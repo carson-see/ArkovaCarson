@@ -2,9 +2,10 @@
  * Identity Verification API (IDT WS1)
  *
  * Endpoints for Stripe Identity KYC verification:
- *   POST /api/v1/identity/session    — Create a verification session
- *   GET  /api/v1/identity/status     — Get current verification status
- *   POST /api/v1/identity/dev-verify — Dev-only: bypass KYC for testing
+ *   POST /api/v1/identity/session     — Create a verification session
+ *   GET  /api/v1/identity/status      — Get current verification status
+ *   GET  /api/v1/identity/entitlement — Verified-only feature gate (PAY-01)
+ *   POST /api/v1/identity/dev-verify  — Dev-only: bypass KYC for testing
  *
  * Constitution 1.4: Never expose Stripe session secrets or PII in logs.
  * Constitution 1.6: Document content never leaves user device — KYC is identity-only.
@@ -15,6 +16,7 @@ import { stripe } from '../../stripe/client.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { db } from '../../utils/db.js';
+import { hasActiveVerifiedEntitlement } from '../../billing/entitlements.js';
 
 const isDev = config.nodeEnv === 'development' || config.nodeEnv === 'test';
 
@@ -146,6 +148,49 @@ identityRouter.get('/status', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error({ error }, 'Failed to fetch identity verification status');
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/v1/identity/entitlement (PAY-01 / SCRUM-2384)
+ *
+ * Verified-only feature gate. Returns whether the authenticated user currently
+ * holds the verified-identity entitlement. Reads the CURRENT subscription period
+ * (SCRUM-1791) so it never grants on a stale row: requires both an open
+ * entitlement window AND an active subscription whose current period covers now.
+ *
+ * Fail-closed: any read error → `{ entitled: false }`.
+ */
+identityRouter.get('/entitlement', async (req: Request, res: Response) => {
+  try {
+    const userId = (req as unknown as { userId?: string }).userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    // Resolve the caller's org so an org-scoped grant is honored.
+    const { data: profile, error: profileError } = await db
+      .from('profiles')
+      .select('org_id')
+      .eq('id', userId)
+      .maybeSingle();
+    if (profileError) {
+      // Fail closed — do not leak a verified-only feature on a read error.
+      logger.error({ error: profileError }, 'Failed to resolve org for entitlement gate — failing closed');
+      res.json({ entitled: false });
+      return;
+    }
+
+    const entitled = await hasActiveVerifiedEntitlement({
+      userId,
+      orgId: profile?.org_id ?? null,
+    });
+
+    res.json({ entitled });
+  } catch (error) {
+    logger.error({ error }, 'Failed to evaluate verified-identity entitlement');
+    res.json({ entitled: false });
   }
 });
 

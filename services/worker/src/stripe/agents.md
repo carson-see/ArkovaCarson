@@ -6,8 +6,8 @@ Stripe SDK integration: client initialization, webhook event handling, and test 
 
 - **client.ts** — Initializes the real Stripe SDK. Exports `stripe` (real client), `getStripeClient()` (returns mock when `USE_MOCKS=true`), and `verifyWebhookSignature()` for webhook authentication via `constructEvent()`.
 - **client.test.ts** — Tests for client initialization, mock switching, and signature verification.
-- **handlers.ts** — Stripe webhook event handlers. Processes `checkout.session.completed`, `customer.subscription.*`, `invoice.*` events. Updates `subscriptions` table, logs to `billing_events` + `audit_events`. Idempotent via `billing_events` dedup.
-- **handlers.test.ts** — Tests for webhook handler event processing.
+- **handlers.ts** — Stripe webhook event handlers. Processes `checkout.session.completed`, `customer.subscription.*`, `invoice.*`, and `identity.verification_session.*` events. Updates `subscriptions` table, logs to `billing_events` + `audit_events`. Idempotent via `billing_events` dedup. **PAY-01 (SCRUM-2384):** `identity.verification_session.verified` → `grantVerifiedIdentityEntitlement` (declined/requires_input/canceled never grant); `customer.subscription.deleted` → `revokeVerifiedIdentityEntitlement`. The grant/revoke logic lives in `../billing/entitlements.ts`.
+- **handlers.test.ts** — Tests for webhook handler event processing. `entitlements.js` is module-mocked here; the entitlement DB behavior is unit-tested in `../billing/entitlements.test.ts`.
 - **mock.ts** — Mock Stripe client for tests. Constitution requires mocks for all Stripe API calls in tests.
 - **mock.test.ts** — Tests for mock Stripe client behavior.
 

@@ -32,6 +32,8 @@ const {
   organizationsUpdate,
   organizationsMaybeSingle,
   mockCallRpc,
+  mockGrantVerified,
+  mockRevokeVerified,
 } = vi.hoisted(() => {
   const mockLogger = {
     info: vi.fn(),
@@ -40,6 +42,11 @@ const {
     debug: vi.fn(),
   };
   const mockCallRpc = vi.fn();
+  // PAY-01 (SCRUM-2384): entitlement grant/revoke spies. The deep DB behavior
+  // is covered by billing/entitlements.test.ts; here we assert the handlers
+  // call them with the resolved user/org.
+  const mockGrantVerified = vi.fn().mockResolvedValue(undefined);
+  const mockRevokeVerified = vi.fn().mockResolvedValue(undefined);
 
   // billing_events.select('id').eq('stripe_event_id', id).maybeSingle()
   const billingEventsMaybeSingle = vi.fn();
@@ -167,6 +174,8 @@ const {
     organizationsUpdate,
     organizationsMaybeSingle,
     mockCallRpc,
+    mockGrantVerified,
+    mockRevokeVerified,
   };
 });
 
@@ -175,6 +184,12 @@ const {
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../utils/db.js', () => ({ db: { from: mockDbFrom } }));
 vi.mock('../utils/rpc.js', () => ({ callRpc: mockCallRpc }));
+// PAY-01 (SCRUM-2384): isolate the entitlement side-effects from these
+// webhook-routing tests (its own DB behavior is unit-tested separately).
+vi.mock('../billing/entitlements.js', () => ({
+  grantVerifiedIdentityEntitlement: mockGrantVerified,
+  revokeVerifiedIdentityEntitlement: mockRevokeVerified,
+}));
 
 // ---- System under test ----
 
@@ -699,6 +714,64 @@ describe('identity.verification_session.verified', () => {
     });
     expect(verifiedCall).toBeUndefined();
   });
+
+  // PAY-01 (SCRUM-2384): verified → GRANTS the verified-identity entitlement.
+  it('grants the verified-identity entitlement with the resolved org on verified', async () => {
+    // org lookup (profiles.select('org_id')) resolves the org for the grant.
+    profilesMaybeSingle.mockResolvedValue({ data: { org_id: 'org-001' }, error: null });
+    const event = makeStripeEvent(
+      'identity.verification_session.verified',
+      { id: 'vs_test_001', metadata: { user_id: 'user-001' } },
+      'evt_identity_grant',
+    );
+    await handleStripeWebhook(event);
+    expect(mockGrantVerified).toHaveBeenCalledTimes(1);
+    expect(mockGrantVerified).toHaveBeenCalledWith({ userId: 'user-001', orgId: 'org-001' });
+    expect(mockRevokeVerified).not.toHaveBeenCalled();
+  });
+
+  it('grants with a null org when the user has no org', async () => {
+    profilesMaybeSingle.mockResolvedValue({ data: { org_id: null }, error: null });
+    const event = makeStripeEvent(
+      'identity.verification_session.verified',
+      { id: 'vs_test_001', metadata: { user_id: 'user-001' } },
+      'evt_identity_grant_no_org',
+    );
+    await handleStripeWebhook(event);
+    expect(mockGrantVerified).toHaveBeenCalledWith({ userId: 'user-001', orgId: null });
+  });
+
+  it('does NOT grant when user_id is missing (declined/anonymous session)', async () => {
+    const event = makeStripeEvent(
+      'identity.verification_session.verified',
+      { id: 'vs_no_user' },
+      'evt_identity_no_grant',
+    );
+    await handleStripeWebhook(event);
+    expect(mockGrantVerified).not.toHaveBeenCalled();
+  });
+
+  // PAY-01: a declined / requires_input / canceled session NEVER grants — those
+  // event types route to no-grant handlers.
+  it('does NOT grant on a requires_input session', async () => {
+    const event = makeStripeEvent(
+      'identity.verification_session.requires_input',
+      { id: 'vs_test_001', metadata: { user_id: 'user-001' } },
+      'evt_identity_requires_input',
+    );
+    await handleStripeWebhook(event);
+    expect(mockGrantVerified).not.toHaveBeenCalled();
+  });
+
+  it('does NOT grant on a canceled session', async () => {
+    const event = makeStripeEvent(
+      'identity.verification_session.canceled',
+      { id: 'vs_test_001', metadata: { user_id: 'user-001' } },
+      'evt_identity_canceled',
+    );
+    await handleStripeWebhook(event);
+    expect(mockGrantVerified).not.toHaveBeenCalled();
+  });
 });
 
 // ================================================================
@@ -1007,6 +1080,24 @@ describe('handleSubscriptionDeleted', () => {
     subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
     await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
     expect(auditInsert).not.toHaveBeenCalled();
+  });
+
+  // PAY-01 (SCRUM-2384): a lapsed subscription REVOKES the verified-identity
+  // entitlement for the resolved user/org.
+  it('revokes the verified-identity entitlement on a lapsed subscription', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: 'org-001' },
+    });
+    await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
+    expect(mockRevokeVerified).toHaveBeenCalledTimes(1);
+    expect(mockRevokeVerified).toHaveBeenCalledWith({ userId: 'user-001', orgId: 'org-001' });
+    expect(mockGrantVerified).not.toHaveBeenCalled();
+  });
+
+  it('does NOT revoke when the orphan-row guard skips (no subscription row)', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
+    await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
+    expect(mockRevokeVerified).not.toHaveBeenCalled();
   });
 
   it('throws when DB update fails', async () => {
