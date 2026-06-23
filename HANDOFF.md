@@ -14,6 +14,18 @@
 
 ## Now
 
+### 2026-06-23 (RTE ops) — #1250 deploy-gate fix → worker on latest; soak-rig teardown; prod Disk-IO budget fix (dashboard cron `*/2`→`*/15`)
+
+**Deploy gate unblocked + worker on latest.** #1250 (Trivy deploy-gate input fix `pkg-types`→`vuln-type` / `github-token`→`github-pat`, + behavior-identical SonarCloud maintainability refactor of `check-image-scan-gate.ts`, 15/15) **admin-merged by Carson** → deploy-worker run **28031108914** green, **Trivy scan PASS** (the step that blocked every worker deploy since 06-22). Prod worker now **rev `arkova-worker-00950-xev` @ 100% traffic**, `/health` git_sha `2a9d0526` (= #1250 merge commit), db/anchoring/kms ok. All worker deploys unblocked.
+
+**Soak-rig hygiene (§7).** Cross-referenced full Supabase + Cloud Run inventory vs PR states. Carson deleted 6 orphaned Supabase rigs (pr1146 / pr1147-resoak / pr1151 / pr1175 / csi04-resoak / s0e4-lane-b — all merged/closed PRs); I deleted the 4 orphaned Cloud Run soak workers still billing (pr1146 / pr1175 / pr1200 / s0e4-lane-b). **3 more orphaned rigs flagged:** `arkova-rig-pr1194/1200/1201` (#1194 closed, #1200/#1201 merged). KEEP = `arkova-staging` (standing) + `train-d-proof` (#1255) + `train-d-queue` (#1259 L2) + `s0e4-lane-a` (#1254) + `pr1260-0344` (#1260 L2) + prod. `cacti-technologies` = unidentified in-org project (Carson to ID).
+
+**Prod Disk-IO budget fix.** Prod `vzwyaatejekddvltxyye` (SMALL) was depleting its burst Disk-IO budget. Dominant consumer by far: `refresh_pipeline_dashboard_cache()` — **~26.7 TB cumulative disk reads** (≈59% of top-15 IO), 6 full-table aggregates over the 22GB `anchors` table per run. Cron job **35** fired it every 2 min (`*/2`), but each run takes **170–227s** and ran **back-to-back continuously** (~85% duty cycle, 24/7). **Carson-approved, DBA-careful change: `cron.alter_job(35, schedule => '*/15 * * * *')`** (schedule-only — command, function, and job 2 `vacuum-anchors` all untouched). New duty cycle ~20% with 12 quiet min/15 for the burst budget to refill (~80% read cut, ~543→~72 GB/day). **Rollback:** `cron.alter_job(35, schedule => '*/2 * * * *')`.
+
+**Follow-up (T3, AFTER the current soak window — not filed mid-soak):** the 6 dashboard sub-aggregates seq-scan `anchors`; runs brush/exceed the 110–120s `statement_timeout`, and the function's per-block `EXCEPTION WHEN OTHERS` **swallows sub-aggregate timeouts → reports "succeeded" while the cache may be partially stale**. Covering/partial indexes or an incremental rollup (same hotspot family as #1257) fixes both the per-run cost and the silent-timeout risk. File once #1255/#1254/#1259/#1260 soaks close.
+
+_Verified via: deploy run 28031108914 success (`gh run view`) + prod `/health` git_sha `2a9d05264f45…` + Cloud Run `arkova-worker-00950-xev` 100% traffic (`gcloud run services describe`); `gcloud run services delete` ×4 + Supabase MCP `list_projects` (6 rigs gone, 3 `rig-pr*` remain); Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` — `cron.job` 35 schedule `*/2`→`*/15` (command/active unchanged), job 2 untouched, `pg_stat_statements` top-IO, `cron.job_run_details` durations 170–227s. No code/schema/migration changed; the cron edit is operational config (Carson-approved)._
+
 ### 2026-06-23 (Lane 2) — Train-D foundations 0340 + 0341 APPLIED to prod + ledger reconciled numeric
 
 Lane 2 (Product & Growth) Sprint-1 ceremonies run (refinement · planning · pre-mortem) → Confluence page 87392262. **Carson-approved prod-apply** of the held Train-D foundation migrations to prod `vzwyaatejekddvltxyye` via Supabase MCP `apply_migration`, in strict prefix order **0340 → 0341**:
@@ -295,4 +307,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-23 by Claude (carson@arkova.io) — claims verified against Supabase MCP `execute_sql` output on prod `vzwyaatejekddvltxyye` (0340/0341 column/constraint/trigger/function presence + numeric ledger versions 0340/0341, captured this session). Prior 2026-06-21 footer (PR #1242 byte-identity) remains in git history._
+_Last refreshed: 2026-06-23 by Claude (carson@arkova.io) — claims verified against: deploy run 28031108914 success + prod `/health` git_sha `2a9d0526` + Cloud Run rev `arkova-worker-00950-xev` 100% traffic (gcloud); Supabase MCP `execute_sql` on prod `vzwyaatejekddvltxyye` (`cron.job` 35 `*/2`→`*/15`, `pg_stat_statements` top-IO, `cron.job_run_details`); `gcloud run services delete` ×4 + Supabase MCP `list_projects`. Prior 0340/0341-apply + #1242 footers remain in git history._
