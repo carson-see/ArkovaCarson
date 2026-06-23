@@ -25,6 +25,23 @@ describe('0341 credit integrity foundation migration', () => {
     expect(migration).toMatch(/entry_type <> 'REFUND'\s+OR amount > 0/);
   });
 
+  it('drops the old positivity CHECK BEFORE the sign-flip UPDATE (ordering regression)', () => {
+    // REGRESSION GUARD: the original 0341 ran `UPDATE ... SET amount = -amount`
+    // BEFORE dropping org_credit_deductions_amount_check (amount > 0), so on a
+    // non-empty table the negation violated the still-live old CHECK (ERROR
+    // 23514). The DROP must come first.
+    const dropOldAmountCheck = migration.indexOf(
+      'DROP CONSTRAINT IF EXISTS org_credit_deductions_amount_check',
+    );
+    const signFlipUpdate = migration.indexOf('SET amount = -amount');
+    const addSignedCheck = migration.indexOf('org_credit_deductions_amount_signed_check');
+    expect(dropOldAmountCheck).toBeGreaterThan(-1);
+    expect(signFlipUpdate).toBeGreaterThan(-1);
+    // (a) drop old amount>0 CHECK -> (b) negate existing debits -> (c) add signed CHECK.
+    expect(dropOldAmountCheck).toBeLessThan(signFlipUpdate);
+    expect(signFlipUpdate).toBeLessThan(addSignedCheck);
+  });
+
   it('enforces append-only via a BEFORE UPDATE OR DELETE trigger that rejects mutation', () => {
     expect(migration).toContain('reject_org_credit_deduction_mutation');
     expect(migration).toMatch(/BEFORE UPDATE OR DELETE ON public\.org_credit_deductions/);
@@ -91,7 +108,7 @@ describe('0341 credit integrity foundation migration', () => {
     );
     const deductCreditFn = migration.slice(
       migration.indexOf('FUNCTION public.deduct_credit'),
-      migration.indexOf('-- (9) Grants'),
+      migration.indexOf('-- (10) Grants'),
     );
     expect(deductCreditFn).toContain('idempotency_key_conflict');
     expect(deductCreditFn).toContain("transaction_type = 'DEDUCTION'");

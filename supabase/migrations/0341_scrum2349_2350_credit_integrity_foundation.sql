@@ -37,30 +37,40 @@ BEGIN;
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- (1) Add entry_type, backfill, and migrate existing debit rows to signed form.
---     Order matters: this runs BEFORE the append-only trigger + signed CHECK.
+-- (1) Add entry_type, then DROP the old unsigned CHECKs BEFORE the sign-flip.
+--     ORDERING IS CORRECTNESS-CRITICAL: the old positivity CHECK
+--     (org_credit_deductions_amount_check, amount > 0) must drop before the
+--     sign-flip UPDATE below — negating a live debit row while amount>0 is still
+--     enforced violates the old CHECK (ERROR 23514) on any non-empty table.
+--     Carson (DBA premortem): drop org_credit_deductions_amount_check (amount>0)
+--     AND org_credit_deductions_balance_after_check (balance_after>=0); the
+--     signed-amount CHECK + a re-named balance_after>=0 CHECK are added in (3),
+--     AFTER the rows are in signed form.
 -- -----------------------------------------------------------------------------
 ALTER TABLE public.org_credit_deductions
   ADD COLUMN IF NOT EXISTS entry_type text NOT NULL DEFAULT 'DEBIT';
 
--- Existing rows (pre-0341) are all debits with positive `amount` because the old
--- refund path DELETEd rather than inserting. Convert them to the signed
--- convention: DEBIT amounts become negative. Idempotent (only flips positives).
+-- Old positivity CHECK must drop before the sign-flip (else amount<0 violates it).
+ALTER TABLE public.org_credit_deductions
+  DROP CONSTRAINT IF EXISTS org_credit_deductions_amount_check,
+  DROP CONSTRAINT IF EXISTS org_credit_deductions_balance_after_check;
+
+-- -----------------------------------------------------------------------------
+-- (2) Migrate existing debit rows to signed form (now that amount>0 is dropped).
+--     Existing rows (pre-0341) are all debits with positive `amount` because the
+--     old refund path DELETEd rather than inserting. Convert them to the signed
+--     convention: DEBIT amounts become negative. Idempotent (only flips
+--     positives). Runs BEFORE the new signed CHECK + append-only trigger.
+-- -----------------------------------------------------------------------------
 UPDATE public.org_credit_deductions
 SET amount = -amount
 WHERE amount > 0;
 
 -- -----------------------------------------------------------------------------
--- (2) Replace the unsigned CHECKs with the signed-amount + entry_type CHECK.
---     Carson (DBA premortem): drop org_credit_deductions_amount_check (amount>0)
---     AND org_credit_deductions_balance_after_check (balance_after>=0), add a
---     signed-amount CHECK. balance_after >= 0 is still valid (balance never goes
---     negative) so it is re-added under an explicit name.
+-- (3) Add the signed-amount + entry_type CHECK (+ re-named balance_after>=0).
+--     balance_after >= 0 is still valid (balance never goes negative) so it is
+--     re-added under an explicit name.
 -- -----------------------------------------------------------------------------
-ALTER TABLE public.org_credit_deductions
-  DROP CONSTRAINT IF EXISTS org_credit_deductions_amount_check,
-  DROP CONSTRAINT IF EXISTS org_credit_deductions_balance_after_check;
-
 ALTER TABLE public.org_credit_deductions
   ADD CONSTRAINT org_credit_deductions_entry_type_check
     CHECK (entry_type IN ('DEBIT', 'REFUND', 'GRANT', 'REVOKE')),
@@ -82,7 +92,7 @@ COMMENT ON COLUMN public.org_credit_deductions.entry_type IS
   'Ledger entry kind: DEBIT (charge), REFUND (compensation), GRANT/REVOKE (future).';
 
 -- -----------------------------------------------------------------------------
--- (3) Append-only enforcement: reject ALL UPDATE/DELETE on the ledger.
+-- (4) Append-only enforcement: reject ALL UPDATE/DELETE on the ledger.
 --     Refunds INSERT a new row; nothing legitimately mutates an existing row.
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.reject_org_credit_deduction_mutation()
@@ -108,7 +118,7 @@ CREATE TRIGGER trg_org_credit_deductions_append_only
 REVOKE DELETE ON TABLE public.org_credit_deductions FROM service_role;
 
 -- -----------------------------------------------------------------------------
--- (4) deduct_org_credit — signed DEBIT row, reference_id REQUIRED, idempotent
+-- (5) deduct_org_credit — signed DEBIT row, reference_id REQUIRED, idempotent
 --     replay (0326 FOR-UPDATE pattern, comparison adjusted for signed storage).
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.deduct_org_credit(
@@ -205,7 +215,7 @@ END;
 $$;
 
 -- -----------------------------------------------------------------------------
--- (5) refund_org_credit — INSERT a positive REFUND row, NEVER DELETE. Idempotent
+-- (6) refund_org_credit — INSERT a positive REFUND row, NEVER DELETE. Idempotent
 --     under retry (the per-(org, reference_id, reason) unique key + a pre-check
 --     under the org_credits row lock). A failed refund can now be safely
 --     re-driven by a reconciliation sweeper without erasing the debit's
@@ -286,7 +296,7 @@ END;
 $$;
 
 -- -----------------------------------------------------------------------------
--- (6) QUEUE-04: debit_and_enqueue_anchor — ONE transaction that debits the org
+-- (7) QUEUE-04: debit_and_enqueue_anchor — ONE transaction that debits the org
 --     AND transitions the anchor's status atomically. reference_id = per-anchor
 --     id (NOT batch id). Replaces the debit→broadcast→best-effort-refund saga's
 --     irreversible mis-debit window: either both the debit row + the status
@@ -424,7 +434,7 @@ END;
 $$;
 
 -- -----------------------------------------------------------------------------
--- (7) Money-conservation reconciliation: balance == grant + Σ signed ledger.
+-- (8) Money-conservation reconciliation: balance == grant + Σ signed ledger.
 --     Returns one row per org with the divergence; a daily sweeper/alarm queries
 --     `WHERE diverged`. `p_initial_grant` is the org's lifetime granted credits
 --     (allocations live outside this ledger today, so the caller supplies it;
@@ -464,7 +474,7 @@ AS $$
 $$;
 
 -- -----------------------------------------------------------------------------
--- (8) USER-PATH (QUEUE-03c): idempotent deduct_credit on credit_transactions.
+-- (9) USER-PATH (QUEUE-03c): idempotent deduct_credit on credit_transactions.
 --     Partial-unique index keyed on (user_id, reference_id, transaction_type)
 --     WHERE reference_id IS NOT NULL, plus the 0326 FOR-UPDATE replay pattern.
 --     credit_transactions already stores DEDUCTION amounts as -p_amount, so the
@@ -557,7 +567,7 @@ END;
 $$;
 
 -- -----------------------------------------------------------------------------
--- (9) Grants. deduct_org_credit keeps its anon/authenticated/service grants
+-- (10) Grants. deduct_org_credit keeps its anon/authenticated/service grants
 --     (matches 0326). refund + atomic RPC + divergence are service-role only.
 -- -----------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION public.deduct_org_credit(uuid, integer, text, uuid) FROM PUBLIC;
