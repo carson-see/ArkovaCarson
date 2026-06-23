@@ -14,6 +14,26 @@
 
 ## Now
 
+### 2026-06-23 — PI-0 Sprint 1 (Lane 1) executed: 3 parallel T3 soaks running; config-drift merged; 0341 launch-blocker caught + fixed
+
+Sprint 1 (PI-0, 06-22→07-03) for Lane 1 (Trust & Chain) driven to **code-complete + in-soak**: refinement → planning → pre-mortems → builds → /code-review + /debug → parallel isolated soaks (S0-E4). **No prod schema/worker state changed; no PR merged by Claude.**
+
+**Merged:** config-drift provider-SPOF (CHAIN-RESIL, README item #6) — **PR #1251 MERGED** (in origin/main). Detects a dropped/wrong `BITCOIN_UTXO_PROVIDER` (config.ts default `mempool` vs deploy `getblock`).
+
+**3 parallel T3 soaks RUNNING on separate isolated rigs** (S0-E4 model): (1) **proof foundation #1255** — mig 0340 + Merkle-recompute verdict (`verify-proof` now recomputes, never `anchors.status`); base-drift resolved by merge-forward `3e3aa1d7`; rig `ykbkueelkxngyrwkutxt`, start 2026-06-22T21:52Z. (2) **PROOF-03 #1254** — GetBlock confirmation-proof (block header + Merkle inclusion); rig `sveujcebzkqxbhimotbb` (s0e4-lane-a), start 2026-06-23T11:46Z. (3) **Lane-2 credit-0341** (`cc440bd2`) — rig `bkstqckfldajpaehveaa`, start 2026-06-23T11:59Z. All three `/health` healthy (db/anchoring ok); 0340 applied + GUC `arkova.proof_enforce_secured_complete` OFF-verified on the proof + lane-a rigs.
+
+**DISC-03 chain posture DECIDED + empirically verified:** live GetBlock curl-matrix vs mainnet block 954869 confirms `getblockheader` + `gettxoutproof` on the prod token → PROOF-03 source confirmed, pre-mortem RP-5 retired. Launch = GetBlock-sovereign broadcast + OP_RETURN **v0** (version-aware verifier) + OP_RETURN-only fee. **No mainnet broadcast until Carson final-confirm.** Pack: Confluence 86966274.
+
+**WEBEXT-CSP #1253** (NER self-host under `'self'`): /code-review caught + FIXED a **critical concurrency fail-open** (racing NER-load callers bypassed the typed error → silent regex fallback, §1.6 risk); 27/27 green; Vercel-preview pending.
+
+**LAUNCH-BLOCKER caught in soak + FIXED:** mig **0341** negated `org_credit_deductions` before dropping the old `amount>0` CHECK → ERROR 23514 on non-empty data. Reordered (`cc440bd2`), re-applied successfully on the non-empty 12-row rig, ordering regression test added. **Bug Tracker BUG-2026-06-23-001.** Prod-apply gate: confirm prod `org_credit_deductions` row counts before the S2 0341 apply (the fixed migration is safe on any data regardless).
+
+**Release path** (soak in parallel, merge in order): #1255 → delete branch (auto-retarget #1254 + Lane 2) → 0340 prod-apply (S2, before 0341) → #1254 → credit → #1253. Mergify auto-merges on green (the `needs-carson-merge` label is a no-op).
+
+**Artifacts:** Sprint 1 report = Confluence **87293954** + Google Drive "ARKOVA PI-0 — Sprint 1 Report [FINAL]"; DISC-03 pack 86966274; proof_bundle contract 86999041. PRs #1251 (merged) / #1255 / #1254 / #1253.
+
+_Last refreshed: 2026-06-23 by Claude (carson@arkova.io) — claims verified against: PR #1251 merge present in origin/main (`gh`/`git log`); rig `/health` git_shas (`3e3aa1d7` / `a6635c32` / `cc440bd2`, db ok) via curl+OIDC; 0340 applied + GUC OFF via Supabase MCP `execute_sql` on `ykbkueelkxngyrwkutxt` + `sveujcebzkqxbhimotbb`; GetBlock curl-matrix vs mainnet 954869; Confluence/Drive create responses. No prod schema/worker state changed; no Claude merge._
+
 ### 2026-06-21 — CSI-04C/04D recovery PR #1242 (stranded #1040+#1041 → main; no prod/soak touched)
 
 The CSI stacked merge tangled: **#1039** (Credly) is on main, but **#1041** (CSI-04D Issuer Partners admin UI + worker API) merged into **#1040's branch** `feat/scrum-1613-csi-04c-accredible-adapter` (merge commit `771e398d`) **not main**, and **#1040** (CSI-04C Accredible adapter) is **closed-never-merged**. So the Accredible adapter + Issuer Partners UI/API were **stranded** on `feat/scrum-1613` and missing from main.
