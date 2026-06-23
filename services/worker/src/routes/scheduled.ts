@@ -21,6 +21,7 @@ import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpi
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
+import { runCreditConservationReconciler } from '../jobs/credit-conservation-reconciler.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
@@ -149,6 +150,33 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
       logger.info({ processed }, 'Monthly credit allocation complete');
     } catch (error) {
       logger.error({ error }, 'Monthly credit allocation failed');
+    }
+  });
+
+  // S1-9 (SCRUM-2349 / PM-25): money-conservation reconciler — daily at 09:00
+  // UTC (deliberately offset from the 03:00 batch flush). Calls the prod
+  // `org_credit_ledger_divergence` SQL function over ALL orgs (read-only),
+  // emits a structured conservation report, and pages (error log + Sentry) on
+  // any drift — the gate #11 SLO/alerting signal. Read-only reconciliation, so
+  // it is NOT in ANCHOR_TABLE_IN_PROCESS_JOBS: a paused anchor pipeline under
+  // the maintenance flag must NOT silence money-conservation checks, and the
+  // function touches credit ledger tables, not the anchors table. Idempotent —
+  // a missed/retried tick just re-reads. In-process backup; prod runs via
+  // Cloud Scheduler hitting /jobs/reconcile-credit-conservation (Carson wires
+  // the scheduler binding — T3, serialized).
+  scheduleInProcess('reconcile-credit-conservation', '0 9 * * *', async () => {
+    logger.debug('Running credit-conservation reconciler');
+    try {
+      const result = await trackOperation(runCreditConservationReconciler(db));
+      if (!result.healthy) {
+        // PII-safe: the result carries counts only, never raw balances.
+        logger.warn(
+          { divergedCount: result.divergedCount, orgsChecked: result.orgsChecked },
+          'Credit-conservation reconciler: drift detected',
+        );
+      }
+    } catch (error) {
+      logger.error({ error }, 'Credit-conservation reconciler cron failed');
     }
   });
 
