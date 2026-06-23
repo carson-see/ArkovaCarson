@@ -5,13 +5,21 @@
  * What this is (and is NOT)
  * -------------------------
  * The reconciler LOGIC already lives in prod as the SQL function
- * `org_credit_ledger_divergence(p_org_id uuid DEFAULT NULL,
- *  p_initial_grant integer DEFAULT 0)` (applied via migration 0341). For every
- * org it computes:
- *   balance == p_initial_grant + SUM(org_credit_deductions.amount)
- * (the ledger is append-only with signed amounts: DEBIT < 0, REFUND > 0) and
- * returns one row per org with `diverged = true` on any mismatch. It is
+ * `org_credit_ledger_divergence(p_org_id uuid DEFAULT NULL)` (added by migration
+ * 0341, CORRECTED by migration 0344). For every org it computes:
+ *   balance == purchased + monthly_allocation
+ *              + net(org_credit_allocations)            -- parent→child sub-org transfers
+ *              + SUM(org_credit_deductions.amount)      -- append-only signed ledger
+ * and returns one row per org with `diverged = true` on any mismatch. It is
  * service_role EXECUTE only, STABLE SECURITY DEFINER — a pure read.
+ *
+ * Why 0344 was needed: the original 0341 body compared `balance` against a
+ * `p_initial_grant` scalar (SQL DEFAULT 0). But credit GRANTS are NOT in the
+ * deduction ledger — they live in the `org_credits` columns (purchased,
+ * monthly_allocation) plus net parent→child allocations. With p_initial_grant=0
+ * every funded org false-flagged a "violation" on the first tick. 0344 drops the
+ * scalar arg and sources the grant from the real columns. The `granted` column
+ * on each row surfaces that grant total.
  *
  * This module is the NET-NEW piece: the daily CALLER that fires that function
  * over ALL orgs (p_org_id = NULL), collects the rows `WHERE diverged = true`,
@@ -29,11 +37,16 @@
  *
  * PII (§1.1 / §1.4)
  * -----------------
- * Raw credit amounts are PII. We log + alert on `org_id` + the divergence
- * MAGNITUDE only — never the raw `balance` / `ledger_sum` / `expected` values.
- * The divergence magnitude is the alert signal; the absolute balances are not.
- * The Sentry beforeSend scrubber still runs, but the alert context is built
- * aggregate-only by construction so nothing sensitive is ever handed to it.
+ * Raw credit amounts are PII. We log + alert on `org_id` + a COARSE divergence
+ * BUCKET only — never the raw `balance` / `granted` / `ledger_sum` / `expected`
+ * / `divergence` numbers. The bucket matters because when `expected == 0` (a
+ * funded org whose grant total is zero), `divergence == balance`, so even the
+ * raw divergence value would leak the org's exact balance (C2). The bucket
+ * ('0' | '±1-9' | '±10-99' | '±100-999' | '±1000+') preserves the alert signal
+ * (is there drift, roughly how big, which direction) without echoing any exact
+ * credit amount. The Sentry beforeSend scrubber still runs, but the alert
+ * context is built bucket-only by construction so nothing sensitive is ever
+ * handed to it.
  *
  * Shape mirrors `stuck-anchor-monitor.ts`: a pure, side-effect-free decision
  * function (`decideCreditConservationAlert`) plus a `runCreditConservationReconciler(db)`
@@ -50,23 +63,57 @@ export const CREDIT_LEDGER_DIVERGENCE_RPC = 'org_credit_ledger_divergence' as co
 export type AlertSeverity = 'info' | 'warning' | 'error';
 
 /**
- * One row returned by `org_credit_ledger_divergence`. Numeric columns are
- * Postgres `integer` / `bigint`; supabase-js returns them as JS numbers (the
- * ledger is bounded well within Number.MAX_SAFE_INTEGER for credit counts).
+ * Coarse PII-safe divergence bucket: sign + magnitude order. Never echoes a raw
+ * credit amount. '0' has no sign; every other band carries '+' or '-'.
+ */
+export type DivergenceBucket =
+  | '0'
+  | '+1-9' | '+10-99' | '+100-999' | '+1000+'
+  | '-1-9' | '-10-99' | '-100-999' | '-1000+';
+
+/**
+ * One row returned by `org_credit_ledger_divergence` (post-0344). Numeric
+ * columns are Postgres `integer` / `bigint`; supabase-js returns them as JS
+ * numbers (credit counts are bounded well within Number.MAX_SAFE_INTEGER).
+ * `granted` = purchased + monthly_allocation + net(org_credit_allocations);
+ * `expected` = granted + ledger_sum; `divergence` = balance - expected.
  */
 export interface DivergenceRow {
   org_id: string;
   balance: number;
+  granted: number;
   ledger_sum: number;
   expected: number;
   divergence: number;
   diverged: boolean;
 }
 
-/** PII-safe per-org summary: identity + magnitude only, never raw balances. */
+/**
+ * PII-safe per-org summary: identity + a COARSE bucket only, never raw amounts.
+ * The bucket (not the raw divergence) is carried because when expected==0,
+ * divergence==balance — the raw value would leak the org's exact balance.
+ */
 export interface DivergedOrgSummary {
   org_id: string;
-  divergence: number;
+  divergence_bucket: DivergenceBucket;
+}
+
+/**
+ * Map a raw signed divergence to a coarse PII-safe bucket. Magnitude order
+ * (1-9 / 10-99 / 100-999 / 1000+) with the sign preserved; 0 → '0'. This is the
+ * ONLY divergence shape allowed into logs / Sentry — raw amounts (which, when
+ * expected==0, equal the org balance) never leave the process.
+ */
+export function bucketDivergence(divergence: number): DivergenceBucket {
+  if (divergence === 0) return '0';
+  const sign = divergence > 0 ? '+' : '-';
+  const mag = Math.abs(divergence);
+  let band: '1-9' | '10-99' | '100-999' | '1000+';
+  if (mag < 10) band = '1-9';
+  else if (mag < 100) band = '10-99';
+  else if (mag < 1000) band = '100-999';
+  else band = '1000+';
+  return `${sign}${band}` as DivergenceBucket;
 }
 
 export interface CreditConservationDecision {
@@ -82,8 +129,8 @@ export interface CreditConservationDecision {
 /**
  * Pure decision function — no I/O. Given the full set of per-org divergence
  * rows, decide whether to page. `should_fire` is true iff at least one org
- * diverged. The returned `diverged_orgs` carries identity + magnitude only so
- * downstream logging/alerting cannot leak raw credit amounts.
+ * diverged. The returned `diverged_orgs` carries identity + a coarse bucket only
+ * so downstream logging/alerting cannot leak raw credit amounts.
  */
 export function decideCreditConservationAlert(
   rows: DivergenceRow[],
@@ -91,7 +138,7 @@ export function decideCreditConservationAlert(
   const orgsChecked = rows.length;
   const divergedOrgs: DivergedOrgSummary[] = rows
     .filter((r) => r.diverged === true)
-    .map((r) => ({ org_id: r.org_id, divergence: r.divergence }));
+    .map((r) => ({ org_id: r.org_id, divergence_bucket: bucketDivergence(r.divergence) }));
   const divergedCount = divergedOrgs.length;
 
   if (divergedCount === 0) {
@@ -110,7 +157,8 @@ export function decideCreditConservationAlert(
     severity: 'error',
     reason:
       `Credit conservation VIOLATED: ${divergedCount} of ${orgsChecked} org(s) `
-      + 'diverge from balance == initial_grant + SUM(ledger.amount) '
+      + 'diverge from balance == granted (purchased + monthly_allocation + '
+      + 'net_allocations) + SUM(ledger.amount) '
       + '(credit-ledger integrity is launch-critical)',
     orgs_checked: orgsChecked,
     diverged_count: divergedCount,
@@ -141,7 +189,7 @@ export interface CreditConservationResult {
 type SupabaseDb = any;
 
 /**
- * Build the PII-safe Sentry alert context. Identity + magnitude only.
+ * Build the PII-safe Sentry alert context. Identity + coarse bucket only.
  * Per-org rows are capped so a pathological all-orgs divergence can't produce
  * an unboundedly large event payload; the aggregate count is always exact.
  */
@@ -156,7 +204,7 @@ function emitCreditConservationAlert(decision: CreditConservationDecision): void
         story: 'S1-9',
         orgs_checked: decision.orgs_checked,
         diverged_count: decision.diverged_count,
-        // Aggregate-only per-org context: {org_id, divergence}. Capped.
+        // Aggregate-only per-org context: {org_id, divergence_bucket}. Capped.
         diverged_orgs: decision.diverged_orgs.slice(0, MAX_ALERT_ORG_ROWS),
         diverged_orgs_truncated: decision.diverged_orgs.length > MAX_ALERT_ORG_ROWS,
       },
@@ -174,7 +222,7 @@ function emitCreditConservationAlert(decision: CreditConservationDecision): void
  * End-to-end cron entry point. Fires `org_credit_ledger_divergence` over all
  * orgs (p_org_id = NULL → SQL DEFAULT), filters to diverged rows, builds the
  * conservation report, and on any drift logs at error level + fires a Sentry
- * alert carrying org_id + divergence magnitude only.
+ * alert carrying org_id + a coarse divergence bucket only.
  *
  * Returns a structured result instead of throwing. A probe failure reports
  * `healthy: false` with `divergedCount: null` so a broken read can NEVER
@@ -191,8 +239,9 @@ export async function runCreditConservationReconciler(
   let data: unknown;
   let error: { message: string; code?: string } | null;
   try {
-    // All-orgs sweep: pass no org filter so p_org_id keeps its SQL DEFAULT
-    // NULL. p_initial_grant also defaults (0) in the function definition.
+    // All-orgs sweep: arg-less call so p_org_id keeps its SQL DEFAULT NULL.
+    // Post-0344 the function is (uuid DEFAULT NULL) — there is no p_initial_grant
+    // arg to pass (its presence was the bug: it false-flagged every funded org).
     const res = await callRpc<DivergenceRow[]>(db, CREDIT_LEDGER_DIVERGENCE_RPC);
     data = res.data;
     error = res.error;
@@ -253,7 +302,7 @@ export async function runCreditConservationReconciler(
   };
 
   if (decision.should_fire) {
-    // PII-safe: org_id + magnitude only, never raw balances.
+    // PII-safe: org_id + coarse bucket only, never raw balances/divergence.
     logger.error(
       {
         orgsChecked: decision.orgs_checked,
