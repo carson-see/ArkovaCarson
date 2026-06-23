@@ -14,6 +14,16 @@
 
 ## Now
 
+### 2026-06-23 (Lane 2) — Train-D foundations 0340 + 0341 APPLIED to prod + ledger reconciled numeric
+
+Lane 2 (Product & Growth) Sprint-1 ceremonies run (refinement · planning · pre-mortem) → Confluence page 87392262. **Carson-approved prod-apply** of the held Train-D foundation migrations to prod `vzwyaatejekddvltxyye` via Supabase MCP `apply_migration`, in strict prefix order **0340 → 0341**:
+- **0340** (proof completeness, SCRUM-2335): `anchor_proofs` +5 cols (block_header/block_hash/op_return_payload/merkle_index/proof_schema_version); GUC-gated `enforce_secured_anchor_proof_complete` trigger present, `arkova.proof_enforce_secured_complete` **default OFF → inert** (2.97M SECURED anchors untouched).
+- **0341** (credit integrity, SCRUM-2349/2350): `org_credit_deductions` now **append-only** — `entry_type` + signed-amount/entry_type/balance_after≥0 CHECKs (old `amount>0`/`balance_after` CHECKs dropped), BEFORE UPDATE/DELETE reject trigger, `DELETE` revoked from service_role; `debit_and_enqueue_anchor` + `org_credit_ledger_divergence` RPCs + idempotency index. Prod table **EMPTY (0 rows)** → sign-flip a no-op, zero data risk.
+
+Ledger reconciled to **numeric** per §0 rule 10; contiguous head **0339, 0340, 0341**. This clears the `Check supabase/migrations vs prod` gate on **#1255** (0340) + the credit PR (0341); both merge via **Mergify** on green + soak evidence (T2/T3 included — `needs-carson-merge` is a Mergify no-op). `0343` reserved for QUEUE-02 (SCRUM-2348, Lane 2) in `supabase/migrations/agents.md`; interface-lock to Lane 3 by 2026-06-26.
+
+_Verified via Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye`: 0340 → 5 new cols + trigger present, ledger version=0340; 0341 → `entry_type` + 3 signed CHECKs (old 2 dropped) + append-only trigger + `debit_and_enqueue_anchor` + `org_credit_ledger_divergence` + idempotency index present, service_role DELETE revoked, 0 rows intact, ledger version=0341; ledger tail "0339, 0340, 0341"._
+
 ### 2026-06-23 — PI-0 Sprint 1 (Lane 1) executed: 3 parallel T3 soaks running; config-drift merged; 0341 launch-blocker caught + fixed
 
 Sprint 1 (PI-0, 06-22→07-03) for Lane 1 (Trust & Chain) driven to **code-complete + in-soak**: refinement → planning → pre-mortems → builds → /code-review + /debug → parallel isolated soaks (S0-E4). **No prod schema/worker state changed; no PR merged by Claude.**
@@ -285,4 +295,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-21 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output. The CSI-04C/04D recovery (PR #1242) entry asserts PR/recovery state only — no prod/worker/schema/soak state changed; the byte-identity check `git diff d8402369 HEAD -- <csi runtime>` is empty, and the local check runs are cited in the PR #1242 body._
+_Last refreshed: 2026-06-23 by Claude (carson@arkova.io) — claims verified against Supabase MCP `execute_sql` output on prod `vzwyaatejekddvltxyye` (0340/0341 column/constraint/trigger/function presence + numeric ledger versions 0340/0341, captured this session). Prior 2026-06-21 footer (PR #1242 byte-identity) remains in git history._

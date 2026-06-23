@@ -39,12 +39,14 @@ Remaining strict order:
 
 ## Train D migration reservations (2026-06-16)
 
-Reserved by the Train D MVP-launch train (GitHub milestone #2). **Pre-soak; not yet merged.** Merge order is strict **0340 → 0341** (0341 is stacked on 0340). Do not reserve or reuse `0340` or `0341`.
+Merge order is strict **0340 → 0341** (0341 is stacked on 0340). **0340 + 0341 were APPLIED to prod `vzwyaatejekddvltxyye` on 2026-06-23** (Carson-approved, via MCP `apply_migration`; ledger reconciled numeric — prod head now `0339, 0340, 0341`). The code PRs (#1255 + the credit PR) merge to `main` via Mergify on green + soak evidence. Do not reserve or reuse `0340`, `0341`, `0342`, or `0343`.
 
 | Prefix | Branch | Story | File | Status |
 |---|---|---|---|---|
-| `0340` | `feat/train-d-proof-foundation` | SCRUM-2335 / 2490 / 2491 | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | RESERVED — pre-soak |
-| `0341` | `feat/train-d-credit-foundation` (stacked on 0340) | SCRUM-2349 / 2350 | `0341_scrum2349_2350_credit_integrity_foundation.sql` | RESERVED — pre-soak |
+| `0340` | `feat/train-d-proof-foundation` | SCRUM-2335 / 2490 / 2491 | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | **APPLIED to prod 2026-06-23** |
+| `0341` | `feat/train-d-credit-foundation` (stacked on 0340) | SCRUM-2349 / 2350 | `0341_scrum2349_2350_credit_integrity_foundation.sql` | **APPLIED to prod 2026-06-23** |
+| `0342` | `perf/cpe-cle-dashboard-partial-index` (PR #1257) | CPE/CLE dashboard partial indexes | `0342_*` | RESERVED — open PR, do not reuse |
+| `0343` | QUEUE-02 connector-artifact schema (Lane 2) | SCRUM-2348 | `0343_scrum2348_connector_artifact_queue_schema.sql` | RESERVED — Lane 2 Sprint 1; interface-lock to Lane 3 by 2026-06-26 |
 
 Train D soaks once (consolidated RC) after Train C (#1154) merges, then rebases onto the new `main`; see HANDOFF.md + the "Release Soak Protection — No-Restart Process" Confluence page.
 
