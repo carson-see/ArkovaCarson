@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const processNextJobMock = vi.hoisted(() => vi.fn());
@@ -119,48 +120,133 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     });
   });
 
-  it('does not persist document fingerprints in integration event details', async () => {
-    let inserted: Record<string, unknown> | undefined;
-    const db = {
-      from: vi.fn((table: string) => {
-        expect(table).toBe('integration_events');
-        const query = {
-          select: vi.fn(() => query),
-          eq: vi.fn(() => query),
-          is: vi.fn(() => query),
-          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-          insert: vi.fn((value: Record<string, unknown>) => {
-            inserted = value;
-            return {
-              select: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue({ data: { id: 'event-1' }, error: null }),
-              })),
-            };
-          }),
-        };
-        return query;
-      }),
-    };
-    const deps = makeDocusignEnvelopeJobDeps({ db });
-
-    await deps.enqueueSignedDocument({
-      orgId: '11111111-1111-4111-8111-111111111111',
+  describe('enqueueSignedDocument — DS-03 server-side hash + durable connector artifact', () => {
+    const SIGNED_BYTES = Buffer.from('signed bytes');
+    const EXPECTED_SHA256 = createHash('sha256').update(SIGNED_BYTES).digest('hex');
+    const ORG_ID = '11111111-1111-4111-8111-111111111111';
+    const SINK_INPUT = {
+      orgId: ORG_ID,
       integrationId: 'integration-1',
       accountId: 'account-1',
       envelopeId: 'envelope-1',
       ruleEventId: 'rule-event-1',
-      documentBytes: Buffer.from('signed bytes'),
-      contentType: 'application/pdf',
+      documentBytes: SIGNED_BYTES,
+      contentType: 'application/pdf' as string | null,
+    };
+
+    interface MakeDbOpts {
+      artifactResult?: { data: string | null; error: unknown };
+      auditResult?: { data: { id: string } | null; error: unknown };
+    }
+
+    function makeDb(opts: MakeDbOpts = {}) {
+      const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+      const state: { insertedDetails?: Record<string, unknown>; insertCalled: boolean } = {
+        insertCalled: false,
+      };
+      const db = {
+        rpc: vi.fn((fn: string, args: Record<string, unknown>) => {
+          rpcCalls.push({ fn, args });
+          return Promise.resolve(opts.artifactResult ?? { data: 'artifact-1', error: null });
+        }),
+        from: vi.fn((table: string) => {
+          expect(table).toBe('integration_events');
+          const query = {
+            select: vi.fn(() => query),
+            eq: vi.fn(() => query),
+            is: vi.fn(() => query),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            insert: vi.fn((value: Record<string, unknown>) => {
+              state.insertCalled = true;
+              state.insertedDetails = value.details as Record<string, unknown>;
+              return {
+                select: vi.fn(() => ({
+                  single: vi
+                    .fn()
+                    .mockResolvedValue(opts.auditResult ?? { data: { id: 'event-1' }, error: null }),
+                })),
+              };
+            }),
+          };
+          return query;
+        }),
+      };
+      return { db, rpcCalls, state };
+    }
+
+    it('computes a server-side SHA-256 and enqueues a durable connector artifact via the 0343 RPC', async () => {
+      const { db, rpcCalls } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+      expect(rpcCalls).toHaveLength(1);
+      expect(rpcCalls[0].fn).toBe('enqueue_connector_artifact');
+      expect(rpcCalls[0].args).toMatchObject({
+        p_org_id: ORG_ID,
+        p_source: 'docusign',
+        p_external_ref: 'envelope-1',
+        p_external_revision: null,
+        p_fingerprint_sha256: EXPECTED_SHA256,
+        p_byte_length: SIGNED_BYTES.byteLength,
+      });
+      // Canonical lowercase 64-hex SHA-256 — matches the 0343 CHECK constraint
+      // connector_artifact_fingerprint_format_check.
+      expect(EXPECTED_SHA256).toMatch(/^[a-f0-9]{64}$/);
+      // The durable artifact id is the queued id the Lane-2 batch loop consumes.
+      expect(result).toEqual({ queuedId: 'artifact-1' });
     });
 
-    expect(inserted?.details).toMatchObject({
-      account_id: 'account-1',
-      envelope_id: 'envelope-1',
-      rule_event_id: 'rule-event-1',
-      content_type: 'application/pdf',
-      byte_length: 12,
+    it('returns the artifact id as the queued id (idempotent on redelivery via the RPC)', async () => {
+      const { db } = makeDb({ artifactResult: { data: 'existing-artifact', error: null } });
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+      expect(result).toEqual({ queuedId: 'existing-artifact' });
     });
-    expect(inserted?.details).not.toHaveProperty('document_sha256');
+
+    it('does not put the fingerprint or raw bytes into the integration_events audit details', async () => {
+      const { db, state } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+      expect(state.insertedDetails).toMatchObject({
+        account_id: 'account-1',
+        envelope_id: 'envelope-1',
+        rule_event_id: 'rule-event-1',
+        content_type: 'application/pdf',
+        byte_length: 12,
+        connector_artifact_id: 'artifact-1',
+      });
+      expect(state.insertedDetails).not.toHaveProperty('document_sha256');
+      expect(state.insertedDetails).not.toHaveProperty('fingerprint');
+      expect(state.insertedDetails).not.toHaveProperty('fingerprint_sha256');
+      // Defensive: the raw signed bytes never appear anywhere in the audit row.
+      expect(JSON.stringify(state.insertedDetails)).not.toContain('signed bytes');
+    });
+
+    it('fails closed when the connector-artifact enqueue errors (throws, no audit write)', async () => {
+      const { db, state } = makeDb({ artifactResult: { data: null, error: { code: '23514' } } });
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+        'docusign_connector_artifact_enqueue_failed',
+      );
+      // No partial state: the audit breadcrumb is never written when the durable
+      // artifact failed.
+      expect(state.insertCalled).toBe(false);
+    });
+
+    it('fails closed when the RPC returns no artifact id', async () => {
+      const { db } = makeDb({ artifactResult: { data: null, error: null } });
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+        'docusign_connector_artifact_enqueue_failed',
+      );
+    });
   });
 
   it('resolves member_integrations when no org_integrations row matches', async () => {
