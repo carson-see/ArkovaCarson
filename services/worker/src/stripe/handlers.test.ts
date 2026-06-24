@@ -1345,6 +1345,98 @@ describe('handlePaymentSucceeded — SCRUM-1791 period roll-forward', () => {
 });
 
 // ================================================================
+// SCRUM-1791 — entitlement-lifecycle regressions (renewal / lapse / cancel)
+//
+// These pin the end-to-end "entitlement window stays correct across the
+// subscription lifecycle" behavior the bug describes, distinct from the
+// field-mechanics tests above:
+//   - lapsed-then-renewed must RE-GRANT (status→active + period advanced +
+//     grace cleared) in the single renewal invoice, so a previously over-grace
+//     paid user is restored on the current cycle;
+//   - cancellation must REVOKE (status→canceled) so the entitlement gate fails
+//     after the period ends.
+// ================================================================
+describe('SCRUM-1791 — entitlement lifecycle (renew / lapse / cancel)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaults();
+  });
+
+  it('lapsed-then-renewed: invoice.payment_succeeded re-grants (active + period advanced + grace cleared)', async () => {
+    // The subscription had lapsed (org in payment grace). The renewal invoice
+    // carries the NEW billing window — the handler must flip to active AND roll
+    // the period forward AND clear the org grace, all from one event.
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { id: 'sub-row-1', user_id: 'user-001', org_id: 'org-001', plan_id: 'plan-ind' },
+    });
+    const start = 1740787200; // 2025-03-01T00:00:00Z (the new, current cycle)
+    const end = 1743465600; // 2025-04-01T00:00:00Z
+    const event = makeStripeEvent('invoice.payment_succeeded', {
+      id: 'inv_relapse_regrant',
+      customer: 'cus_test_001',
+      subscription: 'sub_test_001',
+      lines: makeInvoiceLines(start, end),
+    });
+
+    await handlePaymentSucceeded(event);
+
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as Record<string, unknown>;
+    // Re-grant: active again, on the CURRENT cycle (not the stale lapsed window).
+    expect(updateArg.status).toBe('active');
+    expect(updateArg.current_period_start).toBe(new Date(start * 1000).toISOString());
+    expect(updateArg.current_period_end).toBe(new Date(end * 1000).toISOString());
+    // Grace must be cleared so entitlement is restored.
+    expect(mockCallRpc).toHaveBeenCalledWith(
+      expect.anything(),
+      'clear_payment_grace',
+      { p_org_id: 'org-001' },
+    );
+  });
+
+  it('cancellation: customer.subscription.deleted revokes entitlement (status→canceled)', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: 'org-001' },
+    });
+
+    await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
+
+    expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'canceled' }),
+    );
+    expect(subscriptionsUpdate.eq).toHaveBeenCalledWith('stripe_subscription_id', 'sub_test_001');
+    // Audit trail of the revoke.
+    expect(auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'payment.subscription_canceled', org_id: 'org-001' }),
+    );
+  });
+
+  it('mid-period upgrade: customer.subscription.updated recomputes the window from items[0] (no stale carry-over)', async () => {
+    // An upgrade mid-cycle issues customer.subscription.updated with the new
+    // item period. Pin that the stored window is recomputed, not left stale.
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', plan_id: 'plan-ind', cancel_at_period_end: false, org_id: 'org-001' },
+    });
+    const newStart = 1743465600; // 2025-04-01
+    const newEnd = 1746057600; // 2025-05-01
+    const event = makeStripeEvent('customer.subscription.updated', {
+      id: 'sub_test_001',
+      customer: 'cus_test_001',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: makeSubItems('price_upgraded', newStart, newEnd),
+    });
+
+    await handleSubscriptionUpdated(event);
+
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as Record<string, unknown>;
+    expect(updateArg.current_period_start).toBe(new Date(newStart * 1000).toISOString());
+    expect(updateArg.current_period_end).toBe(new Date(newEnd * 1000).toISOString());
+  });
+});
+
+// ================================================================
 // SCRUM-1267 (R2-4): items.data[0].current_period_* migration
 // ================================================================
 
