@@ -6,6 +6,7 @@ import {
   type CtdlType,
 } from './ctdl-type-map.js';
 import { assertValidCtdlJsonLd } from './ctdl-validation.js';
+import { assertRealCtidOrAbsent, assertNoFabricatedCtidInJsonLd } from './ctdl-ctid-guard.js';
 // SCRUM-1922 R-CTDL-FR9 — keep the issuer DID format in lockstep with the
 // did:web resolver so the CTDL `sameAs` link resolves to the org's DID doc.
 import { ARKOVA_DID } from '../api/did-web.js';
@@ -206,14 +207,6 @@ function effectiveDate(anchor: CtdlAnchor): string {
   return anchor.issuedAt ?? anchor.chainTimestamp ?? anchor.createdAt;
 }
 
-const REAL_CTID_PATTERN = /^ce-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function realCtid(value: unknown): string | null {
-  const clean = cleanPublicString(value, 80);
-  if (!clean || !REAL_CTID_PATTERN.test(clean)) return null;
-  return clean;
-}
-
 function metadataTextValues(value: unknown): string[] {
   if (typeof value === 'string') return [value];
   if (Array.isArray(value)) return value.flatMap(metadataTextValues);
@@ -267,7 +260,9 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     'ceterms:name': issuerName(anchor, metadata),
   };
 
-  const issuerCtid = realCtid(anchor.issuer?.ctid);
+  // CE-02: a present issuer CTID must be a REAL CE CTID or the build fails
+  // closed (FabricatedCtidError). An absent CTID is honestly omitted.
+  const issuerCtid = assertRealCtidOrAbsent(anchor.issuer?.ctid, 'issuer');
   if (issuerCtid) {
     offeredBy['ceterms:ctid'] = issuerCtid;
   }
@@ -302,7 +297,8 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     },
   };
 
-  const credentialCtid = realCtid(anchor.ctid);
+  // CE-02: same fail-closed rule for the credential's own CTID.
+  const credentialCtid = assertRealCtidOrAbsent(anchor.ctid, 'credential');
   if (credentialCtid) jsonLd['ceterms:ctid'] = credentialCtid;
 
   const description = cleanPublicFreeText(anchor.description, 500);
@@ -314,6 +310,9 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     if (reason) jsonLd['ceterms:revocationReason'] = reason;
   }
 
+  // CE-02 defense-in-depth: belt-and-suspenders scan of the assembled body so no
+  // ceterms:ctid key (now or in a future code path) can carry a fabricated value.
+  assertNoFabricatedCtidInJsonLd(jsonLd);
   assertValidCtdlJsonLd(jsonLd);
   return jsonLd;
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCtdlJsonLd, type CtdlAnchor } from './ctdl-serializer.js';
+import { FabricatedCtidError } from './ctdl-ctid-guard.js';
 import { ARKOVA_DID } from '../api/did-web.js';
 
 const baseAnchor: CtdlAnchor = {
@@ -73,6 +74,34 @@ describe('buildCtdlJsonLd', () => {
 
     expect(jsonLd['ceterms:ctid']).toBe('ce-11111111-1111-1111-1111-111111111111');
     expect(jsonLd['ceterms:offeredBy']['ceterms:ctid']).toBe('ce-22222222-2222-2222-2222-222222222222');
+  });
+
+  // SCRUM-2373 (CE-02) — the serializer now FAILS CLOSED on a fabricated CTID
+  // instead of silently dropping it. Real/absent paths are covered above.
+  it('throws FabricatedCtidError when the credential carries a fabricated CTID', () => {
+    expect(() =>
+      buildCtdlJsonLd(
+        { ...baseAnchor, ctid: 'ce-ARK-2026-CTDL-001' },
+        { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' },
+      ),
+    ).toThrow(FabricatedCtidError);
+  });
+
+  it('throws FabricatedCtidError when the issuer carries a fabricated CTID', () => {
+    expect(() =>
+      buildCtdlJsonLd(
+        { ...baseAnchor, issuer: { ...baseAnchor.issuer, ctid: 'urn:ctid:ORG-MI-CLE' } },
+        { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' },
+      ),
+    ).toThrow(FabricatedCtidError);
+  });
+
+  it('still omits ceterms:ctid (never synthesizes one) when no CTID is present', () => {
+    const jsonLd = buildCtdlJsonLd(baseAnchor, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+    expect(jsonLd).not.toHaveProperty('ceterms:ctid');
+    expect(jsonLd['ceterms:offeredBy']).not.toHaveProperty('ceterms:ctid');
   });
 
   it('marks revoked credentials as revoked while still returning a CTDL body', () => {
