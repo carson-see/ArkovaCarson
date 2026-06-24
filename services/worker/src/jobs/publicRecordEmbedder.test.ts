@@ -1,11 +1,11 @@
 /**
- * Tests for publicRecordEmbedder — ARKOVA-WORKER-M fix + SCRUM-2203 / mig 0345 timeout fix.
+ * Tests for publicRecordEmbedder — ARKOVA-WORKER-M fix + SCRUM-2203 / mig 0346 timeout fix.
  *
  * Validates that RPC errors are propagated (not swallowed) so the cron
  * wrapper can return 500 and Sentry captures the real root cause, and that
  * the un-embedded fetch is always issued through the bounded RPC
  * (get_unembedded_public_records with p_limit = EMBED_BATCH_SIZE) — the property
- * that, together with the partial index added in mig 0345, keeps the fetch under
+ * that, together with the partial index added in mig 0346, keeps the fetch under
  * statement_timeout instead of 500ing every ~2 min (err 57014).
  */
 
@@ -103,7 +103,7 @@ describe('embedPublicRecords', () => {
     expect(result).toEqual({ total: 0, succeeded: 0, failed: 0, errors: [] });
   });
 
-  it('fetches the unembedded batch through the bounded RPC (LIMIT = EMBED_BATCH_SIZE) so the query never goes unbounded (mig 0345)', async () => {
+  it('fetches the unembedded batch through the bounded RPC (LIMIT = EMBED_BATCH_SIZE) so the query never goes unbounded (mig 0346)', async () => {
     mockRpc.mockResolvedValueOnce({ data: true, error: null }); // flag enabled
     mockRpc.mockResolvedValueOnce({ data: [], error: null });   // no records
 
@@ -132,7 +132,7 @@ describe('embedPublicRecords', () => {
     expect(mockGenerateEmbedding).toHaveBeenCalledTimes(2);
     expect(mockFrom).toHaveBeenCalledWith('public_record_embeddings');
     expect(mockInsert).toHaveBeenCalledTimes(2);
-    // Inserted rows carry the parent record id (the trigger in 0345 keys embedded_at off this).
+    // Inserted rows carry the parent record id (the trigger in 0346 keys embedded_at off this).
     const insertedIds = mockInsert.mock.calls
       .map((c) => (c[0] as { public_record_id: string }).public_record_id)
       .sort();

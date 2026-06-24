@@ -1,5 +1,7 @@
--- 0345_fix_embed_unembedded_query_perf.sql
+-- 0346_fix_embed_unembedded_query_perf.sql
 -- Jira: SCRUM-2203 (follow-up to 0330) — embed-public-records cron statement-timeout regression.
+-- NOTE: renumbered 0345 → 0346 (0345 collided with PR #1282 `fix/vacuum-anchors-cron-0345`,
+--       which legitimately owns `0345_fix_vacuum_anchors_cron.sql`). 0346 is the next free prefix.
 -- Bug Tracker: Confluence "Bug Tracker — Master Log" (worker silent-failure: POST /jobs/embed-public-records 500s every ~2 min, err 57014).
 --
 -- INCIDENT (prod vzwyaatejekddvltxyye, confirmed 2026-06-24):
@@ -137,7 +139,7 @@ ALTER TABLE public.public_records
   ADD COLUMN IF NOT EXISTS embedded_at timestamptz;
 
 COMMENT ON COLUMN public.public_records.embedded_at IS
-  'When a vector embedding was first stored for this record (maintained by trg_public_record_embeddings_mark_embedded). NULL = un-embedded; drives idx_public_records_unembedded + get_unembedded_public_records. SCRUM-2203 / mig 0345.';
+  'When a vector embedding was first stored for this record (maintained by trg_public_record_embeddings_mark_embedded). NULL = un-embedded; drives idx_public_records_unembedded + get_unembedded_public_records. SCRUM-2203 / mig 0346.';
 
 -- ── (2) Trigger: keep embedded_at in lock-step with public_record_embeddings ──
 CREATE OR REPLACE FUNCTION public.mark_public_record_embedded()
