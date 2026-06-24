@@ -358,4 +358,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-23 by Claude (carson@arkova.io) — claims verified against: deploy run 28031108914 success + prod `/health` git_sha `2a9d0526` + Cloud Run rev `arkova-worker-00950-xev` 100% traffic (gcloud); Supabase MCP `execute_sql` on prod `vzwyaatejekddvltxyye` (`cron.job` 35 `*/2`→`*/15`, `pg_stat_statements` top-IO, `cron.job_run_details`); `gcloud run services delete` ×4 + Supabase MCP `list_projects`. Prior 0340/0341-apply + #1242 footers remain in git history._
+_Last refreshed: 2026-06-24 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output: Supabase MCP execute-sql + list-migrations (read-only) on prod vzwyaatejekddvltxyye (ledger rows 0340/0341; signed amount CHECK; debit+enqueue RPC pg-proc count=1; append-only trigger); clean-apply credit-schema diff on throwaway expjtjcpqfrcspljptpv. Prior footers remain in git history._
