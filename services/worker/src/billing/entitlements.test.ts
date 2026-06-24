@@ -255,15 +255,51 @@ describe('resolveVerifiedEntitlement (pure)', () => {
     expect(resolveVerifiedEntitlement({ rows: within, subscription: null, now: NOW })).toBe(false);
   });
 
-  it('grants when subscription has no period end yet but is active and within start (trialing-style open end)', () => {
-    // current_period_end null but active + started → not stale; entitlement window governs.
+  // ── fail-CLOSED on a NULL current period (soak finding; security+money gate) ──
+  // A verified entitlement requires a non-null current period that COVERS now. A
+  // sub with no period bounds must NOT grant the entitlement open-endedly.
+  // handlers.ts can legitimately leave current_period_start/end NULL on an
+  // active/trialing row (SCRUM-1267: period-less status update applied without
+  // touching period fields), so this is a real, reachable data shape.
+  it('denies (fail-closed) when current_period_end is null (active, started)', () => {
+    // Previously fail-OPEN: a null end skipped the stale check and granted.
     expect(
       resolveVerifiedEntitlement({
         rows: within,
         subscription: { status: 'active', current_period_start: '2026-06-15T00:00:00Z', current_period_end: null },
         now: NOW,
       }),
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it('denies (fail-closed) when current_period_start is null (active, end in future)', () => {
+    expect(
+      resolveVerifiedEntitlement({
+        rows: within,
+        subscription: { status: 'active', current_period_start: null, current_period_end: '2026-07-15T00:00:00Z' },
+        now: NOW,
+      }),
+    ).toBe(false);
+  });
+
+  it('denies (fail-closed) when BOTH current_period_start and current_period_end are null', () => {
+    expect(
+      resolveVerifiedEntitlement({
+        rows: within,
+        subscription: { status: 'active', current_period_start: null, current_period_end: null },
+        now: NOW,
+      }),
+    ).toBe(false);
+  });
+
+  it('denies (fail-closed) when a trialing sub has a null current period', () => {
+    expect(
+      resolveVerifiedEntitlement({
+        rows: within,
+        subscription: { status: 'trialing', current_period_start: null, current_period_end: null },
+        now: NOW,
+      }),
+    ).toBe(false);
   });
 
   it('ignores unrelated entitlement_type rows', () => {
@@ -290,6 +326,16 @@ describe('hasActiveVerifiedEntitlement (db-backed)', () => {
   it('denies when the subscription period is stale (SCRUM-1791) even with an open entitlement', async () => {
     handles.subsMaybeSingle.mockResolvedValue({
       data: { status: 'active', current_period_start: '2026-05-01T00:00:00Z', current_period_end: '2026-06-05T00:00:00Z' },
+      error: null,
+    });
+    const ok = await hasActiveVerifiedEntitlement({ userId: USER, orgId: ORG }, NOW);
+    expect(ok).toBe(false);
+  });
+
+  it('fails closed (false) on an active sub with a NULL current period even with an open entitlement', async () => {
+    // Soak finding: a period-less active row must not grant open-endedly.
+    handles.subsMaybeSingle.mockResolvedValue({
+      data: { status: 'active', current_period_start: null, current_period_end: null },
       error: null,
     });
     const ok = await hasActiveVerifiedEntitlement({ userId: USER, orgId: ORG }, NOW);

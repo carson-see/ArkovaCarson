@@ -18,9 +18,12 @@
  * READ PATH (current-period correctness, SCRUM-1791): a verified entitlement is
  * gated by an active paid subscription, so `resolveVerifiedEntitlement` requires
  * BOTH (a) an open entitlement window covering `now`, AND (b) an `active`
- * subscription whose CURRENT period covers `now`. Reading the live
- * `subscriptions.current_period_*` (which SCRUM-1791 rolls forward on every
- * renewal invoice) prevents gating on a stale row.
+ * subscription whose CURRENT period is fully bounded AND covers `now`. Reading
+ * the live `subscriptions.current_period_*` (which SCRUM-1791 rolls forward on
+ * every renewal invoice) prevents gating on a stale row. FAIL CLOSED: a NULL
+ * `current_period_start`/`current_period_end` is treated as no covering period
+ * and denies — a period-less active row (SCRUM-1267 status-only update) must not
+ * grant the entitlement open-endedly (soak finding on this PR).
  *
  * Constitution refs:
  *   - §1.2 / §1.4: every write path is Zod-validated; service_role never leaves
@@ -179,11 +182,15 @@ export interface ResolveVerifiedEntitlementInput {
  * Requires BOTH:
  *   (a) an open entitlement window covering `now`
  *       (`valid_from <= now` and (`valid_until` null or `> now`)), AND
- *   (b) an `active` subscription whose CURRENT period covers `now`
- *       (`current_period_start <= now` and (`current_period_end` null or `> now`)).
+ *   (b) an `active`/`trialing` subscription whose CURRENT period is fully
+ *       bounded AND covers `now` (`current_period_start <= now < current_period_end`).
  *
- * Fails closed (false) on missing rows / missing subscription. (b) is what makes
- * the gate read the CURRENT period rather than a stale row (SCRUM-1791).
+ * Fails closed (false) on missing rows / missing subscription / non-active
+ * status, AND on a subscription with a NULL `current_period_start` or NULL
+ * `current_period_end` — an absent period bound is NOT "covers now" and must
+ * deny (a sub with no period bounds otherwise grants the entitlement
+ * open-endedly; soak finding). (b) reads the CURRENT period so the gate never
+ * grants on a stale row (SCRUM-1791).
  */
 export function resolveVerifiedEntitlement({
   rows,
@@ -204,19 +211,26 @@ export function resolveVerifiedEntitlement({
   });
   if (!hasOpenWindow) return false;
 
-  // (b) current, non-stale subscription period.
+  // (b) current, non-stale subscription period. FAIL CLOSED: a verified
+  // entitlement gates a security+money capability, so it requires a fully
+  // bounded current period that COVERS now — a null current_period_start OR a
+  // null current_period_end is NOT "covers now", it is the absence of a period
+  // and must deny. (handlers.ts can leave these null on an active/trialing row
+  // when a status-only update arrives without period fields, SCRUM-1267; that
+  // must not grant the entitlement open-endedly.)
   if (!subscription) return false;
   if (subscription.status !== 'active' && subscription.status !== 'trialing') return false;
 
-  if (subscription.current_period_start) {
-    const start = new Date(subscription.current_period_start).getTime();
-    if (Number.isFinite(start) && start > ts) return false;
-  }
-  if (subscription.current_period_end) {
-    const end = new Date(subscription.current_period_end).getTime();
-    // stale period (end already passed) → deny, do NOT gate on it.
-    if (Number.isFinite(end) && end <= ts) return false;
-  }
+  if (!subscription.current_period_start || !subscription.current_period_end) return false;
+
+  const start = new Date(subscription.current_period_start).getTime();
+  const end = new Date(subscription.current_period_end).getTime();
+  // Unparseable bounds → deny (fail closed); don't gate on a NaN comparison.
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  // Period must cover now: started at/before now, ends strictly after now.
+  // (end <= now is a stale/expired period — SCRUM-1791 — deny.)
+  if (start > ts) return false;
+  if (end <= ts) return false;
 
   return true;
 }
