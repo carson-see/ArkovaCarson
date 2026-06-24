@@ -31,6 +31,8 @@ import {
   type RuntimeConfig,
   type ParityFinding,
 } from './lib/runtimeParity.js';
+import { runProviderSpofCheck } from './config-drift/providerSpof.js';
+import { runFlagSpofCheck, type FlagSpofFinding } from './config-drift/flagSpof.js';
 
 export interface ConfigState {
   /** Feature-flag name → expected/observed enabled state. */
@@ -157,6 +159,18 @@ const CONFIG_DIR = resolve(HERE, 'config-drift');
 
 interface SnapshotFile extends ConfigState {
   runtimes?: { worker: RuntimeConfig; edge: RuntimeConfig };
+  /**
+   * S1 Lane-2 flag-SPOF (asserted manifest only). Flags whose intended EFFECTIVE prod
+   * value is ON (`true`); the gate hard-fails if the deploy sets one false or omits it.
+   */
+  launchRequiredFlags?: string[];
+  /**
+   * S1 Lane-2 flag-SPOF (asserted manifest only). Flags KNOWN to be env=true while
+   * asserted effective=false — held OFF today only by a live switchboard_flags row (the
+   * deploy edit is a T3/Carson chain-adjacent change). These surface as a loud WARN; a
+   * NEW, unacknowledged fail-open flag is a hard ERROR (the regression guard).
+   */
+  acknowledgedFailOpenFlags?: string[];
 }
 
 // Fail CLOSED on a malformed/degraded config file: a degraded asserted file
@@ -177,6 +191,8 @@ const SnapshotFileSchema = z
     bitcoinFeeStrategy: z.string().min(1).optional(),
     cspConnectSrc: z.array(z.string().min(1)).min(1),
     runtimes: z.object({ worker: RuntimeConfigSchema, edge: RuntimeConfigSchema }).optional(),
+    launchRequiredFlags: z.array(z.string().min(1)).optional(),
+    acknowledgedFailOpenFlags: z.array(z.string().min(1)).optional(),
   })
   .passthrough();
 
@@ -206,6 +222,26 @@ export function runConfigDriftCheck(
   return { drift, parity };
 }
 
+/**
+ * Two-tier split of flag-SPOF findings (Lane-2). `launch-flag-off` and
+ * `env-flag-on-no-db-guard` are ALWAYS blocking. A `fail-open-flag` is blocking UNLESS
+ * its flag is acknowledged (a known, DB-guarded-today hazard whose deploy fix is
+ * T3/Carson) — those are non-blocking warnings. A NEW, unacknowledged fail-open flag is
+ * the regression we guard against and goes to `errors`.
+ */
+export function classifyFlagSpofFindings(
+  findings: FlagSpofFinding[],
+  acknowledgedFailOpenFlags: Iterable<string>,
+): { errors: FlagSpofFinding[]; warnings: FlagSpofFinding[] } {
+  const acknowledged = new Set(acknowledgedFailOpenFlags);
+  const isAcknowledgedFailOpen = (f: FlagSpofFinding) =>
+    f.code === 'fail-open-flag' && acknowledged.has(f.flag);
+  return {
+    errors: findings.filter((f) => !isAcknowledgedFailOpen(f)),
+    warnings: findings.filter(isAcknowledgedFailOpen),
+  };
+}
+
 function isMainModule(metaUrl: string, argvPath: string | undefined): boolean {
   return argvPath !== undefined && resolve(fileURLToPath(metaUrl)) === resolve(argvPath);
 }
@@ -215,8 +251,58 @@ function main(): void {
   const running = loadRunningSnapshot();
   const { drift, parity } = runConfigDriftCheck(asserted, running);
 
-  if (drift.length === 0 && parity.length === 0) {
-    console.log('✅ config↔reality: no drift; cross-runtime parity intact.');
+  // S1 hardening (README item #6): provider-SPOF — parse the REAL config.ts default
+  // + deploy-worker.yml override so a dropped/wrong BITCOIN_UTXO_PROVIDER fails CI, not
+  // prod. repoRoot = scripts/ci/../.. (HERE = scripts/ci).
+  const repoRoot = resolve(HERE, '..', '..');
+  const spof = runProviderSpofCheck(asserted.bitcoinUtxoProvider, {
+    configTsPath: resolve(repoRoot, 'services/worker/src/config.ts'),
+    deployYmlPath: resolve(repoRoot, '.github/workflows/deploy-worker.yml'),
+  });
+  const spofErrors = spof.filter((f) => f.severity === 'error');
+  const spofWarnings = spof.filter((f) => f.severity === 'warn');
+
+  // Warnings never fail the gate but always surface (e.g. the latent code-default SPOF
+  // that the deploy currently masks — a defense-in-depth signal, not a blocker).
+  for (const w of spofWarnings) {
+    console.warn(`::warning::S1 provider-SPOF [${w.code}] ${w.message}`);
+  }
+
+  // S1 hardening (README item #5 — Lane-2): flag-SPOF — parse the REAL deploy-worker.yml
+  // env flags + the REAL flagRegistry.ts DB_FLAGS list so the env↔DB fail-open hazard
+  // (a DB-gated flag asserted OFF but env=true → fails OPEN when the switchboard row is
+  // absent — the 2026-05-30 class) and a launch-required flag set OFF/omitted fail CI.
+  // The asserted manifest's `flags` are the intended EFFECTIVE values; a launch-required
+  // flag is asserted ON, everything else asserted here is the effective value.
+  const assertedFlagsForSpof: Record<string, boolean> = { ...asserted.flags };
+  for (const f of asserted.launchRequiredFlags ?? []) assertedFlagsForSpof[f] = true;
+  const flagSpof = runFlagSpofCheck(assertedFlagsForSpof, {
+    deployYmlPath: resolve(repoRoot, '.github/workflows/deploy-worker.yml'),
+    flagRegistryPath: resolve(repoRoot, 'services/worker/src/middleware/flagRegistry.ts'),
+  });
+  // Two-tier calibration (mirrors providerSpof's masked-latent precedent):
+  //  - launch-flag-off / env-flag-on-no-db-guard → always blocking (no DB kill switch can
+  //    save a launch flag that is off, nor an env-on flag that has no DB guard at all);
+  //  - fail-open-flag → blocking UNLESS the flag is in `acknowledgedFailOpenFlags` (a known,
+  //    DB-guarded-today hazard whose deploy fix is a T3/Carson chain-adjacent change). An
+  //    acknowledged one is a loud WARN; a NEW, unacknowledged one is a hard ERROR.
+  const { errors: flagSpofErrors, warnings: flagSpofWarnings } = classifyFlagSpofFindings(
+    flagSpof,
+    asserted.acknowledgedFailOpenFlags ?? [],
+  );
+  for (const w of flagSpofWarnings) {
+    console.warn(`::warning::S1 flag-SPOF [${w.code}] (acknowledged) ${w.message}`);
+  }
+
+  if (
+    drift.length === 0 &&
+    parity.length === 0 &&
+    spofErrors.length === 0 &&
+    flagSpofErrors.length === 0
+  ) {
+    console.log(
+      '✅ config↔reality: no drift; cross-runtime parity intact; provider-SPOF + flag-SPOF clear.',
+    );
     return;
   }
 
@@ -229,6 +315,14 @@ function main(): void {
   if (parity.length > 0) {
     console.error(`::error::S0-5.2 cross-runtime parity: ${parity.length} finding(s):`);
     for (const p of parity) console.error(`  [${p.kind}] ${p.message}`);
+  }
+  if (spofErrors.length > 0) {
+    console.error(`::error::S1 provider-SPOF: ${spofErrors.length} issue(s):`);
+    for (const s of spofErrors) console.error(`  [${s.code}] ${s.message}`);
+  }
+  if (flagSpofErrors.length > 0) {
+    console.error(`::error::S1 flag-SPOF (env↔DB fail-open): ${flagSpofErrors.length} issue(s):`);
+    for (const s of flagSpofErrors) console.error(`  [${s.code}] ${s.flag}: ${s.message}`);
   }
   process.exit(1);
 }
