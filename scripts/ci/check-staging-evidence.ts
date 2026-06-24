@@ -1046,6 +1046,10 @@ const STAGING_TOOLING_ALLOW = [
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
   /^scripts\/ci\/config-drift\//,
+  // WEBEXT-04 (SCRUM-2506): CSP↔runtime-deps drift gate — a sibling config↔reality
+  // CI gate that parses vercel.json + scans on-device runtime sources. Runs only
+  // in CI, never ships to prod runtime, so it is T0 tooling.
+  /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,
