@@ -14,6 +14,20 @@
 
 ## Now
 
+### 2026-06-24 (Lane 1 SM/RTE) — WEBEXT producer fixed (4.2.0 skew) + staging-gate gap closed (#1289); SCRUM-2471 confirmed already in #1255; backfill→S3
+
+**WEBEXT-CSP #1253 (producer):** fixed the transformers.js vendored-bundle skew (4.1.0→**4.2.0**, now == npm dep == lockfile; + a version-assert test + a runtime version-skew guard) and scoped the §1.6 claims to producer-only (the fail-CLOSED consumer is Lane-2 **#1262**). Verified the Vercel preview serves the 4.2.0 lib bundle (431,652 B) + the integrity-locked 108 MB model **same-origin** under CSP. Base-refreshed onto main (head `e2b6a3c9`) → DIRTY + Policy-Lints cleared.
+
+**Staging-gate gap + fix (#1289 / WEBEXT-05):** #1253 (frontend §1.6 surface + build-wiring `scripts/`+`package.json`) fit neither the frontend-T2 fast-path (frontend-only files) nor the worker-evidence path (no worker) → unsatisfiable as-shaped. Fix = a **narrow, purely-additive** extension to `isFrontendOnlyChange` (root `package.json`/`package-lock.json`/`.gitignore` + top-level `fetch-*`/`vendor-*`/`*-weights.lock` build scripts; governance subtrees `scripts/{ci,staging,agent,…}` explicitly denied). **156 gate tests, 0 regressions / 3,323 files**, T0. PR [#1289](https://github.com/carson-see/ArkovaCarson/pull/1289) OPEN (CI settling → Mergify auto-merges T0). Diff verified safe (root-anchored regexes — `services/worker/package.json` can't match; denylist wins).
+
+**Merge ordering (enforced):** #1289 (gate) → #1253 (producer) → **#1262 (consumer)** — never #1262 before #1253 (a #1262-first merge = NER can't load under prod CSP → fail-closed → upload outage). After #1289 lands, #1253 base-refreshes onto it → frontend-T2 evidence → co-merge #1253-first with #1262.
+
+**SCRUM-2471 (persist customer-doc Merkle branch):** NOT missing / NOT a future-sprint gap — **already implemented in #1255** (`persistBatchAnchorProofs()`, all anchor paths). Jira ticket stale (unscheduled); the back-catalogue of ~2.97M existing anchors is **S3 PROOF-BACKCATALOG** (oldest anchors' leaf-order unrecoverable → re-anchor / cohort-trigger design call). #1281 backfill held → S3 (overlaps #1255's `proof-branch-backfill.ts`).
+
+**On the clock:** #1255 foundation soak → ~06-24 22:00Z; #1254 PROOF-03 → ~06-25 ~11:46Z. #1280 (S1.2b flag-bit consumption check) draft, folds into #1254 at its merge-prep.
+
+_Verified via: gh pr/api on #1289 (open, head `7618804`, Staging gate=success/T0, 156-test gate suite green) + #1253 (head `e2b6a3c9`, DIRTY+Policy-Lints cleared); `git diff 3c23fb96..e2b6a3c9` (WEBEXT files byte-identical); authenticated Vercel-preview curl (`/vendor/transformers.web.min.js` 200, 431,652 B, self-version 4.2.0; `/models/Xenova/bert-base-NER/onnx/model_quantized.onnx` 200, 108,952,255 B); `git show origin/feat/train-d-proof-foundation:services/worker/src/jobs/batch-anchor.ts` (persistBatchAnchorProofs / SCRUM-2471)._
+
 ### 2026-06-24 (Lane 3) — PI-0 S1 connector materialization + CE honesty: code-complete, 3 PRs open, in-review (NOT merged, no prod change)
 
 Lane 3 (Credential Network & Intelligence) PI-0 Sprint 1 driven to **code-complete + in-PR** (refinement·planning·pre-mortem → parallel specialist build → /code-review·/debug·/deploy-checklist·/tla-precheck·release pre-mortem). **No prod/staging/schema/soak state changed; nothing merged by Claude.**
