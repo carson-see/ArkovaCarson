@@ -1618,6 +1618,48 @@ ${note}
         expect(isFrontendOnlyChange(['src/components/anchor/AssetDetailView.tsx'])).toBe(true);
       });
 
+      // A frontend feature legitimately ships vendored runtime assets
+      // (public/vendor) + its Playwright E2E (e2e/) alongside the src/ change.
+      // None of those can produce a worker/migration/SDK artifact, so the PR
+      // stays frontend-T2 eligible. (The #1262 §1.6 fail-closed OCR shape.)
+      it('is true for a src/ + public/vendor + e2e/ fileset (vendored assets + E2E are non-deploying)', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/anchor/SecureDocumentDialog.tsx',
+          'public/vendor/tesseract/core/tesseract-core-lstm.wasm.js',
+          'e2e/extraction-csp-fail-closed.spec.ts',
+        ])).toBe(true);
+      });
+
+      it('is true for a public/-plus-src fileset', () => {
+        expect(isFrontendOnlyChange([
+          'src/lib/ocrWorker.ts',
+          'public/vendor/tesseract/worker.min.js',
+        ])).toBe(true);
+      });
+
+      it('is true for an e2e/-plus-src fileset', () => {
+        expect(isFrontendOnlyChange([
+          'src/lib/aiExtraction.ts',
+          'e2e/extraction-csp-fail-closed.spec.ts',
+        ])).toBe(true);
+      });
+
+      it('is false when a CI script is present (scripts/ci is not frontend)', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/anchor/SecureDocumentDialog.tsx',
+          'public/vendor/tesseract/worker.min.js',
+          'scripts/ci/check-csp-runtime-deps.ts',
+        ])).toBe(false);
+      });
+
+      it('is false when a GitHub Actions workflow is present', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/anchor/SecureDocumentDialog.tsx',
+          'e2e/extraction-csp-fail-closed.spec.ts',
+          '.github/workflows/ci.yml',
+        ])).toBe(false);
+      });
+
       it('is false when a worker file is present', () => {
         expect(isFrontendOnlyChange([
           'src/components/anchor/AssetDetailView.tsx',
