@@ -14,6 +14,20 @@
 
 ## Now
 
+### 2026-06-24 (Lane 3) — PI-0 S1 connector materialization + CE honesty: code-complete, 3 PRs open, in-review (NOT merged, no prod change)
+
+Lane 3 (Credential Network & Intelligence) PI-0 Sprint 1 driven to **code-complete + in-PR** (refinement·planning·pre-mortem → parallel specialist build → /code-review·/debug·/deploy-checklist·/tla-precheck·release pre-mortem). **No prod/staging/schema/soak state changed; nothing merged by Claude.**
+
+**3 draft PRs (cut off `ef61d735`):** **#1283 DS-03** (T3, **stacked on #1259**/mig 0343) — server-side SHA-256 over fetched DocuSign bytes (fetch→hash→discard §1.6A) → durable idempotent `connector_artifact` via the 0343 `enqueue_connector_artifact` RPC, fail-closed, `source_timestamp` plumbed end-to-end; **#1284 DS-01/02** (T2) — verified+**not-suspended** connect gate + mutation-verified no-PII-leak; **#1285 CE-02/05** (T2/T1) — fail-closed fabricated-CTID guard + Secret-Manager smoke.
+
+**Green:** worker **6464** + frontend **3063** tests pass (only the pre-existing env-gated `zk-proof.test.ts` fails — needs `build:circuit`); `tsc --noEmit` 0, `eslint --max-warnings 0`, `lint:copy` clean. `/code-review` (adversarial) found 1 must-fix — worker/UI verified-org gate parity, a suspended-but-VERIFIED org could connect via direct `/oauth/start`; **fixed `6e686cf7`** + flagged the sub-org parent-approval *direction* for Carson. `/debug` confirmed DS-03 is exactly-once under concurrent duplicate delivery (0343 unique idx + ON CONFLICT + fail-closed). **0 machine files touched** → no TLA change (tla-precheck CLI has a pre-existing TS-6.0 incompat → tooling ticket).
+
+**Jira/docs:** 9 work-breakdown subtasks (SCRUM-2560..2568) under SCRUM-2361/2362/2363/2373/2376; ceremony page Confluence **88211458** (child of Lane-3 PI 85491717); Drive plan + Lane-3 S1 report in `ARKOVA PI-0-S1`; refinement/review/decision comments on the stories + epics 2329/2331.
+
+**PENDING (gated, not faked):** the **DS-03 T3 48h soak** (clean isolated rig + PR-image deploy = RTE/operator step — not started); **Carson T2/T3 merges** via Mergify on green + soak evidence. Connector→SECURED→Lane-1-proof E2E is **S3/S4** (OPS-02). Local `stripe` refreshed 22.1.1→**22.2.1** (lockfile pin) so local `tsc` is clean; CI unaffected (`npm ci`).
+
+_Last refreshed: 2026-06-24 by Claude (Lane-3 SM) — claims verified against: `gh pr` (#1283/#1284/#1285 open draft; #1259 = the 0343 base, open draft); local `vitest run` (worker 6464 / frontend 3063 pass) + `tsc --noEmit` (0) + `eslint`/`lint:copy`; Jira subtask creates SCRUM-2560..2568 + parent read-back; Confluence 88211458 + Drive create responses. No prod/staging/schema/soak state changed; no PR merged by Claude._
+
 ### 2026-06-23 (Lane 1 SM) — PI-0 S1 stakeholder demo held; back-catalogue proof backfill APPROVED; demo prod-status reconciled
 
 **Stakeholder demo / sprint review (C-suite + business)** of all Lane-1 S1 work, run by the SM + 4 specialists with live evidence (live test runs, code diffs, 3× soak `/health`, live GetBlock RPC matrix). Record: Confluence [87719938](https://arkova.atlassian.net/wiki/spaces/A/pages/87719938) (child of S1 report 87293954) + Drive deck in `ARKOVA PI-0-S1` (the `[CORRECTED]` copy is canonical). Shown: #1251 provider-SPOF (merged), #1255 verify-by-math foundation (soaking), #1254 PROOF-03 (soaking), #1253 WEBEXT-CSP fail-closed (preview-gated), 0341 credit fix; DISC-03 retired via live curl-matrix.
