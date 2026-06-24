@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@d411fff7b8879a62509f3fa98c07f247ac089a51 # v3.95.5
+        uses: trufflesecurity/trufflehog@30d5bb91af1a771378349dbbb0c82129392acf70 # v3.95.6
         with:
           extra_args: --only-verified
 
@@ -108,6 +108,16 @@ jobs:
 
       - name: Block tracked filenames with spaces (SCRUM-1294)
         run: npx tsx scripts/ci/check-filename-spaces.ts
+
+      # WEBEXT-04 / SCRUM-2506 — CSP↔runtime-deps drift gate. Parses the deployed
+      # CSP (vercel.json) and fails if any on-device runtime dep (Tesseract OCR /
+      # NER model / PDF.js) would need an off-origin fetch or wasm eval the CSP
+      # forbids. This is the config↔reality gate the 2026-06-16 §1.6 regression
+      # lacked. Override: PR label `csp-runtime-deps-intentional`.
+      - name: Block CSP↔runtime-deps drift (WEBEXT-04 / SCRUM-2506)
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: npx tsx scripts/ci/check-csp-runtime-deps.ts
 
       - name: Block duplicate source artifacts and repo-copy worktrees (SCRUM-1586)
         run: npm run ci:duplicate-artifacts

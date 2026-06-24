@@ -300,13 +300,14 @@ export function requiredTierFor(files: string[]): { tier: Tier; reason: string }
 }
 
 /**
- * Patterns for any non-frontend, prod-runtime surface. A change that touches
- * ANY of these can produce real worker/migration/SDK/contract artifacts, so it
- * must NOT be eligible for the frontend-T2 evidence path — it keeps the full
- * worker-artifact requirements. This list is intentionally a denylist (not just
- * "everything outside src/") so the guard fails closed: a future file that
- * lands under `src/` but matches a server/SDK/contract pattern would still be
- * pushed onto the standard evidence path.
+ * Patterns for any non-frontend, prod-runtime (or CI) surface. A change that
+ * touches ANY of these can produce real worker/migration/SDK/contract artifacts
+ * (or is CI config/script, which is not a frontend asset), so it must NOT be
+ * eligible for the frontend-T2 evidence path — it keeps the full worker-artifact
+ * (standard) evidence requirements. This list is intentionally a denylist (not
+ * just "outside src/|public/|e2e/") so the guard fails closed: a future file
+ * that lands under one of the allowed prefixes but matches a server/SDK/contract
+ * pattern would still be pushed onto the standard evidence path.
  */
 const NON_FRONTEND_SURFACE_RE: RegExp[] = [
   /^services\//,
@@ -316,14 +317,34 @@ const NON_FRONTEND_SURFACE_RE: RegExp[] = [
   /^docs\/api\//,
   /^docs\/guides\/API_GUIDE\.md$/,
   /^\.github\/workflows\//,
+  // CI scripts are not a frontend asset — a `scripts/` change (e.g. this gate,
+  // or the CSP-deps guard) keeps the standard worker-evidence path even when it
+  // rides alongside a src/ change.
+  /^scripts\//,
 ];
 
+/** Prefixes a frontend feature can legitimately ship without producing any
+ * deploying (worker/migration/SDK) artifact:
+ *   - `src/`          the React/TS app source itself,
+ *   - `public/`       static + vendored runtime assets (e.g. self-hosted
+ *                     Tesseract OCR wasm/worker/lang under `public/vendor`),
+ *   - `e2e/`          the Playwright spec(s) that exercise the changed view.
+ * None of these are built into the Cloud Run worker image or applied to the DB,
+ * so a PR confined to them (modulo the NON_FRONTEND_SURFACE_RE denylist) cannot
+ * produce worker artifacts and is eligible for the frontend-T2 evidence path. */
+const FRONTEND_PREFIXES = ['src/', 'public/', 'e2e/'];
+
 /**
- * True iff EVERY changed file is purely a frontend source file — under `src/`
- * and not matching any server/migration/SDK/contract surface. This is the
- * backward-compatibility guard for the frontend-T2 evidence mode: it gates the
- * alternate (Vercel + view-E2E) evidence path so it can only ever apply to a
- * PR that genuinely cannot produce worker artifacts.
+ * True iff EVERY changed file is a purely-frontend file — under one of
+ * {@link FRONTEND_PREFIXES} (`src/` / `public/` / `e2e/`) and not matching any
+ * server/migration/SDK/contract/CI surface ({@link NON_FRONTEND_SURFACE_RE}).
+ * This is the backward-compatibility guard for the frontend-T2 evidence mode:
+ * it gates the alternate (Vercel + view-E2E) evidence path so it can only ever
+ * apply to a PR that genuinely cannot produce worker artifacts. A frontend
+ * feature shipping vendored assets (`public/vendor`) + its E2E (`e2e/`)
+ * alongside its `src/` change is exactly this case (the #1262 §1.6 fail-closed
+ * OCR enabler); workflow / CI-script / worker / migration changes stay on the
+ * full worker-evidence path (fail-closed preserved).
  *
  * An empty fileset returns false: there is nothing to attest as frontend-only,
  * and a non-frontend caller should never reach the frontend path by default.
@@ -331,7 +352,8 @@ const NON_FRONTEND_SURFACE_RE: RegExp[] = [
 export function isFrontendOnlyChange(files: string[]): boolean {
   if (files.length === 0) return false;
   return files.every(
-    (f) => f.startsWith('src/') && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
+    (f) => FRONTEND_PREFIXES.some((p) => f.startsWith(p))
+      && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
   );
 }
 
@@ -1024,6 +1046,10 @@ const STAGING_TOOLING_ALLOW = [
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
   /^scripts\/ci\/config-drift\//,
+  // WEBEXT-04 (SCRUM-2506): CSP↔runtime-deps drift gate — a sibling config↔reality
+  // CI gate that parses vercel.json + scans on-device runtime sources. Runs only
+  // in CI, never ships to prod runtime, so it is T0 tooling.
+  /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,

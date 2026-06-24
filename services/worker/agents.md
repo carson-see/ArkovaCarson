@@ -1,6 +1,37 @@
 # agents.md — services/worker
 
-_Last updated: 2026-06-16 (SCRUM-2492 connector-byte handling hardening)._
+_Last updated: 2026-06-23 (SCRUM-1791 entitlement read-side stale-period clamp)._
+
+## SCRUM-1791 — entitlement read-side stale-period clamp (2026-06-23)
+
+Closes the read-side half of the `subscriptions.current_period_*` SEV1. The
+write-side roll-forward already landed (`f5f1e051`: `handlePaymentSucceeded`
+advances the period from `invoice.lines.data[0].period`), but it depends on the
+Stripe webhook landing with a usable period — when BOTH documented fallbacks
+fire (a missed `customer.subscription.updated` AND an invoice with no line
+period) the row stays stale, the original 18-day-stale prod row.
+
+- **`routes/billing.ts`**: new `effectiveUsagePeriodStart(periodStart, periodEnd)`
+  + `currentMonthStartIso()`. `handleBillingStatus` now scopes `countAnchorUsage`
+  by the EFFECTIVE period start: the stored `current_period_start` **only while
+  the window is current** (`current_period_end` in the future), otherwise the
+  current UTC calendar-month boundary — the same bound the already-safe frontend
+  RPC `get_user_monthly_anchor_count` (`created_at >= date_trunc('month', now())`)
+  uses. A stale row can no longer make the usage meter span multiple cycles →
+  no false `percentUsed > 100` → a paid+current user is never gated out. The
+  customer-facing `billing.currentPeriodEnd` still reports the stored value
+  verbatim (we don't fabricate a next-billing date; the clamp is meter-only).
+- **`routes/billing-status.test.ts`**: `chain()`/`routeTables()` gained an
+  `onGte` capture so tests assert the exact `created_at` lower bound. New
+  describe `SCRUM-1791 stale-period read clamp`: clamp on past `period_end`,
+  clamp on null start, trust a fresh window verbatim, and stored stale
+  `currentPeriodEnd` still surfaced.
+- **`stripe/handlers.test.ts`**: new describe `SCRUM-1791 entitlement lifecycle`
+  — lapsed-then-renewed re-grant (active + period advanced + grace cleared in one
+  invoice), cancellation revoke (status→canceled + audit), mid-period upgrade
+  window recompute from `items[0]`.
+
+Code-only, no migration. Read path only; write path unchanged.
 
 ## SCRUM-2492 — connector-byte handling hardening (§1.6A enforcement) (2026-06-16)
 
