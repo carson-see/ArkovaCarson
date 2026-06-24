@@ -26,10 +26,19 @@ vi.mock('react-router-dom', async () => {
 const mockStartCheckout = vi.fn();
 const mockOpenBillingPortal = vi.fn();
 const mockUseBilling = vi.fn();
+const mockUseEntitlements = vi.fn();
 
 vi.mock('@/hooks/useBilling', () => ({
   useBilling: () => mockUseBilling(),
 }));
+
+vi.mock('@/hooks/useEntitlements', async () => {
+  // Keep the real sentinel helper (PricingPage imports it); mock only the hook.
+  const actual = await vi.importActual<typeof import('@/hooks/useEntitlements')>(
+    '@/hooks/useEntitlements',
+  );
+  return { ...actual, useEntitlements: () => mockUseEntitlements() };
+});
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
@@ -104,6 +113,23 @@ function mockBillingDefaults(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function mockEntitlementsDefaults(overrides: Record<string, unknown> = {}) {
+  mockUseEntitlements.mockReturnValue({
+    canCreateAnchor: true,
+    recordsUsed: 0,
+    recordsLimit: 3,
+    remaining: 3,
+    percentUsed: 0,
+    isNearLimit: false,
+    planName: 'Free',
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    canCreateCount: () => true,
+    ...overrides,
+  });
+}
+
 // =========================================================================
 // Tests
 // =========================================================================
@@ -112,6 +138,7 @@ describe('PricingPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockBillingDefaults();
+    mockEntitlementsDefaults();
   });
 
   it('renders page title and description', () => {
@@ -204,5 +231,73 @@ describe('PricingPage', () => {
   it('shows Custom price for custom organization plans', () => {
     renderPage();
     expect(screen.getByText('Custom')).toBeInTheDocument();
+  });
+
+  // BUG-2026-06-24-009 — the Pricing-page BillingOverview hardcoded
+  // `usage.recordsUsed: 0`, so a user over quota saw "0 records used" with an
+  // empty meter and no upgrade warning. Usage must come from useEntitlements.
+  it('renders real (non-zero) usage in the Pricing-page overview (BUG-2026-06-24-009)', () => {
+    mockBillingDefaults({
+      subscription: { status: 'active', current_period_end: '2026-04-01' },
+      plan: { id: 'individual_verified_monthly', name: 'Verified Individual', records_per_month: 10 },
+    });
+    mockEntitlementsDefaults({
+      recordsUsed: 8,
+      recordsLimit: 10,
+      remaining: 2,
+      percentUsed: 80,
+      isNearLimit: true,
+      planName: 'Verified Individual',
+    });
+    renderPage();
+
+    // BillingOverview usage line ("{used} / {limit}") reflects the live count,
+    // not the old hardcoded 0.
+    expect(screen.getByText('8 / 10')).toBeInTheDocument();
+    expect(screen.queryByText('0 / 10')).not.toBeInTheDocument();
+  });
+
+  it('surfaces the at-/near-limit upgrade warning on the Pricing page (BUG-2026-06-24-009)', () => {
+    mockBillingDefaults({
+      subscription: { status: 'active', current_period_end: '2026-04-01' },
+      plan: { id: 'individual_verified_monthly', name: 'Verified Individual', records_per_month: 10 },
+    });
+    mockEntitlementsDefaults({
+      recordsUsed: 10,
+      recordsLimit: 10,
+      remaining: 0,
+      percentUsed: 100,
+      isNearLimit: true,
+      canCreateAnchor: false,
+      planName: 'Verified Individual',
+    });
+    renderPage();
+
+    // At 100% the BillingOverview meter shows the reached-limit copy.
+    expect(screen.getByText(/reached your monthly limit/)).toBeInTheDocument();
+  });
+
+  // BUG-2026-06-24-010 — an unlimited (sentinel-normalized → null limit) plan
+  // must NOT render the frozen "/ 999999" meter on the Pricing page.
+  it('renders an unlimited plan without a numeric meter (BUG-2026-06-24-010)', () => {
+    mockBillingDefaults({
+      subscription: { status: 'active', current_period_end: '2026-04-01' },
+      plan: { id: 'organization', name: 'Organization', records_per_month: 999999 },
+    });
+    // useEntitlements normalizes the 999999 sentinel to recordsLimit === null.
+    mockEntitlementsDefaults({
+      recordsUsed: 3,
+      recordsLimit: null,
+      remaining: null,
+      percentUsed: null,
+      isNearLimit: false,
+      planName: 'Organization',
+    });
+    renderPage();
+
+    // No frozen sentinel meter anywhere on the page.
+    expect(screen.queryByText(/999999/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\/\s*999999/)).not.toBeInTheDocument();
+    expect(screen.queryByText('3 / 999999')).not.toBeInTheDocument();
   });
 });
