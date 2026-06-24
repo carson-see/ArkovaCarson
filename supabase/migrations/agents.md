@@ -47,6 +47,8 @@ Merge order is strict **0340 → 0341** (0341 is stacked on 0340). **0340 + 0341
 | `0341` | `feat/train-d-credit-foundation` (stacked on 0340) | SCRUM-2349 / 2350 | `0341_scrum2349_2350_credit_integrity_foundation.sql` | **APPLIED to prod 2026-06-23** |
 | `0342` | `perf/cpe-cle-dashboard-partial-index` (PR #1257) | CPE/CLE dashboard partial indexes | `0342_*` | RESERVED — open PR, do not reuse |
 | `0343` | QUEUE-02 connector-artifact schema (Lane 2) | SCRUM-2348 | `0343_scrum2348_connector_artifact_queue_schema.sql` | RESERVED — Lane 2 Sprint 1; interface-lock to Lane 3 by 2026-06-26 |
+| `0344` | `lane2-s1-reconciler-fix` (in-flight, commit `4bf1c057`) | SCRUM-2349 | `0344_scrum2349_credit_conservation_invariant_fix.sql` | IN-FLIGHT — credit-conservation invariant fix; do not reuse |
+| `0345` | `fix/vacuum-anchors-cron-0345` (PR — vacuum-anchors cron fix) | BUG-2026-06-24-001 | `0345_fix_vacuum_anchors_cron.sql` | RESERVED — corrects prod pg_cron jobid=2 (`VACUUM cannot run inside a transaction block`); next-free above the in-flight `0344` |
 
 Train D soaks once (consolidated RC) after Train C (#1154) merges, then rebases onto the new `main`; see HANDOFF.md + the "Release Soak Protection — No-Restart Process" Confluence page.
 
