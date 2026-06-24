@@ -21,10 +21,23 @@
  * never reaches out to the HF CDN — that fetch is blocked by the production
  * CSP and previously caused a SILENT regex fallback (a §1.6 fail-OPEN).
  * If the self-hosted model cannot be loaded, the loader throws a typed
- * `NERModelLoadError` (it never silently returns null), so the fail-CLOSED
- * stripper (WEBEXT-03) can catch it and refuse to let unstripped text leave
- * the browser. Vendor the weights with `scripts/fetch-ner-model.ts` (ops step;
- * the binaries are git-ignored, never committed).
+ * `NERModelLoadError` (it never silently returns null).
+ *
+ * SCOPE — this module (SCRUM-2503 / #1253) is the PRODUCER half only:
+ *   1. self-host loading from the app origin (remote off, local on),
+ *   2. a typed `NERModelLoadError` raised on any load failure (incl. concurrent
+ *      first-load races), and
+ *   3. the build-time integrity pin (scripts/ner-weights.lock.json +
+ *      scripts/fetch-ner-model.ts).
+ * It does NOT, on its own, deliver the end-to-end §1.6 fail-CLOSED guarantee.
+ * That requires the CONSUMER change in #1262 / WEBEXT-03 (Lane 2), which makes
+ * `enhancedPiiStripper.ts` THROW on `NERModelLoadError` instead of degrading to
+ * regex-only stripping. Until that consumer lands, a raised `NERModelLoadError`
+ * is still handled by the existing caller (regex fallback). This module MUST
+ * co-merge with #1262 so the typed error is actually acted on fail-CLOSED.
+ *
+ * Vendor the weights with `scripts/fetch-ner-model.ts` (ops step; the binaries
+ * are git-ignored, never committed).
  */
 
 import type { MLBackend } from './mlRuntime';
@@ -93,6 +106,25 @@ export const NER_MODEL_ID = 'Xenova/bert-base-NER';
  */
 export const NER_MODEL_REVISION = '24c7e5aba9ae350923357a6f0b92571be34037ec';
 
+/**
+ * Pinned transformers.js runtime version.
+ *
+ * §1.6 / SCRUM-2503: the vendored browser bundle at
+ * `public/vendor/transformers.web.min.js` is what actually resolves the model
+ * files in the browser, and the integrity lockfile
+ * (scripts/ner-weights.lock.json `transformersJsVersion`) was built for the
+ * exact file set THIS version requests for `Xenova/bert-base-NER` q8. If the
+ * vendored bundle and the lock drift (e.g. the bundle is 4.1.0 but the lock is
+ * pinned to 4.2.0), runtime loading can break while CI stays green. The
+ * regression test in scripts/vendor-transformers-version.test.ts fails the
+ * build if the bundle's embedded version != this constant != the lock's
+ * `transformersJsVersion`, so the skew can never recur silently.
+ *
+ * Keep in sync with `transformersJsVersion` in scripts/ner-weights.lock.json
+ * and the `@huggingface/transformers` pin in package.json.
+ */
+export const TRANSFORMERS_JS_VERSION = '4.2.0';
+
 const NER_CONFIDENCE_THRESHOLD = 0.7;
 const MAX_TEXT_LENGTH = 15_000; // Limit input to avoid OOM
 const TRANSFORMERS_BROWSER_MODULE = '/vendor/transformers.web.min.js';
@@ -116,10 +148,13 @@ export const NER_LOCAL_MODEL_PATH = '/models/';
  * missing under `public/models/`, the vendored runtime bundle fails to load, or
  * `pipeline(...)` rejects/returns nothing.
  *
- * This is intentionally a distinct, typed error so the fail-closed PII stripper
- * (Lane 2 / WEBEXT-03, enhancedPiiStripper.ts) can `instanceof`-detect a model
- * load failure and refuse to release text, rather than the loader silently
- * returning null and falling back to regex-only stripping (a §1.6 fail-OPEN).
+ * This is intentionally a distinct, typed error: it is the PRODUCER contract
+ * (this module / #1253) that the fail-closed PII stripper consumer
+ * (`enhancedPiiStripper.ts`, Lane 2 / #1262 / WEBEXT-03) will `instanceof`-detect
+ * to refuse to release text — rather than the loader silently returning null and
+ * the caller falling back to regex-only stripping (a §1.6 fail-OPEN). The
+ * fail-CLOSED behavior is delivered by that consumer change, NOT by this module
+ * alone; the two MUST co-merge (see the module header).
  */
 export class NERModelLoadError extends Error {
   /**
@@ -139,6 +174,8 @@ export class NERModelLoadError extends Error {
 }
 
 interface TransformersJsEnv {
+  /** transformers.js runtime version (e.g. `4.2.0`). Used to catch a vendored-bundle ↔ integrity-lock skew at runtime. */
+  version?: string;
   /** When false, transformers.js never fetches from the remote (HF CDN) host. */
   allowRemoteModels: boolean;
   /** When true, transformers.js may load model files from the local origin. Pinned explicitly. */
@@ -232,6 +269,22 @@ async function getNERPipeline(
   _pipelinePromise = (async () => {
     try {
       const { pipeline, env } = await _transformersLoader();
+
+      // §1.6 / SCRUM-2503: guard against a vendored-bundle ↔ integrity-lock skew.
+      // The SHA-256 lockfile (scripts/ner-weights.lock.json) is built for the
+      // EXACT file set transformers.js TRANSFORMERS_JS_VERSION requests for this
+      // model in q8. If the served bundle reports a different version, it may
+      // resolve a file set the lock does not cover — fail CLOSED (typed error)
+      // rather than load weights that bypassed the integrity check. The build-time
+      // test (scripts/vendor-transformers-version.test.ts) is the primary gate;
+      // this is the runtime backstop. `env.version` may be absent on a stub.
+      if (env.version && env.version !== TRANSFORMERS_JS_VERSION) {
+        throw new Error(
+          `Vendored transformers.js bundle is v${env.version} but the integrity ` +
+            `lock + loader are pinned to v${TRANSFORMERS_JS_VERSION}. Re-vendor ` +
+            'public/vendor/transformers.web.min.js at the pinned version.',
+        );
+      }
 
       // §1.6 / SCRUM-2503: SELF-HOST. Forbid the HF CDN and pin loading to the
       // Arkova app origin. `allowRemoteModels = false` is the equivalent of
