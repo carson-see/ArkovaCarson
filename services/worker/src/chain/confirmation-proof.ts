@@ -117,6 +117,220 @@ function doubleSha256(data: Uint8Array): Buffer {
 }
 
 /**
+ * The structural fields of a `gettxoutproof` blob after the 80-byte header:
+ * the block's total tx count, the carried partial-merkle hashes (internal LE),
+ * and the raw flag bytes. Returned by {@link parseMerkleBlockFields}.
+ */
+interface MerkleBlockFields {
+  totalTx: number;
+  hashes: Buffer[];
+  flagBytes: Buffer;
+  flagBytesLen: number;
+}
+
+/**
+ * Parse the partial-merkle-tree fields that follow the 80-byte header in a
+ * serialized `CMerkleBlock`:
+ *   [ 4-byte total tx count ][ varint hash count ][ hashes... ]
+ *   [ varint flag-bytes len ][ flag bytes ]
+ *
+ * `buf` is the whole proof buffer; parsing starts at byte 80. Returns `null`
+ * (caller maps to a reject) on any structural malformation: truncated varint,
+ * non-positive tx count, zero hashes/flag bytes, or a length that runs past the
+ * buffer. Behaviour is byte-for-byte identical to the inline reads it replaces.
+ */
+function parseMerkleBlockFields(buf: Buffer): MerkleBlockFields | null {
+  let offset = 80;
+  const totalTx = buf.readUInt32LE(offset);
+  offset += 4;
+  if (totalTx <= 0) return null;
+
+  const readVarInt = (): number | null => {
+    if (offset >= buf.length) return null;
+    const first = buf.readUInt8(offset);
+    offset += 1;
+    if (first < 0xfd) return first;
+    if (first === 0xfd) {
+      if (offset + 2 > buf.length) return null;
+      const v = buf.readUInt16LE(offset);
+      offset += 2;
+      return v;
+    }
+    if (first === 0xfe) {
+      if (offset + 4 > buf.length) return null;
+      const v = buf.readUInt32LE(offset);
+      offset += 4;
+      return v;
+    }
+    // 0xff (8-byte) — far beyond any realistic block tx count; reject.
+    return null;
+  };
+
+  const hashCount = readVarInt();
+  if (hashCount == null || hashCount < 1) return null;
+  const hashes: Buffer[] = [];
+  for (let i = 0; i < hashCount; i++) {
+    if (offset + 32 > buf.length) return null;
+    hashes.push(buf.subarray(offset, offset + 32));
+    offset += 32;
+  }
+
+  const flagBytesLen = readVarInt();
+  if (flagBytesLen == null || flagBytesLen < 1) return null;
+  if (offset + flagBytesLen > buf.length) return null;
+  const flagBytes = buf.subarray(offset, offset + flagBytesLen);
+
+  return { totalTx, hashes, flagBytes, flagBytesLen };
+}
+
+/** Tree height for `totalTx` leaves: ceil(log2) by doubling level width. */
+function merkleTreeHeight(totalTx: number): number | null {
+  let treeHeight = 0;
+  while ((totalTx >> treeHeight) > 1 || (1 << treeHeight) < totalTx) {
+    treeHeight++;
+    if (treeHeight > 32) return null; // sanity bound
+  }
+  return treeHeight;
+}
+
+/** Result of the first (matching) walk over the partial merkle tree. */
+interface MerkleWalkResult {
+  /** Recomputed subtree root (internal LE). */
+  root: Buffer;
+  /** Leaf index of the single matched tx. */
+  matchedIndex: number;
+  /** Matched leaf hash (internal LE). */
+  matchedLeafHashLE: Buffer;
+  /** Flag bits consumed by the walk (for full-consumption parity). */
+  bitsConsumed: number;
+  /** Hashes consumed by the walk (for full-consumption parity). */
+  hashesConsumed: number;
+}
+
+/**
+ * Run `CPartialMerkleTree::TraverseAndExtract` over the carried hashes + flag
+ * stream, recovering the recomputed root, the matched leaf hash, and the
+ * matched leaf index, plus how many bits/hashes were consumed. Returns `null`
+ * if the stream under/over-runs or no leaf matched — byte-for-byte equivalent
+ * to the inline closure it replaces.
+ */
+function walkMerkleTree(
+  hashes: Buffer[],
+  flagBytes: Buffer,
+  flagBytesLen: number,
+  totalTx: number,
+  treeHeight: number,
+): MerkleWalkResult | null {
+  let bitPos = 0;
+  let hashPos = 0;
+  let matchedIndex = -1;
+  let matchedLeafHashLE: Buffer | null = null;
+  let parseError = false;
+
+  const nextBit = (): number => {
+    if (bitPos >= flagBytesLen * 8) {
+      parseError = true;
+      return 0;
+    }
+    const byte = flagBytes.readUInt8(Math.floor(bitPos / 8));
+    const bit = (byte >> (bitPos % 8)) & 1;
+    bitPos++;
+    return bit;
+  };
+
+  const nextHash = (): Buffer | null => {
+    if (hashPos >= hashes.length) {
+      parseError = true;
+      return null;
+    }
+    return hashes[hashPos++];
+  };
+
+  const calcWidthAtHeight = (height: number): number =>
+    Math.floor((totalTx + (1 << height) - 1) / (1 << height));
+
+  /**
+   * Recursive descent. Returns the subtree hash. When the target match-bit
+   * path is followed, records the matched leaf index + hash.
+   *
+   * `pos` is the node index at `height`; leaf positions live at height 0.
+   */
+  const traverse = (height: number, pos: number): Buffer | null => {
+    if (parseError) return null;
+    const isParentOfMatch = nextBit() === 1;
+    if (height === 0 || !isParentOfMatch) {
+      // Leaf, OR an internal node none of whose descendants match: hash is
+      // taken verbatim from the hash stream.
+      const h = nextHash();
+      if (h == null) return null;
+      if (height === 0 && isParentOfMatch) {
+        // This leaf is the matched tx.
+        matchedIndex = pos;
+        matchedLeafHashLE = h;
+      }
+      return h;
+    }
+    // Internal node with at least one matched descendant: recurse.
+    const left = traverse(height - 1, pos * 2);
+    let right: Buffer | null;
+    const rightChildPos = pos * 2 + 1;
+    if (rightChildPos < calcWidthAtHeight(height - 1)) {
+      right = traverse(height - 1, rightChildPos);
+      // Bitcoin rejects left==right at internal nodes (CVE-2012-2459-adjacent);
+      // here it can only happen via a duplicated last node, which the width
+      // check above already excludes for a real right child.
+    } else {
+      // Odd row: right child is a duplicate of the left.
+      right = left;
+    }
+    if (left == null || right == null) return null;
+    return doubleSha256(Buffer.concat([left, right]));
+  };
+
+  const root = traverse(treeHeight, 0);
+  if (parseError || root == null || matchedIndex < 0 || matchedLeafHashLE == null) {
+    return null;
+  }
+  return { root, matchedIndex, matchedLeafHashLE, bitsConsumed: bitPos, hashesConsumed: hashPos };
+}
+
+/**
+ * Full-consumption parity (S1.2b / PROOF-03 review hardening).
+ *
+ * A well-formed CPartialMerkleTree's traversal consumes EXACTLY the flag bits
+ * it walks (one per visited node) and EXACTLY every carried hash. Anything left
+ * over is malformed or malicious padding a verifier must reject — a proof MUST
+ * NOT carry "spare" hashes or set flag bits the tree never reached.
+ *
+ *   (1) HASH parity: every provided hash was consumed.
+ *   (2) FLAG-BYTE parity (Bitcoin Core's own rule): the bytes needed to hold
+ *       the consumed bits equal the serialized flag-byte length — i.e. no extra
+ *       trailing flag byte, even an all-zero one.
+ *   (3) PADDING-BIT zero (stricter than stock Core): every bit AFTER the last
+ *       consumed bit, within the final partial byte, is zero. A set padding bit
+ *       cannot change the recovered tree (the walk stops at `bitsConsumed`), so
+ *       only this explicit check can reject a tampered/forged flag stream.
+ */
+function flagStreamFullyConsumed(
+  bitsConsumed: number,
+  hashesConsumed: number,
+  flagBytes: Buffer,
+  flagBytesLen: number,
+  hashesLen: number,
+): boolean {
+  // (1)
+  if (hashesConsumed !== hashesLen) return false;
+  // (2)
+  if (Math.ceil(bitsConsumed / 8) !== flagBytesLen) return false;
+  // (3)
+  for (let i = bitsConsumed; i < flagBytesLen * 8; i++) {
+    const byte = flagBytes.readUInt8(i >> 3);
+    if (((byte >> (i & 7)) & 1) !== 0) return false;
+  }
+  return true;
+}
+
+/**
  * Parse a `gettxoutproof` hex blob into its block header + the embedded
  * partial-merkle-tree, then derive the inclusion branch for the single target
  * txid.
@@ -168,161 +382,25 @@ export function parseTxOutProof(
   const blockMerkleRoot = Buffer.from(headerBuf.subarray(36, 68)).reverse().toString('hex');
 
   // ── 2. Partial merkle tree fields ──
-  let offset = 80;
-  const totalTx = buf.readUInt32LE(offset);
-  offset += 4;
-  if (totalTx <= 0) return null;
-
-  const readVarInt = (): number | null => {
-    if (offset >= buf.length) return null;
-    const first = buf.readUInt8(offset);
-    offset += 1;
-    if (first < 0xfd) return first;
-    if (first === 0xfd) {
-      if (offset + 2 > buf.length) return null;
-      const v = buf.readUInt16LE(offset);
-      offset += 2;
-      return v;
-    }
-    if (first === 0xfe) {
-      if (offset + 4 > buf.length) return null;
-      const v = buf.readUInt32LE(offset);
-      offset += 4;
-      return v;
-    }
-    // 0xff (8-byte) — far beyond any realistic block tx count; reject.
-    return null;
-  };
-
-  const hashCount = readVarInt();
-  if (hashCount == null || hashCount < 1) return null;
-  const hashes: Buffer[] = [];
-  for (let i = 0; i < hashCount; i++) {
-    if (offset + 32 > buf.length) return null;
-    hashes.push(buf.subarray(offset, offset + 32));
-    offset += 32;
-  }
-
-  const flagBytesLen = readVarInt();
-  if (flagBytesLen == null || flagBytesLen < 1) return null;
-  if (offset + flagBytesLen > buf.length) return null;
-  const flagBytes = buf.subarray(offset, offset + flagBytesLen);
+  const fields = parseMerkleBlockFields(buf);
+  if (fields == null) return null;
+  const { totalTx, hashes, flagBytes, flagBytesLen } = fields;
 
   // ── 3. Walk the partial merkle tree (CPartialMerkleTree::TraverseAndExtract) ──
-  // Compute tree height: ceil(log2) by doubling level width.
-  let treeHeight = 0;
-  while ((totalTx >> treeHeight) > 1 || (1 << treeHeight) < totalTx) {
-    treeHeight++;
-    if (treeHeight > 32) return null; // sanity bound
+  const treeHeight = merkleTreeHeight(totalTx);
+  if (treeHeight == null) return null;
+
+  const walk = walkMerkleTree(hashes, flagBytes, flagBytesLen, totalTx, treeHeight);
+  if (walk == null) return null;
+  const { root, matchedIndex, matchedLeafHashLE } = walk;
+
+  // Reject malformed/malicious flag-or-hash padding (see helper for the rule).
+  if (!flagStreamFullyConsumed(walk.bitsConsumed, walk.hashesConsumed, flagBytes, flagBytesLen, hashes.length)) {
+    return null;
   }
 
-  let bitPos = 0;
-  let hashPos = 0;
-  let matchedIndex = -1;
-  let matchedLeafHashLE: Buffer | null = null;
-  let parseError = false;
-
-  const nextBit = (): number => {
-    if (bitPos >= flagBytesLen * 8) {
-      parseError = true;
-      return 0;
-    }
-    const byte = flagBytes.readUInt8(Math.floor(bitPos / 8));
-    const bit = (byte >> (bitPos % 8)) & 1;
-    bitPos++;
-    return bit;
-  };
-
-  const nextHash = (): Buffer | null => {
-    if (hashPos >= hashes.length) {
-      parseError = true;
-      return null;
-    }
-    return hashes[hashPos++];
-  };
-
-  /**
-   * Recursive descent. Returns the subtree hash. When the target match-bit
-   * path is followed, records each sibling as a branch entry (relative to the
-   * matched leaf) and captures the leaf index.
-   *
-   * `pos` is the node index at `height`; leaf positions live at height 0.
-   */
-  const calcWidthAtHeight = (height: number): number => {
-    return Math.floor((totalTx + (1 << height) - 1) / (1 << height));
-  };
-
-  const traverse = (height: number, pos: number): Buffer | null => {
-    if (parseError) return null;
-    const isParentOfMatch = nextBit() === 1;
-    if (height === 0 || !isParentOfMatch) {
-      // Leaf, OR an internal node none of whose descendants match: hash is
-      // taken verbatim from the hash stream.
-      const h = nextHash();
-      if (h == null) return null;
-      if (height === 0 && isParentOfMatch) {
-        // This leaf is the matched tx.
-        matchedIndex = pos;
-        matchedLeafHashLE = h;
-      }
-      return h;
-    }
-    // Internal node with at least one matched descendant: recurse.
-    const left = traverse(height - 1, pos * 2);
-    let right: Buffer | null;
-    const rightChildPos = pos * 2 + 1;
-    if (rightChildPos < calcWidthAtHeight(height - 1)) {
-      right = traverse(height - 1, rightChildPos);
-      // Bitcoin rejects left==right at internal nodes (CVE-2012-2459-adjacent);
-      // here it can only happen via a duplicated last node, which the width
-      // check above already excludes for a real right child.
-    } else {
-      // Odd row: right child is a duplicate of the left.
-      right = left;
-    }
-    if (left == null || right == null) return null;
-    return doubleSha256(Buffer.concat([left, right]));
-  };
-
-  const root = traverse(treeHeight, 0);
-  if (parseError || root == null || matchedIndex < 0 || matchedLeafHashLE == null) return null;
-
-  // ── Full-consumption parity (S1.2b / PROOF-03 review hardening) ──
-  // A well-formed CPartialMerkleTree's traversal consumes EXACTLY the flag bits
-  // it walks (one per visited node) and EXACTLY every carried hash. Anything
-  // left over is malformed or malicious padding a verifier must reject — a
-  // proof MUST NOT carry "spare" hashes or set flag bits the tree never reached.
-  //
-  //   (1) HASH parity: every provided hash was consumed.
-  //   (2) FLAG-BYTE parity (Bitcoin Core's own rule): the bytes needed to hold
-  //       the consumed bits equal the serialized flag-byte length — i.e. no
-  //       extra trailing flag byte, even an all-zero one.
-  //   (3) PADDING-BIT zero (stricter than stock Core): every bit AFTER the last
-  //       consumed bit, within the final partial byte, is zero. A set padding
-  //       bit cannot change the recovered tree (the walk stops at `bitPos`), so
-  //       only this explicit check can reject a tampered/forged flag stream.
-  const bitsConsumed = bitPos;
-  // (1)
-  if (hashPos !== hashes.length) return null;
-  // (2)
-  if (Math.ceil(bitsConsumed / 8) !== flagBytesLen) return null;
-  // (3)
-  for (let i = bitsConsumed; i < flagBytesLen * 8; i++) {
-    const byte = flagBytes.readUInt8(i >> 3);
-    if (((byte >> (i & 7)) & 1) !== 0) return null;
-  }
-
-  // Verify the recomputed root matches the header's merkleroot (raw LE form).
-  const headerMerkleRootLE = headerBuf.subarray(36, 68);
-  if (!Buffer.from(root).equals(headerMerkleRootLE)) return null;
-
-  // CRITICAL: the matched leaf must actually be the TARGET tx. `gettxoutproof`
-  // commits to the matched leaves via the flag bits, not by carrying the txid,
-  // so a proof built for a DIFFERENT tx in the same block would otherwise be
-  // accepted. Compare the matched leaf hash (internal LE) to the target txid
-  // (display hex → reversed to LE). Mismatch ⇒ not a proof for this tx.
-  const targetLE = Buffer.from(targetTxId.toLowerCase(), 'hex').reverse();
-  if (!Buffer.from(matchedLeafHashLE).equals(targetLE)) return null;
+  // Verify the recomputed root + matched leaf identity (see helper).
+  if (!verifyRecoveredRoot(root, headerBuf, matchedLeafHashLE, targetTxId)) return null;
 
   // ── 4. Re-derive the inclusion branch + positions for the matched leaf ──
   // The recursive walk above recovers `matchedIndex` and (implicitly) the
@@ -340,6 +418,27 @@ export function parseTxOutProof(
     merkleBranch: orderedBranch,
     txIndex: matchedIndex,
   };
+}
+
+/**
+ * Final verification for a recovered partial-merkle walk:
+ *   (a) the recomputed root equals the header's merkleroot (raw LE bytes [36,68)),
+ *   (b) the matched leaf is the TARGET tx — `gettxoutproof` commits to matched
+ *       leaves via flag bits, not by carrying the txid, so a proof built for a
+ *       DIFFERENT tx in the same block would otherwise be accepted. Compare the
+ *       matched leaf hash (internal LE) to the target txid (display hex → LE).
+ * Either mismatch ⇒ reject. Byte-for-byte equivalent to the inline checks.
+ */
+function verifyRecoveredRoot(
+  root: Buffer,
+  headerBuf: Buffer,
+  matchedLeafHashLE: Buffer,
+  targetTxId: string,
+): boolean {
+  const headerMerkleRootLE = headerBuf.subarray(36, 68);
+  if (!Buffer.from(root).equals(headerMerkleRootLE)) return false;
+  const targetLE = Buffer.from(targetTxId.toLowerCase(), 'hex').reverse();
+  return Buffer.from(matchedLeafHashLE).equals(targetLE);
 }
 
 /**
