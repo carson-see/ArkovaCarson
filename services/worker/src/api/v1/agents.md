@@ -2,6 +2,16 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-06-24 Batch AI extraction credit accounting (BUG-2026-06-24-013, T2)
+
+- `ai-extract-batch.ts` (`POST /api/v1/ai/extract-batch`) moved from an UP-FRONT batch debit + failure-only refund to **per-item debit/refund inside `parallelMap`** (parity with the single path `ai-extract.ts`). Batch-level double-accounting is now structurally impossible.
+- **No free batch:** the per-row debit runs BEFORE the provider call. When the org has a finite credit balance (`checkAICredits` returned non-null) and the per-row `deductAICredits(...,1)` returns falsy, that row is skipped with `{ success:false, error:'insufficient_credits' }` and the provider is NOT called. The old "log `'…deduction failed — proceeding'` and extract anyway" free-extraction path is gone. An up-front 402 still rejects the whole batch when `hasCredits === false` (cheap guard), but the per-row debit is the authoritative gate.
+- **Only successes stay charged:** each failed/timed-out row refunds **its own** single credit (`deductAICredits(...,-1)`) — there is no blanket `-failedCount` batch refund that could credit work never paid for. Cached rows and unmetered-beta rows (balance null) are never debited, so they are never refunded.
+- **No swallowed refund:** if a per-row refund fails after a successful debit, the code enqueues an `ai_credits.reconcile_refund` job via `submitJob` (`AI_CREDIT_RECONCILE_JOB_TYPE`, payload = `{orgId,userId,amount,reason,fingerprint,source}`, metadata-only, no row text) instead of `.catch(()=>{})`. A lost refund is an overcharge — it is surfaced, not dropped.
+- **Fingerprint cache (EFF-1 parity):** each row checks `ai_usage_events` by `fingerprint` (same query as the single path) and, on hit, returns `provider:'cache'` with no debit and no provider call → batch retries are idempotent and don't re-charge already-extracted rows. Successful extractions now write `result_json` into the usage event so they populate the cache.
+- **Per-row latency budget:** `BATCH_ROW_LATENCY_BUDGET_MS` (env `AI_BATCH_ROW_LATENCY_BUDGET_MS`, default 8000, 1000–30000) bounds each provider call; a timeout is treated as a failed+refunded row, not a charge.
+- Response gains `summary.cached`; the frozen success/result shape is otherwise unchanged. No new banned fields exposed; logs/job payloads carry `orgId`/`userId`/`fingerprint`/`rowIndex` only, never `row.text`.
+
 ## 2026-06-11 CTDL Safety Gate (PR #1146)
 
 - `credentials-ctdl.ts` treats `CtdlPiiSafetyError` from the serializer as a fail-closed public response: HTTP 404 `{ error: 'not_found' }` with `ctdl.requested` audit outcome `safety_blocked`. Never return a CTDL body when the serializer blocks on transcript/education learner-name PII confidence. The credential's public contract (status/date/identifier/revocation fields) is otherwise unchanged from main.
