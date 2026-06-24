@@ -88,12 +88,13 @@ function asTestDb(db: unknown): DocusignRouterDeps['db'] {
 function verifiedConnectDb(
   role: 'admin' | 'owner' | 'member' = 'admin',
   verificationStatus: 'VERIFIED' | 'PENDING' | 'UNVERIFIED' = 'VERIFIED',
+  suspended = false,
 ) {
   return {
     from: vi.fn((table: string) => {
       if (table === 'org_members') return mockQuery({ data: { role }, error: null });
       if (table === 'organizations') {
-        return mockQuery({ data: { id: TEST_ORG_ID, verification_status: verificationStatus }, error: null });
+        return mockQuery({ data: { id: TEST_ORG_ID, verification_status: verificationStatus, suspended }, error: null });
       }
       return mockQuery({ data: null, error: null });
     }),
@@ -1390,6 +1391,29 @@ describe('DocuSign OAuth — DS-01 verified-org entitlement gate', () => {
     const res = await startConnect(verifiedConnectDb('admin', 'PENDING'));
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('org_unverified');
+  });
+
+  it('PERSONA org admin + VERIFIED but SUSPENDED org → DENIES connect (403, org_suspended)', async () => {
+    // Worker/UI gate parity (code-review must-fix): the authoritative worker gate
+    // must not be narrower than useCanIssueCredential, which bars suspended orgs.
+    // A suspended-but-VERIFIED org must not connect via a direct /oauth/start call.
+    const res = await startConnect(verifiedConnectDb('admin', 'VERIFIED', true));
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('org_suspended');
+  });
+
+  it('VERIFIED org with null/legacy suspended (pre-0289) → still allowed (parity with the hook)', async () => {
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'organizations') {
+          return mockQuery({ data: { id: TEST_ORG_ID, verification_status: 'VERIFIED', suspended: null }, error: null });
+        }
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const res = await startConnect(db);
+    expect(res.status).toBe(200);
   });
 
   it('PERSONA org member (not admin) → DENIES connect at admin gate (403) before verification check', async () => {

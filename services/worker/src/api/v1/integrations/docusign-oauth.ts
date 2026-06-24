@@ -49,7 +49,7 @@ type AuditEventInsert = TypeSafeDatabase['public']['Tables']['audit_events']['In
 type OrganizationRow = TypeSafeDatabase['public']['Tables']['organizations']['Row'];
 type OrgMemberRoleRow = Pick<OrgMemberRow, 'role'>;
 type OrganizationPublicIdLookupRow = Pick<OrganizationRow, 'id'>;
-type OrganizationVerificationRow = Pick<OrganizationRow, 'id' | 'verification_status'>;
+type OrganizationVerificationRow = Pick<OrganizationRow, 'id' | 'verification_status' | 'suspended'>;
 type DocusignIntegrationIdRow = Pick<OrgIntegrationRow, 'id'>;
 type DocusignIntegrationLookupRow = Pick<
   OrgIntegrationRow,
@@ -297,12 +297,12 @@ async function requireOrgAdmin(db: DbClient, userId: string, orgId: string): Pro
  */
 type VerifiedOrgGate =
   | { allowed: true }
-  | { allowed: false; reason: 'org_unverified' | 'org_not_found' | 'lookup_failed' };
+  | { allowed: false; reason: 'org_unverified' | 'org_suspended' | 'org_not_found' | 'lookup_failed' };
 
 async function requireVerifiedOrg(db: DbClient, orgId: string): Promise<VerifiedOrgGate> {
   const { data, error } = await db
     .from('organizations')
-    .select('id, verification_status')
+    .select('id, verification_status, suspended')
     .eq('id', orgId)
     .maybeSingle();
 
@@ -315,6 +315,15 @@ async function requireVerifiedOrg(db: DbClient, orgId: string): Promise<Verified
   }
   if (data.verification_status !== 'VERIFIED') {
     return { allowed: false, reason: 'org_unverified' };
+  }
+  // Parity with the UI entitlement gate (useCanIssueCredential / SCRUM-1755): a
+  // suspended org is barred from connecting a document source even when KYB-
+  // VERIFIED. The worker is the authoritative gate, so it must not be narrower
+  // than the UI — otherwise a suspended-but-VERIFIED org could connect via a
+  // direct /oauth/start call. `suspended` is migration 0289; null/undefined
+  // (legacy pre-0289 rows) is treated as not-suspended, matching the hook.
+  if (data.suspended === true) {
+    return { allowed: false, reason: 'org_suspended' };
   }
   return { allowed: true };
 }
@@ -550,7 +559,9 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
     // persist a DocuSign connection for an org that is not VERIFIED.
     const callbackOrgGate = await requireVerifiedOrg(db, payload.orgId);
     if (!callbackOrgGate.allowed) {
-      res.redirect(302, appendResult(returnTo, 'docusign_error', 'org_unverified'));
+      // Reflect the actual reason (org_unverified / org_suspended / ...) so the
+      // return-to surface shows the right denial, never persisting a connection.
+      res.redirect(302, appendResult(returnTo, 'docusign_error', callbackOrgGate.reason));
       return;
     }
 
