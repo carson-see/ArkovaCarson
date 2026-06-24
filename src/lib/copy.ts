@@ -2977,3 +2977,101 @@ export const ISSUER_PARTNERSHIP_LABELS = {
     udemy: 'Udemy',
   } as const,
 } as const;
+
+// =============================================================================
+// QUEUE / INSTANT-SECURE UX CONTRACT (QUEUE-01 / SCRUM-2347)
+// =============================================================================
+// Frozen, user-visible labels for the queue-first vs. instant-secure securing
+// experience. Keys are the lowercase QueueLifecycleState / CreditDebitState /
+// SecuringPath / QueueSurface union members from src/lib/queueContract.ts —
+// the test asserts a 1:1 mapping, so adding a state without a label fails CI.
+//
+// Terminology (CLAUDE.md §1.3): no banned terms. "Secured" is the terminal
+// success word (internal code-name "anchored"); "Anchor Receipt" is the receipt;
+// "Fingerprint" is the document identifier; "credit" is the funding unit.
+
+/** User-visible badge label for each canonical queue lifecycle state. */
+export const QUEUE_LIFECYCLE_LABELS = {
+  pending: 'Pending',
+  queued: 'In Queue',
+  processing: 'Securing',
+  materialized: 'Awaiting Confirmation',
+  anchored: 'Secured',
+  failed: 'Needs Attention',
+  skipped: 'Skipped',
+} as const;
+
+/** One-line, plain-language description shown next to each lifecycle state. */
+export const QUEUE_LIFECYCLE_DESCRIPTIONS = {
+  pending: 'Your document is being prepared. It has not used any credits yet.',
+  queued: 'Your document is in the queue to be secured. Queueing is free — no credits are used.',
+  processing: 'Your document is being secured now.',
+  materialized: 'Your document has its network receipt and is awaiting final confirmation.',
+  anchored: 'Your document is permanently secured and independently verifiable.',
+  failed: 'We could not secure this document. You were not charged. You can try again.',
+  skipped: 'This document was not secured — it was a duplicate or you cancelled. No credits were used.',
+} as const;
+
+/**
+ * Credit-charge state copy, mapped 1:1 to the credit-ledger model
+ * (debit_and_enqueue + nightly reconciler; refunds are append-only reversing
+ * rows). Charge happens at securing, never at queueing.
+ */
+export const CREDIT_DEBIT_LABELS = {
+  spent: 'Credit used',
+  pending: 'Credit pending',
+  refunded: 'Credit refunded',
+} as const;
+
+/** Optional helper text expanding each credit-charge state. */
+export const CREDIT_DEBIT_DESCRIPTIONS = {
+  spent: '1 credit was used to secure this document instantly.',
+  pending: 'A credit is reserved for this document and will be confirmed shortly.',
+  refunded: '1 credit was returned to your balance.',
+} as const;
+
+/**
+ * Labels for the two securing paths. "Add to Queue" is the default, free path;
+ * "Secure Instantly" is hidden at launch and only shown when the worker grants
+ * the capability (never a client default). See queueContract.ts.
+ */
+export const SECURING_CHOICE_LABELS = {
+  queue: 'Add to Queue',
+  instant: 'Secure Instantly',
+} as const;
+
+/** Helper text for each securing path, shown under the choice when offered. */
+export const SECURING_CHOICE_HINTS = {
+  queue: 'Secured with the next batch. Free — no credits used.',
+  instant: 'Secured right away. Uses 1 credit from your plan.',
+} as const;
+
+/**
+ * Distinct page titles for the three "queue" surfaces. Carson's premortem
+ * (SCRUM-2347): never ship two surfaces both titled "Review queue". These are
+ * deliberately distinct so a self-serve user is never shown the org dedup queue.
+ */
+export const QUEUE_SURFACE_TITLES = {
+  consumer_secure_queue: 'Pending Documents',
+  org_duplicate_review: 'Duplicate Review',
+  org_approvals: 'Approvals',
+} as const;
+
+/**
+ * Consumer-facing secure-queue surface copy (the NEW individual-facing list of
+ * documents waiting to be secured). Title is shared with
+ * QUEUE_SURFACE_TITLES.consumer_secure_queue.
+ */
+export const SECURE_QUEUE_LABELS = {
+  PAGE_TITLE: 'Pending Documents',
+  PAGE_SUBTITLE: 'Documents waiting to be secured. Queueing is free — credits are only used when you secure instantly.',
+  ADD_TO_QUEUE: 'Add to Queue',
+  SECURE_INSTANTLY: 'Secure Instantly',
+  EMPTY_TITLE: 'Nothing waiting',
+  EMPTY_DESC: 'Documents you add to the queue will appear here until they are secured.',
+  COST_PREVIEW: 'Uses 1 credit. You have {n} remaining this cycle.',
+  INSUFFICIENT_CREDITS: 'Not enough credits. Add credits or add to the queue (free).',
+  NOT_CHARGED_FAILURE: 'We couldn’t secure your document right now. You were not charged. Please try again or add it to the queue.',
+  QUEUED_TOAST: 'Added to the queue. No credits used.',
+  SECURED_TOAST: 'Your document has been secured.',
+} as const;
