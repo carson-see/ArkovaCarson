@@ -471,6 +471,12 @@ export const RECORDS_LIST_LABELS = {
   // Replaces "Block Height" — the banned-term version sat next to
   // NETWORK_RECEIPT / "Network Observed Time"; this keeps the trio coherent.
   NETWORK_CHECKPOINT: 'Network Checkpoint',
+  // Network-observed-time honesty (BUG-2026-06-24-008, §1.5): the network has
+  // only "observed" a record once it is SECURED. For unconfirmed records the
+  // field falls back to CREATED_TIME (the local creation/upload time) under an
+  // honest label — never the local time under the network label.
+  NETWORK_OBSERVED_TIME: 'Network Observed Time',
+  CREATED_TIME: 'Record Created',
 } as const;
 
 // =============================================================================

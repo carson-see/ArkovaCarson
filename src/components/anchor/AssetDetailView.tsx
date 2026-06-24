@@ -570,9 +570,15 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 </p>
               </div>
 
-              {/* Network Observed Time */}
+              {/* Network Observed Time (BUG-2026-06-24-008, §1.5) — only render
+                  the network-observed label once the anchor is SECURED. For
+                  unconfirmed anchors, fall back to the honest local creation
+                  time under a distinct label; never show createdAt under the
+                  network label. */}
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Network Observed Time</p>
+                <p className="text-xs text-muted-foreground">
+                  {anchor.securedAt ? RECORDS_LIST_LABELS.NETWORK_OBSERVED_TIME : RECORDS_LIST_LABELS.CREATED_TIME}
+                </p>
                 <p className="text-sm">
                   {anchor.securedAt ? formatDate(anchor.securedAt) : formatDate(anchor.createdAt)}
                 </p>

@@ -468,13 +468,20 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
 
         {/* ============================================================
             SECTION 2D: Compliance Controls (CML-01)
-            ============================================================ */}
-        {(isSecured || isRevoked) && (
+            ============================================================
+            BUG-2026-06-24-007 (§1.5/§1.13 claims-gate): compliance controls
+            describe protections that apply to a *securely anchored* credential.
+            A REVOKED / SUPERSEDED / EXPIRED record must NOT advertise live
+            SOC2/HIPAA/eIDAS frameworks next to its terminal banner. Gate this
+            section on `isSecured` only (was `isSecured || isRevoked` with a
+            hardcoded `isSecured={true}`, which wrongly rendered the full control
+            set for revoked records). */}
+        {isSecured && (
           <>
             <Separator />
             <ComplianceBadge
               credentialType={data.credential_type}
-              isSecured={true}
+              isSecured={isSecured}
               compact={false}
             />
           </>

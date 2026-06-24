@@ -496,9 +496,14 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
             </p>
           </div>
 
-          {/* Network Observed Time */}
+          {/* Network Observed Time (BUG-2026-06-24-008, §1.5) — only render the
+              network-observed label once the record is SECURED. For unconfirmed
+              records, fall back to the honest local creation time under a
+              distinct label; never show createdAt under the network label. */}
           <div>
-            <p className="text-[10px] text-[#859398]">Network Observed Time</p>
+            <p className="text-[10px] text-[#859398]">
+              {record.securedAt ? RECORDS_LIST_LABELS.NETWORK_OBSERVED_TIME : RECORDS_LIST_LABELS.CREATED_TIME}
+            </p>
             <p className="text-xs text-[#dce3ed] mt-0.5">
               {record.securedAt ? formatDateTime(record.securedAt) : formatDateTime(record.createdAt)}
             </p>

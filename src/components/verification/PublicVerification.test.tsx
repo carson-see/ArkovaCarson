@@ -191,6 +191,27 @@ describe('PublicVerification', () => {
     expect(screen.getByText('Cryptographic Proof')).toBeInTheDocument();
     expect(screen.getByTestId('evidence-layers')).toHaveTextContent('1 active');
     expect(screen.getByTestId('proof-download')).toBeInTheDocument();
+    // BUG-2026-06-24-007: revoked credentials must NOT render the SOC2/HIPAA/
+    // eIDAS compliance controls — those controls no longer apply once revoked
+    // (claims-gate §1.5/§1.13). The compliance section is gated on isSecured.
+    expect(screen.queryByTestId('compliance-badge')).not.toBeInTheDocument();
+  });
+
+  it('does not render compliance controls for SUPERSEDED records (BUG-2026-06-24-007)', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SUPERSEDED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByText('Record Superseded')).toBeInTheDocument();
+    expect(screen.queryByTestId('compliance-badge')).not.toBeInTheDocument();
   });
 
   it('renders SUPERSEDED records as visible terminal records with proof affordances', async () => {
