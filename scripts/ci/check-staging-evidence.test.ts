@@ -304,7 +304,7 @@ describe('check-staging-evidence', () => {
     });
 
     it('lists all T1 fields when body has none', () => {
-      expect(missingFields('', 'T1').length).toBe(TIER_SPECS.T1.requiredFields.length);
+      expect(missingFields('', 'T1')).toHaveLength(TIER_SPECS.T1.requiredFields.length);
     });
 
     it('catches partial T3 (missing trigger fires)', () => {

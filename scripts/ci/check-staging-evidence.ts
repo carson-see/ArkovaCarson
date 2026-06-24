@@ -373,8 +373,32 @@ function escapeRegExp(value: string): string {
 // The plain `Tier: T2` form keeps matching (every decoration group is optional).
 // This is label-parsing tolerance only: the captured value is still validated
 // against DECLARED_TIER_VALUES, so the set of accepted tiers is unchanged.
-const DECLARED_TIER_LINE_RE =
-  /^\s*(?:[-*]\s*)?(?:\[[ x]\]\s*)?(?:[*_]{1,2})?Tier(?:[*_]{1,2})?\s*:\s*(?:[*_]{1,2})?\s*(T[0-3])(?:[*_]{1,2})?(?!\w)/i;
+//
+// Composed from named sub-parts rather than one dense literal: it keeps each
+// fragment readable and below the per-regex cognitive-complexity bound, and it
+// removes the backtracking ambiguity of adjacent `\s*` groups flanking optional
+// emphasis (the old `\s*:\s*(?:[*_]{1,2})?\s*` shape) by using single horizontal-
+// whitespace runs (`HSPACE`). Lines are pre-split on `\r?\n` by
+// {@link extractDeclaredTier}, so horizontal-only whitespace is exact, not a
+// behavior change — verified identical to the prior literal over a combinatorial
+// corpus.
+const TIER_HSPACE = String.raw`[^\S\r\n]`;
+const TIER_EMPHASIS = String.raw`[*_]{1,2}`;
+// Optional leading list bullet (`-`/`*`) then optional spaces.
+const TIER_LIST_PREFIX = String.raw`(?:[-*]${TIER_HSPACE}*)?`;
+// Optional GitHub task checkbox (`[ ]`/`[x]`) then optional spaces.
+const TIER_CHECKBOX = String.raw`(?:\[[ x]\]${TIER_HSPACE}*)?`;
+// The literal label `Tier`, optionally emphasis-wrapped on either side.
+const TIER_LABEL = String.raw`(?:${TIER_EMPHASIS})?Tier(?:${TIER_EMPHASIS})?`;
+// Separator: optional spaces, colon, optional spaces, then an optional emphasis
+// run with its own trailing spaces — no two `\s*` flank the same optional group.
+const TIER_SEPARATOR = String.raw`${TIER_HSPACE}*:${TIER_HSPACE}*(?:${TIER_EMPHASIS}${TIER_HSPACE}*)?`;
+// The tier token `T0`–`T3`, optional trailing emphasis, not followed by a word char.
+const TIER_VALUE_TOKEN = String.raw`(T[0-3])(?:${TIER_EMPHASIS})?(?!\w)`;
+const DECLARED_TIER_LINE_RE = new RegExp(
+  String.raw`^${TIER_HSPACE}*${TIER_LIST_PREFIX}${TIER_CHECKBOX}${TIER_LABEL}${TIER_SEPARATOR}${TIER_VALUE_TOKEN}`,
+  'i',
+);
 
 export function extractDeclaredTier(body: string): Tier | null {
   for (const line of body.split(/\r?\n/)) {
