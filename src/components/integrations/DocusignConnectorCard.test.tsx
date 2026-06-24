@@ -35,6 +35,16 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// SCRUM-2361 (DS-01): the card consumes the shipped verified-org entitlement
+// gate (useCanIssueCredential, SCRUM-1755). Default to "allowed" so the
+// pre-existing behavioural tests are unaffected; the denial-state tests below
+// override the return value per-case.
+import type { IssueGate } from '@/hooks/useCanIssueCredential';
+const issueGateMock = vi.fn<() => IssueGate>(() => ({ allowed: true, loading: false, reason: null }));
+vi.mock('@/hooks/useCanIssueCredential', () => ({
+  useCanIssueCredential: (...args: unknown[]) => issueGateMock(...(args as [])),
+}));
+
 const ORG_ID = '11111111-2222-3333-4444-555555555555';
 
 describe('DocusignConnectorCard', () => {
@@ -49,6 +59,8 @@ describe('DocusignConnectorCard', () => {
     supabaseQuery.order.mockReturnThis();
     supabaseQuery.limit.mockReturnThis();
     supabaseQuery.maybeSingle.mockResolvedValue({ data: null, error: null });
+    // Default: org is verified / gate allows. Denial tests override this.
+    issueGateMock.mockReturnValue({ allowed: true, loading: false, reason: null });
 
     assignSpy = vi.fn();
     Object.defineProperty(window, 'location', {
@@ -329,5 +341,86 @@ describe('DocusignConnectorCard', () => {
       expect(screen.getByText('Could not start the connection. Please try again.')).toBeInTheDocument();
     });
     expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  // ─── SCRUM-2361 (DS-01): verified-org entitlement gate (frontend) ───
+
+  it('blocks Connect and shows the not-verified copy when the org is unverified', async () => {
+    issueGateMock.mockReturnValue({ allowed: false, loading: false, reason: 'org_unverified' });
+
+    render(<DocusignConnectorCard orgId={ORG_ID} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(CONNECTIONS_LABELS.DOCUSIGN_NOT_VERIFIED)).toBeInTheDocument();
+    });
+    const connectButton = screen.getByRole('button', { name: /connect/i });
+    expect(connectButton).toBeDisabled();
+  });
+
+  it('does not call the worker connect endpoint when the gate denies (defense in depth)', async () => {
+    issueGateMock.mockReturnValue({ allowed: false, loading: false, reason: 'org_unverified' });
+
+    render(<DocusignConnectorCard orgId={ORG_ID} />);
+
+    const connectButton = await screen.findByRole('button', { name: /connect/i });
+    fireEvent.click(connectButton);
+
+    // Disabled button shouldn't fire, but assert the network call never happens
+    // even if a click slips through — the backend is the real gate, this is UX.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(workerFetch).not.toHaveBeenCalled();
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows the not-verified copy for a suspended org as well', async () => {
+    issueGateMock.mockReturnValue({ allowed: false, loading: false, reason: 'org_suspended' });
+
+    render(<DocusignConnectorCard orgId={ORG_ID} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(CONNECTIONS_LABELS.DOCUSIGN_NOT_VERIFIED)).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /connect/i })).toBeDisabled();
+  });
+
+  it('still allows Disconnect for an already-connected org even if the gate later denies', async () => {
+    // Disconnect must never be blocked by the connect gate — a verified org
+    // that lapses must still be able to remove its connection.
+    issueGateMock.mockReturnValue({ allowed: false, loading: false, reason: 'org_unverified' });
+    supabaseQuery.maybeSingle.mockResolvedValue({
+      data: {
+        id: 'int-1',
+        account_id: 'acct-47470255',
+        account_label: 'Arkova',
+        connected_at: '2026-04-25T00:00:00Z',
+        scope: 'signature extended openid email',
+      },
+      error: null,
+    });
+    workerFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+
+    render(<DocusignConnectorCard orgId={ORG_ID} />);
+
+    const disconnectButton = await screen.findByRole('button', { name: /disconnect/i });
+    expect(disconnectButton).toBeEnabled();
+    fireEvent.click(disconnectButton);
+
+    await waitFor(() => {
+      expect(workerFetch).toHaveBeenCalledWith(
+        '/api/v1/integrations/docusign/disconnect',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+  });
+
+  it('shows the checking copy while the gate is still loading', async () => {
+    issueGateMock.mockReturnValue({ allowed: false, loading: true, reason: 'loading' });
+
+    render(<DocusignConnectorCard orgId={ORG_ID} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(CONNECTIONS_LABELS.DOCUSIGN_GATE_CHECKING)).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /connect/i })).toBeDisabled();
   });
 });
