@@ -193,6 +193,76 @@ function merkleTreeHeight(totalTx: number): number | null {
   return treeHeight;
 }
 
+/**
+ * Number of nodes at a given tree `height` for a tree of `totalTx` leaves.
+ * `ceil(totalTx / 2^height)`. Shared by both partial-merkle passes so the odd-row
+ * "duplicate the last node" boundary is computed identically in each.
+ */
+function calcWidthAtHeight(totalTx: number, height: number): number {
+  return Math.floor((totalTx + (1 << height) - 1) / (1 << height));
+}
+
+/**
+ * A single forward cursor over a `CPartialMerkleTree`'s flag-bit stream and
+ * carried-hash list. Both partial-merkle passes ({@link walkMerkleTree} and
+ * {@link extractBranchForIndex}) consume the exact same two streams in the exact
+ * same order, so the bit/hash readers live here once instead of being inlined as
+ * identical per-pass closures (was SonarCloud `typescript:S4144`). Behaviour is
+ * byte-for-byte identical to those closures:
+ *   - `nextBit` reads the next flag bit LSB-first; over-running the flag stream
+ *     sets `hadError` and yields 0.
+ *   - `nextHash` returns the next carried hash; exhausting the list sets
+ *     `hadError` and yields null.
+ * `bitsRead` / `hashesRead` expose the consumed counts for full-consumption
+ * parity; `hadError` reports whether either stream under-ran.
+ */
+interface PartialMerkleCursor {
+  nextBit: () => number;
+  nextHash: () => Buffer | null;
+  readonly bitsRead: number;
+  readonly hashesRead: number;
+  readonly hadError: boolean;
+}
+
+function createPartialMerkleCursor(
+  hashes: Buffer[],
+  flagBytes: Buffer,
+  flagBytesLen: number,
+): PartialMerkleCursor {
+  let bitPos = 0;
+  let hashPos = 0;
+  let parseError = false;
+
+  return {
+    nextBit(): number {
+      if (bitPos >= flagBytesLen * 8) {
+        parseError = true;
+        return 0;
+      }
+      const byte = flagBytes.readUInt8(Math.floor(bitPos / 8));
+      const bit = (byte >> (bitPos % 8)) & 1;
+      bitPos++;
+      return bit;
+    },
+    nextHash(): Buffer | null {
+      if (hashPos >= hashes.length) {
+        parseError = true;
+        return null;
+      }
+      return hashes[hashPos++];
+    },
+    get bitsRead(): number {
+      return bitPos;
+    },
+    get hashesRead(): number {
+      return hashPos;
+    },
+    get hadError(): boolean {
+      return parseError;
+    },
+  };
+}
+
 /** Result of the first (matching) walk over the partial merkle tree. */
 interface MerkleWalkResult {
   /** Recomputed subtree root (internal LE). */
@@ -221,33 +291,10 @@ function walkMerkleTree(
   totalTx: number,
   treeHeight: number,
 ): MerkleWalkResult | null {
-  let bitPos = 0;
-  let hashPos = 0;
   let matchedIndex = -1;
   let matchedLeafHashLE: Buffer | null = null;
-  let parseError = false;
 
-  const nextBit = (): number => {
-    if (bitPos >= flagBytesLen * 8) {
-      parseError = true;
-      return 0;
-    }
-    const byte = flagBytes.readUInt8(Math.floor(bitPos / 8));
-    const bit = (byte >> (bitPos % 8)) & 1;
-    bitPos++;
-    return bit;
-  };
-
-  const nextHash = (): Buffer | null => {
-    if (hashPos >= hashes.length) {
-      parseError = true;
-      return null;
-    }
-    return hashes[hashPos++];
-  };
-
-  const calcWidthAtHeight = (height: number): number =>
-    Math.floor((totalTx + (1 << height) - 1) / (1 << height));
+  const cursor = createPartialMerkleCursor(hashes, flagBytes, flagBytesLen);
 
   /**
    * Recursive descent. Returns the subtree hash. When the target match-bit
@@ -256,12 +303,12 @@ function walkMerkleTree(
    * `pos` is the node index at `height`; leaf positions live at height 0.
    */
   const traverse = (height: number, pos: number): Buffer | null => {
-    if (parseError) return null;
-    const isParentOfMatch = nextBit() === 1;
+    if (cursor.hadError) return null;
+    const isParentOfMatch = cursor.nextBit() === 1;
     if (height === 0 || !isParentOfMatch) {
       // Leaf, OR an internal node none of whose descendants match: hash is
       // taken verbatim from the hash stream.
-      const h = nextHash();
+      const h = cursor.nextHash();
       if (h == null) return null;
       if (height === 0 && isParentOfMatch) {
         // This leaf is the matched tx.
@@ -274,7 +321,7 @@ function walkMerkleTree(
     const left = traverse(height - 1, pos * 2);
     let right: Buffer | null;
     const rightChildPos = pos * 2 + 1;
-    if (rightChildPos < calcWidthAtHeight(height - 1)) {
+    if (rightChildPos < calcWidthAtHeight(totalTx, height - 1)) {
       right = traverse(height - 1, rightChildPos);
       // Bitcoin rejects left==right at internal nodes (CVE-2012-2459-adjacent);
       // here it can only happen via a duplicated last node, which the width
@@ -288,10 +335,16 @@ function walkMerkleTree(
   };
 
   const root = traverse(treeHeight, 0);
-  if (parseError || root == null || matchedIndex < 0 || matchedLeafHashLE == null) {
+  if (cursor.hadError || root == null || matchedIndex < 0 || matchedLeafHashLE == null) {
     return null;
   }
-  return { root, matchedIndex, matchedLeafHashLE, bitsConsumed: bitPos, hashesConsumed: hashPos };
+  return {
+    root,
+    matchedIndex,
+    matchedLeafHashLE,
+    bitsConsumed: cursor.bitsRead,
+    hashesConsumed: cursor.hashesRead,
+  };
 }
 
 /**
@@ -457,39 +510,17 @@ function extractBranchForIndex(
   treeHeight: number,
   matchedIndex: number,
 ): MerkleProofEntry[] | null {
-  let bitPos = 0;
-  let hashPos = 0;
-  let parseError = false;
-
-  const nextBit = (): number => {
-    if (bitPos >= flagBytesLen * 8) {
-      parseError = true;
-      return 0;
-    }
-    const byte = flagBytes.readUInt8(Math.floor(bitPos / 8));
-    const bit = (byte >> (bitPos % 8)) & 1;
-    bitPos++;
-    return bit;
-  };
-  const nextHash = (): Buffer | null => {
-    if (hashPos >= hashes.length) {
-      parseError = true;
-      return null;
-    }
-    return hashes[hashPos++];
-  };
-  const calcWidthAtHeight = (height: number): number =>
-    Math.floor((totalTx + (1 << height) - 1) / (1 << height));
+  const cursor = createPartialMerkleCursor(hashes, flagBytes, flagBytesLen);
 
   // Branch entries collected as { height, hash, position }. We collect during
   // descent then sort leaf→root (height ascending).
   const collected: Array<{ height: number; hash: string; position: 'left' | 'right' }> = [];
 
   const traverse = (height: number, pos: number): Buffer | null => {
-    if (parseError) return null;
-    const isParentOfMatch = nextBit() === 1;
+    if (cursor.hadError) return null;
+    const isParentOfMatch = cursor.nextBit() === 1;
     if (height === 0 || !isParentOfMatch) {
-      const h = nextHash();
+      const h = cursor.nextHash();
       return h;
     }
     const leftPos = pos * 2;
@@ -499,7 +530,7 @@ function extractBranchForIndex(
     const matchedChildIsLeft = ((matchedIndex >> (height - 1)) & 1) === 0;
     const left = traverse(height - 1, leftPos);
     let right: Buffer | null;
-    if (rightPos < calcWidthAtHeight(height - 1)) {
+    if (rightPos < calcWidthAtHeight(totalTx, height - 1)) {
       right = traverse(height - 1, rightPos);
     } else {
       right = left; // duplicated last node
@@ -516,7 +547,7 @@ function extractBranchForIndex(
   };
 
   traverse(treeHeight, 0);
-  if (parseError) return null;
+  if (cursor.hadError) return null;
   collected.sort((a, b) => a.height - b.height);
   return collected.map((c) => ({ hash: c.hash, position: c.position }));
 }
