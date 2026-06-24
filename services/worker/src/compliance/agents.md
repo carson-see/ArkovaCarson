@@ -19,7 +19,7 @@ persistence.
 | `audit-report.ts` | Audit-ready report generation | NCE-18 |
 | `benchmarking.ts` | Industry benchmark comparisons | NCE-17 |
 | `cross-reference.ts` | Credential × rule cross-reference | NCE-15 |
-| `auth-helpers.ts` | Shared `getCallerOrgId(req, res)` — every compliance route uses this |
+| `auth-helpers.ts` | Shared `getCallerOrgId(req, res)` — every compliance route uses this. Resolves the caller's org via the canonical precedence: `profiles.org_id` first (delegated to `../api/_org-auth.ts`), then an `org_members` fallback — so org **owners** (linked via `profiles.org_id`) resolve, not just `org_members` rows |
 | `professional-education.ts` | Shared CPE/CLE taxonomy, metadata validation, normalization, and PII stripping helpers for R-CPE-01 / R-LEGAL-01 foundation work | SCRUM-1851 / SCRUM-1877 |
 
 ## Conventions
@@ -43,6 +43,17 @@ persistence.
   fluent-builder mock pattern.
 
 ## Recent Changes
+
+- **2026-06-24 — compliance audit owner-org gate** (`auth-helpers.ts`):
+  `getCallerOrgId` resolved the caller's org via `org_members` ONLY, so org
+  OWNERS — linked via `profiles.org_id` (the "Managing X" header source) and not
+  guaranteed an `org_members` 'owner' row — were 403'd "Must belong to an
+  organization" on "Audit My Organization" (prod UAT). Now resolves via the
+  canonical precedence: `profiles.org_id` first (delegated to `../api/_org-auth.ts`,
+  the single source of truth shared with `orgVerification.ts` /
+  `get_user_org_id()` / `useCanIssueCredential`), then an `org_members` fallback
+  using `limit(1).maybeSingle()` (also fixes a latent `.single()` crash-to-403
+  for users in 2+ orgs). Covered by `auth-helpers.test.ts`.
 
 - **2026-05-20 — SCRUM-1851 / SCRUM-1877** (`professional-education.ts`):
   Added pure CPE/CLE metadata schemas, controlled vocabularies, manual-review
