@@ -337,40 +337,40 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
     statusBadgeLabel = ANCHORING_STATUS_LABELS.PENDING_BADGE;
   }
 
+  // Status-banner styling + icon, derived as flat statements rather than
+  // nested ternaries in JSX (keeps the hero markup readable and avoids deep
+  // ternary chains — typescript:S3358). Amber = awaiting/expired, gray =
+  // revoked/superseded, green = secured; the icon mirrors the same split.
+  let bannerBackgroundClass = 'bg-gradient-to-r from-green-500/10 to-green-400/5 px-6 py-6';
+  let iconBackgroundClass = 'bg-green-500/10';
+  if (isAwaitingConfirmation || isExpired) {
+    bannerBackgroundClass = 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6';
+    iconBackgroundClass = 'bg-amber-500/10';
+  } else if (isRevoked || isSuperseded) {
+    bannerBackgroundClass = 'bg-gradient-to-r from-gray-500/10 to-gray-400/5 px-6 py-6';
+    iconBackgroundClass = 'bg-gray-500/10';
+  }
+
+  let statusIcon = <CheckCircle className="h-8 w-8 text-green-500" />;
+  if (isPending) {
+    statusIcon = <Clock className="h-8 w-8 text-amber-500 animate-pulse" />;
+  } else if (isSubmitted || isExpired) {
+    statusIcon = <Clock className="h-8 w-8 text-amber-500" />;
+  } else if (isRevoked) {
+    statusIcon = <Ban className="h-8 w-8 text-gray-500" />;
+  } else if (isSuperseded) {
+    statusIcon = <XCircle className="h-8 w-8 text-gray-500" />;
+  }
+
   return (
     <Card className="max-w-2xl mx-auto overflow-hidden">
       {/* ============================================================
           SECTION 1: Status Banner
           ============================================================ */}
-      <div className={
-        isAwaitingConfirmation
-          ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
-          : isExpired
-            ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
-            : isRevoked || isSuperseded
-              ? 'bg-gradient-to-r from-gray-500/10 to-gray-400/5 px-6 py-6'
-              : 'bg-gradient-to-r from-green-500/10 to-green-400/5 px-6 py-6'
-      }>
+      <div className={bannerBackgroundClass}>
         <div className="flex flex-col items-center text-center">
-          <div className={`flex h-16 w-16 items-center justify-center rounded-full mb-4 ${
-            isAwaitingConfirmation ? 'bg-amber-500/10'
-            : isExpired ? 'bg-amber-500/10'
-            : isRevoked || isSuperseded ? 'bg-gray-500/10'
-            : 'bg-green-500/10'
-          }`}>
-            {isPending ? (
-              <Clock className="h-8 w-8 text-amber-500 animate-pulse" />
-            ) : isSubmitted ? (
-              <Clock className="h-8 w-8 text-amber-500" />
-            ) : isExpired ? (
-              <Clock className="h-8 w-8 text-amber-500" />
-            ) : isRevoked ? (
-              <Ban className="h-8 w-8 text-gray-500" />
-            ) : isSuperseded ? (
-              <XCircle className="h-8 w-8 text-gray-500" />
-            ) : (
-              <CheckCircle className="h-8 w-8 text-green-500" />
-            )}
+          <div className={`flex h-16 w-16 items-center justify-center rounded-full mb-4 ${iconBackgroundClass}`}>
+            {statusIcon}
           </div>
           <Badge
             variant={statusBadgeVariant}
