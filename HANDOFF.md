@@ -14,6 +14,19 @@
 
 ## Now
 
+### 2026-06-24 (Lane 2 RTE) — 0341 credit-integrity reconciliation: prod-proven, landing on `main` via PR #1290 (§1.12 exception)
+
+**0341 reconciliation — prod-proven (applied to prod, running healthy all sprint), landed on `main` via this PR under a Carson-approved §1.12 prod-proven residual-risk exception (2026-06-24); sequenced after #1255 (0340), before #1257/#1259/#1260 (0342/0343/0344).** `main` head was `0339`; prod (`vzwyaatejekddvltxyye`) ledger head is `0341` (rows 0340 + 0341 present), so `main` was missing 0340 (lands via Train-D #1255) + 0341 (this PR). This PR carries the **FIXED** version (HEAD `cc440bd2` "fix(0341): drop old amount>0 CHECK before sign-flip UPDATE (ERROR 23514)") — making `main` reflect already-applied prod state. **Confirmation, not discovery; no new prod change** (all prod queries read-only).
+
+**Prod-proven facts (read-only MCP on `vzwyaatejekddvltxyye`, 2026-06-24):**
+- `list_migrations` + `schema_migrations` → ledger rows `0340` + `0341` present (both numeric `version`).
+- `org_credit_deductions_amount_signed_check` present with signed semantics: `CHECK ((amount <> 0) AND (entry_type<>'DEBIT' OR amount<0) AND (entry_type<>'REFUND' OR amount>0) AND (entry_type<>'GRANT' OR amount>0) AND (entry_type<>'REVOKE' OR amount<0))`; the old `org_credit_deductions_amount_check (amount>0)` is **gone** (`pg_constraint` count = 0).
+- `debit_and_enqueue_anchor(uuid,uuid,integer,text,anchor_status,anchor_status)` RPC present (`pg_proc` count = 1); append-only trigger `trg_org_credit_deductions_append_only` (BEFORE DELETE OR UPDATE → `reject_org_credit_deduction_mutation()`) present.
+
+**Clean-apply prod-mirror validation (§1.12 exception evidence):** throwaway Supabase project `arkova-val-0341` (ref `expjtjcpqfrcspljptpv`, us-east-2, org `byhkazrpmivhcsuqjtva`) — branch migrations applied schema-only (no worker), then the credit objects diffed vs prod read-only. See the PR Staging Soak Evidence block for the diff-empty proof + throwaway teardown. (No worker/Cloud Run; schema-only.)
+
+_Verified via: Supabase MCP `list_migrations` + `execute_sql` (read-only) on prod `vzwyaatejekddvltxyye` (ledger rows 0340/0341; signed CHECK def; old amount>0 CHECK count=0; `debit_and_enqueue_anchor` count=1; append-only trigger def); throwaway-rig apply + credit-object diff on `expjtjcpqfrcspljptpv`. Source bytes: `git show <fixed-branch>:supabase/migrations/0341_*.sql` (HEAD cc440bd2), md5 `861c323315249a3dc2c6900371bc516b`, 25007 B._
+
 ### 2026-06-24 (Lane 1 SM/RTE) — WEBEXT producer fixed (4.2.0 skew) + staging-gate gap closed (#1289); SCRUM-2471 confirmed already in #1255; backfill→S3
 
 **WEBEXT-CSP #1253 (producer):** fixed the transformers.js vendored-bundle skew (4.1.0→**4.2.0**, now == npm dep == lockfile; + a version-assert test + a runtime version-skew guard) and scoped the §1.6 claims to producer-only (the fail-CLOSED consumer is Lane-2 **#1262**). Verified the Vercel preview serves the 4.2.0 lib bundle (431,652 B) + the integrity-locked 108 MB model **same-origin** under CSP. Base-refreshed onto main (head `e2b6a3c9`) → DIRTY + Policy-Lints cleared.
@@ -345,4 +358,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-23 by Claude (carson@arkova.io) — claims verified against: deploy run 28031108914 success + prod `/health` git_sha `2a9d0526` + Cloud Run rev `arkova-worker-00950-xev` 100% traffic (gcloud); Supabase MCP `execute_sql` on prod `vzwyaatejekddvltxyye` (`cron.job` 35 `*/2`→`*/15`, `pg_stat_statements` top-IO, `cron.job_run_details`); `gcloud run services delete` ×4 + Supabase MCP `list_projects`. Prior 0340/0341-apply + #1242 footers remain in git history._
+_Last refreshed: 2026-06-24 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output: Supabase MCP execute-sql + list-migrations (read-only) on prod vzwyaatejekddvltxyye (ledger rows 0340/0341; signed amount CHECK; debit+enqueue RPC pg-proc count=1; append-only trigger); clean-apply credit-schema diff on throwaway expjtjcpqfrcspljptpv. Prior footers remain in git history._
