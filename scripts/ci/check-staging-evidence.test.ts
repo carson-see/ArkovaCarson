@@ -1697,6 +1697,101 @@ ${note}
       });
     });
 
+    // ── Frontend build-wiring widening (WEBEXT-05 enabler for #1253) ──────────
+    // A frontend feature that build-fetches a large self-hosted asset (the NER
+    // model) legitimately ships, alongside its src/+public/ change, the root
+    // Vite app manifest (`package.json`/`package-lock.json`), `.gitignore`, and
+    // the top-level model/asset-fetch build scripts. None of these are built
+    // into the Cloud Run worker image or applied to the DB (the worker has its
+    // OWN `services/worker/package.json`), so they belong on the frontend-T2
+    // evidence path. Mirrors the #1277 public/+e2e/ precedent; purely additive.
+    describe('isFrontendOnlyChange — frontend build-wiring (#1253 enabler)', () => {
+      it("is true for #1253's exact changed set (build-fetched NER model)", () => {
+        expect(isFrontendOnlyChange([
+          '.gitignore',
+          'package.json',
+          'public/vendor/transformers.web.min.js',
+          'public/vendor/agents.md',
+          'scripts/fetch-ner-model.ts',
+          'scripts/ner-weights.lock.json',
+          'scripts/vendor-transformers-version.test.ts',
+          'scripts/fetch-ner-model.test.ts',
+          'src/lib/nerPiiDetector.ts',
+          'src/lib/nerPiiDetector.test.ts',
+          'src/lib/agents.md',
+        ])).toBe(true);
+      });
+
+      it('is true for the root package.json manifest alone (Vite app build config)', () => {
+        expect(isFrontendOnlyChange(['package.json'])).toBe(true);
+      });
+
+      it('is true for the root package-lock.json alone', () => {
+        expect(isFrontendOnlyChange(['package-lock.json'])).toBe(true);
+      });
+
+      it('is true for root .gitignore alone', () => {
+        expect(isFrontendOnlyChange(['.gitignore'])).toBe(true);
+      });
+
+      it('is true for a model-fetch build script + its weights lock + tests', () => {
+        expect(isFrontendOnlyChange([
+          'scripts/fetch-ner-model.ts',
+          'scripts/ner-weights.lock.json',
+          'scripts/fetch-ner-model.test.ts',
+          'scripts/vendor-transformers-version.test.ts',
+        ])).toBe(true);
+      });
+
+      // ── Safety: the widening must NOT re-admit any worker / governance surface ─
+      it("is FALSE for the worker's own package.json (governs the deployed worker dep tree)", () => {
+        expect(isFrontendOnlyChange(['services/worker/package.json'])).toBe(false);
+      });
+
+      it('is FALSE for any worker source file', () => {
+        expect(isFrontendOnlyChange(['services/worker/src/x.ts'])).toBe(false);
+      });
+
+      it('is FALSE for a CI-gate script (scripts/ci is governance, not build-wiring)', () => {
+        expect(isFrontendOnlyChange(['scripts/ci/check-staging-evidence.ts'])).toBe(false);
+      });
+
+      it('is FALSE for a migration', () => {
+        expect(isFrontendOnlyChange(['supabase/migrations/0345_x.sql'])).toBe(false);
+      });
+
+      it('is FALSE for a mixed frontend + worker set', () => {
+        expect(isFrontendOnlyChange([
+          'package.json',
+          'src/lib/nerPiiDetector.ts',
+          'services/worker/src/chain/client.ts',
+        ])).toBe(false);
+      });
+
+      it('is FALSE for scripts/staging and scripts/agent governance trees', () => {
+        expect(isFrontendOnlyChange(['scripts/staging/deploy.sh'])).toBe(false);
+        expect(isFrontendOnlyChange(['scripts/agent/ack-claude-bootstrap.sh'])).toBe(false);
+      });
+
+      // A top-level scripts/ file that is NOT a model/asset-fetch build script
+      // (e.g. a copy-term lint or a deploy shell script) must stay on the full
+      // worker-evidence path — the build-wiring pattern is intentionally narrow.
+      it('is FALSE for a non-build top-level scripts/ file (lint/deploy scripts stay strict)', () => {
+        expect(isFrontendOnlyChange(['scripts/check-copy-terms.ts'])).toBe(false);
+        expect(isFrontendOnlyChange(['scripts/deploy-worker.sh'])).toBe(false);
+        expect(isFrontendOnlyChange(['scripts/publish-packages.sh'])).toBe(false);
+      });
+
+      // Defense-in-depth: a model-fetch build script riding alongside a real
+      // worker change does not launder the worker change onto the light path.
+      it('is FALSE for a build script + worker file together', () => {
+        expect(isFrontendOnlyChange([
+          'scripts/fetch-ner-model.ts',
+          'services/worker/src/api/v1/anchor.ts',
+        ])).toBe(false);
+      });
+    });
+
     // ── Scenario 1 (required): frontend-only T2 + frontend evidence → PASS ──
     it('Scenario 1: frontend-only T2 with frontend evidence PASSES', () => {
       const r = check({

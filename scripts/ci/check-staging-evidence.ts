@@ -317,10 +317,24 @@ const NON_FRONTEND_SURFACE_RE: RegExp[] = [
   /^docs\/api\//,
   /^docs\/guides\/API_GUIDE\.md$/,
   /^\.github\/workflows\//,
-  // CI scripts are not a frontend asset — a `scripts/` change (e.g. this gate,
-  // or the CSP-deps guard) keeps the standard worker-evidence path even when it
-  // rides alongside a src/ change.
-  /^scripts\//,
+  // Governance / CI / staging / agent / secrets / infra script trees are NOT a
+  // frontend asset. A change under any of these keeps the standard worker-
+  // evidence path even when it rides alongside a src/ change. (This replaces the
+  // earlier blanket `^scripts/` denial: the only `scripts/` files now eligible
+  // for the frontend path are the narrowly-allowlisted top-level model/asset-
+  // fetch build scripts in FRONTEND_BUILD_WIRING_RE — everything else under
+  // `scripts/`, including these subtrees, stays on full worker-evidence. This
+  // denylist still wins over the allowlist, so it is defense-in-depth.)
+  /^scripts\/ci\//,
+  /^scripts\/staging\//,
+  /^scripts\/agent\//,
+  /^scripts\/secrets\//,
+  /^scripts\/security\//,
+  /^scripts\/gcp-setup\//,
+  /^scripts\/ops\//,
+  /^scripts\/admin\//,
+  /^scripts\/healthcheck\//,
+  /^scripts\/uat\//,
 ];
 
 /** Prefixes a frontend feature can legitimately ship without producing any
@@ -335,16 +349,65 @@ const NON_FRONTEND_SURFACE_RE: RegExp[] = [
 const FRONTEND_PREFIXES = ['src/', 'public/', 'e2e/'];
 
 /**
+ * Frontend-build *wiring* files that are not under a {@link FRONTEND_PREFIXES}
+ * directory but are nonetheless frontend-scoped and cannot produce a worker /
+ * migration / SDK artifact, so they belong on the frontend-T2 evidence path
+ * (WEBEXT-05 enabler for #1253 — a frontend feature that build-fetches a large
+ * self-hosted asset, the NER model). Mirrors the #1277 `public/`+`e2e/` widening.
+ *
+ * No-worker-surface rationale (why each is genuinely frontend-only):
+ *   - `package.json` / `package-lock.json` (ROOT): the manifest/lockfile of the
+ *     Vite frontend app. The deployed Cloud Run WORKER has its OWN manifest at
+ *     `services/worker/package.json` (and the SDK/integration manifests live
+ *     under `packages/`/`integrations/`), all of which are caught by the
+ *     denylist above — so root build-config is genuinely frontend-scoped and
+ *     ships no worker/DB artifact. (Anchored to the repo root: `services/...`,
+ *     `packages/...` manifests never match these patterns AND are denied.)
+ *   - `.gitignore` (ROOT): a build/VCS-hygiene file (e.g. ignoring the fetched
+ *     model output dir); produces nothing that deploys.
+ *   - top-level model/asset-fetch BUILD scripts: `scripts/<fetch-…|vendor-…|
+ *     …-weights.lock>(.test)?.(ts|json)`. This is a precise, maintainable
+ *     pattern keyed on the build-script *naming convention* (a model/asset
+ *     FETCH script, a VENDOR pin, or a weights LOCK — plus its colocated test),
+ *     NOT a hardcoded #1253 filename list. It matches ONLY files directly under
+ *     `scripts/` (the char class excludes `/`), and ONLY `.ts`/`.json` — so
+ *     governance subtrees (`scripts/ci`, `scripts/staging`, `scripts/agent`, …,
+ *     all also denied above) and executable `.sh`/`.sql` scripts can never
+ *     match. These scripts run at frontend BUILD time to vendor a static asset
+ *     into `public/`; they are not imported by the worker and deploy nothing.
+ */
+const FRONTEND_BUILD_WIRING_RE: RegExp[] = [
+  /^package\.json$/,
+  /^package-lock\.json$/,
+  /^\.gitignore$/,
+  /^scripts\/(?:fetch-[A-Za-z0-9-]+|vendor-[A-Za-z0-9-]+|[A-Za-z0-9-]+-weights\.lock)(?:\.test)?\.(?:ts|json)$/,
+];
+
+/**
  * True iff EVERY changed file is a purely-frontend file — under one of
- * {@link FRONTEND_PREFIXES} (`src/` / `public/` / `e2e/`) and not matching any
- * server/migration/SDK/contract/CI surface ({@link NON_FRONTEND_SURFACE_RE}).
+ * {@link FRONTEND_PREFIXES} (`src/` / `public/` / `e2e/`) OR matching a
+ * frontend-build-wiring allowlist entry ({@link FRONTEND_BUILD_WIRING_RE}:
+ * root `package.json`/`package-lock.json`/`.gitignore` + top-level model/asset-
+ * fetch build scripts) — and not matching any server/migration/SDK/contract/CI/
+ * governance surface ({@link NON_FRONTEND_SURFACE_RE}).
+ *
  * This is the backward-compatibility guard for the frontend-T2 evidence mode:
  * it gates the alternate (Vercel + view-E2E) evidence path so it can only ever
  * apply to a PR that genuinely cannot produce worker artifacts. A frontend
  * feature shipping vendored assets (`public/vendor`) + its E2E (`e2e/`)
  * alongside its `src/` change is exactly this case (the #1262 §1.6 fail-closed
- * OCR enabler); workflow / CI-script / worker / migration changes stay on the
- * full worker-evidence path (fail-closed preserved).
+ * OCR enabler); a frontend feature that build-fetches a large self-hosted asset
+ * additionally ships root build-config + a model-fetch script (the #1253
+ * WEBEXT-CSP enabler). Workflow / governance-script / worker / migration / SDK
+ * changes stay on the full worker-evidence path (fail-closed preserved): the
+ * denylist is checked AFTER the allowlist and always wins, so e.g.
+ * `services/worker/package.json` is rejected despite the root `package.json`
+ * allowlist entry.
+ *
+ * Purely additive vs the pre-#1253 logic: every fileset that was frontend-only
+ * before remains so (no allowlist entry was removed and the denylist only got
+ * NARROWER for non-governance `scripts/`, which were not frontend-eligible to
+ * begin with). The widening admits ONLY the new build-wiring files.
  *
  * An empty fileset returns false: there is nothing to attest as frontend-only,
  * and a non-frontend caller should never reach the frontend path by default.
@@ -352,7 +415,8 @@ const FRONTEND_PREFIXES = ['src/', 'public/', 'e2e/'];
 export function isFrontendOnlyChange(files: string[]): boolean {
   if (files.length === 0) return false;
   return files.every(
-    (f) => FRONTEND_PREFIXES.some((p) => f.startsWith(p))
+    (f) => (FRONTEND_PREFIXES.some((p) => f.startsWith(p))
+        || FRONTEND_BUILD_WIRING_RE.some((re) => re.test(f)))
       && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
   );
 }
