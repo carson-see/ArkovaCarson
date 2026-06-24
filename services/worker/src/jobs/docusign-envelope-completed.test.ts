@@ -132,6 +132,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       ruleEventId: 'rule-event-1',
       documentBytes: SIGNED_BYTES,
       contentType: 'application/pdf' as string | null,
+      sourceTimestamp: '2026-06-24T10:00:00.000Z' as string | null,
     };
 
     interface MakeDbOpts {
@@ -189,6 +190,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         p_external_revision: null,
         p_fingerprint_sha256: EXPECTED_SHA256,
         p_byte_length: SIGNED_BYTES.byteLength,
+        p_source_timestamp: '2026-06-24T10:00:00.000Z',
       });
       // Canonical lowercase 64-hex SHA-256 — matches the 0343 CHECK constraint
       // connector_artifact_fingerprint_format_check.

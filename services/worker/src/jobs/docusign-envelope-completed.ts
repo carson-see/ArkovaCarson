@@ -347,7 +347,7 @@ export function makeDocusignEnvelopeJobDeps(
         p_external_revision: null,
         p_fingerprint_sha256: fingerprint,
         p_byte_length: byteLength,
-        p_source_timestamp: null,
+        p_source_timestamp: input.sourceTimestamp,
         p_metadata: {
           account_id: input.accountId,
           envelope_id: input.envelopeId,
