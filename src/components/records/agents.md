@@ -17,3 +17,12 @@ Document records list component with virtualized rendering and status-based acti
 ## Do / Don't Rules
 - DO: Use virtualized rendering for records lists to handle large datasets
 - DO NOT: Expose raw `id` or `user_id` — use `public_id` for external-facing links
+- DO NOT (§1.5): Render `createdAt` under the "Network Observed Time" label. The
+  network has only "observed" a record once it is SECURED (`securedAt` set). For
+  unconfirmed records, show `RECORDS_LIST_LABELS.CREATED_TIME` ("Record Created")
+  with the local creation time — never the local time under the network label.
+
+## Recent Changes
+- 2026-06-24 BUG-2026-06-24-008: `RecordsList.tsx` "Network Observed Time" field
+  now renders the network label only when `securedAt` is set; otherwise it shows
+  an honest "Record Created" label. Regression test: `RecordsList.test.tsx`.
