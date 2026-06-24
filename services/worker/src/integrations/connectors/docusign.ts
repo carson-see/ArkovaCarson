@@ -24,6 +24,9 @@ export const DocusignEnvelopeCompletedJobPayload = z.object({
   envelope_id: z.string().min(1),
   rule_event_id: z.string().min(1),
   document_ids: z.array(z.string().min(1)).max(100).default([]),
+  // DS-03: the DocuSign Connect completion time, threaded through so the durable
+  // connector_artifact records source_timestamp (PII-safe metadata only).
+  envelope_completed_at: z.string().datetime().optional(),
 });
 
 export type DocusignEnvelopeCompletedJobPayloadT = z.infer<typeof DocusignEnvelopeCompletedJobPayload>;
@@ -73,6 +76,7 @@ export interface DocusignEnvelopeJobDeps extends DocusignClientDeps {
     ruleEventId: string;
     documentBytes: Buffer;
     contentType: string | null;
+    sourceTimestamp: string | null;
   }) => Promise<DocusignDocumentSinkResult>;
 }
 
@@ -145,5 +149,6 @@ export async function processDocusignEnvelopeCompletedJob(
     ruleEventId: parsed.rule_event_id,
     documentBytes: document.bytes,
     contentType: document.contentType,
+    sourceTimestamp: parsed.envelope_completed_at ?? null,
   });
 }
