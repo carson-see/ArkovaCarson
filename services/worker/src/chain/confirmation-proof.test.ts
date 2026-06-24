@@ -74,13 +74,69 @@ function buildHeader(merkleRootLE: Buffer): Buffer {
   return header;
 }
 
+const writeVarInt = (n: number): Buffer => {
+  if (n < 0xfd) return Buffer.from([n]);
+  if (n <= 0xffff) {
+    const b = Buffer.alloc(3);
+    b[0] = 0xfd;
+    b.writeUInt16LE(n, 1);
+    return b;
+  }
+  const b = Buffer.alloc(5);
+  b[0] = 0xfe;
+  b.writeUInt32LE(n, 1);
+  return b;
+};
+
+/**
+ * The decomposed pieces of a serialized `CMerkleBlock`, plus the ground-truth
+ * consumption counters a faithful traversal must report. Returned by
+ * `buildMerkleBlock` so tamper-tests can reassemble the blob with one field
+ * mutated, and so consumption-counter expectations are derived from the SAME
+ * builder that produced the proof (no magic numbers).
+ */
+interface BuiltMerkleBlock {
+  /** Hex of the full serialized CMerkleBlock (== gettxoutproof output). */
+  hex: string;
+  header: Buffer;
+  totalTx: number;
+  /** Ordered LE sibling/subtree hashes carried by the proof. */
+  hashesLE: Buffer[];
+  /** Packed flag bytes (LSB-first). */
+  flagBytes: Buffer;
+  /** Number of flag BITS a correct traversal consumes (one per visited node). */
+  bitCount: number;
+  /** Number of HASHES a correct traversal consumes (== hashesLE.length). */
+  hashCount: number;
+}
+
+/** Reassemble a CMerkleBlock hex from (possibly-tampered) pieces. */
+function assembleMerkleBlockHex(parts: {
+  header: Buffer;
+  totalTx: number;
+  hashesLE: Buffer[];
+  flagBytes: Buffer;
+}): string {
+  const totalTxBuf = Buffer.alloc(4);
+  totalTxBuf.writeUInt32LE(parts.totalTx, 0);
+  return Buffer.concat([
+    parts.header,
+    totalTxBuf,
+    writeVarInt(parts.hashesLE.length),
+    ...parts.hashesLE,
+    writeVarInt(parts.flagBytes.length),
+    parts.flagBytes,
+  ]).toString('hex');
+}
+
 /**
  * Build the serialized `CMerkleBlock` (== `gettxoutproof` output) for a single
- * matched tx, given the full ordered list of LE leaf hashes in the block.
+ * matched tx, given the full ordered list of LE leaf hashes in the block, and
+ * return its decomposed pieces + the ground-truth bit/hash consumption counts.
  *
  * Mirrors Bitcoin's CPartialMerkleTree::TraverseAndBuild.
  */
-function buildMerkleBlockHex(allLeavesLE: Buffer[], matchIndex: number): string {
+function buildMerkleBlock(allLeavesLE: Buffer[], matchIndex: number): BuiltMerkleBlock {
   const totalTx = allLeavesLE.length;
   const merkleRootLE = computeMerkleRootLE(allLeavesLE);
   const header = buildHeader(merkleRootLE);
@@ -127,32 +183,20 @@ function buildMerkleBlockHex(allLeavesLE: Buffer[], matchIndex: number): string 
     if (bits[i]) flagBytes[Math.floor(i / 8)] |= 1 << (i % 8);
   }
 
-  const writeVarInt = (n: number): Buffer => {
-    if (n < 0xfd) return Buffer.from([n]);
-    if (n <= 0xffff) {
-      const b = Buffer.alloc(3);
-      b[0] = 0xfd;
-      b.writeUInt16LE(n, 1);
-      return b;
-    }
-    const b = Buffer.alloc(5);
-    b[0] = 0xfe;
-    b.writeUInt32LE(n, 1);
-    return b;
-  };
-
-  const totalTxBuf = Buffer.alloc(4);
-  totalTxBuf.writeUInt32LE(totalTx, 0);
-
-  const parts: Buffer[] = [
+  return {
+    hex: assembleMerkleBlockHex({ header, totalTx, hashesLE, flagBytes }),
     header,
-    totalTxBuf,
-    writeVarInt(hashesLE.length),
-    ...hashesLE,
-    writeVarInt(flagBytes.length),
+    totalTx,
+    hashesLE,
     flagBytes,
-  ];
-  return Buffer.concat(parts).toString('hex');
+    bitCount: bits.length,
+    hashCount: hashesLE.length,
+  };
+}
+
+/** Hex-only convenience wrapper around {@link buildMerkleBlock}. */
+function buildMerkleBlockHex(allLeavesLE: Buffer[], matchIndex: number): string {
+  return buildMerkleBlock(allLeavesLE, matchIndex).hex;
 }
 
 /** Recompute a Merkle root from a display-hex branch (the parser's output). */
@@ -248,6 +292,104 @@ describe('parseTxOutProof', () => {
     const proofHex = buildMerkleBlockHex(leaves, 0);
     expect(parseTxOutProof(proofHex, 'notahash')).toBeNull();
   });
+
+  // ── S1.2b: flag-bit / hash FULL-consumption parity (PROOF-03 review) ──
+  // A well-formed gettxoutproof partial merkle tree consumes EXACTLY the bits
+  // the traversal walks and EXACTLY every carried hash. Leftover hashes, or a
+  // set flag bit beyond the consumed bits (padding must be zero), make the blob
+  // malformed/malicious and MUST be rejected.
+
+  it('rejects a proof carrying an extra (unconsumed) trailing hash', () => {
+    const built = buildMerkleBlock([makeTxidLE(3), makeTxidLE(4)], 0);
+    const target = displayHex(makeTxidLE(3));
+    // sanity: the untampered proof parses
+    expect(parseTxOutProof(built.hex, target)).not.toBeNull();
+
+    // Append one extra hash the traversal will never consume. The hash-count
+    // varint is rewritten by assemble, so the structure is otherwise valid.
+    const tampered = assembleMerkleBlockHex({
+      header: built.header,
+      totalTx: built.totalTx,
+      hashesLE: [...built.hashesLE, makeTxidLE(0xdead)],
+      flagBytes: built.flagBytes,
+    });
+    expect(parseTxOutProof(tampered, target)).toBeNull();
+  });
+
+  it('rejects a proof whose flag-bit padding has a set bit beyond consumed bits', () => {
+    const built = buildMerkleBlock([makeTxidLE(11), makeTxidLE(12), makeTxidLE(13)], 1);
+    const target = displayHex(makeTxidLE(12));
+    expect(parseTxOutProof(built.hex, target)).not.toBeNull();
+
+    // The traversal consumes `bitCount` bits; bits at indices [bitCount, 8*len)
+    // are zero padding within the final byte. Set the first padding bit — the
+    // tree shape is unchanged (the parser stops reading at bitCount), so ONLY
+    // the full-consumption check can catch this.
+    const lastByteBitCapacity = built.flagBytes.length * 8;
+    expect(built.bitCount).toBeLessThan(lastByteBitCapacity); // a padding bit exists
+    const paddingBit = built.bitCount; // first unused bit
+    const tamperedFlags = Buffer.from(built.flagBytes);
+    tamperedFlags[Math.floor(paddingBit / 8)] |= 1 << (paddingBit % 8);
+    expect(tamperedFlags.equals(built.flagBytes)).toBe(false); // we actually flipped a bit
+
+    const tampered = assembleMerkleBlockHex({
+      header: built.header,
+      totalTx: built.totalTx,
+      hashesLE: built.hashesLE,
+      flagBytes: tamperedFlags,
+    });
+    expect(parseTxOutProof(tampered, target)).toBeNull();
+  });
+
+  it('rejects a proof with a fully-zero extra trailing flag byte (byte-count parity)', () => {
+    // Bitcoin Core's own check: ceil(bitsUsed/8) must equal the flag-byte
+    // length. A trailing all-zero flag byte passes the padding-bit check but
+    // fails byte-count parity — still malformed.
+    const built = buildMerkleBlock([makeTxidLE(21), makeTxidLE(22)], 0);
+    const target = displayHex(makeTxidLE(21));
+    expect(parseTxOutProof(built.hex, target)).not.toBeNull();
+
+    const tampered = assembleMerkleBlockHex({
+      header: built.header,
+      totalTx: built.totalTx,
+      hashesLE: built.hashesLE,
+      flagBytes: Buffer.concat([built.flagBytes, Buffer.from([0x00])]),
+    });
+    expect(parseTxOutProof(tampered, target)).toBeNull();
+  });
+
+  it.each([0, 1, 2, 3, 4])(
+    'consumes EXACTLY the expected bit/hash counts for the 5-tx vector (match idx %i)',
+    (idx) => {
+      const leaves = [0, 1, 2, 3, 4].map((s) => makeTxidLE(s + 10));
+      const built = buildMerkleBlock(leaves, idx);
+      const target = displayHex(leaves[idx]);
+
+      // The proof parses only because consumption is exact: every carried hash
+      // is used and no flag-bit padding is set. These ground-truth counts come
+      // from the builder's own traversal.
+      expect(built.hashCount).toBe(built.hashesLE.length);
+      expect(Math.ceil(built.bitCount / 8)).toBe(built.flagBytes.length);
+
+      const parsed = parseTxOutProof(built.hex, target);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.txIndex).toBe(idx);
+
+      // Flip ANY consumed flag bit's padding companion → rejected, proving the
+      // parser enforces exact consumption against these very counts.
+      if (built.bitCount < built.flagBytes.length * 8) {
+        const flags = Buffer.from(built.flagBytes);
+        flags[Math.floor(built.bitCount / 8)] |= 1 << (built.bitCount % 8);
+        const tampered = assembleMerkleBlockHex({
+          header: built.header,
+          totalTx: built.totalTx,
+          hashesLE: built.hashesLE,
+          flagBytes: flags,
+        });
+        expect(parseTxOutProof(tampered, target)).toBeNull();
+      }
+    },
+  );
 });
 
 // ─── fetchConfirmationProof: confirmed ──────────────────────────────────────

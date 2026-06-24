@@ -286,8 +286,31 @@ export function parseTxOutProof(
 
   const root = traverse(treeHeight, 0);
   if (parseError || root == null || matchedIndex < 0 || matchedLeafHashLE == null) return null;
-  // All hashes and (nearly) all flag bits must be consumed for a valid proof.
+
+  // ── Full-consumption parity (S1.2b / PROOF-03 review hardening) ──
+  // A well-formed CPartialMerkleTree's traversal consumes EXACTLY the flag bits
+  // it walks (one per visited node) and EXACTLY every carried hash. Anything
+  // left over is malformed or malicious padding a verifier must reject — a
+  // proof MUST NOT carry "spare" hashes or set flag bits the tree never reached.
+  //
+  //   (1) HASH parity: every provided hash was consumed.
+  //   (2) FLAG-BYTE parity (Bitcoin Core's own rule): the bytes needed to hold
+  //       the consumed bits equal the serialized flag-byte length — i.e. no
+  //       extra trailing flag byte, even an all-zero one.
+  //   (3) PADDING-BIT zero (stricter than stock Core): every bit AFTER the last
+  //       consumed bit, within the final partial byte, is zero. A set padding
+  //       bit cannot change the recovered tree (the walk stops at `bitPos`), so
+  //       only this explicit check can reject a tampered/forged flag stream.
+  const bitsConsumed = bitPos;
+  // (1)
   if (hashPos !== hashes.length) return null;
+  // (2)
+  if (Math.ceil(bitsConsumed / 8) !== flagBytesLen) return null;
+  // (3)
+  for (let i = bitsConsumed; i < flagBytesLen * 8; i++) {
+    const byte = flagBytes.readUInt8(i >> 3);
+    if (((byte >> (i & 7)) & 1) !== 0) return null;
+  }
 
   // Verify the recomputed root matches the header's merkleroot (raw LE form).
   const headerMerkleRootLE = headerBuf.subarray(36, 68);
