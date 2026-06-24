@@ -339,7 +339,7 @@ function AnchorRecordGrid({ anchor, status, formatDate }: Readonly<AnchorRecordG
         <div className="space-y-1">
           <p className="text-xs text-muted-foreground">Category</p>
           <Badge variant="secondary" className="text-xs font-normal">
-            {categoryType !== '—' ? categoryType : 'General Record'}
+            {categoryType === '—' ? 'General Record' : categoryType}
           </Badge>
         </div>
 
