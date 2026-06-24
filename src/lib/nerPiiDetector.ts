@@ -70,7 +70,29 @@ export interface NERProgress {
 }
 
 // Model configuration
-const NER_MODEL_ID = 'Xenova/bert-base-NER';
+/**
+ * The self-hosted NER model repository id. Exported so the vendoring script
+ * (scripts/fetch-ner-model.ts) and the integrity lockfile (scripts/ner-weights.lock.json)
+ * load from the EXACT same repo the runtime loads from — no drift between
+ * build-time fetch and runtime path.
+ */
+export const NER_MODEL_ID = 'Xenova/bert-base-NER';
+
+/**
+ * Pinned model revision (a 40-char git commit SHA, NOT a floating `main`).
+ *
+ * §1.6 / SCRUM-2503: the on-device PII model is a privacy-critical artifact —
+ * its weights determine what counts as PII before anything leaves the browser.
+ * Pinning the revision (rather than tracking `main`) means a silent upstream
+ * re-publish can't change detection behavior, and the build-time integrity
+ * check (SHA-256 vs scripts/ner-weights.lock.json) stays meaningful. Bumping
+ * this is a deliberate, reviewed change that requires a re-soak.
+ *
+ * Kept in sync with `revision` in scripts/ner-weights.lock.json and
+ * MODEL_REVISION in scripts/fetch-ner-model.ts.
+ */
+export const NER_MODEL_REVISION = '24c7e5aba9ae350923357a6f0b92571be34037ec';
+
 const NER_CONFIDENCE_THRESHOLD = 0.7;
 const MAX_TEXT_LENGTH = 15_000; // Limit input to avoid OOM
 const TRANSFORMERS_BROWSER_MODULE = '/vendor/transformers.web.min.js';
@@ -233,7 +255,12 @@ async function getNERPipeline(
 
       const loaded = await pipeline('token-classification', NER_MODEL_ID, {
         device,
-        dtype: 'q8', // 8-bit quantized — ~130MB vs ~420MB fp32
+        dtype: 'q8', // 8-bit quantized — ~104MB vs ~420MB fp32
+        // Pin the revision (not floating `main`). With allowRemoteModels=false
+        // this never drives a network fetch, but it keeps the runtime contract
+        // identical to the build-time vendoring (scripts/ner-weights.lock.json)
+        // and stays correct if a future change ever re-enables remote loading.
+        revision: NER_MODEL_REVISION,
       });
 
       // FAIL LOUD: a self-hosted model that builds to nothing is not usable.
