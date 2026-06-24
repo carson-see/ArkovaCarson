@@ -266,6 +266,26 @@ describe('check-staging-evidence', () => {
     it('finds tier with unchecked checkbox prefix', () => {
       expect(extractDeclaredTier('- [ ] Tier: T1\n')).toBe('T1');
     });
+
+    it('finds tier with plain Tier: line', () => {
+      expect(extractDeclaredTier('Tier: T2\n')).toBe('T2');
+    });
+
+    it('finds tier wrapped in markdown bold (**Tier:** T2)', () => {
+      expect(extractDeclaredTier('**Tier:** T2\n')).toBe('T2');
+    });
+
+    it('finds tier with list marker + markdown bold (- **Tier:** T2)', () => {
+      expect(extractDeclaredTier('- **Tier:** T2\n')).toBe('T2');
+    });
+
+    it('finds tier with list marker + underscore emphasis (* _Tier_: T3)', () => {
+      expect(extractDeclaredTier('* _Tier_: T3\n')).toBe('T3');
+    });
+
+    it('returns null for a bold-decorated line with no tier declared', () => {
+      expect(extractDeclaredTier('- **Severity:** high\n')).toBeNull();
+    });
   });
 
   describe('hasEvidenceSection', () => {

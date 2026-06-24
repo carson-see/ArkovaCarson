@@ -364,21 +364,24 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
+// Tier declaration, tolerant of common markdown decoration on the line.
+// Accepts, anchored to the start of a (whitespace-trimmed) line:
+//   - an optional list marker (`-` / `*`) + optional `[x]`/`[ ]` checkbox,
+//   - optional markdown emphasis (`*`/`**`/`_`/`__`) wrapping the word `Tier`
+//     and/or its colon — covers `**Tier:**`, `*Tier*:`, `_Tier_:`, `**Tier**:`,
+//   - then `T0`–`T3`, optionally emphasis-wrapped, as a whole token.
+// The plain `Tier: T2` form keeps matching (every decoration group is optional).
+// This is label-parsing tolerance only: the captured value is still validated
+// against DECLARED_TIER_VALUES, so the set of accepted tiers is unchanged.
+const DECLARED_TIER_LINE_RE =
+  /^\s*(?:[-*]\s*)?(?:\[[ x]\]\s*)?(?:[*_]{1,2})?Tier(?:[*_]{1,2})?\s*:\s*(?:[*_]{1,2})?\s*(T[0-3])(?:[*_]{1,2})?(?!\w)/i;
+
 export function extractDeclaredTier(body: string): Tier | null {
   for (const line of body.split(/\r?\n/)) {
-    let candidate = line.trimStart();
-    if (candidate.startsWith('-') || candidate.startsWith('*')) {
-      candidate = candidate.slice(1).trimStart();
-    }
-    if (candidate.startsWith('[x]') || candidate.startsWith('[ ]')) {
-      candidate = candidate.slice(3).trimStart();
-    }
-    if (!candidate.startsWith('Tier:')) continue;
-
-    const rest = candidate.slice('Tier:'.length).trimStart();
-    const value = rest.slice(0, 2);
-    const next = rest[2];
-    if (DECLARED_TIER_VALUES.has(value as Tier) && (next === undefined || !/\w/.test(next))) {
+    const m = DECLARED_TIER_LINE_RE.exec(line);
+    if (!m) continue;
+    const value = m[1].toUpperCase();
+    if (DECLARED_TIER_VALUES.has(value as Tier)) {
       return value as Tier;
     }
   }
