@@ -35,7 +35,34 @@ vi.mock('./useAuth', () => ({
 
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { createQueryWrapper } from '@/tests/queryTestUtils';
-import { useEntitlements } from './useEntitlements';
+import {
+  useEntitlements,
+  isUnlimitedRecordsLimit,
+  UNLIMITED_RECORDS_SENTINEL,
+} from './useEntitlements';
+
+describe('isUnlimitedRecordsLimit (BUG-2026-06-24-010)', () => {
+  it('treats null as unlimited', () => {
+    expect(isUnlimitedRecordsLimit(null)).toBe(true);
+  });
+
+  it('treats the 999999 sentinel as unlimited', () => {
+    expect(UNLIMITED_RECORDS_SENTINEL).toBe(999999);
+    expect(isUnlimitedRecordsLimit(UNLIMITED_RECORDS_SENTINEL)).toBe(true);
+    expect(isUnlimitedRecordsLimit(999999)).toBe(true);
+  });
+
+  it('treats values above the sentinel as unlimited', () => {
+    expect(isUnlimitedRecordsLimit(1_000_000)).toBe(true);
+  });
+
+  it('treats finite limits below the sentinel as finite', () => {
+    expect(isUnlimitedRecordsLimit(0)).toBe(false);
+    expect(isUnlimitedRecordsLimit(3)).toBe(false);
+    expect(isUnlimitedRecordsLimit(250)).toBe(false);
+    expect(isUnlimitedRecordsLimit(999998)).toBe(false);
+  });
+});
 
 // Helper to set up mock chain for subscription + plan + count queries
 function setupMocks(opts: {
@@ -159,7 +186,12 @@ describe('useEntitlements', () => {
     expect(result.current.canCreateAnchor).toBe(true);
   });
 
-  it('should treat high-volume custom plans as finite configured limits', async () => {
+  // BUG-2026-06-24-010 — the `999999` records_per_month value (seed.sql:220,
+  // the "organization" plan) is the UNLIMITED sentinel, NOT a finite cap.
+  // Treating it as finite rendered "N / 999999" with a meter pinned near 0%
+  // instead of "Unlimited records". The hook now normalizes the sentinel so
+  // unlimited surfaces (recordsLimit === null) everywhere downstream.
+  it('maps the 999999 sentinel plan to unlimited (BUG-2026-06-24-010)', async () => {
     setupMocks({
       subscription: { plan_id: 'org', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
       plan: { records_per_month: 999999, name: 'Organization' },
@@ -170,10 +202,48 @@ describe('useEntitlements', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.recordsLimit).toBe(999999);
-    expect(result.current.remaining).toBe(999499);
-    expect(result.current.percentUsed).toBeLessThan(1);
+    // Sentinel normalized to null so every `recordsLimit === null` consumer
+    // (UsageWidget, UpgradePrompt, BillingOverview) renders the unlimited path.
+    expect(result.current.recordsLimit).toBeNull();
+    expect(result.current.remaining).toBeNull();
+    expect(result.current.percentUsed).toBeNull();
     expect(result.current.isNearLimit).toBe(false);
+    expect(result.current.canCreateAnchor).toBe(true);
+    // recordsUsed is still surfaced verbatim — only the limit is unlimited.
+    expect(result.current.recordsUsed).toBe(500);
+  });
+
+  it('treats limits at or above the sentinel as unlimited (BUG-2026-06-24-010)', async () => {
+    setupMocks({
+      subscription: { plan_id: 'org', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
+      plan: { records_per_month: 1_000_000, name: 'Custom Enterprise' },
+      count: 12,
+    });
+
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.recordsLimit).toBeNull();
+    expect(result.current.percentUsed).toBeNull();
+    expect(result.current.canCreateAnchor).toBe(true);
+  });
+
+  it('keeps finite limits just below the sentinel finite (BUG-2026-06-24-010)', async () => {
+    setupMocks({
+      subscription: { plan_id: 'big', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
+      plan: { records_per_month: 999998, name: 'Almost Unlimited' },
+      count: 1,
+    });
+
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // 999998 is below the sentinel — still a real, finite cap.
+    expect(result.current.recordsLimit).toBe(999998);
+    expect(result.current.remaining).toBe(999997);
+    expect(result.current.percentUsed).not.toBeNull();
     expect(result.current.canCreateAnchor).toBe(true);
   });
 
@@ -189,7 +259,7 @@ describe('useEntitlements', () => {
     expect(result.current.canCreateCount(3)).toBe(false);
   });
 
-  it('canCreateCount should support large custom allocations', async () => {
+  it('canCreateCount allows any count on the unlimited (sentinel) plan', async () => {
     setupMocks({
       subscription: { plan_id: 'org', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
       plan: { records_per_month: 999999, name: 'Organization' },
@@ -200,6 +270,8 @@ describe('useEntitlements', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
+    // Unlimited plan: remaining is null, but canCreateCount short-circuits true.
+    expect(result.current.remaining).toBeNull();
     expect(result.current.canCreateCount(1)).toBe(true);
     expect(result.current.canCreateCount(100000)).toBe(true);
   });
