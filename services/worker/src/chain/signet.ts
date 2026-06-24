@@ -30,7 +30,7 @@ import type {
   SubmitFingerprintRequest,
   VerificationResult,
 } from './types.js';
-import { RpcUtxoProvider, type UtxoProvider, type Utxo } from './utxo-provider.js';
+import { RpcUtxoProvider, type UtxoProvider, type Utxo, type RawTransaction } from './utxo-provider.js';
 import type { SigningProvider } from './signing-provider.js';
 import { WifSigningProvider } from './signing-provider.js';
 import type { FeeEstimator } from './fee-estimator.js';
@@ -93,6 +93,62 @@ export function hashMetadata(metadata: Record<string, unknown>): string {
  */
 export function truncateMetadataHash(fullHash: string): Buffer {
   return Buffer.from(fullHash, 'hex').subarray(0, METADATA_HASH_TRUNCATED_BYTES);
+}
+
+/**
+ * BUG-2026-06-24-004: Structurally decode an output scriptPubKey and return the
+ * Arkova-committed fingerprint, or null if the script is not a canonical Arkova
+ * anchor.
+ *
+ * A canonical anchor is exactly `OP_RETURN <buffer>` where the single pushed
+ * buffer begins with the 4-byte `ARKV` prefix immediately followed by the
+ * 32-byte SHA-256 fingerprint (an optional truncated metadata hash may trail it).
+ *
+ * This validates the COMMITTED payload at its canonical byte offset — it does NOT
+ * do a loose substring scan of the raw hex. A crafted OP_RETURN that merely
+ * contains the bytes `ARKV<fingerprint>` somewhere in its payload (e.g. behind a
+ * junk byte, or as multiple pushes) decompiles to a different structure and is
+ * correctly rejected.
+ *
+ * @param scriptPubKeyHex - Output scriptPubKey as hex
+ * @returns lowercase 64-char hex fingerprint, or null if not a canonical anchor
+ */
+export function extractAnchorFingerprint(scriptPubKeyHex: string): string | null {
+  let chunks: ReturnType<typeof bitcoin.script.decompile>;
+  try {
+    chunks = bitcoin.script.decompile(Buffer.from(scriptPubKeyHex, 'hex'));
+  } catch {
+    return null;
+  }
+
+  // Must be exactly [OP_RETURN, <data buffer>].
+  if (!chunks || chunks.length !== 2) return null;
+  if (chunks[0] !== bitcoin.opcodes.OP_RETURN) return null;
+
+  const payload = chunks[1];
+  // The second chunk must be a pushed data buffer (not a number/opcode).
+  if (!Buffer.isBuffer(payload)) return null;
+
+  // Need at least prefix (4) + fingerprint (32) = 36 bytes of committed data.
+  if (payload.length < OP_RETURN_PREFIX.length + 32) return null;
+
+  // Prefix must match at offset 0 (NOT anywhere in the buffer).
+  if (!payload.subarray(0, OP_RETURN_PREFIX.length).equals(OP_RETURN_PREFIX)) {
+    return null;
+  }
+
+  return payload
+    .subarray(OP_RETURN_PREFIX.length, OP_RETURN_PREFIX.length + 32)
+    .toString('hex');
+}
+
+/**
+ * BUG-2026-06-24-004: True iff `scriptPubKeyHex` is a canonical Arkova anchor
+ * committing exactly `fingerprint` (case-insensitive).
+ */
+function scriptCommitsFingerprint(scriptPubKeyHex: string, fingerprint: string): boolean {
+  const committed = extractAnchorFingerprint(scriptPubKeyHex);
+  return committed !== null && committed === fingerprint.toLowerCase();
 }
 
 // ─── Legacy Config (backward compat) ────────────────────────────────────
@@ -762,47 +818,66 @@ export class BitcoinChainClient implements ChainClient {
       }
     }
 
-    // ── Step 2: Fall back to O(n) UTXO scan ──
+    // ── Step 2: Fall back to a chain scan ──
+    //
+    // BUG-2026-06-24-004: two fixes vs the legacy implementation —
+    //   (1) Match each OP_RETURN STRUCTURALLY (decompile + canonical-offset
+    //       prefix/fingerprint check) instead of a loose `.includes()` substring
+    //       scan of the raw scriptPubKey hex.
+    //   (2) Scan the address TRANSACTION HISTORY (when the provider supports it)
+    //       rather than only `listUnspent` — an anchor's value-0 OP_RETURN output
+    //       and its change are spent by the next anchor, so historical anchors
+    //       never appear in the UTXO set and the unspent-only scan was a dead path.
     try {
-      const utxos = await this.provider.listUnspent(this.address);
-
-      for (const utxo of utxos) {
-        try {
-          const rawTx = await this.provider.getRawTransaction(utxo.txid);
-
-          for (const output of rawTx.vout) {
-            if (output.scriptPubKey.asm.startsWith('OP_RETURN')) {
-              const hexData = output.scriptPubKey.hex;
-              const expectedSuffix =
-                OP_RETURN_PREFIX.toString('hex') +
-                fingerprint.toLowerCase();
-
-              if (hexData.includes(expectedSuffix)) {
-                let blockHeight = 0;
-                if (rawTx.blockhash) {
-                  const header = await this.provider.getBlockHeader(
-                    rawTx.blockhash,
-                  );
-                  blockHeight = header.height;
-                }
-
-                return {
-                  verified: true,
-                  receipt: {
-                    receiptId: rawTx.txid,
-                    blockHeight,
-                    blockTimestamp: rawTx.blocktime
-                      ? new Date(rawTx.blocktime * 1000).toISOString()
-                      : new Date().toISOString(),
-                    confirmations: rawTx.confirmations ?? 0,
-                  },
-                };
-              }
-            }
+      // Build a verification result from a tx whose OP_RETURN commits this
+      // fingerprint, or null if none of its outputs match.
+      const matchInTx = async (
+        rawTx: RawTransaction,
+      ): Promise<VerificationResult | null> => {
+        for (const output of rawTx.vout) {
+          if (!scriptCommitsFingerprint(output.scriptPubKey.hex, fingerprint)) {
+            continue;
           }
-        } catch {
-          // Skip UTXOs whose parent tx can't be fetched
-          continue;
+          let blockHeight = 0;
+          if (rawTx.blockhash) {
+            const header = await this.provider.getBlockHeader(rawTx.blockhash);
+            blockHeight = header.height;
+          }
+          return {
+            verified: true,
+            receipt: {
+              receiptId: rawTx.txid,
+              blockHeight,
+              blockTimestamp: rawTx.blocktime
+                ? new Date(rawTx.blocktime * 1000).toISOString()
+                : new Date().toISOString(),
+              confirmations: rawTx.confirmations ?? 0,
+            },
+          };
+        }
+        return null;
+      };
+
+      // Preferred path: full address transaction history (finds spent anchors).
+      if (typeof this.provider.getAddressTxs === 'function') {
+        const history = await this.provider.getAddressTxs(this.address);
+        for (const rawTx of history) {
+          const match = await matchInTx(rawTx);
+          if (match) return match;
+        }
+      } else {
+        // Backward-compat path: providers without an address index (e.g. a bare
+        // Bitcoin Core RPC node) can still verify anchors that remain unspent.
+        const utxos = await this.provider.listUnspent(this.address);
+        for (const utxo of utxos) {
+          try {
+            const rawTx = await this.provider.getRawTransaction(utxo.txid);
+            const match = await matchInTx(rawTx);
+            if (match) return match;
+          } catch {
+            // Skip UTXOs whose parent tx can't be fetched
+            continue;
+          }
         }
       }
 
