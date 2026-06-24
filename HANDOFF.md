@@ -14,7 +14,7 @@
 
 ## Now
 
-### 2026-06-24 (Lane 2 RTE) — 0341 credit-integrity reconciliation: prod-proven, landing on `main` via PR #__RECONCILE_PR__ (§1.12 exception)
+### 2026-06-24 (Lane 2 RTE) — 0341 credit-integrity reconciliation: prod-proven, landing on `main` via PR #1290 (§1.12 exception)
 
 **0341 reconciliation — prod-proven (applied to prod, running healthy all sprint), landed on `main` via this PR under a Carson-approved §1.12 prod-proven residual-risk exception (2026-06-24); sequenced after #1255 (0340), before #1257/#1259/#1260 (0342/0343/0344).** `main` head was `0339`; prod (`vzwyaatejekddvltxyye`) ledger head is `0341` (rows 0340 + 0341 present), so `main` was missing 0340 (lands via Train-D #1255) + 0341 (this PR). This PR carries the **FIXED** version (HEAD `cc440bd2` "fix(0341): drop old amount>0 CHECK before sign-flip UPDATE (ERROR 23514)") — making `main` reflect already-applied prod state. **Confirmation, not discovery; no new prod change** (all prod queries read-only).
 
