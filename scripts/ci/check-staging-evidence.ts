@@ -382,21 +382,24 @@ function escapeRegExp(value: string): string {
 // {@link extractDeclaredTier}, so horizontal-only whitespace is exact, not a
 // behavior change — verified identical to the prior literal over a combinatorial
 // corpus.
+// `String.raw` only where the literal itself carries backslashes; the
+// backslash-free fragments use plain template literals (interpolated sub-parts
+// keep their own escaping). Same assembled source either way.
 const TIER_HSPACE = String.raw`[^\S\r\n]`;
-const TIER_EMPHASIS = String.raw`[*_]{1,2}`;
+const TIER_EMPHASIS = `[*_]{1,2}`;
 // Optional leading list bullet (`-`/`*`) then optional spaces.
-const TIER_LIST_PREFIX = String.raw`(?:[-*]${TIER_HSPACE}*)?`;
+const TIER_LIST_PREFIX = `(?:[-*]${TIER_HSPACE}*)?`;
 // Optional GitHub task checkbox (`[ ]`/`[x]`) then optional spaces.
 const TIER_CHECKBOX = String.raw`(?:\[[ x]\]${TIER_HSPACE}*)?`;
 // The literal label `Tier`, optionally emphasis-wrapped on either side.
-const TIER_LABEL = String.raw`(?:${TIER_EMPHASIS})?Tier(?:${TIER_EMPHASIS})?`;
+const TIER_LABEL = `(?:${TIER_EMPHASIS})?Tier(?:${TIER_EMPHASIS})?`;
 // Separator: optional spaces, colon, optional spaces, then an optional emphasis
 // run with its own trailing spaces — no two `\s*` flank the same optional group.
-const TIER_SEPARATOR = String.raw`${TIER_HSPACE}*:${TIER_HSPACE}*(?:${TIER_EMPHASIS}${TIER_HSPACE}*)?`;
+const TIER_SEPARATOR = `${TIER_HSPACE}*:${TIER_HSPACE}*(?:${TIER_EMPHASIS}${TIER_HSPACE}*)?`;
 // The tier token `T0`–`T3`, optional trailing emphasis, not followed by a word char.
 const TIER_VALUE_TOKEN = String.raw`(T[0-3])(?:${TIER_EMPHASIS})?(?!\w)`;
 const DECLARED_TIER_LINE_RE = new RegExp(
-  String.raw`^${TIER_HSPACE}*${TIER_LIST_PREFIX}${TIER_CHECKBOX}${TIER_LABEL}${TIER_SEPARATOR}${TIER_VALUE_TOKEN}`,
+  `^${TIER_HSPACE}*${TIER_LIST_PREFIX}${TIER_CHECKBOX}${TIER_LABEL}${TIER_SEPARATOR}${TIER_VALUE_TOKEN}`,
   'i',
 );
 
