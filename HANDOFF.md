@@ -14,6 +14,69 @@
 
 ## Now
 
+### 2026-06-24 (Lane 2 RTE) — 0341 credit-integrity reconciliation: prod-proven, landing on `main` via PR #1290 (§1.12 exception)
+
+**0341 reconciliation — prod-proven (applied to prod, running healthy all sprint), landed on `main` via this PR under a Carson-approved §1.12 prod-proven residual-risk exception (2026-06-24); sequenced after #1255 (0340), before #1257/#1259/#1260 (0342/0343/0344).** `main` head was `0339`; prod (`vzwyaatejekddvltxyye`) ledger head is `0341` (rows 0340 + 0341 present), so `main` was missing 0340 (lands via Train-D #1255) + 0341 (this PR). This PR carries the **FIXED** version (HEAD `cc440bd2` "fix(0341): drop old amount>0 CHECK before sign-flip UPDATE (ERROR 23514)") — making `main` reflect already-applied prod state. **Confirmation, not discovery; no new prod change** (all prod queries read-only).
+
+**Prod-proven facts (read-only MCP on `vzwyaatejekddvltxyye`, 2026-06-24):**
+- `list_migrations` + `schema_migrations` → ledger rows `0340` + `0341` present (both numeric `version`).
+- `org_credit_deductions_amount_signed_check` present with signed semantics: `CHECK ((amount <> 0) AND (entry_type<>'DEBIT' OR amount<0) AND (entry_type<>'REFUND' OR amount>0) AND (entry_type<>'GRANT' OR amount>0) AND (entry_type<>'REVOKE' OR amount<0))`; the old `org_credit_deductions_amount_check (amount>0)` is **gone** (`pg_constraint` count = 0).
+- `debit_and_enqueue_anchor(uuid,uuid,integer,text,anchor_status,anchor_status)` RPC present (`pg_proc` count = 1); append-only trigger `trg_org_credit_deductions_append_only` (BEFORE DELETE OR UPDATE → `reject_org_credit_deduction_mutation()`) present.
+
+**Clean-apply prod-mirror validation (§1.12 exception evidence):** throwaway Supabase project `arkova-val-0341` (ref `expjtjcpqfrcspljptpv`, us-east-2, org `byhkazrpmivhcsuqjtva`) — branch migrations applied schema-only (no worker), then the credit objects diffed vs prod read-only. See the PR Staging Soak Evidence block for the diff-empty proof + throwaway teardown. (No worker/Cloud Run; schema-only.)
+
+_Verified via: Supabase MCP `list_migrations` + `execute_sql` (read-only) on prod `vzwyaatejekddvltxyye` (ledger rows 0340/0341; signed CHECK def; old amount>0 CHECK count=0; `debit_and_enqueue_anchor` count=1; append-only trigger def); throwaway-rig apply + credit-object diff on `expjtjcpqfrcspljptpv`. Source bytes: `git show <fixed-branch>:supabase/migrations/0341_*.sql` (HEAD cc440bd2), md5 `861c323315249a3dc2c6900371bc516b`, 25007 B._
+
+### 2026-06-24 (Lane 1 SM/RTE) — WEBEXT producer fixed (4.2.0 skew) + staging-gate gap closed (#1289); SCRUM-2471 confirmed already in #1255; backfill→S3
+
+**WEBEXT-CSP #1253 (producer):** fixed the transformers.js vendored-bundle skew (4.1.0→**4.2.0**, now == npm dep == lockfile; + a version-assert test + a runtime version-skew guard) and scoped the §1.6 claims to producer-only (the fail-CLOSED consumer is Lane-2 **#1262**). Verified the Vercel preview serves the 4.2.0 lib bundle (431,652 B) + the integrity-locked 108 MB model **same-origin** under CSP. Base-refreshed onto main (head `e2b6a3c9`) → DIRTY + Policy-Lints cleared.
+
+**Staging-gate gap + fix (#1289 / WEBEXT-05):** #1253 (frontend §1.6 surface + build-wiring `scripts/`+`package.json`) fit neither the frontend-T2 fast-path (frontend-only files) nor the worker-evidence path (no worker) → unsatisfiable as-shaped. Fix = a **narrow, purely-additive** extension to `isFrontendOnlyChange` (root `package.json`/`package-lock.json`/`.gitignore` + top-level `fetch-*`/`vendor-*`/`*-weights.lock` build scripts; governance subtrees `scripts/{ci,staging,agent,…}` explicitly denied). **156 gate tests, 0 regressions / 3,323 files**, T0. PR [#1289](https://github.com/carson-see/ArkovaCarson/pull/1289) OPEN (CI settling → Mergify auto-merges T0). Diff verified safe (root-anchored regexes — `services/worker/package.json` can't match; denylist wins).
+
+**Merge ordering (enforced):** #1289 (gate) → #1253 (producer) → **#1262 (consumer)** — never #1262 before #1253 (a #1262-first merge = NER can't load under prod CSP → fail-closed → upload outage). After #1289 lands, #1253 base-refreshes onto it → frontend-T2 evidence → co-merge #1253-first with #1262.
+
+**SCRUM-2471 (persist customer-doc Merkle branch):** NOT missing / NOT a future-sprint gap — **already implemented in #1255** (`persistBatchAnchorProofs()`, all anchor paths). Jira ticket stale (unscheduled); the back-catalogue of ~2.97M existing anchors is **S3 PROOF-BACKCATALOG** (oldest anchors' leaf-order unrecoverable → re-anchor / cohort-trigger design call). #1281 backfill held → S3 (overlaps #1255's `proof-branch-backfill.ts`).
+
+**On the clock:** #1255 foundation soak → ~06-24 22:00Z; #1254 PROOF-03 → ~06-25 ~11:46Z. #1280 (S1.2b flag-bit consumption check) draft, folds into #1254 at its merge-prep.
+
+_Verified via: gh pr/api on #1289 (open, head `7618804`, Staging gate=success/T0, 156-test gate suite green) + #1253 (head `e2b6a3c9`, DIRTY+Policy-Lints cleared); `git diff 3c23fb96..e2b6a3c9` (WEBEXT files byte-identical); authenticated Vercel-preview curl (`/vendor/transformers.web.min.js` 200, 431,652 B, self-version 4.2.0; `/models/Xenova/bert-base-NER/onnx/model_quantized.onnx` 200, 108,952,255 B); `git show origin/feat/train-d-proof-foundation:services/worker/src/jobs/batch-anchor.ts` (persistBatchAnchorProofs / SCRUM-2471)._
+
+### 2026-06-24 (Lane 3) — PI-0 S1 connector materialization + CE honesty: code-complete, 3 PRs open, in-review (NOT merged, no prod change)
+
+Lane 3 (Credential Network & Intelligence) PI-0 Sprint 1 driven to **code-complete + in-PR** (refinement·planning·pre-mortem → parallel specialist build → /code-review·/debug·/deploy-checklist·/tla-precheck·release pre-mortem). **No prod/staging/schema/soak state changed; nothing merged by Claude.**
+
+**3 draft PRs (cut off `ef61d735`):** **#1283 DS-03** (T3, **stacked on #1259**/mig 0343) — server-side SHA-256 over fetched DocuSign bytes (fetch→hash→discard §1.6A) → durable idempotent `connector_artifact` via the 0343 `enqueue_connector_artifact` RPC, fail-closed, `source_timestamp` plumbed end-to-end; **#1284 DS-01/02** (T2) — verified+**not-suspended** connect gate + mutation-verified no-PII-leak; **#1285 CE-02/05** (T2/T1) — fail-closed fabricated-CTID guard + Secret-Manager smoke.
+
+**Green:** worker **6464** + frontend **3063** tests pass (only the pre-existing env-gated `zk-proof.test.ts` fails — needs `build:circuit`); `tsc --noEmit` 0, `eslint --max-warnings 0`, `lint:copy` clean. `/code-review` (adversarial) found 1 must-fix — worker/UI verified-org gate parity, a suspended-but-VERIFIED org could connect via direct `/oauth/start`; **fixed `6e686cf7`** + flagged the sub-org parent-approval *direction* for Carson. `/debug` confirmed DS-03 is exactly-once under concurrent duplicate delivery (0343 unique idx + ON CONFLICT + fail-closed). **0 machine files touched** → no TLA change (tla-precheck CLI has a pre-existing TS-6.0 incompat → tooling ticket).
+
+**Jira/docs:** 9 work-breakdown subtasks (SCRUM-2560..2568) under SCRUM-2361/2362/2363/2373/2376; ceremony page Confluence **88211458** (child of Lane-3 PI 85491717); Drive plan + Lane-3 S1 report in `ARKOVA PI-0-S1`; refinement/review/decision comments on the stories + epics 2329/2331.
+
+**PENDING (gated, not faked):** the **DS-03 T3 48h soak** (clean isolated rig + PR-image deploy = RTE/operator step — not started); **Carson T2/T3 merges** via Mergify on green + soak evidence. Connector→SECURED→Lane-1-proof E2E is **S3/S4** (OPS-02). Local `stripe` refreshed 22.1.1→**22.2.1** (lockfile pin) so local `tsc` is clean; CI unaffected (`npm ci`).
+
+_Last refreshed: 2026-06-24 by Claude (Lane-3 SM) — claims verified against: `gh pr` (#1283/#1284/#1285 open draft; #1259 = the 0343 base, open draft); local `vitest run` (worker 6464 / frontend 3063 pass) + `tsc --noEmit` (0) + `eslint`/`lint:copy`; Jira subtask creates SCRUM-2560..2568 + parent read-back; Confluence 88211458 + Drive create responses. No prod/staging/schema/soak state changed; no PR merged by Claude._
+
+### 2026-06-23 (Lane 1 SM) — PI-0 S1 stakeholder demo held; back-catalogue proof backfill APPROVED; demo prod-status reconciled
+
+**Stakeholder demo / sprint review (C-suite + business)** of all Lane-1 S1 work, run by the SM + 4 specialists with live evidence (live test runs, code diffs, 3× soak `/health`, live GetBlock RPC matrix). Record: Confluence [87719938](https://arkova.atlassian.net/wiki/spaces/A/pages/87719938) (child of S1 report 87293954) + Drive deck in `ARKOVA PI-0-S1` (the `[CORRECTED]` copy is canonical). Shown: #1251 provider-SPOF (merged), #1255 verify-by-math foundation (soaking), #1254 PROOF-03 (soaking), #1253 WEBEXT-CSP fail-closed (preview-gated), 0341 credit fix; DISC-03 retired via live curl-matrix.
+
+**Carson APPROVED the back-catalogue proof backfill** (~2.97M SECURED anchors) — the gate between "0340 machinery shipped" and "trigger enforced." Logged on epic SCRUM-2325. Scheduled, NOT run: remaining gates = #1255 code on main + backfill-job staging rehearsal, then flip the GUC trigger ON. The "0340 prod-applied" dependency is **already met**.
+
+**Demo prod-status reconciled (caught against main):** the demo was delivered on stale Lane-1 context framing 0340/0341 as "not in prod." Live prod query confirms BOTH already applied (per Lane-2 entry below): ledger head 0340/0341, `anchor_proofs` +5 cols, trigger present + GUC inert, `org_credit_deductions` append-only + 0 rows. The 0341 "row-count" caveat is RESOLVED (empty table → zero data risk). Confluence record + Drive deck corrected.
+
+_Verified via: live prod Supabase MCP `list_migrations` (head 0340,0341) + `execute_sql` on `vzwyaatejekddvltxyye` (anchor_proofs 5 new cols; trigger `trg_anchors_proof_complete_on_secured` present; GUC null/inert; `org_credit_deductions` 0 rows + 3 signed CHECKs + append-only trigger); 3× Cloud Run `/health` (3e3aa1d7 / a6635c32 / cc440bd2); live GetBlock getblockheader+gettxoutproof on mainnet block 955029; Confluence v2 page 87719938 + Drive [CORRECTED] doc; Jira SCRUM-2325 comment 16686._
+
+### 2026-06-23 (RTE ops) — #1250 deploy-gate fix → worker on latest; soak-rig teardown; prod Disk-IO budget fix (dashboard cron `*/2`→`*/15`)
+
+**Deploy gate unblocked + worker on latest.** #1250 (Trivy deploy-gate input fix `pkg-types`→`vuln-type` / `github-token`→`github-pat`, + behavior-identical SonarCloud maintainability refactor of `check-image-scan-gate.ts`, 15/15) **admin-merged by Carson** → deploy-worker run **28031108914** green, **Trivy scan PASS** (the step that blocked every worker deploy since 06-22). Prod worker now **rev `arkova-worker-00950-xev` @ 100% traffic**, `/health` git_sha `2a9d0526` (= #1250 merge commit), db/anchoring/kms ok. All worker deploys unblocked.
+
+**Soak-rig hygiene (§7).** Cross-referenced full Supabase + Cloud Run inventory vs PR states. Carson deleted 6 orphaned Supabase rigs (pr1146 / pr1147-resoak / pr1151 / pr1175 / csi04-resoak / s0e4-lane-b — all merged/closed PRs); I deleted the 4 orphaned Cloud Run soak workers still billing (pr1146 / pr1175 / pr1200 / s0e4-lane-b). **3 more orphaned rigs flagged:** `arkova-rig-pr1194/1200/1201` (#1194 closed, #1200/#1201 merged). KEEP = `arkova-staging` (standing) + `train-d-proof` (#1255) + `train-d-queue` (#1259 L2) + `s0e4-lane-a` (#1254) + `pr1260-0344` (#1260 L2) + prod. `cacti-technologies` = unidentified in-org project (Carson to ID).
+
+**Prod Disk-IO budget fix.** Prod `vzwyaatejekddvltxyye` (SMALL) was depleting its burst Disk-IO budget. Dominant consumer by far: `refresh_pipeline_dashboard_cache()` — **~26.7 TB cumulative disk reads** (≈59% of top-15 IO), 6 full-table aggregates over the 22GB `anchors` table per run. Cron job **35** fired it every 2 min (`*/2`), but each run takes **170–227s** and ran **back-to-back continuously** (~85% duty cycle, 24/7). **Carson-approved, DBA-careful change: `cron.alter_job(35, schedule => '*/15 * * * *')`** (schedule-only — command, function, and job 2 `vacuum-anchors` all untouched). New duty cycle ~20% with 12 quiet min/15 for the burst budget to refill (~80% read cut, ~543→~72 GB/day). **Rollback:** `cron.alter_job(35, schedule => '*/2 * * * *')`.
+
+**Follow-up (T3, AFTER the current soak window — not filed mid-soak):** the 6 dashboard sub-aggregates seq-scan `anchors`; runs brush/exceed the 110–120s `statement_timeout`, and the function's per-block `EXCEPTION WHEN OTHERS` **swallows sub-aggregate timeouts → reports "succeeded" while the cache may be partially stale**. Covering/partial indexes or an incremental rollup (same hotspot family as #1257) fixes both the per-run cost and the silent-timeout risk. File once #1255/#1254/#1259/#1260 soaks close.
+
+_Verified via: deploy run 28031108914 success (`gh run view`) + prod `/health` git_sha `2a9d05264f45…` + Cloud Run `arkova-worker-00950-xev` 100% traffic (`gcloud run services describe`); `gcloud run services delete` ×4 + Supabase MCP `list_projects` (6 rigs gone, 3 `rig-pr*` remain); Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` — `cron.job` 35 schedule `*/2`→`*/15` (command/active unchanged), job 2 untouched, `pg_stat_statements` top-IO, `cron.job_run_details` durations 170–227s. No code/schema/migration changed; the cron edit is operational config (Carson-approved)._
+
 ### 2026-06-23 (Lane 2) — Train-D foundations 0340 + 0341 APPLIED to prod + ledger reconciled numeric
 
 Lane 2 (Product & Growth) Sprint-1 ceremonies run (refinement · planning · pre-mortem) → Confluence page 87392262. **Carson-approved prod-apply** of the held Train-D foundation migrations to prod `vzwyaatejekddvltxyye` via Supabase MCP `apply_migration`, in strict prefix order **0340 → 0341**:
@@ -295,4 +358,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-23 by Claude (carson@arkova.io) — claims verified against Supabase MCP `execute_sql` output on prod `vzwyaatejekddvltxyye` (0340/0341 column/constraint/trigger/function presence + numeric ledger versions 0340/0341, captured this session). Prior 2026-06-21 footer (PR #1242 byte-identity) remains in git history._
+_Last refreshed: 2026-06-24 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output: Supabase MCP execute-sql + list-migrations (read-only) on prod vzwyaatejekddvltxyye (ledger rows 0340/0341; signed amount CHECK; debit+enqueue RPC pg-proc count=1; append-only trigger); clean-apply credit-schema diff on throwaway expjtjcpqfrcspljptpv. Prior footers remain in git history._
