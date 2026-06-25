@@ -10,6 +10,7 @@ import {
   extractAndPersistProfessionalEducationMetadata,
   normalizeCleMetadata,
   normalizeCpeMetadata,
+  resolveCpeNasbaStatus,
 } from './professional-education.js';
 import type { IAIProvider } from '../ai/types.js';
 import type { ExtractedFields } from '../ai/types.js';
@@ -222,6 +223,156 @@ describe('professional education metadata schemas', () => {
   });
 });
 
+describe('CPE NASBA status is registry-authoritative (fail-closed)', () => {
+  describe('resolveCpeNasbaStatus()', () => {
+    it('passes when the registry confirms the provider — even if the model said nothing', () => {
+      const resolved = resolveCpeNasbaStatus({
+        modelAsserted: null,
+        registry: { outcome: 'found', nasbaStatus: 'confirmed' },
+      });
+      expect(resolved.nasba_status).toBe('confirmed');
+      expect(resolved.forced_review).toBe(false);
+    });
+
+    it('NEVER trusts a model self-assertion of "confirmed" when the registry is absent / says no', () => {
+      // The model hallucinated "NASBA confirmed" but the registry has no such
+      // provider. The authoritative answer is the registry's, and this must be
+      // flagged for review — a self-assertion alone cannot satisfy the allowlist.
+      const resolved = resolveCpeNasbaStatus({
+        modelAsserted: 'confirmed',
+        registry: { outcome: 'not_found' },
+      });
+      expect(resolved.nasba_status).not.toBe('confirmed');
+      expect(resolved.nasba_status).toBe('not_found');
+      expect(resolved.forced_review).toBe(true);
+    });
+
+    it('flags model-only assertion when there is no registry hit (registry is silent)', () => {
+      const resolved = resolveCpeNasbaStatus({
+        modelAsserted: 'confirmed',
+        registry: { outcome: 'not_found' },
+      });
+      expect(resolved.nasba_status).not.toBe('confirmed');
+      expect(resolved.forced_review).toBe(true);
+    });
+
+    it('degrades to needs-review (NOT auto-pass, NOT hard-reject) when the registry is unreachable', () => {
+      const resolved = resolveCpeNasbaStatus({
+        modelAsserted: 'confirmed',
+        registry: { outcome: 'unreachable' },
+      });
+      // Not auto-passed: a flaky registry must never yield "confirmed".
+      expect(resolved.nasba_status).not.toBe('confirmed');
+      // Not hard-rejected: an honest "not_found" verdict would wrongly punish a
+      // legitimate credential for a transient registry outage. Degraded instead.
+      expect(resolved.nasba_status).not.toBe('not_found');
+      expect(resolved.nasba_status).toBe('unknown');
+      // But it IS forced into manual review so a human resolves it.
+      expect(resolved.forced_review).toBe(true);
+    });
+
+    it('does not invent "confirmed" out of an unknown registry verdict', () => {
+      const resolved = resolveCpeNasbaStatus({
+        modelAsserted: 'confirmed',
+        registry: { outcome: 'found', nasbaStatus: 'unknown' },
+      });
+      expect(resolved.nasba_status).toBe('unknown');
+      expect(resolved.forced_review).toBe(true);
+    });
+  });
+
+  describe('end-to-end through extractAndPersistProfessionalEducationMetadata', () => {
+    it('AC1: registry-confirmed credential passes', async () => {
+      const db = makeProfessionalEducationDb({ cpeRegistry: 'confirmed' });
+      const provider = makeProvider({
+        credit_hours: 8,
+        field_of_study: 'Taxes',
+        delivery_method: 'QAS Self-Study',
+        extraction_confidence: 0.92,
+        requires_manual_review: false,
+      });
+
+      const result = await extractAndPersistProfessionalEducationMetadata({
+        db,
+        provider,
+        anchor: makeAnchor('CPE', {
+          source_url: 'https://udemy.com/certificate/UC-123',
+          credential_title: 'Advanced Tax Planning',
+          credential_issuer: 'Udemy',
+        }),
+        educationKind: 'CPE',
+      });
+
+      expect(result.metadata).toMatchObject({ nasba_status: 'confirmed' });
+      expect(result.requiresManualReview).toBe(false);
+    });
+
+    it('AC2: a model-only "confirmed" with no registry match is flagged, not passed', async () => {
+      const db = makeProfessionalEducationDb({ cpeRegistry: 'not_found' });
+      // Model hallucinates a NASBA confirmation the registry does not back.
+      const provider = makeProvider({
+        credit_hours: 8,
+        field_of_study: 'Taxes',
+        delivery_method: 'QAS Self-Study',
+        nasba_status: 'confirmed',
+        extraction_confidence: 0.99,
+        requires_manual_review: false,
+      });
+
+      const result = await extractAndPersistProfessionalEducationMetadata({
+        db,
+        provider,
+        anchor: makeAnchor('CPE', {
+          source_url: 'https://totally-fake-cpe.example/cert/1',
+          credential_title: 'Bogus Tax CPE',
+          credential_issuer: 'Definitely Not Registered LLC',
+        }),
+        educationKind: 'CPE',
+      });
+
+      expect((result.metadata as { nasba_status?: string }).nasba_status).not.toBe('confirmed');
+      expect(result.requiresManualReview).toBe(true);
+      expect(db.anchorUpdates[0]).toMatchObject({
+        cpe_metadata: expect.objectContaining({ requires_manual_review: true }),
+      });
+      expect((db.anchorUpdates[0] as { cpe_metadata: { nasba_status?: string } }).cpe_metadata.nasba_status)
+        .not.toBe('confirmed');
+    });
+
+    it('AC3: an unreachable registry degrades to needs-review (neither auto-pass nor hard-fail)', async () => {
+      const db = makeProfessionalEducationDb({ cpeRegistry: 'unreachable' });
+      const provider = makeProvider({
+        credit_hours: 8,
+        field_of_study: 'Taxes',
+        delivery_method: 'QAS Self-Study',
+        nasba_status: 'confirmed',
+        extraction_confidence: 0.95,
+        requires_manual_review: false,
+      });
+
+      const result = await extractAndPersistProfessionalEducationMetadata({
+        db,
+        provider,
+        anchor: makeAnchor('CPE', {
+          source_url: 'https://udemy.com/certificate/UC-123',
+          credential_title: 'Advanced Tax Planning',
+          credential_issuer: 'Udemy',
+        }),
+        educationKind: 'CPE',
+      });
+
+      const status = (result.metadata as { nasba_status?: string }).nasba_status;
+      // Not auto-passed.
+      expect(status).not.toBe('confirmed');
+      // Not hard-rejected as a definitive "not_found".
+      expect(status).not.toBe('not_found');
+      expect(status).toBe('unknown');
+      // Forced into manual review so a human resolves it.
+      expect(result.requiresManualReview).toBe(true);
+    });
+  });
+});
+
 function makeAnchor(credentialType: 'CPE' | 'CLE', metadata: Record<string, unknown>) {
   return {
     id: '550e8400-e29b-41d4-a716-446655440000',
@@ -249,7 +400,17 @@ function makeProvider(fields: Record<string, unknown>, error?: Error): Pick<IAIP
   };
 }
 
-function makeProfessionalEducationDb() {
+/**
+ * Registry behavior knob for the CPE provider lookup, so tests can drive the
+ * three distinct outcomes the resolver must separate:
+ *   - 'confirmed' : registry has the provider with nasba_status='confirmed'
+ *   - 'not_found' : registry has no matching row (provider genuinely absent)
+ *   - 'unreachable': the registry query errors / throws (flaky DB, not a verdict)
+ */
+type CpeRegistryBehavior = 'confirmed' | 'not_found' | 'unreachable';
+
+function makeProfessionalEducationDb(options?: { cpeRegistry?: CpeRegistryBehavior }) {
+  const cpeRegistry = options?.cpeRegistry ?? 'confirmed';
   const anchorUpdates: Record<string, unknown>[] = [];
   const auditEvents: Record<string, unknown>[] = [];
   const providers = {
@@ -283,6 +444,17 @@ function makeProfessionalEducationDb() {
             eq(column: string, value: unknown) {
               return {
                 async maybeSingle() {
+                  if (table === 'cpe_provider_registry') {
+                    // Simulate a flaky/unreachable registry: the query rejects.
+                    // This must NOT be read as "provider not found".
+                    if (cpeRegistry === 'unreachable') {
+                      throw new Error('registry connection reset');
+                    }
+                    // Simulate "provider genuinely absent": no row matches.
+                    if (cpeRegistry === 'not_found') {
+                      return { data: null, error: null };
+                    }
+                  }
                   const rows = table === 'cpe_provider_registry'
                     ? providers.cpe_provider_registry
                     : providers.cle_provider_registry;
