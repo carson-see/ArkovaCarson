@@ -586,6 +586,8 @@ export const API_KEY_LABELS = {
   DELETE_KEY: 'Delete',
   CONFIRM_REVOKE: 'Are you sure you want to revoke this key? It will immediately stop working.',
   CONFIRM_DELETE: 'Are you sure you want to permanently delete this key? This cannot be undone.',
+  REVOKE_FAILED: 'Failed to revoke key. It is still active — please try again.',
+  DELETE_FAILED: 'Failed to delete key. Please try again.',
   NO_KEYS: 'No API keys yet. Create one to get started with the Verification API.',
   ACTIVE: 'Active',
   REVOKED: 'Revoked',
