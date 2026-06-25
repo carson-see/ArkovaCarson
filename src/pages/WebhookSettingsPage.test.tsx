@@ -10,10 +10,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { WebhookSettingsPage } from './WebhookSettingsPage';
+import { WEBHOOK_LABELS } from '@/lib/copy';
 
 // =========================================================================
 // Mocks
@@ -251,31 +252,38 @@ describe('WebhookSettingsPage', () => {
   // =========================================================================
 
   describe('delete endpoint via RPC', () => {
-    it('calls delete_webhook_endpoint RPC', async () => {
-      renderPage();
+    // BUG-D: the Trash button now opens a confirm dialog; the RPC fires only
+    // after the user confirms (mirrors RevokeDialog). A single click must NOT
+    // call the delete RPC.
+    it('calls delete_webhook_endpoint RPC after confirming the dialog', async () => {
+      const { container } = renderPage();
 
       await waitFor(() => {
         expect(screen.getByText('https://example.com/webhooks')).toBeInTheDocument();
       });
 
-      // Find and click the delete button (Trash2 icon button)
-      const { container } = renderPage();
-      await waitFor(() => {
-        expect(screen.getAllByText('https://example.com/webhooks').length).toBeGreaterThanOrEqual(1);
-      });
-
+      // Click the row's Trash (delete) button.
       const deleteIcons = container.querySelectorAll('.text-destructive');
       const deleteBtn = deleteIcons[0]?.closest('button');
+      expect(deleteBtn).toBeTruthy();
+      await userEvent.click(deleteBtn as HTMLButtonElement);
 
-      if (deleteBtn) {
-        await userEvent.click(deleteBtn);
+      // No RPC yet — the confirm dialog is open.
+      expect(mockRpc).not.toHaveBeenCalledWith('delete_webhook_endpoint', {
+        p_endpoint_id: 'ep-1',
+      });
 
-        await waitFor(() => {
-          expect(mockRpc).toHaveBeenCalledWith('delete_webhook_endpoint', {
-            p_endpoint_id: 'ep-1',
-          });
+      // Confirm, then the RPC fires.
+      const dialog = await screen.findByRole('alertdialog');
+      await userEvent.click(
+        within(dialog).getByRole('button', { name: WEBHOOK_LABELS.DELETE_CONFIRM_ACTION }),
+      );
+
+      await waitFor(() => {
+        expect(mockRpc).toHaveBeenCalledWith('delete_webhook_endpoint', {
+          p_endpoint_id: 'ep-1',
         });
-      }
+      });
     });
   });
 

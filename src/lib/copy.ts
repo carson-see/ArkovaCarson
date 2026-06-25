@@ -471,6 +471,12 @@ export const RECORDS_LIST_LABELS = {
   // Replaces "Block Height" — the banned-term version sat next to
   // NETWORK_RECEIPT / "Network Observed Time"; this keeps the trio coherent.
   NETWORK_CHECKPOINT: 'Network Checkpoint',
+  // Network-observed-time honesty (BUG-2026-06-24-008, §1.5): the network has
+  // only "observed" a record once it is SECURED. For unconfirmed records the
+  // field falls back to CREATED_TIME (the local creation/upload time) under an
+  // honest label — never the local time under the network label.
+  NETWORK_OBSERVED_TIME: 'Network Observed Time',
+  CREATED_TIME: 'Record Created',
 } as const;
 
 // =============================================================================
@@ -528,6 +534,10 @@ export const BILLING_LABELS = {
   CHECKOUT_SUCCESS_DESC: 'Your subscription has been successfully set up. You can now access all features included in your plan.',
   LOADING_SUBSCRIPTION: 'Setting up your subscription...',
   YOUR_PLAN: 'Your Plan',
+  // BUG-C (BUG-2026-06-24-009 class): unlimited plans encode their monthly limit
+  // as the sentinel 999999 (seed.sql:220). The checkout-success screen renders
+  // this label via isUnlimitedRecordsLimit() instead of the raw sentinel.
+  RECORDS_UNLIMITED: 'Unlimited records',
   GO_TO_DASHBOARD: 'Go to Dashboard',
   VIEW_BILLING: 'View Billing Details',
   CHECKOUT_CANCEL_TITLE: 'Checkout Cancelled',
@@ -538,6 +548,22 @@ export const BILLING_LABELS = {
   CURRENT_PLAN_BADGE: 'Current Plan',
   DOWNGRADE_NOTE: 'Changes take effect at the end of your current billing period.',
   CANCELLATION_SCHEDULED: 'Your subscription is set to cancel at the end of the current period.',
+} as const;
+
+// =============================================================================
+// WEBHOOKS
+// =============================================================================
+
+export const WEBHOOK_LABELS = {
+  // BUG-D: deleting an endpoint is destructive — it silently stops the event
+  // feed. The confirm dialog (mirrors RevokeDialog / ApiKeySettings) names the
+  // endpoint and warns that notifications stop. `{url}` is interpolated by the
+  // component. §1.3-clean (no banned terms).
+  DELETE_CONFIRM_TITLE: 'Delete webhook endpoint?',
+  DELETE_CONFIRM_DESC:
+    'Event notifications to {url} will stop and this endpoint will be removed. This cannot be undone.',
+  DELETE_CONFIRM_ACTION: 'Delete endpoint',
+  DELETE_CONFIRM_CANCEL: 'Cancel',
 } as const;
 
 // =============================================================================

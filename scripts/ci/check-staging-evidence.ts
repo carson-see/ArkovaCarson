@@ -364,21 +364,51 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
+// Tier declaration, tolerant of common markdown decoration on the line.
+// Accepts, anchored to the start of a (whitespace-trimmed) line:
+//   - an optional list marker (`-` / `*`) + optional `[x]`/`[ ]` checkbox,
+//   - optional markdown emphasis (`*`/`**`/`_`/`__`) wrapping the word `Tier`
+//     and/or its colon — covers `**Tier:**`, `*Tier*:`, `_Tier_:`, `**Tier**:`,
+//   - then `T0`–`T3`, optionally emphasis-wrapped, as a whole token.
+// The plain `Tier: T2` form keeps matching (every decoration group is optional).
+// This is label-parsing tolerance only: the captured value is still validated
+// against DECLARED_TIER_VALUES, so the set of accepted tiers is unchanged.
+//
+// Composed from named sub-parts rather than one dense literal: it keeps each
+// fragment readable and below the per-regex cognitive-complexity bound, and it
+// removes the backtracking ambiguity of adjacent `\s*` groups flanking optional
+// emphasis (the old `\s*:\s*(?:[*_]{1,2})?\s*` shape) by using single horizontal-
+// whitespace runs (`HSPACE`). Lines are pre-split on `\r?\n` by
+// {@link extractDeclaredTier}, so horizontal-only whitespace is exact, not a
+// behavior change — verified identical to the prior literal over a combinatorial
+// corpus.
+// `String.raw` only where the literal itself carries backslashes; the
+// backslash-free fragments use plain template literals (interpolated sub-parts
+// keep their own escaping). Same assembled source either way.
+const TIER_HSPACE = String.raw`[^\S\r\n]`;
+const TIER_EMPHASIS = `[*_]{1,2}`;
+// Optional leading list bullet (`-`/`*`) then optional spaces.
+const TIER_LIST_PREFIX = `(?:[-*]${TIER_HSPACE}*)?`;
+// Optional GitHub task checkbox (`[ ]`/`[x]`) then optional spaces.
+const TIER_CHECKBOX = String.raw`(?:\[[ x]\]${TIER_HSPACE}*)?`;
+// The literal label `Tier`, optionally emphasis-wrapped on either side.
+const TIER_LABEL = `(?:${TIER_EMPHASIS})?Tier(?:${TIER_EMPHASIS})?`;
+// Separator: optional spaces, colon, optional spaces, then an optional emphasis
+// run with its own trailing spaces — no two `\s*` flank the same optional group.
+const TIER_SEPARATOR = `${TIER_HSPACE}*:${TIER_HSPACE}*(?:${TIER_EMPHASIS}${TIER_HSPACE}*)?`;
+// The tier token `T0`–`T3`, optional trailing emphasis, not followed by a word char.
+const TIER_VALUE_TOKEN = String.raw`(T[0-3])(?:${TIER_EMPHASIS})?(?!\w)`;
+const DECLARED_TIER_LINE_RE = new RegExp(
+  `^${TIER_HSPACE}*${TIER_LIST_PREFIX}${TIER_CHECKBOX}${TIER_LABEL}${TIER_SEPARATOR}${TIER_VALUE_TOKEN}`,
+  'i',
+);
+
 export function extractDeclaredTier(body: string): Tier | null {
   for (const line of body.split(/\r?\n/)) {
-    let candidate = line.trimStart();
-    if (candidate.startsWith('-') || candidate.startsWith('*')) {
-      candidate = candidate.slice(1).trimStart();
-    }
-    if (candidate.startsWith('[x]') || candidate.startsWith('[ ]')) {
-      candidate = candidate.slice(3).trimStart();
-    }
-    if (!candidate.startsWith('Tier:')) continue;
-
-    const rest = candidate.slice('Tier:'.length).trimStart();
-    const value = rest.slice(0, 2);
-    const next = rest[2];
-    if (DECLARED_TIER_VALUES.has(value as Tier) && (next === undefined || !/\w/.test(next))) {
+    const m = DECLARED_TIER_LINE_RE.exec(line);
+    if (!m) continue;
+    const value = m[1].toUpperCase();
+    if (DECLARED_TIER_VALUES.has(value as Tier)) {
       return value as Tier;
     }
   }
