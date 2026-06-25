@@ -100,6 +100,16 @@ const ConfigSchema = z.object({
   /** Gates real Bitcoin chain calls (Constitution 1.9) */
   enableProdNetworkAnchoring: boolFlag(false),
   /**
+   * PROOF-03 (SCRUM-2336): gate the confirmation-proof backfill cron — a
+   * separate, bounded pass that fetches the 80-byte block header + Merkle
+   * inclusion path for already-SECURED anchors and populates
+   * `anchor_proofs.block_header`/`block_hash`. Default OFF: ships inert,
+   * enabled per-environment for the soak + a deliberate prod rollout.
+   * Independent of (and additional to) `enableProdNetworkAnchoring`, which
+   * must also be on for a real (non-mock) inclusion-proof provider.
+   */
+  enableConfirmationProofBackfill: boolFlag(false),
+  /**
    * SCRUM-1170-B — gate org-level credit enforcement on anchor submit.
    * Default false: existing per-user credit path runs unchanged. Flip to true
    * per-tenant via Confluence carve-out (e.g. HakiChain) once an org is seeded
@@ -595,6 +605,7 @@ function loadConfig(): Config {
     sentryDsn: process.env.SENTRY_DSN,
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
+    enableConfirmationProofBackfill: process.env.ENABLE_CONFIRMATION_PROOF_BACKFILL,
     enableOrgCreditEnforcement: process.env.ENABLE_ORG_CREDIT_ENFORCEMENT,
     disableInProcessAnchorCron: process.env.DISABLE_IN_PROCESS_ANCHOR_CRON,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
