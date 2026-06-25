@@ -54,6 +54,13 @@ function workflow(scanStep: string, opts: { bypass?: boolean } = {}): string {
 // Mirrors the real deploy-worker.yml shape: a named step with `uses:` on its
 // own line (not on the bullet) and the gate config under `with:`. Includes the
 // break-glass `if:` guard so a manual dispatch can skip ONLY the scan step.
+//
+// Uses the SUPPORTED action inputs at the pinned SHA: `vuln-type` (NOT
+// `pkg-types`) and `github-pat` (NOT `github-token`). The pinned
+// `aquasecurity/trivy-action@ed142fd…` does not define `pkg-types`/`github-token`
+// — passing them is a hard "Unexpected input(s)" failure that silently fell
+// back to the default `vuln-type: os,library` (library CVEs in sonatype's lane),
+// exit-code 1, blocking every prod deploy. See hotfix/trivy-vuln-type-input.
 const VALID_TRIVY_STEP = [
   '      - name: Scan image for base-image CVEs (Trivy)',
   "        if: github.event.inputs.bypass_image_scan != 'true'",
@@ -66,10 +73,10 @@ const VALID_TRIVY_STEP = [
   '          image-ref: ${{ steps.build.outputs.image }}',
   '          format: table',
   '          cache: true',
-  '          github-token: ${{ secrets.GITHUB_TOKEN }}',
+  '          github-pat: ${{ secrets.GITHUB_TOKEN }}',
   "          exit-code: '1'",
   '          ignore-unfixed: true',
-  '          pkg-types: os',
+  '          vuln-type: os',
   '          severity: HIGH,CRITICAL',
 ].join('\n');
 
@@ -148,32 +155,44 @@ describe('check-image-scan-gate — auditImageScanGate', () => {
     expect(result.errors.some((e) => /AFTER the deploy/.test(e))).toBe(true);
   });
 
-  // --- NEW: package-type scope is present and correct (LOW finding #3) ---
+  // --- package-type scope is present and uses the SUPPORTED action input ---
+  //
+  // The pinned `aquasecurity/trivy-action@ed142fd…` defines `vuln-type`, NOT
+  // `pkg-types` (the rename is only a placeholder in its action.yaml, not yet shipped).
+  // A workflow passing `pkg-types` triggers an "Unexpected input(s)" failure and
+  // the action falls back to scanning `os,library` → library CVEs gate the
+  // deploy. The guard must REQUIRE `vuln-type: os` and REJECT a `pkg-types`-only
+  // config so this exact deploy-blocking bug can't recur (hotfix incident
+  // 2026-06-22, failed run 27969852143).
 
-  it('passes when the OS package-type scope uses the current `pkg-types` key', () => {
-    // VALID_TRIVY_STEP already uses `pkg-types: os`.
+  it('passes when the OS package-type scope uses the supported `vuln-type` key', () => {
+    // VALID_TRIVY_STEP uses `vuln-type: os` (the supported input at the pin).
     const result = auditImageScanGate(workflow(VALID_TRIVY_STEP));
     expect(result.errors).toEqual([]);
     expect(result.ok).toBe(true);
   });
 
-  it('still accepts the deprecated `vuln-type: os` key for back-compat', () => {
-    const deprecated = VALID_TRIVY_STEP.replace('pkg-types: os', 'vuln-type: os');
-    const result = auditImageScanGate(workflow(deprecated));
-    expect(result.ok).toBe(true);
+  it('fails a `pkg-types`-only config — it is not a valid input at the pinned SHA', () => {
+    // Regression guard for the 2026-06-22 deploy block: `pkg-types` is rejected
+    // by the action ("Unexpected input(s)"), so a config that uses ONLY
+    // `pkg-types` (and not the supported `vuln-type`) must FAIL the gate.
+    const pkgTypesOnly = VALID_TRIVY_STEP.replace('vuln-type: os', 'pkg-types: os');
+    const result = auditImageScanGate(workflow(pkgTypesOnly));
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => /package-type/i.test(e))).toBe(true);
   });
 
   it('fails when the OS package-type scope key is missing entirely', () => {
     // A future action-version rename that drops the key must not silently
     // disable OS scanning — the gate must catch the absence.
-    const noPkgTypes = VALID_TRIVY_STEP.replace('          pkg-types: os\n', '');
-    const result = auditImageScanGate(workflow(noPkgTypes));
+    const noVulnType = VALID_TRIVY_STEP.replace('          vuln-type: os\n', '');
+    const result = auditImageScanGate(workflow(noVulnType));
     expect(result.ok).toBe(false);
     expect(result.errors.some((e) => /package-type/i.test(e))).toBe(true);
   });
 
   it('fails when the package-type scope is set to something other than os', () => {
-    const wrongScope = VALID_TRIVY_STEP.replace('pkg-types: os', 'pkg-types: library');
+    const wrongScope = VALID_TRIVY_STEP.replace('vuln-type: os', 'vuln-type: library');
     const result = auditImageScanGate(workflow(wrongScope));
     expect(result.ok).toBe(false);
     expect(result.errors.some((e) => /package-type/i.test(e))).toBe(true);
