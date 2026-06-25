@@ -1395,6 +1395,11 @@ export const CONNECTIONS_LABELS = {
   MEMBER_DOCUSIGN_DESC: 'Connect your personal DocuSign account for member-level signing',
   MEMBER_TOAST_CONNECTED: 'DocuSign connected.',
   MEMBER_TOAST_DISCONNECTED: 'Personal DocuSign disconnected.',
+  // SCRUM-2361 (DS-01): denial copy shown when the organization is not yet
+  // verified. Mirrors the worker `code: 'org_unverified'` response so the UI
+  // message and the backend gate stay in lockstep.
+  DOCUSIGN_NOT_VERIFIED: 'Your organization must be verified before connecting DocuSign. Verified organizations can connect a document source. Contact support to start verification.',
+  DOCUSIGN_GATE_CHECKING: 'Checking your organization’s authorization…',
 } as const;
 
 // =============================================================================
