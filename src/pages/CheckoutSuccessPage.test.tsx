@@ -119,6 +119,40 @@ describe('CheckoutSuccessPage', () => {
     expect(screen.queryByText(/records per month/)).not.toBeInTheDocument();
   });
 
+  // BUG-C (BUG-2026-06-24-009 class): the unlimited "organization" plan encodes
+  // its limit as the sentinel 999999 (seed.sql:220). The naive `> 0` guard
+  // rendered the raw sentinel — "999999 records per month" — on the post-payment
+  // screen instead of "Unlimited records". Mirror the normalization already in
+  // useEntitlements/PricingPage via isUnlimitedRecordsLimit + RECORDS_UNLIMITED.
+  it('shows "Unlimited records" for the unlimited sentinel plan (999999)', () => {
+    mockUseBilling.mockReturnValue({
+      plan: { name: 'Organization', records_per_month: 999999 },
+      loading: false,
+      refresh: mockRefresh,
+    });
+    renderPage();
+    expect(screen.getByText('Organization')).toBeInTheDocument();
+    expect(screen.getByText(BILLING_LABELS.RECORDS_UNLIMITED)).toBeInTheDocument();
+    // The raw sentinel must never leak to the user.
+    expect(screen.queryByText(/999999/)).not.toBeInTheDocument();
+    expect(screen.queryByText('999999 records per month')).not.toBeInTheDocument();
+  });
+
+  // Finite-boundary guard: 999998 is just below the sentinel and is a real,
+  // finite limit — it must render the normal "N records per month" line, NOT
+  // the unlimited copy (isUnlimitedRecordsLimit(999998) === false).
+  it('shows finite count for a limit just below the sentinel (999998)', () => {
+    mockUseBilling.mockReturnValue({
+      plan: { name: 'Scale', records_per_month: 999998 },
+      loading: false,
+      refresh: mockRefresh,
+    });
+    renderPage();
+    expect(screen.getByText('Scale')).toBeInTheDocument();
+    expect(screen.getByText('999998 records per month')).toBeInTheDocument();
+    expect(screen.queryByText(BILLING_LABELS.RECORDS_UNLIMITED)).not.toBeInTheDocument();
+  });
+
   it('renders dashboard and billing navigation links', () => {
     mockUseBilling.mockReturnValue({
       plan: null,
