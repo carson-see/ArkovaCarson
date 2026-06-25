@@ -15,3 +15,9 @@ CTDL/CE Registry serialization helpers for public credential representations.
 - Keep CTDL output public-safe: never emit internal UUIDs, fingerprints, user IDs, recipient emails, raw metadata, or source filenames.
 - Serializer changes must keep required CTDL fields covered by tests: `@context`, `@type`, `ceterms:name`, `ceterms:offeredBy`, `ceterms:credentialStatusType`, `ceterms:dateEffective`, and `ceterms:verificationServiceProfile`. `ceterms:ctid` is optional and must only be emitted when a real Credential Engine CTID is provided explicitly.
 - If `credential_type` enum values change, update `CTDL_TYPE_MAP` and the coverage test in the same PR.
+
+## 2026-06-24 expirationDate gated by status (SCRUM-2374 / CE-03)
+
+- `ceterms:expirationDate` is emitted ONLY for term-bound statuses — `statusAllowsExpiration(status)` in `ctdl-type-map.ts` returns true for `ACTIVE`/`SECURED`/`EXPIRED` and false for `REVOKED`/`SUPERSEDED` (and all non-publishable statuses). A REVOKED or SUPERSEDED credential ended for an unrelated reason, so a forward-looking expiry would contradict the status (the conflation Jeanne Kitchens flagged). The serializer suppresses it at the source (`ctdl-serializer.ts`, the `anchor.expiresAt && statusAllowsExpiration(anchor.status)` gate).
+- `statusAllowsExpiration` is the single source of truth, shared by the serializer (gates emission, Arkova-status layer) and `ctdl-validation.ts` (cross-field invariant at the CTDL-status layer: a body with `ceterms:expirationDate` AND `ceterms:credentialStatusType ∈ {ceterms:Revoked, ceterms:Superseded}` is rejected). The validator is the independent second check for any future code path that re-introduces the conflict.
+- This change only *removes* a contradictory assertion from the public body (CLAUDE.md §1.13 R-7 safe direction); it adds no new public field and changes no CTID behavior.

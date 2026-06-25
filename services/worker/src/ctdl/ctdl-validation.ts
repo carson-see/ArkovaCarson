@@ -12,6 +12,15 @@ const SAFE_CTLD_STATUS_TYPES = new Set([
   'ceterms:Superseded',
 ]);
 
+// SCRUM-2374 (CE-03) — CTDL status types for which a forward-looking
+// ceterms:expirationDate is a contradiction (the credential ended for an
+// unrelated reason). Mirrors statusAllowsExpiration() in ctdl-type-map.ts at the
+// CTDL-status layer the validator operates on.
+const STATUS_TYPES_DISALLOWING_EXPIRATION = new Set([
+  'ceterms:Revoked',
+  'ceterms:Superseded',
+]);
+
 const UNSAFE_PUBLIC_KEYS = new Set([
   'anchor_id',
   'anchorId',
@@ -170,6 +179,19 @@ export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
   }
   if (value['ceterms:revocationDate'] !== undefined && !isIsoDateLike(value['ceterms:revocationDate'])) {
     errors.push('ceterms:revocationDate must be a date string');
+  }
+
+  // SCRUM-2374 (CE-03) — cross-field invariant. A forward-looking expiration date
+  // contradicts a Revoked or Superseded status (the credential ended for an
+  // unrelated reason). The serializer suppresses ceterms:expirationDate at the
+  // source; this is the independent second check that catches any body — now or
+  // from a future code path — that re-introduces the conflation.
+  if (
+    value['ceterms:expirationDate'] !== undefined &&
+    typeof value['ceterms:credentialStatusType'] === 'string' &&
+    STATUS_TYPES_DISALLOWING_EXPIRATION.has(value['ceterms:credentialStatusType'])
+  ) {
+    errors.push('ceterms:expirationDate must not be present for a Revoked or Superseded credential');
   }
 
   const unsafeErrors: string[] = [];

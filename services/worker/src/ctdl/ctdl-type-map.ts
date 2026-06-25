@@ -81,3 +81,17 @@ export function toCtdlCredentialStatusType(status: string): CtdlStatusType | nul
 export function isCtdlPublishableStatus(status: string): boolean {
   return toCtdlCredentialStatusType(status) !== null;
 }
+
+// SCRUM-2374 (CE-03) — ceterms:expirationDate is a forward-looking validity
+// assertion: it only makes sense for a credential that is (or was) running out
+// its own term. ACTIVE/SECURED credentials are still inside their term; an
+// EXPIRED credential's term has lapsed (the expiry IS the reason it is expired).
+// REVOKED and SUPERSEDED credentials ended for an unrelated reason, so emitting a
+// future expiry alongside them is a contradiction (the conflation Jeanne Kitchens
+// flagged). This is the single source of truth, shared by the serializer (gates
+// emission) and the validator (rejects any body that re-introduces the conflict).
+const STATUSES_ALLOWING_EXPIRATION = new Set(['ACTIVE', 'SECURED', 'EXPIRED']);
+
+export function statusAllowsExpiration(status: string): boolean {
+  return STATUSES_ALLOWING_EXPIRATION.has(status);
+}

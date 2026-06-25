@@ -255,4 +255,26 @@ describe('GET /credentials/:publicId/ctdl', () => {
       http_status: 400,
     });
   });
+
+  // SCRUM-2374 (CE-03) — a revoked credential that still carries an expires_at in
+  // the DB must not surface ceterms:expirationDate on the public CTDL projection.
+  // End-to-end check through the route, since this is the public-contract surface.
+  it('omits ceterms:expirationDate on the public body for a revoked credential with expires_at', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        status: 'REVOKED',
+        expiresAt: '2027-05-19T00:00:00.000Z',
+        revokedAt: '2026-05-21T00:00:00.000Z',
+        revocationReason: 'Revoked by issuer.',
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(410);
+    expect(res.body['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
+    expect(res.body).not.toHaveProperty('ceterms:expirationDate');
+    expect(JSON.stringify(res.body)).not.toContain('2027-05-19');
+    expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
+  });
 });
