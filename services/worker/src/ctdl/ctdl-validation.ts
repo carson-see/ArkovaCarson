@@ -100,6 +100,82 @@ function unsafeDepth(error: string): number {
   return error.replace(/^unsafe public CTDL key: /, '').split('.').length;
 }
 
+function validateOfferedBy(value: Record<string, unknown>, errors: string[]): void {
+  const offeredBy = value['ceterms:offeredBy'];
+  if (!isRecord(offeredBy)) {
+    errors.push('ceterms:offeredBy must be an object');
+    return;
+  }
+  if (offeredBy['@type'] !== 'ceterms:Organization') {
+    errors.push('ceterms:offeredBy.@type must be ceterms:Organization');
+  }
+  addRequiredStringError(errors, offeredBy, 'ceterms:name', 'ceterms:offeredBy.ceterms:name');
+  if (offeredBy['ceterms:ctid'] !== undefined && !isRealCtid(offeredBy['ceterms:ctid'])) {
+    errors.push('ceterms:offeredBy.ceterms:ctid must be a real Credential Engine CTID when present');
+  }
+}
+
+function validateVerificationProfile(value: Record<string, unknown>, errors: string[]): void {
+  const verification = value['ceterms:verificationServiceProfile'];
+  if (!isRecord(verification)) {
+    errors.push('ceterms:verificationServiceProfile must be an object');
+    return;
+  }
+  if (verification['@type'] !== 'ceterms:VerificationServiceProfile') {
+    errors.push('ceterms:verificationServiceProfile.@type must be ceterms:VerificationServiceProfile');
+  }
+  addRequiredStringError(
+    errors,
+    verification,
+    'ceterms:name',
+    'ceterms:verificationServiceProfile.ceterms:name',
+  );
+  if (!isAbsoluteHttpUrl(verification['ceterms:verificationService'])) {
+    errors.push('ceterms:verificationServiceProfile.ceterms:verificationService must be an absolute http(s) URL');
+  }
+}
+
+function validateIdentifier(value: Record<string, unknown>, errors: string[]): void {
+  const identifier = value['ceterms:identifier'];
+  if (!isRecord(identifier)) {
+    errors.push('ceterms:identifier must be an object');
+    return;
+  }
+  addRequiredStringError(
+    errors,
+    identifier,
+    'ceterms:identifierType',
+    'ceterms:identifier.ceterms:identifierType',
+  );
+  addRequiredStringError(
+    errors,
+    identifier,
+    'ceterms:identifierValue',
+    'ceterms:identifier.ceterms:identifierValue',
+  );
+}
+
+// SCRUM-2374 (CE-03) — expiration/revocation date shape + the cross-field invariant.
+// A forward-looking expiration date contradicts a Revoked or Superseded status (the
+// credential ended for an unrelated reason). The serializer suppresses
+// ceterms:expirationDate at the source; this is the independent second check that
+// catches any body — now or from a future code path — that re-introduces the conflation.
+function validateExpirationAndStatus(value: Record<string, unknown>, errors: string[]): void {
+  if (value['ceterms:expirationDate'] !== undefined && !isIsoDateLike(value['ceterms:expirationDate'])) {
+    errors.push('ceterms:expirationDate must be a date string');
+  }
+  if (value['ceterms:revocationDate'] !== undefined && !isIsoDateLike(value['ceterms:revocationDate'])) {
+    errors.push('ceterms:revocationDate must be a date string');
+  }
+  if (
+    value['ceterms:expirationDate'] !== undefined &&
+    typeof value['ceterms:credentialStatusType'] === 'string' &&
+    STATUS_TYPES_DISALLOWING_EXPIRATION.has(value['ceterms:credentialStatusType'])
+  ) {
+    errors.push('ceterms:expirationDate must not be present for a Revoked or Superseded credential');
+  }
+}
+
 export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
   const errors: string[] = [];
 
@@ -118,18 +194,7 @@ export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
     errors.push('ceterms:ctid must be a real Credential Engine CTID when present');
   }
 
-  const offeredBy = value['ceterms:offeredBy'];
-  if (!isRecord(offeredBy)) {
-    errors.push('ceterms:offeredBy must be an object');
-  } else {
-    if (offeredBy['@type'] !== 'ceterms:Organization') {
-      errors.push('ceterms:offeredBy.@type must be ceterms:Organization');
-    }
-    addRequiredStringError(errors, offeredBy, 'ceterms:name', 'ceterms:offeredBy.ceterms:name');
-    if (offeredBy['ceterms:ctid'] !== undefined && !isRealCtid(offeredBy['ceterms:ctid'])) {
-      errors.push('ceterms:offeredBy.ceterms:ctid must be a real Credential Engine CTID when present');
-    }
-  }
+  validateOfferedBy(value, errors);
 
   if (!isNonEmptyString(value['ceterms:credentialStatusType']) || !SAFE_CTLD_STATUS_TYPES.has(value['ceterms:credentialStatusType'])) {
     errors.push('ceterms:credentialStatusType must be a supported CTDL status');
@@ -138,61 +203,9 @@ export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
     errors.push('ceterms:dateEffective must be a date string');
   }
 
-  const verification = value['ceterms:verificationServiceProfile'];
-  if (!isRecord(verification)) {
-    errors.push('ceterms:verificationServiceProfile must be an object');
-  } else {
-    if (verification['@type'] !== 'ceterms:VerificationServiceProfile') {
-      errors.push('ceterms:verificationServiceProfile.@type must be ceterms:VerificationServiceProfile');
-    }
-    addRequiredStringError(
-      errors,
-      verification,
-      'ceterms:name',
-      'ceterms:verificationServiceProfile.ceterms:name',
-    );
-    if (!isAbsoluteHttpUrl(verification['ceterms:verificationService'])) {
-      errors.push('ceterms:verificationServiceProfile.ceterms:verificationService must be an absolute http(s) URL');
-    }
-  }
-
-  const identifier = value['ceterms:identifier'];
-  if (!isRecord(identifier)) {
-    errors.push('ceterms:identifier must be an object');
-  } else {
-    addRequiredStringError(
-      errors,
-      identifier,
-      'ceterms:identifierType',
-      'ceterms:identifier.ceterms:identifierType',
-    );
-    addRequiredStringError(
-      errors,
-      identifier,
-      'ceterms:identifierValue',
-      'ceterms:identifier.ceterms:identifierValue',
-    );
-  }
-
-  if (value['ceterms:expirationDate'] !== undefined && !isIsoDateLike(value['ceterms:expirationDate'])) {
-    errors.push('ceterms:expirationDate must be a date string');
-  }
-  if (value['ceterms:revocationDate'] !== undefined && !isIsoDateLike(value['ceterms:revocationDate'])) {
-    errors.push('ceterms:revocationDate must be a date string');
-  }
-
-  // SCRUM-2374 (CE-03) — cross-field invariant. A forward-looking expiration date
-  // contradicts a Revoked or Superseded status (the credential ended for an
-  // unrelated reason). The serializer suppresses ceterms:expirationDate at the
-  // source; this is the independent second check that catches any body — now or
-  // from a future code path — that re-introduces the conflation.
-  if (
-    value['ceterms:expirationDate'] !== undefined &&
-    typeof value['ceterms:credentialStatusType'] === 'string' &&
-    STATUS_TYPES_DISALLOWING_EXPIRATION.has(value['ceterms:credentialStatusType'])
-  ) {
-    errors.push('ceterms:expirationDate must not be present for a Revoked or Superseded credential');
-  }
+  validateVerificationProfile(value, errors);
+  validateIdentifier(value, errors);
+  validateExpirationAndStatus(value, errors);
 
   const unsafeErrors: string[] = [];
   collectUnsafeKeys(value, unsafeErrors);
