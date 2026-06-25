@@ -41,14 +41,33 @@ import type { TypeSafeTablesInsert } from '../types/database-overrides.js';
 export const VERIFIED_IDENTITY_ENTITLEMENT = 'identity_verified' as const;
 
 /**
+ * Format-only UUID matcher (8-4-4-4-12 hex), case-insensitive. We validate the
+ * SHAPE of the owner key, not its RFC-4122 version/variant nibbles. This is the
+ * established worker convention for owner-key validation (`audit-event.ts`,
+ * `admin-org-members.ts`): we want "is this a well-formed UUID-shaped scoping
+ * key" — NOT "is this a v4 UUID."
+ *
+ * Why this matters here: under Zod v4, `z.string().uuid()` became strict and
+ * rejects any UUID whose version nibble isn't 1–8 or whose variant nibble isn't
+ * 8/9/a/b. Our synthetic owner keys (seed users `55555555-…`, and any non-v4
+ * UUID that could appear in `subscriptions`/`entitlements`) have zero
+ * version/variant nibbles, so `.uuid()` rejected them and `hasActiveVerified-
+ * Entitlement` fail-closed-denied the seed user even on a valid current period
+ * (the PAY-01 E2E "grants" happy-path failure). A format-only check still fails
+ * closed on genuinely malformed input — the security intent — without rejecting
+ * valid UUID-shaped keys.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
  * Target of a grant/revoke. At least one of userId / orgId must be present.
- * UUIDs are validated to fail closed against malformed webhook metadata and to
- * keep RLS-scoping keys well-formed.
+ * UUIDs are validated (format-only, see `UUID_RE`) to fail closed against
+ * malformed webhook metadata and to keep RLS-scoping keys well-formed.
  */
 const entitlementTargetSchema = z
   .object({
-    userId: z.string().uuid().nullable().optional(),
-    orgId: z.string().uuid().nullable().optional(),
+    userId: z.string().regex(UUID_RE, 'userId must be a UUID').nullable().optional(),
+    orgId: z.string().regex(UUID_RE, 'orgId must be a UUID').nullable().optional(),
   })
   .refine((t) => !!t.userId || !!t.orgId, {
     message: 'entitlement target requires a userId or an orgId',

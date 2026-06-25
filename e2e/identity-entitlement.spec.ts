@@ -57,6 +57,17 @@ test.describe('Verified-Identity Entitlement Gate (PAY-01)', () => {
     'Live-worker E2E: requires VITE_SUPABASE_ANON_KEY + E2E_SEED_PASSWORD (set in CI E2E job / staging soak)',
   );
 
+  // SERIAL: every test mutates the SAME seed individual's single subscription
+  // row (`subscriptions` has UNIQUE(user_id)) and entitlement window. Under the
+  // repo default `fullyParallel: true` (workers default to CPU/2 off-CI), the
+  // four tests would run concurrently and clobber that one shared row — the
+  // "grants" test's current-period upsert races the "stale"/"closed" tests'
+  // upserts (last write wins), so the gate non-deterministically read the wrong
+  // period and `entitled` flipped. They share mutable per-user state, so they
+  // must run in order. (CI already runs workers=1, which is why this surfaced
+  // only locally.)
+  test.describe.configure({ mode: 'serial' });
+
   const service = getServiceClient();
   let accessToken: string | null = null;
   let planId: string | null = null;
@@ -101,46 +112,60 @@ test.describe('Verified-Identity Entitlement Gate (PAY-01)', () => {
     const res = await request.get(`${WORKER_URL}/api/v1/identity/entitlement`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    expect(res.ok()).toBeTruthy();
+    expect(res.ok(), `entitlement GET returned ${res.status()}: ${await res.text()}`).toBeTruthy();
     return (await res.json()) as { entitled: boolean };
   }
 
-  test('grants when an open entitlement and a current subscription exist', async ({ request }) => {
-    await service.from('subscriptions').insert({
-      user_id: USER.id,
-      plan_id: planId,
-      status: 'active',
-      current_period_start: iso(-5 * 24 * 60 * 60 * 1000),
-      current_period_end: iso(25 * 24 * 60 * 60 * 1000),
-    });
-    await service.from('entitlements').insert({
+  // `subscriptions` has a UNIQUE(user_id) constraint (`subscriptions_user_unique`),
+  // and the seed always provisions a subscription for `demo-user`. A plain
+  // `insert` therefore collides (23505) with whatever row already exists — the
+  // `beforeEach` delete narrows the window but a swallowed insert error silently
+  // leaves a stale (valid-period) row behind, which then bleeds into later tests
+  // (a verified gate flips true when it must be false). Upserting on the unique
+  // `user_id` makes each test's subscription period deterministic regardless of
+  // prior state, and asserting the error keeps a future schema change from
+  // silently no-op-ing the seed again.
+  async function setSubscription(period: { startMs: number; endMs: number; status?: string }) {
+    const { error } = await service
+      .from('subscriptions')
+      .upsert(
+        {
+          user_id: USER.id,
+          plan_id: planId,
+          status: period.status ?? 'active',
+          current_period_start: iso(period.startMs),
+          current_period_end: iso(period.endMs),
+        },
+        { onConflict: 'user_id' },
+      );
+    expect(error, `subscription upsert failed: ${JSON.stringify(error)}`).toBeNull();
+  }
+
+  async function setEntitlement(window: { fromMs: number; untilMs: number | null }) {
+    const { error } = await service.from('entitlements').insert({
       user_id: USER.id,
       entitlement_type: VERIFIED_IDENTITY_ENTITLEMENT,
       source: 'subscription',
-      valid_from: iso(-5 * 24 * 60 * 60 * 1000),
-      valid_until: null,
+      valid_from: iso(window.fromMs),
+      valid_until: window.untilMs === null ? null : iso(window.untilMs),
     });
+    expect(error, `entitlement insert failed: ${JSON.stringify(error)}`).toBeNull();
+  }
+
+  const DAY = 24 * 60 * 60 * 1000;
+
+  test('grants when an open entitlement and a current subscription exist', async ({ request }) => {
+    await setSubscription({ startMs: -5 * DAY, endMs: 25 * DAY });
+    await setEntitlement({ fromMs: -5 * DAY, untilMs: null });
 
     const body = await getEntitlement(request);
     expect(body.entitled).toBe(true);
   });
 
   test('denies after the entitlement window is closed (revoked/lapsed)', async ({ request }) => {
-    await service.from('subscriptions').insert({
-      user_id: USER.id,
-      plan_id: planId,
-      status: 'active',
-      current_period_start: iso(-5 * 24 * 60 * 60 * 1000),
-      current_period_end: iso(25 * 24 * 60 * 60 * 1000),
-    });
+    await setSubscription({ startMs: -5 * DAY, endMs: 25 * DAY });
     // closed window: valid_until already in the past.
-    await service.from('entitlements').insert({
-      user_id: USER.id,
-      entitlement_type: VERIFIED_IDENTITY_ENTITLEMENT,
-      source: 'subscription',
-      valid_from: iso(-30 * 24 * 60 * 60 * 1000),
-      valid_until: iso(-1 * 24 * 60 * 60 * 1000),
-    });
+    await setEntitlement({ fromMs: -30 * DAY, untilMs: -1 * DAY });
 
     const body = await getEntitlement(request);
     expect(body.entitled).toBe(false);
@@ -148,33 +173,18 @@ test.describe('Verified-Identity Entitlement Gate (PAY-01)', () => {
 
   test('SCRUM-1791: denies on a STALE subscription period even with an open entitlement', async ({ request }) => {
     // period ended 10 days ago — must not gate on it.
-    await service.from('subscriptions').insert({
-      user_id: USER.id,
-      plan_id: planId,
-      status: 'active',
-      current_period_start: iso(-40 * 24 * 60 * 60 * 1000),
-      current_period_end: iso(-10 * 24 * 60 * 60 * 1000),
-    });
-    await service.from('entitlements').insert({
-      user_id: USER.id,
-      entitlement_type: VERIFIED_IDENTITY_ENTITLEMENT,
-      source: 'subscription',
-      valid_from: iso(-40 * 24 * 60 * 60 * 1000),
-      valid_until: null,
-    });
+    await setSubscription({ startMs: -40 * DAY, endMs: -10 * DAY });
+    await setEntitlement({ fromMs: -40 * DAY, untilMs: null });
 
     const body = await getEntitlement(request);
     expect(body.entitled).toBe(false);
   });
 
   test('denies (fail-closed) with no subscription at all', async ({ request }) => {
-    await service.from('entitlements').insert({
-      user_id: USER.id,
-      entitlement_type: VERIFIED_IDENTITY_ENTITLEMENT,
-      source: 'subscription',
-      valid_from: iso(-5 * 24 * 60 * 60 * 1000),
-      valid_until: null,
-    });
+    // Explicitly ensure NO subscription row exists (don't rely on beforeEach
+    // ordering): the gate must fail closed when the period source is absent.
+    await service.from('subscriptions').delete().eq('user_id', USER.id);
+    await setEntitlement({ fromMs: -5 * DAY, untilMs: null });
 
     const body = await getEntitlement(request);
     expect(body.entitled).toBe(false);
