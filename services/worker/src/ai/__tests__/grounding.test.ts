@@ -103,6 +103,81 @@ describe('verifyGrounding', () => {
     expect(report.groundedFieldCount).toBe(1);
   });
 
+  // ITER-5: model-authored narrative fields must NOT be grounding-checked.
+  // reasoning / description / subType are written BY the model (chain-of-thought,
+  // human-readable summary, taxonomy label) — they are never verbatim in the
+  // source document, so grounding them false-flags legitimate documents and
+  // deflates confidence. They must be treated like the already-non-groundable
+  // inferred fields (fieldOfStudy, degreeLevel).
+
+  it('AC1: should NOT deflate confidence for legit doc whose reasoning/description/subType are not verbatim in source', () => {
+    const fields = {
+      // Every FACTUAL field is verbatim-grounded in sampleText:
+      issuerName: 'University of Michigan',
+      licenseNumber: 'TX-PE-89012',
+      // Model-authored narrative — none of these appear in the source text:
+      reasoning:
+        'Classified as an engineering degree because the document names the College of Engineering and a Bachelor of Science.',
+      description:
+        'A bachelor of science degree in computer science conferred to the recipient by a major public university.',
+      subType: 'official_undergraduate',
+    };
+
+    const report = verifyGrounding(fields, sampleText);
+
+    // Narrative fields are skipped — only the two factual fields are groundable.
+    expect(report.groundableFieldCount).toBe(2);
+    expect(report.groundedFieldCount).toBe(2);
+    // No narrative field should appear in the per-field results at all.
+    const checkedFields = report.fieldResults.map((r) => r.field);
+    expect(checkedFields).not.toContain('reasoning');
+    expect(checkedFields).not.toContain('description');
+    expect(checkedFields).not.toContain('subType');
+    // The whole point: confidence is NOT deflated by the narrative fields.
+    expect(report.groundingScore).toBe(1.0);
+    expect(report.confidenceAdjustment).toBe(0);
+  });
+
+  it('AC2: should STILL flag a hallucinated FACTUAL field even when narrative fields are present', () => {
+    const fields = {
+      issuerName: 'Fabricated Issuer University', // hallucinated factual claim — NOT in source
+      expiryDate: '2099-12-31', // hallucinated factual claim — NOT in source
+      // Narrative fields present alongside the hallucination must not mask it:
+      reasoning: 'The classification reasoning narrative goes here and is not in the source.',
+      description: 'A human-readable summary that is also absent from the source document.',
+      subType: 'fabricated_subtype_label',
+    };
+
+    const report = verifyGrounding(fields, sampleText);
+
+    // Only the two factual fields are groundable; both are hallucinated.
+    expect(report.groundableFieldCount).toBe(2);
+    expect(report.groundedFieldCount).toBe(0);
+    expect(report.groundingScore).toBeLessThan(1.0);
+    expect(report.confidenceAdjustment).toBeLessThan(0);
+
+    const issuerResult = report.fieldResults.find((r) => r.field === 'issuerName');
+    expect(issuerResult?.grounded).toBe(false);
+    expect(issuerResult?.matchType).toBe('not_found');
+  });
+
+  it('AC3: existing grounding behavior on factual fields is unchanged when no narrative fields are present', () => {
+    // Mirrors the original grounded-fields case: factual-only extraction still
+    // grounds perfectly and applies no penalty (regression guard for the allowlist change).
+    const fields = {
+      issuerName: 'University of Michigan',
+      jurisdiction: 'Texas, USA',
+      licenseNumber: 'TX-PE-89012',
+    };
+
+    const report = verifyGrounding(fields, sampleText);
+
+    expect(report.groundableFieldCount).toBe(3);
+    expect(report.groundedFieldCount).toBe(3);
+    expect(report.groundingScore).toBe(1.0);
+    expect(report.confidenceAdjustment).toBe(0);
+  });
+
   it('should skip redacted values', () => {
     const fields = {
       issuerName: 'University of Michigan',
