@@ -117,6 +117,10 @@ describe('buildCtdlJsonLd', () => {
     expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
     expect(jsonLd['ceterms:revocationDate']).toBe('2026-05-21T00:00:00.000Z');
     expect(jsonLd['ceterms:revocationReason']).toBe('Issuer revoked the completion.');
+    // SCRUM-2374 (CE-03): baseAnchor carries a future expiresAt, but a REVOKED
+    // credential must NOT advertise a forward-looking expiration date — that
+    // would contradict the revoked status. Suppressed at the source.
+    expect(jsonLd).not.toHaveProperty('ceterms:expirationDate');
   });
 
   it('suppresses PII-bearing free-text values before public CTDL serialization', () => {
@@ -228,5 +232,65 @@ describe('buildCtdlJsonLd', () => {
     const sameAs = jsonLd['ceterms:offeredBy']['ceterms:sameAs'];
     expect(Array.isArray(sameAs)).toBe(true);
     expect(sameAs?.[0]).toMatch(/^did:web:app\.arkova\.ai:orgs:/);
+  });
+
+  // SCRUM-2374 (CE-03) — ceterms:expirationDate is gated by credential status so
+  // a public CTDL body never advertises an expiry that contradicts the status
+  // (REVOKED/SUPERSEDED) while still emitting it for the term-bound statuses.
+  describe('ceterms:expirationDate status gating (CE-03)', () => {
+    it('emits ceterms:expirationDate for an ACTIVE credential with a future expiry', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, status: 'ACTIVE', expiresAt: '2027-05-19T00:00:00.000Z' },
+        { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' },
+      );
+
+      expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Active');
+      expect(jsonLd['ceterms:expirationDate']).toBe('2027-05-19T00:00:00.000Z');
+    });
+
+    it('emits ceterms:expirationDate for a SECURED credential with a future expiry (regression)', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, status: 'SECURED', expiresAt: '2027-05-19T00:00:00.000Z' },
+        { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' },
+      );
+
+      expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Active');
+      expect(jsonLd['ceterms:expirationDate']).toBe('2027-05-19T00:00:00.000Z');
+    });
+
+    it('emits ceterms:expirationDate for an EXPIRED credential (positive — the term lapsed)', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, status: 'EXPIRED', expiresAt: '2025-01-01T00:00:00.000Z' },
+        { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' },
+      );
+
+      expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Expired');
+      expect(jsonLd['ceterms:expirationDate']).toBe('2025-01-01T00:00:00.000Z');
+    });
+
+    it('suppresses ceterms:expirationDate for a SUPERSEDED credential with a future expiry', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, status: 'SUPERSEDED', expiresAt: '2027-05-19T00:00:00.000Z' },
+        { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' },
+      );
+
+      expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Superseded');
+      expect(jsonLd).not.toHaveProperty('ceterms:expirationDate');
+    });
+
+    it('suppresses ceterms:expirationDate for a REVOKED credential even with a past expiry', () => {
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          status: 'REVOKED',
+          expiresAt: '2025-01-01T00:00:00.000Z',
+          revokedAt: '2026-05-21T00:00:00.000Z',
+        },
+        { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' },
+      );
+
+      expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
+      expect(jsonLd).not.toHaveProperty('ceterms:expirationDate');
+    });
   });
 });

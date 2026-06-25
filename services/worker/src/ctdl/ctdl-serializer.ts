@@ -1,6 +1,7 @@
 import {
   CTDL_CONTEXT,
   resolveCtdlType,
+  statusAllowsExpiration,
   toCtdlCredentialStatusType,
   type CtdlStatusType,
   type CtdlType,
@@ -303,7 +304,13 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
 
   const description = cleanPublicFreeText(anchor.description, 500);
   if (description) jsonLd['ceterms:description'] = description;
-  if (anchor.expiresAt) jsonLd['ceterms:expirationDate'] = anchor.expiresAt;
+  // SCRUM-2374 (CE-03): only emit a forward-looking expiration date for statuses
+  // where the credential is running out its own term (ACTIVE/SECURED/EXPIRED).
+  // For REVOKED/SUPERSEDED the credential ended for an unrelated reason, so an
+  // expiry would contradict the status — suppress it at the source.
+  if (anchor.expiresAt && statusAllowsExpiration(anchor.status)) {
+    jsonLd['ceterms:expirationDate'] = anchor.expiresAt;
+  }
   if (anchor.status === 'REVOKED') {
     if (anchor.revokedAt) jsonLd['ceterms:revocationDate'] = anchor.revokedAt;
     const reason = cleanPublicString(anchor.revocationReason, 500);
