@@ -30,25 +30,13 @@ Remaining strict order:
 | Prefix | PR | Story | File | Status |
 |---|---|---|---|---|
 | `0339` | #1122 | SCRUM-2285 | `0339_get_public_anchor_by_fingerprint.sql` | current strict-order PR |
+| `0340` | (Train D, branch `feat/train-d-proof-foundation`) | SCRUM-2335 (PROOF-02) | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | reserved — T3, soak pending. Branched off `main` head `1a9d35bb` (disk head 0339). |
 
-- Remaining migration order is strict: #1122.
+- Remaining migration order is strict: #1122, then `0340` (Train D proof foundation).
 - Do not reserve or reuse `0327`, `0328`, `0329`, `0333`, `0334`, `0335`, `0336`, `0337`, or `0338`; those prefixes are already consumed by merged drain PRs.
 - Do not infer a current `0332` release-drain owner from older stale reservations; no active `0332` release-drain PR is asserted by this mirror sync.
 - Remaining soaks must use a dedicated isolated Supabase project or a proven `clean_mirror`, never dirty shared staging.
 - Remove a remaining row once its PR merges to `main` and gets a durable `## Recent migrations` entry below.
-
-## Train D migration reservations (2026-06-16)
-
-Merge order is strict **0340 → 0341** (0341 is stacked on 0340). **0340 + 0341 were APPLIED to prod `vzwyaatejekddvltxyye` on 2026-06-23** (Carson-approved, via MCP `apply_migration`; ledger reconciled numeric — prod head now `0339, 0340, 0341`). The code PRs (#1255 + the credit PR) merge to `main` via Mergify on green + soak evidence. Do not reserve or reuse `0340`, `0341`, `0342`, or `0343`.
-
-| Prefix | Branch | Story | File | Status |
-|---|---|---|---|---|
-| `0340` | `feat/train-d-proof-foundation` | SCRUM-2335 / 2490 / 2491 | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | **APPLIED to prod 2026-06-23** |
-| `0341` | `lane2/s1-0341-reconcile-to-main` (fixed version; PR #1290) | SCRUM-2349 / 2350 | `0341_scrum2349_2350_credit_integrity_foundation.sql` | **APPLIED to prod 2026-06-23**; reconciling to `main` via PR #1290 (FIXED ERROR-23514 ordering; §1.12 prod-proven exception) |
-| `0342` | `perf/cpe-cle-dashboard-partial-index` (PR #1257) | CPE/CLE dashboard partial indexes | `0342_*` | RESERVED — open PR, do not reuse |
-| `0343` | QUEUE-02 connector-artifact schema (Lane 2) | SCRUM-2348 | `0343_scrum2348_connector_artifact_queue_schema.sql` | RESERVED — Lane 2 Sprint 1; interface-lock to Lane 3 by 2026-06-26 |
-
-Train D soaks once (consolidated RC) after Train C (#1154) merges, then rebases onto the new `main`; see HANDOFF.md + the "Release Soak Protection — No-Restart Process" Confluence page.
 
 ## Recent migrations (PR #817)
 
@@ -96,6 +84,6 @@ _Rollback rehearsed: 2026-05-16 on staging (ujtlwnoqfhtitcmsnrpq). Both tables d
 
 - **0329_member_integrations_credential_providers.sql**: Widens the `member_integrations.provider` CHECK constraint from `{'docusign'}` to `{'docusign', 'credly', 'accredible', 'udemy'}` so the same table can hold credential-source provider tokens for the SCRUM-1596 epic. Adds `kek_version smallint NOT NULL DEFAULT 1` for KMS key-rotation tracking (RFC 9700). No new RLS policies — the policies established by 0320 apply to all providers polymorphically. Tier T2 (CHECK widening + additive column). Rollback rehearsal pending on staging.
 
-## Recent migrations (PR #1290 — SCRUM-2349 / SCRUM-2350 — 0341 reconcile-to-main)
+## Recent migrations (branch feat/train-d-proof-foundation, 0340)
 
-- **0341_scrum2349_2350_credit_integrity_foundation.sql**: **Reconciliation, not new work** — this migration was applied to **prod** (`vzwyaatejekddvltxyye`) on 2026-06-23 and has been running healthy all sprint, but never landed on `main` via a PR (`main` head was `0339`; `0340` lands separately via Train-D PR #1255). This PR carries the **FIXED** version (HEAD `cc440bd2` "fix(0341): drop old amount>0 CHECK before sign-flip UPDATE (ERROR 23514)") so `main` reflects already-applied prod state — **confirmation, not discovery; no new prod change**. The fix: the old positivity CHECK `org_credit_deductions_amount_check (amount > 0)` is **dropped BEFORE** the sign-flip `UPDATE … SET amount = -amount` (negating a live debit row while `amount>0` is still enforced raises ERROR 23514 on any non-empty table). Hardens the EXISTING 0326 `org_credit_deductions` ledger: (a) append-only `BEFORE UPDATE OR DELETE` trigger `trg_org_credit_deductions_append_only`; (b) `refund_org_credit` INSERTs a signed `entry_type='REFUND'` row instead of DELETEing (kills the double-charge-on-retry vector); (c) signed-amount CHECK `org_credit_deductions_amount_signed_check` (DEBIT/REVOKE < 0, REFUND/GRANT > 0) + re-named `balance_after >= 0` CHECK; (d) `REVOKE DELETE … FROM service_role`; (e) user-path idempotency via partial-unique `uq_credit_transactions_user_reference_type (user_id, reference_id, transaction_type) WHERE reference_id IS NOT NULL` + the 0326 FOR-UPDATE replay pattern ported to `deduct_credit`; (f) the QUEUE-04 atomic `debit_and_enqueue_anchor(uuid,uuid,integer,text,anchor_status,anchor_status)` RPC (debit + anchor transition in ONE txn, `reference_id` = per-anchor id) + the money-conservation reconciler. Independent of 0340 (proof-completeness; touches no credit objects). **Tier T3** under a Carson-approved **§1.12 prod-proven residual-risk exception (2026-06-24)** — NOT a fresh 48h soak. Evidence = prod-proven (ledger row `0341` + the three credit schema objects verified by read-only MCP on prod `vzwyaatejekddvltxyye`) + a clean-apply prod-mirror validation (throwaway rig `expjtjcpqfrcspljptpv` diff-empty vs prod credit schema). Full `-- ROLLBACK:` block in-file. Sequenced after #1255 (0340), before #1257/#1259/#1260 (0342/0343/0344).
+- **0340_scrum2335_proof_completeness_columns_and_trigger.sql** (PROOF-02 / SCRUM-2335, Train D proof-integrity foundation): adds additive-nullable columns on `anchor_proofs` — `block_header bytea`, `block_hash text`, `op_return_payload bytea`, `merkle_index integer`, `proof_schema_version smallint NOT NULL DEFAULT 1` — for the two-layer proof bundle (PROOF-01 contract, Confluence 81330178). Adds the "SECURED ⇒ proof complete" invariant as a **constraint trigger** on `anchors` (a CHECK cannot subquery `anchors.status`), **GATED** behind the GUC `arkova.proof_enforce_secured_complete` which defaults **OFF**. Phase 1 (this migration) ships columns + trigger function + wiring, enforcement INERT so it does NOT reject the ~2.97M pre-existing empty-branch SECURED anchors. Phase 2 flips enforcement on via `ALTER DATABASE … SET arkova.proof_enforce_secured_complete = 'on'` AFTER the SCRUM-2471 `proof-branch-backfill` job has filled the back catalogue (validated on staging). `-- ROLLBACK:` block included. Tier **T3** (migration + anchor lifecycle). Local validation: applied + ROLLBACK + forward-reapply clean on throwaway PG 17; gate-off allows SECURED with empty branch, gate-on rejects incomplete proof / allows complete proof. `database.types.ts` regenerated (hand-synced — local-only). Reserved off `main` head `1a9d35bb` (disk head 0339). Staging soak + Carson sign-off required before Phase 2 / prod apply.

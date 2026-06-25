@@ -7,6 +7,8 @@ export interface AnchorProofUpsertRow {
   blockTimestamp?: string | null;
   merkleRoot?: string | null;
   proofPath?: unknown;
+  /** Integer leaf index in the batch tree (PROOF-02 `merkle_index`). */
+  merkleIndex?: number | null;
   batchId?: string | null;
   rawResponse?: unknown;
 }
@@ -33,6 +35,7 @@ export async function upsertAnchorProofs(
       block_timestamp: row.blockTimestamp ?? null,
       merkle_root: row.merkleRoot ?? null,
       proof_path: row.proofPath ?? null,
+      merkle_index: row.merkleIndex ?? null,
       batch_id: row.batchId ?? null,
       raw_response: row.rawResponse ?? null,
     }));
