@@ -471,6 +471,12 @@ export const RECORDS_LIST_LABELS = {
   // Replaces "Block Height" — the banned-term version sat next to
   // NETWORK_RECEIPT / "Network Observed Time"; this keeps the trio coherent.
   NETWORK_CHECKPOINT: 'Network Checkpoint',
+  // Network-observed-time honesty (BUG-2026-06-24-008, §1.5): the network has
+  // only "observed" a record once it is SECURED. For unconfirmed records the
+  // field falls back to CREATED_TIME (the local creation/upload time) under an
+  // honest label — never the local time under the network label.
+  NETWORK_OBSERVED_TIME: 'Network Observed Time',
+  CREATED_TIME: 'Record Created',
 } as const;
 
 // =============================================================================
@@ -528,6 +534,10 @@ export const BILLING_LABELS = {
   CHECKOUT_SUCCESS_DESC: 'Your subscription has been successfully set up. You can now access all features included in your plan.',
   LOADING_SUBSCRIPTION: 'Setting up your subscription...',
   YOUR_PLAN: 'Your Plan',
+  // BUG-C (BUG-2026-06-24-009 class): unlimited plans encode their monthly limit
+  // as the sentinel 999999 (seed.sql:220). The checkout-success screen renders
+  // this label via isUnlimitedRecordsLimit() instead of the raw sentinel.
+  RECORDS_UNLIMITED: 'Unlimited records',
   GO_TO_DASHBOARD: 'Go to Dashboard',
   VIEW_BILLING: 'View Billing Details',
   CHECKOUT_CANCEL_TITLE: 'Checkout Cancelled',
@@ -538,6 +548,22 @@ export const BILLING_LABELS = {
   CURRENT_PLAN_BADGE: 'Current Plan',
   DOWNGRADE_NOTE: 'Changes take effect at the end of your current billing period.',
   CANCELLATION_SCHEDULED: 'Your subscription is set to cancel at the end of the current period.',
+} as const;
+
+// =============================================================================
+// WEBHOOKS
+// =============================================================================
+
+export const WEBHOOK_LABELS = {
+  // BUG-D: deleting an endpoint is destructive — it silently stops the event
+  // feed. The confirm dialog (mirrors RevokeDialog / ApiKeySettings) names the
+  // endpoint and warns that notifications stop. `{url}` is interpolated by the
+  // component. §1.3-clean (no banned terms).
+  DELETE_CONFIRM_TITLE: 'Delete webhook endpoint?',
+  DELETE_CONFIRM_DESC:
+    'Event notifications to {url} will stop and this endpoint will be removed. This cannot be undone.',
+  DELETE_CONFIRM_ACTION: 'Delete endpoint',
+  DELETE_CONFIRM_CANCEL: 'Cancel',
 } as const;
 
 // =============================================================================
@@ -1296,6 +1322,32 @@ export const AI_EXTRACTION_LABELS = {
   EXTRACTING: 'Analyzing...',
   EXTRACT_DESCRIPTION: 'Automatically extract credential fields from the uploaded document',
   EXTRACTION_FAILED_TOAST: 'AI extraction unavailable — document will be secured without metadata.',
+  /**
+   * §1.6 FAIL-CLOSED (WEBEXT-03). Shown when the on-device privacy tools (the
+   * personal-information remover or the on-device document reader) could not
+   * run, so nothing was analyzed and nothing was sent. This is a LOUD failure,
+   * deliberately distinct from EXTRACTION_FAILED_TOAST — we did NOT proceed.
+   */
+  PRIVACY_GUARANTEE_FAILED:
+    'On-device privacy protection couldn’t run, so this document was not analyzed and nothing was sent. Your file never left your device. Reload and try again, or continue without AI metadata.',
+} as const;
+
+// =============================================================================
+// §1.6 ON-DEVICE PRIVACY FAIL-CLOSED (WEBEXT-03 / SCRUM-2505)
+// Loud, explicit failure surface for when on-device PII stripping or OCR could
+// not run. The whole point: the user is told plainly that nothing was sent.
+// =============================================================================
+
+export const PRIVACY_FAIL_CLOSED_LABELS = {
+  TITLE: 'On-Device Privacy Protection Unavailable',
+  BODY:
+    'Arkova removes personal information on your device before anything is sent. That on-device step couldn’t run just now, so this document was not analyzed and no information was sent. Your file never left your device.',
+  WHAT_HAPPENED_LABEL: 'What happened',
+  WHAT_HAPPENED:
+    'The on-device privacy tools (the personal-information remover or the document reader) failed to load. To protect you, we stopped instead of sending anything that wasn’t fully checked.',
+  RETRY: 'Reload and Try Again',
+  CONTINUE_WITHOUT: 'Continue Without AI Metadata',
+  REASSURANCE: 'No information was sent to Arkova or anyone else.',
 } as const;
 
 // =============================================================================
@@ -1343,6 +1395,11 @@ export const CONNECTIONS_LABELS = {
   MEMBER_DOCUSIGN_DESC: 'Connect your personal DocuSign account for member-level signing',
   MEMBER_TOAST_CONNECTED: 'DocuSign connected.',
   MEMBER_TOAST_DISCONNECTED: 'Personal DocuSign disconnected.',
+  // SCRUM-2361 (DS-01): denial copy shown when the organization is not yet
+  // verified. Mirrors the worker `code: 'org_unverified'` response so the UI
+  // message and the backend gate stay in lockstep.
+  DOCUSIGN_NOT_VERIFIED: 'Your organization must be verified before connecting DocuSign. Verified organizations can connect a document source. Contact support to start verification.',
+  DOCUSIGN_GATE_CHECKING: 'Checking your organization’s authorization…',
 } as const;
 
 // =============================================================================
@@ -2135,6 +2192,13 @@ export const OCR_LABELS = {
     `Unsupported file type for text extraction: ${typeOrExt}. ` +
     'Supported: PDF, Word (.docx), images, and text files. ' +
     'The document can still be secured without AI metadata.',
+  /**
+   * §1.6 FAIL-CLOSED (WEBEXT-03). Surfaced when the on-device document reader
+   * (OCR engine) could not load or run. Fixed copy — never includes the
+   * underlying error, which may reference document-derived text.
+   */
+  OCR_ENGINE_UNAVAILABLE:
+    'The on-device document reader couldn’t start, so this document was not read and nothing was sent. Your file never left your device.',
 } as const;
 
 export const CONFIRMATION_PROGRESS_LABELS = {
@@ -2976,4 +3040,102 @@ export const ISSUER_PARTNERSHIP_LABELS = {
     accredible: 'Accredible',
     udemy: 'Udemy',
   } as const,
+} as const;
+
+// =============================================================================
+// QUEUE / INSTANT-SECURE UX CONTRACT (QUEUE-01 / SCRUM-2347)
+// =============================================================================
+// Frozen, user-visible labels for the queue-first vs. instant-secure securing
+// experience. Keys are the lowercase QueueLifecycleState / CreditDebitState /
+// SecuringPath / QueueSurface union members from src/lib/queueContract.ts —
+// the test asserts a 1:1 mapping, so adding a state without a label fails CI.
+//
+// Terminology (CLAUDE.md §1.3): no banned terms. "Secured" is the terminal
+// success word (internal code-name "anchored"); "Anchor Receipt" is the receipt;
+// "Fingerprint" is the document identifier; "credit" is the funding unit.
+
+/** User-visible badge label for each canonical queue lifecycle state. */
+export const QUEUE_LIFECYCLE_LABELS = {
+  pending: 'Pending',
+  queued: 'In Queue',
+  processing: 'Securing',
+  materialized: 'Awaiting Confirmation',
+  anchored: 'Secured',
+  failed: 'Needs Attention',
+  skipped: 'Skipped',
+} as const;
+
+/** One-line, plain-language description shown next to each lifecycle state. */
+export const QUEUE_LIFECYCLE_DESCRIPTIONS = {
+  pending: 'Your document is being prepared. It has not used any credits yet.',
+  queued: 'Your document is in the queue to be secured. Queueing is free — no credits are used.',
+  processing: 'Your document is being secured now.',
+  materialized: 'Your document has its network receipt and is awaiting final confirmation.',
+  anchored: 'Your document is permanently secured and independently verifiable.',
+  failed: 'We could not secure this document. You were not charged. You can try again.',
+  skipped: 'This document was not secured — it was a duplicate or you cancelled. No credits were used.',
+} as const;
+
+/**
+ * Credit-charge state copy, mapped 1:1 to the credit-ledger model
+ * (debit_and_enqueue + nightly reconciler; refunds are append-only reversing
+ * rows). Charge happens at securing, never at queueing.
+ */
+export const CREDIT_DEBIT_LABELS = {
+  spent: 'Credit used',
+  pending: 'Credit pending',
+  refunded: 'Credit refunded',
+} as const;
+
+/** Optional helper text expanding each credit-charge state. */
+export const CREDIT_DEBIT_DESCRIPTIONS = {
+  spent: '1 credit was used to secure this document instantly.',
+  pending: 'A credit is reserved for this document and will be confirmed shortly.',
+  refunded: '1 credit was returned to your balance.',
+} as const;
+
+/**
+ * Labels for the two securing paths. "Add to Queue" is the default, free path;
+ * "Secure Instantly" is hidden at launch and only shown when the worker grants
+ * the capability (never a client default). See queueContract.ts.
+ */
+export const SECURING_CHOICE_LABELS = {
+  queue: 'Add to Queue',
+  instant: 'Secure Instantly',
+} as const;
+
+/** Helper text for each securing path, shown under the choice when offered. */
+export const SECURING_CHOICE_HINTS = {
+  queue: 'Secured with the next batch. Free — no credits used.',
+  instant: 'Secured right away. Uses 1 credit from your plan.',
+} as const;
+
+/**
+ * Distinct page titles for the three "queue" surfaces. Carson's premortem
+ * (SCRUM-2347): never ship two surfaces both titled "Review queue". These are
+ * deliberately distinct so a self-serve user is never shown the org dedup queue.
+ */
+export const QUEUE_SURFACE_TITLES = {
+  consumer_secure_queue: 'Pending Documents',
+  org_duplicate_review: 'Duplicate Review',
+  org_approvals: 'Approvals',
+} as const;
+
+/**
+ * Consumer-facing secure-queue surface copy (the NEW individual-facing list of
+ * documents waiting to be secured). Title is shared with
+ * QUEUE_SURFACE_TITLES.consumer_secure_queue.
+ */
+export const SECURE_QUEUE_LABELS = {
+  PAGE_TITLE: 'Pending Documents',
+  PAGE_SUBTITLE: 'Documents waiting to be secured. Queueing is free — credits are only used when you secure instantly.',
+  ADD_TO_QUEUE: 'Add to Queue',
+  SECURE_INSTANTLY: 'Secure Instantly',
+  EMPTY_TITLE: 'Nothing waiting',
+  EMPTY_DESC: 'Documents you add to the queue will appear here until they are secured.',
+  COST_PREVIEW: 'Uses 1 credit. You have {n} remaining this cycle.',
+  INSUFFICIENT_CREDITS: 'Not enough credits. Add credits or add to the queue (free).',
+  NOT_CHARGED_FAILURE: 'We couldn’t secure your document right now. You were not charged. Please try again or add it to the queue.',
+  QUEUED_TOAST: 'Added to the queue. No credits used.',
+  SECURED_TOAST: 'Your document has been secured.',
 } as const;

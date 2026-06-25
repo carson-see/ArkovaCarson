@@ -202,6 +202,27 @@ describe('GET /credentials/:publicId/ctdl', () => {
     });
   });
 
+  it('fails closed (no published body) when a credential carries a fabricated CTID (CE-02)', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(
+        anchor({ ctid: 'ce-ARK-2026-CTDL-001' } as Partial<CtdlAnchor>),
+      ),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    // The guard throws inside buildCtdlJsonLd; the endpoint fails closed —
+    // never publishes a body, never echoes the offending CTID.
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'internal_error' });
+    expect(JSON.stringify(res.body)).not.toContain('ce-ARK-2026-CTDL-001');
+    const auditPayload = insertAudit.mock.calls[0][0];
+    expect(JSON.parse(auditPayload.details)).toMatchObject({
+      outcome: 'error',
+      http_status: 500,
+    });
+  });
+
   it('returns 410 with a revoked CTDL body for revoked credentials', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(anchor({

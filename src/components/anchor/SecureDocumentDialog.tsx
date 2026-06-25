@@ -15,7 +15,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import type { Json } from '@/types/database.types';
 import { useAuditorMode } from '@/hooks/useAuditorMode';
-import { CheckCircle, AlertCircle, Loader2, Copy, Check, ExternalLink, Sparkles, SkipForward, RefreshCw, PenLine, Clock } from 'lucide-react';
+import { CheckCircle, AlertCircle, Loader2, Copy, Check, ExternalLink, Sparkles, SkipForward, RefreshCw, PenLine, Clock, ShieldAlert } from 'lucide-react';
 import { ExtractionQualityBanner } from './ExtractionQualityBanner';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,7 +43,7 @@ import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { toast } from 'sonner';
-import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS, EXTRACTION_RECOVERY_LABELS, CONFIRMATION_PROGRESS_LABELS } from '@/lib/copy';
+import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS, EXTRACTION_RECOVERY_LABELS, PRIVACY_FAIL_CLOSED_LABELS, CONFIRMATION_PROGRESS_LABELS } from '@/lib/copy';
 import { verifyUrl, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 
@@ -57,7 +57,7 @@ interface SecureDocumentDialogProps {
   initialJurisdiction?: string;
 }
 
-type Step = 'upload' | 'extracting' | 'extraction-failed' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk' | 'attestation-review' | 'attestation-submitting';
+type Step = 'upload' | 'extracting' | 'extraction-failed' | 'privacy-blocked' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk' | 'attestation-review' | 'attestation-submitting';
 
 interface FileData {
   file: File;
@@ -379,11 +379,19 @@ export function SecureDocumentDialog({
     setExtractedFields([]);
     setExtractionProgress({ stage: 'ocr', progress: 0, message: 'Starting AI analysis...' });
 
+    // §1.6 FAIL-CLOSED (WEBEXT-03): capture whether the on-device privacy
+    // guarantee could not be honored. The orchestrator reports this via the
+    // progress callback synchronously before returning null; React state is
+    // async, so we latch it in a local to branch reliably afterward.
+    let failedClosed = false;
     const result = await runExtraction(
       fileData.file,
       fileData.fingerprint,
       selectedTemplate?.credential_type ?? 'OTHER',
-      (progress) => setExtractionProgress(progress),
+      (progress) => {
+        if (progress.failClosed) failedClosed = true;
+        setExtractionProgress(progress);
+      },
     );
 
     if (result) {
@@ -425,8 +433,19 @@ export function SecureDocumentDialog({
       // The extracting step with stage=complete shows the field list
       // and a Continue button that navigates to confirm or template.
       return;
+    } else if (failedClosed) {
+      // §1.6 FAIL-CLOSED: the on-device PII model or OCR engine could not run,
+      // so NOTHING was analyzed and NOTHING was sent. This is a LOUD, distinct
+      // failure — NOT the soft "secure without metadata" recovery path. We do
+      // NOT auto-select a template or fall through to skip here; the user must
+      // explicitly acknowledge before continuing without on-device analysis.
+      toast.error(PRIVACY_FAIL_CLOSED_LABELS.TITLE);
+      setExtractionProgress(null);
+      setStep('privacy-blocked');
+      return;
     } else {
-      // AI extraction failed — show recovery step so the user can retry,
+      // AI extraction failed (soft/recoverable: no text, timeout, server 5xx) —
+      // egress was already PII-safe. Show recovery step so the user can retry,
       // enter metadata manually, or skip. Never silently save with zero metadata.
       toast.warning(AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST);
       setExtractionProgress(null);
@@ -713,6 +732,48 @@ export function SecureDocumentDialog({
                 >
                   <SkipForward className="mr-2 h-4 w-4" />
                   {EXTRACTION_RECOVERY_LABELS.SKIP}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* §1.6 FAIL-CLOSED (WEBEXT-03): loud, explicit failure when the
+              on-device privacy protection (PII model / OCR engine) could not
+              run. Distinct from the soft extraction-failed recovery: it states
+              plainly that nothing was sent and the file never left the device. */}
+          {step === 'privacy-blocked' && (
+            <div className="space-y-4 py-2" data-testid="privacy-blocked">
+              <Alert className="border-destructive/40 bg-destructive/10">
+                <ShieldAlert className="h-4 w-4 text-destructive" />
+                <AlertDescription className="text-sm">
+                  <p className="font-medium mb-1 text-destructive">{PRIVACY_FAIL_CLOSED_LABELS.TITLE}</p>
+                  <p className="text-muted-foreground mb-2">{PRIVACY_FAIL_CLOSED_LABELS.BODY}</p>
+                  <p className="text-muted-foreground">
+                    <span className="font-medium text-foreground">{PRIVACY_FAIL_CLOSED_LABELS.WHAT_HAPPENED_LABEL}: </span>
+                    {PRIVACY_FAIL_CLOSED_LABELS.WHAT_HAPPENED}
+                  </p>
+                </AlertDescription>
+              </Alert>
+              <p className="text-xs font-medium text-muted-foreground">{PRIVACY_FAIL_CLOSED_LABELS.REASSURANCE}</p>
+              <div className="flex flex-col gap-2">
+                <Button
+                  variant="default"
+                  className="w-full justify-start"
+                  onClick={() => handleStartExtraction()}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {PRIVACY_FAIL_CLOSED_LABELS.RETRY}
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start text-muted-foreground"
+                  onClick={async () => {
+                    await autoSelectTemplate('OTHER');
+                    handleConfirm([]);
+                  }}
+                >
+                  <SkipForward className="mr-2 h-4 w-4" />
+                  {PRIVACY_FAIL_CLOSED_LABELS.CONTINUE_WITHOUT}
                 </Button>
               </div>
             </div>

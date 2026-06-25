@@ -58,10 +58,17 @@ downloads.
   normalized status is `SECURED`. The SCRUM-952 UAT closure (BUG-2026-05-15-001)
   showed contradictory signals — that bug is the regression-test target
   in `PublicVerification.test.tsx`.
+- **DON'T** render the `ComplianceBadge` (SOC2/HIPAA/eIDAS controls) for any
+  non-`SECURED` status. Compliance controls describe protections of a *securely
+  anchored* credential; advertising them next to a REVOKED/SUPERSEDED/EXPIRED
+  banner is a §1.5/§1.13 claims-gate violation. Gate the section on `isSecured`
+  and pass the real `isSecured` to `ComplianceBadge` — never hardcode `true`
+  (BUG-2026-06-24-007, regression-pinned in `PublicVerification.test.tsx`).
 
 ## Tests
 
 - `PublicVerification.test.tsx` — pins the hero state machine for PENDING /
   SUBMITTED / SECURED / REVOKED / EXPIRED, including the "no green-check on
-  SUBMITTED" rule, `ACTIVE` alias normalization, and the gating of proof
-  sections behind terminal proof states.
+  SUBMITTED" rule, `ACTIVE` alias normalization, the gating of proof
+  sections behind terminal proof states, and the "no compliance controls
+  unless SECURED" rule (BUG-2026-06-24-007).

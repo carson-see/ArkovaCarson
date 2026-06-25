@@ -11,13 +11,20 @@
  * 2. Run NER on the remaining text (catches names, locations, orgs the regex missed)
  * 3. Merge results into a unified stripping report
  *
- * The NER step is optional — if the model fails to load or is disabled,
- * falls back gracefully to regex-only stripping (existing behavior).
+ * §1.6 FAIL-CLOSED (WEBEXT-03 / SCRUM-2505): the NER step is opt-OUT, not
+ * best-effort. When NER is requested (the default) and the model fails to load
+ * or run, this function THROWS a fail-closed error — it does NOT silently
+ * degrade to regex-only. Silent degrade is the exact 2026-06-16 fail-open
+ * regression (a CSP-broken model dep → regex-only → unstripped PII left the
+ * browser). The caller (`aiExtraction.runExtraction`) catches the fail-closed
+ * error BEFORE any network call, so no metadata leaves the device. NER is only
+ * skipped when the caller explicitly passes `enableNER: false`.
  */
 
 import { stripPII, type StrippingOptions, type StrippingReport } from './piiStripper';
 import { detectPIIWithNER, redactNEREntities, type NERPIIResult, type NERProgress } from './nerPiiDetector';
 import { detectMLRuntime, type MLBackend } from './mlRuntime';
+import { NerPiiFailClosedError, isPiiStripFailClosedError } from './ocrFailClosed';
 
 export interface EnhancedStrippingOptions extends StrippingOptions {
   /** Enable NER-based detection (default: true) */
@@ -40,7 +47,11 @@ export interface EnhancedStrippingReport extends StrippingReport {
 /**
  * Strip PII using regex patterns + NER model.
  *
- * Falls back to regex-only if NER fails or is disabled.
+ * §1.6 FAIL-CLOSED: throws {@link NerPiiFailClosedError} (or re-throws Lane 1's
+ * `NERModelLoadError`) when NER is requested but cannot load/run. Returns a
+ * regex-only report ONLY when the caller explicitly passes `enableNER: false`.
+ *
+ * @throws PiiStripFailClosedError when NER fails and was not opted out.
  */
 export async function stripPIIEnhanced(
   text: string,
@@ -103,13 +114,20 @@ export async function stripPIIEnhanced(
       allPiiCategories: Array.from(allCategories),
     };
   } catch (err) {
-    // NER failed — fall back to regex-only results
-    console.warn('NER PII detection failed, using regex-only:', err);
-    return {
-      ...regexReport,
-      nerUsed: false,
-      nerResult: null,
-      allPiiCategories: regexReport.piiFound,
-    };
+    // §1.6 FAIL-CLOSED: NER was requested but could not load/run. Do NOT degrade
+    // to regex-only — that would let NER-detectable PII (names, locations, orgs)
+    // leave the browser. Re-raise as a fail-closed error so the orchestrator
+    // blocks egress before any network call. If it is already a fail-closed
+    // error (e.g. Lane 1's NERModelLoadError, DEPENDS ON #1253), preserve it.
+    // NOTE: `err` is intentionally NOT interpolated into the message — it may
+    // reference document-derived text; we surface only a bounded, generic
+    // reason and attach the original as `cause` for diagnostics.
+    if (isPiiStripFailClosedError(err)) {
+      throw err;
+    }
+    throw new NerPiiFailClosedError(
+      'On-device privacy check could not run (NER model unavailable).',
+      { cause: err },
+    );
   }
 }
