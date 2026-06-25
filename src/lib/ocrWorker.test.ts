@@ -38,26 +38,25 @@ vi.mock('pdfjs-dist', () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Mock tesseract.js (dynamic import) — we won't exercise it but need it to
-// exist so the module loads without error.
+// Mock tesseract.js (dynamic import). createWorker is a shared spy so tests can
+// inspect the WEBEXT-02 self-host options and force load failures (WEBEXT-03).
 // ---------------------------------------------------------------------------
+const mockTesseractRecognize = vi.fn().mockResolvedValue({ data: { text: 'ocr text' } });
+const mockTesseractTerminate = vi.fn();
+const mockCreateWorker = vi.fn().mockResolvedValue({
+  recognize: mockTesseractRecognize,
+  terminate: mockTesseractTerminate,
+});
 vi.mock('tesseract.js', () => ({
-  default: {
-    createWorker: vi.fn().mockResolvedValue({
-      recognize: vi.fn().mockResolvedValue({ data: { text: 'ocr text' } }),
-      terminate: vi.fn(),
-    }),
-  },
-  createWorker: vi.fn().mockResolvedValue({
-    recognize: vi.fn().mockResolvedValue({ data: { text: 'ocr text' } }),
-    terminate: vi.fn(),
-  }),
+  default: { createWorker: (...args: unknown[]) => mockCreateWorker(...args) },
+  createWorker: (...args: unknown[]) => mockCreateWorker(...args),
 }));
 
 // ---------------------------------------------------------------------------
 // Import under test — AFTER mocks are declared
 // ---------------------------------------------------------------------------
-import { extractText } from './ocrWorker';
+import { extractText, extractTextFromImage, TESSERACT_VENDOR_PATHS } from './ocrWorker';
+import { OcrEngineLoadError } from './ocrFailClosed';
 
 /** Helper: create a File with the given name, MIME type, and optional content */
 function fakeFile(name: string, type: string, content = ''): File {
@@ -212,5 +211,82 @@ describe('extractText routing', () => {
 
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
     expect(typeof result.durationMs).toBe('number');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WEBEXT-02 / SCRUM-2504 — Tesseract self-host under CSP 'self'
+// WEBEXT-03 / SCRUM-2505 — OCR engine fail-closed
+// ---------------------------------------------------------------------------
+describe('Tesseract self-host + fail-closed (WEBEXT-02/03)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateWorker.mockResolvedValue({
+      recognize: mockTesseractRecognize,
+      terminate: mockTesseractTerminate,
+    });
+    mockTesseractRecognize.mockResolvedValue({ data: { text: 'ocr text' } });
+  });
+
+  it('exposes vendored, same-origin (/vendor) Tesseract asset paths — no CDN', () => {
+    // The exported config is the single source of truth for the CI CSP guard.
+    expect(TESSERACT_VENDOR_PATHS.workerPath).toMatch(/^\/vendor\/tesseract\//);
+    expect(TESSERACT_VENDOR_PATHS.corePath).toMatch(/^\/vendor\/tesseract\//);
+    expect(TESSERACT_VENDOR_PATHS.langPath).toMatch(/^\/vendor\/tesseract\//);
+    for (const p of Object.values(TESSERACT_VENDOR_PATHS)) {
+      expect(p).not.toMatch(/jsdelivr|unpkg|tessdata|cdn|https?:/i);
+    }
+  });
+
+  it('passes the vendored self-host options to createWorker (no jsdelivr/CDN fetch)', async () => {
+    const file = fakeFile('scan.png', 'image/png', 'fake-image-bytes');
+
+    const result = await extractTextFromImage(file);
+
+    expect(result.method).toBe('tesseract');
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
+    const [lang, , workerOptions] = mockCreateWorker.mock.calls[0] as [
+      string,
+      unknown,
+      { workerPath?: string; corePath?: string; langPath?: string },
+    ];
+    expect(lang).toBe('eng');
+    // The 3rd arg (WorkerOptions) must pin all three asset roots to /vendor.
+    expect(workerOptions.workerPath).toBe(TESSERACT_VENDOR_PATHS.workerPath);
+    expect(workerOptions.corePath).toBe(TESSERACT_VENDOR_PATHS.corePath);
+    expect(workerOptions.langPath).toBe(TESSERACT_VENDOR_PATHS.langPath);
+  });
+
+  it('FAILS CLOSED with OcrEngineLoadError when the OCR engine cannot load', async () => {
+    // Simulate the CSP-blocked / network-failed core load.
+    mockCreateWorker.mockRejectedValue(new Error('Failed to fetch dynamically imported module'));
+
+    const file = fakeFile('scan.png', 'image/png', 'fake-image-bytes');
+
+    const caught = await extractTextFromImage(file).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(OcrEngineLoadError);
+    expect((caught as OcrEngineLoadError).failClosed).toBe(true);
+    expect((caught as OcrEngineLoadError).stage).toBe('ocr');
+  });
+
+  it('FAILS CLOSED when recognition itself throws (engine ran but failed)', async () => {
+    mockTesseractRecognize.mockRejectedValue(new Error('wasm OOM'));
+
+    const file = fakeFile('scan.png', 'image/png', 'fake-image-bytes');
+
+    const caught = await extractTextFromImage(file).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(OcrEngineLoadError);
+    // The worker must still be terminated even on failure (no leak).
+    expect(mockTesseractTerminate).toHaveBeenCalled();
+  });
+
+  it('does NOT leak document bytes into the fail-closed error message', async () => {
+    mockCreateWorker.mockRejectedValue(new Error('boom containing secret-doc-bytes-ABC123'));
+
+    const file = fakeFile('scan.png', 'image/png', 'secret-doc-bytes-ABC123');
+
+    const caught = await extractTextFromImage(file).catch((e: unknown) => e) as Error;
+    // The surfaced message must be the fixed copy, not the raw underlying error.
+    expect(caught.message).not.toContain('secret-doc-bytes-ABC123');
   });
 });
