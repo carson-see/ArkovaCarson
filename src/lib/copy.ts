@@ -564,6 +564,11 @@ export const WEBHOOK_LABELS = {
     'Event notifications to {url} will stop and this endpoint will be removed. This cannot be undone.',
   DELETE_CONFIRM_ACTION: 'Delete endpoint',
   DELETE_CONFIRM_CANCEL: 'Cancel',
+  // Surfaced when enabling/disabling an endpoint is denied (e.g. RLS /
+  // permission failure). The optimistic toggle reverts; this tells the user it
+  // did not take, instead of a silent snap-back. No internal error detail is
+  // leaked to the user. §1.3-clean (no banned terms).
+  TOGGLE_ERROR: "Couldn't update this endpoint. You may not have permission. Please try again.",
 } as const;
 
 // =============================================================================
