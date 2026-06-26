@@ -222,6 +222,15 @@ const ConfigSchema = z.object({
    * true explicitly once the connector is launch-approved.
    */
   enableDocusignWebhook: boolFlag(false),
+  /**
+   * Connector-artifact enqueue (DS-03 / SCRUM-2363) — when false, connector
+   * jobs (DocuSign envelope-completed) compute the fingerprint but DO NOT
+   * enqueue a `connector_artifact` row. Default false: the row's drain consumer
+   * (QUEUE-06/SCRUM-2352, QUEUE-08/SCRUM-2354) is unbuilt, so enqueuing now
+   * would pile up `pending` rows that nothing anchors. Cloud Run prod env sets
+   * this to true explicitly once the drain ships.
+   */
+  enableConnectorArtifactEnqueue: boolFlag(false),
   /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
   docusignIntegrationKey: z.string().optional(),
   /** DocuSign client secret. Required when DOCUSIGN_INTEGRATION_KEY is set. */
@@ -629,6 +638,7 @@ function loadConfig(): Config {
     googleOauthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
     enableDocusignOauth: process.env.ENABLE_DOCUSIGN_OAUTH,
     enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,
+    enableConnectorArtifactEnqueue: process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE,
     docusignIntegrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
     docusignClientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
     docusignConnectHmacSecret: process.env.DOCUSIGN_CONNECT_HMAC_SECRET,
