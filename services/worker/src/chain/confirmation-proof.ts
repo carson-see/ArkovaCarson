@@ -293,6 +293,10 @@ function walkMerkleTree(
 ): MerkleWalkResult | null {
   let matchedIndex = -1;
   let matchedLeafHashLE: Buffer | null = null;
+  // CVE-2012-2459 (Bitcoin Core's `fBad`): set if any internal node with a
+  // GENUINE right child has left == right — the signature of a duplicate-node
+  // second-preimage forgery. A tree that trips this is rejected outright.
+  let duplicateNode = false;
 
   const cursor = createPartialMerkleCursor(hashes, flagBytes, flagBytesLen);
 
@@ -322,12 +326,16 @@ function walkMerkleTree(
     let right: Buffer | null;
     const rightChildPos = pos * 2 + 1;
     if (rightChildPos < calcWidthAtHeight(totalTx, height - 1)) {
+      // GENUINE right child (not an odd-row duplicate of the left). Bitcoin
+      // Core rejects left == right here: it can only mean a duplicate-node
+      // forgery (CVE-2012-2459), since a real distinct right child cannot equal
+      // its left sibling in an honest tree. Flag it so the whole walk fails.
       right = traverse(height - 1, rightChildPos);
-      // Bitcoin rejects left==right at internal nodes (CVE-2012-2459-adjacent);
-      // here it can only happen via a duplicated last node, which the width
-      // check above already excludes for a real right child.
+      if (left != null && right != null && Buffer.from(left).equals(right)) {
+        duplicateNode = true;
+      }
     } else {
-      // Odd row: right child is a duplicate of the left.
+      // Odd row: right child is a legitimate duplicate of the left.
       right = left;
     }
     if (left == null || right == null) return null;
@@ -335,7 +343,7 @@ function walkMerkleTree(
   };
 
   const root = traverse(treeHeight, 0);
-  if (cursor.hadError || root == null || matchedIndex < 0 || matchedLeafHashLE == null) {
+  if (cursor.hadError || duplicateNode || root == null || matchedIndex < 0 || matchedLeafHashLE == null) {
     return null;
   }
   return {
@@ -511,6 +519,9 @@ function extractBranchForIndex(
   matchedIndex: number,
 ): MerkleProofEntry[] | null {
   const cursor = createPartialMerkleCursor(hashes, flagBytes, flagBytesLen);
+  // CVE-2012-2459 guard, mirrored from walkMerkleTree so the branch-extraction
+  // pass rejects the same duplicate-node forgery rather than emitting a branch.
+  let duplicateNode = false;
 
   // Branch entries collected as { height, hash, position }. We collect during
   // descent then sort leaf→root (height ascending).
@@ -531,7 +542,11 @@ function extractBranchForIndex(
     const left = traverse(height - 1, leftPos);
     let right: Buffer | null;
     if (rightPos < calcWidthAtHeight(totalTx, height - 1)) {
+      // Genuine right child: left == right ⇒ duplicate-node forgery (reject).
       right = traverse(height - 1, rightPos);
+      if (left != null && right != null && Buffer.from(left).equals(right)) {
+        duplicateNode = true;
+      }
     } else {
       right = left; // duplicated last node
     }
@@ -547,7 +562,7 @@ function extractBranchForIndex(
   };
 
   traverse(treeHeight, 0);
-  if (cursor.hadError) return null;
+  if (cursor.hadError || duplicateNode) return null;
   collected.sort((a, b) => a.height - b.height);
   return collected.map((c) => ({ hash: c.hash, position: c.position }));
 }

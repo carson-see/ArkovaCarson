@@ -27,6 +27,11 @@ import { withCronMonitoring } from '../utils/sentry.js';
 
 type CronTask = Parameters<typeof cron.schedule>[1];
 
+/** Narrow an unknown error to its message string (LOW-2 log-hygiene helper). */
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   'recover-stuck-broadcasts',
   'process-batch-anchors',
@@ -277,7 +282,9 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
           );
         }
       } catch (error) {
-        logger.error({ error }, 'Confirmation-proof backfill cron failed');
+        // LOW-2: log the message string (not the raw error object) so a future
+        // richer error can't drag rpcUrl/token-bearing fields into the log.
+        logger.error({ err: errMsg(error) }, 'Confirmation-proof backfill cron failed');
       }
     });
   }

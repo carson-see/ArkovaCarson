@@ -14,18 +14,31 @@ function mockClient() {
 }
 
 /**
- * Mock client for the PROOF-03 confirmation UPDATE path: `.from().update().eq()`
- * resolves to `{ error, count }`. `counts` controls the per-call `count`.
+ * Mock client for the PROOF-03 confirmation UPDATE path:
+ * `.from().update().eq().select()` resolves to `{ error, data }`, where `data`
+ * is the array of affected rows (`[{ anchor_id }]` for a real row, `[]` when no
+ * row matched). This mirrors the established `.select()`-then-`data.length`
+ * pattern (anchorExpirySweep.ts:507-515) — it models REALITY, so an update that
+ * matches no row genuinely returns an empty array. `matchedRows[i]` controls
+ * whether the i-th update finds its row (default: found).
+ *
+ * (PROOF-03 / MED-2: the prior mock fabricated a `count` the production code
+ * never actually requested — masking the bug where `count` was always null.)
  */
-function mockUpdateClient(counts: Array<number | null> = []) {
+function mockUpdateClient(matchedRows: Array<boolean> = []) {
   const eqCalls: Array<{ col: string; val: string; values: Record<string, unknown> }> = [];
   let callIdx = 0;
   const update = vi.fn((values: Record<string, unknown>) => ({
     eq: vi.fn((col: string, val: string) => {
       eqCalls.push({ col, val, values });
-      const count = counts[callIdx] ?? 1;
+      const idx = callIdx;
       callIdx += 1;
-      return Promise.resolve({ error: null, count });
+      return {
+        select: vi.fn((_cols: string) => {
+          const found = matchedRows[idx] ?? true;
+          return Promise.resolve({ error: null, data: found ? [{ anchor_id: val }] : [] });
+        }),
+      };
     }),
   }));
   const from = vi.fn(() => ({ update }));
@@ -130,7 +143,7 @@ describe('updateAnchorConfirmationProofs (PROOF-03)', () => {
   });
 
   it('updates ONLY block_header + block_hash (never app-tree columns) keyed by anchor_id', async () => {
-    const { client, update, eqCalls } = mockUpdateClient([1]);
+    const { client, update, eqCalls } = mockUpdateClient([true]);
     const result = await updateAnchorConfirmationProofs(client, [
       { anchorId: 'anc-1', blockHeader: 'aa'.repeat(80), blockHash: 'bb'.repeat(32) },
     ]);
@@ -145,7 +158,7 @@ describe('updateAnchorConfirmationProofs (PROOF-03)', () => {
   });
 
   it('includes block_height only when provided', async () => {
-    const { client, update } = mockUpdateClient([1, 1]);
+    const { client, update } = mockUpdateClient([true, true]);
     await updateAnchorConfirmationProofs(client, [
       { anchorId: 'anc-1', blockHeader: 'aa'.repeat(80), blockHash: 'bb'.repeat(32), blockHeight: 800123 },
       { anchorId: 'anc-2', blockHeader: 'aa'.repeat(80), blockHash: 'bb'.repeat(32) },
@@ -154,13 +167,35 @@ describe('updateAnchorConfirmationProofs (PROOF-03)', () => {
     expect('block_height' in (update.mock.calls[1][0] as Record<string, unknown>)).toBe(false);
   });
 
-  it('counts rows with count===0 as missing (skipped, not created)', async () => {
-    // First anchor has a row (count 1), second has none (count 0).
-    const { client } = mockUpdateClient([1, 0]);
+  // MED-2 regression: an update that matches NO row must increment `anchorsMissing`.
+  // Previously `updateAnchorConfirmationProofs` read `count` without requesting it,
+  // so `count` was always null, `count===0` never fired, and EVERY row counted as
+  // updated (missing was permanently 0). The `.select('anchor_id')` ⇒ empty-array
+  // signal makes the missing-row case actually observable.
+  it('counts an update matching no row as missing (skipped, not created)', async () => {
+    // First anchor has a row, second matches none (empty data array).
+    const { client } = mockUpdateClient([true, false]);
     const result = await updateAnchorConfirmationProofs(client, [
       { anchorId: 'has-row', blockHeader: 'aa'.repeat(80), blockHash: 'bb'.repeat(32) },
       { anchorId: 'no-row', blockHeader: 'aa'.repeat(80), blockHash: 'bb'.repeat(32) },
     ]);
     expect(result).toEqual({ updated: 1, missing: 1 });
+  });
+
+  it('requests the affected rows via .select(anchor_id) so the missing-row case is observable', async () => {
+    // The prod helper MUST call .select(...) after .eq(...) — without it the
+    // missing-row branch can never fire (the MED-2 bug). Assert the select call
+    // happens and is scoped to a lightweight column.
+    const selectSpy = vi.fn((_cols: string) => Promise.resolve({ error: null, data: [] as Array<{ anchor_id: string }> }));
+    const eq = vi.fn((_col: string, _val: string) => ({ select: selectSpy }));
+    const update = vi.fn((_values: Record<string, unknown>) => ({ eq }));
+    const from = vi.fn(() => ({ update }));
+    const client = { from } as unknown as SupabaseClient;
+
+    const result = await updateAnchorConfirmationProofs(client, [
+      { anchorId: 'no-row', blockHeader: 'aa'.repeat(80), blockHash: 'bb'.repeat(32) },
+    ]);
+    expect(selectSpy).toHaveBeenCalledWith('anchor_id');
+    expect(result).toEqual({ updated: 0, missing: 1 });
   });
 });

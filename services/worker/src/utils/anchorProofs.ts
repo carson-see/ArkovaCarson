@@ -97,10 +97,18 @@ export async function updateAnchorConfirmationProofs(
 ): Promise<ConfirmationUpdateResult> {
   if (rows.length === 0) return { updated: 0, missing: 0 };
 
+  // MED-2: `.update().eq()` does NOT return a row count unless explicitly
+  // requested (the prior code read `count` without `{ count: 'exact' }`, so it
+  // was always null — every row counted as updated and `missing` was stuck at
+  // 0, making the "no anchor_proofs row" warn unreachable). Use the established
+  // `.select(...)`-then-`data.length` signal (anchorExpirySweep.ts:507-515): an
+  // UPDATE that matches no row returns an empty array, so a missing row is real.
   const dbAny = client as unknown as {
     from(table: string): {
       update(values: Record<string, unknown>): {
-        eq(col: string, val: string): Promise<{ error: Error | null; count: number | null }>;
+        eq(col: string, val: string): {
+          select(cols: string): Promise<{ error: Error | null; data: Array<{ anchor_id: string }> | null }>;
+        };
       };
     };
   };
@@ -114,14 +122,15 @@ export async function updateAnchorConfirmationProofs(
     };
     if (row.blockHeight != null) values.block_height = row.blockHeight;
 
-    const { error, count } = await dbAny
+    const { error, data } = await dbAny
       .from('anchor_proofs')
       .update(values)
-      .eq('anchor_id', row.anchorId);
+      .eq('anchor_id', row.anchorId)
+      .select('anchor_id');
 
     if (error) throw error;
-    if (count === 0) missing += 1;
-    else updated += 1;
+    if ((data?.length ?? 0) > 0) updated += 1;
+    else missing += 1;
   }
 
   return { updated, missing };

@@ -390,6 +390,36 @@ describe('parseTxOutProof', () => {
       }
     },
   );
+
+  // ── CVE-2012-2459 (MED-1): reject left == right at a GENUINE internal node ──
+  //
+  // Bitcoin Core's CPartialMerkleTree::TraverseAndExtract sets fBad when, at an
+  // internal node that has a real (non-duplicated) right child, the recovered
+  // left and right child hashes are equal. That equality is the signature of a
+  // duplicate-node second-preimage forgery (CVE-2012-2459): two different trees
+  // hashing to the same merkleroot. A proof must NEVER be accepted in that case.
+  //
+  // Fixture: a genuine 2-tx block whose two leaves are IDENTICAL. totalTx=2 so
+  // the right child at the root is real (calcWidthAtHeight(2,0)=2 ⇒ pos 1 is in
+  // range — NOT an odd-row duplicate), yet left == right at the root. The
+  // recomputed root still equals the header merkleroot and the matched leaf
+  // equals the target, so ONLY the duplicate-child check can reject this.
+  it('rejects a degenerate block where left == right at a genuine (non-duplicated) internal node (CVE-2012-2459)', () => {
+    const dupLeaf = makeTxidLE(0x2459);
+    // Two genuine leaves that happen to be byte-identical → left == right at root.
+    const built = buildMerkleBlock([dupLeaf, dupLeaf], 0);
+    const target = displayHex(dupLeaf);
+
+    // Sanity on the fixture: it IS a 2-leaf block (a real right child exists,
+    // not an odd-row duplicate) and the two carried leaf hashes are equal.
+    expect(built.totalTx).toBe(2);
+    expect(built.hashesLE).toHaveLength(2);
+    expect(built.hashesLE[0].equals(built.hashesLE[1])).toBe(true);
+
+    // The recomputed root matches the header merkleroot and the matched leaf is
+    // the target, so the only thing that may reject this is the CVE check.
+    expect(parseTxOutProof(built.hex, target)).toBeNull();
+  });
 });
 
 // ─── fetchConfirmationProof: confirmed ──────────────────────────────────────

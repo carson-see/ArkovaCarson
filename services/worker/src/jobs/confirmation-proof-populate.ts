@@ -255,7 +255,10 @@ export async function populateConfirmationProofsForSecuredAnchors(
     .limit(maxRows);
 
   if (error) {
-    logger.error({ error }, 'confirmation-proof scan failed');
+    // LOW-2: log the message string, not the raw error object — keeps the log
+    // shape consistent and avoids any future coupling of provider/rpcUrl/token
+    // fields that might ride along on a richer error object.
+    logger.error({ err: errMsg(error) }, 'confirmation-proof scan failed');
     return {
       scanned: 0,
       txAttempted: 0,

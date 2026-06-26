@@ -68,10 +68,21 @@ function buildSingleTxProof(leafLE: Buffer): { proofHex: string; headerHex: stri
   return { proofHex, headerHex, blockHash };
 }
 
-/** Supabase mock for the `.from().update().eq()` confirmation path. */
+/**
+ * Supabase mock for the `.from().update().eq().select()` confirmation path
+ * (MED-2: the write requests affected rows via `.select('anchor_id')`).
+ * `updateCount` rows are returned as the affected-row array — 0 ⇒ missing row.
+ */
 function mockClient(updateCount = 1) {
   const update = vi.fn((_values: Record<string, unknown>) => ({
-    eq: vi.fn((_col: string, _val: string) => Promise.resolve({ error: null, count: updateCount })),
+    eq: vi.fn((_col: string, val: string) => ({
+      select: vi.fn((_cols: string) =>
+        Promise.resolve({
+          error: null,
+          data: Array.from({ length: updateCount }, () => ({ anchor_id: val })),
+        }),
+      ),
+    })),
   }));
   const from = vi.fn(() => ({ update }));
   return { client: { from } as unknown as SupabaseClient, from, update };
@@ -199,7 +210,7 @@ describe('populateConfirmationProofs', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('reports anchorsMissing when an anchor has no anchor_proofs row (count 0)', async () => {
+  it('reports anchorsMissing when an anchor has no anchor_proofs row (update matches no row)', async () => {
     const leaf = makeTxidLE(4);
     const txId = displayHex(leaf);
     const { proofHex, headerHex, blockHash } = buildSingleTxProof(leaf);
@@ -241,7 +252,14 @@ describe('populateConfirmationProofs', () => {
  */
 function mockScanClient(scanRows: unknown[], updateCount = 1) {
   const update = vi.fn((_values: Record<string, unknown>) => ({
-    eq: vi.fn((_col: string, _val: string) => Promise.resolve({ error: null, count: updateCount })),
+    eq: vi.fn((_col: string, val: string) => ({
+      select: vi.fn((_cols: string) =>
+        Promise.resolve({
+          error: null,
+          data: Array.from({ length: updateCount }, () => ({ anchor_id: val })),
+        }),
+      ),
+    })),
   }));
   const selectResult = { data: scanRows, error: null };
   const builder: Record<string, unknown> = {};
