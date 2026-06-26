@@ -4,6 +4,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const processNextJobMock = vi.hoisted(() => vi.fn());
 const processDocusignEnvelopeCompletedJobMock = vi.hoisted(() => vi.fn());
 
+// DS-03 (SCRUM-2363) connector-artifact enqueue guard. The job reads
+// `config.enableConnectorArtifactEnqueue`; mock it as a mutable object so each
+// test can toggle the flag. Default ON here so every pre-existing enqueue-path
+// test exercises the same behavior as production-with-the-flag-on (the real
+// config throws at import without the full env, so a mock is mandatory anyway).
+const { mockConfig } = vi.hoisted(() => ({
+  mockConfig: { enableConnectorArtifactEnqueue: true },
+}));
+
+vi.mock('../config.js', () => ({
+  get config() {
+    return mockConfig;
+  },
+}));
+
 vi.mock('../utils/jobQueue.js', () => ({
   processNextJob: processNextJobMock,
 }));
@@ -34,6 +49,10 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     processNextJobMock.mockReset();
     processDocusignEnvelopeCompletedJobMock.mockReset();
     resetDocusignAccountRateLimitStoreForTests();
+    // Default the DS-03 enqueue flag ON between tests so the existing enqueue-path
+    // assertions reflect production-with-the-drain-flag-on. The dedicated guard
+    // tests below flip it OFF explicitly.
+    mockConfig.enableConnectorArtifactEnqueue = true;
   });
 
   it('claims docusign.envelope_completed jobs through the generic queue and invokes the DocuSign processor', async () => {
@@ -248,6 +267,61 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
         'docusign_connector_artifact_enqueue_failed',
       );
+    });
+
+    // DS-03 (SCRUM-2363) — feature-flag guard. The connector_artifact drain
+    // (QUEUE-06/SCRUM-2352, QUEUE-08/SCRUM-2354) is unbuilt, so DS-03 ships
+    // DORMANT behind ENABLE_CONNECTOR_ARTIFACT_ENQUEUE (default off in prod):
+    // no rows are enqueued until something drains them.
+    it('skips the enqueue gracefully when ENABLE_CONNECTOR_ARTIFACT_ENQUEUE is off (no RPC, no throw, no audit write)', async () => {
+      mockConfig.enableConnectorArtifactEnqueue = false;
+      const { db, rpcCalls, state } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      // Must NOT throw — a dormant connector path is a graceful no-op, not a failure.
+      const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+      // No connector_artifact row: the idempotent enqueue RPC is never called.
+      expect(rpcCalls).toHaveLength(0);
+      expect(db.rpc).not.toHaveBeenCalled();
+      // No partial state: the integration_events audit breadcrumb is not written
+      // either (nothing was enqueued to reference).
+      expect(state.insertCalled).toBe(false);
+      // A structured breadcrumb records the disabled path — and it carries NO
+      // fingerprint and NO raw bytes (§1.6A).
+      expect(logger.info).toHaveBeenCalledWith(
+        { integrationId: 'integration-1' },
+        expect.stringContaining('ENABLE_CONNECTOR_ARTIFACT_ENQUEUE'),
+      );
+      const loggedBreadcrumbs = (logger.info as unknown as { mock: { calls: unknown[][] } }).mock
+        .calls;
+      const serialized = JSON.stringify(loggedBreadcrumbs);
+      expect(serialized).not.toContain(EXPECTED_SHA256);
+      expect(serialized).not.toContain('fingerprint');
+      expect(serialized).not.toContain('signed bytes');
+      // The skip result is a clearly non-id sentinel, never a real artifact id.
+      expect(result.queuedId).not.toBe('artifact-1');
+      expect(result.queuedId).toContain('disabled');
+    });
+
+    it('enqueues exactly as today when ENABLE_CONNECTOR_ARTIFACT_ENQUEUE is on', async () => {
+      mockConfig.enableConnectorArtifactEnqueue = true;
+      const { db, rpcCalls } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+      // Unchanged behavior: one idempotent enqueue RPC with the server-side digest.
+      expect(rpcCalls).toHaveLength(1);
+      expect(rpcCalls[0].fn).toBe('enqueue_connector_artifact');
+      expect(rpcCalls[0].args).toMatchObject({
+        p_org_id: ORG_ID,
+        p_source: 'docusign',
+        p_external_ref: 'envelope-1',
+        p_fingerprint_sha256: EXPECTED_SHA256,
+        p_byte_length: SIGNED_BYTES.byteLength,
+      });
+      expect(result).toEqual({ queuedId: 'artifact-1' });
     });
   });
 

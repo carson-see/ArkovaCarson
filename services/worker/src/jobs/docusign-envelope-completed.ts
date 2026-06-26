@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { config } from '../config.js';
 import { db as defaultDb } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { processNextJob } from '../utils/jobQueue.js';
@@ -22,6 +23,10 @@ import type { TypeSafeDatabase } from '../types/database-overrides.js';
 export const DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE = 'docusign.envelope_completed';
 const DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT = 10;
 const MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT = 100;
+// DS-03 (SCRUM-2363): sentinel returned when the connector-artifact enqueue is
+// gated off. Deliberately not a real artifact id — no consumer reads `queuedId`,
+// and a "*_disabled" value makes the dormant path obvious in any trace.
+const CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_QUEUED_ID = 'connector_artifact_enqueue_disabled';
 const QUEUE_STATUS_COUNTERS = {
   completed: 'completed',
   failed: 'failed',
@@ -241,6 +246,10 @@ export interface DocusignEnvelopeJobRuntimeDeps {
   fetchImpl?: typeof fetch;
   refreshTokenStore?: DocusignRefreshTokenStore;
   now?: () => Date;
+  // DS-03 (SCRUM-2363): overrides config.enableConnectorArtifactEnqueue for
+  // tests. When unset, the live config flag (default off in prod) decides whether
+  // a connector_artifact row is enqueued.
+  enableConnectorArtifactEnqueue?: boolean;
 }
 
 export interface DocusignEnvelopeJobRunOptions extends DocusignEnvelopeJobRuntimeDeps {
@@ -262,6 +271,12 @@ export function makeDocusignEnvelopeJobDeps(
 ): DocusignEnvelopeJobDeps {
   const db = deps.db ?? (defaultDb as unknown as DbClient);
   const refreshTokenStore = getRefreshTokenStore(deps);
+  // DS-03 (SCRUM-2363): the connector_artifact drain (QUEUE-06/SCRUM-2352,
+  // QUEUE-08/SCRUM-2354) is unbuilt, so enqueuing is gated off in prod by
+  // default. The flag mirrors the ENABLE_DOCUSIGN_* env flags; tests inject it
+  // directly via deps.
+  const connectorArtifactEnqueueEnabled =
+    deps.enableConnectorArtifactEnqueue ?? config.enableConnectorArtifactEnqueue;
   let tokenRefreshAccountId: string | undefined;
   const docusignFetch = createDocusignRateLimitedFetch({
     fetchImpl: deps.fetchImpl,
@@ -327,6 +342,21 @@ export function makeDocusignEnvelopeJobDeps(
     },
 
     async enqueueSignedDocument(input): Promise<DocusignDocumentSinkResult> {
+      // DS-03 (SCRUM-2363) feature-flag guard. When ENABLE_CONNECTOR_ARTIFACT_ENQUEUE
+      // is off (the prod default until the QUEUE-06/SCRUM-2352 + QUEUE-08/SCRUM-2354
+      // drain ships), do NOT enqueue a connector_artifact row — nothing would
+      // anchor it, so a `pending` pile-up would accrue silently. This is a
+      // graceful no-op: skip before hashing, write no row, throw nothing. The
+      // breadcrumb carries only operational ids — never the fingerprint or bytes
+      // (§1.6A).
+      if (!connectorArtifactEnqueueEnabled) {
+        logger.info(
+          { integrationId: input.integrationId },
+          'DocuSign connector-artifact enqueue skipped — ENABLE_CONNECTOR_ARTIFACT_ENQUEUE disabled (drain not yet wired: QUEUE-06/QUEUE-08)',
+        );
+        return { queuedId: CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_QUEUED_ID };
+      }
+
       // DS-03 (SCRUM-2363): server-side SHA-256 over the fetched bytes, computed
       // in memory. The bytes are never logged, persisted, attached to an Error,
       // or written to job_queue.last_error (§1.6A / SCRUM-2492). Only the digest
