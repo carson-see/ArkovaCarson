@@ -14,6 +14,7 @@ import { CreditCard, Loader2, ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useBilling } from '@/hooks/useBilling';
+import { useEntitlements, isUnlimitedRecordsLimit } from '@/hooks/useEntitlements';
 import { AppShell } from '@/components/layout';
 import { PricingCard } from '@/components/billing/PricingCard';
 import { BillingOverview } from '@/components/billing/BillingOverview';
@@ -46,6 +47,10 @@ export function PricingPage() {
     startCheckout,
     openBillingPortal,
   } = useBilling();
+  // Live usage for the Pricing-page overview (BUG-2026-06-24-009). recordsLimit
+  // is already null for unlimited plans (the 999999 sentinel is normalized in
+  // useEntitlements — BUG-2026-06-24-010).
+  const { recordsUsed, recordsLimit: entitlementRecordsLimit, percentUsed } = useEntitlements();
 
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
 
@@ -92,15 +97,21 @@ export function PricingPage() {
     await signOut();
   };
 
-  // Build BillingInfo for BillingOverview when user has a subscription
+  // Build BillingInfo for BillingOverview when user has a subscription.
+  // Usage (recordsUsed / recordsLimit / percentUsed) comes from useEntitlements
+  // — not a hardcoded 0 (BUG-2026-06-24-009). The 999999 sentinel maps to
+  // "unlimited" / a null limit so no frozen "/ 999999" meter renders
+  // (BUG-2026-06-24-010); recordsLimit from the hook is already normalized.
+  const planLimitIsUnlimited = isUnlimitedRecordsLimit(currentPlan?.records_per_month ?? null);
   const billingInfo: BillingInfo | null = hasActiveSubscription && currentPlan ? {
     plan: {
       name: currentPlan.name,
-      recordsIncluded: currentPlan.records_per_month ?? 0,
+      recordsIncluded: planLimitIsUnlimited ? 'unlimited' : (currentPlan.records_per_month ?? 0),
     },
     usage: {
-      recordsUsed: 0, // Would come from profile.anchor_count_this_month
-      recordsLimit: currentPlan.records_per_month ?? 0,
+      recordsUsed,
+      recordsLimit: entitlementRecordsLimit,
+      percentUsed: percentUsed ?? undefined,
     },
     billing: {
       status: subscription.status as 'active' | 'trialing' | 'past_due' | 'canceled',

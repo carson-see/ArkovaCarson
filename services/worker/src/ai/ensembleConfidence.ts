@@ -233,7 +233,11 @@ export function computeEnsembleConfidence(
     } else if (rate >= 0.3) {
       contribution = 0.50 + (rate - 0.3) * 0.667; // 0.50–0.70 range
     } else {
-      contribution = 0.30 + rate; // 0.30–0.60 range
+      // Map [0, 0.3) → [0.30, 0.50) so the curve meets the next tier at 0.50
+      // exactly (continuous + monotonic). The prior `0.30 + rate` overshot to
+      // [0.30, 0.60), overlapping the >=0.3 tier and creating a confidence DROP
+      // as agreement rose past 0.3 (BUG-F).
+      contribution = 0.3 + rate * (0.2 / 0.3); // 0.30–0.50 range
     }
 
     weightedSum += contribution * weight;

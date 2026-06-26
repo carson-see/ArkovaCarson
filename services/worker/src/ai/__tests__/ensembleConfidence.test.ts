@@ -236,6 +236,65 @@ describe('AI-002: computeEnsembleConfidence', () => {
   });
 });
 
+// ─── BUG-F: ensemble confidence is monotonic in agreement rate ───
+
+describe('AI-002 / BUG-F: confidence is monotonic non-decreasing in agreement rate', () => {
+  // Probe the rate→contribution mapping in isolation. With a single extracted
+  // field, runsCompleted=3, and fieldsWithData<5, computeEnsembleConfidence
+  // returns exactly the per-field `contribution` (no field-count bonus, no
+  // sub-3-run penalty), so the ensemble score is a faithful 1:1 probe of the
+  // piecewise rate→contribution map.
+  const contributionAt = (rate: number): number =>
+    computeEnsembleConfidence({ issuerName: rate }, 3, [0.8, 0.8, 0.8]);
+
+  it('never decreases as agreement rate rises (sweep 0.001 → 1.0 step 0.001)', () => {
+    // rate=0 is the "no field extracted" sentinel (skipped → 0.2 floor), so the
+    // monotonic mapping is defined on (0, 1]. Sweep the whole open interval.
+    let prev = contributionAt(0.001);
+    for (let rate = 0.002; rate <= 1.0 + 1e-9; rate += 0.001) {
+      const cur = contributionAt(rate);
+      // Allow a hair of float slop; the real bug is a 0.099 cliff, not rounding.
+      expect(cur).toBeGreaterThanOrEqual(prev - 1e-9);
+      prev = cur;
+    }
+  });
+
+  it('does not drop across the 0.3 boundary (the reported discontinuity)', () => {
+    // Today: contribution(0.299)=0.599 but contribution(0.300)=0.500 — a 0.099 cliff.
+    expect(contributionAt(0.299)).toBeLessThanOrEqual(contributionAt(0.3) + 1e-9);
+  });
+
+  it('is continuous (~0.50) from both sides of the 0.3 boundary', () => {
+    expect(contributionAt(0.2999)).toBeCloseTo(0.5, 2);
+    expect(contributionAt(0.3)).toBeCloseTo(0.5, 5);
+  });
+
+  it('is continuous (~0.70) from both sides of the 0.6 boundary', () => {
+    expect(contributionAt(0.5999)).toBeCloseTo(0.7, 2);
+    expect(contributionAt(0.6)).toBeCloseTo(0.7, 5);
+  });
+
+  // ─── Regression anchors: known boundary contributions stay put ───
+
+  it('rate ≥ 0.95 → contribution 0.95 (unchanged)', () => {
+    expect(contributionAt(0.95)).toBeCloseTo(0.95, 5);
+    expect(contributionAt(1.0)).toBeCloseTo(0.95, 5);
+  });
+
+  it('rate = 0.6 → contribution 0.70 (unchanged)', () => {
+    expect(contributionAt(0.6)).toBeCloseTo(0.7, 5);
+  });
+
+  it('rate = 0.3 → contribution 0.50 (bottom of the mid tier, unchanged)', () => {
+    expect(contributionAt(0.3)).toBeCloseTo(0.5, 5);
+  });
+
+  it('rate → 0+ → contribution → 0.30 (low-tier floor, unchanged)', () => {
+    // As rate approaches 0 from above, the low tier asymptotes to 0.30.
+    expect(contributionAt(0.0001)).toBeCloseTo(0.3, 3);
+  });
+});
+
 // ─── runEnsembleExtraction ───
 
 describe('AI-002: runEnsembleExtraction', () => {

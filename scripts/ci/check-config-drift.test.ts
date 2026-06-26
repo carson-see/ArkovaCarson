@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
+  classifyFlagSpofFindings,
   diffConfigState,
   loadConfigFile,
   runConfigDriftCheck,
   type ConfigState,
 } from './check-config-drift.js';
+import { runFlagSpofCheck, type FlagSpofFinding } from './config-drift/flagSpof.js';
 
 // Asserted = what the repo (config.ts defaults + deploy-worker.yml env + vercel.json CSP)
 // SAYS prod should be. Running = what /health + a flag snapshot REPORTS prod actually is.
@@ -153,5 +156,108 @@ describe('runConfigDriftCheck (parity off running runtimes)', () => {
     running.bitcoinUtxoProvider = 'mempool'; // inject the provider SPOF regression
     const { drift } = runConfigDriftCheck(asserted, running);
     expect(drift.some((d) => d.dimension === 'provider')).toBe(true);
+  });
+});
+
+// S1 Lane-2: the gate's two-tier acknowledgment of flag-SPOF findings. This is the seam
+// main() uses to decide blocking vs non-blocking — the env↔DB fail-open regression guard.
+describe('classifyFlagSpofFindings (Lane-2 two-tier)', () => {
+  const failOpen = (flag: string): FlagSpofFinding => ({
+    severity: 'error',
+    code: 'fail-open-flag',
+    flag,
+    message: `${flag} env on / asserted off / DB-backed`,
+  });
+  const launchOff: FlagSpofFinding = {
+    severity: 'error',
+    code: 'launch-flag-off',
+    flag: 'ENABLE_AI_EXTRACTION',
+    message: 'launch flag off',
+  };
+  const noGuard: FlagSpofFinding = {
+    severity: 'error',
+    code: 'env-flag-on-no-db-guard',
+    flag: 'ENABLE_DEMO_INJECTOR',
+    message: 'no db guard',
+  };
+
+  it('treats an ACKNOWLEDGED fail-open flag as a non-blocking warning (the known DB-guarded hazard)', () => {
+    const { errors, warnings } = classifyFlagSpofFindings(
+      [failOpen('ENABLE_SEMANTIC_SEARCH'), failOpen('ENABLE_AI_FRAUD')],
+      ['ENABLE_SEMANTIC_SEARCH', 'ENABLE_AI_FRAUD'],
+    );
+    expect(errors).toEqual([]);
+    expect(warnings).toHaveLength(2);
+  });
+
+  it('FAILS CLOSED on a NEW, unacknowledged fail-open flag (the regression guard)', () => {
+    const { errors, warnings } = classifyFlagSpofFindings(
+      [failOpen('ENABLE_SEMANTIC_SEARCH'), failOpen('ENABLE_AI_REPORTS')], // 2nd not acknowledged
+      ['ENABLE_SEMANTIC_SEARCH'],
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ code: 'fail-open-flag', flag: 'ENABLE_AI_REPORTS' });
+    expect(warnings.map((w) => w.flag)).toEqual(['ENABLE_SEMANTIC_SEARCH']);
+  });
+
+  it('NEVER lets an acknowledgment downgrade a launch-flag-off or env-flag-on-no-db-guard finding', () => {
+    // Even if someone (wrongly) lists these flags as acknowledged, only fail-open-flag is
+    // downgradable — a launch flag being off / an env-on flag with no DB guard always blocks.
+    const { errors, warnings } = classifyFlagSpofFindings(
+      [launchOff, noGuard],
+      ['ENABLE_AI_EXTRACTION', 'ENABLE_DEMO_INJECTOR'],
+    );
+    expect(warnings).toEqual([]);
+    expect(errors).toHaveLength(2);
+    expect(new Set(errors.map((e) => e.code))).toEqual(
+      new Set(['launch-flag-off', 'env-flag-on-no-db-guard']),
+    );
+  });
+
+  it('is empty/empty when there are no findings (clean config passes)', () => {
+    expect(classifyFlagSpofFindings([], ['ENABLE_SEMANTIC_SEARCH'])).toEqual({
+      errors: [],
+      warnings: [],
+    });
+  });
+});
+
+// End-to-end: the REAL flag-SPOF source parse (deploy-worker.yml + flagRegistry.ts) fed
+// through the REAL two-tier classifier — the exact path main() runs. Proves the wiring,
+// not just the helper: with the live acknowledgment the gate is GREEN; drop it and the
+// live env↔DB fail-open hazard FAILS CLOSED.
+describe('flag-SPOF wiring end-to-end (real tree)', () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const sources = {
+    deployYmlPath: resolve(repoRoot, '.github/workflows/deploy-worker.yml'),
+    flagRegistryPath: resolve(repoRoot, 'services/worker/src/middleware/flagRegistry.ts'),
+  };
+  // The asserted EFFECTIVE state (mirrors expected-prod-config.json `flags`).
+  const assertedFlags = {
+    ENABLE_PROD_NETWORK_ANCHORING: true,
+    ENABLE_AI_EXTRACTION: true,
+    ENABLE_VERIFICATION_API: true,
+    ENABLE_SEMANTIC_SEARCH: false,
+    ENABLE_AI_FRAUD: false,
+  };
+
+  it('passes (no blocking errors) with the live acknowledgment list — the known hazards are warnings', () => {
+    const findings = runFlagSpofCheck(assertedFlags, sources);
+    const { errors, warnings } = classifyFlagSpofFindings(findings, [
+      'ENABLE_SEMANTIC_SEARCH',
+      'ENABLE_AI_FRAUD',
+    ]);
+    expect(errors).toEqual([]);
+    expect(warnings.length).toBeGreaterThanOrEqual(2); // the two live fail-open flags
+  });
+
+  it('FAILS CLOSED on the live env↔DB fail-open hazard when nothing is acknowledged', () => {
+    const findings = runFlagSpofCheck(assertedFlags, sources);
+    const { errors } = classifyFlagSpofFindings(findings, []); // acknowledge nothing
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(errors.map((e) => e.flag))).toEqual(
+      new Set(['ENABLE_SEMANTIC_SEARCH', 'ENABLE_AI_FRAUD']),
+    );
+    for (const e of errors) expect(e.code).toBe('fail-open-flag');
   });
 });
