@@ -266,6 +266,26 @@ describe('check-staging-evidence', () => {
     it('finds tier with unchecked checkbox prefix', () => {
       expect(extractDeclaredTier('- [ ] Tier: T1\n')).toBe('T1');
     });
+
+    it('finds tier with plain Tier: line', () => {
+      expect(extractDeclaredTier('Tier: T2\n')).toBe('T2');
+    });
+
+    it('finds tier wrapped in markdown bold (**Tier:** T2)', () => {
+      expect(extractDeclaredTier('**Tier:** T2\n')).toBe('T2');
+    });
+
+    it('finds tier with list marker + markdown bold (- **Tier:** T2)', () => {
+      expect(extractDeclaredTier('- **Tier:** T2\n')).toBe('T2');
+    });
+
+    it('finds tier with list marker + underscore emphasis (* _Tier_: T3)', () => {
+      expect(extractDeclaredTier('* _Tier_: T3\n')).toBe('T3');
+    });
+
+    it('returns null for a bold-decorated line with no tier declared', () => {
+      expect(extractDeclaredTier('- **Severity:** high\n')).toBeNull();
+    });
   });
 
   describe('hasEvidenceSection', () => {
@@ -284,7 +304,7 @@ describe('check-staging-evidence', () => {
     });
 
     it('lists all T1 fields when body has none', () => {
-      expect(missingFields('', 'T1').length).toBe(TIER_SPECS.T1.requiredFields.length);
+      expect(missingFields('', 'T1')).toHaveLength(TIER_SPECS.T1.requiredFields.length);
     });
 
     it('catches partial T3 (missing trigger fires)', () => {
@@ -1616,6 +1636,48 @@ ${note}
 
       it('is true for a single frontend component', () => {
         expect(isFrontendOnlyChange(['src/components/anchor/AssetDetailView.tsx'])).toBe(true);
+      });
+
+      // A frontend feature legitimately ships vendored runtime assets
+      // (public/vendor) + its Playwright E2E (e2e/) alongside the src/ change.
+      // None of those can produce a worker/migration/SDK artifact, so the PR
+      // stays frontend-T2 eligible. (The #1262 §1.6 fail-closed OCR shape.)
+      it('is true for a src/ + public/vendor + e2e/ fileset (vendored assets + E2E are non-deploying)', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/anchor/SecureDocumentDialog.tsx',
+          'public/vendor/tesseract/core/tesseract-core-lstm.wasm.js',
+          'e2e/extraction-csp-fail-closed.spec.ts',
+        ])).toBe(true);
+      });
+
+      it('is true for a public/-plus-src fileset', () => {
+        expect(isFrontendOnlyChange([
+          'src/lib/ocrWorker.ts',
+          'public/vendor/tesseract/worker.min.js',
+        ])).toBe(true);
+      });
+
+      it('is true for an e2e/-plus-src fileset', () => {
+        expect(isFrontendOnlyChange([
+          'src/lib/aiExtraction.ts',
+          'e2e/extraction-csp-fail-closed.spec.ts',
+        ])).toBe(true);
+      });
+
+      it('is false when a CI script is present (scripts/ci is not frontend)', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/anchor/SecureDocumentDialog.tsx',
+          'public/vendor/tesseract/worker.min.js',
+          'scripts/ci/check-csp-runtime-deps.ts',
+        ])).toBe(false);
+      });
+
+      it('is false when a GitHub Actions workflow is present', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/anchor/SecureDocumentDialog.tsx',
+          'e2e/extraction-csp-fail-closed.spec.ts',
+          '.github/workflows/ci.yml',
+        ])).toBe(false);
       });
 
       it('is false when a worker file is present', () => {

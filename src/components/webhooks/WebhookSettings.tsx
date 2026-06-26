@@ -29,6 +29,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { WEBHOOK_LABELS } from '@/lib/copy';
 
 interface WebhookEndpoint {
   id: string;
@@ -83,6 +94,19 @@ export function WebhookSettings({
   // Secret display state — shown once after creation
   const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
   const [secretCopied, setSecretCopied] = useState(false);
+
+  // BUG-D: deleting an endpoint is destructive (the event feed stops), so the
+  // Trash button opens a confirm dialog instead of deleting immediately. We hold
+  // the endpoint pending confirmation; onDelete only fires on confirm.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const pendingDeleteEndpoint = endpoints.find((ep) => ep.id === pendingDeleteId) ?? null;
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDeleteId) return;
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
+    await onDelete(id);
+  };
 
   const handleAdd = async (e: FormEvent) => {
     e.preventDefault();
@@ -320,7 +344,8 @@ export function WebhookSettings({
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => onDelete(endpoint.id)}
+                    aria-label={`${WEBHOOK_LABELS.DELETE_CONFIRM_ACTION}: ${endpoint.url}`}
+                    onClick={() => setPendingDeleteId(endpoint.id)}
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
@@ -330,6 +355,36 @@ export function WebhookSettings({
           </div>
         ))}
       </CardContent>
+
+      {/* BUG-D: destructive-delete confirmation. Mirrors RevokeDialog /
+          ApiKeySettings — onDelete only fires after the user confirms. */}
+      <AlertDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{WEBHOOK_LABELS.DELETE_CONFIRM_TITLE}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {WEBHOOK_LABELS.DELETE_CONFIRM_DESC.replace(
+                '{url}',
+                pendingDeleteEndpoint?.url ?? '',
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{WEBHOOK_LABELS.DELETE_CONFIRM_CANCEL}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {WEBHOOK_LABELS.DELETE_CONFIRM_ACTION}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

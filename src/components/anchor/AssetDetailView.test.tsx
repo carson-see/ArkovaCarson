@@ -252,4 +252,32 @@ describe('AssetDetailView', () => {
     expect(queryByText(/token=secret/)).not.toBeInTheDocument();
     expect(queryByText(/AI-extracted metadata/)).not.toBeInTheDocument();
   });
+
+  // BUG-2026-06-24-008: "Network Observed Time" must never show the local
+  // upload/creation time for unconfirmed records (§1.5).
+  it('shows Network Observed Time for SECURED anchors', () => {
+    const { queryByText } = render(<AssetDetailView anchor={mockAnchor} />);
+
+    expect(queryByText('Network Observed Time')).toBeInTheDocument();
+    // The honest created-only fallback label is not used for a secured anchor.
+    expect(queryByText('Record Created')).not.toBeInTheDocument();
+  });
+
+  it('does NOT show Network Observed Time for PENDING anchors (no securedAt)', () => {
+    const pendingAnchor = { ...mockAnchor, status: 'PENDING' as const, securedAt: undefined };
+    const { queryByText } = render(<AssetDetailView anchor={pendingAnchor} />);
+
+    // The network observed-time label must be absent — nothing has been
+    // observed by the network yet; createdAt must not appear under it.
+    expect(queryByText('Network Observed Time')).not.toBeInTheDocument();
+    expect(queryByText('Record Created')).toBeInTheDocument();
+  });
+
+  it('does NOT show Network Observed Time for SUBMITTED anchors (no securedAt)', () => {
+    const submittedAnchor = { ...mockAnchor, status: 'SUBMITTED' as const, securedAt: undefined };
+    const { queryByText } = render(<AssetDetailView anchor={submittedAnchor} />);
+
+    expect(queryByText('Network Observed Time')).not.toBeInTheDocument();
+    expect(queryByText('Record Created')).toBeInTheDocument();
+  });
 });
