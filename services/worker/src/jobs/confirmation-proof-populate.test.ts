@@ -137,7 +137,8 @@ describe('populateConfirmationProofs', () => {
     expect(update).toHaveBeenCalledTimes(3);
     // each persisted value carries the header + hash
     const firstValues = update.mock.calls[0][0] as Record<string, unknown>;
-    expect(firstValues.block_header).toBe(headerHex);
+    // BUG-4: block_header is `bytea` → persisted as `\x<hex>` (raw bytes). block_hash is text.
+    expect(firstValues.block_header).toBe(`\\x${headerHex}`);
     expect(firstValues.block_hash).toBe(blockHash);
   });
 

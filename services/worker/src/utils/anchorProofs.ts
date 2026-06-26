@@ -1,5 +1,17 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+/**
+ * Encode a hex string for a Postgres `bytea` column via PostgREST. A bare hex
+ * string is stored as its ASCII bytes (2x size — a malformed 160-byte "header"),
+ * whereas the `\x<hex>` form is hex-decoded to the raw bytes. Null/undefined pass
+ * through. (BUG-4, soak-caught: `block_header` is `bytea`; `block_hash` and
+ * `merkle_root` are `text`, so only `block_header` needs this.)
+ */
+function toByteaHex(hex: string | null | undefined): string | null | undefined {
+  if (hex == null) return hex;
+  return hex.startsWith('\\x') ? hex : `\\x${hex}`;
+}
+
 export interface AnchorProofUpsertRow {
   anchorId: string;
   receiptId: string;
@@ -53,7 +65,7 @@ export async function upsertAnchorProofs(
       // PROOF-03: only include the bitcoin-tree columns when the caller
       // supplied them, so an app-tree-only upsert (FIX-1 batch/anchor path)
       // does not write explicit nulls over a previously-populated header.
-      if (row.blockHeader !== undefined) mapped.block_header = row.blockHeader;
+      if (row.blockHeader !== undefined) mapped.block_header = toByteaHex(row.blockHeader);
       if (row.blockHash !== undefined) mapped.block_hash = row.blockHash;
       return mapped;
     });
@@ -117,7 +129,9 @@ export async function updateAnchorConfirmationProofs(
   let missing = 0;
   for (const row of rows) {
     const values: Record<string, unknown> = {
-      block_header: row.blockHeader,
+      // BUG-4 (soak-caught): block_header is `bytea` — a bare hex string stores as
+      // ASCII bytes (160) not the raw 80-byte header. toByteaHex sends `\x<hex>`.
+      block_header: toByteaHex(row.blockHeader),
       block_hash: row.blockHash,
     };
     if (row.blockHeight != null) values.block_height = row.blockHeight;

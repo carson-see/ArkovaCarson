@@ -107,7 +107,9 @@ describe('upsertAnchorProofs', () => {
       },
     ]);
     const persisted = upsert.mock.calls[0][0] as Array<Record<string, unknown>>;
-    expect(persisted[0].block_header).toBe('ab'.repeat(80));
+    // BUG-4: block_header is `bytea` → must be sent as `\x<hex>` (raw bytes), not a
+    // bare hex string (which Postgres would store as 160 ASCII bytes). block_hash is text.
+    expect(persisted[0].block_header).toBe(`\\x${'ab'.repeat(80)}`);
     expect(persisted[0].block_hash).toBe('cd'.repeat(32));
   });
 
@@ -149,7 +151,7 @@ describe('updateAnchorConfirmationProofs (PROOF-03)', () => {
     ]);
     expect(result).toEqual({ updated: 1, missing: 0 });
     const values = update.mock.calls[0][0] as Record<string, unknown>;
-    expect(values).toEqual({ block_header: 'aa'.repeat(80), block_hash: 'bb'.repeat(32) });
+    expect(values).toEqual({ block_header: `\\x${'aa'.repeat(80)}`, block_hash: 'bb'.repeat(32) });
     // crucially: no merkle_root / proof_path / merkle_index touched
     expect('merkle_root' in values).toBe(false);
     expect('proof_path' in values).toBe(false);
