@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { config } from '../config.js';
 import { db as defaultDb } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { processNextJob } from '../utils/jobQueue.js';
@@ -246,8 +245,8 @@ export interface DocusignEnvelopeJobRuntimeDeps {
   fetchImpl?: typeof fetch;
   refreshTokenStore?: DocusignRefreshTokenStore;
   now?: () => Date;
-  // DS-03 (SCRUM-2363): overrides config.enableConnectorArtifactEnqueue for
-  // tests. When unset, the live config flag (default off in prod) decides whether
+  // DS-03 (SCRUM-2363): overrides the ENABLE_CONNECTOR_ARTIFACT_ENQUEUE env flag
+  // for tests. When unset, the env flag (default off in prod) decides whether
   // a connector_artifact row is enqueued.
   enableConnectorArtifactEnqueue?: boolean;
 }
@@ -276,7 +275,8 @@ export function makeDocusignEnvelopeJobDeps(
   // default. The flag mirrors the ENABLE_DOCUSIGN_* env flags; tests inject it
   // directly via deps.
   const connectorArtifactEnqueueEnabled =
-    deps.enableConnectorArtifactEnqueue ?? config.enableConnectorArtifactEnqueue;
+    deps.enableConnectorArtifactEnqueue ??
+    (deps.env ?? process.env).ENABLE_CONNECTOR_ARTIFACT_ENQUEUE === 'true';
   let tokenRefreshAccountId: string | undefined;
   const docusignFetch = createDocusignRateLimitedFetch({
     fetchImpl: deps.fetchImpl,

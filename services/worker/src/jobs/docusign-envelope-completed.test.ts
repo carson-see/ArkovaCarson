@@ -51,8 +51,9 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     resetDocusignAccountRateLimitStoreForTests();
     // Default the DS-03 enqueue flag ON between tests so the existing enqueue-path
     // assertions reflect production-with-the-drain-flag-on. The dedicated guard
-    // tests below flip it OFF explicitly.
-    mockConfig.enableConnectorArtifactEnqueue = true;
+    // tests below flip it OFF explicitly. The materializer reads the flag from the
+    // ENABLE_CONNECTOR_ARTIFACT_ENQUEUE env var (not config — avoids loadConfig at import).
+    process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE = 'true';
   });
 
   it('claims docusign.envelope_completed jobs through the generic queue and invokes the DocuSign processor', async () => {
@@ -274,7 +275,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     // DORMANT behind ENABLE_CONNECTOR_ARTIFACT_ENQUEUE (default off in prod):
     // no rows are enqueued until something drains them.
     it('skips the enqueue gracefully when ENABLE_CONNECTOR_ARTIFACT_ENQUEUE is off (no RPC, no throw, no audit write)', async () => {
-      mockConfig.enableConnectorArtifactEnqueue = false;
+      process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE = 'false';
       const { db, rpcCalls, state } = makeDb();
       const deps = makeDocusignEnvelopeJobDeps({ db });
 
@@ -305,7 +306,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     });
 
     it('enqueues exactly as today when ENABLE_CONNECTOR_ARTIFACT_ENQUEUE is on', async () => {
-      mockConfig.enableConnectorArtifactEnqueue = true;
+      process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE = 'true';
       const { db, rpcCalls } = makeDb();
       const deps = makeDocusignEnvelopeJobDeps({ db });
 
