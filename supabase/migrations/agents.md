@@ -31,12 +31,17 @@ Remaining strict order:
 |---|---|---|---|---|
 | `0339` | #1122 | SCRUM-2285 | `0339_get_public_anchor_by_fingerprint.sql` | current strict-order PR |
 | `0340` | (Train D, branch `feat/train-d-proof-foundation`) | SCRUM-2335 (PROOF-02) | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | reserved — T3, soak pending. Branched off `main` head `1a9d35bb` (disk head 0339). |
+| `0343` | `lane2/s1-queue02-connector-artifact-0343` (PR #1259) | SCRUM-2348 (QUEUE-02) | `0343_scrum2348_connector_artifact_queue_schema.sql` | **DRAFT PR open** — file written, T3 soak in progress (isolated rig `arkova-worker-pr1259-staging`); interface-lock to Lane 3 by 2026-06-26. |
 
-- Remaining migration order is strict: #1122, then `0340` (Train D proof foundation).
+- Remaining migration order is strict: #1122, then `0340` (Train D proof foundation), then `0343` (#1259 QUEUE-02 connector-artifact schema).
 - Do not reserve or reuse `0327`, `0328`, `0329`, `0333`, `0334`, `0335`, `0336`, `0337`, or `0338`; those prefixes are already consumed by merged drain PRs.
 - Do not infer a current `0332` release-drain owner from older stale reservations; no active `0332` release-drain PR is asserted by this mirror sync.
 - Remaining soaks must use a dedicated isolated Supabase project or a proven `clean_mirror`, never dirty shared staging.
 - Remove a remaining row once its PR merges to `main` and gets a durable `## Recent migrations` entry below.
+
+## Recent migrations (PR #1259 — QUEUE-02 / SCRUM-2348, branch lane2/s1-queue02-connector-artifact-0343)
+
+- **0343_scrum2348_connector_artifact_queue_schema.sql** (T3, DRAFT PR — not yet soaked/merged): Creates `connector_artifact`, the queue table Lane 3's connector materializers write into, plus the idempotent `enqueue_connector_artifact(...)` RPC. §1.6A-clean — stores only the server-computed `fingerprint_sha256` (64-hex CHECK) + PII-scrubbed `metadata jsonb`; **no bytea/blob/content column**. Dedup/idempotency key is a UNIQUE INDEX on `(org_id, source, external_ref, COALESCE(external_revision,''))` so NULL revisions dedupe as one logical value (a plain UNIQUE would let no-revision redeliveries double-insert). RLS + FORCE: `service_role` full; org members `SELECT` own-org rows only (mirrors `edv_org_select`, 0323). `enqueue_connector_artifact` is `SECURITY DEFINER SET search_path = public`, `INSERT ... ON CONFLICT DO NOTHING RETURNING id` then resolves the existing id on conflict; EXECUTE granted to `service_role` only. **No credit debit at enqueue** — the debit happens at SECURING via `debit_and_enqueue_anchor` (0341); `credit_deduction_id` is a nullable worker-set backlink. FKs: `org_id`→organizations, `integration_id`→org_integrations (`ON DELETE SET NULL`), `credit_deduction_id`→org_credit_deductions, `anchor_id`→anchors. `database.types.ts` hand-regenerated (Docker unavailable locally → `gen:types` could not run); regenerate from the live schema post-merge to confirm parity.
 
 ## Recent migrations (PR #817)
 
