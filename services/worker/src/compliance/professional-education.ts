@@ -277,13 +277,77 @@ async function runProfessionalEducationExtraction(params: {
   }
 }
 
+/** Canonical NASBA verification states (matches CpeMetadataSchema). */
+export type NasbaStatus = 'confirmed' | 'not_found' | 'unknown';
+
+/**
+ * Outcome of looking the CPE provider up in the authoritative registry.
+ *
+ * The three cases MUST stay distinct — collapsing `unreachable` into
+ * `not_found` is the fail-OPEN/over-reject trap:
+ *   - `found`       : a registry row exists; `nasbaStatus` is its verdict.
+ *   - `not_found`   : the registry was reachable and returned no matching row.
+ *   - `unreachable` : the registry query errored/threw — NO verdict was obtained.
+ */
+export type CpeRegistryLookup =
+  | { outcome: 'found'; nasbaStatus: NasbaStatus }
+  | { outcome: 'not_found' }
+  | { outcome: 'unreachable' };
+
+/**
+ * Resolve the authoritative `nasba_status` for a CPE record.
+ *
+ * The provider registry is the ONLY authority. A model self-assertion (e.g. the
+ * extractor emitting `nasba_status: 'confirmed'` because the document text said
+ * "NASBA confirmed") must NEVER, on its own, satisfy the allowlist — that was the
+ * fail-OPEN bug. We therefore ignore the model's asserted status for the purpose
+ * of granting `confirmed` and derive the result from the registry outcome:
+ *
+ *   - registry `found` + `confirmed` → `confirmed`, no forced review.
+ *   - registry `found` + other       → that status, forced review.
+ *   - registry `not_found`           → `not_found`, forced review (flagged).
+ *   - registry `unreachable`         → `unknown`, forced review (DEGRADED:
+ *                                       not auto-passed, not hard-failed — a
+ *                                       human resolves it so a flaky registry
+ *                                       never punishes a legitimate credential).
+ *
+ * `modelAsserted` is accepted for interface symmetry and future telemetry, but
+ * is deliberately never allowed to upgrade the result to `confirmed`.
+ */
+export function resolveCpeNasbaStatus(input: {
+  modelAsserted: NasbaStatus | string | null;
+  registry: CpeRegistryLookup;
+}): { nasba_status: NasbaStatus; forced_review: boolean } {
+  const { registry } = input;
+
+  if (registry.outcome === 'found') {
+    const status = registry.nasbaStatus;
+    return { nasba_status: status, forced_review: status !== 'confirmed' };
+  }
+
+  if (registry.outcome === 'not_found') {
+    // Reachable registry, no backing row: the credential is not registry-backed.
+    return { nasba_status: 'not_found', forced_review: true };
+  }
+
+  // unreachable: no verdict obtained — degrade to needs-review.
+  return { nasba_status: 'unknown', forced_review: true };
+}
+
 async function buildCpeExtractionResult(
   db: ProfessionalEducationDb,
   anchor: ProfessionalEducationAnchorRow,
   evidence: Record<string, unknown>,
   fields: Record<string, unknown>,
 ): Promise<ProfessionalEducationExtractionResult> {
-  const provider = await lookupCpeProvider(db, evidence, fields);
+  const lookup = await lookupCpeProvider(db, evidence, fields);
+  const provider = lookup.outcome === 'found' ? lookup.provider : null;
+  const nasba = resolveCpeNasbaStatus({
+    modelAsserted: stringOrNull(fields.nasba_status ?? fields.nasbaStatus),
+    registry: lookup.outcome === 'found'
+      ? { outcome: 'found', nasbaStatus: lookup.provider.nasba_status }
+      : { outcome: lookup.outcome },
+  });
   const raw = {
     credit_hours: numberOrNull(fields.credit_hours ?? fields.creditHours),
     field_of_study: stringOrNull(fields.field_of_study ?? fields.fieldOfStudy),
@@ -293,9 +357,10 @@ async function buildCpeExtractionResult(
     reporting_period_end: dateOnlyOrNull(fields.reporting_period_end ?? fields.reportingPeriodEnd),
     extraction_confidence: numberOrNull(fields.extraction_confidence ?? fields.confidence ?? evidence.extraction_confidence),
     extraction_source: 'ai',
-    nasba_status: stringOrNull(fields.nasba_status ?? fields.nasbaStatus) ?? provider?.nasba_status ?? 'unknown',
+    // Registry-authoritative — a model self-assertion can never grant 'confirmed'.
+    nasba_status: nasba.nasba_status,
     nasba_lookup_date: dateOnlyOrNull(fields.nasba_lookup_date ?? fields.nasbaLookupDate) ?? provider?.last_verified_date ?? null,
-    requires_manual_review: Boolean(fields.requires_manual_review ?? fields.requiresManualReview),
+    requires_manual_review: Boolean(fields.requires_manual_review ?? fields.requiresManualReview) || nasba.forced_review,
   };
   const normalized = normalizeCpeMetadata(raw);
   const metadata: CpeMetadata = {
@@ -373,26 +438,43 @@ async function buildCleExtractionResult(
   };
 }
 
+type CpeProviderRow = {
+  provider_name: string;
+  nasba_sponsor_id: string | null;
+  nasba_status: NasbaStatus;
+  last_verified_date: string | null;
+};
+
+/**
+ * Look the CPE provider up by domain then by name.
+ *
+ * Returns a tri-state so the caller can tell apart "registry reachable, no row"
+ * (`not_found`) from "registry query errored" (`unreachable`). The latter must
+ * degrade to needs-review, never silently fall through to a verdict.
+ */
 async function lookupCpeProvider(
   db: ProfessionalEducationDb,
   evidence: Record<string, unknown>,
   fields: Record<string, unknown>,
-): Promise<{
-  provider_name: string;
-  nasba_sponsor_id: string | null;
-  nasba_status: 'confirmed' | 'not_found' | 'unknown';
-  last_verified_date: string | null;
-} | null> {
+): Promise<
+  | { outcome: 'found'; provider: CpeProviderRow }
+  | { outcome: 'not_found' }
+  | { outcome: 'unreachable' }
+> {
   const domain = sourceDomain(evidence);
-  const byDomain = domain
-    ? await maybeSelectProvider(db, 'cpe_provider_registry', 'provider_domain', domain)
-    : null;
-  if (byDomain) return CpeProviderRowSchema.parse(byDomain);
+  if (domain) {
+    const byDomain = await selectProvider(db, 'cpe_provider_registry', 'provider_domain', domain);
+    if (byDomain.outcome === 'unreachable') return { outcome: 'unreachable' };
+    if (byDomain.row) return { outcome: 'found', provider: CpeProviderRowSchema.parse(byDomain.row) };
+  }
 
   const name = stringOrNull(fields.providerName ?? fields.issuerName ?? evidence.credential_issuer ?? evidence.source_provider);
-  if (!name) return null;
-  const byName = await maybeSelectProvider(db, 'cpe_provider_registry', 'provider_name', name);
-  return byName ? CpeProviderRowSchema.parse(byName) : null;
+  if (!name) return { outcome: 'not_found' };
+
+  const byName = await selectProvider(db, 'cpe_provider_registry', 'provider_name', name);
+  if (byName.outcome === 'unreachable') return { outcome: 'unreachable' };
+  if (byName.row) return { outcome: 'found', provider: CpeProviderRowSchema.parse(byName.row) };
+  return { outcome: 'not_found' };
 }
 
 async function lookupCleProvider(
@@ -451,6 +533,34 @@ async function maybeSelectProvider(
   const result = await callQuery(selected, 'eq', [column, column === 'provider_domain' ? value.toLowerCase() : value]);
   if (hasDbError(result)) return null;
   return result?.data ?? null;
+}
+
+/**
+ * Registry select that DISTINGUISHES a transient failure from "no row".
+ *
+ * A DB error or a thrown exception → `unreachable` (no verdict). A clean query
+ * with no matching row → `{ outcome: 'ok', row: null }`. This is what lets the
+ * caller degrade an unreachable registry to needs-review instead of mistaking
+ * it for a definitive "provider not found".
+ */
+async function selectProvider(
+  db: ProfessionalEducationDb,
+  table: 'cpe_provider_registry' | 'cle_provider_registry',
+  column: 'provider_domain' | 'provider_name',
+  value: string,
+): Promise<{ outcome: 'ok'; row: unknown | null } | { outcome: 'unreachable' }> {
+  try {
+    const selected = db.from(table).select?.(
+      table === 'cpe_provider_registry'
+        ? 'provider_name, nasba_sponsor_id, nasba_status, last_verified_date'
+        : 'provider_name, approval_status, approved_jurisdictions, last_verified_date',
+    );
+    const result = await callQuery(selected, 'eq', [column, column === 'provider_domain' ? value.toLowerCase() : value]);
+    if (hasDbError(result)) return { outcome: 'unreachable' };
+    return { outcome: 'ok', row: (result as { data?: unknown })?.data ?? null };
+  } catch {
+    return { outcome: 'unreachable' };
+  }
 }
 
 async function insertProfessionalEducationAuditEvent(params: {

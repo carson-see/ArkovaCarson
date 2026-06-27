@@ -1,7 +1,23 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const processNextJobMock = vi.hoisted(() => vi.fn());
 const processDocusignEnvelopeCompletedJobMock = vi.hoisted(() => vi.fn());
+
+// DS-03 (SCRUM-2363) connector-artifact enqueue guard. The job reads
+// `config.enableConnectorArtifactEnqueue`; mock it as a mutable object so each
+// test can toggle the flag. Default ON here so every pre-existing enqueue-path
+// test exercises the same behavior as production-with-the-flag-on (the real
+// config throws at import without the full env, so a mock is mandatory anyway).
+const { mockConfig } = vi.hoisted(() => ({
+  mockConfig: { enableConnectorArtifactEnqueue: true },
+}));
+
+vi.mock('../config.js', () => ({
+  get config() {
+    return mockConfig;
+  },
+}));
 
 vi.mock('../utils/jobQueue.js', () => ({
   processNextJob: processNextJobMock,
@@ -33,6 +49,11 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     processNextJobMock.mockReset();
     processDocusignEnvelopeCompletedJobMock.mockReset();
     resetDocusignAccountRateLimitStoreForTests();
+    // Default the DS-03 enqueue flag ON between tests so the existing enqueue-path
+    // assertions reflect production-with-the-drain-flag-on. The dedicated guard
+    // tests below flip it OFF explicitly. The materializer reads the flag from the
+    // ENABLE_CONNECTOR_ARTIFACT_ENQUEUE env var (not config — avoids loadConfig at import).
+    process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE = 'true';
   });
 
   it('claims docusign.envelope_completed jobs through the generic queue and invokes the DocuSign processor', async () => {
@@ -119,48 +140,190 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     });
   });
 
-  it('does not persist document fingerprints in integration event details', async () => {
-    let inserted: Record<string, unknown> | undefined;
-    const db = {
-      from: vi.fn((table: string) => {
-        expect(table).toBe('integration_events');
-        const query = {
-          select: vi.fn(() => query),
-          eq: vi.fn(() => query),
-          is: vi.fn(() => query),
-          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-          insert: vi.fn((value: Record<string, unknown>) => {
-            inserted = value;
-            return {
-              select: vi.fn(() => ({
-                single: vi.fn().mockResolvedValue({ data: { id: 'event-1' }, error: null }),
-              })),
-            };
-          }),
-        };
-        return query;
-      }),
-    };
-    const deps = makeDocusignEnvelopeJobDeps({ db });
-
-    await deps.enqueueSignedDocument({
-      orgId: '11111111-1111-4111-8111-111111111111',
+  describe('enqueueSignedDocument — DS-03 server-side hash + durable connector artifact', () => {
+    const SIGNED_BYTES = Buffer.from('signed bytes');
+    const EXPECTED_SHA256 = createHash('sha256').update(SIGNED_BYTES).digest('hex');
+    const ORG_ID = '11111111-1111-4111-8111-111111111111';
+    const SINK_INPUT = {
+      orgId: ORG_ID,
       integrationId: 'integration-1',
       accountId: 'account-1',
       envelopeId: 'envelope-1',
       ruleEventId: 'rule-event-1',
-      documentBytes: Buffer.from('signed bytes'),
-      contentType: 'application/pdf',
+      documentBytes: SIGNED_BYTES,
+      contentType: 'application/pdf' as string | null,
+      sourceTimestamp: '2026-06-24T10:00:00.000Z' as string | null,
+    };
+
+    interface MakeDbOpts {
+      artifactResult?: { data: string | null; error: unknown };
+      auditResult?: { data: { id: string } | null; error: unknown };
+    }
+
+    function makeDb(opts: MakeDbOpts = {}) {
+      const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+      const state: { insertedDetails?: Record<string, unknown>; insertCalled: boolean } = {
+        insertCalled: false,
+      };
+      const db = {
+        rpc: vi.fn((fn: string, args: Record<string, unknown>) => {
+          rpcCalls.push({ fn, args });
+          return Promise.resolve(opts.artifactResult ?? { data: 'artifact-1', error: null });
+        }),
+        from: vi.fn((table: string) => {
+          expect(table).toBe('integration_events');
+          const query = {
+            select: vi.fn(() => query),
+            eq: vi.fn(() => query),
+            is: vi.fn(() => query),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            insert: vi.fn((value: Record<string, unknown>) => {
+              state.insertCalled = true;
+              state.insertedDetails = value.details as Record<string, unknown>;
+              return {
+                select: vi.fn(() => ({
+                  single: vi
+                    .fn()
+                    .mockResolvedValue(opts.auditResult ?? { data: { id: 'event-1' }, error: null }),
+                })),
+              };
+            }),
+          };
+          return query;
+        }),
+      };
+      return { db, rpcCalls, state };
+    }
+
+    it('computes a server-side SHA-256 and enqueues a durable connector artifact via the 0343 RPC', async () => {
+      const { db, rpcCalls } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+      expect(rpcCalls).toHaveLength(1);
+      expect(rpcCalls[0].fn).toBe('enqueue_connector_artifact');
+      expect(rpcCalls[0].args).toMatchObject({
+        p_org_id: ORG_ID,
+        p_source: 'docusign',
+        p_external_ref: 'envelope-1',
+        p_external_revision: null,
+        p_fingerprint_sha256: EXPECTED_SHA256,
+        p_byte_length: SIGNED_BYTES.byteLength,
+        p_source_timestamp: '2026-06-24T10:00:00.000Z',
+      });
+      // Canonical lowercase 64-hex SHA-256 — matches the 0343 CHECK constraint
+      // connector_artifact_fingerprint_format_check.
+      expect(EXPECTED_SHA256).toMatch(/^[a-f0-9]{64}$/);
+      // The durable artifact id is the queued id the Lane-2 batch loop consumes.
+      expect(result).toEqual({ queuedId: 'artifact-1' });
     });
 
-    expect(inserted?.details).toMatchObject({
-      account_id: 'account-1',
-      envelope_id: 'envelope-1',
-      rule_event_id: 'rule-event-1',
-      content_type: 'application/pdf',
-      byte_length: 12,
+    it('returns the artifact id as the queued id (idempotent on redelivery via the RPC)', async () => {
+      const { db } = makeDb({ artifactResult: { data: 'existing-artifact', error: null } });
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+      expect(result).toEqual({ queuedId: 'existing-artifact' });
     });
-    expect(inserted?.details).not.toHaveProperty('document_sha256');
+
+    it('does not put the fingerprint or raw bytes into the integration_events audit details', async () => {
+      const { db, state } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+      expect(state.insertedDetails).toMatchObject({
+        account_id: 'account-1',
+        envelope_id: 'envelope-1',
+        rule_event_id: 'rule-event-1',
+        content_type: 'application/pdf',
+        byte_length: 12,
+        connector_artifact_id: 'artifact-1',
+      });
+      expect(state.insertedDetails).not.toHaveProperty('document_sha256');
+      expect(state.insertedDetails).not.toHaveProperty('fingerprint');
+      expect(state.insertedDetails).not.toHaveProperty('fingerprint_sha256');
+      // Defensive: the raw signed bytes never appear anywhere in the audit row.
+      expect(JSON.stringify(state.insertedDetails)).not.toContain('signed bytes');
+    });
+
+    it('fails closed when the connector-artifact enqueue errors (throws, no audit write)', async () => {
+      const { db, state } = makeDb({ artifactResult: { data: null, error: { code: '23514' } } });
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+        'docusign_connector_artifact_enqueue_failed',
+      );
+      // No partial state: the audit breadcrumb is never written when the durable
+      // artifact failed.
+      expect(state.insertCalled).toBe(false);
+    });
+
+    it('fails closed when the RPC returns no artifact id', async () => {
+      const { db } = makeDb({ artifactResult: { data: null, error: null } });
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+        'docusign_connector_artifact_enqueue_failed',
+      );
+    });
+
+    // DS-03 (SCRUM-2363) — feature-flag guard. The connector_artifact drain
+    // (QUEUE-06/SCRUM-2352, QUEUE-08/SCRUM-2354) is unbuilt, so DS-03 ships
+    // DORMANT behind ENABLE_CONNECTOR_ARTIFACT_ENQUEUE (default off in prod):
+    // no rows are enqueued until something drains them.
+    it('skips the enqueue gracefully when ENABLE_CONNECTOR_ARTIFACT_ENQUEUE is off (no RPC, no throw, no audit write)', async () => {
+      process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE = 'false';
+      const { db, rpcCalls, state } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      // Must NOT throw — a dormant connector path is a graceful no-op, not a failure.
+      const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+      // No connector_artifact row: the idempotent enqueue RPC is never called.
+      expect(rpcCalls).toHaveLength(0);
+      expect(db.rpc).not.toHaveBeenCalled();
+      // No partial state: the integration_events audit breadcrumb is not written
+      // either (nothing was enqueued to reference).
+      expect(state.insertCalled).toBe(false);
+      // A structured breadcrumb records the disabled path — and it carries NO
+      // fingerprint and NO raw bytes (§1.6A).
+      expect(logger.info).toHaveBeenCalledWith(
+        { integrationId: 'integration-1' },
+        expect.stringContaining('ENABLE_CONNECTOR_ARTIFACT_ENQUEUE'),
+      );
+      const loggedBreadcrumbs = (logger.info as unknown as { mock: { calls: unknown[][] } }).mock
+        .calls;
+      const serialized = JSON.stringify(loggedBreadcrumbs);
+      expect(serialized).not.toContain(EXPECTED_SHA256);
+      expect(serialized).not.toContain('fingerprint');
+      expect(serialized).not.toContain('signed bytes');
+      // The skip result is a clearly non-id sentinel, never a real artifact id.
+      expect(result.queuedId).not.toBe('artifact-1');
+      expect(result.queuedId).toContain('disabled');
+    });
+
+    it('enqueues exactly as today when ENABLE_CONNECTOR_ARTIFACT_ENQUEUE is on', async () => {
+      process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE = 'true';
+      const { db, rpcCalls } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+      // Unchanged behavior: one idempotent enqueue RPC with the server-side digest.
+      expect(rpcCalls).toHaveLength(1);
+      expect(rpcCalls[0].fn).toBe('enqueue_connector_artifact');
+      expect(rpcCalls[0].args).toMatchObject({
+        p_org_id: ORG_ID,
+        p_source: 'docusign',
+        p_external_ref: 'envelope-1',
+        p_fingerprint_sha256: EXPECTED_SHA256,
+        p_byte_length: SIGNED_BYTES.byteLength,
+      });
+      expect(result).toEqual({ queuedId: 'artifact-1' });
+    });
   });
 
   it('resolves member_integrations when no org_integrations row matches', async () => {

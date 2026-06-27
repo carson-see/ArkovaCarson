@@ -14,6 +14,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { verifyMerkleInclusion } from '../../utils/merkle-verify.js';
 import { createSignedBundle, staticEd25519Signer, type SignerFn } from '../../proof/signed-bundle.js';
 import {
   gcpKmsEd25519Signer,
@@ -99,6 +100,11 @@ export interface MerkleProofResponse {
   block_height: number | null;
   block_timestamp: string | null;
   batch_id: string | null;
+  /**
+   * SCRUM-2490 (PROOF-VERIFY): the result of CRYPTOGRAPHICALLY recomputing
+   * the Merkle root from `merkle_proof` and comparing it to `merkle_root`.
+   * Derived purely from cryptography — NEVER from `anchors.status`.
+   */
   verified: boolean;
 }
 
@@ -126,6 +132,21 @@ export interface ProofRecordData {
   merkle_root: string | null;
   proof_path: unknown;
   batch_id?: string | null;
+  /** Integer leaf index (PROOF-02 column / PROOF-01 `merkle_index`). */
+  merkle_index?: number | null;
+}
+
+/** Normalised proof source threaded into the cryptographic verdict. */
+interface ResolvedProofSource {
+  merkleRoot: string;
+  merkleProof: MerkleProofEntry[];
+  batchId: string | null;
+  merkleIndex: number | null;
+}
+
+/** Read an integer leaf index from an untyped value (NULL/garbage → null). */
+function readMerkleIndex(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 /**
@@ -144,7 +165,7 @@ export function isValidProofArray(arr: unknown): arr is MerkleProofEntry[] {
 
 function extractStoredProof(
   proof: ProofRecordData | null,
-): { merkleRoot: string; merkleProof: MerkleProofEntry[]; batchId: string | null } | ProofErrorResponse | null {
+): ResolvedProofSource | ProofErrorResponse | null {
   if (!proof?.merkle_root || !proof.proof_path) return null;
   if (!isValidProofArray(proof.proof_path)) {
     return { error: 'Merkle proof data is malformed' };
@@ -153,12 +174,13 @@ function extractStoredProof(
     merkleRoot: proof.merkle_root,
     merkleProof: proof.proof_path,
     batchId: proof.batch_id ? String(proof.batch_id) : null,
+    merkleIndex: readMerkleIndex(proof.merkle_index),
   };
 }
 
 function extractMetadataProof(
   metadata: Record<string, unknown> | null,
-): { merkleRoot: string; merkleProof: MerkleProofEntry[]; batchId: string | null } | ProofErrorResponse | null {
+): ResolvedProofSource | ProofErrorResponse | null {
   if (!metadata?.merkle_root || !metadata.merkle_proof) return null;
   if (typeof metadata.merkle_root !== 'string') {
     return { error: 'Merkle proof data is malformed' };
@@ -173,6 +195,7 @@ function extractMetadataProof(
     merkleRoot: metadata.merkle_root,
     merkleProof: metadata.merkle_proof,
     batchId: metadata.batch_id ?? null,
+    merkleIndex: readMerkleIndex(metadata.merkle_index),
   };
 }
 
@@ -188,7 +211,18 @@ export function buildProofResponse(
   if (!proofSource) return null;
   if ('error' in proofSource) return proofSource;
 
-  const isAnchored = anchor.status === 'SECURED' || anchor.status === 'SUBMITTED';
+  // SCRUM-2490 (PROOF-VERIFY) — the pre-mortem K1 kill-shot was that
+  // `verified` was derived from `anchors.status` and nothing recomputed the
+  // root. `verified` is now the result of CRYPTOGRAPHICALLY recomputing the
+  // app-tree root from the stored branch (with the CVE-2012-2459 guard when
+  // the leaf index is known) and checking it equals the committed
+  // `merkle_root`. Status is irrelevant to this field.
+  const inclusion = verifyMerkleInclusion(
+    anchor.fingerprint,
+    proofSource.merkleProof,
+    proofSource.merkleRoot,
+    proofSource.merkleIndex != null ? { leafIndex: proofSource.merkleIndex } : {},
+  );
 
   return {
     public_id: anchor.public_id,
@@ -199,7 +233,7 @@ export function buildProofResponse(
     block_height: anchor.chain_block_height,
     block_timestamp: anchor.chain_timestamp,
     batch_id: proofSource.batchId,
-    verified: isAnchored,
+    verified: inclusion.valid,
   };
 }
 
@@ -235,7 +269,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       } else {
         const { data: proofData } = await db
           .from('anchor_proofs')
-          .select('merkle_root, proof_path, batch_id')
+          .select('merkle_root, proof_path, batch_id, merkle_index')
           .eq('anchor_id', data.id)
           .maybeSingle();
 
@@ -258,6 +292,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
                 merkle_root: proofData.merkle_root ?? null,
                 proof_path: proofData.proof_path ?? null,
                 batch_id: proofData.batch_id ?? null,
+                merkle_index: proofData.merkle_index ?? null,
               }
             : null,
         );

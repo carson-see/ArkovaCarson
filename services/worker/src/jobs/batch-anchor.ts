@@ -18,7 +18,8 @@ import { z } from 'zod';
 import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getChainClientAsync } from '../chain/client.js';
-import { buildMerkleTree } from '../utils/merkle.js';
+import { buildMerkleTree, type MerkleTreeResult } from '../utils/merkle.js';
+import { upsertAnchorProofs } from '../utils/anchorProofs.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
 import { config } from '../config.js';
 import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
@@ -446,6 +447,61 @@ export interface BatchAnchorResult {
   txId: string | null;
 }
 
+interface LeafForProof {
+  id: string;
+  fingerprint: string;
+}
+
+/**
+ * FIX-1 (SCRUM-2471): persist each leaf's Merkle branch + integer index into
+ * `anchor_proofs` so SECURED customer anchors carry a recomputable proof
+ * (PROOF-VERIFY / SCRUM-2490 depends on the stored branch). Before this, the
+ * customer batch path discarded `tree.proofs` entirely — only
+ * `publicRecordAnchor.ts` wrote branches.
+ *
+ * Non-fatal: the Bitcoin TX is already broadcast by the time this runs, and
+ * a failure here is recoverable by the resumable backfill job
+ * (`proof-branch-backfill.ts`). We never revert a broadcast over a proof
+ * write — that would risk a double-broadcast (anchor-backlog incident
+ * 2026-04-24). The PROOF-02 "SECURED ⇒ proof complete" trigger stays gated
+ * OFF until the backfill has covered the back-catalogue, so a transient miss
+ * here cannot strand an anchor.
+ *
+ * Single-leaf batches: `buildMerkleTree` returns `root == fingerprint` with
+ * an empty branch — persisted as `proofPath: []`, `merkleIndex: 0`,
+ * `merkleRoot == fingerprint` (a valid single-leaf inclusion).
+ */
+async function persistBatchAnchorProofs(
+  leaves: LeafForProof[],
+  tree: MerkleTreeResult,
+  receiptId: string,
+  blockHeight: number | null,
+  blockTimestamp: string | null,
+  batchId: string,
+): Promise<void> {
+  if (leaves.length === 0) return;
+  try {
+    const rows = leaves.map((leaf, index) => ({
+      anchorId: leaf.id,
+      receiptId,
+      blockHeight,
+      blockTimestamp,
+      merkleRoot: tree.root,
+      // The leaf's inclusion branch (empty for a single-leaf tree).
+      proofPath: tree.proofs.get(leaf.fingerprint) ?? [],
+      // Integer leaf index (PROOF-01 merkle_index / PROOF-02 column).
+      merkleIndex: index,
+      batchId,
+    }));
+    await upsertAnchorProofs(db, rows);
+  } catch (proofError) {
+    logger.warn(
+      { error: proofError, count: leaves.length, batchId, txId: receiptId },
+      'FIX-1: failed to persist customer batch Merkle proofs (non-fatal — recoverable via proof-branch-backfill)',
+    );
+  }
+}
+
 export interface ProcessBatchAnchorOptions {
   /** Bypass economic age/size deferral. Used by daily flush + explicit org queue runs. */
   force?: boolean;
@@ -762,6 +818,18 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
 
   const processed = typeof updatedCount === 'number' ? updatedCount : broadcastAnchors.length;
 
+  // FIX-1 (SCRUM-2471): persist each leaf's Merkle branch + integer index.
+  // `broadcastAnchors` order is exactly the leaf order passed to
+  // buildMerkleTree above, so the array index == the leaf's merkle_index.
+  await persistBatchAnchorProofs(
+    broadcastAnchors.map((a) => ({ id: a.id, fingerprint: a.fingerprint })),
+    tree,
+    receipt.receiptId,
+    receipt.blockHeight ?? null,
+    receipt.blockTimestamp ?? null,
+    batchId,
+  );
+
   // CML-02: Populate compliance_controls per credential type (non-fatal post-processing)
   try {
     const byType = new Map<string | null, string[]>();
@@ -1056,11 +1124,31 @@ async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorRes
       updatedCount++;
     }
 
+    // FIX-1 (SCRUM-2471): persist branches even on the legacy fallback path.
+    await persistBatchAnchorProofs(
+      broadcastAnchors.map((a) => ({ id: a.id, fingerprint: a.fingerprint })),
+      tree,
+      receipt.receiptId,
+      receipt.blockHeight ?? null,
+      receipt.blockTimestamp ?? null,
+      batchId,
+    );
+
     logger.info({ batchId, count: updatedCount, total: broadcastAnchors.length, merkleRoot: tree.root, txId: receipt.receiptId }, 'Legacy batch anchor processing complete (fallback)');
     return { processed: updatedCount, batchId, merkleRoot: tree.root, txId: receipt.receiptId };
   }
 
   const processed = typeof bulkCount === 'number' ? bulkCount : broadcastAnchors.length;
+
+  // FIX-1 (SCRUM-2471): persist branches on the legacy RPC-success path.
+  await persistBatchAnchorProofs(
+    broadcastAnchors.map((a) => ({ id: a.id, fingerprint: a.fingerprint })),
+    tree,
+    receipt.receiptId,
+    receipt.blockHeight ?? null,
+    receipt.blockTimestamp ?? null,
+    batchId,
+  );
 
   logger.info(
     { batchId, count: processed, total: broadcastAnchors.length, merkleRoot: tree.root, txId: receipt.receiptId },

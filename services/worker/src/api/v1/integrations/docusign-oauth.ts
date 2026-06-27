@@ -49,6 +49,7 @@ type AuditEventInsert = TypeSafeDatabase['public']['Tables']['audit_events']['In
 type OrganizationRow = TypeSafeDatabase['public']['Tables']['organizations']['Row'];
 type OrgMemberRoleRow = Pick<OrgMemberRow, 'role'>;
 type OrganizationPublicIdLookupRow = Pick<OrganizationRow, 'id'>;
+type OrganizationVerificationRow = Pick<OrganizationRow, 'id' | 'verification_status' | 'suspended'>;
 type DocusignIntegrationIdRow = Pick<OrgIntegrationRow, 'id'>;
 type DocusignIntegrationLookupRow = Pick<
   OrgIntegrationRow,
@@ -96,7 +97,7 @@ interface DbAuditTableQuery {
 
 interface DbClient {
   from(table: 'org_members'): DbTableQuery<OrgMemberRoleRow>;
-  from(table: 'organizations'): DbTableQuery<OrganizationPublicIdLookupRow>;
+  from(table: 'organizations'): DbTableQuery<OrganizationPublicIdLookupRow & Partial<OrganizationVerificationRow>>;
   from(table: 'org_integrations'): DbTableQuery<DocusignIntegrationLookupRow[]>;
   from(table: 'integration_events'): DbTableQuery<unknown>;
   from(table: 'audit_events'): DbAuditTableQuery;
@@ -274,6 +275,59 @@ async function requireOrgAdmin(db: DbClient, userId: string, orgId: string): Pro
   return data?.role === 'admin' || data?.role === 'owner';
 }
 
+/**
+ * SCRUM-2361 (DS-01) — verified-organization entitlement gate.
+ *
+ * Only organizations whose `verification_status = 'VERIFIED'` may connect a
+ * DocuSign account at the org level. `'UNVERIFIED'` and `'PENDING'` orgs are
+ * denied. This is the shipped entitlement signal (org KYB verification,
+ * SCRUM-1755 — the same column behind the frontend `useCanIssueCredential`
+ * hook). The connect is scoped to exactly this org by `orgId`.
+ *
+ * TODO(PAY-01): the *paid verified individual* entitlement (Stripe Identity
+ * personal verification → personal/member queue) is a separate, not-yet-shipped
+ * signal. When PAY-01 lands, the member-level router gains its own paid-identity
+ * gate; the org path here continues to key off org KYB verification. Until then
+ * the org connect requires a VERIFIED organization, full stop.
+ *
+ * Returns a discriminated result so callers can distinguish a genuine denial
+ * (unverified org) from a transient lookup failure (fail closed, but with a
+ * distinct reason so the UI can offer a retry rather than a "get verified"
+ * dead-end).
+ */
+type VerifiedOrgGate =
+  | { allowed: true }
+  | { allowed: false; reason: 'org_unverified' | 'org_suspended' | 'org_not_found' | 'lookup_failed' };
+
+async function requireVerifiedOrg(db: DbClient, orgId: string): Promise<VerifiedOrgGate> {
+  const { data, error } = await db
+    .from('organizations')
+    .select('id, verification_status, suspended')
+    .eq('id', orgId)
+    .maybeSingle();
+
+  if (error) {
+    logger.error({ error, orgId }, 'DocuSign OAuth org-verification lookup failed');
+    return { allowed: false, reason: 'lookup_failed' };
+  }
+  if (!data) {
+    return { allowed: false, reason: 'org_not_found' };
+  }
+  if (data.verification_status !== 'VERIFIED') {
+    return { allowed: false, reason: 'org_unverified' };
+  }
+  // Parity with the UI entitlement gate (useCanIssueCredential / SCRUM-1755): a
+  // suspended org is barred from connecting a document source even when KYB-
+  // VERIFIED. The worker is the authoritative gate, so it must not be narrower
+  // than the UI — otherwise a suspended-but-VERIFIED org could connect via a
+  // direct /oauth/start call. `suspended` is migration 0289; null/undefined
+  // (legacy pre-0289 rows) is treated as not-suspended, matching the hook.
+  if (data.suspended === true) {
+    return { allowed: false, reason: 'org_suspended' };
+  }
+  return { allowed: true };
+}
+
 async function recordIntegrationEvent(db: DbClient, args: {
   orgId: string;
   integrationId?: string | null;
@@ -434,6 +488,21 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
       return;
     }
 
+    // SCRUM-2361 (DS-01): deny unverified / free-individual orgs before issuing
+    // a DocuSign authorization URL. Gate is scoped to this org.
+    const orgGate = await requireVerifiedOrg(db, orgId);
+    if (!orgGate.allowed) {
+      if (orgGate.reason === 'lookup_failed') {
+        res.status(500).json({ error: 'Failed to start DocuSign connection', code: 'verification_lookup_failed' });
+        return;
+      }
+      res.status(403).json({
+        error: 'Your organization must be verified before connecting DocuSign.',
+        code: orgGate.reason,
+      });
+      return;
+    }
+
     try {
       const returnTo = sanitizeReturnTo(parsed.data.return_to, orgId, deps);
       const redirectUri = buildRedirectUri(req);
@@ -481,6 +550,18 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
 
     if (!(await requireOrgAdmin(db, payload.userId, payload.orgId))) {
       res.redirect(302, appendResult(returnTo, 'docusign_error', 'not_authorized'));
+      return;
+    }
+
+    // SCRUM-2361 (DS-01): re-check verification on the callback — the security
+    // backstop. A signed state could be replayed inside its TTL, or the org's
+    // verification could have been revoked between start and callback; never
+    // persist a DocuSign connection for an org that is not VERIFIED.
+    const callbackOrgGate = await requireVerifiedOrg(db, payload.orgId);
+    if (!callbackOrgGate.allowed) {
+      // Reflect the actual reason (org_unverified / org_suspended / ...) so the
+      // return-to surface shows the right denial, never persisting a connection.
+      res.redirect(302, appendResult(returnTo, 'docusign_error', callbackOrgGate.reason));
       return;
     }
 
