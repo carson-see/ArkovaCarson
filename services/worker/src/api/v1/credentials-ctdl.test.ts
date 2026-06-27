@@ -202,6 +202,27 @@ describe('GET /credentials/:publicId/ctdl', () => {
     });
   });
 
+  it('fails closed (no published body) when a credential carries a fabricated CTID (CE-02)', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(
+        anchor({ ctid: 'ce-ARK-2026-CTDL-001' } as Partial<CtdlAnchor>),
+      ),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    // The guard throws inside buildCtdlJsonLd; the endpoint fails closed —
+    // never publishes a body, never echoes the offending CTID.
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'internal_error' });
+    expect(JSON.stringify(res.body)).not.toContain('ce-ARK-2026-CTDL-001');
+    const auditPayload = insertAudit.mock.calls[0][0];
+    expect(JSON.parse(auditPayload.details)).toMatchObject({
+      outcome: 'error',
+      http_status: 500,
+    });
+  });
+
   it('returns 410 with a revoked CTDL body for revoked credentials', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(anchor({
@@ -254,5 +275,27 @@ describe('GET /credentials/:publicId/ctdl', () => {
       outcome: 'invalid',
       http_status: 400,
     });
+  });
+
+  // SCRUM-2374 (CE-03) — a revoked credential that still carries an expires_at in
+  // the DB must not surface ceterms:expirationDate on the public CTDL projection.
+  // End-to-end check through the route, since this is the public-contract surface.
+  it('omits ceterms:expirationDate on the public body for a revoked credential with expires_at', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        status: 'REVOKED',
+        expiresAt: '2027-05-19T00:00:00.000Z',
+        revokedAt: '2026-05-21T00:00:00.000Z',
+        revocationReason: 'Revoked by issuer.',
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(410);
+    expect(res.body['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
+    expect(res.body).not.toHaveProperty('ceterms:expirationDate');
+    expect(JSON.stringify(res.body)).not.toContain('2027-05-19');
+    expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
   });
 });

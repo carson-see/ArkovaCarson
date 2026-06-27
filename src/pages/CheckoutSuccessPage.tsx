@@ -13,6 +13,7 @@ import { CheckCircle2, ArrowRight, Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useBilling } from '@/hooks/useBilling';
+import { isUnlimitedRecordsLimit } from '@/hooks/useEntitlements';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -74,11 +75,22 @@ export function CheckoutSuccessPage() {
               <div className="rounded-lg border bg-muted/50 p-4 text-center">
                 <p className="text-sm text-muted-foreground">{BILLING_LABELS.YOUR_PLAN}</p>
                 <p className="text-lg font-semibold mt-1">{plan.name}</p>
-                {plan.records_per_month > 0 && (
+                {/* BUG-C: the unlimited "organization" plan encodes its limit as
+                    the sentinel 999999 (seed.sql:220). Route it through the same
+                    isUnlimitedRecordsLimit() normalization used by
+                    useEntitlements/PricingPage so the post-payment screen shows
+                    "Unlimited records" instead of the raw sentinel. A finite
+                    limit (incl. 999998) still renders the count; 0 renders
+                    nothing. */}
+                {isUnlimitedRecordsLimit(plan.records_per_month) ? (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {BILLING_LABELS.RECORDS_UNLIMITED}
+                  </p>
+                ) : plan.records_per_month > 0 ? (
                   <p className="text-sm text-muted-foreground mt-1">
                     {plan.records_per_month} records per month
                   </p>
-                )}
+                ) : null}
               </div>
             ) : null}
 

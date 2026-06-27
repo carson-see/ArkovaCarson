@@ -41,8 +41,6 @@ queue_rules:
     queue_conditions:
       - -draft
       - label = hotfix
-      # Fail-closed: even hotfixes touching T2/T3 surfaces go to Carson (S0-4.3).
-      - -label = needs-carson-merge
       - "#changes-requested-reviews-by = 0"
     merge_conditions:
       # All 13 required status checks from branch protection
@@ -70,13 +68,16 @@ queue_rules:
       - -label = work-in-progress
       - -label = do-not-merge
       - -label = hotfix
-      # Tiered-merge (S0-4.3): T2/T3 PRs carry needs-carson-merge (applied by the
-      # Merge Authority workflow from compute-merge-authority.ts). The council
-      # queue may not auto-merge them; Carson merges them manually.
-      - -label = needs-carson-merge
+      # Tiered-merge (corrected 2026-06-24): Mergify auto-merges EVERY tier once
+      # CI + the Staging Soak Evidence Gate pass. The `needs-carson-merge` label
+      # (still applied by the Merge Authority workflow as an informational
+      # tier-marker) is NO LONGER a queue gate — T2/T3 safety is the merge-grade
+      # soak evidence the gate requires, not a manual merge. Carson overrides any
+      # PR with `do-not-merge` / `work-in-progress`. (Removes the S0-4.2d gate
+      # that held T2/T3 out of the queue; see CLAUDE.md §1.13.)
       - "#changes-requested-reviews-by = 0"
-      # Staging evidence must pass before entering queue. T0/T1 can move fast,
-      # while T2/T3 must complete merge-grade evidence before queueing.
+      # Staging evidence must pass before entering queue. T0/T1 move fast; T2/T3
+      # must complete merge-grade evidence (the real tier gate) before queueing.
       - check-success = Staging Soak Evidence Gate
     merge_conditions:
       - check-success = TypeCheck & Lint
@@ -118,8 +119,6 @@ pull_request_rules:
       - -label = work-in-progress
       - -label = do-not-merge
       - -label = hotfix
-      # Tiered-merge (S0-4.3): never auto-queue a needs-carson-merge PR.
-      - -label = needs-carson-merge
       - "#changes-requested-reviews-by = 0"
       - check-success = Staging Soak Evidence Gate
     actions:
@@ -132,7 +131,6 @@ pull_request_rules:
       - base = main
       - -draft
       - label = hotfix
-      - -label = needs-carson-merge
       - check-success = Staging Soak Evidence Gate
     actions:
       queue:

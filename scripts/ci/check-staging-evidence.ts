@@ -300,13 +300,14 @@ export function requiredTierFor(files: string[]): { tier: Tier; reason: string }
 }
 
 /**
- * Patterns for any non-frontend, prod-runtime surface. A change that touches
- * ANY of these can produce real worker/migration/SDK/contract artifacts, so it
- * must NOT be eligible for the frontend-T2 evidence path — it keeps the full
- * worker-artifact requirements. This list is intentionally a denylist (not just
- * "everything outside src/") so the guard fails closed: a future file that
- * lands under `src/` but matches a server/SDK/contract pattern would still be
- * pushed onto the standard evidence path.
+ * Patterns for any non-frontend, prod-runtime (or CI) surface. A change that
+ * touches ANY of these can produce real worker/migration/SDK/contract artifacts
+ * (or is CI config/script, which is not a frontend asset), so it must NOT be
+ * eligible for the frontend-T2 evidence path — it keeps the full worker-artifact
+ * (standard) evidence requirements. This list is intentionally a denylist (not
+ * just "outside src/|public/|e2e/") so the guard fails closed: a future file
+ * that lands under one of the allowed prefixes but matches a server/SDK/contract
+ * pattern would still be pushed onto the standard evidence path.
  */
 const NON_FRONTEND_SURFACE_RE: RegExp[] = [
   /^services\//,
@@ -316,14 +317,34 @@ const NON_FRONTEND_SURFACE_RE: RegExp[] = [
   /^docs\/api\//,
   /^docs\/guides\/API_GUIDE\.md$/,
   /^\.github\/workflows\//,
+  // CI scripts are not a frontend asset — a `scripts/` change (e.g. this gate,
+  // or the CSP-deps guard) keeps the standard worker-evidence path even when it
+  // rides alongside a src/ change.
+  /^scripts\//,
 ];
 
+/** Prefixes a frontend feature can legitimately ship without producing any
+ * deploying (worker/migration/SDK) artifact:
+ *   - `src/`          the React/TS app source itself,
+ *   - `public/`       static + vendored runtime assets (e.g. self-hosted
+ *                     Tesseract OCR wasm/worker/lang under `public/vendor`),
+ *   - `e2e/`          the Playwright spec(s) that exercise the changed view.
+ * None of these are built into the Cloud Run worker image or applied to the DB,
+ * so a PR confined to them (modulo the NON_FRONTEND_SURFACE_RE denylist) cannot
+ * produce worker artifacts and is eligible for the frontend-T2 evidence path. */
+const FRONTEND_PREFIXES = ['src/', 'public/', 'e2e/'];
+
 /**
- * True iff EVERY changed file is purely a frontend source file — under `src/`
- * and not matching any server/migration/SDK/contract surface. This is the
- * backward-compatibility guard for the frontend-T2 evidence mode: it gates the
- * alternate (Vercel + view-E2E) evidence path so it can only ever apply to a
- * PR that genuinely cannot produce worker artifacts.
+ * True iff EVERY changed file is a purely-frontend file — under one of
+ * {@link FRONTEND_PREFIXES} (`src/` / `public/` / `e2e/`) and not matching any
+ * server/migration/SDK/contract/CI surface ({@link NON_FRONTEND_SURFACE_RE}).
+ * This is the backward-compatibility guard for the frontend-T2 evidence mode:
+ * it gates the alternate (Vercel + view-E2E) evidence path so it can only ever
+ * apply to a PR that genuinely cannot produce worker artifacts. A frontend
+ * feature shipping vendored assets (`public/vendor`) + its E2E (`e2e/`)
+ * alongside its `src/` change is exactly this case (the #1262 §1.6 fail-closed
+ * OCR enabler); workflow / CI-script / worker / migration changes stay on the
+ * full worker-evidence path (fail-closed preserved).
  *
  * An empty fileset returns false: there is nothing to attest as frontend-only,
  * and a non-frontend caller should never reach the frontend path by default.
@@ -331,7 +352,8 @@ const NON_FRONTEND_SURFACE_RE: RegExp[] = [
 export function isFrontendOnlyChange(files: string[]): boolean {
   if (files.length === 0) return false;
   return files.every(
-    (f) => f.startsWith('src/') && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
+    (f) => FRONTEND_PREFIXES.some((p) => f.startsWith(p))
+      && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
   );
 }
 
@@ -342,21 +364,51 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
+// Tier declaration, tolerant of common markdown decoration on the line.
+// Accepts, anchored to the start of a (whitespace-trimmed) line:
+//   - an optional list marker (`-` / `*`) + optional `[x]`/`[ ]` checkbox,
+//   - optional markdown emphasis (`*`/`**`/`_`/`__`) wrapping the word `Tier`
+//     and/or its colon — covers `**Tier:**`, `*Tier*:`, `_Tier_:`, `**Tier**:`,
+//   - then `T0`–`T3`, optionally emphasis-wrapped, as a whole token.
+// The plain `Tier: T2` form keeps matching (every decoration group is optional).
+// This is label-parsing tolerance only: the captured value is still validated
+// against DECLARED_TIER_VALUES, so the set of accepted tiers is unchanged.
+//
+// Composed from named sub-parts rather than one dense literal: it keeps each
+// fragment readable and below the per-regex cognitive-complexity bound, and it
+// removes the backtracking ambiguity of adjacent `\s*` groups flanking optional
+// emphasis (the old `\s*:\s*(?:[*_]{1,2})?\s*` shape) by using single horizontal-
+// whitespace runs (`HSPACE`). Lines are pre-split on `\r?\n` by
+// {@link extractDeclaredTier}, so horizontal-only whitespace is exact, not a
+// behavior change — verified identical to the prior literal over a combinatorial
+// corpus.
+// `String.raw` only where the literal itself carries backslashes; the
+// backslash-free fragments use plain template literals (interpolated sub-parts
+// keep their own escaping). Same assembled source either way.
+const TIER_HSPACE = String.raw`[^\S\r\n]`;
+const TIER_EMPHASIS = `[*_]{1,2}`;
+// Optional leading list bullet (`-`/`*`) then optional spaces.
+const TIER_LIST_PREFIX = `(?:[-*]${TIER_HSPACE}*)?`;
+// Optional GitHub task checkbox (`[ ]`/`[x]`) then optional spaces.
+const TIER_CHECKBOX = String.raw`(?:\[[ x]\]${TIER_HSPACE}*)?`;
+// The literal label `Tier`, optionally emphasis-wrapped on either side.
+const TIER_LABEL = `(?:${TIER_EMPHASIS})?Tier(?:${TIER_EMPHASIS})?`;
+// Separator: optional spaces, colon, optional spaces, then an optional emphasis
+// run with its own trailing spaces — no two `\s*` flank the same optional group.
+const TIER_SEPARATOR = `${TIER_HSPACE}*:${TIER_HSPACE}*(?:${TIER_EMPHASIS}${TIER_HSPACE}*)?`;
+// The tier token `T0`–`T3`, optional trailing emphasis, not followed by a word char.
+const TIER_VALUE_TOKEN = String.raw`(T[0-3])(?:${TIER_EMPHASIS})?(?!\w)`;
+const DECLARED_TIER_LINE_RE = new RegExp(
+  `^${TIER_HSPACE}*${TIER_LIST_PREFIX}${TIER_CHECKBOX}${TIER_LABEL}${TIER_SEPARATOR}${TIER_VALUE_TOKEN}`,
+  'i',
+);
+
 export function extractDeclaredTier(body: string): Tier | null {
   for (const line of body.split(/\r?\n/)) {
-    let candidate = line.trimStart();
-    if (candidate.startsWith('-') || candidate.startsWith('*')) {
-      candidate = candidate.slice(1).trimStart();
-    }
-    if (candidate.startsWith('[x]') || candidate.startsWith('[ ]')) {
-      candidate = candidate.slice(3).trimStart();
-    }
-    if (!candidate.startsWith('Tier:')) continue;
-
-    const rest = candidate.slice('Tier:'.length).trimStart();
-    const value = rest.slice(0, 2);
-    const next = rest[2];
-    if (DECLARED_TIER_VALUES.has(value as Tier) && (next === undefined || !/\w/.test(next))) {
+    const m = DECLARED_TIER_LINE_RE.exec(line);
+    if (!m) continue;
+    const value = m[1].toUpperCase();
+    if (DECLARED_TIER_VALUES.has(value as Tier)) {
       return value as Tier;
     }
   }
@@ -1024,6 +1076,10 @@ const STAGING_TOOLING_ALLOW = [
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
   /^scripts\/ci\/config-drift\//,
+  // WEBEXT-04 (SCRUM-2506): CSP↔runtime-deps drift gate — a sibling config↔reality
+  // CI gate that parses vercel.json + scans on-device runtime sources. Runs only
+  // in CI, never ships to prod runtime, so it is T0 tooling.
+  /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,

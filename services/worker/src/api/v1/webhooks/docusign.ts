@@ -234,6 +234,10 @@ async function enqueueFetchJob(args: {
       envelope_id: args.event.envelopeId,
       rule_event_id: args.ruleEventId,
       document_ids: args.event.envelopeDocuments.map((doc) => doc.documentId),
+      // DS-03: forward the Connect completion time so the materializer records
+      // connector_artifact.source_timestamp. Optional — undefined when DocuSign
+      // omits it; the job payload schema and the RPC both accept null.
+      envelope_completed_at: args.event.generatedDateTime,
     },
   });
   if (!jobId) {

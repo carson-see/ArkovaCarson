@@ -304,8 +304,23 @@ function logVerificationAudit(
   });
 }
 
-/** Shape returned by the Supabase nested select in defaultLookup (not yet in generated types). */
-interface AnchorSelectRow {
+/** Single embedded `anchor_proofs` row (merkle_root lives here, not on anchors). */
+interface AnchorProofEmbed {
+  merkle_root: string | null;
+}
+
+/**
+ * Shape returned by the Supabase nested select in defaultLookup (not yet in
+ * generated types).
+ *
+ * NOTE on jurisdiction + merkle_root: neither is a top-level `anchors` column.
+ * `merkle_root` lives on `anchor_proofs.merkle_root` (1:1 via
+ * `anchor_proofs_anchor_unique`), with a legacy `metadata->>'merkle_root'`
+ * fallback. `jurisdiction` lives in `anchors.metadata->>'jurisdiction'`. The
+ * embed may surface as a single object or a one-element array depending on how
+ * PostgREST resolves the to-one relationship, so `anchor_proofs` accepts both.
+ */
+export interface AnchorSelectRow {
   public_id: string;
   fingerprint: string;
   status: string;
@@ -327,12 +342,83 @@ interface AnchorSelectRow {
   file_mime: string | null;
   file_size: number | null;
   org_id: string | null;
+  /** anchors.metadata JSONB — source of jurisdiction + legacy merkle_root. */
+  metadata: Record<string, unknown> | null;
   organization: { display_name: string } | null;
   parent: { public_id: string } | null;
+  /** Embedded anchor_proofs (single object or one-element array, or null). */
+  anchor_proofs: AnchorProofEmbed | AnchorProofEmbed[] | null;
   extraction_manifests: Array<{
     confidence_scores: Record<string, unknown> | null;
     extraction_timestamp: string;
   }>;
+}
+
+/** Reads `merkle_root` from the joined anchor_proofs embed (object or array),
+ *  falling back to the legacy `metadata.merkle_root` string. Returns null when
+ *  neither source carries a string value. */
+function resolveMerkleRoot(row: AnchorSelectRow): string | null {
+  const proofs = row.anchor_proofs;
+  const proofRows = Array.isArray(proofs) ? proofs : proofs ? [proofs] : [];
+  for (const proof of proofRows) {
+    if (typeof proof?.merkle_root === 'string' && proof.merkle_root.length > 0) {
+      return proof.merkle_root;
+    }
+  }
+  const legacy = row.metadata?.merkle_root;
+  return typeof legacy === 'string' && legacy.length > 0 ? legacy : null;
+}
+
+/** Reads `jurisdiction` from anchors.metadata JSONB (informational tag,
+ *  Constitution 1.5). Returns null for missing or non-string values. */
+function resolveJurisdiction(row: AnchorSelectRow): string | null {
+  const value = row.metadata?.jurisdiction;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
+ * Pure mapping from a DB select row to the public-safe AnchorByPublicId.
+ * Exported for unit testing. Uses an explicit field allowlist — internal-only
+ * columns (anchors.id, org_id beyond webhook routing) are never copied into the
+ * public response by construction (Constitution 1.4 / §6).
+ */
+export function mapAnchorRow(row: AnchorSelectRow): AnchorByPublicId {
+  const manifests = row.extraction_manifests ?? [];
+  const latestManifest = manifests.length === 0
+    ? null
+    : manifests
+        .slice()
+        .sort((a, b) => (a.extraction_timestamp < b.extraction_timestamp ? 1 : -1))[0];
+
+  return {
+    public_id: row.public_id ?? '',
+    fingerprint: row.fingerprint,
+    status: row.status,
+    org_id: row.org_id ?? null,
+    chain_tx_id: row.chain_tx_id ?? null,
+    chain_block_height: row.chain_block_height ?? null,
+    chain_timestamp: row.chain_timestamp ?? null,
+    created_at: row.created_at,
+    credential_type: row.credential_type ?? null,
+    org_name: row.organization?.display_name ?? null,
+    recipient_hash: null,
+    issued_at: row.issued_at ?? null,
+    expires_at: row.expires_at ?? null,
+    jurisdiction: resolveJurisdiction(row),
+    merkle_root: resolveMerkleRoot(row),
+    description: row.description ?? null,
+    directory_info_opt_out: row.directory_info_opt_out ?? false,
+    compliance_controls: row.compliance_controls ?? null,
+    chain_confirmations: row.chain_confirmations ?? null,
+    parent_public_id: row.parent?.public_id ?? null,
+    version_number: row.version_number ?? null,
+    revocation_tx_id: row.revocation_tx_id ?? null,
+    revocation_block_height: row.revocation_block_height ?? null,
+    file_mime: row.file_mime ?? null,
+    file_size: row.file_size ?? null,
+    confidence_scores: latestManifest?.confidence_scores ?? null,
+    sub_type: row.sub_type ?? null,
+  };
 }
 
 /** Default DB-backed lookup — single JOIN for orgName + parent public_id to avoid N+1 on hot path */
@@ -345,8 +431,9 @@ const defaultLookup: PublicIdLookup = {
           'credential_type, sub_type, issued_at, expires_at, description, directory_info_opt_out, ' +
           'compliance_controls, chain_confirmations, version_number, ' +
           'revocation_tx_id, revocation_block_height, file_mime, file_size, ' +
-          'org_id, ' +
+          'org_id, metadata, ' +
           'organization:org_id(display_name), parent:parent_anchor_id(public_id), ' +
+          'anchor_proofs(merkle_root), ' +
           'extraction_manifests(confidence_scores, extraction_timestamp)',
       )
       .eq('public_id', publicId)
@@ -355,43 +442,7 @@ const defaultLookup: PublicIdLookup = {
 
     if (error || !data) return null;
 
-    const row = data as unknown as AnchorSelectRow;
-    const manifests = row.extraction_manifests ?? [];
-    const latestManifest = manifests.length === 0
-      ? null
-      : manifests
-          .slice()
-          .sort((a, b) => (a.extraction_timestamp < b.extraction_timestamp ? 1 : -1))[0];
-
-    return {
-      public_id: row.public_id ?? '',
-      fingerprint: row.fingerprint,
-      status: row.status,
-      org_id: row.org_id ?? null,
-      chain_tx_id: row.chain_tx_id ?? null,
-      chain_block_height: row.chain_block_height ?? null,
-      chain_timestamp: row.chain_timestamp ?? null,
-      created_at: row.created_at,
-      credential_type: row.credential_type ?? null,
-      org_name: row.organization?.display_name ?? null,
-      recipient_hash: null,
-      issued_at: row.issued_at ?? null,
-      expires_at: row.expires_at ?? null,
-      jurisdiction: null,
-      merkle_root: null,
-      description: row.description ?? null,
-      directory_info_opt_out: row.directory_info_opt_out ?? false,
-      compliance_controls: row.compliance_controls ?? null,
-      chain_confirmations: row.chain_confirmations ?? null,
-      parent_public_id: row.parent?.public_id ?? null,
-      version_number: row.version_number ?? null,
-      revocation_tx_id: row.revocation_tx_id ?? null,
-      revocation_block_height: row.revocation_block_height ?? null,
-      file_mime: row.file_mime ?? null,
-      file_size: row.file_size ?? null,
-      confidence_scores: latestManifest?.confidence_scores ?? null,
-      sub_type: row.sub_type ?? null,
-    } as AnchorByPublicId;
+    return mapAnchorRow(data as unknown as AnchorSelectRow);
   },
 };
 

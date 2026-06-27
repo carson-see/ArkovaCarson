@@ -15,6 +15,8 @@ import { stripPII, type StrippingReport } from './piiStripper';
 import { stripPIIEnhanced, type EnhancedStrippingReport } from './enhancedPiiStripper';
 import { supabase } from './supabase';
 import { WORKER_URL } from './workerClient';
+import { isPiiStripFailClosedError } from './ocrFailClosed';
+import { AI_EXTRACTION_LABELS } from './copy';
 
 export const AI_EXTRACTION_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -30,6 +32,15 @@ export interface ExtractionProgress {
   progress: number; // 0-100
   ocrProgress?: OCRProgress;
   message?: string;
+  /**
+   * §1.6 FAIL-CLOSED (WEBEXT-03): true only when the on-device privacy
+   * guarantee could NOT be honored (NER PII model or OCR engine failed to
+   * load/run). In that case NO metadata left the browser and the UI must show
+   * a LOUD, explicit failure — never the soft "secured without metadata" path.
+   * Soft, recoverable failures (no text found, AI timeout, server 5xx) leave
+   * this unset.
+   */
+  failClosed?: boolean;
 }
 
 export interface ExtractionOutput {
@@ -181,6 +192,24 @@ export async function runExtraction(
       manifestHash: result.manifestHash,
     };
   } catch (err) {
+    // §1.6 FAIL-CLOSED (WEBEXT-03 / SCRUM-2505): if the on-device PII model or
+    // the OCR engine failed, we reach here BEFORE the network call — no metadata
+    // left the browser. Surface a LOUD, explicit failure so the UI never falls
+    // through to the soft "secured without metadata" recovery path.
+    //
+    // We deliberately do NOT interpolate `err.message` for the fail-closed case:
+    // the OCR-stage error may wrap document-derived text in its `cause`, so we
+    // surface only the fixed §1.6 copy string (defense-in-depth per §1.6).
+    if (isPiiStripFailClosedError(err)) {
+      onProgress?.({
+        stage: 'error',
+        progress: 0,
+        failClosed: true,
+        message: AI_EXTRACTION_LABELS.PRIVACY_GUARANTEE_FAILED,
+      });
+      return null;
+    }
+
     let message = 'Extraction failed';
     if (isAbortError(err)) {
       message = 'AI analysis timed out. The document can still be secured without metadata.';

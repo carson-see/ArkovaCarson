@@ -15,6 +15,22 @@ import { supabase } from '../lib/supabase';
 import { queryKeys } from '../lib/queryClient';
 import { useAuth } from './useAuth';
 
+/**
+ * Sentinel `records_per_month` value used by "unlimited" plans.
+ *
+ * No plan seeds a NULL limit — the "organization" plan (supabase/seed.sql:220)
+ * encodes unlimited as `999999`. Without normalization, unlimited orgs rendered
+ * a frozen "N / 999999" meter pinned near 0% instead of "Unlimited records"
+ * (BUG-2026-06-24-010). Treat the sentinel (and any value at or above it) as
+ * unlimited so every `recordsLimit === null` consumer renders the right path.
+ */
+export const UNLIMITED_RECORDS_SENTINEL = 999999;
+
+/** True when a plan's monthly limit means "unlimited" (null or sentinel). */
+export function isUnlimitedRecordsLimit(limit: number | null): boolean {
+  return limit === null || limit >= UNLIMITED_RECORDS_SENTINEL;
+}
+
 export interface EntitlementState {
   /** Whether the user can create at least one more anchor this period */
   canCreateAnchor: boolean;
@@ -124,13 +140,19 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
 
   // When no user: return free tier defaults (not unlimited)
   const recordsUsed = data?.recordsUsed ?? 0;
-  const recordsLimit = !user ? 3 : (queryError ? 3 : (data?.recordsLimit ?? 3));
+  const rawRecordsLimit = !user ? 3 : (queryError ? 3 : (data?.recordsLimit ?? 3));
   const planName = !user ? 'Free' : (queryError ? 'Free' : (data?.planName ?? 'Free'));
   const error = queryError ? (queryError as Error).message : null;
 
-  const isUnlimited = recordsLimit === null;
-  const remaining = isUnlimited ? null : Math.max(0, recordsLimit - recordsUsed);
-  const percentUsed = isUnlimited ? null : Math.min(100, (recordsUsed / recordsLimit) * 100);
+  // Normalize the unlimited sentinel (999999, seed.sql:220) to null so every
+  // `recordsLimit === null` consumer renders the unlimited path instead of a
+  // frozen "/ 999999" meter (BUG-2026-06-24-010).
+  const isUnlimited = isUnlimitedRecordsLimit(rawRecordsLimit);
+  const recordsLimit = isUnlimited ? null : rawRecordsLimit;
+  // `rawRecordsLimit` is always a number; use it for the finite-branch math so
+  // TS doesn't have to narrow the now-nullable `recordsLimit`.
+  const remaining = isUnlimited ? null : Math.max(0, rawRecordsLimit - recordsUsed);
+  const percentUsed = isUnlimited ? null : Math.min(100, (recordsUsed / rawRecordsLimit) * 100);
   const isNearLimit = percentUsed !== null && percentUsed >= 80;
   const canCreateAnchor = isUnlimited || (remaining !== null && remaining > 0);
 

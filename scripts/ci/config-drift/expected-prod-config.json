@@ -1,5 +1,6 @@
 {
   "_note": "ASSERTED = intended EFFECTIVE prod config. For kill-switch flags the effective value is the DB (switchboard_flags) resolution, NOT the raw deploy env var: e.g. ENABLE_SEMANTIC_SEARCH and ENABLE_AI_FRAUD are env=true (deploy-worker.yml) but DB=false/gated (fail closed) => effective=false; both are pinned here so a silent re-enable is caught. cspConnectSrc is the cross-runtime-relevant SUBSET (worker+edge), not the full vercel.json connect-src. SPIKE: hand-declared; Sprint 1 captures env AND DB per flag so the env<->DB delta (the 2026-05-30 fail-open class) becomes the compared dimension. Provider 'getblock' = post-2026-04-25 sovereign-broadcast posture.",
+  "_flagSpofNote": "S1 Lane-2: flagSpof.ts parses the REAL deploy-worker.yml env flags + the REAL flagRegistry.ts DB_FLAGS list and classifies env<->DB drift against `flags` below. flagRegistry resolves a DB-backed flag to its env var when the switchboard_flags row is ABSENT, so a flag asserted effective=false but env=true fails OPEN. `launchRequiredFlags` = effective ON; the gate hard-fails if the deploy sets it false/omits it (launch path break). `acknowledgedFailOpenFlags` = flags KNOWN to be env=true while asserted=false, held OFF today only by a live DB row (deploy edit is a T3/Carson chain-adjacent change). These surface as a loud non-blocking ::warning:: (the providerSpof latent-SPOF precedent); a NEW unacknowledged fail-open flag is a hard ERROR (the regression guard). instant-secure stays HIDDEN until QUEUE-08+ledger pass T3 (launch-gating, PRD §11) — it is a product surface, not a single env flag, so it is asserted via the queue/checkout flags rather than a fabricated ENABLE_INSTANT_SECURE key.",
   "flags": {
     "ENABLE_PROD_NETWORK_ANCHORING": true,
     "ENABLE_AI_EXTRACTION": true,
@@ -7,6 +8,8 @@
     "ENABLE_SEMANTIC_SEARCH": false,
     "ENABLE_AI_FRAUD": false
   },
+  "launchRequiredFlags": ["ENABLE_AI_EXTRACTION", "ENABLE_PROD_NETWORK_ANCHORING", "ENABLE_VERIFICATION_API"],
+  "acknowledgedFailOpenFlags": ["ENABLE_SEMANTIC_SEARCH", "ENABLE_AI_FRAUD"],
   "bitcoinUtxoProvider": "getblock",
   "bitcoinFeeStrategy": "mempool",
   "cspConnectSrc": [
