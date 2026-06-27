@@ -6,18 +6,18 @@
  * -------------------------
  * The reconciler LOGIC already lives in prod as the SQL function
  * `org_credit_ledger_divergence(p_org_id uuid DEFAULT NULL)` (added by migration
- * 0341, CORRECTED by migration 0344). For every org it computes:
+ * 0341, CORRECTED by migration 0347). For every org it computes:
  *   balance == purchased + monthly_allocation
  *              + net(org_credit_allocations)            -- parent→child sub-org transfers
  *              + SUM(org_credit_deductions.amount)      -- append-only signed ledger
  * and returns one row per org with `diverged = true` on any mismatch. It is
  * service_role EXECUTE only, STABLE SECURITY DEFINER — a pure read.
  *
- * Why 0344 was needed: the original 0341 body compared `balance` against a
+ * Why 0347 was needed: the original 0341 body compared `balance` against a
  * `p_initial_grant` scalar (SQL DEFAULT 0). But credit GRANTS are NOT in the
  * deduction ledger — they live in the `org_credits` columns (purchased,
  * monthly_allocation) plus net parent→child allocations. With p_initial_grant=0
- * every funded org false-flagged a "violation" on the first tick. 0344 drops the
+ * every funded org false-flagged a "violation" on the first tick. 0347 drops the
  * scalar arg and sources the grant from the real columns. The `granted` column
  * on each row surfaces that grant total.
  *
@@ -72,7 +72,7 @@ export type DivergenceBucket =
   | '-1-9' | '-10-99' | '-100-999' | '-1000+';
 
 /**
- * One row returned by `org_credit_ledger_divergence` (post-0344). Numeric
+ * One row returned by `org_credit_ledger_divergence` (post-0347). Numeric
  * columns are Postgres `integer` / `bigint`; supabase-js returns them as JS
  * numbers (credit counts are bounded well within Number.MAX_SAFE_INTEGER).
  * `granted` = purchased + monthly_allocation + net(org_credit_allocations);
@@ -240,7 +240,7 @@ export async function runCreditConservationReconciler(
   let error: { message: string; code?: string } | null;
   try {
     // All-orgs sweep: arg-less call so p_org_id keeps its SQL DEFAULT NULL.
-    // Post-0344 the function is (uuid DEFAULT NULL) — there is no p_initial_grant
+    // Post-0347 the function is (uuid DEFAULT NULL) — there is no p_initial_grant
     // arg to pass (its presence was the bug: it false-flagged every funded org).
     const res = await callRpc<DivergenceRow[]>(db, CREDIT_LEDGER_DIVERGENCE_RPC);
     data = res.data;

@@ -3,14 +3,14 @@
  * parent SCRUM-2349 / PM-25).
  *
  * The reconciler LOGIC is the prod SQL function `org_credit_ledger_divergence`
- * (live via mig 0341, CORRECTED by mig 0344): it computes, per org, whether
+ * (live via mig 0341, CORRECTED by mig 0347): it computes, per org, whether
  *   balance == purchased + monthly_allocation + net(org_credit_allocations)
  *              + SUM(org_credit_deductions.amount)
  * and flags `diverged = true` on any mismatch. Grants live in the `org_credits`
  * columns (purchased / monthly_allocation) plus net parent→child sub-org
  * allocations — NOT in the deduction ledger. (The original 0341 body compared
  * against a `p_initial_grant=0` scalar, which false-flagged every funded org;
- * 0344 sources the grant from the real columns and drops that arg.)
+ * 0347 sources the grant from the real columns and drops that arg.)
  *
  * This module is the daily caller that fires the function over ALL orgs, builds
  * a structured conservation report, and ALERTS on any drift (Sentry) so gate #11
@@ -97,7 +97,7 @@ function row(o: {
 /**
  * The 5 live-prod orgs (vzwyaatejekddvltxyye, 2026-06-23). The REAL invariant
  * `balance == purchased + monthly_allocation + net_alloc + SUM(ledger)` holds
- * for every one of them — none should ever flag under the 0344 function. With
+ * for every one of them — none should ever flag under the 0347 function. With
  * the OLD p_initial_grant=0 function the 3 funded orgs (50/10/5) false-flagged.
  */
 const PROD_ORGS: DivergenceRow[] = [
@@ -262,9 +262,9 @@ describe('runCreditConservationReconciler', () => {
     const [, fnName, args] = mockCallRpc.mock.calls[0];
     expect(fnName).toBe(CREDIT_LEDGER_DIVERGENCE_RPC);
     expect(fnName).toBe('org_credit_ledger_divergence');
-    // All-orgs sweep → arg-less call. After 0344 the function is (uuid DEFAULT
+    // All-orgs sweep → arg-less call. After 0347 the function is (uuid DEFAULT
     // NULL); an arg-less RPC maps to it and p_org_id keeps its SQL DEFAULT NULL.
-    // We MUST NOT pass p_initial_grant (removed in 0344).
+    // We MUST NOT pass p_initial_grant (removed in 0347).
     expect(args === undefined || (args.p_org_id == null && !('p_initial_grant' in args))).toBe(true);
   });
 
