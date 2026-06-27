@@ -11,6 +11,7 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
 
 export interface KeyInventoryEntry {
   keyId: string;
@@ -96,16 +97,11 @@ router.get('/signatures/key-inventory', async (req: Request, res: Response) => {
       return;
     }
 
-    // Check role: organization admin only
-    const { data: membership } = await db
-      .from('org_members')
-      .select('org_id, role')
-      .eq('user_id', userId)
-      .in('role', ['owner', 'admin'])
-      .limit(1)
-      .single();
-
-    if (!membership) {
+    // Check role: organization admin only (owner-inclusive — resolves via
+    // profiles.org_id, then org_members owner/admin OR profile ORG_ADMIN OR
+    // platform admin; an org owner linked only via profiles.org_id is allowed).
+    const orgId = await getCallerOrgId(userId);
+    if (!orgId || !(await isCallerOrgAdmin(userId, orgId))) {
       res.status(403).json({ error: 'Organization administrator role required' });
       return;
     }
@@ -120,8 +116,8 @@ router.get('/signatures/key-inventory', async (req: Request, res: Response) => {
       event_type: 'key_inventory_accessed',
       event_category: 'SYSTEM',
       actor_id: userId,
-      org_id: membership.org_id,
-      details: JSON.stringify({ role: membership.role }),
+      org_id: orgId,
+      details: JSON.stringify({ role: 'admin' }),
     }).then(() => {/* fire and forget */}, (err: unknown) => {
       logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'Failed to log key inventory audit event');
     });

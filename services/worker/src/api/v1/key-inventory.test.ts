@@ -7,7 +7,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildKeyInventory } from './key-inventory.js';
+import express from 'express';
+import request from 'supertest';
+import { buildKeyInventory, keyInventoryRouter } from './key-inventory.js';
 
 vi.mock('../../utils/db.js', () => ({
   db: {
@@ -23,6 +25,25 @@ vi.mock('../../utils/logger.js', () => ({
     debug: vi.fn(),
   },
 }));
+
+vi.mock('../_org-auth.js', () => ({
+  getCallerOrgId: vi.fn(),
+  isCallerOrgAdmin: vi.fn(),
+}));
+
+import { db } from '../../utils/db.js';
+import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
+
+function buildApp(userId?: string) {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    if (userId) req.authUserId = userId;
+    next();
+  });
+  app.use('/api/v1', keyInventoryRouter);
+  return app;
+}
 
 describe('Key Inventory (COMP-05)', () => {
   beforeEach(() => {
@@ -116,6 +137,56 @@ describe('Key Inventory (COMP-05)', () => {
       // Must not contain anything resembling a real key
       expect(serialized).not.toMatch(/-----BEGIN/);
       expect(serialized).not.toMatch(/[A-Za-z0-9+/]{40,}/);
+    });
+  });
+
+  describe('GET /api/v1/signatures/key-inventory — owner-inclusive org gate', () => {
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it('requires authentication', async () => {
+      const app = buildApp();
+      await request(app).get('/api/v1/signatures/key-inventory').expect(401);
+    });
+
+    it('allows an org OWNER (resolved via profiles.org_id, no org_members row)', async () => {
+      vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+      vi.mocked(isCallerOrgAdmin).mockResolvedValue(true);
+
+      // Fire-and-forget audit insert after the gate passes.
+      vi.mocked(db.from).mockImplementation((table: string) => {
+        if (table === 'audit_events') {
+          return { insert: () => Promise.resolve({ data: null, error: null }) } as never;
+        }
+        return { select: () => ({}) } as never;
+      });
+
+      const app = buildApp('owner-1');
+      const res = await request(app).get('/api/v1/signatures/key-inventory');
+
+      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('keys');
+      expect(res.body.key_count).toBeGreaterThan(0);
+      expect(getCallerOrgId).toHaveBeenCalledWith('owner-1');
+      expect(isCallerOrgAdmin).toHaveBeenCalledWith('owner-1', 'org-1');
+    });
+
+    it('returns 403 when caller has no org (getCallerOrgId → null)', async () => {
+      vi.mocked(getCallerOrgId).mockResolvedValue(null);
+      vi.mocked(isCallerOrgAdmin).mockResolvedValue(false);
+
+      const app = buildApp('user-1');
+      const res = await request(app).get('/api/v1/signatures/key-inventory').expect(403);
+      expect(res.body.error).toBe('Organization administrator role required');
+    });
+
+    it('returns 403 when caller is a non-admin member (isCallerOrgAdmin → false)', async () => {
+      vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+      vi.mocked(isCallerOrgAdmin).mockResolvedValue(false);
+
+      const app = buildApp('member-1');
+      const res = await request(app).get('/api/v1/signatures/key-inventory').expect(403);
+      expect(res.body.error).toBe('Organization administrator role required');
     });
   });
 });
