@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-06-26 (Lane 3 SM/RTE) — PI-0 S1 CLOSED: all 5 Lane-3 stories merged; producer-before-consumer guard caught a launch-blocker
+
+- **DS-01 (SCRUM-2361) + DS-02 (SCRUM-2362):** merged #1284, **live + verified in prod** (worker git_sha `b96c6836`, `/health` healthy db/anchoring/kms ok). Verified-only + suspended-org DocuSign connect gate; HMAC/nonce webhook contract; §1.6A no-PII-leak. → Jira Done.
+- **CE-02 (SCRUM-2373) + CE-05 (SCRUM-2376):** merged #1285, live in prod (CE flag off → the fabricated-CTID fail-closed guard is additive/dormant; SM runtime smoke is ops tooling). → Jira Done.
+- **DS-03 (SCRUM-2363):** producer merged **DORMANT** via #1321 (rebased clean from auto-closed #1283 — GitHub won't reopen a deleted-base PR). `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` **unset in prod → inert** (verified via `gcloud run services describe arkova-worker`). **NOT done** → Jira Blocked: go-live waits on the connector_artifact CONSUMER (QUEUE-06/SCRUM-2352 daily drain + QUEUE-08/SCRUM-2354 instant) + a both-sides sustained soak (sprint-2/3) before the flag flips. Board blocks-links live.
+- **Launch-blocker caught + closed:** the drain that takes connector_artifact `pending → anchored` does not exist yet (DS-03 is the producer half; 0343 ships the table + enqueue RPC only). Unguarded into the live DocuSign webhook it would pile up `pending` rows nothing secures. The enqueue guard (default off) + the blocks-links prevent it. New standard codified in `memory/feedback_soak_evidence_standard.md`: a producer/consumer soak must drive BOTH sides under sustained load with bounded queue depth — a one-shot burst + idle-worker uptime is not a soak (it's what surfaced this).
+- **Process scars:** isolated-rig soaks MUST deploy via canonical `scripts/staging/deploy.sh` (the Staging Soak Evidence Gate needs the auditable `staging_deploy_log` id); direct-`gcloud` deploys yield gate-invalid evidence (cost a same-day re-home). Soak rigs torn down — ds0102/ce/ds03 Cloud Run deleted; Supabase rigs `bouiinieoaxjssbznmzq` / `ancgydqkmlgwzwzpyplf` / `yctvbsdejbkeivfeexoc` flagged for dashboard delete.
+
 ### 2026-06-24 (Lane 2 RTE) — 0341 credit-integrity reconciliation: prod-proven, landing on `main` via PR #1290 (§1.12 exception)
 
 **0341 reconciliation — prod-proven (applied to prod, running healthy all sprint), landed on `main` via this PR under a Carson-approved §1.12 prod-proven residual-risk exception (2026-06-24); sequenced after #1255 (0340), before #1257/#1259/#1260 (0342/0343/0344).** `main` head was `0339`; prod (`vzwyaatejekddvltxyye`) ledger head is `0341` (rows 0340 + 0341 present), so `main` was missing 0340 (lands via Train-D #1255) + 0341 (this PR). This PR carries the **FIXED** version (HEAD `cc440bd2` "fix(0341): drop old amount>0 CHECK before sign-flip UPDATE (ERROR 23514)") — making `main` reflect already-applied prod state. **Confirmation, not discovery; no new prod change** (all prod queries read-only).
@@ -358,4 +366,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-24 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output: Supabase MCP execute-sql + list-migrations (read-only) on prod vzwyaatejekddvltxyye (ledger rows 0340/0341; signed amount CHECK; debit+enqueue RPC pg-proc count=1; append-only trigger); clean-apply credit-schema diff on throwaway expjtjcpqfrcspljptpv. Prior footers remain in git history._
+_Last refreshed: 2026-06-26 by Claude (carson@arkova.io) — Lane-3 PI-0 S1 close-out; claims verified against gcloud/MCP/CI/gh output: prod worker `/health` git_sha=b96c6836 healthy (db/anchoring/kms ok, self-curled via identity token); `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` unset in `gcloud run services describe arkova-worker` (DS-03 producer dormant); PRs #1284/#1285/#1321 MERGED and #1321 deploy-worker run succeeded (gh); prod migration head 0341 via Supabase MCP on vzwyaatejekddvltxyye. Prior footers remain in git history._
