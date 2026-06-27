@@ -14,6 +14,10 @@ import type { TypeSafeTablesUpdate } from '../types/database-overrides.js';
 import type { SubscriptionTier } from '../types/check-constraint-values.js';
 import { logger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
+import {
+  grantVerifiedIdentityEntitlement,
+  revokeVerifiedIdentityEntitlement,
+} from '../billing/entitlements.js';
 
 type StripeEvent = Stripe.Event;
 
@@ -581,6 +585,16 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
     });
   }
 
+  // PAY-01 (SCRUM-2384): a lapsed paid subscription REVOKES the
+  // verified-identity entitlement (the entitlement is gated by an active
+  // subscription). Closes any open entitlement window for the user/org.
+  if (existingSub.user_id || existingSub.org_id) {
+    await revokeVerifiedIdentityEntitlement({
+      userId: existingSub.user_id ?? null,
+      orgId: existingSub.org_id ?? null,
+    });
+  }
+
   logger.info({ subscriptionId: subscription.id }, 'Subscription canceled');
 }
 
@@ -798,6 +812,13 @@ async function handleIdentityVerified(event: StripeEvent): Promise<void> {
     org_id: verifiedProfile?.org_id ?? null,
     details: `Identity verified via Stripe session ${session.id}`,
   });
+
+  // PAY-01 (SCRUM-2384): a verified session GRANTS the verified-identity
+  // entitlement server-side. Declined / requires_input / canceled sessions
+  // never reach this handler, so they never grant. Grant after the profile +
+  // audit writes so a grant failure (which re-throws → Stripe retries) does not
+  // leave the entitlement set without the audit trail.
+  await grantVerifiedIdentityEntitlement({ userId, orgId: verifiedProfile?.org_id ?? null });
 
   logger.info({ userId }, 'Identity verification completed successfully');
 }
