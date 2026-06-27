@@ -14,6 +14,18 @@
 
 ## Now
 
+### 2026-06-27 (RTE/RM) — Compliance "Audit My Organization" owner-org gate fixed (PR #1325, DRAFT, T2) + owner-resolution-drift CLASS mapped (11 more worker gates)
+
+**Reported P1 (prod UAT 2026-06-24):** org OWNERS got `403 "Must belong to an organization"` clicking **Audit My Organization**. Root cause: `services/worker/src/compliance/auth-helpers.ts` `getCallerOrgId` resolved org via `org_members` ONLY; owners are linked via `profiles.org_id` (the "Managing X" header source) and aren't guaranteed an `org_members` 'owner' row. **Fix → PR #1325 (DRAFT, T2):** resolve `profiles.org_id` first (delegated to canonical `api/_org-auth.ts`), `org_members` fallback via `limit(1).maybeSingle()` (also closes a latent `.single()` crash-to-403 for 2+ org users). Single chokepoint → fixes all 7 compliance routes. 8 unit tests; full worker suite green (478/6491). **NOT merged, soak PENDING** (T2 12h on clean `arkova-staging`; plan in PR body). Was a **prior-session orphan** (identical local commit, never pushed/PR'd — the literal "fell through" failure); now durably #1325.
+
+**Owner-resolution-drift CLASS (6-specialist sweep):** the compliance gate is **1 of ~12**. ~11 MORE worker gates re-resolve org from `org_members` → 403 owners: `signatures.ts` (152 create / 597 list), `signatureCompliance.ts` (74/129/170/215 — SOC2/eIDAS exports), `grc.ts:120`, `complianceTrends.ts:39`, `auditBatchVerify.ts:67`, `key-inventory.ts:100`, `integrations/docusign-member-oauth.ts:226`; + admin-check family (`docusign-oauth`/`drive-oauth`/`issuer-partnerships`) + frontend `OrgProfilePage.tsx:140`. (`agents.ts:44` SAFE — uses profiles.org_id.) **Prod blast radius = 0 today** (read-only prod COUNTs): every current owner has a matching `org_members` row (onboarding RPC writes both in one txn) → LATENT class bug, not an active outage; no backfill (recommend a drift-detection cron).
+
+**NEXT — PR2 (class fix, NOT started):** route the 11 gates through `_org-auth` (`getCallerOrgId` + `isCallerOrgAdmin`, which already has the owner/ORG_ADMIN/platform-admin fallback) + a reusable "owner-no-org_members-row" fixture + a parametrized contract test (owner→2xx, member→2xx, multi-org→2xx, orphan→403, unauth→401) + an ESLint guard forbidding `org_members`-as-primary org resolution. T2.
+
+**BLOCKED — Atlassian MCP connector invalidated:** could NOT file the Jira epic/stories or Confluence Bug-tracker rows this session. Needs Carson to reconnect; then RTE files epic "Org-owner eligibility resolution drift" + children (compliance [#1325] / 11-gate sweep / admin-check / frontend / eslint+cron) + Master-Log rows.
+
+_Verified via: PR #1325 open/draft (`gh pr view 1325`); code analysis on branch `fix/scrum-compliance-audit-owner-org-gate` @ `85279d2b` (file:line cited); full worker `vitest run` 478 files/6491 tests green + `eslint --max-warnings 0` + `tsc` clean; prod blast-radius from read-only `execute_sql` COUNT aggregates on `vzwyaatejekddvltxyye` (0 users with profiles.org_id set lacking the matching org_members row). No prod/staging state changed; no migration; nothing merged._
+
 ### 2026-06-26 (Lane 3 SM/RTE) — PI-0 S1 CLOSED: all 5 Lane-3 stories merged; producer-before-consumer guard caught a launch-blocker
 
 - **DS-01 (SCRUM-2361) + DS-02 (SCRUM-2362):** merged #1284, **live + verified in prod** (worker git_sha `b96c6836`, `/health` healthy db/anchoring/kms ok). Verified-only + suspended-org DocuSign connect gate; HMAC/nonce webhook contract; §1.6A no-PII-leak. → Jira Done.
