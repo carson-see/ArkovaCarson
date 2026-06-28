@@ -89,6 +89,16 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// SCRUM-1258: ai-extract-batch.ts now sources the per-row latency budget from the
+// typed config instead of an ad-hoc process.env read. Mock it (route-test pattern)
+// so the module loads without a full prod-config env. 8000 = the schema default,
+// keeping BATCH_ROW_LATENCY_BUDGET_MS at its prior value for the timeout test.
+vi.mock('../../config.js', () => ({
+  config: {
+    aiBatchRowLatencyBudgetMs: 8_000,
+  },
+}));
+
 vi.mock('../../ai/eval/calibration.js', () => ({
   // Router used by production code — test offset lives here.
   calibrateConfidenceByProvider: vi.fn((_provider: string, raw: number) => raw + 0.05),

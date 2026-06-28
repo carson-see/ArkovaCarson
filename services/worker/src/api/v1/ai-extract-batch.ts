@@ -39,6 +39,7 @@ import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
 import { submitJob } from '../../utils/jobQueue.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { config } from '../../config.js';
 
 const MAX_BATCH_SIZE = 50;
 // EFF-4: Configurable concurrency — Gemini Flash handles 5-10 concurrent requests well.
@@ -49,10 +50,9 @@ const CONCURRENCY_LIMIT = Math.min(
 
 // Per-row latency budget (parity with the single path's AI_EXTRACTION_LATENCY_BUDGET_MS).
 // Batch rows can be longer, so the budget is slightly higher than the single path.
-export const BATCH_ROW_LATENCY_BUDGET_MS = Math.min(
-  Math.max(1_000, parseInt(process.env.AI_BATCH_ROW_LATENCY_BUDGET_MS ?? '8000', 10) || 8_000),
-  30_000, // hard cap
-);
+// Sourced via the typed config (SCRUM-1258): AI_BATCH_ROW_LATENCY_BUDGET_MS is
+// validated + clamped to [1000, 30000] in config.ts, not read ad-hoc here.
+export const BATCH_ROW_LATENCY_BUDGET_MS = config.aiBatchRowLatencyBudgetMs;
 
 /** Job type for the credit-reconciliation queue (refund failed after a successful debit). */
 export const AI_CREDIT_RECONCILE_JOB_TYPE = 'ai_credits.reconcile_refund';
