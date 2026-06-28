@@ -168,6 +168,11 @@ export class GeminiProvider implements IAIProvider {
   }
 
   async extractMetadata(request: ExtractionRequest): Promise<ExtractionResult> {
+    // BUG-2026-06-24-015: in-provider §1.6 launch-gate. The production extraction
+    // path must fail closed on its own — not rely solely on route middleware — so
+    // a routing regression cannot bypass the launch gate. Fails closed ONLY when
+    // ENABLE_AI_EXTRACTION is explicitly not "true" (prod default is "true").
+    assertExtractionEnabled();
     this.checkCircuit();
 
     const prompt = buildExtractionPrompt(
@@ -238,8 +243,9 @@ export class GeminiProvider implements IAIProvider {
       }
 
       // Parse and validate (shared path for both tuned and standard)
-      // NMT-02: Strip JS-style comments that tuned/reasoning models may emit
-      const parsed = parseExtractionJson(text);
+      // NMT-02 / BUG-2026-06-24-014: shared hardened pipeline (fence strip +
+      // comment strip + brace-salvage) — same helper used by tags/template.
+      const parsed = parseModelJson(text);
       const confidence = coerceConfidence(parsed.confidence);
       const { confidence: _, ...rawFields } = parsed;
       const sanitizedFields = sanitizeExtractedFields(rawFields);
@@ -341,11 +347,9 @@ export class GeminiProvider implements IAIProvider {
   }): Promise<{ text: string; tokensUsed?: number }> {
     // Launch-gate parity (Constitution §1.6): the raw extraction path is still
     // an AI-extraction code path, so it must fail closed when the flag is off —
-    // no "raw mode" bypass. Prod sets ENABLE_AI_EXTRACTION=true via deploy;
-    // off-prod defaults false.
-    if (process.env.ENABLE_AI_EXTRACTION !== 'true') {
-      throw new Error('AI extraction is disabled (ENABLE_AI_EXTRACTION is not "true")');
-    }
+    // no "raw mode" bypass. Shared guard with extractMetadata (BUG-2026-06-24-015).
+    // Prod sets ENABLE_AI_EXTRACTION=true via deploy; off-prod defaults false.
+    assertExtractionEnabled();
     this.checkCircuit();
 
     return this.withRetry(async () => {
@@ -442,7 +446,8 @@ export class GeminiProvider implements IAIProvider {
       );
 
       const text = response.response.text();
-      return JSON.parse(text) as TagsResult;
+      // BUG-2026-06-24-014: hardened parse — Flash Lite ```json-fences/truncates.
+      return parseModelJson<TagsResult>(text);
     });
 
     return result;
@@ -490,7 +495,8 @@ export class GeminiProvider implements IAIProvider {
       );
 
       const text = response.response.text();
-      const parsed = JSON.parse(text) as TemplateReconstructionResult;
+      // BUG-2026-06-24-014: hardened parse — Flash ```json-fences/truncates.
+      const parsed = parseModelJson<TemplateReconstructionResult>(text);
       const usage = response.response.usageMetadata;
       parsed.tokensUsed = usage?.totalTokenCount;
       return parsed;
@@ -855,17 +861,46 @@ export class GeminiProvider implements IAIProvider {
   }
 }
 
-function parseExtractionJson(text: string): Record<string, unknown> {
+/**
+ * BUG-2026-06-24-015: shared §1.6 fail-closed launch-gate guard.
+ *
+ * Both the production extraction path (extractMetadata) and the raw eval path
+ * (generateExtractionJson) call this so neither depends solely on route
+ * middleware to enforce the launch gate. Fails closed ONLY when
+ * ENABLE_AI_EXTRACTION is explicitly not "true" — the production default IS
+ * "true" (§1.6: set on via switchboard + deploy-worker env fallback), so this
+ * does not break prod; it just blocks extraction off-prod or on a flag flip.
+ */
+function assertExtractionEnabled(): void {
+  if (process.env.ENABLE_AI_EXTRACTION !== 'true') {
+    throw new Error('AI extraction is disabled (ENABLE_AI_EXTRACTION is not "true")');
+  }
+}
+
+/**
+ * BUG-2026-06-24-014: shared hardened JSON parse for ALL raw Gemini text output.
+ *
+ * Gemini Flash routinely wraps JSON in ```json fences and occasionally appends
+ * stray continuation tokens / prose past the final `}`. A naked `JSON.parse`
+ * throws SyntaxError, which surfaces as HTTP 500 on the extraction/tags/template
+ * endpoints. This pipeline (strip JS-style comments → strip markdown fence →
+ * brace-salvage) recovers the object. Used by extractMetadata, generateTags, and
+ * reconstructTemplate so every model-text parse path is equally resilient.
+ *
+ * Returns a parsed object whose shape the caller is responsible for validating
+ * (extractMetadata runs Zod; tags/template cast to their result types).
+ */
+function parseModelJson<T = Record<string, unknown>>(text: string): T {
   const cleaned = stripJsonComments(text).trim();
   const unfenced = stripMarkdownJsonFence(cleaned);
 
   try {
-    return ensureJsonObject(JSON.parse(unfenced));
+    return ensureJsonObject(JSON.parse(unfenced)) as T;
   } catch (initialError) {
     const start = unfenced.indexOf('{');
     const end = unfenced.lastIndexOf('}');
     if (start >= 0 && end > start) {
-      return ensureJsonObject(JSON.parse(unfenced.slice(start, end + 1)));
+      return ensureJsonObject(JSON.parse(unfenced.slice(start, end + 1))) as T;
     }
     throw initialError;
   }
