@@ -16,6 +16,7 @@ import {
   buildMultiInputOpReturnTransaction,
   hashMetadata,
   truncateMetadataHash,
+  DUST_THRESHOLD,
 } from './signet.js';
 import type { Utxo } from './utxo-provider.js';
 import type { SelectedUtxo } from './signet.js';
@@ -131,6 +132,129 @@ describe('Bitcoin Audit Hardening', () => {
       const result = selectMultipleUtxos(utxos, 700, 1);
       expect(result).not.toBeNull();
       expect(result![0].valueSats).toBe(800); // Largest first
+    });
+  });
+
+  // ─── BUG-2026-06-24-005: multi-input fee threshold under-count ─────────
+  //
+  // The selector's threshold must account for the OP_RETURN output, change
+  // output, and per-tx overhead for the ACTUAL multi-input transaction it
+  // returns — not just the single-input estimate plus extra-input vbytes.
+  // Otherwise it can hand back a UTXO set that lands in the band where the
+  // real build either (a) burns sub-dust change as fee, or (b) throws
+  // `Insufficient funds`, which processBatchAnchors bulk-reverts
+  // BROADCASTING → PENDING (a wedged, retrying batch).
+  //
+  // Helper: replicate the REAL fee the multi-input build computes for `n`
+  // inputs, mirroring buildMultiInputOpReturnTransaction's constants.
+  function realBuildFee(
+    n: number,
+    payloadSize: number,
+    feeRate: number,
+    withChange: boolean,
+  ): number {
+    const INPUT_SIZE = 68;
+    const OP_RETURN_OVERHEAD = 11;
+    const CHANGE_OUTPUT_SIZE = 31;
+    const OVERHEAD = 11;
+    const vsize =
+      INPUT_SIZE * n +
+      OP_RETURN_OVERHEAD +
+      payloadSize +
+      (withChange ? CHANGE_OUTPUT_SIZE : 0) +
+      OVERHEAD;
+    return Math.ceil(vsize * feeRate);
+  }
+
+  describe('selectMultipleUtxos fee threshold (BUG-2026-06-24-005)', () => {
+    // Caller derives `requiredFee` from a SINGLE-input estimate that already
+    // includes one input + OP_RETURN + change + overhead.
+    // estimateTxVsize(true, 36) = 68 + (11+36) + 31 + 11 = 157.
+    // At feeRate 2 → estimatedFee = ceil(157 * 2) = 314.
+    const PAYLOAD = 36; // ARKV(4) + fingerprint(32)
+    const FEE_RATE = 2;
+    const estimatedFee = Math.ceil(estimateTxVsize(true, PAYLOAD) * FEE_RATE); // 314
+
+    it('rejects a UTXO set whose only feasible build burns sub-dust change (treasury liveness)', () => {
+      // Two UTXOs of 225 each → total 450. No single UTXO covers 314, so the
+      // multi-input path runs. The REAL build for n=2 with change costs
+      // realBuildFee(2,36,2,true) = ceil((136+47+31+11)*2) = 450, leaving
+      // change 450-450 = 0 → drops change → fee_nochange = ceil((136+47+11)*2)
+      // = 388 → 62 sats silently burned as fee (sub-dust).
+      const feeWithChange = realBuildFee(2, PAYLOAD, FEE_RATE, true); // 450
+      const utxos = makeUtxos([225, 225]); // total 450 == feeWithChange (no dust margin)
+      expect(utxos.reduce((s, u) => s + u.valueSats, 0)).toBe(feeWithChange);
+
+      const result = selectMultipleUtxos(utxos, estimatedFee, FEE_RATE, PAYLOAD);
+
+      // The pre-fix selector returns [225,225] (threshold = 314 + 136 = 450).
+      // A dust-safe selector must NOT return a set that cannot leave a
+      // spendable (>= dust) change output: here no such combination exists,
+      // so it must return null and let the caller queue for retry.
+      expect(result).toBeNull();
+    });
+
+    it('any returned selection leaves change == 0 or >= dust (never sub-dust burn)', () => {
+      // Comfortable funding: 3 UTXOs of 400 → total 1200. Pre-fix selector
+      // returns only 2 (threshold 450), whose build leaves 1200-... sub-dust;
+      // a dust-safe selector pulls a third input so the kept change is
+      // spendable.
+      const utxos = makeUtxos([400, 400, 400]);
+      const result = selectMultipleUtxos(utxos, estimatedFee, FEE_RATE, PAYLOAD);
+      expect(result).not.toBeNull();
+
+      const n = result!.length;
+      const total = result!.reduce((s, u) => s + u.valueSats, 0);
+      const feeWithChange = realBuildFee(n, PAYLOAD, FEE_RATE, true);
+      const change = total - feeWithChange;
+      // Either the change output is dropped cleanly (change <= 0, exact-fit)
+      // or it is spendable (>= dust). It must never land in (0, dust).
+      expect(change <= 0 || change >= DUST_THRESHOLD).toBe(true);
+    });
+
+    it('threshold is never below the real multi-input build fee for n inputs (no build-throw)', () => {
+      // Property guard across fee rates, payloads, and input counts: whatever
+      // set the selector returns, its total must cover the REAL no-change fee
+      // floor of the build (the only condition under which the build throws
+      // `Insufficient funds`).
+      for (const feeRate of [1, 2, 5, 10]) {
+        for (const payload of [36, 44]) {
+          const reqFee = Math.ceil(estimateTxVsize(true, payload) * feeRate);
+          // Many small equal UTXOs, each below the single-input estimate.
+          const utxos = makeUtxos(Array(8).fill(200));
+          const result = selectMultipleUtxos(utxos, reqFee, feeRate, payload);
+          if (result === null) continue; // refusing is always safe
+          const n = result.length;
+          const total = result.reduce((s, u) => s + u.valueSats, 0);
+          const floor = realBuildFee(n, payload, feeRate, false); // no-change throw boundary
+          expect(total).toBeGreaterThanOrEqual(floor);
+        }
+      }
+    });
+
+    it('a dust-safe selection actually builds without throwing Insufficient funds', async () => {
+      const signer = makeMockSigner();
+      // Pick funding that forces a multi-input selection with a comfortable
+      // margin so the build keeps a spendable change output. Valid 64-hex
+      // txids are required for PSBT input construction.
+      const utxos: SelectedUtxo[] = [
+        { txid: 'a'.repeat(64), vout: 0, valueSats: 400, rawTxHex: '' },
+        { txid: 'b'.repeat(64), vout: 1, valueSats: 400, rawTxHex: '' },
+        { txid: 'c'.repeat(64), vout: 0, valueSats: 400, rawTxHex: '' },
+        { txid: 'd'.repeat(64), vout: 1, valueSats: 400, rawTxHex: '' },
+      ];
+      const selected = selectMultipleUtxos(utxos, estimatedFee, FEE_RATE, PAYLOAD);
+      expect(selected).not.toBeNull();
+
+      // The set the selector returns must be buildable — no InsufficientFunds.
+      const built = await buildMultiInputOpReturnTransaction(
+        VALID_FINGERPRINT,
+        selected!,
+        signer,
+        FEE_RATE,
+      );
+      expect(built.txHex).toBeTruthy();
+      expect(built.fee).toBeGreaterThan(0);
     });
   });
 

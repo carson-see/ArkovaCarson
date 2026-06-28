@@ -9,9 +9,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { WebhookSettings, AVAILABLE_EVENTS } from './WebhookSettings';
+import { WEBHOOK_LABELS } from '@/lib/copy';
 
 // Mock navigator.clipboard
 const mockClipboard = {
@@ -385,20 +386,64 @@ describe('WebhookSettings', () => {
       expect(defaultProps.onToggle).toHaveBeenCalledWith('ep-2', true);
     });
 
-    it('calls onDelete when delete button clicked', async () => {
-      const { container } = render(<WebhookSettings {...defaultProps} />);
+    // BUG-D: deleting a webhook endpoint is destructive (the event feed stops)
+    // and must NOT fire on a single click. The Trash button opens a confirm
+    // AlertDialog (mirrors RevokeDialog / ApiKeySettings); onDelete is only
+    // called after the user confirms.
 
-      // Delete buttons are ghost buttons with Trash2 icon
+    /** Click the first row's Trash (delete) button. */
+    async function clickFirstDeleteButton(container: HTMLElement) {
       const deleteButtons = container.querySelectorAll('.text-destructive');
       expect(deleteButtons.length).toBe(2);
-
-      // Click the first delete button's parent
       const firstDeleteBtn = deleteButtons[0].closest('button');
-      if (firstDeleteBtn) {
-        await userEvent.click(firstDeleteBtn);
-      }
+      expect(firstDeleteBtn).not.toBeNull();
+      await userEvent.click(firstDeleteBtn as HTMLButtonElement);
+    }
 
-      expect(defaultProps.onDelete).toHaveBeenCalledWith('ep-1');
+    it('opens a confirm dialog (does not delete immediately) when delete clicked', async () => {
+      const { container } = render(<WebhookSettings {...defaultProps} />);
+
+      await clickFirstDeleteButton(container);
+
+      // Confirmation dialog appears and names the endpoint (scoped to the
+      // dialog — the URL also appears in the list row).
+      const dialog = await screen.findByRole('alertdialog');
+      expect(within(dialog).getByText(WEBHOOK_LABELS.DELETE_CONFIRM_TITLE)).toBeInTheDocument();
+      expect(within(dialog).getByText(/https:\/\/example\.com\/webhooks/)).toBeInTheDocument();
+      // …and the destructive action has NOT been performed yet.
+      expect(defaultProps.onDelete).not.toHaveBeenCalled();
+    });
+
+    it('calls onDelete exactly once after the confirm action', async () => {
+      const { container } = render(<WebhookSettings {...defaultProps} />);
+
+      await clickFirstDeleteButton(container);
+
+      const confirmButton = await screen.findByRole('button', {
+        name: WEBHOOK_LABELS.DELETE_CONFIRM_ACTION,
+      });
+      await userEvent.click(confirmButton);
+
+      await waitFor(() => {
+        expect(defaultProps.onDelete).toHaveBeenCalledWith('ep-1');
+      });
+      expect(defaultProps.onDelete).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not call onDelete when the confirm dialog is cancelled', async () => {
+      const { container } = render(<WebhookSettings {...defaultProps} />);
+
+      await clickFirstDeleteButton(container);
+
+      const cancelButton = await screen.findByRole('button', {
+        name: WEBHOOK_LABELS.DELETE_CONFIRM_CANCEL,
+      });
+      await userEvent.click(cancelButton);
+
+      await waitFor(() => {
+        expect(screen.queryByText(WEBHOOK_LABELS.DELETE_CONFIRM_TITLE)).not.toBeInTheDocument();
+      });
+      expect(defaultProps.onDelete).not.toHaveBeenCalled();
     });
   });
 

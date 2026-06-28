@@ -471,6 +471,12 @@ export const RECORDS_LIST_LABELS = {
   // Replaces "Block Height" — the banned-term version sat next to
   // NETWORK_RECEIPT / "Network Observed Time"; this keeps the trio coherent.
   NETWORK_CHECKPOINT: 'Network Checkpoint',
+  // Network-observed-time honesty (BUG-2026-06-24-008, §1.5): the network has
+  // only "observed" a record once it is SECURED. For unconfirmed records the
+  // field falls back to CREATED_TIME (the local creation/upload time) under an
+  // honest label — never the local time under the network label.
+  NETWORK_OBSERVED_TIME: 'Network Observed Time',
+  CREATED_TIME: 'Record Created',
 } as const;
 
 // =============================================================================
@@ -528,6 +534,10 @@ export const BILLING_LABELS = {
   CHECKOUT_SUCCESS_DESC: 'Your subscription has been successfully set up. You can now access all features included in your plan.',
   LOADING_SUBSCRIPTION: 'Setting up your subscription...',
   YOUR_PLAN: 'Your Plan',
+  // BUG-C (BUG-2026-06-24-009 class): unlimited plans encode their monthly limit
+  // as the sentinel 999999 (seed.sql:220). The checkout-success screen renders
+  // this label via isUnlimitedRecordsLimit() instead of the raw sentinel.
+  RECORDS_UNLIMITED: 'Unlimited records',
   GO_TO_DASHBOARD: 'Go to Dashboard',
   VIEW_BILLING: 'View Billing Details',
   CHECKOUT_CANCEL_TITLE: 'Checkout Cancelled',
@@ -538,6 +548,27 @@ export const BILLING_LABELS = {
   CURRENT_PLAN_BADGE: 'Current Plan',
   DOWNGRADE_NOTE: 'Changes take effect at the end of your current billing period.',
   CANCELLATION_SCHEDULED: 'Your subscription is set to cancel at the end of the current period.',
+} as const;
+
+// =============================================================================
+// WEBHOOKS
+// =============================================================================
+
+export const WEBHOOK_LABELS = {
+  // BUG-D: deleting an endpoint is destructive — it silently stops the event
+  // feed. The confirm dialog (mirrors RevokeDialog / ApiKeySettings) names the
+  // endpoint and warns that notifications stop. `{url}` is interpolated by the
+  // component. §1.3-clean (no banned terms).
+  DELETE_CONFIRM_TITLE: 'Delete webhook endpoint?',
+  DELETE_CONFIRM_DESC:
+    'Event notifications to {url} will stop and this endpoint will be removed. This cannot be undone.',
+  DELETE_CONFIRM_ACTION: 'Delete endpoint',
+  DELETE_CONFIRM_CANCEL: 'Cancel',
+  // Surfaced when enabling/disabling an endpoint is denied (e.g. RLS /
+  // permission failure). The optimistic toggle reverts; this tells the user it
+  // did not take, instead of a silent snap-back. No internal error detail is
+  // leaked to the user. §1.3-clean (no banned terms).
+  TOGGLE_ERROR: "Couldn't update this endpoint. You may not have permission. Please try again.",
 } as const;
 
 // =============================================================================
@@ -560,6 +591,8 @@ export const API_KEY_LABELS = {
   DELETE_KEY: 'Delete',
   CONFIRM_REVOKE: 'Are you sure you want to revoke this key? It will immediately stop working.',
   CONFIRM_DELETE: 'Are you sure you want to permanently delete this key? This cannot be undone.',
+  REVOKE_FAILED: 'Failed to revoke key. It is still active — please try again.',
+  DELETE_FAILED: 'Failed to delete key. Please try again.',
   NO_KEYS: 'No API keys yet. Create one to get started with the Verification API.',
   ACTIVE: 'Active',
   REVOKED: 'Revoked',
@@ -1296,6 +1329,32 @@ export const AI_EXTRACTION_LABELS = {
   EXTRACTING: 'Analyzing...',
   EXTRACT_DESCRIPTION: 'Automatically extract credential fields from the uploaded document',
   EXTRACTION_FAILED_TOAST: 'AI extraction unavailable — document will be secured without metadata.',
+  /**
+   * §1.6 FAIL-CLOSED (WEBEXT-03). Shown when the on-device privacy tools (the
+   * personal-information remover or the on-device document reader) could not
+   * run, so nothing was analyzed and nothing was sent. This is a LOUD failure,
+   * deliberately distinct from EXTRACTION_FAILED_TOAST — we did NOT proceed.
+   */
+  PRIVACY_GUARANTEE_FAILED:
+    'On-device privacy protection couldn’t run, so this document was not analyzed and nothing was sent. Your file never left your device. Reload and try again, or continue without AI metadata.',
+} as const;
+
+// =============================================================================
+// §1.6 ON-DEVICE PRIVACY FAIL-CLOSED (WEBEXT-03 / SCRUM-2505)
+// Loud, explicit failure surface for when on-device PII stripping or OCR could
+// not run. The whole point: the user is told plainly that nothing was sent.
+// =============================================================================
+
+export const PRIVACY_FAIL_CLOSED_LABELS = {
+  TITLE: 'On-Device Privacy Protection Unavailable',
+  BODY:
+    'Arkova removes personal information on your device before anything is sent. That on-device step couldn’t run just now, so this document was not analyzed and no information was sent. Your file never left your device.',
+  WHAT_HAPPENED_LABEL: 'What happened',
+  WHAT_HAPPENED:
+    'The on-device privacy tools (the personal-information remover or the document reader) failed to load. To protect you, we stopped instead of sending anything that wasn’t fully checked.',
+  RETRY: 'Reload and Try Again',
+  CONTINUE_WITHOUT: 'Continue Without AI Metadata',
+  REASSURANCE: 'No information was sent to Arkova or anyone else.',
 } as const;
 
 // =============================================================================
@@ -1343,6 +1402,11 @@ export const CONNECTIONS_LABELS = {
   MEMBER_DOCUSIGN_DESC: 'Connect your personal DocuSign account for member-level signing',
   MEMBER_TOAST_CONNECTED: 'DocuSign connected.',
   MEMBER_TOAST_DISCONNECTED: 'Personal DocuSign disconnected.',
+  // SCRUM-2361 (DS-01): denial copy shown when the organization is not yet
+  // verified. Mirrors the worker `code: 'org_unverified'` response so the UI
+  // message and the backend gate stay in lockstep.
+  DOCUSIGN_NOT_VERIFIED: 'Your organization must be verified before connecting DocuSign. Verified organizations can connect a document source. Contact support to start verification.',
+  DOCUSIGN_GATE_CHECKING: 'Checking your organization’s authorization…',
 } as const;
 
 // =============================================================================
@@ -2135,6 +2199,13 @@ export const OCR_LABELS = {
     `Unsupported file type for text extraction: ${typeOrExt}. ` +
     'Supported: PDF, Word (.docx), images, and text files. ' +
     'The document can still be secured without AI metadata.',
+  /**
+   * §1.6 FAIL-CLOSED (WEBEXT-03). Surfaced when the on-device document reader
+   * (OCR engine) could not load or run. Fixed copy — never includes the
+   * underlying error, which may reference document-derived text.
+   */
+  OCR_ENGINE_UNAVAILABLE:
+    'The on-device document reader couldn’t start, so this document was not read and nothing was sent. Your file never left your device.',
 } as const;
 
 export const CONFIRMATION_PROGRESS_LABELS = {

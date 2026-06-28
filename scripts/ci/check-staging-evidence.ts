@@ -259,7 +259,82 @@ const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx|js|jsx)$/;
 const PUBLIC_CONTRACT_DOC_RE = /^docs\/(?:api\/|guides\/API_GUIDE\.md)/;
 const DOCS_ONLY_RE = /^(?:docs\/|README\.md|ARKOVA_WORKSPACE_README\.md|WORKSPACE_STATUS\.md|memory\/.*\.md$)/;
 
-function isT0OnlyFile(file: string): boolean {
+/**
+ * Supplies the unified diff body (the lines after each `@@` hunk header, i.e.
+ * context + `+`/`-` lines) for a single changed file, or `null` when it cannot
+ * be obtained (no git history, deleted file, binary, error). Threaded through
+ * {@link isT0OnlyFile} / {@link requiredTierFor} so the classifier can, for the
+ * narrow {@link DEPLOY_WORKER_WORKFLOW} carve-out, look at WHAT changed in the
+ * file rather than only its name. Everything else stays name-only. A `null`
+ * return always fails closed (keeps the path-rule tier).
+ */
+export type DiffProvider = (file: string) => string | null;
+
+interface TierClassifyOpts {
+  diffProvider?: DiffProvider;
+}
+
+const DEPLOY_WORKER_WORKFLOW = '.github/workflows/deploy-worker.yml';
+
+// A changed line in deploy-worker.yml that is "harmless" for prod runtime: a
+// GitHub-Actions `uses:` pin (the Dependabot bump target), a YAML comment, or a
+// blank line. Anything else (env, secrets, min/max-instances, image, region,
+// service account, --set-env-vars, scaling, …) is a real runtime change.
+const DEPLOY_WORKER_USES_LINE_RE = /^[^\S\r\n]*-?[^\S\r\n]*uses:[^\S\r\n]*\S/;
+const YAML_COMMENT_OR_BLANK_RE = /^[^\S\r\n]*(?:#.*)?$/;
+
+/**
+ * True iff a unified diff for {@link DEPLOY_WORKER_WORKFLOW} changes ONLY
+ * `uses:` action-version/SHA lines (plus YAML comments / blank lines). Used to
+ * exempt a Dependabot GitHub-Actions version bump from the T2 deploy-config rule
+ * without weakening the gate for real runtime-config edits.
+ *
+ * Fail-closed: returns false for an empty/`null` diff, and for any diff that
+ * contains at least one added/removed line which is not a `uses:`/comment/blank
+ * line. A diff with no added/removed lines at all is also false (nothing
+ * attestable as a uses-only bump → keep the path-rule tier).
+ */
+export function isDeployWorkerUsesOnlyBump(diff: string | null | undefined): boolean {
+  if (!diff || diff.trim().length === 0) return false;
+
+  let sawChange = false;
+  for (const rawLine of diff.split(/\r?\n/)) {
+    // Skip unified-diff file headers (`+++`/`---`) and hunk headers (`@@ … @@`);
+    // they are not content lines.
+    if (rawLine.startsWith('+++') || rawLine.startsWith('---') || rawLine.startsWith('@@')) {
+      continue;
+    }
+    if (rawLine.startsWith('+') || rawLine.startsWith('-')) {
+      const content = rawLine.slice(1);
+      if (DEPLOY_WORKER_USES_LINE_RE.test(content) || YAML_COMMENT_OR_BLANK_RE.test(content)) {
+        sawChange = true;
+        continue;
+      }
+      // A real (non-uses) changed line → not a uses-only bump. Fail closed.
+      return false;
+    }
+    // Context line (leading space) or stray line — ignored for the decision.
+  }
+  return sawChange;
+}
+
+/**
+ * deploy-worker.yml is normally a T2 prod-runtime surface. The ONLY exemption is
+ * a Dependabot GitHub-Actions `uses:`-version bump (verified against the file's
+ * diff via {@link isDeployWorkerUsesOnlyBump}); such a change touches no prod
+ * runtime config and is treated as CI-tooling (T0). Fail-closed: without a diff
+ * provider, or when the diff can't be obtained, the file stays T2.
+ *
+ * Possible future carve-out (NOT implemented — a separate policy call for the
+ * operator): a `@types/*`-only manifest/lockfile bump. Deliberately left out.
+ */
+function isDeployWorkerUsesOnlyExempt(file: string, opts?: TierClassifyOpts): boolean {
+  if (file !== DEPLOY_WORKER_WORKFLOW) return false;
+  if (!opts?.diffProvider) return false;
+  return isDeployWorkerUsesOnlyBump(opts.diffProvider(file));
+}
+
+function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
   if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
   if (TEST_FILE_RE.test(file) || file.endsWith('agents.md')) return true;
   // Dependency bumps that don't touch a core runtime surface are T0:
@@ -273,22 +348,29 @@ function isT0OnlyFile(file: string): boolean {
   // manifests — those govern the prod worker / app runtime dependency tree, so a
   // manifest bump there must still earn a tier (the lockfile counterparts stay T0).
   if (/^(?:package-lock\.json|(?:packages|services|integrations)\/[^/]+\/package-lock\.json|(?:packages|integrations)\/[^/]+\/package\.json)$/.test(file)) return true;
+  // deploy-worker.yml is a T2 PATH_RULE, but a Dependabot `uses:`-only action
+  // bump touches no prod runtime config — exempt it to CI-tooling (T0) when the
+  // diff confirms it. Checked BEFORE the PATH_RULES.some() T2 short-circuit.
+  if (isDeployWorkerUsesOnlyExempt(file, opts)) return true;
   if (PATH_RULES.some((rule) => rule.pattern.test(file))) return false;
   return STAGING_TOOLING_ALLOW.some((re) => re.test(file))
     || DOCS_ONLY_RE.test(file)
     || /^\.github\/(?:workflows\/|ISSUE_TEMPLATE\/|pull_request_template\.md|CONTRIBUTING\.md|dependabot\.yml)/.test(file);
 }
 
-export function requiredTierFor(files: string[]): { tier: Tier; reason: string } {
+export function requiredTierFor(
+  files: string[],
+  opts?: TierClassifyOpts,
+): { tier: Tier; reason: string } {
   if (files.length === 0) return { tier: 'T0', reason: 'no changed files' };
-  if (files.every(isT0OnlyFile)) {
+  if (files.every((f) => isT0OnlyFile(f, opts))) {
     return { tier: 'T0', reason: 'docs/tests/CI/tooling-only' };
   }
 
   let best: Tier = 'T1';
   let reason = 'default frontend / additive change';
   for (const f of files) {
-    if (isT0OnlyFile(f)) continue;
+    if (isT0OnlyFile(f, opts)) continue;
     for (const rule of PATH_RULES) {
       if (rule.pattern.test(f) && TIER_RANK[rule.minTier] > TIER_RANK[best]) {
         best = rule.minTier;
@@ -300,13 +382,14 @@ export function requiredTierFor(files: string[]): { tier: Tier; reason: string }
 }
 
 /**
- * Patterns for any non-frontend, prod-runtime surface. A change that touches
- * ANY of these can produce real worker/migration/SDK/contract artifacts, so it
- * must NOT be eligible for the frontend-T2 evidence path — it keeps the full
- * worker-artifact requirements. This list is intentionally a denylist (not just
- * "everything outside src/") so the guard fails closed: a future file that
- * lands under `src/` but matches a server/SDK/contract pattern would still be
- * pushed onto the standard evidence path.
+ * Patterns for any non-frontend, prod-runtime (or CI) surface. A change that
+ * touches ANY of these can produce real worker/migration/SDK/contract artifacts
+ * (or is CI config/script, which is not a frontend asset), so it must NOT be
+ * eligible for the frontend-T2 evidence path — it keeps the full worker-artifact
+ * (standard) evidence requirements. This list is intentionally a denylist (not
+ * just "outside src/|public/|e2e/") so the guard fails closed: a future file
+ * that lands under one of the allowed prefixes but matches a server/SDK/contract
+ * pattern would still be pushed onto the standard evidence path.
  */
 const NON_FRONTEND_SURFACE_RE: RegExp[] = [
   /^services\//,
@@ -316,14 +399,34 @@ const NON_FRONTEND_SURFACE_RE: RegExp[] = [
   /^docs\/api\//,
   /^docs\/guides\/API_GUIDE\.md$/,
   /^\.github\/workflows\//,
+  // CI scripts are not a frontend asset — a `scripts/` change (e.g. this gate,
+  // or the CSP-deps guard) keeps the standard worker-evidence path even when it
+  // rides alongside a src/ change.
+  /^scripts\//,
 ];
 
+/** Prefixes a frontend feature can legitimately ship without producing any
+ * deploying (worker/migration/SDK) artifact:
+ *   - `src/`          the React/TS app source itself,
+ *   - `public/`       static + vendored runtime assets (e.g. self-hosted
+ *                     Tesseract OCR wasm/worker/lang under `public/vendor`),
+ *   - `e2e/`          the Playwright spec(s) that exercise the changed view.
+ * None of these are built into the Cloud Run worker image or applied to the DB,
+ * so a PR confined to them (modulo the NON_FRONTEND_SURFACE_RE denylist) cannot
+ * produce worker artifacts and is eligible for the frontend-T2 evidence path. */
+const FRONTEND_PREFIXES = ['src/', 'public/', 'e2e/'];
+
 /**
- * True iff EVERY changed file is purely a frontend source file — under `src/`
- * and not matching any server/migration/SDK/contract surface. This is the
- * backward-compatibility guard for the frontend-T2 evidence mode: it gates the
- * alternate (Vercel + view-E2E) evidence path so it can only ever apply to a
- * PR that genuinely cannot produce worker artifacts.
+ * True iff EVERY changed file is a purely-frontend file — under one of
+ * {@link FRONTEND_PREFIXES} (`src/` / `public/` / `e2e/`) and not matching any
+ * server/migration/SDK/contract/CI surface ({@link NON_FRONTEND_SURFACE_RE}).
+ * This is the backward-compatibility guard for the frontend-T2 evidence mode:
+ * it gates the alternate (Vercel + view-E2E) evidence path so it can only ever
+ * apply to a PR that genuinely cannot produce worker artifacts. A frontend
+ * feature shipping vendored assets (`public/vendor`) + its E2E (`e2e/`)
+ * alongside its `src/` change is exactly this case (the #1262 §1.6 fail-closed
+ * OCR enabler); workflow / CI-script / worker / migration changes stay on the
+ * full worker-evidence path (fail-closed preserved).
  *
  * An empty fileset returns false: there is nothing to attest as frontend-only,
  * and a non-frontend caller should never reach the frontend path by default.
@@ -331,7 +434,8 @@ const NON_FRONTEND_SURFACE_RE: RegExp[] = [
 export function isFrontendOnlyChange(files: string[]): boolean {
   if (files.length === 0) return false;
   return files.every(
-    (f) => f.startsWith('src/') && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
+    (f) => FRONTEND_PREFIXES.some((p) => f.startsWith(p))
+      && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
   );
 }
 
@@ -342,21 +446,51 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
+// Tier declaration, tolerant of common markdown decoration on the line.
+// Accepts, anchored to the start of a (whitespace-trimmed) line:
+//   - an optional list marker (`-` / `*`) + optional `[x]`/`[ ]` checkbox,
+//   - optional markdown emphasis (`*`/`**`/`_`/`__`) wrapping the word `Tier`
+//     and/or its colon — covers `**Tier:**`, `*Tier*:`, `_Tier_:`, `**Tier**:`,
+//   - then `T0`–`T3`, optionally emphasis-wrapped, as a whole token.
+// The plain `Tier: T2` form keeps matching (every decoration group is optional).
+// This is label-parsing tolerance only: the captured value is still validated
+// against DECLARED_TIER_VALUES, so the set of accepted tiers is unchanged.
+//
+// Composed from named sub-parts rather than one dense literal: it keeps each
+// fragment readable and below the per-regex cognitive-complexity bound, and it
+// removes the backtracking ambiguity of adjacent `\s*` groups flanking optional
+// emphasis (the old `\s*:\s*(?:[*_]{1,2})?\s*` shape) by using single horizontal-
+// whitespace runs (`HSPACE`). Lines are pre-split on `\r?\n` by
+// {@link extractDeclaredTier}, so horizontal-only whitespace is exact, not a
+// behavior change — verified identical to the prior literal over a combinatorial
+// corpus.
+// `String.raw` only where the literal itself carries backslashes; the
+// backslash-free fragments use plain template literals (interpolated sub-parts
+// keep their own escaping). Same assembled source either way.
+const TIER_HSPACE = String.raw`[^\S\r\n]`;
+const TIER_EMPHASIS = `[*_]{1,2}`;
+// Optional leading list bullet (`-`/`*`) then optional spaces.
+const TIER_LIST_PREFIX = `(?:[-*]${TIER_HSPACE}*)?`;
+// Optional GitHub task checkbox (`[ ]`/`[x]`) then optional spaces.
+const TIER_CHECKBOX = String.raw`(?:\[[ x]\]${TIER_HSPACE}*)?`;
+// The literal label `Tier`, optionally emphasis-wrapped on either side.
+const TIER_LABEL = `(?:${TIER_EMPHASIS})?Tier(?:${TIER_EMPHASIS})?`;
+// Separator: optional spaces, colon, optional spaces, then an optional emphasis
+// run with its own trailing spaces — no two `\s*` flank the same optional group.
+const TIER_SEPARATOR = `${TIER_HSPACE}*:${TIER_HSPACE}*(?:${TIER_EMPHASIS}${TIER_HSPACE}*)?`;
+// The tier token `T0`–`T3`, optional trailing emphasis, not followed by a word char.
+const TIER_VALUE_TOKEN = String.raw`(T[0-3])(?:${TIER_EMPHASIS})?(?!\w)`;
+const DECLARED_TIER_LINE_RE = new RegExp(
+  `^${TIER_HSPACE}*${TIER_LIST_PREFIX}${TIER_CHECKBOX}${TIER_LABEL}${TIER_SEPARATOR}${TIER_VALUE_TOKEN}`,
+  'i',
+);
+
 export function extractDeclaredTier(body: string): Tier | null {
   for (const line of body.split(/\r?\n/)) {
-    let candidate = line.trimStart();
-    if (candidate.startsWith('-') || candidate.startsWith('*')) {
-      candidate = candidate.slice(1).trimStart();
-    }
-    if (candidate.startsWith('[x]') || candidate.startsWith('[ ]')) {
-      candidate = candidate.slice(3).trimStart();
-    }
-    if (!candidate.startsWith('Tier:')) continue;
-
-    const rest = candidate.slice('Tier:'.length).trimStart();
-    const value = rest.slice(0, 2);
-    const next = rest[2];
-    if (DECLARED_TIER_VALUES.has(value as Tier) && (next === undefined || !/\w/.test(next))) {
+    const m = DECLARED_TIER_LINE_RE.exec(line);
+    if (!m) continue;
+    const value = m[1].toUpperCase();
+    if (DECLARED_TIER_VALUES.has(value as Tier)) {
       return value as Tier;
     }
   }
@@ -900,6 +1034,26 @@ function changedFilesBetween(fromSha: string, toSha: string): string[] | null {
   }
 }
 
+/**
+ * Default {@link DiffProvider} for the live CI path: the unified diff of a single
+ * file between `baseRef` and `HEAD`. `null` on any failure (no history, deleted,
+ * binary), which makes the deploy-worker carve-out fail closed (keeps T2).
+ */
+function gitFileDiffProvider(baseSha: string): DiffProvider {
+  return (file: string): string | null => {
+    try {
+      const out = execFileSync(
+        GIT_BIN,
+        ['diff', '--unified=0', `${baseSha}...HEAD`, '--', file],
+        { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      return out.trim().length > 0 ? out : null;
+    } catch {
+      return null;
+    }
+  };
+}
+
 function hasNamedApprover(value: string): boolean {
   const match = /\bapproved by:\s*([^.;\n]+)/i.exec(value);
   return match !== null && isFilledValue(match[1] ?? null);
@@ -1024,6 +1178,10 @@ const STAGING_TOOLING_ALLOW = [
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
   /^scripts\/ci\/config-drift\//,
+  // WEBEXT-04 (SCRUM-2506): CSP↔runtime-deps drift gate — a sibling config↔reality
+  // CI gate that parses vercel.json + scans on-device runtime sources. Runs only
+  // in CI, never ships to prod runtime, so it is T0 tooling.
+  /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,
@@ -1089,6 +1247,12 @@ interface CheckOptions {
   prNumber?: number;
   nowMs?: number;
   rcManifestLoader?: RcManifestLoader;
+  /**
+   * Per-file unified-diff source for content-aware tier classification (the
+   * deploy-worker.yml `uses:`-only carve-out). Defaults to a git-backed provider
+   * in {@link main}; tests inject a stub. Absent → carve-out fails closed (T2).
+   */
+  diffProvider?: DiffProvider;
 }
 
 function addErrors(result: CheckResult, errors: string[]): void {
@@ -1600,7 +1764,7 @@ export function check(opts: CheckOptions): CheckResult {
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
 
-  const required = requiredTierFor(files);
+  const required = requiredTierFor(files, { diffProvider: opts.diffProvider });
   if (required.tier === 'T0') {
     result.notes.push(`T0 CI-only PR (${required.reason}) — no staging soak evidence required.`);
     return result;
@@ -1664,7 +1828,14 @@ function main(): void {
   );
   const parsedPrNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10);
   const prNumber = Number.isFinite(parsedPrNumber) ? parsedPrNumber : undefined;
-  const result = check({ body: prBody, files, headSha: currentHeadSha, baseSha: baseRef, prNumber });
+  const result = check({
+    body: prBody,
+    files,
+    headSha: currentHeadSha,
+    baseSha: baseRef,
+    prNumber,
+    diffProvider: gitFileDiffProvider(baseRef),
+  });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);
   if (result.ok) {

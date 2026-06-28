@@ -26,6 +26,7 @@ interface FlagState {
 const ENV_FLAG_GETTERS = {
   USE_MOCKS: () => config.useMocks,
   ENABLE_PROD_NETWORK_ANCHORING: () => config.enableProdNetworkAnchoring,
+  ENABLE_CONFIRMATION_PROOF_BACKFILL: () => config.enableConfirmationProofBackfill,
   ENABLE_ORG_CREDIT_ENFORCEMENT: () => config.enableOrgCreditEnforcement,
   ENABLE_AI_FALLBACK: () => config.enableAiFallback,
   ENABLE_VERTEX_AI: () => config.enableVertexAi,

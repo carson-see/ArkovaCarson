@@ -23,6 +23,11 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 - `credentials-ctdl.ts` exposes anonymous `GET /api/v1/credentials/:publicId/ctdl` for SCRUM-1875. It returns public CTDL JSON-LD only for anchored/revoked public IDs and audits every request as `ctdl.requested`.
 - PR #841 containment: `anchor-submit.ts` and `anchor-bulk.ts` must reject `credential_type=CPE` before DB access while `ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY=false`; CPE is absent from prod until schema reconciliation.
 
+## 2026-06-23 Verified-identity entitlement gate (PAY-01 / SCRUM-2384)
+
+- `identity.ts` adds `GET /api/v1/identity/entitlement` (JWT-authed via `requireAuthMw`). Returns `{ entitled: boolean }` — the verified-only feature gate. Delegates to `../../billing/entitlements.ts` `hasActiveVerifiedEntitlement`, which requires BOTH an open `identity_verified` entitlement window AND an `active` subscription whose **current** period covers now (SCRUM-1791 — never gates on a stale `current_period_*` row). Fail-closed: any read error → `{ entitled: false }`. Org is resolved from the caller's `profiles` row, never trusted from input. No new scope (identity routes are JWT-only, not behind the verification-API feature gate).
+- The entitlement is GRANTED by the Stripe `identity.verification_session.verified` webhook (`stripe/handlers.ts`) and REVOKED on `customer.subscription.deleted`. No schema change — reuses the existing `entitlements` table.
+
 ## Files
 
 - `router.ts` — mounts every v1 endpoint with its `requireScope(...)` gate. Anonymous-GET allow on `/verify` is intentional (Constitution §1.10 zero-friction public verification, rate-limited 100/min).

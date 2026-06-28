@@ -14,6 +14,10 @@ import type { TypeSafeTablesUpdate } from '../types/database-overrides.js';
 import type { SubscriptionTier } from '../types/check-constraint-values.js';
 import { logger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
+import {
+  grantVerifiedIdentityEntitlement,
+  revokeVerifiedIdentityEntitlement,
+} from '../billing/entitlements.js';
 
 type StripeEvent = Stripe.Event;
 
@@ -144,45 +148,104 @@ async function callPaymentGraceRpc(
 }
 
 // =========================================================================
-// Idempotency — billing_events table
+// Idempotency — webhook_event_claims (releasable) + billing_events (immutable)
 // =========================================================================
+//
+// SCRUM-2353: the idempotency CLAIM and the audit RECORD live in two different
+// tables on purpose.
+//   - `webhook_event_claims` is MUTABLE. The claim is inserted BEFORE side
+//     effects run; its `stripe_event_id` UNIQUE constraint serializes
+//     concurrent duplicate deliveries (a loser hits 23505 and skips). Because
+//     it carries NO append-only trigger, a failed side effect can DELETE its
+//     own claim so the Stripe retry reprocesses exactly once.
+//   - `billing_events` is the IMMUTABLE audit trail (BEFORE DELETE/UPDATE
+//     triggers raise 23514 "Audit events are immutable."). Its row is written
+//     only AFTER the side effect succeeds and is never deleted/updated.
+//
+// The original fix tried to release the claim with `DELETE FROM billing_events`,
+// which the immutability trigger always rejects in prod — leaving the claim
+// stranded and the side effect orphaned. Splitting the releasable claim out
+// into `webhook_event_claims` is what makes the recovery actually work.
 
 /**
- * Claim a Stripe event for processing by inserting into billing_events FIRST,
- * relying on the `stripe_event_id` UNIQUE constraint as a transactional lock.
+ * Claim a Stripe event for processing by inserting into `webhook_event_claims`
+ * FIRST, relying on its `stripe_event_id` UNIQUE constraint as a transactional
+ * lock.
  *
  * Returns `true` when this caller is the first to claim the event and should
- * run its side effects, `false` when the event was already claimed (the
- * UNIQUE violation means a sibling worker — or this same worker on Stripe
- * retry — already started processing).
+ * run its side effects, `false` when the event was already claimed (the UNIQUE
+ * violation means a sibling worker — or this same worker on Stripe retry —
+ * already started processing).
  *
- * Inserting before side effects prevents Stripe retries from replaying the
- * side effects: every retry sees the row, hits the UNIQUE violation, and
- * returns false. The trade-off is at-most-once delivery per event — a crash
- * between INSERT and the side-effect block leaves an event marked claimed
- * with no effect. That's preferred over replaying anchor adjustments / DB
- * writes on every Stripe retry, which was the prior behavior.
+ * Claiming before side effects prevents Stripe retries from replaying them:
+ * every concurrent duplicate sees the row, hits the UNIQUE violation, and
+ * returns false. Unlike the previous billing_events claim, this row is
+ * releasable (see `releaseClaim`), so a post-claim failure is recoverable
+ * rather than a permanent at-most-once drop.
  */
-async function claimEvent(
-  eventId: string,
-  eventType: string,
-  userId: string | null,
-  payload: Record<string, unknown>,
-): Promise<boolean> {
-  const { error } = await db.from('billing_events').insert({
-    stripe_event_id: eventId,
-    event_type: eventType,
-    user_id: userId,
-    payload: payload as unknown as import('../types/database.types.js').Json,
-  });
+async function claimEvent(eventId: string): Promise<boolean> {
+  const { error } = await db
+    .from('webhook_event_claims')
+    .insert({ stripe_event_id: eventId });
 
   if (!error) return true;
   if (error.code === '23505') {
     logger.info({ eventId }, 'Event already processed');
     return false;
   }
-  logger.error({ error, eventId }, 'Failed to record billing event');
+  logger.error({ error, eventId }, 'Failed to claim webhook event');
   throw error;
+}
+
+/**
+ * Write the IMMUTABLE billing_events audit row for a successfully-processed
+ * event. Called only after the side effect completes, so the append-only audit
+ * trail records work that actually happened. Never deleted/updated.
+ */
+async function recordBillingAudit(
+  eventId: string,
+  eventType: string,
+  userId: string | null,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await db.from('billing_events').insert({
+    stripe_event_id: eventId,
+    event_type: eventType,
+    user_id: userId,
+    payload: payload as unknown as import('../types/database.types.js').Json,
+  });
+  if (error) {
+    logger.error({ error, eventId }, 'Failed to record billing event audit row');
+    throw error;
+  }
+}
+
+/**
+ * Compensating delete for a claim whose side effects failed (SCRUM-2353).
+ *
+ * `claimEvent` writes the `webhook_event_claims` row BEFORE side effects run. If
+ * a side effect then throws, that row would persist and make every Stripe retry
+ * hit the UNIQUE constraint → return false → silently drop the side effect
+ * forever (paid customer, no entitlement). Deleting the claim row hands the next
+ * Stripe retry a clean slate so it reprocesses exactly once. `webhook_event_claims`
+ * is mutable (no immutability trigger), so unlike the original billing_events
+ * delete, this actually succeeds.
+ *
+ * This is best-effort: a failed delete is logged but never masks the original
+ * processing error (which the caller re-throws so the route returns 5xx). At
+ * worst a failed delete degrades to at-most-once for that one event — never a
+ * double-apply. The immutable billing_events audit row is never touched here.
+ */
+async function releaseClaim(eventId: string): Promise<void> {
+  const { error } = await db
+    .from('webhook_event_claims')
+    .delete()
+    .eq('stripe_event_id', eventId);
+  if (error) {
+    logger.error({ error, eventId }, 'Failed to release webhook_event_claims claim after processing error');
+    return;
+  }
+  logger.info({ eventId }, 'Released webhook_event_claims claim so Stripe retry can reprocess');
 }
 
 // =========================================================================
@@ -581,6 +644,16 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
     });
   }
 
+  // PAY-01 (SCRUM-2384): a lapsed paid subscription REVOKES the
+  // verified-identity entitlement (the entitlement is gated by an active
+  // subscription). Closes any open entitlement window for the user/org.
+  if (existingSub.user_id || existingSub.org_id) {
+    await revokeVerifiedIdentityEntitlement({
+      userId: existingSub.user_id ?? null,
+      orgId: existingSub.org_id ?? null,
+    });
+  }
+
   logger.info({ subscriptionId: subscription.id }, 'Subscription canceled');
 }
 
@@ -799,6 +872,13 @@ async function handleIdentityVerified(event: StripeEvent): Promise<void> {
     details: `Identity verified via Stripe session ${session.id}`,
   });
 
+  // PAY-01 (SCRUM-2384): a verified session GRANTS the verified-identity
+  // entitlement server-side. Declined / requires_input / canceled sessions
+  // never reach this handler, so they never grant. Grant after the profile +
+  // audit writes so a grant failure (which re-throws → Stripe retries) does not
+  // leave the entitlement set without the audit trail.
+  await grantVerifiedIdentityEntitlement({ userId, orgId: verifiedProfile?.org_id ?? null });
+
   logger.info({ userId }, 'Identity verification completed successfully');
 }
 
@@ -841,26 +921,11 @@ async function handleIdentityCanceled(event: StripeEvent): Promise<void> {
 }
 
 /**
- * Main webhook handler — claims the event in billing_events first, then
- * routes to the type-specific handler. Claiming before side effects is the
- * idempotency boundary: Stripe retries hit the UNIQUE constraint and bail
- * before any state mutations run.
+ * Route a claimed event to its type-specific handler. Extracted from
+ * handleStripeWebhook so the claim/compensate control flow stays flat (keeps
+ * cognitive complexity low — the switch alone is the only branching here).
  */
-export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
-  // Extract user_id from event metadata if available
-  let userId: string | null = null;
-  const obj = event.data.object as unknown as Record<string, unknown>;
-  const metadata = obj.metadata as Record<string, string> | undefined;
-  if (metadata?.user_id) {
-    userId = metadata.user_id;
-  }
-
-  // Claim the event in billing_events BEFORE running side effects. If we lose
-  // the claim race (Stripe retry, sibling worker), bail without re-running
-  // the handler.
-  const claimed = await claimEvent(event.id, event.type, userId, obj);
-  if (!claimed) return;
-
+async function dispatchEvent(event: StripeEvent): Promise<void> {
   switch (event.type) {
     case 'checkout.session.completed':
       await handleCheckoutComplete(event);
@@ -889,4 +954,48 @@ export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
     default:
       logger.info({ eventType: event.type }, 'Unhandled event type');
   }
+}
+
+/**
+ * Main webhook handler — claims the event in `webhook_event_claims` first, then
+ * routes to the type-specific handler. Claiming before side effects is the
+ * idempotency boundary: concurrent duplicate deliveries / Stripe retries hit the
+ * UNIQUE constraint and bail before any state mutations run.
+ *
+ * SCRUM-2353: on SUCCESS the immutable `billing_events` audit row is written and
+ * the claim is kept (exactly-once). If a side effect throws AFTER the claim is
+ * written, the mutable claim is released (compensating delete) and the error
+ * re-thrown; the caller (webhook route) returns 5xx so Stripe retries, and
+ * because the claim is gone the retry reprocesses exactly once instead of being
+ * swallowed by the persisted claim. The immutable audit row is only ever written
+ * on success, so a failed attempt leaves nothing to roll back on the audit side.
+ */
+export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
+  // Extract user_id from event metadata if available (for the audit row).
+  let userId: string | null = null;
+  const obj = event.data.object as unknown as Record<string, unknown>;
+  const metadata = obj.metadata as Record<string, string> | undefined;
+  if (metadata?.user_id) {
+    userId = metadata.user_id;
+  }
+
+  // Claim the event in the MUTABLE webhook_event_claims table BEFORE running
+  // side effects. If we lose the claim race (Stripe retry, sibling worker), bail
+  // without re-running the handler.
+  const claimed = await claimEvent(event.id);
+  if (!claimed) return;
+
+  try {
+    await dispatchEvent(event);
+  } catch (error) {
+    // Roll back the (mutable) idempotency claim so the Stripe retry can
+    // reprocess this event exactly once, then propagate so the route answers
+    // 5xx (retryable). The immutable billing_events audit row was not written
+    // (we only write it on success), so nothing to compensate there.
+    await releaseClaim(event.id);
+    throw error;
+  }
+
+  // Side effects succeeded — record the immutable audit row and keep the claim.
+  await recordBillingAudit(event.id, event.type, userId, obj);
 }
