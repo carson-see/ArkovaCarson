@@ -25,6 +25,7 @@ import { verifyAuthToken } from '../auth.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
+import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
@@ -302,6 +303,27 @@ cronRouter.post('/check-confirmations', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Confirmation check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// PROOF-03 (SCRUM-2336): confirmation-proof backfill.
+//
+// PRODUCTION TRIGGER. The real-network soak proved the in-process node-cron
+// schedule (routes/scheduled.ts) NEVER fires on Cloud Run — node-cron is
+// dormant while CPU is throttled between requests. Prod drives cron via Cloud
+// Scheduler → HTTP, so the backfill needs this endpoint to run at all. The
+// in-process schedule stays as the dev/test backup. `runConfirmationProofBackfill`
+// already no-ops (skipped:true) in mock mode / when prod anchoring is off, and
+// needs no mutex (idempotent — the populated block_header is the watermark and
+// the last writer writes identical bytes). Same cronAuth + JSON-result /
+// 500-on-error shape as /check-confirmations.
+cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
+  try {
+    const result = await runConfirmationProofBackfill();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Confirmation-proof backfill failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
