@@ -22,10 +22,16 @@ import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions,
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
 import { runCreditConservationReconciler } from '../jobs/credit-conservation-reconciler.js';
+import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
 type CronTask = Parameters<typeof cron.schedule>[1];
+
+/** Narrow an unknown error to its message string (LOW-2 log-hygiene helper). */
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   'recover-stuck-broadcasts',
@@ -40,6 +46,10 @@ const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   // the maintenance flag alongside the other anchor-table jobs so a paused
   // pipeline during a migration window doesn't trip a spurious stall page.
   'check-stuck-anchors',
+  // PROOF-03 (SCRUM-2336): confirmation-proof backfill reads SECURED anchors +
+  // anchor_proofs. Joins the anchor-table allowlist so the maintenance flag
+  // pauses it during a migration window alongside the other anchor-table jobs.
+  'populate-confirmation-proofs',
 ]);
 
 function scheduleInProcess(jobName: string, expression: string, task: CronTask): void {
@@ -278,6 +288,34 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
       logger.error({ error }, 'Fee monitoring cron failed');
     }
   });
+
+  // PROOF-03 (SCRUM-2336): confirmation-proof backfill every 15 minutes.
+  // Populates the 80-byte block header + Merkle inclusion path for SECURED
+  // anchors whose app-tree branch is complete but bitcoin-tree evidence is
+  // missing (block_header IS NULL). Bounded (≤2000 rows/run), idempotent (the
+  // populated block_header is the watermark), and DELIBERATELY decoupled from
+  // the latency-critical 2-minute check-confirmations drain. Default OFF —
+  // enabled per-environment via ENABLE_CONFIRMATION_PROOF_BACKFILL (the wrapper
+  // additionally no-ops unless ENABLE_PROD_NETWORK_ANCHORING yields a real
+  // inclusion-proof provider).
+  if (config.enableConfirmationProofBackfill) {
+    scheduleInProcess('populate-confirmation-proofs', '*/15 * * * *', async () => {
+      logger.debug('Running confirmation-proof backfill');
+      try {
+        const result = await trackOperation(runConfirmationProofBackfill());
+        if (!result.skipped && result.anchorsUpdated > 0) {
+          logger.info(
+            { anchorsUpdated: result.anchorsUpdated, txConfirmed: result.txConfirmed, scanned: result.scanned },
+            'Confirmation-proof backfill populated anchors',
+          );
+        }
+      } catch (error) {
+        // LOW-2: log the message string (not the raw error object) so a future
+        // richer error can't drag rpcUrl/token-bearing fields into the log.
+        logger.error({ err: errMsg(error) }, 'Confirmation-proof backfill cron failed');
+      }
+    });
+  }
 
   logger.info('Scheduled jobs configured (including chain maintenance)');
 }
