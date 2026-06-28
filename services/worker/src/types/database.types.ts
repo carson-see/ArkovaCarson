@@ -6435,7 +6435,6 @@ export type Database = {
         | {
             Args: {
               p_batch_size?: number
-              p_block_hash?: string
               p_block_height: number
               p_block_timestamp: string
               p_chain_tx_id: string
