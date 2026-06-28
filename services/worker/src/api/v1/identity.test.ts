@@ -32,6 +32,7 @@ const mockSelect = vi.fn();
 const mockUpdate = vi.fn();
 const mockEq = vi.fn();
 const mockSingle = vi.fn();
+const mockMaybeSingle = vi.fn();
 
 vi.mock('../../utils/db.js', () => ({
   db: {
@@ -39,6 +40,7 @@ vi.mock('../../utils/db.js', () => ({
       select: mockSelect.mockReturnValue({
         eq: mockEq.mockReturnValue({
           single: mockSingle,
+          maybeSingle: mockMaybeSingle,
         }),
       }),
       update: mockUpdate.mockReturnValue({
@@ -48,6 +50,14 @@ vi.mock('../../utils/db.js', () => ({
       }),
     })),
   },
+}));
+
+// PAY-01 (SCRUM-2384): isolate the entitlement gate (own unit tests cover the
+// resolver + DB read). Here we assert the endpoint surfaces its boolean.
+// vi.hoisted so the spy exists when the hoisted vi.mock factory runs.
+const { mockHasActiveVerified } = vi.hoisted(() => ({ mockHasActiveVerified: vi.fn() }));
+vi.mock('../../billing/entitlements.js', () => ({
+  hasActiveVerifiedEntitlement: mockHasActiveVerified,
 }));
 
 vi.mock('../../config.js', () => ({
@@ -123,6 +133,52 @@ describe('Identity API', () => {
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('verified');
       expect(res.body.verifiedAt).toBe('2026-03-26T12:00:00Z');
+    });
+  });
+
+  // PAY-01 (SCRUM-2384): verified-only feature gate
+  describe('GET /identity/entitlement', () => {
+    it('returns entitled:true when the gate grants on the current period', async () => {
+      mockMaybeSingle.mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
+      mockHasActiveVerified.mockResolvedValue(true);
+
+      const app = createApp();
+      const res = await request(app).get('/identity/entitlement').send();
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ entitled: true });
+      expect(mockHasActiveVerified).toHaveBeenCalledWith({ userId: 'test-user-123', orgId: 'org-1' });
+    });
+
+    it('returns entitled:false when the gate denies (lapsed/declined/stale period)', async () => {
+      mockMaybeSingle.mockResolvedValue({ data: { org_id: null }, error: null });
+      mockHasActiveVerified.mockResolvedValue(false);
+
+      const app = createApp();
+      const res = await request(app).get('/identity/entitlement').send();
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ entitled: false });
+      expect(mockHasActiveVerified).toHaveBeenCalledWith({ userId: 'test-user-123', orgId: null });
+    });
+
+    it('fails closed (entitled:false) when the org lookup errors', async () => {
+      mockMaybeSingle.mockResolvedValue({ data: null, error: { message: 'db down' } });
+
+      const app = createApp();
+      const res = await request(app).get('/identity/entitlement').send();
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ entitled: false });
+      expect(mockHasActiveVerified).not.toHaveBeenCalled();
+    });
+
+    it('requires authentication', async () => {
+      const app = express();
+      app.use(express.json());
+      app.use('/identity', identityRouter); // no userId injected
+      const res = await request(app).get('/identity/entitlement').send();
+      expect(res.status).toBe(401);
     });
   });
 });

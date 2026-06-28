@@ -308,6 +308,26 @@ app.use(compression({ threshold: 1024 }));
 app.use(express.json());
 
 // ─── Mount routers (ARCH-1: each router owns its middleware) ───
+//
+// PAY-01: the identity router is mounted at the most-specific path AND ahead of
+// the broad `/api` prefix routers below. Those `/api` mounts (notably
+// `adminRouter`, whose first middleware is the limit-10 `rateLimiters.checkout`)
+// run their middleware for EVERY `/api/*` request — including `/api/v1/identity`
+// — because Express runs a prefix-mounted router's middleware before it fails to
+// match an inner route and calls `next()`. With the shared per-IP rate-limit
+// bucket, that capped the identity reads at the checkout limiter's 10/min and
+// returned 429s under burst (the PAY-01 E2E `res.ok()` failures). Registering
+// the specific identity mount first lets its handler respond and end the chain
+// before the broad `/api` chokepoint can run. `v1DeprecationHeaders` is applied
+// inline here so the early mount still carries the v1 deprecation calendar.
+app.use(
+  '/api/v1/identity',
+  v1DeprecationHeaders,
+  rateLimiters.api,
+  requireAuthMw,
+  identityRouter,
+);
+
 app.use('/api', rateLimiters.api, badgeRouter); // /api/badge/:publicId
 app.use('/api', billingRouter);    // /api/checkout/session, /api/billing/portal
 app.use('/api', anchorRouter);     // /api/verify-anchor, /api/recipients, /api/account
@@ -347,8 +367,11 @@ app.get('/v2/openapi.json', apiV2OpenApiHandler);
 // v1 deprecation calendar — applies to every /api/v1 response, including side routers.
 app.use('/api/v1', v1DeprecationHeaders);
 
-// Identity & org verification — internal (frontend-facing), not behind feature gate
-app.use('/api/v1/identity', rateLimiters.api, requireAuthMw, identityRouter);
+// Identity & org verification — internal (frontend-facing), not behind feature gate.
+// NOTE: `/api/v1/identity` is mounted earlier (just before the broad `/api`
+// prefix routers) so its reads bypass the `adminRouter` limit-10 checkout
+// chokepoint — see the PAY-01 note at that mount. Do not re-add an identity
+// mount here.
 app.use('/api/v1/org', rateLimiters.api, requireAuthMw, orgVerificationRouter);
 app.use('/api/v1/org/sub-orgs', rateLimiters.api, requireAuthMw, orgSubOrgsRouter);
 app.use('/api/v1/org-kyb', rateLimiters.api, requireAuthMw, orgKybRouter);
