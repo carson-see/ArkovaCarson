@@ -165,3 +165,86 @@ describe('POST /api/v1/sign org admin gate', () => {
     expect(res.body.error).toBe('Admin or owner role required to create signatures');
   });
 });
+
+// ─── Owner-exclusion bug-class regression: POST /api/v1/signatures/:id/revoke ─
+// The revoke gate previously queried org_members directly, which 403s org
+// OWNERS linked only via profiles.org_id (no guaranteed org_members row). It
+// must now authorize via isCallerOrgAdmin, scoped to the signature's OWN org
+// (sig.org_id). Unlike create/list, the route already holds the signature row,
+// so it does NOT resolve the caller's org via getCallerOrgId.
+describe('POST /api/v1/signatures/:id/revoke org admin gate', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  const publicId = 'ARK-ORG-SIG-ABCD1234';
+  const validBody = { reason: 'SUPERSEDED' };
+
+  // A non-revoked signature row the lookup returns so the flow reaches the admin
+  // gate — the route 404s before the gate when the row is missing.
+  const sigRow = {
+    id: '22222222-2222-4222-8222-222222222222',
+    public_id: publicId,
+    status: 'PENDING',
+    org_id: 'org-owner-1',
+  };
+
+  it('requires authentication', async () => {
+    const app = buildApp();
+    await request(app)
+      .post(`/api/v1/signatures/${publicId}/revoke`)
+      .send(validBody)
+      .expect(401);
+  });
+
+  it('lets an org OWNER (admin via resolver) revoke a signature', async () => {
+    // isCallerOrgAdmin authorizes the owner against the signature's OWN org.
+    // Every db.from() returns a builder whose .single() yields the sig row; the
+    // subsequent update + audit insert resolve without error.
+    vi.mocked(isCallerOrgAdmin).mockResolvedValue(true);
+    vi.mocked(db.from).mockImplementation(
+      () => makeBuilder({ singleData: sigRow }) as never,
+    );
+
+    const app = buildApp('owner-user');
+    const res = await request(app)
+      .post(`/api/v1/signatures/${publicId}/revoke`)
+      .send(validBody)
+      .expect(200);
+    expect(res.body.signature_id).toBe(publicId);
+    expect(res.body.status).toBe('REVOKED');
+    expect(res.body.reason).toBe('SUPERSEDED');
+    // Admin check is scoped to the signature's own org id (not a separately
+    // resolved caller org) — owners with no org_members row are not excluded.
+    expect(vi.mocked(isCallerOrgAdmin)).toHaveBeenCalledWith('owner-user', 'org-owner-1');
+  });
+
+  it('404s (before the admin check) when the signature does not exist', async () => {
+    // Lookup resolves null → route 404s and never reaches the admin gate.
+    vi.mocked(db.from).mockImplementation(
+      () => makeBuilder({ singleData: null }) as never,
+    );
+
+    const app = buildApp('owner-user');
+    const res = await request(app)
+      .post(`/api/v1/signatures/${publicId}/revoke`)
+      .send(validBody)
+      .expect(404);
+    expect(res.body.error).toBe('Signature not found');
+    expect(vi.mocked(isCallerOrgAdmin)).not.toHaveBeenCalled();
+  });
+
+  it('403s with the original message when the caller is a non-admin', async () => {
+    vi.mocked(isCallerOrgAdmin).mockResolvedValue(false);
+    vi.mocked(db.from).mockImplementation(
+      () => makeBuilder({ singleData: { ...sigRow, org_id: 'org-1' } }) as never,
+    );
+
+    const app = buildApp('member-user');
+    const res = await request(app)
+      .post(`/api/v1/signatures/${publicId}/revoke`)
+      .send(validBody)
+      .expect(403);
+    expect(res.body.error).toBe('Admin or owner role required to revoke signatures');
+    // Gate is scoped to the signature's own org id.
+    expect(vi.mocked(isCallerOrgAdmin)).toHaveBeenCalledWith('member-user', 'org-1');
+  });
+});
