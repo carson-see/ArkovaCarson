@@ -83,6 +83,14 @@ describe('SEC-005: RLS Policy Audit', () => {
   it('SECURITY DEFINER functions include SET search_path = public', () => {
     if (!fs.existsSync(migrationsDir)) return;
 
+    // Postgres accepts BOTH `SET search_path = public` and `SET search_path TO 'public'`
+    // for a function's SET clause — they are semantically identical and both satisfy
+    // §1.4 ("SECURITY DEFINER functions must SET search_path = public"). Match either
+    // form so the audit does not false-flag the `TO 'public'` variant (which most of
+    // our migrations actually use, e.g. 0330/0346).
+    const hasSearchPath = (s: string) =>
+      /SET\s+search_path\s*(?:=|\bTO\b)\s*/i.test(s);
+
     const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql'));
     const violations: string[] = [];
 
@@ -101,13 +109,13 @@ describe('SEC-005: RLS Policy Audit', () => {
         const name = nameMatch?.[1] ?? 'unknown';
 
         // Check if the function block has SET search_path
-        if (!/SET\s+search_path\s*=\s*/i.test(func)) {
+        if (!hasSearchPath(func)) {
           // Check the surrounding context (the full CREATE FUNCTION ... $$ block)
           const funcStart = content.indexOf(func);
           const blockEnd = content.indexOf('$$', funcStart + func.length);
           const fullBlock = content.substring(funcStart, blockEnd > 0 ? blockEnd + 100 : funcStart + func.length + 200);
 
-          if (!/SET\s+search_path\s*=\s*/i.test(fullBlock)) {
+          if (!hasSearchPath(fullBlock)) {
             violations.push(`${file}: ${name}`);
           }
         }

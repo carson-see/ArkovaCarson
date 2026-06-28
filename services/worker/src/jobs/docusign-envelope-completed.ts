@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { db as defaultDb } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { processNextJob } from '../utils/jobQueue.js';
@@ -21,6 +22,10 @@ import type { TypeSafeDatabase } from '../types/database-overrides.js';
 export const DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE = 'docusign.envelope_completed';
 const DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT = 10;
 const MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT = 100;
+// DS-03 (SCRUM-2363): sentinel returned when the connector-artifact enqueue is
+// gated off. Deliberately not a real artifact id — no consumer reads `queuedId`,
+// and a "*_disabled" value makes the dormant path obvious in any trace.
+const CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_QUEUED_ID = 'connector_artifact_enqueue_disabled';
 const QUEUE_STATUS_COUNTERS = {
   completed: 'completed',
   failed: 'failed',
@@ -51,10 +56,36 @@ interface DbInsertQuery<T> {
   };
 }
 
+// DS-03 (SCRUM-2363): typed args for the 0343 `enqueue_connector_artifact` RPC
+// (Lane-2 / SCRUM-2348, mig 0343). The RPC is idempotent (ON CONFLICT DO NOTHING
+// on the dedupe key org_id/source/external_ref/COALESCE(external_revision,'')) and
+// returns the artifact id. Only the server-computed fingerprint + PII-scrubbed
+// metadata cross this boundary — never raw document bytes (§1.6A).
+interface EnqueueConnectorArtifactArgs {
+  p_org_id: string;
+  p_source: 'docusign';
+  p_external_ref: string;
+  p_external_revision: string | null;
+  p_fingerprint_sha256: string;
+  p_byte_length: number | null;
+  p_source_timestamp: string | null;
+  p_metadata: Record<string, unknown>;
+}
+
 interface DbClient {
   from(table: 'org_integrations' | 'member_integrations'): DbSelectQuery<DocusignIntegrationRow>;
   from(table: 'organizations'): DbSelectQuery<{ parent_org_id: string | null }>;
   from(table: 'integration_events'): DbInsertQuery<{ id?: string }>;
+}
+
+// The 0343 enqueue RPC lives on the same supabase client but is reached through a
+// narrow typed view, so the existing `DbClient.from` test mocks stay valid and
+// only the artifact path takes a dependency on `.rpc`.
+interface ConnectorArtifactRpcClient {
+  rpc(
+    fn: 'enqueue_connector_artifact',
+    args: EnqueueConnectorArtifactArgs,
+  ): Promise<DbQueryResult<string>>;
 }
 
 type DocusignIntegrationRow = Pick<
@@ -214,6 +245,10 @@ export interface DocusignEnvelopeJobRuntimeDeps {
   fetchImpl?: typeof fetch;
   refreshTokenStore?: DocusignRefreshTokenStore;
   now?: () => Date;
+  // DS-03 (SCRUM-2363): overrides the ENABLE_CONNECTOR_ARTIFACT_ENQUEUE env flag
+  // for tests. When unset, the env flag (default off in prod) decides whether
+  // a connector_artifact row is enqueued.
+  enableConnectorArtifactEnqueue?: boolean;
 }
 
 export interface DocusignEnvelopeJobRunOptions extends DocusignEnvelopeJobRuntimeDeps {
@@ -235,6 +270,13 @@ export function makeDocusignEnvelopeJobDeps(
 ): DocusignEnvelopeJobDeps {
   const db = deps.db ?? (defaultDb as unknown as DbClient);
   const refreshTokenStore = getRefreshTokenStore(deps);
+  // DS-03 (SCRUM-2363): the connector_artifact drain (QUEUE-06/SCRUM-2352,
+  // QUEUE-08/SCRUM-2354) is unbuilt, so enqueuing is gated off in prod by
+  // default. The flag mirrors the ENABLE_DOCUSIGN_* env flags; tests inject it
+  // directly via deps.
+  const connectorArtifactEnqueueEnabled =
+    deps.enableConnectorArtifactEnqueue ??
+    (deps.env ?? process.env).ENABLE_CONNECTOR_ARTIFACT_ENQUEUE === 'true';
   let tokenRefreshAccountId: string | undefined;
   const docusignFetch = createDocusignRateLimitedFetch({
     fetchImpl: deps.fetchImpl,
@@ -300,7 +342,65 @@ export function makeDocusignEnvelopeJobDeps(
     },
 
     async enqueueSignedDocument(input): Promise<DocusignDocumentSinkResult> {
-      const { data, error } = await db
+      // DS-03 (SCRUM-2363) feature-flag guard. When ENABLE_CONNECTOR_ARTIFACT_ENQUEUE
+      // is off (the prod default until the QUEUE-06/SCRUM-2352 + QUEUE-08/SCRUM-2354
+      // drain ships), do NOT enqueue a connector_artifact row — nothing would
+      // anchor it, so a `pending` pile-up would accrue silently. This is a
+      // graceful no-op: skip before hashing, write no row, throw nothing. The
+      // breadcrumb carries only operational ids — never the fingerprint or bytes
+      // (§1.6A).
+      if (!connectorArtifactEnqueueEnabled) {
+        logger.info(
+          { integrationId: input.integrationId },
+          'DocuSign connector-artifact enqueue skipped — ENABLE_CONNECTOR_ARTIFACT_ENQUEUE disabled (drain not yet wired: QUEUE-06/QUEUE-08)',
+        );
+        return { queuedId: CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_QUEUED_ID };
+      }
+
+      // DS-03 (SCRUM-2363): server-side SHA-256 over the fetched bytes, computed
+      // in memory. The bytes are never logged, persisted, attached to an Error,
+      // or written to job_queue.last_error (§1.6A / SCRUM-2492). Only the digest
+      // + byteLength leave this scope.
+      const fingerprint = createHash('sha256').update(input.documentBytes).digest('hex');
+      const byteLength = input.documentBytes.byteLength;
+
+      // Durable, idempotent connector artifact via the Lane-2 0343 RPC. Exactly
+      // one row per (org, 'docusign', envelopeId): a redelivered envelope dedupes
+      // (ON CONFLICT DO NOTHING) and the RPC returns the existing id. No credit
+      // debit here — the debit happens later, at SECURING.
+      const { data: artifactId, error: artifactError } = await (
+        db as unknown as ConnectorArtifactRpcClient
+      ).rpc('enqueue_connector_artifact', {
+        p_org_id: input.orgId,
+        p_source: 'docusign',
+        p_external_ref: input.envelopeId,
+        p_external_revision: null,
+        p_fingerprint_sha256: fingerprint,
+        p_byte_length: byteLength,
+        p_source_timestamp: input.sourceTimestamp,
+        p_metadata: {
+          account_id: input.accountId,
+          envelope_id: input.envelopeId,
+          rule_event_id: input.ruleEventId,
+          integration_id: input.integrationId,
+          content_type: input.contentType,
+        },
+      });
+
+      // Fail-closed: no durable artifact => no silent drop, no partial state. The
+      // job throws and is retried; the RPC's idempotency makes the retry safe.
+      if (artifactError || !artifactId) {
+        logger.error(
+          { error: artifactError, integrationId: input.integrationId },
+          'DocuSign connector-artifact enqueue failed',
+        );
+        throw new Error('docusign_connector_artifact_enqueue_failed');
+      }
+
+      // Audit breadcrumb. Carries the artifact id + byte_length but NEVER the
+      // fingerprint or bytes (§1.6A). Also fail-closed so a broken audit path is
+      // visible rather than silently swallowed.
+      const { error: auditError } = await db
         .from('integration_events')
         .insert({
           org_id: input.orgId,
@@ -313,18 +413,19 @@ export function makeDocusignEnvelopeJobDeps(
             envelope_id: input.envelopeId,
             rule_event_id: input.ruleEventId,
             content_type: input.contentType,
-            byte_length: input.documentBytes.byteLength,
+            byte_length: byteLength,
+            connector_artifact_id: artifactId,
           },
         })
         .select('id')
         .single();
 
-      if (error) {
-        logger.error({ error, integrationId: input.integrationId }, 'DocuSign signed-document sink failed');
+      if (auditError) {
+        logger.error({ error: auditError, integrationId: input.integrationId }, 'DocuSign signed-document audit sink failed');
         throw new Error('docusign_signed_document_sink_failed');
       }
 
-      return { queuedId: data && data.id ? data.id : input.ruleEventId };
+      return { queuedId: artifactId };
     },
   };
 }

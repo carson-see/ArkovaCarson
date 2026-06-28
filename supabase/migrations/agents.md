@@ -47,6 +47,10 @@ Merge order is strict **0340 → 0341** (0341 is stacked on 0340). **0340 + 0341
 | `0341` | `feat/train-d-credit-foundation` (stacked on 0340) | SCRUM-2349 / 2350 | `0341_scrum2349_2350_credit_integrity_foundation.sql` | **APPLIED to prod 2026-06-23** |
 | `0342` | `perf/cpe-cle-dashboard-partial-index` (PR #1257) | CPE/CLE dashboard partial indexes | `0342_*` | RESERVED — open PR, do not reuse |
 | `0343` | QUEUE-02 connector-artifact schema (Lane 2) | SCRUM-2348 | `0343_scrum2348_connector_artifact_queue_schema.sql` | RESERVED — Lane 2 Sprint 1; interface-lock to Lane 3 by 2026-06-26 |
+| `0345` | `fix/vacuum-anchors-cron-0345` (PR #1282) | vacuum-anchors cron | `0345_fix_vacuum_anchors_cron.sql` | RESERVED — open PR. **Legitimate owner of `0345`.** |
+| `0346` | `fix/embed-public-records-timeout-0346` (PR #1286) | SCRUM-2203 (0330 follow-up) | `0346_fix_embed_unembedded_query_perf.sql` | RESERVED — open PR (DRAFT, T3 soak pending). **Renumbered 0345 → 0346 on 2026-06-24 (collision: PR #1282 owns `0345_fix_vacuum_anchors_cron.sql`).** 0346 is the next free prefix above #1282's 0345. Fixes the embed-public-records cron statement-timeout (57014) regression: 0330's NOT EXISTS anti-join now walks ~2.1M already-embedded rows at the created_at leading edge. Adds `public_records.embedded_at` marker + maintenance trigger + partial index `idx_public_records_unembedded ((created_at) WHERE embedded_at IS NULL)` (standalone CONCURRENTLY + batched backfill, per 0313/0330 convention) + RPC rewrite to `embedded_at IS NULL`. |
+
+`0344` is consumed (merged to `main`: `0344_scrum2349_credit_conservation_invariant_fix.sql`).
 
 Train D soaks once (consolidated RC) after Train C (#1154) merges, then rebases onto the new `main`; see HANDOFF.md + the "Release Soak Protection — No-Restart Process" Confluence page.
 

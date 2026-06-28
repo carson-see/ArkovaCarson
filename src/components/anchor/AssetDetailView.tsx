@@ -5,6 +5,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import type { ReactNode } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { FileText, CheckCircle, XCircle, AlertTriangle, Clock, Copy, Check, RefreshCw, Download, ArrowLeft, Hash, Share2, ExternalLink, GitBranch, Pencil, Ban } from 'lucide-react';
 import { RevokeAnchorModal } from './RevokeAnchorModal';
@@ -226,6 +227,133 @@ const statusConfig = {
     color: 'text-amber-600',
   },
 };
+
+type StatusConfigEntry = (typeof statusConfig)[keyof typeof statusConfig];
+
+interface AnchorRecordGridProps {
+  anchor: AnchorRecord;
+  status: StatusConfigEntry;
+  formatDate: (dateString: string) => string;
+}
+
+/**
+ * The "Anchor Record" 2-column detail grid (status, network receipt, network
+ * checkpoint, network-observed/created time, public id, category, template
+ * description). Extracted from AssetDetailView's render body so that very large
+ * function stays within the cognitive-complexity budget (typescript:S3776);
+ * this is pure presentation with no local state and is behavior-identical to
+ * the previous inline markup. Includes the BUG-2026-06-24-008 (§1.5)
+ * network-observed-time honesty gate.
+ */
+function AnchorRecordGrid({ anchor, status, formatDate }: Readonly<AnchorRecordGridProps>) {
+  let networkReceipt: ReactNode;
+  if (anchor.chainTxId) {
+    networkReceipt = (
+      <div className="flex items-center gap-1.5">
+        <a
+          href={`${getExplorerBaseUrl()}/tx/${anchor.chainTxId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm text-[#00d4ff] hover:underline font-mono truncate"
+        >
+          <ExternalLink className="inline h-3 w-3 mr-1" />
+          {anchor.chainTxId.slice(0, 16)}…
+        </a>
+        <CopyButton value={anchor.chainTxId} />
+      </div>
+    );
+  } else {
+    let awaitingLabel = '—';
+    if (anchor.status === 'SUBMITTED') {
+      awaitingLabel = 'Awaiting confirmation';
+    } else if (anchor.status === 'PENDING') {
+      awaitingLabel = 'Awaiting submission';
+    }
+    networkReceipt = <p className="text-xs text-amber-500">{awaitingLabel}</p>;
+  }
+
+  let statusBadgeClass = '';
+  if (anchor.status === 'SECURED') {
+    statusBadgeClass = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+  } else if (anchor.status === 'SUBMITTED') {
+    statusBadgeClass = 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+  }
+
+  // BUG-2026-06-24-008 (§1.5): only label the timestamp "Network Observed Time"
+  // once the anchor is SECURED; otherwise show the honest local creation time
+  // under a distinct label. Never show createdAt under the network label.
+  const observedTimeLabel = anchor.securedAt
+    ? RECORDS_LIST_LABELS.NETWORK_OBSERVED_TIME
+    : RECORDS_LIST_LABELS.CREATED_TIME;
+  const observedTimeValue = anchor.securedAt
+    ? formatDate(anchor.securedAt)
+    : formatDate(anchor.createdAt);
+
+  const categoryType = formatCredentialType(
+    anchor.credentialType ?? (anchor.metadata?.ai_document_type as string | undefined) ?? null,
+  );
+
+  return (
+    <div className="space-y-4">
+      <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Anchor Record</span>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {/* Status */}
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">Status</p>
+          <Badge variant={status.variant} className={`text-xs ${statusBadgeClass}`}>
+            {status.label.toUpperCase()}
+          </Badge>
+        </div>
+
+        {/* Network Receipt */}
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">{EXPLORER_LABELS.NETWORK_RECEIPT}</p>
+          {networkReceipt}
+        </div>
+
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">{RECORDS_LIST_LABELS.NETWORK_CHECKPOINT}</p>
+          <p className="text-sm font-semibold">
+            {anchor.chainBlockHeight ? anchor.chainBlockHeight.toLocaleString() : '—'}
+          </p>
+        </div>
+
+        {/* Network Observed Time (BUG-2026-06-24-008, §1.5) */}
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">{observedTimeLabel}</p>
+          <p className="text-sm">{observedTimeValue}</p>
+        </div>
+
+        {/* Public ID */}
+        {anchor.publicId && (
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">Public ID</p>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-mono">{anchor.publicId}</span>
+              <CopyButton value={anchor.publicId} />
+            </div>
+          </div>
+        )}
+
+        {/* Category — AI-extracted or credential type, fallback to General Record */}
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">Category</p>
+          <Badge variant="secondary" className="text-xs font-normal">
+            {categoryType === '—' ? 'General Record' : categoryType}
+          </Badge>
+        </div>
+
+        {/* Template Description — anonymized summary */}
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">Template Description</p>
+          <p className="text-sm text-muted-foreground">
+            {getTemplateDescription(anchor.credentialType ?? (anchor.metadata?.ai_document_type as string | undefined))}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRevoke = false, onRevoked, hasImportEntitlement = false }: Readonly<AssetDetailViewProps>) {
   const [copied, setCopied] = useState(false);
@@ -525,89 +653,11 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
 
           <Separator />
 
-          {/* ANCHOR RECORD — pipeline-style 2-column grid */}
-          <div className="space-y-4">
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Anchor Record</span>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {/* Status */}
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Status</p>
-                <Badge
-                  variant={status.variant}
-                  className={`text-xs ${anchor.status === 'SECURED' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : anchor.status === 'SUBMITTED' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : ''}`}
-                >
-                  {status.label.toUpperCase()}
-                </Badge>
-              </div>
-
-              {/* Network Receipt */}
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">{EXPLORER_LABELS.NETWORK_RECEIPT}</p>
-                {anchor.chainTxId ? (
-                  <div className="flex items-center gap-1.5">
-                    <a
-                      href={`${getExplorerBaseUrl()}/tx/${anchor.chainTxId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-[#00d4ff] hover:underline font-mono truncate"
-                    >
-                      <ExternalLink className="inline h-3 w-3 mr-1" />
-                      {anchor.chainTxId.slice(0, 16)}…
-                    </a>
-                    <CopyButton value={anchor.chainTxId} />
-                  </div>
-                ) : (
-                  <p className="text-xs text-amber-500">
-                    {anchor.status === 'SUBMITTED' ? 'Awaiting confirmation' : anchor.status === 'PENDING' ? 'Awaiting submission' : '—'}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">{RECORDS_LIST_LABELS.NETWORK_CHECKPOINT}</p>
-                <p className="text-sm font-semibold">
-                  {anchor.chainBlockHeight ? anchor.chainBlockHeight.toLocaleString() : '—'}
-                </p>
-              </div>
-
-              {/* Network Observed Time */}
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Network Observed Time</p>
-                <p className="text-sm">
-                  {anchor.securedAt ? formatDate(anchor.securedAt) : formatDate(anchor.createdAt)}
-                </p>
-              </div>
-
-              {/* Public ID */}
-              {anchor.publicId && (
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Public ID</p>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-mono">{anchor.publicId}</span>
-                    <CopyButton value={anchor.publicId} />
-                  </div>
-                </div>
-              )}
-
-              {/* Category — AI-extracted or credential type, fallback to General Record */}
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Category</p>
-                <Badge variant="secondary" className="text-xs font-normal">
-                  {formatCredentialType(anchor.credentialType ?? (anchor.metadata?.ai_document_type as string | undefined) ?? null) !== '—'
-                    ? formatCredentialType(anchor.credentialType ?? (anchor.metadata?.ai_document_type as string | undefined) ?? null)
-                    : 'General Record'}
-                </Badge>
-              </div>
-
-              {/* Template Description — anonymized summary */}
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Template Description</p>
-                <p className="text-sm text-muted-foreground">
-                  {getTemplateDescription(anchor.credentialType ?? (anchor.metadata?.ai_document_type as string | undefined))}
-                </p>
-              </div>
-            </div>
-          </div>
+          {/* ANCHOR RECORD — pipeline-style 2-column grid. Extracted into
+              AnchorRecordGrid (module-level) so the AssetDetailView render
+              body stays under the cognitive-complexity budget
+              (typescript:S3776). Pure presentation; behavior-identical. */}
+          <AnchorRecordGrid anchor={anchor} status={status} formatDate={formatDate} />
 
           {/* Description (BETA-12) — falls back to metadata abstract/description/summary */}
           {(() => {

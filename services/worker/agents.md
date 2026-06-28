@@ -1,44 +1,18 @@
 # agents.md — services/worker
 
-_Last updated: 2026-06-16 (SCRUM-2492 connector-byte handling hardening)._
+_Last updated: 2026-06-15 (Train D proof-integrity foundation)._
 
-## SCRUM-2492 — connector-byte handling hardening (§1.6A enforcement) (2026-06-16)
+## Train D proof-integrity foundation (2026-06-15, branch `feat/train-d-proof-foundation`)
 
-Closed the §1.6A gap where 0-of-6 controls were enforced. Connector-fetched
-document bytes (DocuSign / Drive) are now blocked from every leak sink — at
-build time AND runtime. The connector happy path was already clean, so this is
-regression-prevention + closing latent error-path leaks. Six cohesive pieces:
+The #1 MVP launch-blocker: make proof `verified` cryptographic and persist the
+branches that make it possible. Three coupled stories on one branch.
 
-- **`eslint-rules/no-connector-bytes-to-sink.cjs`** (new, ERROR on connector
-  files): flags raw bytes (`Buffer`/typed-array/`*.bytes`/`documentBytes`/raw
-  `.toString()`) reaching `logger.*`, `Sentry.capture*`/breadcrumb/context,
-  `Error`/`throw`/template literals, `last_error:`/`failJob(...)`, `fs.write*`,
-  `.insert/.update/.upsert` row values, or `JSON.stringify(...)`. Single-hop
-  alias tracking; range-dedupe. Scoped via `eslint.config.js` to
-  `src/integrations/**` + `docusign-*` job files; PKI/timestamp `arrayBuffer()`
-  readers (`src/signatures/**`) are out of scope. 0 real violations.
-- **`integrations/oauth/docusign.ts` / `drive.ts`**: `DocusignApiError` /
-  `DriveApiError` are byte-safe BY CONSTRUCTION — dropped the `body: unknown`
-  field; now `{ message, status }` only (mirrors `CredentialSourceImportError`).
-  All ~20 construction sites updated; the document-fetch non-2xx path no longer
-  reads the response body.
-- **`utils/logger.ts`**: `formatters.log` recursively strips any binary value
-  (`Buffer`/TypedArray/DataView/ArrayBuffer + `{type:'Buffer',data:[…]}` shape)
-  to `[REDACTED_BYTES]` by TYPE regardless of key; `redact` paths cover known
-  byte field names; the `err`/`error` serializer runs the same sanitizer.
-  Exported `redactBinaryValues`.
-- **`utils/sentry.ts`**: `scrubBinaryValues` runs FIRST in `scrubPiiFromEvent`
-  and `scrubPiiFromBreadcrumb` — type-based binary drop across contexts/extra/
-  tags/exception/arbitrary keys, before the existing key-name PII pass.
-- **`utils/jobQueue.ts`**: `failJob` routes `last_error` through
-  `sanitizeLastError` (detects raw Buffer/typed-array, `{type:'Buffer'}` JSON,
-  control-byte runs, and low-entropy repeated-char runs → token) instead of a
-  bare `substring(0,1000)`. The dead-letter warn log uses the sanitized value.
-- **`jobs/connector-byte-safety.test.ts`** (new): the mandated runtime test —
-  drives a 5 MiB Buffer (`Buffer.alloc(5*1024*1024, 0x25)`) through every sink
-  and asserts the bytes appear in none of: thrown error message/fields,
-  `job_queue.last_error`, captured pino output, or a Sentry event through
-  `scrubPiiFromEvent`.
+- **`utils/merkle-verify.ts`** (new, SCRUM-2490 / PROOF-VERIFY): `verifyMerkleInclusion(leaf, branch, root, { leafIndex?, leafCount? })` recomputes the app-tree root from the branch using the SAME plain double-SHA256 rule as `utils/merkle.ts::buildMerkleTree` (so it matches what is actually anchored on-chain) and returns `{ valid, reason }`. Hardening: 32-byte (64-hex) leaf/sibling length validation (leaf↔internal domain separation for this Bitcoin-style scheme), the **CVE-2012-2459** duplicated-leaf guard (a self-pair `sibling == running hash` is legitimate ONLY at the rightmost node of an odd-sized level — enforced structurally when `leafIndex` + `leafCount` are known), and empty-branch ⇒ root == leaf. Also exports RFC-6962 `hashLeafTagged` / `hashNodeTagged` for a FUTURE `proof_schema_version=2` — NOT wired into the v1 verdict (tagged hashing would change on-chain root bytes; gated behind the PROOF-01 §4 OP_RETURN version-byte decision).
+- **`api/v1/verify-proof.ts`** (SCRUM-2490): `buildProofResponse` now sets `verified` from `verifyMerkleInclusion(...)`, **never** from `anchors.status` (closes the pre-mortem K1 kill-shot). Threads the new `merkle_index` through the stored-proof + metadata extractors and the prod `anchor_proofs` SELECT. NOTE: `api/v1/verify.ts::buildVerificationResult` `verified` is a DIFFERENT, credential-status semantic (active/non-revoked) and is correctly left status-derived — do not confuse the two.
+- **`jobs/batch-anchor.ts` + `jobs/anchor.ts`** (SCRUM-2471 / FIX-1): the customer batch path (`processBatchAnchors`, both the claim path and the legacy fallback) and the single-anchor path (`processAnchor`) now persist each leaf's branch + integer `merkleIndex` into `anchor_proofs` via `utils/anchorProofs.ts::upsertAnchorProofs` (`buildMerkleTree`'s `tree.proofs` was previously discarded; only `publicRecordAnchor.ts` wrote branches). Single-leaf = empty branch, `merkle_root == fingerprint`. Persistence is NON-FATAL (the TX is already broadcast; a miss is recoverable via the backfill — never revert a broadcast over a proof write).
+- **`utils/anchorProofs.ts`**: `AnchorProofUpsertRow` gains `merkleIndex?` → persisted as `anchor_proofs.merkle_index`.
+- **`jobs/proof-branch-backfill.ts`** (new, SCRUM-2471): resumable, self-validating backfill for EXISTING SECURED customer anchors missing a branch. Reconstructs each batch's tree from `created_at,id`-ordered fingerprints, recomputes the root, and persists branches **only if the recomputed root equals the stored `merkle_root`** (never writes a wrong branch; unrecoverable batches are skipped + counted). The data is the durable watermark (a completed batch stops matching the "incomplete" query). **Manual-trigger only — NOT cron-wired, NOT to be run against prod in this change** (T3 data backfill; needs its own soak + operator sign-off).
+- **Migration `0340`** adds the proof-completeness columns + the gated "SECURED ⇒ proof complete" trigger (see `supabase/migrations/agents.md`). `database.types.ts` (worker + root) hand-synced for the 5 new `anchor_proofs` columns (local-only; no cloud `gen:types`).
 
 ## Edge MCP Truthfulness PR-1 — test realignment + embedding drift guard (2026-06-05)
 

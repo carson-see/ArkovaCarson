@@ -19,7 +19,44 @@ vi.mock('../../config.js', () => ({
   config: { bitcoinNetwork: 'signet', frontendUrl: 'https://app.arkova.ai' },
 }));
 
-import { buildVerificationResult, type AnchorByPublicId } from './verify.js';
+import {
+  buildVerificationResult,
+  mapAnchorRow,
+  type AnchorByPublicId,
+  type AnchorSelectRow,
+} from './verify.js';
+
+function createRow(overrides: Partial<AnchorSelectRow> = {}): AnchorSelectRow {
+  return {
+    public_id: 'ARK-2026-TEST-001',
+    fingerprint: 'a'.repeat(64),
+    status: 'SECURED',
+    chain_tx_id: 'b8e381df09ca404eaae2e5e9d9b3d27567fe97ece39ead718f6d2c77ca60eb57',
+    chain_block_height: 204567,
+    chain_timestamp: '2026-03-12T10:30:00Z',
+    created_at: '2026-03-10T08:00:00Z',
+    credential_type: 'DIPLOMA',
+    sub_type: null,
+    issued_at: '2026-01-15T00:00:00Z',
+    expires_at: null,
+    description: null,
+    directory_info_opt_out: false,
+    compliance_controls: null,
+    chain_confirmations: null,
+    version_number: 1,
+    revocation_tx_id: null,
+    revocation_block_height: null,
+    file_mime: null,
+    file_size: null,
+    org_id: 'org-test-1',
+    metadata: null,
+    organization: { display_name: 'University of Michigan' },
+    parent: null,
+    anchor_proofs: null,
+    extraction_manifests: [],
+    ...overrides,
+  };
+}
 
 function createAnchor(overrides: Partial<AnchorByPublicId> = {}): AnchorByPublicId {
   return {
@@ -460,5 +497,79 @@ describe('buildVerificationResult', () => {
       expect(result).not.toHaveProperty('fraudSignals');
       expect(result).not.toHaveProperty('fraud_signals');
     });
+  });
+});
+
+// BUG FIX (iter-5): the public verify lookup hardcoded merkle_root: null and
+// jurisdiction: null, so every verifier was told "no Merkle data" and lost the
+// jurisdiction tag even though the values exist. merkle_root lives on
+// anchor_proofs.merkle_root (legacy fallback anchors.metadata->>'merkle_root');
+// jurisdiction lives in anchors.metadata->>'jurisdiction'. Verified against prod
+// schema (anchor_proofs_anchor_unique → one proof row per anchor).
+describe('mapAnchorRow — DB row → AnchorByPublicId (verify lookup)', () => {
+  it('populates merkle_root from the joined anchor_proofs row', () => {
+    const root = 'deadbeef' + 'a'.repeat(56);
+    const anchor = mapAnchorRow(createRow({ anchor_proofs: { merkle_root: root } }));
+
+    expect(anchor.merkle_root).toBe(root);
+    // and it surfaces on the public response as merkle_proof_hash
+    expect(buildVerificationResult(anchor).merkle_proof_hash).toBe(root);
+  });
+
+  it('accepts anchor_proofs as a to-many array embed (takes first non-null root)', () => {
+    const root = 'c0ffee' + 'b'.repeat(58);
+    const anchor = mapAnchorRow(
+      createRow({ anchor_proofs: [{ merkle_root: null }, { merkle_root: root }] }),
+    );
+
+    expect(anchor.merkle_root).toBe(root);
+  });
+
+  it('falls back to metadata.merkle_root when anchor_proofs has none', () => {
+    const root = 'facade' + 'd'.repeat(58);
+    const anchor = mapAnchorRow(
+      createRow({ anchor_proofs: null, metadata: { merkle_root: root } }),
+    );
+
+    expect(anchor.merkle_root).toBe(root);
+  });
+
+  it('leaves merkle_root null when neither source has it', () => {
+    const anchor = mapAnchorRow(createRow({ anchor_proofs: null, metadata: null }));
+    expect(anchor.merkle_root).toBeNull();
+  });
+
+  it('AC2: jurisdiction key is ABSENT from the response when metadata has none', () => {
+    const anchor = mapAnchorRow(createRow({ metadata: null }));
+    expect(anchor.jurisdiction).toBeNull();
+    // Frozen schema: omit (not null) on the wire.
+    expect(buildVerificationResult(anchor)).not.toHaveProperty('jurisdiction');
+  });
+
+  it('AC3: jurisdiction is present with the value from metadata', () => {
+    const anchor = mapAnchorRow(createRow({ metadata: { jurisdiction: 'US-MI' } }));
+    expect(anchor.jurisdiction).toBe('US-MI');
+    expect(buildVerificationResult(anchor).jurisdiction).toBe('US-MI');
+  });
+
+  it('AC4: never copies an internal id (anchors.id / org_id) into the public response', () => {
+    const anchor = mapAnchorRow(
+      createRow({
+        org_id: '11111111-2222-3333-4444-555555555555',
+        anchor_proofs: { merkle_root: 'ab'.repeat(32) },
+        metadata: { jurisdiction: 'US-CA' },
+      }),
+    );
+    const serialized = JSON.stringify(buildVerificationResult(anchor));
+    // UUID v4 pattern: 8-4-4-4-12 hex — org_id / anchors.id must never leak.
+    expect(serialized).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    expect(serialized).not.toContain('org_id');
+  });
+
+  it('ignores non-string metadata.jurisdiction (defensive — JSONB is untyped)', () => {
+    const anchor = mapAnchorRow(
+      createRow({ metadata: { jurisdiction: { nested: 'oops' } } }),
+    );
+    expect(anchor.jurisdiction).toBeNull();
   });
 });
