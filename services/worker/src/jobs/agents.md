@@ -2,6 +2,16 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-06-25 — Lane 1 i4: reorg block_hash + reorg retraction + legal-hold NET-1/3 freeze (migration 0347)
+
+Three interacting chain-integrity fixes in `chain-maintenance.ts` + `check-confirmations.ts`:
+
+- **BUG-A (false SECURED on same-height reorg).** `detectReorgs` compared only `chain_block_height`, so a reorg that re-mined the anchoring TX into a *different block at the same height* left the anchor falsely SECURED. Migration **0347** adds `anchors.chain_block_hash` (+ `anchor_chain_index` mirror) and threads `p_block_hash` (trailing `DEFAULT NULL`) through `drain_submitted_to_secured_for_tx` (6-arg overload dropped to dodge the PostgREST DEFAULT-ambiguity, §6). `check-confirmations.ts` persists `txData.status.block_hash` at **both** SECURED-write sites (real drain RPC + `autoConfirmMockAnchors`). `detectReorgs` now reverts SECURED→SUBMITTED on a stored-hash≠confirmed-hash mismatch *even at equal height*; legacy NULL-hash rows fall back to the height-only check (strictly-better, no regression).
+- **BUG-B (un-retracted webhook).** A reorg revert now dispatches the EXISTING `credential.status_changed` (previous_status SECURED → new_status SUBMITTED), **org-scoped**, so subscribers who saw `anchor.secured`/`credential.status_changed` learn it was undone. New `anchor.reorg_reverted` audit row per org (reuses the check-confirmations per-org dispatch+audit aggregation — batch failures recorded, not dropped). New `revertReorgedAnchors()` helper centralizes all three revert paths (404 / unconfirmed / hash-or-height mismatch).
+- **BUG-C (legal-hold not frozen).** `monitorStuckTransactions` (NET-1) + `rebroadcastDroppedTransactions` (NET-3) selects now carry `.eq('legal_hold', false)` (mirrors `detectReorgs`) so `abandonSubmittedAnchor` can no longer rewind a held SUBMITTED anchor → PENDING (upholds `legalHoldPreventsSecuredToRevoked`).
+
+TLA: `machines/bitcoinAnchor.machine.ts` adds `reorgSameHeightRevert` + `chainSubmitAbandon` and guards `chainSubmitFail` with `not(legalHold)`; `tla-precheck check` passes (proofPassed, all 9 invariants, deadlock-checked). T3 — migration not applied to prod by the dev (RTE post-merge).
+
 ## 2026-06-16 — rules-engine-versions.ts upsert now typed (head-0339 types resync)
 
 The `database.types.ts` resync to head 0339 added `external_document_versions`, so the
