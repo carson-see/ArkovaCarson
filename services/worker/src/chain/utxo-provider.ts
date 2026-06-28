@@ -260,8 +260,34 @@ export interface UtxoProvider {
    * a bare Bitcoin Core RPC node) may omit it; callers fall back to the UTXO scan.
    */
   getAddressTxs?(address: string): Promise<RawTransaction[]>;
+  /**
+   * PROOF-03 (SCRUM-2336): get the RAW 80-byte block header (160-hex) for a
+   * block hash. Optional — providers that can't supply it (e.g. a plain
+   * mempool REST provider without the endpoint) omit it and the
+   * confirmation-proof fetch degrades to `pending`.
+   */
+  getBlockHeaderHex?(blockhash: string): Promise<string>;
+  /**
+   * PROOF-03 (SCRUM-2336): get the Bitcoin Merkle inclusion proof for one or
+   * more txids within a block (`gettxoutproof`). Returns the serialized
+   * `CMerkleBlock` hex (header + partial merkle tree). Optional for the same
+   * reason as `getBlockHeaderHex`.
+   */
+  getTxOutProof?(txids: string[], blockhash?: string): Promise<string>;
   /** Provider display name for logging */
   readonly name: string;
+}
+
+/**
+ * The slice of {@link UtxoProvider} that {@link fetchConfirmationProof} needs:
+ * a tx lookup plus the two optional inclusion-proof methods. Lets the
+ * confirmation-proof module depend on a narrow interface (and the test mocks
+ * stay small) without pulling in the whole UTXO/broadcast surface.
+ */
+export interface ConfirmationProofProvider {
+  getRawTransaction(txid: string): Promise<RawTransaction>;
+  getBlockHeaderHex?(blockhash: string): Promise<string>;
+  getTxOutProof?(txids: string[], blockhash?: string): Promise<string>;
 }
 
 // ─── Bitcoin Core RPC Implementation ────────────────────────────────────
@@ -342,6 +368,21 @@ export class RpcUtxoProvider implements UtxoProvider {
     return retryWithBackoff(async () => {
       return (await rpcCall(this.config.rpcUrl, 'getblockheader', [blockhash], this.config.rpcAuth)) as BlockHeader;
     }, { name: 'RpcUtxoProvider.getBlockHeader' });
+  }
+
+  /** PROOF-03: raw 80-byte header via `getblockheader <hash> false`. */
+  async getBlockHeaderHex(blockhash: string): Promise<string> {
+    return retryWithBackoff(async () => {
+      return (await rpcCall(this.config.rpcUrl, 'getblockheader', [blockhash, false], this.config.rpcAuth)) as string;
+    }, { name: 'RpcUtxoProvider.getBlockHeaderHex' });
+  }
+
+  /** PROOF-03: Merkle inclusion proof via `gettxoutproof [txids] (blockhash)`. */
+  async getTxOutProof(txids: string[], blockhash?: string): Promise<string> {
+    return retryWithBackoff(async () => {
+      const params: unknown[] = blockhash ? [txids, blockhash] : [txids];
+      return (await rpcCall(this.config.rpcUrl, 'gettxoutproof', params, this.config.rpcAuth)) as string;
+    }, { name: 'RpcUtxoProvider.getTxOutProof' });
   }
 }
 
@@ -465,6 +506,28 @@ export class MempoolUtxoProvider implements UtxoProvider {
     }, { name: 'MempoolUtxoProvider.getAddressTxs' });
   }
 
+  /**
+   * PROOF-03 documented fallback: mempool.space serves the raw 80-byte header
+   * at `/block/:hash/header` (160-hex text). Default source is GetBlock RPC;
+   * this exists so a mempool-only deployment can still fetch the header.
+   */
+  async getBlockHeaderHex(blockhash: string): Promise<string> {
+    return retryWithBackoff(async () => {
+      const url = `${this.baseUrl}/block/${blockhash}/header`;
+      const response = await fetch(url, { signal: createTimeoutSignal() });
+      if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
+      return (await response.text()).trim();
+    }, { name: 'MempoolUtxoProvider.getBlockHeaderHex' });
+  }
+
+  // NOTE: mempool.space has NO `gettxoutproof`-equivalent that returns the
+  // serialized CMerkleBlock format `parseTxOutProof` expects (its
+  // `/tx/:txid/merkle-proof` returns a different JSON shape — block_height,
+  // merkle[], pos). We deliberately do NOT implement `getTxOutProof` here:
+  // the confirmation-proof fetch then reports `pending` for a mempool-only
+  // provider rather than fabricating an unverifiable branch (§1.5). GetBlock
+  // RPC is the supported inclusion-proof source (DISC-03).
+
   private async fetchRawTxHex(txid: string): Promise<string> {
     const url = `${this.baseUrl}/tx/${txid}/hex`;
     const response = await fetch(url, { signal: createTimeoutSignal() });
@@ -574,6 +637,30 @@ export class GetBlockHybridProvider implements UtxoProvider {
    */
   async getAddressTxs(address: string): Promise<RawTransaction[]> {
     return this.mempool.getAddressTxs(address);
+  }
+
+  /**
+   * PROOF-03 (SCRUM-2336): raw 80-byte header via GetBlock RPC
+   * `getblockheader <hash> false`. GetBlock is the sovereign inclusion-proof
+   * source (DISC-03) — same node as broadcast.
+   */
+  async getBlockHeaderHex(blockhash: string): Promise<string> {
+    return retryWithBackoff(async () => {
+      return (await rpcCall(this.rpcUrl, 'getblockheader', [blockhash, false], this.rpcAuth)) as string;
+    }, { name: 'GetBlockHybridProvider.getBlockHeaderHex' });
+  }
+
+  /**
+   * PROOF-03 (SCRUM-2336): Merkle inclusion proof via GetBlock RPC
+   * `gettxoutproof [txids] (blockhash)`. Passing the blockhash pins the proof
+   * to the exact block, so a reorged-out tx fails loudly rather than resolving
+   * against a different block.
+   */
+  async getTxOutProof(txids: string[], blockhash?: string): Promise<string> {
+    return retryWithBackoff(async () => {
+      const params: unknown[] = blockhash ? [txids, blockhash] : [txids];
+      return (await rpcCall(this.rpcUrl, 'gettxoutproof', params, this.rpcAuth)) as string;
+    }, { name: 'GetBlockHybridProvider.getTxOutProof' });
   }
 }
 

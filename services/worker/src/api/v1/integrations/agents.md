@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/api/v1/integrations/
 
-_Last updated: 2026-06-20_
+_Last updated: 2026-06-24_
 
 ## What This Folder Contains
 
@@ -8,7 +8,7 @@ User-facing OAuth flow endpoints for third-party integrations. Each integration 
 
 | File | Purpose |
 |------|---------|
-| `docusign-oauth.ts` | DocuSign OAuth start/callback/disconnect routes plus org-admin Connect listener reprovisioning (SCRUM-1101/SCRUM-2069) |
+| `docusign-oauth.ts` | DocuSign OAuth start/callback/disconnect routes plus org-admin Connect listener reprovisioning (SCRUM-1101/SCRUM-2069). SCRUM-2361 (DS-01): `start` + `callback` gate on `organizations.verification_status = 'VERIFIED'` via `requireVerifiedOrg` — unverified/pending orgs are denied (403 `org_unverified` on start, `docusign_error=org_unverified` redirect on callback); disconnect is never gated. `// TODO(PAY-01)` marks the not-yet-shipped paid-individual (Stripe Identity) entitlement |
 | `docusign-oauth.test.ts` | Tests for DocuSign OAuth flows |
 | `drive-oauth.ts` | Google Drive OAuth start/callback/disconnect routes (SCRUM-1168) |
 | `drive-oauth.test.ts` | Tests for Drive OAuth flows |
@@ -30,4 +30,5 @@ User-facing OAuth flow endpoints for third-party integrations. Each integration 
 - **DO NOT** fall back to `config.supabaseJwtSecret` / `config.supabaseServiceKey` for state signing — that collapses the user-auth and OAuth-CSRF trust boundaries (the H1 finding)
 - **DO** type `member_integrations` (and any other table missing from the generated `database.types.ts`) via a narrow hand-written DB facade with `from(table)` overloads + `.select<Row>()`, cast once at the real-client seam — see `docusign-member-oauth.ts` and `issuer-partnerships.ts`. Do **not** scatter `as unknown as never` casts to silence the checker.
 - **DO** call pino as `logger.error(obj, msg)` / `logger.warn(obj, msg)` (object first) so the configured error serializer + redaction apply; never `logger.error('msg', { error })` (reversed args bypass redaction).
+- **DO** gate the *org-level* DocuSign connect on org KYB verification (`requireVerifiedOrg`), not just admin role (SCRUM-2361). Re-check on the callback too — a signed `state` is replayable inside its TTL and verification can be revoked between start and callback. Never gate disconnect.
 - **DO NOT** select secret-bearing columns (`encrypted_tokens`, `token_kms_key_id`) in any list/read endpoint that returns to a client — list responses are summaries only.

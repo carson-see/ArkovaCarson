@@ -121,4 +121,79 @@ describe('ApiKeySettings', () => {
     render(<ApiKeySettings {...defaultProps} fetchError={null} />);
     expect(screen.queryByText(/Unable to load API keys/)).not.toBeInTheDocument();
   });
+
+  // Regression: a failed revoke used to be swallowed by an empty catch
+  // ("Error handled by parent"), so the dialog closed and the key looked
+  // revoked even though the call rejected. It must surface the failure and
+  // keep the key shown as active.
+  describe('revoke/delete error handling', () => {
+    // Open the confirm dialog for the single active key and click the
+    // destructive confirm button.
+    const confirmRevoke = async () => {
+      // The card action button and the dialog confirm button share the
+      // "Revoke" label; the card button is the only one until the dialog opens.
+      fireEvent.click(screen.getByRole('button', { name: /Revoke/ }));
+      const confirmButton = await screen.findByRole('button', { name: 'Revoke' });
+      fireEvent.click(confirmButton);
+    };
+
+    it('surfaces an error and keeps the key active when revoke fails', async () => {
+      const onRevoke = vi.fn().mockRejectedValue(new Error('row-level security'));
+      render(<ApiKeySettings {...defaultProps} onRevoke={onRevoke} />);
+
+      await confirmRevoke();
+
+      // (AC1) error message is shown to the user
+      await waitFor(() => {
+        expect(screen.getByText(/Failed to revoke key/i)).toBeInTheDocument();
+      });
+      expect(onRevoke).toHaveBeenCalledWith('key-1');
+
+      // (AC1) the key remains shown as active — exactly one Active badge
+      // (key-1) and exactly one Revoked badge (key-2, the pre-existing
+      // revoked key). The active key was NOT flipped to revoked.
+      expect(screen.getAllByText('Active')).toHaveLength(1);
+      expect(screen.getAllByText('Revoked')).toHaveLength(1);
+
+      // (AC1) the confirm dialog stays open (does not imply success by
+      // closing) — its destructive confirm button is still present.
+      expect(screen.getByRole('button', { name: 'Revoke' })).toBeInTheDocument();
+    });
+
+    it('closes the dialog with no error when revoke succeeds', async () => {
+      const onRevoke = vi.fn().mockResolvedValue(undefined);
+      render(<ApiKeySettings {...defaultProps} onRevoke={onRevoke} />);
+
+      await confirmRevoke();
+
+      await waitFor(() => {
+        expect(onRevoke).toHaveBeenCalledWith('key-1');
+      });
+      // (AC2) no error surfaced
+      expect(screen.queryByText(/Failed to revoke key/i)).not.toBeInTheDocument();
+      // (AC2) confirm dialog closed — its title is gone
+      await waitFor(() => {
+        expect(screen.queryByText('Revoke API Key')).not.toBeInTheDocument();
+      });
+    });
+
+    it('surfaces an error when delete fails', async () => {
+      const onDelete = vi.fn().mockRejectedValue(new Error('network'));
+      render(<ApiKeySettings {...defaultProps} onDelete={onDelete} />);
+
+      // Delete buttons are icon-only (Trash2); the active key's is first.
+      const deleteButtons = screen
+        .getAllByRole('button')
+        .filter((b) => b.className.includes('text-destructive'));
+      fireEvent.click(deleteButtons[0]);
+
+      const confirmButton = await screen.findByRole('button', { name: 'Delete' });
+      fireEvent.click(confirmButton);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Failed to delete key/i)).toBeInTheDocument();
+      });
+      expect(onDelete).toHaveBeenCalledWith('key-1');
+    });
+  });
 });

@@ -141,7 +141,14 @@ has_tier=false
 if printf '%s' "$body" | grep -qiE '^##[[:space:]]+Staging[[:space:]]+Soak[[:space:]]+Evidence[[:space:]]*$'; then
   has_section=true
 fi
-if printf '%s' "$body" | grep -qiE '^[[:space:]]*[-*]?[[:space:]]*Tier:[[:space:]]+T[0123]\b'; then
+# Tolerant of common markdown decoration on the Tier line: an optional list
+# marker (`-`/`*`) + optional `[x]`/`[ ]` checkbox, optional emphasis
+# (`*`/`**`/`_`/`__`) wrapping the word `Tier` and/or its colon, and optional
+# emphasis around the value — so `**Tier:** T2`, `- **Tier:** T2`, and
+# `* _Tier_: T3` all parse, while the plain `Tier: T2` form keeps matching.
+# This mirrors extractDeclaredTier() in scripts/ci/check-staging-evidence.ts.
+# Label-parsing tolerance only — the value set stays T0–T3.
+if printf '%s' "$body" | grep -qiE '^[[:space:]]*([-*][[:space:]]*)?(\[[ x]\][[:space:]]*)?([*_]{1,2})?Tier([*_]{1,2})?[[:space:]]*:[[:space:]]*([*_]{1,2})?[[:space:]]*T[0123]([*_]{1,2})?([^[:alnum:]]|$)'; then
   has_tier=true
 fi
 

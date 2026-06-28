@@ -39,6 +39,11 @@ export interface GroundingReport {
 /**
  * Fields that are inherently not groundable in source text
  * (numeric calculations, AI-generated signals, inferred fields, etc.)
+ *
+ * IMPORTANT: only NARRATIVE / inferred fields the MODEL authors belong here.
+ * Never add a field that carries a verbatim FACTUAL claim from the document
+ * (issuerName, dates, license/EIN/CRD numbers, jurisdiction, …) — those MUST
+ * stay groundable so real hallucinations are still caught.
  */
 const NON_GROUNDABLE_FIELDS = new Set([
   'confidence',
@@ -46,6 +51,11 @@ const NON_GROUNDABLE_FIELDS = new Set([
   'creditHours', // numeric — often OCR'd differently
   'fieldOfStudy', // explicitly inferred/normalized per prompt guidance (e.g., "Pharmacist" → "Pharmacy")
   'degreeLevel', // inferred from context (e.g., "Licenciado" → "Bachelor")
+  // ITER-5: model-authored narrative/interpretation — never verbatim in source,
+  // so grounding them false-flagged legitimate documents and deflated confidence.
+  'subType', // GRE-01: model-assigned taxonomy label (e.g., "official_undergraduate")
+  'reasoning', // GRE-02: chain-of-thought explaining WHY the classification was chosen
+  'description', // GME2 v6: model-authored 1–2 sentence human-readable summary
 ]);
 
 /**

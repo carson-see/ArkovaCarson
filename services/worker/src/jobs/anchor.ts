@@ -25,6 +25,7 @@ import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { checkPaymentGuard } from '../billing/paymentGuard.js';
 import { isFreeTierUser, isWithinBatchWindow } from '../billing/reconciliation.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
+import { upsertAnchorProofs } from '../utils/anchorProofs.js';
 
 /** SHA-256 hex fingerprint pattern: exactly 64 lowercase hex characters */
 const FINGERPRINT_REGEX = /^[a-f0-9]{64}$/i;
@@ -262,6 +263,30 @@ export async function processAnchor(anchor: ClaimedAnchor): Promise<boolean> {
     if (updateError) {
       logger.error({ anchorId, error: updateError }, 'Failed to update anchor');
       throw updateError;
+    }
+
+    // FIX-1 (SCRUM-2471): a single-anchor broadcast is a degenerate single-leaf
+    // Merkle tree (root == fingerprint, empty branch). Persist a proof row so
+    // the SECURED anchor carries a recomputable proof for PROOF-VERIFY
+    // (SCRUM-2490). Non-fatal: the TX is already broadcast, and a miss is
+    // recoverable via proof-branch-backfill — never throw over a proof write.
+    try {
+      await upsertAnchorProofs(db, [
+        {
+          anchorId,
+          receiptId: receipt.receiptId,
+          blockHeight: receipt.blockHeight ?? null,
+          blockTimestamp: receipt.blockTimestamp ?? null,
+          merkleRoot: anchor.fingerprint, // single leaf ⇒ root == fingerprint
+          proofPath: [], // empty branch for a single-leaf tree
+          merkleIndex: 0,
+        },
+      ]);
+    } catch (proofError) {
+      logger.warn(
+        { anchorId, error: proofError },
+        'FIX-1: failed to persist single-leaf Merkle proof (non-fatal — recoverable via proof-branch-backfill)',
+      );
     }
 
     // Log audit event — non-fatal

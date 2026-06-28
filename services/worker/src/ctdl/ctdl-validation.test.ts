@@ -114,4 +114,59 @@ describe('validateCtdlJsonLd', () => {
       ],
     });
   });
+
+  // SCRUM-2374 (CE-03) — cross-field invariant: a Revoked or Superseded
+  // credential must not carry a forward-looking ceterms:expirationDate. The
+  // serializer suppresses it at the source; the validator is the independent
+  // second check that catches any future code path that re-introduces the
+  // conflation (the issue Jeanne Kitchens flagged).
+  it('rejects ceterms:expirationDate on a Revoked credential (cross-field invariant)', () => {
+    const jsonLd = buildCtdlJsonLd(baseAnchor, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    const invalid = {
+      ...jsonLd,
+      'ceterms:credentialStatusType': 'ceterms:Revoked',
+      'ceterms:expirationDate': '2027-05-19T00:00:00.000Z',
+    };
+
+    const result = validateCtdlJsonLd(invalid);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain(
+      'ceterms:expirationDate must not be present for a Revoked or Superseded credential',
+    );
+  });
+
+  it('rejects ceterms:expirationDate on a Superseded credential (cross-field invariant)', () => {
+    const jsonLd = buildCtdlJsonLd(baseAnchor, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    const invalid = {
+      ...jsonLd,
+      'ceterms:credentialStatusType': 'ceterms:Superseded',
+      'ceterms:expirationDate': '2027-05-19T00:00:00.000Z',
+    };
+
+    const result = validateCtdlJsonLd(invalid);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain(
+      'ceterms:expirationDate must not be present for a Revoked or Superseded credential',
+    );
+  });
+
+  it('still accepts ceterms:expirationDate on an Active credential', () => {
+    const jsonLd = buildCtdlJsonLd(baseAnchor, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    const active = {
+      ...jsonLd,
+      'ceterms:credentialStatusType': 'ceterms:Active',
+      'ceterms:expirationDate': '2027-05-19T00:00:00.000Z',
+    };
+
+    expect(validateCtdlJsonLd(active)).toEqual({ valid: true, errors: [] });
+  });
 });

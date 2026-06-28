@@ -35,6 +35,7 @@ import { extractText } from './ocrWorker';
 import { stripPII } from './piiStripper';
 import { stripPIIEnhanced } from './enhancedPiiStripper';
 import { supabase } from './supabase';
+import { NerPiiFailClosedError, OcrEngineLoadError } from './ocrFailClosed';
 
 describe('aiExtraction orchestrator', () => {
   beforeEach(() => {
@@ -414,5 +415,145 @@ describe('aiExtraction orchestrator', () => {
     expect(stages).toContain('stripping');
     expect(stages).toContain('extracting');
     expect(stages).toContain('complete');
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // §1.6 FAIL-CLOSED (WEBEXT-03 / SCRUM-2505)
+  //
+  // If the on-device PII model OR the OCR engine fails, the flow MUST
+  // hard-block egress: NO metadata (stripped or not) leaves the browser, and
+  // the user sees a LOUD, explicit failure (progress.failClosed === true).
+  // These are the security-critical tests — they prove the 2026-06-16 fail-open
+  // regression cannot recur.
+  // ───────────────────────────────────────────────────────────────────────
+  describe('§1.6 fail-closed', () => {
+    it('blocks egress (NO fetch) when the NER PII model fails to run', async () => {
+      (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
+        text: 'Jane Doe\nUniversity of Michigan\nBachelor of Science',
+        pageCount: 1,
+        method: 'pdfjs',
+        durationMs: 120,
+      });
+      // NER stripping fails closed (the new contract).
+      (stripPIIEnhanced as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new NerPiiFailClosedError('On-device privacy check could not run (NER model unavailable).'),
+      );
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['private-bytes'], 'degree.pdf', { type: 'application/pdf' });
+      const result = await runExtraction(file, 'a'.repeat(64), 'DEGREE', progressCb);
+
+      // The network call must NEVER happen on the fail-closed path.
+      expect(mockFetch).not.toHaveBeenCalled();
+      // No successful extraction output.
+      expect(result).toBeNull();
+      // The user sees a LOUD, fail-closed error (not a silent skip).
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error', failClosed: true }),
+      );
+    });
+
+    it('blocks egress (NO fetch) when the OCR engine fails to load', async () => {
+      // Tesseract/core/lang failed to load on-device → fail-closed.
+      (extractText as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new OcrEngineLoadError('On-device document reader could not start.'),
+      );
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['scan-bytes'], 'scan.png', { type: 'image/png' });
+      const result = await runExtraction(file, 'b'.repeat(64), 'OTHER', progressCb);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toBeNull();
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error', failClosed: true }),
+      );
+    });
+
+    it('re-raises a Lane 1 NERModelLoadError as fail-closed (DEPENDS ON #1253)', async () => {
+      (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
+        text: 'Some PII-bearing text with names',
+        pageCount: 1,
+        method: 'pdfjs',
+        durationMs: 100,
+      });
+      // Simulate Lane 1's typed error escaping the stripper unchanged.
+      const nerLoadErr = Object.assign(new Error('CSP blocked the model'), {
+        name: 'NERModelLoadError',
+        failClosed: true,
+      });
+      (stripPIIEnhanced as ReturnType<typeof vi.fn>).mockRejectedValue(nerLoadErr);
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['x'], 'doc.pdf', { type: 'application/pdf' });
+      const result = await runExtraction(file, 'c'.repeat(64), 'DEGREE', progressCb);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toBeNull();
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error', failClosed: true }),
+      );
+    });
+
+    it('does NOT mark soft failures (no text found) as fail-closed', async () => {
+      (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
+        text: '',
+        pageCount: 1,
+        method: 'pdfjs',
+        durationMs: 80,
+      });
+
+      const progressCb = vi.fn();
+      const file = new File(['blank'], 'blank.pdf', { type: 'application/pdf' });
+      const result = await runExtraction(file, 'a'.repeat(64), 'DEGREE', progressCb);
+
+      expect(result).toBeNull();
+      // A blank document is a soft, recoverable failure — NOT a privacy breach.
+      const failClosedCalls = progressCb.mock.calls.filter(
+        (c: unknown[]) => (c[0] as { failClosed?: boolean }).failClosed === true,
+      );
+      expect(failClosedCalls).toHaveLength(0);
+    });
+
+    it('does NOT mark an API/timeout failure as fail-closed (egress already PII-safe)', async () => {
+      (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
+        text: 'University of Michigan\nBachelor of Science',
+        pageCount: 1,
+        method: 'pdfjs',
+        durationMs: 100,
+      });
+      (stripPII as ReturnType<typeof vi.fn>).mockReturnValue({
+        strippedText: 'University of Michigan\nBachelor of Science',
+        piiFound: [],
+        redactionCount: 0,
+        originalLength: 39,
+        strippedLength: 39,
+      });
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: () => Promise.resolve({ message: 'AI extraction disabled' }),
+      });
+
+      const progressCb = vi.fn();
+      const file = new File(['x'], 'doc.pdf', { type: 'application/pdf' });
+      const result = await runExtraction(file, 'a'.repeat(64), 'DEGREE', progressCb);
+
+      expect(result).toBeNull();
+      // The strip already succeeded; the failure is downstream of egress safety.
+      const failClosedCalls = progressCb.mock.calls.filter(
+        (c: unknown[]) => (c[0] as { failClosed?: boolean }).failClosed === true,
+      );
+      expect(failClosedCalls).toHaveLength(0);
+    });
   });
 });

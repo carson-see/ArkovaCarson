@@ -364,36 +364,51 @@ export type Database = {
         Row: {
           anchor_id: string
           batch_id: string | null
+          block_hash: string | null
+          block_header: string | null
           block_height: number | null
           block_timestamp: string | null
           created_at: string
           id: string
+          merkle_index: number | null
           merkle_root: string | null
+          op_return_payload: string | null
           proof_path: Json | null
+          proof_schema_version: number
           raw_response: Json | null
           receipt_id: string
         }
         Insert: {
           anchor_id: string
           batch_id?: string | null
+          block_hash?: string | null
+          block_header?: string | null
           block_height?: number | null
           block_timestamp?: string | null
           created_at?: string
           id?: string
+          merkle_index?: number | null
           merkle_root?: string | null
+          op_return_payload?: string | null
           proof_path?: Json | null
+          proof_schema_version?: number
           raw_response?: Json | null
           receipt_id: string
         }
         Update: {
           anchor_id?: string
           batch_id?: string | null
+          block_hash?: string | null
+          block_header?: string | null
           block_height?: number | null
           block_timestamp?: string | null
           created_at?: string
           id?: string
+          merkle_index?: number | null
           merkle_root?: string | null
+          op_return_payload?: string | null
           proof_path?: Json | null
+          proof_schema_version?: number
           raw_response?: Json | null
           receipt_id?: string
         }
@@ -1553,6 +1568,96 @@ export type Database = {
           },
           {
             foreignKeyName: "connector_alert_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      connector_artifact: {
+        Row: {
+          anchor_id: string | null
+          byte_length: number | null
+          created_at: string
+          credit_deduction_id: string | null
+          external_ref: string
+          external_revision: string | null
+          fingerprint_sha256: string
+          id: string
+          integration_id: string | null
+          metadata: Json
+          org_id: string
+          source: string
+          source_timestamp: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          anchor_id?: string | null
+          byte_length?: number | null
+          created_at?: string
+          credit_deduction_id?: string | null
+          external_ref: string
+          external_revision?: string | null
+          fingerprint_sha256: string
+          id?: string
+          integration_id?: string | null
+          metadata?: Json
+          org_id: string
+          source: string
+          source_timestamp?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          anchor_id?: string | null
+          byte_length?: number | null
+          created_at?: string
+          credit_deduction_id?: string | null
+          external_ref?: string
+          external_revision?: string | null
+          fingerprint_sha256?: string
+          id?: string
+          integration_id?: string | null
+          metadata?: Json
+          org_id?: string
+          source?: string
+          source_timestamp?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connector_artifact_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connector_artifact_credit_deduction_id_fkey"
+            columns: ["credit_deduction_id"]
+            isOneToOne: false
+            referencedRelation: "org_credit_deductions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connector_artifact_integration_id_fkey"
+            columns: ["integration_id"]
+            isOneToOne: false
+            referencedRelation: "org_integrations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connector_artifact_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connector_artifact_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "public_org_profiles"
@@ -6431,6 +6536,19 @@ export type Database = {
             }
             Returns: Json
           }
+      enqueue_connector_artifact: {
+        Args: {
+          p_byte_length?: number
+          p_external_ref: string
+          p_external_revision?: string
+          p_fingerprint_sha256?: string
+          p_metadata?: Json
+          p_org_id: string
+          p_source: string
+          p_source_timestamp?: string
+        }
+        Returns: string
+      }
       enqueue_rule_event: {
         Args: {
           p_external_file_id?: string
