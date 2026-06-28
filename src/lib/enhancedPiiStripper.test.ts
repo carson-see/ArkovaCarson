@@ -27,6 +27,7 @@ vi.mock('./mlRuntime', () => ({
 
 import { stripPIIEnhanced } from './enhancedPiiStripper';
 import { detectPIIWithNER, redactNEREntities } from './nerPiiDetector';
+import { isPiiStripFailClosedError } from './ocrFailClosed';
 
 const mockDetectPII = vi.mocked(detectPIIWithNER);
 const mockRedact = vi.mocked(redactNEREntities);
@@ -113,10 +114,34 @@ describe('enhancedPiiStripper', () => {
       expect(result.strippedText).toContain('[SSN_REDACTED]');
     });
 
-    it('falls back to regex-only on NER error', async () => {
+    // WEBEXT-03 / SCRUM-2505 — §1.6 FAIL-CLOSED.
+    // Inverts the pre-2026-06-23 behavior. When NER was requested but the model
+    // fails to load/run, the stripper MUST throw (block egress) — NOT silently
+    // degrade to regex-only. Silent degrade is the exact 2026-06-16 fail-open
+    // regression (unstripped PII left the browser).
+    it('THROWS a fail-closed error on NER failure (no silent regex-only degrade)', async () => {
       mockDetectPII.mockRejectedValue(new Error('Model load failed'));
 
-      const result = await stripPIIEnhanced('SSN: 123-45-6789');
+      await expect(stripPIIEnhanced('SSN: 123-45-6789')).rejects.toMatchObject({
+        failClosed: true,
+        stage: 'ner',
+      });
+    });
+
+    it('preserves Lane 1 NERModelLoadError as a fail-closed throw (DEPENDS ON #1253)', async () => {
+      // Simulate Lane 1's typed error without importing it (not on main yet).
+      const nerLoadErr = Object.assign(new Error('CSP blocked model fetch'), {
+        name: 'NERModelLoadError',
+      });
+      mockDetectPII.mockRejectedValue(nerLoadErr);
+
+      const caught = await stripPIIEnhanced('SSN: 123-45-6789').catch((e: unknown) => e);
+      expect(isPiiStripFailClosedError(caught)).toBe(true);
+    });
+
+    it('does NOT throw (regex-only) when NER is explicitly disabled', async () => {
+      // enableNER:false is a legitimate caller opt-out, not a model failure.
+      const result = await stripPIIEnhanced('SSN: 123-45-6789', { enableNER: false });
       expect(result.nerUsed).toBe(false);
       expect(result.nerResult).toBeNull();
       expect(result.strippedText).toContain('[SSN_REDACTED]');

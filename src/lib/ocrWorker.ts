@@ -7,9 +7,41 @@
  * Constitution 1.6: Documents never leave the user's device.
  * Constitution 4A: Raw OCR text stays client-side; only PII-stripped
  * metadata may be sent to the server.
+ *
+ * WEBEXT-02 / SCRUM-2504 — Tesseract is self-hosted under CSP 'self'. The
+ * Tesseract core (wasm), the worker script, and the English language data are
+ * served from an Arkova-controlled origin (`/vendor/tesseract/...`), NOT from
+ * `cdn.jsdelivr.net`. The deployed CSP (`vercel.json`) forbids jsdelivr, so the
+ * upstream-default CDN load would silently fail; pinning to /vendor keeps OCR
+ * working under the production CSP. Assets are lazy-loaded (only on first image
+ * OCR) and browser-cached; they are NOT bundled into the JS app.
+ *
+ * WEBEXT-03 / SCRUM-2505 — the OCR engine FAILS CLOSED: if the core/worker/lang
+ * cannot load or recognition throws, `extractTextFromImage` raises an
+ * `OcrEngineLoadError` (a fail-closed error) so the orchestrator blocks egress.
  */
 
 import { OCR_LABELS } from './copy';
+import { OcrEngineLoadError } from './ocrFailClosed';
+
+/**
+ * WEBEXT-02: vendored, same-origin Tesseract asset roots (served from
+ * `public/vendor/tesseract/` → site root `/vendor/tesseract/` in dev + prod).
+ * These are passed to `Tesseract.createWorker(..., WorkerOptions)` so Tesseract
+ * never reaches a CDN at runtime. They are also the source of truth asserted by
+ * the WEBEXT-04 CSP CI guard (`scripts/ci/check-csp-runtime-deps.ts`).
+ *
+ *  - `workerPath`: the Tesseract Web Worker script (worker-src 'self').
+ *  - `corePath`:   directory of the core wasm loaders; Tesseract auto-selects
+ *                  the SIMD/relaxedSIMD/plain `-lstm.wasm.js` variant at runtime
+ *                  (script-src 'self' + 'wasm-unsafe-eval').
+ *  - `langPath`:   directory holding `eng.traineddata.gz` (connect-src 'self').
+ */
+export const TESSERACT_VENDOR_PATHS = {
+  workerPath: '/vendor/tesseract/worker.min.js',
+  corePath: '/vendor/tesseract/core/',
+  langPath: '/vendor/tesseract/lang',
+} as const;
 
 export interface OCRResult {
   text: string;
@@ -78,6 +110,13 @@ export async function extractTextFromPDF(
 /**
  * Extract text from an image file using Tesseract.js OCR.
  * Runs entirely in the browser — no network calls.
+ *
+ * WEBEXT-02: the Tesseract core/worker/lang are loaded from the vendored,
+ * same-origin {@link TESSERACT_VENDOR_PATHS} (CSP 'self'), never from a CDN.
+ * WEBEXT-03: FAILS CLOSED — any load/init/recognition failure throws an
+ * {@link OcrEngineLoadError} so the caller blocks egress. The underlying error
+ * is attached as `cause` (for diagnostics) but is NEVER interpolated into the
+ * surfaced message, since it could reference document-derived text (§1.6).
  */
 export async function extractTextFromImage(
   file: File,
@@ -87,16 +126,37 @@ export async function extractTextFromImage(
 
   onProgress?.({ stage: 'loading', progress: 0 });
 
-  const Tesseract = await import('tesseract.js');
+  // The Tesseract import + worker creation + recognition are ALL inside the
+  // fail-closed boundary: a CSP-blocked core fetch, a worker init error, or a
+  // wasm/recognition fault must surface as OcrEngineLoadError — not leak through.
+  let Tesseract: typeof import('tesseract.js');
+  try {
+    Tesseract = await import('tesseract.js');
+  } catch (err) {
+    throw new OcrEngineLoadError(OCR_LABELS.OCR_ENGINE_UNAVAILABLE, { cause: err });
+  }
 
-  const worker = await Tesseract.createWorker('eng', undefined, {
-    logger: (m: { progress: number }) => {
-      onProgress?.({
-        stage: 'processing',
-        progress: Math.round(m.progress * 100),
-      });
-    },
-  });
+  let worker: Awaited<ReturnType<typeof Tesseract.createWorker>>;
+  try {
+    // WEBEXT-02: pin the core (wasm), worker, and language data to /vendor.
+    // OEM defaults to LSTM_ONLY, matching the vendored `*-lstm` cores + the
+    // `eng.traineddata.gz` LSTM model. `gzip: true` matches the `.gz` asset.
+    worker = await Tesseract.createWorker('eng', undefined, {
+      workerPath: TESSERACT_VENDOR_PATHS.workerPath,
+      corePath: TESSERACT_VENDOR_PATHS.corePath,
+      langPath: TESSERACT_VENDOR_PATHS.langPath,
+      gzip: true,
+      logger: (m: { progress: number }) => {
+        onProgress?.({
+          stage: 'processing',
+          progress: Math.round(m.progress * 100),
+        });
+      },
+    });
+  } catch (err) {
+    onProgress?.({ stage: 'error', progress: 0 });
+    throw new OcrEngineLoadError(OCR_LABELS.OCR_ENGINE_UNAVAILABLE, { cause: err });
+  }
 
   try {
     const { data } = await worker.recognize(file);
@@ -109,8 +169,16 @@ export async function extractTextFromImage(
       method: 'tesseract',
       durationMs: Date.now() - start,
     };
+  } catch (err) {
+    onProgress?.({ stage: 'error', progress: 0 });
+    throw new OcrEngineLoadError(OCR_LABELS.OCR_ENGINE_UNAVAILABLE, { cause: err });
   } finally {
-    await worker.terminate();
+    // Always release the worker, even on failure, to avoid a leak.
+    try {
+      await worker.terminate();
+    } catch {
+      // Terminate best-effort; the fail-closed error above is what matters.
+    }
   }
 }
 

@@ -85,6 +85,17 @@ export function ApiKeySettings({
   const [copied, setCopied] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ type: 'revoke' | 'delete'; keyId: string } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const openConfirmAction = (action: { type: 'revoke' | 'delete'; keyId: string }) => {
+    setActionError(null);
+    setConfirmAction(action);
+  };
+
+  const closeConfirmAction = () => {
+    setActionError(null);
+    setConfirmAction(null);
+  };
 
   const resetForm = () => {
     setPhase('form');
@@ -145,17 +156,28 @@ export function ApiKeySettings({
   const handleConfirmAction = async () => {
     if (!confirmAction) return;
     setActionLoading(true);
+    setActionError(null);
     try {
       if (confirmAction.type === 'revoke') {
         await onRevoke(confirmAction.keyId);
       } else {
         await onDelete(confirmAction.keyId);
       }
+      // Success: close the dialog. The key list refetches in the parent.
+      setConfirmAction(null);
     } catch {
-      // Error handled by parent
+      // The mutation rejected (RLS/network/non-OK). Surface it and keep the
+      // dialog open — the key is NOT revoked/deleted, so we must not imply
+      // success by closing or flipping its status. No raw error detail is
+      // shown (it may contain server internals); a stable, scrubbed message
+      // is used instead.
+      setActionError(
+        confirmAction.type === 'revoke'
+          ? API_KEY_LABELS.REVOKE_FAILED
+          : API_KEY_LABELS.DELETE_FAILED,
+      );
     } finally {
       setActionLoading(false);
-      setConfirmAction(null);
     }
   };
 
@@ -277,7 +299,7 @@ export function ApiKeySettings({
       </div>
 
       {/* Confirm action dialog */}
-      <Dialog open={!!confirmAction} onOpenChange={(open) => !open && setConfirmAction(null)}>
+      <Dialog open={!!confirmAction} onOpenChange={(open) => { if (!open && !actionLoading) closeConfirmAction(); }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>
@@ -289,8 +311,14 @@ export function ApiKeySettings({
                 : API_KEY_LABELS.CONFIRM_DELETE}
             </DialogDescription>
           </DialogHeader>
+          {actionError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{actionError}</AlertDescription>
+            </Alert>
+          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmAction(null)}>Cancel</Button>
+            <Button variant="outline" onClick={closeConfirmAction} disabled={actionLoading}>Cancel</Button>
             <Button
               variant="destructive"
               onClick={handleConfirmAction}
@@ -343,7 +371,7 @@ export function ApiKeySettings({
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setConfirmAction({ type: 'revoke', keyId: apiKey.id })}
+                        onClick={() => openConfirmAction({ type: 'revoke', keyId: apiKey.id })}
                       >
                         <Ban className="h-4 w-4 mr-1" />
                         {API_KEY_LABELS.REVOKE_KEY}
@@ -353,7 +381,7 @@ export function ApiKeySettings({
                       variant="ghost"
                       size="sm"
                       className="text-destructive hover:text-destructive"
-                      onClick={() => setConfirmAction({ type: 'delete', keyId: apiKey.id })}
+                      onClick={() => openConfirmAction({ type: 'delete', keyId: apiKey.id })}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>

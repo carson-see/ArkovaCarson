@@ -31,6 +31,7 @@ vi.mock('../../../utils/logger.js', () => ({
 }));
 
 import { docusignWebhookRouter, extractNotaryData } from './docusign.js';
+import { logger } from '../../../utils/logger.js';
 
 const TEST_HMAC_KEY = 'fixture-key-not-a-secret-aaaa';
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
@@ -888,6 +889,182 @@ describe('POST /webhooks/docusign', () => {
 
     expect(res.status).toBe(202);
     expect(res.body.ok).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// SCRUM-2362 (DS-02) — no raw-payload PII in logs / Sentry / Error (§1.6A).
+//
+// The webhook handles documents fetched from a third party (the §1.6A carve-
+// out): the raw Connect payload carries PII (signer/sender emails, notary
+// identity, document fingerprints). None of it may reach the logger, an Error
+// message, or (by extension) Sentry. These tests drive the failure paths that
+// DO log (invalid signature, processing-failure DLQ, ambiguity) and assert the
+// PII markers never appear in any captured log argument or thrown error.
+// ─────────────────────────────────────────────────────────────────────
+describe('POST /webhooks/docusign — no raw-payload PII leak (DS-02, §1.6A)', () => {
+  // Distinctive markers planted in the payload. If any surfaces in a log line
+  // or an Error, the redaction contract is broken.
+  const PII_SENDER_EMAIL = 'pii-sender-fingerprint@secret.example';
+  const PII_NOTARY_NAME = 'PII-NotaryFingerprintName';
+  const PII_DOC_SHA = 'd'.repeat(64);
+
+  function piiBody(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      event: 'envelope-completed',
+      eventId: 'evt-pii-1',
+      envelopeId: 'env-pii-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      generatedDateTime: '2026-05-28T14:05:00.000Z',
+      sender: { email: PII_SENDER_EMAIL },
+      envelopeDocuments: [{ documentId: 'combined', name: 'sensitive.pdf', sha256: PII_DOC_SHA }],
+      envelopeSummary: {
+        recipients: {
+          notaries: [{ name: PII_NOTARY_NAME, completedDateTime: '2026-05-28T14:05:00.000Z' }],
+        },
+      },
+      ...overrides,
+    });
+  }
+
+  // Every value passed to any logger method, deep-serialized to a single string.
+  function allLoggedText(): string {
+    const loggerMock = logger as unknown as Record<'info' | 'warn' | 'error' | 'debug', { mock: { calls: unknown[][] } }>;
+    const chunks: string[] = [];
+    for (const level of ['info', 'warn', 'error', 'debug'] as const) {
+      for (const call of loggerMock[level].mock.calls) {
+        for (const arg of call) {
+          try {
+            chunks.push(typeof arg === 'string' ? arg : JSON.stringify(arg));
+          } catch {
+            chunks.push(String(arg));
+          }
+          // Also capture an Error's message/stack explicitly — JSON.stringify
+          // drops them (non-enumerable), so a leaked Error wouldn't show above.
+          if (arg instanceof Error) {
+            chunks.push(arg.message);
+            chunks.push(arg.stack ?? '');
+          }
+          if (arg && typeof arg === 'object') {
+            const maybeErr = (arg as Record<string, unknown>).error ?? (arg as Record<string, unknown>).err;
+            if (maybeErr instanceof Error) {
+              chunks.push(maybeErr.message);
+              chunks.push(maybeErr.stack ?? '');
+            }
+          }
+        }
+      }
+    }
+    return chunks.join('\n');
+  }
+
+  function expectNoPii(text: string): void {
+    expect(text).not.toContain(PII_SENDER_EMAIL);
+    expect(text).not.toContain(PII_NOTARY_NAME);
+    expect(text).not.toContain(PII_DOC_SHA);
+  }
+
+  it('invalid signature → 401 and no PII in any log line', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    const body = piiBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', 'bad-signature')
+      .send(body);
+
+    expect(res.status).toBe(401);
+    // Response body must not echo PII either.
+    expectNoPii(JSON.stringify(res.body));
+    expectNoPii(allLoggedText());
+  });
+
+  it('processing-failure DLQ path → 500, DLQ row carries no raw PII, logs carry no raw PII', async () => {
+    // Ambiguous inherited markers → throws, hits the catch → logs + DLQ insert.
+    let dlqInsertArg: Record<string, unknown> | null = null;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'parent-int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup([
+        { id: 'marker-int-1', org_id: SUB_ORG_ID, account_id: null, hmac_keys: null },
+        { id: 'marker-int-2', org_id: '33333333-3333-4333-8333-333333333333', account_id: null, hmac_keys: null },
+      ]),
+    );
+    dbFromMock.mockReturnValueOnce({
+      insert: vi.fn((value: Record<string, unknown>) => {
+        dlqInsertArg = value;
+        return Promise.resolve({ data: null, error: null });
+      }),
+    });
+    const body = piiBody();
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(500);
+    // DLQ stores only provider/reason/external_id/payload_hash — never raw bytes.
+    expect(dlqInsertArg).not.toBeNull();
+    expectNoPii(JSON.stringify(dlqInsertArg));
+    // payload_hash is a SHA-256 of the body, not the body itself; external_id is
+    // the envelope id (an opaque provider id, not PII content).
+    expect((dlqInsertArg as unknown as { payload_hash: string }).payload_hash).toMatch(/^[a-f0-9]{64}$/);
+    expectNoPii(allLoggedText());
+  });
+
+  it('rule-event enqueue failure → 500, the thrown/logged error carries no raw PII', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    dbFromMock.mockReturnValueOnce(nonceDelete());
+    dbFromMock.mockReturnValueOnce(webhookDlqInsert());
+    // enqueue_rule_event RPC returns a DB error → handler logs + rolls back + DLQs.
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: 'db unavailable' } });
+    const body = piiBody();
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(500);
+    expectNoPii(allLoggedText());
+  });
+
+  it('valid orphan (unknown account) → 200 and no PII logged on the orphan warn', async () => {
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    const body = piiBody({ accountId: 'unknown-acct' });
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, orphaned: true });
+    expectNoPii(allLoggedText());
+  });
+
+  it('malformed body → 401 and the parse-error log carries no raw payload PII', async () => {
+    // A body that parses as JSON but fails schema (missing accountId) takes the
+    // parse-failure branch which logs err.message — must not echo the raw body.
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-pii-malformed',
+      status: 'completed',
+      sender: { email: PII_SENDER_EMAIL },
+      secretField: PII_NOTARY_NAME,
+    });
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(401);
+    expectNoPii(allLoggedText());
   });
 });
 

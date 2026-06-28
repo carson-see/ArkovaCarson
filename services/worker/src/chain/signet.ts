@@ -175,31 +175,78 @@ export function selectUtxo(
 }
 
 /**
+ * Project the REAL fee of a multi-input OP_RETURN anchor transaction with
+ * `inputCount` inputs, mirroring the vsize math in
+ * `buildMultiInputOpReturnTransaction` so the selector and the builder agree.
+ *
+ * @param inputCount - Number of P2WPKH inputs in the transaction
+ * @param payloadSize - OP_RETURN data payload size in bytes (36 = ARKV + fingerprint; 44 with metadata)
+ * @param feeRate - Fee rate in sat/vbyte
+ * @param withChange - Whether to include the change output in the size estimate
+ */
+function projectMultiInputFee(
+  inputCount: number,
+  payloadSize: number,
+  feeRate: number,
+  withChange: boolean,
+): number {
+  const INPUT_SIZE = 68; // P2WPKH input vbytes
+  const OP_RETURN_OVERHEAD = 11; // 8 (value) + 1 (scriptLen) + 1 (OP_RETURN) + 1 (push opcode)
+  const CHANGE_OUTPUT_SIZE = 31; // P2WPKH change output
+  const OVERHEAD = 11; // version + locktime + witness flag
+  const vsize =
+    INPUT_SIZE * inputCount +
+    OP_RETURN_OVERHEAD +
+    payloadSize +
+    (withChange ? CHANGE_OUTPUT_SIZE : 0) +
+    OVERHEAD;
+  return Math.ceil(vsize * feeRate);
+}
+
+/**
  * INEFF-4/CRIT-5: Select multiple UTXOs to cover the required fee.
  *
  * When no single UTXO is large enough, combine multiple smaller ones.
  * Also enables UTXO consolidation as a side effect (many inputs → one change output).
  *
- * Strategy: largest-first accumulation until total >= requiredFee.
- * Each additional input adds ~68 vbytes to the transaction.
+ * Strategy: largest-first accumulation until the running total clears the fee
+ * threshold for the ACTUAL number of inputs selected so far.
+ *
+ * BUG-2026-06-24-005 (treasury liveness): the threshold is computed from the
+ * real projected vsize for `selected.length` inputs — `INPUT_SIZE*n +
+ * OP_RETURN_OVERHEAD + payloadSize + CHANGE + OVERHEAD` — exactly matching
+ * `buildMultiInputOpReturnTransaction`, PLUS a dust reservation so the chosen
+ * set leaves a spendable change output. The previous implementation escalated
+ * only by extra-input vbytes on top of a single-input estimate and ignored the
+ * change-below-dust band, so it could return a set whose real build either
+ * silently burned sub-dust change as fee or threw `Insufficient funds` —
+ * wedging the batch (processBatchAnchors bulk-reverts BROADCASTING → PENDING).
  *
  * @param utxos - Available UTXOs from the provider
- * @param requiredFee - Minimum fee in satoshis (for single input)
- * @param feeRate - Fee rate in sat/vbyte (needed to account for additional input costs)
- * @returns Array of selected UTXOs, or null if total value is insufficient
+ * @param requiredFee - Single-input fee estimate in satoshis (kept as a floor for backward compat)
+ * @param feeRate - Fee rate in sat/vbyte
+ * @param payloadSize - OP_RETURN payload size in bytes (default 36: ARKV + fingerprint)
+ * @returns Array of selected UTXOs, or null if no dust-safe combination exists
  */
 export function selectMultipleUtxos(
   utxos: Utxo[],
   requiredFee: number,
   feeRate: number,
+  payloadSize: number = 36,
 ): SelectedUtxo[] | null {
   if (utxos.length === 0) return null;
 
-  const INPUT_VSIZE = 68; // P2WPKH input vbytes
   const sorted = [...utxos].sort((a, b) => b.valueSats - a.valueSats);
 
-  // Try single UTXO first (most efficient)
-  if (sorted[0].valueSats >= requiredFee) {
+  // Try single UTXO first (most efficient). Reserve the dust threshold on top
+  // of the single-input projected fee so the change output is spendable rather
+  // than silently burned as fee (BUG-2026-06-24-005). Floored by the caller's
+  // requiredFee estimate for backward compatibility.
+  const singleInputThreshold = Math.max(
+    requiredFee,
+    projectMultiInputFee(1, payloadSize, feeRate, true) + DUST_THRESHOLD,
+  );
+  if (sorted[0].valueSats >= singleInputThreshold) {
     return [{
       txid: sorted[0].txid,
       vout: sorted[0].vout,
@@ -208,10 +255,10 @@ export function selectMultipleUtxos(
     }];
   }
 
-  // Accumulate UTXOs until we have enough
+  // Accumulate UTXOs until the total clears the dust-safe threshold for the
+  // current input count.
   const selected: SelectedUtxo[] = [];
   let totalValue = 0;
-  let totalFeeNeeded = requiredFee;
 
   for (const u of sorted) {
     selected.push({
@@ -222,17 +269,20 @@ export function selectMultipleUtxos(
     });
     totalValue += u.valueSats;
 
-    // Each additional input beyond the first adds to the fee
-    if (selected.length > 1) {
-      totalFeeNeeded = requiredFee + (selected.length - 1) * INPUT_VSIZE * feeRate;
-    }
+    // Real fee for a tx with `selected.length` inputs that keeps a change
+    // output, reserving the dust threshold so the change is spendable rather
+    // than silently burned as fee. Floored by the caller's single-input
+    // estimate so the selector never returns less than the caller expects.
+    const feeWithChange = projectMultiInputFee(selected.length, payloadSize, feeRate, true);
+    const totalFeeNeeded = Math.max(requiredFee, feeWithChange + DUST_THRESHOLD);
 
     if (totalValue >= totalFeeNeeded) {
       return selected;
     }
   }
 
-  // Not enough total value even with all UTXOs
+  // No dust-safe combination — even all UTXOs together cannot fund a tx that
+  // leaves a spendable change output. Caller queues the batch for retry.
   return null;
 }
 
@@ -263,7 +313,7 @@ export function estimateTxVsize(hasChange: boolean, opReturnPayloadSize: number 
 }
 
 /** Dust threshold in satoshis — outputs below this are unspendable */
-const DUST_THRESHOLD = 546;
+export const DUST_THRESHOLD = 546;
 
 /**
  * CRIT-3: BIP125 RBF opt-in nSequence value.
@@ -632,8 +682,11 @@ export class BitcoinChainClient implements ChainClient {
     const selected = selectUtxo(utxos, estimatedFee);
 
     if (!selected) {
-      // INEFF-4: Fall back to multi-input selection
-      const multiSelected = selectMultipleUtxos(utxos, estimatedFee, feeRate);
+      // INEFF-4: Fall back to multi-input selection.
+      // BUG-2026-06-24-005: pass payloadSize so the selector's fee threshold
+      // matches the real multi-input build (OP_RETURN + change + overhead) and
+      // reserves dust — preventing a selector "success" that throws at build.
+      const multiSelected = selectMultipleUtxos(utxos, estimatedFee, feeRate, payloadSize);
       if (!multiSelected) {
         const totalValue = utxos.reduce((sum, u) => sum + u.valueSats, 0);
         throw new Error(

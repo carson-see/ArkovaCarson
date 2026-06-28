@@ -10,11 +10,13 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { AppShell } from '@/components/layout';
 import { WebhookSettings } from '@/components/webhooks';
 import { supabase } from '@/lib/supabase';
+import { WEBHOOK_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
 
 interface WebhookEndpoint {
@@ -102,10 +104,26 @@ export function WebhookSettingsPage() {
   };
 
   const handleToggle = async (id: string, active: boolean) => {
-    await supabase
+    // Optimistic update — flip the row immediately so the toggle feels
+    // responsive. We reconcile against the server below.
+    setEndpoints((prev) =>
+      prev.map((ep) => (ep.id === id ? { ...ep, is_active: active } : ep)),
+    );
+
+    const { error } = await supabase
       .from('webhook_endpoints')
       .update({ is_active: active })
       .eq('id', id);
+
+    if (error) {
+      // RLS / permission denial (or any failure): surface it and visibly
+      // revert. Without this the optimistic flip silently snaps back via the
+      // refetch and the user wrongly believes the change took.
+      toast.error(WEBHOOK_LABELS.TOGGLE_ERROR);
+    }
+
+    // Reconcile with the server: on success this confirms the new state; on
+    // failure it reverts the optimistic flip to the true (unchanged) value.
     await fetchEndpoints();
   };
 

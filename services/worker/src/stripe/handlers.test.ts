@@ -20,6 +20,10 @@ const {
   mockDbFrom,
   billingEventsSelect,
   billingEventsInsert,
+  billingEventsDelete,
+  webhookClaimsInsert,
+  webhookClaimsDelete,
+  webhookClaimsDeleteEq,
   plansSelect,
   plansSelectMaybeSingle,
   subscriptionsUpsert,
@@ -32,6 +36,8 @@ const {
   organizationsUpdate,
   organizationsMaybeSingle,
   mockCallRpc,
+  mockGrantVerified,
+  mockRevokeVerified,
 } = vi.hoisted(() => {
   const mockLogger = {
     info: vi.fn(),
@@ -40,6 +46,11 @@ const {
     debug: vi.fn(),
   };
   const mockCallRpc = vi.fn();
+  // PAY-01 (SCRUM-2384): entitlement grant/revoke spies. The deep DB behavior
+  // is covered by billing/entitlements.test.ts; here we assert the handlers
+  // call them with the resolved user/org.
+  const mockGrantVerified = vi.fn().mockResolvedValue(undefined);
+  const mockRevokeVerified = vi.fn().mockResolvedValue(undefined);
 
   // billing_events.select('id').eq('stripe_event_id', id).maybeSingle()
   const billingEventsMaybeSingle = vi.fn();
@@ -50,8 +61,36 @@ const {
     maybeSingle: billingEventsMaybeSingle,
   };
 
-  // billing_events.insert({})
+  // billing_events.insert({}) — the IMMUTABLE success audit row (written only
+  // after the side effect succeeds).
   const billingEventsInsert = vi.fn();
+
+  // billing_events.delete().eq('stripe_event_id', id)
+  // SCRUM-2353 FAULT INJECTION: production `billing_events` is an append-only
+  // audit table guarded by a BEFORE DELETE trigger (`reject_billing_events_delete`
+  // → `reject_audit_modification`) that RAISEs ERRCODE 23514 "Audit events are
+  // immutable." This mock models that trigger so any attempt to delete a
+  // billing_events row resolves with the 23514 error — exactly what prod does.
+  // The ORIGINAL fix deleted billing_events here; against this faithful mock its
+  // claim-release tests would FAIL (claim never released), which is precisely
+  // the prod bug the mocked-DB unit tests previously masked. The new design must
+  // NEVER call this — it releases the separate webhook_event_claims row instead.
+  const billingEventsDeleteEq = vi.fn().mockResolvedValue({
+    error: { code: '23514', message: 'Audit events are immutable. DELETE operations are not allowed.' },
+  });
+  const billingEventsDelete = vi.fn(() => ({ eq: billingEventsDeleteEq }));
+
+  // webhook_event_claims.insert({}) — the MUTABLE idempotency claim (SCRUM-2353).
+  // Inserted BEFORE the side effect; the stripe_event_id UNIQUE constraint
+  // serializes concurrent duplicate deliveries (23505 → claim lost → skip).
+  const webhookClaimsInsert = vi.fn();
+
+  // webhook_event_claims.delete().eq('stripe_event_id', id) — compensating delete
+  // on a post-claim side-effect throw. This table has NO immutability trigger, so
+  // the delete SUCCEEDS (resolves { error: null }) and the Stripe retry can
+  // re-claim + reprocess exactly once.
+  const webhookClaimsDeleteEq = vi.fn().mockResolvedValue({ error: null });
+  const webhookClaimsDelete = vi.fn(() => ({ eq: webhookClaimsDeleteEq }));
 
   // plans.select('id, stripe_price_id').not('stripe_price_id', 'is', null)
   // plans.select('id').eq('stripe_price_id', priceId).maybeSingle()
@@ -124,6 +163,13 @@ const {
         return {
           select: billingEventsSelect.select,
           insert: billingEventsInsert,
+          // Immutable audit table — delete is modelled as trigger-rejected (23514).
+          delete: billingEventsDelete,
+        };
+      case 'webhook_event_claims':
+        return {
+          insert: webhookClaimsInsert,
+          delete: webhookClaimsDelete,
         };
       case 'plans':
         return { select: plansSelect.select };
@@ -155,6 +201,10 @@ const {
     mockDbFrom,
     billingEventsSelect,
     billingEventsInsert,
+    billingEventsDelete,
+    webhookClaimsInsert,
+    webhookClaimsDelete,
+    webhookClaimsDeleteEq,
     plansSelect,
     plansSelectMaybeSingle,
     subscriptionsUpsert,
@@ -167,6 +217,8 @@ const {
     organizationsUpdate,
     organizationsMaybeSingle,
     mockCallRpc,
+    mockGrantVerified,
+    mockRevokeVerified,
   };
 });
 
@@ -175,6 +227,12 @@ const {
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../utils/db.js', () => ({ db: { from: mockDbFrom } }));
 vi.mock('../utils/rpc.js', () => ({ callRpc: mockCallRpc }));
+// PAY-01 (SCRUM-2384): isolate the entitlement side-effects from these
+// webhook-routing tests (its own DB behavior is unit-tested separately).
+vi.mock('../billing/entitlements.js', () => ({
+  grantVerifiedIdentityEntitlement: mockGrantVerified,
+  revokeVerifiedIdentityEntitlement: mockRevokeVerified,
+}));
 
 // ---- System under test ----
 
@@ -247,7 +305,11 @@ const PAYMENT_SUCCEEDED_EVENT = makeStripeEvent('invoice.payment_succeeded', {
 // ================================================================
 
 function setupDefaults() {
-  // billing_events: event not yet processed
+  // webhook_event_claims: the idempotency CLAIM (SCRUM-2353) — wins the race by
+  // default (no prior claim for this stripe_event_id).
+  webhookClaimsInsert.mockResolvedValue({ error: null });
+  // billing_events: the immutable SUCCESS audit row — insert succeeds; the
+  // event has no prior audit row.
   billingEventsSelect.maybeSingle.mockResolvedValue({ data: null });
   billingEventsInsert.mockResolvedValue({ error: null });
 
@@ -369,29 +431,42 @@ describe('handleStripeWebhook', () => {
     );
   });
 
-  it('skips already-processed events (idempotency via UNIQUE violation)', async () => {
-    billingEventsInsert.mockResolvedValueOnce({ error: { code: '23505', message: 'duplicate' } });
+  it('skips already-processed events (idempotency via webhook_event_claims UNIQUE violation)', async () => {
+    // The CLAIM lives in webhook_event_claims now; a duplicate delivery loses
+    // the claim insert (23505) and bails.
+    webhookClaimsInsert.mockResolvedValueOnce({ error: { code: '23505', message: 'duplicate' } });
     await handleStripeWebhook(CHECKOUT_EVENT);
     expect(mockLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ eventId: 'evt_test_001' }),
       'Event already processed',
     );
     expect(subscriptionsUpsert).not.toHaveBeenCalled();
+    // No audit row is written for a duplicate (no work ran).
+    expect(billingEventsInsert).not.toHaveBeenCalled();
   });
 
-  it('records event in billing_events BEFORE handling (idempotency boundary)', async () => {
+  it('claims in webhook_event_claims BEFORE handling, then writes the billing_events audit AFTER (claim-first idempotency)', async () => {
     const callOrder: string[] = [];
-    billingEventsInsert.mockImplementationOnce(() => {
-      callOrder.push('billing_events.insert');
+    webhookClaimsInsert.mockImplementationOnce(() => {
+      callOrder.push('webhook_event_claims.insert');
       return Promise.resolve({ error: null });
     });
     subscriptionsUpsert.mockImplementationOnce(() => {
       callOrder.push('subscriptions.upsert');
       return Promise.resolve({ error: null });
     });
+    billingEventsInsert.mockImplementationOnce(() => {
+      callOrder.push('billing_events.insert');
+      return Promise.resolve({ error: null });
+    });
 
     await handleStripeWebhook(CHECKOUT_EVENT);
 
+    // The mutable claim carries the stripe_event_id idempotency key.
+    expect(webhookClaimsInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ stripe_event_id: 'evt_test_001' }),
+    );
+    // The immutable audit row still carries the full event context.
     expect(billingEventsInsert).toHaveBeenCalledWith(
       expect.objectContaining({
         stripe_event_id: 'evt_test_001',
@@ -399,13 +474,16 @@ describe('handleStripeWebhook', () => {
         user_id: 'user-001',
       }),
     );
-    // Critical: billing_events MUST be written before any side effect.
-    expect(callOrder.indexOf('billing_events.insert')).toBeLessThan(
+    // Critical ordering: CLAIM before the side effect; AUDIT only after it.
+    expect(callOrder.indexOf('webhook_event_claims.insert')).toBeLessThan(
       callOrder.indexOf('subscriptions.upsert'),
+    );
+    expect(callOrder.indexOf('subscriptions.upsert')).toBeLessThan(
+      callOrder.indexOf('billing_events.insert'),
     );
   });
 
-  it('extracts user_id from event metadata for billing_events', async () => {
+  it('extracts user_id from event metadata for the billing_events audit row', async () => {
     const noMetaEvent = makeStripeEvent('unknown.event.type', { some: 'data' }, 'evt_no_meta');
     await handleStripeWebhook(noMetaEvent);
     expect(billingEventsInsert).toHaveBeenCalledWith(
@@ -414,23 +492,124 @@ describe('handleStripeWebhook', () => {
   });
 
   it('SCRUM-1222: Stripe retry of already-processed event runs zero side effects', async () => {
-    // Simulate: first delivery succeeded, billing_events row exists. Stripe
-    // retries the same event_id. Insert hits UNIQUE violation → bail with
-    // zero side effects.
-    billingEventsInsert.mockResolvedValueOnce({ error: { code: '23505', message: 'duplicate' } });
+    // Simulate: first delivery succeeded, the claim row exists. Stripe retries
+    // the same event_id. The claim insert hits UNIQUE violation → bail with
+    // zero side effects and zero audit writes.
+    webhookClaimsInsert.mockResolvedValueOnce({ error: { code: '23505', message: 'duplicate' } });
     await handleStripeWebhook(CHECKOUT_EVENT);
     expect(subscriptionsUpsert).not.toHaveBeenCalled();
     expect(plansSelect.select).not.toHaveBeenCalled();
     expect(profilesUpdate).not.toHaveBeenCalled();
     expect(auditInsert).not.toHaveBeenCalled();
+    expect(billingEventsInsert).not.toHaveBeenCalled();
   });
 
-  it('throws on non-duplicate billing_events insert error', async () => {
+  it('throws on non-duplicate webhook_event_claims insert error', async () => {
     const dbError = { code: '08001', message: 'connection refused' };
-    billingEventsInsert.mockResolvedValue({ error: dbError });
+    webhookClaimsInsert.mockResolvedValue({ error: dbError });
     await expect(
       handleStripeWebhook(makeStripeEvent('unknown.event.type', {}, 'evt_fail')),
     ).rejects.toEqual(dbError);
+  });
+
+  // ----------------------------------------------------------------
+  // SCRUM-2353 (re-soak redesign): post-claim processing failure must NOT
+  // strand the event behind the idempotency claim. The MUTABLE
+  // webhook_event_claims row is deleted and the error re-thrown so the route
+  // returns 5xx and Stripe retries exactly once. The IMMUTABLE billing_events
+  // audit table is never deleted/updated.
+  //
+  // FAULT-INJECTION NOTE — why this catches the original bug:
+  //   `billingEventsDelete` is mocked to resolve the production immutability
+  //   trigger's error (23514 "Audit events are immutable."). The original fix
+  //   called `billing_events.delete()` to release the claim; against this mock
+  //   that delete fails and the claim is never released — so the claim-release
+  //   + retry-reprocess assertions below would FAIL on the old code, which is
+  //   exactly the prod behaviour the previous all-mocked tests masked. The new
+  //   design releases webhook_event_claims (deletable) instead, and must NEVER
+  //   touch billing_events.delete().
+  // ----------------------------------------------------------------
+
+  it('SCRUM-2353: releases the webhook_event_claims row (NOT billing_events) and re-throws when a side effect fails', async () => {
+    const sideEffectError = new Error('subscriptions.upsert failed');
+    subscriptionsUpsert.mockRejectedValueOnce(sideEffectError);
+
+    await expect(handleStripeWebhook(CHECKOUT_EVENT)).rejects.toThrow('subscriptions.upsert failed');
+
+    // Claim was inserted into the MUTABLE table (we won the race) ...
+    expect(webhookClaimsInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ stripe_event_id: 'evt_test_001' }),
+    );
+    // ... then released by deleting the exact claim row so the retry can reprocess.
+    expect(webhookClaimsDelete).toHaveBeenCalledTimes(1);
+    expect(webhookClaimsDeleteEq).toHaveBeenCalledWith('stripe_event_id', 'evt_test_001');
+    // IMMUTABILITY RESPECTED: billing_events is NEVER deleted (the original
+    // bug). The side effect failed before success, so no audit row was written
+    // either — nothing to roll back on the audit side.
+    expect(billingEventsDelete).not.toHaveBeenCalled();
+    expect(billingEventsInsert).not.toHaveBeenCalled();
+  });
+
+  it('SCRUM-2353: success path writes ONE billing_events audit row, keeps the claim, deletes nothing', async () => {
+    await handleStripeWebhook(CHECKOUT_EVENT);
+    expect(subscriptionsUpsert).toHaveBeenCalled();
+    // Exactly one immutable audit row on success.
+    expect(billingEventsInsert).toHaveBeenCalledTimes(1);
+    // Claim persists (no release on the happy path) ...
+    expect(webhookClaimsDelete).not.toHaveBeenCalled();
+    // ... and the immutable audit is never mutated.
+    expect(billingEventsDelete).not.toHaveBeenCalled();
+  });
+
+  it('SCRUM-2353: failure→retry reprocesses the side effect EXACTLY ONCE (no double-apply)', async () => {
+    // Delivery #1: claim succeeds, side effect throws → claim released, rethrow.
+    const sideEffectError = new Error('transient downstream failure');
+    subscriptionsUpsert.mockRejectedValueOnce(sideEffectError);
+
+    await expect(handleStripeWebhook(CHECKOUT_EVENT)).rejects.toThrow('transient downstream failure');
+    expect(subscriptionsUpsert).toHaveBeenCalledTimes(1); // attempted once, failed
+    expect(webhookClaimsDelete).toHaveBeenCalledTimes(1); // claim rolled back (mutable)
+    expect(billingEventsInsert).not.toHaveBeenCalled();    // no audit row for the failed attempt
+
+    // Stripe retry (delivery #2): claim is gone so the claim insert succeeds
+    // again and the side effect runs to completion — exactly one *successful*
+    // application, and exactly one audit row.
+    subscriptionsUpsert.mockResolvedValueOnce({ error: null });
+    await handleStripeWebhook(CHECKOUT_EVENT);
+
+    // Two attempts total (1 failed + 1 succeeded); never two successful applies,
+    // never a double charge. The claim is NOT deleted again on success.
+    expect(subscriptionsUpsert).toHaveBeenCalledTimes(2);
+    expect(webhookClaimsDelete).toHaveBeenCalledTimes(1);
+    expect(billingEventsInsert).toHaveBeenCalledTimes(1); // exactly one audit row across both deliveries
+  });
+
+  it('SCRUM-2353: a duplicate claim (retry already in flight) skips work and never deletes', async () => {
+    // If we LOSE the claim race (sibling worker / overlapping retry holds the
+    // claim), we must not run side effects AND must not delete the claim the
+    // winner owns AND must not write an audit row.
+    webhookClaimsInsert.mockResolvedValueOnce({ error: { code: '23505', message: 'duplicate' } });
+    await handleStripeWebhook(CHECKOUT_EVENT);
+    expect(subscriptionsUpsert).not.toHaveBeenCalled();
+    expect(webhookClaimsDelete).not.toHaveBeenCalled();
+    expect(billingEventsDelete).not.toHaveBeenCalled();
+    expect(billingEventsInsert).not.toHaveBeenCalled();
+  });
+
+  it('SCRUM-2353: a best-effort claim-release failure does not mask the original processing error', async () => {
+    // The compensating delete is best-effort: if releasing the claim itself
+    // errors, the ORIGINAL side-effect error must still propagate (so the route
+    // answers 5xx) — never the release error.
+    const sideEffectError = new Error('downstream exploded');
+    subscriptionsUpsert.mockRejectedValueOnce(sideEffectError);
+    webhookClaimsDeleteEq.mockResolvedValueOnce({ error: { code: '08006', message: 'release failed' } });
+
+    await expect(handleStripeWebhook(CHECKOUT_EVENT)).rejects.toThrow('downstream exploded');
+    expect(webhookClaimsDelete).toHaveBeenCalledTimes(1);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: 'evt_test_001' }),
+      expect.stringContaining('release'),
+    );
   });
 });
 
@@ -698,6 +877,64 @@ describe('identity.verification_session.verified', () => {
       return arg && arg.kyc_provider === 'stripe_identity';
     });
     expect(verifiedCall).toBeUndefined();
+  });
+
+  // PAY-01 (SCRUM-2384): verified → GRANTS the verified-identity entitlement.
+  it('grants the verified-identity entitlement with the resolved org on verified', async () => {
+    // org lookup (profiles.select('org_id')) resolves the org for the grant.
+    profilesMaybeSingle.mockResolvedValue({ data: { org_id: 'org-001' }, error: null });
+    const event = makeStripeEvent(
+      'identity.verification_session.verified',
+      { id: 'vs_test_001', metadata: { user_id: 'user-001' } },
+      'evt_identity_grant',
+    );
+    await handleStripeWebhook(event);
+    expect(mockGrantVerified).toHaveBeenCalledTimes(1);
+    expect(mockGrantVerified).toHaveBeenCalledWith({ userId: 'user-001', orgId: 'org-001' });
+    expect(mockRevokeVerified).not.toHaveBeenCalled();
+  });
+
+  it('grants with a null org when the user has no org', async () => {
+    profilesMaybeSingle.mockResolvedValue({ data: { org_id: null }, error: null });
+    const event = makeStripeEvent(
+      'identity.verification_session.verified',
+      { id: 'vs_test_001', metadata: { user_id: 'user-001' } },
+      'evt_identity_grant_no_org',
+    );
+    await handleStripeWebhook(event);
+    expect(mockGrantVerified).toHaveBeenCalledWith({ userId: 'user-001', orgId: null });
+  });
+
+  it('does NOT grant when user_id is missing (declined/anonymous session)', async () => {
+    const event = makeStripeEvent(
+      'identity.verification_session.verified',
+      { id: 'vs_no_user' },
+      'evt_identity_no_grant',
+    );
+    await handleStripeWebhook(event);
+    expect(mockGrantVerified).not.toHaveBeenCalled();
+  });
+
+  // PAY-01: a declined / requires_input / canceled session NEVER grants — those
+  // event types route to no-grant handlers.
+  it('does NOT grant on a requires_input session', async () => {
+    const event = makeStripeEvent(
+      'identity.verification_session.requires_input',
+      { id: 'vs_test_001', metadata: { user_id: 'user-001' } },
+      'evt_identity_requires_input',
+    );
+    await handleStripeWebhook(event);
+    expect(mockGrantVerified).not.toHaveBeenCalled();
+  });
+
+  it('does NOT grant on a canceled session', async () => {
+    const event = makeStripeEvent(
+      'identity.verification_session.canceled',
+      { id: 'vs_test_001', metadata: { user_id: 'user-001' } },
+      'evt_identity_canceled',
+    );
+    await handleStripeWebhook(event);
+    expect(mockGrantVerified).not.toHaveBeenCalled();
   });
 });
 
@@ -1007,6 +1244,24 @@ describe('handleSubscriptionDeleted', () => {
     subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
     await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
     expect(auditInsert).not.toHaveBeenCalled();
+  });
+
+  // PAY-01 (SCRUM-2384): a lapsed subscription REVOKES the verified-identity
+  // entitlement for the resolved user/org.
+  it('revokes the verified-identity entitlement on a lapsed subscription', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: 'org-001' },
+    });
+    await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
+    expect(mockRevokeVerified).toHaveBeenCalledTimes(1);
+    expect(mockRevokeVerified).toHaveBeenCalledWith({ userId: 'user-001', orgId: 'org-001' });
+    expect(mockGrantVerified).not.toHaveBeenCalled();
+  });
+
+  it('does NOT revoke when the orphan-row guard skips (no subscription row)', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
+    await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
+    expect(mockRevokeVerified).not.toHaveBeenCalled();
   });
 
   it('throws when DB update fails', async () => {
@@ -1341,6 +1596,98 @@ describe('handlePaymentSucceeded — SCRUM-1791 period roll-forward', () => {
 
     // SCRUM-1239 orphan guard must still short-circuit before any UPDATE.
     expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+  });
+});
+
+// ================================================================
+// SCRUM-1791 — entitlement-lifecycle regressions (renewal / lapse / cancel)
+//
+// These pin the end-to-end "entitlement window stays correct across the
+// subscription lifecycle" behavior the bug describes, distinct from the
+// field-mechanics tests above:
+//   - lapsed-then-renewed must RE-GRANT (status→active + period advanced +
+//     grace cleared) in the single renewal invoice, so a previously over-grace
+//     paid user is restored on the current cycle;
+//   - cancellation must REVOKE (status→canceled) so the entitlement gate fails
+//     after the period ends.
+// ================================================================
+describe('SCRUM-1791 — entitlement lifecycle (renew / lapse / cancel)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaults();
+  });
+
+  it('lapsed-then-renewed: invoice.payment_succeeded re-grants (active + period advanced + grace cleared)', async () => {
+    // The subscription had lapsed (org in payment grace). The renewal invoice
+    // carries the NEW billing window — the handler must flip to active AND roll
+    // the period forward AND clear the org grace, all from one event.
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { id: 'sub-row-1', user_id: 'user-001', org_id: 'org-001', plan_id: 'plan-ind' },
+    });
+    const start = 1740787200; // 2025-03-01T00:00:00Z (the new, current cycle)
+    const end = 1743465600; // 2025-04-01T00:00:00Z
+    const event = makeStripeEvent('invoice.payment_succeeded', {
+      id: 'inv_relapse_regrant',
+      customer: 'cus_test_001',
+      subscription: 'sub_test_001',
+      lines: makeInvoiceLines(start, end),
+    });
+
+    await handlePaymentSucceeded(event);
+
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as Record<string, unknown>;
+    // Re-grant: active again, on the CURRENT cycle (not the stale lapsed window).
+    expect(updateArg.status).toBe('active');
+    expect(updateArg.current_period_start).toBe(new Date(start * 1000).toISOString());
+    expect(updateArg.current_period_end).toBe(new Date(end * 1000).toISOString());
+    // Grace must be cleared so entitlement is restored.
+    expect(mockCallRpc).toHaveBeenCalledWith(
+      expect.anything(),
+      'clear_payment_grace',
+      { p_org_id: 'org-001' },
+    );
+  });
+
+  it('cancellation: customer.subscription.deleted revokes entitlement (status→canceled)', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: 'org-001' },
+    });
+
+    await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
+
+    expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'canceled' }),
+    );
+    expect(subscriptionsUpdate.eq).toHaveBeenCalledWith('stripe_subscription_id', 'sub_test_001');
+    // Audit trail of the revoke.
+    expect(auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'payment.subscription_canceled', org_id: 'org-001' }),
+    );
+  });
+
+  it('mid-period upgrade: customer.subscription.updated recomputes the window from items[0] (no stale carry-over)', async () => {
+    // An upgrade mid-cycle issues customer.subscription.updated with the new
+    // item period. Pin that the stored window is recomputed, not left stale.
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', plan_id: 'plan-ind', cancel_at_period_end: false, org_id: 'org-001' },
+    });
+    const newStart = 1743465600; // 2025-04-01
+    const newEnd = 1746057600; // 2025-05-01
+    const event = makeStripeEvent('customer.subscription.updated', {
+      id: 'sub_test_001',
+      customer: 'cus_test_001',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: makeSubItems('price_upgraded', newStart, newEnd),
+    });
+
+    await handleSubscriptionUpdated(event);
+
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as Record<string, unknown>;
+    expect(updateArg.current_period_start).toBe(new Date(newStart * 1000).toISOString());
+    expect(updateArg.current_period_end).toBe(new Date(newEnd * 1000).toISOString());
   });
 });
 

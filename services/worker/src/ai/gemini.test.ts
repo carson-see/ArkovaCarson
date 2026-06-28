@@ -4,7 +4,7 @@
  * All tests use mocked GoogleGenerativeAI — no real API calls (Constitution 1.7).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock logger to avoid config dependency
 vi.mock('../utils/logger.js', () => ({
@@ -45,12 +45,24 @@ import type { ExtractionRequest } from './types.js';
 import { logger } from '../utils/logger.js';
 
 describe('GeminiProvider', () => {
+  // §1.6: ENABLE_AI_EXTRACTION defaults TRUE in production. Mirror that here so the
+  // standard extraction tests exercise the production-default state; tests that
+  // assert the fail-closed guard (BUG-2026-06-24-015) override to 'false' locally.
+  const originalExtractionFlag = process.env.ENABLE_AI_EXTRACTION;
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.ENABLE_AI_EXTRACTION = 'true';
     mockGetGenerativeModel.mockReturnValue({
       generateContent: mockGenerateContent,
       embedContent: mockEmbedContent,
     });
+  });
+  afterEach(() => {
+    if (originalExtractionFlag === undefined) {
+      delete process.env.ENABLE_AI_EXTRACTION;
+    } else {
+      process.env.ENABLE_AI_EXTRACTION = originalExtractionFlag;
+    }
   });
 
   describe('constructor', () => {
@@ -272,6 +284,153 @@ describe('GeminiProvider', () => {
       const provider = new GeminiProvider('test-key');
       await expect(provider.extractMetadata(request)).rejects.toThrow('UNAVAILABLE');
       expect(mockGenerateContent).toHaveBeenCalledTimes(3);
+    });
+
+    // BUG-2026-06-24-015: in-provider §1.6 fail-closed guard. The production
+    // extraction path must not rely solely on route middleware — a routing
+    // regression must not let extraction run while the launch-gate is off.
+    describe('ENABLE_AI_EXTRACTION fail-closed guard (§1.6)', () => {
+      it('fails closed when ENABLE_AI_EXTRACTION is explicitly not "true"', async () => {
+        const original = process.env.ENABLE_AI_EXTRACTION;
+        process.env.ENABLE_AI_EXTRACTION = 'false';
+        try {
+          const provider = new GeminiProvider('test-key');
+          await expect(provider.extractMetadata(request)).rejects.toThrow('ENABLE_AI_EXTRACTION');
+          // The model must never be invoked when the gate is closed.
+          expect(mockGenerateContent).not.toHaveBeenCalled();
+        } finally {
+          process.env.ENABLE_AI_EXTRACTION = original;
+        }
+      });
+
+      it('runs normally when ENABLE_AI_EXTRACTION is "true" (prod default)', async () => {
+        const original = process.env.ENABLE_AI_EXTRACTION;
+        process.env.ENABLE_AI_EXTRACTION = 'true';
+        mockGenerateContent.mockResolvedValue({
+          response: {
+            text: () => JSON.stringify({ credentialType: 'DEGREE', confidence: 0.9 }),
+            usageMetadata: { totalTokenCount: 50 },
+          },
+        });
+        try {
+          const provider = new GeminiProvider('test-key');
+          const result = await provider.extractMetadata(request);
+          expect(result.fields.credentialType).toBe('DEGREE');
+          expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+        } finally {
+          process.env.ENABLE_AI_EXTRACTION = original;
+        }
+      });
+    });
+  });
+
+  // BUG-2026-06-24-014: generateTags and reconstructTemplate must use the same
+  // hardened JSON pipeline (markdown-fence strip + comment strip + brace-salvage)
+  // that extractMetadata uses. Gemini Flash routinely ```json-fences and truncates
+  // output; a naked JSON.parse throws SyntaxError → HTTP 500 on /ai/tags + /ai/template.
+  describe('generateTags (hardened JSON parsing)', () => {
+    const fields = { credentialType: 'DEGREE', issuerName: 'University of Michigan' };
+
+    it('parses ```json-fenced tag responses instead of throwing SyntaxError', async () => {
+      mockGenerateContent.mockResolvedValue({
+        response: {
+          text: () => [
+            '```json',
+            JSON.stringify({
+              tags: ['degree', 'university'],
+              documentType: 'Academic Credential',
+              category: 'Education',
+              subcategory: 'Higher Education',
+            }),
+            '```',
+          ].join('\n'),
+          usageMetadata: { totalTokenCount: 30 },
+        },
+      });
+
+      const provider = new GeminiProvider('test-key');
+      const result = await provider.generateTags(fields);
+
+      expect(result.tags).toEqual(['degree', 'university']);
+      expect(result.documentType).toBe('Academic Credential');
+      expect(result.category).toBe('Education');
+    });
+
+    it('salvages a truncated tag payload with trailing junk after the closing brace', async () => {
+      // Flash sometimes appends a stray continuation token / prose after the JSON
+      // object; naked JSON.parse rejects the whole string. Brace-salvage recovers it.
+      mockGenerateContent.mockResolvedValue({
+        response: {
+          text: () =>
+            `${JSON.stringify({
+              tags: ['license'],
+              documentType: 'License',
+              category: 'Legal',
+              subcategory: 'Bar',
+            })}\nNote: truncated response continues here without closing fence`,
+          usageMetadata: { totalTokenCount: 28 },
+        },
+      });
+
+      const provider = new GeminiProvider('test-key');
+      const result = await provider.generateTags(fields);
+
+      expect(result.tags).toEqual(['license']);
+      expect(result.documentType).toBe('License');
+    });
+  });
+
+  describe('reconstructTemplate (hardened JSON parsing)', () => {
+    const fields = { credentialType: 'DEGREE', issuerName: 'University of Michigan' };
+
+    const validTemplate = {
+      templateType: 'formal' as const,
+      documentTitle: 'Bachelor of Science',
+      sections: [
+        {
+          heading: 'Credential',
+          fields: [{ label: 'Issuer', value: 'University of Michigan', displayType: 'text' as const }],
+        },
+      ],
+      tags: ['degree'],
+      documentType: 'Academic Credential',
+      summary: 'A bachelor of science degree.',
+      verificationNotes: null,
+    };
+
+    it('parses ```json-fenced template responses instead of throwing SyntaxError', async () => {
+      mockGenerateContent.mockResolvedValue({
+        response: {
+          text: () => ['```json', JSON.stringify(validTemplate), '```'].join('\n'),
+          usageMetadata: { totalTokenCount: 200 },
+        },
+      });
+
+      const provider = new GeminiProvider('test-key');
+      const result = await provider.reconstructTemplate(fields, 0.9);
+
+      expect(result.templateType).toBe('formal');
+      expect(result.documentTitle).toBe('Bachelor of Science');
+      expect(result.sections).toHaveLength(1);
+      // tokensUsed is attached from usageMetadata after parse.
+      expect(result.tokensUsed).toBe(200);
+    });
+
+    it('salvages a truncated template payload with trailing junk after the closing brace', async () => {
+      mockGenerateContent.mockResolvedValue({
+        response: {
+          text: () =>
+            `${JSON.stringify(validTemplate)} <-- model kept emitting past the object`,
+          usageMetadata: { totalTokenCount: 180 },
+        },
+      });
+
+      const provider = new GeminiProvider('test-key');
+      const result = await provider.reconstructTemplate(fields, 0.9);
+
+      expect(result.templateType).toBe('formal');
+      expect(result.summary).toBe('A bachelor of science degree.');
+      expect(result.tokensUsed).toBe(180);
     });
   });
 

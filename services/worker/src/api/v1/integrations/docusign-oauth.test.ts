@@ -79,6 +79,28 @@ function asTestDb(db: unknown): DocusignRouterDeps['db'] {
   return db as DocusignRouterDeps['db'];
 }
 
+/**
+ * SCRUM-2361 (DS-01): the connect path now performs TWO lookups —
+ * `org_members` (admin gate) then `organizations` (verified-org gate). This
+ * table-aware mock satisfies both for the happy path; pass a role and an
+ * org verification status. Unknown tables resolve empty (success, no rows).
+ */
+function verifiedConnectDb(
+  role: 'admin' | 'owner' | 'member' = 'admin',
+  verificationStatus: 'VERIFIED' | 'PENDING' | 'UNVERIFIED' = 'VERIFIED',
+  suspended = false,
+) {
+  return {
+    from: vi.fn((table: string) => {
+      if (table === 'org_members') return mockQuery({ data: { role }, error: null });
+      if (table === 'organizations') {
+        return mockQuery({ data: { id: TEST_ORG_ID, verification_status: verificationStatus, suspended }, error: null });
+      }
+      return mockQuery({ data: null, error: null });
+    }),
+  };
+}
+
 function createApp(db: unknown, overrides: Partial<DocusignRouterDeps> = {}) {
   const app = express();
   app.use(express.json());
@@ -174,9 +196,7 @@ describe('DocuSign OAuth router', () => {
   });
 
   it('H1: uses INTEGRATION_STATE_HMAC_SECRET from env when provided', async () => {
-    const db = {
-      from: vi.fn(() => mockQuery({ data: { role: 'admin' }, error: null })),
-    };
+    const db = verifiedConnectDb('admin');
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -249,9 +269,7 @@ describe('DocuSign OAuth router', () => {
   });
 
   it('starts OAuth for org admins and returns a DocuSign authorization URL', async () => {
-    const db = {
-      from: vi.fn(() => mockQuery({ data: { role: 'admin' }, error: null })),
-    };
+    const db = verifiedConnectDb('admin');
     const app = createApp(db);
 
     const res = await request(app)
@@ -296,6 +314,7 @@ describe('DocuSign OAuth router', () => {
     const db = {
       from: vi.fn((table: string) => {
         if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID, verification_status: 'VERIFIED' }, error: null }, capture);
         if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
         if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
         return mockQuery({ data: null, error: null }, capture);
@@ -679,6 +698,7 @@ describe('DocuSign OAuth router', () => {
     const db = {
       from: vi.fn((table: string) => {
         if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID, verification_status: 'VERIFIED' }, error: null }, capture);
         if (table === 'org_integrations') return mockQuery({ data: null, error: { message: 'upsert failed' } }, capture);
         if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
         return mockQuery({ data: null, error: null }, capture);
@@ -778,6 +798,7 @@ describe('DocuSign OAuth router', () => {
     const db = {
       from: vi.fn((table: string) => {
         if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID, verification_status: 'VERIFIED' }, error: null }, capture);
         if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
         if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
         return mockQuery({ data: null, error: null }, capture);
@@ -893,6 +914,7 @@ describe('DocuSign OAuth router', () => {
     const db = {
       from: vi.fn((table: string) => {
         if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID, verification_status: 'VERIFIED' }, error: null }, capture);
         if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
         if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
         return mockQuery({ data: null, error: null }, capture);
@@ -1318,5 +1340,168 @@ describe('DocuSign OAuth router', () => {
         error: 'DocuSign refresh-token secret is empty or missing',
       },
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// SCRUM-2361 (DS-01) — verified-organization entitlement gate.
+//
+// AC: the backend DENIES the DocuSign connect for unverified orgs and for
+// free individual users; the org-admin connection path is scoped to that org;
+// a paid verified individual routes to the personal/member queue (TODO PAY-01,
+// not yet shipped — the org path here keys off org KYB verification); and the
+// UI denial copy must match the backend. These tests pin the backend half:
+// every persona resolves to the expected status/code at `start` and the
+// callback enforces the same gate as a security backstop.
+// ─────────────────────────────────────────────────────────────────────
+describe('DocuSign OAuth — DS-01 verified-org entitlement gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function startConnect(db: ReturnType<typeof verifiedConnectDb>) {
+    return request(createApp(db))
+      .post('/api/v1/integrations/docusign/oauth/start')
+      .set('host', 'worker.test')
+      .send({ org_id: TEST_ORG_ID });
+  }
+
+  it('PERSONA org admin + VERIFIED org → allows connect (200, authorization URL)', async () => {
+    const res = await startConnect(verifiedConnectDb('admin', 'VERIFIED'));
+    expect(res.status).toBe(200);
+    expect(res.body.authorizationUrl).toContain('account-d.docusign.com');
+  });
+
+  it('PERSONA org owner + VERIFIED org → allows connect (200)', async () => {
+    const res = await startConnect(verifiedConnectDb('owner', 'VERIFIED'));
+    expect(res.status).toBe(200);
+    expect(res.body.authorizationUrl).toBeTruthy();
+  });
+
+  it('PERSONA org admin + UNVERIFIED org → DENIES connect (403, org_unverified)', async () => {
+    const res = await startConnect(verifiedConnectDb('admin', 'UNVERIFIED'));
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('org_unverified');
+    // No DocuSign authorization URL is leaked on denial.
+    expect(res.body.authorizationUrl).toBeUndefined();
+    expect(res.body.url).toBeUndefined();
+  });
+
+  it('PERSONA org admin + PENDING org → DENIES connect (403, org_unverified)', async () => {
+    const res = await startConnect(verifiedConnectDb('admin', 'PENDING'));
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('org_unverified');
+  });
+
+  it('PERSONA org admin + VERIFIED but SUSPENDED org → DENIES connect (403, org_suspended)', async () => {
+    // Worker/UI gate parity (code-review must-fix): the authoritative worker gate
+    // must not be narrower than useCanIssueCredential, which bars suspended orgs.
+    // A suspended-but-VERIFIED org must not connect via a direct /oauth/start call.
+    const res = await startConnect(verifiedConnectDb('admin', 'VERIFIED', true));
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('org_suspended');
+  });
+
+  it('VERIFIED org with null/legacy suspended (pre-0289) → still allowed (parity with the hook)', async () => {
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'organizations') {
+          return mockQuery({ data: { id: TEST_ORG_ID, verification_status: 'VERIFIED', suspended: null }, error: null });
+        }
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const res = await startConnect(db);
+    expect(res.status).toBe(200);
+  });
+
+  it('PERSONA org member (not admin) → DENIES connect at admin gate (403) before verification check', async () => {
+    // Free individual / non-admin member: denied at the admin gate. The
+    // organizations lookup must NOT run (admin gate short-circuits first).
+    const db = verifiedConnectDb('member', 'VERIFIED');
+    const res = await startConnect(db);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain('org admin');
+    // Verification lookup never reached — admin gate denied first.
+    const tablesQueried = db.from.mock.calls.map((c) => c[0]);
+    expect(tablesQueried).toContain('org_members');
+    expect(tablesQueried).not.toContain('organizations');
+  });
+
+  it('PERSONA unverified individual (admin of an UNVERIFIED org) → denial code is stable for UI copy mapping', async () => {
+    // The frontend maps `code: 'org_unverified'` to CONNECTIONS_LABELS.
+    // DOCUSIGN_NOT_VERIFIED. Pin the contract so the copy stays in lockstep.
+    const res = await startConnect(verifiedConnectDb('admin', 'UNVERIFIED'));
+    expect(res.body).toMatchObject({ code: 'org_unverified' });
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  it('verification lookup failure → fails closed (500) with a distinct retry code, not a "get verified" dead-end', async () => {
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'organizations') return mockQuery({ data: null, error: { message: 'db unavailable' } });
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const res = await startConnect(db);
+    expect(res.status).toBe(500);
+    expect(res.body.code).toBe('verification_lookup_failed');
+  });
+
+  it('CALLBACK backstop: a signed state for an org that is no longer VERIFIED is rejected (no connection persisted)', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    // Start succeeds (org VERIFIED at start time) to mint a real signed state…
+    const startDb = verifiedConnectDb('admin', 'VERIFIED');
+    const startApp = createApp(startDb);
+    const start = await request(startApp)
+      .post('/api/v1/integrations/docusign/oauth/start')
+      .set('host', 'worker.test')
+      .send({ org_id: TEST_ORG_ID, return_to: 'http://localhost:5173/organizations/org-1?tab=settings' });
+    expect(start.status).toBe(200);
+    const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+
+    // …but by callback time the org is UNVERIFIED (revoked). The callback must
+    // redirect with org_unverified and never reach the token upsert.
+    const callbackDb = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID, verification_status: 'UNVERIFIED' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
+        return mockQuery({ data: null, error: null }, capture);
+      }),
+    };
+    const callbackApp = express();
+    callbackApp.use(express.json());
+    callbackApp.use((req, _res, next) => {
+      (req as unknown as { userId: string }).userId = TEST_USER_ID;
+      next();
+    });
+    callbackApp.use('/api/v1/integrations', createDocusignOAuthRouter({
+      db: asTestDb(callbackDb),
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+      },
+      stateSecret: 'test-state-secret',
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+    }));
+
+    const callback = await request(callbackApp)
+      .get('/api/v1/integrations/docusign/oauth/callback')
+      .set('host', 'worker.test')
+      .query({ code: 'docusign-code', state });
+
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toContain('docusign_error=org_unverified');
+    // No token upsert happened — the connection was not persisted.
+    expect(captured.upsert).toBeUndefined();
   });
 });

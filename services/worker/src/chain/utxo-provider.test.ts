@@ -419,3 +419,67 @@ describe('MempoolUtxoProvider retry integration', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
+
+// ─── PROOF-03 (SCRUM-2336): inclusion-proof provider methods ────────────────
+
+describe('PROOF-03 getBlockHeaderHex / getTxOutProof', () => {
+  beforeEach(() => { mockFetch.mockReset(); });
+
+  it('RpcUtxoProvider.getBlockHeaderHex calls getblockheader with verbose=false', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(rpcOk('00'.repeat(80)));
+    const hex = await provider.getBlockHeaderHex('b'.repeat(64));
+    expect(hex).toBe('00'.repeat(80));
+    const body = JSON.parse((mockFetch.mock.calls[0][1] as { body: string }).body);
+    expect(body.method).toBe('getblockheader');
+    expect(body.params).toEqual(['b'.repeat(64), false]);
+  });
+
+  it('RpcUtxoProvider.getTxOutProof passes [txids, blockhash]', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(rpcOk('deadbeef'));
+    const proof = await provider.getTxOutProof(['a'.repeat(64)], 'b'.repeat(64));
+    expect(proof).toBe('deadbeef');
+    const body = JSON.parse((mockFetch.mock.calls[0][1] as { body: string }).body);
+    expect(body.method).toBe('gettxoutproof');
+    expect(body.params).toEqual([['a'.repeat(64)], 'b'.repeat(64)]);
+  });
+
+  it('RpcUtxoProvider.getTxOutProof omits blockhash when not given', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(rpcOk('cafe'));
+    await provider.getTxOutProof(['a'.repeat(64)]);
+    const body = JSON.parse((mockFetch.mock.calls[0][1] as { body: string }).body);
+    expect(body.params).toEqual([['a'.repeat(64)]]);
+  });
+
+  it('GetBlockHybridProvider routes header + proof through the RPC node', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'https://go.getblock.io/fake-token',
+      mempoolBaseUrl: 'https://mempool.space/api',
+    });
+    mockFetch.mockResolvedValueOnce(rpcOk('11'.repeat(80)));
+    expect(await provider.getBlockHeaderHex('b'.repeat(64))).toBe('11'.repeat(80));
+    const hdrBody = JSON.parse((mockFetch.mock.calls[0][1] as { body: string }).body);
+    expect(hdrBody.method).toBe('getblockheader');
+    expect(hdrBody.params).toEqual(['b'.repeat(64), false]);
+
+    mockFetch.mockResolvedValueOnce(rpcOk('aabbcc'));
+    expect(await provider.getTxOutProof(['a'.repeat(64)], 'b'.repeat(64))).toBe('aabbcc');
+    const proofBody = JSON.parse((mockFetch.mock.calls[1][1] as { body: string }).body);
+    expect(proofBody.method).toBe('gettxoutproof');
+  });
+
+  it('MempoolUtxoProvider.getBlockHeaderHex fetches the /block/:hash/header text endpoint', async () => {
+    const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
+    mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('22'.repeat(80) + '\n') });
+    const hex = await provider.getBlockHeaderHex('b'.repeat(64));
+    expect(hex).toBe('22'.repeat(80));
+    expect(mockFetch.mock.calls[0][0]).toBe('https://mempool.space/signet/api/block/' + 'b'.repeat(64) + '/header');
+  });
+
+  it('MempoolUtxoProvider does NOT implement getTxOutProof (forces honest pending, no fabricated branch)', () => {
+    const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
+    expect((provider as unknown as { getTxOutProof?: unknown }).getTxOutProof).toBeUndefined();
+  });
+});
