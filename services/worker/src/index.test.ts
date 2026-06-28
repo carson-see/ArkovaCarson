@@ -508,7 +508,7 @@ describe('worker server', () => {
       expect(mockHandleStripeWebhook).toHaveBeenCalledWith({ id: 'evt_1', type: 'checkout.session.completed' });
     });
 
-    it('returns 400 when webhook processing throws', async () => {
+    it('returns 400 when signature verification fails (no retry — genuinely bad request)', async () => {
       mockVerifyWebhookSignature.mockImplementation(() => {
         throw new Error('Invalid signature');
       });
@@ -517,8 +517,26 @@ describe('worker server', () => {
         'stripe-signature': 'bad_sig',
       });
 
+      // 400 tells Stripe the request is malformed → do NOT retry.
       expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'Webhook processing failed' });
+      expect(res.body).toEqual({ error: 'Webhook signature verification failed' });
+      // The handler must never run when the signature is bad.
+      expect(mockHandleStripeWebhook).not.toHaveBeenCalled();
+    });
+
+    it('SCRUM-2353: returns 503 (not 400) when POST-verification processing throws so Stripe retries', async () => {
+      // Signature is valid — the throw happens AFTER verification, in the
+      // side-effect handler. A 400 here would make Stripe give up and orphan
+      // the billing side effect (paid customer, no entitlement). Must be 5xx.
+      mockVerifyWebhookSignature.mockReturnValue({ id: 'evt_2', type: 'checkout.session.completed' });
+      mockHandleStripeWebhook.mockRejectedValue(new Error('side effect failed'));
+
+      const res = await request(app, 'POST', '/webhooks/stripe', '{}', {
+        'stripe-signature': 'sig_test',
+      });
+
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: 'Webhook processing failed, retry expected' });
     });
   });
 
