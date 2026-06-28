@@ -24,6 +24,17 @@ import {
   type BackfillLogger,
 } from './backfillProofCompleteness.js';
 
+// SCRUM-1258: the job now imports the typed `config` singleton, whose loader
+// validates full prod env at module load. Mock it (route-test pattern, mirrors
+// ai-extract-batch.test.ts) so the unit test loads without prod config. Every
+// test below injects `deps.confirmToken` directly, which takes precedence over
+// `config.proofBackfillConfirm`, so the dry-run default (undefined) here is inert.
+vi.mock('../config.js', () => ({
+  config: {
+    proofBackfillConfirm: undefined,
+  },
+}));
+
 // ── Test doubles ─────────────────────────────────────────────────────────────
 
 const silentLogger: BackfillLogger = {

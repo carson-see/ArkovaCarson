@@ -49,6 +49,8 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { config } from '../config.js';
+
 /**
  * Current proof-bundle schema version. Mirrors 0340's
  * `anchor_proofs.proof_schema_version` DEFAULT (1 = plain double-SHA256
@@ -362,8 +364,11 @@ export async function runProofCompletenessBackfill(
   options: RunBackfillOptions = {},
 ): Promise<BackfillSummary> {
   const { client, chain, logger } = deps;
+  // SCRUM-1258: the env confirm token is read via typed config
+  // (`config.proofBackfillConfirm` ← PROOF_BACKFILL_CONFIRM), not an ad-hoc
+  // dynamic env read keyed by variable. `deps.confirmToken` still wins for tests.
   const confirmToken =
-    deps.confirmToken ?? process.env[EXECUTE_CONFIRM_ENV] ?? undefined;
+    deps.confirmToken ?? config.proofBackfillConfirm ?? undefined;
   const guard = resolveExecuteGuard(options.execute, confirmToken);
   const dryRun = !guard.permitted;
   const batchSize = clampBatchSize(options.batchSize);

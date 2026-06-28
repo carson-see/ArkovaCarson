@@ -350,6 +350,18 @@ const ConfigSchema = z.object({
    * behavior (SCRUM-1258 — read via `config`, not ad-hoc `process.env`).
    */
   exportsStorageBucket: z.string().default('exports'),
+
+  // Proof-completeness backfill (SCRUM-2335 PROOF-02 / SCRUM-2471)
+  /**
+   * PROOF_BACKFILL_CONFIRM — confirmation token for the back-catalogue
+   * proof-completeness backfill (`runProofCompletenessBackfill`). The job is
+   * DRY-RUN by default; it only applies writes when this token equals the
+   * literal `EXECUTE` AND the caller also passes `options.execute`. Optional —
+   * unset means dry-run-only (the safe default). Routed through typed config
+   * so the gate is a single source of truth, not an ad-hoc `process.env[...]`
+   * read (SCRUM-1258 — typed, not dynamic).
+   */
+  proofBackfillConfirm: z.string().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -700,6 +712,11 @@ function loadConfig(): Config {
     // empty string falls through to the schema default 'exports', preserving
     // the original `process.env.EXPORTS_STORAGE_BUCKET || 'exports'` behavior.
     exportsStorageBucket: process.env.EXPORTS_STORAGE_BUCKET || undefined,
+
+    // Proof-completeness backfill confirm token (SCRUM-2335 / SCRUM-2471).
+    // `|| undefined` so an empty string is treated as unset (dry-run-only),
+    // matching the prior dynamic PROOF_BACKFILL_CONFIRM read in the job.
+    proofBackfillConfirm: process.env.PROOF_BACKFILL_CONFIRM || undefined,
   });
 
   if (!result.success) {
