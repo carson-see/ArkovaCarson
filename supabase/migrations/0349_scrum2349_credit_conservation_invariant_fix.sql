@@ -1,4 +1,4 @@
--- 0347_scrum2349_credit_conservation_invariant_fix.sql
+-- 0349_scrum2349_credit_conservation_invariant_fix.sql
 -- SCRUM-2349 (PM-25 / S1-9) — money-conservation reconciler correctness fix.
 --
 -- WHAT THIS FIXES
@@ -35,8 +35,10 @@
 -- grant.
 --
 -- Numbering: 0344 in the original PR; renumbered to 0347 on 2026-06-27 base
--- refresh — main advanced to 0345 and open PRs reserve 0342 (#1257) and 0346
--- (#1286), so the next free prefix is 0347 (max(main 0345, open-PR 0346)+1).
+-- refresh, then to 0349 on 2026-06-28 base refresh — prod ledger advanced to
+-- 0348 (0347 = lane1_i4_chain_block_hash_reorg, 0348 = scrum2353_webhook_event_claims),
+-- so the original 0347 slot collided. Next free prefix is 0349 (max(prod head
+-- 0348)+1).
 -- Signature change (uuid, integer) → (uuid) is a CREATE-after-DROP, not an
 -- overload — the old two-arg function is dropped first so no DEFAULT-overload
 -- ambiguity remains.
@@ -99,7 +101,7 @@ REVOKE ALL ON FUNCTION public.org_credit_ledger_divergence(uuid) FROM PUBLIC, an
 GRANT EXECUTE ON FUNCTION public.org_credit_ledger_divergence(uuid) TO service_role;
 
 COMMENT ON FUNCTION public.org_credit_ledger_divergence(uuid) IS
-  'SCRUM-2349 (0347 fix, supersedes 0341 body): money-conservation reconciliation. '
+  'SCRUM-2349 (0349 fix, supersedes 0341 body): money-conservation reconciliation. '
   'expected = org_credits.purchased + monthly_allocation + net(org_credit_allocations) '
   '+ SUM(org_credit_deductions.amount). Grants live in org_credits, NOT the ledger '
   '(the 0341 p_initial_grant=0 scalar false-flagged every funded org). Daily sweeper '
