@@ -6025,6 +6025,24 @@ export type Database = {
           },
         ]
       }
+      webhook_event_claims: {
+        Row: {
+          claimed_at: string
+          id: string
+          stripe_event_id: string
+        }
+        Insert: {
+          claimed_at?: string
+          id?: string
+          stripe_event_id: string
+        }
+        Update: {
+          claimed_at?: string
+          id?: string
+          stripe_event_id?: string
+        }
+        Relationships: []
+      }
       x402_payments: {
         Row: {
           amount_usd: number

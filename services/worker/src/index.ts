@@ -179,13 +179,30 @@ app.post(
       res.status(400).json({ error: 'Missing stripe-signature header' });
       return;
     }
+
+    // SCRUM-2353: signature verification and event processing are separate
+    // failure modes and must NOT share a catch.
+    //   - Bad signature → 400. The request is malformed; Stripe must not retry.
+    //   - Processing throws (after the idempotency claim is written) → 503 so
+    //     Stripe RETRIES. handleStripeWebhook releases the claim on throw, so
+    //     the retry reprocesses exactly once instead of being orphaned behind
+    //     the persisted claim (paid customer, no entitlement). A 400 here was
+    //     the bug: it told Stripe to give up on a recoverable failure.
+    let event;
     try {
-      const event = verifyWebhookSignature(req.body, sig ?? '');
+      event = verifyWebhookSignature(req.body, sig ?? '');
+    } catch (error) {
+      logger.error({ error }, 'Webhook signature verification failed');
+      res.status(400).json({ error: 'Webhook signature verification failed' });
+      return;
+    }
+
+    try {
       await handleStripeWebhook(event);
       res.json({ received: true });
     } catch (error) {
-      logger.error({ error }, 'Webhook signature verification or processing failed');
-      res.status(400).json({ error: 'Webhook processing failed' });
+      logger.error({ error }, 'Webhook processing failed after signature verification');
+      res.status(503).json({ error: 'Webhook processing failed, retry expected' });
     }
   }
 );
