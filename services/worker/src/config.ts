@@ -257,6 +257,14 @@ const ConfigSchema = z.object({
    * this to true explicitly once the drain ships.
    */
   enableConnectorArtifactEnqueue: boolFlag(false),
+  /**
+   * Connector-artifact drain consumer (QUEUE-06 / SCRUM-2352) — when false, the
+   * `POST /jobs/drain-connector-artifacts` cron route + in-process schedule
+   * no-op (`skipped:true`). Default false: the drain charges credits at SECURING
+   * and anchors to Bitcoin, so it stays gated until launch-approved per org.
+   * Cloud Run prod env sets this true explicitly once the consumer is signed off.
+   */
+  enableConnectorArtifactDrain: boolFlag(false),
   /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
   docusignIntegrationKey: z.string().optional(),
   /** DocuSign client secret. Required when DOCUSIGN_INTEGRATION_KEY is set. */
@@ -679,6 +687,7 @@ function loadConfig(): Config {
     enableDocusignOauth: process.env.ENABLE_DOCUSIGN_OAUTH,
     enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,
     enableConnectorArtifactEnqueue: process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE,
+    enableConnectorArtifactDrain: process.env.ENABLE_CONNECTOR_ARTIFACT_DRAIN,
     docusignIntegrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
     docusignClientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
     docusignConnectHmacSecret: process.env.DOCUSIGN_CONNECT_HMAC_SECRET,
