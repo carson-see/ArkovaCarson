@@ -39,6 +39,7 @@ import {
   type DocusignRefreshTokenStore,
 } from '../../../integrations/connectors/docusign-token-store.js';
 import { resolveIntegrationStateSecret, createLazyOAuthRouter } from './oauth-state.js';
+import { getCallerOrgId } from '../../_org-auth.js';
 
 const Provider = 'docusign' as const;
 const StateTtlMs = 10 * 60 * 1000;
@@ -222,19 +223,19 @@ function toPostgresBytea(buffer: Buffer): string {
 }
 
 async function requireOrgMember(db: DbClient, userId: string, orgId: string): Promise<boolean> {
-  const { data, error } = await db
-    .from('org_members')
-    .select('role')
-    .eq('user_id', userId)
-    .eq('org_id', orgId)
-    .maybeSingle();
-
-  if (error) {
-    logger.error({ error, orgId }, 'DocuSign member OAuth membership lookup failed');
-    return false;
-  }
-  // Any org role qualifies — not admin-only like org-level OAuth
-  return data?.role != null;
+  // Owner-inclusive resolution. An org OWNER is linked via `profiles.org_id`
+  // and is NOT guaranteed to have an `org_members` row, so a direct
+  // `org_members` lookup 403s owners on their own org. Resolve the caller's org
+  // via the canonical `getCallerOrgId` (reads `profiles.org_id`) and treat a
+  // caller whose profile org matches `orgId` as a member — owners included.
+  // `getCallerOrgId` fails closed (null) on a DB/operational error, preserving
+  // the previous fail-closed-on-error behaviour of this gate.
+  // (The `db` param is retained for signature/call-site stability; the canonical
+  // resolver uses its own service_role client.)
+  void db;
+  const callerOrgId = await getCallerOrgId(userId);
+  // Any caller whose org is `orgId` qualifies — not admin-only like org-level OAuth.
+  return callerOrgId != null && callerOrgId === orgId;
 }
 
 async function recordIntegrationEvent(db: DbClient, args: {

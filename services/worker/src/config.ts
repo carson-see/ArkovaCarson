@@ -100,6 +100,16 @@ const ConfigSchema = z.object({
   /** Gates real Bitcoin chain calls (Constitution 1.9) */
   enableProdNetworkAnchoring: boolFlag(false),
   /**
+   * PROOF-03 (SCRUM-2336): gate the confirmation-proof backfill cron — a
+   * separate, bounded pass that fetches the 80-byte block header + Merkle
+   * inclusion path for already-SECURED anchors and populates
+   * `anchor_proofs.block_header`/`block_hash`. Default OFF: ships inert,
+   * enabled per-environment for the soak + a deliberate prod rollout.
+   * Independent of (and additional to) `enableProdNetworkAnchoring`, which
+   * must also be on for a real (non-mock) inclusion-proof provider.
+   */
+  enableConfirmationProofBackfill: boolFlag(false),
+  /**
    * SCRUM-1170-B — gate org-level credit enforcement on anchor submit.
    * Default false: existing per-user credit path runs unchanged. Flip to true
    * per-tenant via Confluence carve-out (e.g. HakiChain) once an org is seeded
@@ -340,6 +350,18 @@ const ConfigSchema = z.object({
    * behavior (SCRUM-1258 — read via `config`, not ad-hoc `process.env`).
    */
   exportsStorageBucket: z.string().default('exports'),
+
+  // Proof-completeness backfill (SCRUM-2335 PROOF-02 / SCRUM-2471)
+  /**
+   * PROOF_BACKFILL_CONFIRM — confirmation token for the back-catalogue
+   * proof-completeness backfill (`runProofCompletenessBackfill`). The job is
+   * DRY-RUN by default; it only applies writes when this token equals the
+   * literal `EXECUTE` AND the caller also passes `options.execute`. Optional —
+   * unset means dry-run-only (the safe default). Routed through typed config
+   * so the gate is a single source of truth, not an ad-hoc `process.env[...]`
+   * read (SCRUM-1258 — typed, not dynamic).
+   */
+  proofBackfillConfirm: z.string().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -604,6 +626,7 @@ function loadConfig(): Config {
     sentryDsn: process.env.SENTRY_DSN,
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
+    enableConfirmationProofBackfill: process.env.ENABLE_CONFIRMATION_PROOF_BACKFILL,
     enableOrgCreditEnforcement: process.env.ENABLE_ORG_CREDIT_ENFORCEMENT,
     disableInProcessAnchorCron: process.env.DISABLE_IN_PROCESS_ANCHOR_CRON,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
@@ -689,6 +712,11 @@ function loadConfig(): Config {
     // empty string falls through to the schema default 'exports', preserving
     // the original `process.env.EXPORTS_STORAGE_BUCKET || 'exports'` behavior.
     exportsStorageBucket: process.env.EXPORTS_STORAGE_BUCKET || undefined,
+
+    // Proof-completeness backfill confirm token (SCRUM-2335 / SCRUM-2471).
+    // `|| undefined` so an empty string is treated as unset (dry-run-only),
+    // matching the prior dynamic PROOF_BACKFILL_CONFIRM read in the job.
+    proofBackfillConfirm: process.env.PROOF_BACKFILL_CONFIRM || undefined,
   });
 
   if (!result.success) {

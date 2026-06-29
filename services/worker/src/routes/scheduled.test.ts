@@ -5,6 +5,7 @@ const { mockConfig, mockCronSchedule, mockLogger } = vi.hoisted(() => ({
     nodeEnv: 'test',
     batchAnchorIntervalMinutes: 10,
     disableInProcessAnchorCron: false,
+    enableConfirmationProofBackfill: false,
   },
   mockCronSchedule: vi.fn(),
   mockLogger: {
@@ -44,6 +45,11 @@ vi.mock('../jobs/anchorExpirySweep.js', () => ({
 vi.mock('../jobs/stuck-anchor-monitor.js', () => ({
   runStuckAnchorCheck: vi.fn().mockResolvedValue({ healthy: true, alertFired: false }),
 }));
+vi.mock('../jobs/confirmation-proof-backfill.js', () => ({
+  runConfirmationProofBackfill: vi.fn().mockResolvedValue({
+    skipped: true, scanned: 0, txAttempted: 0, txConfirmed: 0, txPending: 0, txStale: 0, anchorsUpdated: 0, anchorsMissing: 0,
+  }),
+}));
 vi.mock('./lifecycle.js', () => ({ trackOperation: vi.fn((operation) => operation) }));
 vi.mock('../utils/sentry.js', () => ({ withCronMonitoring: vi.fn((_name, _schedule, fn) => fn) }));
 
@@ -51,6 +57,7 @@ describe('setupScheduledJobs', () => {
   beforeEach(() => {
     mockConfig.nodeEnv = 'test';
     mockConfig.disableInProcessAnchorCron = false;
+    mockConfig.enableConfirmationProofBackfill = false;
     mockCronSchedule.mockClear();
     vi.clearAllMocks();
   });
@@ -145,5 +152,44 @@ describe('setupScheduledJobs', () => {
       .map((call) => (call[0] as { jobName: string }).jobName);
 
     expect(skippedJobNames).toContain('check-stuck-anchors');
+  });
+
+  it('registers populate-confirmation-proofs every 15 min when the flag is on (PROOF-03 / SCRUM-2336)', async () => {
+    mockConfig.enableConfirmationProofBackfill = true;
+    const { setupScheduledJobs } = await import('./scheduled.js');
+
+    setupScheduledJobs(true);
+
+    // 14 baseline + the gated confirmation-proof backfill job.
+    expect(mockCronSchedule).toHaveBeenCalledTimes(15);
+    const expressions = mockCronSchedule.mock.calls.map((call) => call[0] as string);
+    expect(expressions).toContain('*/15 * * * *');
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it('does NOT register the backfill job when the flag is off (default-OFF, zero prod impact)', async () => {
+    mockConfig.enableConfirmationProofBackfill = false;
+    const { setupScheduledJobs } = await import('./scheduled.js');
+
+    setupScheduledJobs(true);
+
+    expect(mockCronSchedule).toHaveBeenCalledTimes(14);
+    const expressions = mockCronSchedule.mock.calls.map((call) => call[0] as string);
+    expect(expressions).not.toContain('*/15 * * * *');
+  });
+
+  it('skips the backfill job under the maintenance flag in production (anchor-table allowlist)', async () => {
+    mockConfig.nodeEnv = 'production';
+    mockConfig.disableInProcessAnchorCron = true;
+    mockConfig.enableConfirmationProofBackfill = true;
+    const { setupScheduledJobs } = await import('./scheduled.js');
+
+    setupScheduledJobs(true);
+
+    const skippedJobNames = mockLogger.warn.mock.calls
+      .filter((call) => typeof (call[0] as { jobName?: string } | undefined)?.jobName === 'string')
+      .map((call) => (call[0] as { jobName: string }).jobName);
+
+    expect(skippedJobNames).toContain('populate-confirmation-proofs');
   });
 });

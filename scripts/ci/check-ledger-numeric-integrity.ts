@@ -170,6 +170,61 @@ export function auditLocalFiles(files: string[], grandfathered: Set<string>): Vi
   return violations;
 }
 
+/**
+ * Cross-check the prod ledger against the repo: every prod ledger row whose
+ * `name` is a numeric Arkova migration (`NNNN_`) MUST have a matching
+ * `supabase/migrations/NNNN_*.sql` file in the repo. A prod row with NO repo
+ * file means a migration reached prod WITHOUT its source landing on `main` —
+ * the 2026-06-29 incident class where `0347_lane1_i4_chain_block_hash_reorg`
+ * was applied to prod out-of-band, ahead of its still-open owning PR #1307
+ * (CLAUDE.md §1.11: staging-before-prod, RTE-applies-post-merge). The existing
+ * `auditLedgerRows` pass missed it because the orphan row was a perfectly clean
+ * numeric version with no duplicate — format-valid, just absent from the repo.
+ *
+ * Keyed off the numeric `version` (a clean `NNNN`), NOT the row `name`: prod
+ * ledger names vary by apply path — `supabase db push` records the file
+ * basename (`0347_lane1_...`) but an MCP `apply_migration` records a free-text
+ * name (`microsoft_graph_webhook_nonces`) over a numeric version. The version is
+ * the one reliable numeric identifier, so an out-of-band apply is caught
+ * regardless of how its name was recorded.
+ *
+ * Direction matters: this flags ONLY prod-AHEAD-of-repo (orphan prod rows). The
+ * reverse — a repo migration file not yet in the prod ledger — is the NORMAL
+ * healthy window (merged, awaiting the RTE's post-merge prod apply) and is
+ * intentionally NOT flagged. `files` are local migration basenames (± `.sql`).
+ */
+export function auditLedgerVsRepo(
+  rows: LedgerRow[],
+  files: string[],
+  exemptPrefixes: Set<string> = new Set(),
+): Violation[] {
+  const localPrefixes = new Set<string>();
+  for (const raw of files) {
+    const file = raw.endsWith('.sql') ? raw : `${raw}.sql`;
+    if (file === BASELINE_FILE) continue;
+    const m = file.match(LOCAL_NUMERIC_RE);
+    if (m) localPrefixes.add(m[1]); // bare NNNN_ and lettered NNNNb_ both map to NNNN
+  }
+
+  const violations: Violation[] = [];
+  for (const row of rows) {
+    const version = row.version ?? '';
+    if (!NUMERIC_VERSION_RE.test(version)) continue; // baseline/operator/timestamp versions: not repo-file-tracked here
+    if (exemptPrefixes.has(version)) continue; // documented backlog (S0-4.2d)
+    if (localPrefixes.has(version)) continue; // repo has the file — reconciled
+    violations.push({
+      code: 'ledger-orphan-prod-row',
+      message:
+        `prod ledger has version="${version}" (name="${row.name ?? ''}") with no matching ` +
+        `supabase/migrations/${version}_*.sql in the repo — a migration reached prod WITHOUT ` +
+        `its source landing on main (CLAUDE.md §1.11: staging-before-prod / RTE-applies-post-merge). ` +
+        `Reconcile by merging the owning PR (lands the file), or add ${version} to ` +
+        `ledger-numeric-exemptions.json with a documented reason.`,
+    });
+  }
+  return violations;
+}
+
 /** Read a string[] under `key` from a snapshot JSON into a Set (missing/bad → empty). */
 function loadStringSet(path: string, key: string): Set<string> {
   if (!existsSync(path)) return new Set();
@@ -223,10 +278,13 @@ function main(): void {
     if (ledgerPath) raw = readFileSync(ledgerPath, 'utf8');
     else if (inlineLedger) raw = inlineLedger;
     if (raw) {
-      ledgerViolations = auditLedgerRows(
-        parseLedgerPayload(raw),
-        loadStringSet(LEDGER_EXEMPTIONS_PATH, 'exemptPrefixes'),
-      );
+      const exempt = loadStringSet(LEDGER_EXEMPTIONS_PATH, 'exemptPrefixes');
+      const ledgerRows = parseLedgerPayload(raw);
+      ledgerViolations = [
+        ...auditLedgerRows(ledgerRows, exempt),
+        // Orphan-prod-row cross-check: prod ledger ahead of repo (0347 incident class).
+        ...auditLedgerVsRepo(ledgerRows, localFiles, exempt),
+      ];
       ledgerChecked = true;
     }
   } catch (err) {

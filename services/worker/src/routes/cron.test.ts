@@ -352,6 +352,24 @@ vi.mock('../jobs/docusign-listener-drift.js', () => ({
   reconcileListenerDrift: (...args: unknown[]) => mockReconcileListenerDrift(...args),
 }));
 
+// PROOF-03 (SCRUM-2336): confirmation-proof backfill HTTP endpoint. Cloud
+// Scheduler hits POST /jobs/populate-confirmation-proofs because in-process
+// node-cron is dormant under Cloud Run CPU throttling (the soak proved the
+// dev/test backup never fires in prod).
+const mockRunConfirmationProofBackfill = vi.fn().mockResolvedValue({
+  skipped: false,
+  scanned: 12,
+  txAttempted: 3,
+  txConfirmed: 2,
+  txPending: 1,
+  txStale: 0,
+  anchorsUpdated: 9,
+  anchorsMissing: 0,
+});
+vi.mock('../jobs/confirmation-proof-backfill.js', () => ({
+  runConfirmationProofBackfill: (...args: unknown[]) => mockRunConfirmationProofBackfill(...args),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -732,6 +750,37 @@ describe('cron routes', () => {
         '*/30 * * * *',
         expect.any(Function),
       );
+    });
+  });
+
+  // PROOF-03 (SCRUM-2336): the Cloud Scheduler trigger for the confirmation-proof
+  // backfill. Mirrors /check-confirmations: same cronAuth, same JSON-result /
+  // 500-on-error shape. This endpoint (not in-process node-cron) is what actually
+  // fires the backfill in prod, where CPU throttling leaves node-cron dormant.
+  describe('POST /populate-confirmation-proofs', () => {
+    it('returns the backfill result as JSON on success', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/populate-confirmation-proofs');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        skipped: false,
+        scanned: 12,
+        txAttempted: 3,
+        txConfirmed: 2,
+        txPending: 1,
+        txStale: 0,
+        anchorsUpdated: 9,
+        anchorsMissing: 0,
+      });
+      expect(mockRunConfirmationProofBackfill).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 500 on backfill failure', async () => {
+      mockRunConfirmationProofBackfill.mockRejectedValueOnce(new Error('rpc down'));
+      const app = createApp();
+      const res = await request(app).post('/cron/populate-confirmation-proofs');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
     });
   });
 
