@@ -169,7 +169,7 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
 
   const alert = (overrides.emitAlert as ReturnType<typeof vi.fn>) ?? vi.fn();
 
-  const deps: ConnectorArtifactDrainDeps = {
+  const deps = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     db: { from } as any,
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -178,7 +178,7 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
     batchAnchor,
     emitAlert: alert,
     ...overrides,
-  };
+  } as unknown as ConnectorArtifactDrainDeps;
 
   return { rows, deps, materialize, debit, batchAnchor, alert, claimAttempts };
 }
