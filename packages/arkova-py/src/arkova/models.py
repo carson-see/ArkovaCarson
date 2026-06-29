@@ -116,23 +116,36 @@ class ProofBundle(ArkovaModel):
     (64 hex), NO version byte, optional trailing metadata hash.
     """
 
+    # strict=True so a wrong-typed member (e.g. leaf_count="4") is REJECTED, not
+    # silently coerced — parity with the TS SDK's typeof checks (CodeRabbit). The
+    # real wire form carries proper JSON numbers/strings, so strict does not
+    # over-reject valid bundles. populate_by_name kept for camel/snake tolerance.
+    model_config = ConfigDict(extra="allow", populate_by_name=True, strict=True)
+
+    # CodeRabbit (SCRUM-2338): every required member is NON-nullable with NO
+    # default. A complete (non-None) bundle must satisfy the
+    # ``proof_bundle is not None ⇒ independently verifiable`` contract, so a
+    # malformed payload (missing/wrong-typed member, or an empty merkle_proof)
+    # must NOT validate into a valid-looking bundle. The parent response coerces
+    # any such failure to ``proof_bundle = None`` (see the validator below)
+    # rather than defaulting members to None/0/1.
     fingerprint: str
     merkle_root: str
-    merkle_proof: list[MerkleProofEntry]
-    merkle_index: int | None = None
-    # Total leaves in the batch tree this proof belongs to. Always present in a
-    # complete (non-None) bundle; with merkle_index it arms the CVE-2012-2459
-    # duplicate-leaf guard during local verification.
-    leaf_count: int = 0
-    tx_id: str | None = None
-    block_height: int | None = None
-    block_hash: str | None = None
-    block_header: str | None = None
-    op_return_payload: str | None = None
-    block_timestamp: str | None = None
-    proof_schema_version: int = 1
+    merkle_proof: list[MerkleProofEntry] = Field(min_length=1)
+    merkle_index: int
+    # Total leaves in the batch tree this proof belongs to; with merkle_index it
+    # arms the CVE-2012-2459 duplicate-leaf guard during local verification.
+    leaf_count: int
+    tx_id: str
+    block_height: int
+    block_hash: str
+    block_header: str
+    op_return_payload: str
+    block_timestamp: str
+    proof_schema_version: int
     # RESERVED — always None today; the signed envelope is the outer
-    # ?format=signed response wrapper, not an inline bundle field.
+    # ?format=signed response wrapper, not an inline bundle field. The one
+    # legitimately-nullable member of the bundle.
     signature: ProofBundleSignature | None = None
 
 
@@ -152,6 +165,28 @@ class MerkleProofResponse(ArkovaModel):
     batch_id: str | None = None
     verified: bool
     proof_bundle: ProofBundle | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fail_closed_proof_bundle(cls, values: Any) -> Any:
+        """Coerce a malformed non-null ``proof_bundle`` to ``None`` (fail closed).
+
+        CodeRabbit (SCRUM-2338): defaulting missing/wrong-typed required members
+        would manufacture a valid-looking — but unverifiable — bundle from
+        malformed JSON. Since ``ProofBundle`` now requires every member, a
+        malformed payload raises ``ValidationError``; we catch that here and drop
+        the bundle to ``None`` so the rest of the (frozen) response still parses
+        and the ``proof_bundle is not None ⇒ verifiable`` contract holds.
+        """
+        if isinstance(values, dict):
+            raw = values.get("proof_bundle")
+            if raw is not None and not isinstance(raw, ProofBundle):
+                try:
+                    ProofBundle.model_validate(raw)
+                except Exception:
+                    values = dict(values)
+                    values["proof_bundle"] = None
+        return values
 
 
 class Anchor(RichVerificationFields):

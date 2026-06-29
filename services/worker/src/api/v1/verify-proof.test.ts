@@ -316,6 +316,28 @@ describe('SCRUM-2490 — verified is cryptographic, never status-derived', () =>
         expect(result.verified).toBe(true);
       }
     });
+
+    // ----- CodeRabbit: FAIL CLOSED when a BATCH proof's leaf_count is indeterminate
+    //
+    // The pre-mortem kill-shot: on a transient DB fault the production reader's
+    // leaf_count COUNT(*) query errors, leaving leafCount=null. The OLD code then
+    // fell back to {leafIndex}-only — RE-DISABLING the CVE-2012-2459 structural
+    // guard and reading verified=TRUE for the exact forged self-pair above — AND
+    // silently suppressed an otherwise-complete bundle. A transient fault must
+    // never downgrade the cryptographic guarantee. With the fix, a batch-linked
+    // proof whose count is indeterminate fails closed (indeterminate error), so
+    // `verified` is never reported true via the weak path and the guard is never
+    // silently disabled.
+    it('FAIL CLOSED: batch proof + indeterminate leaf_count ⇒ error, NOT verified=true via the weak path', () => {
+      const result = buildProofResponse(forgedAnchor, null, null, /* leafCountIndeterminate */ true);
+      expect(result).not.toBeNull();
+      // It must NOT be a successful response that reports verified=true.
+      expect(result).toHaveProperty('error');
+      if (result && !('error' in result)) {
+        // Defensive: if it somehow were a verdict, it must not be true-via-weak.
+        expect(result.verified).not.toBe(true);
+      }
+    });
   });
 });
 
@@ -561,6 +583,14 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
     if (result && !('error' in result)) {
       expect(result.proof_bundle).toBeNull();
     }
+  });
+
+  it('(e9b) FAIL CLOSED: complete layer-2 columns but INDETERMINATE batch leaf_count ⇒ error (bundle NOT silently suppressed)', () => {
+    // A transient DB fault on the count query must not let an otherwise-complete
+    // batch proof be served with proof_bundle silently null + a weak verdict.
+    const result = buildProofResponse(ANCHOR, COMPLETE_STORED, null, /* indeterminate */ true);
+    expect(result).not.toBeNull();
+    expect(result).toHaveProperty('error');
   });
 
   it('(e10) complete layer-2 columns but null merkle_index ⇒ bundle null (CVE guard cannot arm)', () => {
