@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { getStatusDisplay } from '@/lib/statusDisplay';
+import { env } from '@/lib/env';
 
 interface ProofData {
   recordId: string;
@@ -142,10 +143,14 @@ export function ProofDownload({
         <div className="space-y-3">
           <h4 className="text-sm font-medium">Download Proof</h4>
           <div className="flex gap-3">
-            <Button variant="outline" className="flex-1" onClick={onDownloadPDF}>
-              <Download className="mr-2 h-4 w-4" />
-              PDF Certificate
-            </Button>
+            {/* FE-PROOF-GATE / FIX-1 (SCRUM-2501): PDF certificate download stays gated
+                OFF in prod until the staging round-trip E2E (download -> re-verify) is green. */}
+            {env.ENABLE_PROOF_PDF_DOWNLOAD && (
+              <Button variant="outline" className="flex-1" onClick={onDownloadPDF}>
+                <Download className="mr-2 h-4 w-4" />
+                PDF Certificate
+              </Button>
+            )}
             <Button variant="outline" className="flex-1" onClick={onDownloadJSON}>
               <Download className="mr-2 h-4 w-4" />
               JSON Data
