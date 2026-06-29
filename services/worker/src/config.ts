@@ -19,6 +19,15 @@ const positiveNumberWithFallback = (def: number) => z.preprocess((v) => {
   const parsed = Number(v);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : def;
 }, z.number().positive());
+// Integer env clamped to [min, max] with a default. Mirrors the inline
+// `Math.min(Math.max(min, parseInt(...) || def), max)` idiom in the worker so
+// ad-hoc reads can migrate into config.ts (SCRUM-1258) with identical runtime
+// behavior: parseInt-style leading-int parse, NaN/0 → def, then clamp (not reject).
+const clampedIntWithFallback = (def: number, min: number, max: number) =>
+  z.preprocess((v) => {
+    const parsed = parseInt(String(v ?? ''), 10) || def;
+    return Math.min(Math.max(min, parsed), max);
+  }, z.number().int());
 
 const ConfigSchema = z.object({
   // Server
@@ -144,6 +153,13 @@ const ConfigSchema = z.object({
   aiProvider: z.string().optional(),
   /** Nessie model name on RunPod vLLM (default: nessie-v2) */
   nessieModel: z.string().optional(),
+  /**
+   * Per-row latency budget (ms) for batch AI extraction — bounds each provider
+   * call so a timeout is a failed+refunded row, not a charge. Parity with the
+   * single path's AI_EXTRACTION_LATENCY_BUDGET_MS; batch rows can be longer so
+   * the default is higher. Clamped to [1000, 30000] (SCRUM-1258: typed, not ad-hoc).
+   */
+  aiBatchRowLatencyBudgetMs: clampedIntWithFallback(8_000, 1_000, 30_000),
 
   // Cron job authentication (AUTH-01)
   /** Shared secret for cron job endpoints — alternative to OIDC when Cloud Scheduler is not used */
@@ -623,6 +639,7 @@ function loadConfig(): Config {
     geminiEmbeddingModel: process.env.GEMINI_EMBEDDING_MODEL,
     aiProvider: process.env.AI_PROVIDER,
     nessieModel: process.env.NESSIE_MODEL,
+    aiBatchRowLatencyBudgetMs: process.env.AI_BATCH_ROW_LATENCY_BUDGET_MS,
     cronSecret: process.env.CRON_SECRET,
     cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
     corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
