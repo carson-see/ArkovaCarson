@@ -56,21 +56,6 @@ function mockReq(opts: { body?: unknown; query?: Record<string, string> } = {}):
   } as unknown as Request;
 }
 
-function selectMaybeSingle(data: unknown, error: unknown = null) {
-  const chain: {
-    eq: ReturnType<typeof vi.fn>;
-    maybeSingle: ReturnType<typeof vi.fn>;
-  } = {
-    eq: vi.fn(),
-    maybeSingle: vi.fn().mockResolvedValue({ data, error }),
-  };
-  chain.eq.mockReturnValue(chain);
-  return {
-    select: vi.fn().mockReturnValue(chain),
-    chain,
-  };
-}
-
 describe('ResolveQueueInput', () => {
   it('accepts minimal valid input', () => {
     const result = ResolveQueueInput.safeParse({
