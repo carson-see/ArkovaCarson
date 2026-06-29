@@ -32,6 +32,7 @@ import {
   hashLeafTagged,
   hashNodeTagged,
 } from './merkle-verify.js';
+import { proofFixtures, isInclusionVector } from '../proof/fixtures/index.js';
 
 function fp(seed: string): string {
   return createHash('sha256').update(seed).digest('hex');
@@ -186,5 +187,37 @@ describe('RFC-6962 tagged hashing primitives (future proof_schema_version=2)', (
       .update(createHash('sha256').update(Buffer.concat([Buffer.from([0x00]), data])).digest())
       .digest('hex');
     expect(hashLeafTagged(data)).toBe(expected);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Canonical proof fixtures (PROOF-08 / SCRUM-2341) wired into THIS suite so the
+// hardened verifier and the cross-consumer fixture set stay on one vector set.
+// The shared fixtures live in proof/fixtures/proof-fixtures.json; their own
+// conformance tests are in proof/fixtures/proof-fixtures.test.ts. Pinning them
+// here too guarantees a verifier change can't pass without the shared fixtures
+// (and every downstream consumer that imports them) still verifying.
+// ───────────────────────────────────────────────────────────────────────────
+describe('verifyMerkleInclusion ↔ canonical proof fixtures (PROOF-08)', () => {
+  it('accepts the shared valid-inclusion fixture', () => {
+    const v = proofFixtures.valid;
+    const r = verifyMerkleInclusion(v.fingerprint, v.merkle_proof, v.merkle_root, {
+      leafIndex: v.merkle_index,
+      leafCount: v.leaf_count,
+    });
+    expect(r.valid).toBe(true);
+  });
+
+  it.each(
+    proofFixtures.invalid
+      .filter(isInclusionVector)
+      .map((v) => ({ id: v.id, v })),
+  )('rejects the shared $id fixture with the documented reason', ({ v }) => {
+    const r = verifyMerkleInclusion(v.fingerprint, v.merkle_proof, v.merkle_root, {
+      leafIndex: v.merkle_index,
+      leafCount: v.leaf_count,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(new RegExp(v.expect_invalid_reason!, 'i'));
   });
 });
