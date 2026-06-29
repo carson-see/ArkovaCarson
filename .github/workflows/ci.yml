@@ -463,9 +463,12 @@ jobs:
         # Asserts services/worker/package.json scripts.build, the Dockerfile
         # `RUN npm run build`, and the new ci.yml worker compile step all run
         # the SAME build, so the PR-time compile gate cannot drift weaker than
-        # the deployed image build. Override: `ci-config-change` / `build-parity-ack`.
-        env:
-          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        # the deployed image build. Pure file-reading hard invariant — no label,
+        # env, or git dependency (mirrors check-deploy-lint-parity.ts), so it
+        # runs cleanly in this shallow-checkout job. A build-command mismatch is
+        # never acceptable; the escape hatch is editing the invariant in-PR
+        # (with `ci-config-change` / `build-parity-ack` signoff), same as lint
+        # parity.
         run: npx tsx scripts/ci/check-deploy-build-parity.ts
 
       - name: Verify 429 responses include Retry-After

@@ -5,7 +5,6 @@ import {
   auditDeployBuildParity,
   EXPECTED_BUILD_SCRIPT,
   EXPECTED_RUN,
-  OVERRIDE_LABELS,
   type ParitySources,
 } from './check-deploy-build-parity.js';
 
@@ -112,9 +111,21 @@ describe('check-deploy-build-parity — 3-way worker build parity', () => {
     expect(r.errors.some((e) => e.includes('must be exactly'))).toBe(true);
   });
 
-  it('exposes the two documented override labels', () => {
-    expect(OVERRIDE_LABELS).toContain('ci-config-change');
-    expect(OVERRIDE_LABELS).toContain('build-parity-ack');
+  it('is a pure file-reading invariant — no ciContext / git / process.env dependency', () => {
+    // Regression guard: importing ciContext (which resolves a base ref via git
+    // at module load) made this gate crash in the shallow-checkout typecheck-lint
+    // job. Mirror check-deploy-lint-parity.ts — read tracked files only.
+    // Strip comments first so prose mentions of these terms in the docstring
+    // don't trip the scan; we only care about real code.
+    const raw = readFileSync(resolve(REPO, 'scripts/ci/check-deploy-build-parity.ts'), 'utf8');
+    const code = raw
+      .replace(/\/\*[\s\S]*?\*\//g, '') // block comments
+      .replace(/^\s*\/\/.*$/gm, '') // line comments
+      .replace(/\/\/[^\n'"`]*$/gm, ''); // trailing line comments (best-effort)
+    expect(code).not.toMatch(/from\s+['"]\.\/lib\/ciContext/);
+    expect(code).not.toMatch(/process\.env/);
+    expect(code).not.toMatch(/rev-parse/);
+    expect(code).not.toMatch(/execFileSync|execSync|child_process/);
   });
 });
 

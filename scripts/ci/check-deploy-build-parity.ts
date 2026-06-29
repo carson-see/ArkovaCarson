@@ -22,19 +22,21 @@
  * the new ci.yml "Worker Build (deploy-parity)" job runs the SAME build the
  * Dockerfile runs, so it cannot drift into a weaker compile.
  *
- * Override: PR labeled `ci-config-change` (reuses the lint-parity signoff label)
- * OR `build-parity-ack` (intentional/known build-parity exception). Both honored
- * via PR_LABELS, mirroring the sibling gates' hasLabel mechanism so the gate is
- * already wired for the future required-flip.
+ * This is a HARD INVARIANT — a build-command mismatch is never acceptable, so
+ * (mirroring `check-deploy-lint-parity.ts`) the script has NO in-script override
+ * and NO label / env / git dependency: it imports only `readFileSync`/`resolve`
+ * and reads three tracked files. The `ci-config-change` / `build-parity-ack`
+ * signoff lives at the workflow level (the ci.yml step's `if:` condition), not
+ * here — so this gate runs cleanly in the shallow-checkout typecheck-lint job
+ * (no `git rev-parse` of a base ref) and keeps SCRUM-1258 trivially satisfied
+ * (zero `process.env` reads).
  */
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { hasLabel } from './lib/ciContext.js';
 
 export const EXPECTED_BUILD_SCRIPT = 'tsc -p tsconfig.build.json';
 export const EXPECTED_RUN = 'npm run build';
-export const OVERRIDE_LABELS = ['ci-config-change', 'build-parity-ack'] as const;
 
 const REPO = resolve(import.meta.dirname, '..', '..');
 
@@ -137,14 +139,6 @@ export function auditDeployBuildParity(sources: ParitySources): ParityResult {
   return { ok: errors.length === 0, errors };
 }
 
-function hasOverrideLabel(): boolean {
-  // Use ciContext.hasLabel — it resolves PR labels from the env-seeded
-  // (frozen pull_request payload) PR_LABELS UNION the live GitHub API labels
-  // (#1336), so a label added after the frozen payload + rerun is honored.
-  // This keeps ZERO direct process.env reads in this gate (SCRUM-1258).
-  return OVERRIDE_LABELS.some((l) => hasLabel(l));
-}
-
 function main(): void {
   const sources: ParitySources = {
     workerPackageJson: readFileSync(resolve(REPO, 'services/worker/package.json'), 'utf8'),
@@ -161,20 +155,12 @@ function main(): void {
     return;
   }
 
-  if (hasOverrideLabel()) {
-    console.log(
-      `::warning::Worker build-parity drift detected but overridden by label (${OVERRIDE_LABELS.join(' / ')}):`,
-    );
-    for (const e of errors) console.log(`  - ${e}`);
-    return;
-  }
-
   console.error('::error::Worker BUILD-command parity drift (deploy gate ≢ CI compile):');
   for (const e of errors) console.error(`  - ${e}`);
   console.error(
     `Fix: keep all three identical — services/worker/package.json scripts.build=\`${EXPECTED_BUILD_SCRIPT}\`, a Dockerfile \`RUN npm run build\`, and a ci.yml services/worker build step \`run: ${EXPECTED_RUN}\`.`,
   );
-  console.error(`If intentional, label the PR \`ci-config-change\` or \`build-parity-ack\`.`);
+  console.error('If intentional, label the PR `ci-config-change` or `build-parity-ack` and update this check.');
   process.exit(1);
 }
 
