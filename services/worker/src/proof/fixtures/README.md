@@ -29,7 +29,7 @@ Every vector is stamped to `proof_schema_version: 1` at the file level.
 The `valid.on_chain.op_return_payload` is the **real** Arkova OP_RETURN
 commitment, hex-encoded:
 
-```
+```text
 ARKV (4 bytes = 41524b56) ‖ 32-byte merkle_root [‖ optional 8-byte metadata hash]
 ```
 
@@ -53,7 +53,7 @@ fixture's `merkle_root`. (An earlier fixture carried a stray `01` version byte
 
 ### Inclusion vector fields (`valid` and app-tree `invalid[]`)
 
-```
+```text
 fingerprint            64-hex document hash (the leaf)
 merkle_root            64-hex root committed on-chain
 merkle_index           integer leaf index (enables the CVE-2012-2459 guard)

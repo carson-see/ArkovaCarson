@@ -49,7 +49,7 @@
         { "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "right" },
         { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
       ],
-      "expect_invalid_reason": "recomputed root|merkle_root"
+      "expect_invalid_reason": "recomputed root"
     },
     {
       "id": "tampered-merkle-branch",
@@ -63,7 +63,7 @@
         { "hash": "ffffffffc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "right" },
         { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
       ],
-      "expect_invalid_reason": "recomputed root|merkle_root"
+      "expect_invalid_reason": "recomputed root"
     },
     {
       "id": "flipped-branch-position",
@@ -77,7 +77,7 @@
         { "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "left" },
         { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
       ],
-      "expect_invalid_reason": "recomputed root|merkle_root"
+      "expect_invalid_reason": "recomputed root"
     },
     {
       "id": "duplicated-leaf-attack",
@@ -91,7 +91,7 @@
         { "hash": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf", "position": "right" },
         { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
       ],
-      "expect_invalid_reason": "duplicat|CVE-2012-2459|self-pair"
+      "expect_invalid_reason": "self-pair"
     },
     {
       "id": "wrong-leaf-index",
@@ -105,7 +105,7 @@
         { "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "right" },
         { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
       ],
-      "expect_invalid_reason": "index|range"
+      "expect_invalid_reason": "out of range"
     },
     {
       "id": "bad-block-header",
@@ -114,13 +114,13 @@
       "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
       "block_header_hex": "00000020aabbccddeeff",
       "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
-      "expect_invalid_reason": "80 bytes|160.?hex|header"
+      "expect_invalid_reason": "header"
     },
     {
       "id": "bad-signature",
       "attack": "tampered-ed25519-signature",
       "description": "Signed-bundle vector. payload + signing_key_id + canonical bytes are intact, but the Ed25519 signature value has its first base64url char mutated. verifySignedBundle MUST report valid:false / signature verification failed. The tampered signature is supplied in signed_bundle.bad_signature_value.",
-      "expect_invalid_reason": "signature verification failed|signature"
+      "expect_invalid_reason": "signature verification failed"
     }
   ],
   "signed_bundle": {

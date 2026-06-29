@@ -236,7 +236,7 @@ describe('proof fixtures — INVALID Merkle inclusion vectors', () => {
       leafCount: v.leaf_count,
     });
     expect(r.valid).toBe(false);
-    expect(r.reason).toMatch(new RegExp(v.expect_invalid_reason!, 'i'));
+    expect(r.reason?.toLowerCase()).toContain(v.expect_invalid_reason!.toLowerCase());
   });
 
   it('the duplicated-leaf (CVE-2012-2459) attack is caught by the structural index/count guard', () => {
@@ -268,6 +268,6 @@ describe('proof fixtures — INVALID signature vector', () => {
     const r = verifySignedBundle({ bundle: tampered, publicKeyPem: sb.test_public_key_pem });
     expect(r.valid).toBe(false);
     const expected = invalidById<InclusionVector>('bad-signature').expect_invalid_reason!;
-    expect(r.reason).toMatch(new RegExp(expected, 'i'));
+    expect(r.reason?.toLowerCase()).toContain(expected.toLowerCase());
   });
 });

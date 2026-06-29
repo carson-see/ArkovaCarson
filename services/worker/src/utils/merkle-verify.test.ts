@@ -218,6 +218,6 @@ describe('verifyMerkleInclusion ↔ canonical proof fixtures (PROOF-08)', () => 
       leafCount: v.leaf_count,
     });
     expect(r.valid).toBe(false);
-    expect(r.reason).toMatch(new RegExp(v.expect_invalid_reason!, 'i'));
+    expect(r.reason?.toLowerCase()).toContain(v.expect_invalid_reason!.toLowerCase());
   });
 });
