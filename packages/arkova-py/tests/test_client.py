@@ -406,11 +406,13 @@ def test_get_merkle_proof_populated_bundle_via_api_v1() -> None:
                     "merkle_root": "aa" * 32,
                     "merkle_proof": [{"hash": "bb" * 32, "position": "left"}],
                     "merkle_index": 0,
+                    "leaf_count": 4,
                     "tx_id": "tx-999",
                     "block_height": 800000,
                     "block_hash": "cc" * 32,
                     "block_header": "dd" * 80,
-                    "op_return_payload": "41524b5601" + "ee" * 32,
+                    # Canonical ARKV + 32-byte root, NO version byte.
+                    "op_return_payload": "41524b56" + "ee" * 32,
                     "block_timestamp": "2026-04-18T10:00:00Z",
                     "proof_schema_version": 1,
                     "signature": None,
@@ -430,6 +432,7 @@ def test_get_merkle_proof_populated_bundle_via_api_v1() -> None:
     assert result.proof_bundle.block_hash == "cc" * 32
     assert result.proof_bundle.block_header == "dd" * 80
     assert result.proof_bundle.merkle_index == 0
+    assert result.proof_bundle.leaf_count == 4
     assert result.proof_bundle.proof_schema_version == 1
     assert result.proof_bundle.signature is None
 

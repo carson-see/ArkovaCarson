@@ -107,13 +107,23 @@ class ProofBundle(ArkovaModel):
 
     Carries only cryptographic evidence (never raw document content or PII).
     The parent ``MerkleProofResponse.proof_bundle`` is ``None`` when the proof
-    is incomplete (e.g. not yet block-confirmed) — never fabricated.
+    is incomplete — never fabricated. The API emits it only when ALL fields are
+    present + well-formed: receipt tx_id/block_height/block_timestamp, 160-hex
+    block_header, 64-hex block_hash, canonical ARKV op_return_payload, and BOTH
+    merkle_index AND leaf_count (which together arm the CVE-2012-2459 guard).
+
+    Canonical op_return_payload shape: "ARKV" (41524b56) + 32-byte app root
+    (64 hex), NO version byte, optional trailing metadata hash.
     """
 
     fingerprint: str
     merkle_root: str
     merkle_proof: list[MerkleProofEntry]
     merkle_index: int | None = None
+    # Total leaves in the batch tree this proof belongs to. Always present in a
+    # complete (non-None) bundle; with merkle_index it arms the CVE-2012-2459
+    # duplicate-leaf guard during local verification.
+    leaf_count: int = 0
     tx_id: str | None = None
     block_height: int | None = None
     block_hash: str | None = None
@@ -121,6 +131,8 @@ class ProofBundle(ArkovaModel):
     op_return_payload: str | None = None
     block_timestamp: str | None = None
     proof_schema_version: int = 1
+    # RESERVED — always None today; the signed envelope is the outer
+    # ?format=signed response wrapper, not an inline bundle field.
     signature: ProofBundleSignature | None = None
 
 

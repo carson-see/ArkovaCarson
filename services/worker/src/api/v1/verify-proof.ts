@@ -100,12 +100,20 @@ export interface MerkleProofEntry {
  * incomplete and is NEVER fabricated (Constitution §1.5 — measured, not
  * asserted). It carries only the already-stored cryptographic evidence:
  *
- *   - app-tree (layer 1): fingerprint, merkle_root, merkle_proof, merkle_index
+ *   - app-tree (layer 1): fingerprint, merkle_root, merkle_proof, merkle_index,
+ *     leaf_count
  *   - bitcoin-tree (layer 2): tx_id, block_height, block_hash, block_header,
  *     op_return_payload, block_timestamp
  *   - proof_schema_version: the format version (1 = plain double-SHA256)
- *   - signature: inline Ed25519 envelope metadata, ONLY present on the
- *     `?format=signed` path; `null` on the default unsigned response.
+ *   - signature: RESERVED inline-signature placeholder, always `null` today —
+ *     the signed envelope lives at the outer `?format=signed` response level,
+ *     not inside the bundle.
+ *
+ * CANONICAL SHAPE (frozen — PDF/CLI/fixtures conform to this):
+ *   { fingerprint, merkle_root, merkle_proof:{hash,position}[], merkle_index,
+ *     leaf_count, tx_id, block_height, block_hash(64hex), block_header(160hex),
+ *     op_return_payload(ARKV‖root hex, no version byte), block_timestamp,
+ *     proof_schema_version:1 (non-null), signature|null }.
  *
  * This is the contract consumed by FE-PROOF-GATE, the PROOF-04 PDF, and the
  * PROOF-07 CLI — keep the field set + names stable.
@@ -126,16 +134,42 @@ export interface ProofBundle {
   merkle_root: string;
   merkle_proof: MerkleProofEntry[];
   merkle_index: number | null;
+  /**
+   * PROOF-05: total number of leaves in the batch tree this proof belongs to.
+   * Together with `merkle_index` this arms the CVE-2012-2459 duplicate-leaf
+   * structural guard downstream (see utils/merkle-verify.ts). BOTH must be
+   * present in a complete bundle — a bundle with either unknown is `null`.
+   * Sourced exactly from the count of `anchor_proofs` rows sharing this
+   * proof's `batch_id` (one row per leaf), never estimated from branch length.
+   */
+  leaf_count: number;
   tx_id: string | null;
   block_height: number | null;
   block_hash: string | null;
   /** Raw 80-byte block header as plain 160-hex (bytea `\x` prefix stripped). */
   block_header: string | null;
-  /** Raw OP_RETURN payload ("ARKV"+version+root) as plain hex. */
+  /**
+   * Raw OP_RETURN payload as plain hex. Canonical Arkova shape:
+   * "ARKV" (0x41524b56) + the 32-byte app-tree root (64 hex), NO version byte
+   * — optionally followed by a truncated metadata hash (8/16 bytes). Matches
+   * the on-chain format built by chain/signet.ts (`Buffer.concat([ARKV, root])`).
+   */
   op_return_payload: string | null;
   block_timestamp: string | null;
+  /**
+   * Proof format version (1 = plain double-SHA256 app-tree). Non-null —
+   * defaults to 1 when the stored row predates the column.
+   */
   proof_schema_version: number;
-  /** Inline signature envelope metadata; null on the default unsigned path. */
+  /**
+   * RESERVED — inline detached-signature envelope metadata. Always `null` on
+   * this (unsigned) JSON path today; the signed envelope lives at the outer
+   * `?format=signed` response level (bundle_version + signature + signing_key_id
+   * via createSignedBundle), NOT inside proof_bundle. Kept as a typed, nullable
+   * placeholder so a future inline-signature format is additive (§1.8) and so
+   * downstream consumers can treat `signature === null` as "verify the outer
+   * envelope instead." Never fabricated.
+   */
   signature: ProofBundleSignature | null;
 }
 
@@ -208,6 +242,27 @@ interface ResolvedProofSource {
   blockHash: string | null;
   opReturnPayload: string | null;
   proofSchemaVersion: number;
+}
+
+/** Exactly 160 hex chars (case-insensitive) == an 80-byte block header. */
+const BLOCK_HEADER_HEX_RE = /^[0-9a-fA-F]{160}$/;
+/** Exactly 64 hex chars (case-insensitive) == a 32-byte block hash. */
+const BLOCK_HASH_HEX_RE = /^[0-9a-fA-F]{64}$/;
+/**
+ * "ARKV" (0x41524b56) + the 32-byte app-tree root (64 hex) at minimum, then an
+ * OPTIONAL trailing metadata hash. Even total length, all hex. NO version byte
+ * — matches chain/signet.ts (`Buffer.concat([ARKV, root[, metadataHash]])`).
+ */
+const OP_RETURN_CANONICAL_RE = /^41524b56[0-9a-fA-F]{64}([0-9a-fA-F]{2})*$/i;
+
+/**
+ * PROOF-05: validate the OP_RETURN payload is the canonical Arkova commitment
+ * (ARKV‖root, no version byte, optional trailing metadata). Returns the
+ * lowercased hex when valid, else `null` (never a fabricated/partial payload).
+ */
+function canonicalOpReturn(value: string | null): string | null {
+  if (value == null) return null;
+  return OP_RETURN_CANONICAL_RE.test(value) ? value.toLowerCase() : null;
 }
 
 /** Read an integer leaf index from an untyped value (NULL/garbage → null). */
@@ -283,38 +338,68 @@ function extractMetadataProof(
  * PROOF-05 (SCRUM-2338): assemble the self-contained `proof_bundle`, or `null`
  * when the two-layer proof is INCOMPLETE.
  *
- * Completeness rule (honest, never partial — Constitution §1.5): a bundle is
- * emitted only when BOTH layers are fully present:
- *   - app-tree: merkle_root + merkle_proof (already guaranteed by the caller).
- *   - bitcoin-tree: block_header AND block_hash AND op_return_payload, all
- *     well-formed. Any missing/malformed layer-2 field ⇒ `null` (no fabricated
- *     header, no half-bundle). This keeps the metadata-only / app-tree-only
- *     records (the ~2.97M back catalogue) returning `proof_bundle: null` rather
- *     than a misleading partial structure.
+ * Completeness rule (honest, never partial — Constitution §1.5). A bundle is
+ * emitted ONLY when an independently-checkable verifier could (a) fetch the
+ * Network/Anchor Receipt and (b) validate an 80-byte header / 32-byte block
+ * hash / canonical commitment / structural inclusion. That requires ALL of:
+ *   - app-tree: merkle_root + merkle_proof (guaranteed by the caller) AND
+ *     merkle_index present AND leaf_count present (both arm the CVE-2012-2459
+ *     duplicate-leaf guard).
+ *   - receipt: tx_id, block_height, block_timestamp all present (else there is
+ *     no receipt to fetch / no confirmation context).
+ *   - bitcoin-tree: block_header EXACTLY 160 hex (80 bytes), block_hash EXACTLY
+ *     64 hex (32 bytes), op_return_payload matching the canonical Arkova shape
+ *     ("ARKV" + 64-hex root, no version byte, optional trailing metadata).
+ *
+ * Any missing field, short-but-well-formed hex, or non-ARKV payload ⇒ `null`
+ * (no fabricated header, no half-bundle). This keeps the metadata-only /
+ * app-tree-only records (the back catalogue) returning `proof_bundle: null`
+ * rather than a misleading partial structure that a downstream verifier would
+ * treat as complete and then fail to check.
  *
  * The field set is an explicit allowlist of cryptographic evidence — no raw
  * document bytes, PII, or `anchors.metadata` blob can leak in (§1.6).
+ *
+ * @param leafCount total leaves in the batch tree (count of anchor_proofs rows
+ *                  sharing batch_id). `null` ⇒ unknown ⇒ incomplete ⇒ bundle null.
  */
 function buildProofBundle(
   anchor: ProofAnchorData,
   source: ResolvedProofSource,
+  leafCount: number | null,
 ): ProofBundle | null {
-  if (source.blockHeader == null || source.blockHash == null || source.opReturnPayload == null) {
-    return null;
-  }
+  // --- Receipt layer: a verifier must be able to fetch + frame the receipt.
+  if (anchor.chain_tx_id == null) return null;
+  if (anchor.chain_block_height == null) return null;
+  if (anchor.chain_timestamp == null) return null;
+
+  // --- App-tree structural completeness: index + count arm the CVE guard.
+  if (source.merkleIndex == null) return null;
+  if (!Number.isInteger(leafCount) || (leafCount as number) < 1) return null;
+  // Index must be inside the tree (mirrors verifyMerkleInclusion's range check).
+  if (source.merkleIndex < 0 || source.merkleIndex >= (leafCount as number)) return null;
+
+  // --- Bitcoin-tree layer: exact sizes + canonical commitment, else null.
+  if (source.blockHeader == null || !BLOCK_HEADER_HEX_RE.test(source.blockHeader)) return null;
+  if (source.blockHash == null || !BLOCK_HASH_HEX_RE.test(source.blockHash)) return null;
+  const opReturn = canonicalOpReturn(source.opReturnPayload);
+  if (opReturn == null) return null;
+
   return {
     fingerprint: anchor.fingerprint,
     merkle_root: source.merkleRoot,
     merkle_proof: source.merkleProof,
     merkle_index: source.merkleIndex,
+    leaf_count: leafCount as number,
     tx_id: anchor.chain_tx_id,
     block_height: anchor.chain_block_height,
-    block_hash: source.blockHash,
-    block_header: source.blockHeader,
-    op_return_payload: source.opReturnPayload,
+    block_hash: source.blockHash.toLowerCase(),
+    block_header: source.blockHeader.toLowerCase(),
+    op_return_payload: opReturn,
     block_timestamp: anchor.chain_timestamp,
     proof_schema_version: source.proofSchemaVersion,
-    // Default (unsigned) path carries no inline signature — never fabricated.
+    // RESERVED — inline signature is always null on this unsigned path today;
+    // the signed envelope is the outer ?format=signed wrapper. Never fabricated.
     signature: null,
   };
 }
@@ -322,10 +407,16 @@ function buildProofBundle(
 /**
  * Build the proof response from anchor data.
  * Extracted for testability.
+ *
+ * @param leafCount total leaves in the batch tree this proof belongs to —
+ *                  sourced by the production reader from the count of
+ *                  `anchor_proofs` rows sharing the proof's `batch_id`. `null`
+ *                  when unknown (no batch linkage); the bundle then stays null.
  */
 export function buildProofResponse(
   anchor: ProofAnchorData,
   proof: ProofRecordData | null = null,
+  leafCount: number | null = null,
 ): MerkleProofResponse | ProofErrorResponse | null {
   const proofSource = extractStoredProof(proof) ?? extractMetadataProof(anchor.metadata);
   if (!proofSource) return null;
@@ -355,7 +446,7 @@ export function buildProofResponse(
     batch_id: proofSource.batchId,
     verified: inclusion.valid,
     // PROOF-05 (SCRUM-2338): additive, nullable self-contained bundle.
-    proof_bundle: buildProofBundle(anchor, proofSource),
+    proof_bundle: buildProofBundle(anchor, proofSource, leafCount),
   };
 }
 
@@ -410,6 +501,23 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
             : null,
         };
 
+        // PROOF-05 (SCRUM-2338): the EXACT leaf_count for the tree this proof
+        // belongs to is the number of anchor_proofs rows sharing the batch_id
+        // (one row per leaf — upsert onConflict 'anchor_id'). This is the only
+        // exact read-side source; we never estimate it from branch length.
+        // `null` ⇒ unknown (no batch linkage) ⇒ buildProofBundle returns null.
+        let leafCount: number | null = null;
+        const batchId = proofData?.batch_id ?? null;
+        if (batchId) {
+          const { count, error: countError } = await db
+            .from('anchor_proofs')
+            .select('anchor_id', { count: 'exact', head: true })
+            .eq('batch_id', batchId);
+          if (!countError && typeof count === 'number' && count >= 1) {
+            leafCount = count;
+          }
+        }
+
         const result = buildProofResponse(
           anchor,
           proofData
@@ -425,6 +533,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
                 proof_schema_version: proofData.proof_schema_version ?? null,
               }
             : null,
+          leafCount,
         );
 
         if (result === null) {
