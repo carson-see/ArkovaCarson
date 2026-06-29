@@ -1,0 +1,9 @@
+{
+  "keys": [
+    {
+      "kid": "arkova-proof-2026-q2",
+      "alg": "Ed25519",
+      "pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA7ix4Rjnm/kC7NyxHbujuyJFwe5/Fhx1QD/bV+3K15kU=\n-----END PUBLIC KEY-----\n"
+    }
+  ]
+}

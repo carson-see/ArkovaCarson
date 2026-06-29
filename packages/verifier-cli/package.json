@@ -1,0 +1,36 @@
+{
+  "name": "@arkova/verifier-cli",
+  "version": "0.1.0",
+  "description": "Standalone reference verifier for Arkova proof packets — recomputes the on-chain Merkle root and confirms inclusion via an INDEPENDENT node, with zero Arkova network calls.",
+  "type": "module",
+  "bin": {
+    "arkova-verify": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "fixtures", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "verify": "node dist/cli.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint src test"
+  },
+  "keywords": ["arkova", "verifier", "merkle", "proof", "bitcoin", "esplora", "trustless"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@arkova/verifier": "file:../verifier"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.24.0",
+    "@types/node": "26.0.0",
+    "eslint": "10.5.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.62.0",
+    "vitest": "4.1.9"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "payload": {
+    "fingerprint": "f0d4c476cf15853d3e6e93439e5e036be70f6d6643311cc937bad1b6f26f8b71",
+    "merkle_root": "088b99e8c630b0a795d5a82ea0c9bcbd150777af22a1c1c6250245f1d68acbb2",
+    "merkle_proof": [
+      {
+        "hash": "f0d4c476cf15853d3e6e93439e5e036be70f6d6643311cc937bad1b6f26f8b71",
+        "position": "right"
+      },
+      {
+        "hash": "03f7c16156c36ddba2b0737da2c675dcddf2df941f5028035c234d68bbc8df64",
+        "position": "left"
+      }
+    ],
+    "tx_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "block_height": 812345,
+    "block_timestamp": "2025-01-01T00:00:00.000Z",
+    "batch_id": "batch-odd-3",
+    "merkle_index": 2,
+    "leaf_count": 3,
+    "verified": true
+  },
+  "signature": {
+    "alg": "Ed25519",
+    "value": "C65NiHcmkihYiCzXFrAXWSnnf9O0f1ypJF0mWu5cnjgLDcLgNW2SiYzE1zvCFFS31URMrDcAqU8HfnnIHJWyDg"
+  },
+  "signing_key_id": "arkova-proof-2026-q2",
+  "signed_at_utc": "2025-01-01T00:00:00.000Z",
+  "bundle_version": "1.0.0"
+}
