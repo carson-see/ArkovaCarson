@@ -30,6 +30,7 @@
       "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
       "block_height": 840000,
       "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+      "block_header": "1161202aefade9e2a6d8ce25f77bdabe5f48f5762f0332f5ff492e476344158131ff3408898bc7e0c6d00219124558e43deca82879a73ce4d99709c38c834c6ece94941a296dbd0adf9428767935029e",
       "block_timestamp": "2024-04-20T00:00:00.000Z",
       "op_return_payload": "41524b56bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607"
     },
@@ -125,9 +126,9 @@
   "signed_bundle": {
     "description": "A VALID signed proof bundle over the canonical valid payload, plus the static TEST keypair used to produce it. The PRIVATE key is a throwaway, deterministically seeded SOLELY for these fixtures — it is NEVER a production signing key (prod signs via GCP KMS; this is the dev/test static-PEM path per verify-proof.ts resolveSigner()). The bad-signature invalid case mutates `signature.value` (see bad_signature_value).",
     "signing_key_id": "arkova-test-fixture-ed25519-v1",
-    "test_public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA6lDCECV5NdebOs7lYe6U0U+TwPuxsDiF6tXnMIDqkPY=\n-----END PUBLIC KEY-----\n",
-    "test_private_key_pem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIGFya292YS1wcm9vZjA4LWZpeHR1cmUtZWQyNTUxOSEh\n-----END PRIVATE KEY-----\n",
-    "bad_signature_value": "AW5Foad_Bc5bx2Dmq_x3MTwQ79-FgzmWz_CH17dqjDzARobi-eY6zhc3SnKnecVxgqwaMkL3kmVkUU0Cyl_SAg",
+    "test_public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEADW+MYALpMP7P8btt24vip0CJkapXrLdhddhUxMtgpnk=\n-----END PUBLIC KEY-----\n",
+    "test_private_key_pem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIFp9R5GHKYDfgZ/xsKRbFYKyYyHDVvLkh9p0g5+4f3oz\n-----END PRIVATE KEY-----\n",
+    "bad_signature_value": "AJFWrk_npvnMJymXY-C66yoF5hRu4cXS5GjYwENcY-d2_RWqwOvBtWfrPKGL7pVzEHHgLB0toIgRvwv3GuABCQ",
     "valid_bundle": {
       "payload": {
         "public_id": "rec_fixture_valid_0001",
@@ -137,15 +138,21 @@
           { "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "right" },
           { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
         ],
+        "merkle_index": 0,
+        "leaf_count": 4,
         "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
         "block_height": 840000,
+        "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+        "block_header": "1161202aefade9e2a6d8ce25f77bdabe5f48f5762f0332f5ff492e476344158131ff3408898bc7e0c6d00219124558e43deca82879a73ce4d99709c38c834c6ece94941a296dbd0adf9428767935029e",
+        "op_return_payload": "41524b56bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
         "block_timestamp": "2024-04-20T00:00:00.000Z",
         "batch_id": "batch_fixture_0001",
+        "proof_schema_version": 1,
         "verified": true
       },
       "signature": {
         "alg": "Ed25519",
-        "value": "FW5Foad_Bc5bx2Dmq_x3MTwQ79-FgzmWz_CH17dqjDzARobi-eY6zhc3SnKnecVxgqwaMkL3kmVkUU0Cyl_SAg"
+        "value": "WJFWrk_npvnMJymXY-C66yoF5hRu4cXS5GjYwENcY-d2_RWqwOvBtWfrPKGL7pVzEHHgLB0toIgRvwv3GuABCQ"
       },
       "signing_key_id": "arkova-test-fixture-ed25519-v1",
       "signed_at_utc": "2024-04-20T00:00:00.000Z",

@@ -179,6 +179,44 @@ describe('proof fixtures — VALID signed bundle', () => {
     });
     expect(r.valid).toBe(true);
   });
+
+  /**
+   * Anti-drift guard (Carson P2, PR #1357): the signed-bundle payload is the
+   * cross-consumer source of truth a CLI / SDK / PDF consumer verifies against.
+   * If it omitted the canonical proof-bundle fields, a consumer could pass the
+   * signed-bundle fixture while NEVER exercising the CVE-2012-2459 structural
+   * guard inputs (merkle_index / leaf_count) or the canonical OP_RETURN field.
+   * This pins the signed payload to the `valid` vector for EVERY canonical
+   * field, so the two fixtures cannot silently diverge again.
+   */
+  it('signed payload carries the SAME canonical proof-bundle fields as the `valid` vector', () => {
+    const payload = proofFixtures.signed_bundle.valid_bundle.payload;
+    const v = validInclusion;
+    const chain = proofFixtures.valid.on_chain;
+
+    // Layer-1 app-tree inclusion fields (incl. the CVE-2012-2459 guard inputs).
+    expect(payload.fingerprint).toBe(v.fingerprint);
+    expect(payload.merkle_root).toBe(v.merkle_root);
+    expect(payload.merkle_index).toBe(v.merkle_index);
+    expect(payload.leaf_count).toBe(v.leaf_count);
+    expect(payload.merkle_proof).toEqual(v.merkle_proof);
+
+    // On-chain commitment fields (incl. the canonical OP_RETURN + raw header).
+    expect(payload.tx_id).toBe(chain.tx_id);
+    expect(payload.block_height).toBe(chain.block_height);
+    expect(payload.block_hash).toBe(chain.block_hash);
+    expect(payload.block_header).toBe(chain.block_header);
+    expect(payload.op_return_payload).toBe(chain.op_return_payload);
+    expect(payload.block_timestamp).toBe(chain.block_timestamp);
+
+    // Schema version is stamped on the signed payload too.
+    expect(payload.proof_schema_version).toBe(FIXTURE_PROOF_SCHEMA_VERSION);
+
+    // And the canonical OP_RETURN field is present (not just under on_chain) —
+    // proves the signed bundle exercises the field the PROOF-08 bug missed.
+    expect(typeof payload.op_return_payload).toBe('string');
+    expect((payload.op_return_payload as string).startsWith(ARKV_PREFIX_HEX)).toBe(true);
+  });
 });
 
 describe('proof fixtures — INVALID Merkle inclusion vectors', () => {

@@ -84,6 +84,18 @@ Uses `signed_bundle`: verify `valid_bundle` against `test_public_key_pem` ⇒
 valid; swap `signature.value` for `bad_signature_value` ⇒ `verifySignedBundle`
 reports `valid: false` / `signature verification failed`.
 
+`signed_bundle.valid_bundle.payload` carries the **same canonical proof-bundle
+fields** as the `valid` vector — `fingerprint`, `merkle_root`, `merkle_proof`,
+`merkle_index`, `leaf_count`, `tx_id`, `block_height`, `block_hash`,
+`block_header`, `op_return_payload`, `block_timestamp`, `proof_schema_version`
+— so a CLI / SDK / PDF consumer that verifies the signed bundle still exercises
+the CVE-2012-2459 structural-guard inputs (`merkle_index` / `leaf_count`) and the
+canonical OP_RETURN field. A `proof-fixtures.test.ts` assertion pins the signed
+payload to the `valid` vector for every canonical field so the two cannot drift
+apart. The signature was regenerated over the expanded payload with the checked-in
+deterministic throwaway test key (regenerate via `node scripts/gen-proof08.mjs`-style
+re-sign through `canonicaliseJson` + `staticEd25519Signer`).
+
 ## Coverage
 
 | `id` | `attack` | Layer | Rejected by |

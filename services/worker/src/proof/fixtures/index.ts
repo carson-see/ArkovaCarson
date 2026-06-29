@@ -66,6 +66,8 @@ export interface ProofFixtureFile {
       tx_id: string;
       block_height: number;
       block_hash: string;
+      /** Raw 80-byte (160-hex) block header — synthetic, well-formed length. */
+      block_header: string;
       block_timestamp: string;
       op_return_payload: string;
     };
