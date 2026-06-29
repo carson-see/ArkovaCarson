@@ -16,11 +16,12 @@ via `--rpc` on the CLI.
 - **`src/independent-node.ts`** — the verifier. `confirmInclusion(req, { fetch })`
   + `createEsploraFetch(baseUrl, httpFetch?)` transport builder. Pure-buffer
   Bitcoin parsing (Node `crypto` only) — no `bitcoinjs-lib`, no worker imports.
-- **`src/independent-node.test.ts`** — 13 tests, all node calls mocked (no real
+- **`src/independent-node.test.ts`** — 17 tests, all node calls mocked (no real
   network, CLAUDE.md §1.7): valid inclusion (+ metadata suffix), payload
   mismatch, forged-substring OP_RETURN, not-in-block, inclusion-failed,
-  same-block-different-tx, height mismatch, reorg (height→hash), tx-not-found,
-  malformed input, transport builder.
+  same-block-different-tx, height mismatch, reorg (height→hash), txid-binding
+  guard, tx-not-found, malformed input, header-derived `observedTime`
+  (header-independent + downstream-failure + pre-header-null), transport builder.
 - **`src/index.ts`** — barrel export (the CLI's import surface).
 
 ## What `confirmInclusion` checks (all must pass)
@@ -34,6 +35,14 @@ via `--rpc` on the CLI.
    maps that height to the SAME block hash (independent reorg guard).
 4. **Header integrity** — the 80-byte header double-SHA256s to the claimed block
    hash; its merkleroot is what inclusion is checked against.
+
+Additionally, the result carries `observedTime: string | null` — the Network
+Observed Time DERIVED FROM the 80-byte header (LE uint32 UNIX seconds at bytes
+`[68,72)` / hex chars `[136,144)`, rendered ISO-8601 UTC). It is INDEPENDENTLY
+MEASURED off the header the node served, never trusted from any packet field;
+`null` only when the header was not fetched/validated. The PROOF-07 CLI (#1353)
+compares it against the packet's claimed `block_timestamp` to flag a forged
+timestamp (§1.5 — measured vs asserted).
 
 ## Conventions
 - Mirrors `@arkova/sdk` toolchain: own `tsconfig.json` + `vitest.config.ts`,

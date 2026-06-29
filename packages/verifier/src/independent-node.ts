@@ -128,6 +128,18 @@ export interface ConfirmInclusionResult {
   extractedMerkleRoot?: string;
   /** Block merkleroot from the independently-fetched header (display hex, when fetched). */
   blockMerkleRoot?: string;
+  /**
+   * Network-observed time DERIVED FROM the 80-byte block header the independent
+   * node served — the little-endian uint32 UNIX-seconds timestamp at header bytes
+   * [68,72) (hex chars [136,144)), rendered as an ISO-8601 UTC string. This is an
+   * INDEPENDENTLY-MEASURED time read off the header the node returned; it is NOT
+   * taken from, and does not trust, any field in the anchor packet. A consuming
+   * CLI (#1353) compares this against the packet's claimed `block_timestamp` to
+   * detect a forged packet timestamp and report a measured Network Observed Time
+   * (§1.5). `null` only when the header could not be fetched/validated — every
+   * result that has a verified header carries a non-null `observedTime`.
+   */
+  observedTime: string | null;
   /** Tx position within the block per the Merkle proof (when fetched). */
   txIndex?: number;
   /** Human/machine-stable reason; present on every non-confirmed result. */
@@ -254,6 +266,9 @@ export async function confirmInclusion(
     };
   }
   const headerMerkleRoot = Buffer.from(headerBuf.subarray(36, 68)).reverse().toString('hex');
+  // Independently-measured Network Observed Time, derived from the header the node
+  // served (bytes [68,72), LE uint32 UNIX seconds). NOT trusted from any packet.
+  const observedTime = headerObservedTime(headerBuf);
 
   // ── 5. Inclusion proof: recompute → header merkleroot, bound to THIS txid ──
   const proofResp = await safeFetch(fetch, `/tx/${txId}/merkle-proof`);
@@ -264,6 +279,7 @@ export async function confirmInclusion(
       blockHash,
       extractedMerkleRoot: extracted,
       blockMerkleRoot: headerMerkleRoot,
+      observedTime,
     };
   }
   const proof = proofResp.json;
@@ -274,6 +290,7 @@ export async function confirmInclusion(
       blockHash,
       extractedMerkleRoot: extracted,
       blockMerkleRoot: headerMerkleRoot,
+      observedTime,
     };
   }
 
@@ -286,6 +303,7 @@ export async function confirmInclusion(
       extractedMerkleRoot: extracted,
       blockMerkleRoot: headerMerkleRoot,
       txIndex: proof.pos,
+      observedTime,
     };
   }
 
@@ -298,6 +316,7 @@ export async function confirmInclusion(
     extractedMerkleRoot: extracted,
     blockMerkleRoot: headerMerkleRoot,
     txIndex: proof.pos,
+    observedTime,
   };
 }
 
@@ -478,5 +497,21 @@ function reject(
   txId: string,
   reason: string,
 ): ConfirmInclusionResult {
-  return { confirmed: false, status, txId, reason };
+  // `observedTime` defaults to null: it is only knowable once the 80-byte header
+  // has been independently fetched and validated. Result sites that DO have a
+  // verified header spread over this and set the measured `observedTime`.
+  return { confirmed: false, status, txId, reason, observedTime: null };
+}
+
+/**
+ * Parse the Network Observed Time from a validated 80-byte block header.
+ * The header timestamp is a little-endian uint32 of UNIX seconds at bytes
+ * [68,72) (hex chars [136,144)). Returned as an ISO-8601 UTC string. This is an
+ * INDEPENDENT measurement off the header the node served — it trusts no packet
+ * field. Returns null if the buffer is not a full 80-byte header.
+ */
+function headerObservedTime(header: Buffer): string | null {
+  if (header.length < 80) return null;
+  const unixSeconds = header.readUInt32LE(68);
+  return new Date(unixSeconds * 1000).toISOString();
 }

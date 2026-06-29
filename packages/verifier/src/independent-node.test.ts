@@ -66,13 +66,20 @@ function buildTree(txidsHex: string[], targetIndex: number): { rootHex: string; 
   return { rootHex, merkle, pos: targetIndex };
 }
 
-/** Build a real 80-byte header committing to `merkleRootHex` (display hex). */
-function buildHeader(merkleRootHex: string, nonce = 0): string {
+/** Default header time used by the fixtures (UNIX seconds → 2023-11-14T22:13:20.000Z). */
+const DEFAULT_HEADER_TIME = 1_700_000_000;
+
+/**
+ * Build a real 80-byte header committing to `merkleRootHex` (display hex). The
+ * `time` is written as a little-endian uint32 of UNIX seconds at bytes [68,72) —
+ * exactly where the verifier reads its independently-measured observed time.
+ */
+function buildHeader(merkleRootHex: string, nonce = 0, time = DEFAULT_HEADER_TIME): string {
   const header = Buffer.alloc(80);
   header.writeInt32LE(0x20000000, 0); // version
   // [4,36) prev block hash — zeros are fine for the test
   Buffer.from(merkleRootHex, 'hex').reverse().copy(header, 36); // merkleroot LE at [36,68)
-  header.writeUInt32LE(1_700_000_000, 68); // time
+  header.writeUInt32LE(time, 68); // time (LE uint32 UNIX seconds)
   header.writeUInt32LE(0x1d00ffff, 72); // bits
   header.writeUInt32LE(nonce, 76); // nonce
   return header.toString('hex');
@@ -101,6 +108,8 @@ function makeFixture(opts: {
   targetIndex: number;
   height: number;
   confirmed?: boolean;
+  /** Override the header timestamp (LE uint32 UNIX seconds at bytes [68,72)). */
+  headerTime?: number;
 }): { fetch: IndependentNodeFetch; block: FixtureBlock; targetTxId: string } {
   const { targetTxId, opReturnScriptHex, otherTxids, targetIndex, height } = opts;
   const confirmed = opts.confirmed ?? true;
@@ -109,7 +118,7 @@ function makeFixture(opts: {
   txids.splice(targetIndex, 0, targetTxId);
 
   const { rootHex, merkle, pos } = buildTree(txids, targetIndex);
-  const headerHex = buildHeader(rootHex);
+  const headerHex = buildHeader(rootHex, 0, opts.headerTime ?? DEFAULT_HEADER_TIME);
   const hash = blockHashOf(headerHex);
 
   const tx: EsploraTx = {
@@ -175,6 +184,80 @@ describe('confirmInclusion (independent Esplora node)', () => {
     expect(result.extractedMerkleRoot).toBe(merkleRoot.toLowerCase());
     expect(result.blockHash).toBeDefined();
     expect(result.txIndex).toBe(2);
+    // Network Observed Time is derived from the header (DEFAULT_HEADER_TIME).
+    expect(result.observedTime).toBe(new Date(DEFAULT_HEADER_TIME * 1000).toISOString());
+  });
+
+  it('derives observedTime from the 80-byte header timestamp [68,72) — independent of any packet field', async () => {
+    const merkleRoot = fp(0xc7);
+    // A distinctive header time that is NOT the fixture default. The verifier must
+    // report THIS value (read off the header the node served), proving the time is
+    // measured from the header bytes and never copied from a packet/request field.
+    const KNOWN_TIME = 1_650_123_456; // 2022-04-16T15:37:36.000Z
+    const expectedIso = new Date(KNOWN_TIME * 1000).toISOString();
+    expect(expectedIso).toBe('2022-04-16T15:37:36.000Z'); // pin the fixture's intent
+
+    const { fetch } = makeFixture({
+      targetTxId: TXID_A,
+      opReturnScriptHex: opReturnScript(merkleRoot),
+      otherTxids: OTHER.slice(0, 4),
+      targetIndex: 1,
+      height: 810_000,
+      headerTime: KNOWN_TIME,
+    });
+
+    const result = await confirmInclusion(
+      { txId: TXID_A, expectedMerkleRoot: merkleRoot, blockHeight: 810_000 },
+      { fetch },
+    );
+
+    expect(result.confirmed).toBe(true);
+    // The observed time equals the header-derived value — NOT the request, NOT a
+    // packet timestamp (the request carries no timestamp at all). It is purely a
+    // function of the 80-byte header bytes [68,72) the independent node returned.
+    expect(result.observedTime).toBe(expectedIso);
+    expect(result.observedTime).not.toBe(new Date(DEFAULT_HEADER_TIME * 1000).toISOString());
+  });
+
+  it('reports observedTime even on a downstream failure once the header is validated (inclusion_failed)', async () => {
+    const merkleRoot = fp(0xd8);
+    const KNOWN_TIME = 1_688_888_888; // 2023-07-09T05:08:08.000Z
+    const { fetch: goodFetch } = makeFixture({
+      targetTxId: TXID_A,
+      opReturnScriptHex: opReturnScript(merkleRoot),
+      otherTxids: OTHER.slice(0, 4),
+      targetIndex: 1,
+      height: 800_000,
+      headerTime: KNOWN_TIME,
+    });
+    // Corrupt the merkle proof so inclusion fails AFTER the header is validated.
+    const fetch: IndependentNodeFetch = async (path) => {
+      if (path === `/tx/${TXID_A}/merkle-proof`) {
+        return { ok: true, json: { block_height: 800_000, merkle: ['9'.repeat(64)], pos: 1 } };
+      }
+      return goodFetch(path);
+    };
+
+    const result = await confirmInclusion(
+      { txId: TXID_A, expectedMerkleRoot: merkleRoot, blockHeight: 800_000 },
+      { fetch },
+    );
+
+    expect(result.confirmed).toBe(false);
+    expect(result.status).toBe('inclusion_failed');
+    // Header was validated, so the measured observed time is still surfaced.
+    expect(result.observedTime).toBe(new Date(KNOWN_TIME * 1000).toISOString());
+  });
+
+  it('observedTime is null on failures BEFORE the header is fetched (tx_not_found)', async () => {
+    const fetch: IndependentNodeFetch = async () => ({ ok: false, status: 404 });
+    const result = await confirmInclusion(
+      { txId: TXID_A, expectedMerkleRoot: fp(0x01), blockHeight: 800_000 },
+      { fetch },
+    );
+    expect(result.confirmed).toBe(false);
+    expect(result.status).toBe('tx_not_found');
+    expect(result.observedTime).toBeNull();
   });
 
   it('confirms a valid inclusion with an 8-byte metadata suffix on the OP_RETURN', async () => {
