@@ -21,6 +21,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { createGrcAdapter, loadGrcCredentials } from '../../integrations/grc/adapters.js';
 import type { GrcConnection } from '../../integrations/grc/types.js';
+import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
 import {
   createDefaultKmsClient,
   encryptTokens,
@@ -118,15 +119,14 @@ const CallbackSchema = z.object({
 // ─── Helper: get user's org (admin/owner only) ──────────
 
 async function getUserAdminOrgId(userId: string): Promise<string | null> {
-  const { data } = await db
-    .from('org_members')
-    .select('org_id, role')
-    .eq('user_id', userId)
-    .limit(1)
-    .maybeSingle();
-
-  if (!data || (data.role !== 'admin' && data.role !== 'owner')) return null;
-  return data.org_id;
+  // Owner-inclusive resolution: an org OWNER is linked via `profiles.org_id`
+  // and is not guaranteed an `org_members` row, so the prior `org_members`-only
+  // lookup 403'd owners. Resolve the caller's org from their profile, then
+  // require org-admin (org_members owner/admin OR profile ORG_ADMIN OR platform
+  // admin). Same return contract: the org id when admin, otherwise null.
+  const orgId = await getCallerOrgId(userId);
+  if (!orgId || !(await isCallerOrgAdmin(userId, orgId))) return null;
+  return orgId;
 }
 
 // ─── POST /connect — Get OAuth2 authorization URL ───────
