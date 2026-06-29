@@ -57,6 +57,13 @@ JOBS=(
   # Detection only: reads DocuSign Connect config and emits Sentry warnings
   # for missing/disabled/HMAC/event/payload-format drift; no DocuSign writes.
   "docusign-listener-drift|15 * * * *|/jobs/docusign-listener-drift|30s,120s,2"
+  # QUEUE-06 (SCRUM-2352): connector_artifact drain consumer every 5 min.
+  # Drains pending|queued rows → materialize PENDING anchor → charge at SECURING
+  # (debit_and_enqueue_anchor) → batch-anchor. Endpoint at
+  # services/worker/src/routes/cron.ts. No-ops (skipped:true) until
+  # ENABLE_CONNECTOR_ARTIFACT_DRAIN=true. Idempotent (compare-and-set claim), so
+  # retries never double-anchor; a non-200 (e.g. cycle select failure) retries.
+  "drain-connector-artifacts|*/5 * * * *|/jobs/drain-connector-artifacts|30s,120s,2"
 )
 # SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
 # It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.
