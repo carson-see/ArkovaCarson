@@ -146,6 +146,13 @@ export async function sourceProofInput(
   } else if (proofRow.batch_id != null) {
     // Derive leaf_count the way the server does: count the anchor_proofs rows
     // that share this batch_id. RLS-scoped, head:true → a number, no rows / PII.
+    //
+    // R0-8 / SCRUM-1254 baseline note: this exact head-count call site is
+    // registered against `check-count-exact-baseline.ts` via the sanctioned
+    // `count-exact-allowed` PR label. The guardrail targets unbounded exact
+    // counts that scan the hot 1.4M-row `anchors` table; this count is bounded
+    // per-batch over the INDEXED `batch_id` on `anchor_proofs` (cheap), and
+    // mirrors the server's leaf_count derivation (PROOF-05 / #1354).
     const { count, error } = await supabase
       .from('anchor_proofs')
       .select('*', { count: 'exact', head: true })
