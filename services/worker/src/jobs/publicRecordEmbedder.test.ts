@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockRpc = vi.fn();
 const mockInsert = vi.fn();
-const mockFrom = vi.fn(() => ({ insert: mockInsert }));
+const mockFrom = vi.fn((..._args: unknown[]) => ({ insert: mockInsert }));
 vi.mock('../utils/db.js', () => ({
   db: {
     rpc: (...args: unknown[]) => mockRpc(...args),
