@@ -22,19 +22,7 @@ import { AssetDetailView } from '@/components/anchor';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ROUTES } from '@/lib/routes';
-import type { MerkleProofEntry } from '@/lib/generateAuditReport';
-
-/**
- * Validate a stored `anchor_proofs.proof_path` entry. Each entry carries a
- * sibling fingerprint plus its side; both are required for the offline verifier
- * to recompute the root, so the entry is preserved whole — never narrowed to a
- * bare string.
- */
-function isMerkleEntry(v: unknown): v is MerkleProofEntry {
-  if (typeof v !== 'object' || v === null) return false;
-  const e = v as Record<string, unknown>;
-  return typeof e.hash === 'string' && (e.position === 'left' || e.position === 'right');
-}
+import { sourceProofInput } from '@/lib/sourceProofInput';
 
 export function RecordDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -236,42 +224,29 @@ export function RecordDetailPage() {
           try {
             // PROOF-04 (SCRUM-2337): embed the full machine-readable proof
             // packet so the certificate can be re-verified offline. The
-            // packet fields live in `anchor_proofs`; fetch them for SECURED
-            // records (RLS scopes the row to the viewer). Non-SECURED records
-            // simply get the legacy certificate with no proof packet.
-            let proof: import('@/lib/generateAuditReport').ProofInput | undefined;
-            if (anchor.status === 'SECURED') {
-              const { data: proofRow } = await supabase
-                .from('anchor_proofs')
-                .select(
-                  'merkle_root, proof_path, merkle_index, block_hash, block_header, block_height, op_return_payload, proof_schema_version, block_timestamp, receipt_id',
-                )
-                .eq('anchor_id', anchor.id)
-                .maybeSingle();
-              if (proofRow) {
-                // `proof_path` is the SAME branch shape the verify-proof API and
-                // PROOF-07 CLI consume. Validate and PRESERVE those entries;
-                // never flatten to strings (that drops the side, so the offline
-                // verifier can't recompute the root). Drop only malformed rows.
-                const path = Array.isArray(proofRow.proof_path)
-                  ? (proofRow.proof_path as unknown[]).filter(isMerkleEntry)
-                  : null;
-                proof = {
-                  fingerprint: anchor.fingerprint,
-                  merkle_root: proofRow.merkle_root,
-                  merkle_proof: path,
-                  merkle_index: proofRow.merkle_index,
-                  tx_id: anchor.chain_tx_id ?? proofRow.receipt_id ?? null,
-                  block_height: proofRow.block_height ?? anchor.chain_block_height ?? null,
-                  block_hash: proofRow.block_hash,
-                  block_header: proofRow.block_header,
-                  op_return_payload: proofRow.op_return_payload,
-                  proof_schema_version: proofRow.proof_schema_version,
-                  // Machine field is `block_timestamp` (the human-readable PDF
-                  // label still reads "Network Observed Time").
-                  block_timestamp: proofRow.block_timestamp ?? anchor.chain_timestamp ?? null,
-                };
-              }
+            // packet fields live in `anchor_proofs`; `sourceProofInput` fetches
+            // them for SECURED records (RLS scopes the row to the viewer) AND
+            // derives `leaf_count` — the field that arms the CVE-2012-2459 guard
+            // — the same way the server does (count the anchor_proofs rows
+            // sharing this proof's batch_id, head:true → a number, no PII).
+            // Non-SECURED records get the legacy certificate with no packet.
+            const { proof, complete } = await sourceProofInput(supabase, {
+              id: anchor.id,
+              fingerprint: anchor.fingerprint,
+              status: anchor.status,
+              chain_tx_id: anchor.chain_tx_id ?? null,
+              chain_block_height: anchor.chain_block_height ?? null,
+              chain_timestamp: anchor.chain_timestamp ?? null,
+            });
+            // If a packet exists but `leaf_count` could not be sourced (a batch
+            // member whose batch count failed), DO NOT present it as a complete
+            // offline proof: the certificate marks the packet incomplete and we
+            // warn the user. `complete` is true for single-leaf records and
+            // fully-counted batches.
+            if (proof && !complete) {
+              toast.warning(
+                'This certificate embeds the proof for inspection, but one field needed to run every offline check could not be loaded. Try again in a moment for a complete proof.',
+              );
             }
             const { generateAuditReport } = await import('@/lib/generateAuditReport');
             generateAuditReport({
@@ -290,6 +265,7 @@ export function RecordDetailPage() {
               networkReceipt: anchor.chain_tx_id ?? undefined,
               blockHeight: anchor.chain_block_height ?? undefined,
               proof,
+              proofComplete: complete,
             });
           } catch {
             toast.error('Failed to generate proof certificate. Please try again.');

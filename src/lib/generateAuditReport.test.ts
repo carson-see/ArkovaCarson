@@ -192,4 +192,23 @@ describe('PROOF-04 buildAuditReport — embedded machine-readable JSON', () => {
     expect(output).toContain('Verified'); // SECURED → "Verified"
     expect(output).not.toMatch(/Status:\s*SECURED/);
   });
+
+  it('claims a complete offline proof by default (proofComplete undefined → true)', () => {
+    const output = buildAuditReport(securedData()).doc.output();
+    // The default offline-verify intro asserts a complete packet.
+    expect(output).toContain('complete, machine-readable proof packet');
+  });
+
+  it('does NOT claim a complete offline proof when proofComplete is false', () => {
+    // A batch member whose leaf_count could not be sourced: the page passes
+    // proofComplete:false. The certificate still embeds the packet but uses the
+    // incomplete copy and drops the "complete … proof packet" assertion (§1.5).
+    const data = securedData({ proofComplete: false });
+    data.proof!.leaf_count = null; // not sourced
+    const r = buildAuditReport(data);
+    const output = r.doc.output();
+    expect(r.embeddedProofJson).toBeTruthy(); // packet still embedded for inspection
+    expect(output).toContain('could not be sourced');
+    expect(output).not.toContain('complete, machine-readable proof packet');
+  });
 });

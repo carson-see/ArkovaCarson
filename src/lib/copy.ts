@@ -823,6 +823,12 @@ export const CERTIFICATE_COPY = {
   // verifier needs to re-check this document without contacting Arkova.
   OFFLINE_VERIFY_INTRO:
     'This certificate carries a complete, machine-readable proof packet (below). Anyone can re-check it independently:',
+  // Shown when the proof packet is missing a field required to run every offline
+  // check (e.g. the batch tree leaf count could not be sourced). The packet is
+  // still embedded for inspection, but the certificate does NOT claim it can run
+  // every check, so the reader is not misled (§1.5 — measured vs not asserted).
+  OFFLINE_VERIFY_INTRO_INCOMPLETE:
+    'This certificate carries a machine-readable proof packet (below), but one or more fields needed to run every offline check could not be sourced for this record. Use the packet for inspection; some checks may not be runnable:',
   OFFLINE_VERIFY_STEP_1:
     '1. Compute the SHA-256 fingerprint of your copy of the document and confirm it matches the Fingerprint field.',
   OFFLINE_VERIFY_STEP_2:

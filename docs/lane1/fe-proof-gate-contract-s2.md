@@ -88,7 +88,7 @@ each sibling needs and the offline verifier could not recompute the root).
 | `merkle_root` | `anchor_proofs.merkle_root` | `text` (hex as-is) |
 | `merkle_proof` | `anchor_proofs.proof_path` | `Json` array of `{ hash, position }`; **validated + preserved whole**, never flattened to strings |
 | `merkle_index` | `anchor_proofs.merkle_index` | `int` |
-| `leaf_count` | (no column today — emits `null`) | reserved for the CLI's structural guard; `null` until a source exists |
+| `leaf_count` | derived: `count(anchor_proofs WHERE batch_id = <row.batch_id>)` | arms the CLI's CVE-2012-2459 guard. Sourced the same way the server does (PROOF-05): RLS-scoped `head:true` count of the batch's proof rows (a number, no PII). Single-leaf / un-batched rows → `1`. If a batch member's count cannot be sourced, the packet ships `leaf_count: null` and is flagged **incomplete** (`proofComplete: false`) — the certificate then drops the "complete proof" claim. See `src/lib/sourceProofInput.ts`. |
 | `tx_id` | `anchors.chain_tx_id` → fallback `anchor_proofs.receipt_id` | |
 | `block_height` | `anchor_proofs.block_height` → fallback `anchors.chain_block_height` | |
 | `block_hash` | `anchor_proofs.block_hash` | `text` (hex as-is) |

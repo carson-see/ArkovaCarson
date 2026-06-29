@@ -120,6 +120,15 @@ export interface AuditReportData {
   /** Full proof inputs (from `anchor_proofs`). When absent or non-SECURED, no
    *  machine-readable proof packet is embedded. */
   proof?: ProofInput;
+  /**
+   * Whether the embedded packet is a COMPLETE offline proof — i.e. every field
+   * needed to run all offline checks (notably `leaf_count`, which arms the
+   * CVE-2012-2459 guard) was sourced. Defaults to `true` for backwards
+   * compatibility. When `false`, the certificate still embeds the packet for
+   * inspection but uses the "incomplete" offline-verify copy and does NOT claim
+   * the proof can run every check (§1.5 — measured vs not asserted).
+   */
+  proofComplete?: boolean;
 }
 
 export interface AuditReportResult {
@@ -385,8 +394,16 @@ export function buildAuditReport(data: AuditReportData): AuditReportResult {
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(40, 40, 40);
+    // When the packet is missing a field required to run every check (e.g.
+    // `leaf_count` could not be sourced for a batch member), the certificate
+    // must NOT claim a complete offline proof (§1.5). `proofComplete` defaults
+    // to `true` so existing callers are unaffected.
+    const offlineIntro =
+      data.proofComplete === false
+        ? CERTIFICATE_COPY.OFFLINE_VERIFY_INTRO_INCOMPLETE
+        : CERTIFICATE_COPY.OFFLINE_VERIFY_INTRO;
     for (const line of [
-      CERTIFICATE_COPY.OFFLINE_VERIFY_INTRO,
+      offlineIntro,
       CERTIFICATE_COPY.OFFLINE_VERIFY_STEP_1,
       CERTIFICATE_COPY.OFFLINE_VERIFY_STEP_2,
       CERTIFICATE_COPY.OFFLINE_VERIFY_STEP_3,
