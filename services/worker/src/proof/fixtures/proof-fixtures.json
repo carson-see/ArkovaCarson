@@ -1,0 +1,162 @@
+{
+  "$schema_note": "Canonical Arkova proof-fixture vectors (PROOF-08 / SCRUM-2341). Self-describing: every proof consumer (API, PDF, SDK, CLI, server verify) tests against THIS file. Synthetic anchors only — NO real customer data or PII. See README.md in this directory for the field contract.",
+  "fixture_set_version": "1.0.0",
+  "proof_schema_version": 1,
+  "hash_rule": "double-SHA256 over positional concat (Bitcoin standard), matching services/worker/src/utils/merkle.ts::buildMerkleTree. NOT RFC-6962 tagged hashing (that is reserved for a future proof_schema_version=2). On-chain commitment format is v0 = ARKV(41524b56) ‖ 32-byte root [‖ optional 8-byte metadata hash]; there is NO version byte (services/worker/src/chain/base.ts:111/124).",
+  "tree": {
+    "description": "Synthetic 4-leaf even tree. No level has a legitimate odd-row duplication, so ANY self-pairing sibling is a forgery — ideal for the CVE-2012-2459 vector. Leaves derive from sha256('arkova-fixture-leaf-N').",
+    "leaf_count": 4,
+    "leaves": [
+      "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+      "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28",
+      "f68ef6c7cf623c430f60d73212b4dd12a0d09517a1de05140dadf48dc700c8eb",
+      "1e605cf31716f7d0bf6453462b9318d2a654bc42a6a697a1390d280ca6097b77"
+    ],
+    "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607"
+  },
+  "valid": {
+    "id": "valid-inclusion",
+    "description": "The one canonical VALID inclusion proof for leaf index 0. verifyMerkleInclusion(leaf, branch, root, {leafIndex, leafCount}) MUST return { valid: true }.",
+    "public_id": "rec_fixture_valid_0001",
+    "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+    "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+    "merkle_index": 0,
+    "leaf_count": 4,
+    "merkle_proof": [
+      { "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "right" },
+      { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
+    ],
+    "on_chain": {
+      "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+      "block_height": 840000,
+      "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+      "block_header": "1161202aefade9e2a6d8ce25f77bdabe5f48f5762f0332f5ff492e476344158131ff3408898bc7e0c6d00219124558e43deca82879a73ce4d99709c38c834c6ece94941a296dbd0adf9428767935029e",
+      "block_timestamp": "2024-04-20T00:00:00.000Z",
+      "op_return_payload": "41524b56bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607"
+    },
+    "batch_id": "batch_fixture_0001"
+  },
+  "invalid": [
+    {
+      "id": "bad-document-hash",
+      "attack": "wrong-document-hash",
+      "description": "A different document fingerprint walked against the valid branch + root. Recomputed root will not match — the leaf was never in this tree.",
+      "fingerprint": "a2cade399ef4e35f5543aa0a9b1059e3d5afe622f8287d622fbb29909224d6f4",
+      "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+      "merkle_index": 0,
+      "leaf_count": 4,
+      "merkle_proof": [
+        { "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "right" },
+        { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
+      ],
+      "expect_invalid_reason": "recomputed root"
+    },
+    {
+      "id": "tampered-merkle-branch",
+      "attack": "tampered-branch-sibling",
+      "description": "Valid leaf, but the first sibling hash is mutated. Recomputed root diverges.",
+      "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+      "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+      "merkle_index": 0,
+      "leaf_count": 4,
+      "merkle_proof": [
+        { "hash": "ffffffffc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "right" },
+        { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
+      ],
+      "expect_invalid_reason": "recomputed root"
+    },
+    {
+      "id": "flipped-branch-position",
+      "attack": "tampered-branch-position",
+      "description": "Valid leaf + valid sibling hashes, but the first entry's left/right position is flipped, so the concatenation order — and the recomputed root — is wrong.",
+      "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+      "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+      "merkle_index": 0,
+      "leaf_count": 4,
+      "merkle_proof": [
+        { "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "left" },
+        { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
+      ],
+      "expect_invalid_reason": "recomputed root"
+    },
+    {
+      "id": "duplicated-leaf-attack",
+      "attack": "cve-2012-2459-self-pair",
+      "description": "CVE-2012-2459 duplicated-leaf forgery. The branch's first sibling equals the leaf itself (self-pair) at index 0 of a size-4 (even) level, which is NOT a legitimate rightmost-odd duplication. With merkle_index + leaf_count supplied, the structural guard MUST reject it.",
+      "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+      "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+      "merkle_index": 0,
+      "leaf_count": 4,
+      "merkle_proof": [
+        { "hash": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf", "position": "right" },
+        { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
+      ],
+      "expect_invalid_reason": "self-pair"
+    },
+    {
+      "id": "wrong-leaf-index",
+      "attack": "leaf-index-out-of-range",
+      "description": "merkle_index is out of range for leaf_count (claims index 9 in a 4-leaf tree). The structural guard MUST reject before walking.",
+      "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+      "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+      "merkle_index": 9,
+      "leaf_count": 4,
+      "merkle_proof": [
+        { "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "right" },
+        { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
+      ],
+      "expect_invalid_reason": "out of range"
+    },
+    {
+      "id": "bad-block-header",
+      "attack": "malformed-block-header",
+      "description": "Layer-2 bitcoin-tree vector. The raw block header is not 80 bytes (160-hex) — it is truncated. confirmation-proof / header consumers MUST reject; the layer-1 app-tree inclusion above is unaffected, so this isolates the header check.",
+      "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+      "block_header_hex": "00000020aabbccddeeff",
+      "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+      "expect_invalid_reason": "header"
+    },
+    {
+      "id": "bad-signature",
+      "attack": "tampered-ed25519-signature",
+      "description": "Signed-bundle vector. payload + signing_key_id + canonical bytes are intact, but the Ed25519 signature value has its first base64url char mutated. verifySignedBundle MUST report valid:false / signature verification failed. The tampered signature is supplied in signed_bundle.bad_signature_value.",
+      "expect_invalid_reason": "signature verification failed"
+    }
+  ],
+  "signed_bundle": {
+    "description": "A VALID signed proof bundle over the canonical valid payload, plus the static TEST keypair used to produce it. The PRIVATE key is a throwaway, deterministically seeded SOLELY for these fixtures — it is NEVER a production signing key (prod signs via GCP KMS; this is the dev/test static-PEM path per verify-proof.ts resolveSigner()). The bad-signature invalid case mutates `signature.value` (see bad_signature_value).",
+    "signing_key_id": "arkova-test-fixture-ed25519-v1",
+    "test_public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEADW+MYALpMP7P8btt24vip0CJkapXrLdhddhUxMtgpnk=\n-----END PUBLIC KEY-----\n",
+    "test_private_key_pem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIFp9R5GHKYDfgZ/xsKRbFYKyYyHDVvLkh9p0g5+4f3oz\n-----END PRIVATE KEY-----\n",
+    "bad_signature_value": "AJFWrk_npvnMJymXY-C66yoF5hRu4cXS5GjYwENcY-d2_RWqwOvBtWfrPKGL7pVzEHHgLB0toIgRvwv3GuABCQ",
+    "valid_bundle": {
+      "payload": {
+        "public_id": "rec_fixture_valid_0001",
+        "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+        "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+        "merkle_proof": [
+          { "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28", "position": "right" },
+          { "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2", "position": "right" }
+        ],
+        "merkle_index": 0,
+        "leaf_count": 4,
+        "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+        "block_height": 840000,
+        "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+        "block_header": "1161202aefade9e2a6d8ce25f77bdabe5f48f5762f0332f5ff492e476344158131ff3408898bc7e0c6d00219124558e43deca82879a73ce4d99709c38c834c6ece94941a296dbd0adf9428767935029e",
+        "op_return_payload": "41524b56bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+        "block_timestamp": "2024-04-20T00:00:00.000Z",
+        "batch_id": "batch_fixture_0001",
+        "proof_schema_version": 1,
+        "verified": true
+      },
+      "signature": {
+        "alg": "Ed25519",
+        "value": "WJFWrk_npvnMJymXY-C66yoF5hRu4cXS5GjYwENcY-d2_RWqwOvBtWfrPKGL7pVzEHHgLB0toIgRvwv3GuABCQ"
+      },
+      "signing_key_id": "arkova-test-fixture-ed25519-v1",
+      "signed_at_utc": "2024-04-20T00:00:00.000Z",
+      "bundle_version": "1.0.0"
+    }
+  }
+}
