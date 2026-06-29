@@ -30,6 +30,7 @@
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { hasLabel } from './lib/ciContext.js';
 
 export const EXPECTED_BUILD_SCRIPT = 'tsc -p tsconfig.build.json';
 export const EXPECTED_RUN = 'npm run build';
@@ -137,11 +138,11 @@ export function auditDeployBuildParity(sources: ParitySources): ParityResult {
 }
 
 function hasOverrideLabel(): boolean {
-  const labels = (process.env.PR_LABELS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return OVERRIDE_LABELS.some((l) => labels.includes(l));
+  // Use ciContext.hasLabel — it resolves PR labels from the env-seeded
+  // (frozen pull_request payload) PR_LABELS UNION the live GitHub API labels
+  // (#1336), so a label added after the frozen payload + rerun is honored.
+  // This keeps ZERO direct process.env reads in this gate (SCRUM-1258).
+  return OVERRIDE_LABELS.some((l) => hasLabel(l));
 }
 
 function main(): void {
