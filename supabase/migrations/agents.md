@@ -30,6 +30,7 @@ Remaining strict order:
 | Prefix | PR | Story | File | Status |
 |---|---|---|---|---|
 | `0339` | #1122 | SCRUM-2285 | `0339_get_public_anchor_by_fingerprint.sql` | current strict-order PR |
+| `0342` | perf/cpe-cle-dashboard-partial-index | — (perf) | `0342_cpe_cle_dashboard_partial_index.sql` | reserved (next free after Train D `0340`/`0341`) — org CPE/CLE dashboard partial indexes (T3 soak PENDING) |
 
 - Remaining migration order is strict: #1122.
 - Do not reserve or reuse `0327`, `0328`, `0329`, `0333`, `0334`, `0335`, `0336`, `0337`, or `0338`; those prefixes are already consumed by merged drain PRs.
@@ -39,18 +40,12 @@ Remaining strict order:
 
 ## Train D migration reservations (2026-06-16)
 
-Merge order is strict **0340 → 0341** (0341 is stacked on 0340). **0340 + 0341 were APPLIED to prod `vzwyaatejekddvltxyye` on 2026-06-23** (Carson-approved, via MCP `apply_migration`; ledger reconciled numeric — prod head now `0339, 0340, 0341`). The code PRs (#1255 + the credit PR) merge to `main` via Mergify on green + soak evidence. Do not reserve or reuse `0340`, `0341`, `0342`, or `0343`.
+Reserved by the Train D MVP-launch train (GitHub milestone #2). **Pre-soak; not yet merged.** Merge order is strict **0340 → 0341** (0341 is stacked on 0340). Do not reserve or reuse `0340` or `0341`.
 
 | Prefix | Branch | Story | File | Status |
 |---|---|---|---|---|
-| `0340` | `feat/train-d-proof-foundation` | SCRUM-2335 / 2490 / 2491 | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | **APPLIED to prod 2026-06-23** |
-| `0341` | `feat/train-d-credit-foundation` (stacked on 0340) | SCRUM-2349 / 2350 | `0341_scrum2349_2350_credit_integrity_foundation.sql` | **APPLIED to prod 2026-06-23** |
-| `0342` | `perf/cpe-cle-dashboard-partial-index` (PR #1257) | CPE/CLE dashboard partial indexes | `0342_*` | RESERVED — open PR, do not reuse |
-| `0343` | QUEUE-02 connector-artifact schema (Lane 2) | SCRUM-2348 | `0343_scrum2348_connector_artifact_queue_schema.sql` | RESERVED — Lane 2 Sprint 1; interface-lock to Lane 3 by 2026-06-26 |
-| `0345` | `fix/vacuum-anchors-cron-0345` (PR #1282) | vacuum-anchors cron | `0345_fix_vacuum_anchors_cron.sql` | RESERVED — open PR. **Legitimate owner of `0345`.** |
-| `0346` | `fix/embed-public-records-timeout-0346` (PR #1286) | SCRUM-2203 (0330 follow-up) | `0346_fix_embed_unembedded_query_perf.sql` | RESERVED — open PR (DRAFT, T3 soak pending). **Renumbered 0345 → 0346 on 2026-06-24 (collision: PR #1282 owns `0345_fix_vacuum_anchors_cron.sql`).** 0346 is the next free prefix above #1282's 0345. Fixes the embed-public-records cron statement-timeout (57014) regression: 0330's NOT EXISTS anti-join now walks ~2.1M already-embedded rows at the created_at leading edge. Adds `public_records.embedded_at` marker + maintenance trigger + partial index `idx_public_records_unembedded ((created_at) WHERE embedded_at IS NULL)` (standalone CONCURRENTLY + batched backfill, per 0313/0330 convention) + RPC rewrite to `embedded_at IS NULL`. |
-
-`0344` is consumed (merged to `main`: `0344_scrum2349_credit_conservation_invariant_fix.sql`).
+| `0340` | `feat/train-d-proof-foundation` | SCRUM-2335 / 2490 / 2491 | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | RESERVED — pre-soak |
+| `0341` | `feat/train-d-credit-foundation` (stacked on 0340) | SCRUM-2349 / 2350 | `0341_scrum2349_2350_credit_integrity_foundation.sql` | RESERVED — pre-soak |
 
 Train D soaks once (consolidated RC) after Train C (#1154) merges, then rebases onto the new `main`; see HANDOFF.md + the "Release Soak Protection — No-Restart Process" Confluence page.
 
@@ -99,3 +94,7 @@ _Rollback rehearsed: 2026-05-16 on staging (ujtlwnoqfhtitcmsnrpq). Both tables d
 ## Recent migrations (SCRUM-1611 CSI-04A)
 
 - **0329_member_integrations_credential_providers.sql**: Widens the `member_integrations.provider` CHECK constraint from `{'docusign'}` to `{'docusign', 'credly', 'accredible', 'udemy'}` so the same table can hold credential-source provider tokens for the SCRUM-1596 epic. Adds `kek_version smallint NOT NULL DEFAULT 1` for KMS key-rotation tracking (RFC 9700). No new RLS policies — the policies established by 0320 apply to all providers polymorphically. Tier T2 (CHECK widening + additive column). Rollback rehearsal pending on staging.
+
+## Recent migrations (perf/cpe-cle-dashboard-partial-index)
+
+- **0342_cpe_cle_dashboard_partial_index.sql**: Adds two PARTIAL btree indexes on `public.anchors` for the org Compliance CPE/CLE reporting panels (`src/pages/ComplianceDashboardPage.tsx`): `idx_anchors_org_cpe_metadata_issued ON (org_id, issued_at DESC) WHERE cpe_metadata IS NOT NULL` and `idx_anchors_org_cle_metadata_issued ON (org_id, issued_at DESC) WHERE cle_metadata IS NOT NULL`. The panel query `WHERE org_id=$1 AND cpe_metadata IS NOT NULL ORDER BY issued_at DESC LIMIT 1000` had no selective index — the only `org_id` indexes are created_at-ordered composites — so on prod (anchors ~3M rows / 22 GB, primary org owns ~99%) it did a full Parallel Seq Scan + Sort and exceeded the statement timeout (prod EXPLAIN cost ~1.77M; a bare `count(*) FILTER (WHERE cpe_metadata IS NOT NULL)` already times out). The partial predicate stores only the few CPE/CLE rows and the `(org_id, issued_at DESC)` key serves both the filter and the order → Index Scan, no Sort (local throwaway EXPLAIN ANALYZE: Seq Scan 1383 buffers / Rows-Removed-by-Filter 79993 → Index Scan, 2 buffers; 16 kB partial indexes). **CONCURRENTLY decision:** a plain `CREATE INDEX` on this hot table takes a write-blocking lock for the full-heap scan a partial build still requires (a partial index is NOT cheap to build), and `CREATE INDEX CONCURRENTLY` cannot run inside the transaction `supabase db push` wraps a migration in — so, per the 0313 / 0330 / 0335 convention, the migration body is a transactional `DO`/`RAISE NOTICE` marker and the two `CREATE INDEX CONCURRENTLY ... IF NOT EXISTS` statements are operator-applied, NON-TRANSACTIONAL (documented at the file bottom). Index-only change → no `database.types.ts` delta, no `NOTIFY pgrst`. Tier **T3** (touches `supabase/migrations/`); isolated-staging soak PENDING (RM/Carson-scheduled). Forward + rollback (`DROP INDEX CONCURRENTLY IF EXISTS`, run standalone) both rehearsed clean on a throwaway local Postgres; plan reverts to Seq Scan on rollback.
