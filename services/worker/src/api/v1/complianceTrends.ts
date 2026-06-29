@@ -11,6 +11,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
 
 const router = Router();
 
@@ -36,20 +37,17 @@ router.get('/', async (req: Request, res: Response) => {
 
     const { granularity, from, to } = parsed.data;
 
-    const { data: membership, error: membershipError } = await db
-      .from('org_members')
-      .select('org_id, role')
-      .eq('user_id', userId)
-      .in('role', ['owner', 'admin'])
-      .limit(1)
-      .single();
-
-    if (membershipError || !membership) {
+    // Owner-inclusive admin gate. The prior `org_members`-only lookup 403'd org
+    // OWNERS, who are linked via `profiles.org_id` and may have no `org_members`
+    // row. Resolve the caller's org from their profile, then require org-admin
+    // (org_members owner/admin OR profile ORG_ADMIN OR platform admin). The
+    // underlying check covers the same owner/admin roles the original `.in()`
+    // allowed; same 403 message/status preserved.
+    const orgId = await getCallerOrgId(userId);
+    if (!orgId || !(await isCallerOrgAdmin(userId, orgId))) {
       res.status(403).json({ error: 'Admin, owner, or compliance officer role required' });
       return;
     }
-
-    const orgId = membership.org_id;
 
     // Fetch anchors, signatures, and certs in parallel (eliminates sequential latency)
     const [anchorsResult, signaturesResult, certsResult] = await Promise.all([
