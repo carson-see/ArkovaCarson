@@ -2,6 +2,10 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-06-29 — Lane 2 s2: connector_artifact drain consumer (QUEUE-06 / SCRUM-2352)
+
+`connector-artifact-drain.ts` is the loop-closer for the `connector_artifact` queue (mig 0343). Drains `pending|queued` rows via a **compare-and-set claim** (`UPDATE … SET status='processing' WHERE id=:id AND org_id=:org AND status IN ('pending','queued')`) — atomically under a row lock, so two concurrent cycles never double-anchor a row (exactly-once **without a new migration**, equivalent to `FOR UPDATE SKIP LOCKED`; the loser's UPDATE matches zero rows → skips). Per claimed row: **materialize** a `PENDING` anchor from the server-computed `fingerprint_sha256` (§1.6A — fingerprint only, never bytes; `user_id` resolved to an org owner/admin actor, `credential_type='CONTRACT_POSTSIGNING'`, `(user_id, fingerprint)` 23505 → reuse existing), then **charge ONLY at SECURING** via `debit_and_enqueue_anchor` (mig 0341 — itself idempotent on the anchor id, so a crash-replay re-drives the same single debit, never a double-charge), then batch-anchor via `processBatchAnchors({force:true, orgId})`. **No charge at enqueue/claim.** Per-row failure → `status='failed'` + bounded PII-scrubbed Sentry alert (ids+reason only); cycle-level select failure alerts (`scope='cycle'`) + throws so Cloud Scheduler retries — **no silent drop**. `runConnectorArtifactDrain()` is the cron entrypoint: flag-gated (`ENABLE_CONNECTOR_ARTIFACT_DRAIN`, default false → `skipped:true`), enumerates distinct orgs with drainable rows, drains each with per-org isolation. Strictly org-scoped (every read/claim/write filters `org_id`). Wired via `POST /jobs/drain-connector-artifacts` (prod trigger — in-process node-cron is dormant under Cloud Run throttling) + `*/5` in-process backup in `routes/scheduled.ts` (added to the anchor-table maintenance allowlist). T3.
+
 ## 2026-06-25 — Lane 1 i4: reorg block_hash + reorg retraction + legal-hold NET-1/3 freeze (migration 0347)
 
 Three interacting chain-integrity fixes in `chain-maintenance.ts` + `check-confirmations.ts`:

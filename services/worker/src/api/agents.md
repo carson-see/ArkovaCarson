@@ -1,6 +1,10 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-06-16 (worker types resync 0339 — version-resolution.ts fully typed)_
+_Last updated: 2026-06-29 (QUEUE-05 manual-run guard — queue-resolution.ts now owner-inclusive + sub-org-aware)_
+
+## 2026-06-29 — Lane 2 s2: manual org queue run guard owner-inclusive + sub-org-aware (QUEUE-05 / SCRUM-2351)
+
+`handleRunOrgAnchorQueue` (`queue-resolution.ts`) no longer carries a local `isOrgAdmin` doing a direct `org_members` probe — it now authorizes through the **canonical `_org-auth` resolver** (`isCallerOrgAdminResult`, owner-inclusive: owner/admin via `org_members` OR `ORG_ADMIN`/platform-admin via profile; fail-closed, 500 on operational error vs 403 true-negative). The endpoint accepts an optional `org_id` (`RunOrgQueueInput`, `.strict()` — unknown key → 400) so a caller can target a **specific** queue: their OWN org, or an **APPROVED sub-org** (`organizations.parent_org_id` = caller's org AND `parent_approval_status='APPROVED'`) whose parent the caller administers. The batch run is scoped to the resolved target org (never the parent), so a parent admin can't reach an unrelated org and a sub-org member/cross-org caller is 403. A `QUEUE_RUN_MANUAL` audit event (event_category `ANCHOR`, `relationship: self|sub_org`) is written on BOTH success and failure (non-fatal — the run is the source of truth). Route-level 401 stays in `routes/admin.ts` (`extractAuthUserId`).
 
 ## 2026-06-16 — version-resolution.ts fully typed (untypedDb removed)
 
