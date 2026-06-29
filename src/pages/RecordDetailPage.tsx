@@ -219,8 +219,42 @@ export function RecordDetailPage() {
         }}
         onBack={handleBack}
         onRenameFile={handleRenameFile}
-        onDownloadProof={() => {
-          import('@/lib/generateAuditReport').then(({ generateAuditReport }) => {
+        onDownloadProof={async () => {
+          try {
+            // PROOF-04 (SCRUM-2337): embed the full machine-readable proof
+            // packet so the certificate can be re-verified offline. The
+            // packet fields live in `anchor_proofs`; fetch them for SECURED
+            // records (RLS scopes the row to the viewer). Non-SECURED records
+            // simply get the legacy certificate with no proof packet.
+            let proof: import('@/lib/generateAuditReport').ProofInput | undefined;
+            if (anchor.status === 'SECURED') {
+              const { data: proofRow } = await supabase
+                .from('anchor_proofs')
+                .select(
+                  'merkle_root, proof_path, merkle_index, block_hash, block_header, block_height, op_return_payload, proof_schema_version, block_timestamp, receipt_id',
+                )
+                .eq('anchor_id', anchor.id)
+                .maybeSingle();
+              if (proofRow) {
+                const path = Array.isArray(proofRow.proof_path)
+                  ? (proofRow.proof_path as unknown[]).filter((s): s is string => typeof s === 'string')
+                  : null;
+                proof = {
+                  fingerprint: anchor.fingerprint,
+                  merkle_root: proofRow.merkle_root,
+                  merkle_proof: path,
+                  merkle_index: proofRow.merkle_index,
+                  tx_id: anchor.chain_tx_id ?? proofRow.receipt_id ?? null,
+                  block_height: proofRow.block_height ?? anchor.chain_block_height ?? null,
+                  block_hash: proofRow.block_hash,
+                  block_header: proofRow.block_header,
+                  op_return_payload: proofRow.op_return_payload,
+                  proof_schema_version: proofRow.proof_schema_version,
+                  observed_time: proofRow.block_timestamp ?? anchor.chain_timestamp ?? null,
+                };
+              }
+            }
+            const { generateAuditReport } = await import('@/lib/generateAuditReport');
             generateAuditReport({
               publicId: anchor.public_id ?? anchor.id,
               filename: anchor.filename,
@@ -236,8 +270,11 @@ export function RecordDetailPage() {
               expiresAt: anchor.expires_at ?? undefined,
               networkReceipt: anchor.chain_tx_id ?? undefined,
               blockHeight: anchor.chain_block_height ?? undefined,
+              proof,
             });
-          });
+          } catch {
+            toast.error('Failed to generate proof certificate. Please try again.');
+          }
         }}
         onDownloadProofJson={async () => {
           try {
