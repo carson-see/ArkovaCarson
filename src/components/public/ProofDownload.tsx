@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { getStatusDisplay } from '@/lib/statusDisplay';
 
 interface ProofData {
   recordId: string;
@@ -59,7 +60,8 @@ export function ProofDownload({
               Cryptographic proof that this document was secured
             </CardDescription>
           </div>
-          <Badge variant="success">Verified</Badge>
+          {/* FE-PROOF-GATE (SCRUM-2501): badge derives from getStatusDisplay — never a hardcoded "Verified". */}
+          <Badge variant="success">{getStatusDisplay(proof.status).label}</Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-6">

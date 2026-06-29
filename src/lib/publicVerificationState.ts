@@ -24,3 +24,15 @@ export function isPreSecuredStatus(status: PublicVerificationStatus): boolean {
 export function hasPublicVerificationProof(status: PublicVerificationStatus): boolean {
   return status === 'SECURED' || status === 'REVOKED' || status === 'EXPIRED' || status === 'SUPERSEDED';
 }
+
+/**
+ * SECURED-only gate for DOWNLOADING a proof artifact (FE-PROOF-GATE / SCRUM-2501).
+ *
+ * Distinct from `hasPublicVerificationProof`: a REVOKED / EXPIRED / SUPERSEDED anchor
+ * still HAS a public verification record (its status section renders), but its proof
+ * must NOT be downloadable as a "Verified" artifact — we never hand out a downloadable
+ * proof for an anchor that is no longer genuinely secured. Only SECURED qualifies.
+ */
+export function isProofDownloadable(status: PublicVerificationStatus): boolean {
+  return status === 'SECURED';
+}
