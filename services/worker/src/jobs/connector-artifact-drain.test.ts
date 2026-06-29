@@ -27,6 +27,7 @@ vi.mock('../config.js', () => ({ config: { enableConnectorArtifactDrain: true } 
 const {
   drainConnectorArtifactsForOrg,
   runConnectorArtifactDrain,
+  reapStaleInFlightArtifacts,
 } = await import('./connector-artifact-drain.js');
 type ConnectorArtifactDrainDeps =
   import('./connector-artifact-drain.js').ConnectorArtifactDrainDeps;
@@ -339,8 +340,10 @@ describe('runConnectorArtifactDrain (cron entrypoint)', () => {
     );
     const listDrainableOrgIds = vi.fn(async () => [ORG_A, ORG_B]);
 
-    const result = await runConnectorArtifactDrain({ listDrainableOrgIds, drainForOrg });
+    const reapStale = vi.fn(async () => ({ reaped: 0 }));
+    const result = await runConnectorArtifactDrain({ listDrainableOrgIds, drainForOrg, reapStale });
 
+    expect(reapStale).toHaveBeenCalledOnce();
     expect(result).toMatchObject({
       skipped: false,
       orgsProcessed: 2,
@@ -373,11 +376,69 @@ describe('runConnectorArtifactDrain (cron entrypoint)', () => {
     const listDrainableOrgIds = vi.fn(async () => [ORG_A, ORG_B]);
     const emitAlert = vi.fn();
 
-    const result = await runConnectorArtifactDrain({ listDrainableOrgIds, drainForOrg, emitAlert });
+    const reapStale = vi.fn(async () => ({ reaped: 0 }));
+    const result = await runConnectorArtifactDrain({ listDrainableOrgIds, drainForOrg, emitAlert, reapStale });
 
     expect(result.orgsProcessed).toBe(2);
     expect(result.orgsFailed).toBe(1);
     expect(result.anchored).toBe(1);
     expect(emitAlert).toHaveBeenCalledWith(expect.objectContaining({ scope: 'cycle', orgId: ORG_A }));
+  });
+});
+
+describe('reapStaleInFlightArtifacts (F-1 stuck-row reaper)', () => {
+  const OLD = '2020-01-01T00:00:00.000Z';
+
+  function makeReaperDb(rows: Array<{ id: string; org_id: string; status: string; updated_at: string }>, opts: { error?: string } = {}) {
+    const calls: { patch?: Record<string, unknown>; inArg?: string[]; ltArg?: string } = {};
+    const builder: Record<string, unknown> = {
+      update(patch: Record<string, unknown>) { calls.patch = patch; return builder; },
+      in(_c: string, vals: string[]) { calls.inArg = vals; return builder; },
+      lt(_c: string, val: string) { calls.ltArg = val; return builder; },
+      select() { return builder; },
+      then(resolve: (v: { data: unknown; error: unknown }) => void) {
+        if (opts.error) return resolve({ data: null, error: { message: opts.error } });
+        const matched = rows.filter((r) => (calls.inArg ?? []).includes(r.status) && r.updated_at < (calls.ltArg ?? ''));
+        return resolve({ data: matched.map((r) => ({ id: r.id, org_id: r.org_id })), error: null });
+      },
+    };
+    return { db: { from: () => builder } as unknown as ConnectorArtifactDrainDeps['db'], calls };
+  }
+
+  it('re-queues rows stranded in processing|materialized past the lease and alerts per row', async () => {
+    const emitAlert = vi.fn();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const rows = [
+      { id: 'a1', org_id: ORG_A, status: 'processing', updated_at: OLD },
+      { id: 'a2', org_id: ORG_A, status: 'materialized', updated_at: OLD },
+      { id: 'a3', org_id: ORG_A, status: 'processing', updated_at: new Date().toISOString() },
+    ];
+    const { db, calls } = makeReaperDb(rows);
+    const result = await reapStaleInFlightArtifacts({ db, logger, emitAlert, thresholdMs: 60_000 });
+    expect(result.reaped).toBe(2);
+    expect(calls.patch).toMatchObject({ status: 'queued' });
+    expect(calls.inArg).toEqual(['processing', 'materialized']);
+    expect(emitAlert).toHaveBeenCalledTimes(2);
+    expect(emitAlert).toHaveBeenCalledWith(expect.objectContaining({ artifactId: 'a1', reason: 'stale_inflight_requeued' }));
+    expect(emitAlert).toHaveBeenCalledWith(expect.objectContaining({ artifactId: 'a2', reason: 'stale_inflight_requeued' }));
+  });
+
+  it('returns reaped:0 and a cycle alert on db error, never throwing', async () => {
+    const emitAlert = vi.fn();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const { db } = makeReaperDb([], { error: 'boom' });
+    const result = await reapStaleInFlightArtifacts({ db, logger, emitAlert });
+    expect(result.reaped).toBe(0);
+    expect(emitAlert).toHaveBeenCalledWith(expect.objectContaining({ scope: 'cycle', reason: expect.stringContaining('reaper failed') }));
+  });
+
+  it('does not reap when nothing is past the lease', async () => {
+    const emitAlert = vi.fn();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const rows = [{ id: 'b1', org_id: ORG_A, status: 'processing', updated_at: new Date().toISOString() }];
+    const { db } = makeReaperDb(rows);
+    const result = await reapStaleInFlightArtifacts({ db, logger, emitAlert, thresholdMs: 60_000 });
+    expect(result.reaped).toBe(0);
+    expect(emitAlert).not.toHaveBeenCalled();
   });
 });

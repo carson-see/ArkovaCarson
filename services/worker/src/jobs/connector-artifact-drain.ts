@@ -337,7 +337,7 @@ export async function drainConnectorArtifactsForOrg(
     try {
       // 1) Materialize a PENDING anchor (fingerprint-only, §1.6A).
       const { anchorId } = await deps.materializeAnchor(row);
-      await markStatus(deps, orgId, row.id, 'materialized', { anchor_id: anchorId });
+      await markStatus(deps, orgId, row.id, 'processing', 'materialized', { anchor_id: anchorId });
 
       // 2) Charge AT SECURING — and ONLY here. Never at enqueue/claim.
       const debit = await deps.debitAndEnqueueAnchor({ orgId, anchorId });
@@ -355,7 +355,7 @@ export async function drainConnectorArtifactsForOrg(
       const batch = await deps.batchAnchor({ force: true, orgId });
 
       // 4) Terminal: mark the artifact anchored + backlink the anchor.
-      await markStatus(deps, orgId, row.id, 'anchored', { anchor_id: anchorId });
+      await markStatus(deps, orgId, row.id, 'materialized', 'anchored', { anchor_id: anchorId });
       result.anchored += 1;
       deps.logger.info(
         { orgId, artifactId: row.id, anchorId, batchId: batch.batchId, processed: batch.processed },
@@ -379,16 +379,21 @@ async function markStatus(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
   id: string,
-  status: 'materialized' | 'anchored',
+  from: 'processing' | 'materialized',
+  to: 'materialized' | 'anchored',
   extra: Record<string, unknown> = {},
 ): Promise<void> {
+  // STATUS-GUARDED transition: `.eq('status', from)` means a row the reaper has
+  // already re-queued (or reclaimed by another worker) is NOT clobbered by a
+  // slow/zombie worker finishing its old pass — it simply matches zero rows.
   const { error } = await deps.db
     .from('connector_artifact')
-    .update({ status, updated_at: new Date().toISOString(), ...extra })
+    .update({ status: to, updated_at: new Date().toISOString(), ...extra })
     .eq('id', id)
-    .eq('org_id', orgId);
+    .eq('org_id', orgId)
+    .eq('status', from);
   if (error) {
-    deps.logger.warn({ error, orgId, artifactId: id, status }, `connector-artifact mark-${status} failed`);
+    deps.logger.warn({ error, orgId, artifactId: id, from, to }, `connector-artifact mark-${to} failed`);
   }
 }
 
@@ -410,6 +415,63 @@ async function markFailed(
   }
 }
 
+// ── F-1 stuck-row reaper (liveness) ──────────────────────────────────────────
+
+/**
+ * Lease / visibility-timeout for in-flight (processing|materialized) rows. A row
+ * in-flight longer than this is presumed STRANDED — the claiming worker crashed
+ * between the claim and a terminal status (the claim CAS gives exactly-once but
+ * NOT liveness; nothing re-drains a 'processing' row, since only pending|queued
+ * are drainable). Generous (>> any real drain pass) so a live worker is never
+ * reaped. Re-drive is SAFE: materialize is idempotent on the (user_id,fingerprint)
+ * unique index and debit_and_enqueue_anchor is idempotent on the anchor id, so a
+ * reaped row re-drives the SAME single charge — never a double. The markStatus
+ * status-guard prevents a zombie worker from clobbering the reclaimed row.
+ */
+export const STALE_INFLIGHT_MS = 15 * 60 * 1000; // 15 min
+
+export interface ReapStaleResult {
+  reaped: number;
+}
+
+/**
+ * Reset rows stranded in processing|materialized past the lease back to 'queued'
+ * so the next drain pass re-claims them. This is the F-1 liveness guarantee the
+ * claim CAS alone does not provide. Global (all orgs); runs at the head of each
+ * drain pass. A reaper failure alerts but NEVER aborts the drain.
+ */
+export async function reapStaleInFlightArtifacts(
+  injected: Partial<Pick<ConnectorArtifactDrainDeps, 'db' | 'logger' | 'emitAlert'>> & { thresholdMs?: number } = {},
+): Promise<ReapStaleResult> {
+  const db = injected.db ?? (defaultDb as unknown as DrainDb);
+  const logger = injected.logger ?? (defaultLogger as unknown as DrainLogger);
+  const emitAlert = injected.emitAlert ?? defaultEmitAlert;
+  const cutoff = new Date(Date.now() - (injected.thresholdMs ?? STALE_INFLIGHT_MS)).toISOString();
+
+  const { data, error } = await db
+    .from('connector_artifact')
+    .update({ status: 'queued', updated_at: new Date().toISOString() })
+    .in('status', ['processing', 'materialized'])
+    .lt('updated_at', cutoff)
+    .select('id, org_id');
+
+  if (error) {
+    emitAlert({ scope: 'cycle', orgId: 'ALL', reason: `reaper failed: ${(error as { message?: string }).message ?? 'unknown'}` });
+    logger.error({ error }, 'connector-artifact reaper failed');
+    return { reaped: 0 };
+  }
+
+  const rows = (data ?? []) as Array<{ id: string; org_id: string }>;
+  for (const r of rows) {
+    // A stranded row is a real liveness incident — alert (bounded ids only, §1.6A).
+    emitAlert({ scope: 'row', orgId: r.org_id, artifactId: r.id, reason: 'stale_inflight_requeued' });
+  }
+  if (rows.length > 0) {
+    logger.warn({ reaped: rows.length }, 'connector-artifact reaper re-queued stranded in-flight rows');
+  }
+  return { reaped: rows.length };
+}
+
 // ── Cron entrypoint ──────────────────────────────────────────────────────────
 
 export interface ConnectorArtifactDrainCronResult {
@@ -417,6 +479,7 @@ export interface ConnectorArtifactDrainCronResult {
   reason?: string;
   orgsProcessed: number;
   orgsFailed: number;
+  reaped: number;
   claimed: number;
   anchored: number;
   failed: number;
@@ -429,6 +492,8 @@ export interface ConnectorArtifactDrainCronDeps {
   listDrainableOrgIds?: () => Promise<string[]>;
   /** Drain a single org (defaults to `drainConnectorArtifactsForOrg`). */
   drainForOrg?: (orgId: string) => Promise<ConnectorArtifactDrainResult>;
+  /** Reap stranded in-flight rows (defaults to `reapStaleInFlightArtifacts`). */
+  reapStale?: () => Promise<ReapStaleResult>;
   /** Bounded, PII-scrubbed alert sink. */
   emitAlert?: (alert: ConnectorArtifactAlert) => void;
   logger?: DrainLogger;
@@ -471,6 +536,7 @@ export async function runConnectorArtifactDrain(
     skipped: false,
     orgsProcessed: 0,
     orgsFailed: 0,
+    reaped: 0,
     claimed: 0,
     anchored: 0,
     failed: 0,
@@ -484,6 +550,11 @@ export async function runConnectorArtifactDrain(
   const listDrainableOrgIds = injected.listDrainableOrgIds ?? (() => defaultListDrainableOrgIds(db));
   const drainForOrg = injected.drainForOrg ?? ((orgId: string) => drainConnectorArtifactsForOrg(orgId));
   const emitAlert = injected.emitAlert ?? defaultEmitAlert;
+
+  // F-1: reap stranded in-flight rows FIRST (presumed-crashed workers) so this
+  // pass re-claims them. Then they reappear in the per-org drainable scan below.
+  const reapStale = injected.reapStale ?? (() => reapStaleInFlightArtifacts({ db, logger, emitAlert }));
+  base.reaped = (await reapStale()).reaped;
 
   const orgIds = await listDrainableOrgIds();
   for (const orgId of orgIds) {
