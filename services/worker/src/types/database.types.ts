@@ -319,6 +319,7 @@ export type Database = {
       anchor_chain_index: {
         Row: {
           anchor_id: string | null
+          chain_block_hash: string | null
           chain_block_height: number | null
           chain_block_timestamp: string | null
           chain_tx_id: string
@@ -330,6 +331,7 @@ export type Database = {
         }
         Insert: {
           anchor_id?: string | null
+          chain_block_hash?: string | null
           chain_block_height?: number | null
           chain_block_timestamp?: string | null
           chain_tx_id: string
@@ -341,6 +343,7 @@ export type Database = {
         }
         Update: {
           anchor_id?: string | null
+          chain_block_hash?: string | null
           chain_block_height?: number | null
           chain_block_timestamp?: string | null
           chain_tx_id?: string
@@ -524,6 +527,7 @@ export type Database = {
       }
       anchors: {
         Row: {
+          chain_block_hash: string | null
           chain_block_height: number | null
           chain_confirmations: number | null
           chain_timestamp: string | null
@@ -567,6 +571,7 @@ export type Database = {
           version_number: number
         }
         Insert: {
+          chain_block_hash?: string | null
           chain_block_height?: number | null
           chain_confirmations?: number | null
           chain_timestamp?: string | null
@@ -612,6 +617,7 @@ export type Database = {
           version_number?: number
         }
         Update: {
+          chain_block_hash?: string | null
           chain_block_height?: number | null
           chain_confirmations?: number | null
           chain_timestamp?: string | null

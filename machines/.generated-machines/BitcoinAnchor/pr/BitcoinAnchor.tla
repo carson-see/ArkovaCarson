@@ -68,7 +68,16 @@ broadcastFail(a) ==
   /\ UNCHANGED <<chainTxId, metadataLocked, legalHold>>
 chainSubmitFail(a) ==
   /\ a \in Anchors
-  /\ (status[a] = "SUBMITTED") /\ (actor[a] = "worker")
+  /\ (status[a] = "SUBMITTED") /\ (actor[a] = "worker") /\ (~(legalHold[a]))
+  /\ status' = [status EXCEPT ![a] = "PENDING"]
+  /\ chainTxId' = [chainTxId EXCEPT ![a] = Null]
+  /\ actor' = [actor EXCEPT ![a] = "client"]
+  /\ fingerprintLocked' = [fingerprintLocked EXCEPT ![a] = FALSE]
+  /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT ![a] = FALSE]
+  /\ UNCHANGED <<metadataLocked, legalHold>>
+chainSubmitAbandon(a) ==
+  /\ a \in Anchors
+  /\ (status[a] = "SUBMITTED") /\ (actor[a] = "worker") /\ (~(legalHold[a]))
   /\ status' = [status EXCEPT ![a] = "PENDING"]
   /\ chainTxId' = [chainTxId EXCEPT ![a] = Null]
   /\ actor' = [actor EXCEPT ![a] = "client"]
@@ -99,6 +108,12 @@ supersede(a) ==
   /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT ![a] = TRUE]
   /\ UNCHANGED <<chainTxId, legalHold, actor>>
 reorgDetected(a) ==
+  /\ a \in Anchors
+  /\ (status[a] = "SECURED") /\ (actor[a] = "worker") /\ (chainTxId[a] = "has_tx") /\ (~(legalHold[a]))
+  /\ status' = [status EXCEPT ![a] = "SUBMITTED"]
+  /\ metadataLocked' = [metadataLocked EXCEPT ![a] = FALSE]
+  /\ UNCHANGED <<chainTxId, fingerprintLocked, credentialTypeLocked, legalHold, actor>>
+reorgSameHeightRevert(a) ==
   /\ a \in Anchors
   /\ (status[a] = "SECURED") /\ (actor[a] = "worker") /\ (chainTxId[a] = "has_tx") /\ (~(legalHold[a]))
   /\ status' = [status EXCEPT ![a] = "SUBMITTED"]
@@ -154,7 +169,7 @@ Action_broadcastFail_2 ==
   /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT !["a2"] = FALSE]
   /\ UNCHANGED <<chainTxId, metadataLocked, legalHold>>
 Action_chainSubmitFail_1 ==
-  /\ (status["a1"] = "SUBMITTED") /\ (actor["a1"] = "worker")
+  /\ (status["a1"] = "SUBMITTED") /\ (actor["a1"] = "worker") /\ (~(legalHold["a1"]))
   /\ status' = [status EXCEPT !["a1"] = "PENDING"]
   /\ chainTxId' = [chainTxId EXCEPT !["a1"] = Null]
   /\ actor' = [actor EXCEPT !["a1"] = "client"]
@@ -162,7 +177,23 @@ Action_chainSubmitFail_1 ==
   /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT !["a1"] = FALSE]
   /\ UNCHANGED <<metadataLocked, legalHold>>
 Action_chainSubmitFail_2 ==
-  /\ (status["a2"] = "SUBMITTED") /\ (actor["a2"] = "worker")
+  /\ (status["a2"] = "SUBMITTED") /\ (actor["a2"] = "worker") /\ (~(legalHold["a2"]))
+  /\ status' = [status EXCEPT !["a2"] = "PENDING"]
+  /\ chainTxId' = [chainTxId EXCEPT !["a2"] = Null]
+  /\ actor' = [actor EXCEPT !["a2"] = "client"]
+  /\ fingerprintLocked' = [fingerprintLocked EXCEPT !["a2"] = FALSE]
+  /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT !["a2"] = FALSE]
+  /\ UNCHANGED <<metadataLocked, legalHold>>
+Action_chainSubmitAbandon_1 ==
+  /\ (status["a1"] = "SUBMITTED") /\ (actor["a1"] = "worker") /\ (~(legalHold["a1"]))
+  /\ status' = [status EXCEPT !["a1"] = "PENDING"]
+  /\ chainTxId' = [chainTxId EXCEPT !["a1"] = Null]
+  /\ actor' = [actor EXCEPT !["a1"] = "client"]
+  /\ fingerprintLocked' = [fingerprintLocked EXCEPT !["a1"] = FALSE]
+  /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT !["a1"] = FALSE]
+  /\ UNCHANGED <<metadataLocked, legalHold>>
+Action_chainSubmitAbandon_2 ==
+  /\ (status["a2"] = "SUBMITTED") /\ (actor["a2"] = "worker") /\ (~(legalHold["a2"]))
   /\ status' = [status EXCEPT !["a2"] = "PENDING"]
   /\ chainTxId' = [chainTxId EXCEPT !["a2"] = Null]
   /\ actor' = [actor EXCEPT !["a2"] = "client"]
@@ -217,6 +248,16 @@ Action_reorgDetected_2 ==
   /\ status' = [status EXCEPT !["a2"] = "SUBMITTED"]
   /\ metadataLocked' = [metadataLocked EXCEPT !["a2"] = FALSE]
   /\ UNCHANGED <<chainTxId, fingerprintLocked, credentialTypeLocked, legalHold, actor>>
+Action_reorgSameHeightRevert_1 ==
+  /\ (status["a1"] = "SECURED") /\ (actor["a1"] = "worker") /\ (chainTxId["a1"] = "has_tx") /\ (~(legalHold["a1"]))
+  /\ status' = [status EXCEPT !["a1"] = "SUBMITTED"]
+  /\ metadataLocked' = [metadataLocked EXCEPT !["a1"] = FALSE]
+  /\ UNCHANGED <<chainTxId, fingerprintLocked, credentialTypeLocked, legalHold, actor>>
+Action_reorgSameHeightRevert_2 ==
+  /\ (status["a2"] = "SECURED") /\ (actor["a2"] = "worker") /\ (chainTxId["a2"] = "has_tx") /\ (~(legalHold["a2"]))
+  /\ status' = [status EXCEPT !["a2"] = "SUBMITTED"]
+  /\ metadataLocked' = [metadataLocked EXCEPT !["a2"] = FALSE]
+  /\ UNCHANGED <<chainTxId, fingerprintLocked, credentialTypeLocked, legalHold, actor>>
 
 Init ==
   /\ status = [x \in Anchors |-> "PENDING"]
@@ -233,11 +274,13 @@ Next ==
   \/ \E a \in Anchors : chainConfirm(a)
   \/ \E a \in Anchors : broadcastFail(a)
   \/ \E a \in Anchors : chainSubmitFail(a)
+  \/ \E a \in Anchors : chainSubmitAbandon(a)
   \/ \E a \in Anchors : revoke(a)
   \/ \E a \in Anchors : placeLegalHold(a)
   \/ \E a \in Anchors : removeLegalHold(a)
   \/ \E a \in Anchors : supersede(a)
   \/ \E a \in Anchors : reorgDetected(a)
+  \/ \E a \in Anchors : reorgSameHeightRevert(a)
 
 EquivalenceNext ==
   \/ Action_workerClaim_1
@@ -250,6 +293,8 @@ EquivalenceNext ==
   \/ Action_broadcastFail_2
   \/ Action_chainSubmitFail_1
   \/ Action_chainSubmitFail_2
+  \/ Action_chainSubmitAbandon_1
+  \/ Action_chainSubmitAbandon_2
   \/ Action_revoke_1
   \/ Action_revoke_2
   \/ Action_placeLegalHold_1
@@ -260,6 +305,8 @@ EquivalenceNext ==
   \/ Action_supersede_2
   \/ Action_reorgDetected_1
   \/ Action_reorgDetected_2
+  \/ Action_reorgSameHeightRevert_1
+  \/ Action_reorgSameHeightRevert_2
 
 Spec == Init /\ [][Next]_vars
 EquivalenceSpec == Init /\ [][EquivalenceNext]_vars

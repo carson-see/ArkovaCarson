@@ -504,6 +504,34 @@ describe('checkSubmittedConfirmations', () => {
     );
   });
 
+  // Lane 1 i4 / BUG-A: promotion must persist the confirmed block_hash so
+  // detectReorgs can later catch a same-height reorg. The block_hash arrives in
+  // the mempool.space tx status (MempoolTxStatus.block_hash) and must flow into
+  // the drain RPC as p_block_hash.
+  it('passes the confirmed block_hash to the drain RPC on promotion (BUG-A)', async () => {
+    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') }) // tip height
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
+      });
+
+    const { db } = await import('../utils/db.js');
+
+    await checkSubmittedConfirmations();
+
+    expect(db.rpc).toHaveBeenCalledWith(
+      'drain_submitted_to_secured_for_tx',
+      expect.objectContaining({
+        p_chain_tx_id: MOCK_SUBMITTED_ANCHOR.chain_tx_id,
+        p_block_height: 200100,
+        p_block_hash: MOCK_CONFIRMED_TX.status.block_hash,
+      }),
+    );
+  });
+
   it('inserts audit events after confirmation', async () => {
     mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
 
@@ -985,6 +1013,23 @@ describe('drain_submitted_to_secured_for_tx migration', () => {
     );
     expect(sql).toMatch(
       /INSERT INTO public\.anchor_chain_index[\s\S]*confirmations[\s\S]*GREATEST\(p_confirmations, 1\)/,
+    );
+  });
+
+  // Lane 1 i4 / BUG-A: the 0347 migration must thread p_block_hash into the
+  // SECURED-promotion RPC and write chain_block_hash on both anchors and the
+  // verification index. (Pins the migration body so a future refactor can't
+  // silently drop the column write.)
+  it('0347 migration writes chain_block_hash on the drain RPC (BUG-A)', () => {
+    const sql = readMigration('0347_lane1_i4_chain_block_hash_reorg.sql');
+
+    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS chain_block_hash text/);
+    expect(sql).toMatch(/"p_block_hash"\s+"text"\s+DEFAULT NULL/);
+    expect(sql).toMatch(
+      /UPDATE anchors a\s+SET[\s\S]*chain_block_hash = p_block_hash[\s\S]*FROM batch/,
+    );
+    expect(sql).toMatch(
+      /INSERT INTO public\.anchor_chain_index[\s\S]*chain_block_hash[\s\S]*p_block_hash/,
     );
   });
 });

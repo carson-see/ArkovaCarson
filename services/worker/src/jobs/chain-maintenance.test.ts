@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---- Hoisted mocks (available before vi.mock factories run) ----
-const { mockDb, mockLogger, mockConfig, mockGetChainClientAsync } = vi.hoisted(() => {
+const { mockDb, mockLogger, mockConfig, mockGetChainClientAsync, mockDispatchWebhookEvent } = vi.hoisted(() => {
   const mockDb = {
     from: vi.fn(),
     rpc: vi.fn(),
@@ -29,13 +29,20 @@ const { mockDb, mockLogger, mockConfig, mockGetChainClientAsync } = vi.hoisted((
     enableProdNetworkAnchoring: true,
   };
 
-  return { mockDb, mockLogger, mockConfig, mockGetChainClientAsync: vi.fn() };
+  return {
+    mockDb,
+    mockLogger,
+    mockConfig,
+    mockGetChainClientAsync: vi.fn(),
+    mockDispatchWebhookEvent: vi.fn(),
+  };
 });
 
 vi.mock('../utils/db.js', () => ({ db: mockDb }));
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../config.js', () => ({ config: mockConfig }));
 vi.mock('../chain/client.js', () => ({ getChainClientAsync: mockGetChainClientAsync }));
+vi.mock('../webhooks/delivery.js', () => ({ dispatchWebhookEvent: mockDispatchWebhookEvent }));
 
 import {
   detectReorgs,
@@ -118,6 +125,7 @@ describe('Chain Maintenance Jobs', () => {
     mockConfig.bitcoinNetwork = 'signet';
     mockConfig.enableProdNetworkAnchoring = true;
     mockGetChainClientAsync.mockRejectedValue(new Error('chain client not configured for test'));
+    mockDispatchWebhookEvent.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -195,6 +203,201 @@ describe('Chain Maintenance Jobs', () => {
         ]),
       );
     });
+
+    // Lane 1 i4 / BUG-A + BUG-B: same-height reorg detection.
+    //
+    // mockReorgRun wires the detectReorgs DB/fetch call sequence. Because
+    // detectReorgs interleaves several `from('anchors')` calls (candidate
+    // select, per-anchor status update, credential_type bulk lookup) in an
+    // order that depends on the branch taken, we route by the METHOD invoked
+    // on each returned builder rather than by call index:
+    //   - .select(...).gte(...)  -> recently-SECURED candidate select (`anchors`)
+    //   - .update(...)           -> per-anchor compare-and-set status revert
+    //   - .select(...).in(...)   -> credential_type bulk lookup
+    //   - from('audit_events')   -> reorg audit insert
+    //
+    // fetch:
+    //   /api/blocks/tip/height -> `tipHeight`
+    //   /api/tx/<txId>         -> `txStatus` (confirmed + block_height + block_hash)
+    function mockReorgRun(opts: {
+      anchors: Array<Record<string, unknown>>;
+      tipHeight: number;
+      txStatus: { confirmed: boolean; block_height?: number; block_hash?: string };
+      credentialTypeRows?: Array<{ public_id: string; credential_type: string }>;
+    }) {
+      const updateChains: Array<ReturnType<typeof mockDbChain>> = [];
+      const auditInsert = vi.fn(() => Promise.resolve({ data: null, error: null }));
+
+      // A select builder that resolves to candidate `anchors` when filtered by
+      // .gte (candidate query) and to credential rows when filtered by .in
+      // (credential_type lookup). Thenable so the candidate query (no terminal
+      // .maybeSingle) still resolves.
+      const makeSelectBuilder = () => {
+        const builder: Record<string, unknown> = {};
+        let resolveData: unknown = opts.anchors;
+        const passthrough = () => builder;
+        builder.eq = vi.fn(passthrough);
+        builder.gte = vi.fn(() => {
+          resolveData = opts.anchors;
+          return builder;
+        });
+        builder.not = vi.fn(passthrough);
+        builder.is = vi.fn(passthrough);
+        builder.order = vi.fn(passthrough);
+        builder.limit = vi.fn(passthrough);
+        builder.in = vi.fn(() => {
+          resolveData = opts.credentialTypeRows ?? [];
+          return builder;
+        });
+        builder.then = (resolve: (v: { data: unknown; error: unknown }) => void) =>
+          Promise.resolve().then(() => resolve({ data: resolveData, error: null }));
+        return builder;
+      };
+
+      mockDb.from.mockImplementation((table: string) => {
+        if (table === 'audit_events') {
+          return { insert: auditInsert };
+        }
+        // table === 'anchors'
+        return {
+          select: vi.fn(() => makeSelectBuilder()),
+          update: vi.fn((...args: unknown[]) => {
+            const updateChain = mockDbChain({ id: 'updated' }, null);
+            const updateFn = updateChain.update as (...a: unknown[]) => unknown;
+            updateFn(...args);
+            updateChains.push(updateChain);
+            return updateChain;
+          }),
+        };
+      });
+
+      global.fetch = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/api/blocks/tip/height')) {
+          return Promise.resolve({ ok: true, text: async () => String(opts.tipHeight) } as Response);
+        }
+        // /api/tx/<txId>
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ status: opts.txStatus }),
+        } as Response);
+      });
+
+      return { updateChains, auditInsert };
+    }
+
+    it('reverts SECURED → SUBMITTED on a same-height reorg (different block_hash) (BUG-A)', async () => {
+      const anchor = {
+        id: 'a1',
+        chain_tx_id: 'tx_reorg_same_height',
+        chain_block_height: 800000,
+        chain_block_hash: 'oldhash_aaaa',
+        fingerprint: 'f'.repeat(64),
+        public_id: 'pub-reorg-1',
+        org_id: 'org-1',
+      };
+
+      const { updateChains, auditInsert } = mockReorgRun({
+        anchors: [anchor],
+        tipHeight: 800005,
+        // Re-mined into a DIFFERENT block at the SAME height — height-only
+        // comparison would miss this; block_hash mismatch must trigger revert.
+        txStatus: { confirmed: true, block_height: 800000, block_hash: 'newhash_bbbb' },
+        credentialTypeRows: [{ public_id: 'pub-reorg-1', credential_type: 'DEGREE' }],
+      });
+
+      const result = await detectReorgs();
+
+      expect(result.reorgsDetected).toBe(1);
+      expect(result.reverted).toBe(1);
+      // The status revert update must have fired with the compare-and-set guard.
+      const revertUpdate = updateChains.find((c) =>
+        (c.update as ReturnType<typeof vi.fn>).mock.calls.some(
+          ([payload]) => (payload as { status?: string })?.status === 'SUBMITTED',
+        ),
+      );
+      expect(revertUpdate).toBeDefined();
+      expect(revertUpdate!.update).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'SUBMITTED' }),
+      );
+      // BUG-B: an anchor.reorg_reverted audit row is written for the org.
+      expect(auditInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event_type: 'anchor.reorg_reverted',
+          org_id: 'org-1',
+          target_id: anchor.id,
+        }),
+      );
+    });
+
+    it('retracts via org-scoped credential.status_changed (SECURED→SUBMITTED) on same-height reorg (BUG-B)', async () => {
+      const anchor = {
+        id: 'a1',
+        chain_tx_id: 'tx_reorg_retract',
+        chain_block_height: 800000,
+        chain_block_hash: 'oldhash_aaaa',
+        fingerprint: 'f'.repeat(64),
+        public_id: 'pub-reorg-1',
+        org_id: 'org-1',
+      };
+
+      mockReorgRun({
+        anchors: [anchor],
+        tipHeight: 800005,
+        txStatus: { confirmed: true, block_height: 800000, block_hash: 'newhash_bbbb' },
+        credentialTypeRows: [{ public_id: 'pub-reorg-1', credential_type: 'DEGREE' }],
+      });
+
+      await detectReorgs();
+
+      // Reuse the EXISTING credential.status_changed event (no new event type),
+      // org-scoped via the anchor's org_id, signalling the SECURED→SUBMITTED
+      // un-confirmation so subscribers can retract the earlier SECURED signal.
+      expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
+        'org-1',
+        'credential.status_changed',
+        'pub-reorg-1',
+        expect.objectContaining({
+          public_id: 'pub-reorg-1',
+          credential_type: 'DEGREE',
+          previous_status: 'SECURED',
+          new_status: 'SUBMITTED',
+        }),
+      );
+    });
+
+    it('does NOT revert when stored block_hash is NULL and height matches (legacy fallback, no regression) (BUG-A)', async () => {
+      const anchor = {
+        id: 'a1',
+        chain_tx_id: 'tx_legacy_null_hash',
+        chain_block_height: 800000,
+        chain_block_hash: null, // legacy row secured before 0347
+        fingerprint: 'f'.repeat(64),
+        public_id: 'pub-legacy-1',
+        org_id: 'org-1',
+      };
+
+      const { updateChains, auditInsert } = mockReorgRun({
+        anchors: [anchor],
+        tipHeight: 800005,
+        // Same height, confirmed — with NULL stored hash we fall back to
+        // height-only, which sees no change, so NO revert.
+        txStatus: { confirmed: true, block_height: 800000, block_hash: 'whatever_cccc' },
+      });
+
+      const result = await detectReorgs();
+
+      expect(result.reverted).toBe(0);
+      const anyRevert = updateChains.some((c) =>
+        (c.update as ReturnType<typeof vi.fn>).mock.calls.some(
+          ([payload]) => (payload as { status?: string })?.status === 'SUBMITTED',
+        ),
+      );
+      expect(anyRevert).toBe(false);
+      expect(auditInsert).not.toHaveBeenCalledWith(
+        expect.objectContaining({ event_type: 'anchor.reorg_reverted' }),
+      );
+      expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+    });
   });
 
   // ─── NET-1: Stuck TX Monitor ──────────────────────────────────────
@@ -212,6 +415,79 @@ describe('Chain Maintenance Jobs', () => {
 
       const result = await monitorStuckTransactions();
       expect(result.checked).toBe(0);
+    });
+
+    // Lane 1 i4 / BUG-C: NET-1's candidate select must carry the same
+    // `.eq('legal_hold', false)` freeze filter that detectReorgs has. Without
+    // it, abandonSubmittedAnchor reverts a held SUBMITTED anchor SUBMITTED →
+    // PENDING, violating legalHoldPreventsSecuredToRevoked.
+    it('filters out legal-hold anchors in the stuck-tx select (legal_hold = false) (BUG-C)', async () => {
+      const eqCalls: Array<[string, unknown]> = [];
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn((col: string, val: unknown) => {
+        eqCalls.push([col, val]);
+        return chain;
+      });
+      chain.not = vi.fn(() => chain);
+      chain.lt = vi.fn(() => chain);
+      chain.is = vi.fn(() => chain);
+      chain.order = vi.fn(() => chain);
+      chain.limit = vi.fn(() => Promise.resolve({ data: [], error: null }));
+      mockDb.from.mockReturnValue(chain);
+
+      await monitorStuckTransactions();
+
+      expect(eqCalls).toEqual(
+        expect.arrayContaining([
+          ['status', 'SUBMITTED'],
+          ['legal_hold', false],
+        ]),
+      );
+    });
+
+    // Lane 1 i4 / BUG-C (behavioral twin): a legal-hold SUBMITTED anchor past
+    // the 72h abandon cutoff must NOT be abandoned, while a non-held twin in the
+    // same cohort IS. With the select-level `legal_hold = false` filter the held
+    // row never reaches the abandonment loop — so only the non-held twin gets
+    // reverted to PENDING.
+    it('does not abandon a 72h-old legal-hold SUBMITTED anchor but does abandon its non-held twin (BUG-C)', async () => {
+      const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
+      const nonHeldTwin = {
+        id: 'a_nonheld',
+        chain_tx_id: 'tx_nonheld_twin',
+        metadata: { pipeline_source: 'public_records' },
+        created_at: abandonCutoff,
+        updated_at: abandonCutoff,
+      };
+
+      // Production select carries `.eq('legal_hold', false)`, so the held anchor
+      // is excluded server-side. The mock returns only what that filtered query
+      // would return: the non-held twin.
+      const updateChain = mockDbChain({ id: nonHeldTwin.id }, null);
+      let fromCallCount = 0;
+      mockDb.from.mockImplementation(() => {
+        fromCallCount++;
+        return fromCallCount === 1 ? mockDbChain([nonHeldTwin], null) : updateChain;
+      });
+
+      const chainClient = new MockChainClient();
+      vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
+        receiptId: nonHeldTwin.chain_tx_id,
+        blockHeight: 0,
+        blockTimestamp: abandonCutoff,
+        confirmations: 0,
+      } satisfies ChainReceipt);
+      mockGetChainClientAsync.mockResolvedValue(chainClient);
+
+      const result = await monitorStuckTransactions();
+
+      // Exactly one anchor abandoned — the non-held twin.
+      expect(result.recovered).toBe(1);
+      expect(updateChain.update).toHaveBeenCalledTimes(1);
+      expect(updateChain.update).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'PENDING', chain_tx_id: null }),
+      );
     });
 
     it('skips anchors whose TX is actually confirmed', async () => {
@@ -489,6 +765,34 @@ describe('Chain Maintenance Jobs', () => {
 
       const result = await rebroadcastDroppedTransactions();
       expect(result.checked).toBe(0);
+    });
+
+    // Lane 1 i4 / BUG-C: NET-3's candidate select must also carry the
+    // `.eq('legal_hold', false)` freeze filter. A rebroadcast that fails can
+    // chain into the abandon path; even on success, a held anchor's stuck TX
+    // should not be re-driven by the cron. Pin the filter shape.
+    it('filters out legal-hold anchors in the rebroadcast select (legal_hold = false) (BUG-C)', async () => {
+      const eqCalls: Array<[string, unknown]> = [];
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn((col: string, val: unknown) => {
+        eqCalls.push([col, val]);
+        return chain;
+      });
+      chain.not = vi.fn(() => chain);
+      chain.lt = vi.fn(() => chain);
+      chain.is = vi.fn(() => chain);
+      chain.limit = vi.fn(() => Promise.resolve({ data: [], error: null }));
+      mockDb.from.mockReturnValue(chain);
+
+      await rebroadcastDroppedTransactions();
+
+      expect(eqCalls).toEqual(
+        expect.arrayContaining([
+          ['status', 'SUBMITTED'],
+          ['legal_hold', false],
+        ]),
+      );
     });
 
     it('successfully rebroadcasts dropped TX with raw hex', async () => {

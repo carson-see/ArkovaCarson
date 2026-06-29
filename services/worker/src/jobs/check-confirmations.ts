@@ -838,6 +838,11 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
 
         // Anchors loaded on-demand via bulk update; no in-memory group needed
         const blockHeight = txData.status.block_height ?? 0;
+        // Lane 1 i4 / BUG-A: persist the confirmed block hash so detectReorgs
+        // can later catch a same-height reorg (TX re-mined into a different
+        // block at the same height). Already present on the mempool.space tx
+        // status; thread it through the SECURED-promotion RPC.
+        const blockHash = txData.status.block_hash ?? null;
         const blockTimestamp = txData.status.block_time
           ? new Date(txData.status.block_time * 1000).toISOString()
           : new Date().toISOString();
@@ -886,6 +891,9 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
             p_confirmations: confirmations,
             p_batch_size: 100,
             p_max_iterations: 5,
+            // Lane 1 i4 / BUG-A: persisted onto anchors.chain_block_hash +
+            // anchor_chain_index for same-height reorg detection.
+            p_block_hash: blockHash,
           });
           const data = rpcRes.data as DrainSubmittedToSecuredResult | null;
           const error = rpcRes.error;
@@ -1020,6 +1028,10 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
   const blockHeight = 100000;
   const blockTimestamp = new Date().toISOString();
   const txId = `mock-batch-${Date.now()}`;
+  // Lane 1 i4 / BUG-A: mirror the real path and stamp a synthetic block hash so
+  // staging soaks (which run with USE_MOCKS=true) exercise the chain_block_hash
+  // write that detectReorgs relies on.
+  const blockHash = `mock-blockhash-${Date.now()}`;
 
   // SCRUM-1800 (PR #753): the `anchors_chain_data_consistency` constraint
   // requires `chain_tx_id IS NOT NULL` whenever status='SECURED'. Some
@@ -1061,6 +1073,7 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
       status: 'SECURED',
       // chain_confirmations: 1, — column pending migration 0068b
       chain_block_height: blockHeight,
+      chain_block_hash: blockHash,
       chain_timestamp: blockTimestamp,
     })
     .in('id', ids)
