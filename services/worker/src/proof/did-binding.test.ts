@@ -56,6 +56,18 @@ function activeKey(id: string, publicPem: string): ProofKey {
   };
 }
 
+/** A retired ProofKey (a since-rotated key that still verifies history). */
+function retiredKey(id: string, publicPem: string): ProofKey {
+  return {
+    id,
+    alg: 'Ed25519',
+    status: 'retired',
+    public_key_pem: publicPem,
+    created_at: '2026-01-01T00:00:00Z',
+    retired_at: '2026-06-01T00:00:00Z',
+  };
+}
+
 const KEY_ID = 'arkova-proof-2026-q2';
 
 describe('PROOF-06 issuer-DID binding', () => {
@@ -203,5 +215,118 @@ describe('PROOF-06 issuer-DID binding', () => {
     const verdict = verifyDidBinding({ bundle, didDocument: didDoc });
     expect(verdict.valid).toBe(true);
     expect(verdict.bound).toBe(true);
+  });
+
+  // ─── C1: KEY ROTATION — SCRUM-900 "historical bundles stay verifiable" ─────
+  it('ROTATION: a pre-rotation bundle still verifies after the active key rotates', async () => {
+    // 1. A bundle is signed by the q2 key while it is ACTIVE.
+    const oldKp = generateTestKeypair();
+    const oldKeyId = KEY_ID; // arkova-proof-2026-q2
+    const historicalBundle = await createSignedBundle({
+      payload: buildBoundProofPayload({ public_id: 'rec_old', fingerprint: 'deadbeef' }, oldKeyId),
+      sign: staticEd25519Signer(oldKp.privatePem, oldKeyId),
+    });
+
+    // 2. Sanity: while q2 is the active key, the bundle verifies and is an
+    //    authorised assertionMethod entry.
+    const preRotationDoc = buildArkovaDidDocument(activeKey(oldKeyId, oldKp.publicPem));
+    const before = verifyDidBinding({ bundle: historicalBundle, didDocument: preRotationDoc });
+    expect(before.valid).toBe(true);
+    expect(before.assertionAuthorized).toBe(true);
+
+    // 3. Lane 3 rotates: a NEW key becomes active; q2 is RETIRED but stays in
+    //    the registry. The published DID document now lists the new key as the
+    //    only assertionMethod, and q2 as a verificationMethod-only entry.
+    const newKp = generateTestKeypair();
+    const newKeyId = 'arkova-proof-2026-q3';
+    const postRotationDoc = buildArkovaDidDocument(
+      activeKey(newKeyId, newKp.publicPem),
+      [retiredKey(oldKeyId, oldKp.publicPem)],
+    );
+
+    // q2 must NOT be in assertionMethod (a retired key cannot assert anew)…
+    expect(postRotationDoc.assertionMethod).not.toContain(`${ARKOVA_DID}#${oldKeyId}`);
+    expect(postRotationDoc.assertionMethod).toContain(`${ARKOVA_DID}#${newKeyId}`);
+    // …but it MUST still be present as a verificationMethod so history verifies.
+    expect(postRotationDoc.verificationMethod.some((m) => m.id === `${ARKOVA_DID}#${oldKeyId}`)).toBe(true);
+
+    // 4. THE GUARANTEE: the pre-rotation bundle STILL verifies against the
+    //    post-rotation DID document — flagged as a retired/historical key.
+    const after = verifyDidBinding({ bundle: historicalBundle, didDocument: postRotationDoc });
+    expect(after.valid).toBe(true);
+    expect(after.bound).toBe(true);
+    expect(after.verificationMethodId).toBe(`${ARKOVA_DID}#${oldKeyId}`);
+    expect(after.assertionAuthorized).toBe(false); // retired, not an active asserter
+
+    // 5. A bundle signed by the NEW active key also verifies post-rotation.
+    const freshBundle = await createSignedBundle({
+      payload: buildBoundProofPayload({ public_id: 'rec_new', fingerprint: 'beadfeed' }, newKeyId),
+      sign: staticEd25519Signer(newKp.privatePem, newKeyId),
+    });
+    const fresh = verifyDidBinding({ bundle: freshBundle, didDocument: postRotationDoc });
+    expect(fresh.valid).toBe(true);
+    expect(fresh.assertionAuthorized).toBe(true);
+  });
+
+  it('ROTATION: a key absent from BOTH assertionMethod and verificationMethod is still rejected', async () => {
+    // After rotation the document carries active + one retired key. A bundle
+    // signed under a key id that was NEVER published (neither active nor
+    // retired) must still be rejected — rotation widens history, not trust.
+    const newKp = generateTestKeypair();
+    const retiredKp = generateTestKeypair();
+    const postRotationDoc = buildArkovaDidDocument(
+      activeKey('arkova-proof-2026-q3', newKp.publicPem),
+      [retiredKey(KEY_ID, retiredKp.publicPem)],
+    );
+
+    const attacker = generateTestKeypair();
+    const forged = await createSignedBundle({
+      payload: buildBoundProofPayload({ public_id: 'rec_x', fingerprint: 'deadbeef' }, 'never-published-key'),
+      sign: staticEd25519Signer(attacker.privatePem, 'never-published-key'),
+    });
+    const verdict = verifyDidBinding({ bundle: forged, didDocument: postRotationDoc });
+    expect(verdict.valid).toBe(false);
+    expect(verdict.reason).toContain('never-published-key');
+  });
+
+  // ─── C2: DEFENSE-IN-DEPTH — forged/misrouted DID document ──────────────────
+  it('SCRUM-2308: rejects a forged DID document whose id differs from the expected issuer DID', async () => {
+    // The attacker stands up their OWN did:web document at a different id, signs
+    // a bundle with their own key, and lists that key as an assertionMethod in
+    // THEIR document. The signature is internally valid and the key IS an
+    // assertionMethod — but the DID id is not the issuer DID we expected.
+    const attacker = generateTestKeypair();
+    const forgedBundle = await createSignedBundle({
+      payload: buildBoundProofPayload({ public_id: 'rec_evil', fingerprint: 'deadbeef' }, KEY_ID),
+      sign: staticEd25519Signer(attacker.privatePem, KEY_ID),
+    });
+    // Build a structurally-valid DID doc, then repoint its id to an attacker DID.
+    const base = buildArkovaDidDocument(activeKey(KEY_ID, attacker.publicPem));
+    const forgedDoc = {
+      ...base,
+      id: 'did:web:evil.example.com',
+      verificationMethod: base.verificationMethod.map((m) => ({
+        ...m,
+        id: `did:web:evil.example.com#${KEY_ID}`,
+        controller: 'did:web:evil.example.com',
+      })),
+      assertionMethod: [`did:web:evil.example.com#${KEY_ID}`],
+      authentication: [`did:web:evil.example.com#${KEY_ID}`],
+    };
+
+    // Expecting the real Arkova DID, the forged document is rejected up front…
+    const verdict = verifyDidBinding({ bundle: forgedBundle, didDocument: forgedDoc });
+    expect(verdict.valid).toBe(false);
+    expect(verdict.reason).toContain('expected issuer DID');
+
+    // …and even if a verifier explicitly expected the attacker DID, the bundle's
+    // own embedded binding (issuer.did = ARKOVA_DID) no longer matches, so the
+    // chain still fails — there is no path that authenticates the forgery.
+    const verdictExpectingAttacker = verifyDidBinding({
+      bundle: forgedBundle,
+      didDocument: forgedDoc,
+      expectedDid: 'did:web:evil.example.com',
+    });
+    expect(verdictExpectingAttacker.valid).toBe(false);
   });
 });

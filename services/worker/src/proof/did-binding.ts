@@ -24,10 +24,20 @@
  * SCRUM-2308 forged/mismatched-key attacks.
  *
  * HARD CONSTRAINT (Lane 3 key custody): we bind to the EXISTING active key
- * `arkova-proof-2026-q2`. We never rotate it. Historical SCRUM-900 bundles
- * stay verifiable: each bundle's `signing_key_id` still maps to its
- * verification-method id, and `verifyDidBinding` accepts unbound legacy
- * bundles (flagging `bound: false`) so nothing pre-PROOF-06 breaks.
+ * `arkova-proof-2026-q2`. We never rotate it here — but the verifier is
+ * rotation-safe by construction. `verifyDidBinding` resolves the bundle's
+ * `signing_key_id` against the DID document's FULL `verificationMethod[]` set,
+ * which (once Lane 3 rotates a key) lists the active key AND the retired keys
+ * `buildArkovaDidDocument` publishes. A retired key stays present as a
+ * `verificationMethod` (but is dropped from `assertionMethod`), so a
+ * pre-rotation bundle STILL verifies — flagged `assertionAuthorized: false` —
+ * while a retired key can never authorise a NEW assertion. This is the SCRUM-900
+ * "historical bundles stay verifiable across key rotation" guarantee. Historical
+ * SCRUM-900 unbound bundles also stay verifiable (flagged `bound: false`).
+ *
+ * `verifyDidBinding` also pins the resolved DID to an expected issuer DID
+ * (default `ARKOVA_DID`), so a misrouted/forged did:web document for a different
+ * `id` cannot satisfy the chain even if it carries a matching assertionMethod.
  *
  * CLAIMS (R-7 / §1.5): the proof asserts ONLY that a document fingerprint is
  * included in an on-chain Merkle root committed at a network-observed time,
@@ -126,6 +136,14 @@ export interface VerifyDidBindingInput {
   bundle: SignedBundle;
   /** The resolved did:web document for the issuer DID. */
   didDocument: DidDocument;
+  /**
+   * Defense-in-depth (SCRUM-2308 / R-7): the DID the verifier EXPECTED to
+   * resolve. When supplied, `didDocument.id` must equal it, so a misrouted or
+   * forged did:web document carrying a matching `assertionMethod` cannot satisfy
+   * the chain. Defaults to {@link ARKOVA_DID} — the only DID Arkova proof
+   * bundles bind to. Pass an org sub-DID here to verify an org-bound bundle.
+   */
+  expectedDid?: string;
 }
 
 export interface DidBindingVerdict {
@@ -134,6 +152,12 @@ export interface DidBindingVerdict {
   verificationMethodId?: string;
   /** True when the payload carried a PROOF-06 issuer binding; false for legacy bundles. */
   bound: boolean;
+  /**
+   * True when the resolving key is an active `assertionMethod` entry; false when
+   * it is a retired key resolved as a `verificationMethod`-only entry (a valid
+   * HISTORICAL bundle signed before the key rotated). Undefined on failure.
+   */
+  assertionAuthorized?: boolean;
   /** Machine-stable short reason on failure (never leaks document bytes). */
   reason?: string;
 }
@@ -154,9 +178,19 @@ function readEmbeddedBinding(payload: Record<string, unknown>): IssuerBinding | 
  * Verify the single trust chain: issuer DID → assertionMethod key → signature.
  *
  * Steps (fail closed at each):
+ *   0. Defense-in-depth (SCRUM-2308 / C2): require `didDocument.id` to equal the
+ *      EXPECTED DID (defaults to {@link ARKOVA_DID}). A misrouted or forged
+ *      did:web document — even one carrying a matching `assertionMethod` — for a
+ *      DIFFERENT identity cannot satisfy the chain.
  *   1. Derive the verification-method id from the bundle's `signing_key_id`.
- *   2. Require that vm-id to be listed in the DID document's `assertionMethod`
- *      (a key not authorised to assert is rejected — SCRUM-2308 forged-key).
+ *   2. Resolve that vm-id against the DID document's FULL key set
+ *      (`verificationMethod[]`, which after a rotation lists active + retired
+ *      keys). A key absent from the document entirely is rejected — SCRUM-2308
+ *      forged-key. A key present only as a retired `verificationMethod` (not in
+ *      `assertionMethod`) is ACCEPTED for HISTORICAL verification (it verifies a
+ *      bundle signed before the key rotated) and flagged `assertionAuthorized:
+ *      false`; an active `assertionMethod` key is flagged `true`. This is the
+ *      SCRUM-900 "historical bundles stay verifiable across rotation" guarantee.
  *   3. If the payload carries an embedded binding, its `assertion_method` MUST
  *      equal the vm-id derived from `signing_key_id` (no spoofed binding).
  *   4. Convert that verification-method's public JWK to a PEM and require the
@@ -167,8 +201,20 @@ function readEmbeddedBinding(payload: Record<string, unknown>): IssuerBinding | 
  */
 export function verifyDidBinding(input: VerifyDidBindingInput): DidBindingVerdict {
   const { bundle, didDocument } = input;
+  const expectedDid = input.expectedDid ?? ARKOVA_DID;
   const embedded = readEmbeddedBinding(bundle.payload);
   const bound = embedded !== null;
+
+  // 0. Defense-in-depth: the resolved DID document must be the one we expected.
+  //    A forged/misrouted did:web doc for a different `id` — even with a matching
+  //    assertionMethod — is rejected before any key resolution.
+  if (didDocument.id !== expectedDid) {
+    return {
+      valid: false,
+      bound,
+      reason: `resolved DID document id ${didDocument.id} does not match the expected issuer DID ${expectedDid}`,
+    };
+  }
 
   const signingKeyId = bundle.signing_key_id;
   if (typeof signingKeyId !== 'string' || signingKeyId.length === 0) {
@@ -178,12 +224,18 @@ export function verifyDidBinding(input: VerifyDidBindingInput): DidBindingVerdic
   // 1. Derive the vm-id the signer's key id maps to under the DID.
   const vmId = `${didDocument.id}#${signingKeyId}`;
 
-  // 2. The vm-id must be an authorised assertionMethod entry.
-  if (!Array.isArray(didDocument.assertionMethod) || !didDocument.assertionMethod.includes(vmId)) {
+  // 2. Resolve the vm-id against the FULL key set (active + retired). A key
+  //    listed in `assertionMethod` is active and may assert new bundles; a key
+  //    present only as a `verificationMethod` is retired and verifies HISTORICAL
+  //    bundles. A key in NEITHER is forged — reject (SCRUM-2308).
+  const vm = didDocument.verificationMethod.find((m) => m.id === vmId);
+  const isAssertionMethod =
+    Array.isArray(didDocument.assertionMethod) && didDocument.assertionMethod.includes(vmId);
+  if (!vm) {
     return {
       valid: false,
       bound,
-      reason: `signing_key_id ${signingKeyId} is not listed as an assertionMethod in the issuer DID document`,
+      reason: `signing_key_id ${signingKeyId} resolves to no verificationMethod and is not an assertionMethod in the issuer DID document`,
     };
   }
 
@@ -203,10 +255,6 @@ export function verifyDidBinding(input: VerifyDidBindingInput): DidBindingVerdic
   }
 
   // 4. Resolve the verification-method's public key and verify the signature.
-  const vm = didDocument.verificationMethod.find((m) => m.id === vmId);
-  if (!vm) {
-    return { valid: false, bound, reason: `verification method ${vmId} not found in DID document` };
-  }
   let publicKeyPem: string;
   try {
     publicKeyPem = ed25519JwkToPem(vm.publicKeyJwk);
@@ -216,10 +264,10 @@ export function verifyDidBinding(input: VerifyDidBindingInput): DidBindingVerdic
 
   const sigResult = verifySignedBundle({ bundle, publicKeyPem });
   if (!sigResult.valid) {
-    return { valid: false, bound, reason: `signature did not verify under the DID assertionMethod key: ${sigResult.reason ?? 'unknown'}` };
+    return { valid: false, bound, reason: `signature did not verify under the DID verification-method key: ${sigResult.reason ?? 'unknown'}` };
   }
 
-  return { valid: true, bound, verificationMethodId: vmId };
+  return { valid: true, bound, verificationMethodId: vmId, assertionAuthorized: isAssertionMethod };
 }
 
 /**
