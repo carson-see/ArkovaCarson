@@ -15,6 +15,7 @@
 
 import { Router, Request, Response } from 'express';
 import { verifyMerkleInclusion } from '../../utils/merkle-verify.js';
+import { fromByteaHex } from '../../utils/anchorProofs.js';
 import { createSignedBundle, staticEd25519Signer, type SignerFn } from '../../proof/signed-bundle.js';
 import {
   gcpKmsEd25519Signer,
@@ -90,6 +91,53 @@ export interface MerkleProofEntry {
   position: 'left' | 'right';
 }
 
+/**
+ * PROOF-05 (SCRUM-2338) — self-contained, INDEPENDENTLY-CHECKABLE proof bundle.
+ *
+ * Additive + nullable per Constitution §1.8: `proof_bundle` is a NEW key on the
+ * frozen MerkleProofResponse; it is `null` whenever the two-layer proof is
+ * incomplete and is NEVER fabricated (Constitution §1.5 — measured, not
+ * asserted). It carries only the already-stored cryptographic evidence:
+ *
+ *   - app-tree (layer 1): fingerprint, merkle_root, merkle_proof, merkle_index
+ *   - bitcoin-tree (layer 2): tx_id, block_height, block_hash, block_header,
+ *     op_return_payload, block_timestamp
+ *   - proof_schema_version: the format version (1 = plain double-SHA256)
+ *   - signature: inline Ed25519 envelope metadata, ONLY present on the
+ *     `?format=signed` path; `null` on the default unsigned response.
+ *
+ * This is the contract consumed by FE-PROOF-GATE, the PROOF-04 PDF, and the
+ * PROOF-07 CLI — keep the field set + names stable.
+ *
+ * SECURITY (§1.6 boundary): the bundle is built from an explicit allowlist of
+ * cryptographic fields only. No raw document content, no PII, no extraction
+ * metadata, and no `anchors.metadata` blob ever flows in — block_header /
+ * op_return_payload are decoded bytea (header bytes / "ARKV"+root commitment),
+ * not document bytes.
+ */
+export interface ProofBundleSignature {
+  alg: string;
+  signing_key_id: string;
+}
+
+export interface ProofBundle {
+  fingerprint: string;
+  merkle_root: string;
+  merkle_proof: MerkleProofEntry[];
+  merkle_index: number | null;
+  tx_id: string | null;
+  block_height: number | null;
+  block_hash: string | null;
+  /** Raw 80-byte block header as plain 160-hex (bytea `\x` prefix stripped). */
+  block_header: string | null;
+  /** Raw OP_RETURN payload ("ARKV"+version+root) as plain hex. */
+  op_return_payload: string | null;
+  block_timestamp: string | null;
+  proof_schema_version: number;
+  /** Inline signature envelope metadata; null on the default unsigned path. */
+  signature: ProofBundleSignature | null;
+}
+
 /** Response shape for the proof endpoint */
 export interface MerkleProofResponse {
   public_id: string;
@@ -106,6 +154,11 @@ export interface MerkleProofResponse {
    * Derived purely from cryptography — NEVER from `anchors.status`.
    */
   verified: boolean;
+  /**
+   * PROOF-05 (SCRUM-2338): additive nullable self-contained proof bundle.
+   * `null` when the two-layer proof is incomplete (Constitution §1.8 / §1.5).
+   */
+  proof_bundle: ProofBundle | null;
 }
 
 /** Error response */
@@ -134,6 +187,13 @@ export interface ProofRecordData {
   batch_id?: string | null;
   /** Integer leaf index (PROOF-02 column / PROOF-01 `merkle_index`). */
   merkle_index?: number | null;
+  // PROOF-05 (SCRUM-2338): layer-2 bitcoin-tree columns (migration 0340).
+  // `block_header` / `op_return_payload` are bytea — PostgREST returns them as
+  // `\x`-prefixed hex; we normalise to plain hex via fromByteaHex.
+  block_header?: string | null;
+  block_hash?: string | null;
+  op_return_payload?: string | null;
+  proof_schema_version?: number | null;
 }
 
 /** Normalised proof source threaded into the cryptographic verdict. */
@@ -142,6 +202,11 @@ interface ResolvedProofSource {
   merkleProof: MerkleProofEntry[];
   batchId: string | null;
   merkleIndex: number | null;
+  /** PROOF-05: layer-2 bitcoin-tree fields, present only from a stored proof row. */
+  blockHeader: string | null;
+  blockHash: string | null;
+  opReturnPayload: string | null;
+  proofSchemaVersion: number;
 }
 
 /** Read an integer leaf index from an untyped value (NULL/garbage → null). */
@@ -175,6 +240,14 @@ function extractStoredProof(
     merkleProof: proof.proof_path,
     batchId: proof.batch_id ? String(proof.batch_id) : null,
     merkleIndex: readMerkleIndex(proof.merkle_index),
+    // PROOF-05: bytea columns → plain hex; null/malformed → null (never faked).
+    blockHeader: fromByteaHex(proof.block_header),
+    blockHash: typeof proof.block_hash === 'string' && proof.block_hash.length > 0 ? proof.block_hash : null,
+    opReturnPayload: fromByteaHex(proof.op_return_payload),
+    proofSchemaVersion:
+      typeof proof.proof_schema_version === 'number' && Number.isInteger(proof.proof_schema_version)
+        ? proof.proof_schema_version
+        : 1,
   };
 }
 
@@ -196,6 +269,52 @@ function extractMetadataProof(
     merkleProof: metadata.merkle_proof,
     batchId: metadata.batch_id ?? null,
     merkleIndex: readMerkleIndex(metadata.merkle_index),
+    // PROOF-05: the legacy metadata fallback never carries layer-2 bitcoin-tree
+    // evidence, so the proof_bundle stays null for these (incomplete) records.
+    blockHeader: null,
+    blockHash: null,
+    opReturnPayload: null,
+    proofSchemaVersion: 1,
+  };
+}
+
+/**
+ * PROOF-05 (SCRUM-2338): assemble the self-contained `proof_bundle`, or `null`
+ * when the two-layer proof is INCOMPLETE.
+ *
+ * Completeness rule (honest, never partial — Constitution §1.5): a bundle is
+ * emitted only when BOTH layers are fully present:
+ *   - app-tree: merkle_root + merkle_proof (already guaranteed by the caller).
+ *   - bitcoin-tree: block_header AND block_hash AND op_return_payload, all
+ *     well-formed. Any missing/malformed layer-2 field ⇒ `null` (no fabricated
+ *     header, no half-bundle). This keeps the metadata-only / app-tree-only
+ *     records (the ~2.97M back catalogue) returning `proof_bundle: null` rather
+ *     than a misleading partial structure.
+ *
+ * The field set is an explicit allowlist of cryptographic evidence — no raw
+ * document bytes, PII, or `anchors.metadata` blob can leak in (§1.6).
+ */
+function buildProofBundle(
+  anchor: ProofAnchorData,
+  source: ResolvedProofSource,
+): ProofBundle | null {
+  if (source.blockHeader == null || source.blockHash == null || source.opReturnPayload == null) {
+    return null;
+  }
+  return {
+    fingerprint: anchor.fingerprint,
+    merkle_root: source.merkleRoot,
+    merkle_proof: source.merkleProof,
+    merkle_index: source.merkleIndex,
+    tx_id: anchor.chain_tx_id,
+    block_height: anchor.chain_block_height,
+    block_hash: source.blockHash,
+    block_header: source.blockHeader,
+    op_return_payload: source.opReturnPayload,
+    block_timestamp: anchor.chain_timestamp,
+    proof_schema_version: source.proofSchemaVersion,
+    // Default (unsigned) path carries no inline signature — never fabricated.
+    signature: null,
   };
 }
 
@@ -234,6 +353,8 @@ export function buildProofResponse(
     block_timestamp: anchor.chain_timestamp,
     batch_id: proofSource.batchId,
     verified: inclusion.valid,
+    // PROOF-05 (SCRUM-2338): additive, nullable self-contained bundle.
+    proof_bundle: buildProofBundle(anchor, proofSource),
   };
 }
 
@@ -267,9 +388,12 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       if (error || !data) {
         anchor = null;
       } else {
+        // PROOF-05 (SCRUM-2338): add the layer-2 bitcoin-tree columns (mig 0340).
+        // Single-line literal so PostgREST/Supabase type inference resolves the
+        // row shape (a concatenated/commented select degrades to GenericStringError).
         const { data: proofData } = await db
           .from('anchor_proofs')
-          .select('merkle_root, proof_path, batch_id, merkle_index')
+          .select('merkle_root, proof_path, batch_id, merkle_index, block_header, block_hash, op_return_payload, proof_schema_version')
           .eq('anchor_id', data.id)
           .maybeSingle();
 
@@ -293,6 +417,11 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
                 proof_path: proofData.proof_path ?? null,
                 batch_id: proofData.batch_id ?? null,
                 merkle_index: proofData.merkle_index ?? null,
+                // PROOF-05 (SCRUM-2338): layer-2 bitcoin-tree columns.
+                block_header: proofData.block_header ?? null,
+                block_hash: proofData.block_hash ?? null,
+                op_return_payload: proofData.op_return_payload ?? null,
+                proof_schema_version: proofData.proof_schema_version ?? null,
               }
             : null,
         );

@@ -12,3 +12,7 @@ Source code for `@arkova/sdk` (PH1-SDK-01 + INT-01).
 - All methods accept an optional `RetryConfig` for automatic retry on transient failures.
 - API key auth via `X-API-Key` header.
 - `ProblemDetail` follows RFC 7807.
+
+## PROOF-05 (SCRUM-2338)
+- `client.getMerkleProof(publicId)` → `MerkleProofResponse` (calls `GET /api/v1/verify/:publicId/proof`). Maps wire snake_case → camelCase.
+- New types in `types.ts`: `MerkleProofResponse`, `MerkleProofEntry`, `ProofBundle`, `ProofBundleSignature`. `proofBundle` is additive + nullable (frozen schema, Constitution §1.8) — `null` when the proof is incomplete.

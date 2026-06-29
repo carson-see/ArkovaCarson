@@ -249,6 +249,64 @@ export interface AnchorDetails extends RichVerificationFields {
   jurisdiction?: string | null;
 }
 
+/** A single Merkle proof sibling (hash + side). */
+export interface MerkleProofEntry {
+  hash: string;
+  position: 'left' | 'right';
+}
+
+/**
+ * PROOF-05 (SCRUM-2338): inline Ed25519 signature envelope metadata on a
+ * {@link ProofBundle}. Present only when the proof was fetched signed; `null`
+ * on the default unsigned response.
+ */
+export interface ProofBundleSignature {
+  alg: string;
+  signingKeyId: string;
+}
+
+/**
+ * PROOF-05 (SCRUM-2338): self-contained, independently-checkable two-layer
+ * proof bundle. Carries only cryptographic evidence — never raw document
+ * content or PII. `null` on the parent response when the proof is incomplete.
+ *
+ * Field names are camelCase per SDK convention; the wire form is snake_case.
+ */
+export interface ProofBundle {
+  fingerprint: string;
+  merkleRoot: string;
+  merkleProof: MerkleProofEntry[];
+  merkleIndex: number | null;
+  txId: string | null;
+  blockHeight: number | null;
+  blockHash: string | null;
+  /** Raw 80-byte block header as plain 160-hex. */
+  blockHeader: string | null;
+  /** Raw OP_RETURN payload ("ARKV"+version+root) as plain hex. */
+  opReturnPayload: string | null;
+  blockTimestamp: string | null;
+  proofSchemaVersion: number;
+  signature: ProofBundleSignature | null;
+}
+
+/**
+ * PROOF-05 (SCRUM-2338): response of `GET /api/v1/verify/{publicId}/proof`.
+ * The legacy top-level fields are unchanged (frozen schema, Constitution 1.8);
+ * `proofBundle` is the additive, nullable self-contained bundle.
+ */
+export interface MerkleProofResponse {
+  publicId: string;
+  fingerprint: string;
+  merkleRoot: string;
+  merkleProof: MerkleProofEntry[];
+  txId: string | null;
+  blockHeight: number | null;
+  blockTimestamp: string | null;
+  batchId: string | null;
+  verified: boolean;
+  proofBundle: ProofBundle | null;
+}
+
 export interface AttestationEvidence {
   publicId: string;
   evidenceType: string;

@@ -382,3 +382,72 @@ def test_async_verify_maps_rich_v1_verification_fields() -> None:
     assert overall == pytest.approx(0.81)
     assert description == "Transcript"
     assert sub_type == "official_transcript"
+
+
+# PROOF-05 (SCRUM-2338) — get_merkle_proof + additive nullable proof_bundle.
+
+
+def test_get_merkle_proof_populated_bundle_via_api_v1() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/verify/abc123/proof"
+        return json_response(
+            {
+                "public_id": "abc123",
+                "fingerprint": "ff" * 32,
+                "merkle_root": "aa" * 32,
+                "merkle_proof": [{"hash": "bb" * 32, "position": "left"}],
+                "tx_id": "tx-999",
+                "block_height": 800000,
+                "block_timestamp": "2026-04-18T10:00:00Z",
+                "batch_id": "batch-1",
+                "verified": True,
+                "proof_bundle": {
+                    "fingerprint": "ff" * 32,
+                    "merkle_root": "aa" * 32,
+                    "merkle_proof": [{"hash": "bb" * 32, "position": "left"}],
+                    "merkle_index": 0,
+                    "tx_id": "tx-999",
+                    "block_height": 800000,
+                    "block_hash": "cc" * 32,
+                    "block_header": "dd" * 80,
+                    "op_return_payload": "41524b5601" + "ee" * 32,
+                    "block_timestamp": "2026-04-18T10:00:00Z",
+                    "proof_schema_version": 1,
+                    "signature": None,
+                },
+            }
+        )
+
+    with Arkova(
+        api_key="ak_test",
+        base_url="https://worker.example/api/v2",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = client.get_merkle_proof("abc123")
+
+    assert result.verified is True
+    assert result.proof_bundle is not None
+    assert result.proof_bundle.block_hash == "cc" * 32
+    assert result.proof_bundle.block_header == "dd" * 80
+    assert result.proof_bundle.merkle_index == 0
+    assert result.proof_bundle.proof_schema_version == 1
+    assert result.proof_bundle.signature is None
+
+
+def test_get_merkle_proof_null_bundle_when_incomplete() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "public_id": "abc123",
+                "fingerprint": "ff" * 32,
+                "merkle_root": "aa" * 32,
+                "merkle_proof": [],
+                "verified": False,
+                "proof_bundle": None,
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.get_merkle_proof("abc123")
+
+    assert result.proof_bundle is None
