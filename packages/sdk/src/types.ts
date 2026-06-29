@@ -268,7 +268,10 @@ export interface ProofBundleSignature {
 /**
  * PROOF-05 (SCRUM-2338): self-contained, independently-checkable two-layer
  * proof bundle. Carries only cryptographic evidence — never raw document
- * content or PII. `null` on the parent response when the proof is incomplete.
+ * content or PII. `null` on the parent response when the proof is incomplete
+ * (the API only emits it when ALL fields below are present + well-formed:
+ * receipt txid/height/timestamp, 160-hex header, 64-hex block hash, canonical
+ * ARKV OP_RETURN, merkleIndex AND leafCount).
  *
  * Field names are camelCase per SDK convention; the wire form is snake_case.
  */
@@ -277,15 +280,28 @@ export interface ProofBundle {
   merkleRoot: string;
   merkleProof: MerkleProofEntry[];
   merkleIndex: number | null;
+  /**
+   * Total leaves in the batch tree this proof belongs to. With `merkleIndex`
+   * this arms the CVE-2012-2459 duplicate-leaf structural guard during local
+   * verification — both are always present in a complete (non-null) bundle.
+   */
+  leafCount: number;
   txId: string | null;
   blockHeight: number | null;
   blockHash: string | null;
   /** Raw 80-byte block header as plain 160-hex. */
   blockHeader: string | null;
-  /** Raw OP_RETURN payload ("ARKV"+version+root) as plain hex. */
+  /**
+   * Raw OP_RETURN payload as plain hex: "ARKV" (41524b56) + the 32-byte
+   * app-tree root (64 hex), NO version byte, optional trailing metadata hash.
+   */
   opReturnPayload: string | null;
   blockTimestamp: string | null;
   proofSchemaVersion: number;
+  /**
+   * RESERVED — always `null` today. The signed envelope is the outer
+   * `?format=signed` response wrapper, not an inline bundle field.
+   */
   signature: ProofBundleSignature | null;
 }
 

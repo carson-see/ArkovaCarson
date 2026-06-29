@@ -247,10 +247,17 @@ describe('SCRUM-2490 — verified is cryptographic, never status-derived', () =>
 });
 
 describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
-  // 80-byte (160-hex) header + an OP_RETURN payload as PostgREST returns bytea (\x-hex).
+  // 80-byte (160-hex) header.
   const HEADER_HEX = 'aa'.repeat(80);
-  const OP_RETURN_HEX = '41524b56' + '01' + 'cd'.repeat(32); // "ARKV" + ver + 32-byte root
+  // Canonical Arkova OP_RETURN: "ARKV" (41524b56) + 32-byte app root (64 hex),
+  // NO version byte (matches prod signet.ts: Buffer.concat([ARKV, root])).
+  const OP_RETURN_HEX = '41524b56' + 'cd'.repeat(32); // "ARKV" + 32-byte root
   const BLOCK_HASH = 'bb'.repeat(32);
+  // The PROOF-05 leaf count is exact: the number of anchor_proofs rows sharing
+  // this proof's batch_id (the production reader counts them). Threaded into
+  // buildProofResponse via the leafCount argument so the pure builder stays
+  // testable without a DB.
+  const LEAF_COUNT = LEAVES.length; // 4
 
   // A complete stored proof carrying the layer-2 bitcoin-tree columns.
   const COMPLETE_STORED: ProofRecordData = {
@@ -267,6 +274,7 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
   it('(a) old client unaffected — top-level fields unchanged, proof_bundle is purely additive', () => {
     const result = buildProofResponse(ANCHOR);
     expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
     if (result && !('error' in result)) {
       // The full legacy frozen shape is intact (Constitution §1.8).
       expect(result.public_id).toBe('abc123');
@@ -283,6 +291,8 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
   it('(b) proof_bundle is null when the proof is incomplete (no bitcoin-tree columns)', () => {
     // Metadata-only proof (app-tree branch present, no block_header/op_return).
     const result = buildProofResponse(ANCHOR);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
     if (result && !('error' in result)) {
       expect(result.proof_bundle).toBeNull();
     }
@@ -290,7 +300,9 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
 
   it('(b2) proof_bundle is null when only SOME bitcoin-tree columns are present (honest, never partial)', () => {
     const partial: ProofRecordData = { ...COMPLETE_STORED, op_return_payload: null };
-    const result = buildProofResponse(ANCHOR, partial);
+    const result = buildProofResponse(ANCHOR, partial, LEAF_COUNT);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
     if (result && !('error' in result)) {
       // block_header present but op_return_payload missing ⇒ incomplete ⇒ null.
       expect(result.proof_bundle).toBeNull();
@@ -298,8 +310,9 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
   });
 
   it('(c) proof_bundle populated when the anchor is SECURED with a complete two-layer proof', () => {
-    const result = buildProofResponse(ANCHOR, COMPLETE_STORED);
+    const result = buildProofResponse(ANCHOR, COMPLETE_STORED, LEAF_COUNT);
     expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
     if (result && !('error' in result)) {
       const b = result.proof_bundle;
       expect(b).not.toBeNull();
@@ -314,6 +327,9 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
         expect(b.block_header).toBe(HEADER_HEX);
         expect(b.op_return_payload).toBe(OP_RETURN_HEX);
         expect(b.merkle_index).toBe(DOC_INDEX);
+        // PROOF-05: leaf_count present + non-null arms the CVE-2012-2459 guard
+        // (both merkle_index AND leaf_count must be present in a complete bundle).
+        expect(b.leaf_count).toBe(LEAF_COUNT);
         expect(b.block_timestamp).toBe('2026-04-18T10:00:00Z');
         expect(b.proof_schema_version).toBe(1);
         // No inline signature on the default (unsigned) path — null, never faked.
@@ -331,42 +347,152 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
       pii_blob: { name: 'Jane Doe', dob: '1990-01-01' },
       proof_path: DOC_BRANCH,
     } as unknown as ProofRecordData;
-    const result = buildProofResponse(ANCHOR, hostile);
-    if (result && !('error' in result) && result.proof_bundle) {
-      const keys = Object.keys(result.proof_bundle).sort();
-      expect(keys).toEqual(
-        [
-          'block_hash',
-          'block_header',
-          'block_height',
-          'block_timestamp',
-          'fingerprint',
-          'merkle_index',
-          'merkle_proof',
-          'merkle_root',
-          'op_return_payload',
-          'proof_schema_version',
-          'signature',
-          'tx_id',
-        ].sort(),
-      );
-      const serialized = JSON.stringify(result.proof_bundle);
-      expect(serialized).not.toContain('123-45-6789');
-      expect(serialized).not.toContain('john@example.com');
-      expect(serialized).not.toContain('Jane Doe');
+    const result = buildProofResponse(ANCHOR, hostile, LEAF_COUNT);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).not.toBeNull();
+      if (result.proof_bundle) {
+        const keys = Object.keys(result.proof_bundle).sort();
+        expect(keys).toEqual(
+          [
+            'block_hash',
+            'block_header',
+            'block_height',
+            'block_timestamp',
+            'fingerprint',
+            'leaf_count',
+            'merkle_index',
+            'merkle_proof',
+            'merkle_root',
+            'op_return_payload',
+            'proof_schema_version',
+            'signature',
+            'tx_id',
+          ].sort(),
+        );
+        const serialized = JSON.stringify(result.proof_bundle);
+        expect(serialized).not.toContain('123-45-6789');
+        expect(serialized).not.toContain('john@example.com');
+        expect(serialized).not.toContain('Jane Doe');
+      }
     }
   });
 
   it('(d2) malformed block_header (odd-length / non-hex) ⇒ bundle null, never a fabricated header', () => {
     const malformed: ProofRecordData = { ...COMPLETE_STORED, block_header: '\\xZZ' };
-    const result = buildProofResponse(ANCHOR, malformed);
+    const result = buildProofResponse(ANCHOR, malformed, LEAF_COUNT);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  // ----- Carson P1: tightened completeness gate ------------------------------
+
+  it('(e1) short-but-valid-hex block_header (not 160 hex / 80 bytes) ⇒ bundle null', () => {
+    // `\xaa` parses as valid hex but is 1 byte, not an 80-byte header. The old
+    // gate accepted it; the tightened gate requires EXACTLY 160 hex.
+    const shortHeader: ProofRecordData = { ...COMPLETE_STORED, block_header: '\\xaa' };
+    const result = buildProofResponse(ANCHOR, shortHeader, LEAF_COUNT);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(e2) short-but-valid block_hash (not 64 hex / 32 bytes) ⇒ bundle null', () => {
+    const shortHash: ProofRecordData = { ...COMPLETE_STORED, block_hash: 'bb' };
+    const result = buildProofResponse(ANCHOR, shortHash, LEAF_COUNT);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(e3) missing tx_id (no receipt to fetch) ⇒ bundle null even with full layer-2 columns', () => {
+    const anchorNoTx: ProofAnchorData = { ...ANCHOR, chain_tx_id: null };
+    const result = buildProofResponse(anchorNoTx, COMPLETE_STORED, LEAF_COUNT);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(e4) missing block_height ⇒ bundle null', () => {
+    const anchorNoHeight: ProofAnchorData = { ...ANCHOR, chain_block_height: null };
+    const result = buildProofResponse(anchorNoHeight, COMPLETE_STORED, LEAF_COUNT);
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(e5) missing block_timestamp ⇒ bundle null', () => {
+    const anchorNoTs: ProofAnchorData = { ...ANCHOR, chain_timestamp: null };
+    const result = buildProofResponse(anchorNoTs, COMPLETE_STORED, LEAF_COUNT);
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(e6) non-ARKV op_return_payload ⇒ bundle null (canonical shape required)', () => {
+    // Right length, wrong prefix: must start with 41524b56 ("ARKV").
+    const badPrefix: ProofRecordData = {
+      ...COMPLETE_STORED,
+      op_return_payload: `\\x${'deadbeef' + 'cd'.repeat(32)}`,
+    };
+    const result = buildProofResponse(ANCHOR, badPrefix, LEAF_COUNT);
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(e7) ARKV prefix but no 32-byte root (too short) ⇒ bundle null', () => {
+    const tooShort: ProofRecordData = {
+      ...COMPLETE_STORED,
+      op_return_payload: `\\x${'41524b56' + 'cd'.repeat(16)}`, // ARKV + only 16 bytes
+    };
+    const result = buildProofResponse(ANCHOR, tooShort, LEAF_COUNT);
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(e8) canonical ARKV payload WITH trailing metadata (44-byte) ⇒ bundle populated', () => {
+    // signet.ts allows ARKV + root + optional 8/16-byte metadata hash.
+    const withMeta: ProofRecordData = {
+      ...COMPLETE_STORED,
+      op_return_payload: `\\x${'41524b56' + 'cd'.repeat(32) + 'ab'.repeat(8)}`,
+    };
+    const result = buildProofResponse(ANCHOR, withMeta, LEAF_COUNT);
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).not.toBeNull();
+    }
+  });
+
+  it('(e9) complete layer-2 columns but unknown leaf_count ⇒ bundle null (CVE guard cannot arm)', () => {
+    // leaf_count is mandatory for a complete, independently-checkable bundle.
+    const result = buildProofResponse(ANCHOR, COMPLETE_STORED, null);
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(e10) complete layer-2 columns but null merkle_index ⇒ bundle null (CVE guard cannot arm)', () => {
+    const noIndex: ProofRecordData = { ...COMPLETE_STORED, merkle_index: null };
+    const result = buildProofResponse(ANCHOR, noIndex, LEAF_COUNT);
     if (result && !('error' in result)) {
       expect(result.proof_bundle).toBeNull();
     }
   });
 
   it('proof_bundle.merkle_proof matches the top-level merkle_proof exactly', () => {
-    const result = buildProofResponse(ANCHOR, COMPLETE_STORED);
+    const result = buildProofResponse(ANCHOR, COMPLETE_STORED, LEAF_COUNT);
+    expect(result).not.toBeNull();
     if (result && !('error' in result) && result.proof_bundle) {
       expect(result.proof_bundle.merkle_proof).toEqual(result.merkle_proof);
       expect(result.proof_bundle.merkle_root).toBe(result.merkle_root);
