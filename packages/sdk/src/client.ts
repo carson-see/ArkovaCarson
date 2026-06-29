@@ -32,6 +32,10 @@ import type {
   AttestationDetails,
   AttestationEvidence,
   AttestorCredential,
+  MerkleProofResponse,
+  MerkleProofEntry,
+  ProofBundle,
+  ProofBundleSignature,
 } from './types';
 
 const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
@@ -236,6 +240,20 @@ export class Arkova {
     const response = await this.fetch(`/api/v2/anchors/${encodeURIComponent(publicId)}`);
     const data = await jsonOrThrow<Record<string, unknown>>(response, 'Anchor lookup failed');
     return mapAnchorDetails(data);
+  }
+
+  /**
+   * PROOF-05 (SCRUM-2338): fetch the Merkle inclusion proof for a batch-anchored
+   * document, including the additive nullable {@link ProofBundle} — the
+   * self-contained, independently-checkable two-layer proof. `proofBundle` is
+   * `null` when the proof is incomplete (e.g. not yet block-confirmed).
+   *
+   * Anonymous or `verify`-scoped.
+   */
+  async getMerkleProof(publicId: string): Promise<MerkleProofResponse> {
+    const response = await this.fetch(`/api/v1/verify/${encodeURIComponent(publicId)}/proof`);
+    const data = await jsonOrThrow<Record<string, unknown>>(response, 'Merkle proof lookup failed');
+    return mapMerkleProofResponse(data);
   }
 
   /**
@@ -730,6 +748,58 @@ function mapAnchorDetails(row: Record<string, unknown>): AnchorDetails {
     networkReceiptId: (row.network_receipt_id as string | null) ?? null,
     recordUri: row.record_uri as string,
     jurisdiction: row.jurisdiction as string | null | undefined,
+  };
+}
+
+/** PROOF-05 (SCRUM-2338): map the wire (snake_case) merkle proof entries. */
+function mapMerkleProofEntries(value: unknown): MerkleProofEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null)
+    .map((e) => ({
+      hash: e.hash as string,
+      position: e.position as 'left' | 'right',
+    }));
+}
+
+/** PROOF-05 (SCRUM-2338): map the nullable, snake_case proof_bundle. */
+function mapProofBundle(value: unknown): ProofBundle | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const b = value as Record<string, unknown>;
+  const sig = b.signature as Record<string, unknown> | null | undefined;
+  const signature: ProofBundleSignature | null =
+    sig && typeof sig === 'object'
+      ? { alg: sig.alg as string, signingKeyId: sig.signing_key_id as string }
+      : null;
+  return {
+    fingerprint: b.fingerprint as string,
+    merkleRoot: b.merkle_root as string,
+    merkleProof: mapMerkleProofEntries(b.merkle_proof),
+    merkleIndex: (b.merkle_index as number | null) ?? null,
+    txId: (b.tx_id as string | null) ?? null,
+    blockHeight: (b.block_height as number | null) ?? null,
+    blockHash: (b.block_hash as string | null) ?? null,
+    blockHeader: (b.block_header as string | null) ?? null,
+    opReturnPayload: (b.op_return_payload as string | null) ?? null,
+    blockTimestamp: (b.block_timestamp as string | null) ?? null,
+    proofSchemaVersion: (b.proof_schema_version as number | null) ?? 1,
+    signature,
+  };
+}
+
+/** PROOF-05 (SCRUM-2338): map the merkle proof response (frozen + additive bundle). */
+function mapMerkleProofResponse(row: Record<string, unknown>): MerkleProofResponse {
+  return {
+    publicId: row.public_id as string,
+    fingerprint: row.fingerprint as string,
+    merkleRoot: row.merkle_root as string,
+    merkleProof: mapMerkleProofEntries(row.merkle_proof),
+    txId: (row.tx_id as string | null) ?? null,
+    blockHeight: (row.block_height as number | null) ?? null,
+    blockTimestamp: (row.block_timestamp as string | null) ?? null,
+    batchId: (row.batch_id as string | null) ?? null,
+    verified: row.verified as boolean,
+    proofBundle: mapProofBundle(row.proof_bundle),
   };
 }
 

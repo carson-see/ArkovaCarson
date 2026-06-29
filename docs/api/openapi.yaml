@@ -1104,6 +1104,84 @@ components:
           nullable: true
         verified:
           type: boolean
+        proof_bundle:
+          # PROOF-05 (SCRUM-2338): additive, nullable self-contained proof bundle.
+          # `null` when the two-layer proof is incomplete (Constitution 1.8 / 1.5).
+          $ref: "#/components/schemas/ProofBundle"
+          nullable: true
+
+    ProofBundle:
+      type: object
+      description: >-
+        Self-contained, independently-checkable two-layer proof bundle
+        (PROOF-05 / SCRUM-2338). Carries only cryptographic evidence — never raw
+        document content or PII. Present only when BOTH the app-tree branch and
+        the bitcoin-tree confirmation columns (block_header, block_hash,
+        op_return_payload) are complete; otherwise the parent `proof_bundle` is
+        null.
+      required:
+        - fingerprint
+        - merkle_root
+        - merkle_proof
+        - proof_schema_version
+      properties:
+        fingerprint:
+          type: string
+          description: SHA-256 document fingerprint (the app-tree leaf).
+        merkle_root:
+          type: string
+          description: Batch app-tree root committed on-chain.
+        merkle_proof:
+          type: array
+          items:
+            type: object
+            properties:
+              hash:
+                type: string
+              position:
+                type: string
+                enum: [left, right]
+        merkle_index:
+          type: integer
+          nullable: true
+          description: Integer leaf index of the document in the batch tree.
+        tx_id:
+          type: string
+          nullable: true
+          description: Bitcoin transaction id committing the app-tree root.
+        block_height:
+          type: integer
+          nullable: true
+        block_hash:
+          type: string
+          nullable: true
+          description: Confirmed block hash (64-hex).
+        block_header:
+          type: string
+          nullable: true
+          description: Raw 80-byte block header as plain 160-hex.
+        op_return_payload:
+          type: string
+          nullable: true
+          description: Raw OP_RETURN payload ("ARKV"+version+root) as plain hex.
+        block_timestamp:
+          type: string
+          format: date-time
+          nullable: true
+        proof_schema_version:
+          type: integer
+          description: Proof format version (1 = plain double-SHA256 app-tree).
+        signature:
+          type: object
+          nullable: true
+          description: >-
+            Inline Ed25519 envelope metadata, present only when the proof is
+            requested with ?format=signed; null on the default unsigned path.
+          properties:
+            alg:
+              type: string
+            signing_key_id:
+              type: string
 
     ExtractionRequest:
       type: object
