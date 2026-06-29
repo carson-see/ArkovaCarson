@@ -16,6 +16,14 @@ import { Buffer } from 'node:buffer';
 
 export const REPO = resolve(import.meta.dirname, '..', '..', '..');
 
+// Resolve the `gh` CLI to a FIXED absolute path instead of letting the OS
+// search `$PATH` (Sonar typescript:S4036 — a writable/attacker-controlled PATH
+// entry could shadow the real binary). `/usr/bin/gh` is where GitHub-hosted
+// Ubuntu runners install it; an explicit `GH_BIN` override covers self-hosted
+// runners and local dev (e.g. Homebrew's `/opt/homebrew/bin/gh`). Mirrors the
+// `GIT_BIN` convention in check-duplicate-artifacts.ts / check-dep-pinning.ts.
+export const GH_BIN = process.env.GH_BIN ?? '/usr/bin/gh';
+
 /**
  * True when a module is being run directly (not imported). Uses fileURLToPath
  * so a checkout path containing a space or `%` is URL-decoded correctly —
@@ -53,7 +61,68 @@ export function resolveCommitOrFail(ref: string, label = 'CI base ref'): string 
 
 const RAW_BASE_REF = process.env.BASE_REF_SHA || process.env.BASE_REF || 'origin/main';
 export const baseRef = resolveCommitOrFail(RAW_BASE_REF);
-export const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
+/**
+ * Derive the PR number from the CI environment.
+ *
+ * On `pull_request` events GitHub sets `GITHUB_REF` to `refs/pull/<N>/merge`
+ * (or `.../head`). We parse that first, then fall back to an explicit
+ * `PR_NUMBER` env (e.g. staging-evidence.yml already passes one). Returns
+ * `null` on push/main and any non-PR context — callers must treat that as
+ * "no live labels available" and fall back to env-only behavior.
+ */
+export function parsePrNumber(env: NodeJS.ProcessEnv = process.env): number | null {
+  const ref = env.GITHUB_REF ?? '';
+  const m = /^refs\/pull\/(\d+)\/(?:merge|head)$/.exec(ref);
+  if (m) return Number(m[1]);
+  const explicit = (env.PR_NUMBER ?? '').trim();
+  if (/^\d+$/.test(explicit)) return Number(explicit);
+  return null;
+}
+
+const ENV_LABELS_SPLIT = (raw: string | undefined): string[] =>
+  (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
+/**
+ * Fetch the PR's labels LIVE from the GitHub API via `gh`.
+ *
+ * Why this exists: ci.yml seeds `PR_LABELS` from the FROZEN `pull_request`
+ * event payload, and the `pull_request` trigger does not fire on `labeled`.
+ * Adding an override label after a run + `gh run rerun` replays the frozen
+ * payload WITHOUT the label, so every label-gated override is structurally
+ * non-functional on re-runs. Reading labels live closes that hole.
+ *
+ * Synchronous (matches the module's existing execFileSync style), short
+ * timeout, and swallows ALL errors to an empty list so a missing `gh`, an
+ * API error, or a non-PR context degrades gracefully to env-only behavior.
+ * Requires `pull-requests: read` on the calling job.
+ */
+export function fetchLiveLabels(env: NodeJS.ProcessEnv = process.env): string[] {
+  const prNumber = parsePrNumber(env);
+  const repo = env.GITHUB_REPOSITORY ?? '';
+  if (prNumber === null || !repo) return [];
+  try {
+    const out = execFileSync(
+      GH_BIN,
+      ['api', `repos/${repo}/issues/${prNumber}/labels`, '--jq', '.[].name'],
+      { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 },
+    );
+    return out.split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The effective PR label set: the env-seeded (frozen-payload) labels UNIONed
+ * with the live labels fetched from the API, deduped. On any non-PR context
+ * or fetch failure this is exactly the env-only set (unchanged behavior).
+ */
+export function resolvePrLabels(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [...new Set([...ENV_LABELS_SPLIT(env.PR_LABELS), ...fetchLiveLabels(env)])];
+}
+
+export const prLabels = resolvePrLabels();
 export const prTitle = process.env.PR_TITLE ?? '';
 export const prBody = process.env.PR_BODY ?? '';
 export const prCommitsMsgs = process.env.PR_COMMITS_MSGS ?? '';
@@ -81,7 +150,9 @@ export function atlassianBasicAuthHeader(email: string, token: string): string {
 }
 
 export function hasLabel(label: string): boolean {
-  return prLabels.includes(label);
+  // Resolve live at call time so a label added after the frozen pull_request
+  // payload (then `gh run rerun`) is honored — the whole point of the fix.
+  return resolvePrLabels().includes(label);
 }
 
 /**
