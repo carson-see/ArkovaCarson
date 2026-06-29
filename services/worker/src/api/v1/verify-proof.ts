@@ -256,12 +256,29 @@ const OP_RETURN_CANONICAL_RE = /^41524b56[0-9a-fA-F]{64}([0-9a-fA-F]{2})*$/i;
 
 /**
  * PROOF-05: validate the OP_RETURN payload is the canonical Arkova commitment
- * (ARKV‖root, no version byte, optional trailing metadata). Returns the
- * lowercased hex when valid, else `null` (never a fabricated/partial payload).
+ * AND that the 32-byte root it commits is EXACTLY this proof's `merkleRoot`.
+ *
+ * Carson P1 (second pass): shape validation alone is insufficient. A stored row
+ * with merkle_root=A and op_return_payload=ARKV‖B is internally contradictory —
+ * the on-chain commitment names a DIFFERENT app-tree than the branch the bundle
+ * ships, yet the old (shape-only) gate still emitted a non-null, "complete"
+ * bundle. An independently-checkable bundle must never advertise such a row.
+ * We extract the committed 32-byte root (hex chars [8,72) — the 64 hex chars
+ * following the 8-hex "ARKV"/41524b56 tag) and require it to equal `merkleRoot`
+ * (case-insensitive). Any mismatch ⇒ `null` (no partial, no fabricated
+ * commitment — Constitution §1.5: measured, not asserted).
+ *
+ * Returns the lowercased canonical hex when valid AND committing the expected
+ * root, else `null`.
  */
-function canonicalOpReturn(value: string | null): string | null {
+function canonicalOpReturn(value: string | null, merkleRoot: string): string | null {
   if (value == null) return null;
-  return OP_RETURN_CANONICAL_RE.test(value) ? value.toLowerCase() : null;
+  if (!OP_RETURN_CANONICAL_RE.test(value)) return null;
+  // The regex guarantees ≥ 72 hex chars: 8-hex "ARKV" tag + 64-hex root. The
+  // committed app-tree root is exactly those 64 hex chars at [8, 72).
+  const committedRoot = value.slice(8, 72).toLowerCase();
+  if (committedRoot !== merkleRoot.toLowerCase()) return null;
+  return value.toLowerCase();
 }
 
 /** Read an integer leaf index from an untyped value (NULL/garbage → null). */
@@ -381,7 +398,10 @@ function buildProofBundle(
   // --- Bitcoin-tree layer: exact sizes + canonical commitment, else null.
   if (source.blockHeader == null || !BLOCK_HEADER_HEX_RE.test(source.blockHeader)) return null;
   if (source.blockHash == null || !BLOCK_HASH_HEX_RE.test(source.blockHash)) return null;
-  const opReturn = canonicalOpReturn(source.opReturnPayload);
+  // Carson P1 (2nd pass): the OP_RETURN must COMMIT THIS EXACT merkle_root, not
+  // merely have the canonical ARKV shape. A row whose committed root != the
+  // app-tree root it ships is internally contradictory ⇒ bundle null.
+  const opReturn = canonicalOpReturn(source.opReturnPayload, source.merkleRoot);
   if (opReturn == null) return null;
 
   return {
@@ -427,11 +447,26 @@ export function buildProofResponse(
   // app-tree root from the stored branch (with the CVE-2012-2459 guard when
   // the leaf index is known) and checking it equals the committed
   // `merkle_root`. Status is irrelevant to this field.
+  //
+  // Carson P1 (2nd pass): thread the EXACT `leafCount` into the TOP-LEVEL
+  // verdict too. `leafCount` already flows to buildProofBundle, but the public
+  // `verified` field previously passed only `{ leafIndex }`, leaving the
+  // CVE-2012-2459 structural self-pair guard INACTIVE on the frozen verdict even
+  // when the leaf count was known (a structurally-forged branch could read
+  // verified=true). Pass BOTH when present; fall back to `{ leafIndex }` (then
+  // `{}`) so legacy rows without a known count keep their prior recompute-only
+  // behaviour.
+  const inclusionOpts =
+    proofSource.merkleIndex != null
+      ? leafCount != null
+        ? { leafIndex: proofSource.merkleIndex, leafCount }
+        : { leafIndex: proofSource.merkleIndex }
+      : {};
   const inclusion = verifyMerkleInclusion(
     anchor.fingerprint,
     proofSource.merkleProof,
     proofSource.merkleRoot,
-    proofSource.merkleIndex != null ? { leafIndex: proofSource.merkleIndex } : {},
+    inclusionOpts,
   );
 
   return {

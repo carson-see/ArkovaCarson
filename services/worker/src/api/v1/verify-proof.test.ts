@@ -213,14 +213,93 @@ describe('SCRUM-2490 — verified is cryptographic, never status-derived', () =>
       expect(result.verified).toBe(false);
     }
   });
+
+  // ----- Carson P1 (2nd pass): leafCount arms the CVE guard on the VERDICT ----
+  //
+  // The structural CVE-2012-2459 self-pair guard inside verifyMerkleInclusion is
+  // active only when BOTH leafIndex AND leafCount are supplied. Before the fix,
+  // buildProofResponse threaded leafCount ONLY into buildProofBundle, so the
+  // public `verified` verdict ran with {leafIndex} alone — the guard was INACTIVE
+  // even when the exact count was known, and a structurally-forged self-pair
+  // branch that recomputes to the committed root read verified=TRUE.
+  //
+  // Construct the canonical collision: a 3-leaf tree [a,b,c] where c legitimately
+  // self-pairs at level-0 (rightmost odd). An attacker forges `c`'s branch so it
+  // self-pairs at claimed index 0 of a size-4 level — NOT a rightmost-odd
+  // position. recompute-and-compare ALONE accepts it (d2(c‖c)=cc, then
+  // d2(ab‖cc)=root); only the count-armed structural guard rejects it.
+  describe('CVE-2012-2459 self-pair on the top-level verdict', () => {
+    const sha = (d: Buffer) => createHash('sha256').update(d).digest();
+    const dsha = (d: Buffer) => sha(sha(d));
+    const cat = (x: string, y: string) => Buffer.concat([Buffer.from(x, 'hex'), Buffer.from(y, 'hex')]);
+    const A = fp('cve-a');
+    const B = fp('cve-b');
+    const C = fp('cve-c');
+    const AB = dsha(cat(A, B)).toString('hex');
+    const CC = dsha(cat(C, C)).toString('hex');
+    const CVE_ROOT = dsha(cat(AB, CC)).toString('hex');
+    // Forged branch for leaf C: step0 sibling == C (illegitimate self-pair),
+    // step1 sibling == AB. Recomputes to CVE_ROOT.
+    const FORGED_BRANCH = [
+      { hash: C, position: 'right' as const },
+      { hash: AB, position: 'left' as const },
+    ];
+
+    const forgedAnchor: ProofAnchorData = {
+      ...ANCHOR,
+      fingerprint: C,
+      metadata: {
+        merkle_root: CVE_ROOT,
+        merkle_proof: FORGED_BRANCH,
+        merkle_index: 0,
+        batch_id: 'cve-batch',
+      },
+    };
+
+    it('verified=true when leaf_count is UNKNOWN (recompute-only; structural guard cannot arm — documents the residual risk)', () => {
+      // No leafCount ⇒ {leafIndex} only ⇒ recompute-and-compare accepts the
+      // forgery. This is the pre-fix behaviour for legacy rows with no count.
+      const result = buildProofResponse(forgedAnchor, null, null);
+      expect(result).not.toBeNull();
+      if (result && !('error' in result)) {
+        expect(result.verified).toBe(true);
+      }
+    });
+
+    it('verified=FALSE for the forged self-pair branch once leaf_count is threaded into the verdict (Carson P1)', () => {
+      // The 3-leaf tree's claimed size-4 level: index 0 is NOT rightmost-odd, so
+      // the self-pair is a forgery. With leafCount=4 the guard fires on the
+      // PUBLIC verdict, not just inside the bundle.
+      const result = buildProofResponse(forgedAnchor, null, 4);
+      expect(result).not.toBeNull();
+      expect(result).not.toHaveProperty('error');
+      if (result && !('error' in result)) {
+        expect(result.verified).toBe(false);
+      }
+    });
+
+    it('legitimate proofs stay verified=true with leaf_count supplied (no false negatives)', () => {
+      // The honest 4-leaf ANCHOR proof must still verify with its real count.
+      const result = buildProofResponse(ANCHOR, null, LEAVES.length);
+      if (result && !('error' in result)) {
+        expect(result.verified).toBe(true);
+      }
+    });
+  });
 });
 
 describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
   // 80-byte (160-hex) header.
   const HEADER_HEX = 'aa'.repeat(80);
-  // Canonical Arkova OP_RETURN: "ARKV" (41524b56) + 32-byte app root (64 hex),
+  // Canonical Arkova OP_RETURN: "ARKV" (41524b56) + the 32-byte app root (64 hex),
   // NO version byte (matches prod signet.ts: Buffer.concat([ARKV, root])).
-  const OP_RETURN_HEX = '41524b56' + 'cd'.repeat(32); // "ARKV" + 32-byte root
+  //
+  // Carson P1 (2nd pass): the committed root MUST be THIS proof's merkle_root
+  // (TREE.root) — a row whose OP_RETURN commits a different root is internally
+  // contradictory and the builder now rejects it (see (f1) below). So we derive
+  // the canonical OP_RETURN from TREE.root, never a stand-in (`cd`*32) that
+  // happens to share the shape but commits the wrong tree.
+  const OP_RETURN_HEX = '41524b56' + TREE.root; // "ARKV" + the actual app root
   const BLOCK_HASH = 'bb'.repeat(32);
   // The PROOF-05 leaf count is exact: the number of anchor_proofs rows sharing
   // this proof's batch_id (the production reader counts them). Threaded into
@@ -432,10 +511,12 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
   });
 
   it('(e8) canonical ARKV payload WITH trailing metadata (44-byte) ⇒ bundle populated', () => {
-    // signet.ts allows ARKV + root + optional 8/16-byte metadata hash.
+    // signet.ts allows ARKV + root + optional 8/16-byte metadata hash. The
+    // committed root is still THIS proof's root (TREE.root); only a trailing
+    // metadata hash follows.
     const withMeta: ProofRecordData = {
       ...COMPLETE_STORED,
-      op_return_payload: `\\x${'41524b56' + 'cd'.repeat(32) + 'ab'.repeat(8)}`,
+      op_return_payload: `\\x${'41524b56' + TREE.root + 'ab'.repeat(8)}`,
     };
     const result = buildProofResponse(ANCHOR, withMeta, LEAF_COUNT);
     if (result && !('error' in result)) {
@@ -465,6 +546,45 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
     if (result && !('error' in result) && result.proof_bundle) {
       expect(result.proof_bundle.merkle_proof).toEqual(result.merkle_proof);
       expect(result.proof_bundle.merkle_root).toBe(result.merkle_root);
+    }
+  });
+
+  // ----- Carson P1 (2nd pass): OP_RETURN must COMMIT THIS EXACT root ----------
+
+  it('(f1) op_return commits a DIFFERENT root than merkle_root ⇒ bundle null (internally-contradictory row never advertised complete)', () => {
+    // Canonical ARKV shape, exact 80-byte header, exact 32-byte hash, valid
+    // index/count — but the OP_RETURN commits a root that is NOT TREE.root.
+    // The old gate (shape-only) emitted a non-null "complete" bundle here; the
+    // tightened gate must return null because the on-chain commitment names a
+    // different app-tree than the branch this bundle ships.
+    const wrongCommit: ProofRecordData = {
+      ...COMPLETE_STORED,
+      op_return_payload: `\\x${'41524b56' + fp('some-other-tree-root')}`,
+    };
+    const result = buildProofResponse(ANCHOR, wrongCommit, LEAF_COUNT);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
+    if (result && !('error' in result)) {
+      // merkle_root=TREE.root but op_return commits fp('some-other-tree-root').
+      expect(result.merkle_root).toBe(TREE.root);
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(f2) op_return committing the EXACT merkle_root (case-insensitive) ⇒ bundle populated', () => {
+    // Same root, uppercased in storage — the committed-root comparison is
+    // case-insensitive, so this remains a complete bundle.
+    const upperCommit: ProofRecordData = {
+      ...COMPLETE_STORED,
+      op_return_payload: `\\x${'41524b56' + TREE.root.toUpperCase()}`,
+    };
+    const result = buildProofResponse(ANCHOR, upperCommit, LEAF_COUNT);
+    expect(result).not.toBeNull();
+    if (result && !('error' in result) && result.proof_bundle) {
+      // Emitted lowercased on the wire, committing the right root.
+      expect(result.proof_bundle.op_return_payload).toBe(
+        ('41524b56' + TREE.root).toLowerCase(),
+      );
     }
   });
 });
