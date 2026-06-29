@@ -431,15 +431,42 @@ function buildProofBundle(
  *                  sourced by the production reader from the count of
  *                  `anchor_proofs` rows sharing the proof's `batch_id`. `null`
  *                  when unknown (no batch linkage); the bundle then stays null.
+ * @param leafCountIndeterminate set by the production reader ONLY when the proof
+ *                  IS batch-linked (has a `batch_id`) but the exact leaf_count
+ *                  could NOT be determined — e.g. the count query returned an
+ *                  error or a non-positive/null count on a transient DB fault.
+ *                  This is the FAIL-CLOSED signal (CodeRabbit / SCRUM-2338).
+ *                  When true we must NOT silently degrade to the weaker
+ *                  `{leafIndex}`-only verdict (which RE-DISABLES the
+ *                  CVE-2012-2459 structural self-pair guard and could read
+ *                  `verified=true` for a structurally-forged batch proof) and we
+ *                  must NOT suppress an otherwise-complete bundle as if the proof
+ *                  were merely legacy/unbatched. Instead the request fails closed
+ *                  / indeterminate (a `ProofErrorResponse`). A genuinely
+ *                  single-leaf / non-batch proof carries `leafCount` resolved
+ *                  (≥1) with this flag false and is unaffected.
  */
 export function buildProofResponse(
   anchor: ProofAnchorData,
   proof: ProofRecordData | null = null,
   leafCount: number | null = null,
+  leafCountIndeterminate = false,
 ): MerkleProofResponse | ProofErrorResponse | null {
   const proofSource = extractStoredProof(proof) ?? extractMetadataProof(anchor.metadata);
   if (!proofSource) return null;
   if ('error' in proofSource) return proofSource;
+
+  // CodeRabbit (SCRUM-2338) — FAIL CLOSED on an indeterminate leaf_count for a
+  // BATCH-linked proof. If the production reader could not resolve the exact
+  // leaf_count for a proof that genuinely belongs to a batch tree, the verdict
+  // CANNOT honestly run the CVE-2012-2459 structural guard, and the proof is not
+  // "merely legacy/unbatched" — so we must neither emit `verified=true` via the
+  // weaker {leafIndex}-only path nor suppress an otherwise-complete bundle as a
+  // silent null. Surface it as indeterminate; the route maps this to a 500 so a
+  // transient DB fault never downgrades the cryptographic guarantee.
+  if (leafCountIndeterminate) {
+    return { error: 'Proof leaf count could not be determined; verification is indeterminate.' };
+  }
 
   // SCRUM-2490 (PROOF-VERIFY) — the pre-mortem K1 kill-shot was that
   // `verified` was derived from `anchors.status` and nothing recomputed the
@@ -456,12 +483,13 @@ export function buildProofResponse(
   // verified=true). Pass BOTH when present; fall back to `{ leafIndex }` (then
   // `{}`) so legacy rows without a known count keep their prior recompute-only
   // behaviour.
-  const inclusionOpts =
-    proofSource.merkleIndex != null
-      ? leafCount != null
-        ? { leafIndex: proofSource.merkleIndex, leafCount }
-        : { leafIndex: proofSource.merkleIndex }
-      : {};
+  const inclusionOpts: { leafIndex?: number; leafCount?: number } = {};
+  if (proofSource.merkleIndex != null) {
+    inclusionOpts.leafIndex = proofSource.merkleIndex;
+    if (leafCount != null) {
+      inclusionOpts.leafCount = leafCount;
+    }
+  }
   const inclusion = verifyMerkleInclusion(
     anchor.fingerprint,
     proofSource.merkleProof,
@@ -540,7 +568,15 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
         // (one row per leaf — upsert onConflict 'anchor_id'). This is the only
         // exact read-side source; we never estimate it from branch length.
         // `null` ⇒ unknown (no batch linkage) ⇒ buildProofBundle returns null.
+        //
+        // CodeRabbit (SCRUM-2338): when the proof IS batch-linked but the count
+        // query fails (countError or a null/non-positive count on a transient DB
+        // fault), we must FAIL CLOSED rather than fall back to the weaker
+        // {leafIndex}-only verdict (which re-disables the CVE-2012-2459 guard)
+        // and suppress an otherwise-complete bundle. `leafCountIndeterminate`
+        // carries that signal into buildProofResponse, which returns an error.
         let leafCount: number | null = null;
+        let leafCountIndeterminate = false;
         const batchId = proofData?.batch_id ?? null;
         if (batchId) {
           const { count, error: countError } = await db
@@ -549,6 +585,9 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
             .eq('batch_id', batchId);
           if (!countError && typeof count === 'number' && count >= 1) {
             leafCount = count;
+          } else {
+            // Batch-linked but the exact count is unresolvable ⇒ indeterminate.
+            leafCountIndeterminate = true;
           }
         }
 
@@ -568,6 +607,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
               }
             : null,
           leafCount,
+          leafCountIndeterminate,
         );
 
         if (result === null) {

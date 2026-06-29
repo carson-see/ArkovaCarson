@@ -278,29 +278,40 @@ export interface ProofBundleSignature {
 export interface ProofBundle {
   fingerprint: string;
   merkleRoot: string;
-  merkleProof: MerkleProofEntry[];
-  merkleIndex: number | null;
+  /**
+   * The inclusion branch. A complete (non-null) bundle always ships a non-empty
+   * branch — `mapProofBundle` fails closed (returns null) on an empty/malformed
+   * array, so consumers can rely on `proofBundle !== null ⇒ independently
+   * verifiable` (CodeRabbit).
+   */
+  merkleProof: [MerkleProofEntry, ...MerkleProofEntry[]];
+  /**
+   * The leaf's index in the batch tree. Non-null in a complete bundle — together
+   * with `leafCount` it arms the CVE-2012-2459 duplicate-leaf structural guard.
+   */
+  merkleIndex: number;
   /**
    * Total leaves in the batch tree this proof belongs to. With `merkleIndex`
    * this arms the CVE-2012-2459 duplicate-leaf structural guard during local
    * verification — both are always present in a complete (non-null) bundle.
    */
   leafCount: number;
-  txId: string | null;
-  blockHeight: number | null;
-  blockHash: string | null;
+  txId: string;
+  blockHeight: number;
+  blockHash: string;
   /** Raw 80-byte block header as plain 160-hex. */
-  blockHeader: string | null;
+  blockHeader: string;
   /**
    * Raw OP_RETURN payload as plain hex: "ARKV" (41524b56) + the 32-byte
    * app-tree root (64 hex), NO version byte, optional trailing metadata hash.
    */
-  opReturnPayload: string | null;
-  blockTimestamp: string | null;
+  opReturnPayload: string;
+  blockTimestamp: string;
   proofSchemaVersion: number;
   /**
    * RESERVED — always `null` today. The signed envelope is the outer
-   * `?format=signed` response wrapper, not an inline bundle field.
+   * `?format=signed` response wrapper, not an inline bundle field. This is the
+   * one legitimately-nullable member of the bundle.
    */
   signature: ProofBundleSignature | null;
 }
