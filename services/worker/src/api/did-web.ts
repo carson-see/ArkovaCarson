@@ -119,7 +119,7 @@ function pemToEd25519Jwk(pem: string): Ed25519Jwk {
 
 // ─── DID document builders (pure) ─────────────────────────────────────────
 
-interface VerificationMethod {
+export interface VerificationMethod {
   id: string;
   type: 'JsonWebKey2020';
   controller: string;
@@ -132,7 +132,7 @@ interface ServiceEntry {
   serviceEndpoint: string;
 }
 
-interface DidDocument {
+export interface DidDocument {
   '@context': readonly string[];
   id: string;
   controller?: string;
