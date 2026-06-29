@@ -776,6 +776,8 @@ function mapProofBundle(value: unknown): ProofBundle | null {
     merkleRoot: b.merkle_root as string,
     merkleProof: mapMerkleProofEntries(b.merkle_proof),
     merkleIndex: (b.merkle_index as number | null) ?? null,
+    // leaf_count is always present in a complete (non-null) bundle from the API.
+    leafCount: (b.leaf_count as number | null) ?? 0,
     txId: (b.tx_id as string | null) ?? null,
     blockHeight: (b.block_height as number | null) ?? null,
     blockHash: (b.block_hash as string | null) ?? null,

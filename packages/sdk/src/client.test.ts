@@ -815,11 +815,13 @@ describe('PROOF-05 (SCRUM-2338) getMerkleProof', () => {
           merkle_root: 'aa'.repeat(32),
           merkle_proof: [{ hash: 'bb'.repeat(32), position: 'left' }],
           merkle_index: 0,
+          leaf_count: 4,
           tx_id: 'tx-999',
           block_height: 800000,
           block_hash: 'cc'.repeat(32),
           block_header: 'dd'.repeat(80),
-          op_return_payload: '41524b5601' + 'ee'.repeat(32),
+          // Canonical ARKV + 32-byte root, NO version byte.
+          op_return_payload: '41524b56' + 'ee'.repeat(32),
           block_timestamp: '2026-04-18T10:00:00Z',
           proof_schema_version: 1,
           signature: null,
@@ -837,6 +839,7 @@ describe('PROOF-05 (SCRUM-2338) getMerkleProof', () => {
     expect(result.proofBundle?.blockHash).toBe('cc'.repeat(32));
     expect(result.proofBundle?.blockHeader).toBe('dd'.repeat(80));
     expect(result.proofBundle?.merkleIndex).toBe(0);
+    expect(result.proofBundle?.leafCount).toBe(4);
     expect(result.proofBundle?.proofSchemaVersion).toBe(1);
     expect(result.proofBundle?.signature).toBeNull();
   });
