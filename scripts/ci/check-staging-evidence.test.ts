@@ -268,6 +268,100 @@ describe('check-staging-evidence', () => {
     it('keeps the root package.json above T0 (guards runtime deps)', () => {
       expect(requiredTierFor(['package.json']).tier).not.toBe('T0');
     });
+
+    // ── PI-0 S2 verifier track / PROOF-08 (SCRUM-2341): zero-prod-runtime
+    // reclassification. @arkova/verifier + @arkova/verifier-cli are standalone
+    // MIT packages not imported by the worker or frontend; the proof fixtures
+    // loader is imported only by tests. All three classify T0. ──
+    it('returns T0 for the @arkova/verifier package (standalone lib, no prod runtime)', () => {
+      // Exact #1349 changed-file set.
+      expect(
+        requiredTierFor([
+          'packages/verifier/agents.md',
+          'packages/verifier/package-lock.json',
+          'packages/verifier/package.json',
+          'packages/verifier/src/independent-node.test.ts',
+          'packages/verifier/src/independent-node.ts',
+          'packages/verifier/src/index.ts',
+          'packages/verifier/tsconfig.json',
+          'packages/verifier/vitest.config.ts',
+        ]).tier,
+      ).toBe('T0');
+    });
+
+    it('returns T0 for the @arkova/verifier-cli package set (#1353, standalone CLI + CI)', () => {
+      // Exact #1353 changed-file set (verifier-cli + a re-touch of verifier + ci.yml).
+      expect(
+        requiredTierFor([
+          '.github/workflows/ci.yml',
+          'packages/verifier-cli/.gitignore',
+          'packages/verifier-cli/LICENSE',
+          'packages/verifier-cli/README.md',
+          'packages/verifier-cli/agents.md',
+          'packages/verifier-cli/eslint.config.js',
+          'packages/verifier-cli/fixtures/README.md',
+          'packages/verifier-cli/fixtures/generate-fixtures.mjs',
+          'packages/verifier-cli/fixtures/published-keys.json',
+          'packages/verifier-cli/fixtures/signed-bundle.json',
+          'packages/verifier-cli/fixtures/synthetic-vectors.json',
+          'packages/verifier-cli/package-lock.json',
+          'packages/verifier-cli/package.json',
+          'packages/verifier-cli/src/cli.ts',
+          'packages/verifier-cli/src/index.ts',
+          'packages/verifier-cli/src/lib/independent-endpoint.ts',
+          'packages/verifier-cli/src/lib/report.ts',
+          'packages/verifier-cli/src/lib/signature.ts',
+          'packages/verifier-cli/src/types.ts',
+          'packages/verifier-cli/src/vendor/canonical-json.ts',
+          'packages/verifier-cli/src/vendor/merkle-verify.ts',
+          'packages/verifier-cli/src/vendor/merkle.ts',
+          'packages/verifier-cli/src/verify.ts',
+          'packages/verifier-cli/test/cli.test.ts',
+          'packages/verifier-cli/test/conformance.test.ts',
+          'packages/verifier-cli/test/helpers.ts',
+          'packages/verifier-cli/test/independent-endpoint.test.ts',
+          'packages/verifier-cli/test/signature.test.ts',
+          'packages/verifier-cli/test/sync-recompute.test.ts',
+          'packages/verifier-cli/tsconfig.json',
+          'packages/verifier-cli/vitest.config.ts',
+          'packages/verifier/agents.md',
+          'packages/verifier/package-lock.json',
+          'packages/verifier/package.json',
+          'packages/verifier/src/independent-node.test.ts',
+          'packages/verifier/src/independent-node.ts',
+          'packages/verifier/src/index.ts',
+          'packages/verifier/tsconfig.json',
+          'packages/verifier/vitest.config.ts',
+        ]).tier,
+      ).toBe('T0');
+    });
+
+    it('returns T0 for the proof test-fixtures set (#1357, test-only loader, no prod importer)', () => {
+      // Exact #1357 changed-file set.
+      expect(
+        requiredTierFor([
+          'services/worker/src/proof/agents.md',
+          'services/worker/src/proof/fixtures/README.md',
+          'services/worker/src/proof/fixtures/index.ts',
+          'services/worker/src/proof/fixtures/proof-fixtures.json',
+          'services/worker/src/proof/fixtures/proof-fixtures.test.ts',
+          'services/worker/src/utils/merkle-verify.test.ts',
+        ]).tier,
+      ).toBe('T0');
+    });
+
+    it('does NOT over-broaden: a real worker-runtime file stays above T0 (control)', () => {
+      // The allowlist is scoped to packages/verifier*, packages/verifier-cli,
+      // and services/worker/src/proof/fixtures/ only — a genuine worker-runtime
+      // file must keep its production tier (no regression).
+      expect(
+        requiredTierFor(['services/worker/src/api/v1/verify-proof.ts']).tier,
+      ).not.toBe('T0');
+      // Sibling non-fixtures files under services/worker/src/proof/ stay T2.
+      expect(
+        requiredTierFor(['services/worker/src/proof/signed-bundle.ts']).tier,
+      ).not.toBe('T0');
+    });
   });
 
   // ── deploy-worker.yml `uses:`-only Dependabot bump exemption ──
