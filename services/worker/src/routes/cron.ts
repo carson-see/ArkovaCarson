@@ -81,6 +81,7 @@ import { runTreasuryAlertCheck } from '../jobs/treasury-alert.js';
 import { buildTreasuryAlertDispatcher } from '../jobs/treasury-alert-dispatcher.js';
 import { runQueueReminderJob } from '../jobs/queue-reminders.js';
 import { runOrgQueueScheduler } from '../jobs/org-queue-scheduler.js';
+import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
 import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
@@ -431,6 +432,24 @@ cronRouter.post('/org-queue-scheduler', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Org queue scheduler pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── QUEUE-06 (SCRUM-2352): connector_artifact drain consumer ───
+//
+// PRODUCTION TRIGGER. Cloud Scheduler hits this HTTP endpoint because in-process
+// node-cron is dormant under Cloud Run CPU throttling (the PROOF-03 soak proved
+// the dev/test backup never fires in prod). `runConnectorArtifactDrain` no-ops
+// (`skipped:true`) when ENABLE_CONNECTOR_ARTIFACT_DRAIN is false, drains each org
+// with at least one pending|queued row, and charges credits ONLY at SECURING via
+// debit_and_enqueue_anchor. Idempotent (compare-and-set claim) → no mutex needed.
+cronRouter.post('/drain-connector-artifacts', async (_req, res) => {
+  try {
+    const result = await runConnectorArtifactDrain();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Connector-artifact drain pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

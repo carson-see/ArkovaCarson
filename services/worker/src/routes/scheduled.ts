@@ -22,6 +22,7 @@ import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions,
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
+import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
@@ -49,6 +50,10 @@ const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   // anchor_proofs. Joins the anchor-table allowlist so the maintenance flag
   // pauses it during a migration window alongside the other anchor-table jobs.
   'populate-confirmation-proofs',
+  // QUEUE-06 (SCRUM-2352): connector-artifact drain materializes anchors +
+  // charges credits + anchors to Bitcoin. Joins the anchor-table allowlist so a
+  // paused pipeline during a migration window doesn't materialize/charge rows.
+  'drain-connector-artifacts',
 ]);
 
 function scheduleInProcess(jobName: string, expression: string, task: CronTask): void {
@@ -285,6 +290,30 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
         // LOW-2: log the message string (not the raw error object) so a future
         // richer error can't drag rpcUrl/token-bearing fields into the log.
         logger.error({ err: errMsg(error) }, 'Confirmation-proof backfill cron failed');
+      }
+    });
+  }
+
+  // QUEUE-06 (SCRUM-2352): connector-artifact drain every 5 minutes. Drains
+  // pending|queued connector_artifact rows → materialize PENDING anchor →
+  // charge at SECURING (debit_and_enqueue_anchor) → batch-anchor. Default OFF —
+  // enabled per-environment via ENABLE_CONNECTOR_ARTIFACT_DRAIN. In-process is
+  // the dev/test BACKUP ONLY: node-cron is dormant under Cloud Run CPU
+  // throttling, so prod drives this via Cloud Scheduler → POST
+  // /jobs/drain-connector-artifacts. Idempotent (compare-and-set claim).
+  if (config.enableConnectorArtifactDrain) {
+    scheduleInProcess('drain-connector-artifacts', '*/5 * * * *', async () => {
+      logger.debug('Running connector-artifact drain');
+      try {
+        const result = await trackOperation(runConnectorArtifactDrain());
+        if (!result.skipped && result.anchored > 0) {
+          logger.info(
+            { anchored: result.anchored, failed: result.failed, orgsProcessed: result.orgsProcessed },
+            'Connector-artifact drain anchored rows',
+          );
+        }
+      } catch (error) {
+        logger.error({ err: errMsg(error) }, 'Connector-artifact drain cron failed');
       }
     });
   }

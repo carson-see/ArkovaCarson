@@ -288,6 +288,19 @@ vi.mock('../jobs/org-queue-scheduler.js', () => ({
   runOrgQueueScheduler: (...args: unknown[]) => mockRunOrgQueueScheduler(...args),
 }));
 
+// QUEUE-06 (SCRUM-2352): connector_artifact drain consumer HTTP endpoint.
+const mockRunConnectorArtifactDrain = vi.fn().mockResolvedValue({
+  skipped: false,
+  orgsProcessed: 2,
+  orgsFailed: 0,
+  claimed: 3,
+  anchored: 3,
+  failed: 0,
+});
+vi.mock('../jobs/connector-artifact-drain.js', () => ({
+  runConnectorArtifactDrain: (...args: unknown[]) => mockRunConnectorArtifactDrain(...args),
+}));
+
 const mockRunDocusignEnvelopeCompletedJobs = vi.fn().mockResolvedValue({
   claimed: 1,
   completed: 1,
@@ -685,6 +698,31 @@ describe('cron routes', () => {
       mockRunOrgQueueScheduler.mockRejectedValueOnce(new Error('scheduler failed'));
       const app = createApp();
       const res = await request(app).post('/cron/org-queue-scheduler');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+  });
+
+  describe('POST /drain-connector-artifacts', () => {
+    it('runs the connector-artifact drain and returns the aggregate result', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drain-connector-artifacts');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        skipped: false,
+        orgsProcessed: 2,
+        orgsFailed: 0,
+        claimed: 3,
+        anchored: 3,
+        failed: 0,
+      });
+      expect(mockRunConnectorArtifactDrain).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 500 on drain failure (Cloud Scheduler retries)', async () => {
+      mockRunConnectorArtifactDrain.mockRejectedValueOnce(new Error('drain failed'));
+      const app = createApp();
+      const res = await request(app).post('/cron/drain-connector-artifacts');
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Processing failed');
     });
