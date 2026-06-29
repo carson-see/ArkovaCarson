@@ -793,3 +793,74 @@ describe('ask', () => {
     expect(result.citations[0].anchorProof?.chainTxId).toBe('tx-abc');
   });
 });
+
+describe('PROOF-05 (SCRUM-2338) getMerkleProof', () => {
+  it('maps the proof response incl. the populated proof_bundle (snake→camel)', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        public_id: 'abc123',
+        fingerprint: 'ff'.repeat(32),
+        merkle_root: 'aa'.repeat(32),
+        merkle_proof: [{ hash: 'bb'.repeat(32), position: 'left' }],
+        tx_id: 'tx-999',
+        block_height: 800000,
+        block_timestamp: '2026-04-18T10:00:00Z',
+        batch_id: 'batch-1',
+        verified: true,
+        proof_bundle: {
+          fingerprint: 'ff'.repeat(32),
+          merkle_root: 'aa'.repeat(32),
+          merkle_proof: [{ hash: 'bb'.repeat(32), position: 'left' }],
+          merkle_index: 0,
+          tx_id: 'tx-999',
+          block_height: 800000,
+          block_hash: 'cc'.repeat(32),
+          block_header: 'dd'.repeat(80),
+          op_return_payload: '41524b5601' + 'ee'.repeat(32),
+          block_timestamp: '2026-04-18T10:00:00Z',
+          proof_schema_version: 1,
+          signature: null,
+        },
+      }),
+    });
+
+    const result = await client.getMerkleProof('abc123');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/verify/abc123/proof'),
+      expect.anything(),
+    );
+    expect(result.verified).toBe(true);
+    expect(result.proofBundle).not.toBeNull();
+    expect(result.proofBundle?.blockHash).toBe('cc'.repeat(32));
+    expect(result.proofBundle?.blockHeader).toBe('dd'.repeat(80));
+    expect(result.proofBundle?.merkleIndex).toBe(0);
+    expect(result.proofBundle?.proofSchemaVersion).toBe(1);
+    expect(result.proofBundle?.signature).toBeNull();
+  });
+
+  it('maps proofBundle = null when the proof is incomplete', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        public_id: 'abc123',
+        fingerprint: 'ff'.repeat(32),
+        merkle_root: 'aa'.repeat(32),
+        merkle_proof: [],
+        tx_id: null,
+        block_height: null,
+        block_timestamp: null,
+        batch_id: null,
+        verified: false,
+        proof_bundle: null,
+      }),
+    });
+
+    const result = await client.getMerkleProof('abc123');
+    expect(result.proofBundle).toBeNull();
+  });
+});

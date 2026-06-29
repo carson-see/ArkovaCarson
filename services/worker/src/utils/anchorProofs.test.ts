@@ -5,7 +5,28 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { upsertAnchorProofs, updateAnchorConfirmationProofs } from './anchorProofs.js';
+import { upsertAnchorProofs, updateAnchorConfirmationProofs, fromByteaHex } from './anchorProofs.js';
+
+describe('PROOF-05 (SCRUM-2338) — fromByteaHex (bytea read-side normaliser)', () => {
+  it('strips the \\x prefix and lowercases valid hex', () => {
+    expect(fromByteaHex('\\xAABB01')).toBe('aabb01');
+  });
+  it('accepts bare hex without a \\x prefix', () => {
+    expect(fromByteaHex('aabb01')).toBe('aabb01');
+  });
+  it('returns null for null/empty/non-string', () => {
+    expect(fromByteaHex(null)).toBeNull();
+    expect(fromByteaHex(undefined)).toBeNull();
+    expect(fromByteaHex('')).toBeNull();
+    expect(fromByteaHex('\\x')).toBeNull();
+    expect(fromByteaHex(123)).toBeNull();
+  });
+  it('returns null for malformed (odd-length or non-hex) — never a fabricated value', () => {
+    expect(fromByteaHex('\\xABC')).toBeNull(); // odd length
+    expect(fromByteaHex('\\xZZ')).toBeNull(); // non-hex
+    expect(fromByteaHex('nothex')).toBeNull();
+  });
+});
 
 function mockClient() {
   const upsert = vi.fn((_rows: Array<Record<string, unknown>>, _opts: { onConflict: string }) => Promise.resolve({ error: null }));

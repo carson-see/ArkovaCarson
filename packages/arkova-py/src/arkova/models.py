@@ -87,6 +87,61 @@ class VerificationResult(RichVerificationFields):
     error: str | None = None
 
 
+class MerkleProofEntry(ArkovaModel):
+    hash: str
+    position: Literal["left", "right"]
+
+
+class ProofBundleSignature(ArkovaModel):
+    """PROOF-05 (SCRUM-2338): inline Ed25519 envelope metadata.
+
+    Present only when the proof was fetched signed; ``None`` otherwise.
+    """
+
+    alg: str
+    signing_key_id: str
+
+
+class ProofBundle(ArkovaModel):
+    """PROOF-05 (SCRUM-2338): self-contained two-layer proof bundle.
+
+    Carries only cryptographic evidence (never raw document content or PII).
+    The parent ``MerkleProofResponse.proof_bundle`` is ``None`` when the proof
+    is incomplete (e.g. not yet block-confirmed) — never fabricated.
+    """
+
+    fingerprint: str
+    merkle_root: str
+    merkle_proof: list[MerkleProofEntry]
+    merkle_index: int | None = None
+    tx_id: str | None = None
+    block_height: int | None = None
+    block_hash: str | None = None
+    block_header: str | None = None
+    op_return_payload: str | None = None
+    block_timestamp: str | None = None
+    proof_schema_version: int = 1
+    signature: ProofBundleSignature | None = None
+
+
+class MerkleProofResponse(ArkovaModel):
+    """PROOF-05 (SCRUM-2338): GET /api/v1/verify/{public_id}/proof.
+
+    Frozen top-level fields plus the additive, nullable ``proof_bundle``.
+    """
+
+    public_id: str
+    fingerprint: str
+    merkle_root: str
+    merkle_proof: list[MerkleProofEntry]
+    tx_id: str | None = None
+    block_height: int | None = None
+    block_timestamp: str | None = None
+    batch_id: str | None = None
+    verified: bool
+    proof_bundle: ProofBundle | None = None
+
+
 class Anchor(RichVerificationFields):
     public_id: str
     verified: bool

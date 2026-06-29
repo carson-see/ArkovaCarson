@@ -245,3 +245,131 @@ describe('SCRUM-2490 — verified is cryptographic, never status-derived', () =>
     }
   });
 });
+
+describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
+  // 80-byte (160-hex) header + an OP_RETURN payload as PostgREST returns bytea (\x-hex).
+  const HEADER_HEX = 'aa'.repeat(80);
+  const OP_RETURN_HEX = '41524b56' + '01' + 'cd'.repeat(32); // "ARKV" + ver + 32-byte root
+  const BLOCK_HASH = 'bb'.repeat(32);
+
+  // A complete stored proof carrying the layer-2 bitcoin-tree columns.
+  const COMPLETE_STORED: ProofRecordData = {
+    merkle_root: TREE.root,
+    proof_path: DOC_BRANCH,
+    batch_id: 'batch-1',
+    merkle_index: DOC_INDEX,
+    block_header: `\\x${HEADER_HEX}`,
+    block_hash: BLOCK_HASH,
+    op_return_payload: `\\x${OP_RETURN_HEX}`,
+    proof_schema_version: 1,
+  };
+
+  it('(a) old client unaffected — top-level fields unchanged, proof_bundle is purely additive', () => {
+    const result = buildProofResponse(ANCHOR);
+    expect(result).not.toBeNull();
+    if (result && !('error' in result)) {
+      // The full legacy frozen shape is intact (Constitution §1.8).
+      expect(result.public_id).toBe('abc123');
+      expect(result.fingerprint).toBe(DOC_FP);
+      expect(result.merkle_root).toBe(TREE.root);
+      expect(result.tx_id).toBe('tx-999');
+      expect(result.block_height).toBe(800_000);
+      expect(result.verified).toBe(true);
+      // proof_bundle exists as a new KEY but never replaces/renames an old field.
+      expect('proof_bundle' in result).toBe(true);
+    }
+  });
+
+  it('(b) proof_bundle is null when the proof is incomplete (no bitcoin-tree columns)', () => {
+    // Metadata-only proof (app-tree branch present, no block_header/op_return).
+    const result = buildProofResponse(ANCHOR);
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(b2) proof_bundle is null when only SOME bitcoin-tree columns are present (honest, never partial)', () => {
+    const partial: ProofRecordData = { ...COMPLETE_STORED, op_return_payload: null };
+    const result = buildProofResponse(ANCHOR, partial);
+    if (result && !('error' in result)) {
+      // block_header present but op_return_payload missing ⇒ incomplete ⇒ null.
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('(c) proof_bundle populated when the anchor is SECURED with a complete two-layer proof', () => {
+    const result = buildProofResponse(ANCHOR, COMPLETE_STORED);
+    expect(result).not.toBeNull();
+    if (result && !('error' in result)) {
+      const b = result.proof_bundle;
+      expect(b).not.toBeNull();
+      if (b) {
+        expect(b.fingerprint).toBe(DOC_FP);
+        expect(b.merkle_root).toBe(TREE.root);
+        expect(b.merkle_proof).toEqual(DOC_BRANCH);
+        expect(b.tx_id).toBe('tx-999');
+        expect(b.block_height).toBe(800_000);
+        expect(b.block_hash).toBe(BLOCK_HASH);
+        // bytea \x-prefix stripped; plain lowercase hex on the wire.
+        expect(b.block_header).toBe(HEADER_HEX);
+        expect(b.op_return_payload).toBe(OP_RETURN_HEX);
+        expect(b.merkle_index).toBe(DOC_INDEX);
+        expect(b.block_timestamp).toBe('2026-04-18T10:00:00Z');
+        expect(b.proof_schema_version).toBe(1);
+        // No inline signature on the default (unsigned) path — null, never faked.
+        expect(b.signature).toBeNull();
+      }
+    }
+  });
+
+  it('(d) REDACTION GUARD — bundle never carries raw document bytes, PII, or non-allowlisted keys', () => {
+    // A hostile stored proof that smuggles extra fields. The builder uses an
+    // explicit allowlist, so none of these may surface in proof_bundle.
+    const hostile = {
+      ...COMPLETE_STORED,
+      raw_document: 'SSN 123-45-6789 john@example.com',
+      pii_blob: { name: 'Jane Doe', dob: '1990-01-01' },
+      proof_path: DOC_BRANCH,
+    } as unknown as ProofRecordData;
+    const result = buildProofResponse(ANCHOR, hostile);
+    if (result && !('error' in result) && result.proof_bundle) {
+      const keys = Object.keys(result.proof_bundle).sort();
+      expect(keys).toEqual(
+        [
+          'block_hash',
+          'block_header',
+          'block_height',
+          'block_timestamp',
+          'fingerprint',
+          'merkle_index',
+          'merkle_proof',
+          'merkle_root',
+          'op_return_payload',
+          'proof_schema_version',
+          'signature',
+          'tx_id',
+        ].sort(),
+      );
+      const serialized = JSON.stringify(result.proof_bundle);
+      expect(serialized).not.toContain('123-45-6789');
+      expect(serialized).not.toContain('john@example.com');
+      expect(serialized).not.toContain('Jane Doe');
+    }
+  });
+
+  it('(d2) malformed block_header (odd-length / non-hex) ⇒ bundle null, never a fabricated header', () => {
+    const malformed: ProofRecordData = { ...COMPLETE_STORED, block_header: '\\xZZ' };
+    const result = buildProofResponse(ANCHOR, malformed);
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
+  });
+
+  it('proof_bundle.merkle_proof matches the top-level merkle_proof exactly', () => {
+    const result = buildProofResponse(ANCHOR, COMPLETE_STORED);
+    if (result && !('error' in result) && result.proof_bundle) {
+      expect(result.proof_bundle.merkle_proof).toEqual(result.merkle_proof);
+      expect(result.proof_bundle.merkle_root).toBe(result.merkle_root);
+    }
+  });
+});
