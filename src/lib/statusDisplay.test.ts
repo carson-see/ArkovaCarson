@@ -17,6 +17,7 @@ import { describe, it, expect } from 'vitest';
 import {
   getStatusDisplay,
   getStatusLabel,
+  isProofDownloadable,
   type StatusTone,
 } from './statusDisplay';
 // Import the forbidden-term list straight from the copy-lint script so this
@@ -300,5 +301,29 @@ describe('getStatusLabel — convenience wrapper', () => {
     for (const status of [...ANCHOR_STATUSES, ...ATTESTATION_STATUSES]) {
       expect(getStatusLabel(status)).toBe(getStatusDisplay(status).label);
     }
+  });
+});
+
+// PROOF-04 (SCRUM-2337) — proof download is SECURED-only and fails closed.
+describe('isProofDownloadable — SECURED-only gate', () => {
+  it('is true only for SECURED', () => {
+    expect(isProofDownloadable('SECURED')).toBe(true);
+    expect(isProofDownloadable('secured')).toBe(true);
+    expect(isProofDownloadable(' SECURED ')).toBe(true);
+  });
+
+  it('is false for every other anchor/attestation status', () => {
+    for (const status of [...ANCHOR_STATUSES, ...ATTESTATION_STATUSES]) {
+      if (status === 'SECURED') continue;
+      expect(isProofDownloadable(status)).toBe(false);
+    }
+  });
+
+  it('fails closed for null, undefined, blank, and unknown input', () => {
+    expect(isProofDownloadable(null)).toBe(false);
+    expect(isProofDownloadable(undefined)).toBe(false);
+    expect(isProofDownloadable('')).toBe(false);
+    expect(isProofDownloadable('   ')).toBe(false);
+    expect(isProofDownloadable('VERIFIED')).toBe(false); // display label, not the enum
   });
 });
