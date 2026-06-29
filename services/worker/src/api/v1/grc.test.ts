@@ -26,6 +26,19 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+// Owner-inclusive org resolution (the P1 fix): getUserAdminOrgId now resolves
+// the caller's org via profiles.org_id and gates on isCallerOrgAdmin (which
+// admits org OWNERS, not just org_members rows). Mock both so the existing
+// state-signing tests resolve an admin org, and so the owner-inclusivity tests
+// below can flip the resolver outcome.
+const getCallerOrgIdMock = vi.fn();
+const isCallerOrgAdminMock = vi.fn();
+
+vi.mock('../_org-auth.js', () => ({
+  getCallerOrgId: (...args: unknown[]) => getCallerOrgIdMock(...args),
+  isCallerOrgAdmin: (...args: unknown[]) => isCallerOrgAdminMock(...args),
+}));
+
 vi.mock('../../integrations/grc/adapters.js', () => ({
   loadGrcCredentials: () => ({
     vanta: { clientId: 'v', clientSecret: 'vs' },
@@ -74,6 +87,10 @@ beforeEach(() => {
   // /connect requires INTEGRATION_STATE_HMAC_SECRET; we set it for tests so
   // the router can sign.
   process.env.INTEGRATION_STATE_HMAC_SECRET = 'grc-test-state-secret';
+  // Default: caller resolves to an org and is an admin (covers the existing
+  // state-signing tests, which previously got their admin org from db.from).
+  getCallerOrgIdMock.mockResolvedValue(TEST_ORG_ID);
+  isCallerOrgAdminMock.mockResolvedValue(true);
 });
 
 describe('GRC OAuth route', () => {
@@ -216,5 +233,58 @@ describe('GRC OAuth route', () => {
       });
 
     expect(res.status).toBe(400);
+  });
+
+  // ── Owner-exclusion P1 fix: getUserAdminOrgId must be owner-inclusive ──
+  describe('owner-inclusive org resolution', () => {
+    it('an org OWNER (profiles.org_id linkage, no org_members row) is NOT 403 on /connect', async () => {
+      // The fix path: getCallerOrgId resolves the owner's org from their
+      // profile and isCallerOrgAdmin admits the owner — even with no
+      // org_members row (db.from is never consulted for the gate now).
+      getCallerOrgIdMock.mockResolvedValue(TEST_ORG_ID);
+      isCallerOrgAdminMock.mockResolvedValue(true);
+
+      const res = await request(createApp())
+        .post('/api/v1/grc/connect')
+        .send({
+          platform: 'vanta',
+          redirect_uri: 'http://localhost:5173/grc/callback',
+        });
+
+      expect(res.status).toBe(200);
+      expect(typeof res.body.state).toBe('string');
+      expect(getCallerOrgIdMock).toHaveBeenCalledWith(TEST_USER_ID);
+      expect(isCallerOrgAdminMock).toHaveBeenCalledWith(TEST_USER_ID, TEST_ORG_ID);
+    });
+
+    it('403 (with the original message) when the caller has no org (getCallerOrgId → null)', async () => {
+      getCallerOrgIdMock.mockResolvedValue(null);
+      isCallerOrgAdminMock.mockResolvedValue(false);
+
+      const res = await request(createApp())
+        .post('/api/v1/grc/connect')
+        .send({
+          platform: 'vanta',
+          redirect_uri: 'http://localhost:5173/grc/callback',
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('Must be org admin to connect GRC platforms');
+    });
+
+    it('403 when the caller has an org but is not an admin (isCallerOrgAdmin → false)', async () => {
+      getCallerOrgIdMock.mockResolvedValue(TEST_ORG_ID);
+      isCallerOrgAdminMock.mockResolvedValue(false);
+
+      const res = await request(createApp())
+        .post('/api/v1/grc/connect')
+        .send({
+          platform: 'vanta',
+          redirect_uri: 'http://localhost:5173/grc/callback',
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('Must be org admin to connect GRC platforms');
+    });
   });
 });

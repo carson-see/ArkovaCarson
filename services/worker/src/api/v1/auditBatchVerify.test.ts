@@ -5,8 +5,38 @@
  * ISA 530 reproducible sampling and anomaly detection.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { z } from 'zod';
+import express from 'express';
+import request from 'supertest';
+
+vi.mock('../../utils/db.js', () => ({
+  db: { from: vi.fn() },
+}));
+
+vi.mock('../../utils/logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock('../_org-auth.js', () => ({
+  getCallerOrgId: vi.fn(),
+  isCallerOrgAdmin: vi.fn(),
+}));
+
+import { auditBatchVerifyRouter } from './auditBatchVerify.js';
+import { db } from '../../utils/db.js';
+import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
+
+function buildApp(userId?: string) {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    if (userId) req.authUserId = userId;
+    next();
+  });
+  app.use('/api/v1/audit/batch-verify', auditBatchVerifyRouter);
+  return app;
+}
 
 // Replicate the schema from the endpoint for unit testing
 const batchVerifySchema = z.object({
@@ -133,5 +163,73 @@ describe('Audit Batch Verify — Anomaly Detection', () => {
   it('flags missing fingerprint', () => {
     const fingerprint = null;
     expect(fingerprint).toBeNull();
+  });
+});
+
+describe('POST /api/v1/audit/batch-verify — owner-inclusive org gate', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('requires authentication', async () => {
+    const app = buildApp();
+    await request(app)
+      .post('/api/v1/audit/batch-verify')
+      .send({ credential_ids: ['abc'] })
+      .expect(401);
+  });
+
+  it('allows an org OWNER (resolved via profiles.org_id, no org_members row)', async () => {
+    // Owner: getCallerOrgId resolves the org, isCallerOrgAdmin → true.
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+    vi.mocked(isCallerOrgAdmin).mockResolvedValue(true);
+
+    // After the gate passes the handler queries `anchors` then `audit_events`.
+    vi.mocked(db.from).mockImplementation((table: string) => {
+      if (table === 'anchors') {
+        return {
+          select: () => ({ in: () => ({ is: () => Promise.resolve({ data: [], error: null }) }) }),
+        } as never;
+      }
+      if (table === 'audit_events') {
+        return { insert: () => Promise.resolve({ data: null, error: null }) } as never;
+      }
+      return { select: () => ({}) } as never;
+    });
+
+    const app = buildApp('owner-1');
+    const res = await request(app)
+      .post('/api/v1/audit/batch-verify')
+      .send({ credential_ids: ['abc', 'def'] });
+
+    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(200);
+    // Gate resolved the org for an owner with no org_members row.
+    expect(getCallerOrgId).toHaveBeenCalledWith('owner-1');
+    expect(isCallerOrgAdmin).toHaveBeenCalledWith('owner-1', 'org-1');
+  });
+
+  it('returns 403 when caller has no org (getCallerOrgId → null)', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue(null);
+    vi.mocked(isCallerOrgAdmin).mockResolvedValue(false);
+
+    const app = buildApp('user-1');
+    const res = await request(app)
+      .post('/api/v1/audit/batch-verify')
+      .send({ credential_ids: ['abc'] })
+      .expect(403);
+
+    expect(res.body.error).toBe('Organization administrator role required');
+  });
+
+  it('returns 403 when caller is a non-admin member (isCallerOrgAdmin → false)', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+    vi.mocked(isCallerOrgAdmin).mockResolvedValue(false);
+
+    const app = buildApp('member-1');
+    const res = await request(app)
+      .post('/api/v1/audit/batch-verify')
+      .send({ credential_ids: ['abc'] })
+      .expect(403);
+
+    expect(res.body.error).toBe('Organization administrator role required');
   });
 });

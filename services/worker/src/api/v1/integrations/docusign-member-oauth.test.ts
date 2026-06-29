@@ -33,6 +33,18 @@ vi.mock('../../../utils/db.js', () => ({
   db: {},
 }));
 
+// SCRUM owner-exclusion fix: `requireOrgMember` now resolves the caller's org
+// via the canonical owner-inclusive resolver (`getCallerOrgId` → `profiles.org_id`)
+// instead of a direct `org_members` lookup — an org OWNER linked only via
+// `profiles.org_id` (no `org_members` row) must NOT be 403'd on their own org.
+// Mock the resolver so each test controls the gate outcome; the membership
+// `org_members` mock-rows below are now inert for the gate (kept for the
+// member_integrations/audit assertions that share the same `db.from` mock).
+const getCallerOrgIdMock = vi.fn<(userId: string) => Promise<string | null>>();
+vi.mock('../../_org-auth.js', () => ({
+  getCallerOrgId: (userId: string) => getCallerOrgIdMock(userId),
+}));
+
 import { createDocusignMemberOAuthRouter } from './docusign-member-oauth.js';
 
 type MemberOAuthDeps = NonNullable<Parameters<typeof createDocusignMemberOAuthRouter>[0]>;
@@ -116,6 +128,9 @@ function createApp(db: unknown, overrides: Partial<MemberOAuthDeps> = {}) {
 describe('Member-level DocuSign OAuth router (SCRUM-2044)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: caller's profile org === the requested org → owner-inclusive gate
+    // passes. Tests asserting the failure path override this to resolve null.
+    getCallerOrgIdMock.mockResolvedValue(TEST_ORG_ID);
   });
 
   // 2026-04-24 forensic audit finding H1 (same class as Drive SCRUM-1236): the
@@ -242,6 +257,44 @@ describe('Member-level DocuSign OAuth router (SCRUM-2044)', () => {
     });
 
     it('rejects when the caller has no org membership', async () => {
+      // Failure path: resolver finds no org on the caller's profile.
+      getCallerOrgIdMock.mockResolvedValue(null);
+      const db = {
+        from: vi.fn(() => mockQuery({ data: null, error: null })),
+      };
+      const app = createApp(db);
+
+      const res = await request(app)
+        .post('/api/v1/integrations/docusign/member/oauth/start')
+        .send({ org_id: TEST_ORG_ID });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('org member');
+    });
+
+    it('allows an org OWNER linked via profiles.org_id (no org_members row)', async () => {
+      // Owner-exclusion regression guard: the owner has NO `org_members` row, so
+      // the DB mock returns null for `org_members`. The owner-inclusive resolver
+      // still resolves their org via `profiles.org_id` → gate must PASS (non-403).
+      getCallerOrgIdMock.mockResolvedValue(TEST_ORG_ID);
+      const db = {
+        from: vi.fn(() => mockQuery({ data: null, error: null })), // no org_members row
+      };
+      const app = createApp(db);
+
+      const res = await request(app)
+        .post('/api/v1/integrations/docusign/member/oauth/start')
+        .set('host', 'worker.test')
+        .send({ org_id: TEST_ORG_ID });
+
+      expect(res.status).toBe(200);
+      expect(getCallerOrgIdMock).toHaveBeenCalledWith(TEST_USER_ID);
+      expect(res.body.authorizationUrl).toContain('https://account-d.docusign.com/oauth/auth');
+    });
+
+    it('rejects a caller whose profile org differs from the requested org', async () => {
+      // Cross-org guard: resolver returns a DIFFERENT org → not a member of `orgId`.
+      getCallerOrgIdMock.mockResolvedValue('99999999-9999-4999-8999-999999999999');
       const db = {
         from: vi.fn(() => mockQuery({ data: null, error: null })),
       };
@@ -530,6 +583,8 @@ describe('Member-level DocuSign OAuth router (SCRUM-2044)', () => {
     });
 
     it('rejects disconnect when user has no org membership', async () => {
+      // Failure path: resolver finds no org on the caller's profile.
+      getCallerOrgIdMock.mockResolvedValue(null);
       const db = {
         from: vi.fn((table: string) => {
           if (table === 'org_members') return mockQuery({ data: null, error: null });
@@ -543,6 +598,41 @@ describe('Member-level DocuSign OAuth router (SCRUM-2044)', () => {
         .send({ org_id: TEST_ORG_ID });
 
       expect(res.status).toBe(403);
+    });
+
+    it('allows an org OWNER (profiles.org_id, no org_members row) to disconnect', async () => {
+      // Owner-exclusion regression guard for the disconnect gate.
+      getCallerOrgIdMock.mockResolvedValue(TEST_ORG_ID);
+      const db = {
+        from: vi.fn((table: string) => {
+          if (table === 'org_members') return mockQuery({ data: null, error: null }); // no row
+          if (table === 'member_integrations') {
+            return mockQuery({
+              data: [{
+                id: 'member-int-1',
+                token_secret_name: 'projects/test-project/secrets/arkova-docusign-member-rt',
+              }],
+              error: null,
+            });
+          }
+          return mockQuery({ data: null, error: null });
+        }),
+      };
+      const app = createApp(db, {
+        refreshTokenStore: {
+          async put() { return undefined; },
+          async get() { return null; },
+          async delete() { /* no-op */ },
+        },
+      });
+
+      const res = await request(app)
+        .post('/api/v1/integrations/docusign/member/disconnect')
+        .send({ org_id: TEST_ORG_ID });
+
+      expect(res.status).toBe(200);
+      expect(res.body.disconnected).toBe(true);
+      expect(getCallerOrgIdMock).toHaveBeenCalledWith(TEST_USER_ID);
     });
   });
 });
