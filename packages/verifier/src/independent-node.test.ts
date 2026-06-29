@@ -371,6 +371,43 @@ describe('confirmInclusion (independent Esplora node)', () => {
     expect(result.status).toBe('block_hash_mismatch');
   });
 
+  it('REJECTS when the fetched tx body carries a DIFFERENT txid than requested (txid-binding guard)', async () => {
+    // Carson P1 (independent-node.ts:160): a buggy/malicious node could pair a
+    // VALID merkle proof for TXID_A with a DIFFERENT tx body that carries the
+    // expected ARKV||root in its OP_RETURN. The verifier must bind the response
+    // to the REQUESTED txid BEFORE reading any vout/OP_RETURN/status — otherwise
+    // it would extract the planted root and confirm against a tx it never asked
+    // for. Build a fixture whose tx body matches in every way EXCEPT its txid.
+    const merkleRoot = fp(0xab);
+    const { fetch: goodFetch } = makeFixture({
+      targetTxId: TXID_A,
+      opReturnScriptHex: opReturnScript(merkleRoot),
+      otherTxids: OTHER.slice(0, 4),
+      targetIndex: 2,
+      height: 800_000,
+    });
+
+    // Same node, but the /tx/<TXID_A> body reports a different txid in its JSON.
+    const fetch: IndependentNodeFetch = async (path) => {
+      if (path === `/tx/${TXID_A}`) {
+        const resp = await goodFetch(path);
+        const tx = resp.json as EsploraTx;
+        return { ...resp, json: { ...tx, txid: 'b'.repeat(64) } };
+      }
+      return goodFetch(path);
+    };
+
+    const result = await confirmInclusion(
+      { txId: TXID_A, expectedMerkleRoot: merkleRoot, blockHeight: 800_000 },
+      { fetch },
+    );
+
+    expect(result.confirmed).toBe(false);
+    expect(result.status).toBe('txid_mismatch');
+    // The guard fires BEFORE the OP_RETURN is read, so no planted root leaks out.
+    expect(result.extractedMerkleRoot).toBeUndefined();
+  });
+
   it('REJECTS when the tx cannot be found on the independent node', async () => {
     const fetch: IndependentNodeFetch = async () => ({ ok: false, status: 404 });
     const result = await confirmInclusion(

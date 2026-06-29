@@ -8,7 +8,11 @@
  * verifier's trust-minimized cross-check: a third party must be able to run it
  * against a node WE do not control and reach the same verdict.
  *
- * It performs four independent checks, each of which must pass:
+ * It performs these independent checks, each of which must pass:
+ *   0. Txid binding       — the fetched tx body's `txid` EQUALS the requested
+ *      txid before any of its vout / OP_RETURN / status is read. The txid is the
+ *      double-SHA256 identity of the body, so this rejects a node that pairs a
+ *      valid proof for `txId` with a different body carrying a planted ARKV‖root.
  *   1. OP_RETURN payload  — the tx carries a canonical Arkova OP_RETURN output
  *      (`OP_RETURN <push> ARKV||<32-byte root>[||metadata]`) whose committed
  *      32-byte fingerprint EQUALS the expected Merkle root. Structural decode at
@@ -101,6 +105,7 @@ export type ConfirmInclusionStatus =
   | 'confirmed'
   | 'bad_request'
   | 'tx_not_found'
+  | 'txid_mismatch'
   | 'not_in_block'
   | 'no_anchor_output'
   | 'payload_mismatch'
@@ -158,6 +163,18 @@ export async function confirmInclusion(
     return reject('tx_not_found', txId, 'transaction not found on the independent node');
   }
   const tx = txResp.json;
+
+  // ── 1a. TXID-BINDING GUARD (Carson P1) ──
+  // Bind the returned body to the txid we actually requested BEFORE reading any
+  // of its vout / OP_RETURN / status. A buggy or malicious node could pair a
+  // valid Merkle proof for `txId` with a DIFFERENT tx body that carries the
+  // expected ARKV‖root in its OP_RETURN; without this check the verifier would
+  // extract the planted root and confirm against a tx it never asked for. The
+  // txid is the cryptographic identity of the body (double-SHA256 of its bytes),
+  // so this is the one field that ties the response to the request.
+  if (typeof tx.txid !== 'string' || tx.txid.toLowerCase() !== txId) {
+    return reject('txid_mismatch', txId, 'independent node returned a tx body whose txid does not match the requested txid');
+  }
 
   if (!tx.status.confirmed || !tx.status.block_hash || tx.status.block_height == null) {
     return reject('not_in_block', txId, 'transaction is not yet confirmed in a block');
