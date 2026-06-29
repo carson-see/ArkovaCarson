@@ -454,3 +454,86 @@ def test_get_merkle_proof_null_bundle_when_incomplete() -> None:
         result = client.get_merkle_proof("abc123")
 
     assert result.proof_bundle is None
+
+
+# CodeRabbit (SCRUM-2338): a malformed but NON-null proof_bundle must fail closed
+# to None — never manufacture a valid-looking, unverifiable bundle.
+_COMPLETE_WIRE_BUNDLE = {
+    "fingerprint": "ff" * 32,
+    "merkle_root": "aa" * 32,
+    "merkle_proof": [{"hash": "bb" * 32, "position": "left"}],
+    "merkle_index": 0,
+    "leaf_count": 4,
+    "tx_id": "tx-999",
+    "block_height": 800000,
+    "block_hash": "cc" * 32,
+    "block_header": "dd" * 80,
+    "op_return_payload": "41524b56" + "ee" * 32,
+    "block_timestamp": "2026-04-18T10:00:00Z",
+    "proof_schema_version": 1,
+    "signature": None,
+}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"tx_id": None},
+        {"block_height": None},
+        {"leaf_count": "4"},
+        {"block_header": None},
+        {"merkle_proof": "nope"},
+        {"merkle_proof": []},
+        {"merkle_proof": [{"hash": "bb" * 32, "position": "up"}]},
+        {"fingerprint": None},
+        {"op_return_payload": None},
+        {"merkle_index": None},
+    ],
+    ids=lambda m: "-".join(m.keys()),
+)
+def test_get_merkle_proof_malformed_bundle_fails_closed(mutation: dict) -> None:
+    bad_bundle = {**_COMPLETE_WIRE_BUNDLE, **mutation}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "public_id": "abc123",
+                "fingerprint": "ff" * 32,
+                "merkle_root": "aa" * 32,
+                "merkle_proof": [{"hash": "bb" * 32, "position": "left"}],
+                "tx_id": "tx-999",
+                "block_height": 800000,
+                "block_timestamp": "2026-04-18T10:00:00Z",
+                "batch_id": "batch-1",
+                "verified": True,
+                "proof_bundle": bad_bundle,
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.get_merkle_proof("abc123")
+
+    # The frozen top-level response still parses; only the bundle fails closed.
+    assert result.verified is True
+    assert result.proof_bundle is None
+
+
+def test_get_merkle_proof_missing_required_member_fails_closed() -> None:
+    bad_bundle = {k: v for k, v in _COMPLETE_WIRE_BUNDLE.items() if k != "tx_id"}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "public_id": "abc123",
+                "fingerprint": "ff" * 32,
+                "merkle_root": "aa" * 32,
+                "merkle_proof": [{"hash": "bb" * 32, "position": "left"}],
+                "verified": True,
+                "proof_bundle": bad_bundle,
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.get_merkle_proof("abc123")
+
+    assert result.proof_bundle is None
