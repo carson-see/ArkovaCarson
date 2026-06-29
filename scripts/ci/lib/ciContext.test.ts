@@ -43,6 +43,11 @@ beforeEach(async () => {
   delete process.env.GITHUB_REPOSITORY;
   delete process.env.PR_NUMBER;
   delete process.env.PR_LABELS;
+  // Pin the gh binary to the bare name so the existing `cmd === 'gh'` mock
+  // matchers stay valid. Production resolves `GH_BIN` to a fixed absolute path
+  // (Sonar S4036) defaulting to /usr/bin/gh; a dedicated test below proves the
+  // override is honored.
+  process.env.GH_BIN = 'gh';
 });
 
 afterEach(() => {
@@ -142,6 +147,33 @@ describe('resolvePrLabels', () => {
     expect(labels).toEqual(['foo']);
     const ghCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'gh');
     expect(ghCalls).toHaveLength(0);
+  });
+
+  it('invokes the gh binary at the fixed GH_BIN path, not via $PATH lookup (S4036)', async () => {
+    // Override the resolved binary to a fixed absolute path and assert the
+    // module shells out to *that* path verbatim — never the bare `gh` name.
+    process.env.GH_BIN = '/custom/bin/gh';
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === '/custom/bin/gh') return 'count-exact-allowed\n';
+      return gitPassthrough(cmd, args);
+    });
+    mod = await import('./ciContext.js');
+    expect(mod.GH_BIN).toBe('/custom/bin/gh');
+    const labels = mod.resolvePrLabels({
+      GITHUB_REF: 'refs/pull/1298/merge',
+      GITHUB_REPOSITORY: 'carson/arkova',
+      PR_LABELS: 'foo',
+    });
+    expect(labels).toContain('count-exact-allowed');
+    // The gh CLI was spawned by absolute path; the bare `gh` name was never used.
+    expect(execFileSyncMock.mock.calls.some((c) => c[0] === '/custom/bin/gh')).toBe(true);
+    expect(execFileSyncMock.mock.calls.some((c) => c[0] === 'gh')).toBe(false);
+  });
+
+  it('defaults GH_BIN to /usr/bin/gh when the env var is unset', async () => {
+    delete process.env.GH_BIN;
+    mod = await import('./ciContext.js');
+    expect(mod.GH_BIN).toBe('/usr/bin/gh');
   });
 });
 

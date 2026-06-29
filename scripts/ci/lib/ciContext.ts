@@ -16,6 +16,14 @@ import { Buffer } from 'node:buffer';
 
 export const REPO = resolve(import.meta.dirname, '..', '..', '..');
 
+// Resolve the `gh` CLI to a FIXED absolute path instead of letting the OS
+// search `$PATH` (Sonar typescript:S4036 — a writable/attacker-controlled PATH
+// entry could shadow the real binary). `/usr/bin/gh` is where GitHub-hosted
+// Ubuntu runners install it; an explicit `GH_BIN` override covers self-hosted
+// runners and local dev (e.g. Homebrew's `/opt/homebrew/bin/gh`). Mirrors the
+// `GIT_BIN` convention in check-duplicate-artifacts.ts / check-dep-pinning.ts.
+export const GH_BIN = process.env.GH_BIN ?? '/usr/bin/gh';
+
 /**
  * True when a module is being run directly (not imported). Uses fileURLToPath
  * so a checkout path containing a space or `%` is URL-decoded correctly —
@@ -95,7 +103,7 @@ export function fetchLiveLabels(env: NodeJS.ProcessEnv = process.env): string[] 
   if (prNumber === null || !repo) return [];
   try {
     const out = execFileSync(
-      'gh',
+      GH_BIN,
       ['api', `repos/${repo}/issues/${prNumber}/labels`, '--jq', '.[].name'],
       { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 },
     );
