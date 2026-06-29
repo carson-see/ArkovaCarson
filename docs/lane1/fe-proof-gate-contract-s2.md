@@ -25,38 +25,60 @@ the same gate so the two never drift.
 
 Three things are frozen here:
 
-1. **The PROOF-04 PDF proof-JSON shape** (`ProofPacket`).
-2. **The PROOF-05 `proof_bundle` field shape** (superset envelope around the packet).
+1. **The proof packet shape** (`ProofPacket`) — which IS the canonical
+   `proof_bundle` field-for-field (PROOF-05 emits it, PROOF-07 CLI parses it).
+2. **The optional Lane 2 download envelope** that wraps that packet verbatim.
 3. **`isProofDownloadable(status) === SECURED-only` semantics** + the badge rule.
 
 ---
 
-## 2. The proof packet — `ProofPacket` (PROOF-04 embedded JSON)
+## 2. The proof packet — `ProofPacket` ≡ the canonical `proof_bundle` (PROOF-04 embedded JSON)
 
 Canonical TypeScript source: `src/lib/generateAuditReport.ts`
 (`export interface ProofPacket`). This is the JSON embedded in the certificate
 PDF (both rendered visibly and stored verbatim in the PDF document properties
 under `keywords`, subject `arkova-proof-packet`).
 
+**This packet IS the canonical `proof_bundle` shape — field-for-field.** It is
+what PROOF-05 (`services/worker/src/api/v1/verify-proof.ts` → `interface
+ProofBundle`, SCRUM-2338) emits on `GET /api/v1/verify/:publicId/proof`, and what
+the PROOF-07 reference CLI (`packages/verifier-cli/src/types.ts` → `interface
+ProofPacket`) parses. The PDF embeds it **verbatim** — same field names, same
+nullability — so the three never drift. The `merkle_proof` branch is the
+structured `MerkleProofEntry[]` (`{ hash, position }`) used by the verify-proof
+API; it is **never** flattened to `string[]` (that would drop the `position`
+each sibling needs and the offline verifier could not recompute the root).
+
 ```jsonc
 {
   "fingerprint":          "<64-hex SHA-256 of the document>",
   "merkle_root":          "<64-hex>|null",
-  "merkle_proof":         ["<64-hex>", "..."] /* ordered sibling path */ | null,
-  "merkle_index":         3 | null,            /* leaf position in the tree */
+  "merkle_proof": [                             /* ordered sibling branch, NOT string[] */
+    { "hash": "<64-hex>", "position": "left" | "right" }
+  ] | null,
+  "merkle_index":         3 | null,             /* leaf position in the tree */
+  "leaf_count":           8 | null,             /* total leaves — enables CVE-2012-2459 guard */
   "tx_id":                "<64-hex network receipt id>" | null,
   "block_height":         850123 | null,
   "block_hash":           "<64-hex>" | null,
   "block_header":         "<160-hex raw 80-byte header>" | null,
-  "op_return_payload":    "<hex>" | null,
-  "proof_schema_version": 1 | null,
-  "observed_time":        "2026-06-02T03:00:00Z" | null, /* ISO-8601 UTC */
-  "signature": {                                /* OPTIONAL — present only when signed */
-    "algorithm": "ECDSA-SHA256",
-    "key_id":    "treasury-wif-1"               /* OPTIONAL */
-  }
+  "op_return_payload":    "<hex>" | null,       /* "ARKV"+root, NO version byte */
+  "proof_schema_version": 1,                    /* NON-null; defaults to 1 */
+  "block_timestamp":      "2026-06-02T03:00:00Z" | null, /* ISO-8601 UTC (machine field) */
+  "signature": {                                /* envelope metadata, or null on unsigned path */
+    "alg":            "Ed25519",
+    "signing_key_id": "treasury-ed25519-1"
+  } | null
 }
 ```
+
+> **Renamed since the first draft (this rework):** `observed_time` → `block_timestamp`
+> (the machine field; the PDF's *human-readable* label may still read
+> "Network Observed Time"). `merkle_proof` `string[]` → `{ hash, position }[]`.
+> `proof_schema_version` is now non-null (defaults to `1`). Added `merkle_index`
+> + `leaf_count`. `signature` is `{ alg, signing_key_id } | null` (was
+> `{ algorithm, key_id? }` optional). **Lane 2 (SCRUM-2501) must build against
+> this corrected shape**, not the earlier `string[]` / `observed_time` draft.
 
 ### Field provenance (DB columns → packet)
 
@@ -64,16 +86,17 @@ under `keywords`, subject `arkova-proof-packet`).
 |---|---|---|
 | `fingerprint` | `anchors.fingerprint` | SHA-256, browser-computed for uploads (§1.6) |
 | `merkle_root` | `anchor_proofs.merkle_root` | `text` (hex as-is) |
-| `merkle_proof` | `anchor_proofs.proof_path` | `Json` array of hex strings; filtered to strings |
+| `merkle_proof` | `anchor_proofs.proof_path` | `Json` array of `{ hash, position }`; **validated + preserved whole**, never flattened to strings |
 | `merkle_index` | `anchor_proofs.merkle_index` | `int` |
+| `leaf_count` | (no column today — emits `null`) | reserved for the CLI's structural guard; `null` until a source exists |
 | `tx_id` | `anchors.chain_tx_id` → fallback `anchor_proofs.receipt_id` | |
 | `block_height` | `anchor_proofs.block_height` → fallback `anchors.chain_block_height` | |
 | `block_hash` | `anchor_proofs.block_hash` | `text` (hex as-is) |
 | `block_header` | `anchor_proofs.block_header` | `bytea` → emit as hex string; see project memory `proof_bytea_vs_text_storage` |
-| `op_return_payload` | `anchor_proofs.op_return_payload` | `text` hex |
-| `proof_schema_version` | `anchor_proofs.proof_schema_version` | `int`, default 1 |
-| `observed_time` | `anchor_proofs.block_timestamp` → fallback `anchors.chain_timestamp` | ISO-8601 UTC |
-| `signature` | (treasury signer metadata) | algorithm + key id only — **never** a private key |
+| `op_return_payload` | `anchor_proofs.op_return_payload` | `text` hex; "ARKV"+root, no version byte |
+| `proof_schema_version` | `anchor_proofs.proof_schema_version` | `int` NOT NULL; defaults to `1` if absent |
+| `block_timestamp` | `anchor_proofs.block_timestamp` → fallback `anchors.chain_timestamp` | ISO-8601 UTC |
+| `signature` | (treasury signer metadata) | `{ alg, signing_key_id }` or `null` — **never** a private key |
 
 ### Hard rules for the packet (§1.5 / §1.6)
 
@@ -88,17 +111,25 @@ under `keywords`, subject `arkova-proof-packet`).
   the frozen public API where `jurisdiction: null` must be omitted). The packet
   uses explicit `null` for absent cryptographic fields so the schema is stable.
 - **Claims discipline (§1.5):** the certificate states the fingerprint was
-  *observed* at `observed_time`; it does NOT assert content accuracy, issuer
-  identity, or credential validity.
+  *observed* at `block_timestamp` (labelled "Network Observed Time" in the PDF);
+  it does NOT assert content accuracy, issuer identity, or credential validity.
 
 ---
 
-## 3. `proof_bundle` field shape (PROOF-05 / SCRUM-2501 consumes)
+## 3. `proof_bundle` envelope (PROOF-05 / SCRUM-2501 consumes)
 
-`proof_bundle` is the **envelope** Lane 2 surfaces (download + render). It wraps
-the exact `ProofPacket` above plus bounded, PII-safe display metadata. The
-embedded `packet` MUST be byte-identical to what PROOF-04 embeds — do not
-re-derive or re-order fields.
+The §2 `ProofPacket` IS the `proof_bundle` payload — Lane 2 (SCRUM-2501) and the
+PROOF-07 CLI consume that object directly. PROOF-05's API returns it as the
+`proof_bundle` key on the (frozen, additive-nullable) `MerkleProofResponse`.
+
+When Lane 2 needs a richer download envelope (e.g. to carry display-only,
+PII-safe record metadata alongside the proof), it wraps the §2 packet as
+`packet` below. The embedded `packet` MUST be the §2 object **verbatim — same
+field names, same order, same nullability** as what the PROOF-04 PDF embeds and
+PROOF-05 emits. Do not re-derive, rename (`block_timestamp`, not
+`observed_time`), or re-shape the branch (`{ hash, position }[]`, not
+`string[]`). With that rule the embedded packet is genuinely byte-for-byte the
+same object the API and CLI handle.
 
 ```jsonc
 {
@@ -184,8 +215,9 @@ Semantics (frozen):
 - The reference verifier at `https://arkova.ai/verify` accepting a pasted
   `proof_bundle`/packet is a **separate** deliverable (verifier UI). This
   contract only fixes the shape it must accept.
-- `signature` is optional and present only when the treasury signer attaches
-  metadata; consumers must treat it as possibly-absent.
+- `signature` is `{ alg, signing_key_id } | null` — present only on the signed
+  path; it is explicit `null` (not omitted) on the default unsigned path.
+  Consumers must treat it as possibly-`null`.
 - `proof_bundle.bundle_version` and `packet.proof_schema_version` are independent
   version axes — the envelope can evolve without bumping the packet schema.
 

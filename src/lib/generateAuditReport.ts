@@ -29,47 +29,76 @@ import { jsPDF } from 'jspdf';
 import { CERTIFICATE_COPY } from './copy';
 import { getStatusDisplay, isProofDownloadable } from './statusDisplay';
 
-/** Signature metadata embedded in the proof packet (never the private key). */
-export interface ProofSignature {
-  algorithm: string;
-  key_id?: string;
+/**
+ * One sibling along the Merkle inclusion branch. Matches the stored
+ * `anchor_proofs.proof_path` shape and the verify-proof API / PROOF-07 CLI
+ * `MerkleProofEntry` field-for-field — the offline verifier needs both the
+ * `hash` and its `position` to recompute the root, so the branch is NEVER
+ * flattened to a `string[]`.
+ */
+export interface MerkleProofEntry {
+  hash: string;
+  position: 'left' | 'right';
 }
 
 /**
- * The machine-readable proof packet embedded in the certificate. These are the
- * only fields that ever leave in the certificate's structured proof — a strict
- * subset chosen so the packet is independently verifiable yet carries no
- * document bytes and no PII (no filename, issuer, or record id).
+ * Inline signature envelope metadata (never the private key). Matches the
+ * canonical PROOF-05 `proof_bundle.signature` shape so the embedded packet is
+ * field-compatible with what the API emits and the CLI parses.
+ */
+export interface ProofSignature {
+  alg: string;
+  signing_key_id: string;
+}
+
+/**
+ * The machine-readable proof packet embedded in the certificate. This is the
+ * CANONICAL `proof_bundle` shape — PROOF-05 (SCRUM-2338) emits it on the
+ * verify-proof API, the PROOF-07 reference CLI parses it, and Lane 2
+ * (SCRUM-2501) renders it; the field set + names MUST match field-for-field.
+ *
+ * It is a strict allow-list of cryptographic fields, chosen so the packet is
+ * independently verifiable yet carries no document bytes and no PII (no
+ * filename, issuer, or record id).
  */
 export interface ProofPacket {
   fingerprint: string;
   merkle_root: string | null;
-  merkle_proof: string[] | null;
+  /** Structured inclusion branch — `{ hash, position }[]`, never `string[]`. */
+  merkle_proof: MerkleProofEntry[] | null;
   merkle_index: number | null;
+  /** Total leaf count of the batch tree — enables the CVE-2012-2459 guard. */
+  leaf_count: number | null;
   tx_id: string | null;
   block_height: number | null;
   block_hash: string | null;
+  /** Raw 80-byte block header as plain 160-hex. */
   block_header: string | null;
+  /** Raw OP_RETURN payload ("ARKV"+root, no version byte) as plain hex. */
   op_return_payload: string | null;
-  proof_schema_version: number | null;
-  observed_time: string | null;
-  signature?: ProofSignature;
+  /** Format version (1 = plain double-SHA256). Non-null; defaults to 1. */
+  proof_schema_version: number;
+  /** ISO-8601 network-observed block time (the machine field name). */
+  block_timestamp: string | null;
+  /** Inline signature envelope metadata; `null` on the default unsigned path. */
+  signature: ProofSignature | null;
 }
 
 /** Raw proof inputs the caller pulls from `anchor_proofs` (+ anchor row). */
 export interface ProofInput {
   fingerprint: string;
   merkle_root?: string | null;
-  merkle_proof?: string[] | null;
+  merkle_proof?: MerkleProofEntry[] | null;
   merkle_index?: number | null;
+  leaf_count?: number | null;
   tx_id?: string | null;
   block_height?: number | null;
   block_hash?: string | null;
   block_header?: string | null;
   op_return_payload?: string | null;
   proof_schema_version?: number | null;
-  observed_time?: string | null;
-  signature?: ProofSignature;
+  block_timestamp?: string | null;
+  signature?: ProofSignature | null;
 }
 
 export interface AuditReportData {
@@ -134,11 +163,20 @@ export function buildProofPacket(data: AuditReportData): ProofPacket | null {
   if (!data.proof) return null;
 
   const p = data.proof;
+  // Preserve the structured `{ hash, position }` branch verbatim — validate
+  // each entry but NEVER flatten to strings (that would drop the position the
+  // offline verifier needs to recompute the root). Reject malformed entries.
+  const merkleProof =
+    Array.isArray(p.merkle_proof) && p.merkle_proof.every(isMerkleProofEntry)
+      ? p.merkle_proof
+      : null;
+
   return {
     fingerprint: p.fingerprint ?? data.fingerprint,
     merkle_root: p.merkle_root ?? null,
-    merkle_proof: p.merkle_proof ?? null,
+    merkle_proof: merkleProof,
     merkle_index: typeof p.merkle_index === 'number' ? p.merkle_index : null,
+    leaf_count: typeof p.leaf_count === 'number' ? p.leaf_count : null,
     tx_id: p.tx_id ?? data.networkReceipt ?? null,
     block_height:
       typeof p.block_height === 'number'
@@ -149,11 +187,21 @@ export function buildProofPacket(data: AuditReportData): ProofPacket | null {
     block_hash: p.block_hash ?? null,
     block_header: p.block_header ?? null,
     op_return_payload: p.op_return_payload ?? null,
+    // proof_schema_version is non-null; default to 1 (plain double-SHA256).
     proof_schema_version:
-      typeof p.proof_schema_version === 'number' ? p.proof_schema_version : null,
-    observed_time: p.observed_time ?? data.securedAt ?? null,
-    ...(p.signature ? { signature: p.signature } : {}),
+      typeof p.proof_schema_version === 'number' ? p.proof_schema_version : 1,
+    block_timestamp: p.block_timestamp ?? data.securedAt ?? null,
+    signature: p.signature ?? null,
   };
+}
+
+/** Type guard: a value is a well-formed `{ hash, position }` Merkle entry. */
+function isMerkleProofEntry(v: unknown): v is MerkleProofEntry {
+  if (typeof v !== 'object' || v === null) return false;
+  const e = v as Record<string, unknown>;
+  return (
+    typeof e.hash === 'string' && (e.position === 'left' || e.position === 'right')
+  );
 }
 
 /**
@@ -252,12 +300,17 @@ export function buildAuditReport(data: AuditReportData): AuditReportResult {
         margin,
         contentWidth,
       );
+      // Each step carries its sibling hash AND its position (left/right) — both
+      // are required to recompute the root, so render them together.
       for (const step of packet.merkle_proof) {
-        y = addMono(doc, step, y, margin);
+        y = addMono(doc, `${step.position}: ${step.hash}`, y, margin);
       }
     }
     if (typeof packet.merkle_index === 'number') {
       y = addField(doc, CERTIFICATE_COPY.FIELD_RECORD_POSITION, `#${packet.merkle_index}`, y, margin, contentWidth);
+    }
+    if (typeof packet.leaf_count === 'number') {
+      y = addField(doc, CERTIFICATE_COPY.FIELD_LEAF_COUNT, String(packet.leaf_count), y, margin, contentWidth);
     }
     if (packet.block_height) {
       y = addField(
@@ -269,24 +322,26 @@ export function buildAuditReport(data: AuditReportData): AuditReportResult {
         contentWidth,
       );
     }
-    if (typeof packet.proof_schema_version === 'number') {
+    y = addField(
+      doc,
+      CERTIFICATE_COPY.FIELD_PROOF_SCHEMA,
+      String(packet.proof_schema_version),
+      y,
+      margin,
+      contentWidth,
+    );
+    if (packet.signature) {
       y = addField(
         doc,
-        CERTIFICATE_COPY.FIELD_PROOF_SCHEMA,
-        String(packet.proof_schema_version),
+        CERTIFICATE_COPY.FIELD_SIGNATURE,
+        `${packet.signature.alg} (${packet.signature.signing_key_id})`,
         y,
         margin,
         contentWidth,
       );
     }
-    if (packet.signature) {
-      const sig = packet.signature.key_id
-        ? `${packet.signature.algorithm} (${packet.signature.key_id})`
-        : packet.signature.algorithm;
-      y = addField(doc, CERTIFICATE_COPY.FIELD_SIGNATURE, sig, y, margin, contentWidth);
-    }
-    if (packet.observed_time) {
-      y = addField(doc, CERTIFICATE_COPY.FIELD_OBSERVED_TIME, formatDate(packet.observed_time), y, margin, contentWidth);
+    if (packet.block_timestamp) {
+      y = addField(doc, CERTIFICATE_COPY.FIELD_OBSERVED_TIME, formatDate(packet.block_timestamp), y, margin, contentWidth);
     }
   } else {
     // Non-SECURED fallback: surface the legacy network fields if present.

@@ -808,8 +808,10 @@ export const CERTIFICATE_COPY = {
   FIELD_VERIFICATION_TREE_ROOT: 'Verification Tree Root',
   FIELD_VERIFICATION_PATH: 'Verification Path',
   FIELD_RECORD_POSITION: 'Record Position',
+  FIELD_LEAF_COUNT: 'Tree Leaf Count',
   FIELD_PROOF_SCHEMA: 'Proof Schema Version',
-  FIELD_OBSERVED_TIME: 'Observed Time',
+  // Human-readable label only — the embedded machine field is `block_timestamp`.
+  FIELD_OBSERVED_TIME: 'Network Observed Time',
   FIELD_SIGNATURE: 'Signature',
   FIELD_CREATED: 'Created',
   FIELD_SECURED: 'Secured',

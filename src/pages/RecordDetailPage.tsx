@@ -22,6 +22,19 @@ import { AssetDetailView } from '@/components/anchor';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ROUTES } from '@/lib/routes';
+import type { MerkleProofEntry } from '@/lib/generateAuditReport';
+
+/**
+ * Validate a stored `anchor_proofs.proof_path` entry. Each entry carries a
+ * sibling fingerprint plus its side; both are required for the offline verifier
+ * to recompute the root, so the entry is preserved whole — never narrowed to a
+ * bare string.
+ */
+function isMerkleEntry(v: unknown): v is MerkleProofEntry {
+  if (typeof v !== 'object' || v === null) return false;
+  const e = v as Record<string, unknown>;
+  return typeof e.hash === 'string' && (e.position === 'left' || e.position === 'right');
+}
 
 export function RecordDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -236,8 +249,12 @@ export function RecordDetailPage() {
                 .eq('anchor_id', anchor.id)
                 .maybeSingle();
               if (proofRow) {
+                // `proof_path` is the SAME branch shape the verify-proof API and
+                // PROOF-07 CLI consume. Validate and PRESERVE those entries;
+                // never flatten to strings (that drops the side, so the offline
+                // verifier can't recompute the root). Drop only malformed rows.
                 const path = Array.isArray(proofRow.proof_path)
-                  ? (proofRow.proof_path as unknown[]).filter((s): s is string => typeof s === 'string')
+                  ? (proofRow.proof_path as unknown[]).filter(isMerkleEntry)
                   : null;
                 proof = {
                   fingerprint: anchor.fingerprint,
@@ -250,7 +267,9 @@ export function RecordDetailPage() {
                   block_header: proofRow.block_header,
                   op_return_payload: proofRow.op_return_payload,
                   proof_schema_version: proofRow.proof_schema_version,
-                  observed_time: proofRow.block_timestamp ?? anchor.chain_timestamp ?? null,
+                  // Machine field is `block_timestamp` (the human-readable PDF
+                  // label still reads "Network Observed Time").
+                  block_timestamp: proofRow.block_timestamp ?? anchor.chain_timestamp ?? null,
                 };
               }
             }
