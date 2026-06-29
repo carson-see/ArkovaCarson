@@ -205,3 +205,23 @@ export function getStatusDisplay(status: string | null | undefined): StatusDispl
 export function getStatusLabel(status: string | null | undefined): string {
   return getStatusDisplay(status).label;
 }
+
+/**
+ * Single source of truth for "may this record's proof be downloaded?"
+ * (PROOF-04 / SCRUM-2337; consumed by Lane 2 per the FE-PROOF-GATE contract).
+ *
+ * Proof download — both the PDF audit certificate and the JSON proof packet —
+ * is enabled ONLY for genuinely SECURED anchors. A record is SECURED when the
+ * worker has confirmed it on the production network and written the proof; no
+ * other status (PENDING, BROADCASTING, SUBMITTED, REVOKED, EXPIRED,
+ * SUPERSEDED, PENDING_RESOLUTION) carries a complete, verifiable proof, so the
+ * download affordance must stay hidden/disabled for them. Fails closed:
+ * unknown / nullish / blank input is NOT downloadable.
+ *
+ * Callers MUST gate the download UI on this helper rather than hardcoding a
+ * "Verified" badge — the user-facing badge comes from `getStatusDisplay`.
+ */
+export function isProofDownloadable(status: string | null | undefined): boolean {
+  if (status == null) return false;
+  return normalizeKey(status) === 'SECURED';
+}
