@@ -36,6 +36,7 @@ import { logger as defaultLogger } from '../utils/logger.js';
 import { processBatchAnchors, type BatchAnchorResult } from './batch-anchor.js';
 import { callRpc } from '../utils/rpc.js';
 import { Sentry } from '../utils/sentry.js';
+import { config } from '../config.js';
 
 /** Page size per drain pass per org — bounded so one org can't starve the cycle. */
 const DRAIN_LIMIT_DEFAULT = 50;
@@ -407,4 +408,100 @@ async function markFailed(
     // ONE thing we must never hide — log loudly.
     deps.logger.error({ error, orgId, artifactId: id, reason }, 'connector-artifact mark-failed failed (row stuck processing)');
   }
+}
+
+// ── Cron entrypoint ──────────────────────────────────────────────────────────
+
+export interface ConnectorArtifactDrainCronResult {
+  skipped: boolean;
+  reason?: string;
+  orgsProcessed: number;
+  orgsFailed: number;
+  claimed: number;
+  anchored: number;
+  failed: number;
+}
+
+export interface ConnectorArtifactDrainCronDeps {
+  /** Feature gate. Defaults to `config.enableConnectorArtifactDrain`. */
+  enabled?: boolean;
+  /** List distinct org_ids that currently have drainable (pending|queued) rows. */
+  listDrainableOrgIds?: () => Promise<string[]>;
+  /** Drain a single org (defaults to `drainConnectorArtifactsForOrg`). */
+  drainForOrg?: (orgId: string) => Promise<ConnectorArtifactDrainResult>;
+  /** Bounded, PII-scrubbed alert sink. */
+  emitAlert?: (alert: ConnectorArtifactAlert) => void;
+  logger?: DrainLogger;
+}
+
+/**
+ * Default org enumerator: distinct org_ids with at least one drainable row.
+ * Bounded scan over the (org_id, status) index. Returns a de-duplicated list.
+ */
+async function defaultListDrainableOrgIds(db: DrainDb): Promise<string[]> {
+  const { data, error } = await db
+    .from('connector_artifact')
+    .select('org_id')
+    .in('status', DRAINABLE_STATUSES as unknown as string[])
+    .limit(5000);
+  if (error) {
+    throw new Error(`connector-artifact org enumeration failed: ${(error as { message?: string }).message ?? 'unknown'}`);
+  }
+  const seen = new Set<string>();
+  for (const row of (data ?? []) as Array<{ org_id?: string }>) {
+    if (row.org_id) seen.add(row.org_id);
+  }
+  return [...seen];
+}
+
+/**
+ * Cron entrypoint (QUEUE-06). Cloud Scheduler → `POST /jobs/drain-connector-artifacts`.
+ *
+ * In-process node-cron is dormant under Cloud Run CPU throttling (proven by the
+ * PROOF-03 soak), so prod drives this via HTTP. No-ops (`skipped:true`) when the
+ * flag is off. Per-org drains are isolated: one org throwing alerts (scope=cycle)
+ * and the remaining orgs still drain — no silent drop.
+ */
+export async function runConnectorArtifactDrain(
+  injected: ConnectorArtifactDrainCronDeps = {},
+): Promise<ConnectorArtifactDrainCronResult> {
+  const logger = injected.logger ?? (defaultLogger as unknown as DrainLogger);
+  const enabled = injected.enabled ?? config.enableConnectorArtifactDrain;
+  const base: ConnectorArtifactDrainCronResult = {
+    skipped: false,
+    orgsProcessed: 0,
+    orgsFailed: 0,
+    claimed: 0,
+    anchored: 0,
+    failed: 0,
+  };
+
+  if (!enabled) {
+    return { ...base, skipped: true, reason: 'ENABLE_CONNECTOR_ARTIFACT_DRAIN is false' };
+  }
+
+  const db = defaultDb as unknown as DrainDb;
+  const listDrainableOrgIds = injected.listDrainableOrgIds ?? (() => defaultListDrainableOrgIds(db));
+  const drainForOrg = injected.drainForOrg ?? ((orgId: string) => drainConnectorArtifactsForOrg(orgId));
+  const emitAlert = injected.emitAlert ?? defaultEmitAlert;
+
+  const orgIds = await listDrainableOrgIds();
+  for (const orgId of orgIds) {
+    base.orgsProcessed += 1;
+    try {
+      const r = await drainForOrg(orgId);
+      base.claimed += r.claimed;
+      base.anchored += r.anchored;
+      base.failed += r.failed;
+    } catch (err) {
+      // Per-org isolation: surface as a cycle alert, keep draining other orgs.
+      base.orgsFailed += 1;
+      const reason = err instanceof Error ? err.message : 'org drain failed';
+      emitAlert({ scope: 'cycle', orgId, reason });
+      logger.error({ error: err, orgId }, 'connector-artifact org drain failed');
+    }
+  }
+
+  logger.info({ ...base }, 'connector-artifact drain cron pass complete');
+  return base;
 }

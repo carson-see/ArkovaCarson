@@ -22,8 +22,11 @@ vi.mock('./batch-anchor.js', () => ({ processBatchAnchors: vi.fn() }));
 vi.mock('../utils/sentry.js', () => ({ Sentry: { captureMessage: vi.fn() } }));
 vi.mock('../utils/rpc.js', () => ({ callRpc: vi.fn() }));
 
+vi.mock('../config.js', () => ({ config: { enableConnectorArtifactDrain: true } }));
+
 const {
   drainConnectorArtifactsForOrg,
+  runConnectorArtifactDrain,
 } = await import('./connector-artifact-drain.js');
 type ConnectorArtifactDrainDeps =
   import('./connector-artifact-drain.js').ConnectorArtifactDrainDeps;
@@ -324,5 +327,57 @@ describe('drainConnectorArtifactsForOrg', () => {
 
     await expect(drainConnectorArtifactsForOrg(ORG_A, deps)).rejects.toThrow();
     expect(alert).toHaveBeenCalledWith(expect.objectContaining({ scope: 'cycle', orgId: ORG_A }));
+  });
+});
+
+describe('runConnectorArtifactDrain (cron entrypoint)', () => {
+  it('enumerates orgs with drainable rows and drains each, aggregating results', async () => {
+    const drainForOrg = vi.fn(async (orgId: string) =>
+      orgId === ORG_A
+        ? { claimed: 2, anchored: 2, failed: 0 }
+        : { claimed: 1, anchored: 0, failed: 1 },
+    );
+    const listDrainableOrgIds = vi.fn(async () => [ORG_A, ORG_B]);
+
+    const result = await runConnectorArtifactDrain({ listDrainableOrgIds, drainForOrg });
+
+    expect(result).toMatchObject({
+      skipped: false,
+      orgsProcessed: 2,
+      claimed: 3,
+      anchored: 2,
+      failed: 1,
+    });
+    expect(drainForOrg).toHaveBeenCalledWith(ORG_A);
+    expect(drainForOrg).toHaveBeenCalledWith(ORG_B);
+  });
+
+  it('no-ops (skipped) when the flag is disabled', async () => {
+    const drainForOrg = vi.fn();
+    const listDrainableOrgIds = vi.fn();
+    const result = await runConnectorArtifactDrain({
+      enabled: false,
+      listDrainableOrgIds,
+      drainForOrg,
+    });
+    expect(result).toMatchObject({ skipped: true });
+    expect(listDrainableOrgIds).not.toHaveBeenCalled();
+    expect(drainForOrg).not.toHaveBeenCalled();
+  });
+
+  it('per-org drain failure is isolated: one org throws, the others still drain, no silent drop', async () => {
+    const drainForOrg = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('org A drain boom'))
+      .mockResolvedValueOnce({ claimed: 1, anchored: 1, failed: 0 });
+    const listDrainableOrgIds = vi.fn(async () => [ORG_A, ORG_B]);
+    const emitAlert = vi.fn();
+
+    const result = await runConnectorArtifactDrain({ listDrainableOrgIds, drainForOrg, emitAlert });
+
+    expect(result.orgsProcessed).toBe(2);
+    expect(result.orgsFailed).toBe(1);
+    expect(result.anchored).toBe(1);
+    expect(emitAlert).toHaveBeenCalledWith(expect.objectContaining({ scope: 'cycle', orgId: ORG_A }));
   });
 });
