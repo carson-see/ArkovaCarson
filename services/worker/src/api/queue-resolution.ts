@@ -18,6 +18,7 @@ import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { recordOrgQueueRunResult } from '../jobs/org-queue-scheduler.js';
 import { mapRpcErrorToStatus } from './rpc-error-status.js';
+import { getCallerProfile, isCallerOrgAdminResult } from './_org-auth.js';
 
 export { mapRpcErrorToStatus } from './rpc-error-status.js';
 
@@ -228,79 +229,148 @@ export async function handleResolveQueue(
   }
 }
 
-interface CallerProfile {
-  org_id?: string | null;
-  role?: string | null;
-  is_platform_admin?: boolean | null;
-}
+/**
+ * QUEUE-05 (SCRUM-2351): the optional `org_id` lets a caller target a *specific*
+ * org's queue (their own, or an approved sub-org they administer). Omitted →
+ * the caller's own org. `.strict()` rejects unknown keys so a typo never
+ * silently runs the wrong org.
+ */
+export const RunOrgQueueInput = z
+  .object({ org_id: z.string().uuid().optional() })
+  .strict();
 
-async function getCallerProfile(userId: string): Promise<CallerProfile | null> {
-  const { data, error } = await db
-    .from('profiles')
-    .select('org_id, role, is_platform_admin')
-    .eq('id', userId)
-    .maybeSingle();
+/**
+ * Outcome of the manual-run authorization check. `relationship` records HOW the
+ * caller was authorized (own org vs parent admin of a sub-org) for the audit row.
+ */
+type RunAuthOutcome =
+  | { ok: true; orgId: string; relationship: 'self' | 'sub_org' }
+  | { ok: false; status: 401 | 403 | 500; code: 'authentication_required' | 'forbidden' | 'internal'; message: string };
 
-  if (error) {
-    logger.warn({ error, userId }, 'profiles lookup failed for queue run');
-    return null;
-  }
-
-  return (data as CallerProfile | null) ?? null;
-}
-
-async function isOrgAdmin(
+/**
+ * Authorize a manual queue run for `targetOrgId` by `userId`, owner-inclusively.
+ *
+ * Uses the canonical `_org-auth` resolver (`isCallerOrgAdminResult`) — NO direct
+ * `org_members` membership probe in this handler. A caller may run:
+ *   1. their OWN org's queue if they are owner/admin (or ORG_ADMIN/platform) of it; OR
+ *   2. an APPROVED sub-org's queue if they are owner/admin of that sub-org's
+ *      PARENT org (parent admins administer their affiliates).
+ * Fails closed: an operational lookup error surfaces as 500, a true negative 403.
+ */
+async function authorizeManualRun(
   userId: string,
-  orgId: string,
-  profile: CallerProfile | null,
-): Promise<boolean> {
-  const { data: membership, error: membershipError } = await db
-    .from('org_members')
-    .select('role')
-    .eq('user_id', userId)
-    .eq('org_id', orgId)
-    .maybeSingle();
-
-  if (membershipError) {
-    logger.warn({ error: membershipError, userId, orgId }, 'org admin lookup failed for queue run');
+  callerOrgId: string,
+  targetOrgId: string,
+): Promise<RunAuthOutcome> {
+  // Direct path: caller administers the target org itself (owner-inclusive).
+  const direct = await isCallerOrgAdminResult(userId, targetOrgId);
+  if (direct.value) return { ok: true, orgId: targetOrgId, relationship: 'self' };
+  if (direct.error) {
+    return { ok: false, status: 500, code: 'internal', message: 'Internal server error' };
   }
 
-  const memberRole = (membership as { role?: string } | null)?.role;
-  return (
-    memberRole === 'owner' ||
-    memberRole === 'admin' ||
-    profile?.role === 'ORG_ADMIN' ||
-    profile?.is_platform_admin === true
-  );
+  // Sub-org path: target is an APPROVED affiliate of the caller's own org, and
+  // the caller administers that parent org.
+  const { data: targetOrg, error: targetErr } = await db
+    .from('organizations')
+    .select('parent_org_id, parent_approval_status')
+    .eq('id', targetOrgId)
+    .maybeSingle();
+  if (targetErr) {
+    logger.warn({ error: targetErr, userId, targetOrgId }, 'queue/run: target org lookup failed');
+    return { ok: false, status: 500, code: 'internal', message: 'Internal server error' };
+  }
+  const parentOrgId = (targetOrg as { parent_org_id?: string | null } | null)?.parent_org_id ?? null;
+  const approval = (targetOrg as { parent_approval_status?: string | null } | null)?.parent_approval_status ?? null;
+  if (parentOrgId && parentOrgId === callerOrgId && approval === 'APPROVED') {
+    const parent = await isCallerOrgAdminResult(userId, parentOrgId);
+    if (parent.value) return { ok: true, orgId: targetOrgId, relationship: 'sub_org' };
+    if (parent.error) {
+      return { ok: false, status: 500, code: 'internal', message: 'Internal server error' };
+    }
+  }
+
+  return {
+    ok: false,
+    status: 403,
+    code: 'forbidden',
+    message: 'Only organization admins can run anchoring jobs',
+  };
+}
+
+/**
+ * Record the manual-run audit event (QUEUE-05). Non-fatal: an audit write
+ * failure is logged but never blocks or fails the run (the run itself is the
+ * source of truth, mirroring the jobs/ audit convention).
+ */
+async function recordManualRunAudit(args: {
+  userId: string;
+  orgId: string;
+  relationship: 'self' | 'sub_org';
+  status: 'succeeded' | 'failed';
+  processed: number;
+  batchId: string | null;
+}): Promise<void> {
+  try {
+    const { error } = await db.from('audit_events').insert({
+      actor_id: args.userId,
+      event_type: 'QUEUE_RUN_MANUAL',
+      event_category: 'ANCHOR',
+      target_type: 'organization',
+      target_id: args.orgId,
+      org_id: args.orgId,
+      details: JSON.stringify({
+        trigger: 'manual',
+        relationship: args.relationship,
+        status: args.status,
+        processed: args.processed,
+        batch_id: args.batchId,
+      }),
+    });
+    if (error) {
+      logger.warn({ error, orgId: args.orgId, userId: args.userId }, 'queue/run: manual-run audit insert failed');
+    }
+  } catch (err) {
+    logger.warn({ error: err, orgId: args.orgId, userId: args.userId }, 'queue/run: manual-run audit insert threw');
+  }
 }
 
 /**
  * POST /api/queue/run
- * Organization admins can force a batch run for their own org queue. The
- * underlying claim RPC still owns row locking and PENDING → BROADCASTING, so
- * this endpoint cannot bypass the worker safety rails or claim another org's
- * anchors.
+ * Organization admins can force a batch run for their own org queue, and sub-org
+ * admins (via parent-org admin) for an approved sub-org's queue. The underlying
+ * claim RPC still owns row locking and PENDING → BROADCASTING, so this endpoint
+ * cannot bypass the worker safety rails or claim an unrelated org's anchors.
  */
 export async function handleRunOrgAnchorQueue(
   userId: string,
-  _req: Request,
+  req: Request,
   res: Response,
 ): Promise<void> {
+  const parsed = RunOrgQueueInput.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({
+      error: { code: 'invalid_request', message: 'Invalid body', details: parsed.error.flatten() },
+    });
+    return;
+  }
+
   const profile = await getCallerProfile(userId);
-  const orgId = profile?.org_id ?? null;
-  if (!orgId) {
+  const callerOrgId = profile?.org_id ?? null;
+  if (!callerOrgId) {
     res.status(403).json({
       error: { code: 'forbidden', message: 'No organization on profile' },
     });
     return;
   }
 
-  if (!(await isOrgAdmin(userId, orgId, profile))) {
-    res.status(403).json({
-      error: { code: 'forbidden', message: 'Only organization admins can run anchoring jobs' },
-    });
+  const targetOrgId = parsed.data.org_id ?? callerOrgId;
+  const auth = await authorizeManualRun(userId, callerOrgId, targetOrgId);
+  if (!auth.ok) {
+    res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
     return;
   }
+  const orgId = auth.orgId;
 
   const startedAt = new Date();
   try {
@@ -317,6 +387,14 @@ export async function handleRunOrgAnchorQueue(
       merkleRoot: result.merkleRoot,
       txId: result.txId,
       triggeredBy: userId,
+    });
+    await recordManualRunAudit({
+      userId,
+      orgId,
+      relationship: auth.relationship,
+      status: 'succeeded',
+      processed: result.processed,
+      batchId: result.batchId,
     });
 
     res.json({ ok: true, ...result });
@@ -346,6 +424,14 @@ export async function handleRunOrgAnchorQueue(
       txId: null,
       triggeredBy: userId,
       error: err instanceof Error ? err.message : 'manual org queue run failed',
+    });
+    await recordManualRunAudit({
+      userId,
+      orgId,
+      relationship: auth.relationship,
+      status: 'failed',
+      processed: 0,
+      batchId: null,
     });
     logger.error({ error: err, orgId, userId }, 'manual org queue run failed');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
