@@ -1420,7 +1420,7 @@ jobs:
       - name: Install verifier dependencies
         if: steps.changed.outputs.changed == 'true'
         working-directory: packages/verifier
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Typecheck verifier (tsc)
         if: steps.changed.outputs.changed == 'true'
