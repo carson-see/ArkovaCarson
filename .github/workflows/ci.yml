@@ -458,6 +458,19 @@ jobs:
         # 2026-04-25 outage was caused by exactly this drift.
         run: npx tsx scripts/ci/check-deploy-lint-parity.ts
 
+      - name: Verify deploy-gate / CI worker BUILD parity
+        # CONDITIONAL-GO sub-decision B — 3-way build-command parity guard.
+        # Asserts services/worker/package.json scripts.build, the Dockerfile
+        # `RUN npm run build`, and the new ci.yml worker compile step all run
+        # the SAME build, so the PR-time compile gate cannot drift weaker than
+        # the deployed image build. Pure file-reading hard invariant — no label,
+        # env, or git dependency (mirrors check-deploy-lint-parity.ts), so it
+        # runs cleanly in this shallow-checkout job. A build-command mismatch is
+        # never acceptable; the escape hatch is editing the invariant in-PR
+        # (with `ci-config-change` / `build-parity-ack` signoff), same as lint
+        # parity.
+        run: npx tsx scripts/ci/check-deploy-build-parity.ts
+
       - name: Verify 429 responses include Retry-After
         run: npm run ci:retry-after-429
 
@@ -1301,3 +1314,127 @@ jobs:
           node -e "const f=require('./fixtures/synthetic-vectors.json');require('fs').writeFileSync('/tmp/p.json',JSON.stringify(f.fixtures.find(x=>x.name==='odd-leaf-pass').packet))"
           node dist/cli.js /tmp/p.json --offline | tee /tmp/out.txt
           grep -q 'VERDICT: VERIFIED' /tmp/out.txt
+
+  # CONDITIONAL-GO sub-decision B (TWO-SURFACE) — PR-time WORKER compile gate.
+  # CI historically never compiled the worker source with tsc (root tsconfigs
+  # exclude services/; worker CI was eslint + vitest only), so a worker TS error
+  # could pass every PR check and only surface in the Dockerfile build at deploy
+  # time (the deploy-typecheck blackout class). This job runs the EXACT Dockerfile
+  # build (`npm run build` == `tsc -p tsconfig.build.json`) at PR time.
+  #
+  # NON-REQUIRED for now (not in branch protection / .mergify.yml) — reports
+  # status while we gather the empirical RED list before the CEO-gated flip.
+  #
+  # In-job path filter (mirrors the E2E / ai-eval-gate pattern): the job ALWAYS
+  # runs and ALWAYS posts a result (never absent), so a future required-flip
+  # cannot strand a non-matching PR in Mergify on an absent check. The install +
+  # build steps are guarded on the diff actually touching worker source/config.
+  worker-build-parity:
+    name: Worker Build (deploy-parity)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Detect worker source/build changes
+        id: changed
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ] && git rev-parse --verify "origin/$BASE_REF" >/dev/null 2>&1; then
+            DIFF=$(git diff --name-only "origin/$BASE_REF...HEAD")
+          else
+            DIFF=$(git diff --name-only HEAD~1 HEAD || true)
+          fi
+          if printf '%s\n' "$DIFF" | grep -qE '^(services/worker/(src/|scripts/|package(-lock)?\.json|tsconfig(\.build)?\.json|Dockerfile)|\.github/workflows/ci\.yml)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.changed.outputs.changed == 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: services/worker/package-lock.json
+
+      - name: Install worker dependencies
+        if: steps.changed.outputs.changed == 'true'
+        working-directory: services/worker
+        run: npm ci --ignore-scripts
+
+      # The EXACT Dockerfile compile (`npm run build` == `tsc -p tsconfig.build.json`).
+      # Step name carries the `deploy-parity` marker that check-deploy-build-parity.ts
+      # keys on — keep it.
+      - name: Build worker (deploy-parity)
+        if: steps.changed.outputs.changed == 'true'
+        working-directory: services/worker
+        run: npm run build
+
+      - name: Skip notice (no worker source/build changes)
+        if: steps.changed.outputs.changed != 'true'
+        run: echo "No services/worker source/build changes detected — worker compile gate skipped; reporting green."
+
+  # CONDITIONAL-GO sub-decision B (TWO-SURFACE) — PR-time VERIFIER compile gate.
+  # packages/verifier (the standalone @arkova/verifier) only ever built on
+  # sdk-v* tags, so a PR could land a TS error in the reference verifier and CI
+  # would never compile it. This job runs the verifier's own typecheck (tsc) +
+  # build (tsup) at PR time. Same always-run in-job path-filter contract.
+  # NON-REQUIRED for now.
+  verifier-build:
+    name: Verifier Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Detect verifier changes
+        id: changed
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ] && git rev-parse --verify "origin/$BASE_REF" >/dev/null 2>&1; then
+            DIFF=$(git diff --name-only "origin/$BASE_REF...HEAD")
+          else
+            DIFF=$(git diff --name-only HEAD~1 HEAD || true)
+          fi
+          if printf '%s\n' "$DIFF" | grep -qE '^(packages/verifier/|\.github/workflows/ci\.yml)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.changed.outputs.changed == 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: packages/verifier/package-lock.json
+
+      - name: Install verifier dependencies
+        if: steps.changed.outputs.changed == 'true'
+        working-directory: packages/verifier
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck verifier (tsc)
+        if: steps.changed.outputs.changed == 'true'
+        working-directory: packages/verifier
+        run: npm run typecheck
+
+      - name: Build verifier (tsup)
+        if: steps.changed.outputs.changed == 'true'
+        working-directory: packages/verifier
+        run: npm run build
+
+      - name: Skip notice (no verifier changes)
+        if: steps.changed.outputs.changed != 'true'
+        run: echo "No packages/verifier changes detected — verifier compile gate skipped; reporting green."

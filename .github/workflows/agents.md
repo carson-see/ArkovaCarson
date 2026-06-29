@@ -28,6 +28,16 @@
 - Revision-drift Sentry tags must match `infra/sentry/alert-rules.json`: `source=revision-drift`, `story`, `deployed_sha`, and `head_sha`.
 - Deploy gate ≡ CI lint job: deploy-worker.yml + ci.yml `Lint worker` step BOTH invoke `npm run lint` from `services/worker/`. Drift between them is enforced by `scripts/ci/check-deploy-lint-parity.ts`. Override label: `ci-config-change`.
 
+## CONDITIONAL-GO sub-decision B (TWO-SURFACE) — PR-time worker + verifier compile gates (NON-REQUIRED)
+
+- Root tsconfigs exclude `services/`, worker CI was eslint + vitest only, and `packages/verifier` built only on `sdk-v*` tags — so CI **never compiled** the worker or verifier source with `tsc`. A worker/verifier TS error could pass every PR check and only surface in the Dockerfile build at deploy time (the deploy-typecheck blackout class, `memory/project_deploy_typecheck_blackout.md`).
+- `ci.yml` gained two jobs:
+  - **`Worker Build (deploy-parity)`** (job `worker-build-parity`): `services/worker` → `npm ci --ignore-scripts` then `npm run build` (the EXACT Dockerfile build = `tsc -p tsconfig.build.json`). Node 20 (matches Dockerfile), `cache: npm` keyed on `services/worker/package-lock.json`. Build step name carries the `deploy-parity` marker that `check-deploy-build-parity.ts` keys on.
+  - **`Verifier Build`** (job `verifier-build`): `packages/verifier` → `npm ci` then `npm run typecheck` (tsc) + `npm run build` (tsup). `cache: npm` keyed on `packages/verifier/package-lock.json`.
+  - Both use an **in-job path filter** (a `git diff --name-only origin/$BASE_REF...HEAD` step setting `changed`) guarding the install/build steps; the job ALWAYS runs and ALWAYS posts a green/red result (a `Skip notice` step on no-match). This mirrors the E2E / ai-eval-gate pattern so a future required-flip can't strand a non-matching PR in Mergify on an absent check.
+- 3-way anti-drift guard: `scripts/ci/check-deploy-build-parity.ts` (in the `typecheck-lint` job) asserts package.json `scripts.build` ≡ Dockerfile `RUN npm run build` ≡ ci.yml worker compile step, fail-closed. Override labels: `ci-config-change` / `build-parity-ack`.
+- **NON-REQUIRED for now** — these jobs are intentionally NOT in branch protection or `.mergify.yml merge_conditions`. They report status while the empirical RED list is gathered; the required-flip is admin-gated to Carson behind the CEO-gated quiet window. Do NOT add them to the required-check set or Mergify queue conditions without that approval.
+
 ## Container-image CVE scan gate (TVM/IVS) + break-glass
 
 - `deploy-worker.yml` runs a Trivy base-image CVE scan (`build → scan → push → deploy`) that fails the deploy on FIXABLE HIGH/CRITICAL OS CVEs (`pkg-types: os`, `severity: HIGH,CRITICAL`, `ignore-unfixed: true`, `exit-code: '1'`). `pkg-types` is the current Trivy input (`vuln-type` is deprecated). Invariant guarded at PR time by `scripts/ci/check-image-scan-gate.ts` (wired into ci.yml as "Enforce container-image CVE scan gate (TVM/IVS)"); unit tests in `scripts/ci/check-image-scan-gate.test.ts`. No PR override label — security control, not style.
