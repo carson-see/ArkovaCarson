@@ -543,6 +543,21 @@ describe('runConnectorArtifactDrain (cron entrypoint)', () => {
     expect(drainForOrg).not.toHaveBeenCalled();
   });
 
+  it('org-enumeration failure propagates (rejects) so the route returns 500 and Scheduler retries — NOT a green zero-org pass', async () => {
+    // The enumerator is the only org-discovery path; if it throws (broken RPC),
+    // runConnectorArtifactDrain must reject (not swallow → green skipped:false /
+    // orgsProcessed:0), so the /jobs route's catch returns non-2xx.
+    const listDrainableOrgIds = vi.fn(async () => {
+      throw new Error('connector-artifact org enumeration failed: rpc boom');
+    });
+    const drainForOrg = vi.fn();
+    const reapStale = vi.fn(async () => ({ reaped: 0 }));
+    await expect(
+      runConnectorArtifactDrain({ listDrainableOrgIds, drainForOrg, reapStale }),
+    ).rejects.toThrow(/org enumeration failed/);
+    expect(drainForOrg).not.toHaveBeenCalled();
+  });
+
   it('per-org drain failure is isolated: one org throws, the others still drain, no silent drop', async () => {
     const drainForOrg = vi
       .fn()
@@ -677,11 +692,30 @@ describe('defaultListDrainableOrgIds (QUEUE-09 fair server-side org enum)', () =
     expect(orgIds.filter((o) => o === NOISY)).toHaveLength(1);
   });
 
-  it('fails safe on RPC error: returns an empty list and never throws (the cron pass continues)', async () => {
+  it('fails LOUD on RPC error: emits a cycle alert and THROWS (no green empty no-op that hides a broken RPC)', async () => {
     const { db } = makeRpcDb({ error: 'rpc boom' });
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    await expect(defaultListDrainableOrgIds(db, { logger })).resolves.toEqual([]);
+    const emitAlert = vi.fn();
+    // A broken/missing list_drainable_connector_orgs RPC (migration unapplied,
+    // grant missing, stale schema cache) must NOT report success while draining
+    // zero orgs — it must surface as a cycle failure → route 500 → Scheduler retry.
+    await expect(defaultListDrainableOrgIds(db, { logger, emitAlert })).rejects.toThrow(/org enumeration failed/);
+    expect(emitAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'cycle', orgId: 'ALL', reason: expect.stringContaining('rpc boom') }),
+    );
     expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('fails LOUD when db.rpc is unavailable: cycle alert + throw (misconfiguration, not a transient skip)', async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const emitAlert = vi.fn();
+    const db = {
+      from() {
+        throw new Error('must not scan');
+      },
+    } as unknown as ConnectorArtifactDrainDeps['db'];
+    await expect(defaultListDrainableOrgIds(db, { logger, emitAlert })).rejects.toThrow(/db\.rpc unavailable/);
+    expect(emitAlert).toHaveBeenCalledWith(expect.objectContaining({ scope: 'cycle', orgId: 'ALL' }));
   });
 
   it('passes a bounded default p_limit (cap on ORGS, not rows)', async () => {

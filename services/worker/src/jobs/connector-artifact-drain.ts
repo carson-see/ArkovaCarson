@@ -749,22 +749,31 @@ const ORG_ENUM_LIMIT_DEFAULT = 200;
  * never enumerated and never drained. The RPC does the DISTINCT server-side, so
  * one noisy org contributes exactly ONE row and can never crowd out a quiet org.
  *
- * FAIL-SAFE: an RPC error is logged and yields an EMPTY list — it never throws
- * out of the enumerator. Throwing here would abort the whole cron pass (and
- * Cloud Scheduler would simply retry the same failure); returning empty lets the
- * pass complete as a no-op and the next scheduled pass retry cleanly. The
- * stuck-row reaper has already run before this point, so liveness is unaffected.
+ * FAIL-LOUD (NOT fail-safe): an RPC error is a CYCLE-LEVEL failure — it emits a
+ * `scope:'cycle'` alert (orgId 'ALL') and THROWS, mirroring
+ * `drainConnectorArtifactsForOrg`'s select-failure path. This is now the ONLY
+ * default org-discovery path, so a broken/missing RPC (migration not applied,
+ * grant missing, stale PostgREST schema cache) must NOT be swallowed as an empty
+ * green list — that would make the cron report SUCCESS while draining ZERO orgs,
+ * hiding the failure and stranding every artifact with no Scheduler retry. The
+ * throw propagates to the `/jobs/drain-connector-artifacts` route's catch → 500
+ * → Cloud Scheduler retries (and pages). The stuck-row reaper has already run
+ * before this point (idempotent), so re-running the pass is safe.
  */
 export async function defaultListDrainableOrgIds(
   db: DrainDb,
-  opts: { logger?: DrainLogger; limit?: number } = {},
+  opts: { logger?: DrainLogger; limit?: number; emitAlert?: (alert: ConnectorArtifactAlert) => void } = {},
 ): Promise<string[]> {
   const logger = opts.logger ?? (defaultLogger as unknown as DrainLogger);
+  const emitAlert = opts.emitAlert ?? defaultEmitAlert;
   const pLimit = Math.max(1, Math.min(opts.limit ?? ORG_ENUM_LIMIT_DEFAULT, 1000));
 
   if (typeof db.rpc !== 'function') {
+    // A db with no rpc() is a misconfiguration, not a transient row error —
+    // surface it as a cycle failure so the route returns non-2xx and retries.
+    emitAlert({ scope: 'cycle', orgId: 'ALL', reason: 'org enumeration RPC unavailable (db.rpc not a function)' });
     logger.error({ job: 'connector-artifact-drain' }, 'connector-artifact org enumeration: db.rpc unavailable');
-    return [];
+    throw new Error('connector-artifact org enumeration failed: db.rpc unavailable');
   }
 
   const { data, error } = (await db.rpc('list_drainable_connector_orgs', { p_limit: pLimit })) as {
@@ -773,13 +782,16 @@ export async function defaultListDrainableOrgIds(
   };
 
   if (error) {
-    // Fail safe: empty list (no throw) so the cron pass completes as a clean
-    // no-op and retries next schedule, rather than aborting the whole drain.
+    // Fail LOUD: emit a cycle alert + THROW so the cron route returns 500 and
+    // Cloud Scheduler retries. Returning an empty list here would report SUCCESS
+    // while draining zero orgs — hiding a broken RPC and stranding every row.
+    const reason = `org enumeration failed: ${error.message ?? 'unknown'}`;
+    emitAlert({ scope: 'cycle', orgId: 'ALL', reason });
     logger.error(
       { error, job: 'connector-artifact-drain' },
       `connector-artifact org enumeration failed: ${error.message ?? 'unknown'}`,
     );
-    return [];
+    throw new Error(`connector-artifact ${reason}`);
   }
 
   // The RPC returns SETOF uuid → an array of strings (supabase-js may also
@@ -824,9 +836,10 @@ export async function runConnectorArtifactDrain(
   }
 
   const db = defaultDb as unknown as DrainDb;
-  const listDrainableOrgIds = injected.listDrainableOrgIds ?? (() => defaultListDrainableOrgIds(db));
-  const drainForOrg = injected.drainForOrg ?? ((orgId: string) => drainConnectorArtifactsForOrg(orgId));
   const emitAlert = injected.emitAlert ?? defaultEmitAlert;
+  const listDrainableOrgIds =
+    injected.listDrainableOrgIds ?? (() => defaultListDrainableOrgIds(db, { logger, emitAlert }));
+  const drainForOrg = injected.drainForOrg ?? ((orgId: string) => drainConnectorArtifactsForOrg(orgId));
 
   // F-1: reap stranded in-flight rows FIRST (presumed-crashed workers) so this
   // pass re-claims them. Then they reappear in the per-org drainable scan below.
