@@ -15,7 +15,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { REPO, baseRef as BASE_REF, hasLabel, LABELS } from './lib/ciContext.js';
+import { REPO, getBaseRef, hasLabel, LABELS } from './lib/ciContext.js';
 
 const SCAN_PATHS = ['src/', 'services/worker/src/'];
 // Match `count: 'exact'` or `count: "exact"` with optional whitespace.
@@ -45,6 +45,8 @@ function countOccurrences(ref: 'HEAD' | string): number {
 }
 
 function main(): void {
+  // Required base: fail closed if it can't resolve (getBaseRef exits 1).
+  const BASE_REF = getBaseRef({ required: true })!;
   const baseline = countOccurrences(BASE_REF);
   const current = countOccurrences('HEAD');
 
