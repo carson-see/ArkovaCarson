@@ -265,6 +265,9 @@ describe('runDailyQueueDigest — cron loop', () => {
     const database = {
       from: vi.fn((table: string) => {
         switch (table) {
+          case 'organization_rules':
+            // org-acme has an ENABLED QUEUE_DIGEST opt-in rule.
+            return makeQuery({ data: [{ org_id: 'org-acme' }] });
           case 'profiles':
             return makeQuery({ data: [{ email: 'admin@acme.example', org_id: 'org-acme' }] });
           case 'organizations':
@@ -303,5 +306,84 @@ describe('runDailyQueueDigest — cron loop', () => {
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({ to: 'admin@acme.example', emailType: 'queue_reminder', orgId: 'org-acme' }),
     );
+  });
+
+  // Build a per-table routed db where the QUEUE_DIGEST opt-in rule set is
+  // configurable. The queue (anchors) is always non-empty so the ONLY thing
+  // deciding whether mail is sent is the per-org opt-in gate.
+  function makeRoutedDb(optInOrgIds: string[]) {
+    const anchorsFrom = vi.fn(() =>
+      makeQuery({ data: [{ created_at: '2026-06-29T07:00:00Z' }] }),
+    );
+    const profilesFrom = vi.fn(() =>
+      makeQuery({ data: [{ email: 'admin@acme.example', org_id: 'org-acme' }] }),
+    );
+    const from = vi.fn((table: string) => {
+      switch (table) {
+        case 'organization_rules':
+          return makeQuery({ data: optInOrgIds.map((id) => ({ org_id: id })) });
+        case 'profiles':
+          return profilesFrom();
+        case 'organizations':
+          return makeQuery({ data: [{ id: 'org-acme', display_name: 'Acme HQ' }] });
+        case 'anchors':
+          return anchorsFrom();
+        case 'connector_alert_state':
+          return makeQuery({ data: [] });
+        case 'audit_events':
+          return { ...makeQuery({ data: [] }), insert: vi.fn(async () => ({ error: null })) };
+        default:
+          return makeQuery({ data: [] });
+      }
+    });
+    return { from, anchorsFrom, profilesFrom };
+  }
+
+  it('emails an admin whose org HAS an enabled QUEUE_DIGEST opt-in rule', async () => {
+    const db = makeRoutedDb(['org-acme']);
+    const send = vi.fn(async () => ({ success: true, messageId: 'm1' }));
+    const result = await runDailyQueueDigest({
+      database: { from: db.from } as never,
+      send: send as never,
+      now: new Date('2026-06-29T08:00:00Z'),
+    });
+    expect(result.admins).toBe(1);
+    expect(result.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT enumerate or email an org without an enabled QUEUE_DIGEST rule, even with a non-empty queue', async () => {
+    // org-acme has a non-empty queue but NO opt-in rule (a DIFFERENT org opted in).
+    const db = makeRoutedDb(['org-other']);
+    const send = vi.fn(async () => ({ success: true, messageId: 'm1' }));
+    const result = await runDailyQueueDigest({
+      database: { from: db.from } as never,
+      send: send as never,
+      now: new Date('2026-06-29T08:00:00Z'),
+    });
+    expect(result.admins).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    // Never built metrics for the non-opted-in org.
+    expect(db.anchorsFrom).not.toHaveBeenCalled();
+  });
+
+  it('does NOT email when the org-rules read fails (fails closed → no opted-in orgs)', async () => {
+    const from = vi.fn((table: string) => {
+      if (table === 'organization_rules') {
+        return makeQuery({ data: null, error: { msg: 'rules read boom' } });
+      }
+      if (table === 'profiles') {
+        return makeQuery({ data: [{ email: 'admin@acme.example', org_id: 'org-acme' }] });
+      }
+      return makeQuery({ data: [] });
+    });
+    const send = vi.fn(async () => ({ success: true }));
+    const result = await runDailyQueueDigest({
+      database: { from } as never,
+      send: send as never,
+      now: new Date('2026-06-29T08:00:00Z'),
+    });
+    expect(result.admins).toBe(0);
+    expect(send).not.toHaveBeenCalled();
   });
 });

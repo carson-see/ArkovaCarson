@@ -209,6 +209,39 @@ export async function listOrgAdmins(database: DigestDb): Promise<AdminRecipient[
 }
 
 /**
+ * Per-org QUEUE_DIGEST opt-in: the set of org ids that have an ENABLED
+ * `organization_rules` row with `trigger_type = 'QUEUE_DIGEST'`. This is the
+ * SAME contract the existing scheduler uses (see `queue-reminders.ts`'s
+ * `.from('organization_rules').eq('enabled', true).in('trigger_type', [...,
+ * 'QUEUE_DIGEST'])`) — an enabled QUEUE_DIGEST rule IS the org's opt-in record
+ * (documented in `queue-digest.ts`). The global ENABLE_QUEUE_DIGEST flag only
+ * gates whether the JOB runs; this gates WHICH orgs may be emailed, so an org
+ * that never opted in is never enumerated, never metered, never mailed.
+ *
+ * Fails CLOSED: on a read error or non-array result, returns an empty set so we
+ * never email orgs we could not confirm opted in.
+ */
+export async function listDigestOptedInOrgIds(
+  database: DigestDb,
+): Promise<Set<string>> {
+  const { data, error } = await database
+    .from('organization_rules')
+    .select('org_id')
+    .eq('enabled', true)
+    .eq('trigger_type', 'QUEUE_DIGEST')
+    .limit(10000);
+  if (error || !Array.isArray(data)) {
+    logger.warn({ error }, 'digest: failed to list QUEUE_DIGEST opt-in orgs — treating as none opted in');
+    return new Set<string>();
+  }
+  const ids = new Set<string>();
+  for (const row of data as Array<{ org_id: string | null }>) {
+    if (row.org_id) ids.add(row.org_id);
+  }
+  return ids;
+}
+
+/**
  * The visibility scope for an admin org = the org itself plus any sub-orgs
  * whose `parent_org_id` is this org. Sibling / unrelated orgs are never
  * included — this is the AC's per-scope isolation guarantee.
@@ -342,7 +375,14 @@ export async function runDailyQueueDigest(
   const now = deps.now ?? new Date();
 
   const store = createAuditBackedStore(database);
-  const admins = await listOrgAdmins(database);
+
+  // Per-org opt-in gate: only orgs with an ENABLED `organization_rules`
+  // QUEUE_DIGEST rule may be emailed. An admin in a non-opted-in org is never
+  // enumerated, never has metrics built, and never receives mail — even when
+  // its queue is non-empty and the global flag is on.
+  const optedInOrgIds = await listDigestOptedInOrgIds(database);
+  const allAdmins = await listOrgAdmins(database);
+  const admins = allAdmins.filter((a) => optedInOrgIds.has(a.adminOrgId));
   result.admins = admins.length;
 
   // Per-org-name memo so a multi-admin org reads its name once.
