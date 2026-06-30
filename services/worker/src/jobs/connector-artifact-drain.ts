@@ -342,9 +342,22 @@ export async function drainConnectorArtifactsForOrg(
       // 2) Charge AT SECURING — and ONLY here. Never at enqueue/claim.
       const debit = await deps.debitAndEnqueueAnchor({ orgId, anchorId });
       if (!debit.success) {
-        // Insufficient credits / debit failure → mark failed + bounded alert.
-        // No batch-anchor, no silent drop. The row is reviewable; the producer
-        // can be re-driven once credits land.
+        if (debit.error === 'insufficient_credits') {
+          // Insufficient credits is a TRANSIENT, recoverable condition: the org
+          // simply has no balance yet. Marking the row `failed` would strand it
+          // permanently — `failed` is NOT a drainable status and enqueue is
+          // idempotent (ON CONFLICT DO NOTHING), so it would never re-enter the
+          // pipeline. Instead, reset it to a RETRYABLE `queued` state so the next
+          // daily drain re-claims it once credits land. The anchor already
+          // materialized; debit_and_enqueue_anchor is idempotent on the anchor
+          // id, so the retry re-drives the SAME single charge (never a double).
+          await markRequeued(deps, orgId, row.id);
+          deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'insufficient_credits_requeued' });
+          result.failed += 1;
+          continue;
+        }
+        // Other (HARD) debit failures → mark failed + bounded alert. No
+        // batch-anchor, no silent drop. The row is reviewable.
         await markFailed(deps, orgId, row.id, debit.error ?? 'debit_failed');
         deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: debit.error ?? 'debit_failed' });
         result.failed += 1;
@@ -394,6 +407,30 @@ async function markStatus(
     .eq('status', from);
   if (error) {
     deps.logger.warn({ error, orgId, artifactId: id, from, to }, `connector-artifact mark-${to} failed`);
+  }
+}
+
+/**
+ * RETRYABLE requeue: reset a row back to 'queued' so the next daily drain
+ * re-claims it. Used for insufficient_credits — a transient condition, not a
+ * hard failure. STATUS-GUARDED on the in-flight `materialized` status (the row
+ * is materialized by step 1 before the debit runs), consistent with the
+ * `markStatus` pattern: if the reaper has already re-queued the row (or another
+ * worker reclaimed it), this matches zero rows and does NOT clobber it.
+ */
+async function markRequeued(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  id: string,
+): Promise<void> {
+  const { error } = await deps.db
+    .from('connector_artifact')
+    .update({ status: 'queued', updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('org_id', orgId)
+    .eq('status', 'materialized');
+  if (error) {
+    deps.logger.warn({ error, orgId, artifactId: id }, 'connector-artifact mark-requeued failed');
   }
 }
 

@@ -245,8 +245,32 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(debit).toHaveBeenCalledTimes(1);
   });
 
-  it('insufficient credits: debit fails → row NOT anchored, no batch-anchor, alert raised, no silent drop', async () => {
+  it('insufficient credits: debit fails → row REQUEUED (retryable), NOT failed; no batch-anchor; bounded requeue alert', async () => {
+    // insufficient_credits is transient: the next daily drain must retry once
+    // credits land. `failed` is NOT a drainable status, so marking failed would
+    // strand the row permanently. It must land back in 'queued'.
     const debit = vi.fn(async () => ({ success: false, error: 'insufficient_credits' }));
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { debitAndEnqueueAnchor: debit });
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(result.failed).toBe(1);
+    expect(result.anchored).toBe(0);
+    expect(h.batchAnchor).not.toHaveBeenCalled();
+    // RETRYABLE: row is back in 'queued' (a drainable status), never terminal 'failed'.
+    expect(h.rows[0].status).toBe('queued');
+    expect(h.rows[0].status).not.toBe('failed');
+    expect(h.alert).toHaveBeenCalledTimes(1);
+    // bounded + PII-scrubbed: requeue reason, ids only, never raw bytes/fingerprint
+    const alertArg = h.alert.mock.calls[0][0];
+    expect(alertArg).toMatchObject({ orgId: ORG_A, artifactId: ART_1, reason: 'insufficient_credits_requeued' });
+    expect(JSON.stringify(alertArg)).not.toContain(FP_1);
+  });
+
+  it('hard debit failure (non-insufficient_credits): row marked failed (terminal), bounded alert', async () => {
+    // A hard/unexpected debit error is NOT retryable — it stays terminal 'failed'
+    // for review, distinct from the insufficient_credits requeue path.
+    const debit = vi.fn(async () => ({ success: false, error: 'debit_constraint_violation' }));
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { debitAndEnqueueAnchor: debit });
 
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
@@ -256,10 +280,8 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.batchAnchor).not.toHaveBeenCalled();
     expect(h.rows[0].status).toBe('failed');
     expect(h.alert).toHaveBeenCalledTimes(1);
-    // alert is bounded + PII-scrubbed: carries ids/reason, never raw bytes/fingerprint
     const alertArg = h.alert.mock.calls[0][0];
-    expect(alertArg).toMatchObject({ orgId: ORG_A, artifactId: ART_1, reason: expect.any(String) });
-    expect(JSON.stringify(alertArg)).not.toContain(FP_1);
+    expect(alertArg).toMatchObject({ orgId: ORG_A, artifactId: ART_1, reason: 'debit_constraint_violation' });
   });
 
   it('partial-failure isolation: one row fails, the next still drains', async () => {
