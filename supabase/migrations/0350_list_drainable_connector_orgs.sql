@@ -26,10 +26,30 @@ BEGIN;
 -- ORDERING / INDEX:
 --   `GROUP BY org_id ORDER BY min(created_at) ASC` surfaces the org whose
 --   oldest unprocessed artifact has waited longest first (anti-starvation
---   fairness across passes). The aggregate filters on the partial set of
---   drainable rows and is served by the existing 0343
---   `idx_connector_artifact_org_status (org_id, status)` index for the
---   status predicate.
+--   fairness across passes). The RPC has NO org_id predicate and needs
+--   created_at for `min(created_at)`, so the existing 0343
+--   `idx_connector_artifact_org_status (org_id, status)` canNOT cheaply serve
+--   the status-only filter or the created_at ordering — once the table fills
+--   with `anchored`/`failed` history, that would devolve into a full table
+--   scan + heap-fetch every 5 minutes just to find org ids. This migration
+--   therefore adds a PARTIAL index over ONLY drainable rows, keyed
+--   `(org_id, created_at)`, so the whole `WHERE status IN ('pending','queued')
+--   GROUP BY org_id ORDER BY min(created_at)` access pattern is an index scan
+--   of a small partial set (the partial predicate excludes the large
+--   anchored/failed tail entirely).
+--
+--   EXPLAIN intuition: without the partial index the planner picks
+--   `Seq Scan on connector_artifact (Filter: status = ANY(...))` → `HashAggregate`
+--   → `Sort`, touching every history row. With it the planner can use
+--   `Index Scan using idx_connector_artifact_drainable` (drainable rows only,
+--   already org-clustered + created_at-ordered) feeding a `GroupAggregate`,
+--   so cost scales with the drainable backlog, not total table size.
+--
+--   CONCURRENTLY is intentionally OFF: `connector_artifact` (0343) is a fresh,
+--   small table and the index must be created inside this migration's
+--   transaction (CREATE INDEX CONCURRENTLY cannot run in a txn block). A plain
+--   partial index is correct here — there is no large-table write-lock concern
+--   like the 0342/0335 hot-anchors-table convention.
 --
 -- SECURITY (§1.4):
 --   - SECURITY DEFINER + SET search_path = public (no search-path hijack).
@@ -38,10 +58,26 @@ BEGIN;
 --
 -- ROLLBACK:
 --   BEGIN;
+--   DROP INDEX IF EXISTS public.idx_connector_artifact_drainable;
 --   DROP FUNCTION IF EXISTS public.list_drainable_connector_orgs(integer);
 --   NOTIFY pgrst, 'reload schema';
 --   COMMIT;
 -- =============================================================================
+
+-- Partial index serving the drain enumeration access pattern over ONLY the
+-- drainable ('pending'|'queued') rows. Keyed (org_id, created_at) so the RPC's
+-- GROUP BY org_id + min(created_at) is an index scan of the small partial set,
+-- not a scan over the anchored/failed history tail. Plain (non-CONCURRENT)
+-- index: fresh small table, must build inside this migration txn.
+CREATE INDEX IF NOT EXISTS idx_connector_artifact_drainable
+  ON public.connector_artifact (org_id, created_at)
+  WHERE status IN ('pending', 'queued');
+
+COMMENT ON INDEX public.idx_connector_artifact_drainable IS
+  'QUEUE-09 (SCRUM-2352): partial index over drainable connector_artifact rows '
+  '(status pending|queued) keyed (org_id, created_at) — serves '
+  'list_drainable_connector_orgs (GROUP BY org_id ORDER BY min(created_at)) '
+  'without scanning the anchored/failed history tail.';
 
 CREATE OR REPLACE FUNCTION public.list_drainable_connector_orgs(
   p_limit integer DEFAULT 100
