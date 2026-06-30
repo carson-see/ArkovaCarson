@@ -52,7 +52,7 @@ describe('mergeAuthorityFor — tiered-merge authority (S0-4.3)', () => {
   });
 
   it('CLI fails closed to needs-carson on an empty changeset (QA #3 — diff HEAD...HEAD)', () => {
-    // baseRef === HEAD ⇒ `${base}...HEAD` is empty ⇒ changedFiles() returns [].
+    // baseRef === HEAD ⇒ `${base}..HEAD` is empty ⇒ changedFiles() returns [].
     const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     let out = '';
     try {

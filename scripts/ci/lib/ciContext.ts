@@ -24,6 +24,14 @@ export const REPO = resolve(import.meta.dirname, '..', '..', '..');
 // `GIT_BIN` convention in check-duplicate-artifacts.ts / check-dep-pinning.ts.
 export const GH_BIN = process.env.GH_BIN ?? '/usr/bin/gh';
 
+// Same S4036 reasoning for `git`: resolve to a FIXED absolute path rather than
+// a bare `git` name that the OS looks up on `$PATH` (a writable/attacker-
+// controlled PATH entry could shadow the real binary). `/usr/bin/git` is the
+// GitHub-hosted Ubuntu runner path; `GIT_BIN` overrides for self-hosted runners
+// and local dev (e.g. Homebrew's `/opt/homebrew/bin/git`). Mirrors GH_BIN and
+// the GIT_BIN convention in check-duplicate-artifacts.ts / check-dep-pinning.ts.
+export const GIT_BIN = process.env.GIT_BIN ?? '/usr/bin/git';
+
 /**
  * True when a module is being run directly (not imported). Uses fileURLToPath
  * so a checkout path containing a space or `%` is URL-decoded correctly —
@@ -40,27 +48,109 @@ export function isMainModule(metaUrl: string, argvPath: string | undefined): boo
 // silently fails and downstream try/catches return [] / 0, no-op'ing the
 // gates. Fail closed instead — resolve to a real SHA via git rev-parse,
 // or exit 1 with a clear actionable message.
-export function resolveCommitOrFail(ref: string, label = 'CI base ref'): string {
+/**
+ * Resolve `ref` to a 40-hex commit SHA, or `null` if it cannot be resolved
+ * (shallow checkout, bad revision, non-SHA output). Pure: never exits, never
+ * warns — the caller decides the failure policy. Shared by `resolveCommitOrFail`
+ * (exit) and `getBaseRef`'s optional path (null + warn) so the rev-parse +
+ * validation logic lives in exactly one place.
+ */
+function tryResolveCommit(ref: string): string | null {
   try {
-    const sha = execFileSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], {
+    const sha = execFileSync(GIT_BIN, ['rev-parse', '--verify', `${ref}^{commit}`], {
       cwd: REPO,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
-    if (!/^[0-9a-f]{40}$/i.test(sha)) {
-      throw new Error(`git rev-parse returned non-SHA: ${sha}`);
-    }
-    return sha;
-  } catch (err) {
-    console.error(`::error::Cannot resolve ${label} '${ref}' (R0 / SCRUM-1246).`);
-    console.error('  This usually means a shallow checkout. Use `actions/checkout@v4 with: fetch-depth: 0`.');
-    console.error(`  Underlying error: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+    return /^[0-9a-f]{40}$/i.test(sha) ? sha : null;
+  } catch {
+    return null;
   }
 }
 
+export function resolveCommitOrFail(ref: string, label = 'CI base ref'): string {
+  const sha = tryResolveCommit(ref);
+  if (sha) return sha;
+  console.error(`::error::Cannot resolve ${label} '${ref}' (R0 / SCRUM-1246).`);
+  console.error('  This usually means a shallow checkout. Use `actions/checkout@v4 with: fetch-depth: 0`.');
+  console.error('  (A non-SHA rev-parse result is treated the same as an unresolvable ref.)');
+  process.exit(1);
+}
+
 const RAW_BASE_REF = process.env.BASE_REF_SHA || process.env.BASE_REF || 'origin/main';
-export const baseRef = resolveCommitOrFail(RAW_BASE_REF);
+
+/**
+ * Memoized resolution of the base ref.
+ *
+ * Was previously an eager `export const baseRef = resolveCommitOrFail(...)`
+ * evaluated at MODULE LOAD. That made *any* import of ciContext — including a
+ * labels/body-only import (prLabels / prBody / hasLabel) by a check that never
+ * diffs against the base — shell out to `git rev-parse` and, on an unresolvable
+ * ref, `process.exit(1)` the whole job. Worse, the three-/two-dot diff helpers
+ * downstream inherited a base that could be a *merge-base* rather than the
+ * current base tip.
+ *
+ * Now resolution is LAZY (first call) and split by intent:
+ *   - getBaseRef({ required: true })  -> resolve or fail closed (exit 1 with the
+ *     SCRUM-1246 actionable message). NEVER returns null/empty for required
+ *     callers — a check that diffs against the base must not silently degrade
+ *     to "no changes" and pass.
+ *   - getBaseRef()  (optional)        -> resolve or return null with a warning,
+ *     for callers that can meaningfully proceed without a base.
+ *
+ * Importing ciContext for labels/body only does NOT trigger any git here.
+ */
+let _resolvedBaseRef: string | null | undefined; // undefined = not yet resolved
+let _baseRefResolutionFailed = false;
+
+/**
+ * Resolve the CI base ref lazily and memoized.
+ *
+ * @param opts.required - When true (default), an unresolvable base fails CLOSED
+ *   via `resolveCommitOrFail` (process.exit(1)). When false, an unresolvable
+ *   base returns `null` after a single warning — for callers that can proceed
+ *   without a base.
+ */
+export function getBaseRef(opts: { required?: boolean } = {}): string | null {
+  const required = opts.required ?? true;
+
+  // Memoized hit: a prior call already resolved a real SHA.
+  if (typeof _resolvedBaseRef === 'string') return _resolvedBaseRef;
+
+  // Required callers ALWAYS fail closed on an unresolvable base — even if a
+  // prior optional call already found it unresolvable. resolveCommitOrFail
+  // emits the SCRUM-1246 message and process.exit(1)s; it never returns null.
+  if (required) {
+    _resolvedBaseRef = resolveCommitOrFail(RAW_BASE_REF);
+    _baseRefResolutionFailed = false;
+    return _resolvedBaseRef;
+  }
+
+  // Optional caller. If a prior optional attempt already failed, stay null
+  // without re-shelling out to git.
+  if (_baseRefResolutionFailed) return null;
+
+  const sha = tryResolveCommit(RAW_BASE_REF);
+  if (sha) {
+    _resolvedBaseRef = sha;
+    return sha;
+  }
+  _baseRefResolutionFailed = true;
+  console.warn(
+    `::warning::Could not resolve CI base ref '${RAW_BASE_REF}' (optional caller). ` +
+      'Proceeding without a base.',
+  );
+  return null;
+}
+
+/**
+ * Test-only: reset the memoized base-ref resolution so each test starts clean.
+ * No-op in production (the module is loaded once per process).
+ */
+export function __resetBaseRefForTests(): void {
+  _resolvedBaseRef = undefined;
+  _baseRefResolutionFailed = false;
+}
 
 /**
  * Derive the PR number from the CI environment.
@@ -156,23 +246,29 @@ export function hasLabel(label: string): boolean {
 }
 
 /**
- * Files changed vs `baseRef` (or all matching `pathspec` when scanAll=true).
+ * Files changed vs the base ref (or all matching `pathspec` when scanAll=true).
  * Uses execFileSync to avoid shell-quoting issues with glob patterns.
+ *
+ * Fails CLOSED: the base is resolved via `getBaseRef({ required: true })`, so an
+ * unresolvable base exits the job (it does NOT silently return `[]`). A previous
+ * version swallowed the `git diff` error to `[]`, which made every path-gated
+ * check see "no changed files" and PASS — exactly the wrong direction for a
+ * gate. We now only swallow to `[]` in the genuinely-empty `scanAll` ls-files
+ * case; a diff failure throws.
  */
 export function changedFiles(pathspec?: string): string[] {
   if (scanAll) {
-    try {
-      const args = pathspec ? ['ls-files', pathspec] : ['ls-files'];
-      return execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).split('\n').filter(Boolean);
-    } catch {
-      return [];
-    }
+    const args = pathspec ? ['ls-files', pathspec] : ['ls-files'];
+    return execFileSync(GIT_BIN, args, { cwd: REPO, encoding: 'utf8' }).split('\n').filter(Boolean);
   }
-  try {
-    const args = ['diff', '--name-only', '--diff-filter=AMR', `${baseRef}...HEAD`];
-    if (pathspec) args.push('--', pathspec);
-    return execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).split('\n').filter(Boolean);
-  } catch {
-    return [];
-  }
+  // Required base: getBaseRef exits(1) if it cannot resolve, so the gate never
+  // degrades to "no changes" on a shallow/broken checkout.
+  const base = getBaseRef({ required: true })!;
+  // Two-dot (`base..HEAD`) = the changeset of THIS PR vs the current base tip,
+  // NOT three-dot (`base...HEAD`, which re-surfaces everything reachable since
+  // the merge-base). On a rebased lane branch the three-dot form attributes a
+  // now-merged base commit's edits to the PR; two-dot does not.
+  const args = ['diff', '--name-only', '--diff-filter=AMR', `${base}..HEAD`];
+  if (pathspec) args.push('--', pathspec);
+  return execFileSync(GIT_BIN, args, { cwd: REPO, encoding: 'utf8' }).split('\n').filter(Boolean);
 }
