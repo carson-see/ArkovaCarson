@@ -125,10 +125,21 @@ export interface ConnectorArtifactDrainDeps {
    * before marking the artifact `anchored`. Returns null if the anchor is gone.
    */
   readAnchorStatus: (args: { orgId: string; anchorId: string }) => Promise<AnchorStatusRow | null>;
+  /**
+   * List this org's `materialized` artifacts (with an anchor_id) for the
+   * CONFIRMATION re-read pass. Bounded by `limit`.
+   */
+  listMaterializedArtifacts: (args: { orgId: string; limit: number }) => Promise<MaterializedArtifactRef[]>;
   /** Emit a bounded, PII-scrubbed alert. Never throws into the drain loop. */
   emitAlert: (alert: ConnectorArtifactAlert) => void;
   /** Page size per pass. */
   limit?: number;
+}
+
+/** A materialized artifact + its anchor, for the confirmation re-read. */
+export interface MaterializedArtifactRef {
+  id: string;
+  anchor_id: string | null;
 }
 
 /** Minimal anchor shape read back to confirm the specific anchor advanced. */
@@ -139,23 +150,60 @@ export interface AnchorStatusRow {
 }
 
 /**
- * An anchor is "advanced past PENDING" (i.e. this artifact's anchoring is in
- * flight or done) when its status has moved off PENDING into the broadcast/
- * confirm lifecycle, OR a chain tx id is already recorded. The debit RPC moves
- * PENDING → BROADCASTING, so a successful debit alone advances it; we still
- * re-read the SPECIFIC anchor rather than trust the aggregate batch count.
+ * An anchor is "advanced" — i.e. this artifact's anchoring has IRREVERSIBLY
+ * progressed and the artifact may be marked terminally `anchored` — ONLY on a
+ * submit/secure signal that the recovery path cannot undo:
+ *   - a `chain_tx_id` is recorded (the tx has been broadcast), OR
+ *   - status is `SUBMITTED` or `SECURED`.
+ *
+ * Crucially we do NOT accept bare `BROADCASTING` (with a null `chain_tx_id`).
+ * `debit_and_enqueue_anchor` ITSELF moves the anchor PENDING → BROADCASTING, so
+ * every successful debit would otherwise instantly satisfy "advanced" and mark
+ * the artifact terminal — before the tx is ever broadcast. Worse,
+ * `recover_stuck_broadcasts()` resets a stale `BROADCASTING`/null-tx anchor back
+ * to PENDING, so BROADCASTING is a REVERSIBLE, not-yet-durable state. A
+ * BROADCASTING/null-tx anchor must keep its artifact `materialized` (retryable),
+ * to be promoted by the confirmation re-read once it gains a tx / SUBMITTED /
+ * SECURED.
  */
-const ADVANCED_ANCHOR_STATUSES = new Set(['BROADCASTING', 'SUBMITTED', 'SECURED']);
+const ADVANCED_ANCHOR_STATUSES = new Set(['SUBMITTED', 'SECURED']);
 function isAnchorAdvanced(anchor: AnchorStatusRow | null): boolean {
   if (!anchor) return false;
   if (typeof anchor.chain_tx_id === 'string' && anchor.chain_tx_id.length > 0) return true;
   return ADVANCED_ANCHOR_STATUSES.has(anchor.status);
 }
 
+/**
+ * Whether a `materialized` artifact's anchor is still legitimately IN FLIGHT
+ * (debited, broadcasting, awaiting a tx) — so the row must be LEFT materialized
+ * for the confirmation re-read, NOT re-queued (a re-queue → re-debit would hit
+ * `debit_and_enqueue_anchor`'s `p_expected_status='PENDING'` rejection on an
+ * already-BROADCASTING anchor). A null/PENDING anchor is NOT in-flight (it has
+ * no forward progress, or was reset by recover_stuck_broadcasts) → it may be
+ * re-queued to re-drive the debit.
+ */
+function isAnchorInFlight(anchor: AnchorStatusRow | null): boolean {
+  if (!anchor) return false;
+  if (isAnchorAdvanced(anchor)) return true;
+  return anchor.status === 'BROADCASTING';
+}
+
 export interface ConnectorArtifactDrainResult {
   claimed: number;
   anchored: number;
   failed: number;
+  /**
+   * Rows promoted materialized → anchored by the CONFIRMATION re-read (an anchor
+   * debited on a PRIOR pass that has now gained a tx / SUBMITTED / SECURED). A
+   * subset of the work that produced `anchored`; tracked separately so a pass
+   * that only confirmed in-flight rows (claimed:0, anchored>0) is legible.
+   */
+  confirmed: number;
+  /**
+   * Materialized rows whose anchor lost forward progress (PENDING again, or
+   * gone) and were re-queued by the confirmation step to re-drive the debit.
+   */
+  reconfirmRequeued: number;
 }
 
 /**
@@ -349,6 +397,30 @@ async function defaultReadAnchorStatus(
   };
 }
 
+/**
+ * Default `materialized` artifact enumerator (org-scoped) for the confirmation
+ * re-read. Only rows with an anchor_id can be confirmed; a materialized row with
+ * a null anchor_id is anomalous and left for the reaper/operator.
+ */
+async function defaultListMaterializedArtifacts(
+  args: { orgId: string; limit: number },
+  deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
+): Promise<MaterializedArtifactRef[]> {
+  const { data, error } = await deps.db
+    .from('connector_artifact')
+    .select('id, anchor_id')
+    .eq('org_id', args.orgId)
+    .eq('status', 'materialized')
+    .order('updated_at', { ascending: true })
+    .limit(args.limit);
+  if (error) {
+    throw new Error(`materialized enumeration failed: ${(error as { message?: string }).message ?? 'unknown'}`);
+  }
+  return ((data ?? []) as Array<{ id?: string; anchor_id?: string | null }>)
+    .filter((r): r is { id: string; anchor_id: string | null } => typeof r.id === 'string')
+    .map((r) => ({ id: r.id, anchor_id: r.anchor_id ?? null }));
+}
+
 function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifactDrainDeps {
   const db = injected.db ?? (defaultDb as unknown as DrainDb);
   return {
@@ -358,6 +430,8 @@ function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifa
     debitAndEnqueueAnchor: injected.debitAndEnqueueAnchor ?? ((args) => defaultDebitAndEnqueueAnchor(args, { db })),
     batchAnchor: injected.batchAnchor ?? ((opts) => processBatchAnchors(opts)),
     readAnchorStatus: injected.readAnchorStatus ?? ((args) => defaultReadAnchorStatus(args, { db })),
+    listMaterializedArtifacts:
+      injected.listMaterializedArtifacts ?? ((args) => defaultListMaterializedArtifacts(args, { db })),
     emitAlert: injected.emitAlert ?? defaultEmitAlert,
     limit: injected.limit,
   };
@@ -386,6 +460,92 @@ async function claimRow(deps: ConnectorArtifactDrainDeps, orgId: string, id: str
 }
 
 /**
+ * CONFIRMATION re-read over this org's `materialized` rows. For each, re-read
+ * the SPECIFIC anchor and reconcile WITHOUT a re-debit (the anchor is already
+ * past PENDING once debited, so a re-debit would be rejected):
+ *
+ *   - anchor ADVANCED (tx / SUBMITTED / SECURED, irreversible) → promote the
+ *     artifact materialized → `anchored` (status-guarded). Counts anchored +
+ *     confirmed.
+ *   - anchor IN FLIGHT (BROADCASTING, null tx — debited, not yet broadcast) →
+ *     LEAVE `materialized`. Re-queuing would force a re-debit the RPC rejects;
+ *     the broadcast/recovery path owns advancing it, and the next confirmation
+ *     pass promotes it once it gains a tx.
+ *   - anchor PENDING (debit never landed, or `recover_stuck_broadcasts` reset a
+ *     stale broadcast back to PENDING) or GONE → no forward progress, so
+ *     re-queue materialized → `queued` to re-drive the debit (now PENDING-
+ *     expected → accepted). Idempotent: materialize resolves the SAME anchor
+ *     (fingerprint unique index), debit keys on the anchor id → no double-charge.
+ *
+ * Org-scoped, status-guarded, never throws into the caller (a confirmation
+ * failure is logged/alerted; the new-row drain still proceeds).
+ */
+async function confirmMaterializedArtifacts(
+  deps: ConnectorArtifactDrainDeps,
+  orgId: string,
+  limit: number,
+  result: ConnectorArtifactDrainResult,
+): Promise<void> {
+  let materialized: MaterializedArtifactRef[];
+  try {
+    materialized = await deps.listMaterializedArtifacts({ orgId, limit });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'materialized enumeration failed';
+    deps.emitAlert({ scope: 'cycle', orgId, reason });
+    deps.logger.error({ error: err, orgId }, 'connector-artifact confirmation enumeration failed');
+    return; // don't abort the new-row drain on a confirmation read failure
+  }
+
+  for (const ref of materialized) {
+    if (!ref.anchor_id) {
+      // A materialized row with no anchor_id is anomalous (we always set it on
+      // the processing→materialized transition). Leave it for the operator.
+      deps.logger.warn({ orgId, artifactId: ref.id }, 'connector-artifact materialized row missing anchor_id — skipping confirmation');
+      continue;
+    }
+    const anchorId = ref.anchor_id;
+
+    let anchor: AnchorStatusRow | null;
+    try {
+      anchor = await deps.readAnchorStatus({ orgId, anchorId });
+    } catch (err) {
+      // Per-row isolation: a read flake leaves the row materialized (retryable).
+      deps.logger.warn({ error: err, orgId, artifactId: ref.id, anchorId }, 'connector-artifact confirmation re-read failed — left materialized');
+      continue;
+    }
+
+    if (isAnchorAdvanced(anchor)) {
+      // Irreversibly advanced → promote to terminal anchored (status-guarded).
+      if (await markStatus(deps, orgId, ref.id, 'materialized', 'anchored', { anchor_id: anchorId })) {
+        result.anchored += 1;
+        result.confirmed += 1;
+        deps.logger.info({ orgId, artifactId: ref.id, anchorId, anchorStatus: anchor!.status }, 'connector-artifact confirmed anchored');
+      } else {
+        deps.logger.warn({ orgId, artifactId: ref.id }, 'connector-artifact lost lease at confirmation promote — stopping row');
+      }
+      continue;
+    }
+
+    if (isAnchorInFlight(anchor)) {
+      // BROADCASTING/null-tx: still in flight, NOT re-queueable (would re-debit).
+      // Leave materialized; a later pass promotes it once it gains a tx.
+      deps.logger.info({ orgId, artifactId: ref.id, anchorId }, 'connector-artifact anchor in flight (BROADCASTING) — left materialized for next confirmation');
+      continue;
+    }
+
+    // Anchor PENDING (reset/never-debited) or gone: no forward progress → re-queue
+    // to re-drive the debit (now PENDING-expected). Status-guarded.
+    if (await markRequeued(deps, orgId, ref.id)) {
+      result.reconfirmRequeued += 1;
+      deps.emitAlert({ scope: 'row', orgId, artifactId: ref.id, reason: 'anchor_not_advanced_requeued' });
+      deps.logger.warn({ orgId, artifactId: ref.id, anchorId, anchorStatus: anchor?.status ?? 'missing' }, 'connector-artifact anchor lost progress — re-queued to re-debit');
+    } else {
+      deps.logger.warn({ orgId, artifactId: ref.id }, 'connector-artifact lost lease at confirmation re-queue — stopping row');
+    }
+  }
+}
+
+/**
  * Drain `connector_artifact` rows for ONE org. Strictly org-scoped: every read,
  * claim, and write filters on `org_id`, so draining one org never touches
  * another's rows (cross-org isolation).
@@ -396,7 +556,20 @@ export async function drainConnectorArtifactsForOrg(
 ): Promise<ConnectorArtifactDrainResult> {
   const deps = getDeps(injected);
   const limit = Math.max(1, Math.min(deps.limit ?? DRAIN_LIMIT_DEFAULT, DRAIN_LIMIT_MAX));
-  const result: ConnectorArtifactDrainResult = { claimed: 0, anchored: 0, failed: 0 };
+  const result: ConnectorArtifactDrainResult = {
+    claimed: 0,
+    anchored: 0,
+    failed: 0,
+    confirmed: 0,
+    reconfirmRequeued: 0,
+  };
+
+  // CONFIRMATION PRE-STEP: promote/reconcile prior-pass `materialized` rows
+  // BEFORE the new-row drain. An anchor debited last pass is now BROADCASTING;
+  // it can only become terminal `anchored` by gaining a tx / SUBMITTED /
+  // SECURED — a CONFIRMATION re-read, never a re-debit (the debit RPC expects
+  // PENDING and would reject a BROADCASTING anchor).
+  await confirmMaterializedArtifacts(deps, orgId, limit, result);
 
   // Candidate rows for THIS org only.
   const { data: candidates, error: selectError } = await deps.db
@@ -483,20 +656,23 @@ export async function drainConnectorArtifactsForOrg(
       // therefore NOT proof this artifact's anchor advanced.
       const batch = await deps.batchAnchor({ force: true, orgId });
 
-      // 4) Confirm the SPECIFIC anchor advanced past PENDING (re-read by id),
-      // never the aggregate batch count. Only then is the artifact terminal.
+      // 4) Confirm the SPECIFIC anchor advanced IRREVERSIBLY (tx / SUBMITTED /
+      // SECURED) by re-reading it — never the aggregate batch count, and never
+      // bare BROADCASTING (which the debit itself produces and which
+      // recover_stuck_broadcasts can reset to PENDING). Only then is the
+      // artifact terminal.
       const anchor = await deps.readAnchorStatus({ orgId, anchorId });
       if (!isAnchorAdvanced(anchor)) {
-        // Debit succeeded (so it's charged + idempotent on re-drive) but the
-        // anchor did NOT advance — keep the artifact RETRYABLE ('materialized')
-        // rather than terminally 'anchored'. The reaper re-queues stale
-        // materialized rows; a re-drive re-resolves the SAME anchor
-        // (materialize idempotent on fingerprint, debit idempotent on anchorId)
-        // → no double-charge. Do NOT count anchored.
-        deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'anchor_not_advanced_retryable' });
-        deps.logger.warn(
+        // Debit succeeded (anchor now BROADCASTING, charged) but it has not yet
+        // irreversibly advanced. LEAVE the artifact `materialized` (retryable) —
+        // do NOT re-queue (that would force a re-debit the RPC rejects on a
+        // BROADCASTING anchor). The CONFIRMATION step on a later pass promotes it
+        // once it gains a tx / SUBMITTED / SECURED (or re-queues it if the anchor
+        // is reset to PENDING). Do NOT count anchored.
+        deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'anchor_pending_confirmation' });
+        deps.logger.info(
           { orgId, artifactId: row.id, anchorId, anchorStatus: anchor?.status ?? 'missing' },
-          'connector-artifact debit ok but anchor not advanced — left materialized (retryable)',
+          'connector-artifact debit ok, anchor not yet irreversibly advanced — left materialized for confirmation',
         );
         continue;
       }
@@ -518,16 +694,15 @@ export async function drainConnectorArtifactsForOrg(
       deps.logger.error({ error: err, orgId, artifactId: row.id }, 'connector-artifact row drain failed');
 
       if (debitSucceeded) {
-        // The charge already landed; a post-debit throw (e.g. batch step) must
-        // NOT mark the artifact terminal `failed` (a CHARGED anchor represented
-        // as failed). Leave it RETRYABLE: re-queue materialized→queued so the
-        // next drain re-resolves the SAME anchor (debit idempotent on anchorId
-        // → no double-charge). Guarded → a lost lease just stops the row.
-        if (await markRequeued(deps, orgId, row.id)) {
-          deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'post_debit_error_requeued' });
-        } else {
-          deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease at post-debit-error requeue — stopping row');
-        }
+        // The charge already landed and the anchor is BROADCASTING. A post-debit
+        // throw (e.g. batch step) must NOT mark the artifact terminal `failed` (a
+        // CHARGED anchor as failed), and must NOT re-queue it (a re-queue → re-
+        // debit would hit the RPC's PENDING-expected rejection on a BROADCASTING
+        // anchor). LEAVE it `materialized`: the CONFIRMATION step owns it from
+        // here — it promotes to anchored once the anchor advances, or re-queues
+        // only if the anchor is reset to PENDING. No re-write, no double-charge.
+        deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'post_debit_error_left_materialized' });
+        deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact post-debit error — left materialized for confirmation');
         continue;
       }
 
@@ -648,15 +823,25 @@ async function markFailed(
 // ── F-1 stuck-row reaper (liveness) ──────────────────────────────────────────
 
 /**
- * Lease / visibility-timeout for in-flight (processing|materialized) rows. A row
- * in-flight longer than this is presumed STRANDED — the claiming worker crashed
- * between the claim and a terminal status (the claim CAS gives exactly-once but
- * NOT liveness; nothing re-drains a 'processing' row, since only pending|queued
- * are drainable). Generous (>> any real drain pass) so a live worker is never
- * reaped. Re-drive is SAFE: materialize is idempotent on the (user_id,fingerprint)
- * unique index and debit_and_enqueue_anchor is idempotent on the anchor id, so a
- * reaped row re-drives the SAME single charge — never a double. The markStatus
- * status-guard prevents a zombie worker from clobbering the reclaimed row.
+ * Lease / visibility-timeout for stranded `processing` rows. A row stuck in
+ * `processing` past this lease is presumed STRANDED — the worker crashed between
+ * the claim and the processing→materialized transition (the claim CAS gives
+ * exactly-once but NOT liveness; nothing re-drains a `processing` row since only
+ * pending|queued are drainable). Generous (>> any real drain pass) so a live
+ * worker is never reaped.
+ *
+ * The reaper re-queues ONLY `processing` rows. A `processing` row has NOT been
+ * debited (the debit only runs AFTER the processing→materialized transition), so
+ * its anchor (if materialize even created one before the crash) is still PENDING
+ * — a re-drive is SAFE (materialize idempotent on the (user_id,fingerprint)
+ * unique index; debit re-drives the SAME single charge — never a double).
+ *
+ * Crucially the reaper does NOT touch `materialized` rows: those may hold an
+ * already-debited, in-flight BROADCASTING anchor, and re-queuing one would force
+ * a re-debit the RPC rejects (`p_expected_status='PENDING'`). `materialized`
+ * rows are owned by the anchor-aware CONFIRMATION step
+ * (`confirmMaterializedArtifacts`), which promotes them once advanced or
+ * re-queues them only when the anchor has lost forward progress (PENDING/gone).
  */
 export const STALE_INFLIGHT_MS = 15 * 60 * 1000; // 15 min
 
@@ -665,10 +850,10 @@ export interface ReapStaleResult {
 }
 
 /**
- * Reset rows stranded in processing|materialized past the lease back to 'queued'
- * so the next drain pass re-claims them. This is the F-1 liveness guarantee the
- * claim CAS alone does not provide. Global (all orgs); runs at the head of each
- * drain pass. A reaper failure alerts but NEVER aborts the drain.
+ * Reset rows stranded in `processing` past the lease back to 'queued' so the
+ * next drain pass re-claims them. This is the F-1 liveness guarantee the claim
+ * CAS alone does not provide. Global (all orgs); runs at the head of each drain
+ * pass. A reaper failure alerts but NEVER aborts the drain.
  */
 export async function reapStaleInFlightArtifacts(
   injected: Partial<Pick<ConnectorArtifactDrainDeps, 'db' | 'logger' | 'emitAlert'>> & { thresholdMs?: number } = {},
@@ -681,7 +866,7 @@ export async function reapStaleInFlightArtifacts(
   const { data, error } = await db
     .from('connector_artifact')
     .update({ status: 'queued', updated_at: new Date().toISOString() })
-    .in('status', ['processing', 'materialized'])
+    .eq('status', 'processing')
     .lt('updated_at', cutoff)
     .select('id, org_id');
 
@@ -713,6 +898,10 @@ export interface ConnectorArtifactDrainCronResult {
   claimed: number;
   anchored: number;
   failed: number;
+  /** Materialized rows promoted to anchored by the confirmation re-read. */
+  confirmed: number;
+  /** Materialized rows re-queued by confirmation (anchor lost forward progress). */
+  reconfirmRequeued: number;
 }
 
 export interface ConnectorArtifactDrainCronDeps {
@@ -730,14 +919,24 @@ export interface ConnectorArtifactDrainCronDeps {
 }
 
 /**
- * Default org enumerator: distinct org_ids with at least one drainable row.
- * Bounded scan over the (org_id, status) index. Returns a de-duplicated list.
+ * Statuses that mean an org has WORK for a drain pass: `pending|queued` (new
+ * rows to claim/anchor) PLUS `materialized` (prior-pass rows awaiting the
+ * CONFIRMATION re-read). An org with ONLY materialized rows (all anchors
+ * in-flight, no new rows) must still be enumerated so its confirmation runs —
+ * otherwise an in-flight anchor would never be promoted to `anchored`.
+ */
+const WORK_STATUSES = [...DRAINABLE_STATUSES, 'materialized'] as const;
+
+/**
+ * Default org enumerator: distinct org_ids with at least one row that needs a
+ * drain pass (drainable OR materialized-awaiting-confirmation). Bounded scan
+ * over the (org_id, status) index. Returns a de-duplicated list.
  */
 async function defaultListDrainableOrgIds(db: DrainDb): Promise<string[]> {
   const { data, error } = await db
     .from('connector_artifact')
     .select('org_id')
-    .in('status', DRAINABLE_STATUSES as unknown as string[])
+    .in('status', WORK_STATUSES as unknown as string[])
     .limit(5000);
   if (error) {
     throw new Error(`connector-artifact org enumeration failed: ${(error as { message?: string }).message ?? 'unknown'}`);
@@ -770,6 +969,8 @@ export async function runConnectorArtifactDrain(
     claimed: 0,
     anchored: 0,
     failed: 0,
+    confirmed: 0,
+    reconfirmRequeued: 0,
   };
 
   if (!enabled) {
@@ -794,6 +995,8 @@ export async function runConnectorArtifactDrain(
       base.claimed += r.claimed;
       base.anchored += r.anchored;
       base.failed += r.failed;
+      base.confirmed += r.confirmed;
+      base.reconfirmRequeued += r.reconfirmRequeued;
     } catch (err) {
       // Per-org isolation: surface as a cycle alert, keep draining other orgs.
       base.orgsFailed += 1;

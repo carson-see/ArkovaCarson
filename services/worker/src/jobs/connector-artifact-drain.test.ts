@@ -81,6 +81,7 @@ interface Harness {
   debit: ReturnType<typeof vi.fn>;
   batchAnchor: ReturnType<typeof vi.fn>;
   readAnchorStatus: ReturnType<typeof vi.fn>;
+  listMaterializedArtifacts: ReturnType<typeof vi.fn>;
   alert: ReturnType<typeof vi.fn>;
   claimAttempts: Array<{ id: string }>;
 }
@@ -169,12 +170,18 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
     (overrides.batchAnchor as ReturnType<typeof vi.fn>) ??
     vi.fn(async () => ({ processed: 1, batchId: 'batch-1', merkleRoot: 'c'.repeat(64), txId: 'tx-1' }));
 
-  // Default: the specific anchor advanced past PENDING (the debit RPC moved it
-  // to BROADCASTING). Tests for the "debit ok but anchor not advanced" path
-  // inject their own readAnchorStatus returning a PENDING / null anchor.
+  // Default: the specific anchor has IRREVERSIBLY advanced (SUBMITTED + tx), so
+  // the first-pass happy path marks the artifact `anchored`. Tests for the
+  // "debited but not yet advanced (BROADCASTING/null-tx)" path inject their own
+  // readAnchorStatus.
   const readAnchorStatus =
     (overrides.readAnchorStatus as ReturnType<typeof vi.fn>) ??
-    vi.fn(async ({ anchorId }: { anchorId: string }) => ({ id: anchorId, status: 'BROADCASTING', chain_tx_id: null }));
+    vi.fn(async ({ anchorId }: { anchorId: string }) => ({ id: anchorId, status: 'SUBMITTED', chain_tx_id: 'tx-confirmed' }));
+
+  // Default: no pre-existing materialized rows awaiting confirmation. Tests for
+  // the confirmation step inject their own list.
+  const listMaterializedArtifacts =
+    (overrides.listMaterializedArtifacts as ReturnType<typeof vi.fn>) ?? vi.fn(async () => []);
 
   const alert = (overrides.emitAlert as ReturnType<typeof vi.fn>) ?? vi.fn();
 
@@ -186,11 +193,12 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
     debitAndEnqueueAnchor: debit,
     batchAnchor,
     readAnchorStatus,
+    listMaterializedArtifacts,
     emitAlert: alert,
     ...overrides,
   } as unknown as ConnectorArtifactDrainDeps;
 
-  return { rows, deps, materialize, debit, batchAnchor, readAnchorStatus, alert, claimAttempts };
+  return { rows, deps, materialize, debit, batchAnchor, readAnchorStatus, listMaterializedArtifacts, alert, claimAttempts };
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -418,10 +426,11 @@ describe('drainConnectorArtifactsForOrg', () => {
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'queued' })]);
     // After the row reaches 'materialized', yank it to 'queued' so the guarded
     // materialized→anchored transition misses. Hook the anchor re-read (which
-    // runs immediately before mark-anchored) to flip the row.
+    // runs immediately before mark-anchored) to flip the row. The anchor IS
+    // irreversibly advanced (SUBMITTED+tx) so the flow reaches mark-anchored.
     const readAnchorStatus = vi.fn(async ({ anchorId }: { anchorId: string }) => {
       h.rows[0].status = 'queued'; // reaper reclaimed the materialized row
-      return { id: anchorId, status: 'BROADCASTING', chain_tx_id: null };
+      return { id: anchorId, status: 'SUBMITTED', chain_tx_id: 'tx-confirmed' };
     });
     h.deps.readAnchorStatus = readAnchorStatus as unknown as ConnectorArtifactDrainDeps['readAnchorStatus'];
 
@@ -432,9 +441,9 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.rows[0].status).toBe('queued'); // not clobbered to 'anchored'
   });
 
-  // ── FIX 2: only mark anchored when the SPECIFIC anchor advanced ─────────────
+  // ── FIX 2/3: mark anchored ONLY on an IRREVERSIBLE advance ──────────────────
 
-  it('confirmed-advanced anchor (re-read shows BROADCASTING) → marked anchored', async () => {
+  it('irreversibly-advanced anchor (SUBMITTED + tx) → marked anchored', async () => {
     const readAnchorStatus = vi.fn(async ({ anchorId }: { anchorId: string }) => ({
       id: anchorId, status: 'SUBMITTED', chain_tx_id: 'tx-abc',
     }));
@@ -447,15 +456,14 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.rows[0].status).toBe('anchored');
   });
 
-  it('debit ok but anchor NOT advanced (processed:0, still PENDING) → stays materialized, not anchored, not counted', async () => {
-    // The debit succeeded (anchor charged + idempotent on re-drive) but the
-    // batch returned {processed:0} and the SPECIFIC anchor is still PENDING — so
-    // the artifact must NOT be marked anchored off the aggregate count. It stays
-    // 'materialized' (retryable); the reaper re-queues it for an idempotent
-    // re-resolve (no double-charge).
+  it('FIX-3: debit ok but anchor only BROADCASTING (null tx) → stays materialized, NOT anchored', async () => {
+    // The debit RPC itself moves the anchor PENDING→BROADCASTING. Bare
+    // BROADCASTING (null tx) is REVERSIBLE (recover_stuck_broadcasts can reset it
+    // to PENDING), so it must NOT be treated as advanced — the artifact stays
+    // 'materialized' (awaiting the confirmation re-read), never terminal anchored.
     const batchAnchor = vi.fn(async () => ({ processed: 0, batchId: null, merkleRoot: null, txId: null }));
     const readAnchorStatus = vi.fn(async ({ anchorId }: { anchorId: string }) => ({
-      id: anchorId, status: 'PENDING', chain_tx_id: null,
+      id: anchorId, status: 'BROADCASTING', chain_tx_id: null,
     }));
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { batchAnchor, readAnchorStatus });
 
@@ -463,21 +471,21 @@ describe('drainConnectorArtifactsForOrg', () => {
 
     expect(result.anchored).toBe(0);
     expect(result.failed).toBe(0);
-    // RETRYABLE: left materialized, never terminal anchored/failed.
+    // RETRYABLE via confirmation: left materialized, never anchored/failed/queued.
     expect(h.rows[0].status).toBe('materialized');
-    // a bounded retryable alert was raised (ids/reason only)
     expect(h.alert).toHaveBeenCalledWith(
-      expect.objectContaining({ orgId: ORG_A, artifactId: ART_1, reason: 'anchor_not_advanced_retryable' }),
+      expect.objectContaining({ orgId: ORG_A, artifactId: ART_1, reason: 'anchor_pending_confirmation' }),
     );
-    // debit happened exactly once (so re-drive is the same idempotent charge)
+    // debit happened exactly once (no re-debit on this pass)
     expect(h.debit).toHaveBeenCalledTimes(1);
   });
 
-  it('post-debit throw (batch step blows up after a successful charge) → RETRYABLE, never terminal failed', async () => {
-    // The debit succeeded (anchor charged + BROADCASTING) but the batch step
-    // throws. Marking the artifact `failed` would represent a CHARGED anchor as
-    // a failed artifact. It must instead be left RETRYABLE ('queued') so the
-    // reaper re-resolves the SAME anchor (debit idempotent → no double-charge).
+  it('post-debit throw (batch blows up after a successful charge) → left materialized for confirmation, NOT failed, NOT re-queued', async () => {
+    // The debit succeeded (anchor BROADCASTING). A post-debit throw must NOT mark
+    // the artifact terminal `failed` (a CHARGED anchor as failed) and must NOT
+    // re-queue it (re-queue → re-debit hits the PENDING-expected RPC rejection on
+    // a BROADCASTING anchor). It stays 'materialized'; the confirmation step owns
+    // it from here.
     const batchAnchor = vi.fn(async () => { throw new Error('chain submit blew up'); });
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { batchAnchor });
 
@@ -486,15 +494,16 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(result.failed).toBe(0); // NOT counted failed — the charge stands
     expect(result.anchored).toBe(0);
     expect(h.debit).toHaveBeenCalledTimes(1);
-    // RETRYABLE: re-queued, never terminal 'failed'.
-    expect(h.rows[0].status).toBe('queued');
+    // left materialized (NOT re-queued, NOT failed) for the confirmation step.
+    expect(h.rows[0].status).toBe('materialized');
     expect(h.rows[0].status).not.toBe('failed');
+    expect(h.rows[0].status).not.toBe('queued');
     expect(h.alert).toHaveBeenCalledWith(
-      expect.objectContaining({ orgId: ORG_A, artifactId: ART_1, reason: 'post_debit_error_requeued' }),
+      expect.objectContaining({ orgId: ORG_A, artifactId: ART_1, reason: 'post_debit_error_left_materialized' }),
     );
   });
 
-  it('anchor re-read returns null (anchor gone) → stays materialized (retryable), not anchored', async () => {
+  it('first-pass anchor re-read returns null (anchor gone) → stays materialized', async () => {
     const readAnchorStatus = vi.fn(async () => null);
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { readAnchorStatus });
 
@@ -503,14 +512,81 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(result.anchored).toBe(0);
     expect(h.rows[0].status).toBe('materialized');
   });
+
+  // ── FIX-3: CONFIRMATION step over prior-pass materialized rows ──────────────
+
+  it('confirmation: a materialized row whose anchor now has a tx → promoted to anchored (no re-debit)', async () => {
+    // A prior pass debited the anchor (BROADCASTING) and left the row
+    // 'materialized'. This pass's confirmation re-reads the anchor — now
+    // SUBMITTED+tx — and promotes the artifact to 'anchored' WITHOUT re-debiting.
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'materialized', anchor_id: ANCHOR_1 })], {
+      listMaterializedArtifacts: vi.fn(async () => [{ id: ART_1, anchor_id: ANCHOR_1 }]),
+      readAnchorStatus: vi.fn(async ({ anchorId }: { anchorId: string }) => ({ id: anchorId, status: 'SUBMITTED', chain_tx_id: 'tx-xyz' })),
+    });
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(result.confirmed).toBe(1);
+    expect(result.anchored).toBe(1);
+    expect(h.rows[0].status).toBe('anchored');
+    // confirmation NEVER re-debits an in-flight anchor.
+    expect(h.debit).not.toHaveBeenCalled();
+  });
+
+  it('confirmation: a materialized row whose anchor is still BROADCASTING (in flight) → left materialized, NOT re-queued, NOT re-debited', async () => {
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'materialized', anchor_id: ANCHOR_1 })], {
+      listMaterializedArtifacts: vi.fn(async () => [{ id: ART_1, anchor_id: ANCHOR_1 }]),
+      readAnchorStatus: vi.fn(async ({ anchorId }: { anchorId: string }) => ({ id: anchorId, status: 'BROADCASTING', chain_tx_id: null })),
+    });
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(result.confirmed).toBe(0);
+    expect(result.reconfirmRequeued).toBe(0);
+    expect(h.rows[0].status).toBe('materialized'); // untouched
+    expect(h.debit).not.toHaveBeenCalled(); // no re-debit of an in-flight BROADCASTING anchor
+  });
+
+  it('confirmation: a materialized row whose anchor was reset to PENDING → re-queued, then re-drives the debit in the same pass', async () => {
+    // The confirmation step re-queues the row (anchor lost forward progress);
+    // because 'queued' is drainable, the SAME pass's new-row drain re-claims and
+    // re-debits it (the anchor is PENDING again, so the PENDING-expected debit is
+    // accepted). End state is materialized again (re-debited, back in flight) —
+    // confirmation produced the re-queue (reconfirmRequeued=1) + the alert, and
+    // the debit was re-driven exactly once.
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'materialized', anchor_id: ANCHOR_1 })], {
+      listMaterializedArtifacts: vi.fn(async () => [{ id: ART_1, anchor_id: ANCHOR_1 }]),
+      // PENDING on the confirmation read (lost progress → requeue); after the
+      // same-pass re-drive the row is left materialized (readAnchorStatus is also
+      // consulted post-debit and still returns PENDING → not advanced).
+      readAnchorStatus: vi.fn(async ({ anchorId }: { anchorId: string }) => ({ id: anchorId, status: 'PENDING', chain_tx_id: null })),
+    });
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(result.confirmed).toBe(0);
+    expect(result.reconfirmRequeued).toBe(1);
+    expect(h.alert).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: ORG_A, artifactId: ART_1, reason: 'anchor_not_advanced_requeued' }),
+    );
+    // the re-queue made the row drainable again → re-claimed + re-debited once
+    expect(result.claimed).toBe(1);
+    expect(h.debit).toHaveBeenCalledTimes(1);
+    expect(h.rows[0].status).toBe('materialized'); // re-debited, back in flight
+  });
 });
+
+// Build a full ConnectorArtifactDrainResult (defaults the confirmation fields).
+function drainResult(over: Partial<{ claimed: number; anchored: number; failed: number; confirmed: number; reconfirmRequeued: number }>) {
+  return { claimed: 0, anchored: 0, failed: 0, confirmed: 0, reconfirmRequeued: 0, ...over };
+}
 
 describe('runConnectorArtifactDrain (cron entrypoint)', () => {
   it('enumerates orgs with drainable rows and drains each, aggregating results', async () => {
     const drainForOrg = vi.fn(async (orgId: string) =>
       orgId === ORG_A
-        ? { claimed: 2, anchored: 2, failed: 0 }
-        : { claimed: 1, anchored: 0, failed: 1 },
+        ? drainResult({ claimed: 2, anchored: 2 })
+        : drainResult({ claimed: 1, failed: 1 }),
     );
     const listDrainableOrgIds = vi.fn(async () => [ORG_A, ORG_B]);
 
@@ -546,7 +622,7 @@ describe('runConnectorArtifactDrain (cron entrypoint)', () => {
     const drainForOrg = vi
       .fn()
       .mockRejectedValueOnce(new Error('org A drain boom'))
-      .mockResolvedValueOnce({ claimed: 1, anchored: 1, failed: 0 });
+      .mockResolvedValueOnce(drainResult({ claimed: 1, anchored: 1 }));
     const listDrainableOrgIds = vi.fn(async () => [ORG_A, ORG_B]);
     const emitAlert = vi.fn();
 
@@ -564,37 +640,42 @@ describe('reapStaleInFlightArtifacts (F-1 stuck-row reaper)', () => {
   const OLD = '2020-01-01T00:00:00.000Z';
 
   function makeReaperDb(rows: Array<{ id: string; org_id: string; status: string; updated_at: string }>, opts: { error?: string } = {}) {
-    const calls: { patch?: Record<string, unknown>; inArg?: string[]; ltArg?: string } = {};
+    const calls: { patch?: Record<string, unknown>; eqStatus?: string; ltArg?: string } = {};
     const builder: Record<string, unknown> = {
       update(patch: Record<string, unknown>) { calls.patch = patch; return builder; },
-      in(_c: string, vals: string[]) { calls.inArg = vals; return builder; },
+      eq(col: string, val: string) { if (col === 'status') calls.eqStatus = val; return builder; },
       lt(_c: string, val: string) { calls.ltArg = val; return builder; },
       select() { return builder; },
       then(resolve: (v: { data: unknown; error: unknown }) => void) {
         if (opts.error) return resolve({ data: null, error: { message: opts.error } });
-        const matched = rows.filter((r) => (calls.inArg ?? []).includes(r.status) && r.updated_at < (calls.ltArg ?? ''));
+        // The reaper re-queues ONLY 'processing' rows (materialized is owned by
+        // the confirmation step). Model the `.eq('status', ...)` guard.
+        const matched = rows.filter((r) => r.status === calls.eqStatus && r.updated_at < (calls.ltArg ?? ''));
         return resolve({ data: matched.map((r) => ({ id: r.id, org_id: r.org_id })), error: null });
       },
     };
     return { db: { from: () => builder } as unknown as ConnectorArtifactDrainDeps['db'], calls };
   }
 
-  it('re-queues rows stranded in processing|materialized past the lease and alerts per row', async () => {
+  it('re-queues ONLY stranded processing rows past the lease — NEVER materialized (confirmation owns those)', async () => {
     const emitAlert = vi.fn();
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const rows = [
       { id: 'a1', org_id: ORG_A, status: 'processing', updated_at: OLD },
+      // a materialized row (possibly an in-flight BROADCASTING anchor) is NOT
+      // reaped — re-queuing it would force a re-debit the RPC rejects.
       { id: 'a2', org_id: ORG_A, status: 'materialized', updated_at: OLD },
       { id: 'a3', org_id: ORG_A, status: 'processing', updated_at: new Date().toISOString() },
     ];
     const { db, calls } = makeReaperDb(rows);
     const result = await reapStaleInFlightArtifacts({ db, logger, emitAlert, thresholdMs: 60_000 });
-    expect(result.reaped).toBe(2);
+    expect(result.reaped).toBe(1); // only a1 (stale processing); a2 materialized is left alone
     expect(calls.patch).toMatchObject({ status: 'queued' });
-    expect(calls.inArg).toEqual(['processing', 'materialized']);
-    expect(emitAlert).toHaveBeenCalledTimes(2);
+    expect(calls.eqStatus).toBe('processing');
+    expect(emitAlert).toHaveBeenCalledTimes(1);
     expect(emitAlert).toHaveBeenCalledWith(expect.objectContaining({ artifactId: 'a1', reason: 'stale_inflight_requeued' }));
-    expect(emitAlert).toHaveBeenCalledWith(expect.objectContaining({ artifactId: 'a2', reason: 'stale_inflight_requeued' }));
+    // the stale materialized row was NOT reaped
+    expect(emitAlert).not.toHaveBeenCalledWith(expect.objectContaining({ artifactId: 'a2' }));
   });
 
   it('returns reaped:0 and a cycle alert on db error, never throwing', async () => {
