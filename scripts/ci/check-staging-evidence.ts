@@ -36,7 +36,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve, sep } from 'node:path';
 import {
   REPO,
-  baseRef,
+  getBaseRef,
   prBody,
   changedFiles,
   resolveCommitOrFail,
@@ -1181,6 +1181,13 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-ledger-numeric-integrity(\.test)?\.ts$/,
   /^scripts\/ci\/check-agents-md-migration-collision(\.test)?\.ts$/,
   /^scripts\/ci\/compute-merge-authority(\.test)?\.ts$/,
+  // R0 verification/baseline CI gates (SCRUM-1252 / 1254 / R0-3). These run
+  // ONLY in CI to lint PR metadata + repo invariants (HANDOFF.md claims,
+  // `count: 'exact'` callsite baseline, coverage-threshold monotonicity). They
+  // never ship to prod runtime → T0 tooling.
+  /^scripts\/ci\/check-handoff-claims(\.test)?\.ts$/,
+  /^scripts\/ci\/check-count-exact-baseline(\.test)?\.ts$/,
+  /^scripts\/ci\/check-coverage-monotonic(\.test)?\.ts$/,
   /^scripts\/ci\/snapshots\//, // CI baselines/snapshots — tooling, never prod runtime
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
@@ -1845,6 +1852,8 @@ export function check(opts: CheckOptions): CheckResult {
 }
 
 function main(): void {
+  // Required base: fail closed if it can't resolve (getBaseRef exits 1).
+  const baseRef = getBaseRef({ required: true })!;
   const files = changedFiles();
   const currentHeadSha = resolveCommitOrFail(
     process.env.HEAD_REF_SHA || process.env.GITHUB_SHA || 'HEAD',
