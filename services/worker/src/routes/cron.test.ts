@@ -726,6 +726,25 @@ describe('cron routes', () => {
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Processing failed');
     });
+
+    it('responds 500 (Scheduler retry) on partial per-org failure, still returning the aggregate body', async () => {
+      // orgsFailed > 0 is a PARTIAL failure: the drain isolated it and drained
+      // the other orgs, but a green 200 would hide the stuck org from Cloud
+      // Scheduler. The route must respond non-2xx AND echo the aggregate body.
+      const partial = {
+        skipped: false,
+        orgsProcessed: 3,
+        orgsFailed: 1,
+        claimed: 5,
+        anchored: 4,
+        failed: 1,
+      };
+      mockRunConnectorArtifactDrain.mockResolvedValueOnce(partial);
+      const app = createApp();
+      const res = await request(app).post('/cron/drain-connector-artifacts');
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual(partial);
+    });
   });
 
   describe('POST /docusign-envelope-completed', () => {

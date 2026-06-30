@@ -447,6 +447,18 @@ cronRouter.post('/org-queue-scheduler', async (req, res) => {
 cronRouter.post('/drain-connector-artifacts', async (_req, res) => {
   try {
     const result = await runConnectorArtifactDrain();
+    // The drain isolates per-org failures (one org throwing keeps the others
+    // draining), so `orgsFailed > 0` is a PARTIAL failure that a green 200 would
+    // hide from Cloud Scheduler. Drain the other orgs first, then respond non-2xx
+    // so Scheduler RETRIES the pass. The drain is idempotent (compare-and-set
+    // claim + anchor-id-keyed debit), so a retry re-drives only the stuck orgs —
+    // already-anchored rows are skipped. Still return the aggregate body for
+    // observability.
+    if (result.orgsFailed > 0) {
+      logger.warn({ result }, 'Connector-artifact drain had per-org failures; responding 500 for Scheduler retry');
+      res.status(500).json(result);
+      return;
+    }
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Connector-artifact drain pass failed');
