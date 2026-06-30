@@ -1411,6 +1411,27 @@ describe('cron routes', () => {
       const res = await request(app).post(`/cron${scheduledPath.replace('/jobs', '')}`);
       expect(res.status).toBe(200);
     });
+
+    it('registers the connector-artifact drain every 5 min and pins it to this handler (QUEUE-06)', async () => {
+      // Production trigger is the Cloud Scheduler entry — a path typo there would
+      // ship green here while the drain never runs in prod. Pin route↔scheduler.
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const here = path.dirname(new URL(import.meta.url).pathname);
+      const schedulerScript = path.resolve(here, '../../../../scripts/gcp-setup/cloud-scheduler.sh');
+      const contents = fs.readFileSync(schedulerScript, 'utf8');
+      const match = contents.match(/"drain-connector-artifacts\|([^|]+)\|(\/jobs\/[^|"]+)\|([^"]+)"/);
+
+      expect(match).not.toBeNull();
+      const [, schedule, scheduledPath, retryPolicy] = match!;
+      expect(schedule).toBe('*/5 * * * *');
+      expect(scheduledPath).toBe('/jobs/drain-connector-artifacts');
+      expect(retryPolicy).toBe('30s,120s,2');
+
+      const app = createApp();
+      const res = await request(app).post(`/cron${scheduledPath.replace('/jobs', '')}`);
+      expect(res.status).toBe(200);
+    });
   });
 
   describe('POST /docusign-connect-failures-poll', () => {

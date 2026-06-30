@@ -31,12 +31,33 @@
  *
  * §-credit: the charge is `debitAndEnqueueAnchor` AT SECURING and nowhere else.
  */
+import { z } from 'zod';
 import { db as defaultDb } from '../utils/db.js';
 import { logger as defaultLogger } from '../utils/logger.js';
 import { processBatchAnchors, type BatchAnchorResult } from './batch-anchor.js';
 import { callRpc } from '../utils/rpc.js';
 import { Sentry } from '../utils/sentry.js';
 import { config } from '../config.js';
+
+/**
+ * Strict Zod schema for the `anchors` insert this job persists (CLAUDE.md §1.2:
+ * Zod on every write path). The `metadata` carries semi-external artifact fields,
+ * so validate the whole row shape before insert — a malformed fingerprint /
+ * empty filename / wrong status is rejected before it reaches Postgres. The
+ * status-update writes (claim/markStatus/markFailed/markRequeued) persist
+ * server-controlled status LITERALS only, so they don't need a schema.
+ */
+const AnchorInsertPayload = z
+  .object({
+    fingerprint: z.string().regex(/^[0-9a-f]{64}$/, 'fingerprint must be 64-hex sha256'),
+    status: z.literal('PENDING'),
+    org_id: z.string().uuid(),
+    user_id: z.string().uuid(),
+    filename: z.string().min(1).max(255),
+    credential_type: z.literal('CONTRACT_POSTSIGNING'),
+    metadata: z.record(z.string(), z.unknown()),
+  })
+  .strict();
 
 /** Page size per drain pass per org — bounded so one org can't starve the cycle. */
 const DRAIN_LIMIT_DEFAULT = 50;
@@ -116,6 +137,15 @@ export interface ConnectorArtifactDrainResult {
  * fingerprint, no bytes (§1.6A). A failure to alert is swallowed so it never
  * aborts the drain.
  */
+/** Hard cap on the alert reason length at the sink — reasons can originate from
+ * raw DB/RPC/Error messages, so bound them defensively (single line, truncated)
+ * before they reach Sentry. Never leak an unbounded upstream payload. */
+const MAX_ALERT_REASON_LEN = 200;
+function boundReason(reason: string): string {
+  const oneLine = String(reason ?? '').replace(/\s+/g, ' ').trim();
+  return oneLine.length > MAX_ALERT_REASON_LEN ? `${oneLine.slice(0, MAX_ALERT_REASON_LEN)}…` : oneLine;
+}
+
 function defaultEmitAlert(alert: ConnectorArtifactAlert): void {
   try {
     Sentry.captureMessage(`connector-artifact-drain ${alert.scope} failure`, {
@@ -124,7 +154,7 @@ function defaultEmitAlert(alert: ConnectorArtifactAlert): void {
       extra: {
         org_id: alert.orgId,
         artifact_id: alert.artifactId,
-        reason: alert.reason,
+        reason: boundReason(alert.reason),
       },
     });
   } catch {
@@ -194,17 +224,25 @@ async function defaultMaterializeAnchor(
     user_id: userId,
     filename,
     credential_type: 'CONTRACT_POSTSIGNING' as const,
+    // Spread the artifact's own metadata FIRST so the trusted connector fields
+    // below always WIN — a (possibly attacker-influenced) metadata key named
+    // `connector_source` / `connector_artifact_id` / `external_ref` can never
+    // spoof the server-derived provenance fields.
     metadata: {
+      ...(row.metadata && typeof row.metadata === 'object' ? row.metadata : {}),
       connector_source: row.source,
       connector_artifact_id: row.id,
       external_ref: row.external_ref,
-      ...(row.metadata && typeof row.metadata === 'object' ? row.metadata : {}),
     },
   };
 
+  // Validate the persisted row before insert (§1.2). Parse failures throw into
+  // the per-row try/catch → the row is marked failed + alerted, never persisted.
+  const validatedPayload = AnchorInsertPayload.parse(insertPayload);
+
   const { data, error } = await deps.db
     .from('anchors')
-    .insert(insertPayload)
+    .insert(validatedPayload)
     .select('id, public_id')
     .single();
 

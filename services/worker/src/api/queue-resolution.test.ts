@@ -383,10 +383,12 @@ describe('handleRunOrgAnchorQueue', () => {
 
   it('sub-org admin → scoped 2xx: parent admin runs an APPROVED sub-org queue', async () => {
     // Caller is admin of parent org-1; targets sub-org sub-1 (approved affiliate).
-    // org_members answers: (target sub-1 → no row) then (parent org-1 → admin).
+    // The direct self/admin path is gated on targetOrgId===callerOrgId, so for a
+    // sub-org target it is SKIPPED entirely — only the parent admin lookup runs:
+    // org_members answers (parent org-1 → admin).
     installFromMock({
       profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
-      org_members: [{ data: null }, { data: { role: 'admin' } }],
+      org_members: [{ data: { role: 'admin' } }],
       organizations: { data: { parent_org_id: 'org-1', parent_approval_status: 'APPROVED' } },
     });
     processBatchAnchorsMock.mockResolvedValue(OWNER_OK);

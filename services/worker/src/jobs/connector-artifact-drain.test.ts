@@ -220,13 +220,35 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.batchAnchor).toHaveBeenCalledWith({ force: true, orgId: ORG_A });
   });
 
-  it('exactly-once: a duplicate-delivery row already claimed by another cycle is not re-anchored', async () => {
-    // Row is already in 'processing' (claimed by a concurrent cycle). The
-    // compare-and-set claim must match zero rows → skip, never double-anchor.
-    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'processing' })]);
+  it('exactly-once: a row that passes the SELECT but loses the claim CAS is not anchored', async () => {
+    // Model a real race: the row is DRAINABLE ('queued') so it is returned by the
+    // candidate SELECT and claimRow() IS invoked — but a concurrent winner already
+    // flipped it to 'processing', so the compare-and-set UPDATE matches zero rows.
+    // This exercises the claim CAS loser path (seeding 'processing' would instead
+    // drop the row at the SELECT and never hit claimRow, hiding a CAS regression).
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'queued' })]);
+
+    // Flip the row to 'processing' the instant the claim UPDATE evaluates, so the
+    // CAS `.in('status', ['pending','queued'])` filter no longer matches.
+    let claimAttempted = false;
+    const realFrom = h.deps.db.from.bind(h.deps.db);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (h.deps.db as any).from = (table: string) => {
+      const builder = realFrom(table);
+      const origUpdate = builder.update.bind(builder);
+      builder.update = (patch: Record<string, unknown>) => {
+        if (patch.status === 'processing' && !claimAttempted) {
+          claimAttempted = true;
+          h.rows[0].status = 'processing'; // concurrent winner got there first
+        }
+        return origUpdate(patch);
+      };
+      return builder;
+    };
 
     const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
 
+    expect(claimAttempted).toBe(true); // claimRow() WAS exercised
     expect(result.claimed).toBe(0);
     expect(h.materialize).not.toHaveBeenCalled();
     expect(h.debit).not.toHaveBeenCalled();
