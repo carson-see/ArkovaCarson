@@ -20,15 +20,23 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { GIT_BIN } from './lib/ciContext.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
+
+// Run the CLI via the CURRENT node binary (process.execPath is an absolute
+// path) + the tsx loader resolved from node_modules — no bare-binary $PATH
+// lookup (Sonar S4036). GIT_BIN is reused from ciContext for the same reason.
+const NODE_BIN = process.execPath;
+const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
 
 const VALID_FOOTER =
   '_Last refreshed: 2026-06-30 by carson — claims verified against gcloud/MCP/CI output._';
 
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  return execFileSync(GIT_BIN, args, { cwd, encoding: 'utf8' }).trim();
 }
 
 /** Run the check CLI in `cwd` (a fixture repo) with the given env. */
@@ -37,7 +45,7 @@ function runCheck(
   env: Record<string, string>,
 ): { code: number; out: string } {
   try {
-    const out = execFileSync('npx', ['tsx', resolve(cwd, 'scripts/ci/check-handoff-claims.ts')], {
+    const out = execFileSync(NODE_BIN, [TSX_CLI, resolve(cwd, 'scripts/ci/check-handoff-claims.ts')], {
       cwd,
       encoding: 'utf8',
       env: { ...process.env, ...env },

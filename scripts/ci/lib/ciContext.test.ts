@@ -43,11 +43,12 @@ beforeEach(async () => {
   delete process.env.GITHUB_REPOSITORY;
   delete process.env.PR_NUMBER;
   delete process.env.PR_LABELS;
-  // Pin the gh binary to the bare name so the existing `cmd === 'gh'` mock
-  // matchers stay valid. Production resolves `GH_BIN` to a fixed absolute path
-  // (Sonar S4036) defaulting to /usr/bin/gh; a dedicated test below proves the
-  // override is honored.
+  // Pin the gh/git binaries to the bare names so the existing `cmd === 'gh'` /
+  // `cmd === 'git'` mock matchers stay valid. Production resolves `GH_BIN` /
+  // `GIT_BIN` to fixed absolute paths (Sonar S4036) defaulting to /usr/bin/gh
+  // and /usr/bin/git; dedicated tests below prove the overrides are honored.
   process.env.GH_BIN = 'gh';
+  process.env.GIT_BIN = 'git';
 });
 
 afterEach(() => {
@@ -297,6 +298,29 @@ describe('changedFiles — two-dot diff, fail-closed base (ci/ciContext-lazy-bas
     mod = await import('./ciContext.js');
     // Old behavior returned [] here (gate passes wrongly). New behavior throws.
     expect(() => mod.changedFiles()).toThrow(/process\.exit\(1\)/);
+  });
+});
+
+describe('GIT_BIN — fixed absolute path, no bare-binary $PATH lookup (S4036)', () => {
+  it('spawns git at the resolved GIT_BIN path, not the bare `git` name', async () => {
+    process.env.GIT_BIN = '/custom/bin/git';
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === '/custom/bin/git' && args[0] === 'rev-parse') return `${FORTY_HEX}\n`;
+      if (cmd === '/custom/bin/git' && args[0] === 'diff') return 'a.ts\n';
+      return '';
+    });
+    mod = await import('./ciContext.js');
+    expect(mod.GIT_BIN).toBe('/custom/bin/git');
+    expect(mod.changedFiles()).toEqual(['a.ts']);
+    // Every git spawn used the absolute path; the bare `git` name was never used.
+    expect(execFileSyncMock.mock.calls.some((c) => c[0] === '/custom/bin/git')).toBe(true);
+    expect(execFileSyncMock.mock.calls.some((c) => c[0] === 'git')).toBe(false);
+  });
+
+  it('defaults GIT_BIN to /usr/bin/git when the env var is unset', async () => {
+    delete process.env.GIT_BIN;
+    mod = await import('./ciContext.js');
+    expect(mod.GIT_BIN).toBe('/usr/bin/git');
   });
 });
 

@@ -15,7 +15,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { REPO, getBaseRef, hasLabel, LABELS } from './lib/ciContext.js';
+import { REPO, GIT_BIN, getBaseRef, hasLabel, LABELS } from './lib/ciContext.js';
 
 const SCAN_PATHS = ['src/', 'services/worker/src/'];
 // Match `count: 'exact'` or `count: "exact"` with optional whitespace.
@@ -28,7 +28,7 @@ function countOccurrences(ref: 'HEAD' | string): number {
       const args = ['grep', '-E', '--count'];
       if (ref !== 'HEAD') args.push(PATTERN, ref, '--', path, ':!*test.ts', ':!*spec.ts');
       else args.push(PATTERN, '--', path, ':!*test.ts', ':!*spec.ts');
-      const out = execFileSync('git', args, {
+      const out = execFileSync(GIT_BIN, args, {
         cwd: REPO,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],

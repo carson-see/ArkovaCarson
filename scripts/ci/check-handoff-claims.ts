@@ -23,7 +23,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { REPO, getBaseRef, prBody as PR_BODY, prCommitsMsgs as PR_COMMITS_MSGS, hasLabel, LABELS } from './lib/ciContext.js';
+import { REPO, GIT_BIN, getBaseRef, prBody as PR_BODY, prCommitsMsgs as PR_COMMITS_MSGS, hasLabel, LABELS } from './lib/ciContext.js';
 
 const HANDOFF_PATH = resolve(REPO, 'HANDOFF.md');
 
@@ -130,7 +130,7 @@ function getDiff(): string {
   // still trips the gate.
   const base = getBaseRef({ required: true })!;
   try {
-    return execFileSync('git', ['diff', `${base}..HEAD`, '--', 'HANDOFF.md'], {
+    return execFileSync(GIT_BIN, ['diff', `${base}..HEAD`, '--', 'HANDOFF.md'], {
       cwd: REPO,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
