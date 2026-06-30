@@ -730,23 +730,70 @@ export interface ConnectorArtifactDrainCronDeps {
 }
 
 /**
- * Default org enumerator: distinct org_ids with at least one drainable row.
- * Bounded scan over the (org_id, status) index. Returns a de-duplicated list.
+ * Default cap on the number of ORGS enumerated per drain pass. This bounds the
+ * fan-out (one `drainConnectorArtifactsForOrg` call per org) and matches the
+ * RPC's own `LEAST(GREATEST(p_limit,1),1000)` clamp. It is a limit on ORGS, NOT
+ * on rows — the QUEUE-09 fix.
  */
-async function defaultListDrainableOrgIds(db: DrainDb): Promise<string[]> {
-  const { data, error } = await db
-    .from('connector_artifact')
-    .select('org_id')
-    .in('status', DRAINABLE_STATUSES as unknown as string[])
-    .limit(5000);
+const ORG_ENUM_LIMIT_DEFAULT = 200;
+
+/**
+ * Default org enumerator (QUEUE-09 / SCRUM-2352 fair enumeration). Calls the
+ * server-side `list_drainable_connector_orgs` RPC (migration 0350), which
+ * returns DISTINCT org_ids that have at least one drainable (`pending`|`queued`)
+ * row, ordered by oldest pending work first, capped on ORGS.
+ *
+ * This REPLACES the previous `SELECT org_id … LIMIT 5000` row scan + in-memory
+ * dedup. That scan had a STARVATION bug: a single org with >5000 drainable rows
+ * filled the entire 5000-row window, so every OTHER org with drainable work was
+ * never enumerated and never drained. The RPC does the DISTINCT server-side, so
+ * one noisy org contributes exactly ONE row and can never crowd out a quiet org.
+ *
+ * FAIL-SAFE: an RPC error is logged and yields an EMPTY list — it never throws
+ * out of the enumerator. Throwing here would abort the whole cron pass (and
+ * Cloud Scheduler would simply retry the same failure); returning empty lets the
+ * pass complete as a no-op and the next scheduled pass retry cleanly. The
+ * stuck-row reaper has already run before this point, so liveness is unaffected.
+ */
+export async function defaultListDrainableOrgIds(
+  db: DrainDb,
+  opts: { logger?: DrainLogger; limit?: number } = {},
+): Promise<string[]> {
+  const logger = opts.logger ?? (defaultLogger as unknown as DrainLogger);
+  const pLimit = Math.max(1, Math.min(opts.limit ?? ORG_ENUM_LIMIT_DEFAULT, 1000));
+
+  if (typeof db.rpc !== 'function') {
+    logger.error({ job: 'connector-artifact-drain' }, 'connector-artifact org enumeration: db.rpc unavailable');
+    return [];
+  }
+
+  const { data, error } = (await db.rpc('list_drainable_connector_orgs', { p_limit: pLimit })) as {
+    data: unknown;
+    error: { message?: string } | null;
+  };
+
   if (error) {
-    throw new Error(`connector-artifact org enumeration failed: ${(error as { message?: string }).message ?? 'unknown'}`);
+    // Fail safe: empty list (no throw) so the cron pass completes as a clean
+    // no-op and retries next schedule, rather than aborting the whole drain.
+    logger.error(
+      { error, job: 'connector-artifact-drain' },
+      `connector-artifact org enumeration failed: ${error.message ?? 'unknown'}`,
+    );
+    return [];
   }
-  const seen = new Set<string>();
-  for (const row of (data ?? []) as Array<{ org_id?: string }>) {
-    if (row.org_id) seen.add(row.org_id);
+
+  // The RPC returns SETOF uuid → an array of strings (supabase-js may also
+  // surface SETOF scalars as `{ <fn_name>: value }` rows; tolerate both).
+  const orgIds: string[] = [];
+  for (const row of (data ?? []) as Array<string | { list_drainable_connector_orgs?: string; org_id?: string }>) {
+    if (typeof row === 'string') {
+      if (row) orgIds.push(row);
+    } else if (row && typeof row === 'object') {
+      const v = row.list_drainable_connector_orgs ?? row.org_id;
+      if (typeof v === 'string' && v) orgIds.push(v);
+    }
   }
-  return [...seen];
+  return orgIds;
 }
 
 /**

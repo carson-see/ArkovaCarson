@@ -28,6 +28,7 @@ const {
   drainConnectorArtifactsForOrg,
   runConnectorArtifactDrain,
   reapStaleInFlightArtifacts,
+  defaultListDrainableOrgIds,
 } = await import('./connector-artifact-drain.js');
 type ConnectorArtifactDrainDeps =
   import('./connector-artifact-drain.js').ConnectorArtifactDrainDeps;
@@ -614,5 +615,80 @@ describe('reapStaleInFlightArtifacts (F-1 stuck-row reaper)', () => {
     const result = await reapStaleInFlightArtifacts({ db, logger, emitAlert, thresholdMs: 60_000 });
     expect(result.reaped).toBe(0);
     expect(emitAlert).not.toHaveBeenCalled();
+  });
+});
+
+describe('defaultListDrainableOrgIds (QUEUE-09 fair server-side org enum)', () => {
+  const ORG_C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+  /**
+   * Minimal `db.rpc('list_drainable_connector_orgs', …)`-shaped mock. The RPC
+   * returns `SETOF uuid`, which supabase-js surfaces as an array of plain
+   * strings. We capture the rpc name + args so the fairness/limit contract can
+   * be asserted, and we do NOT model `.from(...)` — the whole point of QUEUE-09
+   * is that the enumerator no longer scans rows, so any `.from` usage is a bug.
+   */
+  function makeRpcDb(opts: {
+    result?: unknown;
+    error?: string;
+  }): {
+    db: ConnectorArtifactDrainDeps['db'];
+    calls: Array<{ fn: string; args: unknown }>;
+  } {
+    const calls: Array<{ fn: string; args: unknown }> = [];
+    const db = {
+      from() {
+        throw new Error('defaultListDrainableOrgIds must NOT scan rows via .from — it must call the RPC');
+      },
+      rpc(fn: string, args: unknown) {
+        calls.push({ fn, args });
+        return Promise.resolve(
+          opts.error
+            ? { data: null, error: { message: opts.error } }
+            : { data: opts.result ?? [], error: null },
+        );
+      },
+    } as unknown as ConnectorArtifactDrainDeps['db'];
+    return { db, calls };
+  }
+
+  it('returns exactly the org_ids the RPC yields (no row scan, no in-memory dedup window)', async () => {
+    const { db, calls } = makeRpcDb({ result: [ORG_A, ORG_B, ORG_C] });
+    const orgIds = await defaultListDrainableOrgIds(db);
+    expect(orgIds).toEqual([ORG_A, ORG_B, ORG_C]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].fn).toBe('list_drainable_connector_orgs');
+    expect(calls[0].args).toMatchObject({ p_limit: expect.any(Number) });
+  });
+
+  it('fairness: a noisy org and a quiet org are BOTH enumerated — the noisy one cannot crowd out the quiet one', async () => {
+    // The RPC returns DISTINCT orgs (GROUP BY org_id), so a noisy org with
+    // thousands of drainable rows contributes exactly ONE entry. The old
+    // 5000-row scan would have filled its window entirely with the noisy org's
+    // rows and never surfaced the quiet org. Here BOTH appear, with the org
+    // whose oldest work waited longest first (ORDER BY min(created_at)).
+    const NOISY = ORG_A; // imagine >5000 drainable rows server-side
+    const QUIET = ORG_B; // a single, older, drainable row
+    const { db } = makeRpcDb({ result: [QUIET, NOISY] });
+    const orgIds = await defaultListDrainableOrgIds(db);
+    expect(orgIds).toContain(NOISY);
+    expect(orgIds).toContain(QUIET);
+    // The noisy org appears exactly once — it did not consume the whole window.
+    expect(orgIds.filter((o) => o === NOISY)).toHaveLength(1);
+  });
+
+  it('fails safe on RPC error: returns an empty list and never throws (the cron pass continues)', async () => {
+    const { db } = makeRpcDb({ error: 'rpc boom' });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    await expect(defaultListDrainableOrgIds(db, { logger })).resolves.toEqual([]);
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('passes a bounded default p_limit (cap on ORGS, not rows)', async () => {
+    const { db, calls } = makeRpcDb({ result: [] });
+    await defaultListDrainableOrgIds(db);
+    const args = calls[0].args as { p_limit: number };
+    expect(args.p_limit).toBeGreaterThan(0);
+    expect(args.p_limit).toBeLessThanOrEqual(1000);
   });
 });
