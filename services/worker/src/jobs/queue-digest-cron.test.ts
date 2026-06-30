@@ -185,6 +185,15 @@ describe('resolveScopeOrgIds — sub-org isolation', () => {
     const ids = await resolveScopeOrgIds(database as never, 'org-solo');
     expect(ids).toEqual(['org-solo']);
   });
+
+  it('throws on a scope-read error rather than dropping owned sub-orgs', async () => {
+    const database = {
+      from: vi.fn(() => makeQuery({ data: null, error: { msg: 'scope boom' } })),
+    };
+    await expect(
+      resolveScopeOrgIds(database as never, 'org-parent'),
+    ).rejects.toThrow(/failed to resolve sub-org scope/);
+  });
 });
 
 describe('readOrgMetrics — connector health filtering', () => {
@@ -237,6 +246,30 @@ describe('readOrgMetrics — connector health filtering', () => {
     await expect(
       readOrgMetrics(database as never, 'org-err', 'Err Org', now),
     ).rejects.toThrow(/failed to read open queue metrics/);
+  });
+
+  it('counts the Review Queue (PENDING_RESOLUTION), NOT ordinary PENDING anchors', async () => {
+    // Mirror /api/queue/pending: only PENDING_RESOLUTION items are review work.
+    // The mock does not itself filter by status, so we (a) seed a
+    // PENDING_RESOLUTION row and assert it counts as open review work, and
+    // (b) assert the SUT pushes the PENDING_RESOLUTION status predicate so a
+    // plain-PENDING anchoring backlog is never counted as review work.
+    const anchorQuery = makeQuery({ data: [{ created_at: '2026-06-29T07:00:00Z' }] });
+    const database = {
+      from: vi.fn((table: string) => {
+        if (table === 'anchors') return anchorQuery;
+        return makeQuery({ data: [] });
+      }),
+    };
+    const metrics = await readOrgMetrics(database as never, 'org-1', 'Org One', now);
+    expect(metrics.openCount).toBe(1);
+
+    const calls = (anchorQuery as unknown as { _calls: Array<[string, unknown, unknown]> })._calls;
+    const statusCall = calls.find(([m, col]) => m === 'in' && col === 'status');
+    expect(statusCall).toBeDefined();
+    expect(statusCall?.[2]).toEqual(['PENDING_RESOLUTION']);
+    // The ordinary anchoring backlog status must NOT be what the digest counts.
+    expect(statusCall?.[2]).not.toContain('PENDING');
   });
 });
 

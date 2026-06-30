@@ -37,8 +37,15 @@ import {
 
 /** Open review items older than this are "aged". */
 const AGED_THRESHOLD_HOURS = 48;
-/** Anchor statuses that represent an item still awaiting org review/action. */
-const OPEN_REVIEW_STATUSES = ['PENDING'] as const;
+/**
+ * Anchor statuses that represent a Review Queue item awaiting org action.
+ * This MUST mirror what the Review Queue itself counts: `/api/queue/pending`
+ * (`api/queue-resolution.ts`) selects `status = 'PENDING_RESOLUTION'`. The
+ * plain `PENDING` status is the ordinary anchoring backlog, NOT review work —
+ * counting it would email orgs with routine pending anchors while silently
+ * skipping orgs that actually have unresolved review items.
+ */
+const OPEN_REVIEW_STATUSES = ['PENDING_RESOLUTION'] as const;
 
 const DIGEST_SENT_EVENT = 'QUEUE_DIGEST_SENT';
 const DIGEST_FAILED_EVENT = 'QUEUE_DIGEST_FAILED';
@@ -224,6 +231,14 @@ export async function listOrgAdmins(database: DigestDb): Promise<AdminRecipient[
 export async function listDigestOptedInOrgIds(
   database: DigestDb,
 ): Promise<Set<string>> {
+  // Intentional cross-org discovery: this is the daily-digest opt-in scan over
+  // ALL orgs' QUEUE_DIGEST rules, run on the service-role client. There is no
+  // single caller org to filter to — and the result is used only to RESTRICT
+  // (fail-closed) which orgs may be emailed, never to widen access. Same
+  // exemption the sibling cron jobs use (queue-reminders.ts:155,
+  // rule-action-dispatcher.ts:126) — only the missing-org-filter half applies
+  // here since this query uses the typed `DigestDb`, not a `db as any` cast.
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data, error } = await database
     .from('organization_rules')
     .select('org_id')
@@ -256,10 +271,14 @@ export async function resolveScopeOrgIds(
     .select('id')
     .eq('parent_org_id', adminOrgId)
     .limit(1000);
-  if (!error && Array.isArray(data)) {
-    for (const row of data as Array<{ id: string }>) {
-      if (row.id && row.id !== adminOrgId) ids.push(row.id);
-    }
+  // A scope-read error must FAIL the admin (caught by the per-admin loop →
+  // counted failed → retried next pass), never silently fall back to the
+  // admin org alone: that would send a digest missing owned sub-org counts.
+  if (error || !Array.isArray(data)) {
+    throw new Error(`digest: failed to resolve sub-org scope for org ${adminOrgId}`);
+  }
+  for (const row of data as Array<{ id: string }>) {
+    if (row.id && row.id !== adminOrgId) ids.push(row.id);
   }
   return ids;
 }
