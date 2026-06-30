@@ -439,6 +439,29 @@ describe('handleRunOrgAnchorQueue', () => {
     expect(processBatchAnchorsMock).not.toHaveBeenCalled();
   });
 
+  it('cross-org → 403: a profile-level ORG_ADMIN of org-1 cannot run an UNRELATED org-2 queue (and never anchors it)', async () => {
+    // Regression for the `_org-auth` profile-level ORG_ADMIN fallback. The
+    // caller is a profile ORG_ADMIN of org-1 (no org_members row in org-2) and
+    // targets the UNRELATED org-2. Because the ORG_ADMIN role is OWN-ORG scoped,
+    // the direct admin check must fail for org-2; org-2 has no parent linkage to
+    // org-1, so the sub-org path also denies → 403, and processBatchAnchors is
+    // never invoked for the unrelated org.
+    installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'ORG_ADMIN', is_platform_admin: false } },
+      org_members: [{ data: null }],
+      organizations: { data: { parent_org_id: null, parent_approval_status: null } },
+    });
+
+    const { res, status, json } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq({ body: { org_id: '22222222-2222-4222-8222-222222222222' } }), res);
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'forbidden', message: 'Only organization admins can run anchoring jobs' },
+    });
+    expect(processBatchAnchorsMock).not.toHaveBeenCalled();
+  });
+
   it('cross-org → 403: a NON-approved sub-org is denied (parent_approval_status != APPROVED)', async () => {
     installFromMock({
       profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
