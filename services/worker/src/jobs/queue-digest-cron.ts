@@ -42,6 +42,7 @@ const OPEN_REVIEW_STATUSES = ['PENDING'] as const;
 
 const DIGEST_SENT_EVENT = 'QUEUE_DIGEST_SENT';
 const DIGEST_FAILED_EVENT = 'QUEUE_DIGEST_FAILED';
+const DIGEST_SUPPRESSED_EVENT = 'QUEUE_DIGEST_SUPPRESSED';
 const DIGEST_UNSUBSCRIBED_EVENT = 'QUEUE_DIGEST_UNSUBSCRIBED';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ export function buildDigestUrls(frontendUrl: string): DigestUrls {
  * `select` returns the loosely-typed PostgREST fluent builder; we only ever
  * read counts/timestamps/ids off it, never document columns (§1.6).
  */
-export type DigestQueryBuilder = {
+export interface DigestQueryBuilder {
   select: (cols: string) => DigestQueryBuilder;
   eq: (col: string, val: unknown) => DigestQueryBuilder;
   in: (col: string, vals: unknown[]) => DigestQueryBuilder;
@@ -80,7 +81,7 @@ export type DigestQueryBuilder = {
   not: (col: string, op: string, val: unknown) => DigestQueryBuilder;
   order: (col: string, opts: { ascending: boolean }) => DigestQueryBuilder;
   limit: (n: number) => Promise<{ data: unknown; error: unknown }>;
-};
+}
 
 export interface DigestDb {
   from(table: string): DigestQueryBuilder & {
@@ -142,11 +143,15 @@ export function createAuditBackedStore(database: DigestDb): DigestStore {
     },
 
     async recordDelivery(row: DeliveryLogRow) {
+      // SUPPRESSED is a delivery-skip marker, NOT an opt-out. `isSuppressed`
+      // fails CLOSED on a read error, so mapping SUPPRESSED →
+      // QUEUE_DIGEST_UNSUBSCRIBED would let a transient read failure forge a
+      // permanent unsubscribe row. Only a genuine opt-out writes UNSUBSCRIBED.
       const eventType =
         row.status === 'SENT'
           ? DIGEST_SENT_EVENT
           : row.status === 'SUPPRESSED'
-            ? DIGEST_UNSUBSCRIBED_EVENT
+            ? DIGEST_SUPPRESSED_EVENT
             : DIGEST_FAILED_EVENT;
       // Counts-only details — no document data, no PII beyond the recipient.
       const { error } = await database.from('audit_events').insert({
@@ -162,7 +167,12 @@ export function createAuditBackedStore(database: DigestDb): DigestStore {
         }),
       });
       if (error) {
+        // The delivery-log row IS the idempotency marker. If it fails to
+        // persist after a successful send, we must NOT report SENT — a later
+        // pass would otherwise re-send the same daily digest. Throw so the
+        // orchestrator/cron loop counts this admin as failed (and retries).
         logger.warn({ error, orgId: row.adminOrgId }, 'digest delivery-log write failed');
+        throw new Error(`digest: delivery-log write failed for org ${row.adminOrgId}`);
       }
     },
   };
@@ -235,7 +245,8 @@ export async function readOrgMetrics(
   const CAP = 1000;
 
   // Open items awaiting review (counts via a bounded id/created_at scan).
-  const { data: openRows } = await database
+  // Fail the run on a read error rather than silently reporting a quiet queue.
+  const { data: openRows, error: openError } = await database
     .from('anchors')
     .select('created_at')
     .eq('org_id', orgId)
@@ -243,21 +254,30 @@ export async function readOrgMetrics(
     .is('deleted_at', null)
     .order('created_at', { ascending: true })
     .limit(CAP);
-  const open = Array.isArray(openRows) ? openRows : [];
+  if (openError || !Array.isArray(openRows)) {
+    throw new Error(`digest: failed to read open queue metrics for org ${orgId}`);
+  }
+  const open = openRows;
   const openCount = open.length;
   const agedCount = open.filter(
     (r) => (r as { created_at: string }).created_at < agedCutoff,
   ).length;
 
-  // Failed-connector items: connector_alert_state degraded/disconnected rows
-  // for this org (a count of connectors needing attention).
-  let failedConnectorCount = 0;
-  const { data: connRows } = await database
+  // Failed-connector items: connector_alert_state rows for this org whose
+  // last_state is degraded/disconnected. The predicate is pushed into the
+  // query so HEALTHY connectors (last_state='connected', the default the
+  // health check upserts) are never counted as issues — otherwise a quiet
+  // org would still receive a digest claiming connector problems.
+  const { data: connRows, error: connError } = await database
     .from('connector_alert_state')
     .select('connector_id')
     .eq('org_id', orgId)
+    .in('last_state', ['degraded', 'disconnected'])
     .limit(CAP);
-  if (Array.isArray(connRows)) failedConnectorCount = connRows.length;
+  if (connError || !Array.isArray(connRows)) {
+    throw new Error(`digest: failed to read connector metrics for org ${orgId}`);
+  }
+  const failedConnectorCount = connRows.length;
 
   return { orgId, orgName, openCount, agedCount, failedConnectorCount };
 }
@@ -308,8 +328,11 @@ export async function runDailyQueueDigest(
     failed: 0,
   };
 
-  if (process.env.ENABLE_QUEUE_DIGEST === 'false') {
-    logger.info('Daily queue digest disabled via ENABLE_QUEUE_DIGEST=false');
+  // Default-off: this production email job sends ONLY when explicitly enabled
+  // via ENABLE_QUEUE_DIGEST=true (config.enableQueueDigest, boolFlag(false)).
+  // An omitted/false flag no-ops before enumerating admins or sending mail.
+  if (!config.enableQueueDigest) {
+    logger.info('Daily queue digest disabled; set ENABLE_QUEUE_DIGEST=true to enable');
     return result;
   }
 
