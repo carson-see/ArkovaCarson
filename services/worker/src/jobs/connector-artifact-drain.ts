@@ -120,10 +120,36 @@ export interface ConnectorArtifactDrainDeps {
   debitAndEnqueueAnchor: (args: { orgId: string; anchorId: string }) => Promise<DebitResult>;
   /** The single worker-owned anchoring path (org-scoped). */
   batchAnchor: (opts: { force: true; orgId: string }) => Promise<BatchAnchorResult>;
+  /**
+   * Re-read the SPECIFIC anchor (org-scoped) to confirm it advanced past PENDING
+   * before marking the artifact `anchored`. Returns null if the anchor is gone.
+   */
+  readAnchorStatus: (args: { orgId: string; anchorId: string }) => Promise<AnchorStatusRow | null>;
   /** Emit a bounded, PII-scrubbed alert. Never throws into the drain loop. */
   emitAlert: (alert: ConnectorArtifactAlert) => void;
   /** Page size per pass. */
   limit?: number;
+}
+
+/** Minimal anchor shape read back to confirm the specific anchor advanced. */
+export interface AnchorStatusRow {
+  id: string;
+  status: string;
+  chain_tx_id: string | null;
+}
+
+/**
+ * An anchor is "advanced past PENDING" (i.e. this artifact's anchoring is in
+ * flight or done) when its status has moved off PENDING into the broadcast/
+ * confirm lifecycle, OR a chain tx id is already recorded. The debit RPC moves
+ * PENDING → BROADCASTING, so a successful debit alone advances it; we still
+ * re-read the SPECIFIC anchor rather than trust the aggregate batch count.
+ */
+const ADVANCED_ANCHOR_STATUSES = new Set(['BROADCASTING', 'SUBMITTED', 'SECURED']);
+function isAnchorAdvanced(anchor: AnchorStatusRow | null): boolean {
+  if (!anchor) return false;
+  if (typeof anchor.chain_tx_id === 'string' && anchor.chain_tx_id.length > 0) return true;
+  return ADVANCED_ANCHOR_STATUSES.has(anchor.status);
 }
 
 export interface ConnectorArtifactDrainResult {
@@ -298,6 +324,31 @@ async function defaultDebitAndEnqueueAnchor(
   return { success: true };
 }
 
+/**
+ * Default anchor re-read: fetch the SPECIFIC anchor (org-scoped) so the drain
+ * can confirm IT advanced past PENDING before marking the artifact `anchored`,
+ * rather than trusting the aggregate batch count. Returns null if the row is
+ * missing (or on error — the caller treats null as "not confirmed advanced",
+ * keeping the artifact retryable rather than terminally-anchored on a flake).
+ */
+async function defaultReadAnchorStatus(
+  args: { orgId: string; anchorId: string },
+  deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
+): Promise<AnchorStatusRow | null> {
+  const { data, error } = await deps.db
+    .from('anchors')
+    .select('id, status, chain_tx_id')
+    .eq('id', args.anchorId)
+    .eq('org_id', args.orgId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    id: data.id as string,
+    status: data.status as string,
+    chain_tx_id: (data.chain_tx_id as string | null) ?? null,
+  };
+}
+
 function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifactDrainDeps {
   const db = injected.db ?? (defaultDb as unknown as DrainDb);
   return {
@@ -306,6 +357,7 @@ function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifa
     materializeAnchor: injected.materializeAnchor ?? ((row) => defaultMaterializeAnchor(row, { db })),
     debitAndEnqueueAnchor: injected.debitAndEnqueueAnchor ?? ((args) => defaultDebitAndEnqueueAnchor(args, { db })),
     batchAnchor: injected.batchAnchor ?? ((opts) => processBatchAnchors(opts)),
+    readAnchorStatus: injected.readAnchorStatus ?? ((args) => defaultReadAnchorStatus(args, { db })),
     emitAlert: injected.emitAlert ?? defaultEmitAlert,
     limit: injected.limit,
   };
@@ -372,10 +424,23 @@ export async function drainConnectorArtifactsForOrg(
     if (!claimed) continue;
     result.claimed += 1;
 
+    // Track whether the (idempotent) debit already landed: if a LATER step
+    // throws after a successful charge, we must NOT mark the artifact terminal
+    // `failed` (that would represent a CHARGED anchor as a failed artifact).
+    // Instead leave it RETRYABLE so the reaper re-resolves the SAME anchor
+    // (debit idempotent on anchorId → no double-charge).
+    let debitSucceeded = false;
+
     try {
       // 1) Materialize a PENDING anchor (fingerprint-only, §1.6A).
       const { anchorId } = await deps.materializeAnchor(row);
-      await markStatus(deps, orgId, row.id, 'processing', 'materialized', { anchor_id: anchorId });
+      // STATUS-GUARDED processing → materialized. A zero-row match = LOST LEASE
+      // (the reaper re-queued the row, or another worker reclaimed it). STOP the
+      // row before debiting/anchoring on a stale lease — and DON'T count it.
+      if (!(await markStatus(deps, orgId, row.id, 'processing', 'materialized', { anchor_id: anchorId }))) {
+        deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease before debit — stopping row');
+        continue;
+      }
 
       // 2) Charge AT SECURING — and ONLY here. Never at enqueue/claim.
       const debit = await deps.debitAndEnqueueAnchor({ orgId, anchorId });
@@ -389,36 +454,91 @@ export async function drainConnectorArtifactsForOrg(
           // daily drain re-claims it once credits land. The anchor already
           // materialized; debit_and_enqueue_anchor is idempotent on the anchor
           // id, so the retry re-drives the SAME single charge (never a double).
-          await markRequeued(deps, orgId, row.id);
-          deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'insufficient_credits_requeued' });
-          result.failed += 1;
+          if (await markRequeued(deps, orgId, row.id)) {
+            deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'insufficient_credits_requeued' });
+            result.failed += 1;
+          } else {
+            deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease at insufficient-credits requeue — stopping row');
+          }
           continue;
         }
         // Other (HARD) debit failures → mark failed + bounded alert. No
-        // batch-anchor, no silent drop. The row is reviewable.
-        await markFailed(deps, orgId, row.id, debit.error ?? 'debit_failed');
-        deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: debit.error ?? 'debit_failed' });
-        result.failed += 1;
+        // batch-anchor, no silent drop. The row is reviewable. If the guarded
+        // mark-failed matched zero rows the lease was lost — stop, don't count.
+        if (await markFailed(deps, orgId, row.id, debit.error ?? 'debit_failed')) {
+          deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: debit.error ?? 'debit_failed' });
+          result.failed += 1;
+        } else {
+          deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease at hard-debit-fail — stopping row');
+        }
+        continue;
+      }
+      debitSucceeded = true;
+
+      // 3) Batch-anchor through the single worker-owned org-scoped path. NOTE:
+      // the debit RPC already moved THIS anchor PENDING → BROADCASTING, and
+      // processBatchAnchors only claims status='PENDING' — so it does NOT
+      // process this (already-BROADCASTING) anchor and may legitimately return
+      // {processed:0, batchId:null} without throwing. The aggregate count is
+      // therefore NOT proof this artifact's anchor advanced.
+      const batch = await deps.batchAnchor({ force: true, orgId });
+
+      // 4) Confirm the SPECIFIC anchor advanced past PENDING (re-read by id),
+      // never the aggregate batch count. Only then is the artifact terminal.
+      const anchor = await deps.readAnchorStatus({ orgId, anchorId });
+      if (!isAnchorAdvanced(anchor)) {
+        // Debit succeeded (so it's charged + idempotent on re-drive) but the
+        // anchor did NOT advance — keep the artifact RETRYABLE ('materialized')
+        // rather than terminally 'anchored'. The reaper re-queues stale
+        // materialized rows; a re-drive re-resolves the SAME anchor
+        // (materialize idempotent on fingerprint, debit idempotent on anchorId)
+        // → no double-charge. Do NOT count anchored.
+        deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'anchor_not_advanced_retryable' });
+        deps.logger.warn(
+          { orgId, artifactId: row.id, anchorId, anchorStatus: anchor?.status ?? 'missing' },
+          'connector-artifact debit ok but anchor not advanced — left materialized (retryable)',
+        );
         continue;
       }
 
-      // 3) Batch-anchor through the single worker-owned org-scoped path.
-      const batch = await deps.batchAnchor({ force: true, orgId });
-
-      // 4) Terminal: mark the artifact anchored + backlink the anchor.
-      await markStatus(deps, orgId, row.id, 'materialized', 'anchored', { anchor_id: anchorId });
+      // STATUS-GUARDED materialized → anchored. A zero-row match = LOST LEASE
+      // (reaper/another worker took it) → stop, don't count anchored.
+      if (!(await markStatus(deps, orgId, row.id, 'materialized', 'anchored', { anchor_id: anchorId }))) {
+        deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease before mark-anchored — stopping row');
+        continue;
+      }
       result.anchored += 1;
       deps.logger.info(
-        { orgId, artifactId: row.id, anchorId, batchId: batch.batchId, processed: batch.processed },
+        { orgId, artifactId: row.id, anchorId, batchId: batch.batchId, processed: batch.processed, anchorStatus: anchor!.status },
         'connector-artifact anchored',
       );
     } catch (err) {
       // Per-row failure isolation: this row fails, the loop continues.
       const reason = err instanceof Error ? err.message : 'drain row failed';
-      await markFailed(deps, orgId, row.id, reason);
-      deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason });
       deps.logger.error({ error: err, orgId, artifactId: row.id }, 'connector-artifact row drain failed');
-      result.failed += 1;
+
+      if (debitSucceeded) {
+        // The charge already landed; a post-debit throw (e.g. batch step) must
+        // NOT mark the artifact terminal `failed` (a CHARGED anchor represented
+        // as failed). Leave it RETRYABLE: re-queue materialized→queued so the
+        // next drain re-resolves the SAME anchor (debit idempotent on anchorId
+        // → no double-charge). Guarded → a lost lease just stops the row.
+        if (await markRequeued(deps, orgId, row.id)) {
+          deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: 'post_debit_error_requeued' });
+        } else {
+          deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease at post-debit-error requeue — stopping row');
+        }
+        continue;
+      }
+
+      // Pre-debit failure → terminal `failed`. The guarded mark-failed matching
+      // zero rows = lost lease → stop, don't count.
+      if (await markFailed(deps, orgId, row.id, reason)) {
+        deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason });
+        result.failed += 1;
+      } else {
+        deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease at catch-mark-failed — stopping row');
+      }
     }
   }
 
@@ -426,6 +546,15 @@ export async function drainConnectorArtifactsForOrg(
   return result;
 }
 
+/**
+ * STATUS-GUARDED transition that RETURNS whether a row actually matched.
+ * `.eq('status', from)` means a row the reaper has already re-queued (or another
+ * worker reclaimed/anchored) is NOT clobbered by a slow/zombie worker finishing
+ * its old pass — the UPDATE matches zero rows. `.select('id').maybeSingle()`
+ * surfaces that zero-row case as `false` (a LOST LEASE), so the caller can STOP
+ * the row instead of pressing on with a stale lease. A DB error is also `false`
+ * (fail-closed — don't proceed on an unconfirmed transition).
+ */
 async function markStatus(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
@@ -433,19 +562,20 @@ async function markStatus(
   from: 'processing' | 'materialized',
   to: 'materialized' | 'anchored',
   extra: Record<string, unknown> = {},
-): Promise<void> {
-  // STATUS-GUARDED transition: `.eq('status', from)` means a row the reaper has
-  // already re-queued (or reclaimed by another worker) is NOT clobbered by a
-  // slow/zombie worker finishing its old pass — it simply matches zero rows.
-  const { error } = await deps.db
+): Promise<boolean> {
+  const { data, error } = await deps.db
     .from('connector_artifact')
     .update({ status: to, updated_at: new Date().toISOString(), ...extra })
     .eq('id', id)
     .eq('org_id', orgId)
-    .eq('status', from);
+    .eq('status', from)
+    .select('id')
+    .maybeSingle();
   if (error) {
     deps.logger.warn({ error, orgId, artifactId: id, from, to }, `connector-artifact mark-${to} failed`);
+    return false;
   }
+  return data != null;
 }
 
 /**
@@ -456,38 +586,63 @@ async function markStatus(
  * `markStatus` pattern: if the reaper has already re-queued the row (or another
  * worker reclaimed it), this matches zero rows and does NOT clobber it.
  */
+/**
+ * RETRYABLE requeue: reset a row back to 'queued' so the next daily drain
+ * re-claims it. Used for insufficient_credits — a transient condition, not a
+ * hard failure. STATUS-GUARDED on the in-flight `materialized` status (the row
+ * is materialized by step 1 before the debit runs) and RETURNS whether a row
+ * matched: a zero-row update means the reaper/another worker already took the
+ * row (LOST LEASE) → the caller must NOT also count it.
+ */
 async function markRequeued(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
   id: string,
-): Promise<void> {
-  const { error } = await deps.db
+): Promise<boolean> {
+  const { data, error } = await deps.db
     .from('connector_artifact')
     .update({ status: 'queued', updated_at: new Date().toISOString() })
     .eq('id', id)
     .eq('org_id', orgId)
-    .eq('status', 'materialized');
+    .eq('status', 'materialized')
+    .select('id')
+    .maybeSingle();
   if (error) {
     deps.logger.warn({ error, orgId, artifactId: id }, 'connector-artifact mark-requeued failed');
+    return false;
   }
+  return data != null;
 }
 
+/**
+ * Terminal `failed` transition — STATUS-GUARDED and RETURNS whether a row
+ * matched. The guard is `status IN ('processing','materialized')` (the only
+ * in-flight statuses this worker holds a lease in): a row the reaper already
+ * re-queued ('queued') or another worker already anchored ('anchored') will NOT
+ * be flipped back to 'failed' — the LOST-LEASE case matches zero rows and the
+ * caller stops the row without counting it.
+ */
 async function markFailed(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
   id: string,
   reason: string,
-): Promise<void> {
-  const { error } = await deps.db
+): Promise<boolean> {
+  const { data, error } = await deps.db
     .from('connector_artifact')
     .update({ status: 'failed', updated_at: new Date().toISOString() })
     .eq('id', id)
-    .eq('org_id', orgId);
+    .eq('org_id', orgId)
+    .in('status', ['processing', 'materialized'])
+    .select('id')
+    .maybeSingle();
   if (error) {
-    // A row stuck in 'processing' because we couldn't even mark it failed is the
-    // ONE thing we must never hide — log loudly.
-    deps.logger.error({ error, orgId, artifactId: id, reason }, 'connector-artifact mark-failed failed (row stuck processing)');
+    // A row stuck in-flight because we couldn't even mark it failed is the ONE
+    // thing we must never hide — log loudly.
+    deps.logger.error({ error, orgId, artifactId: id, reason }, 'connector-artifact mark-failed failed (row stuck in-flight)');
+    return false;
   }
+  return data != null;
 }
 
 // ── F-1 stuck-row reaper (liveness) ──────────────────────────────────────────

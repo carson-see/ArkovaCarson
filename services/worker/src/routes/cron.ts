@@ -461,11 +461,11 @@ cronRouter.post('/drain-connector-artifacts', async (_req, res) => {
     }
     res.json(result);
   } catch (error) {
-    // Scrub: log only the bounded error message, never the full thrown object,
-    // on this connector-artifact path (§1.6A — an upstream failure must not leak
-    // connector payload fields into logs).
-    const message = error instanceof Error ? error.message : 'unknown error';
-    logger.error({ message }, 'Connector-artifact drain pass failed');
+    // Scrub: log only the bounded error message/string, never the full thrown
+    // object, on this connector-artifact path (§1.6A — an upstream failure must
+    // not leak connector payload fields into logs).
+    const err = error instanceof Error ? error.message : String(error);
+    logger.error({ err }, 'Connector-artifact drain pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
