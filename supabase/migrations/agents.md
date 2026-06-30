@@ -49,6 +49,14 @@ Reserved by the Train D MVP-launch train (GitHub milestone #2). **Pre-soak; not 
 
 Train D soaks once (consolidated RC) after Train C (#1154) merges, then rebases onto the new `main`; see HANDOFF.md + the "Release Soak Protection — No-Restart Process" Confluence page.
 
+## Lane 2 migration reservation (2026-06-29)
+
+Reserved by the Lane 2 QUEUE-09 follow-up (stacked on QUEUE-06 PR #1366). **Pre-soak; not yet merged.** Next free after main head `0348` (`0349` is reserved by open PR #1260): `0350`.
+
+| Prefix | Branch | Story | File | Status |
+|---|---|---|---|---|
+| `0350` | `lane2/s2-queue09-fair-enum` (stacked on `lane2/s2-queue0605-wt` / PR #1366) | QUEUE-09 (SCRUM-2352 follow-up) | `0350_list_drainable_connector_orgs.sql` | RESERVED — pre-soak |
+
 ## Recent migrations (PR #817)
 
 - **0311_scrum1599_public_anchor_provenance.sql**: Replaces `get_public_anchor` so public verification can return `SUPERSEDED` records and CSI-03 source provenance fields from sanitized anchor metadata.
