@@ -23,7 +23,7 @@ Every task updates its ticket (DoR checked, DoD checked, status transitioned, Co
 Every Jira story + epic (To Do / In Progress / Blocked / Done / Closed) MUST have a Confluence page. Markdown files in `docs/` are NOT documentation — they are either historical context or internal engineering notes. Auditors read Confluence. User has repeated this 500+ times; see `memory/feedback_confluence_is_the_doc.md`.
 
 ### 5. Bug log is canonical (Confluence from 2026-04-26)
-Every bug found or fixed must land in the master tracker: [Bug Tracker — Master Log](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270). Google Sheet (https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4) is historical archive only — new bugs land in Confluence.
+Every bug found or fixed must land in the master tracker: [Bug Tracker — Master Log](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514) (canonical, rebuilt 2026-06-24; old pageId 28115270 is archived/read-only — do not log there). Google Sheet (https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4) is historical archive only — new bugs land in Confluence.
 
 ### 6. UAT every UI change
 Dev server up at 1280px and 375px. Screenshots in the PR. Regressions logged in bug tracker.

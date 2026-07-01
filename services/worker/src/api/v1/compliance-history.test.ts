@@ -38,6 +38,14 @@ describe('GET /api/v1/compliance/history', () => {
 
   it('returns history for authenticated user', async () => {
     vi.mocked(db.from).mockImplementation((table: string) => {
+      // Caller org now resolves via profiles.org_id first (canonical
+      // precedence — see compliance/auth-helpers.ts), with org_members as a
+      // fallback. Seed both so the gate resolves regardless of ordering.
+      if (table === 'profiles') {
+        return {
+          select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { org_id: 'org-1' }, error: null }) }) }),
+        } as never;
+      }
       if (table === 'org_members') {
         return {
           select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: { org_id: 'org-1' }, error: null }) }) }),
@@ -71,6 +79,14 @@ describe('GET /api/v1/compliance/history', () => {
 
   it('accepts custom days parameter', async () => {
     vi.mocked(db.from).mockImplementation((table: string) => {
+      // Caller org now resolves via profiles.org_id first (canonical
+      // precedence — see compliance/auth-helpers.ts), with org_members as a
+      // fallback. Seed both so the gate resolves regardless of ordering.
+      if (table === 'profiles') {
+        return {
+          select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { org_id: 'org-1' }, error: null }) }) }),
+        } as never;
+      }
       if (table === 'org_members') {
         return {
           select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: { org_id: 'org-1' }, error: null }) }) }),

@@ -36,7 +36,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve, sep } from 'node:path';
 import {
   REPO,
-  baseRef,
+  getBaseRef,
   prBody,
   changedFiles,
   resolveCommitOrFail,
@@ -259,7 +259,82 @@ const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx|js|jsx)$/;
 const PUBLIC_CONTRACT_DOC_RE = /^docs\/(?:api\/|guides\/API_GUIDE\.md)/;
 const DOCS_ONLY_RE = /^(?:docs\/|README\.md|ARKOVA_WORKSPACE_README\.md|WORKSPACE_STATUS\.md|memory\/.*\.md$)/;
 
-function isT0OnlyFile(file: string): boolean {
+/**
+ * Supplies the unified diff body (the lines after each `@@` hunk header, i.e.
+ * context + `+`/`-` lines) for a single changed file, or `null` when it cannot
+ * be obtained (no git history, deleted file, binary, error). Threaded through
+ * {@link isT0OnlyFile} / {@link requiredTierFor} so the classifier can, for the
+ * narrow {@link DEPLOY_WORKER_WORKFLOW} carve-out, look at WHAT changed in the
+ * file rather than only its name. Everything else stays name-only. A `null`
+ * return always fails closed (keeps the path-rule tier).
+ */
+export type DiffProvider = (file: string) => string | null;
+
+interface TierClassifyOpts {
+  diffProvider?: DiffProvider;
+}
+
+const DEPLOY_WORKER_WORKFLOW = '.github/workflows/deploy-worker.yml';
+
+// A changed line in deploy-worker.yml that is "harmless" for prod runtime: a
+// GitHub-Actions `uses:` pin (the Dependabot bump target), a YAML comment, or a
+// blank line. Anything else (env, secrets, min/max-instances, image, region,
+// service account, --set-env-vars, scaling, …) is a real runtime change.
+const DEPLOY_WORKER_USES_LINE_RE = /^[^\S\r\n]*-?[^\S\r\n]*uses:[^\S\r\n]*\S/;
+const YAML_COMMENT_OR_BLANK_RE = /^[^\S\r\n]*(?:#.*)?$/;
+
+/**
+ * True iff a unified diff for {@link DEPLOY_WORKER_WORKFLOW} changes ONLY
+ * `uses:` action-version/SHA lines (plus YAML comments / blank lines). Used to
+ * exempt a Dependabot GitHub-Actions version bump from the T2 deploy-config rule
+ * without weakening the gate for real runtime-config edits.
+ *
+ * Fail-closed: returns false for an empty/`null` diff, and for any diff that
+ * contains at least one added/removed line which is not a `uses:`/comment/blank
+ * line. A diff with no added/removed lines at all is also false (nothing
+ * attestable as a uses-only bump → keep the path-rule tier).
+ */
+export function isDeployWorkerUsesOnlyBump(diff: string | null | undefined): boolean {
+  if (!diff || diff.trim().length === 0) return false;
+
+  let sawChange = false;
+  for (const rawLine of diff.split(/\r?\n/)) {
+    // Skip unified-diff file headers (`+++`/`---`) and hunk headers (`@@ … @@`);
+    // they are not content lines.
+    if (rawLine.startsWith('+++') || rawLine.startsWith('---') || rawLine.startsWith('@@')) {
+      continue;
+    }
+    if (rawLine.startsWith('+') || rawLine.startsWith('-')) {
+      const content = rawLine.slice(1);
+      if (DEPLOY_WORKER_USES_LINE_RE.test(content) || YAML_COMMENT_OR_BLANK_RE.test(content)) {
+        sawChange = true;
+        continue;
+      }
+      // A real (non-uses) changed line → not a uses-only bump. Fail closed.
+      return false;
+    }
+    // Context line (leading space) or stray line — ignored for the decision.
+  }
+  return sawChange;
+}
+
+/**
+ * deploy-worker.yml is normally a T2 prod-runtime surface. The ONLY exemption is
+ * a Dependabot GitHub-Actions `uses:`-version bump (verified against the file's
+ * diff via {@link isDeployWorkerUsesOnlyBump}); such a change touches no prod
+ * runtime config and is treated as CI-tooling (T0). Fail-closed: without a diff
+ * provider, or when the diff can't be obtained, the file stays T2.
+ *
+ * Possible future carve-out (NOT implemented — a separate policy call for the
+ * operator): a `@types/*`-only manifest/lockfile bump. Deliberately left out.
+ */
+function isDeployWorkerUsesOnlyExempt(file: string, opts?: TierClassifyOpts): boolean {
+  if (file !== DEPLOY_WORKER_WORKFLOW) return false;
+  if (!opts?.diffProvider) return false;
+  return isDeployWorkerUsesOnlyBump(opts.diffProvider(file));
+}
+
+function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
   if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
   if (TEST_FILE_RE.test(file) || file.endsWith('agents.md')) return true;
   // Dependency bumps that don't touch a core runtime surface are T0:
@@ -273,22 +348,36 @@ function isT0OnlyFile(file: string): boolean {
   // manifests — those govern the prod worker / app runtime dependency tree, so a
   // manifest bump there must still earn a tier (the lockfile counterparts stay T0).
   if (/^(?:package-lock\.json|(?:packages|services|integrations)\/[^/]+\/package-lock\.json|(?:packages|integrations)\/[^/]+\/package\.json)$/.test(file)) return true;
+  // deploy-worker.yml is a T2 PATH_RULE, but a Dependabot `uses:`-only action
+  // bump touches no prod runtime config — exempt it to CI-tooling (T0) when the
+  // diff confirms it. Checked BEFORE the PATH_RULES.some() T2 short-circuit.
+  if (isDeployWorkerUsesOnlyExempt(file, opts)) return true;
+  // PROOF-08 (SCRUM-2341): the proof test-fixtures subtree lives under
+  // services/worker/src/, which matches the T2 `services/worker/src/` PATH_RULE.
+  // Its loader (index.ts) + JSON are imported ONLY by test suites (verified no
+  // non-test importer), so there is no prod-runtime path. Exempt it to T0 BEFORE
+  // the PATH_RULES.some() short-circuit — same shape as the deploy-worker carve-out
+  // above (a T0 allowlist entry that has to win over a matching PATH_RULE).
+  if (/^services\/worker\/src\/proof\/fixtures\//.test(file)) return true;
   if (PATH_RULES.some((rule) => rule.pattern.test(file))) return false;
   return STAGING_TOOLING_ALLOW.some((re) => re.test(file))
     || DOCS_ONLY_RE.test(file)
     || /^\.github\/(?:workflows\/|ISSUE_TEMPLATE\/|pull_request_template\.md|CONTRIBUTING\.md|dependabot\.yml)/.test(file);
 }
 
-export function requiredTierFor(files: string[]): { tier: Tier; reason: string } {
+export function requiredTierFor(
+  files: string[],
+  opts?: TierClassifyOpts,
+): { tier: Tier; reason: string } {
   if (files.length === 0) return { tier: 'T0', reason: 'no changed files' };
-  if (files.every(isT0OnlyFile)) {
+  if (files.every((f) => isT0OnlyFile(f, opts))) {
     return { tier: 'T0', reason: 'docs/tests/CI/tooling-only' };
   }
 
   let best: Tier = 'T1';
   let reason = 'default frontend / additive change';
   for (const f of files) {
-    if (isT0OnlyFile(f)) continue;
+    if (isT0OnlyFile(f, opts)) continue;
     for (const rule of PATH_RULES) {
       if (rule.pattern.test(f) && TIER_RANK[rule.minTier] > TIER_RANK[best]) {
         best = rule.minTier;
@@ -952,6 +1041,26 @@ function changedFilesBetween(fromSha: string, toSha: string): string[] | null {
   }
 }
 
+/**
+ * Default {@link DiffProvider} for the live CI path: the unified diff of a single
+ * file between `baseRef` and `HEAD`. `null` on any failure (no history, deleted,
+ * binary), which makes the deploy-worker carve-out fail closed (keeps T2).
+ */
+function gitFileDiffProvider(baseSha: string): DiffProvider {
+  return (file: string): string | null => {
+    try {
+      const out = execFileSync(
+        GIT_BIN,
+        ['diff', '--unified=0', `${baseSha}...HEAD`, '--', file],
+        { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      return out.trim().length > 0 ? out : null;
+    } catch {
+      return null;
+    }
+  };
+}
+
 function hasNamedApprover(value: string): boolean {
   const match = /\bapproved by:\s*([^.;\n]+)/i.exec(value);
   return match !== null && isFilledValue(match[1] ?? null);
@@ -1072,6 +1181,13 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-ledger-numeric-integrity(\.test)?\.ts$/,
   /^scripts\/ci\/check-agents-md-migration-collision(\.test)?\.ts$/,
   /^scripts\/ci\/compute-merge-authority(\.test)?\.ts$/,
+  // R0 verification/baseline CI gates (SCRUM-1252 / 1254 / R0-3). These run
+  // ONLY in CI to lint PR metadata + repo invariants (HANDOFF.md claims,
+  // `count: 'exact'` callsite baseline, coverage-threshold monotonicity). They
+  // never ship to prod runtime → T0 tooling.
+  /^scripts\/ci\/check-handoff-claims(\.test)?\.ts$/,
+  /^scripts\/ci\/check-count-exact-baseline(\.test)?\.ts$/,
+  /^scripts\/ci\/check-coverage-monotonic(\.test)?\.ts$/,
   /^scripts\/ci\/snapshots\//, // CI baselines/snapshots — tooling, never prod runtime
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
@@ -1112,6 +1228,23 @@ const STAGING_TOOLING_ALLOW = [
   // services/edge is the peripheral Cloudflare edge worker (PR #884), not the
   // deployed Cloud Run worker — its manifest stays T0 by explicit carve-out.
   /^services\/edge\/package\.json$/,
+  // PI-0 S2 (SCRUM-2341 / verifier track): @arkova/verifier + @arkova/verifier-cli
+  // are new MIT-licensed STANDALONE library/CLI packages. They are NOT imported by
+  // the deployed Cloud Run worker (services/worker) or the frontend (src/) — verified
+  // no `@arkova/verifier` import exists under services/** or src/**. No migration, no
+  // API/contract surface, no prod runtime: they run only in their own clean-room CI
+  // job and as a developer/auditor CLI. Zero prod-runtime impact → T0 tooling. (The
+  // packages/*/package.json + package-lock.json + eslint.config.js + agents.md within
+  // them are already covered by the peripheral-package / lockfile / eslint / agents.md
+  // rules; these two prefixes additionally cover their src/, tsconfig, vitest config,
+  // fixtures, README, LICENSE, .gitignore, and generator script.)
+  /^packages\/verifier\//,
+  /^packages\/verifier-cli\//,
+  // NOTE: services/worker/src/proof/fixtures/ (PROOF-08, #1357) is ALSO T0, but it
+  // matches the T2 `services/worker/src/` PATH_RULE, so it is exempted earlier in
+  // isT0OnlyFile() (BEFORE the PATH_RULES short-circuit) rather than here — an entry
+  // in this list alone would never be reached for it. See that carve-out for the
+  // test-only justification.
   /agents\.md$/,
   /^eslint-rules\//,
   /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
@@ -1145,6 +1278,12 @@ interface CheckOptions {
   prNumber?: number;
   nowMs?: number;
   rcManifestLoader?: RcManifestLoader;
+  /**
+   * Per-file unified-diff source for content-aware tier classification (the
+   * deploy-worker.yml `uses:`-only carve-out). Defaults to a git-backed provider
+   * in {@link main}; tests inject a stub. Absent → carve-out fails closed (T2).
+   */
+  diffProvider?: DiffProvider;
 }
 
 function addErrors(result: CheckResult, errors: string[]): void {
@@ -1656,7 +1795,7 @@ export function check(opts: CheckOptions): CheckResult {
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
 
-  const required = requiredTierFor(files);
+  const required = requiredTierFor(files, { diffProvider: opts.diffProvider });
   if (required.tier === 'T0') {
     result.notes.push(`T0 CI-only PR (${required.reason}) — no staging soak evidence required.`);
     return result;
@@ -1713,6 +1852,8 @@ export function check(opts: CheckOptions): CheckResult {
 }
 
 function main(): void {
+  // Required base: fail closed if it can't resolve (getBaseRef exits 1).
+  const baseRef = getBaseRef({ required: true })!;
   const files = changedFiles();
   const currentHeadSha = resolveCommitOrFail(
     process.env.HEAD_REF_SHA || process.env.GITHUB_SHA || 'HEAD',
@@ -1720,7 +1861,14 @@ function main(): void {
   );
   const parsedPrNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10);
   const prNumber = Number.isFinite(parsedPrNumber) ? parsedPrNumber : undefined;
-  const result = check({ body: prBody, files, headSha: currentHeadSha, baseSha: baseRef, prNumber });
+  const result = check({
+    body: prBody,
+    files,
+    headSha: currentHeadSha,
+    baseSha: baseRef,
+    prNumber,
+    diffProvider: gitFileDiffProvider(baseRef),
+  });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);
   if (result.ok) {

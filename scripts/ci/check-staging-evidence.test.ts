@@ -4,6 +4,7 @@ import {
   extractDeclaredTier,
   hasEvidenceSection,
   hasResidualRiskException,
+  isDeployWorkerUsesOnlyBump,
   isFrontendOnlyChange,
   isStagingToolingOnly,
   missingFields,
@@ -11,6 +12,37 @@ import {
   soakDurationErrors,
   TIER_SPECS,
 } from './check-staging-evidence.js';
+
+// Unified diff (the body git emits after the `@@` hunk header) limited to an
+// `actions/<name>@vN` (or `@<sha>`) bump in .github/workflows/deploy-worker.yml.
+const USES_ONLY_DEPLOY_WORKER_DIFF = `@@ -41,7 +41,7 @@ jobs:
+       - name: Checkout
+-        uses: actions/checkout@v6
++        uses: actions/checkout@v7
+       - name: Setup Node
+         uses: actions/setup-node@v4
+`;
+
+// A real runtime-config change in deploy-worker.yml: bumps --min-instances. This
+// MUST keep classifying T2 — it is exactly the prod-runtime surface the gate guards.
+const RUNTIME_CONFIG_DEPLOY_WORKER_DIFF = `@@ -78,7 +78,7 @@ jobs:
+           --region=us-central1 \\
+-          --min-instances=1 \\
++          --min-instances=2 \\
+           --max-instances=10 \\
+`;
+
+// A mixed diff: a uses: bump AND a real env-var change in the same file. Fail
+// closed — the presence of any non-uses runtime line keeps the whole file T2.
+const MIXED_DEPLOY_WORKER_DIFF = `@@ -41,7 +41,7 @@ jobs:
+       - name: Checkout
+-        uses: actions/checkout@v6
++        uses: actions/checkout@v7
+@@ -90,7 +90,7 @@ jobs:
+           --set-env-vars \\
+-          ENABLE_AI_EXTRACTION=true \\
++          ENABLE_AI_EXTRACTION=false \\
+`;
 
 const T3_BODY = `
 ## Summary
@@ -235,6 +267,167 @@ describe('check-staging-evidence', () => {
 
     it('keeps the root package.json above T0 (guards runtime deps)', () => {
       expect(requiredTierFor(['package.json']).tier).not.toBe('T0');
+    });
+
+    // ── PI-0 S2 verifier track / PROOF-08 (SCRUM-2341): zero-prod-runtime
+    // reclassification. @arkova/verifier + @arkova/verifier-cli are standalone
+    // MIT packages not imported by the worker or frontend; the proof fixtures
+    // loader is imported only by tests. All three classify T0. ──
+    it('returns T0 for the @arkova/verifier package (standalone lib, no prod runtime)', () => {
+      // Exact #1349 changed-file set.
+      expect(
+        requiredTierFor([
+          'packages/verifier/agents.md',
+          'packages/verifier/package-lock.json',
+          'packages/verifier/package.json',
+          'packages/verifier/src/independent-node.test.ts',
+          'packages/verifier/src/independent-node.ts',
+          'packages/verifier/src/index.ts',
+          'packages/verifier/tsconfig.json',
+          'packages/verifier/vitest.config.ts',
+        ]).tier,
+      ).toBe('T0');
+    });
+
+    it('returns T0 for the @arkova/verifier-cli package set (#1353, standalone CLI + CI)', () => {
+      // Exact #1353 changed-file set (verifier-cli + a re-touch of verifier + ci.yml).
+      expect(
+        requiredTierFor([
+          '.github/workflows/ci.yml',
+          'packages/verifier-cli/.gitignore',
+          'packages/verifier-cli/LICENSE',
+          'packages/verifier-cli/README.md',
+          'packages/verifier-cli/agents.md',
+          'packages/verifier-cli/eslint.config.js',
+          'packages/verifier-cli/fixtures/README.md',
+          'packages/verifier-cli/fixtures/generate-fixtures.mjs',
+          'packages/verifier-cli/fixtures/published-keys.json',
+          'packages/verifier-cli/fixtures/signed-bundle.json',
+          'packages/verifier-cli/fixtures/synthetic-vectors.json',
+          'packages/verifier-cli/package-lock.json',
+          'packages/verifier-cli/package.json',
+          'packages/verifier-cli/src/cli.ts',
+          'packages/verifier-cli/src/index.ts',
+          'packages/verifier-cli/src/lib/independent-endpoint.ts',
+          'packages/verifier-cli/src/lib/report.ts',
+          'packages/verifier-cli/src/lib/signature.ts',
+          'packages/verifier-cli/src/types.ts',
+          'packages/verifier-cli/src/vendor/canonical-json.ts',
+          'packages/verifier-cli/src/vendor/merkle-verify.ts',
+          'packages/verifier-cli/src/vendor/merkle.ts',
+          'packages/verifier-cli/src/verify.ts',
+          'packages/verifier-cli/test/cli.test.ts',
+          'packages/verifier-cli/test/conformance.test.ts',
+          'packages/verifier-cli/test/helpers.ts',
+          'packages/verifier-cli/test/independent-endpoint.test.ts',
+          'packages/verifier-cli/test/signature.test.ts',
+          'packages/verifier-cli/test/sync-recompute.test.ts',
+          'packages/verifier-cli/tsconfig.json',
+          'packages/verifier-cli/vitest.config.ts',
+          'packages/verifier/agents.md',
+          'packages/verifier/package-lock.json',
+          'packages/verifier/package.json',
+          'packages/verifier/src/independent-node.test.ts',
+          'packages/verifier/src/independent-node.ts',
+          'packages/verifier/src/index.ts',
+          'packages/verifier/tsconfig.json',
+          'packages/verifier/vitest.config.ts',
+        ]).tier,
+      ).toBe('T0');
+    });
+
+    it('returns T0 for the proof test-fixtures set (#1357, test-only loader, no prod importer)', () => {
+      // Exact #1357 changed-file set.
+      expect(
+        requiredTierFor([
+          'services/worker/src/proof/agents.md',
+          'services/worker/src/proof/fixtures/README.md',
+          'services/worker/src/proof/fixtures/index.ts',
+          'services/worker/src/proof/fixtures/proof-fixtures.json',
+          'services/worker/src/proof/fixtures/proof-fixtures.test.ts',
+          'services/worker/src/utils/merkle-verify.test.ts',
+        ]).tier,
+      ).toBe('T0');
+    });
+
+    it('does NOT over-broaden: a real worker-runtime file stays above T0 (control)', () => {
+      // The allowlist is scoped to packages/verifier*, packages/verifier-cli,
+      // and services/worker/src/proof/fixtures/ only — a genuine worker-runtime
+      // file must keep its production tier (no regression).
+      expect(
+        requiredTierFor(['services/worker/src/api/v1/verify-proof.ts']).tier,
+      ).not.toBe('T0');
+      // Sibling non-fixtures files under services/worker/src/proof/ stay T2.
+      expect(
+        requiredTierFor(['services/worker/src/proof/signed-bundle.ts']).tier,
+      ).not.toBe('T0');
+    });
+  });
+
+  // ── deploy-worker.yml `uses:`-only Dependabot bump exemption ──
+  // A Dependabot GitHub-Actions bump that only edits a `uses: actions/<x>@vN`
+  // line in deploy-worker.yml touches zero prod runtime config (min-instances,
+  // env, secrets, image). It should classify CI-tooling (T0), not T2. A real
+  // runtime-config edit, or any mixed diff, must stay T2 (fail-closed).
+  describe('isDeployWorkerUsesOnlyBump', () => {
+    it('returns true for a diff that only bumps a uses: action version', () => {
+      expect(isDeployWorkerUsesOnlyBump(USES_ONLY_DEPLOY_WORKER_DIFF)).toBe(true);
+    });
+
+    it('returns false for a runtime-config (--min-instances) change', () => {
+      expect(isDeployWorkerUsesOnlyBump(RUNTIME_CONFIG_DEPLOY_WORKER_DIFF)).toBe(false);
+    });
+
+    it('returns false for a mixed uses-bump + env-var change (fail-closed)', () => {
+      expect(isDeployWorkerUsesOnlyBump(MIXED_DEPLOY_WORKER_DIFF)).toBe(false);
+    });
+
+    it('returns false for an empty / unobtainable diff (fail-closed)', () => {
+      expect(isDeployWorkerUsesOnlyBump('')).toBe(false);
+      expect(isDeployWorkerUsesOnlyBump(null)).toBe(false);
+    });
+  });
+
+  describe('requiredTierFor with deploy-worker.yml diff content', () => {
+    const file = '.github/workflows/deploy-worker.yml';
+    const diffProvider = (diff: string | null) => (f: string) => (f === file ? diff : null);
+
+    it('classifies a uses:-only deploy-worker.yml bump as T0 (CI tooling)', () => {
+      expect(
+        requiredTierFor([file], { diffProvider: diffProvider(USES_ONLY_DEPLOY_WORKER_DIFF) }).tier,
+      ).toBe('T0');
+    });
+
+    it('keeps a --min-instances deploy-worker.yml change at T2', () => {
+      expect(
+        requiredTierFor([file], { diffProvider: diffProvider(RUNTIME_CONFIG_DEPLOY_WORKER_DIFF) }).tier,
+      ).toBe('T2');
+    });
+
+    it('keeps a mixed (uses bump + env change) deploy-worker.yml diff at T2 (fail-closed)', () => {
+      expect(
+        requiredTierFor([file], { diffProvider: diffProvider(MIXED_DEPLOY_WORKER_DIFF) }).tier,
+      ).toBe('T2');
+    });
+
+    it('keeps deploy-worker.yml at T2 when no diff provider is supplied (fail-closed)', () => {
+      expect(requiredTierFor([file]).tier).toBe('T2');
+    });
+
+    it('keeps deploy-worker.yml at T2 when the diff cannot be obtained (fail-closed)', () => {
+      expect(
+        requiredTierFor([file], { diffProvider: diffProvider(null) }).tier,
+      ).toBe('T2');
+    });
+
+    it('does not exempt other workflow runtime files via the deploy-worker carve-out', () => {
+      // cloudbuild.yaml is a separate T2 rule; the uses:-only carve-out is scoped
+      // to deploy-worker.yml only.
+      expect(
+        requiredTierFor(['services/worker/cloudbuild.yaml'], {
+          diffProvider: () => USES_ONLY_DEPLOY_WORKER_DIFF,
+        }).tier,
+      ).toBe('T2');
     });
   });
 
@@ -702,6 +895,26 @@ describe('check-staging-evidence', () => {
         files: ['services/worker/src/jobs/batch-anchor.ts'],
       });
       expect(r.ok).toBe(true);
+    });
+
+    it('passes a Dependabot uses:-only deploy-worker.yml bump as T0 (no evidence needed)', () => {
+      const r = check({
+        body: '## Summary\nBump actions/checkout v6 → v7 (Dependabot).',
+        files: ['.github/workflows/deploy-worker.yml'],
+        diffProvider: () => USES_ONLY_DEPLOY_WORKER_DIFF,
+      });
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/T0/i);
+    });
+
+    it('still fails a real deploy-worker.yml runtime-config change without T2 evidence', () => {
+      const r = check({
+        body: '## Summary\nBump --min-instances 1 → 2.',
+        files: ['.github/workflows/deploy-worker.yml'],
+        diffProvider: () => RUNTIME_CONFIG_DEPLOY_WORKER_DIFF,
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/tier declaration|T2/i);
     });
 
     describe('release-candidate manifest coverage', () => {

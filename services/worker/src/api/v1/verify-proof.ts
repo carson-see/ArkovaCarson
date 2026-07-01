@@ -16,6 +16,7 @@
 import { Router, Request, Response } from 'express';
 import { verifyMerkleInclusion } from '../../utils/merkle-verify.js';
 import { createSignedBundle, staticEd25519Signer, type SignerFn } from '../../proof/signed-bundle.js';
+import { buildBoundProofPayload } from '../../proof/did-binding.js';
 import {
   gcpKmsEd25519Signer,
   createRealGcpKmsEd25519Client,
@@ -318,8 +319,14 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
             } as ProofErrorResponse);
             return;
           }
+          // PROOF-06 (SCRUM-2339): bind the bundle to the issuer DID before
+          // signing, so a verifier follows one chain — issuer DID →
+          // assertionMethod key (signer.keyId) → anchored proof.
           const bundle = await createSignedBundle({
-            payload: result as unknown as Record<string, unknown>,
+            payload: buildBoundProofPayload(
+              result as unknown as Record<string, unknown>,
+              signer.keyId,
+            ),
             sign: signer.sign,
           });
           res.json(bundle);
@@ -362,8 +369,14 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
         } as ProofErrorResponse);
         return;
       }
+      // PROOF-06 (SCRUM-2339): bind the bundle to the issuer DID before
+      // signing, so a verifier follows one chain — issuer DID →
+      // assertionMethod key (signer.keyId) → anchored proof.
       const bundle = await createSignedBundle({
-        payload: result as unknown as Record<string, unknown>,
+        payload: buildBoundProofPayload(
+          result as unknown as Record<string, unknown>,
+          signer.keyId,
+        ),
         sign: signer.sign,
       });
       res.json(bundle);

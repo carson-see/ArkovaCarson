@@ -141,12 +141,46 @@ export const bitcoinAnchorMachine = defineMachine({
     },
 
     // Chain submission fails after broadcast — tx dropped from mempool.
-    // Maps to: recover_stuck_broadcasts() RPC or chain-maintenance reorg detection
+    // Maps to: recover_stuck_broadcasts() RPC or chain-maintenance reorg detection.
+    // Lane 1 i4 / BUG-C: guarded not(legalHold). A legal-hold anchor must never
+    // reach PENDING (legalHoldPreventsSecuredToRevoked). The worker selects
+    // that drive this transition now carry an explicit `.eq('legal_hold',
+    // false)` so a held SUBMITTED anchor is never abandoned SUBMITTED → PENDING.
     chainSubmitFail: {
       params: { a: "Anchors" },
       guard: and(
         eq(index(status, param("a")), lit("SUBMITTED")),
-        eq(index(actor, param("a")), lit("worker"))
+        eq(index(actor, param("a")), lit("worker")),
+        not(index(legalHold, param("a")))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("PENDING")),
+        setMap("chainTxId", param("a"), lit(null)),
+        setMap("actor", param("a"), lit("client")),
+        setMap("fingerprintLocked", param("a"), lit(false)),
+        setMap("credentialTypeLocked", param("a"), lit(false))
+      ]
+    },
+
+    // NET-1 / NET-3 stuck/dropped-TX abandon path — the 72h + max-rebroadcast
+    // recovery in services/worker/src/jobs/chain-maintenance.ts
+    // (abandonSubmittedAnchor / rebroadcastDroppedTransactions). A SUBMITTED
+    // anchor whose TX never confirms (or is dropped from mempool) is reverted
+    // to PENDING for resubmission with a fresh fee.
+    //
+    // Lane 1 i4 / BUG-C: guarded not(legalHold). Before the fix, the NET-1 +
+    // NET-3 candidate selects lacked the `.eq('legal_hold', false)` filter that
+    // detectReorgs already had, so a held SUBMITTED anchor could be rewound
+    // SUBMITTED → PENDING — violating legalHoldPreventsSecuredToRevoked.
+    // Modeled as its own action (vs reusing chainSubmitFail) so the spec names
+    // the exact production code path the fix freezes. chainTxId is cleared
+    // because abandonment discards the stuck TX.
+    chainSubmitAbandon: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("SUBMITTED")),
+        eq(index(actor, param("a")), lit("worker")),
+        not(index(legalHold, param("a")))
       ),
       updates: [
         setMap("status", param("a"), lit("PENDING")),
@@ -238,6 +272,31 @@ export const bitcoinAnchorMachine = defineMachine({
         // anymore. fingerprint + credential_type stay locked because the
         // anchor has been broadcast (immutable from the user's POV regardless
         // of confirmation state).
+        setMap("metadataLocked", param("a"), lit(false))
+      ]
+    },
+
+    // Lane 1 i4 / BUG-A: same-height reorg revert. detectReorgs() now persists
+    // and compares chain_block_hash, not just chain_block_height. A reorg that
+    // re-mines the TX into a DIFFERENT block at the SAME height (storedHash !==
+    // confirmed block_hash, equal height) used to leave the anchor falsely
+    // SECURED because the prior height-only check saw no change. With the
+    // stored block hash, that case now reverts SECURED → SUBMITTED. Modeled as
+    // its own action so the spec records the equal-height revert trigger; the
+    // transition is otherwise identical to reorgDetected (same not(legalHold)
+    // freeze, chainTxId retained, metadata lock unwound). The legacy
+    // height-only fallback (storedHash NULL) is strictly-better superset
+    // behavior and does not weaken any invariant.
+    reorgSameHeightRevert: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("SECURED")),
+        eq(index(actor, param("a")), lit("worker")),
+        eq(index(chainTxId, param("a")), lit("has_tx")),
+        not(index(legalHold, param("a")))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("SUBMITTED")),
         setMap("metadataLocked", param("a"), lit(false))
       ]
     }

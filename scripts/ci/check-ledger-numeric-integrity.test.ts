@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
   auditLedgerRows,
+  auditLedgerVsRepo,
   auditLocalFiles,
   parseLedgerPayload,
   type LedgerRow,
@@ -108,6 +109,70 @@ describe('auditLedgerRows — prod ledger numeric integrity (SCRUM-2500 / S0-4.2
       { version: '0331' },
     ];
     expect(() => auditLedgerRows(rows)).not.toThrow();
+  });
+});
+
+describe('auditLedgerVsRepo — prod-ahead-of-repo orphan rows (0347 incident, 2026-06-29)', () => {
+  const FILES = [BASELINE, '0345_a.sql', '0346_b.sql', '0347_lane1_i4_chain_block_hash_reorg.sql', '0348_c.sql'];
+
+  it('passes when every numeric prod ledger row has a matching repo file', () => {
+    const rows: LedgerRow[] = [
+      { version: '0346', name: '0346_b' },
+      { version: '0347', name: '0347_lane1_i4_chain_block_hash_reorg' },
+      { version: '0348', name: '0348_c' },
+    ];
+    expect(auditLedgerVsRepo(rows, FILES)).toEqual([]);
+  });
+
+  it('FAILS on a clean numeric prod row with no repo file — the exact 0347-applied-out-of-band shape', () => {
+    // Repo is missing 0347 (PR #1307 unmerged); prod ledger has it. auditLedgerRows
+    // would pass this row (numeric version, no dup) — only the repo cross-check catches it.
+    const filesWithout0347 = [BASELINE, '0345_a.sql', '0346_b.sql', '0348_c.sql'];
+    const rows: LedgerRow[] = [
+      { version: '0347', name: '0347_lane1_i4_chain_block_hash_reorg' },
+    ];
+    expect(auditLedgerRows(rows)).toEqual([]); // format-valid, slips the existing pass
+    const v = auditLedgerVsRepo(rows, filesWithout0347);
+    expect(v.map((x) => x.code)).toContain('ledger-orphan-prod-row');
+    expect(v.some((x) => x.message.includes('0347'))).toBe(true);
+  });
+
+  it('does NOT flag a repo file that is not yet in the prod ledger (normal pre-RTE-apply window)', () => {
+    // Repo has 0349 (merged), prod ledger does not yet (awaiting post-merge apply). No violation.
+    const files = [...FILES, '0349_new_merged.sql'];
+    const rows: LedgerRow[] = [{ version: '0348', name: '0348_c' }];
+    expect(auditLedgerVsRepo(rows, files)).toEqual([]);
+  });
+
+  it('honors the exemption set for a documented orphan prefix', () => {
+    const filesWithout0347 = [BASELINE, '0346_b.sql', '0348_c.sql'];
+    const rows: LedgerRow[] = [{ version: '0347', name: '0347_lane1_i4_chain_block_hash_reorg' }];
+    expect(auditLedgerVsRepo(rows, filesWithout0347)).not.toEqual([]);
+    expect(auditLedgerVsRepo(rows, filesWithout0347, new Set(['0347']))).toEqual([]);
+  });
+
+  it('FAILS on a descriptive-named orphan (numeric version, free-text MCP name) — the version-keyed catch', () => {
+    // An MCP apply_migration records a free-text name over a numeric version.
+    // A name-keyed check would miss this; the version-keyed check catches it.
+    const filesWithout0292 = [BASELINE, '0290_a.sql', '0293_c.sql'];
+    const rows: LedgerRow[] = [{ version: '0292', name: 'microsoft_graph_webhook_nonces' }];
+    expect(auditLedgerRows(rows)).toEqual([]); // descriptive name → existing pass ignores it
+    const v = auditLedgerVsRepo(rows, filesWithout0292);
+    expect(v.map((x) => x.code)).toContain('ledger-orphan-prod-row');
+    expect(v.some((x) => x.message.includes('0292'))).toBe(true);
+  });
+
+  it('ignores baseline / operator-named ledger rows (not repo-file-tracked)', () => {
+    const rows: LedgerRow[] = [
+      { version: '00000000000000', name: '00000000000000_baseline_at_main_HEAD' },
+      { version: 'public_verification_revoked', name: 'public_verification_revoked' },
+    ];
+    expect(auditLedgerVsRepo(rows, FILES)).toEqual([]);
+  });
+
+  it('matches a lettered-suffix repo file (0055b_) against a 0055_ ledger prefix', () => {
+    const rows: LedgerRow[] = [{ version: '0055', name: '0055_seed_alignment' }];
+    expect(auditLedgerVsRepo(rows, [BASELINE, '0055b_seed_alignment_idempotent.sql'])).toEqual([]);
   });
 });
 

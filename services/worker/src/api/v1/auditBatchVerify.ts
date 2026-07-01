@@ -14,6 +14,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
 
 const router = Router();
 
@@ -63,16 +64,10 @@ router.post('/', async (req: Request, res: Response) => {
 
     const { credential_ids, sample_percentage, seed } = parsed.data;
 
-    // Get user's org
-    const { data: membership } = await db
-      .from('org_members')
-      .select('org_id, role')
-      .eq('user_id', userId)
-      .in('role', ['owner', 'admin'])
-      .limit(1)
-      .single();
-
-    if (!membership) {
+    // Get user's org (owner-inclusive: resolves via profiles.org_id, then
+    // checks org_members owner/admin OR profile ORG_ADMIN OR platform admin).
+    const orgId = await getCallerOrgId(userId);
+    if (!orgId || !(await isCallerOrgAdmin(userId, orgId))) {
       res.status(403).json({ error: 'Organization administrator role required' });
       return;
     }
@@ -86,7 +81,7 @@ router.post('/', async (req: Request, res: Response) => {
       const { data: allAnchors } = await db
         .from('anchors')
         .select('public_id')
-        .eq('org_id', membership.org_id)
+        .eq('org_id', orgId)
         .is('deleted_at', null);
 
       if (!allAnchors || allAnchors.length === 0) {
@@ -171,7 +166,7 @@ router.post('/', async (req: Request, res: Response) => {
     await db.from('audit_events').insert({
       event_type: 'AUDIT_BATCH_VERIFY',
       event_category: 'SYSTEM',
-      org_id: membership.org_id,
+      org_id: orgId,
       details: JSON.stringify({
         total_verified: results.length,
         passed: results.filter(r => r.status === 'PASS').length,
@@ -183,7 +178,7 @@ router.post('/', async (req: Request, res: Response) => {
     });
 
     const totalPopulation = sample_percentage
-      ? (await db.from('anchors').select('*', { count: 'exact', head: true }).eq('org_id', membership.org_id).is('deleted_at', null)).count || 0
+      ? (await db.from('anchors').select('*', { count: 'exact', head: true }).eq('org_id', orgId).is('deleted_at', null)).count || 0
       : targetIds.length;
 
     res.json({

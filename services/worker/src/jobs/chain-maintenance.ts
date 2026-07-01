@@ -21,6 +21,7 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
+import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { z } from 'zod';
 import type { Json } from '../types/database.types.js';
 
@@ -151,6 +152,188 @@ interface ReorgCheckResult {
   reverted: number;
 }
 
+/** Recently-SECURED anchor row shape selected by detectReorgs. */
+type ReorgCandidateAnchor = {
+  id: string;
+  public_id: string | null;
+  org_id: string | null;
+  chain_tx_id: string | null;
+  chain_block_height: number | null;
+  chain_block_hash: string | null;
+  fingerprint: string | null;
+};
+
+/**
+ * Lane 1 i4 / BUG-B: revert a reorged tx's anchors SECURED → SUBMITTED and
+ * RETRACT the earlier confirmation signal to subscribers.
+ *
+ * When check-confirmations promoted these anchors it dispatched
+ * `anchor.secured` + `credential.status_changed` (→ SECURED). A reorg undoes
+ * that, but nothing told subscribers — so a credential that flipped back to
+ * unconfirmed still looks SECURED downstream. Here we:
+ *   1. compare-and-set status SECURED → SUBMITTED (only count rows we actually
+ *      flipped, so a concurrent revoke/supersede race isn't miscounted);
+ *   2. dispatch the EXISTING `credential.status_changed` event (no new event
+ *      type), org-scoped, previous_status SECURED → new_status SUBMITTED, for
+ *      anchors that carry a credential_type;
+ *   3. write one `anchor.reorg_reverted` audit row per org, with aggregated
+ *      dispatch outcome counts (mirrors the check-confirmations bulk pattern —
+ *      failures are recorded, never silently dropped).
+ *
+ * Returns the number of anchors whose status was actually reverted.
+ */
+async function revertReorgedAnchors(
+  affected: ReorgCandidateAnchor[],
+  txId: string,
+  auditReason: string,
+  logMessage: string,
+): Promise<number> {
+  if (affected.length === 0) return 0;
+
+  // Step 1: compare-and-set each anchor SECURED → SUBMITTED.
+  const revertedAnchors: ReorgCandidateAnchor[] = [];
+  for (const anchor of affected) {
+    const { data: updatedRow, error: updateError } = await db.from('anchors')
+      .update({ status: 'SUBMITTED' })
+      .eq('id', anchor.id)
+      .eq('status', 'SECURED')
+      .select('id')
+      .maybeSingle();
+
+    if (updateError) {
+      logger.error(
+        { anchorId: anchor.id, txId, error: updateError },
+        'Failed to revert reorged anchor SECURED → SUBMITTED',
+      );
+      continue;
+    }
+    if (!updatedRow) {
+      // Anchor left SECURED before our compare-and-set (revoke/supersede/race).
+      logger.debug(
+        { anchorId: anchor.id, txId },
+        'Reorged anchor changed before SECURED → SUBMITTED revert — skipped',
+      );
+      continue;
+    }
+    revertedAnchors.push(anchor);
+    logger.warn({ anchorId: anchor.id, txId }, logMessage);
+  }
+
+  if (revertedAnchors.length === 0) return 0;
+
+  // Step 2: look up credential_type for the reverted anchors so we can also
+  // dispatch credential.status_changed (which requires credential_type).
+  const publicIds = revertedAnchors
+    .map((a) => a.public_id)
+    .filter((p): p is string => Boolean(p));
+  const credentialTypeByPublicId = new Map<string, string>();
+  if (publicIds.length > 0) {
+    const { data: credRows, error: credErr } = await db
+      .from('anchors')
+      .select('public_id, credential_type')
+      .in('public_id', publicIds);
+    if (credErr) {
+      logger.warn(
+        { txId, error: credErr },
+        'Reorg retraction: credential_type lookup failed — anchor reverts still recorded, credential.status_changed skipped for this tx',
+      );
+    } else if (Array.isArray(credRows)) {
+      for (const row of credRows) {
+        const r = row as { public_id?: unknown; credential_type?: unknown };
+        if (typeof r.public_id === 'string' && typeof r.credential_type === 'string') {
+          credentialTypeByPublicId.set(r.public_id, r.credential_type);
+        }
+      }
+    }
+  }
+
+  // Step 3: dispatch credential.status_changed (org-scoped) + tally per-org
+  // outcomes so the audit row records dispatched/failed, never first-error-only.
+  const reorgTimestamp = new Date().toISOString();
+  type OrgOutcome = {
+    reverted: number;
+    dispatched: number;
+    failed: number;
+    sample_failures: Array<{ public_id: string; error: string }>;
+  };
+  const perOrg = new Map<string | null, OrgOutcome>();
+  const slotFor = (orgId: string | null): OrgOutcome => {
+    const slot = perOrg.get(orgId) ?? { reverted: 0, dispatched: 0, failed: 0, sample_failures: [] };
+    perOrg.set(orgId, slot);
+    return slot;
+  };
+
+  for (const anchor of revertedAnchors) {
+    const slot = slotFor(anchor.org_id);
+    slot.reverted++;
+
+    const credentialType = anchor.public_id
+      ? credentialTypeByPublicId.get(anchor.public_id)
+      : undefined;
+    // credential.status_changed is org-scoped + requires org_id, public_id, and
+    // credential_type. Anchors missing any of those skip the credential.* event
+    // (the status revert + audit row still happen).
+    if (!anchor.org_id || !anchor.public_id || !credentialType) continue;
+
+    try {
+      await dispatchWebhookEvent(anchor.org_id, 'credential.status_changed', anchor.public_id, {
+        public_id: anchor.public_id,
+        credential_type: credentialType,
+        previous_status: 'SECURED',
+        new_status: 'SUBMITTED',
+        changed_at: reorgTimestamp,
+      });
+      slot.dispatched++;
+    } catch (emitErr) {
+      slot.failed++;
+      if (slot.sample_failures.length < 5) {
+        slot.sample_failures.push({
+          public_id: anchor.public_id,
+          error: emitErr instanceof Error ? emitErr.message : String(emitErr),
+        });
+      }
+      logger.warn(
+        { txId, anchorId: anchor.id, error: emitErr },
+        'Reorg retraction: credential.status_changed dispatch failed (DLQ holds durable retry)',
+      );
+    }
+  }
+
+  // One anchor.reorg_reverted audit row per org touched by this tx.
+  const auditRows = Array.from(perOrg.entries()).map(([orgId, outcome]) => ({
+    event_type: 'anchor.reorg_reverted',
+    event_category: 'ANCHOR' as const,
+    actor_id: null,
+    target_type: 'anchor',
+    // Attribute to the first reverted anchor in this org for a stable target_id.
+    target_id: revertedAnchors.find((a) => a.org_id === orgId)?.id ?? txId,
+    org_id: orgId,
+    details: JSON.stringify({
+      chain_tx_id: txId,
+      reason: auditReason,
+      previous_status: 'SECURED',
+      new_status: 'SUBMITTED',
+      anchors_reverted: outcome.reverted,
+      credential_status_changed_dispatched: outcome.dispatched,
+      credential_status_changed_failed: outcome.failed,
+      sample_failures: outcome.sample_failures,
+    }),
+  }));
+  try {
+    const { error: auditErr } =
+      auditRows.length === 1
+        ? await db.from('audit_events').insert(auditRows[0])
+        : await db.from('audit_events').insert(auditRows);
+    if (auditErr) {
+      logger.warn({ txId, error: auditErr }, 'Failed to insert anchor.reorg_reverted audit row(s)');
+    }
+  } catch (auditError) {
+    logger.warn({ txId, error: auditError }, 'anchor.reorg_reverted audit insert threw');
+  }
+
+  return revertedAnchors.length;
+}
+
 /**
  * CRIT-2: Detect chain reorganizations for recently SECURED anchors.
  *
@@ -191,9 +374,12 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
     // chainSubmitFail path could then unwind it to PENDING in violation
     // of legalHoldPreventsSecuredToRevoked. Reorgs on legal-hold
     // anchors require operator intervention.
+    // Lane 1 i4 / BUG-A + BUG-B: also pull chain_block_hash (same-height reorg
+    // detection) plus public_id + org_id (org-scoped credential.status_changed
+    // retraction when a reort reverts SECURED → SUBMITTED).
     const { data: recentAnchors, error } = await db
       .from('anchors')
-      .select('id, chain_tx_id, chain_block_height, fingerprint')
+      .select('id, public_id, org_id, chain_tx_id, chain_block_height, chain_block_hash, fingerprint')
       .eq('status', 'SECURED')
       .eq('legal_hold', false)
       .gte('chain_block_height', minBlockHeight)
@@ -219,32 +405,18 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
           signal: AbortSignal.timeout(10000),
         });
 
+        const affected = recentAnchors.filter((a) => a.chain_tx_id === txId);
+
         if (!resp.ok) {
           if (resp.status === 404) {
             // TX not found — potential reorg or mempool drop
             reorgsDetected++;
-            const affected = recentAnchors.filter((a) => a.chain_tx_id === txId);
-            for (const anchor of affected) {
-              await db.from('anchors')
-                .update({ status: 'SUBMITTED' })
-                .eq('id', anchor.id)
-                .eq('status', 'SECURED');
-              reverted++;
-              logger.warn(
-                { anchorId: anchor.id, txId },
-                'REORG DETECTED: TX not found — reverted SECURED → SUBMITTED',
-              );
-            }
-
-            await db.from('audit_events').insert({
-              event_type: 'anchor.reorg_detected',
-              event_category: 'ANCHOR',
-              actor_id: null,
-              org_id: null,
-              target_type: 'anchor',
-              target_id: affected[0]?.id ?? txId,
-              details: `Reorg detected: TX ${txId} not found. ${affected.length} anchor(s) reverted.`,
-            });
+            reverted += await revertReorgedAnchors(
+              affected,
+              txId,
+              `TX ${txId} not found (potential reorg or mempool drop)`,
+              'REORG DETECTED: TX not found — reverted SECURED → SUBMITTED',
+            );
           }
           continue;
         }
@@ -254,34 +426,54 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
         if (!txData.status.confirmed) {
           // TX exists but no longer confirmed — reorg
           reorgsDetected++;
-          const affected = recentAnchors.filter((a) => a.chain_tx_id === txId);
-          for (const anchor of affected) {
-            await db.from('anchors')
-              .update({ status: 'SUBMITTED' })
-              .eq('id', anchor.id)
-              .eq('status', 'SECURED');
-            reverted++;
-          }
-
-          logger.warn(
-            { txId, affectedCount: affected.length },
+          reverted += await revertReorgedAnchors(
+            affected,
+            txId,
+            `TX ${txId} no longer confirmed (reorg)`,
             'REORG DETECTED: TX unconfirmed — reverted SECURED → SUBMITTED',
           );
         } else if (txData.status.block_height) {
-          // Check if block height changed (block hash mismatch implies reorg)
-          const storedHeight = recentAnchors.find((a) => a.chain_tx_id === txId)?.chain_block_height;
-          if (storedHeight && storedHeight !== txData.status.block_height) {
-            logger.warn(
-              { txId, storedHeight, newHeight: txData.status.block_height },
-              'Block height changed — TX re-mined in different block (reorg resolved)',
+          // TX is confirmed. Compare the stored block identity against the
+          // currently-confirmed block.
+          //
+          // Lane 1 i4 / BUG-A: a same-height reorg re-mines the TX into a
+          // DIFFERENT block at the SAME height. The previous height-only check
+          // saw no change and left the anchor falsely SECURED. With the stored
+          // chain_block_hash (persisted at promotion), a hash mismatch at equal
+          // height now reverts. When the stored hash is NULL (legacy rows
+          // secured before migration 0347) we fall back to the height-only
+          // check — strictly-better, no regression.
+          const storedAnchor = affected[0];
+          const storedHeight = storedAnchor?.chain_block_height ?? null;
+          const storedHash = storedAnchor?.chain_block_hash ?? null;
+          const newHeight = txData.status.block_height;
+          const newHash = txData.status.block_hash ?? null;
+
+          const hashMismatch = storedHash != null && newHash != null && storedHash !== newHash;
+          const heightChanged = storedHeight != null && storedHeight !== newHeight;
+
+          if (hashMismatch) {
+            // Same-height (or any-height) block-hash divergence — the proof's
+            // block no longer matches the chain. Revert + retract.
+            reorgsDetected++;
+            reverted += await revertReorgedAnchors(
+              affected,
+              txId,
+              `TX ${txId} re-mined into a different block (stored hash ${storedHash} != confirmed hash ${newHash} at height ${newHeight})`,
+              'REORG DETECTED: block hash changed — reverted SECURED → SUBMITTED',
             );
-            // TX was re-mined, update the block height
-            const affected = recentAnchors.filter((a) => a.chain_tx_id === txId);
-            for (const anchor of affected) {
-              await db.from('anchors')
-                .update({ chain_block_height: txData.status.block_height })
-                .eq('id', anchor.id);
-            }
+          } else if (heightChanged) {
+            // Height changed but we have no stored hash to compare (legacy row),
+            // OR hashes were unavailable. Treat as the prior height-only reorg
+            // signal and revert (stricter than the old "just update the height"
+            // behavior, which silently accepted the new block).
+            reorgsDetected++;
+            reverted += await revertReorgedAnchors(
+              affected,
+              txId,
+              `TX ${txId} re-mined at a different height (stored ${storedHeight} != confirmed ${newHeight})`,
+              'REORG DETECTED: block height changed — reverted SECURED → SUBMITTED',
+            );
           }
         }
       } catch (err) {
@@ -336,11 +528,16 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
     const stuckCutoff = new Date(Date.now() - STUCK_TX_THRESHOLD_MS).toISOString();
     const abandonCutoff = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString(); // 72 hours
 
-    // Fetch SUBMITTED anchors older than 30 minutes
+    // Fetch SUBMITTED anchors older than 30 minutes.
+    // Lane 1 i4 / BUG-C: exclude legal-hold anchors (mirrors detectReorgs). A
+    // held SUBMITTED anchor must never be abandoned SUBMITTED → PENDING by the
+    // stuck-tx recovery — that would violate legalHoldPreventsSecuredToRevoked.
+    // Reorgs/recovery on held anchors require operator intervention.
     const { data: stuckAnchors, error } = await db
       .from('anchors')
       .select('id, chain_tx_id, metadata, created_at, updated_at')
       .eq('status', 'SUBMITTED')
+      .eq('legal_hold', false)
       .not('chain_tx_id', 'is', null)
       .lt('updated_at', stuckCutoff)
       .is('deleted_at', null)
@@ -504,10 +701,15 @@ export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResul
   try {
     const oldCutoff = new Date(Date.now() - MEMPOOL_EXPIRY_THRESHOLD_MS).toISOString();
 
+    // Lane 1 i4 / BUG-C: exclude legal-hold anchors (mirrors detectReorgs +
+    // NET-1). A failed rebroadcast can chain into the abandon path, and even a
+    // successful rebroadcast should not re-drive a held anchor's stuck TX. A
+    // held SUBMITTED anchor must never be rewound toward PENDING.
     const { data: oldAnchors, error } = await db
       .from('anchors')
       .select('id, chain_tx_id, metadata')
       .eq('status', 'SUBMITTED')
+      .eq('legal_hold', false)
       .not('chain_tx_id', 'is', null)
       .lt('updated_at', oldCutoff)
       .is('deleted_at', null)

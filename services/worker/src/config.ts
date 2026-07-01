@@ -19,6 +19,15 @@ const positiveNumberWithFallback = (def: number) => z.preprocess((v) => {
   const parsed = Number(v);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : def;
 }, z.number().positive());
+// Integer env clamped to [min, max] with a default. Mirrors the inline
+// `Math.min(Math.max(min, parseInt(...) || def), max)` idiom in the worker so
+// ad-hoc reads can migrate into config.ts (SCRUM-1258) with identical runtime
+// behavior: parseInt-style leading-int parse, NaN/0 → def, then clamp (not reject).
+const clampedIntWithFallback = (def: number, min: number, max: number) =>
+  z.preprocess((v) => {
+    const parsed = parseInt(String(v ?? ''), 10) || def;
+    return Math.min(Math.max(min, parsed), max);
+  }, z.number().int());
 
 const ConfigSchema = z.object({
   // Server
@@ -144,6 +153,13 @@ const ConfigSchema = z.object({
   aiProvider: z.string().optional(),
   /** Nessie model name on RunPod vLLM (default: nessie-v2) */
   nessieModel: z.string().optional(),
+  /**
+   * Per-row latency budget (ms) for batch AI extraction — bounds each provider
+   * call so a timeout is a failed+refunded row, not a charge. Parity with the
+   * single path's AI_EXTRACTION_LATENCY_BUDGET_MS; batch rows can be longer so
+   * the default is higher. Clamped to [1000, 30000] (SCRUM-1258: typed, not ad-hoc).
+   */
+  aiBatchRowLatencyBudgetMs: clampedIntWithFallback(8_000, 1_000, 30_000),
 
   // Cron job authentication (AUTH-01)
   /** Shared secret for cron job endpoints — alternative to OIDC when Cloud Scheduler is not used */
@@ -350,6 +366,18 @@ const ConfigSchema = z.object({
    * behavior (SCRUM-1258 — read via `config`, not ad-hoc `process.env`).
    */
   exportsStorageBucket: z.string().default('exports'),
+
+  // Proof-completeness backfill (SCRUM-2335 PROOF-02 / SCRUM-2471)
+  /**
+   * PROOF_BACKFILL_CONFIRM — confirmation token for the back-catalogue
+   * proof-completeness backfill (`runProofCompletenessBackfill`). The job is
+   * DRY-RUN by default; it only applies writes when this token equals the
+   * literal `EXECUTE` AND the caller also passes `options.execute`. Optional —
+   * unset means dry-run-only (the safe default). Routed through typed config
+   * so the gate is a single source of truth, not an ad-hoc `process.env[...]`
+   * read (SCRUM-1258 — typed, not dynamic).
+   */
+  proofBackfillConfirm: z.string().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -623,6 +651,7 @@ function loadConfig(): Config {
     geminiEmbeddingModel: process.env.GEMINI_EMBEDDING_MODEL,
     aiProvider: process.env.AI_PROVIDER,
     nessieModel: process.env.NESSIE_MODEL,
+    aiBatchRowLatencyBudgetMs: process.env.AI_BATCH_ROW_LATENCY_BUDGET_MS,
     cronSecret: process.env.CRON_SECRET,
     cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
     corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
@@ -700,6 +729,11 @@ function loadConfig(): Config {
     // empty string falls through to the schema default 'exports', preserving
     // the original `process.env.EXPORTS_STORAGE_BUCKET || 'exports'` behavior.
     exportsStorageBucket: process.env.EXPORTS_STORAGE_BUCKET || undefined,
+
+    // Proof-completeness backfill confirm token (SCRUM-2335 / SCRUM-2471).
+    // `|| undefined` so an empty string is treated as unset (dry-run-only),
+    // matching the prior dynamic PROOF_BACKFILL_CONFIRM read in the job.
+    proofBackfillConfirm: process.env.PROOF_BACKFILL_CONFIRM || undefined,
   });
 
   if (!result.success) {

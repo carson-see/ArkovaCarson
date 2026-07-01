@@ -10,8 +10,8 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
 import {
   generateAuditProof,
   bulkExportSignatures,
@@ -70,21 +70,16 @@ router.get('/signatures/export', async (req: Request, res: Response) => {
       return;
     }
 
-    // Get user's org
-    const { data: membership } = await db
-      .from('org_members')
-      .select('org_id')
-      .eq('user_id', userId)
-      .limit(1)
-      .single();
-
-    if (!membership) {
+    // Get user's org (owner-inclusive: owners are linked via profiles.org_id,
+    // not guaranteed an org_members row).
+    const orgId = await getCallerOrgId(userId);
+    if (!orgId) {
       res.status(403).json({ error: 'No organization membership found' });
       return;
     }
 
     const result = await bulkExportSignatures({
-      orgId: membership.org_id,
+      orgId,
       format: parsed.data.format,
       from: parsed.data.from,
       to: parsed.data.to,
@@ -125,22 +120,16 @@ router.get('/signatures/soc2-evidence', async (req: Request, res: Response) => {
       return;
     }
 
-    // Get user's org
-    const { data: membership } = await db
-      .from('org_members')
-      .select('org_id, role')
-      .eq('user_id', userId)
-      .in('role', ['owner', 'admin'])
-      .limit(1)
-      .single();
-
-    if (!membership) {
+    // Get user's org + admin check (owner-inclusive: owners are linked via
+    // profiles.org_id and may lack an org_members row).
+    const orgId = await getCallerOrgId(userId);
+    if (!orgId || !(await isCallerOrgAdmin(userId, orgId))) {
       res.status(403).json({ error: 'Organization administrator role required' });
       return;
     }
 
     const bundle = await generateSoc2EvidenceBundle(
-      membership.org_id,
+      orgId,
       parsed.data.from,
       parsed.data.to,
     );
@@ -166,20 +155,14 @@ router.get('/signatures/gdpr-article30', async (req: Request, res: Response) => 
       return;
     }
 
-    const { data: membership } = await db
-      .from('org_members')
-      .select('org_id, role')
-      .eq('user_id', userId)
-      .in('role', ['owner', 'admin'])
-      .limit(1)
-      .single();
-
-    if (!membership) {
+    // Owner-inclusive org + admin check (owners linked via profiles.org_id).
+    const orgId = await getCallerOrgId(userId);
+    if (!orgId || !(await isCallerOrgAdmin(userId, orgId))) {
       res.status(403).json({ error: 'Organization administrator role required' });
       return;
     }
 
-    const report = await generateGdprArticle30Export(membership.org_id);
+    const report = await generateGdprArticle30Export(orgId);
     res.json(report);
   } catch (err) {
     logger.error({
@@ -212,21 +195,15 @@ router.get('/signatures/eidas-report', async (req: Request, res: Response) => {
       return;
     }
 
-    const { data: membership } = await db
-      .from('org_members')
-      .select('org_id, role')
-      .eq('user_id', userId)
-      .in('role', ['owner', 'admin'])
-      .limit(1)
-      .single();
-
-    if (!membership) {
+    // Owner-inclusive org + admin check (owners linked via profiles.org_id).
+    const orgId = await getCallerOrgId(userId);
+    if (!orgId || !(await isCallerOrgAdmin(userId, orgId))) {
       res.status(403).json({ error: 'Organization administrator role required' });
       return;
     }
 
     const report = await generateEidasComplianceReport(
-      membership.org_id,
+      orgId,
       parsed.data.from,
       parsed.data.to,
     );

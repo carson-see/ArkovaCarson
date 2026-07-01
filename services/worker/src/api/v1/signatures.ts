@@ -18,6 +18,7 @@ import * as crypto from 'crypto';
 import { buildSignatureVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
 
 import type {
   SignResponse,
@@ -148,21 +149,13 @@ router.post('/sign', async (req: Request, res: Response) => {
       return;
     }
 
-    // Resolve the signer's org membership
-    const { data: membership, error: memberErr } = await db
-      .from('org_members')
-      .select('org_id, role')
-      .eq('user_id', userId)
-      .in('role', ['owner', 'admin'])
-      .limit(1)
-      .single();
-
-    if (memberErr || !membership) {
+    // Resolve the signer's org (owner-inclusive: owners link via profiles.org_id,
+    // not guaranteed an org_members row) and require admin/owner privilege.
+    const orgId = await getCallerOrgId(userId);
+    if (!orgId || !(await isCallerOrgAdmin(userId, orgId))) {
       res.status(403).json({ error: 'Admin or owner role required to create signatures' });
       return;
     }
-
-    const orgId = membership.org_id;
 
     // Resolve the signing certificate
     const { data: cert, error: certErr } = await db
@@ -593,15 +586,10 @@ router.get('/signatures', async (req: Request, res: Response) => {
 
     const params = parsed.data;
 
-    // Get user's org
-    const { data: membership } = await db
-      .from('org_members')
-      .select('org_id')
-      .eq('user_id', userId)
-      .limit(1)
-      .single();
-
-    if (!membership) {
+    // Get user's org (owner-inclusive: owners link via profiles.org_id, which
+    // may have no org_members row — querying org_members directly 403s owners).
+    const orgId = await getCallerOrgId(userId);
+    if (!orgId) {
       res.status(403).json({ error: 'No organization membership found' });
       return;
     }
@@ -609,7 +597,7 @@ router.get('/signatures', async (req: Request, res: Response) => {
     let query = (db as unknown as UntypedSupabaseClient)
       .from('signatures')
       .select('public_id, format, level, status, jurisdiction, document_fingerprint, signer_name, signer_org, signed_at, created_at')
-      .eq('org_id', membership.org_id)
+      .eq('org_id', orgId)
       .order('created_at', { ascending: false })
       .limit(params.limit);
 
@@ -683,16 +671,9 @@ router.post('/signatures/:id/revoke', async (req: Request, res: Response) => {
 
     const sig = sigRaw as unknown as SignatureRow;
 
-    // Verify user has admin/owner role in the org
-    const { data: membership } = await db
-      .from('org_members')
-      .select('role')
-      .eq('user_id', userId)
-      .eq('org_id', sig.org_id)
-      .in('role', ['owner', 'admin'])
-      .single();
-
-    if (!membership) {
+    // Verify user has admin/owner role in the org (owner-inclusive — owners are
+    // linked via profiles.org_id and may have no org_members row; see _org-auth).
+    if (!(await isCallerOrgAdmin(userId, sig.org_id))) {
       res.status(403).json({ error: 'Admin or owner role required to revoke signatures' });
       return;
     }
