@@ -46,6 +46,7 @@ import {
   canonicalMetadataJson,
   hashMetadata,
   truncateMetadataHash,
+  extractAnchorFingerprint,
   type SelectedUtxo,
   type BitcoinClientConfig,
 } from './signet.js';
@@ -229,6 +230,65 @@ describe('truncateMetadataHash', () => {
     const truncated = truncateMetadataHash(fullHash);
     const expected = Buffer.from(fullHash, 'hex').subarray(0, 8);
     expect(truncated).toEqual(expected);
+  });
+});
+
+// ─── extractAnchorFingerprint (BUG-2026-06-24-004 structural decode) ──────
+
+describe('extractAnchorFingerprint', () => {
+  const FP = 'a'.repeat(64);
+  const fpBytes = Buffer.from(FP, 'hex');
+
+  const opReturnHex = (payload: Buffer): string =>
+    bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, payload]).toString('hex');
+
+  it('returns the fingerprint for a canonical ARKV anchor (prefix + 32-byte fp)', () => {
+    const hex = opReturnHex(Buffer.concat([Buffer.from('ARKV'), fpBytes]));
+    expect(extractAnchorFingerprint(hex)).toBe(FP);
+  });
+
+  it('returns the fingerprint when a trailing metadata hash is present', () => {
+    const meta = Buffer.from('0011223344556677', 'hex');
+    const hex = opReturnHex(Buffer.concat([Buffer.from('ARKV'), fpBytes, meta]));
+    expect(extractAnchorFingerprint(hex)).toBe(FP);
+  });
+
+  it('rejects a payload with a leading junk byte before ARKV (non-canonical offset)', () => {
+    const hex = opReturnHex(Buffer.concat([Buffer.from([0xab]), Buffer.from('ARKV'), fpBytes]));
+    // The raw hex still CONTAINS "ARKV<fp>" — a substring scan would wrongly match.
+    expect(hex).toContain(Buffer.from('ARKV').toString('hex') + FP);
+    expect(extractAnchorFingerprint(hex)).toBeNull();
+  });
+
+  it('rejects a multi-push OP_RETURN even if a push equals ARKV+fingerprint', () => {
+    // OP_RETURN <junk> <ARKV+fp> decompiles to 3 chunks, not the canonical 2.
+    const hex = bitcoin.script
+      .compile([
+        bitcoin.opcodes.OP_RETURN,
+        Buffer.from('deadbeef', 'hex'),
+        Buffer.concat([Buffer.from('ARKV'), fpBytes]),
+      ])
+      .toString('hex');
+    expect(extractAnchorFingerprint(hex)).toBeNull();
+  });
+
+  it('rejects an OP_RETURN whose prefix is not ARKV', () => {
+    const hex = opReturnHex(Buffer.concat([Buffer.from('XXXX'), fpBytes]));
+    expect(extractAnchorFingerprint(hex)).toBeNull();
+  });
+
+  it('rejects a non-OP_RETURN script (e.g. P2WPKH)', () => {
+    const hex = '0014' + '00'.repeat(20); // OP_0 <20-byte program>
+    expect(extractAnchorFingerprint(hex)).toBeNull();
+  });
+
+  it('rejects an OP_RETURN whose payload is shorter than prefix + 32 bytes', () => {
+    const hex = opReturnHex(Buffer.concat([Buffer.from('ARKV'), fpBytes.subarray(0, 16)]));
+    expect(extractAnchorFingerprint(hex)).toBeNull();
+  });
+
+  it('returns null for undecodable / empty hex', () => {
+    expect(extractAnchorFingerprint('')).toBeNull();
   });
 });
 
@@ -929,5 +989,206 @@ describe('BitcoinChainClient.verifyFingerprint', () => {
     expect(result.verified).toBe(true);
     expect(result.receipt!.blockHeight).toBe(0);
     expect(result.receipt!.confirmations).toBe(0);
+  });
+
+  // ── BUG-2026-06-24-004: structural OP_RETURN decode + tx-history fallback ──
+
+  it('REJECTS a forged OP_RETURN containing the prefix+fingerprint substring at a non-canonical offset', async () => {
+    // Craft an OP_RETURN whose pushed payload is `<junk byte> || ARKV || fingerprint`.
+    // The raw scriptPubKey hex therefore CONTAINS the substring "ARKV<fingerprint>"
+    // (so the old `.includes()` check would falsely match), but the canonical
+    // committed bytes are NOT [OP_RETURN, <ARKV><fingerprint>]: byte 0 is junk,
+    // so subarray(0,4) !== "ARKV". A structural decode must reject it.
+    const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
+    const forgedPayload = Buffer.concat([Buffer.from([0xab]), Buffer.from('ARKV'), fpBytes]);
+    const forgedScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, forgedPayload]);
+    const forgedHex = forgedScript.toString('hex');
+
+    // Sanity: the forged hex really does contain the loose substring the old code matched.
+    expect(forgedHex).toContain(Buffer.from('ARKV').toString('hex') + TEST_FINGERPRINT.toLowerCase());
+
+    const forgedTx = {
+      txid: 'f'.repeat(64),
+      confirmations: 5,
+      blocktime: 1710000000,
+      blockhash: 'e'.repeat(64),
+      vout: [{ scriptPubKey: { hex: forgedHex, asm: 'OP_RETURN ' + forgedPayload.toString('hex') } }],
+    };
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: 'f'.repeat(64), vout: 0, valueSats: 50000, rawTxHex: '00' },
+      ]),
+      getAddressTxs: vi.fn().mockResolvedValue([forgedTx]),
+      getRawTransaction: vi.fn().mockResolvedValue(forgedTx),
+    });
+
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    const result = await client.verifyFingerprint(TEST_FINGERPRINT);
+
+    expect(result.verified).toBe(false);
+  });
+
+  it('FINDS a spent/historical anchor TX via address tx-history (not in the UTXO set)', async () => {
+    // Historical anchors: the OP_RETURN output is value-0 and the change is spent
+    // by the next anchor, so the anchor TX never appears in listUnspent. It must be
+    // discovered via the address transaction history.
+    const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
+    const canonicalPayload = Buffer.concat([Buffer.from('ARKV'), fpBytes]);
+    const canonicalScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]);
+    const canonicalHex = canonicalScript.toString('hex');
+
+    const historicalTxid = 'd'.repeat(64);
+    const provider = createMockProvider({
+      // UTXO set is EMPTY — the anchor TX has been fully spent.
+      listUnspent: vi.fn().mockResolvedValue([]),
+      getAddressTxs: vi.fn().mockResolvedValue([
+        {
+          txid: historicalTxid,
+          confirmations: 12,
+          blocktime: 1710000000,
+          blockhash: 'c'.repeat(64),
+          vout: [
+            { scriptPubKey: { hex: canonicalHex, asm: 'OP_RETURN ' + canonicalPayload.toString('hex') } },
+            // A change output (P2WPKH) that was later spent — must be ignored.
+            { scriptPubKey: { hex: '0014' + '00'.repeat(20), asm: 'OP_0 ...' } },
+          ],
+        },
+      ]),
+      getBlockHeader: vi.fn().mockResolvedValue({ height: 250000 }),
+    });
+
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    const result = await client.verifyFingerprint(TEST_FINGERPRINT);
+
+    expect(result.verified).toBe(true);
+    expect(result.receipt).toBeDefined();
+    expect(result.receipt!.receiptId).toBe(historicalTxid);
+    expect(result.receipt!.blockHeight).toBe(250000);
+    // The full address history must have been consulted.
+    expect(provider.getAddressTxs).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it('accepts a genuine canonical OP_RETURN anchor found via tx-history', async () => {
+    const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
+    const canonicalPayload = Buffer.concat([Buffer.from('ARKV'), fpBytes]);
+    const canonicalScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]);
+    const canonicalHex = canonicalScript.toString('hex');
+
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([]),
+      getAddressTxs: vi.fn().mockResolvedValue([
+        {
+          txid: 'a1'.repeat(32),
+          confirmations: 6,
+          blocktime: 1710000000,
+          blockhash: 'b'.repeat(64),
+          vout: [{ scriptPubKey: { hex: canonicalHex, asm: 'OP_RETURN ' + canonicalPayload.toString('hex') } }],
+        },
+      ]),
+      getBlockHeader: vi.fn().mockResolvedValue({ height: 150042 }),
+    });
+
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    const result = await client.verifyFingerprint(TEST_FINGERPRINT);
+
+    expect(result.verified).toBe(true);
+    expect(result.receipt!.blockHeight).toBe(150042);
+  });
+
+  it('accepts a canonical anchor that also carries an 8-byte metadata hash suffix', async () => {
+    // Payload = ARKV(4) + fingerprint(32) + metadataHash(8) = 44 bytes.
+    // The structural matcher keys on subarray(0,4)===ARKV and subarray(4,36)===fp,
+    // ignoring any trailing metadata bytes.
+    const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
+    const metaBytes = Buffer.from('0011223344556677', 'hex'); // 8 bytes
+    const payload = Buffer.concat([Buffer.from('ARKV'), fpBytes, metaBytes]);
+    const script = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, payload]);
+
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([]),
+      getAddressTxs: vi.fn().mockResolvedValue([
+        {
+          txid: 'a2'.repeat(32),
+          confirmations: 6,
+          blocktime: 1710000000,
+          blockhash: 'b'.repeat(64),
+          vout: [{ scriptPubKey: { hex: script.toString('hex'), asm: 'OP_RETURN ' + payload.toString('hex') } }],
+        },
+      ]),
+      getBlockHeader: vi.fn().mockResolvedValue({ height: 160000 }),
+    });
+
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    const result = await client.verifyFingerprint(TEST_FINGERPRINT);
+
+    expect(result.verified).toBe(true);
+    expect(result.receipt!.blockHeight).toBe(160000);
+  });
+
+  it('falls back to the UTXO scan (structural) when the provider has no getAddressTxs', async () => {
+    // Backward-compat: providers without history support still verify unspent anchors.
+    const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
+    const canonicalPayload = Buffer.concat([Buffer.from('ARKV'), fpBytes]);
+    const canonicalScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]);
+    const canonicalHex = canonicalScript.toString('hex');
+
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: 'x'.repeat(64), vout: 0, valueSats: 50000, rawTxHex: '00' },
+      ]),
+      getRawTransaction: vi.fn().mockResolvedValue({
+        txid: 'x'.repeat(64),
+        confirmations: 5,
+        blocktime: 1710000000,
+        blockhash: 'y'.repeat(64),
+        vout: [{ scriptPubKey: { hex: canonicalHex, asm: 'OP_RETURN ' + canonicalPayload.toString('hex') } }],
+      }),
+      getBlockHeader: vi.fn().mockResolvedValue({ height: 150042 }),
+    });
+    // Explicitly remove getAddressTxs to simulate a legacy provider.
+    delete (provider as { getAddressTxs?: unknown }).getAddressTxs;
+
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    const result = await client.verifyFingerprint(TEST_FINGERPRINT);
+
+    expect(result.verified).toBe(true);
+    expect(result.receipt!.blockHeight).toBe(150042);
+    expect(provider.listUnspent).toHaveBeenCalled();
+  });
+
+  it('falls back to the UTXO scan when getAddressTxs FAILS (timeout/429), not a hard error', async () => {
+    // Review (CodeRabbit): a transient history-API failure must not make
+    // verification strictly worse than the pre-fix unspent-only path — it should
+    // fall through to the legacy UTXO scan, which still verifies unspent anchors.
+    const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
+    const canonicalPayload = Buffer.concat([Buffer.from('ARKV'), fpBytes]);
+    const canonicalScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]);
+    const canonicalHex = canonicalScript.toString('hex');
+
+    const provider = createMockProvider({
+      // History API is down (e.g. 429 / timeout).
+      getAddressTxs: vi.fn().mockRejectedValue(new Error('HTTP 429 Too Many Requests')),
+      // The anchor is still unspent, so the legacy UTXO scan can find it.
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: 'x'.repeat(64), vout: 0, valueSats: 50000, rawTxHex: '00' },
+      ]),
+      getRawTransaction: vi.fn().mockResolvedValue({
+        txid: 'x'.repeat(64),
+        confirmations: 5,
+        blocktime: 1710000000,
+        blockhash: 'y'.repeat(64),
+        vout: [{ scriptPubKey: { hex: canonicalHex, asm: 'OP_RETURN ' + canonicalPayload.toString('hex') } }],
+      }),
+      getBlockHeader: vi.fn().mockResolvedValue({ height: 150042 }),
+    });
+
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    const result = await client.verifyFingerprint(TEST_FINGERPRINT);
+
+    // Found via UTXO fallback — NOT a "Verification error".
+    expect(result.verified).toBe(true);
+    expect(result.receipt!.blockHeight).toBe(150042);
+    expect(provider.getAddressTxs).toHaveBeenCalled();
+    expect(provider.listUnspent).toHaveBeenCalled();
   });
 });
