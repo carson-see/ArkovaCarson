@@ -2144,6 +2144,87 @@ export type Database = {
           },
         ]
       }
+      drive_watch_state: {
+        Row: {
+          channel_expires_at: string | null
+          channel_id: string
+          channel_resource_id: string | null
+          created_at: string
+          created_by: string | null
+          drive_id: string | null
+          folder_path: string | null
+          id: string
+          initial_page_token: string
+          integration_id: string
+          last_renewal_error: string | null
+          last_renewed_at: string | null
+          org_id: string
+          owner_email: string | null
+          owner_scope: string
+          owner_user_id: string | null
+          status: string
+          updated_at: string
+          watched_folder_id: string
+        }
+        Insert: {
+          channel_expires_at?: string | null
+          channel_id: string
+          channel_resource_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          drive_id?: string | null
+          folder_path?: string | null
+          id?: string
+          initial_page_token: string
+          integration_id: string
+          last_renewal_error?: string | null
+          last_renewed_at?: string | null
+          org_id: string
+          owner_email?: string | null
+          owner_scope?: string
+          owner_user_id?: string | null
+          status?: string
+          updated_at?: string
+          watched_folder_id: string
+        }
+        Update: {
+          channel_expires_at?: string | null
+          channel_id?: string
+          channel_resource_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          drive_id?: string | null
+          folder_path?: string | null
+          id?: string
+          initial_page_token?: string
+          integration_id?: string
+          last_renewal_error?: string | null
+          last_renewed_at?: string | null
+          org_id?: string
+          owner_email?: string | null
+          owner_scope?: string
+          owner_user_id?: string | null
+          status?: string
+          updated_at?: string
+          watched_folder_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drive_watch_state_integration_id_fkey"
+            columns: ["integration_id"]
+            isOneToOne: false
+            referencedRelation: "org_integrations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drive_watch_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       drive_webhook_nonces: {
         Row: {
           channel_id: string
