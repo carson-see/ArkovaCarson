@@ -290,6 +290,15 @@ export interface DigestStore {
   ): Promise<DeliveryLogRow | null>;
   /** Upsert the delivery-log row (records status + attempt count). */
   recordDelivery(row: DeliveryLogRow): Promise<void>;
+  /**
+   * F3: atomically RESERVE today's SENT marker BEFORE sending. Returns true if
+   * this worker won the reservation (proceed to send), false if a concurrent
+   * worker already holds it (skip). Backed by a unique index so exactly one of
+   * N overlapping /queue-digest runs sends — no duplicate admin emails.
+   */
+  reserveDelivery(row: DeliveryLogRow): Promise<boolean>;
+  /** Release a reservation whose send failed, so the day's retry can re-reserve. */
+  releaseDelivery(row: DeliveryLogRow): Promise<void>;
 }
 
 export interface SendDigestDeps {
@@ -372,6 +381,27 @@ export async function deliverDigestToAdmin(
   }
 
   const attempts = (existing?.attempts ?? 0) + 1;
+
+  // F3 (atomic idempotency): RESERVE the SENT marker BEFORE sending. The unique
+  // index (mig 0352) lets exactly one concurrent worker win; a loser skips —
+  // closing the read→send→write double-send race that could duplicate admin
+  // emails across Scheduler retries / manual overlap.
+  const reserved = await deps.store.reserveDelivery({
+    adminEmail: scope.adminEmail,
+    adminOrgId: scope.adminOrgId,
+    digestDate,
+    status: 'SENT',
+    attempts,
+  });
+  if (!reserved) {
+    // Another worker already holds today's reservation → do NOT send again.
+    return {
+      status: 'ALREADY_SENT',
+      attempts,
+      scopeOrgIds: payload.scopeOrgIds,
+    };
+  }
+
   const result = await deps.sendEmail({
     to: payload.adminEmail,
     subject: payload.subject,
@@ -380,17 +410,33 @@ export async function deliverDigestToAdmin(
     orgId: payload.adminOrgId,
   });
 
-  const status: DeliveryLogRow['status'] = result.success ? 'SENT' : 'FAILED';
-  await deps.store.recordDelivery({
-    adminEmail: scope.adminEmail,
-    adminOrgId: scope.adminOrgId,
-    digestDate,
-    status,
-    attempts,
-  });
+  if (!result.success) {
+    // Release the reservation so the day's retry can re-reserve, then record the
+    // FAILED attempt (distinct event_type — not covered by the unique index).
+    await deps.store.releaseDelivery({
+      adminEmail: scope.adminEmail,
+      adminOrgId: scope.adminOrgId,
+      digestDate,
+      status: 'FAILED',
+      attempts,
+    });
+    await deps.store.recordDelivery({
+      adminEmail: scope.adminEmail,
+      adminOrgId: scope.adminOrgId,
+      digestDate,
+      status: 'FAILED',
+      attempts,
+    });
+    return {
+      status: 'FAILED',
+      attempts,
+      scopeOrgIds: payload.scopeOrgIds,
+    };
+  }
 
+  // Success: the reservation row IS the durable SENT idempotency marker.
   return {
-    status: result.success ? 'SENT' : 'FAILED',
+    status: 'SENT',
     attempts,
     scopeOrgIds: payload.scopeOrgIds,
   };

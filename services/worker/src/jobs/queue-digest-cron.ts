@@ -90,9 +90,16 @@ export interface DigestQueryBuilder {
   limit: (n: number) => Promise<{ data: unknown; error: unknown }>;
 }
 
+/** Delete filter chain: `.eq()` chains, the final filter resolves to an error. */
+export interface DigestDeleteBuilder {
+  eq: (col: string, val: unknown) => DigestDeleteBuilder;
+  like: (col: string, pattern: string) => Promise<{ error: unknown }>;
+}
+
 export interface DigestDb {
   from(table: string): DigestQueryBuilder & {
     insert: (row: Record<string, unknown>) => Promise<{ error: unknown }>;
+    delete: () => DigestDeleteBuilder;
   };
 }
 
@@ -192,6 +199,49 @@ export function createAuditBackedStore(database: DigestDb): DigestStore {
         // orchestrator/cron loop counts this admin as failed (and retries).
         logger.warn({ error, orgId: row.adminOrgId }, 'digest delivery-log write failed');
         throw new Error(`digest: delivery-log write failed for org ${row.adminOrgId}`);
+      }
+    },
+
+    async reserveDelivery(row: DeliveryLogRow): Promise<boolean> {
+      // F3 (atomic idempotency): RESERVE the QUEUE_DIGEST_SENT marker BEFORE
+      // sending. The unique index (mig 0352) on (org_id, target_id, digest_date)
+      // WHERE event_type='QUEUE_DIGEST_SENT' lets exactly one concurrent worker
+      // win the insert. The loser's insert conflicts (23505) → returns false and
+      // skips the send. This closes the read→send→write double-send race.
+      const { error } = await database.from('audit_events').insert({
+        event_type: DIGEST_SENT_EVENT,
+        event_category: 'SYSTEM',
+        org_id: row.adminOrgId,
+        target_type: 'user',
+        target_id: row.adminEmail,
+        details: JSON.stringify({
+          digest_date: row.digestDate,
+          attempts: row.attempts,
+          status: 'SENT',
+        }),
+      });
+      if (!error) return true; // won the reservation → this worker sends
+      if ((error as { code?: string }).code === '23505') return false; // lost → another worker owns today's send
+      // Any other error: we could not establish an exclusive reservation → fail
+      // CLOSED (throw) so we never send without holding the idempotency marker.
+      logger.warn({ error, orgId: row.adminOrgId }, 'digest reservation insert failed');
+      throw new Error(`digest: reservation insert failed for org ${row.adminOrgId}`);
+    },
+
+    async releaseDelivery(row: DeliveryLogRow): Promise<void> {
+      // Release a reservation whose send FAILED so the day's retry can re-reserve.
+      // Matches the single SENT marker for this (org, recipient, digest_date) —
+      // the unique index guarantees at most one. Best-effort: a failed release
+      // just leaves a stuck marker (a missed digest that day, never a duplicate).
+      const { error } = await database
+        .from('audit_events')
+        .delete()
+        .eq('event_type', DIGEST_SENT_EVENT)
+        .eq('org_id', row.adminOrgId)
+        .eq('target_id', row.adminEmail)
+        .like('details', `%"digest_date":"${row.digestDate}"%`);
+      if (error) {
+        logger.warn({ error, orgId: row.adminOrgId }, 'digest reservation release failed');
       }
     },
   };

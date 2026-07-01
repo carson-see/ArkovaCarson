@@ -198,10 +198,51 @@ function makeStore(over: Partial<DigestStore> = {}): {
     recordDelivery: vi.fn(async (row: DeliveryLogRow) => {
       recorded.push(row);
     }),
+    // F3: default reservation wins (single-worker happy path). Concurrency tests
+    // override reserveDelivery to return false (loser).
+    reserveDelivery: vi.fn(async () => true),
+    releaseDelivery: vi.fn(async () => {}),
     ...over,
   };
   return { store, recorded };
 }
+
+describe('deliverDigestToAdmin — F3 atomic reservation (concurrent double-send)', () => {
+  it('loser (reservation conflict) returns ALREADY_SENT and NEVER sends', async () => {
+    const { store, recorded } = makeStore({ reserveDelivery: vi.fn(async () => false) });
+    const sendEmail = vi.fn(async () => ({ success: true, messageId: 'm1' }));
+    const r = await deliverDigestToAdmin(scope(), { store, urls, sendEmail, digestDate: '2026-06-29' });
+    expect(r.status).toBe('ALREADY_SENT');
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(recorded).toHaveLength(0);
+  });
+
+  it('winner reserves BEFORE sending (reservation precedes the email)', async () => {
+    const order: string[] = [];
+    const { store } = makeStore({
+      reserveDelivery: vi.fn(async () => {
+        order.push('reserve');
+        return true;
+      }),
+    });
+    const sendEmail = vi.fn(async () => {
+      order.push('send');
+      return { success: true, messageId: 'm1' };
+    });
+    const r = await deliverDigestToAdmin(scope(), { store, urls, sendEmail, digestDate: '2026-06-29' });
+    expect(r.status).toBe('SENT');
+    expect(order).toEqual(['reserve', 'send']);
+  });
+
+  it('send failure RELEASES the reservation (so the day can retry) and records FAILED', async () => {
+    const { store, recorded } = makeStore();
+    const sendEmail = vi.fn(async () => ({ success: false, error: 'smtp down' }));
+    const r = await deliverDigestToAdmin(scope(), { store, urls, sendEmail, digestDate: '2026-06-29' });
+    expect(r.status).toBe('FAILED');
+    expect(store.releaseDelivery).toHaveBeenCalledTimes(1);
+    expect(recorded.some((row) => row.status === 'FAILED')).toBe(true);
+  });
+});
 
 describe('deliverDigestToAdmin — suppression', () => {
   it('skips a suppressed recipient and never calls sendEmail', async () => {
@@ -243,7 +284,11 @@ describe('deliverDigestToAdmin — delivery + logging', () => {
         orgId: 'org-acme',
       }),
     );
-    expect(recorded.at(-1)).toMatchObject({ status: 'SENT', attempts: 1 });
+    // F3: the SENT idempotency marker is now written by the reserve (before send),
+    // so it is the reservation — not a post-send recordDelivery — that carries it.
+    expect(store.reserveDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'SENT', attempts: 1 }),
+    );
   });
 
   it('skips an empty-queue admin without sending', async () => {
@@ -309,7 +354,10 @@ describe('deliverDigestToAdmin — idempotency + retry', () => {
     expect(result.status).toBe('SENT');
     expect(result.attempts).toBe(2);
     expect(sendEmail).toHaveBeenCalledTimes(1);
-    expect(recorded.at(-1)).toMatchObject({ status: 'SENT', attempts: 2 });
+    // F3: SENT marker is written by the reserve, carrying the incremented attempt.
+    expect(store.reserveDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'SENT', attempts: 2 }),
+    );
   });
 
   it('records FAILED (not SENT) when the send fails, leaving it retryable', async () => {
