@@ -66,6 +66,9 @@ describe('resolveEffectiveDocusignConnection', () => {
       accountId: 'acct-sub',
       baseUri: 'https://na1.docusign.net',
       tokenSecretName: 'projects/p/secrets/sub-refresh',
+      // DS-04: an org_integrations row is org-scoped (org policy), no owner user.
+      scope: 'org',
+      ownerUserId: null,
     });
     expect(deps.fetchOwnConnection).toHaveBeenCalledWith({
       orgId: SUB_ORG,
