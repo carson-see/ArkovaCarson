@@ -31,6 +31,12 @@ import {
   type KmsClient,
 } from '../../../integrations/oauth/crypto.js';
 import { WEBHOOK_PATHS } from '../../../constants/webhook-paths.js';
+import {
+  assertDriveConnectAllowed,
+  DriveConnectDenied,
+  type DriveConnectDenyReason,
+  type DriveEligibilityDb,
+} from '../../../integrations/connectors/drive-connect-eligibility.js';
 
 // org_integrations landed after generated worker DB types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,7 +53,9 @@ interface DriveOAuthDeps {
 }
 
 interface StatePayload {
-  orgId: string;
+  // null when the caller connects a PERSONAL Drive (paid-verified individual,
+  // no org). Present for the org-admin connect path.
+  orgId: string | null;
   userId: string;
   nonce: string;
   returnTo: string;
@@ -57,9 +65,13 @@ interface StatePayload {
 const Provider = 'google_drive' as const;
 const StateTtlMs = 10 * 60 * 1000;
 const StartSchema = z.object({
-  org_id: z.string().uuid(),
+  // Optional: absent → paid-verified individual connecting a personal Drive.
+  org_id: z.string().uuid().optional(),
   return_to: z.string().url().optional(),
 });
+// Disconnect is always org-scoped (org_integrations rows are org-keyed): org_id
+// is required, unlike the connect start where it is optional (personal path).
+const DisconnectSchema = z.object({ org_id: z.string().uuid() });
 
 function getUserId(req: Request): string | undefined {
   return (req as unknown as { userId?: string }).userId;
@@ -116,10 +128,13 @@ function verifyState(state: string, secret: string, deps: DriveOAuthDeps): State
   try {
     const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as StatePayload;
     const nowMs = (deps.now?.() ?? new Date()).getTime();
-    if (!parsed.orgId || !parsed.userId || !parsed.iat || nowMs - parsed.iat > StateTtlMs) {
+    // orgId may legitimately be null (personal-Drive individual path); userId +
+    // iat are always required and the token must be within TTL.
+    if (!parsed.userId || !parsed.iat || nowMs - parsed.iat > StateTtlMs) {
       return null;
     }
-    return parsed;
+    // Normalize a missing/absent orgId to null so downstream checks are explicit.
+    return { ...parsed, orgId: parsed.orgId ?? null };
   } catch {
     return null;
   }
@@ -141,8 +156,12 @@ function buildWebhookAddress(req: Request): string {
   return `${getRequestBaseUrl(req)}${WEBHOOK_PATHS.GOOGLE_DRIVE}`;
 }
 
-function sanitizeReturnTo(returnTo: string | undefined, orgId: string, deps: DriveOAuthDeps): string {
-  const fallback = `${deps.frontendUrl ?? config.frontendUrl}/organizations/${orgId}?tab=settings`;
+function sanitizeReturnTo(returnTo: string | undefined, orgId: string | null, deps: DriveOAuthDeps): string {
+  const base = deps.frontendUrl ?? config.frontendUrl;
+  // Org connect returns to the org settings; personal connect to account settings.
+  const fallback = orgId
+    ? `${base}/organizations/${orgId}?tab=settings`
+    : `${base}/account?tab=settings`;
   if (!returnTo) return fallback;
   try {
     const parsed = new URL(returnTo);
@@ -179,6 +198,60 @@ async function requireOrgAdmin(db: DbClient, userId: string, orgId: string): Pro
   }
   return data?.role === 'admin' || data?.role === 'owner';
 }
+
+/**
+ * DRIVE-01 (SCRUM-2366) — build the `DriveEligibilityDb` adapter over the route
+ * `db`. The org-verification + individual-entitlement lookups the resolver
+ * needs run through the route's Supabase client; the owner-inclusive admin /
+ * org-membership resolution runs through the canonical `_org-auth.ts` helpers
+ * (which use the service-role singleton) INSIDE the eligibility module — we
+ * never re-resolve org from `org_members` alone here (the #1325/#1326 drift
+ * class). `error:true` on a DB failure so the resolver fails closed to
+ * `lookup_failed` (retryable) rather than a hard denial.
+ */
+function makeEligibilityDb(db: DbClient): DriveEligibilityDb {
+  return {
+    async getOrganization(orgId: string) {
+      const { data, error } = await db
+        .from('organizations')
+        .select('verification_status, suspended')
+        .eq('id', orgId)
+        .maybeSingle();
+      if (error) {
+        logger.error({ error, orgId }, 'Drive OAuth org-verification lookup failed');
+        return { row: null, error: true };
+      }
+      return { row: data ?? null, error: false };
+    },
+    async getProfileEntitlement(userId: string) {
+      const { data, error } = await db
+        .from('profiles')
+        .select('subscription_tier, identity_verified_at')
+        .eq('id', userId)
+        .maybeSingle();
+      if (error) {
+        logger.error({ error, userId }, 'Drive OAuth profile-entitlement lookup failed');
+        return { row: null, error: true };
+      }
+      return { row: data ?? null, error: false };
+    },
+  };
+}
+
+/**
+ * Map a connect-denial reason to an HTTP status + stable error code. A
+ * `lookup_failed` is a transient/operational fault (→ 500, retryable); every
+ * other reason is a definitive entitlement denial (→ 403). Callback denials
+ * reuse the same `code` as the `drive_error` query param.
+ */
+const DENY_HTTP: Record<DriveConnectDenyReason, { status: 403 | 500; code: string }> = {
+  not_admin: { status: 403, code: 'not_authorized' },
+  org_unverified: { status: 403, code: 'org_unverified' },
+  org_suspended: { status: 403, code: 'org_suspended' },
+  needs_paid_plan: { status: 403, code: 'needs_paid_plan' },
+  individual_not_verified: { status: 403, code: 'individual_not_verified' },
+  lookup_failed: { status: 500, code: 'lookup_failed' },
+};
 
 async function fetchGoogleIdentity(accessToken: string, deps: DriveOAuthDeps): Promise<{
   accountId: string;
@@ -243,9 +316,22 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
       return;
     }
 
-    const orgId = parsed.data.org_id;
-    if (!(await requireOrgAdmin(db, userId, orgId))) {
-      res.status(403).json({ error: 'Must be org admin to connect Google Drive' });
+    const orgId = parsed.data.org_id ?? null;
+
+    // DRIVE-01 (SCRUM-2366): verified-only connect gate. Org path → owner-
+    // inclusive admin of a VERIFIED, non-suspended org; personal path (no
+    // org_id) → paid + identity-verified individual. Routes through the
+    // canonical owner-inclusive resolver, NOT org_members alone.
+    try {
+      await assertDriveConnectAllowed({ userId, orgId, db: makeEligibilityDb(db) });
+    } catch (gateErr) {
+      if (gateErr instanceof DriveConnectDenied) {
+        const { status, code } = DENY_HTTP[gateErr.reason];
+        res.status(status).json({ error: 'Not eligible to connect Google Drive', code });
+        return;
+      }
+      logger.error({ error: gateErr, orgId }, 'Drive OAuth start eligibility gate errored');
+      res.status(500).json({ error: 'Failed to start Google Drive connection' });
       return;
     }
 
@@ -294,10 +380,38 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
       return;
     }
 
-    if (!(await requireOrgAdmin(db, payload.userId, payload.orgId))) {
-      res.redirect(302, appendResult(returnTo, 'drive_error', 'not_authorized'));
+    // DRIVE-01 (SCRUM-2366): RE-EVALUATE the connect gate at the callback leg,
+    // not just at start. A caller holding a still-valid `state` token whose
+    // entitlement lapsed between start and callback (org de-verified/suspended,
+    // plan downgraded, identity verification revoked) is denied HERE, at persist
+    // time — an existing/stale token cannot bypass a lapsed entitlement.
+    try {
+      await assertDriveConnectAllowed({
+        userId: payload.userId,
+        orgId: payload.orgId,
+        db: makeEligibilityDb(db),
+      });
+    } catch (gateErr) {
+      if (gateErr instanceof DriveConnectDenied) {
+        const { code } = DENY_HTTP[gateErr.reason];
+        res.redirect(302, appendResult(returnTo, 'drive_error', code));
+        return;
+      }
+      logger.error({ error: gateErr, orgId: payload.orgId }, 'Drive OAuth callback eligibility gate errored');
+      res.redirect(302, appendResult(returnTo, 'drive_error', 'lookup_failed'));
       return;
     }
+
+    // The persisted connection is org-scoped (org_integrations.org_id is NOT
+    // NULL). A personal-Drive individual passes the gate but has no org row to
+    // write — deny persistence here until the personal-connect storage path
+    // (separate story) lands, rather than crash on a NOT NULL insert.
+    if (!payload.orgId) {
+      logger.warn({ userId: payload.userId }, 'Drive OAuth callback: personal-Drive connect not yet persistable');
+      res.redirect(302, appendResult(returnTo, 'drive_error', 'personal_connect_unavailable'));
+      return;
+    }
+    const callbackOrgId: string = payload.orgId;
 
     try {
       const driveDeps: DriveClientDeps = { env: deps.env, fetchImpl: deps.fetchImpl };
@@ -324,23 +438,23 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
           accessToken: tokens.access_token,
           channelId,
           address: buildWebhookAddress(req),
-          token: payload.orgId,
+          token: callbackOrgId,
           deps: driveDeps,
         });
       } catch (watchError) {
-        logger.warn({ watchError, orgId: payload.orgId }, 'Drive changes.watch failed; saving OAuth connection without subscription');
+        logger.warn({ watchError, orgId: callbackOrgId }, 'Drive changes.watch failed; saving OAuth connection without subscription');
       }
 
       const accountLabelJson = JSON.stringify({
         email: identity.accountLabel,
-        channel_token: payload.orgId,
+        channel_token: callbackOrgId,
         resource_id: subscription?.resourceId ?? null,
       });
 
       const { data: integration, error: upsertError } = await db
         .from('org_integrations')
         .upsert({
-          org_id: payload.orgId,
+          org_id: callbackOrgId,
           provider: Provider,
           account_id: identity.accountId,
           account_label: accountLabelJson,
@@ -358,13 +472,13 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
         .single();
 
       if (upsertError) {
-        logger.error({ error: upsertError, orgId: payload.orgId }, 'Drive integration upsert failed');
+        logger.error({ error: upsertError, orgId: callbackOrgId }, 'Drive integration upsert failed');
         res.redirect(302, appendResult(returnTo, 'drive_error', 'save_failed'));
         return;
       }
 
       await recordIntegrationEvent(db, {
-        orgId: payload.orgId,
+        orgId: callbackOrgId,
         integrationId: integration?.id,
         eventType: 'oauth_connected',
         status: subscription ? 'success' : 'warning',
@@ -376,7 +490,7 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
 
       res.redirect(302, appendResult(returnTo, 'drive', 'connected'));
     } catch (error) {
-      logger.error({ error, orgId: payload.orgId }, 'Drive OAuth callback failed');
+      logger.error({ error, orgId: callbackOrgId }, 'Drive OAuth callback failed');
       res.redirect(302, appendResult(returnTo, 'drive_error', 'callback_failed'));
     }
   });
@@ -388,7 +502,7 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
       return;
     }
 
-    const parsed = StartSchema.pick({ org_id: true }).safeParse(req.body);
+    const parsed = DisconnectSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
       return;

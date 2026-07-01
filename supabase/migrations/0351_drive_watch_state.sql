@@ -32,7 +32,7 @@
 -- org-member SELECT, FK ON DELETE CASCADE from org_integrations/organizations.
 --
 -- ROLLBACK:
---   DROP FUNCTION IF EXISTS public.upsert_drive_watch_state(uuid, uuid, text, text, text, text, text, text, timestamptz, text, uuid, text, text, uuid);
+--   DROP FUNCTION IF EXISTS public.upsert_drive_watch_state(uuid, uuid, text, text, text, text, text, text, timestamptz, text, uuid, text, text, uuid, text);
 --   DROP TABLE IF EXISTS public.drive_watch_state;
 
 BEGIN;
@@ -179,7 +179,11 @@ CREATE OR REPLACE FUNCTION public.upsert_drive_watch_state(
   p_owner_user_id uuid DEFAULT NULL,
   p_owner_email text DEFAULT NULL,
   p_folder_path text DEFAULT NULL,
-  p_created_by uuid DEFAULT NULL
+  p_created_by uuid DEFAULT NULL,
+  -- Ops surface for DRIVE-06: last renewal/bootstrap failure reason (bounded,
+  -- non-secret). Forwarded by the worker persist() path; nullable + defaulted
+  -- so existing bootstrap callsites that don't set it stay valid.
+  p_last_renewal_error text DEFAULT NULL
 )
 RETURNS uuid
 LANGUAGE plpgsql
@@ -193,13 +197,15 @@ BEGIN
     org_id, integration_id, watched_folder_id, initial_page_token,
     channel_id, channel_resource_id, owner_scope, drive_id,
     channel_expires_at, status,
-    owner_user_id, owner_email, folder_path, created_by
+    owner_user_id, owner_email, folder_path, created_by,
+    last_renewal_error
   )
   VALUES (
     p_org_id, p_integration_id, p_watched_folder_id, p_initial_page_token,
     p_channel_id, p_channel_resource_id, p_owner_scope, p_drive_id,
     p_channel_expires_at, p_status,
-    p_owner_user_id, p_owner_email, p_folder_path, p_created_by
+    p_owner_user_id, p_owner_email, p_folder_path, p_created_by,
+    p_last_renewal_error
   )
   ON CONFLICT (integration_id, watched_folder_id)
   DO UPDATE SET
@@ -216,6 +222,8 @@ BEGIN
     -- created_by is set-once: a renewal must NOT overwrite the original
     -- bootstrapping admin. COALESCE keeps the existing value on conflict.
     created_by = COALESCE(public.drive_watch_state.created_by, EXCLUDED.created_by),
+    -- Latest bootstrap/renewal error reason (null on a clean re-bootstrap).
+    last_renewal_error = EXCLUDED.last_renewal_error,
     last_renewed_at = now(),
     updated_at = now()
   RETURNING id INTO v_id;
@@ -233,8 +241,8 @@ GRANT ALL ON TABLE public.drive_watch_state TO service_role;
 -- Org members read their own rows (RLS-scoped). No write grant to authenticated.
 GRANT SELECT ON TABLE public.drive_watch_state TO authenticated;
 
-REVOKE ALL ON FUNCTION public.upsert_drive_watch_state(uuid, uuid, text, text, text, text, text, text, timestamptz, text, uuid, text, text, uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.upsert_drive_watch_state(uuid, uuid, text, text, text, text, text, text, timestamptz, text, uuid, text, text, uuid) TO service_role;
+REVOKE ALL ON FUNCTION public.upsert_drive_watch_state(uuid, uuid, text, text, text, text, text, text, timestamptz, text, uuid, text, text, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.upsert_drive_watch_state(uuid, uuid, text, text, text, text, text, text, timestamptz, text, uuid, text, text, uuid, text) TO service_role;
 
 NOTIFY pgrst, 'reload schema';
 

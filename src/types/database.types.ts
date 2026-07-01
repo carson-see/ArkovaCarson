@@ -7190,6 +7190,7 @@ export type Database = {
           p_folder_path?: string
           p_initial_page_token: string
           p_integration_id: string
+          p_last_renewal_error?: string
           p_org_id: string
           p_owner_email?: string
           p_owner_scope?: string
