@@ -1155,4 +1155,40 @@ describe('BitcoinChainClient.verifyFingerprint', () => {
     expect(result.receipt!.blockHeight).toBe(150042);
     expect(provider.listUnspent).toHaveBeenCalled();
   });
+
+  it('falls back to the UTXO scan when getAddressTxs FAILS (timeout/429), not a hard error', async () => {
+    // Review (CodeRabbit): a transient history-API failure must not make
+    // verification strictly worse than the pre-fix unspent-only path — it should
+    // fall through to the legacy UTXO scan, which still verifies unspent anchors.
+    const fpBytes = Buffer.from(TEST_FINGERPRINT.toLowerCase(), 'hex');
+    const canonicalPayload = Buffer.concat([Buffer.from('ARKV'), fpBytes]);
+    const canonicalScript = bitcoin.script.compile([bitcoin.opcodes.OP_RETURN, canonicalPayload]);
+    const canonicalHex = canonicalScript.toString('hex');
+
+    const provider = createMockProvider({
+      // History API is down (e.g. 429 / timeout).
+      getAddressTxs: vi.fn().mockRejectedValue(new Error('HTTP 429 Too Many Requests')),
+      // The anchor is still unspent, so the legacy UTXO scan can find it.
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: 'x'.repeat(64), vout: 0, valueSats: 50000, rawTxHex: '00' },
+      ]),
+      getRawTransaction: vi.fn().mockResolvedValue({
+        txid: 'x'.repeat(64),
+        confirmations: 5,
+        blocktime: 1710000000,
+        blockhash: 'y'.repeat(64),
+        vout: [{ scriptPubKey: { hex: canonicalHex, asm: 'OP_RETURN ' + canonicalPayload.toString('hex') } }],
+      }),
+      getBlockHeader: vi.fn().mockResolvedValue({ height: 150042 }),
+    });
+
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    const result = await client.verifyFingerprint(TEST_FINGERPRINT);
+
+    // Found via UTXO fallback — NOT a "Verification error".
+    expect(result.verified).toBe(true);
+    expect(result.receipt!.blockHeight).toBe(150042);
+    expect(provider.getAddressTxs).toHaveBeenCalled();
+    expect(provider.listUnspent).toHaveBeenCalled();
+  });
 });

@@ -912,15 +912,35 @@ export class BitcoinChainClient implements ChainClient {
       };
 
       // Preferred path: full address transaction history (finds spent anchors).
+      // BUG-2026-06-24-004 (review): if the history API is unavailable OR fails
+      // transiently (timeout / 429 / 5xx), do NOT surface a hard verification
+      // error — fall through to the legacy UTXO scan, which still verifies any
+      // anchor that remains unspent. History failure must not make verification
+      // strictly worse than the pre-fix unspent-only path.
+      let historyCompleted = false;
       if (typeof this.provider.getAddressTxs === 'function') {
-        const history = await this.provider.getAddressTxs(this.address);
-        for (const rawTx of history) {
-          const match = await matchInTx(rawTx);
-          if (match) return match;
+        try {
+          const history = await this.provider.getAddressTxs(this.address);
+          historyCompleted = true;
+          for (const rawTx of history) {
+            const match = await matchInTx(rawTx);
+            if (match) return match;
+          }
+        } catch (historyError) {
+          const message =
+            historyError instanceof Error
+              ? historyError.message
+              : String(historyError);
+          logger.warn(
+            { fingerprint, error: message },
+            'Address-history lookup failed; falling back to UTXO scan',
+          );
         }
-      } else {
-        // Backward-compat path: providers without an address index (e.g. a bare
-        // Bitcoin Core RPC node) can still verify anchors that remain unspent.
+      }
+      if (!historyCompleted) {
+        // Backward-compat / resilience path: providers without an address index
+        // (e.g. a bare Bitcoin Core RPC node) OR a transient history-API failure
+        // still verify anchors that remain unspent.
         const utxos = await this.provider.listUnspent(this.address);
         for (const utxo of utxos) {
           try {

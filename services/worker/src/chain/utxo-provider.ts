@@ -503,29 +503,49 @@ export class MempoolUtxoProvider implements UtxoProvider {
   // RPC is the supported inclusion-proof source (DISC-03).
 
   /**
-   * BUG-2026-06-24-004: Address transaction history (confirmed + mempool).
-   * mempool.space `/address/:addr/txs` returns up to 50 of the most recent
-   * confirmed txs plus all mempool txs, newest first. This includes fully-spent
-   * anchor txs that no longer appear in `listUnspent`.
+   * BUG-2026-06-24-004: Address transaction history (confirmed + mempool), PAGINATED.
+   * mempool.space `/address/:addr/txs` returns mempool txs + the most-recent 25
+   * confirmed, newest first; `/address/:addr/txs/chain/:last_txid` walks 25 older
+   * confirmed txs at a time. A single page misses fully-spent anchors older than
+   * the first page (review P2 / false-negative hole for aged anchors), so we follow
+   * the confirmed chain until history is exhausted — bounded by `MAX_HISTORY_TXS`
+   * so a large treasury address can't unbound the scan (DoS/latency guard).
    */
   async getAddressTxs(address: string): Promise<RawTransaction[]> {
-    return retryWithBackoff(async () => {
-      const url = `${this.baseUrl}/address/${address}/txs`;
-      const response = await fetch(url, { signal: createTimeoutSignal() });
-      if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
-      const txs = (await response.json()) as Array<{
-        txid: string;
-        status: { confirmed: boolean; block_height?: number; block_hash?: string; block_time?: number };
-        vout: Array<{ scriptpubkey: string; scriptpubkey_asm: string; value: number }>;
-      }>;
-      return txs.map((t) => ({
-        txid: t.txid,
-        confirmations: t.status.confirmed ? 1 : 0,
-        blocktime: t.status.block_time,
-        blockhash: t.status.block_hash,
-        vout: t.vout.map((v) => ({ scriptPubKey: { hex: v.scriptpubkey, asm: v.scriptpubkey_asm } })),
-      }));
-    }, { name: 'MempoolUtxoProvider.getAddressTxs' });
+    const MAX_HISTORY_TXS = 500; // ~20 confirmed pages; bounded cap
+    type MempoolTx = {
+      txid: string;
+      status: { confirmed: boolean; block_height?: number; block_hash?: string; block_time?: number };
+      vout: Array<{ scriptpubkey: string; scriptpubkey_asm: string; value: number }>;
+    };
+    const toRaw = (t: MempoolTx): RawTransaction => ({
+      txid: t.txid,
+      confirmations: t.status.confirmed ? 1 : 0,
+      blocktime: t.status.block_time,
+      blockhash: t.status.block_hash,
+      vout: t.vout.map((v) => ({ scriptPubKey: { hex: v.scriptpubkey, asm: v.scriptpubkey_asm } })),
+    });
+    const fetchPage = (url: string): Promise<MempoolTx[]> =>
+      retryWithBackoff(async () => {
+        const response = await fetch(url, { signal: createTimeoutSignal() });
+        if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
+        return (await response.json()) as MempoolTx[];
+      }, { name: 'MempoolUtxoProvider.getAddressTxs' });
+
+    // First page: mempool + most-recent 25 confirmed (newest first).
+    const first = await fetchPage(`${this.baseUrl}/address/${address}/txs`);
+    const out: RawTransaction[] = first.map(toRaw);
+    // Oldest confirmed txid in a newest-first page is the pagination cursor.
+    const oldestConfirmed = (page: MempoolTx[]): string | undefined =>
+      [...page].reverse().find((t) => t.status.confirmed)?.txid;
+    let cursor = oldestConfirmed(first);
+    while (cursor && out.length < MAX_HISTORY_TXS) {
+      const page = await fetchPage(`${this.baseUrl}/address/${address}/txs/chain/${cursor}`);
+      if (page.length === 0) break;
+      out.push(...page.map(toRaw));
+      cursor = oldestConfirmed(page);
+    }
+    return out;
   }
 
 
