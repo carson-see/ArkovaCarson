@@ -288,7 +288,17 @@ describe('GET /credentials/:publicId/ctdl', () => {
       ['SUPERSEDED', 200],
       ['REVOKED', 410],
     ];
-    const NON_PUBLISHABLE = ['PENDING', 'DRAFT', 'PROCESSING', 'FAILED', 'DELETED', 'UNKNOWN', ''];
+    // [label, status] — label renders '' as a readable '(empty)' in the generated
+    // test title while the actual empty string still drives the anchor status.
+    const NON_PUBLISHABLE: Array<[string, string]> = [
+      ['PENDING', 'PENDING'],
+      ['DRAFT', 'DRAFT'],
+      ['PROCESSING', 'PROCESSING'],
+      ['FAILED', 'FAILED'],
+      ['DELETED', 'DELETED'],
+      ['UNKNOWN', 'UNKNOWN'],
+      ['(empty)', ''],
+    ];
 
     it.each(PUBLISHABLE)('publishes CTDL for status %s (HTTP %i)', async (status, expected) => {
       const lookup: CredentialsCtdlLookup = {
@@ -308,7 +318,7 @@ describe('GET /credentials/:publicId/ctdl', () => {
       expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
     });
 
-    it.each(NON_PUBLISHABLE)('fails closed with 404 and no CTDL body for non-publishable status %s', async (status) => {
+    it.each(NON_PUBLISHABLE)('fails closed with 404 and no CTDL body for non-publishable status %s', async (_label, status) => {
       const lookup: CredentialsCtdlLookup = {
         lookupByPublicId: vi.fn().mockResolvedValue(anchor({ status })),
       };
@@ -533,5 +543,47 @@ describe('normalizeAnchorRow — CE-03 expiration mapping', () => {
       metadata: { resource_available_until: '2030-12-31T00:00:00.000Z' },
     });
     expect(anchor.resourceAvailableUntil).toBe('2030-12-31T00:00:00.000Z');
+  });
+
+  // Pins the string-or-null coercion (asStringOrNull) applied to every optional
+  // field: a non-string row value (number/object/array/boolean) must become null,
+  // never leak a coerced/stringified artifact into the CtdlAnchor projection.
+  it('coerces non-string row + issuer fields to null (no stringified leakage)', () => {
+    const anchor = normalizeAnchorRow({
+      ...baseRow,
+      org_id: 12345,
+      credential_type: { nested: 'object' },
+      sub_type: ['array'],
+      label: true,
+      description: 0,
+      chain_timestamp: 99,
+      issued_at: {},
+      expires_at: [],
+      revoked_at: false,
+      revocation_reason: 3.14,
+      organization: {
+        display_name: 42,
+        public_id: null,
+        website_url: undefined,
+        domain: ['x'],
+      },
+    });
+
+    expect(anchor.orgId).toBeNull();
+    expect(anchor.credentialType).toBeNull();
+    expect(anchor.subType).toBeNull();
+    expect(anchor.label).toBeNull();
+    expect(anchor.description).toBeNull();
+    expect(anchor.chainTimestamp).toBeNull();
+    expect(anchor.issuedAt).toBeNull();
+    expect(anchor.expiresAt).toBeNull();
+    expect(anchor.revokedAt).toBeNull();
+    expect(anchor.revocationReason).toBeNull();
+    expect(anchor.issuer).toEqual({
+      name: null,
+      publicId: null,
+      websiteUrl: null,
+      domain: null,
+    });
   });
 });

@@ -141,32 +141,40 @@ function resourceAvailableUntilFromMetadata(metadata: unknown): string | null {
   return null;
 }
 
+// Coerce an unknown row value to a bare string or null. Collapsing the repeated
+// `typeof x === 'string' ? x : null` branches into one helper keeps
+// normalizeAnchorRow under the cognitive-complexity limit (SonarCloud) without
+// changing behavior.
+function asStringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
 export function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
   const organization = row.organization as Record<string, unknown> | null | undefined;
   return {
     publicId: String(row.public_id ?? ''),
-    orgId: typeof row.org_id === 'string' ? row.org_id : null,
+    orgId: asStringOrNull(row.org_id),
     status: String(row.status ?? ''),
-    credentialType: typeof row.credential_type === 'string' ? row.credential_type : null,
-    subType: typeof row.sub_type === 'string' ? row.sub_type : null,
-    label: typeof row.label === 'string' ? row.label : null,
-    description: typeof row.description === 'string' ? row.description : null,
+    credentialType: asStringOrNull(row.credential_type),
+    subType: asStringOrNull(row.sub_type),
+    label: asStringOrNull(row.label),
+    description: asStringOrNull(row.description),
     metadata: row.metadata,
     createdAt: String(row.created_at ?? ''),
-    chainTimestamp: typeof row.chain_timestamp === 'string' ? row.chain_timestamp : null,
-    issuedAt: typeof row.issued_at === 'string' ? row.issued_at : null,
+    chainTimestamp: asStringOrNull(row.chain_timestamp),
+    issuedAt: asStringOrNull(row.issued_at),
     // Issued-person credential expiry — read for completeness but the serializer
     // never routes it to ceterms:expirationDate (SCRUM-2374 / Jeanne guidance).
-    expiresAt: typeof row.expires_at === 'string' ? row.expires_at : null,
+    expiresAt: asStringOrNull(row.expires_at),
     // Resource-availability / offering expiry (the only expiry that maps to CTDL).
     resourceAvailableUntil: resourceAvailableUntilFromMetadata(row.metadata),
-    revokedAt: typeof row.revoked_at === 'string' ? row.revoked_at : null,
-    revocationReason: typeof row.revocation_reason === 'string' ? row.revocation_reason : null,
+    revokedAt: asStringOrNull(row.revoked_at),
+    revocationReason: asStringOrNull(row.revocation_reason),
     issuer: organization ? {
-      name: typeof organization.display_name === 'string' ? organization.display_name : null,
-      publicId: typeof organization.public_id === 'string' ? organization.public_id : null,
-      websiteUrl: typeof organization.website_url === 'string' ? organization.website_url : null,
-      domain: typeof organization.domain === 'string' ? organization.domain : null,
+      name: asStringOrNull(organization.display_name),
+      publicId: asStringOrNull(organization.public_id),
+      websiteUrl: asStringOrNull(organization.website_url),
+      domain: asStringOrNull(organization.domain),
     } : null,
   };
 }
