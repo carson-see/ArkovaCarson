@@ -14,6 +14,34 @@
 
 ## Now
 
+### 2026-06-29 (Lane 2 S2) — queue-first loop consumer + FE-PROOF-GATE built; 4 draft PRs open for review
+
+Lane-2 PI-0 Sprint-2 driven to **build-complete** (this session's PRs only; #1260 + other carryover are prior-session, out of scope). Ceremonies (refinement/planning/pre-mortem) + the full gate run executed. **Nothing merged by Claude; no prod/schema/soak state changed.** Plans + close-out in Drive `ARKOVA PI-0-S2`.
+
+**4 draft PRs (all TDD-green, NO migration, flags default-OFF, off the proof/chain runtime per the soak-window guard):**
+- **#1364 FE-PROOF-GATE** (SCRUM-2501, T2, launch-blocker gate #2): fixes the live bug where `hasPublicVerificationProof` gated the proof DOWNLOAD as SECURED||REVOKED||EXPIRED||SUPERSEDED. New `isProofDownloadable`=SECURED-only gates `VerifierProofDownload`; badge from `getStatusDisplay`; FIX-1 flag `ENABLE_PROOF_PDF_DOWNLOAD` (OFF) gates the PDF download until the staging round-trip E2E (waits on Lane-1 #1354). 18/18.
+- **#1366 QUEUE-06 + QUEUE-05** (SCRUM-2352 T3 / 2351 T2): `connector_artifact` drain consumer (Cloud Scheduler → `/jobs/drain-connector-artifacts`), exactly-once via a compare-and-set claim, charge-at-securing ONLY via `debit_and_enqueue_anchor` (0341), flag `ENABLE_CONNECTOR_ARTIFACT_DRAIN` (OFF). Owner-inclusive manual-run guard (canonical `isCallerOrgAdminResult`, fail-closed). **F-1 stuck-row reaper added** (lease/visibility-timeout re-queues stranded processing|materialized rows + status-guarded transitions) — confirmed an uncovered gap (anchor monitors don't see pre-materialize rows; no backlog story). Drain 15/15 + QUEUE-05 suite green.
+- **#1365 QUEUE-07** (SCRUM-2353, T2): daily queue digest on `queue-reminders.ts` — counts/aged/failed-connector/action links, audit-backed prefs/suppression/retry, org/sub-org scope, typed `assertNoRawContent` guard (§1.6). 35/35.
+
+**Gates:** /code-review (4 findings) → /debug (F-2 owner-actor lookup verified prod-safe + consistent with `rule-action-dispatcher` precedent → no change) → /tla-precheck PASS (no `.machine.ts` touched; anchor PENDING→BROADCASTING only via the verified `debit_and_enqueue_anchor` RPC) → RTE check-in → final pre-mortem.
+
+**OPEN DEPENDENCY (RTE-owned, launch-blocker for the connector loop):** **mig 0343 (`connector_artifact`, #1259) is NOT in prod** — prod ledger jumps 0342→0345 (0345-0348 applied out-of-band; the #1346 prod-ahead-guard class). Safe today ONLY because the connector flags (QUEUE-06 drain + DS-03 producer) are OFF; 0343 must be prod-applied **before** any connector flag flips, with a §0-rule-10 ledger reconcile (prod already at 0348). 0344 correctly absent (renumbered to 0349 under open #1260).
+
+_Verified via: `gh pr create` #1364/#1365/#1366 (open draft); local `vitest run` (FE 18/18; drain 15/15; QUEUE-07 35/35) + `tsc --noEmit` 0 + `lint:copy`/`lint --max-warnings 0` clean; prod ledger head 0348 + 0343 absent via Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye`. No prod/schema/soak state changed; nothing merged by Claude._
+
+### 2026-06-29 (PI-0 Sprint 2 kickoff — ART/cross-lane) — S1→S2 production wave (28 PRs merged 06-27→06-29); S2 planned; prod on 0348 / worker 70b50223
+
+**Prod truth (read-only, 2026-06-29):** worker `git_sha 70b50223`, `/health` healthy (mainnet; db/anchoring/kms ok), deployed by deploy-worker run 28400817406 (2026-06-29T20:32:56Z). Migration ledger head **0348** (`0348_webhook_event_claims`); 0345/0346/0347/0348 present, **0343 NOT in prod** (see Lane-2 entry — launch-blocker dependency). Flags AI_EXTRACTION / VERIFICATION_API / PROD_NETWORK_ANCHORING = true; no connector-drain/enqueue flag in prod env.
+
+**28 PRs merged to main 06-27→06-29** (origin/main `d9773a64`):
+- **Owner-resolution-drift fix (06-29):** #1325 (compliance Audit-My-Org owner gate) + #1326 (12 org gates routed through the canonical owner-inclusive resolver) — the 06-27 mapped CLASS, now MERGED (supersedes the 2026-06-27 entry's "#1325 DRAFT").
+- **Lane-1 proof (gate #2):** #1320 PROOF-03 confirmation-proof LIVE via backfill cron (06-28); #1349 independent-node confirm; #1352 PROOF-04 (PDF embeds proof JSON); #1353 reference verifier CLI v0.1 (`@arkova/verifier` / `-cli`); #1357 PROOF-08 fixtures. **Soaking T2:** #1354 PROOF-05 `proof_bundle` API + #1350 PROOF-06 signed-DID (FE-PROOF-GATE contract frozen on main `docs/lane1/fe-proof-gate-contract-s2.md`). Carryover: #1307 reorg/legal-hold (merged, mig 0347); #1293 verifyFingerprint decode (DRAFT; re-soak → merges 06-30 23:12Z, C-suite residual-risk); #1281 backfill (gated dry-run).
+- **Chain/credit/CI hardening:** #1300 UTXO fee; #1298 batch-extraction credit accounting; #1291 Gemini-parse §1.6; #1269 Stripe-Identity entitlement (PAY-01); #1317 Stripe-503 (mig 0348); #1257 CPE/CLE indexes (mig 0342); #1286 embed perf (mig 0345); #1342 deploy-gate typecheck unblock; #1346 prod-ahead ledger guard; #1338 prod-tables snapshot.
+
+**S2 planned (06-29):** ART Founders' Report + Lane-1/Lane-2 plans filed in Drive `ARKOVA PI-0-S2` (Lane-3 plan embedded; standalone doc expected day-1). RTE cross-lane brief = Program Board comment 91783169 (soak-window guard; contract on main; head 0348 / 0349=#1260 / next-free 0350; own-rig isolation; Lane-2 single scheduler owner). Critical path: Lane-3 producers (DS-04/Drive) → `connector_artifact` (0343) → Lane-2 QUEUE-06 consumer → SECURED → Lane-1 proof bundle → verifier.
+
+_Verified via: `gh pr list --search "merged:>=2026-06-27"` + `git log origin/main` (28 merges; HEAD `d9773a64`); prod `/health` `70b50223` + `gcloud run services describe arkova-worker` + deploy run 28400817406; Supabase MCP `list_migrations`/`execute_sql` on `vzwyaatejekddvltxyye` (head 0348; 0343 absent; flags); Drive `ARKOVA PI-0-S2` + Confluence 85622786 comment 91783169._
+
 ### 2026-06-27 (RTE/RM) — Compliance "Audit My Organization" owner-org gate fixed (PR #1325, DRAFT, T2) + owner-resolution-drift CLASS mapped (11 more worker gates)
 
 **Reported P1 (prod UAT 2026-06-24):** org OWNERS got `403 "Must belong to an organization"` clicking **Audit My Organization**. Root cause: `services/worker/src/compliance/auth-helpers.ts` `getCallerOrgId` resolved org via `org_members` ONLY; owners are linked via `profiles.org_id` (the "Managing X" header source) and aren't guaranteed an `org_members` 'owner' row. **Fix → PR #1325 (DRAFT, T2):** resolve `profiles.org_id` first (delegated to canonical `api/_org-auth.ts`), `org_members` fallback via `limit(1).maybeSingle()` (also closes a latent `.single()` crash-to-403 for 2+ org users). Single chokepoint → fixes all 7 compliance routes. 8 unit tests; full worker suite green (478/6491). **NOT merged, soak PENDING** (T2 12h on clean `arkova-staging`; plan in PR body). Was a **prior-session orphan** (identical local commit, never pushed/PR'd — the literal "fell through" failure); now durably #1325.
@@ -378,4 +406,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-26 by Claude (carson@arkova.io) — Lane-3 PI-0 S1 close-out; claims verified against gcloud/MCP/CI/gh output: prod worker `/health` git_sha=b96c6836 healthy (db/anchoring/kms ok, self-curled via identity token); `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` unset in `gcloud run services describe arkova-worker` (DS-03 producer dormant); PRs #1284/#1285/#1321 MERGED and #1321 deploy-worker run succeeded (gh); prod migration head 0341 via Supabase MCP on vzwyaatejekddvltxyye. Prior footers remain in git history._
+_Last refreshed: 2026-06-29 by Claude (carson@arkova.io) — PI-0 S2 kickoff + Lane-2 S2 build close-out; claims verified against gcloud/MCP/CI/gh: prod worker `/health` git_sha=70b50223 healthy (mainnet, db/anchoring/kms ok) deployed by run 28400817406; prod migration head 0348 + 0343 absent via Supabase MCP on vzwyaatejekddvltxyye; 28 PRs merged 06-27→06-29 (origin/main d9773a64) via gh; Lane-2 draft PRs #1364/#1365/#1366 open. Prior footers remain in git history._
