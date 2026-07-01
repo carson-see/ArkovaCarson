@@ -97,6 +97,18 @@ async function getActiveKey(): Promise<ProofKey | null> {
   return registry.keys.find((k) => k.status === 'active') ?? null;
 }
 
+/**
+ * The retired Ed25519 keys, in registry order. Retired keys are published as
+ * `verificationMethod` entries (so historical proof bundles signed under a
+ * since-rotated key still verify) but are NOT listed in `assertionMethod` —
+ * a retired key must not authorise a NEW assertion. Empty when none retired.
+ */
+async function getRetiredKeys(): Promise<ProofKey[]> {
+  const registry = await loadRegistry();
+  if (!registry || !Array.isArray(registry.keys)) return [];
+  return registry.keys.filter((k) => k.status === 'retired');
+}
+
 interface Ed25519Jwk {
   kty: 'OKP';
   crv: 'Ed25519';
@@ -119,7 +131,7 @@ function pemToEd25519Jwk(pem: string): Ed25519Jwk {
 
 // ─── DID document builders (pure) ─────────────────────────────────────────
 
-interface VerificationMethod {
+export interface VerificationMethod {
   id: string;
   type: 'JsonWebKey2020';
   controller: string;
@@ -132,7 +144,7 @@ interface ServiceEntry {
   serviceEndpoint: string;
 }
 
-interface DidDocument {
+export interface DidDocument {
   '@context': readonly string[];
   id: string;
   controller?: string;
@@ -143,18 +155,40 @@ interface DidDocument {
   service?: ServiceEntry[];
 }
 
-/** Build the Arkova platform DID document. */
-export function buildArkovaDidDocument(activeKey: ProofKey): DidDocument {
-  const jwk = pemToEd25519Jwk(activeKey.public_key_pem);
-  const vmId = `${ARKOVA_DID}#${activeKey.id}`;
+/**
+ * Build the Arkova platform DID document.
+ *
+ * KEY ROTATION (SCRUM-900 "historical bundles stay verifiable"): the active key
+ * is the ONLY `assertionMethod` / `authentication` entry — only it may authorise
+ * a NEW assertion or authentication. `retiredKeys` (if any) are published as
+ * additional `verificationMethod` entries but are deliberately absent from
+ * `assertionMethod`, so a verifier resolving a pre-rotation bundle can still
+ * find the retired key's public JWK and verify the historical signature, while a
+ * retired key can never assert a new bundle. Mirrors the registry: retired keys
+ * stay listed (`proof-keys.public.json`, `status: "retired"`) precisely so the
+ * trust chain survives rotation.
+ */
+export function buildArkovaDidDocument(activeKey: ProofKey, retiredKeys: ProofKey[] = []): DidDocument {
+  const activeJwk = pemToEd25519Jwk(activeKey.public_key_pem);
+  const activeVmId = `${ARKOVA_DID}#${activeKey.id}`;
+  // Retired keys become verificationMethod entries only. A malformed retired PEM
+  // throws in pemToEd25519Jwk and surfaces as a 503 (same as the active key) —
+  // we never publish a partial/garbage verification method.
+  const retiredVms: VerificationMethod[] = retiredKeys.map((k) => ({
+    id: `${ARKOVA_DID}#${k.id}`,
+    type: 'JsonWebKey2020',
+    controller: ARKOVA_DID,
+    publicKeyJwk: pemToEd25519Jwk(k.public_key_pem),
+  }));
   return {
     '@context': DID_CONTEXT,
     id: ARKOVA_DID,
     verificationMethod: [
-      { id: vmId, type: 'JsonWebKey2020', controller: ARKOVA_DID, publicKeyJwk: jwk },
+      { id: activeVmId, type: 'JsonWebKey2020', controller: ARKOVA_DID, publicKeyJwk: activeJwk },
+      ...retiredVms,
     ],
-    assertionMethod: [vmId],
-    authentication: [vmId],
+    assertionMethod: [activeVmId],
+    authentication: [activeVmId],
     service: [
       { id: `${ARKOVA_DID}#homepage`, type: 'LinkedDomains', serviceEndpoint: ARKOVA_HOMEPAGE },
     ],
@@ -286,7 +320,11 @@ export function createDidWebRouter(deps: DidWebRouterDeps = {}): Router {
     }
     let doc: DidDocument;
     try {
-      doc = buildArkovaDidDocument(activeKey);
+      // Publish retired keys as verificationMethod entries (not assertionMethod)
+      // so historical proof bundles signed under a since-rotated key still
+      // resolve their public key from the DID document.
+      const retiredKeys = await getRetiredKeys();
+      doc = buildArkovaDidDocument(activeKey, retiredKeys);
     } catch {
       res.status(503).json({ error: 'Active signing key is not a valid Ed25519 public key.' });
       return;

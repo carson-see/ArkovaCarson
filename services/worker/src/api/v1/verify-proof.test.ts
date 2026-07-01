@@ -21,6 +21,9 @@ import {
   __resetSignerCacheForTests,
 } from './verify-proof.js';
 import { verifySignedBundle } from '../../proof/signed-bundle.js';
+import { verifyDidBinding } from '../../proof/did-binding.js';
+import { buildArkovaDidDocument, ARKOVA_DID } from '../did-web.js';
+import type { ProofKey } from '../proof-keys.js';
 import { buildMerkleTree } from '../../utils/merkle.js';
 
 const fp = (seed: string) => createHash('sha256').update(seed).digest('hex');
@@ -104,6 +107,34 @@ describe('SCRUM-900 signed proof bundle route', () => {
     const res = await request(app).get('/api/v1/verify/abc123/proof?format=signed');
     const verification = verifySignedBundle({ bundle: res.body, publicKeyPem: publicPem });
     expect(verification.valid).toBe(true);
+  });
+
+  it('PROOF-06: signed bundle binds the issuer DID and verifies as one chain', async () => {
+    const app = buildApp({ lookupByPublicId: async () => ANCHOR });
+    const res = await request(app).get('/api/v1/verify/abc123/proof?format=signed');
+    expect(res.status).toBe(200);
+
+    // The payload carries the issuer binding pointing at the DID's
+    // assertionMethod vm-id derived from the signing key id.
+    expect(res.body.payload.issuer.did).toBe(ARKOVA_DID);
+    expect(res.body.payload.issuer.assertion_method).toBe(`${ARKOVA_DID}#arkova-proof-test`);
+    expect(res.body.payload.issuer.anchoring.chain).toBe('bitcoin');
+    expect(res.body.payload.assertions.not_asserted.length).toBeGreaterThan(0);
+
+    // Build the DID document from the SAME key the route signed with, then
+    // walk the single trust chain: issuer DID → assertionMethod key → sig.
+    const didKey: ProofKey = {
+      id: 'arkova-proof-test',
+      alg: 'Ed25519',
+      status: 'active',
+      public_key_pem: publicPem,
+      created_at: '2026-06-01T00:00:00Z',
+    };
+    const didDoc = buildArkovaDidDocument(didKey);
+    const verdict = verifyDidBinding({ bundle: res.body, didDocument: didDoc });
+    expect(verdict.valid).toBe(true);
+    expect(verdict.bound).toBe(true);
+    expect(verdict.verificationMethodId).toBe(`${ARKOVA_DID}#arkova-proof-test`);
   });
 
   it('returns 503 when the signer env vars are not configured', async () => {
