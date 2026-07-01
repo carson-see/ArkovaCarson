@@ -635,7 +635,47 @@ export async function drainConnectorArtifactsForOrg(
           }
           continue;
         }
-        // Other (HARD) debit failures → mark failed + bounded alert. No
+        // `anchor_not_in_expected_status` is NOT terminal. It means a concurrent
+        // cycle already advanced THIS anchor past PENDING (the drain's own prior
+        // debit + broadcast/confirmation). The debit RPC rejects BEFORE charging
+        // and is idempotent on anchor id, so NO charge was lost — the securing
+        // already happened. Marking the row `failed` here strands a genuinely
+        // SECURED/SUBMITTED anchor as a failed artifact (data-integrity bug found
+        // under load: ~12k wrongly-failed rows whose anchors were SECURED/SUBMITTED).
+        // Re-read and reconcile — mirroring the confirmation step — instead of failing.
+        // The confirmation re-queue path (SITE `isAnchorInFlight`) already guards
+        // this on re-debit; the FIRST-pass debit needs the same guard.
+        if (debit.error === 'anchor_not_in_expected_status') {
+          let advancedAnchor: AnchorStatusRow | null;
+          try {
+            advancedAnchor = await deps.readAnchorStatus({ orgId, anchorId });
+          } catch (err) {
+            // Read flake → leave materialized (retryable). Never fail on a transient
+            // read after an already-advanced anchor.
+            deps.logger.warn({ error: err, orgId, artifactId: row.id, anchorId }, 'connector-artifact advanced-anchor re-read failed — left materialized');
+            continue;
+          }
+          if (isAnchorAdvanced(advancedAnchor)) {
+            // Irreversibly advanced → promote to terminal anchored (status-guarded).
+            if (await markStatus(deps, orgId, row.id, 'materialized', 'anchored', { anchor_id: anchorId })) {
+              result.anchored += 1;
+              result.confirmed += 1;
+              deps.logger.info({ orgId, artifactId: row.id, anchorId, anchorStatus: advancedAnchor!.status }, 'connector-artifact debit saw advanced anchor — promoted anchored (idempotent, no re-charge)');
+            } else {
+              deps.logger.warn({ orgId, artifactId: row.id }, 'connector-artifact lost lease at advanced-anchor promote — stopping row');
+            }
+            continue;
+          }
+          if (isAnchorInFlight(advancedAnchor)) {
+            // BROADCASTING/null-tx → still in flight; leave materialized for the
+            // confirmation re-read to promote once it gains a tx. NOT failed.
+            deps.logger.info({ orgId, artifactId: row.id, anchorId }, 'connector-artifact debit saw in-flight anchor — left materialized for confirmation');
+            continue;
+          }
+          // Anchor genuinely PENDING/missing despite the rejection is not expected
+          // (the RPC only rejects a NON-PENDING anchor) → fall through to terminal.
+        }
+        // Truly-terminal debit failures → mark failed + bounded alert. No
         // batch-anchor, no silent drop. The row is reviewable. If the guarded
         // mark-failed matched zero rows the lease was lost — stop, don't count.
         if (await markFailed(deps, orgId, row.id, debit.error ?? 'debit_failed')) {
