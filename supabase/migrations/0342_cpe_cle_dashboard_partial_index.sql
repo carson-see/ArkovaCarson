@@ -1,0 +1,134 @@
+-- PERF: org Compliance/CPE-CLE dashboard — partial indexes for the org CPE/CLE
+-- reporting panels (SCRUM CPE/CLE compliance dashboard track; see PR
+-- perf/cpe-cle-dashboard-partial-index).
+--
+-- WHY: src/pages/ComplianceDashboardPage.tsx builds the org CPE reporting panel
+-- (and an analogous CLE panel) by querying the anchors table for that org's rows
+-- that carry CPE/CLE compliance metadata, newest first:
+--
+--   supabase.from('anchors')
+--     .select(ORG_CPE_AGGREGATE_SELECT)
+--     .eq('org_id', orgId)
+--     .not('cpe_metadata', 'is', null)
+--     .order('issued_at', { ascending: false })
+--     .limit(1000)
+--   -- i.e.  WHERE org_id = $1 AND cpe_metadata IS NOT NULL
+--   --       ORDER BY issued_at DESC LIMIT 1000
+--   -- (the CLE panel is the same shape against cle_metadata)
+--
+-- The only org_id indexes on public.anchors are composite and lead/order on
+-- created_at, NONE of which can serve this predicate+order:
+--   idx_anchors_org_status_created     (org_id, status, created_at DESC) WHERE deleted_at IS NULL
+--   idx_anchors_org_deleted_created    (org_id, created_at DESC)         WHERE deleted_at IS NULL
+--   idx_anchors_org_nopipeline_created (org_id, created_at DESC)         WHERE deleted_at IS NULL AND metadata->>'pipeline_source' IS NULL
+-- There is no index whose predicate is `cpe_metadata IS NOT NULL` /
+-- `cle_metadata IS NOT NULL`, and none key on issued_at. So for an org with a
+-- large anchor count, `WHERE org_id=$1 AND cpe_metadata IS NOT NULL ORDER BY
+-- issued_at DESC` has no selective access path and the planner must scan that
+-- org's entire row set, then sort by issued_at.
+--
+-- PROD EVIDENCE (project vzwyaatejekddvltxyye, captured 2026-06-22):
+--   * public.anchors ~ 3,005,664 rows, 22 GB total (13 GB heap).
+--   * The primary org (40383eb2-…) owns 2,972,219 of those rows (~99%) — the
+--     "tens-to-hundreds of thousands of pipeline-ingested anchors, only a handful
+--     with cpe_metadata" case, at the extreme.
+--   * EXPLAIN of the panel query on that org:
+--       Limit  (cost=1765817.49..1765817.61 rows=1)
+--         -> Gather Merge -> Sort (Sort Key: issued_at DESC)
+--              -> Parallel Seq Scan on anchors
+--                   Filter: ((cpe_metadata IS NOT NULL) AND (org_id = '40383eb2-…'))
+--     A full Parallel Seq Scan over the 22 GB table (cost ~1.77M).
+--   * A bare `count(*) FILTER (WHERE cpe_metadata IS NOT NULL)` over anchors
+--     ALREADY exceeds the statement timeout (SQLSTATE 57014) — empirically
+--     confirming the panel query exceeds the timeout and the panel fails to
+--     render for large orgs.
+--
+-- FIX: two PARTIAL btree indexes, one per metadata column:
+--   idx_anchors_org_cpe_metadata_issued  ON (org_id, issued_at DESC) WHERE cpe_metadata IS NOT NULL
+--   idx_anchors_org_cle_metadata_issued  ON (org_id, issued_at DESC) WHERE cle_metadata IS NOT NULL
+-- The partial predicate means the index stores ONLY the few rows that actually
+-- carry CPE/CLE metadata, and the (org_id, issued_at DESC) key serves both the
+-- org_id equality filter and the issued_at DESC ordering directly — turning the
+-- full-table Seq Scan + Sort into a tiny bounded index range scan. This is the
+-- correct, narrowly-scoped structure for these two panels; the existing
+-- created_at-ordered composites are deliberately left untouched.
+--
+-- This migration is ADDITIVE and read-path only: it creates two indexes. It does
+-- NOT change any table, column, RPC, RLS policy, or row data. database.types.ts
+-- is unaffected by index DDL (verified no-op — see PR notes), so no type
+-- regeneration is required and no `NOTIFY pgrst, 'reload schema'` is needed (no
+-- function/column surface changes).
+--
+-- ---------------------------------------------------------------------------
+-- CONCURRENTLY vs TRANSACTION — the apply decision (the load-bearing part)
+-- ---------------------------------------------------------------------------
+-- `supabase db push` wraps each migration file in a single transaction. Two hard
+-- consequences follow, and they force the operator-applied pattern below — the
+-- same one used by 0313_anchors_index_consolidation.sql,
+-- 0330_scrum2203_unembedded_records_query_perf.sql, and
+-- 0335_scrum2236_dashboard_cache_budgets.sql:
+--
+--   (1) A PLAIN `CREATE INDEX` here would be UNSAFE on prod. It takes a SHARE
+--       lock on public.anchors that BLOCKS ALL WRITES (INSERT/UPDATE/DELETE) for
+--       the FULL DURATION of the build. Crucially, a PARTIAL index is NOT cheap
+--       to build just because it stores few rows: Postgres must still scan the
+--       ENTIRE 13 GB heap (~3M rows) to evaluate `cpe_metadata IS NOT NULL` for
+--       every row before it knows which (few) rows to index. On this 22 GB hot
+--       table under continuous pipeline ingestion, that is a multi-minute,
+--       all-writers-blocked window — i.e. a prod write outage. Not acceptable.
+--
+--   (2) A `CREATE INDEX CONCURRENTLY` CANNOT be placed in this migration body.
+--       Postgres forbids CONCURRENTLY inside a transaction block (it would abort
+--       the migration with SQLSTATE 25001, "CREATE INDEX CONCURRENTLY cannot run
+--       inside a transaction block"), and `db push` always runs the file in one.
+--       CONCURRENTLY is exactly what we want for safety (it builds in two passes
+--       and never takes a blocking lock — concurrent writes proceed throughout),
+--       but it must be run STANDALONE, OUTSIDE any transaction.
+--
+-- DECISION: ship a transactional, side-effect-light MARKER body (the DO block
+-- below, mirroring 0313) so the numbered migration + ledger row exist and apply
+-- cleanly under `db push` / `db reset`, and apply the actual indexes as
+-- OPERATOR-RUN, NON-TRANSACTIONAL `CREATE INDEX CONCURRENTLY ... IF NOT EXISTS`
+-- statements (the block at the bottom of this file). Both are IF NOT EXISTS, so
+-- re-running is safe and idempotent. On a CONCURRENTLY failure (e.g. operator
+-- ^C), drop the resulting INVALID index (DROP INDEX CONCURRENTLY IF EXISTS …)
+-- and re-run.
+--
+-- ROLLBACK: drop the two indexes, standalone, outside a transaction:
+--   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_org_cpe_metadata_issued;
+--   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_org_cle_metadata_issued;
+-- (No data migration is involved; dropping the indexes restores the prior plan —
+-- the Parallel Seq Scan + Sort — exactly. The marker DO block is a no-op and
+-- needs no rollback.)
+
+DO $$
+BEGIN
+  RAISE NOTICE 'Migration 0342 records the org CPE/CLE dashboard partial indexes. The concurrent index builds are operator-applied OUTSIDE a transaction on the live anchors table; see this file header.';
+END $$;
+
+-- ===========================================================================
+-- OPERATOR-APPLIED, NON-TRANSACTIONAL INDEXES (the actual fix)
+-- ===========================================================================
+-- Run each statement STANDALONE, OUTSIDE any transaction, on the live anchors
+-- table (CONCURRENTLY cannot run inside a transaction; `supabase db push` wraps
+-- migrations in one — per the 0313 / 0330 / 0335 convention). Both are
+-- IF NOT EXISTS so re-running is safe.
+--
+--   -- (1) Org CPE reporting panel:
+--   --     WHERE org_id=$1 AND cpe_metadata IS NOT NULL ORDER BY issued_at DESC.
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_org_cpe_metadata_issued
+--     ON public.anchors (org_id, issued_at DESC)
+--     WHERE (cpe_metadata IS NOT NULL);
+--
+--   -- (2) Org CLE reporting panel (same shape, cle_metadata):
+--   --     WHERE org_id=$1 AND cle_metadata IS NOT NULL ORDER BY issued_at DESC.
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_org_cle_metadata_issued
+--     ON public.anchors (org_id, issued_at DESC)
+--     WHERE (cle_metadata IS NOT NULL);
+--
+-- After applying, confirm each panel query plans an Index Scan on the new
+-- partial index (not a Seq Scan):
+--   EXPLAIN SELECT … FROM public.anchors
+--   WHERE org_id = $1 AND cpe_metadata IS NOT NULL
+--   ORDER BY issued_at DESC LIMIT 1000;
+-- ===========================================================================

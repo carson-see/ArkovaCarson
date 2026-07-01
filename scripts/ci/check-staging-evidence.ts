@@ -36,7 +36,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve, sep } from 'node:path';
 import {
   REPO,
-  baseRef,
+  getBaseRef,
   prBody,
   changedFiles,
   resolveCommitOrFail,
@@ -352,6 +352,13 @@ function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
   // bump touches no prod runtime config — exempt it to CI-tooling (T0) when the
   // diff confirms it. Checked BEFORE the PATH_RULES.some() T2 short-circuit.
   if (isDeployWorkerUsesOnlyExempt(file, opts)) return true;
+  // PROOF-08 (SCRUM-2341): the proof test-fixtures subtree lives under
+  // services/worker/src/, which matches the T2 `services/worker/src/` PATH_RULE.
+  // Its loader (index.ts) + JSON are imported ONLY by test suites (verified no
+  // non-test importer), so there is no prod-runtime path. Exempt it to T0 BEFORE
+  // the PATH_RULES.some() short-circuit — same shape as the deploy-worker carve-out
+  // above (a T0 allowlist entry that has to win over a matching PATH_RULE).
+  if (/^services\/worker\/src\/proof\/fixtures\//.test(file)) return true;
   if (PATH_RULES.some((rule) => rule.pattern.test(file))) return false;
   return STAGING_TOOLING_ALLOW.some((re) => re.test(file))
     || DOCS_ONLY_RE.test(file)
@@ -1174,6 +1181,13 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-ledger-numeric-integrity(\.test)?\.ts$/,
   /^scripts\/ci\/check-agents-md-migration-collision(\.test)?\.ts$/,
   /^scripts\/ci\/compute-merge-authority(\.test)?\.ts$/,
+  // R0 verification/baseline CI gates (SCRUM-1252 / 1254 / R0-3). These run
+  // ONLY in CI to lint PR metadata + repo invariants (HANDOFF.md claims,
+  // `count: 'exact'` callsite baseline, coverage-threshold monotonicity). They
+  // never ship to prod runtime → T0 tooling.
+  /^scripts\/ci\/check-handoff-claims(\.test)?\.ts$/,
+  /^scripts\/ci\/check-count-exact-baseline(\.test)?\.ts$/,
+  /^scripts\/ci\/check-coverage-monotonic(\.test)?\.ts$/,
   /^scripts\/ci\/snapshots\//, // CI baselines/snapshots — tooling, never prod runtime
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
@@ -1214,6 +1228,23 @@ const STAGING_TOOLING_ALLOW = [
   // services/edge is the peripheral Cloudflare edge worker (PR #884), not the
   // deployed Cloud Run worker — its manifest stays T0 by explicit carve-out.
   /^services\/edge\/package\.json$/,
+  // PI-0 S2 (SCRUM-2341 / verifier track): @arkova/verifier + @arkova/verifier-cli
+  // are new MIT-licensed STANDALONE library/CLI packages. They are NOT imported by
+  // the deployed Cloud Run worker (services/worker) or the frontend (src/) — verified
+  // no `@arkova/verifier` import exists under services/** or src/**. No migration, no
+  // API/contract surface, no prod runtime: they run only in their own clean-room CI
+  // job and as a developer/auditor CLI. Zero prod-runtime impact → T0 tooling. (The
+  // packages/*/package.json + package-lock.json + eslint.config.js + agents.md within
+  // them are already covered by the peripheral-package / lockfile / eslint / agents.md
+  // rules; these two prefixes additionally cover their src/, tsconfig, vitest config,
+  // fixtures, README, LICENSE, .gitignore, and generator script.)
+  /^packages\/verifier\//,
+  /^packages\/verifier-cli\//,
+  // NOTE: services/worker/src/proof/fixtures/ (PROOF-08, #1357) is ALSO T0, but it
+  // matches the T2 `services/worker/src/` PATH_RULE, so it is exempted earlier in
+  // isT0OnlyFile() (BEFORE the PATH_RULES short-circuit) rather than here — an entry
+  // in this list alone would never be reached for it. See that carve-out for the
+  // test-only justification.
   /agents\.md$/,
   /^eslint-rules\//,
   /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
@@ -1821,6 +1852,8 @@ export function check(opts: CheckOptions): CheckResult {
 }
 
 function main(): void {
+  // Required base: fail closed if it can't resolve (getBaseRef exits 1).
+  const baseRef = getBaseRef({ required: true })!;
   const files = changedFiles();
   const currentHeadSha = resolveCommitOrFail(
     process.env.HEAD_REF_SHA || process.env.GITHUB_SHA || 'HEAD',

@@ -22,6 +22,7 @@ import { AssetDetailView } from '@/components/anchor';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ROUTES } from '@/lib/routes';
+import { sourceProofInput } from '@/lib/sourceProofInput';
 
 export function RecordDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -219,8 +220,35 @@ export function RecordDetailPage() {
         }}
         onBack={handleBack}
         onRenameFile={handleRenameFile}
-        onDownloadProof={() => {
-          import('@/lib/generateAuditReport').then(({ generateAuditReport }) => {
+        onDownloadProof={async () => {
+          try {
+            // PROOF-04 (SCRUM-2337): embed the full machine-readable proof
+            // packet so the certificate can be re-verified offline. The
+            // packet fields live in `anchor_proofs`; `sourceProofInput` fetches
+            // them for SECURED records (RLS scopes the row to the viewer) AND
+            // derives `leaf_count` — the field that arms the CVE-2012-2459 guard
+            // — the same way the server does (count the anchor_proofs rows
+            // sharing this proof's batch_id, head:true → a number, no PII).
+            // Non-SECURED records get the legacy certificate with no packet.
+            const { proof, complete } = await sourceProofInput(supabase, {
+              id: anchor.id,
+              fingerprint: anchor.fingerprint,
+              status: anchor.status,
+              chain_tx_id: anchor.chain_tx_id ?? null,
+              chain_block_height: anchor.chain_block_height ?? null,
+              chain_timestamp: anchor.chain_timestamp ?? null,
+            });
+            // If a packet exists but `leaf_count` could not be sourced (a batch
+            // member whose batch count failed), DO NOT present it as a complete
+            // offline proof: the certificate marks the packet incomplete and we
+            // warn the user. `complete` is true for single-leaf records and
+            // fully-counted batches.
+            if (proof && !complete) {
+              toast.warning(
+                'This certificate embeds the proof for inspection, but one field needed to run every offline check could not be loaded. Try again in a moment for a complete proof.',
+              );
+            }
+            const { generateAuditReport } = await import('@/lib/generateAuditReport');
             generateAuditReport({
               publicId: anchor.public_id ?? anchor.id,
               filename: anchor.filename,
@@ -236,8 +264,12 @@ export function RecordDetailPage() {
               expiresAt: anchor.expires_at ?? undefined,
               networkReceipt: anchor.chain_tx_id ?? undefined,
               blockHeight: anchor.chain_block_height ?? undefined,
+              proof,
+              proofComplete: complete,
             });
-          });
+          } catch {
+            toast.error('Failed to generate proof certificate. Please try again.');
+          }
         }}
         onDownloadProofJson={async () => {
           try {

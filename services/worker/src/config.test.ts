@@ -637,3 +637,41 @@ describe('SCRUM-1258 batch 2 — feature flags + observability + treasury', () =
     });
   });
 });
+
+/**
+ * SCRUM-1258 (R1-4) — AI_BATCH_ROW_LATENCY_BUDGET_MS migrated from an ad-hoc
+ * `process.env` read in ai-extract-batch.ts into the typed config. Preserves the
+ * original `Math.min(Math.max(1000, parseInt(...) || 8000), 30000)` semantics:
+ * default 8000, NaN/0 → default, then clamp to [1000, 30000].
+ */
+describe('SCRUM-1258 aiBatchRowLatencyBudgetMs (typed config, clamped)', () => {
+  it('defaults to 8000 when AI_BATCH_ROW_LATENCY_BUDGET_MS is unset', async () => {
+    await withConfig({ AI_BATCH_ROW_LATENCY_BUDGET_MS: undefined }, (mod) => {
+      expect(mod.config.aiBatchRowLatencyBudgetMs).toBe(8_000);
+    });
+  });
+
+  it('passes through an in-range value', async () => {
+    await withConfig({ AI_BATCH_ROW_LATENCY_BUDGET_MS: '12000' }, (mod) => {
+      expect(mod.config.aiBatchRowLatencyBudgetMs).toBe(12_000);
+    });
+  });
+
+  it('clamps below the floor up to 1000', async () => {
+    await withConfig({ AI_BATCH_ROW_LATENCY_BUDGET_MS: '50' }, (mod) => {
+      expect(mod.config.aiBatchRowLatencyBudgetMs).toBe(1_000);
+    });
+  });
+
+  it('clamps above the ceiling down to 30000', async () => {
+    await withConfig({ AI_BATCH_ROW_LATENCY_BUDGET_MS: '999999' }, (mod) => {
+      expect(mod.config.aiBatchRowLatencyBudgetMs).toBe(30_000);
+    });
+  });
+
+  it('falls back to the default on a non-numeric value', async () => {
+    await withConfig({ AI_BATCH_ROW_LATENCY_BUDGET_MS: 'not-a-number' }, (mod) => {
+      expect(mod.config.aiBatchRowLatencyBudgetMs).toBe(8_000);
+    });
+  });
+});

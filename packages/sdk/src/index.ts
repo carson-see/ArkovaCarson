@@ -51,4 +51,8 @@ export type {
   AttestationEvidence,
   AttestorCredential,
   OrganizationSummary,
+  MerkleProofEntry,
+  MerkleProofResponse,
+  ProofBundle,
+  ProofBundleSignature,
 } from './types';

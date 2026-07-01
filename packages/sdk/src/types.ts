@@ -249,6 +249,91 @@ export interface AnchorDetails extends RichVerificationFields {
   jurisdiction?: string | null;
 }
 
+/** A single Merkle proof sibling (hash + side). */
+export interface MerkleProofEntry {
+  hash: string;
+  position: 'left' | 'right';
+}
+
+/**
+ * PROOF-05 (SCRUM-2338): inline Ed25519 signature envelope metadata on a
+ * {@link ProofBundle}. Present only when the proof was fetched signed; `null`
+ * on the default unsigned response.
+ */
+export interface ProofBundleSignature {
+  alg: string;
+  signingKeyId: string;
+}
+
+/**
+ * PROOF-05 (SCRUM-2338): self-contained, independently-checkable two-layer
+ * proof bundle. Carries only cryptographic evidence — never raw document
+ * content or PII. `null` on the parent response when the proof is incomplete
+ * (the API only emits it when ALL fields below are present + well-formed:
+ * receipt txid/height/timestamp, 160-hex header, 64-hex block hash, canonical
+ * ARKV OP_RETURN, merkleIndex AND leafCount).
+ *
+ * Field names are camelCase per SDK convention; the wire form is snake_case.
+ */
+export interface ProofBundle {
+  fingerprint: string;
+  merkleRoot: string;
+  /**
+   * The inclusion branch. A complete (non-null) bundle always ships a non-empty
+   * branch — `mapProofBundle` fails closed (returns null) on an empty/malformed
+   * array, so consumers can rely on `proofBundle !== null ⇒ independently
+   * verifiable` (CodeRabbit).
+   */
+  merkleProof: [MerkleProofEntry, ...MerkleProofEntry[]];
+  /**
+   * The leaf's index in the batch tree. Non-null in a complete bundle — together
+   * with `leafCount` it arms the CVE-2012-2459 duplicate-leaf structural guard.
+   */
+  merkleIndex: number;
+  /**
+   * Total leaves in the batch tree this proof belongs to. With `merkleIndex`
+   * this arms the CVE-2012-2459 duplicate-leaf structural guard during local
+   * verification — both are always present in a complete (non-null) bundle.
+   */
+  leafCount: number;
+  txId: string;
+  blockHeight: number;
+  blockHash: string;
+  /** Raw 80-byte block header as plain 160-hex. */
+  blockHeader: string;
+  /**
+   * Raw OP_RETURN payload as plain hex: "ARKV" (41524b56) + the 32-byte
+   * app-tree root (64 hex), NO version byte, optional trailing metadata hash.
+   */
+  opReturnPayload: string;
+  blockTimestamp: string;
+  proofSchemaVersion: number;
+  /**
+   * RESERVED — always `null` today. The signed envelope is the outer
+   * `?format=signed` response wrapper, not an inline bundle field. This is the
+   * one legitimately-nullable member of the bundle.
+   */
+  signature: ProofBundleSignature | null;
+}
+
+/**
+ * PROOF-05 (SCRUM-2338): response of `GET /api/v1/verify/{publicId}/proof`.
+ * The legacy top-level fields are unchanged (frozen schema, Constitution 1.8);
+ * `proofBundle` is the additive, nullable self-contained bundle.
+ */
+export interface MerkleProofResponse {
+  publicId: string;
+  fingerprint: string;
+  merkleRoot: string;
+  merkleProof: MerkleProofEntry[];
+  txId: string | null;
+  blockHeight: number | null;
+  blockTimestamp: string | null;
+  batchId: string | null;
+  verified: boolean;
+  proofBundle: ProofBundle | null;
+}
+
 export interface AttestationEvidence {
   publicId: string;
   evidenceType: string;
