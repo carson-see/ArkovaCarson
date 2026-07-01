@@ -91,7 +91,34 @@ function logCtdlRequested(args: AuditArgs): void {
   }
 }
 
-function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
+// SCRUM-2374 (CE-03) — bounded, allow-listed metadata keys that carry a
+// RESOURCE-AVAILABILITY / offering expiry (the date the offering itself is no
+// longer available), which is the ONLY expiry Jeanne Kitchens' guidance allows
+// to map to CTDL `ceterms:expirationDate`. The issued-person expiry lives on
+// `anchors.expires_at` and is deliberately NOT one of these keys. Only a valid
+// ISO date-like value is accepted; anything else is ignored (honest omission).
+const RESOURCE_AVAILABILITY_METADATA_KEYS = [
+  'resource_available_until',
+  'resourceAvailableUntil',
+  'offering_available_until',
+  'offeringAvailableUntil',
+  'offering_end_date',
+  'offeringEndDate',
+] as const;
+
+function resourceAvailableUntilFromMetadata(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const record = metadata as Record<string, unknown>;
+  for (const key of RESOURCE_AVAILABILITY_METADATA_KEYS) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim() && !Number.isNaN(Date.parse(value))) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+export function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
   const organization = row.organization as Record<string, unknown> | null | undefined;
   return {
     publicId: String(row.public_id ?? ''),
@@ -105,7 +132,11 @@ function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
     createdAt: String(row.created_at ?? ''),
     chainTimestamp: typeof row.chain_timestamp === 'string' ? row.chain_timestamp : null,
     issuedAt: typeof row.issued_at === 'string' ? row.issued_at : null,
+    // Issued-person credential expiry — read for completeness but the serializer
+    // never routes it to ceterms:expirationDate (SCRUM-2374 / Jeanne guidance).
     expiresAt: typeof row.expires_at === 'string' ? row.expires_at : null,
+    // Resource-availability / offering expiry (the only expiry that maps to CTDL).
+    resourceAvailableUntil: resourceAvailableUntilFromMetadata(row.metadata),
     revokedAt: typeof row.revoked_at === 'string' ? row.revoked_at : null,
     revocationReason: typeof row.revocation_reason === 'string' ? row.revocation_reason : null,
     issuer: organization ? {
