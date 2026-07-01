@@ -183,8 +183,19 @@ test.describe('Public Verification', () => {
         await expect(page.getByText(`Verification ID: ${anchor.public_id}`)).toBeVisible();
 
         if (statusCase.showsProof) {
+          // The Cryptographic Proof SECTION is gated by hasPublicVerificationProof
+          // (any terminal proof state: SECURED/EXPIRED/REVOKED/SUPERSEDED), so it
+          // stays visible for a record that HAS a proof.
           await expect(page.getByText('Cryptographic Proof')).toBeVisible();
-          await expect(page.getByText('Download Proof')).toBeVisible();
+          // FE-PROOF-GATE (SCRUM-2501): the "Download Proof" AFFORDANCE is a
+          // separate gate — isProofDownloadable is SECURED-only. A terminal-but-
+          // non-SECURED record (EXPIRED/REVOKED) still shows the proof section but
+          // must NOT offer a downloadable "Verified" proof.
+          if (statusCase.status === 'SECURED') {
+            await expect(page.getByText('Download Proof')).toBeVisible();
+          } else {
+            await expect(page.getByText('Download Proof')).not.toBeVisible();
+          }
         } else {
           await expect(page.getByText('Document Verified')).not.toBeVisible();
           await expect(page.getByText('Cryptographic Proof')).not.toBeVisible();
