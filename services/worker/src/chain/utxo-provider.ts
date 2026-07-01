@@ -252,6 +252,15 @@ export interface UtxoProvider {
   /** Get block header by block hash */
   getBlockHeader(blockhash: string): Promise<BlockHeader>;
   /**
+   * BUG-2026-06-24-004: Fetch the transaction HISTORY for an address (confirmed
+   * + mempool), most-recent first. Unlike `listUnspent`, this surfaces fully-spent
+   * transactions — anchor TXs whose value-0 OP_RETURN output and change have both
+   * been spent by later anchors never appear in the UTXO set, so verification must
+   * walk history to find them. Optional: providers without an address index (e.g.
+   * a bare Bitcoin Core RPC node) may omit it; callers fall back to the UTXO scan.
+   */
+  getAddressTxs?(address: string): Promise<RawTransaction[]>;
+  /**
    * PROOF-03 (SCRUM-2336): get the RAW 80-byte block header (160-hex) for a
    * block hash. Optional — providers that can't supply it (e.g. a plain
    * mempool REST provider without the endpoint) omit it and the
@@ -472,6 +481,32 @@ export class MempoolUtxoProvider implements UtxoProvider {
   }
 
   /**
+   * BUG-2026-06-24-004: Address transaction history (confirmed + mempool).
+   * mempool.space `/address/:addr/txs` returns up to 50 of the most recent
+   * confirmed txs plus all mempool txs, newest first. This includes fully-spent
+   * anchor txs that no longer appear in `listUnspent`.
+   */
+  async getAddressTxs(address: string): Promise<RawTransaction[]> {
+    return retryWithBackoff(async () => {
+      const url = `${this.baseUrl}/address/${address}/txs`;
+      const response = await fetch(url, { signal: createTimeoutSignal() });
+      if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
+      const txs = (await response.json()) as Array<{
+        txid: string;
+        status: { confirmed: boolean; block_height?: number; block_hash?: string; block_time?: number };
+        vout: Array<{ scriptpubkey: string; scriptpubkey_asm: string; value: number }>;
+      }>;
+      return txs.map((t) => ({
+        txid: t.txid,
+        confirmations: t.status.confirmed ? 1 : 0,
+        blocktime: t.status.block_time,
+        blockhash: t.status.block_hash,
+        vout: t.vout.map((v) => ({ scriptPubKey: { hex: v.scriptpubkey, asm: v.scriptpubkey_asm } })),
+      }));
+    }, { name: 'MempoolUtxoProvider.getAddressTxs' });
+  }
+
+  /**
    * PROOF-03 documented fallback: mempool.space serves the raw 80-byte header
    * at `/block/:hash/header` (160-hex text). Default source is GetBlock RPC;
    * this exists so a mempool-only deployment can still fetch the header.
@@ -591,6 +626,17 @@ export class GetBlockHybridProvider implements UtxoProvider {
     return retryWithBackoff(async () => {
       return (await rpcCall(this.rpcUrl, 'getblockheader', [blockhash], this.rpcAuth)) as BlockHeader;
     }, { name: 'GetBlockHybridProvider.getBlockHeader' });
+  }
+
+  /**
+   * BUG-2026-06-24-004: Address transaction history.
+   * The shared GetBlock RPC endpoint exposes no address index (same matrix as
+   * the `listUnspent` "Method not allowed" forensic), so history is served via
+   * public mempool.space — the same already-accepted partial-sovereignty leak as
+   * UTXO listing. Needed so verification can find fully-spent historical anchors.
+   */
+  async getAddressTxs(address: string): Promise<RawTransaction[]> {
+    return this.mempool.getAddressTxs(address);
   }
 
   /**
