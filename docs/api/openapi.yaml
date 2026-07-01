@@ -1104,6 +1104,100 @@ components:
           nullable: true
         verified:
           type: boolean
+        proof_bundle:
+          # PROOF-05 (SCRUM-2338): additive, nullable self-contained proof bundle.
+          # `null` when the two-layer proof is incomplete (Constitution 1.8 / 1.5).
+          $ref: "#/components/schemas/ProofBundle"
+          nullable: true
+
+    ProofBundle:
+      type: object
+      description: >-
+        Self-contained, independently-checkable two-layer proof bundle
+        (PROOF-05 / SCRUM-2338). Carries only cryptographic evidence — never raw
+        document content or PII. The parent `proof_bundle` is non-null ONLY when
+        a verifier could fetch the receipt and validate it end-to-end: ALL of
+        tx_id, block_height, block_timestamp present; block_header exactly
+        160-hex (80 bytes); block_hash exactly 64-hex (32 bytes);
+        op_return_payload matching the canonical ARKV shape; and BOTH
+        merkle_index AND leaf_count present (these arm the CVE-2012-2459
+        duplicate-leaf guard). Any missing/short/non-canonical field ⇒ null
+        (never a partial bundle).
+      required:
+        - fingerprint
+        - merkle_root
+        - merkle_proof
+        - merkle_index
+        - leaf_count
+        - tx_id
+        - block_height
+        - block_hash
+        - block_header
+        - op_return_payload
+        - block_timestamp
+        - proof_schema_version
+        - signature
+      properties:
+        fingerprint:
+          type: string
+          description: SHA-256 document fingerprint (the app-tree leaf).
+        merkle_root:
+          type: string
+          description: Batch app-tree root committed on-chain.
+        merkle_proof:
+          type: array
+          items:
+            type: object
+            properties:
+              hash:
+                type: string
+              position:
+                type: string
+                enum: [left, right]
+        merkle_index:
+          type: integer
+          description: Integer leaf index of the document in the batch tree.
+        leaf_count:
+          type: integer
+          description: >-
+            Total number of leaves in the batch tree this proof belongs to.
+            With merkle_index, arms the CVE-2012-2459 duplicate-leaf structural
+            guard during local verification. Always present in a complete bundle.
+        tx_id:
+          type: string
+          description: Anchor receipt id (transaction) committing the app-tree root.
+        block_height:
+          type: integer
+        block_hash:
+          type: string
+          description: Confirmed block hash (exactly 64-hex / 32 bytes).
+        block_header:
+          type: string
+          description: Raw 80-byte block header as plain 160-hex.
+        op_return_payload:
+          type: string
+          description: >-
+            Raw OP_RETURN payload as plain hex. Canonical Arkova shape:
+            "ARKV" (41524b56) + the 32-byte app-tree root (64 hex), NO version
+            byte, optionally followed by a truncated metadata hash.
+        block_timestamp:
+          type: string
+          format: date-time
+        proof_schema_version:
+          type: integer
+          description: Proof format version (1 = plain double-SHA256 app-tree).
+        signature:
+          type: object
+          nullable: true
+          description: >-
+            RESERVED — always null on this (unsigned) response today. The signed
+            envelope (bundle_version + signature + signing_key_id) is the outer
+            ?format=signed response wrapper, not an inline bundle field.
+          properties:
+            alg:
+              type: string
+            signing_key_id:
+              type: string
 
     ExtractionRequest:
       type: object

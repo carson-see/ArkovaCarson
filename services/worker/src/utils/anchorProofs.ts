@@ -12,6 +12,24 @@ function toByteaHex(hex: string | null | undefined): string | null | undefined {
   return hex.startsWith('\\x') ? hex : `\\x${hex}`;
 }
 
+/**
+ * Read-side inverse of {@link toByteaHex}. PostgREST returns a `bytea` column as
+ * a `\x`-prefixed hex string (e.g. `\x0100...`). For the wire we expose plain
+ * lowercase hex (no `\x`), matching how `block_header` / `op_return_payload` are
+ * presented everywhere else (confirmation-proof.ts emits bare 160-hex). A value
+ * that is null/empty, not a string, or not valid hex returns `null` — we never
+ * forward a malformed payload as if it were a real header (Constitution §1.5:
+ * honest representation, never fabricated).
+ */
+export function fromByteaHex(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  const hex = value.startsWith('\\x') ? value.slice(2) : value;
+  if (hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) {
+    return null;
+  }
+  return hex.toLowerCase();
+}
+
 export interface AnchorProofUpsertRow {
   anchorId: string;
   receiptId: string;
