@@ -1478,6 +1478,18 @@ export const CONNECTIONS_LABELS = {
   // message and the backend gate stay in lockstep.
   DOCUSIGN_NOT_VERIFIED: 'Your organization must be verified before connecting DocuSign. Verified organizations can connect a document source. Contact support to start verification.',
   DOCUSIGN_GATE_CHECKING: 'Checking your organization’s authorization…',
+  GOOGLE_DRIVE_NAME: 'Google Drive',
+  GOOGLE_DRIVE_DESC: 'Trigger rules when a watched folder’s files change',
+  // DRIVE-01 (SCRUM-2366): entitlement denial copy. Each string mirrors a
+  // worker `code:` so the UI message and the backend eligibility gate stay in
+  // lockstep. A free or unverified account cannot connect a document source.
+  DRIVE_NOT_ADMIN: 'Only an organization administrator can connect Google Drive for your organization.',
+  DRIVE_ORG_NOT_VERIFIED: 'Your organization must be verified before connecting Google Drive. Verified organizations can connect a document source. Contact support to start verification.',
+  DRIVE_ORG_SUSPENDED: 'Your organization is currently suspended. Google Drive cannot be connected until the suspension is resolved.',
+  DRIVE_NEEDS_PAID_PLAN: 'Connecting Google Drive requires a paid plan. Upgrade your plan, or ask an organization administrator to connect it for your organization.',
+  DRIVE_INDIVIDUAL_NOT_VERIFIED: 'You must complete identity verification before connecting Google Drive to your personal account.',
+  DRIVE_GATE_CHECKING: 'Checking your authorization to connect Google Drive…',
+  DRIVE_GATE_UNAVAILABLE: 'We could not verify your authorization right now. Please retry in a few seconds; if the issue persists, contact support.',
 } as const;
 
 // =============================================================================

@@ -2144,6 +2144,87 @@ export type Database = {
           },
         ]
       }
+      drive_watch_state: {
+        Row: {
+          channel_expires_at: string | null
+          channel_id: string
+          channel_resource_id: string | null
+          created_at: string
+          created_by: string | null
+          drive_id: string | null
+          folder_path: string | null
+          id: string
+          initial_page_token: string
+          integration_id: string
+          last_renewal_error: string | null
+          last_renewed_at: string | null
+          org_id: string
+          owner_email: string | null
+          owner_scope: string
+          owner_user_id: string | null
+          status: string
+          updated_at: string
+          watched_folder_id: string
+        }
+        Insert: {
+          channel_expires_at?: string | null
+          channel_id: string
+          channel_resource_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          drive_id?: string | null
+          folder_path?: string | null
+          id?: string
+          initial_page_token: string
+          integration_id: string
+          last_renewal_error?: string | null
+          last_renewed_at?: string | null
+          org_id: string
+          owner_email?: string | null
+          owner_scope?: string
+          owner_user_id?: string | null
+          status?: string
+          updated_at?: string
+          watched_folder_id: string
+        }
+        Update: {
+          channel_expires_at?: string | null
+          channel_id?: string
+          channel_resource_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          drive_id?: string | null
+          folder_path?: string | null
+          id?: string
+          initial_page_token?: string
+          integration_id?: string
+          last_renewal_error?: string | null
+          last_renewed_at?: string | null
+          org_id?: string
+          owner_email?: string | null
+          owner_scope?: string
+          owner_user_id?: string | null
+          status?: string
+          updated_at?: string
+          watched_folder_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drive_watch_state_integration_id_fkey"
+            columns: ["integration_id"]
+            isOneToOne: false
+            referencedRelation: "org_integrations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drive_watch_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       drive_webhook_nonces: {
         Row: {
           channel_id: string
@@ -7019,6 +7100,25 @@ export type Database = {
           p_role: Database["public"]["Enums"]["user_role"]
         }
         Returns: Json
+      }
+      upsert_drive_watch_state: {
+        Args: {
+          p_channel_expires_at?: string
+          p_channel_id: string
+          p_channel_resource_id?: string
+          p_created_by?: string
+          p_drive_id?: string
+          p_folder_path?: string
+          p_initial_page_token: string
+          p_integration_id: string
+          p_org_id: string
+          p_owner_email?: string
+          p_owner_scope?: string
+          p_owner_user_id?: string
+          p_status?: string
+          p_watched_folder_id: string
+        }
+        Returns: string
       }
       validate_api_key: { Args: { p_api_key: string }; Returns: Json }
       verify_anchors_rls_enabled: { Args: never; Returns: boolean }
