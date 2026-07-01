@@ -363,6 +363,40 @@ describe('GET /credentials/:publicId/ctdl', () => {
     expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
   });
 
+  // MED PII-leak (end-to-end): a leaky metadata value that Date.parse()s must
+  // NEVER surface an email in ceterms:expirationDate on the public projection.
+  // Drives through normalizeAnchorRow (the real derivation path), not a
+  // hand-set resourceAvailableUntil.
+  it('never leaks an email from metadata into ceterms:expirationDate (end-to-end)', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockImplementation(async () =>
+        normalizeAnchorRow({
+          public_id: 'ARK-2026-CTDL-001',
+          status: 'SECURED',
+          credential_type: 'DEGREE',
+          sub_type: 'bachelor',
+          label: 'Bachelor of Science',
+          description: 'Public credential description',
+          created_at: '2026-05-20T12:00:00.000Z',
+          chain_timestamp: '2026-05-20T12:10:00.000Z',
+          issued_at: '2026-05-01T00:00:00.000Z',
+          metadata: { resource_available_until: 'recipient@example.com 2030-01-01' },
+          organization: { display_name: 'Arkova University', public_id: 'ORG-ARKOVA-U', website_url: 'https://example.edu' },
+        }),
+      ),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(200);
+    // JSON-LD legitimately contains @context/@type, so assert the email address
+    // (local-part@domain) is absent rather than a bare "@".
+    expect(JSON.stringify(res.body)).not.toContain('recipient@example.com');
+    expect(JSON.stringify(res.body)).not.toContain('example.com');
+    expect(res.body).not.toHaveProperty('ceterms:expirationDate');
+    expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
+  });
+
   it('omits ceterms:expirationDate when no resource-availability offering expiry is present', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(anchor({
@@ -450,5 +484,54 @@ describe('normalizeAnchorRow — CE-03 expiration mapping', () => {
       metadata: { expires_at: '2030-12-31T00:00:00.000Z', person_expiry: '2030-12-31T00:00:00.000Z' },
     });
     expect(anchor.resourceAvailableUntil).toBeNull();
+  });
+
+  // MED PII-leak — Date.parse() is lenient enough that an issuer email prefixed
+  // to a date parses as "valid", and the pre-fix code returned the RAW string
+  // verbatim, leaking the email into ceterms:expirationDate on the public body.
+  it('rejects a metadata value carrying an email even if it Date.parse()s (PII leak)', () => {
+    const leaky = 'recipient@example.com 2030-01-01';
+    // Sanity-pin the exact leak precondition the fix defends against.
+    expect(Number.isNaN(Date.parse(leaky))).toBe(false);
+
+    const anchor = normalizeAnchorRow({
+      ...baseRow,
+      metadata: { resource_available_until: leaky },
+    });
+    // The email must NEVER survive into the derived offering expiry.
+    expect(anchor.resourceAvailableUntil ?? '').not.toContain('@');
+    expect(anchor.resourceAvailableUntil ?? '').not.toContain('example.com');
+    expect(anchor.resourceAvailableUntil).toBeNull();
+  });
+
+  it('rejects a metadata value carrying a phone number', () => {
+    const anchor = normalizeAnchorRow({
+      ...baseRow,
+      metadata: { resource_available_until: '2030-01-01 555-123-4567' },
+    });
+    expect(anchor.resourceAvailableUntil).toBeNull();
+  });
+
+  it('canonicalizes a non-ISO date string to bare ISO 8601 (no verbatim passthrough)', () => {
+    const anchor = normalizeAnchorRow({
+      ...baseRow,
+      metadata: { resource_available_until: '12/31/2030' },
+    });
+    const derived = anchor.resourceAvailableUntil;
+    // Either canonical ISO or omitted — never the raw "12/31/2030" string.
+    expect(derived).not.toBe('12/31/2030');
+    if (typeof derived === 'string') {
+      expect(derived).toMatch(/^\d{4}-\d{2}-\d{2}/);
+      // Must round-trip through Date as a canonical ISO value.
+      expect(new Date(derived).toISOString()).toBe(derived);
+    }
+  });
+
+  it('passes a valid full-ISO offering date through unchanged (canonical is a no-op)', () => {
+    const anchor = normalizeAnchorRow({
+      ...baseRow,
+      metadata: { resource_available_until: '2030-12-31T00:00:00.000Z' },
+    });
+    expect(anchor.resourceAvailableUntil).toBe('2030-12-31T00:00:00.000Z');
   });
 });

@@ -7,7 +7,7 @@
  */
 
 import { Router, type Request } from 'express';
-import { buildCtdlJsonLd, CtdlPiiSafetyError, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
+import { buildCtdlJsonLd, containsHighConfidencePii, CtdlPiiSafetyError, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
 import { isCtdlPublishableStatus } from '../../ctdl/ctdl-type-map.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
@@ -106,13 +106,36 @@ const RESOURCE_AVAILABILITY_METADATA_KEYS = [
   'offeringEndDate',
 ] as const;
 
+// Canonicalize an accepted metadata value to a bare, canonical ISO 8601 string.
+// This is the ONLY value that can ever reach `ceterms:expirationDate`. Two
+// defenses run before canonicalization so nothing but a canonical date survives:
+//   1. High-confidence PII gate (email/phone/SSN). Date.parse() is lenient enough
+//      that "recipient@example.com 2030-01-01" parses as a valid date — the raw
+//      passthrough used to leak the email onto the public projection (MED). Any
+//      PII hit rejects the whole value (honest omission), never a canonicalized
+//      remnant.
+//   2. ISO-8601 canonicalization via `new Date(value).toISOString()`. A non-ISO
+//      string like "12/31/2030" is normalized to canonical ISO (or omitted if it
+//      does not parse), so a verbatim locale-formatted string can never appear (LOW).
+function canonicalizeResourceAvailableUntil(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  // Reject any value carrying high-confidence PII — do not attempt to salvage a date.
+  if (containsHighConfidencePii(trimmed)) return null;
+  const parsed = new Date(trimmed);
+  const ms = parsed.getTime();
+  if (Number.isNaN(ms)) return null;
+  return parsed.toISOString();
+}
+
 function resourceAvailableUntilFromMetadata(metadata: unknown): string | null {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
   const record = metadata as Record<string, unknown>;
   for (const key of RESOURCE_AVAILABILITY_METADATA_KEYS) {
     const value = record[key];
-    if (typeof value === 'string' && value.trim() && !Number.isNaN(Date.parse(value))) {
-      return value.trim();
+    if (typeof value === 'string') {
+      const canonical = canonicalizeResourceAvailableUntil(value);
+      if (canonical) return canonical;
     }
   }
   return null;

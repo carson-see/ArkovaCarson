@@ -147,7 +147,7 @@ const NAME_FIRST_LEARNER_PATTERN = new RegExp(
   String.raw`\b${FULL_NAME}(?:'s)?\s+(?:transcript|student record|learner record|certificate|credential|degree|completion)\b`,
 );
 
-function containsHighConfidencePii(value: string): boolean {
+export function containsHighConfidencePii(value: string): boolean {
   return EMAIL_PATTERN.test(value) || SSN_PATTERN.test(value) || PHONE_PATTERN.test(value);
 }
 

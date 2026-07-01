@@ -38,3 +38,9 @@ CTDL/CE Registry serialization helpers for public credential representations.
 ## 2026-07-01 publishability gate — fixture-driven coverage (SCRUM-2372 / CE-01, S2)
 
 - The publishability gate (route 404s for non-publishable status, 410 for `REVOKED`, 200 otherwise; fail-closed 404 on `CtdlPiiSafetyError`) is exercised by fixture-driven tests in `credentials-ctdl.test.ts`: every publishable status returns a valid CTDL body with no learner PII; every non-publishable status (`PENDING`/`DRAFT`/`PROCESSING`/`FAILED`/`DELETED`/`UNKNOWN`/empty) fails closed with 404, no body, no PII, no internal fields.
+
+## 2026-07-01 offering-expiry PII/ISO hardening (PR #1378, S2 fix-team)
+
+- **Root cause (MED PII-leak + LOW non-ISO):** `resourceAvailableUntilFromMetadata` (`credentials-ctdl.ts`) returned an allow-listed metadata value *verbatim* after only a lenient `Date.parse()` gate. `Date.parse("recipient@example.com 2030-01-01")` is valid → the issuer email leaked into `ceterms:expirationDate` on the public projection; non-ISO strings like `"12/31/2030"` also passed through verbatim.
+- **Fix:** `canonicalizeResourceAvailableUntil` now (1) rejects any value carrying high-confidence PII via the shared `containsHighConfidencePii` (email/phone/SSN — now exported from `ctdl-serializer.ts`) and (2) canonicalizes to a bare ISO string via `new Date(value).toISOString()`. Only a canonical date can ever reach `ceterms:expirationDate`; anything else is omitted (honest omission).
+- **Validator tightened:** `isIsoDateLike` in `ctdl-validation.ts` is now a real ISO-8601 check (`YYYY-MM-DD` or full date-time with optional offset + real-instant validity) instead of raw `Date.parse()`. This is the independent second check for `ceterms:expirationDate` / `dateEffective` / `revocationDate`; a locale or PII-prefixed string can no longer validate. Note: all DB-sourced dates fed to these fields are `timestamptz` full-ISO, so this narrowing does not affect legitimate values.
