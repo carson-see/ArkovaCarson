@@ -96,8 +96,15 @@ type DocusignIntegrationRow = Pick<
 type DocusignOrgIntegrationRow = DocusignIntegrationRow &
   Pick<OrgIntegrationRow, 'inherited_from_org_id'>;
 
+// DS-04 (SCRUM-2364): member_integrations rows additionally carry the owning
+// user id, which the resolver maps to owner_user_id ⇒ member (personal) scope.
+type DocusignMemberIntegrationRow = DocusignIntegrationRow & { user_id?: string | null };
+
 // Base columns exist on BOTH org_integrations and member_integrations.
 const DOCUSIGN_BASE_COLUMNS = 'id, org_id, account_id, base_uri, token_secret_name';
+// DS-04: member_integrations additionally exposes user_id — the owning member.
+// Never select it from org_integrations (org rows have no per-user owner).
+const DOCUSIGN_MEMBER_COLUMNS = `${DOCUSIGN_BASE_COLUMNS}, user_id`;
 // inherited_from_org_id is an org_integrations-only column (SCRUM-2045) — never
 // select it from member_integrations.
 const DOCUSIGN_ORG_COLUMNS = `${DOCUSIGN_BASE_COLUMNS}, inherited_from_org_id`;
@@ -105,6 +112,7 @@ const DOCUSIGN_ORG_COLUMNS = `${DOCUSIGN_BASE_COLUMNS}, inherited_from_org_id`;
 function toConnectionRow(
   row: DocusignIntegrationRow,
   inheritedFromOrgId: string | null,
+  ownerUserId: string | null = null,
 ): DocusignConnectionRow {
   return {
     id: row.id,
@@ -113,6 +121,8 @@ function toConnectionRow(
     base_uri: row.base_uri ?? null,
     token_secret_name: row.token_secret_name ?? null,
     inherited_from_org_id: inheritedFromOrgId,
+    // DS-04: a set owner_user_id marks this as a member (personal) connection.
+    owner_user_id: ownerUserId,
   };
 }
 
@@ -140,9 +150,12 @@ async function fetchDirectDocusignRow(
   db: DbClient,
   args: { orgId: string; accountId: string; integrationId: string },
 ): Promise<DocusignConnectionRow | null> {
-  const queryIntegration = (table: 'org_integrations' | 'member_integrations') => db
+  const queryIntegration = (
+    table: 'org_integrations' | 'member_integrations',
+    columns: string,
+  ) => db
     .from(table)
-    .select(DOCUSIGN_BASE_COLUMNS)
+    .select(columns)
     .eq('id', args.integrationId)
     .eq('org_id', args.orgId)
     .eq('provider', 'docusign')
@@ -150,7 +163,10 @@ async function fetchDirectDocusignRow(
     .is('revoked_at', null)
     .maybeSingle();
 
-  const orgResult = await queryIntegration('org_integrations');
+  // org_integrations wins over member_integrations (mirrors the webhook
+  // `findIntegration` precedence): an envelope connected under org policy is an
+  // org-queue artifact even if the same user also holds a personal connection.
+  const orgResult = await queryIntegration('org_integrations', DOCUSIGN_BASE_COLUMNS);
   if (orgResult.error) {
     logger.error(
       { error: orgResult.error, integrationId: args.integrationId },
@@ -159,10 +175,13 @@ async function fetchDirectDocusignRow(
     throw new Error('docusign_integration_lookup_failed');
   }
   if (orgResult.data) {
-    return toConnectionRow(orgResult.data as DocusignIntegrationRow, null);
+    // Org connection ⇒ org queue (no owner user).
+    return toConnectionRow(orgResult.data as DocusignIntegrationRow, null, null);
   }
 
-  const memberResult = await queryIntegration('member_integrations');
+  // DS-04 (SCRUM-2364): fall back to the member (personal) connection and select
+  // its owning user id so the artifact routes to that user's personal queue.
+  const memberResult = await queryIntegration('member_integrations', DOCUSIGN_MEMBER_COLUMNS);
   if (memberResult.error) {
     logger.error(
       { error: memberResult.error, integrationId: args.integrationId },
@@ -171,7 +190,8 @@ async function fetchDirectDocusignRow(
     throw new Error('docusign_integration_lookup_failed');
   }
   if (memberResult.data) {
-    return toConnectionRow(memberResult.data as DocusignIntegrationRow, null);
+    const memberRow = memberResult.data as DocusignMemberIntegrationRow;
+    return toConnectionRow(memberRow, null, memberRow.user_id ?? null);
   }
   return null;
 }
@@ -338,6 +358,10 @@ export function makeDocusignEnvelopeJobDeps(
       return {
         accessToken: refreshed.access_token,
         baseUri: effective.baseUri,
+        // DS-04 (SCRUM-2364): surface the resolved queue routing so the sink can
+        // materialize a member envelope into the owning user's personal queue.
+        scope: effective.scope,
+        ownerUserId: effective.ownerUserId,
       };
     },
 
@@ -355,6 +379,21 @@ export function makeDocusignEnvelopeJobDeps(
           'DocuSign connector-artifact enqueue skipped — ENABLE_CONNECTOR_ARTIFACT_ENQUEUE disabled (drain not yet wired: QUEUE-06/QUEUE-08)',
         );
         return { queuedId: CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_QUEUED_ID };
+      }
+
+      // DS-04 (SCRUM-2364): personal-queue routing. `scope` defaults to 'org'
+      // (org policy) for callers/rows without a member owner. A 'member' scope
+      // REQUIRES an ownerUserId — routing a personal-queue artifact with no owner
+      // would materialize an unowned document, so fail closed BEFORE hashing or
+      // enqueuing (no RPC, no partial state).
+      const queueScope: 'org' | 'member' = input.scope ?? 'org';
+      const ownerUserId = input.ownerUserId ?? null;
+      if (queueScope === 'member' && !ownerUserId) {
+        logger.error(
+          { integrationId: input.integrationId },
+          'DocuSign member-scoped envelope missing owner_user_id — refusing to materialize',
+        );
+        throw new Error('docusign_member_scope_missing_owner');
       }
 
       // DS-03 (SCRUM-2363): server-side SHA-256 over the fetched bytes, computed
@@ -384,6 +423,12 @@ export function makeDocusignEnvelopeJobDeps(
           rule_event_id: input.ruleEventId,
           integration_id: input.integrationId,
           content_type: input.contentType,
+          // DS-04: queue routing metadata. `queue_scope` selects the personal vs
+          // org queue; `owner_user_id` is present only for member envelopes so the
+          // downstream drain (QUEUE-06/08) can scope materialization to the user.
+          // No PII beyond the user's uuid — never the fingerprint or bytes (§1.6A).
+          queue_scope: queueScope,
+          ...(queueScope === 'member' && ownerUserId ? { owner_user_id: ownerUserId } : {}),
         },
       });
 

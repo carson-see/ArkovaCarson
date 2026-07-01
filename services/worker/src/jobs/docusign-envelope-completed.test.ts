@@ -324,6 +324,55 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       });
       expect(result).toEqual({ queuedId: 'artifact-1' });
     });
+
+    // DS-04 (SCRUM-2364): an org-scoped envelope carries NO owner_user_id in the
+    // artifact metadata — routing to the org queue is the absence of an owner.
+    it('omits owner_user_id from artifact metadata for an org-scoped envelope (DS-04)', async () => {
+      const { db, rpcCalls } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      await deps.enqueueSignedDocument({ ...SINK_INPUT, scope: 'org', ownerUserId: null });
+
+      const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+      expect(metadata).toMatchObject({ queue_scope: 'org' });
+      expect(metadata).not.toHaveProperty('owner_user_id');
+    });
+
+    // DS-04 (SCRUM-2364): a member-owned envelope routes to the PERSONAL queue —
+    // materialization is scoped to the owning user via owner_user_id in metadata.
+    it('stamps owner_user_id + member scope into artifact metadata for a member envelope (DS-04)', async () => {
+      const MEMBER_USER = '55555555-5555-4555-8555-555555555555';
+      const { db, rpcCalls } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      const result = await deps.enqueueSignedDocument({
+        ...SINK_INPUT,
+        scope: 'member',
+        ownerUserId: MEMBER_USER,
+      });
+
+      expect(rpcCalls).toHaveLength(1);
+      const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+      expect(metadata).toMatchObject({
+        queue_scope: 'member',
+        owner_user_id: MEMBER_USER,
+        envelope_id: 'envelope-1',
+      });
+      expect(result).toEqual({ queuedId: 'artifact-1' });
+    });
+
+    // DS-04: member routing must be self-consistent — a 'member' scope with no
+    // owning user is a programming error and must fail closed, never silently
+    // materialize an unowned personal-queue artifact.
+    it('fails closed when a member-scoped envelope has no owner_user_id (DS-04)', async () => {
+      const { db, rpcCalls } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      await expect(
+        deps.enqueueSignedDocument({ ...SINK_INPUT, scope: 'member', ownerUserId: null }),
+      ).rejects.toThrow('docusign_member_scope_missing_owner');
+      expect(rpcCalls).toHaveLength(0);
+    });
   });
 
   it('resolves member_integrations when no org_integrations row matches', async () => {
@@ -334,6 +383,9 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       account_id: 'account-1',
       base_uri: 'https://demo.docusign.net',
       token_secret_name: 'secret/member-int-1',
+      // DS-04: member_integrations carries the owning user; the resolver maps it
+      // to owner_user_id ⇒ member scope ⇒ personal-queue materialization.
+      user_id: '66666666-6666-4666-8666-666666666666',
     };
     const db = {
       from: vi.fn((table: string) => {
@@ -395,6 +447,10 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     expect(connection).toEqual({
       accessToken: 'access-token-1',
       baseUri: 'https://demo.docusign.net',
+      // DS-04: the member connection surfaces its personal-queue routing to the
+      // materializer — scope 'member' + the owning user id.
+      scope: 'member',
+      ownerUserId: '66666666-6666-4666-8666-666666666666',
     });
     expect(refreshTokenStore.get).toHaveBeenCalledWith({ name: 'secret/member-int-1' });
     expect(refreshTokenStore.put).toHaveBeenCalledWith({
@@ -550,6 +606,9 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     expect(connection).toEqual({
       accessToken: 'access-token-1',
       baseUri: 'https://na1.docusign.net',
+      // DS-04: inherited connections are org policy — org scope, no owner user.
+      scope: 'org',
+      ownerUserId: null,
     });
     const parentLookup = lookups.find(
       (lookup) => lookup.table === 'org_integrations' && lookup.filters.org_id === parentOrgId,

@@ -257,6 +257,12 @@ const ConfigSchema = z.object({
    * this to true explicitly once the drain ships.
    */
   enableConnectorArtifactEnqueue: boolFlag(false),
+  /**
+   * DS-05 (SCRUM-2365): gates the DocuSign queue-drift reconciliation cron.
+   * Default OFF in prod — re-materialization goes through the DS-03 producer,
+   * which is itself gated by enableConnectorArtifactEnqueue.
+   */
+  enableDocusignQueueReconciliation: boolFlag(false),
   /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
   docusignIntegrationKey: z.string().optional(),
   /** DocuSign client secret. Required when DOCUSIGN_INTEGRATION_KEY is set. */
@@ -679,6 +685,10 @@ function loadConfig(): Config {
     enableDocusignOauth: process.env.ENABLE_DOCUSIGN_OAUTH,
     enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,
     enableConnectorArtifactEnqueue: process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE,
+    // DS-05 (SCRUM-2365): gates the DocuSign queue-drift reconciliation cron.
+    // Default OFF in prod — the reconciliation re-materializes via the DS-03
+    // producer, which is itself gated by ENABLE_CONNECTOR_ARTIFACT_ENQUEUE.
+    enableDocusignQueueReconciliation: process.env.ENABLE_DOCUSIGN_QUEUE_RECONCILIATION,
     docusignIntegrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
     docusignClientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
     docusignConnectHmacSecret: process.env.DOCUSIGN_CONNECT_HMAC_SECRET,

@@ -95,6 +95,8 @@ import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expi
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
 import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
 import { makeReconciliationDeps } from '../jobs/docusign-reconciliation-deps.js';
+import { reconcileDocusignQueueDrift } from '../jobs/docusign-queue-reconciliation.js';
+import { makeQueueReconciliationDeps } from '../jobs/docusign-queue-reconciliation-deps.js';
 import { pollDocusignConnectFailures } from '../jobs/docusign-connect-failures.js';
 import { makeConnectFailuresDeps } from '../jobs/docusign-connect-failures-deps.js';
 import { reconcileListenerDrift } from '../jobs/docusign-listener-drift.js';
@@ -1584,6 +1586,36 @@ cronRouter.post('/docusign-reconciliation', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign reconciliation failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── DS-05 (SCRUM-2365): DocuSign QUEUE reconciliation ───
+// Detects completed envelopes MISSING from the connector-artifact queue
+// (distinct from the SCRUM-2042 webhook-delivery gap check above), fires drift
+// alerts + bounded audit events, and idempotently re-materializes missing
+// org/member queue items via the audited DS-03 producer path (§1.6A: no bytes
+// here). Gated OFF by default via ENABLE_DOCUSIGN_QUEUE_RECONCILIATION — the
+// re-materialization goes through the producer, itself gated by
+// ENABLE_CONNECTOR_ARTIFACT_ENQUEUE. Scheduler: daily (Cloud Scheduler → HTTP).
+cronRouter.post('/docusign-queue-reconciliation', async (_req, res) => {
+  if (!config.enableDocusignQueueReconciliation) {
+    res.json({ skipped: true, reason: 'ENABLE_DOCUSIGN_QUEUE_RECONCILIATION disabled' });
+    return;
+  }
+  try {
+    const result = await withCronMonitoring(
+      'docusign-queue-reconciliation',
+      '0 7 * * *',
+      () => reconcileDocusignQueueDrift(makeQueueReconciliationDeps()),
+    )();
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign queue reconciliation failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
