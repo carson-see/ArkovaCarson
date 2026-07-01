@@ -24,6 +24,8 @@ const {
   resolveScopeOrgIds,
   readOrgMetrics,
   runDailyQueueDigest,
+  isDigestRuleDueToday,
+  listDigestOptedInOrgIds,
 } = await import('./queue-digest-cron.js');
 
 // ── A tiny query-builder mock that records the filters applied and returns a
@@ -49,6 +51,92 @@ describe('buildDigestUrls', () => {
     expect(urls.preferencesUrl('org-1')).toBe(
       'https://app.arkova.ai/org/org-1/settings/notifications',
     );
+  });
+});
+
+describe('createAuditBackedStore — getDeliveryLog fails CLOSED (F2)', () => {
+  it('THROWS on an audit read error (never returns null → never re-sends unverified)', async () => {
+    const database = {
+      from: vi.fn(() => makeQuery({ data: null, error: { message: 'audit boom' } })),
+    };
+    const store = createAuditBackedStore(database as never);
+    await expect(store.getDeliveryLog('a@x.com', 'org-1', '2026-07-01')).rejects.toThrow(
+      /delivery-log read failed/i,
+    );
+  });
+
+  it('returns null only for a genuine no-match (empty array, no read error)', async () => {
+    const database = { from: vi.fn(() => makeQuery({ data: [] })) };
+    const store = createAuditBackedStore(database as never);
+    expect(await store.getDeliveryLog('a@x.com', 'org-1', '2026-07-01')).toBeNull();
+  });
+});
+
+describe('isDigestRuleDueToday (F4 — per-rule cadence)', () => {
+  // 2026-07-01 is a Wednesday (UTC).
+  const wed = new Date('2026-07-01T13:00:00Z');
+  const mon = new Date('2026-07-06T13:00:00Z'); // Monday
+  const first = new Date('2026-07-01T13:00:00Z'); // 1st of month
+  const second = new Date('2026-07-02T13:00:00Z');
+
+  it('no cron configured → due (daily default, backward compatible)', () => {
+    expect(isDigestRuleDueToday({}, wed)).toBe(true);
+    expect(isDigestRuleDueToday(null, wed)).toBe(true);
+    expect(isDigestRuleDueToday({ cron: '' }, wed)).toBe(true);
+  });
+
+  it('daily cron → due every day', () => {
+    expect(isDigestRuleDueToday({ cron: '0 13 * * *' }, wed)).toBe(true);
+    expect(isDigestRuleDueToday({ cron: '0 13 * * *' }, mon)).toBe(true);
+  });
+
+  it('weekly Monday cron → due Monday, NOT Wednesday', () => {
+    expect(isDigestRuleDueToday({ cron: '0 13 * * 1' }, mon)).toBe(true);
+    expect(isDigestRuleDueToday({ cron: '0 13 * * 1' }, wed)).toBe(false);
+  });
+
+  it('weekdays cron (1-5) → due Wed, NOT Sunday', () => {
+    const sun = new Date('2026-07-05T13:00:00Z');
+    expect(isDigestRuleDueToday({ cron: '0 13 * * 1-5' }, wed)).toBe(true);
+    expect(isDigestRuleDueToday({ cron: '0 13 * * 1-5' }, sun)).toBe(false);
+  });
+
+  it('monthly 1st cron → due on the 1st, NOT the 2nd', () => {
+    expect(isDigestRuleDueToday({ cron: '0 13 1 * *' }, first)).toBe(true);
+    expect(isDigestRuleDueToday({ cron: '0 13 1 * *' }, second)).toBe(false);
+  });
+
+  it('cron with 7-as-Sunday normalizes correctly', () => {
+    const sun = new Date('2026-07-05T13:00:00Z');
+    expect(isDigestRuleDueToday({ cron: '0 13 * * 7' }, sun)).toBe(true);
+    expect(isDigestRuleDueToday({ cron: '0 13 * * 7' }, wed)).toBe(false);
+  });
+
+  it('malformed cron (wrong field count) → fail safe to due', () => {
+    expect(isDigestRuleDueToday({ cron: 'nonsense' }, wed)).toBe(true);
+    expect(isDigestRuleDueToday({ cron: '* * *' }, wed)).toBe(true);
+  });
+});
+
+describe('listDigestOptedInOrgIds — cadence filtering (F4)', () => {
+  it('enumerates only orgs whose rule cadence is due today', async () => {
+    const wed = new Date('2026-07-01T13:00:00Z'); // Wednesday
+    const rows = [
+      { org_id: 'daily-org', trigger_config: { cron: '0 13 * * *' } },
+      { org_id: 'monday-org', trigger_config: { cron: '0 13 * * 1' } }, // not due Wed
+      { org_id: 'nocron-org', trigger_config: {} },
+    ];
+    const database = { from: vi.fn(() => makeQuery({ data: rows })) };
+    const ids = await listDigestOptedInOrgIds(database as never, wed);
+    expect(ids.has('daily-org')).toBe(true);
+    expect(ids.has('nocron-org')).toBe(true);
+    expect(ids.has('monday-org')).toBe(false);
+  });
+
+  it('read error → empty set (fail closed)', async () => {
+    const database = { from: vi.fn(() => makeQuery({ data: null, error: { message: 'boom' } })) };
+    const ids = await listDigestOptedInOrgIds(database as never, new Date());
+    expect(ids.size).toBe(0);
   });
 });
 

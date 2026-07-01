@@ -127,7 +127,19 @@ export function createAuditBackedStore(database: DigestDb): DigestStore {
         .eq('target_id', adminEmail)
         .order('created_at', { ascending: false })
         .limit(50);
-      if (error || !Array.isArray(data)) return null;
+      // F2 (fail-closed idempotency): a READ ERROR means we cannot verify whether
+      // today's digest already went out. Returning null here reads as "no prior
+      // send" and re-sends on every transient audit_events failure. Throw so the
+      // per-admin caller (cron loop) skips the send and retries next run — never a
+      // duplicate email off an unverified idempotency marker.
+      if (error) {
+        throw new Error(
+          `digest delivery-log read failed: ${(error as { message?: string }).message ?? 'unknown'}`,
+        );
+      }
+      if (!Array.isArray(data)) {
+        throw new Error('digest delivery-log read returned a non-array payload');
+      }
 
       // Filter to this digest date (stored in details JSON) and take the latest.
       for (const row of data as Array<{ event_type: string; details: string | null }>) {
@@ -228,8 +240,77 @@ export async function listOrgAdmins(database: DigestDb): Promise<AdminRecipient[
  * Fails CLOSED: on a read error or non-array result, returns an empty set so we
  * never email orgs we could not confirm opted in.
  */
+/**
+ * F4 (per-rule cadence): the daily digest cron runs once a day, but a
+ * QUEUE_DIGEST rule may carry a `trigger_config.cron` (+ optional `timezone`)
+ * expressing a coarser cadence (weekly, monthly, weekdays-only). The digest is
+ * DAY-granular — the global schedule owns time-of-day — so we match only the
+ * cron's DATE fields (day-of-month, month, day-of-week) against "today" in the
+ * rule's timezone. A rule with no cron keeps the legacy daily behavior.
+ *
+ * Supports wildcard, comma lists, ranges (a-b), and step syntax (slash-n) per field.
+ * Exported for direct unit testing.
+ */
+export function isDigestRuleDueToday(
+  triggerConfig: unknown,
+  now: Date,
+): boolean {
+  const cfg = (triggerConfig ?? {}) as { cron?: unknown; timezone?: unknown };
+  const cron = typeof cfg.cron === 'string' ? cfg.cron.trim() : '';
+  if (!cron) return true; // no cadence configured → daily default (backward compatible)
+
+  const fields = cron.split(/\s+/);
+  // Standard 5-field cron: min hour dom month dow. Anything else → fail safe to due.
+  if (fields.length !== 5) return true;
+  const [, , domF, monthF, dowF] = fields;
+
+  const tz = typeof cfg.timezone === 'string' && cfg.timezone ? cfg.timezone : 'UTC';
+  let dom: number, month: number, dow: number;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      day: 'numeric',
+      month: 'numeric',
+      weekday: 'short',
+    }).formatToParts(now);
+    dom = Number(parts.find((p) => p.type === 'day')?.value);
+    month = Number(parts.find((p) => p.type === 'month')?.value);
+    const wk = parts.find((p) => p.type === 'weekday')?.value ?? '';
+    dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wk);
+  } catch {
+    return true; // bad timezone → don't silently drop the org; fail safe to due
+  }
+
+  const matches = (field: string, value: number, min: number, max: number): boolean => {
+    if (field === '*') return true;
+    return field.split(',').some((part) => {
+      const [rangePart, stepPart] = part.split('/');
+      const step = stepPart ? Number(stepPart) : 1;
+      if (!Number.isFinite(step) || step <= 0) return false;
+      let lo: number, hi: number;
+      if (rangePart === '*') { lo = min; hi = max; }
+      else if (rangePart.includes('-')) {
+        const [a, b] = rangePart.split('-').map(Number);
+        lo = a; hi = b;
+      } else { lo = Number(rangePart); hi = lo; }
+      if (!Number.isFinite(lo) || !Number.isFinite(hi)) return false;
+      if (value < lo || value > hi) return false;
+      return (value - lo) % step === 0;
+    });
+  };
+
+  // dow: cron allows 0 or 7 for Sunday. Normalize a `7` in the field to `0`.
+  const dowField = dowF.replace(/\b7\b/g, '0');
+  return (
+    matches(domF, dom, 1, 31) &&
+    matches(monthF, month, 1, 12) &&
+    matches(dowField, dow, 0, 6)
+  );
+}
+
 export async function listDigestOptedInOrgIds(
   database: DigestDb,
+  now: Date = new Date(),
 ): Promise<Set<string>> {
   // Intentional cross-org discovery: this is the daily-digest opt-in scan over
   // ALL orgs' QUEUE_DIGEST rules, run on the service-role client. There is no
@@ -241,7 +322,7 @@ export async function listDigestOptedInOrgIds(
   // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data, error } = await database
     .from('organization_rules')
-    .select('org_id')
+    .select('org_id, trigger_config')
     .eq('enabled', true)
     .eq('trigger_type', 'QUEUE_DIGEST')
     .limit(10000);
@@ -250,8 +331,11 @@ export async function listDigestOptedInOrgIds(
     return new Set<string>();
   }
   const ids = new Set<string>();
-  for (const row of data as Array<{ org_id: string | null }>) {
-    if (row.org_id) ids.add(row.org_id);
+  for (const row of data as Array<{ org_id: string | null; trigger_config: unknown }>) {
+    // F4: only enumerate an org whose QUEUE_DIGEST rule cadence is due today
+    // (per-rule cron/timezone; daily by default). A weekly/custom rule that is
+    // not due today is skipped instead of emailed every day.
+    if (row.org_id && isDigestRuleDueToday(row.trigger_config, now)) ids.add(row.org_id);
   }
   return ids;
 }
@@ -399,7 +483,7 @@ export async function runDailyQueueDigest(
   // QUEUE_DIGEST rule may be emailed. An admin in a non-opted-in org is never
   // enumerated, never has metrics built, and never receives mail — even when
   // its queue is non-empty and the global flag is on.
-  const optedInOrgIds = await listDigestOptedInOrgIds(database);
+  const optedInOrgIds = await listDigestOptedInOrgIds(database, now);
   const allAdmins = await listOrgAdmins(database);
   const admins = allAdmins.filter((a) => optedInOrgIds.has(a.adminOrgId));
   result.admins = admins.length;
