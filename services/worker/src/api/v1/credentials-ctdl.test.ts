@@ -277,14 +277,111 @@ describe('GET /credentials/:publicId/ctdl', () => {
     });
   });
 
-  // SCRUM-2374 (CE-03) — a revoked credential that still carries an expires_at in
-  // the DB must not surface ceterms:expirationDate on the public CTDL projection.
-  // End-to-end check through the route, since this is the public-contract surface.
-  it('omits ceterms:expirationDate on the public body for a revoked credential with expires_at', async () => {
+  // SCRUM-2372 (CE-01) — publishability gate, fixture-driven. Publishable
+  // statuses return a CTDL body (200, or 410 for revoked); every non-publishable
+  // status fails closed with 404 and no CTDL body / no learner PII.
+  describe('CE-01 publishability gate (fixture-driven)', () => {
+    const PUBLISHABLE: ReadonlyArray<[string, number]> = [
+      ['SECURED', 200],
+      ['ACTIVE', 200],
+      ['EXPIRED', 200],
+      ['SUPERSEDED', 200],
+      ['REVOKED', 410],
+    ];
+    const NON_PUBLISHABLE = ['PENDING', 'DRAFT', 'PROCESSING', 'FAILED', 'DELETED', 'UNKNOWN', ''];
+
+    it.each(PUBLISHABLE)('publishes CTDL for status %s (HTTP %i)', async (status, expected) => {
+      const lookup: CredentialsCtdlLookup = {
+        lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+          status,
+          revokedAt: status === 'REVOKED' ? '2026-05-21T00:00:00.000Z' : null,
+        })),
+      };
+
+      const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+      expect(res.status).toBe(expected);
+      expect(res.body['@context']).toBe('https://credreg.net/ctdl/schema/context/json');
+      // No learner PII in any publishable body.
+      expect(JSON.stringify(res.body)).not.toContain('recipient@example.com');
+      expect(JSON.stringify(res.body)).not.toContain('fingerprint');
+      expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
+    });
+
+    it.each(NON_PUBLISHABLE)('fails closed with 404 and no CTDL body for non-publishable status %s', async (status) => {
+      const lookup: CredentialsCtdlLookup = {
+        lookupByPublicId: vi.fn().mockResolvedValue(anchor({ status })),
+      };
+
+      const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: 'not_found' });
+      // No CTDL projection, no learner PII, no internal fields leak on a block.
+      expect(res.body).not.toHaveProperty('@context');
+      expect(JSON.stringify(res.body)).not.toContain('recipient@example.com');
+      expect(JSON.stringify(res.body)).not.toContain('fingerprint');
+      expect(JSON.stringify(res.body)).not.toContain('Arkova University');
+    });
+  });
+
+  // SCRUM-2374 (CE-03) — expiration semantics through the public route.
+  // The route sources issued-person expiry from anchors.expires_at (never mapped
+  // to ceterms:expirationDate) and resource-availability expiry from an
+  // allow-listed metadata key (mapped, when status permits).
+  it('never surfaces an issued-person expires_at as ceterms:expirationDate (SECURED)', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        status: 'SECURED',
+        expiresAt: '2027-05-19T00:00:00.000Z',
+        metadata: {},
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty('ceterms:expirationDate');
+    expect(JSON.stringify(res.body)).not.toContain('2027-05-19');
+    expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
+  });
+
+  it('maps an allow-listed resource-availability metadata date to ceterms:expirationDate', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        status: 'SECURED',
+        expiresAt: '2027-05-19T00:00:00.000Z', // issued-person — must NOT appear
+        metadata: { resource_available_until: '2030-12-31T00:00:00.000Z' },
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(200);
+    expect(res.body['ceterms:expirationDate']).toBe('2030-12-31T00:00:00.000Z');
+    expect(JSON.stringify(res.body)).not.toContain('2027-05-19');
+    expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
+  });
+
+  it('ignores a non-date resource-availability metadata value (honest omission)', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        status: 'SECURED',
+        metadata: { resource_available_until: 'not-a-date' },
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty('ceterms:expirationDate');
+  });
+
+  it('omits ceterms:expirationDate on the public body for a revoked credential with resource-availability metadata', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(anchor({
         status: 'REVOKED',
-        expiresAt: '2027-05-19T00:00:00.000Z',
+        metadata: { resource_available_until: '2030-12-31T00:00:00.000Z' },
         revokedAt: '2026-05-21T00:00:00.000Z',
         revocationReason: 'Revoked by issuer.',
       })),
@@ -295,7 +392,7 @@ describe('GET /credentials/:publicId/ctdl', () => {
     expect(res.status).toBe(410);
     expect(res.body['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
     expect(res.body).not.toHaveProperty('ceterms:expirationDate');
-    expect(JSON.stringify(res.body)).not.toContain('2027-05-19');
+    expect(JSON.stringify(res.body)).not.toContain('2030-12-31');
     expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
   });
 });
