@@ -185,6 +185,57 @@ describe('reconcileDocusignQueueDrift', () => {
     expect(result.errors.some((e) => e.error.includes('enqueue boom'))).toBe(true);
   });
 
+  // Flag-mismatch config (SCRUM-2365 defect): ENABLE_DOCUSIGN_QUEUE_RECONCILIATION
+  // ON while ENABLE_CONNECTOR_ARTIFACT_ENQUEUE OFF. Re-materialization re-drives the
+  // DS-03 producer, but with the enqueue flag OFF the producer writes NO artifact —
+  // so the envelope stays "missing" and the run re-submits it (and falsely counts it
+  // materialized) every single cron cycle. When the enqueue flag is off, the re-drive
+  // must be a no-op: detect + audit + alert the drift, but do not re-materialize and
+  // do not count it materialized (nothing was durably queued).
+  it('does not re-materialize (or count materialized) when connector-artifact enqueue is OFF', async () => {
+    const materializeMissingEnvelope = vi.fn().mockResolvedValue({ enqueued: true, error: null });
+    const recordDriftAudit = vi.fn().mockResolvedValue({ error: null });
+    const deps = makeDeps({
+      listActiveIntegrations: vi.fn().mockResolvedValue([INT_ORG]),
+      listCompletedEnvelopes: vi.fn().mockResolvedValue([env('env-missing')]),
+      getQueuedEnvelopeRefs: vi.fn().mockResolvedValue(new Set<string>()),
+      materializeMissingEnvelope,
+      recordDriftAudit,
+    });
+
+    const result = await reconcileDocusignQueueDrift(deps, {
+      enableConnectorArtifactEnqueue: false,
+    });
+
+    // Drift is still surfaced (audit + Sentry) so operators see the gap.
+    expect(result.drift_detected).toBe(1);
+    expect(recordDriftAudit).toHaveBeenCalledTimes(1);
+    expect(captureMessageMock).toHaveBeenCalledTimes(1);
+    // But the re-drive is a no-op: no producer re-submit, no phantom materialize.
+    expect(materializeMissingEnvelope).not.toHaveBeenCalled();
+    expect(result.materialized).toBe(0);
+    // ok stays true — a suppressed re-drive under a disabled drain is expected, not
+    // an error condition.
+    expect(result.ok).toBe(true);
+  });
+
+  it('re-materializes normally when connector-artifact enqueue is ON (flags aligned)', async () => {
+    const materializeMissingEnvelope = vi.fn().mockResolvedValue({ enqueued: true, error: null });
+    const deps = makeDeps({
+      listActiveIntegrations: vi.fn().mockResolvedValue([INT_ORG]),
+      listCompletedEnvelopes: vi.fn().mockResolvedValue([env('env-missing')]),
+      getQueuedEnvelopeRefs: vi.fn().mockResolvedValue(new Set<string>()),
+      materializeMissingEnvelope,
+    });
+
+    const result = await reconcileDocusignQueueDrift(deps, {
+      enableConnectorArtifactEnqueue: true,
+    });
+
+    expect(materializeMissingEnvelope).toHaveBeenCalledTimes(1);
+    expect(result.materialized).toBe(1);
+  });
+
   it('returns a hard failure when listing integrations throws', async () => {
     const deps = makeDeps({
       listActiveIntegrations: vi.fn().mockRejectedValue(new Error('list boom')),

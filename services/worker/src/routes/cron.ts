@@ -1607,7 +1607,14 @@ cronRouter.post('/docusign-queue-reconciliation', async (_req, res) => {
     const result = await withCronMonitoring(
       'docusign-queue-reconciliation',
       '0 7 * * *',
-      () => reconcileDocusignQueueDrift(makeQueueReconciliationDeps()),
+      () =>
+        reconcileDocusignQueueDrift(makeQueueReconciliationDeps(), {
+          // Flag alignment: with the connector-artifact enqueue OFF the DS-03
+          // producer writes no durable row, so a re-drive can never queue the
+          // envelope. Pass the flag so reconciliation still surfaces drift (audit +
+          // Sentry) but suppresses a re-submit-every-run loop.
+          enableConnectorArtifactEnqueue: config.enableConnectorArtifactEnqueue,
+        }),
     )();
     if (!result.ok) {
       res.status(500).json(result);

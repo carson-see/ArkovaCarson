@@ -162,7 +162,11 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
 
     function makeDb(opts: MakeDbOpts = {}) {
       const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
-      const state: { insertedDetails?: Record<string, unknown>; insertCalled: boolean } = {
+      const state: {
+        insertedDetails?: Record<string, unknown>;
+        insertedRow?: Record<string, unknown>;
+        insertCalled: boolean;
+      } = {
         insertCalled: false,
       };
       const db = {
@@ -179,6 +183,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
             maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
             insert: vi.fn((value: Record<string, unknown>) => {
               state.insertCalled = true;
+              state.insertedRow = value;
               state.insertedDetails = value.details as Record<string, unknown>;
               return {
                 select: vi.fn(() => ({
@@ -372,6 +377,43 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         deps.enqueueSignedDocument({ ...SINK_INPUT, scope: 'member', ownerUserId: null }),
       ).rejects.toThrow('docusign_member_scope_missing_owner');
       expect(rpcCalls).toHaveLength(0);
+    });
+
+    // FK bug (SCRUM-2364/2365): integration_events.integration_id has a FK to
+    // org_integrations(id) ONLY. A member envelope carries a member_integrations
+    // id, so writing it into integration_id violates the FK at runtime. The audit
+    // row must set integration_id = null for a member envelope and carry the member
+    // integration id inside details instead.
+    it('writes a member audit row with integration_id null + member id in details (FK-safe)', async () => {
+      const MEMBER_USER = '77777777-7777-4777-8777-777777777777';
+      const { db, state } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      await deps.enqueueSignedDocument({
+        ...SINK_INPUT,
+        scope: 'member',
+        ownerUserId: MEMBER_USER,
+      });
+
+      // The FK column must NOT carry the member_integrations id.
+      expect(state.insertedRow).toMatchObject({ integration_id: null });
+      // The member integration id is preserved in the ids-only details JSON.
+      expect(state.insertedDetails).toMatchObject({
+        member_integration_id: 'integration-1',
+        envelope_id: 'envelope-1',
+      });
+    });
+
+    // An org envelope carries an org_integrations id, which satisfies the FK, so it
+    // must still be written into integration_id (regression guard for the fix).
+    it('keeps integration_id set for an org-scoped envelope (FK satisfied)', async () => {
+      const { db, state } = makeDb();
+      const deps = makeDocusignEnvelopeJobDeps({ db });
+
+      await deps.enqueueSignedDocument({ ...SINK_INPUT, scope: 'org', ownerUserId: null });
+
+      expect(state.insertedRow).toMatchObject({ integration_id: 'integration-1' });
+      expect(state.insertedDetails).not.toHaveProperty('member_integration_id');
     });
   });
 

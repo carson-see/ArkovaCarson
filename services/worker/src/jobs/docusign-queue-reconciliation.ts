@@ -98,6 +98,21 @@ export interface QueueReconciliationDeps {
   }): Promise<{ error: string | null }>;
 }
 
+export interface ReconcileDocusignQueueDriftOptions {
+  /** Lookback window for completed-envelope polling. Defaults to 24h. */
+  lookbackHours?: number;
+  /**
+   * DS-03/DS-05 flag alignment. When the connector-artifact enqueue is OFF the
+   * DS-03 producer computes a fingerprint but writes NO `connector_artifact` row,
+   * so a re-materialization can never durably queue the envelope. Re-driving it
+   * would re-submit (and falsely count) the same envelope every cron run. When
+   * this is false the reconciliation still detects + audits + alerts drift, but
+   * suppresses the re-drive and does not count it materialized. Defaults to true
+   * (aligned) so the pure unit tests that predate this flag are unaffected.
+   */
+  enableConnectorArtifactEnqueue?: boolean;
+}
+
 export interface QueueReconciliationResult {
   ok: boolean;
   integrations_checked: number;
@@ -114,8 +129,12 @@ function errMsg(err: unknown): string {
 
 export async function reconcileDocusignQueueDrift(
   deps: QueueReconciliationDeps,
-  lookbackHours: number = DEFAULT_LOOKBACK_HOURS,
+  options: ReconcileDocusignQueueDriftOptions = {},
 ): Promise<QueueReconciliationResult> {
+  const lookbackHours = options.lookbackHours ?? DEFAULT_LOOKBACK_HOURS;
+  // Default true so the re-drive behaves as before unless a caller explicitly
+  // passes the (off) flag from config.
+  const enableConnectorArtifactEnqueue = options.enableConnectorArtifactEnqueue ?? true;
   const result: QueueReconciliationResult = {
     ok: true,
     integrations_checked: 0,
@@ -141,7 +160,13 @@ export async function reconcileDocusignQueueDrift(
     result.integrations_checked++;
     // Per-org isolation: one integration's failure never starves the rest.
     try {
-      await reconcileOneIntegration(deps, integration, fromDate, result);
+      await reconcileOneIntegration(
+        deps,
+        integration,
+        fromDate,
+        result,
+        enableConnectorArtifactEnqueue,
+      );
     } catch (err) {
       const msg = errMsg(err);
       logger.error(
@@ -172,6 +197,7 @@ async function reconcileOneIntegration(
   integration: QueueActiveIntegration,
   fromDate: string,
   result: QueueReconciliationResult,
+  enableConnectorArtifactEnqueue: boolean,
 ): Promise<void> {
   const accessToken = await deps.getAccessToken(integration);
 
@@ -191,7 +217,7 @@ async function reconcileOneIntegration(
   result.drift_detected += drift.length;
 
   for (const envelope of drift) {
-    await handleDrift(deps, integration, envelope, result);
+    await handleDrift(deps, integration, envelope, result, enableConnectorArtifactEnqueue);
   }
 }
 
@@ -200,6 +226,7 @@ async function handleDrift(
   integration: QueueActiveIntegration,
   envelope: CompletedEnvelopeRef,
   result: QueueReconciliationResult,
+  enableConnectorArtifactEnqueue: boolean,
 ): Promise<void> {
   // Bounded audit row — ids only, never a fingerprint or bytes (§1.6A).
   const audit = await deps.recordDriftAudit({
@@ -248,6 +275,19 @@ async function handleDrift(
       { error: errMsg(sentryErr), envelopeId: envelope.envelopeId },
       'Queue reconciliation: Sentry alert failed',
     );
+  }
+
+  // Flag-alignment guard (SCRUM-2365): if the connector-artifact enqueue is OFF,
+  // the DS-03 producer writes no durable `connector_artifact` row, so re-driving
+  // would re-submit (and falsely count) the same envelope every cron run. Detect +
+  // audit + alert the drift above, but suppress the re-drive here. Not an error —
+  // the drain is intentionally dormant until ENABLE_CONNECTOR_ARTIFACT_ENQUEUE ships.
+  if (!enableConnectorArtifactEnqueue) {
+    logger.warn(
+      { integrationId: integration.id, envelopeId: envelope.envelopeId },
+      'Queue reconciliation: drift detected but re-materialization suppressed — ENABLE_CONNECTOR_ARTIFACT_ENQUEUE disabled',
+    );
+    return;
   }
 
   // Idempotent re-materialization into the correct (org vs personal) queue.

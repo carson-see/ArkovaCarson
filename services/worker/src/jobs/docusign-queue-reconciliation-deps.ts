@@ -47,6 +47,9 @@ type IntegrationRow = {
   base_uri?: unknown;
   token_secret_name?: unknown;
   user_id?: unknown;
+  // org_integrations-only: set on an inheritance-marker row (account_id NULL)
+  // pointing at the parent org whose connection the sub-org inherits (SCRUM-2045).
+  inherited_from_org_id?: unknown;
 };
 
 type ArtifactRefRow = { external_ref?: unknown };
@@ -114,7 +117,7 @@ export function makeQueueReconciliationDeps(
       // eslint-disable-next-line arkova/missing-org-filter
       const { data: orgData, error: orgError } = await db
         .from('org_integrations')
-        .select('id, org_id, account_id, base_uri, token_secret_name')
+        .select('id, org_id, account_id, base_uri, token_secret_name, inherited_from_org_id')
         .eq('provider', 'docusign')
         .is('revoked_at', null);
       if (orgError) throw new Error(`integration_list_failed: ${dbErrorMessage(orgError)}`);
@@ -128,10 +131,64 @@ export function makeQueueReconciliationDeps(
         throw new Error(`member_integration_list_failed: ${dbErrorMessage(memberError)}`);
       }
 
-      const orgRows = (orgData ?? []).flatMap((row) => {
-        const i = toActiveIntegration(row, 'org');
-        return i ? [i] : [];
-      });
+      const allOrgRows = orgData ?? [];
+
+      // Cross-org attribution (DS-SUBORG-01 / SCRUM-2045): a sub-org can INHERIT
+      // its parent's DocuSign connection via an inheritance-marker row (account_id
+      // NULL, inherited_from_org_id = parent). DS-03 + the webhook key that org's
+      // envelopes under the CHILD org_id. So when we enumerate a parent's own
+      // connection here we must re-attribute it to the inheriting child, or the
+      // drift diff runs against the wrong org and re-materializes every run
+      // (cross-org false drift + double-materialize). Build parent-org → markers.
+      const markersByParent = new Map<string, IntegrationRow[]>();
+      for (const row of allOrgRows) {
+        const parentId = row.inherited_from_org_id;
+        const accountId = row.account_id;
+        // A marker is a row with NO own account that points at a parent org.
+        if (typeof parentId === 'string' && (accountId === null || accountId === undefined)) {
+          const list = markersByParent.get(parentId) ?? [];
+          list.push(row);
+          markersByParent.set(parentId, list);
+        }
+      }
+
+      const orgRows: QueueActiveIntegration[] = [];
+      for (const row of allOrgRows) {
+        // Own connections only (markers themselves have no account/credentials and
+        // are consumed as attribution for their parent, never polled directly).
+        const base = toActiveIntegration(row, 'org');
+        if (!base) continue;
+
+        const markers = typeof row.org_id === 'string' ? markersByParent.get(row.org_id) : undefined;
+        if (markers && markers.length > 0) {
+          if (markers.length > 1) {
+            // Ambiguous inherited attribution — mirror the webhook and refuse to
+            // poll this account at all rather than risk a cross-tenant leak.
+            logger.error(
+              {
+                parentOrgId: row.org_id,
+                childOrgIds: markers.map((m) => m.org_id),
+              },
+              'Queue reconciliation: ambiguous inherited sub-org attribution — skipping account',
+            );
+            continue;
+          }
+          const marker = markers[0];
+          // Re-attribute to the child org (org_id + marker id) while keeping the
+          // parent's polling credentials. The marker id is the same integration_id
+          // DS-03/the webhook stamped, so a re-materialization resolves back to the
+          // parent connection and the 0343 dedupe makes it a genuine no-op.
+          orgRows.push({
+            ...base,
+            id: typeof marker.id === 'string' ? marker.id : base.id,
+            org_id: typeof marker.org_id === 'string' ? marker.org_id : base.org_id,
+          });
+          continue;
+        }
+
+        orgRows.push(base);
+      }
+
       const memberRows = (memberData ?? []).flatMap((row) => {
         const i = toActiveIntegration(row, 'member');
         return i ? [i] : [];
@@ -267,10 +324,16 @@ export function makeQueueReconciliationDeps(
     async recordDriftAudit(row) {
       // Bounded, PII-scrubbed audit breadcrumb — ids only (§1.6A). No fingerprint,
       // no bytes. Uses the existing integration_events audit table.
+      //
+      // FK safety: integration_events.integration_id has a FK to org_integrations(id)
+      // ONLY. A member drift row's integration_id is a member_integrations id, which
+      // would violate that FK at runtime — so for member scope we NULL the FK column
+      // and carry the member integration id inside the ids-only details JSON instead.
+      const isMemberScope = row.scope === 'member';
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- integration_events audit insert
       const { error } = await (db as any).from('integration_events').insert({
         org_id: row.org_id,
-        integration_id: row.integration_id,
+        integration_id: isMemberScope ? null : row.integration_id,
         provider: 'docusign',
         event_type: 'queue_drift_detected',
         status: 'success',
@@ -280,7 +343,8 @@ export function makeQueueReconciliationDeps(
           envelope_status: row.envelope_status,
           completed_at: row.completed_at,
           queue_scope: row.scope,
-          ...(row.scope === 'member' && row.owner_user_id
+          ...(isMemberScope ? { member_integration_id: row.integration_id } : {}),
+          ...(isMemberScope && row.owner_user_id
             ? { owner_user_id: row.owner_user_id }
             : {}),
         },

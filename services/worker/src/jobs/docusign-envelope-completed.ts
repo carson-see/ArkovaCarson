@@ -445,11 +445,17 @@ export function makeDocusignEnvelopeJobDeps(
       // Audit breadcrumb. Carries the artifact id + byte_length but NEVER the
       // fingerprint or bytes (§1.6A). Also fail-closed so a broken audit path is
       // visible rather than silently swallowed.
+      //
+      // FK safety: integration_events.integration_id has a FK to org_integrations(id)
+      // ONLY. A member envelope's integrationId is a member_integrations id, which
+      // would violate that FK at runtime — so for member scope we NULL the FK column
+      // and carry the member integration id inside the ids-only details JSON instead.
+      const isMemberScope = queueScope === 'member';
       const { error: auditError } = await db
         .from('integration_events')
         .insert({
           org_id: input.orgId,
-          integration_id: input.integrationId,
+          integration_id: isMemberScope ? null : input.integrationId,
           provider: 'docusign',
           event_type: 'envelope_document_fetched',
           status: 'success',
@@ -460,6 +466,10 @@ export function makeDocusignEnvelopeJobDeps(
             content_type: input.contentType,
             byte_length: byteLength,
             connector_artifact_id: artifactId,
+            queue_scope: queueScope,
+            // Member integration id lives in details (not the FK column) so the
+            // audit row still ties back to the personal connection.
+            ...(isMemberScope ? { member_integration_id: input.integrationId } : {}),
           },
         })
         .select('id')
