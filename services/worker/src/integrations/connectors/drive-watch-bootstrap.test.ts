@@ -104,6 +104,12 @@ describe('bootstrapDriveWatch — happy path (My Drive)', () => {
     });
     expect(typeof (row as { p_channel_id: string }).p_channel_id).toBe('string');
     expect((row as { p_channel_expires_at: string }).p_channel_expires_at).toBe('2026-07-08T00:00:00.000Z');
+    // A successful (re-)bootstrap forwards p_last_renewal_error=null so the RPC's
+    // `last_renewal_error = EXCLUDED.last_renewal_error` UPDATE clears any stale
+    // error left by a prior degraded renewal (P2: re-bootstrap must not keep a
+    // dangling reason).
+    expect('p_last_renewal_error' in row).toBe(true);
+    expect((row as { p_last_renewal_error: string | null }).p_last_renewal_error).toBeNull();
   });
 });
 

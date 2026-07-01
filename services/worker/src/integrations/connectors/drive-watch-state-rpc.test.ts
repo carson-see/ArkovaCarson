@@ -88,3 +88,68 @@ describe('upsert_drive_watch_state RPC — p_last_renewal_error contract (0351)'
     }
   });
 });
+
+/**
+ * DRIVE-06 (SCRUM-2371) — regression for the [P1] status-vocabulary drift:
+ * `renewDriveWatchChannels()` persists `status:'degraded'` at three sites
+ * (token-revoked + two renewal-failed paths), and `bootstrapDriveWatch()`
+ * persists `active | permission_denied | failed`. Before this fix the
+ * `drive_watch_state_status_check` CHECK constraint omitted `degraded`, so the
+ * FIRST renewal-failure UPDATE would violate the constraint at the DB and leave
+ * the watch without the `last_renewal_error` ops need. The injected-DB renewal
+ * tests mock the interface and cannot catch a real CHECK-constraint mismatch —
+ * this is a SQL-contract test that parses the shipped constraint against the
+ * exact status literals the code writes, so the vocabulary can never drift apart
+ * again.
+ */
+describe('drive_watch_state status CHECK — code↔DB vocabulary (0351)', () => {
+  /** Extract the quoted status values inside the drive_watch_state_status_check CHECK IN (...). */
+  function statusCheckValues(sql: string): string[] {
+    const marker = 'drive_watch_state_status_check';
+    const start = sql.indexOf(marker);
+    expect(start).toBeGreaterThanOrEqual(0);
+    // The CHECK IN (...) list follows the constraint name on the next line(s).
+    const inStart = sql.indexOf('IN (', start);
+    expect(inStart).toBeGreaterThanOrEqual(0);
+    const inEnd = sql.indexOf(')', inStart);
+    const list = sql.slice(inStart + 'IN ('.length, inEnd);
+    return [...list.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  }
+
+  // Every status literal the worker persists into drive_watch_state:
+  //   - bootstrapDriveWatch(): 'active' | 'permission_denied' | 'failed'
+  //   - renewDriveWatchChannels(): 'active' | 'degraded' | 'stopped' | 'expired'
+  const CODE_STATUSES = [
+    'active',
+    'permission_denied',
+    'failed',
+    'degraded',
+    'stopped',
+    'expired',
+  ];
+
+  it('allows every status the worker writes (incl. degraded)', () => {
+    const allowed = statusCheckValues(migrationSql);
+    for (const s of CODE_STATUSES) {
+      expect(allowed, `status '${s}' must be permitted by the CHECK constraint`).toContain(s);
+    }
+  });
+
+  it('specifically permits degraded (the renewal-failure ops status)', () => {
+    expect(statusCheckValues(migrationSql)).toContain('degraded');
+  });
+
+  it('does not permit statuses the code never writes (constraint stays tight)', () => {
+    const allowed = statusCheckValues(migrationSql);
+    for (const s of allowed) {
+      expect(CODE_STATUSES, `CHECK permits '${s}' but no code path writes it`).toContain(s);
+    }
+  });
+
+  it('documents degraded in the status COLUMN comment', () => {
+    const commentStart = migrationSql.indexOf('COMMENT ON COLUMN public.drive_watch_state.status');
+    expect(commentStart).toBeGreaterThanOrEqual(0);
+    const comment = migrationSql.slice(commentStart, migrationSql.indexOf(';', commentStart));
+    expect(comment).toMatch(/degraded/);
+  });
+});

@@ -73,7 +73,11 @@ CREATE TABLE IF NOT EXISTS public.drive_watch_state (
   folder_path text,
   -- Lifecycle. `permission_denied` = bootstrap saw a folder-permission failure;
   -- `expired` = channel lapsed (DRIVE-06 recovery target); `stopped` = watch
-  -- torn down on disconnect.
+  -- torn down on disconnect or entitlement loss; `degraded` = a renewal sweep hit
+  -- a recoverable failure (OAuth grant revoked, renewal error) and recorded a
+  -- bounded `last_renewal_error` — the watch stays in the renewal sweep so it can
+  -- recover once the user reconnects; `failed` = bootstrap could not register the
+  -- watch (metadata/watch-registration error).
   status text NOT NULL DEFAULT 'active',
   -- Ops surface for DRIVE-06: last renewal failure reason (bounded, non-secret).
   last_renewal_error text,
@@ -84,7 +88,7 @@ CREATE TABLE IF NOT EXISTS public.drive_watch_state (
   CONSTRAINT drive_watch_state_owner_scope_check
     CHECK (owner_scope IN ('my_drive', 'shared_drive')),
   CONSTRAINT drive_watch_state_status_check
-    CHECK (status IN ('active', 'permission_denied', 'expired', 'stopped', 'failed')),
+    CHECK (status IN ('active', 'permission_denied', 'expired', 'stopped', 'degraded', 'failed')),
   -- A shared-drive watch must carry the shared drive_id; a My-Drive watch must not.
   CONSTRAINT drive_watch_state_shared_drive_id_check
     CHECK (
@@ -108,7 +112,7 @@ COMMENT ON COLUMN public.drive_watch_state.folder_path IS
 COMMENT ON COLUMN public.drive_watch_state.owner_email IS
   'Sensitive: acting user''s Google identity. RLS-scoped, must not be logged (DRIVE-02).';
 COMMENT ON COLUMN public.drive_watch_state.status IS
-  'active | permission_denied (folder access failed at bootstrap) | expired (channel lapsed, DRIVE-06 recovery) | stopped (disconnect) | failed.';
+  'active | permission_denied (folder access failed at bootstrap) | expired (channel lapsed, DRIVE-06 recovery) | stopped (disconnect or entitlement loss) | degraded (renewal sweep hit a recoverable failure; last_renewal_error set, still renewal-eligible) | failed (bootstrap could not register the watch).';
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- Indexes
