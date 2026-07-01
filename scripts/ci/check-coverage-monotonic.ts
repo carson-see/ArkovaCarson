@@ -18,7 +18,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { REPO, baseRef, prLabels, prBody } from './lib/ciContext.js';
+import { REPO, getBaseRef, prLabels, prBody } from './lib/ciContext.js';
 
 const CONFIGS = [
   'vitest.config.ts',
@@ -28,7 +28,6 @@ const METRICS = ['branches', 'functions', 'lines', 'statements'] as const;
 type Metric = (typeof METRICS)[number];
 type Thresholds = Record<string, Partial<Record<Metric, number>>>;
 
-const BASE_REF = baseRef;
 const PR_LABELS = prLabels;
 const PR_BODY = prBody;
 
@@ -76,14 +75,14 @@ interface Drop {
   newValue: number;
 }
 
-function checkConfig(configRelPath: string): Drop[] {
+function checkConfig(configRelPath: string, baseRef: string): Drop[] {
   const drops: Drop[] = [];
   const fullPath = resolve(REPO, configRelPath);
   if (!existsSync(fullPath)) return drops;
   const current = parseThresholds(readFileSync(fullPath, 'utf8'));
-  const baseSrc = readFromGit(BASE_REF, configRelPath);
+  const baseSrc = readFromGit(baseRef, configRelPath);
   if (baseSrc === null) {
-    console.log(`ℹ️  ${configRelPath}: not present on ${BASE_REF}, treating as new file`);
+    console.log(`ℹ️  ${configRelPath}: not present on ${baseRef}, treating as new file`);
     return drops;
   }
   const base = parseThresholds(baseSrc);
@@ -120,9 +119,11 @@ function isOverridden(): { allowed: boolean; reason?: string } {
 }
 
 function main(): void {
+  // Required base: fail closed if it can't resolve (getBaseRef exits 1).
+  const BASE_REF = getBaseRef({ required: true })!;
   const allDrops: Drop[] = [];
   for (const cfg of CONFIGS) {
-    const drops = checkConfig(cfg);
+    const drops = checkConfig(cfg, BASE_REF);
     allDrops.push(...drops);
   }
 

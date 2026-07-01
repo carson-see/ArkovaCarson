@@ -43,11 +43,12 @@ beforeEach(async () => {
   delete process.env.GITHUB_REPOSITORY;
   delete process.env.PR_NUMBER;
   delete process.env.PR_LABELS;
-  // Pin the gh binary to the bare name so the existing `cmd === 'gh'` mock
-  // matchers stay valid. Production resolves `GH_BIN` to a fixed absolute path
-  // (Sonar S4036) defaulting to /usr/bin/gh; a dedicated test below proves the
-  // override is honored.
+  // Pin the gh/git binaries to the bare names so the existing `cmd === 'gh'` /
+  // `cmd === 'git'` mock matchers stay valid. Production resolves `GH_BIN` /
+  // `GIT_BIN` to fixed absolute paths (Sonar S4036) defaulting to /usr/bin/gh
+  // and /usr/bin/git; dedicated tests below prove the overrides are honored.
   process.env.GH_BIN = 'gh';
+  process.env.GIT_BIN = 'git';
 });
 
 afterEach(() => {
@@ -174,6 +175,152 @@ describe('resolvePrLabels', () => {
     delete process.env.GH_BIN;
     mod = await import('./ciContext.js');
     expect(mod.GH_BIN).toBe('/usr/bin/gh');
+  });
+});
+
+describe('getBaseRef — lazy, memoized, fail-closed (ci/ciContext-lazy-baseref)', () => {
+  it('does NOT invoke git on a labels/body-only import (no eager base resolution)', async () => {
+    // The whole point of the lazy split: importing ciContext to read labels /
+    // body must not shell out to `git rev-parse`. A check like
+    // check-confluence-coverage imports prBody/hasLabel and never diffs.
+    mod = await import('./ciContext.js');
+    // Touch the labels/body surface — these are what a base-optional importer uses.
+    void mod.prBody;
+    void mod.prTitle;
+    mod.resolvePrLabels({ PR_LABELS: 'foo' });
+    const gitCalls = execFileSyncMock.mock.calls.filter((c) => c[0] === 'git');
+    expect(gitCalls).toHaveLength(0);
+  });
+
+  it('getBaseRef({ required: true }) resolves the base on first call and memoizes it', async () => {
+    mod = await import('./ciContext.js');
+    const first = mod.getBaseRef({ required: true });
+    expect(first).toBe(FORTY_HEX);
+    const gitCallsAfterFirst = execFileSyncMock.mock.calls.filter((c) => c[0] === 'git').length;
+    // Second call must be memoized — no additional git invocation.
+    const second = mod.getBaseRef({ required: true });
+    expect(second).toBe(FORTY_HEX);
+    const gitCallsAfterSecond = execFileSyncMock.mock.calls.filter((c) => c[0] === 'git').length;
+    expect(gitCallsAfterSecond).toBe(gitCallsAfterFirst);
+  });
+
+  it('getBaseRef({ required: true }) exits non-zero when the base is unresolvable (fail closed)', async () => {
+    // git rev-parse throws ⇒ resolveCommitOrFail must process.exit(1).
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === 'git') throw new Error('fatal: ambiguous argument');
+      return '';
+    });
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    mod = await import('./ciContext.js');
+    expect(() => mod.getBaseRef({ required: true })).toThrow(/process\.exit\(1\)/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('getBaseRef({ required: true }) NEVER degrades to null/empty (does not return for required callers on failure)', async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === 'git') throw new Error('fatal: bad revision');
+      return '';
+    });
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`__exit_${code}__`);
+    }) as never);
+    mod = await import('./ciContext.js');
+    // A returned null/'' would be the dangerous degradation. Instead it MUST
+    // throw via the mocked exit — never hand back a falsy base.
+    let returned: unknown = 'NOT_CALLED';
+    try {
+      returned = mod.getBaseRef({ required: true });
+    } catch (e) {
+      returned = e;
+    }
+    expect(returned).toBeInstanceOf(Error);
+    expect(returned).not.toBeNull();
+    expect(returned).not.toBe('');
+  });
+
+  it('getBaseRef() (optional) returns null with a warning on an unresolvable base — no exit', async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === 'git') throw new Error('fatal: bad revision');
+      return '';
+    });
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mod = await import('./ciContext.js');
+    expect(mod.getBaseRef({ required: false })).toBeNull();
+    expect(warnSpy).toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('a required call after a failed optional call still fails closed (does not cache null for required callers)', async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === 'git') throw new Error('fatal: bad revision');
+      return '';
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    mod = await import('./ciContext.js');
+    expect(mod.getBaseRef({ required: false })).toBeNull(); // optional: graceful null
+    expect(() => mod.getBaseRef({ required: true })).toThrow(/process\.exit\(1\)/); // required: fail closed
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('changedFiles — two-dot diff, fail-closed base (ci/ciContext-lazy-baseref)', () => {
+  it('diffs with TWO-dot (base..HEAD), NOT three-dot (base...HEAD)', async () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args[0] === 'rev-parse') return `${FORTY_HEX}\n`;
+      if (cmd === 'git' && args[0] === 'diff') return 'a.ts\nb.ts\n';
+      return '';
+    });
+    mod = await import('./ciContext.js');
+    const files = mod.changedFiles();
+    expect(files).toEqual(['a.ts', 'b.ts']);
+    const diffCall = execFileSyncMock.mock.calls.find((c) => c[0] === 'git' && c[1][0] === 'diff');
+    expect(diffCall).toBeDefined();
+    const rangeArg = (diffCall![1] as string[]).find((a) => a.includes('HEAD') && a.includes(FORTY_HEX));
+    expect(rangeArg).toBe(`${FORTY_HEX}..HEAD`);
+    // Explicitly assert the three-dot form is NOT used.
+    expect(rangeArg).not.toContain('...');
+  });
+
+  it('fails closed (exits) when the base is unresolvable instead of returning [] (no silent path-gate bypass)', async () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args[0] === 'rev-parse') throw new Error('fatal: bad revision');
+      return '';
+    });
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    mod = await import('./ciContext.js');
+    // Old behavior returned [] here (gate passes wrongly). New behavior throws.
+    expect(() => mod.changedFiles()).toThrow(/process\.exit\(1\)/);
+  });
+});
+
+describe('GIT_BIN — fixed absolute path, no bare-binary $PATH lookup (S4036)', () => {
+  it('spawns git at the resolved GIT_BIN path, not the bare `git` name', async () => {
+    process.env.GIT_BIN = '/custom/bin/git';
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === '/custom/bin/git' && args[0] === 'rev-parse') return `${FORTY_HEX}\n`;
+      if (cmd === '/custom/bin/git' && args[0] === 'diff') return 'a.ts\n';
+      return '';
+    });
+    mod = await import('./ciContext.js');
+    expect(mod.GIT_BIN).toBe('/custom/bin/git');
+    expect(mod.changedFiles()).toEqual(['a.ts']);
+    // Every git spawn used the absolute path; the bare `git` name was never used.
+    expect(execFileSyncMock.mock.calls.some((c) => c[0] === '/custom/bin/git')).toBe(true);
+    expect(execFileSyncMock.mock.calls.some((c) => c[0] === 'git')).toBe(false);
+  });
+
+  it('defaults GIT_BIN to /usr/bin/git when the env var is unset', async () => {
+    delete process.env.GIT_BIN;
+    mod = await import('./ciContext.js');
+    expect(mod.GIT_BIN).toBe('/usr/bin/git');
   });
 });
 

@@ -324,6 +324,47 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(alertArg).toMatchObject({ orgId: ORG_A, artifactId: ART_1, reason: 'debit_constraint_violation' });
   });
 
+  it('anchor_not_in_expected_status + anchor ALREADY ADVANCED: promote to anchored, NEVER failed (idempotent, no re-charge)', async () => {
+    // Regression (found in T3 soak @ ~10k/hr: ~12k artifacts wrongly marked
+    // `failed` whose anchors were SECURED/SUBMITTED). A concurrent cycle advanced
+    // THIS anchor past PENDING before the first-pass debit, so the RPC rejects
+    // with `anchor_not_in_expected_status` — BEFORE charging (idempotent on
+    // anchor id, no charge lost). The securing already happened: the row must be
+    // promoted to `anchored`, not stranded `failed`.
+    const debit = vi.fn(async () => ({ success: false, error: 'anchor_not_in_expected_status' }));
+    // default readAnchorStatus → { status: 'SUBMITTED', chain_tx_id: 'tx-confirmed' } (advanced)
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { debitAndEnqueueAnchor: debit });
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(h.readAnchorStatus).toHaveBeenCalledWith({ orgId: ORG_A, anchorId: ANCHOR_1 });
+    expect(result.anchored).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(h.rows[0].status).toBe('anchored');
+    expect(h.rows[0].status).not.toBe('failed');
+  });
+
+  it('anchor_not_in_expected_status + anchor still IN FLIGHT (BROADCASTING): left materialized for confirmation, NOT failed', async () => {
+    const debit = vi.fn(async () => ({ success: false, error: 'anchor_not_in_expected_status' }));
+    const readAnchorStatus = vi.fn(async ({ anchorId }: { anchorId: string }) => ({
+      id: anchorId,
+      status: 'BROADCASTING',
+      chain_tx_id: null,
+    }));
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], {
+      debitAndEnqueueAnchor: debit,
+      readAnchorStatus,
+    });
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(result.failed).toBe(0);
+    expect(result.anchored).toBe(0);
+    // Left materialized (retryable via confirmation), never terminal failed.
+    expect(h.rows[0].status).toBe('materialized');
+    expect(h.rows[0].status).not.toBe('failed');
+  });
+
   it('partial-failure isolation: one row fails, the next still drains', async () => {
     const materialize = vi
       .fn()

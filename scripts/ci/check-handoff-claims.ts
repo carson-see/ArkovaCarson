@@ -23,7 +23,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { REPO, baseRef as BASE_REF, prLabels as PR_LABELS, prBody as PR_BODY, prCommitsMsgs as PR_COMMITS_MSGS, hasLabel, LABELS } from './lib/ciContext.js';
+import { REPO, GIT_BIN, getBaseRef, prBody as PR_BODY, prCommitsMsgs as PR_COMMITS_MSGS, hasLabel, LABELS } from './lib/ciContext.js';
 
 const HANDOFF_PATH = resolve(REPO, 'HANDOFF.md');
 
@@ -116,11 +116,21 @@ interface Violation {
 
 function getDiff(): string {
   // Code-review issue #E: prefer execFileSync (no shell) over execSync with
-  // shell-interpolated BASE_REF. BASE_REF is now a real SHA from
-  // ciContext.resolveBaseRefOrFail, so injection is moot — but match the
-  // pattern used by the rest of the PR's scripts.
+  // shell-interpolated BASE_REF. The base is a real SHA from
+  // ciContext.getBaseRef({ required: true }), so injection is moot — but match
+  // the pattern used by the rest of the PR's scripts.
+  //
+  // TWO-dot (`base..HEAD`), NOT three-dot. Three-dot diffs against the
+  // merge-base, so on a rebased lane branch (e.g. lane2/*-wt) that reaches a
+  // now-merged HANDOFF.md commit, `base...HEAD` re-surfaces that edit as if
+  // THIS PR authored it — then the footer check fails on on-disk HANDOFF.md
+  // even though `gh pr diff --name-only` (two-dot) shows no HANDOFF change.
+  // Two-dot asks the correct question: "did THIS PR's changeset edit
+  // HANDOFF.md vs the current base tip?". A PR that genuinely edits HANDOFF.md
+  // still trips the gate.
+  const base = getBaseRef({ required: true })!;
   try {
-    return execFileSync('git', ['diff', `${BASE_REF}...HEAD`, '--', 'HANDOFF.md'], {
+    return execFileSync(GIT_BIN, ['diff', `${base}..HEAD`, '--', 'HANDOFF.md'], {
       cwd: REPO,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
