@@ -14,7 +14,7 @@ import { useState } from 'react';
 import { Download, FileJson, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
-import { hasPublicVerificationProof, normalizePublicVerificationStatus } from '@/lib/publicVerificationState';
+import { isProofDownloadable, normalizePublicVerificationStatus } from '@/lib/publicVerificationState';
 import { buildEvidenceProofFields, type SourceProvenanceData } from '@/lib/sourceProvenance';
 
 interface VerifierProofDownloadProps {
@@ -82,7 +82,9 @@ export function VerifierProofDownload({
     }
   };
 
-  if (!hasPublicVerificationProof(publicStatus)) return null;
+  // FE-PROOF-GATE (SCRUM-2501): SECURED-only. A REVOKED/EXPIRED/SUPERSEDED anchor
+  // must NOT expose a downloadable "Verified" proof, even though it still HAS a record.
+  if (!isProofDownloadable(publicStatus)) return null;
 
   return (
     <div className="space-y-2">
