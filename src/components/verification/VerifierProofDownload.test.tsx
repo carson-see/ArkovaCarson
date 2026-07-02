@@ -76,9 +76,22 @@ describe('VerifierProofDownload', () => {
     expect(screen.getByText('JSON Proof Package')).toBeInTheDocument();
   });
 
-  it('renders for REVOKED anchors', () => {
-    render(<VerifierProofDownload {...PROPS} status="REVOKED" />);
-    expect(screen.getByText('JSON Proof Package')).toBeInTheDocument();
+  // FE-PROOF-GATE (SCRUM-2501): the proof download is SECURED-only. A REVOKED /
+  // EXPIRED / SUPERSEDED anchor still HAS a public record, but must NOT expose a
+  // downloadable "Verified" proof. (This previously rendered — that was the bug.)
+  it('returns null for REVOKED anchors (SECURED-only download gate)', () => {
+    const { container } = render(<VerifierProofDownload {...PROPS} status="REVOKED" />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('returns null for EXPIRED anchors (SECURED-only download gate)', () => {
+    const { container } = render(<VerifierProofDownload {...PROPS} status="EXPIRED" />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('returns null for SUPERSEDED anchors (SECURED-only download gate)', () => {
+    const { container } = render(<VerifierProofDownload {...PROPS} status="SUPERSEDED" />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('triggers JSON download on click', async () => {
