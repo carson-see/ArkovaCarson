@@ -236,6 +236,39 @@ describe('reconcileDocusignQueueDrift', () => {
     expect(result.materialized).toBe(1);
   });
 
+  // Fail-open-per-row (CodeRabbit Major): the Sentry call is try/catch-guarded,
+  // but recordDriftAudit was not — so a THROWN audit exception (e.g. a network
+  // error from the DB client, distinct from a returned `{ error }`) propagated
+  // past the alert + materialization for that envelope AND aborted the remaining
+  // drift envelopes for the integration. It must instead be caught, recorded, and
+  // NOT stop the alert, the re-materialization, or the next drift envelope.
+  it('a thrown recordDriftAudit does not abort alert, materialize, or remaining drift (fail-open per row)', async () => {
+    const materializeMissingEnvelope = vi.fn().mockResolvedValue({ enqueued: true, error: null });
+    // Throws on the first envelope, resolves cleanly on the second.
+    const recordDriftAudit = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('audit db exception'))
+      .mockResolvedValueOnce({ error: null });
+    const deps = makeDeps({
+      listActiveIntegrations: vi.fn().mockResolvedValue([INT_ORG]),
+      listCompletedEnvelopes: vi.fn().mockResolvedValue([env('m1'), env('m2')]),
+      getQueuedEnvelopeRefs: vi.fn().mockResolvedValue(new Set<string>()),
+      materializeMissingEnvelope,
+      recordDriftAudit,
+    });
+
+    const result = await reconcileDocusignQueueDrift(deps);
+
+    expect(result.drift_detected).toBe(2);
+    // Both envelopes still alerted + materialized despite the first audit throwing.
+    expect(captureMessageMock).toHaveBeenCalledTimes(2);
+    expect(materializeMissingEnvelope).toHaveBeenCalledTimes(2);
+    expect(result.materialized).toBe(2);
+    // The thrown audit failure is recorded as an error, but the run is not aborted.
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => e.error.includes('audit db exception'))).toBe(true);
+  });
+
   it('returns a hard failure when listing integrations throws', async () => {
     const deps = makeDeps({
       listActiveIntegrations: vi.fn().mockRejectedValue(new Error('list boom')),

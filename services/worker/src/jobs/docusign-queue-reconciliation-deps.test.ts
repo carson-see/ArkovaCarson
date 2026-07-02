@@ -9,6 +9,7 @@ vi.mock('../utils/db.js', () => ({ db: {} }));
 
 import { makeQueueReconciliationDeps } from './docusign-queue-reconciliation-deps.js';
 import type { QueueActiveIntegration } from './docusign-queue-reconciliation.js';
+import { logger } from '../utils/logger.js';
 
 const ORG_INT: QueueActiveIntegration = {
   id: 'int-1',
@@ -27,7 +28,10 @@ const MEMBER_INT: QueueActiveIntegration = {
   owner_user_id: '99999999-9999-4999-8999-999999999999',
 };
 
-beforeEach(() => submitJobMock.mockReset());
+beforeEach(() => {
+  submitJobMock.mockReset();
+  vi.mocked(logger.warn).mockClear();
+});
 
 // A small table-aware mock db for listActiveIntegrations. Each `from(table)` call
 // returns a chainable query that resolves to `datasets[table]` filtered by the
@@ -185,6 +189,76 @@ describe('makeQueueReconciliationDeps', () => {
     });
   });
 
+  describe('listCompletedEnvelopes', () => {
+    function jsonRes(body: unknown) {
+      return {
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(''),
+      } as unknown as Response;
+    }
+
+    it('follows a same-origin nextUri across pages and merges the envelopes', async () => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonRes({
+            envelopes: [{ envelopeId: 'e1', status: 'completed', completedDateTime: '2026-06-30T00:00:00Z' }],
+            nextUri: 'https://na1.docusign.net/restapi/v2.1/accounts/acct-1/envelopes?start_position=100',
+          }),
+        )
+        .mockResolvedValueOnce(
+          jsonRes({
+            envelopes: [{ envelopeId: 'e2', status: 'completed', completedDateTime: '2026-06-30T01:00:00Z' }],
+          }),
+        );
+      const deps = makeQueueReconciliationDeps({ db: { from: vi.fn() } as never, fetchImpl });
+
+      const result = await deps.listCompletedEnvelopes({
+        baseUri: 'https://na1.docusign.net',
+        accountId: 'acct-1',
+        accessToken: 'tok',
+        fromDate: '2026-06-29T00:00:00Z',
+      });
+
+      expect(result.map((e) => e.envelopeId)).toEqual(['e1', 'e2']);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    // Minor (CodeRabbit): the SSRF guard stops pagination when nextUri's origin
+    // doesn't match the integration base. It must LOG the early stop instead of
+    // silently under-reporting drift. Pre-fix this stops with no operator signal.
+    it('stops pagination and logs a warn when nextUri origin does not match the base', async () => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonRes({
+            envelopes: [{ envelopeId: 'e1', status: 'completed', completedDateTime: '2026-06-30T00:00:00Z' }],
+            // Off-origin nextUri — the guard must refuse to follow it.
+            nextUri: 'https://evil.example.com/restapi/v2.1/accounts/acct-1/envelopes?start_position=100',
+          }),
+        );
+      const deps = makeQueueReconciliationDeps({ db: { from: vi.fn() } as never, fetchImpl });
+
+      const result = await deps.listCompletedEnvelopes({
+        baseUri: 'https://na1.docusign.net',
+        accountId: 'acct-1',
+        accessToken: 'tok',
+        fromDate: '2026-06-29T00:00:00Z',
+      });
+
+      // Only the first page's envelope is returned; the off-origin page is skipped.
+      expect(result.map((e) => e.envelopeId)).toEqual(['e1']);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      // The early stop is logged so drift under-reporting isn't silent.
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        expect.objectContaining({ nextOrigin: 'https://evil.example.com' }),
+        expect.stringContaining('nextUri origin mismatch'),
+      );
+    });
+  });
+
   describe('getQueuedEnvelopeRefs', () => {
     it('returns the set of already-queued envelope external_refs for the org', async () => {
       const filters: Record<string, unknown> = {};
@@ -197,7 +271,7 @@ describe('makeQueueReconciliationDeps', () => {
               filters[f] = v;
               return q;
             }),
-            in: vi.fn((_f: string, _v: unknown) =>
+            in: vi.fn(() =>
               Promise.resolve({ data: [{ external_ref: 'env-a' }], error: null }),
             ),
           };
@@ -221,6 +295,48 @@ describe('makeQueueReconciliationDeps', () => {
       const refs = await deps.getQueuedEnvelopeRefs(ORG_INT, []);
       expect(refs.size).toBe(0);
       expect(from).not.toHaveBeenCalled();
+    });
+
+    // carson-see [P2]: a busy DocuSign account can surface up to MAX_PAGES*100
+    // candidate envelopes; the whole set through one PostgREST `.in()` blows the
+    // query-string limit and fails the run. The lookup must chunk at 100 ids and
+    // union the results. Pre-fix (single unchunked `.in()`) issues ONE query with
+    // all 250 ids — this asserts three chunked queries instead.
+    it('chunks the .in() lookup at 100 ids and unions the returned refs', async () => {
+      const inCalls: string[][] = [];
+      // Envelope ids env-0 .. env-249 (250 → 3 chunks of 100/100/50).
+      const envelopeIds = Array.from({ length: 250 }, (_, i) => `env-${i}`);
+      // Simulate a match in the 1st chunk (env-5) and the 3rd chunk (env-205).
+      const db = {
+        from: vi.fn((table: string) => {
+          expect(table).toBe('connector_artifact');
+          const q = {
+            select: vi.fn(() => q),
+            eq: vi.fn(() => q),
+            in: vi.fn((_field: string, values: string[]) => {
+              inCalls.push(values);
+              const hit = values.filter((v) => v === 'env-5' || v === 'env-205');
+              return Promise.resolve({
+                data: hit.map((external_ref) => ({ external_ref })),
+                error: null,
+              });
+            }),
+          };
+          return q;
+        }),
+      };
+      const deps = makeQueueReconciliationDeps({ db: db as never });
+
+      const refs = await deps.getQueuedEnvelopeRefs(ORG_INT, envelopeIds);
+
+      // Three chunked queries: 100 + 100 + 50.
+      expect(inCalls.map((c) => c.length)).toEqual([100, 100, 50]);
+      // No chunk exceeds the 100-id bound.
+      expect(inCalls.every((c) => c.length <= 100)).toBe(true);
+      // Results unioned across chunks.
+      expect(refs.has('env-5')).toBe(true);
+      expect(refs.has('env-205')).toBe(true);
+      expect(refs.has('env-6')).toBe(false);
     });
   });
 
@@ -257,6 +373,24 @@ describe('makeQueueReconciliationDeps', () => {
       });
       expect(outcome.enqueued).toBe(false);
       expect(outcome.error).toBe('job_submit_returned_null');
+    });
+
+    // §1.2/§1.4: the persisted job payload is Zod-validated before submit. A
+    // malformed input (here: an empty envelope id, which the producer requires)
+    // must fail closed WITHOUT ever calling submitJob. Pre-fix (no validation)
+    // this would submit an invalid job and report enqueued:true.
+    it('rejects a malformed producer payload before submit (Zod, no job written)', async () => {
+      submitJobMock.mockResolvedValue('job-should-not-happen');
+      const deps = makeQueueReconciliationDeps({ db: { from: vi.fn() } as never });
+
+      const outcome = await deps.materializeMissingEnvelope({
+        integration: ORG_INT,
+        envelope: { envelopeId: '', status: 'completed', completedDateTime: '2026-06-30T00:00:00Z' },
+      });
+
+      expect(outcome.enqueued).toBe(false);
+      expect(outcome.error).toBeTruthy();
+      expect(submitJobMock).not.toHaveBeenCalled();
     });
   });
 
@@ -357,6 +491,29 @@ describe('makeQueueReconciliationDeps', () => {
       expect(inserted).toMatchObject({ integration_id: ORG_INT.id });
       const details = inserted!.details as Record<string, unknown>;
       expect(details).not.toHaveProperty('member_integration_id');
+    });
+
+    // §1.2/§1.4: the audit row is Zod-validated before the persisted insert. A
+    // malformed row (here: an empty envelope id) must fail closed WITHOUT the
+    // insert running. Pre-fix (no validation) this would write an unvalidated row.
+    it('rejects a malformed audit row before insert (Zod, no write)', async () => {
+      const insert = vi.fn(() => Promise.resolve({ error: null }));
+      const db = { from: vi.fn(() => ({ insert })) };
+      const deps = makeQueueReconciliationDeps({ db: db as never });
+
+      const res = await deps.recordDriftAudit({
+        org_id: ORG_INT.org_id,
+        integration_id: ORG_INT.id,
+        account_id: ORG_INT.account_id,
+        envelope_id: '',
+        envelope_status: 'completed',
+        completed_at: '2026-06-30T00:00:00Z',
+        scope: 'org',
+        owner_user_id: null,
+      });
+
+      expect(res.error).toBeTruthy();
+      expect(insert).not.toHaveBeenCalled();
     });
   });
 });

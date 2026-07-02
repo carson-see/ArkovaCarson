@@ -12,6 +12,7 @@
  * a re-run of an already-queued envelope is a no-op.
  */
 
+import { z } from 'zod';
 import { db as defaultDb } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { submitJob } from '../utils/jobQueue.js';
@@ -40,7 +41,7 @@ interface DbQuery<T> extends PromiseLike<DbQueryResult<T>> {
   insert(value: Record<string, unknown>): PromiseLike<DbQueryResult<null>>;
 }
 
-type IntegrationRow = {
+interface IntegrationRow {
   id?: unknown;
   org_id?: unknown;
   account_id?: unknown;
@@ -50,9 +51,11 @@ type IntegrationRow = {
   // org_integrations-only: set on an inheritance-marker row (account_id NULL)
   // pointing at the parent org whose connection the sub-org inherits (SCRUM-2045).
   inherited_from_org_id?: unknown;
-};
+}
 
-type ArtifactRefRow = { external_ref?: unknown };
+interface ArtifactRefRow {
+  external_ref?: unknown;
+}
 
 interface DbClient {
   from(table: 'org_integrations' | 'member_integrations'): DbQuery<IntegrationRow[]>;
@@ -65,6 +68,39 @@ function dbErrorMessage(error: DbQueryResult<unknown>['error']): string {
   if (typeof error === 'string') return error;
   return error.message ?? String(error);
 }
+
+// PostgREST `.in()` filters are chunked at 100 ids/batch to stay within the
+// query-string / request-size limit on large candidate sets (worker jobs
+// agents.md convention — mirrors the SCRUM-1296 N+1 cleanup).
+const IN_CHUNK_SIZE = 100;
+
+// §1.2 / §1.4: Zod-validate every write path before the persisted mutation.
+// Both schemas assert ids-only shapes — no fingerprint, no bytes (§1.6A). A
+// malformed input fails closed (the caller returns an error) rather than
+// persisting an unvalidated row.
+
+/** Producer re-drive job payload (submitted to job_queue). */
+const MaterializeJobPayloadSchema = z.object({
+  org_id: z.string().min(1),
+  integration_id: z.string().min(1),
+  account_id: z.string().min(1),
+  envelope_id: z.string().min(1),
+  rule_event_id: z.string().min(1),
+  document_ids: z.array(z.string()),
+  envelope_completed_at: z.string().min(1),
+});
+
+/** Bounded drift-audit row (inserted into integration_events). */
+const DriftAuditRowSchema = z.object({
+  org_id: z.string().min(1),
+  integration_id: z.string().min(1),
+  account_id: z.string().min(1),
+  envelope_id: z.string().min(1),
+  envelope_status: z.string().min(1),
+  completed_at: z.string().min(1),
+  scope: z.enum(['org', 'member']),
+  owner_user_id: z.string().nullable(),
+});
 
 export interface QueueReconciliationDepOptions {
   db?: DbClient;
@@ -252,7 +288,19 @@ export function makeQueueReconciliationDeps(
             if (json.nextUri.startsWith('http')) {
               const nextOrigin = new URL(json.nextUri).origin;
               const expectedOrigin = new URL(base).origin;
-              nextUrl = nextOrigin === expectedOrigin ? json.nextUri : null;
+              if (nextOrigin === expectedOrigin) {
+                nextUrl = json.nextUri;
+              } else {
+                // SSRF guard: a nextUri pointing off the integration's own base
+                // origin is not followed. Log it so the early pagination stop
+                // (which under-reports drift for this account) leaves an operator
+                // signal instead of silently truncating.
+                logger.warn(
+                  { expectedOrigin, nextOrigin, accountId: args.accountId },
+                  'Queue reconciliation: nextUri origin mismatch — stopping pagination early',
+                );
+                nextUrl = null;
+              }
             } else {
               nextUrl = `${base}${json.nextUri}`;
             }
@@ -276,19 +324,30 @@ export function makeQueueReconciliationDeps(
       envelopeIds: string[],
     ): Promise<Set<string>> {
       if (envelopeIds.length === 0) return new Set();
-      const { data, error } = await db
-        .from('connector_artifact')
-        .select('external_ref')
-        .eq('org_id', integration.org_id)
-        .eq('source', 'docusign')
-        .in('external_ref', envelopeIds);
 
-      if (error) throw new Error(`queued_ref_lookup_failed: ${dbErrorMessage(error)}`);
-      return new Set(
-        (data ?? [])
-          .map((row) => row.external_ref)
-          .filter((v): v is string => typeof v === 'string'),
-      );
+      // Chunk the `.in()` filter at IN_CHUNK_SIZE ids per batch (worker
+      // agents.md convention): a busy DocuSign account can surface up to
+      // MAX_PAGES*100 completed envelopes for one integration, and pushing the
+      // whole candidate set through a single PostgREST `.in()` would blow the
+      // query-string / request-size limit — failing the lookup, marking the run
+      // failed, and leaving Scheduler to retry without ever reconciling a gap.
+      // Each chunk carries the same org_id/source scope; results are unioned.
+      const found = new Set<string>();
+      for (let i = 0; i < envelopeIds.length; i += IN_CHUNK_SIZE) {
+        const chunk = envelopeIds.slice(i, i + IN_CHUNK_SIZE);
+        const { data, error } = await db
+          .from('connector_artifact')
+          .select('external_ref')
+          .eq('org_id', integration.org_id)
+          .eq('source', 'docusign')
+          .in('external_ref', chunk);
+
+        if (error) throw new Error(`queued_ref_lookup_failed: ${dbErrorMessage(error)}`);
+        for (const row of data ?? []) {
+          if (typeof row.external_ref === 'string') found.add(row.external_ref);
+        }
+      }
+      return found;
     },
 
     async materializeMissingEnvelope({ integration, envelope }) {
@@ -296,21 +355,23 @@ export function makeQueueReconciliationDeps(
       // (fetch → SHA-256 → discard → enqueue_connector_artifact); the 0343 dedupe
       // makes a re-run of an already-queued envelope a no-op. No bytes here.
       try {
+        // §1.2/§1.4: validate the persisted job payload shape before submit.
+        const payload = MaterializeJobPayloadSchema.parse({
+          org_id: integration.org_id,
+          integration_id: integration.id,
+          account_id: integration.account_id,
+          envelope_id: envelope.envelopeId,
+          // Synthetic reconciliation marker — the producer requires a non-empty
+          // rule_event_id but a recon re-drive has no originating rule event.
+          rule_event_id: `recon:${envelope.envelopeId}`,
+          document_ids: [],
+          envelope_completed_at: envelope.completedDateTime,
+        });
         const jobId = await submitJob({
           type: DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE,
           max_attempts: 5,
           priority: 10,
-          payload: {
-            org_id: integration.org_id,
-            integration_id: integration.id,
-            account_id: integration.account_id,
-            envelope_id: envelope.envelopeId,
-            // Synthetic reconciliation marker — the producer requires a non-empty
-            // rule_event_id but a recon re-drive has no originating rule event.
-            rule_event_id: `recon:${envelope.envelopeId}`,
-            document_ids: [],
-            envelope_completed_at: envelope.completedDateTime,
-          },
+          payload,
         });
         if (!jobId) {
           return { enqueued: false, error: 'job_submit_returned_null' };
@@ -325,27 +386,40 @@ export function makeQueueReconciliationDeps(
       // Bounded, PII-scrubbed audit breadcrumb — ids only (§1.6A). No fingerprint,
       // no bytes. Uses the existing integration_events audit table.
       //
+      // §1.2/§1.4: validate the ids-only row shape before the persisted insert.
+      // A malformed audit row fails closed (returns an error) rather than writing
+      // an unvalidated breadcrumb.
+      const parsed = DriftAuditRowSchema.safeParse(row);
+      if (!parsed.success) {
+        const msg = `drift_audit_validation_failed: ${parsed.error.message}`;
+        logger.error(
+          { integrationId: row.integration_id, envelopeId: row.envelope_id },
+          'Queue reconciliation: drift audit row failed validation',
+        );
+        return { error: msg };
+      }
+      const validRow = parsed.data;
       // FK safety: integration_events.integration_id has a FK to org_integrations(id)
       // ONLY. A member drift row's integration_id is a member_integrations id, which
       // would violate that FK at runtime — so for member scope we NULL the FK column
       // and carry the member integration id inside the ids-only details JSON instead.
-      const isMemberScope = row.scope === 'member';
+      const isMemberScope = validRow.scope === 'member';
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- integration_events audit insert
       const { error } = await (db as any).from('integration_events').insert({
-        org_id: row.org_id,
-        integration_id: isMemberScope ? null : row.integration_id,
+        org_id: validRow.org_id,
+        integration_id: isMemberScope ? null : validRow.integration_id,
         provider: 'docusign',
         event_type: 'queue_drift_detected',
         status: 'success',
         details: {
-          account_id: row.account_id,
-          envelope_id: row.envelope_id,
-          envelope_status: row.envelope_status,
-          completed_at: row.completed_at,
-          queue_scope: row.scope,
-          ...(isMemberScope ? { member_integration_id: row.integration_id } : {}),
-          ...(isMemberScope && row.owner_user_id
-            ? { owner_user_id: row.owner_user_id }
+          account_id: validRow.account_id,
+          envelope_id: validRow.envelope_id,
+          envelope_status: validRow.envelope_status,
+          completed_at: validRow.completed_at,
+          queue_scope: validRow.scope,
+          ...(isMemberScope ? { member_integration_id: validRow.integration_id } : {}),
+          ...(isMemberScope && validRow.owner_user_id
+            ? { owner_user_id: validRow.owner_user_id }
             : {}),
         },
       });

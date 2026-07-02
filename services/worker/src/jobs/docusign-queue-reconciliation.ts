@@ -229,16 +229,26 @@ async function handleDrift(
   enableConnectorArtifactEnqueue: boolean,
 ): Promise<void> {
   // Bounded audit row — ids only, never a fingerprint or bytes (§1.6A).
-  const audit = await deps.recordDriftAudit({
-    org_id: integration.org_id,
-    integration_id: integration.id,
-    account_id: integration.account_id,
-    envelope_id: envelope.envelopeId,
-    envelope_status: envelope.status,
-    completed_at: envelope.completedDateTime,
-    scope: integration.scope,
-    owner_user_id: integration.owner_user_id,
-  });
+  // Fail-open-per-row: a drift-audit failure must not stop the Sentry alert or
+  // re-materialization for this envelope, nor abort the remaining drift envelopes
+  // for this integration. The deps contract returns `{ error }`, but a production
+  // impl can also *throw* (e.g. a network exception from the DB client) — catch it
+  // and degrade to the returned-error path so it is recorded, not propagated.
+  let audit: { error: string | null };
+  try {
+    audit = await deps.recordDriftAudit({
+      org_id: integration.org_id,
+      integration_id: integration.id,
+      account_id: integration.account_id,
+      envelope_id: envelope.envelopeId,
+      envelope_status: envelope.status,
+      completed_at: envelope.completedDateTime,
+      scope: integration.scope,
+      owner_user_id: integration.owner_user_id,
+    });
+  } catch (auditErr) {
+    audit = { error: errMsg(auditErr) };
+  }
   if (audit.error) {
     logger.error(
       { integrationId: integration.id, envelopeId: envelope.envelopeId, error: audit.error },
