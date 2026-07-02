@@ -793,3 +793,140 @@ describe('ask', () => {
     expect(result.citations[0].anchorProof?.chainTxId).toBe('tx-abc');
   });
 });
+
+describe('PROOF-05 (SCRUM-2338) getMerkleProof', () => {
+  it('maps the proof response incl. the populated proof_bundle (snake→camel)', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        public_id: 'abc123',
+        fingerprint: 'ff'.repeat(32),
+        merkle_root: 'aa'.repeat(32),
+        merkle_proof: [{ hash: 'bb'.repeat(32), position: 'left' }],
+        tx_id: 'tx-999',
+        block_height: 800000,
+        block_timestamp: '2026-04-18T10:00:00Z',
+        batch_id: 'batch-1',
+        verified: true,
+        proof_bundle: {
+          fingerprint: 'ff'.repeat(32),
+          merkle_root: 'aa'.repeat(32),
+          merkle_proof: [{ hash: 'bb'.repeat(32), position: 'left' }],
+          merkle_index: 0,
+          leaf_count: 4,
+          tx_id: 'tx-999',
+          block_height: 800000,
+          block_hash: 'cc'.repeat(32),
+          block_header: 'dd'.repeat(80),
+          // Canonical ARKV + 32-byte root, NO version byte.
+          op_return_payload: '41524b56' + 'ee'.repeat(32),
+          block_timestamp: '2026-04-18T10:00:00Z',
+          proof_schema_version: 1,
+          signature: null,
+        },
+      }),
+    });
+
+    const result = await client.getMerkleProof('abc123');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/verify/abc123/proof'),
+      expect.anything(),
+    );
+    expect(result.verified).toBe(true);
+    expect(result.proofBundle).not.toBeNull();
+    expect(result.proofBundle?.blockHash).toBe('cc'.repeat(32));
+    expect(result.proofBundle?.blockHeader).toBe('dd'.repeat(80));
+    expect(result.proofBundle?.merkleIndex).toBe(0);
+    expect(result.proofBundle?.leafCount).toBe(4);
+    expect(result.proofBundle?.proofSchemaVersion).toBe(1);
+    expect(result.proofBundle?.signature).toBeNull();
+  });
+
+  it('maps proofBundle = null when the proof is incomplete', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        public_id: 'abc123',
+        fingerprint: 'ff'.repeat(32),
+        merkle_root: 'aa'.repeat(32),
+        merkle_proof: [],
+        tx_id: null,
+        block_height: null,
+        block_timestamp: null,
+        batch_id: null,
+        verified: false,
+        proof_bundle: null,
+      }),
+    });
+
+    const result = await client.getMerkleProof('abc123');
+    expect(result.proofBundle).toBeNull();
+  });
+
+  // CodeRabbit: the SDK guarantees `proofBundle !== null ⇒ independently
+  // verifiable`. A malformed but NON-NULL proof_bundle must map to null (fail
+  // closed), never to a manufactured valid-looking bundle.
+  const COMPLETE_WIRE_BUNDLE = {
+    fingerprint: 'ff'.repeat(32),
+    merkle_root: 'aa'.repeat(32),
+    merkle_proof: [{ hash: 'bb'.repeat(32), position: 'left' }],
+    merkle_index: 0,
+    leaf_count: 4,
+    tx_id: 'tx-999',
+    block_height: 800000,
+    block_hash: 'cc'.repeat(32),
+    block_header: 'dd'.repeat(80),
+    op_return_payload: '41524b56' + 'ee'.repeat(32),
+    block_timestamp: '2026-04-18T10:00:00Z',
+    proof_schema_version: 1,
+    signature: null,
+  };
+
+  const malformedBundles: Array<[string, Record<string, unknown>]> = [
+    ['missing tx_id', { ...COMPLETE_WIRE_BUNDLE, tx_id: undefined }],
+    ['null block_height', { ...COMPLETE_WIRE_BUNDLE, block_height: null }],
+    ['wrong-typed leaf_count (string)', { ...COMPLETE_WIRE_BUNDLE, leaf_count: '4' }],
+    ['missing block_header', { ...COMPLETE_WIRE_BUNDLE, block_header: undefined }],
+    ['non-array merkle_proof', { ...COMPLETE_WIRE_BUNDLE, merkle_proof: 'nope' }],
+    ['empty merkle_proof', { ...COMPLETE_WIRE_BUNDLE, merkle_proof: [] }],
+    [
+      'malformed merkle_proof entry (bad position)',
+      { ...COMPLETE_WIRE_BUNDLE, merkle_proof: [{ hash: 'bb'.repeat(32), position: 'up' }] },
+    ],
+    ['null fingerprint', { ...COMPLETE_WIRE_BUNDLE, fingerprint: null }],
+    ['missing op_return_payload', { ...COMPLETE_WIRE_BUNDLE, op_return_payload: undefined }],
+    ['malformed signature object', { ...COMPLETE_WIRE_BUNDLE, signature: { alg: 'ed25519' } }],
+  ];
+
+  it.each(malformedBundles)(
+    'maps proofBundle = null for a malformed non-null payload (%s) — fail closed',
+    async (_label, badBundle) => {
+      const client = new Arkova({ apiKey: 'ak_test' });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          public_id: 'abc123',
+          fingerprint: 'ff'.repeat(32),
+          merkle_root: 'aa'.repeat(32),
+          merkle_proof: [{ hash: 'bb'.repeat(32), position: 'left' }],
+          tx_id: 'tx-999',
+          block_height: 800000,
+          block_timestamp: '2026-04-18T10:00:00Z',
+          batch_id: 'batch-1',
+          verified: true,
+          proof_bundle: badBundle,
+        }),
+      });
+
+      const result = await client.getMerkleProof('abc123');
+      // Top-level response still maps; only the malformed bundle fails closed.
+      expect(result.verified).toBe(true);
+      expect(result.proofBundle).toBeNull();
+    },
+  );
+});

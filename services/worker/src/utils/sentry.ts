@@ -342,6 +342,44 @@ export function captureStuckAnchorAlert(
 }
 
 // ---------------------------------------------------------------------------
+// Credit-conservation reconciler fingerprinting (S1-9 / SCRUM-2349 / PM-25)
+// ---------------------------------------------------------------------------
+//
+// The money-conservation reconciler runs daily (calls the prod
+// `org_credit_ledger_divergence` SQL function over all orgs and pages on any
+// drift). Like the stuck-anchor monitor, a persistent divergence would, without
+// a stable fingerprint, mint a fresh Sentry issue every day. A fixed
+// fingerprint collapses repeated daily drift alerts into ONE issue that keeps
+// incrementing its event count.
+export const CREDIT_CONSERVATION_FINGERPRINT = ['credit-conservation-reconciler'] as const;
+
+/**
+ * Capture a credit-conservation drift alert with a stable fingerprint so daily
+ * re-fires collapse into a single Sentry issue.
+ *
+ * PII (§1.4): raw credit amounts are PII. Callers MUST pass aggregate context
+ * only — org_id + divergence MAGNITUDE, never raw balance / ledger_sum /
+ * expected. The beforeSend scrubber still runs, but the caller builds the
+ * context aggregate-only by construction.
+ *
+ * @param message - Human-readable summary (e.g. "Credit conservation VIOLATED:
+ *                  2 of 140 org(s) diverge").
+ * @param extra   - Optional aggregate-only structured context (counts, per-org
+ *                  {org_id, divergence}). No raw balances.
+ */
+export function captureCreditConservationAlert(
+  message: string,
+  extra?: Record<string, unknown>,
+  level: 'warning' | 'error' = 'error',
+): void {
+  Sentry.captureMessage(message, {
+    level,
+    fingerprint: [...CREDIT_CONSERVATION_FINGERPRINT],
+    ...(extra ? { extra } : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Sentry Cron Monitoring (Phase 4, Item 18)
 // ---------------------------------------------------------------------------
 
