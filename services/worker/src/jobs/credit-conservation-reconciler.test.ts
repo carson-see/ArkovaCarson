@@ -391,8 +391,15 @@ describe('runCreditConservationReconciler', () => {
       error: null,
     });
 
-    const first = await runCreditConservationReconciler(fakeDb);
-    const second = await runCreditConservationReconciler(fakeDb);
+    // Pin `now` so both ticks share a deterministic `checkedAt`. Without this,
+    // each call's `new Date()` differs whenever the two runs straddle a
+    // millisecond boundary → `checkedAt` diverges → this deep-equal flakes and
+    // (via deploy-worker.yml Pre-deploy Quality Gates) blackouts the prod worker
+    // deploy. We remove only the wall-clock nondeterminism; the idempotency
+    // assertion (identical outcome, two reads, zero writes) is unchanged.
+    const now = new Date('2026-01-01T00:00:00.000Z');
+    const first = await runCreditConservationReconciler(fakeDb, { now });
+    const second = await runCreditConservationReconciler(fakeDb, { now });
 
     expect(second).toEqual(first);
     // Two ticks → two reads of the same RPC, never an insert/update/upsert.
