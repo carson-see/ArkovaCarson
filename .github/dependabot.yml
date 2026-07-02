@@ -43,6 +43,17 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # stripe API-version pin is a manual billing-reviewed upgrade — see CEO
+      # decision 2026-06-29 (CONDITIONAL-GO sub-decision A). stripe >=22.3.0
+      # repins the SDK apiVersion type (2026-06-24.dahlia), which breaks the
+      # worker's hardcoded apiVersion (src/stripe/client.ts) at build time.
+      # Bumping stripe must be a deliberate, human-driven PR that also moves the
+      # pinned apiVersion — never an auto-grouped Dependabot bump.
+      - dependency-name: "stripe"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
 
   # Edge service
   - package-ecosystem: "npm"
