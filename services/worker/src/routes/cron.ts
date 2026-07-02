@@ -91,6 +91,7 @@ import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migrati
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runConnectorHealthCheck } from '../jobs/connector-health-alert.js';
 import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
+import { runCreditConservationReconciler } from '../jobs/credit-conservation-reconciler.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
 import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
@@ -366,6 +367,25 @@ cronRouter.post('/credit-expiry', async (_req, res) => {
     logger.error({ error }, 'Credit expiry processing failed');
     res.status(500).json({ error: 'Processing failed' });
   }
+});
+
+// S1-9 (SCRUM-2349 / PM-25): money-conservation reconciler. Fires the prod
+// `org_credit_ledger_divergence` SQL function over ALL orgs (read-only),
+// builds a conservation report, and pages (error log + Sentry) on any drift.
+// Cloud Scheduler triggers daily; in-process backup wired in scheduled.ts.
+// HTTP semantics mirror /check-stuck-anchors: a DETECTED divergence
+// (healthy:false from a successful read) is a CORRECT result → 200 (we do not
+// want Scheduler retrying a true "ledger diverged" finding). Only a probe
+// FAILURE (RPC error / throw → result.error set) returns 500 so Scheduler
+// retries the broken probe. The reconciler never throws — it returns a
+// structured result — so we branch on result.error rather than try/catch.
+cronRouter.post('/reconcile-credit-conservation', async (_req, res) => {
+  const result = await runCreditConservationReconciler(db);
+  if (result.error) {
+    res.status(500).json(result);
+    return;
+  }
+  res.json(result);
 });
 
 // SCRUM-1736: anchor expiry sweep — transitions SECURED anchors past

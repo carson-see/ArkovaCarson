@@ -205,6 +205,30 @@ describe('MempoolUtxoProvider', () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ height: 150042 }) });
     expect((await provider.getBlockHeader('bbb')).height).toBe(150042);
   });
+  it('paginates address history to surface an anchor older than the first page (review P2)', async () => {
+    // Page 1 (/txs): recent confirmed txs, none is the target anchor.
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([
+      { txid: 'p1a', status: { confirmed: true, block_height: 200, block_hash: 'h1', block_time: 1710000000 }, vout: [] },
+      { txid: 'p1b', status: { confirmed: true, block_height: 199, block_hash: 'h2', block_time: 1710000001 }, vout: [] },
+    ]) });
+    // Page 2 (/txs/chain/:cursor): the OLD fully-spent anchor tx lives here.
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([
+      { txid: 'OLD_ANCHOR', status: { confirmed: true, block_height: 150, block_hash: 'h3', block_time: 1709000000 },
+        vout: [{ scriptpubkey: 'deadbeef', scriptpubkey_asm: 'OP_RETURN ...', value: 0 }] },
+    ]) });
+    // Page 3: empty → history exhausted, stop.
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
+
+    const history = await provider.getAddressTxs('tb1qtreasury');
+
+    // The older-than-first-page anchor is surfaced (false-negative hole closed).
+    expect(history.map((t) => t.txid)).toContain('OLD_ANCHOR');
+    // Cursor = oldest confirmed of page 1 (p1b) — the confirmed-chain pagination URL.
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://mempool.space/signet/api/address/tb1qtreasury/txs/chain/p1b',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
   it('has correct name', () => { expect(provider.name).toBe('Mempool.space REST API'); });
   it('uses default Signet URL', () => { expect(new MempoolUtxoProvider().name).toBe('Mempool.space REST API'); });
   it('strips trailing slash from base URL', async () => {
