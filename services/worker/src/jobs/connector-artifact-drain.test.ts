@@ -79,6 +79,7 @@ interface Harness {
   deps: ConnectorArtifactDrainDeps;
   materialize: ReturnType<typeof vi.fn>;
   debit: ReturnType<typeof vi.fn>;
+  resetUnclaimedConnectorBroadcasts: ReturnType<typeof vi.fn>;
   batchAnchor: ReturnType<typeof vi.fn>;
   readAnchorStatus: ReturnType<typeof vi.fn>;
   listMaterializedArtifacts: ReturnType<typeof vi.fn>;
@@ -185,12 +186,16 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
 
   const alert = (overrides.emitAlert as ReturnType<typeof vi.fn>) ?? vi.fn();
 
+  const resetUnclaimedConnectorBroadcasts =
+    (overrides.resetUnclaimedConnectorBroadcasts as ReturnType<typeof vi.fn>) ?? vi.fn(async () => 0);
+
   const deps = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     db: { from } as any,
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     materializeAnchor: materialize,
     debitAndEnqueueAnchor: debit,
+    resetUnclaimedConnectorBroadcasts,
     batchAnchor,
     readAnchorStatus,
     listMaterializedArtifacts,
@@ -198,7 +203,7 @@ function makeHarness(rows: Row[], overrides: Partial<ConnectorArtifactDrainDeps>
     ...overrides,
   } as unknown as ConnectorArtifactDrainDeps;
 
-  return { rows, deps, materialize, debit, batchAnchor, readAnchorStatus, listMaterializedArtifacts, alert, claimAttempts };
+  return { rows, deps, materialize, debit, resetUnclaimedConnectorBroadcasts, batchAnchor, readAnchorStatus, listMaterializedArtifacts, alert, claimAttempts };
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -221,6 +226,25 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(h.rows[0].status).toBe('anchored');
     expect(h.rows[0].anchor_id).toBe(ANCHOR_1);
     expect(h.alert).not.toHaveBeenCalled();
+  });
+
+  it('design-C (mig 0353): resets stuck connector broadcasts to PENDING BEFORE the batch, so it claims+submits them promptly', async () => {
+    const order: string[] = [];
+    const reset = vi.fn(async () => { order.push('reset'); return 3; });
+    const batchAnchor = vi.fn(async () => { order.push('batch'); return { processed: 3, batchId: 'b', merkleRoot: 'c'.repeat(64), txId: 't' }; });
+    const debit = vi.fn(async () => { order.push('debit'); return { success: true }; });
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], {
+      debitAndEnqueueAnchor: debit,
+      resetUnclaimedConnectorBroadcasts: reset,
+      batchAnchor,
+    });
+
+    await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    // The reset runs org-scoped, AFTER the charge (never touches it) and BEFORE
+    // the batch (so the batch claims the just-reset PENDING anchors and submits).
+    expect(reset).toHaveBeenCalledWith(expect.objectContaining({ orgId: ORG_A }));
+    expect(order).toEqual(['debit', 'reset', 'batch']);
   });
 
   it('also drains queued rows (status IN pending,queued)', async () => {
