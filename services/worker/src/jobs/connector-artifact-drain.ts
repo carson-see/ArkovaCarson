@@ -118,6 +118,13 @@ export interface ConnectorArtifactDrainDeps {
   materializeAnchor: (row: ConnectorArtifactRow) => Promise<MaterializedAnchor>;
   /** Charge AT SECURING via debit_and_enqueue_anchor (mig 0341). */
   debitAndEnqueueAnchor: (args: { orgId: string; anchorId: string }) => Promise<DebitResult>;
+  /**
+   * Design-C (mig 0353): reset this org's drain-charged-but-never-batch-claimed
+   * connector anchors (BROADCASTING, null tx) back to PENDING so `batchAnchor`
+   * claims + submits them promptly — closing the submission-latency gap without
+   * touching the (already-landed, exactly-once) charge. Returns rows reset.
+   */
+  resetUnclaimedConnectorBroadcasts: (args: { orgId: string; limit?: number }) => Promise<number>;
   /** The single worker-owned anchoring path (org-scoped). */
   batchAnchor: (opts: { force: true; orgId: string }) => Promise<BatchAnchorResult>;
   /**
@@ -373,6 +380,28 @@ async function defaultDebitAndEnqueueAnchor(
 }
 
 /**
+ * Default design-C reset via mig-0353 RPC. Resets this org's drain-charged,
+ * never-batch-claimed connector anchors (BROADCASTING/null-tx) back to PENDING so
+ * `batchAnchor` claims + submits them in the same pass. Best-effort: a failure just
+ * leaves the anchors for the generic recover_stuck_broadcasts sweep (the original
+ * latency behavior) — it NEVER blocks the drain and NEVER touches the charge.
+ * Returns the number of anchors reset (0 on error).
+ */
+async function defaultResetUnclaimedConnectorBroadcasts(
+  args: { orgId: string; limit?: number },
+  deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
+): Promise<number> {
+  const { data, error } = await callRpc<Array<{ id: string }>>(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    deps.db as any,
+    'reset_unclaimed_connector_broadcasts',
+    { p_org_id: args.orgId, p_limit: args.limit ?? 500 },
+  );
+  if (error) return 0;
+  return Array.isArray(data) ? data.length : 0;
+}
+
+/**
  * Default anchor re-read: fetch the SPECIFIC anchor (org-scoped) so the drain
  * can confirm IT advanced past PENDING before marking the artifact `anchored`,
  * rather than trusting the aggregate batch count. Returns null if the row is
@@ -428,6 +457,8 @@ function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifa
     logger: injected.logger ?? (defaultLogger as unknown as DrainLogger),
     materializeAnchor: injected.materializeAnchor ?? ((row) => defaultMaterializeAnchor(row, { db })),
     debitAndEnqueueAnchor: injected.debitAndEnqueueAnchor ?? ((args) => defaultDebitAndEnqueueAnchor(args, { db })),
+    resetUnclaimedConnectorBroadcasts:
+      injected.resetUnclaimedConnectorBroadcasts ?? ((args) => defaultResetUnclaimedConnectorBroadcasts(args, { db })),
     batchAnchor: injected.batchAnchor ?? ((opts) => processBatchAnchors(opts)),
     readAnchorStatus: injected.readAnchorStatus ?? ((args) => defaultReadAnchorStatus(args, { db })),
     listMaterializedArtifacts:
@@ -688,12 +719,24 @@ export async function drainConnectorArtifactsForOrg(
       }
       debitSucceeded = true;
 
-      // 3) Batch-anchor through the single worker-owned org-scoped path. NOTE:
-      // the debit RPC already moved THIS anchor PENDING → BROADCASTING, and
-      // processBatchAnchors only claims status='PENDING' — so it does NOT
-      // process this (already-BROADCASTING) anchor and may legitimately return
-      // {processed:0, batchId:null} without throwing. The aggregate count is
-      // therefore NOT proof this artifact's anchor advanced.
+      // 3a) Design-C (mig 0353): the debit RPC just moved THIS anchor
+      // PENDING → BROADCASTING (charged, exactly once). processBatchAnchors claims
+      // ONLY status='PENDING', so it would skip the already-BROADCASTING anchor —
+      // the submission-latency gap. Reset this org's drain-charged, never-batch-
+      // claimed connector anchors back to PENDING so the batch below claims +
+      // submits them NOW. The charge lives on the anchor id and PERSISTS across the
+      // reset — never refunded, never re-debited — so exactly one charge stands.
+      // Best-effort: on failure the anchors just wait for recover_stuck_broadcasts.
+      const resetCount = await deps.resetUnclaimedConnectorBroadcasts({ orgId });
+      if (resetCount > 0) {
+        deps.logger.info({ orgId, resetCount }, 'connector-artifact reset stuck broadcasts → PENDING for prompt batch submit');
+      }
+
+      // 3b) Batch-anchor through the single worker-owned org-scoped path. It now
+      // claims the just-reset PENDING connector anchors (leased via
+      // claim_pending_anchors → no double-submit) and submits them. May still
+      // return {processed:0} if a batch trigger/size gate defers — so the aggregate
+      // count is NOT proof this artifact's anchor advanced (the confirm re-read is).
       const batch = await deps.batchAnchor({ force: true, orgId });
 
       // 4) Confirm the SPECIFIC anchor advanced IRREVERSIBLY (tx / SUBMITTED /
