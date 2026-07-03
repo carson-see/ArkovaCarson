@@ -65,8 +65,22 @@ function isRealCtid(value: unknown): boolean {
   return isNonEmptyString(value) && REAL_CTID_PATTERN.test(value);
 }
 
+// Real ISO-8601 check (not a lenient Date.parse). Date.parse() accepts locale
+// strings like "12/31/2030" and even PII-prefixed values like
+// "recipient@example.com 2030-01-01", which must NEVER be treated as valid dates
+// on the public CTDL projection. This is the independent second check that a
+// non-canonical value never reaches ceterms:expirationDate / dateEffective /
+// revocationDate. Accepts calendar dates (YYYY-MM-DD) and full date-times with an
+// optional time zone offset.
+const ISO_8601_DATE_OR_DATETIME =
+  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
+
 function isIsoDateLike(value: unknown): boolean {
-  return isNonEmptyString(value) && !Number.isNaN(Date.parse(value));
+  if (!isNonEmptyString(value)) return false;
+  const trimmed = value.trim();
+  if (!ISO_8601_DATE_OR_DATETIME.test(trimmed)) return false;
+  // Also require the value to be a real calendar instant (rejects 2030-13-40 etc.).
+  return !Number.isNaN(new Date(trimmed).getTime());
 }
 
 function addRequiredStringError(

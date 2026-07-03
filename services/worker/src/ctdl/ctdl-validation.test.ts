@@ -169,4 +169,48 @@ describe('validateCtdlJsonLd', () => {
 
     expect(validateCtdlJsonLd(active)).toEqual({ valid: true, errors: [] });
   });
+
+  // LOW non-ISO / MED PII-leak — isIsoDateLike must be a real ISO-8601 check, not
+  // a lenient Date.parse(). Loose values like "12/31/2030" or an email-prefixed
+  // date parse under Date.parse but are NOT ISO 8601, so the validator (the
+  // independent second check) must reject them in ceterms:expirationDate.
+  it.each([
+    '12/31/2030',
+    'recipient@example.com 2030-01-01',
+    'December 31, 2030',
+    'sometime in 2030',
+  ])('rejects a non-ISO-8601 ceterms:expirationDate value: %s', (bad) => {
+    const jsonLd = buildCtdlJsonLd(baseAnchor, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    const invalid = {
+      ...jsonLd,
+      'ceterms:credentialStatusType': 'ceterms:Active',
+      'ceterms:expirationDate': bad,
+    };
+
+    const result = validateCtdlJsonLd(invalid);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('ceterms:expirationDate must be a date string');
+  });
+
+  it.each([
+    '2030-12-31',
+    '2030-12-31T00:00:00.000Z',
+    '2030-12-31T00:00:00Z',
+    '2030-12-31T00:00:00+00:00',
+  ])('accepts a canonical ISO-8601 ceterms:expirationDate value: %s', (good) => {
+    const jsonLd = buildCtdlJsonLd(baseAnchor, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    const active = {
+      ...jsonLd,
+      'ceterms:credentialStatusType': 'ceterms:Active',
+      'ceterms:expirationDate': good,
+    };
+
+    expect(validateCtdlJsonLd(active)).toEqual({ valid: true, errors: [] });
+  });
 });
