@@ -627,7 +627,7 @@ jobs:
       # ~30s circom compile + plonk setup; cache miss rebuilds from source.
       - name: Cache zk circuit artifacts
         id: cache-zk-artifacts
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: services/worker/circuits/artifacts
           key: zk-artifacts-${{ runner.os }}-circom2.1.9-${{ hashFiles('services/worker/circuits/extraction-proof.circom', 'services/worker/circuits/build.sh', 'services/worker/package-lock.json') }}
