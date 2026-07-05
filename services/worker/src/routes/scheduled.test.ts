@@ -6,6 +6,7 @@ const { mockConfig, mockCronSchedule, mockLogger } = vi.hoisted(() => ({
     batchAnchorIntervalMinutes: 10,
     disableInProcessAnchorCron: false,
     enableConfirmationProofBackfill: false,
+    enableConnectorArtifactDrain: false,
   },
   mockCronSchedule: vi.fn(),
   mockLogger: {
@@ -58,6 +59,11 @@ vi.mock('../jobs/confirmation-proof-backfill.js', () => ({
     skipped: true, scanned: 0, txAttempted: 0, txConfirmed: 0, txPending: 0, txStale: 0, anchorsUpdated: 0, anchorsMissing: 0,
   }),
 }));
+vi.mock('../jobs/connector-artifact-drain.js', () => ({
+  runConnectorArtifactDrain: vi.fn().mockResolvedValue({
+    skipped: true, orgsProcessed: 0, orgsFailed: 0, claimed: 0, anchored: 0, failed: 0,
+  }),
+}));
 vi.mock('./lifecycle.js', () => ({ trackOperation: vi.fn((operation) => operation) }));
 vi.mock('../utils/sentry.js', () => ({ withCronMonitoring: vi.fn((_name, _schedule, fn) => fn) }));
 
@@ -66,6 +72,7 @@ describe('setupScheduledJobs', () => {
     mockConfig.nodeEnv = 'test';
     mockConfig.disableInProcessAnchorCron = false;
     mockConfig.enableConfirmationProofBackfill = false;
+    mockConfig.enableConnectorArtifactDrain = false;
     mockCronSchedule.mockClear();
     vi.clearAllMocks();
   });
@@ -237,5 +244,46 @@ describe('setupScheduledJobs', () => {
       .map((call) => (call[0] as { jobName: string }).jobName);
 
     expect(skippedJobNames).toContain('populate-confirmation-proofs');
+  });
+
+  it('registers drain-connector-artifacts every 5 min when the flag is on (QUEUE-06 / SCRUM-2352)', async () => {
+    mockConfig.enableConnectorArtifactDrain = true;
+    const { setupScheduledJobs } = await import('./scheduled.js');
+
+    setupScheduledJobs(true);
+
+    // 15 baseline (incl. reconcile-credit-conservation, SCRUM-2349) + the gated connector-artifact drain job.
+    expect(mockCronSchedule).toHaveBeenCalledTimes(16);
+    const expressions = mockCronSchedule.mock.calls.map((call) => call[0] as string);
+    expect(expressions).toContain('*/5 * * * *');
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it('does NOT register the drain job when the flag is off (default-OFF, zero prod impact)', async () => {
+    // The drain job is the only flag-gated addition here, so with the flag off
+    // the schedule count stays at the 15-job baseline (the `*/5` expression is
+    // shared with process-revoked-anchors, so the count — not the expression —
+    // is the load-bearing signal that the gated job did NOT register).
+    mockConfig.enableConnectorArtifactDrain = false;
+    const { setupScheduledJobs } = await import('./scheduled.js');
+
+    setupScheduledJobs(true);
+
+    expect(mockCronSchedule).toHaveBeenCalledTimes(15);
+  });
+
+  it('skips the drain job under the maintenance flag in production (anchor-table allowlist)', async () => {
+    mockConfig.nodeEnv = 'production';
+    mockConfig.disableInProcessAnchorCron = true;
+    mockConfig.enableConnectorArtifactDrain = true;
+    const { setupScheduledJobs } = await import('./scheduled.js');
+
+    setupScheduledJobs(true);
+
+    const skippedJobNames = mockLogger.warn.mock.calls
+      .filter((call) => typeof (call[0] as { jobName?: string } | undefined)?.jobName === 'string')
+      .map((call) => (call[0] as { jobName: string }).jobName);
+
+    expect(skippedJobNames).toContain('drain-connector-artifacts');
   });
 });

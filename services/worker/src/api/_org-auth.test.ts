@@ -122,6 +122,27 @@ describe('isCallerOrgAdmin', () => {
     expect(await isCallerOrgAdmin('admin', 'org-A')).toBe(true);
   });
 
+  it('cross-org: profile ORG_ADMIN of org-A is NOT admin of an UNRELATED org-B (false)', async () => {
+    // Regression: the profile ORG_ADMIN role is OWN-ORG scoped. Without the
+    // org_id guard, a profile-level ORG_ADMIN of org-A would pass the admin
+    // check for org-B (no org_members row there) — a cross-org escalation.
+    routeTables({
+      org_members: { data: null, error: null },
+      profiles: { data: { org_id: 'org-A', role: 'ORG_ADMIN', is_platform_admin: false }, error: null },
+    });
+    expect(await isCallerOrgAdmin('admin', 'org-B')).toBe(false);
+  });
+
+  it('platform admin stays GLOBAL: is_platform_admin is admin of any org (cross-org allowed)', async () => {
+    // Contrast with the ORG_ADMIN scoping above: platform admins are global by
+    // design and remain admin of an org other than their profile.org_id.
+    routeTables({
+      org_members: { data: null, error: null },
+      profiles: { data: { org_id: 'org-A', role: 'INDIVIDUAL', is_platform_admin: true }, error: null },
+    });
+    expect(await isCallerOrgAdmin('admin', 'org-B')).toBe(true);
+  });
+
   it('returns false for a plain member (no admin role, profile ORG_MEMBER)', async () => {
     routeTables({
       org_members: { data: { role: 'member' }, error: null },

@@ -266,6 +266,14 @@ const ConfigSchema = z.object({
    */
   enableConnectorArtifactEnqueue: boolFlag(false),
   /**
+   * Connector-artifact drain consumer (QUEUE-06 / SCRUM-2352) — when false, the
+   * `POST /jobs/drain-connector-artifacts` cron route + in-process schedule
+   * no-op (`skipped:true`). Default false: the drain charges credits at SECURING
+   * and anchors to Bitcoin, so it stays gated until launch-approved per org.
+   * Cloud Run prod env sets this true explicitly once the consumer is signed off.
+   */
+  enableConnectorArtifactDrain: boolFlag(false),
+  /**
    * DS-05 (SCRUM-2365): gates the DocuSign queue-drift reconciliation cron.
    * Default OFF in prod — re-materialization goes through the DS-03 producer,
    * which is itself gated by enableConnectorArtifactEnqueue.
@@ -712,6 +720,7 @@ function loadConfig(): Config {
     enableDocusignOauth: process.env.ENABLE_DOCUSIGN_OAUTH,
     enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,
     enableConnectorArtifactEnqueue: process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE,
+    enableConnectorArtifactDrain: process.env.ENABLE_CONNECTOR_ARTIFACT_DRAIN,
     // DS-05 (SCRUM-2365): gates the DocuSign queue-drift reconciliation cron.
     // Default OFF in prod — the reconciliation re-materializes via the DS-03
     // producer, which is itself gated by ENABLE_CONNECTOR_ARTIFACT_ENQUEUE.
