@@ -82,14 +82,19 @@ export function isCtdlPublishableStatus(status: string): boolean {
   return toCtdlCredentialStatusType(status) !== null;
 }
 
-// SCRUM-2374 (CE-03) — ceterms:expirationDate is a forward-looking validity
-// assertion: it only makes sense for a credential that is (or was) running out
-// its own term. ACTIVE/SECURED credentials are still inside their term; an
-// EXPIRED credential's term has lapsed (the expiry IS the reason it is expired).
-// REVOKED and SUPERSEDED credentials ended for an unrelated reason, so emitting a
-// future expiry alongside them is a contradiction (the conflation Jeanne Kitchens
-// flagged). This is the single source of truth, shared by the serializer (gates
-// emission) and the validator (rejects any body that re-introduces the conflict).
+// SCRUM-2374 (CE-03) — ceterms:expirationDate is the RESOURCE-AVAILABILITY
+// (offering) expiry: the date beyond which the credential resource is no longer
+// offered/available (Jeanne Kitchens, Credential Engine — SCRUM-2294). It is NOT
+// the expiration of a credential issued to a person; that person-level validity
+// lives in the OB3/W3C VC layer (SCRUM-2296) and is never emitted here.
+//
+// This gate governs the STATUS dimension of that offering-availability date:
+// ACTIVE/SECURED resources are still offered; an EXPIRED resource's offering term
+// has lapsed (the availability date IS why it is expired). REVOKED and SUPERSEDED
+// resources ended for an unrelated reason, so a forward-looking availability date
+// would contradict the status. Single source of truth, shared by the serializer
+// (gates emission) and the validator (rejects any body that re-introduces the
+// conflict).
 const STATUSES_ALLOWING_EXPIRATION = new Set(['ACTIVE', 'SECURED', 'EXPIRED']);
 
 export function statusAllowsExpiration(status: string): boolean {
