@@ -130,7 +130,14 @@ export async function isCallerOrgAdminResult(
     profile = loaded.profile;
     profileError = loaded.error;
   }
-  const isAdmin = profile?.role === 'ORG_ADMIN' || profile?.is_platform_admin === true;
+  // The profile `ORG_ADMIN` role is OWN-ORG scoped — it makes the caller an
+  // admin of THEIR org (`profile.org_id`), not of every org. Without the
+  // `org_id === orgId` guard a profile-level ORG_ADMIN of org-1 would pass this
+  // check for an UNRELATED org-2 (cross-org privilege escalation), since the
+  // `org_members` probe above already returned no row for org-2. Platform
+  // admins (`is_platform_admin`) ARE global by design, so they stay cross-org.
+  const isOrgAdminOfThisOrg = profile?.role === 'ORG_ADMIN' && profile?.org_id === orgId;
+  const isAdmin = isOrgAdminOfThisOrg || profile?.is_platform_admin === true;
 
   // Only report an operational error when we did NOT find a positive signal:
   // an admin answer is definitive regardless of a later lookup hiccup.

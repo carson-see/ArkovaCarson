@@ -56,21 +56,6 @@ function mockReq(opts: { body?: unknown; query?: Record<string, string> } = {}):
   } as unknown as Request;
 }
 
-function selectMaybeSingle(data: unknown, error: unknown = null) {
-  const chain: {
-    eq: ReturnType<typeof vi.fn>;
-    maybeSingle: ReturnType<typeof vi.fn>;
-  } = {
-    eq: vi.fn(),
-    maybeSingle: vi.fn().mockResolvedValue({ data, error }),
-  };
-  chain.eq.mockReturnValue(chain);
-  return {
-    select: vi.fn().mockReturnValue(chain),
-    chain,
-  };
-}
-
 describe('ResolveQueueInput', () => {
   it('accepts minimal valid input', () => {
     const result = ResolveQueueInput.safeParse({
@@ -279,6 +264,61 @@ describe('handleResolveQueue', () => {
   });
 });
 
+/**
+ * QUEUE-05 (SCRUM-2351) manual-run guard tests.
+ *
+ * A table-dispatching `from` mock so the canonical `_org-auth` resolver
+ * (profiles + org_members) and the handler's sub-org / audit lookups can each
+ * be answered independently and in any order — the guard's call ORDER is an
+ * implementation detail, the per-table answer is the contract.
+ */
+interface TableResponses {
+  profiles?: { data: unknown; error?: unknown };
+  org_members?: Array<{ data: unknown; error?: unknown }>;
+  organizations?: { data: unknown; error?: unknown };
+  audit_events?: { error?: unknown };
+}
+
+function installFromMock(responses: TableResponses): { auditInserts: unknown[] } {
+  const auditInserts: unknown[] = [];
+  const orgMembersQueue = [...(responses.org_members ?? [])];
+
+  fromMock.mockImplementation((table: string) => {
+    if (table === 'audit_events') {
+      return {
+        insert: (row: unknown) => {
+          auditInserts.push(row);
+          return Promise.resolve({ error: responses.audit_events?.error ?? null });
+        },
+      };
+    }
+
+    // Read tables resolve through .select().eq()*.maybeSingle().
+    let payload: { data: unknown; error: unknown };
+    if (table === 'profiles') {
+      payload = { data: responses.profiles?.data ?? null, error: responses.profiles?.error ?? null };
+    } else if (table === 'org_members') {
+      const next = orgMembersQueue.shift() ?? { data: null };
+      payload = { data: next.data ?? null, error: next.error ?? null };
+    } else if (table === 'organizations') {
+      payload = { data: responses.organizations?.data ?? null, error: responses.organizations?.error ?? null };
+    } else {
+      payload = { data: null, error: null };
+    }
+
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      eq: () => chain,
+      maybeSingle: () => Promise.resolve(payload),
+    };
+    return chain;
+  });
+
+  return { auditInserts };
+}
+
+const OWNER_OK = { processed: 7, batchId: 'b-1', merkleRoot: 'a'.repeat(64), txId: 'tx-1' };
+
 describe('handleRunOrgAnchorQueue', () => {
   beforeEach(() => {
     fromMock.mockReset();
@@ -288,8 +328,8 @@ describe('handleRunOrgAnchorQueue', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('rejects callers without an organization', async () => {
-    fromMock.mockReturnValueOnce(selectMaybeSingle({ org_id: null, role: 'ORG_ADMIN' }));
+  it('rejects callers without an organization (403)', async () => {
+    installFromMock({ profiles: { data: { org_id: null, role: 'ORG_ADMIN' } } });
 
     const { res, status, json } = mockRes();
     await handleRunOrgAnchorQueue('user-1', mockReq(), res);
@@ -301,10 +341,75 @@ describe('handleRunOrgAnchorQueue', () => {
     expect(processBatchAnchorsMock).not.toHaveBeenCalled();
   });
 
-  it('rejects non-admin organization members', async () => {
-    fromMock
-      .mockReturnValueOnce(selectMaybeSingle({ org_id: 'org-1', role: 'INDIVIDUAL' }))
-      .mockReturnValueOnce(selectMaybeSingle({ role: 'member' }));
+  it('owner of own org → 2xx, runs the batch + writes a manual-run audit event', async () => {
+    const { auditInserts } = installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
+      org_members: [{ data: { role: 'owner' } }],
+    });
+    processBatchAnchorsMock.mockResolvedValue(OWNER_OK);
+
+    const { res, status, json } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+
+    expect(status).not.toHaveBeenCalled();
+    expect(processBatchAnchorsMock).toHaveBeenCalledWith({ force: true, orgId: 'org-1' });
+    expect(json).toHaveBeenCalledWith({ ok: true, ...OWNER_OK });
+    expect(recordOrgQueueRunResultMock).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: 'org-1', trigger: 'manual', status: 'succeeded', triggeredBy: 'user-1' }),
+    );
+    // manual-run audit event recorded
+    expect(auditInserts).toHaveLength(1);
+    expect(auditInserts[0]).toMatchObject({
+      actor_id: 'user-1',
+      event_type: 'QUEUE_RUN_MANUAL',
+      org_id: 'org-1',
+      target_id: 'org-1',
+    });
+  });
+
+  it('admin of own org → 2xx', async () => {
+    installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
+      org_members: [{ data: { role: 'admin' } }],
+    });
+    processBatchAnchorsMock.mockResolvedValue(OWNER_OK);
+
+    const { res, status } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+
+    expect(status).not.toHaveBeenCalled();
+    expect(processBatchAnchorsMock).toHaveBeenCalledWith({ force: true, orgId: 'org-1' });
+  });
+
+  it('sub-org admin → scoped 2xx: parent admin runs an APPROVED sub-org queue', async () => {
+    // Caller is admin of parent org-1; targets sub-org sub-1 (approved affiliate).
+    // The direct self/admin path is gated on targetOrgId===callerOrgId, so for a
+    // sub-org target it is SKIPPED entirely — only the parent admin lookup runs:
+    // org_members answers (parent org-1 → admin).
+    installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
+      org_members: [{ data: { role: 'admin' } }],
+      organizations: { data: { parent_org_id: 'org-1', parent_approval_status: 'APPROVED' } },
+    });
+    processBatchAnchorsMock.mockResolvedValue(OWNER_OK);
+
+    const { res, status } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq({ body: { org_id: '11111111-1111-4111-8111-111111111111' } }), res);
+
+    expect(status).not.toHaveBeenCalled();
+    // scoped to the SUB-org, never the parent
+    expect(processBatchAnchorsMock).toHaveBeenCalledWith({
+      force: true,
+      orgId: '11111111-1111-4111-8111-111111111111',
+    });
+  });
+
+  it('plain member → 403, no run', async () => {
+    installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
+      org_members: [{ data: { role: 'member' } }, { data: { role: 'member' } }],
+      organizations: { data: { parent_org_id: null, parent_approval_status: null } },
+    });
 
     const { res, status, json } = mockRes();
     await handleRunOrgAnchorQueue('user-1', mockReq(), res);
@@ -316,57 +421,68 @@ describe('handleRunOrgAnchorQueue', () => {
     expect(processBatchAnchorsMock).not.toHaveBeenCalled();
   });
 
-  it('runs the batch processor and notifies admins on success', async () => {
-    fromMock
-      .mockReturnValueOnce(selectMaybeSingle({ org_id: 'org-1', role: 'INDIVIDUAL' }))
-      .mockReturnValueOnce(selectMaybeSingle({ role: 'admin' }));
-    processBatchAnchorsMock.mockResolvedValue({
-      processed: 42,
-      batchId: 'batch-1',
-      merkleRoot: 'a'.repeat(64),
-      txId: 'tx-1',
+  it('cross-org → 403: admin of org-1 cannot run an UNRELATED org-2 queue', async () => {
+    // Caller is owner of org-1; targets org-2, which is NOT their sub-org.
+    // org_members: (target org-2 → no row), (parent lookup never reached because
+    // org-2 has no parent linkage to org-1).
+    installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
+      org_members: [{ data: null }],
+      organizations: { data: { parent_org_id: null, parent_approval_status: null } },
     });
 
     const { res, status, json } = mockRes();
-    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+    await handleRunOrgAnchorQueue('user-1', mockReq({ body: { org_id: '22222222-2222-4222-8222-222222222222' } }), res);
 
-    expect(status).not.toHaveBeenCalled();
-    expect(processBatchAnchorsMock).toHaveBeenCalledWith({ force: true, orgId: 'org-1' });
+    expect(status).toHaveBeenCalledWith(403);
     expect(json).toHaveBeenCalledWith({
-      ok: true,
-      processed: 42,
-      batchId: 'batch-1',
-      merkleRoot: 'a'.repeat(64),
-      txId: 'tx-1',
+      error: { code: 'forbidden', message: 'Only organization admins can run anchoring jobs' },
     });
-    expect(recordOrgQueueRunResultMock).toHaveBeenCalledWith(expect.objectContaining({
-      orgId: 'org-1',
-      trigger: 'manual',
-      status: 'succeeded',
-      startedAt: expect.any(Date),
-      finishedAt: expect.any(Date),
-      processed: 42,
-      batchId: 'batch-1',
-      merkleRoot: 'a'.repeat(64),
-      txId: 'tx-1',
-      triggeredBy: 'user-1',
-    }));
-    expect(emitOrgAdminNotificationsMock).toHaveBeenCalledWith({
-      type: 'queue_run_completed',
-      organizationId: 'org-1',
-      payload: expect.objectContaining({
-        triggeredBy: 'user-1',
-        trigger: 'manual',
-        processed: 42,
-        batchId: 'batch-1',
-      }),
-    });
+    expect(processBatchAnchorsMock).not.toHaveBeenCalled();
   });
 
-  it('returns 500 when the batch worker throws', async () => {
-    fromMock
-      .mockReturnValueOnce(selectMaybeSingle({ org_id: 'org-1', role: 'ORG_ADMIN' }))
-      .mockReturnValueOnce(selectMaybeSingle(null));
+  it('cross-org → 403: a profile-level ORG_ADMIN of org-1 cannot run an UNRELATED org-2 queue (and never anchors it)', async () => {
+    // Regression for the `_org-auth` profile-level ORG_ADMIN fallback. The
+    // caller is a profile ORG_ADMIN of org-1 (no org_members row in org-2) and
+    // targets the UNRELATED org-2. Because the ORG_ADMIN role is OWN-ORG scoped,
+    // the direct admin check must fail for org-2; org-2 has no parent linkage to
+    // org-1, so the sub-org path also denies → 403, and processBatchAnchors is
+    // never invoked for the unrelated org.
+    installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'ORG_ADMIN', is_platform_admin: false } },
+      org_members: [{ data: null }],
+      organizations: { data: { parent_org_id: null, parent_approval_status: null } },
+    });
+
+    const { res, status, json } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq({ body: { org_id: '22222222-2222-4222-8222-222222222222' } }), res);
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'forbidden', message: 'Only organization admins can run anchoring jobs' },
+    });
+    expect(processBatchAnchorsMock).not.toHaveBeenCalled();
+  });
+
+  it('cross-org → 403: a NON-approved sub-org is denied (parent_approval_status != APPROVED)', async () => {
+    installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
+      org_members: [{ data: null }],
+      organizations: { data: { parent_org_id: 'org-1', parent_approval_status: 'PENDING' } },
+    });
+
+    const { res, status } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq({ body: { org_id: '33333333-3333-4333-8333-333333333333' } }), res);
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(processBatchAnchorsMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when the batch worker throws (records failed run + failed audit)', async () => {
+    const { auditInserts } = installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'ORG_ADMIN', is_platform_admin: false } },
+      org_members: [{ data: { role: 'owner' } }],
+    });
     processBatchAnchorsMock.mockRejectedValue(new Error('chain submit blew up'));
 
     const { res, status, json } = mockRes();
@@ -380,15 +496,20 @@ describe('handleRunOrgAnchorQueue', () => {
       orgId: 'org-1',
       trigger: 'manual',
       status: 'failed',
-      startedAt: expect.any(Date),
-      finishedAt: expect.any(Date),
-      processed: 0,
-      batchId: null,
-      merkleRoot: null,
-      txId: null,
       triggeredBy: 'user-1',
       error: 'chain submit blew up',
     }));
+    // failed run still leaves an audit trail
+    expect(auditInserts).toHaveLength(1);
+    expect(auditInserts[0]).toMatchObject({ event_type: 'QUEUE_RUN_MANUAL', org_id: 'org-1' });
     expect(emitOrgAdminNotificationsMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown body key (strict schema, 400)', async () => {
+    installFromMock({ profiles: { data: { org_id: 'org-1', role: 'ORG_ADMIN' } } });
+    const { res, status } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq({ body: { selected_anchor_id: 'x' } }), res);
+    expect(status).toHaveBeenCalledWith(400);
+    expect(processBatchAnchorsMock).not.toHaveBeenCalled();
   });
 });

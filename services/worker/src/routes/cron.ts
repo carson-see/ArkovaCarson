@@ -82,6 +82,7 @@ import { runTreasuryAlertCheck } from '../jobs/treasury-alert.js';
 import { buildTreasuryAlertDispatcher } from '../jobs/treasury-alert-dispatcher.js';
 import { runQueueReminderJob } from '../jobs/queue-reminders.js';
 import { runOrgQueueScheduler } from '../jobs/org-queue-scheduler.js';
+import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
 import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
@@ -476,6 +477,40 @@ cronRouter.post('/org-queue-scheduler', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Org queue scheduler pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── QUEUE-06 (SCRUM-2352): connector_artifact drain consumer ───
+//
+// PRODUCTION TRIGGER. Cloud Scheduler hits this HTTP endpoint because in-process
+// node-cron is dormant under Cloud Run CPU throttling (the PROOF-03 soak proved
+// the dev/test backup never fires in prod). `runConnectorArtifactDrain` no-ops
+// (`skipped:true`) when ENABLE_CONNECTOR_ARTIFACT_DRAIN is false, drains each org
+// with at least one pending|queued row, and charges credits ONLY at SECURING via
+// debit_and_enqueue_anchor. Idempotent (compare-and-set claim) → no mutex needed.
+cronRouter.post('/drain-connector-artifacts', async (_req, res) => {
+  try {
+    const result = await runConnectorArtifactDrain();
+    // The drain isolates per-org failures (one org throwing keeps the others
+    // draining), so `orgsFailed > 0` is a PARTIAL failure that a green 200 would
+    // hide from Cloud Scheduler. Drain the other orgs first, then respond non-2xx
+    // so Scheduler RETRIES the pass. The drain is idempotent (compare-and-set
+    // claim + anchor-id-keyed debit), so a retry re-drives only the stuck orgs —
+    // already-anchored rows are skipped. Still return the aggregate body for
+    // observability.
+    if (result.orgsFailed > 0) {
+      logger.warn({ result }, 'Connector-artifact drain had per-org failures; responding 500 for Scheduler retry');
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    // Scrub: log only the bounded error message/string, never the full thrown
+    // object, on this connector-artifact path (§1.6A — an upstream failure must
+    // not leak connector payload fields into logs).
+    const err = error instanceof Error ? error.message : String(error);
+    logger.error({ err }, 'Connector-artifact drain pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

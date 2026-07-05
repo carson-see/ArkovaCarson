@@ -1,6 +1,10 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-06-16 (worker types resync 0339 — version-resolution.ts fully typed)_
+_Last updated: 2026-06-29 (QUEUE-05 manual-run guard — queue-resolution.ts now owner-inclusive + sub-org-aware)_
+
+## 2026-06-29 — Lane 2 s2: manual org queue run guard owner-inclusive + sub-org-aware (QUEUE-05 / SCRUM-2351)
+
+`handleRunOrgAnchorQueue` (`queue-resolution.ts`) no longer carries a local `isOrgAdmin` doing a direct `org_members` probe — it now authorizes through the **canonical `_org-auth` resolver** (`isCallerOrgAdminResult`, owner-inclusive: owner/admin via `org_members` OR `ORG_ADMIN`/platform-admin via profile; fail-closed, 500 on operational error vs 403 true-negative). The endpoint accepts an optional `org_id` (`RunOrgQueueInput`, `.strict()` — unknown key → 400) so a caller can target a **specific** queue: their OWN org, or an **APPROVED sub-org** (`organizations.parent_org_id` = caller's org AND `parent_approval_status='APPROVED'`) whose parent the caller administers. The batch run is scoped to the resolved target org (never the parent), so a parent admin can't reach an unrelated org and a sub-org member/cross-org caller is 403. A `QUEUE_RUN_MANUAL` audit event (event_category `ANCHOR`, `relationship: self|sub_org`) is written on BOTH success and failure (non-fatal — the run is the source of truth). Route-level 401 stays in `routes/admin.ts` (`extractAuthUserId`).
 
 ## 2026-06-16 — version-resolution.ts fully typed (untypedDb removed)
 
@@ -49,7 +53,7 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 | `verify-anchor.ts` | Public anchor verification endpoint |
 | `proof-packet.ts` | Proof package generation (Bitcoin TX + metadata + timestamps) |
 | `proof-keys.ts` | Proof signing key management |
-| `did-web.ts` | did:web identity docs — `GET /.well-known/did.json` (Arkova) + `GET /orgs/:id/.well-known/did.json` (issuing orgs). Public, no auth. Reuses the active proof key (PEM→Ed25519 JWK); org sub-DIDs are controlled by the Arkova DID. Strict org-public-id charset guard before lookup (SCRUM-1922). `buildArkovaDidDocument(activeKey, retiredKeys?)` (PROOF-06 C1): the active key is the only `assertionMethod`; retired registry keys are published as additional `verificationMethod` entries only, so historical proof bundles signed under a since-rotated key still resolve their public key (`verifyDidBinding` is rotation-safe) |
+| `did-web.ts` | did:web identity docs — `GET /.well-known/did.json` (Arkova) + `GET /orgs/:id/.well-known/did.json` (issuing orgs). Public, no auth. Reuses the active proof key (PEM→Ed25519 JWK); org sub-DIDs are controlled by the Arkova DID. Strict org-public-id charset guard before lookup (SCRUM-1922) |
 | `audit-event.ts` | Audit event creation and query |
 | `admin-stats.ts` / `admin-lists.ts` / `admin-pipeline-stats.ts` | Admin dashboard data endpoints |
 | `admin-org-members.ts` | Platform-admin org roster + user-search + add-member (service_role, RLS-bypass; backs the org profile UI when an admin views a non-member org) |

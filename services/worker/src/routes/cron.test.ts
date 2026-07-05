@@ -288,6 +288,19 @@ vi.mock('../jobs/org-queue-scheduler.js', () => ({
   runOrgQueueScheduler: (...args: unknown[]) => mockRunOrgQueueScheduler(...args),
 }));
 
+// QUEUE-06 (SCRUM-2352): connector_artifact drain consumer HTTP endpoint.
+const mockRunConnectorArtifactDrain = vi.fn().mockResolvedValue({
+  skipped: false,
+  orgsProcessed: 2,
+  orgsFailed: 0,
+  claimed: 3,
+  anchored: 3,
+  failed: 0,
+});
+vi.mock('../jobs/connector-artifact-drain.js', () => ({
+  runConnectorArtifactDrain: (...args: unknown[]) => mockRunConnectorArtifactDrain(...args),
+}));
+
 const mockRunDocusignEnvelopeCompletedJobs = vi.fn().mockResolvedValue({
   claimed: 1,
   completed: 1,
@@ -700,6 +713,50 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/org-queue-scheduler');
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Processing failed');
+    });
+  });
+
+  describe('POST /drain-connector-artifacts', () => {
+    it('runs the connector-artifact drain and returns the aggregate result', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drain-connector-artifacts');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        skipped: false,
+        orgsProcessed: 2,
+        orgsFailed: 0,
+        claimed: 3,
+        anchored: 3,
+        failed: 0,
+      });
+      expect(mockRunConnectorArtifactDrain).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 500 on drain failure (Cloud Scheduler retries)', async () => {
+      mockRunConnectorArtifactDrain.mockRejectedValueOnce(new Error('drain failed'));
+      const app = createApp();
+      const res = await request(app).post('/cron/drain-connector-artifacts');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+
+    it('responds 500 (Scheduler retry) on partial per-org failure, still returning the aggregate body', async () => {
+      // orgsFailed > 0 is a PARTIAL failure: the drain isolated it and drained
+      // the other orgs, but a green 200 would hide the stuck org from Cloud
+      // Scheduler. The route must respond non-2xx AND echo the aggregate body.
+      const partial = {
+        skipped: false,
+        orgsProcessed: 3,
+        orgsFailed: 1,
+        claimed: 5,
+        anchored: 4,
+        failed: 1,
+      };
+      mockRunConnectorArtifactDrain.mockResolvedValueOnce(partial);
+      const app = createApp();
+      const res = await request(app).post('/cron/drain-connector-artifacts');
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual(partial);
     });
   });
 
@@ -1361,6 +1418,27 @@ describe('cron routes', () => {
       const [, schedule, scheduledPath, retryPolicy] = match!;
       expect(schedule).toBe('0 * * * *');
       expect(scheduledPath).toBe('/jobs/docusign-connect-failures-poll');
+      expect(retryPolicy).toBe('30s,120s,2');
+
+      const app = createApp();
+      const res = await request(app).post(`/cron${scheduledPath.replace('/jobs', '')}`);
+      expect(res.status).toBe(200);
+    });
+
+    it('registers the connector-artifact drain every 5 min and pins it to this handler (QUEUE-06)', async () => {
+      // Production trigger is the Cloud Scheduler entry — a path typo there would
+      // ship green here while the drain never runs in prod. Pin route↔scheduler.
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const here = path.dirname(new URL(import.meta.url).pathname);
+      const schedulerScript = path.resolve(here, '../../../../scripts/gcp-setup/cloud-scheduler.sh');
+      const contents = fs.readFileSync(schedulerScript, 'utf8');
+      const match = contents.match(/"drain-connector-artifacts\|([^|]+)\|(\/jobs\/[^|"]+)\|([^"]+)"/);
+
+      expect(match).not.toBeNull();
+      const [, schedule, scheduledPath, retryPolicy] = match!;
+      expect(schedule).toBe('*/5 * * * *');
+      expect(scheduledPath).toBe('/jobs/drain-connector-artifacts');
       expect(retryPolicy).toBe('30s,120s,2');
 
       const app = createApp();
