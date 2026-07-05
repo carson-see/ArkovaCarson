@@ -66,6 +66,9 @@ describe('resolveEffectiveDocusignConnection', () => {
       accountId: 'acct-sub',
       baseUri: 'https://na1.docusign.net',
       tokenSecretName: 'projects/p/secrets/sub-refresh',
+      // DS-04: an org_integrations row is org-scoped (org policy), no owner user.
+      scope: 'org',
+      ownerUserId: null,
     });
     expect(deps.fetchOwnConnection).toHaveBeenCalledWith({
       orgId: SUB_ORG,
@@ -95,6 +98,9 @@ describe('resolveEffectiveDocusignConnection', () => {
       accountId: 'acct-parent',
       baseUri: 'https://na2.docusign.net',
       tokenSecretName: 'projects/p/secrets/parent-refresh',
+      // DS-04: inheritance is org policy by definition — org-scoped, no owner user.
+      scope: 'org',
+      ownerUserId: null,
     });
     expect(deps.fetchParentOwnConnection).toHaveBeenCalledWith({
       parentOrgId: PARENT_ORG,
@@ -195,6 +201,33 @@ describe('resolveEffectiveDocusignConnection', () => {
     await expect(resolveEffectiveDocusignConnection({ ...REQUEST, deps })).rejects.toMatchObject({
       code: 'docusign_inherited_parent_not_own',
     });
+  });
+
+  it('marks an own connection member-scoped when the row carries owner_user_id (DS-04)', async () => {
+    const MEMBER_USER = '44444444-4444-4444-8444-444444444444';
+    const deps = makeDeps({
+      fetchOwnConnection: vi.fn().mockResolvedValue({ ...OWN_ROW, owner_user_id: MEMBER_USER }),
+    });
+
+    const result = await resolveEffectiveDocusignConnection({ ...REQUEST, deps });
+
+    expect(result).toMatchObject({
+      source: 'own',
+      scope: 'member',
+      ownerUserId: MEMBER_USER,
+    });
+    // A member connection short-circuits inheritance exactly like an org own row.
+    expect(deps.fetchInheritanceMarker).not.toHaveBeenCalled();
+  });
+
+  it('treats an own connection with a null owner_user_id as org-scoped (DS-04)', async () => {
+    const deps = makeDeps({
+      fetchOwnConnection: vi.fn().mockResolvedValue({ ...OWN_ROW, owner_user_id: null }),
+    });
+
+    const result = await resolveEffectiveDocusignConnection({ ...REQUEST, deps });
+
+    expect(result).toMatchObject({ source: 'own', scope: 'org', ownerUserId: null });
   });
 
   it('exposes the error type for instanceof checks', async () => {
