@@ -1,4 +1,4 @@
 {
-  "_comment": "S0-4.2 / SCRUM-2500. DRAINED 2026-06-18: prod ledger (vzwyaatejekddvltxyye) verified clean via read-only Supabase MCP — 0 numeric-named rows with non-numeric versions, 0 duplicate names/versions, numeric head 0339. The documented-unreconciled backlog this list used to mirror is gone, so exemptPrefixes is now EMPTY and the prod-ledger audit runs BLOCKING (the --report-only valve was removed from migration-drift.yml). Re-add a prefix here ONLY with a dated runbook note if an operator-applied row is knowingly left non-numeric pending reconciliation; otherwise a non-numeric numeric-named row is a real regression and must block.",
-  "exemptPrefixes": []
+  "_comment": "S0-4.2 / SCRUM-2500. Prod-ledger numeric-integrity + orphan-row audit. Re-add a prefix here ONLY with a dated runbook note when an operator-applied prod row is knowingly pending reconciliation. 2026-07-05 (RTE): 0352/0353 are Lane-2 migrations applied to prod ahead of their source landing on main (0352_queue_digest_idempotency_unique, 0353_reset_unclaimed_connector_broadcasts) — orphan-prod-rows pending the owning Lane-2 PRs merging. Exempted so unrelated migration PRs (e.g. Lane-3 #1380 / 0351) are not blocked by pre-existing cross-lane drift. REMOVE 0352/0353 once the Lane-2 PRs merge and land their source files.",
+  "exemptPrefixes": ["0352", "0353"]
 }
