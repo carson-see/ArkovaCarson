@@ -252,8 +252,8 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    // 14 baseline + the gated connector-artifact drain job.
-    expect(mockCronSchedule).toHaveBeenCalledTimes(15);
+    // 15 baseline (incl. reconcile-credit-conservation, SCRUM-2349) + the gated connector-artifact drain job.
+    expect(mockCronSchedule).toHaveBeenCalledTimes(16);
     const expressions = mockCronSchedule.mock.calls.map((call) => call[0] as string);
     expect(expressions).toContain('*/5 * * * *');
     expect(mockLogger.warn).not.toHaveBeenCalled();
@@ -261,7 +261,7 @@ describe('setupScheduledJobs', () => {
 
   it('does NOT register the drain job when the flag is off (default-OFF, zero prod impact)', async () => {
     // The drain job is the only flag-gated addition here, so with the flag off
-    // the schedule count stays at the 14-job baseline (the `*/5` expression is
+    // the schedule count stays at the 15-job baseline (the `*/5` expression is
     // shared with process-revoked-anchors, so the count — not the expression —
     // is the load-bearing signal that the gated job did NOT register).
     mockConfig.enableConnectorArtifactDrain = false;
@@ -269,7 +269,7 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    expect(mockCronSchedule).toHaveBeenCalledTimes(14);
+    expect(mockCronSchedule).toHaveBeenCalledTimes(15);
   });
 
   it('skips the drain job under the maintenance flag in production (anchor-table allowlist)', async () => {
