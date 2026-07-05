@@ -119,6 +119,14 @@ const ConfigSchema = z.object({
    */
   enableConfirmationProofBackfill: boolFlag(false),
   /**
+   * QUEUE-07 (SCRUM-2353) — gate the daily queue-review digest email job.
+   * Default false: this is a new production email-sending job and must be
+   * explicitly opted in per-environment. When unset OR false,
+   * `runDailyQueueDigest` no-ops (never enumerates admins, never sends mail).
+   * Flip to true only after the soak + a deliberate prod rollout.
+   */
+  enableQueueDigest: boolFlag(false),
+  /**
    * SCRUM-1170-B — gate org-level credit enforcement on anchor submit.
    * Default false: existing per-user credit path runs unchanged. Flip to true
    * per-tenant via Confluence carve-out (e.g. HakiChain) once an org is seeded
@@ -643,6 +651,7 @@ function loadConfig(): Config {
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
     enableConfirmationProofBackfill: process.env.ENABLE_CONFIRMATION_PROOF_BACKFILL,
+    enableQueueDigest: process.env.ENABLE_QUEUE_DIGEST,
     enableOrgCreditEnforcement: process.env.ENABLE_ORG_CREDIT_ENFORCEMENT,
     disableInProcessAnchorCron: process.env.DISABLE_IN_PROCESS_ANCHOR_CRON,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,

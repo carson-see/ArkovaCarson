@@ -26,6 +26,7 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
+import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
@@ -325,6 +326,28 @@ cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Confirmation-proof backfill failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// QUEUE-07 (SCRUM-2353): daily review digest to org admins.
+//
+// PRODUCTION TRIGGER (Cloud Scheduler → HTTP; node-cron is dormant under Cloud
+// Run CPU throttling). One row per org admin, scoped to the admin's org + owned
+// sub-orgs. Counts-only — never document content (§1.6). Idempotent per
+// (admin, org, UTC date) via the audit-events-backed delivery log, so a daily
+// re-trigger or Scheduler retry does not double-send. Gated by
+// ENABLE_QUEUE_DIGEST (no-op when 'false').
+cronRouter.post('/queue-digest', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'queue-digest',
+      '0 13 * * *',
+      () => runDailyQueueDigest(),
+    )();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Daily queue digest failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
