@@ -32,6 +32,10 @@ import type {
   AttestationDetails,
   AttestationEvidence,
   AttestorCredential,
+  MerkleProofResponse,
+  MerkleProofEntry,
+  ProofBundle,
+  ProofBundleSignature,
 } from './types';
 
 const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
@@ -236,6 +240,20 @@ export class Arkova {
     const response = await this.fetch(`/api/v2/anchors/${encodeURIComponent(publicId)}`);
     const data = await jsonOrThrow<Record<string, unknown>>(response, 'Anchor lookup failed');
     return mapAnchorDetails(data);
+  }
+
+  /**
+   * PROOF-05 (SCRUM-2338): fetch the Merkle inclusion proof for a batch-anchored
+   * document, including the additive nullable {@link ProofBundle} — the
+   * self-contained, independently-checkable two-layer proof. `proofBundle` is
+   * `null` when the proof is incomplete (e.g. not yet block-confirmed).
+   *
+   * Anonymous or `verify`-scoped.
+   */
+  async getMerkleProof(publicId: string): Promise<MerkleProofResponse> {
+    const response = await this.fetch(`/api/v1/verify/${encodeURIComponent(publicId)}/proof`);
+    const data = await jsonOrThrow<Record<string, unknown>>(response, 'Merkle proof lookup failed');
+    return mapMerkleProofResponse(data);
   }
 
   /**
@@ -730,6 +748,120 @@ function mapAnchorDetails(row: Record<string, unknown>): AnchorDetails {
     networkReceiptId: (row.network_receipt_id as string | null) ?? null,
     recordUri: row.record_uri as string,
     jurisdiction: row.jurisdiction as string | null | undefined,
+  };
+}
+
+/**
+ * PROOF-05 (SCRUM-2338): map the wire (snake_case) merkle proof entries with
+ * STRICT validation. Returns `null` (not `[]`) when the value is not an array
+ * or any entry is malformed — a non-array / malformed `merkle_proof` must not be
+ * silently collapsed into an empty proof, which would manufacture a valid-looking
+ * (but unverifiable) bundle from malformed JSON (CodeRabbit).
+ */
+function mapMerkleProofEntries(value: unknown): MerkleProofEntry[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: MerkleProofEntry[] = [];
+  for (const e of value) {
+    if (
+      typeof e !== 'object' ||
+      e === null ||
+      typeof (e as Record<string, unknown>).hash !== 'string' ||
+      ((e as Record<string, unknown>).position !== 'left' &&
+        (e as Record<string, unknown>).position !== 'right')
+    ) {
+      return null;
+    }
+    const entry = e as Record<string, unknown>;
+    out.push({ hash: entry.hash as string, position: entry.position as 'left' | 'right' });
+  }
+  return out;
+}
+
+/**
+ * PROOF-05 (SCRUM-2338): map the nullable, snake_case proof_bundle — FAIL CLOSED.
+ *
+ * CodeRabbit: the SDK guarantees `proofBundle !== null ⇒ independently
+ * verifiable`. Defaulting missing/wrong-typed required members to null/0/1 (and
+ * collapsing a non-array merkle_proof to []) manufactures a valid-looking
+ * ProofBundle from malformed JSON, breaking that guarantee. Instead, return
+ * `null` if ANY required member is missing or the wrong type. Only `signature`
+ * is legitimately nullable.
+ */
+function mapProofBundle(value: unknown): ProofBundle | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const b = value as Record<string, unknown>;
+
+  const merkleProof = mapMerkleProofEntries(b.merkle_proof);
+  // Required members must all be present + correctly typed, else fail closed.
+  if (
+    typeof b.fingerprint !== 'string' ||
+    typeof b.merkle_root !== 'string' ||
+    merkleProof === null ||
+    merkleProof.length === 0 ||
+    typeof b.merkle_index !== 'number' ||
+    typeof b.leaf_count !== 'number' ||
+    typeof b.tx_id !== 'string' ||
+    typeof b.block_height !== 'number' ||
+    typeof b.block_hash !== 'string' ||
+    typeof b.block_header !== 'string' ||
+    typeof b.op_return_payload !== 'string' ||
+    typeof b.block_timestamp !== 'string' ||
+    typeof b.proof_schema_version !== 'number'
+  ) {
+    return null;
+  }
+
+  // `signature` is the one legitimately nullable member. When present it must be
+  // a well-formed envelope; a malformed signature object fails closed too.
+  let signature: ProofBundleSignature | null = null;
+  if (b.signature != null) {
+    const sig = b.signature;
+    if (
+      typeof sig !== 'object' ||
+      typeof (sig as Record<string, unknown>).alg !== 'string' ||
+      typeof (sig as Record<string, unknown>).signing_key_id !== 'string'
+    ) {
+      return null;
+    }
+    const s = sig as Record<string, unknown>;
+    signature = { alg: s.alg as string, signingKeyId: s.signing_key_id as string };
+  }
+
+  return {
+    fingerprint: b.fingerprint,
+    merkleRoot: b.merkle_root,
+    // Non-empty asserted above (length === 0 ⇒ null), so this satisfies the
+    // non-empty tuple type on ProofBundle.merkleProof.
+    merkleProof: merkleProof as [MerkleProofEntry, ...MerkleProofEntry[]],
+    merkleIndex: b.merkle_index,
+    leafCount: b.leaf_count,
+    txId: b.tx_id,
+    blockHeight: b.block_height,
+    blockHash: b.block_hash,
+    blockHeader: b.block_header,
+    opReturnPayload: b.op_return_payload,
+    blockTimestamp: b.block_timestamp,
+    proofSchemaVersion: b.proof_schema_version,
+    signature,
+  };
+}
+
+/** PROOF-05 (SCRUM-2338): map the merkle proof response (frozen + additive bundle). */
+function mapMerkleProofResponse(row: Record<string, unknown>): MerkleProofResponse {
+  return {
+    publicId: row.public_id as string,
+    fingerprint: row.fingerprint as string,
+    merkleRoot: row.merkle_root as string,
+    // Top-level merkleProof is a frozen non-null field that may legitimately be
+    // empty; a malformed/non-array value degrades to [] here (the strict,
+    // fail-closed validation applies to the additive proof_bundle below).
+    merkleProof: mapMerkleProofEntries(row.merkle_proof) ?? [],
+    txId: (row.tx_id as string | null) ?? null,
+    blockHeight: (row.block_height as number | null) ?? null,
+    blockTimestamp: (row.block_timestamp as string | null) ?? null,
+    batchId: (row.batch_id as string | null) ?? null,
+    verified: row.verified as boolean,
+    proofBundle: mapProofBundle(row.proof_bundle),
   };
 }
 

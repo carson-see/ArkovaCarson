@@ -16,6 +16,7 @@ from .models import (
     DocumentDetail,
     FingerprintDetail,
     FingerprintVerification,
+    MerkleProofResponse,
     OrganizationDetail,
     OrgList,
     ProblemDetail,
@@ -152,6 +153,18 @@ class Arkova:
         )
         return _parse_json(self._request("GET", path), VerificationResult)
 
+    def get_merkle_proof(self, public_id: str) -> MerkleProofResponse:
+        """PROOF-05 (SCRUM-2338): fetch the Merkle proof + additive proof_bundle.
+
+        ``proof_bundle`` is ``None`` when the proof is incomplete.
+        """
+        path = _versioned_path(
+            str(self._client.base_url),
+            "v1",
+            f"/verify/{quote(public_id, safe='')}/proof",
+        )
+        return _parse_json(self._request("GET", path), MerkleProofResponse)
+
     def verify_fingerprint(self, fingerprint: str) -> FingerprintVerification:
         return _parse_json(
             self._request("GET", f"/verify/{fingerprint}"),
@@ -252,6 +265,18 @@ class AsyncArkova:
             f"/verify/{quote(public_id, safe='')}",
         )
         return _parse_json(await self._request("GET", path), VerificationResult)
+
+    async def get_merkle_proof(self, public_id: str) -> MerkleProofResponse:
+        """PROOF-05 (SCRUM-2338): fetch the Merkle proof + additive proof_bundle.
+
+        ``proof_bundle`` is ``None`` when the proof is incomplete.
+        """
+        path = _versioned_path(
+            str(self._client.base_url),
+            "v1",
+            f"/verify/{quote(public_id, safe='')}/proof",
+        )
+        return _parse_json(await self._request("GET", path), MerkleProofResponse)
 
     async def verify_fingerprint(self, fingerprint: str) -> FingerprintVerification:
         return _parse_json(

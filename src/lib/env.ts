@@ -42,6 +42,10 @@ export const ENV = {
   STRIPE_PUBLISHABLE_KEY: import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '',
   BETA_INVITE_CODE: import.meta.env.VITE_BETA_INVITE_CODE as string | undefined,
   ENABLE_DSAR_UI: import.meta.env.VITE_ENABLE_DSAR_UI === 'true',
+  // FE-PROOF-GATE / FIX-1 (SCRUM-2501): gates the PROOF-04 PDF certificate download.
+  // OFF in prod until the staging round-trip E2E (download -> re-verify with @arkova/verifier)
+  // is green; the public-API proof_bundle field lands with Lane-1 #1354.
+  ENABLE_PROOF_PDF_DOWNLOAD: import.meta.env.VITE_ENABLE_PROOF_PDF_DOWNLOAD === 'true',
   IS_DEV: import.meta.env.DEV,
   IS_PROD: import.meta.env.PROD,
   MODE: import.meta.env.MODE || 'development',

@@ -34,7 +34,27 @@ export interface CtdlAnchor {
   createdAt: string;
   chainTimestamp?: string | null;
   issuedAt?: string | null;
+  /**
+   * SCRUM-2374 (CE-03) — the ISSUED-PERSON credential's expiry: the date the
+   * individual's credential lapses. Per Jeanne Kitchens (Credential Engine,
+   * SCRUM-2294 comment 2026-06-10), this MUST NOT be emitted as CTDL
+   * `ceterms:expirationDate`. CTDL `expirationDate` means "the date beyond which
+   * the credential RESOURCE is no longer offered/available" — a class/offering
+   * property, not a person's credential validity. Issued-person validity belongs
+   * in the OB3 / W3C VC issued-credential layer (SCRUM-2296), not class-level CTDL.
+   * The serializer therefore NEVER routes this field to `ceterms:expirationDate`.
+   */
   expiresAt?: string | null;
+  /**
+   * SCRUM-2374 (CE-03) — RESOURCE-AVAILABILITY / offering expiry: the date beyond
+   * which the credential resource (the program/offering itself) is no longer
+   * offered or available. This is the ONLY expiry Jeanne's guidance allows to map
+   * to CTDL `ceterms:expirationDate`. Distinct from `expiresAt` (issued-person).
+   * Absent for the vast majority of Arkova anchors today (we anchor issued
+   * artifacts, not offering catalogs), so `ceterms:expirationDate` is honestly
+   * omitted unless a real offering-availability date is supplied.
+   */
+  resourceAvailableUntil?: string | null;
   revokedAt?: string | null;
   revocationReason?: string | null;
   issuer?: CtdlIssuer | null;
@@ -127,7 +147,7 @@ const NAME_FIRST_LEARNER_PATTERN = new RegExp(
   String.raw`\b${FULL_NAME}(?:'s)?\s+(?:transcript|student record|learner record|certificate|credential|degree|completion)\b`,
 );
 
-function containsHighConfidencePii(value: string): boolean {
+export function containsHighConfidencePii(value: string): boolean {
   return EMAIL_PATTERN.test(value) || SSN_PATTERN.test(value) || PHONE_PATTERN.test(value);
 }
 
@@ -304,12 +324,22 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
 
   const description = cleanPublicFreeText(anchor.description, 500);
   if (description) jsonLd['ceterms:description'] = description;
-  // SCRUM-2374 (CE-03): only emit a forward-looking expiration date for statuses
-  // where the credential is running out its own term (ACTIVE/SECURED/EXPIRED).
-  // For REVOKED/SUPERSEDED the credential ended for an unrelated reason, so an
-  // expiry would contradict the status — suppress it at the source.
-  if (anchor.expiresAt && statusAllowsExpiration(anchor.status)) {
-    jsonLd['ceterms:expirationDate'] = anchor.expiresAt;
+  // SCRUM-2374 (CE-03): `ceterms:expirationDate` carries RESOURCE-AVAILABILITY
+  // (offering) expiry ONLY — per Jeanne Kitchens (Credential Engine, SCRUM-2294):
+  // it is "the date beyond which the credential resource is no longer
+  // offered/available", NOT the expiration of a credential issued to a person.
+  //
+  // Therefore:
+  //   - anchor.expiresAt (ISSUED-PERSON expiry) is NEVER emitted here. That
+  //     person-level validity belongs to the OB3/W3C VC issued-credential layer
+  //     (SCRUM-2296), not class-level CTDL. Emitting it would be the exact
+  //     conflation Jeanne flagged.
+  //   - anchor.resourceAvailableUntil (offering-availability expiry) IS emitted,
+  //     and only for term-bound statuses. A REVOKED/SUPERSEDED resource ended for
+  //     an unrelated reason, so a forward-looking availability date would
+  //     contradict the status — suppress it there (statusAllowsExpiration()).
+  if (anchor.resourceAvailableUntil && statusAllowsExpiration(anchor.status)) {
+    jsonLd['ceterms:expirationDate'] = anchor.resourceAvailableUntil;
   }
   if (anchor.status === 'REVOKED') {
     if (anchor.revokedAt) jsonLd['ceterms:revocationDate'] = anchor.revokedAt;

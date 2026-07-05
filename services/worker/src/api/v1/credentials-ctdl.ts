@@ -7,7 +7,7 @@
  */
 
 import { Router, type Request } from 'express';
-import { buildCtdlJsonLd, CtdlPiiSafetyError, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
+import { buildCtdlJsonLd, containsHighConfidencePii, CtdlPiiSafetyError, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
 import { isCtdlPublishableStatus } from '../../ctdl/ctdl-type-map.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
@@ -91,28 +91,90 @@ function logCtdlRequested(args: AuditArgs): void {
   }
 }
 
-function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
+// SCRUM-2374 (CE-03) — bounded, allow-listed metadata keys that carry a
+// RESOURCE-AVAILABILITY / offering expiry (the date the offering itself is no
+// longer available), which is the ONLY expiry Jeanne Kitchens' guidance allows
+// to map to CTDL `ceterms:expirationDate`. The issued-person expiry lives on
+// `anchors.expires_at` and is deliberately NOT one of these keys. Only a valid
+// ISO date-like value is accepted; anything else is ignored (honest omission).
+const RESOURCE_AVAILABILITY_METADATA_KEYS = [
+  'resource_available_until',
+  'resourceAvailableUntil',
+  'offering_available_until',
+  'offeringAvailableUntil',
+  'offering_end_date',
+  'offeringEndDate',
+] as const;
+
+// Canonicalize an accepted metadata value to a bare, canonical ISO 8601 string.
+// This is the ONLY value that can ever reach `ceterms:expirationDate`. Two
+// defenses run before canonicalization so nothing but a canonical date survives:
+//   1. High-confidence PII gate (email/phone/SSN). Date.parse() is lenient enough
+//      that "recipient@example.com 2030-01-01" parses as a valid date — the raw
+//      passthrough used to leak the email onto the public projection (MED). Any
+//      PII hit rejects the whole value (honest omission), never a canonicalized
+//      remnant.
+//   2. ISO-8601 canonicalization via `new Date(value).toISOString()`. A non-ISO
+//      string like "12/31/2030" is normalized to canonical ISO (or omitted if it
+//      does not parse), so a verbatim locale-formatted string can never appear (LOW).
+function canonicalizeResourceAvailableUntil(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  // Reject any value carrying high-confidence PII — do not attempt to salvage a date.
+  if (containsHighConfidencePii(trimmed)) return null;
+  const parsed = new Date(trimmed);
+  const ms = parsed.getTime();
+  if (Number.isNaN(ms)) return null;
+  return parsed.toISOString();
+}
+
+function resourceAvailableUntilFromMetadata(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const record = metadata as Record<string, unknown>;
+  for (const key of RESOURCE_AVAILABILITY_METADATA_KEYS) {
+    const value = record[key];
+    if (typeof value === 'string') {
+      const canonical = canonicalizeResourceAvailableUntil(value);
+      if (canonical) return canonical;
+    }
+  }
+  return null;
+}
+
+// Coerce an unknown row value to a bare string or null. Collapsing the repeated
+// `typeof x === 'string' ? x : null` branches into one helper keeps
+// normalizeAnchorRow under the cognitive-complexity limit (SonarCloud) without
+// changing behavior.
+function asStringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+export function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
   const organization = row.organization as Record<string, unknown> | null | undefined;
   return {
     publicId: String(row.public_id ?? ''),
-    orgId: typeof row.org_id === 'string' ? row.org_id : null,
+    orgId: asStringOrNull(row.org_id),
     status: String(row.status ?? ''),
-    credentialType: typeof row.credential_type === 'string' ? row.credential_type : null,
-    subType: typeof row.sub_type === 'string' ? row.sub_type : null,
-    label: typeof row.label === 'string' ? row.label : null,
-    description: typeof row.description === 'string' ? row.description : null,
+    credentialType: asStringOrNull(row.credential_type),
+    subType: asStringOrNull(row.sub_type),
+    label: asStringOrNull(row.label),
+    description: asStringOrNull(row.description),
     metadata: row.metadata,
     createdAt: String(row.created_at ?? ''),
-    chainTimestamp: typeof row.chain_timestamp === 'string' ? row.chain_timestamp : null,
-    issuedAt: typeof row.issued_at === 'string' ? row.issued_at : null,
-    expiresAt: typeof row.expires_at === 'string' ? row.expires_at : null,
-    revokedAt: typeof row.revoked_at === 'string' ? row.revoked_at : null,
-    revocationReason: typeof row.revocation_reason === 'string' ? row.revocation_reason : null,
+    chainTimestamp: asStringOrNull(row.chain_timestamp),
+    issuedAt: asStringOrNull(row.issued_at),
+    // Issued-person credential expiry — read for completeness but the serializer
+    // never routes it to ceterms:expirationDate (SCRUM-2374 / Jeanne guidance).
+    expiresAt: asStringOrNull(row.expires_at),
+    // Resource-availability / offering expiry (the only expiry that maps to CTDL).
+    resourceAvailableUntil: resourceAvailableUntilFromMetadata(row.metadata),
+    revokedAt: asStringOrNull(row.revoked_at),
+    revocationReason: asStringOrNull(row.revocation_reason),
     issuer: organization ? {
-      name: typeof organization.display_name === 'string' ? organization.display_name : null,
-      publicId: typeof organization.public_id === 'string' ? organization.public_id : null,
-      websiteUrl: typeof organization.website_url === 'string' ? organization.website_url : null,
-      domain: typeof organization.domain === 'string' ? organization.domain : null,
+      name: asStringOrNull(organization.display_name),
+      publicId: asStringOrNull(organization.public_id),
+      websiteUrl: asStringOrNull(organization.website_url),
+      domain: asStringOrNull(organization.domain),
     } : null,
   };
 }
