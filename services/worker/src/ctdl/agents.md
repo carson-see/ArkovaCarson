@@ -22,8 +22,25 @@ CTDL/CE Registry serialization helpers for public credential representations.
 - Serializer changes must keep required CTDL fields covered by tests: `@context`, `@type`, `ceterms:name`, `ceterms:offeredBy`, `ceterms:credentialStatusType`, `ceterms:dateEffective`, and `ceterms:verificationServiceProfile`. `ceterms:ctid` is optional and must only be emitted when a real Credential Engine CTID is provided explicitly.
 - If `credential_type` enum values change, update `CTDL_TYPE_MAP` and the coverage test in the same PR.
 
-## 2026-06-24 expirationDate gated by status (SCRUM-2374 / CE-03)
+## 2026-06-24 expirationDate gated by status (SCRUM-2374 / CE-03 — status layer, PR #1305)
 
-- `ceterms:expirationDate` is emitted ONLY for term-bound statuses — `statusAllowsExpiration(status)` in `ctdl-type-map.ts` returns true for `ACTIVE`/`SECURED`/`EXPIRED` and false for `REVOKED`/`SUPERSEDED` (and all non-publishable statuses). A REVOKED or SUPERSEDED credential ended for an unrelated reason, so a forward-looking expiry would contradict the status (the conflation Jeanne Kitchens flagged). The serializer suppresses it at the source (`ctdl-serializer.ts`, the `anchor.expiresAt && statusAllowsExpiration(anchor.status)` gate).
+- `ceterms:expirationDate` is emitted ONLY for term-bound statuses — `statusAllowsExpiration(status)` in `ctdl-type-map.ts` returns true for `ACTIVE`/`SECURED`/`EXPIRED` and false for `REVOKED`/`SUPERSEDED` (and all non-publishable statuses). A REVOKED or SUPERSEDED credential ended for an unrelated reason, so a forward-looking expiry would contradict the status.
 - `statusAllowsExpiration` is the single source of truth, shared by the serializer (gates emission, Arkova-status layer) and `ctdl-validation.ts` (cross-field invariant at the CTDL-status layer: a body with `ceterms:expirationDate` AND `ceterms:credentialStatusType ∈ {ceterms:Revoked, ceterms:Superseded}` is rejected). The validator is the independent second check for any future code path that re-introduces the conflict.
-- This change only *removes* a contradictory assertion from the public body (CLAUDE.md §1.13 R-7 safe direction); it adds no new public field and changes no CTID behavior.
+
+## 2026-07-01 expiration SEMANTICS — person vs offering (SCRUM-2374 / CE-03, S2)
+
+- Builds on the status-layer gate above. Per Jeanne Kitchens (Credential Engine, SCRUM-2294): CTDL `ceterms:expirationDate` is the **RESOURCE-AVAILABILITY / offering** expiry — the date the credential resource (the program/offering) is no longer offered — NOT the expiry of a credential issued to a **person**.
+- Two distinct fields on `CtdlAnchor`:
+  - `expiresAt` (ISSUED-PERSON expiry, from `anchors.expires_at`) is read but **NEVER** routed to `ceterms:expirationDate`. Person-level validity belongs to the OB3/W3C VC issued-credential layer (SCRUM-2296), not class-level CTDL. Emitting it is the exact conflation Jeanne flagged.
+  - `resourceAvailableUntil` (offering expiry) is the ONLY source for `ceterms:expirationDate`, still status-gated via `statusAllowsExpiration`. Derived in `normalizeAnchorRow` (`credentials-ctdl.ts`) from an allow-listed metadata key set (`resource_available_until`, `offering_available_until`, `offering_end_date`, + camelCase). Non-date values are ignored (honest omission). Arkova anchors issued artifacts, not offering catalogs, so this is absent for almost all live anchors → `ceterms:expirationDate` is honestly omitted by default.
+- R-7 safe: it only *narrows* what the public body asserts; no new external claim, no CTID behavior change.
+
+## 2026-07-01 publishability gate — fixture-driven coverage (SCRUM-2372 / CE-01, S2)
+
+- The publishability gate (route 404s for non-publishable status, 410 for `REVOKED`, 200 otherwise; fail-closed 404 on `CtdlPiiSafetyError`) is exercised by fixture-driven tests in `credentials-ctdl.test.ts`: every publishable status returns a valid CTDL body with no learner PII; every non-publishable status (`PENDING`/`DRAFT`/`PROCESSING`/`FAILED`/`DELETED`/`UNKNOWN`/empty) fails closed with 404, no body, no PII, no internal fields.
+
+## 2026-07-01 offering-expiry PII/ISO hardening (PR #1378, S2 fix-team)
+
+- **Root cause (MED PII-leak + LOW non-ISO):** `resourceAvailableUntilFromMetadata` (`credentials-ctdl.ts`) returned an allow-listed metadata value *verbatim* after only a lenient `Date.parse()` gate. `Date.parse("recipient@example.com 2030-01-01")` is valid → the issuer email leaked into `ceterms:expirationDate` on the public projection; non-ISO strings like `"12/31/2030"` also passed through verbatim.
+- **Fix:** `canonicalizeResourceAvailableUntil` now (1) rejects any value carrying high-confidence PII via the shared `containsHighConfidencePii` (email/phone/SSN — now exported from `ctdl-serializer.ts`) and (2) canonicalizes to a bare ISO string via `new Date(value).toISOString()`. Only a canonical date can ever reach `ceterms:expirationDate`; anything else is omitted (honest omission).
+- **Validator tightened:** `isIsoDateLike` in `ctdl-validation.ts` is now a real ISO-8601 check (`YYYY-MM-DD` or full date-time with optional offset + real-instant validity) instead of raw `Date.parse()`. This is the independent second check for `ceterms:expirationDate` / `dateEffective` / `revocationDate`; a locale or PII-prefixed string can no longer validate. Note: all DB-sourced dates fed to these fields are `timestamptz` full-ISO, so this narrowing does not affect legitimate values.

@@ -338,6 +338,19 @@ vi.mock('../jobs/stuck-anchor-monitor.js', () => ({
   runStuckAnchorCheck: (...args: unknown[]) => mockRunStuckAnchorCheck(...args),
 }));
 
+const mockRunCreditConservationReconciler = vi.fn().mockResolvedValue({
+  healthy: true,
+  alertFired: false,
+  divergedCount: 0,
+  orgsChecked: 3,
+  error: null,
+  checkedAt: '2026-06-01T12:00:00.000Z',
+});
+vi.mock('../jobs/credit-conservation-reconciler.js', () => ({
+  runCreditConservationReconciler: (...args: unknown[]) =>
+    mockRunCreditConservationReconciler(...args),
+}));
+
 const mockMakeConnectFailuresDeps = vi.fn(() => ({ deps: 'connect-failures' }));
 vi.mock('../jobs/docusign-connect-failures-deps.js', () => ({
   makeConnectFailuresDeps: () => mockMakeConnectFailuresDeps(),
@@ -2358,6 +2371,62 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/check-stuck-anchors');
       expect(res.status).toBe(401);
       expect(mockRunStuckAnchorCheck).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /reconcile-credit-conservation (S1-9)', () => {
+    it('returns the conservation report on a clean run', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/reconcile-credit-conservation');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        healthy: true,
+        alertFired: false,
+        divergedCount: 0,
+        orgsChecked: 3,
+        error: null,
+        checkedAt: '2026-06-01T12:00:00.000Z',
+      });
+      expect(mockRunCreditConservationReconciler).toHaveBeenCalled();
+    });
+
+    it('returns 200 with healthy:false when drift is detected (a correct detection — no Scheduler retry)', async () => {
+      mockRunCreditConservationReconciler.mockResolvedValueOnce({
+        healthy: false,
+        alertFired: true,
+        divergedCount: 1,
+        orgsChecked: 3,
+        error: null,
+        checkedAt: '2026-06-01T12:00:00.000Z',
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/reconcile-credit-conservation');
+      expect(res.status).toBe(200);
+      expect(res.body.healthy).toBe(false);
+      expect(res.body.alertFired).toBe(true);
+    });
+
+    it('returns 500 when the RPC probe fails (Scheduler retries the broken probe)', async () => {
+      mockRunCreditConservationReconciler.mockResolvedValueOnce({
+        healthy: false,
+        alertFired: false,
+        divergedCount: null,
+        orgsChecked: null,
+        error: 'permission denied for function org_credit_ledger_divergence',
+        checkedAt: '2026-06-01T12:00:00.000Z',
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/reconcile-credit-conservation');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toMatch(/permission denied/i);
+    });
+
+    it('is protected by cronAuth — 401 unauthenticated in production', async () => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+      const res = await request(app).post('/cron/reconcile-credit-conservation');
+      expect(res.status).toBe(401);
+      expect(mockRunCreditConservationReconciler).not.toHaveBeenCalled();
     });
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   hasPublicVerificationProof,
   isPreSecuredStatus,
+  isProofDownloadable,
   normalizePublicVerificationStatus,
 } from './publicVerificationState';
 
@@ -36,5 +37,21 @@ describe('publicVerificationState', () => {
     expect(hasPublicVerificationProof('REVOKED')).toBe(true);
     expect(hasPublicVerificationProof('EXPIRED')).toBe(true);
     expect(hasPublicVerificationProof('SUPERSEDED')).toBe(true);
+  });
+
+  it('allows proof DOWNLOAD only for genuinely SECURED anchors (FE-PROOF-GATE / SCRUM-2501)', () => {
+    expect(isProofDownloadable('SECURED')).toBe(true);
+    expect(isProofDownloadable('PENDING')).toBe(false);
+    expect(isProofDownloadable('SUBMITTED')).toBe(false);
+    expect(isProofDownloadable('REVOKED')).toBe(false);
+    expect(isProofDownloadable('EXPIRED')).toBe(false);
+    expect(isProofDownloadable('SUPERSEDED')).toBe(false);
+  });
+
+  it('is STRICTER than hasPublicVerificationProof for terminal-but-not-secured statuses', () => {
+    for (const status of ['REVOKED', 'EXPIRED', 'SUPERSEDED'] as const) {
+      expect(hasPublicVerificationProof(status)).toBe(true);
+      expect(isProofDownloadable(status)).toBe(false);
+    }
   });
 });
