@@ -119,6 +119,14 @@ const ConfigSchema = z.object({
    */
   enableConfirmationProofBackfill: boolFlag(false),
   /**
+   * QUEUE-07 (SCRUM-2353) — gate the daily queue-review digest email job.
+   * Default false: this is a new production email-sending job and must be
+   * explicitly opted in per-environment. When unset OR false,
+   * `runDailyQueueDigest` no-ops (never enumerates admins, never sends mail).
+   * Flip to true only after the soak + a deliberate prod rollout.
+   */
+  enableQueueDigest: boolFlag(false),
+  /**
    * SCRUM-1170-B — gate org-level credit enforcement on anchor submit.
    * Default false: existing per-user credit path runs unchanged. Flip to true
    * per-tenant via Confluence carve-out (e.g. HakiChain) once an org is seeded
@@ -265,6 +273,12 @@ const ConfigSchema = z.object({
    * Cloud Run prod env sets this true explicitly once the consumer is signed off.
    */
   enableConnectorArtifactDrain: boolFlag(false),
+  /**
+   * DS-05 (SCRUM-2365): gates the DocuSign queue-drift reconciliation cron.
+   * Default OFF in prod — re-materialization goes through the DS-03 producer,
+   * which is itself gated by enableConnectorArtifactEnqueue.
+   */
+  enableDocusignQueueReconciliation: boolFlag(false),
   /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
   docusignIntegrationKey: z.string().optional(),
   /** DocuSign client secret. Required when DOCUSIGN_INTEGRATION_KEY is set. */
@@ -566,6 +580,24 @@ const ConfigSchema = z.object({
     });
   }
 
+  // DS-05 (SCRUM-2365): the queue-drift reconciliation re-materializes via the
+  // DS-03 producer, itself gated by ENABLE_CONNECTOR_ARTIFACT_ENQUEUE. Without
+  // that producer flag the re-drive writes no durable connector_artifact row, so
+  // the same drift is detected + alerted every cron run with no resolution path.
+  // The runtime handler already suppresses the re-drive when the producer is off;
+  // this boot-time guard makes an ON-reconciliation / OFF-producer misconfig fail
+  // loud at startup instead of silently spinning. Mirrors the vendor-connector
+  // cross-field guards above.
+  if (cfg.enableDocusignQueueReconciliation && !cfg.enableConnectorArtifactEnqueue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_QUEUE_RECONCILIATION=true requires ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true — '
+        + 'otherwise re-materialized envelopes never durably queue and drift repeats every run.',
+      path: ['enableDocusignQueueReconciliation'],
+    });
+  }
+
   // SCRUM-1258 (R1-4) batch 2 cross-field rules.
 
   // Arize tracing requires creds when enabled.
@@ -651,6 +683,7 @@ function loadConfig(): Config {
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
     enableConfirmationProofBackfill: process.env.ENABLE_CONFIRMATION_PROOF_BACKFILL,
+    enableQueueDigest: process.env.ENABLE_QUEUE_DIGEST,
     enableOrgCreditEnforcement: process.env.ENABLE_ORG_CREDIT_ENFORCEMENT,
     disableInProcessAnchorCron: process.env.DISABLE_IN_PROCESS_ANCHOR_CRON,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
@@ -688,6 +721,10 @@ function loadConfig(): Config {
     enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,
     enableConnectorArtifactEnqueue: process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE,
     enableConnectorArtifactDrain: process.env.ENABLE_CONNECTOR_ARTIFACT_DRAIN,
+    // DS-05 (SCRUM-2365): gates the DocuSign queue-drift reconciliation cron.
+    // Default OFF in prod — the reconciliation re-materializes via the DS-03
+    // producer, which is itself gated by ENABLE_CONNECTOR_ARTIFACT_ENQUEUE.
+    enableDocusignQueueReconciliation: process.env.ENABLE_DOCUSIGN_QUEUE_RECONCILIATION,
     docusignIntegrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
     docusignClientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
     docusignConnectHmacSecret: process.env.DOCUSIGN_CONNECT_HMAC_SECRET,

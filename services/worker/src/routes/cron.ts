@@ -26,6 +26,7 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
+import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
@@ -97,6 +98,8 @@ import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expi
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
 import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
 import { makeReconciliationDeps } from '../jobs/docusign-reconciliation-deps.js';
+import { reconcileDocusignQueueDrift } from '../jobs/docusign-queue-reconciliation.js';
+import { makeQueueReconciliationDeps } from '../jobs/docusign-queue-reconciliation-deps.js';
 import { pollDocusignConnectFailures } from '../jobs/docusign-connect-failures.js';
 import { makeConnectFailuresDeps } from '../jobs/docusign-connect-failures-deps.js';
 import { reconcileListenerDrift } from '../jobs/docusign-listener-drift.js';
@@ -326,6 +329,28 @@ cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Confirmation-proof backfill failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// QUEUE-07 (SCRUM-2353): daily review digest to org admins.
+//
+// PRODUCTION TRIGGER (Cloud Scheduler → HTTP; node-cron is dormant under Cloud
+// Run CPU throttling). One row per org admin, scoped to the admin's org + owned
+// sub-orgs. Counts-only — never document content (§1.6). Idempotent per
+// (admin, org, UTC date) via the audit-events-backed delivery log, so a daily
+// re-trigger or Scheduler retry does not double-send. Gated by
+// ENABLE_QUEUE_DIGEST (no-op when 'false').
+cronRouter.post('/queue-digest', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'queue-digest',
+      '0 13 * * *',
+      () => runDailyQueueDigest(),
+    )();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Daily queue digest failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
@@ -1639,6 +1664,43 @@ cronRouter.post('/docusign-reconciliation', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign reconciliation failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── DS-05 (SCRUM-2365): DocuSign QUEUE reconciliation ───
+// Detects completed envelopes MISSING from the connector-artifact queue
+// (distinct from the SCRUM-2042 webhook-delivery gap check above), fires drift
+// alerts + bounded audit events, and idempotently re-materializes missing
+// org/member queue items via the audited DS-03 producer path (§1.6A: no bytes
+// here). Gated OFF by default via ENABLE_DOCUSIGN_QUEUE_RECONCILIATION — the
+// re-materialization goes through the producer, itself gated by
+// ENABLE_CONNECTOR_ARTIFACT_ENQUEUE. Scheduler: daily (Cloud Scheduler → HTTP).
+cronRouter.post('/docusign-queue-reconciliation', async (_req, res) => {
+  if (!config.enableDocusignQueueReconciliation) {
+    res.json({ skipped: true, reason: 'ENABLE_DOCUSIGN_QUEUE_RECONCILIATION disabled' });
+    return;
+  }
+  try {
+    const result = await withCronMonitoring(
+      'docusign-queue-reconciliation',
+      '0 7 * * *',
+      () =>
+        reconcileDocusignQueueDrift(makeQueueReconciliationDeps(), {
+          // Flag alignment: with the connector-artifact enqueue OFF the DS-03
+          // producer writes no durable row, so a re-drive can never queue the
+          // envelope. Pass the flag so reconciliation still surfaces drift (audit +
+          // Sentry) but suppresses a re-submit-every-run loop.
+          enableConnectorArtifactEnqueue: config.enableConnectorArtifactEnqueue,
+        }),
+    )();
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign queue reconciliation failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

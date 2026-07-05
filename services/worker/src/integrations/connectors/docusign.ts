@@ -34,6 +34,18 @@ export type DocusignEnvelopeCompletedJobPayloadT = z.infer<typeof DocusignEnvelo
 export interface DocusignResolvedConnection {
   accessToken: string;
   baseUri: string;
+  /**
+   * DS-04 (SCRUM-2364): queue routing scope for the resolved connection.
+   * `'member'` ⇒ the completed envelope materializes into the owning user's
+   * PERSONAL queue; `'org'` ⇒ org policy (org-owned or inherited) → org queue.
+   */
+  scope: 'org' | 'member';
+  /**
+   * DS-04: the owning user for a member (personal) connection. Set only when
+   * `scope === 'member'`; NULL for org/inherited connections. The materializer
+   * keys the personal queue on this id.
+   */
+  ownerUserId: string | null;
 }
 
 export interface DocusignDocumentSinkResult {
@@ -77,6 +89,12 @@ export interface DocusignEnvelopeJobDeps extends DocusignClientDeps {
     documentBytes: Buffer;
     contentType: string | null;
     sourceTimestamp: string | null;
+    // DS-04 (SCRUM-2364): personal-vs-org queue routing. `scope` is 'member' for
+    // a per-member connection (materialize into that user's personal queue via
+    // `ownerUserId`) and 'org' for org-policy connections. Optional for callers
+    // that predate DS-04 — the materializer defaults to 'org' when unset.
+    scope?: 'org' | 'member';
+    ownerUserId?: string | null;
   }) => Promise<DocusignDocumentSinkResult>;
 }
 
@@ -150,5 +168,9 @@ export async function processDocusignEnvelopeCompletedJob(
     documentBytes: document.bytes,
     contentType: document.contentType,
     sourceTimestamp: parsed.envelope_completed_at ?? null,
+    // DS-04 (SCRUM-2364): forward the resolved queue routing so a member-owned
+    // envelope materializes into the owning user's personal queue.
+    scope: connection.scope,
+    ownerUserId: connection.ownerUserId,
   });
 }
