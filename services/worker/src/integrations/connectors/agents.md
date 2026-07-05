@@ -11,7 +11,8 @@ Vendor connector services and canonical event adapters. Each connector owns OAut
 | `schemas.ts` | Zod schemas for all vendor webhook payloads (Drive, DocuSign, Adobe, Checkr, Veremark) |
 | `adapters.ts` | Pure-function adapters: vendor payload -> canonical `TriggerEvent` for rules engine |
 | `googleDrive.ts` | Google Drive connector — OAuth, Secret Manager tokens, 7-day watch channels, event shaping |
-| `docusign.ts` | DocuSign connector — retryable signed-document fetch, account token resolution |
+| `docusign.ts` | DocuSign connector — retryable signed-document fetch, account token resolution. DS-04: `DocusignResolvedConnection` + the `enqueueSignedDocument` sink now carry `scope` (`'org'`/`'member'`) + `ownerUserId` for personal-queue routing |
+| `docusign-connection-resolver.ts` | Sub-org connection resolution (SCRUM-2045). DS-04 (SCRUM-2364): resolves `scope`/`ownerUserId` — a `member_integrations` row's `owner_user_id` ⇒ `scope='member'` (personal queue); org-owned / inherited connections ⇒ `scope='org'` |
 | `docusign-token-store.ts` | DocuSign refresh-token Secret Manager store — org + member-level naming (SCRUM-2044) |
 | `drive-changes-processor.ts` | Drive changes feed processor — paginated, deduped, folder-matched event emission |
 | `drive-changes-runner.ts` | Webhook-to-processor glue — token refresh, watched-folder-id resolution |
