@@ -264,7 +264,7 @@ describe('deliverDigestToAdmin — suppression', () => {
 
 describe('deliverDigestToAdmin — delivery + logging', () => {
   it('sends, logs SENT, and uses the queue_reminder email type scoped to the org', async () => {
-    const { store, recorded } = makeStore();
+    const { store } = makeStore();
     const sendEmail = vi.fn(async () => ({ success: true, messageId: 'm1' }));
 
     const result = await deliverDigestToAdmin(scope(), {
@@ -332,7 +332,7 @@ describe('deliverDigestToAdmin — idempotency + retry', () => {
   });
 
   it('retries after a prior FAILED attempt, incrementing the attempt count', async () => {
-    const { store, recorded } = makeStore({
+    const { store } = makeStore({
       getDeliveryLog: vi.fn(async () => ({
         adminEmail: 'admin@acme.example',
         adminOrgId: 'org-acme',
