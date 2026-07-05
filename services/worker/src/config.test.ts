@@ -438,6 +438,29 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
     });
   });
 
+  // DS-05 (SCRUM-2365): the queue-drift reconciliation cron depends on the DS-03
+  // producer flag — enabling it without ENABLE_CONNECTOR_ARTIFACT_ENQUEUE must
+  // fail loud at boot rather than spin drift alerts with no drain.
+  it('rejects when ENABLE_DOCUSIGN_QUEUE_RECONCILIATION=true but ENABLE_CONNECTOR_ARTIFACT_ENQUEUE is off', async () => {
+    await expectConfigToReject({
+      ENABLE_DOCUSIGN_QUEUE_RECONCILIATION: 'true',
+      ENABLE_CONNECTOR_ARTIFACT_ENQUEUE: undefined,
+    });
+  });
+
+  it('accepts ENABLE_DOCUSIGN_QUEUE_RECONCILIATION=true when ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true', async () => {
+    await withConfig(
+      {
+        ENABLE_DOCUSIGN_QUEUE_RECONCILIATION: 'true',
+        ENABLE_CONNECTOR_ARTIFACT_ENQUEUE: 'true',
+      },
+      (mod) => {
+        expect(mod.config.enableDocusignQueueReconciliation).toBe(true);
+        expect(mod.config.enableConnectorArtifactEnqueue).toBe(true);
+      },
+    );
+  });
+
   it('accepts production when Drive OAuth is fully configured', async () => {
     await withConfig(
       {
