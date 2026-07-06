@@ -1,5 +1,6 @@
 import {
   CTDL_CONTEXT,
+  isContinuingEducationCreditType,
   resolveCtdlType,
   statusAllowsExpiration,
   toCtdlCredentialStatusType,
@@ -55,6 +56,20 @@ export interface CtdlAnchor {
    * omitted unless a real offering-availability date is supplied.
    */
   resourceAvailableUntil?: string | null;
+  /**
+   * SCRUM-2375 (CE-04) — CE continuing-education credit value in CONTACT HOURS,
+   * emitted as a `ceterms:ValueProfile` with `schema:value` +
+   * `ceterms:creditUnitType` ContactHour (per Jeanne Kitchens' CTDL correction).
+   * Derived only from allow-listed anchor metadata keys in `normalizeAnchorRow`
+   * (`credentials-ctdl.ts`).
+   *
+   * CONFLATION GUARD: this is the credential's CE ContactHour credit — it has
+   * NOTHING to do with the Arkova billing `credit_ledger` (paid anchoring
+   * credits). The CTDL path must never import/query billing state, and the
+   * billing ledger must never source this value. Enforced by
+   * `ctdl-credit-conflation-guard.test.ts`.
+   */
+  contactHours?: number | null;
   revokedAt?: string | null;
   revocationReason?: string | null;
   issuer?: CtdlIssuer | null;
@@ -63,6 +78,35 @@ export interface CtdlAnchor {
 export interface BuildCtdlOptions {
   verifyUrl: string;
 }
+
+/**
+ * SCRUM-2375 (CE-04) — the CE continuing-education credit value as CTDL wants
+ * it: a `ceterms:ValueProfile` carrying `schema:value` and a
+ * `ceterms:creditUnitType` alignment to `creditUnit:ContactHour` — NOT a bare
+ * scalar. Property spelling follows Credential Engine's published Registry
+ * examples for `ceterms:creditValue` (ValueProfile + CredentialAlignmentObject
+ * against the credreg.net creditUnit concept scheme), per Jeanne Kitchens'
+ * correction that CE credit is "ContactHour via ValueProfile". CE's full
+ * Registry envelopes use language-map objects for frameworkName/targetNodeName
+ * (`{"en-US": …}`); this module emits plain strings to match every other
+ * `ceterms:name`-style field in our projection — a consumer-safe simplification
+ * that CE's JSON-LD context accepts.
+ */
+export interface CtdlContactHourValueProfile {
+  '@type': 'ceterms:ValueProfile';
+  'schema:value': number;
+  'ceterms:creditUnitType': [
+    {
+      '@type': 'ceterms:CredentialAlignmentObject';
+      'ceterms:framework': typeof CREDIT_UNIT_FRAMEWORK;
+      'ceterms:frameworkName': 'Credit Unit';
+      'ceterms:targetNode': 'creditUnit:ContactHour';
+      'ceterms:targetNodeName': 'Contact Hour';
+    },
+  ];
+}
+
+export const CREDIT_UNIT_FRAMEWORK = 'https://credreg.net/ctdl/terms/creditUnit' as const;
 
 export interface CtdlJsonLd {
   '@context': typeof CTDL_CONTEXT;
@@ -96,6 +140,8 @@ export interface CtdlJsonLd {
   'ceterms:expirationDate'?: string;
   'ceterms:revocationDate'?: string;
   'ceterms:revocationReason'?: string;
+  /** SCRUM-2375 (CE-04) — ContactHour credit as a ValueProfile array (never a bare scalar). */
+  'ceterms:creditValue'?: [CtdlContactHourValueProfile];
 }
 
 /**
@@ -228,6 +274,46 @@ function effectiveDate(anchor: CtdlAnchor): string {
   return anchor.issuedAt ?? anchor.chainTimestamp ?? anchor.createdAt;
 }
 
+// SCRUM-2375 (CE-04) — plausibility ceiling for a single credential's contact
+// hours. Anything above this is a data error (or a unit confusion), and an
+// implausible public assertion is worse than an honest omission.
+const MAX_CONTACT_HOURS = 1000;
+
+/**
+ * Single source of truth for "is this a contact-hour value we can honestly
+ * assert publicly": a positive, finite number within the plausibility ceiling.
+ * Zero/negative/NaN/Infinity/absent → null (the ValueProfile is OMITTED —
+ * never a fabricated 0-hour profile). Shared with the metadata derivation in
+ * `credentials-ctdl.ts` so the row layer and the serializer cannot drift.
+ */
+export function normalizeContactHours(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value <= 0 || value > MAX_CONTACT_HOURS) return null;
+  return value;
+}
+
+/**
+ * SCRUM-2375 (CE-04) — express the CE continuing-education credit as
+ * `ceterms:ValueProfile` + `creditUnit:ContactHour`, per Jeanne Kitchens'
+ * correction (never a bare scalar). See {@link CtdlContactHourValueProfile}
+ * for the property-spelling rationale.
+ */
+function buildContactHourValueProfile(contactHours: number): CtdlContactHourValueProfile {
+  return {
+    '@type': 'ceterms:ValueProfile',
+    'schema:value': contactHours,
+    'ceterms:creditUnitType': [
+      {
+        '@type': 'ceterms:CredentialAlignmentObject',
+        'ceterms:framework': CREDIT_UNIT_FRAMEWORK,
+        'ceterms:frameworkName': 'Credit Unit',
+        'ceterms:targetNode': 'creditUnit:ContactHour',
+        'ceterms:targetNodeName': 'Contact Hour',
+      },
+    ],
+  };
+}
+
 function metadataTextValues(value: unknown): string[] {
   if (typeof value === 'string') return [value];
   if (Array.isArray(value)) return value.flatMap(metadataTextValues);
@@ -340,6 +426,16 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
   //     contradict the status — suppress it there (statusAllowsExpiration()).
   if (anchor.resourceAvailableUntil && statusAllowsExpiration(anchor.status)) {
     jsonLd['ceterms:expirationDate'] = anchor.resourceAvailableUntil;
+  }
+  // SCRUM-2375 (CE-04): CE continuing-education credit as ContactHour via
+  // ceterms:ValueProfile (Jeanne Kitchens' correction — never a bare scalar).
+  // Emitted only for continuing-education types (CPE/CLE) with a plausible
+  // positive value; absent/zero credit OMITS the property (never fabricated).
+  // CONFLATION GUARD: anchor.contactHours is the CE credit value — completely
+  // unrelated to the billing credit_ledger (paid anchoring credits).
+  const contactHours = normalizeContactHours(anchor.contactHours);
+  if (contactHours !== null && isContinuingEducationCreditType(anchor.credentialType)) {
+    jsonLd['ceterms:creditValue'] = [buildContactHourValueProfile(contactHours)];
   }
   if (anchor.status === 'REVOKED') {
     if (anchor.revokedAt) jsonLd['ceterms:revocationDate'] = anchor.revokedAt;

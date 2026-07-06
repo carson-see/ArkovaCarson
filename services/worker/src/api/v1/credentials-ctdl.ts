@@ -7,7 +7,7 @@
  */
 
 import { Router, type Request } from 'express';
-import { buildCtdlJsonLd, containsHighConfidencePii, CtdlPiiSafetyError, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
+import { buildCtdlJsonLd, containsHighConfidencePii, CtdlPiiSafetyError, normalizeContactHours, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
 import { isCtdlPublishableStatus } from '../../ctdl/ctdl-type-map.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
@@ -141,6 +141,50 @@ function resourceAvailableUntilFromMetadata(metadata: unknown): string | null {
   return null;
 }
 
+// SCRUM-2375 (CE-04) — bounded, allow-listed metadata keys that carry a CE
+// continuing-education CONTACT-HOUR credit value (how many contact hours the
+// CPE/CLE offering awards). Emitted publicly as a ceterms:ValueProfile with
+// creditUnit:ContactHour — see `ctdl-serializer.ts`.
+//
+// `ceu` / `ceus` are deliberately NOT allow-listed: 1 CEU = 10 contact hours by
+// convention, and asserting that conversion would fabricate a number the issuer
+// never stated. Honest omission over unit invention.
+//
+// CONFLATION GUARD: this "credit" is the CE ContactHour credit of the
+// credential. It is derived ONLY from anchor metadata — never from the billing
+// credit_ledger, which is a different "credit" entirely (paid anchoring
+// balance). Enforced by `ctdl-credit-conflation-guard.test.ts`.
+const CONTACT_HOUR_METADATA_KEYS = [
+  'contact_hours',
+  'contactHours',
+  'credit_hours',
+  'creditHours',
+  'ce_credit_hours',
+  'ceCreditHours',
+] as const;
+
+// Accepts a plain number or a bare numeric string ("1.5"); everything else is
+// ignored. The shared plausibility gate (normalizeContactHours, exported by the
+// serializer so the row layer and emission layer cannot drift) then rejects
+// zero/negative/non-finite/implausibly-large values → honest omission.
+function contactHoursFromMetadata(metadata: unknown): number | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const record = metadata as Record<string, unknown>;
+  for (const key of CONTACT_HOUR_METADATA_KEYS) {
+    const raw = record[key];
+    let candidate: number | null = null;
+    if (typeof raw === 'number') {
+      candidate = raw;
+    } else if (typeof raw === 'string' && raw.trim() !== '') {
+      const parsed = Number(raw.trim());
+      candidate = Number.isNaN(parsed) ? null : parsed;
+    }
+    const normalized = normalizeContactHours(candidate);
+    if (normalized !== null) return normalized;
+  }
+  return null;
+}
+
 // Coerce an unknown row value to a bare string or null. Collapsing the repeated
 // `typeof x === 'string' ? x : null` branches into one helper keeps
 // normalizeAnchorRow under the cognitive-complexity limit (SonarCloud) without
@@ -168,6 +212,9 @@ export function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
     expiresAt: asStringOrNull(row.expires_at),
     // Resource-availability / offering expiry (the only expiry that maps to CTDL).
     resourceAvailableUntil: resourceAvailableUntilFromMetadata(row.metadata),
+    // CE-04: continuing-education contact-hour credit (CE ContactHour — NOT the
+    // billing credit_ledger). Allow-listed metadata keys only.
+    contactHours: contactHoursFromMetadata(row.metadata),
     revokedAt: asStringOrNull(row.revoked_at),
     revocationReason: asStringOrNull(row.revocation_reason),
     issuer: organization ? {

@@ -333,5 +333,161 @@ describe('buildCtdlJsonLd', () => {
       expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
       expect(jsonLd).not.toHaveProperty('ceterms:expirationDate');
     });
+
+    // CE-06b sign-off breadcrumb (SCRUM-2377): Jeanne Kitchens' correction (1)
+    // says the two expiry meanings are DISTINCT properties in CTDL-land:
+    // `ceterms:expirationDate` = resource/offering availability; issued-PERSON
+    // credential expiry has NO class-level CTDL property and belongs to the
+    // OB3/W3C VC issued-credential layer (SCRUM-2296). The exact property
+    // choice for surfacing person-level validity (OB3 `expirationDate` on the
+    // issued credential vs a VC `expirationDate`/`validUntil`) is the OPEN
+    // QUESTION for CE-06b sign-off. Until that sign-off, the only executable
+    // truth is: the CTDL projection NEVER carries the person-level expiry —
+    // under any status — even when no offering expiry exists to shadow it.
+    it('documents the CE-06b property-choice question: person expiry maps to NO CTDL property today', () => {
+      for (const status of ['ACTIVE', 'SECURED', 'EXPIRED', 'SUPERSEDED'] as const) {
+        const jsonLd = buildCtdlJsonLd(
+          {
+            ...baseAnchor,
+            status,
+            expiresAt: '2031-03-03T00:00:00.000Z',
+            resourceAvailableUntil: null,
+          },
+          { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' },
+        );
+        expect(jsonLd).not.toHaveProperty('ceterms:expirationDate');
+        expect(JSON.stringify(jsonLd)).not.toContain('2031-03-03');
+      }
+    });
+  });
+
+  // SCRUM-2375 (CE-04) — CE continuing-education credit is expressed as a
+  // ceterms:ValueProfile with schema:value + ceterms:creditUnitType ContactHour,
+  // per Jeanne Kitchens' CTDL correction (2). NEVER a bare scalar; NEVER
+  // fabricated when absent/zero. CONFLATION GUARD: this "credit" is the CE
+  // ContactHour credit value of the credential — it has NOTHING to do with the
+  // Arkova billing credit_ledger (paid anchoring credits).
+  describe('ceterms:creditValue ContactHour ValueProfile (CE-04)', () => {
+    const verify = { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' };
+
+    // Golden fixture 1 — integer credit: a 2.0-hour CLE ethics completion.
+    it('emits a golden ContactHour ValueProfile for a 2.0-hour CLE ethics credit', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'CLE', subType: 'ethics_cle', contactHours: 2 },
+        verify,
+      );
+
+      expect(jsonLd['ceterms:creditValue']).toEqual([
+        {
+          '@type': 'ceterms:ValueProfile',
+          'schema:value': 2,
+          'ceterms:creditUnitType': [
+            {
+              '@type': 'ceterms:CredentialAlignmentObject',
+              'ceterms:framework': 'https://credreg.net/ctdl/terms/creditUnit',
+              'ceterms:frameworkName': 'Credit Unit',
+              'ceterms:targetNode': 'creditUnit:ContactHour',
+              'ceterms:targetNodeName': 'Contact Hour',
+            },
+          ],
+        },
+      ]);
+    });
+
+    // Golden fixture 2 — fractional credit: a 1.5-contact-hour CPE completion.
+    it('emits a golden fractional ContactHour ValueProfile for a 1.5-hour CPE credit', () => {
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          credentialType: 'CPE',
+          subType: 'accounting_cpe',
+          label: 'Accounting Update CPE',
+          contactHours: 1.5,
+        },
+        verify,
+      );
+
+      expect(jsonLd['@type']).toBe('ceterms:Certificate');
+      expect(jsonLd['ceterms:creditValue']).toEqual([
+        {
+          '@type': 'ceterms:ValueProfile',
+          'schema:value': 1.5,
+          'ceterms:creditUnitType': [
+            {
+              '@type': 'ceterms:CredentialAlignmentObject',
+              'ceterms:framework': 'https://credreg.net/ctdl/terms/creditUnit',
+              'ceterms:frameworkName': 'Credit Unit',
+              'ceterms:targetNode': 'creditUnit:ContactHour',
+              'ceterms:targetNodeName': 'Contact Hour',
+            },
+          ],
+        },
+      ]);
+    });
+
+    // Golden fixture 3 — absent credit: NEVER fabricate a ValueProfile.
+    it('omits ceterms:creditValue entirely when no credit value is present', () => {
+      const jsonLd = buildCtdlJsonLd({ ...baseAnchor, credentialType: 'CLE' }, verify);
+      expect(jsonLd).not.toHaveProperty('ceterms:creditValue');
+    });
+
+    it('omits ceterms:creditValue for a zero credit value (never a fabricated 0-hour profile)', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'CPE', contactHours: 0 },
+        verify,
+      );
+      expect(jsonLd).not.toHaveProperty('ceterms:creditValue');
+    });
+
+    it('omits ceterms:creditValue for negative or non-finite credit values', () => {
+      for (const bogus of [-1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        const jsonLd = buildCtdlJsonLd(
+          { ...baseAnchor, credentialType: 'CLE', contactHours: bogus },
+          verify,
+        );
+        expect(jsonLd).not.toHaveProperty('ceterms:creditValue');
+      }
+    });
+
+    // Golden fixture 4 — CPE vs CLE: both are continuing-education credit and
+    // both express the credit as ContactHour; the distinction lives in @type
+    // resolution + name, never in the credit unit.
+    it('emits ContactHour for both CPE and CLE with the same unit vocabulary (CPE vs CLE case)', () => {
+      const cle = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'CLE', subType: 'ethics_cle', contactHours: 2 },
+        verify,
+      );
+      const cpe = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'CPE', subType: 'tax_cpe', contactHours: 8 },
+        verify,
+      );
+
+      const cleUnit = cle['ceterms:creditValue']?.[0]['ceterms:creditUnitType'][0]['ceterms:targetNode'];
+      const cpeUnit = cpe['ceterms:creditValue']?.[0]['ceterms:creditUnitType'][0]['ceterms:targetNode'];
+      expect(cleUnit).toBe('creditUnit:ContactHour');
+      expect(cpeUnit).toBe('creditUnit:ContactHour');
+      expect(cle['ceterms:creditValue']?.[0]['schema:value']).toBe(2);
+      expect(cpe['ceterms:creditValue']?.[0]['schema:value']).toBe(8);
+    });
+
+    // Honest-omission guard: contact hours on a non-continuing-education type
+    // are not a CE credit assertion we can stand behind — omit.
+    it('omits ceterms:creditValue for non-continuing-education credential types', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'DEGREE', subType: 'bachelor', contactHours: 3 },
+        verify,
+      );
+      expect(jsonLd).not.toHaveProperty('ceterms:creditValue');
+    });
+
+    it('keeps the CTDL body valid when a ContactHour ValueProfile is present', () => {
+      // buildCtdlJsonLd runs assertValidCtdlJsonLd internally — reaching the
+      // expectation means the validator accepted the ValueProfile shape.
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'CLE', contactHours: 2 },
+        verify,
+      );
+      expect(jsonLd['ceterms:creditValue']).toHaveLength(1);
+    });
   });
 });

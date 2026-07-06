@@ -190,6 +190,61 @@ function validateExpirationAndStatus(value: Record<string, unknown>, errors: str
   }
 }
 
+// SCRUM-2375 (CE-04) — independent second check on the ContactHour ValueProfile.
+// The serializer only emits `ceterms:creditValue` as a ValueProfile array with a
+// positive finite `schema:value` and a `creditUnit:ContactHour` unit; this
+// validator rejects any body — now or from a future code path — that carries a
+// bare-scalar credit (the exact shape Jeanne Kitchens corrected), a fabricated
+// zero/negative value, or a unit we do not emit. ContactHour is deliberately the
+// ONLY accepted unit today; widen alongside the serializer when a new unit is
+// introduced, never ahead of it.
+function validateCreditUnitTypes(units: unknown, index: number, errors: string[]): void {
+  if (!Array.isArray(units) || units.length === 0) {
+    errors.push(
+      `ceterms:creditValue[${index}].ceterms:creditUnitType must be a non-empty array of alignment objects`,
+    );
+    return;
+  }
+  units.forEach((unit, unitIndex) => {
+    if (!isRecord(unit) || unit['@type'] !== 'ceterms:CredentialAlignmentObject') {
+      errors.push(
+        `ceterms:creditValue[${index}].ceterms:creditUnitType[${unitIndex}].@type must be ceterms:CredentialAlignmentObject`,
+      );
+      return;
+    }
+    if (unit['ceterms:targetNode'] !== 'creditUnit:ContactHour') {
+      errors.push(
+        `ceterms:creditValue[${index}].ceterms:creditUnitType[${unitIndex}].ceterms:targetNode must be creditUnit:ContactHour`,
+      );
+    }
+  });
+}
+
+function validateCreditValue(value: Record<string, unknown>, errors: string[]): void {
+  const creditValue = value['ceterms:creditValue'];
+  if (creditValue === undefined) return;
+
+  if (!Array.isArray(creditValue) || creditValue.length === 0) {
+    errors.push('ceterms:creditValue must be an array of ceterms:ValueProfile objects');
+    return;
+  }
+
+  creditValue.forEach((profile, index) => {
+    if (!isRecord(profile)) {
+      errors.push('ceterms:creditValue must be an array of ceterms:ValueProfile objects');
+      return;
+    }
+    if (profile['@type'] !== 'ceterms:ValueProfile') {
+      errors.push(`ceterms:creditValue[${index}].@type must be ceterms:ValueProfile`);
+    }
+    const schemaValue = profile['schema:value'];
+    if (typeof schemaValue !== 'number' || !Number.isFinite(schemaValue) || schemaValue <= 0) {
+      errors.push(`ceterms:creditValue[${index}].schema:value must be a positive finite number`);
+    }
+    validateCreditUnitTypes(profile['ceterms:creditUnitType'], index, errors);
+  });
+}
+
 export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
   const errors: string[] = [];
 
@@ -220,6 +275,7 @@ export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
   validateVerificationProfile(value, errors);
   validateIdentifier(value, errors);
   validateExpirationAndStatus(value, errors);
+  validateCreditValue(value, errors);
 
   const unsafeErrors: string[] = [];
   collectUnsafeKeys(value, unsafeErrors);

@@ -213,4 +213,96 @@ describe('validateCtdlJsonLd', () => {
 
     expect(validateCtdlJsonLd(active)).toEqual({ valid: true, errors: [] });
   });
+
+  // SCRUM-2375 (CE-04) — independent second check on the ContactHour
+  // ValueProfile: `ceterms:creditValue` must be a ValueProfile array carrying a
+  // positive finite schema:value and a ContactHour creditUnitType, never a bare
+  // scalar and never a fabricated/zero value.
+  describe('ceterms:creditValue ValueProfile validation (CE-04)', () => {
+    const validCreditValue = [
+      {
+        '@type': 'ceterms:ValueProfile',
+        'schema:value': 1.5,
+        'ceterms:creditUnitType': [
+          {
+            '@type': 'ceterms:CredentialAlignmentObject',
+            'ceterms:framework': 'https://credreg.net/ctdl/terms/creditUnit',
+            'ceterms:frameworkName': 'Credit Unit',
+            'ceterms:targetNode': 'creditUnit:ContactHour',
+            'ceterms:targetNodeName': 'Contact Hour',
+          },
+        ],
+      },
+    ];
+
+    function bodyWithCreditValue(creditValue: unknown) {
+      const jsonLd = buildCtdlJsonLd(baseAnchor, {
+        verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+      });
+      return { ...jsonLd, 'ceterms:creditValue': creditValue };
+    }
+
+    it('accepts a well-formed ContactHour ValueProfile', () => {
+      expect(validateCtdlJsonLd(bodyWithCreditValue(validCreditValue))).toEqual({
+        valid: true,
+        errors: [],
+      });
+    });
+
+    it('rejects a bare scalar credit value (the exact shape Jeanne corrected)', () => {
+      const result = validateCtdlJsonLd(bodyWithCreditValue(1.5));
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('ceterms:creditValue must be an array of ceterms:ValueProfile objects');
+    });
+
+    it('rejects a ValueProfile without a ceterms:ValueProfile @type', () => {
+      const result = validateCtdlJsonLd(
+        bodyWithCreditValue([{ ...validCreditValue[0], '@type': 'schema:QuantitativeValue' }]),
+      );
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('ceterms:creditValue[0].@type must be ceterms:ValueProfile');
+    });
+
+    it.each([0, -2, Number.NaN, 'two', null])(
+      'rejects a non-positive or non-numeric schema:value: %s',
+      (bad) => {
+        const result = validateCtdlJsonLd(
+          bodyWithCreditValue([{ ...validCreditValue[0], 'schema:value': bad }]),
+        );
+        expect(result.valid).toBe(false);
+        expect(result.errors).toContain('ceterms:creditValue[0].schema:value must be a positive finite number');
+      },
+    );
+
+    it('rejects a ValueProfile whose creditUnitType is missing or not ContactHour', () => {
+      const missing = validateCtdlJsonLd(
+        bodyWithCreditValue([{ '@type': 'ceterms:ValueProfile', 'schema:value': 2 }]),
+      );
+      expect(missing.valid).toBe(false);
+      expect(missing.errors).toContain(
+        'ceterms:creditValue[0].ceterms:creditUnitType must be a non-empty array of alignment objects',
+      );
+
+      const wrongUnit = validateCtdlJsonLd(
+        bodyWithCreditValue([
+          {
+            ...validCreditValue[0],
+            'ceterms:creditUnitType': [
+              { ...validCreditValue[0]['ceterms:creditUnitType'][0], 'ceterms:targetNode': 'creditUnit:SemesterHour' },
+            ],
+          },
+        ]),
+      );
+      expect(wrongUnit.valid).toBe(false);
+      expect(wrongUnit.errors).toContain(
+        'ceterms:creditValue[0].ceterms:creditUnitType[0].ceterms:targetNode must be creditUnit:ContactHour',
+      );
+    });
+
+    it('rejects an empty creditValue array (omit the property instead)', () => {
+      const result = validateCtdlJsonLd(bodyWithCreditValue([]));
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain('ceterms:creditValue must be an array of ceterms:ValueProfile objects');
+    });
+  });
 });

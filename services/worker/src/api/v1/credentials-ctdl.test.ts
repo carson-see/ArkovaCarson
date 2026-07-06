@@ -587,3 +587,130 @@ describe('normalizeAnchorRow — CE-03 expiration mapping', () => {
     });
   });
 });
+
+// SCRUM-2375 (CE-04) — contact-hour derivation at the DB-row layer.
+// CONFLATION GUARD: `contactHours` is the CE continuing-education ContactHour
+// credit of the credential (CTDL ceterms:creditValue). It is derived ONLY from
+// allow-listed anchor metadata keys — never from the billing credit_ledger,
+// which is a different "credit" entirely (paid anchoring balance).
+describe('normalizeAnchorRow — CE-04 contact-hour mapping', () => {
+  const baseRow = {
+    public_id: 'ARK-2026-CTDL-002',
+    status: 'SECURED',
+    credential_type: 'CLE',
+    created_at: '2026-05-20T12:00:00.000Z',
+  };
+
+  it.each([
+    'contact_hours',
+    'contactHours',
+    'credit_hours',
+    'creditHours',
+    'ce_credit_hours',
+    'ceCreditHours',
+  ])('derives contactHours from allow-listed metadata key %s', (key) => {
+    const anchor = normalizeAnchorRow({ ...baseRow, metadata: { [key]: 2 } });
+    expect(anchor.contactHours).toBe(2);
+  });
+
+  it('accepts a numeric string metadata value ("1.5")', () => {
+    const anchor = normalizeAnchorRow({
+      ...baseRow,
+      metadata: { contact_hours: '1.5' },
+    });
+    expect(anchor.contactHours).toBe(1.5);
+  });
+
+  it.each([
+    ['zero', 0],
+    ['negative', -2],
+    ['NaN string', 'two hours'],
+    ['empty string', ''],
+    ['implausibly large', 100000],
+    ['boolean', true],
+    ['object', { value: 2 }],
+    ['array', [2]],
+    ['null', null],
+  ])('ignores a non-positive / non-numeric / implausible value (%s) — honest omission', (_label, bad) => {
+    const anchor = normalizeAnchorRow({ ...baseRow, metadata: { contact_hours: bad } });
+    expect(anchor.contactHours).toBeNull();
+  });
+
+  it('does not derive contact hours from CEU keys (no fabricated unit conversion)', () => {
+    // 1 CEU = 10 contact hours by convention, but asserting that conversion
+    // would fabricate a number the issuer never stated. `ceu` is deliberately
+    // NOT allow-listed.
+    const anchor = normalizeAnchorRow({ ...baseRow, metadata: { ceu: 1.5, ceus: 2 } });
+    expect(anchor.contactHours).toBeNull();
+  });
+
+  it('leaves contactHours null when metadata is absent', () => {
+    const anchor = normalizeAnchorRow({ ...baseRow, metadata: null });
+    expect(anchor.contactHours).toBeNull();
+  });
+});
+
+// SCRUM-2375 (CE-04) — end-to-end route fixture: metadata contact hours surface
+// as a ContactHour ValueProfile on the public CTDL body.
+describe('GET /credentials/:publicId/ctdl — CE-04 ContactHour ValueProfile', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    insertAudit.mockReturnValue({ error: null });
+  });
+
+  it('emits ceterms:creditValue for a CLE anchor with metadata contact hours', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(
+        normalizeAnchorRow({
+          public_id: 'ARK-2026-CTDL-CLE-01',
+          status: 'SECURED',
+          credential_type: 'CLE',
+          sub_type: 'ethics_cle',
+          label: 'Ethics CLE Completion',
+          created_at: '2026-05-20T12:00:00.000Z',
+          metadata: { contact_hours: 2 },
+        }),
+      ),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-CLE-01/ctdl');
+
+    expect(res.status).toBe(200);
+    expect(res.body['ceterms:creditValue']).toEqual([
+      {
+        '@type': 'ceterms:ValueProfile',
+        'schema:value': 2,
+        'ceterms:creditUnitType': [
+          {
+            '@type': 'ceterms:CredentialAlignmentObject',
+            'ceterms:framework': 'https://credreg.net/ctdl/terms/creditUnit',
+            'ceterms:frameworkName': 'Credit Unit',
+            'ceterms:targetNode': 'creditUnit:ContactHour',
+            'ceterms:targetNodeName': 'Contact Hour',
+          },
+        ],
+      },
+    ]);
+    expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
+  });
+
+  it('omits ceterms:creditValue when the anchor has no credit metadata', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(
+        normalizeAnchorRow({
+          public_id: 'ARK-2026-CTDL-CLE-02',
+          status: 'SECURED',
+          credential_type: 'CPE',
+          created_at: '2026-05-20T12:00:00.000Z',
+          metadata: {},
+        }),
+      ),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-CLE-02/ctdl');
+
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty('ceterms:creditValue');
+    expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
+  });
+});

@@ -39,6 +39,13 @@ CTDL/CE Registry serialization helpers for public credential representations.
 
 - The publishability gate (route 404s for non-publishable status, 410 for `REVOKED`, 200 otherwise; fail-closed 404 on `CtdlPiiSafetyError`) is exercised by fixture-driven tests in `credentials-ctdl.test.ts`: every publishable status returns a valid CTDL body with no learner PII; every non-publishable status (`PENDING`/`DRAFT`/`PROCESSING`/`FAILED`/`DELETED`/`UNKNOWN`/empty) fails closed with 404, no body, no PII, no internal fields.
 
+## 2026-07-06 ContactHour credit via ValueProfile (SCRUM-2375 / CE-04, S3)
+
+- CE continuing-education credit is emitted as `ceterms:creditValue` → an array of ONE `ceterms:ValueProfile` with `schema:value` (positive finite number) + `ceterms:creditUnitType` → `CredentialAlignmentObject` targeting `creditUnit:ContactHour` (framework `https://credreg.net/ctdl/terms/creditUnit`). Per Jeanne Kitchens' CTDL correction: NEVER a bare scalar. Plain strings (not language maps) for frameworkName/targetNodeName, matching the module's other `ceterms:name`-style fields.
+- Source: allow-listed anchor metadata keys only (`contact_hours`/`credit_hours`/`ce_credit_hours` + camelCase) via `contactHoursFromMetadata` in `credentials-ctdl.ts`; `normalizeContactHours` (exported by the serializer — single plausibility gate, 0 < v ≤ 1000) is shared by the row layer and emission layer. `ceu`/`ceus` deliberately NOT allow-listed (no fabricated ×10 unit conversion). Absent/zero/negative/non-finite credit → the property is OMITTED (honest omission, never a 0-hour profile).
+- Emission is restricted to continuing-education types (`CPE`/`CLE` — `isContinuingEducationCreditType` in `ctdl-type-map.ts`); a contact-hour value on any other type is ambiguous and omitted. `ctdl-validation.ts` `validateCreditValue` is the independent second check (rejects bare scalars, non-positive values, non-ContactHour units). Export-only — NO persisted mapping table (PO default).
+- **CONFLATION GUARD:** the CE ContactHour credit has NOTHING to do with the billing `credit_ledger` (paid anchoring credits). `ctdl-credit-conflation-guard.test.ts` scans the CTDL production sources (comment-stripped) and fails on any credit_ledger/billing reference or `/billing/` import.
+
 ## 2026-07-01 offering-expiry PII/ISO hardening (PR #1378, S2 fix-team)
 
 - **Root cause (MED PII-leak + LOW non-ISO):** `resourceAvailableUntilFromMetadata` (`credentials-ctdl.ts`) returned an allow-listed metadata value *verbatim* after only a lenient `Date.parse()` gate. `Date.parse("recipient@example.com 2030-01-01")` is valid → the issuer email leaked into `ceterms:expirationDate` on the public projection; non-ISO strings like `"12/31/2030"` also passed through verbatim.
