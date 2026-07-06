@@ -564,7 +564,24 @@ export function partitionAgainstBaseline(
   return { fresh, grandfathered, stale };
 }
 
-export function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
+/**
+ * @param jsxTextContinuation PR #1433 follow-up: true when {@link scanFileContent}
+ *   determined this line is RAW JSX ELEMENT TEXT continued from a previous line
+ *   (e.g. the middle of a wrapped `<p>…</p>` paragraph). Such a line often has
+ *   neither a quote char nor a same-line `<`/`>` pair, so the quote/JSX
+ *   short-circuit below would skip it — the blind spot that let the literal
+ *   "Bitcoin blockchain" ship to prod in src/components/verification. In this
+ *   mode the line is user-visible copy BY CONSTRUCTION: balanced `{…}` JSX
+ *   expressions are blanked out (they are code, scanned via their own lines'
+ *   normal path) and every remaining forbidden-term match flags with no
+ *   isCodeIdentifier suppression (there are no code positions in raw text).
+ */
+export function findTermViolations(
+  line: string,
+  lineNum: number,
+  filePath: string,
+  jsxTextContinuation = false,
+): Violation[] {
   const results: Violation[] = [];
   const cleaned = stripClassNameAttributes(line);
 
@@ -585,6 +602,23 @@ export function findTermViolations(line: string, lineNum: number, filePath: stri
   // the cleaned line (so className braces are already neutralised) and is gated
   // to .tsx inside findRawEnumRenders.
   results.push(...findRawEnumRenders(cleaned, lineNum, filePath));
+
+  if (jsxTextContinuation) {
+    const textOnly = blankJsxExpressions(cleaned);
+    for (const regex of FORBIDDEN_REGEXES) {
+      regex.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(textOnly)) !== null) {
+        results.push({
+          file: filePath,
+          line: lineNum,
+          term: match[0],
+          context: cleaned.trim().substring(0, 80),
+        });
+      }
+    }
+    return results;
+  }
 
   // Quote/JSX context is a per-line property; computing it once per term
   // saves 6×n includes() calls when the line has many term matches.
@@ -608,11 +642,190 @@ export function findTermViolations(line: string, lineNum: number, filePath: stri
   return results;
 }
 
-function checkFile(filePath: string): Violation[] {
+// =============================================================================
+// PR #1433 follow-up — cross-line JSX element-text tracking.
+//
+// The per-line scanner cannot see that a line like
+//     `      Bitcoin blockchain at the stated time. Arkova does not verify…`
+// is user-visible copy: the enclosing `<p …>` and `</p>` are on OTHER lines, so
+// the line has no quote char and no same-line `<`/`>` pair and the forbidden-term
+// loop short-circuited. scanFileContent() keeps a small line-to-line state
+// machine: are we inside JSX element text, inside a tag that spans lines, or
+// inside a `{…}` expression opened from element text? Raw-text continuation
+// lines are then force-scanned via findTermViolations(…, jsxTextContinuation).
+//
+// Known, accepted approximations (all strictly narrower than the old blind spot):
+//  - a closing tag ends text state, so raw text on the line AFTER an inline
+//    element (`…see <b>the guide</b>\n for details`) is treated as code again;
+//  - multi-line template literals are not tracked (per-line quote blanking only);
+//  - the state machine never parses TypeScript — a `<` preceded by an
+//    identifier char (generics `Array<string>`, comparisons `a<b`) is ignored.
+// =============================================================================
+
+interface JsxTextState {
+  /** Inside JSX element text — raw lines here are user-visible copy. */
+  inJsxText: boolean;
+  /** A tag (`<p` / `</p`) opened on an earlier line and has not hit its `>` yet. */
+  pendingTag: 'opening' | 'closing' | null;
+  /** Unclosed `{` depth carried inside a pending multi-line tag (attr exprs). */
+  pendingTagBraceDepth: number;
+  /** Unclosed `{…}` expression depth opened from element text (code, not copy). */
+  exprDepth: number;
+}
+
+/**
+ * Blank the CONTENTS of quoted strings (keeping length, so indices still line
+ * up) so quotes containing `<`, `>`, `{`, `}` cannot corrupt tag/expression
+ * tracking. An unterminated quote (multi-line template literal) blanks to EOL.
+ * Also blanks a trailing `//` line comment ONCE strings are gone (so `https://`
+ * inside a string does not count as a comment).
+ */
+function blankStringsAndComments(line: string): string {
+  const out = line.split('');
+  let i = 0;
+  while (i < out.length) {
+    const ch = out[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      let j = i + 1;
+      while (j < out.length && out[j] !== ch) {
+        if (out[j] === '\\') j++; // skip escaped char
+        j++;
+      }
+      for (let k = i + 1; k < Math.min(j, out.length); k++) out[k] = ' ';
+      i = j + 1;
+      continue;
+    }
+    if (ch === '/' && out[i + 1] === '/') {
+      for (let k = i; k < out.length; k++) out[k] = ' ';
+      break;
+    }
+    i++;
+  }
+  return out.join('');
+}
+
+/**
+ * Blank balanced `{…}` JSX expressions on a raw-text continuation line (they
+ * are code — their values are scanned by the normal per-line rules when they
+ * span lines, and are never element text). An UNCLOSED `{` blanks to EOL: the
+ * rest of the line is the start of a multi-line expression, not copy.
+ */
+function blankJsxExpressions(line: string): string {
+  const out = line.split('');
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] !== '{') continue;
+    let depth = 1;
+    let j = i + 1;
+    while (j < out.length && depth > 0) {
+      if (out[j] === '{') depth++;
+      else if (out[j] === '}') depth--;
+      j++;
+    }
+    const end = depth === 0 ? j : out.length;
+    for (let k = i; k < end; k++) out[k] = ' ';
+    i = end - 1;
+  }
+  return out.join('');
+}
+
+/** True when `next` can start a JSX tag name and `prev` rules out a TS generic
+ *  (`Array<string>`) or comparison (`x<y`) — JSX tags are never preceded by an
+ *  identifier char, `)`, or `]`. */
+function isJsxTagStart(prev: string, next: string): boolean {
+  return (next === '/' || /[A-Za-z]/.test(next)) && !/[\w$)\]]/.test(prev);
+}
+
+/**
+ * Advance the cross-line JSX state machine over one source line. Operates on a
+ * string/comment-blanked copy; tag ends (`>`) are only recognised at `{}`-depth
+ * 0 so attribute expressions like `onClick={() => f()}` cannot fake a tag end.
+ */
+function updateJsxTextState(rawLine: string, state: JsxTextState): void {
+  const line = blankStringsAndComments(rawLine);
+  let i = 0;
+
+  // Resolve a tag that spans lines: consume until its `>` (at brace depth 0).
+  if (state.pendingTag !== null) {
+    let depth = state.pendingTagBraceDepth;
+    while (i < line.length) {
+      const ch = line[i];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth = Math.max(0, depth - 1);
+      else if (ch === '>' && depth === 0) break;
+      i++;
+    }
+    if (i >= line.length) {
+      state.pendingTagBraceDepth = depth;
+      return; // tag still open
+    }
+    const selfClosing = i > 0 && line[i - 1] === '/';
+    if (state.pendingTag === 'closing') state.inJsxText = false;
+    else if (!selfClosing) state.inJsxText = true;
+    state.pendingTag = null;
+    state.pendingTagBraceDepth = 0;
+    i++;
+  }
+
+  for (; i < line.length; i++) {
+    const ch = line[i];
+
+    if (state.exprDepth > 0) {
+      if (ch === '{') state.exprDepth++;
+      else if (ch === '}') state.exprDepth--;
+      continue;
+    }
+
+    if (ch === '{' && state.inJsxText) {
+      state.exprDepth = 1;
+      continue;
+    }
+
+    if (ch !== '<') continue;
+    const prev = i > 0 ? line[i - 1] : '';
+    const next = line[i + 1] ?? '';
+    if (!isJsxTagStart(prev, next)) continue;
+    const closing = next === '/';
+
+    // Find the tag's `>` on this line, honouring `{}` depth (attr expressions).
+    let depth = 0;
+    let j = i + 1;
+    while (j < line.length) {
+      const c = line[j];
+      if (c === '{') depth++;
+      else if (c === '}') depth = Math.max(0, depth - 1);
+      else if (c === '>' && depth === 0) break;
+      j++;
+    }
+    if (j >= line.length) {
+      state.pendingTag = closing ? 'closing' : 'opening';
+      state.pendingTagBraceDepth = depth;
+      return;
+    }
+    const selfClosing = line[j - 1] === '/';
+    if (closing) state.inJsxText = false;
+    else if (!selfClosing) state.inJsxText = true;
+    i = j;
+  }
+}
+
+/**
+ * Scan one file's CONTENT line-by-line, carrying block-comment state (as
+ * before) plus the cross-line JSX-text state machine. A line is force-scanned
+ * as raw copy (jsxTextContinuation) when we are inside JSX element text, no
+ * tag or `{…}` expression is spanning lines, and the line itself has no angle
+ * bracket (lines WITH tags are handled by the normal per-line rules).
+ * Exported for unit tests; checkFile() delegates here.
+ */
+export function scanFileContent(content: string, filePath: string): Violation[] {
   const violations: Violation[] = [];
-  const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split('\n');
   let inBlockComment = false;
+  const jsx: JsxTextState = {
+    inJsxText: false,
+    pendingTag: null,
+    pendingTagBraceDepth: 0,
+    exprDepth: 0,
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -629,13 +842,28 @@ function checkFile(filePath: string): Violation[] {
     }
 
     if (shouldSkipLine(line, trimmed)) {
+      // Skipped for SCANNING only — the line still advances the JSX state
+      // machine (e.g. a copy line exempted via `cryptographic` is still text).
+      updateJsxTextState(line, jsx);
       continue;
     }
 
-    violations.push(...findTermViolations(line, i + 1, filePath));
+    const isJsxTextContinuation =
+      jsx.inJsxText &&
+      jsx.pendingTag === null &&
+      jsx.exprDepth === 0 &&
+      !line.includes('<') &&
+      !line.includes('>');
+
+    violations.push(...findTermViolations(line, i + 1, filePath, isJsxTextContinuation));
+    updateJsxTextState(line, jsx);
   }
 
   return violations;
+}
+
+function checkFile(filePath: string): Violation[] {
+  return scanFileContent(fs.readFileSync(filePath, 'utf-8'), filePath);
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   findRawEnumRenders,
   findTermViolations,
   partitionAgainstBaseline,
+  scanFileContent,
   shouldCheck,
   shouldSkipLine,
   stripClassNameAttributes,
@@ -724,6 +725,155 @@ describe('partitionAgainstBaseline — grandfather logic (SCRUM-2148)', () => {
       baseline,
     );
     expect(fresh).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// 2026-07-06 — multi-line raw JSX text blind spot (shipped "Bitcoin blockchain"
+// to prod in src/components/verification; found + removed by PR #1433). The
+// per-line short-circuit in findTermViolations (no quote char AND no same-line
+// `<`/`>` pair → skip the forbidden-term loop) meant a banned term on its OWN
+// JSX text line was never scanned. scanFileContent() tracks JSX element-text
+// context ACROSS lines and force-scans raw text continuation lines.
+// =============================================================================
+
+describe('scanFileContent — multi-line raw JSX text blind spot (PR #1433 follow-up)', () => {
+  const lines = (...ls: string[]): string => ls.join('\n');
+
+  it('flags "Bitcoin blockchain" on its own JSX text line (the exact shipped case)', () => {
+    const content = lines(
+      'export function Disclaimer() {',
+      '  return (',
+      '    <p className="text-xs text-muted-foreground leading-relaxed">',
+      '      Arkova verifies that a fingerprint was anchored to the',
+      '      Bitcoin blockchain at the stated time. Arkova does not verify, and makes no',
+      '      representation regarding the underlying document content.',
+      '    </p>',
+      '  );',
+      '}',
+    );
+    const terms = scanFileContent(content, 'src/components/verification/PublicVerification.tsx');
+    expect(terms.map((v) => v.term.toLowerCase())).toContain('bitcoin');
+    expect(terms.map((v) => v.term.toLowerCase())).toContain('blockchain');
+    expect(terms.find((v) => v.term.toLowerCase() === 'bitcoin')?.line).toBe(5);
+  });
+
+  it('reproduces the shipped PublicVerification shape from the checked-in fixture', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const fixture = readFileSync(join(here, 'fixtures/copy-terms-multiline-jsx.fixture.txt'), 'utf-8');
+    const bitcoinLine = fixture.split('\n').findIndex((l) => l.includes('Bitcoin blockchain')) + 1;
+    expect(bitcoinLine).toBeGreaterThan(0);
+
+    const terms = scanFileContent(fixture, 'src/components/verification/PublicVerification.tsx');
+    const bitcoinHits = terms.filter((v) => v.term.toLowerCase() === 'bitcoin');
+    expect(bitcoinHits.map((v) => v.line)).toContain(bitcoinLine);
+    expect(terms.map((v) => v.term.toLowerCase())).toContain('blockchain');
+  });
+
+  it('scans text after a multi-line opening tag (`>` on its own line)', () => {
+    const content = lines(
+      '<p',
+      '  data-testid="disclaimer"',
+      '>',
+      '  Recorded on the Bitcoin network.',
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+  });
+
+  it('keeps JSX-text state across a self-closing element line', () => {
+    const content = lines(
+      '<p>',
+      '  Anchored to the',
+      '  <br />',
+      '  Bitcoin blockchain forever.',
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('blockchain');
+  });
+
+  it('flags a quoted-for-emphasis banned word on a text continuation line', () => {
+    const content = lines(
+      '<p>',
+      '  anchored to the "Bitcoin" network',
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+  });
+
+  it('flags text around an inline balanced JSX expression without flagging the expression', () => {
+    const content = lines(
+      '<p>',
+      "  Secured {formatNetwork('mainnet')} times on the Bitcoin network",
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+    expect(terms).not.toContain('mainnet'); // code value inside {…}, not copy
+  });
+
+  it('does NOT flag code values inside a multi-line JSX expression', () => {
+    const content = lines(
+      '<div>',
+      "  {network === 'bitcoin'",
+      "    ? primaryLabel",
+      "    : 'mainnet'}",
+      '</div>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).not.toContain('bitcoin');
+    expect(terms).not.toContain('mainnet');
+  });
+
+  it('does NOT flag plain code lines after the JSX block closes', () => {
+    const content = lines(
+      'function C() {',
+      '  return (',
+      '    <p>',
+      '      All good copy here.',
+      '    </p>',
+      '  );',
+      '}',
+      'const hash = computeFingerprint(data);',
+      'export { hash };',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
+  });
+
+  it('does NOT let a TS generic (`Array<string>`) fake a JSX text context', () => {
+    const content = lines(
+      'const xs: Array<string> = [];',
+      'const hash = xs.length;',
+      'let wallet = 0;',
+    );
+    expect(scanFileContent(content, 'src/lib/x.ts')).toHaveLength(0);
+  });
+
+  it('single-line JSX copy still flags exactly as before (parity)', () => {
+    const content = '<p className="text-xs">Block Height</p>';
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms.some((t) => t.includes('block'))).toBe(true);
+  });
+
+  it('still skips block comments and line comments in multi-line JSX context', () => {
+    const content = lines(
+      '<p>',
+      '  {/* Bitcoin blockchain — engineering note, not copy */}',
+      '  visible copy line',
+      '</p>',
+      '/*',
+      ' * Bitcoin blockchain in a block comment',
+      ' */',
+      '// Bitcoin blockchain in a line comment',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
   });
 });
 
