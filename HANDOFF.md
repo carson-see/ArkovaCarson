@@ -14,6 +14,18 @@
 
 ## Now
 
+### 2026-07-06 (RTE/ART) - Sprint 4 priority set; S3 still in progress; OPS-02 is top ART priority
+
+RTE reviewed the Drive PI-0 lane plans in folder `1cu5KsxHA7Kox6Dz-sTxfWY88meXn_4w5`, live GitHub open PR state, Jira/Confluence, and Lane 1/2/3 subteam input. Founder report created in the same Drive folder: https://docs.google.com/document/d/1-DgrevxqsMI9QHMez8o-pSlgOf4b2UGYLkbBF9YkybQ/edit?usp=drivesdk.
+
+**ART disposition:** Sprint 4 remains an integration/soak/evidence sprint, not a late feature-build sprint. **Lane 2 is the top Sprint 4 priority** because it owns OPS-02 / OPS-04: the single consolidated 48h clean-mirror launch proving soak and founder evidence closeout. Lane 1 is second because proof/verifier E2E inside OPS-02 closes the offline trust proof. Lane 3 is third for Sprint 4 execution because connector/CE evidence feeds OPS-02, with immediate unblock priority on Lane 3 carryover (#1380, #1412, #1413, #1415).
+
+**Current S3 reality:** Sprint 3 is still in progress and will not be done for a few days. GitHub shows 14 open PRs as of the RTE pass: #1367 is open/non-draft/dequeued/UNSTABLE; #1380 is open/non-draft/dequeued/BLOCKED; most S3 lane PRs are draft or blocked (#1405, #1406, #1408, #1409, #1410, #1411, #1412, #1413, #1415, #1416, #1417). Do not start Sprint 4 as a clean code-freeze/integration sprint until S3 inputs are landed, closed, or explicitly risk-accepted.
+
+**Source-of-truth updates:** SCRUM-2400 was updated to priority Highest with labels `art-p0` and `s4-top-priority`, and Jira comment `16731` records the RTE disposition + report link. Confluence Program Board page `85622786` has footer comment `94666753` with the same disposition. No production, schema, soak, or runtime state changed. `CLAUDE.md` was not changed because no directive/rule changed.
+
+_Last refreshed: 2026-07-06 by Codex - claims verified against Drive folder `1cu5KsxHA7Kox6Dz-sTxfWY88meXn_4w5`, founder report `1-DgrevxqsMI9QHMez8o-pSlgOf4b2UGYLkbBF9YkybQ`, `gh pr list`/check-rollup for open PRs, Jira SCRUM-2400 comment `16731`, and Confluence footer comment `94666753`._
+
 ### 2026-06-29 (Lane 2 S2) — queue-first loop consumer + FE-PROOF-GATE built; 4 draft PRs open for review
 
 Lane-2 PI-0 Sprint-2 driven to **build-complete** (this session's PRs only; #1260 + other carryover are prior-session, out of scope). Ceremonies (refinement/planning/pre-mortem) + the full gate run executed. **Nothing merged by Claude; no prod/schema/soak state changed.** Plans + close-out in Drive `ARKOVA PI-0-S2`.

@@ -187,10 +187,18 @@ export async function createChangesWatch(args: {
   address: string;
   token?: string;
   deps?: DriveClientDeps;
-}): Promise<{ resourceId: string; expiration: string }> {
+  // DRIVE-02 (SCRUM-2367): the folder id being watched, so a shared-drive folder
+  // scopes its changes.watch to the correct corpus. Optional to preserve the
+  // existing My-Drive callers' behavior.
+  driveId?: string;
+}): Promise<{ resourceId: string; expiration: string; startPageToken: string }> {
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
-  // Drive requires a startPageToken to watch changes.
-  const startRes = await fetchImpl(`${DRIVE_API_BASE}/changes/startPageToken`, {
+  // Drive requires a startPageToken to watch changes. For a shared-drive corpus
+  // the token must be scoped to that drive.
+  const startTokenQuery = args.driveId
+    ? `?driveId=${encodeURIComponent(args.driveId)}&supportsAllDrives=true`
+    : '';
+  const startRes = await fetchImpl(`${DRIVE_API_BASE}/changes/startPageToken${startTokenQuery}`, {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
   const startJson = (await startRes.json().catch(() => null)) as { startPageToken?: string } | null;
@@ -206,8 +214,11 @@ export async function createChangesWatch(args: {
     token: args.token,
   };
 
+  const watchQuery = args.driveId
+    ? `&driveId=${encodeURIComponent(args.driveId)}&supportsAllDrives=true&includeItemsFromAllDrives=true`
+    : '';
   const res = await fetchImpl(
-    `${DRIVE_API_BASE}/changes/watch?pageToken=${encodeURIComponent(startJson.startPageToken)}`,
+    `${DRIVE_API_BASE}/changes/watch?pageToken=${encodeURIComponent(startJson.startPageToken)}${watchQuery}`,
     {
       method: 'POST',
       headers: {
@@ -229,7 +240,9 @@ export async function createChangesWatch(args: {
   const expirationIso = json.expiration
     ? new Date(Number(json.expiration)).toISOString()
     : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  return { resourceId: json.resourceId, expiration: expirationIso };
+  // DRIVE-02: expose the startPageToken so the bootstrap can persist it as the
+  // watch's initial_page_token (the durable resume anchor).
+  return { resourceId: json.resourceId, expiration: expirationIso, startPageToken: startJson.startPageToken };
 }
 
 /** Stop an active Drive push-notification channel during renewal/disconnect. */
