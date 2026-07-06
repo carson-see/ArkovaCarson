@@ -173,8 +173,14 @@ async function readAnchorSecuredRate(): Promise<AnchorSecuredRateSurface> {
 }
 
 /** Statuses that mean a connector_artifact row still has work outstanding
- * (mirrors `connector-artifact-drain.ts` WORK_STATUSES). */
-const CONNECTOR_DEPTH_STATUSES = new Set(['pending', 'queued', 'processing', 'materialized']);
+ * (mirrors `connector-artifact-drain.ts` WORK_STATUSES + in-flight `processing`). */
+const CONNECTOR_WORK_STATUSES = ['pending', 'queued', 'processing', 'materialized'] as const;
+
+/** Shape of a PostgREST head-count response (`{ count: 'exact', head: true }`). */
+interface CountResult {
+  count: number | null;
+  error: { message?: string } | null;
+}
 
 async function readConnectorQueue(): Promise<ConnectorQueueSurface> {
   const unavailable = (error: string): ConnectorQueueSurface => ({
@@ -187,31 +193,30 @@ async function readConnectorQueue(): Promise<ConnectorQueueSurface> {
   });
 
   try {
-    // Bounded scan mirroring `defaultListDrainableOrgIds` — status-only column
-    // read over the (org_id, status) index, capped so a pathological backlog
-    // can't produce an unbounded response.
-    // `connector_artifact` (migration 0343) isn't in the generated
-    // database.types.ts yet (same escape hatch as connector-artifact-drain.ts).
+    // EXACT server-side counts — never a row sample. An unordered/limited row
+    // scan of a table that can hold millions returns an ARBITRARY subset, so a
+    // 500k backlog could read as "healthy" if the sample happened to be mostly
+    // terminal rows — inverting the dashboard's purpose. Three head-count
+    // queries (no rows transferred), each served by the (org_id, status) index
+    // from migration 0343.
+    // `connector_artifact` isn't in the generated database.types.ts yet (same
+    // escape hatch as connector-artifact-drain.ts).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db as any)
-      .from('connector_artifact')
-      .select('status')
-      .limit(20_000);
+    const table = () => (db as any).from('connector_artifact');
+    const [workRes, anchoredRes, failedRes] = (await Promise.all([
+      table().select('*', { count: 'exact', head: true }).in('status', [...CONNECTOR_WORK_STATUSES]),
+      table().select('*', { count: 'exact', head: true }).eq('status', 'anchored'),
+      table().select('*', { count: 'exact', head: true }).eq('status', 'failed'),
+    ])) as [CountResult, CountResult, CountResult];
 
-    if (error) return unavailable((error as { message?: string }).message ?? 'connector_artifact select failed');
-    if (!Array.isArray(data)) return unavailable('malformed connector_artifact response');
-
-    let depth = 0;
-    let anchored = 0;
-    let failed = 0;
-    for (const row of data as Array<{ status?: string }>) {
-      const status = row.status;
-      if (!status) continue;
-      if (CONNECTOR_DEPTH_STATUSES.has(status)) depth += 1;
-      else if (status === 'anchored') anchored += 1;
-      else if (status === 'failed') failed += 1;
+    for (const res of [workRes, anchoredRes, failedRes]) {
+      if (res.error) return unavailable(res.error.message ?? 'connector_artifact count failed');
+      if (typeof res.count !== 'number') return unavailable('connector_artifact count missing');
     }
 
+    const depth = workRes.count as number;
+    const anchored = anchoredRes.count as number;
+    const failed = failedRes.count as number;
     const breach = depth > CONNECTOR_QUEUE_DEPTH_BREACH_ABOVE;
 
     return { available: true, depth, anchored, failed, breach, error: null };
@@ -380,6 +385,8 @@ export async function handleOpsSloStats(
   _req: Request,
   res: Response,
 ): Promise<void> {
+  // Fail-closed: any error here throws before data reads fire (the route
+  // wrapper's catch answers 500; no SLO query runs for an unverified caller).
   const isAdmin = await isPlatformAdmin(userId);
   if (!isAdmin) {
     res.status(403).json({ error: 'Forbidden — platform admin access required' });

@@ -39,16 +39,78 @@ function queryStub(result: { data: unknown; error: unknown }) {
   builder.gte = vi.fn(chain);
   builder.in = vi.fn(chain);
   builder.order = vi.fn(chain);
-  // Every handler query terminates with `.limit(...)` — the sole resolving
-  // method in this stub. If a future query drops `.limit`, add a thenable.
+  // Every non-connector handler query terminates with `.limit(...)` — the sole
+  // resolving method in this stub. If a future query drops `.limit`, add a thenable.
   builder.limit = vi.fn(() => Promise.resolve(result));
   return builder;
 }
 
+/**
+ * Records connector_artifact query shape so tests can pin the exact-count
+ * contract (never a bounded row sample). One recorder is shared across the
+ * three fresh builders a single handler call creates.
+ */
+interface ConnectorCalls {
+  selectOptions: unknown[];
+  limitUsed: boolean;
+}
+
+/**
+ * connector_artifact query-builder stub. The handler now issues three EXACT
+ * head-count queries (`select('*', { count:'exact', head:true })` + `.in`/`.eq`
+ * on status), each awaited directly — so the builder is a thenable resolving to
+ * `{ count, error }`. The count is DERIVED from the fixture's status rows via
+ * the actual `.in`/`.eq` predicate, so every existing `{ data:[rows], error }`
+ * fixture keeps expressing intent as a row set while exercising the count path.
+ */
+function connectorCountStub(
+  result: { data: unknown; error: unknown },
+  calls: ConnectorCalls,
+) {
+  let predicate: (row: { status?: string }) => boolean = () => false;
+  const builder: Record<string, unknown> = {};
+  builder.select = vi.fn((_cols: unknown, opts: unknown) => {
+    calls.selectOptions.push(opts);
+    return builder;
+  });
+  builder.in = vi.fn((_col: string, vals: string[]) => {
+    predicate = (row) => typeof row.status === 'string' && vals.includes(row.status);
+    return builder;
+  });
+  builder.eq = vi.fn((_col: string, val: string) => {
+    predicate = (row) => row.status === val;
+    return builder;
+  });
+  builder.gte = vi.fn(() => builder);
+  builder.order = vi.fn(() => builder);
+  builder.limit = vi.fn(() => {
+    calls.limitUsed = true;
+    return Promise.resolve(result);
+  });
+  // Thenable: `await builder` (in Promise.all) resolves the count.
+  builder.then = (
+    resolve: (v: { count: number | null; error: unknown }) => unknown,
+    reject: (e: unknown) => unknown,
+  ) => {
+    if (result.error) {
+      return Promise.resolve({ count: null, error: result.error }).then(resolve, reject);
+    }
+    const rows = Array.isArray(result.data) ? (result.data as Array<{ status?: string }>) : [];
+    return Promise.resolve({ count: rows.filter(predicate).length, error: null }).then(resolve, reject);
+  };
+  return builder;
+}
+
+/** Shared recorder for the most recent mockFrom() setup. */
+let connectorCalls: ConnectorCalls = { selectOptions: [], limitUsed: false };
+
 function mockFrom(byTable: Record<string, { data: unknown; error: unknown }>) {
+  connectorCalls = { selectOptions: [], limitUsed: false };
   (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
     const result = byTable[table] ?? { data: [], error: null };
-    return queryStub(result);
+    return table === 'connector_artifact'
+      ? connectorCountStub(result, connectorCalls)
+      : queryStub(result);
   });
 }
 
@@ -181,6 +243,39 @@ describe('handleOpsSloStats — happy path (all healthy)', () => {
 
     expect(payload.overallBreach).toBe(false);
     expect(typeof payload.checkedAt).toBe('string');
+  });
+
+  it('counts connector depth by status via EXACT head-count, never a bounded row sample', async () => {
+    // Regression for the review finding: an unordered `.limit(20_000)` row scan
+    // of a millions-row table returns an ARBITRARY subset, so a large backlog
+    // could read as "healthy". The handler must count by status server-side.
+    // Here 4 work rows (pending/queued/processing/materialized) sit among many
+    // terminal rows — the depth must be exactly 4, and the query must use
+    // count-mode (`head:true`), never `.limit`.
+    isPlatformAdminMock.mockResolvedValueOnce(true);
+    mockRpcs({});
+    const bigBacklog = [
+      { status: 'pending' }, { status: 'queued' }, { status: 'processing' }, { status: 'materialized' },
+      ...Array.from({ length: 50 }, () => ({ status: 'anchored' })),
+      ...Array.from({ length: 7 }, () => ({ status: 'failed' })),
+      ...Array.from({ length: 12 }, () => ({ status: 'skipped' })),
+    ];
+    mockFrom({
+      connector_artifact: { data: bigBacklog, error: null },
+      webhook_delivery_logs: { data: [], error: null },
+    });
+
+    const res = mockRes();
+    await handleOpsSloStats('admin-1', {} as Request, res);
+
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.connectorQueue.available).toBe(true);
+    expect(payload.connectorQueue.depth).toBe(4); // the 4 work rows, not a sample
+    expect(payload.connectorQueue.anchored).toBe(50);
+    expect(payload.connectorQueue.failed).toBe(7);
+    // Anti-sampling contract: exact head-count mode, no `.limit()` row scan.
+    expect(connectorCalls.limitUsed).toBe(false);
+    expect(connectorCalls.selectOptions).toContainEqual({ count: 'exact', head: true });
   });
 });
 
