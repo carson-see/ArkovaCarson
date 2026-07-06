@@ -19,7 +19,12 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 
 ## 2026-07-06 CE-04 contact-hour sourcing in normalizeAnchorRow (SCRUM-2375, S3)
 
-- `normalizeAnchorRow` additionally derives `contactHours` (CE continuing-education ContactHour credit) from an allow-listed metadata key set (`contact_hours`/`credit_hours`/`ce_credit_hours` + camelCase) via `contactHoursFromMetadata`, accepting plain numbers or bare numeric strings and gating through the serializer-exported `normalizeContactHours` plausibility check (0 < v ≤ 1000). `ceu`/`ceus` are NOT allow-listed — no fabricated unit conversion. The serializer emits it as `ceterms:creditValue` (ValueProfile + `creditUnit:ContactHour`) for CPE/CLE only; see `ctdl/agents.md`. Additive optional field on the public CTDL body (§1.8-safe). CONFLATION GUARD: unrelated to the billing `credit_ledger`.
+- `normalizeAnchorRow` additionally derives `contactHours` (CE continuing-education ContactHour credit) from an allow-listed metadata key set (`contact_hours`/`credit_hours`/`ce_credit_hours` + camelCase) via `contactHoursFromMetadata`, accepting plain numbers or CANONICAL decimal strings only (`/^\d+(\.\d+)?$/` — round-1 review fix on PR #1412: `Number()`-coercible forms like `'0x10'`/`'1e3'`/`'Infinity'`/`'+5'` are ignored) and gating through the serializer-exported `normalizeContactHours` plausibility check (0 < v ≤ `MAX_CONTACT_HOURS` = 1000, the constant shared with `ctdl-validation.ts`). `ceu`/`ceus` are NOT allow-listed — no fabricated unit conversion. The serializer emits it as `ceterms:creditValue` (ValueProfile + `creditUnit:ContactHour`) for CPE/CLE only; see `ctdl/agents.md`. Additive optional field on the public CTDL body (§1.8-safe). CONFLATION GUARD: unrelated to the billing `credit_ledger`.
+
+## 2026-07-06 CE-06a claims_blocked audit outcome + revocationReason PII (PR #1412 round-1 review fixes)
+
+- `credentials-ctdl.ts` now catches `ProhibitedClaimError` from the serializer's final claims assert with its own audit outcome `claims_blocked` (HTTP 500 `internal_error`, no body, value-free error message), mirroring `CtdlPiiSafetyError`'s `safety_blocked` instead of the generic `error` bucket — claims blocks are observable in `audit_events`.
+- BUG-2026-07-06-002 / SCRUM-2630 (pre-existing): a PII-bearing `revocation_reason` no longer ships on the public 410 body — the serializer routes it through `cleanPublicFreeText` (honest omission; 410 + `ceterms:revocationDate` unchanged). See `ctdl/agents.md`.
 
 ## 2026-07-01 CE-03 expiration sourcing in normalizeAnchorRow (SCRUM-2374, S2)
 
