@@ -32,6 +32,34 @@ export class HttpError extends Error {
   }
 }
 
+// ─── RpcApplicationError ────────────────────────────────────────────────
+
+/**
+ * JSON-RPC application-level error — the `{error: {code, message}}` envelope
+ * a Bitcoin Core-compatible endpoint returns when the METHOD failed (as
+ * opposed to the transport). Definitive by classification: `isRetryableError`
+ * returns false for it, because retrying `sendrawtransaction` on
+ * `bad-txns-*` / `min relay fee not met` / `Not all transactions found`
+ * cannot succeed.
+ *
+ * S3-C2 review #1408-Finding-1: Bitcoin-Core-faithful endpoints wrap EVERY
+ * RPC_* application error in an HTTP 500 (`HTTP_INTERNAL_SERVER_ERROR`), so
+ * the envelope can arrive on a non-OK response. `httpStatus` preserves that
+ * transport status as metadata; the application error is the real failure.
+ */
+export class RpcApplicationError extends Error {
+  constructor(
+    message: string,
+    /** JSON-RPC error code (e.g. -5 RPC_INVALID_ADDRESS_OR_KEY, -27 RPC_VERIFY_ALREADY_IN_CHAIN) */
+    public readonly code?: number,
+    /** HTTP transport status the envelope arrived on (500 on Core-faithful endpoints) */
+    public readonly httpStatus?: number,
+  ) {
+    super(message);
+    this.name = 'RpcApplicationError';
+  }
+}
+
 // ─── Retry with Exponential Backoff ─────────────────────────────────────
 
 interface RetryOptions {
@@ -144,6 +172,13 @@ export function isDuplicateTxError(message: string): boolean {
  *   - Any other unknown error
  */
 export function isRetryableError(error: unknown): boolean {
+  // JSON-RPC application error = the METHOD definitively failed (regardless
+  // of the HTTP status it was wrapped in — #1408-Finding-1). Never retryable:
+  // resubmitting the same call cannot change a definitive verdict.
+  if (error instanceof RpcApplicationError) {
+    return false;
+  }
+
   if (error instanceof HttpError) {
     // 5xx = server-side transient. 429 = rate limit — transient by definition
     // (S3-C2); backoff-and-retry is exactly the right response to it.
@@ -340,6 +375,37 @@ export interface RpcProviderConfig {
   rpcAuth?: string;
 }
 
+/**
+ * Best-effort extraction of a JSON-RPC `{error}` envelope from a non-OK
+ * response body (#1408-Finding-1). Returns null when the body is missing,
+ * unreadable, non-JSON, or carries no error object — the caller then falls
+ * back to the bare (retryable-if-5xx) HttpError, so the fail-safe transient
+ * classification is unchanged for genuinely broken responses.
+ */
+async function tryParseRpcErrorBody(
+  response: { text?: () => Promise<string> },
+): Promise<{ message: string; code?: number } | null> {
+  try {
+    if (typeof response.text !== 'function') return null;
+    const parsed = JSON.parse(await response.text()) as {
+      error?: { message?: unknown; code?: unknown } | null;
+    };
+    if (
+      parsed !== null && typeof parsed === 'object' &&
+      parsed.error != null && typeof parsed.error === 'object' &&
+      typeof parsed.error.message === 'string'
+    ) {
+      return {
+        message: parsed.error.message,
+        code: typeof parsed.error.code === 'number' ? parsed.error.code : undefined,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function rpcCall(
   rpcUrl: string, method: string, params: unknown[] = [], rpcAuth?: string,
 ): Promise<unknown> {
@@ -352,12 +418,30 @@ async function rpcCall(
   const response = await fetch(rpcUrl, { method: 'POST', headers, body, signal: createTimeoutSignal() });
 
   if (!response.ok) {
+    // #1408-Finding-1: Bitcoin-Core-faithful endpoints wrap JSON-RPC
+    // application errors in HTTP 500. Parse the body FIRST — if it carries an
+    // `{error}` envelope, the application error is the real (definitive)
+    // failure and must reach the transient-vs-definitive classifier and
+    // isDuplicateTxError. Only a body with no parseable envelope stays a bare
+    // HttpError (retryable on 5xx — fail-safe unchanged).
+    const appError = await tryParseRpcErrorBody(response);
+    if (appError) {
+      throw new RpcApplicationError(
+        `RPC ${method} error: ${appError.message} (code ${appError.code ?? 'unknown'}) [HTTP ${response.status}]`,
+        appError.code,
+        response.status,
+      );
+    }
     throw new HttpError(`RPC ${method} failed: HTTP ${response.status}`, response.status);
   }
 
   const json = (await response.json()) as { result?: unknown; error?: { message: string; code: number } };
   if (json.error) {
-    throw new Error(`RPC ${method} error: ${json.error.message} (code ${json.error.code})`);
+    throw new RpcApplicationError(
+      `RPC ${method} error: ${json.error.message} (code ${json.error.code})`,
+      json.error.code,
+      response.status,
+    );
   }
   return json.result;
 }
