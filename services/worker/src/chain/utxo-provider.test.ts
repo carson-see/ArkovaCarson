@@ -14,7 +14,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 import {
   RpcUtxoProvider, MempoolUtxoProvider, GetBlockHybridProvider, createUtxoProvider,
-  HttpError, retryWithBackoff, isRetryableError, isDuplicateTxError,
+  HttpError, RpcApplicationError, retryWithBackoff, isRetryableError, isDuplicateTxError,
 } from './utxo-provider.js';
 import { logger } from '../utils/logger.js';
 
@@ -762,5 +762,104 @@ describe('S3-C2 confirmation-proof provider methods — bounded retry', () => {
     mockFetch.mockResolvedValueOnce(rpcOk('ab'.repeat(80)));
     expect(await provider.getBlockHeaderHex('b'.repeat(64))).toBe('ab'.repeat(80));
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─── S3-C2 review #1408-Finding-1: HTTP-wrapped JSON-RPC application errors ──
+// Bitcoin-Core-faithful endpoints wrap JSON-RPC application errors in HTTP 500
+// (`HTTP_INTERNAL_SERVER_ERROR` for every RPC_* app error). rpcCall must parse
+// the response body FIRST on !response.ok: an `{error}` envelope is the REAL,
+// definitive failure. A bare HttpError 500 would (a) misclassify a definitive
+// app error as transient (burning the retry budget) and (b) hide
+// "transaction already in block chain" from the duplicate==success path.
+// Non-JSON / unreadable 5xx bodies keep the fail-safe retryable HttpError.
+
+describe('S3-C2 #1408-Finding-1: rpcCall surfaces HTTP-wrapped JSON-RPC application errors', () => {
+  beforeEach(() => { mockFetch.mockReset(); });
+
+  /** A Bitcoin-Core-faithful failure: HTTP error status, JSON-RPC error body. */
+  function httpWrappedRpcErr(status: number, message: string, code: number) {
+    const body = JSON.stringify({ result: null, error: { message, code }, id: 1 });
+    return { ok: false, status, text: () => Promise.resolve(body) };
+  }
+
+  it('(i) HTTP 500 + {error:{code:-5}} throws a definitive RpcApplicationError — NO retry', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(httpWrappedRpcErr(500, 'Not all transactions found', -5));
+    await expect(provider.getTxOutProof(['a'.repeat(64)])).rejects.toMatchObject({
+      name: 'RpcApplicationError',
+      code: -5,
+      httpStatus: 500,
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1); // definitive → classifier must not retry
+  });
+
+  it('(i) classifier: RpcApplicationError is NOT retryable (definitive), even when HTTP-wrapped', () => {
+    const err = new RpcApplicationError(
+      'RPC gettxoutproof error: Not all transactions found (code -5)', -5, 500,
+    );
+    expect(isRetryableError(err)).toBe(false);
+    expect(err.httpStatus).toBe(500);
+  });
+
+  it('(ii) HTTP 500 + {error:{code:-27, already in block chain}} → duplicate == success', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(httpWrappedRpcErr(500, 'transaction already in block chain', -27));
+    const result = await provider.broadcastTx('0200aabb');
+    expect(result.txid).toBe(''); // prior broadcast landed — success, not unwind
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('(ii) GetBlockHybridProvider: HTTP-wrapped duplicate on broadcast is success too', async () => {
+    const provider = new GetBlockHybridProvider({ rpcUrl: 'https://go.getblock.io/fake-token' });
+    mockFetch.mockResolvedValueOnce(httpWrappedRpcErr(500, 'txn-already-in-mempool', -26));
+    const result = await provider.broadcastTx('0200aabb');
+    expect(result.txid).toBe('');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('(iii) HTTP 500 with a non-JSON body stays a retryable HttpError (fail-safe unchanged)', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve('<html>Internal Server Error</html>') });
+    mockFetch.mockResolvedValueOnce(rpcOk({ chain: 'signet', blocks: 100 }));
+    expect(await provider.getBlockchainInfo()).toEqual({ chain: 'signet', blocks: 100 });
+    expect(mockFetch).toHaveBeenCalledTimes(2); // retried as transient
+  });
+
+  it('(iii) HTTP 500 whose JSON body has NO {error} envelope stays a retryable HttpError', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve('{"result":null}') });
+    mockFetch.mockResolvedValueOnce(rpcOk({ chain: 'signet', blocks: 100 }));
+    expect(await provider.getBlockchainInfo()).toEqual({ chain: 'signet', blocks: 100 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('(iii) unreadable 5xx body (no text()) stays a retryable HttpError — parse never crashes classification', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 502 }); // legacy-mock shape: no .text
+    mockFetch.mockResolvedValueOnce(rpcOk({ chain: 'signet', blocks: 100 }));
+    expect(await provider.getBlockchainInfo()).toEqual({ chain: 'signet', blocks: 100 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('HTTP 4xx with a JSON-RPC error body also surfaces the application error (status preserved)', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(httpWrappedRpcErr(404, 'Method not found', -32601));
+    await expect(provider.getBlockchainInfo()).rejects.toMatchObject({
+      name: 'RpcApplicationError',
+      code: -32601,
+      httpStatus: 404,
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('in-envelope RPC error on HTTP 200 throws the SAME typed RpcApplicationError (single error shape)', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(rpcErr('Wallet not loaded', -18));
+    await expect(provider.getBlockchainInfo()).rejects.toMatchObject({
+      name: 'RpcApplicationError',
+      code: -18,
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
