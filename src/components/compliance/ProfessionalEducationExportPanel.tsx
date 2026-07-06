@@ -40,8 +40,14 @@ export interface ProfessionalEducationExportPanelProps {
 
 const LABELS = PROFESSIONAL_EDUCATION_EXPORT_LABELS;
 
+// Postgres-UUID text, not z.string().uuid(): Zod v4's .uuid() enforces RFC
+// version/variant bits and rejects deterministic seed ids (zeroed fields) that
+// Postgres happily stores — the worker endpoint accepts any non-empty user_id
+// and re-derives authorization from the JWT anyway (SCRUM-2378 e2e caught this).
+const POSTGRES_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const exportRequestSchema = z.object({
-  user_id: z.string().uuid(),
+  user_id: z.string().regex(POSTGRES_UUID_RE),
   jurisdiction: z.string().trim().min(1).max(32).optional(),
   period_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   period_end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

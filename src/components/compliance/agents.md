@@ -15,6 +15,8 @@ Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdictio
 - `RecommendationsCard.tsx` — AI-generated compliance improvement recommendations
 - `JurisdictionPrivacyNotices.tsx` — Jurisdiction-specific privacy notice display
 - `SessionTimeoutBanner.tsx` — HIPAA-compliant session timeout warning banner
+- `ProfessionalEducationExportPanel.tsx` — CPE/CLE compliance-log export panel (workerFetch -> signed URL). SCRUM-2378: renders the inline excluded-records notice (`excluded_count` from the hardened worker endpoints, `data-testid="excluded-records-notice"`) — exclusions are surfaced, never blocking. SCRUM-2379: always renders the section 1.5 jurisdiction-informational disclaimer (`data-testid="jurisdiction-disclaimer"`, copy key `PROFESSIONAL_EDUCATION_S3_LABELS.JURISDICTION_DISCLAIMER`). NOTE: user_id validation uses a Postgres-UUID regex, NOT `z.string().uuid()` — Zod v4 enforces RFC version/variant bits and rejects deterministic seed ids.
+- `OrgCpeMemberDashboard.tsx` — CPE-02 (SCRUM-2380) org CPE dashboard MVP: per-member secured vs pending tiles + last activity over the live `useOrgCpeMemberSummary` hook (no new table, no migration; 0342 partial-index read shape). Org admins see org members; a plain member's data layer is pinned to own rows (query-layer — the standing `anchors_select` policy grants org members the org-wide read; see tests/rls/cpe-org-dashboard.test.ts).
 - `index.ts` — Barrel exports
 
 ## Dependencies

@@ -10,7 +10,7 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 
 - `supabase.ts` — typed Supabase client (anon key only, never service role)
 - `routes.ts` — named route constants consumed by App.tsx and navigation
-- `copy.ts` — all user-facing strings, including legal-page notices; enforces banned-term vocabulary (Constitution 1.3)
+- `copy.ts` — all user-facing strings, including legal-page notices; enforces banned-term vocabulary (Constitution 1.3). Sprint-3 Lane-3 strings (SCRUM-2378/2379/2380) live in ONE contiguous block (`PROFESSIONAL_EDUCATION_S3_LABELS` + `ORG_CPE_DASHBOARD_LABELS`) placed right after `PROFESSIONAL_EDUCATION_EXPORT_LABELS` to minimize cross-stream merge conflicts. `copy-professional-education-overclaim.test.ts` greps every CPE/CLE copy key for overclaim phrases ("meets"/"satisfies"/"legally sufficient" — R-7 claims gate); keep the JURISDICTION_DISCLAIMER consistent with the worker's `JURISDICTION_INFORMATIONAL_DISCLAIMER`.
 - `validators.ts` — Zod schemas for fingerprints, anchors, profiles, API keys
 - `switchboard.ts` — feature flag definitions and client-side checking
 - `workerClient.ts` — fetch wrapper for frontend-to-worker API calls with auth injection

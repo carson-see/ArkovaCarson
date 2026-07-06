@@ -38,6 +38,10 @@ React hooks for data fetching and mutations against Supabase. Each hook encapsul
 - **MVP-09 (Records Pagination + Search):** `useAnchors.ts` needs pagination params (page, pageSize, search, status filter, sort) passed to Supabase `.range()` query.
 - **MVP-12 (Dark Mode):** New `useTheme.ts` hook — localStorage persistence + system preference detection.
 
+## Sprint 3 (Lane 3) additions
+
+- `useOrgCpeMemberSummary.ts` — CPE-02 (SCRUM-2380): live Supabase read for the org CPE dashboard MVP (NO new table/migration). anchors read = 0342 partial-index shape (`org_id` + `cpe_metadata IS NOT NULL`, `issued_at DESC`, cap 1000) with a section-1.6-minimal projection (`user_id, status, issued_at` — never the `cpe_metadata` blob). profiles read (org-scoped policy) supplies name/email. Org admin -> org-wide; plain member -> query pinned to own `user_id` (RLS alone cannot express own-rows-only for org members — see tests/rls/cpe-org-dashboard.test.ts). Pure `fetchOrgCpeMemberSummary()` exported for tests; React-Query hook wraps it.
+
 ## Dependencies
 - `@/lib/supabase` — the typed Supabase client
 - `@/types/database.types` — auto-generated from `supabase gen types`

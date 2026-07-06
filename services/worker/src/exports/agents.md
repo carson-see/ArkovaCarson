@@ -20,6 +20,11 @@ Worker-side document/report **export generators**. Pure-ish modules (DI'd `db`/`
   - `cle_log.exported` audit event (`event_category='ADMIN'`) carries **metadata only** — actor, org, **jurisdiction**, period, format, record_count, request_id — **no export body content** (CC7). Audit failure is non-fatal.
   - Org/user scope enforced in the query (filtered by BOTH `user_id` AND `org_id`); the endpoint also rejects cross-user `user_id` before calling.
 
+## SCRUM-2378 / SCRUM-2379 (Sprint 3) — SECURED-only gate + jurisdiction disclaimer
+
+- **SECURED-only export gate (SCRUM-2378):** BOTH exporters exclude un-SECURED (PENDING/SUBMITTED/…) in-period rows from records — and, for CLE, from the summary aggregates — post-fetch. The count is surfaced as `excluded_count` in the result, the JSON document (additive optional field per section 1.8), the audit `details` (still metadata-only / CC7), and every export endpoint response. Exports are never blocked; exclusions are never silent (FE renders an inline notice).
+- **Jurisdiction-informational disclaimer (SCRUM-2379, section 1.5):** `JURISDICTION_INFORMATIONAL_DISCLAIMER` in `cle-log-export.ts` is embedded verbatim in the CLE JSON (`jurisdiction_disclaimer`, additive `z.literal(...).optional()`) and rendered as a second PDF disclaimer block; echoed on the endpoint response. UI mirror lives in `src/lib/copy.ts` (`PROFESSIONAL_EDUCATION_S3_LABELS.JURISDICTION_DISCLAIMER`) — keep the two consistent in substance. Never use "meets"/"satisfies"/"legally sufficient" in any disclaimer (overclaim tests grep for these).
+
 ## Conventions
 
 - **Storage seam is dependency-injected** (`CpeExportStorage`): unit tests pass with a mock, and the bucket is provisioned as an ops step rather than a DB migration — this keeps export work **T2** (no schema/RLS/migration), not T3. Default bucket: `EXPORTS_STORAGE_BUCKET` env, else `exports`.
