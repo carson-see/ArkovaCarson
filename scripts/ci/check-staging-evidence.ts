@@ -280,7 +280,12 @@ const DEPLOY_WORKER_WORKFLOW = '.github/workflows/deploy-worker.yml';
 // GitHub-Actions `uses:` pin (the Dependabot bump target), a YAML comment, or a
 // blank line. Anything else (env, secrets, min/max-instances, image, region,
 // service account, --set-env-vars, scaling, …) is a real runtime change.
-const DEPLOY_WORKER_USES_LINE_RE = /^[^\S\r\n]*-?[^\S\r\n]*uses:[^\S\r\n]*\S/;
+// Note the optional dash + its trailing whitespace are grouped together rather
+// than written as two adjacent `[^\S\r\n]*` runs — the adjacent form lets the
+// engine split a whitespace span ambiguously (super-linear backtracking Sonar
+// flags). Behaviour is identical: optional indent, optional `- ` list marker,
+// then `uses:`.
+const DEPLOY_WORKER_USES_LINE_RE = /^[^\S\r\n]*(?:-[^\S\r\n]*)?uses:[^\S\r\n]*\S/;
 const YAML_COMMENT_OR_BLANK_RE = /^[^\S\r\n]*(?:#.*)?$/;
 
 /**
@@ -358,7 +363,7 @@ function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
   // non-test importer), so there is no prod-runtime path. Exempt it to T0 BEFORE
   // the PATH_RULES.some() short-circuit — same shape as the deploy-worker carve-out
   // above (a T0 allowlist entry that has to win over a matching PATH_RULE).
-  if (/^services\/worker\/src\/proof\/fixtures\//.test(file)) return true;
+  if (file.startsWith('services/worker/src/proof/fixtures/')) return true;
   if (PATH_RULES.some((rule) => rule.pattern.test(file))) return false;
   return STAGING_TOOLING_ALLOW.some((re) => re.test(file))
     || DOCS_ONLY_RE.test(file)
@@ -1173,6 +1178,9 @@ interface StagingFilesOnlyResult {
  */
 const STAGING_TOOLING_ALLOW = [
   /^scripts\/staging\//,
+  // CI-only local-Supabase bootstrap for the types/tests/e2e jobs (sourced by
+  // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
+  /^scripts\/ci-supabase-start\.sh$/,
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
