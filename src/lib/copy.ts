@@ -3234,7 +3234,6 @@ export const TEMPLATE_REVIEW_LABELS = {
   SUBTITLE:
     'Check each detail before continuing. Fields the AI was less sure about are highlighted and need your confirmation.',
   LOW_CONFIDENCE_BADGE: 'Needs your review',
-  HIGH_CONFIDENCE_BADGE: 'Auto-detected',
   ACKNOWLEDGE_LABEL: 'This is correct',
   ACKNOWLEDGED_LABEL: 'Confirmed',
   EDITED_BADGE: 'Corrected',

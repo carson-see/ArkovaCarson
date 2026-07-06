@@ -445,6 +445,45 @@ describe('AI-03 (SCRUM-2383) — extraction review gate', () => {
     expect(screen.getByTestId('extraction-review-continue')).not.toBeDisabled();
   });
 
+  it('does NOT gate Continue when extraction succeeds with zero displayable fields (sparse extraction)', async () => {
+    // Round-1 review HIGH: sparse extraction (e.g. only credentialType +
+    // fraudSignals, both filtered out by the template mapper) yields zero
+    // displayable fields. The review panel never mounts, so it can never
+    // report review-complete — Continue must not stay disabled forever.
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    vi.mocked(runExtraction).mockResolvedValueOnce({
+      fields: [
+        { key: 'credentialType', value: 'CPE', confidence: 0.6, status: 'suggested' },
+        { key: 'fraudSignals', value: '[]', confidence: 0.6, status: 'suggested' },
+      ],
+      overallConfidence: 0.6,
+      provider: 'gemini',
+      creditsRemaining: 49,
+      ocrResult: { text: 'x', pageCount: 1, method: 'pdfjs', durationMs: 1 },
+      strippingReport: {
+        strippedText: 'x',
+        piiFound: [],
+        redactionCount: 0,
+        originalLength: 1,
+        strippedLength: 1,
+      },
+    } as unknown as Awaited<ReturnType<typeof runExtraction>>);
+    // Template mapper filters both fields → nothing displayable.
+    vi.mocked(applyTemplate).mockResolvedValue({
+      mappedFields: [],
+      unmappedFields: [],
+    } as unknown as Awaited<ReturnType<typeof applyTemplate>>);
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+    await flushAiEnabledState();
+
+    // Panel absent AND non-blocking — same contract as flag-off.
+    expect(screen.queryByTestId('template-review-panel')).not.toBeInTheDocument();
+    expect(screen.getByTestId('extraction-review-continue')).not.toBeDisabled();
+  });
+
   it('enables Continue immediately when every field is high-confidence', async () => {
     vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
     mockExtractionWith([

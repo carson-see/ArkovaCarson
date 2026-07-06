@@ -436,6 +436,16 @@ export function SecureDocumentDialog({
       );
       setExtractedFields(autoAccepted);
 
+      // AI-03 zero-field guard (round-1 review): sparse extraction can leave
+      // zero displayable fields (e.g. only credentialType/fraudSignals, both
+      // filtered by the template mapper). The review panel only mounts when
+      // there are fields, so it can never report review-complete — extraction
+      // success with nothing to review must NOT gate Continue (panel absent
+      // AND non-blocking, same contract as flag-off).
+      if (autoAccepted.length === 0) {
+        setReviewComplete(true);
+      }
+
       // Let the user review extracted fields before confirming.
       // The extracting step with stage=complete shows the field list
       // and a Continue button that navigates to confirm or template.
@@ -475,31 +485,10 @@ export function SecureDocumentDialog({
     }
   }, [fileData, aiEnabled, handleStartExtraction, autoSelectTemplate, handleConfirm]);
 
-  // AI field callbacks
-  const handleFieldAccept = useCallback((key: string, value: string) => {
-    setExtractedFields(prev =>
-      prev.map(f => f.key === key ? { ...f, value, status: 'accepted' as const } : f)
-    );
-  }, []);
-
-  const handleFieldReject = useCallback((key: string) => {
-    setExtractedFields(prev =>
-      prev.map(f => f.key === key ? { ...f, status: 'rejected' as const } : f)
-    );
-  }, []);
-
+  // AI field callbacks (review-panel path; see TemplateReviewPanel)
   const handleFieldEdit = useCallback((key: string, value: string) => {
     setExtractedFields(prev =>
       prev.map(f => f.key === key ? { ...f, value, status: 'edited' as const } : f)
-    );
-  }, []);
-
-  const handleAcceptAll = useCallback((fields: ExtractionField[]) => {
-    setExtractedFields(prev =>
-      prev.map(f => {
-        const matched = fields.find(sf => sf.key === f.key);
-        return matched ? { ...f, status: 'accepted' as const } : f;
-      })
     );
   }, []);
 
@@ -650,15 +639,20 @@ export function SecureDocumentDialog({
           {step === 'extracting' && (
             <div className="space-y-4">
               {extractionProgress && extractionProgress.stage !== 'complete' && (
+                /* Progress-only instance: fields={[]} means the per-field
+                   accept/reject/edit/accept-all callbacks can never fire —
+                   inline no-ops instead of dead handler wiring (round-1
+                   review cleanup). Post-extraction review is owned by
+                   TemplateReviewPanel below. */
                 <AIFieldSuggestions
                   fields={[]}
                   overallConfidence={0}
                   creditsRemaining={0}
                   progress={extractionProgress}
-                  onFieldAccept={handleFieldAccept}
-                  onFieldReject={handleFieldReject}
-                  onFieldEdit={handleFieldEdit}
-                  onAcceptAll={handleAcceptAll}
+                  onFieldAccept={() => {}}
+                  onFieldReject={() => {}}
+                  onFieldEdit={() => {}}
+                  onAcceptAll={() => {}}
                 />
               )}
 
