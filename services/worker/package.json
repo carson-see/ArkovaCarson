@@ -14,6 +14,8 @@
     "test:watch": "vitest",
     "smoke:docusign": "tsx scripts/ops/docusign-connect-smoke.ts",
     "eval:regression": "tsx scripts/nessie-eval-regression.ts",
+    "eval:s3-gate": "tsx src/ai/eval/run-pe-gates.ts --dataset s3 --provider fixture --recorded src/ai/eval/recorded/s3-cpe-cle-recorded.json",
+    "eval:s3-gate:seed": "tsx src/ai/eval/run-pe-gates.ts --dataset s3 --provider mock --seed-recorded src/ai/eval/recorded/s3-cpe-cle-recorded.json",
     "audit:golden": "tsx scripts/golden-distribution-audit.ts",
     "build:circuit": "bash circuits/build.sh"
   },

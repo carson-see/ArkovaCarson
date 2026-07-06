@@ -6,7 +6,7 @@ export interface EvalGateFieldRequirement {
 }
 
 export interface EvalGateConfig {
-  gateId: 'SCRUM-1962' | 'SCRUM-1963' | 'SCRUM-2187';
+  gateId: 'SCRUM-1962' | 'SCRUM-1963' | 'SCRUM-2187' | 'SCRUM-2382';
   label: string;
   blocksStory: string;
   minimumEntries: number;
@@ -75,6 +75,26 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
     requiredFields: [{ field: 'courseId', minimumF1: 0.75 }],
     matchesEntry: (entry) =>
       hasTag(entry, 'course-id') && !hasTag(entry, 'cpe') && !hasTag(entry, 'cle') && isGateFixture(entry),
+  },
+  {
+    // AI-02 (S3): deterministic F1 gate for the S3 CPE/CLE golden set
+    // (golden-dataset-cpe-cle-s3.ts). Aggregate weighted F1 >= 0.80 AND
+    // per-critical-field floors — creditHours, issuedDate, credentialType —
+    // fail below either. minimumEntries is HARD-CODED to the full 48-entry
+    // gate split so a shrinking dataset fails the gate instead of silently
+    // lowering the coverage bar. Held-out entries are excluded by
+    // isGateFixture (NON_GATE_SPLIT_TAGS).
+    gateId: 'SCRUM-2382',
+    label: 'S3 CPE/CLE extraction eval gate',
+    blocksStory: 'SCRUM-2383',
+    minimumEntries: 48,
+    minimumWeightedF1: 0.8,
+    requiredFields: [
+      { field: 'creditHours', minimumF1: 0.85 },
+      { field: 'issuedDate', minimumF1: 0.8 },
+      { field: 'credentialType', minimumF1: 0.8 },
+    ],
+    matchesEntry: (entry) => hasTag(entry, 's3-cpe-cle') && isGateFixture(entry),
   },
 ];
 
