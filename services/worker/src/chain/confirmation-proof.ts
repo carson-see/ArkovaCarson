@@ -35,6 +35,7 @@
 import * as bitcoin from 'bitcoinjs-lib';
 import { logger } from '../utils/logger.js';
 import type { MerkleProofEntry } from '../utils/merkle.js';
+import { isRetryableError } from './utxo-provider.js';
 import type { ConfirmationProofProvider } from './utxo-provider.js';
 
 // Re-export so callers/tests can import the provider slice alongside the
@@ -577,7 +578,9 @@ function extractBranchForIndex(
  *   3. Below `minConfirmations` ⇒ `pending`.
  *   4. Fetch raw header (getBlockHeaderHex) + the inclusion proof
  *      (getTxOutProof), parse, verify the branch recomputes to the header
- *      merkleroot. Any gap ⇒ `stale` with a reason; NEVER throws.
+ *      merkleroot. A TRANSIENT provider read failure (network/5xx/timeout/429)
+ *      ⇒ `pending` (retry next tick, S3-C2); a definitive negative answer or
+ *      malformed/mismatched proof ⇒ `stale` with a reason; NEVER throws.
  *
  * The provider is the `ConfirmationProofProvider` slice of `UtxoProvider`;
  * GetBlock's `GetBlockHybridProvider` is the production implementation.
@@ -658,6 +661,27 @@ export async function fetchConfirmationProof(
       provider.getTxOutProof([chainTxId], blockHash),
     ]);
   } catch (err) {
+    // S3-C2 provider-failure semantics: a TRANSIENT read failure (network,
+    // 5xx, timeout, rate limit) — i.e. the provider's own bounded retries were
+    // exhausted while GetBlock was unreachable — is NOT evidence of a reorg.
+    // Degrade to `pending` so the next tick retries, and NEVER fabricate any
+    // proof field (no header, no branch, no mempool-derived pseudo-proof).
+    // Definitive RPC application errors (e.g. "Not all transactions found in
+    // specified or retrieved block") remain `stale`: the provider answered,
+    // and the answer was negative.
+    if (isRetryableError(err)) {
+      logger.warn(
+        { chainTxId, blockHash, err: errMsg(err) },
+        'confirmation-proof: transient header/proof fetch failure — pending, will retry',
+      );
+      return {
+        status: 'pending',
+        chainTxId,
+        blockHash,
+        confirmations,
+        reason: 'transient provider failure fetching header or inclusion proof; will retry',
+      };
+    }
     logger.warn({ chainTxId, blockHash, err: errMsg(err) }, 'confirmation-proof: header/proof fetch failed');
     return { status: 'stale', chainTxId, blockHash, confirmations, reason: 'header or inclusion-proof fetch failed' };
   }
