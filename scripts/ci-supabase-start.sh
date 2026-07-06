@@ -175,6 +175,45 @@ done
 
 echo "Migration filenames fixed."
 
+# --- Escape Docker Hub anonymous rate limits (TOOMANYREQUESTS) in CI ---
+# The Supabase stack (`supabase start`) AND `supabase gen types --local` pull
+# images from docker.io. The shared GitHub-runner IP pool routinely trips the
+# anonymous 100-pull/6h limit, which surfaces as
+#   `docker: Error response from daemon: toomanyrequests: Rate exceeded`
+# and intermittently fails `supabase start` / `gen:types` / `db reset` — most
+# visibly in the Mergify merge-queue speculative drafts, which kept dequeuing
+# migration PRs (#1367 3x, 2026-07-06). Route docker.io pulls through Google's
+# public pull-through cache (no auth, no per-IP cap). Daemon config persists
+# across job steps, so setting it here (before any Supabase docker pull) also
+# covers the later `gen types --local` / `db reset` steps in the same job.
+#
+# Best-effort by design: every mutation is guarded with `|| true` and falls back
+# to the default registry, so a mirror hiccup can never break the previously
+# green path. Mirrors the public.ecr.aws escape already used for the Trivy DB in
+# deploy-worker.yml ("Escape the shared pool — the usual TOOMANYREQUESTS source").
+if [[ "${CI:-}" == "true" ]] && command -v sudo >/dev/null 2>&1; then
+  echo "Configuring docker.io registry mirror (mirror.gcr.io) to dodge anonymous rate limits..."
+  daemon_json="/etc/docker/daemon.json"
+  tmp_daemon="$(mktemp)"
+  if sudo test -s "$daemon_json" && command -v jq >/dev/null 2>&1; then
+    # Merge our mirror into any existing daemon config (preserve runner settings).
+    if ! sudo cat "$daemon_json" 2>/dev/null \
+      | jq '. + {"registry-mirrors": ((.["registry-mirrors"] // []) + ["https://mirror.gcr.io"] | unique)}' \
+        > "$tmp_daemon" 2>/dev/null; then
+      echo '{"registry-mirrors":["https://mirror.gcr.io"]}' > "$tmp_daemon"
+    fi
+  else
+    echo '{"registry-mirrors":["https://mirror.gcr.io"]}' > "$tmp_daemon"
+  fi
+  sudo cp "$daemon_json" "${daemon_json}.bak" 2>/dev/null || true
+  sudo cp "$tmp_daemon" "$daemon_json" 2>/dev/null || true
+  rm -f "$tmp_daemon"
+  sudo systemctl restart docker 2>/dev/null || sudo service docker restart 2>/dev/null || true
+  # Wait for the daemon to come back before Supabase issues its first pull.
+  for _ in $(seq 1 15); do docker info >/dev/null 2>&1 && break; sleep 1; done
+  echo "Docker registry mirror configured (best-effort)."
+fi
+
 # --- Start Supabase ---
 echo "Stopping any existing local Supabase containers..."
 supabase stop --no-backup >/dev/null 2>&1 || true
