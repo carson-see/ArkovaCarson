@@ -273,9 +273,10 @@ describe('handleOpsSloStats — happy path (all healthy)', () => {
     expect(payload.connectorQueue.depth).toBe(4); // the 4 work rows, not a sample
     expect(payload.connectorQueue.anchored).toBe(50);
     expect(payload.connectorQueue.failed).toBe(7);
-    // Anti-sampling contract: exact head-count mode, no `.limit()` row scan.
+    // Anti-sampling contract: whole-table count mode (planner-estimated, not a
+    // full-scan `exact` count — R0-8), and never a `.limit()` row scan.
     expect(connectorCalls.limitUsed).toBe(false);
-    expect(connectorCalls.selectOptions).toContainEqual({ count: 'exact', head: true });
+    expect(connectorCalls.selectOptions).toContainEqual({ count: 'estimated', head: true });
   });
 });
 

@@ -18,7 +18,7 @@
  * the RTE's Sprint-3 disposition (HANDOFF.md 2026-07-06).
  */
 
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, RefreshCw, Anchor, ListChecks, Coins, Webhook, Activity } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -66,6 +66,45 @@ function SurfaceBadge({ available, breach }: Readonly<{ available: boolean; brea
       <CheckCircle2 className="h-3 w-3 mr-1" />
       {OPS_SLO_LABELS.ALL_CLEAR_BADGE.split(' ')[0]}
     </Badge>
+  );
+}
+
+/**
+ * One SLO surface card. Every surface renders the same scaffold (title + icon,
+ * a big value, a health badge, a subtitle) — only the data differs — so the
+ * five cards share this single component rather than repeating the markup.
+ */
+function SloCard({
+  testId,
+  title,
+  icon,
+  value,
+  available,
+  breach,
+  subtitle,
+}: Readonly<{
+  testId: string;
+  title: string;
+  icon: ReactNode;
+  value: string;
+  available: boolean;
+  breach: boolean;
+  subtitle: string;
+}>) {
+  return (
+    <Card data-testid={testId}>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        {icon}
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-2xl font-bold font-mono">{value}</span>
+          <SurfaceBadge available={available} breach={breach} />
+        </div>
+        <p className="text-xs text-muted-foreground">{subtitle}</p>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -168,128 +207,83 @@ export function OpsSloDashboardPage() {
 
         {stats && (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4" data-testid="ops-slo-cards">
-            {/* Anchor Secure Rate */}
-            <Card data-testid="slo-card-anchor-secured-rate">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{OPS_SLO_LABELS.ANCHOR_SECURED_RATE_TITLE}</CardTitle>
-                <Anchor className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-2xl font-bold font-mono">
-                    {stats.anchorSecuredRate.available ? formatPct(stats.anchorSecuredRate.ratePct) : '—'}
-                  </span>
-                  <SurfaceBadge available={stats.anchorSecuredRate.available} breach={stats.anchorSecuredRate.breach} />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {stats.anchorSecuredRate.available
-                    ? OPS_SLO_LABELS.ANCHOR_SECURED_RATE_SUBTITLE(
-                      formatCount(stats.anchorSecuredRate.securedCount),
-                      formatCount(stats.anchorSecuredRate.totalCount),
-                    )
-                    : OPS_SLO_LABELS.ANCHOR_SECURED_RATE_UNAVAILABLE}
-                </p>
-              </CardContent>
-            </Card>
+            <SloCard
+              testId="slo-card-anchor-secured-rate"
+              title={OPS_SLO_LABELS.ANCHOR_SECURED_RATE_TITLE}
+              icon={<Anchor className="h-4 w-4 text-muted-foreground" />}
+              value={stats.anchorSecuredRate.available ? formatPct(stats.anchorSecuredRate.ratePct) : '—'}
+              available={stats.anchorSecuredRate.available}
+              breach={stats.anchorSecuredRate.breach}
+              subtitle={stats.anchorSecuredRate.available
+                ? OPS_SLO_LABELS.ANCHOR_SECURED_RATE_SUBTITLE(
+                  formatCount(stats.anchorSecuredRate.securedCount),
+                  formatCount(stats.anchorSecuredRate.totalCount),
+                )
+                : OPS_SLO_LABELS.ANCHOR_SECURED_RATE_UNAVAILABLE}
+            />
 
-            {/* Connector Queue Depth */}
-            <Card data-testid="slo-card-connector-queue">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{OPS_SLO_LABELS.CONNECTOR_QUEUE_TITLE}</CardTitle>
-                <ListChecks className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-2xl font-bold font-mono">
-                    {stats.connectorQueue.available ? formatCount(stats.connectorQueue.depth) : '—'}
-                  </span>
-                  <SurfaceBadge available={stats.connectorQueue.available} breach={stats.connectorQueue.breach} />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {stats.connectorQueue.available
-                    ? OPS_SLO_LABELS.CONNECTOR_QUEUE_SUBTITLE(
-                      formatCount(stats.connectorQueue.anchored),
-                      formatCount(stats.connectorQueue.failed),
-                    )
-                    : OPS_SLO_LABELS.CONNECTOR_QUEUE_UNAVAILABLE}
-                </p>
-              </CardContent>
-            </Card>
+            <SloCard
+              testId="slo-card-connector-queue"
+              title={OPS_SLO_LABELS.CONNECTOR_QUEUE_TITLE}
+              icon={<ListChecks className="h-4 w-4 text-muted-foreground" />}
+              value={stats.connectorQueue.available ? formatCount(stats.connectorQueue.depth) : '—'}
+              available={stats.connectorQueue.available}
+              breach={stats.connectorQueue.breach}
+              subtitle={stats.connectorQueue.available
+                ? OPS_SLO_LABELS.CONNECTOR_QUEUE_SUBTITLE(
+                  formatCount(stats.connectorQueue.anchored),
+                  formatCount(stats.connectorQueue.failed),
+                )
+                : OPS_SLO_LABELS.CONNECTOR_QUEUE_UNAVAILABLE}
+            />
 
-            {/* Credit Ledger Conservation */}
-            <Card data-testid="slo-card-credit-conservation">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{OPS_SLO_LABELS.CREDIT_CONSERVATION_TITLE}</CardTitle>
-                <Coins className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-2xl font-bold font-mono">
-                    {stats.creditConservation.available
-                      ? (stats.creditConservation.breach
-                        ? OPS_SLO_LABELS.CREDIT_CONSERVATION_BREACH(stats.creditConservation.divergedCount ?? 0)
-                        : OPS_SLO_LABELS.CREDIT_CONSERVATION_HEALTHY)
-                      : '—'}
-                  </span>
-                  <SurfaceBadge available={stats.creditConservation.available} breach={stats.creditConservation.breach} />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {stats.creditConservation.available
-                    ? OPS_SLO_LABELS.CREDIT_CONSERVATION_SUBTITLE(formatCount(stats.creditConservation.orgsChecked))
-                    : OPS_SLO_LABELS.CREDIT_CONSERVATION_UNAVAILABLE}
-                </p>
-              </CardContent>
-            </Card>
+            <SloCard
+              testId="slo-card-credit-conservation"
+              title={OPS_SLO_LABELS.CREDIT_CONSERVATION_TITLE}
+              icon={<Coins className="h-4 w-4 text-muted-foreground" />}
+              value={stats.creditConservation.available
+                ? (stats.creditConservation.breach
+                  ? OPS_SLO_LABELS.CREDIT_CONSERVATION_BREACH(stats.creditConservation.divergedCount ?? 0)
+                  : OPS_SLO_LABELS.CREDIT_CONSERVATION_HEALTHY)
+                : '—'}
+              available={stats.creditConservation.available}
+              breach={stats.creditConservation.breach}
+              subtitle={stats.creditConservation.available
+                ? OPS_SLO_LABELS.CREDIT_CONSERVATION_SUBTITLE(formatCount(stats.creditConservation.orgsChecked))
+                : OPS_SLO_LABELS.CREDIT_CONSERVATION_UNAVAILABLE}
+            />
 
-            {/* Webhook Delivery Success Rate */}
-            <Card data-testid="slo-card-webhook-delivery">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{OPS_SLO_LABELS.WEBHOOK_DELIVERY_TITLE}</CardTitle>
-                <Webhook className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-2xl font-bold font-mono">
-                    {stats.webhookDelivery.available ? formatPct(stats.webhookDelivery.ratePct) : '—'}
-                  </span>
-                  <SurfaceBadge available={stats.webhookDelivery.available} breach={stats.webhookDelivery.breach} />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {stats.webhookDelivery.available
-                    ? OPS_SLO_LABELS.WEBHOOK_DELIVERY_SUBTITLE(
-                      formatCount(stats.webhookDelivery.successCount),
-                      formatCount(stats.webhookDelivery.totalCount),
-                      stats.webhookDelivery.windowHours,
-                    )
-                    : OPS_SLO_LABELS.WEBHOOK_DELIVERY_UNAVAILABLE}
-                </p>
-              </CardContent>
-            </Card>
+            <SloCard
+              testId="slo-card-webhook-delivery"
+              title={OPS_SLO_LABELS.WEBHOOK_DELIVERY_TITLE}
+              icon={<Webhook className="h-4 w-4 text-muted-foreground" />}
+              value={stats.webhookDelivery.available ? formatPct(stats.webhookDelivery.ratePct) : '—'}
+              available={stats.webhookDelivery.available}
+              breach={stats.webhookDelivery.breach}
+              subtitle={stats.webhookDelivery.available
+                ? OPS_SLO_LABELS.WEBHOOK_DELIVERY_SUBTITLE(
+                  formatCount(stats.webhookDelivery.successCount),
+                  formatCount(stats.webhookDelivery.totalCount),
+                  stats.webhookDelivery.windowHours,
+                )
+                : OPS_SLO_LABELS.WEBHOOK_DELIVERY_UNAVAILABLE}
+            />
 
-            {/* Verification API Error Rate */}
-            <Card data-testid="slo-card-api-errors">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{OPS_SLO_LABELS.API_ERRORS_TITLE}</CardTitle>
-                <Activity className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-2xl font-bold font-mono">
-                    {stats.apiErrors.available ? formatPct(stats.apiErrors.errorRatePct) : '—'}
-                  </span>
-                  <SurfaceBadge available={stats.apiErrors.available} breach={stats.apiErrors.breach} />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {stats.apiErrors.available
-                    ? OPS_SLO_LABELS.API_ERRORS_SUBTITLE(
-                      formatCount(stats.apiErrors.errorCount),
-                      formatCount(stats.apiErrors.totalCount),
-                      stats.apiErrors.windowHours,
-                    )
-                    : OPS_SLO_LABELS.API_ERRORS_UNAVAILABLE}
-                </p>
-              </CardContent>
-            </Card>
+            <SloCard
+              testId="slo-card-api-errors"
+              title={OPS_SLO_LABELS.API_ERRORS_TITLE}
+              icon={<Activity className="h-4 w-4 text-muted-foreground" />}
+              value={stats.apiErrors.available ? formatPct(stats.apiErrors.errorRatePct) : '—'}
+              available={stats.apiErrors.available}
+              breach={stats.apiErrors.breach}
+              subtitle={stats.apiErrors.available
+                ? OPS_SLO_LABELS.API_ERRORS_SUBTITLE(
+                  formatCount(stats.apiErrors.errorCount),
+                  formatCount(stats.apiErrors.totalCount),
+                  stats.apiErrors.windowHours,
+                )
+                : OPS_SLO_LABELS.API_ERRORS_UNAVAILABLE}
+            />
           </div>
         )}
 

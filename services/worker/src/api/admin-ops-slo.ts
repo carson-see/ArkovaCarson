@@ -193,20 +193,23 @@ async function readConnectorQueue(): Promise<ConnectorQueueSurface> {
   });
 
   try {
-    // EXACT server-side counts — never a row sample. An unordered/limited row
+    // Server-side status counts — never a row sample. An unordered/limited row
     // scan of a table that can hold millions returns an ARBITRARY subset, so a
     // 500k backlog could read as "healthy" if the sample happened to be mostly
-    // terminal rows — inverting the dashboard's purpose. Three head-count
-    // queries (no rows transferred), each served by the (org_id, status) index
-    // from migration 0343.
+    // terminal rows — inverting the dashboard's purpose. We use ESTIMATED
+    // (planner-based) counts, not `exact`: an exact count is a full index scan
+    // on every 30s poll (the R0-8 / SCRUM-1254 exact-count perf guard), and a
+    // health gauge only needs "roughly how deep" against a coarse breach
+    // threshold — the planner estimate over the (org_id, status) index from
+    // migration 0343 answers that cheaply (no rows transferred, no full scan).
     // `connector_artifact` isn't in the generated database.types.ts yet (same
     // escape hatch as connector-artifact-drain.ts).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const table = () => (db as any).from('connector_artifact');
     const [workRes, anchoredRes, failedRes] = (await Promise.all([
-      table().select('*', { count: 'exact', head: true }).in('status', [...CONNECTOR_WORK_STATUSES]),
-      table().select('*', { count: 'exact', head: true }).eq('status', 'anchored'),
-      table().select('*', { count: 'exact', head: true }).eq('status', 'failed'),
+      table().select('*', { count: 'estimated', head: true }).in('status', [...CONNECTOR_WORK_STATUSES]),
+      table().select('*', { count: 'estimated', head: true }).eq('status', 'anchored'),
+      table().select('*', { count: 'estimated', head: true }).eq('status', 'failed'),
     ])) as [CountResult, CountResult, CountResult];
 
     for (const res of [workRes, anchoredRes, failedRes]) {
