@@ -154,6 +154,14 @@ export const CleLogRecordSchema = z
 
 export type CleLogRecord = z.infer<typeof CleLogRecordSchema>;
 
+// NOTE (round-1 review): CleLogRecordSchema/CleLogV1Schema are INTERNAL-ONLY
+// validators — they check OUR OWN generated artifact before upload and are not
+// published to external consumers (no SDK/docs export references them). The
+// `.strict()` is therefore safe: it can never reject a third party's payload,
+// only catch our own drift at generation time. If these schemas are ever
+// exported for external parsing, `.strict()` must be revisited (§1.8 additive
+// evolution would break strict consumers).
+
 /**
  * Aggregate summary. `ethics_hours` is a distinct subtotal alongside the total
  * `total_credit_hours` — the AC requires the ethics figure to be shown
@@ -205,6 +213,11 @@ export interface CleLogExportDeps {
   frontendUrl: string;
   /** Storage bucket override (defaults to EXPORTS_STORAGE_BUCKET or `exports`). */
   bucket?: string;
+  /**
+   * Fetch-cap override (defaults to MAX_EXPORT_RECORDS). Test seam only — lets
+   * the cap-displacement behavior be exercised without 5000-row fixtures.
+   */
+  maxRecords?: number;
 }
 
 export interface CleLogExportArgs {
@@ -489,12 +502,22 @@ export async function generateCleLogExport(
     throw new Error(`invalid jurisdiction for CLE export: ${String(args.jurisdiction)}`);
   }
 
-  // 1. Fetch the caller's CLE anchors in the reporting period for the requested
-  //    jurisdiction. Service-role client; scope is enforced by the explicit
-  //    user_id + org_id filters. `issued_at` is the credential completion date
-  //    used for the period window; rows without issued_at are excluded.
-  //    The jurisdiction filter matches the bare state code OR the `US-`prefixed
-  //    form stored in `cle_metadata->>'jurisdiction'`.
+  const maxRecords = deps.maxRecords ?? MAX_EXPORT_RECORDS;
+
+  // 1. Fetch the caller's SECURED CLE anchors in the reporting period for the
+  //    requested jurisdiction. Service-role client; scope is enforced by the
+  //    explicit user_id + org_id filters. `issued_at` is the credential
+  //    completion date used for the period window; rows without issued_at are
+  //    excluded. The jurisdiction filter matches the bare state code OR the
+  //    `US-`prefixed form stored in `cle_metadata->>'jurisdiction'`.
+  //
+  //    SECURED-only gate (SCRUM-2378, mirrored from the CPE exporter): only
+  //    SECURED records are auditor-grade evidence. The status filter runs IN
+  //    SQL — not post-fetch — so non-SECURED rows can never displace SECURED
+  //    rows inside the fetch cap (round-1 review finding). SECURED-only
+  //    semantics conform to the FE-PROOF-GATE contract
+  //    (docs/reference/FE_PROOF_GATE_CONTRACT.md: proof evidence is
+  //    SECURED-only; REVOKED/EXPIRED/SUPERSEDED are never treated as secured).
   const { data, error } = await deps.db
     .from('anchors')
     .select(
@@ -503,26 +526,45 @@ export async function generateCleLogExport(
     .eq('user_id', args.userId)
     .eq('org_id', args.orgId)
     .eq('credential_type', 'CLE')
+    .eq('status', 'SECURED')
     .is('deleted_at', null)
     .or(`cle_metadata->>jurisdiction.eq.${jurisdiction},cle_metadata->>jurisdiction.eq.US-${jurisdiction}`)
     .gte('issued_at', `${args.periodStart}T00:00:00.000Z`)
     .lte('issued_at', `${args.periodEnd}T23:59:59.999Z`)
     .order('issued_at', { ascending: true })
-    .limit(MAX_EXPORT_RECORDS);
+    .limit(maxRecords);
 
   if (error) {
     throw new Error(`failed to load CLE anchors for export: ${error.message}`);
   }
 
-  const anchors = ((data ?? []) as CleExportAnchorRow[]).slice(0, MAX_EXPORT_RECORDS);
+  const securedAnchors = ((data ?? []) as CleExportAnchorRow[]).slice(0, maxRecords);
 
-  // 1b. SECURED-only gate (SCRUM-2378, mirrored from the CPE exporter): only
-  //     SECURED records are auditor-grade evidence; un-SECURED (pending) rows
-  //     are EXCLUDED from records AND the summary aggregates — but counted and
-  //     surfaced via `excluded_count`, never silently dropped and never
-  //     blocking the export.
-  const securedAnchors = anchors.filter((a) => a.status === 'SECURED');
-  const excludedCount = anchors.length - securedAnchors.length;
+  // 1b. Excluded (non-SECURED) records are counted via a SEPARATE count query
+  //     over the same tenant + jurisdiction + period predicate — never derived
+  //     from the capped fetch, which would undercount once the cap is hit.
+  //     Surfaced via `excluded_count`; never silently dropped and never
+  //     blocking the export. They are excluded from records AND the summary
+  //     aggregates.
+  const excludedRes = await deps.db
+    .from('anchors')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', args.userId)
+    .eq('org_id', args.orgId)
+    .eq('credential_type', 'CLE')
+    .neq('status', 'SECURED')
+    .is('deleted_at', null)
+    .or(`cle_metadata->>jurisdiction.eq.${jurisdiction},cle_metadata->>jurisdiction.eq.US-${jurisdiction}`)
+    .gte('issued_at', `${args.periodStart}T00:00:00.000Z`)
+    .lte('issued_at', `${args.periodEnd}T23:59:59.999Z`);
+
+  if (excludedRes.error) {
+    // Fail loud rather than emit a fabricated/incomplete exclusion count —
+    // excluded_count is an honesty surface (§1.5), not decoration.
+    throw new Error(`failed to count excluded CLE records: ${excludedRes.error.message}`);
+  }
+  const excludedCount = excludedRes.count ?? 0;
+
   const records = securedAnchors.map((a) => buildCleLogRecord(a, deps.frontendUrl));
   const recordCount = records.length;
   const summary = computeCleSummary(records);

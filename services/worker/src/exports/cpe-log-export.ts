@@ -96,6 +96,13 @@ export const CpeLogRecordSchema = z
 
 export type CpeLogRecord = z.infer<typeof CpeLogRecordSchema>;
 
+// NOTE (round-1 review): CpeLogRecordSchema/CpeLogV1Schema are INTERNAL-ONLY
+// validators — they check OUR OWN generated artifact before upload and are not
+// published to external consumers (no SDK/docs export references them). The
+// `.strict()` is therefore safe: it can never reject a third party's payload,
+// only catch our own drift at generation time. If these schemas are ever
+// exported for external parsing, `.strict()` must be revisited (§1.8 additive
+// evolution would break strict consumers).
 export const CpeLogV1Schema = z
   .object({
     schema: z.literal(CPE_LOG_SCHEMA_VERSION),
@@ -220,6 +227,11 @@ export interface CpeLogExportDeps {
   frontendUrl: string;
   /** Storage bucket override (defaults to EXPORTS_STORAGE_BUCKET or `exports`). */
   bucket?: string;
+  /**
+   * Fetch-cap override (defaults to MAX_EXPORT_RECORDS). Test seam only — lets
+   * the cap-displacement behavior be exercised without 5000-row fixtures.
+   */
+  maxRecords?: number;
 }
 
 export interface CpeLogExportArgs {
@@ -462,10 +474,20 @@ export async function generateCpeLogExport(
   //    error, and must not silently 500 mid-upload or leak unsigned bodies.
   await assertExportsBucketReady(deps.storage, bucket);
 
-  // 1. Fetch the caller's CPE anchors in the reporting period. Service-role
-  //    client; scope is enforced by the explicit user_id + org_id filters.
-  //    `issued_at` is the credential completion date used for the period
-  //    window; rows without issued_at are excluded from the period view.
+  const maxRecords = deps.maxRecords ?? MAX_EXPORT_RECORDS;
+
+  // 1. Fetch the caller's SECURED CPE anchors in the reporting period.
+  //    Service-role client; scope is enforced by the explicit user_id + org_id
+  //    filters. `issued_at` is the credential completion date used for the
+  //    period window; rows without issued_at are excluded from the period view.
+  //
+  //    SECURED-only gate (SCRUM-2378 — CPE-01): only records that have reached
+  //    `SECURED` are auditor-grade evidence. The status filter runs IN SQL —
+  //    not post-fetch — so non-SECURED rows can never displace SECURED rows
+  //    inside the fetch cap (round-1 review finding). SECURED-only semantics
+  //    conform to the FE-PROOF-GATE contract (docs/reference/FE_PROOF_GATE_CONTRACT.md:
+  //    proof evidence is SECURED-only; REVOKED/EXPIRED/SUPERSEDED are never
+  //    treated as secured).
   const { data, error } = await deps.db
     .from('anchors')
     .select(
@@ -474,25 +496,42 @@ export async function generateCpeLogExport(
     .eq('user_id', args.userId)
     .eq('org_id', args.orgId)
     .eq('credential_type', 'CPE')
+    .eq('status', 'SECURED')
     .is('deleted_at', null)
     .gte('issued_at', `${args.periodStart}T00:00:00.000Z`)
     .lte('issued_at', `${args.periodEnd}T23:59:59.999Z`)
     .order('issued_at', { ascending: true })
-    .limit(MAX_EXPORT_RECORDS);
+    .limit(maxRecords);
 
   if (error) {
     throw new Error(`failed to load CPE anchors for export: ${error.message}`);
   }
 
-  const anchors = ((data ?? []) as CpeExportAnchorRow[]).slice(0, MAX_EXPORT_RECORDS);
+  const securedAnchors = ((data ?? []) as CpeExportAnchorRow[]).slice(0, maxRecords);
 
-  // 1b. SECURED-only gate (SCRUM-2378 — CPE-01): only records that have reached
-  //     `SECURED` are auditor-grade evidence, so un-SECURED (pending) records
-  //     are EXCLUDED from the artifact — but never silently: they are counted
-  //     and surfaced as `excluded_count` in the result, the JSON document, and
-  //     the audit event, and they never block the export as a whole.
-  const securedAnchors = anchors.filter((a) => a.status === 'SECURED');
-  const excludedCount = anchors.length - securedAnchors.length;
+  // 1b. Excluded (non-SECURED) records are counted via a SEPARATE count query
+  //     over the same period predicate — never derived from the capped fetch,
+  //     which would undercount once the cap is hit. Surfaced as
+  //     `excluded_count` in the result, the JSON document, and the audit
+  //     event; never silently dropped and never blocking the export.
+  const excludedRes = await deps.db
+    .from('anchors')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', args.userId)
+    .eq('org_id', args.orgId)
+    .eq('credential_type', 'CPE')
+    .neq('status', 'SECURED')
+    .is('deleted_at', null)
+    .gte('issued_at', `${args.periodStart}T00:00:00.000Z`)
+    .lte('issued_at', `${args.periodEnd}T23:59:59.999Z`);
+
+  if (excludedRes.error) {
+    // Fail loud rather than emit a fabricated/incomplete exclusion count —
+    // excluded_count is an honesty surface (§1.5), not decoration.
+    throw new Error(`failed to count excluded CPE records: ${excludedRes.error.message}`);
+  }
+  const excludedCount = excludedRes.count ?? 0;
+
   const records = securedAnchors.map((a) => buildCpeLogRecord(a, deps.frontendUrl));
   const recordCount = records.length;
 

@@ -77,10 +77,72 @@ interface SignedUrlCall {
   expiresIn: number;
 }
 
+/**
+ * Filter-applying Supabase query-builder mock for the anchors table.
+ *
+ * Unlike a plain chainable stub, this mock APPLIES the `status` eq/neq
+ * predicates and `.limit()` to the fixture rows when awaited, and resolves
+ * `head: true` count queries with a real `count`. That makes the SQL-side
+ * SECURED gate (round-1 review finding: post-fetch filtering let non-SECURED
+ * rows displace SECURED rows inside the cap) actually observable in tests.
+ */
+function makeAnchorBuilder(anchors: CpeExportAnchorRow[], opts: { countError?: boolean } = {}) {
+  const state = {
+    statusEq: null as string | null,
+    statusNeq: null as string | null,
+    limit: null as number | null,
+    head: false,
+  };
+  const builder: Record<string, unknown> = { __state: state };
+  builder.select = vi.fn().mockImplementation((_cols: string, selectOpts?: { head?: boolean; count?: string }) => {
+    if (selectOpts?.head) state.head = true;
+    return builder;
+  });
+  const chain = (name: string, record?: (args: unknown[]) => void) => {
+    builder[name] = vi.fn().mockImplementation((...args: unknown[]) => {
+      record?.(args);
+      return builder;
+    });
+  };
+  chain('eq', (args) => {
+    if (args[0] === 'status') state.statusEq = args[1] as string;
+  });
+  chain('neq', (args) => {
+    if (args[0] === 'status') state.statusNeq = args[1] as string;
+  });
+  chain('in');
+  chain('gte');
+  chain('lte');
+  chain('is');
+  chain('order');
+  chain('limit', (args) => {
+    state.limit = args[0] as number;
+  });
+  (builder as { then: unknown }).then = (
+    resolve: (v: unknown) => void,
+    reject: (e: unknown) => void,
+  ) => {
+    let rows = anchors;
+    if (state.statusEq !== null) rows = rows.filter((a) => a.status === state.statusEq);
+    if (state.statusNeq !== null) rows = rows.filter((a) => a.status !== state.statusNeq);
+    if (state.head) {
+      if (opts.countError) {
+        return Promise.resolve({ data: null, count: null, error: { message: 'count boom' } }).then(resolve, reject);
+      }
+      return Promise.resolve({ data: null, count: rows.length, error: null }).then(resolve, reject);
+    }
+    const limited = state.limit !== null ? rows.slice(0, state.limit) : rows;
+    return Promise.resolve({ data: limited, error: null }).then(resolve, reject);
+  };
+  return builder;
+}
+
 function makeDeps(opts: {
   anchors?: CpeExportAnchorRow[];
   uploadError?: boolean;
   signError?: boolean;
+  countError?: boolean;
+  maxRecords?: number;
   /** Override the bucket guard result. Defaults to a private, existing bucket. */
   bucket?: { exists?: boolean; isPublic?: boolean | null; error?: Error | null };
 } = {}): {
@@ -88,27 +150,16 @@ function makeDeps(opts: {
   uploads: UploadCall[];
   signs: SignedUrlCall[];
   audits: Array<Record<string, unknown>>;
+  anchorBuilders: Array<Record<string, unknown>>;
 } {
   const uploads: UploadCall[] = [];
   const signs: SignedUrlCall[] = [];
   const audits: Array<Record<string, unknown>> = [];
   const anchors = opts.anchors ?? [makeAnchor()];
 
-  // Minimal Supabase-query-builder mock for the anchors SELECT chain.
-  const anchorQuery: Record<string, unknown> = {};
-  const terminal = () => Promise.resolve({ data: anchors, error: null });
-  anchorQuery.select = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.eq = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.in = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.gte = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.lte = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.is = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.order = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.limit = vi.fn().mockReturnValue(anchorQuery);
-  (anchorQuery as { then: unknown }).then = (
-    resolve: (v: unknown) => void,
-    reject: (e: unknown) => void,
-  ) => terminal().then(resolve, reject);
+  // Each `from('anchors')` call gets a FRESH builder (main data query vs the
+  // separate excluded-count query record independent filter chains).
+  const anchorBuilders: Array<Record<string, unknown>> = [];
 
   const auditInsert = vi.fn().mockImplementation((row: Record<string, unknown>) => {
     audits.push(row);
@@ -121,7 +172,9 @@ function makeDeps(opts: {
         if (table === 'audit_events') {
           return { insert: auditInsert };
         }
-        return anchorQuery;
+        const builder = makeAnchorBuilder(anchors, { countError: opts.countError });
+        anchorBuilders.push(builder);
+        return builder;
       }),
     } as unknown as CpeLogExportDeps['db'],
     storage: {
@@ -163,9 +216,10 @@ function makeDeps(opts: {
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     frontendUrl: 'https://app.arkova.io',
     bucket: 'exports',
+    ...(opts.maxRecords !== undefined ? { maxRecords: opts.maxRecords } : {}),
   };
 
-  return { deps, uploads, signs, audits };
+  return { deps, uploads, signs, audits, anchorBuilders };
 }
 
 const BASE_ARGS = {
@@ -482,6 +536,56 @@ describe('SECURED-only export gate (SCRUM-2378)', () => {
     const result = await generateCpeLogExport(BASE_ARGS, deps);
     expect(result.record_count).toBe(1);
     expect(result.excluded_count).toBe(0);
+  });
+
+  it('gates SECURED in the SQL query itself, not post-fetch (round-1 review finding)', async () => {
+    const { deps, anchorBuilders } = makeDeps({ anchors: mixedAnchors() });
+    await generateCpeLogExport(BASE_ARGS, deps);
+
+    // Main data query applies .eq('status', 'SECURED') so non-SECURED rows
+    // never occupy the fetch cap.
+    const mainState = anchorBuilders[0].__state as { statusEq: string | null };
+    expect(mainState.statusEq).toBe('SECURED');
+    // The excluded count comes from a SEPARATE count query over the same
+    // period predicate with .neq('status', 'SECURED') — not from in-cap
+    // subtraction (which undercounts once the cap is hit).
+    expect(anchorBuilders.length).toBeGreaterThanOrEqual(2);
+    const countState = anchorBuilders[1].__state as { statusNeq: string | null; head: boolean };
+    expect(countState.statusNeq).toBe('SECURED');
+    expect(countState.head).toBe(true);
+  });
+
+  it('cap: non-SECURED rows cannot displace SECURED rows inside the fetch cap, and excluded_count is NOT capped', async () => {
+    // Fixture deliberately front-loads pending rows: with the OLD post-fetch
+    // filter and a cap of 2, the fetch would return [PENDING, PENDING] and
+    // silently drop every SECURED record (record_count 0, excluded_count 2).
+    // With the SQL-side gate: the cap applies to SECURED rows only, and the
+    // separate count query reports ALL 3 exclusions.
+    const anchors = [
+      makeAnchor({ id: 'p1', public_id: 'ARK-CPE-P001', status: 'PENDING' }),
+      makeAnchor({ id: 'p2', public_id: 'ARK-CPE-P002', status: 'PENDING' }),
+      makeAnchor({ id: 'p3', public_id: 'ARK-CPE-P003', status: 'SUBMITTED' }),
+      makeAnchor({ id: 's1', public_id: 'ARK-CPE-S001' }),
+      makeAnchor({ id: 's2', public_id: 'ARK-CPE-S002' }),
+      makeAnchor({ id: 's3', public_id: 'ARK-CPE-S003' }),
+    ];
+    const { deps, uploads } = makeDeps({ anchors, maxRecords: 2 });
+    const result = await generateCpeLogExport(BASE_ARGS, deps);
+
+    // Cap holds for the artifact — but every capped record is SECURED.
+    expect(result.record_count).toBe(2);
+    // excluded_count counts ALL non-SECURED in-period rows (3 > cap of 2).
+    expect(result.excluded_count).toBe(3);
+
+    const jsonUpload = uploads.find((u) => u.contentType === 'application/json');
+    const doc = JSON.parse(jsonUpload!.body) as { records: Array<{ status: string }> };
+    expect(doc.records).toHaveLength(2);
+    expect(doc.records.every((r) => r.status === 'SECURED')).toBe(true);
+  });
+
+  it('throws when the excluded-count query fails (never emits a fabricated count)', async () => {
+    const { deps } = makeDeps({ anchors: mixedAnchors(), countError: true });
+    await expect(generateCpeLogExport(BASE_ARGS, deps)).rejects.toThrow(/excluded/i);
   });
 
   it('audit details carry excluded_count (metadata only — CC7 still holds)', async () => {
