@@ -14,7 +14,7 @@
 
 ## Now
 
-### 2026-07-06 (RTE/ART) - Final Sprint 3.25/3.5/3.75/3.8 artifact packet
+### 2026-07-06 (RTE/ART) - Final Sprint 3.25/3.5/3.75/3.8/3.85/3.9 artifact packet
 
 Use this clean final-artifacts folder for founder review: https://drive.google.com/drive/folders/1ItbVr6LtLMzif20hCUwEClYhcHYUsddd.
 
@@ -23,12 +23,16 @@ It intentionally contains only the current final sprint artifacts:
 - Sprint 3.5 Release Confidence ART Plan: https://docs.google.com/document/d/1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc/edit?usp=drivesdk
 - Corrected Sprint 3.75 / PI-1 CE-Haki Critical Path + 12-Hour Release Priority: https://docs.google.com/document/d/1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos/edit?usp=drivesdk
 - Sprint 3.8 Program Administrator Provisioning & Internal Controls ART Plan: https://docs.google.com/document/d/1cqv_rOc-YnGo0w3ri6VVrsHUIGoHKxd1M4rDaPwoYfI/edit?usp=drivesdk
+- Sprint 3.85 Launch Trust / Security / Privacy / Usability Gap Sweep ART Plan: https://docs.google.com/document/d/19ptuJWHViaCe8y4F6_zgwrmAPAmsdL6c65D9W_F79RY/edit?usp=drivesdk
+- Sprint 3.9 Sprint 4 Readiness Evidence / UAT / Founder Go-No-Go ART Plan: https://docs.google.com/document/d/17Qyd4kBEJWWdyZbZLSWTtgV9YhCHNHNQCiDFnm-NyK4/edit?usp=drivesdk
 
 Current sprint interpretation:
 - **3.25:** launch-blocker hardening sprint. Lane 2 first for security/privacy/legal risk; Lane 1 second for proof/chain integrity; Lane 3 third for public verification/API trust. Planning/report/story packet is done; this does **not** assert the underlying bugs are fixed/live.
 - **3.5:** Release Confidence / CI-CD / staging parity after 3.25. Supabase work remains a supporting workstream, not the whole sprint.
 - **3.75:** corrected PI-1 S1-S7 Credential Engine + HakiChain critical-path reconciliation. This is not a standalone "make CE/Haki done" sprint and does not replace the PI-1 sequencing.
 - **3.8:** program administrator provisioning and internal controls sprint. Lane 2 leads; CTO/RM/Security review required; Lane 1 consults on evidence integrity; Lane 3 consults on CE/Haki/program account scope.
+- **3.85:** launch trust/security/privacy/usability closure-evidence sprint. Lane 2 has top priority for operational/user-visible risk; Lane 1 second for security/privacy/proof gates; Lane 3 third for public verification, AI/PII, and CE/Haki smoke evidence. This does **not** replace Sprint 3.0 or 3.5.
+- **3.9:** Sprint 4 readiness evidence sprint after 3.85. It packages founder go/no-go, current UAT, CE/Haki acceptance bridge evidence, incident/support/rollback proof, backup/restore proof, API onboarding, privacy ops, and status/config-drift evidence. It is not a hiding place for unresolved 3.85 P0s.
 
 Sprint 3.0 active execution state - do not erase:
 - Sprint 3.0 is still active. The 3.25/3.5/3.75/3.8 planning packet does **not** mean Sprint 3.0 is complete, merged, live, or soaked.
@@ -45,7 +49,11 @@ Jira / Confluence trace:
 - Sprint 3.75 CE trace: `SCRUM-1867` comment `16787`
 - Sprint 3.75 Haki trace: `SCRUM-1010` comment `16788`
 - Sprint 3.8 anchor: `SCRUM-2637`, comment `16789`
+- Sprint 3.85 epic: `SCRUM-2638`, comment `16790`; Confluence page `95944705`
+- Sprint 3.9 epic: `SCRUM-2639`, comment `16791`; Confluence page `95977473`
+- Sprint 3.85/3.9 JQL: https://arkova.atlassian.net/issues?jql=project%20%3D%20SCRUM%20AND%20labels%20in%20(sprint-3-85%2C%20sprint-3-9)%20ORDER%20BY%20key%20ASC
 - Confluence roadmap trace: page `82444290` footer comment `95780866`
+- Confluence program-board trace: page `85622786` footer comment `95715332`
 
 Archive / stale guidance:
 - Legacy session packet folder: https://drive.google.com/drive/folders/1cQ5rbbFStwDRI870su-gpm-Ud7Aq_JrB
@@ -58,4 +66,4 @@ Known loose ends:
 - No production, schema, deploy, runtime, or database state changed by the documentation/refinement pass.
 - Two older pre-existing lane docs still appear in the legacy S3 folder because Drive returned `appNotAuthorizedToFile` even after Archive access was granted: `1OAltgtonRD39SvHYh-9foTk7zj8lY5YxZX5tUO9GuXI` and `1jl7KoMryRrmgWM9afFvXjmmPbfpwnzx6hwOcG7fOE68`.
 
-_Last refreshed: 2026-07-06 by Codex - verified against Drive readback for final folder `1ItbVr6LtLMzif20hCUwEClYhcHYUsddd`, docs `1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk`, `1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc`, `1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos`, and `1cqv_rOc-YnGo0w3ri6VVrsHUIGoHKxd1M4rDaPwoYfI`; Jira/Confluence trace above; GitHub PR check restored Sprint 3.0 active state; Supermemory saves `CKbwLFbkWtWtDgLRS5ofb6`, `57e6zJKR4SgazS1gKPZrj1`, `ihUSJZ8Tv15MMYxfyhzA3u`, `BZTruDzwRqg29Vcm3QL1qE`, `me9Tr3Qpdx1KkDAuPkywL7`, and `AS8CbDkqRGyRUMeoWKG55D`._
+_Last refreshed: 2026-07-06 by Codex - verified against Drive readback for final folder `1ItbVr6LtLMzif20hCUwEClYhcHYUsddd`, docs `1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk`, `1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc`, `1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos`, `1cqv_rOc-YnGo0w3ri6VVrsHUIGoHKxd1M4rDaPwoYfI`, `19ptuJWHViaCe8y4F6_zgwrmAPAmsdL6c65D9W_F79RY`, and `17Qyd4kBEJWWdyZbZLSWTtgV9YhCHNHNQCiDFnm-NyK4`; Jira/Confluence trace above; GitHub PR check restored Sprint 3.0 active state; Supermemory saves `CKbwLFbkWtWtDgLRS5ofb6`, `57e6zJKR4SgazS1gKPZrj1`, `ihUSJZ8Tv15MMYxfyhzA3u`, `BZTruDzwRqg29Vcm3QL1qE`, `me9Tr3Qpdx1KkDAuPkywL7`, `AS8CbDkqRGyRUMeoWKG55D`, and `t4D2F5KyrY2YhbdMwzypLV`._
