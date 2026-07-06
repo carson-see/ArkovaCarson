@@ -203,6 +203,79 @@ describe('webhooksSelfServiceRouter', () => {
       vi.unstubAllGlobals();
     });
 
+    // WH-02 AC: the test ping must land in the delivery log like any other
+    // delivery (status / response code / timestamp visible in the UI).
+    it('records a webhook_delivery_logs row with success status on 2xx', async () => {
+      const insertMock = vi.fn().mockResolvedValue({ error: null });
+      (db.from as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(mockQuery({ data: PROFILE_ADMIN }))
+        .mockReturnValueOnce(mockQuery({ data: ENDPOINT_ROW }))
+        .mockImplementation((table: string) =>
+          table === 'webhook_delivery_logs' ? { insert: insertMock } : inertInsertChain(),
+        );
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          text: vi.fn().mockResolvedValue('ok'),
+        }),
+      );
+
+      const app = createApp();
+      const res = await request(app)
+        .post('/webhooks/self-service/ep-1/test')
+        .set('x-test-user-id', 'user-1');
+
+      expect(res.status).toBe(200);
+      expect(insertMock).toHaveBeenCalledTimes(1);
+      const row = insertMock.mock.calls[0][0];
+      expect(row.endpoint_id).toBe('ep-1');
+      expect(row.event_type).toBe('test.ping');
+      expect(row.status).toBe('success');
+      expect(row.response_status).toBe(200);
+      expect(row.attempt_number).toBe(1);
+      // event_id column is uuid (SCRUM-1800) — must be a real UUID.
+      expect(row.event_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      expect(row.delivered_at).toBeTruthy();
+
+      vi.unstubAllGlobals();
+    });
+
+    it('records a webhook_delivery_logs row with failed status on non-2xx', async () => {
+      const insertMock = vi.fn().mockResolvedValue({ error: null });
+      (db.from as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(mockQuery({ data: PROFILE_ADMIN }))
+        .mockReturnValueOnce(mockQuery({ data: ENDPOINT_ROW }))
+        .mockImplementation((table: string) =>
+          table === 'webhook_delivery_logs' ? { insert: insertMock } : inertInsertChain(),
+        );
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 503,
+          text: vi.fn().mockResolvedValue('down'),
+        }),
+      );
+
+      const app = createApp();
+      const res = await request(app)
+        .post('/webhooks/self-service/ep-1/test')
+        .set('x-test-user-id', 'user-1');
+
+      expect(res.status).toBe(200);
+      expect(insertMock).toHaveBeenCalledTimes(1);
+      const row = insertMock.mock.calls[0][0];
+      expect(row.status).toBe('failed');
+      expect(row.response_status).toBe(503);
+      expect(row.delivered_at).toBeNull();
+
+      vi.unstubAllGlobals();
+    });
+
     it('reports failure without throwing when the endpoint returns a non-2xx', async () => {
       (db.from as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce(mockQuery({ data: PROFILE_ADMIN }))
@@ -310,6 +383,36 @@ describe('webhooksSelfServiceRouter', () => {
       expect(first.body.delivery_id).toBe('log-2');
       expect(second.body.delivery_id).toBe('log-3');
       expect(replayDelivery).toHaveBeenCalledTimes(2);
+    });
+
+    // WH-03 AC: every replay action must leave an audit trail.
+    it('emits a WEBHOOK_DELIVERY_REPLAYED audit event on replay', async () => {
+      const auditInsertMock = vi.fn().mockResolvedValue({ error: null });
+      (db.from as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(mockQuery({ data: PROFILE_ADMIN }))
+        .mockImplementation((table: string) =>
+          table === 'audit_events' ? { insert: auditInsertMock } : inertInsertChain(),
+        );
+      (replayDelivery as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: true,
+        status_code: 200,
+        new_delivery_id: 'log-2',
+      });
+
+      const app = createApp();
+      const res = await request(app)
+        .post('/webhooks/self-service/deliveries/log-1/replay')
+        .set('x-test-user-id', 'user-1');
+
+      expect(res.status).toBe(200);
+      expect(auditInsertMock).toHaveBeenCalledTimes(1);
+      const audit = auditInsertMock.mock.calls[0][0];
+      expect(audit.event_type).toBe('WEBHOOK_DELIVERY_REPLAYED');
+      expect(audit.event_category).toBe('ADMIN');
+      expect(audit.actor_id).toBe('user-1');
+      expect(audit.org_id).toBe('org-1');
+      expect(audit.target_id).toBe('log-2');
+      expect(JSON.parse(audit.details)).toMatchObject({ replayed_from: 'log-1', ok: true });
     });
 
     it('maps not_found/cross_org to 404 without leaking which one', async () => {

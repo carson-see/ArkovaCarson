@@ -133,9 +133,13 @@ router.post('/:id/test', async (req, res) => {
       return;
     }
 
+    // event_id doubles as the wire event id AND the webhook_delivery_logs
+    // row's event_id, which is a uuid column (SCRUM-1800) — so it must be a
+    // real UUID, not a prefixed string.
+    const eventId = crypto.randomUUID();
     const testPayload = {
       event_type: 'test.ping',
-      event_id: `test_${crypto.randomBytes(12).toString('hex')}`,
+      event_id: eventId,
       timestamp: new Date().toISOString(),
       test: true,
       data: {
@@ -163,11 +167,30 @@ router.post('/:id/test', async (req, res) => {
 
     const responseBody = await response.text().catch(() => '');
 
+    // WH-02 AC: the test ping lands in the delivery log like any other
+    // delivery so its status / response code / timestamp are visible in the
+    // dashboard delivery history. Failure to record is logged but does not
+    // fail the ping response — the caller already has the live result.
+    const { error: logError } = await db.from('webhook_delivery_logs').insert({
+      endpoint_id: endpoint.id,
+      event_type: 'test.ping',
+      event_id: eventId,
+      payload: testPayload,
+      attempt_number: 1,
+      status: response.ok ? 'success' : 'failed',
+      response_status: response.status,
+      delivered_at: response.ok ? new Date().toISOString() : null,
+      idempotency_key: `test-${endpoint.id}-${eventId}`,
+    });
+    if (logError) {
+      logger.warn({ error: logError, endpointId: endpoint.id }, 'test ping delivery log insert failed');
+    }
+
     res.json({
       success: response.ok,
       status_code: response.status,
       response_body: responseBody.slice(0, 500),
-      event_id: testPayload.event_id,
+      event_id: eventId,
     });
   } catch (err) {
     logger.error({ error: err, id }, 'webhook self-service: test ping failed');
