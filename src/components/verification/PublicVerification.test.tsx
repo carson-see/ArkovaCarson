@@ -123,7 +123,12 @@ describe('PublicVerification', () => {
     render(<PublicVerification publicId="ARK-DOC-123" />);
 
     expect(await screen.findByText(/Verified on Apr 1, 2026/)).toBeInTheDocument();
-    expect(screen.getByText('This record is permanently anchored.')).toBeInTheDocument();
+    // SCRUM-2495 claims review: the hero subtitle binds permanence to the
+    // record's FINGERPRINT, never the underlying document — the unscoped
+    // "This record is permanently anchored." read as document-level
+    // protection, contradicting the does-not-assert disclaimer below it.
+    expect(screen.getByText('This record’s fingerprint is permanently anchored.')).toBeInTheDocument();
+    expect(screen.queryByText('This record is permanently anchored.')).not.toBeInTheDocument();
     expect(screen.getByTestId('proof-download')).toBeInTheDocument();
   });
 

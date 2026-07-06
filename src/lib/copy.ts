@@ -26,7 +26,11 @@ export const ANCHOR_STATUS_LABELS = {
 export const ANCHOR_STATUS_DESCRIPTIONS = {
   PENDING: 'Your record is being secured. This typically completes within a few minutes.',
   SUBMITTED: 'Your record has been submitted to the network and is awaiting confirmation.',
-  SECURED: 'Your record has been permanently secured with cryptographic verification.',
+  // SCRUM-2495 claims review (§1.5): permanence is bound to the record's
+  // FINGERPRINT, not the underlying document. Arkova records and anchors the
+  // fingerprint permanently; it does not store, monitor, or protect the
+  // document itself after securing.
+  SECURED: "Your record's fingerprint has been permanently secured with cryptographic verification.",
   REVOKED: 'This record has been revoked and is no longer active.',
   EXPIRED: 'This record has passed its expiration date.',
   SUPERSEDED: 'This record has been replaced by a newer version.',
@@ -326,7 +330,9 @@ export const FORM_LABELS = {
 export const MESSAGES = {
   // Success
   ANCHOR_CREATED: 'Your document has been submitted for securing.',
-  ANCHOR_SECURED: 'Your document has been permanently secured.',
+  // SCRUM-2495 claims review (§1.5): the fingerprint is permanently secured,
+  // not the document itself (Arkova never stores or monitors the document).
+  ANCHOR_SECURED: "Your document's fingerprint has been permanently secured.",
   ANCHOR_VERIFIED: 'Document verification successful.',
 
   // Errors
@@ -760,7 +766,13 @@ export const PUBLIC_VERIFICATION_LABELS = {
   REVOKED_DESC: 'This record has been revoked by the issuing organization',
   EXPIRED_DESC: 'This record has passed its expiration date',
   SUPERSEDED_DESC: 'This record has been replaced by a newer version.',
-  VERIFIED_DESC: 'This record is permanently anchored.',
+  // SCRUM-2495 claims review (§1.5): permanence is bound to the record's
+  // FINGERPRINT, never the underlying document. The unscoped "This record is
+  // permanently anchored." read as document-level protection, contradicting
+  // the does-not-assert disclaimer rendered on the same page. The permanence
+  // claim itself is real (anchor/fingerprint permanence is the product's core
+  // value) — only its scope changed.
+  VERIFIED_DESC: 'This record’s fingerprint is permanently anchored.',
   CRYPTOGRAPHIC_PROOF: 'Cryptographic Proof',
   FINGERPRINT_SHA256: 'Fingerprint (SHA-256)',
   NETWORK_RECEIPT: 'Network Receipt',
@@ -3192,7 +3204,8 @@ export const QUEUE_LIFECYCLE_DESCRIPTIONS = {
   queued: 'Your document is in the queue to be secured. Queueing is free — no credits are used.',
   processing: 'Your document is being secured now.',
   materialized: 'Your document has its network receipt and is awaiting final confirmation.',
-  anchored: 'Your document is permanently secured and independently verifiable.',
+  // SCRUM-2495 claims review (§1.5): fingerprint is permanently secured, not the document.
+  anchored: "Your document's fingerprint is permanently secured and independently verifiable.",
   failed: 'We could not secure this document. You were not charged. You can try again.',
   skipped: 'This document was not secured — it was a duplicate or you cancelled. No credits were used.',
 } as const;

@@ -140,7 +140,7 @@ test.describe('Public Verification', () => {
       filename: 'e2e_public_secured.pdf',
       title: /^Verified on/i,
       badge: 'Secured',
-      subtitle: 'This record is permanently anchored.',
+      subtitle: 'This record’s fingerprint is permanently anchored.',
       showsProof: true,
     },
     {
