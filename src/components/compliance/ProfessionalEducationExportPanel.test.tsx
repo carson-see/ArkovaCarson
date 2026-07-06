@@ -205,7 +205,7 @@ describe('ProfessionalEducationExportPanel — excluded-records notice (SCRUM-23
     expect(await screen.findByText('CPE log ready. 2 records included.')).toBeInTheDocument();
     // …and the excluded records are surfaced, never silently dropped.
     expect(
-      screen.getByText("3 records aren't ready to export yet — they'll appear once secured."),
+      screen.getByText("3 records aren't included because they aren't secured."),
     ).toBeInTheDocument();
     expect(openMock).toHaveBeenCalledTimes(1);
   });
@@ -220,7 +220,7 @@ describe('ProfessionalEducationExportPanel — excluded-records notice (SCRUM-23
     await user.click(screen.getByRole('button', { name: 'Export CPE log' }));
 
     expect(
-      await screen.findByText("1 record isn't ready to export yet — it'll appear once secured."),
+      await screen.findByText("1 record isn't included because it isn't secured."),
     ).toBeInTheDocument();
   });
 

@@ -48,11 +48,15 @@ test.describe('Professional education — CPE/CLE export hardening + org dashboa
   test.beforeAll(async () => {
     orgId = await getSeedUserOrgId(serviceClient, SEED_USERS.orgAdmin.id);
 
-    // Mixed SECURED + PENDING CPE fixture for the org admin (CPE-01 + CPE-02).
+    // Mixed-status CPE fixture for the org admin (CPE-01 + CPE-02): secured,
+    // in-progress (PENDING + BROADCASTING), and terminal (REVOKED) rows so the
+    // dashboard taxonomy (round-1 review finding 1) is exercised end-to-end.
     const rows = [
       { seed: 1, status: 'SECURED' },
       { seed: 2, status: 'SECURED' },
       { seed: 3, status: 'PENDING' },
+      { seed: 4, status: 'BROADCASTING' },
+      { seed: 5, status: 'REVOKED' },
     ] as const;
     for (const row of rows) {
       const fingerprint = fp(row.seed);
@@ -119,9 +123,11 @@ test.describe('Professional education — CPE/CLE export hardening + org dashboa
 
     // Export completes (not blocked)…
     await expect(orgAdminPage.getByText('CPE log ready. 2 records included.')).toBeVisible({ timeout: 15000 });
-    // …and the exclusion is surfaced, never silent.
+    // …and the exclusion is surfaced, never silent — asserting only what is
+    // held (§1.5): the records aren't secured. No "will appear once secured"
+    // promise (false for revoked/expired records — round-1 review finding 2).
     await expect(orgAdminPage.getByTestId('excluded-records-notice')).toContainText(
-      "1 record isn't ready to export yet — it'll appear once secured.",
+      "1 record isn't included because it isn't secured.",
     );
   });
 
@@ -153,12 +159,20 @@ test.describe('Professional education — CPE/CLE export hardening + org dashboa
       .limit(1000);
     if (expectedErr) throw new Error(`expected-count query failed: ${expectedErr.message}`);
     const rows = (expectedRows ?? []) as Array<{ user_id: string | null; status: string }>;
+    // SAME taxonomy as useOrgCpeMemberSummary (round-1 review finding 1):
+    // secured = SECURED only; in-progress = PENDING/SUBMITTED/BROADCASTING/
+    // PENDING_RESOLUTION; terminal = REVOKED/EXPIRED/SUPERSEDED (footnote).
+    const IN_PROGRESS = new Set(['PENDING', 'SUBMITTED', 'BROADCASTING', 'PENDING_RESOLUTION']);
+    const TERMINAL = new Set(['REVOKED', 'EXPIRED', 'SUPERSEDED']);
     const expectedSecured = rows.filter((r) => r.status === 'SECURED').length;
-    const expectedPending = rows.filter((r) => r.status === 'PENDING' || r.status === 'SUBMITTED').length;
+    const expectedPending = rows.filter((r) => IN_PROGRESS.has(r.status)).length;
+    const expectedTerminal = rows.filter((r) => TERMINAL.has(r.status)).length;
     const expectedMembers = new Set(rows.map((r) => r.user_id).filter(Boolean)).size;
-    // The fixture guarantees at least 2 secured + 1 pending exist.
+    // The fixture guarantees 2 secured + 2 in-progress (PENDING, BROADCASTING)
+    // + 1 terminal (REVOKED) exist.
     expect(expectedSecured).toBeGreaterThanOrEqual(2);
-    expect(expectedPending).toBeGreaterThanOrEqual(1);
+    expect(expectedPending).toBeGreaterThanOrEqual(2);
+    expect(expectedTerminal).toBeGreaterThanOrEqual(1);
 
     await orgAdminPage.goto('/organization/compliance');
 
@@ -168,6 +182,11 @@ test.describe('Professional education — CPE/CLE export hardening + org dashboa
     await expect(dashboard.getByTestId('org-cpe-tile-secured')).toHaveText(String(expectedSecured), { timeout: 15000 });
     await expect(dashboard.getByTestId('org-cpe-tile-pending')).toHaveText(String(expectedPending));
     await expect(dashboard.getByTestId('org-cpe-tile-members')).toHaveText(String(expectedMembers));
+
+    // Terminal records are surfaced explicitly — never silently omitted.
+    await expect(dashboard.getByTestId('org-cpe-terminal-footnote')).toContainText(
+      new RegExp(`^${expectedTerminal} records? in this period`),
+    );
 
     // Member row: name/identifier + per-member counts.
     const memberRow = dashboard.getByRole('row').filter({ hasText: 'demo-admin@arkova.local' });

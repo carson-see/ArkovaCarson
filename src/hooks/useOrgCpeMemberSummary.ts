@@ -30,20 +30,26 @@ import { supabase } from '@/lib/supabase';
 
 export interface OrgCpeMemberSummaryRow {
   userId: string;
-  /** full_name → email → placeholder (never blank). */
+  /**
+   * full_name → email → '' (the component maps '' to the UNKNOWN_MEMBER copy;
+   * never an internal-id fragment — round-1 review finding 5).
+   */
   displayName: string;
   /** Stable identifier shown next to the name (email), when readable. */
   identifier: string | null;
+  /** Secured = status SECURED only (FE-PROOF-GATE contract, see below). */
   securedCount: number;
-  /** Not yet secured: PENDING or SUBMITTED. */
+  /** In progress: PENDING, SUBMITTED, BROADCASTING, or PENDING_RESOLUTION. */
   pendingCount: number;
+  /** Terminal: REVOKED, EXPIRED, or SUPERSEDED — surfaced, never silent. */
+  terminalCount: number;
   /** Most recent issued_at across the member's in-period CPE rows. */
   lastActivity: string | null;
 }
 
 export interface OrgCpeMemberSummary {
   rows: OrgCpeMemberSummaryRow[];
-  totals: { members: number; secured: number; pending: number };
+  totals: { members: number; secured: number; pending: number; terminal: number };
   /** True when the caller is a plain member and results are own-rows only. */
   scopedToSelf: boolean;
 }
@@ -71,7 +77,23 @@ interface ProfileRow {
 /** Row cap mirrors the existing org CPE aggregate panel (bounded read). */
 const MAX_ROWS = 1000;
 
-const PENDING_STATUSES = new Set(['PENDING', 'SUBMITTED']);
+/**
+ * Status taxonomy — consistent with the SECURED-only export gate and the
+ * FE-PROOF-GATE contract (docs/reference/FE_PROOF_GATE_CONTRACT.md): "secured"
+ * means status === 'SECURED' ONLY; terminal states (REVOKED / EXPIRED /
+ * SUPERSEDED) are never treated as secured NOR as in-progress — they are
+ * counted distinctly so no record silently vanishes from the dashboard.
+ * Values verified against the `anchor_status` enum in
+ * src/types/database.types.ts (PENDING, SECURED, REVOKED, EXPIRED, SUBMITTED,
+ * BROADCASTING, SUPERSEDED, PENDING_RESOLUTION).
+ */
+const IN_PROGRESS_STATUSES = new Set([
+  'PENDING',
+  'SUBMITTED',
+  'BROADCASTING',
+  'PENDING_RESOLUTION',
+]);
+const TERMINAL_STATUSES = new Set(['REVOKED', 'EXPIRED', 'SUPERSEDED']);
 
 export async function fetchOrgCpeMemberSummary(
   params: FetchOrgCpeMemberSummaryParams,
@@ -121,6 +143,7 @@ export async function fetchOrgCpeMemberSummary(
   const byMember = new Map<string, OrgCpeMemberSummaryRow>();
   let securedTotal = 0;
   let pendingTotal = 0;
+  let terminalTotal = 0;
 
   for (const row of anchorRows) {
     if (!row.user_id) continue;
@@ -134,21 +157,28 @@ export async function fetchOrgCpeMemberSummary(
           profile?.email?.trim() ||
           // Static fallback lives here (data-layer), the component maps it to
           // the ORG_CPE_DASHBOARD_LABELS.UNKNOWN_MEMBER copy for display.
+          // NEVER an internal-id fragment (round-1 review finding 5).
           '',
         identifier: profile?.email ?? null,
         securedCount: 0,
         pendingCount: 0,
+        terminalCount: 0,
         lastActivity: null,
       };
       byMember.set(row.user_id, member);
     }
 
+    // Three-bucket taxonomy — every status lands in exactly one bucket
+    // (secured / in-progress / terminal); nothing silently vanishes.
     if (row.status === 'SECURED') {
       member.securedCount += 1;
       securedTotal += 1;
-    } else if (row.status && PENDING_STATUSES.has(row.status)) {
+    } else if (row.status && IN_PROGRESS_STATUSES.has(row.status)) {
       member.pendingCount += 1;
       pendingTotal += 1;
+    } else if (row.status && TERMINAL_STATUSES.has(row.status)) {
+      member.terminalCount += 1;
+      terminalTotal += 1;
     }
     if (row.issued_at && (!member.lastActivity || row.issued_at > member.lastActivity)) {
       member.lastActivity = row.issued_at;
@@ -158,13 +188,20 @@ export async function fetchOrgCpeMemberSummary(
   const rows = [...byMember.values()]
     .map((r) => ({
       ...r,
-      displayName: r.displayName || r.identifier || r.userId.slice(0, 8),
+      // '' when neither profile name nor email is readable — the component
+      // renders UNKNOWN_MEMBER copy; never a userId fragment.
+      displayName: r.displayName || r.identifier || '',
     }))
     .sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? ''));
 
   return {
     rows,
-    totals: { members: rows.length, secured: securedTotal, pending: pendingTotal },
+    totals: {
+      members: rows.length,
+      secured: securedTotal,
+      pending: pendingTotal,
+      terminal: terminalTotal,
+    },
     scopedToSelf,
   };
 }

@@ -53,12 +53,22 @@ const ORG_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
 const ADMIN_ID = '44444444-0000-0000-0000-000000000001';
 const MEMBER_ID = '44444444-0000-0000-0000-000000000002';
 
+// Status taxonomy fixtures (round-1 review finding 1): every anchor_status
+// enum value appears — SECURED; the four in-progress states (PENDING,
+// SUBMITTED, BROADCASTING, PENDING_RESOLUTION); and the three terminal states
+// (REVOKED, EXPIRED, SUPERSEDED). Verified against
+// src/types/database.types.ts `anchor_status`.
 const ANCHOR_ROWS = [
   { user_id: ADMIN_ID, status: 'SECURED', issued_at: '2026-06-01T00:00:00.000Z' },
   { user_id: ADMIN_ID, status: 'SECURED', issued_at: '2026-05-01T00:00:00.000Z' },
   { user_id: ADMIN_ID, status: 'PENDING', issued_at: '2026-06-10T00:00:00.000Z' },
+  { user_id: ADMIN_ID, status: 'BROADCASTING', issued_at: '2026-06-15T00:00:00.000Z' },
+  { user_id: ADMIN_ID, status: 'REVOKED', issued_at: '2026-02-01T00:00:00.000Z' },
+  { user_id: ADMIN_ID, status: 'SUPERSEDED', issued_at: '2026-01-05T00:00:00.000Z' },
   { user_id: MEMBER_ID, status: 'SUBMITTED', issued_at: '2026-04-01T00:00:00.000Z' },
   { user_id: MEMBER_ID, status: 'SECURED', issued_at: '2026-03-01T00:00:00.000Z' },
+  { user_id: MEMBER_ID, status: 'PENDING_RESOLUTION', issued_at: '2026-04-15T00:00:00.000Z' },
+  { user_id: MEMBER_ID, status: 'EXPIRED', issued_at: '2026-01-15T00:00:00.000Z' },
 ];
 
 const PROFILE_ROWS = [
@@ -91,15 +101,20 @@ describe('fetchOrgCpeMemberSummary — org admin', () => {
     });
 
     expect(summary.scopedToSelf).toBe(false);
-    expect(summary.totals).toEqual({ members: 2, secured: 3, pending: 2 });
+    // Taxonomy (review round 1): secured = SECURED only; in-progress =
+    // PENDING + SUBMITTED + BROADCASTING + PENDING_RESOLUTION; terminal =
+    // REVOKED + EXPIRED + SUPERSEDED — counted explicitly, never silently
+    // omitted.
+    expect(summary.totals).toEqual({ members: 2, secured: 3, pending: 4, terminal: 3 });
 
     const carson = summary.rows.find((r) => r.userId === ADMIN_ID);
     expect(carson).toMatchObject({
       displayName: 'Carson Seeger',
       identifier: 'carson@arkova.ai',
       securedCount: 2,
-      pendingCount: 1,
-      lastActivity: '2026-06-10T00:00:00.000Z',
+      pendingCount: 2, // PENDING + BROADCASTING
+      terminalCount: 2, // REVOKED + SUPERSEDED
+      lastActivity: '2026-06-15T00:00:00.000Z',
     });
 
     const sarah = summary.rows.find((r) => r.userId === MEMBER_ID);
@@ -107,9 +122,35 @@ describe('fetchOrgCpeMemberSummary — org admin', () => {
     expect(sarah).toMatchObject({
       displayName: 'sarah@arkova.ai',
       securedCount: 1,
-      pendingCount: 1,
-      lastActivity: '2026-04-01T00:00:00.000Z',
+      pendingCount: 2, // SUBMITTED + PENDING_RESOLUTION
+      terminalCount: 1, // EXPIRED
+      lastActivity: '2026-04-15T00:00:00.000Z',
     });
+  });
+
+  it('counts BROADCASTING and PENDING_RESOLUTION as in-progress (not dropped) and terminal states distinctly', async () => {
+    wire(
+      {
+        data: [
+          { user_id: ADMIN_ID, status: 'BROADCASTING', issued_at: '2026-06-01T00:00:00.000Z' },
+          { user_id: ADMIN_ID, status: 'PENDING_RESOLUTION', issued_at: '2026-06-02T00:00:00.000Z' },
+          { user_id: ADMIN_ID, status: 'REVOKED', issued_at: '2026-06-03T00:00:00.000Z' },
+        ],
+        error: null,
+      },
+      { data: PROFILE_ROWS, error: null },
+    );
+
+    const summary = await fetchOrgCpeMemberSummary({
+      orgId: ORG_ID,
+      userId: ADMIN_ID,
+      isOrgAdmin: true,
+      periodStart: null,
+    });
+
+    // Every row lands in exactly one bucket — nothing vanishes.
+    expect(summary.totals).toEqual({ members: 1, secured: 0, pending: 2, terminal: 1 });
+    expect(summary.rows[0]).toMatchObject({ securedCount: 0, pendingCount: 2, terminalCount: 1 });
   });
 
   it('queries the 0342 partial-index shape: org_id + cpe_metadata NOT NULL + issued_at DESC, no PII columns', async () => {
@@ -156,7 +197,7 @@ describe('fetchOrgCpeMemberSummary — org admin', () => {
     ).rejects.toThrow();
   });
 
-  it('degrades gracefully when the profiles read fails (identifiers fall back, counts intact)', async () => {
+  it('degrades gracefully when the profiles read fails (counts intact; NO internal-id fragment leaks as a display name)', async () => {
     wire({ data: ANCHOR_ROWS, error: null }, { data: null, error: { message: 'nope' } });
 
     const summary = await fetchOrgCpeMemberSummary({
@@ -167,7 +208,13 @@ describe('fetchOrgCpeMemberSummary — org admin', () => {
     });
 
     expect(summary.totals.secured).toBe(3);
-    expect(summary.rows.every((r) => r.displayName.length > 0)).toBe(true);
+    // Round-1 review finding 5: never render a userId fragment. With no
+    // profile data the displayName stays EMPTY — the component maps '' to the
+    // ORG_CPE_DASHBOARD_LABELS.UNKNOWN_MEMBER copy.
+    expect(summary.rows.every((r) => r.displayName === '')).toBe(true);
+    expect(
+      summary.rows.every((r) => !r.displayName.includes(r.userId.slice(0, 8))),
+    ).toBe(true);
   });
 });
 

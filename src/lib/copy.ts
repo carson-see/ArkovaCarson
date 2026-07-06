@@ -1727,12 +1727,16 @@ export const PROFESSIONAL_EDUCATION_EXPORT_LABELS = {
 // =============================================================================
 
 export const PROFESSIONAL_EDUCATION_S3_LABELS = {
-  // CPE-01 (SCRUM-2378): the worker excludes not-yet-secured records from
-  // compliance exports. Surfaced inline — never a blocker, never silent.
+  // CPE-01 (SCRUM-2378): the worker excludes ALL non-secured records from
+  // compliance exports — including revoked/expired/superseded ones that will
+  // NEVER become secured. Per §1.5 the notice asserts only what is held (they
+  // aren't secured); it must not promise they will "appear once secured"
+  // (round-1 review finding 2). Surfaced inline — never a blocker, never
+  // silent.
   EXCLUDED_NOTICE: (count: number) =>
     count === 1
-      ? "1 record isn't ready to export yet — it'll appear once secured."
-      : `${count} records aren't ready to export yet — they'll appear once secured.`,
+      ? "1 record isn't included because it isn't secured."
+      : `${count} records aren't included because they aren't secured.`,
   // CLE-01 (SCRUM-2379, Constitution §1.5): jurisdiction tags are informational
   // metadata only. Mirrors JURISDICTION_INFORMATIONAL_DISCLAIMER in
   // services/worker/src/exports/cle-log-export.ts (embedded in the export
@@ -1763,6 +1767,13 @@ export const ORG_CPE_DASHBOARD_LABELS = {
   EMPTY_DESC: 'Member records appear here once CPE documents are secured or queued for the selected period.',
   ERROR: 'Unable to load team CPE records.',
   NO_ACTIVITY: '—',
+  // Round-1 review finding 1: terminal records (revoked, expired, or
+  // superseded) are counted in neither tile — surface them explicitly so they
+  // never vanish silently from the dashboard.
+  TERMINAL_FOOTNOTE: (count: number) =>
+    count === 1
+      ? '1 record in this period is revoked, expired, or superseded and is not counted in the totals above.'
+      : `${count} records in this period are revoked, expired, or superseded and are not counted in the totals above.`,
 } as const;
 
 // =============================================================================

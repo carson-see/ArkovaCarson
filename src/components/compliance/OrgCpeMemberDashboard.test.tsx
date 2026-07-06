@@ -48,6 +48,7 @@ describe('OrgCpeMemberDashboard', () => {
               identifier: 'carson@arkova.ai',
               securedCount: 2,
               pendingCount: 1,
+              terminalCount: 0,
               lastActivity: '2026-06-10T00:00:00.000Z',
             },
             {
@@ -56,10 +57,11 @@ describe('OrgCpeMemberDashboard', () => {
               identifier: 'sarah@arkova.ai',
               securedCount: 1,
               pendingCount: 0,
+              terminalCount: 0,
               lastActivity: null,
             },
           ],
-          totals: { members: 2, secured: 3, pending: 1 },
+          totals: { members: 2, secured: 3, pending: 1, terminal: 0 },
           scopedToSelf: false,
         },
       }),
@@ -97,10 +99,11 @@ describe('OrgCpeMemberDashboard', () => {
               identifier: 'me@example.com',
               securedCount: 1,
               pendingCount: 0,
+              terminalCount: 0,
               lastActivity: '2026-06-01T00:00:00.000Z',
             },
           ],
-          totals: { members: 1, secured: 1, pending: 0 },
+          totals: { members: 1, secured: 1, pending: 0, terminal: 0 },
           scopedToSelf: true,
         },
       }),
@@ -118,10 +121,90 @@ describe('OrgCpeMemberDashboard', () => {
     );
   });
 
+  it('surfaces terminal (revoked/expired/superseded) records via the explicit footnote — never silently omitted', () => {
+    useOrgCpeMemberSummaryMock.mockReturnValue(
+      hookReturn({
+        summary: {
+          rows: [
+            {
+              userId: USER_ID,
+              displayName: 'Carson Seeger',
+              identifier: 'carson@arkova.ai',
+              securedCount: 1,
+              pendingCount: 0,
+              terminalCount: 2,
+              lastActivity: '2026-06-10T00:00:00.000Z',
+            },
+          ],
+          totals: { members: 1, secured: 1, pending: 0, terminal: 2 },
+          scopedToSelf: false,
+        },
+      }),
+    );
+
+    render(<OrgCpeMemberDashboard orgId={ORG_ID} userId={USER_ID} isOrgAdmin />);
+
+    expect(screen.getByTestId('org-cpe-terminal-footnote')).toHaveTextContent(
+      '2 records in this period are revoked, expired, or superseded and are not counted in the totals above.',
+    );
+  });
+
+  it('renders NO terminal footnote when there are no terminal records', () => {
+    useOrgCpeMemberSummaryMock.mockReturnValue(
+      hookReturn({
+        summary: {
+          rows: [
+            {
+              userId: USER_ID,
+              displayName: 'Carson Seeger',
+              identifier: 'carson@arkova.ai',
+              securedCount: 1,
+              pendingCount: 0,
+              terminalCount: 0,
+              lastActivity: '2026-06-10T00:00:00.000Z',
+            },
+          ],
+          totals: { members: 1, secured: 1, pending: 0, terminal: 0 },
+          scopedToSelf: false,
+        },
+      }),
+    );
+
+    render(<OrgCpeMemberDashboard orgId={ORG_ID} userId={USER_ID} isOrgAdmin />);
+    expect(screen.queryByTestId('org-cpe-terminal-footnote')).not.toBeInTheDocument();
+  });
+
+  it('renders the UNKNOWN_MEMBER copy (never an id fragment) when a member has no readable name', () => {
+    useOrgCpeMemberSummaryMock.mockReturnValue(
+      hookReturn({
+        summary: {
+          rows: [
+            {
+              userId: '9f8e7d6c-0000-0000-0000-000000000009',
+              displayName: '',
+              identifier: null,
+              securedCount: 1,
+              pendingCount: 0,
+              terminalCount: 0,
+              lastActivity: null,
+            },
+          ],
+          totals: { members: 1, secured: 1, pending: 0, terminal: 0 },
+          scopedToSelf: false,
+        },
+      }),
+    );
+
+    render(<OrgCpeMemberDashboard orgId={ORG_ID} userId={USER_ID} isOrgAdmin />);
+    expect(screen.getByText('Unknown member')).toBeInTheDocument();
+    // No internal-id fragment leaks into the table.
+    expect(screen.queryByText(/9f8e7d6c/)).not.toBeInTheDocument();
+  });
+
   it('renders the empty state when there are no records in the period', () => {
     useOrgCpeMemberSummaryMock.mockReturnValue(
       hookReturn({
-        summary: { rows: [], totals: { members: 0, secured: 0, pending: 0 }, scopedToSelf: false },
+        summary: { rows: [], totals: { members: 0, secured: 0, pending: 0, terminal: 0 }, scopedToSelf: false },
       }),
     );
 

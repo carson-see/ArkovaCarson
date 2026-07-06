@@ -165,6 +165,20 @@ export function OrgCpeMemberDashboard({ orgId, userId, isOrgAdmin }: Readonly<Or
                 </TableBody>
               </Table>
             </div>
+
+            {/* Terminal records (revoked/expired/superseded) are counted in
+                neither tile — surface them explicitly (round-1 review
+                finding 1: no silent omission). Taxonomy matches the
+                SECURED-only export gate and the FE-PROOF-GATE contract
+                (docs/reference/FE_PROOF_GATE_CONTRACT.md). */}
+            {summary.totals.terminal > 0 && (
+              <p
+                data-testid="org-cpe-terminal-footnote"
+                className="text-xs text-muted-foreground border-t border-border pt-3"
+              >
+                {LABELS.TERMINAL_FOOTNOTE(summary.totals.terminal)}
+              </p>
+            )}
           </div>
         )}
       </CardContent>
