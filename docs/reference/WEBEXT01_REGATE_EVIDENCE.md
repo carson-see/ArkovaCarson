@@ -4,7 +4,7 @@ _Sprint 3 / S3-E, Lane 1. Captured 2026-07-06 on branch `lane1/s3-webext01-regat
 
 **Evidence-tag legend** — every claim below is tagged one of:
 
-- `VERIFIED(code-cite)` — read directly from the source at the cited file:line on this branch (== origin/main except the one comment fix in this PR).
+- `VERIFIED(code-cite)` — read directly from the source at the cited file:line on this branch (== origin/main; the stale co-merge comment fix originally carried here was moved to fix PR #1416 so this PR is docs/evidence-only).
 - `VERIFIED(test-run)` — a test/build/tool execution performed in this session, output quoted.
 - `VERIFIED(browser-real)` — observed in a real headless Chromium (Playwright 1.61.1) in this session.
 - `VERIFIED(prod-read)` — read-only GET/HEAD against the live `app.arkova.ai` origin (no writes, no deploy actions).
@@ -34,7 +34,7 @@ _Sprint 3 / S3-E, Lane 1. Captured 2026-07-06 on branch `lane1/s3-webext01-regat
 
 ## 1. Code verification (VERIFIED: code-cite)
 
-All citations from `src/lib/nerPiiDetector.ts` unless noted. Line numbers are pre-comment-fix (== origin/main `f927494e`); the only change in this PR is the stale co-merge comment (§7).
+All citations from `src/lib/nerPiiDetector.ts` unless noted. Line numbers are per origin/main `f927494e` — this PR no longer changes any source file (the stale co-merge comment fix originally captured alongside this evidence was moved to fix PR #1416, whose branch reworks the same file with tests).
 
 | Contract | Citation |
 |---|---|
@@ -84,7 +84,7 @@ default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsa
 
 Note the unit suites inject a **fake transformers loader** (`__setTransformersLoaderForTesting`) — by design they cannot see F-1 (§6). That is exactly why this re-gate demanded browser-real evidence.
 
-Also green in this session after the comment-only change: `npm run typecheck` (0 errors), `npm run lint` (0 errors; 2 pre-existing warnings in unrelated `issuer-partnerships` files), `npm run lint:copy` (compliant).
+Also green in this session: `npm run typecheck` (0 errors), `npm run lint` (0 errors; 2 pre-existing warnings in unrelated `issuer-partnerships` files), `npm run lint:copy` (compliant). (That run's tree included a comment-only docstring fix in `nerPiiDetector.ts` since moved to fix PR #1416 — a comment cannot alter these outputs.)
 
 ## 4. Build + vendoring evidence (VERIFIED: test-run)
 

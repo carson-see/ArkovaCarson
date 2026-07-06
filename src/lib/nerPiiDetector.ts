@@ -30,12 +30,11 @@
  *   3. the build-time integrity pin (scripts/ner-weights.lock.json +
  *      scripts/fetch-ner-model.ts).
  * It does NOT, on its own, deliver the end-to-end §1.6 fail-CLOSED guarantee.
- * That is delivered by the CONSUMER change in #1262 / WEBEXT-03 (Lane 2), which
- * makes `enhancedPiiStripper.ts` THROW on `NERModelLoadError` instead of
- * degrading to regex-only stripping. BOTH halves are on `main`: #1253 merged
- * 2026-06-24 and #1262 merged 2026-06-25, so a raised `NERModelLoadError` is
- * now acted on fail-CLOSED end-to-end (see `enhancedPiiStripper.ts` +
- * `ocrFailClosed.ts` `isPiiStripFailClosedError`).
+ * That requires the CONSUMER change in #1262 / WEBEXT-03 (Lane 2), which makes
+ * `enhancedPiiStripper.ts` THROW on `NERModelLoadError` instead of degrading to
+ * regex-only stripping. Until that consumer lands, a raised `NERModelLoadError`
+ * is still handled by the existing caller (regex fallback). This module MUST
+ * co-merge with #1262 so the typed error is actually acted on fail-CLOSED.
  *
  * Vendor the weights with `scripts/fetch-ner-model.ts` (ops step; the binaries
  * are git-ignored, never committed).
@@ -151,12 +150,11 @@ export const NER_LOCAL_MODEL_PATH = '/models/';
  *
  * This is intentionally a distinct, typed error: it is the PRODUCER contract
  * (this module / #1253) that the fail-closed PII stripper consumer
- * (`enhancedPiiStripper.ts`, Lane 2 / #1262 / WEBEXT-03) detects — via
- * `isPiiStripFailClosedError` (name/prototype match) — to refuse to release
- * text, rather than the loader silently returning null and the caller falling
- * back to regex-only stripping (a §1.6 fail-OPEN). Both halves are merged on
- * `main` (#1253 on 2026-06-24, #1262 on 2026-06-25), so the end-to-end
- * fail-CLOSED path is live (see the module header).
+ * (`enhancedPiiStripper.ts`, Lane 2 / #1262 / WEBEXT-03) will `instanceof`-detect
+ * to refuse to release text — rather than the loader silently returning null and
+ * the caller falling back to regex-only stripping (a §1.6 fail-OPEN). The
+ * fail-CLOSED behavior is delivered by that consumer change, NOT by this module
+ * alone; the two MUST co-merge (see the module header).
  */
 export class NERModelLoadError extends Error {
   /**
