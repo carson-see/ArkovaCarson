@@ -27,7 +27,31 @@ vi.mock('../../../utils/db.js', () => ({
   db: {},
 }));
 
+// DRIVE-01 (SCRUM-2366): the connect gate resolves org membership/admin through
+// the canonical owner-inclusive resolver (api/_org-auth.ts), NOT org_members
+// directly. Mock it so these route tests control the admin/org answer and prove
+// the router routes THROUGH the canonical resolver.
+vi.mock('../../../api/_org-auth.js', () => ({
+  getCallerOrgIdResult: vi.fn(async () => ({ value: null, error: false })),
+  isCallerOrgAdminResult: vi.fn(async () => ({ value: true, error: false })),
+}));
+
+import { getCallerOrgIdResult, isCallerOrgAdminResult } from '../../../api/_org-auth.js';
 import { createDriveOAuthRouter } from './drive-oauth.js';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockOrgId = getCallerOrgIdResult as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockAdmin = isCallerOrgAdminResult as any;
+
+/**
+ * Default the resolver to "verified-org admin" so pre-existing tests that only
+ * exercise the org-admin happy path keep passing. Individual-tests override.
+ */
+function allowVerifiedOrgAdmin() {
+  mockOrgId.mockResolvedValue({ value: TEST_ORG_ID, error: false });
+  mockAdmin.mockResolvedValue({ value: true, error: false });
+}
 
 interface QueryResult {
   data?: unknown;
@@ -103,9 +127,53 @@ function createApp(db: unknown) {
   return app;
 }
 
+/**
+ * A route-`db` mock that serves the tables the connect gate + callback touch:
+ *   - organizations → verification/suspension row (defaults VERIFIED, active)
+ *   - profiles      → individual entitlement row (defaults undefined)
+ *   - org_members   → legacy admin lookup (disconnect still uses requireOrgAdmin)
+ *   - org_integrations / integration_events → capture upsert/insert
+ */
+function makeRouteDb(opts: {
+  org?: { verification_status?: string; suspended?: boolean | null } | null;
+  profile?: { subscription_tier?: string; identity_verified_at?: string | null } | null;
+  memberRole?: string;
+  capture?: (method: string, value: unknown) => void;
+  integrationsResult?: () => QueryResult;
+} = {}) {
+  let integrationsCall = 0;
+  return {
+    from: vi.fn((table: string) => {
+      if (table === 'organizations') {
+        return mockQuery({
+          data: opts.org === undefined ? { verification_status: 'VERIFIED', suspended: false } : opts.org,
+          error: null,
+        });
+      }
+      if (table === 'profiles') {
+        return mockQuery({ data: opts.profile ?? null, error: null });
+      }
+      if (table === 'org_members') {
+        return mockQuery({ data: { role: opts.memberRole ?? 'admin' }, error: null });
+      }
+      if (table === 'org_integrations') {
+        integrationsCall++;
+        return mockQuery(opts.integrationsResult?.() ?? { data: { id: 'integration-1' }, error: null }, opts.capture);
+      }
+      if (table === 'integration_events') {
+        return mockQuery({ data: null, error: null }, opts.capture);
+      }
+      return mockQuery({ data: null, error: null }, opts.capture);
+    }),
+    _integrationsCall: () => integrationsCall,
+  };
+}
+
 describe('Drive OAuth router', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: caller is an admin of a VERIFIED, active org.
+    allowVerifiedOrgAdmin();
   });
 
   // SCRUM-1236 (AUDIT-0424-11): state HMAC must come from a dedicated env var
@@ -127,9 +195,7 @@ describe('Drive OAuth router', () => {
   });
 
   it('SCRUM-1236: uses INTEGRATION_STATE_HMAC_SECRET from env when provided', async () => {
-    const db = {
-      from: vi.fn(() => mockQuery({ data: { role: 'admin' }, error: null })),
-    };
+    const db = makeRouteDb();
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -159,9 +225,7 @@ describe('Drive OAuth router', () => {
   it('SCRUM-1236: state HMAC does NOT fall back to supabaseJwtSecret', async () => {
     // Build a state using supabaseJwtSecret (the old fallback) — verify
     // should reject because the new code requires the dedicated secret.
-    const db = {
-      from: vi.fn(() => mockQuery({ data: { role: 'admin' }, error: null })),
-    };
+    const db = makeRouteDb();
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -200,9 +264,7 @@ describe('Drive OAuth router', () => {
   });
 
   it('starts OAuth for org admins and returns a Google authorization URL', async () => {
-    const db = {
-      from: vi.fn(() => mockQuery({ data: { role: 'admin' }, error: null })),
-    };
+    const db = makeRouteDb();
     const app = createApp(db);
 
     const res = await request(app)
@@ -222,9 +284,9 @@ describe('Drive OAuth router', () => {
   });
 
   it('rejects OAuth start when the caller is not an org admin', async () => {
-    const db = {
-      from: vi.fn(() => mockQuery({ data: { role: 'member' }, error: null })),
-    };
+    // Canonical resolver reports non-admin → gate denies with reason not_admin.
+    mockAdmin.mockResolvedValue({ value: false, error: false });
+    const db = makeRouteDb({ memberRole: 'member' });
     const app = createApp(db);
 
     const res = await request(app)
@@ -232,7 +294,9 @@ describe('Drive OAuth router', () => {
       .send({ org_id: TEST_ORG_ID });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toContain('org admin');
+    expect(res.body.code).toBe('not_authorized');
+    // Routed through the canonical owner-inclusive resolver, not org_members.
+    expect(mockAdmin).toHaveBeenCalledWith(TEST_USER_ID, TEST_ORG_ID);
   });
 
   it('exchanges callback code, encrypts tokens, stores integration state, and redirects to settings', async () => {
@@ -242,6 +306,7 @@ describe('Drive OAuth router', () => {
     };
     const db = {
       from: vi.fn((table: string) => {
+        if (table === 'organizations') return mockQuery({ data: { verification_status: 'VERIFIED', suspended: false }, error: null });
         if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
         if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
         if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
@@ -429,6 +494,138 @@ describe('Drive OAuth router', () => {
       encrypted_tokens: null,
       token_kms_key_id: null,
       subscription_id: null,
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // DRIVE-01 (SCRUM-2366): verified-only connect gate WIRED into start+callback.
+  // Before the fix the eligibility resolver had zero production importers and
+  // the route gated on org_members.role alone — unverified/free could connect
+  // and a stale state token could bypass a lapsed entitlement.
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('DRIVE-01 verified-only connect gate', () => {
+    it('org path: allows an admin of a VERIFIED, active org (routes through the canonical resolver)', async () => {
+      mockOrgId.mockResolvedValue({ value: TEST_ORG_ID, error: false });
+      mockAdmin.mockResolvedValue({ value: true, error: false });
+      const db = makeRouteDb({ org: { verification_status: 'VERIFIED', suspended: false } });
+      const app = createApp(db);
+
+      const res = await request(app)
+        .post('/api/v1/integrations/google_drive/oauth/start')
+        .set('host', 'worker.test')
+        .send({ org_id: TEST_ORG_ID });
+
+      expect(res.status).toBe(200);
+      expect(res.body.authorizationUrl).toContain('accounts.google.com');
+      expect(mockAdmin).toHaveBeenCalledWith(TEST_USER_ID, TEST_ORG_ID);
+    });
+
+    it('org path: DENIES an admin of an UNVERIFIED org (verified-only gate)', async () => {
+      mockOrgId.mockResolvedValue({ value: TEST_ORG_ID, error: false });
+      mockAdmin.mockResolvedValue({ value: true, error: false });
+      const db = makeRouteDb({ org: { verification_status: 'UNVERIFIED', suspended: false } });
+      const app = createApp(db);
+
+      const res = await request(app)
+        .post('/api/v1/integrations/google_drive/oauth/start')
+        .set('host', 'worker.test')
+        .send({ org_id: TEST_ORG_ID });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('org_unverified');
+    });
+
+    it('individual path: allows a PAID + identity-verified individual with no org_id', async () => {
+      // No org supplied → resolver reports the caller has no org.
+      mockOrgId.mockResolvedValue({ value: null, error: false });
+      const db = makeRouteDb({
+        profile: { subscription_tier: 'professional', identity_verified_at: '2026-01-01T00:00:00Z' },
+      });
+      const app = createApp(db);
+
+      const res = await request(app)
+        .post('/api/v1/integrations/google_drive/oauth/start')
+        .set('host', 'worker.test')
+        .send({}); // no org_id → personal-Drive path
+
+      expect(res.status).toBe(200);
+      expect(res.body.authorizationUrl).toContain('accounts.google.com');
+      // Personal path must NOT consult the admin resolver.
+      expect(mockAdmin).not.toHaveBeenCalled();
+    });
+
+    it('individual path: DENIES a FREE / unverified individual (no paid plan)', async () => {
+      mockOrgId.mockResolvedValue({ value: null, error: false });
+      const db = makeRouteDb({
+        profile: { subscription_tier: 'free', identity_verified_at: '2026-01-01T00:00:00Z' },
+      });
+      const app = createApp(db);
+
+      const res = await request(app)
+        .post('/api/v1/integrations/google_drive/oauth/start')
+        .set('host', 'worker.test')
+        .send({});
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('needs_paid_plan');
+    });
+
+    it('callback re-check: a stale-but-valid state token cannot bypass an entitlement that lapsed after start', async () => {
+      // Start leg: admin of a VERIFIED org → issues a valid state token.
+      mockOrgId.mockResolvedValue({ value: TEST_ORG_ID, error: false });
+      mockAdmin.mockResolvedValue({ value: true, error: false });
+
+      const startDb = makeRouteDb({ org: { verification_status: 'VERIFIED', suspended: false } });
+      const startApp = createApp(startDb);
+      const start = await request(startApp)
+        .post('/api/v1/integrations/google_drive/oauth/start')
+        .set('host', 'worker.test')
+        .send({ org_id: TEST_ORG_ID, return_to: 'http://localhost:5173/organizations/org-1?tab=settings' });
+      expect(start.status).toBe(200);
+      const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+      expect(state).toBeTruthy();
+
+      // Between start and callback the org was SUSPENDED. The token is still
+      // signature-valid + within TTL, but the callback re-evaluates the gate and
+      // must deny persistence.
+      const exchangeSpy = vi.fn();
+      const callbackDb = makeRouteDb({ org: { verification_status: 'VERIFIED', suspended: true } });
+      const callbackApp = express();
+      callbackApp.use(express.json());
+      callbackApp.use((req, _res, next) => {
+        (req as unknown as { userId: string }).userId = TEST_USER_ID;
+        next();
+      });
+      callbackApp.use('/api/v1/integrations', createDriveOAuthRouter({
+        db: callbackDb,
+        env: {
+          GOOGLE_OAUTH_CLIENT_ID: 'google-client',
+          GOOGLE_OAUTH_CLIENT_SECRET: 'google-secret',
+          GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+        },
+        // If the gate were bypassed we'd reach token exchange — this fetch would
+        // fire. Asserting it never runs proves the gate blocked BEFORE exchange.
+        fetchImpl: exchangeSpy as unknown as typeof fetch,
+        stateSecret: 'test-state-secret',
+        frontendUrl: 'http://localhost:5173',
+        now: () => new Date('2026-04-24T12:00:00.000Z'),
+        kms: {
+          async encrypt() { return Buffer.from('x'); },
+          async decrypt() { return Buffer.from('{}'); },
+        },
+      }));
+
+      const callback = await request(callbackApp)
+        .get('/api/v1/integrations/google_drive/oauth/callback')
+        .set('host', 'worker.test')
+        .query({ code: 'google-code', state });
+
+      expect(callback.status).toBe(302);
+      expect(callback.headers.location).toContain('drive_error=org_suspended');
+      // No token exchange happened — the lapsed entitlement was caught first.
+      expect(exchangeSpy).not.toHaveBeenCalled();
+      // Nothing was persisted.
+      expect(callbackDb._integrationsCall()).toBe(0);
     });
   });
 });
