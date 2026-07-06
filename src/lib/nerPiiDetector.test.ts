@@ -12,6 +12,8 @@ import {
   disposeNERPipeline,
   NERModelLoadError,
   NER_LOCAL_MODEL_PATH,
+  ORT_WASM_VENDOR_PATH,
+  TRANSFORMERS_BROWSER_MODULE,
   __setTransformersLoaderForTesting,
   __resetTransformersLoaderForTesting,
   type NEREntity,
@@ -264,6 +266,222 @@ describe('nerPiiDetector', () => {
       const res = await detectPIIWithNER('Some text', 'wasm');
       expect(res.entityCount).toBe(0);
       expect(res.backend).toBe('wasm');
+    });
+  });
+
+  // WEBEXT-01 F-1/F-2 (gate #13, §1.6): the vendored runtime must be a
+  // SELF-CONTAINED browser bundle (no bare specifiers — F-1) and the ort WASM
+  // artifacts must be pinned to a same-origin vendor path BEFORE any session
+  // creation, or onnxruntime-web silently defaults `wasmPaths` to a jsdelivr
+  // CDN URL the deployed CSP (connect-src 'self') blocks (F-2).
+  describe('self-contained runtime + same-origin ort WASM (WEBEXT-01 F-1/F-2)', () => {
+    function makeFakeModule(opts: {
+      pipelineImpl: (...args: unknown[]) => Promise<unknown>;
+    }) {
+      const env = {
+        allowRemoteModels: true,
+        allowLocalModels: false,
+        localModelPath: '/models/',
+        backends: {
+          onnx: {
+            wasm: {
+              numThreads: undefined as number | undefined,
+              wasmPaths: undefined as string | { wasm?: string; mjs?: string } | undefined,
+            },
+          },
+        },
+      };
+      const pipeline = vi.fn(opts.pipelineImpl);
+      return { module: { pipeline, env }, env, pipeline };
+    }
+
+    beforeEach(async () => {
+      await disposeNERPipeline();
+      __resetTransformersLoaderForTesting();
+    });
+
+    afterEach(async () => {
+      await disposeNERPipeline();
+      __resetTransformersLoaderForTesting();
+    });
+
+    it('loads the runtime from a self-contained same-origin bundle path (F-1)', () => {
+      // Must be app-origin-relative (script-src 'self') and must be the
+      // SELF-CONTAINED bundle artifact — the plain `.web.` build carries
+      // top-level bare specifiers ('onnxruntime-web/webgpu') that no browser
+      // can link without an import map (the F-1 dead-on-arrival failure).
+      expect(TRANSFORMERS_BROWSER_MODULE.startsWith('/vendor/')).toBe(true);
+      expect(TRANSFORMERS_BROWSER_MODULE).not.toMatch(/^https?:\/\//);
+      expect(TRANSFORMERS_BROWSER_MODULE).toContain('bundle');
+      expect(TRANSFORMERS_BROWSER_MODULE).not.toBe('/vendor/transformers.web.min.js');
+    });
+
+    it('exposes a same-origin ort WASM vendor path (F-2)', () => {
+      expect(ORT_WASM_VENDOR_PATH.startsWith('/vendor/')).toBe(true);
+      expect(ORT_WASM_VENDOR_PATH.endsWith('/')).toBe(true);
+      expect(ORT_WASM_VENDOR_PATH).not.toMatch(/^https?:\/\//);
+      expect(ORT_WASM_VENDOR_PATH).not.toMatch(/jsdelivr|unpkg|huggingface|hf\.co|cdn/i);
+    });
+
+    it('pins ort wasmPaths to the vendor path BEFORE building the pipeline (F-2)', async () => {
+      // Capture the wasmPaths value AT pipeline-build time: the pin must land
+      // before session creation, not after — an unset value at this point lets
+      // ort's jsdelivr default win the race and the deployed CSP kills the load.
+      let wasmPathsAtBuildTime: unknown = 'NOT_CAPTURED';
+      const modelFn = vi.fn(async () => []);
+      const { module, env } = makeFakeModule({
+        pipelineImpl: async () => {
+          wasmPathsAtBuildTime = env.backends.onnx.wasm.wasmPaths;
+          return modelFn;
+        },
+      });
+      __setTransformersLoaderForTesting(async () => module);
+
+      await detectPIIWithNER('Some text', 'wasm');
+
+      expect(wasmPathsAtBuildTime).toBe(ORT_WASM_VENDOR_PATH);
+      expect(env.backends.onnx.wasm.wasmPaths).toBe(ORT_WASM_VENDOR_PATH);
+    });
+
+    // WEBEXT-01 F-3 (found by the browser-real probe): the transformers.js
+    // 4.2.0 token-classification output carries NO start/end character
+    // offsets ({entity, score, index, word} only). The old merge code copied
+    // `raw.start`/`raw.end` through as undefined, and redactNEREntities then
+    // sliced with undefined — producing exponentially duplicated text WITH
+    // ALL PII STILL PRESENT (a §1.6 leak the moment F-1/F-2 unblock NER).
+    // The detector must now COMPUTE spans against the input text, and the
+    // redactor must fail CLOSED when an entity cannot be located at all.
+    describe('entity spans without pipeline offsets (F-3)', () => {
+      /** Raw output shaped EXACTLY like the real 4.2.0 browser pipeline: no start/end. */
+      const RAW_420 = (tokens: Array<[string, string, number]>) =>
+        tokens.map(([entity, word, score], index) => ({ entity, word, score, index }));
+
+      it('computes correct spans from the input text when the pipeline provides none', async () => {
+        const text = 'John Smith works at Acme Corporation in Seattle';
+        const modelFn = vi.fn(async () =>
+          RAW_420([
+            ['B-PER', 'John', 0.99],
+            ['I-PER', 'Smith', 0.99],
+            ['B-ORG', 'Acme', 0.98],
+            ['I-ORG', 'Corporation', 0.97],
+            ['B-LOC', 'Seattle', 0.99],
+          ]),
+        );
+        const { module } = makeFakeModule({ pipelineImpl: async () => modelFn });
+        __setTransformersLoaderForTesting(async () => module);
+
+        const res = await detectPIIWithNER(text, 'wasm');
+        expect(res.entityCount).toBe(3);
+        const [per, org, loc] = res.entities;
+        expect(per.text).toBe('John Smith');
+        expect(text.slice(per.start, per.end)).toBe('John Smith');
+        expect(org.text).toBe('Acme Corporation');
+        expect(text.slice(org.start, org.end)).toBe('Acme Corporation');
+        expect(loc.text).toBe('Seattle');
+        expect(text.slice(loc.start, loc.end)).toBe('Seattle');
+        // Redaction over the computed spans must remove the PII, not duplicate text.
+        const redacted = redactNEREntities(text, res.entities);
+        expect(redacted).toBe('[PERSON_REDACTED] works at [ORG_REDACTED] in [LOCATION_REDACTED]');
+      });
+
+      it('merges ## subword continuations and still locates the span', async () => {
+        const text = 'Signed by Johanna in Reykjavik';
+        const modelFn = vi.fn(async () =>
+          RAW_420([
+            ['B-PER', 'Joh', 0.95],
+            ['I-PER', '##anna', 0.94],
+            ['B-LOC', 'Rey', 0.93],
+            ['I-LOC', '##kja', 0.92],
+            ['I-LOC', '##vik', 0.91],
+          ]),
+        );
+        const { module } = makeFakeModule({ pipelineImpl: async () => modelFn });
+        __setTransformersLoaderForTesting(async () => module);
+
+        const res = await detectPIIWithNER(text, 'wasm');
+        expect(res.entities.map((e) => e.text)).toEqual(['Johanna', 'Reykjavik']);
+        for (const e of res.entities) {
+          expect(text.slice(e.start, e.end)).toBe(e.text);
+        }
+      });
+
+      it('maps repeated entity text to successive occurrences (cursor advances)', async () => {
+        const text = 'Bob met Bob';
+        const modelFn = vi.fn(async () =>
+          RAW_420([
+            ['B-PER', 'Bob', 0.99],
+            ['O', 'met', 0.99],
+            ['B-PER', 'Bob', 0.99],
+          ]),
+        );
+        const { module } = makeFakeModule({ pipelineImpl: async () => modelFn });
+        __setTransformersLoaderForTesting(async () => module);
+
+        const res = await detectPIIWithNER(text, 'wasm');
+        expect(res.entityCount).toBe(2);
+        expect(res.entities[0].start).toBe(0);
+        expect(res.entities[1].start).toBe(8);
+        expect(redactNEREntities(text, res.entities)).toBe('[PERSON_REDACTED] met [PERSON_REDACTED]');
+      });
+
+      it('still honors pipeline-provided offsets when they are valid', async () => {
+        const text = 'Alice in Paris';
+        const modelFn = vi.fn(async () => [
+          { entity: 'B-PER', word: 'Alice', score: 0.99, start: 0, end: 5 },
+          { entity: 'B-LOC', word: 'Paris', score: 0.99, start: 9, end: 14 },
+        ]);
+        const { module } = makeFakeModule({ pipelineImpl: async () => modelFn });
+        __setTransformersLoaderForTesting(async () => module);
+
+        const res = await detectPIIWithNER(text, 'wasm');
+        expect(res.entities.map((e) => [e.start, e.end])).toEqual([[0, 5], [9, 14]]);
+      });
+    });
+
+    describe('redactNEREntities fail-closed on unlocatable entities (F-3)', () => {
+      it('falls back to literal text redaction when spans are invalid but the text is present', () => {
+        const text = 'Contact Jane Roe today';
+        const entities: NEREntity[] = [
+          { text: 'Jane Roe', type: 'PERSON', score: 0.95, start: -1, end: -1 },
+        ];
+        expect(redactNEREntities(text, entities)).toBe('Contact [PERSON_REDACTED] today');
+      });
+
+      it('THROWS (fail closed) when a detected entity cannot be located at all', () => {
+        const text = 'some visible text';
+        const entities: NEREntity[] = [
+          { text: 'Ghost Name', type: 'PERSON', score: 0.95, start: -1, end: -1 },
+        ];
+        expect(() => redactNEREntities(text, entities)).toThrow(/locat/i);
+        // The thrown message must never contain the entity text (it IS the PII).
+        try {
+          redactNEREntities(text, entities);
+        } catch (e) {
+          expect((e as Error).message).not.toContain('Ghost Name');
+        }
+      });
+    });
+
+    it('fails CLOSED (typed) when the runtime exposes no ort wasm env to pin', async () => {
+      // If we cannot pin wasmPaths, ort would fall back to its CDN default —
+      // refuse to create a session rather than let that race the CSP.
+      const pipeline = vi.fn(async () => vi.fn(async () => []));
+      const module = {
+        pipeline,
+        env: {
+          allowRemoteModels: true,
+          allowLocalModels: false,
+          localModelPath: '/models/',
+          // no backends.onnx.wasm at all
+        },
+      };
+      __setTransformersLoaderForTesting(async () => module);
+
+      await expect(detectPIIWithNER('Some text', 'wasm')).rejects.toBeInstanceOf(
+        NERModelLoadError,
+      );
+      // The session must never have been created.
+      expect(pipeline).not.toHaveBeenCalled();
     });
   });
 });

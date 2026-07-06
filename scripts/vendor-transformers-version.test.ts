@@ -21,7 +21,11 @@ import { readLock, LOCKFILE_PATH } from './fetch-ner-model';
 import { TRANSFORMERS_JS_VERSION } from '../src/lib/nerPiiDetector';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VENDOR_BUNDLE = join(__dirname, '..', 'public', 'vendor', 'transformers.web.min.js');
+// WEBEXT-01 F-1 fix: the vendored runtime is now the SELF-CONTAINED browser
+// bundle (`transformers.bundle.min.js`, from the package's dist/transformers.min.js
+// — ort inlined, no bare specifiers), NOT the `.web.` build whose top-level
+// `onnxruntime-web/webgpu` imports no browser can link without an import map.
+const VENDOR_BUNDLE = join(__dirname, '..', 'public', 'vendor', 'transformers.bundle.min.js');
 
 /**
  * Resolve the SemVer version embedded in a minified transformers.js bundle.
@@ -30,15 +34,23 @@ const VENDOR_BUNDLE = join(__dirname, '..', 'public', 'vendor', 'transformers.we
  * where `<ident>` is a minified const assigned the version literal
  * (e.g. `$k="4.2.0"`). The const NAME is minifier-dependent and changes between
  * builds (4.1.0 → `Ck`, 4.2.0 → `$k`), so we follow the `version:` reference to
- * the literal rather than grepping a fixed identifier. Returns the version
- * string (e.g. `4.2.0`), or null if it can't be resolved.
+ * the literal rather than grepping a fixed identifier. Hardened for the
+ * self-contained bundle (WEBEXT-01): the inlined onnxruntime code carries its
+ * own `version:`-shaped members, so EVERY candidate reference is followed and
+ * the first one that resolves to a strict SemVer literal wins; a direct
+ * `version:"X.Y.Z"` literal (a future re-minification could inline the const)
+ * is also accepted. Returns the version string (e.g. `4.2.0`), or null if it
+ * can't be resolved.
  */
 export function extractBundleVersion(src: string): string | null {
-  const ref = src.match(/version:\s*([A-Za-z_$][\w$]*)/);
-  if (!ref) return null;
-  const ident = ref[1].replace(/[$]/g, '\\$&');
-  const lit = src.match(new RegExp(`${ident}\\s*=\\s*"(\\d+\\.\\d+\\.\\d+)"`));
-  return lit ? lit[1] : null;
+  const direct = src.match(/version:\s*"(\d+\.\d+\.\d+)"/);
+  if (direct) return direct[1];
+  for (const ref of src.matchAll(/version:\s*([A-Za-z_$][\w$]*)/g)) {
+    const ident = ref[1].replace(/[$]/g, '\\$&');
+    const lit = src.match(new RegExp(`${ident}\\s*=\\s*"(\\d+\\.\\d+\\.\\d+)"`));
+    if (lit) return lit[1];
+  }
+  return null;
 }
 
 describe('vendored transformers.js version ↔ integrity lock (SCRUM-2503)', () => {
@@ -68,5 +80,15 @@ describe('vendored transformers.js version ↔ integrity lock (SCRUM-2503)', () 
   it('loader-pinned constant === the integrity lock transformersJsVersion', async () => {
     const lock = await readLock(LOCKFILE_PATH);
     expect(TRANSFORMERS_JS_VERSION).toBe(lock.transformersJsVersion);
+  });
+
+  it('extractBundleVersion handles a direct literal and skips non-SemVer candidates', () => {
+    // Direct literal (a re-minification could inline the const).
+    expect(extractBundleVersion('x={version:"4.2.0"}')).toBe('4.2.0');
+    // Inlined ort code exposes its own version members that resolve to a
+    // dev-suffixed (non-SemVer) literal — those must be skipped, not returned.
+    const mixed = 'a={version:qq};qq="1.26.0-dev.20260416";b={version:VI};VI="4.2.0"';
+    expect(extractBundleVersion(mixed)).toBe('4.2.0');
+    expect(extractBundleVersion('nothing here')).toBeNull();
   });
 });
