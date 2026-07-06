@@ -14,6 +14,18 @@
 
 ## Now
 
+### 2026-07-06 (RTE/ART correction) — Sprint 3.5 updated in place; stale Supabase-only framing removed
+
+Founder clarified that if Sprint 3.25 makes the slot, Arkova should **not** continue normal development immediately after it; the next slot is Sprint 3.5. The existing founder-facing 3.5 Drive artifact was updated in place and renamed to **Arkova Sprint 3.5 Release Confidence ART Plan — Founder Review — 2026-07-06**: https://docs.google.com/document/d/1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc/edit?usp=drivesdk.
+
+Corrected decision: Sprint 3.5 is now a **Release Confidence / CI-CD / staging parity** sprint after 3.25, not a narrow Supabase-only overlay. Supabase remains inside 3.5 as a supporting workstream (`SCRUM-2632`..`SCRUM-2636`), but the train-level work is release-grade environment parity, CI/CD evidence gates, Release Management runbook, prod-promotion/rollback control, and clear proof that final T2/T3 evidence is not being produced on invalid micro/dev-only infrastructure.
+
+Reason for correction: Sprint 3.0 will not merge to prod during the 12-hour AI window, and Peter's Medium-vs-micro staging concern means bad staging evidence could create a bad launch call. Correct sequencing is: finish/land 3.25 if it makes the slot; immediately run 3.5 release confidence; then continue corrected 3.75 / PI-1 CE-Haki partner work after release evidence is no longer ambiguous.
+
+Jira/Confluence trace: `SCRUM-2312` comment `16782`, `SCRUM-2632` comment `16783`, `SCRUM-2633` comment `16784`, Confluence roadmap page `82444290` footer comment `95813633`. `CLAUDE.md` was not changed because no standing engineering directive changed. No production, schema, deploy, runtime, or database state changed by this correction.
+
+_Last refreshed: 2026-07-06 by Codex — verified against Drive readbacks for doc `1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc`, Jira comments `16782`/`16783`/`16784`, Confluence comment `95813633`, and local docs-only git status._
+
 ### 2026-07-06 (RTE/ART correction) — Prior 3.75 / 12-hour arbitration superseded; 3.5 Release Confidence now top priority
 
 Founder flagged that the prior 3.75 plan missed the PI-1 Sprint 1-7 subfolders. Correction is accepted: the previous 3.75 and previous 12-hour arbitration artifacts are invalid/superseded. Corrected founder artifact is published in the shared folder: https://docs.google.com/document/d/1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos/edit?usp=drivesdk. The old 3.75 doc (`1wss0gT8Trlt5msgS0txO3AVuhltTf4szwJ7_JNIGXxc`) and old 12-hour doc (`17swR1oXTZ0jhEcy5-vNGuM2U4M62Wmvcicu0yQvJo9U`) have been renamed with `SUPERSEDED` and have warning text inserted at the top.
