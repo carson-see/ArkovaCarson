@@ -102,6 +102,14 @@ export const CpeLogV1Schema = z
     generated_at: z.string(),
     period: z.object({ start: z.string(), end: z.string() }).strict(),
     record_count: z.number().int().nonnegative(),
+    /**
+     * SCRUM-2378 (CPE-01): count of in-period records EXCLUDED because they are
+     * not yet SECURED. Additive + optional (§1.8) so previously-issued
+     * documents without the field still validate. Always emitted for new
+     * exports — un-SECURED records are excluded, counted, and surfaced; never
+     * silently dropped and never blocking the export.
+     */
+    excluded_count: z.number().int().nonnegative().optional(),
     records: z.array(CpeLogRecordSchema),
     disclaimer: z.literal(NASBA_DISCLAIMER_TEXT),
   })
@@ -231,6 +239,8 @@ export interface CpeLogExportArtifact {
 export interface CpeLogExportResult {
   request_id: string;
   record_count: number;
+  /** In-period records excluded because they are not yet SECURED (SCRUM-2378). */
+  excluded_count: number;
   disclaimer: string;
   exports: {
     pdf: CpeLogExportArtifact;
@@ -391,7 +401,7 @@ function generateCpeLogPdf(
 // ─── Audit event (METADATA ONLY — CC7) ───────────────
 async function emitCpeLogExportedAudit(
   deps: CpeLogExportDeps,
-  args: { userId: string; orgId: string; periodStart: string; periodEnd: string; recordCount: number; requestId: string },
+  args: { userId: string; orgId: string; periodStart: string; periodEnd: string; recordCount: number; excludedCount: number; requestId: string },
 ): Promise<void> {
   // Only the allowed metadata keys. No titles, providers, public_ids, URLs,
   // or any per-credential content — verified by the CC7 leak test.
@@ -400,6 +410,7 @@ async function emitCpeLogExportedAudit(
     period_end: args.periodEnd,
     format: 'pdf+json',
     record_count: args.recordCount,
+    excluded_count: args.excludedCount,
     request_id: args.requestId,
   };
 
@@ -474,7 +485,15 @@ export async function generateCpeLogExport(
   }
 
   const anchors = ((data ?? []) as CpeExportAnchorRow[]).slice(0, MAX_EXPORT_RECORDS);
-  const records = anchors.map((a) => buildCpeLogRecord(a, deps.frontendUrl));
+
+  // 1b. SECURED-only gate (SCRUM-2378 — CPE-01): only records that have reached
+  //     `SECURED` are auditor-grade evidence, so un-SECURED (pending) records
+  //     are EXCLUDED from the artifact — but never silently: they are counted
+  //     and surfaced as `excluded_count` in the result, the JSON document, and
+  //     the audit event, and they never block the export as a whole.
+  const securedAnchors = anchors.filter((a) => a.status === 'SECURED');
+  const excludedCount = anchors.length - securedAnchors.length;
+  const records = securedAnchors.map((a) => buildCpeLogRecord(a, deps.frontendUrl));
   const recordCount = records.length;
 
   // 2. Build artifacts.
@@ -483,6 +502,7 @@ export async function generateCpeLogExport(
     generated_at: new Date().toISOString(),
     period: { start: args.periodStart, end: args.periodEnd },
     record_count: recordCount,
+    excluded_count: excludedCount,
     records,
     disclaimer: NASBA_DISCLAIMER_TEXT,
   };
@@ -521,17 +541,19 @@ export async function generateCpeLogExport(
     periodStart: args.periodStart,
     periodEnd: args.periodEnd,
     recordCount,
+    excludedCount,
     requestId,
   });
 
   deps.logger.info(
-    { requestId, orgId: args.orgId, recordCount },
+    { requestId, orgId: args.orgId, recordCount, excludedCount },
     'CPE compliance log exported',
   );
 
   return {
     request_id: requestId,
     record_count: recordCount,
+    excluded_count: excludedCount,
     disclaimer: NASBA_DISCLAIMER_TEXT,
     exports: {
       pdf: { signed_url: pdfSigned.signedUrl, path: pdfPath, expires_in: SIGNED_URL_TTL_SECONDS },

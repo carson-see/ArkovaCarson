@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { workerFetch } from '@/lib/workerClient';
-import { PROFESSIONAL_EDUCATION_EXPORT_LABELS } from '@/lib/copy';
+import { PROFESSIONAL_EDUCATION_EXPORT_LABELS, PROFESSIONAL_EDUCATION_S3_LABELS } from '@/lib/copy';
 import { cn } from '@/lib/utils';
 
 type ExportKind = 'cpe' | 'cle';
@@ -19,6 +19,11 @@ interface ExportArtifact {
 
 interface ExportResponseBody {
   record_count?: number;
+  /**
+   * SCRUM-2378 (CPE-01): in-period records the worker EXCLUDED because they
+   * are not yet secured. Additive server field — absent on older responses.
+   */
+  excluded_count?: number;
   exports?: Partial<Record<ExportFormat, ExportArtifact>>;
   error?: string | { message?: string };
 }
@@ -95,6 +100,9 @@ export function ProfessionalEducationExportPanel({ userId }: Readonly<Profession
   const [cle, setCle] = useState<EducationExportState>({ start: '', end: '', jurisdiction: '' });
   const [loading, setLoading] = useState<ExportKind | null>(null);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  // SCRUM-2378: count of not-yet-secured records the server excluded from the
+  // latest export. Rendered as an inline notice — informational, never blocking.
+  const [excludedCount, setExcludedCount] = useState<number>(0);
 
   async function submitExport(kind: ExportKind) {
     const state = kind === 'cpe' ? cpe : cle;
@@ -121,6 +129,7 @@ export function ProfessionalEducationExportPanel({ userId }: Readonly<Profession
 
     setLoading(kind);
     setMessage(null);
+    setExcludedCount(0);
 
     try {
       const response = await workerFetch(`/api/v1/exports/${kind}-log`, {
@@ -147,6 +156,8 @@ export function ProfessionalEducationExportPanel({ userId }: Readonly<Profession
         kind: 'success',
         text: kind === 'cpe' ? LABELS.SUCCESS_CPE(count) : LABELS.SUCCESS_CLE(count),
       });
+      // SCRUM-2378: surface server-side exclusions of not-yet-secured records.
+      setExcludedCount(parsed.excluded_count ?? 0);
     } catch (error) {
       setMessage({
         kind: 'error',
@@ -178,6 +189,14 @@ export function ProfessionalEducationExportPanel({ userId }: Readonly<Profession
         {message && (
           <Alert variant={message.kind === 'success' ? 'success' : 'destructive'}>
             <AlertDescription>{message.text}</AlertDescription>
+          </Alert>
+        )}
+
+        {message?.kind === 'success' && excludedCount > 0 && (
+          <Alert data-testid="excluded-records-notice">
+            <AlertDescription>
+              {PROFESSIONAL_EDUCATION_S3_LABELS.EXCLUDED_NOTICE(excludedCount)}
+            </AlertDescription>
           </Alert>
         )}
 
@@ -253,6 +272,13 @@ export function ProfessionalEducationExportPanel({ userId }: Readonly<Profession
             </Button>
           </form>
         </div>
+
+        {/* SCRUM-2379 (§1.5): jurisdiction tags are informational metadata only.
+            Always visible; the same statement is embedded verbatim in the
+            export artifacts (JSON field + PDF text) by the worker. */}
+        <p data-testid="jurisdiction-disclaimer" className="text-xs text-muted-foreground border-t border-border pt-3">
+          {PROFESSIONAL_EDUCATION_S3_LABELS.JURISDICTION_DISCLAIMER}
+        </p>
       </CardContent>
     </Card>
   );

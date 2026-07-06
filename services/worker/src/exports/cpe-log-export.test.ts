@@ -67,6 +67,8 @@ interface UploadCall {
   path: string;
   contentType: string | undefined;
   bodyLength: number;
+  /** Raw body — JSON as-is, PDF decoded latin1 so text runs are searchable. */
+  body: string;
 }
 
 interface SignedUrlCall {
@@ -130,6 +132,7 @@ function makeDeps(opts: {
             path,
             contentType,
             bodyLength: typeof body === 'string' ? body.length : body.byteLength,
+            body: typeof body === 'string' ? body : Buffer.from(body).toString('latin1'),
           });
           if (opts.uploadError) {
             return Promise.resolve({ error: new Error('upload boom') });
@@ -411,5 +414,106 @@ describe('assertExportsBucketReady', () => {
   it('throws when the bucket is PUBLIC (would leak unsigned bodies)', async () => {
     const storage = storageReturning({ exists: true, isPublic: true, error: null });
     await expect(assertExportsBucketReady(storage, 'exports')).rejects.toThrow(/PUBLIC/i);
+  });
+});
+
+// ─── SECURED-only export gate (SCRUM-2378 — CPE-01) ──
+describe('SECURED-only export gate (SCRUM-2378)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function mixedAnchors(): CpeExportAnchorRow[] {
+    return [
+      makeAnchor(), // SECURED
+      makeAnchor({
+        id: 'anchor-uuid-2',
+        public_id: 'ARK-CPE-0002',
+        status: 'PENDING',
+        label: 'Pending Ethics Course',
+        metadata: { credential_title: 'Pending Ethics Course' },
+      }),
+      makeAnchor({
+        id: 'anchor-uuid-3',
+        public_id: 'ARK-CPE-0003',
+        status: 'SUBMITTED',
+        label: 'Submitted Tax Update',
+        metadata: { credential_title: 'Submitted Tax Update' },
+      }),
+    ];
+  }
+
+  it('excludes un-SECURED records from the export and reports excluded_count', async () => {
+    const { deps, uploads } = makeDeps({ anchors: mixedAnchors() });
+    const result = await generateCpeLogExport(BASE_ARGS, deps);
+
+    // Only the SECURED record is exported; the pending ones are counted, never
+    // silently dropped and never blocking the whole export.
+    expect(result.record_count).toBe(1);
+    expect(result.excluded_count).toBe(2);
+
+    const jsonUpload = uploads.find((u) => u.contentType === 'application/json');
+    const doc = JSON.parse(jsonUpload!.body) as {
+      record_count: number;
+      excluded_count: number;
+      records: Array<{ status: string; public_id: string | null }>;
+    };
+    expect(doc.record_count).toBe(1);
+    expect(doc.excluded_count).toBe(2);
+    expect(doc.records).toHaveLength(1);
+    expect(doc.records.every((r) => r.status === 'SECURED')).toBe(true);
+    // No un-SECURED record content leaks into the artifact.
+    expect(jsonUpload!.body).not.toContain('ARK-CPE-0002');
+    expect(jsonUpload!.body).not.toContain('Pending Ethics Course');
+  });
+
+  it('still produces a (empty-records) export when every record is un-SECURED — never blocks', async () => {
+    const anchors = mixedAnchors().filter((a) => a.status !== 'SECURED');
+    const { deps, uploads, signs } = makeDeps({ anchors });
+    const result = await generateCpeLogExport(BASE_ARGS, deps);
+
+    expect(result.record_count).toBe(0);
+    expect(result.excluded_count).toBe(2);
+    // Both artifacts still uploaded + signed.
+    expect(uploads).toHaveLength(2);
+    expect(signs).toHaveLength(2);
+  });
+
+  it('reports excluded_count = 0 when everything in the period is SECURED', async () => {
+    const { deps } = makeDeps({ anchors: [makeAnchor()] });
+    const result = await generateCpeLogExport(BASE_ARGS, deps);
+    expect(result.record_count).toBe(1);
+    expect(result.excluded_count).toBe(0);
+  });
+
+  it('audit details carry excluded_count (metadata only — CC7 still holds)', async () => {
+    const { deps, audits } = makeDeps({ anchors: mixedAnchors() });
+    await generateCpeLogExport(BASE_ARGS, deps);
+
+    const event = audits.find((a) => a.event_type === 'cpe_log.exported');
+    expect(event).toBeDefined();
+    const detailsRaw = event!.details;
+    const details = typeof detailsRaw === 'string' ? JSON.parse(detailsRaw) : detailsRaw;
+    expect(details.record_count).toBe(1);
+    expect(details.excluded_count).toBe(2);
+    // CC7: excluded records leak no content into the audit row either.
+    const serialized = JSON.stringify(event);
+    expect(serialized).not.toContain('Pending Ethics Course');
+    expect(serialized).not.toContain('ARK-CPE-0002');
+  });
+
+  it('CpeLogV1Schema accepts the additive excluded_count field and stays backward-compatible', () => {
+    const base = {
+      schema: CPE_LOG_SCHEMA_VERSION,
+      generated_at: new Date().toISOString(),
+      period: { start: '2026-01-01', end: '2026-12-31' },
+      record_count: 0,
+      records: [],
+      disclaimer: NASBA_DISCLAIMER_TEXT,
+    };
+    // New documents carry excluded_count…
+    expect(CpeLogV1Schema.safeParse({ ...base, excluded_count: 3 }).success).toBe(true);
+    // …and previously-issued documents without it still validate (additive §1.8).
+    expect(CpeLogV1Schema.safeParse(base).success).toBe(true);
+    // Negative counts are rejected.
+    expect(CpeLogV1Schema.safeParse({ ...base, excluded_count: -1 }).success).toBe(false);
   });
 });

@@ -29,9 +29,11 @@ import {
   generateCleLogExport,
   normalizeJurisdiction,
   CLE_DISCLAIMER_TEXT,
+  JURISDICTION_INFORMATIONAL_DISCLAIMER,
   type CleExportAnchorRow,
   type CleLogExportDeps,
 } from './cle-log-export.js';
+import { NASBA_DISCLAIMER_TEXT } from './cpe-log-export.js';
 
 // ─── Fixtures ────────────────────────────────────────
 function makeAnchor(overrides: Partial<CleExportAnchorRow> = {}): CleExportAnchorRow {
@@ -498,4 +500,136 @@ describe('generateCleLogExport', () => {
     expect(result.record_count).toBe(200);
     expect(elapsedMs).toBeLessThan(10_000);
   }, 15_000);
+});
+
+// ─── SECURED-only export gate (SCRUM-2378 — CPE-01, mirrored for CLE) ──
+describe('SECURED-only export gate (SCRUM-2378 — CLE mirror)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function mixedAnchors(): CleExportAnchorRow[] {
+    return [
+      makeAnchor(), // SECURED
+      makeAnchor({
+        id: 'anchor-uuid-2',
+        public_id: 'ARK-CLE-0002',
+        status: 'PENDING',
+        label: 'Pending Trial Practice Course',
+        cle_metadata: {
+          jurisdiction: 'CA',
+          credit_hours: 2,
+          ethics_hours: 0,
+          course_title: 'Pending Trial Practice Course',
+          requires_manual_review: false,
+        },
+      }),
+    ];
+  }
+
+  it('excludes un-SECURED records, reports excluded_count, and keeps the summary SECURED-only', async () => {
+    const { deps, uploads } = makeDeps({ anchors: mixedAnchors() });
+    const result = await generateCleLogExport(BASE_ARGS, deps);
+
+    expect(result.record_count).toBe(1);
+    expect(result.excluded_count).toBe(1);
+
+    const jsonUpload = uploads.find((u) => u.contentType === 'application/json');
+    const doc = JSON.parse(jsonUpload!.body as string) as {
+      record_count: number;
+      excluded_count: number;
+      records: Array<{ status: string }>;
+      summary: { total_credit_hours: number };
+    };
+    expect(doc.record_count).toBe(1);
+    expect(doc.excluded_count).toBe(1);
+    expect(doc.records).toHaveLength(1);
+    expect(doc.records.every((r) => r.status === 'SECURED')).toBe(true);
+    // The excluded PENDING record's 2 credit hours must NOT be summed.
+    expect(doc.summary.total_credit_hours).toBe(6);
+    expect(jsonUpload!.body).not.toContain('ARK-CLE-0002');
+    expect(jsonUpload!.body).not.toContain('Pending Trial Practice Course');
+  });
+
+  it('audit details carry excluded_count (metadata only — CC7 still holds)', async () => {
+    const { deps, audits } = makeDeps({ anchors: mixedAnchors() });
+    await generateCleLogExport(BASE_ARGS, deps);
+
+    const event = audits.find((a) => a.event_type === 'cle_log.exported');
+    expect(event).toBeDefined();
+    const detailsRaw = event!.details;
+    const details = typeof detailsRaw === 'string' ? JSON.parse(detailsRaw) : detailsRaw;
+    expect(details.record_count).toBe(1);
+    expect(details.excluded_count).toBe(1);
+    expect(JSON.stringify(event)).not.toContain('Pending Trial Practice Course');
+  });
+});
+
+// ─── Jurisdiction-informational disclaimer (SCRUM-2379 — CLE-01) ──
+describe('jurisdiction-informational disclaimer (SCRUM-2379)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('embeds the jurisdiction disclaimer as a JSON field in the export artifact', async () => {
+    const { deps, uploads } = makeDeps();
+    await generateCleLogExport(BASE_ARGS, deps);
+
+    const jsonUpload = uploads.find((u) => u.contentType === 'application/json');
+    const doc = JSON.parse(jsonUpload!.body as string) as { jurisdiction_disclaimer?: string };
+    expect(doc.jurisdiction_disclaimer).toBe(JURISDICTION_INFORMATIONAL_DISCLAIMER);
+  });
+
+  it('renders the jurisdiction disclaimer text into the PDF artifact', async () => {
+    const { deps, uploads } = makeDeps();
+    await generateCleLogExport(BASE_ARGS, deps);
+
+    // jsPDF writes uncompressed text runs; words stay intact across wrapped
+    // lines, so a distinctive phrase fragment is searchable in the raw bytes.
+    const pdfUpload = uploads.find((u) => u.contentType === 'application/pdf');
+    const pdfText = Buffer.from(pdfUpload!.body as Uint8Array).toString('latin1');
+    expect(pdfText).toContain('informational metadata only');
+  });
+
+  it('CleLogV1Schema accepts the additive jurisdiction_disclaimer and stays backward-compatible', () => {
+    const base = {
+      schema: CLE_LOG_SCHEMA_VERSION,
+      generated_at: new Date().toISOString(),
+      jurisdiction: 'CA',
+      period: { start: '2026-01-01', end: '2026-12-31' },
+      record_count: 0,
+      summary: {
+        total_credit_hours: 0,
+        ethics_hours: 0,
+        approved_provider_hours: 0,
+        unverified_provider_hours: 0,
+        hours_by_delivery_format: {},
+      },
+      records: [],
+      disclaimer: CLE_DISCLAIMER_TEXT,
+    };
+    expect(
+      CleLogV1Schema.safeParse({
+        ...base,
+        jurisdiction_disclaimer: JURISDICTION_INFORMATIONAL_DISCLAIMER,
+      }).success,
+    ).toBe(true);
+    // Previously-issued documents without it still validate (additive §1.8).
+    expect(CleLogV1Schema.safeParse(base).success).toBe(true);
+    // A reworded disclaimer is rejected — the text is load-bearing.
+    expect(
+      CleLogV1Schema.safeParse({ ...base, jurisdiction_disclaimer: 'reworded' }).success,
+    ).toBe(false);
+  });
+
+  it('no CLE/CPE disclaimer text overclaims: never "meets", "satisfies", or "legally sufficient"', () => {
+    const overclaims = [/\bmeets?\b/i, /\bsatisf(?:y|ies|ied)\b/i, /legally\s+sufficient/i, /listed in the registry/i];
+    for (const text of [
+      CLE_DISCLAIMER_TEXT,
+      NASBA_DISCLAIMER_TEXT,
+      JURISDICTION_INFORMATIONAL_DISCLAIMER,
+    ]) {
+      for (const pattern of overclaims) {
+        expect(text).not.toMatch(pattern);
+      }
+    }
+    // And the jurisdiction disclaimer affirmatively states the §1.5 framing.
+    expect(JURISDICTION_INFORMATIONAL_DISCLAIMER).toContain('informational metadata only');
+  });
 });
