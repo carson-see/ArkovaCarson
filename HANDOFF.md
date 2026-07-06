@@ -14,6 +14,16 @@
 
 ## Now
 
+### 2026-07-06 (RTE/ART) — Sprint 3.25 launch-bug sprint refined across full ART; Lane 2 top priority; local main synced
+
+Founder asked the ART to turn the bug hunt into a full pre-launch Sprint 3.25, using the entire ART and assuming current Sprint 3 PRs (#1408..#1434 family) are live before this work starts. Founder report created in Drive folder `1cu5KsxHA7Kox6Dz-sTxfWY88meXn_4w5`: https://docs.google.com/document/d/1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk/edit?usp=drivesdk. Confluence Sprint 3.25 ART page updated: https://arkova.atlassian.net/wiki/spaces/A/pages/94863362/Sprint+3.25+ART+Refinement+Bug+Hunt+Hardening+2026-07-06. Canonical bug tracker page `88768514` has footer comment `95485953` linking the sprint/report.
+
+**Priority:** Lane 2 is P0 for Sprint 3.25 because security/privacy/legal bugs are the most mission-critical launch blockers. Lane 1 is second because proof/chain integrity must be trustworthy. Lane 3 is third because public verification/API trust must not overstate what Arkova proves. Build scope: Lane 2 `SCRUM-2483/2484/2485/2283`; Lane 1 `SCRUM-2486/2591/2592`; Lane 3 `SCRUM-2481/2603/2227`. Baseline verify/close: `SCRUM-2589/2590/2593/2594/2595/2599/2600/2601/2602/2629/2630/2631` depending on current PRs/merged PR evidence.
+
+Jira synced: `SCRUM-2591`, `SCRUM-2592`, and `SCRUM-2227` were raised to High and labeled into `sprint-3-25` / `art-sprint-3-25`; all build-scope and baseline tickets received ART comments with the founder-report link. Supermemory decision record saved as `uaxcqyAZMxoeg4sWPbTPVR`. `CLAUDE.md` was not changed because no operating rule changed. Local `main` worktree `/Volumes/Extreme/Arkova/worktrees/hygiene-sync-20260603` is clean and fast-forwarded to `origin/main` `75baf81fc7cbf7cf4ff442968edaf258a3572336`; prior local doc notes were preserved on local backup branch `backup/main-dirty-doc-sync-20260706` at `a2854aa9`.
+
+_Last refreshed: 2026-07-06 by Codex — claims verified against Drive doc `1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk`, Confluence page `94863362`, bug-tracker footer comment `95485953`, Jira readback for the ten build-scope issues, Supermemory save id `uaxcqyAZMxoeg4sWPbTPVR`, and `git status`/`rev-parse` showing local `main` clean at `75baf81fc7cbf7cf4ff442968edaf258a3572336`. No production, schema, deploy, soak, or runtime state changed by this entry._
+
 ### 2026-07-06 (Lane 2 SM) — Lane-2 team reconvened for S3; PO added; plan corrected + ratified against live prod (no new prod/schema state)
 
 Founder corrected a same-session Lane-2 planning error: Carson is Arkova's FOUNDER, not the Lane-2 Product Owner — the team now runs its own PO persona for backlog/priority ratification (Carson keeps founder-level override + admin-merge authority, exercised at his discretion). PO ratified the Lane-2 Sprint-3 plan as-is + decided PAY-02 stays P0 (thin wiring on already-merged entitlement infra).
