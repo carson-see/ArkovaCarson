@@ -793,8 +793,14 @@ export const DOES_NOT_ASSERT_LABELS = {
   MEASURED_BODY:
     'The document Fingerprint (a cryptographic digest of the file) at a specific point in time, and the Network Observed Time at which that fingerprint was recorded.',
   ASSERTED_LABEL: 'Asserted',
+  // §1.5 claims discipline (Carson P1 review): do NOT say "and have not been
+  // altered since" — Arkova does not monitor the document after securing and
+  // makes no post-securing immutability claim about it. What the record
+  // proves: the fingerprint existed and the record reached Secured status at
+  // the recorded time. A document altered later simply produces a different
+  // fingerprint that will not match this record.
   ASSERTED_BODY:
-    'That this record reached Secured status — meaning its fingerprint and existence were confirmed at the time of securing, and have not been altered since.',
+    'That this record reached Secured status — its fingerprint and existence were confirmed at the time of securing shown on this record. Arkova does not monitor or make any claim about the document after that moment; a document altered later would produce a different fingerprint and simply would not match this record.',
   NOT_ASSERTED_LABEL: 'Not Asserted',
   NOT_ASSERTED_BODY:
     'The identity of the signer or uploader, the legal validity of the underlying document, or any jurisdiction. Jurisdiction tags shown elsewhere on this record are informational metadata only — not a legal claim. Relying parties should exercise their own due diligence.',

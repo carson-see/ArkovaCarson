@@ -56,10 +56,23 @@ describe('DoesNotAssertDisclaimer', () => {
     expect(screen.getByText(/Network Observed Time/)).toBeVisible();
   });
 
-  it('states what is ASSERTED: Secured status (existence + integrity at anchoring time)', () => {
+  it('states what is ASSERTED: Secured status (existence + integrity at securing time)', () => {
     render(<DoesNotAssertDisclaimer />);
     expect(screen.getByText(DOES_NOT_ASSERT_LABELS.ASSERTED_LABEL)).toBeVisible();
     expect(screen.getByText(/Secured status/)).toBeVisible();
+  });
+
+  // §1.5 claims discipline (Carson P1 review): the ASSERTED claim must be
+  // scoped to the moment of securing. Arkova does not monitor the document
+  // afterwards — a later alteration produces a different fingerprint that
+  // simply will not match this record. The copy must say that, and must NOT
+  // claim post-securing immutability of the underlying document.
+  it('scopes the ASSERTED claim to securing time — no post-securing immutability claim', () => {
+    render(<DoesNotAssertDisclaimer />);
+    const body = screen.getByText(/Secured status/);
+    expect(body.textContent).toMatch(/does not monitor/i);
+    expect(body.textContent).toMatch(/different fingerprint/i);
+    expect(body.textContent).not.toMatch(/not been altered/i);
   });
 
   it('states what is NOT ASSERTED: signer/uploader identity, legal validity, jurisdiction', () => {
