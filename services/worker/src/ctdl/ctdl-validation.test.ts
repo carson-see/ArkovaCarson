@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCtdlJsonLd, type CtdlAnchor } from './ctdl-serializer.js';
-import { assertValidCtdlJsonLd, validateCtdlJsonLd } from './ctdl-validation.js';
+import { MAX_CONTACT_HOURS, assertValidCtdlJsonLd, validateCtdlJsonLd } from './ctdl-validation.js';
 
 const baseAnchor: CtdlAnchor = {
   publicId: 'ARK-2026-CTDL-001',
@@ -303,6 +303,39 @@ describe('validateCtdlJsonLd', () => {
       const result = validateCtdlJsonLd(bodyWithCreditValue([]));
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('ceterms:creditValue must be an array of ceterms:ValueProfile objects');
+    });
+
+    // Round-1 review finding 4: the validator is the independent second check,
+    // so it must enforce the same plausibility ceiling the serializer applies
+    // (MAX_CONTACT_HOURS) and the single-element invariant of the
+    // [CtdlContactHourValueProfile] tuple — a future code path bypassing the
+    // serializer must not be able to publish an implausible or multi-profile
+    // credit the emission side can never produce.
+    it('rejects a schema:value above the shared plausibility ceiling (e.g. 1e9)', () => {
+      const result = validateCtdlJsonLd(
+        bodyWithCreditValue([{ ...validCreditValue[0], 'schema:value': 1e9 }]),
+      );
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain(
+        `ceterms:creditValue[0].schema:value must be at most ${MAX_CONTACT_HOURS} contact hours`,
+      );
+    });
+
+    it('accepts a schema:value exactly at the ceiling', () => {
+      const result = validateCtdlJsonLd(
+        bodyWithCreditValue([{ ...validCreditValue[0], 'schema:value': MAX_CONTACT_HOURS }]),
+      );
+      expect(result).toEqual({ valid: true, errors: [] });
+    });
+
+    it('rejects a creditValue array with more than one ValueProfile (single-element invariant)', () => {
+      const result = validateCtdlJsonLd(
+        bodyWithCreditValue([validCreditValue[0], { ...validCreditValue[0], 'schema:value': 3 }]),
+      );
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain(
+        'ceterms:creditValue must contain exactly one ceterms:ValueProfile',
+      );
     });
   });
 });

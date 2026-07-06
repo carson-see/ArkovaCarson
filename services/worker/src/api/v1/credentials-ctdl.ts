@@ -8,6 +8,7 @@
 
 import { Router, type Request } from 'express';
 import { buildCtdlJsonLd, containsHighConfidencePii, CtdlPiiSafetyError, normalizeContactHours, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
+import { ProhibitedClaimError } from '../../ctdl/ctdl-claims-guard.js';
 import { isCtdlPublishableStatus } from '../../ctdl/ctdl-type-map.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
@@ -23,7 +24,7 @@ export interface CredentialsCtdlLookup {
 interface AuditArgs {
   req: Request;
   publicId: string;
-  outcome: 'invalid' | 'not_found' | 'not_publishable' | 'safety_blocked' | 'published' | 'revoked' | 'error';
+  outcome: 'invalid' | 'not_found' | 'not_publishable' | 'safety_blocked' | 'claims_blocked' | 'published' | 'revoked' | 'error';
   httpStatus: number;
   credentialStatus?: string | null;
   credentialType?: string | null;
@@ -163,10 +164,17 @@ const CONTACT_HOUR_METADATA_KEYS = [
   'ceCreditHours',
 ] as const;
 
-// Accepts a plain number or a bare numeric string ("1.5"); everything else is
-// ignored. The shared plausibility gate (normalizeContactHours, exported by the
-// serializer so the row layer and emission layer cannot drift) then rejects
-// zero/negative/non-finite/implausibly-large values → honest omission.
+// Round-1 review finding 7: only a CANONICAL decimal string may coerce.
+// Number() alone also accepts hex ('0x10' → 16), exponent ('1e3' → 1000),
+// 'Infinity', and signed forms — none of which are an issuer's honest
+// contact-hour statement, so they are ignored (honest omission).
+const CANONICAL_DECIMAL_STRING = /^\d+(\.\d+)?$/;
+
+// Accepts a plain number or a canonical decimal string ("2", "1.5"); everything
+// else is ignored. The shared plausibility gate (normalizeContactHours,
+// exported by the serializer so the row layer and emission layer cannot drift)
+// then rejects zero/negative/non-finite/implausibly-large values → honest
+// omission.
 function contactHoursFromMetadata(metadata: unknown): number | null {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
   const record = metadata as Record<string, unknown>;
@@ -175,9 +183,8 @@ function contactHoursFromMetadata(metadata: unknown): number | null {
     let candidate: number | null = null;
     if (typeof raw === 'number') {
       candidate = raw;
-    } else if (typeof raw === 'string' && raw.trim() !== '') {
-      const parsed = Number(raw.trim());
-      candidate = Number.isNaN(parsed) ? null : parsed;
+    } else if (typeof raw === 'string' && CANONICAL_DECIMAL_STRING.test(raw.trim())) {
+      candidate = Number(raw.trim());
     }
     const normalized = normalizeContactHours(candidate);
     if (normalized !== null) return normalized;
@@ -307,6 +314,25 @@ export function buildCredentialsCtdlRouter(lookup: CredentialsCtdlLookup = defau
           orgId: anchor?.orgId,
         });
         res.status(404).json({ error: 'not_found' });
+        return;
+      }
+      if (error instanceof ProhibitedClaimError) {
+        // CE-06a fail-closed (round-1 review finding 7): the assembled body
+        // carried a Registry-listing / legal-sufficiency overclaim that the
+        // final claims assert refused to publish. Give it its own audit
+        // outcome (mirroring safety_blocked) instead of the generic 'error'
+        // bucket so claims blocks are observable. Still 500 / no body / no
+        // echo of the offending text (the error message is value-free).
+        logCtdlRequested({
+          req,
+          publicId,
+          outcome: 'claims_blocked',
+          httpStatus: 500,
+          credentialStatus: anchor?.status,
+          credentialType: anchor?.credentialType,
+          orgId: anchor?.orgId,
+        });
+        res.status(500).json({ error: 'internal_error' });
         return;
       }
       logger.error({

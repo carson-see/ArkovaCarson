@@ -21,6 +21,18 @@ const STATUS_TYPES_DISALLOWING_EXPIRATION = new Set([
   'ceterms:Superseded',
 ]);
 
+/**
+ * SCRUM-2375 (CE-04) — plausibility ceiling for a single credential's contact
+ * hours. Anything above this is a data error (or a unit confusion), and an
+ * implausible public assertion is worse than an honest omission. SINGLE SHARED
+ * SOURCE (round-1 review finding 4): the serializer's `normalizeContactHours`
+ * imports this same constant, so the emission gate and this independent second
+ * check cannot drift. Defined here (not in the serializer) because the
+ * serializer already imports from this module — the reverse import would be a
+ * cycle.
+ */
+export const MAX_CONTACT_HOURS = 1000;
+
 const UNSAFE_PUBLIC_KEYS = new Set([
   'anchor_id',
   'anchorId',
@@ -228,6 +240,12 @@ function validateCreditValue(value: Record<string, unknown>, errors: string[]): 
     errors.push('ceterms:creditValue must be an array of ceterms:ValueProfile objects');
     return;
   }
+  // Round-1 review finding 4: the serializer's type is the single-element
+  // tuple [CtdlContactHourValueProfile]; a multi-profile credit is a shape the
+  // emission side can never produce and must fail the independent second check.
+  if (creditValue.length !== 1) {
+    errors.push('ceterms:creditValue must contain exactly one ceterms:ValueProfile');
+  }
 
   creditValue.forEach((profile, index) => {
     if (!isRecord(profile)) {
@@ -240,6 +258,13 @@ function validateCreditValue(value: Record<string, unknown>, errors: string[]): 
     const schemaValue = profile['schema:value'];
     if (typeof schemaValue !== 'number' || !Number.isFinite(schemaValue) || schemaValue <= 0) {
       errors.push(`ceterms:creditValue[${index}].schema:value must be a positive finite number`);
+    } else if (schemaValue > MAX_CONTACT_HOURS) {
+      // Same plausibility ceiling normalizeContactHours enforces at emission
+      // (round-1 review finding 4): the validator must reject what the
+      // serializer can never emit.
+      errors.push(
+        `ceterms:creditValue[${index}].schema:value must be at most ${MAX_CONTACT_HOURS} contact hours`,
+      );
     }
     validateCreditUnitTypes(profile['ceterms:creditUnitType'], index, errors);
   });
