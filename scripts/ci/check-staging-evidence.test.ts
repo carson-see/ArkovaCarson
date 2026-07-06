@@ -117,6 +117,12 @@ describe('check-staging-evidence', () => {
       ).toBe('T0');
     });
 
+    it('returns T0 for the CI-only Supabase-start helper script', () => {
+      // scripts/ci-supabase-start.sh runs ONLY in CI to boot the local Supabase
+      // stack for the types/tests/e2e jobs; it never ships to prod runtime.
+      expect(requiredTierFor(['scripts/ci-supabase-start.sh']).tier).toBe('T0');
+    });
+
     it('returns T3 when migration is touched', () => {
       expect(requiredTierFor(['supabase/migrations/0288_x.sql']).tier).toBe('T3');
     });
