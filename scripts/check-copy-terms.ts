@@ -662,46 +662,31 @@ export function findTermViolations(
 //    identifier char (generics `Array<string>`, comparisons `a<b`) is ignored.
 // =============================================================================
 
+/** One frame of nesting: JSX element text, or a `{…}` expression opened from it. */
+type JsxFrame = { kind: 'text' } | { kind: 'expr'; depth: number };
+
 interface JsxTextState {
-  /** Inside JSX element text — raw lines here are user-visible copy. */
-  inJsxText: boolean;
-  /** A tag (`<p` / `</p`) opened on an earlier line and has not hit its `>` yet. */
-  pendingTag: 'opening' | 'closing' | null;
-  /** Unclosed `{` depth carried inside a pending multi-line tag (attr exprs). */
-  pendingTagBraceDepth: number;
-  /** Unclosed `{…}` expression depth opened from element text (code, not copy). */
-  exprDepth: number;
+  /**
+   * Context stack. Empty = plain code. `text` on top = inside JSX element
+   * text (raw lines are user-visible copy). `expr` on top = inside a `{…}`
+   * expression (code). Nesting composes: `<div>` text → `{cond && (` expr →
+   * `<p>` text → … — so copy inside conditional renders / .map() callbacks is
+   * tracked, and a closing tag pops back to the PARENT context instead of
+   * killing text state (adversarial review round 2, findings 1/5/6/7).
+   */
+  stack: JsxFrame[];
+  /** A tag (`<p` / `</p`) opened on an earlier line, not yet at its `>`.
+   *  `inTemplate` = an attribute template literal (`` className={`…${ ``) is
+   *  open inside the tag and must close before tag parsing resumes. */
+  pendingTag: { closing: boolean; braceDepth: number; inTemplate: boolean } | null;
+  /** Inside a `/* … *​/` block comment opened mid-line in code context. */
+  inBlockComment: boolean;
+  /** Inside a multi-line template literal opened in code context. */
+  inTemplate: boolean;
 }
 
-/**
- * Blank the CONTENTS of quoted strings (keeping length, so indices still line
- * up) so quotes containing `<`, `>`, `{`, `}` cannot corrupt tag/expression
- * tracking. An unterminated quote (multi-line template literal) blanks to EOL.
- * Also blanks a trailing `//` line comment ONCE strings are gone (so `https://`
- * inside a string does not count as a comment).
- */
-function blankStringsAndComments(line: string): string {
-  const out = line.split('');
-  let i = 0;
-  while (i < out.length) {
-    const ch = out[i];
-    if (ch === '"' || ch === "'" || ch === '`') {
-      let j = i + 1;
-      while (j < out.length && out[j] !== ch) {
-        if (out[j] === '\\') j++; // skip escaped char
-        j++;
-      }
-      for (let k = i + 1; k < Math.min(j, out.length); k++) out[k] = ' ';
-      i = j + 1;
-      continue;
-    }
-    if (ch === '/' && out[i + 1] === '/') {
-      for (let k = i; k < out.length; k++) out[k] = ' ';
-      break;
-    }
-    i++;
-  }
-  return out.join('');
+function newJsxTextState(): JsxTextState {
+  return { stack: [], pendingTag: null, inBlockComment: false, inTemplate: false };
 }
 
 /**
@@ -728,83 +713,227 @@ function blankJsxExpressions(line: string): string {
   return out.join('');
 }
 
-/** True when `next` can start a JSX tag name and `prev` rules out a TS generic
- *  (`Array<string>`) or comparison (`x<y`) — JSX tags are never preceded by an
- *  identifier char, `)`, or `]`. */
-function isJsxTagStart(prev: string, next: string): boolean {
-  return (next === '/' || /[A-Za-z]/.test(next)) && !/[\w$)\]]/.test(prev);
+/** Index just past the closing quote of the string starting at `i`, or the
+ *  line length if unterminated on this line. Handles backslash escapes. */
+function skipQuoted(line: string, i: number): number {
+  const quote = line[i];
+  let j = i + 1;
+  while (j < line.length) {
+    if (line[j] === '\\') j += 2;
+    else if (line[j] === quote) return j + 1;
+    else j++;
+  }
+  return line.length;
+}
+
+/** True when a `/` at `i` starts a REGEX literal rather than division: the
+ *  last non-space char before it is an operator/opening punctuator (or line
+ *  start). Conservative — a miss just means the regex body is walked as code. */
+function startsRegexLiteral(line: string, i: number): boolean {
+  let k = i - 1;
+  while (k >= 0 && line[k] === ' ') k--;
+  if (k < 0) return true;
+  return '=(,;:![&|?{}+*%~^<>'.includes(line[k]);
+}
+
+/** Index just past the closing `/` of the regex literal at `i`, or -1 when it
+ *  does not terminate on this line (then it was division — walk on). */
+function skipRegexLiteral(line: string, i: number): number {
+  let j = i + 1;
+  let inClass = false;
+  while (j < line.length) {
+    const c = line[j];
+    if (c === '\\') j += 2;
+    else if (c === '[') { inClass = true; j++; }
+    else if (c === ']') { inClass = false; j++; }
+    else if (c === '/' && !inClass) return j + 1;
+    else j++;
+  }
+  return -1;
+}
+
+const TAG_NOT_A_TAG = -1;
+const TAG_SPANS_LINES = -2;
+
+// TSX generic shapes that are NOT JSX tags even though `<Letter` follows an
+// operator: `<T extends …>(…)` and `<T,>` — TypeScript itself mandates these
+// exact spellings for arrow generics in .tsx BECAUSE of the JSX ambiguity, so
+// matching just these two closes the generic-arrow hole (review finding 2).
+const GENERIC_PARAM_RE = /^[A-Za-z_$][\w$]*(?:\s+extends\b|\s*,)/;
+
+/**
+ * Try to consume a JSX tag starting at the `<` at index `i`. Returns the index
+ * to continue from, TAG_NOT_A_TAG when this `<` is not a tag (comparison,
+ * generic — caller advances by one), or TAG_SPANS_LINES when the tag continues
+ * on the next line (pendingTag recorded). `prose` = we are inside element text,
+ * where an abutting prev char (`text</b>`) must NOT veto the tag (review
+ * finding 1: the prev-char guard is a CODE-context disambiguator only).
+ */
+function tryConsumeTag(line: string, i: number, state: JsxTextState, prose: boolean): number {
+  const next = line[i + 1] ?? '';
+  const closing = next === '/';
+  const fragmentOpen = next === '>';
+
+  if (!closing && !fragmentOpen) {
+    if (!/[A-Za-z]/.test(next)) return TAG_NOT_A_TAG;
+    if (!prose) {
+      const prev = i > 0 ? line[i - 1] : '';
+      if (/[\w$)\]]/.test(prev)) return TAG_NOT_A_TAG; // Array<string>, x<y
+      if (GENERIC_PARAM_RE.test(line.slice(i + 1))) return TAG_NOT_A_TAG; // <T extends …> / <T,>
+    }
+  }
+
+  if (fragmentOpen) {
+    state.stack.push({ kind: 'text' });
+    return i + 2;
+  }
+
+  const walk = { braceDepth: 0, inTemplate: false };
+  const gt = walkTagBody(line, i + (closing ? 2 : 1), walk);
+  if (gt === -1) {
+    state.pendingTag = { closing, braceDepth: walk.braceDepth, inTemplate: walk.inTemplate };
+    return TAG_SPANS_LINES;
+  }
+  applyTagEnd(state, closing, line[gt - 1] === '/');
+  return gt + 1;
 }
 
 /**
- * Advance the cross-line JSX state machine over one source line. Operates on a
- * string/comment-blanked copy; tag ends (`>`) are only recognised at `{}`-depth
- * 0 so attribute expressions like `onClick={() => f()}` cannot fake a tag end.
+ * Walk tag-attribute characters from `j` to the tag's `>` at `{}`-depth 0,
+ * honouring quoted attribute values, attribute-expression braces, and template
+ * literals — a multi-line `` className={`… ${ `` template is opaque until its
+ * closing backtick (adversarial review round 2, ApiSandbox className shape).
+ * Returns the `>` index, or -1 when the tag continues on the next line (walk
+ * state updated for the caller to persist in pendingTag).
  */
-function updateJsxTextState(rawLine: string, state: JsxTextState): void {
-  const line = blankStringsAndComments(rawLine);
+function walkTagBody(line: string, j: number, walk: { braceDepth: number; inTemplate: boolean }): number {
+  while (j < line.length) {
+    if (walk.inTemplate) {
+      while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
+      if (j >= line.length) return -1;
+      walk.inTemplate = false;
+      j++;
+      continue;
+    }
+    const c = line[j];
+    if (c === '"' || c === "'") { j = skipQuoted(line, j); continue; }
+    if (c === '`') { walk.inTemplate = true; j++; continue; }
+    if (c === '{') { walk.braceDepth++; j++; continue; }
+    if (c === '}') { walk.braceDepth = Math.max(0, walk.braceDepth - 1); j++; continue; }
+    if (c === '>' && walk.braceDepth === 0) return j;
+    j++;
+  }
+  return -1;
+}
+
+/** Apply the stack transition for a completed tag. */
+function applyTagEnd(state: JsxTextState, closing: boolean, selfClosing: boolean): void {
+  if (closing) {
+    // `</p>` / `</>` closes the innermost text frame (back to parent context).
+    if (state.stack[state.stack.length - 1]?.kind === 'text') state.stack.pop();
+  } else if (!selfClosing) {
+    state.stack.push({ kind: 'text' });
+  }
+}
+
+/** Resume a tag that spans lines; returns index past its `>` or -1 (still open). */
+function resumePendingTag(line: string, state: JsxTextState): number {
+  const pending = state.pendingTag;
+  if (pending === null) return 0;
+  const gt = walkTagBody(line, 0, pending);
+  if (gt === -1) return -1;
+  applyTagEnd(state, pending.closing, gt > 0 && line[gt - 1] === '/');
+  state.pendingTag = null;
+  return gt + 1;
+}
+
+/**
+ * Advance the cross-line JSX state machine over one source line.
+ *
+ * Contexts: element TEXT (top of stack) treats quotes, slashes, and braces'
+ * neighbours as prose — only `{` (opens an expression frame) and `<` (a tag)
+ * are structural, so apostrophes ("Here's") and URLs in copy can't corrupt
+ * state (review finding 3). CODE/EXPR contexts skip strings, template
+ * literals, `//` and `/* *​/` comments, and regex literals (review finding 4),
+ * count expression braces, and recognise tags with the generic/comparison
+ * guard. All tag ends honour `{}` depth and quoted attribute values.
+ */
+function updateJsxTextState(line: string, state: JsxTextState): void {
   let i = 0;
 
-  // Resolve a tag that spans lines: consume until its `>` (at brace depth 0).
-  if (state.pendingTag !== null) {
-    let depth = state.pendingTagBraceDepth;
-    while (i < line.length) {
-      const ch = line[i];
-      if (ch === '{') depth++;
-      else if (ch === '}') depth = Math.max(0, depth - 1);
-      else if (ch === '>' && depth === 0) break;
-      i++;
-    }
-    if (i >= line.length) {
-      state.pendingTagBraceDepth = depth;
-      return; // tag still open
-    }
-    const selfClosing = i > 0 && line[i - 1] === '/';
-    if (state.pendingTag === 'closing') state.inJsxText = false;
-    else if (!selfClosing) state.inJsxText = true;
-    state.pendingTag = null;
-    state.pendingTagBraceDepth = 0;
-    i++;
+  if (state.inBlockComment) {
+    const e = line.indexOf('*/');
+    if (e === -1) return;
+    state.inBlockComment = false;
+    i = e + 2;
+  } else if (state.inTemplate) {
+    let j = 0;
+    while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
+    if (j >= line.length) return;
+    state.inTemplate = false;
+    i = j + 1;
   }
 
-  for (; i < line.length; i++) {
+  if (state.pendingTag !== null) {
+    const r = resumePendingTag(line.slice(i), state);
+    if (r === -1) return;
+    i += r;
+  }
+
+  while (i < line.length) {
+    const top = state.stack[state.stack.length - 1];
     const ch = line[i];
 
-    if (state.exprDepth > 0) {
-      if (ch === '{') state.exprDepth++;
-      else if (ch === '}') state.exprDepth--;
+    if (top?.kind === 'text') {
+      if (ch === '{') {
+        state.stack.push({ kind: 'expr', depth: 1 });
+        i++;
+      } else if (ch === '<') {
+        const r = tryConsumeTag(line, i, state, true);
+        if (r === TAG_SPANS_LINES) return;
+        i = r === TAG_NOT_A_TAG ? i + 1 : r;
+      } else {
+        i++; // prose — quotes, slashes, `>` etc. are just copy
+      }
       continue;
     }
 
-    if (ch === '{' && state.inJsxText) {
-      state.exprDepth = 1;
+    // CODE (empty stack) or EXPR frame.
+    if (ch === '"' || ch === "'") { i = skipQuoted(line, i); continue; }
+    if (ch === '`') {
+      let j = i + 1;
+      while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
+      if (j >= line.length) { state.inTemplate = true; return; }
+      i = j + 1;
       continue;
     }
-
-    if (ch !== '<') continue;
-    const prev = i > 0 ? line[i - 1] : '';
-    const next = line[i + 1] ?? '';
-    if (!isJsxTagStart(prev, next)) continue;
-    const closing = next === '/';
-
-    // Find the tag's `>` on this line, honouring `{}` depth (attr expressions).
-    let depth = 0;
-    let j = i + 1;
-    while (j < line.length) {
-      const c = line[j];
-      if (c === '{') depth++;
-      else if (c === '}') depth = Math.max(0, depth - 1);
-      else if (c === '>' && depth === 0) break;
-      j++;
+    if (ch === '/' && line[i + 1] === '/') return; // line comment
+    if (ch === '/' && line[i + 1] === '*') {
+      const e = line.indexOf('*/', i + 2);
+      if (e === -1) { state.inBlockComment = true; return; }
+      i = e + 2;
+      continue;
     }
-    if (j >= line.length) {
-      state.pendingTag = closing ? 'closing' : 'opening';
-      state.pendingTagBraceDepth = depth;
-      return;
+    if (ch === '/' && startsRegexLiteral(line, i)) {
+      const e = skipRegexLiteral(line, i);
+      if (e !== -1) { i = e; continue; }
+      i++; // unterminated on this line → it was division
+      continue;
     }
-    const selfClosing = line[j - 1] === '/';
-    if (closing) state.inJsxText = false;
-    else if (!selfClosing) state.inJsxText = true;
-    i = j;
+    if (top !== undefined && ch === '{') { top.depth++; i++; continue; }
+    if (top !== undefined && ch === '}') {
+      top.depth--;
+      if (top.depth === 0) state.stack.pop();
+      i++;
+      continue;
+    }
+    if (ch === '<') {
+      const r = tryConsumeTag(line, i, state, false);
+      if (r === TAG_SPANS_LINES) return;
+      i = r === TAG_NOT_A_TAG ? i + 1 : r;
+      continue;
+    }
+    i++;
   }
 }
 
@@ -820,12 +949,10 @@ export function scanFileContent(content: string, filePath: string): Violation[] 
   const violations: Violation[] = [];
   const lines = content.split('\n');
   let inBlockComment = false;
-  const jsx: JsxTextState = {
-    inJsxText: false,
-    pendingTag: null,
-    pendingTagBraceDepth: 0,
-    exprDepth: 0,
-  };
+  // JSX can only appear in .tsx — running the tag tracker on plain .ts would
+  // misread generics/comparisons (`if (a <b)`) with no possible payoff.
+  const trackJsx = filePath.endsWith('.tsx');
+  const jsx = newJsxTextState();
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -844,19 +971,23 @@ export function scanFileContent(content: string, filePath: string): Violation[] 
     if (shouldSkipLine(line, trimmed)) {
       // Skipped for SCANNING only — the line still advances the JSX state
       // machine (e.g. a copy line exempted via `cryptographic` is still text).
-      updateJsxTextState(line, jsx);
+      if (trackJsx) updateJsxTextState(line, jsx);
       continue;
     }
 
+    // Force-scan as raw copy when element text is the current context and the
+    // line has no tag start (`<`). A bare `>` is fine — it is prose ("> 6
+    // confirmations"); lines WITH tags go through the normal per-line rules.
     const isJsxTextContinuation =
-      jsx.inJsxText &&
+      trackJsx &&
+      jsx.stack[jsx.stack.length - 1]?.kind === 'text' &&
       jsx.pendingTag === null &&
-      jsx.exprDepth === 0 &&
-      !line.includes('<') &&
-      !line.includes('>');
+      !jsx.inBlockComment &&
+      !jsx.inTemplate &&
+      !line.includes('<');
 
     violations.push(...findTermViolations(line, i + 1, filePath, isJsxTextContinuation));
-    updateJsxTextState(line, jsx);
+    if (trackJsx) updateJsxTextState(line, jsx);
   }
 
   return violations;
