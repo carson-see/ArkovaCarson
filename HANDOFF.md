@@ -14,6 +14,18 @@
 
 ## Now
 
+### 2026-07-06 (RTE/ART correction) — Prior 3.75 / 12-hour arbitration superseded; 3.5 Release Confidence now top priority
+
+Founder flagged that the prior 3.75 plan missed the PI-1 Sprint 1-7 subfolders. Correction is accepted: the previous 3.75 and previous 12-hour arbitration artifacts are invalid/superseded. Corrected founder artifact is published in the shared folder: https://docs.google.com/document/d/1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos/edit?usp=drivesdk. The old 3.75 doc (`1wss0gT8Trlt5msgS0txO3AVuhltTf4szwJ7_JNIGXxc`) and old 12-hour doc (`17swR1oXTZ0jhEcy5-vNGuM2U4M62Wmvcicu0yQvJo9U`) have been renamed with `SUPERSEDED` and have warning text inserted at the top.
+
+Corrected source set: PI-1 parent folder `1o9DNX3yh9MH_kKvrgt31lT9mCCP6TiPE`, PI-1 master `1oTU-Vol3WWrnWn_Dgy3_RsDkUBXappn9ycY4HDxgdhY`, and Sprint 1-7 docs/folders. Sprint 0 intentionally skipped per founder direction because it should already be in prod for the next PI.
+
+Corrected decision: because Sprint 3.0 will **not** merge to prod during the 12-hour AI window, and Peter flagged micro-vs-Medium staging risk, the 12-hour business priority changes to **Sprint 3.5 Release Confidence / CI-CD / staging parity**. 3.25 remains important as merge-ready/evidence-ready launch bug work, but not prod-promotion work during this window. 3.75 is now a PI-1 CE/Haki critical-path reconciliation pass, not a standalone "get CE/Haki Done" sprint.
+
+Jira trace: `SCRUM-2632` comment `16779`, `SCRUM-1867` comment `16780`, `SCRUM-1010` comment `16781`. Confluence roadmap trace: page `82444290` footer comment `95748097`. No production, schema, deploy, runtime, or database state changed by this correction.
+
+_Last refreshed: 2026-07-06 by Codex — verified against Drive readbacks for the corrected artifact and superseded warnings, PI-1 parent listing with S1-S7 folders, Jira comments `16779`/`16780`/`16781`, and Confluence comment `95748097`._
+
 ### 2026-07-06 (RTE/ART + CTO) — Sprint 3.75 partner-clock plan + 12-hour AI arbitration published
 
 Founder asked the ART/CTO to plan Sprint 3.75 after the Supabase 3.5 pass, with the goal of getting anything related to HakiChain and Credential Engine to "done," then to prioritize 3.25 / 3.5 / 3.75 against a 12-hour high-power AI coding window. ART used Supermemory, the Drive folder `1cu5KsxHA7Kox6Dz-sTxfWY88meXn_4w5`, targeted Gmail/Drive/Jira/GitHub/repo review, and Lane 1/2/3 subagent review. Founder-facing Drive artifacts are published in the shared folder: Sprint 3.5 founder review https://docs.google.com/document/d/1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc/edit?usp=drivesdk, Sprint 3.75 founder report https://docs.google.com/document/d/1wss0gT8Trlt5msgS0txO3AVuhltTf4szwJ7_JNIGXxc/edit?usp=drivesdk, and 12-hour priority arbitration https://docs.google.com/document/d/17swR1oXTZ0jhEcy5-vNGuM2U4M62Wmvcicu0yQvJo9U/edit?usp=drivesdk.
