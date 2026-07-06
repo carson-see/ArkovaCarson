@@ -149,6 +149,8 @@ function makeDeps(opts: {
   signError?: boolean;
   countError?: boolean;
   maxRecords?: number;
+  /** Override the bucket-guard result. Defaults to a private, existing bucket. */
+  bucket?: { exists?: boolean; isPublic?: boolean | null; error?: Error | null };
 } = {}): {
   deps: CleLogExportDeps;
   uploads: UploadCall[];
@@ -209,11 +211,17 @@ function makeDeps(opts: {
           });
         },
       ),
-      // `getBucket` is part of the shared `CpeExportStorage` seam (added for the
-      // CPE bucket-guard). The CLE exporter does not call it, but the type
-      // requires it; stub a healthy private bucket so the mock satisfies the
-      // contract the real `createSupabaseStorageAdapter` provides.
-      getBucket: vi.fn().mockResolvedValue({ exists: true, isPublic: false, error: null }),
+      // `getBucket` is part of the shared `CpeExportStorage` seam. It is now
+      // driven by the shared `uploadAndSignExportArtifacts` preflight (the
+      // structural CLE fix — PR #1415), so the default stub is a healthy private
+      // bucket and tests can override it to exercise the fail-loud guard.
+      getBucket: vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          exists: opts.bucket?.exists ?? true,
+          isPublic: opts.bucket?.isPublic ?? false,
+          error: opts.bucket?.error ?? null,
+        }),
+      ),
     },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     frontendUrl: 'https://app.arkova.io',
@@ -545,6 +553,24 @@ describe('generateCleLogExport', () => {
   it('throws when signed-URL creation fails', async () => {
     const { deps } = makeDeps({ signError: true });
     await expect(generateCleLogExport(BASE_ARGS, deps)).rejects.toThrow();
+  });
+
+  // ─── Private-bucket preflight (PR #1415, Carson [P1]) ──
+  // The CLE path previously called `uploadAndSignExportArtifacts` directly with
+  // NO bucket-visibility check, so an accidentally-public bucket could receive
+  // export bodies despite the signed-URL-only privacy guarantee. The structural
+  // fix moved the guard INTO the shared upload helper, so these prove CLE now
+  // fails loud — writing NOTHING — for a missing or PUBLIC bucket, mirroring CPE.
+  it('fails loud (and uploads NOTHING) when the exports bucket is missing', async () => {
+    const { deps, uploads } = makeDeps({ bucket: { exists: false, isPublic: null } });
+    await expect(generateCleLogExport(BASE_ARGS, deps)).rejects.toThrow(/does not exist/i);
+    expect(uploads).toHaveLength(0);
+  });
+
+  it('fails loud (and uploads NOTHING) when the exports bucket is PUBLIC', async () => {
+    const { deps, uploads } = makeDeps({ bucket: { exists: true, isPublic: true } });
+    await expect(generateCleLogExport(BASE_ARGS, deps)).rejects.toThrow(/PUBLIC/i);
+    expect(uploads).toHaveLength(0);
   });
 
   it('throws on an invalid jurisdiction (caller passed a non-state code)', async () => {

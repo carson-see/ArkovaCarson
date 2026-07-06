@@ -546,6 +546,16 @@ export async function generateCleLogExport(
   //     Surfaced via `excluded_count`; never silently dropped and never
   //     blocking the export. They are excluded from records AND the summary
   //     aggregates.
+  //
+  //     R0-8 / SCRUM-1254 justification (PR #1415, label `count-exact-allowed`):
+  //     mirrors the CPE exporter — `excluded_count` is shown to the user as an
+  //     EXACT integer (copy.ts EXCLUDED_NOTICE), so an estimate would be
+  //     dishonest. This count is bounded and index-backed — one caller's own
+  //     anchors (`user_id` + `org_id`), a single `credential_type`, ONE
+  //     jurisdiction, inside a date window — not the unfiltered whole-table
+  //     exact count on the ~3M-row anchors table that the R0-8 rule exists to
+  //     stop. Exact is correct and safe; increase sanctioned via the
+  //     `count-exact-allowed` override.
   const excludedRes = await deps.db
     .from('anchors')
     .select('id', { count: 'exact', head: true })
