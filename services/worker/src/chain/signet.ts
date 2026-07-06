@@ -870,7 +870,8 @@ export class BitcoinChainClient implements ChainClient {
     // broadcast-time observability only — the tx is ALREADY on the wire. If the
     // provider 402/401/5xx's on this follow-up call, throwing would make the
     // caller misread a LIVE broadcast as unknown/failed and (worse) unwind the
-    // intent, then re-broadcast a SECOND, DIFFERENT tx. Degrade to height 0.
+    // intent, then re-broadcast a SECOND, DIFFERENT tx. Degrade to height 0;
+    // the real height is recovered at confirmation time.
     let blockHeight = 0;
     try {
       const blockchainInfo = await this.provider.getBlockchainInfo();

@@ -733,6 +733,13 @@ async function deleteIntentProofRows(anchorIds: string[], txId: string): Promise
   }
 }
 
+// #1417-HIGH: the definitive-reject unwind gate is the SHARED, typed
+// `isBroadcastRejectedError` from ../chain/utxo-provider.js — a single source of
+// truth that keys off typed errors (BroadcastRejectedError / RpcApplicationError)
+// plus the explicit mempool reject-text set, rather than a batch-local
+// message-substring heuristic. Auth (401) / quota (402) / 5xx / timeout / unknown
+// all classify as non-reject → DEFER.
+
 /** Revert intent-marked rows to PENDING, clearing chain_tx_id (definitive reject ONLY). */
 async function revertIntentAnchors(anchorIds: string[]): Promise<void> {
   for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
@@ -1259,11 +1266,11 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       if (!isBroadcastRejectedError(error)) {
         // NOT a definitive reject — the tx may or may not have reached the
         // network (transient 5xx, timeout, OR auth 401 / quota 402 at the 3am
-        // drain, OR any unknown error). #1417-HIGH: DEFER. The intent is
-        // durable: leave rows BROADCASTING+chain_tx_id and let
-        // reconcileBroadcastIntents finish next tick. NEVER unwind here — a
-        // revert would re-claim and broadcast a SECOND, DIFFERENT tx while the
-        // first may be live.
+        // drain, OR a post-broadcast bookkeeping throw, OR any unknown error).
+        // #1417-HIGH: DEFER. The intent is durable: leave rows
+        // BROADCASTING+chain_tx_id and let reconcileBroadcastIntents finish next
+        // tick. NEVER unwind here — a revert would re-claim and broadcast a
+        // SECOND, DIFFERENT tx while the first may be live.
         logger.warn(
           { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
           'Batch broadcast outcome unknown (non-reject failure) — intent persisted; reconcile will finalize or rebroadcast the SAME bytes next tick',

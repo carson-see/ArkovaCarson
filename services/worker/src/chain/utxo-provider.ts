@@ -110,15 +110,17 @@ const BROADCAST_REJECT_PATTERNS = [
   'non-final',
   'non-bip68-final',
   'txn-mempool-conflict',
+  'too-long-mempool-chain',
   'tx-size',
-  'scriptpubkey',
   'scriptsig-not-pushonly',
-  'version',
-  'no-witness',
-  'bad-witness',
-  'not-final',
-  'rejected',
+  'no-witness-data',
+  'bad-witness-nonstandard',
 ];
+// NOTE: deliberately conservative. Over-broad tokens ('version', 'rejected',
+// bare 'scriptpubkey') were EXCLUDED — the HIGH is about never over-unwinding,
+// so a substring that could appear in a non-reject proxy/error message must not
+// trigger the intent unwind. A real reject that slips this net simply DEFERS to
+// reconcile (safe), never double-broadcasts.
 
 /**
  * Does this text carry an explicit mempool/relay rejection verdict (as opposed

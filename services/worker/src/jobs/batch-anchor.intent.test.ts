@@ -410,6 +410,33 @@ describe('S3-P0 — crash/unknown-outcome: never revert, never double-broadcast'
     expect(callOrder).not.toContain('submitBatchAnchors');
   });
 
+  it('HIGH: a provider quota/auth error (402/401) after a possible broadcast DEFERS, never unwinds (no second mainnet tx)', async () => {
+    // S3-P0 review HIGH: a 402 GetBlock quota error (e.g. at the 3am drain), a
+    // 401 auth rotation, or a post-broadcast bookkeeping throw is NOT a node
+    // rejection — the tx may be live. It must leave rows BROADCASTING+intent for
+    // reconcile, NOT refund+delete+revert (which would broadcast a 2nd, different tx).
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    mockBroadcastSigned.mockRejectedValue(new Error('GetBlock RPC HTTP 402 Payment Required (quota exceeded)'));
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.processed).toBe(0);
+    expect(result.txId).toBe(TX_ID); // intent surfaced; batch NOT nulled/unwound
+    expect(callOrder).not.toContain('revertToPending');
+    expect(proofDeletes).toHaveLength(0); // intent proofs preserved for reconcile
+    expect(callOrder).not.toContain('submitBatchAnchors');
+  });
+
+  it('HIGH: a 401 auth error DEFERS too (unknown outcome, not a definitive reject)', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    mockBroadcastSigned.mockRejectedValue(new Error('HTTP 401 Unauthorized'));
+
+    await processBatchAnchors({ force: true });
+
+    expect(callOrder).not.toContain('revertToPending');
+    expect(proofDeletes).toHaveLength(0);
+  });
+
   it('rerun after crash: tx already on-chain → finalize with the SAME txid, NO second broadcast', async () => {
     // Simulated crash aftermath: rows are BROADCASTING with chain_tx_id set.
     dbState.reconcileRows = [

@@ -885,10 +885,11 @@ describe('S3-P0 #1417 isBroadcastRejectText — explicit mempool-API reject stri
     'non-mandatory-script-verify-flag',
     'insufficient fee, rejected',
     'txn-mempool-conflict',
-    'scriptpubkey',
+    'mandatory-script-verify-flag-failed (Script failed an OP_EQUALVERIFY operation)',
     'non-final',
     'bad-txns-in-belowout',
     'absurdly-high-fee',
+    'too-long-mempool-chain',
   ])('classifies %j as a definitive broadcast reject', (text) => {
     expect(isBroadcastRejectText(text)).toBe(true);
   });
@@ -905,6 +906,13 @@ describe('S3-P0 #1417 isBroadcastRejectText — explicit mempool-API reject stri
     'connect ETIMEDOUT 1.2.3.4:8332',
     'fetch failed',
     'transaction already in mempool', // duplicate == success, NOT a reject
+    // Conservative: broad tokens that could appear in a non-reject
+    // proxy/transport message are deliberately NOT classified as rejects — the
+    // HIGH is about never OVER-unwinding. These DEFER (a genuine reject slipping
+    // the net just waits for reconcile — safe; a false positive would double-broadcast).
+    'request rejected by upstream proxy',
+    'unsupported protocol version',
+    'invalid scriptpubkey format in your query',
   ])('does NOT classify %j as a broadcast reject', (text) => {
     expect(isBroadcastRejectText(text)).toBe(false);
   });
