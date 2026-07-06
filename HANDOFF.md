@@ -30,6 +30,15 @@ Current sprint interpretation:
 - **3.75:** corrected PI-1 S1-S7 Credential Engine + HakiChain critical-path reconciliation. This is not a standalone "make CE/Haki done" sprint and does not replace the PI-1 sequencing.
 - **3.8:** program administrator provisioning and internal controls sprint. Lane 2 leads; CTO/RM/Security review required; Lane 1 consults on evidence integrity; Lane 3 consults on CE/Haki/program account scope.
 
+Sprint 3.0 active execution state - do not erase:
+- Sprint 3.0 is still active. The 3.25/3.5/3.75/3.8 planning packet does **not** mean Sprint 3.0 is complete, merged, live, or soaked.
+- As of the 2026-07-06 PR check, open S3 story PRs remain draft/blocked/dirty across all lanes. Nothing in this documentation cleanup accepts launch soak or replaces lane-level delivery evidence.
+- Lane 1 still has open proof/chain/verifier work: `#1408` chain resilience, `#1410` back-catalogue classifier, `#1411` verifier parity, `#1416` web extension vendor fix, `#1417` batch anchoring producer, `#1427` proof completeness migration/write path, and `#1433` proof-surface disclaimer.
+- Lane 2 still has launch-critical queue/security follow-through: `#1434` QUEUE-10 drain hardening / SCRUM-2625 is open and blocked; OPS-03 dashboards and QUEUE-08 instant-secure remain Sprint-4 entry criteria unless Jira/PR evidence explicitly closes them.
+- Lane 3 still has CE/Haki/public-trust S3 work open: `#1412` CE mapping/fail-closed claims gate, `#1413` AI golden set/eval/template review, and `#1415` CPE/CLE secured export/dashboard.
+- Release/CI management still has open support PRs: `#1428` prod-tables snapshot refresh is unstable/dequeued and `#1429` TLA jar/handoff-claims hotfix is blocked.
+- Do not start clean Sprint 4 / 3.25 integration as "post-S3" work until these S3 inputs are merged, closed as intentionally deferred, or explicitly risk-accepted by CTO/RM/ART. No 48-hour launch proving soak is asserted here.
+
 Jira / Confluence trace:
 - Sprint 3.25 trace: `SCRUM-2483` comment `16785`
 - Sprint 3.5 trace: `SCRUM-2312` comment `16786`
@@ -49,4 +58,4 @@ Known loose ends:
 - No production, schema, deploy, runtime, or database state changed by the documentation/refinement pass.
 - Two older pre-existing lane docs still appear in the legacy S3 folder because Drive returned `appNotAuthorizedToFile` even after Archive access was granted: `1OAltgtonRD39SvHYh-9foTk7zj8lY5YxZX5tUO9GuXI` and `1jl7KoMryRrmgWM9afFvXjmmPbfpwnzx6hwOcG7fOE68`.
 
-_Last refreshed: 2026-07-06 by Codex - verified against Drive readback for final folder `1ItbVr6LtLMzif20hCUwEClYhcHYUsddd`, docs `1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk`, `1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc`, `1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos`, and `1cqv_rOc-YnGo0w3ri6VVrsHUIGoHKxd1M4rDaPwoYfI`; Jira/Confluence trace above; Supermemory saves `CKbwLFbkWtWtDgLRS5ofb6`, `57e6zJKR4SgazS1gKPZrj1`, `ihUSJZ8Tv15MMYxfyhzA3u`, `BZTruDzwRqg29Vcm3QL1qE`, and `me9Tr3Qpdx1KkDAuPkywL7`._
+_Last refreshed: 2026-07-06 by Codex - verified against Drive readback for final folder `1ItbVr6LtLMzif20hCUwEClYhcHYUsddd`, docs `1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk`, `1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc`, `1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos`, and `1cqv_rOc-YnGo0w3ri6VVrsHUIGoHKxd1M4rDaPwoYfI`; Jira/Confluence trace above; GitHub PR check restored Sprint 3.0 active state; Supermemory saves `CKbwLFbkWtWtDgLRS5ofb6`, `57e6zJKR4SgazS1gKPZrj1`, `ihUSJZ8Tv15MMYxfyhzA3u`, `BZTruDzwRqg29Vcm3QL1qE`, `me9Tr3Qpdx1KkDAuPkywL7`, and `AS8CbDkqRGyRUMeoWKG55D`._
