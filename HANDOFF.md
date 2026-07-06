@@ -14,6 +14,21 @@
 
 ## Now
 
+### 2026-07-06 (RTE/RM) — Sprint-2 tail LANDED: #1367 (QUEUE-09/0350) + #1380 (DRIVE/0351) merged + LIVE in prod; #1398 closed; #1414 CI-flake fix
+
+Drove the three open carryover PRs to completion (the Sprint-4 ART report's stated immediate priority).
+
+- **#1380 DRIVE-01/02/03/06 + mig 0351** (SCRUM-2366/67/68/71, T3) — **MERGED** 17:32Z (Carson admin-merge, merge-commit, head `1b4142aa` = 48h-soak head; base-drift gate bypassed with documented residual — drift is Lane-1/2 infra, disjoint from Drive, connector flags OFF). Worker deploy `063ac289` succeeded 17:32.
+- **#1367 QUEUE-09 fair connector-drain org enumeration + mig 0350** (SCRUM-2352, T3) — **MERGED** 17:48Z (`0dd7bc9f`; conflict-resolution merge `f0876bf9` after #1380 landed — agents.md + generated types only, soaked drain code byte-identical; admin-merge). Worker deploy → rev **`arkova-worker-01016-sil`, health check passed**.
+- **#1398** ledger-exempt — **CLOSED** superseded (main already carried the `[0350..0353]` superset via `8672c0b3`).
+- **#1414 (new, CI fix)** — Docker Hub `toomanyrequests` in the merge-queue speculative type-gen kept dequeuing green migration PRs (#1367 3×); fixed via a `mirror.gcr.io` daemon registry mirror in `ci-supabase-start.sh` + T0-classified that script in `check-staging-evidence.ts`. Merging (T0). See `memory/project_dockerhub_ratelimit_mirror_fix.md`.
+
+**Prod truth (2026-07-06, read-only):** mig ledger fully reconciled — **main ↔ prod exact match (61 = 61 files/rows)**, zero missing, zero orphaned; numeric head **0353** (0350 fn `list_drainable_connector_orgs` + idx `idx_connector_artifact_drainable`; 0351 `drive_watch_state` table + `upsert_drive_watch_state` RPC + RLS/FORCE + `degraded` status CHECK — all verified live). Security advisors: **0 ERROR** (260 WARN, all pre-existing baseline; none touch the new tables). Drive/connector flags remain OFF in prod.
+
+**Fast-follow (non-blocking; Drive flags OFF + gated on Lane-2 QUEUE-06):** #1380 P2 review items — Drive change classifier not yet wired into the live `processDriveChanges`; channel renewal stops the old channel before the new one is confirmed; add Zod on the `updateWatchState`/`upsertWatchState` write paths. Exemption cleanup: remove `0350`–`0353` (sources all now on main) from `ledger-numeric-exemptions.json`.
+
+_Verified via: `gh pr view` #1367/#1380/#1398/#1414 (states + SHAs); Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` — 0350 fn+idx present, 0351 table+RPC+CHECK(`degraded`) present, ledger 61 rows numeric head 0353, main↔prod diff 0 missing/0 orphan; `get_advisors` security 0 ERROR; deploy-worker run [28811691027](https://github.com/carson-see/ArkovaCarson/actions/runs/28811691027) (#1367 → rev `arkova-worker-01016-sil`, "health check passed") + `063ac289` (#1380). Migrations were applied to prod ahead of merge (orphan-row exemption window); no in-session prod-apply needed._
+
 ### 2026-07-06 (RTE/ART) - Sprint 4 priority set; S3 still in progress; OPS-02 is top ART priority
 
 RTE reviewed the Drive PI-0 lane plans in folder `1cu5KsxHA7Kox6Dz-sTxfWY88meXn_4w5`, live GitHub open PR state, Jira/Confluence, and Lane 1/2/3 subteam input. Founder report created in the same Drive folder: https://docs.google.com/document/d/1-DgrevxqsMI9QHMez8o-pSlgOf4b2UGYLkbBF9YkybQ/edit?usp=drivesdk.
