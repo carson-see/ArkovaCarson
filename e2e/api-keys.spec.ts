@@ -166,7 +166,7 @@ test.describe('API Keys & Verification Flow', () => {
       // Usage dashboard or its offline state should be present.
       await expect(
         orgAdminPage.getByText('API Usage')
-          .or(orgAdminPage.getByText('Usage data unavailable — worker service not connected'))
+          .or(orgAdminPage.getByText('Usage data unavailable — service not connected'))
       ).toBeVisible({ timeout: 10000 });
     });
   });
