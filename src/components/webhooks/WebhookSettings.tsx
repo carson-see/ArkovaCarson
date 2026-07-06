@@ -7,7 +7,7 @@
  */
 
 import { useState, FormEvent } from 'react';
-import { Plus, Trash2, AlertCircle, CheckCircle, Loader2, Copy, Check } from 'lucide-react';
+import { Plus, Trash2, AlertCircle, CheckCircle, Loader2, Copy, Check, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -49,11 +49,23 @@ interface WebhookEndpoint {
   created_at: string;
 }
 
+/** Result of a signed test ping (WH-02) as returned by the worker. */
+export interface WebhookTestPingResult {
+  success: boolean;
+  status_code: number;
+  event_id: string;
+}
+
 interface WebhookSettingsProps {
   endpoints: WebhookEndpoint[];
   onAdd: (url: string, events: string[]) => Promise<string>;
   onDelete: (id: string) => Promise<void>;
   onToggle: (id: string, active: boolean) => Promise<void>;
+  /**
+   * WH-02 (SCRUM-2397): fire a signed test event at the endpoint. Optional so
+   * embedding surfaces without a worker session can omit the button entirely.
+   */
+  onTestPing?: (id: string) => Promise<WebhookTestPingResult>;
   loading?: boolean;
 }
 
@@ -83,6 +95,7 @@ export function WebhookSettings({
   onAdd,
   onDelete,
   onToggle,
+  onTestPing,
   loading = false,
 }: Readonly<WebhookSettingsProps>) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -100,6 +113,45 @@ export function WebhookSettings({
   // the endpoint pending confirmation; onDelete only fires on confirm.
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const pendingDeleteEndpoint = endpoints.find((ep) => ep.id === pendingDeleteId) ?? null;
+
+  // WH-02: signed test ping state. `testingId` is the in-flight guard (the
+  // button disables so a double-click can't fire two pings); `pingResults`
+  // holds the last consumer-side verification result per endpoint.
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [pingResults, setPingResults] = useState<Record<string, { message: string; ok: boolean }>>({});
+
+  const handleTestPing = async (id: string) => {
+    if (!onTestPing || testingId) return;
+    setTestingId(id);
+    setPingResults((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    try {
+      const result = await onTestPing(id);
+      const template = result.success
+        ? WEBHOOK_LABELS.TEST_PING_SUCCESS
+        : WEBHOOK_LABELS.TEST_PING_FAILURE;
+      setPingResults((prev) => ({
+        ...prev,
+        [id]: {
+          message: template.replace('{status}', String(result.status_code)),
+          ok: result.success,
+        },
+      }));
+    } catch (err) {
+      setPingResults((prev) => ({
+        ...prev,
+        [id]: {
+          message: err instanceof Error ? err.message : WEBHOOK_LABELS.TEST_PING_ERROR,
+          ok: false,
+        },
+      }));
+    } finally {
+      setTestingId(null);
+    }
+  };
 
   const handleConfirmDelete = async () => {
     if (!pendingDeleteId) return;
@@ -311,47 +363,83 @@ export function WebhookSettings({
           </div>
         ) : (
           <div className="space-y-4">
-            {endpoints.map((endpoint) => (
-              <div
-                key={endpoint.id}
-                className="flex items-center justify-between p-4 border rounded-lg"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    {endpoint.is_active ? (
-                      <CheckCircle className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <AlertCircle className="h-4 w-4 text-muted-foreground" />
-                    )}
-                    <span className="font-mono text-sm">{endpoint.url}</span>
+            {endpoints.map((endpoint) => {
+              const isTesting = testingId === endpoint.id;
+              const pingResult = pingResults[endpoint.id];
+              return (
+                <div key={endpoint.id} className="p-4 border rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        {endpoint.is_active ? (
+                          <CheckCircle className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                        )}
+                        <span className="font-mono text-sm">{endpoint.url}</span>
+                      </div>
+                      <div className="flex gap-1">
+                        {endpoint.events.map((event) => (
+                          <Badge key={event} variant="secondary" className="text-xs">
+                            {event}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {onTestPing && endpoint.is_active && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isTesting}
+                          onClick={() => handleTestPing(endpoint.id)}
+                        >
+                          {isTesting ? (
+                            <>
+                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              {WEBHOOK_LABELS.TEST_PING_SENDING}
+                            </>
+                          ) : (
+                            <>
+                              <Send className="mr-1 h-3 w-3" />
+                              {WEBHOOK_LABELS.TEST_PING_ACTION}
+                            </>
+                          )}
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onToggle(endpoint.id, !endpoint.is_active)}
+                      >
+                        {endpoint.is_active ? 'Disable' : 'Enable'}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`${WEBHOOK_LABELS.DELETE_CONFIRM_ACTION}: ${endpoint.url}`}
+                        onClick={() => setPendingDeleteId(endpoint.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex gap-1">
-                    {endpoint.events.map((event) => (
-                      <Badge key={event} variant="secondary" className="text-xs">
-                        {event}
-                      </Badge>
-                    ))}
-                  </div>
+                  {/* WH-02: consumer-side verification result of the signed
+                      test event — success = the receiver accepted the signed
+                      request with a 2xx. */}
+                  {pingResult && (
+                    <Alert variant={pingResult.ok ? 'default' : 'destructive'}>
+                      {pingResult.ok ? (
+                        <CheckCircle className="h-4 w-4" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4" />
+                      )}
+                      <AlertDescription>{pingResult.message}</AlertDescription>
+                    </Alert>
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onToggle(endpoint.id, !endpoint.is_active)}
-                  >
-                    {endpoint.is_active ? 'Disable' : 'Enable'}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`${WEBHOOK_LABELS.DELETE_CONFIRM_ACTION}: ${endpoint.url}`}
-                    onClick={() => setPendingDeleteId(endpoint.id)}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ))}
       </CardContent>
