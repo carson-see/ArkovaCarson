@@ -187,13 +187,22 @@ test.describe('Public Verification', () => {
           // (any terminal proof state: SECURED/EXPIRED/REVOKED/SUPERSEDED), so it
           // stays visible for a record that HAS a proof.
           await expect(page.getByText('Cryptographic Proof')).toBeVisible();
-          // FE-PROOF-GATE (SCRUM-2501): the "Download Proof" AFFORDANCE is a
-          // separate gate — isProofDownloadable is SECURED-only. A terminal-but-
-          // non-SECURED record (EXPIRED/REVOKED) still shows the proof section but
-          // must NOT offer a downloadable "Verified" proof.
+          // FE-PROOF-GATE (SCRUM-2501 / contract §3): the "Download Proof"
+          // affordance now reflects real proof availability, not just status.
           if (statusCase.status === 'SECURED') {
-            await expect(page.getByText('Download Proof')).toBeVisible();
+            // This fixture is a directly-anchored SECURED record with no batch/
+            // Merkle proof, so the public /proof endpoint returns 404 → the
+            // honest state-2 "not yet available" presentation (the ~2.97M
+            // back-catalogue case): the proof section is present, but there is
+            // NO download button and NO error signal. A downloadable proof for a
+            // SECURED record that HAS a batch bundle is covered separately in
+            // e2e/public-proof-gate.spec.ts (state 1, via contract-verbatim
+            // response interception).
+            await expect(page.getByTestId('proof-not-yet-available')).toBeVisible();
+            await expect(page.getByRole('button', { name: 'Download Proof' })).toHaveCount(0);
           } else {
+            // Terminal-but-non-SECURED (EXPIRED/REVOKED/SUPERSEDED): the gate is
+            // closed entirely — no download affordance at all.
             await expect(page.getByText('Download Proof')).not.toBeVisible();
           }
         } else {
