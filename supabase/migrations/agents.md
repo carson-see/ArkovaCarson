@@ -46,6 +46,12 @@ Reserved by the Train D MVP-launch train (GitHub milestone #2). **Pre-soak; not 
 |---|---|---|---|---|
 | `0340` | `feat/train-d-proof-foundation` | SCRUM-2335 / 2490 / 2491 | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | RESERVED — pre-soak |
 | `0341` | `feat/train-d-credit-foundation` (stacked on 0340) | SCRUM-2349 / 2350 | `0341_scrum2349_2350_credit_integrity_foundation.sql` | RESERVED — pre-soak |
+| `0340` | `feat/train-d-proof-foundation` | SCRUM-2335 / 2490 / 2491 | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | **APPLIED to prod 2026-06-23** |
+| `0341` | `lane2/s1-0341-reconcile-to-main` (fixed version; PR #1290) | SCRUM-2349 / 2350 | `0341_scrum2349_2350_credit_integrity_foundation.sql` | **APPLIED to prod 2026-06-23**; reconciling to `main` via PR #1290 (FIXED ERROR-23514 ordering; §1.12 prod-proven exception) |
+| `0342` | `perf/cpe-cle-dashboard-partial-index` (PR #1257) | CPE/CLE dashboard partial indexes | `0342_*` | RESERVED — open PR, do not reuse |
+| `0343` | QUEUE-02 connector-artifact schema (Lane 2) | SCRUM-2348 | `0343_scrum2348_connector_artifact_queue_schema.sql` | RESERVED — Lane 2 Sprint 1; interface-lock to Lane 3 by 2026-06-26 |
+| `0349` | `lane2/s1-reconciler-daily-sweep-caller` (PR #1260, Lane 2) | SCRUM-2349 | `0349_scrum2349_credit_conservation_invariant_fix.sql` | RESERVED — fixes the 0341 `org_credit_ledger_divergence` invariant. **Renumbered 0344→0347 (2026-06-27) → 0349 (2026-06-28 base refresh)** — prod ledger advanced to 0348 (`0347_lane1_i4_chain_block_hash_reorg`, `0348_scrum2353_webhook_event_claims`), so the prior 0347 slot collided; next free = max(prod head 0348)+1 = 0349. Prod-apply-first, like 0343, before the migrations-vs-prod gate passes. T3 — fresh soak required. |
+| `0354` | `lane1/s3-0354-completeness-class` (stacked on PR #1410, Lane 1 S3-A(2)) | S3-A / PROOF-BACKCATALOG | `0354_proof_completeness_class_and_guc_reader.sql` | RESERVED — open PR; adds `anchor_proofs.proof_completeness_class` (nullable + CHECK on the classifier's four class strings) + service_role-only `get_proof_enforcement_guc()` reader RPC. GUC stays OFF; 0340 trigger untouched. Next free = max(main head `0353`, reservations `0349`, open-PR `0350`)+1 = 0354. T3 — prod-apply is Carson/RTE-gated. |
 
 Train D soaks once (consolidated RC) after Train C (#1154) merges, then rebases onto the new `main`; see HANDOFF.md + the "Release Soak Protection — No-Restart Process" Confluence page.
 

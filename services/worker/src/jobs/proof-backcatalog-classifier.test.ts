@@ -9,8 +9,10 @@
  *      classified honestly with Merkle-path fields left empty; existing proof
  *      columns are READ-ONLY (asserted structurally on every write payload).
  *   3. Write mode HALTS when ambiguous > 0.
- *   4. Write mode refuses with the exact 0354 schema gap (no
- *      `proof_completeness_class` column exists in 0340) — zero writes today.
+ *   4. Write mode (0354 landed) persists EXACTLY anchor_proofs.
+ *      proof_completeness_class — UPDATE-only on existing proof rows, one
+ *      column, never an INSERT (anchor_id/receipt_id are read-only, so a
+ *      missing proof row is counted honestly, never fabricated).
  *   5. GUC guard: refuses to run when arkova.proof_enforce_secured_complete
  *      is ON; checked at run start AND on every resume (= every invocation).
  *   6. Resumable: durable job_queue checkpoint; re-invoke resumes, never
@@ -30,7 +32,6 @@ import {
   createDbLocker,
   computeClassifierLockId,
   CLASSIFIER_READ_ONLY_COLUMNS,
-  SCHEMA_GAP_0354,
   CHECKPOINT_JOB_TYPE,
   EXECUTE_CONFIRM_TOKEN,
   DEFAULT_MAX_BATCHES_PER_INVOCATION,
@@ -110,6 +111,8 @@ interface FixtureProof {
   merkle_root: string | null;
   proof_path: unknown;
   batch_id: string | null;
+  /** 0354 label state (null = unlabeled). Mutated by the fake's update handler. */
+  proof_completeness_class?: string | null;
 }
 
 interface RecordedWrite {
@@ -138,7 +141,8 @@ interface RecordedRead {
  *   - checkpoint load:     from('job_queue').select().eq()x3.order().limit()
  *   - checkpoint insert:   from('job_queue').insert().select('id').single()
  *   - checkpoint update:   from('job_queue').update().eq('id', …)
- * Every write is recorded; anchors/anchor_proofs writes are the "never" set.
+ * Every write is recorded; anchors writes are the "never" set, and the ONLY
+ * legitimate anchor_proofs write is the one-column 0354 label update.
  */
 function makeFakeDb(fixture: { anchors: FixtureAnchor[]; proofs: FixtureProof[] }) {
   const writes: RecordedWrite[] = [];
@@ -218,7 +222,9 @@ function makeFakeDb(fixture: { anchors: FixtureAnchor[]; proofs: FixtureProof[] 
       const inFilter = state.filters.find((f) => f.method === 'in' && f.col === 'anchor_id');
       const ids = new Set((inFilter?.val as string[]) ?? []);
       return {
-        data: fixture.proofs.filter((p) => ids.has(p.anchor_id)),
+        data: fixture.proofs
+          .filter((p) => ids.has(p.anchor_id))
+          .map((p) => ({ ...p, proof_completeness_class: p.proof_completeness_class ?? null })),
         error: null,
       };
     }
@@ -320,10 +326,38 @@ function makeFakeDb(fixture: { anchors: FixtureAnchor[]; proofs: FixtureProof[] 
         },
         update(values: Record<string, unknown>) {
           const filters: Array<{ method: string; col: string; val: unknown }> = [];
+          function applyProofLabelUpdate(): Array<{ anchor_id: string }> {
+            const inFilter = filters.find((f) => f.method === 'in' && f.col === 'anchor_id');
+            const ids = new Set((inFilter?.val as string[]) ?? []);
+            const affected: Array<{ anchor_id: string }> = [];
+            for (const row of fixture.proofs) {
+              if (ids.has(row.anchor_id)) {
+                Object.assign(row, values);
+                affected.push({ anchor_id: row.anchor_id });
+              }
+            }
+            return affected;
+          }
           const chain = {
             eq(col: string, val: unknown) {
               filters.push({ method: 'eq', col, val });
               return chain;
+            },
+            in(col: string, val: unknown[]) {
+              filters.push({ method: 'in', col, val });
+              return chain;
+            },
+            select(_cols: string) {
+              return {
+                then(resolve: (v: unknown) => void) {
+                  writes.push({ table, op: 'update', values, filters });
+                  if (table === 'anchor_proofs') {
+                    resolve({ data: applyProofLabelUpdate(), error: null });
+                    return;
+                  }
+                  resolve({ data: [], error: { message: `unexpected update-select on ${table}` } });
+                },
+              };
             },
             then(resolve: (v: unknown) => void) {
               writes.push({ table, op: 'update', values, filters });
@@ -357,6 +391,14 @@ function makeFakeDb(fixture: { anchors: FixtureAnchor[]; proofs: FixtureProof[] 
     /** Writes to anything OTHER than the job_queue checkpoint store. */
     nonCheckpointWrites() {
       return writes.filter((w) => w.table !== 'job_queue');
+    },
+    /** Current label/proof state of one anchor's proof row (or undefined). */
+    proofRow(anchorId: string) {
+      return fixture.proofs.find((p) => p.anchor_id === anchorId);
+    },
+    /** Mutate the fixture mid-test (simulates data changing between invocations). */
+    pushAnchor(a: FixtureAnchor) {
+      fixture.anchors.push(a);
     },
   };
 }
@@ -427,6 +469,7 @@ describe('classifyAnchor: honest per-row taxonomy (never fabricates)', () => {
     merkle_root: null,
     proof_path: null,
     batch_id: null,
+    proof_completeness_class: null,
     ...over,
   });
 
@@ -541,14 +584,13 @@ describe('buildClassWriteSet: read-only proof columns are structurally unreachab
     expect(buildClassWriteSet('ambiguous')).toEqual({ values: null, schemaGap: null });
   });
 
-  it('direct_anchored / batch_provable need the class column 0340 does not have → 0354 gap', () => {
+  it('direct_anchored / batch_provable emit EXACTLY the one 0354 label column (nothing else)', () => {
     for (const cls of ['direct_anchored', 'batch_provable'] as const) {
       const ws = buildClassWriteSet(cls);
-      expect(ws.values).toBeNull();
-      expect(ws.schemaGap).toEqual(SCHEMA_GAP_0354);
+      expect(ws.schemaGap).toBeNull();
+      expect(ws.values).toEqual({ proof_completeness_class: cls });
+      expect(Object.keys(ws.values ?? {})).toEqual(['proof_completeness_class']);
     }
-    expect(SCHEMA_GAP_0354.table).toBe('anchor_proofs');
-    expect(SCHEMA_GAP_0354.neededColumn).toBe('proof_completeness_class');
   });
 });
 
@@ -706,7 +748,7 @@ describe('runBackCatalogClassifier: GUC guard (arkova.proof_enforce_secured_comp
   });
 });
 
-// ── 6. Write mode: halt on ambiguous, then the honest 0354 schema-gap stop ──
+// ── 6. Write mode: halt on ambiguous, then the 0354 label apply ─────────────
 
 describe('runBackCatalogClassifier: write mode', () => {
   const writeDeps = (db: ReturnType<typeof makeFakeDb>) => ({
@@ -728,15 +770,21 @@ describe('runBackCatalogClassifier: write mode', () => {
     expect(db.nonCheckpointWrites()).toHaveLength(0);
   });
 
-  it('with a clean plan, refuses on the exact 0354 schema gap — the class label has no 0340 column', async () => {
+  it('with a clean plan, persists the class label — UPDATE-only, one column, missing proof rows counted honestly', async () => {
     // Clean fixture: only classifiable rows, zero ambiguity.
+    //   a01 direct, NO proof row  → label CANNOT be persisted (no INSERT — ever)
+    //   a02 direct, receipt-only proof row → labeled 'direct_anchored'
+    //   a03 complete               → no label needed
+    //   a04 batch_provable         → labeled 'batch_provable'
     const db = makeFakeDb({
       anchors: [
-        anchor({ id: 'a01', fingerprint: FP(1) }), // direct (no proof row, solo tx)
-        anchor({ id: 'a03', fingerprint: FP(3) }), // complete
-        anchor({ id: 'a04', fingerprint: FP(4), chain_tx_id: 'tx-batch-1' }), // batch_provable
+        anchor({ id: 'a01', fingerprint: FP(1) }),
+        anchor({ id: 'a02', fingerprint: FP(2) }),
+        anchor({ id: 'a03', fingerprint: FP(3) }),
+        anchor({ id: 'a04', fingerprint: FP(4), chain_tx_id: 'tx-batch-1' }),
       ],
       proofs: [
+        { anchor_id: 'a02', merkle_root: null, proof_path: null, batch_id: null },
         { anchor_id: 'a03', merkle_root: FP(3), proof_path: [], batch_id: null },
         { anchor_id: 'a04', merkle_root: FP(40), proof_path: null, batch_id: 'batch-1' },
       ],
@@ -746,16 +794,31 @@ describe('runBackCatalogClassifier: write mode', () => {
 
     expect(summary.mode).toBe('write');
     expect(summary.plan).toEqual({
-      direct_anchored: 1,
+      direct_anchored: 2,
       batch_provable: 1,
       already_complete: 1,
       ambiguous: 0,
     });
-    expect(summary.refused).toBe(true);
-    expect(summary.refusalReason).toBe('schema_gap_0354');
-    expect(summary.schemaGap).toEqual(SCHEMA_GAP_0354);
-    expect(summary.writesApplied).toBe(0);
-    expect(db.nonCheckpointWrites()).toHaveLength(0); // ← never fabricates, never writes
+    expect(summary.refused).toBe(false);
+    expect(summary.refusalReason).toBeNull();
+    expect(summary.writesApplied).toBe(2); // a02 + a04
+    expect(summary.classUnpersistedNoProofRow).toBe(1); // a01 — honest, not fabricated
+    expect(summary.applyComplete).toBe(true);
+
+    // The ONLY non-checkpoint writes are one-column anchor_proofs label updates.
+    const proofWrites = db.writes.filter((w) => w.table === 'anchor_proofs');
+    expect(proofWrites.length).toBeGreaterThan(0);
+    for (const w of proofWrites) {
+      expect(w.op).toBe('update');
+      expect(Object.keys(w.values)).toEqual(['proof_completeness_class']);
+    }
+    expect(db.writes.filter((w) => w.table === 'anchors')).toHaveLength(0);
+    expect(db.writes.filter((w) => w.table === 'anchor_proofs' && w.op === 'insert')).toHaveLength(0);
+
+    // Label state landed on the right rows — and ONLY those rows.
+    expect(db.proofRow('a02')?.proof_completeness_class).toBe('direct_anchored');
+    expect(db.proofRow('a04')?.proof_completeness_class).toBe('batch_provable');
+    expect(db.proofRow('a03')?.proof_completeness_class ?? null).toBeNull();
   });
 
   it('write mode over already_complete-only rows is a vacuous success (nothing to persist)', async () => {
@@ -779,6 +842,167 @@ describe('runBackCatalogClassifier: write mode', () => {
     expect(second.plan).toEqual(first.plan);
     expect(second.refusalReason).toBe(first.refusalReason);
     expect(db.nonCheckpointWrites()).toHaveLength(0);
+  });
+});
+
+// ── 6b. 0354 label apply phase: invariants under the REAL write path ────────
+
+describe('runBackCatalogClassifier: 0354 label apply phase', () => {
+  const writeDeps = (db: ReturnType<typeof makeFakeDb>, guc?: GucReader) => ({
+    client: db.client,
+    guc: guc ?? gucFixed('off').guc,
+    logger: makeLogger(),
+    confirmToken: EXECUTE_CONFIRM_TOKEN,
+  });
+
+  /** 120 direct anchors, each with a receipt-only proof row (labelable). */
+  const labelableFixture = () => ({
+    anchors: Array.from({ length: 120 }, (_, i) =>
+      anchor({ id: `a${String(i).padStart(3, '0')}`, fingerprint: FP(i + 1) }),
+    ),
+    proofs: Array.from({ length: 120 }, (_, i) => ({
+      anchor_id: `a${String(i).padStart(3, '0')}`,
+      merkle_root: null,
+      proof_path: null,
+      batch_id: null,
+    })),
+  });
+
+  it('a second write run is idempotent: labels already match ⇒ ZERO further anchor_proofs writes', async () => {
+    const db = makeFakeDb({
+      anchors: [
+        anchor({ id: 'a02', fingerprint: FP(2) }),
+        anchor({ id: 'a04', fingerprint: FP(4), chain_tx_id: 'tx-batch-1' }),
+      ],
+      proofs: [
+        { anchor_id: 'a02', merkle_root: null, proof_path: null, batch_id: null },
+        { anchor_id: 'a04', merkle_root: FP(40), proof_path: null, batch_id: 'batch-1' },
+      ],
+    });
+
+    const first = await runBackCatalogClassifier(writeDeps(db), { execute: true });
+    expect(first.writesApplied).toBe(2);
+    const proofWritesAfterFirst = db.writes.filter((w) => w.table === 'anchor_proofs').length;
+
+    const second = await runBackCatalogClassifier(writeDeps(db), { execute: true, restart: true });
+    expect(second.plan).toEqual(first.plan);
+    expect(second.refused).toBe(false);
+    expect(second.applyComplete).toBe(true);
+    expect(second.writesApplied).toBe(0); // nothing re-written
+    expect(db.writes.filter((w) => w.table === 'anchor_proofs').length).toBe(
+      proofWritesAfterFirst, // zero new label updates
+    );
+    expect(db.proofRow('a02')?.proof_completeness_class).toBe('direct_anchored');
+    expect(db.proofRow('a04')?.proof_completeness_class).toBe('batch_provable');
+  });
+
+  it('GUC flipping ON between census and apply refuses — zero label writes (fail-closed re-check)', async () => {
+    // Reader: 'off' for the run-start check, 'on' for the pre-apply re-check.
+    const states: GucState[] = ['off', 'on'];
+    const flippingGuc: GucReader = {
+      async getProofEnforcementGuc() {
+        return states.shift() ?? 'on';
+      },
+    };
+    const db = makeFakeDb({
+      anchors: [anchor({ id: 'a02', fingerprint: FP(2) })],
+      proofs: [{ anchor_id: 'a02', merkle_root: null, proof_path: null, batch_id: null }],
+    });
+
+    const summary = await runBackCatalogClassifier(writeDeps(db, flippingGuc), { execute: true });
+
+    expect(summary.refused).toBe(true);
+    expect(summary.refusalReason).toBe('guc_enforcement_on');
+    expect(summary.writesApplied).toBe(0);
+    expect(db.writes.filter((w) => w.table === 'anchor_proofs')).toHaveLength(0);
+    expect(db.proofRow('a02')?.proof_completeness_class ?? null).toBeNull();
+  });
+
+  it('an erroring GUC-reader RPC (createDbGucReader) fail-closes write mode — refuse, zero writes', async () => {
+    // Wire the REAL reader over an rpc that errors (e.g. function missing /
+    // permission denied): 'unknown' must refuse write mode outright.
+    const db = makeFakeDb({
+      anchors: [anchor({ id: 'a02', fingerprint: FP(2) })],
+      proofs: [{ anchor_id: 'a02', merkle_root: null, proof_path: null, batch_id: null }],
+    });
+    const erroringRpcClient = {
+      rpc: vi.fn(async () => ({
+        data: null,
+        error: { message: 'permission denied for function get_proof_enforcement_guc' },
+      })),
+    } as never;
+    const guc = createDbGucReader(erroringRpcClient);
+
+    const summary = await runBackCatalogClassifier(writeDeps(db, guc), { execute: true });
+
+    expect(summary.refused).toBe(true);
+    expect(summary.refusalReason).toBe('guc_state_unknown');
+    expect(db.writes.filter((w) => w.table === 'anchor_proofs')).toHaveLength(0);
+  });
+
+  it('the apply phase is resumable: bounded per invocation, cumulative writesApplied, durable apply cursor', async () => {
+    const db = makeFakeDb(labelableFixture());
+    const deps = writeDeps(db);
+    const opts = { execute: true, batchSize: 50, maxBatches: 1 };
+
+    // Census: 3 invocations at 1 page each (50+50+20; the short page completes it).
+    const c1 = await runBackCatalogClassifier(deps, opts);
+    expect(c1.runComplete).toBe(false);
+    const c2 = await runBackCatalogClassifier(deps, opts);
+    expect(c2.runComplete).toBe(false);
+    // Invocation 3 completes the census AND starts the apply (1-page budget).
+    const c3 = await runBackCatalogClassifier(deps, opts);
+    expect(c3.runComplete).toBe(true);
+    expect(c3.refused).toBe(false);
+    expect(c3.applyComplete).toBe(false);
+    expect(c3.writesApplied).toBe(50);
+
+    // Invocation 4 resumes the apply from the durable cursor.
+    const c4 = await runBackCatalogClassifier(deps, opts);
+    expect(c4.applyComplete).toBe(false);
+    expect(c4.writesApplied).toBe(100);
+
+    // Invocation 5 finishes.
+    const c5 = await runBackCatalogClassifier(deps, opts);
+    expect(c5.applyComplete).toBe(true);
+    expect(c5.writesApplied).toBe(120);
+    expect(c5.refused).toBe(false);
+
+    // Every row labeled; a further invocation re-writes nothing.
+    expect(db.proofRow('a000')?.proof_completeness_class).toBe('direct_anchored');
+    expect(db.proofRow('a119')?.proof_completeness_class).toBe('direct_anchored');
+    const proofWrites = db.writes.filter((w) => w.table === 'anchor_proofs').length;
+    const c6 = await runBackCatalogClassifier(deps, opts);
+    expect(c6.applyComplete).toBe(true);
+    expect(c6.writesApplied).toBe(120); // cumulative, not re-applied
+    expect(db.writes.filter((w) => w.table === 'anchor_proofs').length).toBe(proofWrites);
+  });
+
+  it('ambiguity discovered AT APPLY TIME (data changed since census) halts before writing that page', async () => {
+    const db = makeFakeDb(labelableFixture());
+    const deps = writeDeps(db);
+    const opts = { execute: true, batchSize: 50, maxBatches: 1 };
+
+    // Complete the census (3 invocations); apply page 1 (inv 3) + page 2 (inv 4).
+    await runBackCatalogClassifier(deps, opts);
+    await runBackCatalogClassifier(deps, opts);
+    const c3 = await runBackCatalogClassifier(deps, opts);
+    expect(c3.writesApplied).toBe(50);
+    const c4 = await runBackCatalogClassifier(deps, opts);
+    expect(c4.writesApplied).toBe(100);
+
+    // The world changes: a119 (page 3, not yet applied) gains a tx-mate with
+    // no persisted root — a119 now classifies batch_member_without_root.
+    db.pushAnchor(anchor({ id: 'zz-new', fingerprint: FP(500), chain_tx_id: 'tx-a119' }));
+
+    const c5 = await runBackCatalogClassifier(deps, opts);
+    expect(c5.refused).toBe(true);
+    expect(c5.refusalReason).toBe('ambiguous_rows_present');
+    expect(c5.applyComplete).toBe(false);
+    expect(c5.writesApplied).toBe(100); // page 3 was NOT written
+    expect(db.proofRow('a119')?.proof_completeness_class ?? null).toBeNull();
+    // Pages already applied keep their labels (idempotent, harmless).
+    expect(db.proofRow('a000')?.proof_completeness_class).toBe('direct_anchored');
   });
 });
 
