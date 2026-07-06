@@ -570,6 +570,27 @@ describe('drainConnectorArtifactsForOrg', () => {
     );
   });
 
+  it('SCRUM-2625 F-3: the FINAL post-debit confirmation re-read throwing (not just batchAnchor) also leaves the row materialized, NOT failed', async () => {
+    // Same invariant as the batchAnchor-throws case above, but pinning a
+    // DIFFERENT post-debit step: readAnchorStatus (the confirmation re-read
+    // that decides whether to mark the artifact terminal `anchored`). The
+    // debit already succeeded (charge landed, anchor BROADCASTING) BEFORE this
+    // call runs, so a throw here must hit the same debitSucceeded guard as any
+    // other post-debit failure — never mis-marking a charged artifact `failed`.
+    const readAnchorStatus = vi.fn(async () => { throw new Error('db connection reset'); });
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { readAnchorStatus });
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(result.failed).toBe(0);
+    expect(result.anchored).toBe(0);
+    expect(h.debit).toHaveBeenCalledTimes(1);
+    expect(h.rows[0].status).toBe('materialized');
+    expect(h.alert).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: ORG_A, artifactId: ART_1, reason: 'post_debit_error_left_materialized' }),
+    );
+  });
+
   it('first-pass anchor re-read returns null (anchor gone) → stays materialized', async () => {
     const readAnchorStatus = vi.fn(async () => null);
     const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { readAnchorStatus });
