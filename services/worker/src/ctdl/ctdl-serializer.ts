@@ -9,6 +9,9 @@ import {
 } from './ctdl-type-map.js';
 import { assertValidCtdlJsonLd } from './ctdl-validation.js';
 import { assertRealCtidOrAbsent, assertNoFabricatedCtidInJsonLd } from './ctdl-ctid-guard.js';
+// SCRUM-2377 (CE-06a) — claims-review gate (R-7): no Registry-listing /
+// legal-sufficiency overclaim can ship on the public projection.
+import { assertNoProhibitedClaimInJsonLd, containsProhibitedClaim } from './ctdl-claims-guard.js';
 // SCRUM-1922 R-CTDL-FR9 — keep the issuer DID format in lockstep with the
 // did:web resolver so the CTDL `sameAs` link resolves to the org's DID doc.
 import { ARKOVA_DID } from '../api/did-web.js';
@@ -207,10 +210,14 @@ function containsLearnerNamePii(value: string): boolean {
 }
 
 // Like cleanPublicString, but additionally drops the value when it carries
-// high-confidence PII (email/phone/SSN) or a learner-name signal.
+// high-confidence PII (email/phone/SSN), a learner-name signal, or — CE-06a
+// (SCRUM-2377, R-7) — a prohibited external-status overclaim ("listed in the
+// Registry", "legally sufficient", …). Issuer-authored free text asserting a
+// Registry listing we do not hold is honestly omitted, same treatment as PII.
 function cleanPublicFreeText(value: unknown, maxLength = 240): string | null {
   const clean = cleanPublicString(value, maxLength);
   if (!clean || containsHighConfidencePii(clean) || containsLearnerNamePii(clean)) return null;
+  if (containsProhibitedClaim(clean)) return null;
   return clean;
 }
 
@@ -446,6 +453,11 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
   // CE-02 defense-in-depth: belt-and-suspenders scan of the assembled body so no
   // ceterms:ctid key (now or in a future code path) can carry a fabricated value.
   assertNoFabricatedCtidInJsonLd(jsonLd);
+  // CE-06a (SCRUM-2377, R-7): final claims-review pass — any string that still
+  // carries a Registry-listing / legal-sufficiency overclaim (e.g. a revocation
+  // reason, or a future code path that bypasses cleanPublicFreeText) fails the
+  // whole build closed. Extends the CE-01/CE-02 chain; never a published body.
+  assertNoProhibitedClaimInJsonLd(jsonLd);
   assertValidCtdlJsonLd(jsonLd);
   return jsonLd;
 }

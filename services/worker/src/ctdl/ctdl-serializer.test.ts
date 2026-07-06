@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildCtdlJsonLd, type CtdlAnchor } from './ctdl-serializer.js';
 import { FabricatedCtidError } from './ctdl-ctid-guard.js';
+import { ProhibitedClaimError } from './ctdl-claims-guard.js';
 import { ARKOVA_DID } from '../api/did-web.js';
 
 const baseAnchor: CtdlAnchor = {
@@ -488,6 +489,84 @@ describe('buildCtdlJsonLd', () => {
         verify,
       );
       expect(jsonLd['ceterms:creditValue']).toHaveLength(1);
+    });
+  });
+
+  // SCRUM-2377 (CE-06a) — fail-closed claims-review gate (R-7): the public CTDL
+  // projection can NEVER ship a Registry-listing assertion ("listed in the
+  // Registry" etc.) or a "legally sufficient" claim. Issuer-authored free text
+  // carrying an overclaim is suppressed (honest omission, like PII); any string
+  // that still reaches the assembled body trips the final assert (throw -> the
+  // route's generic catch -> 500, no body). This EXTENDS the CE-01/CE-02
+  // fail-closed chain in buildCtdlJsonLd — it is not a parallel gate.
+  describe('claims-review gate — no Registry-listing overclaims (CE-06a)', () => {
+    const verify = { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' };
+
+    it('suppresses an issuer description asserting Registry listing (honest omission)', () => {
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          description: 'This credential is listed in the Credential Registry.',
+        },
+        verify,
+      );
+
+      expect(jsonLd).not.toHaveProperty('ceterms:description');
+      expect(JSON.stringify(jsonLd)).not.toMatch(/listed in the/i);
+    });
+
+    it('suppresses an overclaim-bearing label instead of publishing it as the name', () => {
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          label: 'Registry-listed Ethics CLE',
+          description: null,
+          metadata: { courseTitle: 'Ethics and Professional Responsibility' },
+        },
+        verify,
+      );
+
+      expect(jsonLd['ceterms:name']).toBe('Ethics and Professional Responsibility');
+      expect(JSON.stringify(jsonLd)).not.toMatch(/registry-listed/i);
+    });
+
+    it('fails closed (throws ProhibitedClaimError) when a revocation reason carries the overclaim', () => {
+      expect(() =>
+        buildCtdlJsonLd(
+          {
+            ...baseAnchor,
+            status: 'REVOKED',
+            revokedAt: '2026-05-21T00:00:00.000Z',
+            revocationReason: 'Superseded by the version listed in the Registry.',
+          },
+          verify,
+        ),
+      ).toThrow(ProhibitedClaimError);
+    });
+
+    it('suppresses a "legally sufficient" claim in free text', () => {
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          description: 'This record is legally sufficient in all jurisdictions.',
+        },
+        verify,
+      );
+      expect(jsonLd).not.toHaveProperty('ceterms:description');
+      expect(JSON.stringify(jsonLd)).not.toMatch(/legally sufficient/i);
+    });
+
+    it('publishing to the CE Registry stays OFF: the projection asserts no listing status at all', () => {
+      // The whole CE "publish path" today is this read-only projection behind
+      // the CE-01 publishability gate. There is no Registry write path, and no
+      // body field may assert one. (The lint test additionally verifies no CE
+      // Registry publish endpoint is wired anywhere in the worker.)
+      const jsonLd = buildCtdlJsonLd(baseAnchor, verify);
+      const body = JSON.stringify(jsonLd);
+      expect(body).not.toMatch(/listed in the/i);
+      expect(body).not.toMatch(/registry[-\s]listed/i);
+      expect(body).not.toMatch(/in the credential registry/i);
+      expect(body).not.toMatch(/legally sufficient/i);
     });
   });
 });
