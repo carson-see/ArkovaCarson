@@ -569,7 +569,80 @@ export const WEBHOOK_LABELS = {
   // did not take, instead of a silent snap-back. No internal error detail is
   // leaked to the user. §1.3-clean (no banned terms).
   TOGGLE_ERROR: "Couldn't update this endpoint. You may not have permission. Please try again.",
+
+  // ── WH-02 (SCRUM-2397): signed test ping ──────────────────────────────────
+  // A test event signed with the endpoint's secret, so the receiver can verify
+  // the same signature scheme production events use. §1.3-clean.
+  TEST_PING_ACTION: 'Send test event',
+  TEST_PING_SENDING: 'Sending…',
+  TEST_PING_SUCCESS: 'Test event delivered and accepted (HTTP {status}). Your endpoint verified the signed request.',
+  TEST_PING_FAILURE: 'Your endpoint did not accept the test event (HTTP {status}). Check that it verifies the signature and returns a 2xx response.',
+  TEST_PING_ERROR: "Couldn't send the test event. Please try again.",
+  TEST_PING_INACTIVE: 'Enable this endpoint before sending a test event.',
+
+  // ── WH-03 (SCRUM-2398): delivery history + failed deliveries ─────────────
+  DELIVERIES_TITLE: 'Delivery History',
+  DELIVERIES_DESC: 'Recent event notifications sent to your endpoints. Only delivery details are shown — never document contents.',
+  DELIVERIES_EMPTY: 'No deliveries yet. Events will appear here once your endpoints start receiving notifications.',
+  DELIVERIES_ERROR: "Couldn't load delivery history. Please try again.",
+  DELIVERIES_COL_EVENT: 'Event',
+  DELIVERIES_COL_ENDPOINT: 'Endpoint',
+  DELIVERIES_COL_STATUS: 'Status',
+  DELIVERIES_COL_RESPONSE: 'Response',
+  DELIVERIES_COL_ATTEMPT: 'Attempt',
+  DELIVERIES_COL_TIME: 'Time',
+  // Delivery status display labels (webhook_delivery_logs.status). A separate
+  // domain from anchor/attestation statuses in statusDisplay.ts — do not merge.
+  DELIVERY_STATUS_PENDING: 'Pending',
+  DELIVERY_STATUS_SUCCESS: 'Delivered',
+  DELIVERY_STATUS_FAILED: 'Failed',
+  DELIVERY_STATUS_RETRYING: 'Retrying',
+  REPLAY_ACTION: 'Resend',
+  REPLAY_SENDING: 'Resending…',
+  REPLAY_SUCCESS: 'Delivery resent. A new delivery record was created — the original is kept for audit.',
+  REPLAY_FAILURE: 'Resend attempted but the endpoint did not accept it (HTTP {status}). The attempt was recorded.',
+  REPLAY_ERROR: "Couldn't resend this delivery. Please try again.",
+  REPLAY_ENDPOINT_INACTIVE: 'This endpoint is disabled. Enable it before resending.',
+
+  FAILED_TITLE: 'Failed Deliveries',
+  FAILED_DESC: 'Deliveries that exhausted all retries. Resend them from the history above, or dismiss them once handled.',
+  FAILED_EMPTY: 'No failed deliveries. All event notifications were delivered or are still retrying.',
+  FAILED_ERROR: "Couldn't load failed deliveries. Please try again.",
+  FAILED_COL_ERROR: 'Last error',
+  FAILED_COL_ATTEMPTS: 'Attempts',
+  FAILED_COL_FAILED_AT: 'Failed at',
+  DISMISS_ACTION: 'Dismiss',
+  DISMISS_SUCCESS: 'Failed delivery dismissed.',
+  DISMISS_ERROR: "Couldn't dismiss this entry. Please try again.",
+
+  // ── WH-01 (SCRUM-2396): event catalog ─────────────────────────────────────
+  CATALOG_TITLE: 'Available Events',
+  CATALOG_DESC: 'Event types your endpoints can subscribe to, with the exact payload fields each one sends.',
+  CATALOG_LIVE_BADGE: 'Active',
+  CATALOG_DEFERRED_BADGE: 'Not yet active',
+  CATALOG_DEFERRED_NOTE: 'You can subscribe now, but no events of this type are sent yet.',
+  CATALOG_PAYLOAD_FIELDS_LABEL: 'Payload fields',
+  // §1.5 / §1.13 R-7 honesty: states what payloads DO and DO NOT contain.
+  CATALOG_REDACTION_NOTE:
+    'Event payloads carry public record identifiers and status details only. They never include document contents, document fingerprints, personal information, or internal account identifiers.',
 } as const;
+
+// Per-event catalog descriptions (WH-01). Keyed by the same event ids as
+// AVAILABLE_EVENTS in src/components/webhooks/WebhookSettings.tsx, which
+// mirrors the worker allowlist (VALID_WEBHOOK_EVENTS). The live/deferred
+// split and payload fields live beside AVAILABLE_EVENTS in
+// src/components/webhooks/WebhookEventCatalog.tsx (technical data, verified
+// against services/worker/src/webhooks/payload-schemas.ts). §1.3-clean.
+export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
+  'anchor.submitted': 'A document record was submitted for securing.',
+  'anchor.secured': 'A document record was secured and its Anchor Receipt details are available.',
+  'anchor.revoked': 'A secured document record was revoked by its issuer.',
+  'anchor.expired': 'A secured document record passed its expiration date.',
+  'anchor.batch_secured': 'A group of document records was secured together in one Network Receipt.',
+  'credential.issued': 'A credential was issued by a verified organization.',
+  'credential.verified': 'A credential was confirmed as secured through a verification request.',
+  'credential.status_changed': 'A credential moved to a different status.',
+};
 
 // =============================================================================
 // API KEYS (P4.5 — deferred post-launch)
