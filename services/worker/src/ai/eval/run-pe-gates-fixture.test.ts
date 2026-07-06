@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runEval } from './runner.js';
+import { runEval, getPromptVersionHash } from './runner.js';
 import { evaluateEvalGates, EVAL_GATE_CONFIGS } from './eval-gates.js';
 import {
   resolveRequestedGates,
@@ -20,6 +20,7 @@ import {
   loadRecordedOutputs,
   createFixtureReplayExtractor,
   buildRecordedOutputsFromGroundTruth,
+  validateReplayFixture,
   formatGateReport,
   checkS3LeakagePrecondition,
   S3_RECORDED_OUTPUTS_DEFAULT_PATH,
@@ -28,6 +29,7 @@ import {
 import {
   CPE_CLE_S3_GATE_ENTRIES,
   GOLDEN_DATASET_CPE_CLE_S3,
+  S3_DATASET_TAG,
 } from './golden-dataset-cpe-cle-s3.js';
 import { MockAIProvider } from '../mock.js';
 
@@ -89,7 +91,7 @@ describe('resolveRequestedGates with dataset defaults', () => {
 
 describe('fixture replay extractor (zero live model calls)', () => {
   it('replays recorded outputs deterministically', async () => {
-    const recorded = buildRecordedOutputsFromGroundTruth(CPE_CLE_S3_GATE_ENTRIES);
+    const recorded = buildRecordedOutputsFromGroundTruth(CPE_CLE_S3_GATE_ENTRIES, S3_DATASET_TAG);
     const extract = createFixtureReplayExtractor(recorded);
     const provider = new MockAIProvider();
     const entry = CPE_CLE_S3_GATE_ENTRIES[0];
@@ -107,6 +109,8 @@ describe('fixture replay extractor (zero live model calls)', () => {
         recordedFrom: 'mock-echo',
         recordedAt: '2026-07-06',
         datasetTag: 's3-cpe-cle',
+        promptVersionHash: 'test-hash',
+        model: 'test-model',
         note: 'test',
       },
       outputs: {},
@@ -153,7 +157,7 @@ describe('SCRUM-2382 gate end-to-end (deterministic CI path)', () => {
   });
 
   it('FAILS when a critical field (creditHours) degrades below its floor', async () => {
-    const recorded = buildRecordedOutputsFromGroundTruth(CPE_CLE_S3_GATE_ENTRIES);
+    const recorded = buildRecordedOutputsFromGroundTruth(CPE_CLE_S3_GATE_ENTRIES, S3_DATASET_TAG);
     // Corrupt creditHours on 60% of recorded outputs — aggregate F1 stays high
     // but the per-field floor must trip the gate.
     const ids = Object.keys(recorded.outputs);
@@ -174,7 +178,7 @@ describe('SCRUM-2382 gate end-to-end (deterministic CI path)', () => {
   });
 
   it('FAILS when aggregate F1 drops below 0.80 even if critical fields hold', async () => {
-    const recorded = buildRecordedOutputsFromGroundTruth(CPE_CLE_S3_GATE_ENTRIES);
+    const recorded = buildRecordedOutputsFromGroundTruth(CPE_CLE_S3_GATE_ENTRIES, S3_DATASET_TAG);
     // Corrupt many NON-critical fields across all outputs to drag aggregate F1
     // down while the three critical-field floors stay green.
     for (const id of Object.keys(recorded.outputs)) {
@@ -234,6 +238,80 @@ describe('report value-omission (field names + scores ONLY)', () => {
       expect(serialized).not.toContain(entry.groundTruth.courseId as string);
     }
     expect(report).toContain('creditHours');
+  });
+});
+
+describe('AI-02 replay falsifiability (round-1 review)', () => {
+  const currentHash = getPromptVersionHash();
+
+  it('resolveDataset exposes the dataset tag used for replay cross-checks', () => {
+    const s3 = resolveDataset('s3');
+    if ('error' in s3) throw new Error('s3 dataset must resolve');
+    expect(s3.tag).toBe(S3_DATASET_TAG);
+    const pe = resolveDataset(undefined);
+    if ('error' in pe) throw new Error('pe dataset must resolve');
+    expect(pe.tag).toBeTruthy();
+    expect(pe.tag).not.toBe(s3.tag);
+  });
+
+  it('the seed builder stamps promptVersionHash + model and the SELECTED dataset tag (no hardcoding)', () => {
+    const recorded = buildRecordedOutputsFromGroundTruth(
+      CPE_CLE_S3_GATE_ENTRIES,
+      'some-other-dataset',
+    );
+    expect(recorded.meta.datasetTag).toBe('some-other-dataset');
+    expect(recorded.meta.promptVersionHash).toBe(currentHash);
+    expect(recorded.meta.model).toBeTruthy();
+  });
+
+  it('FAILS replay validation when the recorded promptVersionHash mismatches the current prompt', () => {
+    const recorded = buildRecordedOutputsFromGroundTruth(CPE_CLE_S3_GATE_ENTRIES, S3_DATASET_TAG);
+    recorded.meta.promptVersionHash = 'deadbeef0000';
+    const errors = validateReplayFixture(recorded, {
+      expectedDatasetTag: S3_DATASET_TAG,
+      currentPromptVersionHash: currentHash,
+      requireLive: false,
+    });
+    expect(errors.some((e) => /prompt/i.test(e))).toBe(true);
+  });
+
+  it('FAILS replay validation when meta.datasetTag mismatches the selected dataset', () => {
+    const recorded = buildRecordedOutputsFromGroundTruth(CPE_CLE_S3_GATE_ENTRIES, S3_DATASET_TAG);
+    const errors = validateReplayFixture(recorded, {
+      expectedDatasetTag: 'professional-education',
+      currentPromptVersionHash: currentHash,
+      requireLive: false,
+    });
+    expect(errors.some((e) => /dataset/i.test(e))).toBe(true);
+  });
+
+  it('HARD-FAILS in strict/CI mode when the fixture is a mock-echo seed', () => {
+    const recorded = buildRecordedOutputsFromGroundTruth(CPE_CLE_S3_GATE_ENTRIES, S3_DATASET_TAG);
+    const strictErrors = validateReplayFixture(recorded, {
+      expectedDatasetTag: S3_DATASET_TAG,
+      currentPromptVersionHash: currentHash,
+      requireLive: true,
+    });
+    expect(strictErrors.some((e) => /mock-echo/i.test(e))).toBe(true);
+    // Non-strict mode: mock-echo is allowed (gate-wiring determinism check).
+    const lenientErrors = validateReplayFixture(recorded, {
+      expectedDatasetTag: S3_DATASET_TAG,
+      currentPromptVersionHash: currentHash,
+      requireLive: false,
+    });
+    expect(lenientErrors).toEqual([]);
+  });
+
+  it('the COMMITTED fixture passes validation for the s3 dataset against the CURRENT prompt', () => {
+    const recorded = loadRecordedOutputs(resolve(WORKER_ROOT, S3_RECORDED_OUTPUTS_DEFAULT_PATH));
+    const errors = validateReplayFixture(recorded, {
+      expectedDatasetTag: S3_DATASET_TAG,
+      currentPromptVersionHash: currentHash,
+      requireLive: false,
+    });
+    expect(errors).toEqual([]);
+    expect(recorded.meta.promptVersionHash).toBe(currentHash);
+    expect(recorded.meta.model).toBeTruthy();
   });
 });
 

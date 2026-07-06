@@ -204,6 +204,16 @@ function computeFieldF1(entries: EntryEvalResult[], field: string): number {
   return f1(truePositives, falsePositives, falseNegatives);
 }
 
+/**
+ * CAVEAT (round-1 review): `missing_both` — the ground truth omits the field
+ * AND the extractor omitted it — is counted as a TRUE POSITIVE. Correctly
+ * abstaining is treated as scoring credit, which INFLATES aggregate F1 on
+ * sparse datasets relative to the classical definition (where true negatives
+ * simply don't enter F1). The per-field floors in each gate config are the
+ * guard against this: they are computed by computeFieldF1, where an entry
+ * missing the field entirely counts as a false negative. Do not compare this
+ * aggregate number against externally-reported extraction F1 scores.
+ */
 function computeWeightedF1(entries: EntryEvalResult[]): number {
   let truePositives = 0;
   let falsePositives = 0;

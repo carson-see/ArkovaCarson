@@ -3,6 +3,8 @@
     "recordedFrom": "mock-echo",
     "recordedAt": "2026-07-06",
     "datasetTag": "s3-cpe-cle",
+    "promptVersionHash": "55995ed0e9cc",
+    "model": "ground-truth-echo (no model)",
     "note": "DETERMINISTIC MOCK SEED — ground-truth echo, NOT a live-model measurement. Replace via a nightly live-Gemini recording before treating the gate F1 as a real model score."
   },
   "outputs": {

@@ -90,16 +90,29 @@ export function checkHeldoutLeakage(
 const CORPUS_EXTENSIONS = ['.jsonl', '.json', '.ts', '.txt', '.md'];
 
 /**
- * Paths (worker-root-relative) that legitimately contain the held-out fixtures
- * and must not self-match. Kept as substrings so both src/ and any build output
- * mirrors are excluded.
+ * EXACT worker-root-relative paths that legitimately contain the held-out
+ * fixtures (or the leakage mechanism itself) and must not self-match.
+ * Round-1 review hardening: exact paths, NOT substrings — a substring rule
+ * would silently skip any OTHER file that merely mentions the dataset name
+ * (e.g. a few-shot module named after it), which is exactly the leak this
+ * check exists to catch. Build-output mirrors are excluded by the walk
+ * (node_modules/dist are skipped).
  */
-const SELF_EXCLUSIONS = [
-  'golden-dataset-cpe-cle-s3',
-  'cpe-cle-s3-manifest',
-  'heldout-leakage',
-  '.test.ts',
-];
+const SELF_EXCLUSION_EXACT_PATHS = new Set([
+  'src/ai/eval/golden-dataset-cpe-cle-s3.ts',
+  'src/ai/eval/cpe-cle-s3-manifest.json',
+  'src/ai/eval/heldout-leakage.ts',
+]);
+
+/**
+ * Is this worker-root-relative path a legitimate self-exclusion? Exact-path
+ * matches plus test files (tests assert ON the fixtures, so they contain
+ * them by design).
+ */
+export function isLeakageSelfExclusion(relPath: string): boolean {
+  const posixPath = relPath.split('\\').join('/');
+  return SELF_EXCLUSION_EXACT_PATHS.has(posixPath) || posixPath.endsWith('.test.ts');
+}
 
 function walk(dir: string, out: string[]): void {
   let names: string[];
@@ -130,11 +143,17 @@ function walk(dir: string, out: string[]): void {
  *   - `training-data/**` — committed tuning/fixture corpora (JSONL etc.)
  *   - `src/ai/**` — provider prompt builders, few-shot blocks, tuning exporters,
  *     and eval datasets OTHER than the S3 set itself.
+ *   - `scripts/**` — CLI tooling (prompt exporters, training-data generators)
+ *     that could equally embed a fixture (round-1 review hardening).
  *
  * @param workerRoot absolute path to `services/worker`
  */
 export function loadLeakageCorpus(workerRoot: string): CorpusFile[] {
-  const roots = [join(workerRoot, 'training-data'), join(workerRoot, 'src', 'ai')];
+  const roots = [
+    join(workerRoot, 'training-data'),
+    join(workerRoot, 'src', 'ai'),
+    join(workerRoot, 'scripts'),
+  ];
   const files: string[] = [];
   for (const root of roots) {
     walk(root, files);
@@ -142,12 +161,12 @@ export function loadLeakageCorpus(workerRoot: string): CorpusFile[] {
   const corpus: CorpusFile[] = [];
   for (const file of files) {
     const rel = relative(workerRoot, file);
-    if (SELF_EXCLUSIONS.some((exclusion) => rel.includes(exclusion))) continue;
+    if (isLeakageSelfExclusion(rel)) continue;
     try {
       corpus.push({ path: rel, content: readFileSync(file, 'utf-8') });
     } catch {
-      // Unreadable file — skip; the sanity assertions in the test suite ensure
-      // the corpus is never silently empty.
+      // Unreadable file — skip; checkS3LeakagePrecondition and the test-suite
+      // sanity assertions fail closed if the corpus ends up empty.
     }
   }
   return corpus;
