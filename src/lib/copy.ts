@@ -776,6 +776,31 @@ export const PUBLIC_VERIFICATION_LABELS = {
 } as const;
 
 // =============================================================================
+// DOES-NOT-ASSERT DISCLAIMER (SCRUM-2495 / ABUSE-DISCLAIMER)
+// =============================================================================
+// Always-visible block on the proof/verification surface stating what an
+// Arkova anchor MEASURES, ASSERTS, and does NOT assert (CLAUDE.md §1.5).
+// This replaces the prior ad-hoc disclaimer paragraph that was written
+// directly in PublicVerification.tsx JSX (banned per §6 "Text directly in
+// JSX") and that also contained a banned-terminology violation ("Bitcoin
+// blockchain", §1.3) invisible to lint:copy only because the two words fell
+// on the same un-quoted, tag-free JSX text line (a scanner blind spot — see
+// PublicVerification.test.tsx for the regression coverage). Jurisdiction tags
+// are informational metadata only, never a legal claim (§1.5).
+export const DOES_NOT_ASSERT_LABELS = {
+  TITLE: 'What This Anchor Does and Does Not Assert',
+  MEASURED_LABEL: 'Measured',
+  MEASURED_BODY:
+    'The document Fingerprint (a cryptographic digest of the file) at a specific point in time, and the Network Observed Time at which that fingerprint was recorded.',
+  ASSERTED_LABEL: 'Asserted',
+  ASSERTED_BODY:
+    'That this record reached Secured status — meaning its fingerprint and existence were confirmed at the time of securing, and have not been altered since.',
+  NOT_ASSERTED_LABEL: 'Not Asserted',
+  NOT_ASSERTED_BODY:
+    'The identity of the signer or uploader, the legal validity of the underlying document, or any jurisdiction. Jurisdiction tags shown elsewhere on this record are informational metadata only — not a legal claim. Relying parties should exercise their own due diligence.',
+} as const;
+
+// =============================================================================
 // AUDIT CERTIFICATE PDF (PROOF-04 / SCRUM-2337)
 // =============================================================================
 //

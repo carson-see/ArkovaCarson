@@ -296,4 +296,43 @@ describe('PublicVerification', () => {
     expect(screen.getByTestId('source-provenance-display')).not.toHaveTextContent('evidence-hash-123');
     expect(screen.getByTestId('proof-download')).toHaveTextContent('evidence-hash-123');
   });
+
+  // SCRUM-2495 / ABUSE-DISCLAIMER: the does-not-assert disclaimer must always
+  // render on the verification surface, visibly, without requiring a click or
+  // hover to reveal it (CLAUDE.md §1.5).
+  it('always renders the does-not-assert disclaimer, visibly, for a secured record', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    const disclaimer = await screen.findByTestId('does-not-assert-disclaimer');
+    expect(disclaimer).toBeVisible();
+    expect(disclaimer).toHaveTextContent(/Fingerprint/);
+    expect(disclaimer).toHaveTextContent(/Network Observed Time/);
+    expect(disclaimer).toHaveTextContent(/Secured status/);
+    expect(disclaimer).toHaveTextContent(/identity of the signer or uploader/);
+    expect(disclaimer).toHaveTextContent(/legal validity/);
+    expect(disclaimer).toHaveTextContent(/informational metadata only/);
+  });
+
+  it('always renders the does-not-assert disclaimer for a pre-secured (SUBMITTED) record', async () => {
+    rpcMock.mockResolvedValue({
+      data: { ...baseAnchor, status: 'SUBMITTED' },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    // Disclaimer renders regardless of proof-affordance gating (hasProof is
+    // false for SUBMITTED) — it is not conditioned on the proof section.
+    expect(await screen.findByTestId('does-not-assert-disclaimer')).toBeVisible();
+  });
 });
