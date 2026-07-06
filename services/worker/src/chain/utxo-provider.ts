@@ -35,9 +35,16 @@ export class HttpError extends Error {
 // ─── Retry with Exponential Backoff ─────────────────────────────────────
 
 interface RetryOptions {
-  /** Max number of retries after the initial attempt */
+  /**
+   * Max number of retries after the initial attempt. Sanitized (S3-C2): floored
+   * to an integer and clamped to [0, HARD_MAX_RETRIES]; NaN falls back to the
+   * default. No caller can configure an unbounded retry loop.
+   */
   maxRetries?: number;
-  /** Base delay in ms (doubles each retry with jitter) */
+  /**
+   * Base delay in ms (doubles each retry with jitter). Sanitized (S3-C2):
+   * non-finite or non-positive values fall back to the default.
+   */
   baseDelayMs?: number;
   /** Operation name for structured logging */
   name: string;
@@ -48,6 +55,36 @@ interface RetryOptions {
 }
 
 const defaultDelay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * S3-C2: hard upper bound on retries. `retryWithBackoff` clamps every caller's
+ * `maxRetries` to this, so EVERY retry path reaches a terminal state (success
+ * or throw) in at most `1 + HARD_MAX_RETRIES` attempts — even if a caller
+ * passes `Infinity`.
+ */
+export const HARD_MAX_RETRIES = 8;
+
+/**
+ * S3-C2: upper bound on a single backoff delay (pre-jitter). Exponential
+ * growth is capped here so a high base delay + high retry count cannot stall
+ * an operation for minutes per attempt.
+ */
+export const MAX_BACKOFF_DELAY_MS = 30_000;
+
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_BASE_DELAY_MS = 1000;
+
+/** Clamp maxRetries to [0, HARD_MAX_RETRIES]; NaN/undefined → default. */
+function sanitizeMaxRetries(value: number | undefined): number {
+  if (value == null || Number.isNaN(value)) return DEFAULT_MAX_RETRIES;
+  return Math.min(Math.max(Math.floor(value), 0), HARD_MAX_RETRIES);
+}
+
+/** Non-finite or non-positive baseDelayMs → default. */
+function sanitizeBaseDelayMs(value: number | undefined): number {
+  if (value == null || !Number.isFinite(value) || value <= 0) return DEFAULT_BASE_DELAY_MS;
+  return value;
+}
 
 /** Default request timeout in milliseconds (30 seconds) */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -95,19 +132,22 @@ export function isDuplicateTxError(message: string): boolean {
  *
  * Retryable:
  *   - HttpError with 5xx status
+ *   - HttpError 429 (rate limit — transient by definition, S3-C2)
  *   - TypeError with network-related message (fetch failures)
  *   - AbortError / DOMException (timeout)
  *   - Errors with ECONNREFUSED, ECONNRESET, ETIMEDOUT in message
  *
  * NOT retryable:
- *   - HttpError with 4xx status (bad request, not found, etc.)
+ *   - HttpError with any other 4xx status (bad request, not found, etc.)
  *   - TypeError from programming bugs (non-network messages)
  *   - RPC-level application errors (JSON error response)
  *   - Any other unknown error
  */
 export function isRetryableError(error: unknown): boolean {
   if (error instanceof HttpError) {
-    return error.status >= 500;
+    // 5xx = server-side transient. 429 = rate limit — transient by definition
+    // (S3-C2); backoff-and-retry is exactly the right response to it.
+    return error.status >= 500 || error.status === 429;
   }
 
   if (error instanceof TypeError) {
@@ -153,8 +193,8 @@ export async function retryWithBackoff<T>(
   fn: () => Promise<T>,
   opts: RetryOptions,
 ): Promise<T> {
-  const maxRetries = opts.maxRetries ?? 3;
-  const baseDelayMs = opts.baseDelayMs ?? 1000;
+  const maxRetries = sanitizeMaxRetries(opts.maxRetries);
+  const baseDelayMs = sanitizeBaseDelayMs(opts.baseDelayMs);
   const delay = opts.delayFn ?? defaultDelay;
   const random = opts.randomFn ?? Math.random;
 
@@ -176,9 +216,12 @@ export async function retryWithBackoff<T>(
         break;
       }
 
-      // Jitter: multiply by random factor in [0.5, 1.0) to prevent thundering herd
+      // Exponential growth capped at MAX_BACKOFF_DELAY_MS (S3-C2), THEN
+      // jitter: multiply by random factor in [0.5, 1.0) to prevent thundering
+      // herd. Jitter only ever shortens the capped delay.
       const delayMs = Math.round(
-        baseDelayMs * Math.pow(2, attempt) * (0.5 + random() * 0.5),
+        Math.min(baseDelayMs * Math.pow(2, attempt), MAX_BACKOFF_DELAY_MS) *
+          (0.5 + random() * 0.5),
       );
       const errorMessage =
         error instanceof Error ? error.message : String(error);
