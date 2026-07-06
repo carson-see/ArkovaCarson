@@ -23,6 +23,9 @@ import { upsertAnchorProofs } from '../utils/anchorProofs.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
 import { config } from '../config.js';
 import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
+import { flagRegistry } from '../middleware/flagRegistry.js';
+import { isRetryableError } from '../chain/utxo-provider.js';
+import type { ChainClient, ChainReceipt, PreparedChainTx } from '../chain/types.js';
 import type { Json } from '../types/database.types.js';
 
 /**
@@ -487,8 +490,10 @@ async function persistBatchAnchorProofs(
       blockHeight,
       blockTimestamp,
       merkleRoot: tree.root,
-      // The leaf's inclusion branch (empty for a single-leaf tree).
-      proofPath: tree.proofs.get(leaf.fingerprint) ?? [],
+      // The leaf's POSITIONAL inclusion branch (S3-P0: correct for duplicate
+      // fingerprints; empty for a single-leaf tree). Falls back to the legacy
+      // fingerprint-keyed map for older MerkleTreeResult shapes.
+      proofPath: tree.proofsByIndex?.[index] ?? tree.proofs.get(leaf.fingerprint) ?? [],
       // Integer leaf index (PROOF-01 merkle_index / PROOF-02 column).
       merkleIndex: index,
       batchId,
@@ -537,6 +542,18 @@ let batchProcessingRunning = false;
 export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
 
+  // S3-P0 / AC7: hard enablement gate. ENABLE_BATCH_ANCHORING is a DB-backed
+  // switchboard flag (env fallback, fail-closed — flagRegistry.getFlag returns
+  // false for unknown/unloaded flags). OFF ⇒ the job cannot claim, sign,
+  // broadcast, or reconcile — even under ?force=true. DEPLOY PREREQUISITE:
+  // prod runs the nightly 3am batch drain through this function; the prod
+  // switchboard_flags row (or ENABLE_BATCH_ANCHORING env) MUST be verified ON
+  // before this change ships, or the drain halts.
+  if (!flagRegistry.getFlag('ENABLE_BATCH_ANCHORING')) {
+    logger.info('Batch anchoring disabled (ENABLE_BATCH_ANCHORING off) — skipping batch run');
+    return EMPTY;
+  }
+
   // SCALE-3: Mutex — skip if already running
   if (batchProcessingRunning) {
     logger.info('Batch processing skipped — already in progress');
@@ -550,6 +567,416 @@ export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}):
   }
 }
 
+// =============================================================================
+// S3-P0 — persisted pre-broadcast intent (no-double-broadcast crash-resume)
+// =============================================================================
+//
+// PIPELINE (prepare-capable chain client):
+//   Phase 3a  prepareFingerprintTx — build + SIGN, no network. txid is now a
+//             pure function of the signed bytes.
+//   Phase 3b  persist the intent DURABLY, before any bytes leave the worker:
+//             (i)  anchor_proofs rows keyed by the precomputed txid
+//                  (receipt_id): merkle branch + merkle_index +
+//                  op_return_payload per leaf, and the SIGNED TX HEX inside
+//                  raw_response.broadcast_intent on the merkle_index-0 row;
+//             (ii) anchors.chain_tx_id = txid on every claimed BROADCASTING
+//                  row. recover_stuck_broadcasts (RACE-1) only resets rows
+//                  with chain_tx_id IS NULL, so the crash sweep can never
+//                  revert an anchor whose tx may already be on the network.
+//   Phase 3c  broadcastSignedTx. Outcomes:
+//             - success            → Phase 4 (submit_batch_anchors).
+//             - RETRYABLE failure  → unknown outcome. LEAVE EVERYTHING —
+//               rows stay BROADCASTING+intent; reconcileBroadcastIntents
+//               finishes the job next tick (tx found ⇒ finalize; tx unknown
+//               ⇒ re-send the SAME bytes ⇒ SAME txid).
+//             - NON-retryable reject → the node refused mempool admission;
+//               the tx provably never relayed. Only then unwind: refund,
+//               delete this txid's proof rows, revert to PENDING.
+//
+// CRASH MATRIX (worker dies at any point):
+//   before 3b  → nothing signed-and-recorded reached the network under a
+//                recorded txid; RACE-1 reverts to PENDING; the next batch is
+//                the FIRST broadcast. Safe.
+//   during 3b  → partial intent; the abort path clears marks + rows (nothing
+//                broadcast yet). If the worker dies mid-3b, rows WITH marks
+//                are reconciled (tx unknown ⇒ rebroadcast same bytes), rows
+//                WITHOUT marks are swept by RACE-1. Either way one txid.
+//   after 3b, before/через 3c → reconcile: getReceipt(txid) found ⇒ finalize
+//                (NO rebroadcast); not found ⇒ rebroadcast the SAME hex
+//                (already-known == success). A batch that broadcast once can
+//                NEVER broadcast twice.
+//   after 3c, before Phase 4 → reconcile finds the tx ⇒ finalize.
+//
+// Modeled in machines/bitcoinAnchor.machine.ts (persistBroadcastIntent /
+// broadcastResumeFinalize / broadcastIntentReject; INV
+// broadcastingIntentChainTxCoupling) — tla-precheck check green.
+
+/** Rows younger than this are assumed to belong to an in-flight run. */
+const INTENT_STALE_MINUTES = 5;
+const INTENT_CHUNK_SIZE = 500;
+
+interface IntentAnchorRow {
+  id: string;
+  chain_tx_id: string | null;
+  org_id: string | null;
+  metadata: unknown;
+  credential_type: string | null;
+}
+
+export interface IntentReconcileResult {
+  scanned: number;
+  finalized: number;
+  rebroadcast: number;
+  rejected: number;
+  deferred: number;
+}
+
+/** Deterministic batch leaf ordering: (fingerprint asc, anchor id asc). */
+function sortAnchorsForBatch(anchors: ClaimedAnchor[]): ClaimedAnchor[] {
+  return [...anchors].sort((a, b) => {
+    const fp = a.fingerprint.toLowerCase().localeCompare(b.fingerprint.toLowerCase());
+    if (fp !== 0) return fp;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+/**
+ * Phase 3b(i): durably persist the batch's proof rows + broadcast intent
+ * BEFORE broadcasting. THROWS on failure (unlike the legacy post-broadcast
+ * FIX-1 write, which is non-fatal) — an intent that is not durable must not
+ * be broadcast.
+ */
+async function persistBroadcastIntentProofs(
+  orderedAnchors: ClaimedAnchor[],
+  tree: MerkleTreeResult,
+  prepared: PreparedChainTx,
+  batchId: string,
+): Promise<void> {
+  const preparedAt = new Date().toISOString();
+  const rows = orderedAnchors.map((leaf, index) => ({
+    anchorId: leaf.id,
+    receiptId: prepared.txId,
+    blockHeight: null,
+    blockTimestamp: null,
+    merkleRoot: tree.root,
+    // Positional branch — correct even for duplicate fingerprints (S3-P0).
+    proofPath: tree.proofsByIndex[index] ?? [],
+    merkleIndex: index,
+    batchId,
+    // The exact committed payload ("ARKV" + root, no version byte).
+    opReturnPayload: prepared.opReturnData,
+    // The signed bytes live ONCE, on the index-0 intent row. A signed tx is
+    // public data the moment it broadcasts — no key material (§1.4).
+    ...(index === 0
+      ? {
+          rawResponse: {
+            broadcast_intent: {
+              tx_id: prepared.txId,
+              tx_hex: prepared.txHex,
+              fee_sats: prepared.feeSats,
+              prepared_at: preparedAt,
+              batch_id: batchId,
+              leaf_count: orderedAnchors.length,
+            },
+          },
+        }
+      : {}),
+  }));
+  await upsertAnchorProofs(db, rows);
+}
+
+/** Phase 3b(ii): mark chain_tx_id on the claimed BROADCASTING rows. Throws on failure. */
+async function markBroadcastIntent(anchorIds: string[], txId: string): Promise<void> {
+  for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
+    const chunk = anchorIds.slice(i, i + INTENT_CHUNK_SIZE);
+    const { error } = await db
+      .from('anchors')
+      .update({ chain_tx_id: txId })
+      .in('id', chunk)
+      .eq('status', 'BROADCASTING');
+    if (error) {
+      throw new Error(`Broadcast-intent mark failed for chunk at ${i}: ${error.message ?? String(error)}`);
+    }
+  }
+}
+
+/** Abort helper: clear intent marks written by markBroadcastIntent (pre-broadcast only). */
+async function clearBroadcastIntentMarks(anchorIds: string[], txId: string): Promise<void> {
+  for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
+    const chunk = anchorIds.slice(i, i + INTENT_CHUNK_SIZE);
+    try {
+      await db
+        .from('anchors')
+        .update({ chain_tx_id: null })
+        .in('id', chunk)
+        .eq('status', 'BROADCASTING')
+        .eq('chain_tx_id', txId);
+    } catch (err) {
+      logger.error({ error: err, txId, chunkStart: i }, 'Failed to clear broadcast-intent marks');
+    }
+  }
+}
+
+/** Delete THIS txid's intent/proof rows (definitive-reject or aborted-intent cleanup). */
+async function deleteIntentProofRows(anchorIds: string[], txId: string): Promise<void> {
+  for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
+    const chunk = anchorIds.slice(i, i + INTENT_CHUNK_SIZE);
+    try {
+      await db
+        .from('anchor_proofs')
+        .delete()
+        .in('anchor_id', chunk)
+        .eq('receipt_id', txId);
+    } catch (err) {
+      logger.error({ error: err, txId, chunkStart: i }, 'Failed to delete intent proof rows');
+    }
+  }
+}
+
+/** Revert intent-marked rows to PENDING, clearing chain_tx_id (definitive reject ONLY). */
+async function revertIntentAnchors(anchorIds: string[]): Promise<void> {
+  for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
+    const chunk = anchorIds.slice(i, i + INTENT_CHUNK_SIZE);
+    try {
+      const { error } = await db
+        .from('anchors')
+        .update({ status: 'PENDING' as const, chain_tx_id: null })
+        .in('id', chunk)
+        .eq('status', 'BROADCASTING');
+      if (error) {
+        logger.error({ error, chunkStart: i }, 'Intent revert chunk failed — rows left BROADCASTING for reconcile');
+      }
+    } catch (err) {
+      logger.error({ error: err, chunkStart: i }, 'Intent revert chunk threw — rows left BROADCASTING for reconcile');
+    }
+  }
+  logger.info({ count: anchorIds.length }, 'Reverted definitively-rejected intent anchors BROADCASTING → PENDING');
+}
+
+/** Load the signed tx hex persisted for a txid's broadcast intent. */
+async function loadBroadcastIntentHex(txId: string): Promise<string | null> {
+  try {
+    const { data, error } = await db
+      .from('anchor_proofs')
+      .select('raw_response')
+      .eq('receipt_id', txId)
+      .not('raw_response', 'is', null)
+      .limit(5);
+    if (error || !Array.isArray(data)) return null;
+    for (const row of data) {
+      const intent = (row as { raw_response?: { broadcast_intent?: { tx_id?: unknown; tx_hex?: unknown } } })
+        .raw_response?.broadcast_intent;
+      if (
+        intent &&
+        intent.tx_id === txId &&
+        typeof intent.tx_hex === 'string' &&
+        /^[0-9a-f]+$/i.test(intent.tx_hex)
+      ) {
+        return intent.tx_hex;
+      }
+    }
+    return null;
+  } catch (err) {
+    logger.warn({ error: err, txId }, 'Broadcast-intent lookup failed');
+    return null;
+  }
+}
+
+/**
+ * Reconcile-path refund: rows charged pre-broadcast carry
+ * queue_credit_source/queue_credit_charged_at markers in metadata
+ * (markQueueCreditCharged). Refund those before reverting so the re-claimed
+ * batch's fresh deduction never double-charges. Returns the ids whose refund
+ * FAILED — those rows must stay BROADCASTING (out of revert) so the refund
+ * retries on the next reconcile pass instead of double-charging.
+ */
+async function refundChargedIntentAnchors(rows: IntentAnchorRow[]): Promise<string[]> {
+  const failed: string[] = [];
+  for (const row of rows) {
+    const metadata = readMetadata(row.metadata);
+    const charged =
+      metadata.queue_credit_source === 'org_credits' &&
+      typeof metadata.queue_credit_charged_at === 'string';
+    if (!charged || !row.org_id) continue;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (db.rpc as any)('refund_org_credit', {
+        p_org_id: row.org_id,
+        p_amount: 1,
+        p_reason: 'rule.queue_anchor_run_compensation',
+        p_reference_id: row.id,
+      });
+      const refunded = !error && (data as { success?: unknown } | null)?.success === true;
+      if (!refunded) {
+        logger.error(
+          { error, result: data, anchorId: row.id, orgId: row.org_id },
+          'DOUBLE_BILLING_RISK: intent-reconcile credit refund failed — row stays BROADCASTING for retry',
+        );
+        failed.push(row.id);
+      }
+    } catch (err) {
+      logger.error(
+        { error: err, anchorId: row.id, orgId: row.org_id },
+        'DOUBLE_BILLING_RISK: intent-reconcile credit refund threw — row stays BROADCASTING for retry',
+      );
+      failed.push(row.id);
+    }
+  }
+  return failed;
+}
+
+/**
+ * S3-P0 crash-resume: finish (or safely unwind) batches whose pre-broadcast
+ * intent was persisted but whose run died before submit_batch_anchors.
+ *
+ * Scans stale BROADCASTING rows WITH chain_tx_id (exactly the rows the RACE-1
+ * sweep is forbidden to touch), grouped per txid:
+ *   - tx known to the chain (mempool or confirmed) → finalize. NO rebroadcast.
+ *   - tx unknown + intent hex present → re-send the SAME signed bytes (same
+ *     txid; provider treats already-known as success), then finalize.
+ *   - definitive (non-retryable) reject → refund + delete intent rows +
+ *     revert to PENDING.
+ *   - anything uncertain (transient errors, missing hex, RPC failures) →
+ *     LEAVE THE ROWS ALONE. Never revert an anchor whose tx might be live.
+ *
+ * Runs under the batch mutex at the start of every batch tick. Idempotent.
+ */
+export async function reconcileBroadcastIntents(chainClient: ChainClient): Promise<IntentReconcileResult> {
+  const result: IntentReconcileResult = { scanned: 0, finalized: 0, rebroadcast: 0, rejected: 0, deferred: 0 };
+
+  let rows: IntentAnchorRow[];
+  try {
+    const staleIso = new Date(Date.now() - INTENT_STALE_MINUTES * 60 * 1000).toISOString();
+    const res = await db
+      .from('anchors')
+      .select('id, chain_tx_id, org_id, metadata, credential_type')
+      .eq('status', 'BROADCASTING')
+      .not('chain_tx_id', 'is', null)
+      .is('deleted_at', null)
+      .lt('updated_at', staleIso)
+      .limit(BATCH_SIZE);
+    if (res.error) {
+      logger.warn({ error: res.error }, 'Broadcast-intent reconcile scan failed — deferring');
+      return result;
+    }
+    rows = ((res.data ?? []) as IntentAnchorRow[]).filter(
+      (r) => typeof r.chain_tx_id === 'string' && r.chain_tx_id.length > 0 && typeof r.id === 'string',
+    );
+  } catch (err) {
+    logger.warn({ error: err }, 'Broadcast-intent reconcile scan threw — deferring');
+    return result;
+  }
+
+  if (rows.length === 0) return result;
+  result.scanned = rows.length;
+
+  const groups = new Map<string, IntentAnchorRow[]>();
+  for (const row of rows) {
+    const txId = row.chain_tx_id as string;
+    if (!groups.has(txId)) groups.set(txId, []);
+    groups.get(txId)!.push(row);
+  }
+
+  logger.warn(
+    { intents: groups.size, anchors: rows.length },
+    'Found persisted broadcast intents from an interrupted batch run — reconciling',
+  );
+
+  for (const [txId, group] of groups) {
+    try {
+      await reconcileOneIntent(chainClient, txId, group, result);
+    } catch (err) {
+      logger.error({ error: err, txId, count: group.length }, 'Broadcast-intent reconcile failed for txid — deferring');
+      result.deferred += 1;
+    }
+  }
+
+  return result;
+}
+
+async function reconcileOneIntent(
+  chainClient: ChainClient,
+  txId: string,
+  group: IntentAnchorRow[],
+  result: IntentReconcileResult,
+): Promise<void> {
+  const ids = group.map((r) => r.id);
+
+  // 1. Is the tx already known to the chain (mempool or confirmed)?
+  let receipt: ChainReceipt | null;
+  try {
+    receipt = await chainClient.getReceipt(txId);
+  } catch (err) {
+    logger.warn({ error: err, txId }, 'Intent reconcile: receipt lookup failed — deferring');
+    result.deferred += 1;
+    return;
+  }
+
+  if (!receipt) {
+    // 2. Unknown to the chain — recover the SIGNED BYTES and re-send them.
+    //    Never rebuild: a fresh tx would be a SECOND, DIFFERENT broadcast.
+    const txHex = await loadBroadcastIntentHex(txId);
+    if (!txHex) {
+      logger.error(
+        { txId, count: ids.length },
+        'Intent reconcile: tx unknown to chain and signed hex missing — leaving rows BROADCASTING for manual reconcile (never reverting a possible broadcast)',
+      );
+      result.deferred += 1;
+      return;
+    }
+    if (typeof chainClient.broadcastSignedTx !== 'function') {
+      logger.error({ txId }, 'Intent reconcile: chain client cannot rebroadcast signed bytes — deferring');
+      result.deferred += 1;
+      return;
+    }
+    try {
+      receipt = await chainClient.broadcastSignedTx(txHex);
+      result.rebroadcast += 1;
+      logger.info({ txId, count: ids.length }, 'Intent reconcile: rebroadcast the SAME signed bytes');
+    } catch (err) {
+      if (isRetryableError(err)) {
+        logger.warn({ error: errMessage(err), txId }, 'Intent reconcile: transient rebroadcast failure — deferring');
+        result.deferred += 1;
+        return;
+      }
+      // Definitive reject — the node refused admission; safe to unwind.
+      logger.error(
+        { error: errMessage(err), txId, count: ids.length },
+        'Intent reconcile: broadcast definitively rejected — unwinding intent',
+      );
+      const refundFailed = await refundChargedIntentAnchors(group);
+      const revertIds = ids.filter((id) => !refundFailed.includes(id));
+      await deleteIntentProofRows(revertIds, txId);
+      await revertIntentAnchors(revertIds);
+      result.rejected += 1;
+      return;
+    }
+  }
+
+  // 3. Finalize: same DB write as the happy path (BROADCASTING → SUBMITTED).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: submitError } = await (db.rpc as any)('submit_batch_anchors', {
+    p_anchor_ids: ids,
+    p_tx_id: txId,
+    p_block_height: receipt.blockHeight ?? null,
+    p_block_timestamp: receipt.blockTimestamp ?? null,
+    p_merkle_root: null,
+    p_batch_id: null,
+  });
+  if (submitError) {
+    logger.error({ error: submitError, txId }, 'Intent reconcile: submit_batch_anchors failed — deferring (intent intact)');
+    result.deferred += 1;
+    return;
+  }
+  result.finalized += 1;
+  logger.info({ txId, count: ids.length }, 'Intent reconcile: finalized interrupted batch BROADCASTING → SUBMITTED');
+}
+
+/** PII-safe error message extraction (txid/blockhash/error text only — §1.4). */
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
   const orgId = typeof opts.orgId === 'string' ? opts.orgId.trim() : null;
@@ -560,6 +987,19 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
 
   // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
   const chainClient = await getChainClientAsync();
+
+  // S3-P0 Phase -1: finish (or safely unwind) any interrupted batch whose
+  // pre-broadcast intent survived a crash, BEFORE claiming new work. Runs
+  // under the same mutex; never throws (defers on any uncertainty).
+  try {
+    const reconcile = await reconcileBroadcastIntents(chainClient);
+    if (reconcile.scanned > 0) {
+      logger.info({ ...reconcile }, 'Broadcast-intent reconcile pass complete');
+    }
+  } catch (err) {
+    logger.warn({ error: err }, 'Broadcast-intent reconcile pass threw — continuing batch run');
+  }
+
   try {
     if (chainClient.hasFunds) {
       const funded = await chainClient.hasFunds();
@@ -733,37 +1173,142 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     'Claimed anchors for batch processing',
   );
 
-  const fingerprints = broadcastAnchors.map((a: { fingerprint: string }) => a.fingerprint);
-
-  // Phase 2: Build Merkle tree
+  // Phase 2: Build Merkle tree over the DETERMINISTICALLY-ORDERED leaf set.
+  // S3-P0 leaf-ordering contract: (fingerprint asc, anchor id asc) — the
+  // committed root is a pure function of the claimed leaf SET, independent of
+  // claim-RPC return order (documented in utils/merkle.ts).
+  const orderedAnchors = sortAnchorsForBatch(broadcastAnchors);
+  const fingerprints = orderedAnchors.map((a: { fingerprint: string }) => a.fingerprint);
   const tree = buildMerkleTree(fingerprints);
 
-  // Phase 3: Publish Merkle root to chain
-  let receipt;
-  try {
-    const chainClient = await getChainClientAsync();
-    receipt = await chainClient.submitFingerprint({
-      fingerprint: tree.root,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    logger.error({ error, merkleRoot: tree.root, count: broadcastAnchors.length }, 'Batch anchor chain submission failed — bulk reverting claims');
-    await refundQueueRunCredits(chargedAnchors, 'chain submission failed');
-    await bulkRevertToPending(broadcastAnchors.map(a => a.id));
-    return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
-  }
+  const batchId = `batch_${Date.now()}_${orderedAnchors.length}`;
+  const anchorIds = orderedAnchors.map((a: { id: string }) => a.id);
 
-  if (!receipt || !receipt.receiptId) {
-    logger.error({ merkleRoot: tree.root }, 'Batch chain broadcast returned empty receipt — bulk reverting claims');
-    await refundQueueRunCredits(chargedAnchors, 'chain submission returned empty receipt');
-    await bulkRevertToPending(broadcastAnchors.map(a => a.id));
-    return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+  // Phase 3: ONE OP_RETURN tx per batch committing the ROOT (ARKV marker).
+  //
+  // Intent path (S3-P0, prepare-capable client — BitcoinChainClient AND
+  // MockChainClient): sign → persist intent → broadcast. See the pipeline
+  // comment above reconcileBroadcastIntents for the full crash matrix.
+  //
+  // Legacy path (clients without prepare support): single-call
+  // submitFingerprint, post-broadcast proof persistence — unchanged behavior.
+  const intentCapable =
+    typeof chainClient.prepareFingerprintTx === 'function' &&
+    typeof chainClient.broadcastSignedTx === 'function';
+
+  let receipt: ChainReceipt;
+  let intentPersisted = false;
+
+  if (intentCapable) {
+    // ── Phase 3a: build + sign (no network) ──
+    let prepared: PreparedChainTx;
+    try {
+      prepared = await chainClient.prepareFingerprintTx!({
+        fingerprint: tree.root,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      // Nothing signed was persisted, nothing broadcast — safe full revert.
+      logger.error(
+        { error: errMessage(error), merkleRoot: tree.root, count: orderedAnchors.length },
+        'Batch tx preparation failed — bulk reverting claims',
+      );
+      await refundQueueRunCredits(chargedAnchors, 'batch tx preparation failed');
+      await bulkRevertToPending(anchorIds);
+      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+    }
+
+    // AC2 hard assertion: ARKV(4) + root(32) [+ metadata] must fit OP_RETURN.
+    if (prepared.opReturnData.length / 2 > 80) {
+      logger.error(
+        { payloadBytes: prepared.opReturnData.length / 2, merkleRoot: tree.root },
+        'Batch OP_RETURN payload exceeds 80 bytes — aborting before intent persistence',
+      );
+      await refundQueueRunCredits(chargedAnchors, 'oversized OP_RETURN payload');
+      await bulkRevertToPending(anchorIds);
+      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+    }
+
+    // ── Phase 3b: persist the broadcast intent DURABLY, pre-network ──
+    try {
+      await persistBroadcastIntentProofs(orderedAnchors, tree, prepared, batchId);
+      await markBroadcastIntent(anchorIds, prepared.txId);
+      intentPersisted = true;
+    } catch (error) {
+      // Intent persistence incomplete — NOTHING has been broadcast, so a
+      // full unwind is safe: clear any partial marks/rows, refund, revert.
+      logger.error(
+        { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
+        'Broadcast-intent persistence failed — unwinding (nothing was broadcast)',
+      );
+      await clearBroadcastIntentMarks(anchorIds, prepared.txId);
+      await deleteIntentProofRows(anchorIds, prepared.txId);
+      await refundQueueRunCredits(chargedAnchors, 'broadcast-intent persistence failed');
+      await bulkRevertToPending(anchorIds);
+      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+    }
+
+    // ── Phase 3c: broadcast the signed bytes ──
+    try {
+      receipt = await chainClient.broadcastSignedTx!(prepared.txHex);
+    } catch (error) {
+      if (isRetryableError(error)) {
+        // UNKNOWN OUTCOME — the tx may or may not have reached the network.
+        // The intent is durable: leave rows BROADCASTING+chain_tx_id and let
+        // reconcileBroadcastIntents finish next tick. NEVER revert here — a
+        // revert would re-claim and broadcast a SECOND, DIFFERENT tx.
+        logger.warn(
+          { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
+          'Batch broadcast outcome unknown (transient failure) — intent persisted; reconcile will finalize or rebroadcast the SAME bytes next tick',
+        );
+        return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
+      }
+      // DEFINITIVE reject — the node refused mempool admission; the signed tx
+      // provably never relayed. Safe to unwind the intent completely.
+      logger.error(
+        { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
+        'Batch broadcast definitively rejected — unwinding intent',
+      );
+      // Refund FIRST: if a refund fails this throws, leaving rows
+      // BROADCASTING+intent so the reconcile retries the refund via metadata
+      // instead of a revert double-charging on re-claim.
+      await refundQueueRunCredits(chargedAnchors, 'batch broadcast definitively rejected');
+      await deleteIntentProofRows(anchorIds, prepared.txId);
+      await revertIntentAnchors(anchorIds);
+      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+    }
+
+    // Normalize: an empty provider txid (already-known == success) falls back
+    // to the precomputed txid of the signed bytes.
+    if (!receipt || !receipt.receiptId) {
+      receipt = { ...(receipt ?? { blockHeight: 0, blockTimestamp: new Date().toISOString(), confirmations: 0 }), receiptId: prepared.txId };
+    }
+  } else {
+    // ── Legacy path: single-call broadcast (no intent persistence) ──
+    let legacyReceipt: ChainReceipt;
+    try {
+      legacyReceipt = await chainClient.submitFingerprint({
+        fingerprint: tree.root,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error({ error, merkleRoot: tree.root, count: orderedAnchors.length }, 'Batch anchor chain submission failed — bulk reverting claims');
+      await refundQueueRunCredits(chargedAnchors, 'chain submission failed');
+      await bulkRevertToPending(anchorIds);
+      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+    }
+
+    if (!legacyReceipt || !legacyReceipt.receiptId) {
+      logger.error({ merkleRoot: tree.root }, 'Batch chain broadcast returned empty receipt — bulk reverting claims');
+      await refundQueueRunCredits(chargedAnchors, 'chain submission returned empty receipt');
+      await bulkRevertToPending(anchorIds);
+      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+    }
+    receipt = legacyReceipt;
   }
 
   // Phase 4: Bulk update all claimed anchors BROADCASTING → SUBMITTED in one RPC call
   // (Individual PostgREST updates timeout under load — use DB-side bulk function)
-  const batchId = `batch_${Date.now()}_${broadcastAnchors.length}`;
-  const anchorIds = broadcastAnchors.map((a: { id: string }) => a.id);
 
   const submitParams = {
     p_anchor_ids: anchorIds,
@@ -819,21 +1364,25 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   const processed = typeof updatedCount === 'number' ? updatedCount : broadcastAnchors.length;
 
   // FIX-1 (SCRUM-2471): persist each leaf's Merkle branch + integer index.
-  // `broadcastAnchors` order is exactly the leaf order passed to
-  // buildMerkleTree above, so the array index == the leaf's merkle_index.
-  await persistBatchAnchorProofs(
-    broadcastAnchors.map((a) => ({ id: a.id, fingerprint: a.fingerprint })),
-    tree,
-    receipt.receiptId,
-    receipt.blockHeight ?? null,
-    receipt.blockTimestamp ?? null,
-    batchId,
-  );
+  // S3-P0: on the intent path this ALREADY happened durably in Phase 3b
+  // (pre-broadcast) — do not re-write. Legacy path keeps the post-broadcast
+  // non-fatal write. `orderedAnchors` order == the leaf order passed to
+  // buildMerkleTree, so the array index == the leaf's merkle_index.
+  if (!intentPersisted) {
+    await persistBatchAnchorProofs(
+      orderedAnchors.map((a) => ({ id: a.id, fingerprint: a.fingerprint })),
+      tree,
+      receipt.receiptId,
+      receipt.blockHeight ?? null,
+      receipt.blockTimestamp ?? null,
+      batchId,
+    );
+  }
 
   // CML-02: Populate compliance_controls per credential type (non-fatal post-processing)
   try {
     const byType = new Map<string | null, string[]>();
-    for (const anchor of broadcastAnchors) {
+    for (const anchor of orderedAnchors) {
       const ct = (anchor as { credential_type?: string | null }).credential_type ?? null;
       if (!byType.has(ct)) byType.set(ct, []);
       byType.get(ct)!.push(anchor.id);
@@ -1049,16 +1598,18 @@ async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorRes
     return { processed: 0, batchId: null, merkleRoot: null, txId: null };
   }
 
-  const { eligibleAnchors: broadcastAnchors, chargedAnchors } = await applyQueueRunCreditGate(
+  const { eligibleAnchors, chargedAnchors } = await applyQueueRunCreditGate(
     pendingAnchors as ClaimedAnchor[],
     'PENDING',
   );
 
-  if (broadcastAnchors.length < MIN_BATCH_SIZE) {
+  if (eligibleAnchors.length < MIN_BATCH_SIZE) {
     await refundQueueRunCredits(chargedAnchors, 'legacy batch below minimum after queue credit gate');
     return { processed: 0, batchId: null, merkleRoot: null, txId: null };
   }
 
+  // S3-P0: same deterministic leaf ordering as the main path.
+  const broadcastAnchors = sortAnchorsForBatch(eligibleAnchors);
   const fingerprints = broadcastAnchors.map((a) => a.fingerprint);
   const tree = buildMerkleTree(fingerprints);
 

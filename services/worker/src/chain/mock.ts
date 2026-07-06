@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import type {
   ChainClient,
   ChainReceipt,
+  PreparedChainTx,
   SubmitFingerprintRequest,
   VerificationResult,
 } from './types.js';
@@ -17,6 +18,10 @@ import { logger } from '../utils/logger.js';
 // In-memory store for mock receipts
 const mockReceipts = new Map<string, ChainReceipt>();
 const fingerprintToReceipt = new Map<string, string>();
+
+// S3-P0: prepared (signed-but-not-broadcast) mock txs, keyed by tx hex, so
+// broadcastSignedTx can resolve the fingerprint the "signed bytes" commit.
+const preparedByHex = new Map<string, { txId: string; fingerprint: string }>();
 
 let mockBlockHeight = 800000;
 
@@ -80,6 +85,60 @@ export class MockChainClient implements ChainClient {
   async getReceipt(receiptId: string): Promise<ChainReceipt | null> {
     logger.info({ receiptId }, 'Mock: Getting receipt');
     return mockReceipts.get(receiptId) ?? null;
+  }
+
+  /**
+   * S3-P0: mock prepare — deterministic per fingerprint (the real client's
+   * txid is a pure function of the signed bytes; the mock mirrors that so
+   * crash-resume tests and USE_MOCKS soak rigs exercise identical semantics).
+   * Registers NOTHING on the mock chain — only broadcastSignedTx does.
+   */
+  async prepareFingerprintTx(data: SubmitFingerprintRequest): Promise<PreparedChainTx> {
+    logger.info({ fingerprint: data.fingerprint }, 'Mock: Preparing fingerprint tx (no broadcast)');
+
+    const txId = createHash('sha256')
+      .update(`mock_prepared_tx:${data.fingerprint.toLowerCase()}`)
+      .digest('hex');
+    // Recognizable pseudo raw-tx hex: a mock marker + committed payload.
+    const opReturnData = `41524b56${data.fingerprint.toLowerCase()}`; // "ARKV" + fingerprint
+    const txHex = `f00dfeed${opReturnData}`;
+
+    preparedByHex.set(txHex, { txId, fingerprint: data.fingerprint.toLowerCase() });
+
+    return { txHex, txId, feeSats: 141, opReturnData };
+  }
+
+  /**
+   * S3-P0: mock broadcast of previously-"signed" bytes. Idempotent: the same
+   * hex always lands the same txId (already-known == success), matching the
+   * provider-layer duplicate-tx semantics of the real client.
+   */
+  async broadcastSignedTx(txHex: string): Promise<ChainReceipt> {
+    const prepared = preparedByHex.get(txHex);
+    if (!prepared) {
+      throw new Error('Mock: unknown signed tx hex — prepareFingerprintTx must produce it first');
+    }
+
+    const existing = mockReceipts.get(prepared.txId);
+    if (existing) {
+      logger.info({ txId: prepared.txId }, 'Mock: signed tx already known — idempotent success');
+      return existing;
+    }
+
+    mockBlockHeight += 1;
+    const receipt: ChainReceipt = {
+      receiptId: prepared.txId,
+      blockHeight: mockBlockHeight,
+      blockTimestamp: new Date().toISOString(),
+      confirmations: 0,
+      rawTxHex: txHex,
+    };
+
+    mockReceipts.set(receipt.receiptId, receipt);
+    fingerprintToReceipt.set(prepared.fingerprint, receipt.receiptId);
+
+    logger.info({ txId: prepared.txId }, 'Mock: signed tx broadcast');
+    return receipt;
   }
 
   async healthCheck(): Promise<boolean> {

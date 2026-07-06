@@ -100,6 +100,12 @@ vi.mock('../utils/rpc.js', () => ({
   callRpc: mockCallRpc,
 }));
 
+// S3-P0: the batch job is gated on ENABLE_BATCH_ANCHORING — force ON so the
+// pre-existing behavioral pins below still exercise the pipeline.
+vi.mock('../middleware/flagRegistry.js', () => ({
+  flagRegistry: { getFlag: vi.fn(() => true) },
+}));
+
 vi.mock('../chain/client.js', () => ({
   getInitializedChainClient: mockGetChainClient,
   getChainClientAsync: mockGetChainClientAsync,

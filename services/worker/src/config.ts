@@ -51,8 +51,15 @@ const ConfigSchema = z.object({
   bitcoinRpcAuth: z.string().optional(),
   /** Treasury WIF — loaded from env, NEVER logged (Constitution 1.4) */
   bitcoinTreasuryWif: z.string().optional(),
-  /** UTXO provider: 'rpc' (full node), 'mempool' (public API), or 'getblock' (RPC broadcast + mempool UTXO) */
-  bitcoinUtxoProvider: z.enum(['rpc', 'mempool', 'getblock']).default('mempool'),
+  /**
+   * UTXO provider: 'rpc' (full node), 'mempool' (public API), or 'getblock'
+   * (RPC broadcast + mempool UTXO). Default 'getblock' (S3-P0 / DISC-03):
+   * prod deploy (deploy-worker.yml) and both R-5 expected-config JSONs assert
+   * "getblock" — the old 'mempool' Zod default was the acknowledged
+   * code-default-divergence WARN and would have silently degraded broadcast
+   * to the public API if the env var were ever dropped from Cloud Run.
+   */
+  bitcoinUtxoProvider: z.enum(['rpc', 'mempool', 'getblock']).default('getblock'),
   /** Mempool.space API URL override (defaults to Signet endpoint) */
   mempoolApiUrl: z.string().url().optional(),
 

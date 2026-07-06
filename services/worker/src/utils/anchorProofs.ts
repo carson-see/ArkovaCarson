@@ -51,6 +51,13 @@ export interface AnchorProofUpsertRow {
    * `anchor_proofs.block_hash`.
    */
   blockHash?: string | null;
+  /**
+   * S3-P0: the raw OP_RETURN payload the batch tx commits, as plain hex —
+   * "ARKV"(4B) + app-tree root(32B), NO version byte (chain/signet.ts shape).
+   * Persisted to `anchor_proofs.op_return_payload` (bytea → `\x`-prefixed).
+   * Undefined = key omitted entirely (no clobber of an existing value).
+   */
+  opReturnPayload?: string | null;
 }
 
 const PROOF_UPSERT_CHUNK = 500;
@@ -85,6 +92,10 @@ export async function upsertAnchorProofs(
       // does not write explicit nulls over a previously-populated header.
       if (row.blockHeader !== undefined) mapped.block_header = toByteaHex(row.blockHeader);
       if (row.blockHash !== undefined) mapped.block_hash = row.blockHash;
+      // S3-P0: same omit-when-undefined contract for op_return_payload (bytea).
+      if (row.opReturnPayload !== undefined) {
+        mapped.op_return_payload = toByteaHex(row.opReturnPayload);
+      }
       return mapped;
     });
 

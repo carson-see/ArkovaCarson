@@ -46,7 +46,7 @@ const {
 } = vi.hoisted(() => {
   const callOrderRef = callOrder;
   const mockGetFlag = vi.fn(() => true);
-  const mockUpsertAnchorProofs = vi.fn(async () => {
+  const mockUpsertAnchorProofs = vi.fn(async (..._args: unknown[]) => {
     callOrderRef.push('persistProofs');
   });
   const mockPrepare = vi.fn();
@@ -258,7 +258,7 @@ beforeEach(() => {
   dbState.oldest = { data: { created_at: '2026-01-01T00:00:00Z' }, error: null };
 
   mockGetFlag.mockReturnValue(true);
-  mockUpsertAnchorProofs.mockImplementation(async () => {
+  mockUpsertAnchorProofs.mockImplementation(async (..._args: unknown[]) => {
     callOrder.push('persistProofs');
   });
   mockPrepare.mockImplementation(async (req: { fingerprint: string }) => ({

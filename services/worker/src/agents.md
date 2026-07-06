@@ -3,6 +3,10 @@ _Last updated: 2026-05-21 (PR #841 prod containment)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
+## 2026-07-06 S3-P0 / DISC-03 config note
+
+- `config.ts` `bitcoinUtxoProvider` Zod default flipped `'mempool'` → `'getblock'` (closes the acknowledged DISC-03 code-default-divergence WARN; prod deploy env + both R-5 expected-config JSONs already assert "getblock"). A getblock env without `BITCOIN_RPC_URL` now fails LOUDLY at chain-client init instead of silently degrading broadcast to the public mempool API. Mock/dev paths (USE_MOCKS / prod-anchoring off) are unaffected.
+
 ## 2026-05-20 AI Fraud Safety Note
 
 - `config.ts` documents `ENABLE_VISUAL_FRAUD_DETECTION` as a legacy gate. The server route is fail-closed pending SCRUM-1955 client-side worker rearchitecture; do not re-enable server-side document/image byte processing in fraud paths.

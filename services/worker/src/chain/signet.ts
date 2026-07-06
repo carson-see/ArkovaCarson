@@ -27,6 +27,7 @@ import type {
   ChainClient,
   ChainReceipt,
   ChainIndexLookup,
+  PreparedChainTx,
   SubmitFingerprintRequest,
   VerificationResult,
 } from './types.js';
@@ -687,12 +688,21 @@ export class BitcoinChainClient implements ChainClient {
     );
   }
 
-  async submitFingerprint(
+  /**
+   * S3-P0: build + SIGN a fingerprint-anchoring OP_RETURN transaction WITHOUT
+   * broadcasting it. Runs the exact pre-broadcast pipeline submitFingerprint
+   * always ran (metadata hash → fee estimate + PERF-7 ceiling → UTXO fetch →
+   * single/multi selection → PSBT build + sign), stopping before the network.
+   * The caller persists {txId, txHex} as the durable broadcast intent, then
+   * calls broadcastSignedTx — crash between the two re-sends the SAME bytes
+   * (same txid), never a second, different transaction.
+   */
+  async prepareFingerprintTx(
     data: SubmitFingerprintRequest,
-  ): Promise<ChainReceipt> {
+  ): Promise<PreparedChainTx> {
     logger.info(
       { fingerprint: data.fingerprint, hasMetadata: !!data.metadata },
-      'Submitting fingerprint to chain',
+      'Preparing fingerprint anchor transaction (build + sign, no broadcast)',
     );
 
     // 1. Compute metadata hash if metadata provided (DEMO-01)
@@ -706,6 +716,14 @@ export class BitcoinChainClient implements ChainClient {
         'Metadata hash computed for OP_RETURN',
       );
     }
+
+    // The exact committed payload: "ARKV"(4) + fingerprint(32) [+ metadata].
+    // NO version byte — parser-compatible with extractAnchorFingerprint.
+    const opReturnData = Buffer.concat([
+      OP_RETURN_PREFIX,
+      Buffer.from(data.fingerprint, 'hex'),
+      ...(metadataHashBytes ? [metadataHashBytes] : []),
+    ]).toString('hex');
 
     // 2. Estimate fee rate
     const feeRate = await this.feeEstimator.estimateFee();
@@ -767,21 +785,15 @@ export class BitcoinChainClient implements ChainClient {
 
       logger.info(
         { txId: multiTxId, fee: multiFee, inputCount: multiSelected.length },
-        'Multi-input transaction built, broadcasting',
+        'Multi-input transaction built and signed (not yet broadcast)',
       );
 
-      const { txid: multiBroadcastTxid } = await this.provider.broadcastTx(multiTxHex);
-      const finalMultiTxId = multiBroadcastTxid || multiTxId;
-      const blockchainInfo = await this.provider.getBlockchainInfo();
-
       return {
-        receiptId: finalMultiTxId,
-        blockHeight: blockchainInfo.blocks,
-        blockTimestamp: new Date().toISOString(),
-        confirmations: 0,
-        metadataHash: fullMetadataHash,
-        rawTxHex: multiTxHex,
+        txHex: multiTxHex,
+        txId: multiTxId,
         feeSats: multiFee,
+        opReturnData,
+        metadataHash: fullMetadataHash,
       };
     }
 
@@ -802,28 +814,36 @@ export class BitcoinChainClient implements ChainClient {
 
     logger.info(
       { txId, fee, utxoValue: selected.valueSats },
-      'Transaction built, broadcasting',
+      'Transaction built and signed (not yet broadcast)',
     );
 
-    // 6. Broadcast
+    return { txHex, txId, feeSats: fee, opReturnData, metadataHash: fullMetadataHash };
+  }
+
+  /**
+   * S3-P0: broadcast previously-signed transaction bytes. Provider-layer
+   * "already-known == success" semantics (S3-C2 regression-pinned per
+   * provider) make re-broadcasting the same bytes idempotent — the
+   * crash-resume reconcile depends on exactly that.
+   */
+  async broadcastSignedTx(txHex: string): Promise<ChainReceipt> {
+    const computedTxId = bitcoin.Transaction.fromHex(txHex).getId();
+
     const { txid: broadcastTxid } = await this.provider.broadcastTx(txHex);
 
     // Sanity check: broadcast returned txid should match our computed txId
-    if (broadcastTxid && broadcastTxid !== txId) {
+    if (broadcastTxid && broadcastTxid !== computedTxId) {
       logger.warn(
-        { computed: txId, broadcast: broadcastTxid },
+        { computed: computedTxId, broadcast: broadcastTxid },
         'Broadcast txid differs from computed txid — using broadcast value',
       );
     }
 
-    const finalTxId = broadcastTxid || txId;
+    const finalTxId = broadcastTxid || computedTxId;
 
-    logger.info(
-      { txId: finalTxId, fingerprint: data.fingerprint, fee, metadataHash: fullMetadataHash },
-      'Fingerprint anchored on chain',
-    );
+    logger.info({ txId: finalTxId }, 'Signed transaction broadcast');
 
-    // 7. Get the current block height for the receipt
+    // Current block height for the receipt (broadcast-time observation).
     const blockchainInfo = await this.provider.getBlockchainInfo();
 
     return {
@@ -831,9 +851,39 @@ export class BitcoinChainClient implements ChainClient {
       blockHeight: blockchainInfo.blocks,
       blockTimestamp: new Date().toISOString(),
       confirmations: 0, // Just broadcast, not yet confirmed
-      metadataHash: fullMetadataHash,
       rawTxHex: txHex, // NET-4: Store for rebroadcast, RBF, and audit
-      feeSats: fee, // Cost tracking per anchor
+    };
+  }
+
+  async submitFingerprint(
+    data: SubmitFingerprintRequest,
+  ): Promise<ChainReceipt> {
+    logger.info(
+      { fingerprint: data.fingerprint, hasMetadata: !!data.metadata },
+      'Submitting fingerprint to chain',
+    );
+
+    // S3-P0: submitFingerprint is now EXACTLY prepare → broadcast composed —
+    // identical bytes, identical selection, identical fee path. Callers that
+    // need the persisted-intent guarantee call the two halves themselves.
+    const prepared = await this.prepareFingerprintTx(data);
+
+    logger.info(
+      { txId: prepared.txId, fee: prepared.feeSats },
+      'Transaction built, broadcasting',
+    );
+
+    const receipt = await this.broadcastSignedTx(prepared.txHex);
+
+    logger.info(
+      { txId: receipt.receiptId, fingerprint: data.fingerprint, fee: prepared.feeSats, metadataHash: prepared.metadataHash },
+      'Fingerprint anchored on chain',
+    );
+
+    return {
+      ...receipt,
+      metadataHash: prepared.metadataHash,
+      feeSats: prepared.feeSats, // Cost tracking per anchor
     };
   }
 
