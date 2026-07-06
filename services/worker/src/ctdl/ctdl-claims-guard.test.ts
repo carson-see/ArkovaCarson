@@ -25,6 +25,18 @@ describe('containsProhibitedClaim', () => {
     'A Registry-listed credential',
     'registry listed since 2026',
     'Appears in the Credential Registry',
+    // Round-1 review bypasses — phrase-family variants that slipped past the
+    // original literal patterns (adversarial review 2026-07-06, finding 1).
+    'listed in the CE Registry',
+    'listed in the Credential Engine Registry',
+    "listed in Credential Engine's Registry",
+    'published in the Registry',
+    'live in the Registry',
+    'listed on the Registry',
+    'listed with the Registry',
+    'listed with Credential Engine',
+    'appears in the Registry',
+    'published on the Credential Engine Registry',
     'This proof is legally sufficient for court use.',
     'Legally  sufficient evidence',
   ])('flags the overclaim: %s', (overclaim) => {
@@ -43,6 +55,8 @@ describe('containsProhibitedClaim', () => {
     'submitted to the Registry for review',
     'Registry listing is not asserted',
     'not listed anywhere',
+    'approved to publish to the Registry',
+    'publishing to the Registry is not enabled',
     '',
   ])('does not flag honest wording: %s', (honest) => {
     expect(containsProhibitedClaim(honest)).toBe(false);
@@ -105,6 +119,44 @@ describe('assertNoProhibitedClaimInJsonLd', () => {
     expect(() => assertNoProhibitedClaimInJsonLd(null)).not.toThrow();
     expect(() => assertNoProhibitedClaimInJsonLd(42)).not.toThrow();
     expect(() => assertNoProhibitedClaimInJsonLd('approved to publish')).not.toThrow();
+  });
+});
+
+// Round-1 review finding 3: exceeding the recursion budget must FAIL CLOSED
+// (throw), never silently return — otherwise an overclaim nested deeper than
+// the budget ships unscanned. Legit CTDL bodies are ~4 levels deep, so any
+// body deeper than the budget is itself suspect and is refused outright.
+describe('assertNoProhibitedClaimInJsonLd — recursion budget fails closed', () => {
+  function nest(depth: number, leaf: unknown): unknown {
+    let value: unknown = leaf;
+    for (let i = 0; i < depth; i += 1) value = { nested: value };
+    return value;
+  }
+
+  it('throws when the body exceeds the depth budget even when every string is clean', () => {
+    expect(() => assertNoProhibitedClaimInJsonLd(nest(14, 'approved to publish'))).toThrow(/depth/i);
+  });
+
+  it('cannot be bypassed by hiding an overclaim deeper than the scan budget', () => {
+    expect(() =>
+      assertNoProhibitedClaimInJsonLd(nest(14, 'listed in the Registry')),
+    ).toThrow();
+  });
+
+  it('throws for an over-deep array nesting as well as object nesting', () => {
+    let value: unknown = 'listed in the Registry';
+    for (let i = 0; i < 14; i += 1) value = [value];
+    expect(() => assertNoProhibitedClaimInJsonLd(value)).toThrow();
+  });
+
+  it('still accepts a clean body within the budget', () => {
+    expect(() => assertNoProhibitedClaimInJsonLd(nest(10, 'approved to publish'))).not.toThrow();
+  });
+
+  it('still throws ProhibitedClaimError for an overclaim within the budget', () => {
+    expect(() =>
+      assertNoProhibitedClaimInJsonLd(nest(10, 'listed in the Registry')),
+    ).toThrow(ProhibitedClaimError);
   });
 });
 

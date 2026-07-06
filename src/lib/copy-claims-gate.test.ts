@@ -8,8 +8,11 @@
  * legal-sufficiency overclaim. The safe default status wording is
  * "approved to publish".
  *
- * Worker-side counterpart: services/worker/src/ctdl/ctdl-claims-guard.ts
- * (runtime, fail-closed) + ctdl-claims-lint.test.ts (CTDL/CE source scan).
+ * SINGLE SHARED SOURCE (round-1 review finding 1): the banned phrase set is
+ * imported from services/worker/src/ctdl/ctdl-claims-guard.ts
+ * (PROHIBITED_CLAIM_PATTERNS) — the worker runtime gate and this UI-copy lint
+ * can no longer drift apart. The guard module is dependency-free (pure
+ * regexes), so the cross-package import is safe for the frontend test runner.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -17,21 +20,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CE_PUBLICATION_COPY } from './copy';
+import {
+  PROHIBITED_CLAIM_PATTERNS,
+  containsProhibitedClaim,
+} from '../../services/worker/src/ctdl/ctdl-claims-guard';
 
 const COPY_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'copy.ts');
-
-/**
- * Banned overclaim phrases. Whitespace-tolerant + case-insensitive so
- * "Listed   in the Registry" and "REGISTRY-LISTED" still trip the gate.
- * Kept in semantic lockstep with PROHIBITED_CLAIM_PATTERNS in
- * services/worker/src/ctdl/ctdl-claims-guard.ts.
- */
-const BANNED_OVERCLAIM_PATTERNS: readonly RegExp[] = [
-  /listed\s+in\s+the\s+(?:credential\s+)?registry/i,
-  /registry[-\s]+listed/i,
-  /in\s+the\s+credential\s+registry/i,
-  /legally\s+sufficient/i,
-];
 
 describe('CE-06a claims gate — src/lib/copy.ts carries no Registry-listing overclaims', () => {
   const copySource = fs.readFileSync(COPY_PATH, 'utf-8');
@@ -40,7 +34,11 @@ describe('CE-06a claims gate — src/lib/copy.ts carries no Registry-listing ove
     expect(copySource.length).toBeGreaterThan(1000);
   });
 
-  it.each(BANNED_OVERCLAIM_PATTERNS.map((p) => [String(p), p] as const))(
+  it('sanity: the shared pattern set is the worker guard, not a local copy', () => {
+    expect(PROHIBITED_CLAIM_PATTERNS.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it.each(PROHIBITED_CLAIM_PATTERNS.map((p) => [String(p), p] as const))(
     'copy.ts contains no match for %s',
     (_label, pattern) => {
       const match = pattern.exec(copySource);
@@ -52,6 +50,20 @@ describe('CE-06a claims gate — src/lib/copy.ts carries no Registry-listing ove
       expect(match).toBeNull();
     },
   );
+
+  // Round-1 review finding 1: pin that the shared pattern set covers the whole
+  // phrase FAMILY, not just the literal wordings — these exact strings bypassed
+  // the original pattern list.
+  it.each([
+    'listed in the CE Registry',
+    'listed in the Credential Engine Registry',
+    'published in the Registry',
+    'listed with Credential Engine',
+    'live in the Registry',
+    'listed on the Registry',
+  ])('the shared pattern set flags the bypass phrase: %s', (bypass) => {
+    expect(containsProhibitedClaim(bypass)).toBe(true);
+  });
 });
 
 describe('CE-06a claims gate — safe default publication-status wording', () => {
@@ -61,7 +73,7 @@ describe('CE-06a claims gate — safe default publication-status wording', () =>
     );
     for (const value of Object.values(CE_PUBLICATION_COPY)) {
       expect(value.toLowerCase()).not.toContain('listed');
-      for (const pattern of BANNED_OVERCLAIM_PATTERNS) {
+      for (const pattern of PROHIBITED_CLAIM_PATTERNS) {
         expect(value).not.toMatch(pattern);
       }
     }
