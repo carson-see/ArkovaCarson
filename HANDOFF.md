@@ -18,6 +18,8 @@
 
 Founder asked that Sprint 3.25, 3.5, and corrected 3.75 all have stories attached in the correct format, that the state be captured in Supermemory, and that the ART plan/refine Sprint 3.8 around: "As a program administrator I need to be able to provision accounts and have internal controls." Drive readbacks confirmed the story packets are present and no stranded Google Docs insertion artifacts remain.
 
+Session packet folder for all docs from this ART/RTE session: https://drive.google.com/drive/folders/1cQ5rbbFStwDRI870su-gpm-Ud7Aq_JrB.
+
 Founder-facing Drive artifacts:
 - Sprint 3.25 ART launch-bug story packet: https://docs.google.com/document/d/1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk/edit?usp=drivesdk
 - Sprint 3.5 Release Confidence story packet: https://docs.google.com/document/d/1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc/edit?usp=drivesdk
@@ -28,7 +30,7 @@ Sprint 3.8 decision: Lane 2 leads with CTO/RM/Security required review; Lane 1 c
 
 Jira trace: `SCRUM-2483` comment `16785`, `SCRUM-2312` comment `16786`, `SCRUM-1867` comment `16787`, `SCRUM-1010` comment `16788`, and new Sprint 3.8 anchor story `SCRUM-2637` with comment `16789`. Confluence roadmap trace: page `82444290` footer comment `95780866`. `CLAUDE.md` was not changed because no standing engineering directive changed. No production, schema, deploy, runtime, database, or backup state changed by this documentation/refinement pass.
 
-_Last refreshed: 2026-07-06 by Codex - verified against Drive readbacks for docs `1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk`, `1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc`, `1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos`, and `1cqv_rOc-YnGo0w3ri6VVrsHUIGoHKxd1M4rDaPwoYfI`; Jira/Confluence trace above; Supermemory save `CKbwLFbkWtWtDgLRS5ofb6`._
+_Last refreshed: 2026-07-06 by Codex - verified against Drive readbacks for docs `1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk`, `1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc`, `1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos`, and `1cqv_rOc-YnGo0w3ri6VVrsHUIGoHKxd1M4rDaPwoYfI`; target packet folder `1cQ5rbbFStwDRI870su-gpm-Ud7Aq_JrB`; Jira/Confluence trace above; Supermemory saves `CKbwLFbkWtWtDgLRS5ofb6` and `57e6zJKR4SgazS1gKPZrj1`._
 
 ### 2026-07-06 (RTE/ART correction) — Sprint 3.5 updated in place; stale Supabase-only framing removed
 
