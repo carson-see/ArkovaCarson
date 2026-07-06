@@ -50,10 +50,17 @@ def load_manifest():
 
 
 def load_source(source):
-    """The fixture list of one vector file (``synthetic`` / ``adversarial``)."""
-    if source not in ("synthetic", "adversarial"):
-        raise ValueError(source)
-    return load_json(os.path.join(FIXTURES_DIR, source + "-vectors.json"))["fixtures"]
+    """The fixture list of one vector file (``synthetic`` / ``adversarial``).
+
+    Each branch opens a LITERAL constant path — the (manifest-derived)
+    ``source`` value never reaches path construction, so no data-derived
+    string can influence what is opened (Sonar S2083 path-injection taint).
+    """
+    if source == "synthetic":
+        return load_json(os.path.join(FIXTURES_DIR, "synthetic-vectors.json"))["fixtures"]
+    if source == "adversarial":
+        return load_json(os.path.join(FIXTURES_DIR, "adversarial-vectors.json"))["fixtures"]
+    raise ValueError(source)
 
 
 def packet_from_proof08(ref):
