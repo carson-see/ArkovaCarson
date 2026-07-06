@@ -14,6 +14,12 @@
 
 ## Now
 
+### 2026-07-06 (tooling) — lint:copy multi-line-JSX blind spot CLOSED (SCRUM-2666, PR #1440, T0)
+
+The `lint:copy` per-line scan short-circuited raw JSX text lines (no quote char + no same-line `<`/`>` pair) — the blind spot that shipped "Bitcoin blockchain" in `PublicVerification.tsx:658` (copy removal owned by open PR #1433). Fixed with cross-line JSX element-text tracking (`scanFileContent()` in `scripts/check-copy-terms.ts`), 11 red-first tests + fixture (`scripts/fixtures/`). Fixed-scanner sweep of the full 356-file scope found exactly 3 pre-existing hits, all grandfathered with retirement conditions in `copy-terms-baseline.json`: PublicVerification 658 ×2 (retire on #1433 merge) + `PipelineAdminPage.tsx:1196` "worker service" (UX-03; reword-vs-ops-exclusion follow-up chip filed). Also allowlisted `scripts/check-copy-terms*.ts` + `scripts/fixtures/` as T0 tooling in `check-staging-evidence.ts` (was falling through to T1 "default frontend"). Bug row BUG-2026-07-06-004 in the master log; Jira SCRUM-2666 In Progress; Confluence page 96108545.
+
+_Verified via: `npx vitest run scripts/check-copy-terms.test.ts` (98/98) + `scripts/ci/check-staging-evidence.test.ts` (165/165); `npm run lint:copy` (0 new, 11 grandfathered); `tsc --noEmit` (0); `requiredTierFor(<changed files>)` → T0; PR https://github.com/carson-see/ArkovaCarson/pull/1440. No prod/staging/schema state asserted or changed._
+
 ### 2026-07-06 (Lane 2 SM) — Lane-2 team reconvened for S3; PO added; plan corrected + ratified against live prod (no new prod/schema state)
 
 Founder corrected a same-session Lane-2 planning error: Carson is Arkova's FOUNDER, not the Lane-2 Product Owner — the team now runs its own PO persona for backlog/priority ratification (Carson keeps founder-level override + admin-merge authority, exercised at his discretion). PO ratified the Lane-2 Sprint-3 plan as-is + decided PAY-02 stays P0 (thin wiring on already-merged entitlement infra).

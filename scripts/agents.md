@@ -4,6 +4,7 @@ Operational, CI, deployment, and security scripts. Run manually or from CI workf
 
 ## Key subdirectories
 - **`ci/`** — CI gate scripts (has its own agents.md).
+- **`fixtures/`** — test fixtures read by `scripts/*.test.ts` via `readFileSync` (stored `.txt` so repo typecheck/eslint never parse them; may deliberately contain banned copy terms — do not "fix").
 - **`agent/`** — local agent bootstrap helpers, including the `CLAUDE.md` acknowledgement required before staging/prod-sensitive commands.
 - **`gcp-setup/`** — GCP infrastructure provisioning (service accounts, BigQuery, SLOs, Cloud Scheduler).
 - **`healthcheck/`** — credential + external-service smoke tests.
