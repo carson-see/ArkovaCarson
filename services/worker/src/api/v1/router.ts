@@ -66,6 +66,7 @@ import { regulatoryLookupRouter } from './regulatory-lookup.js';
 import { cleVerifyRouter } from './cle-verify.js';
 import { credentialsCtdlRouter } from './credentials-ctdl.js';
 import { webhooksRouter } from './webhooks.js';
+import { webhooksSelfServiceRouter } from './webhooks-self-service.js';
 // atsWebhookRouter moved to index.ts for raw-body HMAC (SCRUM-1214/1215)
 import { driveWebhookRouter } from './webhooks/drive.js';
 import { API_V1_PREFIX, WEBHOOK_PATHS, relativeTo } from '../../constants/webhook-paths.js';
@@ -369,6 +370,16 @@ router.use(
 // INT-09: CRUD routes are mutating/sensitive — apply batch tier rate limit
 // (10 req/min per key) per Constitution 1.10 and the webhook docs contract.
 router.use('/webhooks', batchRateLimiter, webhooksRouter);
+
+// ─── Webhook self-service — signed test ping + replay for the dashboard
+// (WH-02 / WH-03, SCRUM-2397 / SCRUM-2398) ───
+// `webhooksRouter` above is API-key-only (apiKeyAuth); the dashboard
+// authenticates with a Supabase session JWT, so it needs a JWT-gated
+// sibling. Mirrors the `/keys` and `/exports/*` mounts: `requireAuth` sets
+// `req.authUserId`, and the router itself re-derives org + ORG_ADMIN from
+// `profiles`. Reuses `signPayload`/`replayDelivery` from
+// `../../webhooks/delivery.js` — no new signing or replay logic.
+router.use('/webhooks/self-service', requireAuth, batchRateLimiter, webhooksSelfServiceRouter);
 
 // ─── Agent Identity & Delegation — Phase II Agentic Layer (PH2-AGENT-05) ───
 // JWT auth required — agents are org-managed resources
