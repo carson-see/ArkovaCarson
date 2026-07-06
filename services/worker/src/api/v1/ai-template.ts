@@ -21,14 +21,60 @@ const router = Router();
 
 // ─── Schemas ───
 
-const TemplateRequestSchema = z.object({
-  fields: z.record(z.string(), z.unknown()),
-  confidence: z.number().min(0).max(1),
-});
+/**
+ * AI-03 lock-in (SCRUM-2383): this endpoint accepts ONLY already-extracted,
+ * PII-stripped metadata fields + confidence. It must never accept document
+ * bytes — structurally (no bytes/base64/document keys in the shape, asserted
+ * by ai-template.contract.test.ts) or smuggled inside `fields` (guarded below).
+ */
+const BANNED_FIELD_KEY = /bytes|base64|blob|dataurl|data_uri|datauri|rawdocument|raw_document|filedata|file_data|filecontent|file_content|documentcontent|document_content/i;
+const MAX_FIELD_VALUE_LENGTH = 20_000;
 
-const TagsRequestSchema = z.object({
-  fields: z.record(z.string(), z.unknown()),
-});
+/** Reject fields records that look like document-byte smuggling. */
+function assertNoDocumentPayload(
+  fields: Record<string, unknown>,
+  ctx: z.RefinementCtx,
+): void {
+  for (const [key, value] of Object.entries(fields)) {
+    if (BANNED_FIELD_KEY.test(key)) {
+      // Report the offending KEY only — never echo the value.
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['fields', key],
+        message: 'Document-byte-shaped field keys are not accepted on this endpoint.',
+      });
+      continue;
+    }
+    if (typeof value === 'string') {
+      if (value.length > MAX_FIELD_VALUE_LENGTH) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['fields', key],
+          message: `Field value exceeds ${MAX_FIELD_VALUE_LENGTH} characters.`,
+        });
+      } else if (value.startsWith('data:')) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['fields', key],
+          message: 'data: URIs are not accepted on this endpoint.',
+        });
+      }
+    }
+  }
+}
+
+export const TemplateRequestSchema = z
+  .object({
+    fields: z.record(z.string(), z.unknown()),
+    confidence: z.number().min(0).max(1),
+  })
+  .superRefine((value, ctx) => assertNoDocumentPayload(value.fields, ctx));
+
+export const TagsRequestSchema = z
+  .object({
+    fields: z.record(z.string(), z.unknown()),
+  })
+  .superRefine((value, ctx) => assertNoDocumentPayload(value.fields, ctx));
 
 // ─── POST /template — Full template reconstruction ───
 
@@ -74,7 +120,12 @@ router.post('/template', async (req: Request, res: Response) => {
     res.json(result);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-    logger.error({ error: err, userId }, 'AI template reconstruction failed');
+    // AI-03 value-omission lock-in: never log the error object or message —
+    // a provider error can echo request field values. Bounded error NAME only.
+    logger.error(
+      { event: 'ai.template.failed', errorName: err instanceof Error ? err.name : 'UnknownError', userId },
+      'AI template reconstruction failed',
+    );
 
     if (errorMessage.includes('circuit breaker')) {
       res.status(503).json({
@@ -130,7 +181,11 @@ router.post('/tags', async (req: Request, res: Response) => {
     res.json(result);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-    logger.error({ error: err, userId }, 'AI tagging failed');
+    // AI-03 value-omission lock-in: bounded error NAME only (see /template).
+    logger.error(
+      { event: 'ai.tags.failed', errorName: err instanceof Error ? err.name : 'UnknownError', userId },
+      'AI tagging failed',
+    );
 
     if (errorMessage.includes('circuit breaker')) {
       res.status(503).json({

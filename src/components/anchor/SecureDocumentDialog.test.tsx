@@ -358,3 +358,105 @@ describe('SecureDocumentDialog — extraction-failed recovery + toast behavior',
     expect(insert).not.toHaveBeenCalled();
   });
 });
+
+describe('AI-03 (SCRUM-2383) — extraction review gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    lastFileUploadProps = null;
+    mockProfileOrgId.current = null;
+    vi.mocked(detectFraudForDocument).mockResolvedValue(null);
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    } as Awaited<ReturnType<typeof supabase.auth.getSession>>);
+    vi.mocked(supabase.from).mockReturnValue({
+      insert: vi.fn(() => ({
+        select: vi.fn(() => ({
+          single: vi.fn(async () => ({
+            data: { id: 'anchor-id', public_id: 'public-id' },
+            error: null,
+          })),
+        })),
+      })),
+      select: createTemplateSelectMock(),
+    } as unknown as ReturnType<typeof supabase.from>);
+    vi.mocked(fetchTemplateReconstruction).mockResolvedValue(null);
+  });
+
+  function fileSelectAndContinue(): Promise<void> {
+    const file = new File(['x'], 'd.pdf', { type: 'application/pdf' });
+    act(() => {
+      lastFileUploadProps?.onFileSelect?.(file, 'a'.repeat(64));
+    });
+    return act(async () => {
+      screen.getByTestId('secure-document-continue').click();
+    });
+  }
+
+  async function flushAiEnabledState(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  function mockExtractionWith(fields: Array<{ key: string; value: string; confidence: number; status: 'suggested' | 'accepted' }>): void {
+    vi.mocked(runExtraction).mockResolvedValueOnce({
+      fields,
+      overallConfidence: 0.7,
+      provider: 'gemini',
+      creditsRemaining: 49,
+      ocrResult: { text: 'x', pageCount: 1, method: 'pdfjs', durationMs: 1 },
+      strippingReport: {
+        strippedText: 'x',
+        piiFound: [],
+        redactionCount: 0,
+        originalLength: 1,
+        strippedLength: 1,
+      },
+    } as unknown as Awaited<ReturnType<typeof runExtraction>>);
+    // applyTemplate passthrough so extractedFields keeps the mocked fields.
+    vi.mocked(applyTemplate).mockImplementation(async (extractionFields) => ({
+      mappedFields: extractionFields,
+      unmappedFields: [],
+    }) as unknown as Awaited<ReturnType<typeof applyTemplate>>);
+  }
+
+  it('disables Continue after extraction until the low-confidence field is acknowledged', async () => {
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    mockExtractionWith([
+      { key: 'credentialType', value: 'CPE', confidence: 0.95, status: 'accepted' },
+      { key: 'creditHours', value: '4', confidence: 0.4, status: 'suggested' },
+    ]);
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+    // Let the review panel resolve its own flag read + report state.
+    await flushAiEnabledState();
+
+    const continueBtn = screen.getByTestId('extraction-review-continue');
+    expect(continueBtn).toBeDisabled();
+
+    await act(async () => {
+      screen.getByTestId('review-ack-creditHours').click();
+    });
+
+    expect(screen.getByTestId('extraction-review-continue')).not.toBeDisabled();
+  });
+
+  it('enables Continue immediately when every field is high-confidence', async () => {
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    mockExtractionWith([
+      { key: 'credentialType', value: 'CPE', confidence: 0.95, status: 'accepted' },
+      { key: 'issuerName', value: 'Example Institute', confidence: 0.92, status: 'accepted' },
+    ]);
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+    await flushAiEnabledState();
+
+    expect(screen.getByTestId('extraction-review-continue')).not.toBeDisabled();
+  });
+});

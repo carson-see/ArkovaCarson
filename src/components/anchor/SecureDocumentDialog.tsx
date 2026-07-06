@@ -33,6 +33,7 @@ import { WORKER_URL } from '@/lib/workerClient';
 import { TemplateSelector } from './TemplateSelector';
 import type { TemplateOption } from './TemplateSelector';
 import { AIFieldSuggestions } from './AIFieldSuggestions';
+import { TemplateReviewPanel } from './TemplateReviewPanel';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
@@ -100,8 +101,12 @@ export function SecureDocumentDialog({
   const [aiEnabled, setAiEnabled] = useState(false);
   const [extractionProgress, setExtractionProgress] = useState<ExtractionProgress | null>(null);
   const [extractedFields, setExtractedFields] = useState<ExtractionField[]>([]);
+  // AI-03 (SCRUM-2383): low-confidence fields must be acknowledged or corrected
+  // in the TemplateReviewPanel before the user can proceed past extraction.
+  const [reviewComplete, setReviewComplete] = useState(true);
   const [overallConfidence, setOverallConfidence] = useState(0);
-  const [creditsRemaining, setCreditsRemaining] = useState(0);
+  // creditsRemaining display moved out with the AI-03 review panel; the
+  // extraction progress instance of AIFieldSuggestions passes a literal 0.
 
   // Template reconstruction state (populated async after extraction)
   const [templateResult, setTemplateResult] = useState<TemplateReconstructionResult | null>(null);
@@ -377,6 +382,9 @@ export function SecureDocumentDialog({
 
     setStep('extracting');
     setExtractedFields([]);
+    // Hold Continue until the review panel reports its state (it re-enables
+    // immediately when there is nothing low-confidence to review).
+    setReviewComplete(false);
     setExtractionProgress({ stage: 'ocr', progress: 0, message: 'Starting AI analysis...' });
 
     // §1.6 FAIL-CLOSED (WEBEXT-03): capture whether the on-device privacy
@@ -396,7 +404,6 @@ export function SecureDocumentDialog({
 
     if (result) {
       setOverallConfidence(result.overallConfidence);
-      setCreditsRemaining(result.creditsRemaining);
       setExtractionProgress({ stage: 'complete', progress: 100, message: 'Extraction complete' });
 
       // Auto-detect document type and auto-select template
@@ -679,14 +686,14 @@ export function SecureDocumentDialog({
                       </span>
                     </div>
                   )}
-                  <AIFieldSuggestions
+                  {/* AI-03 (SCRUM-2383): review/correct step — low-confidence
+                      fields are flagged and require acknowledgment or
+                      correction before Continue enables. */}
+                  <TemplateReviewPanel
                     fields={extractedFields}
                     overallConfidence={overallConfidence}
-                    creditsRemaining={creditsRemaining}
-                    onFieldAccept={handleFieldAccept}
-                    onFieldReject={handleFieldReject}
                     onFieldEdit={handleFieldEdit}
-                    onAcceptAll={handleAcceptAll}
+                    onReviewStateChange={setReviewComplete}
                   />
                 </>
               )}
@@ -996,8 +1003,15 @@ export function SecureDocumentDialog({
                   <Button variant="outline" onClick={() => setStep('upload')}>
                     {SECURE_DIALOG_LABELS.BACK}
                   </Button>
-                  {/* Skip template selection if AI auto-detected a type */}
-                  <Button onClick={() => setStep(selectedTemplate ? 'confirm' : 'template')}>
+                  {/* Skip template selection if AI auto-detected a type.
+                      AI-03: disabled until every low-confidence field has been
+                      acknowledged or corrected in the review panel. */}
+                  <Button
+                    onClick={() => setStep(selectedTemplate ? 'confirm' : 'template')}
+                    disabled={!reviewComplete}
+                    aria-disabled={!reviewComplete}
+                    data-testid="extraction-review-continue"
+                  >
                     {SECURE_DIALOG_LABELS.CONTINUE}
                   </Button>
                 </>

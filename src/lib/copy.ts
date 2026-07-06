@@ -3217,3 +3217,30 @@ export const SECURE_QUEUE_LABELS = {
   QUEUED_TOAST: 'Added to the queue. No credits used.',
   SECURED_TOAST: 'Your document has been secured.',
 } as const;
+
+// =============================================================================
+// S3 Lane-3 AI strings (AI-03 template review — SCRUM-2383)
+// One contiguous block by agreement across the three S3 streams — append-only,
+// do not interleave other streams' strings here.
+// =============================================================================
+
+/**
+ * Template-review panel (AI-03 MVP): the review/correct step shown after
+ * on-device extraction. Low-confidence fields are visually flagged and must be
+ * confirmed or corrected before the user can proceed.
+ */
+export const TEMPLATE_REVIEW_LABELS = {
+  TITLE: 'Review Extracted Details',
+  SUBTITLE:
+    'Check each detail before continuing. Fields the AI was less sure about are highlighted and need your confirmation.',
+  LOW_CONFIDENCE_BADGE: 'Needs your review',
+  HIGH_CONFIDENCE_BADGE: 'Auto-detected',
+  ACKNOWLEDGE_LABEL: 'This is correct',
+  ACKNOWLEDGED_LABEL: 'Confirmed',
+  EDITED_BADGE: 'Corrected',
+  EDIT: 'Edit',
+  SAVE: 'Save',
+  CANCEL: 'Cancel',
+  REVIEW_REQUIRED_NOTICE: 'Confirm or correct the highlighted fields to continue.',
+  ALL_REVIEWED_NOTICE: 'All details reviewed. You can continue.',
+} as const;
