@@ -484,4 +484,65 @@ describe('nerPiiDetector', () => {
       expect(pipeline).not.toHaveBeenCalled();
     });
   });
+
+  // Review-hardening (WEBEXT-01 F-3): the adversarial code review empirically
+  // reproduced wrong-span redactions that left model-detected PII in the
+  // output. The invariant is asserted by STRING ABSENCE of the detected entity
+  // text — not by span coordinates (which cannot see a wrong-occurrence bind).
+  describe('redactNEREntities never leaves detected entity text (review-hardening)', () => {
+    it('redacts every occurrence when an earlier occurrence was untagged (cursor-theft class)', () => {
+      const text = 'Apple pie recipe. Apple announced earnings.';
+      // Only the second "Apple" is the detected ORG (no valid span → literal path).
+      const entities: NEREntity[] = [
+        { text: 'Apple', type: 'ORGANIZATION', score: 0.99, start: -1, end: -1 },
+      ];
+      const out = redactNEREntities(text, entities);
+      expect(out).not.toContain('Apple'); // neither occurrence may survive
+      expect(out).toContain('[ORG_REDACTED]');
+    });
+
+    it('does not garble a longer word that merely contains the entity (substring collision)', () => {
+      const text = 'Johnson & Johnson hired John.';
+      const entities: NEREntity[] = [
+        { text: 'John', type: 'PERSON', score: 0.99, start: -1, end: -1 },
+      ];
+      const out = redactNEREntities(text, entities);
+      expect(out).toContain('Johnson & Johnson'); // longer word preserved
+      expect(out).toContain('[PERSON_REDACTED]'); // standalone John redacted
+      expect(out).not.toMatch(/\bJohn\b/); // no standalone "John" survives
+    });
+
+    it('demotes a wrong-but-structurally-valid offset to the literal path (F-3 offset trust)', () => {
+      const text = 'Report for Alice Zimmer on Friday';
+      // Structurally valid span [0,12] but it points at "Report for A", not the name.
+      const entities: NEREntity[] = [
+        { text: 'Alice Zimmer', type: 'PERSON', score: 0.95, start: 0, end: 12 },
+      ];
+      const out = redactNEREntities(text, entities);
+      expect(out).not.toContain('Alice Zimmer'); // real name must be gone
+    });
+
+    it('fails CLOSED (typed, no PII in message) on an out-of-vocabulary entity', () => {
+      const text = 'Met with Zoe Miller today';
+      const entities: NEREntity[] = [
+        { text: 'Miller', type: 'PERSON', score: 0.95, start: -1, end: -1, hasUnknownToken: true },
+      ];
+      expect(() => redactNEREntities(text, entities)).toThrow(/out-of-vocabulary|fail-closed/i);
+      try {
+        redactNEREntities(text, entities);
+      } catch (e) {
+        expect((e as Error).message).not.toContain('Miller');
+      }
+    });
+
+    it('still redacts both occurrences when the same entity is legitimately tagged twice', () => {
+      const text = 'Bob called Bob';
+      const entities: NEREntity[] = [
+        { text: 'Bob', type: 'PERSON', score: 0.99, start: 0, end: 3 },
+        { text: 'Bob', type: 'PERSON', score: 0.99, start: 11, end: 14 },
+      ];
+      const out = redactNEREntities(text, entities);
+      expect(out).not.toContain('Bob');
+    });
+  });
 });

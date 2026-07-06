@@ -58,6 +58,13 @@ export interface NEREntity {
   start: number;
   /** End character offset in the original text */
   end: number;
+  /**
+   * True when the entity was assembled from one or more out-of-vocabulary
+   * (`[UNK]`) subword tokens. The reconstructed `text` cannot represent the
+   * original OOV characters, so such an entity cannot be reliably located or
+   * redacted by literal text — `redactNEREntities` fails CLOSED on it (§1.6).
+   */
+  hasUnknownToken?: boolean;
 }
 
 /** Result from NER-based PII detection */
@@ -111,7 +118,8 @@ export const NER_MODEL_REVISION = '24c7e5aba9ae350923357a6f0b92571be34037ec';
  * Pinned transformers.js runtime version.
  *
  * §1.6 / SCRUM-2503: the vendored browser bundle at
- * `public/vendor/transformers.web.min.js` is what actually resolves the model
+ * `public/vendor/transformers.bundle.min.js` (see TRANSFORMERS_BROWSER_MODULE)
+ * is what actually resolves the model
  * files in the browser, and the integrity lockfile
  * (scripts/ner-weights.lock.json `transformersJsVersion`) was built for the
  * exact file set THIS version requests for `Xenova/bert-base-NER` q8. If the
@@ -327,7 +335,7 @@ async function getNERPipeline(
         throw new Error(
           `Vendored transformers.js bundle is v${env.version} but the integrity ` +
             `lock + loader are pinned to v${TRANSFORMERS_JS_VERSION}. Re-vendor ` +
-            'public/vendor/transformers.web.min.js at the pinned version.',
+            `${TRANSFORMERS_BROWSER_MODULE} via scripts/vendor-ner-runtime.ts at the pinned version.`,
         );
       }
 
@@ -448,14 +456,31 @@ function isValidSpan(start: unknown, end: unknown, textLength: number): boolean 
  * Returns null when the entity cannot be located — the redactor then falls
  * back to literal-text redaction or fails CLOSED (never silently skips).
  */
+/**
+ * indexOf anchored at word boundaries where the needle's edges are
+ * alphanumeric — so "John" is not located inside "Johnson". Returns -1 when
+ * absent. Unicode-aware; falls back to a plain indexOf only for needles with
+ * non-alphanumeric edges (punctuation/space) where boundaries don't apply.
+ */
+function indexOfWordBoundary(haystack: string, needle: string, from: number): number {
+  if (!needle) return -1;
+  const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const left = /^[\p{L}\p{N}]/u.test(needle) ? '(?<![\\p{L}\\p{N}_])' : '';
+  const right = /[\p{L}\p{N}]$/u.test(needle) ? '(?![\\p{L}\\p{N}_])' : '';
+  const re = new RegExp(`${left}${esc}${right}`, 'gu');
+  re.lastIndex = Math.max(0, from);
+  const m = re.exec(haystack);
+  return m ? m.index : -1;
+}
+
 function locateSpan(
   sourceText: string,
   entityText: string,
   tokens: readonly string[],
   from: number,
 ): { start: number; end: number } | null {
-  let idx = sourceText.indexOf(entityText, from);
-  if (idx < 0) idx = sourceText.indexOf(entityText);
+  let idx = indexOfWordBoundary(sourceText, entityText, from);
+  if (idx < 0) idx = indexOfWordBoundary(sourceText, entityText, 0);
   if (idx >= 0) return { start: idx, end: idx + entityText.length };
 
   let cursor = from;
@@ -464,7 +489,8 @@ function locateSpan(
   for (const rawWord of tokens) {
     const word = rawWord.replace(/^##/, '');
     if (!word || word === '[UNK]') continue;
-    const i = sourceText.indexOf(word, cursor);
+    let i = indexOfWordBoundary(sourceText, word, cursor);
+    if (i < 0) i = indexOfWordBoundary(sourceText, word, 0);
     if (i < 0) return null;
     if (start < 0) start = i;
     cursor = i + word.length;
@@ -524,23 +550,33 @@ function mergeEntities(rawEntities: RawNERToken[], sourceText: string): NEREntit
 
     const isBegin = raw.entity.startsWith('B-');
 
+    const bareWord = raw.word.replace(/^##/, '');
+    const isUnk = bareWord === '[UNK]';
+
     if (isBegin || !current || current.type !== entityType) {
-      // Start new entity
+      // Start new entity. An [UNK] leading token contributes no representable
+      // text but still marks the entity as OOV so the redactor fails closed.
       flush();
       current = {
-        text: raw.word.replace(/^##/, ''),
+        text: isUnk ? '' : bareWord,
         type: entityType,
         score: raw.score,
         start: raw.start ?? -1,
         end: raw.end ?? -1,
+        hasUnknownToken: isUnk,
       };
       currentTokens = [raw.word];
     } else {
-      // Continue current entity (I- token)
-      const wordPart = raw.word.startsWith('##')
-        ? raw.word.slice(2) // Subword continuation
-        : ` ${raw.word}`; // New word in same entity
-      current.text += wordPart;
+      // Continue current entity (I- token). Skip [UNK] in the reconstructed
+      // text (it cannot represent the original characters) but record it.
+      if (isUnk) {
+        current.hasUnknownToken = true;
+      } else {
+        const wordPart = raw.word.startsWith('##')
+          ? raw.word.slice(2) // Subword continuation
+          : (current.text ? ` ${bareWord}` : bareWord); // New word in same entity
+        current.text += wordPart;
+      }
       current.end = raw.end ?? -1;
       current.score = Math.min(current.score, raw.score); // Conservative: use min score
       currentTokens.push(raw.word);
@@ -634,23 +670,60 @@ export async function detectPIIWithNER(
  * fail-closed error before any egress). The thrown message never contains
  * the entity text — it IS the PII.
  */
+/**
+ * Replace every occurrence of `needle` in `haystack` with `token`, anchored at
+ * word boundaries where the needle's edges are alphanumeric. This avoids
+ * garbling a longer word that merely CONTAINS the needle ("John" must not match
+ * inside "Johnson") while still redacting every standalone occurrence.
+ * Unicode-aware (`\p{L}\p{N}` under the `u` flag) so accented letters count as
+ * word characters. Over-matching (redacting too much) is the acceptable failure
+ * mode here; under-matching (leaving PII) is not.
+ */
+function redactAllOccurrences(haystack: string, needle: string, token: string): string {
+  if (!needle) return haystack;
+  const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const left = /^[\p{L}\p{N}]/u.test(needle) ? '(?<![\\p{L}\\p{N}_])' : '';
+  const right = /[\p{L}\p{N}]$/u.test(needle) ? '(?![\\p{L}\\p{N}_])' : '';
+  return haystack.replace(new RegExp(`${left}${esc}${right}`, 'gu'), token);
+}
+
 export function redactNEREntities(text: string, entities: NEREntity[]): string {
-  const positional = entities.filter((e) => isValidSpan(e.start, e.end, text.length));
-  const textual = entities.filter((e) => !isValidSpan(e.start, e.end, text.length));
+  // OOV-token entities cannot be represented by `text` (the [UNK] characters are
+  // lost), so neither positional nor literal redaction can guarantee coverage —
+  // fail CLOSED before releasing anything. (Message carries only the type; the
+  // entity text IS the PII.)
+  const unknown = entities.find((e) => e.hasUnknownToken);
+  if (unknown) {
+    throw new Error(
+      `NER detected a ${unknown.type} entity containing out-of-vocabulary characters ` +
+        'that cannot be reliably redacted — refusing to release text (fail-closed).',
+    );
+  }
+
+  // A structurally valid span is only trusted when the text it covers actually
+  // matches the detected entity (whitespace-normalised — the merge step collapses
+  // inter-token whitespace to single spaces). Guards against a wrong upstream
+  // offset (F-3): a mismatching span is demoted to the literal/sweep path rather
+  // than redacting the wrong characters.
+  const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
+  const positional = entities.filter(
+    (e) => isValidSpan(e.start, e.end, text.length) && norm(text.slice(e.start, e.end)) === norm(e.text),
+  );
+  const positionalSet = new Set(positional);
+  const textual = entities.filter((e) => !positionalSet.has(e));
 
   // Sort by start position descending to preserve offsets
   const sorted = [...positional].sort((a, b) => b.start - a.start);
   let result = text;
 
   for (const entity of sorted) {
-    const token = getRedactionToken(entity.type);
-    result = result.slice(0, entity.start) + token + result.slice(entity.end);
+    result = result.slice(0, entity.start) + getRedactionToken(entity.type) + result.slice(entity.end);
   }
 
   for (const entity of textual) {
     const token = getRedactionToken(entity.type);
     if (entity.text && result.includes(entity.text)) {
-      result = result.split(entity.text).join(token);
+      result = redactAllOccurrences(result, entity.text, token);
       continue;
     }
     if (entity.text && text.includes(entity.text)) {
@@ -665,6 +738,19 @@ export function redactNEREntities(text: string, entities: NEREntity[]): string {
       `NER detected a ${entity.type} entity that could not be located for redaction — ` +
         'refusing to release text (fail-closed).',
     );
+  }
+
+  // Defense-in-depth guarantee (WEBEXT-01 F-3 review-hardening): after the
+  // positional + literal passes, NO detected entity's text may survive in the
+  // output. A positional span can bind to the WRONG occurrence when spans drift
+  // (dropped low-confidence tokens don't advance the merge cursor; substring
+  // locates bind inside longer words), so sweep every detected entity and redact
+  // any remaining word-boundary occurrence by literal text. Over-redaction is
+  // acceptable; a surviving detected entity is a §1.6 breach.
+  for (const entity of entities) {
+    if (entity.text && result.includes(entity.text)) {
+      result = redactAllOccurrences(result, entity.text, getRedactionToken(entity.type));
+    }
   }
 
   return result;
