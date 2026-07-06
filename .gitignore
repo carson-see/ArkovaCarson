@@ -185,3 +185,8 @@ public/models/
 .cache/
 .parcel-cache/
 .vercel
+
+# Python (packages/arkova-py tooling artifacts)
+__pycache__/
+*.pyc
+.pytest_cache/

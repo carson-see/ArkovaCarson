@@ -22,8 +22,31 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
 - **Never contact Arkova.** `src/lib/independent-endpoint.ts::assertIndependentEndpoint`
   refuses any `arkova.*` host before any on-chain call. The on-chain fact is
   confirmed only against an independent Esplora node. Keep it that way.
-- **Signature ≠ recompute.** The optional Ed25519 check (`src/lib/signature.ts`)
-  proves only that Arkova issued the package; it must never gate the verdict.
+- **Signature ≠ recompute — but a requested check that FAILS fails closed
+  (S3-B).** The optional Ed25519 check (`src/lib/signature.ts`) proves only
+  that Arkova issued the package; a PASSING signature must never substitute
+  for the recompute (unchanged). Since S3-B, when the caller EXPLICITLY
+  requests the check (bundle + key supplied) and it fails, the verdict is
+  NOT VERIFIED (`SIG_INVALID`), and a `signing_key_id` that resolves to no key
+  in the supplied published key set fails closed too (`DID_UNRESOLVED` — never
+  "try every key"). No key material supplied ⇒ skipped, verdict unaffected.
+- **Frozen reason enum (S3-B).** Every NOT-VERIFIED verdict carries exactly one
+  machine `reasonCode` from `src/lib/reason-codes.ts`, mirrored byte-for-byte
+  in `fixtures/manifest.json` (`reason_codes`) and re-derived independently by
+  the Python verifier (`packages/arkova-py/src/arkova/proofs.py`). Append-only:
+  never rename/reorder; bump `reason_enum_version`; `test/manifest.test.ts`
+  pins the freeze and requires every code to be exercised by a fixture.
+- **Adversarial fixtures are authored FROM SPEC, never from the builder.**
+  `fixtures/adversarial-vectors.json` is emitted by
+  `fixtures/author-adversarial.py` — a clean-room Python implementation of the
+  documented formats that shares ZERO code with `generate-fixtures.mjs`.
+  Do not "fix" a failing adversarial vector by regenerating it from the TS
+  builder; a divergence means one side departed from the spec — find which.
+- **Three-way parity is a gate.** `npm run parity`
+  (`scripts/parity-compare.mjs`) runs the WHOLE manifest through the TS
+  verifier AND the Python verifier and requires TS == Python == manifest.
+  Suggested CI job (needs python3 ≥ 3.9; kept out of `npm test` so the
+  Node-only CI job stays self-contained).
 - **Terminology ban (§1.3)** applies to all user-facing strings (CLI help +
   rendered report): Fingerprint / Network Receipt / Network Observed Time — not
   Hash / Transaction / Block / Broadcast. `test/cli.test.ts` asserts this.
@@ -46,16 +69,32 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
 
 - `src/cli.ts` — the `arkova-verify` bin (arg parse, IO, exit codes); builds the
   independent node from a vetted `--rpc` via `assertIndependentEndpoint` +
-  `createEsploraFetch`.
-- `src/verify.ts` — the 4-step orchestrator → `VerifyReport`. Steps 2 & 3
-  delegate to `@arkova/verifier`'s `confirmInclusion`.
+  `createEsploraFetch`; `--key` loads a published key SET (kid-resolved) or a
+  raw PEM.
+- `src/verify.ts` — the orchestrator → `VerifyReport` (schema gate → recompute
+  → on-chain steps 2 & 3 via `@arkova/verifier`'s `confirmInclusion` →
+  timestamp honesty → signature). Emits per-step `code` + top-level
+  `reasonCode` from the frozen enum.
+- `src/lib/reason-codes.ts` — the FROZEN S3-B reason enum + the two mapping
+  layers (vendored recompute reasons; ConfirmInclusionStatus).
 - `src/lib/independent-endpoint.ts` — the Arkova-host guard (host policy only).
-- `src/lib/signature.ts` — optional published-key Ed25519 verify.
+- `src/lib/signature.ts` — published-key Ed25519 verify with `signing_key_id`
+  resolution against a key set (fail-closed on unknown ids).
 - `src/lib/report.ts` — auditor-legible plain-text renderer.
 - `src/vendor/` — verbatim worker Merkle recompute (byte-identity guarded).
-- `fixtures/` — self-describing vectors + `generate-fixtures.mjs` (PROOF-08
-  golden vectors pending; local synthetic vectors ship meanwhile). See
+- `fixtures/` — `manifest.json` (the SINGLE versioned fixture list + expected
+  {verdict, reason_code} — three runners obey it), `synthetic-vectors.json`
+  (+ `generate-fixtures.mjs`), `adversarial-vectors.json`
+  (+ `author-adversarial.py`, spec-derived clean-room authoring). See
   `fixtures/README.md`.
+- `scripts/parity-compare.mjs` — `npm run parity` three-way comparator
+  (TS == Python == manifest).
+- `test/manifest.test.ts` — manifest conformance + enum freeze + coverage +
+  corpus drift pins; `test/no-network.test.ts` — transport-layer lockdown
+  (globalThis.fetch throws for every host but the mock node), field
+  completeness, and the mechanical no-Arkova-client source audit;
+  `test/reason-codes.test.ts` — enum mapping + schema gate + signature
+  semantics.
 
 ## Build/test
 
@@ -64,5 +103,9 @@ Self-contained toolchain (own `package.json` / `tsconfig.json` / `eslint.config.
 `@arkova/verifier` (`file:../verifier`), so **build that first**:
 `cd ../verifier && npm ci && npm run build`, then `cd ../verifier-cli &&
 npm ci && npm test && npm run lint && npm run typecheck`. The test suite is
-**clean-room**: it touches no network. CI job: `verifier-cli` in
+**clean-room**: it touches no network (and `test/no-network.test.ts` enforces
+that at the transport layer, not just by convention). CI job: `verifier-cli` in
 `.github/workflows/ci.yml` (builds `@arkova/verifier` before installing the CLI).
+`npm run parity` additionally requires `python3` ≥ 3.9 (runs the independent
+Python verifier over the same manifest) — suggested as its own CI job; it is
+deliberately NOT part of `npm test`.

@@ -15,13 +15,20 @@
 
 import { createPublicKey, verify as nodeVerify, type KeyObject } from 'node:crypto';
 import { canonicaliseJson } from '../vendor/canonical-json.js';
-import type { SignedProofBundle } from '../types.js';
+import type { PublishedKeys, SignedProofBundle } from '../types.js';
 
 export interface SignatureResult {
   /** 'verified' | 'failed' | 'skipped' (no bundle/key supplied). */
   status: 'verified' | 'failed' | 'skipped';
   reason?: string;
   signingKeyId?: string;
+  /**
+   * Machine failure class when status === 'failed' (S3-B frozen enum):
+   *  - 'SIG_INVALID'    — the Ed25519 check itself failed (bad bytes/alg/key);
+   *  - 'DID_UNRESOLVED' — the bundle's signing_key_id is not present in the
+   *    supplied published key set (the verifier never guesses a key).
+   */
+  failureCode?: 'SIG_INVALID' | 'DID_UNRESOLVED';
 }
 
 function parsePublicKey(pem: string): KeyObject | null {
@@ -34,31 +41,63 @@ function parsePublicKey(pem: string): KeyObject | null {
 
 /**
  * Verify the bundle's detached Ed25519 signature over the canonicalised
- * payload. `publicKeyPem` is the published Arkova key (fetched out-of-band by
+ * payload against the published Arkova key material (fetched out-of-band by
  * the caller — e.g. from docs.arkova.ai/keys.json, which the auditor can pin).
+ *
+ * Key resolution (S3-B):
+ *  - When a `publishedKeys` SET is supplied, the bundle's `signing_key_id` is
+ *    resolved against `keys[].kid`. An id that resolves to no key fails closed
+ *    (`DID_UNRESOLVED`) — the verifier NEVER falls back to "try every key".
+ *  - A bare `publicKeyPem` (raw PEM / single-key file) keeps the legacy
+ *    behaviour: verify directly against that key, no id resolution.
  */
 export function verifyBundleSignature(
   bundle: SignedProofBundle | undefined,
   publicKeyPem: string | undefined,
+  publishedKeys?: PublishedKeys,
 ): SignatureResult {
-  if (!bundle || !publicKeyPem) return { status: 'skipped' };
+  const haveKeySet = publishedKeys != null && publishedKeys.keys.length > 0;
+  if (!bundle || (!publicKeyPem && !haveKeySet)) return { status: 'skipped' };
+
+  let pem = publicKeyPem;
+  if (haveKeySet) {
+    const resolved = publishedKeys.keys.find((k) => k.kid === bundle.signing_key_id);
+    if (!resolved) {
+      return {
+        status: 'failed',
+        failureCode: 'DID_UNRESOLVED',
+        reason: `signing key id "${bundle.signing_key_id}" is not present in the published key set — the signer identity cannot be resolved`,
+        signingKeyId: bundle.signing_key_id,
+      };
+    }
+    pem = resolved.pem;
+  }
 
   if (bundle.signature?.alg !== 'Ed25519') {
-    return { status: 'failed', reason: `unsupported signature alg ${bundle.signature?.alg}` };
+    return {
+      status: 'failed',
+      failureCode: 'SIG_INVALID',
+      reason: `unsupported signature alg ${bundle.signature?.alg}`,
+    };
   }
-  const key = parsePublicKey(publicKeyPem);
-  if (!key) return { status: 'failed', reason: 'invalid published key PEM' };
+  const key = parsePublicKey(pem as string);
+  if (!key) return { status: 'failed', failureCode: 'SIG_INVALID', reason: 'invalid published key PEM' };
 
   let signatureBytes: Buffer;
   try {
     signatureBytes = Buffer.from(bundle.signature.value, 'base64url');
   } catch {
-    return { status: 'failed', reason: 'signature not base64url' };
+    return { status: 'failed', failureCode: 'SIG_INVALID', reason: 'signature not base64url' };
   }
 
   const canonical = canonicaliseJson(bundle.payload);
   const ok = nodeVerify(null, Buffer.from(canonical, 'utf8'), key, signatureBytes);
   return ok
     ? { status: 'verified', signingKeyId: bundle.signing_key_id }
-    : { status: 'failed', reason: 'signature verification failed', signingKeyId: bundle.signing_key_id };
+    : {
+        status: 'failed',
+        failureCode: 'SIG_INVALID',
+        reason: 'signature verification failed',
+        signingKeyId: bundle.signing_key_id,
+      };
 }

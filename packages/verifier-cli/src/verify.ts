@@ -28,9 +28,13 @@
 import { confirmInclusion, type ConfirmInclusionResult } from '@arkova/verifier';
 import { verifyMerkleInclusion } from './vendor/merkle-verify.js';
 import { verifyBundleSignature, type SignatureResult } from './lib/signature.js';
-import type { IndependentNode, ProofPacket, SignedProofBundle } from './types.js';
+import { chainReasonCode, recomputeReasonCode, type ReasonCode } from './lib/reason-codes.js';
+import type { IndependentNode, ProofPacket, PublishedKeys, SignedProofBundle } from './types.js';
 
 export type StepStatus = 'pass' | 'fail' | 'skipped';
+
+/** The one proof schema version this verifier understands (PROOF-08 stamp). */
+export const SUPPORTED_PROOF_SCHEMA_VERSION = 1;
 
 export interface VerifyStep {
   id: string;
@@ -38,6 +42,8 @@ export interface VerifyStep {
   label: string;
   status: StepStatus;
   detail: string;
+  /** Frozen machine reason code — present ONLY on failing steps (S3-B). */
+  code?: ReasonCode;
 }
 
 export interface VerifyReport {
@@ -74,6 +80,13 @@ export interface VerifyReport {
   signature: SignatureResult;
   /** The server's own claim, surfaced for comparison — NOT used for the verdict. */
   serverClaimedVerified: boolean | null;
+  /**
+   * Frozen machine reason for a NOT-VERIFIED verdict (S3-B enum,
+   * `fixtures/manifest.json` reason_codes): the FIRST failing required step's
+   * code, or the signature failure class when only the explicitly-requested
+   * signature check failed. Null when VERIFIED.
+   */
+  reasonCode: ReasonCode | null;
 }
 
 export interface VerifyOptions {
@@ -88,8 +101,14 @@ export interface VerifyOptions {
   signedBundle?: SignedProofBundle;
   /** Published Arkova public key PEM (optional) for signature verification. */
   publicKeyPem?: string;
+  /**
+   * Published key SET (keys.json shape, optional). When supplied, the bundle's
+   * signing_key_id is resolved against it — an unresolvable id fails closed.
+   */
+  publishedKeys?: PublishedKeys;
 }
 
+const RECOMPUTE_LABEL = 'Recompute the secured fingerprint into the published root';
 const OP_RETURN_LABEL = 'Confirm the root in the on-chain receipt (independent node)';
 const BLOCK_LABEL = 'Confirm the receipt is in a real block (independent node)';
 const TIMESTAMP_LABEL = 'Confirm the claimed time matches the independently measured Network Observed Time';
@@ -98,11 +117,17 @@ const TIMESTAMP_LABEL = 'Confirm the claimed time matches the independently meas
  * Run the verification pipeline against a proof packet.
  *
  * Required steps for `ok === true`:
+ *   - schema (always) — the packet's proof_schema_version must be understood
+ *     (absent ⇒ legacy v1); an unknown version fails closed rather than
+ *     guessing at the hashing rule.
  *   - recompute (always)
  *   - op_return + block-confirm ONLY when a `chain` source is provided AND the
  *     packet carries a tx_id + block_height. (Recompute-only mode is honest: it
  *     confirms the fingerprint is in the claimed root, but states the on-chain
  *     step was not run.)
+ *   - signature, ONLY when explicitly requested (bundle + key material
+ *     supplied): a PASSING signature never substitutes for the steps above,
+ *     but a FAILING requested check fails the verdict closed (S3-B hardening).
  */
 export async function verifyProof(
   packet: ProofPacket,
@@ -110,20 +135,19 @@ export async function verifyProof(
 ): Promise<VerifyReport> {
   const steps: VerifyStep[] = [];
 
-  // ── Step 1: recompute the Merkle root (the canonical, shared routine) ──
-  const inclusion = verifyMerkleInclusion(
-    packet.fingerprint,
-    packet.merkle_proof,
-    packet.merkle_root,
-    buildInclusionOpts(packet),
-  );
+  // ── Step 0: schema gate — refuse to interpret an unknown format ──
+  const schemaVersion = packet.proof_schema_version ?? null;
+  const schemaSupported = schemaVersion === null || schemaVersion === SUPPORTED_PROOF_SCHEMA_VERSION;
   steps.push({
-    id: 'recompute',
-    label: 'Recompute the secured fingerprint into the published root',
-    status: inclusion.valid ? 'pass' : 'fail',
-    detail: inclusion.valid
-      ? 'The fingerprint, combined with its inclusion path, reproduces the published root exactly.'
-      : `Recompute mismatch: ${inclusion.reason ?? 'unknown'}`,
+    id: 'schema',
+    label: 'Confirm the proof package schema version is understood',
+    status: schemaSupported ? 'pass' : 'fail',
+    detail: schemaSupported
+      ? schemaVersion === null
+        ? `No schema version declared; interpreted as version ${SUPPORTED_PROOF_SCHEMA_VERSION} (legacy package).`
+        : `Proof package declares schema version ${schemaVersion}, which this verifier understands.`
+      : `Unsupported proof package schema version ${schemaVersion} — this verifier understands schema version ${SUPPORTED_PROOF_SCHEMA_VERSION} only and refuses to guess at an unknown format.`,
+    ...(schemaSupported ? {} : { code: 'UNSUPPORTED_SCHEMA_VERSION' as const }),
   });
 
   let independentNode: string | null = null;
@@ -134,55 +158,93 @@ export async function verifyProof(
   let networkObservedTime: string | null = null;
   let observedTimeAgrees: boolean | null = null;
 
-  // ── Steps 2 & 3: independent on-chain confirmation (delegated to #1349) ──
-  if (opts.chain && packet.tx_id != null && packet.block_height != null) {
-    independentNode = opts.chain.label;
-    const result = await confirmOnChain(packet, opts.chain);
-    steps.push(result.opReturnStep);
-    steps.push(result.blockStep);
-    if (result.blockHeight != null) blockHeight = result.blockHeight;
-    networkObservedTime = result.measuredObservedTime;
-
-    // ── Step 3b: timestamp honesty (§1.5) ──
-    // The header gave us an INDEPENDENTLY MEASURED time. Compare it against the
-    // time the packet CLAIMS. A forged/stale packet time must not be silently
-    // presented as node-observed — surface the divergence and fail the verdict.
-    const tsStep = buildTimestampStep(
-      packet.block_timestamp,
-      result.measuredObservedTime,
-      opts.chain.label,
-      result.headerMeasured,
-    );
-    steps.push(tsStep.step);
-    observedTimeAgrees = tsStep.agrees;
+  if (!schemaSupported) {
+    // An unknown schema means every cryptographic interpretation below would be
+    // a guess — skip them explicitly rather than pretending to check.
+    const skipDetail = 'Skipped because the proof package schema version is not understood.';
+    steps.push({ id: 'recompute', label: RECOMPUTE_LABEL, status: 'skipped', detail: skipDetail });
+    steps.push({ id: 'op_return', label: OP_RETURN_LABEL, status: 'skipped', detail: skipDetail });
+    steps.push({ id: 'block_confirm', label: BLOCK_LABEL, status: 'skipped', detail: skipDetail });
+    steps.push({ id: 'timestamp_honesty', label: TIMESTAMP_LABEL, status: 'skipped', detail: skipDetail });
   } else {
-    const reason = describeSkip(opts.chain != null, packet);
+    // ── Step 1: recompute the Merkle root (the canonical, shared routine) ──
+    const inclusion = verifyMerkleInclusion(
+      packet.fingerprint,
+      packet.merkle_proof,
+      packet.merkle_root,
+      buildInclusionOpts(packet),
+    );
     steps.push({
-      id: 'op_return',
-      label: OP_RETURN_LABEL,
-      status: 'skipped',
-      detail: reason,
+      id: 'recompute',
+      label: RECOMPUTE_LABEL,
+      status: inclusion.valid ? 'pass' : 'fail',
+      detail: inclusion.valid
+        ? 'The fingerprint, combined with its inclusion path, reproduces the published root exactly.'
+        : `Recompute mismatch: ${inclusion.reason ?? 'unknown'}`,
+      ...(inclusion.valid ? {} : { code: recomputeReasonCode(inclusion.reason) }),
     });
-    steps.push({
-      id: 'block_confirm',
-      label: BLOCK_LABEL,
-      status: 'skipped',
-      detail: 'Skipped because the on-chain receipt was not checked.',
-    });
-    steps.push({
-      id: 'timestamp_honesty',
-      label: TIMESTAMP_LABEL,
-      status: 'skipped',
-      detail:
-        'Skipped because no independent header was measured; the packet-claimed time is shown as a claim only, never as a measured Network Observed Time.',
-    });
+
+    // ── Steps 2 & 3: independent on-chain confirmation (delegated to #1349) ──
+    if (opts.chain && packet.tx_id != null && packet.block_height != null) {
+      independentNode = opts.chain.label;
+      const result = await confirmOnChain(packet, opts.chain);
+      steps.push(result.opReturnStep);
+      steps.push(result.blockStep);
+      if (result.blockHeight != null) blockHeight = result.blockHeight;
+      networkObservedTime = result.measuredObservedTime;
+
+      // ── Step 3b: timestamp honesty (§1.5) ──
+      // The header gave us an INDEPENDENTLY MEASURED time. Compare it against the
+      // time the packet CLAIMS. A forged/stale packet time must not be silently
+      // presented as node-observed — surface the divergence and fail the verdict.
+      const tsStep = buildTimestampStep(
+        packet.block_timestamp,
+        result.measuredObservedTime,
+        opts.chain.label,
+        result.headerMeasured,
+      );
+      steps.push(tsStep.step);
+      observedTimeAgrees = tsStep.agrees;
+    } else {
+      const reason = describeSkip(opts.chain != null, packet);
+      steps.push({
+        id: 'op_return',
+        label: OP_RETURN_LABEL,
+        status: 'skipped',
+        detail: reason,
+      });
+      steps.push({
+        id: 'block_confirm',
+        label: BLOCK_LABEL,
+        status: 'skipped',
+        detail: 'Skipped because the on-chain receipt was not checked.',
+      });
+      steps.push({
+        id: 'timestamp_honesty',
+        label: TIMESTAMP_LABEL,
+        status: 'skipped',
+        detail:
+          'Skipped because no independent header was measured; the packet-claimed time is shown as a claim only, never as a measured Network Observed Time.',
+      });
+    }
   }
 
-  // ── Step 4: optional signature verification (never substitutes for 1–3) ──
-  const signature = verifyBundleSignature(opts.signedBundle, opts.publicKeyPem);
+  // ── Step 4: signature verification (explicitly requested only) ──
+  // A PASSING signature never substitutes for the cryptographic steps above.
+  // A FAILING one — when the caller explicitly asked for the check — fails the
+  // verdict closed: the verifier will not bless a package carrying a forged
+  // signature or an unresolvable signer identity (S3-B).
+  const signature = verifyBundleSignature(opts.signedBundle, opts.publicKeyPem, opts.publishedKeys);
 
-  // Required steps are everything not 'skipped'. ok = no failures among them.
-  const ok = steps.every((s) => s.status !== 'fail');
+  // Required steps are everything not 'skipped'. ok = no failures among them
+  // AND no failure of an explicitly-requested signature check.
+  const ok = steps.every((s) => s.status !== 'fail') && signature.status !== 'failed';
+
+  const firstFailingStep = steps.find((s) => s.status === 'fail');
+  const reasonCode: ReasonCode | null = ok
+    ? null
+    : firstFailingStep?.code ??
+      (signature.status === 'failed' ? signature.failureCode ?? 'SIG_INVALID' : null);
 
   return {
     ok,
@@ -197,6 +259,7 @@ export async function verifyProof(
     steps,
     signature,
     serverClaimedVerified: typeof packet.verified === 'boolean' ? packet.verified : null,
+    reasonCode,
   };
 }
 
@@ -229,6 +292,7 @@ function buildTimestampStep(
         label: TIMESTAMP_LABEL,
         status: 'fail',
         detail: `No Network Observed Time could be measured from the independent header via ${label}; the packet-claimed time of ${claimed ?? '(none)'} cannot be independently corroborated.`,
+        code: 'TIMESTAMP_MISMATCH',
       },
       agrees: null,
     };
@@ -264,6 +328,7 @@ function buildTimestampStep(
       label: TIMESTAMP_LABEL,
       status: 'fail',
       detail: `Time MISMATCH: the packet claims ${claimed}, but the Network Observed Time measured independently from the header (${label}) is ${measured}. The claimed time is NOT what the network recorded and must not be presented as observed.`,
+      code: 'TIMESTAMP_MISMATCH',
     },
     agrees: false,
   };
@@ -331,13 +396,17 @@ async function confirmOnChain(packet: ProofPacket, chain: IndependentNode): Prom
     );
   } catch (err) {
     const detail = `Could not confirm the receipt against the independent node (${chain.label}): ${errMsg(err)}`;
+    // Defensive: confirmInclusion never throws by contract; a thrown transport
+    // bug means the receipt could not be fetched — the honest bucket is
+    // TX_NOT_FOUND (nothing on the independent node corroborates the packet).
     return {
-      opReturnStep: { id: 'op_return', label: OP_RETURN_LABEL, status: 'fail', detail },
+      opReturnStep: { id: 'op_return', label: OP_RETURN_LABEL, status: 'fail', detail, code: 'TX_NOT_FOUND' },
       blockStep: {
         id: 'block_confirm',
         label: BLOCK_LABEL,
         status: 'fail',
         detail: 'Not checked because the independent confirmation could not run.',
+        code: 'TX_NOT_FOUND',
       },
       blockHeight: null,
       measuredObservedTime: null,
@@ -351,6 +420,10 @@ async function confirmOnChain(packet: ProofPacket, chain: IndependentNode): Prom
   const measuredObservedTime = result.observedTime;
   const headerMeasured = result.observedTime != null;
 
+  // The frozen machine code for whatever failed on-chain (undefined when clean).
+  const failureCode =
+    result.confirmed ? undefined : chainReasonCode(result.status as Exclude<ConfirmInclusionResult['status'], 'confirmed'>);
+
   // Step 2 (OP_RETURN payload) passes once we reach a payload-clean status: the
   // tx exists, carries a canonical Arkova OP_RETURN, and it commits the expected
   // root. payload-specific failures fail THIS step; later (height/header/
@@ -363,6 +436,7 @@ async function confirmOnChain(packet: ProofPacket, chain: IndependentNode): Prom
     detail: opReturnPassed
       ? `The receipt fetched from ${chain.label} commits exactly the published root in its embedded data.`
       : opReturnDetail(result, chain.label),
+    ...(opReturnPassed ? {} : { code: failureCode }),
   };
 
   const blockStep: VerifyStep = {
@@ -372,6 +446,7 @@ async function confirmOnChain(packet: ProofPacket, chain: IndependentNode): Prom
     detail: result.confirmed
       ? `Confirmed in block #${result.blockHeight} (Network Observed Time ${measuredObservedTime ?? 'unavailable'}, measured from the independent header), per ${chain.label}, with an independently recomputed inclusion proof.`
       : blockDetail(result, chain.label),
+    ...(result.confirmed ? {} : { code: failureCode }),
   };
 
   return {

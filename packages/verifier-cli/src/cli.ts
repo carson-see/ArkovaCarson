@@ -19,7 +19,7 @@ import { createEsploraFetch } from '@arkova/verifier';
 import { verifyProof } from './verify.js';
 import { renderReport } from './lib/report.js';
 import { assertIndependentEndpoint, DEFAULT_ESPLORA } from './lib/independent-endpoint.js';
-import type { IndependentNode, ProofPacket, SignedProofBundle } from './types.js';
+import type { IndependentNode, ProofPacket, PublishedKeys, SignedProofBundle } from './types.js';
 
 interface CliArgs {
   proofPath?: string;
@@ -93,22 +93,43 @@ function loadProof(path: string): { packet: ProofPacket; signedBundle?: SignedPr
   return { packet: parsed as ProofPacket };
 }
 
-/** Extract a PEM from a keys.json ({ keys: [{ pem }] } or { pem }) or a raw PEM file. */
-function loadPublicKeyPem(path: string): string {
+/**
+ * Load published key material from a keys.json file or a raw PEM.
+ *  - keys.json with `keys[]` → a PublishedKeys SET: the bundle's signing_key_id
+ *    is resolved against `keys[].kid` and an unresolvable id fails closed.
+ *  - `{ pem }` or a raw PEM file → a single legacy key (no id resolution).
+ */
+function loadPublishedKeyMaterial(path: string): {
+  publicKeyPem?: string;
+  publishedKeys?: PublishedKeys;
+} {
   const raw = readFileSync(path, 'utf8').trim();
   // Prefer JSON (keys.json shape) — a raw PEM is not valid JSON so this is a
   // clean discriminator. A bare PEM file falls through to the raw branch.
   if (raw.startsWith('{')) {
     try {
-      const obj = JSON.parse(raw) as { pem?: unknown; keys?: Array<{ pem?: unknown }> };
-      if (typeof obj.pem === 'string') return obj.pem;
-      if (Array.isArray(obj.keys) && typeof obj.keys[0]?.pem === 'string') return obj.keys[0].pem;
+      const obj = JSON.parse(raw) as {
+        pem?: unknown;
+        keys?: Array<{ kid?: unknown; alg?: unknown; pem?: unknown }>;
+      };
+      if (Array.isArray(obj.keys) && obj.keys.length > 0 && obj.keys.every((k) => typeof k?.pem === 'string')) {
+        return {
+          publishedKeys: {
+            keys: obj.keys.map((k) => ({
+              kid: typeof k.kid === 'string' ? k.kid : undefined,
+              alg: typeof k.alg === 'string' ? k.alg : undefined,
+              pem: k.pem as string,
+            })),
+          },
+        };
+      }
+      if (typeof obj.pem === 'string') return { publicKeyPem: obj.pem };
     } catch {
       /* fall through to raw-PEM handling */
     }
     throw new UsageError(`Could not find a public key PEM in ${path}`);
   }
-  if (raw.includes('BEGIN PUBLIC KEY')) return raw;
+  if (raw.includes('BEGIN PUBLIC KEY')) return { publicKeyPem: raw };
   throw new UsageError(`Could not find a public key PEM in ${path}`);
 }
 
@@ -129,9 +150,10 @@ export async function main(argv: string[]): Promise<number> {
   let packet: ProofPacket;
   let signedBundle: SignedProofBundle | undefined;
   let publicKeyPem: string | undefined;
+  let publishedKeys: PublishedKeys | undefined;
   try {
     ({ packet, signedBundle } = loadProof(args.proofPath));
-    if (args.keyPath) publicKeyPem = loadPublicKeyPem(args.keyPath);
+    if (args.keyPath) ({ publicKeyPem, publishedKeys } = loadPublishedKeyMaterial(args.keyPath));
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return 2;
@@ -150,7 +172,7 @@ export async function main(argv: string[]): Promise<number> {
     }
   }
 
-  const report = await verifyProof(packet, { chain, signedBundle, publicKeyPem });
+  const report = await verifyProof(packet, { chain, signedBundle, publicKeyPem, publishedKeys });
 
   if (args.json) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);

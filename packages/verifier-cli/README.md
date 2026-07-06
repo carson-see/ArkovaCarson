@@ -62,9 +62,22 @@ Exit codes: `0` VERIFIED · `1` NOT VERIFIED · `2` usage/input error.
    **txid-bound** inclusion proof (a proof for a *different* tx in the same block
    is rejected), the height→hash reorg guard, and the independent 80-byte header
    recomputation. The CLI keeps **no second decoder** of its own.
-4. **(Optional) Verify the issuer signature** against the published Arkova key.
-   This only proves *Arkova issued the package* — it **never** substitutes for
-   the recomputation in steps 1–3, and is reported on a separate line.
+4. **(Optional) Verify the issuer signature** against the published Arkova key
+   material. This only proves *Arkova issued the package* — a PASSING signature
+   **never** substitutes for the recomputation in steps 1–3, and is reported on
+   a separate line. When you explicitly request the check (`--key`) and it
+   FAILS, the verdict fails closed: `SIG_INVALID` for bad signature bytes, or
+   `DID_UNRESOLVED` when the bundle's `signing_key_id` is not present in the
+   supplied key set (the verifier never guesses which key to use).
+
+Before step 1 the verifier also gates on the packet's `proof_schema_version`:
+only version 1 (or a legacy packet with no version) is interpreted; anything
+else is refused with `UNSUPPORTED_SCHEMA_VERSION` rather than guessed at.
+
+Machine-readable output (`--json`) carries a frozen `reasonCode` on every
+NOT-VERIFIED verdict (and per-step `code`s) — the enum lives in
+`src/lib/reason-codes.ts` and `fixtures/manifest.json`, and is re-derived
+independently by the Python verifier in `packages/arkova-py`.
 
 You can run the whole thing against **your own node**: point `--rpc` at it.
 Nothing in this tool ever contacts Arkova.
@@ -85,13 +98,25 @@ cp ../../services/worker/src/utils/{merkle-verify,merkle,canonical-json}.ts src/
 ## Tests (clean-room — no network)
 
 ```bash
-npm test          # 38 tests across 5 files, fully offline
+npm test          # 128 tests across 8 files, fully offline
 npm run lint
 npm run typecheck
+npm run parity    # three-way agreement: TS == Python == manifest (needs python3 >= 3.9)
 ```
 
 The conformance suite drives a fixture-backed independent node (an
 `@arkova/verifier` `IndependentNodeFetch` served from canned Esplora REST
 responses), so it runs with **no network reachable** — see `fixtures/README.md`
-for the self-describing vector contract and the **PROOF-08** golden-vector
-dependency.
+for the self-describing vector contract and `manifest.json`, the single
+versioned list of every fixture and its expected `{verdict, reason_code}`.
+
+The **no-Arkova-network guarantee is enforced at the transport layer**
+(`test/no-network.test.ts`): `globalThis.fetch` is replaced with a lockdown
+stub that throws for every host except one allowlisted mock node — every valid
+fixture must still verify fully, Arkova/Supabase egress attempts are recorded
+and must be zero, and a mechanical source audit asserts the packages import no
+HTTP client and contain no Arkova/Supabase endpoint literal.
+
+`npm run parity` re-runs the whole manifest through the **independent Python
+verifier** (`packages/arkova-py/src/arkova/proofs.py` — a from-spec
+re-derivation, not a port) and fails on any three-way disagreement.
