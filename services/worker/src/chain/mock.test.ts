@@ -232,3 +232,43 @@ describe('MockChainClient', () => {
     });
   });
 });
+
+// =============================================================================
+// S3-P0 (batch producer) — mock prepare/broadcast split parity with the real
+// client, so the intent-persistence pipeline is exercised in USE_MOCKS envs.
+// =============================================================================
+
+describe('S3-P0 — MockChainClient.prepareFingerprintTx / broadcastSignedTx', () => {
+  const client = new MockChainClient();
+  const ROOT = 'ab'.repeat(32);
+
+  it('prepare is deterministic per fingerprint (same txId, no receipt registered yet)', async () => {
+    const p1 = await client.prepareFingerprintTx({ fingerprint: ROOT, timestamp: new Date().toISOString() });
+    const p2 = await client.prepareFingerprintTx({ fingerprint: ROOT, timestamp: new Date().toISOString() });
+
+    expect(p1.txId).toBe(p2.txId);
+    expect(p1.txHex).toBe(p2.txHex);
+    // Intent only — nothing on "chain" until broadcastSignedTx.
+    expect(await client.getReceipt(p1.txId)).toBeNull();
+  });
+
+  it('prepare carries the canonical ARKV payload (no version byte)', async () => {
+    const p = await client.prepareFingerprintTx({ fingerprint: ROOT, timestamp: new Date().toISOString() });
+    expect(p.opReturnData).toBe(`41524b56${ROOT}`);
+  });
+
+  it('broadcastSignedTx registers the receipt under the prepared txId', async () => {
+    const p = await client.prepareFingerprintTx({ fingerprint: ROOT, timestamp: new Date().toISOString() });
+    const receipt = await client.broadcastSignedTx(p.txHex);
+
+    expect(receipt.receiptId).toBe(p.txId);
+    expect(await client.getReceipt(p.txId)).not.toBeNull();
+  });
+
+  it('re-broadcasting the SAME signed hex is idempotent success with the SAME txid (crash-resume contract)', async () => {
+    const p = await client.prepareFingerprintTx({ fingerprint: ROOT, timestamp: new Date().toISOString() });
+    const r1 = await client.broadcastSignedTx(p.txHex);
+    const r2 = await client.broadcastSignedTx(p.txHex);
+    expect(r2.receiptId).toBe(r1.receiptId);
+  });
+});
