@@ -6787,6 +6787,10 @@ export type Database = {
         Args: { p_email_hash: string; p_user_id: string }
         Returns: number
       }
+      list_drainable_connector_orgs: {
+        Args: { p_limit?: number }
+        Returns: string[]
+      }
       list_pending_resolution_anchors: {
         Args: { p_limit?: number }
         Returns: Json

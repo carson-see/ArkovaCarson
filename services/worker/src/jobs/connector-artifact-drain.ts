@@ -990,7 +990,7 @@ export interface ConnectorArtifactDrainCronResult {
 export interface ConnectorArtifactDrainCronDeps {
   /** Feature gate. Defaults to `config.enableConnectorArtifactDrain`. */
   enabled?: boolean;
-  /** List distinct org_ids that currently have drainable (pending|queued) rows. */
+  /** List distinct org_ids with WORK (pending|queued to drain OR materialized awaiting confirmation). */
   listDrainableOrgIds?: () => Promise<string[]>;
   /** Drain a single org (defaults to `drainConnectorArtifactsForOrg`). */
   drainForOrg?: (orgId: string) => Promise<ConnectorArtifactDrainResult>;
@@ -1002,33 +1002,99 @@ export interface ConnectorArtifactDrainCronDeps {
 }
 
 /**
- * Statuses that mean an org has WORK for a drain pass: `pending|queued` (new
- * rows to claim/anchor) PLUS `materialized` (prior-pass rows awaiting the
- * CONFIRMATION re-read). An org with ONLY materialized rows (all anchors
- * in-flight, no new rows) must still be enumerated so its confirmation runs —
- * otherwise an in-flight anchor would never be promoted to `anchored`.
+ * WORK statuses for a cron pass: `pending|queued` (new rows to claim/anchor)
+ * PLUS `materialized` (prior-pass rows awaiting the CONFIRMATION re-read by
+ * `confirmMaterializedArtifacts`). An org with ONLY materialized rows (all
+ * anchors in-flight, no new rows) must STILL be enumerated so its confirmation
+ * runs — otherwise an in-flight anchor would never be promoted to `anchored`.
+ * The QUEUE-09 enumeration RPC (`list_drainable_connector_orgs`, migration 0350)
+ * is the single source of truth for this predicate: it enforces
+ * `status IN ('pending','queued','materialized')` server-side, backed by the
+ * partial index `idx_connector_artifact_drainable`. (There is intentionally no
+ * `WORK_STATUSES` const here anymore — the predicate lives in the RPC/index, not
+ * in app code, so the two can't drift.)
+ *
+ * Default cap on the number of ORGS enumerated per cron pass. This bounds the
+ * fan-out (one `drainConnectorArtifactsForOrg` call per org) and matches the
+ * RPC's own `LEAST(GREATEST(p_limit,1),1000)` clamp. It is a limit on ORGS, NOT
+ * on rows — the QUEUE-09 fix.
  */
-const WORK_STATUSES = [...DRAINABLE_STATUSES, 'materialized'] as const;
+const ORG_ENUM_LIMIT_DEFAULT = 200;
 
 /**
- * Default org enumerator: distinct org_ids with at least one row that needs a
- * drain pass (drainable OR materialized-awaiting-confirmation). Bounded scan
- * over the (org_id, status) index. Returns a de-duplicated list.
+ * Default org enumerator (QUEUE-09 / SCRUM-2352 fair enumeration). Calls the
+ * server-side `list_drainable_connector_orgs` RPC (migration 0350), which
+ * returns DISTINCT org_ids that have at least one WORK row — `pending|queued`
+ * (new rows to claim/anchor) OR `materialized` (prior-pass rows awaiting the
+ * confirmation re-read) — ordered by oldest pending work first, capped on ORGS.
+ * Surfacing materialized-only orgs is what lets #1366's `confirmMaterializedArtifacts`
+ * promote an in-flight anchor to `anchored`; the per-org flow still drains ONLY
+ * pending|queued (the CAS claim) and confirms ONLY materialized — the broadening
+ * is at ORG DISCOVERY, not in those per-row predicates.
+ *
+ * This REPLACES the previous `SELECT org_id … LIMIT 5000` row scan + in-memory
+ * dedup. That scan had a STARVATION bug: a single org with >5000 work rows
+ * filled the entire 5000-row window, so every OTHER org with work was never
+ * enumerated and never drained/confirmed. The RPC does the DISTINCT server-side,
+ * so one noisy org contributes exactly ONE row and can never crowd out a quiet org.
+ *
+ * FAIL-LOUD (NOT fail-safe): an RPC error is a CYCLE-LEVEL failure — it emits a
+ * `scope:'cycle'` alert (orgId 'ALL') and THROWS, mirroring
+ * `drainConnectorArtifactsForOrg`'s select-failure path. This is the ONLY default
+ * org-discovery path, so a broken/missing RPC (migration not applied, grant
+ * missing, stale PostgREST schema cache) must NOT be swallowed as an empty green
+ * list — that would make the cron report SUCCESS while draining/confirming ZERO
+ * orgs, hiding the failure and stranding every artifact with no Scheduler retry.
+ * The throw propagates to the `/jobs/drain-connector-artifacts` route's catch →
+ * 500 → Cloud Scheduler retries (and pages). The stuck-row reaper has already run
+ * before this point (idempotent), so re-running the pass is safe.
  */
-async function defaultListDrainableOrgIds(db: DrainDb): Promise<string[]> {
-  const { data, error } = await db
-    .from('connector_artifact')
-    .select('org_id')
-    .in('status', WORK_STATUSES as unknown as string[])
-    .limit(5000);
+export async function defaultListDrainableOrgIds(
+  db: DrainDb,
+  opts: { logger?: DrainLogger; limit?: number; emitAlert?: (alert: ConnectorArtifactAlert) => void } = {},
+): Promise<string[]> {
+  const logger = opts.logger ?? (defaultLogger as unknown as DrainLogger);
+  const emitAlert = opts.emitAlert ?? defaultEmitAlert;
+  const pLimit = Math.max(1, Math.min(opts.limit ?? ORG_ENUM_LIMIT_DEFAULT, 1000));
+
+  if (typeof db.rpc !== 'function') {
+    // A db with no rpc() is a misconfiguration, not a transient row error —
+    // surface it as a cycle failure so the route returns non-2xx and retries.
+    emitAlert({ scope: 'cycle', orgId: 'ALL', reason: 'org enumeration RPC unavailable (db.rpc not a function)' });
+    logger.error({ job: 'connector-artifact-drain' }, 'connector-artifact org enumeration: db.rpc unavailable');
+    throw new Error('connector-artifact org enumeration failed: db.rpc unavailable');
+  }
+
+  const { data, error } = (await db.rpc('list_drainable_connector_orgs', { p_limit: pLimit })) as {
+    data: unknown;
+    error: { message?: string } | null;
+  };
+
   if (error) {
-    throw new Error(`connector-artifact org enumeration failed: ${(error as { message?: string }).message ?? 'unknown'}`);
+    // Fail LOUD: emit a cycle alert + THROW so the cron route returns 500 and
+    // Cloud Scheduler retries. Returning an empty list here would report SUCCESS
+    // while draining zero orgs — hiding a broken RPC and stranding every row.
+    const reason = `org enumeration failed: ${error.message ?? 'unknown'}`;
+    emitAlert({ scope: 'cycle', orgId: 'ALL', reason });
+    logger.error(
+      { error, job: 'connector-artifact-drain' },
+      `connector-artifact org enumeration failed: ${error.message ?? 'unknown'}`,
+    );
+    throw new Error(`connector-artifact ${reason}`);
   }
-  const seen = new Set<string>();
-  for (const row of (data ?? []) as Array<{ org_id?: string }>) {
-    if (row.org_id) seen.add(row.org_id);
+
+  // The RPC returns SETOF uuid → an array of strings (supabase-js may also
+  // surface SETOF scalars as `{ <fn_name>: value }` rows; tolerate both).
+  const orgIds: string[] = [];
+  for (const row of (data ?? []) as Array<string | { list_drainable_connector_orgs?: string; org_id?: string }>) {
+    if (typeof row === 'string') {
+      if (row) orgIds.push(row);
+    } else if (row && typeof row === 'object') {
+      const v = row.list_drainable_connector_orgs ?? row.org_id;
+      if (typeof v === 'string' && v) orgIds.push(v);
+    }
   }
-  return [...seen];
+  return orgIds;
 }
 
 /**
@@ -1061,9 +1127,10 @@ export async function runConnectorArtifactDrain(
   }
 
   const db = defaultDb as unknown as DrainDb;
-  const listDrainableOrgIds = injected.listDrainableOrgIds ?? (() => defaultListDrainableOrgIds(db));
-  const drainForOrg = injected.drainForOrg ?? ((orgId: string) => drainConnectorArtifactsForOrg(orgId));
   const emitAlert = injected.emitAlert ?? defaultEmitAlert;
+  const listDrainableOrgIds =
+    injected.listDrainableOrgIds ?? (() => defaultListDrainableOrgIds(db, { logger, emitAlert }));
+  const drainForOrg = injected.drainForOrg ?? ((orgId: string) => drainConnectorArtifactsForOrg(orgId));
 
   // F-1: reap stranded in-flight rows FIRST (presumed-crashed workers) so this
   // pass re-claims them. Then they reappear in the per-org drainable scan below.
