@@ -1173,6 +1173,9 @@ interface StagingFilesOnlyResult {
  */
 const STAGING_TOOLING_ALLOW = [
   /^scripts\/staging\//,
+  // CI-only local-Supabase bootstrap for the types/tests/e2e jobs (sourced by
+  // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
+  /^scripts\/ci-supabase-start\.sh$/,
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
