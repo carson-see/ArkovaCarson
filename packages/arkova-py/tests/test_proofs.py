@@ -129,6 +129,27 @@ class TestMerkleRecomputeUnit:
         )
         assert (ok, code) == (False, "FORGED_SELF_PAIR")
 
+    def test_forged_self_pair_rejected_with_integral_float_index(self):
+        # JSON `1.0` parses to a Python float; the guard must still fire (parity
+        # with JS Number.isInteger(1.0) === true). Regression for the review's
+        # HIGH: an integral-float merkle_index/leaf_count previously disabled the
+        # CVE-2012-2459 structural guard, letting Python VERIFY a forgery TS rejects.
+        leaf = "ab" * 32
+        ok, code = verify_merkle_inclusion(
+            leaf, [{"hash": leaf, "position": "right"}], "cd" * 32,
+            leaf_index=0.0, leaf_count=4.0,
+        )
+        assert (ok, code) == (False, "FORGED_SELF_PAIR")
+
+    def test_non_integral_float_index_disables_structure(self):
+        # A non-integral float is NOT an integer in either runtime → the
+        # structural guard stays off (parity with Number.isInteger(1.5) === false).
+        leaf = "ab" * 32
+        assert _proofs._as_int(1.5) is None
+        assert _proofs._as_int(True) is None
+        assert _proofs._as_int("1") is None
+        assert _proofs._as_int(2.0) == 2
+
     def test_legitimate_rightmost_odd_self_pair_allowed(self):
         # 3-leaf tree: the rightmost leaf (index 2) legitimately pairs with itself.
         import hashlib

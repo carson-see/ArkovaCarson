@@ -222,7 +222,10 @@ describe('code audit — the verifier packages contain NO Arkova client or fallb
   });
 
   it('imports no HTTP client library anywhere', () => {
-    const FORBIDDEN_IMPORT = /from\s+['"](node:https?|https?|axios|undici|node-fetch|got|ky|@supabase\/[^'"]*|@arkova\/(?!verifier)[^'"]*)['"]/;
+    // Defense-in-depth for a public OSS artifact: block raw-socket / DNS /
+    // subprocess modules too, not just high-level HTTP clients — a dependency
+    // opening a raw socket would escape the fetch lockdown otherwise.
+    const FORBIDDEN_IMPORT = /from\s+['"](node:(https?|net|tls|dgram|http2|dns|dns\/promises)|https?|dns|net|tls|child_process|node:child_process|axios|undici|node-fetch|got|ky|@supabase\/[^'"]*|@arkova\/(?!verifier)[^'"]*)['"]/;
     for (const file of files) {
       expect(readFileSync(file, 'utf8'), `forbidden HTTP-client import in ${file}`).not.toMatch(FORBIDDEN_IMPORT);
     }

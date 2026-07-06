@@ -110,16 +110,31 @@ def _is_hex64(value: Any) -> bool:
     return isinstance(value, str) and bool(_HEX64.match(value))
 
 
+def _as_int(value: Any) -> Optional[int]:
+    """JS ``Number.isInteger`` parity for a JSON-parsed value.
+
+    ``json.load`` distinguishes ``1`` (int) from ``1.0`` (float); ``JSON.parse``
+    yields ``Number`` for both and ``Number.isInteger(1.0)`` is ``True``. To keep
+    the Python verifier byte-parity with the TS runtime — and to close the
+    CVE-2012-2459 guard-bypass where a JSON ``1.0`` merkle_index silently
+    disabled the structural check — accept a real int OR an integral float,
+    reject bool / non-integral float / str / everything else.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
 def _has_structural_guard(leaf_index: Any, leaf_count: Any) -> bool:
-    """True when leaf_index + leaf_count are real (non-bool) ints, enabling the
-    CVE-2012-2459 structural self-pair guard."""
-    return (
-        isinstance(leaf_index, int)
-        and not isinstance(leaf_index, bool)
-        and isinstance(leaf_count, int)
-        and not isinstance(leaf_count, bool)
-        and leaf_count >= 1
-    )
+    """True when leaf_index + leaf_count are integers (or integral floats),
+    enabling the CVE-2012-2459 structural self-pair guard."""
+    li = _as_int(leaf_index)
+    lc = _as_int(leaf_count)
+    return li is not None and lc is not None and lc >= 1
 
 
 def _branch_entry_parts(entry: Any) -> Optional[Tuple[bytes, str]]:
@@ -178,8 +193,13 @@ def verify_merkle_inclusion(
         return False, "MALFORMED_BUNDLE"
 
     structural = _has_structural_guard(leaf_index, leaf_count)
-    if structural and not (0 <= leaf_index < leaf_count):
-        return False, "LEAF_INDEX_OUT_OF_RANGE"
+    if structural:
+        # Normalise integral floats to int so downstream row arithmetic (//, %)
+        # stays integer and matches the TS runtime exactly.
+        leaf_index = _as_int(leaf_index)
+        leaf_count = _as_int(leaf_count)
+        if not (0 <= leaf_index < leaf_count):
+            return False, "LEAF_INDEX_OUT_OF_RANGE"
 
     leaf = leaf_hex.lower()
     root = root_hex.lower()
