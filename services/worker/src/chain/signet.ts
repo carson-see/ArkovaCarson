@@ -31,7 +31,7 @@ import type {
   SubmitFingerprintRequest,
   VerificationResult,
 } from './types.js';
-import { RpcUtxoProvider, type UtxoProvider, type Utxo, type RawTransaction } from './utxo-provider.js';
+import { RpcUtxoProvider, HttpError, RpcApplicationError, type UtxoProvider, type Utxo, type RawTransaction } from './utxo-provider.js';
 import type { SigningProvider } from './signing-provider.js';
 import { WifSigningProvider } from './signing-provider.js';
 import type { FeeEstimator } from './fee-estimator.js';
@@ -629,6 +629,28 @@ function isSignetConfig(
   return 'utxoProvider' in cfg;
 }
 
+/**
+ * #1417-HIGH (fix c): does this getRawTransaction failure prove the tx is
+ * ABSENT (vs. just unreadable)?  A definitive "not found" verdict is:
+ *   - RPC: JSON-RPC code -5 (RPC_INVALID_ADDRESS_OR_KEY — "No such mempool or
+ *     blockchain transaction"), regardless of the HTTP status it wrapped.
+ *   - REST (mempool.space): HTTP 404 on GET /tx/:txid.
+ * EVERYTHING else — 401/402/5xx/timeout/network/unknown — is a lookup FAILURE
+ * and must NOT be read as absence (it would trigger a rebroadcast → 4xx →
+ * unwind → double-broadcast). Fail-safe: unknown ⇒ not-absent ⇒ caller throws.
+ */
+function isDefinitivelyAbsent(error: unknown): boolean {
+  if (error instanceof RpcApplicationError) {
+    // -5 = RPC_INVALID_ADDRESS_OR_KEY ("No such … transaction"). Any other
+    // application code (e.g. -8 bad param) is NOT a proof of absence.
+    return error.code === -5;
+  }
+  if (error instanceof HttpError) {
+    return error.status === 404;
+  }
+  return false;
+}
+
 // ─── Bitcoin Chain Client ────────────────────────────────────────────────
 
 export class BitcoinChainClient implements ChainClient {
@@ -843,12 +865,26 @@ export class BitcoinChainClient implements ChainClient {
 
     logger.info({ txId: finalTxId }, 'Signed transaction broadcast');
 
-    // Current block height for the receipt (broadcast-time observation).
-    const blockchainInfo = await this.provider.getBlockchainInfo();
+    // #1417-HIGH (fix b): broadcastSignedTx MUST be infallible AFTER
+    // broadcastTx succeeds. The block-height read below is best-effort
+    // broadcast-time observability only — the tx is ALREADY on the wire. If the
+    // provider 402/401/5xx's on this follow-up call, throwing would make the
+    // caller misread a LIVE broadcast as unknown/failed and (worse) unwind the
+    // intent, then re-broadcast a SECOND, DIFFERENT tx. Degrade to height 0.
+    let blockHeight = 0;
+    try {
+      const blockchainInfo = await this.provider.getBlockchainInfo();
+      blockHeight = blockchainInfo.blocks;
+    } catch (error) {
+      logger.warn(
+        { txId: finalTxId, error: error instanceof Error ? error.message : String(error) },
+        'Post-broadcast height read failed — broadcast already committed, returning receipt with height 0',
+      );
+    }
 
     return {
       receiptId: finalTxId,
-      blockHeight: blockchainInfo.blocks,
+      blockHeight,
       blockTimestamp: new Date().toISOString(),
       confirmations: 0, // Just broadcast, not yet confirmed
       rawTxHex: txHex, // NET-4: Store for rebroadcast, RBF, and audit
@@ -1019,30 +1055,62 @@ export class BitcoinChainClient implements ChainClient {
     }
   }
 
+  /**
+   * #1417-HIGH (fix c): TRI-STATE receipt lookup.
+   *   found                → ChainReceipt
+   *   definitively-absent  → null  (RPC code -5 "No such … transaction", or
+   *                          mempool REST HTTP 404)
+   *   lookup-failed         → THROW (provider outage: 401/402/5xx/timeout)
+   *
+   * The reconcile crash-resume reads null as "tx unknown → rebroadcast the same
+   * bytes"; if a provider OUTAGE collapsed to null (the old bare `catch → null`),
+   * a live tx got rebroadcast, the follow-up 4xx'd, and the intent unwound into
+   * a second, different mainnet tx. A lookup failure must therefore propagate so
+   * the caller DEFERS — never guess "absent" from an error we couldn't read.
+   */
   async getReceipt(receiptId: string): Promise<ChainReceipt | null> {
     logger.info({ receiptId }, 'Getting receipt from chain');
 
+    let rawTx: RawTransaction;
     try {
-      const rawTx = await this.provider.getRawTransaction(receiptId);
+      rawTx = await this.provider.getRawTransaction(receiptId);
+    } catch (error) {
+      if (isDefinitivelyAbsent(error)) {
+        logger.warn({ receiptId }, 'Receipt definitively absent on chain (not-found verdict)');
+        return null;
+      }
+      // Lookup failed (outage/auth/quota/transient) — DO NOT masquerade as
+      // absent. Propagate so the reconcile path defers instead of rebroadcasting.
+      logger.warn(
+        { receiptId, error: error instanceof Error ? error.message : String(error) },
+        'Receipt lookup failed (provider unavailable) — deferring, not asserting absence',
+      );
+      throw error;
+    }
 
-      let blockHeight = 0;
-      if (rawTx.blockhash) {
+    // The header read is enrichment only; a failure here must NOT flip a
+    // confirmed tx to "absent". Degrade blockHeight to 0 and return the receipt.
+    let blockHeight = 0;
+    if (rawTx.blockhash) {
+      try {
         const header = await this.provider.getBlockHeader(rawTx.blockhash);
         blockHeight = header.height;
+      } catch (error) {
+        logger.warn(
+          { receiptId, error: error instanceof Error ? error.message : String(error) },
+          'Receipt found but block-header read failed — returning receipt with height 0',
+        );
       }
-
-      return {
-        receiptId: rawTx.txid,
-        blockHeight,
-        blockTimestamp: rawTx.blocktime
-          ? new Date(rawTx.blocktime * 1000).toISOString()
-          : new Date().toISOString(),
-        confirmations: rawTx.confirmations ?? 0,
-      };
-    } catch {
-      logger.warn({ receiptId }, 'Receipt not found on chain');
-      return null;
     }
+
+    return {
+      receiptId: rawTx.txid,
+      blockHeight,
+      blockTimestamp: rawTx.blocktime
+        ? new Date(rawTx.blocktime * 1000).toISOString()
+        : new Date().toISOString(),
+      confirmations: rawTx.confirmations ?? 0,
+    };
   }
 
   async healthCheck(): Promise<boolean> {

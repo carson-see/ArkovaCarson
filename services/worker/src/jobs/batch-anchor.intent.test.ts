@@ -205,6 +205,9 @@ vi.mock('../utils/db.js', () => {
 // ---- System under test ----
 
 import { processBatchAnchors } from './batch-anchor.js';
+// Real typed errors (utxo-provider is NOT mocked here) — the unwind gate must
+// discriminate a definitive broadcast reject from an auth/quota/transport blip.
+import { HttpError, RpcApplicationError, BroadcastRejectedError } from '../chain/utxo-provider.js';
 
 // ---- Fixtures ----
 
@@ -536,5 +539,134 @@ describe('S3-P0 — definitive broadcast reject unwinds the intent safely', () =
     const refundCall = mockDbRpc.mock.calls.find(([name]) => name === 'refund_org_credit');
     expect(refundCall).toBeDefined();
     expect(refundCall![1]).toMatchObject({ p_org_id: chargedDocusign.org_id });
+  });
+});
+
+// =============================================================================
+// #1417-HIGH — double-broadcast: the unwind fires ONLY on a typed broadcast
+// reject. Auth/quota/transport failures anywhere in the broadcast→reconcile
+// path DEFER — never a second, different mainnet tx while the first is live.
+// =============================================================================
+
+describe('#1417-HIGH — Phase 3c: only a definitive reject unwinds; auth/quota/transport DEFER', () => {
+  it('GetBlock 402 (quota, e.g. at the 3am drain) thrown from broadcastSignedTx → NO unwind, row stays BROADCASTING', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    // A 402 can surface here two ways: the broadcast itself, OR the infallible
+    // post-broadcast height read leaking (belt-and-suspenders: even if that
+    // leak regresses, the gate must still DEFER a quota error).
+    mockBroadcastSigned.mockRejectedValue(new HttpError('GetBlock quota exceeded', 402));
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.processed).toBe(0);
+    expect(result.txId).toBe(TX_ID); // intent surfaced; reconcile will finalize
+    expect(callOrder).not.toContain('revertToPending');
+    expect(proofDeletes).toHaveLength(0);
+    expect(callOrder).not.toContain('submitBatchAnchors');
+  });
+
+  it('GetBlock 401 (auth) thrown from broadcastSignedTx → NO unwind (DEFER)', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    mockBroadcastSigned.mockRejectedValue(new HttpError('unauthorized', 401));
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.processed).toBe(0);
+    expect(callOrder).not.toContain('revertToPending');
+    expect(proofDeletes).toHaveLength(0);
+  });
+
+  it('unknown Error from broadcastSignedTx → NO unwind (fail-safe DEFER)', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    mockBroadcastSigned.mockRejectedValue(new Error('unexpected provider response shape'));
+
+    await processBatchAnchors({ force: true });
+
+    expect(callOrder).not.toContain('revertToPending');
+    expect(proofDeletes).toHaveLength(0);
+  });
+
+  it('genuine dust / min-relay-fee reject (BroadcastRejectedError) → unwind DOES fire', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    mockBroadcastSigned.mockRejectedValue(new BroadcastRejectedError('min relay fee not met (code -26)', -26));
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.processed).toBe(0);
+    expect(proofDeletes.length).toBeGreaterThan(0);
+    const revert = anchorsUpdates.find((u) => u.payload.status === 'PENDING');
+    expect(revert).toBeDefined();
+    expect(revert!.payload.chain_tx_id).toBeNull();
+  });
+
+  it('genuine reject surfaced as RpcApplicationError from sendrawtransaction → unwind DOES fire', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    mockBroadcastSigned.mockRejectedValue(new RpcApplicationError('bad-txns-inputs-missingorspent (code -25)', -25, 500));
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.processed).toBe(0);
+    expect(proofDeletes.length).toBeGreaterThan(0);
+    const revert = anchorsUpdates.find((u) => u.payload.status === 'PENDING');
+    expect(revert).toBeDefined();
+  });
+});
+
+describe('#1417-HIGH — reconcile rebroadcast: outage on a LIVE tx defers, never unwinds', () => {
+  function stageInterruptedIntent() {
+    dbState.reconcileRows = [
+      { id: 'anchor-a', chain_tx_id: TX_ID, org_id: null, metadata: null, credential_type: null },
+    ];
+    dbState.intentProofRows = [
+      { raw_response: { broadcast_intent: { tx_id: TX_ID, tx_hex: TX_HEX, fee_sats: 141, prepared_at: '2026-07-06T00:00:00.000Z' } } },
+    ];
+  }
+
+  it('getReceipt lookup FAILS (throws provider outage) → DEFER, no rebroadcast, no unwind (the reachable "lookup failed" branch)', async () => {
+    stageInterruptedIntent();
+    // Provider outage during reconcile — getReceipt now THROWS (tri-state
+    // lookup-failed) rather than returning null. Must NOT be read as tx-unknown.
+    mockGetReceipt.mockRejectedValue(new HttpError('GetBlock quota exceeded', 402));
+
+    await processBatchAnchors({ force: true });
+
+    expect(mockBroadcastSigned).not.toHaveBeenCalled(); // no rebroadcast attempt
+    expect(callOrder).not.toContain('revertToPending');
+    expect(proofDeletes).toHaveLength(0);
+  });
+
+  it('401 during reconcile rebroadcast of an unknown-but-live tx → DEFER (never unwind)', async () => {
+    stageInterruptedIntent();
+    mockGetReceipt.mockResolvedValue(null); // tx not seen (provider lag) → rebroadcast path
+    mockBroadcastSigned.mockRejectedValue(new HttpError('unauthorized', 401));
+
+    await processBatchAnchors({ force: true });
+
+    expect(mockBroadcastSigned).toHaveBeenCalledWith(TX_HEX);
+    expect(callOrder).not.toContain('revertToPending');
+    expect(proofDeletes).toHaveLength(0);
+  });
+
+  it('402 during reconcile rebroadcast → DEFER (never unwind)', async () => {
+    stageInterruptedIntent();
+    mockGetReceipt.mockResolvedValue(null);
+    mockBroadcastSigned.mockRejectedValue(new HttpError('GetBlock quota exceeded', 402));
+
+    await processBatchAnchors({ force: true });
+
+    expect(callOrder).not.toContain('revertToPending');
+    expect(proofDeletes).toHaveLength(0);
+  });
+
+  it('genuine dust reject during reconcile rebroadcast → unwind DOES fire', async () => {
+    stageInterruptedIntent();
+    mockGetReceipt.mockResolvedValue(null);
+    mockBroadcastSigned.mockRejectedValue(new BroadcastRejectedError('dust (code -26)', -26));
+
+    await processBatchAnchors({ force: true });
+
+    expect(mockBroadcastSigned).toHaveBeenCalledWith(TX_HEX);
+    expect(proofDeletes.length).toBeGreaterThan(0);
+    expect(callOrder).toContain('revertToPending');
   });
 });

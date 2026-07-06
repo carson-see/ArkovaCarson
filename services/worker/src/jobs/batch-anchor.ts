@@ -24,7 +24,7 @@ import { getComplianceControlIds } from '../utils/complianceMapping.js';
 import { config } from '../config.js';
 import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
 import { flagRegistry } from '../middleware/flagRegistry.js';
-import { isRetryableError } from '../chain/utxo-provider.js';
+import { isBroadcastRejectedError } from '../chain/utxo-provider.js';
 import type { ChainClient, ChainReceipt, PreparedChainTx } from '../chain/types.js';
 import type { Json } from '../types/database.types.js';
 
@@ -934,12 +934,16 @@ async function reconcileOneIntent(
       result.rebroadcast += 1;
       logger.info({ txId, count: ids.length }, 'Intent reconcile: rebroadcast the SAME signed bytes');
     } catch (err) {
-      if (isRetryableError(err)) {
-        logger.warn({ error: errMessage(err), txId }, 'Intent reconcile: transient rebroadcast failure — deferring');
+      if (!isBroadcastRejectedError(err)) {
+        // #1417-HIGH: NOT a definitive reject (transient 5xx/timeout, OR auth
+        // 401 / quota 402). The rebroadcast targets a tx that may already be
+        // LIVE — DEFER; never unwind on a lookup/auth/quota failure.
+        logger.warn({ error: errMessage(err), txId }, 'Intent reconcile: non-reject rebroadcast failure — deferring (tx may be live)');
         result.deferred += 1;
         return;
       }
-      // Definitive reject — the node refused admission; safe to unwind.
+      // Definitive reject — the node examined the tx and refused admission;
+      // safe to unwind.
       logger.error(
         { error: errMessage(err), txId, count: ids.length },
         'Intent reconcile: broadcast definitively rejected — unwinding intent',
@@ -1252,19 +1256,22 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     try {
       receipt = await chainClient.broadcastSignedTx!(prepared.txHex);
     } catch (error) {
-      if (isRetryableError(error)) {
-        // UNKNOWN OUTCOME — the tx may or may not have reached the network.
-        // The intent is durable: leave rows BROADCASTING+chain_tx_id and let
-        // reconcileBroadcastIntents finish next tick. NEVER revert here — a
-        // revert would re-claim and broadcast a SECOND, DIFFERENT tx.
+      if (!isBroadcastRejectedError(error)) {
+        // NOT a definitive reject — the tx may or may not have reached the
+        // network (transient 5xx, timeout, OR auth 401 / quota 402 at the 3am
+        // drain, OR any unknown error). #1417-HIGH: DEFER. The intent is
+        // durable: leave rows BROADCASTING+chain_tx_id and let
+        // reconcileBroadcastIntents finish next tick. NEVER unwind here — a
+        // revert would re-claim and broadcast a SECOND, DIFFERENT tx while the
+        // first may be live.
         logger.warn(
           { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
-          'Batch broadcast outcome unknown (transient failure) — intent persisted; reconcile will finalize or rebroadcast the SAME bytes next tick',
+          'Batch broadcast outcome unknown (non-reject failure) — intent persisted; reconcile will finalize or rebroadcast the SAME bytes next tick',
         );
         return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
       }
-      // DEFINITIVE reject — the node refused mempool admission; the signed tx
-      // provably never relayed. Safe to unwind the intent completely.
+      // DEFINITIVE reject — the node examined the tx and refused mempool
+      // admission; the signed tx provably never relayed. Safe to unwind.
       logger.error(
         { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
         'Batch broadcast definitively rejected — unwinding intent',

@@ -51,6 +51,7 @@ import {
   type BitcoinClientConfig,
 } from './signet.js';
 import type { UtxoProvider, Utxo } from './utxo-provider.js';
+import { HttpError, RpcApplicationError } from './utxo-provider.js';
 import { WifSigningProvider } from './signing-provider.js';
 import { StaticFeeEstimator } from './fee-estimator.js';
 import type { FeeEstimator } from './fee-estimator.js';
@@ -793,13 +794,59 @@ describe('BitcoinChainClient.getReceipt', () => {
     expect(receipt!.confirmations).toBe(3);
   });
 
-  it('returns null for non-existent transaction', async () => {
+  // S3-P0 #1417-HIGH — getReceipt tri-state:
+  //   found                 → receipt
+  //   definitively-absent   → null  (RPC code -5, or mempool HTTP 404)
+  //   lookup-failed          → THROW (provider outage; caller must DEFER, not
+  //                            treat the tx as unknown → rebroadcast → 4xx → unwind)
+  it('returns null when the RPC node definitively reports the tx absent (code -5)', async () => {
     const provider = createMockProvider({
-      getRawTransaction: vi.fn().mockRejectedValue(new Error('Not found')),
+      getRawTransaction: vi.fn().mockRejectedValue(
+        new RpcApplicationError('No such mempool or blockchain transaction (code -5)', -5, 500),
+      ),
     });
     const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
-    const receipt = await client.getReceipt('nonexistent');
-    expect(receipt).toBeNull();
+    expect(await client.getReceipt('nonexistent')).toBeNull();
+  });
+
+  it('returns null when the mempool API definitively reports the tx absent (HTTP 404)', async () => {
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new HttpError('GET /tx/x failed: HTTP 404', 404)),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    expect(await client.getReceipt('nonexistent')).toBeNull();
+  });
+
+  it('THROWS on a provider quota outage (HTTP 402) — a lookup failure must NOT masquerade as tx-absent', async () => {
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new HttpError('GetBlock quota exceeded', 402)),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    await expect(client.getReceipt('c'.repeat(64))).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('THROWS on a provider auth outage (HTTP 401) — lookup failed, not tx-absent', async () => {
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new HttpError('unauthorized', 401)),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    await expect(client.getReceipt('c'.repeat(64))).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('THROWS on a transient transport failure (HTTP 5xx / timeout) — caller defers', async () => {
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new HttpError('bad gateway', 502)),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    await expect(client.getReceipt('c'.repeat(64))).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('THROWS on an ambiguous unknown error — fail-safe (never assume absent)', async () => {
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new Error('connect ETIMEDOUT 1.2.3.4:8332')),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    await expect(client.getReceipt('c'.repeat(64))).rejects.toThrow();
   });
 
   it('returns receipt without block height for unconfirmed tx', async () => {
@@ -1284,6 +1331,36 @@ describe('S3-P0 — BitcoinChainClient.broadcastSignedTx', () => {
 
     const receipt = await client.broadcastSignedTx(FUNDING_TX.txHex);
     expect(receipt.receiptId).toBe(FUNDING_TX.txid);
+  });
+
+  // S3-P0 #1417-HIGH (fix b): broadcastSignedTx MUST be infallible AFTER
+  // broadcastTx succeeds. The post-broadcast getBlockchainInfo() height read is
+  // best-effort observability — if the provider 402/401/5xx's on that follow-up
+  // call, the tx is ALREADY on the wire; throwing here would make the caller
+  // misread a live broadcast as an unknown/failed one and (worse) unwind it.
+  it('does NOT throw when the post-broadcast height read fails (402) — returns a receipt with height 0', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: 'broadcast_txid_live' });
+    const getBlockchainInfo = vi.fn().mockRejectedValue(new HttpError('GetBlock quota exceeded', 402));
+    const provider = createMockProvider({ broadcastTx, getBlockchainInfo });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const receipt = await client.broadcastSignedTx(FUNDING_TX.txHex);
+
+    expect(broadcastTx).toHaveBeenCalledWith(FUNDING_TX.txHex);
+    expect(receipt.receiptId).toBe('broadcast_txid_live'); // the broadcast committed
+    expect(receipt.blockHeight).toBe(0); // height unknown, but broadcast is NOT lost
+    expect(receipt.rawTxHex).toBe(FUNDING_TX.txHex);
+  });
+
+  it('does NOT throw when the post-broadcast height read times out — receipt still returned', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: '' }); // already-known == success
+    const getBlockchainInfo = vi.fn().mockRejectedValue(new Error('connect ETIMEDOUT'));
+    const provider = createMockProvider({ broadcastTx, getBlockchainInfo });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const receipt = await client.broadcastSignedTx(FUNDING_TX.txHex);
+    expect(receipt.receiptId).toBe(FUNDING_TX.txid); // computed fallback
+    expect(receipt.blockHeight).toBe(0);
   });
 
   it('submitFingerprint remains prepare→broadcast composed: broadcast bytes == prepared bytes', async () => {
