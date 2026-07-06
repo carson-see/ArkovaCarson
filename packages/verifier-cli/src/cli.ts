@@ -133,12 +133,42 @@ function loadPublishedKeyMaterial(path: string): {
   throw new UsageError(`Could not find a public key PEM in ${path}`);
 }
 
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Everything read off disk for one verification run. */
+interface LoadedInputs {
+  packet: ProofPacket;
+  signedBundle?: SignedProofBundle;
+  publicKeyPem?: string;
+  publishedKeys?: PublishedKeys;
+}
+
+function loadInputs(args: CliArgs): LoadedInputs {
+  const { packet, signedBundle } = loadProof(args.proofPath as string);
+  const keyMaterial = args.keyPath ? loadPublishedKeyMaterial(args.keyPath) : {};
+  return { packet, signedBundle, ...keyMaterial };
+}
+
+/**
+ * Build the independent on-chain source from the vetted `--rpc` endpoint, or
+ * undefined in `--offline` mode. Refuses an Arkova endpoint up front; the
+ * on-chain confirmation itself is delegated to @arkova/verifier's
+ * createEsploraFetch + confirmInclusion.
+ */
+function buildChain(args: CliArgs): IndependentNode | undefined {
+  if (args.offline) return undefined;
+  const url = assertIndependentEndpoint(args.rpc);
+  return { label: url.hostname, fetch: createEsploraFetch(args.rpc) };
+}
+
 export async function main(argv: string[]): Promise<number> {
   let args: CliArgs;
   try {
     args = parseArgs(argv);
   } catch (err) {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n\n${HELP}\n`);
+    process.stderr.write(`${errText(err)}\n\n${HELP}\n`);
     return 2;
   }
 
@@ -147,38 +177,25 @@ export async function main(argv: string[]): Promise<number> {
     return args.help ? 0 : 2;
   }
 
-  let packet: ProofPacket;
-  let signedBundle: SignedProofBundle | undefined;
-  let publicKeyPem: string | undefined;
-  let publishedKeys: PublishedKeys | undefined;
+  let inputs: LoadedInputs;
+  let chain: IndependentNode | undefined;
   try {
-    ({ packet, signedBundle } = loadProof(args.proofPath));
-    if (args.keyPath) ({ publicKeyPem, publishedKeys } = loadPublishedKeyMaterial(args.keyPath));
+    inputs = loadInputs(args);
+    chain = buildChain(args);
   } catch (err) {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`${errText(err)}\n`);
     return 2;
   }
 
-  let chain: IndependentNode | undefined;
-  if (!args.offline) {
-    try {
-      // Refuse an Arkova endpoint up front; the on-chain confirmation itself is
-      // delegated to @arkova/verifier's createEsploraFetch + confirmInclusion.
-      const url = assertIndependentEndpoint(args.rpc);
-      chain = { label: url.hostname, fetch: createEsploraFetch(args.rpc) };
-    } catch (err) {
-      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-      return 2;
-    }
-  }
+  const report = await verifyProof(inputs.packet, {
+    chain,
+    signedBundle: inputs.signedBundle,
+    publicKeyPem: inputs.publicKeyPem,
+    publishedKeys: inputs.publishedKeys,
+  });
 
-  const report = await verifyProof(packet, { chain, signedBundle, publicKeyPem, publishedKeys });
-
-  if (args.json) {
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  } else {
-    process.stdout.write(`${renderReport(report)}\n`);
-  }
+  const rendered = args.json ? JSON.stringify(report, null, 2) : renderReport(report);
+  process.stdout.write(`${rendered}\n`);
   return report.ok ? 0 : 1;
 }
 
@@ -186,11 +203,10 @@ export async function main(argv: string[]): Promise<number> {
 const invokedDirectly =
   process.argv[1] != null && import.meta.url === new URL(`file://${process.argv[1]}`).href;
 if (invokedDirectly) {
-  main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
-    (err) => {
-      process.stderr.write(`Unexpected error: ${err instanceof Error ? err.stack : String(err)}\n`);
-      process.exit(2);
-    },
-  );
+  try {
+    process.exit(await main(process.argv.slice(2)));
+  } catch (err) {
+    process.stderr.write(`Unexpected error: ${err instanceof Error ? err.stack : String(err)}\n`);
+    process.exit(2);
+  }
 }

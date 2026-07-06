@@ -46,7 +46,10 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
   (`scripts/parity-compare.mjs`) runs the WHOLE manifest through the TS
   verifier AND the Python verifier and requires TS == Python == manifest.
   Suggested CI job (needs python3 ≥ 3.9; kept out of `npm test` so the
-  Node-only CI job stays self-contained).
+  Node-only CI job stays self-contained). The interpreter is NEVER resolved
+  via `$PATH` (Sonar S4036): `$ARKOVA_PYTHON` (absolute) when set, else the
+  fixed locations `/usr/bin/python3`, `/usr/local/bin/python3`,
+  `/opt/homebrew/bin/python3`.
 - **Terminology ban (§1.3)** applies to all user-facing strings (CLI help +
   rendered report): Fingerprint / Network Receipt / Network Observed Time — not
   Hash / Transaction / Block / Broadcast. `test/cli.test.ts` asserts this.
@@ -79,7 +82,13 @@ S2 CLI v0.1.) Design: `docs/sprint-0/lane1/verifier-oss-sdk-predesign.md`.
   layers (vendored recompute reasons; ConfirmInclusionStatus).
 - `src/lib/independent-endpoint.ts` — the Arkova-host guard (host policy only).
 - `src/lib/signature.ts` — published-key Ed25519 verify with `signing_key_id`
-  resolution against a key set (fail-closed on unknown ids).
+  resolution against a key set (fail-closed on unknown ids; a MISSING/blank
+  `signing_key_id` also fails closed — `undefined === undefined` must never
+  match a kid-less key entry).
+- `src/lib/fixtures.ts` — fixture-corpus plumbing SHARED by `test/helpers.ts`
+  and `scripts/parity-compare.mjs` (PROOF-08 vector→packet transform, corpus
+  ref resolution, offline fixture-node transport) so the test and parity
+  runners cannot drift.
 - `src/lib/report.ts` — auditor-legible plain-text renderer.
 - `src/vendor/` — verbatim worker Merkle recompute (byte-identity guarded).
 - `fixtures/` — `manifest.json` (the SINGLE versioned fixture list + expected
@@ -102,7 +111,9 @@ Self-contained toolchain (own `package.json` / `tsconfig.json` / `eslint.config.
 / `vitest.config.ts`), like `packages/embed` — but it depends on the sibling
 `@arkova/verifier` (`file:../verifier`), so **build that first**:
 `cd ../verifier && npm ci && npm run build`, then `cd ../verifier-cli &&
-npm ci && npm test && npm run lint && npm run typecheck`. The test suite is
+npm ci && npm test && npm run lint && npm run typecheck` (`lint` covers
+`src`, `test` AND `scripts` — the parity comparator is linted with Node ESM
+globals, not ignored). The test suite is
 **clean-room**: it touches no network (and `test/no-network.test.ts` enforces
 that at the transport layer, not just by convention). CI job: `verifier-cli` in
 `.github/workflows/ci.yml` (builds `@arkova/verifier` before installing the CLI).

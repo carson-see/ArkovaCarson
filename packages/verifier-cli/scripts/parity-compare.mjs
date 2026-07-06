@@ -10,17 +10,23 @@
  * status where the manifest pins one). Any disagreement exits non-zero with a
  * per-fixture diff table.
  *
- * Run:  npm run parity        (builds dist/ first; needs python3 >= 3.9 on PATH)
+ * Run:  npm run parity        (builds dist/ first; needs python3 >= 3.9 — see below)
  * CI:   suggested job — build @arkova/verifier + this package, then `npm run parity`.
+ *
+ * The Python interpreter is NEVER resolved via $PATH (a writable dir on PATH
+ * could shadow `python3` — Sonar S4036): it is taken from $ARKOVA_PYTHON when
+ * set (must be an ABSOLUTE path), else probed at the fixed system locations
+ * below.
  *
  * Fully offline: canned node responses only. Zero Arkova network calls.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { verifyProof } from '../dist/verify.js';
+import { fixtureNodeFetch, packetFromProof08Vector, resolveProof08Vector } from '../dist/lib/fixtures.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PKG = join(here, '..');
@@ -28,6 +34,33 @@ const FIXTURES = join(PKG, 'fixtures');
 const REPO_ROOT = join(PKG, '..', '..');
 const PY_PKG = join(REPO_ROOT, 'packages', 'arkova-py');
 const PROOF08 = join(REPO_ROOT, 'services', 'worker', 'src', 'proof', 'fixtures', 'proof-fixtures.json');
+
+/** Fixed, root-owned interpreter locations — never a $PATH search (S4036). */
+const PYTHON_CANDIDATES = [
+  '/usr/bin/python3',
+  '/usr/local/bin/python3',
+  '/opt/homebrew/bin/python3',
+];
+
+function resolvePythonBin() {
+  const override = process.env.ARKOVA_PYTHON;
+  if (override) {
+    if (!isAbsolute(override) || !existsSync(override)) {
+      console.error(`FAIL: ARKOVA_PYTHON must be an absolute path to an existing python3 (got "${override}").`);
+      process.exit(2);
+    }
+    return override;
+  }
+  const found = PYTHON_CANDIDATES.find((p) => existsSync(p));
+  if (!found) {
+    console.error(
+      `FAIL: no python3 found at ${PYTHON_CANDIDATES.join(', ')}. ` +
+        'Set ARKOVA_PYTHON to an absolute python3 (>= 3.9) path.',
+    );
+    process.exit(2);
+  }
+  return found;
+}
 
 const loadJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
 
@@ -39,31 +72,9 @@ const sources = {
 const proof08 = loadJson(PROOF08);
 
 function packetFromProof08(ref) {
-  const v = ref === 'valid-inclusion' ? proof08.valid : proof08.invalid.find((i) => i.id === ref);
+  const v = resolveProof08Vector(proof08, ref);
   if (!v) throw new Error(`PROOF-08 vector ${ref} not found`);
-  return {
-    fingerprint: v.fingerprint,
-    merkle_root: v.merkle_root,
-    merkle_proof: v.merkle_proof,
-    merkle_index: v.merkle_index,
-    leaf_count: v.leaf_count,
-    tx_id: null,
-    block_height: null,
-    block_timestamp: null,
-    batch_id: null,
-  };
-}
-
-function offlineNode(responses) {
-  return {
-    label: 'offline-fixture-node',
-    fetch: async (path) => {
-      if (!(path in responses)) return { ok: false, status: 404 };
-      const value = responses[path];
-      if (typeof value === 'string') return { ok: true, status: 200, text: value };
-      return { ok: true, status: 200, json: value };
-    },
-  };
+  return packetFromProof08Vector(v);
 }
 
 async function runTs(entry) {
@@ -73,7 +84,10 @@ async function runTs(entry) {
       : sources[entry.source].find((f) => f.name === entry.ref);
   if (!fixture) throw new Error(`fixture ${entry.ref} not found in ${entry.source}`);
   const report = await verifyProof(fixture.packet, {
-    chain: entry.mode === 'chain' && fixture.node ? offlineNode(fixture.node) : undefined,
+    chain:
+      entry.mode === 'chain' && fixture.node
+        ? { label: 'offline-fixture-node', fetch: fixtureNodeFetch(fixture.node) }
+        : undefined,
     signedBundle: entry.mode === 'signature' ? fixture.signedBundle : undefined,
     publishedKeys: entry.mode === 'signature' ? fixture.publishedKeys : undefined,
   });
@@ -85,17 +99,23 @@ async function runTs(entry) {
 }
 
 function runPython() {
+  const pythonBin = resolvePythonBin();
   try {
-    const out = execFileSync('python3', [join(PY_PKG, 'scripts', 'run_manifest.py')], {
+    const out = execFileSync(pythonBin, [join(PY_PKG, 'scripts', 'run_manifest.py')], {
       encoding: 'utf8',
       timeout: 120_000,
     });
     return JSON.parse(out);
   } catch (err) {
-    console.error('FAIL: could not run the Python verifier (python3 >= 3.9 required on PATH).');
+    console.error(`FAIL: could not run the Python verifier via ${pythonBin} (python3 >= 3.9 required).`);
     console.error(String(err?.message ?? err));
     process.exit(2);
   }
+}
+
+function agreementNote(expected) {
+  const reason = expected.reason_code ? ` / ${expected.reason_code}` : '';
+  return `${expected.verdict}${reason}`;
 }
 
 const pyResults = runPython();
@@ -133,10 +153,7 @@ for (const entry of manifest.fixtures) {
   rows.push({
     id: entry.id,
     ok: problems.length === 0,
-    note:
-      problems.length === 0
-        ? `${expected.verdict}${expected.reason_code ? ` / ${expected.reason_code}` : ''}`
-        : problems.join('; '),
+    note: problems.length === 0 ? agreementNote(expected) : problems.join('; '),
   });
 }
 

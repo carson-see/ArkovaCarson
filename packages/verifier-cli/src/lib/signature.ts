@@ -61,7 +61,17 @@ export function verifyBundleSignature(
 
   let pem = publicKeyPem;
   if (haveKeySet) {
-    const resolved = publishedKeys.keys.find((k) => k.kid === bundle.signing_key_id);
+    // Fail closed BEFORE resolution when the bundle names no real signing key
+    // id: malformed runtime JSON must not match a kid-less key entry via
+    // `undefined === undefined` and sneak past the DID_UNRESOLVED gate.
+    if (typeof bundle.signing_key_id !== 'string' || bundle.signing_key_id.trim() === '') {
+      return {
+        status: 'failed',
+        failureCode: 'DID_UNRESOLVED',
+        reason: 'the bundle carries no signing key id — the signer identity cannot be resolved against the published key set',
+      };
+    }
+    const resolved = publishedKeys.keys.find((k) => typeof k.kid === 'string' && k.kid === bundle.signing_key_id);
     if (!resolved) {
       return {
         status: 'failed',

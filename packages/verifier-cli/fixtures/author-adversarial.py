@@ -340,7 +340,7 @@ fixtures.append(
 
 # A6: truncated 79-byte header (158 hex chars) served by the node.
 node_trunc = json.loads(json.dumps(node))
-for k in list(node_trunc):
+for k in node_trunc:
     if k.endswith("/header"):
         node_trunc[k] = node_trunc[k][:-2]  # drop the final byte → 79 bytes
 fixtures.append(

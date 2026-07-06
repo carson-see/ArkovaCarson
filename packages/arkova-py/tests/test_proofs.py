@@ -21,28 +21,30 @@ import sys
 
 import pytest
 
-# `arkova.proofs` is deliberately a STANDALONE stdlib-only module (the point of
-# DEV-02: a verifier that runs anywhere). Load it directly so this suite runs
+# Fixture resolution is OWNED by scripts/manifest_lib.py — the same module
+# run_manifest.py (the parity comparator's Python side) uses, so the test and
+# parity paths cannot drift. Loaded via importlib for the same reason
+# `arkova.proofs` is: both are deliberately STANDALONE stdlib-only modules
+# (the point of DEV-02: a verifier that runs anywhere), so this suite runs
 # even where the SDK's httpx/pydantic client deps or Python>=3.10 pydantic
-# syntax are unavailable — the module itself supports 3.9+.
-_PROOFS_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "arkova", "proofs.py"
+# syntax are unavailable — the modules themselves support 3.9+.
+_MANIFEST_LIB_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "manifest_lib.py"
 )
-_spec = importlib.util.spec_from_file_location("arkova_proofs", _PROOFS_PATH)
-_proofs = importlib.util.module_from_spec(_spec)
-sys.modules["arkova_proofs"] = _proofs  # dataclasses resolve annotations via sys.modules
-_spec.loader.exec_module(_proofs)
+_lib_spec = importlib.util.spec_from_file_location("arkova_manifest_lib", _MANIFEST_LIB_PATH)
+_manifest_lib = importlib.util.module_from_spec(_lib_spec)
+sys.modules["arkova_manifest_lib"] = _manifest_lib
+_lib_spec.loader.exec_module(_manifest_lib)
+
+_proofs = _manifest_lib.load_proofs_module()
 
 REASON_CODES = _proofs.REASON_CODES
 verify_bundle = _proofs.verify_bundle
 verify_merkle_inclusion = _proofs.verify_merkle_inclusion
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
-FIXTURES_DIR = os.path.join(REPO_ROOT, "packages", "verifier-cli", "fixtures")
-PROOF08_PATH = os.path.join(
-    REPO_ROOT, "services", "worker", "src", "proof", "fixtures", "proof-fixtures.json"
-)
+load_json = _manifest_lib.load_json
+FIXTURES_DIR = _manifest_lib.FIXTURES_DIR
+PROOF08_PATH = _manifest_lib.PROOF08_PATH
 
 pytestmark = pytest.mark.skipif(
     not os.path.isdir(FIXTURES_DIR) or not os.path.isfile(PROOF08_PATH),
@@ -50,62 +52,15 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def load_json(path: str):
-    with open(path) as f:
-        return json.load(f)
-
-
-def load_manifest():
-    return load_json(os.path.join(FIXTURES_DIR, "manifest.json"))
-
-
-def load_source(source: str):
-    if source == "synthetic":
-        return load_json(os.path.join(FIXTURES_DIR, "synthetic-vectors.json"))["fixtures"]
-    if source == "adversarial":
-        return load_json(os.path.join(FIXTURES_DIR, "adversarial-vectors.json"))["fixtures"]
-    raise ValueError(source)
-
-
-def packet_from_proof08(ref: str) -> dict:
-    corpus = load_json(PROOF08_PATH)
-    vector = (
-        corpus["valid"]
-        if ref == "valid-inclusion"
-        else next(v for v in corpus["invalid"] if v["id"] == ref)
-    )
-    return {
-        "fingerprint": vector["fingerprint"],
-        "merkle_root": vector["merkle_root"],
-        "merkle_proof": vector["merkle_proof"],
-        "merkle_index": vector["merkle_index"],
-        "leaf_count": vector["leaf_count"],
-        "tx_id": None,
-        "block_height": None,
-        "block_timestamp": None,
-        "batch_id": None,
-    }
-
-
-def resolve_entry(entry: dict) -> dict:
-    if entry["source"] in ("synthetic", "adversarial"):
-        fixtures = load_source(entry["source"])
-        return next(f for f in fixtures if f["name"] == entry["ref"])
-    return {"name": entry["id"], "packet": packet_from_proof08(entry["ref"])}
-
-
 def run_entry(entry: dict):
-    fixture = resolve_entry(entry)
-    kwargs = {}
-    if entry["mode"] == "chain" and fixture.get("node") is not None:
-        kwargs["node"] = fixture["node"]
-    if entry["mode"] == "signature":
-        kwargs["signed_bundle"] = fixture.get("signedBundle")
-        kwargs["published_keys"] = fixture.get("publishedKeys")
-    return verify_bundle(fixture["packet"], **kwargs)
+    return _manifest_lib.run_entry(verify_bundle, entry)
 
 
-MANIFEST = load_manifest() if os.path.isdir(FIXTURES_DIR) else {"fixtures": [], "reason_codes": []}
+MANIFEST = (
+    _manifest_lib.load_manifest()
+    if os.path.isdir(FIXTURES_DIR)
+    else {"fixtures": [], "reason_codes": []}
+)
 
 
 def test_reason_enum_is_frozen_and_matches_manifest():
@@ -117,6 +72,11 @@ def test_manifest_conformance(entry):
     outcome = run_entry(entry)
     expected_ok = entry["expected"]["verdict"] == "VERIFIED"
     assert outcome.ok is expected_ok, f"{entry['id']}: verdict mismatch"
+    # The verdict STRING is what run_manifest.py serializes for the parity
+    # comparator — pin it directly, not only the boolean it derives from.
+    assert outcome.verdict == entry["expected"]["verdict"], (
+        f"{entry['id']}: verdict string mismatch"
+    )
     assert outcome.reason_code == entry["expected"]["reason_code"], (
         f"{entry['id']}: reason code mismatch"
     )
@@ -188,6 +148,44 @@ class TestMerkleRecomputeUnit:
         ) == (True, None)
 
 
+class TestSchemaGateUnit:
+    """Fail-closed schema gate: only a real (non-bool) JSON number 1 passes."""
+
+    @staticmethod
+    def _packet(version):
+        leaf = "ab" * 32
+        return {
+            "fingerprint": leaf,
+            "merkle_root": leaf,
+            "merkle_proof": [],
+            "tx_id": None,
+            "block_height": None,
+            "block_timestamp": None,
+            "batch_id": None,
+            "proof_schema_version": version,
+        }
+
+    def test_boolean_true_is_not_schema_version_1(self):
+        # JSON `true` must not satisfy the gate via Python's `True == 1`.
+        outcome = verify_bundle(self._packet(True))
+        assert outcome.ok is False
+        assert outcome.reason_code == "UNSUPPORTED_SCHEMA_VERSION"
+        assert [s["status"] for s in outcome.steps[1:]] == ["skipped"] * 4
+
+    def test_float_one_passes_for_json_parity_with_ts(self):
+        # JSON `1.0` is indistinguishable from `1` after the TS verifier's JSON
+        # parse; the gate accepts any non-bool JSON number equal to 1 so both
+        # runtimes reach the same verdict on the same JSON document.
+        outcome = verify_bundle(self._packet(1.0))
+        assert outcome.steps[0]["status"] == "pass"
+        assert outcome.ok is True
+
+    def test_string_version_fails_closed(self):
+        outcome = verify_bundle(self._packet("1"))
+        assert outcome.ok is False
+        assert outcome.reason_code == "UNSUPPORTED_SCHEMA_VERSION"
+
+
 class TestSignatureUnit:
     """The pure-python Ed25519 + canonical-JSON path against the PROOF-08 corpus."""
 
@@ -223,6 +221,20 @@ class TestSignatureUnit:
         outcome = verify_bundle(moved["payload"], signed_bundle=moved, published_keys=keys)
         assert outcome.signature_status == "failed"
         assert outcome.reason_code == "DID_UNRESOLVED"
+
+    def test_missing_signing_key_id_fails_closed(self, corpus):
+        # A bundle with NO signing_key_id must not resolve against a key set
+        # whose entries also lack `kid` (the None == None smuggle) — the signer
+        # identity is unresolved, so the check fails closed: DID_UNRESOLVED.
+        keys = {"keys": [{"pem": corpus["test_public_key_pem"]}]}
+        anonymous = json.loads(json.dumps(corpus["valid_bundle"]))
+        del anonymous["signing_key_id"]
+        outcome = verify_bundle(
+            anonymous["payload"], signed_bundle=anonymous, published_keys=keys
+        )
+        assert outcome.signature_status == "failed"
+        assert outcome.reason_code == "DID_UNRESOLVED"
+        assert outcome.ok is False
 
     def test_tampered_payload_fails(self, corpus):
         keys = {"keys": [{"kid": corpus["signing_key_id"], "pem": corpus["test_public_key_pem"]}]}

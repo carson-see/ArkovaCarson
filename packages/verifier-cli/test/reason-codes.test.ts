@@ -130,6 +130,17 @@ describe('schema gate (UNSUPPORTED_SCHEMA_VERSION)', () => {
     expect(report.steps.find((s) => s.id === 'block_confirm')?.status).toBe('skipped');
   });
 
+  it('fails closed when proof_schema_version is a non-numeric JSON value (e.g. true)', async () => {
+    // JSON `true` never equals 1 in JS — pinned here because the Python
+    // verifier had to guard the same document against `True == 1` (parity).
+    const good = adv('adv-valid-even-tree-pass');
+    const packet = { ...good.packet, proof_schema_version: true as unknown as number };
+    const report = await verifyProof(packet, {});
+    expect(report.ok).toBe(false);
+    expect(report.reasonCode).toBe('UNSUPPORTED_SCHEMA_VERSION');
+    expect(report.steps.find((s) => s.id === 'recompute')?.status).toBe('skipped');
+  });
+
   it('passes schema version 1 explicitly and a legacy packet with no version', async () => {
     const withV1 = adv('adv-valid-even-tree-pass');
     const r1 = await verifyProof(withV1.packet, { chain: offlineNode(withV1) });

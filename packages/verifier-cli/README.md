@@ -98,11 +98,16 @@ cp ../../services/worker/src/utils/{merkle-verify,merkle,canonical-json}.ts src/
 ## Tests (clean-room — no network)
 
 ```bash
-npm test          # 128 tests across 8 files, fully offline
+npm test          # 130 tests across 8 files, fully offline
 npm run lint
 npm run typecheck
 npm run parity    # three-way agreement: TS == Python == manifest (needs python3 >= 3.9)
 ```
+
+`npm run parity` never resolves `python3` via `$PATH` (Sonar S4036 — a
+writable dir on PATH could shadow the interpreter): it uses `$ARKOVA_PYTHON`
+when set (must be an absolute path), else probes `/usr/bin/python3`,
+`/usr/local/bin/python3`, `/opt/homebrew/bin/python3`.
 
 The conformance suite drives a fixture-backed independent node (an
 `@arkova/verifier` `IndependentNodeFetch` served from canned Esplora REST

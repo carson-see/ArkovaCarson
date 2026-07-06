@@ -63,6 +63,14 @@ export interface ProofPacket {
   proof_schema_version?: number | null;
 }
 
+/** One published key entry in a keys.json set. */
+export interface PublishedKey {
+  /** Key id the bundle's `signing_key_id` resolves against. */
+  kid?: string;
+  alg?: string;
+  pem: string;
+}
+
 /**
  * A published Arkova key set (`docs.arkova.ai/keys.json` shape). When the
  * bundle names a `signing_key_id`, it is resolved against `keys[].kid`; an
@@ -70,7 +78,7 @@ export interface ProofPacket {
  * which key to use.
  */
 export interface PublishedKeys {
-  keys: Array<{ kid?: string; alg?: string; pem: string }>;
+  keys: PublishedKey[];
 }
 
 /**

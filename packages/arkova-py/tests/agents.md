@@ -8,12 +8,16 @@ Tests for the Arkova Python SDK.
 - **`test_proofs.py`** — DEV-02 / S3-B proof-helper parity suite: runs the ENTIRE
   fixture manifest (`packages/verifier-cli/fixtures/manifest.json` — synthetic +
   adversarial + PROOF-08 vectors) through `arkova.proofs.verify_bundle` and
-  asserts every verdict + frozen reason code matches the manifest, plus direct
-  unit coverage of the Merkle recompute guards and the pure-python Ed25519 path
-  against the PROOF-08 corpus signature. Loads `proofs.py` standalone via
-  importlib so it runs even where httpx/pydantic are absent (the module is
-  stdlib-only, Python >= 3.9). Skips itself in installed-package runs where the
-  repo fixture corpus is not present.
+  asserts every verdict (bool AND string) + frozen reason code matches the
+  manifest, plus direct unit coverage of the Merkle recompute guards, the
+  fail-closed schema gate (bool/str rejected, float 1.0 accepted for JSON
+  parity with TS), and the pure-python Ed25519 path against the PROOF-08
+  corpus signature (incl. missing-signing_key_id → DID_UNRESOLVED). Fixture
+  resolution comes from `scripts/manifest_lib.py` — the SAME module
+  `run_manifest.py` uses, so test and parity paths cannot drift; both it and
+  `proofs.py` are loaded standalone via importlib so the suite runs even
+  where httpx/pydantic are absent (stdlib-only, Python >= 3.9). Skips itself
+  in installed-package runs where the repo fixture corpus is not present.
 
 ## Conventions
 - Uses `httpx` transport mocks; never calls real Arkova API. `test_proofs.py`

@@ -20,7 +20,7 @@
     "verify": "node dist/cli.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "eslint src test",
+    "lint": "eslint src test scripts",
     "parity": "npm run build && node scripts/parity-compare.mjs"
   },
   "keywords": [

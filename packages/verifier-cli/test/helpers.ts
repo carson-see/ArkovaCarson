@@ -9,8 +9,17 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import type { IndependentNodeFetch } from '@arkova/verifier';
-import type { IndependentNode, ProofPacket, VerifierFixture } from '../src/types.js';
+import {
+  fixtureNodeFetch,
+  packetFromProof08Vector,
+  resolveProof08Vector,
+  type Proof08Corpus,
+} from '../src/lib/fixtures.js';
+import type { IndependentNode, VerifierFixture } from '../src/types.js';
+
+// Re-export the shared fixture plumbing (src/lib/fixtures.ts) so test files
+// keep importing from './helpers.js' — ONE transform for tests + parity script.
+export { packetFromProof08Vector, resolveProof08Vector, type Proof08Corpus, type Proof08Vector } from '../src/lib/fixtures.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const FIXTURES_DIR = join(here, '..', 'fixtures');
@@ -64,25 +73,8 @@ export function loadManifest(): Manifest {
 }
 
 /** Raw PROOF-08 corpus (services/worker/src/proof/fixtures/proof-fixtures.json). */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function loadProof08(): any {
-  return JSON.parse(readFileSync(PROOF08_PATH, 'utf8'));
-}
-
-/** Build a recompute-only ProofPacket from a PROOF-08 app-tree vector. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function packetFromProof08Vector(v: any): ProofPacket {
-  return {
-    fingerprint: v.fingerprint,
-    merkle_root: v.merkle_root,
-    merkle_proof: v.merkle_proof,
-    merkle_index: v.merkle_index,
-    leaf_count: v.leaf_count,
-    tx_id: null,
-    block_height: null,
-    block_timestamp: null,
-    batch_id: null,
-  };
+export function loadProof08(): Proof08Corpus {
+  return JSON.parse(readFileSync(PROOF08_PATH, 'utf8')) as Proof08Corpus;
 }
 
 /** Resolve a manifest entry to the concrete fixture inputs each runner needs. */
@@ -93,12 +85,7 @@ export function resolveManifestEntry(entry: ManifestEntry): VerifierFixture {
     if (!found) throw new Error(`manifest entry ${entry.id}: fixture ${entry.ref} not found in ${entry.source}`);
     return found;
   }
-  const corpus = loadProof08();
-  const vector =
-    entry.ref === 'valid-inclusion'
-      ? corpus.valid
-      : // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        corpus.invalid.find((i: any) => i.id === entry.ref);
+  const vector = resolveProof08Vector(loadProof08(), entry.ref);
   if (!vector) throw new Error(`manifest entry ${entry.id}: PROOF-08 vector ${entry.ref} not found`);
   return {
     name: entry.id,
@@ -114,17 +101,9 @@ export function readFixtureFile(name: string): string {
 
 /**
  * Build an offline `IndependentNode` from a fixture's canned REST responses.
- * Text endpoints (`/block-height/:h`, `/block/:hash/header`) are stored as raw
- * strings; everything else is JSON. Mirrors `createEsploraFetch`'s normalized
- * response shape ({ ok, json, text }).
+ * The transport is the SHARED `fixtureNodeFetch` (src/lib/fixtures.ts) — the
+ * same one the parity comparator uses.
  */
 export function offlineNode(fixture: VerifierFixture): IndependentNode {
-  const responses = fixture.node ?? {};
-  const fetch: IndependentNodeFetch = async (path: string) => {
-    if (!(path in responses)) return { ok: false, status: 404 };
-    const value = responses[path];
-    if (typeof value === 'string') return { ok: true, status: 200, text: value };
-    return { ok: true, status: 200, json: value };
-  };
-  return { label: 'offline-fixture-node', fetch };
+  return { label: 'offline-fixture-node', fetch: fixtureNodeFetch(fixture.node ?? {}) };
 }

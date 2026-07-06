@@ -133,100 +133,22 @@ export async function verifyProof(
   packet: ProofPacket,
   opts: VerifyOptions = {},
 ): Promise<VerifyReport> {
-  const steps: VerifyStep[] = [];
-
   // ── Step 0: schema gate — refuse to interpret an unknown format ──
-  const schemaVersion = packet.proof_schema_version ?? null;
-  const schemaSupported = schemaVersion === null || schemaVersion === SUPPORTED_PROOF_SCHEMA_VERSION;
-  steps.push({
-    id: 'schema',
-    label: 'Confirm the proof package schema version is understood',
-    status: schemaSupported ? 'pass' : 'fail',
-    detail: schemaSupported
-      ? schemaVersion === null
-        ? `No schema version declared; interpreted as version ${SUPPORTED_PROOF_SCHEMA_VERSION} (legacy package).`
-        : `Proof package declares schema version ${schemaVersion}, which this verifier understands.`
-      : `Unsupported proof package schema version ${schemaVersion} — this verifier understands schema version ${SUPPORTED_PROOF_SCHEMA_VERSION} only and refuses to guess at an unknown format.`,
-    ...(schemaSupported ? {} : { code: 'UNSUPPORTED_SCHEMA_VERSION' as const }),
-  });
+  const schemaStep = buildSchemaStep(packet.proof_schema_version ?? null);
+  const steps: VerifyStep[] = [schemaStep];
 
-  let independentNode: string | null = null;
-  let blockHeight: number | null = packet.block_height;
-  // The reported Network Observed Time is ONLY ever the time MEASURED from the
-  // independent header (§1.5). It stays null until an on-chain header is read —
-  // the packet's self-claimed `block_timestamp` is NEVER promoted into it.
-  let networkObservedTime: string | null = null;
-  let observedTimeAgrees: boolean | null = null;
-
-  if (!schemaSupported) {
+  let chainPhase: ChainPhaseResult;
+  if (schemaStep.status !== 'pass') {
     // An unknown schema means every cryptographic interpretation below would be
     // a guess — skip them explicitly rather than pretending to check.
-    const skipDetail = 'Skipped because the proof package schema version is not understood.';
-    steps.push({ id: 'recompute', label: RECOMPUTE_LABEL, status: 'skipped', detail: skipDetail });
-    steps.push({ id: 'op_return', label: OP_RETURN_LABEL, status: 'skipped', detail: skipDetail });
-    steps.push({ id: 'block_confirm', label: BLOCK_LABEL, status: 'skipped', detail: skipDetail });
-    steps.push({ id: 'timestamp_honesty', label: TIMESTAMP_LABEL, status: 'skipped', detail: skipDetail });
+    steps.push(...schemaSkippedSteps());
+    chainPhase = emptyChainPhase(packet);
   } else {
     // ── Step 1: recompute the Merkle root (the canonical, shared routine) ──
-    const inclusion = verifyMerkleInclusion(
-      packet.fingerprint,
-      packet.merkle_proof,
-      packet.merkle_root,
-      buildInclusionOpts(packet),
-    );
-    steps.push({
-      id: 'recompute',
-      label: RECOMPUTE_LABEL,
-      status: inclusion.valid ? 'pass' : 'fail',
-      detail: inclusion.valid
-        ? 'The fingerprint, combined with its inclusion path, reproduces the published root exactly.'
-        : `Recompute mismatch: ${inclusion.reason ?? 'unknown'}`,
-      ...(inclusion.valid ? {} : { code: recomputeReasonCode(inclusion.reason) }),
-    });
-
-    // ── Steps 2 & 3: independent on-chain confirmation (delegated to #1349) ──
-    if (opts.chain && packet.tx_id != null && packet.block_height != null) {
-      independentNode = opts.chain.label;
-      const result = await confirmOnChain(packet, opts.chain);
-      steps.push(result.opReturnStep);
-      steps.push(result.blockStep);
-      if (result.blockHeight != null) blockHeight = result.blockHeight;
-      networkObservedTime = result.measuredObservedTime;
-
-      // ── Step 3b: timestamp honesty (§1.5) ──
-      // The header gave us an INDEPENDENTLY MEASURED time. Compare it against the
-      // time the packet CLAIMS. A forged/stale packet time must not be silently
-      // presented as node-observed — surface the divergence and fail the verdict.
-      const tsStep = buildTimestampStep(
-        packet.block_timestamp,
-        result.measuredObservedTime,
-        opts.chain.label,
-        result.headerMeasured,
-      );
-      steps.push(tsStep.step);
-      observedTimeAgrees = tsStep.agrees;
-    } else {
-      const reason = describeSkip(opts.chain != null, packet);
-      steps.push({
-        id: 'op_return',
-        label: OP_RETURN_LABEL,
-        status: 'skipped',
-        detail: reason,
-      });
-      steps.push({
-        id: 'block_confirm',
-        label: BLOCK_LABEL,
-        status: 'skipped',
-        detail: 'Skipped because the on-chain receipt was not checked.',
-      });
-      steps.push({
-        id: 'timestamp_honesty',
-        label: TIMESTAMP_LABEL,
-        status: 'skipped',
-        detail:
-          'Skipped because no independent header was measured; the packet-claimed time is shown as a claim only, never as a measured Network Observed Time.',
-      });
-    }
+    steps.push(buildRecomputeStep(packet));
+    // ── Steps 2, 3 & 3b: independent on-chain confirmation + §1.5 honesty ──
+    chainPhase = await runChainPhase(packet, opts.chain);
+    steps.push(...chainPhase.steps);
   }
 
   // ── Step 4: signature verification (explicitly requested only) ──
@@ -240,27 +162,159 @@ export async function verifyProof(
   // AND no failure of an explicitly-requested signature check.
   const ok = steps.every((s) => s.status !== 'fail') && signature.status !== 'failed';
 
-  const firstFailingStep = steps.find((s) => s.status === 'fail');
-  const reasonCode: ReasonCode | null = ok
-    ? null
-    : firstFailingStep?.code ??
-      (signature.status === 'failed' ? signature.failureCode ?? 'SIG_INVALID' : null);
-
   return {
     ok,
     fingerprint: packet.fingerprint,
     merkleRoot: packet.merkle_root,
     receiptId: packet.tx_id,
-    blockHeight,
-    networkObservedTime,
+    blockHeight: chainPhase.blockHeight,
+    networkObservedTime: chainPhase.networkObservedTime,
     packetClaimedTime: packet.block_timestamp,
-    observedTimeAgrees,
-    independentNode,
+    observedTimeAgrees: chainPhase.observedTimeAgrees,
+    independentNode: chainPhase.independentNode,
     steps,
     signature,
     serverClaimedVerified: typeof packet.verified === 'boolean' ? packet.verified : null,
-    reasonCode,
+    reasonCode: ok ? null : selectReasonCode(steps, signature),
   };
+}
+
+/** Build the step-0 schema gate: only version 1 (or absent = legacy) is understood. */
+function buildSchemaStep(schemaVersion: number | null): VerifyStep {
+  const supported = schemaVersion === null || schemaVersion === SUPPORTED_PROOF_SCHEMA_VERSION;
+  let detail: string;
+  if (!supported) {
+    detail = `Unsupported proof package schema version ${schemaVersion} — this verifier understands schema version ${SUPPORTED_PROOF_SCHEMA_VERSION} only and refuses to guess at an unknown format.`;
+  } else if (schemaVersion === null) {
+    detail = `No schema version declared; interpreted as version ${SUPPORTED_PROOF_SCHEMA_VERSION} (legacy package).`;
+  } else {
+    detail = `Proof package declares schema version ${schemaVersion}, which this verifier understands.`;
+  }
+  return {
+    id: 'schema',
+    label: 'Confirm the proof package schema version is understood',
+    status: supported ? 'pass' : 'fail',
+    detail,
+    ...(supported ? {} : { code: 'UNSUPPORTED_SCHEMA_VERSION' as const }),
+  };
+}
+
+/** Steps 1–3b, all explicitly skipped because the schema gate failed. */
+function schemaSkippedSteps(): VerifyStep[] {
+  const detail = 'Skipped because the proof package schema version is not understood.';
+  return [
+    { id: 'recompute', label: RECOMPUTE_LABEL, status: 'skipped', detail },
+    { id: 'op_return', label: OP_RETURN_LABEL, status: 'skipped', detail },
+    { id: 'block_confirm', label: BLOCK_LABEL, status: 'skipped', detail },
+    { id: 'timestamp_honesty', label: TIMESTAMP_LABEL, status: 'skipped', detail },
+  ];
+}
+
+/** Step 1: recompute the Merkle root via the canonical, shared routine. */
+function buildRecomputeStep(packet: ProofPacket): VerifyStep {
+  const inclusion = verifyMerkleInclusion(
+    packet.fingerprint,
+    packet.merkle_proof,
+    packet.merkle_root,
+    buildInclusionOpts(packet),
+  );
+  return {
+    id: 'recompute',
+    label: RECOMPUTE_LABEL,
+    status: inclusion.valid ? 'pass' : 'fail',
+    detail: inclusion.valid
+      ? 'The fingerprint, combined with its inclusion path, reproduces the published root exactly.'
+      : `Recompute mismatch: ${inclusion.reason ?? 'unknown'}`,
+    ...(inclusion.valid ? {} : { code: recomputeReasonCode(inclusion.reason) }),
+  };
+}
+
+/** The chain phase's contribution to the report (steps 2, 3 and 3b). */
+interface ChainPhaseResult {
+  steps: VerifyStep[];
+  independentNode: string | null;
+  blockHeight: number | null;
+  /**
+   * The reported Network Observed Time is ONLY ever the time MEASURED from the
+   * independent header (§1.5). It stays null until an on-chain header is read —
+   * the packet's self-claimed `block_timestamp` is NEVER promoted into it.
+   */
+  networkObservedTime: string | null;
+  observedTimeAgrees: boolean | null;
+}
+
+/** The chain phase when no on-chain confirmation ran at all. */
+function emptyChainPhase(packet: ProofPacket): ChainPhaseResult {
+  return {
+    steps: [],
+    independentNode: null,
+    blockHeight: packet.block_height,
+    networkObservedTime: null,
+    observedTimeAgrees: null,
+  };
+}
+
+/**
+ * Steps 2 & 3: independent on-chain confirmation (delegated to #1349), plus
+ * step 3b — timestamp honesty (§1.5): the header gives an INDEPENDENTLY
+ * MEASURED time, compared against the time the packet CLAIMS. A forged/stale
+ * packet time must not be silently presented as node-observed — the divergence
+ * is surfaced and fails the verdict.
+ */
+async function runChainPhase(
+  packet: ProofPacket,
+  chain: IndependentNode | undefined,
+): Promise<ChainPhaseResult> {
+  if (!chain || packet.tx_id == null || packet.block_height == null) {
+    return { ...emptyChainPhase(packet), steps: chainSkippedSteps(chain != null, packet) };
+  }
+
+  const result = await confirmOnChain(packet, chain);
+  const tsStep = buildTimestampStep(
+    packet.block_timestamp,
+    result.measuredObservedTime,
+    chain.label,
+    result.headerMeasured,
+  );
+  return {
+    steps: [result.opReturnStep, result.blockStep, tsStep.step],
+    independentNode: chain.label,
+    blockHeight: result.blockHeight ?? packet.block_height,
+    networkObservedTime: result.measuredObservedTime,
+    observedTimeAgrees: tsStep.agrees,
+  };
+}
+
+/** Steps 2–3b skipped: no node supplied, or the packet lacks a receipt binding. */
+function chainSkippedSteps(haveChain: boolean, packet: ProofPacket): VerifyStep[] {
+  return [
+    { id: 'op_return', label: OP_RETURN_LABEL, status: 'skipped', detail: describeSkip(haveChain, packet) },
+    {
+      id: 'block_confirm',
+      label: BLOCK_LABEL,
+      status: 'skipped',
+      detail: 'Skipped because the on-chain receipt was not checked.',
+    },
+    {
+      id: 'timestamp_honesty',
+      label: TIMESTAMP_LABEL,
+      status: 'skipped',
+      detail:
+        'Skipped because no independent header was measured; the packet-claimed time is shown as a claim only, never as a measured Network Observed Time.',
+    },
+  ];
+}
+
+/**
+ * The frozen machine reason for a NOT-VERIFIED verdict: the FIRST failing
+ * step's code, else the signature failure class when only the
+ * explicitly-requested signature check failed.
+ */
+function selectReasonCode(steps: VerifyStep[], signature: SignatureResult): ReasonCode | null {
+  const firstFailing = steps.find((s) => s.status === 'fail');
+  if (firstFailing?.code) return firstFailing.code;
+  if (signature.status === 'failed') return signature.failureCode ?? 'SIG_INVALID';
+  return null;
 }
 
 /**
