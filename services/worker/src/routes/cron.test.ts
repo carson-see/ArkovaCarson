@@ -417,9 +417,14 @@ const mockRunBackCatalogClassifier = vi.fn().mockResolvedValue({
   cursor: 'a07',
   softDeletedExcluded: 0,
 });
+const mockCreateDbLocker = vi.fn((..._args: unknown[]) => ({
+  acquire: vi.fn().mockResolvedValue(true),
+  release: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../jobs/proof-backcatalog-classifier.js', () => ({
   runBackCatalogClassifier: (...args: unknown[]) => mockRunBackCatalogClassifier(...args),
   createDbGucReader: vi.fn(() => ({ getProofEnforcementGuc: vi.fn() })),
+  createDbLocker: (...args: unknown[]) => mockCreateDbLocker(...args),
 }));
 
 // ─── Import after mocks ───
@@ -896,9 +901,13 @@ describe('cron routes', () => {
         ambiguous: 1,
       });
       expect(mockRunBackCatalogClassifier).toHaveBeenCalledTimes(1);
-      const [, options] = mockRunBackCatalogClassifier.mock.calls[0];
+      const [deps, options] = mockRunBackCatalogClassifier.mock.calls[0];
       expect(options.execute).toBe(false);
       expect(options.orgId).toBeUndefined();
+      // F1: the handler wires the real advisory locker so concurrent invocations
+      // cannot corrupt the shared checkpoint.
+      expect(mockCreateDbLocker).toHaveBeenCalled();
+      expect(deps.locker).toBeDefined();
     });
 
     it('forwards org scoping, execute, batching and restart options', async () => {

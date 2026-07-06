@@ -27,6 +27,8 @@ import {
   buildClassWriteSet,
   resolveExecuteGuard,
   createDbGucReader,
+  createDbLocker,
+  computeClassifierLockId,
   CLASSIFIER_READ_ONLY_COLUMNS,
   SCHEMA_GAP_0354,
   CHECKPOINT_JOB_TYPE,
@@ -35,6 +37,7 @@ import {
   __testing,
   type BackCatalogClass,
   type ClassifierLogger,
+  type ClassifierLocker,
   type GucReader,
   type GucState,
   type ScanAnchorRow,
@@ -65,6 +68,30 @@ function gucFixed(state: GucState): { guc: GucReader; calls: number[] } {
         calls.push(Date.now());
         return state;
       },
+    },
+  };
+}
+
+/**
+ * Fake advisory locker that records every acquire/release. `acquired` controls
+ * whether the first acquire succeeds (simulating a concurrent invocation
+ * already holding the lock when false).
+ */
+function makeLocker(acquired = true): ClassifierLocker & {
+  acquires: number[];
+  releases: number[];
+} {
+  const acquires: number[] = [];
+  const releases: number[] = [];
+  return {
+    acquires,
+    releases,
+    async acquire(lockId: number) {
+      acquires.push(lockId);
+      return acquired;
+    },
+    async release(lockId: number) {
+      releases.push(lockId);
     },
   };
 }
@@ -1074,5 +1101,248 @@ describe('clampMaxBatches (HTTP input cannot force an unbounded single-request r
     expect(summary.batchesProcessed).toBe(1);
     expect(summary.rowsScanned).toBe(50);
     expect(summary.runComplete).toBe(false);
+  });
+});
+
+// ── 12. F1: concurrency guard (advisory lock keyed on job+scope+mode) ────────
+//
+// Two concurrent /classify-proof-backcatalog invocations for the same
+// (scope,mode) both read-modify-write the ONE durable job_queue checkpoint row.
+// Without a mutex that is last-writer-wins: the second invocation's stale
+// cursor overwrites the first's → the census cursor REWINDS and the per-class
+// plan Carson gates the 2.97M labeling on is silently wrong. The advisory lock
+// (pg_try_advisory_lock via the try_advisory_lock RPC, keyed on
+// job+scope+mode) refuses the second invocation loudly. Mirrors
+// chain-maintenance.test.ts:146 "skips when advisory lock not acquired".
+
+describe('runBackCatalogClassifier: concurrency guard (F1)', () => {
+  it('refuses (skips loudly) a second concurrent invocation for the same (scope,mode) — no scan, no checkpoint mutation', async () => {
+    const db = makeFakeDb(mixedFixture());
+    const { guc } = gucFixed('off');
+    const locker = makeLocker(false); // lock already held by a concurrent run
+    const logger = makeLogger();
+
+    const summary = await runBackCatalogClassifier(
+      { client: db.client, guc, logger, locker },
+      {},
+    );
+
+    expect(summary.refused).toBe(true);
+    expect(summary.refusalReason).toBe('lock_not_acquired');
+    expect(summary.rowsScanned).toBe(0);
+    // The guard runs BEFORE any scan or checkpoint work.
+    expect(db.reads.filter((r) => r.table === 'anchors')).toHaveLength(0);
+    expect(db.checkpointRows).toHaveLength(0);
+    expect(db.nonCheckpointWrites()).toHaveLength(0);
+    // It tried exactly once and, having failed, did NOT release a lock it never held.
+    expect(locker.acquires).toHaveLength(1);
+    expect(locker.releases).toHaveLength(0);
+    // Loud refusal.
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('acquires then RELEASES the lock on normal completion', async () => {
+    const db = makeFakeDb(mixedFixture());
+    const { guc } = gucFixed('off');
+    const locker = makeLocker(true);
+
+    const summary = await runBackCatalogClassifier(
+      { client: db.client, guc, logger: makeLogger(), locker },
+      {},
+    );
+
+    expect(summary.refused).toBe(false);
+    expect(summary.runComplete).toBe(true);
+    expect(locker.acquires).toHaveLength(1);
+    expect(locker.releases).toHaveLength(1);
+    // Same key for acquire and release.
+    expect(locker.releases[0]).toBe(locker.acquires[0]);
+  });
+
+  it('RELEASES the lock even when the scan throws (finally — no leaked lock)', async () => {
+    const db = makeFakeDb(mixedFixture());
+    db.setFailScan(true); // scan read throws mid-run
+    const { guc } = gucFixed('off');
+    const locker = makeLocker(true);
+
+    await expect(
+      runBackCatalogClassifier({ client: db.client, guc, logger: makeLogger(), locker }, {}),
+    ).rejects.toThrow(/scan query failed/i);
+
+    // The error propagated, but the lock was still released.
+    expect(locker.acquires).toHaveLength(1);
+    expect(locker.releases).toHaveLength(1);
+    expect(locker.releases[0]).toBe(locker.acquires[0]);
+  });
+
+  it('the lock is keyed on (scope,mode): global-dry-run, org-dry-run and global-write all get distinct keys', async () => {
+    const globalDry = computeClassifierLockId('global', 'dry-run');
+    const orgDry = computeClassifierLockId(ORG_A, 'dry-run');
+    const globalWrite = computeClassifierLockId('global', 'write');
+
+    const keys = new Set([globalDry, orgDry, globalWrite]);
+    expect(keys.size).toBe(3); // all distinct
+    // Deterministic + stable (safe signed-bigint range for pg_try_advisory_lock).
+    expect(computeClassifierLockId('global', 'dry-run')).toBe(globalDry);
+    expect(Number.isSafeInteger(globalDry)).toBe(true);
+    expect(Number.isSafeInteger(orgDry)).toBe(true);
+    expect(Number.isSafeInteger(globalWrite)).toBe(true);
+  });
+
+  it('an org-scoped run and a global run do NOT block each other (different lock keys)', async () => {
+    const db = makeFakeDb(mixedFixture());
+    const { guc } = gucFixed('off');
+    // A single shared locker that only lets ONE key be held at a time would
+    // still permit both here because the keys differ. Model that: track held keys.
+    const held = new Set<number>();
+    const locker: ClassifierLocker = {
+      async acquire(lockId: number) {
+        if (held.has(lockId)) return false;
+        held.add(lockId);
+        return true;
+      },
+      async release(lockId: number) {
+        held.delete(lockId);
+      },
+    };
+    const deps = { client: db.client, guc, logger: makeLogger(), locker };
+
+    const g = await runBackCatalogClassifier(deps, {});
+    const o = await runBackCatalogClassifier(deps, { orgId: ORG_A });
+
+    expect(g.refused).toBe(false);
+    expect(o.refused).toBe(false);
+    expect(o.scope).toBe(ORG_A);
+  });
+
+  it('defaults to a permissive no-op locker when none is injected (back-compat with the no-op single-worker assumption)', async () => {
+    // No `locker` in deps → the run still proceeds (mirrors chain-maintenance's
+    // no-op acquireLock). The production cron path injects the real DB locker.
+    const db = makeFakeDb(mixedFixture());
+    const { guc } = gucFixed('off');
+
+    const summary = await runBackCatalogClassifier(
+      { client: db.client, guc, logger: makeLogger() },
+      {},
+    );
+
+    expect(summary.refused).toBe(false);
+    expect(summary.runComplete).toBe(true);
+  });
+});
+
+// ── 13. createDbLocker: RPC mapping ──────────────────────────────────────────
+
+describe('createDbLocker (try_advisory_lock / release_advisory_lock RPCs)', () => {
+  it('acquire returns true only when the RPC returns boolean true', async () => {
+    const calls: Array<{ name: string; args: unknown }> = [];
+    const client = {
+      rpc: vi.fn(async (name: string, args: unknown) => {
+        calls.push({ name, args });
+        return { data: name === 'try_advisory_lock' ? true : null, error: null };
+      }),
+    } as never;
+
+    const locker = createDbLocker(client);
+    expect(await locker.acquire(123)).toBe(true);
+    expect(calls[0]).toEqual({ name: 'try_advisory_lock', args: { lock_id: 123 } });
+  });
+
+  it('acquire returns false when the RPC returns false OR errors (fail-closed — do not run without the lock)', async () => {
+    const falseClient = {
+      rpc: vi.fn(async () => ({ data: false, error: null })),
+    } as never;
+    expect(await createDbLocker(falseClient).acquire(1)).toBe(false);
+
+    const errClient = {
+      rpc: vi.fn(async () => ({ data: null, error: { message: 'boom' } })),
+    } as never;
+    expect(await createDbLocker(errClient).acquire(1)).toBe(false);
+  });
+
+  it('release calls release_advisory_lock and never throws on RPC error (best-effort unlock)', async () => {
+    const errClient = {
+      rpc: vi.fn(async () => ({ data: null, error: { message: 'unlock on wrong backend' } })),
+    } as never;
+    await expect(createDbLocker(errClient).release(7)).resolves.toBeUndefined();
+  });
+});
+
+// ── 14. F3: already_complete_without_tx caveat counter ───────────────────────
+//
+// classifyAnchor returns already_complete on (root + path) BEFORE it checks for
+// a chain tx. A row that is root+path-complete yet has chain_tx_id IS NULL is a
+// self-contradiction (complete proof, no anchoring tx). We do NOT change the
+// class vocabulary — the row still counts as already_complete — but we surface
+// the contradiction count so the census is honest about it (§1.5).
+
+describe('runBackCatalogClassifier: already_complete_without_tx caveat (F3)', () => {
+  it('counts already_complete rows that have NO chain tx as a caveat, without changing the class', async () => {
+    const db = makeFakeDb({
+      anchors: [
+        // complete + has tx → already_complete, NOT counted in the caveat
+        anchor({ id: 'a01', fingerprint: FP(1), chain_tx_id: 'tx-1' }),
+        // complete but NO tx → already_complete AND caveat-counted
+        anchor({ id: 'a02', fingerprint: FP(2), chain_tx_id: null }),
+        anchor({ id: 'a03', fingerprint: FP(3), chain_tx_id: null }),
+      ],
+      proofs: [
+        { anchor_id: 'a01', merkle_root: FP(1), proof_path: [], batch_id: null },
+        { anchor_id: 'a02', merkle_root: FP(2), proof_path: [], batch_id: null },
+        { anchor_id: 'a03', merkle_root: FP(3), proof_path: [], batch_id: null },
+      ],
+    });
+    const { guc } = gucFixed('off');
+
+    const summary = await runBackCatalogClassifier(
+      { client: db.client, guc, logger: makeLogger() },
+      {},
+    );
+
+    // Class vocabulary unchanged: all three are already_complete, zero ambiguous.
+    expect(summary.plan.already_complete).toBe(3);
+    expect(summary.plan.ambiguous).toBe(0);
+    // The caveat surfaces the two contradictory rows.
+    expect(summary.alreadyCompleteWithoutTx).toBe(2);
+  });
+
+  it('is zero when every already_complete row has a chain tx (no contradiction)', async () => {
+    const db = makeFakeDb({
+      anchors: [anchor({ id: 'a01', fingerprint: FP(1), chain_tx_id: 'tx-1' })],
+      proofs: [{ anchor_id: 'a01', merkle_root: FP(1), proof_path: [], batch_id: null }],
+    });
+    const { guc } = gucFixed('off');
+
+    const summary = await runBackCatalogClassifier(
+      { client: db.client, guc, logger: makeLogger() },
+      {},
+    );
+
+    expect(summary.plan.already_complete).toBe(1);
+    expect(summary.alreadyCompleteWithoutTx).toBe(0);
+  });
+
+  it('the caveat count is cumulative across resumes (carried on the checkpoint)', async () => {
+    // 120 rows, all complete + NO tx → all caveat-counted, spanning 3 pages.
+    const anchors: FixtureAnchor[] = Array.from({ length: 120 }, (_, i) =>
+      anchor({ id: `a${String(i).padStart(3, '0')}`, fingerprint: FP(i + 1), chain_tx_id: null }),
+    );
+    const proofs: FixtureProof[] = anchors.map((a) => ({
+      anchor_id: a.id,
+      merkle_root: a.fingerprint,
+      proof_path: [],
+      batch_id: null,
+    }));
+    const db = makeFakeDb({ anchors, proofs });
+    const { guc } = gucFixed('off');
+    const deps = { client: db.client, guc, logger: makeLogger() };
+
+    const inv1 = await runBackCatalogClassifier(deps, { batchSize: 50, maxBatches: 1 });
+    expect(inv1.runComplete).toBe(false);
+    expect(inv1.alreadyCompleteWithoutTx).toBe(50);
+
+    const inv2 = await runBackCatalogClassifier(deps, { batchSize: 50, maxBatches: 5 });
+    expect(inv2.runComplete).toBe(true);
+    expect(inv2.alreadyCompleteWithoutTx).toBe(120); // cumulative, not reset
   });
 });

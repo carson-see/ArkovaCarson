@@ -37,7 +37,10 @@
  *     class label. It performs zero chain calls and zero reconstruction.
  *
  * ── Safety ───────────────────────────────────────────────────────────────────
- *   - DRY-RUN BY DEFAULT: emits the per-class plan, writes NOTHING.
+ *   - DRY-RUN BY DEFAULT: emits the per-class plan with zero writes to
+ *     anchors/anchor_proofs; durable checkpoint rows in job_queue (dry-run
+ *     included). "Zero writes" is scoped to the proof catalogue — the resumable
+ *     census still persists its own job_queue checkpoint state in both modes.
  *   - HARD EXECUTE GUARD: write mode needs BOTH options.execute===true AND
  *     PROOF_CLASSIFIER_CONFIRM='EXECUTE' (mirrors the SCRUM-2491 foundation).
  *   - GUC GUARD: checked at run start AND on every resume (every invocation).
@@ -147,6 +150,27 @@ export interface ClassifierLogger {
   debug: (obj: unknown, msg?: string) => void;
 }
 
+/**
+ * F1 concurrency guard. Two concurrent /classify-proof-backcatalog invocations
+ * for the same (scope,mode) both read-modify-write the ONE durable job_queue
+ * checkpoint row — last-writer-wins REWINDS the census cursor and silently
+ * corrupts the per-class plan Carson gates the 2.97M labeling on. This mutex
+ * refuses the second invocation.
+ *
+ * Backed by the existing `try_advisory_lock` / `release_advisory_lock` RPCs
+ * (baseline; service_role-granted). Injectable so unit tests exercise the
+ * refuse/release paths without a DB. Absent → a permissive no-op (matches
+ * chain-maintenance's single-worker no-op assumption); the production cron path
+ * injects the real DB locker.
+ */
+export interface ClassifierLocker {
+  /** Try to take the lock. false ⇒ another invocation holds it → skip loudly. */
+  acquire(lockId: number): Promise<boolean>;
+  /** Best-effort release (safe to call even if the unlock lands on a pooled
+   *  backend that never held it — pg_advisory_unlock returns false, no throw). */
+  release(lockId: number): Promise<void>;
+}
+
 /** The anchors columns the scan reads (nothing more). */
 export interface ScanAnchorRow {
   id: string;
@@ -183,6 +207,12 @@ export interface ClassifierDeps {
   client: SupabaseClient;
   guc: GucReader;
   logger: ClassifierLogger;
+  /**
+   * F1 concurrency guard. Absent → a permissive no-op locker (the census still
+   * runs — matches the single-worker no-op assumption). The production cron
+   * path passes `createDbLocker(db)`.
+   */
+  locker?: ClassifierLocker;
   /** Override for the env confirmation (testing). Defaults to typed config. */
   confirmToken?: string;
 }
@@ -215,9 +245,10 @@ export interface SchemaGap {
 
 export interface ClassifierSummary {
   mode: 'dry-run' | 'write';
-  /** True when the run refused (GUC on/unknown, ambiguity, or schema gap). */
+  /** True when the run refused (lock held, GUC on/unknown, ambiguity, or schema gap). */
   refused: boolean;
   refusalReason:
+    | 'lock_not_acquired'
     | 'guc_enforcement_on'
     | 'guc_state_unknown'
     | 'ambiguous_rows_present'
@@ -246,6 +277,14 @@ export interface ClassifierSummary {
    * 'unknown' when the best-effort count query failed.
    */
   softDeletedExcluded: number | 'unknown';
+  /**
+   * Honesty caveat (F3): count of rows classified `already_complete`
+   * (merkle_root + proof_path present) that nonetheless carry NO chain_tx_id.
+   * That is a self-contradiction — a complete proof with no anchoring tx. The
+   * class vocabulary is unchanged (these still count as already_complete); this
+   * surfaces the contradiction so the census stays honest (§1.5).
+   */
+  alreadyCompleteWithoutTx: number;
 }
 
 // ── Read-only enforcement ────────────────────────────────────────────────────
@@ -368,6 +407,85 @@ export function createDbGucReader(client: SupabaseClient): GucReader {
   };
 }
 
+// ── Advisory lock (F1 concurrency guard) ─────────────────────────────────────
+
+/**
+ * Deterministic 53-bit lock id for a (scope, mode) pair. FNV-1a over
+ * `${CHECKPOINT_JOB_TYPE}:${scope}:${mode}` folded into the JS safe-integer
+ * range (Number.MAX_SAFE_INTEGER, 2^53-1) — well inside Postgres bigint's
+ * signed 64-bit domain and safely representable as a JS number end-to-end (no
+ * precision loss when it round-trips through supabase-js / PostgREST as JSON).
+ * The single-bigint pg_try_advisory_lock namespace is DISTINCT from the
+ * two-int form (e.g. baseline's (8675309,1)), so there is no cross-lock
+ * collision; chain-maintenance's tiny LOCK_* integers won't collide with a
+ * 53-bit hash either.
+ */
+export function computeClassifierLockId(scope: string, mode: 'dry-run' | 'write'): number {
+  const key = `${CHECKPOINT_JOB_TYPE}:${scope}:${mode}`;
+  // 64-bit FNV-1a via BigInt, then reduce into the 53-bit safe-integer range.
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  const mask = 0xffffffffffffffffn;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= BigInt(key.charCodeAt(i));
+    hash = (hash * prime) & mask;
+  }
+  return Number(hash % 9007199254740991n); // % (2^53 - 1) → safe integer
+}
+
+/**
+ * Production advisory locker over the baseline `try_advisory_lock` /
+ * `release_advisory_lock` RPCs (SECURITY DEFINER, service_role-granted).
+ *
+ * HONEST SCOPE (§1.5): this is a SESSION-level advisory lock reached through
+ * PostgREST. It reliably refuses a concurrent invocation while the acquiring
+ * backend's session is live, which is the corruption vector we care about (two
+ * simultaneous invocations racing the ONE checkpoint row). It is NOT a
+ * distributed lock: under connection pooling the `release` RPC may land on a
+ * different pooled backend than `acquire` did, in which case the unlock is a
+ * no-op and the real lock clears when that backend's session is recycled. The
+ * durable job_queue checkpoint (monotonic cursor) remains the source of truth;
+ * the lock's job is only to keep two invocations from interleaving their
+ * read-modify-write of it. `acquire` fails CLOSED on any RPC error (we do not
+ * run the census without the lock).
+ */
+export function createDbLocker(client: SupabaseClient): ClassifierLocker {
+  const rpc = (
+    client as unknown as {
+      rpc(
+        name: string,
+        args: Record<string, unknown>,
+      ): Promise<{ data: unknown; error: { message?: string } | null }>;
+    }
+  ).rpc.bind(client);
+  return {
+    async acquire(lockId: number): Promise<boolean> {
+      const { data, error } = await rpc('try_advisory_lock', { lock_id: lockId });
+      if (error) return false; // fail-closed
+      return data === true;
+    },
+    async release(lockId: number): Promise<void> {
+      // Best-effort: never throw — a failed/no-op unlock must not mask the
+      // run's real outcome (and the lock self-heals on session recycle).
+      try {
+        await rpc('release_advisory_lock', { lock_id: lockId });
+      } catch {
+        /* swallow — best-effort unlock */
+      }
+    },
+  };
+}
+
+/** No-op locker used when none is injected (single-worker no-op assumption). */
+const NOOP_LOCKER: ClassifierLocker = {
+  async acquire() {
+    return true;
+  },
+  async release() {
+    /* no-op */
+  },
+};
+
 // ── Pure classification ──────────────────────────────────────────────────────
 
 function isFilled(value: unknown): boolean {
@@ -451,6 +569,8 @@ interface CheckpointPayload {
   cursor: string | null;
   rowsScanned: number;
   plan: PlanCounts;
+  /** F3 caveat: already_complete rows with no chain_tx_id (cumulative). */
+  alreadyCompleteWithoutTx: number;
   ambiguousReasons: Partial<Record<AmbiguityReason, number>>;
   ambiguousSamples: Array<{ anchor_id: string; reason: AmbiguityReason }>;
   startedAt: string;
@@ -723,6 +843,8 @@ function summaryFromCheckpoint(
     writesApplied: 0,
     cursor: cp.payload.cursor,
     softDeletedExcluded: base.softDeletedExcluded,
+    // Defensive default: a checkpoint written before F3 lacks this field.
+    alreadyCompleteWithoutTx: cp.payload.alreadyCompleteWithoutTx ?? 0,
     ...extra,
   };
 }
@@ -756,6 +878,7 @@ function buildEmptyRefusal(args: {
     writesApplied: 0,
     cursor: null,
     softDeletedExcluded: 'unknown',
+    alreadyCompleteWithoutTx: 0,
   };
 }
 
@@ -823,6 +946,12 @@ function classifyPageIntoCheckpoint(
     const { cls, reason } = classifyAnchor(a, proof, cardinality);
     cp.payload.rowsScanned += 1;
     cp.payload.plan[cls] += 1;
+    // F3 caveat: a complete proof (root+path) with no anchoring tx is a
+    // contradiction. Vocabulary is unchanged — it still counts as
+    // already_complete above — but the count is surfaced.
+    if (cls === 'already_complete' && !a.chain_tx_id) {
+      cp.payload.alreadyCompleteWithoutTx = (cp.payload.alreadyCompleteWithoutTx ?? 0) + 1;
+    }
     if (cls === 'ambiguous' && reason) {
       cp.payload.ambiguousReasons[reason] = (cp.payload.ambiguousReasons[reason] ?? 0) + 1;
       if (cp.payload.ambiguousSamples.length < AMBIGUOUS_SAMPLE_CAP) {
@@ -895,13 +1024,57 @@ export async function runBackCatalogClassifier(
   options: ClassifierOptions = {},
 ): Promise<ClassifierSummary> {
   const { logger } = deps;
-  const db = deps.client as unknown as UntypedDb;
   const confirmToken = deps.confirmToken ?? config.proofClassifierConfirm ?? undefined;
 
   const guard = resolveExecuteGuard(options.execute, confirmToken);
   const mode: 'dry-run' | 'write' = guard.permitted ? 'write' : 'dry-run';
   const executeRefusalReason = options.execute === true && !guard.permitted ? guard.reason : null;
   const scope = options.orgId ?? 'global';
+
+  // ── F1 concurrency guard: refuse a second concurrent invocation for the
+  //    same (scope,mode). Two concurrent runs share the ONE durable checkpoint
+  //    row → last-writer-wins rewinds the cursor. Acquire BEFORE any checkpoint
+  //    / scan work; release in `finally` on EVERY path (success or throw). ────
+  const locker = deps.locker ?? NOOP_LOCKER;
+  const lockId = computeClassifierLockId(scope, mode);
+  const acquired = await locker.acquire(lockId);
+  if (!acquired) {
+    logger.warn(
+      { scope, mode, lockId },
+      'proof-backcatalog-classifier: REFUSING — another invocation for this (scope,mode) holds the advisory lock; skipping to avoid checkpoint-cursor corruption',
+    );
+    return buildEmptyRefusal({
+      mode,
+      refusalReason: 'lock_not_acquired',
+      executeRefusalReason,
+      gucState: 'unknown',
+      scope,
+    });
+  }
+  try {
+    return await runCensusUnderLock(deps, options, { mode, executeRefusalReason, scope });
+  } finally {
+    await locker.release(lockId);
+  }
+}
+
+/**
+ * The census body, run while the (scope,mode) advisory lock is HELD. Extracted
+ * from `runBackCatalogClassifier` so the lock's acquire/finally-release wraps
+ * every return and throw path.
+ */
+async function runCensusUnderLock(
+  deps: ClassifierDeps,
+  options: ClassifierOptions,
+  pre: {
+    mode: 'dry-run' | 'write';
+    executeRefusalReason: string | null;
+    scope: string;
+  },
+): Promise<ClassifierSummary> {
+  const { logger } = deps;
+  const db = deps.client as unknown as UntypedDb;
+  const { mode, executeRefusalReason, scope } = pre;
   const batchSize = clampBatchSize(options.batchSize);
   const maxBatches = clampMaxBatches(options.maxBatches);
 
@@ -954,6 +1127,7 @@ export async function runBackCatalogClassifier(
       cursor: null,
       rowsScanned: 0,
       plan: emptyPlan(),
+      alreadyCompleteWithoutTx: 0,
       ambiguousReasons: {},
       ambiguousSamples: [],
       startedAt: now,

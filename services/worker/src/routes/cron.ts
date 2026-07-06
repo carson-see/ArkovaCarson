@@ -26,7 +26,7 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
-import { runBackCatalogClassifier, createDbGucReader } from '../jobs/proof-backcatalog-classifier.js';
+import { runBackCatalogClassifier, createDbGucReader, createDbLocker } from '../jobs/proof-backcatalog-classifier.js';
 import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
@@ -343,12 +343,19 @@ cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
 // authenticated POST is the only trigger that actually fires in prod).
 //
 // DRY-RUN BY DEFAULT: emits the per-class plan {direct_anchored,
-// batch_provable, already_complete, ambiguous} with zero writes. Write mode
-// needs execute=true AND PROOF_CLASSIFIER_CONFIRM=EXECUTE, halts when
-// ambiguous > 0, refuses while the 0340 GUC is on (or unconfirmable), and
-// today stops on the honest 0354 schema gap (no class column exists yet).
+// batch_provable, already_complete, ambiguous} with zero writes to the proof
+// catalogue (anchors/anchor_proofs); the resumable census still persists its
+// own durable job_queue checkpoint row in both modes. Write mode needs
+// execute=true AND PROOF_CLASSIFIER_CONFIRM=EXECUTE, halts when ambiguous > 0,
+// refuses while the 0340 GUC is on (or unconfirmable), and today stops on the
+// honest 0354 schema gap (no class column exists yet).
 // Resumable via a durable job_queue checkpoint — re-POST to continue a long
 // census; restart=true starts a fresh one.
+// F1 CONCURRENCY GUARD: createDbLocker gives the run a (scope,mode)-keyed
+// pg_try_advisory_lock so two concurrent POSTs can't interleave their
+// read-modify-write of the ONE checkpoint row (which would rewind the cursor +
+// silently corrupt the plan). The second concurrent run returns
+// refused/lock_not_acquired; the lock releases in a finally on every path.
 // Zod boundary validation (§1.1: every write path — the classifier persists a
 // job_queue checkpoint row even in dry-run). Booleans accept JSON booleans or
 // the query-string forms; numbers are coerced and BOUNDED here so a mistyped
@@ -395,6 +402,7 @@ cronRouter.post('/classify-proof-backcatalog', async (req, res) => {
       {
         client: db,
         guc: createDbGucReader(db),
+        locker: createDbLocker(db),
         logger,
         confirmToken: config.proofClassifierConfirm,
       },
