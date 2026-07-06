@@ -7,7 +7,7 @@ import {
   type CtdlStatusType,
   type CtdlType,
 } from './ctdl-type-map.js';
-import { assertValidCtdlJsonLd } from './ctdl-validation.js';
+import { MAX_CONTACT_HOURS, assertValidCtdlJsonLd } from './ctdl-validation.js';
 import { assertRealCtidOrAbsent, assertNoFabricatedCtidInJsonLd } from './ctdl-ctid-guard.js';
 // SCRUM-2377 (CE-06a) — claims-review gate (R-7): no Registry-listing /
 // legal-sufficiency overclaim can ship on the public projection.
@@ -281,10 +281,11 @@ function effectiveDate(anchor: CtdlAnchor): string {
   return anchor.issuedAt ?? anchor.chainTimestamp ?? anchor.createdAt;
 }
 
-// SCRUM-2375 (CE-04) — plausibility ceiling for a single credential's contact
-// hours. Anything above this is a data error (or a unit confusion), and an
+// SCRUM-2375 (CE-04) — the plausibility ceiling (MAX_CONTACT_HOURS) is defined
+// in ctdl-validation.ts and imported here, so the emission gate below and the
+// validator's independent second check share ONE constant (round-1 review
+// finding 4). Anything above it is a data error (or a unit confusion), and an
 // implausible public assertion is worse than an honest omission.
-const MAX_CONTACT_HOURS = 1000;
 
 /**
  * Single source of truth for "is this a contact-hour value we can honestly
@@ -446,7 +447,13 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
   }
   if (anchor.status === 'REVOKED') {
     if (anchor.revokedAt) jsonLd['ceterms:revocationDate'] = anchor.revokedAt;
-    const reason = cleanPublicString(anchor.revocationReason, 500);
+    // BUG-2026-07-06-002 / SCRUM-2630 (pre-existing): the reason is issuer
+    // free text and used to route through cleanPublicString (hygiene only), so
+    // a PII-bearing reason shipped verbatim on the public 410 projection. It
+    // now routes through cleanPublicFreeText — PII / learner-name / overclaim
+    // reasons are honestly OMITTED (410 + revocationDate stay; the final
+    // assertNoProhibitedClaimInJsonLd below remains the backstop).
+    const reason = cleanPublicFreeText(anchor.revocationReason, 500);
     if (reason) jsonLd['ceterms:revocationReason'] = reason;
   }
 
@@ -454,9 +461,10 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
   // ceterms:ctid key (now or in a future code path) can carry a fabricated value.
   assertNoFabricatedCtidInJsonLd(jsonLd);
   // CE-06a (SCRUM-2377, R-7): final claims-review pass — any string that still
-  // carries a Registry-listing / legal-sufficiency overclaim (e.g. a revocation
-  // reason, or a future code path that bypasses cleanPublicFreeText) fails the
-  // whole build closed. Extends the CE-01/CE-02 chain; never a published body.
+  // carries a Registry-listing / legal-sufficiency overclaim (e.g. a non-free-
+  // text field like publicId, or a future code path that bypasses
+  // cleanPublicFreeText) fails the whole build closed. Extends the CE-01/CE-02
+  // chain; never a published body.
   assertNoProhibitedClaimInJsonLd(jsonLd);
   assertValidCtdlJsonLd(jsonLd);
   return jsonLd;

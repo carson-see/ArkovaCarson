@@ -123,6 +123,59 @@ describe('buildCtdlJsonLd', () => {
     expect(jsonLd).not.toHaveProperty('ceterms:expirationDate');
   });
 
+  // BUG-2026-07-06-002 / SCRUM-2630 (pre-existing, round-1 review finding 5):
+  // revocationReason used to route through cleanPublicString (control-char/
+  // length hygiene only), so a PII-bearing issuer reason ("revoked — contact
+  // jane@example.com") shipped verbatim on the public 410 projection. It now
+  // routes through cleanPublicFreeText: PII / learner-name / overclaim-bearing
+  // reasons are honestly OMITTED while the 410 + ceterms:revocationDate stay.
+  describe('revocationReason PII gate (BUG-2026-07-06-002 / SCRUM-2630)', () => {
+    const revokedBase = {
+      ...baseAnchor,
+      status: 'REVOKED',
+      revokedAt: '2026-05-21T00:00:00.000Z',
+    };
+    const verify = { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' };
+
+    it('omits an email-bearing revocation reason while keeping the revocation date', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...revokedBase, revocationReason: 'Revoked — contact jane.student@example.edu for details.' },
+        verify,
+      );
+
+      expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
+      expect(jsonLd['ceterms:revocationDate']).toBe('2026-05-21T00:00:00.000Z');
+      expect(jsonLd).not.toHaveProperty('ceterms:revocationReason');
+      expect(JSON.stringify(jsonLd)).not.toContain('jane.student@example.edu');
+    });
+
+    it('omits a phone-bearing revocation reason', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...revokedBase, revocationReason: 'Call 555-867-5309 to dispute this revocation.' },
+        verify,
+      );
+      expect(jsonLd).not.toHaveProperty('ceterms:revocationReason');
+      expect(JSON.stringify(jsonLd)).not.toContain('555-867-5309');
+    });
+
+    it('omits a learner-name-bearing revocation reason', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...revokedBase, revocationReason: 'Credential issued to Jane Q Student in error.' },
+        verify,
+      );
+      expect(jsonLd).not.toHaveProperty('ceterms:revocationReason');
+      expect(JSON.stringify(jsonLd)).not.toContain('Jane Q Student');
+    });
+
+    it('still publishes a clean revocation reason', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...revokedBase, revocationReason: 'Issuer revoked the completion.' },
+        verify,
+      );
+      expect(jsonLd['ceterms:revocationReason']).toBe('Issuer revoked the completion.');
+    });
+  });
+
   it('suppresses PII-bearing free-text values before public CTDL serialization', () => {
     const jsonLd = buildCtdlJsonLd({
       ...baseAnchor,
@@ -530,14 +583,40 @@ describe('buildCtdlJsonLd', () => {
       expect(JSON.stringify(jsonLd)).not.toMatch(/registry-listed/i);
     });
 
-    it('fails closed (throws ProhibitedClaimError) when a revocation reason carries the overclaim', () => {
+    it('suppresses an overclaim-bearing revocation reason (honest omission; 410 fields kept)', () => {
+      // BUG-2026-07-06-002 / SCRUM-2630: revocationReason now routes through
+      // cleanPublicFreeText, so an overclaim is dropped at the source (same
+      // treatment as PII) instead of relying on the final assert; the assembled
+      // body ships without the reason. assertNoProhibitedClaimInJsonLd stays as
+      // the backstop for any future path that bypasses cleanPublicFreeText.
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          status: 'REVOKED',
+          revokedAt: '2026-05-21T00:00:00.000Z',
+          revocationReason: 'Superseded by the version listed in the Registry.',
+        },
+        verify,
+      );
+
+      expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
+      expect(jsonLd['ceterms:revocationDate']).toBe('2026-05-21T00:00:00.000Z');
+      expect(jsonLd).not.toHaveProperty('ceterms:revocationReason');
+      expect(JSON.stringify(jsonLd)).not.toMatch(/listed in the/i);
+    });
+
+    it('the final body assert still fails closed for a claim that bypasses per-field cleaning', () => {
+      // Backstop pin: the recursive assert itself still throws on an overclaim
+      // reaching an assembled body (exercised directly in ctdl-claims-guard.test.ts;
+      // here we pin that the serializer keeps calling it — see the source-scan
+      // lint test asserting assertNoProhibitedClaimInJsonLd stays wired).
       expect(() =>
         buildCtdlJsonLd(
           {
             ...baseAnchor,
-            status: 'REVOKED',
-            revokedAt: '2026-05-21T00:00:00.000Z',
-            revocationReason: 'Superseded by the version listed in the Registry.',
+            // publicId feeds ceterms:identifierValue verbatim (not free text),
+            // so it is the one field that can carry a claim to the final assert.
+            publicId: 'listed in the Registry',
           },
           verify,
         ),
