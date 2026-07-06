@@ -224,7 +224,56 @@ export interface ConnectorArtifactDrainResult {
 const MAX_ALERT_REASON_LEN = 200;
 function boundReason(reason: string): string {
   const oneLine = String(reason ?? '').replace(/\s+/g, ' ').trim();
-  return oneLine.length > MAX_ALERT_REASON_LEN ? `${oneLine.slice(0, MAX_ALERT_REASON_LEN)}…` : oneLine;
+  // Reserve one char for the ellipsis so the RETURNED string never exceeds
+  // MAX_ALERT_REASON_LEN (a naive slice-then-append would return LEN+1 chars).
+  return oneLine.length > MAX_ALERT_REASON_LEN
+    ? `${oneLine.slice(0, MAX_ALERT_REASON_LEN - 1)}…`
+    : oneLine;
+}
+
+/**
+ * F-4 (SCRUM-2625 / QUEUE-10): redact sensitive-shaped substrings from a
+ * `reason` string BEFORE it reaches any alert/log sink. §1.6A forbids
+ * fingerprints or PII in logs/Sentry/alerts, but every `reason` on this
+ * drain path can originate from a raw Postgres/RPC/Error `.message` — and
+ * Postgres constraint-violation text routinely echoes back the literal
+ * offending value (e.g. `Key (fingerprint)=(<64-hex>) already exists`).
+ * `boundReason`'s truncation alone does NOT remove sensitive content that
+ * fits within the 200-char cap, so this scrub runs FIRST and is structural,
+ * not length-based:
+ *
+ *   - 64-hex-char runs (document fingerprint shape, sha256) → `[fingerprint]`
+ *   - UUIDs (org_id / anchor_id / user_id / artifact_id shape)  → `[uuid]`
+ *   - email addresses                                           → `[email]`
+ *
+ * Known-safe coarse category strings (the literal string constants this
+ * module already emits, e.g. `insufficient_credits`) contain none of these
+ * shapes and pass through unchanged — this is a redaction pass, not a
+ * allowlist, so it never needs updating when a new coarse category is added.
+ */
+const FINGERPRINT_RE = /\b[0-9a-f]{64}\b/gi;
+const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const EMAIL_RE = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/gi;
+
+export function scrubReason(reason: string): string {
+  const redacted = String(reason ?? '')
+    .replace(FINGERPRINT_RE, '[fingerprint]')
+    .replace(UUID_RE, '[uuid]')
+    .replace(EMAIL_RE, '[email]');
+  return boundReason(redacted);
+}
+
+/**
+ * Wrap ANY `emitAlert` sink (default or caller-injected, e.g. a production
+ * monitoring override) so `scrubReason` runs centrally, once, regardless of
+ * which call site built the `reason` string. This is deliberately NOT left to
+ * individual call sites to remember — a future call site that forgets to
+ * scrub would reopen the §1.6A leak this fix closes. Every one of the three
+ * places this module resolves an `emitAlert` dependency (`getDeps` for the
+ * per-org drain, the reaper, and the cron entrypoint) routes through this.
+ */
+function wrapEmitAlert(sink: (alert: ConnectorArtifactAlert) => void): (alert: ConnectorArtifactAlert) => void {
+  return (alert: ConnectorArtifactAlert) => sink({ ...alert, reason: scrubReason(alert.reason) });
 }
 
 function defaultEmitAlert(alert: ConnectorArtifactAlert): void {
@@ -235,7 +284,7 @@ function defaultEmitAlert(alert: ConnectorArtifactAlert): void {
       extra: {
         org_id: alert.orgId,
         artifact_id: alert.artifactId,
-        reason: boundReason(alert.reason),
+        reason: scrubReason(alert.reason),
       },
     });
   } catch {
@@ -463,7 +512,7 @@ function getDeps(injected: Partial<ConnectorArtifactDrainDeps>): ConnectorArtifa
     readAnchorStatus: injected.readAnchorStatus ?? ((args) => defaultReadAnchorStatus(args, { db })),
     listMaterializedArtifacts:
       injected.listMaterializedArtifacts ?? ((args) => defaultListMaterializedArtifacts(args, { db })),
-    emitAlert: injected.emitAlert ?? defaultEmitAlert,
+    emitAlert: wrapEmitAlert(injected.emitAlert ?? defaultEmitAlert),
     limit: injected.limit,
   };
 }
@@ -943,7 +992,7 @@ export async function reapStaleInFlightArtifacts(
 ): Promise<ReapStaleResult> {
   const db = injected.db ?? (defaultDb as unknown as DrainDb);
   const logger = injected.logger ?? (defaultLogger as unknown as DrainLogger);
-  const emitAlert = injected.emitAlert ?? defaultEmitAlert;
+  const emitAlert = wrapEmitAlert(injected.emitAlert ?? defaultEmitAlert);
   const cutoff = new Date(Date.now() - (injected.thresholdMs ?? STALE_INFLIGHT_MS)).toISOString();
 
   const { data, error } = await db
@@ -1127,7 +1176,7 @@ export async function runConnectorArtifactDrain(
   }
 
   const db = defaultDb as unknown as DrainDb;
-  const emitAlert = injected.emitAlert ?? defaultEmitAlert;
+  const emitAlert = wrapEmitAlert(injected.emitAlert ?? defaultEmitAlert);
   const listDrainableOrgIds =
     injected.listDrainableOrgIds ?? (() => defaultListDrainableOrgIds(db, { logger, emitAlert }));
   const drainForOrg = injected.drainForOrg ?? ((orgId: string) => drainConnectorArtifactsForOrg(orgId));

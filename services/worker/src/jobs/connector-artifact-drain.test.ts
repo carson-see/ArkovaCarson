@@ -29,6 +29,7 @@ const {
   runConnectorArtifactDrain,
   reapStaleInFlightArtifacts,
   defaultListDrainableOrgIds,
+  scrubReason,
 } = await import('./connector-artifact-drain.js');
 type ConnectorArtifactDrainDeps =
   import('./connector-artifact-drain.js').ConnectorArtifactDrainDeps;
@@ -777,6 +778,81 @@ describe('reapStaleInFlightArtifacts (F-1 stuck-row reaper)', () => {
     expect(result.reaped).toBe(0);
     expect(emitAlert).not.toHaveBeenCalled();
   });
+
+  // ── SCRUM-2625 / QUEUE-10 F-1: worker-kill simulation + credit-safety ───────
+  it('worker-kill simulation: a row stuck in processing is recovered by the reaper AND the next drain pass re-claims + completes it exactly once, with exactly ONE debit call', async () => {
+    // Simulate a crash between claim (pending → processing) and the
+    // processing → materialized transition: the row is left in 'processing'
+    // with a stale updated_at, and — because materialize/debit run strictly
+    // AFTER that transition in the real pipeline — NO debit has happened yet
+    // for this row. This is the structural reason the reaper is safe to
+    // re-drive: 'processing' rows are always pre-debit.
+    const STALE = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1h ago
+    const emitAlert = vi.fn();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const reaperRows = [{ id: ART_1, org_id: ORG_A, status: 'processing', updated_at: STALE }];
+    const { db: reaperDb } = (() => {
+      const calls: { patch?: Record<string, unknown>; eqStatus?: string; ltArg?: string } = {};
+      const builder: Record<string, unknown> = {
+        update(patch: Record<string, unknown>) { calls.patch = patch; return builder; },
+        eq(col: string, val: string) { if (col === 'status') calls.eqStatus = val; return builder; },
+        lt(_c: string, val: string) { calls.ltArg = val; return builder; },
+        select() { return builder; },
+        then(resolve: (v: { data: unknown; error: unknown }) => void) {
+          const matched = reaperRows.filter((r) => r.status === calls.eqStatus && r.updated_at < (calls.ltArg ?? ''));
+          for (const r of matched) r.status = 'queued'; // model the actual re-queue write
+          return resolve({ data: matched.map((r) => ({ id: r.id, org_id: r.org_id })), error: null });
+        },
+      };
+      return { db: { from: () => builder } as unknown as ConnectorArtifactDrainDeps['db'] };
+    })();
+
+    // 1) Reaper runs first (as it does at the head of every cron pass) and
+    // recovers the stranded row: no lost row, re-queued to 'queued'.
+    const reapResult = await reapStaleInFlightArtifacts({ db: reaperDb, logger, emitAlert, thresholdMs: 15 * 60 * 1000 });
+    expect(reapResult.reaped).toBe(1);
+    expect(reaperRows[0].status).toBe('queued'); // row is NOT lost — recovered to a drainable status
+
+    // 2) The next drain pass re-claims the now-'queued' row and drives it
+    // through to completion. Assert the debit (the ONLY credit-charging call
+    // in this pipeline) fires EXACTLY ONCE — the worker-kill + reap cycle must
+    // never cause a double-charge, because the crash happened pre-debit.
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A, status: 'queued' })]);
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(result.claimed).toBe(1);
+    expect(result.anchored).toBe(1);
+    expect(h.debit).toHaveBeenCalledTimes(1); // exactly-once charge — no double-debit from the recovery
+    expect(h.rows[0].status).toBe('anchored');
+  });
+
+  it('worker-kill simulation: reaper never touches a materialized (already-debited) row — asserting the credit_deduction_id / anchor_id interaction is untouched', async () => {
+    // A row that crashed AFTER the debit (now 'materialized', already charged,
+    // anchor BROADCASTING) must be structurally excluded from the reaper's
+    // blast radius — re-queuing it would force debit_and_enqueue_anchor to be
+    // called a second time on an anchor that is no longer PENDING (rejected by
+    // the RPC's p_expected_status guard, but the SAFEST possible fix is to never
+    // attempt it). This test pins that the reaper's own DB update never selects
+    // a materialized row, so no debit path is ever re-entered for it.
+    const STALE = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const emitAlert = vi.fn();
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const rows = [
+      {
+        id: ART_2,
+        org_id: ORG_A,
+        status: 'materialized', // already debited: has an anchor_id + credit_deduction_id in prod
+        updated_at: STALE,
+      },
+    ];
+    const { db, calls } = makeReaperDb(rows);
+    const result = await reapStaleInFlightArtifacts({ db, logger, emitAlert, thresholdMs: 15 * 60 * 1000 });
+
+    expect(result.reaped).toBe(0); // NOT reaped — no lost row here, but also no re-debit risk
+    expect(calls.eqStatus).toBe('processing'); // the reaper's guard column is hard-pinned to 'processing'
+    expect(rows[0].status).toBe('materialized'); // untouched: still charged, still in flight
+  });
 });
 
 describe('defaultListDrainableOrgIds (QUEUE-09 fair server-side org enum)', () => {
@@ -885,5 +961,69 @@ describe('defaultListDrainableOrgIds (QUEUE-09 fair server-side org enum)', () =
     const args = calls[0].args as { p_limit: number };
     expect(args.p_limit).toBeGreaterThan(0);
     expect(args.p_limit).toBeLessThanOrEqual(1000);
+  });
+});
+
+describe('scrubReason (SCRUM-2625 / QUEUE-10 F-4 reason-scrub)', () => {
+  // CLAUDE.md §1.6A: no fingerprint or PII may leak into logs/Sentry/alerts.
+  // `reason` strings on this drain path originate from raw DB/RPC/Error
+  // `.message` values (Postgres error text can echo back literal query
+  // parameters, e.g. a duplicate-key violation quoting the offending column
+  // value). Truncation alone (the pre-existing `boundReason`) does not
+  // remove sensitive content that fits within the length cap — it must be
+  // categorized/redacted, not merely shortened.
+
+  it('a raw DB error message containing a fingerprint-looking 64-hex sha256 string does NOT appear verbatim in the scrubbed reason', () => {
+    const fakeFingerprint = 'f'.repeat(64); // fingerprint-shaped (CLAUDE.md §1.6/§1.6A protected)
+    const raw = `duplicate key value violates unique constraint "anchors_fingerprint_key" Key (fingerprint)=(${fakeFingerprint}) already exists.`;
+    const scrubbed = scrubReason(raw);
+    expect(scrubbed).not.toContain(fakeFingerprint);
+    expect(scrubbed.length).toBeLessThanOrEqual(200);
+  });
+
+  it('a raw DB error message containing an email address does NOT appear verbatim in the scrubbed reason', () => {
+    const raw = 'insert failed: user carson@arkova.io violates check constraint "org_members_email_check"';
+    const scrubbed = scrubReason(raw);
+    expect(scrubbed).not.toContain('carson@arkova.io');
+  });
+
+  it('a raw DB error message containing a UUID (potential org_id/anchor_id/user_id leak) does NOT appear verbatim', () => {
+    const raw = `update failed for row ${ANCHOR_1}: foreign key violation referencing org ${ORG_A}`;
+    const scrubbed = scrubReason(raw);
+    expect(scrubbed).not.toContain(ANCHOR_1);
+    expect(scrubbed).not.toContain(ORG_A);
+  });
+
+  it('a known-safe coarse category string (e.g. "insufficient_credits") passes through unchanged', () => {
+    expect(scrubReason('insufficient_credits')).toBe('insufficient_credits');
+    expect(scrubReason('anchor_not_in_expected_status')).toBe('anchor_not_in_expected_status');
+    expect(scrubReason('post_debit_error_left_materialized')).toBe('post_debit_error_left_materialized');
+    expect(scrubReason('stale_inflight_requeued')).toBe('stale_inflight_requeued');
+  });
+
+  it('still bounds length after scrubbing (defense in depth alongside redaction)', () => {
+    const raw = `boom ${'x'.repeat(500)} ${'a'.repeat(64)}`;
+    const scrubbed = scrubReason(raw);
+    expect(scrubbed.length).toBeLessThanOrEqual(200);
+  });
+
+  it('defaultEmitAlert-facing path: emitAlert receives a scrubbed reason, never the raw injected DB message, for a row-scoped failure', async () => {
+    // End-to-end through the real drain: inject a debit failure whose `.error`
+    // is a raw-shaped string carrying a fake fingerprint, and assert the alert
+    // payload's `reason` field never contains it verbatim.
+    const fakeFingerprint = 'e'.repeat(64);
+    const debit = vi.fn(async () => ({
+      success: false,
+      error: `debit_and_enqueue_anchor failed: constraint violation on fingerprint ${fakeFingerprint}`,
+    }));
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { debitAndEnqueueAnchor: debit });
+
+    await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(h.alert).toHaveBeenCalled();
+    const alertedReasons = h.alert.mock.calls.map((c: unknown[]) => (c[0] as { reason?: string }).reason ?? '');
+    for (const reason of alertedReasons) {
+      expect(reason).not.toContain(fakeFingerprint);
+    }
   });
 });
