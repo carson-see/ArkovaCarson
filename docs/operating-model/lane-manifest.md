@@ -85,7 +85,7 @@ One **P0 per lane per sprint**; one **T3 soak at a time per shared rig** (lifted
 
 ## Reconciliation flags (from S0-E2 read; Carson-gated to action)
 
-1. **PO Roadmap (Confluence 27591934) is SUPERSEDED** by 82444290 → banner it + re-point CLAUDE.md §5 and the `project_release_structure` memory.
+1. **RESOLVED:** PO Roadmap (Confluence 27591934) is superseded by 82444290; `CLAUDE.md` §5 already points agents to 82444290 as canonical.
 2. **SDK-PY overlaps Done SCRUM-1112** (arkova-py) → file as GA/proof-helpers, not a rebuild.
 3. **VC-W3C front-runs OPEN spike SCRUM-2296** → file as follow-on, or soften the roadmap's "DECIDED: build W3C VC."
 4. **Possible-false-Done SCRUM-1044 & 1049** → child-rollup + resolver-changelog check before trusting Done (reporter=carson on both).
