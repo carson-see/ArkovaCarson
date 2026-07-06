@@ -24,7 +24,6 @@ import { getComplianceControlIds } from '../utils/complianceMapping.js';
 import { config } from '../config.js';
 import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
 import { flagRegistry } from '../middleware/flagRegistry.js';
-import { isRetryableError } from '../chain/utxo-provider.js';
 import type { ChainClient, ChainReceipt, PreparedChainTx } from '../chain/types.js';
 import type { Json } from '../types/database.types.js';
 
@@ -733,6 +732,39 @@ async function deleteIntentProofRows(anchorIds: string[], txId: string): Promise
   }
 }
 
+/**
+ * Positively-identified node/mempool REJECTIONS of a broadcast — the only case
+ * where the signed tx provably never relayed, so the batch intent can be safely
+ * unwound (refund + revert to PENDING). Matched against Bitcoin Core / mempool
+ * reject reasons only.
+ */
+const BROADCAST_REJECT_PATTERNS = [
+  'min relay fee not met', 'mempool min fee not met', 'insufficient fee', 'fee too low',
+  'dust', 'bad-txns', 'non-final', 'non-mandatory-script-verify', 'scriptpubkey',
+  'txn-mempool-conflict', 'missing-inputs', 'missingorspent', 'tx-size',
+  'too-long-mempool-chain', 'absurdly-high-fee', 'min-relay',
+];
+
+/**
+ * True ONLY when `error` is a definitive node rejection of the signed tx.
+ *
+ * S3-P0 review HIGH: the unwind (refund + delete intent + revert PENDING) must
+ * fire ONLY here. Everything else — auth (401), quota (402), 4xx/5xx, network
+ * timeouts, or a post-broadcast bookkeeping error that surfaced AFTER the tx was
+ * accepted — is UNKNOWN-outcome: the tx MAY be live, so we DEFER (leave rows
+ * BROADCASTING+intent for reconcile) rather than risk a second, different
+ * mainnet broadcast. "already known" / "in mempool" / "in block chain" mean the
+ * tx IS live — success, never a reject.
+ */
+function isDefinitiveBroadcastReject(error: unknown): boolean {
+  const msg = errMessage(error).toLowerCase();
+  if (!msg) return false;
+  if (msg.includes('already') || msg.includes('in mempool') || msg.includes('in block chain')) {
+    return false;
+  }
+  return BROADCAST_REJECT_PATTERNS.some((pattern) => msg.includes(pattern));
+}
+
 /** Revert intent-marked rows to PENDING, clearing chain_tx_id (definitive reject ONLY). */
 async function revertIntentAnchors(anchorIds: string[]): Promise<void> {
   for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
@@ -934,8 +966,10 @@ async function reconcileOneIntent(
       result.rebroadcast += 1;
       logger.info({ txId, count: ids.length }, 'Intent reconcile: rebroadcast the SAME signed bytes');
     } catch (err) {
-      if (isRetryableError(err)) {
-        logger.warn({ error: errMessage(err), txId }, 'Intent reconcile: transient rebroadcast failure — deferring');
+      if (!isDefinitiveBroadcastReject(err)) {
+        // Not a definitive node reject (transient, OR auth/quota/network on a
+        // possibly-live tx) — DEFER, never revert (S3-P0 review HIGH).
+        logger.warn({ error: errMessage(err), txId }, 'Intent reconcile: rebroadcast outcome unknown (not a definitive reject) — deferring');
         result.deferred += 1;
         return;
       }
@@ -1252,14 +1286,16 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     try {
       receipt = await chainClient.broadcastSignedTx!(prepared.txHex);
     } catch (error) {
-      if (isRetryableError(error)) {
-        // UNKNOWN OUTCOME — the tx may or may not have reached the network.
-        // The intent is durable: leave rows BROADCASTING+chain_tx_id and let
-        // reconcileBroadcastIntents finish next tick. NEVER revert here — a
-        // revert would re-claim and broadcast a SECOND, DIFFERENT tx.
+      if (!isDefinitiveBroadcastReject(error)) {
+        // UNKNOWN OUTCOME — the tx may or may not have reached the network
+        // (transient failure, OR a provider-level auth/quota/network error, OR a
+        // post-broadcast bookkeeping throw). The intent is durable: leave rows
+        // BROADCASTING+chain_tx_id and let reconcileBroadcastIntents finish next
+        // tick. NEVER revert here — a revert would re-claim and broadcast a
+        // SECOND, DIFFERENT tx (S3-P0 review HIGH — defer by default).
         logger.warn(
           { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
-          'Batch broadcast outcome unknown (transient failure) — intent persisted; reconcile will finalize or rebroadcast the SAME bytes next tick',
+          'Batch broadcast outcome unknown (not a definitive reject) — intent persisted; reconcile will finalize or rebroadcast the SAME bytes next tick',
         );
         return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
       }

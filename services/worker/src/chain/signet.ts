@@ -843,12 +843,25 @@ export class BitcoinChainClient implements ChainClient {
 
     logger.info({ txId: finalTxId }, 'Signed transaction broadcast');
 
-    // Current block height for the receipt (broadcast-time observation).
-    const blockchainInfo = await this.provider.getBlockchainInfo();
+    // Current block height for the receipt (broadcast-time observation). This
+    // is bookkeeping that runs AFTER a successful broadcastTx — it must NEVER
+    // propagate a throw, or a post-broadcast provider hiccup (auth/quota/network)
+    // would surface as a broadcast failure and unwind a LIVE tx into a second
+    // mainnet broadcast (S3-P0 review HIGH). Fall back to height 0; the real
+    // height is recovered at confirmation time.
+    let blockHeight = 0;
+    try {
+      blockHeight = (await this.provider.getBlockchainInfo()).blocks;
+    } catch (err) {
+      logger.warn(
+        { error: err instanceof Error ? err.message : String(err), txId: finalTxId },
+        'Post-broadcast block-height lookup failed — recording receipt with height 0 (broadcast already succeeded)',
+      );
+    }
 
     return {
       receiptId: finalTxId,
-      blockHeight: blockchainInfo.blocks,
+      blockHeight,
       blockTimestamp: new Date().toISOString(),
       confirmations: 0, // Just broadcast, not yet confirmed
       rawTxHex: txHex, // NET-4: Store for rebroadcast, RBF, and audit
