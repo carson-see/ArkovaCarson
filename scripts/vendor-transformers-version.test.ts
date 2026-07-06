@@ -1,8 +1,9 @@
 /**
  * Vendored transformers.js ↔ integrity-lock VERSION-SKEW guard (SCRUM-2503 / WEBEXT-CSP).
  *
- * §1.6: the vendored browser bundle at `public/vendor/transformers.web.min.js`
- * is what actually resolves the on-device NER model files at runtime. The
+ * §1.6: the vendored browser bundle at `public/vendor/transformers.bundle.min.js`
+ * (WEBEXT-01 F-1 fix — see VENDOR_BUNDLE below) is what actually resolves the
+ * on-device NER model files at runtime. The
  * SHA-256 integrity lockfile (scripts/ner-weights.lock.json `transformersJsVersion`)
  * was built for the EXACT file set THAT transformers.js version requests for
  * `Xenova/bert-base-NER` in q8. If the vendored bundle and the lock drift — e.g.
