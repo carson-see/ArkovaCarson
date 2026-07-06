@@ -26,6 +26,7 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
+import { runBackCatalogClassifier, createDbGucReader } from '../jobs/proof-backcatalog-classifier.js';
 import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
@@ -329,6 +330,63 @@ cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Confirmation-proof backfill failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// S3-A (PROOF-BACKCATALOG): back-catalogue proof-completeness CLASSIFIER.
+//
+// MANUAL TRIGGER ONLY — deliberately NOT scheduled (no Cloud Scheduler
+// binding, no in-process backup): the census is an operator-driven run, and
+// any future write mode is Carson-gated. Follows the Cloud Scheduler → HTTP
+// pattern anyway (node-cron is dormant under Cloud Run CPU throttling, so an
+// authenticated POST is the only trigger that actually fires in prod).
+//
+// DRY-RUN BY DEFAULT: emits the per-class plan {direct_anchored,
+// batch_provable, already_complete, ambiguous} with zero writes. Write mode
+// needs execute=true AND PROOF_CLASSIFIER_CONFIRM=EXECUTE, halts when
+// ambiguous > 0, refuses while the 0340 GUC is on (or unconfirmable), and
+// today stops on the honest 0354 schema gap (no class column exists yet).
+// Resumable via a durable job_queue checkpoint — re-POST to continue a long
+// census; restart=true starts a fresh one.
+cronRouter.post('/classify-proof-backcatalog', async (req, res) => {
+  try {
+    const rawOrgId = req.query.org_id ?? req.body?.org_id;
+    let orgId: string | undefined;
+    if (rawOrgId !== undefined) {
+      const parsedOrgId = z.string().uuid().safeParse(String(rawOrgId).trim());
+      if (!parsedOrgId.success) {
+        res.status(400).json({ error: 'Invalid org_id' });
+        return;
+      }
+      orgId = parsedOrgId.data;
+    }
+
+    const flag = (v: unknown) => v === true || v === 'true' || v === '1';
+    const int = (v: unknown) => {
+      if (v === undefined || v === null) return undefined;
+      const n = Number.parseInt(String(v), 10);
+      return Number.isFinite(n) ? n : undefined;
+    };
+
+    const result = await runBackCatalogClassifier(
+      {
+        client: db,
+        guc: createDbGucReader(db),
+        logger,
+        confirmToken: config.proofClassifierConfirm,
+      },
+      {
+        execute: flag(req.query.execute ?? req.body?.execute),
+        orgId,
+        batchSize: int(req.query.batch_size ?? req.body?.batch_size),
+        maxBatches: int(req.query.max_batches ?? req.body?.max_batches),
+        restart: flag(req.query.restart ?? req.body?.restart),
+      },
+    );
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Back-catalogue proof classifier failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

@@ -396,6 +396,32 @@ vi.mock('../jobs/confirmation-proof-backfill.js', () => ({
   runConfirmationProofBackfill: (...args: unknown[]) => mockRunConfirmationProofBackfill(...args),
 }));
 
+// S3-A (PROOF-BACKCATALOG): back-catalogue proof-completeness classifier.
+// Manual-trigger endpoint (authenticated POST), dry-run census by default.
+const mockRunBackCatalogClassifier = vi.fn().mockResolvedValue({
+  mode: 'dry-run',
+  refused: false,
+  refusalReason: null,
+  executeRefusalReason: null,
+  schemaGap: null,
+  gucState: 'unknown',
+  scope: 'global',
+  runComplete: true,
+  resumed: false,
+  batchesProcessed: 1,
+  rowsScanned: 7,
+  plan: { direct_anchored: 4, batch_provable: 1, already_complete: 1, ambiguous: 1 },
+  ambiguousReasons: { secured_without_tx: 1 },
+  ambiguousSamples: [{ anchor_id: 'a07', reason: 'secured_without_tx' }],
+  writesApplied: 0,
+  cursor: 'a07',
+  softDeletedExcluded: 0,
+});
+vi.mock('../jobs/proof-backcatalog-classifier.js', () => ({
+  runBackCatalogClassifier: (...args: unknown[]) => mockRunBackCatalogClassifier(...args),
+  createDbGucReader: vi.fn(() => ({ getProofEnforcementGuc: vi.fn() })),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -849,6 +875,61 @@ describe('cron routes', () => {
       mockRunConfirmationProofBackfill.mockRejectedValueOnce(new Error('rpc down'));
       const app = createApp();
       const res = await request(app).post('/cron/populate-confirmation-proofs');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+  });
+
+  // S3-A (PROOF-BACKCATALOG): manual-trigger back-catalogue classifier.
+  // Same cronAuth + JSON-result / 500-on-error shape as the other proof jobs.
+  // NOT scheduled — an operator (or a Carson-gated runbook) POSTs it manually.
+  describe('POST /classify-proof-backcatalog', () => {
+    it('runs the dry-run census by default and returns the per-class plan', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/classify-proof-backcatalog');
+      expect(res.status).toBe(200);
+      expect(res.body.mode).toBe('dry-run');
+      expect(res.body.plan).toEqual({
+        direct_anchored: 4,
+        batch_provable: 1,
+        already_complete: 1,
+        ambiguous: 1,
+      });
+      expect(mockRunBackCatalogClassifier).toHaveBeenCalledTimes(1);
+      const [, options] = mockRunBackCatalogClassifier.mock.calls[0];
+      expect(options.execute).toBe(false);
+      expect(options.orgId).toBeUndefined();
+    });
+
+    it('forwards org scoping, execute, batching and restart options', async () => {
+      const app = createApp();
+      const orgId = '33333333-3333-4333-8333-333333333333';
+      const res = await request(app)
+        .post(`/cron/classify-proof-backcatalog?org_id=${orgId}&execute=true&restart=true`)
+        .send({ batch_size: 200, max_batches: 5 });
+      expect(res.status).toBe(200);
+      const [, options] = mockRunBackCatalogClassifier.mock.calls[0];
+      expect(options).toMatchObject({
+        orgId,
+        execute: true,
+        restart: true,
+        batchSize: 200,
+        maxBatches: 5,
+      });
+    });
+
+    it('rejects an invalid org_id before running anything', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/classify-proof-backcatalog?org_id=not-a-uuid');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid org_id');
+      expect(mockRunBackCatalogClassifier).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 on classifier failure (fail-closed)', async () => {
+      mockRunBackCatalogClassifier.mockRejectedValueOnce(new Error('scan query failed'));
+      const app = createApp();
+      const res = await request(app).post('/cron/classify-proof-backcatalog');
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Processing failed');
     });

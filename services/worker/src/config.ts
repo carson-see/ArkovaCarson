@@ -400,6 +400,17 @@ const ConfigSchema = z.object({
    * read (SCRUM-1258 — typed, not dynamic).
    */
   proofBackfillConfirm: z.string().optional(),
+
+  // Back-catalogue proof-completeness classifier (S3-A / PROOF-BACKCATALOG)
+  /**
+   * PROOF_CLASSIFIER_CONFIRM — confirmation token for the back-catalogue
+   * classifier (`runBackCatalogClassifier`). The job is DRY-RUN by default
+   * (census only, zero writes); write mode additionally requires this token
+   * to equal the literal `EXECUTE` AND the caller to pass `execute=true`.
+   * Deliberately SEPARATE from PROOF_BACKFILL_CONFIRM so arming one write job
+   * never arms the other. Optional — unset means dry-run-only (safe default).
+   */
+  proofClassifierConfirm: z.string().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -780,6 +791,10 @@ function loadConfig(): Config {
     // `|| undefined` so an empty string is treated as unset (dry-run-only),
     // matching the prior dynamic PROOF_BACKFILL_CONFIRM read in the job.
     proofBackfillConfirm: process.env.PROOF_BACKFILL_CONFIRM || undefined,
+
+    // Back-catalogue classifier confirm token (S3-A / PROOF-BACKCATALOG).
+    // `|| undefined` so an empty string is treated as unset (dry-run-only).
+    proofClassifierConfirm: process.env.PROOF_CLASSIFIER_CONFIRM || undefined,
   });
 
   if (!result.success) {
