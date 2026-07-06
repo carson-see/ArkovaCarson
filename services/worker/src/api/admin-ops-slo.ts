@@ -176,7 +176,7 @@ async function readAnchorSecuredRate(): Promise<AnchorSecuredRateSurface> {
  * (mirrors `connector-artifact-drain.ts` WORK_STATUSES + in-flight `processing`). */
 const CONNECTOR_WORK_STATUSES = ['pending', 'queued', 'processing', 'materialized'] as const;
 
-/** Shape of a PostgREST head-count response (`{ count: 'exact', head: true }`). */
+/** Shape of a PostgREST head-count response (an estimated `head`-only count). */
 interface CountResult {
   count: number | null;
   error: { message?: string } | null;
@@ -281,51 +281,87 @@ async function readCreditConservation(): Promise<CreditConservationSurface> {
   }
 }
 
-async function readWebhookDelivery(): Promise<WebhookDeliverySurface> {
-  const unavailable = (error: string): WebhookDeliverySurface => ({
+/** Outcome of counting how many rows over a rolling window match one value. */
+interface WindowedMatchRate {
+  available: boolean;
+  matchedCount: number | null;
+  totalCount: number | null;
+  ratePct: number | null;
+  error: string | null;
+}
+
+/**
+ * Shared reader for the two "success/error rate over the last N hours" surfaces
+ * (webhook delivery, verification-API errors): bounded window select, count the
+ * rows whose `column` equals `matchValue`, and derive the percentage. Each
+ * caller maps the generic result to its own surface shape and applies its own
+ * breach direction — this collapses two byte-identical read loops into one.
+ */
+async function readWindowedMatchRate(opts: {
+  table: string;
+  column: string;
+  matchValue: string;
+  windowHours: number;
+  label: string;
+}): Promise<WindowedMatchRate> {
+  const { table, column, matchValue, windowHours, label } = opts;
+  const fail = (error: string): WindowedMatchRate => ({
     available: false,
-    successCount: null,
+    matchedCount: null,
     totalCount: null,
     ratePct: null,
-    windowHours: WEBHOOK_WINDOW_HOURS,
-    breach: false,
     error,
   });
-
   try {
-    const sinceIso = new Date(Date.now() - WEBHOOK_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
-    const { data, error } = await db
-      .from('webhook_delivery_logs')
-      .select('status')
+    const sinceIso = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+    // Dynamic table name — cast past the typed-client's literal-union `from`.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any)
+      .from(table)
+      .select(column)
       .gte('created_at', sinceIso)
       .limit(50_000);
 
-    if (error) return unavailable((error as { message?: string }).message ?? 'webhook_delivery_logs select failed');
-    if (!Array.isArray(data)) return unavailable('malformed webhook_delivery_logs response');
+    if (error) return fail((error as { message?: string }).message ?? `${table} select failed`);
+    if (!Array.isArray(data)) return fail(`malformed ${table} response`);
 
-    let successCount = 0;
+    let matchedCount = 0;
     const totalCount = data.length;
-    for (const row of data as Array<{ status?: string }>) {
-      if (row.status === 'success') successCount += 1;
+    for (const row of data as Array<Record<string, unknown>>) {
+      if (row[column] === matchValue) matchedCount += 1;
     }
-
-    const ratePct = totalCount === 0 ? null : (successCount / totalCount) * 100;
-    const breach = totalCount > 0 && ratePct !== null && ratePct / 100 < WEBHOOK_SUCCESS_RATE_BREACH_BELOW;
-
-    return {
-      available: true,
-      successCount,
-      totalCount,
-      ratePct,
-      windowHours: WEBHOOK_WINDOW_HOURS,
-      breach,
-      error: null,
-    };
+    const ratePct = totalCount === 0 ? null : (matchedCount / totalCount) * 100;
+    return { available: true, matchedCount, totalCount, ratePct, error: null };
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'webhook delivery read failed';
-    logger.warn({ error: err }, 'ops-slo-stats: webhook delivery read failed');
-    return unavailable(message);
+    const message = err instanceof Error ? err.message : `${label} read failed`;
+    logger.warn({ error: err }, `ops-slo-stats: ${label} read failed`);
+    return fail(message);
   }
+}
+
+async function readWebhookDelivery(): Promise<WebhookDeliverySurface> {
+  const r = await readWindowedMatchRate({
+    table: 'webhook_delivery_logs',
+    column: 'status',
+    matchValue: 'success',
+    windowHours: WEBHOOK_WINDOW_HOURS,
+    label: 'webhook delivery',
+  });
+  const base = { windowHours: WEBHOOK_WINDOW_HOURS };
+  if (!r.available) {
+    return { available: false, successCount: null, totalCount: null, ratePct: null, breach: false, error: r.error, ...base };
+  }
+  const breach =
+    (r.totalCount ?? 0) > 0 && r.ratePct !== null && r.ratePct / 100 < WEBHOOK_SUCCESS_RATE_BREACH_BELOW;
+  return {
+    available: true,
+    successCount: r.matchedCount,
+    totalCount: r.totalCount,
+    ratePct: r.ratePct,
+    breach,
+    error: null,
+    ...base,
+  };
 }
 
 /**
@@ -337,50 +373,29 @@ async function readWebhookDelivery(): Promise<WebhookDeliverySurface> {
  * durable per-request error metric (rate-limit + query stats are in-memory).
  */
 async function readApiErrors(): Promise<ApiErrorsSurface> {
-  const unavailable = (error: string): ApiErrorsSurface => ({
-    available: false,
-    errorCount: null,
-    totalCount: null,
-    errorRatePct: null,
+  const r = await readWindowedMatchRate({
+    table: 'verification_events',
+    column: 'result',
+    matchValue: 'error',
     windowHours: API_ERROR_WINDOW_HOURS,
-    breach: false,
-    error,
+    label: 'api error-rate',
   });
-
-  try {
-    const sinceIso = new Date(Date.now() - API_ERROR_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
-    const { data, error } = await db
-      .from('verification_events')
-      .select('result')
-      .gte('created_at', sinceIso)
-      .limit(50_000);
-
-    if (error) return unavailable((error as { message?: string }).message ?? 'verification_events select failed');
-    if (!Array.isArray(data)) return unavailable('malformed verification_events response');
-
-    let errorCount = 0;
-    const totalCount = data.length;
-    for (const row of data as Array<{ result?: string }>) {
-      if (row.result === 'error') errorCount += 1;
-    }
-
-    const errorRatePct = totalCount === 0 ? null : (errorCount / totalCount) * 100;
-    const breach = totalCount > 0 && errorRatePct !== null && errorRatePct / 100 > API_ERROR_RATE_BREACH_ABOVE;
-
-    return {
-      available: true,
-      errorCount,
-      totalCount,
-      errorRatePct,
-      windowHours: API_ERROR_WINDOW_HOURS,
-      breach,
-      error: null,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'verification events read failed';
-    logger.warn({ error: err }, 'ops-slo-stats: api error-rate read failed');
-    return unavailable(message);
+  const base = { windowHours: API_ERROR_WINDOW_HOURS };
+  if (!r.available) {
+    return { available: false, errorCount: null, totalCount: null, errorRatePct: null, breach: false, error: r.error, ...base };
   }
+  // Error rate breaches ABOVE the threshold (webhook success rate breaches below).
+  const breach =
+    (r.totalCount ?? 0) > 0 && r.ratePct !== null && r.ratePct / 100 > API_ERROR_RATE_BREACH_ABOVE;
+  return {
+    available: true,
+    errorCount: r.matchedCount,
+    totalCount: r.totalCount,
+    errorRatePct: r.ratePct,
+    breach,
+    error: null,
+    ...base,
+  };
 }
 
 export async function handleOpsSloStats(
