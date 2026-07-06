@@ -1023,6 +1023,33 @@ export const VERIFICATION_DISPLAY_LABELS = {
 } as const;
 
 // =============================================================================
+// PROOF AVAILABILITY (FE-PROOF-GATE / SCRUM-2501)
+// =============================================================================
+// Copy for the public verification page's proof-download states, per
+// docs/reference/FE_PROOF_GATE_CONTRACT.md \u00a73.1. State 2 (the honest core \u2014
+// SECURED but no downloadable proof file, i.e. the ~2.97M direct-anchored
+// back catalogue) renders NO download control at all; this copy affirms the
+// record's standing first, explains availability honestly, and points at the
+// Fingerprint + Network Receipt already on the page. It never promises a date
+// or implies the user must act.
+export const PROOF_AVAILABILITY_LABELS = {
+  // State 2 / 1b \u2014 honest empty-state. No disabled button, no error toast.
+  NOT_YET_AVAILABLE_TITLE: 'Secured & Anchored',
+  NOT_YET_AVAILABLE_BODY:
+    'This record is protected on the Production Network \u2014 its Fingerprint and Network Receipt above are its proof of standing. A downloadable proof file becomes available for records secured through batch anchoring.',
+  // State 3 (record not yet SECURED) has no entry here: the page-level hero
+  // state machine ("Submitting to Network\u2026", proof sections hidden \u2014 see
+  // src/components/verification/agents.md) IS the securing-in-progress
+  // presentation, and VerifierProofDownload is never mounted pre-SECURED.
+  // Record not found (404 "Record not found") \u2014 a real error, not state 2.
+  RECORD_MISSING: 'This record could not be found.',
+  // 5xx, malformed 200 (verified:false) \u2014 retryable, never state-2 copy.
+  RETRY_TITLE: 'Proof File Unavailable',
+  RETRY_BODY: 'The proof file could not be loaded right now. Please try again.',
+  RETRY_BUTTON: 'Retry',
+} as const;
+
+// =============================================================================
 // PUBLIC ATTESTATION VERIFY
 // =============================================================================
 
