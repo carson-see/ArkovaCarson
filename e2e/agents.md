@@ -1,5 +1,9 @@
 # agents.md — e2e/
-_Last updated: 2026-05-30_
+_Last updated: 2026-07-06_
+
+## 2026-07-06 AI-03 template-review privacy-contract spec (SCRUM-2383)
+
+`template-review.spec.ts` — upload-mock → on-device extract (mocked at network seams) → review → correct → confirm, asserting NO request body ever carries raw document content or unstripped PII. Mocking pattern worth reusing: the on-device NER runtime is stubbed by intercepting the app-origin `/vendor/transformers.web.min.js` module (a stub `pipeline()` returning zero entities), so the REAL regex PII stripper and the full production React flow run without the gitignored ~100MB model weights; worker `/api/v1/ai/extract` + `/ai/template` are fulfilled canned while their request bodies are captured for the privacy assertions; `rpc/get_flag` is routed to force `ENABLE_AI_EXTRACTION` on deterministically. Uses a `.txt` upload so on-device text extraction needs no OCR engine.
 
 ## What This Folder Contains
 

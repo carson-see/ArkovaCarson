@@ -1,6 +1,10 @@
 # agents.md — lib
 
-_Last updated: 2026-05-26_
+_Last updated: 2026-07-06_
+
+## 2026-07-06 S3 Lane-3 AI copy block (AI-03 — SCRUM-2383)
+
+`copy.ts` gained `TEMPLATE_REVIEW_LABELS` in a clearly-commented contiguous block at EOF titled "S3 Lane-3 AI strings". The three S3 streams each append ONE contiguous block — do not interleave strings from other streams inside it (merge-conflict containment, mirrors the `supabase/migrations/agents.md` per-PR-block lesson).
 
 ## What This Folder Contains
 

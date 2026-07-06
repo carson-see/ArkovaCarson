@@ -1,6 +1,14 @@
 # agents.md — services/worker/src/ai/eval/
 
-_Last updated: 2026-05-22_
+_Last updated: 2026-07-06_
+
+## 2026-07-06 S3 CPE/CLE golden set + deterministic eval gate (AI-01/AI-02 — SCRUM-2381/2382)
+
+- `golden-dataset-cpe-cle-s3.ts` — 60 synthetic labeled fixtures (30 CPE × 30 CLE), stratified/tagged: `clean` | `degraded-scan` × adversarial classes (`ambiguous-provider`, `near-duplicate-credits`, `fractional-hours`, `multi-credit`). 12-entry `held-out` split; `eval-gates.ts` excludes `held-out` from all merge gates. Counts + held-out fingerprints are version-pinned in `cpe-cle-s3-manifest.json` (regeneration-guarded by tests — regenerate the manifest whenever the dataset changes).
+- `heldout-leakage.ts` — leakage control: SHA-256 fingerprints over normalized fixture text; `loadLeakageCorpus` scans `training-data/**` + `src/ai/**` (excluding the dataset/manifest/tests themselves) and the check FAILS on held-out content or id appearing in any committed prompt/few-shot/tuning corpus. NEVER add a held-out fixture (or its id) to a prompt or tuning export.
+- `run-pe-gates.ts` gains `--dataset pe|s3`, a `fixture` provider mode (replays `recorded/s3-cpe-cle-recorded.json`, zero live model calls — the CI path), `--seed-recorded` (mock-echo seeding), and runs the leakage check as a fail-closed precondition of every s3 run. Gate `SCRUM-2382` in `eval-gates.ts`: aggregate weighted F1 ≥ 0.80 AND per-field floors (creditHours 0.85, issuedDate 0.80, credentialType 0.80), coverage hard-coded at 48. Reports emit field NAMES + scores only (value-omission is test-locked).
+- `recorded/s3-cpe-cle-recorded.json` is a **mock-echo seed** (see `meta.note`) — it proves gate wiring determinism, NOT model quality. Replace via a nightly live-Gemini recording (run with `--provider gemini --dataset s3`, then record) before quoting the F1 as a model score. Held-out ids must never enter this committed file.
+- npm scripts: `eval:s3-gate` (deterministic CI gate), `eval:s3-gate:seed` (re-seed after dataset changes).
 
 ## 2026-05-22 Professional Education Phase 5 Dataset
 
