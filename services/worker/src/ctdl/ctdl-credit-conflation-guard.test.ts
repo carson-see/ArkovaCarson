@@ -19,6 +19,14 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// Round-1 review finding 6: comments are stripped with the string-aware
+// stripTsComments — a naive per-line `indexOf('//')` truncated at the `//` in
+// URL string literals (e.g. 'https://x/billing/credits'), hiding the exact
+// billing token this guard exists to catch. Guard comments in the CTDL
+// modules deliberately NAME the credit_ledger distinction (that documentation
+// is the point); only an actual import, query, or identifier reference in
+// executable code may fail this test.
+import { stripTsComments } from './strip-ts-comments.js';
 
 const CTDL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const API_V1_DIR = path.resolve(CTDL_DIR, '..', 'api', 'v1');
@@ -30,23 +38,6 @@ function ctdlProductionSources(): string[] {
     .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
     .map((name) => path.join(CTDL_DIR, name));
   return [...ctdlFiles, path.join(API_V1_DIR, 'credentials-ctdl.ts')];
-}
-
-/**
- * Strip line comments and block comments so the scan sees CODE
- * only. Guard comments in the CTDL modules deliberately NAME the credit_ledger
- * distinction (that documentation is the point); only an actual import, query,
- * or identifier reference in executable code may fail this test.
- */
-function stripComments(source: string): string {
-  return source
-    .replaceAll(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .map((line) => {
-      const index = line.indexOf('//');
-      return index === -1 ? line : line.slice(0, index);
-    })
-    .join('\n');
 }
 
 /** Billing-ledger references that must never appear in the CTDL path. */
@@ -71,7 +62,7 @@ describe('CE-04 conflation guard — CE ContactHour credit vs billing credit_led
   it('CTDL serializer path never imports/queries/references the billing credit ledger', () => {
     const offenders: string[] = [];
     for (const file of ctdlProductionSources()) {
-      const source = stripComments(fs.readFileSync(file, 'utf-8'));
+      const source = stripTsComments(fs.readFileSync(file, 'utf-8'));
       for (const pattern of BILLING_LEDGER_PATTERNS) {
         if (pattern.test(source)) {
           offenders.push(`${path.basename(file)} matches ${String(pattern)}`);
@@ -81,10 +72,19 @@ describe('CE-04 conflation guard — CE ContactHour credit vs billing credit_led
     expect(offenders).toEqual([]);
   });
 
+  it('a billing token inside a URL string survives comment stripping (round-1 review finding 6)', () => {
+    // The old per-line indexOf('//') stripper dropped everything after
+    // `https:` — including the billing marker — making this exact fixture
+    // invisible to the guard. Pin that the scan pipeline now catches it.
+    const fixture = "const url = 'https://api.example.com/billing/credits';\n";
+    const stripped = stripTsComments(fixture);
+    expect(BILLING_LEDGER_PATTERNS.some((pattern) => pattern.test(stripped))).toBe(true);
+  });
+
   it('CTDL modules do not import from the billing directory at all', () => {
     const offenders: string[] = [];
     for (const file of ctdlProductionSources()) {
-      const source = stripComments(fs.readFileSync(file, 'utf-8'));
+      const source = stripTsComments(fs.readFileSync(file, 'utf-8'));
       for (const line of source.split('\n')) {
         if (/^\s*import\b.*['"][^'"]*\/billing\//.test(line)) {
           offenders.push(`${path.basename(file)}: ${line.trim()}`);
