@@ -1015,6 +1015,43 @@ describe('scrubReason (SCRUM-2625 / QUEUE-10 F-4 reason-scrub)', () => {
     expect(scrubbed).not.toContain(ORG_A);
   });
 
+  // ── PR #1434 review (Carson, P2): case-insensitivity must be STRUCTURAL ─────
+  // User/provider values preserve casing (Carson@Arkova.io, uppercase UUIDs in
+  // Postgres error text, hex values uppercased by intermediate tooling). The
+  // §1.6A guarantee cannot depend on input normalization — over-redaction of an
+  // alert reason is harmless, under-redaction is a privacy leak. These tests pin
+  // the `i` flag on all three patterns so it can never be dropped in a refactor.
+
+  it('a MIXED-CASE email address (Carson@Arkova.io) does NOT appear verbatim in the scrubbed reason', () => {
+    const raw = 'insert failed: user Carson@Arkova.io violates check constraint "org_members_email_check"';
+    const scrubbed = scrubReason(raw);
+    expect(scrubbed).not.toContain('Carson@Arkova.io');
+    expect(scrubbed).toContain('[email]');
+  });
+
+  it('an UPPERCASE-domain email (ops@ARKOVA.IO) does NOT appear verbatim in the scrubbed reason', () => {
+    const raw = 'mail bounce recorded for ops@ARKOVA.IO on connector callback';
+    const scrubbed = scrubReason(raw);
+    expect(scrubbed).not.toContain('ops@ARKOVA.IO');
+    expect(scrubbed).toContain('[email]');
+  });
+
+  it('an UPPERCASE UUID does NOT appear verbatim in the scrubbed reason', () => {
+    const upperUuid = ANCHOR_1.toUpperCase();
+    const raw = `update failed for row ${upperUuid}: foreign key violation`;
+    const scrubbed = scrubReason(raw);
+    expect(scrubbed).not.toContain(upperUuid);
+    expect(scrubbed).toContain('[uuid]');
+  });
+
+  it('an UPPERCASE 64-hex fingerprint-shaped string does NOT appear verbatim (case-insensitive by design: over-redaction is harmless, under-redaction is a §1.6A leak)', () => {
+    const upperFingerprint = 'A1B2C3D4'.repeat(8); // 64 hex chars, uppercase
+    const raw = `duplicate key: Key (fingerprint)=(${upperFingerprint}) already exists`;
+    const scrubbed = scrubReason(raw);
+    expect(scrubbed).not.toContain(upperFingerprint);
+    expect(scrubbed).toContain('[fingerprint]');
+  });
+
   it('a known-safe coarse category string (e.g. "insufficient_credits") passes through unchanged', () => {
     expect(scrubReason('insufficient_credits')).toBe('insufficient_credits');
     expect(scrubReason('anchor_not_in_expected_status')).toBe('anchor_not_in_expected_status');

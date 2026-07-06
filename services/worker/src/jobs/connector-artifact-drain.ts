@@ -251,6 +251,12 @@ function boundReason(reason: string): string {
  * shapes and pass through unchanged — this is a redaction pass, not a
  * allowlist, so it never needs updating when a new coarse category is added.
  */
+// NOTE: the `i` flag is LOAD-BEARING on all three patterns — the character
+// classes are written lowercase but match CASE-INSENSITIVELY. User/provider
+// values preserve casing (Carson@Arkova.io, uppercase UUIDs/hex in Postgres
+// error text), and the §1.6A guarantee must be structural, not dependent on
+// input normalization: over-redaction is harmless, under-redaction is a leak.
+// Pinned by the mixed-case/uppercase tests in connector-artifact-drain.test.ts.
 const FINGERPRINT_RE = /\b[0-9a-f]{64}\b/gi;
 const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const EMAIL_RE = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/gi;
