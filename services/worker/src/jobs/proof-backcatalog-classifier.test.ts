@@ -31,6 +31,7 @@ import {
   SCHEMA_GAP_0354,
   CHECKPOINT_JOB_TYPE,
   EXECUTE_CONFIRM_TOKEN,
+  DEFAULT_MAX_BATCHES_PER_INVOCATION,
   __testing,
   type BackCatalogClass,
   type ClassifierLogger,
@@ -93,16 +94,19 @@ interface RecordedWrite {
 
 interface RecordedRead {
   table: string;
-  head: boolean;
+  /** What the read shape says the query IS (derived from its filter shape). */
+  kind: 'scan' | 'cardinality' | 'soft_deleted' | 'other';
   filters: Array<{ method: string; col: string; val: unknown }>;
+  limitN: number | null;
 }
 
 /**
  * Fixture-driven fake supabase client. Supports the exact chains the
- * classifier uses:
+ * classifier uses (R0-8: no count:'exact' head-counts anywhere — every probe
+ * is a bounded id-row fetch):
  *   - anchors page scan:   from().select().eq()...gt().order().limit() → await
- *   - tx cardinality:      from().select('id',{count,head}).eq().is() → await
- *   - soft-deleted caveat: from().select('id',{count,head}).eq().not() → await
+ *   - tx cardinality:      from().select('id').eq(chain_tx_id).is().limit(2)
+ *   - soft-deleted caveat: from().select('id').eq(status).not().limit(cap)
  *   - proof rows:          from().select().in() → await
  *   - checkpoint load:     from('job_queue').select().eq()x3.order().limit()
  *   - checkpoint insert:   from('job_queue').insert().select('id').single()
@@ -125,30 +129,41 @@ function makeFakeDb(fixture: { anchors: FixtureAnchor[]; proofs: FixtureProof[] 
 
   const anchorsSorted = () => [...fixture.anchors].sort((a, b) => a.id.localeCompare(b.id));
 
-  function dispatchRead(state: BuilderState): { data?: unknown; count?: number | null; error: { message: string } | null } {
-    reads.push({ table: state.table, head: state.head, filters: state.filters });
+  function readKind(state: BuilderState): RecordedRead['kind'] {
+    if (state.table !== 'anchors') return 'other';
+    if (state.filters.some((f) => f.method === 'eq' && f.col === 'chain_tx_id')) return 'cardinality';
+    if (state.filters.some((f) => f.method === 'not' && f.col === 'deleted_at')) return 'soft_deleted';
+    return 'scan';
+  }
 
-    if (state.table === 'anchors' && state.head) {
-      // count queries: cardinality (eq chain_tx_id) or soft-deleted caveat
-      const txFilter = state.filters.find((f) => f.method === 'eq' && f.col === 'chain_tx_id');
-      if (txFilter) {
-        if (failCardinalityForTx !== null && txFilter.val === failCardinalityForTx) {
-          return { count: null, error: { message: 'simulated cardinality failure' } };
-        }
-        const n = fixture.anchors.filter(
-          (a) => a.chain_tx_id === txFilter.val && (a.deleted_at ?? null) === null,
-        ).length;
-        return { count: n, error: null };
+  function dispatchRead(state: BuilderState): { data?: unknown; error: { message: string } | null } {
+    const kind = readKind(state);
+    reads.push({ table: state.table, kind, filters: state.filters, limitN: state.limitN });
+
+    if (kind === 'cardinality') {
+      // LIMIT-2 id probe: live rows sharing the tx (no status/org filter — global).
+      const txFilter = state.filters.find((f) => f.method === 'eq' && f.col === 'chain_tx_id')!;
+      if (failCardinalityForTx !== null && txFilter.val === failCardinalityForTx) {
+        return { data: null, error: { message: 'simulated cardinality failure' } };
       }
-      // soft-deleted caveat: status SECURED + deleted_at NOT null (+ optional org)
+      const rows = fixture.anchors.filter(
+        (a) => a.chain_tx_id === txFilter.val && (a.deleted_at ?? null) === null,
+      );
+      const limited = state.limitN !== null ? rows.slice(0, state.limitN) : rows;
+      return { data: limited.map((a) => ({ id: a.id })), error: null };
+    }
+
+    if (kind === 'soft_deleted') {
+      // Capped id probe: status SECURED + deleted_at NOT null (+ optional org).
       const orgFilter = state.filters.find((f) => f.method === 'eq' && f.col === 'org_id');
-      const n = fixture.anchors.filter(
+      const rows = fixture.anchors.filter(
         (a) =>
           (a.status ?? 'SECURED') === 'SECURED' &&
           (a.deleted_at ?? null) !== null &&
           (!orgFilter || a.org_id === orgFilter.val),
-      ).length;
-      return { count: n, error: null };
+      );
+      const limited = state.limitN !== null ? rows.slice(0, state.limitN) : rows;
+      return { data: limited.map((a) => ({ id: a.id })), error: null };
     }
 
     if (state.table === 'anchors') {
@@ -202,13 +217,12 @@ function makeFakeDb(fixture: { anchors: FixtureAnchor[]; proofs: FixtureProof[] 
 
   interface BuilderState {
     table: string;
-    head: boolean;
     filters: Array<{ method: string; col: string; val: unknown }>;
     limitN: number | null;
   }
 
-  function makeBuilder(table: string, head: boolean) {
-    const state: BuilderState = { table, head, filters: [], limitN: null };
+  function makeBuilder(table: string) {
+    const state: BuilderState = { table, filters: [], limitN: null };
     const builder = {
       eq(col: string, val: unknown) {
         state.filters.push({ method: 'eq', col, val });
@@ -251,8 +265,8 @@ function makeFakeDb(fixture: { anchors: FixtureAnchor[]; proofs: FixtureProof[] 
   const client = {
     from(table: string) {
       return {
-        select(_cols: string, opts?: { count?: string; head?: boolean }) {
-          return makeBuilder(table, Boolean(opts?.head));
+        select(_cols: string) {
+          return makeBuilder(table);
         },
         insert(values: Record<string, unknown>) {
           return {
@@ -778,7 +792,7 @@ describe('runBackCatalogClassifier: resumable job_queue checkpoint', () => {
     const resumedScans = db.reads.filter(
       (r) =>
         r.table === 'anchors' &&
-        !r.head &&
+        r.kind === 'scan' &&
         r.filters.some((f) => f.method === 'gt' && f.col === 'id' && f.val === 'a049'),
     );
     expect(resumedScans.length).toBeGreaterThan(0);
@@ -791,14 +805,14 @@ describe('runBackCatalogClassifier: resumable job_queue checkpoint', () => {
 
     const first = await runBackCatalogClassifier(deps, {});
     expect(first.runComplete).toBe(true);
-    const scansAfterFirst = db.reads.filter((r) => r.table === 'anchors' && !r.head).length;
+    const scansAfterFirst = db.reads.filter((r) => r.table === 'anchors' && r.kind === 'scan').length;
 
     const second = await runBackCatalogClassifier(deps, {});
     expect(second.runComplete).toBe(true);
     expect(second.resumed).toBe(true);
     expect(second.plan).toEqual(first.plan);
     // No new anchors-scan reads.
-    expect(db.reads.filter((r) => r.table === 'anchors' && !r.head).length).toBe(scansAfterFirst);
+    expect(db.reads.filter((r) => r.table === 'anchors' && r.kind === 'scan').length).toBe(scansAfterFirst);
   });
 
   it('restart=true starts a fresh census instead of returning the stored one', async () => {
@@ -807,11 +821,11 @@ describe('runBackCatalogClassifier: resumable job_queue checkpoint', () => {
     const deps = { client: db.client, guc, logger: makeLogger() };
 
     await runBackCatalogClassifier(deps, {});
-    const scansAfterFirst = db.reads.filter((r) => r.table === 'anchors' && !r.head).length;
+    const scansAfterFirst = db.reads.filter((r) => r.table === 'anchors' && r.kind === 'scan').length;
 
     const second = await runBackCatalogClassifier(deps, { restart: true });
     expect(second.plan).toEqual(MIXED_PLAN);
-    expect(db.reads.filter((r) => r.table === 'anchors' && !r.head).length).toBeGreaterThan(
+    expect(db.reads.filter((r) => r.table === 'anchors' && r.kind === 'scan').length).toBeGreaterThan(
       scansAfterFirst,
     );
   });
@@ -841,7 +855,7 @@ describe('runBackCatalogClassifier: per-org scoping', () => {
     expect(summary.plan.direct_anchored).toBe(1);
 
     // Every anchors page-scan carried the org filter…
-    const scans = db.reads.filter((r) => r.table === 'anchors' && !r.head);
+    const scans = db.reads.filter((r) => r.table === 'anchors' && r.kind === 'scan');
     for (const s of scans) {
       expect(s.filters).toContainEqual({ method: 'eq', col: 'org_id', val: ORG_A });
     }
@@ -871,7 +885,7 @@ describe('runBackCatalogClassifier: per-org scoping', () => {
 
     // Cardinality count queries must NOT be org-filtered.
     const cardReads = db.reads.filter(
-      (r) => r.table === 'anchors' && r.head && r.filters.some((f) => f.col === 'chain_tx_id'),
+      (r) => r.table === 'anchors' && r.kind === 'cardinality',
     );
     expect(cardReads.length).toBeGreaterThan(0);
     for (const c of cardReads) {
@@ -911,9 +925,88 @@ describe('runBackCatalogClassifier: tx-cardinality probes are memoized', () => {
     await runBackCatalogClassifier({ client: db.client, guc, logger: makeLogger() }, {});
 
     const probes = db.reads
-      .filter((r) => r.table === 'anchors' && r.head && r.filters.some((f) => f.col === 'chain_tx_id'))
+      .filter((r) => r.table === 'anchors' && r.kind === 'cardinality')
       .map((r) => r.filters.find((f) => f.col === 'chain_tx_id')?.val);
     expect(probes.sort()).toEqual(['tx-shared', 'tx-solo']);
+  });
+});
+
+// ── 9b. R0-8 probe shapes: no count:'exact' — bounded id probes only ─────────
+
+describe('runBackCatalogClassifier: R0-8-safe probe shapes (no count:\'exact\')', () => {
+  it('cardinality probes are LIMIT-2 id fetches (0 / 1 / ≥2 is all classification needs)', async () => {
+    const db = makeFakeDb({
+      anchors: [
+        anchor({ id: 'a01', fingerprint: FP(1), chain_tx_id: 'tx-shared' }),
+        anchor({ id: 'a02', fingerprint: FP(2), chain_tx_id: 'tx-shared' }),
+        anchor({ id: 'a03', fingerprint: FP(3), chain_tx_id: 'tx-shared' }),
+      ],
+      proofs: [],
+    });
+    const { guc } = gucFixed('off');
+
+    const summary = await runBackCatalogClassifier(
+      { client: db.client, guc, logger: makeLogger() },
+      {},
+    );
+
+    // 3 anchors share one tx: the capped probe (returns 2 ⇒ "≥2") still
+    // classifies every one of them as a shared-tx row — never direct.
+    expect(summary.plan.ambiguous).toBe(3);
+    expect(summary.plan.direct_anchored).toBe(0);
+    expect(summary.ambiguousReasons.batch_member_without_root).toBe(3);
+
+    const probes = db.reads.filter((r) => r.kind === 'cardinality');
+    expect(probes.length).toBeGreaterThan(0);
+    for (const p of probes) {
+      expect(p.limitN).toBe(__testing.CARDINALITY_PROBE_LIMIT);
+    }
+  });
+
+  it('soft-deleted SECURED anchors are excluded from the census and counted exactly (small set)', async () => {
+    const db = makeFakeDb({
+      anchors: [
+        anchor({ id: 'a01', fingerprint: FP(1) }),
+        anchor({ id: 'a02', fingerprint: FP(2), deleted_at: '2026-01-01T00:00:00Z' }),
+        anchor({ id: 'a03', fingerprint: FP(3), deleted_at: '2026-01-02T00:00:00Z' }),
+      ],
+      proofs: [],
+    });
+    const { guc } = gucFixed('off');
+
+    const summary = await runBackCatalogClassifier(
+      { client: db.client, guc, logger: makeLogger() },
+      {},
+    );
+
+    expect(summary.rowsScanned).toBe(1); // soft-deleted rows never enter the scan
+    expect(summary.softDeletedExcluded).toBe(2);
+    const probe = db.reads.find((r) => r.kind === 'soft_deleted');
+    expect(probe?.limitN).toBe(__testing.SOFT_DELETED_PROBE_LIMIT);
+  });
+
+  it("reports 'unknown' (never a truncated number) when the soft-deleted caveat cap is hit", async () => {
+    const cap = __testing.SOFT_DELETED_PROBE_LIMIT;
+    const anchors: FixtureAnchor[] = [
+      anchor({ id: 'a-live', fingerprint: FP(1) }),
+      ...Array.from({ length: cap }, (_, i) =>
+        anchor({
+          id: `del-${String(i).padStart(5, '0')}`,
+          fingerprint: FP(i + 2),
+          deleted_at: '2026-01-01T00:00:00Z',
+        }),
+      ),
+    ];
+    const db = makeFakeDb({ anchors, proofs: [] });
+    const { guc } = gucFixed('off');
+
+    const summary = await runBackCatalogClassifier(
+      { client: db.client, guc, logger: makeLogger() },
+      {},
+    );
+
+    expect(summary.softDeletedExcluded).toBe('unknown');
+    expect(summary.rowsScanned).toBe(1); // census itself is unaffected by the cap
   });
 });
 
@@ -946,7 +1039,7 @@ describe('createDbGucReader', () => {
   });
 });
 
-// ── 11. Batch-size clamp ─────────────────────────────────────────────────────
+// ── 11. Batch-size + max-batches clamps ──────────────────────────────────────
 
 describe('clampBatchSize', () => {
   it('clamps to [MIN, MAX] and defaults safely', () => {
@@ -954,5 +1047,32 @@ describe('clampBatchSize', () => {
     expect(__testing.clampBatchSize(1)).toBe(__testing.MIN_BATCH_SIZE);
     expect(__testing.clampBatchSize(10_000_000)).toBe(__testing.MAX_BATCH_SIZE);
     expect(__testing.clampBatchSize(NaN)).toBe(__testing.DEFAULT_BATCH_SIZE);
+  });
+});
+
+describe('clampMaxBatches (HTTP input cannot force an unbounded single-request run)', () => {
+  it('clamps to [MIN, MAX] and defaults safely', () => {
+    expect(__testing.clampMaxBatches(undefined)).toBe(DEFAULT_MAX_BATCHES_PER_INVOCATION);
+    expect(__testing.clampMaxBatches(0)).toBe(__testing.MIN_BATCHES_PER_INVOCATION);
+    expect(__testing.clampMaxBatches(-5)).toBe(__testing.MIN_BATCHES_PER_INVOCATION);
+    expect(__testing.clampMaxBatches(10_000_000)).toBe(__testing.MAX_BATCHES_PER_INVOCATION);
+    expect(__testing.clampMaxBatches(NaN)).toBe(DEFAULT_MAX_BATCHES_PER_INVOCATION);
+  });
+
+  it('a below-minimum maxBatches still processes exactly one batch (clamped, not zero-looped)', async () => {
+    const anchors: FixtureAnchor[] = Array.from({ length: 120 }, (_, i) =>
+      anchor({ id: `a${String(i).padStart(3, '0')}`, fingerprint: FP(i + 1) }),
+    );
+    const db = makeFakeDb({ anchors, proofs: [] });
+    const { guc } = gucFixed('off');
+
+    const summary = await runBackCatalogClassifier(
+      { client: db.client, guc, logger: makeLogger() },
+      { batchSize: 50, maxBatches: 0 },
+    );
+
+    expect(summary.batchesProcessed).toBe(1);
+    expect(summary.rowsScanned).toBe(50);
+    expect(summary.runComplete).toBe(false);
   });
 });

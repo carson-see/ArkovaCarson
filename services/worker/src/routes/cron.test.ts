@@ -926,6 +926,29 @@ describe('cron routes', () => {
       expect(mockRunBackCatalogClassifier).not.toHaveBeenCalled();
     });
 
+    it('rejects malformed or out-of-range tuning params with 400 (Zod at the boundary)', async () => {
+      const app = createApp();
+
+      // Non-boolean-ish execute flag: fail loudly, not silently-false.
+      const badFlag = await request(app).post('/cron/classify-proof-backcatalog?execute=yes');
+      expect(badFlag.status).toBe(400);
+
+      // Non-numeric batch_size: fail loudly, not silently-defaulted.
+      const badBatch = await request(app)
+        .post('/cron/classify-proof-backcatalog')
+        .send({ batch_size: 'abc' });
+      expect(badBatch.status).toBe(400);
+
+      // Out-of-range max_batches: bounded at the boundary (companion to the
+      // classifier-side clamp) so one HTTP call cannot request an unbounded run.
+      const badMax = await request(app)
+        .post('/cron/classify-proof-backcatalog')
+        .send({ max_batches: 10_000 });
+      expect(badMax.status).toBe(400);
+
+      expect(mockRunBackCatalogClassifier).not.toHaveBeenCalled();
+    });
+
     it('returns 500 on classifier failure (fail-closed)', async () => {
       mockRunBackCatalogClassifier.mockRejectedValueOnce(new Error('scan query failed'));
       const app = createApp();

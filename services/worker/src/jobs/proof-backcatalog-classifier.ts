@@ -82,8 +82,33 @@ const MAX_BATCH_SIZE = 2_000;
 /** Default number of page-batches processed per invocation (bounded HTTP run). */
 export const DEFAULT_MAX_BATCHES_PER_INVOCATION = 20;
 
-/** Bounded fan-out for tx-cardinality count probes. */
+/**
+ * Hard bounds on the per-invocation batch budget. `maxBatches` flows straight
+ * from the HTTP `max_batches` param; without a clamp a mistyped value would
+ * turn one authenticated POST into an unbounded synchronous run. (Mirrors the
+ * deliberate bound already applied to `batchSize`.)
+ */
+const MIN_BATCHES_PER_INVOCATION = 1;
+const MAX_BATCHES_PER_INVOCATION = 200;
+
+/** Bounded fan-out for tx-cardinality probes. */
 const CARDINALITY_CONCURRENCY = 8;
+
+/**
+ * Tx-cardinality probes fetch at most 2 ids: classification only ever needs
+ * to distinguish 0 / 1 / ≥2 live anchors on a tx. R0-8 (SCRUM-1254): no
+ * exact-count head-counts against the hot anchors table — a LIMIT-2 index
+ * probe answers the same question and stops early.
+ */
+const CARDINALITY_PROBE_LIMIT = 2;
+
+/**
+ * Soft-deleted caveat probe cap: the excluded-row count is exact up to this
+ * many ids; past the cap the summary reports 'unknown' rather than a
+ * truncated number. (R0-8 again: an id fetch bounded by LIMIT, not an
+ * exact-count scan over anchors.)
+ */
+const SOFT_DELETED_PROBE_LIMIT = 1_000;
 
 /** `.in()` filters are chunked to stay inside PostgREST query-string limits. */
 const IN_FILTER_CHUNK = 100;
@@ -354,6 +379,8 @@ function isFilled(value: unknown): boolean {
  *
  * @param txCardinality Number of live anchors sharing this anchor's tx
  *   (including itself), or null when it was not / could not be resolved.
+ *   May be CAPPED at 2 by the LIMIT-2 probe (2 stands for "≥2") — this
+ *   function only ever distinguishes <1 / 1 / >1, so the cap is lossless.
  *   Cardinality is only consulted when the stored proof data alone cannot
  *   settle the class; if it is needed but unknown, the row is AMBIGUOUS
  *   (fail-closed) — never guessed.
@@ -438,10 +465,7 @@ interface CheckpointHandle {
 
 type UntypedDb = {
   from(table: string): {
-    select(
-      cols: string,
-      opts?: { count?: 'exact'; head?: boolean },
-    ): {
+    select(cols: string): {
       eq(col: string, val: unknown): unknown;
       in(col: string, val: string[]): unknown;
       is(col: string, val: unknown): unknown;
@@ -534,6 +558,12 @@ function clampBatchSize(requested: number | undefined): number {
   return Math.min(Math.max(Math.floor(n), MIN_BATCH_SIZE), MAX_BATCH_SIZE);
 }
 
+function clampMaxBatches(requested: number | undefined): number {
+  const n = requested ?? DEFAULT_MAX_BATCHES_PER_INVOCATION;
+  if (!Number.isFinite(n)) return DEFAULT_MAX_BATCHES_PER_INVOCATION;
+  return Math.min(Math.max(Math.floor(n), MIN_BATCHES_PER_INVOCATION), MAX_BATCHES_PER_INVOCATION);
+}
+
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -584,12 +614,15 @@ async function fetchProofRows(db: UntypedDb, anchorIds: string[]): Promise<Map<s
 }
 
 /**
- * Resolve tx cardinality (count of live anchors sharing the tx) for each
- * distinct tx, memoized across the whole invocation. DELIBERATELY GLOBAL —
- * no org filter: a tx shared with another org's anchor is still a batch tx.
- * Uses the partial index idx_anchors_chain_tx_id (deleted_at IS NULL AND
- * chain_tx_id IS NOT NULL) via head-count probes. A probe failure marks that
- * tx 'unknown' → the affected rows classify AMBIGUOUS (fail-closed).
+ * Resolve tx cardinality (live anchors sharing the tx, CAPPED at 2 — see
+ * CARDINALITY_PROBE_LIMIT) for each distinct tx, memoized across the whole
+ * invocation. DELIBERATELY GLOBAL — no org filter: a tx shared with another
+ * org's anchor is still a batch tx. Uses the partial index
+ * idx_anchors_chain_tx_id (deleted_at IS NULL AND chain_tx_id IS NOT NULL)
+ * via LIMIT-2 id probes, NOT exact-count head-counts (R0-8 /
+ * SCRUM-1254): classification only needs 0 / 1 / ≥2, and the bounded probe
+ * stops as soon as a second row exists. A probe failure marks that tx
+ * 'unknown' → the affected rows classify AMBIGUOUS (fail-closed).
  */
 async function resolveCardinalities(
   db: UntypedDb,
@@ -601,47 +634,67 @@ async function resolveCardinalities(
   if (unresolved.length === 0) return;
 
   const tasks = unresolved.map((tx) => async () => {
-    const { count, error } = await (db
-      .from('anchors')
-      .select('id', { count: 'exact', head: true })
-      .eq('chain_tx_id', tx) as unknown as {
-      is(col: string, val: unknown): PromiseLike<{ count: number | null; error: { message?: string } | null }>;
-    }).is('deleted_at', null);
-    if (error || count === null || count === undefined) {
+    const { data, error } = await (
+      db.from('anchors').select('id').eq('chain_tx_id', tx) as unknown as {
+        is(col: string, val: unknown): {
+          limit(n: number): PromiseLike<{
+            data: Array<{ id: string }> | null;
+            error: { message?: string } | null;
+          }>;
+        };
+      }
+    )
+      .is('deleted_at', null)
+      .limit(CARDINALITY_PROBE_LIMIT);
+    if (error || !data) {
       logger.warn(
-        { tx, error: error?.message ?? 'null count' },
+        { tx, error: error?.message ?? 'null rows' },
         'proof-backcatalog-classifier: cardinality probe failed — rows on this tx will classify AMBIGUOUS',
       );
       memo.set(tx, null);
       return;
     }
-    memo.set(tx, count);
+    // data.length is 0, 1, or 2 — 2 stands for "≥2", which is everything
+    // classifyAnchor ever distinguishes (<1 ⇒ ambiguous, 1 ⇒ direct, >1 ⇒ shared).
+    memo.set(tx, data.length);
   });
 
   await runWithConcurrency(tasks, CARDINALITY_CONCURRENCY);
 }
 
-/** Best-effort census caveat: soft-deleted SECURED anchors excluded from scope. */
+/**
+ * Best-effort census caveat: soft-deleted SECURED anchors excluded from scope.
+ * Counted via a LIMIT-capped id fetch, NOT an exact count (R0-8 /
+ * SCRUM-1254 — no exact-count scans on the hot anchors table). Exact up to
+ * SOFT_DELETED_PROBE_LIMIT rows; past the cap the summary reports 'unknown'
+ * (with a warn) rather than a silently truncated number.
+ */
 async function countSoftDeletedExcluded(
   db: UntypedDb,
   orgId: string | undefined,
+  logger: ClassifierLogger,
 ): Promise<number | 'unknown'> {
   try {
-    let q = db
-      .from('anchors')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'SECURED') as unknown as {
+    let q = db.from('anchors').select('id').eq('status', 'SECURED') as unknown as {
       eq(col: string, val: unknown): typeof q;
-      not(col: string, op: string, val: unknown): typeof q;
-      then: PromiseLike<{ count: number | null; error: { message?: string } | null }>['then'];
+      not(col: string, op: string, val: unknown): {
+        limit(n: number): PromiseLike<{
+          data: Array<{ id: string }> | null;
+          error: { message?: string } | null;
+        }>;
+      };
     };
     if (orgId) q = q.eq('org_id', orgId);
-    const { count, error } = await (q.not('deleted_at', 'is', null) as unknown as PromiseLike<{
-      count: number | null;
-      error: { message?: string } | null;
-    }>);
-    if (error || count === null || count === undefined) return 'unknown';
-    return count;
+    const { data, error } = await q.not('deleted_at', 'is', null).limit(SOFT_DELETED_PROBE_LIMIT);
+    if (error || !data) return 'unknown';
+    if (data.length >= SOFT_DELETED_PROBE_LIMIT) {
+      logger.warn(
+        { cap: SOFT_DELETED_PROBE_LIMIT, orgId: orgId ?? 'global' },
+        'proof-backcatalog-classifier: soft-deleted caveat probe hit its cap — reporting unknown, not a truncated count',
+      );
+      return 'unknown';
+    }
+    return data.length;
   } catch {
     return 'unknown';
   }
@@ -674,6 +727,167 @@ function summaryFromCheckpoint(
   };
 }
 
+/**
+ * The empty refused-before-scanning summary (GUC gate refusals). Shared by
+ * the two refusal paths so they cannot drift apart.
+ */
+function buildEmptyRefusal(args: {
+  mode: 'dry-run' | 'write';
+  refusalReason: NonNullable<ClassifierSummary['refusalReason']>;
+  executeRefusalReason: string | null;
+  gucState: GucState;
+  scope: string;
+}): ClassifierSummary {
+  return {
+    mode: args.mode,
+    refused: true,
+    refusalReason: args.refusalReason,
+    executeRefusalReason: args.executeRefusalReason,
+    schemaGap: null,
+    gucState: args.gucState,
+    scope: args.scope,
+    runComplete: false,
+    resumed: false,
+    batchesProcessed: 0,
+    rowsScanned: 0,
+    plan: emptyPlan(),
+    ambiguousReasons: {},
+    ambiguousSamples: [],
+    writesApplied: 0,
+    cursor: null,
+    softDeletedExcluded: 'unknown',
+  };
+}
+
+/**
+ * GUC gate for one invocation (start or resume both pass through here).
+ * Returns the refusal reason, or null when the run may proceed. Dry-run may
+ * proceed under 'unknown' (loudly); write mode fail-closes on anything but a
+ * confirmed 'off'.
+ */
+function resolveGucGate(
+  gucState: GucState,
+  mode: 'dry-run' | 'write',
+  scope: string,
+  logger: ClassifierLogger,
+): 'guc_enforcement_on' | 'guc_state_unknown' | null {
+  if (gucState === 'on') {
+    logger.error(
+      { scope, mode },
+      'proof-backcatalog-classifier: REFUSING — arkova.proof_enforce_secured_complete is ON (the 0340 trigger would reject honest empty-branch rows mid-run)',
+    );
+    return 'guc_enforcement_on';
+  }
+  if (gucState === 'unknown') {
+    if (mode === 'write') {
+      logger.error(
+        { scope },
+        'proof-backcatalog-classifier: REFUSING write mode — GUC state cannot be confirmed (no reader RPC on this database yet; fail-closed)',
+      );
+      return 'guc_state_unknown';
+    }
+    logger.warn(
+      { scope },
+      'proof-backcatalog-classifier: GUC state unknown — proceeding with the zero-write dry-run census only',
+    );
+  }
+  return null;
+}
+
+/** Which txs still need a cardinality probe (stored proof data cannot settle them). */
+function txsNeedingCardinality(
+  page: ScanAnchorRow[],
+  proofMap: Map<string, ClassifierProofRow>,
+): string[] {
+  return page
+    .filter((a) => {
+      if (!a.chain_tx_id) return false;
+      const proof = proofMap.get(a.id) ?? null;
+      if (proof && isFilled(proof.merkle_root) && isFilled(proof.proof_path)) return false;
+      if (proof && isFilled(proof.merkle_root) && isFilled(proof.batch_id)) return false;
+      return true;
+    })
+    .map((a) => a.chain_tx_id as string);
+}
+
+/** Classify one page into the checkpoint's cumulative counts (mutates cp.payload). */
+function classifyPageIntoCheckpoint(
+  page: ScanAnchorRow[],
+  proofMap: Map<string, ClassifierProofRow>,
+  cardinalityMemo: Map<string, number | null>,
+  cp: CheckpointHandle,
+): void {
+  for (const a of page) {
+    const proof = proofMap.get(a.id) ?? null;
+    const cardinality = a.chain_tx_id ? (cardinalityMemo.get(a.chain_tx_id) ?? null) : null;
+    const { cls, reason } = classifyAnchor(a, proof, cardinality);
+    cp.payload.rowsScanned += 1;
+    cp.payload.plan[cls] += 1;
+    if (cls === 'ambiguous' && reason) {
+      cp.payload.ambiguousReasons[reason] = (cp.payload.ambiguousReasons[reason] ?? 0) + 1;
+      if (cp.payload.ambiguousSamples.length < AMBIGUOUS_SAMPLE_CAP) {
+        cp.payload.ambiguousSamples.push({ anchor_id: a.id, reason });
+      }
+    }
+  }
+}
+
+/**
+ * The bounded scan loop: classify up to `maxBatches` pages, checkpointing
+ * after every page. Returns the number of batches processed; completion is
+ * recorded on the checkpoint itself (payload.completedAt).
+ */
+async function runCensusScan(
+  db: UntypedDb,
+  cp: CheckpointHandle,
+  opts: { orgId?: string; batchSize: number; maxBatches: number; scope: string },
+  logger: ClassifierLogger,
+): Promise<number> {
+  const cardinalityMemo = new Map<string, number | null>();
+  let batchesProcessed = 0;
+
+  while (batchesProcessed < opts.maxBatches) {
+    const page = await fetchScanPage(db, {
+      orgId: opts.orgId,
+      cursor: cp.payload.cursor,
+      batchSize: opts.batchSize,
+    });
+
+    if (page.length === 0) {
+      cp.payload.completedAt = new Date().toISOString();
+      cp.payload.updatedAt = cp.payload.completedAt;
+      await saveCheckpoint(db, cp);
+      break;
+    }
+
+    const proofMap = await fetchProofRows(db, page.map((a) => a.id));
+    await resolveCardinalities(db, txsNeedingCardinality(page, proofMap), cardinalityMemo, logger);
+    classifyPageIntoCheckpoint(page, proofMap, cardinalityMemo, cp);
+
+    cp.payload.cursor = page[page.length - 1].id;
+    cp.payload.updatedAt = new Date().toISOString();
+    const isLastPage = page.length < opts.batchSize;
+    if (isLastPage) cp.payload.completedAt = cp.payload.updatedAt;
+    await saveCheckpoint(db, cp);
+    batchesProcessed += 1;
+
+    logger.info(
+      {
+        scope: opts.scope,
+        batch: batchesProcessed,
+        rowsScanned: cp.payload.rowsScanned,
+        plan: cp.payload.plan,
+        cursor: cp.payload.cursor,
+      },
+      'proof-backcatalog-classifier: batch classified',
+    );
+
+    if (isLastPage) break;
+  }
+
+  return batchesProcessed;
+}
+
 // ── The run ──────────────────────────────────────────────────────────────────
 
 export async function runBackCatalogClassifier(
@@ -689,65 +903,13 @@ export async function runBackCatalogClassifier(
   const executeRefusalReason = options.execute === true && !guard.permitted ? guard.reason : null;
   const scope = options.orgId ?? 'global';
   const batchSize = clampBatchSize(options.batchSize);
-  const maxBatches = options.maxBatches ?? DEFAULT_MAX_BATCHES_PER_INVOCATION;
+  const maxBatches = clampMaxBatches(options.maxBatches);
 
   // ── GUC guard: every invocation is a start or a resume — check both. ──────
   const gucState = await deps.guc.getProofEnforcementGuc();
-  if (gucState === 'on') {
-    logger.error(
-      { scope, mode },
-      'proof-backcatalog-classifier: REFUSING — arkova.proof_enforce_secured_complete is ON (the 0340 trigger would reject honest empty-branch rows mid-run)',
-    );
-    return {
-      mode,
-      refused: true,
-      refusalReason: 'guc_enforcement_on',
-      executeRefusalReason,
-      schemaGap: null,
-      gucState,
-      scope,
-      runComplete: false,
-      resumed: false,
-      batchesProcessed: 0,
-      rowsScanned: 0,
-      plan: emptyPlan(),
-      ambiguousReasons: {},
-      ambiguousSamples: [],
-      writesApplied: 0,
-      cursor: null,
-      softDeletedExcluded: 'unknown',
-    };
-  }
-  if (mode === 'write' && gucState === 'unknown') {
-    logger.error(
-      { scope },
-      'proof-backcatalog-classifier: REFUSING write mode — GUC state cannot be confirmed (no reader RPC on this database yet; fail-closed)',
-    );
-    return {
-      mode,
-      refused: true,
-      refusalReason: 'guc_state_unknown',
-      executeRefusalReason,
-      schemaGap: null,
-      gucState,
-      scope,
-      runComplete: false,
-      resumed: false,
-      batchesProcessed: 0,
-      rowsScanned: 0,
-      plan: emptyPlan(),
-      ambiguousReasons: {},
-      ambiguousSamples: [],
-      writesApplied: 0,
-      cursor: null,
-      softDeletedExcluded: 'unknown',
-    };
-  }
-  if (gucState === 'unknown') {
-    logger.warn(
-      { scope },
-      'proof-backcatalog-classifier: GUC state unknown — proceeding with the zero-write dry-run census only',
-    );
+  const gucRefusal = resolveGucGate(gucState, mode, scope, logger);
+  if (gucRefusal) {
+    return buildEmptyRefusal({ mode, refusalReason: gucRefusal, executeRefusalReason, gucState, scope });
   }
 
   logger.info(
@@ -757,7 +919,7 @@ export async function runBackCatalogClassifier(
       : 'proof-backcatalog-classifier: WRITE mode requested — plan first, halt on ambiguity, then apply',
   );
 
-  const softDeletedExcluded = await countSoftDeletedExcluded(db, options.orgId);
+  const softDeletedExcluded = await countSoftDeletedExcluded(db, options.orgId, logger);
 
   // ── Checkpoint: resume or create. ─────────────────────────────────────────
   let cp = options.restart === true ? null : await loadCheckpoint(db, scope, mode);
@@ -802,71 +964,12 @@ export async function runBackCatalogClassifier(
   }
 
   // ── Scan loop (bounded per invocation; checkpoint after every batch). ─────
-  const cardinalityMemo = new Map<string, number | null>();
-  let batchesProcessed = 0;
-
-  while (batchesProcessed < maxBatches) {
-    const page = await fetchScanPage(db, {
-      orgId: options.orgId,
-      cursor: cp.payload.cursor,
-      batchSize,
-    });
-
-    if (page.length === 0) {
-      cp.payload.completedAt = new Date().toISOString();
-      cp.payload.updatedAt = cp.payload.completedAt;
-      await saveCheckpoint(db, cp);
-      break;
-    }
-
-    const proofMap = await fetchProofRows(db, page.map((a) => a.id));
-
-    // Cardinality is only needed where stored proof data cannot settle the class.
-    const txsNeedingCardinality = page
-      .filter((a) => {
-        if (!a.chain_tx_id) return false;
-        const proof = proofMap.get(a.id) ?? null;
-        if (proof && isFilled(proof.merkle_root) && isFilled(proof.proof_path)) return false;
-        if (proof && isFilled(proof.merkle_root) && isFilled(proof.batch_id)) return false;
-        return true;
-      })
-      .map((a) => a.chain_tx_id as string);
-    await resolveCardinalities(db, txsNeedingCardinality, cardinalityMemo, logger);
-
-    for (const a of page) {
-      const proof = proofMap.get(a.id) ?? null;
-      const cardinality = a.chain_tx_id ? (cardinalityMemo.get(a.chain_tx_id) ?? null) : null;
-      const { cls, reason } = classifyAnchor(a, proof, cardinality);
-      cp.payload.rowsScanned += 1;
-      cp.payload.plan[cls] += 1;
-      if (cls === 'ambiguous' && reason) {
-        cp.payload.ambiguousReasons[reason] = (cp.payload.ambiguousReasons[reason] ?? 0) + 1;
-        if (cp.payload.ambiguousSamples.length < AMBIGUOUS_SAMPLE_CAP) {
-          cp.payload.ambiguousSamples.push({ anchor_id: a.id, reason });
-        }
-      }
-    }
-
-    cp.payload.cursor = page[page.length - 1].id;
-    cp.payload.updatedAt = new Date().toISOString();
-    const isLastPage = page.length < batchSize;
-    if (isLastPage) cp.payload.completedAt = cp.payload.updatedAt;
-    await saveCheckpoint(db, cp);
-    batchesProcessed += 1;
-
-    logger.info(
-      {
-        scope,
-        batch: batchesProcessed,
-        rowsScanned: cp.payload.rowsScanned,
-        plan: cp.payload.plan,
-        cursor: cp.payload.cursor,
-      },
-      'proof-backcatalog-classifier: batch classified',
-    );
-
-    if (isLastPage) break;
-  }
+  const batchesProcessed = await runCensusScan(
+    db,
+    cp,
+    { orgId: options.orgId, batchSize, maxBatches, scope },
+    logger,
+  );
 
   const runComplete = cp.payload.completedAt !== null;
 
@@ -993,9 +1096,14 @@ async function finalizeWriteMode(
 
 export const __testing = {
   clampBatchSize,
+  clampMaxBatches,
   chunk,
   DEFAULT_BATCH_SIZE,
   MIN_BATCH_SIZE,
   MAX_BATCH_SIZE,
+  MIN_BATCHES_PER_INVOCATION,
+  MAX_BATCHES_PER_INVOCATION,
+  CARDINALITY_PROBE_LIMIT,
+  SOFT_DELETED_PROBE_LIMIT,
   AMBIGUOUS_SAMPLE_CAP,
 };

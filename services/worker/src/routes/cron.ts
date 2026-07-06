@@ -349,6 +349,19 @@ cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
 // today stops on the honest 0354 schema gap (no class column exists yet).
 // Resumable via a durable job_queue checkpoint — re-POST to continue a long
 // census; restart=true starts a fresh one.
+// Zod boundary validation (§1.1: every write path — the classifier persists a
+// job_queue checkpoint row even in dry-run). Booleans accept JSON booleans or
+// the query-string forms; numbers are coerced and BOUNDED here so a mistyped
+// value fails loudly with a 400 instead of being silently coerced/defaulted.
+// Bounds mirror the classifier's own clamps (batch 50–2000, batches 1–200).
+const ClassifierBooleanishSchema = z.union([z.boolean(), z.enum(['true', 'false', '1', '0'])]);
+const ClassifyProofBackcatalogParamsSchema = z.object({
+  execute: ClassifierBooleanishSchema.optional(),
+  batch_size: z.coerce.number().int().min(50).max(2000).optional(),
+  max_batches: z.coerce.number().int().min(1).max(200).optional(),
+  restart: ClassifierBooleanishSchema.optional(),
+});
+
 cronRouter.post('/classify-proof-backcatalog', async (req, res) => {
   try {
     const rawOrgId = req.query.org_id ?? req.body?.org_id;
@@ -362,12 +375,21 @@ cronRouter.post('/classify-proof-backcatalog', async (req, res) => {
       orgId = parsedOrgId.data;
     }
 
-    const flag = (v: unknown) => v === true || v === 'true' || v === '1';
-    const int = (v: unknown) => {
-      if (v === undefined || v === null) return undefined;
-      const n = Number.parseInt(String(v), 10);
-      return Number.isFinite(n) ? n : undefined;
-    };
+    const parsedParams = ClassifyProofBackcatalogParamsSchema.safeParse({
+      execute: req.query.execute ?? req.body?.execute,
+      batch_size: req.query.batch_size ?? req.body?.batch_size,
+      max_batches: req.query.max_batches ?? req.body?.max_batches,
+      restart: req.query.restart ?? req.body?.restart,
+    });
+    if (!parsedParams.success) {
+      res.status(400).json({
+        error: 'Invalid classifier parameters',
+        details: parsedParams.error.flatten().fieldErrors,
+      });
+      return;
+    }
+    const flag = (v: boolean | 'true' | 'false' | '1' | '0' | undefined) =>
+      v === true || v === 'true' || v === '1';
 
     const result = await runBackCatalogClassifier(
       {
@@ -377,11 +399,11 @@ cronRouter.post('/classify-proof-backcatalog', async (req, res) => {
         confirmToken: config.proofClassifierConfirm,
       },
       {
-        execute: flag(req.query.execute ?? req.body?.execute),
+        execute: flag(parsedParams.data.execute),
         orgId,
-        batchSize: int(req.query.batch_size ?? req.body?.batch_size),
-        maxBatches: int(req.query.max_batches ?? req.body?.max_batches),
-        restart: flag(req.query.restart ?? req.body?.restart),
+        batchSize: parsedParams.data.batch_size,
+        maxBatches: parsedParams.data.max_batches,
+        restart: flag(parsedParams.data.restart),
       },
     );
     res.json(result);
