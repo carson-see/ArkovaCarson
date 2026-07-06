@@ -8,7 +8,7 @@ Test suites for v1 API endpoints — verification, proof packets, and batch oper
 
 | File | Purpose |
 |------|---------|
-| `ai-template.contract.test.ts` | AI-03 (SCRUM-2383) privacy lock-ins for `/ai/template` + `/ai/tags`: schema-lint (no bytes/base64/raw-document payloads, incl. smuggling inside `fields`) and telemetry value-omission (logs carry names/counts/confidence + bounded error NAMES only — never field values) |
+| `ai-template.contract.test.ts` | AI-03 (SCRUM-2383) privacy lock-ins for `/ai/template` + `/ai/tags`: schema-lint (no bytes/base64/raw-document payloads, incl. smuggling inside `fields` — RECURSIVE per Carson P1 round-1 review: banned keys / `data:` URIs / base64-shaped + oversized strings at any depth, cumulative string budget, key-name smuggling, depth cap) and telemetry value-omission (logs carry names/counts/confidence + bounded error NAMES only — never field values) |
 | `auditBatchVerify.test.ts` | Tests for batch audit verification endpoint |
 | `provenance.test.ts` | Tests for provenance chain endpoint |
 | `verify-proof.test.ts` | Tests for proof verification endpoint |

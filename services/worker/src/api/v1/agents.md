@@ -2,6 +2,11 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-07-06 AI-03 recursive byte-smuggling guard (Carson P1, PR #1413)
+
+- `ai-template.ts` `assertNoDocumentPayload` is now RECURSIVE over nested objects/arrays (the schema accepts `z.unknown()` values, so a first-level-only walk let `{fields:{metadata:{rawDocument:"<base64>"}}}` through to `GeminiProvider.reconstructTemplate`). At ANY depth it rejects: banned document-shaped keys, `data:` URIs, base64-shaped strings (≥512 chars pure base64/base64url alphabet), per-value length > 20k, key names > 256 chars, nesting > 8 levels, and a CUMULATIVE string budget (50k across all values + key names) that blocks documents chunked across many small keys. Issues carry key paths + bounded messages only — never values.
+- The two route handlers (`/template`, `/tags`) share one `aiRouteHandler` factory (auth → validate → invoke → value-free log → respond); per-route deltas are declarative specs. AI-03 value-omission lock-ins unchanged and still test-locked in `__tests__/ai-template.contract.test.ts`.
+
 ## 2026-06-24 Batch AI extraction credit accounting (BUG-2026-06-24-013, T2)
 
 - `ai-extract-batch.ts` (`POST /api/v1/ai/extract-batch`) moved from an UP-FRONT batch debit + failure-only refund to **per-item debit/refund inside `parallelMap`** (parity with the single path `ai-extract.ts`). Batch-level double-accounting is now structurally impossible.

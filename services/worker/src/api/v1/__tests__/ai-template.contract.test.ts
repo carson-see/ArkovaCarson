@@ -104,6 +104,109 @@ describe('AI-03 lock-in (a): /ai/template request schema carries no document pay
   it('the same guard protects /ai/tags', () => {
     expect(TagsRequestSchema.safeParse({ fields: { documentBytes: 'AAAA' } }).success).toBe(false);
   });
+
+  // ── Recursive guard (Carson P1, round-1 review): fields values are
+  //    z.unknown(), so smuggling one level down must also be rejected. ──
+
+  it('REJECTS banned keys nested inside objects at any depth', () => {
+    const oneLevel = TemplateRequestSchema.safeParse({
+      fields: { metadata: { rawDocument: 'JVBERi0xLjQ=' } },
+      confidence: 0.9,
+    });
+    expect(oneLevel.success).toBe(false);
+
+    const deep = TemplateRequestSchema.safeParse({
+      fields: { a: { b: { c: { dataUrl: 'ZG9jdW1lbnQ=' } } } },
+      confidence: 0.9,
+    });
+    expect(deep.success).toBe(false);
+
+    const inArray = TemplateRequestSchema.safeParse({
+      fields: { attachments: [{ fileData: 'AAAA' }] },
+      confidence: 0.9,
+    });
+    expect(inArray.success).toBe(false);
+  });
+
+  it('REJECTS data: URIs and oversized strings nested inside objects/arrays', () => {
+    const nestedDataUri = TemplateRequestSchema.safeParse({
+      fields: { meta: { preview: 'data:application/pdf;base64,JVBERi0xLjQ=' } },
+      confidence: 0.5,
+    });
+    expect(nestedDataUri.success).toBe(false);
+
+    const nestedOversized = TemplateRequestSchema.safeParse({
+      fields: { notes: [{ body: 'A B '.repeat(7_000) }] },
+      confidence: 0.5,
+    });
+    expect(nestedOversized.success).toBe(false);
+  });
+
+  it('REJECTS base64-shaped long strings at any depth (no data: prefix needed)', () => {
+    // 800 chars of pure base64 alphabet — a document chunk without the data: marker.
+    const base64Chunk = 'QUJDRGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo0MzIx'.repeat(20);
+    const parsed = TemplateRequestSchema.safeParse({
+      fields: { extra: { note: base64Chunk } },
+      confidence: 0.5,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('REJECTS payloads chunked across many keys (cumulative string budget)', () => {
+    // Each chunk is individually under the per-value cap and NOT base64-shaped
+    // (contains spaces), but together they smuggle a document.
+    const fields: Record<string, string> = {};
+    for (let i = 0; i < 30; i++) {
+      fields[`part${i}`] = `chunk ${i} `.repeat(250); // ~2,250 chars each
+    }
+    const parsed = TemplateRequestSchema.safeParse({ fields, confidence: 0.5 });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('REJECTS payloads chunked into the KEY NAMES themselves', () => {
+    const fields: Record<string, string> = {};
+    for (let i = 0; i < 3; i++) {
+      // ~500-char keys — content smuggled as key names, values benign.
+      fields[`k${i}-${'docchunk'.repeat(64)}`] = 'x';
+    }
+    const parsed = TemplateRequestSchema.safeParse({ fields, confidence: 0.5 });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('REJECTS absurdly deep nesting (fail-closed instead of walking forever)', () => {
+    let nested: unknown = 'value';
+    for (let i = 0; i < 40; i++) nested = { level: nested };
+    const parsed = TemplateRequestSchema.safeParse({
+      fields: { root: nested },
+      confidence: 0.5,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('still ACCEPTS nested benign metadata (objects/arrays of short strings)', () => {
+    const parsed = TemplateRequestSchema.safeParse({
+      fields: {
+        credentialType: 'CPE',
+        issuerName: 'Example Institute',
+        creditBreakdown: { general: 6, ethics: 2 },
+        tags: ['education', 'accounting'],
+      },
+      confidence: 0.9,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('never echoes smuggled VALUES in validation issues (key paths only)', () => {
+    const smuggled = 'SMUGGLED-DOC-BYTES-SENTINEL-' + 'x'.repeat(600);
+    const parsed = TemplateRequestSchema.safeParse({
+      fields: { metadata: { rawDocument: smuggled } },
+      confidence: 0.9,
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(JSON.stringify(parsed.error.issues)).not.toContain('SMUGGLED-DOC-BYTES-SENTINEL');
+    }
+  });
 });
 
 // ── (b) Telemetry value-omission ──
