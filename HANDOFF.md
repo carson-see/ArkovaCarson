@@ -14,6 +14,20 @@
 
 ## Now
 
+### 2026-07-06 (Lane 2 SM) — Lane-2 team reconvened for S3; PO added; plan corrected + ratified against live prod (no new prod/schema state)
+
+Founder corrected a same-session Lane-2 planning error: Carson is Arkova's FOUNDER, not the Lane-2 Product Owner — the team now runs its own PO persona for backlog/priority ratification (Carson keeps founder-level override + admin-merge authority, exercised at his discretion). PO ratified the Lane-2 Sprint-3 plan as-is + decided PAY-02 stays P0 (thin wiring on already-merged entitlement infra).
+
+A first draft of the plan asserted "mig 0343 NOT in prod" as the top S3 risk — true when the entry below (and the prior 06-29 entries) were written, but stale by the time the draft was reconciled: the entry below already shows the corrected live state (ledger head 0353, main↔prod exact match). No new prod/schema state from this entry — pure planning correction + team-role fix.
+
+Also folded in: the RTE Sprint-4 ART Prioritization Report (Drive `1cu5KsxHA7Kox6Dz-sTxfWY88meXn_4w5`, doc `1-DgrevxqsMI9QHMez8o-pSlgOf4b2UGYLkbBF9YkybQ`) — Sprint 3 is still in progress ART-wide (not just Lane 2); Sprint 4 = OPS-02/OPS-04 only, and Lane-2's Sprint-3 OPS-03 (dashboards live before OPS-02) + QUEUE-08 (instant-secure proven-or-hidden) are explicit Sprint-4 entry criteria — both already P0 in the Lane-2 plan below.
+
+Sprint-3 plan + ceremony record: Confluence [page 94928898](https://arkova.atlassian.net/wiki/spaces/A/pages/94928898); Drive mirror "Arkova PI-0 — Lane 2 — Sprint 3 Plan". New Jira stories: [SCRUM-2624](https://arkova.atlassian.net/browse/SCRUM-2624) (QUEUE-09, retroactive — already shipped in merged #1367), [SCRUM-2625](https://arkova.atlassian.net/browse/SCRUM-2625) (QUEUE-10 drain hardening — reaper F-1 + F-3 + F-4, new, not yet started).
+
+**Flagged, not actioned:** this file is well over its own ≤150-line target — needs a trim/archive pass. Several S2 isolated soak rigs still alive (`lane2-s2-queue07-t2`, `lane2-s2-queue07-t2b`, `lane2-s2-q0667-t3c`, `arkova-soak-pr1260-0344`, `arkova-soak-ce`, `arkova-soak-lane3-s2-{ds,drive,ce}`, `arkova-train-d-queue-20260615`) — candidates for the §7 end-of-sprint teardown sweep.
+
+_Verified via: reading this file's own newer 2026-07-06 entries + the RTE Founder Report doc directly (both already prod-verified by other sessions — not re-derived here); Jira `getJiraIssue`/`createJiraIssue` for SCRUM-2624/2625; Confluence `updateConfluencePage` on 94928898. No prod/schema/flag/deploy state asserted or changed by this entry._
+
 ### 2026-07-06 (RTE/RM) — Sprint-2 tail LANDED: #1367 (QUEUE-09/0350) + #1380 (DRIVE/0351) merged + LIVE in prod; #1398 closed; #1414 CI-flake fix
 
 Drove the three open carryover PRs to completion (the Sprint-4 ART report's stated immediate priority).
