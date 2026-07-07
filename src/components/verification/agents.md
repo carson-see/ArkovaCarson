@@ -82,6 +82,16 @@ what each evidence tier proves — this is a launch blocker, not cosmetics.
   `EVIDENCE_TRIAD` / `EVIDENCE_TRIAD_LABELS`, so a one-sided edit that drifts a
   fallback from copy.ts canon fails red (this closes the "dead export could
   silently diverge" gap). These per-tier guards stay green after the swap.
+- The honesty gate ALSO covers the off-platform SHARE/EMBED affordance, not just
+  the badge colour/triad. `PublicVerification.tsx` Section 2f (the embeddable
+  `ArkovaBadge` + the `LinkedInCredentialHelper` Credential-URL helper) is gated
+  on `canShareIssuerBadge` = `isSecured && isIssuerAuthenticated(level)` — the
+  SAME `isIssuerAuthenticated()` gate as the green treatment. A merely-SECURED
+  low-trust record (`captured_url` / `account_linked` / `ai_captured`) — or a
+  plain upload with NO `verification_level` — must NEVER surface a shareable /
+  embeddable issuer-looking badge (SCRUM-2481 [P1], §1.5 / R-7 claims-gate).
+  Pinned in `PublicVerification.test.tsx` (absent for captured_url /
+  account_linked / no-level; present only for issuer_anchored / source_signed).
 - Deferred post-soak (Carson-gated): the worker `verification_level` mapping fn
   and the DB CHECK migration that enforces the tier enum are NOT in this slice —
   they touch soaking surfaces.

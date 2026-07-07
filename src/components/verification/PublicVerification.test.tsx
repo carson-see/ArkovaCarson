@@ -312,6 +312,120 @@ describe('PublicVerification', () => {
     expect(notAsserted.textContent?.toLowerCase()).toContain('issuer identity');
   });
 
+  // SCRUM-2481 [P1]: the embeddable Arkova badge + LinkedIn Credential-URL
+  // share helper are issuer-STYLE off-platform affordances. They must be gated
+  // on isIssuerAuthenticated(level) — the same gate that earns the green
+  // treatment — NOT merely on isSecured. A low-trust captured_url /
+  // account_linked / ai_captured record that is SECURED must NOT get an
+  // embeddable/shareable issuer-looking badge.
+  it('does not render the embeddable badge or LinkedIn share for a captured_url anchor', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_provider: 'credly',
+          verification_level: 'captured_url',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    // The record still renders (proof affordances present for a secured anchor)…
+    expect(await screen.findByTestId('proof-download')).toBeInTheDocument();
+    // …but the issuer-style embeddable/shareable affordances are absent.
+    expect(screen.queryByTestId('arkova-badge')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('linkedin-credential-helper')).not.toBeInTheDocument();
+  });
+
+  it('does not render the embeddable badge or LinkedIn share for an account_linked anchor', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_provider: 'linkedin',
+          verification_level: 'account_linked',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('proof-download')).toBeInTheDocument();
+    expect(screen.queryByTestId('arkova-badge')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('linkedin-credential-helper')).not.toBeInTheDocument();
+  });
+
+  it('does not render the embeddable badge or LinkedIn share for a SECURED anchor with no evidence level', async () => {
+    // A plain user-uploaded secured document has no verification_level. It is
+    // not issuer-authenticated, so it must not surface an issuer-style badge.
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('proof-download')).toBeInTheDocument();
+    expect(screen.queryByTestId('arkova-badge')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('linkedin-credential-helper')).not.toBeInTheDocument();
+  });
+
+  it('renders the embeddable badge and LinkedIn share for an issuer_anchored anchor', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_provider: 'credly',
+          verification_level: 'issuer_anchored',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('arkova-badge')).toBeInTheDocument();
+    expect(screen.getByTestId('linkedin-credential-helper')).toBeInTheDocument();
+  });
+
+  it('renders the embeddable badge and LinkedIn share for a source_signed anchor', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_provider: 'accredible',
+          verification_level: 'source_signed',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('arkova-badge')).toBeInTheDocument();
+    expect(screen.getByTestId('linkedin-credential-helper')).toBeInTheDocument();
+  });
+
   it('renders source provenance when only proof hashes are present', async () => {
     rpcMock.mockResolvedValue({
       data: {
