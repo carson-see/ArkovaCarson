@@ -12,64 +12,20 @@
 
 import { useState, useCallback } from 'react';
 import { workerFetch } from '@/lib/workerClient';
+import type { OpsSloStats } from '@/types/opsSlo';
 
-export interface AnchorSecuredRateSurface {
-  available: boolean;
-  securedCount: number | null;
-  totalCount: number | null;
-  ratePct: number | null;
-  cacheUpdatedAt: string | null;
-  breach: boolean;
-  error: string | null;
-}
-
-export interface ConnectorQueueSurface {
-  available: boolean;
-  depth: number | null;
-  anchored: number | null;
-  failed: number | null;
-  breach: boolean;
-  error: string | null;
-}
-
-export interface CreditConservationSurface {
-  available: boolean;
-  orgsChecked: number | null;
-  divergedCount: number | null;
-  divergedOrgIds: string[];
-  breach: boolean;
-  error: string | null;
-}
-
-export interface WebhookDeliverySurface {
-  available: boolean;
-  successCount: number | null;
-  totalCount: number | null;
-  ratePct: number | null;
-  windowHours: number;
-  breach: boolean;
-  error: string | null;
-}
-
-export interface ApiErrorsSurface {
-  available: boolean;
-  errorCount: number | null;
-  totalCount: number | null;
-  errorRatePct: number | null;
-  windowHours: number;
-  breach: boolean;
-  error: string | null;
-}
-
-export interface OpsSloStats {
-  anchorSecuredRate: AnchorSecuredRateSurface;
-  connectorQueue: ConnectorQueueSurface;
-  creditConservation: CreditConservationSurface;
-  webhookDelivery: WebhookDeliverySurface;
-  apiErrors: ApiErrorsSurface;
-  overallBreach: boolean;
-  checkedAt: string;
-}
+// The response-surface interfaces are a hand-maintained mirror of the worker's
+// contract; they live in a types-only module (@/types/opsSlo) so the
+// unavoidable cross-build-root duplication is isolated. Re-exported here so
+// existing consumers keep importing them from `@/hooks/useOpsSloStats`.
+export type {
+  AnchorSecuredRateSurface,
+  ConnectorQueueSurface,
+  CreditConservationSurface,
+  WebhookDeliverySurface,
+  ApiErrorsSurface,
+  OpsSloStats,
+} from '@/types/opsSlo';
 
 interface UseOpsSloStatsReturn {
   stats: OpsSloStats | null;
