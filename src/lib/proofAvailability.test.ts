@@ -17,6 +17,8 @@ import {
   classifyProofAvailability,
   NO_MERKLE_PROOF_ERROR,
   RECORD_NOT_FOUND_ERROR,
+  PROOF_ERROR_CODE_NO_BATCH_PROOF,
+  PROOF_ERROR_CODE_RECORD_NOT_FOUND,
   type ProofBundleLike,
   type ProofEndpointResult,
 } from './proofAvailability';
@@ -53,6 +55,11 @@ function notFound(error: string): ProofEndpointResult {
   return { ok: false, status: 404, body: { error } };
 }
 
+/** A 404 carrying the additive machine-readable discriminator (contract §2.2). */
+function notFoundCoded(proof_error_code: string, error: string): ProofEndpointResult {
+  return { ok: false, status: 404, body: { error, proof_error_code } };
+}
+
 describe('classifyProofAvailability', () => {
   it('state 1 — 200 + verified true + proof_bundle present -> available, verbatim bundle', () => {
     const result = classifyProofAvailability(ok200({}));
@@ -86,6 +93,58 @@ describe('classifyProofAvailability', () => {
   it('Record not found 404 -> record-missing, a real error state distinct from state 2', () => {
     const result = classifyProofAvailability(notFound(RECORD_NOT_FOUND_ERROR));
     expect(result.state).toBe('record-missing');
+  });
+
+  // --- proof_error_code discriminator (contract §2.2, additive §1.8) ---------
+  // Prefer the stable machine-readable code over the human-readable prose so a
+  // future prose change (localization, typo fix) cannot silently misroute.
+
+  it('404 code NO_BATCH_PROOF -> empty (code preferred; prose irrelevant)', () => {
+    const result = classifyProofAvailability(
+      notFoundCoded(PROOF_ERROR_CODE_NO_BATCH_PROOF, 'some future localized no-proof string'),
+    );
+    expect(result.state).toBe('empty');
+    expect(result.proofBundle).toBeNull();
+  });
+
+  it('404 code RECORD_NOT_FOUND -> record-missing (code preferred; prose irrelevant)', () => {
+    const result = classifyProofAvailability(
+      notFoundCoded(PROOF_ERROR_CODE_RECORD_NOT_FOUND, 'un enregistrement introuvable'),
+    );
+    expect(result.state).toBe('record-missing');
+  });
+
+  it('code beats CONTRADICTORY prose — NO_BATCH_PROOF with "Record not found" prose -> empty', () => {
+    const result = classifyProofAvailability(
+      notFoundCoded(PROOF_ERROR_CODE_NO_BATCH_PROOF, RECORD_NOT_FOUND_ERROR),
+    );
+    expect(result.state).toBe('empty');
+  });
+
+  it('code beats CONTRADICTORY prose — RECORD_NOT_FOUND with "No Merkle proof…" prose -> record-missing', () => {
+    const result = classifyProofAvailability(
+      notFoundCoded(PROOF_ERROR_CODE_RECORD_NOT_FOUND, NO_MERKLE_PROOF_ERROR),
+    );
+    expect(result.state).toBe('record-missing');
+  });
+
+  it('unrecognized code falls back to the prose match (RECORD_NOT_FOUND_ERROR -> record-missing)', () => {
+    const result = classifyProofAvailability(
+      notFoundCoded('SOME_UNKNOWN_FUTURE_CODE', RECORD_NOT_FOUND_ERROR),
+    );
+    expect(result.state).toBe('record-missing');
+  });
+
+  it('no code (older worker) still routes by prose — "Record not found" -> record-missing', () => {
+    // Fallback path preserved for §1.8-additive responses that predate the code.
+    expect(classifyProofAvailability(notFound(RECORD_NOT_FOUND_ERROR)).state).toBe('record-missing');
+  });
+
+  it('no code + unknown/localized prose -> empty (the safe default, the exact fragility this closes)', () => {
+    // The pre-code behavior: any non-"Record not found" 404 falls to empty. With
+    // the code now present on real responses this only bites truly ancient/absent
+    // -code bodies, and errs toward the honest empty-state, never a false error.
+    expect(classifyProofAvailability(notFound('Kein Merkle-Nachweis verfügbar')).state).toBe('empty');
   });
 
   it('429 -> transient; renders neither empty-state nor error', () => {

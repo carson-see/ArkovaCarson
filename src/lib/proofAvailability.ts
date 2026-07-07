@@ -47,7 +47,7 @@ export interface ProofEndpointSuccess {
 export interface ProofEndpointNotFound {
   ok: false;
   status: 404;
-  body: { error: string };
+  body: { error: string; proof_error_code?: string };
 }
 
 export interface ProofEndpointOther {
@@ -58,10 +58,22 @@ export interface ProofEndpointOther {
 
 export type ProofEndpointResult = ProofEndpointSuccess | ProofEndpointNotFound | ProofEndpointOther;
 
-/** Verbatim 404 body strings from the contract (§2.2) — matched exactly, not by substring heuristics. */
+/** Verbatim 404 body strings from the contract (§2.2) — the FALLBACK match when no code is present. */
 export const NO_MERKLE_PROOF_ERROR =
   'No Merkle proof available for this record. It may not have been batch-anchored.';
 export const RECORD_NOT_FOUND_ERROR = 'Record not found';
+
+/**
+ * Stable machine-readable 404 discriminators (contract §2.2) — the PREFERRED
+ * signal, matched before the prose so a future prose change (localization, typo
+ * fix) cannot silently misroute. Mirror of the worker's `ProofErrorCode`
+ * (services/worker/src/api/v1/verify-proof.ts) — kept structural, not imported
+ * across the FE/worker boundary (same convention as the verbatim strings above).
+ * Additive per §1.8: `proof_error_code` may be absent on older responses, so the
+ * prose fallback above is retained.
+ */
+export const PROOF_ERROR_CODE_NO_BATCH_PROOF = 'NO_BATCH_PROOF';
+export const PROOF_ERROR_CODE_RECORD_NOT_FOUND = 'RECORD_NOT_FOUND';
 
 /**
  * The rendered presentation states for the proof-download surface.
@@ -119,7 +131,21 @@ export function classifyProofAvailability(
   }
 
   if (result.status === 404) {
-    const body = result.body as { error?: string } | undefined;
+    const body = result.body as { error?: string; proof_error_code?: string } | undefined;
+
+    // Prefer the stable machine-readable discriminator (contract §2.2) when the
+    // worker supplies it — immune to prose changes (localization, typo fixes).
+    const code = body?.proof_error_code;
+    if (code === PROOF_ERROR_CODE_RECORD_NOT_FOUND) {
+      return RECORD_MISSING;
+    }
+    if (code === PROOF_ERROR_CODE_NO_BATCH_PROOF) {
+      return NOT_AVAILABLE;
+    }
+
+    // Fallback for older responses that predate proof_error_code (§1.8 additive
+    // — the field may be absent) or carry an unrecognized code: exact-match the
+    // verbatim prose.
     if (body?.error === RECORD_NOT_FOUND_ERROR) {
       return RECORD_MISSING;
     }

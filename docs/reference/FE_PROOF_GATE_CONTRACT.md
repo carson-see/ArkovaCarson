@@ -104,15 +104,35 @@ Read this carefully; it is the one place reality differs from the story's shorth
 `block_hash` exactly 64 hex, and `op_return_payload` in canonical ARKV shape **committing this exact
 `merkle_root`**. Any miss ⇒ `proof_bundle: null` — never a partial or fabricated bundle (§1.5).
 
-### 2.2 `404 Not Found` — TWO distinct bodies (match on these verbatim)
+### 2.2 `404 Not Found` — TWO distinct bodies (discriminate on `proof_error_code`; the verbatim `error` is the fallback)
 
-| Condition | Verbatim body | Source |
-|---|---|---|
-| Record exists (not deleted) but **no Merkle proof** from `anchor_proofs` or metadata — i.e. direct-anchored / back-catalog | `{"error":"No Merkle proof available for this record. It may not have been batch-anchored."}` | `verify-proof.ts:615-617` (db path) and `verify-proof.ts:662-664` (injected-lookup path) — identical string, asserted in `__tests__/verify-proof.test.ts:142,157` |
-| Unknown `publicId`, or record soft-deleted (`deleted_at` set) | `{"error":"Record not found"}` | `verify-proof.ts:655` |
+Both 404 bodies carry an **additive, machine-readable `proof_error_code`** (§1.8 — a NEW optional
+field; the human-readable `error` prose is unchanged, so any client still exact-matching it keeps
+working). **Prefer the code**; treat its absence (responses predating the field) as "fall back to the
+verbatim `error` string". This removes the latent fragility that a future prose change (localization,
+typo fix) would silently misroute the two states.
 
-**These two 404s mean different things.** The first is the honest **state-2** signal (§3). The second
-means Lane 2's record reference is stale — that is a real error state, not an empty state.
+| Condition | `proof_error_code` | Verbatim `error` (fallback) | Source |
+|---|---|---|---|
+| Record exists (not deleted) but **no Merkle proof** from `anchor_proofs` or metadata — i.e. direct-anchored / back-catalog | `"NO_BATCH_PROOF"` | `"No Merkle proof available for this record. It may not have been batch-anchored."` | `verify-proof.ts` db path + injected-lookup path — identical body; both fields asserted in `__tests__/verify-proof.test.ts` |
+| Unknown `publicId`, or record soft-deleted (`deleted_at` set) | `"RECORD_NOT_FOUND"` | `"Record not found"` | `verify-proof.ts` shared tail |
+
+Full body shape (both cases):
+
+```jsonc
+{ "error": "…", "proof_error_code": "NO_BATCH_PROOF" | "RECORD_NOT_FOUND" }
+```
+
+The code type is defined worker-side as `ProofErrorCode` (`verify-proof.ts`, `PROOF_ERROR_CODE`) and
+mirrored FE-side as `PROOF_ERROR_CODE_NO_BATCH_PROOF` / `PROOF_ERROR_CODE_RECORD_NOT_FOUND`
+(`src/lib/proofAvailability.ts`, kept structural rather than imported across the boundary). The
+`400` / `500` / `503` bodies (§2.3–2.5) intentionally **omit** `proof_error_code` — only these two
+404s carry it today.
+
+**These two 404s mean different things.** `NO_BATCH_PROOF` is the honest **state-2** signal (§3).
+`RECORD_NOT_FOUND` means Lane 2's record reference is stale — a real error state, not an empty state.
+The FE classifier (`src/lib/proofAvailability.ts`) routes on `proof_error_code` first and only falls
+back to the exact prose when the field is absent.
 
 ### 2.3 `400 Bad Request`
 
@@ -265,9 +285,9 @@ Lane 1 co-reviews Lane 2's implementation. All boxes ticked before the story tra
 - [ ] **1280px and 375px screenshots of every state in the PR** (CLAUDE.md §0 rule 6).
 - [ ] State 2 renders NO download control, NO error toast, NO disabled button — verified in DOM,
       not just visually.
-- [ ] 404 branch matches on response shape/status, not on substring-matching the error prose in a
-      brittle way (the string is stable and test-asserted, but status+which-404 is the discriminator:
-      "No Merkle proof available…" vs "Record not found" must route to different presentations).
+- [ ] 404 branch discriminates on the machine-readable `proof_error_code` (`NO_BATCH_PROOF` vs
+      `RECORD_NOT_FOUND`, §2.2), falling back to the verbatim prose only when the code is absent —
+      not brittle substring-matching. The two 404s must route to different presentations.
 - [ ] Download only enabled when `status SECURED/ACTIVE && 200 && verified === true && proof_bundle !== null`;
       downloaded artifact is the unmodified `proof_bundle` object.
 - [ ] All new strings in `src/lib/copy.ts`; `npm run lint:copy` green; no §1.3 banned terms.
@@ -304,7 +324,8 @@ Lane 1 co-reviews Lane 2's implementation. All boxes ticked before the story tra
    producers + the FE status check, not by a status branch in `verify-proof.ts`.
 2. **A 200 does not imply a downloadable bundle** — `proof_bundle` can be `null` (state 1b). Gate the
    affordance on the bundle, not on the HTTP status.
-3. **There are two different 404 bodies.** Only "No Merkle proof available…" is the state-2 signal.
+3. **There are two different 404 bodies**, now discriminated by `proof_error_code` (§2.2):
+   `NO_BATCH_PROOF` is the state-2 signal; `RECORD_NOT_FOUND` is a real error. Prose is the fallback.
 4. **`verified: false` on a 200 is possible** and must suppress the download (§3).
 5. The existing RecordDetailPage PROOF-04 certificate path sources proof data client-side from
    Supabase (`src/lib/sourceProofInput.ts`), not from this endpoint. SCRUM-2501's gate is about the
@@ -315,3 +336,8 @@ Lane 1 co-reviews Lane 2's implementation. All boxes ticked before the story tra
 
 _Contract owner: Lane 1 (S3-D). Questions or drift found in code → flag on the SCRUM-2501 PR and
 update this file in the same change. Last grounded: 2026-07-06 against `main` @ `f927494e`._
+
+_Amended 2026-07-07: §2.2 / §7 / §9 — added the additive (§1.8) `proof_error_code` 404 discriminator
+(`NO_BATCH_PROOF` / `RECORD_NOT_FOUND`) on the worker and taught the FE classifier to prefer it over
+the prose, with the verbatim strings retained as the fallback. Confluence mirror to be updated to match
+(Doc Update Matrix — Identity & Access / this reference page)._

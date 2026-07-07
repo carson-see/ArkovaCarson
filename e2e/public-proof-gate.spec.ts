@@ -152,6 +152,9 @@ test.describe('Public Proof Gate (FE-PROOF-GATE / SCRUM-2501)', () => {
         contentType: 'application/json',
         body: JSON.stringify({
           error: 'No Merkle proof available for this record. It may not have been batch-anchored.',
+          // Mirror the real worker: the additive machine-readable discriminator
+          // (§1.8) is what the classifier routes on; prose is the fallback.
+          proof_error_code: 'NO_BATCH_PROOF',
         }),
       });
     });
@@ -188,7 +191,7 @@ test.describe('Public Proof Gate (FE-PROOF-GATE / SCRUM-2501)', () => {
       await route.fulfill({
         status: 404,
         contentType: 'application/json',
-        body: JSON.stringify({ error: 'Record not found' }),
+        body: JSON.stringify({ error: 'Record not found', proof_error_code: 'RECORD_NOT_FOUND' }),
       });
     });
 
