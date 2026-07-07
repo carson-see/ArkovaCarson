@@ -188,23 +188,22 @@ test.describe('Public Verification', () => {
           // stays visible for a record that HAS a proof.
           await expect(page.getByText('Cryptographic Proof')).toBeVisible();
           // FE-PROOF-GATE (SCRUM-2501 / contract §3): the "Download Proof"
-          // affordance now reflects real proof availability, not just status.
-          if (statusCase.status === 'SECURED') {
-            // This fixture is a directly-anchored SECURED record with no batch/
-            // Merkle proof, so the public /proof endpoint returns 404 → the
-            // honest state-2 "not yet available" presentation (the ~2.97M
-            // back-catalogue case): the proof section is present, but there is
-            // NO download button and NO error signal. A downloadable proof for a
-            // SECURED record that HAS a batch bundle is covered separately in
-            // e2e/public-proof-gate.spec.ts (state 1, via contract-verbatim
-            // response interception).
-            await expect(page.getByTestId('proof-not-yet-available')).toBeVisible();
-            await expect(page.getByRole('button', { name: 'Download Proof' })).toHaveCount(0);
-          } else {
-            // Terminal-but-non-SECURED (EXPIRED/REVOKED/SUPERSEDED): the gate is
-            // closed entirely — no download affordance at all.
+          // affordance now reflects real proof AVAILABILITY, not just status.
+          if (statusCase.status !== 'SECURED') {
+            // Terminal-but-non-SECURED (EXPIRED/REVOKED/SUPERSEDED): the download
+            // gate is closed entirely (isProofDownloadable is SECURED-only) — no
+            // download affordance at all, regardless of the proof endpoint.
             await expect(page.getByText('Download Proof')).not.toBeVisible();
           }
+          // For SECURED we deliberately do NOT assert a specific download
+          // outcome here: this test hits the LIVE worker, and whether a real
+          // batch proof exists for a directly-created fixture is environment-
+          // dependent (404 → honest empty-state, or a real bundle → download).
+          // The full state matrix (state 1 download vs state 2 empty vs the
+          // retry/record-missing branches) is pinned deterministically in
+          // e2e/public-proof-gate.spec.ts via contract-verbatim /proof
+          // interception. Here we only assert the stable, worker-independent
+          // facts (section present above; no ACTIVE badge below).
         } else {
           await expect(page.getByText('Document Verified')).not.toBeVisible();
           await expect(page.getByText('Cryptographic Proof')).not.toBeVisible();
