@@ -75,6 +75,7 @@ ANCHOR_CONFIDENCE_THRESHOLD=0.4
 ```bash
 ENABLE_VERIFICATION_API=false       # legacy config input only; runtime gate reads switchboard_flags via get_flag
 API_KEY_HMAC_SECRET=
+RECIPIENT_IDENTIFIER_PEPPER=        # SCRUM-2484: server pepper for the keyed HMAC-SHA256 of recipient email identifiers (recipient_email_hash / recipient_identifier_hash). Without it, no recipient identifier hash is produced — NEVER a bare, enumerable sha256(email). Also set DB-side as the `app.recipient_pepper` GUC (e.g. `ALTER DATABASE postgres SET app.recipient_pepper='<value>'`) so get_public_anchor's recipient_identifier is keyed; unset ⇒ recipient_identifier reads '' (fail closed). Carson/RTE-provisioned in Secret Manager.
 CORS_ALLOWED_ORIGINS=*
 INTEGRATION_STATE_HMAC_SECRET=      # SCRUM-1236 / audit H1: dedicated HMAC secret for OAuth `state` signing (Drive, DocuSign org + member, GRC). Worker fails closed if unset (no fallback to SUPABASE_JWT_SECRET). Required at boot in production when ENABLE_DRIVE_OAUTH or ENABLE_DOCUSIGN_OAUTH is true.
 ```

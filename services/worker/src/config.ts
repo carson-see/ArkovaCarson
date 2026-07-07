@@ -184,6 +184,13 @@ const ConfigSchema = z.object({
   // Verification API (P4.5)
   /** HMAC-SHA256 secret for API key hashing (Constitution 1.4) — never logged */
   apiKeyHmacSecret: z.string().min(1).optional(),
+  /**
+   * SCRUM-2484: server pepper for keyed HMAC-SHA256 of recipient email
+   * identifiers (recipient_email_hash / recipient_identifier_hash). Without it,
+   * recipient identifiers fall back to an enumerable bare sha256(email). Never
+   * logged. VALUE is Carson/RTE-provisioned in Secret Manager.
+   */
+  recipientIdentifierPepper: z.string().min(16).optional(),
   /** CORS origins for /api/v1/* endpoints (comma-separated) */
   corsAllowedOrigins: z.string().optional(),
 
@@ -687,6 +694,7 @@ function loadConfig(): Config {
     enableOrgCreditEnforcement: process.env.ENABLE_ORG_CREDIT_ENFORCEMENT,
     disableInProcessAnchorCron: process.env.DISABLE_IN_PROCESS_ANCHOR_CRON,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
+    recipientIdentifierPepper: process.env.RECIPIENT_IDENTIFIER_PEPPER,
     geminiApiKey: process.env.GEMINI_API_KEY,
     geminiModel: process.env.GEMINI_MODEL,
     geminiEmbeddingModel: process.env.GEMINI_EMBEDDING_MODEL,

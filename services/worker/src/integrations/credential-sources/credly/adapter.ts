@@ -38,13 +38,15 @@ import {
   type CredentialEvidencePackage,
   buildCredentialEvidencePackage,
 } from '../../../lib/credential-evidence.js';
+import { hashRecipientEmail } from '../../../lib/recipient-identity.js';
 
 import type { CredlyIssuedBadge } from './client.js';
 
 /** Source slug recorded into evidence packages — matches PRD §6.1. */
 export const CREDLY_SOURCE_PROVIDER_SLUG = 'credly' as const;
 
-/** SHA-256 hex digest of a UTF-8 string (lowercased emails, raw ids). */
+/** SHA-256 hex digest of a UTF-8 string (raw ids only — recipient emails use the
+ *  keyed HMAC via hashRecipientEmail, SCRUM-2484). */
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
@@ -58,6 +60,12 @@ export interface CredlyAdapterDeps {
   payloadByteLength?: number;
   /** Optional recipient email; if provided it is hashed into the package. */
   recipientEmail?: string;
+  /**
+   * SCRUM-2484: server pepper for the keyed HMAC of the recipient email. When
+   * absent, NO recipient identifier hash is produced — never a bare, enumerable
+   * sha256(email). Callers pass `config.recipientIdentifierPepper`.
+   */
+  recipientPepper?: string;
 }
 
 export interface CredlyAdapterResult {
@@ -97,11 +105,13 @@ export function credlyBadgeToEvidence(
     badge.public_url ??
     `https://api.credly.com/v1/issued_badges/${encodeURIComponent(badge.id)}`;
 
-  // Recipient email (when present) is lowercased before hashing so two
-  // syntactic variants of the same email hash identically.
-  const recipientIdentifierHash = deps.recipientEmail
-    ? sha256Hex(deps.recipientEmail.trim().toLowerCase())
-    : undefined;
+  // SCRUM-2484: recipient email → keyed HMAC (pepper), lowercased+trimmed for
+  // stable matching — not a bare sha256, so it cannot be precomputed/enumerated
+  // offline. Omitted entirely when no pepper is available.
+  const recipientIdentifierHash =
+    deps.recipientEmail && deps.recipientPepper
+      ? hashRecipientEmail(deps.recipientEmail, deps.recipientPepper)
+      : undefined;
 
   const proofDetected = badge.proof !== undefined && badge.proof !== null;
   const credentialIdHash = sha256Hex(badge.id);

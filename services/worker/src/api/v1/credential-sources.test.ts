@@ -132,6 +132,13 @@ vi.mock('../../utils/orgCredits.js', () => ({
   deductOrgCredit: mockDeductOrgCredit,
 }));
 
+// SCRUM-2484: the router reads config.recipientIdentifierPepper. Mock config so
+// the test does not load the real config singleton (which requires prod secrets
+// at import time). A test pepper is supplied so the keyed-HMAC path is exercised.
+vi.mock('../../config.js', () => ({
+  config: { recipientIdentifierPepper: 'test-recipient-pepper-0123456789' },
+}));
+
 const { mockDispatchWebhookEvent } = vi.hoisted(() => ({
   mockDispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
@@ -304,7 +311,10 @@ describe('credentialSourcesRouter', () => {
     });
     expect(anchorPayload.metadata).not.toHaveProperty('credential_recipient_display');
     expect(anchorPayload.metadata).not.toHaveProperty('recipient_display_name');
-    expect(anchorPayload.metadata.recipient_identifier_hash).toMatch(/^[a-f0-9]{64}$/);
+    // SCRUM-2484: the recipient identifier hash is NO LONGER stored in
+    // anchors.metadata (which get_public_anchor projects to anonymous callers).
+    // It lives only in the anchor_recipients linking row.
+    expect(anchorPayload.metadata).not.toHaveProperty('recipient_identifier_hash');
 
     const recipientPayload = mockRecipientInsert.mock.calls[0][0] as Record<string, unknown>;
     expect(recipientPayload).toEqual(expect.objectContaining({
