@@ -22,6 +22,12 @@ Tests that need unauthenticated state (e.g., `auth.spec.ts`, `route-guards.spec.
 | `seed-anchors.ts` | Seed SECURED anchors fixture — creates reusable anchors in various states for E2E tests |
 | `index.ts` | Barrel export — all specs import from here |
 
+### Helpers (`e2e/helpers/`)
+
+| File | Purpose |
+|------|---------|
+| `soaking-ref-guard.ts` | **SCRUM-2603** hard guard. `assertNotSoakingRef(ref)` throws BEFORE any repro `execute_sql`/deploy/load if the target Supabase ref is shared staging (`ujtlwnoqfhtitcmsnrpq`), prod (`vzwyaatejekddvltxyye`), any `*-staging`-shaped ref, or any operator-listed soaking micro-rig ref (`SOAKING_PROJECT_REFS` env). The #1147 contamination scar made mechanical (§1.11A). Pure `evaluateReproTargetRef()` is unit-tested in `tests/infra/soaking-ref-guard.test.ts`. Does NOT stand up / write / tear down any rig — validation only. |
+
 ### Existing Specs
 
 | File | Flow | Tests | Fixtures Used |
@@ -46,6 +52,7 @@ Tests that need unauthenticated state (e.g., `auth.spec.ts`, `route-guards.spec.
 | `legal-pages.spec.ts` | Public privacy and terms routes: update notices present, launch-blocker placeholder copy absent | 2 | `@playwright/test`, unauthenticated empty storageState |
 | `integrations-docusign.spec.ts` | DocuSign org settings connector: status, connect, disconnect, error states, non-admin boundary, 1280px + 375px screenshot attachments | 11 | `test`, `expect`, `getServiceClient`, `SEED_USERS`, `orgAdminPage`, `individualPage` |
 | `route-screenshot-baseline.spec.ts` | **Route matrix + screenshot baseline (SCRUM-1998 / GA-S2 / E3).** Enumerates the app's routes (derived from the LOCKED `src/lib/routes.ts` `ROUTES` map) and captures a deterministic full-page screenshot of each at BOTH 1280px desktop + 375px mobile. 57 route cases × 2 viewports = 114 shots/project. | 57 | `test`, `expect`, `getServiceClient`, `getSeedUserOrgId`, `createTestAnchor`, `deleteTestAnchor`, `SEED_USERS`, `acceptDisclaimerIfVisible`, `ROUTES` |
+| `verify-ratelimit-contract.spec.ts` | **SCRUM-2603 (RED de-risking artifact).** Proves the verify endpoint is 429'd at ~10 req/min/IP — 1/10th the §1.10 anon 100/min contract — because `adminRouter`'s limit-10 checkout limiter (routes/admin.ts:37) is mounted at `/api` (index.ts:351) ahead of the verify router (index.ts:458). Fires 11 anon verify GETs from one fixed `X-Forwarded-For` IP and asserts all 2xx + `X-RateLimit-Limit=100` + `Retry-After` on the real 429. **Written RED**; the index.ts mount-order fix is WITHHELD (soaking surface). Runs ONLY against a Carson-provisioned throwaway rig cleared by the soaking-ref guard — skips otherwise, never touches a protected rig. | 3 | `test`, `expect`, `getServiceClient`, `createTestAnchor`, `deleteTestAnchor`, `SEED_USERS`, `assertNotSoakingRef` |
 
 ## Route Screenshot Baseline — Matrix (SCRUM-1998)
 
