@@ -1197,6 +1197,12 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-count-exact-baseline(\.test)?\.ts$/,
   /^scripts\/ci\/check-coverage-monotonic(\.test)?\.ts$/,
   /^scripts\/ci\/snapshots\//, // CI baselines/snapshots — tooling, never prod runtime
+  // SCRUM-2666: the `npm run lint:copy` banned-terminology gate + its test
+  // fixtures. Runs only in CI (ci.yml typecheck-lint job) and locally; never
+  // ships to prod runtime → T0 tooling. scripts/fixtures/ holds .txt sources
+  // read by scripts/*.test.ts only (never imported, typechecked, or bundled).
+  /^scripts\/check-copy-terms(\.test)?\.ts$/,
+  /^scripts\/fixtures\//,
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
   /^scripts\/ci\/config-drift\//,

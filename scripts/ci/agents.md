@@ -35,7 +35,7 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 ## `snapshots/`
 Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per gate).
 - `prod-tables.json`, `worker-env-adhoc-baseline.json`, `rls-policy-coverage-baseline.json`, `views-security-invoker-baseline.json`, `migration-prefix-baseline.json` — see the gate that reads each.
-- **`copy-terms-baseline.json`** (SCRUM-2148 / SCRUM-2149) — grandfather baseline for `scripts/check-copy-terms.ts` (`npm run lint:copy`, defined one level up in `scripts/`). Records ONLY pre-existing copy-term/raw-enum violations that can't be fixed in their PR (locked file or another in-flight track). The linter fails on NEW violations only; match key = `file`+`line`. Each entry needs a `reason`. Full protocol in `scripts/agents.md` → "Copy-term linter". Never baseline a self-introduced violation.
+- **`copy-terms-baseline.json`** (SCRUM-2148 / SCRUM-2149) — grandfather baseline for `scripts/check-copy-terms.ts` (`npm run lint:copy`, defined one level up in `scripts/`). Records ONLY pre-existing copy-term/raw-enum violations that can't be fixed in their PR (locked file or another in-flight track). The linter fails on NEW violations only; match key = normalised `file`+`line`+`term` (term lower-cased — two different terms on the same line are two entries). Each entry needs a `reason`. Full protocol in `scripts/agents.md` → "Copy-term linter". Never baseline a self-introduced violation.
 
 ## Conventions
 

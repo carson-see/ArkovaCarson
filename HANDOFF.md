@@ -14,6 +14,12 @@
 
 ## Now
 
+### 2026-07-06 (tooling) — lint:copy multi-line-JSX blind spot CLOSED (SCRUM-2666, PR #1440, T0)
+
+The `lint:copy` per-line scan short-circuited raw JSX text lines (no quote char + no same-line `<`/`>` pair) — the blind spot that shipped "Bitcoin blockchain" in `PublicVerification.tsx:658` (copy removal owned by open PR #1433). Fixed with a cross-line **context-stack** JSX state machine (`scanFileContent()` in `scripts/check-copy-terms.ts`) that also tracks copy inside `{cond && (…)}` renders, `.map()` callbacks, and fragments; 28 red-first tests + fixture (`scripts/fixtures/`). Round-2 adversarial review (parallel refuter agent) killed the round-1 flat machine — closing-tag guard bug had put 1,932 code lines into force-scan mode; all 8 confirmed findings fixed + test-locked; post-fix census: 0 code-shaped force-scanned lines. Fixed-scanner sweep of the full 356-file scope found exactly 3 pre-existing hits, all grandfathered with retirement conditions in `copy-terms-baseline.json`: PublicVerification 658 ×2 (retire on #1433 merge) + `PipelineAdminPage.tsx:1196` "worker service" (UX-03; reword-vs-ops-exclusion follow-up session spawned). Also allowlisted `scripts/check-copy-terms*.ts` + `scripts/fixtures/` as T0 tooling in `check-staging-evidence.ts` (was falling through to T1 "default frontend"). Bug row BUG-2026-07-06-004 in the master log; Jira SCRUM-2666 In Progress; Confluence page 96108545.
+
+_Verified via: `npx vitest run scripts/check-copy-terms.test.ts` (115/115) + `scripts/ci/check-staging-evidence.test.ts` (165/165); `npm run lint:copy` (0 new, 11 grandfathered, 0 stale); `tsc --noEmit` (0); `requiredTierFor(<changed files>)` → T0; instrumented repo census (4,855 continuation lines, 0 code-shaped); PR https://github.com/carson-see/ArkovaCarson/pull/1440. No prod/staging/schema state asserted or changed._
+
 ### 2026-07-06 (RTE/ART) - Final Sprint 3.25/3.5/3.75/3.8/3.85/3.9 artifact packet
 
 Use this clean final-artifacts folder for founder review: https://drive.google.com/drive/folders/1ItbVr6LtLMzif20hCUwEClYhcHYUsddd.

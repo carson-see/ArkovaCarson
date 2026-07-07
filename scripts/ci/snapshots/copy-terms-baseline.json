@@ -55,6 +55,24 @@
       "line": 399,
       "term": "raw enum render: {credential.credential_type}",
       "reason": "PUBLIC verify page — pre-existing raw credential_type render. Fix = formatCredentialType() from src/lib/copy.ts; coordinate with the SCRUM-2003 status-label track. SCRUM-2148 follow-up (public-surface priority)."
+    },
+    {
+      "file": "src/components/verification/PublicVerification.tsx",
+      "line": 658,
+      "term": "bitcoin",
+      "reason": "The shipped multi-line-JSX blind-spot case (raw JSX text line, no quote / no same-line tag pair) surfaced by the 2026-07-06 cross-line scanner fix. Copy removal is owned by OPEN PR #1433 (SCRUM-2495 disclaimer rework) — entry goes stale and must be removed once #1433 merges."
+    },
+    {
+      "file": "src/components/verification/PublicVerification.tsx",
+      "line": 658,
+      "term": "blockchain",
+      "reason": "Second banned term on the same shipped blind-spot line as the bitcoin entry above; same ownership (OPEN PR #1433). Remove once #1433 merges."
+    },
+    {
+      "file": "src/pages/PipelineAdminPage.tsx",
+      "line": 1196,
+      "term": "worker service",
+      "reason": "Pre-existing UX-03 engineering-copy leak on a multi-line JSX text line, surfaced by the 2026-07-06 cross-line scanner fix. Platform-admin-only ops dashboard (AuthGuard + admin JWT) — decide reword vs. an ops-dashboard scan exclusion (precedent: src/components/admin/treasury/**) in the follow-up copy PR, then retire this entry."
     }
   ]
 }
