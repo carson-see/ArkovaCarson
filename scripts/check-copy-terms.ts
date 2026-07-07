@@ -236,8 +236,13 @@ export function shouldSkipLine(line: string, trimmed: string): boolean {
   ) {
     return true;
   }
-  // Skip Web Crypto API usage and "cryptographic" adjective
-  if (line.includes('crypto.subtle') || line.includes('crypto.getRandomValues') || line.includes('cryptographic')) {
+  // Skip Web Crypto API usage (`crypto.subtle`/`crypto.getRandomValues` — the
+  // `.` makes the boundaried `crypto` term match, a false positive). NOTE: we do
+  // NOT skip the "cryptographic" adjective — the boundaried `crypto` regex never
+  // matches inside "cryptographic" (the trailing `g` blocks `(?!\w)`), so that
+  // skip was vestigial AND it hid every OTHER banned term on marketing lines
+  // like "SHA-256 cryptographic hash" (a real §1.3 "hash" leak). Removed.
+  if (line.includes('crypto.subtle') || line.includes('crypto.getRandomValues')) {
     return true;
   }
   // Skip DOM API parameters (e.g. scrollIntoView({ block: 'nearest' }))
@@ -732,7 +737,16 @@ export function findTermViolations(line: string, lineNum: number, filePath: stri
     regex.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = regex.exec(cleaned)) !== null) {
-      if (isCodeIdentifier(cleaned, match.index, match[0].length)) continue;
+      // Non-suppressible terms (secrets / launch-blockers) are never dropped by a
+      // structural-position filter — they have no legitimate code position in a
+      // scanned UI file, so a bare-value `'service role'` or an object-key
+      // position must still flag. Every other term respects isCodeIdentifier.
+      if (
+        isCodeIdentifier(cleaned, match.index, match[0].length) &&
+        !isNonSuppressibleTerm(match[0])
+      ) {
+        continue;
+      }
       results.push({
         file: filePath,
         line: lineNum,
@@ -765,6 +779,20 @@ export function checkFile(filePath: string): Violation[] {
     }
 
     if (shouldSkipLine(line, trimmed)) {
+      // A line-skip suppresses vocab false-positives (`crypto.subtle`→"crypto",
+      // the DOM `block:` param, URL `token` key). On a real CODE line it must
+      // NEVER hide a secret / launch-blocker leak in a same-line shipped string
+      // (e.g. `toast('service_role failed'); el.scrollIntoView()`), so we still
+      // scan those for the non-suppressible terms. Comments and imports are
+      // exempt — they are not shipped copy and legitimately mention infra terms
+      // (a `// … worker service …` explanatory comment must not flag).
+      const isCommentOrImport =
+        trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('import ');
+      if (!isCommentOrImport) {
+        violations.push(
+          ...findTermViolations(line, i + 1, filePath).filter((v) => isNonSuppressibleTerm(v.term)),
+        );
+      }
       continue;
     }
 

@@ -911,3 +911,77 @@ describe('non-suppressible terms — no channel may silence a secret/launch-bloc
     expect(fresh).toHaveLength(0);
   });
 });
+
+// =============================================================================
+// UPSTREAM suppression must not hide a non-suppressible leak (code-review /
+// pre-mortem finding): shouldSkipLine + isCodeIdentifier run BEFORE the
+// allowlist/baseline guard, so the guarantee must also hold at those layers.
+// =============================================================================
+
+describe('upstream suppression cannot hide a secret / launch-blocker leak', () => {
+  it('a bare-value SECRET/infra string still flags (isCodeIdentifier bypass)', () => {
+    // A whole-value quoted string is normally suppressed (isBareValueString) —
+    // correct for copy.ts vocab DATA — but a secret/infra term never is.
+    expect(
+      findTermViolations(`  MSG: 'service role',`, 1, 'src/lib/copy.ts').map((v) => v.term.toLowerCase()),
+    ).toContain('service role');
+    expect(
+      findTermViolations(`  MSG: 'worker service',`, 1, 'src/lib/copy.ts').map((v) => v.term.toLowerCase()),
+    ).toContain('worker service');
+  });
+
+  it('a VOCAB bare-value stays suppressed (copy.ts legitimately holds the FORBIDDEN/TERM_REPLACEMENTS vocab data)', () => {
+    // Scope guard: the fix must NOT start flagging copy.ts\'s own banned-term
+    // data (e.g. the `'wallet',` entry in the FORBIDDEN_TERMS list), which would
+    // red the file. Single-word vocab bare-values remain a documented gap.
+    expect(findTermViolations(`  'wallet',`, 1, 'src/lib/copy.ts')).toEqual([]);
+  });
+
+  it('the "cryptographic" adjective no longer whole-line-skips a banned term', () => {
+    const line = `  X: 'SHA-256 cryptographic hash shown below',`;
+    expect(shouldSkipLine(line, line.trim())).toBe(false);
+    expect(findTermViolations(line, 1, 'src/lib/copy.ts').map((v) => v.term.toLowerCase())).toContain('hash');
+  });
+
+  it('"cryptographic" on its own is not a violation (crypto term has a word boundary)', () => {
+    expect(findTermViolations(`  X: 'cryptographic verification',`, 1, 'src/lib/copy.ts')).toEqual([]);
+  });
+
+  it('a Web Crypto API line is still skipped for vocab, but a secret on it still flags (checkFile)', () => {
+    const tmp = path.join(os.tmpdir(), `copy-skip-secret-${process.pid}.ts`);
+    fs.writeFileSync(tmp, `  logError('service_role missing'); await crypto.subtle.digest(a, b);\n`);
+    try {
+      const terms = checkFile(tmp).map((v) => v.term.toLowerCase());
+      expect(terms).toContain('service_role'); // secret NOT hidden by the crypto.subtle skip
+      expect(terms).not.toContain('crypto'); // vocab false-positive still suppressed by the skip
+    } finally {
+      fs.unlinkSync(tmp);
+    }
+  });
+
+  it('a secret hidden behind a TRAILING skip-token comment on a shipped string still flags', () => {
+    const tmp = path.join(os.tmpdir(), `copy-trailing-skip-${process.pid}.ts`);
+    fs.writeFileSync(tmp, `  export const MSG = 'service_role reset required'; // uses crypto.subtle\n`);
+    try {
+      expect(checkFile(tmp).map((v) => v.term.toLowerCase())).toContain('service_role');
+    } finally {
+      fs.unlinkSync(tmp);
+    }
+  });
+
+  it('a COMMENT mentioning a non-suppressible term does NOT flag (comments are not shipped copy)', () => {
+    const tmp = path.join(os.tmpdir(), `copy-comment-${process.pid}.ts`);
+    fs.writeFileSync(
+      tmp,
+      [
+        `  // BUG-UAT5-04: leaked "Ensure the worker service is running" to users.`,
+        `  // each was a 60s PostgREST query against service_role paths.`,
+      ].join('\n'),
+    );
+    try {
+      expect(checkFile(tmp)).toEqual([]);
+    } finally {
+      fs.unlinkSync(tmp);
+    }
+  });
+});
