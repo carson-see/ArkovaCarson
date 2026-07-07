@@ -13,11 +13,45 @@ import {
   type CredentialSourceImportPreview,
 } from '../../lib/credential-source-import.js';
 import { dispatchWebhookEvent, isPrivateUrlResolved } from '../../webhooks/delivery.js';
+import { createSafeFetchImpl } from '../../lib/safe-fetch.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit, type DeductionResult } from '../../utils/orgCredits.js';
 
 const router = Router();
+
+// SCRUM-2483: a single IP-pinned fetch impl for credential-source imports. Each
+// hop resolves + validates + pins the IP, so the socket target is guaranteed to
+// be the validated public address — collapsing the TOCTOU split between the
+// urlGuard (isPrivateUrlResolved) and the raw fetch that previously re-resolved
+// the hostname independently and could be steered to a private host via DNS
+// rebinding. The import's own per-hop urlGuard remains as defense-in-depth.
+const safeCredentialSourceFetch = createSafeFetchImpl();
+
+/**
+ * Test-only override for the credential-source fetch impl. Production uses the
+ * IP-pinned safeFetch above (which performs real DNS resolution); tests inject a
+ * plain fetch so they can stub responses without a DNS server. Mirrors the
+ * `__testOverridePath` seam convention used in did-web.ts / proof-keys.ts.
+ *
+ * `CredentialSourceFetchFn` references the DOM `Response` via the global fetch's
+ * return type — express's `Response` is imported into this module's scope and
+ * would otherwise shadow it.
+ */
+type CredentialSourceFetchFn = (
+  url: string,
+  init?: RequestInit,
+) => Promise<Awaited<ReturnType<typeof globalThis.fetch>>>;
+
+let testFetchOverride: CredentialSourceFetchFn | null = null;
+
+export function __setCredentialSourceFetchForTests(fetchImpl: CredentialSourceFetchFn | null): void {
+  testFetchOverride = fetchImpl;
+}
+
+function credentialSourceFetch(): CredentialSourceFetchFn {
+  return testFetchOverride ?? safeCredentialSourceFetch;
+}
 const MAX_PUBLIC_ID_INSERT_ATTEMPTS = 5;
 
 const anchorRecipientSchema = z.object({
@@ -136,7 +170,7 @@ async function buildPreviewFromRequest(req: Request, res: Response) {
   return {
     input: parsed.data,
     result: await buildCredentialSourceImportPreview(parsed.data, {
-      fetchFn: globalThis.fetch,
+      fetchFn: credentialSourceFetch(),
       urlGuard: isPrivateUrlResolved,
     }),
   };

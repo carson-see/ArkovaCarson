@@ -46,3 +46,7 @@ Sprint 1 follow-up (CSI-04D) adds the Issuer Partners admin UI.
 - KMS module: `services/worker/src/integrations/oauth/crypto.ts` (SCRUM-1168)
 - DocuSign precedent: same `member_integrations` table established by `0320_member_integrations.sql` (SCRUM-2044)
 - Jira: [SCRUM-1611](https://arkova.atlassian.net/browse/SCRUM-1611) / parent [SCRUM-1600](https://arkova.atlassian.net/browse/SCRUM-1600) / epic [SCRUM-1596](https://arkova.atlassian.net/browse/SCRUM-1596)
+
+## SSRF (SCRUM-2483)
+
+- Provider clients (`accredible/client.ts`, `credly/client.ts`) take an injectable `fetch: FetchLike`. **Production callers MUST inject `createSafeProviderFetch()`** (`safe-provider-fetch.ts`) — the IP-pinned SSRF-guarded fetch — never the raw `fetch` global, so a rebinding provider host cannot reach a private/metadata address. Tests inject a stub. These clients are greenfield (no production instantiation wired yet); wire the safe fetch when the connector job that constructs them lands.

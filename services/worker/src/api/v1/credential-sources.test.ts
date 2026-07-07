@@ -1,7 +1,10 @@
 import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { credentialSourcesRouter } from './credential-sources.js';
+import {
+  credentialSourcesRouter,
+  __setCredentialSourceFetchForTests,
+} from './credential-sources.js';
 
 const {
   mockFrom,
@@ -175,6 +178,11 @@ describe('credentialSourcesRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockHtmlFetch();
+    // SCRUM-2483: production routes credential-source imports through the
+    // IP-pinned safeFetch (real DNS). These tests stub globalThis.fetch and
+    // mock the urlGuard, so inject a plain fetch override that delegates to the
+    // stubbed global — exercising the router without a DNS server.
+    __setCredentialSourceFetchForTests((url, init) => globalThis.fetch(url, init));
     mockProfileSingle.mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
     mockAnchorsMaybeSingle.mockResolvedValue({ data: null, error: null });
     mockDeductOrgCredit.mockResolvedValue({ allowed: true });

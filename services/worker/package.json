@@ -55,6 +55,7 @@
     "stripe": "22.2.1",
     "swagger-ui-express": "5.0.1",
     "tiny-secp256k1": "2.2.4",
+    "undici": "7.28.0",
     "unzipper": "0.12.5",
     "viem": "2.54.1",
     "ws": "8.21.0",
