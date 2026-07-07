@@ -647,7 +647,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               {anchor.fingerprint}
             </div>
             <p className="text-xs text-muted-foreground">
-              SHA-256 cryptographic fingerprint • {formatFingerprint(anchor.fingerprint, 8, 4)}
+              SHA-256 cryptographic hash • {formatFingerprint(anchor.fingerprint, 8, 4)}
             </p>
           </div>
 

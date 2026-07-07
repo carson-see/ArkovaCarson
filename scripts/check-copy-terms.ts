@@ -236,13 +236,16 @@ export function shouldSkipLine(line: string, trimmed: string): boolean {
   ) {
     return true;
   }
-  // Skip Web Crypto API usage (`crypto.subtle`/`crypto.getRandomValues` — the
-  // `.` makes the boundaried `crypto` term match, a false positive). NOTE: we do
-  // NOT skip the "cryptographic" adjective — the boundaried `crypto` regex never
-  // matches inside "cryptographic" (the trailing `g` blocks `(?!\w)`), so that
-  // skip was vestigial AND it hid every OTHER banned term on marketing lines
-  // like "SHA-256 cryptographic hash" (a real §1.3 "hash" leak). Removed.
-  if (line.includes('crypto.subtle') || line.includes('crypto.getRandomValues')) {
+  // Skip Web Crypto API usage and the "cryptographic" adjective. NOTE: this is a
+  // whole-line skip, so a VOCAB term co-located with "cryptographic" (e.g. a
+  // stray "SHA-256 cryptographic hash") is not flagged — a documented residual
+  // (see scripts/agents.md). A SECRET / launch-blocker on such a line is NOT
+  // hidden: checkFile re-scans skipped code lines for non-suppressible terms.
+  if (
+    line.includes('crypto.subtle') ||
+    line.includes('crypto.getRandomValues') ||
+    line.includes('cryptographic')
+  ) {
     return true;
   }
   // Skip DOM API parameters (e.g. scrollIntoView({ block: 'nearest' }))

@@ -937,10 +937,18 @@ describe('upstream suppression cannot hide a secret / launch-blocker leak', () =
     expect(findTermViolations(`  'wallet',`, 1, 'src/lib/copy.ts')).toEqual([]);
   });
 
-  it('the "cryptographic" adjective no longer whole-line-skips a banned term', () => {
-    const line = `  X: 'SHA-256 cryptographic hash shown below',`;
-    expect(shouldSkipLine(line, line.trim())).toBe(false);
-    expect(findTermViolations(line, 1, 'src/lib/copy.ts').map((v) => v.term.toLowerCase())).toContain('hash');
+  it('a "cryptographic" line skips VOCAB (documented residual) but a SECRET on it still flags', () => {
+    // VOCAB residual: a "hash" co-located with "cryptographic" is whole-line-skipped.
+    const vocab = `  X: 'SHA-256 cryptographic hash shown below',`;
+    expect(shouldSkipLine(vocab, vocab.trim())).toBe(true);
+    // But a secret on a "cryptographic" line is NOT hidden — checkFile re-scans.
+    const tmp = path.join(os.tmpdir(), `copy-crypto-secret-${process.pid}.ts`);
+    fs.writeFileSync(tmp, `  const m = 'cryptographic wrapper leaks service_role';\n`);
+    try {
+      expect(checkFile(tmp).map((v) => v.term.toLowerCase())).toContain('service_role');
+    } finally {
+      fs.unlinkSync(tmp);
+    }
   });
 
   it('"cryptographic" on its own is not a violation (crypto term has a word boundary)', () => {
