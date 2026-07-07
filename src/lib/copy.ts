@@ -630,7 +630,7 @@ export const API_KEY_LABELS = {
   UNLIMITED_TIER: 'Unlimited',
   RESET_DATE: 'Resets on',
   PER_KEY_BREAKDOWN: 'Usage by Key',
-  USAGE_UNAVAILABLE: 'Usage data unavailable — worker service not connected',
+  USAGE_UNAVAILABLE: 'Usage data unavailable — service not connected',
   USAGE_CREATE_KEY_HINT: 'Usage metrics will appear once you create your first API key',
 } as const;
 
