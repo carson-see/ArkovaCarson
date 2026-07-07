@@ -96,3 +96,78 @@ describe('SourceProvenanceDisplay', () => {
     expect(section).not.toHaveTextContent('payload-hash-456');
   });
 });
+
+// ─── SCRUM-2481: measured / asserted / NOT-asserted triad ────────────────────
+describe('SourceProvenanceDisplay — SCRUM-2481 evidence triad', () => {
+  it('renders the measured/asserted/NOT-asserted triad for a captured_url card', () => {
+    render(
+      <SourceProvenanceDisplay
+        data={{ ...FULL_DATA, verification_level: 'captured_url' }}
+      />
+    );
+
+    const triad = screen.getByTestId('evidence-triad');
+    expect(triad).toBeInTheDocument();
+    // §1.5: state what is measured, asserted, and NOT asserted.
+    expect(triad).toHaveTextContent(/measured/i);
+    expect(triad).toHaveTextContent(/asserted/i);
+    expect(triad).toHaveTextContent(/not asserted/i);
+  });
+
+  it('a captured_url card explicitly states issuer identity is NOT asserted', () => {
+    render(
+      <SourceProvenanceDisplay
+        data={{ ...FULL_DATA, verification_level: 'captured_url' }}
+      />
+    );
+
+    const notAsserted = screen.getByTestId('evidence-triad-not-asserted');
+    expect(notAsserted.textContent?.toLowerCase()).toContain('issuer identity');
+  });
+
+  it('an ai_captured card explicitly states issuer identity is NOT asserted', () => {
+    render(
+      <SourceProvenanceDisplay
+        data={{ ...FULL_DATA, verification_level: 'ai_captured' }}
+      />
+    );
+
+    const notAsserted = screen.getByTestId('evidence-triad-not-asserted');
+    expect(notAsserted.textContent?.toLowerCase()).toContain('issuer identity');
+  });
+
+  it('an account_linked card explicitly states issuer identity is NOT asserted', () => {
+    render(
+      <SourceProvenanceDisplay
+        data={{ ...FULL_DATA, verification_level: 'account_linked' }}
+      />
+    );
+
+    const notAsserted = screen.getByTestId('evidence-triad-not-asserted');
+    expect(notAsserted.textContent?.toLowerCase()).toContain('issuer identity');
+  });
+
+  it('an issuer_anchored card does NOT show an issuer-identity NOT-asserted disclaimer', () => {
+    render(
+      <SourceProvenanceDisplay
+        data={{ ...FULL_DATA, verification_level: 'issuer_anchored' }}
+      />
+    );
+
+    // Issuer tiers DO assert issuer identity, so the "NOT asserted: issuer
+    // identity" disclaimer must be absent for them.
+    const notAsserted = screen.queryByTestId('evidence-triad-not-asserted');
+    if (notAsserted) {
+      expect(notAsserted.textContent?.toLowerCase()).not.toContain('issuer identity');
+    }
+  });
+
+  it('does not render the triad when no verification level is present', () => {
+    render(
+      <SourceProvenanceDisplay
+        data={{ source_provider: 'credly', source_url: null }}
+      />
+    );
+    expect(screen.queryByTestId('evidence-triad')).not.toBeInTheDocument();
+  });
+});

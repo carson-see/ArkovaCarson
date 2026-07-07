@@ -275,6 +275,43 @@ describe('PublicVerification', () => {
     expect(screen.queryByText(/token=secret/)).not.toBeInTheDocument();
   });
 
+  // SCRUM-2481: a captured_url anchor's PUBLIC page must never present the
+  // green issuer-verified evidence badge, and must surface the NOT-asserted
+  // issuer-identity disclaimer.
+  it('never shows the green issuer-verified badge for a captured_url anchor', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_url: 'https://credly.com/badges/abc?id=visible',
+          source_provider: 'credly',
+          verification_level: 'captured_url',
+          evidence_package_hash: 'evidence-hash-123',
+          source_payload_hash: 'payload-hash-456',
+          source_fetched_at: '2026-04-01T11:45:00Z',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    const badge = await screen.findByTestId('evidence-level-badge');
+    expect(badge).toHaveAttribute('data-evidence-tier', 'captured_url');
+    // Structural honesty: no green treatment, no issuer-family wording.
+    expect(badge.className).not.toContain('green');
+    const ariaLabel = (badge.getAttribute('aria-label') ?? '').toLowerCase();
+    expect(ariaLabel).not.toContain('verified');
+    expect(ariaLabel).not.toContain('issuer');
+
+    // The public triad states issuer identity is NOT asserted.
+    const notAsserted = screen.getByTestId('evidence-triad-not-asserted');
+    expect(notAsserted.textContent?.toLowerCase()).toContain('issuer identity');
+  });
+
   it('renders source provenance when only proof hashes are present', async () => {
     rpcMock.mockResolvedValue({
       data: {

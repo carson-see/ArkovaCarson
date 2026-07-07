@@ -44,6 +44,34 @@ credential-card metadata is defensively filtered for PII and CSI internal fields
 source fields render in `SourceProvenanceDisplay`, and hashes belong in proof
 downloads.
 
+## Badge / provenance honesty (SCRUM-2481, 2026-07-07)
+
+`EvidenceLevelBadge` and `SourceProvenanceDisplay` are structurally honest about
+what each evidence tier proves — this is a launch blocker, not cosmetics.
+
+- The green "issuer-verified" treatment is routed EXCLUSIVELY through
+  `isIssuerAuthenticated()` (`src/lib/sourceProvenance.ts`), true ONLY for
+  `issuer_anchored` and `source_signed`. `account_linked` / `captured_url` /
+  `ai_captured` can NEVER earn green or any issuer-family wording
+  ("Verified" / "Issuer" / "Authenticated"). Do NOT gate green on
+  `isStrongEvidence` at the badge — that is the strength ordering, not the
+  issuer-auth gate.
+- Every tier carries a distinct `data-evidence-tier` and a distinct, honest
+  `aria-label`. `SourceProvenanceDisplay` also renders the §1.5
+  measured / asserted / NOT-asserted triad; every non-issuer tier lists
+  "issuer identity" under NOT-asserted.
+- The alt / triad strings currently live as LOCAL CONSTS in the two components
+  (`TIER_ALT_FALLBACK`, `EVIDENCE_TRIAD_FALLBACK`, `SOURCE_PROVENANCE_TRIAD_LABELS`)
+  because the canonical block `// ─── SCRUM-2481 badge honesty (Lane 3) ───` in
+  `src/lib/copy.ts` is HELD to land after the copy.ts-touching soaking PRs merge.
+  Once that block lands, swap the components to import `EVIDENCE_LEVEL_BADGE_ALT`
+  / `EVIDENCE_TRIAD` / `EVIDENCE_TRIAD_LABELS` from `@/lib/copy` — the strings are
+  identical, so it is a no-op. Keep the local consts and the copy.ts block in
+  sync until then.
+- Deferred post-soak (Carson-gated): the worker `verification_level` mapping fn
+  and the DB CHECK migration that enforces the tier enum are NOT in this slice —
+  they touch soaking surfaces.
+
 ## Do / Don't Rules
 
 - **DO** drive every hero affordance from the normalized `publicStatus`.

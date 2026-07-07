@@ -10,10 +10,12 @@ import {
   getEvidenceLevelDescription,
   getEvidenceLevelStrength,
   isStrongEvidence,
+  isIssuerAuthenticated,
   formatProvider,
   buildEvidenceProofFields,
   badgeUrl,
   linkedInCredentialUrl,
+  VERIFICATION_LEVEL_VALUES,
 } from './sourceProvenance';
 
 afterEach(() => {
@@ -130,6 +132,45 @@ describe('evidence level helpers', () => {
     expect(isStrongEvidence('source_signed')).toBe(true);
     expect(isStrongEvidence('captured_url')).toBe(false);
     expect(isStrongEvidence(null)).toBe(false);
+  });
+});
+
+// ─── SCRUM-2481: issuer-authentication honesty gate ──────────────────────────
+describe('isIssuerAuthenticated (SCRUM-2481)', () => {
+  it('is TRUE only for issuer_anchored and source_signed', () => {
+    expect(isIssuerAuthenticated('issuer_anchored')).toBe(true);
+    expect(isIssuerAuthenticated('source_signed')).toBe(true);
+  });
+
+  it('is FALSE for account_linked, captured_url and ai_captured — these can NEVER present as issuer-verified', () => {
+    expect(isIssuerAuthenticated('account_linked')).toBe(false);
+    expect(isIssuerAuthenticated('captured_url')).toBe(false);
+    expect(isIssuerAuthenticated('ai_captured')).toBe(false);
+  });
+
+  it('is FALSE for unknown / null / undefined levels', () => {
+    expect(isIssuerAuthenticated('unknown_level')).toBe(false);
+    expect(isIssuerAuthenticated(null)).toBe(false);
+    expect(isIssuerAuthenticated(undefined)).toBe(false);
+  });
+
+  it('never lets a non-issuer tier reach the issuer-verified (strength>=4) treatment', () => {
+    // The green issuer treatment is gated by isIssuerAuthenticated, which must
+    // be a strict subset of isStrongEvidence. No tier below source_signed may
+    // ever return true.
+    for (const level of VERIFICATION_LEVEL_VALUES) {
+      if (level === 'issuer_anchored' || level === 'source_signed') continue;
+      expect(isIssuerAuthenticated(level)).toBe(false);
+      expect(getEvidenceLevelStrength(level)).toBeLessThan(4);
+    }
+  });
+
+  it('agrees with isStrongEvidence for the issuer tiers (issuer-auth ⊆ strong)', () => {
+    for (const level of VERIFICATION_LEVEL_VALUES) {
+      if (isIssuerAuthenticated(level)) {
+        expect(isStrongEvidence(level)).toBe(true);
+      }
+    }
   });
 });
 
