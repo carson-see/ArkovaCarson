@@ -135,35 +135,67 @@ export function buildAnchorCalldata(
 }
 
 /**
- * Parse calldata to extract fingerprint and optional metadata hash.
- * Returns null if calldata doesn't match ARKV format.
+ * SCRUM-2591: Length of the ARKV prefix in hex chars (4 bytes = 8 hex chars). */
+const ARKV_PREFIX_HEX_LEN = ARKV_PREFIX_HEX.length; // 8
+/** Fingerprint length in hex chars (32 bytes). */
+const FINGERPRINT_HEX_LEN = 64;
+/** Truncated metadata hash length in hex chars (8 bytes). */
+const METADATA_HASH_HEX_LEN = METADATA_HASH_TRUNCATED_BYTES * 2; // 16
+
+/** Canonical total calldata length (hex chars) with NO metadata: ARKV(8) + fp(64) = 72. */
+const CANONICAL_LEN_NO_META = ARKV_PREFIX_HEX_LEN + FINGERPRINT_HEX_LEN; // 72
+/** Canonical total calldata length (hex chars) WITH metadata: 72 + 16 = 88. */
+const CANONICAL_LEN_WITH_META = CANONICAL_LEN_NO_META + METADATA_HASH_HEX_LEN; // 88
+
+/**
+ * SCRUM-2591 canonical-decode CONTRACT: parse anchor calldata and return the
+ * committed fingerprint (+ optional truncated metadata hash), or null if the
+ * calldata is not a CANONICAL Arkova anchor.
+ *
+ * A canonical anchor is EXACTLY `ARKV (4B) + fingerprint (32B)` (36 bytes) or
+ * `ARKV (4B) + fingerprint (32B) + metadataHash (8B)` (44 bytes). This is a
+ * structural decode at the canonical byte offset — NOT a loose substring scan.
+ * Any of the following decode to null:
+ *   - a prefix that begins at a non-zero offset (junk byte(s) before ARKV);
+ *   - trailing bytes after the committed 36/44-byte payload (so a buffer that
+ *     merely CONTAINS `ARKV<fingerprint>` is rejected);
+ *   - a truncated / partial metadata region (37..43 bytes);
+ *   - an odd-length or non-hex string.
+ *
+ * This mirrors the Bitcoin-side contract enforced by
+ * signet.ts:extractAnchorFingerprint (BUG-2026-06-24-004) so both chains reject
+ * the same malformed-payload adversarial class.
  */
 export function parseAnchorCalldata(calldata: string): {
   fingerprint: string;
   metadataHashTruncated?: string;
 } | null {
   // Strip 0x prefix
-  const hex = calldata.startsWith('0x') ? calldata.slice(2) : calldata;
+  const hex = (calldata.startsWith('0x') ? calldata.slice(2) : calldata).toLowerCase();
 
-  // Must start with ARKV prefix
-  if (!hex.toLowerCase().startsWith(ARKV_PREFIX_HEX)) {
+  // Must be whole bytes (even number of hex chars) and strictly hex — a
+  // substring/loose parser would silently accept malformed input.
+  if (hex.length % 2 !== 0) return null;
+  if (!/^[0-9a-f]*$/.test(hex)) return null;
+
+  // Total length must be EXACTLY one of the two canonical lengths — this rejects
+  // both trailing junk after the payload and any truncated/partial metadata.
+  if (hex.length !== CANONICAL_LEN_NO_META && hex.length !== CANONICAL_LEN_WITH_META) {
     return null;
   }
 
-  const afterPrefix = hex.slice(ARKV_PREFIX_HEX.length);
-
-  // Fingerprint is 64 hex chars (32 bytes)
-  if (afterPrefix.length < 64) {
+  // Prefix must match at offset 0 (NOT anywhere in the buffer).
+  if (hex.slice(0, ARKV_PREFIX_HEX_LEN) !== ARKV_PREFIX_HEX) {
     return null;
   }
 
-  const fingerprint = afterPrefix.slice(0, 64).toLowerCase();
+  const fingerprint = hex.slice(ARKV_PREFIX_HEX_LEN, ARKV_PREFIX_HEX_LEN + FINGERPRINT_HEX_LEN);
 
-  // Optional metadata hash (16 hex chars = 8 bytes)
-  const remaining = afterPrefix.slice(64);
-  const metadataHashTruncated = remaining.length >= METADATA_HASH_TRUNCATED_BYTES * 2
-    ? remaining.slice(0, METADATA_HASH_TRUNCATED_BYTES * 2).toLowerCase()
-    : undefined;
+  // Optional metadata hash — present iff the calldata is the 44-byte canonical form.
+  const metadataHashTruncated =
+    hex.length === CANONICAL_LEN_WITH_META
+      ? hex.slice(ARKV_PREFIX_HEX_LEN + FINGERPRINT_HEX_LEN)
+      : undefined;
 
   return { fingerprint, metadataHashTruncated };
 }

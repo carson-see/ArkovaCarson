@@ -13,6 +13,8 @@
  * Uses MAX_FEE_THRESHOLD_SAT_PER_VBYTE from config (default: 50).
  */
 
+import { computeBatchFeeCeiling } from '../chain/fee-estimator.js';
+
 /** Fee estimator interface (duplicated to avoid config import chain) */
 export interface FeeEstimator {
   estimateFee(): Promise<number>;
@@ -85,6 +87,93 @@ export async function checkFeeConditions(
     };
   } catch {
     // If fee estimation fails, submit anyway (don't block anchoring)
+    return {
+      currentFee: 0,
+      threshold,
+      shouldSubmit: true,
+      reason: 'fee_check_failed',
+    };
+  }
+}
+
+/**
+ * SCRUM-2592: Input for the dynamic (age-scaled) fee-condition check.
+ */
+export interface DynamicFeeConditionsInput {
+  /** Base ceiling in sat/vByte (the configured max fee threshold). */
+  baseCeiling: number;
+  /** Age of the oldest pending anchor in ms — scales the ceiling. */
+  oldestPendingAgeMs: number;
+  /**
+   * Absolute hard cap in sat/vByte, INJECTED by the caller (batch-anchor's
+   * ABSOLUTE_FEE_CAP_SAT_PER_VB at the wire-up site). Never redefined here.
+   */
+  absoluteCapSatPerVb: number;
+  /** Timestamp (ms) when the batch was first queued, or null if not queued. */
+  queuedSince?: number | null;
+  /** Optional injected fee estimator (for testing). */
+  estimator?: FeeEstimator;
+}
+
+/**
+ * SCRUM-2592: Fee-condition check against a DYNAMIC, age-scaled ceiling.
+ *
+ * Unlike {@link checkFeeConditions} (flat threshold), this compares the live fee
+ * rate against `computeBatchFeeCeiling(baseCeiling, oldestPendingAgeMs, cap)` —
+ * so a stale backlog tolerates a higher fee, bounded by the injected absolute
+ * cap. The deadline-exceeded and fail-open (fee_check_failed) semantics are
+ * preserved unchanged. `threshold` in the result is the EFFECTIVE (age-scaled,
+ * capped) ceiling that the fee was compared against.
+ *
+ * This is a MIRROR of batch-anchor's triggerC fee model at the scheduler layer;
+ * batch-anchor.ts remains the single owner of the constant. Wire-up (replacing
+ * the flat threshold in the batch path) is a post-#1417-merge integration
+ * handoff — see the branch description.
+ */
+export async function checkDynamicFeeConditions(
+  input: DynamicFeeConditionsInput,
+): Promise<FeeCheckResult> {
+  const threshold = computeBatchFeeCeiling({
+    baseCeiling: input.baseCeiling,
+    oldestPendingAgeMs: input.oldestPendingAgeMs,
+    absoluteCapSatPerVb: input.absoluteCapSatPerVb,
+  });
+
+  // Hard deadline first — same precedence as checkFeeConditions.
+  if (input.queuedSince && Date.now() - input.queuedSince >= FEE_HARD_DEADLINE_MS) {
+    return {
+      currentFee: 0,
+      threshold,
+      shouldSubmit: true,
+      reason: 'deadline_exceeded',
+    };
+  }
+
+  try {
+    let feeEstimator = input.estimator;
+    if (!feeEstimator) {
+      const { MempoolFeeEstimator } = await import('../chain/fee-estimator.js');
+      feeEstimator = new MempoolFeeEstimator({ target: 'halfHour', timeoutMs: 5000 });
+    }
+    const currentFee = await feeEstimator.estimateFee();
+
+    if (currentFee <= threshold) {
+      return {
+        currentFee,
+        threshold,
+        shouldSubmit: true,
+        reason: 'below_threshold',
+      };
+    }
+
+    return {
+      currentFee,
+      threshold,
+      shouldSubmit: false,
+      reason: 'above_threshold',
+    };
+  } catch {
+    // Fail open — never block anchoring on a fee-estimation failure.
     return {
       currentFee: 0,
       threshold,
