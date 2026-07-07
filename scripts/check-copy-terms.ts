@@ -89,6 +89,42 @@ export const LAUNCH_BLOCKER_COPY_TERMS = [
   'legal-reviewed copy before production launch',
 ];
 
+// =============================================================================
+// UX-03 follow-up — sanctioned-copy allowlist vocabulary + non-suppressible guard.
+// =============================================================================
+
+/**
+ * The ONLY terms a copy-terms-allowlist entry may pardon. Deliberately a
+ * set-of-one: the sole §1.3-sanctioned term inside src/lib/copy.ts is
+ * "Issue Credential" — the restricted verified-organisation issuance action
+ * (SCRUM-1672 / §1.3 exception). No other banned term has a sanctioned use in
+ * copy.ts, so nothing else is allowlistable. Keeping this tiny bounds the abuse
+ * surface: loadAllowlist() drops any entry that names a different term.
+ */
+export const ALLOWLISTABLE_TERMS = new Set<string>(['issue credential']);
+
+/**
+ * Terms that NO suppression channel (the sanctioned-copy allowlist OR the
+ * grandfather baseline) may ever silence: engineering-secret leaks
+ * (service_role / service role / postgrest), the infra-copy leak "worker
+ * service" (UX-03), and every launch-blocker legal placeholder. A violation on
+ * one of these ALWAYS lands in `fresh` (fails CI) even if an allowlist/baseline
+ * entry nominally matches it. Fail-closed hardening: the baseline is
+ * category-blind and could otherwise grandfather a real service_role leak.
+ */
+const NON_SUPPRESSIBLE_TERMS = new Set<string>([
+  'service_role',
+  'service role',
+  'postgrest',
+  'worker service',
+  ...LAUNCH_BLOCKER_COPY_TERMS.map((t) => t.trim().toLowerCase()),
+]);
+
+/** True when `term` must never be silenced by the allowlist or the baseline. */
+export function isNonSuppressibleTerm(term: string): boolean {
+  return NON_SUPPRESSIBLE_TERMS.has(term.trim().toLowerCase());
+}
+
 // Directory prefixes scanned for UI copy. SCRUM-2149(a): the pre-2149 scope was
 // ONLY src/components + src/pages, leaving src/lib, src/hooks, and the PUBLIC
 // embeddable widget (packages/embed/src) unscanned — banned terms there reached
@@ -104,7 +140,11 @@ const INCLUDE_ROOTS = [
 
 // Files/patterns to exclude
 const EXCLUDE_PATTERNS = [
-  'src/lib/copy.ts', // This file documents the rules
+  // NOTE: src/lib/copy.ts is intentionally NOT excluded — it IS scanned. Its
+  // shipped strings are the largest user-facing copy surface; a blanket exclude
+  // let banned terms ship silently (UX-03: "worker service" in USAGE_UNAVAILABLE).
+  // The sanctioned SCRUM-1672 "Issue Credential" lines pass via the dedicated
+  // copy-terms-allowlist.json carve-out, not by excluding the whole file.
   '**/*.test.ts',
   '**/*.test.tsx',
   '**/node_modules/**',
@@ -552,7 +592,9 @@ export function partitionAgainstBaseline(
 
   for (const v of violations) {
     const key = baselineKey(v.file, v.line, v.term);
-    if (baselineKeys.has(key)) {
+    // A secret / launch-blocker leak is NEVER grandfathered, even if a baseline
+    // row matches it (fail-closed): those terms are structurally un-suppressible.
+    if (!isNonSuppressibleTerm(v.term) && baselineKeys.has(key)) {
       grandfathered.push(v);
       matchedKeys.add(key);
     } else {
@@ -562,6 +604,100 @@ export function partitionAgainstBaseline(
 
   const stale = baseline.filter((e) => !matchedKeys.has(baselineKey(e.file, e.line, e.term)));
   return { fresh, grandfathered, stale };
+}
+
+// =============================================================================
+// UX-03 follow-up — SCRUM-1672 sanctioned-copy allowlist (permanent policy).
+// Distinct from the grandfather baseline (transient debt): this file records
+// PERMANENT §1.3 carve-outs, keyed on normalised (file, term) with NO line
+// number, so it is immune to copy.ts line drift.
+// =============================================================================
+
+const ALLOWLIST_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'ci',
+  'snapshots',
+  'copy-terms-allowlist.json',
+);
+
+/** One sanctioned-copy carve-out. `term` must be in {@link ALLOWLISTABLE_TERMS}. */
+export interface AllowlistEntry {
+  file: string;
+  term: string;
+  reason: string;
+}
+
+/**
+ * Load the sanctioned-copy allowlist. Fail-closed: a missing/malformed file →
+ * [] (nothing pardoned). Each entry must have a non-empty file/term/reason AND
+ * name an ALLOWLISTABLE term (and, redundantly, not a non-suppressible one) —
+ * an entry naming a secret / launch-blocker / any other term is dropped at
+ * load, so the allowlist can never become a channel for silencing those.
+ */
+export function loadAllowlist(allowlistPath: string = ALLOWLIST_PATH): AllowlistEntry[] {
+  try {
+    const raw = fs.readFileSync(allowlistPath, 'utf-8');
+    const parsed = JSON.parse(raw) as { allow?: AllowlistEntry[] };
+    if (!parsed || !Array.isArray(parsed.allow)) return [];
+    return parsed.allow.filter(
+      (e): e is AllowlistEntry =>
+        !!e &&
+        typeof e.file === 'string' &&
+        e.file.trim().length > 0 &&
+        typeof e.term === 'string' &&
+        typeof e.reason === 'string' &&
+        e.reason.trim().length > 0 &&
+        ALLOWLISTABLE_TERMS.has(normaliseTerm(e.term)) &&
+        !isNonSuppressibleTerm(e.term),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export interface AllowlistPartition {
+  /** Violations pardoned by a sanctioned-copy allowlist entry. */
+  allowed: Violation[];
+  /** Violations NOT pardoned — passed on to the baseline partition. */
+  remaining: Violation[];
+  /** Allowlist entries with no matching current violation — prompt cleanup. */
+  staleAllow: AllowlistEntry[];
+}
+
+/**
+ * Split violations into {allowed, remaining} against the sanctioned-copy
+ * allowlist, surfacing {staleAllow}. A violation is pardoned ONLY when its term
+ * is allowlistable (never a secret/launch-blocker — belt-and-suspenders with
+ * loadAllowlist's filter) AND a normalised (file, term) allowlist entry
+ * matches. Line-independent by design (immune to copy.ts drift). Pure —
+ * exported for unit tests.
+ */
+export function partitionAgainstAllowlist(
+  violations: Violation[],
+  allowlist: AllowlistEntry[],
+): AllowlistPartition {
+  const allowKeys = new Set(
+    allowlist.map((e) => `${normaliseFile(e.file)}\0${normaliseTerm(e.term)}`),
+  );
+  const matched = new Set<string>();
+  const allowed: Violation[] = [];
+  const remaining: Violation[] = [];
+
+  for (const v of violations) {
+    const term = normaliseTerm(v.term);
+    const key = `${normaliseFile(v.file)}\0${term}`;
+    if (ALLOWLISTABLE_TERMS.has(term) && !isNonSuppressibleTerm(v.term) && allowKeys.has(key)) {
+      allowed.push(v);
+      matched.add(key);
+    } else {
+      remaining.push(v);
+    }
+  }
+
+  const staleAllow = allowlist.filter(
+    (e) => !matched.has(`${normaliseFile(e.file)}\0${normaliseTerm(e.term)}`),
+  );
+  return { allowed, remaining, staleAllow };
 }
 
 export function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
@@ -608,7 +744,7 @@ export function findTermViolations(line: string, lineNum: number, filePath: stri
   return results;
 }
 
-function checkFile(filePath: string): Violation[] {
+export function checkFile(filePath: string): Violation[] {
   const violations: Violation[] = [];
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split('\n');
@@ -683,10 +819,31 @@ function main(): void {
     allViolations.push(...violations);
   }
 
-  // SCRUM-2148: partition against the grandfather baseline. Only NEW (fresh)
-  // violations fail the build; recorded pre-existing ones are tolerated.
+  // SCRUM-1672 sanctioned-copy allowlist (permanent §1.3 policy) runs FIRST —
+  // it pardons the "Issue Credential" restricted-flow strings in copy.ts.
+  const allowlist = loadAllowlist();
+  const { allowed, remaining, staleAllow } = partitionAgainstAllowlist(allViolations, allowlist);
+
+  // SCRUM-2148: whatever the allowlist did NOT pardon is partitioned against the
+  // grandfather baseline (transient debt). Only NEW (fresh) violations fail.
   const baseline = loadBaseline();
-  const { fresh, grandfathered, stale } = partitionAgainstBaseline(allViolations, baseline);
+  const { fresh, grandfathered, stale } = partitionAgainstBaseline(remaining, baseline);
+
+  if (allowed.length > 0) {
+    console.log(
+      `Allowing ${allowed.length} sanctioned copy string(s) via copy-terms-allowlist.json (SCRUM-1672 permanent carve-out).\n`,
+    );
+  }
+
+  if (staleAllow.length > 0) {
+    console.log(
+      `⚠️  ${staleAllow.length} stale allowlist entr(y/ies) — no longer matching any violation, consider removing from copy-terms-allowlist.json:`,
+    );
+    for (const e of staleAllow) {
+      console.log(`    - ${e.file} ("${e.term}")`);
+    }
+    console.log('');
+  }
 
   if (grandfathered.length > 0) {
     console.log(
