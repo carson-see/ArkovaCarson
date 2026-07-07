@@ -162,9 +162,16 @@ const CANONICAL_LEN_WITH_META = CANONICAL_LEN_NO_META + METADATA_HASH_HEX_LEN; /
  *   - a truncated / partial metadata region (37..43 bytes);
  *   - an odd-length or non-hex string.
  *
- * This mirrors the Bitcoin-side contract enforced by
- * signet.ts:extractAnchorFingerprint (BUG-2026-06-24-004) so both chains reject
- * the same malformed-payload adversarial class.
+ * PARITY NOTE (corrected): the EVM and Bitcoin decoders share the offset-0 /
+ * no-substring-scan / whole-structure rejection class, so both reject the same
+ * leading-junk, wrong-prefix, and split-push inputs. They are NOT byte-for-byte
+ * identical, however: signet.ts:extractAnchorFingerprint checks
+ * `payload.length >= 36` and therefore TOLERATES arbitrary trailing bytes up to
+ * the 80-byte OP_RETURN limit, whereas this EVM decoder requires an EXACT 36-
+ * or 44-byte length and therefore REJECTS all trailing bytes. That asymmetry is
+ * pinned empirically in extract-anchor-fingerprint.adversarial.test.ts (the
+ * "signet vs EVM trailing-byte DIVERGENCE" block). Do not restate this as an
+ * "identical structural contract".
  */
 export function parseAnchorCalldata(calldata: string): {
   fingerprint: string;

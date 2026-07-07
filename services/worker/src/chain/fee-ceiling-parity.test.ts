@@ -1,5 +1,18 @@
 /**
- * SCRUM-2592 — batch fee-ceiling PARITY guarantee.
+ * SCRUM-2592 — batch fee-CEILING PARITY guarantee (SCAFFOLDING, not the ticket fix).
+ *
+ * SCOPE HONESTY (3.25 ART correction): this file pins an age-scaled fee-CEILING
+ * primitive. That is SAFE SCAFFOLDING — it does NOT address SCRUM-2592's actual
+ * defect, which was the multi-input UTXO COIN-SELECTION fee under-counting
+ * (select-succeeds → build-throws-InsufficientFunds → stuck batch). That defect
+ * is ALREADY FIXED on main via BUG-2026-06-24-005 in signet.ts:selectMultipleUtxos
+ * (the selector now uses projectMultiInputFee(selected.length, ...) + a dust
+ * reservation matching buildMultiInputOpReturnTransaction) and is regression-pinned
+ * on main in bitcoin-audit.test.ts ("selectMultipleUtxos fee threshold" +
+ * "a dust-safe selection actually builds without throwing Insufficient funds").
+ * So this PR authors NO coin-selection fix; the ceiling primitive lands as
+ * anti-divergence scaffolding for the post-#1417 batch-anchor wiring only, and
+ * SCRUM-2592 does NOT close on this PR.
  *
  * The fee-estimator primitive `computeBatchFeeCeiling` MUST produce byte-identical
  * output to the batch-anchor source-of-truth `triggerC_computeFeeCeiling` when the
@@ -39,6 +52,20 @@ const { triggerC_computeFeeCeiling, ABSOLUTE_FEE_CAP_SAT_PER_VB } = await import
 
 describe('fee-ceiling parity — estimator primitive mirrors batch-anchor triggerC', () => {
   const MIN = 60_000;
+
+  // GUARD (review nit): batch-anchor.ts is imported for ONLY its two fee-model
+  // exports, but its other top-level imports (merkle/anchorProofs/
+  // complianceMapping/orgCredits) are NOT mocked. Today none of them side-effect
+  // at module init beyond the already-mocked config/db/logger/chain, so the
+  // `await import` above resolves. If a FUTURE batch-anchor import DID side-effect
+  // at init and the import threw, this whole suite would silently become an
+  // import-error (0 assertions) that merely "fails" rather than proving parity.
+  // Pin the contract so that failure mode is a loud, specific one.
+  it('imports the locked batch-anchor fee-model surface (fails loud if a future import side-effects at init)', () => {
+    expect(typeof triggerC_computeFeeCeiling).toBe('function');
+    expect(typeof ABSOLUTE_FEE_CAP_SAT_PER_VB).toBe('number');
+    expect(ABSOLUTE_FEE_CAP_SAT_PER_VB).toBeGreaterThan(0);
+  });
 
   // Sweep a representative input space: base ceilings spanning below/at/above the
   // absolute cap, and ages spanning every escalation band + exact boundaries.
