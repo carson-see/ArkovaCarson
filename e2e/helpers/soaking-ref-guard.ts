@@ -90,12 +90,18 @@ export function evaluateReproTargetRef(
     };
   }
 
-  const denyList = new Set<string>([
-    ...KNOWN_PROTECTED_REFS,
-    ...extraProtectedRefsFromEnv(env),
-  ]);
+  // Compare case-insensitively: the staging heuristic above is /i, so the
+  // literal deny-list must match with the same case-insensitivity or an
+  // UPPERCASED shared/prod/soaking ref would slip past Set.has (exact-case) and
+  // clear as a throwaway target. Supabase refs are canonically lowercase, but a
+  // safety guard must not depend on the caller casing the ref correctly.
+  const denyList = new Set<string>(
+    [...KNOWN_PROTECTED_REFS, ...extraProtectedRefsFromEnv(env)].map((r) =>
+      r.toLowerCase(),
+    ),
+  );
 
-  if (denyList.has(trimmed)) {
+  if (denyList.has(trimmed.toLowerCase())) {
     return {
       ref: trimmed,
       allowed: false,
