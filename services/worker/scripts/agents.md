@@ -21,6 +21,7 @@ Offline tooling for Nessie model training, evaluation, dataset building, benchma
 - `build-*-dataset.ts` — Dataset builders for domain and FCRA intelligence corpora.
 - `smoke-test*.ts` — Smoke tests for model endpoints.
 - `derive-*.ts` — Calibration-knot and per-type calibration derivation scripts.
+- `audit-secured-chain-integrity.ts` (SCRUM-2486 AC-2) — **STRICTLY READ-ONLY** operator CLI that audits the SECURED anchor back-catalogue (~2.97M rows) for the chain-integrity invariant (every `status='SECURED'` row must have a non-blank `chain_tx_id`, a 64-hex `fingerprint`, and — where populated — a positive `chain_block_height`). Resolves the prod service-role client from Secret Manager (same pattern as `check-anchor-status.ts`) and prints the structured JSON summary. **NO write path** — reports violations + bounded sample ids, never mutates/backfills/fabricates. All logic lives in the injectable `src/jobs/auditSecuredChainIntegrity.ts` library (unit-tested with a fake client that THROWS on any write). NOTE: apply/soak + any prod run is DEFERRED to Sprint-4 — authored + unit-tested here, not run against prod by the authoring session.
 
 ## Constraints
 
