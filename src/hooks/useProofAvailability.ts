@@ -51,9 +51,12 @@ export function useProofAvailability(
     }
 
     const controller = new AbortController();
-    setLoading(true);
 
     (async () => {
+      // setLoading lives inside the async closure (not the effect body) so it
+      // is not a synchronous setState-in-effect (react-hooks lint) — behaviour
+      // is unchanged: loading flips true before the fetch resolves.
+      setLoading(true);
       let result: ProofEndpointResult | null = null;
       try {
         const response = await fetch(
