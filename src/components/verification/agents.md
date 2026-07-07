@@ -60,14 +60,28 @@ what each evidence tier proves — this is a launch blocker, not cosmetics.
   `aria-label`. `SourceProvenanceDisplay` also renders the §1.5
   measured / asserted / NOT-asserted triad; every non-issuer tier lists
   "issuer identity" under NOT-asserted.
+- The honesty invariant covers the `showDescription` TOOLTIP too, not just the
+  alt/triad. The tooltip body is `getEvidenceLevelDescription()` →
+  `EVIDENCE_LEVEL_DESCRIPTIONS` (`src/lib/copy.ts`), rendered on the public
+  (unauthenticated) verification page. `account_linked`'s description used to read
+  "Imported from an *authenticated* account…" — a non-issuer tier surfacing
+  "authenticated" on an off-platform surface (§1.5 / R-7). It now reads "Imported
+  from a connected account. Proves the holder had access to that account — the
+  originating organization did not vouch for this record." Pinned by
+  `sourceProvenance.test.ts` ("non-issuer tier DESCRIPTIONS carry no issuer-family
+  wording").
 - The alt / triad strings currently live as LOCAL CONSTS in the two components
   (`TIER_ALT_FALLBACK`, `EVIDENCE_TRIAD_FALLBACK`, `SOURCE_PROVENANCE_TRIAD_LABELS`)
   because the canonical block `// ─── SCRUM-2481 badge honesty (Lane 3) ───` in
   `src/lib/copy.ts` is HELD to land after the copy.ts-touching soaking PRs merge.
   Once that block lands, swap the components to import `EVIDENCE_LEVEL_BADGE_ALT`
   / `EVIDENCE_TRIAD` / `EVIDENCE_TRIAD_LABELS` from `@/lib/copy` — the strings are
-  identical, so it is a no-op. Keep the local consts and the copy.ts block in
-  sync until then.
+  identical, so it is a no-op. **Parity is now enforced**: `EvidenceLevelBadge.test.tsx`
+  pins the rendered `aria-label` to `EVIDENCE_LEVEL_BADGE_ALT` and
+  `SourceProvenanceDisplay.test.tsx` pins the rendered triad rows/labels to
+  `EVIDENCE_TRIAD` / `EVIDENCE_TRIAD_LABELS`, so a one-sided edit that drifts a
+  fallback from copy.ts canon fails red (this closes the "dead export could
+  silently diverge" gap). These per-tier guards stay green after the swap.
 - Deferred post-soak (Carson-gated): the worker `verification_level` mapping fn
   and the DB CHECK migration that enforces the tier enum are NOT in this slice —
   they touch soaking surfaces.
@@ -100,3 +114,13 @@ what each evidence tier proves — this is a launch blocker, not cosmetics.
   SUBMITTED" rule, `ACTIVE` alias normalization, the gating of proof
   sections behind terminal proof states, and the "no compliance controls
   unless SECURED" rule (BUG-2026-06-24-007).
+- `EvidenceLevelBadge.test.tsx` — per-tier `data-evidence-tier` + distinct
+  `aria-label` + distinct icon, green ONLY for issuer tiers, no issuer-family
+  wording on non-issuer alt text, and the copy.ts-canon parity guard for the
+  rendered alt text.
+- `SourceProvenanceDisplay.test.tsx` — triad renders per tier, non-issuer tiers
+  state "issuer identity" NOT-asserted, issuer tiers omit that disclaimer, and the
+  copy.ts-canon parity guard for the rendered triad rows/labels.
+- `src/lib/sourceProvenance.test.ts` — the issuer-auth gate (`isIssuerAuthenticated`
+  ⊆ strong) plus the non-issuer DESCRIPTION honesty guard (no "Verified" /
+  "Issuer" / "Authenticated" in the public tooltip body).

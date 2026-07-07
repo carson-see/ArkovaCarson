@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { EvidenceLevelBadge } from './EvidenceLevelBadge';
+import { EVIDENCE_LEVEL_BADGE_ALT } from '@/lib/copy';
 
 describe('EvidenceLevelBadge', () => {
   it('renders nothing for null level', () => {
@@ -163,4 +164,20 @@ describe('EvidenceLevelBadge — SCRUM-2481 honesty guarantees', () => {
     const labelled = badge.getAttribute('aria-label') ?? '';
     expect(labelled.toLowerCase()).not.toContain('verified');
   });
+
+  // "No-op swap" guard: the component currently renders from a local-const
+  // TIER_ALT_FALLBACK, held identical to the canonical EVIDENCE_LEVEL_BADGE_ALT in
+  // copy.ts so the later swap-to-import is a behaviour no-op. Nothing asserted the
+  // two stayed identical, so a one-sided edit to either could silently diverge.
+  // This pins the RENDERED aria-label to the canonical copy.ts source per tier —
+  // it stays green after the component swaps to import from copy.ts, and it fails
+  // the moment the fallback drifts from canon.
+  it.each(ALL_TIERS)(
+    'renders the canonical copy.ts alt text (EVIDENCE_LEVEL_BADGE_ALT) for %s',
+    (tier) => {
+      const { container } = render(<EvidenceLevelBadge level={tier} />);
+      const badge = container.querySelector('[data-evidence-tier]') as HTMLElement;
+      expect(badge.getAttribute('aria-label')).toBe(EVIDENCE_LEVEL_BADGE_ALT[tier]);
+    }
+  );
 });

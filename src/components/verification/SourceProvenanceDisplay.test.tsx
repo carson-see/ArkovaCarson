@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { SourceProvenanceDisplay } from './SourceProvenanceDisplay';
+import { EVIDENCE_TRIAD, EVIDENCE_TRIAD_LABELS, type EvidenceLevel } from '@/lib/copy';
 
 const FULL_DATA = {
   source_url: 'https://www.credly.com/badges/12345678-abcd-efgh',
@@ -170,4 +171,36 @@ describe('SourceProvenanceDisplay — SCRUM-2481 evidence triad', () => {
     );
     expect(screen.queryByTestId('evidence-triad')).not.toBeInTheDocument();
   });
+
+  // "No-op swap" guard: the component renders the triad from a local-const
+  // EVIDENCE_TRIAD_FALLBACK + SOURCE_PROVENANCE_TRIAD_LABELS, held identical to
+  // the canonical EVIDENCE_TRIAD / EVIDENCE_TRIAD_LABELS in copy.ts so the later
+  // swap-to-import is a behaviour no-op. This pins the RENDERED triad rows to the
+  // canonical copy.ts source per tier — green after the swap, red the moment the
+  // fallback drifts from canon.
+  const ALL_TIERS: EvidenceLevel[] = [
+    'issuer_anchored',
+    'source_signed',
+    'account_linked',
+    'captured_url',
+    'ai_captured',
+  ];
+
+  it.each(ALL_TIERS)(
+    'renders the canonical copy.ts triad (EVIDENCE_TRIAD) rows + labels for %s',
+    (tier) => {
+      render(<SourceProvenanceDisplay data={{ ...FULL_DATA, verification_level: tier }} />);
+
+      const canon = EVIDENCE_TRIAD[tier];
+      expect(screen.getByTestId('evidence-triad-measured').textContent).toBe(canon.measured);
+      expect(screen.getByTestId('evidence-triad-asserted').textContent).toBe(canon.asserted);
+      expect(screen.getByTestId('evidence-triad-not-asserted').textContent).toBe(canon.notAsserted);
+
+      // Row labels render as "<Label>:" — the canonical label must be present.
+      const triad = screen.getByTestId('evidence-triad');
+      expect(triad).toHaveTextContent(EVIDENCE_TRIAD_LABELS.MEASURED);
+      expect(triad).toHaveTextContent(EVIDENCE_TRIAD_LABELS.ASSERTED);
+      expect(triad).toHaveTextContent(EVIDENCE_TRIAD_LABELS.NOT_ASSERTED);
+    }
+  );
 });

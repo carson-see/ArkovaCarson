@@ -3056,7 +3056,7 @@ export const EVIDENCE_LEVEL_LABELS = {
 export const EVIDENCE_LEVEL_DESCRIPTIONS = {
   issuer_anchored: 'Verified directly with the issuing organization. The credential was cryptographically anchored by the original issuer.',
   source_signed: 'The credential source provided a cryptographic signature proving origin and integrity.',
-  account_linked: 'Imported from an authenticated account. The holder proved access to the issuing platform.',
+  account_linked: 'Imported from a connected account. Proves the holder had access to that account — the originating organization did not vouch for this record.',
   captured_url: 'Captured from a public URL. The content was fetched and fingerprinted at the recorded time.',
   ai_captured: 'Extracted using AI from an uploaded document. Content was parsed and structured automatically.',
 } as const satisfies Record<EvidenceLevel, string>;
