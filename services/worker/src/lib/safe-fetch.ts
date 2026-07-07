@@ -328,8 +328,17 @@ export function defaultSafeFetchDeps(): SafeFetchDeps {
       const agent = new Agent({
         connect: {
           servername,
-          lookup(_hostname, _opts, callback) {
+          lookup(_hostname, opts, callback) {
             const family = pinnedIp.includes(':') ? 6 : 4;
+            // undici's connect invokes lookup with { all: true } and, in that
+            // mode, node's net.connect expects an ARRAY of { address, family }.
+            // The legacy 3-arg positional form (callback(null, ip, family))
+            // yields `address === undefined` under { all: true } and throws
+            // 'Invalid IP address: undefined', failing 100% of real egress.
+            if (opts && (opts as { all?: boolean }).all) {
+              callback(null, [{ address: pinnedIp, family }] as never);
+              return;
+            }
             callback(null, pinnedIp, family);
           },
         },

@@ -38,13 +38,55 @@ export const BLOCKED_HOSTNAMES = new Set([
   'metadata.google',
 ]);
 
+// SCRUM-2483 (HIGH): IPv4-mapped IPv6 forms (::ffff:127.0.0.1, ::ffff:7f00:1,
+// the ::0:… / ::ffff: dotted or hextet encodings) let an attacker smuggle a
+// private IPv4 target past a naive PRIVATE_IP_PATTERNS scan, because none of
+// those patterns match a value that starts with '::ffff:'. We normalise the
+// embedded IPv4 back to dotted-quad BEFORE classification. Mirrors the proven
+// ipv4FromEmbeddedIpv6 logic in credential-evidence.ts (the second guard on the
+// credential path) so the reusable primitive is no longer the weak link.
+const EMBEDDED_IPV4_PREFIX = '(?:(?:.*::(?:ffff:)?)|(?:0:0:0:0:0:(?:ffff|0):))';
+const EMBEDDED_IPV4_DOTTED_RE = new RegExp(`^${EMBEDDED_IPV4_PREFIX}(\\d{1,3}(?:\\.\\d{1,3}){3})$`);
+const EMBEDDED_IPV4_HEX_RE = new RegExp(`^${EMBEDDED_IPV4_PREFIX}([0-9a-f]{1,4}):([0-9a-f]{1,4})$`);
+
+/**
+ * If `ip` is an IPv4-mapped IPv6 address, return the embedded IPv4 as a
+ * dotted-quad; otherwise null. Accepts both the dotted (`::ffff:127.0.0.1`)
+ * and hextet (`::ffff:7f00:1`) encodings.
+ */
+function ipv4FromEmbeddedIpv6(ip: string): string | null {
+  const normalized = ip.toLowerCase().replace(/^\[|\]$/g, '');
+  const dottedMatch = EMBEDDED_IPV4_DOTTED_RE.exec(normalized);
+  if (dottedMatch) return dottedMatch[1]!;
+
+  const hexMatch = EMBEDDED_IPV4_HEX_RE.exec(normalized);
+  if (!hexMatch) return null;
+
+  const high = Number.parseInt(hexMatch[1]!, 16);
+  const low = Number.parseInt(hexMatch[2]!, 16);
+  if (high > 0xffff || low > 0xffff) return null;
+  return [(high >> 8) & 0xff, high & 0xff, (low >> 8) & 0xff, low & 0xff].join('.');
+}
+
 /**
  * Check if an IP address is private/internal.
- * Blocks RFC 1918 ranges, loopback, link-local, cloud metadata endpoints.
+ * Blocks RFC 1918 ranges, loopback, link-local, cloud metadata endpoints,
+ * the unspecified address, and IPv4-mapped IPv6 encodings of any of the above.
  */
 export function isPrivateIp(ip: string): boolean {
-  if (ip === '169.254.169.254') return true;
-  return PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(ip));
+  const normalized = ip.toLowerCase().replace(/^\[|\]$/g, '');
+  if (normalized === '169.254.169.254') return true;
+  // Unspecified address: '::' (and its long form) binds to 0.0.0.0 → never egress.
+  if (normalized === '::' || normalized === '0:0:0:0:0:0:0:0') return true;
+  // IPv6 loopback long form (PRIVATE_IP_PATTERNS only matches the '::1' shorthand).
+  if (normalized === '0:0:0:0:0:0:0:1') return true;
+  // Unwrap an IPv4-mapped IPv6 target and classify the embedded IPv4. The
+  // metadata IP 169.254.169.254 is covered by the 169.254.0.0/16 pattern below.
+  const embeddedIpv4 = ipv4FromEmbeddedIpv6(normalized);
+  if (embeddedIpv4 && PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(embeddedIpv4))) {
+    return true;
+  }
+  return PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 /**

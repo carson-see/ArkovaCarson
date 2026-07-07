@@ -40,6 +40,46 @@ describe('ssrf-guard isPrivateIp', () => {
     expect(isPrivateIp('203.0.113.50')).toBe(false);
     expect(isPrivateIp('8.8.8.8')).toBe(false);
   });
+
+  // SCRUM-2483 (HIGH finding): IPv4-mapped IPv6 and the unspecified address
+  // were classified as PUBLIC, so a socket to '::ffff:127.0.0.1' /
+  // '::ffff:169.254.169.254' reached loopback/metadata and '::' bound to
+  // 0.0.0.0. The classifier must normalize the embedded IPv4 before checking
+  // and reject the unspecified address.
+  it('blocks IPv4-mapped IPv6 loopback (::ffff:127.0.0.1)', () => {
+    expect(isPrivateIp('::ffff:127.0.0.1')).toBe(true);
+    expect(isPrivateIp('::ffff:7f00:1')).toBe(true); // hextet form of 127.0.0.1
+  });
+
+  it('blocks IPv4-mapped IPv6 cloud metadata (::ffff:169.254.169.254)', () => {
+    expect(isPrivateIp('::ffff:169.254.169.254')).toBe(true);
+    expect(isPrivateIp('::ffff:a9fe:a9fe')).toBe(true); // hextet form of 169.254.169.254
+  });
+
+  it('blocks IPv4-mapped IPv6 RFC 1918 targets', () => {
+    expect(isPrivateIp('::ffff:10.0.0.1')).toBe(true);
+    expect(isPrivateIp('::ffff:192.168.1.1')).toBe(true);
+    expect(isPrivateIp('::ffff:172.16.0.1')).toBe(true);
+  });
+
+  it('blocks the unspecified IPv6 address (::)', () => {
+    expect(isPrivateIp('::')).toBe(true);
+    expect(isPrivateIp('0:0:0:0:0:0:0:0')).toBe(true);
+  });
+
+  it('blocks IPv6 loopback long form and is case-insensitive', () => {
+    expect(isPrivateIp('0:0:0:0:0:0:0:1')).toBe(true);
+    expect(isPrivateIp('FE80::1')).toBe(true);
+  });
+
+  it('still allows a public IPv4-mapped IPv6 (::ffff:203.0.113.50)', () => {
+    expect(isPrivateIp('::ffff:203.0.113.50')).toBe(false);
+    expect(isPrivateIp('::ffff:8.8.8.8')).toBe(false);
+  });
+
+  it('still allows a genuinely public IPv6', () => {
+    expect(isPrivateIp('2606:4700:4700::1111')).toBe(false);
+  });
 });
 
 describe('ssrf-guard isPrivateHostname', () => {

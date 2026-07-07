@@ -22,11 +22,14 @@
  *     forces the resolved ip; in tests: a stub that records the pinned ip).
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { createServer, type Server } from 'node:http';
+import { AddressInfo } from 'node:net';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   safeFetch,
   safeFetchSingleHop,
   createSafeFetchImpl,
+  defaultSafeFetchDeps,
   SafeFetchError,
   type SafeFetchDeps,
   type SafeFetchResponse,
@@ -312,5 +315,90 @@ describe('createSafeFetchImpl (fetch-shaped adapter)', () => {
     const res = await impl('https://public.example.com/');
     expect(res.status).toBe(301);
     expect(res.headers.get('location')).toBe('https://next.example.com/');
+  });
+});
+
+/**
+ * SCRUM-2483 (CRITICAL finding): the 34 unit tests above all inject a STUB
+ * dispatch and never exercise defaultSafeFetchDeps — so the real undici Agent
+ * connect.lookup override went untested. This block drives the PRODUCTION
+ * dispatch against a REAL loopback HTTP server, which is exactly what the live
+ * credential-source import and provider clients use. The lookup callback must
+ * satisfy undici's contract (net.connect invokes it with { all: true } and
+ * expects an array of { address, family }); the legacy 3-arg positional form
+ * throws 'Invalid IP address: undefined' and every real egress fails 100%.
+ */
+describe('defaultSafeFetchDeps().dispatch (real undici Agent pin)', () => {
+  let server: Server;
+  let port: number;
+
+  beforeEach(async () => {
+    server = createServer((req, res) => {
+      if (req.url === '/redirect') {
+        res.writeHead(302, { location: 'https://elsewhere.example.com/' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, host: req.headers.host }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as AddressInfo).port;
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('connects to the PINNED IP and returns the real body (lookup contract)', async () => {
+    const deps = defaultSafeFetchDeps();
+    // Pin to loopback and request an off-host hostname: the Agent's lookup
+    // override must force the socket to 127.0.0.1 regardless of the URL host,
+    // proving the pin (no second DNS lookup) works with real undici.
+    const res = await deps.dispatch(
+      '127.0.0.1',
+      `http://pinned.example.test:${port}/creds`,
+      {},
+    );
+
+    expect(res.status).toBe(200);
+    const body = Buffer.from(await res.arrayBuffer()).toString('utf8');
+    const parsed = JSON.parse(body);
+    expect(parsed.ok).toBe(true);
+    // Host header preserved as the original hostname (SNI/Host untouched).
+    expect(parsed.host).toBe(`pinned.example.test:${port}`);
+  });
+
+  it('does NOT auto-follow redirects (surfaces the 3xx as-is)', async () => {
+    const deps = defaultSafeFetchDeps();
+    const res = await deps.dispatch(
+      '127.0.0.1',
+      `http://pinned.example.test:${port}/redirect`,
+      {},
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://elsewhere.example.com/');
+  });
+
+  it('safeFetch drives the real dispatch end-to-end (stub resolver, real pin)', async () => {
+    // Inject the REAL production dispatch but a resolver that returns a PUBLIC
+    // IP (so resolveAndPin passes the guard), while the dispatch is asked to pin
+    // the loopback server. This exercises the whole safeFetch → real undici path
+    // without tripping the private-IP guard, isolating the pin/lookup mechanism.
+    const deps: SafeFetchDeps = {
+      resolve: async () => ['203.0.113.10'], // public — passes resolveAndPin
+      dispatch: (_pinnedIp, url, init) =>
+        // Ignore the (public) pinned IP and force the socket to the loopback
+        // test server, so the real undici Agent lookup override still runs.
+        defaultSafeFetchDeps().dispatch('127.0.0.1', url, init),
+    };
+    const res = await safeFetch(
+      `http://loopback.example.test:${port}/creds`,
+      {},
+      deps,
+    );
+    expect(res.status).toBe(200);
+    const parsed = JSON.parse(Buffer.from(await res.arrayBuffer()).toString('utf8'));
+    expect(parsed.ok).toBe(true);
   });
 });
