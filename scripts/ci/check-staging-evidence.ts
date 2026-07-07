@@ -248,6 +248,28 @@ export const PATH_RULES: PathRule[] = [
 ];
 
 const TIER_RANK: Record<Tier, number> = { T0: 0, T1: 1, T2: 2, T3: 3 };
+
+/**
+ * The SHARED PROD-RUNTIME surface: the subset of {@link PATH_RULES} at tier T2 or
+ * higher. These are the files whose semantics a completed soak implicitly depends
+ * on because they are the same deployed artifact / DB / queue substrate the soak
+ * ran against — migrations (T3), chain/treasury (T3), security (T3), anchor
+ * lifecycle + cron (T3), billing (T3), queue/concurrency (T2), public API (T2),
+ * stripe/webhooks/auth/ai (T2), edge (T2), and the catch-all worker-behavior
+ * rule (T2). Derived from the single source of truth ({@link PATH_RULES}) so the
+ * shared surface can NEVER drift from the tier detector: adding a T2+ path rule
+ * automatically widens the surface whose intervening main-drift invalidates a
+ * completed soak, and lowering a rule below T2 automatically drops it.
+ *
+ * The <T2 rules (frontend `src/…` at T1) are intentionally excluded: a
+ * frontend-only PR is classified T1 and never reaches the T2/T3
+ * {@link stagingIntegrityErrors} base-drift path, so folding the T1 frontend
+ * surface in here would only gate PRs that can't reach the check anyway.
+ */
+export const SHARED_PROD_RUNTIME_RULES: PathRule[] = PATH_RULES.filter(
+  (rule) => TIER_RANK[rule.minTier] >= TIER_RANK.T2,
+);
+
 const SHA_RE = /\b[0-9a-f]{40}\b/i;
 const DECLARED_TIER_VALUES = new Set<Tier>(['T0', 'T1', 'T2', 'T3']);
 const ALLOWED_EVIDENCE_SCOPES = new Set([
@@ -1078,28 +1100,65 @@ function impactNoteAttestsNoRuntimeEffect(value: string): boolean {
     && hasNamedApprover(value);
 }
 
+/**
+ * The set of file-path predicates whose intervening main-drift could invalidate
+ * THIS PR's completed soak. It is the UNION of:
+ *   1. `ownFiles` — the exact files this PR changed (`opts.files`). If main
+ *      independently edited one of the exact files the PR soaked, the soak ran
+ *      against a now-stale version of that file → re-soak. Matched by exact path
+ *      equality against the drift set.
+ *   2. `sharedPatterns` — the SHARED PROD-RUNTIME surface ({@link
+ *      SHARED_PROD_RUNTIME_RULES} patterns). Files not in this PR's diff but whose
+ *      semantics the soak implicitly depends on because they are the same deployed
+ *      artifact / DB / queue substrate (migrations, chain, queue/cron, billing,
+ *      public API, …). Matched by regex against the drift set.
+ */
+function prSurfaceMatchers(files: string[]): { ownFiles: Set<string>; sharedPatterns: RegExp[] } {
+  return {
+    ownFiles: new Set(files),
+    sharedPatterns: SHARED_PROD_RUNTIME_RULES.map((rule) => rule.pattern),
+  };
+}
+
+/**
+ * The subset of `driftFiles` (files changed on main between the evidence base and
+ * the current base) that INTERSECTS this PR's soak surface — i.e. the drift files
+ * that could have invalidated the soak. Empty ⇒ drift is disjoint from the PR
+ * surface ⇒ evidence preserved.
+ */
+function driftFilesIntersectingSurface(
+  driftFiles: string[],
+  surface: { ownFiles: Set<string>; sharedPatterns: RegExp[] },
+): string[] {
+  return driftFiles.filter(
+    (f) => surface.ownFiles.has(f) || surface.sharedPatterns.some((re) => re.test(f)),
+  );
+}
+
+/**
+ * Path-aware base-drift enforcement. When the evidence's `Base SHA` no longer
+ * matches the current base, the intervening main movement is compared against
+ * THIS PR's soak surface ({@link prSurfaceMatchers}):
+ *
+ *   • DISJOINT (no drift file touches the PR's own files or the shared
+ *     prod-runtime surface) → evidence preserved, no attestation required.
+ *   • INTERSECTS → the soak ran against a now-stale version of a surface the PR
+ *     depends on → hard fail (re-soak), with a strictly-narrower fallback: the
+ *     operator MAY preserve evidence for the T0-only case by supplying an
+ *     approved `Base drift impact:` attestation AND the intervening drift being
+ *     classified strictly T0. That fallback exists only so no
+ *     currently-passing (T0-drift + attested) PR regresses; it is NOT a general
+ *     override for T1+ same-surface drift.
+ *   • drift-file list unavailable (`changedFilesBetween` → null and no override)
+ *     → fail closed (re-soak).
+ */
 function baseDriftImpactErrors(
   body: string,
   evidenceBaseSha: string,
   currentBaseSha: string,
+  prFiles: string[],
   driftFilesOverride?: string[],
 ): string[] {
-  const impact = extractEvidenceFieldValue(body, BASE_DRIFT_IMPACT_FIELD);
-  if (impact === null || !isFilledValue(impact)) {
-    return [
-      `Base SHA \`${evidenceBaseSha}\` differs from current base \`${currentBaseSha}\`. `
-      + `If the intervening main movement is harmless, add \`${BASE_DRIFT_IMPACT_FIELD}\` `
-      + 'with the changed files, the no-runtime/schema/staging-impact assessment, and a named approver; '
-      + 'otherwise refresh/re-scope the evidence.',
-    ];
-  }
-
-  if (!impactNoteAttestsNoRuntimeEffect(impact)) {
-    return [
-      `${BASE_DRIFT_IMPACT_FIELD} must state T0/CI-only drift, explicitly attest no runtime/schema/migration/staging/soak/deploy impact, and name an approver.`,
-    ];
-  }
-
   const driftFiles = driftFilesOverride ?? changedFilesBetween(evidenceBaseSha, currentBaseSha);
   if (driftFiles === null) {
     return [
@@ -1108,19 +1167,45 @@ function baseDriftImpactErrors(
     ];
   }
 
+  const surface = prSurfaceMatchers(prFiles);
+  const intersecting = driftFilesIntersectingSurface(driftFiles, surface);
+
+  // Disjoint drift — the soak's surface is untouched by the intervening main
+  // movement. Evidence preserved; no attestation needed.
+  if (intersecting.length === 0) return [];
+
+  // Same-surface drift. Preserve the strictly-narrower legacy escape hatch: an
+  // approved `Base drift impact:` attestation for the case where the WHOLE
+  // intervening drift is T0-only. Anything above T0 is an unconditional re-soak.
   const driftTier = requiredTierFor(driftFiles);
-  if (driftTier.tier !== 'T0') {
-    return [
-      `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\` touches ${driftTier.tier} surface `
-      + `(${driftTier.reason}); existing soak evidence cannot be preserved without release-owner re-scope/retest.`,
-    ];
+  if (driftTier.tier === 'T0') {
+    const impact = extractEvidenceFieldValue(body, BASE_DRIFT_IMPACT_FIELD);
+    if (impact === null || !isFilledValue(impact)) {
+      return [
+        `Base SHA \`${evidenceBaseSha}\` differs from current base \`${currentBaseSha}\` and the drift touches this PR's soak surface `
+        + `(${intersecting.join(', ')}). If the intervening main movement is harmless (T0/CI-only), add \`${BASE_DRIFT_IMPACT_FIELD}\` `
+        + 'with the changed files, the no-runtime/schema/staging-impact assessment, and a named approver; '
+        + 'otherwise refresh/re-scope the evidence.',
+      ];
+    }
+    if (!impactNoteAttestsNoRuntimeEffect(impact)) {
+      return [
+        `${BASE_DRIFT_IMPACT_FIELD} must state T0/CI-only drift, explicitly attest no runtime/schema/migration/staging/soak/deploy impact, and name an approver.`,
+      ];
+    }
+    return [];
   }
 
-  return [];
+  return [
+    `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\` touches this PR's soak surface `
+    + `(${intersecting.join(', ')}) at ${driftTier.tier} (${driftTier.reason}); `
+    + 'existing soak evidence cannot be preserved without release-owner re-scope/retest.',
+  ];
 }
 
 function baseShaEvidenceErrors(
   body: string,
+  prFiles: string[],
   expectedSha?: string,
   driftFilesOverride?: string[],
 ): string[] {
@@ -1130,13 +1215,13 @@ function baseShaEvidenceErrors(
   const expected = normalizeSha(expectedSha);
   if (!expected || evidenceSha === expected) return [];
 
-  return baseDriftImpactErrors(body, evidenceSha, expected, driftFilesOverride);
+  return baseDriftImpactErrors(body, evidenceSha, expected, prFiles, driftFilesOverride);
 }
 
 function stagingIntegrityErrors(
   body: string,
   tier: Tier,
-  opts: { headSha?: string; baseSha?: string; baseDriftFiles?: string[] } = {},
+  opts: { headSha?: string; baseSha?: string; baseDriftFiles?: string[]; files?: string[] } = {},
 ): string[] {
   if (tier === 'T0') return [];
 
@@ -1163,7 +1248,7 @@ function stagingIntegrityErrors(
       currentLabel: 'PR head',
       staleMessage: 'evidence cannot be copied across commits.',
     }),
-    ...baseShaEvidenceErrors(body, opts.baseSha, opts.baseDriftFiles),
+    ...baseShaEvidenceErrors(body, opts.files ?? [], opts.baseSha, opts.baseDriftFiles),
   ];
 }
 
@@ -1361,7 +1446,7 @@ function durationValidation(body: string, declared: Tier): { errors: string[]; n
 function standardEvidenceErrors(
   body: string,
   declared: Tier,
-  opts: { headSha?: string; baseSha?: string },
+  opts: { headSha?: string; baseSha?: string; baseDriftFiles?: string[]; files?: string[] },
 ): { errors: string[]; notes: string[] } {
   const errors: string[] = [];
   const notes: string[] = [];

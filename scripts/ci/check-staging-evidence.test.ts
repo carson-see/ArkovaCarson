@@ -9,6 +9,7 @@ import {
   isStagingToolingOnly,
   missingFields,
   requiredTierFor,
+  SHARED_PROD_RUNTIME_RULES,
   soakDurationErrors,
   TIER_SPECS,
 } from './check-staging-evidence.js';
@@ -1282,6 +1283,8 @@ describe('check-staging-evidence', () => {
 - Rollback rehearsed: n/a
 - Staging deploy log id: 142
 `;
+      // No baseDriftFiles override + unresolvable fake SHAs ⇒ changedFilesBetween
+      // returns null ⇒ fail closed (cannot classify base drift → re-soak).
       const r = check({
         body,
         files: ['services/worker/src/api/v1/docusign.ts'],
@@ -1289,7 +1292,7 @@ describe('check-staging-evidence', () => {
         baseSha: '9999991234567890abcdef1234567890abcdef12',
       });
       expect(r.ok).toBe(false);
-      expect(r.errors.join(' ')).toMatch(/Base SHA/i);
+      expect(r.errors.join(' ')).toMatch(/Could not inspect changed files|Base SHA/i);
     });
 
     it('preserves completed T2 evidence when base drift is T0 CI-only and approved', () => {
@@ -1355,7 +1358,11 @@ describe('check-staging-evidence', () => {
       expect(r.errors.join(' ')).toMatch(/base SHA drift|T2 surface/i);
     });
 
-    it('fails completed T2 evidence when T0 base drift lacks an approved impact note', () => {
+    it('fails completed T2 evidence when same-surface T0 base drift lacks an approved impact note', () => {
+      // Base drift touches the PR's OWN file (`agents.md`), so it intersects the
+      // soak surface. The drift set is T0-only (agents.md), so the strictly-narrower
+      // attestation fallback applies — but with no `Base drift impact:` note the
+      // fallback is unmet and the gate must fail.
       const body = `## Staging Soak Evidence
 - Tier: T2
 - Staging branch: arkova-staging
@@ -1377,23 +1384,25 @@ describe('check-staging-evidence', () => {
 `;
       const r = check({
         body,
-        files: ['services/worker/src/api/v1/docusign.ts'],
+        files: ['services/worker/src/api/v1/docusign.ts', 'services/worker/src/api/agents.md'],
         headSha: '1234567890abcdef1234567890abcdef12345678',
         baseSha: '9999991234567890abcdef1234567890abcdef12',
-        baseDriftFiles: ['.github/workflows/ci.yml'],
+        baseDriftFiles: ['services/worker/src/api/agents.md'],
       });
       expect(r.ok).toBe(false);
-      expect(r.errors.join(' ')).toMatch(/Base drift impact/i);
+      expect(r.errors.join(' ')).toMatch(/Base drift impact|Base SHA .* differs/i);
     });
 
-    it('fails completed T2 evidence when base drift approval is a placeholder', () => {
+    it('fails completed T2 evidence when same-surface base drift approval is a placeholder', () => {
+      // Same-surface T0 drift (PR's own agents.md), attestation present but the
+      // approver is a placeholder → fallback unmet → fail.
       const body = `## Staging Soak Evidence
 - Tier: T2
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
-- Base drift impact: T0 CI-only drift in .github/workflows/ci.yml; no runtime/schema/migration/staging/soak/deploy impact. Approved by: TBD.
+- Base drift impact: T0 CI-only drift in services/worker/src/api/agents.md; no runtime/schema/migration/staging/soak/deploy impact. Approved by: TBD.
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
 - Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
@@ -1409,10 +1418,10 @@ describe('check-staging-evidence', () => {
 `;
       const r = check({
         body,
-        files: ['services/worker/src/api/v1/docusign.ts'],
+        files: ['services/worker/src/api/v1/docusign.ts', 'services/worker/src/api/agents.md'],
         headSha: '1234567890abcdef1234567890abcdef12345678',
         baseSha: '9999991234567890abcdef1234567890abcdef12',
-        baseDriftFiles: ['.github/workflows/ci.yml'],
+        baseDriftFiles: ['services/worker/src/api/agents.md'],
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/Base drift impact/i);
@@ -1446,6 +1455,174 @@ describe('check-staging-evidence', () => {
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/Evidence scope/i);
+    });
+
+    // ── Path-aware base-drift gate (ci/path-aware-drift-gate) ──
+    // Replaces the SHA-exact / T0-only base-drift wall with a surface-intersection
+    // test: intervening main movement invalidates a completed soak ONLY when it
+    // touches THIS PR's soak surface (its own changed files ∪ the shared
+    // prod-runtime surface). Disjoint drift preserves evidence with no attestation.
+    describe('path-aware base drift (surface intersection)', () => {
+      const HEAD = '1234567890abcdef1234567890abcdef12345678';
+      const EVIDENCE_BASE = 'abcdef1234567890abcdef1234567890abcdef12';
+      const CURRENT_BASE = '9999991234567890abcdef1234567890abcdef12';
+
+      // Merge-grade T2 evidence whose recorded Base SHA is EVIDENCE_BASE. The
+      // current base (CURRENT_BASE, passed to check()) differs, so the drift path
+      // is exercised. No `Base drift impact:` note — disjoint drift must not need
+      // one; same-surface drift must fail even in its absence.
+      const t2Body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: ${HEAD}
+- Base SHA: ${EVIDENCE_BASE}
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+`;
+
+      const driftCheck = (files: string[], baseDriftFiles: string[]) =>
+        check({ body: t2Body, files, headSha: HEAD, baseSha: CURRENT_BASE, baseDriftFiles });
+
+      it('SHARED_PROD_RUNTIME_RULES is the T2+ subset of the tier detector', () => {
+        // Every shared-surface rule is a real PATH_RULE at T2 or T3 — derived from
+        // the single source of truth so the surface can never drift from the detector.
+        expect(SHARED_PROD_RUNTIME_RULES.length).toBeGreaterThan(0);
+        expect(SHARED_PROD_RUNTIME_RULES.every((r) => r.minTier === 'T2' || r.minTier === 'T3')).toBe(true);
+        // Frontend (T1) is intentionally excluded from the shared surface.
+        expect(SHARED_PROD_RUNTIME_RULES.some((r) => r.pattern.test('src/components/Foo.tsx'))).toBe(false);
+        // A representative sample of the shared surface is present.
+        expect(SHARED_PROD_RUNTIME_RULES.some((r) => r.pattern.test('supabase/migrations/0350_x.sql'))).toBe(true);
+        expect(SHARED_PROD_RUNTIME_RULES.some((r) => r.pattern.test('services/worker/src/chain/client.ts'))).toBe(true);
+      });
+
+      // (a) Orthogonal intervening diff → PASS (evidence preserved, no attestation).
+      it('(a) preserves evidence when intervening drift is orthogonal to the PR surface', () => {
+        // PR touches the worker API; main independently moved an unrelated docs file
+        // and an unrelated frontend component. Neither is the PR's own file nor a
+        // shared prod-runtime surface → disjoint → evidence preserved.
+        const r = driftCheck(
+          ['services/worker/src/api/v1/docusign.ts'],
+          ['docs/architecture/overview.md', 'src/components/Header.tsx'],
+        );
+        expect(r.ok).toBe(true);
+      });
+
+      // (b) Same-file intervening diff → FAIL (hard re-soak, no override).
+      it('(b) fails when intervening drift edits one of the PR\'s own soaked files', () => {
+        const r = driftCheck(
+          ['services/worker/src/api/v1/docusign.ts'],
+          ['services/worker/src/api/v1/docusign.ts'],
+        );
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/touches this PR's soak surface/i);
+        expect(r.errors.join(' ')).toContain('services/worker/src/api/v1/docusign.ts');
+      });
+
+      // (c) Shared-runtime intervening diff → FAIL for each substrate the design names.
+      it('(c) fails when intervening drift touches a shared migration surface', () => {
+        const r = driftCheck(
+          ['services/worker/src/api/v1/docusign.ts'],
+          ['supabase/migrations/0351_add_index.sql'],
+        );
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/soak surface.*T3/is);
+      });
+
+      it('(c) fails when intervening drift touches the shared chain surface', () => {
+        const r = driftCheck(
+          ['services/worker/src/api/v1/docusign.ts'],
+          ['services/worker/src/chain/client.ts'],
+        );
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/soak surface/i);
+      });
+
+      it('(c) fails when intervening drift touches the shared queue surface', () => {
+        const r = driftCheck(
+          ['services/worker/src/api/v1/docusign.ts'],
+          ['services/worker/src/queues/batch-drain.ts'],
+        );
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/soak surface/i);
+      });
+
+      it('(c) fails when intervening drift touches the cron schedule surface', () => {
+        const r = driftCheck(
+          ['services/worker/src/api/v1/docusign.ts'],
+          ['services/worker/src/routes/scheduled.ts'],
+        );
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/soak surface/i);
+      });
+
+      // (d) T0/docs intervening diff (disjoint) → PASS.
+      it('(d) preserves evidence when intervening drift is docs/CI-only and disjoint', () => {
+        const r = driftCheck(
+          ['services/worker/src/api/v1/docusign.ts'],
+          ['README.md', '.github/workflows/ci.yml', 'scripts/ci/some-tool.test.ts'],
+        );
+        expect(r.ok).toBe(true);
+      });
+
+      it('preserves evidence when the mixed drift set is entirely disjoint from the surface', () => {
+        // Even a large intervening diff passes as long as nothing intersects the
+        // PR's own files or the shared prod-runtime surface.
+        const r = driftCheck(
+          ['services/worker/src/api/v1/docusign.ts'],
+          ['docs/x.md', 'src/pages/About.tsx', 'e2e/smoke.spec.ts', 'HANDOFF.md'],
+        );
+        expect(r.ok).toBe(true);
+      });
+
+      it('fails when ANY drift file intersects even if the rest are disjoint', () => {
+        const r = driftCheck(
+          ['services/worker/src/api/v1/docusign.ts'],
+          ['docs/x.md', 'supabase/migrations/0352_y.sql', 'README.md'],
+        );
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toContain('supabase/migrations/0352_y.sql');
+      });
+
+      it('T0-drift on the PR\'s own file passes via the narrower attestation fallback', () => {
+        // The PR also owns a T0 file (agents.md). Main touched that exact file →
+        // intersects the surface, but the drift set is T0-only, so an approved
+        // `Base drift impact:` note preserves evidence.
+        const attestBody = t2Body.replace(
+          `- Base SHA: ${EVIDENCE_BASE}\n`,
+          `- Base SHA: ${EVIDENCE_BASE}\n- Base drift impact: T0 CI-only drift in services/worker/src/api/agents.md; no runtime/schema/migration/staging/soak/deploy impact. Approved by: Carson 2026-07-07.\n`,
+        );
+        const r = check({
+          body: attestBody,
+          files: ['services/worker/src/api/v1/docusign.ts', 'services/worker/src/api/agents.md'],
+          headSha: HEAD,
+          baseSha: CURRENT_BASE,
+          baseDriftFiles: ['services/worker/src/api/agents.md'],
+        });
+        expect(r.ok).toBe(true);
+      });
+
+      it('fails closed when the drift-file list cannot be resolved', () => {
+        // No baseDriftFiles override + fake SHAs unresolvable by git → null → re-soak.
+        const r = check({
+          body: t2Body,
+          files: ['services/worker/src/api/v1/docusign.ts'],
+          headSha: HEAD,
+          baseSha: CURRENT_BASE,
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/Could not inspect changed files/i);
+      });
     });
 
     it('SCRUM-1208: HANDOFF.md and .gitignore are now in the T0 allowlist (PR #733 follow-up)', () => {
