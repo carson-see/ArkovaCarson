@@ -1159,6 +1159,27 @@ describe('check-staging-evidence', () => {
       expect(r.ok).toBe(true);
     });
 
+    it('passes a complete T1 PR without T2/T3 changed-behavior/load fields', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: not applicable - docs-only worker image was not built
+- Health/smoke result: current-head smoke green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
+- CI/E2E green: green
+- Rollback plan: revert PR
+- Risk rationale: frontend copy-only change, no restricted surfaces
+- Human approver: Carson
+`;
+      const r = check({
+        body,
+        files: ['src/components/Foo.tsx'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+      });
+      expect(r.ok).toBe(true);
+    });
+
     it('fails T1 expedited evidence copied from an older PR head', () => {
       const body = `## Staging Soak Evidence
 - Tier: T1
@@ -1588,31 +1609,14 @@ describe('check-staging-evidence', () => {
       });
 
       // (c) Shared-runtime intervening diff → FAIL for each substrate the design names.
-      it('(c) fails when intervening drift touches a shared migration surface', () => {
-        const r = driftCheck(
-          ['services/worker/src/api/v1/docusign.ts'],
-          ['supabase/migrations/0351_add_index.sql'],
-        );
+      it.each([
+        ['shared migration surface', ['supabase/migrations/0351_add_index.sql'], /soak surface.*T3/is],
+        ['shared chain surface', ['services/worker/src/chain/client.ts'], /soak surface/i],
+        ['shared queue surface', ['services/worker/src/queues/batch-drain.ts'], /soak surface/i],
+      ])('(c) fails when intervening drift touches the %s', (_label, driftFiles, errorPattern) => {
+        const r = driftCheck(['services/worker/src/api/v1/docusign.ts'], driftFiles);
         expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/soak surface.*T3/is);
-      });
-
-      it('(c) fails when intervening drift touches the shared chain surface', () => {
-        const r = driftCheck(
-          ['services/worker/src/api/v1/docusign.ts'],
-          ['services/worker/src/chain/client.ts'],
-        );
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/soak surface/i);
-      });
-
-      it('(c) fails when intervening drift touches the shared queue surface', () => {
-        const r = driftCheck(
-          ['services/worker/src/api/v1/docusign.ts'],
-          ['services/worker/src/queues/batch-drain.ts'],
-        );
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/soak surface/i);
+        expect(r.errors.join(' ')).toMatch(errorPattern);
       });
 
       it('(c) fails when intervening drift touches the cron schedule surface', () => {
@@ -2076,6 +2080,15 @@ describe('check-staging-evidence', () => {
       expect(r.errors.join(' ')).toMatch(/Targeted evidence:.*changed behavior|\/health/i);
     });
 
+    it('does not treat healthcheck as a substring inside a larger token', () => {
+      const body = mergeGradeT2Body.replace(
+        /Targeted evidence:.*\n/,
+        'Targeted evidence: prehealthcheck scenario exercised the changed behavior under the targeted driver\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(true);
+    });
+
     it('rejects missing heavy-user load/concurrency evidence', () => {
       const body = mergeGradeT2Body.replace(/- Load\/concurrency evidence:.*\n/, '');
       const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
@@ -2101,6 +2114,25 @@ describe('check-staging-evidence', () => {
       const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/Load\/concurrency evidence:.*generic.*\/health/i);
+    });
+
+    it('rejects weak request-only text as load/concurrency evidence', () => {
+      const body = mergeGradeT2Body.replace(
+        /Load\/concurrency evidence:.*\n/,
+        'Load/concurrency evidence: replayed the changed request successfully\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Load\/concurrency evidence:.*load\/concurrency proof/i);
+    });
+
+    it('allows completed evidence that mentions a planned/future scenario', () => {
+      const body = mergeGradeT2Body.replace(
+        /E2E result:.*\n/,
+        'E2E result: 50/50 green for planned fallback and future-effective retry scenarios\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(true);
     });
 
     it('rejects evidence that does not name the changed behavior', () => {

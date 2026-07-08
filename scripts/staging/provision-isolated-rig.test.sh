@@ -15,9 +15,11 @@ assert_exit() {
   if [[ "$actual" == "$expected" ]]; then
     echo "  PASS  $label  exit=$actual"
     PASS=$((PASS + 1))
+    return 0
   else
     echo "  FAIL  $label  exit=$actual  (expected $expected)"
     FAIL=$((FAIL + 1))
+    return 1
   fi
 }
 
@@ -62,10 +64,40 @@ EOF
   then
     echo "  PASS  $label"
     PASS=$((PASS + 1))
+    return 0
   else
     echo "  FAIL  $label"
     echo "        json: $json"
     FAIL=$((FAIL + 1))
+    return 1
+  fi
+}
+
+assert_contains() {
+  local label="$1" haystack="$2" needle="$3"
+  if grep -Fq "$needle" <<<"$haystack"; then
+    echo "  PASS  $label"
+    PASS=$((PASS + 1))
+    return 0
+  else
+    echo "  FAIL  $label"
+    echo "        expected to find: $needle"
+    FAIL=$((FAIL + 1))
+    return 1
+  fi
+}
+
+assert_file_not_contains() {
+  local label="$1" file="$2" needle="$3"
+  if grep -Fq "$needle" "$file"; then
+    echo "  FAIL  $label"
+    echo "        unexpected text: $needle"
+    FAIL=$((FAIL + 1))
+    return 1
+  else
+    echo "  PASS  $label"
+    PASS=$((PASS + 1))
+    return 0
   fi
 }
 
@@ -105,6 +137,57 @@ else
   echo "  PASS  dry-run did not execute side-effect commands"
   PASS=$((PASS + 1))
 fi
+
+assert_file_not_contains "base SHA resolver does not fall back to HEAD~1" "$PROVISION" "HEAD~1"
+
+tmp_bin="$(mktemp -d)"
+cat >"$tmp_bin/npx" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
+  echo '{"id":"abcdefghijklmnopqrst"}'
+  exit 0
+fi
+if [[ "$1" == "supabase" ]]; then
+  exit 0
+fi
+if [[ "$1" == "tsx" && "$2" == "scripts/ci/staging-honesty-preflight.ts" ]]; then
+  echo '{"checks":[]}'
+  exit 0
+fi
+echo "unexpected npx call: $*" >&2
+exit 64
+EOF
+chmod +x "$tmp_bin/npx"
+
+cat >"$tmp_bin/gcloud" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "artifacts" && "$2" == "docker" && "$3" == "images" && "$4" == "describe" ]]; then
+  echo 'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+  exit 0
+fi
+if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
+  echo 'https://arkova-worker-s0e4-lane-b-staging.example.run.app'
+  exit 0
+fi
+exit 0
+EOF
+chmod +x "$tmp_bin/gcloud"
+
+bad_out=$(
+  PATH="$tmp_bin:$PATH" \
+  CONFIRM_PROVISION=s0e4-lane-b \
+  GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  USER=rig-owner \
+  "$PROVISION" --name s0e4-lane-b --apply 2>&1
+)
+bad_rc=$?
+rm -rf "$tmp_bin"
+
+assert_exit "apply fails when preflight omits environment_type" 1 "$bad_rc"
+assert_contains "apply failure names missing environment_type" "$bad_out" "environment_type"
 
 echo ""
 echo "--- summary -------------------------------------------------"
