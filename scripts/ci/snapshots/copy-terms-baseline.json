@@ -58,15 +58,15 @@
     },
     {
       "file": "src/components/verification/PublicVerification.tsx",
-      "line": 658,
+      "line": 651,
       "term": "bitcoin",
-      "reason": "The shipped multi-line-JSX blind-spot case (raw JSX text line, no quote / no same-line tag pair) surfaced by the 2026-07-06 cross-line scanner fix. Copy removal is owned by OPEN PR #1433 (SCRUM-2495 disclaimer rework) — entry goes stale and must be removed once #1433 merges."
+      "reason": "The shipped multi-line-JSX blind-spot case (raw JSX text line, no quote / no same-line tag pair) surfaced by the 2026-07-06 cross-line scanner fix. Copy removal is owned by OPEN PR #1433 (SCRUM-2495 disclaimer rework) — entry goes stale and must be removed once #1433 merges. Re-anchored 658→651 on #1439: the disclaimer copy is unchanged, but #1439 removed 7 lines of props/JSX above it (VerifierProofDownload slimming), so the same pre-existing line drifted up. Not a new violation."
     },
     {
       "file": "src/components/verification/PublicVerification.tsx",
-      "line": 658,
+      "line": 651,
       "term": "blockchain",
-      "reason": "Second banned term on the same shipped blind-spot line as the bitcoin entry above; same ownership (OPEN PR #1433). Remove once #1433 merges."
+      "reason": "Second banned term on the same shipped blind-spot line as the bitcoin entry above; same ownership (OPEN PR #1433). Re-anchored 658→651 on #1439 (line drift from removing 7 lines above; copy unchanged). Remove once #1433 merges."
     },
     {
       "file": "src/pages/PipelineAdminPage.tsx",
