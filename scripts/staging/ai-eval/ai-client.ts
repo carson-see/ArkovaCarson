@@ -136,6 +136,24 @@ async function safeJson(text: string): Promise<unknown> {
 export interface CallOptions {
   /** Per-request client deadline in ms. 0 disables the client timeout. */
   timeoutMs?: number;
+  /**
+   * Rotating `X-Forwarded-For` value. The worker runs `app.set('trust proxy', …)`
+   * and keys the anonymous 100 req/min/IP limiter on `req.ip`, so a distinct XFF
+   * per request makes each call a distinct IP — the documented way (see
+   * memory/project_isolated_soak_standup_procedure.md) to drive high aggregate
+   * rate from a single egress host without self-inflicting the per-IP 429. Note:
+   * the per-USER AI limiter (30/min) keys on authUserId, so JWT sharding is still
+   * required in addition to XFF rotation.
+   */
+  forwardedFor?: string;
+}
+
+/** A random public-ish IPv4 for X-Forwarded-For rotation (never 10./127./192.168.). */
+export function randomForwardedFor(): string {
+  const octet = () => 1 + Math.floor(Math.random() * 254);
+  let a = octet();
+  while (a === 10 || a === 127 || a === 192 || a === 172) a = octet();
+  return `${a}.${octet()}.${octet()}.${octet()}`;
 }
 
 export async function callAiEndpoint(
@@ -154,12 +172,14 @@ export async function callAiEndpoint(
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
 
   try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${identity.jwt}`,
+    };
+    if (options.forwardedFor) headers['X-Forwarded-For'] = options.forwardedFor;
     const init: RequestInit = {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${identity.jwt}`,
-      },
+      headers,
       body: JSON.stringify(body),
     };
     if (controller) init.signal = controller.signal;

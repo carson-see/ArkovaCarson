@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   callAiEndpoint,
   parseIdentities,
+  randomForwardedFor,
   AI_PATHS,
   type FetchLike,
   type WorkerIdentity,
@@ -70,5 +71,38 @@ describe('callAiEndpoint', () => {
     const result = await callAiEndpoint('https://rig.example', 'extract', {}, IDENTITY, fetchImpl);
     expect(result.status).toBe(503);
     expect(result.body).toBeUndefined();
+  });
+
+  it('sets a rotating X-Forwarded-For when provided (per-IP limiter spreading)', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(200, '{}')) as unknown as FetchLike;
+    await callAiEndpoint('https://rig.example', 'extract', {}, IDENTITY, fetchImpl, { forwardedFor: '203.0.113.7' });
+    const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(init.headers['X-Forwarded-For']).toBe('203.0.113.7');
+  });
+
+  it('omits X-Forwarded-For when not provided', async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(200, '{}')) as unknown as FetchLike;
+    await callAiEndpoint('https://rig.example', 'extract', {}, IDENTITY, fetchImpl);
+    const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(init.headers['X-Forwarded-For']).toBeUndefined();
+  });
+});
+
+describe('randomForwardedFor', () => {
+  it('produces a well-formed IPv4 avoiding private ranges', () => {
+    for (let i = 0; i < 200; i++) {
+      const ip = randomForwardedFor();
+      expect(ip).toMatch(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/);
+      const first = Number(ip.split('.')[0]);
+      expect([10, 127, 192, 172]).not.toContain(first);
+      for (const octet of ip.split('.')) {
+        expect(Number(octet)).toBeGreaterThanOrEqual(1);
+        expect(Number(octet)).toBeLessThanOrEqual(254);
+      }
+    }
+  });
+  it('varies across calls (rotation)', () => {
+    const seen = new Set(Array.from({ length: 50 }, () => randomForwardedFor()));
+    expect(seen.size).toBeGreaterThan(10);
   });
 });

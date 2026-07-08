@@ -44,6 +44,7 @@ import { resolveStagingApiBase } from './load-harness-env.js';
 import {
   callAiEndpoint,
   parseIdentities,
+  randomForwardedFor,
   type AiEndpoint,
   type FetchLike,
   type WorkerIdentity,
@@ -74,6 +75,7 @@ const { values: args } = parseArgs({
     endpoints: { type: 'string', default: 'extract,template,tags' },
     'doc-variants': { type: 'string' }, // default: all (pdf/scan/docx/large/oversized/malformed)
     'timeout-ms': { type: 'string', default: '10000' }, // client request deadline
+    'no-rotate-ip': { type: 'boolean', default: false }, // disable X-Forwarded-For rotation
     'evidence-out': { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
   },
@@ -138,6 +140,7 @@ async function main(): Promise<void> {
   const endpoints = parseEndpoints(args.endpoints ?? 'extract,template,tags');
   const variants = parseDocVariants(args['doc-variants']);
   const timeoutMs = parsePositiveInt(args['timeout-ms'], 10_000, 'timeout-ms');
+  const rotateIp = !args['no-rotate-ip'];
   const evidencePath = args['evidence-out'];
 
   const apiBase = resolveStagingApiBase(process.env);
@@ -150,7 +153,7 @@ async function main(): Promise<void> {
 
   console.log(`▶ ai-soak-harness ${mode} at ${new Date().toISOString()}`);
   console.log(`  api_base=${apiBase}`);
-  console.log(`  duration=${durationMin}min  target=${ratePerHour} req/hr  interval=${plan.intervalMs}ms  client_timeout=${timeoutMs}ms`);
+  console.log(`  duration=${durationMin}min  target=${ratePerHour} req/hr  interval=${plan.intervalMs}ms  client_timeout=${timeoutMs}ms  rotate_ip=${rotateIp}`);
   console.log(`  identities=${identities.length} (min ${plan.minUsers})  per_user≈${plan.perUserPerMin.toFixed(1)}/min (limit 30)`);
   console.log(`  corpus=${corpus.length} items (${allGoldenEntries().length} fixtures × ${variants.length} variants: ${variants.join(',')})`);
   console.log(`  endpoints=${endpoints.join(',')}`);
@@ -190,8 +193,9 @@ async function main(): Promise<void> {
       // document text). Route them to extract regardless of the rotation.
       const effectiveEndpoint = isLoadOnlyVariant(item.variant) ? 'extract' : endpoint;
       const identity = pickIdentity(identities, seq);
+      const forwardedFor = rotateIp ? randomForwardedFor() : undefined;
       // Fire-and-forget within the pacing loop; the interval bounds the rate.
-      void callAiEndpoint(apiBase, effectiveEndpoint, payloadFor(effectiveEndpoint, item), identity, realFetch, { timeoutMs })
+      void callAiEndpoint(apiBase, effectiveEndpoint, payloadFor(effectiveEndpoint, item), identity, realFetch, { timeoutMs, forwardedFor })
         .then((outcome) => recordAiOutcome(stats, outcome, item.variant));
       seq++;
       await boundedSleep(intervalMs, endAt);

@@ -143,8 +143,27 @@ Mint the **Supabase user JWTs** (`STAGING_AI_JWTS`): sign short-lived user JWTs
 with the rig's `SUPABASE_JWT_SECRET` for ≥ 4 seeded staging users, or capture
 them from staging logins. **≥ 4 distinct users** because `aiRateLimiter` = 30
 req/min **per user**; 5k/hr ≈ 83/min → ≥ 3 users bare-minimum, 4 with headroom.
-(A single source IP is also capped at 100 req/min in the anon bucket — if you push
-much past ~100/min aggregate, distribute egress across IPs.)
+
+**Per-IP limiter (the other rate wall):** the anon bucket caps 100 req/min **per
+IP**. AI calls carry no API key, so at ≥ 5k/hr (~83/min) a single egress IP would
+also 429 here — independent of the per-user AI limiter. The worker runs
+`app.set('trust proxy', …)` and keys the per-IP limiter on `req.ip`, so the
+harness **rotates `X-Forwarded-For` per request** (on by default; `--no-rotate-ip`
+to disable) — each request reads as a distinct IP, exactly the documented
+single-host high-rate technique (`memory/project_isolated_soak_standup_procedure.md`).
+JWT sharding (per-user limit) and XFF rotation (per-IP limit) are **both**
+required — they solve different limiters.
+
+**`STAGING_API_BASE` URL guard (isolated-rig gotcha):** `load-harness-env.ts` only
+accepts `pr-N---<host>` / `train-*---<host>` **tag-routed** URLs and REJECTS a
+dedicated isolated-rig service hostname (e.g. `arkova-worker-s3-ai-eval-staging-…run.app`).
+Do NOT patch the guard — instead add a tag to the isolated service and use its
+tag URL (stays fully isolated, one service):
+```bash
+gcloud run services update-traffic arkova-worker-s3-ai-eval-staging \
+  --region us-central1 --update-tags pr-9999=$(latest-revision)
+# → STAGING_API_BASE=https://pr-9999---arkova-worker-s3-ai-eval-staging-…run.app
+```
 
 ## Rig env checklist (in addition to the standard isolated-rig env)
 
@@ -169,7 +188,9 @@ Two long-running processes against the **same rig tag URL**. Run each under
 (`memory/feedback_soak_clock_is_worker_uptime.md`).
 
 ```bash
-export STAGING_API_BASE="https://s3-ai-eval---arkova-worker-<rig>.run.app"
+# Tag-routed URL of the isolated rig (see the URL-guard note above — a bare
+# service hostname is rejected; add a pr-<N> tag to the isolated service).
+export STAGING_API_BASE="https://pr-9999---arkova-worker-s3-ai-eval-staging-<hash>-uc.a.run.app"
 export STAGING_AI_JWTS="u1:<jwt1>,u2:<jwt2>,u3:<jwt3>,u4:<jwt4>"   # never commit
 
 # 0) validate the plan without firing (checks pool size vs rate)
