@@ -867,14 +867,19 @@ export async function resolveDlqEntry(entryId: string, orgId: string): Promise<b
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any;
 
-  // ARK-SEC-026: Always verify the DLQ entry belongs to the requesting org
+  // ARK-SEC-026: Always verify the DLQ entry belongs to the requesting org.
+  // webhook_dead_letter_queue has no FK relationship to webhook_endpoints, so
+  // an embedded-join select (`endpoint_id, webhook_endpoints(org_id)`) fails
+  // in production with PGRST200 ("Could not find a relationship..."), making
+  // this check always fail closed. webhook_dead_letter_queue already carries
+  // its own denormalized org_id column — read it directly, no join needed.
   const { data: entry } = await dbAny
     .from('webhook_dead_letter_queue')
-    .select('endpoint_id, webhook_endpoints(org_id)')
+    .select('org_id')
     .eq('id', entryId)
     .single();
 
-  const entryOrgId = entry?.webhook_endpoints?.org_id;
+  const entryOrgId = entry?.org_id;
   if (!entryOrgId || entryOrgId !== orgId) {
     logger.warn({ entryId, orgId }, 'DLQ entry does not belong to requesting org');
     return false;
