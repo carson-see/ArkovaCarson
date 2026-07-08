@@ -75,6 +75,7 @@ export function IssuerPartnershipsPage({
   }, [api, orgId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount fetch; reload() resets loading/error before awaiting
     reload().catch(() => undefined);
   }, [reload]);
 
