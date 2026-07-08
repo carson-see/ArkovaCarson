@@ -53,6 +53,11 @@ describe('fixtures: DLQ row (webhooks self-service dlq/resolve branch, #1443)', 
     // localhost URL cannot resolve outside the host — SSRF-safe synthetic.
     expect(row.endpoint_url).toMatch(/^http:\/\/localhost/);
     expect(row.payload).toBeTypeOf('object');
+    // failure_kind MUST satisfy the CHECK constraint from
+    // 0338_scrum2244_dlq_idempotency.sql, else the seed INSERT trips Postgres
+    // 23514 (webhook_dead_letter_queue_failure_kind_check) before the driver
+    // can fire — which is exactly what blocked the #1443 webhooks soak.
+    expect(['http_delivery', 'log_write']).toContain(row.failure_kind);
   });
 
   it('marks the event_id as a synthetic fixture', () => {

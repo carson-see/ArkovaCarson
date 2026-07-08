@@ -110,7 +110,10 @@ export function buildDlqFixtureRow(args: DlqFixtureArgs): DlqFixtureRow {
     event_id: taggedId('EVT'),
     event_type: 'anchor.secured',
     error_message: 'synthetic soak fixture — endpoint unreachable',
-    failure_kind: 'delivery_exhausted',
+    // Must be one of the values allowed by 0338_scrum2244_dlq_idempotency.sql:
+    // CHECK (failure_kind IN ('http_delivery', 'log_write')). 'http_delivery' is
+    // the migration default and models an exhausted HTTP delivery attempt.
+    failure_kind: 'http_delivery',
     last_attempt: 5,
     payload: { tsoak: true, event: 'anchor.secured' },
     resolved: false,
