@@ -358,9 +358,7 @@ resolve_base_sha() {
   elif [[ -n "${GITHUB_BASE_SHA:-}" ]]; then
     printf '%s\n' "$GITHUB_BASE_SHA"
   else
-    git merge-base HEAD origin/main 2>/dev/null \
-      || git rev-parse HEAD~1 2>/dev/null \
-      || printf 'unknown\n'
+    git merge-base HEAD origin/main 2>/dev/null || printf 'unknown\n'
   fi
 }
 
@@ -432,25 +430,29 @@ resolve_cloud_run_url() {
 }
 
 emit_admission_json() {
-  local head_sha="$1"
-  local base_sha="$2"
-  local image_digest="$3"
-  local tag_url="$4"
-  local supabase_project_ref="$5"
-  local preflight_result="$6"
-  local owner="$7"
+  local schema_version="$1"
+  local rig_name="$2"
+  local cloud_run_service="$3"
+  local image="$4"
+  local head_sha="$5"
+  local base_sha="$6"
+  local image_digest="$7"
+  local tag_url="$8"
+  local supabase_project_ref="$9"
+  local preflight_result="${10}"
+  local owner="${11}"
   local generated_at
   generated_at="${ADMISSION_GENERATED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
 
   jq -nc \
-    --argjson schema_version "$ADMISSION_SCHEMA_VERSION" \
+    --argjson schema_version "$schema_version" \
     --arg kind "isolated_rig_admission" \
     --arg generated_at "$generated_at" \
-    --arg rig_name "$NAME" \
-    --arg cloud_run_service "$CLOUD_RUN_SERVICE" \
+    --arg rig_name "$rig_name" \
+    --arg cloud_run_service "$cloud_run_service" \
     --arg sha "$head_sha" \
     --arg base_sha "$base_sha" \
-    --arg image "$PINNED_IMAGE" \
+    --arg image "$image" \
     --arg image_digest "$image_digest" \
     --arg tag_url "$tag_url" \
     --arg supabase_project_ref "$supabase_project_ref" \
@@ -669,6 +671,10 @@ if [[ $APPLY -eq 1 ]]; then
     --format json)"
   printf '%s\n' "$PREFLIGHT_JSON"
   PREFLIGHT_ENVIRONMENT="$(jq -r '.environment_type // empty' <<<"$PREFLIGHT_JSON")"
+  if [[ -z "$PREFLIGHT_ENVIRONMENT" ]]; then
+    echo "ERROR: staging preflight JSON did not include environment_type; refusing to emit admission JSON." >&2
+    exit 1
+  fi
   PREFLIGHT_RESULT="environment_type=${PREFLIGHT_ENVIRONMENT}"
 else
   run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
@@ -693,6 +699,10 @@ ADMISSION_SUPABASE_PROJECT_REF="${ADMISSION_SUPABASE_PROJECT_REF:-$NEW_PROJECT_R
 OWNER="$(resolve_owner)"
 
 ADMISSION_JSON="$(emit_admission_json \
+  "$ADMISSION_SCHEMA_VERSION" \
+  "$NAME" \
+  "$CLOUD_RUN_SERVICE" \
+  "$PINNED_IMAGE" \
   "$HEAD_SHA" \
   "$BASE_SHA_VALUE" \
   "$IMAGE_DIGEST" \

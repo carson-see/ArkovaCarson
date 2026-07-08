@@ -74,7 +74,7 @@ If the PR touches *any* worker/migration/SDK/contract file, this variant does **
 - PR head SHA: 40-character current PR head SHA
 - Changed behavior: name the user-facing frontend behavior this PR changed
 - Targeted evidence: name the affected view E2E path that exercised that changed behavior
-- Load/concurrency evidence: name the heavy-user/load proof for the affected view or explain the RM-approved user-volume check used for this frontend-only path
+- Load/concurrency evidence: name the heavy-user/load/concurrency proof for the affected view or explain the RM-approved load-oriented check used for this frontend-only path
 - Vercel deployment URL: https://<your-preview>.vercel.app
 - E2E result: <affected view(s)> E2E N/N green on head
 - CI/E2E green: Tests, E2E Tests, TypeCheck & Lint green on current head

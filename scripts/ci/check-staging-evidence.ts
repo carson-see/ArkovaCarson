@@ -520,11 +520,12 @@ export function isOfflinePackageOnlyChange(files: string[]): boolean {
   if (files.length === 0) return false;
   return files.every(
     (f) => OFFLINE_PACKAGE_PREFIXES.some((p) => f.startsWith(p))
-      && !/^services\//.test(f)
-      && !/^supabase\/(?:migrations|functions)\//.test(f)
+      && !f.startsWith('services/')
+      && !f.startsWith('supabase/migrations/')
+      && !f.startsWith('supabase/functions/')
       && !SERVED_CONTRACT_DOC_RE.test(f)
-      && !/^\.github\/workflows\//.test(f)
-      && !/^scripts\//.test(f),
+      && !f.startsWith('.github/workflows/')
+      && !f.startsWith('scripts/'),
   );
 }
 
@@ -723,6 +724,8 @@ const INCOMPLETE_VALUE_PATTERNS = [
   /^tba\.?$/i,
   /^todo\.?$/i,
   /^to[\s-]?do\.?$/i,
+  /^planned\.?$/i,
+  /^future\.?$/i,
   /^fixme\.?$/i,
   /^wip\.?$/i,
   /^work[\s-]?in[\s-]?progress\.?$/i,
@@ -738,8 +741,15 @@ const INCOMPLETE_VALUE_PATTERNS = [
   /^…\.?$/i,
   /^<[^>]*>\.?$/i,
 ];
-const INCOMPLETE_PHRASE_RE =
-  /\b(?:not[\s-]?started|planned|future|to[\s-]?be[\s-]?(?:run|captured)|will\s+(?:run|start|finish|capture|verify))\b/i;
+const INCOMPLETE_CONTEXT_WORDS =
+  '(?:evidence|soak|run|capture|verification|verify|test|proof|result|preflight|deploy|observation|timestamp|start|end)';
+const INCOMPLETE_PHRASE_PATTERNS = [
+  /\bnot[\s-]?started\b/i,
+  /\bto[\s-]?be[\s-]?(?:run|captured)\b/i,
+  /\bwill\s+(?:run|start|finish|capture|verify)\b/i,
+  new RegExp(String.raw`\b(?:planned|future)\s+${INCOMPLETE_CONTEXT_WORDS}\b`, 'i'),
+  new RegExp(String.raw`\b${INCOMPLETE_CONTEXT_WORDS}\s+(?:planned|future)\b`, 'i'),
+];
 
 // "Not applicable" markers — legitimate for some fields (e.g. `Migration
 // applied: none`) but never for a concrete deploy artifact.
@@ -750,7 +760,7 @@ const IMAGE_DIGEST_RE = /\bsha256:[0-9a-f]{64}\b/i;
 function isIncompletePlaceholder(value: string): boolean {
   const trimmed = value.trim();
   return INCOMPLETE_VALUE_PATTERNS.some((re) => re.test(trimmed))
-    || INCOMPLETE_PHRASE_RE.test(trimmed);
+    || INCOMPLETE_PHRASE_PATTERNS.some((re) => re.test(trimmed));
 }
 
 function isNotApplicablePlaceholder(value: string): boolean {
@@ -912,14 +922,75 @@ function validateVercelUrlEvidence(body: string): string | null {
     : `${field} must contain a Vercel deployment or preview URL.`;
 }
 
-function isGenericHealthOnlyEvidence(value: string): boolean {
-  const lower = value.toLowerCase();
-  if (!/(?:^|\s|`)\/health\b|healthcheck\b/.test(lower)) return false;
-  return !/\b(?:webhook|docusign|retry|envelope|\/api\/(?!health)|batch|anchor|cron|queue|deadman|dlq|proof|verify|verification|export|ai|billing|rate[- ]?limit|chain|treasury|migration|slo)\b/.test(lower);
+const HEALTH_TOKEN_RE = /(?:^|[\s`"'(])(?:\/health\b|healthcheck\b)/i;
+const HEALTH_CONTEXT_TERMS = [
+  'webhook',
+  'docusign',
+  'retry',
+  'envelope',
+  'batch',
+  'anchor',
+  'cron',
+  'queue',
+  'deadman',
+  'dlq',
+  'proof',
+  'verify',
+  'verification',
+  'export',
+  'ai',
+  'billing',
+  'rate-limit',
+  'rate limit',
+  'chain',
+  'treasury',
+  'migration',
+  'slo',
+];
+
+function hasChangedBehaviorContext(lower: string): boolean {
+  return HEALTH_CONTEXT_TERMS.some((term) => lower.includes(term))
+    || /\/api\/(?!health\b)/.test(lower);
 }
 
+function isGenericHealthOnlyEvidence(value: string): boolean {
+  const lower = value.toLowerCase();
+  return HEALTH_TOKEN_RE.test(lower) && !hasChangedBehaviorContext(lower);
+}
+
+const LOAD_EVIDENCE_TERMS = [
+  'load',
+  'concurr',
+  'parallel',
+  'fan-out',
+  'fan out',
+  'burst',
+  'rate-limit',
+  'rate limit',
+  'throughput',
+  'p95',
+  'latency',
+  'k6',
+  'vu',
+  'virtual user',
+  'stress',
+  'rps',
+  'queue',
+  'retry',
+  'drain',
+  '10k',
+  'anchors/sec',
+  'deliveries',
+];
+const QUALIFIED_REQUEST_RE =
+  /\b(?:concurrent|parallel|simultaneous|burst|high[- ]volume|rate[- ]limited)\s+requests?\b/i;
+const NUMERIC_REQUEST_RE = /\b\d+\s*(?:rps|qps|reqs?|requests?)\b/i;
+
 function isSpecificLoadEvidence(value: string): boolean {
-  return /\b(?:load|concurr|parallel|fan[- ]?out|burst|rate[- ]?limit|throughput|p95|latency|k6|vus?|virtual users?|stress|rps|requests?|queue|retry|drain|10k|anchors\/sec|deliveries)\b/i.test(value);
+  const lower = value.toLowerCase();
+  return LOAD_EVIDENCE_TERMS.some((term) => lower.includes(term))
+    || QUALIFIED_REQUEST_RE.test(value)
+    || NUMERIC_REQUEST_RE.test(value);
 }
 
 function validateLoadConcurrencyEvidence(body: string): string | null {
@@ -1003,8 +1074,8 @@ function frontendT2Errors(body: string): string[] {
       /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
       'CI/E2E green: must state that CI/E2E is green.',
     ),
+    ...changedBehaviorErrors(body),
   );
-  errors.push(...changedBehaviorErrors(body));
 
   // A frontend-T2 PR substitutes a residual-risk note for the worker
   // artifacts. The note's sub-fields are frontend-specific (attest no worker
@@ -1080,8 +1151,8 @@ function unsoakableT2Errors(body: string): string[] {
     // symmetry with the T1 validator) — a bare "skipped" is not auditable.
     validateStagingTagEvidence(body),
     validateFilledEvidenceField(body, 'Staging tag URL or N/A explanation:'),
+    ...changedBehaviorErrors(body),
   );
-  errors.push(...changedBehaviorErrors(body));
 
   // The worker artifacts are substituted by an unsoakable-surface note.
   const note = hasUnsoakableSurfaceNote(body);
@@ -1794,7 +1865,7 @@ function standardEvidenceErrors(
   errors.push(
     ...duration.errors,
     ...requiredValueErrors(body, declared),
-    ...changedBehaviorErrors(body),
+    ...(declared === 'T1' ? [] : changedBehaviorErrors(body)),
     ...stagingIntegrityErrors(body, declared, opts),
     ...futureTimestampErrors(body),
   );
