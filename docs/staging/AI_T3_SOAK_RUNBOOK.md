@@ -16,11 +16,52 @@ webhooks / events / cron / reads / mixed` — **none hit `/api/v1/ai/*`** — an
 eval gate ran during the load. The founder re-tiered **AI-03 T2 → T3**: 48 h,
 ≥ 5k users/hr, **with the SCRUM-2382 eval gate run LIVE during the load**.
 
-This tooling supplies the two missing pieces:
+This tooling supplies the two missing pieces, and — per founder direction — must
+**characterize and help fix the REAL Gemini reliability problems** seen in prod
+(continual 429 "too many requests", timeouts, and false readings), not merely
+prove the endpoint gets hit:
 
-1. **`ai-soak-harness.ts`** — drives the LIVE AI endpoints at ≥ 5k req/hr.
+1. **`ai-soak-harness.ts`** — drives the LIVE AI endpoints at ≥ 5k req/hr across
+   **multiple document shapes + sizes** (pdf/scan-OCR/docx text, large near-limit,
+   oversized-past-limit, malformed) and **measures the 429 / timeout /
+   false-reading rate as a first-class result**.
 2. **`ai-eval-gate-runner.ts`** — continuously scores the golden set through the
-   LIVE `/extract` endpoint and enforces weighted F1 ≥ 0.80 during the soak.
+   LIVE `/extract` endpoint, enforces weighted F1 ≥ 0.80, and records per-round
+   reliability (429/timeout/false-reading) alongside the F1.
+
+## 🔴 ROOT-CAUSE FINDING — prod routes extraction to the QUOTA-LIMITED PUBLIC Gemini API
+
+The 429 "too many requests" storms have a concrete, code-confirmed cause:
+
+**Prod's worker does NOT set `GEMINI_TUNED_MODEL`, so extraction routes to the
+public `gemini-2.5-flash` API — NOT the dedicated provisioned Vertex tuned
+endpoint** (`projects/270018525501/locations/us-central1/endpoints/6659012403474202624`).
+The public API is per-minute quota-limited; sustained load hits that quota → 429.
+
+Evidence (committed config + docs — a live `gcloud run services describe
+arkova-worker` env check is the final confirmation):
+
+- **Routing mechanism** — `services/worker/src/ai/gemini.ts:159`
+  `this.tunedModelPath = process.env.GEMINI_TUNED_MODEL ?? null`. Set → Vertex
+  provisioned endpoint (`callTunedModel`, `gemini.ts:670`); unset → public API via
+  `getGenerativeModel({ model: GEMINI_GENERATION_MODEL })`.
+- **`GEMINI_GENERATION_MODEL` default = `gemini-2.5-flash`** (`gemini-config.ts:28,49`).
+- **`GEMINI_TUNED_MODEL` is absent from the prod deploy** — `.github/workflows/deploy-worker.yml`
+  `--set-env-vars` sets `AI_PROVIDER=gemini, GEMINI_MODEL=gemini-2.5-flash,
+  ENABLE_AI_EXTRACTION=true` but **no `GEMINI_TUNED_MODEL`**; `config.ts` has no
+  default; the v6 cutover was rolled back with `--remove-env-vars GEMINI_TUNED_MODEL`.
+- **Two 2026-05-31 eval reports state it directly**: `services/worker/docs/eval/pe-gates-gemini-2026-05-31T*.md`
+  — "`GEMINI_TUNED_MODEL` is unset on `arkova-worker`; prod uses the stock model …
+  Public Gemini API path".
+
+**The fix (see Mitigations below): route extraction to the provisioned Vertex
+tuned endpoint** by setting `GEMINI_TUNED_MODEL` to the endpoint resource path.
+On Cloud Run this needs no key management — `callTunedModel` authenticates via the
+service account's ADC (metadata server) and hits
+`https://us-central1-aiplatform.googleapis.com/v1beta1/{GEMINI_TUNED_MODEL}:generateContent`.
+The provisioned endpoint has dedicated throughput, so it should not 429 under the
+same load. The soak is the instrument to PROVE this: run it against the public
+path first (baseline 429 rate), then against the tuned path, and compare.
 
 ## The AI endpoints under test
 
@@ -114,8 +155,11 @@ much past ~100/min aggregate, distribute egress across IPs.)
 | `ENABLE_AI_EXTRACTION` | `true` **and** `switchboard_flags` row `enabled=true` | else `aiExtractionGate` 503s (fresh env = flags empty → dark, per `project_switchboard_flags_dark_api`) |
 | ingress | `--allow-unauthenticated` (or IAP/ESPv2) | resolve the JWT/IAM header collision |
 | — | seed ≥ 4 users + mint their JWTs | shard under the 30/min per-user limit |
+| `GEMINI_TUNED_MODEL` | **run A:** UNSET (public API — reproduce the 429 baseline). **run B:** `projects/270018525501/locations/us-central1/endpoints/6659012403474202624` (route to the provisioned Vertex endpoint — the fix) | the A/B that PROVES the routing root-cause. Run B needs the rig's Cloud Run SA to hold Vertex `aiplatform.endpoints.predict` and the endpoint deployed in `us-central1` |
 
-Leave `ENABLE_AI_FRAUD` / `ENABLE_AI_REPORTS` / training paths **off**.
+Leave `ENABLE_AI_FRAUD` / `ENABLE_AI_REPORTS` / training paths **off**. Do not
+set `GEMINI_TUNED_MODEL` to a *training* job — only to the deployed inference
+endpoint (inference is allowed; GEMB2 blocks training only).
 
 ## Run the soak (48 h)
 
@@ -131,25 +175,90 @@ export STAGING_AI_JWTS="u1:<jwt1>,u2:<jwt2>,u3:<jwt3>,u4:<jwt4>"   # never commi
 # 0) validate the plan without firing (checks pool size vs rate)
 npx tsx scripts/staging/ai-soak-harness.ts --duration 15 --rate 5000 --dry-run
 
-# 1) AI-path load: 48 h @ 5000 req/hr across extract+template+tags
+# 1) AI-path load: 48 h @ 5000 req/hr across extract+template+tags, ALL doc
+#    variants (multi-doctype + size stress). --doc-variants defaults to all six.
 npx tsx scripts/staging/ai-soak-harness.ts \
   --duration 2880 --rate 5000 --endpoints extract,template,tags \
+  --doc-variants pdf-clean,scan-ocr,docx-text,large,oversized,malformed \
+  --timeout-ms 10000 \
   --evidence-out docs/staging/evidence/ai-soak-<rig>-load.json
 
 # 2) LIVE eval gate: sample the 48-entry golden set every 30 min for 48 h,
 #    require real inference, append rolling JSONL evidence
 npx tsx scripts/staging/ai-eval-gate-runner.ts \
-  --duration 2880 --interval 30 --require-live \
+  --duration 2880 --interval 30 --require-live --timeout-ms 10000 \
   --evidence-out docs/staging/evidence/ai-soak-<rig>-eval.jsonl
 ```
 
 - **Load evidence** (`ai-soak-*-load.json`): per-endpoint p50/p95/p99 latency,
-  error rate, per-HTTP-status counts, `achievedRequestsPerHour`, `rateLimited429`,
-  `transportErrors`. This is the ≥ 5k users/hr proof.
+  per-HTTP-status counts, `achievedRequestsPerHour`, **`byVariant`** (per
+  document-shape request counts), and the **first-class `reliability` block**:
+  `rate429`, `timeoutRate`, `falseReadingRate`, `serverErrorRate`,
+  `unreliableRate` + per-class `counts`. **This reliability block IS the founders'
+  headline result** — report `rate429` / `timeoutRate` / `falseReadingRate` at ≥ 5k/hr.
 - **Eval evidence** (`ai-soak-*-eval.jsonl`): one record per 30-min round —
   `gate.passed`, `gate.weightedF1`, per-field precision/recall/F1, sample
-  misclassifications, `extractionErrorCount`, observed `provider`, and `merited`.
-  The runner exits non-zero if **any** round fails the gate.
+  misclassifications, `extractionErrorCount`, **`falseReadingCount`**, per-round
+  `reliability`, observed `provider`, and `merited`. The runner exits non-zero if
+  **any** round fails the gate.
+
+## Reliability characterization — what the numbers mean
+
+Each AI call is classified into a reliability bucket (`scripts/staging/ai-eval/reliability.ts`):
+
+| Bucket | What it is | Prod pain it measures |
+|---|---|---|
+| `rate_limited` | HTTP 429 | **"too many requests"** — the public-API quota being hit |
+| `false_reading` | 2xx but `degraded:true` / `provider:'fast-fallback'` | the extract endpoint's **4.5s latency budget expired** and it returned a low-confidence regex guess that LOOKS like an answer — **the "false reading"** |
+| `client_timeout` | our request deadline elapsed | Gemini/worker **hung** past the client timeout |
+| `server_unavailable` | HTTP 503 | Gemini **circuit breaker open** (5 consecutive failures → 60s cooldown) or gate closed |
+| `server_error` | other 5xx | extraction failure |
+| `client_error` | 4xx (e.g. 400 on the `oversized` variant) | size-limit enforcement working |
+| `ok` | clean 2xx from a real provider | healthy inference |
+
+**Document coverage** (`--doc-variants`): `pdf-clean` / `scan-ocr` / `docx-text`
+exercise text-shape diversity; `large` pads near the 50,000-char `strippedText`
+limit (big-file latency stress); `oversized` pushes past it (**must 400** — limit
+enforcement); `malformed` sends control-char garbage (robustness). `oversized` +
+`malformed` are load-only (not eval-scored) and are always routed to `/extract`.
+
+## Mitigations for the 429 / timeout / false-reading problem (concrete)
+
+In priority order, and what the soak proves for each:
+
+1. **Route extraction to the provisioned Vertex tuned endpoint (the root-cause fix).**
+   Set `GEMINI_TUNED_MODEL=projects/270018525501/locations/us-central1/endpoints/6659012403474202624`.
+   The provisioned endpoint has dedicated throughput → the public-API per-minute
+   quota (the 429 source) no longer applies. **Prove it:** the A/B run (public vs
+   tuned) should show `rate429` collapse on the tuned run. On Cloud Run this needs
+   no key — ADC via the metadata server + the SA holding Vertex predict.
+2. **If staying on the public API: request a quota increase AND pace to stay under it.**
+   The harness already paces at a fixed interval; add worker-side **request pacing
+   / a concurrency cap** so aggregate Gemini calls stay under the granted QPM.
+   Quantify the ceiling from the soak's `rate429` vs achieved rate.
+3. **Backoff/retry with jitter is already present but insufficient at scale.**
+   `gemini.ts:withRetry` does 3 attempts, exponential backoff, 0.5–1.0× jitter
+   (`gemini.ts:850`). Under sustained 429 it exhausts retries and the circuit
+   breaker opens (503). Mitigation: honor the 429 `Retry-After`, widen backoff, and
+   raise `MAX_RETRIES` only if paired with pacing (more retries without pacing just
+   amplifies the quota storm). The soak's `rate429` + `server_unavailable` rates
+   show whether retry is absorbing or amplifying.
+4. **Reduce false readings by widening the latency budget on the tuned path.**
+   The 4.5s `AI_EXTRACTION_LATENCY_BUDGET_MS` turns a slow Gemini call into a
+   degraded fast-fallback (the false reading). A faster/dedicated endpoint makes
+   the budget bite less often; if it still bites, raise the budget on the tuned
+   path (dedicated throughput has predictable latency). The soak's
+   `falseReadingRate` quantifies this before and after.
+5. **The fallback path (`@cloudflare/ai`)** is gated by `ENABLE_AI_FALLBACK`
+   (default false, Constitution §1.1). It is NOT a 429 fix — it is a separate
+   provider for hard outages, and is off in prod. Do not enable it to mask a quota
+   problem; fix the routing instead.
+
+**First-class result to report** (from the load evidence `reliability` block, at
+≥ 5k req/hr): the observed `rate429`, `timeoutRate` (client_timeout +
+server_unavailable), and `falseReadingRate` on the **public** path (baseline),
+and the same three on the **tuned** path (post-fix). The delta is the proof that
+the routing fix resolves the founders' Gemini reliability problem.
 
 ## How F1 ≥ 0.80 becomes merge-grade evidence
 

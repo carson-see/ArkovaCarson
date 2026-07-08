@@ -62,6 +62,11 @@ describe('scoreEntry', () => {
     // every ground-truth field reads as a miss
     expect(result.fieldResults.every((f) => !f.correct)).toBe(true);
   });
+
+  it('carries a falseReading flag when the server returned a degraded/fast-fallback body', () => {
+    const result = scoreEntry(ENTRY, { credentialType: 'CPE' }, 'false_reading (degraded/fast-fallback)', true);
+    expect(result.falseReading).toBe(true);
+  });
 });
 
 describe('buildEvalRecord', () => {
@@ -106,6 +111,20 @@ describe('buildEvalRecord', () => {
     expect(record.misclassifications.length).toBe(3);
     expect(record.misclassifications[0]).toMatchObject({ field: 'credentialType', expected: 'CPE', actual: 'CLE' });
   });
+
+  it('counts false readings and carries the reliability report when supplied', () => {
+    const scored = [
+      scoreEntry(ENTRY, { credentialType: 'CPE', creditHours: 8, issuedDate: '2026-01-05' }),
+      scoreEntry({ ...ENTRY, id: 'GD-2' }, { credentialType: 'CPE' }, 'false_reading (degraded/fast-fallback)', true),
+    ];
+    const reliability = {
+      total: 2, counts: { ok: 1, false_reading: 1, rate_limited: 0, server_unavailable: 0, server_error: 0, client_timeout: 0, transport_error: 0, client_error: 0 },
+      rate429: 0, timeoutRate: 0, falseReadingRate: 0.5, serverErrorRate: 0, unreliableRate: 0.5,
+    };
+    const record = buildEvalRecord({ sampledAt: 't', apiBase: 'x', provider: 'gemini', scored, reliability });
+    expect(record.falseReadingCount).toBe(1);
+    expect(record.reliability?.falseReadingRate).toBe(0.5);
+  });
 });
 
 describe('providerFromBody', () => {
@@ -122,7 +141,7 @@ describe('providerFromBody', () => {
 describe('certifyRound (real-vs-mock guard)', () => {
   const passingRecord: EvalRecord = {
     sampledAt: 'now', apiBase: 'x', provider: 'gemini', sampleCount: 48, gateSampleCount: 48,
-    extractionErrorCount: 0,
+    extractionErrorCount: 0, falseReadingCount: 0,
     gate: {
       gateId: 'SCRUM-2382', label: 'x', blocksStory: 'SCRUM-2383', passed: true, reason: 'passed',
       matchingEntries: 48, minimumEntries: 48, weightedF1: 0.9, minimumWeightedF1: 0.8, fieldResults: [],

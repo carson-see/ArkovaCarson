@@ -66,12 +66,19 @@ import {
   type EvalRecord,
 } from './ai-eval/eval-core.js';
 import type { EntryEvalResult } from './ai-eval/scoring.js';
+import {
+  classifyReliability,
+  newReliabilityStats,
+  recordReliability,
+  reliabilityReport,
+} from './ai-eval/reliability.js';
 
 const { values: args } = parseArgs({
   options: {
     rounds: { type: 'string' }, // fixed round count (overrides duration)
     duration: { type: 'string', default: '2880' }, // minutes (48h)
     interval: { type: 'string', default: '30' }, // minutes between rounds
+    'timeout-ms': { type: 'string', default: '10000' }, // client request deadline
     'evidence-out': { type: 'string' },
     'require-live': { type: 'boolean', default: false },
     'dry-run': { type: 'boolean', default: false },
@@ -96,20 +103,31 @@ const realFetch: FetchLike = fetch as unknown as FetchLike;
 async function runRound(
   apiBase: string,
   identities: WorkerIdentity[],
+  timeoutMs: number,
 ): Promise<{ record: EvalRecord; providersSeen: Set<string> }> {
   const entries = gateGoldenEntries();
   const scored: EntryEvalResult[] = [];
   const providersSeen = new Set<string>();
+  const reliability = newReliabilityStats();
 
   let i = 0;
   for (const entry of entries) {
     const identity = pickIdentity(identities, i++);
-    const outcome = await callAiEndpoint(apiBase, 'extract', buildExtractPayload(entry), identity, realFetch);
-    const provider = providerFromBody(outcome.body);
-    providersSeen.add(provider);
-    if (outcome.ok) {
+    const outcome = await callAiEndpoint(
+      apiBase, 'extract', buildExtractPayload(entry), identity, realFetch, { timeoutMs },
+    );
+    providersSeen.add(providerFromBody(outcome.body));
+    const klass = recordReliability(reliability, outcome);
+    const falseReading = classifyReliability(outcome) === 'false_reading';
+    if (outcome.ok && klass !== 'false_reading') {
+      // A clean 2xx from a real provider — score it against ground truth.
       scored.push(scoreEntry(entry, fieldsFromExtractResponse(outcome.body)));
+    } else if (falseReading) {
+      // A degraded/fast-fallback 2xx: score its (degraded) fields so its poor F1
+      // shows up, AND flag it as a false reading for the reliability tally.
+      scored.push(scoreEntry(entry, fieldsFromExtractResponse(outcome.body), 'false_reading (degraded/fast-fallback)', true));
     } else {
+      // 429 / 5xx / timeout / transport — no fields; visible as an extraction error.
       const reason = outcome.transportError ?? `HTTP ${outcome.status}`;
       scored.push(scoreEntry(entry, {}, reason));
     }
@@ -121,6 +139,7 @@ async function runRound(
     apiBase,
     provider: dominantProvider,
     scored,
+    reliability: reliabilityReport(reliability),
   });
   return { record, providersSeen };
 }
@@ -130,10 +149,14 @@ function summarizeRoundLine(round: number, record: EvalRecord, merited: boolean)
   const fields = Object.entries(record.perField)
     .map(([f, m]) => `${f}=${m.f1.toFixed(3)}${m.passed ? '' : '✗'}`)
     .join(' ');
+  const rel = record.reliability;
+  const relStr = rel
+    ? ` 429=${(rel.rate429 * 100).toFixed(0)}% timeout=${(rel.timeoutRate * 100).toFixed(0)}% false=${(rel.falseReadingRate * 100).toFixed(0)}%`
+    : '';
   return (
     `[round ${round}] provider=${record.provider} gate=${g.passed ? 'PASS' : 'FAIL'}(${g.reason}) ` +
     `weightedF1=${g.weightedF1.toFixed(4)} entries=${g.matchingEntries}/${g.minimumEntries} ` +
-    `fields[${fields}] errors=${record.extractionErrorCount} merit=${merited ? 'YES' : 'NO'}`
+    `fields[${fields}] errors=${record.extractionErrorCount} falseReadings=${record.falseReadingCount}${relStr} merit=${merited ? 'YES' : 'NO'}`
   );
 }
 
@@ -143,12 +166,13 @@ async function main(): Promise<void> {
   const evidencePath = args['evidence-out'];
   const requireLive = Boolean(args['require-live']);
   const intervalMin = parsePositiveInt(args.interval, 30, 'interval');
+  const timeoutMs = parsePositiveInt(args['timeout-ms'], 10_000, 'timeout-ms');
 
   const prov = goldenProvenance();
   console.log(`▶ ai-eval-gate-runner (SCRUM-2382) at ${new Date().toISOString()}`);
   console.log(`  api_base=${apiBase}`);
   console.log(`  golden=${prov.gateEntries} gate + ${prov.heldOutEntries} held-out (source ${prov.sourceRef} @ ${prov.sourceCommit.slice(0, 8)})`);
-  console.log(`  identities=${identities.length}  require_live=${requireLive}  interval=${intervalMin}min`);
+  console.log(`  identities=${identities.length}  require_live=${requireLive}  interval=${intervalMin}min  client_timeout=${timeoutMs}ms`);
 
   if (identities.length === 0) {
     console.error('::error::STAGING_AI_JWTS is required — /api/v1/ai/extract rejects unauthenticated calls (401).');
@@ -177,7 +201,7 @@ async function main(): Promise<void> {
 
   while (shouldContinue()) {
     round++;
-    const { record, providersSeen } = await runRound(apiBase, identities);
+    const { record, providersSeen } = await runRound(apiBase, identities, timeoutMs);
     const { merited, notes } = certifyRound(record, providersSeen, requireLive);
     if (merited) meritedRounds++;
     if (!record.gate.passed) anyFailure = true;

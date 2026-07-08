@@ -62,6 +62,21 @@ describe('stats aggregation', () => {
     expect(summary.transportErrors).toBe(1);
     expect(summary.totalRequests).toBe(2);
   });
+
+  it('embeds first-class reliability rates and per-variant counts in the summary', () => {
+    const stats = newAiStats();
+    recordAiOutcome(stats, outcome('extract', 200, 100), 'pdf-clean');
+    recordAiOutcome(stats, outcome('extract', 429, 5), 'large');
+    recordAiOutcome(stats, { endpoint: 'extract', status: 200, ok: true, latencyMs: 4600, body: { degraded: true, provider: 'fast-fallback', fields: {} } }, 'scan-ocr');
+    recordAiOutcome(stats, outcome('extract', 400, 3), 'oversized');
+    const summary = summarizeAiRun(stats, 'ai-extract', 'https://pr-1413---x.run.app', 3600);
+    expect(summary.reliability.total).toBe(4);
+    expect(summary.reliability.counts.rate_limited).toBe(1);
+    expect(summary.reliability.counts.false_reading).toBe(1);
+    expect(summary.reliability.counts.client_error).toBe(1); // the oversized 400
+    expect(summary.reliability.falseReadingRate).toBeCloseTo(0.25, 5);
+    expect(summary.byVariant).toEqual({ 'pdf-clean': 1, large: 1, 'scan-ocr': 1, oversized: 1 });
+  });
 });
 
 describe('summarizeAiRun', () => {

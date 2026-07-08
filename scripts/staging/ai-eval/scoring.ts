@@ -65,6 +65,8 @@ export interface EntryEvalResult {
   tags: string[];
   fieldResults: FieldResult[];
   extractionError?: string;
+  /** true when the server returned a degraded / fast-fallback (false reading). */
+  falseReading?: boolean;
 }
 
 // ── ALL_FIELDS + field classes (verbatim from scoring.ts) ────────────────────

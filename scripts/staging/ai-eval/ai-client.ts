@@ -57,7 +57,14 @@ export interface AiCallResult {
   transportError?: string;
   /** Retry-After header (seconds) when a 429 was returned. */
   retryAfterSec?: number;
+  /** true when the harness's own request deadline elapsed (status 0). */
+  clientTimedOut?: boolean;
 }
+
+/** Default per-request client deadline. Gemini's own extract budget is 4.5s; a
+ *  10s client deadline catches worker/Gemini hangs past that without being so
+ *  tight it flags normal slow inference. Override via callAiEndpoint options. */
+export const DEFAULT_CLIENT_TIMEOUT_MS = 10_000;
 
 export interface FetchLike {
   (url: string, init?: RequestInit): Promise<{
@@ -126,24 +133,37 @@ async function safeJson(text: string): Promise<unknown> {
  * is returned as `{ status: 0, ok: false, transportError }` so the caller's
  * stats loop records it (silent catch is how dead-endpoint bugs hid for months).
  */
+export interface CallOptions {
+  /** Per-request client deadline in ms. 0 disables the client timeout. */
+  timeoutMs?: number;
+}
+
 export async function callAiEndpoint(
   apiBase: string,
   endpoint: AiEndpoint,
   body: unknown,
   identity: WorkerIdentity,
   fetchImpl: FetchLike,
+  options: CallOptions = {},
 ): Promise<AiCallResult> {
   const url = `${apiBase}${AI_PATHS[endpoint]}`;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CLIENT_TIMEOUT_MS;
   const startedAt = Date.now();
+
+  const controller = timeoutMs > 0 ? new AbortController() : undefined;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+
   try {
-    const res = await fetchImpl(url, {
+    const init: RequestInit = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${identity.jwt}`,
       },
       body: JSON.stringify(body),
-    });
+    };
+    if (controller) init.signal = controller.signal;
+    const res = await fetchImpl(url, init);
     const text = await res.text();
     return {
       endpoint,
@@ -154,12 +174,17 @@ export async function callAiEndpoint(
       retryAfterSec: res.status === 429 ? parseRetryAfter(res.headers.get('retry-after')) : undefined,
     };
   } catch (err) {
+    // An AbortError means our own client deadline elapsed — a Gemini/worker hang.
+    const aborted = err instanceof Error && (err.name === 'AbortError' || controller?.signal.aborted === true);
     return {
       endpoint,
       status: 0,
       ok: false,
       latencyMs: Date.now() - startedAt,
       transportError: err instanceof Error ? err.message : String(err),
+      clientTimedOut: aborted || undefined,
     };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

@@ -20,6 +20,7 @@ import {
   type GoldenEntry,
 } from './scoring.js';
 import type { ExtractRequestBody } from './ai-client.js';
+import type { ReliabilityReport } from './reliability.js';
 
 /** Deterministic 64-hex fingerprint from the entry id (schema requires 64 hex). */
 export function fingerprintForEntry(entryId: string): string {
@@ -60,12 +61,14 @@ export function scoreEntry(
   entry: GoldenEntry,
   extractedFields: Record<string, unknown>,
   extractionError?: string,
+  falseReading?: boolean,
 ): EntryEvalResult {
   return {
     entryId: entry.id,
     tags: entry.tags,
     fieldResults: compareFields(entry.groundTruth, extractedFields),
     extractionError,
+    falseReading,
   };
 }
 
@@ -95,6 +98,10 @@ export interface EvalRecord {
   sampleCount: number;
   gateSampleCount: number;
   extractionErrorCount: number;
+  /** False readings this round: degraded / fast-fallback 2xx (timeout budget hit). */
+  falseReadingCount: number;
+  /** Round reliability (429/timeout/false-reading rates) when supplied. */
+  reliability?: ReliabilityReport;
   gate: GateEvaluation;
   perField: Record<string, FieldMetricRecord>;
   misclassifications: Misclassification[];
@@ -158,6 +165,7 @@ export interface BuildEvalRecordInput {
   provider: string;
   scored: EntryEvalResult[];
   maxMisclassifications?: number;
+  reliability?: ReliabilityReport;
 }
 
 /**
@@ -166,7 +174,7 @@ export interface BuildEvalRecordInput {
  * misclassifications for triage.
  */
 export function buildEvalRecord(input: BuildEvalRecordInput): EvalRecord {
-  const { sampledAt, apiBase, provider, scored, maxMisclassifications = 20 } = input;
+  const { sampledAt, apiBase, provider, scored, maxMisclassifications = 20, reliability } = input;
   const gateEntries = scored.filter(matchesGate);
   const gate = evaluateGate(scored);
 
@@ -209,6 +217,8 @@ export function buildEvalRecord(input: BuildEvalRecordInput): EvalRecord {
     sampleCount: scored.length,
     gateSampleCount: gateEntries.length,
     extractionErrorCount: scored.filter((s) => s.extractionError).length,
+    falseReadingCount: scored.filter((s) => s.falseReading).length,
+    reliability,
     gate,
     perField,
     misclassifications,

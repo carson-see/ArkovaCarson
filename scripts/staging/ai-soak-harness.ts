@@ -58,14 +58,22 @@ import {
   buildTagsPayload,
   selectEndpointForSequence,
 } from './ai-eval/harness-core.js';
-import { buildExtractPayload } from './ai-eval/eval-core.js';
-import type { GoldenEntry } from './ai-eval/scoring.js';
+import { fingerprintForEntry } from './ai-eval/eval-core.js';
+import {
+  buildVariantCorpus,
+  parseDocVariants,
+  isLoadOnlyVariant,
+  type CorpusItem,
+} from './ai-eval/corpus.js';
+import type { ExtractRequestBody } from './ai-eval/ai-client.js';
 
 const { values: args } = parseArgs({
   options: {
     duration: { type: 'string', default: '15' }, // minutes
     rate: { type: 'string', default: '5000' }, // requests/hour
     endpoints: { type: 'string', default: 'extract,template,tags' },
+    'doc-variants': { type: 'string' }, // default: all (pdf/scan/docx/large/oversized/malformed)
+    'timeout-ms': { type: 'string', default: '10000' }, // client request deadline
     'evidence-out': { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
   },
@@ -92,14 +100,27 @@ function parseEndpoints(raw: string): AiEndpoint[] {
   return known.filter((k) => selected.includes(k));
 }
 
-function payloadFor(endpoint: AiEndpoint, entry: GoldenEntry): unknown {
+/**
+ * Extract carries the VARIANT text (pdf/scan/docx/large/oversized/malformed) so
+ * the load exercises real document diversity + size limits. Template/tags take
+ * metadata FIELDS only (no text/bytes) — variant doesn't apply, so they always
+ * use the entry's clean ground-truth metadata.
+ */
+function payloadFor(endpoint: AiEndpoint, item: CorpusItem): unknown {
   switch (endpoint) {
-    case 'extract':
-      return buildExtractPayload(entry);
+    case 'extract': {
+      const payload: ExtractRequestBody = {
+        strippedText: item.strippedText,
+        credentialType: item.entry.credentialTypeHint,
+        fingerprint: fingerprintForEntry(`${item.entry.id}:${item.variant}`),
+      };
+      if (item.entry.issuerHint) payload.issuerHint = item.entry.issuerHint;
+      return payload;
+    }
     case 'template':
-      return buildTemplatePayload(entry);
+      return buildTemplatePayload(item.entry);
     case 'tags':
-      return buildTagsPayload(entry);
+      return buildTagsPayload(item.entry);
   }
 }
 
@@ -115,20 +136,24 @@ async function main(): Promise<void> {
   const durationMin = parsePositiveInt(args.duration, 15, 'duration');
   const ratePerHour = parsePositiveInt(args.rate, 5000, 'rate');
   const endpoints = parseEndpoints(args.endpoints ?? 'extract,template,tags');
+  const variants = parseDocVariants(args['doc-variants']);
+  const timeoutMs = parsePositiveInt(args['timeout-ms'], 10_000, 'timeout-ms');
   const evidencePath = args['evidence-out'];
 
   const apiBase = resolveStagingApiBase(process.env);
   const identities: WorkerIdentity[] = parseIdentities(process.env.STAGING_AI_JWTS);
-  const corpus = allGoldenEntries();
+  // Multi-doctype + size corpus: golden fixtures × document variants.
+  const corpus = buildVariantCorpus(allGoldenEntries(), variants);
 
   const plan = planRate(ratePerHour, identities);
   const mode = `ai-${endpoints.join('+')}`;
 
   console.log(`▶ ai-soak-harness ${mode} at ${new Date().toISOString()}`);
   console.log(`  api_base=${apiBase}`);
-  console.log(`  duration=${durationMin}min  target=${ratePerHour} req/hr  interval=${plan.intervalMs}ms`);
+  console.log(`  duration=${durationMin}min  target=${ratePerHour} req/hr  interval=${plan.intervalMs}ms  client_timeout=${timeoutMs}ms`);
   console.log(`  identities=${identities.length} (min ${plan.minUsers})  per_user≈${plan.perUserPerMin.toFixed(1)}/min (limit 30)`);
-  console.log(`  corpus=${corpus.length} golden fixtures  endpoints=${endpoints.join(',')}`);
+  console.log(`  corpus=${corpus.length} items (${allGoldenEntries().length} fixtures × ${variants.length} variants: ${variants.join(',')})`);
+  console.log(`  endpoints=${endpoints.join(',')}`);
   if (plan.warning) console.warn(`  ⚠ ${plan.warning}`);
 
   if (identities.length === 0) {
@@ -147,19 +172,27 @@ async function main(): Promise<void> {
   const summaryTimer = setInterval(() => {
     if (Date.now() >= endAt) return;
     const elapsedSec = (Date.now() - stats.startedAt) / 1000;
-    console.log(`[t+${elapsedSec.toFixed(0)}s] total=${stats.total} 429=${stats.rateLimited429} transportErr=${stats.transportErrors} achieved≈${((stats.total / Math.max(elapsedSec, 1)) * 3600).toFixed(0)}/hr`);
+    const r = stats.reliability.counts;
+    console.log(
+      `[t+${elapsedSec.toFixed(0)}s] total=${stats.total} 429=${r.rate_limited} ` +
+      `timeout=${r.client_timeout + r.server_unavailable} false=${r.false_reading} ` +
+      `achieved≈${((stats.total / Math.max(elapsedSec, 1)) * 3600).toFixed(0)}/hr`,
+    );
   }, 60_000);
 
   let seq = 0;
   try {
     while (Date.now() < endAt) {
       const endpoint = selectEndpointForSequence(seq, endpoints);
-      const entry = corpus[seq % corpus.length];
+      const item = corpus[seq % corpus.length];
+      // Load-only variants (oversized/malformed) test the ENDPOINT'S failure
+      // handling — only meaningful on extract (template/tags take metadata, not
+      // document text). Route them to extract regardless of the rotation.
+      const effectiveEndpoint = isLoadOnlyVariant(item.variant) ? 'extract' : endpoint;
       const identity = pickIdentity(identities, seq);
       // Fire-and-forget within the pacing loop; the interval bounds the rate.
-      void callAiEndpoint(apiBase, endpoint, payloadFor(endpoint, entry), identity, realFetch).then((outcome) =>
-        recordAiOutcome(stats, outcome),
-      );
+      void callAiEndpoint(apiBase, effectiveEndpoint, payloadFor(effectiveEndpoint, item), identity, realFetch, { timeoutMs })
+        .then((outcome) => recordAiOutcome(stats, outcome, item.variant));
       seq++;
       await boundedSleep(intervalMs, endAt);
     }
@@ -173,6 +206,12 @@ async function main(): Promise<void> {
   const durationSec = (Date.now() - stats.startedAt) / 1000;
   const summary = summarizeAiRun(stats, mode, apiBase, durationSec);
   console.log(`\n=== AI SOAK SUMMARY (${durationMin}min ${mode}) ===`);
+  const rel = summary.reliability;
+  console.log(
+    `RELIABILITY: 429=${(rel.rate429 * 100).toFixed(1)}%  timeout=${(rel.timeoutRate * 100).toFixed(1)}%  ` +
+    `false_reading=${(rel.falseReadingRate * 100).toFixed(1)}%  server_error=${(rel.serverErrorRate * 100).toFixed(1)}%  ` +
+    `unreliable=${(rel.unreliableRate * 100).toFixed(1)}%  achieved=${summary.achievedRequestsPerHour.toFixed(0)}/hr`,
+  );
   console.log(JSON.stringify(summary, null, 2));
 
   if (evidencePath) {

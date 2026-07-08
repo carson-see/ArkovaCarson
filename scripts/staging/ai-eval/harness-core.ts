@@ -11,6 +11,13 @@
 
 import type { AiCallResult, AiEndpoint } from './ai-client.js';
 import type { GoldenEntry, GroundTruthFields } from './scoring.js';
+import {
+  newReliabilityStats,
+  recordReliability,
+  reliabilityReport,
+  type ReliabilityStats,
+  type ReliabilityReport,
+} from './reliability.js';
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +34,10 @@ export interface AiStats {
   byEndpoint: Record<AiEndpoint, EndpointSlot>;
   rateLimited429: number;
   transportErrors: number;
+  /** First-class Gemini reliability characterization (429/timeout/false-reading). */
+  reliability: ReliabilityStats;
+  /** Per-document-variant request counts (multi-doctype + size coverage proof). */
+  byVariant: Record<string, number>;
 }
 
 function emptySlot(): EndpointSlot {
@@ -40,10 +51,12 @@ export function newAiStats(startedAt: number = Date.now()): AiStats {
     byEndpoint: { extract: emptySlot(), template: emptySlot(), tags: emptySlot() },
     rateLimited429: 0,
     transportErrors: 0,
+    reliability: newReliabilityStats(),
+    byVariant: {},
   };
 }
 
-export function recordAiOutcome(stats: AiStats, outcome: AiCallResult): void {
+export function recordAiOutcome(stats: AiStats, outcome: AiCallResult, variant?: string): void {
   stats.total++;
   const slot = stats.byEndpoint[outcome.endpoint];
   if (outcome.ok) slot.ok++;
@@ -52,6 +65,8 @@ export function recordAiOutcome(stats: AiStats, outcome: AiCallResult): void {
   slot.byStatus[outcome.status] = (slot.byStatus[outcome.status] ?? 0) + 1;
   if (outcome.status === 429) stats.rateLimited429++;
   if (outcome.status === 0) stats.transportErrors++;
+  recordReliability(stats.reliability, outcome);
+  if (variant) stats.byVariant[variant] = (stats.byVariant[variant] ?? 0) + 1;
 }
 
 export function percentile(values: number[], p: number): number {
@@ -83,6 +98,10 @@ export interface AiRunSummary {
   achievedRequestsPerHour: number;
   rateLimited429: number;
   transportErrors: number;
+  /** First-class Gemini reliability result — the founders' headline concern. */
+  reliability: ReliabilityReport;
+  /** Requests per document variant (multi-doctype + large/oversized coverage). */
+  byVariant: Record<string, number>;
   byEndpoint: Record<string, EndpointEvidence>;
 }
 
@@ -117,6 +136,8 @@ export function summarizeAiRun(
     achievedRequestsPerHour: (stats.total / safeDuration) * 3600,
     rateLimited429: stats.rateLimited429,
     transportErrors: stats.transportErrors,
+    reliability: reliabilityReport(stats.reliability),
+    byVariant: stats.byVariant,
     byEndpoint,
   };
 }
