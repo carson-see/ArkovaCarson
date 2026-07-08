@@ -1075,7 +1075,7 @@ describe('deliverToEndpoint', () => {
     await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
 
     const updateArg = (deliveryLogUpdate.update.mock.calls as unknown[][])[0][0] as Record<string, string>;
-    expect(updateArg.response_body.length).toBe(1000);
+    expect(updateArg.response_body).toHaveLength(1000);
   });
 
   it('handles network error (fetch throws)', async () => {

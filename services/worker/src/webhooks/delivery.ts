@@ -354,7 +354,7 @@ async function deliverToEndpoint(
     return false;
   }
 
-  if (existing && existing.status === 'success') {
+  if (existing?.status === 'success') {
     logger.debug({ endpointId: endpoint.id, eventId: payload.event_id }, 'Webhook already delivered');
     return true;
   }
@@ -1127,7 +1127,9 @@ export async function processWebhookRetries(): Promise<number> {
       // Deterministic tie-break when sequences collide (shouldn't, but legacy
       // rows can both be -Infinity): older attempt first, then id.
       if (a.attempt_number !== b.attempt_number) return a.attempt_number - b.attempt_number;
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      if (a.id < b.id) return -1;
+      if (a.id > b.id) return 1;
+      return 0;
     });
     headRows.push(bucket[0]);
   }
