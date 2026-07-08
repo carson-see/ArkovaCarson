@@ -40,6 +40,9 @@ T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, publi
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-NNNNN-xxx
 - PR head SHA: 40-character commit SHA deployed/tested
+- Changed behavior: name the behavior this PR changed
+- Targeted evidence: name the driver/E2E path that exercised that changed behavior
+- Load/concurrency evidence: name the heavy-user/load proof for that changed behavior, e.g. `tests/load/*`, `tests/k6/*`, p95/error-rate thresholds, queue drain, retry fan-out, or rate-limit evidence
 - Base SHA: 40-character `main`/base SHA used when evidence was captured
 - Base drift impact: optional; required only if `main` moved after evidence capture. Must list changed files, attest T0/CI-only no runtime/schema/migration/staging/soak/deploy impact, and name the approver.
 - Staging project ref: ujtlwnoqfhtitcmsnrpq or approved isolated project ref
@@ -69,6 +72,9 @@ If the PR touches *any* worker/migration/SDK/contract file, this variant does **
 
 - Tier: T2
 - PR head SHA: 40-character current PR head SHA
+- Changed behavior: name the user-facing frontend behavior this PR changed
+- Targeted evidence: name the affected view E2E path that exercised that changed behavior
+- Load/concurrency evidence: name the heavy-user/load proof for the affected view or explain the RM-approved user-volume check used for this frontend-only path
 - Vercel deployment URL: https://<your-preview>.vercel.app
 - E2E result: <affected view(s)> E2E N/N green on head
 - CI/E2E green: Tests, E2E Tests, TypeCheck & Lint green on current head
@@ -93,6 +99,9 @@ If the PR touches *any* worker/migration/served-contract file, this variant does
 
 - Tier: T2
 - PR head SHA: 40-character current PR head SHA
+- Changed behavior: name the offline package/SDK behavior this PR changed
+- Targeted evidence: name the parity/test path that exercised that changed behavior
+- Load/concurrency evidence: name the stress/concurrency or volume-oriented proof for that offline behavior
 - Test evidence: pytest N/N green + parity suite green on current head
 - CI green: Tests, TypeCheck & Lint all green on current head
 - Staging tag URL or N/A explanation: N/A — offline <package> SDK: no worker runtime, no migration, no served contract to soak
@@ -114,6 +123,9 @@ If the PR touches *any* worker/migration/served-contract file, this variant does
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-NNNNN-xxx
 - PR head SHA: 40-character commit SHA deployed/tested
+- Changed behavior: name the behavior this PR changed
+- Targeted evidence: name the driver/E2E path that exercised that changed behavior
+- Load/concurrency evidence: name the heavy-user/load proof for that changed behavior, e.g. `tests/load/*`, `tests/k6/*`, p95/error-rate thresholds, queue drain, retry fan-out, rate-limit evidence, trigger fan-out, or 10k/batch-drain evidence
 - Base SHA: 40-character `main`/base SHA used when evidence was captured
 - Base drift impact: optional; required only if `main` moved after evidence capture. Must list changed files, attest T0/CI-only no runtime/schema/migration/staging/soak/deploy impact, and name the approver.
 - Staging project ref: ujtlwnoqfhtitcmsnrpq or approved isolated project ref
