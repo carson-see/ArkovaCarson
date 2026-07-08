@@ -34,9 +34,10 @@ import {
   parseDriverArgs,
   type DriverStats,
 } from './driver-core';
-import { runDriver, iamAuthHeaders, writeEvidenceFile, type DriverContext } from './runtime';
+import { runDriver, iamAuthHeaders, requireEnv, writeEvidenceFile, type DriverContext } from './runtime';
 
 export const EXPORTS_DRIVER = { driver: 'cpe-cle-exports', pr: '#1415' } as const;
+export const EXPORTS_PASS_INTERVAL_MS = 60 * 60_000;
 
 const CPE = '/api/v1/exports/cpe-log';
 const CLE = '/api/v1/exports/cle-log';
@@ -87,24 +88,21 @@ export function planExportRequests(apiBase: string, args: ExportPlanArgs): Expor
   });
 
   const selfBase = { user_id: args.callerUserId, period_start: start, period_end: end };
-  const plan: ExportRequestSpec[] = [];
+  const formats = ['pdf', 'json'] as const;
 
   // ── cpe-log happy path: both formats ──────────────────────────────────────
-  for (const format of ['pdf', 'json'] as const) {
-    plan.push(mk(`cpe-log-ok-${format}`, CPE, { ...selfBase, format }, [200], args.callerJwt));
-  }
+  const cpeOk = formats.map((format) =>
+    mk(`cpe-log-ok-${format}`, CPE, { ...selfBase, format }, [200], args.callerJwt),
+  );
 
   // ── cle-log happy path: both formats, with a jurisdiction ─────────────────
-  for (const format of ['pdf', 'json'] as const) {
-    plan.push(
-      mk(`cle-log-ok-${format}`, CLE, { ...selfBase, jurisdiction: 'CA', format }, [200], args.callerJwt),
-    );
-  }
+  const cleOk = formats.map((format) =>
+    mk(`cle-log-ok-${format}`, CLE, { ...selfBase, jurisdiction: 'CA', format }, [200], args.callerJwt),
+  );
 
   // ── org/cpe-log happy path: ORG_ADMIN exports a MEMBER ────────────────────
-  if (args.orgAdminJwt) {
-    for (const format of ['pdf', 'json'] as const) {
-      plan.push(
+  const orgOk = args.orgAdminJwt
+    ? formats.map((format) =>
         mk(
           `org-cpe-log-ok-${format}`,
           ORG_CPE,
@@ -112,12 +110,11 @@ export function planExportRequests(apiBase: string, args: ExportPlanArgs): Expor
           [200],
           args.orgAdminJwt,
         ),
-      );
-    }
-  }
+      )
+    : [];
 
   // ── cross-user 403 isolation: caller exports a FOREIGN user_id ────────────
-  plan.push(
+  const crossUser = [
     mk(
       'cpe-log-cross-user-403',
       CPE,
@@ -125,13 +122,11 @@ export function planExportRequests(apiBase: string, args: ExportPlanArgs): Expor
       [403],
       args.callerJwt,
     ),
-  );
+  ];
 
   // ── Zod edges (all 400) ───────────────────────────────────────────────────
-  plan.push(
+  const zodEdges = [
     mk('cpe-log-bad-format-400', CPE, { ...selfBase, format: 'xml' }, [400], args.callerJwt),
-  );
-  plan.push(
     mk(
       'cpe-log-bad-date-400',
       CPE,
@@ -139,8 +134,6 @@ export function planExportRequests(apiBase: string, args: ExportPlanArgs): Expor
       [400],
       args.callerJwt,
     ),
-  );
-  plan.push(
     mk(
       'cpe-log-inverted-period-400',
       CPE,
@@ -148,21 +141,15 @@ export function planExportRequests(apiBase: string, args: ExportPlanArgs): Expor
       [400],
       args.callerJwt,
     ),
-  );
+  ];
 
   // ── unauthenticated 401 (no JWT) ──────────────────────────────────────────
-  plan.push(mk('unauthenticated-401', CPE, { ...selfBase, format: 'json' }, [401]));
+  const unauthenticated = [mk('unauthenticated-401', CPE, { ...selfBase, format: 'json' }, [401])];
 
-  return plan;
+  return [...cpeOk, ...cleOk, ...orgOk, ...crossUser, ...zodEdges, ...unauthenticated];
 }
 
 // ─── Runtime ────────────────────────────────────────────────────────────────
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is required for the cpe-cle exports driver.`);
-  return v;
-}
 
 async function fireOnce(ctx: DriverContext, stats: DriverStats, plan: ExportRequestSpec[]): Promise<void> {
   for (const spec of plan) {
@@ -179,9 +166,9 @@ async function main(): Promise<void> {
   const stats = newDriverStats();
 
   const planArgs: ExportPlanArgs = {
-    callerJwt: requireEnv('STAGING_EXPORT_CALLER_JWT'),
-    callerUserId: requireEnv('STAGING_EXPORT_CALLER_UID'),
-    otherUserId: requireEnv('STAGING_EXPORT_OTHER_UID'),
+    callerJwt: requireEnv('STAGING_EXPORT_CALLER_JWT', 'cpe-cle exports driver'),
+    callerUserId: requireEnv('STAGING_EXPORT_CALLER_UID', 'cpe-cle exports driver'),
+    otherUserId: requireEnv('STAGING_EXPORT_OTHER_UID', 'cpe-cle exports driver'),
     orgAdminJwt: process.env.STAGING_EXPORT_ORG_ADMIN_JWT,
     period: { start: '2026-01-01', end: '2026-06-30' },
   };
@@ -196,6 +183,7 @@ async function main(): Promise<void> {
       return planExportRequests(apiBase, planArgs);
     },
     fireOnce: (ctx, plan) => fireOnce(ctx, stats, plan as ExportRequestSpec[]),
+    passIntervalMs: EXPORTS_PASS_INTERVAL_MS,
   });
 
   const evidence = summarizeEvidence(stats, { ...EXPORTS_DRIVER, apiBase });

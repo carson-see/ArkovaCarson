@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   planExportRequests,
+  EXPORTS_PASS_INTERVAL_MS,
   EXPORTS_DRIVER,
 } from './cpe-cle-exports-driver';
 
@@ -32,7 +33,7 @@ describe('cpe-cle-exports-driver: three POST endpoints, both formats', () => {
 
   it('POSTs /exports/cle-log with a jurisdiction and both formats', () => {
     const cle = plan.filter((p) => p.endpoint === '/api/v1/exports/cle-log' && p.label.startsWith('cle-log-ok'));
-    expect(cle.length).toBe(2);
+    expect(cle).toHaveLength(2);
     for (const p of cle) {
       const body = JSON.parse(p.body!);
       expect(body.jurisdiction).toBeTruthy();
@@ -42,7 +43,7 @@ describe('cpe-cle-exports-driver: three POST endpoints, both formats', () => {
 
   it('POSTs /exports/org/cpe-log with the ORG_ADMIN JWT targeting a member', () => {
     const org = plan.filter((p) => p.endpoint === '/api/v1/exports/org/cpe-log' && p.label.startsWith('org-cpe-log-ok'));
-    expect(org.length).toBeGreaterThanOrEqual(1);
+    expect(org).toHaveLength(2);
     for (const p of org) {
       expect(p.headers?.Authorization).toBe('Bearer jwt-org-admin');
       // Org export targets a MEMBER user_id, not the caller.
@@ -111,5 +112,9 @@ describe('cpe-cle-exports-driver: metadata', () => {
       expect(p.endpoint).toContain('/exports/');
       expect(p.capture).toBe(true);
     }
+  });
+
+  it('spaces repeated export passes below the hourly per-caller cap', () => {
+    expect(EXPORTS_PASS_INTERVAL_MS).toBeGreaterThanOrEqual(60 * 60_000);
   });
 });

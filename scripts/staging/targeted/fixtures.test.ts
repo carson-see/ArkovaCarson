@@ -6,6 +6,7 @@ import {
   buildOrgAndAdminProfile,
   FIXTURE_TAG,
   isSyntheticFixture,
+  validateFixtureRows,
   type FixtureExecutor,
 } from './fixtures';
 
@@ -41,6 +42,12 @@ describe('fixtures: SECURED-but-unbatched anchor (NO_BATCH_PROOF branch, #1439)'
     expect(a.public_id).not.toBe(b.public_id);
     expect(a.fingerprint).not.toBe(b.fingerprint);
   });
+
+  it('validates anchor rows before a service-role insert', () => {
+    const row = buildSecuredUnbatchedAnchor({ orgId: 'o', userId: 'u' });
+    expect(validateFixtureRows('anchors', [row])).toEqual([row]);
+    expect(() => validateFixtureRows('anchors', [{ ...row, public_id: 'REAL-ANCHOR' }])).toThrow(/anchors/);
+  });
 });
 
 describe('fixtures: DLQ row (webhooks self-service dlq/resolve branch, #1443)', () => {
@@ -63,6 +70,14 @@ describe('fixtures: DLQ row (webhooks self-service dlq/resolve branch, #1443)', 
   it('marks the event_id as a synthetic fixture', () => {
     const row = buildDlqFixtureRow({ orgId: 'o', endpointId: 'e' });
     expect(isSyntheticFixture(row.event_id)).toBe(true);
+  });
+
+  it('validates DLQ rows before a service-role insert', () => {
+    const row = buildDlqFixtureRow({ orgId: 'o', endpointId: 'e' });
+    expect(validateFixtureRows('webhook_dead_letter_queue', [row])).toEqual([row]);
+    expect(() =>
+      validateFixtureRows('webhook_dead_letter_queue', [{ ...row, failure_kind: 'delivery_exhausted' }]),
+    ).toThrow(/webhook_dead_letter_queue/);
   });
 });
 

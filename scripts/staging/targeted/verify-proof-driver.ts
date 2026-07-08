@@ -38,6 +38,7 @@ import {
 import {
   runDriver,
   iamAuthHeaders,
+  requireEnv,
   seedViaServiceRole,
   writeEvidenceFile,
   type DriverContext,
@@ -105,18 +106,12 @@ export function interpretProofOutcome(body: JsonBody): string | null {
 // ─── Runtime (thin; not unit-tested — needs live rig) ───────────────────────
 
 async function seedAndPlan(ctx: DriverContext): Promise<ProofRequestSpec[]> {
-  const orgId = requireEnv('STAGING_FIXTURE_ORG_ID');
-  const userId = requireEnv('STAGING_FIXTURE_USER_ID');
+  const orgId = requireEnv('STAGING_FIXTURE_ORG_ID', 'verify-proof driver');
+  const userId = requireEnv('STAGING_FIXTURE_USER_ID', 'verify-proof driver');
   const anchor = buildSecuredUnbatchedAnchor({ orgId, userId });
   await seedViaServiceRole('anchors', [anchor]);
   ctx.log(`seeded SECURED-but-unbatched anchor public_id=${anchor.public_id}`);
   return planProofRequests(ctx.apiBase, { unbatchedPublicId: anchor.public_id });
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is required for the verify-proof driver.`);
-  return v;
 }
 
 async function fireOnce(ctx: DriverContext, stats: DriverStats, plan: ProofRequestSpec[]): Promise<void> {

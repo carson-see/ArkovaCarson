@@ -25,7 +25,7 @@ Root cause this replaces: the failed soak fleet ran `load-harness --mode mixed` 
 
 ## Running (against an ISOLATED rig only)
 
-```
+```bash
 STAGING_API_BASE=https://pr-1439---arkova-worker-staging-…run.app \
 STAGING_SUPABASE_URL=… STAGING_SUPABASE_SERVICE_ROLE_KEY=… \
 STAGING_FIXTURE_ORG_ID=… STAGING_FIXTURE_USER_ID=… \

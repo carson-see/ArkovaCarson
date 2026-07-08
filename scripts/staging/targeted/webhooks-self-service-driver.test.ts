@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  dlqIdFromInsert,
   planWebhookSelfServiceRequests,
   WEBHOOKS_DRIVER,
 } from './webhooks-self-service-driver';
@@ -66,5 +67,15 @@ describe('webhooks-self-service-driver: metadata', () => {
   it('names PR #1443 and the driver', () => {
     expect(WEBHOOKS_DRIVER.pr).toBe('#1443');
     expect(WEBHOOKS_DRIVER.driver).toBe('webhooks-self-service');
+  });
+});
+
+describe('webhooks-self-service-driver: seeded DLQ id', () => {
+  it('uses the real inserted id for dlq-resolve planning', () => {
+    expect(dlqIdFromInsert([{ id: 'dlq-real-1' }])).toBe('dlq-real-1');
+  });
+
+  it('fails closed instead of substituting a fake id when seeding returns no row', () => {
+    expect(() => dlqIdFromInsert([])).toThrow(/DLQ fixture seeding returned no row/);
   });
 });

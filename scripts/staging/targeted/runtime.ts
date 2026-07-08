@@ -14,10 +14,10 @@
 
 import { execFileSync } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
-import { newDriverStats, type DriverStats } from './driver-core';
-import { makeDbExecutor, type FixtureExecutor } from './fixtures';
+import { type DriverStats } from './driver-core';
+import { makeDbExecutor, validateFixtureRows, type FixtureExecutor } from './fixtures';
 
 // ─── Pure helpers (unit-tested) ─────────────────────────────────────────────
 
@@ -25,11 +25,29 @@ export function bearerHeader(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
+export function requireEnv(name: string, contextLabel: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`${name} is required for the ${contextLabel}.`);
+  return v;
+}
+
+const EVIDENCE_ROOT = resolve(process.cwd(), 'docs', 'staging');
+
+export function resolveEvidencePath(path: string): string {
+  const resolved = isAbsolute(path) ? resolve(path) : resolve(process.cwd(), path);
+  const rel = relative(EVIDENCE_ROOT, resolved);
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(`Evidence output must stay under docs/staging: ${path}`);
+  }
+  return resolved;
+}
+
 export function writeEvidenceFile(path: string | undefined, evidence: unknown): void {
   if (!path) return;
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(evidence, null, 2) + '\n');
-  console.log(`\n[evidence] written: ${path}`);
+  const safePath = resolveEvidencePath(path);
+  mkdirSync(dirname(safePath), { recursive: true }); // NOSONAR S8707 — resolveEvidencePath confines writes to docs/staging.
+  writeFileSync(safePath, JSON.stringify(evidence, null, 2) + '\n'); // NOSONAR S8707 — resolveEvidencePath confines writes to docs/staging.
+  console.log(`\n[evidence] written: ${safePath}`);
 }
 
 // ─── IAM token (Cloud Run --no-allow-unauthenticated) ───────────────────────
@@ -69,7 +87,10 @@ export function iamToken(): string {
 
 /** Authorization header carrying the Cloud Run IAM identity token. */
 export function iamAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  return { ...bearerHeader(iamToken()), ...extra };
+  const iam = bearerHeader(iamToken()).Authorization;
+  const hasAppBearer = Object.keys(extra).some((key) => key.toLowerCase() === 'authorization');
+  if (hasAppBearer) return { 'X-Serverless-Authorization': iam, ...extra };
+  return { Authorization: iam, ...extra };
 }
 
 // ─── Service-role Supabase seeder ───────────────────────────────────────────
@@ -96,7 +117,7 @@ export async function seedViaServiceRole(
   rows: ReadonlyArray<object>,
 ): Promise<Array<Record<string, unknown>>> {
   const exec = await serviceRoleExecutor();
-  return exec(table, rows);
+  return exec(table, validateFixtureRows(table, rows));
 }
 
 // ─── Driver run loop ────────────────────────────────────────────────────────
@@ -117,6 +138,8 @@ export interface RunDriverOpts<P> {
   plan: (ctx: DriverContext) => Promise<P>;
   /** Fire the whole plan once (one pass). */
   fireOnce: (ctx: DriverContext, plan: P) => Promise<void>;
+  /** Cadence between passes; defaults to the legacy 30s targeted-soak interval. */
+  passIntervalMs?: number;
 }
 
 /**
@@ -142,17 +165,21 @@ export async function runDriver<P>(opts: RunDriverOpts<P>): Promise<void> {
   const endAt = Date.now() + opts.args.durationMin * 60_000;
   // Cadence: one pass per 30s keeps steady pressure on the changed branches
   // without hammering (each pass is only a handful of requests).
-  const PASS_INTERVAL_MS = 30_000;
+  const passIntervalMs = opts.passIntervalMs ?? 30_000;
   let pass = 0;
   while (Date.now() < endAt) {
-    await opts.fireOnce(ctx, plan);
+    try {
+      await opts.fireOnce(ctx, plan);
+    } catch (err) {
+      ctx.log(`pass ${pass} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     pass++;
     const remaining = endAt - Date.now();
     if (remaining <= 0) break;
-    await new Promise((r) => setTimeout(r, Math.min(PASS_INTERVAL_MS, remaining)));
+    await new Promise((r) => setTimeout(r, Math.min(passIntervalMs, remaining)));
   }
   ctx.log(`completed ${pass} pass(es).`);
 }
 
 /** Re-export so drivers can build a fresh stats object without a second import. */
-export { newDriverStats };
+export { newDriverStats } from './driver-core';

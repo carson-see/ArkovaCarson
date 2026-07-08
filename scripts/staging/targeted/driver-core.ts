@@ -171,6 +171,21 @@ export function summarizeEvidence(stats: DriverStats, meta: EvidenceMeta): Drive
 
 const MAX_SNIPPET = 2048;
 
+function shouldRedactKey(key: string): boolean {
+  return key.replace(/_/g, '').toLowerCase() === 'signedurl';
+}
+
+function redactSensitiveBody(value: JsonBody): JsonBody {
+  if (Array.isArray(value)) return value.map((item) => redactSensitiveBody(item as JsonBody));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, child]) => [
+      key,
+      shouldRedactKey(key) ? '[REDACTED]' : redactSensitiveBody(child as JsonBody),
+    ]),
+  );
+}
+
 /**
  * Parse a raw response body into a JSON value when it is valid JSON, else
  * return a length-bounded string snippet. Bounding avoids retaining megabytes
@@ -180,7 +195,7 @@ export function bodySnippet(raw: string): JsonBody {
   const trimmed = raw.trim();
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
-      return JSON.parse(trimmed) as JsonBody;
+      return redactSensitiveBody(JSON.parse(trimmed) as JsonBody);
     } catch {
       /* fall through to string snippet */
     }
@@ -216,7 +231,11 @@ export interface FireOpts {
   allowedStatuses: readonly number[];
   /** Capture the response body into evidence (default true for the first N). */
   capture?: boolean;
+  /** Per-request timeout. Transport timeout records status 0, never throws. */
+  timeoutMs?: number;
 }
+
+const DEFAULT_FIRE_TIMEOUT_MS = 15_000;
 
 /**
  * Fire one labeled request, record latency + expected/unexpected, and optionally
@@ -226,11 +245,14 @@ export async function fireLabeled(opts: FireOpts): Promise<DriverOutcome> {
   const startedAt = Date.now();
   let status = 0;
   let capturedBody: JsonBody | undefined;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_FIRE_TIMEOUT_MS);
   try {
     const res = await fetch(opts.url, {
       method: opts.method,
       headers: opts.headers,
       body: opts.body,
+      signal: controller.signal,
     });
     status = res.status;
     const raw = await res.text();
@@ -239,6 +261,8 @@ export async function fireLabeled(opts: FireOpts): Promise<DriverOutcome> {
     }
   } catch {
     status = 0;
+  } finally {
+    clearTimeout(timeout);
   }
   const outcome: DriverOutcome = {
     label: opts.label,

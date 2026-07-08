@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   newDriverStats,
@@ -7,9 +7,17 @@ import {
   classifyStatus,
   bodySnippet,
   captureProofErrorCode,
+  fireLabeled,
   parseDriverArgs,
   type DriverOutcome,
 } from './driver-core';
+
+const realFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = realFetch;
+  vi.restoreAllMocks();
+});
 
 describe('driver-core: outcome recording + evidence summary', () => {
   it('starts with an empty stats object', () => {
@@ -125,11 +133,55 @@ describe('driver-core: body helpers', () => {
     expect(parsed).toEqual({ error: 'Record not found', proof_error_code: 'RECORD_NOT_FOUND' });
   });
 
+  it('bodySnippet redacts signed artifact URLs before evidence persistence', () => {
+    const parsed = bodySnippet(
+      JSON.stringify({
+        exports: {
+          pdf: { signed_url: 'https://signed.example/pdf-token' },
+          json: { signedUrl: 'https://signed.example/json-token' },
+        },
+      }),
+    );
+    expect(parsed).toEqual({
+      exports: {
+        pdf: { signed_url: '[REDACTED]' },
+        json: { signedUrl: '[REDACTED]' },
+      },
+    });
+  });
+
   it('captureProofErrorCode reads proof_error_code from a parsed body', () => {
     expect(captureProofErrorCode({ proof_error_code: 'NO_BATCH_PROOF' })).toBe('NO_BATCH_PROOF');
     // Falls back to null when the field is absent (main-branch shape has only `error`).
     expect(captureProofErrorCode({ error: 'Record not found' })).toBeNull();
     expect(captureProofErrorCode('not-json')).toBeNull();
+  });
+});
+
+describe('driver-core: HTTP fire', () => {
+  it('records status 0 when a request exceeds its timeout', async () => {
+    globalThis.fetch = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('timed out', 'AbortError'));
+        });
+      });
+    }) as never;
+
+    const stats = newDriverStats();
+    const outcome = await fireLabeled({
+      stats,
+      label: 'hung-endpoint',
+      method: 'GET',
+      endpoint: '/hung',
+      url: 'https://pr-1.example/hung',
+      allowedStatuses: [200],
+      timeoutMs: 1,
+    });
+
+    expect(outcome.status).toBe(0);
+    expect(outcome.expected).toBe(false);
+    expect(stats.outcomes).toHaveLength(1);
   });
 });
 

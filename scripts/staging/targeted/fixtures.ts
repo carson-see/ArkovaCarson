@@ -17,6 +17,7 @@
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
+import { z } from 'zod';
 
 /** Prefix stamped on every synthetic public_id / name / event_id we create. */
 export const FIXTURE_TAG = 'TSOAK-';
@@ -119,6 +120,59 @@ export function buildDlqFixtureRow(args: DlqFixtureArgs): DlqFixtureRow {
     resolved: false,
     resolved_at: null,
   };
+}
+
+const SyntheticIdSchema = z.string().refine(isSyntheticFixture, 'must carry the TSOAK- fixture tag');
+
+export const SecuredUnbatchedAnchorRowSchema = z
+  .object({
+    public_id: SyntheticIdSchema,
+    fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+    filename: z.string().min(1),
+    status: z.literal('SECURED'),
+    chain_tx_id: z.string().regex(/^[0-9a-f]{64}$/),
+    chain_block_height: z.number().int().positive(),
+    chain_timestamp: z.string().datetime(),
+    org_id: z.string().min(1),
+    user_id: z.string().min(1),
+    metadata: z.record(z.string(), z.unknown()),
+  })
+  .passthrough();
+
+export const DlqFixtureRowSchema = z
+  .object({
+    org_id: z.string().min(1),
+    endpoint_id: z.string().min(1),
+    endpoint_url: z.string().url().startsWith('http://localhost'),
+    event_id: SyntheticIdSchema,
+    event_type: z.string().min(1),
+    error_message: z.string().min(1),
+    failure_kind: z.enum(['http_delivery', 'log_write']),
+    last_attempt: z.number().int().nonnegative(),
+    payload: z.record(z.string(), z.unknown()),
+    resolved: z.literal(false),
+    resolved_at: z.null(),
+  })
+  .passthrough();
+
+export function validateFixtureRows(
+  table: string,
+  rows: ReadonlyArray<object>,
+): ReadonlyArray<object> {
+  const schema =
+    table === 'anchors'
+      ? SecuredUnbatchedAnchorRowSchema
+      : table === 'webhook_dead_letter_queue'
+        ? DlqFixtureRowSchema
+        : null;
+  if (!schema) return rows;
+  return rows.map((row, index) => {
+    const parsed = schema.safeParse(row);
+    if (!parsed.success) {
+      throw new Error(`Invalid ${table} fixture row ${index}: ${parsed.error.message}`);
+    }
+    return parsed.data;
+  });
 }
 
 // ─── Shared: org + ORG_ADMIN profile ────────────────────────────────────────

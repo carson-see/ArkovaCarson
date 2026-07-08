@@ -31,7 +31,14 @@ import {
   parseDriverArgs,
   type DriverStats,
 } from './driver-core';
-import { runDriver, iamAuthHeaders, seedViaServiceRole, writeEvidenceFile, type DriverContext } from './runtime';
+import {
+  runDriver,
+  iamAuthHeaders,
+  requireEnv,
+  seedViaServiceRole,
+  writeEvidenceFile,
+  type DriverContext,
+} from './runtime';
 import { buildDlqFixtureRow } from './fixtures';
 
 export const WEBHOOKS_DRIVER = { driver: 'webhooks-self-service', pr: '#1443' } as const;
@@ -99,21 +106,23 @@ export function planWebhookSelfServiceRequests(
 
 // ─── Runtime ────────────────────────────────────────────────────────────────
 
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is required for the webhooks self-service driver.`);
-  return v;
+export function dlqIdFromInsert(inserted: Array<Record<string, unknown>>): string {
+  const seededId = inserted[0]?.id;
+  if (seededId === undefined || seededId === null || seededId === '') {
+    throw new Error('DLQ fixture seeding returned no row — cannot proceed with dlq-list/dlq-resolve evidence.');
+  }
+  return String(seededId);
 }
 
 async function seedAndPlan(ctx: DriverContext): Promise<WebhookRequestSpec[]> {
-  const orgAdminKey = requireEnv('STAGING_ORG_ADMIN_KEY');
-  const endpointId = requireEnv('STAGING_WEBHOOK_ENDPOINT_ID');
-  const orgId = requireEnv('STAGING_FIXTURE_ORG_ID');
+  const orgAdminKey = requireEnv('STAGING_ORG_ADMIN_KEY', 'webhooks self-service driver');
+  const endpointId = requireEnv('STAGING_WEBHOOK_ENDPOINT_ID', 'webhooks self-service driver');
+  const orgId = requireEnv('STAGING_FIXTURE_ORG_ID', 'webhooks self-service driver');
   const deliveryId = process.env.STAGING_WEBHOOK_DELIVERY_ID ?? 'TSOAK-DEL-000000000000';
 
   const dlqRow = buildDlqFixtureRow({ orgId, endpointId });
   const inserted = await seedViaServiceRole('webhook_dead_letter_queue', [dlqRow]);
-  const dlqId = String(inserted[0]?.id ?? 'TSOAK-DLQ-000000000000');
+  const dlqId = dlqIdFromInsert(inserted);
   ctx.log(`seeded DLQ row id=${dlqId} org=${orgId}`);
 
   return planWebhookSelfServiceRequests(ctx.apiBase, { orgAdminKey, endpointId, deliveryId, dlqId });
