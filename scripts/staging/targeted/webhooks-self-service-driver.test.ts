@@ -4,6 +4,7 @@ import {
   dlqIdFromInsert,
   planWebhookSelfServiceRequests,
   WEBHOOKS_DRIVER,
+  WEBHOOKS_PASS_INTERVAL_MS,
 } from './webhooks-self-service-driver';
 
 const BASE = 'https://pr-1443---arkova-worker-staging-x-uc.a.run.app';
@@ -67,6 +68,10 @@ describe('webhooks-self-service-driver: metadata', () => {
   it('names PR #1443 and the driver', () => {
     expect(WEBHOOKS_DRIVER.pr).toBe('#1443');
     expect(WEBHOOKS_DRIVER.driver).toBe('webhooks-self-service');
+  });
+
+  it('paces passes below the JWT-gated batch limiter budget', () => {
+    expect(WEBHOOKS_PASS_INTERVAL_MS).toBeGreaterThanOrEqual(65_000);
   });
 });
 

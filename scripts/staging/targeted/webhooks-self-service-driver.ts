@@ -44,6 +44,7 @@ import {
 import { buildDlqFixtureRow } from './fixtures';
 
 export const WEBHOOKS_DRIVER = { driver: 'webhooks-self-service', pr: '#1443' } as const;
+export const WEBHOOKS_PASS_INTERVAL_MS = 65_000;
 
 // ─── Pure plan (unit-tested) ────────────────────────────────────────────────
 
@@ -151,6 +152,11 @@ async function main(): Promise<void> {
     stats,
     plan: (ctx) => seedAndPlan(ctx),
     fireOnce: (ctx, plan) => fireOnce(ctx, stats, plan as WebhookRequestSpec[]),
+    // Five branch probes per pass behind the batch limiter: keep the sustained
+    // soak below the 10 req/min route budget, and leave jitter room for health
+    // checks / operator probes. Heavy-user testing belongs in an explicit
+    // rate-limit scenario, not as accidental 429s in merge evidence.
+    passIntervalMs: WEBHOOKS_PASS_INTERVAL_MS,
   });
 
   const evidence = summarizeEvidence(stats, { ...WEBHOOKS_DRIVER, apiBase });
