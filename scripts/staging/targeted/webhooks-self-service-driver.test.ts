@@ -9,7 +9,7 @@ import {
 const BASE = 'https://pr-1443---arkova-worker-staging-x-uc.a.run.app';
 
 const ARGS = {
-  orgAdminKey: 'ak_admin',
+  orgAdminJwt: 'jwt_admin',
   endpointId: 'ep-1',
   deliveryId: 'del-1',
   dlqId: 'dlq-1',
@@ -18,47 +18,47 @@ const ARGS = {
 describe('webhooks-self-service-driver: request plan hits test/replay/dlq/resolve', () => {
   const plan = planWebhookSelfServiceRequests(BASE, ARGS);
 
-  it('drives POST /webhooks/test with the ORG_ADMIN key', () => {
+  it('drives POST /webhooks/self-service/:id/test with the ORG_ADMIN JWT', () => {
     const test = plan.find((p) => p.label === 'test');
     expect(test).toBeDefined();
     expect(test!.method).toBe('POST');
-    expect(test!.endpoint).toBe('/api/v1/webhooks/test');
-    expect(test!.headers?.['X-API-Key']).toBe('ak_admin');
-    expect(JSON.parse(test!.body!)).toEqual({ endpoint_id: 'ep-1' });
+    expect(test!.endpoint).toBe('/api/v1/webhooks/self-service/ep-1/test');
+    expect(test!.headers?.Authorization).toBe('Bearer jwt_admin');
+    expect(test!.body).toBeUndefined();
   });
 
-  it('drives POST /webhooks/deliveries/:id/replay', () => {
+  it('drives POST /webhooks/self-service/deliveries/:id/replay', () => {
     const replay = plan.find((p) => p.label === 'replay');
     expect(replay).toBeDefined();
-    expect(replay!.endpoint).toBe('/api/v1/webhooks/deliveries/del-1/replay');
+    expect(replay!.endpoint).toBe('/api/v1/webhooks/self-service/deliveries/del-1/replay');
     expect(replay!.method).toBe('POST');
   });
 
-  it('drives GET /webhooks/dlq (list)', () => {
+  it('drives GET /webhooks/self-service/dlq (list)', () => {
     const dlqList = plan.find((p) => p.label === 'dlq-list');
     expect(dlqList).toBeDefined();
-    expect(dlqList!.endpoint).toBe('/api/v1/webhooks/dlq');
+    expect(dlqList!.endpoint).toBe('/api/v1/webhooks/self-service/dlq');
     expect(dlqList!.method).toBe('GET');
     expect(dlqList!.allowedStatuses).toContain(200);
   });
 
-  it('drives POST /webhooks/dlq/:id/resolve against the seeded DLQ fixture', () => {
+  it('drives POST /webhooks/self-service/dlq/:id/resolve against the seeded DLQ fixture', () => {
     const resolve = plan.find((p) => p.label === 'dlq-resolve');
     expect(resolve).toBeDefined();
-    expect(resolve!.endpoint).toBe('/api/v1/webhooks/dlq/dlq-1/resolve');
+    expect(resolve!.endpoint).toBe('/api/v1/webhooks/self-service/dlq/dlq-1/resolve');
     expect(resolve!.method).toBe('POST');
   });
 
-  it('includes a cross-org 401 unauthenticated negative (no key)', () => {
+  it('includes a 401 unauthenticated negative (no Supabase JWT)', () => {
     const noKey = plan.find((p) => p.label === 'unauthenticated');
     expect(noKey).toBeDefined();
-    expect(noKey!.headers?.['X-API-Key']).toBeUndefined();
+    expect(noKey!.headers?.Authorization).toBeUndefined();
     expect(noKey!.allowedStatuses).toContain(401);
   });
 
-  it('every authenticated request carries the ORG_ADMIN key', () => {
+  it('every authenticated request carries the ORG_ADMIN Supabase JWT', () => {
     for (const p of plan.filter((x) => x.label !== 'unauthenticated')) {
-      expect(p.headers?.['X-API-Key']).toBe('ak_admin');
+      expect(p.headers?.Authorization).toBe('Bearer jwt_admin');
     }
   });
 });
