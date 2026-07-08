@@ -53,8 +53,9 @@ import {
   type FetchLike,
   type WorkerIdentity,
 } from './ai-eval/ai-client.js';
-import { pickIdentity } from './ai-eval/rate.js';
+import { PER_USER_LIMIT_PER_MIN, pickIdentity } from './ai-eval/rate.js';
 import { gateGoldenEntries, goldenProvenance } from './ai-eval/golden.js';
+import { resolveEvidenceOutputPath } from './ai-eval/evidence-path.js';
 import {
   buildExtractPayload,
   fieldsFromExtractResponse,
@@ -67,7 +68,6 @@ import {
 } from './ai-eval/eval-core.js';
 import type { EntryEvalResult } from './ai-eval/scoring.js';
 import {
-  classifyReliability,
   newReliabilityStats,
   recordReliability,
   reliabilityReport,
@@ -95,6 +95,88 @@ function parsePositiveInt(raw: string | undefined, fallback: number, name: strin
 }
 
 const realFetch: FetchLike = fetch as unknown as FetchLike;
+const EVAL_PER_USER_HEADROOM = 0.8;
+
+interface RunnerConfig {
+  apiBase: string;
+  identities: WorkerIdentity[];
+  evidencePath?: string;
+  requireLive: boolean;
+  intervalMin: number;
+  timeoutMs: number;
+  fixedRounds?: number;
+  endAt: number;
+}
+
+interface RunnerSummary {
+  rounds: number;
+  meritedRounds: number;
+  anyFailure: boolean;
+}
+
+function evalRequestIntervalMs(identityCount: number): number {
+  const aggregatePerMinute = Math.max(1, identityCount) * PER_USER_LIMIT_PER_MIN * EVAL_PER_USER_HEADROOM;
+  return Math.ceil(60_000 / aggregatePerMinute);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function resolveRunnerConfig(startedAt: number): RunnerConfig {
+  const apiBase = resolveStagingApiBase(process.env);
+  const identities = parseIdentities(process.env.STAGING_AI_JWTS);
+  const evidencePath = args['evidence-out'] ? resolveEvidenceOutputPath(args['evidence-out']) : undefined;
+  const intervalMin = parsePositiveInt(args.interval, 30, 'interval');
+  const timeoutMs = parsePositiveInt(args['timeout-ms'], 10_000, 'timeout-ms');
+  const fixedRounds = args.rounds ? parsePositiveInt(args.rounds, 1, 'rounds') : undefined;
+  const durationMin = parsePositiveInt(args.duration, 2880, 'duration');
+
+  return {
+    apiBase,
+    identities,
+    evidencePath,
+    requireLive: Boolean(args['require-live']),
+    intervalMin,
+    timeoutMs,
+    fixedRounds,
+    endAt: startedAt + durationMin * 60_000,
+  };
+}
+
+function ensureRunnable(config: RunnerConfig): void {
+  if (config.identities.length === 0) {
+    console.error('::error::STAGING_AI_JWTS is required — /api/v1/ai/extract rejects unauthenticated calls (401).');
+    process.exit(1);
+  }
+}
+
+function shouldRunNextRound(round: number, config: RunnerConfig): boolean {
+  if (config.fixedRounds !== undefined) return round < config.fixedRounds;
+  return Date.now() < config.endAt;
+}
+
+function recordFailureState(record: EvalRecord, merited: boolean, requireLive: boolean): boolean {
+  return !record.gate.passed || (requireLive && !merited);
+}
+
+function writeRoundEvidence(
+  evidencePath: string | undefined,
+  round: number,
+  merited: boolean,
+  notes: string[],
+  providersSeen: Set<string>,
+  record: EvalRecord,
+): void {
+  if (!evidencePath) return;
+  appendFileSync(evidencePath, JSON.stringify({ round, merited, notes, providersSeen: [...providersSeen], ...record }) + '\n'); // NOSONAR S8707 — resolveEvidenceOutputPath confines writes to docs/staging.
+}
+
+async function sleepUntilNextRound(config: RunnerConfig): Promise<void> {
+  if (config.fixedRounds !== undefined) return;
+  const sleepMs = Math.min(config.intervalMin * 60_000, Math.max(0, config.endAt - Date.now()));
+  if (sleepMs > 0) await sleep(sleepMs);
+}
 
 /**
  * Sample the full 48-entry gate split through the LIVE /extract endpoint and
@@ -109,6 +191,7 @@ async function runRound(
   const scored: EntryEvalResult[] = [];
   const providersSeen = new Set<string>();
   const reliability = newReliabilityStats();
+  const requestIntervalMs = evalRequestIntervalMs(identities.length);
 
   let i = 0;
   for (const entry of entries) {
@@ -118,7 +201,7 @@ async function runRound(
     );
     providersSeen.add(providerFromBody(outcome.body));
     const klass = recordReliability(reliability, outcome);
-    const falseReading = classifyReliability(outcome) === 'false_reading';
+    const falseReading = klass === 'false_reading';
     if (outcome.ok && klass !== 'false_reading') {
       // A clean 2xx from a real provider — score it against ground truth.
       scored.push(scoreEntry(entry, fieldsFromExtractResponse(outcome.body)));
@@ -131,6 +214,7 @@ async function runRound(
       const reason = outcome.transportError ?? `HTTP ${outcome.status}`;
       scored.push(scoreEntry(entry, {}, reason));
     }
+    if (i < entries.length) await sleep(requestIntervalMs);
   }
 
   const dominantProvider = [...providersSeen].find((p) => LIVE_PROVIDERS.has(p)) ?? [...providersSeen][0] ?? 'unknown';
@@ -160,74 +244,52 @@ function summarizeRoundLine(round: number, record: EvalRecord, merited: boolean)
   );
 }
 
-async function main(): Promise<void> {
-  const apiBase = resolveStagingApiBase(process.env);
-  const identities = parseIdentities(process.env.STAGING_AI_JWTS);
-  const evidencePath = args['evidence-out'];
-  const requireLive = Boolean(args['require-live']);
-  const intervalMin = parsePositiveInt(args.interval, 30, 'interval');
-  const timeoutMs = parsePositiveInt(args['timeout-ms'], 10_000, 'timeout-ms');
+async function runEvalRounds(config: RunnerConfig): Promise<RunnerSummary> {
+  let round = 0;
+  let anyFailure = false;
+  let meritedRounds = 0;
 
+  while (shouldRunNextRound(round, config)) {
+    round++;
+    const { record, providersSeen } = await runRound(config.apiBase, config.identities, config.timeoutMs);
+    const { merited, notes } = certifyRound(record, providersSeen, config.requireLive);
+    if (merited) meritedRounds++;
+    if (recordFailureState(record, merited, config.requireLive)) anyFailure = true;
+
+    console.log(summarizeRoundLine(round, record, merited));
+    for (const note of notes) console.log(`    note: ${note}`);
+
+    writeRoundEvidence(config.evidencePath, round, merited, notes, providersSeen, record);
+
+    if (!shouldRunNextRound(round, config)) break;
+    await sleepUntilNextRound(config);
+  }
+
+  return { rounds: round, meritedRounds, anyFailure };
+}
+
+async function main(): Promise<void> {
+  const startedAt = Date.now();
+  const config = resolveRunnerConfig(startedAt);
   const prov = goldenProvenance();
   console.log(`▶ ai-eval-gate-runner (SCRUM-2382) at ${new Date().toISOString()}`);
-  console.log(`  api_base=${apiBase}`);
+  console.log(`  api_base=${config.apiBase}`);
   console.log(`  golden=${prov.gateEntries} gate + ${prov.heldOutEntries} held-out (source ${prov.sourceRef} @ ${prov.sourceCommit.slice(0, 8)})`);
-  console.log(`  identities=${identities.length}  require_live=${requireLive}  interval=${intervalMin}min  client_timeout=${timeoutMs}ms`);
+  console.log(`  identities=${config.identities.length}  require_live=${config.requireLive}  interval=${config.intervalMin}min  client_timeout=${config.timeoutMs}ms`);
 
-  if (identities.length === 0) {
-    console.error('::error::STAGING_AI_JWTS is required — /api/v1/ai/extract rejects unauthenticated calls (401).');
-    process.exit(1);
-  }
+  ensureRunnable(config);
   if (args['dry-run']) {
     console.log('  --dry-run: config validated; exiting without sampling.');
     return;
   }
 
-  if (evidencePath) mkdirSync(dirname(evidencePath), { recursive: true });
+  if (config.evidencePath) mkdirSync(dirname(config.evidencePath), { recursive: true }); // NOSONAR S8707 — resolveEvidenceOutputPath confines writes to docs/staging.
 
-  const startedAt = Date.now();
-  const fixedRounds = args.rounds ? parsePositiveInt(args.rounds, 1, 'rounds') : undefined;
-  const durationMin = parsePositiveInt(args.duration, 2880, 'duration');
-  const endAt = startedAt + durationMin * 60_000;
-
-  let round = 0;
-  let anyFailure = false;
-  let meritedRounds = 0;
-
-  const shouldContinue = (): boolean => {
-    if (fixedRounds !== undefined) return round < fixedRounds;
-    return Date.now() < endAt;
-  };
-
-  while (shouldContinue()) {
-    round++;
-    const { record, providersSeen } = await runRound(apiBase, identities, timeoutMs);
-    const { merited, notes } = certifyRound(record, providersSeen, requireLive);
-    if (merited) meritedRounds++;
-    // Fail-closed on BOTH signals: a gate-verdict miss, and (under --require-live)
-    // a round that is not merited — e.g. gate.passed=true off a mock/fast-fallback
-    // provider echoing golden fields. Either alone would let non-live evidence
-    // exit 0 as if it were merge-grade.
-    if (!record.gate.passed || (requireLive && !merited)) anyFailure = true;
-
-    console.log(summarizeRoundLine(round, record, merited));
-    for (const note of notes) console.log(`    note: ${note}`);
-
-    if (evidencePath) {
-      appendFileSync(evidencePath, JSON.stringify({ round, merited, notes, providersSeen: [...providersSeen], ...record }) + '\n');
-    }
-
-    if (!shouldContinue()) break;
-    // Sleep to the next interval (unless a fixed-round run finished).
-    if (fixedRounds === undefined) {
-      const sleepMs = Math.min(intervalMin * 60_000, Math.max(0, endAt - Date.now()));
-      if (sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs));
-    }
-  }
+  const { rounds, meritedRounds, anyFailure } = await runEvalRounds(config);
 
   console.log(`\n=== EVAL-GATE SUMMARY ===`);
-  console.log(`  rounds=${round}  merited=${meritedRounds}  any_gate_failure=${anyFailure}`);
-  if (evidencePath) console.log(`  evidence (JSONL) → ${evidencePath}`);
+  console.log(`  rounds=${rounds}  merited=${meritedRounds}  any_gate_failure=${anyFailure}`);
+  if (config.evidencePath) console.log(`  evidence (JSONL) → ${config.evidencePath}`);
 
   // Fail-closed exit: non-zero if any round failed the gate, so CI / the soak
   // operator treats a mid-soak F1 regression as a hard block.

@@ -31,6 +31,7 @@
 
 /** Golden-set ground-truth field map (superset; only ALL_FIELDS are scored). */
 export type GroundTruthFields = Record<string, string | number | string[] | boolean | undefined>;
+export type FieldValue = string | number | string[] | undefined;
 
 export interface GoldenEntry {
   id: string;
@@ -54,8 +55,8 @@ export type MatchType =
 
 export interface FieldResult {
   field: string;
-  expected: string | number | string[] | undefined;
-  actual: string | number | string[] | undefined;
+  expected: FieldValue;
+  actual: FieldValue;
   correct: boolean;
   matchType: MatchType;
 }
@@ -128,124 +129,126 @@ export function normalizeDate(value: string | undefined): string | undefined {
   return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
 }
 
-/** Faithful port of scoring.ts:compareField. */
-export function compareField(
+function resultFor(
   field: string,
-  expected: string | number | string[] | undefined,
-  actual: string | number | string[] | undefined,
+  expected: FieldValue,
+  actual: FieldValue,
+  correct: boolean,
+  matchType: MatchType,
 ): FieldResult {
-  if (expected === undefined && actual === undefined) {
-    return { field, expected, actual, correct: true, matchType: 'missing_both' };
-  }
-  if (
-    (expected === undefined || (Array.isArray(expected) && expected.length === 0)) &&
-    (actual === undefined || (Array.isArray(actual) && actual.length === 0))
-  ) {
-    return { field, expected, actual, correct: true, matchType: 'missing_both' };
-  }
+  return { field, expected, actual, correct, matchType };
+}
 
-  if (actual === undefined || actual === null || actual === '') {
-    if (
-      expected !== undefined &&
-      expected !== null &&
-      expected !== '' &&
-      !(Array.isArray(expected) && expected.length === 0)
-    ) {
-      return { field, expected, actual, correct: false, matchType: 'false_negative' };
-    }
-  }
+function isEmptyValue(value: FieldValue | null): boolean {
+  return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
+}
 
-  if (
-    expected === undefined ||
-    expected === null ||
-    expected === '' ||
-    (Array.isArray(expected) && expected.length === 0)
-  ) {
-    if (
-      actual !== undefined &&
-      actual !== null &&
-      actual !== '' &&
-      !(Array.isArray(actual) && actual.length === 0)
-    ) {
-      return { field, expected, actual, correct: false, matchType: 'false_positive' };
-    }
+function compareMissingValues(field: string, expected: FieldValue, actual: FieldValue): FieldResult | undefined {
+  const expectedEmpty = isEmptyValue(expected);
+  const actualEmpty = isEmptyValue(actual);
+  if (expectedEmpty && actualEmpty) {
+    return resultFor(field, expected, actual, true, 'missing_both');
   }
-
-  if (ARRAY_FIELDS.has(field)) {
-    const expArr = Array.isArray(expected) ? [...expected].sort() : [];
-    const actArr = Array.isArray(actual) ? [...actual].sort() : [];
-    const match = expArr.length === actArr.length && expArr.every((v, i) => v === actArr[i]);
-    return { field, expected, actual, correct: match, matchType: match ? 'exact' : 'mismatch' };
+  if (actualEmpty) {
+    return resultFor(field, expected, actual, false, 'false_negative');
   }
-
-  if (NUMERIC_FIELDS.has(field)) {
-    const match = Number(expected) === Number(actual);
-    return { field, expected, actual, correct: match, matchType: match ? 'exact' : 'mismatch' };
+  if (expectedEmpty) {
+    return resultFor(field, expected, actual, false, 'false_positive');
   }
+  return undefined;
+}
 
-  if (DATE_FIELDS.has(field)) {
-    const normExp = normalizeDate(String(expected));
-    const normAct = normalizeDate(String(actual));
-    if (normExp === normAct) {
-      return { field, expected, actual, correct: true, matchType: 'exact' };
-    }
-    if (field === 'expiryDate' && normExp && normAct) {
-      if (normExp.slice(0, 7) === normAct.slice(0, 7)) {
-        return { field, expected, actual, correct: true, matchType: 'normalized' };
-      }
-    }
-    return { field, expected, actual, correct: false, matchType: 'mismatch' };
+function sortedStrings(value: FieldValue): string[] {
+  return Array.isArray(value) ? [...value].sort((a, b) => String(a).localeCompare(String(b))) : [];
+}
+
+function compareArrayField(field: string, expected: FieldValue, actual: FieldValue): FieldResult {
+  const expArr = sortedStrings(expected);
+  const actArr = sortedStrings(actual);
+  const match = expArr.length === actArr.length && expArr.every((v, i) => v === actArr[i]);
+  return resultFor(field, expected, actual, match, match ? 'exact' : 'mismatch');
+}
+
+function compareNumericField(field: string, expected: FieldValue, actual: FieldValue): FieldResult {
+  const match = Number(expected) === Number(actual);
+  return resultFor(field, expected, actual, match, match ? 'exact' : 'mismatch');
+}
+
+function compareDateField(field: string, expected: FieldValue, actual: FieldValue): FieldResult {
+  const normExp = normalizeDate(String(expected));
+  const normAct = normalizeDate(String(actual));
+  if (normExp === normAct) {
+    return resultFor(field, expected, actual, true, 'exact');
   }
+  const monthMatches = field === 'expiryDate' && normExp && normAct && normExp.slice(0, 7) === normAct.slice(0, 7);
+  return resultFor(field, expected, actual, Boolean(monthMatches), monthMatches ? 'normalized' : 'mismatch');
+}
 
-  if (field === 'degreeLevel') {
-    const normExp = normalizeDegreeLevel(String(expected));
-    const normAct = normalizeDegreeLevel(String(actual));
-    if (normExp && normAct && normExp === normAct) {
-      return { field, expected, actual, correct: true, matchType: 'normalized' };
-    }
-    return {
-      field,
-      expected,
-      actual,
-      correct: normExp === normAct,
-      matchType: normExp === normAct ? 'exact' : 'mismatch',
-    };
+function compareDegreeLevel(field: string, expected: FieldValue, actual: FieldValue): FieldResult {
+  const normExp = normalizeDegreeLevel(String(expected));
+  const normAct = normalizeDegreeLevel(String(actual));
+  if (normExp && normAct && normExp === normAct) {
+    return resultFor(field, expected, actual, true, 'normalized');
   }
+  const match = normExp === normAct;
+  return resultFor(field, expected, actual, match, match ? 'exact' : 'mismatch');
+}
 
+function fuzzyTokens(value: string): string[] {
+  return value.replaceAll(/[/\-,&]/g, ' ').split(/\s+/).filter((token) => token.length > 1);
+}
+
+function tokenOverlapRatio(expTokens: string[], actTokens: string[]): number {
+  const matchedFromExp = expTokens.filter((token) => actTokens.some((actual) => actual.includes(token) || token.includes(actual)));
+  const matchedFromAct = actTokens.filter((token) => expTokens.some((expected) => expected.includes(token) || token.includes(expected)));
+  return Math.max(
+    matchedFromExp.length / expTokens.length,
+    matchedFromAct.length / actTokens.length,
+  );
+}
+
+function compareFuzzyField(field: string, expected: FieldValue, actual: FieldValue, normExp: string, normAct: string): FieldResult | undefined {
+  if (!FUZZY_FIELDS.has(field)) return undefined;
+  if (normExp.includes(normAct) || normAct.includes(normExp)) {
+    return resultFor(field, expected, actual, true, 'normalized');
+  }
+  const expTokens = fuzzyTokens(normExp);
+  const actTokens = fuzzyTokens(normAct);
+  if (expTokens.length === 0 || actTokens.length === 0) return undefined;
+  return tokenOverlapRatio(expTokens, actTokens) >= 0.6
+    ? resultFor(field, expected, actual, true, 'normalized')
+    : undefined;
+}
+
+function compareStringField(field: string, expected: FieldValue, actual: FieldValue): FieldResult {
   const expStr = String(expected);
   const actStr = String(actual);
-
-  if (expStr === actStr) {
-    return { field, expected, actual, correct: true, matchType: 'exact' };
-  }
+  if (expStr === actStr) return resultFor(field, expected, actual, true, 'exact');
 
   const normExp = normalizeString(expStr);
   const normAct = normalizeString(actStr);
-
-  if (normExp === normAct) {
-    return { field, expected, actual, correct: true, matchType: 'normalized' };
+  if (normExp === normAct) return resultFor(field, expected, actual, true, 'normalized');
+  if (normExp && normAct) {
+    const fuzzy = compareFuzzyField(field, expected, actual, normExp, normAct);
+    if (fuzzy) return fuzzy;
   }
 
-  if (FUZZY_FIELDS.has(field) && normExp && normAct) {
-    if (normExp.includes(normAct) || normAct.includes(normExp)) {
-      return { field, expected, actual, correct: true, matchType: 'normalized' };
-    }
-    const expTokens = normExp.replace(/[/\-,&]/g, ' ').split(/\s+/).filter((t) => t.length > 1);
-    const actTokens = normAct.replace(/[/\-,&]/g, ' ').split(/\s+/).filter((t) => t.length > 1);
-    if (expTokens.length > 0 && actTokens.length > 0) {
-      const matchedFromExp = expTokens.filter((t) => actTokens.some((a) => a.includes(t) || t.includes(a)));
-      const matchedFromAct = actTokens.filter((t) => expTokens.some((e) => e.includes(t) || t.includes(e)));
-      const overlapRatio = Math.max(
-        matchedFromExp.length / expTokens.length,
-        matchedFromAct.length / actTokens.length,
-      );
-      if (overlapRatio >= 0.6) {
-        return { field, expected, actual, correct: true, matchType: 'normalized' };
-      }
-    }
-  }
+  return resultFor(field, expected, actual, false, 'mismatch');
+}
 
-  return { field, expected, actual, correct: false, matchType: 'mismatch' };
+/** Faithful port of scoring.ts:compareField. */
+export function compareField(
+  field: string,
+  expected: FieldValue,
+  actual: FieldValue,
+): FieldResult {
+  const missing = compareMissingValues(field, expected, actual);
+  if (missing) return missing;
+  if (ARRAY_FIELDS.has(field)) return compareArrayField(field, expected, actual);
+  if (NUMERIC_FIELDS.has(field)) return compareNumericField(field, expected, actual);
+  if (DATE_FIELDS.has(field)) return compareDateField(field, expected, actual);
+  if (field === 'degreeLevel') return compareDegreeLevel(field, expected, actual);
+  return compareStringField(field, expected, actual);
 }
 
 /** Faithful port of scoring.ts:compareFields. */
@@ -255,8 +258,8 @@ export function compareFields(
 ): FieldResult[] {
   const results: FieldResult[] = [];
   for (const field of ALL_FIELDS) {
-    const expected = groundTruth[field] as string | number | string[] | undefined;
-    const actual = extracted[field] as string | number | string[] | undefined;
+    const expected = groundTruth[field] as FieldValue;
+    const actual = extracted[field] as FieldValue;
     if (expected === undefined && actual === undefined) continue;
     results.push(compareField(field, expected, actual));
   }

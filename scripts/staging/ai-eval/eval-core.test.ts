@@ -108,7 +108,7 @@ describe('buildEvalRecord', () => {
     });
     expect(record.gate.passed).toBe(false);
     expect(record.perField.credentialType.passed).toBe(false);
-    expect(record.misclassifications.length).toBe(3);
+    expect(record.misclassifications).toHaveLength(3);
     expect(record.misclassifications[0]).toMatchObject({ field: 'credentialType', expected: 'CPE', actual: 'CLE' });
   });
 

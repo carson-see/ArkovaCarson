@@ -46,9 +46,11 @@ import {
   parseIdentities,
   randomForwardedFor,
   type AiEndpoint,
+  type ExtractRequestBody,
   type FetchLike,
   type WorkerIdentity,
 } from './ai-eval/ai-client.js';
+import { resolveEvidenceOutputPath } from './ai-eval/evidence-path.js';
 import { planRate, pickIdentity, intervalMsForRatePerHour } from './ai-eval/rate.js';
 import { allGoldenEntries } from './ai-eval/golden.js';
 import {
@@ -66,7 +68,6 @@ import {
   isLoadOnlyVariant,
   type CorpusItem,
 } from './ai-eval/corpus.js';
-import type { ExtractRequestBody } from './ai-eval/ai-client.js';
 
 const { values: args } = parseArgs({
   options: {
@@ -135,6 +136,21 @@ function boundedSleep(ms: number, endAt: number): Promise<void> {
 
 const realFetch: FetchLike = fetch as unknown as FetchLike;
 
+function trackPendingRequest(pending: Set<Promise<void>>, request: Promise<void>): void {
+  pending.add(request);
+  void request.finally(() => pending.delete(request));
+}
+
+function recordHarnessFailure(stats: ReturnType<typeof newAiStats>, endpoint: AiEndpoint, err: unknown, variant: string): void {
+  recordAiOutcome(stats, {
+    endpoint,
+    status: 0,
+    ok: false,
+    latencyMs: 0,
+    transportError: err instanceof Error ? err.message : String(err),
+  }, variant);
+}
+
 async function main(): Promise<void> {
   const durationMin = parsePositiveInt(args.duration, 15, 'duration');
   const ratePerHour = parsePositiveInt(args.rate, 5000, 'rate');
@@ -142,7 +158,7 @@ async function main(): Promise<void> {
   const variants = parseDocVariants(args['doc-variants']);
   const timeoutMs = parsePositiveInt(args['timeout-ms'], 10_000, 'timeout-ms');
   const rotateIp = !args['no-rotate-ip'];
-  const evidencePath = args['evidence-out'];
+  const evidencePath = args['evidence-out'] ? resolveEvidenceOutputPath(args['evidence-out']) : undefined;
 
   const apiBase = resolveStagingApiBase(process.env);
   const identities: WorkerIdentity[] = parseIdentities(process.env.STAGING_AI_JWTS);
@@ -192,6 +208,7 @@ async function main(): Promise<void> {
   }, 60_000);
 
   let seq = 0;
+  const pendingRequests = new Set<Promise<void>>();
   try {
     while (Date.now() < endAt) {
       const endpoint = selectEndpointForSequence(seq, endpoints);
@@ -202,9 +219,17 @@ async function main(): Promise<void> {
       const effectiveEndpoint = isLoadOnlyVariant(item.variant) ? 'extract' : endpoint;
       const identity = pickIdentity(identities, seq);
       const forwardedFor = rotateIp ? randomForwardedFor() : undefined;
-      // Fire-and-forget within the pacing loop; the interval bounds the rate.
-      void callAiEndpoint(apiBase, effectiveEndpoint, payloadFor(effectiveEndpoint, item), identity, realFetch, { timeoutMs, forwardedFor })
-        .then((outcome) => recordAiOutcome(stats, outcome, item.variant));
+      const request = callAiEndpoint(
+        apiBase,
+        effectiveEndpoint,
+        payloadFor(effectiveEndpoint, item),
+        identity,
+        realFetch,
+        { timeoutMs, forwardedFor },
+      )
+        .then((outcome) => recordAiOutcome(stats, outcome, item.variant))
+        .catch((err: unknown) => recordHarnessFailure(stats, effectiveEndpoint, err, item.variant));
+      trackPendingRequest(pendingRequests, request);
       seq++;
       await boundedSleep(intervalMs, endAt);
     }
@@ -212,8 +237,7 @@ async function main(): Promise<void> {
     clearInterval(summaryTimer);
   }
 
-  // Give in-flight requests a moment to settle before summarizing.
-  await new Promise((r) => setTimeout(r, 2_000));
+  await Promise.allSettled([...pendingRequests]);
 
   const durationSec = (Date.now() - stats.startedAt) / 1000;
   const summary = summarizeAiRun(stats, mode, apiBase, durationSec);
@@ -227,8 +251,8 @@ async function main(): Promise<void> {
   console.log(JSON.stringify(summary, null, 2));
 
   if (evidencePath) {
-    mkdirSync(dirname(evidencePath), { recursive: true });
-    writeFileSync(evidencePath, JSON.stringify(summary, null, 2) + '\n');
+    mkdirSync(dirname(evidencePath), { recursive: true }); // NOSONAR S8707 — resolveEvidenceOutputPath confines writes to docs/staging.
+    writeFileSync(evidencePath, JSON.stringify(summary, null, 2) + '\n'); // NOSONAR S8707 — resolveEvidenceOutputPath confines writes to docs/staging.
     console.log(`\n📄 Evidence written: ${evidencePath}`);
   }
 }

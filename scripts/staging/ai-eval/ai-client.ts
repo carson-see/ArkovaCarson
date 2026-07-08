@@ -27,6 +27,8 @@
  * for the multi-egress-IP note.
  */
 
+import { randomInt } from 'node:crypto';
+
 export const EXTRACT_PATH = '/api/v1/ai/extract';
 export const TEMPLATE_PATH = '/api/v1/ai/template';
 export const TAGS_PATH = '/api/v1/ai/tags';
@@ -66,14 +68,12 @@ export interface AiCallResult {
  *  tight it flags normal slow inference. Override via callAiEndpoint options. */
 export const DEFAULT_CLIENT_TIMEOUT_MS = 10_000;
 
-export interface FetchLike {
-  (url: string, init?: RequestInit): Promise<{
-    status: number;
-    ok: boolean;
-    headers: { get(name: string): string | null };
-    text(): Promise<string>;
-  }>;
-}
+export type FetchLike = (url: string, init?: RequestInit) => Promise<{
+  status: number;
+  ok: boolean;
+  headers: { get(name: string): string | null };
+  text(): Promise<string>;
+}>;
 
 /**
  * A JWT-bearing worker identity. Sharding load across several of these keeps
@@ -92,7 +92,7 @@ export interface WorkerIdentity {
  * bare `eyJ...` gets an auto label). Whitespace-tolerant.
  */
 export function parseIdentities(raw: string | undefined): WorkerIdentity[] {
-  if (!raw || !raw.trim()) return [];
+  if (!raw?.trim()) return [];
   return raw
     .split(',')
     .map((chunk) => chunk.trim())
@@ -150,7 +150,7 @@ export interface CallOptions {
 
 /** A random public-ish IPv4 for X-Forwarded-For rotation (never 10./127./192.168.). */
 export function randomForwardedFor(): string {
-  const octet = () => 1 + Math.floor(Math.random() * 254);
+  const octet = () => randomInt(1, 255);
   let a = octet();
   while (a === 10 || a === 127 || a === 192 || a === 172) a = octet();
   return `${a}.${octet()}.${octet()}.${octet()}`;

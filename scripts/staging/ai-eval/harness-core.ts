@@ -185,12 +185,8 @@ export function buildTagsPayload(entry: GoldenEntry): TagsPayload {
 export function selectEndpointForSequence(sequence: number, endpoints: AiEndpoint[]): AiEndpoint {
   if (endpoints.length === 0) throw new Error('endpoints must be non-empty');
   if (endpoints.length === 1) return endpoints[0];
-  if (
-    endpoints.length === 3 &&
-    endpoints[0] === 'extract' &&
-    endpoints[1] === 'template' &&
-    endpoints[2] === 'tags'
-  ) {
+  const endpointSet = new Set(endpoints);
+  if (endpoints.length === 3 && endpointSet.has('extract') && endpointSet.has('template') && endpointSet.has('tags')) {
     const cycle: AiEndpoint[] = ['extract', 'template', 'extract', 'tags'];
     return cycle[sequence % cycle.length];
   }

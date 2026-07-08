@@ -114,6 +114,10 @@ describe('selectEndpointForSequence', () => {
     for (let i = 0; i < 12; i++) seen.add(selectEndpointForSequence(i, ['extract', 'template', 'tags']));
     expect(seen).toEqual(new Set(['extract', 'template', 'tags']));
   });
+  it('keeps the weighted rotation even if endpoint flags arrive in a different order', () => {
+    const cycle = Array.from({ length: 4 }, (_, i) => selectEndpointForSequence(i, ['tags', 'extract', 'template']));
+    expect(cycle).toEqual(['extract', 'template', 'extract', 'tags']);
+  });
   it('honors a single-endpoint restriction (extract-only focus mode)', () => {
     for (let i = 0; i < 5; i++) expect(selectEndpointForSequence(i, ['extract'])).toBe('extract');
   });
