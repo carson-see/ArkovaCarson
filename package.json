@@ -40,6 +40,8 @@
     "staging:seed": "tsx scripts/staging/seed.ts",
     "staging:load": "tsx scripts/staging/load-harness.ts",
     "staging:soak-lanes": "tsx scripts/staging/soak-lanes.ts",
+    "staging:cpf-fault": "tsx scripts/staging/confirmation-proof-fault-harness.ts",
+    "staging:classify-backcatalog": "tsx scripts/staging/classify-backcatalog-harness.ts",
     "staging:claim": "./scripts/staging/claim.sh",
     "staging:janitor": "./scripts/staging/cleanup-orphan-tags.sh",
     "staging:rotate-iam": "./scripts/staging/rotate-deploy-iam.sh",

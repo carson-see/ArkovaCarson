@@ -95,19 +95,24 @@ export function isDuplicateTxError(message: string): boolean {
  *
  * Retryable:
  *   - HttpError with 5xx status
+ *   - HttpError with 429 status (rate-limited — the node is up but throttling
+ *     us; backing off IS the correct response, per the Retry-After contract in
+ *     §1.10 and the GetBlock RPC rate limits). #1408: a 429 while fetching a
+ *     confirmation proof for an already-confirmed tx must NOT be treated as a
+ *     definitive/stale failure.
  *   - TypeError with network-related message (fetch failures)
  *   - AbortError / DOMException (timeout)
  *   - Errors with ECONNREFUSED, ECONNRESET, ETIMEDOUT in message
  *
  * NOT retryable:
- *   - HttpError with 4xx status (bad request, not found, etc.)
+ *   - HttpError with a non-429 4xx status (bad request, not found, etc.)
  *   - TypeError from programming bugs (non-network messages)
  *   - RPC-level application errors (JSON error response)
  *   - Any other unknown error
  */
 export function isRetryableError(error: unknown): boolean {
   if (error instanceof HttpError) {
-    return error.status >= 500;
+    return error.status >= 500 || error.status === 429;
   }
 
   if (error instanceof TypeError) {

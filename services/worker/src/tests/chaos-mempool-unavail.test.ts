@@ -45,8 +45,13 @@ describe('QA-CHAOS-02: Mempool.space Unavailability', () => {
       expect(isRetryableError(new HttpError('unavailable', 503))).toBe(true);
     });
 
-    it('retries 429 is NOT retryable (HttpError < 500)', () => {
-      expect(isRetryableError(new HttpError('rate limited', 429))).toBe(false);
+    it('retries 429 Too Many Requests (rate-limit → back off and retry, per §1.10 Retry-After; #1408)', () => {
+      // A 429 is a throttle, not a hard client error: the node is up and the
+      // request is valid, it just wants us to slow down. Backing off IS the
+      // correct response, so isRetryableError treats 429 like a 5xx. #1408: this
+      // also stops a 429 while fetching a confirmation proof for an
+      // already-confirmed tx from being poisoned to a definitive/stale failure.
+      expect(isRetryableError(new HttpError('rate limited', 429))).toBe(true);
     });
 
     it('does NOT retry 400 Bad Request', () => {

@@ -35,7 +35,7 @@
 import * as bitcoin from 'bitcoinjs-lib';
 import { logger } from '../utils/logger.js';
 import type { MerkleProofEntry } from '../utils/merkle.js';
-import type { ConfirmationProofProvider } from './utxo-provider.js';
+import { isRetryableError, type ConfirmationProofProvider } from './utxo-provider.js';
 
 // Re-export so callers/tests can import the provider slice alongside the
 // confirmation-proof types from one module.
@@ -658,8 +658,28 @@ export async function fetchConfirmationProof(
       provider.getTxOutProof([chainTxId], blockHash),
     ]);
   } catch (err) {
-    logger.warn({ chainTxId, blockHash, err: errMsg(err) }, 'confirmation-proof: header/proof fetch failed');
-    return { status: 'stale', chainTxId, blockHash, confirmations, reason: 'header or inclusion-proof fetch failed' };
+    // #1408 fault classification. The provider already exhausted its own
+    // `retryWithBackoff` before throwing, so a TRANSIENT class here (5xx / 429 /
+    // timeout / network drop — `isRetryableError` true) means the node was
+    // simply unreachable THIS tick for a tx that IS confirmed: keep the row
+    // recoverable as `pending` and let the next cron pass re-fetch. Only a
+    // DEFINITIVE failure (RPC application error like "block not found", a 4xx,
+    // or any non-retryable error) is treated as `stale` — the previously-
+    // recorded block genuinely no longer serves an inclusion proof for this tx.
+    // Poisoning a transient blip to `stale` used to strand a legitimately-
+    // confirmed anchor's bitcoin-tree evidence (the header column stays NULL and
+    // the scan keeps re-selecting it, but a `stale` classification signals
+    // "give up / reorg" to callers/dashboards, which is wrong for a 5xx).
+    const transient = isRetryableError(err);
+    logger.warn(
+      { chainTxId, blockHash, transient, err: errMsg(err) },
+      transient
+        ? 'confirmation-proof: header/proof fetch failed transiently — pending, retry next tick'
+        : 'confirmation-proof: header/proof fetch failed definitively — stale',
+    );
+    return transient
+      ? { status: 'pending', chainTxId, blockHash, confirmations, reason: 'header or inclusion-proof fetch failed transiently — will retry' }
+      : { status: 'stale', chainTxId, blockHash, confirmations, reason: 'header or inclusion-proof fetch failed (non-retryable)' };
   }
 
   if (!BLOCK_HEADER_HEX_RE.test(headerHex)) {
