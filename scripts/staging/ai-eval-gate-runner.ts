@@ -204,7 +204,11 @@ async function main(): Promise<void> {
     const { record, providersSeen } = await runRound(apiBase, identities, timeoutMs);
     const { merited, notes } = certifyRound(record, providersSeen, requireLive);
     if (merited) meritedRounds++;
-    if (!record.gate.passed) anyFailure = true;
+    // Fail-closed on BOTH signals: a gate-verdict miss, and (under --require-live)
+    // a round that is not merited — e.g. gate.passed=true off a mock/fast-fallback
+    // provider echoing golden fields. Either alone would let non-live evidence
+    // exit 0 as if it were merge-grade.
+    if (!record.gate.passed || (requireLive && !merited)) anyFailure = true;
 
     console.log(summarizeRoundLine(round, record, merited));
     for (const note of notes) console.log(`    note: ${note}`);

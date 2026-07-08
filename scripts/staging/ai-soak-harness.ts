@@ -78,6 +78,7 @@ const { values: args } = parseArgs({
     'no-rotate-ip': { type: 'boolean', default: false }, // disable X-Forwarded-For rotation
     'evidence-out': { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
+    'allow-undersized-pool': { type: 'boolean', default: false }, // force-run despite plan.sufficient=false
   },
 });
 
@@ -161,6 +162,13 @@ async function main(): Promise<void> {
 
   if (identities.length === 0) {
     console.error('::error::STAGING_AI_JWTS is required — /api/v1/ai/* rejects unauthenticated calls (401).');
+    process.exit(1);
+  }
+  if (!plan.sufficient && !args['allow-undersized-pool']) {
+    console.error(`::error::${plan.warning}`);
+    console.error('::error::Aborting — an undersized JWT pool would self-inflict 429s that masquerade as ' +
+      'Gemini reliability failures in the soak evidence. Add JWTs, lower --rate, or pass ' +
+      '--allow-undersized-pool to force a run (not merge-grade for reliability evidence).');
     process.exit(1);
   }
   if (args['dry-run']) {
