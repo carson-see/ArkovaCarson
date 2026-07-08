@@ -3,7 +3,7 @@ import { readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { newDriverStats } from './driver-core';
-import { writeEvidenceFile, bearerHeader, iamAuthHeaders, runDriver, requireEnv } from './runtime';
+import { writeEvidenceFile, bearerHeader, iamAuthHeaders, iamOnlyHeaders, runDriver, requireEnv } from './runtime';
 
 const scratch = join(process.cwd(), 'docs', 'staging', `.tmp-tsoak-runtime-${process.pid}`);
 
@@ -54,6 +54,13 @@ describe('runtime: IAM/app auth header split', () => {
     expect(iamAuthHeaders({ Authorization: 'Bearer supabase-jwt' })).toEqual({
       'X-Serverless-Authorization': 'Bearer iam-token',
       Authorization: 'Bearer supabase-jwt',
+    });
+  });
+
+  it('can carry only Cloud Run IAM without app Authorization for JWT-negative probes', () => {
+    process.env.STAGING_GCP_IDENTITY = 'iam-token';
+    expect(iamOnlyHeaders()).toEqual({
+      'X-Serverless-Authorization': 'Bearer iam-token',
     });
   });
 });

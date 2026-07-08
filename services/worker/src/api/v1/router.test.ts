@@ -28,4 +28,14 @@ describe('api v1 router attestation batch routes', () => {
       routerSource.indexOf("router.use('/webhooks', batchRateLimiter, webhooksRouter)"),
     );
   });
+
+  it('rate-limits webhook self-service by authenticated user instead of shared API-key batch IP bucket', () => {
+    const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
+
+    expect(routerSource).toMatch(/const webhooksSelfServiceRateLimiter = rateLimit\(\{[\s\S]*scope: ['"]webhooks-self-service['"]/);
+    expect(routerSource).toMatch(/keyGenerator: \(req\) => req\.authUserId \?\? req\.ip \?\? ['"]unknown['"]/);
+    expect(routerSource).toContain(
+      "router.use('/webhooks/self-service', requireAuth, webhooksSelfServiceRateLimiter, webhooksSelfServiceRouter)",
+    );
+  });
 });

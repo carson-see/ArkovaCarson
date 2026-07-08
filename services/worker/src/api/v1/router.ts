@@ -211,6 +211,13 @@ const batchRateLimiter = rateLimit({
   keyGenerator: (req) => req.apiKey?.keyId ?? req.ip ?? 'unknown',
 });
 
+const webhooksSelfServiceRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+  scope: 'webhooks-self-service',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
+});
+
 // ─── Mount routes ───
 // Agentic verification search — MUST be before /verify to avoid route shadowing (P8-S19)
 router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
@@ -374,7 +381,7 @@ router.use(
 // `req.authUserId`, and the router itself re-derives org + ORG_ADMIN from
 // `profiles`. Reuses `signPayload`/`replayDelivery` from
 // `../../webhooks/delivery.js` — no new signing or replay logic.
-router.use('/webhooks/self-service', requireAuth, batchRateLimiter, webhooksSelfServiceRouter);
+router.use('/webhooks/self-service', requireAuth, webhooksSelfServiceRateLimiter, webhooksSelfServiceRouter);
 
 // ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───
 // INT-09: CRUD routes are mutating/sensitive — apply batch tier rate limit

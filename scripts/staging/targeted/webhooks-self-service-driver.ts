@@ -36,6 +36,7 @@ import {
 import {
   runDriver,
   iamAuthHeaders,
+  iamOnlyHeaders,
   requireEnv,
   seedViaServiceRole,
   writeEvidenceFile,
@@ -133,7 +134,7 @@ async function seedAndPlan(ctx: DriverContext): Promise<WebhookRequestSpec[]> {
 
 async function fireOnce(ctx: DriverContext, stats: DriverStats, plan: WebhookRequestSpec[]): Promise<void> {
   for (const spec of plan) {
-    const headers = iamAuthHeaders(spec.headers ?? {});
+    const headers = spec.headers ? iamAuthHeaders(spec.headers) : iamOnlyHeaders();
     const outcome = await fireLabeled({ stats, ...spec, headers });
     ctx.log(`${spec.label}: status=${outcome.status}`);
   }

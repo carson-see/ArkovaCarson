@@ -93,6 +93,11 @@ export function iamAuthHeaders(extra: Record<string, string> = {}): Record<strin
   return { Authorization: iam, ...extra };
 }
 
+/** Cloud Run IAM only, leaving app-layer Authorization intentionally absent. */
+export function iamOnlyHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return { 'X-Serverless-Authorization': bearerHeader(iamToken()).Authorization, ...extra };
+}
+
 // ─── Service-role Supabase seeder ───────────────────────────────────────────
 
 let cachedExecutor: FixtureExecutor | null = null;
