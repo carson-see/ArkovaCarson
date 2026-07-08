@@ -134,6 +134,15 @@ app.get('/health', async (req, res) => {
         .eq('status', 'SUBMITTED')
         .order('updated_at', { ascending: false })
         .limit(1),
+    // Oldest PENDING anchor — powers the batch-drain dead-man's-switch
+    // (Lane-1 S3.5 / BTC-real). Indexed lookup, single row; keeps the
+    // /health?detailed probe sub-second even on the bloated anchors table.
+    getOldestPendingAnchor: async () =>
+      db.from('anchors')
+        .select('created_at')
+        .eq('status', 'PENDING')
+        .order('created_at', { ascending: true })
+        .limit(1),
     getPendingAnchorCount: async () => {
       // SCRUM-1259 (R1-5): swapped exact-count on bloated anchors table
       // for get_anchor_status_counts_fast RPC. /health?detailed=true must
