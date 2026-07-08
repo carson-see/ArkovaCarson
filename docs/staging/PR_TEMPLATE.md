@@ -82,6 +82,29 @@ If the PR touches *any* worker/migration/SDK/contract file, this variant does **
 
 ---
 
+## T2 (offline package/SDK) — test/parity evidence (architecturally-unsoakable; no worker runtime)
+
+Use this variant **only** when the PR is required-tier T2 *and* every changed file is an OFFLINE package/SDK path (`packages/**` or `sdks/**`) with **no** `services/worker/`, **no** `supabase/migrations/`, and **no** served-contract file (`docs/api/`, `docs/guides/API_GUIDE.md`). The classifier puts such a PR at T2 because it touches the public SDK/contract surface, but a standalone client library/CLI (e.g. the `arkova-py` Python SDK, `verifier-cli`) ships no worker image, no migration, and no deploy-log row, and is not the served Cloud Run HTTP contract — there is **no worker runtime to soak**. It satisfies T2 with test/parity evidence (pytest/vitest/parity green on head), an N/A-with-justification staging tag, and an unsoakable-surface note attesting that no worker runtime exists.
+
+If the PR touches *any* worker/migration/served-contract file, this variant does **not** apply — use the standard T2 (or T3) block above. Tier classification is unchanged; only the evidence form differs.
+
+```markdown
+## Staging Soak Evidence
+
+- Tier: T2
+- PR head SHA: 40-character current PR head SHA
+- Test evidence: pytest N/N green + parity suite green on current head
+- CI green: Tests, TypeCheck & Lint all green on current head
+- Staging tag URL or N/A explanation: N/A — offline <package> SDK: no worker runtime, no migration, no served contract to soak
+
+### Unsoakable-surface note
+- No worker runtime: offline package/SDK — no Cloud Run deploy, no worker revision, no image digest, no staging deploy-log id, no migration (nothing a soak could exercise)
+- Surfaces touched: <the offline package(s) this PR changes, e.g. packages/arkova-py>
+- Approved by: <named human approver — not blank, not a placeholder>
+```
+
+---
+
 ## T3 — Critical isolated/clean soak (migrations / data integrity / concurrency / security / chain / treasury; 48h minimum)
 
 ```markdown

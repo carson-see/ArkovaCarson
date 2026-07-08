@@ -6,6 +6,7 @@ import {
   hasResidualRiskException,
   isDeployWorkerUsesOnlyBump,
   isFrontendOnlyChange,
+  isOfflinePackageOnlyChange,
   isStagingToolingOnly,
   missingFields,
   requiredTierFor,
@@ -2296,6 +2297,278 @@ ${note}
       expect(r.ok).toBe(false);
       // Declared T2 < required T3 → blocked; never reaches frontend-T2 acceptance.
       expect(r.errors.join(' ')).toMatch(/below required tier T3/i);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Architecturally-unsoakable evidence mode (offline CLI/SDK/tooling pkgs).
+  //
+  // A PR can be required-tier T2 purely by touching an OFFLINE package/SDK
+  // surface (the `packages/(?:arkova-py|embed|mcp-server|typescript|langchain)`
+  // / `sdks/` half of the SDK PATH_RULE). Those packages ship no worker code,
+  // no migration, and are not the served Cloud Run HTTP contract — they are
+  // distributed as standalone libraries/CLIs and run offline (pytest / vitest /
+  // parity). Such a PR can NEVER produce the worker-soak artifacts (Worker
+  // revision, Image digest, Cloud Run URL, Staging deploy-log id, clean_mirror
+  // preflight) the standard T2 block demands — an impossible catch-22 that
+  // blocked #1411 (verifier-cli + arkova-py).
+  //
+  // The unsoakable path lets that narrow case satisfy T2 with TEST/PARITY
+  // evidence (vitest/pytest/parity green at head) + an N/A-with-justification
+  // staging tag + an `### Unsoakable-surface note` attesting no worker runtime
+  // exists to soak.
+  //
+  // CRITICAL fail-closed guard: this path activates ONLY when every changed
+  // file is an offline package/SDK path (packages/** or sdks/**) AND none is a
+  // worker/migration/served-contract surface. Any worker-, migration-, or
+  // API-contract-doc-touching T2 PR keeps the unchanged worker-artifact
+  // requirements.
+  // ───────────────────────────────────────────────────────────────────────
+  describe('architecturally-unsoakable evidence mode', () => {
+    const headSha = '1234567890abcdef1234567890abcdef12345678';
+
+    // The real #1411 fileset: an offline Python client SDK + its tests.
+    const offlinePackageT2Files = [
+      'packages/arkova-py/src/arkova/client.py',
+      'packages/arkova-py/src/arkova/models.py',
+      'packages/arkova-py/tests/test_client.py',
+      'packages/arkova-py/pyproject.toml',
+    ];
+
+    const unsoakableBody = (overrides: Partial<{
+      tier: string;
+      head: string;
+      testEvidence: string;
+      ciGreen: string;
+      stagingTag: string;
+      note: string;
+    }> = {}) => {
+      const {
+        tier = 'T2',
+        head = headSha,
+        testEvidence = 'pytest 42/42 green + parity suite green on current head',
+        ciGreen = 'Tests, TypeCheck & Lint all green on current head',
+        stagingTag = 'N/A — offline Python SDK: no worker runtime, no migration, no served contract to soak',
+        note = `
+### Unsoakable-surface note
+- No worker runtime: offline SDK package — no Cloud Run deploy, no worker revision, no image digest, no staging deploy-log id, no migration (nothing a soak could exercise)
+- Surfaces touched: packages/arkova-py (standalone Python client library, run offline by consumers)
+- Approved by: Carson`,
+      } = overrides;
+      return `## Staging Soak Evidence
+- Tier: ${tier}
+- PR head SHA: ${head}
+- Test evidence: ${testEvidence}
+- CI green: ${ciGreen}
+- Staging tag URL or N/A explanation: ${stagingTag}
+${note}
+`;
+    };
+
+    describe('isOfflinePackageOnlyChange', () => {
+      it('is true for an all-offline-package fileset (#1411 arkova-py)', () => {
+        expect(isOfflinePackageOnlyChange(offlinePackageT2Files)).toBe(true);
+      });
+
+      it('is true for a single offline SDK source file', () => {
+        expect(isOfflinePackageOnlyChange(['packages/arkova-py/src/arkova/client.py'])).toBe(true);
+      });
+
+      it('is true for the sdks/ offline client tree', () => {
+        expect(isOfflinePackageOnlyChange([
+          'sdks/typescript/src/index.ts',
+          'sdks/langchain/src/tool.ts',
+        ])).toBe(true);
+      });
+
+      it('is true for the verifier-cli offline CLI package', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/verifier-cli/src/index.ts',
+          'packages/verifier/src/verify.ts',
+        ])).toBe(true);
+      });
+
+      it('is false when a worker file is present', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/arkova-py/src/arkova/client.py',
+          'services/worker/src/api/v1/verify.ts',
+        ])).toBe(false);
+      });
+
+      it('is false when a migration is present', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/typescript/src/index.ts',
+          'supabase/migrations/0354_x.sql',
+        ])).toBe(false);
+      });
+
+      it('is false when a served API contract doc is present (docs/api describes the soakable worker contract)', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/arkova-py/src/arkova/client.py',
+          'docs/api/openapi.yaml',
+        ])).toBe(false);
+      });
+
+      it('is false when the API_GUIDE contract doc is present', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/embed/src/widget.ts',
+          'docs/guides/API_GUIDE.md',
+        ])).toBe(false);
+      });
+
+      it('is false when a frontend file is present (not an offline package)', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/typescript/src/index.ts',
+          'src/components/api/ApiKeys.tsx',
+        ])).toBe(false);
+      });
+
+      it('is false for an empty fileset (nothing to attest as offline-package-only)', () => {
+        expect(isOfflinePackageOnlyChange([])).toBe(false);
+      });
+    });
+
+    // ── Scenario 1 (required): offline-package T2 + test evidence → PASS ──
+    it('Scenario 1: #1411 offline-package T2 with test/parity evidence PASSES', () => {
+      const r = check({
+        body: unsoakableBody(),
+        files: offlinePackageT2Files,
+        headSha,
+      });
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/unsoakable/i);
+    });
+
+    it('Scenario 1b: offline-package T2 PASSES with NO worker-artifact fields present at all', () => {
+      const body = unsoakableBody();
+      expect(body).not.toContain('- Worker revision:');
+      expect(body).not.toContain('- Image digest:');
+      expect(body).not.toContain('- Cloud Run service/tag URL:');
+      expect(body).not.toContain('- Staging deploy log id:');
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(true);
+    });
+
+    // ── Scenario 2 (required): worker-touching T2 still FAILS without artifacts ──
+    it('Scenario 2: worker-touching T2 with ONLY unsoakable evidence still FAILS (worker artifacts unchanged)', () => {
+      const r = check({
+        body: unsoakableBody(),
+        // Same body, but the fileset now includes a worker file → NOT offline-only.
+        files: ['packages/arkova-py/src/arkova/client.py', 'services/worker/src/api/v1/verify.ts'],
+        headSha,
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Worker revision:|Image digest:|Cloud Run|Staging deploy log id:/i);
+    });
+
+    it('Scenario 2b: a migration-bearing PR alongside an offline package still demands a full T3 soak', () => {
+      const r = check({
+        body: unsoakableBody({ tier: 'T3' }),
+        files: ['packages/arkova-py/src/arkova/client.py', 'supabase/migrations/0354_x.sql'],
+        headSha,
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      // Migration → T3; the offline-package escape hatch must not apply.
+      expect(r.errors.join(' ')).toMatch(/Worker revision:|Trigger A fires:|missing required fields for T3/i);
+    });
+
+    // ── Scenario 3 (required): offline-package T2 WITHOUT test evidence → FAIL ──
+    it('Scenario 3: offline-package T2 missing the Test evidence field FAILS', () => {
+      const body = unsoakableBody().replace(/- Test evidence:.*\n/, '');
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Test evidence:/i);
+    });
+
+    it('Scenario 3b: offline-package T2 with an EMPTY Test evidence value FAILS', () => {
+      const body = unsoakableBody({ testEvidence: '' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Test evidence:/i);
+    });
+
+    it('Scenario 3c: offline-package T2 with a PENDING Test evidence value FAILS (placeholder rejected)', () => {
+      const body = unsoakableBody({ testEvidence: 'PENDING' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/placeholder/i);
+    });
+
+    it('Scenario 3d: offline-package T2 whose Test evidence does not state a passing result FAILS', () => {
+      const body = unsoakableBody({ testEvidence: 'ran the suite locally' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Test evidence/i);
+    });
+
+    it('Scenario 3e: offline-package T2 with an empty CI green value FAILS', () => {
+      const body = unsoakableBody({ ciGreen: '' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/CI green:/i);
+    });
+
+    it('Scenario 3f: offline-package T2 with NO unsoakable-surface note FAILS', () => {
+      const body = unsoakableBody({ note: '' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/unsoakable-surface note|no worker runtime/i);
+    });
+
+    it('Scenario 3g: offline-package T2 whose note has a blank Approved by FAILS', () => {
+      const body = unsoakableBody({
+        note: `
+### Unsoakable-surface note
+- No worker runtime: offline SDK — nothing to soak
+- Surfaces touched: packages/arkova-py
+- Approved by:`,
+      });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Approved by|unsoakable-surface note/i);
+    });
+
+    it('Scenario 3h: offline-package T2 with a stale (mismatched) PR head SHA FAILS (exact-head integrity preserved)', () => {
+      const body = unsoakableBody();
+      const r = check({
+        body,
+        files: offlinePackageT2Files,
+        headSha: '9999999990abcdef1234567890abcdef12345678',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/PR head SHA/i);
+    });
+
+    it('Scenario 3i: offline-package T2 with a bare staging tag (no N/A justification, no URL) FAILS', () => {
+      const body = unsoakableBody({ stagingTag: 'skipped' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Staging tag URL or N\/A explanation/i);
+    });
+
+    // Under-declaration must still fail: an offline-package T2-required PR that
+    // declares T1 is blocked exactly as before (the unsoakable path does NOT
+    // weaken classification — it only changes which evidence T2 accepts).
+    it('does not let an offline-package T2-required PR sneak through as a declared T1', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: ${headSha}
+- Test evidence: pytest green
+- CI green: green
+- Staging tag URL or N/A explanation: N/A — offline SDK
+`;
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below required tier T2/i);
+    });
+
+    // A pure-frontend PR must NOT reach the offline-package path: it keeps the
+    // frontend-T2 evidence mode. Guards against the two alt-evidence paths
+    // bleeding into each other.
+    it('a frontend-only T2 PR is NOT treated as offline-package (stays frontend-T2)', () => {
+      expect(isOfflinePackageOnlyChange(['src/components/anchor/AssetDetailView.tsx'])).toBe(false);
     });
   });
 });
