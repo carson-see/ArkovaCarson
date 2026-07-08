@@ -10,7 +10,7 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 |------|---------|
 | `crypto.ts` | GCP KMS-based OAuth token encryption/decryption — cleartext never lands in Postgres |
 | `hmac.ts` | Shared HMAC-SHA256 webhook verifier (timing-safe, supports base64 and hex encoding) |
-| `drive.ts` | Google Drive OAuth client — token exchange, refresh, changes.watch, files.get, channels.stop |
+| `drive.ts` | Google Drive OAuth client — token exchange, refresh, changes.watch, files.get, channels.stop. **DRIVE-02 (S2)**: `createChangesWatch` now returns the `startPageToken` (additive) and accepts an optional `driveId` to scope startPageToken + changes.watch to a shared-drive corpus. |
 | `docusign.ts` | DocuSign OAuth client — consent URLs, token refresh, UserInfo discovery, envelope document fetch, Connect HMAC |
 | `docusign-rate-limit.ts` | DocuSign outbound API guard — per-account 3,000/hour local slot budget plus Retry-After-aware 429 retry wrapper |
 | `adobe-sign.ts` | Adobe Sign webhook HMAC verification helpers |

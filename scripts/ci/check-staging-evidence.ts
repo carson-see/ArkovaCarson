@@ -248,6 +248,28 @@ export const PATH_RULES: PathRule[] = [
 ];
 
 const TIER_RANK: Record<Tier, number> = { T0: 0, T1: 1, T2: 2, T3: 3 };
+
+/**
+ * The SHARED PROD-RUNTIME surface: the subset of {@link PATH_RULES} at tier T2 or
+ * higher. These are the files whose semantics a completed soak implicitly depends
+ * on because they are the same deployed artifact / DB / queue substrate the soak
+ * ran against — migrations (T3), chain/treasury (T3), security (T3), anchor
+ * lifecycle + cron (T3), billing (T3), queue/concurrency (T2), public API (T2),
+ * stripe/webhooks/auth/ai (T2), edge (T2), and the catch-all worker-behavior
+ * rule (T2). Derived from the single source of truth ({@link PATH_RULES}) so the
+ * shared surface can NEVER drift from the tier detector: adding a T2+ path rule
+ * automatically widens the surface whose intervening main-drift invalidates a
+ * completed soak, and lowering a rule below T2 automatically drops it.
+ *
+ * The <T2 rules (frontend `src/…` at T1) are intentionally excluded: a
+ * frontend-only PR is classified T1 and never reaches the T2/T3
+ * {@link stagingIntegrityErrors} base-drift path, so folding the T1 frontend
+ * surface in here would only gate PRs that can't reach the check anyway.
+ */
+export const SHARED_PROD_RUNTIME_RULES: PathRule[] = PATH_RULES.filter(
+  (rule) => TIER_RANK[rule.minTier] >= TIER_RANK.T2,
+);
+
 const SHA_RE = /\b[0-9a-f]{40}\b/i;
 const DECLARED_TIER_VALUES = new Set<Tier>(['T0', 'T1', 'T2', 'T3']);
 const ALLOWED_EVIDENCE_SCOPES = new Set([
@@ -280,7 +302,12 @@ const DEPLOY_WORKER_WORKFLOW = '.github/workflows/deploy-worker.yml';
 // GitHub-Actions `uses:` pin (the Dependabot bump target), a YAML comment, or a
 // blank line. Anything else (env, secrets, min/max-instances, image, region,
 // service account, --set-env-vars, scaling, …) is a real runtime change.
-const DEPLOY_WORKER_USES_LINE_RE = /^[^\S\r\n]*-?[^\S\r\n]*uses:[^\S\r\n]*\S/;
+// Note the optional dash + its trailing whitespace are grouped together rather
+// than written as two adjacent `[^\S\r\n]*` runs — the adjacent form lets the
+// engine split a whitespace span ambiguously (super-linear backtracking Sonar
+// flags). Behaviour is identical: optional indent, optional `- ` list marker,
+// then `uses:`.
+const DEPLOY_WORKER_USES_LINE_RE = /^[^\S\r\n]*(?:-[^\S\r\n]*)?uses:[^\S\r\n]*\S/;
 const YAML_COMMENT_OR_BLANK_RE = /^[^\S\r\n]*(?:#.*)?$/;
 
 /**
@@ -358,7 +385,7 @@ function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
   // non-test importer), so there is no prod-runtime path. Exempt it to T0 BEFORE
   // the PATH_RULES.some() short-circuit — same shape as the deploy-worker carve-out
   // above (a T0 allowlist entry that has to win over a matching PATH_RULE).
-  if (/^services\/worker\/src\/proof\/fixtures\//.test(file)) return true;
+  if (file.startsWith('services/worker/src/proof/fixtures/')) return true;
   if (PATH_RULES.some((rule) => rule.pattern.test(file))) return false;
   return STAGING_TOOLING_ALLOW.some((re) => re.test(file))
     || DOCS_ONLY_RE.test(file)
@@ -446,6 +473,61 @@ export function isFrontendOnlyChange(files: string[]): boolean {
   );
 }
 
+/**
+ * Prefixes of the OFFLINE, architecturally-unsoakable distributable surface: the
+ * standalone client SDK / CLI / library packages that ship to consumers and run
+ * offline (pytest / vitest / parity), NOT the deployed Cloud Run worker.
+ *   - `packages/`  the `packages/*` library + CLI tree (arkova-py, verifier,
+ *                  verifier-cli, embed, mcp-server, typescript, langchain, sdk, …).
+ *   - `sdks/`      the client SDK tree (typescript / langchain / mcp-server).
+ * Verified (grep): no `packages/**` or `sdks/**` file is imported by
+ * `services/worker/src/**`, so none is bundled into the deployed worker image or
+ * applied to the DB — there is no worker runtime to soak for a PR confined here.
+ */
+const OFFLINE_PACKAGE_PREFIXES = ['packages/', 'sdks/'];
+
+/**
+ * A served-contract-doc predicate. `docs/api/` and `docs/guides/API_GUIDE.md`
+ * are part of the SDK PATH_RULE, but they DOCUMENT the served Cloud Run worker
+ * HTTP contract — a soak validates that contract's behavior — so a PR touching
+ * them is NOT architecturally unsoakable and must stay on the standard
+ * worker-evidence path. Excluded from {@link isOfflinePackageOnlyChange}.
+ */
+const SERVED_CONTRACT_DOC_RE = /^(?:docs\/api\/|docs\/guides\/API_GUIDE\.md$)/;
+
+/**
+ * True iff EVERY changed file is a purely-offline package/SDK file — under one of
+ * {@link OFFLINE_PACKAGE_PREFIXES} (`packages/` / `sdks/`) and NOT matching any
+ * worker/migration/served-contract surface ({@link NON_FRONTEND_SURFACE_RE} minus
+ * the offline-package prefixes it also lists, plus the {@link SERVED_CONTRACT_DOC_RE}
+ * carve-out). This is the fail-closed guard for the architecturally-unsoakable
+ * evidence mode: it gates the alternate (test/parity + N/A-tag + unsoakable-note)
+ * evidence path so it can only ever apply to a PR that genuinely has no worker
+ * runtime to soak. #1411 (offline verifier-cli + arkova-py SDK) is exactly this
+ * case; any worker/migration/API-contract-doc-touching PR stays on the full
+ * worker-evidence path (fail-closed preserved).
+ *
+ * `NON_FRONTEND_SURFACE_RE` lists `^packages/` and `^sdks/` as "non-frontend", so
+ * it cannot be used directly as the denylist here (it would reject every offline
+ * package). Instead the denylist is the SERVED/worker/migration subset: worker
+ * (`services/`), migration/functions (`supabase/(migrations|functions)/`), served
+ * contract docs, CI workflows, and CI scripts. An offline package file matches
+ * none of those.
+ *
+ * An empty fileset returns false: there is nothing to attest as offline-only.
+ */
+export function isOfflinePackageOnlyChange(files: string[]): boolean {
+  if (files.length === 0) return false;
+  return files.every(
+    (f) => OFFLINE_PACKAGE_PREFIXES.some((p) => f.startsWith(p))
+      && !/^services\//.test(f)
+      && !/^supabase\/(?:migrations|functions)\//.test(f)
+      && !SERVED_CONTRACT_DOC_RE.test(f)
+      && !/^\.github\/workflows\//.test(f)
+      && !/^scripts\//.test(f),
+  );
+}
+
 const EVIDENCE_HEADER_RE = /^##\s+Staging\s+Soak\s+Evidence\s*$/im;
 const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
 
@@ -508,11 +590,16 @@ export function hasEvidenceSection(body: string): boolean {
   return EVIDENCE_HEADER_RE.test(body);
 }
 
-/** Evidence-block field set key: a standard tier, or the frontend-T2 path. */
-export type FieldSet = Tier | 'T2_FRONTEND';
+/**
+ * Evidence-block field set key: a standard tier, the frontend-T2 path, or the
+ * architecturally-unsoakable (offline-package) T2 path.
+ */
+export type FieldSet = Tier | 'T2_FRONTEND' | 'T2_UNSOAKABLE';
 
 function requiredFieldsFor(set: FieldSet): readonly string[] {
-  return set === 'T2_FRONTEND' ? T2_FRONTEND_FIELDS : TIER_SPECS[set].requiredFields;
+  if (set === 'T2_FRONTEND') return T2_FRONTEND_FIELDS;
+  if (set === 'T2_UNSOAKABLE') return T2_UNSOAKABLE_FIELDS;
+  return TIER_SPECS[set].requiredFields;
 }
 
 export function missingFields(body: string, set: FieldSet): string[] {
@@ -757,6 +844,47 @@ export const T2_FRONTEND_FIELDS = [
   'Rollback plan:',
 ];
 
+// ───────────────────────────────────────────────────────────────────────────
+// Architecturally-unsoakable evidence mode.
+//
+// A PR can be required-tier T2 purely by touching an OFFLINE package/SDK/CLI
+// surface (the `packages/…` / `sdks/` half of the SDK PATH_RULE). Those
+// packages ship no worker code, no migration, and are not the served Cloud Run
+// HTTP contract — they are distributed as standalone libraries/CLIs run offline
+// by consumers (pytest / vitest / parity). Such a PR can NEVER produce the
+// worker artifacts (Worker revision, Image digest, Cloud Run URL, Staging
+// deploy-log id) or the clean_mirror preflight the standard T2 block demands —
+// there is no worker runtime to soak. Demanding those was an impossible
+// catch-22 that blocked #1411 (verifier-cli + arkova-py).
+//
+// Instead it satisfies T2 with test/parity evidence (vitest/pytest/parity green
+// at head), an N/A-with-justification staging tag, and an `### Unsoakable-surface
+// note` attesting that no worker runtime exists to soak.
+//
+// This path is reachable ONLY through `isOfflinePackageOnlyChange(files)` — see
+// check(). Any worker/migration/served-contract-touching T2 PR keeps the
+// unchanged worker-artifact requirements (fail-closed).
+// ───────────────────────────────────────────────────────────────────────────
+export const T2_UNSOAKABLE_FIELDS = [
+  'Tier:',
+  'PR head SHA:',
+  'Test evidence:',
+  'CI green:',
+  'Staging tag URL or N/A explanation:',
+];
+
+// Unsoakable-surface note: an offline-package PR substitutes this for the worker
+// artifacts it cannot produce. The sub-fields attest that no worker runtime
+// exists to soak + name the offline surfaces; the SAME real-approver guard as
+// the other alternate-evidence notes applies.
+const UNSOAKABLE_NOTE_REQUIRED_FIELDS = [
+  'No worker runtime:',
+  'Surfaces touched:',
+  'Approved by:',
+];
+
+const UNSOAKABLE_NOTE_HEADER_RE = /^###\s+Unsoakable-surface\s+note\b/im;
+
 function validateVercelUrlEvidence(body: string): string | null {
   const field = 'Vercel deployment URL:';
   // Must be present, filled, not a placeholder, AND an actual URL.
@@ -830,6 +958,80 @@ function frontendT2Errors(body: string): string[] {
         'frontend-T2 evidence requires a `### Residual-risk note` section '
         + 'attesting that no worker artifacts exist (frontend-only: no Cloud Run '
         + 'deploy, no worker revision, no image digest, no staging deploy-log id).',
+      );
+    }
+  }
+
+  return errors.filter((e): e is string => e !== null);
+}
+
+/**
+ * Architecturally-unsoakable evidence validation. Mirrors the spirit of the
+ * frontend-T2 / T1 auditable-value checks (real test/parity result, real CI
+ * green, real N/A-justified staging tag, named approver) but swaps the
+ * worker-artifact requirements for a `### Unsoakable-surface note` attesting
+ * that no worker runtime exists to soak. Returns the list of error strings
+ * (empty = ok).
+ */
+function unsoakableT2Errors(body: string): string[] {
+  const errors: (string | null)[] = [];
+
+  if (!hasEvidenceSection(body)) {
+    return [
+      'PR body is missing a `## Staging Soak Evidence` section. '
+      + 'Use docs/staging/PR_TEMPLATE.md (unsoakable-surface block) as a starting point.',
+    ];
+  }
+
+  const missing = missingFields(body, 'T2_UNSOAKABLE');
+  if (missing.length > 0) {
+    errors.push(
+      '`## Staging Soak Evidence` section is missing required fields for the '
+      + 'architecturally-unsoakable (offline package/SDK) evidence path: '
+      + missing.map((f) => `\`${f}\``).join(', ') + '.',
+    );
+  }
+
+  // `Test evidence:` must be filled (no placeholder) AND state a passing result
+  // (pytest/vitest/parity green). The non-empty check runs first because
+  // validatePassingEvidenceField short-circuits to PASS on an empty value.
+  errors.push(
+    validateFilledEvidenceField(body, 'Test evidence:'),
+    validatePassingEvidenceField(
+      body,
+      'Test evidence:',
+      /\b(?:green|pass(?:ed|es)?|success(?:ful)?|ok|\d+\s*\/\s*\d+)\b/i,
+      'Test evidence: must state a passing test/parity result (e.g. pytest/vitest/parity green).',
+    ),
+    validateNonEmptyEvidenceField(body, 'CI green:'),
+    validatePassingEvidenceField(
+      body,
+      'CI green:',
+      /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
+      'CI green: must state that CI is green.',
+    ),
+    // The staging tag MUST be an explicit N/A-with-justification (or a URL, for
+    // symmetry with the T1 validator) — a bare "skipped" is not auditable.
+    validateStagingTagEvidence(body),
+    validateFilledEvidenceField(body, 'Staging tag URL or N/A explanation:'),
+  );
+
+  // The worker artifacts are substituted by an unsoakable-surface note.
+  const note = hasUnsoakableSurfaceNote(body);
+  if (!note.valid) {
+    if (note.missing.length > 0) {
+      errors.push(
+        '`### Unsoakable-surface note` is missing required sub-fields: '
+        + note.missing.map((f) => `\`${f}\``).join(', ')
+        + '. The note must attest that no worker runtime exists to soak '
+        + '(offline package/SDK) and carry a named `Approved by:`.',
+      );
+    } else {
+      errors.push(
+        'Architecturally-unsoakable evidence requires a `### Unsoakable-surface '
+        + 'note` section attesting that no worker runtime exists to soak '
+        + '(offline package/SDK: no Cloud Run deploy, no worker revision, no '
+        + 'image digest, no staging deploy-log id, no migration).',
       );
     }
   }
@@ -938,8 +1140,9 @@ const FRONTEND_RESIDUAL_RISK_REQUIRED_FIELDS = [
 function validateResidualRiskNote(
   body: string,
   requiredFields: readonly string[],
+  headerRe: RegExp = RESIDUAL_RISK_HEADER_RE,
 ): { valid: boolean; missing: string[] } {
-  const headerMatch = RESIDUAL_RISK_HEADER_RE.exec(body);
+  const headerMatch = headerRe.exec(body);
   if (!headerMatch) return { valid: false, missing: [] };
   const sectionStart = headerMatch.index + headerMatch[0].length;
   const nextHeading = body.slice(sectionStart).search(/^#{1,3}\s/m);
@@ -971,6 +1174,14 @@ export function hasResidualRiskException(body: string): { valid: boolean; missin
 
 export function hasFrontendResidualRiskNote(body: string): { valid: boolean; missing: string[] } {
   return validateResidualRiskNote(body, FRONTEND_RESIDUAL_RISK_REQUIRED_FIELDS);
+}
+
+export function hasUnsoakableSurfaceNote(body: string): { valid: boolean; missing: string[] } {
+  return validateResidualRiskNote(
+    body,
+    UNSOAKABLE_NOTE_REQUIRED_FIELDS,
+    UNSOAKABLE_NOTE_HEADER_RE,
+  );
 }
 
 function preflightResultErrors(body: string): string[] {
@@ -1073,28 +1284,65 @@ function impactNoteAttestsNoRuntimeEffect(value: string): boolean {
     && hasNamedApprover(value);
 }
 
+/**
+ * The set of file-path predicates whose intervening main-drift could invalidate
+ * THIS PR's completed soak. It is the UNION of:
+ *   1. `ownFiles` — the exact files this PR changed (`opts.files`). If main
+ *      independently edited one of the exact files the PR soaked, the soak ran
+ *      against a now-stale version of that file → re-soak. Matched by exact path
+ *      equality against the drift set.
+ *   2. `sharedPatterns` — the SHARED PROD-RUNTIME surface ({@link
+ *      SHARED_PROD_RUNTIME_RULES} patterns). Files not in this PR's diff but whose
+ *      semantics the soak implicitly depends on because they are the same deployed
+ *      artifact / DB / queue substrate (migrations, chain, queue/cron, billing,
+ *      public API, …). Matched by regex against the drift set.
+ */
+function prSurfaceMatchers(files: string[]): { ownFiles: Set<string>; sharedPatterns: RegExp[] } {
+  return {
+    ownFiles: new Set(files),
+    sharedPatterns: SHARED_PROD_RUNTIME_RULES.map((rule) => rule.pattern),
+  };
+}
+
+/**
+ * The subset of `driftFiles` (files changed on main between the evidence base and
+ * the current base) that INTERSECTS this PR's soak surface — i.e. the drift files
+ * that could have invalidated the soak. Empty ⇒ drift is disjoint from the PR
+ * surface ⇒ evidence preserved.
+ */
+function driftFilesIntersectingSurface(
+  driftFiles: string[],
+  surface: { ownFiles: Set<string>; sharedPatterns: RegExp[] },
+): string[] {
+  return driftFiles.filter(
+    (f) => surface.ownFiles.has(f) || surface.sharedPatterns.some((re) => re.test(f)),
+  );
+}
+
+/**
+ * Path-aware base-drift enforcement. When the evidence's `Base SHA` no longer
+ * matches the current base, the intervening main movement is compared against
+ * THIS PR's soak surface ({@link prSurfaceMatchers}):
+ *
+ *   • DISJOINT (no drift file touches the PR's own files or the shared
+ *     prod-runtime surface) → evidence preserved, no attestation required.
+ *   • INTERSECTS → the soak ran against a now-stale version of a surface the PR
+ *     depends on → hard fail (re-soak), with a strictly-narrower fallback: the
+ *     operator MAY preserve evidence for the T0-only case by supplying an
+ *     approved `Base drift impact:` attestation AND the intervening drift being
+ *     classified strictly T0. That fallback exists only so no
+ *     currently-passing (T0-drift + attested) PR regresses; it is NOT a general
+ *     override for T1+ same-surface drift.
+ *   • drift-file list unavailable (`changedFilesBetween` → null and no override)
+ *     → fail closed (re-soak).
+ */
 function baseDriftImpactErrors(
   body: string,
   evidenceBaseSha: string,
   currentBaseSha: string,
+  prFiles: string[],
   driftFilesOverride?: string[],
 ): string[] {
-  const impact = extractEvidenceFieldValue(body, BASE_DRIFT_IMPACT_FIELD);
-  if (impact === null || !isFilledValue(impact)) {
-    return [
-      `Base SHA \`${evidenceBaseSha}\` differs from current base \`${currentBaseSha}\`. `
-      + `If the intervening main movement is harmless, add \`${BASE_DRIFT_IMPACT_FIELD}\` `
-      + 'with the changed files, the no-runtime/schema/staging-impact assessment, and a named approver; '
-      + 'otherwise refresh/re-scope the evidence.',
-    ];
-  }
-
-  if (!impactNoteAttestsNoRuntimeEffect(impact)) {
-    return [
-      `${BASE_DRIFT_IMPACT_FIELD} must state T0/CI-only drift, explicitly attest no runtime/schema/migration/staging/soak/deploy impact, and name an approver.`,
-    ];
-  }
-
   const driftFiles = driftFilesOverride ?? changedFilesBetween(evidenceBaseSha, currentBaseSha);
   if (driftFiles === null) {
     return [
@@ -1103,19 +1351,45 @@ function baseDriftImpactErrors(
     ];
   }
 
+  const surface = prSurfaceMatchers(prFiles);
+  const intersecting = driftFilesIntersectingSurface(driftFiles, surface);
+
+  // Disjoint drift — the soak's surface is untouched by the intervening main
+  // movement. Evidence preserved; no attestation needed.
+  if (intersecting.length === 0) return [];
+
+  // Same-surface drift. Preserve the strictly-narrower legacy escape hatch: an
+  // approved `Base drift impact:` attestation for the case where the WHOLE
+  // intervening drift is T0-only. Anything above T0 is an unconditional re-soak.
   const driftTier = requiredTierFor(driftFiles);
-  if (driftTier.tier !== 'T0') {
-    return [
-      `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\` touches ${driftTier.tier} surface `
-      + `(${driftTier.reason}); existing soak evidence cannot be preserved without release-owner re-scope/retest.`,
-    ];
+  if (driftTier.tier === 'T0') {
+    const impact = extractEvidenceFieldValue(body, BASE_DRIFT_IMPACT_FIELD);
+    if (impact === null || !isFilledValue(impact)) {
+      return [
+        `Base SHA \`${evidenceBaseSha}\` differs from current base \`${currentBaseSha}\` and the drift touches this PR's soak surface `
+        + `(${intersecting.join(', ')}). If the intervening main movement is harmless (T0/CI-only), add \`${BASE_DRIFT_IMPACT_FIELD}\` `
+        + 'with the changed files, the no-runtime/schema/staging-impact assessment, and a named approver; '
+        + 'otherwise refresh/re-scope the evidence.',
+      ];
+    }
+    if (!impactNoteAttestsNoRuntimeEffect(impact)) {
+      return [
+        `${BASE_DRIFT_IMPACT_FIELD} must state T0/CI-only drift, explicitly attest no runtime/schema/migration/staging/soak/deploy impact, and name an approver.`,
+      ];
+    }
+    return [];
   }
 
-  return [];
+  return [
+    `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\` touches this PR's soak surface `
+    + `(${intersecting.join(', ')}) at ${driftTier.tier} (${driftTier.reason}); `
+    + 'existing soak evidence cannot be preserved without release-owner re-scope/retest.',
+  ];
 }
 
 function baseShaEvidenceErrors(
   body: string,
+  prFiles: string[],
   expectedSha?: string,
   driftFilesOverride?: string[],
 ): string[] {
@@ -1125,13 +1399,13 @@ function baseShaEvidenceErrors(
   const expected = normalizeSha(expectedSha);
   if (!expected || evidenceSha === expected) return [];
 
-  return baseDriftImpactErrors(body, evidenceSha, expected, driftFilesOverride);
+  return baseDriftImpactErrors(body, evidenceSha, expected, prFiles, driftFilesOverride);
 }
 
 function stagingIntegrityErrors(
   body: string,
   tier: Tier,
-  opts: { headSha?: string; baseSha?: string; baseDriftFiles?: string[] } = {},
+  opts: { headSha?: string; baseSha?: string; baseDriftFiles?: string[]; files?: string[] } = {},
 ): string[] {
   if (tier === 'T0') return [];
 
@@ -1158,7 +1432,7 @@ function stagingIntegrityErrors(
       currentLabel: 'PR head',
       staleMessage: 'evidence cannot be copied across commits.',
     }),
-    ...baseShaEvidenceErrors(body, opts.baseSha, opts.baseDriftFiles),
+    ...baseShaEvidenceErrors(body, opts.files ?? [], opts.baseSha, opts.baseDriftFiles),
   ];
 }
 
@@ -1173,6 +1447,9 @@ interface StagingFilesOnlyResult {
  */
 const STAGING_TOOLING_ALLOW = [
   /^scripts\/staging\//,
+  // CI-only local-Supabase bootstrap for the types/tests/e2e jobs (sourced by
+  // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
+  /^scripts\/ci-supabase-start\.sh$/,
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
@@ -1189,6 +1466,12 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-count-exact-baseline(\.test)?\.ts$/,
   /^scripts\/ci\/check-coverage-monotonic(\.test)?\.ts$/,
   /^scripts\/ci\/snapshots\//, // CI baselines/snapshots — tooling, never prod runtime
+  // SCRUM-2666: the `npm run lint:copy` banned-terminology gate + its test
+  // fixtures. Runs only in CI (ci.yml typecheck-lint job) and locally; never
+  // ships to prod runtime → T0 tooling. scripts/fixtures/ holds .txt sources
+  // read by scripts/*.test.ts only (never imported, typechecked, or bundled).
+  /^scripts\/check-copy-terms(\.test)?\.ts$/,
+  /^scripts\/fixtures\//,
   // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
   /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
   /^scripts\/ci\/config-drift\//,
@@ -1306,6 +1589,12 @@ function isFrontendT2EvidencePath(declared: Tier, required: Tier, files: string[
     && isFrontendOnlyChange(files);
 }
 
+function isUnsoakableEvidencePath(declared: Tier, required: Tier, files: string[]): boolean {
+  return declared === 'T2'
+    && required === 'T2'
+    && isOfflinePackageOnlyChange(files);
+}
+
 function frontendT2Result(body: string, headSha?: string): CheckResult {
   const result: CheckResult = { ok: true, errors: [], notes: [] };
   const feErrors = frontendT2Errors(body);
@@ -1330,6 +1619,30 @@ function frontendT2Result(body: string, headSha?: string): CheckResult {
   return result;
 }
 
+function unsoakableT2Result(body: string, headSha?: string): CheckResult {
+  const result: CheckResult = { ok: true, errors: [], notes: [] };
+  const usErrors = unsoakableT2Errors(body);
+  // Exact-head integrity still applies: test evidence cannot be copied across
+  // commits any more than worker or frontend evidence can.
+  const headShaErrors = shaEvidenceErrors({
+    body,
+    field: 'PR head SHA:',
+    expectedSha: headSha,
+    currentLabel: 'PR head',
+    staleMessage: 'test/parity evidence cannot be copied across commits.',
+  });
+
+  addErrors(result, [...usErrors, ...headShaErrors]);
+  if (result.ok) {
+    result.notes.push(
+      'architecturally-unsoakable evidence path accepted (offline package/SDK '
+      + 'change; no worker runtime to soak — test/parity evidence + N/A staging '
+      + 'tag + unsoakable-surface note satisfy T2).',
+    );
+  }
+  return result;
+}
+
 function durationValidation(body: string, declared: Tier): { errors: string[]; notes: string[] } {
   const errors = soakDurationErrors(body, declared);
   if (errors.length === 0) return { errors: [], notes: [] };
@@ -1347,7 +1660,7 @@ function durationValidation(body: string, declared: Tier): { errors: string[]; n
 function standardEvidenceErrors(
   body: string,
   declared: Tier,
-  opts: { headSha?: string; baseSha?: string },
+  opts: { headSha?: string; baseSha?: string; baseDriftFiles?: string[]; files?: string[] },
 ): { errors: string[]; notes: string[] } {
   const errors: string[] = [];
   const notes: string[] = [];
@@ -1831,6 +2144,18 @@ export function check(opts: CheckOptions): CheckResult {
     const frontendResult = frontendT2Result(body, opts.headSha);
     addErrors(result, frontendResult.errors);
     result.notes.push(...frontendResult.notes);
+    return result;
+  }
+
+  // ── Architecturally-unsoakable evidence path ──
+  // Activates ONLY when the PR is T2 by requirement AND declaration AND every
+  // changed file is an offline package/SDK path (no worker runtime to soak).
+  // Tier classification is unchanged; this only swaps which evidence T2 accepts
+  // for a surface that CANNOT be soaked. Unblocks #1411 (verifier-cli + arkova-py).
+  if (isUnsoakableEvidencePath(declared, required.tier, files)) {
+    const unsoakableResult = unsoakableT2Result(body, opts.headSha);
+    addErrors(result, unsoakableResult.errors);
+    result.notes.push(...unsoakableResult.notes);
     return result;
   }
 

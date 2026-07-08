@@ -25,6 +25,14 @@ vi.mock('../../../utils/logger.js', () => ({
 
 vi.mock('../../../utils/db.js', () => ({ db: {} }));
 
+// DRIVE-01 (SCRUM-2366): the connect gate routes org admin/membership through
+// the canonical owner-inclusive resolver. Mock it so this webhook-URL test
+// exercises the org-admin happy path without a real DB.
+vi.mock('../../../api/_org-auth.js', () => ({
+  getCallerOrgIdResult: vi.fn(async () => ({ value: '11111111-1111-4111-8111-111111111111', error: false })),
+  isCallerOrgAdminResult: vi.fn(async () => ({ value: true, error: false })),
+}));
+
 import { createDriveOAuthRouter } from './drive-oauth.js';
 import { driveWebhookRouter } from '../webhooks/drive.js';
 import { API_V1_PREFIX, WEBHOOK_PATHS, relativeTo } from '../../../constants/webhook-paths.js';
@@ -53,6 +61,7 @@ describe('Drive webhook address registration', () => {
     let watchAddress: string | null = null;
     const db = {
       from: vi.fn((table: string) => {
+        if (table === 'organizations') return mockQuery({ data: { verification_status: 'VERIFIED', suspended: false }, error: null });
         if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
         if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null });
         return mockQuery({ data: null, error: null });

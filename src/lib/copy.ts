@@ -630,7 +630,7 @@ export const API_KEY_LABELS = {
   UNLIMITED_TIER: 'Unlimited',
   RESET_DATE: 'Resets on',
   PER_KEY_BREAKDOWN: 'Usage by Key',
-  USAGE_UNAVAILABLE: 'Usage data unavailable — worker service not connected',
+  USAGE_UNAVAILABLE: 'Usage data unavailable — service not connected',
   USAGE_CREATE_KEY_HINT: 'Usage metrics will appear once you create your first API key',
 } as const;
 
@@ -1478,6 +1478,18 @@ export const CONNECTIONS_LABELS = {
   // message and the backend gate stay in lockstep.
   DOCUSIGN_NOT_VERIFIED: 'Your organization must be verified before connecting DocuSign. Verified organizations can connect a document source. Contact support to start verification.',
   DOCUSIGN_GATE_CHECKING: 'Checking your organization’s authorization…',
+  GOOGLE_DRIVE_NAME: 'Google Drive',
+  GOOGLE_DRIVE_DESC: 'Trigger rules when a watched folder’s files change',
+  // DRIVE-01 (SCRUM-2366): entitlement denial copy. Each string mirrors a
+  // worker `code:` so the UI message and the backend eligibility gate stay in
+  // lockstep. A free or unverified account cannot connect a document source.
+  DRIVE_NOT_ADMIN: 'Only an organization administrator can connect Google Drive for your organization.',
+  DRIVE_ORG_NOT_VERIFIED: 'Your organization must be verified before connecting Google Drive. Verified organizations can connect a document source. Contact support to start verification.',
+  DRIVE_ORG_SUSPENDED: 'Your organization is currently suspended. Google Drive cannot be connected until the suspension is resolved.',
+  DRIVE_NEEDS_PAID_PLAN: 'Connecting Google Drive requires a paid plan. Upgrade your plan, or ask an organization administrator to connect it for your organization.',
+  DRIVE_INDIVIDUAL_NOT_VERIFIED: 'You must complete identity verification before connecting Google Drive to your personal account.',
+  DRIVE_GATE_CHECKING: 'Checking your authorization to connect Google Drive…',
+  DRIVE_GATE_UNAVAILABLE: 'We could not verify your authorization right now. Please retry in a few seconds; if the issue persists, contact support.',
 } as const;
 
 // =============================================================================
@@ -3216,6 +3228,26 @@ export const SECURE_QUEUE_LABELS = {
   NOT_CHARGED_FAILURE: 'We couldn’t secure your document right now. You were not charged. Please try again or add it to the queue.',
   QUEUED_TOAST: 'Added to the queue. No credits used.',
   SECURED_TOAST: 'Your document has been secured.',
+} as const;
+
+// =============================================================================
+// S3 Lane-3 CE strings (CE-06a / SCRUM-2377) — Credential Engine publication
+// status. Claims-review gate (CLAUDE.md §1.13 R-7): Credential Engine approved
+// Arkova TO PUBLISH only — no Registry listing exists. Any CE status copy
+// MUST use "approved to publish" wording; never assert a listing or any
+// external status we do not hold. Enforced by src/lib/copy-claims-gate.test.ts
+// (which scans this ENTIRE file, comments included) and
+// services/worker/src/ctdl/ctdl-claims-guard.ts (runtime, fail-closed).
+// =============================================================================
+
+export const CE_PUBLICATION_COPY = {
+  /** The one safe status wording — states exactly what we hold, nothing more. */
+  STATUS_APPROVED_TO_PUBLISH: 'Approved to publish',
+  /** Longer status detail for settings/status surfaces. */
+  STATUS_DETAIL:
+    'Credential Engine has approved Arkova to publish credential data. This approval does not assert any further external status.',
+  /** Shown while publication remains switched off (the standing default). */
+  PUBLICATION_OFF: 'Publication is not enabled.',
 } as const;
 
 // =============================================================================
