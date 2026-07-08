@@ -366,20 +366,20 @@ router.use(
   driveWebhookRouter,
 );
 
-// ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───
-// INT-09: CRUD routes are mutating/sensitive — apply batch tier rate limit
-// (10 req/min per key) per Constitution 1.10 and the webhook docs contract.
-router.use('/webhooks', batchRateLimiter, webhooksRouter);
-
 // ─── Webhook self-service — signed test ping + replay for the dashboard
 // (WH-02 / WH-03, SCRUM-2397 / SCRUM-2398) ───
-// `webhooksRouter` above is API-key-only (apiKeyAuth); the dashboard
+// The broad `webhooksRouter` below is API-key-only (apiKeyAuth); the dashboard
 // authenticates with a Supabase session JWT, so it needs a JWT-gated
 // sibling. Mirrors the `/keys` and `/exports/*` mounts: `requireAuth` sets
 // `req.authUserId`, and the router itself re-derives org + ORG_ADMIN from
 // `profiles`. Reuses `signPayload`/`replayDelivery` from
 // `../../webhooks/delivery.js` — no new signing or replay logic.
 router.use('/webhooks/self-service', requireAuth, batchRateLimiter, webhooksSelfServiceRouter);
+
+// ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───
+// INT-09: CRUD routes are mutating/sensitive — apply batch tier rate limit
+// (10 req/min per key) per Constitution 1.10 and the webhook docs contract.
+router.use('/webhooks', batchRateLimiter, webhooksRouter);
 
 // ─── Agent Identity & Delegation — Phase II Agentic Layer (PH2-AGENT-05) ───
 // JWT auth required — agents are org-managed resources

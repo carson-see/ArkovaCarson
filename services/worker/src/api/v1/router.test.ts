@@ -20,4 +20,12 @@ describe('api v1 router attestation batch routes', () => {
       /router\.use\(\s*['"]\/anchor['"]\s*,\s*requireScope\(['"]verify['"]\)\s*,\s*anchorExtractionManifestRouter\s*\)/,
     );
   });
+
+  it('mounts webhook self-service before the broad API-key webhook router so diagnostics are not double rate-limited', () => {
+    const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
+
+    expect(routerSource.indexOf("router.use('/webhooks/self-service'")).toBeLessThan(
+      routerSource.indexOf("router.use('/webhooks', batchRateLimiter, webhooksRouter)"),
+    );
+  });
 });
