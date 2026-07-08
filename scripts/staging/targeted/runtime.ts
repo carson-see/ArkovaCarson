@@ -70,11 +70,18 @@ function resolveGcloudPath(): string {
   }
 }
 
+export function resolveGcloudIdentityArgs(): string[] {
+  const args = ['auth', 'print-identity-token'];
+  const audience = process.env.STAGING_GCP_AUDIENCE?.trim();
+  if (audience) args.push(`--audiences=${audience}`);
+  return args;
+}
+
 function fetchIamToken(): string {
   const env = process.env.STAGING_GCP_IDENTITY;
   if (env) return env.trim();
   const bin = resolveGcloudPath();
-  return execFileSync(bin, ['auth', 'print-identity-token'], { encoding: 'utf8' }).trim();
+  return execFileSync(bin, resolveGcloudIdentityArgs(), { encoding: 'utf8' }).trim();
 }
 
 export function iamToken(): string {
