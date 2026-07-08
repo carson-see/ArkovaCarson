@@ -142,7 +142,7 @@ test.describe('Public Proof Gate (FE-PROOF-GATE / SCRUM-2501)', () => {
 
     await page.goto(`/verify/${securedPublicId}`);
     await expect(page.getByText(/Secured & Anchored/i)).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('JSON Proof Package')).not.toBeVisible();
+    await expect(page.getByText('JSON Proof Package')).toHaveCount(0);
   });
 
   test('state 2 (THE MOST IMPORTANT STATE): 404 "No Merkle proof available…" renders the honest empty-state — no download control, no error toast', async ({ page }) => {
@@ -163,14 +163,14 @@ test.describe('Public Proof Gate (FE-PROOF-GATE / SCRUM-2501)', () => {
     await expect(page.getByText(/Secured & Anchored/i)).toBeVisible({ timeout: 10000 });
 
     // No download control at all.
-    await expect(page.getByText('JSON Proof Package')).not.toBeVisible();
-    await expect(page.getByRole('button', { name: /download/i })).not.toBeVisible();
+    await expect(page.getByText('JSON Proof Package')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /download/i })).toHaveCount(0);
 
     // No error toast / alert.
-    await expect(page.getByRole('alert')).not.toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(0);
 
-    // The copy affirms Secured/anchored standing, points at Fingerprint + Network Receipt
-    // already on the page, and does not promise a date or say "generating".
+    // The copy affirms Secured/anchored standing, points at evidence already
+    // on the page, and does not promise a date or say "generating".
     await expect(page.getByText('Fingerprint (SHA-256)', { exact: true })).toBeVisible();
     const sectionText = await page.getByTestId('proof-not-yet-available').textContent();
     expect(sectionText?.toLowerCase()).not.toContain('generating');
@@ -182,8 +182,8 @@ test.describe('Public Proof Gate (FE-PROOF-GATE / SCRUM-2501)', () => {
     await page.goto(`/verify/${pendingPublicId}`);
 
     await expect(page.getByText(/Submitting to Network/i)).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('JSON Proof Package')).not.toBeVisible();
-    await expect(page.getByText(/Secured & Anchored/i)).not.toBeVisible();
+    await expect(page.getByText('JSON Proof Package')).toHaveCount(0);
+    await expect(page.getByText(/Secured & Anchored/i)).toHaveCount(0);
   });
 
   test('"Record not found" 404 renders a distinct real error state, not the honest empty-state', async ({ page }) => {
@@ -197,7 +197,7 @@ test.describe('Public Proof Gate (FE-PROOF-GATE / SCRUM-2501)', () => {
 
     await page.goto(`/verify/${securedPublicId}`);
     await expect(page.getByTestId('proof-record-missing')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByTestId('proof-not-yet-available')).not.toBeVisible();
+    await expect(page.getByTestId('proof-not-yet-available')).toHaveCount(0);
   });
 
   test('5xx renders a retryable "could not load" affordance, never the state-2 empty-state copy', async ({ page }) => {
@@ -211,7 +211,7 @@ test.describe('Public Proof Gate (FE-PROOF-GATE / SCRUM-2501)', () => {
 
     await page.goto(`/verify/${securedPublicId}`);
     await expect(page.getByTestId('proof-retry')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByTestId('proof-not-yet-available')).not.toBeVisible();
+    await expect(page.getByTestId('proof-not-yet-available')).toHaveCount(0);
     await expect(page.getByRole('button', { name: /retry/i })).toBeVisible();
   });
 });

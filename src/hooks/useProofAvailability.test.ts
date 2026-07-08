@@ -72,27 +72,15 @@ describe('useProofAvailability', () => {
     expect(result.current.state).toBe('empty');
   });
 
-  it('state 2 — 404 "No Merkle proof available…" -> empty', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(404, {
-      error: 'No Merkle proof available for this record. It may not have been batch-anchored.',
-    }));
+  it.each([
+    [404, 'No Merkle proof available for this record. It may not have been batch-anchored.', 'empty'],
+    [404, 'Record not found', 'record-missing'],
+    [429, 'rate limited', 'transient'],
+  ] as const)('status %i with body %s -> %s', async (status, error, expected) => {
+    fetchMock.mockResolvedValue(jsonResponse(status, { error }));
     const { result } = renderHook(() => useProofAvailability('ARK-1', true));
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.state).toBe('empty');
-  });
-
-  it('Record not found 404 -> record-missing', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(404, { error: 'Record not found' }));
-    const { result } = renderHook(() => useProofAvailability('ARK-1', true));
-    await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.state).toBe('record-missing');
-  });
-
-  it('429 -> transient', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(429, { error: 'rate limited' }));
-    const { result } = renderHook(() => useProofAvailability('ARK-1', true));
-    await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.state).toBe('transient');
+    expect(result.current.state).toBe(expected);
   });
 
   it('5xx -> retry', async () => {

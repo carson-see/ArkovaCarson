@@ -1,6 +1,5 @@
 # agents.md — hooks
-_Last updated: 2026-05-30_
-_Last updated: 2026-05-26_
+_Last updated: 2026-07-08_
 
 ## What This Folder Contains
 
@@ -8,6 +7,7 @@ React hooks for data fetching and mutations against Supabase. Each hook encapsul
 
 ## Recent Changes
 
+- 2026-07-08 FE-PROOF-GATE review fix (SCRUM-2501): `useProofAvailability.test.ts` now table-drives the status-to-state cases so 404 no-proof, 404 record-missing, and 429 transient remain pinned together. The classifier treats unknown 404 bodies as `retry`, not the honest direct-anchored empty state.
 - 2026-07-06 FE-PROOF-GATE (SCRUM-2501, Lane 2 S3): created `useProofAvailability.ts` — anonymous fetch of `GET /api/v1/verify/:publicId/proof` (public endpoint, plain `fetch` against `WORKER_URL`, no session — same pattern as `ProvenanceTimeline`), delegating state classification to the pure `src/lib/proofAvailability.ts`. Takes `(publicId, enabled)`; callers must pass `enabled` only when the record's normalized status is SECURED (the contract's belt-and-braces status gate lives in `VerifierProofDownload`, not here). Returns `{ state, proofBundle, loading, retry }`; `loading` initializes from the mount-time fetch condition so the state-2 empty copy never flashes on first paint; `retry()` re-runs the fetch for the 5xx affordance; no automatic retry on 429 (no retry storms against the rate-limited endpoint); aborts the in-flight fetch on unmount/publicId change. Tests: `useProofAvailability.test.ts` (12).
 - 2026-06-24 BUG-2026-06-24-010: `useEntitlements.ts` — no plan seeds a NULL `records_per_month`; the "organization" plan (seed.sql:220) encodes unlimited as the sentinel `999999`. Treating it as a finite cap rendered a frozen "N / 999999" meter pinned near 0% instead of "Unlimited records". Added exported `UNLIMITED_RECORDS_SENTINEL = 999999` + pure `isUnlimitedRecordsLimit(limit)` (`limit === null || limit >= 999999`); the hook now derives `isUnlimited` from it and **normalizes the returned `recordsLimit` to `null`** for unlimited plans. Every `recordsLimit === null` consumer (`UsageWidget`, `UpgradePrompt`, `ConfirmAnchorModal`→`UpgradePrompt`, `BillingPage`, `PricingPage`) gets the unlimited path for free — no per-consumer sentinel checks. Finite-branch math uses the always-numeric `rawRecordsLimit` so TS doesn't have to narrow the now-nullable `recordsLimit`. The `999999`/`>=999999`→unlimited and `999998`→finite boundary is asserted in `useEntitlements.test.ts`. Pattern: when a DB column uses a magic "unlimited" sentinel, normalize it to `null` at the hook boundary, not at every render site.
 - 2026-06-01 Platform-admin org roster: created `useAdminOrgMembers.ts` — same `Member[]`/`loading`/`error`/`refreshMembers` shape as `useOrgMembers`, but fetches `GET /api/admin/organizations/:id/members` via `workerFetch` (service_role, RLS-bypass). Gated by an `enabled` arg so it only fires for platform admins viewing an org they are NOT a member of (whose RLS-scoped `useOrgMembers` returns 0 rows); non-admins never hit the 403-bound endpoint. `OrgProfilePage` picks `useAdminOrgMembers` vs `useOrgMembers` based on `isPlatformAdmin(email) && !userRole`.

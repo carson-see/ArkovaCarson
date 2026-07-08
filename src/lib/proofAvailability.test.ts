@@ -140,11 +140,15 @@ describe('classifyProofAvailability', () => {
     expect(classifyProofAvailability(notFound(RECORD_NOT_FOUND_ERROR)).state).toBe('record-missing');
   });
 
-  it('no code + unknown/localized prose -> empty (the safe default, the exact fragility this closes)', () => {
-    // The pre-code behavior: any non-"Record not found" 404 falls to empty. With
-    // the code now present on real responses this only bites truly ancient/absent
-    // -code bodies, and errs toward the honest empty-state, never a false error.
-    expect(classifyProofAvailability(notFound('Kein Merkle-Nachweis verfügbar')).state).toBe('empty');
+  it('no code + unknown/localized prose -> retry, never the honest empty-state', () => {
+    expect(classifyProofAvailability(notFound('Kein Merkle-Nachweis verfügbar')).state).toBe('retry');
+  });
+
+  it('unrecognized code + unknown prose -> retry, never the honest empty-state', () => {
+    const result = classifyProofAvailability(
+      notFoundCoded('SOME_UNKNOWN_FUTURE_CODE', 'some future unknown string'),
+    );
+    expect(result.state).toBe('retry');
   });
 
   it('429 -> transient; renders neither empty-state nor error', () => {

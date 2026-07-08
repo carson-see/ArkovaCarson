@@ -269,7 +269,6 @@ describe('PublicVerification', () => {
     expect(screen.getByText('Credly')).toBeInTheDocument();
     expect(screen.getByText('Source Signed')).toBeInTheDocument();
 
-    const proofDownload = screen.getByTestId('proof-download');
     const credentialRenderer = screen.getByTestId('credential-renderer');
     // FE-PROOF-GATE (SCRUM-2501): proof-download no longer receives
     // sourceProvenance/evidence hashes at all — it fetches its own data live
@@ -279,8 +278,6 @@ describe('PublicVerification', () => {
     expect(credentialRenderer).not.toHaveTextContent('private@example.com');
     expect(credentialRenderer).not.toHaveTextContent('token=secret');
     expect(credentialRenderer).not.toHaveTextContent('evidence-hash-123');
-    expect(proofDownload).not.toHaveTextContent('private@example.com');
-    expect(proofDownload).not.toHaveTextContent('evidence-hash-123');
     expect(screen.queryByText('private@example.com')).not.toBeInTheDocument();
     expect(screen.queryByText(/token=secret/)).not.toBeInTheDocument();
   });

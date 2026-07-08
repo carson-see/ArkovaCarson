@@ -179,6 +179,7 @@ describe('BTC-003: GET /verify/:publicId/proof', () => {
     const res = await request(app).get('/ARK-2026-TEST-001/proof');
     expect(res.status).toBe(500);
     expect(res.body.error).toContain('malformed');
+    expect(res.body.proof_error_code).toBeUndefined();
   });
 
   it('returns 400 for short publicId', async () => {
@@ -190,6 +191,7 @@ describe('BTC-003: GET /verify/:publicId/proof', () => {
     const res = await request(app).get('/ab/proof');
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('Invalid publicId');
+    expect(res.body.proof_error_code).toBeUndefined();
   });
 
   it('handles lookup errors gracefully', async () => {
@@ -201,6 +203,7 @@ describe('BTC-003: GET /verify/:publicId/proof', () => {
     const res = await request(app).get('/ARK-2026-TEST-001/proof');
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('Internal server error');
+    expect(res.body.proof_error_code).toBeUndefined();
   });
 
   it('returns null batch_id when not in metadata', async () => {

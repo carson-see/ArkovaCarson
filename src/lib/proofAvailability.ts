@@ -145,13 +145,15 @@ export function classifyProofAvailability(
 
     // Fallback for older responses that predate proof_error_code (§1.8 additive
     // — the field may be absent) or carry an unrecognized code: exact-match the
-    // verbatim prose.
+    // verbatim prose. Unknown 404 bodies are retryable so we do not silently
+    // present API-contract drift as the honest direct-anchored state.
     if (body?.error === RECORD_NOT_FOUND_ERROR) {
       return RECORD_MISSING;
     }
-    // Verbatim "No Merkle proof available…" (or any other 404 body) is the
-    // honest state-2 signal — the back-catalogue direct-anchored case.
-    return NOT_AVAILABLE;
+    if (body?.error === NO_MERKLE_PROOF_ERROR) {
+      return NOT_AVAILABLE;
+    }
+    return RETRY;
   }
 
   if (result.status === 200 && result.ok) {

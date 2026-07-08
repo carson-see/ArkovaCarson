@@ -195,9 +195,9 @@ Requirements the final copy MUST satisfy:
 2. **Explain availability honestly**: a self-contained, independently checkable proof file becomes
    available once the record is batch-anchored. Do not promise a date, do not say it is "being
    generated," and do not imply the user must act.
-3. **Point to the evidence already on the page**: the Fingerprint and the Network Receipt (and
-   Network Observed Time where shown) are already displayed and remain the record's verification
-   surface today.
+3. **Point to the evidence already on the page**: the Fingerprint and available verification details
+   remain the record's verification surface today. Do not reference a Network Receipt when the record
+   has none.
 4. **Render no download control** — no disabled button, no greyed link, no spinner. An affordance
    that exists-but-is-disabled implies a temporary fault; this state is a truthful, stable "not
    applicable yet."
@@ -205,9 +205,9 @@ Requirements the final copy MUST satisfy:
 Suggested frame (illustrative only — final strings are Lane 2's, in `src/lib/copy.ts`, and must pass
 `npm run lint:copy`):
 
-> **Secured & anchored.** This record is protected on the Production Network — its Fingerprint and
-> Network Receipt above are its proof of standing. A downloadable proof file becomes available for
-> records secured through batch anchoring.
+> **Secured & anchored.** This record is protected on the Production Network. The Fingerprint and
+> verification details above are its proof of standing. A downloadable proof file becomes available
+> for records secured through batch anchoring.
 
 ---
 

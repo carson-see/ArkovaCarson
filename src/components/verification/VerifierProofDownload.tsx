@@ -63,10 +63,11 @@ export function VerifierProofDownload({
 
   if (!gateOpen) return null;
 
-  const handleDownloadBundle = () => {
+  const handleDownloadBundle = async () => {
     if (!proofBundle) return;
     setDownloading(true);
     try {
+      await Promise.resolve();
       // The downloaded artifact is the proof_bundle object VERBATIM — never a
       // hand-assembled subset (contract §3, state 1 requirement).
       downloadJson(`arkova-proof-${publicId}.json`, proofBundle);

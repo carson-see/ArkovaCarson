@@ -81,33 +81,14 @@ describe('VerifierProofDownload', () => {
   // status isn't SECURED/ACTIVE.
   // ---------------------------------------------------------------------
 
-  it('returns null and does not fetch for PENDING anchors', () => {
-    const { container } = render(<VerifierProofDownload publicId="ARK-1" status="PENDING" />);
-    expect(container).toBeEmptyDOMElement();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('returns null and does not fetch for SUBMITTED anchors', () => {
-    const { container } = render(<VerifierProofDownload publicId="ARK-1" status="SUBMITTED" />);
-    expect(container).toBeEmptyDOMElement();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('returns null for REVOKED anchors (SECURED-only download gate)', () => {
-    const { container } = render(<VerifierProofDownload publicId="ARK-1" status="REVOKED" />);
-    expect(container).toBeEmptyDOMElement();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('returns null for EXPIRED anchors (SECURED-only download gate)', () => {
-    const { container } = render(<VerifierProofDownload publicId="ARK-1" status="EXPIRED" />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it('returns null for SUPERSEDED anchors (SECURED-only download gate)', () => {
-    const { container } = render(<VerifierProofDownload publicId="ARK-1" status="SUPERSEDED" />);
-    expect(container).toBeEmptyDOMElement();
-  });
+  it.each(['PENDING', 'SUBMITTED', 'REVOKED', 'EXPIRED', 'SUPERSEDED'])(
+    'returns null and does not fetch for %s anchors (SECURED-only download gate)',
+    status => {
+      const { container } = render(<VerifierProofDownload publicId="ARK-1" status={status} />);
+      expect(container).toBeEmptyDOMElement();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   // ---------------------------------------------------------------------
   // State 1 — 200 + verified true + proof_bundle -> live download control.

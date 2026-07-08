@@ -1029,14 +1029,14 @@ export const VERIFICATION_DISPLAY_LABELS = {
 // docs/reference/FE_PROOF_GATE_CONTRACT.md \u00a73.1. State 2 (the honest core \u2014
 // SECURED but no downloadable proof file, i.e. the ~2.97M direct-anchored
 // back catalogue) renders NO download control at all; this copy affirms the
-// record's standing first, explains availability honestly, and points at the
-// Fingerprint + Network Receipt already on the page. It never promises a date
-// or implies the user must act.
+// record's standing first and explains availability honestly. It never promises
+// a date, implies the user must act, or references receipt fields that may be
+// absent on direct-anchored records.
 export const PROOF_AVAILABILITY_LABELS = {
   // State 2 / 1b \u2014 honest empty-state. No disabled button, no error toast.
   NOT_YET_AVAILABLE_TITLE: 'Secured & Anchored',
   NOT_YET_AVAILABLE_BODY:
-    'This record is protected on the Production Network \u2014 its Fingerprint and Network Receipt above are its proof of standing. A downloadable proof file becomes available for records secured through batch anchoring.',
+    'This record is protected on the Production Network. The Fingerprint and verification details above are its proof of standing. A downloadable proof file becomes available for records secured through batch anchoring.',
   // State 3 (record not yet SECURED) has no entry here: the page-level hero
   // state machine ("Submitting to Network\u2026", proof sections hidden \u2014 see
   // src/components/verification/agents.md) IS the securing-in-progress
