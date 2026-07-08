@@ -19,6 +19,7 @@
  * Env:
  *   STAGING_API_BASE            REQUIRED per-PR tag URL
  *   STAGING_WEBHOOK_ORG_ADMIN_JWT REQUIRED ORG_ADMIN Supabase JWT
+ *   STAGING_WEBHOOK_ORG_ADMIN_REFRESH_TOKEN optional; required for long soaks
  *   STAGING_WEBHOOK_ENDPOINT_ID REQUIRED existing endpoint id for test/replay
  *   STAGING_WEBHOOK_DELIVERY_ID  optional delivery id for replay; a seeded/known id
  *   STAGING_FIXTURE_ORG_ID       REQUIRED org id owning the seeded DLQ row
@@ -65,6 +66,67 @@ export interface WebhookPlanArgs {
   endpointId: string;
   deliveryId: string;
   dlqId: string;
+}
+
+interface WebhookAuthSession {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAtMs: number | null;
+}
+
+let webhookAuthSession: WebhookAuthSession | null = null;
+
+export function jwtExpiresAtMs(jwt: string): number | null {
+  const [, payload] = jwt.split('.');
+  if (!payload) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { exp?: unknown };
+    return typeof decoded.exp === 'number' ? decoded.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function initWebhookAuthSession(accessToken: string): WebhookAuthSession {
+  webhookAuthSession = {
+    accessToken,
+    refreshToken: process.env.STAGING_WEBHOOK_ORG_ADMIN_REFRESH_TOKEN,
+    expiresAtMs: jwtExpiresAtMs(accessToken),
+  };
+  return webhookAuthSession;
+}
+
+async function currentOrgAdminJwt(): Promise<string> {
+  if (!webhookAuthSession) {
+    return requireEnv('STAGING_WEBHOOK_ORG_ADMIN_JWT', 'webhooks self-service driver');
+  }
+
+  const refreshByMs = webhookAuthSession.expiresAtMs === null
+    ? Number.POSITIVE_INFINITY
+    : webhookAuthSession.expiresAtMs - 5 * 60_000;
+  if (Date.now() < refreshByMs) return webhookAuthSession.accessToken;
+
+  if (!webhookAuthSession.refreshToken) return webhookAuthSession.accessToken;
+
+  const supabaseUrl = requireEnv('STAGING_SUPABASE_URL', 'webhooks self-service JWT refresh');
+  const serviceRoleKey = requireEnv('STAGING_SUPABASE_SERVICE_ROLE_KEY', 'webhooks self-service JWT refresh');
+  const { createClient } = await import('@supabase/supabase-js');
+  const authClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await authClient.auth.refreshSession({
+    refresh_token: webhookAuthSession.refreshToken,
+  });
+  if (error || !data.session?.access_token) {
+    throw error ?? new Error('Supabase refresh returned no access token');
+  }
+
+  webhookAuthSession = {
+    accessToken: data.session.access_token,
+    refreshToken: data.session.refresh_token ?? webhookAuthSession.refreshToken,
+    expiresAtMs: data.session.expires_at ? data.session.expires_at * 1000 : jwtExpiresAtMs(data.session.access_token),
+  };
+  return webhookAuthSession.accessToken;
 }
 
 export function planWebhookSelfServiceRequests(
@@ -120,6 +182,7 @@ export function dlqIdFromInsert(inserted: Array<Record<string, unknown>>): strin
 
 async function seedAndPlan(ctx: DriverContext): Promise<WebhookRequestSpec[]> {
   const orgAdminJwt = requireEnv('STAGING_WEBHOOK_ORG_ADMIN_JWT', 'webhooks self-service driver');
+  initWebhookAuthSession(orgAdminJwt);
   const endpointId = requireEnv('STAGING_WEBHOOK_ENDPOINT_ID', 'webhooks self-service driver');
   const orgId = requireEnv('STAGING_FIXTURE_ORG_ID', 'webhooks self-service driver');
   const deliveryId = process.env.STAGING_WEBHOOK_DELIVERY_ID ?? 'TSOAK-DEL-000000000000';
@@ -133,8 +196,11 @@ async function seedAndPlan(ctx: DriverContext): Promise<WebhookRequestSpec[]> {
 }
 
 async function fireOnce(ctx: DriverContext, stats: DriverStats, plan: WebhookRequestSpec[]): Promise<void> {
+  const orgAdminJwt = await currentOrgAdminJwt();
   for (const spec of plan) {
-    const headers = spec.headers ? iamAuthHeaders(spec.headers) : iamOnlyHeaders();
+    const headers = spec.headers
+      ? iamAuthHeaders({ ...spec.headers, Authorization: `Bearer ${orgAdminJwt}` })
+      : iamOnlyHeaders();
     const outcome = await fireLabeled({ stats, ...spec, headers });
     ctx.log(`${spec.label}: status=${outcome.status}`);
   }

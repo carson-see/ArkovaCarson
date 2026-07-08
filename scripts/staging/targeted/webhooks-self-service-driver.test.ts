@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   dlqIdFromInsert,
+  jwtExpiresAtMs,
   planWebhookSelfServiceRequests,
   WEBHOOKS_DRIVER,
   WEBHOOKS_PASS_INTERVAL_MS,
@@ -72,6 +73,18 @@ describe('webhooks-self-service-driver: metadata', () => {
 
   it('paces passes below the JWT-gated batch limiter budget', () => {
     expect(WEBHOOKS_PASS_INTERVAL_MS).toBeGreaterThanOrEqual(65_000);
+  });
+});
+
+describe('webhooks-self-service-driver: JWT refresh helpers', () => {
+  it('reads exp from a Supabase-style JWT payload', () => {
+    const payload = Buffer.from(JSON.stringify({ exp: 1_800_000_000 }), 'utf8').toString('base64url');
+
+    expect(jwtExpiresAtMs(`header.${payload}.sig`)).toBe(1_800_000_000_000);
+  });
+
+  it('returns null for malformed JWTs', () => {
+    expect(jwtExpiresAtMs('not-a-jwt')).toBeNull();
   });
 });
 
