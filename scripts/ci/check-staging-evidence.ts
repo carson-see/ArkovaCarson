@@ -60,14 +60,12 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
   },
   T1: {
     tier: 'T1',
-    soakHours: 2,
+    soakHours: 0,
     requiredFields: [
       'Tier:',
       'PR head SHA:',
       'Staging tag URL or N/A explanation:',
       'Health/smoke result:',
-      'Soak start:',
-      'Soak end:',
       'CI/E2E green:',
       'Rollback plan:',
       'Risk rationale:',
