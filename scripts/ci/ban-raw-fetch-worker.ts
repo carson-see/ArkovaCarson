@@ -47,7 +47,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const WORKER_SRC_PREFIX = 'services/worker/src/';
-export const GIT_BIN = process.env.GIT_BIN ?? '/usr/bin/git';
+export const GIT_BIN = '/usr/bin/git';
 
 /**
  * Reviewed allow-list. Entries are matched against the worker-src-relative path
