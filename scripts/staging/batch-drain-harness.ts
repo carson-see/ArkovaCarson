@@ -55,6 +55,9 @@
  *   STAGING_SUPABASE_SERVICE_ROLE_KEY isolated rig service role (required)
  *   STAGING_SUPABASE_PROJECT_REF     isolated rig ref (optional; used for the safety allow-list)
  *   ALLOWED_STAGING_PROJECT_REFS     comma-list of refs this harness may write to
+ *   STAGING_GCP_IDENTITY             IAM bearer token for Cloud Run tag URL
+ *                                    (required for DRAIN/CRASH unless the rig
+ *                                    is explicitly allow-unauthenticated)
  *
  * Usage:
  *   npm run staging:batch-drain -- --phase all --count 10000 --evidence-out docs/staging/batch-drain-pr1417.json
@@ -66,11 +69,13 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { resolveStagingApiBase } from './load-harness-env';
 import { resolveRigTarget, runOrgId } from './batch-drain-harness-lib';
+
+const BASELINE_FIXTURE_PROFILE_ID = '5eed0000-0000-0000-0000-0000000000a1';
 
 const { values: args } = parseArgs({
   options: {
@@ -83,8 +88,14 @@ const { values: args } = parseArgs({
   },
 });
 
+function safeForLog(value: unknown): string {
+  return String(value)
+    .replace(/[^\x20-\x7E]/g, '?')
+    .slice(0, 600);
+}
+
 function die(msg: string): never {
-  console.error(`::error::${msg}`);
+  console.error(`::error::${safeForLog(msg)}`);
   process.exit(1);
 }
 
@@ -98,6 +109,26 @@ function parsePositiveInt(raw: string | undefined, fallback: number, name: strin
   const n = Number.parseInt(raw ?? String(fallback), 10);
   if (!Number.isFinite(n) || n <= 0) die(`--${name}=${raw} must be a positive integer.`);
   return n;
+}
+
+function resolveEvidencePath(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  if (!trimmed.endsWith('.json')) die('--evidence-out must end with .json.');
+
+  const candidate = resolve(process.cwd(), trimmed);
+  const cwd = resolve(process.cwd());
+  const tmp = resolve('/tmp');
+  const privateTmp = resolve('/private/tmp');
+  const fromCwd = relative(cwd, candidate);
+  const fromTmp = relative(tmp, candidate);
+  const fromPrivateTmp = relative(privateTmp, candidate);
+  const inside = (rel: string) => rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+
+  if (!inside(fromCwd) && !inside(fromTmp) && !inside(fromPrivateTmp)) {
+    die('--evidence-out must stay under this checkout, /tmp, or /private/tmp.');
+  }
+  return candidate;
 }
 
 // ── Supabase safety-guarded client (mirrors seed.ts guards) ─────────────────
@@ -132,17 +163,50 @@ interface Evidence {
   endedAt?: string;
 }
 
-async function ensureRunOrg(client: SupabaseClient, orgId: string): Promise<void> {
-  // Best-effort: create a synthetic org + profile so FK constraints on anchors
-  // are satisfied. If the schema does not require these, the upsert is a no-op.
-  await client.from('organizations').upsert(
-    { id: orgId, name: `batch-drain-${orgId.slice(0, 8)}`, public_id: `ORG-BD-${orgId.slice(0, 8)}` },
-    { onConflict: 'id', ignoreDuplicates: true },
+async function ensureRunFixture(client: SupabaseClient, orgId: string, count: number): Promise<string> {
+  const { data: profile, error: profileError } = await client
+    .from('profiles')
+    .select('id')
+    .eq('id', BASELINE_FIXTURE_PROFILE_ID)
+    .maybeSingle();
+  if (profileError) die(`profile fixture lookup failed: ${profileError.message}`);
+  if (!profile?.id) {
+    die(
+      `baseline fixture profile ${BASELINE_FIXTURE_PROFILE_ID} is missing; run scripts/staging/seed-baseline-fixture.sql before this harness`,
+    );
+  }
+
+  const label = orgId.slice(0, 8);
+  const { error: orgError } = await client.from('organizations').upsert(
+    {
+      id: orgId,
+      legal_name: `Batch Drain Harness ${label} LLC`,
+      display_name: `Batch Drain Harness ${label}`,
+      domain: `batch-drain-${label}.invalid`,
+      verification_status: 'UNVERIFIED',
+    },
+    { onConflict: 'id' },
   );
+  if (orgError) die(`synthetic organization upsert failed: ${orgError.message}`);
+
+  const { error: creditError } = await client.from('org_credits').upsert(
+    {
+      org_id: orgId,
+      balance: count,
+      monthly_allocation: count,
+      purchased: 0,
+      is_test: true,
+      anchor_quota: null,
+    },
+    { onConflict: 'org_id' },
+  );
+  if (creditError) die(`synthetic org_credits upsert failed: ${creditError.message}`);
+
+  return profile.id as string;
 }
 
 async function seedPending(client: SupabaseClient, orgId: string, count: number): Promise<number> {
-  await ensureRunOrg(client, orgId);
+  const userId = await ensureRunFixture(client, orgId, count);
   const CHUNK = 1000;
   let inserted = 0;
   for (let base = 0; base < count; base += CHUNK) {
@@ -153,13 +217,13 @@ async function seedPending(client: SupabaseClient, orgId: string, count: number)
       rows.push({
         id,
         org_id: orgId,
-        user_id: null,
+        user_id: userId,
         public_id: `ANC-BD-${orgId.slice(0, 8)}-${base + i}`,
         fingerprint: fakeFingerprint(),
         filename: `batch-drain-${base + i}.pdf`,
         status: 'PENDING',
         credential_type: 'OTHER',
-        metadata: { source: 'batch-drain-harness', run_org: orgId },
+        metadata: { source: 'batch-drain-harness', run_org: orgId, fixture_user_id: userId },
         version_number: 1,
       });
     }
@@ -192,8 +256,8 @@ async function statusCounts(client: SupabaseClient, orgId: string): Promise<Reco
 async function iamHeader(): Promise<Record<string, string>> {
   const pre = process.env.STAGING_GCP_IDENTITY?.trim();
   if (pre) return { Authorization: `Bearer ${pre}` };
-  // Fall back: allow anonymous if the rig is --allow-unauthenticated (dev rigs).
-  return {};
+  if (process.env.STAGING_ALLOW_ANONYMOUS_CLOUD_RUN === '1') return {};
+  die('STAGING_GCP_IDENTITY is required for DRAIN/CRASH. Export `gcloud auth print-identity-token` for the tag URL, or set STAGING_ALLOW_ANONYMOUS_CLOUD_RUN=1 only on an explicitly unauthenticated dev rig.');
 }
 
 async function postDrain(apiBase: string, orgId: string): Promise<unknown> {
@@ -340,6 +404,7 @@ async function assertReconcileNoDoubleBroadcast(
   apiBase: string,
   orgId: string,
 ): Promise<{ reverted: number; secondBroadcastTxCount: number }> {
+  const userId = await ensureRunFixture(client, orgId, 5);
   // Manufacture a "crashed after broadcast" state: a handful of BROADCASTING
   // rows that ALREADY carry a chain_tx_id (the TX landed on chain, but the
   // worker died before submit_batch_anchors flipped them to SUBMITTED).
@@ -350,13 +415,14 @@ async function assertReconcileNoDoubleBroadcast(
       Array.from({ length: 5 }, (_, i) => ({
         id: randomUUID(),
         org_id: orgId,
+        user_id: userId,
         public_id: `ANC-BD-CRASH-${orgId.slice(0, 8)}-${i}`,
         fingerprint: fakeFingerprint(),
         filename: `batch-drain-crash-${i}.pdf`,
         status: 'BROADCASTING',
         chain_tx_id: crashTx, // broadcast already landed
         credential_type: 'OTHER',
-        metadata: { source: 'batch-drain-harness', _claimed_by: 'crashed-worker', run_org: orgId },
+        metadata: { source: 'batch-drain-harness', _claimed_by: 'crashed-worker', run_org: orgId, fixture_user_id: userId },
         version_number: 1,
       })),
     )
@@ -407,6 +473,7 @@ async function cleanup(client: SupabaseClient, orgId: string): Promise<number> {
   }
   const { error } = await client.from('anchors').delete().eq('org_id', orgId);
   if (error) die(`cleanup anchors delete failed: ${error.message}`);
+  await client.from('org_credits').delete().eq('org_id', orgId);
   await client.from('organizations').delete().eq('id', orgId);
   return ids.length;
 }
@@ -419,6 +486,7 @@ async function main(): Promise<void> {
   const pollTimeout = parsePositiveInt(args['poll-timeout'], 600, 'poll-timeout');
   const runId = args['run-id'] ?? randomBytes(4).toString('hex');
   const orgId = runOrgId(runId);
+  const evidencePath = resolveEvidencePath(args['evidence-out']);
 
   const { client, ref } = makeRigClient();
   const needsApi = phase === 'drain' || phase === 'crash' || phase === 'all';
@@ -426,8 +494,8 @@ async function main(): Promise<void> {
 
   const evidence: Evidence = { runId, ref, apiBase, phases: {}, startedAt: new Date().toISOString() };
 
-  console.log(`▶ batch-drain-harness  phase=${phase}  run=${runId}  ref=${ref}  org=${orgId}`);
-  if (apiBase) console.log(`  api_base=${apiBase}`);
+  console.log(`▶ batch-drain-harness  phase=${safeForLog(phase)}  run=${safeForLog(runId)}  ref=${safeForLog(ref)}  org=${safeForLog(orgId)}`);
+  if (apiBase) console.log(`  api_base=${safeForLog(apiBase)}`);
   console.log(`  count=${count}  poll-timeout=${pollTimeout}s`);
   if (args['dry-run']) {
     console.log('  --dry-run: validated env + safety guards, exiting without writing.');
@@ -480,7 +548,6 @@ async function main(): Promise<void> {
   }
 
   evidence.endedAt = new Date().toISOString();
-  const evidencePath = args['evidence-out'];
   if (evidencePath) {
     mkdirSync(dirname(evidencePath), { recursive: true });
     writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');

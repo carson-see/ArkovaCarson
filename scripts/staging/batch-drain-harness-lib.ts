@@ -57,7 +57,7 @@ export function resolveRigTarget(
     throw new Error('Refusing to run against the prod project ref.');
   }
 
-  if (allowedRefsRaw && allowedRefsRaw.trim()) {
+  if (allowedRefsRaw?.trim()) {
     const allowed = allowedRefsRaw.split(',').map((s) => s.trim()).filter(Boolean);
     for (const a of allowed) {
       if (a === PROD_PROJECT_REF || !/^[a-z]{20}$/.test(a)) {
@@ -78,7 +78,7 @@ export function resolveRigTarget(
  * needs to be stable within a run and shaped like a v4 UUID.
  */
 export function runOrgId(runId: string): string {
-  if (!runId || !runId.trim()) throw new Error('runId is required for runOrgId.');
+  if (!runId?.trim()) throw new Error('runId is required for runOrgId.');
   const hex = Buffer.from(`batch-drain-${runId}`).toString('hex').padEnd(32, '0').slice(0, 32);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }

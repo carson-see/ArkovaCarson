@@ -535,7 +535,7 @@ describe('REAL batch-drain — crash mid-drain RECONCILES, never double-broadcas
     const broadcastsBefore = store.broadcasts.length;
     const retry = await processBatchAnchors({ force: true });
     expect(retry.processed).toBe(N);
-    expect(store.broadcasts.length).toBe(broadcastsBefore + 1);
+    expect(store.broadcasts).toHaveLength(broadcastsBefore + 1);
     expect([...store.anchors.values()].every((a) => a.status === 'SUBMITTED')).toBe(true);
   });
 
