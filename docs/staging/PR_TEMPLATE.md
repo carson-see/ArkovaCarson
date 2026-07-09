@@ -61,29 +61,27 @@ T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, publi
 
 ---
 
-## T2 (frontend-only) — Vercel + view-E2E evidence (sensitive frontend surface; no worker artifacts)
+## T2 (frontend-only) — RM-approved targeted UI evidence (no worker artifacts)
 
-Use this variant **only** when the PR is required-tier T2 *and* every changed file is purely frontend (`src/**`, no `services/worker/`, no `supabase/migrations/`, no `packages/`/`sdks/`/API-contract files). The classifier still puts such a PR at T2 because it touches a sensitive user-facing contract surface (`src/components/{anchor,api,auth,billing,public,verification,verify}/`), but a frontend-only change ships no worker image, no migration, and no deploy-log row — so it cannot produce the standard T2 worker artifacts. It satisfies T2 with a Vercel deployment/preview URL, an E2E result on the affected view, and a residual-risk note attesting that no worker artifacts exist.
+Use this variant **only** when the PR declares T2 and every changed file is frontend/UAT/test/support-only (`src/**`, `public/**`, `e2e/**`, frontend/UAT docs, or test support) with no `services/worker/`, no `supabase/migrations/`, no `packages/`/`sdks/`, no API-contract files, no workflow files, and no CI scripts. The classifier may require T1 or T2 by path, but a frontend-only change ships no worker image, no migration, no staging project ref, no clean worker preflight, and no deploy-log row — so it must not invent those artifacts.
 
-If the PR touches *any* worker/migration/SDK/contract file, this variant does **not** apply — use the standard T2 (or T3) block above. Tier classification is unchanged; only the evidence form differs.
+This path satisfies T2 only with RM approval plus targeted evidence that names the changed UI behavior, the affected-view proof, and the async-cycle/load floor used for that frontend-only path. If the PR touches *any* worker/API/webhook/SDK/AI/queue/security/chain/migration file, this variant does **not** apply — use the standard T2 or T3 block above.
+
+Do not include placeholder fields such as `PENDING`, `NOT STARTED`, or planned future evidence. Generic `/health` is not changed-behavior coverage.
 
 ```markdown
 ## Staging Soak Evidence
 
 - Tier: T2
 - PR head SHA: 40-character current PR head SHA
+- RM-approved targeted evidence: Carson/RM approved targeted frontend-only T2 evidence for <changed UI path>
+- Async-cycle floor: affected-view UI validation cycle/load floor, e.g. Playwright copy/contract suite under N parallel workers with p95/error-free threshold
 - Changed behavior: name the user-facing frontend behavior this PR changed
 - Targeted evidence: name the affected view E2E path that exercised that changed behavior
-- Load/concurrency evidence: name the heavy-user/load/concurrency proof for the affected view or explain the RM-approved load-oriented check used for this frontend-only path
-- Vercel deployment URL: https://<your-preview>.vercel.app
+- Load/concurrency evidence: name the load/concurrency proof for the affected view or RM-approved load-oriented check used for this frontend-only path
 - E2E result: <affected view(s)> E2E N/N green on head
 - CI/E2E green: Tests, E2E Tests, TypeCheck & Lint green on current head
 - Rollback plan: revert PR — additive display-only change, no data/schema/worker state to unwind
-
-### Residual-risk note
-- No worker artifacts: frontend-only PR — no Cloud Run deploy, no worker revision, no image digest, no staging deploy-log id (no server code, no migration changed)
-- Surfaces touched: <the frontend views/components this PR changes>
-- Approved by: <named human approver — not blank, not a placeholder>
 ```
 
 ---

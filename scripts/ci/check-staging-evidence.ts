@@ -20,15 +20,13 @@
  * was removed on 2026-05-07. The only CI-only path is T0, computed from
  * changed files rather than labels.
  *
- * Frontend-T2 evidence mode: a PR that is required-tier T2 purely because it
- * touches a sensitive *frontend* surface, and whose every changed file is
- * frontend-only (`isFrontendOnlyChange`), cannot produce worker artifacts. It
- * satisfies T2 with a Vercel deployment URL + view-E2E + a `### Residual-risk
- * note` attesting no worker artifacts exist, instead of the worker-artifact
- * fields. This does NOT change tier classification (`requiredTierFor` is
- * unchanged) — it only swaps the accepted evidence form for that narrow case.
- * Any worker/migration/SDK/contract-touching T2 PR keeps the full
- * worker-artifact requirements.
+ * Frontend-T2 targeted evidence mode: a declared-T2 PR whose every changed file
+ * is frontend/UAT/test/support-only (`isFrontendOnlyChange`) cannot produce
+ * worker artifacts. With RM approval, it satisfies T2 with targeted UI evidence
+ * and an async-cycle/load floor instead of worker-artifact fields. This does NOT
+ * change tier classification (`requiredTierFor` is unchanged) — it only swaps
+ * the accepted evidence form for that narrow case. Any worker/migration/SDK/
+ * contract-touching T2 PR keeps the full worker-artifact requirements.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -417,7 +415,7 @@ export function requiredTierFor(
  * Patterns for any non-frontend, prod-runtime (or CI) surface. A change that
  * touches ANY of these can produce real worker/migration/SDK/contract artifacts
  * (or is CI config/script, which is not a frontend asset), so it must NOT be
- * eligible for the frontend-T2 evidence path — it keeps the full worker-artifact
+ * eligible for the frontend-targeted T2 evidence path — it keeps the full worker-artifact
  * (standard) evidence requirements. This list is intentionally a denylist (not
  * just "outside src/|public/|e2e/") so the guard fails closed: a future file
  * that lands under one of the allowed prefixes but matches a server/SDK/contract
@@ -437,28 +435,34 @@ const NON_FRONTEND_SURFACE_RE: RegExp[] = [
   /^scripts\//,
 ];
 
-/** Prefixes a frontend feature can legitimately ship without producing any
- * deploying (worker/migration/SDK) artifact:
- *   - `src/`          the React/TS app source itself,
- *   - `public/`       static + vendored runtime assets (e.g. self-hosted
- *                     Tesseract OCR wasm/worker/lang under `public/vendor`),
- *   - `e2e/`          the Playwright spec(s) that exercise the changed view.
+/** Prefixes/patterns a frontend feature can legitimately ship without producing
+ * any deploying worker/migration/SDK artifact:
+ *   - `src/` / `public/`  the React/TS app source + static/vendor assets,
+ *   - `e2e/` / `tests/e2e` Playwright/UAT specs for the changed view,
+ *   - frontend UAT/reference docs and test/support helpers that accompany the
+ *     UI proof.
  * None of these are built into the Cloud Run worker image or applied to the DB,
  * so a PR confined to them (modulo the NON_FRONTEND_SURFACE_RE denylist) cannot
- * produce worker artifacts and is eligible for the frontend-T2 evidence path. */
-const FRONTEND_PREFIXES = ['src/', 'public/', 'e2e/'];
+ * produce worker artifacts and is eligible for frontend-targeted T2 evidence. */
+const FRONTEND_ONLY_PATH_RE: RegExp[] = [
+  /^src\//,
+  /^public\//,
+  /^e2e\//,
+  /^tests\/(?:e2e|frontend|ui|uat|support)\//,
+  /^test\/(?:e2e|frontend|ui|uat|support)\//,
+  /^docs\/(?:uat|reference|staging|bugs|qa|screenshots|frontend|ui)\//,
+];
 
 /**
- * True iff EVERY changed file is a purely-frontend file — under one of
- * {@link FRONTEND_PREFIXES} (`src/` / `public/` / `e2e/`) and not matching any
+ * True iff EVERY changed file is a purely-frontend/UAT/test/support file and
+ * not matching any
  * server/migration/SDK/contract/CI surface ({@link NON_FRONTEND_SURFACE_RE}).
- * This is the backward-compatibility guard for the frontend-T2 evidence mode:
- * it gates the alternate (Vercel + view-E2E) evidence path so it can only ever
- * apply to a PR that genuinely cannot produce worker artifacts. A frontend
- * feature shipping vendored assets (`public/vendor`) + its E2E (`e2e/`)
- * alongside its `src/` change is exactly this case (the #1262 §1.6 fail-closed
- * OCR enabler); workflow / CI-script / worker / migration changes stay on the
- * full worker-evidence path (fail-closed preserved).
+ * This is the fail-closed guard for the frontend-targeted T2 evidence mode: it
+ * gates the alternate evidence path so it can only ever apply to a PR that
+ * genuinely cannot produce worker artifacts. A frontend feature shipping
+ * vendored assets (`public/vendor`) + its E2E (`e2e/`) alongside its `src/`
+ * change is exactly this case; workflow / CI-script / worker / migration
+ * changes stay on the full worker-evidence path (fail-closed preserved).
  *
  * An empty fileset returns false: there is nothing to attest as frontend-only,
  * and a non-frontend caller should never reach the frontend path by default.
@@ -466,7 +470,7 @@ const FRONTEND_PREFIXES = ['src/', 'public/', 'e2e/'];
 export function isFrontendOnlyChange(files: string[]): boolean {
   if (files.length === 0) return false;
   return files.every(
-    (f) => FRONTEND_PREFIXES.some((p) => f.startsWith(p))
+    (f) => FRONTEND_ONLY_PATH_RE.some((re) => re.test(f))
       && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
   );
 }
@@ -590,7 +594,7 @@ export function hasEvidenceSection(body: string): boolean {
 }
 
 /**
- * Evidence-block field set key: a standard tier, the frontend-T2 path, or the
+ * Evidence-block field set key: a standard tier, the frontend-targeted T2 path, or the
  * architecturally-unsoakable (offline-package) T2 path.
  */
 export type FieldSet = Tier | 'T2_FRONTEND' | 'T2_UNSOAKABLE';
@@ -842,17 +846,14 @@ const T2_T3_FILLED_FIELDS = [
 ];
 
 // ───────────────────────────────────────────────────────────────────────────
-// Frontend-T2 evidence mode (decision (a)).
+// Frontend-T2 targeted evidence mode.
 //
-// A PR can be required-tier T2 purely by touching a sensitive *frontend*
-// contract surface (the `src/components/{anchor,api,auth,billing,public,
-// verification,verify}/` PATH_RULES rule). Such a PR ships no worker code, no
+// A declared-T2 PR can be frontend-only even when it is T1 by path (copy/UI
+// contract) or T2 by sensitive frontend path. Such a PR ships no worker code, no
 // migration, and no SDK/contract change, so it can never produce the worker
-// artifacts (Worker revision, Image digest, Cloud Run URL, Staging deploy-log
-// id) the standard T2 block demands. Instead it satisfies T2 with
-// frontend-appropriate evidence: a Vercel deployment/preview URL, an
-// E2E-on-the-affected-view result, and a `### Residual-risk note` attesting
-// that no worker artifacts exist.
+// artifacts / clean worker preflight the standard T2 block demands. Instead it
+// satisfies T2 only when RM explicitly approves targeted evidence and the body
+// names changed behavior, targeted evidence, and load/async-cycle proof.
 //
 // This path is reachable ONLY through `isFrontendOnlyChange(files)` — see
 // check(). Any worker- or migration-touching T2 PR keeps the unchanged
@@ -861,7 +862,8 @@ const T2_T3_FILLED_FIELDS = [
 export const T2_FRONTEND_FIELDS = [
   'Tier:',
   'PR head SHA:',
-  'Vercel deployment URL:',
+  'RM-approved targeted evidence:',
+  'Async-cycle floor:',
   'E2E result:',
   'CI/E2E green:',
   'Rollback plan:',
@@ -907,18 +909,6 @@ const UNSOAKABLE_NOTE_REQUIRED_FIELDS = [
 ];
 
 const UNSOAKABLE_NOTE_HEADER_RE = /^###\s+Unsoakable-surface\s+note\b/im;
-
-function validateVercelUrlEvidence(body: string): string | null {
-  const field = 'Vercel deployment URL:';
-  // Must be present, filled, not a placeholder, AND an actual URL.
-  const filled = validateFilledEvidenceField(body, field);
-  if (filled !== null) return filled;
-  const value = extractEvidenceFieldValue(body, field);
-  if (value === null) return null; // label-absence owned by missingFields()
-  return URL_RE.test(value)
-    ? null
-    : `${field} must contain a Vercel deployment or preview URL.`;
-}
 
 const HEALTH_TOKEN_RE = /(?:^|[\s`"'(])(?:\/health\b|healthcheck\b)/i;
 const HEALTH_CONTEXT_TERMS = [
@@ -1011,6 +1001,32 @@ function validateLoadConcurrencyEvidence(body: string): string | null {
     : `${field} must name load/concurrency proof for the changed behavior (for example tests/load, k6 VUs, p95/error-rate thresholds, queue drain, retry fan-out, or rate-limit evidence).`;
 }
 
+const RM_TARGETED_APPROVAL_FIELD = 'RM-approved targeted evidence:';
+const ASYNC_CYCLE_FLOOR_FIELD = 'Async-cycle floor:';
+
+function validateRmTargetedApproval(body: string): string[] {
+  const approval = extractEvidenceFieldValue(body, RM_TARGETED_APPROVAL_FIELD);
+  if (approval === null) return [];
+
+  const errors = [
+    validateFilledEvidenceField(body, RM_TARGETED_APPROVAL_FIELD),
+  ].filter((error): error is string => error !== null);
+
+  if (!/\bapproved\b/i.test(approval) || !/\b(?:carson|rm|release manager)\b/i.test(approval)) {
+    errors.push(`${RM_TARGETED_APPROVAL_FIELD} must name the release manager approval for targeted evidence.`);
+  }
+  return errors;
+}
+
+function validateAsyncCycleFloor(body: string): string[] {
+  const floor = extractEvidenceFieldValue(body, ASYNC_CYCLE_FLOOR_FIELD);
+  if (floor === null) return [`${ASYNC_CYCLE_FLOOR_FIELD} is required when RM-approved targeted evidence is used.`];
+  const errors = [
+    validateFilledEvidenceField(body, ASYNC_CYCLE_FLOOR_FIELD),
+  ].filter((error): error is string => error !== null);
+  return errors;
+}
+
 function changedBehaviorErrors(body: string): string[] {
   const errors = [
     validateFilledEvidenceField(body, 'Changed behavior:'),
@@ -1032,10 +1048,10 @@ function changedBehaviorErrors(body: string): string[] {
 }
 
 /**
- * Frontend-T2 evidence validation. Mirrors the spirit of the T1 auditable-value
- * checks (real Vercel URL, real E2E result, CI green, named approver) but swaps
- * the worker-artifact requirements for a residual-risk note attesting that no
- * worker artifacts exist. Returns the list of error strings (empty = ok).
+ * Frontend-T2 targeted evidence validation. Mirrors the standard T2
+ * changed-behavior/load checks, but swaps the worker-artifact/preflight
+ * requirements for RM-approved targeted UI evidence. Returns the list of error
+ * strings (empty = ok).
  */
 function frontendT2Errors(body: string): string[] {
   const errors: (string | null)[] = [];
@@ -1062,7 +1078,8 @@ function frontendT2Errors(body: string): string[] {
   // `- CI/E2E green:` line would attest nothing, weaker than the T1 path
   // (which runs validateNonEmptyEvidenceField over every required field).
   errors.push(
-    validateVercelUrlEvidence(body),
+    ...validateRmTargetedApproval(body),
+    ...validateAsyncCycleFloor(body),
     validateFilledEvidenceField(body, 'E2E result:'),
     validateNonEmptyEvidenceField(body, 'Rollback plan:'),
     validateNonEmptyEvidenceField(body, 'CI/E2E green:'),
@@ -1075,34 +1092,12 @@ function frontendT2Errors(body: string): string[] {
     ...changedBehaviorErrors(body),
   );
 
-  // A frontend-T2 PR substitutes a residual-risk note for the worker
-  // artifacts. The note's sub-fields are frontend-specific (attest no worker
-  // artifacts + name the surfaces) and the validator enforces a real,
-  // non-placeholder `Approved by:`.
-  const note = hasFrontendResidualRiskNote(body);
-  if (!note.valid) {
-    if (note.missing.length > 0) {
-      errors.push(
-        'frontend-T2 `### Residual-risk note` is missing required sub-fields: '
-        + note.missing.map((f) => `\`${f}\``).join(', ')
-        + '. The note must attest that no worker artifacts exist (frontend-only) '
-        + 'and carry a named `Approved by:`.',
-      );
-    } else {
-      errors.push(
-        'frontend-T2 evidence requires a `### Residual-risk note` section '
-        + 'attesting that no worker artifacts exist (frontend-only: no Cloud Run '
-        + 'deploy, no worker revision, no image digest, no staging deploy-log id).',
-      );
-    }
-  }
-
   return errors.filter((e): e is string => e !== null);
 }
 
 /**
  * Architecturally-unsoakable evidence validation. Mirrors the spirit of the
- * frontend-T2 / T1 auditable-value checks (real test/parity result, real CI
+ * alternate T2 / T1 auditable-value checks (real test/parity result, real CI
  * green, real N/A-justified staging tag, named approver) but swaps the
  * worker-artifact requirements for a `### Unsoakable-surface note` attesting
  * that no worker runtime exists to soak. Returns the list of error strings
@@ -1259,22 +1254,11 @@ const RESIDUAL_RISK_REQUIRED_FIELDS = [
   'Approved by:',
 ];
 
-// Frontend-T2 residual-risk note: a frontend-only PR substitutes this for the
-// worker artifacts it cannot produce. The sub-fields are frontend-appropriate
-// (attest no worker artifacts + name the affected surfaces) rather than the
-// DB-contamination fields above, but the SAME real-approver guard applies — a
-// blank/placeholder `Approved by:` is a self-waiver and never valid.
-const FRONTEND_RESIDUAL_RISK_REQUIRED_FIELDS = [
-  'No worker artifacts:',
-  'Surfaces touched:',
-  'Approved by:',
-];
-
 /**
  * Validate a `### Residual-risk note` section against a required-field list.
  * Shared by the DB-contamination exception ({@link hasResidualRiskException})
- * and the frontend-T2 note ({@link hasFrontendResidualRiskNote}). Enforces the
- * real-approver guard on `Approved by:` for both.
+ * and the unsoakable-package note. Enforces the real-approver guard on
+ * `Approved by:` for both.
  */
 function validateResidualRiskNote(
   body: string,
@@ -1309,10 +1293,6 @@ function validateResidualRiskNote(
 
 export function hasResidualRiskException(body: string): { valid: boolean; missing: string[] } {
   return validateResidualRiskNote(body, RESIDUAL_RISK_REQUIRED_FIELDS);
-}
-
-export function hasFrontendResidualRiskNote(body: string): { valid: boolean; missing: string[] } {
-  return validateResidualRiskNote(body, FRONTEND_RESIDUAL_RISK_REQUIRED_FIELDS);
 }
 
 export function hasUnsoakableSurfaceNote(body: string): { valid: boolean; missing: string[] } {
@@ -1380,26 +1360,13 @@ function futureTimestampErrors(body: string, nowMs = Date.now()): string[] {
 function targetedDurationWaiverErrors(body: string, tier: Tier): { valid: boolean; errors: string[] } {
   if (tier !== 'T2') return { valid: false, errors: [] };
 
-  const approvalField = 'RM-approved targeted evidence:';
-  const floorField = 'Async-cycle floor:';
-  const approval = extractEvidenceFieldValue(body, approvalField);
+  const approval = extractEvidenceFieldValue(body, RM_TARGETED_APPROVAL_FIELD);
   if (approval === null) return { valid: false, errors: [] };
 
   const errors = [
-    validateFilledEvidenceField(body, approvalField),
-  ].filter((error): error is string => error !== null);
-
-  if (!/\bapproved\b/i.test(approval) || !/\b(?:carson|rm|release manager)\b/i.test(approval)) {
-    errors.push(`${approvalField} must name the release manager approval for targeted evidence.`);
-  }
-
-  const floor = extractEvidenceFieldValue(body, floorField);
-  if (floor === null) {
-    errors.push(`${floorField} is required when RM-approved targeted evidence is used below the 12h T2 floor.`);
-  } else {
-    const floorError = validateFilledEvidenceField(body, floorField);
-    if (floorError !== null) errors.push(floorError);
-  }
+    ...validateRmTargetedApproval(body),
+    ...validateAsyncCycleFloor(body),
+  ];
 
   return { valid: errors.length === 0, errors };
 }
@@ -1770,7 +1737,7 @@ function tierDeclarationErrors(declared: Tier, required: { tier: Tier; reason: s
 
 function isFrontendT2EvidencePath(declared: Tier, required: Tier, files: string[]): boolean {
   return declared === 'T2'
-    && required === 'T2'
+    && TIER_RANK[required] <= TIER_RANK.T2
     && isFrontendOnlyChange(files);
 }
 
@@ -1797,8 +1764,8 @@ function frontendT2Result(body: string, headSha?: string): CheckResult {
   if (result.ok) {
     result.notes.push(
       'frontend-T2 evidence path accepted (frontend-only change; no worker '
-      + 'artifacts producible — Vercel deployment + view-E2E + residual-risk '
-      + 'note satisfy T2).',
+      + 'artifacts producible — RM-approved targeted UI evidence with async-cycle '
+      + 'floor/load evidence satisfies T2).',
     );
   }
   return result;
