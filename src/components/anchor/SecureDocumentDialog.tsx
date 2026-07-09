@@ -411,15 +411,6 @@ export function SecureDocumentDialog({
       const detectedType = (typeField && typeField.confidence >= 0.5) ? typeField.value : 'OTHER';
       await autoSelectTemplate(detectedType);
 
-      // Fire off template reconstruction in parallel (non-blocking)
-      const fieldsObj = result.fields.reduce<Record<string, unknown>>((acc, f) => {
-        acc[f.key] = f.value;
-        return acc;
-      }, {});
-      fetchTemplateReconstruction(fieldsObj, result.overallConfidence)
-        .then(tr => { if (tr) setTemplateResult(tr); })
-        .catch(() => { /* template reconstruction is best-effort */ });
-
       // Apply template field schema: reorder, label, validate
       const tmplResult = await applyTemplate(
         result.fields,
@@ -491,6 +482,24 @@ export function SecureDocumentDialog({
       prev.map(f => f.key === key ? { ...f, value, status: 'edited' as const } : f)
     );
   }, []);
+
+  const handleExtractionReviewContinue = useCallback(async () => {
+    if (extractedFields.length > 0) {
+      const reviewedFields = extractedFields
+        .filter(f => f.status !== 'rejected')
+        .reduce<Record<string, unknown>>((acc, f) => {
+          acc[f.key] = f.value;
+          return acc;
+        }, {});
+
+      if (Object.keys(reviewedFields).length > 0) {
+        const reconstruction = await fetchTemplateReconstruction(reviewedFields, overallConfidence);
+        if (reconstruction) setTemplateResult(reconstruction);
+      }
+    }
+
+    setStep(selectedTemplate ? 'confirm' : 'template');
+  }, [extractedFields, overallConfidence, selectedTemplate]);
 
   const handleClose = useCallback(() => {
     setStep('upload');
@@ -1001,7 +1010,7 @@ export function SecureDocumentDialog({
                       AI-03: disabled until every low-confidence field has been
                       acknowledged or corrected in the review panel. */}
                   <Button
-                    onClick={() => setStep(selectedTemplate ? 'confirm' : 'template')}
+                    onClick={() => void handleExtractionReviewContinue()}
                     disabled={!reviewComplete}
                     aria-disabled={!reviewComplete}
                     data-testid="extraction-review-continue"

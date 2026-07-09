@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { toast } from 'sonner';
 import { SecureDocumentDialog } from './SecureDocumentDialog';
 import {
@@ -37,10 +37,10 @@ type FileUploadMockProps = {
 let lastFileUploadProps: FileUploadMockProps | null = null;
 const mockProfileOrgId = vi.hoisted(() => ({ current: null as string | null }));
 
-function createTemplateSelectMock() {
+function createTemplateSelectMock(data: unknown[] = []) {
   const query = {
     eq: vi.fn(() => query),
-    limit: vi.fn(() => Promise.resolve({ data: [] })),
+    limit: vi.fn(() => Promise.resolve({ data })),
   };
   return vi.fn(() => query);
 }
@@ -497,5 +497,74 @@ describe('AI-03 (SCRUM-2383) — extraction review gate', () => {
     await flushAiEnabledState();
 
     expect(screen.getByTestId('extraction-review-continue')).not.toBeDisabled();
+  });
+
+  it('defers template reconstruction until review is complete and uses reviewed field values', async () => {
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    vi.mocked(supabase.from).mockReturnValue({
+      insert: vi.fn(() => ({
+        select: vi.fn(() => ({
+          single: vi.fn(async () => ({
+            data: { id: 'anchor-id', public_id: 'public-id' },
+            error: null,
+          })),
+        })),
+      })),
+      select: createTemplateSelectMock([
+        {
+          id: 'template-cpe',
+          name: 'CPE Certificate',
+          description: 'Continuing professional education',
+          credential_type: 'CPE',
+          is_system: true,
+          org_id: null,
+        },
+      ]),
+    } as unknown as ReturnType<typeof supabase.from>);
+    vi.mocked(fetchTemplateReconstruction).mockResolvedValueOnce({
+      templateType: 'formal',
+      documentTitle: 'Reviewed CPE Certificate',
+      sections: [],
+      tags: ['reviewed'],
+      documentType: 'CPE Certificate',
+      summary: 'Reviewed continuing education certificate.',
+      verificationNotes: null,
+    });
+    mockExtractionWith([
+      { key: 'credentialType', value: 'CPE', confidence: 0.95, status: 'accepted' },
+      { key: 'issuerName', value: 'Example Fixture Institute', confidence: 0.6, status: 'suggested' },
+      { key: 'creditHours', value: '4', confidence: 0.4, status: 'suggested' },
+    ]);
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+    await flushAiEnabledState();
+
+    expect(fetchTemplateReconstruction).not.toHaveBeenCalled();
+
+    await act(async () => {
+      screen.getByTestId('review-edit-creditHours').click();
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('review-input-creditHours'), { target: { value: '6' } });
+      screen.getByTestId('review-save-creditHours').click();
+    });
+    await act(async () => {
+      screen.getByTestId('review-ack-issuerName').click();
+    });
+
+    await act(async () => {
+      screen.getByTestId('extraction-review-continue').click();
+    });
+
+    expect(fetchTemplateReconstruction).toHaveBeenCalledWith(
+      {
+        credentialType: 'CPE',
+        issuerName: 'Example Fixture Institute',
+        creditHours: '6',
+      },
+      0.7,
+    );
   });
 });

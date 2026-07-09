@@ -102,9 +102,11 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     );
 
     // 2. Force ENABLE_AI_EXTRACTION on, deterministically.
+    let aiFlagResolved = false;
     await page.route('**/rest/v1/rpc/get_flag', async (route) => {
       const body = route.request().postData() ?? '';
       if (body.includes('ENABLE_AI_EXTRACTION')) {
+        aiFlagResolved = true;
         await route.fulfill({ status: 200, contentType: 'application/json', body: 'true' });
       } else {
         await route.fallback();
@@ -163,6 +165,10 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     const fileInput = page.locator('input[type="file"]');
     await fileInput.setInputFiles(testFilePath);
     await expect(page.getByText(path.basename(testFilePath))).toBeVisible({ timeout: 10000 });
+    await expect.poll(() => aiFlagResolved, {
+      message: 'ENABLE_AI_EXTRACTION flag resolved before continuing',
+      timeout: 10000,
+    }).toBe(true);
 
     await page.getByTestId('secure-document-continue').click();
 
@@ -174,6 +180,7 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     // Low-confidence fields are flagged and Continue is BLOCKED.
     const continueButton = page.getByTestId('extraction-review-continue');
     await expect(continueButton).toBeDisabled();
+    expect(templateRequestBody).toEqual('');
 
     // ── Correct one field (edit) and acknowledge the rest ──
     await page.getByTestId('review-edit-creditHours').click();
@@ -186,6 +193,10 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
 
     await expect(continueButton).toBeEnabled();
     await continueButton.click();
+    await expect.poll(() => templateRequestBody, {
+      message: 'template reconstruction request uses reviewed fields after review',
+      timeout: 10000,
+    }).not.toEqual('');
 
     // ── Template step (if shown) → confirm → success ──
     const skipButton = page.getByRole('button', { name: /^Skip$/ });
@@ -208,6 +219,11 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     expect(templateRequestBody).not.toEqual('');
     const templatePayload = JSON.parse(templateRequestBody) as Record<string, unknown>;
     expect(Object.keys(templatePayload).sort()).toEqual(['confidence', 'fields']);
+    expect(templatePayload.fields).toMatchObject({
+      credentialType: 'CPE',
+      issuerName: 'Example Fixture Institute',
+      creditHours: '6',
+    });
     expect(templateRequestBody).not.toContain(RAW_DOC_MARKER);
     expect(templateRequestBody).not.toContain(SSN_SENTINEL);
 

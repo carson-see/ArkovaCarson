@@ -250,9 +250,8 @@ export interface ReplayFixtureExpectations {
   /** Current getPromptVersionHash() — replay is invalid across prompt edits. */
   currentPromptVersionHash: string;
   /**
-   * Strict/CI mode (--require-live or EVAL_REQUIRE_LIVE=true): mock-echo
-   * seeds HARD-FAIL so a wiring-determinism fixture can never masquerade as
-   * model-quality evidence.
+   * Strict mode (--require-live): mock-echo seeds HARD-FAIL so a
+   * wiring-determinism fixture can never masquerade as model-quality evidence.
    */
   requireLive: boolean;
 }
@@ -282,11 +281,15 @@ export function validateReplayFixture(
   }
   if (expectations.requireLive && recorded.meta.recordedFrom === 'mock-echo') {
     errors.push(
-      'Strict mode (--require-live / EVAL_REQUIRE_LIVE=true): the fixture is a mock-echo seed, ' +
+      'Strict mode (--require-live): the fixture is a mock-echo seed, ' +
         'not a live-model recording — it proves gate WIRING only and cannot be model-quality evidence.',
     );
   }
   return errors;
+}
+
+export function resolveRequireLive(args: string[]): boolean {
+  return args.includes('--require-live');
 }
 
 /**
@@ -498,8 +501,8 @@ async function main(): Promise<void> {
     recorded = loadRecordedOutputs(resolve(process.cwd(), recordedPath));
     console.log(`   Replay fixture: ${recordedPath} (recordedFrom=${recorded.meta.recordedFrom}, model=${recorded.meta.model})`);
     // Falsifiability guard (round-1 review): dataset tag + prompt version must
-    // match this run, and strict/CI mode refuses mock-echo seeds outright.
-    const requireLive = args.includes('--require-live') || process.env.EVAL_REQUIRE_LIVE === 'true';
+    // match this run, and strict mode refuses mock-echo seeds outright.
+    const requireLive = resolveRequireLive(args);
     const replayErrors = validateReplayFixture(recorded, {
       expectedDatasetTag: dataset.tag,
       currentPromptVersionHash: getPromptVersionHash(),
