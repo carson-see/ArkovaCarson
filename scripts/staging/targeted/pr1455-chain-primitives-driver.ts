@@ -1,4 +1,3 @@
-#!/usr/bin/env tsx
 import { appendFileSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -15,6 +14,39 @@ interface CheckResult {
   ok: boolean;
   details: Record<string, unknown>;
 }
+
+type CanonicalCalldataModule = {
+  buildAnchorCalldata: (fingerprint: string, metadataHash?: string) => string;
+  parseAnchorCalldata: (calldata: string) => {
+    fingerprint: string;
+    metadataHashTruncated?: string;
+  } | null;
+};
+
+type DynamicFeeModule = {
+  computeBatchFeeCeiling: (input: {
+    baseCeiling: number;
+    oldestPendingAgeMs: number;
+    absoluteCapSatPerVb: number;
+  }) => number;
+};
+
+type FeeSchedulerModule = {
+  FEE_HARD_DEADLINE_MS: number;
+  checkDynamicFeeConditions: (input: {
+    baseCeiling: number;
+    oldestPendingAgeMs: number;
+    absoluteCapSatPerVb: number;
+    queuedSince: number | null;
+    estimator: { name: string; estimateFee: () => Promise<number> };
+  }) => Promise<{ shouldSubmit: boolean; reason: string }>;
+};
+
+type CtidGuardModule = {
+  isRealCtid: (value: string) => boolean;
+  assertRealCtidOrAbsent: (value: string | undefined, label: string) => string | undefined;
+  FabricatedCtidError: new (...args: unknown[]) => Error;
+};
 
 export interface Pr1455DriverResult {
   pr: 1455;
@@ -46,11 +78,14 @@ function check(name: string, ok: boolean, details: Record<string, unknown>): Che
   return { name, ok, details };
 }
 
+async function runtimeImport<T>(specifier: string): Promise<T> {
+  return (await import(/* @vite-ignore */ specifier)) as T;
+}
+
 async function runCanonicalCalldataChecks(): Promise<CheckResult> {
   ensureWorkerImportEnv();
-  const { buildAnchorCalldata, parseAnchorCalldata } = await import(
-    '../../../services/worker/src/chain/base.js'
-  );
+  const { buildAnchorCalldata, parseAnchorCalldata } =
+    await runtimeImport<CanonicalCalldataModule>('../../../services/worker/src/chain/base.js');
 
   const fingerprint = 'a'.repeat(64);
   const metadataHash = 'b'.repeat(64);
@@ -77,12 +112,10 @@ async function runCanonicalCalldataChecks(): Promise<CheckResult> {
 
 async function runDynamicFeeChecks(): Promise<CheckResult> {
   ensureWorkerImportEnv();
-  const { computeBatchFeeCeiling } = await import(
-    '../../../services/worker/src/chain/fee-estimator.js'
-  );
-  const { checkDynamicFeeConditions, FEE_HARD_DEADLINE_MS } = await import(
-    '../../../services/worker/src/jobs/feeAwareScheduler.js'
-  );
+  const { computeBatchFeeCeiling } =
+    await runtimeImport<DynamicFeeModule>('../../../services/worker/src/chain/fee-estimator.js');
+  const { checkDynamicFeeConditions, FEE_HARD_DEADLINE_MS } =
+    await runtimeImport<FeeSchedulerModule>('../../../services/worker/src/jobs/feeAwareScheduler.js');
 
   const estimator = (rate: number) => ({ name: 'pr1455-driver', estimateFee: async () => rate });
   const ceilingCases = [
@@ -135,7 +168,7 @@ async function runCtidInvarianceChecks(): Promise<CheckResult> {
     isRealCtid,
     assertRealCtidOrAbsent,
     FabricatedCtidError,
-  } = await import('../../../services/worker/src/ctdl/ctdl-ctid-guard.js');
+  } = await runtimeImport<CtidGuardModule>('../../../services/worker/src/ctdl/ctdl-ctid-guard.js');
 
   const real = 'ce-a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
   const fabricated = 'ce-SUPER_SECRET_public_id_should_not_leak';
