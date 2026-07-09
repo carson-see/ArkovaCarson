@@ -42,6 +42,7 @@ import { runDriver, iamAuthHeaders, writeEvidenceFile, type DriverContext } from
 export const OPS_SLO_DRIVER = { driver: 'ops-slo', pr: '#1441' } as const;
 
 const ENDPOINT = '/api/admin/ops-slo-stats';
+const PASS_INTERVAL_MS = 75_000;
 
 function firstEnv(names: string[]): string | undefined {
   for (const name of names) {
@@ -189,6 +190,10 @@ async function main(): Promise<void> {
       return planOpsSloRequests(apiBase, planArgs);
     },
     fireOnce: (ctx, plan) => fireOnce(ctx, stats, plan as OpsSloRequestSpec[]),
+    // The unauthenticated branch is intentionally rate-limited per IP around a
+    // one-minute window. A 30s default cadence makes the driver manufacture
+    // 429s instead of proving the route's 401/403/200 auth contract.
+    passIntervalMs: PASS_INTERVAL_MS,
   });
 
   const evidence = summarizeEvidence(stats, { ...OPS_SLO_DRIVER, apiBase });
