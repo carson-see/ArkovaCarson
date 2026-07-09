@@ -32,8 +32,7 @@ export interface HealthCheckDeps {
     sentryDsn?: string;
     geminiApiKey?: string;
     aiProvider?: string;
-    kmsProvider: 'aws' | 'gcp';
-    bitcoinKmsKeyId?: string;
+    kmsProvider: string;
     gcpKmsKeyResourceName?: string;
     bitcoinTreasuryWif?: string;
     enableProdNetworkAnchoring: boolean;
@@ -207,15 +206,13 @@ export async function buildHealthResponse(
   const cfg = deps.config;
   if (cfg.kmsProvider === 'gcp' && cfg.gcpKmsKeyResourceName) {
     kmsCheck = { status: 'ok', provider: 'gcp' };
-  } else if (cfg.kmsProvider === 'aws' && cfg.bitcoinKmsKeyId) {
-    kmsCheck = { status: 'ok', provider: 'aws' };
   } else if (cfg.bitcoinTreasuryWif) {
     kmsCheck = { status: 'ok', provider: 'wif' };
   } else {
     kmsCheck = {
       status: 'warning',
       provider: 'none',
-      message: 'No signing key configured (KMS key or treasury WIF required)',
+      message: 'No signing key configured (GCP KMS key or treasury WIF required)',
     };
   }
 

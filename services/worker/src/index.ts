@@ -117,7 +117,6 @@ app.get('/health', async (req, res) => {
       geminiApiKey: config.geminiApiKey,
       aiProvider: config.aiProvider,
       kmsProvider: config.kmsProvider,
-      bitcoinKmsKeyId: config.bitcoinKmsKeyId,
       gcpKmsKeyResourceName: config.gcpKmsKeyResourceName,
       bitcoinTreasuryWif: config.bitcoinTreasuryWif,
       enableProdNetworkAnchoring: config.enableProdNetworkAnchoring,

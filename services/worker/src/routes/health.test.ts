@@ -35,7 +35,6 @@ function createMockDeps(overrides: Partial<HealthCheckDeps> = {}): HealthCheckDe
       geminiApiKey: 'key',
       aiProvider: 'mock',
       kmsProvider: 'gcp' as const,
-      bitcoinKmsKeyId: undefined,
       gcpKmsKeyResourceName: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
       bitcoinTreasuryWif: 'wif_test',
       enableProdNetworkAnchoring: false,
@@ -305,7 +304,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       expect(checks(result).kms.provider).toBe('gcp');
     });
 
-    it('reports KMS as configured when AWS KMS key is set', async () => {
+    it('does not report KMS as configured from a non-GCP provider without an active signer', async () => {
       const deps = createMockDeps({
         config: {
           bitcoinNetwork: 'mainnet' as const,
@@ -313,8 +312,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
           sentryDsn: undefined,
           geminiApiKey: undefined,
           aiProvider: 'mock',
-          kmsProvider: 'aws' as const,
-          bitcoinKmsKeyId: 'key-123',
+          kmsProvider: 'legacy',
           gcpKmsKeyResourceName: undefined,
           bitcoinTreasuryWif: undefined,
           enableProdNetworkAnchoring: true,
@@ -322,8 +320,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       });
       const result = await buildHealthResponse(deps, true);
 
-      expect(checks(result).kms.status).toBe('ok');
-      expect(checks(result).kms.provider).toBe('aws');
+      expect(checks(result).kms.status).toBe('warning');
+      expect(checks(result).kms.provider).toBe('none');
     });
 
     it('reports KMS as unconfigured when no key is available', async () => {
@@ -334,8 +332,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
           sentryDsn: undefined,
           geminiApiKey: undefined,
           aiProvider: 'mock',
-          kmsProvider: 'aws' as const,
-          bitcoinKmsKeyId: undefined,
+          kmsProvider: 'gcp' as const,
           gcpKmsKeyResourceName: undefined,
           bitcoinTreasuryWif: undefined,
           enableProdNetworkAnchoring: true,
@@ -355,8 +352,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
           sentryDsn: undefined,
           geminiApiKey: undefined,
           aiProvider: 'mock',
-          kmsProvider: 'aws' as const,
-          bitcoinKmsKeyId: undefined,
+          kmsProvider: 'gcp' as const,
           gcpKmsKeyResourceName: undefined,
           bitcoinTreasuryWif: 'wif_test',
           enableProdNetworkAnchoring: true,
