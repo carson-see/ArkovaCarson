@@ -1018,7 +1018,6 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
     .from('anchors')
     .select('id, public_id, org_id, chain_tx_id')
     .eq('status', 'SUBMITTED')
-    .eq('legal_hold', false)
     .is('deleted_at', null)
     .limit(100);
 
@@ -1057,7 +1056,6 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
       .update({ chain_tx_id: txId })
       .in('id', idsMissingTxId)
       .eq('status', 'SUBMITTED')
-      .eq('legal_hold', false)
       .is('chain_tx_id', null);
     if (backfillErr) {
       logger.error(
@@ -1079,8 +1077,7 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
       chain_timestamp: blockTimestamp,
     })
     .in('id', ids)
-    .eq('status', 'SUBMITTED')
-    .eq('legal_hold', false);
+    .eq('status', 'SUBMITTED');
 
   if (updateError) {
     logger.error({ error: updateError }, 'Failed to auto-confirm mock anchors');
