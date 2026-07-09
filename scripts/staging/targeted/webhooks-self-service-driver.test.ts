@@ -47,6 +47,7 @@ describe('webhooks-self-service-driver: request plan hits test/replay/dlq/resolv
     expect(resolve).toBeDefined();
     expect(resolve!.endpoint).toBe('/api/v1/webhooks/dlq/dlq-1/resolve');
     expect(resolve!.method).toBe('POST');
+    expect(resolve!.allowedStatuses).toEqual([200]);
   });
 
   it('includes a cross-org 401 unauthenticated negative (no key)', () => {

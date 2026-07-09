@@ -97,8 +97,9 @@ export function planWebhookSelfServiceRequests(
     mk('replay', 'POST', `/deliveries/${args.deliveryId}/replay`, [200, 404, 409]),
     // dlq list → ORG_ADMIN sees ≥1 seeded row.
     mk('dlq-list', 'GET', '/dlq', [200]),
-    // dlq resolve → flips the seeded row's resolved flag; 200 or 404 (already gone).
-    mk('dlq-resolve', 'POST', `/dlq/${args.dlqId}/resolve`, [200, 404]),
+    // dlq resolve → must hit the deployed route and resolve the seeded row.
+    // 404 is not accepted because that was #1471's false-return symptom.
+    mk('dlq-resolve', 'POST', `/dlq/${args.dlqId}/resolve`, [200]),
     // unauthenticated negative → API-key gate returns 401.
     mk('unauthenticated', 'GET', '/dlq', [401], undefined, false),
   ];
