@@ -65,8 +65,8 @@ describe('webhooks-self-service-driver: request plan hits test/replay/dlq/resolv
 });
 
 describe('webhooks-self-service-driver: metadata', () => {
-  it('names PR #1443 and the driver', () => {
-    expect(WEBHOOKS_DRIVER.pr).toBe('#1443');
+  it('names PR #1471 and the driver', () => {
+    expect(WEBHOOKS_DRIVER.pr).toBe('#1471');
     expect(WEBHOOKS_DRIVER.driver).toBe('webhooks-self-service');
   });
 });

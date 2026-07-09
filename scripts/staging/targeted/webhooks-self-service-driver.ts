@@ -41,7 +41,7 @@ import {
 } from './runtime';
 import { buildDlqFixtureRow } from './fixtures';
 
-export const WEBHOOKS_DRIVER = { driver: 'webhooks-self-service', pr: '#1443' } as const;
+export const WEBHOOKS_DRIVER = { driver: 'webhooks-self-service', pr: '#1471' } as const;
 
 // ─── Pure plan (unit-tested) ────────────────────────────────────────────────
 
@@ -61,6 +61,13 @@ export interface WebhookPlanArgs {
   endpointId: string;
   deliveryId: string;
   dlqId: string;
+}
+
+interface WebhookRuntimeArgs {
+  orgAdminKey: string;
+  endpointId: string;
+  deliveryId: string;
+  orgId: string;
 }
 
 export function planWebhookSelfServiceRequests(
@@ -115,21 +122,31 @@ export function dlqIdFromInsert(inserted: Array<Record<string, unknown>>): strin
   return String(seededId);
 }
 
-async function seedAndPlan(ctx: DriverContext): Promise<WebhookRequestSpec[]> {
+async function runtimeArgs(): Promise<WebhookRuntimeArgs> {
   const orgAdminKey = requireEnv('STAGING_ORG_ADMIN_KEY', 'webhooks self-service driver');
   const endpointId = requireEnv('STAGING_WEBHOOK_ENDPOINT_ID', 'webhooks self-service driver');
   const orgId = requireEnv('STAGING_FIXTURE_ORG_ID', 'webhooks self-service driver');
   const deliveryId = process.env.STAGING_WEBHOOK_DELIVERY_ID ?? 'TSOAK-DEL-000000000000';
 
-  const dlqRow = buildDlqFixtureRow({ orgId, endpointId });
-  const inserted = await seedViaServiceRole('webhook_dead_letter_queue', [dlqRow]);
-  const dlqId = dlqIdFromInsert(inserted);
-  ctx.log(`seeded DLQ row id=${dlqId} org=${orgId}`);
-
-  return planWebhookSelfServiceRequests(ctx.apiBase, { orgAdminKey, endpointId, deliveryId, dlqId });
+  return { orgAdminKey, endpointId, deliveryId, orgId };
 }
 
-async function fireOnce(ctx: DriverContext, stats: DriverStats, plan: WebhookRequestSpec[]): Promise<void> {
+async function seedAndPlan(ctx: DriverContext, args: WebhookRuntimeArgs): Promise<WebhookRequestSpec[]> {
+  const dlqRow = buildDlqFixtureRow({ orgId: args.orgId, endpointId: args.endpointId });
+  const inserted = await seedViaServiceRole('webhook_dead_letter_queue', [dlqRow]);
+  const dlqId = dlqIdFromInsert(inserted);
+  ctx.log(`seeded DLQ row id=${dlqId} org=${args.orgId}`);
+
+  return planWebhookSelfServiceRequests(ctx.apiBase, {
+    orgAdminKey: args.orgAdminKey,
+    endpointId: args.endpointId,
+    deliveryId: args.deliveryId,
+    dlqId,
+  });
+}
+
+async function fireOnce(ctx: DriverContext, stats: DriverStats, args: WebhookRuntimeArgs): Promise<void> {
+  const plan = await seedAndPlan(ctx, args);
   for (const spec of plan) {
     const headers = iamAuthHeaders(spec.headers ?? {});
     const outcome = await fireLabeled({ stats, ...spec, headers });
@@ -148,8 +165,8 @@ async function main(): Promise<void> {
     args,
     label: WEBHOOKS_DRIVER.driver,
     stats,
-    plan: (ctx) => seedAndPlan(ctx),
-    fireOnce: (ctx, plan) => fireOnce(ctx, stats, plan as WebhookRequestSpec[]),
+    plan: () => runtimeArgs(),
+    fireOnce: (ctx, args) => fireOnce(ctx, stats, args as WebhookRuntimeArgs),
   });
 
   const evidence = summarizeEvidence(stats, { ...WEBHOOKS_DRIVER, apiBase });
