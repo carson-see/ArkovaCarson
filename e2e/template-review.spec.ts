@@ -187,8 +187,9 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     await page.getByTestId('review-input-creditHours').fill('6');
     await page.getByTestId('review-save-creditHours').click();
 
-    for (const key of ['credentialType', 'issuerName']) {
-      await page.getByTestId(`review-ack-${key}`).click();
+    const remainingAcknowledgementButtons = reviewPanel.getByTestId(/^review-ack-/);
+    while (await remainingAcknowledgementButtons.count() > 0) {
+      await remainingAcknowledgementButtons.first().click();
     }
 
     await expect(continueButton).toBeEnabled();
