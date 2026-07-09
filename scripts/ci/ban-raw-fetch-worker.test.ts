@@ -14,6 +14,7 @@ import {
   scanTextForRawFetch,
   isAllowlisted,
   RAW_FETCH_ALLOWLIST,
+  GIT_BIN,
   type RawFetchFinding,
 } from './ban-raw-fetch-worker.js';
 
@@ -126,5 +127,11 @@ describe('finding shape', () => {
       kind: 'fetch',
       text: 'const r = await fetch(u);',
     });
+  });
+});
+
+describe('git binary', () => {
+  it('uses a fixed git executable path by default, not a PATH lookup', () => {
+    expect(GIT_BIN).toBe('/usr/bin/git');
   });
 });

@@ -47,6 +47,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const WORKER_SRC_PREFIX = 'services/worker/src/';
+export const GIT_BIN = process.env.GIT_BIN ?? '/usr/bin/git';
 
 /**
  * Reviewed allow-list. Entries are matched against the worker-src-relative path
@@ -233,7 +234,7 @@ function matchStar(basename: string, pattern: string): boolean {
 }
 
 function listWorkerSrcFiles(repo: string): string[] {
-  const out = execFileSync('git', ['ls-files', 'services/worker/src'], { cwd: repo, encoding: 'utf8' });
+  const out = execFileSync(GIT_BIN, ['ls-files', 'services/worker/src'], { cwd: repo, encoding: 'utf8' });
   return out
     .split('\n')
     .filter(Boolean)
