@@ -2323,6 +2323,35 @@ describe('check-staging-evidence', () => {
         ])).toBe(false);
       });
 
+      it('is true for the WEBEXT NER browser-runtime support file shape', () => {
+        expect(isFrontendOnlyChange([
+          '.gitignore',
+          'docs/reference/WEBEXT01_FIX_RESULTS.md',
+          'docs/reference/webext01-fix-evidence/evidence-results.json',
+          'package.json',
+          'public/vendor/transformers.bundle.min.js',
+          'public/vendor/transformers.web.min.js',
+          'scripts/agents.md',
+          'scripts/ci/agents.md',
+          'scripts/ci/check-csp-runtime-deps.test.ts',
+          'scripts/ci/check-csp-runtime-deps.ts',
+          'scripts/ner-runtime.lock.json',
+          'scripts/vendor-ner-runtime.test.ts',
+          'scripts/vendor-ner-runtime.ts',
+          'scripts/vendor-transformers-version.test.ts',
+          'src/lib/agents.md',
+          'src/lib/nerPiiDetector.test.ts',
+          'src/lib/nerPiiDetector.ts',
+        ])).toBe(true);
+      });
+
+      it('keeps unrelated scripts/ci changes out of the frontend-T2 path', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/anchor/SecureDocumentDialog.tsx',
+          'scripts/ci/check-csp-runtime-deps.ts',
+        ])).toBe(false);
+      });
+
       it('is false when a GitHub Actions workflow is present', () => {
         expect(isFrontendOnlyChange([
           'src/components/anchor/SecureDocumentDialog.tsx',

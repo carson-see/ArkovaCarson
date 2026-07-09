@@ -453,6 +453,38 @@ const FRONTEND_ONLY_PATH_RE: RegExp[] = [
   /^docs\/(?:uat|reference|staging|bugs|qa|screenshots|frontend|ui)\//,
 ];
 
+const FRONTEND_NER_RUNTIME_SIGNAL_RE: RegExp[] = [
+  /^src\/lib\/nerPiiDetector(?:\.test)?\.ts$/,
+  /^public\/vendor\/transformers\.(?:bundle|web)\.min\.js$/,
+  /^scripts\/vendor-ner-runtime(?:\.test)?\.ts$/,
+  /^scripts\/ner-runtime\.lock\.json$/,
+];
+
+const FRONTEND_NER_RUNTIME_SUPPORT_RE: RegExp[] = [
+  /^\.gitignore$/,
+  /^package\.json$/,
+  /^docs\/reference\/WEBEXT01_FIX_RESULTS\.md$/,
+  /^docs\/reference\/webext01-fix-evidence\//,
+  /^scripts\/agents\.md$/,
+  /^scripts\/ci\/agents\.md$/,
+  /^scripts\/ci\/check-csp-runtime-deps(?:\.test)?\.ts$/,
+  /^scripts\/ner-runtime\.lock\.json$/,
+  /^scripts\/vendor-ner-runtime(?:\.test)?\.ts$/,
+  /^scripts\/vendor-transformers-version\.test\.ts$/,
+];
+
+function isFrontendNerRuntimeSupportChange(files: string[]): boolean {
+  return files.some((file) => FRONTEND_NER_RUNTIME_SIGNAL_RE.some((re) => re.test(file)));
+}
+
+function isFrontendOnlyFile(file: string, files: string[]): boolean {
+  const isNerSupport = isFrontendNerRuntimeSupportChange(files)
+    && FRONTEND_NER_RUNTIME_SUPPORT_RE.some((re) => re.test(file));
+  const isFrontendAsset = FRONTEND_ONLY_PATH_RE.some((re) => re.test(file)) || isNerSupport;
+  const isNonFrontend = NON_FRONTEND_SURFACE_RE.some((re) => re.test(file)) && !isNerSupport;
+  return isFrontendAsset && !isNonFrontend;
+}
+
 /**
  * True iff EVERY changed file is a purely-frontend/UAT/test/support file and
  * not matching any
@@ -469,10 +501,7 @@ const FRONTEND_ONLY_PATH_RE: RegExp[] = [
  */
 export function isFrontendOnlyChange(files: string[]): boolean {
   if (files.length === 0) return false;
-  return files.every(
-    (f) => FRONTEND_ONLY_PATH_RE.some((re) => re.test(f))
-      && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
-  );
+  return files.every((file) => isFrontendOnlyFile(file, files));
 }
 
 /**
