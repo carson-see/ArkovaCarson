@@ -1,11 +1,17 @@
 import { appendFileSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-type DriverMode = 'self-test';
+type DriverMode = 'self-test' | 'live-trigger-proof';
 
 export interface DriverOptions {
   mode?: DriverMode;
   evidenceJsonl?: string;
+  admissionJson?: string;
+  preflightJson?: string;
+  triggerProofJson?: string;
+  expectedSha?: string;
+  expectedProjectRef?: string;
+  expectedTagUrl?: string;
   now?: string;
 }
 
@@ -52,7 +58,7 @@ export interface Pr1455DriverResult {
   pr: 1455;
   tier: 'T3';
   status: 'pass' | 'fail';
-  evidenceForSoak: false;
+  evidenceForSoak: boolean;
   mode: DriverMode;
   at: string;
   changedBehavior: string;
@@ -76,6 +82,40 @@ function ensureWorkerImportEnv(): void {
 
 function check(name: string, ok: boolean, details: Record<string, unknown>): CheckResult {
   return { name, ok, details };
+}
+
+function readJsonArtifact(path: string, label: string): Record<string, unknown> {
+  try {
+    return JSON.parse(readFileSync(resolve(path), 'utf8')) as Record<string, unknown>;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Unable to read ${label} JSON at ${path}: ${message}`);
+  }
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.map(stringValue).find((value): value is string => value !== undefined);
+}
+
+function nestedRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function includesPr1455Tag(url: string | undefined): boolean {
+  return Boolean(url?.includes('pr-1455'));
+}
+
+function cleanMirrorFromPreflight(preflight: Record<string, unknown>): boolean {
+  return preflight.environment_type === 'clean_mirror'
+    || preflight.environmentType === 'clean_mirror'
+    || preflight.status === 'clean_mirror'
+    || preflight.result === 'clean_mirror';
 }
 
 async function runtimeImport<T>(specifier: string): Promise<T> {
@@ -213,6 +253,92 @@ function runSecuredTriggerDesignCheck(): CheckResult {
   });
 }
 
+function validateAdmissionAndPreflight(options: DriverOptions): CheckResult {
+  const missing = [
+    options.admissionJson ? undefined : '--admission-json',
+    options.preflightJson ? undefined : '--preflight-json',
+  ].filter((item): item is string => Boolean(item));
+  if (missing.length > 0) {
+    return check('exact_head_admission_and_clean_preflight', false, {
+      missing,
+      requirement: 'Live countable mode requires exact-head admission plus clean_mirror preflight artifacts.',
+    });
+  }
+
+  const admission = readJsonArtifact(options.admissionJson as string, 'admission');
+  const preflight = readJsonArtifact(options.preflightJson as string, 'preflight');
+  const deploy = nestedRecord(admission.deploy);
+  const deployed = nestedRecord(admission.deployed);
+  const service = nestedRecord(admission.service);
+  const image = nestedRecord(admission.image);
+  const preflightClean = cleanMirrorFromPreflight(preflight);
+  const headSha = firstString(admission.headSha, admission.sha, admission.prHeadSha);
+  const buildSha = firstString(admission.buildSha, deploy.buildSha, deployed.buildSha, service.buildSha);
+  const projectRef = firstString(admission.projectRef, admission.stagingProjectRef, preflight.staging_project_ref, preflight.projectRef);
+  const tagUrl = firstString(admission.tagUrl, admission.serviceUrl, deploy.tagUrl, deploy.url, deployed.tagUrl, service.tagUrl);
+  const imageDigest = firstString(admission.imageDigest, deploy.imageDigest, deployed.imageDigest, image.digest);
+  const expectedShaOk = !options.expectedSha || (headSha === options.expectedSha && buildSha === options.expectedSha);
+  const expectedProjectOk = !options.expectedProjectRef || projectRef === options.expectedProjectRef;
+  const expectedTagOk = !options.expectedTagUrl || tagUrl === options.expectedTagUrl;
+  const ok = preflightClean
+    && expectedShaOk
+    && expectedProjectOk
+    && expectedTagOk
+    && includesPr1455Tag(tagUrl)
+    && Boolean(imageDigest?.startsWith('sha256:') || imageDigest?.includes('@sha256:'));
+
+  return check('exact_head_admission_and_clean_preflight', ok, {
+    admissionJson: options.admissionJson,
+    preflightJson: options.preflightJson,
+    expectedSha: options.expectedSha,
+    headSha,
+    buildSha,
+    expectedProjectRef: options.expectedProjectRef,
+    projectRef,
+    expectedTagUrl: options.expectedTagUrl,
+    tagUrl,
+    hasPr1455Tag: includesPr1455Tag(tagUrl),
+    imageDigest,
+    preflightCleanMirror: preflightClean,
+  });
+}
+
+function validateLiveTriggerProof(options: DriverOptions): CheckResult {
+  if (!options.triggerProofJson) {
+    return check('live_0357_secured_trigger_proof', false, {
+      missing: ['--trigger-proof-json'],
+      requirement: 'Countable PR #1455 evidence must prove 0357 was applied on the isolated clean mirror and exercised with the GUC enabled.',
+    });
+  }
+
+  const proof = readJsonArtifact(options.triggerProofJson, '0357 trigger proof');
+  const projectRef = firstString(proof.projectRef, proof.stagingProjectRef);
+  const migration = firstString(proof.migration, proof.migrationVersion);
+  const environmentType = firstString(proof.environmentType, proof.environment_type);
+  const ok = proof.pr === 1455
+    && migration === '0357'
+    && (!options.expectedProjectRef || projectRef === options.expectedProjectRef)
+    && environmentType === 'clean_mirror'
+    && proof.triggerInstalled === true
+    && (proof.gucEnabled === true || proof.guc === 'on')
+    && proof.invalidSecuredRejected === true
+    && proof.validSecuredAccepted === true
+    && proof.evidenceForSoak === true;
+
+  return check('live_0357_secured_trigger_proof', ok, {
+    triggerProofJson: options.triggerProofJson,
+    projectRef,
+    migration,
+    environmentType,
+    triggerInstalled: proof.triggerInstalled,
+    gucEnabled: proof.gucEnabled ?? proof.guc,
+    invalidSecuredRejected: proof.invalidSecuredRejected,
+    validSecuredAccepted: proof.validSecuredAccepted,
+    nonSecuredUnaffected: proof.nonSecuredUnaffected,
+    evidenceForSoak: proof.evidenceForSoak,
+  });
+}
+
 export async function runPr1455AdmissionDriver(options: DriverOptions = {}): Promise<Pr1455DriverResult> {
   const mode = options.mode ?? 'self-test';
   const checks = [
@@ -221,15 +347,22 @@ export async function runPr1455AdmissionDriver(options: DriverOptions = {}): Pro
     await runCtidInvarianceChecks(),
     runSecuredTriggerDesignCheck(),
   ];
-  const blockers = [
-    'No exact-head isolated deploy/admission JSON is provided by this self-test.',
-    '0357 trigger behavior still requires clean isolated DB apply + live trigger exercise before T3 soak evidence can count.',
-  ];
+  if (mode === 'live-trigger-proof') {
+    checks.push(validateAdmissionAndPreflight(options), validateLiveTriggerProof(options));
+  }
+  const failedChecks = checks.filter((item) => !item.ok).map((item) => item.name);
+  const blockers = mode === 'self-test'
+    ? [
+      'No exact-head isolated deploy/admission JSON is provided by this self-test.',
+      '0357 trigger behavior still requires clean isolated DB apply + live trigger exercise before T3 soak evidence can count.',
+    ]
+    : failedChecks.map((name) => `Required live evidence check failed: ${name}`);
+  const status = checks.every((item) => item.ok) ? 'pass' : 'fail';
   const result: Pr1455DriverResult = {
     pr: 1455,
     tier: 'T3',
-    status: checks.every((item) => item.ok) ? 'pass' : 'fail',
-    evidenceForSoak: false,
+    status,
+    evidenceForSoak: mode === 'live-trigger-proof' && status === 'pass',
     mode,
     at: options.now ?? new Date().toISOString(),
     changedBehavior: CHANGED_BEHAVIOR,
@@ -249,8 +382,22 @@ function parseArgs(argv: string[]): DriverOptions {
     const arg = argv[idx];
     if (arg === '--self-test') {
       options.mode = 'self-test';
+    } else if (arg === '--live-trigger-proof') {
+      options.mode = 'live-trigger-proof';
     } else if (arg === '--evidence-jsonl') {
       options.evidenceJsonl = argv[++idx];
+    } else if (arg === '--admission-json') {
+      options.admissionJson = argv[++idx];
+    } else if (arg === '--preflight-json') {
+      options.preflightJson = argv[++idx];
+    } else if (arg === '--trigger-proof-json') {
+      options.triggerProofJson = argv[++idx];
+    } else if (arg === '--expected-sha') {
+      options.expectedSha = argv[++idx];
+    } else if (arg === '--expected-project-ref') {
+      options.expectedProjectRef = argv[++idx];
+    } else if (arg === '--expected-tag-url') {
+      options.expectedTagUrl = argv[++idx];
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
