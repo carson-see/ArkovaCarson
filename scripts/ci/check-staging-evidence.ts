@@ -473,6 +473,62 @@ export function isFrontendOnlyChange(files: string[]): boolean {
   );
 }
 
+/**
+ * Prefixes of the OFFLINE, architecturally-unsoakable distributable surface: the
+ * standalone client SDK / CLI / library packages that ship to consumers and run
+ * offline (pytest / vitest / parity), NOT the deployed Cloud Run worker.
+ *   - `packages/`  the `packages/*` library + CLI tree (arkova-py, verifier,
+ *                  verifier-cli, embed, mcp-server, typescript, langchain, sdk, …).
+ *   - `sdks/`      the client SDK tree (typescript / langchain / mcp-server).
+ * Verified (grep): no `packages/**` or `sdks/**` file is imported by
+ * `services/worker/src/**`, so none is bundled into the deployed worker image or
+ * applied to the DB — there is no worker runtime to soak for a PR confined here.
+ */
+const OFFLINE_PACKAGE_PREFIXES = ['packages/', 'sdks/'];
+
+/**
+ * A served-contract-doc predicate. `docs/api/` and `docs/guides/API_GUIDE.md`
+ * are part of the SDK PATH_RULE, but they DOCUMENT the served Cloud Run worker
+ * HTTP contract — a soak validates that contract's behavior — so a PR touching
+ * them is NOT architecturally unsoakable and must stay on the standard
+ * worker-evidence path. Excluded from {@link isOfflinePackageOnlyChange}.
+ */
+const SERVED_CONTRACT_DOC_RE = /^(?:docs\/api\/|docs\/guides\/API_GUIDE\.md$)/;
+
+/**
+ * True iff EVERY changed file is a purely-offline package/SDK file — under one of
+ * {@link OFFLINE_PACKAGE_PREFIXES} (`packages/` / `sdks/`) and NOT matching any
+ * worker/migration/served-contract surface ({@link NON_FRONTEND_SURFACE_RE} minus
+ * the offline-package prefixes it also lists, plus the {@link SERVED_CONTRACT_DOC_RE}
+ * carve-out). This is the fail-closed guard for the architecturally-unsoakable
+ * evidence mode: it gates the alternate (test/parity + N/A-tag + unsoakable-note)
+ * evidence path so it can only ever apply to a PR that genuinely has no worker
+ * runtime to soak. #1411 (offline verifier-cli + arkova-py SDK) is exactly this
+ * case; any worker/migration/API-contract-doc-touching PR stays on the full
+ * worker-evidence path (fail-closed preserved).
+ *
+ * `NON_FRONTEND_SURFACE_RE` lists `^packages/` and `^sdks/` as "non-frontend", so
+ * it cannot be used directly as the denylist here (it would reject every offline
+ * package). Instead the denylist is the SERVED/worker/migration subset: worker
+ * (`services/`), migration/functions (`supabase/(migrations|functions)/`), served
+ * contract docs, CI workflows, and CI scripts. An offline package file matches
+ * none of those.
+ *
+ * An empty fileset returns false: there is nothing to attest as offline-only.
+ */
+export function isOfflinePackageOnlyChange(files: string[]): boolean {
+  if (files.length === 0) return false;
+  return files.every(
+    (f) => OFFLINE_PACKAGE_PREFIXES.some((p) => f.startsWith(p))
+      && !f.startsWith('services/')
+      && !f.startsWith('supabase/migrations/')
+      && !f.startsWith('supabase/functions/')
+      && !SERVED_CONTRACT_DOC_RE.test(f)
+      && !f.startsWith('.github/workflows/')
+      && !f.startsWith('scripts/'),
+  );
+}
+
 const EVIDENCE_HEADER_RE = /^##\s+Staging\s+Soak\s+Evidence\s*$/im;
 const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
 
@@ -535,11 +591,16 @@ export function hasEvidenceSection(body: string): boolean {
   return EVIDENCE_HEADER_RE.test(body);
 }
 
-/** Evidence-block field set key: a standard tier, or the frontend-T2 path. */
-export type FieldSet = Tier | 'T2_FRONTEND';
+/**
+ * Evidence-block field set key: a standard tier, the frontend-T2 path, or the
+ * architecturally-unsoakable (offline-package) T2 path.
+ */
+export type FieldSet = Tier | 'T2_FRONTEND' | 'T2_UNSOAKABLE';
 
 function requiredFieldsFor(set: FieldSet): readonly string[] {
-  return set === 'T2_FRONTEND' ? T2_FRONTEND_FIELDS : TIER_SPECS[set].requiredFields;
+  if (set === 'T2_FRONTEND') return T2_FRONTEND_FIELDS;
+  if (set === 'T2_UNSOAKABLE') return T2_UNSOAKABLE_FIELDS;
+  return TIER_SPECS[set].requiredFields;
 }
 
 export function missingFields(body: string, set: FieldSet): string[] {
@@ -663,6 +724,8 @@ const INCOMPLETE_VALUE_PATTERNS = [
   /^tba\.?$/i,
   /^todo\.?$/i,
   /^to[\s-]?do\.?$/i,
+  /^planned\.?$/i,
+  /^future\.?$/i,
   /^fixme\.?$/i,
   /^wip\.?$/i,
   /^work[\s-]?in[\s-]?progress\.?$/i,
@@ -678,14 +741,26 @@ const INCOMPLETE_VALUE_PATTERNS = [
   /^…\.?$/i,
   /^<[^>]*>\.?$/i,
 ];
+const INCOMPLETE_CONTEXT_WORDS =
+  '(?:evidence|soak|run|capture|verification|verify|test|proof|result|preflight|deploy|observation|timestamp|start|end)';
+const INCOMPLETE_PHRASE_PATTERNS = [
+  /\bnot[\s-]?started\b/i,
+  /\bto[\s-]?be[\s-]?(?:run|captured)\b/i,
+  /\bwill\s+(?:run|start|finish|capture|verify)\b/i,
+  new RegExp(String.raw`\b(?:planned|future)\s+${INCOMPLETE_CONTEXT_WORDS}\b`, 'i'),
+  new RegExp(String.raw`\b${INCOMPLETE_CONTEXT_WORDS}\s+(?:planned|future)\b`, 'i'),
+];
 
 // "Not applicable" markers — legitimate for some fields (e.g. `Migration
 // applied: none`) but never for a concrete deploy artifact.
 const NOT_APPLICABLE_VALUE_RE = /^(?:n\/?a|n\.?a\.?|none|not[\s-]?applicable|null|nil)\.?$/i;
+const URL_RE = /\bhttps?:\/\/\S+/i;
+const IMAGE_DIGEST_RE = /\bsha256:[0-9a-f]{64}\b/i;
 
 function isIncompletePlaceholder(value: string): boolean {
   const trimmed = value.trim();
-  return INCOMPLETE_VALUE_PATTERNS.some((re) => re.test(trimmed));
+  return INCOMPLETE_VALUE_PATTERNS.some((re) => re.test(trimmed))
+    || INCOMPLETE_PHRASE_PATTERNS.some((re) => re.test(trimmed));
 }
 
 function isNotApplicablePlaceholder(value: string): boolean {
@@ -729,16 +804,26 @@ function validateCloudRunUrlEvidence(body: string): string | null {
   if (artifact !== null) return artifact;
   const value = extractEvidenceFieldValue(body, field);
   if (value === null || value.trim().length === 0) return null;
-  return /\bhttps?:\/\/\S+/i.test(value)
+  return URL_RE.test(value)
     ? null
     : `${field} must contain the Cloud Run service or tag URL.`;
+}
+
+function validateImageDigestEvidence(body: string): string | null {
+  const field = 'Image digest:';
+  const artifact = validateArtifactEvidenceField(body, field);
+  if (artifact !== null) return artifact;
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null || value.trim().length === 0) return null;
+  return IMAGE_DIGEST_RE.test(value)
+    ? null
+    : `${field} must contain the immutable sha256:<64 hex> image digest for the tested worker image.`;
 }
 
 // Concrete deploy artifacts: a placeholder or N/A here means the deploy did
 // not actually happen for this evidence.
 const T2_T3_ARTIFACT_FIELDS = [
   'Worker revision:',
-  'Image digest:',
   'Staging deploy log id:',
 ];
 
@@ -784,6 +869,47 @@ export const T2_FRONTEND_FIELDS = [
   'Rollback plan:',
 ];
 
+// ───────────────────────────────────────────────────────────────────────────
+// Architecturally-unsoakable evidence mode.
+//
+// A PR can be required-tier T2 purely by touching an OFFLINE package/SDK/CLI
+// surface (the `packages/…` / `sdks/` half of the SDK PATH_RULE). Those
+// packages ship no worker code, no migration, and are not the served Cloud Run
+// HTTP contract — they are distributed as standalone libraries/CLIs run offline
+// by consumers (pytest / vitest / parity). Such a PR can NEVER produce the
+// worker artifacts (Worker revision, Image digest, Cloud Run URL, Staging
+// deploy-log id) or the clean_mirror preflight the standard T2 block demands —
+// there is no worker runtime to soak. Demanding those was an impossible
+// catch-22 that blocked #1411 (verifier-cli + arkova-py).
+//
+// Instead it satisfies T2 with test/parity evidence (vitest/pytest/parity green
+// at head), an N/A-with-justification staging tag, and an `### Unsoakable-surface
+// note` attesting that no worker runtime exists to soak.
+//
+// This path is reachable ONLY through `isOfflinePackageOnlyChange(files)` — see
+// check(). Any worker/migration/served-contract-touching T2 PR keeps the
+// unchanged worker-artifact requirements (fail-closed).
+// ───────────────────────────────────────────────────────────────────────────
+export const T2_UNSOAKABLE_FIELDS = [
+  'Tier:',
+  'PR head SHA:',
+  'Test evidence:',
+  'CI green:',
+  'Staging tag URL or N/A explanation:',
+];
+
+// Unsoakable-surface note: an offline-package PR substitutes this for the worker
+// artifacts it cannot produce. The sub-fields attest that no worker runtime
+// exists to soak + name the offline surfaces; the SAME real-approver guard as
+// the other alternate-evidence notes applies.
+const UNSOAKABLE_NOTE_REQUIRED_FIELDS = [
+  'No worker runtime:',
+  'Surfaces touched:',
+  'Approved by:',
+];
+
+const UNSOAKABLE_NOTE_HEADER_RE = /^###\s+Unsoakable-surface\s+note\b/im;
+
 function validateVercelUrlEvidence(body: string): string | null {
   const field = 'Vercel deployment URL:';
   // Must be present, filled, not a placeholder, AND an actual URL.
@@ -791,9 +917,120 @@ function validateVercelUrlEvidence(body: string): string | null {
   if (filled !== null) return filled;
   const value = extractEvidenceFieldValue(body, field);
   if (value === null) return null; // label-absence owned by missingFields()
-  return /\bhttps?:\/\/\S+/i.test(value)
+  return URL_RE.test(value)
     ? null
     : `${field} must contain a Vercel deployment or preview URL.`;
+}
+
+const HEALTH_TOKEN_RE = /(?:^|[\s`"'(])(?:\/health\b|healthcheck\b)/i;
+const HEALTH_CONTEXT_TERMS = [
+  'webhook',
+  'docusign',
+  'retry',
+  'envelope',
+  'batch',
+  'anchor',
+  'cron',
+  'queue',
+  'deadman',
+  'dlq',
+  'proof',
+  'verify',
+  'verification',
+  'export',
+  'ai',
+  'billing',
+  'rate-limit',
+  'rate limit',
+  'chain',
+  'treasury',
+  'migration',
+  'slo',
+];
+
+function hasChangedBehaviorContext(lower: string): boolean {
+  return HEALTH_CONTEXT_TERMS.some((term) => lower.includes(term))
+    || /\/api\/(?!health\b)/.test(lower);
+}
+
+function isGenericHealthOnlyEvidence(value: string): boolean {
+  const lower = value.toLowerCase();
+  return HEALTH_TOKEN_RE.test(lower) && !hasChangedBehaviorContext(lower);
+}
+
+const LOAD_EVIDENCE_TERMS = [
+  'load',
+  'concurr',
+  'parallel',
+  'fan-out',
+  'fan out',
+  'burst',
+  'rate-limit',
+  'rate limit',
+  'throughput',
+  'p95',
+  'latency',
+  'k6',
+  'vu',
+  'virtual user',
+  'stress',
+  'rps',
+  'queue',
+  'retry',
+  'drain',
+  '10k',
+  'anchors/sec',
+  'deliveries',
+];
+const QUALIFIED_REQUEST_RE =
+  /\b(?:concurrent|parallel|simultaneous|burst|high[- ]volume|rate[- ]limited)\s+requests?\b/i;
+const NUMERIC_REQUEST_RE = /\b\d+\s*(?:rps|qps|reqs?|requests?)\b/i;
+
+function isSpecificLoadEvidence(value: string): boolean {
+  const lower = value.toLowerCase();
+  return LOAD_EVIDENCE_TERMS.some((term) => lower.includes(term))
+    || QUALIFIED_REQUEST_RE.test(value)
+    || NUMERIC_REQUEST_RE.test(value);
+}
+
+function validateLoadConcurrencyEvidence(body: string): string | null {
+  const field = 'Load/concurrency evidence:';
+  const filled = validateFilledEvidenceField(body, field);
+  if (filled !== null) return filled;
+
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null) {
+    return `${field} is required and must name the changed-behavior proof under heavy-user/load/concurrency conditions.`;
+  }
+  if (isNotApplicablePlaceholder(value)) {
+    return `${field} must name real heavy-user/load/concurrency evidence; \`${value.trim()}\` is not merge-grade soak evidence.`;
+  }
+  if (isGenericHealthOnlyEvidence(value)) {
+    return `${field} must exercise the changed behavior under load; generic \`/health\` coverage is only supporting worker-health evidence.`;
+  }
+  return isSpecificLoadEvidence(value)
+    ? null
+    : `${field} must name load/concurrency proof for the changed behavior (for example tests/load, k6 VUs, p95/error-rate thresholds, queue drain, retry fan-out, or rate-limit evidence).`;
+}
+
+function changedBehaviorErrors(body: string): string[] {
+  const errors = [
+    validateFilledEvidenceField(body, 'Changed behavior:'),
+    validateFilledEvidenceField(body, 'Targeted evidence:'),
+    validateLoadConcurrencyEvidence(body),
+  ].filter((error): error is string => error !== null);
+
+  if (extractEvidenceFieldValue(body, 'Changed behavior:') === null) {
+    errors.push('Changed behavior: is required and must name the behavior changed by this PR.');
+  }
+  const targetedEvidence = extractEvidenceFieldValue(body, 'Targeted evidence:');
+  if (targetedEvidence === null) {
+    errors.push('Targeted evidence: is required and must name the changed behavior exercised by the evidence.');
+  } else if (isGenericHealthOnlyEvidence(targetedEvidence)) {
+    errors.push('Targeted evidence: must exercise the changed behavior; generic `/health` coverage is only supporting worker-health evidence.');
+  }
+
+  return errors;
 }
 
 /**
@@ -837,6 +1074,7 @@ function frontendT2Errors(body: string): string[] {
       /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
       'CI/E2E green: must state that CI/E2E is green.',
     ),
+    ...changedBehaviorErrors(body),
   );
 
   // A frontend-T2 PR substitutes a residual-risk note for the worker
@@ -857,6 +1095,81 @@ function frontendT2Errors(body: string): string[] {
         'frontend-T2 evidence requires a `### Residual-risk note` section '
         + 'attesting that no worker artifacts exist (frontend-only: no Cloud Run '
         + 'deploy, no worker revision, no image digest, no staging deploy-log id).',
+      );
+    }
+  }
+
+  return errors.filter((e): e is string => e !== null);
+}
+
+/**
+ * Architecturally-unsoakable evidence validation. Mirrors the spirit of the
+ * frontend-T2 / T1 auditable-value checks (real test/parity result, real CI
+ * green, real N/A-justified staging tag, named approver) but swaps the
+ * worker-artifact requirements for a `### Unsoakable-surface note` attesting
+ * that no worker runtime exists to soak. Returns the list of error strings
+ * (empty = ok).
+ */
+function unsoakableT2Errors(body: string): string[] {
+  const errors: (string | null)[] = [];
+
+  if (!hasEvidenceSection(body)) {
+    return [
+      'PR body is missing a `## Staging Soak Evidence` section. '
+      + 'Use docs/staging/PR_TEMPLATE.md (unsoakable-surface block) as a starting point.',
+    ];
+  }
+
+  const missing = missingFields(body, 'T2_UNSOAKABLE');
+  if (missing.length > 0) {
+    errors.push(
+      '`## Staging Soak Evidence` section is missing required fields for the '
+      + 'architecturally-unsoakable (offline package/SDK) evidence path: '
+      + missing.map((f) => `\`${f}\``).join(', ') + '.',
+    );
+  }
+
+  // `Test evidence:` must be filled (no placeholder) AND state a passing result
+  // (pytest/vitest/parity green). The non-empty check runs first because
+  // validatePassingEvidenceField short-circuits to PASS on an empty value.
+  errors.push(
+    validateFilledEvidenceField(body, 'Test evidence:'),
+    validatePassingEvidenceField(
+      body,
+      'Test evidence:',
+      /\b(?:green|pass(?:ed|es)?|success(?:ful)?|ok|\d+\s*\/\s*\d+)\b/i,
+      'Test evidence: must state a passing test/parity result (e.g. pytest/vitest/parity green).',
+    ),
+    validateNonEmptyEvidenceField(body, 'CI green:'),
+    validatePassingEvidenceField(
+      body,
+      'CI green:',
+      /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
+      'CI green: must state that CI is green.',
+    ),
+    // The staging tag MUST be an explicit N/A-with-justification (or a URL, for
+    // symmetry with the T1 validator) — a bare "skipped" is not auditable.
+    validateStagingTagEvidence(body),
+    validateFilledEvidenceField(body, 'Staging tag URL or N/A explanation:'),
+    ...changedBehaviorErrors(body),
+  );
+
+  // The worker artifacts are substituted by an unsoakable-surface note.
+  const note = hasUnsoakableSurfaceNote(body);
+  if (!note.valid) {
+    if (note.missing.length > 0) {
+      errors.push(
+        '`### Unsoakable-surface note` is missing required sub-fields: '
+        + note.missing.map((f) => `\`${f}\``).join(', ')
+        + '. The note must attest that no worker runtime exists to soak '
+        + '(offline package/SDK) and carry a named `Approved by:`.',
+      );
+    } else {
+      errors.push(
+        'Architecturally-unsoakable evidence requires a `### Unsoakable-surface '
+        + 'note` section attesting that no worker runtime exists to soak '
+        + '(offline package/SDK: no Cloud Run deploy, no worker revision, no '
+        + 'image digest, no staging deploy-log id, no migration).',
       );
     }
   }
@@ -898,6 +1211,7 @@ function requiredValueErrors(body: string, tier: Tier): string[] {
   return [
     ...T2_T3_ARTIFACT_FIELDS.map((field) => validateArtifactEvidenceField(body, field)),
     validateCloudRunUrlEvidence(body),
+    validateImageDigestEvidence(body),
     ...T2_T3_FILLED_FIELDS.map((field) => validateFilledEvidenceField(body, field)),
   ].filter((error): error is string => error !== null);
 }
@@ -912,6 +1226,8 @@ function hasCleanMirrorPreflight(value: string): boolean {
   const lower = value.toLowerCase();
   if (/\b(?:soak_artifact|fixture_seeded)\b/.test(lower)) return false;
   if (/\bdiagnostic[- ]?only\b/.test(lower)) return false;
+  if (/\b(?:dirty|contaminated|staging[- ]only|pr[- ]only|prod(?:uction)? divergence|unexplained prod divergence)\b/.test(lower)) return false;
+  if (/\bduplicate migration (?:names|versions) (?:found|present|detected)\b/.test(lower)) return false;
   return /["']?environment_type["']?\s*[:=]\s*["']?clean_mirror["']?/.test(lower);
 }
 
@@ -965,8 +1281,9 @@ const FRONTEND_RESIDUAL_RISK_REQUIRED_FIELDS = [
 function validateResidualRiskNote(
   body: string,
   requiredFields: readonly string[],
+  headerRe: RegExp = RESIDUAL_RISK_HEADER_RE,
 ): { valid: boolean; missing: string[] } {
-  const headerMatch = RESIDUAL_RISK_HEADER_RE.exec(body);
+  const headerMatch = headerRe.exec(body);
   if (!headerMatch) return { valid: false, missing: [] };
   const sectionStart = headerMatch.index + headerMatch[0].length;
   const nextHeading = body.slice(sectionStart).search(/^#{1,3}\s/m);
@@ -998,6 +1315,14 @@ export function hasResidualRiskException(body: string): { valid: boolean; missin
 
 export function hasFrontendResidualRiskNote(body: string): { valid: boolean; missing: string[] } {
   return validateResidualRiskNote(body, FRONTEND_RESIDUAL_RISK_REQUIRED_FIELDS);
+}
+
+export function hasUnsoakableSurfaceNote(body: string): { valid: boolean; missing: string[] } {
+  return validateResidualRiskNote(
+    body,
+    UNSOAKABLE_NOTE_REQUIRED_FIELDS,
+    UNSOAKABLE_NOTE_HEADER_RE,
+  );
 }
 
 function preflightResultErrors(body: string): string[] {
@@ -1033,6 +1358,52 @@ function preflightTimestampErrors(body: string): string[] {
   }
 
   return [];
+}
+
+const FUTURE_TIMESTAMP_FIELDS = [
+  'Preflight timestamp:',
+  'Soak start:',
+  'Soak end:',
+];
+
+function futureTimestampErrors(body: string, nowMs = Date.now()): string[] {
+  const errors: string[] = [];
+  for (const field of FUTURE_TIMESTAMP_FIELDS) {
+    const value = extractEvidenceFieldValue(body, field);
+    if (value === null) continue;
+    const parsed = parseEvidenceTimestamp(value);
+    if (parsed !== null && parsed > nowMs) {
+      errors.push(`${field} \`${value}\` is in the future; planned/future evidence cannot start or complete a soak clock.`);
+    }
+  }
+  return errors;
+}
+
+function targetedDurationWaiverErrors(body: string, tier: Tier): { valid: boolean; errors: string[] } {
+  if (tier !== 'T2') return { valid: false, errors: [] };
+
+  const approvalField = 'RM-approved targeted evidence:';
+  const floorField = 'Async-cycle floor:';
+  const approval = extractEvidenceFieldValue(body, approvalField);
+  if (approval === null) return { valid: false, errors: [] };
+
+  const errors = [
+    validateFilledEvidenceField(body, approvalField),
+  ].filter((error): error is string => error !== null);
+
+  if (!/\bapproved\b/i.test(approval) || !/\b(?:carson|rm|release manager)\b/i.test(approval)) {
+    errors.push(`${approvalField} must name the release manager approval for targeted evidence.`);
+  }
+
+  const floor = extractEvidenceFieldValue(body, floorField);
+  if (floor === null) {
+    errors.push(`${floorField} is required when RM-approved targeted evidence is used below the 12h T2 floor.`);
+  } else {
+    const floorError = validateFilledEvidenceField(body, floorField);
+    if (floorError !== null) errors.push(floorError);
+  }
+
+  return { valid: errors.length === 0, errors };
 }
 
 function shaEvidenceErrors(opts: {
@@ -1405,6 +1776,12 @@ function isFrontendT2EvidencePath(declared: Tier, required: Tier, files: string[
     && isFrontendOnlyChange(files);
 }
 
+function isUnsoakableEvidencePath(declared: Tier, required: Tier, files: string[]): boolean {
+  return declared === 'T2'
+    && required === 'T2'
+    && isOfflinePackageOnlyChange(files);
+}
+
 function frontendT2Result(body: string, headSha?: string): CheckResult {
   const result: CheckResult = { ok: true, errors: [], notes: [] };
   const feErrors = frontendT2Errors(body);
@@ -1429,18 +1806,42 @@ function frontendT2Result(body: string, headSha?: string): CheckResult {
   return result;
 }
 
+function unsoakableT2Result(body: string, headSha?: string): CheckResult {
+  const result: CheckResult = { ok: true, errors: [], notes: [] };
+  const usErrors = unsoakableT2Errors(body);
+  // Exact-head integrity still applies: test evidence cannot be copied across
+  // commits any more than worker or frontend evidence can.
+  const headShaErrors = shaEvidenceErrors({
+    body,
+    field: 'PR head SHA:',
+    expectedSha: headSha,
+    currentLabel: 'PR head',
+    staleMessage: 'test/parity evidence cannot be copied across commits.',
+  });
+
+  addErrors(result, [...usErrors, ...headShaErrors]);
+  if (result.ok) {
+    result.notes.push(
+      'architecturally-unsoakable evidence path accepted (offline package/SDK '
+      + 'change; no worker runtime to soak — test/parity evidence + N/A staging '
+      + 'tag + unsoakable-surface note satisfy T2).',
+    );
+  }
+  return result;
+}
+
 function durationValidation(body: string, declared: Tier): { errors: string[]; notes: string[] } {
   const errors = soakDurationErrors(body, declared);
   if (errors.length === 0) return { errors: [], notes: [] };
 
-  const riskException = hasResidualRiskException(body);
-  if (riskException.valid) {
+  const targetedWaiver = targetedDurationWaiverErrors(body, declared);
+  if (targetedWaiver.valid) {
     return {
       errors: [],
-      notes: [`Soak duration below ${TIER_SPECS[declared].soakHours}h minimum; residual-risk exception accepted.`],
+      notes: ['T2 soak duration below 12h minimum; RM-approved targeted evidence with async-cycle floor accepted.'],
     };
   }
-  return { errors, notes: [] };
+  return { errors: targetedWaiver.errors.length > 0 ? targetedWaiver.errors : errors, notes: [] };
 }
 
 function standardEvidenceErrors(
@@ -1464,7 +1865,9 @@ function standardEvidenceErrors(
   errors.push(
     ...duration.errors,
     ...requiredValueErrors(body, declared),
+    ...(declared === 'T1' ? [] : changedBehaviorErrors(body)),
     ...stagingIntegrityErrors(body, declared, opts),
+    ...futureTimestampErrors(body),
   );
 
   const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
@@ -1930,6 +2333,18 @@ export function check(opts: CheckOptions): CheckResult {
     const frontendResult = frontendT2Result(body, opts.headSha);
     addErrors(result, frontendResult.errors);
     result.notes.push(...frontendResult.notes);
+    return result;
+  }
+
+  // ── Architecturally-unsoakable evidence path ──
+  // Activates ONLY when the PR is T2 by requirement AND declaration AND every
+  // changed file is an offline package/SDK path (no worker runtime to soak).
+  // Tier classification is unchanged; this only swaps which evidence T2 accepts
+  // for a surface that CANNOT be soaked. Unblocks #1411 (verifier-cli + arkova-py).
+  if (isUnsoakableEvidencePath(declared, required.tier, files)) {
+    const unsoakableResult = unsoakableT2Result(body, opts.headSha);
+    addErrors(result, unsoakableResult.errors);
+    result.notes.push(...unsoakableResult.notes);
     return result;
   }
 
