@@ -103,8 +103,11 @@ test.describe('API Keys & Verification Flow', () => {
       // After creation, the secret display phase should show
       // Either the key is created successfully or there is an error
       // (worker may not be running in CI, so we check for both states)
-      const keyCreatedTitle = orgAdminPage.getByText('API Key Created');
-      const errorAlert = orgAdminPage.locator('[role="alert"]');
+      const dialog = orgAdminPage.getByRole('dialog');
+      const keyCreatedTitle = dialog.getByRole('heading', { name: 'API Key Created' });
+      const errorAlert = dialog
+        .locator('[role="alert"]')
+        .filter({ hasText: /failed|error|invalid|unauthorized|forbidden/i });
 
       await expect(keyCreatedTitle.or(errorAlert)).toBeVisible({ timeout: 15000 });
 
@@ -116,7 +119,7 @@ test.describe('API Keys & Verification Flow', () => {
         ).toBeVisible();
 
         // The key value should be displayed in a monospace alert
-        const keyDisplay = orgAdminPage.locator('[role="alert"] .font-mono').filter({ hasText: /^ark_/ });
+        const keyDisplay = dialog.locator('[role="alert"] .font-mono').filter({ hasText: /^ark_/ });
         await expect(keyDisplay).toBeVisible();
 
         // Copy to Clipboard button should be visible
