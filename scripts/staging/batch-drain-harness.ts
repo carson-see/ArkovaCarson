@@ -99,6 +99,46 @@ function die(msg: string): never {
   process.exit(1);
 }
 
+async function withSupabaseReadRetry<T extends { error: { message?: string } | null }>(
+  label: string,
+  op: () => PromiseLike<T>,
+): Promise<T> {
+  let latest: T | null = null;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    latest = await op();
+    if (!latest.error) return latest;
+    if (attempt < 5) {
+      console.warn(`  ${safeForLog(label)} failed on attempt ${attempt}/5: ${safeForLog(latest.error.message ?? 'unknown')}; retrying`);
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+    }
+  }
+  return latest as T;
+}
+
+async function anchorIdsForOrg(
+  client: SupabaseClient,
+  orgId: string,
+  statuses?: string[],
+): Promise<string[]> {
+  const ids: string[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const to = from + PAGE - 1;
+    const { data, error } = await withSupabaseReadRetry('anchor id page select', () => {
+      const query = client
+        .from('anchors')
+        .select('id')
+        .eq('org_id', orgId)
+        .range(from, to);
+      return statuses ? query.in('status', statuses) : query;
+    });
+    if (error) die(`anchor id page select failed: ${error.message}`);
+    const page = (data ?? []).map((r) => r.id as string);
+    ids.push(...page);
+    if (page.length < PAGE) return ids;
+  }
+}
+
 function requireEnv(name: string): string {
   const v = process.env[name]?.trim();
   if (!v) die(`${name} is required.`);
@@ -350,22 +390,18 @@ async function assertSingleBatch(client: SupabaseClient, orgId: string, count: n
 
 async function distinctMerkleRoots(client: SupabaseClient, orgId: string): Promise<string[]> {
   // anchor_proofs has no org_id; join via the run's anchor ids.
-  const { data: anchorRows, error: aErr } = await client
-    .from('anchors')
-    .select('id')
-    .eq('org_id', orgId)
-    .in('status', ['SUBMITTED', 'SECURED']);
-  if (aErr) die(`distinctMerkleRoots anchor select failed: ${aErr.message}`);
-  const ids = (anchorRows ?? []).map((r) => r.id as string);
+  const ids = await anchorIdsForOrg(client, orgId, ['SUBMITTED', 'SECURED']);
   if (ids.length === 0) return [];
   const roots = new Set<string>();
-  const CHUNK = 500;
+  const CHUNK = 50;
   for (let i = 0; i < ids.length; i += CHUNK) {
     const chunk = ids.slice(i, i + CHUNK);
-    const { data, error } = await client
-      .from('anchor_proofs')
-      .select('merkle_root')
-      .in('anchor_id', chunk);
+    const { data, error } = await withSupabaseReadRetry('anchor_proofs merkle_root select', () =>
+      client
+        .from('anchor_proofs')
+        .select('merkle_root')
+        .in('anchor_id', chunk),
+    );
     if (error) die(`anchor_proofs select failed: ${error.message}`);
     for (const row of data ?? []) if (row.merkle_root) roots.add(row.merkle_root as string);
   }
@@ -373,23 +409,19 @@ async function distinctMerkleRoots(client: SupabaseClient, orgId: string): Promi
 }
 
 async function assertPositionalProofs(client: SupabaseClient, orgId: string, count: number): Promise<{ proofRows: number; distinctIndices: number }> {
-  const { data: anchorRows, error: aErr } = await client
-    .from('anchors')
-    .select('id')
-    .eq('org_id', orgId)
-    .in('status', ['SUBMITTED', 'SECURED']);
-  if (aErr) die(`assertPositionalProofs anchor select failed: ${aErr.message}`);
-  const ids = (anchorRows ?? []).map((r) => r.id as string);
+  const ids = await anchorIdsForOrg(client, orgId, ['SUBMITTED', 'SECURED']);
 
   const indices = new Set<number>();
   let proofRows = 0;
-  const CHUNK = 500;
+  const CHUNK = 50;
   for (let i = 0; i < ids.length; i += CHUNK) {
     const chunk = ids.slice(i, i + CHUNK);
-    const { data, error } = await client
-      .from('anchor_proofs')
-      .select('anchor_id, merkle_index')
-      .in('anchor_id', chunk);
+    const { data, error } = await withSupabaseReadRetry('anchor_proofs positional select', () =>
+      client
+        .from('anchor_proofs')
+        .select('anchor_id, merkle_index')
+        .in('anchor_id', chunk),
+    );
     if (error) die(`assertPositionalProofs anchor_proofs select failed: ${error.message}`);
     for (const row of data ?? []) {
       proofRows += 1;
@@ -473,9 +505,8 @@ async function assertReconcileNoDoubleBroadcast(
 
 async function cleanup(client: SupabaseClient, orgId: string): Promise<number> {
   // Remove proofs first (FK-safe), then anchors, then the synthetic org.
-  const { data: anchorRows } = await client.from('anchors').select('id').eq('org_id', orgId);
-  const ids = (anchorRows ?? []).map((r) => r.id as string);
-  const CHUNK = 500;
+  const ids = await anchorIdsForOrg(client, orgId);
+  const CHUNK = 50;
   for (let i = 0; i < ids.length; i += CHUNK) {
     await client.from('anchor_proofs').delete().in('anchor_id', ids.slice(i, i + CHUNK));
   }
