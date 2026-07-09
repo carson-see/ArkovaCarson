@@ -221,10 +221,10 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     const templatePayload = JSON.parse(templateRequestBody) as Record<string, unknown>;
     expect(Object.keys(templatePayload).sort()).toEqual(['confidence', 'fields']);
     expect(templatePayload.fields).toMatchObject({
-      credentialType: 'CPE',
       issuerName: 'Example Fixture Institute',
       creditHours: '6',
     });
+    expect(templatePayload.fields).not.toMatchObject({ credentialType: 'CPE' });
     expect(templateRequestBody).not.toContain(RAW_DOC_MARKER);
     expect(templateRequestBody).not.toContain(SSN_SENTINEL);
 
