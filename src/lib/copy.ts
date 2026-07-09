@@ -2682,21 +2682,21 @@ export const INDEPENDENT_VERIFY_LABELS = {
   HERO_TITLE: 'Verify Without Arkova',
   HERO_SUBTITLE: 'Every Arkova credential can be independently verified using publicly available data. If Arkova disappears tomorrow, your proofs still work.',
   STEP_1_TITLE: 'Compute the Document Fingerprint',
-  STEP_1_DESC: 'Generate the SHA-256 hash of your document. This is the same fingerprint Arkova computed when the document was anchored.',
+  STEP_1_DESC: 'Compute the SHA-256 fingerprint of your document. This is the same fingerprint Arkova computed when the document was anchored.',
   STEP_1_CMD: 'shasum -a 256 your-document.pdf',
   STEP_2_TITLE: 'Find the Network Record',
-  STEP_2_DESC: 'Look up the anchoring record on a public block explorer. The OP_RETURN data contains a Merkle root that includes your fingerprint.',
+  STEP_2_DESC: 'Look up the anchoring record on a public network explorer. The OP_RETURN data contains a Merkle root that includes your fingerprint.',
   STEP_2_CMD: 'curl https://mempool.space/api/tx/{txid}',
   STEP_3_TITLE: 'Verify the Merkle Proof',
   STEP_3_DESC: 'Using the Merkle proof from your proof package, verify that your fingerprint is included in the Merkle root.',
-  STEP_3_CMD: './verify.sh --fingerprint {hash} --proof proof-package.json',
+  STEP_3_CMD: './verify.sh --fingerprint {fingerprint} --proof proof-package.json',
   STEP_4_TITLE: 'Verify the Timestamp (Optional)',
   STEP_4_DESC: 'If the credential has an RFC 3161 timestamp, verify it independently using OpenSSL.',
   STEP_4_CMD: 'openssl ts -verify -data signed-attrs.der -in timestamp.tst -CAfile tsa-ca.pem',
   FAQ_SHUTDOWN_Q: 'What if Arkova shuts down?',
   FAQ_SHUTDOWN_A: 'Your proofs remain valid. The network records are permanent and public. The Merkle proofs in your proof packages contain everything needed for independent verification.',
   FAQ_OFFLINE_Q: 'What if the Arkova website is offline?',
-  FAQ_OFFLINE_A: 'You can verify using only the proof package file and a public block explorer. No Arkova API call is required.',
+  FAQ_OFFLINE_A: 'You can verify using only the proof package file and a public network explorer. No Arkova API call is required.',
   FAQ_TRUST_Q: 'Do I need to trust Arkova?',
   FAQ_TRUST_A: 'No. Arkova is a convenience layer. The cryptographic proofs are self-contained and verifiable by anyone with standard tools.',
   DOWNLOAD_SCRIPT: 'Download Verification Script',
@@ -3234,4 +3234,24 @@ export const SECURE_QUEUE_LABELS = {
   NOT_CHARGED_FAILURE: 'We couldn’t secure your document right now. You were not charged. Please try again or add it to the queue.',
   QUEUED_TOAST: 'Added to the queue. No credits used.',
   SECURED_TOAST: 'Your document has been secured.',
+} as const;
+
+// =============================================================================
+// S3 Lane-3 CE strings (CE-06a / SCRUM-2377) — Credential Engine publication
+// status. Claims-review gate (CLAUDE.md §1.13 R-7): Credential Engine approved
+// Arkova TO PUBLISH only — no Registry listing exists. Any CE status copy
+// MUST use "approved to publish" wording; never assert a listing or any
+// external status we do not hold. Enforced by src/lib/copy-claims-gate.test.ts
+// (which scans this ENTIRE file, comments included) and
+// services/worker/src/ctdl/ctdl-claims-guard.ts (runtime, fail-closed).
+// =============================================================================
+
+export const CE_PUBLICATION_COPY = {
+  /** The one safe status wording — states exactly what we hold, nothing more. */
+  STATUS_APPROVED_TO_PUBLISH: 'Approved to publish',
+  /** Longer status detail for settings/status surfaces. */
+  STATUS_DETAIL:
+    'Credential Engine has approved Arkova to publish credential data. This approval does not assert any further external status.',
+  /** Shown while publication remains switched off (the standing default). */
+  PUBLICATION_OFF: 'Publication is not enabled.',
 } as const;

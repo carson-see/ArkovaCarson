@@ -21,6 +21,18 @@ const STATUS_TYPES_DISALLOWING_EXPIRATION = new Set([
   'ceterms:Superseded',
 ]);
 
+/**
+ * SCRUM-2375 (CE-04) — plausibility ceiling for a single credential's contact
+ * hours. Anything above this is a data error (or a unit confusion), and an
+ * implausible public assertion is worse than an honest omission. SINGLE SHARED
+ * SOURCE (round-1 review finding 4): the serializer's `normalizeContactHours`
+ * imports this same constant, so the emission gate and this independent second
+ * check cannot drift. Defined here (not in the serializer) because the
+ * serializer already imports from this module — the reverse import would be a
+ * cycle.
+ */
+export const MAX_CONTACT_HOURS = 1000;
+
 const UNSAFE_PUBLIC_KEYS = new Set([
   'anchor_id',
   'anchorId',
@@ -190,6 +202,74 @@ function validateExpirationAndStatus(value: Record<string, unknown>, errors: str
   }
 }
 
+// SCRUM-2375 (CE-04) — independent second check on the ContactHour ValueProfile.
+// The serializer only emits `ceterms:creditValue` as a ValueProfile array with a
+// positive finite `schema:value` and a `creditUnit:ContactHour` unit; this
+// validator rejects any body — now or from a future code path — that carries a
+// bare-scalar credit (the exact shape Jeanne Kitchens corrected), a fabricated
+// zero/negative value, or a unit we do not emit. ContactHour is deliberately the
+// ONLY accepted unit today; widen alongside the serializer when a new unit is
+// introduced, never ahead of it.
+function validateCreditUnitTypes(units: unknown, index: number, errors: string[]): void {
+  if (!Array.isArray(units) || units.length === 0) {
+    errors.push(
+      `ceterms:creditValue[${index}].ceterms:creditUnitType must be a non-empty array of alignment objects`,
+    );
+    return;
+  }
+  units.forEach((unit, unitIndex) => {
+    if (!isRecord(unit) || unit['@type'] !== 'ceterms:CredentialAlignmentObject') {
+      errors.push(
+        `ceterms:creditValue[${index}].ceterms:creditUnitType[${unitIndex}].@type must be ceterms:CredentialAlignmentObject`,
+      );
+      return;
+    }
+    if (unit['ceterms:targetNode'] !== 'creditUnit:ContactHour') {
+      errors.push(
+        `ceterms:creditValue[${index}].ceterms:creditUnitType[${unitIndex}].ceterms:targetNode must be creditUnit:ContactHour`,
+      );
+    }
+  });
+}
+
+function validateCreditValue(value: Record<string, unknown>, errors: string[]): void {
+  const creditValue = value['ceterms:creditValue'];
+  if (creditValue === undefined) return;
+
+  if (!Array.isArray(creditValue) || creditValue.length === 0) {
+    errors.push('ceterms:creditValue must be an array of ceterms:ValueProfile objects');
+    return;
+  }
+  // Round-1 review finding 4: the serializer's type is the single-element
+  // tuple [CtdlContactHourValueProfile]; a multi-profile credit is a shape the
+  // emission side can never produce and must fail the independent second check.
+  if (creditValue.length !== 1) {
+    errors.push('ceterms:creditValue must contain exactly one ceterms:ValueProfile');
+  }
+
+  creditValue.forEach((profile, index) => {
+    if (!isRecord(profile)) {
+      errors.push('ceterms:creditValue must be an array of ceterms:ValueProfile objects');
+      return;
+    }
+    if (profile['@type'] !== 'ceterms:ValueProfile') {
+      errors.push(`ceterms:creditValue[${index}].@type must be ceterms:ValueProfile`);
+    }
+    const schemaValue = profile['schema:value'];
+    if (typeof schemaValue !== 'number' || !Number.isFinite(schemaValue) || schemaValue <= 0) {
+      errors.push(`ceterms:creditValue[${index}].schema:value must be a positive finite number`);
+    } else if (schemaValue > MAX_CONTACT_HOURS) {
+      // Same plausibility ceiling normalizeContactHours enforces at emission
+      // (round-1 review finding 4): the validator must reject what the
+      // serializer can never emit.
+      errors.push(
+        `ceterms:creditValue[${index}].schema:value must be at most ${MAX_CONTACT_HOURS} contact hours`,
+      );
+    }
+    validateCreditUnitTypes(profile['ceterms:creditUnitType'], index, errors);
+  });
+}
+
 export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
   const errors: string[] = [];
 
@@ -220,6 +300,7 @@ export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
   validateVerificationProfile(value, errors);
   validateIdentifier(value, errors);
   validateExpirationAndStatus(value, errors);
+  validateCreditValue(value, errors);
 
   const unsafeErrors: string[] = [];
   collectUnsafeKeys(value, unsafeErrors);

@@ -40,6 +40,9 @@ T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, publi
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-NNNNN-xxx
 - PR head SHA: 40-character commit SHA deployed/tested
+- Changed behavior: name the behavior this PR changed
+- Targeted evidence: name the driver/E2E path that exercised that changed behavior
+- Load/concurrency evidence: name the heavy-user/load proof for that changed behavior, e.g. `tests/load/*`, `tests/k6/*`, p95/error-rate thresholds, queue drain, retry fan-out, or rate-limit evidence
 - Base SHA: 40-character `main`/base SHA used when evidence was captured
 - Base drift impact: optional; required only if `main` moved after evidence capture. Must list changed files, attest T0/CI-only no runtime/schema/migration/staging/soak/deploy impact, and name the approver.
 - Staging project ref: ujtlwnoqfhtitcmsnrpq or approved isolated project ref
@@ -58,25 +61,52 @@ T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, publi
 
 ---
 
-## T2 (frontend-only) — Vercel + view-E2E evidence (sensitive frontend surface; no worker artifacts)
+## T2 (frontend-only) — RM-approved targeted UI evidence (no worker artifacts)
 
-Use this variant **only** when the PR is required-tier T2 *and* every changed file is purely frontend (`src/**`, no `services/worker/`, no `supabase/migrations/`, no `packages/`/`sdks/`/API-contract files). The classifier still puts such a PR at T2 because it touches a sensitive user-facing contract surface (`src/components/{anchor,api,auth,billing,public,verification,verify}/`), but a frontend-only change ships no worker image, no migration, and no deploy-log row — so it cannot produce the standard T2 worker artifacts. It satisfies T2 with a Vercel deployment/preview URL, an E2E result on the affected view, and a residual-risk note attesting that no worker artifacts exist.
+Use this variant **only** when the PR declares T2 and every changed file is frontend/UAT/test/support-only (`src/**`, `public/**`, `e2e/**`, frontend/UAT docs, or test support) with no `services/worker/`, no `supabase/migrations/`, no `packages/`/`sdks/`, no API-contract files, no workflow files, and no CI scripts. The classifier may require T1 or T2 by path, but a frontend-only change ships no worker image, no migration, no staging project ref, no clean worker preflight, and no deploy-log row — so it must not invent those artifacts.
 
-If the PR touches *any* worker/migration/SDK/contract file, this variant does **not** apply — use the standard T2 (or T3) block above. Tier classification is unchanged; only the evidence form differs.
+This path satisfies T2 only with RM approval plus targeted evidence that names the changed UI behavior, the affected-view proof, and the async-cycle/load floor used for that frontend-only path. If the PR touches *any* worker/API/webhook/SDK/AI/queue/security/chain/migration file, this variant does **not** apply — use the standard T2 or T3 block above.
+
+Do not include placeholder fields such as `PENDING`, `NOT STARTED`, or planned future evidence. Generic `/health` is not changed-behavior coverage.
 
 ```markdown
 ## Staging Soak Evidence
 
 - Tier: T2
 - PR head SHA: 40-character current PR head SHA
-- Vercel deployment URL: https://<your-preview>.vercel.app
+- RM-approved targeted evidence: Carson/RM approved targeted frontend-only T2 evidence for <changed UI path>
+- Async-cycle floor: affected-view UI validation cycle/load floor, e.g. Playwright copy/contract suite under N parallel workers with p95/error-free threshold
+- Changed behavior: name the user-facing frontend behavior this PR changed
+- Targeted evidence: name the affected view E2E path that exercised that changed behavior
+- Load/concurrency evidence: name the load/concurrency proof for the affected view or RM-approved load-oriented check used for this frontend-only path
 - E2E result: <affected view(s)> E2E N/N green on head
 - CI/E2E green: Tests, E2E Tests, TypeCheck & Lint green on current head
 - Rollback plan: revert PR — additive display-only change, no data/schema/worker state to unwind
+```
 
-### Residual-risk note
-- No worker artifacts: frontend-only PR — no Cloud Run deploy, no worker revision, no image digest, no staging deploy-log id (no server code, no migration changed)
-- Surfaces touched: <the frontend views/components this PR changes>
+---
+
+## T2 (offline package/SDK) — test/parity evidence (architecturally-unsoakable; no worker runtime)
+
+Use this variant **only** when the PR is required-tier T2 *and* every changed file is an OFFLINE package/SDK path (`packages/**` or `sdks/**`) with **no** `services/worker/`, **no** `supabase/migrations/`, and **no** served-contract file (`docs/api/`, `docs/guides/API_GUIDE.md`). The classifier puts such a PR at T2 because it touches the public SDK/contract surface, but a standalone client library/CLI (e.g. the `arkova-py` Python SDK, `verifier-cli`) ships no worker image, no migration, and no deploy-log row, and is not the served Cloud Run HTTP contract — there is **no worker runtime to soak**. It satisfies T2 with test/parity evidence (pytest/vitest/parity green on head), an N/A-with-justification staging tag, and an unsoakable-surface note attesting that no worker runtime exists.
+
+If the PR touches *any* worker/migration/served-contract file, this variant does **not** apply — use the standard T2 (or T3) block above. Tier classification is unchanged; only the evidence form differs.
+
+```markdown
+## Staging Soak Evidence
+
+- Tier: T2
+- PR head SHA: 40-character current PR head SHA
+- Changed behavior: name the offline package/SDK behavior this PR changed
+- Targeted evidence: name the parity/test path that exercised that changed behavior
+- Load/concurrency evidence: name the stress/concurrency or volume-oriented proof for that offline behavior
+- Test evidence: pytest N/N green + parity suite green on current head
+- CI green: Tests, TypeCheck & Lint all green on current head
+- Staging tag URL or N/A explanation: N/A — offline <package> SDK: no worker runtime, no migration, no served contract to soak
+
+### Unsoakable-surface note
+- No worker runtime: offline package/SDK — no Cloud Run deploy, no worker revision, no image digest, no staging deploy-log id, no migration (nothing a soak could exercise)
+- Surfaces touched: <the offline package(s) this PR changes, e.g. packages/arkova-py>
 - Approved by: <named human approver — not blank, not a placeholder>
 ```
 
@@ -91,6 +121,9 @@ If the PR touches *any* worker/migration/SDK/contract file, this variant does **
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-NNNNN-xxx
 - PR head SHA: 40-character commit SHA deployed/tested
+- Changed behavior: name the behavior this PR changed
+- Targeted evidence: name the driver/E2E path that exercised that changed behavior
+- Load/concurrency evidence: name the heavy-user/load proof for that changed behavior, e.g. `tests/load/*`, `tests/k6/*`, p95/error-rate thresholds, queue drain, retry fan-out, rate-limit evidence, trigger fan-out, or 10k/batch-drain evidence
 - Base SHA: 40-character `main`/base SHA used when evidence was captured
 - Base drift impact: optional; required only if `main` moved after evidence capture. Must list changed files, attest T0/CI-only no runtime/schema/migration/staging/soak/deploy impact, and name the approver.
 - Staging project ref: ujtlwnoqfhtitcmsnrpq or approved isolated project ref
