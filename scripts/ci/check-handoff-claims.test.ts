@@ -163,3 +163,93 @@ describe('getDiff two-dot vs three-dot (rebased-lane false-positive)', () => {
     expect(r.out).toMatch(/claims pass verification check/);
   });
 });
+
+describe('merge-ref checkout + stale pinned base (base-drift misattribution, 2026-07-06 f11a5290 class)', () => {
+  it('does NOT fire when the BASE branch edited HANDOFF.md after the PR was cut (PR changeset has no HANDOFF edit)', () => {
+    // Reproduces the 2026-07-06 incident: actions/checkout on pull_request
+    // checks out the SYNTHETIC merge ref (PR head merged into CURRENT base
+    // tip) while github.event.pull_request.base.sha stays pinned at
+    // PR-creation time. A direct-to-main HANDOFF.md docs commit (f11a5290)
+    // then surfaces in `pinnedBase..HEAD` for EVERY pre-drift PR, and the
+    // footer check runs against a file this PR never touched.
+    writeFileSync(resolve(dir, 'HANDOFF.md'), `# Handoff\n\nClean.\n\n${VALID_FOOTER}\n`);
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'base at PR creation');
+    const pinnedBase = git(dir, 'rev-parse', 'HEAD');
+    const initialBranch = git(dir, 'symbolic-ref', '--short', 'HEAD');
+
+    // PR branch off pinnedBase: lane work only, NO HANDOFF edit.
+    git(dir, 'checkout', '-qb', 'pr');
+    writeFileSync(resolve(dir, 'scripts/ci/lane-work.txt'), 'chain work\n');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-qm', 'feat(chain): lane work (no HANDOFF edit)');
+    const prHead = git(dir, 'rev-parse', 'HEAD');
+
+    // Base branch advances AFTER the PR was cut: a docs commit edits
+    // HANDOFF.md mid-file and leaves a NON-conforming footer as the last
+    // non-empty line (the exact f11a5290 shape).
+    git(dir, 'checkout', '-q', initialBranch);
+    writeFileSync(
+      resolve(dir, 'HANDOFF.md'),
+      `# Handoff\n\n### 2026-07-06 (RTE) - Sprint 4 priority set\n\nNarrative only; no runtime state changed.\n\n_Last refreshed: 2026-07-06 by Codex - claims verified against Drive folder ABC123._\n`,
+    );
+    git(dir, 'commit', '-aqm', 'docs: record Sprint 4 ART priority');
+    const mainTip = git(dir, 'rev-parse', 'HEAD');
+
+    // GitHub's synthetic refs/pull/N/merge commit: PR head merged into the
+    // CURRENT base tip, with the canonical "Merge <sha> into <sha>" subject.
+    git(dir, 'merge', '-q', '--no-ff', '-m', `Merge ${prHead} into ${mainTip}`, 'pr');
+    const mergeSha = git(dir, 'rev-parse', 'HEAD');
+
+    const r = runCheck(dir, {
+      BASE_REF_SHA: pinnedBase,
+      HEAD_REF_SHA: prHead,
+      GITHUB_EVENT_NAME: 'pull_request',
+      GITHUB_SHA: mergeSha,
+      PR_BODY: 'Chain lane work. No HANDOFF edit in this PR.',
+      PR_COMMITS_MSGS: 'feat(chain): lane work (no HANDOFF edit)',
+    });
+
+    expect(r.out).toMatch(/HANDOFF\.md not modified by this PR/);
+    expect(r.code).toBe(0);
+  });
+
+  it('still FAILS on the merge-ref checkout when THIS PR genuinely edits HANDOFF.md with an unverified claim (gate not weakened)', () => {
+    writeFileSync(resolve(dir, 'HANDOFF.md'), `# Handoff\n\nClean.\n\n${VALID_FOOTER}\n`);
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'base at PR creation');
+    const pinnedBase = git(dir, 'rev-parse', 'HEAD');
+    const initialBranch = git(dir, 'symbolic-ref', '--short', 'HEAD');
+
+    // PR branch: adds an unverified prod claim to HANDOFF.md.
+    git(dir, 'checkout', '-qb', 'pr');
+    writeFileSync(
+      resolve(dir, 'HANDOFF.md'),
+      `# Handoff\n\nClean.\n\nrev arkova-worker-00397-9jm deployed, healthy.\n\n${VALID_FOOTER}\n`,
+    );
+    git(dir, 'commit', '-aqm', 'handoff: claim deploy');
+    const prHead = git(dir, 'rev-parse', 'HEAD');
+
+    // Base advances on an unrelated file (no merge conflict).
+    git(dir, 'checkout', '-q', initialBranch);
+    writeFileSync(resolve(dir, 'scripts/ci/other-lane.txt'), 'other lane\n');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-qm', 'ci: unrelated base advance');
+    const mainTip = git(dir, 'rev-parse', 'HEAD');
+
+    git(dir, 'merge', '-q', '--no-ff', '-m', `Merge ${prHead} into ${mainTip}`, 'pr');
+    const mergeSha = git(dir, 'rev-parse', 'HEAD');
+
+    const r = runCheck(dir, {
+      BASE_REF_SHA: pinnedBase,
+      HEAD_REF_SHA: prHead,
+      GITHUB_EVENT_NAME: 'pull_request',
+      GITHUB_SHA: mergeSha,
+      PR_BODY: 'No verification artifact here.',
+      PR_COMMITS_MSGS: 'handoff: claim deploy',
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/asserts prod state without verification artifact/);
+  });
+});

@@ -1,120 +1,103 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
-  buildBlockedAdmission,
-  hasOpsSloContract,
-  missingAdmissionInputs,
-  parseConfig,
-  runOneCycle,
+  missingOpsSloAdmissionInputs,
+  planOpsSloRequests,
+  summarizeSurfaceAvailability,
+  OPS_SLO_DRIVER,
 } from './ops-slo-driver.js';
 
-function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
+const BASE = 'https://pr-1441---arkova-worker-staging-x-uc.a.run.app';
 
-const goodBody = {
-  anchorSecuredRate: { available: true, breach: false },
-  connectorQueue: { available: true, breach: false },
-  creditConservation: { available: true, breach: false },
-  webhookDelivery: { available: true, breach: false },
-  apiErrors: { available: true, breach: false },
-  overallBreach: false,
-  checkedAt: '2026-07-09T16:00:00.000Z',
-};
-
-describe('ops-slo targeted driver admission', () => {
-  it('names exact missing auth and target inputs', () => {
-    expect(missingAdmissionInputs({})).toEqual([
-      'WORKER_URL or STAGING_API_BASE for the deployed PR #1441 tag URL',
-      'OPS_SLO_ADMIN_JWT or STAGING_ADMIN_JWT for a platform-admin Supabase JWT',
-      'OPS_SLO_NON_ADMIN_JWT or STAGING_NON_ADMIN_JWT for an authenticated non-admin Supabase JWT',
-      'WORKER_IAM_TOKEN, CLOUD_RUN_IDENTITY_TOKEN, or STAGING_GCP_IDENTITY for Cloud Run tag ingress when the service is IAM-protected',
-      'CLOUD_RUN_AUDIENCE or STAGING_GCP_AUDIENCE for the Cloud Run identity-token audience',
-    ]);
-
-    expect(buildBlockedAdmission(['OPS_SLO_ADMIN_JWT'], new Date('2026-07-09T16:00:00.000Z'))).toMatchObject({
-      pr: 1441,
-      driver: 'ops-slo',
-      status: 'blocked',
-      exact_head_required: '97b8e7555f74da3ceeb45d259e956201b4d32874',
-      missing: ['OPS_SLO_ADMIN_JWT'],
-    });
+describe('ops-slo-driver: request plan', () => {
+  it('drives the authenticated platform-admin 200 path when a JWT is supplied', () => {
+    const plan = planOpsSloRequests(BASE, { adminJwt: 'jwt-admin', nonAdminJwt: 'jwt-user' });
+    const ok = plan.find((p) => p.label === 'admin-ok');
+    expect(ok).toBeDefined();
+    expect(ok!.endpoint).toBe('/api/admin/ops-slo-stats');
+    expect(ok!.headers?.Authorization).toBe('Bearer jwt-admin');
+    expect(ok!.allowedStatuses).toContain(200);
   });
 
-  it('parses secrets only from env and rejects command-line token material', () => {
-    expect(() => parseConfig(['--admin-jwt=secret'], {
-      WORKER_URL: 'https://worker.example.test',
-      CLOUD_RUN_AUDIENCE: 'https://worker.example.test',
-      OPS_SLO_ADMIN_JWT: 'admin.jwt',
-      OPS_SLO_NON_ADMIN_JWT: 'member.jwt',
-    })).toThrow('Do not pass --admin-jwt');
+  it('drives the 401 unauthenticated branch (no bearer token)', () => {
+    const plan = planOpsSloRequests(BASE, { adminJwt: 'jwt-admin', nonAdminJwt: 'jwt-user' });
+    const unauth = plan.find((p) => p.label === 'unauthenticated');
+    expect(unauth).toBeDefined();
+    expect(unauth!.headers?.Authorization).toBeUndefined();
+    expect(unauth!.allowedStatuses).toContain(401);
+  });
 
-    expect(parseConfig(['--duration-min=720', '--concurrency=3'], {
-      WORKER_URL: 'https://worker.example.test/',
-      CLOUD_RUN_AUDIENCE: 'https://worker.example.test/',
-      OPS_SLO_ADMIN_JWT: 'admin.jwt',
-      OPS_SLO_NON_ADMIN_JWT: 'member.jwt',
-      CLOUD_RUN_IDENTITY_TOKEN: 'iam.jwt',
-    })).toMatchObject({
-      workerUrl: 'https://worker.example.test',
-      adminJwt: 'admin.jwt',
-      nonAdminJwt: 'member.jwt',
-      cloudRunIdentityToken: 'iam.jwt',
-      cloudRunAudience: 'https://worker.example.test',
-      durationMin: 720,
-      concurrency: 3,
-    });
+  it('drives the 403 non-admin branch when a non-admin JWT is supplied', () => {
+    const plan = planOpsSloRequests(BASE, { adminJwt: 'jwt-admin', nonAdminJwt: 'jwt-user' });
+    const forbidden = plan.find((p) => p.label === 'non-admin-forbidden');
+    expect(forbidden).toBeDefined();
+    expect(forbidden!.headers?.Authorization).toBe('Bearer jwt-user');
+    expect(forbidden!.allowedStatuses).toContain(403);
+  });
+
+  it('fails closed instead of producing hollow 401-only evidence when JWTs are absent', () => {
+    expect(() => planOpsSloRequests(BASE, {})).toThrow(/platform-admin Supabase JWT/);
+    expect(() => planOpsSloRequests(BASE, { adminJwt: 'jwt-admin' })).toThrow(/non-admin Supabase JWT/);
+  });
+
+  it('captures response bodies to prove per-surface available:false fields', () => {
+    const plan = planOpsSloRequests(BASE, { adminJwt: 'jwt-admin', nonAdminJwt: 'jwt-user' });
+    expect(plan.every((p) => p.capture === true)).toBe(true);
   });
 });
 
-describe('ops-slo targeted driver checks', () => {
-  it('accepts the current flat five-surface OPS SLO contract', () => {
-    expect(hasOpsSloContract(goodBody)).toBe(true);
-    expect(hasOpsSloContract({ surfaces: { old: { available: true } } })).toBe(false);
+describe('ops-slo-driver: admission inputs', () => {
+  it('names the exact missing target/auth/ingress facts', () => {
+    expect(missingOpsSloAdmissionInputs({})).toEqual([
+      'STAGING_API_BASE or WORKER_URL for the deployed PR #1441 tag URL',
+      'STAGING_ADMIN_JWT or OPS_SLO_ADMIN_JWT for a platform-admin Supabase JWT',
+      'STAGING_NON_ADMIN_JWT or OPS_SLO_NON_ADMIN_JWT for an authenticated non-admin Supabase JWT',
+      'STAGING_GCP_IDENTITY, WORKER_IAM_TOKEN, or CLOUD_RUN_IDENTITY_TOKEN for Cloud Run tag ingress',
+    ]);
   });
 
-  it('drives unauth 401, non-admin 403, and admin 200 contract with separate app JWT headers', async () => {
-    const fetchImpl = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(401, { error: 'Authentication required' }))
-      .mockResolvedValueOnce(jsonResponse(403, { error: 'Forbidden - platform admin access required' }))
-      .mockResolvedValueOnce(jsonResponse(200, goodBody));
+  it('accepts the OPS_SLO alias names without requiring secret values on argv', () => {
+    expect(missingOpsSloAdmissionInputs({
+      WORKER_URL: BASE,
+      OPS_SLO_ADMIN_JWT: 'admin.jwt',
+      OPS_SLO_NON_ADMIN_JWT: 'user.jwt',
+      WORKER_IAM_TOKEN: 'iam.jwt',
+    })).toEqual([]);
+  });
+});
 
-    const checks = await runOneCycle({
-      workerUrl: 'https://worker.example.test',
-      adminJwt: 'admin.jwt.secret',
-      nonAdminJwt: 'member.jwt.secret',
-      cloudRunIdentityToken: 'iam.jwt.secret',
-      cloudRunAudience: 'https://worker.example.test',
-      durationMin: 720,
-      intervalMs: 30_000,
-      concurrency: 1,
-      timeoutMs: 1000,
-      evidenceOut: null,
-      admissionOut: null,
-      dryRun: false,
-    }, fetchImpl);
+describe('ops-slo-driver: summarizeSurfaceAvailability', () => {
+  it('collects per-surface available flags from the #1441 stats body', () => {
+    const body = {
+      anchorSecuredRate: { available: true, breach: false },
+      connectorQueue: { available: false, breach: false },
+      creditConservation: { available: true, breach: false },
+      webhookDelivery: { available: true, breach: false },
+      apiErrors: { available: false, breach: false },
+      overallBreach: false,
+      checkedAt: '2026-07-09T16:00:00.000Z',
+    };
+    const avail = summarizeSurfaceAvailability(body);
+    expect(avail).toEqual({
+      anchorSecuredRate: true,
+      connectorQueue: false,
+      creditConservation: true,
+      webhookDelivery: true,
+      apiErrors: false,
+    });
+    // The whole point of #1441: at least one surface can be unavailable.
+    expect(Object.values(avail)).toContain(false);
+  });
 
-    expect(checks.map((check) => [check.name, check.status, check.http_status])).toEqual([
-      ['unauthenticated', 'pass', 401],
-      ['non_admin_forbidden', 'pass', 403],
-      ['platform_admin_stats', 'pass', 200],
-    ]);
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
-    expect(fetchImpl.mock.calls[0][1]?.headers).toMatchObject({
-      Accept: 'application/json',
-      'X-Serverless-Authorization': 'Bearer iam.jwt.secret',
-    });
-    expect(fetchImpl.mock.calls[0][1]?.headers).not.toHaveProperty('Authorization');
-    expect(fetchImpl.mock.calls[1][1]?.headers).toMatchObject({
-      Authorization: 'Bearer member.jwt.secret',
-      'X-Serverless-Authorization': 'Bearer iam.jwt.secret',
-    });
-    expect(fetchImpl.mock.calls[2][1]?.headers).toMatchObject({
-      Authorization: 'Bearer admin.jwt.secret',
-      'X-Serverless-Authorization': 'Bearer iam.jwt.secret',
-    });
+  it('returns an empty map when the body has none of the flat surface keys', () => {
+    expect(summarizeSurfaceAvailability({ error: 'x' })).toEqual({});
+    expect(summarizeSurfaceAvailability('not-json')).toEqual({});
+  });
+});
+
+describe('ops-slo-driver: metadata', () => {
+  it('names PR #1441 and the driver', () => {
+    expect(OPS_SLO_DRIVER.pr).toBe('#1441');
+    expect(OPS_SLO_DRIVER.driver).toBe('ops-slo');
   });
 });

@@ -54,6 +54,31 @@ export interface ProofPacket {
    * agrees with what the server asserted.
    */
   verified?: boolean;
+  /**
+   * Proof schema version the packet targets (PROOF-08 stamps 1). The verifier
+   * understands ONLY version 1: an unknown version fails closed
+   * (UNSUPPORTED_SCHEMA_VERSION) rather than guessing at the hashing rule.
+   * Absent/null ⇒ interpreted as version 1 (legacy packets predate the stamp).
+   */
+  proof_schema_version?: number | null;
+}
+
+/** One published key entry in a keys.json set. */
+export interface PublishedKey {
+  /** Key id the bundle's `signing_key_id` resolves against. */
+  kid?: string;
+  alg?: string;
+  pem: string;
+}
+
+/**
+ * A published Arkova key set (`docs.arkova.ai/keys.json` shape). When the
+ * bundle names a `signing_key_id`, it is resolved against `keys[].kid`; an
+ * unresolvable id fails closed (DID_UNRESOLVED) — the verifier never guesses
+ * which key to use.
+ */
+export interface PublishedKeys {
+  keys: PublishedKey[];
 }
 
 /**
@@ -121,6 +146,8 @@ export interface VerifierFixture {
   node?: FixtureNodeResponses;
   /** OPTIONAL published Ed25519 key PEM, for signature-verify vectors. */
   publicKeyPem?: string;
+  /** OPTIONAL published key SET (keys.json shape), for key-id-resolved vectors. */
+  publishedKeys?: PublishedKeys;
   /** OPTIONAL signed bundle, for signature-verify vectors. */
   signedBundle?: SignedProofBundle;
   /** The expected top-level verdict from the verifier. */
@@ -129,5 +156,9 @@ export interface VerifierFixture {
     ok: boolean;
     /** Expected machine reason substring on failure (optional). */
     reasonIncludes?: string;
+    /** Expected frozen machine reason code (S3-B manifest; null on pass). */
+    reason_code?: string | null;
+    /** Expected signature outcome, for signature-mode vectors. */
+    signature?: 'verified' | 'failed' | 'skipped';
   };
 }
