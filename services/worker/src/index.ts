@@ -152,7 +152,8 @@ app.get('/health', async (req, res) => {
         if (error || !data) {
           return { count: null, error: error ? { message: error.message } : null };
         }
-        return { count: data.PENDING ?? null, error: null };
+        const pending = data.PENDING;
+        return { count: typeof pending === 'number' && pending >= 0 ? pending : null, error: null };
       } catch (err) {
         return { count: null, error: { message: err instanceof Error ? err.message : String(err) } };
       }

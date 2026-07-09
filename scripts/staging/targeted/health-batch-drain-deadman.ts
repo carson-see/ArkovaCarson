@@ -69,11 +69,11 @@ function readBooleanField(record: Record<string, unknown>, key: string): boolean
   return value;
 }
 
-function readNullableNumberField(record: Record<string, unknown>, key: string): number | null {
+function readNullableNonNegativeNumberField(record: Record<string, unknown>, key: string): number | null {
   const value = record[key];
   if (value === null) return null;
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    fail(`Expected checks.anchoring.${key} to be a finite number or null.`);
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    fail(`Expected checks.anchoring.${key} to be a non-negative finite number or null.`);
   }
   return value;
 }
@@ -113,7 +113,7 @@ export function assertBatchDrainHealthPayload(
     status: parseAnchoringStatus(readStringField(anchoring, 'status')),
     drainStalled: readBooleanField(anchoring, 'drainStalled'),
     drainReason: parseDrainReason(readStringField(anchoring, 'drainReason')),
-    pendingCount: readNullableNumberField(anchoring, 'pendingCount'),
+    pendingCount: readNullableNonNegativeNumberField(anchoring, 'pendingCount'),
     lastBatchAt: readNullableStringField(anchoring, 'lastBatchAt'),
   };
 

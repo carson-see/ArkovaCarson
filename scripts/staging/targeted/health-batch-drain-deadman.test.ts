@@ -85,4 +85,21 @@ describe('targeted batch-drain /health detailed driver', () => {
       }),
     ).toThrow(/drainReason/);
   });
+
+  it('rejects negative pending-count sentinels as unknown rather than evidence', () => {
+    expect(() =>
+      assertBatchDrainHealthPayload({
+        status: 'healthy',
+        checks: {
+          anchoring: {
+            status: 'ok',
+            pendingCount: -1,
+            lastBatchAt: null,
+            drainStalled: false,
+            drainReason: 'ok',
+          },
+        },
+      }),
+    ).toThrow(/pendingCount/);
+  });
 });
