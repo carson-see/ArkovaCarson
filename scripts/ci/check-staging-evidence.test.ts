@@ -6,6 +6,7 @@ import {
   hasResidualRiskException,
   isDeployWorkerUsesOnlyBump,
   isFrontendOnlyChange,
+  isOfflinePackageOnlyChange,
   isStagingToolingOnly,
   missingFields,
   requiredTierFor,
@@ -54,6 +55,9 @@ Queue rewrite.
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00012-abc
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-123---arkova-worker-staging.example.run.app
@@ -77,7 +81,7 @@ describe('check-staging-evidence', () => {
   describe('TIER_SPECS', () => {
     it('pins the current minimum soak windows', () => {
       expect(TIER_SPECS.T0.soakHours).toBe(0);
-      expect(TIER_SPECS.T1.soakHours).toBe(2);
+      expect(TIER_SPECS.T1.soakHours).toBe(0);
       expect(TIER_SPECS.T2.soakHours).toBe(12);
       expect(TIER_SPECS.T3.soakHours).toBe(48);
     });
@@ -544,6 +548,9 @@ describe('check-staging-evidence', () => {
       const body = `## Staging Soak Evidence
 - [x] Tier: T1
 - [x] PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - [x] Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - [x] Health/smoke result: health ok, smoke green
 - [x] Soak start: 2026-05-09 14:00 UTC
@@ -560,6 +567,9 @@ describe('check-staging-evidence', () => {
       const body = `## Staging Soak Evidence
 - [ ] Tier: T1
 - [ ] PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - [ ] Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - [ ] Health/smoke result: health ok, smoke green
 - [ ] Soak start: 2026-05-09 14:00 UTC
@@ -617,6 +627,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -635,6 +648,9 @@ describe('check-staging-evidence', () => {
     const completeT1Body = (start: string, end: string) => `## Staging Soak Evidence
 - Tier: T1
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, targeted smoke green
 - Soak start: ${start}
@@ -668,21 +684,12 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T1 expedited evidence at exactly 2 hours',
+        'T1 exact-head evidence with optional soak timestamps',
         completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
         t1Files,
       ],
-    ])('passes %s', (_label, body, files) => {
-      expect(check({
-        body,
-        files,
-        headSha: '1234567890abcdef1234567890abcdef12345678',
-      }).ok).toBe(true);
-    });
-
-    it.each([
       [
-        'T1 expedited evidence with no soak window',
+        'T1 exact-head evidence with no soak window',
         `## Staging Soak Evidence
 - Tier: T1
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
@@ -694,14 +701,16 @@ describe('check-staging-evidence', () => {
 - Human approver: Carson
 `,
         t1Files,
-        /missing required fields.*Soak start:.*Soak end:/,
       ],
-      [
-        'T1 shorter than 2 hours',
-        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
-        t1Files,
-        /below the 2h minimum/,
-      ],
+    ])('passes %s', (_label, body, files) => {
+      expect(check({
+        body,
+        files,
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+      }).ok).toBe(true);
+    });
+
+    it.each([
       [
         'T2 shorter than 12 hours',
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
@@ -1120,6 +1129,9 @@ describe('check-staging-evidence', () => {
       const body = `## Staging Soak Evidence
 - [x] Tier: T1
 - [x] PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - [x] Staging tag URL or N/A explanation: not applicable - docs-only worker image was not built
 - [x] Health/smoke result: current-head smoke green
 - [x] Soak start: 2026-05-09 14:00 UTC
@@ -1137,10 +1149,34 @@ describe('check-staging-evidence', () => {
       expect(r.ok).toBe(true);
     });
 
+    it('passes a complete T1 PR without T2/T3 changed-behavior/load fields', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: not applicable - docs-only worker image was not built
+- Health/smoke result: current-head smoke green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
+- CI/E2E green: green
+- Rollback plan: revert PR
+- Risk rationale: frontend copy-only change, no restricted surfaces
+- Human approver: Carson
+`;
+      const r = check({
+        body,
+        files: ['src/components/Foo.tsx'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+      });
+      expect(r.ok).toBe(true);
+    });
+
     it('fails T1 expedited evidence copied from an older PR head', () => {
       const body = `## Staging Soak Evidence
 - Tier: T1
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, smoke green
 - Soak start: 2026-05-09 14:00 UTC
@@ -1163,6 +1199,9 @@ describe('check-staging-evidence', () => {
       const body = `## Staging Soak Evidence
 - Tier: T1
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Staging tag URL or N/A explanation:
 - Health/smoke result: health ok
 - Soak start: 2026-05-09 14:00 UTC
@@ -1185,6 +1224,9 @@ describe('check-staging-evidence', () => {
       const body = `## Staging Soak Evidence
 - Tier: T1
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, smoke green
 - Soak start: 2026-05-09 14:00 UTC
@@ -1209,6 +1251,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -1239,6 +1284,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -1269,6 +1317,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -1301,6 +1352,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Base drift impact: T0 CI-only drift in .github/workflows/ci.yml; no runtime/schema/migration/staging/soak/deploy impact. Approved by: Carson 2026-06-09.
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
@@ -1332,6 +1386,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Base drift impact: T0 CI-only drift; no runtime/schema/migration/staging/soak/deploy impact. Approved by: Carson 2026-06-09.
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
@@ -1368,6 +1425,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -1401,6 +1461,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Base drift impact: T0 CI-only drift in services/worker/src/api/agents.md; no runtime/schema/migration/staging/soak/deploy impact. Approved by: TBD.
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
@@ -1433,6 +1496,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -1476,6 +1542,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: ${HEAD}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: ${EVIDENCE_BASE}
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -1530,31 +1599,14 @@ describe('check-staging-evidence', () => {
       });
 
       // (c) Shared-runtime intervening diff → FAIL for each substrate the design names.
-      it('(c) fails when intervening drift touches a shared migration surface', () => {
-        const r = driftCheck(
-          ['services/worker/src/api/v1/docusign.ts'],
-          ['supabase/migrations/0351_add_index.sql'],
-        );
+      it.each([
+        ['shared migration surface', ['supabase/migrations/0351_add_index.sql'], /soak surface.*T3/is],
+        ['shared chain surface', ['services/worker/src/chain/client.ts'], /soak surface/i],
+        ['shared queue surface', ['services/worker/src/queues/batch-drain.ts'], /soak surface/i],
+      ])('(c) fails when intervening drift touches the %s', (_label, driftFiles, errorPattern) => {
+        const r = driftCheck(['services/worker/src/api/v1/docusign.ts'], driftFiles);
         expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/soak surface.*T3/is);
-      });
-
-      it('(c) fails when intervening drift touches the shared chain surface', () => {
-        const r = driftCheck(
-          ['services/worker/src/api/v1/docusign.ts'],
-          ['services/worker/src/chain/client.ts'],
-        );
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/soak surface/i);
-      });
-
-      it('(c) fails when intervening drift touches the shared queue surface', () => {
-        const r = driftCheck(
-          ['services/worker/src/api/v1/docusign.ts'],
-          ['services/worker/src/queues/batch-drain.ts'],
-        );
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/soak surface/i);
+        expect(r.errors.join(' ')).toMatch(errorPattern);
       });
 
       it('(c) fails when intervening drift touches the cron schedule surface', () => {
@@ -1645,6 +1697,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00190-diz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-924---arkova-worker-staging-kvojbeutfa-uc.a.run.app
@@ -1682,6 +1737,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -1712,6 +1770,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -1824,6 +1885,28 @@ describe('check-staging-evidence', () => {
   describe('T2/T3 deploy-evidence value validation (defense-in-depth)', () => {
     const headSha = '1234567890abcdef1234567890abcdef12345678';
     const baseSha = 'abcdef1234567890abcdef1234567890abcdef12';
+    const mergeGradeT2Body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: ${headSha}
+- Changed behavior: DocuSign rate-limit retry preserves the Retry-After backoff slot
+- Targeted evidence: staging POST /api/v1/docusign/envelopes replay hit 429 then retried after Retry-After and completed
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
+- Base SHA: ${baseSha}
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: yes
+- Staging deploy log id: 142
+`;
 
     it('Gap 1: T2 fails when deploy-evidence fields are PENDING placeholders', () => {
       const body = `## Staging Soak Evidence
@@ -1831,6 +1914,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: PENDING
 - PR head SHA: ${headSha}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: ${baseSha}
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: PENDING
@@ -1862,6 +1948,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: PENDING
 - PR head SHA: ${headSha}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: ${baseSha}
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: PENDING
@@ -1898,6 +1987,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: ${headSha}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: ${baseSha}
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -1921,6 +2013,155 @@ describe('check-staging-evidence', () => {
       expect(r.ok).toBe(true);
     });
 
+    it('rejects NOT STARTED evidence values even when the field label is present', () => {
+      const body = mergeGradeT2Body.replace(/E2E result:.*\n/, 'E2E result: NOT STARTED\n');
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/E2E result:.*NOT STARTED/i);
+    });
+
+    it('rejects planned or future-dated evidence before it can start the soak clock', () => {
+      const body = mergeGradeT2Body
+        .replace(/Preflight timestamp:.*\n/, 'Preflight timestamp: 2099-05-09 13:55 UTC\n')
+        .replace(/Soak start:.*\n/, 'Soak start: 2099-05-09 14:00 UTC\n')
+        .replace(/Soak end:.*\n/, 'Soak end: 2099-05-10 02:00 UTC\n');
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/future/i);
+    });
+
+    it('rejects T2/T3 deploy evidence without a real image digest', () => {
+      const body = mergeGradeT2Body.replace(
+        /Image digest:.*\n/,
+        'Image digest: us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:pr-999\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Image digest:.*sha256/i);
+    });
+
+    it('rejects T2/T3 deploy evidence without a target Cloud Run URL', () => {
+      const body = mergeGradeT2Body.replace(
+        /Cloud Run service\/tag URL:.*\n/,
+        'Cloud Run service/tag URL: arkova-worker-staging-00099-xyz\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Cloud Run service\/tag URL:.*URL/i);
+    });
+
+    it('rejects dirty preflight output that also says clean_mirror', () => {
+      const body = mergeGradeT2Body.replace(
+        /Preflight result:.*\n/,
+        'Preflight result: environment_type=clean_mirror; duplicate migration names found; dirty staging project\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/clean_mirror/i);
+    });
+
+    it('rejects generic /health as the changed-behavior coverage', () => {
+      const body = mergeGradeT2Body.replace(
+        /Targeted evidence:.*\n/,
+        'Targeted evidence: Playwright asserted GET /health returned 200 healthy\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Targeted evidence:.*changed behavior|\/health/i);
+    });
+
+    it('does not treat healthcheck as a substring inside a larger token', () => {
+      const body = mergeGradeT2Body.replace(
+        /Targeted evidence:.*\n/,
+        'Targeted evidence: prehealthcheck scenario exercised the changed behavior under the targeted driver\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(true);
+    });
+
+    it('rejects missing heavy-user load/concurrency evidence', () => {
+      const body = mergeGradeT2Body.replace(/- Load\/concurrency evidence:.*\n/, '');
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Load\/concurrency evidence:.*heavy-user|load|concurrency/i);
+    });
+
+    it('rejects N/A as load/concurrency evidence for a soak', () => {
+      const body = mergeGradeT2Body.replace(
+        /Load\/concurrency evidence:.*\n/,
+        'Load/concurrency evidence: N/A\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Load\/concurrency evidence:.*real heavy-user/i);
+    });
+
+    it('rejects generic /health as load/concurrency evidence', () => {
+      const body = mergeGradeT2Body.replace(
+        /Load\/concurrency evidence:.*\n/,
+        'Load/concurrency evidence: GET /health returned 200 under one request\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Load\/concurrency evidence:.*generic.*\/health/i);
+    });
+
+    it('rejects weak request-only text as load/concurrency evidence', () => {
+      const body = mergeGradeT2Body.replace(
+        /Load\/concurrency evidence:.*\n/,
+        'Load/concurrency evidence: replayed the changed request successfully\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Load\/concurrency evidence:.*load\/concurrency proof/i);
+    });
+
+    it('allows completed evidence that mentions a planned/future scenario', () => {
+      const body = mergeGradeT2Body.replace(
+        /E2E result:.*\n/,
+        'E2E result: 50/50 green for planned fallback and future-effective retry scenarios\n',
+      );
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(true);
+    });
+
+    it('rejects evidence that does not name the changed behavior', () => {
+      const body = mergeGradeT2Body.replace(/Changed behavior:.*\n/, '');
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Changed behavior:/i);
+    });
+
+    it('does not let a residual-risk note waive the standard T2 12h floor', () => {
+      const body = `${mergeGradeT2Body.replace(/Soak end:.*\n/, 'Soak end: 2026-05-09 18:00 UTC\n')}
+### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: 15 timestamp-versioned migration ledger rows
+- Impact on this PR: none — evidence target is isolated from the contaminated rows
+- Reason not cleaned: active staging leases would be invalidated
+- Approved by: Carson (2026-05-09)
+`;
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/12h minimum/i);
+    });
+
+    it('requires an explicit async-cycle floor for RM-approved targeted T2 evidence below 12h', () => {
+      const body = `${mergeGradeT2Body.replace(/Soak end:.*\n/, 'Soak end: 2026-05-09 18:00 UTC\n')}- RM-approved targeted evidence: Carson approved targeted DocuSign Retry-After evidence for this T2-long path
+`;
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Async-cycle floor:/i);
+    });
+
+    it('allows RM-approved targeted T2 evidence when it names the async-cycle floor', () => {
+      const body = `${mergeGradeT2Body.replace(/Soak end:.*\n/, 'Soak end: 2026-05-09 18:00 UTC\n')}- RM-approved targeted evidence: Carson approved targeted DocuSign Retry-After evidence for this T2-long path
+- Async-cycle floor: Retry-After backoff cycle observed through one complete retry slot
+`;
+      const r = check({ body, files: ['services/worker/src/api/v1/docusign.ts'], headSha, baseSha });
+      expect(r.ok).toBe(true);
+    });
+
     it('Gap 1+2: dirty-staging T2 with PENDING artifacts and a self-blank Approved by stays red', () => {
       // The combined exploit: dirty preflight + short soak + all-PENDING deploy
       // evidence, "waived" by a self-authored residual-risk note whose
@@ -1930,6 +2171,9 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: PENDING
 - PR head SHA: ${headSha}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: ${baseSha}
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: PENDING
@@ -2017,6 +2261,9 @@ describe('check-staging-evidence', () => {
       return `## Staging Soak Evidence
 - Tier: ${tier}
 - PR head SHA: ${head}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Vercel deployment URL: ${vercel}
 - E2E result: ${e2e}
 - CI/E2E green: ${ciGreen}
@@ -2160,6 +2407,9 @@ ${note}
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - PR head SHA: ${headSha}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Base SHA: abcdef1234567890abcdef1234567890abcdef12
 - Staging project ref: ujtlwnoqfhtitcmsnrpq
 - Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
@@ -2271,6 +2521,9 @@ ${note}
       const body = `## Staging Soak Evidence
 - Tier: T1
 - PR head SHA: ${headSha}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
 - Staging tag URL or N/A explanation: N/A — frontend-only
 - Health/smoke result: green
 - CI/E2E green: green
@@ -2296,6 +2549,284 @@ ${note}
       expect(r.ok).toBe(false);
       // Declared T2 < required T3 → blocked; never reaches frontend-T2 acceptance.
       expect(r.errors.join(' ')).toMatch(/below required tier T3/i);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Architecturally-unsoakable evidence mode (offline CLI/SDK/tooling pkgs).
+  //
+  // A PR can be required-tier T2 purely by touching an OFFLINE package/SDK
+  // surface (the `packages/(?:arkova-py|embed|mcp-server|typescript|langchain)`
+  // / `sdks/` half of the SDK PATH_RULE). Those packages ship no worker code,
+  // no migration, and are not the served Cloud Run HTTP contract — they are
+  // distributed as standalone libraries/CLIs and run offline (pytest / vitest /
+  // parity). Such a PR can NEVER produce the worker-soak artifacts (Worker
+  // revision, Image digest, Cloud Run URL, Staging deploy-log id, clean_mirror
+  // preflight) the standard T2 block demands — an impossible catch-22 that
+  // blocked #1411 (verifier-cli + arkova-py).
+  //
+  // The unsoakable path lets that narrow case satisfy T2 with TEST/PARITY
+  // evidence (vitest/pytest/parity green at head) + an N/A-with-justification
+  // staging tag + an `### Unsoakable-surface note` attesting no worker runtime
+  // exists to soak.
+  //
+  // CRITICAL fail-closed guard: this path activates ONLY when every changed
+  // file is an offline package/SDK path (packages/** or sdks/**) AND none is a
+  // worker/migration/served-contract surface. Any worker-, migration-, or
+  // API-contract-doc-touching T2 PR keeps the unchanged worker-artifact
+  // requirements.
+  // ───────────────────────────────────────────────────────────────────────
+  describe('architecturally-unsoakable evidence mode', () => {
+    const headSha = '1234567890abcdef1234567890abcdef12345678';
+
+    // The real #1411 fileset: an offline Python client SDK + its tests.
+    const offlinePackageT2Files = [
+      'packages/arkova-py/src/arkova/client.py',
+      'packages/arkova-py/src/arkova/models.py',
+      'packages/arkova-py/tests/test_client.py',
+      'packages/arkova-py/pyproject.toml',
+    ];
+
+    const unsoakableBody = (overrides: Partial<{
+      tier: string;
+      head: string;
+      testEvidence: string;
+      ciGreen: string;
+      stagingTag: string;
+      note: string;
+    }> = {}) => {
+      const {
+        tier = 'T2',
+        head = headSha,
+        testEvidence = 'pytest 42/42 green + parity suite green on current head',
+        ciGreen = 'Tests, TypeCheck & Lint all green on current head',
+        stagingTag = 'N/A — offline Python SDK: no worker runtime, no migration, no served contract to soak',
+        note = `
+### Unsoakable-surface note
+- No worker runtime: offline SDK package — no Cloud Run deploy, no worker revision, no image digest, no staging deploy-log id, no migration (nothing a soak could exercise)
+- Surfaces touched: packages/arkova-py (standalone Python client library, run offline by consumers)
+- Approved by: Carson`,
+      } = overrides;
+      return `## Staging Soak Evidence
+- Tier: ${tier}
+- PR head SHA: ${head}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
+- Test evidence: ${testEvidence}
+- CI green: ${ciGreen}
+- Staging tag URL or N/A explanation: ${stagingTag}
+${note}
+`;
+    };
+
+    describe('isOfflinePackageOnlyChange', () => {
+      it('is true for an all-offline-package fileset (#1411 arkova-py)', () => {
+        expect(isOfflinePackageOnlyChange(offlinePackageT2Files)).toBe(true);
+      });
+
+      it('is true for a single offline SDK source file', () => {
+        expect(isOfflinePackageOnlyChange(['packages/arkova-py/src/arkova/client.py'])).toBe(true);
+      });
+
+      it('is true for the sdks/ offline client tree', () => {
+        expect(isOfflinePackageOnlyChange([
+          'sdks/typescript/src/index.ts',
+          'sdks/langchain/src/tool.ts',
+        ])).toBe(true);
+      });
+
+      it('is true for the verifier-cli offline CLI package', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/verifier-cli/src/index.ts',
+          'packages/verifier/src/verify.ts',
+        ])).toBe(true);
+      });
+
+      it('is false when a worker file is present', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/arkova-py/src/arkova/client.py',
+          'services/worker/src/api/v1/verify.ts',
+        ])).toBe(false);
+      });
+
+      it('is false when a migration is present', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/typescript/src/index.ts',
+          'supabase/migrations/0354_x.sql',
+        ])).toBe(false);
+      });
+
+      it('is false when a served API contract doc is present (docs/api describes the soakable worker contract)', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/arkova-py/src/arkova/client.py',
+          'docs/api/openapi.yaml',
+        ])).toBe(false);
+      });
+
+      it('is false when the API_GUIDE contract doc is present', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/embed/src/widget.ts',
+          'docs/guides/API_GUIDE.md',
+        ])).toBe(false);
+      });
+
+      it('is false when a frontend file is present (not an offline package)', () => {
+        expect(isOfflinePackageOnlyChange([
+          'packages/typescript/src/index.ts',
+          'src/components/api/ApiKeys.tsx',
+        ])).toBe(false);
+      });
+
+      it('is false for an empty fileset (nothing to attest as offline-package-only)', () => {
+        expect(isOfflinePackageOnlyChange([])).toBe(false);
+      });
+    });
+
+    // ── Scenario 1 (required): offline-package T2 + test evidence → PASS ──
+    it('Scenario 1: #1411 offline-package T2 with test/parity evidence PASSES', () => {
+      const r = check({
+        body: unsoakableBody(),
+        files: offlinePackageT2Files,
+        headSha,
+      });
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/unsoakable/i);
+    });
+
+    it('Scenario 1b: offline-package T2 PASSES with NO worker-artifact fields present at all', () => {
+      const body = unsoakableBody();
+      expect(body).not.toContain('- Worker revision:');
+      expect(body).not.toContain('- Image digest:');
+      expect(body).not.toContain('- Cloud Run service/tag URL:');
+      expect(body).not.toContain('- Staging deploy log id:');
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(true);
+    });
+
+    // ── Scenario 2 (required): worker-touching T2 still FAILS without artifacts ──
+    it('Scenario 2: worker-touching T2 with ONLY unsoakable evidence still FAILS (worker artifacts unchanged)', () => {
+      const r = check({
+        body: unsoakableBody(),
+        // Same body, but the fileset now includes a worker file → NOT offline-only.
+        files: ['packages/arkova-py/src/arkova/client.py', 'services/worker/src/api/v1/verify.ts'],
+        headSha,
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Worker revision:|Image digest:|Cloud Run|Staging deploy log id:/i);
+    });
+
+    it('Scenario 2b: a migration-bearing PR alongside an offline package still demands a full T3 soak', () => {
+      const r = check({
+        body: unsoakableBody({ tier: 'T3' }),
+        files: ['packages/arkova-py/src/arkova/client.py', 'supabase/migrations/0354_x.sql'],
+        headSha,
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      // Migration → T3; the offline-package escape hatch must not apply.
+      expect(r.errors.join(' ')).toMatch(/Worker revision:|Trigger A fires:|missing required fields for T3/i);
+    });
+
+    // ── Scenario 3 (required): offline-package T2 WITHOUT test evidence → FAIL ──
+    it('Scenario 3: offline-package T2 missing the Test evidence field FAILS', () => {
+      const body = unsoakableBody().replace(/- Test evidence:.*\n/, '');
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Test evidence:/i);
+    });
+
+    it('Scenario 3b: offline-package T2 with an EMPTY Test evidence value FAILS', () => {
+      const body = unsoakableBody({ testEvidence: '' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Test evidence:/i);
+    });
+
+    it('Scenario 3c: offline-package T2 with a PENDING Test evidence value FAILS (placeholder rejected)', () => {
+      const body = unsoakableBody({ testEvidence: 'PENDING' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/placeholder/i);
+    });
+
+    it('Scenario 3d: offline-package T2 whose Test evidence does not state a passing result FAILS', () => {
+      const body = unsoakableBody({ testEvidence: 'ran the suite locally' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Test evidence/i);
+    });
+
+    it('Scenario 3e: offline-package T2 with an empty CI green value FAILS', () => {
+      const body = unsoakableBody({ ciGreen: '' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/CI green:/i);
+    });
+
+    it('Scenario 3f: offline-package T2 with NO unsoakable-surface note FAILS', () => {
+      const body = unsoakableBody({ note: '' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/unsoakable-surface note|no worker runtime/i);
+    });
+
+    it('Scenario 3g: offline-package T2 whose note has a blank Approved by FAILS', () => {
+      const body = unsoakableBody({
+        note: `
+### Unsoakable-surface note
+- No worker runtime: offline SDK — nothing to soak
+- Surfaces touched: packages/arkova-py
+- Approved by:`,
+      });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Approved by|unsoakable-surface note/i);
+    });
+
+    it('Scenario 3h: offline-package T2 with a stale (mismatched) PR head SHA FAILS (exact-head integrity preserved)', () => {
+      const body = unsoakableBody();
+      const r = check({
+        body,
+        files: offlinePackageT2Files,
+        headSha: '9999999990abcdef1234567890abcdef12345678',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/PR head SHA/i);
+    });
+
+    it('Scenario 3i: offline-package T2 with a bare staging tag (no N/A justification, no URL) FAILS', () => {
+      const body = unsoakableBody({ stagingTag: 'skipped' });
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Staging tag URL or N\/A explanation/i);
+    });
+
+    // Under-declaration must still fail: an offline-package T2-required PR that
+    // declares T1 is blocked exactly as before (the unsoakable path does NOT
+    // weaken classification — it only changes which evidence T2 accepts).
+    it('does not let an offline-package T2-required PR sneak through as a declared T1', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: ${headSha}
+- Changed behavior: fixture changed behavior under test
+- Targeted evidence: targeted fixture evidence exercised the changed behavior path
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
+- Test evidence: pytest green
+- CI green: green
+- Staging tag URL or N/A explanation: N/A — offline SDK
+`;
+      const r = check({ body, files: offlinePackageT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below required tier T2/i);
+    });
+
+    // A pure-frontend PR must NOT reach the offline-package path: it keeps the
+    // frontend-T2 evidence mode. Guards against the two alt-evidence paths
+    // bleeding into each other.
+    it('a frontend-only T2 PR is NOT treated as offline-package (stays frontend-T2)', () => {
+      expect(isOfflinePackageOnlyChange(['src/components/anchor/AssetDetailView.tsx'])).toBe(false);
     });
   });
 });

@@ -670,8 +670,8 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
                 Verification Disclaimer
               </p>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Arkova verifies that a document&apos;s cryptographic fingerprint was anchored to the
-                Bitcoin blockchain at the stated time. Arkova does not verify, and makes no
+                Arkova verifies that a document&apos;s fingerprint was recorded on the
+                public verification network at the stated time. Arkova does not verify, and makes no
                 representation regarding, the accuracy, authenticity, or legitimacy of the underlying
                 document content. For anchors created by unverified or individual accounts, the
                 identity of the anchoring party has not been independently confirmed by Arkova.

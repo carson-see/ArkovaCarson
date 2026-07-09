@@ -16,6 +16,7 @@ import { test, expect } from './fixtures';
 
 const API_KEYS_DESCRIPTION = 'Manage API keys for programmatic access to the Verification API.';
 const DEVELOPER_OVERVIEW_LINK = /Developer Platform|API Documentation|developer overview/i;
+const API_KEY_SECRET_PATTERN = /^ak_(live|test)_[a-f0-9]{64}$/;
 
 async function expectApiKeysPage(page: Page) {
   await expect(
@@ -103,8 +104,11 @@ test.describe('API Keys & Verification Flow', () => {
       // After creation, the secret display phase should show
       // Either the key is created successfully or there is an error
       // (worker may not be running in CI, so we check for both states)
-      const keyCreatedTitle = orgAdminPage.getByText('API Key Created');
-      const errorAlert = orgAdminPage.locator('[role="alert"]');
+      const dialog = orgAdminPage.getByRole('dialog');
+      const keyCreatedTitle = dialog.getByRole('heading', { name: 'API Key Created' });
+      const errorAlert = dialog
+        .locator('[role="alert"]')
+        .filter({ hasText: /failed|error|invalid|unauthorized|forbidden|too many requests|rate limit|429/i });
 
       await expect(keyCreatedTitle.or(errorAlert)).toBeVisible({ timeout: 15000 });
 
@@ -112,12 +116,12 @@ test.describe('API Keys & Verification Flow', () => {
       if (await keyCreatedTitle.isVisible().catch(() => false)) {
         // Warning message about one-time display
         await expect(
-          orgAdminPage.getByText('Copy this key now. It will not be shown again.')
+          dialog.getByText('Copy this key now. It will not be shown again.')
         ).toBeVisible();
 
-        // The key value should be displayed in a monospace alert
-        const keyDisplay = orgAdminPage.locator('[role="alert"] .font-mono').filter({ hasText: /^ark_/ });
-        await expect(keyDisplay).toBeVisible();
+        // The key value should be displayed in a monospace alert.
+        const keyDisplay = dialog.locator('[role="alert"] .font-mono');
+        await expect(keyDisplay).toHaveText(API_KEY_SECRET_PATTERN);
 
         // Copy to Clipboard button should be visible
         await expect(

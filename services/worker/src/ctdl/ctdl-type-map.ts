@@ -100,3 +100,20 @@ const STATUSES_ALLOWING_EXPIRATION = new Set(['ACTIVE', 'SECURED', 'EXPIRED']);
 export function statusAllowsExpiration(status: string): boolean {
   return STATUSES_ALLOWING_EXPIRATION.has(status);
 }
+
+// SCRUM-2375 (CE-04) — credential types whose CE credit value is expressed as
+// contact hours (CTDL ceterms:creditValue → ceterms:ValueProfile with
+// creditUnit:ContactHour, per Jeanne Kitchens' correction). Deliberately narrow:
+// only the continuing-education types (CPE, CLE) carry a contact-hour credit we
+// can honestly assert; a `contact_hours` metadata value on any other type is
+// ambiguous (semester hours? seat time?) and is omitted rather than guessed.
+// Widen only with a documented CTDL-vocabulary reason.
+const CONTINUING_EDUCATION_CREDIT_TYPES = new Set<string>(['CPE', 'CLE']);
+
+export function isContinuingEducationCreditType(
+  credentialType: string | null | undefined,
+): boolean {
+  return (
+    typeof credentialType === 'string' && CONTINUING_EDUCATION_CREDIT_TYPES.has(credentialType)
+  );
+}
