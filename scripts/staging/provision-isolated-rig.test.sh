@@ -178,6 +178,7 @@ chmod +x "$tmp_bin/gcloud"
 bad_out=$(
   PATH="$tmp_bin:$PATH" \
   CONFIRM_PROVISION=s0e4-lane-b \
+  STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY=test-service-role-key \
   GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
   USER=rig-owner \
