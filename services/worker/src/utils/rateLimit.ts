@@ -67,10 +67,6 @@ export function getRateLimitStoreSize(): number {
   return rateLimitStore.size;
 }
 
-function shouldBypassRateLimitForE2E(): boolean {
-  return process.env.NODE_ENV === 'test' && process.env.DISABLE_E2E_RATE_LIMITS === 'true';
-}
-
 interface RateLimitOptions {
   windowMs: number; // Time window in ms
   maxRequests: number; // Max requests per window
@@ -108,11 +104,6 @@ export function rateLimit(options: RateLimitOptions) {
   } = options;
 
   return (req: Request, res: Response, next: NextFunction): void => {
-    if (shouldBypassRateLimitForE2E()) {
-      next();
-      return;
-    }
-
     const key = scope ? `${scope}:${keyGenerator(req)}` : keyGenerator(req);
     const now = Date.now();
 

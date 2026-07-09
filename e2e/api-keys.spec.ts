@@ -17,6 +17,7 @@ import { test, expect } from './fixtures';
 const API_KEYS_DESCRIPTION = 'Manage API keys for programmatic access to the Verification API.';
 const DEVELOPER_OVERVIEW_LINK = /Developer Platform|API Documentation|developer overview/i;
 const API_KEY_SECRET_PATTERN = /^ak_(live|test)_[a-f0-9]{64}$/;
+const WORKER_RATE_LIMIT_WINDOW_RESET_MS = 61_000;
 
 async function expectApiKeysPage(page: Page) {
   await expect(
@@ -95,6 +96,12 @@ test.describe('API Keys & Verification Flow', () => {
 
       // Search scope is pre-selected by default for new v2 API keys.
       await expect(orgAdminPage.getByRole('checkbox', { name: 'Search' })).toBeChecked();
+
+      // CI runs the whole Playwright suite through one local worker/IP. Let the
+      // shared /api limiter window reset before the create-key mutation.
+      if (process.env.CI) {
+        await orgAdminPage.waitForTimeout(WORKER_RATE_LIMIT_WINDOW_RESET_MS);
+      }
 
       // Submit the form
       const createButtons = orgAdminPage.getByRole('button', { name: /Create API Key/i });
