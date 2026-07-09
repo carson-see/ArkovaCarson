@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { verifyBundleSignature } from '../src/lib/signature.js';
 import { verifyProof } from '../src/verify.js';
 import { readFixtureFile, offlineNode, loadSyntheticFixtures } from './helpers.js';
-import type { SignedProofBundle } from '../src/types.js';
+import type { PublishedKeys, SignedProofBundle } from '../src/types.js';
 
 const bundle = JSON.parse(readFixtureFile('signed-bundle.json')) as SignedProofBundle;
 // The raw PEM is sourced from the tracked keys.json (a *.pem file would be
@@ -34,6 +34,19 @@ describe('verifyBundleSignature', () => {
       payload: { ...bundle.payload, fingerprint: 'ff'.repeat(32) },
     };
     expect(verifyBundleSignature(tampered, pem).status).toBe('failed');
+  });
+
+  it('fails closed (DID_UNRESOLVED) when the bundle carries no signing key id', () => {
+    // Malformed runtime JSON: no signing_key_id on the bundle AND a key set
+    // whose entries carry no kid. `undefined === undefined` must NOT resolve a
+    // key — the signer identity is unresolved and the check fails closed.
+    const keySet = JSON.parse(readFixtureFile('published-keys.json')) as PublishedKeys;
+    const anonymousKeys: PublishedKeys = { keys: keySet.keys.map((k) => ({ pem: k.pem })) };
+    const { signing_key_id: _dropped, ...rest } = bundle;
+    const stripped = rest as unknown as SignedProofBundle;
+    const r = verifyBundleSignature(stripped, undefined, anonymousKeys);
+    expect(r.status).toBe('failed');
+    expect(r.failureCode).toBe('DID_UNRESOLVED');
   });
 });
 
