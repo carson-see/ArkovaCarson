@@ -68,6 +68,7 @@ CLOUD_RUN_REGION="${STAGING_CLOUD_RUN_REGION:-us-central1}"
 SUPABASE_REGION="${STAGING_SUPABASE_REGION:-us-east-2}"
 SUPABASE_PG_MAJOR="${STAGING_SUPABASE_PG_MAJOR:-17}"
 SUPABASE_ORG="${STAGING_SUPABASE_ORG:-byhkazrpmivhcsuqjtva}"
+SUPABASE_DB_PASSWORD="${STAGING_NEW_SUPABASE_DB_PASSWORD:-}"
 PINNED_IMAGE="${STAGING_PINNED_IMAGE:-us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:30e56792d1b1cdb8b2d658782d1e7d88994eaaa5}"
 RUNTIME_SA="${STAGING_RUNTIME_SA_EMAIL:-270018525501-compute@developer.gserviceaccount.com}"
 
@@ -219,6 +220,11 @@ if [[ $APPLY -eq 1 ]]; then
   if [[ "${CONFIRM_PROVISION:-}" != "$NAME" ]]; then
     echo "ERROR: live provision requires CONFIRM_PROVISION=<rig-name> matching --name." >&2
     echo "       Expected CONFIRM_PROVISION='$NAME', got CONFIRM_PROVISION='${CONFIRM_PROVISION:-<unset>}'." >&2
+    exit 2
+  fi
+  if [[ -z "$SUPABASE_DB_PASSWORD" ]]; then
+    echo "ERROR: live provision requires STAGING_NEW_SUPABASE_DB_PASSWORD to create the Supabase project." >&2
+    echo "       Generate/provide it through the operator secret path; it is never printed by this script." >&2
     exit 2
   fi
   # A non-mock profile wires REAL credentials (chain: real Bitcoin exposure via
@@ -659,13 +665,13 @@ echo "#   region=$SUPABASE_REGION, postgres major=$SUPABASE_PG_MAJOR, org=$SUPAB
 # path appends --output json so the new ref can be captured + re-validated.
 CREATE_CMD=(npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION")
 NEW_PROJECT_REF='<captured-from-step-1>'
-print_cmd "${CREATE_CMD[@]}"
+print_cmd "${CREATE_CMD[@]}" --db-password '<redacted:STAGING_NEW_SUPABASE_DB_PASSWORD>'
 if [[ $APPLY -eq 1 ]]; then
-  echo "executing: ${CREATE_CMD[*]} --output json" >&2
+  echo "executing: ${CREATE_CMD[*]} --db-password <redacted> --output json" >&2
   # Capture the new ref so links/pushes/preflight target the validated project,
   # never whatever happens to be linked on disk (review #1). Fail loudly if the
   # ref can't be captured — better to abort than orphan + push blind (review #2).
-  NEW_PROJECT_REF="$("${CREATE_CMD[@]}" --output json 2>/dev/null | jq -r '.id // .ref // empty')"
+  NEW_PROJECT_REF="$("${CREATE_CMD[@]}" --db-password "$SUPABASE_DB_PASSWORD" --output json 2>/dev/null | jq -r '.id // .ref // empty')"
   if [[ -z "$NEW_PROJECT_REF" ]]; then
     echo "ERROR: could not capture the new project ref from 'supabase projects create'." >&2
     echo "       Capture it manually, verify it is NOT prod/shared, then run the remaining steps." >&2
