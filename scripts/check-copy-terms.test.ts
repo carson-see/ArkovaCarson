@@ -29,6 +29,7 @@ import {
   loadBaseline,
   partitionAgainstAllowlist,
   partitionAgainstBaseline,
+  scanFileContent,
   shouldCheck,
   shouldSkipLine,
   stripClassNameAttributes,
@@ -740,6 +741,370 @@ describe('partitionAgainstBaseline — grandfather logic (SCRUM-2148)', () => {
   });
 });
 
+// =============================================================================
+// 2026-07-06 — multi-line raw JSX text blind spot (shipped "Bitcoin blockchain"
+// to prod in src/components/verification; found + removed by PR #1433). The
+// per-line short-circuit in findTermViolations (no quote char AND no same-line
+// `<`/`>` pair → skip the forbidden-term loop) meant a banned term on its OWN
+// JSX text line was never scanned. scanFileContent() tracks JSX element-text
+// context ACROSS lines and force-scans raw text continuation lines.
+// =============================================================================
+
+describe('scanFileContent — multi-line raw JSX text blind spot (PR #1433 follow-up)', () => {
+  const lines = (...ls: string[]): string => ls.join('\n');
+
+  it('flags "Bitcoin blockchain" on its own JSX text line (the exact shipped case)', () => {
+    const content = lines(
+      'export function Disclaimer() {',
+      '  return (',
+      '    <p className="text-xs text-muted-foreground leading-relaxed">',
+      '      Arkova verifies that a fingerprint was anchored to the',
+      '      Bitcoin blockchain at the stated time. Arkova does not verify, and makes no',
+      '      representation regarding the underlying document content.',
+      '    </p>',
+      '  );',
+      '}',
+    );
+    const terms = scanFileContent(content, 'src/components/verification/PublicVerification.tsx');
+    expect(terms.map((v) => v.term.toLowerCase())).toContain('bitcoin');
+    expect(terms.map((v) => v.term.toLowerCase())).toContain('blockchain');
+    expect(terms.find((v) => v.term.toLowerCase() === 'bitcoin')?.line).toBe(5);
+  });
+
+  it('reproduces the shipped PublicVerification shape from the checked-in fixture', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const fixture = readFileSync(join(here, 'fixtures/copy-terms-multiline-jsx.fixture.txt'), 'utf-8');
+    const bitcoinLine = fixture.split('\n').findIndex((l) => l.includes('Bitcoin blockchain')) + 1;
+    expect(bitcoinLine).toBeGreaterThan(0);
+
+    const terms = scanFileContent(fixture, 'src/components/verification/PublicVerification.tsx');
+    const bitcoinHits = terms.filter((v) => v.term.toLowerCase() === 'bitcoin');
+    expect(bitcoinHits.map((v) => v.line)).toContain(bitcoinLine);
+    expect(terms.map((v) => v.term.toLowerCase())).toContain('blockchain');
+  });
+
+  it('scans text after a multi-line opening tag (`>` on its own line)', () => {
+    const content = lines(
+      '<p',
+      '  data-testid="disclaimer"',
+      '>',
+      '  Recorded on the Bitcoin network.',
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+  });
+
+  it('keeps JSX-text state across a self-closing element line', () => {
+    const content = lines(
+      '<p>',
+      '  Anchored to the',
+      '  <br />',
+      '  Bitcoin blockchain forever.',
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('blockchain');
+  });
+
+  it('flags a quoted-for-emphasis banned word on a text continuation line', () => {
+    const content = lines(
+      '<p>',
+      '  anchored to the "Bitcoin" network',
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+  });
+
+  it('flags text around an inline balanced JSX expression without flagging the expression', () => {
+    const content = lines(
+      '<p>',
+      "  Secured {formatNetwork('mainnet')} times on the Bitcoin network",
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+    expect(terms).not.toContain('mainnet'); // code value inside {…}, not copy
+  });
+
+  it('does NOT flag code values inside a multi-line JSX expression', () => {
+    const content = lines(
+      '<div>',
+      "  {network === 'bitcoin'",
+      "    ? primaryLabel",
+      "    : 'mainnet'}",
+      '</div>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).not.toContain('bitcoin');
+    expect(terms).not.toContain('mainnet');
+  });
+
+  it('does NOT flag plain code lines after the JSX block closes', () => {
+    const content = lines(
+      'function C() {',
+      '  return (',
+      '    <p>',
+      '      All good copy here.',
+      '    </p>',
+      '  );',
+      '}',
+      'const hash = computeFingerprint(data);',
+      'export { hash };',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
+  });
+
+  it('does NOT let a TS generic (`Array<string>`) fake a JSX text context', () => {
+    const content = lines(
+      'const xs: Array<string> = [];',
+      'const hash = xs.length;',
+      'let wallet = 0;',
+    );
+    expect(scanFileContent(content, 'src/lib/x.ts')).toHaveLength(0);
+  });
+
+  it('single-line JSX copy still flags exactly as before (parity)', () => {
+    const content = '<p className="text-xs">Block Height</p>';
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms.some((t) => t.includes('block'))).toBe(true);
+  });
+
+  it('still skips block comments and line comments in multi-line JSX context', () => {
+    const content = lines(
+      '<p>',
+      '  {/* Bitcoin blockchain — engineering note, not copy */}',
+      '  visible copy line',
+      '</p>',
+      '/*',
+      ' * Bitcoin blockchain in a block comment',
+      ' */',
+      '// Bitcoin blockchain in a line comment',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// Adversarial-review findings (2026-07-06, SCRUM-2666 review round 2). The
+// first cross-line implementation had state-corruption false positives (stuck
+// text mode after inline closing tags, TSX generics, apostrophes in prose) and
+// false negatives (copy inside {cond && (…)} / .map() / fragments). The state
+// machine is a context STACK (code → text → expr → text …), so these are all
+// locked with tests.
+// =============================================================================
+
+describe('scanFileContent — no false positives from state corruption (review round 2)', () => {
+  const lines = (...ls: string[]): string => ls.join('\n');
+
+  it('F1: inline `text</Tag>` closing tag ends text state — later code is NOT force-scanned', () => {
+    const content = lines(
+      'function getStatusBadge(s: string) {',
+      "  if (s === 'ok') {",
+      '    return <Badge variant="success">Completed</Badge>;',
+      '  }',
+      '  return <Badge>Unknown</Badge>;',
+      '}',
+      'const hash = record.content_fingerprint;',
+      'const token = session.access_key;',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
+  });
+
+  it('F2: TSX generic arrow `<T extends …>` does not fake a text context', () => {
+    const content = lines(
+      'const filterBySearch = <T extends { title?: string }>(item: T): boolean => {',
+      '  return true;',
+      '};',
+      'const wallet = deriveFeeAccount(cfg);',
+    );
+    expect(scanFileContent(content, 'src/pages/DocumentsPage.tsx')).toHaveLength(0);
+  });
+
+  it('F2b: TSX generic arrow `<T,>` does not fake a text context', () => {
+    const content = lines(
+      'const pick = <T,>(v: T): T => v;',
+      'const wallet = 1;',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
+  });
+
+  it('F3: apostrophe in prose does not corrupt expression tracking', () => {
+    const content = lines(
+      '<p>',
+      "  Here's your current balance: {formatAmount(",
+      '    wallet.balance,',
+      '  )}',
+      '</p>',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
+  });
+
+  it('F3b: apostrophe prose lines still flag banned terms', () => {
+    const content = lines(
+      '<p>',
+      "  Here's the Bitcoin summary you asked for",
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+  });
+
+  it('F4a: a regex literal containing an HTML tag does not open text mode', () => {
+    const content = lines(
+      'const isPara = /^<p>/.test(html);',
+      'const hash = computeFingerprint(x);',
+    );
+    expect(scanFileContent(content, 'src/lib/x.tsx')).toHaveLength(0);
+  });
+
+  it('F4b: an inline /* block comment */ mentioning a tag does not open text mode', () => {
+    const content = lines(
+      'const a = b; /* renders a <p> element */',
+      'const token = getKey();',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
+  });
+
+  it('F4c: a multi-line template literal containing HTML does not open text mode', () => {
+    const content = lines(
+      'const tpl = `',
+      '  <div>',
+      '  some plain words',
+      '`;',
+      'const wallet = 2;',
+      'let transaction = 3;',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
+  });
+
+  it('F5: braces on code lines after JSX closes do not open expression frames', () => {
+    const content = lines(
+      'function C() {',
+      '  return <p>fine copy</p>;',
+      '}',
+      'switch (kind) {',
+      '  default: {',
+      '    const hash = 1;',
+      '  }',
+      '}',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
+  });
+
+  it('F9: multi-line template literal inside a JSX attribute does not corrupt tag parsing', () => {
+    // Real shape from src/components/api/ApiSandbox.tsx:502-510 — the
+    // className template spans lines; the tag walker must treat the whole
+    // template as opaque and still find the real `>` after it closes.
+    const content = lines(
+      '<span className={`text-xs font-bold ${',
+      '  status >= 200 && status < 300',
+      "    ? 'bg-emerald-500/20'",
+      "    : 'bg-red-500/20'",
+      '}`}>',
+      '  {status}',
+      '</span>',
+      'const hash = record.fingerprint;',
+      'const token = 1;',
+    );
+    expect(scanFileContent(content, 'src/components/X.tsx')).toHaveLength(0);
+  });
+
+  it('F9b: text after a multi-line-template attribute tag is still scanned as copy', () => {
+    const content = lines(
+      '<p className={`x ${',
+      '  a ? b : c',
+      '}`}>',
+      '  Recorded on the Bitcoin network permanently',
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+  });
+
+  it('plain .ts files (no JSX) never enter text mode at all', () => {
+    const content = lines(
+      'if (a <b) {',
+      '  doThing();',
+      '}',
+      'const hash = 1;',
+    );
+    expect(scanFileContent(content, 'src/lib/helper.ts')).toHaveLength(0);
+  });
+});
+
+describe('scanFileContent — copy inside expression renders IS scanned (review round 2)', () => {
+  const lines = (...ls: string[]): string => ls.join('\n');
+
+  it('F6: raw text inside a {cond && (…)} conditional render flags', () => {
+    const content = lines(
+      '<div>',
+      '  {loading && (',
+      '    <p>',
+      '      Fetching data from the Bitcoin blockchain, please wait',
+      '    </p>',
+      '  )}',
+      '</div>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('blockchain');
+  });
+
+  it('F6b: raw text inside a .map() callback render flags', () => {
+    const content = lines(
+      '<ul>',
+      '  {items.map((item) => (',
+      '    <li key={item.id}>',
+      '      Bitcoin receipt for {item.name}',
+      '    </li>',
+      '  ))}',
+      '</ul>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+  });
+
+  it('F7: raw text directly inside a fragment (<>…</>) flags', () => {
+    const content = lines(
+      'return (',
+      '  <>',
+      '    Anchored to the Bitcoin blockchain permanently',
+      '  </>',
+      ');',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('blockchain');
+  });
+
+  it('F8: a text continuation line containing a bare `>` comparison still flags', () => {
+    const content = lines(
+      '<p>',
+      '  Requires > 6 confirmations on the Bitcoin network before release',
+      '</p>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+  });
+
+  it('nested elements: text after a nested closing tag is still element text', () => {
+    const content = lines(
+      '<div>',
+      '  <p>inner copy</p>',
+      '  Bitcoin settlement text after the nested element',
+      '</div>',
+    );
+    const terms = scanFileContent(content, 'src/components/X.tsx').map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+  });
+});
+
 describe('copy-terms-baseline.json — shipped baseline is well-formed (SCRUM-2148)', () => {
   it('every entry has file, line, term, and a non-empty reason', async () => {
     const { readFileSync } = await import('node:fs');
@@ -769,6 +1134,11 @@ describe('copy-terms-baseline.json — shipped baseline is well-formed (SCRUM-21
 // =============================================================================
 
 describe('copy.ts is enforced end-to-end (scan-plus-allowlist)', () => {
+  it('keeps the linter source text-searchable by avoiding literal NUL bytes', () => {
+    const source = fs.readFileSync(path.join(HERE, 'check-copy-terms.ts'), 'utf-8');
+    expect(source.includes('\u0000')).toBe(false);
+  });
+
   it('the real src/lib/copy.ts yields ZERO fresh violations through the full pipeline', () => {
     // Mirrors main(): scan → pardon sanctioned → grandfather debt → what's left is fresh.
     const copyPath = path.resolve(HERE, '../src/lib/copy.ts');
