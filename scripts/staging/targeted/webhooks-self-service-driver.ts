@@ -167,6 +167,7 @@ async function main(): Promise<void> {
     stats,
     plan: () => runtimeArgs(),
     fireOnce: (ctx, args) => fireOnce(ctx, stats, args as WebhookRuntimeArgs),
+    passIntervalMs: 75_000,
   });
 
   const evidence = summarizeEvidence(stats, { ...WEBHOOKS_DRIVER, apiBase });
