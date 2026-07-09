@@ -500,6 +500,24 @@ resolve_driver_sha256() {
   shasum -a 256 "$DRIVER_PATH" | awk '{print $1}'
 }
 
+resolve_cloud_run_url() {
+  if [[ $APPLY -eq 1 ]]; then
+    local url
+    url="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+      --region="$CLOUD_RUN_REGION" \
+      --project="$GCP_PROJECT" \
+      --format="value(status.url)")"
+    if [[ -z "$url" ]]; then
+      echo "ERROR: could not resolve Cloud Run service URL for $CLOUD_RUN_SERVICE." >&2
+      exit 1
+    fi
+    printf '%s\n' "$url"
+    return 0
+  fi
+
+  printf '%s\n' "${STAGING_RIG_TAG_URL:-<captured-cloud-run-url-for-${CLOUD_RUN_SERVICE}>}"
+}
+
 emit_admission_json() {
   local schema_version="$1"
   local rig_name="$2"
@@ -801,7 +819,7 @@ fi
 HEAD_SHA="$(resolve_head_sha)"
 BASE_SHA_VALUE="$(resolve_base_sha)"
 IMAGE_DIGEST="$(resolve_image_digest)"
-TAG_URL="${WORKER_URL:-<captured-cloud-run-url-for-${CLOUD_RUN_SERVICE}>}"
+TAG_URL="$(resolve_cloud_run_url)"
 ADMISSION_SUPABASE_PROJECT_REF="${ADMISSION_SUPABASE_PROJECT_REF:-$NEW_PROJECT_REF}"
 OWNER="$(resolve_owner)"
 DRIVER_SHA256="$(resolve_driver_sha256)"
