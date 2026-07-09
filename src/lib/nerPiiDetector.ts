@@ -671,7 +671,7 @@ export async function detectPIIWithNER(
  * the entity text — it IS the PII.
  */
 /**
- * Replace every occurrence of `needle` in `haystack` with `token`, anchored at
+ * Replace every occurrence of `needle` in `haystack` with `replacement`, anchored at
  * word boundaries where the needle's edges are alphanumeric. This avoids
  * garbling a longer word that merely CONTAINS the needle ("John" must not match
  * inside "Johnson") while still redacting every standalone occurrence.
@@ -679,12 +679,12 @@ export async function detectPIIWithNER(
  * word characters. Over-matching (redacting too much) is the acceptable failure
  * mode here; under-matching (leaving PII) is not.
  */
-function redactAllOccurrences(haystack: string, needle: string, token: string): string {
+function redactAllOccurrences(haystack: string, needle: string, replacement: string): string {
   if (!needle) return haystack;
   const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const left = /^[\p{L}\p{N}]/u.test(needle) ? '(?<![\\p{L}\\p{N}_])' : '';
   const right = /[\p{L}\p{N}]$/u.test(needle) ? '(?![\\p{L}\\p{N}_])' : '';
-  return haystack.replace(new RegExp(`${left}${esc}${right}`, 'gu'), token);
+  return haystack.replace(new RegExp(`${left}${esc}${right}`, 'gu'), replacement);
 }
 
 export function redactNEREntities(text: string, entities: NEREntity[]): string {
