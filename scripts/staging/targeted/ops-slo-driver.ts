@@ -37,7 +37,14 @@ import {
   type DriverStats,
   type JsonBody,
 } from './driver-core.js';
-import { runDriver, iamAuthHeaders, writeEvidenceFile, type DriverContext } from './runtime.js';
+import {
+  runDriver,
+  iamAuthHeaders,
+  iamToken,
+  bearerHeader,
+  writeEvidenceFile,
+  type DriverContext,
+} from './runtime.js';
 
 export const OPS_SLO_DRIVER = { driver: 'ops-slo', pr: '#1441' } as const;
 
@@ -146,8 +153,9 @@ async function fireOnce(ctx: DriverContext, stats: DriverStats, plan: OpsSloRequ
     // The app auth is the Supabase bearer (spec.headers), NOT the IAM token, so
     // we attach IAM for ingress and let the app-layer Supabase JWT (or its
     // absence) drive the 200/401/403 outcome.
-    const headers = iamAuthHeaders(spec.headers ?? {});
-    // For 'unauthenticated', ensure no Supabase bearer overrides ingress IAM.
+    const headers = spec.label === 'unauthenticated'
+      ? { 'X-Serverless-Authorization': bearerHeader(iamToken()).Authorization }
+      : iamAuthHeaders(spec.headers ?? {});
     const outcome = await fireLabeled({ stats, ...spec, headers });
     if (spec.label === 'admin-ok') {
       const avail = summarizeSurfaceAvailability(outcome.capturedBody ?? null);
