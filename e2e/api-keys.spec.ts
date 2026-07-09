@@ -108,7 +108,7 @@ test.describe('API Keys & Verification Flow', () => {
       const keyCreatedTitle = dialog.getByRole('heading', { name: 'API Key Created' });
       const errorAlert = dialog
         .locator('[role="alert"]')
-        .filter({ hasText: /failed|error|invalid|unauthorized|forbidden/i });
+        .filter({ hasText: /failed|error|invalid|unauthorized|forbidden|too many requests|rate limit|429/i });
 
       await expect(keyCreatedTitle.or(errorAlert)).toBeVisible({ timeout: 15000 });
 
