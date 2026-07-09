@@ -103,6 +103,11 @@ CRON_OIDC_SA="${STAGING_CRON_OIDC_SA:-$RUNTIME_SA}"
 
 NAME=""
 APPLY=0
+ADMISSION_SCHEMA_VERSION=1
+DRIVER_PATH="${STAGING_DRIVER_PATH:-services/worker/scripts/pr1408-chain-resilience-driver.ts}"
+TIER="${STAGING_TIER:-T3}"
+DURATION_MIN="${STAGING_DURATION_MIN:-2880}"
+CHANGED_BEHAVIOR="${STAGING_CHANGED_BEHAVIOR:-}"
 
 usage() {
   sed -n '2,38p' "$0"
@@ -228,6 +233,14 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       Expected CONFIRM_REAL_CONFIG='$PROFILE', got CONFIRM_REAL_CONFIG='${CONFIRM_REAL_CONFIG:-<unset>}'." >&2
     exit 2
   fi
+  if [[ -z "$CHANGED_BEHAVIOR" ]]; then
+    echo "ERROR: live provision requires STAGING_CHANGED_BEHAVIOR naming the PR-specific behavior under soak." >&2
+    exit 2
+  fi
+  if [[ ! -f "$DRIVER_PATH" ]]; then
+    echo "ERROR: live provision requires STAGING_DRIVER_PATH to exist; got '$DRIVER_PATH'." >&2
+    exit 2
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -343,6 +356,223 @@ run_cmd() {
   fi
 }
 
+run_scheduler_cmd() {
+  local job_name="$1"
+  local job_uri="$2"
+  local cron_header_value="$3"
+  local redacted_header="X-Cron-Secret=<redacted>"
+  local actual_header="X-Cron-Secret=${cron_header_value}"
+
+  print_cmd gcloud scheduler jobs create http "$job_name" \
+    --project="$GCP_PROJECT" \
+    --location="$CLOUD_RUN_REGION" \
+    --schedule="*/5 * * * *" \
+    --uri="$job_uri" \
+    --http-method=POST \
+    --update-headers="$redacted_header" \
+    --oidc-service-account-email="$CRON_OIDC_SA" \
+    --oidc-token-audience="$WORKER_URL"
+  if [[ $APPLY -eq 1 ]]; then
+    echo "executing: gcloud scheduler jobs create http $job_name --update-headers=$redacted_header" >&2
+    gcloud scheduler jobs create http "$job_name" \
+      --project="$GCP_PROJECT" \
+      --location="$CLOUD_RUN_REGION" \
+      --schedule="*/5 * * * *" \
+      --uri="$job_uri" \
+      --http-method=POST \
+      --update-headers="$actual_header" \
+      --oidc-service-account-email="$CRON_OIDC_SA" \
+      --oidc-token-audience="$WORKER_URL"
+  fi
+}
+
+require_gcloud_secret() {
+  local secret_name="$1"
+  if ! gcloud secrets describe "$secret_name" --project="$GCP_PROJECT" >/dev/null 2>&1; then
+    echo "ERROR: required Secret Manager secret '$secret_name' is missing in project '$GCP_PROJECT'." >&2
+    exit 1
+  fi
+}
+
+ensure_secret_value() {
+  local secret_name="$1"
+  local value="$2"
+  if [[ -z "$value" ]]; then
+    echo "ERROR: refusing to create empty Secret Manager secret '$secret_name'." >&2
+    exit 1
+  fi
+  if gcloud secrets describe "$secret_name" --project="$GCP_PROJECT" >/dev/null 2>&1; then
+    printf '%s' "$value" | gcloud secrets versions add "$secret_name" --project="$GCP_PROJECT" --data-file=-
+  else
+    printf '%s' "$value" | gcloud secrets create "$secret_name" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+  fi
+}
+
+if [[ $APPLY -eq 1 ]]; then
+  # Fail closed before creating infra if any pre-existing Secret Manager
+  # dependency is absent. The NEW project's Supabase URL/service-role secrets
+  # are created after Step 1, once the project ref and API keys exist.
+  require_gcloud_secret "$STRIPE_SECRET_KEY_SECRET"
+  require_gcloud_secret "$STRIPE_WEBHOOK_SECRET_SECRET"
+  require_gcloud_secret "$API_KEY_HMAC_SECRET_SECRET"
+  require_gcloud_secret "$CRON_SECRET_SECRET"
+  case "$PROFILE" in
+    chain)
+      require_gcloud_secret "$GETBLOCK_RPC_URL_SECRET"
+      require_gcloud_secret "$GETBLOCK_RPC_AUTH_SECRET"
+      require_gcloud_secret "$TREASURY_WIF_SECRET"
+      ;;
+    gemini)
+      require_gcloud_secret "$GEMINI_API_KEY_SECRET"
+      ;;
+  esac
+fi
+
+resolve_head_sha() {
+  if [[ -n "${GITHUB_SHA:-}" ]]; then
+    printf '%s\n' "$GITHUB_SHA"
+  else
+    git rev-parse HEAD 2>/dev/null || printf 'unknown\n'
+  fi
+}
+
+resolve_base_sha() {
+  if [[ -n "${BASE_SHA:-}" ]]; then
+    printf '%s\n' "$BASE_SHA"
+  elif [[ -n "${GITHUB_BASE_SHA:-}" ]]; then
+    printf '%s\n' "$GITHUB_BASE_SHA"
+  else
+    git merge-base HEAD origin/main 2>/dev/null || printf 'unknown\n'
+  fi
+}
+
+short_sha() {
+  local sha="$1"
+  if [[ "$sha" == "unknown" ]]; then
+    printf 'unknown\n'
+  else
+    printf '%.12s\n' "$sha"
+  fi
+}
+
+resolve_owner() {
+  printf '%s@%s\n' "${USER:-unknown}" "$(hostname -s 2>/dev/null || echo host)"
+}
+
+image_digest_from_ref() {
+  local image_ref="$1"
+  case "$image_ref" in
+    *@sha256:*) printf 'sha256:%s\n' "${image_ref##*@sha256:}" ;;
+    sha256:*) printf '%s\n' "$image_ref" ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_image_digest() {
+  if [[ -n "${STAGING_IMAGE_DIGEST:-}" ]]; then
+    printf '%s\n' "$STAGING_IMAGE_DIGEST"
+    return 0
+  fi
+  if image_digest_from_ref "$PINNED_IMAGE"; then
+    return 0
+  fi
+  if [[ $APPLY -eq 1 ]]; then
+    local resolved digest
+    resolved="$(gcloud artifacts docker images describe "$PINNED_IMAGE" \
+      --project="$GCP_PROJECT" \
+      --format="value(image_summary.fully_qualified_digest)")"
+    digest="${resolved##*@}"
+    if [[ -z "$digest" || "$digest" == "$resolved" || "$digest" != sha256:* ]]; then
+      echo "ERROR: could not resolve image digest for $PINNED_IMAGE." >&2
+      exit 1
+    fi
+    printf '%s\n' "$digest"
+    return 0
+  fi
+  printf '<resolve-in-apply:%s>\n' "$PINNED_IMAGE"
+}
+
+resolve_driver_sha256() {
+  if [[ ! -f "$DRIVER_PATH" ]]; then
+    echo "ERROR: required staging driver '$DRIVER_PATH' does not exist." >&2
+    exit 1
+  fi
+  shasum -a 256 "$DRIVER_PATH" | awk '{print $1}'
+}
+
+emit_admission_json() {
+  local schema_version="$1"
+  local rig_name="$2"
+  local cloud_run_service="$3"
+  local image="$4"
+  local head_sha="$5"
+  local base_sha="$6"
+  local image_digest="$7"
+  local tag_url="$8"
+  local supabase_project_ref="$9"
+  local preflight_result="${10}"
+  local driver_path="${11}"
+  local driver_sha256="${12}"
+  local changed_behavior="${13}"
+  local owner="${14}"
+  local generated_at
+  generated_at="${ADMISSION_GENERATED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+
+  jq -nc \
+    --argjson schema_version "$schema_version" \
+    --arg kind "isolated_rig_admission" \
+    --arg generated_at "$generated_at" \
+    --arg rig_name "$rig_name" \
+    --arg cloud_run_service "$cloud_run_service" \
+    --arg tier "$TIER" \
+    --argjson duration_min "$DURATION_MIN" \
+    --arg sha "$head_sha" \
+    --arg base_sha "$base_sha" \
+    --arg image "$image" \
+    --arg image_digest "$image_digest" \
+    --arg tag_url "$tag_url" \
+    --arg supabase_project_ref "$supabase_project_ref" \
+    --arg preflight_result "$preflight_result" \
+    --arg driver_path "$driver_path" \
+    --arg driver_sha256 "$driver_sha256" \
+    --arg changed_behavior "$changed_behavior" \
+    --arg harness_version "$driver_path@$(short_sha "$head_sha")" \
+    --arg tool_version "scripts/staging/provision-isolated-rig.sh@$(short_sha "$head_sha")" \
+    --arg owner "$owner" \
+    '{
+      schema_version: $schema_version,
+      kind: $kind,
+      generated_at: $generated_at,
+      rig_name: $rig_name,
+      cloud_run_service: $cloud_run_service,
+      tier: $tier,
+      duration_min: $duration_min,
+      sha: $sha,
+      base_sha: $base_sha,
+      image: $image,
+      image_digest: $image_digest,
+      tag_url: $tag_url,
+      supabase_project_ref: $supabase_project_ref,
+      preflight_result: $preflight_result,
+      driver_path: $driver_path,
+      driver_sha256: $driver_sha256,
+      changed_behavior: $changed_behavior,
+      harness_version: $harness_version,
+      tool_version: $tool_version,
+      owner: $owner,
+      stop_conditions: [
+        "SHA mismatch between admission JSON and PR head",
+        "base SHA drift with runtime/schema/staging/deploy impact",
+        "image digest mismatch against deployed Cloud Run revision",
+        "dirty preflight (environment_type != clean_mirror)",
+        "Supabase project ref resolves to prod or shared staging",
+        "Cloud Run service/tag URL points at shared/main staging",
+        "driver_path or driver_sha256 mismatch",
+        "soak harness exits non-zero or fails required duration"
+      ]
+    }'
+}
+
 # ---------------------------------------------------------------------------
 # Plan header.
 # ---------------------------------------------------------------------------
@@ -383,6 +613,8 @@ echo "#   region=$SUPABASE_REGION, postgres major=$SUPABASE_PG_MAJOR, org=$SUPAB
 # path appends --output json so the new ref can be captured + re-validated.
 CREATE_CMD=(npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION")
 NEW_PROJECT_REF='<captured-from-step-1>'
+NEW_SUPABASE_URL_SECRET="supabase-url-${NAME}-staging"
+NEW_SUPABASE_SERVICE_ROLE_SECRET="supabase-service-role-key-${NAME}-staging"
 print_cmd "${CREATE_CMD[@]}"
 if [[ $APPLY -eq 1 ]]; then
   echo "executing: ${CREATE_CMD[*]} --output json" >&2
@@ -400,9 +632,22 @@ if [[ $APPLY -eq 1 ]]; then
     deny "created/resolved ref '$NEW_PROJECT_REF' is prod/shared — aborting before any schema push."
   fi
   echo "captured NEW_PROJECT_REF=$NEW_PROJECT_REF" >&2
+  NEW_SUPABASE_URL="https://${NEW_PROJECT_REF}.supabase.co"
+  echo "executing: npx supabase projects api-keys --project-ref $NEW_PROJECT_REF --output json" >&2
+  API_KEYS_JSON="$(npx supabase projects api-keys --project-ref "$NEW_PROJECT_REF" --output json)"
+  NEW_SUPABASE_SERVICE_ROLE_KEY="$(jq -r '.[] | select((.name // .key_name // .type // "") | test("service[_ -]?role"; "i")) | .api_key // .key // .value // empty' <<<"$API_KEYS_JSON" | head -1)"
+  if [[ -z "$NEW_SUPABASE_SERVICE_ROLE_KEY" ]]; then
+    echo "ERROR: could not extract service_role API key for new project '$NEW_PROJECT_REF'." >&2
+    exit 1
+  fi
+  echo "creating/updating Cloud Run Supabase secrets for $NEW_PROJECT_REF" >&2
+  ensure_secret_value "$NEW_SUPABASE_URL_SECRET" "$NEW_SUPABASE_URL"
+  ensure_secret_value "$NEW_SUPABASE_SERVICE_ROLE_SECRET" "$NEW_SUPABASE_SERVICE_ROLE_KEY"
 else
   echo "#   -> (apply mode captures the returned ref into NEW_PROJECT_REF and re-validates it"
   echo "#       against $PROD_SUPABASE_REF / $SHARED_STAGING_SUPABASE_REF before any push)."
+  echo "#   -> (apply mode creates $NEW_SUPABASE_URL_SECRET and"
+  echo "#       $NEW_SUPABASE_SERVICE_ROLE_SECRET from the NEW project's API keys)."
 fi
 echo
 
@@ -447,7 +692,7 @@ run_cmd gcloud run deploy "$CLOUD_RUN_SERVICE" \
   --set-env-vars="$WORKER_ENV_VARS" \
   --set-secrets="$WORKER_SECRETS"
 echo "#   NOTE: create the supabase-url-${NAME}-staging + supabase-service-role-key-${NAME}-staging"
-echo "#         secrets from the NEW project's keys (MCP get_publishable_keys) FIRST."
+echo "#         secrets from the NEW project's keys before this deploy."
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
   echo "#   NOTE (profile=$PROFILE): the real-config secrets referenced above must already"
   echo "#         exist in Secret Manager (project $GCP_PROJECT) and hold the intended"
@@ -471,20 +716,27 @@ if [[ $IS_MOCK_PROFILE -eq 1 ]]; then
   echo "#   profile=mock — no behavioral cron to drive; skipping Scheduler job creation."
 else
   WORKER_URL="https://${CLOUD_RUN_SERVICE}-<hash>.${CLOUD_RUN_REGION}.run.app"
-  echo "#   (apply mode resolves the real service URL via 'gcloud run services describe')"
-  for job in "${SCHEDULER_JOBS[@]}"; do
-    run_cmd gcloud scheduler jobs create http "${CLOUD_RUN_SERVICE}-${job}" \
+  CRON_HEADER_VALUE="<from-${CRON_SECRET_SECRET}>"
+  if [[ $APPLY -eq 1 ]]; then
+    WORKER_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+      --region="$CLOUD_RUN_REGION" \
       --project="$GCP_PROJECT" \
-      --location="$CLOUD_RUN_REGION" \
-      --schedule="*/5 * * * *" \
-      --uri="${WORKER_URL}/jobs/${job}" \
-      --http-method=POST \
-      --update-headers="X-Cron-Secret=<from-${CRON_SECRET_SECRET}>" \
-      --oidc-service-account-email="$CRON_OIDC_SA" \
-      --oidc-token-audience="$WORKER_URL"
+      --format="value(status.url)")"
+    if [[ -z "$WORKER_URL" ]]; then
+      echo "ERROR: could not resolve Cloud Run service URL for $CLOUD_RUN_SERVICE." >&2
+      exit 1
+    fi
+    CRON_HEADER_VALUE="$(gcloud secrets versions access latest --secret="$CRON_SECRET_SECRET" --project="$GCP_PROJECT")"
+    if [[ -z "$CRON_HEADER_VALUE" ]]; then
+      echo "ERROR: cron secret '$CRON_SECRET_SECRET' resolved to an empty value." >&2
+      exit 1
+    fi
+  else
+    echo "#   (apply mode resolves the real service URL via 'gcloud run services describe')"
+  fi
+  for job in "${SCHEDULER_JOBS[@]}"; do
+    run_scheduler_cmd "${CLOUD_RUN_SERVICE}-${job}" "${WORKER_URL}/jobs/${job}" "$CRON_HEADER_VALUE"
   done
-  echo "#   NOTE: replace <hash> + <from-…> at apply time — the URL and cron secret are"
-  echo "#         resolved from the deployed service + Secret Manager, never inlined here."
 fi
 echo
 
@@ -515,17 +767,61 @@ run_cmd npx supabase db query --linked --file scripts/staging/seed-baseline-fixt
 # under set -e in --apply mode.
 # ---------------------------------------------------------------------------
 echo "# Step 6/6 — clean_mirror preflight (CLAUDE.md §1.11A)"
-run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
-  --project-ref "$NEW_PROJECT_REF" \
-  --format text
+PREFLIGHT_RESULT="${STAGING_PREFLIGHT_RESULT:-environment_type=<from-step-6>}"
+if [[ $APPLY -eq 1 ]]; then
+  print_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
+    --project-ref "$NEW_PROJECT_REF" \
+    --format json
+  echo "executing: npx tsx scripts/ci/staging-honesty-preflight.ts --project-ref $NEW_PROJECT_REF --format json" >&2
+  PREFLIGHT_JSON="$(npx tsx scripts/ci/staging-honesty-preflight.ts \
+    --project-ref "$NEW_PROJECT_REF" \
+    --format json)"
+  printf '%s\n' "$PREFLIGHT_JSON"
+  PREFLIGHT_ENVIRONMENT="$(jq -r '.environment_type // empty' <<<"$PREFLIGHT_JSON")"
+  if [[ "$PREFLIGHT_ENVIRONMENT" != "clean_mirror" ]]; then
+    echo "ERROR: staging preflight must be environment_type=clean_mirror; got '${PREFLIGHT_ENVIRONMENT:-<missing>}'." >&2
+    exit 1
+  fi
+  PREFLIGHT_RESULT="environment_type=${PREFLIGHT_ENVIRONMENT}"
+else
+  run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
+    --project-ref "$NEW_PROJECT_REF" \
+    --format json
+fi
 echo
 echo "# Provision plan complete."
 if [[ $APPLY -eq 1 ]]; then
-  echo "# Verify the preflight printed environment_type=clean_mirror above."
-  echo "# Record NEW_PROJECT_REF, service URL, image digest, and preflight result"
-  echo "# into the rig inventory (see the 'Isolated Soak-Rig Automation Runbook'"
+  echo "# Admission JSON below is the rig inventory seed (see the 'Isolated Soak-Rig Automation Runbook'"
   echo "# Google Doc in Drive ARKOVA PI-1-S0:"
   echo "#   https://docs.google.com/document/d/1c0F_9NSy9ldfeR28xlY7s7zFFwKpS8cmTzvhI9dI__E/edit )."
 else
   echo "# (dry-run — nothing was created)"
 fi
+
+HEAD_SHA="$(resolve_head_sha)"
+BASE_SHA_VALUE="$(resolve_base_sha)"
+IMAGE_DIGEST="$(resolve_image_digest)"
+TAG_URL="${WORKER_URL:-<captured-cloud-run-url-for-${CLOUD_RUN_SERVICE}>}"
+ADMISSION_SUPABASE_PROJECT_REF="${ADMISSION_SUPABASE_PROJECT_REF:-$NEW_PROJECT_REF}"
+OWNER="$(resolve_owner)"
+DRIVER_SHA256="$(resolve_driver_sha256)"
+if [[ -z "$CHANGED_BEHAVIOR" ]]; then
+  CHANGED_BEHAVIOR="PR #1408 chain resilience: bounded retry/backoff, RPC/GetBlock/Mempool duplicate and retry classification, and confirmation-proof transient-to-pending vs definitive-to-stale behavior"
+fi
+
+ADMISSION_JSON="$(emit_admission_json \
+  "$ADMISSION_SCHEMA_VERSION" \
+  "$NAME" \
+  "$CLOUD_RUN_SERVICE" \
+  "$PINNED_IMAGE" \
+  "$HEAD_SHA" \
+  "$BASE_SHA_VALUE" \
+  "$IMAGE_DIGEST" \
+  "$TAG_URL" \
+  "$ADMISSION_SUPABASE_PROJECT_REF" \
+  "$PREFLIGHT_RESULT" \
+  "$DRIVER_PATH" \
+  "$DRIVER_SHA256" \
+  "$CHANGED_BEHAVIOR" \
+  "$OWNER")"
+echo "ADMISSION_JSON=$ADMISSION_JSON"
