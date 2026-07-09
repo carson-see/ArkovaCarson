@@ -72,7 +72,7 @@ function resolveGcloudPath(): string {
 
 export function resolveGcloudIdentityArgs(): string[] {
   const args = ['auth', 'print-identity-token'];
-  const audience = process.env.STAGING_GCP_AUDIENCE?.trim();
+  const audience = process.env.STAGING_GCP_IDENTITY_AUDIENCE?.trim();
   if (audience) args.push(`--audiences=${audience}`);
   return args;
 }
