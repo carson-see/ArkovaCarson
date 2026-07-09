@@ -93,7 +93,7 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
 
     // ── Network seams ──
     // 1. On-device NER runtime stub (same-origin module intercept).
-    await page.route('**/vendor/transformers.web.min.js', (route) =>
+    await page.context().route('**/vendor/transformers.web.min.js*', (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/javascript',
