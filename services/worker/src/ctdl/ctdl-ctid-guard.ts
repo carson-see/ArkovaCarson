@@ -76,15 +76,32 @@ export function assertRealCtidOrAbsent(value: unknown, subject: CtidSubject): st
 const CTID_KEY = 'ceterms:ctid';
 
 /**
+ * Recursion budget for the defense-in-depth body scan. Real CTDL bodies are
+ * ~4 levels deep; anything deeper is not something the serializer can produce.
+ */
+const MAX_JSONLD_SCAN_DEPTH = 12;
+
+/**
  * Defense-in-depth: recursively scan an already-built CTDL JSON-LD body and
  * throw if ANY `ceterms:ctid` key holds a value that is not a real CE CTID
  * (including an empty string). The serializer assembles the body field-by-field
  * with {@link assertRealCtidOrAbsent}; this is the belt-and-suspenders check on
  * the final object so no future code path can attach a `ceterms:ctid` that
  * bypasses the per-field guard.
+ *
+ * FAIL CLOSED on depth (round-1 review finding 3): exceeding the recursion
+ * budget THROWS instead of silently returning — a body too deep to scan is a
+ * body we refuse to publish, never one that ships unscanned.
  */
 export function assertNoFabricatedCtidInJsonLd(value: unknown, depth = 0): void {
-  if (depth > 12 || value === null || typeof value !== 'object') return;
+  if (value === null || typeof value !== 'object') return;
+  if (depth > MAX_JSONLD_SCAN_DEPTH) {
+    // Value-free by construction: reports the budget, never the content.
+    throw new Error(
+      `CTDL CTID scan exceeded its depth budget of ${MAX_JSONLD_SCAN_DEPTH} — ` +
+        'refusing to serialize an unscannable body (fail closed, CE-02).',
+    );
+  }
   if (Array.isArray(value)) {
     for (const item of value) assertNoFabricatedCtidInJsonLd(item, depth + 1);
     return;
