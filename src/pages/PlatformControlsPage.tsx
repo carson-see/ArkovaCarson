@@ -57,7 +57,6 @@ const FLAG_CATEGORIES: Record<string, { label: string; icon: any; flags: string[
     icon: ArkovaIcon,
     flags: [
       'ENABLE_PROD_NETWORK_ANCHORING',
-      'ENABLE_BATCH_ANCHORING',
     ],
   },
   ai: {
