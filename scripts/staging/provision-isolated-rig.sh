@@ -222,11 +222,6 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       Expected CONFIRM_PROVISION='$NAME', got CONFIRM_PROVISION='${CONFIRM_PROVISION:-<unset>}'." >&2
     exit 2
   fi
-  if [[ -z "$SUPABASE_DB_PASSWORD" ]]; then
-    echo "ERROR: live provision requires STAGING_NEW_SUPABASE_DB_PASSWORD to create the Supabase project." >&2
-    echo "       Generate/provide it through the operator secret path; it is never printed by this script." >&2
-    exit 2
-  fi
   # A non-mock profile wires REAL credentials (chain: real Bitcoin exposure via
   # ENABLE_PROD_NETWORK_ANCHORING=true + WIF signer). Require a SECOND explicit
   # ack so a real-money / real-model rig is never provisioned by a bare
@@ -235,6 +230,11 @@ if [[ $APPLY -eq 1 ]]; then
     echo "ERROR: live provision of the '$PROFILE' profile is a REAL-config rig and requires" >&2
     echo "       CONFIRM_REAL_CONFIG=<profile> matching --profile (extra ack for real credentials)." >&2
     echo "       Expected CONFIRM_REAL_CONFIG='$PROFILE', got CONFIRM_REAL_CONFIG='${CONFIRM_REAL_CONFIG:-<unset>}'." >&2
+    exit 2
+  fi
+  if [[ -z "$SUPABASE_DB_PASSWORD" ]]; then
+    echo "ERROR: live provision requires STAGING_NEW_SUPABASE_DB_PASSWORD to create the Supabase project." >&2
+    echo "       Generate/provide it through the operator secret path; it is never printed by this script." >&2
     exit 2
   fi
 fi
@@ -347,7 +347,10 @@ fi
 print_cmd() {
   printf '+'
   for arg in "$@"; do
-    printf ' %q' "$arg"
+    case "$arg" in
+      \<*\>) printf ' %s' "$arg" ;;
+      *) printf ' %q' "$arg" ;;
+    esac
   done
   printf '\n'
 }
