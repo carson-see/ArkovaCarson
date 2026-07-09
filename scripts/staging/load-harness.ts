@@ -11,6 +11,7 @@
  *               (drive / docusign / adobe-sign / checkr)
  *   events      POST /api/admin/inject-demo-event (rules-engine claim loop)
  *   cron        POST /jobs/{batch-anchors,check-confirmations,...}
+ *   classifier  POST /jobs/classify-proof-backcatalog with concurrent dry-run bursts
  *   reads       GET /api/v1/verify/:publicId + /admin/pipeline-stats
  *   mixed       runs webhooks + events + cron + reads concurrently — the
  *               default mode for a T2/T3 soak window
@@ -169,10 +170,28 @@ interface RunStats {
   startedAt: number;
   outcomes: RequestOutcome[];
   byMode: Record<string, { ok: number; fail: number; latencyMs: number[]; byStatus: Record<number, number> }>;
+  classifier: {
+    completed: number;
+    refused: number;
+    lockRefused: number;
+    writesAppliedNonZero: number;
+    malformedBodies: number;
+  };
 }
 
 function newStats(): RunStats {
-  return { startedAt: Date.now(), outcomes: [], byMode: {} };
+  return {
+    startedAt: Date.now(),
+    outcomes: [],
+    byMode: {},
+    classifier: {
+      completed: 0,
+      refused: 0,
+      lockRefused: 0,
+      writesAppliedNonZero: 0,
+      malformedBodies: 0,
+    },
+  };
 }
 
 function record(stats: RunStats, o: RequestOutcome): void {
@@ -445,6 +464,102 @@ async function runCronMode(opts: ModeOpts, intervalSec: number): Promise<void> {
   }
 }
 
+const CLASSIFIER_ENDPOINTS = [
+  '/jobs/classify-proof-backcatalog?batch_size=50&max_batches=1',
+  '/jobs/classify-proof-backcatalog?restart=true&batch_size=50&max_batches=1',
+] as const;
+
+function requireCronSecretForClassifier(): string {
+  const secret = process.env.STAGING_CRON_SECRET;
+  if (!secret) {
+    console.error('::error::STAGING_CRON_SECRET is required for classifier mode; 401s are not valid route-specific classifier evidence.');
+    process.exit(2);
+  }
+  return secret;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+async function fireClassifier(stats: RunStats, endpoint: string, cronSecret: string): Promise<void> {
+  const url = `${API_BASE}${endpoint}`;
+  const startedAt = Date.now();
+  let status = 0;
+  let ok = false;
+  let body: Record<string, unknown> | null = null;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${iamToken()}`,
+        'Content-Type': 'application/json',
+        'X-Cron-Secret': cronSecret,
+      },
+    });
+    status = res.status;
+    ok = res.ok;
+    const text = await res.text();
+    if (text) {
+      try {
+        body = asRecord(JSON.parse(text));
+      } catch {
+        body = null;
+      }
+    }
+  } catch (err) {
+    status = 0;
+    ok = false;
+    void err;
+  }
+
+  record(stats, {
+    mode: 'classifier',
+    endpoint,
+    status,
+    latencyMs: Date.now() - startedAt,
+    ok,
+  });
+
+  if (status === 429 || status >= 500) {
+    throw new Error(`classifier mode aborting on status ${status} from ${endpoint}`);
+  }
+
+  if (!body || !('plan' in body) || !('refused' in body)) {
+    stats.classifier.malformedBodies++;
+    throw new Error(`classifier mode got a malformed response body from ${endpoint}`);
+  }
+
+  if (body.runComplete === true) stats.classifier.completed++;
+  if (body.refused === true) {
+    stats.classifier.refused++;
+    if (body.refusalReason === 'lock_not_acquired') stats.classifier.lockRefused++;
+  }
+
+  const writesApplied = typeof body.writesApplied === 'number' ? body.writesApplied : 0;
+  if (writesApplied !== 0) {
+    stats.classifier.writesAppliedNonZero++;
+    throw new Error(`classifier mode dry-run observed writesApplied=${writesApplied} from ${endpoint}`);
+  }
+}
+
+async function runClassifierMode(opts: ModeOpts, ratePerMin: number): Promise<void> {
+  const cronSecret = requireCronSecretForClassifier();
+  const burstIntervalMs = Math.max(250, (60_000 * opts.concurrency) / Math.max(ratePerMin, 1));
+  let i = 0;
+  while (Date.now() < opts.endAt) {
+    const burst = Array.from({ length: opts.concurrency }, () => {
+      const endpoint = CLASSIFIER_ENDPOINTS[i % CLASSIFIER_ENDPOINTS.length];
+      i++;
+      return fireClassifier(opts.stats, endpoint, cronSecret);
+    });
+    await Promise.all(burst);
+    await boundedSleep(burstIntervalMs, opts.endAt);
+  }
+}
+
 // Mix of verify (public) and admin pipeline stats (auth-gated; will 401
 // without admin token, which is fine soak data — exercises the auth path).
 const READ_PATHS = [
@@ -511,6 +626,7 @@ interface EvidenceFile {
   durationSec: number;
   apiBase: string;
   mode: string;
+  concurrency: number;
   totalRequests: number;
   byMode: Record<string, {
     ok: number;
@@ -521,9 +637,10 @@ interface EvidenceFile {
     p99Ms: number;
     byStatus: Record<number, number>;
   }>;
+  classifier?: RunStats['classifier'];
 }
 
-function summarize(stats: RunStats, mode: string): EvidenceFile {
+function summarize(stats: RunStats, mode: string, concurrency: number): EvidenceFile {
   const startedAt = new Date(stats.startedAt).toISOString();
   const endedAt = new Date().toISOString();
   const durationSec = (Date.now() - stats.startedAt) / 1000;
@@ -545,8 +662,10 @@ function summarize(stats: RunStats, mode: string): EvidenceFile {
     durationSec,
     apiBase: API_BASE,
     mode,
+    concurrency,
     totalRequests: stats.outcomes.length,
     byMode,
+    classifier: mode === 'classifier' ? stats.classifier : undefined,
   };
 }
 
@@ -612,6 +731,13 @@ async function main(): Promise<void> {
       case 'cron':
         await runCronMode(opts, 5 * 60);
         break;
+      case 'classifier':
+        await runClassifierMode(opts, parsePositiveInt(args.rate, 60, 'rate'));
+        if (stats.classifier.completed === 0) {
+          console.error('::error::classifier mode completed no non-refused census runs; load evidence would be lock-only.');
+          process.exit(1);
+        }
+        break;
       case 'reads':
         await runReadsMode(opts, 50);
         break;
@@ -629,7 +755,7 @@ async function main(): Promise<void> {
   console.log(`\n=== FINAL SUMMARY (${pad2(durationMin)}min ${mode} mode) ===`);
   printPerMinute(stats);
 
-  if (evidencePath) writeEvidence(evidencePath, summarize(stats, mode));
+  if (evidencePath) writeEvidence(evidencePath, summarize(stats, mode, concurrency));
 }
 
 main().catch((err) => {

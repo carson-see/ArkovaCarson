@@ -7,7 +7,7 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 | File | Purpose |
 |---|---|
 | `seed.ts` | Synthesize prod-shape data on the staging rig. Tier flag (`--smoke` / `--standard` / `--full`) controls volume. Goes through the `staging_seed_auth_users` RPC (staging-only) so profiles satisfy the `auth.users` FK. Synthetic data only — never copies real customer rows. |
-| `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `reads`, `mixed` (default). Mixed runs all four pressure types concurrently. Requires `STAGING_API_BASE` to be the per-PR or named train tag URL printed by `deploy.sh`; shared/main staging URLs are refused so parallel soaks don't contaminate each other (SCRUM-1803). |
+| `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `classifier`, `reads`, `mixed` (default). Mixed runs webhooks/events/cron/reads concurrently; `classifier` targets `POST /jobs/classify-proof-backcatalog` with concurrent dry-run bursts. Requires `STAGING_API_BASE` to be the per-PR or named train tag URL printed by `deploy.sh`; shared/main staging URLs are refused so parallel soaks don't contaminate each other (SCRUM-1803). |
 | `soak-lanes.ts` | Read-only active-lane dashboard. Lists active `screen` soak sessions, latest local evidence summaries, missing final JSON, idle open PRs whose titles indicate `T3`, `migration NNNN`, or `soak PENDING`, and blocked soak candidates with labels such as `do-not-merge`. It recognizes both per-PR sessions (`pr1055-*`) and named train sessions (`train-a-*`, `train-b-*`, `train-c-*`) so release-train soaks stay visible. |
 | `claim.sh` | Per-PR lease (multi-tenant after SCRUM-1803). Acquire / release / status the staging-rig lease. Posts to `#eng-staging` if `SLACK_WEBHOOK_URL` is set. |
 | `deploy.sh` | **Lease-enforced, tag-routed worker deploys (SCRUM-1803/SCRUM-1821).** Refuses to deploy without a `staging_lease` row for the PR (override with a structured `--force "<Jira>: <reason>"`). Checks image existence (retries to absorb Artifact Registry indexing lag on a fresh push — see below), blocks recent other-PR revisions, gates `--promote` behind the per-day Secret Manager token, deploys with `--tag pr-N --no-traffic` by default or `--lane train-c-*` for named release-train lanes, and writes an audit row to `staging_deploy_log`. Replaces ad-hoc Cloud Run update calls. |
@@ -74,6 +74,7 @@ All three are `SECURITY DEFINER`, granted `EXECUTE` to `service_role` only, revo
 | `webhooks`   | `POST /webhooks/{drive,docusign,adobe-sign,checkr}` | 10/min | IAM + provider HMAC headers |
 | `events`     | `POST /api/admin/inject-demo-event` | 100/min | IAM |
 | `cron`       | `POST /jobs/{batch-anchors,check-confirmations,...}` | every 5 min | IAM + `X-Cron-Secret` |
+| `classifier` | `POST /jobs/classify-proof-backcatalog` | --rate (default 100/min) in concurrent dry-run bursts | IAM + `X-Cron-Secret` |
 | `reads`      | `GET /api/v1/verify/...` + `/api/admin/pipeline-stats` | 50/min | IAM + `X-API-Key` |
 | `mixed` (default) | webhooks + events + cron + reads concurrently | per above | per above |
 
