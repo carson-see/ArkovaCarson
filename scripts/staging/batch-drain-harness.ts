@@ -100,9 +100,9 @@ function die(msg: string): never {
 }
 
 function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v || !v.trim()) die(`${name} is required.`);
-  return v.trim();
+  const v = process.env[name]?.trim();
+  if (!v) die(`${name} is required.`);
+  return v;
 }
 
 function parsePositiveInt(raw: string | undefined, fallback: number, name: string): number {
@@ -111,7 +111,9 @@ function parsePositiveInt(raw: string | undefined, fallback: number, name: strin
   return n;
 }
 
-function resolveEvidencePath(raw: string | undefined): string | undefined {
+type EvidencePath = string & { readonly __validatedEvidencePath: unique symbol };
+
+function resolveEvidencePath(raw: string | undefined): EvidencePath | undefined {
   const trimmed = raw?.trim();
   if (!trimmed) return undefined;
   if (!trimmed.endsWith('.json')) die('--evidence-out must end with .json.');
@@ -128,7 +130,7 @@ function resolveEvidencePath(raw: string | undefined): string | undefined {
   if (!inside(fromCwd) && !inside(fromTmp) && !inside(fromPrivateTmp)) {
     die('--evidence-out must stay under this checkout, /tmp, or /private/tmp.');
   }
-  return candidate;
+  return candidate as EvidencePath;
 }
 
 // ── Supabase safety-guarded client (mirrors seed.ts guards) ─────────────────
@@ -161,6 +163,12 @@ interface Evidence {
   phases: Record<string, unknown>;
   startedAt: string;
   endedAt?: string;
+}
+
+function writeEvidenceFile(evidencePath: EvidencePath, evidence: Evidence): void {
+  // The path is canonicalized and confined by resolveEvidencePath before this sink.
+  mkdirSync(dirname(evidencePath), { recursive: true }); // NOSONAR S8707
+  writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n'); // NOSONAR S8707
 }
 
 async function ensureRunFixture(client: SupabaseClient, orgId: string, count: number): Promise<string> {
@@ -519,7 +527,7 @@ async function main(): Promise<void> {
   if (runDrain) {
     console.log('── DRAIN (Trigger D: force=true) ──');
     const resp = await postDrain(apiBase!, orgId);
-    console.log(`  drain response: ${JSON.stringify(resp)}`);
+    console.log('  drain response accepted');
     const drained = await pollDrained(client, orgId, pollTimeout);
     const proof = await assertSingleBatch(client, orgId, count);
     evidence.phases.drain = { response: resp, drained, proof };
@@ -549,8 +557,7 @@ async function main(): Promise<void> {
 
   evidence.endedAt = new Date().toISOString();
   if (evidencePath) {
-    mkdirSync(dirname(evidencePath), { recursive: true });
-    writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n');
+    writeEvidenceFile(evidencePath, evidence);
     console.log(`\n📄 Evidence written: ${evidencePath}`);
   }
   console.log('\n✅ batch-drain-harness complete.');
