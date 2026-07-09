@@ -1,5 +1,5 @@
 # agents.md — verification
-_Last updated: 2026-05-19 (SCRUM-1599 source provenance + badge safety)_
+_Last updated: 2026-07-06 (SCRUM-2495 does-not-assert disclaimer)_
 
 ## What This Folder Contains
 
@@ -117,6 +117,26 @@ what each evidence tier proves — this is a launch blocker, not cosmetics.
   and pass the real `isSecured` to `ComplianceBadge` — never hardcode `true`
   (BUG-2026-06-24-007, regression-pinned in `PublicVerification.test.tsx`).
 
+## Does-Not-Assert Disclaimer (SCRUM-2495, 2026-07-06)
+
+`DoesNotAssertDisclaimer.tsx` renders an always-visible MEASURED / ASSERTED /
+NOT ASSERTED block (CLAUDE.md §1.5) at the bottom of `PublicVerification.tsx`,
+below the proof-download section. It replaces the prior ad-hoc disclaimer
+paragraph that was written directly in JSX (a §6 "text directly in JSX"
+violation) and that also contained a live §1.3 banned-terminology violation
+("Bitcoin blockchain") — invisible to `npm run lint:copy` only because the
+scanner's line-based heuristic requires a quote or a same-line `<`/`>` pair,
+and the two banned words happened to land on an unquoted, tag-free JSX text
+line. `DoesNotAssertDisclaimer.test.tsx` carries an independent banned-terms
+regex as a second line of defense against that exact scanner blind spot.
+
+- **DO** render this component unconditionally (not gated behind `hasProof`
+  or any status check) — it applies to every anchor status, not just SECURED.
+- **DON'T** hide it behind a tooltip, hover, or click-to-reveal affordance —
+  CLAUDE.md §1.6 UAT requires it to be visibly present without interaction.
+- **DON'T** inline disclaimer copy in JSX — add/edit strings in
+  `DOES_NOT_ASSERT_LABELS` (`src/lib/copy.ts`) only.
+
 ## Tests
 
 - `PublicVerification.test.tsx` — pins the hero state machine for PENDING /
@@ -134,3 +154,9 @@ what each evidence tier proves — this is a launch blocker, not cosmetics.
 - `src/lib/sourceProvenance.test.ts` — the issuer-auth gate (`isIssuerAuthenticated`
   ⊆ strong) plus the non-issuer DESCRIPTION honesty guard (no "Verified" /
   "Issuer" / "Authenticated" in the public tooltip body).
+  sections behind terminal proof states, the "no compliance controls
+  unless SECURED" rule (BUG-2026-06-24-007), and the does-not-assert
+  disclaimer's unconditional presence (SCRUM-2495).
+- `DoesNotAssertDisclaimer.test.tsx` — pins the MEASURED/ASSERTED/NOT-ASSERTED
+  substance, the "always visible, no reveal needed" contract, a banned-terms
+  regression guard, and basic rendering at 1280px/375px container widths.

@@ -123,7 +123,12 @@ describe('PublicVerification', () => {
     render(<PublicVerification publicId="ARK-DOC-123" />);
 
     expect(await screen.findByText(/Verified on Apr 1, 2026/)).toBeInTheDocument();
-    expect(screen.getByText('This record is permanently anchored.')).toBeInTheDocument();
+    // SCRUM-2495 claims review: the hero subtitle binds permanence to the
+    // record's FINGERPRINT, never the underlying document — the unscoped
+    // "This record is permanently anchored." read as document-level
+    // protection, contradicting the does-not-assert disclaimer below it.
+    expect(screen.getByText('This record’s fingerprint is permanently anchored.')).toBeInTheDocument();
+    expect(screen.queryByText('This record is permanently anchored.')).not.toBeInTheDocument();
     expect(screen.getByTestId('proof-download')).toBeInTheDocument();
   });
 
@@ -446,5 +451,44 @@ describe('PublicVerification', () => {
     expect(await screen.findByTestId('source-provenance-display')).toBeInTheDocument();
     expect(screen.getByTestId('source-provenance-display')).not.toHaveTextContent('evidence-hash-123');
     expect(screen.getByTestId('proof-download')).toHaveTextContent('evidence-hash-123');
+  });
+
+  // SCRUM-2495 / ABUSE-DISCLAIMER: the does-not-assert disclaimer must always
+  // render on the verification surface, visibly, without requiring a click or
+  // hover to reveal it (CLAUDE.md §1.5).
+  it('always renders the does-not-assert disclaimer, visibly, for a secured record', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    const disclaimer = await screen.findByTestId('does-not-assert-disclaimer');
+    expect(disclaimer).toBeVisible();
+    expect(disclaimer).toHaveTextContent(/Fingerprint/);
+    expect(disclaimer).toHaveTextContent(/Network Observed Time/);
+    expect(disclaimer).toHaveTextContent(/Secured status/);
+    expect(disclaimer).toHaveTextContent(/identity of the signer or uploader/);
+    expect(disclaimer).toHaveTextContent(/legal validity/);
+    expect(disclaimer).toHaveTextContent(/informational metadata only/);
+  });
+
+  it('always renders the does-not-assert disclaimer for a pre-secured (SUBMITTED) record', async () => {
+    rpcMock.mockResolvedValue({
+      data: { ...baseAnchor, status: 'SUBMITTED' },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    // Disclaimer renders regardless of proof-affordance gating (hasProof is
+    // false for SUBMITTED) — it is not conditioned on the proof section.
+    expect(await screen.findByTestId('does-not-assert-disclaimer')).toBeVisible();
   });
 });
