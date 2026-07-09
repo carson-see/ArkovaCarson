@@ -1193,7 +1193,7 @@ export function PipelineAdminPage() {
             ))}
 
             <p className="text-xs text-muted-foreground">
-              Jobs run on the worker service. Authenticated via platform admin JWT.
+              Jobs run on the background service. Authenticated via platform admin JWT.
             </p>
           </div>
         </CollapsibleSection>
