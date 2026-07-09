@@ -1,0 +1,16 @@
+{
+  "_comment": "SCRUM-1672 sanctioned-copy allowlist for `npm run lint:copy` (scripts/check-copy-terms.ts). Records PERMANENT §1.3 policy carve-outs — NOT tech debt (that is copy-terms-baseline.json, which the linter nags you to pay down). Matched on normalised (file, term) with NO line number, so it is immune to src/lib/copy.ts line drift. Fail-closed: an entry may ONLY name a term in ALLOWLISTABLE_TERMS (currently just 'issue credential'); loadAllowlist() drops any entry naming a secret / launch-blocker / other term, so this file can never silence a service_role/postgrest/worker-service/legal-placeholder leak. See scripts/agents.md → 'Copy-term sanctioned allowlist'.",
+  "_protocol": [
+    "ADD an entry ONLY for copy that §1.3 itself sanctions (today: the SCRUM-1672 'Issue Credential' restricted verified-organization issuance action, allowed only in src/lib/copy.ts).",
+    "NEVER add an entry to silence a term you simply have not fixed — that is what copy-terms-baseline.json is for, and even there secrets/launch-blockers are non-suppressible.",
+    "Every entry needs a non-empty `reason` naming the sanctioning ticket. Entries are (file, term)-keyed; a DIFFERENT banned term on a sanctioned line is still reported fresh.",
+    "To sanction a NEW term you must first add it to ALLOWLISTABLE_TERMS in check-copy-terms.ts (a reviewed code change), then add the entry here."
+  ],
+  "allow": [
+    {
+      "file": "src/lib/copy.ts",
+      "term": "issue credential",
+      "reason": "SCRUM-1672 / §1.3 exception: 'Issue Credential' is the sanctioned action for the restricted verified-organization credential issuance flow (ISSUE_CREDENTIAL_LABELS gate copy + CREDENTIAL_ISSUE_FAILED error). Allowed ONLY in src/lib/copy.ts; component/page literals remain banned."
+    }
+  ]
+}
