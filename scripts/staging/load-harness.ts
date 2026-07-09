@@ -65,7 +65,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { randomBytes, randomUUID, createHmac } from 'node:crypto';
 import { parseArgs } from 'node:util';
 
@@ -509,10 +509,9 @@ async function fireClassifier(stats: RunStats, endpoint: string, cronSecret: str
         body = null;
       }
     }
-  } catch (err) {
+  } catch {
     status = 0;
     ok = false;
-    void err;
   }
 
   record(stats, {
@@ -669,10 +668,22 @@ function summarize(stats: RunStats, mode: string, concurrency: number): Evidence
   };
 }
 
+const EVIDENCE_ROOT = resolve(process.cwd(), 'docs', 'staging');
+
+function resolveEvidencePath(path: string): string {
+  const resolved = isAbsolute(path) ? resolve(path) : resolve(process.cwd(), path);
+  const rel = relative(EVIDENCE_ROOT, resolved);
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(`Evidence output must stay under docs/staging: ${path}`);
+  }
+  return resolved;
+}
+
 function writeEvidence(path: string, evidence: EvidenceFile): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(evidence, null, 2) + '\n');
-  console.log(`\n📄 Evidence written: ${path}`);
+  const safePath = resolveEvidencePath(path);
+  mkdirSync(dirname(safePath), { recursive: true });
+  writeFileSync(safePath, JSON.stringify(evidence, null, 2) + '\n');
+  console.log(`\n📄 Evidence written: ${safePath}`);
 }
 
 // --- main ---

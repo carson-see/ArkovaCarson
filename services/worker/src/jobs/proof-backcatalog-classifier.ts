@@ -426,8 +426,8 @@ export function computeClassifierLockId(scope: string, mode: 'dry-run' | 'write'
   let hash = 0xcbf29ce484222325n;
   const prime = 0x100000001b3n;
   const mask = 0xffffffffffffffffn;
-  for (let i = 0; i < key.length; i++) {
-    hash ^= BigInt(key.charCodeAt(i));
+  for (const char of key) {
+    hash ^= BigInt(char.codePointAt(0) ?? 0);
     hash = (hash * prime) & mask;
   }
   return Number(hash % 9007199254740991n); // % (2^53 - 1) → safe integer
@@ -993,7 +993,7 @@ async function runCensusScan(
     await resolveCardinalities(db, txsNeedingCardinality(page, proofMap), cardinalityMemo, logger);
     classifyPageIntoCheckpoint(page, proofMap, cardinalityMemo, cp);
 
-    cp.payload.cursor = page[page.length - 1].id;
+    cp.payload.cursor = page.at(-1)?.id ?? cp.payload.cursor;
     cp.payload.updatedAt = new Date().toISOString();
     const isLastPage = page.length < opts.batchSize;
     if (isLastPage) cp.payload.completedAt = cp.payload.updatedAt;

@@ -20,12 +20,12 @@ const positiveNumberWithFallback = (def: number) => z.preprocess((v) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : def;
 }, z.number().positive());
 // Integer env clamped to [min, max] with a default. Mirrors the inline
-// `Math.min(Math.max(min, parseInt(...) || def), max)` idiom in the worker so
+// `Math.min(Math.max(min, Number.parseInt(...) || def), max)` idiom in the worker so
 // ad-hoc reads can migrate into config.ts (SCRUM-1258) with identical runtime
 // behavior: parseInt-style leading-int parse, NaN/0 → def, then clamp (not reject).
 const clampedIntWithFallback = (def: number, min: number, max: number) =>
   z.preprocess((v) => {
-    const parsed = parseInt(String(v ?? ''), 10) || def;
+    const parsed = Number.parseInt(String(v ?? ''), 10) || def;
     return Math.min(Math.max(min, parsed), max);
   }, z.number().int());
 

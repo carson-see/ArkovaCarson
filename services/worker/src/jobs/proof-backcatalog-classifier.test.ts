@@ -702,7 +702,7 @@ describe('runBackCatalogClassifier: GUC guard (arkova.proof_enforce_secured_comp
     await runBackCatalogClassifier(deps, { batchSize: 50, maxBatches: 1 });
     await runBackCatalogClassifier(deps, { batchSize: 50, maxBatches: 1 });
 
-    expect(calls.length).toBe(2);
+    expect(calls).toHaveLength(2);
   });
 });
 
@@ -839,7 +839,8 @@ describe('runBackCatalogClassifier: resumable job_queue checkpoint', () => {
     expect(second.resumed).toBe(true);
     expect(second.plan).toEqual(first.plan);
     // No new anchors-scan reads.
-    expect(db.reads.filter((r) => r.table === 'anchors' && r.kind === 'scan').length).toBe(scansAfterFirst);
+    const scansAfterResume = db.reads.filter((r) => r.table === 'anchors' && r.kind === 'scan');
+    expect(scansAfterResume).toHaveLength(scansAfterFirst);
   });
 
   it('restart=true starts a fresh census instead of returning the stored one', async () => {

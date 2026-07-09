@@ -289,7 +289,7 @@ cronRouter.post('/professional-education-extraction', async (req, res) => {
     }
 
     const maxJobs = req.body?.maxJobs
-      ? Math.min(Math.max(parseInt(String(req.body.maxJobs), 10) || 10, 1), 100)
+      ? Math.min(Math.max(Number.parseInt(String(req.body.maxJobs), 10) || 10, 1), 100)
       : 10;
     const result = await processProfessionalEducationExtractionJobs(maxJobs);
     res.json(result);

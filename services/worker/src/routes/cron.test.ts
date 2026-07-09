@@ -479,34 +479,18 @@ describe('cron routes', () => {
       expect(res.body.error).toBe('Authentication required');
     });
 
-    it('accepts valid CRON_SECRET header in production', async () => {
+    it.each([
+      ['accepts valid CRON_SECRET header', 'test-cron-secret-1234', 200],
+      ['rejects invalid CRON_SECRET header', 'wrong-secret-value!!', 401],
+      ['rejects CRON_SECRET with wrong length', 'short', 401],
+    ])('%s in production', async (_name, cronSecret, expectedStatus) => {
       (config as { nodeEnv: string }).nodeEnv = 'production';
       const app = createApp();
 
       const res = await request(app)
         .post('/cron/process-anchors')
-        .set('X-Cron-Secret', 'test-cron-secret-1234');
-      expect(res.status).toBe(200);
-    });
-
-    it('rejects invalid CRON_SECRET header in production', async () => {
-      (config as { nodeEnv: string }).nodeEnv = 'production';
-      const app = createApp();
-
-      const res = await request(app)
-        .post('/cron/process-anchors')
-        .set('X-Cron-Secret', 'wrong-secret-value!!');
-      expect(res.status).toBe(401);
-    });
-
-    it('rejects CRON_SECRET with wrong length', async () => {
-      (config as { nodeEnv: string }).nodeEnv = 'production';
-      const app = createApp();
-
-      const res = await request(app)
-        .post('/cron/process-anchors')
-        .set('X-Cron-Secret', 'short');
-      expect(res.status).toBe(401);
+        .set('X-Cron-Secret', cronSecret);
+      expect(res.status).toBe(expectedStatus);
     });
 
     it('accepts platform admin Bearer token in production', async () => {
