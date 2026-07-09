@@ -83,12 +83,12 @@ describe('ApiUsageDashboard', () => {
     // Raw "Failed to load" must NOT render — it would be an engineering-
     // copy leak. The friendly USAGE_UNAVAILABLE copy is shown instead.
     expect(screen.queryByText('Failed to load')).toBeNull();
-    expect(screen.getByText('Usage data unavailable — worker service not connected')).toBeInTheDocument();
+    expect(screen.getByText('Usage data unavailable — service not connected')).toBeInTheDocument();
   });
 
   it('renders the same friendly message for network errors (classified path)', () => {
     render(<ApiUsageDashboard usage={null} error="Failed to fetch" />);
-    expect(screen.getByText('Usage data unavailable — worker service not connected')).toBeInTheDocument();
+    expect(screen.getByText('Usage data unavailable — service not connected')).toBeInTheDocument();
   });
 
   it('renders reset date', () => {
