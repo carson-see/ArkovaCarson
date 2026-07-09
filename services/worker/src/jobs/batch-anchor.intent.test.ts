@@ -62,11 +62,17 @@ const {
     reconcileRows: [] as Array<Record<string, unknown>>,
     /** Rows returned by the anchor_proofs intent lookup (per receipt_id). */
     intentProofRows: [] as Array<Record<string, unknown>>,
+    /** Per-chunk responses for anchors.chain_tx_id intent-mark updates. */
+    intentMarkResults: [] as Array<{ data?: Array<{ id: string }>; count?: number | null; error?: { message?: string } | null }>,
     /** Oldest-PENDING row for the trigger probe. */
     oldest: { data: { created_at: '2026-01-01T00:00:00Z' }, error: null } as Record<string, unknown>,
   };
 
-  const anchorsUpdates = [] as Array<{ payload: Record<string, unknown>; filters: Array<[string, ...unknown[]]> }>;
+  const anchorsUpdates = [] as Array<{
+    payload: Record<string, unknown>;
+    options?: Record<string, unknown>;
+    filters: Array<[string, ...unknown[]]>;
+  }>;
   const proofDeletes = [] as Array<{ filters: Array<[string, ...unknown[]]> }>;
 
   return {
@@ -151,7 +157,7 @@ vi.mock('../utils/db.js', () => {
     return builder;
   }
 
-  function makeUpdateBuilder(table: string, payload: Record<string, unknown>) {
+  function makeUpdateBuilder(table: string, payload: Record<string, unknown>, options?: Record<string, unknown>) {
     const filters: Array<[string, ...unknown[]]> = [];
     const builder: Record<string, unknown> = {};
     const chain = (name: string) => vi.fn((...args: unknown[]) => {
@@ -160,15 +166,32 @@ vi.mock('../utils/db.js', () => {
     });
     builder.eq = chain('eq');
     builder.in = chain('in');
+    builder.select = chain('select');
     builder.then = (resolve?: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
+      let result: { error: { message?: string } | null; count?: number | null; data?: Array<{ id: string }> } = {
+        error: null,
+        count: 1,
+      };
       if (table === 'anchors') {
-        anchorsUpdates.push({ payload, filters });
+        anchorsUpdates.push({ payload, options, filters });
         if ('chain_tx_id' in payload && payload.chain_tx_id !== null) {
           callOrder.push('persistChainTxId');
+          const idFilter = filters.find(([name, col]) => name === 'in' && col === 'id');
+          const ids = Array.isArray(idFilter?.[2]) ? idFilter[2] as string[] : [];
+          const queued = dbState.intentMarkResults.shift();
+          result = queued ? {
+            error: queued.error ?? null,
+            count: queued.count,
+            data: queued.data,
+          } : {
+            error: null,
+            count: ids.length,
+            data: ids.map((id) => ({ id })),
+          };
         }
         if (payload.status === 'PENDING') callOrder.push('revertToPending');
       }
-      return Promise.resolve({ error: null, count: 1 }).then(resolve, reject);
+      return Promise.resolve(result).then(resolve, reject);
     };
     return builder;
   }
@@ -194,8 +217,10 @@ vi.mock('../utils/db.js', () => {
       rpc: mockDbRpc,
       from: vi.fn((table: string) => ({
         select: vi.fn(() => makeSelectBuilder(table)),
-        update: vi.fn((payload: Record<string, unknown>) => makeUpdateBuilder(table, payload)),
         delete: vi.fn(() => makeDeleteBuilder(table)),
+        update: vi.fn((payload: Record<string, unknown>, options?: Record<string, unknown>) =>
+          makeUpdateBuilder(table, payload, options),
+        ),
       })),
     },
     withDbTimeout: vi.fn((fn: () => Promise<unknown>) => fn()),
@@ -258,6 +283,7 @@ beforeEach(() => {
   proofDeletes.length = 0;
   dbState.reconcileRows = [];
   dbState.intentProofRows = [];
+  dbState.intentMarkResults = [];
   dbState.oldest = { data: { created_at: '2026-01-01T00:00:00Z' }, error: null };
 
   mockGetFlag.mockReturnValue(true);
@@ -388,7 +414,25 @@ describe('S3-P0 — pre-broadcast intent persistence (happy path)', () => {
     );
     expect(intentMark).toBeDefined();
     // Guarded to still-BROADCASTING rows only.
+    expect(intentMark!.options).toEqual({ count: 'exact' });
     expect(intentMark!.filters).toContainEqual(['eq', 'status', 'BROADCASTING']);
+    expect(intentMark!.filters).toContainEqual(['select', 'id']);
+  });
+
+  it.each([
+    ['zero', [], 0],
+    ['partial', [{ id: 'anchor-a' }, { id: 'anchor-b' }], 2],
+  ])('aborts before broadcast when the intent mark affects %s intended rows', async (_label, returnedRows, count) => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    dbState.intentMarkResults = [{ data: returnedRows, count, error: null }];
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: SORTED_ROOT, txId: null });
+    expect(mockBroadcastSigned).not.toHaveBeenCalled();
+    expect(callOrder).not.toContain('broadcast');
+    expect(proofDeletes.length).toBeGreaterThan(0);
+    expect(callOrder).toContain('revertToPending');
   });
 });
 

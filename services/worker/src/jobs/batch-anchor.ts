@@ -689,13 +689,29 @@ async function persistBroadcastIntentProofs(
 async function markBroadcastIntent(anchorIds: string[], txId: string): Promise<void> {
   for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
     const chunk = anchorIds.slice(i, i + INTENT_CHUNK_SIZE);
-    const { error } = await db
+    const { data, error, count } = await db
       .from('anchors')
-      .update({ chain_tx_id: txId })
+      .update({ chain_tx_id: txId }, { count: 'exact' })
       .in('id', chunk)
-      .eq('status', 'BROADCASTING');
+      .eq('status', 'BROADCASTING')
+      .select('id');
     if (error) {
       throw new Error(`Broadcast-intent mark failed for chunk at ${i}: ${error.message ?? String(error)}`);
+    }
+    const returnedIds = Array.isArray(data)
+      ? data
+          .map((row: { id?: unknown }) => row.id)
+          .filter((id): id is string => typeof id === 'string')
+      : [];
+    const returnedSet = new Set(returnedIds);
+    const missingIds = chunk.filter((id) => !returnedSet.has(id));
+    const unexpectedIds = returnedIds.filter((id) => !chunk.includes(id));
+    if (count !== chunk.length || returnedIds.length !== chunk.length || missingIds.length > 0 || unexpectedIds.length > 0) {
+      throw new Error(
+        `Broadcast-intent mark affected ${count ?? 'unknown'}/${chunk.length} rows for chunk at ${i}; ` +
+          `returned=${returnedIds.length}; missing=${missingIds.join(',') || 'none'}; ` +
+          `unexpected=${unexpectedIds.join(',') || 'none'}`,
+      );
     }
   }
 }
