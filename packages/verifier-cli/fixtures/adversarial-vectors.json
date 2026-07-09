@@ -1,0 +1,1136 @@
+{
+  "schema_version": 1,
+  "source": "S3-B adversarial vectors \u2014 authored INDEPENDENTLY from the bundle-format spec by fixtures/author-adversarial.py (Python; shares no code with generate-fixtures.mjs). Synthetic values only: leaves/txids derive from sha256('s3adv-*') seeds; the signature vectors embed the PROOF-08 throwaway TEST key (never a production key). No PII, no real org/user identifiers.",
+  "fixtures": [
+    {
+      "name": "adv-valid-even-tree-pass",
+      "description": "Independently authored (Python, spec-derived) fully valid vector: 4-leaf app tree, canonical ARKV||root OP_RETURN, real header + receipt inclusion proof at pos 1. Must VERIFY \u2014 proves the spec derivation and the verifier agree.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435": {
+          "txid": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+          "status": {
+            "confirmed": true,
+            "block_height": 901000,
+            "block_hash": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901000": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e",
+        "/block/36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e/header": "0000002000000000000000000000000000000000000000000000000000000000000000001ab5a99f3ea27d9b958382c5b66eedafa81c104d07768b98d922880054b5a73d00c86568ffff001d07000000",
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435/merkle-proof": {
+          "block_height": 901000,
+          "merkle": [
+            "5475359703b4106b6d319b628ade5650206d1ab536da172f7296eede53349f10",
+            "bb8074e9fe99bb7b6293345666a86f54ddf7eb6002843e446ecc6c99bfd7e4c4"
+          ],
+          "pos": 1
+        }
+      },
+      "expect": {
+        "ok": true,
+        "reason_code": null
+      }
+    },
+    {
+      "name": "adv-valid-metadata-suffix-pass",
+      "description": "Valid vector whose on-chain push carries the OPTIONAL 8-byte metadata suffix (ARKV||root||meta, 44 bytes). The root is still read at fixed offset [4,36) \u2014 must VERIFY.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "58a549405db14402e4c42d7571d49738d990161511c5bbc317eb96460cc92e8b",
+        "block_height": 901001,
+        "block_timestamp": "2025-07-03T00:10:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/58a549405db14402e4c42d7571d49738d990161511c5bbc317eb96460cc92e8b": {
+          "txid": "58a549405db14402e4c42d7571d49738d990161511c5bbc317eb96460cc92e8b",
+          "status": {
+            "confirmed": true,
+            "block_height": 901001,
+            "block_hash": "a27aa72f2438db6c6e8ac0f7ce6fbd681bd52f782d9b5c2b65ad9211ed5f4065"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "6a2c41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27875083ff37c1ebe6"
+            },
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            }
+          ]
+        },
+        "/block-height/901001": "a27aa72f2438db6c6e8ac0f7ce6fbd681bd52f782d9b5c2b65ad9211ed5f4065",
+        "/block/a27aa72f2438db6c6e8ac0f7ce6fbd681bd52f782d9b5c2b65ad9211ed5f4065/header": "00000020000000000000000000000000000000000000000000000000000000000000000089969821b6dd3e4c585ab9a2c2df4fc2a26debca86d4c101de8bc9804cdc432458ca6568ffff001d07000000",
+        "/tx/58a549405db14402e4c42d7571d49738d990161511c5bbc317eb96460cc92e8b/merkle-proof": {
+          "block_height": 901001,
+          "merkle": [
+            "8527e3354926ee541deb92ae3f08ff4edfe9a535f4c5d59e42f8a63924479e45"
+          ],
+          "pos": 0
+        }
+      },
+      "expect": {
+        "ok": true,
+        "reason_code": null
+      }
+    },
+    {
+      "name": "adv-tampered-fingerprint-byte",
+      "description": "One byte of the fingerprint flipped (byte 7 XOR 0x01); branch + root untouched. Recompute must fail: MERKLE_MISMATCH.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8558a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435": {
+          "txid": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+          "status": {
+            "confirmed": true,
+            "block_height": 901000,
+            "block_hash": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901000": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e",
+        "/block/36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e/header": "0000002000000000000000000000000000000000000000000000000000000000000000001ab5a99f3ea27d9b958382c5b66eedafa81c104d07768b98d922880054b5a73d00c86568ffff001d07000000",
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435/merkle-proof": {
+          "block_height": 901000,
+          "merkle": [
+            "5475359703b4106b6d319b628ade5650206d1ab536da172f7296eede53349f10",
+            "bb8074e9fe99bb7b6293345666a86f54ddf7eb6002843e446ecc6c99bfd7e4c4"
+          ],
+          "pos": 1
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "MERKLE_MISMATCH",
+        "reasonIncludes": "recomputed root"
+      }
+    },
+    {
+      "name": "adv-app-sibling-order-swapped",
+      "description": "The two app-branch entries are presented in the wrong level order (hashes + positions intact). Recompute walks the wrong concatenation sequence: MERKLE_MISMATCH.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          },
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          }
+        ],
+        "tx_id": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435": {
+          "txid": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+          "status": {
+            "confirmed": true,
+            "block_height": 901000,
+            "block_hash": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901000": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e",
+        "/block/36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e/header": "0000002000000000000000000000000000000000000000000000000000000000000000001ab5a99f3ea27d9b958382c5b66eedafa81c104d07768b98d922880054b5a73d00c86568ffff001d07000000",
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435/merkle-proof": {
+          "block_height": 901000,
+          "merkle": [
+            "5475359703b4106b6d319b628ade5650206d1ab536da172f7296eede53349f10",
+            "bb8074e9fe99bb7b6293345666a86f54ddf7eb6002843e446ecc6c99bfd7e4c4"
+          ],
+          "pos": 1
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "MERKLE_MISMATCH",
+        "reasonIncludes": "recomputed root"
+      }
+    },
+    {
+      "name": "adv-leaf-index-off-by-one-selfpair",
+      "description": "3-leaf tree, rightmost leaf (real index 2) legitimately self-pairs \u2014 but the packet declares merkle_index 1 (off by one). At index 1 of a 3-wide level the self-pair is NOT a legitimate duplication: FORGED_SELF_PAIR.",
+      "packet": {
+        "fingerprint": "3dc70a12409eef476ecf7d8a2b0aad2551201b7083d5051a17797c4cc1b8a1a6",
+        "merkle_root": "51c7e474758d0c834b30a009f03f5153dbdcf8600a83d01846ed2cc2c6fb6f0d",
+        "merkle_proof": [
+          {
+            "hash": "3dc70a12409eef476ecf7d8a2b0aad2551201b7083d5051a17797c4cc1b8a1a6",
+            "position": "right"
+          },
+          {
+            "hash": "707eb5383f74ce3fb01fd164a2a6fe3a90d38a66d672ff6f3b9447d64794a858",
+            "position": "left"
+          }
+        ],
+        "tx_id": null,
+        "block_height": null,
+        "block_timestamp": null,
+        "batch_id": "s3adv-batch-odd",
+        "merkle_index": 1,
+        "leaf_count": 3,
+        "op_return_payload": null,
+        "verified": false,
+        "proof_schema_version": 1
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "FORGED_SELF_PAIR",
+        "reasonIncludes": "CVE-2012-2459"
+      }
+    },
+    {
+      "name": "adv-block-proof-pos-off-by-one",
+      "description": "Independent-node inclusion proof carries pos 2 instead of the true 1 (siblings unchanged), so the fold takes the wrong side at level 0 and the recomputed receipt root diverges from the header: ROOT_NOT_IN_HEADER.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435": {
+          "txid": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+          "status": {
+            "confirmed": true,
+            "block_height": 901000,
+            "block_hash": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901000": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e",
+        "/block/36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e/header": "0000002000000000000000000000000000000000000000000000000000000000000000001ab5a99f3ea27d9b958382c5b66eedafa81c104d07768b98d922880054b5a73d00c86568ffff001d07000000",
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435/merkle-proof": {
+          "block_height": 901000,
+          "merkle": [
+            "5475359703b4106b6d319b628ade5650206d1ab536da172f7296eede53349f10",
+            "bb8074e9fe99bb7b6293345666a86f54ddf7eb6002843e446ecc6c99bfd7e4c4"
+          ],
+          "pos": 2
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "ROOT_NOT_IN_HEADER",
+        "reasonIncludes": "does not recompute"
+      }
+    },
+    {
+      "name": "adv-block-proof-sibling-order-swapped",
+      "description": "Independent-node inclusion-proof sibling list reversed (bottom-up order violated). The fold hashes levels in the wrong sequence: ROOT_NOT_IN_HEADER.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435": {
+          "txid": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+          "status": {
+            "confirmed": true,
+            "block_height": 901000,
+            "block_hash": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901000": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e",
+        "/block/36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e/header": "0000002000000000000000000000000000000000000000000000000000000000000000001ab5a99f3ea27d9b958382c5b66eedafa81c104d07768b98d922880054b5a73d00c86568ffff001d07000000",
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435/merkle-proof": {
+          "block_height": 901000,
+          "merkle": [
+            "bb8074e9fe99bb7b6293345666a86f54ddf7eb6002843e446ecc6c99bfd7e4c4",
+            "5475359703b4106b6d319b628ade5650206d1ab536da172f7296eede53349f10"
+          ],
+          "pos": 1
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "ROOT_NOT_IN_HEADER",
+        "reasonIncludes": "does not recompute"
+      }
+    },
+    {
+      "name": "adv-truncated-header-79-bytes",
+      "description": "The independent node serves a 79-byte (158-hex) header. The 80-byte rule must reject it before any timestamp/merkleroot is read: HEADER_INVALID.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435": {
+          "txid": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+          "status": {
+            "confirmed": true,
+            "block_height": 901000,
+            "block_hash": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901000": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e",
+        "/block/36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e/header": "0000002000000000000000000000000000000000000000000000000000000000000000001ab5a99f3ea27d9b958382c5b66eedafa81c104d07768b98d922880054b5a73d00c86568ffff001d070000",
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435/merkle-proof": {
+          "block_height": 901000,
+          "merkle": [
+            "5475359703b4106b6d319b628ade5650206d1ab536da172f7296eede53349f10",
+            "bb8074e9fe99bb7b6293345666a86f54ddf7eb6002843e446ecc6c99bfd7e4c4"
+          ],
+          "pos": 1
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "HEADER_INVALID",
+        "reasonIncludes": "not 80 bytes"
+      }
+    },
+    {
+      "name": "adv-wrong-marker-arkx",
+      "description": "The push reads 'ARKX'||root \u2014 not the canonical 4-byte ASCII 'ARKV' marker. No canonical anchor output exists: NO_ANCHOR_OUTPUT.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "2a7bc89a3334faa41dd652b0b5c2f54bc4da7157c9ddb99ce8bafb0eaeb026c1",
+        "block_height": 901002,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/2a7bc89a3334faa41dd652b0b5c2f54bc4da7157c9ddb99ce8bafb0eaeb026c1": {
+          "txid": "2a7bc89a3334faa41dd652b0b5c2f54bc4da7157c9ddb99ce8bafb0eaeb026c1",
+          "status": {
+            "confirmed": true,
+            "block_height": 901002,
+            "block_hash": "03094fed436e531d6a8bcdc6a25c5766978f0ef024c0ded14cd307ac79a57888"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b58b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901002": "03094fed436e531d6a8bcdc6a25c5766978f0ef024c0ded14cd307ac79a57888",
+        "/block/03094fed436e531d6a8bcdc6a25c5766978f0ef024c0ded14cd307ac79a57888/header": "00000020000000000000000000000000000000000000000000000000000000000000000093a2f1c15c7d25eb4e5d252927a68c1e75966f5680cd962e018050b6ffe2f00d00c86568ffff001d07000000",
+        "/tx/2a7bc89a3334faa41dd652b0b5c2f54bc4da7157c9ddb99ce8bafb0eaeb026c1/merkle-proof": {
+          "block_height": 901002,
+          "merkle": [
+            "7b5fe1c94b604f92119a74e9e656208c4c4087ef52aea923c9b7ff1ea1eb6171"
+          ],
+          "pos": 0
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "NO_ANCHOR_OUTPUT",
+        "reasonIncludes": "no canonical Arkova"
+      }
+    },
+    {
+      "name": "adv-marker-not-at-offset",
+      "description": "The push contains 0x00 then ARKV||root \u2014 the marker exists as a SUBSTRING but not at byte offset 0. A substring-matching decoder would accept this forgery; the fixed-offset rule must reject: NO_ANCHOR_OUTPUT.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "46dc56da8ae58c1685d837fc0f467f791a7ad4bca95c1916b00b5fd0e41aacb0",
+        "block_height": 901003,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/46dc56da8ae58c1685d837fc0f467f791a7ad4bca95c1916b00b5fd0e41aacb0": {
+          "txid": "46dc56da8ae58c1685d837fc0f467f791a7ad4bca95c1916b00b5fd0e41aacb0",
+          "status": {
+            "confirmed": true,
+            "block_height": 901003,
+            "block_hash": "00e33b635f197c43ccf9bacf90ed49c4321279248241205599c1118ea34de695"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "6a250041524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            },
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            }
+          ]
+        },
+        "/block-height/901003": "00e33b635f197c43ccf9bacf90ed49c4321279248241205599c1118ea34de695",
+        "/block/00e33b635f197c43ccf9bacf90ed49c4321279248241205599c1118ea34de695/header": "000000200000000000000000000000000000000000000000000000000000000000000000a04115522c2fd51750cdf353dc040e9fbc16d04a6775a8c91f6f33fd134c281700c86568ffff001d07000000",
+        "/tx/46dc56da8ae58c1685d837fc0f467f791a7ad4bca95c1916b00b5fd0e41aacb0/merkle-proof": {
+          "block_height": 901003,
+          "merkle": [
+            "0c47ff79f1f0ef5012ce9fd0cf99f5817a0b9b79ab82b24daca5b1572a3dbb7e"
+          ],
+          "pos": 0
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "NO_ANCHOR_OUTPUT",
+        "reasonIncludes": "no canonical Arkova"
+      }
+    },
+    {
+      "name": "adv-height-mismatch",
+      "description": "The independent node reports the receipt at height 901001 while the packet claims 901000: HEIGHT_MISMATCH.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435": {
+          "txid": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+          "status": {
+            "confirmed": true,
+            "block_height": 901001,
+            "block_hash": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901000": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e",
+        "/block/36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e/header": "0000002000000000000000000000000000000000000000000000000000000000000000001ab5a99f3ea27d9b958382c5b66eedafa81c104d07768b98d922880054b5a73d00c86568ffff001d07000000",
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435/merkle-proof": {
+          "block_height": 901000,
+          "merkle": [
+            "5475359703b4106b6d319b628ade5650206d1ab536da172f7296eede53349f10",
+            "bb8074e9fe99bb7b6293345666a86f54ddf7eb6002843e446ecc6c99bfd7e4c4"
+          ],
+          "pos": 1
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "HEIGHT_MISMATCH",
+        "reasonIncludes": "different block height"
+      }
+    },
+    {
+      "name": "adv-reorg-hash-mismatch",
+      "description": "The independent height\u2192hash index resolves the stated height to a different hash than the receipt claims (reorg signal): BLOCK_HASH_MISMATCH.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435": {
+          "txid": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+          "status": {
+            "confirmed": true,
+            "block_height": 901000,
+            "block_hash": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901000": "d9cb8cc89824eb62a486577d611129a57b5b6f57941278da1fe7e0dd67434427",
+        "/block/36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e/header": "0000002000000000000000000000000000000000000000000000000000000000000000001ab5a99f3ea27d9b958382c5b66eedafa81c104d07768b98d922880054b5a73d00c86568ffff001d07000000",
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435/merkle-proof": {
+          "block_height": 901000,
+          "merkle": [
+            "5475359703b4106b6d319b628ade5650206d1ab536da172f7296eede53349f10",
+            "bb8074e9fe99bb7b6293345666a86f54ddf7eb6002843e446ecc6c99bfd7e4c4"
+          ],
+          "pos": 1
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "BLOCK_HASH_MISMATCH",
+        "reasonIncludes": "different"
+      }
+    },
+    {
+      "name": "adv-receipt-not-found",
+      "description": "The independent node has never seen the claimed receipt id (404 on /tx). Nothing on chain corroborates the packet: TX_NOT_FOUND.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "80fd7c451d6cf4568a0a2f63abf2e2fbd0eaf9a9895f9d5093d7a51fee970cad",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {},
+      "expect": {
+        "ok": false,
+        "reason_code": "TX_NOT_FOUND",
+        "reasonIncludes": "not found"
+      }
+    },
+    {
+      "name": "adv-receipt-unconfirmed",
+      "description": "The independent node serves the receipt but reports it unconfirmed (not in any block): NOT_IN_BLOCK.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 1
+      },
+      "node": {
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435": {
+          "txid": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+          "status": {
+            "confirmed": false
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901000": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e",
+        "/block/36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e/header": "0000002000000000000000000000000000000000000000000000000000000000000000001ab5a99f3ea27d9b958382c5b66eedafa81c104d07768b98d922880054b5a73d00c86568ffff001d07000000",
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435/merkle-proof": {
+          "block_height": 901000,
+          "merkle": [
+            "5475359703b4106b6d319b628ade5650206d1ab536da172f7296eede53349f10",
+            "bb8074e9fe99bb7b6293345666a86f54ddf7eb6002843e446ecc6c99bfd7e4c4"
+          ],
+          "pos": 1
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "NOT_IN_BLOCK",
+        "reasonIncludes": "not yet confirmed"
+      }
+    },
+    {
+      "name": "adv-unsupported-schema-version",
+      "description": "proof_schema_version 99 \u2014 the verifier only understands v1 and must refuse to interpret rather than guess: UNSUPPORTED_SCHEMA_VERSION.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e4",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+        "block_height": 901000,
+        "block_timestamp": "2025-07-03T00:00:00.000Z",
+        "batch_id": "s3adv-batch-4",
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": "41524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "verified": true,
+        "proof_schema_version": 99
+      },
+      "node": {
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435": {
+          "txid": "6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435",
+          "status": {
+            "confirmed": true,
+            "block_height": 901000,
+            "block_hash": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e"
+          },
+          "vout": [
+            {
+              "scriptpubkey": "00142222222222222222222222222222222222222222"
+            },
+            {
+              "scriptpubkey": "6a2441524b56b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27"
+            }
+          ]
+        },
+        "/block-height/901000": "36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e",
+        "/block/36eff5c3c0ca0fae0ea0af88c8bd0ad39f8602947f93403bcf35ed8f30fcd94e/header": "0000002000000000000000000000000000000000000000000000000000000000000000001ab5a99f3ea27d9b958382c5b66eedafa81c104d07768b98d922880054b5a73d00c86568ffff001d07000000",
+        "/tx/6e3f51adf84219486dc9916b8e9fcf8b39ca43fb83dd88c50242bf0c26fe7435/merkle-proof": {
+          "block_height": 901000,
+          "merkle": [
+            "5475359703b4106b6d319b628ade5650206d1ab536da172f7296eede53349f10",
+            "bb8074e9fe99bb7b6293345666a86f54ddf7eb6002843e446ecc6c99bfd7e4c4"
+          ],
+          "pos": 1
+        }
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "UNSUPPORTED_SCHEMA_VERSION",
+        "reasonIncludes": "schema version"
+      }
+    },
+    {
+      "name": "adv-malformed-fingerprint",
+      "description": "Fingerprint is 63 hex chars (not a 32-byte value). Format guard must refuse before any walk: MALFORMED_BUNDLE.",
+      "packet": {
+        "fingerprint": "9221a4e4e66d8559a981bde282a0908d3d577d21e61abd004cb996192feb71e",
+        "merkle_root": "b269da49db8af2e1d9c80709817891a86240cff17cd46a5af887fc00c73b5e27",
+        "merkle_proof": [
+          {
+            "hash": "ffcd8e4268ee885caec54725e8af9c1d612684a35d126ea4c8f0628e29cb5665",
+            "position": "left"
+          },
+          {
+            "hash": "c0c8fd9d172af98c2b40bda11ff7ec449333112edc9b36b1a34a14d66ec8916b",
+            "position": "right"
+          }
+        ],
+        "tx_id": null,
+        "block_height": null,
+        "block_timestamp": null,
+        "batch_id": null,
+        "merkle_index": 1,
+        "leaf_count": 4,
+        "op_return_payload": null,
+        "verified": false,
+        "proof_schema_version": 1
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "MALFORMED_BUNDLE",
+        "reasonIncludes": "invalid leaf format"
+      }
+    },
+    {
+      "name": "adv-empty-branch-root-mismatch",
+      "description": "Empty inclusion branch (single-leaf claim) but the root does not equal the fingerprint \u2014 nothing connects them: EMPTY_BRANCH_UNVERIFIABLE.",
+      "packet": {
+        "fingerprint": "aab9c4862beb31366f04d9fa473072deddf9cbcdc1f2e1a7d9fbc80a430a1445",
+        "merkle_root": "90508396c9a52ae14841cd3299fd4f3b05557900358a2a4d206fc659a398d21d",
+        "merkle_proof": [],
+        "tx_id": null,
+        "block_height": null,
+        "block_timestamp": null,
+        "batch_id": null,
+        "merkle_index": 0,
+        "leaf_count": 1,
+        "op_return_payload": null,
+        "verified": false,
+        "proof_schema_version": 1
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "EMPTY_BRANCH_UNVERIFIABLE",
+        "reasonIncludes": "empty branch"
+      }
+    },
+    {
+      "name": "adv-valid-signed-bundle",
+      "description": "PROOF-08 corpus signed bundle verified against its published (throwaway TEST) key set, resolved by signing_key_id. Recompute passes and the issuer signature verifies: VERIFIED.",
+      "packet": {
+        "public_id": "rec_fixture_valid_0001",
+        "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+        "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+        "merkle_proof": [
+          {
+            "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28",
+            "position": "right"
+          },
+          {
+            "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2",
+            "position": "right"
+          }
+        ],
+        "merkle_index": 0,
+        "leaf_count": 4,
+        "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+        "block_height": 840000,
+        "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+        "block_header": "1161202aefade9e2a6d8ce25f77bdabe5f48f5762f0332f5ff492e476344158131ff3408898bc7e0c6d00219124558e43deca82879a73ce4d99709c38c834c6ece94941a296dbd0adf9428767935029e",
+        "op_return_payload": "41524b56bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+        "block_timestamp": "2024-04-20T00:00:00.000Z",
+        "batch_id": "batch_fixture_0001",
+        "proof_schema_version": 1,
+        "verified": true
+      },
+      "signedBundle": {
+        "payload": {
+          "public_id": "rec_fixture_valid_0001",
+          "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+          "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+          "merkle_proof": [
+            {
+              "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28",
+              "position": "right"
+            },
+            {
+              "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2",
+              "position": "right"
+            }
+          ],
+          "merkle_index": 0,
+          "leaf_count": 4,
+          "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+          "block_height": 840000,
+          "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+          "block_header": "1161202aefade9e2a6d8ce25f77bdabe5f48f5762f0332f5ff492e476344158131ff3408898bc7e0c6d00219124558e43deca82879a73ce4d99709c38c834c6ece94941a296dbd0adf9428767935029e",
+          "op_return_payload": "41524b56bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+          "block_timestamp": "2024-04-20T00:00:00.000Z",
+          "batch_id": "batch_fixture_0001",
+          "proof_schema_version": 1,
+          "verified": true
+        },
+        "signature": {
+          "alg": "Ed25519",
+          "value": "WJFWrk_npvnMJymXY-C66yoF5hRu4cXS5GjYwENcY-d2_RWqwOvBtWfrPKGL7pVzEHHgLB0toIgRvwv3GuABCQ"
+        },
+        "signing_key_id": "arkova-test-fixture-ed25519-v1",
+        "signed_at_utc": "2024-04-20T00:00:00.000Z",
+        "bundle_version": "1.0.0"
+      },
+      "publishedKeys": {
+        "keys": [
+          {
+            "kid": "arkova-test-fixture-ed25519-v1",
+            "alg": "Ed25519",
+            "pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEADW+MYALpMP7P8btt24vip0CJkapXrLdhddhUxMtgpnk=\n-----END PUBLIC KEY-----\n"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "reason_code": null,
+        "signature": "verified"
+      }
+    },
+    {
+      "name": "adv-forged-signature",
+      "description": "The corpus bundle with signature.value replaced by the corpus-documented bad_signature_value (first byte perturbed). The Ed25519 check must fail and, because a signature check was explicitly requested, the verdict fails closed: SIG_INVALID.",
+      "packet": {
+        "public_id": "rec_fixture_valid_0001",
+        "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+        "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+        "merkle_proof": [
+          {
+            "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28",
+            "position": "right"
+          },
+          {
+            "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2",
+            "position": "right"
+          }
+        ],
+        "merkle_index": 0,
+        "leaf_count": 4,
+        "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+        "block_height": 840000,
+        "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+        "block_header": "1161202aefade9e2a6d8ce25f77bdabe5f48f5762f0332f5ff492e476344158131ff3408898bc7e0c6d00219124558e43deca82879a73ce4d99709c38c834c6ece94941a296dbd0adf9428767935029e",
+        "op_return_payload": "41524b56bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+        "block_timestamp": "2024-04-20T00:00:00.000Z",
+        "batch_id": "batch_fixture_0001",
+        "proof_schema_version": 1,
+        "verified": true
+      },
+      "signedBundle": {
+        "payload": {
+          "public_id": "rec_fixture_valid_0001",
+          "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+          "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+          "merkle_proof": [
+            {
+              "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28",
+              "position": "right"
+            },
+            {
+              "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2",
+              "position": "right"
+            }
+          ],
+          "merkle_index": 0,
+          "leaf_count": 4,
+          "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+          "block_height": 840000,
+          "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+          "block_header": "1161202aefade9e2a6d8ce25f77bdabe5f48f5762f0332f5ff492e476344158131ff3408898bc7e0c6d00219124558e43deca82879a73ce4d99709c38c834c6ece94941a296dbd0adf9428767935029e",
+          "op_return_payload": "41524b56bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+          "block_timestamp": "2024-04-20T00:00:00.000Z",
+          "batch_id": "batch_fixture_0001",
+          "proof_schema_version": 1,
+          "verified": true
+        },
+        "signature": {
+          "alg": "Ed25519",
+          "value": "AJFWrk_npvnMJymXY-C66yoF5hRu4cXS5GjYwENcY-d2_RWqwOvBtWfrPKGL7pVzEHHgLB0toIgRvwv3GuABCQ"
+        },
+        "signing_key_id": "arkova-test-fixture-ed25519-v1",
+        "signed_at_utc": "2024-04-20T00:00:00.000Z",
+        "bundle_version": "1.0.0"
+      },
+      "publishedKeys": {
+        "keys": [
+          {
+            "kid": "arkova-test-fixture-ed25519-v1",
+            "alg": "Ed25519",
+            "pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEADW+MYALpMP7P8btt24vip0CJkapXrLdhddhUxMtgpnk=\n-----END PUBLIC KEY-----\n"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "SIG_INVALID",
+        "signature": "failed"
+      }
+    },
+    {
+      "name": "adv-unknown-signing-key-id",
+      "description": "The bundle's signing_key_id is not present in the published key set (the signature bytes themselves are the valid ones \u2014 only the key identity is unresolvable). Must fail closed without guessing a key: DID_UNRESOLVED.",
+      "packet": {
+        "public_id": "rec_fixture_valid_0001",
+        "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+        "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+        "merkle_proof": [
+          {
+            "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28",
+            "position": "right"
+          },
+          {
+            "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2",
+            "position": "right"
+          }
+        ],
+        "merkle_index": 0,
+        "leaf_count": 4,
+        "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+        "block_height": 840000,
+        "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+        "block_header": "1161202aefade9e2a6d8ce25f77bdabe5f48f5762f0332f5ff492e476344158131ff3408898bc7e0c6d00219124558e43deca82879a73ce4d99709c38c834c6ece94941a296dbd0adf9428767935029e",
+        "op_return_payload": "41524b56bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+        "block_timestamp": "2024-04-20T00:00:00.000Z",
+        "batch_id": "batch_fixture_0001",
+        "proof_schema_version": 1,
+        "verified": true
+      },
+      "signedBundle": {
+        "payload": {
+          "public_id": "rec_fixture_valid_0001",
+          "fingerprint": "b17dd034db708baab7947230cda05884641a8706533a0cc30e0ffd9d73bd2daf",
+          "merkle_root": "bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+          "merkle_proof": [
+            {
+              "hash": "388df68dc0e85e41cc7901100e20671113785280eced4ee7b47136a0985a0a28",
+              "position": "right"
+            },
+            {
+              "hash": "0b387afbe6f9d9b97849f1a666bee795e899b7b8b2b4ef376cfcb41fe3cbfaa2",
+              "position": "right"
+            }
+          ],
+          "merkle_index": 0,
+          "leaf_count": 4,
+          "tx_id": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+          "block_height": 840000,
+          "block_hash": "0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5",
+          "block_header": "1161202aefade9e2a6d8ce25f77bdabe5f48f5762f0332f5ff492e476344158131ff3408898bc7e0c6d00219124558e43deca82879a73ce4d99709c38c834c6ece94941a296dbd0adf9428767935029e",
+          "op_return_payload": "41524b56bc5dbbd1ad6c89dca7cb25c773375e8a33c77173184df0d16b6646c496ea1607",
+          "block_timestamp": "2024-04-20T00:00:00.000Z",
+          "batch_id": "batch_fixture_0001",
+          "proof_schema_version": 1,
+          "verified": true
+        },
+        "signature": {
+          "alg": "Ed25519",
+          "value": "WJFWrk_npvnMJymXY-C66yoF5hRu4cXS5GjYwENcY-d2_RWqwOvBtWfrPKGL7pVzEHHgLB0toIgRvwv3GuABCQ"
+        },
+        "signing_key_id": "arkova-key-that-does-not-exist-v9",
+        "signed_at_utc": "2024-04-20T00:00:00.000Z",
+        "bundle_version": "1.0.0"
+      },
+      "publishedKeys": {
+        "keys": [
+          {
+            "kid": "arkova-test-fixture-ed25519-v1",
+            "alg": "Ed25519",
+            "pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEADW+MYALpMP7P8btt24vip0CJkapXrLdhddhUxMtgpnk=\n-----END PUBLIC KEY-----\n"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "reason_code": "DID_UNRESOLVED",
+        "signature": "failed"
+      }
+    }
+  ]
+}
