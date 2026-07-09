@@ -36,6 +36,9 @@ import {
   unsubscribeFlagChanges,
   _clearCacheForTest,
 } from './switchboard';
+// Namespace import so the isBatchAnchoringEnabled-removal assertion below stays
+// valid (and keeps typechecking) after the named export is deleted.
+import * as switchboardModule from './switchboard';
 
 describe('switchboard feature flags', () => {
   beforeEach(() => {
@@ -201,6 +204,27 @@ describe('switchboard feature flags', () => {
       unsubscribeFlagChanges();
 
       expect(mockRemoveChannel).toHaveBeenCalledWith(mockChannel);
+    });
+  });
+
+  // ─── Dead flag removal: ENABLE_BATCH_ANCHORING ──────────────────────────────
+  //
+  // ENABLE_BATCH_ANCHORING was a no-op: the batch drain (processBatchAnchors)
+  // never read it. The real gate is pending-anchor presence + the chain client's
+  // ENABLE_PROD_NETWORK_ANCHORING. The frontend must not carry the dead flag —
+  // it is not a real control and its guard helper had zero callers.
+  describe('ENABLE_BATCH_ANCHORING is fully removed from the frontend', () => {
+    it('is not a defined switchboard flag', () => {
+      expect(Object.keys(FLAGS)).not.toContain('ENABLE_BATCH_ANCHORING');
+      // `in` guard mirrors the runtime membership check used by getAllFlags /
+      // subscribeFlagChanges (`row.flag_key in FLAGS`).
+      expect('ENABLE_BATCH_ANCHORING' in FLAGS).toBe(false);
+    });
+
+    it('does not export an isBatchAnchoringEnabled guard helper', () => {
+      expect(
+        (switchboardModule as Record<string, unknown>).isBatchAnchoringEnabled,
+      ).toBeUndefined();
     });
   });
 });
