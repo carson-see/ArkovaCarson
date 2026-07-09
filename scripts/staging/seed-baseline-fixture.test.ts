@@ -51,6 +51,12 @@ describe('seed-baseline-fixture.sql — preflight Check 5', () => {
     const m = sql.match(/'([A-Fa-f0-9]{64})'/);
     expect(m, 'a 64-char hex fingerprint literal must be present').not.toBeNull();
   });
+
+  it('keeps the baseline SUBMITTED anchor on legal hold so mock confirmation cannot consume it', () => {
+    const anchorInsert = sql.match(/insert\s+into\s+public\.anchors[\s\S]*?on\s+conflict\s*\(\s*id\s*\)\s*do\s+update\s+set\s+legal_hold\s*=\s*true/i);
+    expect(anchorInsert, 'public.anchors insert must set and preserve legal_hold=true').not.toBeNull();
+    expect(anchorInsert?.[0]).toMatch(/\blegal_hold\b[\s\S]*\btrue\b/i);
+  });
 });
 
 describe('seed-baseline-fixture.sql — §1.11A data-only + idempotent', () => {
