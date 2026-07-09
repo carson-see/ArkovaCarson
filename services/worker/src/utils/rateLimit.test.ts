@@ -114,6 +114,60 @@ describe('rateLimit', () => {
 
       vi.useRealTimers();
     });
+
+    it('allows an explicit E2E-only bypass in the test worker', () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      const originalBypass = process.env.DISABLE_E2E_RATE_LIMITS;
+      process.env.NODE_ENV = 'test';
+      process.env.DISABLE_E2E_RATE_LIMITS = 'true';
+
+      try {
+        const limiter = rateLimit({ windowMs: 60000, maxRequests: 1 });
+        const ip = '192.168.250.1';
+        const path = '/e2e-bypass-test';
+
+        const { req: req1, res: res1, next: next1 } = createMockReqResWithKey(ip, path);
+        limiter(req1, res1, next1);
+        expect(next1).toHaveBeenCalled();
+
+        const { req: req2, res: res2, next: next2 } = createMockReqResWithKey(ip, path);
+        limiter(req2, res2, next2);
+        expect(next2).toHaveBeenCalled();
+        expect(res2.status).not.toHaveBeenCalled();
+      } finally {
+        if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = originalNodeEnv;
+        if (originalBypass === undefined) delete process.env.DISABLE_E2E_RATE_LIMITS;
+        else process.env.DISABLE_E2E_RATE_LIMITS = originalBypass;
+      }
+    });
+
+    it('does not honor the E2E bypass outside the test worker', () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      const originalBypass = process.env.DISABLE_E2E_RATE_LIMITS;
+      process.env.NODE_ENV = 'production';
+      process.env.DISABLE_E2E_RATE_LIMITS = 'true';
+
+      try {
+        const limiter = rateLimit({ windowMs: 60000, maxRequests: 1 });
+        const ip = '192.168.251.1';
+        const path = '/prod-no-bypass-test';
+
+        const { req: req1, res: res1, next: next1 } = createMockReqResWithKey(ip, path);
+        limiter(req1, res1, next1);
+        expect(next1).toHaveBeenCalled();
+
+        const { req: req2, res: res2, next: next2 } = createMockReqResWithKey(ip, path);
+        limiter(req2, res2, next2);
+        expect(next2).not.toHaveBeenCalled();
+        expect(res2.status).toHaveBeenCalledWith(429);
+      } finally {
+        if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = originalNodeEnv;
+        if (originalBypass === undefined) delete process.env.DISABLE_E2E_RATE_LIMITS;
+        else process.env.DISABLE_E2E_RATE_LIMITS = originalBypass;
+      }
+    });
   });
 
   describe('rate limit headers', () => {

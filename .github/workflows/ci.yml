@@ -1117,6 +1117,7 @@ jobs:
           STRIPE_SECRET_KEY: sk_test_e2e_local
           STRIPE_WEBHOOK_SECRET: whsec_e2e_local
           API_KEY_HMAC_SECRET: e2e-local-api-key-hmac-secret
+          DISABLE_E2E_RATE_LIMITS: true
           USE_MOCKS: true
           ENABLE_VERIFICATION_API: true
           ENABLE_PROD_NETWORK_ANCHORING: false
