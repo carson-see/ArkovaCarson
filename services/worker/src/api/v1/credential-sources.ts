@@ -140,6 +140,15 @@ interface ImportCompensationOptions {
   recipientLinked: boolean;
 }
 
+interface CredentialIssuedAuditOptions {
+  anchorId: string;
+  anchorOrgId: string;
+  anchorCreatedAt: string;
+  publicId: string;
+  userId: string;
+  preview: CredentialSourceImportPreview;
+}
+
 type AnchorInsertPayload = z.infer<typeof anchorSchema>;
 
 function credentialSourceErrorStatus(error: CredentialSourceImportError): number {
@@ -560,6 +569,63 @@ function toReceipt(anchor: AnchorRecord): AnchorReceipt {
   };
 }
 
+function queueCredentialIssuedAudit(options: CredentialIssuedAuditOptions): void {
+  const issuedAt =
+    evidenceDateToTimestamp(options.preview.credential_issued_at) ?? options.anchorCreatedAt;
+  const expiresAt = evidenceDateToTimestamp(options.preview.credential_expires_at, true);
+
+  dispatchWebhookEvent(options.anchorOrgId, 'credential.issued', options.publicId, {
+    public_id: options.publicId,
+    credential_type: options.preview.credential_type,
+    status: 'ISSUED',
+    issued_at: issuedAt,
+    expires_at: expiresAt,
+  })
+    .then(() => ({ dispatched: true, error: null as string | null }))
+    .catch((webhookError: unknown) => {
+      const message = webhookError instanceof Error
+        ? webhookError.message
+        : String(webhookError);
+      logger.warn(
+        { anchorId: options.anchorId, publicId: options.publicId, error: webhookError },
+        'Failed to dispatch credential.issued webhook (response NOT aborted)',
+      );
+      return { dispatched: false, error: message };
+    })
+    .then((outcome) =>
+      db.from('audit_events').insert({
+        event_type: 'credential.issued',
+        event_category: 'WEBHOOK',
+        actor_id: options.userId,
+        org_id: options.anchorOrgId,
+        target_type: 'anchor',
+        target_id: options.anchorId,
+        details: JSON.stringify({
+          public_id: options.publicId,
+          credential_type: options.preview.credential_type,
+          dispatched: outcome.dispatched,
+          dispatch_error: outcome.error,
+          issued_at: issuedAt,
+          expires_at: expiresAt,
+        }),
+      }),
+    )
+    .then(({ error }: { error: unknown }) => {
+      if (error) {
+        logger.error(
+          { error, anchorId: options.anchorId },
+          'Failed to write credential.issued audit row',
+        );
+      }
+    })
+    .catch((error: unknown) => {
+      logger.error(
+        { error, anchorId: options.anchorId },
+        'Failed to write credential.issued audit row',
+      );
+    });
+}
+
 router.post('/import-url/preview', async (req: Request, res: Response) => {
   if (!req.authUserId) {
     res.status(401).json({ error: 'Authentication required' });
@@ -660,77 +726,15 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
     // — joining to orgs.public_id / profiles.public_id is a follow-up; schema
     // accepts null today.
     if (orgId && anchor.public_id) {
-      const issuedAt =
-        evidenceDateToTimestamp(preview.credential_issued_at) ?? anchor.created_at;
-      const expiresAt = evidenceDateToTimestamp(preview.credential_expires_at, true);
-      // Capture narrowed values into locals so TypeScript keeps the non-null
-      // narrowing across the async closure below.
-      const publicId: string = anchor.public_id;
-      const anchorOrgId: string = orgId;
-      const anchorId: string = anchor.id;
-
-      // Codex P2 PR #753: fire-and-forget the webhook dispatch. The previous
-      // pattern awaited dispatchWebhookEvent which awaits Promise.all over
-      // deliverToEndpoint — each endpoint has a 10s fetch timeout. A slow or
-      // black-holed customer endpoint could add up to ~10s to every successful
-      // import. The webhook is best-effort; the credential is already
-      // committed by the time we get here. The .then handler writes the
-      // tamper-evident audit row capturing dispatch outcome (success or
-      // dispatch_error) after the dispatch resolves; the response returns
-      // immediately regardless.
-      const dispatchPromise = (async () => {
-        try {
-          await dispatchWebhookEvent(anchorOrgId, 'credential.issued', publicId, {
-            public_id: publicId,
-            credential_type: preview.credential_type,
-            status: 'ISSUED',
-            issued_at: issuedAt,
-            expires_at: expiresAt,
-          });
-          return { dispatched: true, error: null as string | null };
-        } catch (webhookError) {
-          const message = webhookError instanceof Error
-            ? webhookError.message
-            : String(webhookError);
-          logger.warn(
-            { anchorId, publicId, error: webhookError },
-            'Failed to dispatch credential.issued webhook (response NOT aborted)',
-          );
-          return { dispatched: false, error: message };
-        }
-      })();
-
-      void dispatchPromise.then((outcome) => {
-        // SCRUM-1800 (SCRUM-1743 Phase 2c): tamper-evident audit row tied to
-        // the webhook emit decision. The existing CREDENTIAL_SOURCE_IMPORTED
-        // row captures the import action; this `credential.issued` row
-        // captures the outbound webhook fan-out specifically so auditors can
-        // answer "was a credential.issued event emitted for anchor X?"
-        // without joining webhook_delivery_logs.
-
-        void db.from('audit_events').insert({
-          event_type: 'credential.issued',
-          event_category: 'WEBHOOK',
-          actor_id: userId,
-          org_id: anchorOrgId,
-          target_type: 'anchor',
-          target_id: anchorId,
-          details: JSON.stringify({
-            public_id: publicId,
-            credential_type: preview.credential_type,
-            dispatched: outcome.dispatched,
-            dispatch_error: outcome.error,
-            issued_at: issuedAt,
-            expires_at: expiresAt,
-          }),
-        }).then(({ error }: { error: unknown }) => {
-          if (error) {
-            logger.error(
-              { error, anchorId },
-              'Failed to write credential.issued audit row',
-            );
-          }
-        });
+      // Codex P2 PR #753: fire-and-forget the webhook dispatch. The helper logs
+      // dispatch/audit failures but never aborts the already-committed import.
+      queueCredentialIssuedAudit({
+        anchorId: anchor.id,
+        anchorOrgId: orgId,
+        anchorCreatedAt: anchor.created_at,
+        publicId: anchor.public_id,
+        userId,
+        preview,
       });
     }
 

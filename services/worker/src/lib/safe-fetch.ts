@@ -152,6 +152,43 @@ function resolveRedirectTarget(location: string, currentUrl: string): URL {
   }
 }
 
+async function fetchValidatedHop(
+  currentUrl: string,
+  init: RequestInit,
+  deps: SafeFetchDeps,
+): Promise<{ parsed: URL; response: SafeFetchResponse }> {
+  const parsed = parseUrl(currentUrl);
+  const pinnedIp = await resolveAndPin(parsed, deps.resolve);
+
+  try {
+    return {
+      parsed,
+      response: await deps.dispatch(pinnedIp, parsed.toString(), init),
+    };
+  } catch (error) {
+    if (error instanceof SafeFetchError) throw error;
+    throw new SafeFetchError(
+      'request_failed',
+      `Request to ${parsed.hostname} failed: ${error instanceof Error ? error.message : 'unknown'}`,
+    );
+  }
+}
+
+function nextRedirectUrl(response: SafeFetchResponse, parsed: URL, hop: number, maxRedirects: number): string {
+  if (hop === maxRedirects) {
+    throw new SafeFetchError('too_many_redirects', `Exceeded ${maxRedirects} redirects`);
+  }
+
+  const location = response.headers.get('location');
+  if (!location) {
+    throw new SafeFetchError('redirect_invalid', 'Redirect response had no Location header');
+  }
+
+  // Re-validate the next hop on the next loop iteration (parseUrl +
+  // resolveAndPin), so a redirect to a private host is refused per-hop.
+  return resolveRedirectTarget(location, parsed.toString()).toString();
+}
+
 /**
  * Fetch a URL with full SSRF protection. See module docstring.
  */
@@ -172,31 +209,10 @@ export async function safeFetch(
     if (Date.now() > deadline) {
       throw new SafeFetchError('deadline_exceeded', `safeFetch exceeded ${totalTimeoutMs}ms total deadline`);
     }
-    const parsed = parseUrl(currentUrl);
-    const pinnedIp = await resolveAndPin(parsed, deps.resolve);
-
-    let response: SafeFetchResponse;
-    try {
-      response = await deps.dispatch(pinnedIp, parsed.toString(), init);
-    } catch (error) {
-      if (error instanceof SafeFetchError) throw error;
-      throw new SafeFetchError(
-        'request_failed',
-        `Request to ${parsed.hostname} failed: ${error instanceof Error ? error.message : 'unknown'}`,
-      );
-    }
+    const { parsed, response } = await fetchValidatedHop(currentUrl, init, deps);
 
     if (REDIRECT_STATUSES.has(response.status)) {
-      if (hop === maxRedirects) {
-        throw new SafeFetchError('too_many_redirects', `Exceeded ${maxRedirects} redirects`);
-      }
-      const location = response.headers.get('location');
-      if (!location) {
-        throw new SafeFetchError('redirect_invalid', 'Redirect response had no Location header');
-      }
-      // Re-validate the next hop on the next loop iteration (parseUrl +
-      // resolveAndPin), so a redirect to a private host is refused per-hop.
-      currentUrl = resolveRedirectTarget(location, parsed.toString()).toString();
+      currentUrl = nextRedirectUrl(response, parsed, hop, maxRedirects);
       continue;
     }
 
@@ -361,7 +377,7 @@ export function defaultSafeFetchDeps(): SafeFetchDeps {
         };
       } finally {
         // Release sockets promptly; the agent is single-use per request.
-        void agent.close();
+        agent.close().catch(() => undefined);
       }
     },
   };

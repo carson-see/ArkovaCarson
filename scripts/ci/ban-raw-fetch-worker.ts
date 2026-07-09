@@ -41,7 +41,7 @@
  * supplied URLs.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -233,7 +233,7 @@ function matchStar(basename: string, pattern: string): boolean {
 }
 
 function listWorkerSrcFiles(repo: string): string[] {
-  const out = execSync('git ls-files services/worker/src', { cwd: repo, encoding: 'utf8' });
+  const out = execFileSync('git', ['ls-files', 'services/worker/src'], { cwd: repo, encoding: 'utf8' });
   return out
     .split('\n')
     .filter(Boolean)
