@@ -60,10 +60,10 @@
  *                                    is explicitly allow-unauthenticated)
  *
  * Usage:
- *   npm run staging:batch-drain -- --phase all --count 10000 --evidence-out docs/staging/batch-drain-pr1417.json
- *   npm run staging:batch-drain -- --phase seed --count 10000 --run-id r1
- *   npm run staging:batch-drain -- --phase drain --run-id r1
- *   npm run staging:batch-drain -- --phase cleanup --run-id r1
+ *   npx tsx scripts/staging/batch-drain-harness.ts --phase all --count 10000 --evidence-out docs/staging/batch-drain-pr1417.json
+ *   npx tsx scripts/staging/batch-drain-harness.ts --phase seed --count 10000 --run-id r1
+ *   npx tsx scripts/staging/batch-drain-harness.ts --phase drain --run-id r1
+ *   npx tsx scripts/staging/batch-drain-harness.ts --phase cleanup --run-id r1
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
