@@ -15,7 +15,7 @@
 
 import { useState, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
-import { CheckCircle, XCircle, Fingerprint, Copy, Check, Ban, Clock, Flag, AlertTriangle } from 'lucide-react';
+import { CheckCircle, XCircle, Fingerprint, Copy, Check, Ban, Clock, Flag } from 'lucide-react';
 import { AnchorLifecycleTimeline, type AnchorLifecycleData } from '@/components/anchor/AnchorLifecycleTimeline';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { extractCpeMetadataView } from '@/components/credentials/cpeMetadataView';
@@ -23,6 +23,7 @@ import { extractCleMetadataView } from '@/components/credentials/cleMetadataView
 import { ProvenanceTimeline } from '@/components/public/ProvenanceTimeline';
 import { RevocationDetails } from '@/components/verification/RevocationDetails';
 import { VerifierProofDownload } from '@/components/verification/VerifierProofDownload';
+import { DoesNotAssertDisclaimer } from '@/components/verification/DoesNotAssertDisclaimer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import {
   Card,
@@ -643,27 +644,12 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         )}
 
         {/* ============================================================
-            SECTION 6: Anchor Authenticity Disclaimer (IDT WS3)
-            ============================================================ */}
+            SECTION 6: Does-Not-Assert Disclaimer (SCRUM-2495 / IDT WS3)
+            ============================================================
+            Always-visible — not a tooltip, not click-to-reveal (CLAUDE.md
+            §1.5). States what is measured / asserted / NOT asserted. */}
         <Separator />
-        <div className="rounded-lg bg-muted/50 border border-border p-4 space-y-2">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-            <div className="space-y-1.5">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Verification Disclaimer
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Arkova verifies that a document&apos;s cryptographic fingerprint was anchored to the
-                Bitcoin blockchain at the stated time. Arkova does not verify, and makes no
-                representation regarding, the accuracy, authenticity, or legitimacy of the underlying
-                document content. For anchors created by unverified or individual accounts, the
-                identity of the anchoring party has not been independently confirmed by Arkova.
-                Relying parties should exercise their own due diligence.
-              </p>
-            </div>
-          </div>
-        </div>
+        <DoesNotAssertDisclaimer />
 
         {/* Footer */}
         <div className="pt-4 text-center text-xs text-muted-foreground border-t">
