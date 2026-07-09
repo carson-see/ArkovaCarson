@@ -335,13 +335,32 @@ function resolveGcloudPath(env: Env): string {
   }
 }
 
+export function resolveCloudRunIamAudience(apiBase: string, env: Env = process.env): string {
+  const override = (env.AI_SOAK_CLOUD_RUN_AUDIENCE ?? env.STAGING_GCP_AUDIENCE)?.trim();
+  if (override) return override;
+
+  const url = new URL(apiBase);
+  const separator = '---';
+  const separatorIndex = url.hostname.indexOf(separator);
+  if (separatorIndex > 0) {
+    url.hostname = url.hostname.slice(separatorIndex + separator.length);
+    url.pathname = '';
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  }
+
+  return apiBase;
+}
+
 function fetchCloudRunIdentityToken(apiBase: string, env: Env): string {
   const envToken = env.STAGING_GCP_IDENTITY?.trim();
   if (envToken) return envToken;
 
+  const audience = resolveCloudRunIamAudience(apiBase, env);
   const gcloud = resolveGcloudPath(env);
   try {
-    const out = execFileSync(gcloud, ['auth', 'print-identity-token', `--audiences=${apiBase}`], {
+    const out = execFileSync(gcloud, ['auth', 'print-identity-token', `--audiences=${audience}`], {
       encoding: 'utf8',
       env: { ...process.env, PATH: SAFE_PATH },
     });

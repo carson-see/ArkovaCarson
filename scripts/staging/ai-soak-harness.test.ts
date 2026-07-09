@@ -10,6 +10,7 @@ import {
   buildRequestHeaders,
   isLiveExtractionProvider,
   resolveAiSoakAuth,
+  resolveCloudRunIamAudience,
   summarizeRun,
 } from './ai-soak-harness';
 
@@ -97,6 +98,23 @@ describe('ai-soak-harness requests', () => {
       'X-Serverless-Authorization': 'Bearer google.oidc.signature',
       'Content-Type': 'application/json',
     });
+  });
+
+  it('mints Cloud Run IAM tokens for the routed service URL, not the tag URL', () => {
+    expect(
+      resolveCloudRunIamAudience(
+        'https://pr-1413---arkova-worker-s3-ai-staging-kvojbeutfa-uc.a.run.app',
+      ),
+    ).toBe('https://arkova-worker-s3-ai-staging-kvojbeutfa-uc.a.run.app');
+  });
+
+  it('allows an explicit Cloud Run IAM audience override for unusual routing', () => {
+    expect(
+      resolveCloudRunIamAudience(
+        'https://pr-1413---arkova-worker-s3-ai-staging-kvojbeutfa-uc.a.run.app',
+        { AI_SOAK_CLOUD_RUN_AUDIENCE: 'https://custom-audience.example.test' },
+      ),
+    ).toBe('https://custom-audience.example.test');
   });
 
   it('builds PII-stripped synthetic extraction fixtures with cache-busting fingerprints', () => {
