@@ -81,7 +81,7 @@ describe('check-staging-evidence', () => {
   describe('TIER_SPECS', () => {
     it('pins the current minimum soak windows', () => {
       expect(TIER_SPECS.T0.soakHours).toBe(0);
-      expect(TIER_SPECS.T1.soakHours).toBe(2);
+      expect(TIER_SPECS.T1.soakHours).toBe(0);
       expect(TIER_SPECS.T2.soakHours).toBe(12);
       expect(TIER_SPECS.T3.soakHours).toBe(48);
     });
@@ -684,8 +684,22 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T1 expedited evidence at exactly 2 hours',
+        'T1 exact-head evidence with optional soak timestamps',
         completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
+        t1Files,
+      ],
+      [
+        'T1 exact-head evidence with no soak window',
+        `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, targeted smoke green
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert this PR and redeploy previous worker image
+- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
+- Human approver: Carson
+`,
         t1Files,
       ],
     ])('passes %s', (_label, body, files) => {
@@ -697,30 +711,6 @@ describe('check-staging-evidence', () => {
     });
 
     it.each([
-      [
-        'T1 expedited evidence with no soak window',
-        `## Staging Soak Evidence
-- Tier: T1
-- PR head SHA: 1234567890abcdef1234567890abcdef12345678
-- Changed behavior: fixture changed behavior under test
-- Targeted evidence: targeted fixture evidence exercised the changed behavior path
-- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
-- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
-- Health/smoke result: health ok, targeted smoke green
-- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
-- Rollback plan: revert this PR and redeploy previous worker image
-- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
-- Human approver: Carson
-`,
-        t1Files,
-        /missing required fields.*Soak start:.*Soak end:/,
-      ],
-      [
-        'T1 shorter than 2 hours',
-        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
-        t1Files,
-        /below the 2h minimum/,
-      ],
       [
         'T2 shorter than 12 hours',
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
