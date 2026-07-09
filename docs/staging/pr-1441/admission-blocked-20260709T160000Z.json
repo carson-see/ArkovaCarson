@@ -1,0 +1,20 @@
+{
+  "pr": 1441,
+  "driver": "ops-slo",
+  "status": "blocked",
+  "blocked_at": "2026-07-09T15:54:27.057Z",
+  "exact_head_required": "97b8e7555f74da3ceeb45d259e956201b4d32874",
+  "changed_behavior": "GET /api/admin/ops-slo-stats platform-admin SLO stats contract",
+  "missing": [
+    "WORKER_URL or STAGING_API_BASE for the deployed PR #1441 tag URL",
+    "OPS_SLO_ADMIN_JWT or STAGING_ADMIN_JWT for a platform-admin Supabase JWT",
+    "OPS_SLO_NON_ADMIN_JWT or STAGING_NON_ADMIN_JWT for an authenticated non-admin Supabase JWT",
+    "WORKER_IAM_TOKEN, CLOUD_RUN_IDENTITY_TOKEN, or STAGING_GCP_IDENTITY for Cloud Run tag ingress when the service is IAM-protected",
+    "CLOUD_RUN_AUDIENCE or STAGING_GCP_AUDIENCE for the Cloud Run identity-token audience"
+  ],
+  "notes": [
+    "Do not start a T2 soak until the admin request returns 200, the non-admin request returns 403, and the unauthenticated request returns 401 against the exact deployed PR tag.",
+    "Generic /health traffic is not change coverage for OPS-03.",
+    "The driver refuses command-line JWT/token arguments to avoid leaking secrets into shell history."
+  ]
+}
