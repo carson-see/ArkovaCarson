@@ -103,6 +103,7 @@ CRON_OIDC_SA="${STAGING_CRON_OIDC_SA:-$RUNTIME_SA}"
 
 NAME=""
 APPLY=0
+ADMISSION_SCHEMA_VERSION=1
 
 usage() {
   sed -n '2,38p' "$0"
@@ -343,6 +344,150 @@ run_cmd() {
   fi
 }
 
+resolve_head_sha() {
+  if [[ -n "${GITHUB_SHA:-}" ]]; then
+    printf '%s\n' "$GITHUB_SHA"
+  else
+    git rev-parse HEAD 2>/dev/null || printf 'unknown\n'
+  fi
+}
+
+resolve_base_sha() {
+  if [[ -n "${BASE_SHA:-}" ]]; then
+    printf '%s\n' "$BASE_SHA"
+  elif [[ -n "${GITHUB_BASE_SHA:-}" ]]; then
+    printf '%s\n' "$GITHUB_BASE_SHA"
+  else
+    git merge-base HEAD origin/main 2>/dev/null || printf 'unknown\n'
+  fi
+}
+
+short_sha() {
+  local sha="$1"
+  if [[ "$sha" == "unknown" ]]; then
+    printf 'unknown\n'
+  else
+    printf '%.12s\n' "$sha"
+  fi
+}
+
+resolve_owner() {
+  printf '%s@%s\n' "${USER:-unknown}" "$(hostname -s 2>/dev/null || echo host)"
+}
+
+image_digest_from_ref() {
+  local image_ref="$1"
+  case "$image_ref" in
+    *@sha256:*) printf 'sha256:%s\n' "${image_ref##*@sha256:}" ;;
+    sha256:*) printf '%s\n' "$image_ref" ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_image_digest() {
+  if [[ -n "${STAGING_IMAGE_DIGEST:-}" ]]; then
+    printf '%s\n' "$STAGING_IMAGE_DIGEST"
+    return 0
+  fi
+
+  if image_digest_from_ref "$PINNED_IMAGE"; then
+    return 0
+  fi
+
+  if [[ $APPLY -eq 1 ]]; then
+    local resolved digest
+    resolved="$(gcloud artifacts docker images describe "$PINNED_IMAGE" \
+      --project="$GCP_PROJECT" \
+      --format="value(image_summary.fully_qualified_digest)")"
+    digest="${resolved##*@}"
+    if [[ -z "$digest" || "$digest" == "$resolved" || "$digest" != sha256:* ]]; then
+      echo "ERROR: could not resolve image digest for $PINNED_IMAGE." >&2
+      exit 1
+    fi
+    printf '%s\n' "$digest"
+    return 0
+  fi
+
+  printf '<resolve-in-apply:%s>\n' "$PINNED_IMAGE"
+}
+
+resolve_cloud_run_url() {
+  if [[ $APPLY -eq 1 ]]; then
+    local url
+    url="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+      --region="$CLOUD_RUN_REGION" \
+      --project="$GCP_PROJECT" \
+      --format="value(status.url)")"
+    if [[ -z "$url" ]]; then
+      echo "ERROR: could not resolve Cloud Run service URL for $CLOUD_RUN_SERVICE." >&2
+      exit 1
+    fi
+    printf '%s\n' "$url"
+    return 0
+  fi
+
+  printf '%s\n' "${STAGING_RIG_TAG_URL:-<captured-cloud-run-url-for-${CLOUD_RUN_SERVICE}>}"
+}
+
+emit_admission_json() {
+  local schema_version="$1"
+  local rig_name="$2"
+  local cloud_run_service="$3"
+  local image="$4"
+  local head_sha="$5"
+  local base_sha="$6"
+  local image_digest="$7"
+  local tag_url="$8"
+  local supabase_project_ref="$9"
+  local preflight_result="${10}"
+  local owner="${11}"
+  local generated_at
+  generated_at="${ADMISSION_GENERATED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+
+  jq -nc \
+    --argjson schema_version "$schema_version" \
+    --arg kind "isolated_rig_admission" \
+    --arg generated_at "$generated_at" \
+    --arg rig_name "$rig_name" \
+    --arg cloud_run_service "$cloud_run_service" \
+    --arg sha "$head_sha" \
+    --arg base_sha "$base_sha" \
+    --arg image "$image" \
+    --arg image_digest "$image_digest" \
+    --arg tag_url "$tag_url" \
+    --arg supabase_project_ref "$supabase_project_ref" \
+    --arg preflight_result "$preflight_result" \
+    --arg harness_version "scripts/staging/load-harness.ts@$(short_sha "$head_sha")" \
+    --arg tool_version "scripts/staging/provision-isolated-rig.sh@$(short_sha "$head_sha")" \
+    --arg owner "$owner" \
+    '{
+      schema_version: $schema_version,
+      kind: $kind,
+      generated_at: $generated_at,
+      rig_name: $rig_name,
+      cloud_run_service: $cloud_run_service,
+      sha: $sha,
+      base_sha: $base_sha,
+      image: $image,
+      image_digest: $image_digest,
+      tag_url: $tag_url,
+      supabase_project_ref: $supabase_project_ref,
+      preflight_result: $preflight_result,
+      harness_version: $harness_version,
+      tool_version: $tool_version,
+      owner: $owner,
+      stop_conditions: [
+        "SHA mismatch between admission JSON and PR head",
+        "base SHA drift with runtime/schema/staging/deploy impact",
+        "image digest mismatch against deployed Cloud Run revision",
+        "dirty preflight (environment_type != clean_mirror)",
+        "Supabase project ref resolves to prod or shared staging",
+        "Cloud Run service/tag URL points at shared/main staging",
+        "soak harness exits non-zero or fails required duration"
+      ]
+    }'
+}
+
 # ---------------------------------------------------------------------------
 # Plan header.
 # ---------------------------------------------------------------------------
@@ -515,17 +660,54 @@ run_cmd npx supabase db query --linked --file scripts/staging/seed-baseline-fixt
 # under set -e in --apply mode.
 # ---------------------------------------------------------------------------
 echo "# Step 6/6 — clean_mirror preflight (CLAUDE.md §1.11A)"
-run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
-  --project-ref "$NEW_PROJECT_REF" \
-  --format text
+PREFLIGHT_RESULT="${STAGING_PREFLIGHT_RESULT:-environment_type=<from-step-6>}"
+if [[ $APPLY -eq 1 ]]; then
+  print_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
+    --project-ref "$NEW_PROJECT_REF" \
+    --format json
+  echo "executing: npx tsx scripts/ci/staging-honesty-preflight.ts --project-ref $NEW_PROJECT_REF --format json" >&2
+  PREFLIGHT_JSON="$(npx tsx scripts/ci/staging-honesty-preflight.ts \
+    --project-ref "$NEW_PROJECT_REF" \
+    --format json)"
+  printf '%s\n' "$PREFLIGHT_JSON"
+  PREFLIGHT_ENVIRONMENT="$(jq -r '.environment_type // empty' <<<"$PREFLIGHT_JSON")"
+  if [[ -z "$PREFLIGHT_ENVIRONMENT" ]]; then
+    echo "ERROR: staging preflight JSON did not include environment_type; refusing to emit admission JSON." >&2
+    exit 1
+  fi
+  PREFLIGHT_RESULT="environment_type=${PREFLIGHT_ENVIRONMENT}"
+else
+  run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
+    --project-ref "$NEW_PROJECT_REF" \
+    --format json
+fi
 echo
 echo "# Provision plan complete."
 if [[ $APPLY -eq 1 ]]; then
-  echo "# Verify the preflight printed environment_type=clean_mirror above."
-  echo "# Record NEW_PROJECT_REF, service URL, image digest, and preflight result"
-  echo "# into the rig inventory (see the 'Isolated Soak-Rig Automation Runbook'"
+  echo "# Admission JSON below is the rig inventory seed (see the 'Isolated Soak-Rig Automation Runbook'"
   echo "# Google Doc in Drive ARKOVA PI-1-S0:"
   echo "#   https://docs.google.com/document/d/1c0F_9NSy9ldfeR28xlY7s7zFFwKpS8cmTzvhI9dI__E/edit )."
 else
   echo "# (dry-run — nothing was created)"
 fi
+
+HEAD_SHA="$(resolve_head_sha)"
+BASE_SHA_VALUE="$(resolve_base_sha)"
+IMAGE_DIGEST="$(resolve_image_digest)"
+TAG_URL="$(resolve_cloud_run_url)"
+ADMISSION_SUPABASE_PROJECT_REF="${ADMISSION_SUPABASE_PROJECT_REF:-$NEW_PROJECT_REF}"
+OWNER="$(resolve_owner)"
+
+ADMISSION_JSON="$(emit_admission_json \
+  "$ADMISSION_SCHEMA_VERSION" \
+  "$NAME" \
+  "$CLOUD_RUN_SERVICE" \
+  "$PINNED_IMAGE" \
+  "$HEAD_SHA" \
+  "$BASE_SHA_VALUE" \
+  "$IMAGE_DIGEST" \
+  "$TAG_URL" \
+  "$ADMISSION_SUPABASE_PROJECT_REF" \
+  "$PREFLIGHT_RESULT" \
+  "$OWNER")"
+echo "ADMISSION_JSON=$ADMISSION_JSON"
