@@ -14,6 +14,12 @@ from .models import (
     SearchResult,
     VerificationResult,
 )
+from .proofs import (
+    REASON_CODES,
+    VerifyOutcome,
+    verify_bundle,
+    verify_merkle_inclusion,
+)
 
 __all__ = [
     "Anchor",
@@ -28,7 +34,11 @@ __all__ = [
     "ProblemDetail",
     "ProofBundle",
     "ProofBundleSignature",
+    "REASON_CODES",
     "SearchResponse",
     "SearchResult",
     "VerificationResult",
+    "VerifyOutcome",
+    "verify_bundle",
+    "verify_merkle_inclusion",
 ]

@@ -66,6 +66,7 @@ export function ConnectIssuerDialog({
   // Always clear secrets on close — never leave them in component state.
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear secret fields when dialog closes (defence-in-depth)
       setClientSecret('');
       setApiKey('');
     }
