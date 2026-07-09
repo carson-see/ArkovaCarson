@@ -10,29 +10,11 @@ const BASE = 'https://pr-1443---arkova-worker-staging-x-uc.a.run.app';
 
 const ARGS = {
   orgAdminKey: 'ak_admin',
-  endpointId: 'ep-1',
-  deliveryId: 'del-1',
   dlqId: 'dlq-1',
 };
 
-describe('webhooks-self-service-driver: request plan hits test/replay/dlq/resolve', () => {
+describe('webhooks-self-service-driver: request plan hits dlq/resolve', () => {
   const plan = planWebhookSelfServiceRequests(BASE, ARGS);
-
-  it('drives POST /webhooks/test with the ORG_ADMIN key', () => {
-    const test = plan.find((p) => p.label === 'test');
-    expect(test).toBeDefined();
-    expect(test!.method).toBe('POST');
-    expect(test!.endpoint).toBe('/api/v1/webhooks/test');
-    expect(test!.headers?.['X-API-Key']).toBe('ak_admin');
-    expect(JSON.parse(test!.body!)).toEqual({ endpoint_id: 'ep-1' });
-  });
-
-  it('drives POST /webhooks/deliveries/:id/replay', () => {
-    const replay = plan.find((p) => p.label === 'replay');
-    expect(replay).toBeDefined();
-    expect(replay!.endpoint).toBe('/api/v1/webhooks/deliveries/del-1/replay');
-    expect(replay!.method).toBe('POST');
-  });
 
   it('drives GET /webhooks/dlq (list)', () => {
     const dlqList = plan.find((p) => p.label === 'dlq-list');
@@ -61,6 +43,10 @@ describe('webhooks-self-service-driver: request plan hits test/replay/dlq/resolv
     for (const p of plan.filter((x) => x.label !== 'unauthenticated')) {
       expect(p.headers?.['X-API-Key']).toBe('ak_admin');
     }
+  });
+
+  it('keeps the per-pass request count below the effective staging limiter edge', () => {
+    expect(plan).toHaveLength(3);
   });
 });
 

@@ -1,12 +1,10 @@
 #!/usr/bin/env -S npx tsx
 /**
- * scripts/staging/targeted/webhooks-self-service-driver.ts  (PR #1443 — webhooks)
+ * scripts/staging/targeted/webhooks-self-service-driver.ts  (PR #1471 — webhooks DLQ)
  *
- * TARGETED soak driver for the ORG_ADMIN webhook self-service surface:
- *   - test         POST /api/v1/webhooks/test                  (WEBHOOK-3)
- *   - replay       POST /api/v1/webhooks/deliveries/:id/replay (SCRUM-1172)
- *   - dlq-list     GET  /api/v1/webhooks/dlq                   (#1443)
- *   - dlq-resolve  POST /api/v1/webhooks/dlq/:id/resolve       (#1443)
+ * TARGETED soak driver for PR #1471's ORG_ADMIN DLQ self-service surface:
+ *   - dlq-list     GET  /api/v1/webhooks/dlq
+ *   - dlq-resolve  POST /api/v1/webhooks/dlq/:id/resolve
  * plus an unauthenticated negative (401) proving the API-key gate.
  *
  * All authenticated calls carry an ORG_ADMIN API key (X-API-Key) — the CRUD /
@@ -17,8 +15,7 @@
  * Env:
  *   STAGING_API_BASE            REQUIRED per-PR tag URL
  *   STAGING_ORG_ADMIN_KEY       REQUIRED ORG_ADMIN API key (X-API-Key)
- *   STAGING_WEBHOOK_ENDPOINT_ID REQUIRED existing endpoint id for test/replay
- *   STAGING_WEBHOOK_DELIVERY_ID  optional delivery id for replay; a seeded/known id
+ *   STAGING_WEBHOOK_ENDPOINT_ID REQUIRED existing endpoint id owning the seeded DLQ row
  *   STAGING_FIXTURE_ORG_ID       REQUIRED org id owning the seeded DLQ row
  *   STAGING_GCP_IDENTITY         optional pre-fetched Cloud Run IAM token
  */
@@ -58,15 +55,12 @@ export interface WebhookRequestSpec {
 
 export interface WebhookPlanArgs {
   orgAdminKey: string;
-  endpointId: string;
-  deliveryId: string;
   dlqId: string;
 }
 
 interface WebhookRuntimeArgs {
   orgAdminKey: string;
   endpointId: string;
-  deliveryId: string;
   orgId: string;
 }
 
@@ -95,14 +89,7 @@ export function planWebhookSelfServiceRequests(
   });
 
   return [
-    // test → the endpoint may be inactive / unreachable localhost sink, so both
-    // a 200 (delivered) and a 400 (endpoint_inactive / invalid_url) are valid
-    // soak evidence exercising the handler under load.
-    mk('test', 'POST', '/test', [200, 400, 404], { endpoint_id: args.endpointId }),
-    // replay → 200 replayed, 404 not-found, or 409 endpoint_inactive all exercise
-    // the replay path; the driver records whichever the rig's fixture yields.
-    mk('replay', 'POST', `/deliveries/${args.deliveryId}/replay`, [200, 404, 409]),
-    // dlq list → ORG_ADMIN sees ≥1 seeded row.
+    // dlq list → ORG_ADMIN sees the fresh seeded row.
     mk('dlq-list', 'GET', '/dlq', [200]),
     // dlq resolve → must hit the deployed route and resolve the seeded row.
     // 404 is not accepted because that was #1471's false-return symptom.
@@ -126,9 +113,8 @@ async function runtimeArgs(): Promise<WebhookRuntimeArgs> {
   const orgAdminKey = requireEnv('STAGING_ORG_ADMIN_KEY', 'webhooks self-service driver');
   const endpointId = requireEnv('STAGING_WEBHOOK_ENDPOINT_ID', 'webhooks self-service driver');
   const orgId = requireEnv('STAGING_FIXTURE_ORG_ID', 'webhooks self-service driver');
-  const deliveryId = process.env.STAGING_WEBHOOK_DELIVERY_ID ?? 'TSOAK-DEL-000000000000';
 
-  return { orgAdminKey, endpointId, deliveryId, orgId };
+  return { orgAdminKey, endpointId, orgId };
 }
 
 async function seedAndPlan(ctx: DriverContext, args: WebhookRuntimeArgs): Promise<WebhookRequestSpec[]> {
@@ -139,8 +125,6 @@ async function seedAndPlan(ctx: DriverContext, args: WebhookRuntimeArgs): Promis
 
   return planWebhookSelfServiceRequests(ctx.apiBase, {
     orgAdminKey: args.orgAdminKey,
-    endpointId: args.endpointId,
-    deliveryId: args.deliveryId,
     dlqId,
   });
 }
