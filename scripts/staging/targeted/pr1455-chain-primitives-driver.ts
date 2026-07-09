@@ -125,7 +125,7 @@ async function runtimeImport<T>(specifier: string): Promise<T> {
 async function runCanonicalCalldataChecks(): Promise<CheckResult> {
   ensureWorkerImportEnv();
   const { buildAnchorCalldata, parseAnchorCalldata } =
-    await runtimeImport<CanonicalCalldataModule>('../../../services/worker/src/chain/base.js');
+    await runtimeImport<CanonicalCalldataModule>('../../../services/worker/src/chain/base-calldata.js');
 
   const fingerprint = 'a'.repeat(64);
   const metadataHash = 'b'.repeat(64);

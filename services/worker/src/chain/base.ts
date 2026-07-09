@@ -39,12 +39,10 @@ import type {
   SubmitFingerprintRequest,
   VerificationResult,
 } from './types.js';
+import { buildAnchorCalldata, parseAnchorCalldata } from './base-calldata.js';
+export { buildAnchorCalldata, parseAnchorCalldata } from './base-calldata.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────
-
-/** ARKV prefix as hex (4 bytes: 0x41524b56) */
-const ARKV_PREFIX_HEX = '41524b56';
-const _ARKV_PREFIX_BYTES = new Uint8Array([0x41, 0x52, 0x4b, 0x56]);
 
 /** Maximum retries for transient RPC failures */
 const MAX_RETRIES = 3;
@@ -57,12 +55,6 @@ const CONFIRMATION_POLL_MS = 2_000;
 
 /** Timeout for waiting for tx receipt (5 minutes) */
 const RECEIPT_TIMEOUT_MS = 300_000;
-
-/**
- * Truncated metadata hash length in bytes (appended after fingerprint in calldata).
- * Matches Bitcoin client's 8-byte default for consistency.
- */
-const METADATA_HASH_TRUNCATED_BYTES = 8;
 
 // ─── Configuration ───────────────────────────────────────────────────────
 
@@ -103,108 +95,6 @@ export function canonicalMetadataJson(metadata: Record<string, unknown>): string
 export function hashMetadata(metadata: Record<string, unknown>): string {
   const canonical = canonicalMetadataJson(metadata);
   return createHash('sha256').update(canonical).digest('hex');
-}
-
-/**
- * Build calldata for an anchor transaction.
- *
- * Format: ARKV (4 bytes) + fingerprint (32 bytes) + [metadataHash (8 bytes)]
- * Total: 36 bytes without metadata, 44 bytes with metadata
- *
- * @returns Hex-encoded calldata with 0x prefix
- */
-export function buildAnchorCalldata(
-  fingerprint: string,
-  metadataHash?: string,
-): `0x${string}` {
-  if (!/^[a-f0-9]{64}$/i.test(fingerprint)) {
-    throw new Error('Fingerprint must be a 64-character hex string (SHA-256)');
-  }
-
-  let calldataHex = ARKV_PREFIX_HEX + fingerprint.toLowerCase();
-
-  if (metadataHash) {
-    if (!/^[a-f0-9]{64}$/i.test(metadataHash)) {
-      throw new Error('Metadata hash must be a 64-character hex string (SHA-256)');
-    }
-    // Truncate to METADATA_HASH_TRUNCATED_BYTES (8 bytes = 16 hex chars)
-    calldataHex += metadataHash.toLowerCase().slice(0, METADATA_HASH_TRUNCATED_BYTES * 2);
-  }
-
-  return `0x${calldataHex}`;
-}
-
-/**
- * SCRUM-2591: Length of the ARKV prefix in hex chars (4 bytes = 8 hex chars). */
-const ARKV_PREFIX_HEX_LEN = ARKV_PREFIX_HEX.length; // 8
-/** Fingerprint length in hex chars (32 bytes). */
-const FINGERPRINT_HEX_LEN = 64;
-/** Truncated metadata hash length in hex chars (8 bytes). */
-const METADATA_HASH_HEX_LEN = METADATA_HASH_TRUNCATED_BYTES * 2; // 16
-
-/** Canonical total calldata length (hex chars) with NO metadata: ARKV(8) + fp(64) = 72. */
-const CANONICAL_LEN_NO_META = ARKV_PREFIX_HEX_LEN + FINGERPRINT_HEX_LEN; // 72
-/** Canonical total calldata length (hex chars) WITH metadata: 72 + 16 = 88. */
-const CANONICAL_LEN_WITH_META = CANONICAL_LEN_NO_META + METADATA_HASH_HEX_LEN; // 88
-
-/**
- * SCRUM-2591 canonical-decode CONTRACT: parse anchor calldata and return the
- * committed fingerprint (+ optional truncated metadata hash), or null if the
- * calldata is not a CANONICAL Arkova anchor.
- *
- * A canonical anchor is EXACTLY `ARKV (4B) + fingerprint (32B)` (36 bytes) or
- * `ARKV (4B) + fingerprint (32B) + metadataHash (8B)` (44 bytes). This is a
- * structural decode at the canonical byte offset — NOT a loose substring scan.
- * Any of the following decode to null:
- *   - a prefix that begins at a non-zero offset (junk byte(s) before ARKV);
- *   - trailing bytes after the committed 36/44-byte payload (so a buffer that
- *     merely CONTAINS `ARKV<fingerprint>` is rejected);
- *   - a truncated / partial metadata region (37..43 bytes);
- *   - an odd-length or non-hex string.
- *
- * PARITY NOTE (corrected): the EVM and Bitcoin decoders share the offset-0 /
- * no-substring-scan / whole-structure rejection class, so both reject the same
- * leading-junk, wrong-prefix, and split-push inputs. They are NOT byte-for-byte
- * identical, however: signet.ts:extractAnchorFingerprint checks
- * `payload.length >= 36` and therefore TOLERATES arbitrary trailing bytes up to
- * the 80-byte OP_RETURN limit, whereas this EVM decoder requires an EXACT 36-
- * or 44-byte length and therefore REJECTS all trailing bytes. That asymmetry is
- * pinned empirically in extract-anchor-fingerprint.adversarial.test.ts (the
- * "signet vs EVM trailing-byte DIVERGENCE" block). Do not restate this as an
- * "identical structural contract".
- */
-export function parseAnchorCalldata(calldata: string): {
-  fingerprint: string;
-  metadataHashTruncated?: string;
-} | null {
-  // Strip 0x prefix
-  const hex = (calldata.startsWith('0x') ? calldata.slice(2) : calldata).toLowerCase();
-
-  // Must be whole bytes (even number of hex chars) and strictly hex — a
-  // substring/loose parser would silently accept malformed input.
-  if (hex.length % 2 !== 0) return null;
-  if (!/^[0-9a-f]*$/.test(hex)) return null;
-
-  // Total length must be EXACTLY one of the two canonical lengths — this rejects
-  // both trailing junk after the payload and any truncated/partial metadata.
-  if (hex.length !== CANONICAL_LEN_NO_META && hex.length !== CANONICAL_LEN_WITH_META) {
-    return null;
-  }
-
-  // Prefix must match at offset 0 (NOT anywhere in the buffer).
-  if (hex.slice(0, ARKV_PREFIX_HEX_LEN) !== ARKV_PREFIX_HEX) {
-    return null;
-  }
-
-  const fingerprint = hex.slice(ARKV_PREFIX_HEX_LEN, ARKV_PREFIX_HEX_LEN + FINGERPRINT_HEX_LEN);
-
-  // Optional metadata hash — present iff the calldata is the 44-byte canonical form.
-  const metadataHashTruncated =
-    hex.length === CANONICAL_LEN_WITH_META
-      ? hex.slice(ARKV_PREFIX_HEX_LEN + FINGERPRINT_HEX_LEN)
-      : undefined;
-
-  return { fingerprint, metadataHashTruncated };
 }
 
 /**
