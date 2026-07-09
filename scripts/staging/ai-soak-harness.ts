@@ -28,6 +28,7 @@ export const AI_SOAK_ENDPOINTS = ['/api/v1/ai/extract', '/api/v1/ai/template'] a
 
 const SAFE_PATH = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin';
 const IAM_TTL_MS = 30 * 60_000;
+const SUPABASE_JWT_REFRESH_SKEW_MS = 5 * 60_000;
 const DEFAULT_DURATION_MINUTES = 15;
 const DEFAULT_RATE_PER_MINUTE = 6;
 const DEFAULT_CONCURRENCY = 2;
@@ -119,7 +120,8 @@ export interface AiSoakEvidence {
 }
 
 interface RuntimeAuth {
-  supabaseJwt: string;
+  supabaseJwt?: string;
+  supabaseJwtExpiresAt: number;
   cloudRunIdentityToken?: string;
   cloudRunTokenFetchedAt: number;
 }
@@ -272,7 +274,7 @@ export function buildRequestHeaders(params: {
   return headers;
 }
 
-async function loginForSupabaseJwt(auth: PasswordGrantAuth): Promise<string> {
+async function loginForSupabaseJwt(auth: PasswordGrantAuth): Promise<{ token: string; expiresAt: number }> {
   const base = auth.supabaseUrl.replace(/\/+$/, '');
   const response = await fetch(`${base}/auth/v1/token?grant_type=password`, {
     method: 'POST',
@@ -290,17 +292,33 @@ async function loginForSupabaseJwt(auth: PasswordGrantAuth): Promise<string> {
     throw new Error(`Supabase password grant failed with HTTP ${response.status}.`);
   }
 
-  const json = await response.json() as { access_token?: unknown };
+  const json = await response.json() as { access_token?: unknown; expires_in?: unknown };
   if (typeof json.access_token !== 'string') {
     throw new Error('Supabase password grant did not return an access_token.');
   }
 
-  return requireJwtShape('Supabase password grant access_token', json.access_token);
+  const expiresInSeconds = typeof json.expires_in === 'number' && Number.isFinite(json.expires_in)
+    ? json.expires_in
+    : 3600;
+  return {
+    token: requireJwtShape('Supabase password grant access_token', json.access_token),
+    expiresAt: Date.now() + Math.max(60, expiresInSeconds) * 1000,
+  };
 }
 
-async function resolveSupabaseJwt(auth: AiSoakAuthConfig): Promise<string> {
-  if (auth.kind === 'direct-jwt') return auth.token;
-  return loginForSupabaseJwt(auth);
+async function ensureSupabaseJwt(config: AiSoakConfig, runtimeAuth: RuntimeAuth): Promise<string> {
+  if (config.auth.kind === 'direct-jwt') return config.auth.token;
+  if (
+    runtimeAuth.supabaseJwt &&
+    Date.now() < runtimeAuth.supabaseJwtExpiresAt - SUPABASE_JWT_REFRESH_SKEW_MS
+  ) {
+    return runtimeAuth.supabaseJwt;
+  }
+
+  const login = await loginForSupabaseJwt(config.auth);
+  runtimeAuth.supabaseJwt = login.token;
+  runtimeAuth.supabaseJwtExpiresAt = login.expiresAt;
+  return runtimeAuth.supabaseJwt;
 }
 
 function resolveGcloudPath(env: Env): string {
@@ -394,11 +412,12 @@ async function postJson(params: {
   let failure: string | undefined;
 
   try {
+    const supabaseJwt = await ensureSupabaseJwt(params.config, params.runtimeAuth);
     const cloudRunIdentityToken = await ensureCloudRunIdentityToken(params.config, params.runtimeAuth, params.env);
     const response = await fetch(`${params.config.apiBase}${params.endpoint}`, {
       method: 'POST',
       headers: buildRequestHeaders({
-        supabaseJwt: params.runtimeAuth.supabaseJwt,
+        supabaseJwt,
         cloudRunIdentityToken,
       }),
       body: JSON.stringify(params.body),
@@ -547,7 +566,7 @@ export async function runAiSoak(
   env: Env = process.env,
 ): Promise<AiSoakEvidence> {
   const runtimeAuth: RuntimeAuth = {
-    supabaseJwt: await resolveSupabaseJwt(config.auth),
+    supabaseJwtExpiresAt: 0,
     cloudRunTokenFetchedAt: 0,
   };
   const stats: RunStats = { startedAt: Date.now(), endedAt: Date.now(), outcomes: [] };

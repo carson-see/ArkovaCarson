@@ -33,6 +33,23 @@ describe('ai-soak-harness config', () => {
     });
   });
 
+  it('accepts password-grant credentials for long soaks that need JWT refresh', () => {
+    expect(
+      resolveAiSoakAuth({
+        AI_SOAK_SUPABASE_URL: 'https://example.supabase.co',
+        AI_SOAK_SUPABASE_ANON_KEY: 'anon-key',
+        AI_SOAK_USER_EMAIL: 'ai-soak@example.test',
+        AI_SOAK_USER_PASSWORD: 'correct-horse-battery-staple',
+      }),
+    ).toEqual({
+      kind: 'supabase-password',
+      supabaseUrl: 'https://example.supabase.co',
+      anonKey: 'anon-key',
+      email: 'ai-soak@example.test',
+      password: 'correct-horse-battery-staple',
+    });
+  });
+
   it('rejects a direct auth value that is not JWT shaped', () => {
     expect(() => resolveAiSoakAuth({ AI_SOAK_JWT: 'not-a-jwt' })).toThrow(/JWT-looking token/);
   });
