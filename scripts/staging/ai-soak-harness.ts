@@ -1,667 +1,259 @@
 #!/usr/bin/env -S npx tsx
 /**
- * scripts/staging/ai-soak-harness.ts - focused live AI soak harness.
+ * scripts/staging/ai-soak-harness.ts — drive SUSTAINED load against the LIVE
+ * worker AI extraction / template-review / tagging endpoints during an AI T3
+ * soak. This is the AI-path load generator the generic `load-harness.ts` lacks
+ * (its modes are anchor/webhooks/cron/reads — none hit `/api/v1/ai/*`).
  *
- * This intentionally avoids generic health checks. Each iteration exercises
- * the changed AI flow:
- *   1. POST /api/v1/ai/extract with PII-stripped synthetic metadata text.
- *   2. POST /api/v1/ai/template with the extracted fields from step 1.
+ * Targets (all metadata-only per Constitution §1.6 / §1.6A):
+ *   POST /api/v1/ai/extract   PII-stripped golden text → structured fields
+ *   POST /api/v1/ai/template  extracted fields → reconstructed template (AI-03)
+ *   POST /api/v1/ai/tags      extracted fields → tags/classification
  *
- * Auth:
- *   - Authorization carries the Supabase user JWT required by app auth.
- *   - X-Serverless-Authorization carries the Cloud Run IAM identity token.
+ * It uses the vendored AI-01 golden set as a representative, PII-free corpus so
+ * the load exercises real model inference on real document shapes.
  *
- * Evidence never records JWTs, identity tokens, request text, or response field
- * values. It only records endpoint/status/latency/provider summaries.
+ * -- Auth + rate limits (see ai-eval/ai-client.ts header for the full note) ---
+ *   /api/v1/ai/* require a Supabase user JWT (Authorization: Bearer <jwt>).
+ *   aiRateLimiter = 30 req/min/user; anon per-IP = 100 req/min. To sustain
+ *   >= 5k req/hr the harness shards across N JWTs (STAGING_AI_JWTS) and paces
+ *   each user under 30/min. planRate() fails loud if the pool is undersized.
+ *
+ * Env:
+ *   STAGING_API_BASE   REQUIRED tag-routed rig URL (resolveStagingApiBase refuses
+ *                      shared/main staging to protect parallel soaks).
+ *   STAGING_AI_JWTS    REQUIRED comma-list of `label:jwt` (or bare jwt) Supabase
+ *                      user JWTs. >= 4 distinct users recommended for 5k/hr.
+ *
+ * Usage:
+ *   # 15-min dry-run smoke with an evidence file
+ *   STAGING_API_BASE=... STAGING_AI_JWTS=... \
+ *     npx tsx scripts/staging/ai-soak-harness.ts --duration 15 --rate 5000 --evidence-out docs/staging/ai-dryrun.json
+ *
+ *   # 48-hour T3 AI soak at 5k req/hr, extract+template+tags
+ *   STAGING_API_BASE=... STAGING_AI_JWTS=... \
+ *     npx tsx scripts/staging/ai-soak-harness.ts --duration 2880 --rate 5000 \
+ *       --endpoints extract,template,tags --evidence-out docs/staging/ai-soak-pr1413.json
  */
 
-import { execFileSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { resolveStagingApiBase } from './load-harness-env';
+import { resolveStagingApiBase } from './load-harness-env.js';
+import {
+  callAiEndpoint,
+  parseIdentities,
+  randomForwardedFor,
+  type AiEndpoint,
+  type ExtractRequestBody,
+  type FetchLike,
+  type WorkerIdentity,
+} from './ai-eval/ai-client.js';
+import { resolveEvidenceOutputPath } from './ai-eval/evidence-path.js';
+import { planRate, pickIdentity, intervalMsForRatePerHour } from './ai-eval/rate.js';
+import { allGoldenEntries } from './ai-eval/golden.js';
+import {
+  newAiStats,
+  recordAiOutcome,
+  summarizeAiRun,
+  buildTemplatePayload,
+  buildTagsPayload,
+  selectEndpointForSequence,
+} from './ai-eval/harness-core.js';
+import { fingerprintForEntry } from './ai-eval/eval-core.js';
+import {
+  buildVariantCorpus,
+  parseDocVariants,
+  isLoadOnlyVariant,
+  type CorpusItem,
+} from './ai-eval/corpus.js';
 
-export const AI_SOAK_ENDPOINTS = ['/api/v1/ai/extract', '/api/v1/ai/template'] as const;
+const { values: args } = parseArgs({
+  options: {
+    duration: { type: 'string', default: '15' },
+    rate: { type: 'string', default: '5000' },
+    endpoints: { type: 'string', default: 'extract,template,tags' },
+    'doc-variants': { type: 'string' },
+    'timeout-ms': { type: 'string', default: '10000' },
+    'no-rotate-ip': { type: 'boolean', default: false },
+    'evidence-out': { type: 'string' },
+    'dry-run': { type: 'boolean', default: false },
+    'allow-undersized-pool': { type: 'boolean', default: false },
+  },
+});
 
-const SAFE_PATH = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin';
-const IAM_TTL_MS = 30 * 60_000;
-const SUPABASE_JWT_REFRESH_SKEW_MS = 5 * 60_000;
-const DEFAULT_DURATION_MINUTES = 15;
-const DEFAULT_RATE_PER_MINUTE = 6;
-const DEFAULT_CONCURRENCY = 2;
-
-type Env = Record<string, string | undefined>;
-
-interface DirectJwtAuth {
-  kind: 'direct-jwt';
-  source: string;
-  token: string;
-}
-
-interface PasswordGrantAuth {
-  kind: 'supabase-password';
-  supabaseUrl: string;
-  anonKey: string;
-  email: string;
-  password: string;
-}
-
-export type AiSoakAuthConfig = DirectJwtAuth | PasswordGrantAuth;
-
-export interface AiSoakConfig {
-  apiBase: string;
-  durationMinutes: number;
-  ratePerMinute: number;
-  concurrency: number;
-  evidenceOut?: string;
-  dryRun: boolean;
-  requireLiveProvider: boolean;
-  maxIterations?: number;
-  skipCloudRunIam: boolean;
-  auth: AiSoakAuthConfig;
-}
-
-export interface ExtractionFixture {
-  strippedText: string;
-  credentialType: string;
-  fingerprint: string;
-  issuerHint: string;
-}
-
-export interface EndpointOutcome {
-  endpoint: string;
-  status: number;
-  latencyMs: number;
-  ok: boolean;
-  provider?: string;
-  failure?: string;
-}
-
-export interface RunStats {
-  startedAt: number;
-  endedAt: number;
-  outcomes: EndpointOutcome[];
-}
-
-interface EvidenceEndpointSummary {
-  ok: number;
-  fail: number;
-  latencyMs: {
-    p50: number;
-    p95: number;
-    p99: number;
-  };
-  byStatus: Record<string, number>;
-}
-
-export interface AiSoakEvidence {
-  startedAt: string;
-  endedAt: string;
-  target: {
-    apiBase: string;
-    endpoints: typeof AI_SOAK_ENDPOINTS;
-  };
-  auth: {
-    jwtSource: string;
-    cloudRunIam: 'x-serverless-authorization' | 'skipped';
-  };
-  requireLiveProvider: boolean;
-  totals: {
-    ok: number;
-    fail: number;
-    requests: number;
-  };
-  byEndpoint: Record<string, EvidenceEndpointSummary>;
-  providers: Record<string, number>;
-  failures: Record<string, number>;
-}
-
-interface RuntimeAuth {
-  supabaseJwt?: string;
-  supabaseJwtExpiresAt: number;
-  cloudRunIdentityToken?: string;
-  cloudRunTokenFetchedAt: number;
-}
-
-export function parseBooleanEnv(value: string | undefined): boolean {
-  if (!value) return false;
-  return ['1', 'true', 'yes', 'y'].includes(value.trim().toLowerCase());
-}
-
-function parsePositiveNumber(label: string, value: string | undefined, fallback: number): number {
-  const parsed = value === undefined ? fallback : Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${label} must be a positive number.`);
+function parsePositiveInt(raw: string | undefined, fallback: number, name: string): number {
+  const n = Number.parseInt(raw ?? String(fallback), 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.error(`::error::--${name}=${raw} must be a positive integer.`);
+    process.exit(2);
   }
-  return parsed;
+  return n;
 }
 
-function parsePositiveInteger(label: string, value: string | undefined, fallback: number): number {
-  const parsed = parsePositiveNumber(label, value, fallback);
-  if (!Number.isInteger(parsed)) {
-    throw new Error(`${label} must be an integer.`);
+function parseEndpoints(raw: string): AiEndpoint[] {
+  const known: AiEndpoint[] = ['extract', 'template', 'tags'];
+  const requested = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  const selected = requested.filter((r): r is AiEndpoint => (known as string[]).includes(r));
+  if (selected.length === 0) {
+    console.error(`::error::--endpoints must be a comma-list of extract|template|tags; got \`${raw}\``);
+    process.exit(2);
   }
-  return parsed;
+  return known.filter((k) => selected.includes(k));
 }
 
-function findFirstEnv(env: Env, keys: string[]): { key: string; value: string } | undefined {
-  for (const key of keys) {
-    const value = env[key]?.trim();
-    if (value) return { key, value };
-  }
-  return undefined;
-}
-
-function looksLikeJwt(value: string): boolean {
-  return value.split('.').length === 3;
-}
-
-function requireJwtShape(source: string, token: string): string {
-  if (!looksLikeJwt(token)) {
-    throw new Error(`${source} must contain a JWT-looking token with three dot-separated segments.`);
-  }
-  return token;
-}
-
-export function resolveAiSoakAuth(env: Env): AiSoakAuthConfig {
-  const directJwt = findFirstEnv(env, ['AI_SOAK_JWT', 'STAGING_SUPABASE_JWT', 'STAGING_AUTH_JWT']);
-  if (directJwt) {
-    return {
-      kind: 'direct-jwt',
-      source: directJwt.key,
-      token: requireJwtShape(directJwt.key, directJwt.value),
-    };
-  }
-
-  const supabaseUrl = (env.AI_SOAK_SUPABASE_URL ?? env.STAGING_SUPABASE_URL)?.trim();
-  const anonKey = (env.AI_SOAK_SUPABASE_ANON_KEY ?? env.STAGING_SUPABASE_ANON_KEY)?.trim();
-  const email = env.AI_SOAK_USER_EMAIL?.trim();
-  const password = env.AI_SOAK_USER_PASSWORD?.trim();
-
-  if (supabaseUrl && anonKey && email && password) {
-    return {
-      kind: 'supabase-password',
-      supabaseUrl,
-      anonKey,
-      email,
-      password,
-    };
-  }
-
-  throw new Error(
-    'AI soak requires a live Supabase user JWT via AI_SOAK_JWT, STAGING_SUPABASE_JWT, or STAGING_AUTH_JWT; ' +
-      'or a password-grant login via AI_SOAK_SUPABASE_URL/STAGING_SUPABASE_URL, ' +
-      'AI_SOAK_SUPABASE_ANON_KEY/STAGING_SUPABASE_ANON_KEY, AI_SOAK_USER_EMAIL, and AI_SOAK_USER_PASSWORD.',
-  );
-}
-
-export function buildConfigFromArgv(argv: string[], env: Env = process.env): AiSoakConfig {
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      duration: { type: 'string', default: String(DEFAULT_DURATION_MINUTES) },
-      rate: { type: 'string', default: String(DEFAULT_RATE_PER_MINUTE) },
-      concurrency: { type: 'string', default: String(DEFAULT_CONCURRENCY) },
-      'max-iterations': { type: 'string' },
-      'evidence-out': { type: 'string' },
-      'dry-run': { type: 'boolean', default: false },
-      'allow-mock-provider': { type: 'boolean', default: false },
-      'skip-cloud-run-iam': { type: 'boolean', default: false },
-    },
-  });
-
-  return {
-    apiBase: resolveStagingApiBase(env),
-    durationMinutes: parsePositiveNumber('duration', values.duration, DEFAULT_DURATION_MINUTES),
-    ratePerMinute: parsePositiveNumber('rate', values.rate, DEFAULT_RATE_PER_MINUTE),
-    concurrency: parsePositiveInteger('concurrency', values.concurrency, DEFAULT_CONCURRENCY),
-    maxIterations: values['max-iterations'] === undefined
-      ? undefined
-      : parsePositiveInteger('max-iterations', values['max-iterations'], 1),
-    evidenceOut: values['evidence-out'],
-    dryRun: values['dry-run'] === true,
-    requireLiveProvider: values['allow-mock-provider'] !== true,
-    skipCloudRunIam: values['skip-cloud-run-iam'] === true || parseBooleanEnv(env.AI_SOAK_SKIP_IAM),
-    auth: resolveAiSoakAuth(env),
-  };
-}
-
-export function buildExtractionFixture(iteration: number, nonce: string = randomUUID()): ExtractionFixture {
-  const strippedText = [
-    'Great Lakes Compliance Institute',
-    'Continuing Professional Education Certificate',
-    'Recipient: [NAME_REDACTED]',
-    `Course ID: AI-SOAK-${iteration}`,
-    'Issued: 2026-05-12',
-    'Credits: 4.0 Ethics',
-    'Jurisdiction: Michigan',
-    'License identifier: [IDENTIFIER_REDACTED]',
-    'This synthetic fixture contains extracted-style metadata only.',
-  ].join('\n');
-
-  return {
-    strippedText,
-    credentialType: 'CPE',
-    issuerHint: 'Great Lakes Compliance Institute',
-    fingerprint: createHash('sha256').update(`${nonce}:${strippedText}`).digest('hex'),
-  };
-}
-
-export function isLiveExtractionProvider(provider: string | undefined, degraded: boolean | undefined): boolean {
-  if (!provider || degraded === true) return false;
-  const normalized = provider.toLowerCase();
-  return !normalized.includes('mock') && !normalized.includes('fallback') && normalized !== 'cache';
-}
-
-export function buildRequestHeaders(params: {
-  supabaseJwt: string;
-  cloudRunIdentityToken?: string;
-}): Record<string, string> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${params.supabaseJwt}`,
-    'Content-Type': 'application/json',
-    'User-Agent': 'arkova-ai-soak-harness/1.0',
-    'X-Arkova-Soak': 'ai-template-review',
-  };
-
-  if (params.cloudRunIdentityToken) {
-    headers['X-Serverless-Authorization'] = `Bearer ${params.cloudRunIdentityToken}`;
-  }
-
-  return headers;
-}
-
-async function loginForSupabaseJwt(auth: PasswordGrantAuth): Promise<{ token: string; expiresAt: number }> {
-  const base = auth.supabaseUrl.replace(/\/+$/, '');
-  const response = await fetch(`${base}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: {
-      apikey: auth.anonKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      email: auth.email,
-      password: auth.password,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Supabase password grant failed with HTTP ${response.status}.`);
-  }
-
-  const json = await response.json() as { access_token?: unknown; expires_in?: unknown };
-  if (typeof json.access_token !== 'string') {
-    throw new Error('Supabase password grant did not return an access_token.');
-  }
-
-  const expiresInSeconds = typeof json.expires_in === 'number' && Number.isFinite(json.expires_in)
-    ? json.expires_in
-    : 3600;
-  return {
-    token: requireJwtShape('Supabase password grant access_token', json.access_token),
-    expiresAt: Date.now() + Math.max(60, expiresInSeconds) * 1000,
-  };
-}
-
-async function ensureSupabaseJwt(config: AiSoakConfig, runtimeAuth: RuntimeAuth): Promise<string> {
-  if (config.auth.kind === 'direct-jwt') return config.auth.token;
-  if (
-    runtimeAuth.supabaseJwt &&
-    Date.now() < runtimeAuth.supabaseJwtExpiresAt - SUPABASE_JWT_REFRESH_SKEW_MS
-  ) {
-    return runtimeAuth.supabaseJwt;
-  }
-
-  const login = await loginForSupabaseJwt(config.auth);
-  runtimeAuth.supabaseJwt = login.token;
-  runtimeAuth.supabaseJwtExpiresAt = login.expiresAt;
-  return runtimeAuth.supabaseJwt;
-}
-
-function resolveGcloudPath(env: Env): string {
-  const override = env.GCLOUD_PATH?.trim();
-  if (override) return override;
-  try {
-    const out = execFileSync('/usr/bin/which', ['gcloud'], {
-      encoding: 'utf8',
-      env: { ...process.env, PATH: SAFE_PATH },
-    });
-    return out.trim();
-  } catch {
-    return '/usr/local/bin/gcloud';
-  }
-}
-
-export function resolveCloudRunIamAudience(apiBase: string, env: Env = process.env): string {
-  const override = (env.AI_SOAK_CLOUD_RUN_AUDIENCE ?? env.STAGING_GCP_AUDIENCE)?.trim();
-  if (override) return override;
-
-  const url = new URL(apiBase);
-  const separator = '---';
-  const separatorIndex = url.hostname.indexOf(separator);
-  if (separatorIndex > 0) {
-    url.hostname = url.hostname.slice(separatorIndex + separator.length);
-    url.pathname = '';
-    url.search = '';
-    url.hash = '';
-    return url.toString().replace(/\/$/, '');
-  }
-
-  return apiBase;
-}
-
-function fetchCloudRunIdentityToken(apiBase: string, env: Env): string {
-  const envToken = env.STAGING_GCP_IDENTITY?.trim();
-  if (envToken) return envToken;
-
-  const audience = resolveCloudRunIamAudience(apiBase, env);
-  const gcloud = resolveGcloudPath(env);
-  try {
-    const out = execFileSync(gcloud, ['auth', 'print-identity-token', `--audiences=${audience}`], {
-      encoding: 'utf8',
-      env: { ...process.env, PATH: SAFE_PATH },
-    });
-    return out.trim();
-  } catch (err) {
-    throw new Error(`Could not fetch Cloud Run IAM token via ${gcloud}: ${err instanceof Error ? err.message : err}`);
-  }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-async function readJson(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text) return undefined;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-async function ensureCloudRunIdentityToken(
-  config: AiSoakConfig,
-  runtimeAuth: RuntimeAuth,
-  env: Env,
-): Promise<string | undefined> {
-  if (config.skipCloudRunIam) return undefined;
-  if (
-    runtimeAuth.cloudRunIdentityToken &&
-    Date.now() - runtimeAuth.cloudRunTokenFetchedAt < IAM_TTL_MS
-  ) {
-    return runtimeAuth.cloudRunIdentityToken;
-  }
-
-  runtimeAuth.cloudRunIdentityToken = fetchCloudRunIdentityToken(config.apiBase, env);
-  runtimeAuth.cloudRunTokenFetchedAt = Date.now();
-  return runtimeAuth.cloudRunIdentityToken;
-}
-
-function extractTemplateFields(json: unknown): Record<string, unknown> | undefined {
-  if (!isPlainObject(json)) return undefined;
-  return isPlainObject(json.fields) ? json.fields : undefined;
-}
-
-function isTemplateResponse(json: unknown): boolean {
-  if (!isPlainObject(json)) return false;
-  return (
-    typeof json.templateType === 'string' &&
-    typeof json.documentTitle === 'string' &&
-    Array.isArray(json.sections) &&
-    Array.isArray(json.tags)
-  );
-}
-
-async function postJson(params: {
-  config: AiSoakConfig;
-  runtimeAuth: RuntimeAuth;
-  env: Env;
-  endpoint: typeof AI_SOAK_ENDPOINTS[number];
-  body: unknown;
-}): Promise<{ outcome: EndpointOutcome; json: unknown }> {
-  const startedAt = Date.now();
-  let status = 0;
-  let json: unknown;
-  let ok = false;
-  let failure: string | undefined;
-
-  try {
-    const supabaseJwt = await ensureSupabaseJwt(params.config, params.runtimeAuth);
-    const cloudRunIdentityToken = await ensureCloudRunIdentityToken(params.config, params.runtimeAuth, params.env);
-    const response = await fetch(`${params.config.apiBase}${params.endpoint}`, {
-      method: 'POST',
-      headers: buildRequestHeaders({
-        supabaseJwt,
-        cloudRunIdentityToken,
-      }),
-      body: JSON.stringify(params.body),
-    });
-
-    status = response.status;
-    json = await readJson(response);
-    ok = response.ok;
-    if (!ok) failure = `http_${status}`;
-  } catch (err) {
-    failure = err instanceof Error ? err.name : 'request_error';
-  }
-
-  return {
-    json,
-    outcome: {
-      endpoint: params.endpoint,
-      status,
-      latencyMs: Date.now() - startedAt,
-      ok,
-      failure,
-    },
-  };
-}
-
-async function runIteration(params: {
-  config: AiSoakConfig;
-  runtimeAuth: RuntimeAuth;
-  env: Env;
-  iteration: number;
-}): Promise<EndpointOutcome[]> {
-  const fixture = buildExtractionFixture(params.iteration);
-  const extract = await postJson({
-    config: params.config,
-    runtimeAuth: params.runtimeAuth,
-    env: params.env,
-    endpoint: '/api/v1/ai/extract',
-    body: fixture,
-  });
-
-  if (isPlainObject(extract.json)) {
-    const provider = typeof extract.json.provider === 'string' ? extract.json.provider : undefined;
-    extract.outcome.provider = provider;
-    if (
-      extract.outcome.ok &&
-      params.config.requireLiveProvider &&
-      !isLiveExtractionProvider(provider, extract.json.degraded === true)
-    ) {
-      extract.outcome.ok = false;
-      extract.outcome.failure = 'non_live_provider';
+/**
+ * Extract carries the VARIANT text (pdf/scan/docx/large/oversized/malformed) so
+ * the load exercises real document diversity + size limits. Template/tags take
+ * metadata FIELDS only (no text/bytes) — variant doesn't apply, so they always
+ * use the entry's clean ground-truth metadata.
+ */
+function payloadFor(endpoint: AiEndpoint, item: CorpusItem): unknown {
+  switch (endpoint) {
+    case 'extract': {
+      const payload: ExtractRequestBody = {
+        strippedText: item.strippedText,
+        credentialType: item.entry.credentialTypeHint,
+        fingerprint: fingerprintForEntry(`${item.entry.id}:${item.variant}`),
+      };
+      if (item.entry.issuerHint) payload.issuerHint = item.entry.issuerHint;
+      return payload;
     }
+    case 'template':
+      return buildTemplatePayload(item.entry);
+    case 'tags':
+      return buildTagsPayload(item.entry);
   }
+}
 
-  const fields = extractTemplateFields(extract.json);
-  const confidence = isPlainObject(extract.json) && typeof extract.json.confidence === 'number'
-    ? extract.json.confidence
-    : undefined;
+function boundedSleep(ms: number, endAt: number): Promise<void> {
+  const remaining = endAt - Date.now();
+  if (remaining <= 0) return Promise.resolve();
+  return new Promise((r) => setTimeout(r, Math.min(ms, remaining)));
+}
 
-  if (!extract.outcome.ok || !fields || confidence === undefined) {
-    return [extract.outcome];
+const realFetch: FetchLike = fetch as unknown as FetchLike;
+
+function trackPendingRequest(pending: Set<Promise<void>>, request: Promise<void>): void {
+  pending.add(request);
+  void request.finally(() => pending.delete(request));
+}
+
+function recordHarnessFailure(stats: ReturnType<typeof newAiStats>, endpoint: AiEndpoint, err: unknown, variant: string): void {
+  recordAiOutcome(stats, {
+    endpoint,
+    status: 0,
+    ok: false,
+    latencyMs: 0,
+    transportError: err instanceof Error ? err.message : String(err),
+  }, variant);
+}
+
+async function main(): Promise<void> {
+  const durationMin = parsePositiveInt(args.duration, 15, 'duration');
+  const ratePerHour = parsePositiveInt(args.rate, 5000, 'rate');
+  const endpoints = parseEndpoints(args.endpoints ?? 'extract,template,tags');
+  const variants = parseDocVariants(args['doc-variants']);
+  const timeoutMs = parsePositiveInt(args['timeout-ms'], 10_000, 'timeout-ms');
+  const rotateIp = !args['no-rotate-ip'];
+  const evidencePath = args['evidence-out'] ? resolveEvidenceOutputPath(args['evidence-out']) : undefined;
+
+  const apiBase = resolveStagingApiBase(process.env);
+  const identities: WorkerIdentity[] = parseIdentities(process.env.STAGING_AI_JWTS);
+  const corpus = buildVariantCorpus(allGoldenEntries(), variants);
+
+  const plan = planRate(ratePerHour, identities);
+  const mode = `ai-${endpoints.join('+')}`;
+
+  console.log(`> ai-soak-harness ${mode} at ${new Date().toISOString()}`);
+  console.log(`  api_base=${apiBase}`);
+  console.log(`  duration=${durationMin}min  target=${ratePerHour} req/hr  interval=${plan.intervalMs}ms  client_timeout=${timeoutMs}ms  rotate_ip=${rotateIp}`);
+  console.log(`  identities=${identities.length} (min ${plan.minUsers})  per_user~${plan.perUserPerMin.toFixed(1)}/min (limit 30)`);
+  console.log(`  corpus=${corpus.length} items (${allGoldenEntries().length} fixtures x ${variants.length} variants: ${variants.join(',')})`);
+  console.log(`  endpoints=${endpoints.join(',')}`);
+  if (plan.warning) console.warn(`  WARN ${plan.warning}`);
+
+  if (identities.length === 0) {
+    console.error('::error::STAGING_AI_JWTS is required — /api/v1/ai/* rejects unauthenticated calls (401).');
+    process.exit(1);
   }
-
-  const template = await postJson({
-    config: params.config,
-    runtimeAuth: params.runtimeAuth,
-    env: params.env,
-    endpoint: '/api/v1/ai/template',
-    body: { fields, confidence },
-  });
-
-  if (template.outcome.ok && !isTemplateResponse(template.json)) {
-    template.outcome.ok = false;
-    template.outcome.failure = 'malformed_template_response';
+  if (!plan.sufficient && !args['allow-undersized-pool']) {
+    console.error(`::error::${plan.warning}`);
+    console.error('::error::Aborting — an undersized JWT pool would self-inflict 429s that masquerade as ' +
+      'Gemini reliability failures in the soak evidence. Add JWTs, lower --rate, or pass ' +
+      '--allow-undersized-pool to force a run (not merge-grade for reliability evidence).');
+    process.exit(1);
   }
-
-  return [extract.outcome, template.outcome];
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function percentile(values: number[], p: number): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((p / 100) * sorted.length)));
-  return sorted[index];
-}
-
-export function summarizeRun(stats: RunStats, config: AiSoakConfig): AiSoakEvidence {
-  const byEndpoint: Record<string, EvidenceEndpointSummary> = {};
-  const providers: Record<string, number> = {};
-  const failures: Record<string, number> = {};
-
-  for (const endpoint of AI_SOAK_ENDPOINTS) {
-    const outcomes = stats.outcomes.filter((outcome) => outcome.endpoint === endpoint);
-    const latencies = outcomes.map((outcome) => outcome.latencyMs);
-    byEndpoint[endpoint] = {
-      ok: outcomes.filter((outcome) => outcome.ok).length,
-      fail: outcomes.filter((outcome) => !outcome.ok).length,
-      latencyMs: {
-        p50: percentile(latencies, 50),
-        p95: percentile(latencies, 95),
-        p99: percentile(latencies, 99),
-      },
-      byStatus: outcomes.reduce<Record<string, number>>((acc, outcome) => {
-        acc[String(outcome.status)] = (acc[String(outcome.status)] ?? 0) + 1;
-        return acc;
-      }, {}),
-    };
-  }
-
-  for (const outcome of stats.outcomes) {
-    if (outcome.provider) providers[outcome.provider] = (providers[outcome.provider] ?? 0) + 1;
-    if (outcome.failure) failures[outcome.failure] = (failures[outcome.failure] ?? 0) + 1;
-  }
-
-  const ok = stats.outcomes.filter((outcome) => outcome.ok).length;
-  const fail = stats.outcomes.length - ok;
-
-  return {
-    startedAt: new Date(stats.startedAt).toISOString(),
-    endedAt: new Date(stats.endedAt).toISOString(),
-    target: {
-      apiBase: config.apiBase,
-      endpoints: AI_SOAK_ENDPOINTS,
-    },
-    auth: {
-      jwtSource: config.auth.kind === 'direct-jwt' ? config.auth.source : 'supabase-password-grant',
-      cloudRunIam: config.skipCloudRunIam ? 'skipped' : 'x-serverless-authorization',
-    },
-    requireLiveProvider: config.requireLiveProvider,
-    totals: {
-      ok,
-      fail,
-      requests: stats.outcomes.length,
-    },
-    byEndpoint,
-    providers,
-    failures,
-  };
-}
-
-export async function runAiSoak(
-  config: AiSoakConfig,
-  env: Env = process.env,
-): Promise<AiSoakEvidence> {
-  const runtimeAuth: RuntimeAuth = {
-    supabaseJwtExpiresAt: 0,
-    cloudRunTokenFetchedAt: 0,
-  };
-  const stats: RunStats = { startedAt: Date.now(), endedAt: Date.now(), outcomes: [] };
-  const endAt = stats.startedAt + config.durationMinutes * 60_000;
-  const spacingMs = 60_000 / config.ratePerMinute;
-  const active = new Set<Promise<void>>();
-  let iteration = 0;
-  let nextStartAt = Date.now();
-
-  while (Date.now() < endAt && (config.maxIterations === undefined || iteration < config.maxIterations)) {
-    while (active.size >= config.concurrency) {
-      await Promise.race(active);
-    }
-
-    const currentIteration = iteration;
-    const task = runIteration({ config, runtimeAuth, env, iteration: currentIteration })
-      .then((outcomes) => {
-        stats.outcomes.push(...outcomes);
-      })
-      .finally(() => {
-        active.delete(task);
-      });
-    active.add(task);
-
-    iteration += 1;
-    if (config.maxIterations !== undefined && iteration >= config.maxIterations) {
-      break;
-    }
-
-    nextStartAt += spacingMs;
-    const waitMs = nextStartAt - Date.now();
-    if (waitMs > 0) await sleep(waitMs);
-  }
-
-  await Promise.all(active);
-  stats.endedAt = Date.now();
-  return summarizeRun(stats, config);
-}
-
-function writeEvidence(path: string, evidence: AiSoakEvidence): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`);
-}
-
-function buildDryRunEvidence(config: AiSoakConfig): AiSoakEvidence {
-  const now = Date.now();
-  return summarizeRun({ startedAt: now, endedAt: now, outcomes: [] }, config);
-}
-
-export async function main(argv = process.argv.slice(2), env: Env = process.env): Promise<void> {
-  const config = buildConfigFromArgv(argv, env);
-
-  if (config.dryRun) {
-    const evidence = buildDryRunEvidence(config);
-    console.log(JSON.stringify({
-      dryRun: true,
-      durationMinutes: config.durationMinutes,
-      ratePerMinute: config.ratePerMinute,
-      concurrency: config.concurrency,
-      maxIterations: config.maxIterations ?? null,
-      evidence,
-    }, null, 2));
+  if (args['dry-run']) {
+    console.log('  --dry-run: plan validated; exiting without firing.');
     return;
   }
 
-  const evidence = await runAiSoak(config, env);
-  if (config.evidenceOut) writeEvidence(config.evidenceOut, evidence);
-  console.log(JSON.stringify(evidence, null, 2));
-  if (evidence.totals.fail > 0) {
-    process.exitCode = 1;
+  const stats = newAiStats();
+  const endAt = stats.startedAt + durationMin * 60_000;
+  const intervalMs = intervalMsForRatePerHour(ratePerHour);
+
+  const summaryTimer = setInterval(() => {
+    if (Date.now() >= endAt) return;
+    const elapsedSec = (Date.now() - stats.startedAt) / 1000;
+    const r = stats.reliability.counts;
+    console.log(
+      `[t+${elapsedSec.toFixed(0)}s] total=${stats.total} 429=${r.rate_limited} ` +
+      `timeout=${r.client_timeout + r.server_unavailable} false=${r.false_reading} ` +
+      `achieved~${((stats.total / Math.max(elapsedSec, 1)) * 3600).toFixed(0)}/hr`,
+    );
+  }, 60_000);
+
+  let seq = 0;
+  const pendingRequests = new Set<Promise<void>>();
+  try {
+    while (Date.now() < endAt) {
+      const endpoint = selectEndpointForSequence(seq, endpoints);
+      const item = corpus[seq % corpus.length];
+      const effectiveEndpoint = isLoadOnlyVariant(item.variant) ? 'extract' : endpoint;
+      const identity = pickIdentity(identities, seq);
+      const forwardedFor = rotateIp ? randomForwardedFor() : undefined;
+      const request = callAiEndpoint(
+        apiBase,
+        effectiveEndpoint,
+        payloadFor(effectiveEndpoint, item),
+        identity,
+        realFetch,
+        { timeoutMs, forwardedFor },
+      )
+        .then((outcome) => recordAiOutcome(stats, outcome, item.variant))
+        .catch((err: unknown) => recordHarnessFailure(stats, effectiveEndpoint, err, item.variant));
+      trackPendingRequest(pendingRequests, request);
+      seq++;
+      await boundedSleep(intervalMs, endAt);
+    }
+  } finally {
+    clearInterval(summaryTimer);
+  }
+
+  await Promise.allSettled([...pendingRequests]);
+
+  const durationSec = (Date.now() - stats.startedAt) / 1000;
+  const summary = summarizeAiRun(stats, mode, apiBase, durationSec);
+  console.log(`\n=== AI SOAK SUMMARY (${durationMin}min ${mode}) ===`);
+  const rel = summary.reliability;
+  console.log(
+    `RELIABILITY: 429=${(rel.rate429 * 100).toFixed(1)}%  timeout=${(rel.timeoutRate * 100).toFixed(1)}%  ` +
+    `false_reading=${(rel.falseReadingRate * 100).toFixed(1)}%  server_error=${(rel.serverErrorRate * 100).toFixed(1)}%  ` +
+    `unreliable=${(rel.unreliableRate * 100).toFixed(1)}%  achieved=${summary.achievedRequestsPerHour.toFixed(0)}/hr`,
+  );
+  console.log(JSON.stringify(summary, null, 2));
+
+  if (evidencePath) {
+    mkdirSync(dirname(evidencePath), { recursive: true }); // NOSONAR S8707 — resolveEvidenceOutputPath confines writes to docs/staging.
+    writeFileSync(evidencePath, JSON.stringify(summary, null, 2) + '\n'); // NOSONAR S8707 — resolveEvidenceOutputPath confines writes to docs/staging.
+    console.log(`\nEvidence written: ${evidencePath}`);
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((err: unknown) => {
-    console.error(`::error::${err instanceof Error ? err.message : err}`);
-    process.exit(1);
-  });
-}
+main().catch((err) => {
+  console.error(`::error::AI soak harness failed: ${err instanceof Error ? err.message : err}`);
+  if (err instanceof Error && err.stack) console.error(err.stack);
+  process.exit(1);
+});

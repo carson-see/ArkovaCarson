@@ -1,0 +1,136 @@
+/**
+ * scripts/staging/ai-eval/corpus.ts — representative document-shape + size
+ * variants for the AI load harness.
+ *
+ * The founders' prod pain is that Gemini is unreliable across REAL document
+ * variety — PDFs, image/scan OCR text, DOCX/plain text, and malformed/oversized
+ * inputs — not one clean fixture shape. `/api/v1/ai/extract` only ever receives
+ * PII-STRIPPED TEXT (client-side OCR already ran, §1.6), so "document type" here
+ * means the TEXT CHARACTERISTICS each source produces, plus size stress against
+ * the 50,000-char `strippedText` Zod limit:
+ *
+ *   pdf-clean     well-structured text (native-PDF text layer)
+ *   scan-ocr      OCR-noise text: 0/O and 1/l swaps, split tokens, stray marks
+ *   docx-text     prose-heavy, loose line structure
+ *   large         padded near the 50k limit (stress big-file extraction latency)
+ *   oversized     pushed PAST 50k → the endpoint MUST 400 (limit enforcement)
+ *   malformed     control chars / truncation / repeated-garbage (robustness)
+ *
+ * These are DERIVED from the vendored golden fixtures so ground truth is
+ * preserved for the eval where the variant is still legible; the `oversized` and
+ * `malformed` variants are load-only (not eval-scored — they test the endpoint's
+ * failure modes, not extraction accuracy).
+ */
+
+import type { GoldenEntry } from './scoring.js';
+
+export const DOC_VARIANTS = [
+  'pdf-clean',
+  'scan-ocr',
+  'docx-text',
+  'large',
+  'oversized',
+  'malformed',
+] as const;
+export type DocVariant = (typeof DOC_VARIANTS)[number];
+
+/** The hard `strippedText` limit in `ExtractionRequestSchema` (schemas.ts). */
+export const STRIPPED_TEXT_MAX = 50_000;
+
+/** Variants whose text still maps to the entry's ground truth (eval-scorable). */
+export const EVAL_SCORABLE_VARIANTS: ReadonlySet<DocVariant> = new Set<DocVariant>([
+  'pdf-clean',
+  'scan-ocr',
+  'docx-text',
+  'large',
+]);
+
+/** Variants that intentionally break the contract (load-only, expect 4xx/degraded). */
+export function isLoadOnlyVariant(variant: DocVariant): boolean {
+  return variant === 'oversized' || variant === 'malformed';
+}
+
+function applyOcrNoise(text: string): string {
+  // Deterministic OCR-style corruption: character swaps + a split token + a mark.
+  return text
+    .replace(/0/g, 'O')
+    .replace(/1/g, 'l')
+    .replace(/ ([A-Z][a-z]{4,}) /, ' $1​ ') // zero-width split inside a word
+    .replace(/\.$/m, '. ~~');
+}
+
+function padToLength(text: string, target: number): string {
+  if (text.length >= target) return text.slice(0, target);
+  // Pad with benign structured filler so the model still sees the real content
+  // first, then a long tail — the shape a big multi-page document produces.
+  const filler = '\nAdditional record notes and appendix continuation. ';
+  let out = text;
+  while (out.length < target) out += filler;
+  return out.slice(0, target);
+}
+
+/**
+ * Produce the `strippedText` for a given variant of an entry. Ground truth is
+ * unchanged for eval-scorable variants; load-only variants return text that
+ * exercises size/robustness limits.
+ */
+export function variantText(entry: GoldenEntry, variant: DocVariant): string {
+  const base = entry.strippedText;
+  switch (variant) {
+    case 'pdf-clean':
+      return base;
+    case 'scan-ocr':
+      return applyOcrNoise(base);
+    case 'docx-text':
+      return base.replaceAll(/\n+/g, ' ').replaceAll(/\s{2,}/g, ' ');
+    case 'large':
+      // Near the limit but under it — stress large-file latency, stays scorable.
+      return padToLength(base, STRIPPED_TEXT_MAX - 100);
+    case 'oversized':
+      // Past the limit — the endpoint MUST reject with 400 (limit enforcement).
+      return padToLength(base, STRIPPED_TEXT_MAX + 5_000);
+    case 'malformed':
+      // Control chars + truncated JSON-ish garbage + repeated noise.
+      return `${base.slice(0, 200)}\u0000\u0007{"trunc":\n` + 'X'.repeat(2_000);
+  }
+}
+
+export interface CorpusItem {
+  entry: GoldenEntry;
+  variant: DocVariant;
+  strippedText: string;
+  /** true when this item's extraction can be scored against ground truth. */
+  scorable: boolean;
+}
+
+/**
+ * Expand the golden corpus across the requested document variants (round-robin
+ * over entries × variants) so a load run exercises real document diversity and
+ * the size/robustness edges — not one fixture shape.
+ */
+export function buildVariantCorpus(entries: GoldenEntry[], variants: DocVariant[]): CorpusItem[] {
+  if (entries.length === 0) throw new Error('golden corpus is empty');
+  if (variants.length === 0) throw new Error('variant list is empty');
+  const items: CorpusItem[] = [];
+  for (const entry of entries) {
+    for (const variant of variants) {
+      items.push({
+        entry,
+        variant,
+        strippedText: variantText(entry, variant),
+        scorable: EVAL_SCORABLE_VARIANTS.has(variant),
+      });
+    }
+  }
+  return items;
+}
+
+export function parseDocVariants(raw: string | undefined, fallback: DocVariant[] = [...DOC_VARIANTS]): DocVariant[] {
+  if (!raw?.trim()) return fallback;
+  const requested = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  const selected = requested.filter((r): r is DocVariant => (DOC_VARIANTS as readonly string[]).includes(r));
+  if (selected.length === 0) {
+    throw new Error(`--doc-variants must be a comma-list of ${DOC_VARIANTS.join('|')}; got \`${raw}\``);
+  }
+  return DOC_VARIANTS.filter((v) => selected.includes(v));
+}
