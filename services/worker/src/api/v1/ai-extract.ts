@@ -25,7 +25,6 @@ import { logger } from '../../utils/logger.js';
 
 const router = Router();
 export const AI_EXTRACTION_LATENCY_BUDGET_MS = 4_500;
-const AI_EXTRACTION_LATENCY_BUDGET_ENV = 'AI_EXTRACTION_LATENCY_BUDGET_MS';
 const ISSUER_KEYWORDS = [
   'university',
   'college',
@@ -56,7 +55,7 @@ class ExtractionLatencyError extends Error {
 }
 
 export function resolveExtractionLatencyBudgetMs(
-  env: Pick<NodeJS.ProcessEnv, typeof AI_EXTRACTION_LATENCY_BUDGET_ENV> = process.env,
+  env: { AI_EXTRACTION_LATENCY_BUDGET_MS?: string } = process.env,
 ): number {
   const raw = env.AI_EXTRACTION_LATENCY_BUDGET_MS?.trim();
   if (!raw) return AI_EXTRACTION_LATENCY_BUDGET_MS;
