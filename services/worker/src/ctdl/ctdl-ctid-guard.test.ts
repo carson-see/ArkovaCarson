@@ -103,4 +103,35 @@ describe('assertNoFabricatedCtidInJsonLd (defense-in-depth output scan)', () => 
   it('THROWS when a ceterms:ctid key holds an empty/blank string (never emit an empty CTID)', () => {
     expect(() => assertNoFabricatedCtidInJsonLd({ 'ceterms:ctid': '' })).toThrow(FabricatedCtidError);
   });
+
+  // Round-1 review finding 3: exceeding the recursion budget must FAIL CLOSED
+  // (throw), never silently return — otherwise a fabricated ceterms:ctid nested
+  // deeper than the budget ships unscanned. Real CTDL bodies are ~4 levels deep.
+  describe('recursion budget fails closed', () => {
+    function nest(depth: number, leaf: unknown): unknown {
+      let value: unknown = leaf;
+      for (let i = 0; i < depth; i += 1) value = { nested: value };
+      return value;
+    }
+
+    it('throws when the body exceeds the depth budget even when clean', () => {
+      expect(() => assertNoFabricatedCtidInJsonLd(nest(14, { ok: true }))).toThrow(/depth/i);
+    });
+
+    it('cannot be bypassed by hiding a fabricated CTID deeper than the scan budget', () => {
+      expect(() =>
+        assertNoFabricatedCtidInJsonLd(nest(14, { 'ceterms:ctid': 'ce-ARK-2026-CTDL-001' })),
+      ).toThrow();
+    });
+
+    it('throws for over-deep array nesting as well as object nesting', () => {
+      let value: unknown = { 'ceterms:ctid': 'ce-ARK-2026-CTDL-001' };
+      for (let i = 0; i < 14; i += 1) value = [value];
+      expect(() => assertNoFabricatedCtidInJsonLd(value)).toThrow();
+    });
+
+    it('still accepts a clean body within the budget', () => {
+      expect(() => assertNoFabricatedCtidInJsonLd(nest(10, { 'ceterms:ctid': REAL_CTID }))).not.toThrow();
+    });
+  });
 });

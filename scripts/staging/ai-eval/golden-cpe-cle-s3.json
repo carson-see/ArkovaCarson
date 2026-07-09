@@ -1,0 +1,1833 @@
+{
+  "_provenance": {
+    "note": "VENDORED SNAPSHOT — do not hand-edit. Regenerate from the source of truth.",
+    "source": "services/worker/src/ai/eval/golden-dataset-cpe-cle-s3.ts",
+    "sourceStory": "SCRUM-2381 (AI-01)",
+    "sourceRef": "origin/lane3/s3-ai (PR #1413)",
+    "sourceCommit": "b95851d57a59f32bc0425f43715339806d511fc3",
+    "snapshotGeneratedAt": "2026-07-08",
+    "totalEntries": 60,
+    "gateEntries": 48,
+    "heldOutEntries": 12,
+    "regenerate": "see scripts/staging/ai-eval/README section in ai-eval-gate-runner.ts header"
+  },
+  "entries": [
+    {
+      "id": "GD-S3-CPE-001",
+      "description": "Clean CPE certificate — tax update webinar",
+      "strippedText": "Certificate of Completion — Continuing Professional Education. Participant: [NAME_REDACTED], CPA. Course Title: Federal Tax Update for Pass-Through Entities. Course ID: RPEI-TAX-2026-041. CPE Credits: 8.0. Field of Study: Taxes. Delivery Method: Group Internet Based. Sponsor: Ridgeline Professional Education Institute. NASBA Registry Status: Active. Completion Date: April 14, 2026.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Ridgeline Professional Education Institute",
+        "issuedDate": "2026-04-14",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Ridgeline Professional Education Institute",
+        "courseId": "RPEI-TAX-2026-041",
+        "activityNumber": "RPEI-TAX-2026-041",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-clean-tax-update",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-002",
+      "description": "Clean CPE certificate — audit self-study",
+      "strippedText": "Blue Harbor CPA Academy hereby certifies that [NAME_REDACTED] has successfully completed the QAS Self Study program \"Risk Assessment in Integrated Audits\" (Program Code BHCA-AUD-2025-217) on November 3, 2025. Credits Awarded: 6.0 CPE. Field of Study: Auditing. NASBA Sponsor Registry: Active.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Blue Harbor CPA Academy",
+        "issuedDate": "2025-11-03",
+        "fieldOfStudy": "Auditing",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 6,
+        "creditType": "CPE",
+        "providerName": "Blue Harbor CPA Academy",
+        "courseId": "BHCA-AUD-2025-217",
+        "activityNumber": "BHCA-AUD-2025-217",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-clean-audit-selfstudy",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-003",
+      "description": "Clean CPE certificate — governmental accounting group-live",
+      "strippedText": "Continuing Professional Education Record. Attendee: [NAME_REDACTED]. Course: GASB Update: Leases and Subscription-Based IT Arrangements. Course Number: SLL-GOV-2026-009. CPE Hours: 4.0. Field of Study: Accounting (Governmental). Delivery: Group Live. Provider: Summit Ledger Learning. NASBA Registry Status: Active. Date of Completion: January 22, 2026. Location: Denver, Colorado.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Summit Ledger Learning",
+        "issuedDate": "2026-01-22",
+        "fieldOfStudy": "Accounting (Governmental)",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Colorado",
+        "creditHours": 4,
+        "creditType": "CPE",
+        "providerName": "Summit Ledger Learning",
+        "courseId": "SLL-GOV-2026-009",
+        "activityNumber": "SLL-GOV-2026-009",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-clean-gov-accounting",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-004",
+      "description": "Clean CPE certificate — ethics course with ethics hours",
+      "strippedText": "Certificate of CPE Completion. Participant: [NAME_REDACTED], CPA. Course: Professional Ethics for Texas CPAs. Course ID: NTI-ETH-2026-114. Credits: 4.0 CPE (4.0 Regulatory Ethics). Field of Study: Regulatory Ethics. Delivery Method: QAS Self Study. Sponsor: Northwind Tax Institute. NASBA Registry Status: Active. Completed: February 9, 2026. Approved for Texas State Board of Public Accountancy ethics requirement.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Northwind Tax Institute",
+        "issuedDate": "2026-02-09",
+        "fieldOfStudy": "Regulatory Ethics",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Texas",
+        "creditHours": 4,
+        "creditType": "CPE Ethics",
+        "providerName": "Northwind Tax Institute",
+        "courseId": "NTI-ETH-2026-114",
+        "activityNumber": "NTI-ETH-2026-114",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "active",
+        "ethicsHours": 4,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-clean-ethics",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-005",
+      "description": "Clean CPE certificate — technology field of study",
+      "strippedText": "Cascade Accounting Seminars LLC — Certificate of Attendance. This certifies that [NAME_REDACTED] attended \"Data Analytics for Close Automation\" on March 5, 2026. Program ID: CAS-TEC-2026-072. CPE Credit: 2.0. Field of Study: Information Technology. Delivery Method: Group Internet Based. NASBA National Registry of CPE Sponsors: Active.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Cascade Accounting Seminars LLC",
+        "issuedDate": "2026-03-05",
+        "fieldOfStudy": "Information Technology",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 2,
+        "creditType": "CPE",
+        "providerName": "Cascade Accounting Seminars LLC",
+        "courseId": "CAS-TEC-2026-072",
+        "activityNumber": "CAS-TEC-2026-072",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-clean-technology",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-006",
+      "description": "Clean CPE certificate — state society sponsor",
+      "strippedText": "Harborview Society of Accountants CPE Certificate. Member: [NAME_REDACTED]. Course: Single Audit Fundamentals under Uniform Guidance. Course Code: HSA-AUD-2025-331. Credits Awarded: 8.0 CPE. Field of Study: Auditing (Governmental). Delivery: Group Live. Completion Date: October 16, 2025. NASBA Sponsor Status: Active. Jurisdiction: Washington.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Harborview Society of Accountants",
+        "issuedDate": "2025-10-16",
+        "fieldOfStudy": "Auditing (Governmental)",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Washington",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Harborview Society of Accountants",
+        "courseId": "HSA-AUD-2025-331",
+        "activityNumber": "HSA-AUD-2025-331",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-clean-state-society",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-007",
+      "description": "Clean CPE certificate — finance field, nano-learning",
+      "strippedText": "Silverbirch Finance Education — Nano Learning Completion Certificate. Learner: [NAME_REDACTED]. Module: Working Capital Ratios in Distressed Entities. Module ID: SFE-FIN-2026-018. CPE Credit: 0.2. Field of Study: Finance. Delivery Method: Nano Learning. NASBA Registry Status: Active. Date: May 1, 2026.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Silverbirch Finance Education",
+        "issuedDate": "2026-05-01",
+        "fieldOfStudy": "Finance",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 0.2,
+        "creditType": "CPE",
+        "providerName": "Silverbirch Finance Education",
+        "courseId": "SFE-FIN-2026-018",
+        "activityNumber": "SFE-FIN-2026-018",
+        "deliveryMethod": "Nano Learning",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-clean-nano",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-008",
+      "description": "Clean CPE certificate — lapsed sponsor requires review",
+      "strippedText": "CPE Completion Record. Participant: [NAME_REDACTED]. Course: Revenue Recognition Refresh for Contractors. Course ID: CCP-ACC-2026-127. Credits: 5.0 CPE. Field of Study: Accounting. Delivery Method: QAS Self Study. Provider: Copperfield CPE Partners. NASBA Sponsor Status: Lapsed as of 2025-12-31. Completion Date: February 2, 2026. Note: verify sponsor standing before reporting credits.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Copperfield CPE Partners",
+        "issuedDate": "2026-02-02",
+        "fieldOfStudy": "Accounting",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 5,
+        "creditType": "CPE",
+        "providerName": "Copperfield CPE Partners",
+        "courseId": "CCP-ACC-2026-127",
+        "activityNumber": "CCP-ACC-2026-127",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "lapsed",
+        "manualReviewExpected": true,
+        "fraudSignals": [
+          "EXPIRED_ACCREDITATION"
+        ]
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-clean-lapsed-sponsor",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-009",
+      "description": "Clean CPE certificate — blended learning conference",
+      "strippedText": "Gleneagle Professional Studies Annual Assurance Conference — CPE Transcript Extract. Attendee: [NAME_REDACTED], CPA. Sessions completed June 10-11, 2026. Total CPE Credits: 16.0. Field of Study: Auditing. Delivery Method: Blended Learning. Conference Code: GPS-CONF-2026-002. NASBA Registry Status: Active. Jurisdiction: Illinois.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Gleneagle Professional Studies",
+        "issuedDate": "2026-06-11",
+        "fieldOfStudy": "Auditing",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Illinois",
+        "creditHours": 16,
+        "creditType": "CPE",
+        "providerName": "Gleneagle Professional Studies",
+        "courseId": "GPS-CONF-2026-002",
+        "activityNumber": "GPS-CONF-2026-002",
+        "deliveryMethod": "Blended Learning",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-clean-conference",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-010",
+      "description": "HELD-OUT clean CPE certificate — personnel/HR field of study",
+      "strippedText": "Juniper Audit Training Co. Certificate of Continuing Professional Education. Participant: [NAME_REDACTED]. Course: Managing Remote Engagement Teams. Course ID: JAT-PER-2026-055. CPE Credits: 3.0. Field of Study: Personnel/Human Resources. Delivery Method: Group Internet Based. NASBA Registry Status: Active. Completed: March 27, 2026.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Juniper Audit Training Co.",
+        "issuedDate": "2026-03-27",
+        "fieldOfStudy": "Personnel/Human Resources",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 3,
+        "creditType": "CPE",
+        "providerName": "Juniper Audit Training Co.",
+        "courseId": "JAT-PER-2026-055",
+        "activityNumber": "JAT-PER-2026-055",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-heldout-clean-hr",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-011",
+      "description": "Degraded-scan CPE — tax course, casing/pipe noise",
+      "strippedText": "CERT1FICATE  OF  C0MPLETION | CONTINUING  PROFESSI0NAL  EDUCATION || Participant : [NAME_REDACTED] , CPA | Course : Partnership  Basis  Adjustments  Workshop | C o u r s e  ID : RPEI-TAX-2025-233 | CPE  Credits : 8.0 | Field of Study : Taxes | Delivery : Group  Internet  Based | Sponsor : Ridgeline  Professional  Education  Institute | NASBA  Registry : Active | Completion  Date : December 4 , 2025",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Ridgeline Professional Education Institute",
+        "issuedDate": "2025-12-04",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Ridgeline Professional Education Institute",
+        "courseId": "RPEI-TAX-2025-233",
+        "activityNumber": "RPEI-TAX-2025-233",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-degraded-tax",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-012",
+      "description": "Degraded-scan CPE — audit course, line-break damage",
+      "strippedText": "Blue Harbor CPA Academy\nCerti ficate of Comple tion\nPartici pant: [NAME_REDACTED]\nCourse: SOC 1 Repor t Walk throughs for Ser vice Auditors\nProgram Code: BHCA-AUD-2026-078\nCred its Awar ded: 4.0 CPE\nField of Study: Audi ting\nDeli very: QAS Self Study\nNASBA Spon sor Regis try: Active\nComple ted: Janu ary 30, 2026",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Blue Harbor CPA Academy",
+        "issuedDate": "2026-01-30",
+        "fieldOfStudy": "Auditing",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 4,
+        "creditType": "CPE",
+        "providerName": "Blue Harbor CPA Academy",
+        "courseId": "BHCA-AUD-2026-078",
+        "activityNumber": "BHCA-AUD-2026-078",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-degraded-audit",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-013",
+      "description": "Degraded-scan CPE — ethics, zero/O substitution",
+      "strippedText": "N0rthwind Tax Institute -- CPE C0mpletion Rec0rd. Participant: [NAME_REDACTED]. C0urse: Ethics and Independence f0r Tax Practiti0ners. C0urse ID: NTI-ETH-2025-402. Credits: 2.0 CPE (Regulat0ry Ethics). Delivery Meth0d: Gr0up Internet Based. NASBA Registry Status: Active. C0mpleti0n Date: September 18, 2025.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Northwind Tax Institute",
+        "issuedDate": "2025-09-18",
+        "fieldOfStudy": "Regulatory Ethics",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 2,
+        "creditType": "CPE Ethics",
+        "providerName": "Northwind Tax Institute",
+        "courseId": "NTI-ETH-2025-402",
+        "activityNumber": "NTI-ETH-2025-402",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "ethicsHours": 2,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-degraded-ethics",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-014",
+      "description": "Degraded-scan CPE — accounting update, spacing noise in numbers",
+      "strippedText": "Summit Ledger Learning * CPE Certificate * Attendee [NAME_REDACTED] * Course : FASB Update : Credit Losses and Fair Value * Course Number SLL - ACC - 2026 - 141 * CPE Hours : 6 . 0 * Field of Study : Accounting * Delivery : Group Live * NASBA Registry Status : Active * Date of Completion : April 8 , 2026 * Location : Portland , Oregon",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Summit Ledger Learning",
+        "issuedDate": "2026-04-08",
+        "fieldOfStudy": "Accounting",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Oregon",
+        "creditHours": 6,
+        "creditType": "CPE",
+        "providerName": "Summit Ledger Learning",
+        "courseId": "SLL-ACC-2026-141",
+        "activityNumber": "SLL-ACC-2026-141",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-degraded-accounting",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-015",
+      "description": "Degraded-scan CPE — header banner damage, table remnants",
+      "strippedText": "~~ CASCADE ACCOUNTING SEMINARS LLC ~~ ||| CPE TRANSCRIPT EXTRACT ||| Row 14: [NAME_REDACTED] | Cybersecurity Assessment for Finance Teams | CAS-TEC-2025-388 | 3.0 | Information Technology | Group Internet Based | 2025-08-21 | NASBA: Active |",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Cascade Accounting Seminars LLC",
+        "issuedDate": "2025-08-21",
+        "fieldOfStudy": "Information Technology",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 3,
+        "creditType": "CPE",
+        "providerName": "Cascade Accounting Seminars LLC",
+        "courseId": "CAS-TEC-2025-388",
+        "activityNumber": "CAS-TEC-2025-388",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-degraded-table",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-016",
+      "description": "Degraded-scan CPE — faded stamp, partial sponsor status",
+      "strippedText": "Gleneagle Professional Studies / CPE Certifi... (edge cut). Participant: [NAME_REDACTED], CPA. Course: Estate and Gift Tax Compliance Intensive. ID: GPS-TAX-2026-091. CPE Cr edits: 8.0. Field of St udy: Taxes. Deliv ery: Group Live. NASBA Regi stry Sta tus: Act ive. Completed: Febr uary 26, 2026. [stamp illegible]",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Gleneagle Professional Studies",
+        "issuedDate": "2026-02-26",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Gleneagle Professional Studies",
+        "courseId": "GPS-TAX-2026-091",
+        "activityNumber": "GPS-TAX-2026-091",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-degraded-faded",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-017",
+      "description": "Degraded-scan CPE — skewed columns, duplicated header words",
+      "strippedText": "CPE CPE CERTIFICATE CERTIFICATE — Silverbirch Finance Education. Learner: [NAME_REDACTED]. Course Course: Treasury Hedging Basics. Module ID: SFE-FIN-2025-260. CPE Credit: 1.0. Field of Study: Finance. Delivery Method: QAS Self Study. NASBA Registry Status: Active. Date: July 7, 2025.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Silverbirch Finance Education",
+        "issuedDate": "2025-07-07",
+        "fieldOfStudy": "Finance",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 1,
+        "creditType": "CPE",
+        "providerName": "Silverbirch Finance Education",
+        "courseId": "SFE-FIN-2025-260",
+        "activityNumber": "SFE-FIN-2025-260",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-degraded-skew",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-018",
+      "description": "HELD-OUT degraded-scan CPE — statistics field, mixed noise",
+      "strippedText": "HARB0RVIEW S0CIETY 0F ACC0UNTANTS || C P E  CERT | Member : [NAME_REDACTED] | C0urse : Sampling  Meth0ds  f0r  Internal  Audit | C0de : HSA-STA-2026-166 | Credits Awarded : 5.0 CPE | Field 0f Study : Statistics | Delivery : Gr0up Internet Based | NASBA Sp0ns0r Status : Active | C0mpleti0n : May 19 , 2026 | Jurisdicti0n : Washingt0n",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Harborview Society of Accountants",
+        "issuedDate": "2026-05-19",
+        "fieldOfStudy": "Statistics",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Washington",
+        "creditHours": 5,
+        "creditType": "CPE",
+        "providerName": "Harborview Society of Accountants",
+        "courseId": "HSA-STA-2026-166",
+        "activityNumber": "HSA-STA-2026-166",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-heldout-degraded-stats",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-019",
+      "description": "Adversarial CPE — platform vs sponsor vs venue ambiguity",
+      "strippedText": "Certificate of CPE Completion. Participant: [NAME_REDACTED], CPA. Course: Lease Accounting Remeasurements. Course ID: RPEI-ACC-2026-133. CPE Credits: 4.0. Field of Study: Accounting. Delivered via the LearnStream Online Platform. Hosted by the Metro Finance Club. NASBA-Registered Sponsor of Record: Ridgeline Professional Education Institute (Registry Status: Active). Delivery Method: Group Internet Based. Completion Date: March 12, 2026.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Ridgeline Professional Education Institute",
+        "issuedDate": "2026-03-12",
+        "fieldOfStudy": "Accounting",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 4,
+        "creditType": "CPE",
+        "providerName": "Ridgeline Professional Education Institute",
+        "courseId": "RPEI-ACC-2026-133",
+        "activityNumber": "RPEI-ACC-2026-133",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-adv-ambiguous-provider-platform",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean",
+        "ambiguous-provider"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-020",
+      "description": "Adversarial CPE — co-branded certificate, sponsor buried mid-text",
+      "strippedText": "Brightpath Webinars and Copperfield CPE Partners jointly present: \"Quality Management Standards Implementation.\" This certifies [NAME_REDACTED] completed the program on April 29, 2026. For CPE reporting purposes the sponsor of record is Copperfield CPE Partners, NASBA Registry Status Active. Brightpath Webinars provides marketing and streaming services only and awards no credit. Program ID: CCP-AUD-2026-208. CPE Credits: 2.0. Field of Study: Auditing. Delivery Method: Group Internet Based.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Copperfield CPE Partners",
+        "issuedDate": "2026-04-29",
+        "fieldOfStudy": "Auditing",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 2,
+        "creditType": "CPE",
+        "providerName": "Copperfield CPE Partners",
+        "courseId": "CCP-AUD-2026-208",
+        "activityNumber": "CCP-AUD-2026-208",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-adv-ambiguous-provider-cobrand",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean",
+        "ambiguous-provider"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-021",
+      "description": "HELD-OUT adversarial CPE — degraded scan with three org names",
+      "strippedText": "C P E   C E R T I F I C A T E || Venue : Lakeside C0nference Center || Streaming Partner : VidC0nnect Inc . || Sp0ns0r 0f Rec0rd ( NASBA Registry : Active ) : Blue Harb0r CPA Academy || Participant : [NAME_REDACTED] || C0urse : F0rensic Interview Techniques f0r Aud itors || Pr0gram C0de : BHCA-FOR-2026-119 || CPE Credits : 6.0 || Field 0f Study : Auditing ( F0rensic ) || Delivery : Gr0up Live || C0mpleted : June 3 , 2026",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Blue Harbor CPA Academy",
+        "issuedDate": "2026-06-03",
+        "fieldOfStudy": "Auditing (Forensic)",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 6,
+        "creditType": "CPE",
+        "providerName": "Blue Harbor CPA Academy",
+        "courseId": "BHCA-FOR-2026-119",
+        "activityNumber": "BHCA-FOR-2026-119",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-heldout-adv-ambiguous-provider",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan",
+        "ambiguous-provider",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-022",
+      "description": "Adversarial CPE — minutes vs credits vs reporting hours",
+      "strippedText": "Northwind Tax Institute CPE Certificate. Participant: [NAME_REDACTED]. Course: SALT Nexus after Marketplace Facilitator Laws. Course ID: NTI-TAX-2026-171. Total instruction time: 400 minutes. CPE Credits Awarded: 8.0. Recommended state reporting hours: 8.0. Attendance polls answered: 12 of 12. Field of Study: Taxes. Delivery Method: Group Internet Based. NASBA Registry Status: Active. Completion Date: January 15, 2026.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Northwind Tax Institute",
+        "issuedDate": "2026-01-15",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Northwind Tax Institute",
+        "courseId": "NTI-TAX-2026-171",
+        "activityNumber": "NTI-TAX-2026-171",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-adv-neardup-minutes",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean",
+        "near-duplicate-credits"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-023",
+      "description": "Adversarial CPE — recommended vs maximum vs awarded credits",
+      "strippedText": "Summit Ledger Learning — Certificate of Completion. Attendee: [NAME_REDACTED], CPA. Course: Consolidations and VIE Reassessment. Course Number: SLL-ACC-2025-299. Program design maximum: 10.0 CPE. Credits awarded to this attendee: 7.0 CPE (partial attendance). NASBA field-of-study recommendation: Accounting, 10.0 credits maximum. Delivery: Group Live. NASBA Registry Status: Active. Completion Date: November 20, 2025.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Summit Ledger Learning",
+        "issuedDate": "2025-11-20",
+        "fieldOfStudy": "Accounting",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 7,
+        "creditType": "CPE",
+        "providerName": "Summit Ledger Learning",
+        "courseId": "SLL-ACC-2025-299",
+        "activityNumber": "SLL-ACC-2025-299",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-adv-neardup-recommended",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean",
+        "near-duplicate-credits"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-024",
+      "description": "HELD-OUT adversarial CPE — degraded scan, duplicate credit lines",
+      "strippedText": "CASCADE ACC0UNTING SEMINARS LLC | CPE REC0RD | Participant : [NAME_REDACTED] | C0urse : IT General C0ntr0ls Testing Lab | C0urse ID : CAS-TEC-2026-244 | CPE Credits ( r0w 1 ) : 4.0 | CPE Credits ( r0w 1 , rescanned ) : 4.0 | Certificates issued : 2 c0pies | CE Br0ker rep0rting h0urs : 4.0 | Field 0f Study : Inf0rmati0n Techn0l0gy | Delivery : Gr0up Internet Based | NASBA : Active | Date : April 22 , 2026",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Cascade Accounting Seminars LLC",
+        "issuedDate": "2026-04-22",
+        "fieldOfStudy": "Information Technology",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 4,
+        "creditType": "CPE",
+        "providerName": "Cascade Accounting Seminars LLC",
+        "courseId": "CAS-TEC-2026-244",
+        "activityNumber": "CAS-TEC-2026-244",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-heldout-adv-neardup",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan",
+        "near-duplicate-credits",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-025",
+      "description": "Adversarial CPE — fractional 1.5 credits",
+      "strippedText": "Silverbirch Finance Education Certificate. Learner: [NAME_REDACTED]. Course: Interest Rate Swap Valuation Walkthrough. Module ID: SFE-FIN-2026-042. CPE Credit: 1.5. Field of Study: Finance. Delivery Method: QAS Self Study. NASBA Registry Status: Active. Date: February 17, 2026.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Silverbirch Finance Education",
+        "issuedDate": "2026-02-17",
+        "fieldOfStudy": "Finance",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 1.5,
+        "creditType": "CPE",
+        "providerName": "Silverbirch Finance Education",
+        "courseId": "SFE-FIN-2026-042",
+        "activityNumber": "SFE-FIN-2026-042",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-adv-fractional-15",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean",
+        "fractional-hours"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-026",
+      "description": "Adversarial CPE — fractional 7.25 credits spelled two ways",
+      "strippedText": "Gleneagle Professional Studies CPE Certificate. Participant: [NAME_REDACTED], CPA. Course: Multistate Apportionment Deep Dive. Course ID: GPS-TAX-2025-310. Credits Awarded: 7.25 CPE (seven and one-quarter credits). Field of Study: Taxes. Delivery: Group Live. NASBA Registry Status: Active. Completion Date: October 2, 2025.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Gleneagle Professional Studies",
+        "issuedDate": "2025-10-02",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 7.25,
+        "creditType": "CPE",
+        "providerName": "Gleneagle Professional Studies",
+        "courseId": "GPS-TAX-2025-310",
+        "activityNumber": "GPS-TAX-2025-310",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-adv-fractional-725",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean",
+        "fractional-hours"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-027",
+      "description": "HELD-OUT adversarial CPE — degraded scan, fractional 0.6 nano credits",
+      "strippedText": "JUNIPER AUDIT TRAINING C0. | NAN0 LEARNING BUNDLE REC0RD | Learner : [NAME_REDACTED] | Bundle : Sampling Micr0-M0dules ( 3 x 0.2 ) | Bundle ID : JAT-STA-2026-089 | T0tal CPE Credit : 0.6 | Field 0f Study : Statistics | Delivery Meth0d : Nan0 Learning | NASBA Registry Status : Active | C0mpleted : March 9 , 2026",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Juniper Audit Training Co.",
+        "issuedDate": "2026-03-09",
+        "fieldOfStudy": "Statistics",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 0.6,
+        "creditType": "CPE",
+        "providerName": "Juniper Audit Training Co.",
+        "courseId": "JAT-STA-2026-089",
+        "activityNumber": "JAT-STA-2026-089",
+        "deliveryMethod": "Nano Learning",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-heldout-adv-fractional",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan",
+        "fractional-hours",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-028",
+      "description": "Adversarial CPE — multi-credit cert: taxes + regulatory ethics split",
+      "strippedText": "Ridgeline Professional Education Institute — Combined Program Certificate. Participant: [NAME_REDACTED], CPA. Program: Annual Tax Compliance and Ethics Day. Program ID: RPEI-CMB-2026-007. Total CPE Credits: 8.0, allocated as 6.0 Taxes and 2.0 Regulatory Ethics. Delivery Method: Group Live. NASBA Registry Status: Active. Completion Date: January 8, 2026.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Ridgeline Professional Education Institute",
+        "issuedDate": "2026-01-08",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Ridgeline Professional Education Institute",
+        "courseId": "RPEI-CMB-2026-007",
+        "activityNumber": "RPEI-CMB-2026-007",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "ethicsHours": 2,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-adv-multicredit-tax-ethics",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean",
+        "multi-credit"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-029",
+      "description": "Adversarial CPE — multi-credit cert: three fields of study",
+      "strippedText": "Harborview Society of Accountants — Cluster Certificate. Member: [NAME_REDACTED]. Cluster: Government Finance Week. Cluster Code: HSA-CLU-2025-054. Total CPE: 12.0 comprising Accounting (Governmental) 6.0, Auditing (Governmental) 4.0, and Regulatory Ethics 2.0. Delivery: Blended Learning. NASBA Sponsor Status: Active. Completion Date: December 12, 2025. Jurisdiction: Washington.",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Harborview Society of Accountants",
+        "issuedDate": "2025-12-12",
+        "fieldOfStudy": "Accounting (Governmental)",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Washington",
+        "creditHours": 12,
+        "creditType": "CPE",
+        "providerName": "Harborview Society of Accountants",
+        "courseId": "HSA-CLU-2025-054",
+        "activityNumber": "HSA-CLU-2025-054",
+        "deliveryMethod": "Blended Learning",
+        "nasbaStatus": "active",
+        "ethicsHours": 2,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-adv-multicredit-three-fields",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "clean",
+        "multi-credit"
+      ]
+    },
+    {
+      "id": "GD-S3-CPE-030",
+      "description": "HELD-OUT adversarial CPE — degraded multi-credit allocation table",
+      "strippedText": "BLUE HARB0R CPA ACADEMY || C0MBINED CERTIFICATE || Participant : [NAME_REDACTED] || Pr0gram : Assurance + Ethics B0otcamp || ID : BHCA-CMB-2026-160 || All0cati0n Table : | Auditing | 5.0 | | Regulat0ry Ethics | 1.0 | | T0TAL | 6.0 | || Delivery Meth0d : Gr0up Internet Based || NASBA Registry Status : Active || C0mpleted : May 28 , 2026",
+      "credentialTypeHint": "CPE",
+      "groundTruth": {
+        "credentialType": "CPE",
+        "issuerName": "Blue Harbor CPA Academy",
+        "issuedDate": "2026-05-28",
+        "fieldOfStudy": "Auditing",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 6,
+        "creditType": "CPE",
+        "providerName": "Blue Harbor CPA Academy",
+        "courseId": "BHCA-CMB-2026-160",
+        "activityNumber": "BHCA-CMB-2026-160",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cpe-heldout-adv-multicredit",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cpe",
+        "degraded-scan",
+        "multi-credit",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-001",
+      "description": "Clean CLE certificate — securities law with ethics hour",
+      "strippedText": "Certificate of Attendance — Continuing Legal Education. Attorney: [NAME_REDACTED]. Course: Private Placement Exemptions after Regulation D Reform. Activity Number: LLEG-SEC-2026-031. Total CLE Credit Hours: 6.0, including 1.0 Ethics. Provider: Lakeshore Legal Education Group. Approved by the New Caldonia State Bar CLE Board. Delivery: Live Webcast. Completion Date: March 18, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Lakeshore Legal Education Group",
+        "issuedDate": "2026-03-18",
+        "jurisdiction": "New Caldonia",
+        "creditHours": 6,
+        "creditType": "CLE",
+        "providerName": "Lakeshore Legal Education Group",
+        "approvedBy": "New Caldonia State Bar CLE Board",
+        "activityNumber": "LLEG-SEC-2026-031",
+        "courseId": "LLEG-SEC-2026-031",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-clean-securities",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-002",
+      "description": "Clean CLE certificate — pure ethics program",
+      "strippedText": "Clearwater Ethics Institute — CLE Completion Certificate. Attorney: [NAME_REDACTED]. Program: Conflicts of Interest in Multi-Party Litigation. Program Number: CEI-ETH-2026-088. CLE Hours: 2.0 (2.0 Ethics). Approved By: State Bar of Westfalia MCLE Committee. Delivery Method: In-Person Seminar. Date Completed: February 25, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Clearwater Ethics Institute",
+        "issuedDate": "2026-02-25",
+        "jurisdiction": "Westfalia",
+        "creditHours": 2,
+        "creditType": "CLE Ethics",
+        "providerName": "Clearwater Ethics Institute",
+        "approvedBy": "State Bar of Westfalia MCLE Committee",
+        "activityNumber": "CEI-ETH-2026-088",
+        "courseId": "CEI-ETH-2026-088",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 2,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-clean-ethics-only",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-003",
+      "description": "Clean CLE certificate — trial skills, no ethics component",
+      "strippedText": "Meridian Bar Review Institute certifies that [NAME_REDACTED], Esq. completed \"Cross-Examination Strategy for Expert Witnesses\" on January 21, 2026. Course ID: MBRI-LIT-2026-014. CLE Credits: 3.0 General. Ethics Credits: 0.0. Accredited by the Ohio Commission on CLE. Format: Live Webcast.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Meridian Bar Review Institute",
+        "issuedDate": "2026-01-21",
+        "jurisdiction": "Ohio",
+        "creditHours": 3,
+        "creditType": "CLE",
+        "providerName": "Meridian Bar Review Institute",
+        "approvedBy": "Ohio Commission on CLE",
+        "activityNumber": "MBRI-LIT-2026-014",
+        "courseId": "MBRI-LIT-2026-014",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-clean-trial-skills",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-004",
+      "description": "Clean CLE certificate — on-demand IP law course",
+      "strippedText": "Oakhollow CLE Partners — Certificate of Completion. Attorney: [NAME_REDACTED]. Course: Patent Claim Construction after Recent Federal Circuit Decisions. Activity Code: OCP-IPL-2025-201. CLE Credit: 1.5 General Hours. Approved Provider, California MCLE. Delivery Method: On-Demand Video. Completed: December 2, 2025.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Oakhollow CLE Partners",
+        "issuedDate": "2025-12-02",
+        "jurisdiction": "California",
+        "creditHours": 1.5,
+        "creditType": "CLE",
+        "providerName": "Oakhollow CLE Partners",
+        "approvedBy": "California MCLE",
+        "activityNumber": "OCP-IPL-2025-201",
+        "courseId": "OCP-IPL-2025-201",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-clean-ip-ondemand",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-005",
+      "description": "Clean CLE certificate — employment law full-day seminar",
+      "strippedText": "Pinnacle Legal Studies Certificate of Attendance. This certifies that [NAME_REDACTED] attended the full-day seminar \"Non-Compete Agreements and Trade Secret Litigation\" held April 3, 2026. Course Number: PLS-EMP-2026-119. Total CLE Hours: 7.0, including 1.0 Ethics and 6.0 General. Approved by the Minnesota State Board of CLE. Format: In-Person Seminar. Location: Minneapolis, Minnesota.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Pinnacle Legal Studies",
+        "issuedDate": "2026-04-03",
+        "jurisdiction": "Minnesota",
+        "creditHours": 7,
+        "creditType": "CLE",
+        "providerName": "Pinnacle Legal Studies",
+        "approvedBy": "Minnesota State Board of CLE",
+        "activityNumber": "PLS-EMP-2026-119",
+        "courseId": "PLS-EMP-2026-119",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-clean-employment",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-006",
+      "description": "Clean CLE certificate — bar association lunch program",
+      "strippedText": "Bar Association of New Caldonia — CLE Lunch Series Certificate. Member: [NAME_REDACTED]. Program: E-Discovery Sanctions Update. Program ID: BANC-LIT-2026-042. CLE Credit: 1.0 General Hour. Approved by the New Caldonia State Bar CLE Board. Delivery: In-Person Seminar. Date: February 11, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Bar Association of New Caldonia",
+        "issuedDate": "2026-02-11",
+        "jurisdiction": "New Caldonia",
+        "creditHours": 1,
+        "creditType": "CLE",
+        "providerName": "Bar Association of New Caldonia",
+        "approvedBy": "New Caldonia State Bar CLE Board",
+        "activityNumber": "BANC-LIT-2026-042",
+        "courseId": "BANC-LIT-2026-042",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-clean-bar-lunch",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-007",
+      "description": "Clean CLE certificate — expired provider accreditation flag",
+      "strippedText": "Fairport Law Seminars — CLE Completion Record. Attorney: [NAME_REDACTED]. Course: Landlord-Tenant Practice Update. Course ID: FLS-RE-2026-077. CLE Hours: 2.5 General. Provider accreditation with the Westfalia MCLE Committee expired 2025-11-30; credits pending provider reinstatement. Delivery: On-Demand Video. Completed: January 12, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Fairport Law Seminars",
+        "issuedDate": "2026-01-12",
+        "jurisdiction": "Westfalia",
+        "creditHours": 2.5,
+        "creditType": "CLE",
+        "providerName": "Fairport Law Seminars",
+        "approvedBy": "Westfalia MCLE Committee",
+        "activityNumber": "FLS-RE-2026-077",
+        "courseId": "FLS-RE-2026-077",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0,
+        "manualReviewExpected": true,
+        "fraudSignals": [
+          "EXPIRED_ACCREDITATION"
+        ]
+      },
+      "source": "synthetic/s3-cpe-cle/cle-clean-expired-provider",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-008",
+      "description": "Clean CLE certificate — technology competence credit",
+      "strippedText": "Redwood Legal Learning Certificate. Attorney: [NAME_REDACTED]. Course: AI-Assisted Drafting and the Duty of Technology Competence. Activity Number: RLL-TEC-2026-023. CLE Credits: 1.0 Technology, counted toward the general requirement. Approved by the Florida Bar CLE Department. Delivery Method: Live Webcast. Completion Date: March 30, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Redwood Legal Learning",
+        "issuedDate": "2026-03-30",
+        "jurisdiction": "Florida",
+        "creditHours": 1,
+        "creditType": "CLE Technology",
+        "providerName": "Redwood Legal Learning",
+        "approvedBy": "Florida Bar CLE Department",
+        "activityNumber": "RLL-TEC-2026-023",
+        "courseId": "RLL-TEC-2026-023",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-clean-tech-competence",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-009",
+      "description": "Clean CLE certificate — multi-jurisdiction approval list",
+      "strippedText": "Stonegate Legal Institute — Uniform Certificate of Attendance. Attorney: [NAME_REDACTED]. Course: Cross-Border Data Transfers for Litigators. Course ID: SLI-PRV-2025-164. CLE Hours: 4.0 General, 0.5 Ethics (total 4.5). Primary approval: New York CLE Board (transitional and non-transitional). Reciprocity claimed: New Jersey, Connecticut. Delivery: Live Webcast. Date Completed: October 28, 2025.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Stonegate Legal Institute",
+        "issuedDate": "2025-10-28",
+        "jurisdiction": "New York",
+        "creditHours": 4.5,
+        "creditType": "CLE",
+        "providerName": "Stonegate Legal Institute",
+        "approvedBy": "New York CLE Board",
+        "activityNumber": "SLI-PRV-2025-164",
+        "courseId": "SLI-PRV-2025-164",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0.5,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-clean-multi-jurisdiction",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-010",
+      "description": "HELD-OUT clean CLE certificate — family law webinar",
+      "strippedText": "Willowbrook Attorney Education — CLE Certificate of Completion. Attorney: [NAME_REDACTED]. Course: Equitable Distribution of Closely-Held Business Interests. Activity Number: WAE-FAM-2026-101. CLE Credit Hours: 2.0 General. Approved by the Georgia Commission on Continuing Lawyer Competency. Delivery Method: Live Webcast. Completion Date: May 6, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Willowbrook Attorney Education",
+        "issuedDate": "2026-05-06",
+        "jurisdiction": "Georgia",
+        "creditHours": 2,
+        "creditType": "CLE",
+        "providerName": "Willowbrook Attorney Education",
+        "approvedBy": "Georgia Commission on Continuing Lawyer Competency",
+        "activityNumber": "WAE-FAM-2026-101",
+        "courseId": "WAE-FAM-2026-101",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-heldout-clean-family",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-011",
+      "description": "Degraded-scan CLE — litigation course, pipe noise",
+      "strippedText": "CERTIFICATE 0F ATTENDANCE | C0NTINUING LEGAL EDUCATI0N || Att0rney : [NAME_REDACTED] | C0urse : Rem0val and Remand Strategy | Activity Number : MBRI-LIT-2025-289 | T0tal CLE Credit H0urs : 5.0 , including 1.0 Ethics | Pr0vider : Meridian Bar Review Institute | Appr0ved by the 0hi0 C0mmissi0n 0n CLE | Delivery : Live Webcast | C0mpleti0n Date : N0vember 13 , 2025",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Meridian Bar Review Institute",
+        "issuedDate": "2025-11-13",
+        "jurisdiction": "Ohio",
+        "creditHours": 5,
+        "creditType": "CLE",
+        "providerName": "Meridian Bar Review Institute",
+        "approvedBy": "Ohio Commission on CLE",
+        "activityNumber": "MBRI-LIT-2025-289",
+        "courseId": "MBRI-LIT-2025-289",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-degraded-litigation",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-012",
+      "description": "Degraded-scan CLE — ethics program, split tokens",
+      "strippedText": "Clear water Eth ics Insti tute\nCLE Comple tion Certi ficate\nAttor ney: [NAME_REDACTED]\nPro gram: Candor to ward the Tribu nal in Set tlement Nego tiations\nPro gram Num ber: CEI-ETH-2025-141\nCLE Hours: 1.0 (1.0 Eth ics)\nApproved By: State Bar of West falia MCLE Commit tee\nDeli very Method: On-Demand Video\nDate Comple ted: Septem ber 9, 2025",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Clearwater Ethics Institute",
+        "issuedDate": "2025-09-09",
+        "jurisdiction": "Westfalia",
+        "creditHours": 1,
+        "creditType": "CLE Ethics",
+        "providerName": "Clearwater Ethics Institute",
+        "approvedBy": "State Bar of Westfalia MCLE Committee",
+        "activityNumber": "CEI-ETH-2025-141",
+        "courseId": "CEI-ETH-2025-141",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-degraded-ethics",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-013",
+      "description": "Degraded-scan CLE — real estate course, spacing noise in numbers",
+      "strippedText": "Fairport Law Seminars * CLE Record * Attorney [NAME_REDACTED] * Course : Commercial Lease Workouts and Receiverships * Course ID FLS - RE - 2026 - 118 * CLE Hours : 3 . 0 General * Approved by Westfalia MCLE Committee * Delivery : In - Person Seminar * Completed : March 4 , 2026",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Fairport Law Seminars",
+        "issuedDate": "2026-03-04",
+        "jurisdiction": "Westfalia",
+        "creditHours": 3,
+        "creditType": "CLE",
+        "providerName": "Fairport Law Seminars",
+        "approvedBy": "Westfalia MCLE Committee",
+        "activityNumber": "FLS-RE-2026-118",
+        "courseId": "FLS-RE-2026-118",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-degraded-realestate",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-014",
+      "description": "Degraded-scan CLE — immigration law, table remnants",
+      "strippedText": "~~ ST0NEGATE LEGAL INSTITUTE ~~ ||| CLE TRANSCRIPT R0W ||| [NAME_REDACTED] | Asylum Practice After Recent BIA Precedent | SLI-IMM-2026-036 | 4.0 General | 0.0 Ethics | New Y0rk CLE B0ard | Live Webcast | 2026-01-27 |",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Stonegate Legal Institute",
+        "issuedDate": "2026-01-27",
+        "jurisdiction": "New York",
+        "creditHours": 4,
+        "creditType": "CLE",
+        "providerName": "Stonegate Legal Institute",
+        "approvedBy": "New York CLE Board",
+        "activityNumber": "SLI-IMM-2026-036",
+        "courseId": "SLI-IMM-2026-036",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-degraded-immigration",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-015",
+      "description": "Degraded-scan CLE — edge-cut header, stamp noise",
+      "strippedText": "Pinnacle Legal Stu... (edge cut) / Certificate of Atten dance. Attor ney: [NAME_REDACTED]. Course: Wage and Hour Class Certi fication Defense. Course Num ber: PLS-EMP-2025-244. Total CLE Hours: 6.5 inclu ding 0.5 Eth ics. Appro ved by the Minne sota State Board of CLE. For mat: In-Per son Semi nar. Date: Octo ber 9, 2025. [seal illegible]",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Pinnacle Legal Studies",
+        "issuedDate": "2025-10-09",
+        "jurisdiction": "Minnesota",
+        "creditHours": 6.5,
+        "creditType": "CLE",
+        "providerName": "Pinnacle Legal Studies",
+        "approvedBy": "Minnesota State Board of CLE",
+        "activityNumber": "PLS-EMP-2025-244",
+        "courseId": "PLS-EMP-2025-244",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0.5,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-degraded-edgecut",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-016",
+      "description": "Degraded-scan CLE — duplicated header words, criminal law",
+      "strippedText": "CLE CLE CERTIFICATE CERTIFICATE — Redwood Legal Learning. Attorney: [NAME_REDACTED]. Course Course: Sentencing Guidelines Departures Workshop. Activity Number: RLL-CRM-2025-310. CLE Credits: 2.0 General. Approved by the Florida Bar CLE Department. Delivery Method: On-Demand Video. Completion Date: December 18, 2025.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Redwood Legal Learning",
+        "issuedDate": "2025-12-18",
+        "jurisdiction": "Florida",
+        "creditHours": 2,
+        "creditType": "CLE",
+        "providerName": "Redwood Legal Learning",
+        "approvedBy": "Florida Bar CLE Department",
+        "activityNumber": "RLL-CRM-2025-310",
+        "courseId": "RLL-CRM-2025-310",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-degraded-criminal",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-017",
+      "description": "Degraded-scan CLE — zero/O substitution, bankruptcy course",
+      "strippedText": "0akh0ll0w CLE Partners -- CLE C0mpleti0n Rec0rd. Att0rney: [NAME_REDACTED]. C0urse: Subchapter V Practice P0inters. Activity C0de: 0CP-BKR-2026-054. CLE Credit: 1.5 General H0urs. Appr0ved Pr0vider, Calif0rnia MCLE. Delivery Meth0d: Live Webcast. C0mpleted: February 19, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Oakhollow CLE Partners",
+        "issuedDate": "2026-02-19",
+        "jurisdiction": "California",
+        "creditHours": 1.5,
+        "creditType": "CLE",
+        "providerName": "Oakhollow CLE Partners",
+        "approvedBy": "California MCLE",
+        "activityNumber": "OCP-BKR-2026-054",
+        "courseId": "OCP-BKR-2026-054",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-degraded-bankruptcy",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-018",
+      "description": "HELD-OUT degraded-scan CLE — health law, mixed noise",
+      "strippedText": "LAKESH0RE LEGAL EDUCATI0N GR0UP || C L E  CERT | Att0rney : [NAME_REDACTED] | C0urse : Telehealth Licensing and the C0rp0rate Practice D0ctrine | Activity Number : LLEG-HEA-2026-149 | T0tal CLE Credit H0urs : 3.5 , including 0.5 Ethics | Appr0ved by the New Cald0nia State Bar CLE B0ard | Delivery : 0n-Demand Vide0 | C0mpleti0n Date : April 16 , 2026",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Lakeshore Legal Education Group",
+        "issuedDate": "2026-04-16",
+        "jurisdiction": "New Caldonia",
+        "creditHours": 3.5,
+        "creditType": "CLE",
+        "providerName": "Lakeshore Legal Education Group",
+        "approvedBy": "New Caldonia State Bar CLE Board",
+        "activityNumber": "LLEG-HEA-2026-149",
+        "courseId": "LLEG-HEA-2026-149",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0.5,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-heldout-degraded-health",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-019",
+      "description": "Adversarial CLE — law firm host vs accredited provider",
+      "strippedText": "CLE Certificate of Attendance. Attorney: [NAME_REDACTED]. Course: Privilege Logs in the Era of Generative Drafting Tools. Hosted at the offices of [COMPANY_REDACTED] LLP. Registration handled by EventWorks Co. Accredited CLE Provider of Record: Stonegate Legal Institute, approved by the New York CLE Board. Activity Number: SLI-PRV-2026-071. CLE Hours: 2.0 General. Delivery: In-Person Seminar. Date: March 25, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Stonegate Legal Institute",
+        "issuedDate": "2026-03-25",
+        "jurisdiction": "New York",
+        "creditHours": 2,
+        "creditType": "CLE",
+        "providerName": "Stonegate Legal Institute",
+        "approvedBy": "New York CLE Board",
+        "activityNumber": "SLI-PRV-2026-071",
+        "courseId": "SLI-PRV-2026-071",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-adv-ambiguous-provider-firm",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean",
+        "ambiguous-provider"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-020",
+      "description": "Adversarial CLE — streaming platform brand dominates certificate",
+      "strippedText": "JurisCast Streaming Network — Viewing Confirmation. Viewer: [NAME_REDACTED], Esq. Title: Appellate Standards of Review Refresher. For CLE credit purposes, this program is produced and accredited by Meridian Bar Review Institute (Ohio Commission on CLE approved provider); JurisCast provides distribution only and is not a CLE provider. Activity Number: MBRI-APP-2026-063. CLE Credits: 1.0 General. Delivery: On-Demand Video. Completed: February 5, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Meridian Bar Review Institute",
+        "issuedDate": "2026-02-05",
+        "jurisdiction": "Ohio",
+        "creditHours": 1,
+        "creditType": "CLE",
+        "providerName": "Meridian Bar Review Institute",
+        "approvedBy": "Ohio Commission on CLE",
+        "activityNumber": "MBRI-APP-2026-063",
+        "courseId": "MBRI-APP-2026-063",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-adv-ambiguous-provider-stream",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean",
+        "ambiguous-provider"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-021",
+      "description": "HELD-OUT adversarial CLE — degraded scan, sponsor vs co-sponsor vs venue",
+      "strippedText": "C L E   C E R T I F I C A T E || Venue : Harb0r P0int H0tel || C0-Sp0ns0r ( n0n-accredited ) : C0astal Paralegal All iance || Accredited Pr0vider 0f Rec0rd : Willowbr00k Att0rney Educati0n , appr0ved by the Ge0rgia C0mmissi0n 0n C0ntinuing Lawyer C0mpetency || Att0rney : [NAME_REDACTED] || C0urse : Guardianship Litigati0n W0rksh0p || Activity Number : WAE-PRO-2026-133 || CLE Credit H0urs : 4.0 General , 1.0 Ethics ( t0tal 5.0 ) || Delivery : In-Pers0n Seminar || Date : May 21 , 2026",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Willowbrook Attorney Education",
+        "issuedDate": "2026-05-21",
+        "jurisdiction": "Georgia",
+        "creditHours": 5,
+        "creditType": "CLE",
+        "providerName": "Willowbrook Attorney Education",
+        "approvedBy": "Georgia Commission on Continuing Lawyer Competency",
+        "activityNumber": "WAE-PRO-2026-133",
+        "courseId": "WAE-PRO-2026-133",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-heldout-adv-ambiguous-provider",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan",
+        "ambiguous-provider",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-022",
+      "description": "Adversarial CLE — requested vs approved vs earned hours",
+      "strippedText": "Lakeshore Legal Education Group — CLE Certificate. Attorney: [NAME_REDACTED]. Course: Construction Defect Coverage Disputes. Activity Number: LLEG-INS-2026-058. Hours requested from the CLE Board: 6.0. Hours approved by the New Caldonia State Bar CLE Board: 5.0. Hours earned by this attendee: 5.0 General. Delivery: In-Person Seminar. Completion Date: January 29, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Lakeshore Legal Education Group",
+        "issuedDate": "2026-01-29",
+        "jurisdiction": "New Caldonia",
+        "creditHours": 5,
+        "creditType": "CLE",
+        "providerName": "Lakeshore Legal Education Group",
+        "approvedBy": "New Caldonia State Bar CLE Board",
+        "activityNumber": "LLEG-INS-2026-058",
+        "courseId": "LLEG-INS-2026-058",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-adv-neardup-requested",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean",
+        "near-duplicate-credits"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-023",
+      "description": "Adversarial CLE — 50-minute vs 60-minute hour conversion",
+      "strippedText": "Oakhollow CLE Partners Uniform Certificate. Attorney: [NAME_REDACTED]. Course: Mediation Advocacy Intensive. Activity Code: OCP-ADR-2025-277. Instruction: 300 minutes. Credit in 60-minute-hour jurisdictions: 5.0 hours. Credit in 50-minute-hour jurisdictions: 6.0 hours. This certificate is issued for California (60-minute hour): 5.0 General Hours. Approved Provider, California MCLE. Delivery: In-Person Seminar. Completed: November 6, 2025.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Oakhollow CLE Partners",
+        "issuedDate": "2025-11-06",
+        "jurisdiction": "California",
+        "creditHours": 5,
+        "creditType": "CLE",
+        "providerName": "Oakhollow CLE Partners",
+        "approvedBy": "California MCLE",
+        "activityNumber": "OCP-ADR-2025-277",
+        "courseId": "OCP-ADR-2025-277",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-adv-neardup-conversion",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean",
+        "near-duplicate-credits"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-024",
+      "description": "HELD-OUT adversarial CLE — degraded scan, repeated near-identical credit rows",
+      "strippedText": "PINNACLE LEGAL STUDIES | CLE REC0RD | Att0rney : [NAME_REDACTED] | C0urse : ERISA Litigati0n Update | Activity : PLS-ERI-2026-190 | CLE H0urs ( certificate ) : 3.0 General | CLE H0urs ( rescan 0f same r0w ) : 3.0 General | Sister c0urse PLS-ERI-2026-191 ( N0T attended ) : 3.5 General | Appr0ved by the Minnes0ta State B0ard 0f CLE | Delivery : Live Webcast | Date : March 11 , 2026",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Pinnacle Legal Studies",
+        "issuedDate": "2026-03-11",
+        "jurisdiction": "Minnesota",
+        "creditHours": 3,
+        "creditType": "CLE",
+        "providerName": "Pinnacle Legal Studies",
+        "approvedBy": "Minnesota State Board of CLE",
+        "activityNumber": "PLS-ERI-2026-190",
+        "courseId": "PLS-ERI-2026-190",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-heldout-adv-neardup",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan",
+        "near-duplicate-credits",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-025",
+      "description": "Adversarial CLE — fractional 0.75 ethics hours",
+      "strippedText": "Clearwater Ethics Institute — CLE Certificate. Attorney: [NAME_REDACTED]. Program: Fee Agreements and Trust Accounting Pitfalls. Program Number: CEI-ETH-2026-119. CLE Hours: 0.75 (0.75 Ethics). Approved By: State Bar of Westfalia MCLE Committee. Delivery Method: Live Webcast. Date Completed: April 21, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Clearwater Ethics Institute",
+        "issuedDate": "2026-04-21",
+        "jurisdiction": "Westfalia",
+        "creditHours": 0.75,
+        "creditType": "CLE Ethics",
+        "providerName": "Clearwater Ethics Institute",
+        "approvedBy": "State Bar of Westfalia MCLE Committee",
+        "activityNumber": "CEI-ETH-2026-119",
+        "courseId": "CEI-ETH-2026-119",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0.75,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-adv-fractional-075",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean",
+        "fractional-hours"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-026",
+      "description": "Adversarial CLE — fractional 3.25 total, mixed general/ethics fractions",
+      "strippedText": "Redwood Legal Learning Certificate of Completion. Attorney: [NAME_REDACTED]. Course: Cyber Incident Response for Outside Counsel. Activity Number: RLL-PRV-2025-198. Total CLE Credits: 3.25, allocated 2.75 General and 0.5 Ethics. Approved by the Florida Bar CLE Department. Delivery Method: On-Demand Video. Completion Date: August 14, 2025.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Redwood Legal Learning",
+        "issuedDate": "2025-08-14",
+        "jurisdiction": "Florida",
+        "creditHours": 3.25,
+        "creditType": "CLE",
+        "providerName": "Redwood Legal Learning",
+        "approvedBy": "Florida Bar CLE Department",
+        "activityNumber": "RLL-PRV-2025-198",
+        "courseId": "RLL-PRV-2025-198",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0.5,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-adv-fractional-325",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean",
+        "fractional-hours"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-027",
+      "description": "HELD-OUT adversarial CLE — degraded scan, fractional 1.25 hours",
+      "strippedText": "BAR ASS0CIATI0N 0F NEW CALD0NIA || CLE LUNCH SERIES || Member : [NAME_REDACTED] || Pr0gram : Expert Discl0sure Deadlines Under the Amended Rules || Pr0gram ID : BANC-LIT-2026-095 || CLE Credit : 1 . 25 General H0urs || Appr0ved by the New Cald0nia State Bar CLE B0ard || Delivery : In-Pers0n Seminar || Date : June 10 , 2026",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Bar Association of New Caldonia",
+        "issuedDate": "2026-06-10",
+        "jurisdiction": "New Caldonia",
+        "creditHours": 1.25,
+        "creditType": "CLE",
+        "providerName": "Bar Association of New Caldonia",
+        "approvedBy": "New Caldonia State Bar CLE Board",
+        "activityNumber": "BANC-LIT-2026-095",
+        "courseId": "BANC-LIT-2026-095",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-heldout-adv-fractional",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan",
+        "fractional-hours",
+        "held-out"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-028",
+      "description": "Adversarial CLE — multi-credit: general + ethics + competence",
+      "strippedText": "Willowbrook Attorney Education — Full-Day Program Certificate. Attorney: [NAME_REDACTED]. Program: Modern Law Practice Summit. Activity Number: WAE-SUM-2026-021. Total CLE Hours: 8.0, allocated as 6.0 General, 1.0 Ethics, and 1.0 Professionalism. Approved by the Georgia Commission on Continuing Lawyer Competency. Delivery: In-Person Seminar. Date: February 27, 2026.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Willowbrook Attorney Education",
+        "issuedDate": "2026-02-27",
+        "jurisdiction": "Georgia",
+        "creditHours": 8,
+        "creditType": "CLE",
+        "providerName": "Willowbrook Attorney Education",
+        "approvedBy": "Georgia Commission on Continuing Lawyer Competency",
+        "activityNumber": "WAE-SUM-2026-021",
+        "courseId": "WAE-SUM-2026-021",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-adv-multicredit-three-buckets",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean",
+        "multi-credit"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-029",
+      "description": "Adversarial CLE — multi-credit two-day conference with per-day totals",
+      "strippedText": "Stonegate Legal Institute Annual Privacy Conference — Certificate of Attendance. Attorney: [NAME_REDACTED]. Dates: May 14-15, 2026. Day 1 credits: 6.0 General. Day 2 credits: 5.0 General plus 1.0 Ethics. Total CLE Hours awarded: 12.0. Activity Number: SLI-CONF-2026-003. Primary approval: New York CLE Board. Delivery: In-Person Seminar.",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Stonegate Legal Institute",
+        "issuedDate": "2026-05-15",
+        "jurisdiction": "New York",
+        "creditHours": 12,
+        "creditType": "CLE",
+        "providerName": "Stonegate Legal Institute",
+        "approvedBy": "New York CLE Board",
+        "activityNumber": "SLI-CONF-2026-003",
+        "courseId": "SLI-CONF-2026-003",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-adv-multicredit-two-day",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "clean",
+        "multi-credit"
+      ]
+    },
+    {
+      "id": "GD-S3-CLE-030",
+      "description": "HELD-OUT adversarial CLE — degraded multi-credit allocation table",
+      "strippedText": "FAIRP0RT LAW SEMINARS || C0MBINED CLE CERTIFICATE || Att0rney : [NAME_REDACTED] || Pr0gram : Landl0rd-Tenant + Ethics D0uble Sessi0n || Activity : FLS-CMB-2026-201 || All0cati0n : | General | 2.0 | | Ethics | 1.0 | | T0TAL | 3.0 | || Appr0ved by Westfalia MCLE C0mmittee || Delivery Meth0d : Live Webcast || C0mpleted : June 17 , 2026",
+      "credentialTypeHint": "CLE",
+      "groundTruth": {
+        "credentialType": "CLE",
+        "issuerName": "Fairport Law Seminars",
+        "issuedDate": "2026-06-17",
+        "jurisdiction": "Westfalia",
+        "creditHours": 3,
+        "creditType": "CLE",
+        "providerName": "Fairport Law Seminars",
+        "approvedBy": "Westfalia MCLE Committee",
+        "activityNumber": "FLS-CMB-2026-201",
+        "courseId": "FLS-CMB-2026-201",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "source": "synthetic/s3-cpe-cle/cle-heldout-adv-multicredit",
+      "category": "professional-education",
+      "tags": [
+        "synthetic",
+        "s3-cpe-cle",
+        "cle",
+        "degraded-scan",
+        "multi-credit",
+        "held-out"
+      ]
+    }
+  ]
+}

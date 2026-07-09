@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildCtdlJsonLd, type CtdlAnchor } from './ctdl-serializer.js';
 import { FabricatedCtidError } from './ctdl-ctid-guard.js';
+import { ProhibitedClaimError } from './ctdl-claims-guard.js';
 import { ARKOVA_DID } from '../api/did-web.js';
 
 const baseAnchor: CtdlAnchor = {
@@ -120,6 +121,59 @@ describe('buildCtdlJsonLd', () => {
     // SCRUM-2374 (CE-03): baseAnchor carries a future issued-person expiresAt,
     // which is NEVER emitted as ceterms:expirationDate regardless of status.
     expect(jsonLd).not.toHaveProperty('ceterms:expirationDate');
+  });
+
+  // BUG-2026-07-06-002 / SCRUM-2630 (pre-existing, round-1 review finding 5):
+  // revocationReason used to route through cleanPublicString (control-char/
+  // length hygiene only), so a PII-bearing issuer reason ("revoked — contact
+  // jane@example.com") shipped verbatim on the public 410 projection. It now
+  // routes through cleanPublicFreeText: PII / learner-name / overclaim-bearing
+  // reasons are honestly OMITTED while the 410 + ceterms:revocationDate stay.
+  describe('revocationReason PII gate (BUG-2026-07-06-002 / SCRUM-2630)', () => {
+    const revokedBase = {
+      ...baseAnchor,
+      status: 'REVOKED',
+      revokedAt: '2026-05-21T00:00:00.000Z',
+    };
+    const verify = { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' };
+
+    it('omits an email-bearing revocation reason while keeping the revocation date', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...revokedBase, revocationReason: 'Revoked — contact jane.student@example.edu for details.' },
+        verify,
+      );
+
+      expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
+      expect(jsonLd['ceterms:revocationDate']).toBe('2026-05-21T00:00:00.000Z');
+      expect(jsonLd).not.toHaveProperty('ceterms:revocationReason');
+      expect(JSON.stringify(jsonLd)).not.toContain('jane.student@example.edu');
+    });
+
+    it('omits a phone-bearing revocation reason', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...revokedBase, revocationReason: 'Call 555-867-5309 to dispute this revocation.' },
+        verify,
+      );
+      expect(jsonLd).not.toHaveProperty('ceterms:revocationReason');
+      expect(JSON.stringify(jsonLd)).not.toContain('555-867-5309');
+    });
+
+    it('omits a learner-name-bearing revocation reason', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...revokedBase, revocationReason: 'Credential issued to Jane Q Student in error.' },
+        verify,
+      );
+      expect(jsonLd).not.toHaveProperty('ceterms:revocationReason');
+      expect(JSON.stringify(jsonLd)).not.toContain('Jane Q Student');
+    });
+
+    it('still publishes a clean revocation reason', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...revokedBase, revocationReason: 'Issuer revoked the completion.' },
+        verify,
+      );
+      expect(jsonLd['ceterms:revocationReason']).toBe('Issuer revoked the completion.');
+    });
   });
 
   it('suppresses PII-bearing free-text values before public CTDL serialization', () => {
@@ -332,6 +386,266 @@ describe('buildCtdlJsonLd', () => {
 
       expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
       expect(jsonLd).not.toHaveProperty('ceterms:expirationDate');
+    });
+
+    // CE-06b sign-off breadcrumb (SCRUM-2377): Jeanne Kitchens' correction (1)
+    // says the two expiry meanings are DISTINCT properties in CTDL-land:
+    // `ceterms:expirationDate` = resource/offering availability; issued-PERSON
+    // credential expiry has NO class-level CTDL property and belongs to the
+    // OB3/W3C VC issued-credential layer (SCRUM-2296). The exact property
+    // choice for surfacing person-level validity (OB3 `expirationDate` on the
+    // issued credential vs a VC `expirationDate`/`validUntil`) is the OPEN
+    // QUESTION for CE-06b sign-off. Until that sign-off, the only executable
+    // truth is: the CTDL projection NEVER carries the person-level expiry —
+    // under any status — even when no offering expiry exists to shadow it.
+    it('documents the CE-06b property-choice question: person expiry maps to NO CTDL property today', () => {
+      for (const status of ['ACTIVE', 'SECURED', 'EXPIRED', 'SUPERSEDED'] as const) {
+        const jsonLd = buildCtdlJsonLd(
+          {
+            ...baseAnchor,
+            status,
+            expiresAt: '2031-03-03T00:00:00.000Z',
+            resourceAvailableUntil: null,
+          },
+          { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' },
+        );
+        expect(jsonLd).not.toHaveProperty('ceterms:expirationDate');
+        expect(JSON.stringify(jsonLd)).not.toContain('2031-03-03');
+      }
+    });
+  });
+
+  // SCRUM-2375 (CE-04) — CE continuing-education credit is expressed as a
+  // ceterms:ValueProfile with schema:value + ceterms:creditUnitType ContactHour,
+  // per Jeanne Kitchens' CTDL correction (2). NEVER a bare scalar; NEVER
+  // fabricated when absent/zero. CONFLATION GUARD: this "credit" is the CE
+  // ContactHour credit value of the credential — it has NOTHING to do with the
+  // Arkova billing credit_ledger (paid anchoring credits).
+  describe('ceterms:creditValue ContactHour ValueProfile (CE-04)', () => {
+    const verify = { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' };
+
+    // Golden fixture 1 — integer credit: a 2.0-hour CLE ethics completion.
+    it('emits a golden ContactHour ValueProfile for a 2.0-hour CLE ethics credit', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'CLE', subType: 'ethics_cle', contactHours: 2 },
+        verify,
+      );
+
+      expect(jsonLd['ceterms:creditValue']).toEqual([
+        {
+          '@type': 'ceterms:ValueProfile',
+          'schema:value': 2,
+          'ceterms:creditUnitType': [
+            {
+              '@type': 'ceterms:CredentialAlignmentObject',
+              'ceterms:framework': 'https://credreg.net/ctdl/terms/creditUnit',
+              'ceterms:frameworkName': 'Credit Unit',
+              'ceterms:targetNode': 'creditUnit:ContactHour',
+              'ceterms:targetNodeName': 'Contact Hour',
+            },
+          ],
+        },
+      ]);
+    });
+
+    // Golden fixture 2 — fractional credit: a 1.5-contact-hour CPE completion.
+    it('emits a golden fractional ContactHour ValueProfile for a 1.5-hour CPE credit', () => {
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          credentialType: 'CPE',
+          subType: 'accounting_cpe',
+          label: 'Accounting Update CPE',
+          contactHours: 1.5,
+        },
+        verify,
+      );
+
+      expect(jsonLd['@type']).toBe('ceterms:Certificate');
+      expect(jsonLd['ceterms:creditValue']).toEqual([
+        {
+          '@type': 'ceterms:ValueProfile',
+          'schema:value': 1.5,
+          'ceterms:creditUnitType': [
+            {
+              '@type': 'ceterms:CredentialAlignmentObject',
+              'ceterms:framework': 'https://credreg.net/ctdl/terms/creditUnit',
+              'ceterms:frameworkName': 'Credit Unit',
+              'ceterms:targetNode': 'creditUnit:ContactHour',
+              'ceterms:targetNodeName': 'Contact Hour',
+            },
+          ],
+        },
+      ]);
+    });
+
+    // Golden fixture 3 — absent credit: NEVER fabricate a ValueProfile.
+    it('omits ceterms:creditValue entirely when no credit value is present', () => {
+      const jsonLd = buildCtdlJsonLd({ ...baseAnchor, credentialType: 'CLE' }, verify);
+      expect(jsonLd).not.toHaveProperty('ceterms:creditValue');
+    });
+
+    it('omits ceterms:creditValue for a zero credit value (never a fabricated 0-hour profile)', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'CPE', contactHours: 0 },
+        verify,
+      );
+      expect(jsonLd).not.toHaveProperty('ceterms:creditValue');
+    });
+
+    it('omits ceterms:creditValue for negative or non-finite credit values', () => {
+      for (const bogus of [-1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        const jsonLd = buildCtdlJsonLd(
+          { ...baseAnchor, credentialType: 'CLE', contactHours: bogus },
+          verify,
+        );
+        expect(jsonLd).not.toHaveProperty('ceterms:creditValue');
+      }
+    });
+
+    // Golden fixture 4 — CPE vs CLE: both are continuing-education credit and
+    // both express the credit as ContactHour; the distinction lives in @type
+    // resolution + name, never in the credit unit.
+    it('emits ContactHour for both CPE and CLE with the same unit vocabulary (CPE vs CLE case)', () => {
+      const cle = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'CLE', subType: 'ethics_cle', contactHours: 2 },
+        verify,
+      );
+      const cpe = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'CPE', subType: 'tax_cpe', contactHours: 8 },
+        verify,
+      );
+
+      const cleUnit = cle['ceterms:creditValue']?.[0]['ceterms:creditUnitType'][0]['ceterms:targetNode'];
+      const cpeUnit = cpe['ceterms:creditValue']?.[0]['ceterms:creditUnitType'][0]['ceterms:targetNode'];
+      expect(cleUnit).toBe('creditUnit:ContactHour');
+      expect(cpeUnit).toBe('creditUnit:ContactHour');
+      expect(cle['ceterms:creditValue']?.[0]['schema:value']).toBe(2);
+      expect(cpe['ceterms:creditValue']?.[0]['schema:value']).toBe(8);
+    });
+
+    // Honest-omission guard: contact hours on a non-continuing-education type
+    // are not a CE credit assertion we can stand behind — omit.
+    it('omits ceterms:creditValue for non-continuing-education credential types', () => {
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'DEGREE', subType: 'bachelor', contactHours: 3 },
+        verify,
+      );
+      expect(jsonLd).not.toHaveProperty('ceterms:creditValue');
+    });
+
+    it('keeps the CTDL body valid when a ContactHour ValueProfile is present', () => {
+      // buildCtdlJsonLd runs assertValidCtdlJsonLd internally — reaching the
+      // expectation means the validator accepted the ValueProfile shape.
+      const jsonLd = buildCtdlJsonLd(
+        { ...baseAnchor, credentialType: 'CLE', contactHours: 2 },
+        verify,
+      );
+      expect(jsonLd['ceterms:creditValue']).toHaveLength(1);
+    });
+  });
+
+  // SCRUM-2377 (CE-06a) — fail-closed claims-review gate (R-7): the public CTDL
+  // projection can NEVER ship a Registry-listing assertion ("listed in the
+  // Registry" etc.) or a "legally sufficient" claim. Issuer-authored free text
+  // carrying an overclaim is suppressed (honest omission, like PII); any string
+  // that still reaches the assembled body trips the final assert (throw -> the
+  // route's generic catch -> 500, no body). This EXTENDS the CE-01/CE-02
+  // fail-closed chain in buildCtdlJsonLd — it is not a parallel gate.
+  describe('claims-review gate — no Registry-listing overclaims (CE-06a)', () => {
+    const verify = { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' };
+
+    it('suppresses an issuer description asserting Registry listing (honest omission)', () => {
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          description: 'This credential is listed in the Credential Registry.',
+        },
+        verify,
+      );
+
+      expect(jsonLd).not.toHaveProperty('ceterms:description');
+      expect(JSON.stringify(jsonLd)).not.toMatch(/listed in the/i);
+    });
+
+    it('suppresses an overclaim-bearing label instead of publishing it as the name', () => {
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          label: 'Registry-listed Ethics CLE',
+          description: null,
+          metadata: { courseTitle: 'Ethics and Professional Responsibility' },
+        },
+        verify,
+      );
+
+      expect(jsonLd['ceterms:name']).toBe('Ethics and Professional Responsibility');
+      expect(JSON.stringify(jsonLd)).not.toMatch(/registry-listed/i);
+    });
+
+    it('suppresses an overclaim-bearing revocation reason (honest omission; 410 fields kept)', () => {
+      // BUG-2026-07-06-002 / SCRUM-2630: revocationReason now routes through
+      // cleanPublicFreeText, so an overclaim is dropped at the source (same
+      // treatment as PII) instead of relying on the final assert; the assembled
+      // body ships without the reason. assertNoProhibitedClaimInJsonLd stays as
+      // the backstop for any future path that bypasses cleanPublicFreeText.
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          status: 'REVOKED',
+          revokedAt: '2026-05-21T00:00:00.000Z',
+          revocationReason: 'Superseded by the version listed in the Registry.',
+        },
+        verify,
+      );
+
+      expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Revoked');
+      expect(jsonLd['ceterms:revocationDate']).toBe('2026-05-21T00:00:00.000Z');
+      expect(jsonLd).not.toHaveProperty('ceterms:revocationReason');
+      expect(JSON.stringify(jsonLd)).not.toMatch(/listed in the/i);
+    });
+
+    it('the final body assert still fails closed for a claim that bypasses per-field cleaning', () => {
+      // Backstop pin: the recursive assert itself still throws on an overclaim
+      // reaching an assembled body (exercised directly in ctdl-claims-guard.test.ts;
+      // here we pin that the serializer keeps calling it — see the source-scan
+      // lint test asserting assertNoProhibitedClaimInJsonLd stays wired).
+      expect(() =>
+        buildCtdlJsonLd(
+          {
+            ...baseAnchor,
+            // publicId feeds ceterms:identifierValue verbatim (not free text),
+            // so it is the one field that can carry a claim to the final assert.
+            publicId: 'listed in the Registry',
+          },
+          verify,
+        ),
+      ).toThrow(ProhibitedClaimError);
+    });
+
+    it('suppresses a "legally sufficient" claim in free text', () => {
+      const jsonLd = buildCtdlJsonLd(
+        {
+          ...baseAnchor,
+          description: 'This record is legally sufficient in all jurisdictions.',
+        },
+        verify,
+      );
+      expect(jsonLd).not.toHaveProperty('ceterms:description');
+      expect(JSON.stringify(jsonLd)).not.toMatch(/legally sufficient/i);
+    });
+
+    it('publishing to the CE Registry stays OFF: the projection asserts no listing status at all', () => {
+      // The whole CE "publish path" today is this read-only projection behind
+      // the CE-01 publishability gate. There is no Registry write path, and no
+      // body field may assert one. (The lint test additionally verifies no CE
+      // Registry publish endpoint is wired anywhere in the worker.)
+      const jsonLd = buildCtdlJsonLd(baseAnchor, verify);
+      const body = JSON.stringify(jsonLd);
+      expect(body).not.toMatch(/listed in the/i);
+      expect(body).not.toMatch(/registry[-\s]listed/i);
+      expect(body).not.toMatch(/in the credential registry/i);
+      expect(body).not.toMatch(/legally sufficient/i);
     });
   });
 });
