@@ -50,7 +50,7 @@ import { EvidenceLayersSection } from '@/components/verification/EvidenceLayersS
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { LinkedInCredentialHelper } from '@/components/verification/LinkedInCredentialHelper';
 import { ArkovaBadge } from '@/components/verification/ArkovaBadge';
-import { parseVerificationLevel, sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
+import { isIssuerAuthenticated, parseVerificationLevel, sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 
 interface PublicAnchorData {
   public_id: string;
@@ -301,6 +301,15 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   // Extract DB field (bitcoin_block) to avoid copy-lint trigger in template literal
   const networkRecordBlock = data.bitcoin_block;
   const sourceProvenance = extractSourceProvenance(data);
+  // SCRUM-2481 [P1]: the embeddable Arkova badge + the LinkedIn Credential-URL
+  // share helper are issuer-STYLE off-platform affordances. Gate them on the
+  // SAME issuer-authentication gate that earns the green treatment
+  // (isIssuerAuthenticated) — true ONLY for issuer_anchored / source_signed.
+  // A merely-SECURED low-trust record (captured_url / account_linked /
+  // ai_captured) — or a plain upload with no evidence level — must NOT get an
+  // embeddable/shareable issuer-looking badge (§1.5 / R-7 claims-gate).
+  const isIssuerAuthenticatedRecord = isIssuerAuthenticated(sourceProvenance.verification_level);
+  const canShareIssuerBadge = isSecured && isIssuerAuthenticatedRecord;
   const credentialMetadata = sanitizeCredentialMetadata(data.metadata);
   const hasSourceProvenance = Boolean(
     sanitizeSourceUrl(sourceProvenance.source_url) ||
@@ -516,8 +525,15 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
 
         {/* ============================================================
             SECTION 2f: LinkedIn Share (CSI-03)
-            ============================================================ */}
-        {isSecured && (
+            ============================================================
+            SCRUM-2481 [P1]: the embeddable ArkovaBadge + LinkedIn Credential-URL
+            helper are issuer-STYLE off-platform affordances. They are gated on
+            `canShareIssuerBadge` (isSecured && isIssuerAuthenticated(level)) —
+            the SAME issuer-auth gate as the green treatment. A low-trust
+            captured_url / account_linked / ai_captured record (or a plain
+            upload with no evidence level) must never surface a shareable /
+            embeddable issuer-looking badge (§1.5 / R-7 claims-gate). */}
+        {canShareIssuerBadge && (
           <>
             <Separator />
             <div className="space-y-3">

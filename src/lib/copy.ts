@@ -3099,7 +3099,7 @@ export const EVIDENCE_LEVEL_LABELS = {
 export const EVIDENCE_LEVEL_DESCRIPTIONS = {
   issuer_anchored: 'Verified directly with the issuing organization. The credential was cryptographically anchored by the original issuer.',
   source_signed: 'The credential source provided a cryptographic signature proving origin and integrity.',
-  account_linked: 'Imported from an authenticated account. The holder proved access to the issuing platform.',
+  account_linked: 'Imported from a connected account. Proves the holder had access to that account — the originating organization did not vouch for this record.',
   captured_url: 'Captured from a public URL. The content was fetched and fingerprinted at the recorded time.',
   ai_captured: 'Extracted using AI from an uploaded document. Content was parsed and structured automatically.',
 } as const satisfies Record<EvidenceLevel, string>;
@@ -3273,6 +3273,73 @@ export const SECURE_QUEUE_LABELS = {
   QUEUED_TOAST: 'Added to the queue. No credits used.',
   SECURED_TOAST: 'Your document has been secured.',
 } as const;
+
+// ─── SCRUM-2481 badge honesty (Lane 3) ───────────────────────────────────────
+//
+// Purely additive, collision-safe block. Does NOT edit BADGE_LABELS,
+// EVIDENCE_LEVEL_LABELS, or EVIDENCE_LEVEL_DESCRIPTIONS in place — those objects
+// are edited by the copy.ts-touching soaking PRs. This block is HELD to land
+// AFTER those PRs merge; until then EvidenceLevelBadge.tsx and
+// SourceProvenanceDisplay.tsx carry local-const fallbacks with identical copy,
+// so swapping the components to import from here is a no-op behaviour change.
+//
+// HONESTY INVARIANT (§1.3 / §1.5 / SCRUM-2481): the three non-issuer tiers
+// (account_linked / captured_url / ai_captured) must never compose the word
+// "Verified", "Issuer", "Authenticated" — or any banned §1.3 term — into their
+// alt text or triad. Enforced by EvidenceLevelBadge.test.tsx + npm run lint:copy.
+
+/** Per-tier alt / aria-label. Non-issuer tiers carry NO issuer-family wording. */
+export const EVIDENCE_LEVEL_BADGE_ALT = {
+  issuer_anchored:
+    'Issuer Anchored: authenticated directly by the issuing organization.',
+  source_signed:
+    'Source Signed: the credential source cryptographically signed this record, proving issuer origin.',
+  account_linked:
+    'Account Linked: imported from a connected account. Proves account access only; the originating organization did not vouch for this record.',
+  captured_url:
+    'Captured URL Evidence: fetched from a public web page. Records what was captured, not who published it.',
+  ai_captured:
+    'AI-Captured Evidence: extracted by AI from an uploaded document. Content parsed automatically; source identity not established.',
+} as const satisfies Record<EvidenceLevel, string>;
+
+/** Row labels for the measured / asserted / NOT-asserted triad (§1.5). */
+export const EVIDENCE_TRIAD_LABELS = {
+  MEASURED: 'Measured',
+  ASSERTED: 'Asserted',
+  NOT_ASSERTED: 'Not asserted',
+} as const;
+
+/**
+ * Per-tier measured / asserted / NOT-asserted triad (§1.5 honesty).
+ * Every non-issuer tier lists "issuer identity" under `notAsserted`.
+ */
+export const EVIDENCE_TRIAD = {
+  issuer_anchored: {
+    measured: 'The credential fingerprint and the time it was anchored.',
+    asserted: 'Issuer identity — anchored directly by the issuing organization.',
+    notAsserted: 'The real-world facts the credential describes (e.g. skills held).',
+  },
+  source_signed: {
+    measured: 'The credential fingerprint and the source signature.',
+    asserted: 'Issuer origin — a cryptographic signature proves the source.',
+    notAsserted: 'The real-world facts the credential describes.',
+  },
+  account_linked: {
+    measured: 'The fingerprint of the record imported from the connected account.',
+    asserted: 'That the holder had access to the linked account.',
+    notAsserted: 'Issuer identity — the originating organization did not vouch for this record.',
+  },
+  captured_url: {
+    measured: 'The fingerprint of the page content and the time it was captured.',
+    asserted: 'What was present at the public URL when it was captured.',
+    notAsserted: 'Issuer identity — who published the page is not verified.',
+  },
+  ai_captured: {
+    measured: 'The fingerprint of the uploaded document and its AI-extracted fields.',
+    asserted: 'The structured content an AI parsed from the document.',
+    notAsserted: 'Issuer identity — the source of the document is not established.',
+  },
+} as const satisfies Record<EvidenceLevel, { measured: string; asserted: string; notAsserted: string }>;
 
 // =============================================================================
 // S3 Lane-3 CE strings (CE-06a / SCRUM-2377) — Credential Engine publication
