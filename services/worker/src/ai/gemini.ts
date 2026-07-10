@@ -16,6 +16,7 @@ import type {
   IAIProvider,
   ExtractionRequest,
   ExtractionResult,
+  ExtractedFields,
   EmbeddingResult,
   BatchEmbeddingInput,
   BatchEmbeddingResult,
@@ -67,8 +68,11 @@ const STRING_EXTRACTION_FIELDS = new Set([
   'creditType',
   'barNumber',
   'activityNumber',
+  'courseId',
   'providerName',
   'approvedBy',
+  'deliveryMethod',
+  'nasbaStatus',
   'einNumber',
   'taxExemptStatus',
   'governingBody',
@@ -85,7 +89,7 @@ const STRING_EXTRACTION_FIELDS = new Set([
   'confidenceReasoning',
   'description',
 ]);
-const NUMBER_EXTRACTION_FIELDS = new Set(['creditHours']);
+const NUMBER_EXTRACTION_FIELDS = new Set(['creditHours', 'ethicsHours']);
 const STRING_ARRAY_EXTRACTION_FIELDS = new Set(['fraudSignals', 'concerns']);
 const BOOLEAN_EXTRACTION_FIELDS = new Set(['issuerVerified']);
 
@@ -260,7 +264,15 @@ export class GeminiProvider implements IAIProvider {
         throw new Error('Extraction schema validation failed');
       }
 
-      return { fields: validated.data, confidence, tokensUsed };
+      return {
+        fields: normalizeProfessionalEducationFields(
+          validated.data,
+          request.strippedText,
+          request.credentialType,
+        ),
+        confidence,
+        tokensUsed,
+      };
     });
 
     // CRIT-5/GAP-3: Grounding verification — check extracted fields against source text
@@ -900,10 +912,88 @@ function parseModelJson<T = Record<string, unknown>>(text: string): T {
     const start = unfenced.indexOf('{');
     const end = unfenced.lastIndexOf('}');
     if (start >= 0 && end > start) {
-      return ensureJsonObject(JSON.parse(unfenced.slice(start, end + 1))) as T;
+      const candidate = unfenced.slice(start, end + 1);
+      try {
+        return ensureJsonObject(JSON.parse(candidate)) as T;
+      } catch {
+        return ensureJsonObject(JSON.parse(repairModelJson(candidate))) as T;
+      }
     }
+    const repaired = repairModelJson(unfenced);
+    if (repaired !== unfenced) return ensureJsonObject(JSON.parse(repaired)) as T;
     throw initialError;
   }
+}
+
+function repairModelJson(text: string): string {
+  const withoutControlChars = text
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
+  const withoutTrailingCommas = withoutControlChars.replace(/,\s*([}\]])/g, '$1');
+  const balanced = balanceJsonDelimiters(withoutTrailingCommas);
+  return escapeBareNewlinesInStrings(balanced);
+}
+
+function balanceJsonDelimiters(text: string): string {
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+
+  for (const char of text) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === '{') stack.push('}');
+    if (char === '[') stack.push(']');
+    if ((char === '}' || char === ']') && stack[stack.length - 1] === char) stack.pop();
+  }
+
+  return text + stack.reverse().join('');
+}
+
+function escapeBareNewlinesInStrings(text: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (const char of text) {
+    if (escaped) {
+      out += char;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      out += char;
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      out += char;
+      continue;
+    }
+    if (inString && char === '\n') {
+      out += '\\n';
+      continue;
+    }
+    if (inString && char === '\r') {
+      out += '\\r';
+      continue;
+    }
+    out += char;
+  }
+
+  return out;
 }
 
 function stripMarkdownJsonFence(cleaned: string): string {
@@ -1011,6 +1101,90 @@ function coerceBoolean(value: unknown): boolean | undefined {
   if (typeof value === 'string') {
     if (/^true$/i.test(value.trim())) return true;
     if (/^false$/i.test(value.trim())) return false;
+  }
+  return undefined;
+}
+
+function normalizeProfessionalEducationFields(
+  fields: ExtractedFields,
+  strippedText: string,
+  credentialTypeHint: string,
+): ExtractedFields {
+  const normalized: ExtractedFields = { ...fields };
+  const text = strippedText.replace(/\s+/g, ' ').trim();
+  const lower = text.toLowerCase();
+  const hint = credentialTypeHint.toUpperCase();
+  const isCpe = hint === 'CPE'
+    || /\bcpe\b/.test(lower)
+    || /continuing professional education/i.test(text)
+    || /nasba/i.test(text);
+  const isCle = hint === 'CLE'
+    || /\bcle\b/.test(lower)
+    || /continuing legal education/i.test(text)
+    || /\bbar\b/i.test(text)
+    || /\bmcle\b/i.test(text);
+
+  if (!isCpe && !isCle) return normalized;
+
+  normalized.credentialType = isCle && !isCpe ? 'CLE' : 'CPE';
+  if (!normalized.creditType || normalized.creditType === 'CERTIFICATE') {
+    normalized.creditType = isCle && !isCpe ? 'CLE' : 'CPE';
+  }
+
+  const creditHours = extractFirstNumber(text, [
+    /\bCPE\s+(?:Credits?|Hours?)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+    /\bCredits?\s+Awarded\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*(?:CPE|CLE)?/i,
+    /\b(?:Total\s+)?(?:CLE|CPE)?\s*Credits?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+    /\b(?:Credit|Contact)\s+Hours?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+    /\b(\d+(?:\.\d+)?)\s+(?:CPE|CLE)\b/i,
+  ]);
+  if (creditHours !== undefined) normalized.creditHours = creditHours;
+
+  const ethicsHours = extractFirstNumber(text, [
+    /\b(?:Ethics|Regulatory Ethics|Professional Responsibility)\s*(?:Credits?|Hours?)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+    /\b(\d+(?:\.\d+)?)\s+(?:Regulatory\s+)?Ethics\b/i,
+  ]);
+  if (ethicsHours !== undefined) normalized.ethicsHours = ethicsHours;
+
+  const courseId = extractFirstText(text, [
+    /\bCourse\s+(?:ID|Number)\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bProgram\s+Code\s+([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bActivity\s+Number\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+  ]);
+  if (courseId) {
+    normalized.courseId = courseId;
+    if (!normalized.activityNumber) normalized.activityNumber = courseId;
+  }
+
+  const deliveryMethod = extractFirstText(text, [
+    /\bDelivery\s+Method\s*[:\-]\s*([^.;]+)/i,
+    /\bDelivery\s*[:\-]\s*([^.;]+)/i,
+  ]);
+  if (deliveryMethod) normalized.deliveryMethod = deliveryMethod;
+
+  const nasbaStatus = extractFirstText(text, [
+    /\bNASBA\s+(?:Sponsor\s+)?Registry(?:\s+Status)?\s*[:\-]\s*(active|lapsed|pending|revoked|not registered)/i,
+  ]);
+  if (nasbaStatus) normalized.nasbaStatus = nasbaStatus.toLowerCase();
+
+  return normalized;
+}
+
+function extractFirstNumber(text: string, patterns: RegExp[]): number | undefined {
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (!match?.[1]) continue;
+    const parsed = Number(match[1]);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function extractFirstText(text: string, patterns: RegExp[]): string | undefined {
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    const value = match?.[1]?.trim().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '');
+    if (value) return value;
   }
   return undefined;
 }
