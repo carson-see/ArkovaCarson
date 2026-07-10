@@ -1,8 +1,23 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { runPr1455AdmissionDriver } from './pr1455-chain-primitives-driver.js';
+
+vi.mock('../../../services/worker/src/utils/logger.js', () => ({
+  logger: {
+    child: () => ({
+      debug: vi.fn(),
+      error: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+    }),
+    debug: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+  },
+}));
 
 describe('pr1455 chain primitives admission driver', () => {
   const headSha = '3184256703a4dae451fc9bcd317f48cd02b04d0d';
