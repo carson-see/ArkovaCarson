@@ -258,6 +258,9 @@ router.post('/', async (req: Request, res: Response) => {
     res.status(200).json({
       request_id: result.request_id,
       record_count: result.record_count,
+      // SCRUM-2378: in-period records excluded because they are not yet
+      // SECURED (additive field, §1.8 — mirrors the own-user export).
+      excluded_count: result.excluded_count,
       requested_format: format,
       exports: result.exports,
     });

@@ -10,7 +10,7 @@
  * the shared builder carried the older single-line `y += 5` cursor advance,
  * which this test pins shut for the CLE path (and any future builder consumer).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { jsPDF } from 'jspdf';
 import {
   asString,
@@ -19,7 +19,10 @@ import {
   stripTrailingSlashes,
   formatUtc,
   ExportPdfBuilder,
+  assertExportsBucketReady,
+  uploadAndSignExportArtifacts,
   type ExportPdfRecord,
+  type ExportStorageLike,
 } from './export-format-helpers.js';
 
 describe('export-format-helpers field coercion', () => {
@@ -116,5 +119,122 @@ describe('ExportPdfBuilder.records() title wrap (PR #1029 / #1034)', () => {
     expect(detailYThreeLine).toBeGreaterThan(detailYOneLine);
     // Each extra title line adds TITLE_LINE_HEIGHT (5pt); 2 extra lines = +10pt.
     expect(detailYThreeLine - detailYOneLine).toBe(10);
+  });
+});
+
+// ─── Shared upload/sign seam bucket-visibility preflight ──
+// The private-bucket guard lives INSIDE `uploadAndSignExportArtifacts` (behind
+// the `getBucket` storage seam) so NO exporter can reach an upload without it —
+// this is the structural fix for the CLE path, which previously called the
+// shared helper directly with no preflight (PR #1415, Carson [P1]). The direct
+// `assertExportsBucketReady` unit tests below pin the check itself; the helper
+// tests pin that the helper ACTUALLY runs it exactly once before any upload.
+
+/** A storage double that records upload/sign/getBucket calls. */
+function makeStorage(
+  bucketRes: { exists: boolean; isPublic: boolean | null; error: Error | null } = {
+    exists: true,
+    isPublic: false,
+    error: null,
+  },
+): {
+  storage: ExportStorageLike;
+  uploads: string[];
+  getBucketCalls: number;
+} {
+  const uploads: string[] = [];
+  let getBucketCalls = 0;
+  const storage: ExportStorageLike = {
+    upload: vi.fn().mockImplementation((_bucket: string, path: string) => {
+      uploads.push(path);
+      return Promise.resolve({ error: null });
+    }),
+    createSignedUrl: vi.fn().mockImplementation((bucket: string, path: string, expiresIn: number) =>
+      Promise.resolve({ signedUrl: `https://s.example/${bucket}/${path}?e=${expiresIn}`, error: null }),
+    ),
+    getBucket: vi.fn().mockImplementation(() => {
+      getBucketCalls += 1;
+      return Promise.resolve(bucketRes);
+    }),
+  };
+  return {
+    storage,
+    uploads,
+    get getBucketCalls() {
+      return getBucketCalls;
+    },
+  };
+}
+
+function uploadArgs(storage: ExportStorageLike) {
+  return {
+    storage,
+    bucket: 'exports',
+    basePath: 'cle-log/org-1/user-1/req-1',
+    pdfBody: new Uint8Array([1, 2, 3]),
+    jsonBody: '{"ok":true}',
+    expiresIn: 3600,
+    label: 'CLE',
+  };
+}
+
+describe('assertExportsBucketReady (shared seam)', () => {
+  function storageReturning(
+    res: { exists: boolean; isPublic: boolean | null; error: Error | null },
+  ): ExportStorageLike {
+    return {
+      upload: vi.fn(),
+      createSignedUrl: vi.fn(),
+      getBucket: vi.fn().mockResolvedValue(res),
+    } as unknown as ExportStorageLike;
+  }
+
+  it('resolves for an existing private bucket', async () => {
+    await expect(
+      assertExportsBucketReady(storageReturning({ exists: true, isPublic: false, error: null }), 'exports'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('throws when the bucket does not exist', async () => {
+    await expect(
+      assertExportsBucketReady(storageReturning({ exists: false, isPublic: null, error: null }), 'exports'),
+    ).rejects.toThrow(/does not exist/i);
+  });
+
+  it('throws (with the underlying message) when the lookup errors and the bucket is absent', async () => {
+    await expect(
+      assertExportsBucketReady(
+        storageReturning({ exists: false, isPublic: null, error: new Error('connection refused') }),
+        'exports',
+      ),
+    ).rejects.toThrow(/unavailable.*connection refused/i);
+  });
+
+  it('throws when the bucket is PUBLIC (would leak unsigned bodies)', async () => {
+    await expect(
+      assertExportsBucketReady(storageReturning({ exists: true, isPublic: true, error: null }), 'exports'),
+    ).rejects.toThrow(/PUBLIC/i);
+  });
+});
+
+describe('uploadAndSignExportArtifacts bucket-visibility preflight', () => {
+  it('runs the bucket-ready guard exactly once BEFORE any upload', async () => {
+    const s = makeStorage();
+    await uploadAndSignExportArtifacts(uploadArgs(s.storage));
+    // getBucket ran, and both artifacts uploaded after it.
+    expect(s.getBucketCalls).toBe(1);
+    expect(s.uploads).toHaveLength(2);
+  });
+
+  it('blocks the upload (writes NOTHING) when the bucket is PUBLIC', async () => {
+    const s = makeStorage({ exists: true, isPublic: true, error: null });
+    await expect(uploadAndSignExportArtifacts(uploadArgs(s.storage))).rejects.toThrow(/PUBLIC/i);
+    expect(s.uploads).toHaveLength(0);
+  });
+
+  it('blocks the upload (writes NOTHING) when the bucket does not exist', async () => {
+    const s = makeStorage({ exists: false, isPublic: null, error: null });
+    await expect(uploadAndSignExportArtifacts(uploadArgs(s.storage))).rejects.toThrow(/does not exist/i);
+    expect(s.uploads).toHaveLength(0);
   });
 });
