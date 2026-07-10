@@ -940,6 +940,7 @@ function parseModelJson<T = Record<string, unknown>>(text: string): T {
 function repairModelJson(text: string): string {
   const withoutControlChars = text
     .replace(/^\uFEFF/, '')
+    // eslint-disable-next-line no-control-regex -- intentional: strip JSON-invalid control chars from model output
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
   const withoutTrailingCommas = withoutControlChars.replace(/,\s*([}\]])/g, '$1');
   const balanced = balanceJsonDelimiters(withoutTrailingCommas);
@@ -1137,28 +1138,28 @@ function normalizeProfessionalEducationFields(
   }
 
   const creditHours = extractFirstNumber(text, [
-    /\bCPE\s+(?:Credits?|Hours?)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
-    /\bCredits?\s+Awarded\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*(?:CPE|CLE)?/i,
-    /\b(?:Total\s+)?(?:CLE|CPE)?\s*Credits?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
-    /\b(?:Credit|Contact)\s+Hours?\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+    /\bCPE\s+(?:Credits?|Hours?)\s*[:-]?\s*(\d+(?:\.\d+)?)/i,
+    /\bCredits?\s+Awarded\s*[:-]?\s*(\d+(?:\.\d+)?)\s*(?:CPE|CLE)?/i,
+    /\b(?:Total\s+)?(?:CLE|CPE)?\s*Credits?\s*[:-]?\s*(\d+(?:\.\d+)?)/i,
+    /\b(?:Credit|Contact)\s+Hours?\s*[:-]?\s*(\d+(?:\.\d+)?)/i,
     /\b(\d+(?:\.\d+)?)\s+(?:CPE|CLE)\b/i,
   ]);
   if (creditHours !== undefined) normalized.creditHours = creditHours;
 
   const ethicsHours = extractFirstNumber(text, [
-    /\b(?:Ethics|Regulatory Ethics|Professional Responsibility)\s*(?:Credits?|Hours?)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i,
+    /\b(?:Ethics|Regulatory Ethics|Professional Responsibility)\s*(?:Credits?|Hours?)\s*[:-]?\s*(\d+(?:\.\d+)?)/i,
     /\b(\d+(?:\.\d+)?)\s+(?:Regulatory\s+)?Ethics\b/i,
   ]);
   if (ethicsHours !== undefined) normalized.ethicsHours = ethicsHours;
 
   const courseId = extractFirstText(text, [
-    /\bC\s*o\s*u\s*r\s*s\s*e\s+(?:ID|Number)\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
-    /\bCourse\s+(?:ID|Number|Code)\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bC\s*o\s*u\s*r\s*s\s*e\s+(?:ID|Number)\s*[:-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bCourse\s+(?:ID|Number|Code)\s*[:-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
     /\bProgram\s+Code\s+([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
-    /\bProgram\s+ID\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
-    /\bModule\s+ID\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
-    /\bConference\s+Code\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
-    /\bActivity\s+Number\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bProgram\s+ID\s*[:-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bModule\s+ID\s*[:-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bConference\s+Code\s*[:-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bActivity\s+Number\s*[:-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
   ]);
   if (courseId) {
     normalized.courseId = courseId;
@@ -1166,23 +1167,23 @@ function normalizeProfessionalEducationFields(
   }
 
   const deliveryMethod = extractFirstText(text, [
-    /\bDelivery\s+Method\s*[:\-]\s*([^.;]+)/i,
-    /\bDelivery\s*[:\-]\s*([^.;]+)/i,
-    /\bDeli\s*very\s*[:\-]\s*([^.;]+)/i,
+    /\bDelivery\s+Method\s*[:-]\s*([^.;]+)/i,
+    /\bDelivery\s*[:-]\s*([^.;]+)/i,
+    /\bDeli\s*very\s*[:-]\s*([^.;]+)/i,
   ]);
   if (deliveryMethod) normalized.deliveryMethod = deliveryMethod;
 
   const nasbaStatus = extractFirstText(text, [
-    /\bNASBA\s+(?:Sponsor\s+)?Registry(?:\s+Status)?\s*[:\-]\s*(active|lapsed|pending|revoked|not registered)/i,
-    /\bNASBA\s+(?:National\s+)?Registry\s+of\s+CPE\s+Sponsors\s*[:\-]\s*(active|lapsed|pending|revoked|not registered)/i,
-    /\bNASBA\s+Sponsor\s+Status\s*[:\-]\s*(active|lapsed|pending|revoked|not registered)/i,
-    /\bNASBA\s+Spon\s*sor\s+Regis\s*try\s*[:\-]\s*(active|lapsed|pending|revoked|not registered)/i,
+    /\bNASBA\s+(?:Sponsor\s+)?Registry(?:\s+Status)?\s*[:-]\s*(active|lapsed|pending|revoked|not registered)/i,
+    /\bNASBA\s+(?:National\s+)?Registry\s+of\s+CPE\s+Sponsors\s*[:-]\s*(active|lapsed|pending|revoked|not registered)/i,
+    /\bNASBA\s+Sponsor\s+Status\s*[:-]\s*(active|lapsed|pending|revoked|not registered)/i,
+    /\bNASBA\s+Spon\s*sor\s+Regis\s*try\s*[:-]\s*(active|lapsed|pending|revoked|not registered)/i,
   ]);
   if (nasbaStatus) normalized.nasbaStatus = nasbaStatus.toLowerCase();
 
   const providerName = extractFirstText(text, [
-    /\bSponsor\s*[:\-]\s*([^.;]+)/i,
-    /\bProvider\s*[:\-]\s*([^.;]+)/i,
+    /\bSponsor\s*[:-]\s*([^.;]+)/i,
+    /\bProvider\s*[:-]\s*([^.;]+)/i,
     /^(.+?)\s+(?:hereby certifies|Certificate of|CPE Certificate|—\s+Certificate|Annual Assurance Conference)/i,
   ]);
   if (providerName) {
@@ -1193,18 +1194,18 @@ function normalizeProfessionalEducationFields(
   if (/nasba/i.test(text)) normalized.accreditingBody = 'NASBA';
 
   const jurisdiction = extractFirstText(text, [
-    /\bJurisdiction\s*[:\-]\s*([^.;]+)/i,
-    /\bLocation\s*[:\-]\s*[^,.;]+,\s*([A-Z][a-z]+)\b/i,
+    /\bJurisdiction\s*[:-]\s*([^.;]+)/i,
+    /\bLocation\s*[:-]\s*[^,.;]+,\s*([A-Z][a-z]+)\b/i,
     /\bApproved\s+for\s+([A-Z][a-z]+)\s+State\s+Board/i,
   ]);
   if (jurisdiction) normalized.jurisdiction = jurisdiction.replace(/,\s*USA$/i, '');
   else if (!normalized.jurisdiction) normalized.jurisdiction = 'United States';
 
   const issuedDate = extractIsoDate(text, [
-    /\bCompletion\s+Date\s*[:\-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
-    /\bDate\s+of\s+Completion\s*[:\-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
-    /\bCompleted\s*[:\-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
-    /\bDate\s*[:\-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
+    /\bCompletion\s+Date\s*[:-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
+    /\bDate\s+of\s+Completion\s*[:-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
+    /\bCompleted\s*[:-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
+    /\bDate\s*[:-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
     /\bon\s+([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
   ]);
   if (issuedDate) normalized.issuedDate = issuedDate;
