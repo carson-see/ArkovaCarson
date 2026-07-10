@@ -320,7 +320,7 @@ WORKER_SECRETS="$(join_by_comma "${SECRETS[@]}")"
 SCHEDULER_JOBS=()
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
   case "$PROFILE" in
-    chain)  SCHEDULER_JOBS=("batch-anchors" "check-confirmations" "populate-confirmation-proofs") ;;
+    chain)  SCHEDULER_JOBS=("batch-anchors" "check-confirmations" "populate-confirmation-proofs" "org-queue-scheduler") ;;
     gemini) SCHEDULER_JOBS=("classify-proof-backcatalog") ;;
   esac
 fi
@@ -340,6 +340,25 @@ run_cmd() {
   print_cmd "$@"
   if [[ $APPLY -eq 1 ]]; then
     echo "executing: $*" >&2
+    "$@"
+  fi
+}
+
+# Like run_cmd, but redacts the X-Cron-Secret header value in everything it
+# prints/logs. The real value (fetched from Secret Manager in apply mode) is
+# passed only to the executed command — never to stdout/stderr.
+run_cmd_cron_redacted() {
+  local display=() arg
+  for arg in "$@"; do
+    if [[ "$arg" == --headers=X-Cron-Secret=* ]]; then
+      display+=("--headers=X-Cron-Secret=<redacted:${CRON_SECRET_SECRET}>")
+    else
+      display+=("$arg")
+    fi
+  done
+  print_cmd "${display[@]}"
+  if [[ $APPLY -eq 1 ]]; then
+    echo "executing: ${display[*]}" >&2
     "$@"
   fi
 }
@@ -615,21 +634,39 @@ echo "# Step 4/6 — Cloud Scheduler -> /jobs/* wiring (node-cron does not fire 
 if [[ $IS_MOCK_PROFILE -eq 1 ]]; then
   echo "#   profile=mock — no behavioral cron to drive; skipping Scheduler job creation."
 else
-  WORKER_URL="https://${CLOUD_RUN_SERVICE}-<hash>.${CLOUD_RUN_REGION}.run.app"
-  echo "#   (apply mode resolves the real service URL via 'gcloud run services describe')"
+  # WORKER_URL: apply mode resolves the REAL URL from the service deployed in
+  # Step 3 (gcloud run services describe); dry-run keeps the clearly-labeled
+  # <captured-cloud-run-url-…> placeholder. Both paths live in
+  # resolve_cloud_run_url() — no hand-built URL, no stale placeholder.
+  WORKER_URL="$(resolve_cloud_run_url)"
+  if [[ $APPLY -eq 1 ]]; then
+    # Fetch the cron secret VALUE from Secret Manager at apply time so the
+    # Scheduler POST passes the worker's cronAuth. The value stays in memory:
+    # every printed/logged command form is redacted (run_cmd_cron_redacted).
+    CRON_SECRET_VALUE="$(gcloud secrets versions access latest \
+      --secret="$CRON_SECRET_SECRET" \
+      --project="$GCP_PROJECT")"
+    if [[ -z "$CRON_SECRET_VALUE" ]]; then
+      echo "ERROR: could not fetch cron secret '$CRON_SECRET_SECRET' from Secret Manager." >&2
+      exit 1
+    fi
+  else
+    CRON_SECRET_VALUE="<redacted:${CRON_SECRET_SECRET}>"
+    echo "#   (dry-run: WORKER_URL + X-Cron-Secret shown as labeled placeholders; apply mode"
+    echo "#    resolves them via 'gcloud run services describe' + Secret Manager access —"
+    echo "#    the secret value is never printed in either mode.)"
+  fi
   for job in "${SCHEDULER_JOBS[@]}"; do
-    run_cmd gcloud scheduler jobs create http "${CLOUD_RUN_SERVICE}-${job}" \
+    run_cmd_cron_redacted gcloud scheduler jobs create http "${CLOUD_RUN_SERVICE}-${job}" \
       --project="$GCP_PROJECT" \
       --location="$CLOUD_RUN_REGION" \
       --schedule="*/5 * * * *" \
       --uri="${WORKER_URL}/jobs/${job}" \
       --http-method=POST \
-      --update-headers="X-Cron-Secret=<from-${CRON_SECRET_SECRET}>" \
+      --headers="X-Cron-Secret=${CRON_SECRET_VALUE}" \
       --oidc-service-account-email="$CRON_OIDC_SA" \
       --oidc-token-audience="$WORKER_URL"
   done
-  echo "#   NOTE: replace <hash> + <from-…> at apply time — the URL and cron secret are"
-  echo "#         resolved from the deployed service + Secret Manager, never inlined here."
 fi
 echo
 
