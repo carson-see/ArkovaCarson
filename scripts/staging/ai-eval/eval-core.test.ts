@@ -35,6 +35,13 @@ describe('buildExtractPayload', () => {
   it('derives a deterministic fingerprint from the entry id (stable across runs)', () => {
     expect(buildExtractPayload(ENTRY).fingerprint).toBe(buildExtractPayload(ENTRY).fingerprint);
   });
+
+  it('changes the fingerprint when a run salt is supplied to avoid cache hits', () => {
+    expect(buildExtractPayload(ENTRY, 'run-a').fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(buildExtractPayload(ENTRY, 'run-a').fingerprint).toBe(buildExtractPayload(ENTRY, 'run-a').fingerprint);
+    expect(buildExtractPayload(ENTRY, 'run-a').fingerprint).not.toBe(buildExtractPayload(ENTRY, 'run-b').fingerprint);
+    expect(buildExtractPayload(ENTRY, 'run-a').fingerprint).not.toBe(buildExtractPayload(ENTRY).fingerprint);
+  });
 });
 
 describe('fieldsFromExtractResponse', () => {

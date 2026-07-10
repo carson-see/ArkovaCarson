@@ -50,6 +50,7 @@ import { resolveStagingApiBase } from './load-harness-env.js';
 import {
   callAiEndpoint,
   parseIdentities,
+  randomForwardedFor,
   type FetchLike,
   type WorkerIdentity,
 } from './ai-eval/ai-client.js';
@@ -80,6 +81,7 @@ const { values: args } = parseArgs({
     interval: { type: 'string', default: '30' }, // minutes between rounds
     'timeout-ms': { type: 'string', default: '10000' }, // client request deadline
     'evidence-out': { type: 'string' },
+    'fingerprint-salt': { type: 'string' },
     'require-live': { type: 'boolean', default: false },
     'dry-run': { type: 'boolean', default: false },
   },
@@ -104,6 +106,7 @@ interface RunnerConfig {
   requireLive: boolean;
   intervalMin: number;
   timeoutMs: number;
+  fingerprintSalt: string;
   fixedRounds?: number;
   endAt: number;
 }
@@ -129,6 +132,7 @@ function resolveRunnerConfig(startedAt: number): RunnerConfig {
   const evidencePath = args['evidence-out'] ? resolveEvidenceOutputPath(args['evidence-out']) : undefined;
   const intervalMin = parsePositiveInt(args.interval, 30, 'interval');
   const timeoutMs = parsePositiveInt(args['timeout-ms'], 10_000, 'timeout-ms');
+  const fingerprintSalt = args['fingerprint-salt'] ?? process.env.AI_EVAL_FINGERPRINT_SALT ?? '';
   const fixedRounds = args.rounds ? parsePositiveInt(args.rounds, 1, 'rounds') : undefined;
   const durationMin = parsePositiveInt(args.duration, 2880, 'duration');
 
@@ -139,6 +143,7 @@ function resolveRunnerConfig(startedAt: number): RunnerConfig {
     requireLive: Boolean(args['require-live']),
     intervalMin,
     timeoutMs,
+    fingerprintSalt,
     fixedRounds,
     endAt: startedAt + durationMin * 60_000,
   };
@@ -186,6 +191,7 @@ async function runRound(
   apiBase: string,
   identities: WorkerIdentity[],
   timeoutMs: number,
+  fingerprintSalt: string,
 ): Promise<{ record: EvalRecord; providersSeen: Set<string> }> {
   const entries = gateGoldenEntries();
   const scored: EntryEvalResult[] = [];
@@ -197,7 +203,12 @@ async function runRound(
   for (const entry of entries) {
     const identity = pickIdentity(identities, i++);
     const outcome = await callAiEndpoint(
-      apiBase, 'extract', buildExtractPayload(entry), identity, realFetch, { timeoutMs },
+      apiBase,
+      'extract',
+      buildExtractPayload(entry, fingerprintSalt),
+      identity,
+      realFetch,
+      { timeoutMs, forwardedFor: randomForwardedFor() },
     );
     providersSeen.add(providerFromBody(outcome.body));
     const klass = recordReliability(reliability, outcome);
@@ -251,7 +262,12 @@ async function runEvalRounds(config: RunnerConfig): Promise<RunnerSummary> {
 
   while (shouldRunNextRound(round, config)) {
     round++;
-    const { record, providersSeen } = await runRound(config.apiBase, config.identities, config.timeoutMs);
+    const { record, providersSeen } = await runRound(
+      config.apiBase,
+      config.identities,
+      config.timeoutMs,
+      config.fingerprintSalt,
+    );
     const { merited, notes } = certifyRound(record, providersSeen, config.requireLive);
     if (merited) meritedRounds++;
     if (recordFailureState(record, merited, config.requireLive)) anyFailure = true;
@@ -276,6 +292,7 @@ async function main(): Promise<void> {
   console.log(`  api_base=${config.apiBase}`);
   console.log(`  golden=${prov.gateEntries} gate + ${prov.heldOutEntries} held-out (source ${prov.sourceRef} @ ${prov.sourceCommit.slice(0, 8)})`);
   console.log(`  identities=${config.identities.length}  require_live=${config.requireLive}  interval=${config.intervalMin}min  client_timeout=${config.timeoutMs}ms`);
+  console.log(`  fingerprint_salt=${config.fingerprintSalt ? '<set>' : '<empty>'}  x_forwarded_for_rotation=true`);
 
   ensureRunnable(config);
   if (args['dry-run']) {

@@ -22,17 +22,17 @@ import {
 import type { ExtractRequestBody } from './ai-client.js';
 import type { ReliabilityReport } from './reliability.js';
 
-/** Deterministic 64-hex fingerprint from the entry id (schema requires 64 hex). */
-export function fingerprintForEntry(entryId: string): string {
-  return createHash('sha256').update(entryId).digest('hex');
+/** Deterministic 64-hex fingerprint from the entry id + optional run salt. */
+export function fingerprintForEntry(entryId: string, salt = ''): string {
+  return createHash('sha256').update(`${entryId}:${salt}`).digest('hex');
 }
 
 /** Map a golden entry to the POST /api/v1/ai/extract request body. */
-export function buildExtractPayload(entry: GoldenEntry): ExtractRequestBody {
+export function buildExtractPayload(entry: GoldenEntry, salt = ''): ExtractRequestBody {
   const payload: ExtractRequestBody = {
     strippedText: entry.strippedText,
     credentialType: entry.credentialTypeHint,
-    fingerprint: fingerprintForEntry(entry.id),
+    fingerprint: fingerprintForEntry(entry.id, salt),
   };
   if (entry.issuerHint) payload.issuerHint = entry.issuerHint;
   return payload;
