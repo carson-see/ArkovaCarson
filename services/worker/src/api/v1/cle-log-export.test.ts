@@ -46,7 +46,10 @@ import { setRateLimitStore } from '../../utils/rateLimit.js';
 const SUCCESS_RESULT = {
   request_id: 'req-1',
   record_count: 2,
+  excluded_count: 1,
+  jurisdiction: 'CA',
   disclaimer: 'disclaimer',
+  jurisdiction_disclaimer: 'jurisdiction tags are informational metadata only (fixture)',
   exports: {
     pdf: { signed_url: 'https://storage.example/exports/x.pdf?token=a', path: 'p.pdf', expires_in: 3600 },
     json: { signed_url: 'https://storage.example/exports/x.json?token=b', path: 'p.json', expires_in: 3600 },
@@ -203,6 +206,11 @@ describe('POST /exports/cle-log — success', () => {
     expect(res.body.exports.json.signed_url).toMatch(/^https:\/\//);
     expect(typeof res.body.request_id).toBe('string');
     expect(res.body.record_count).toBe(2);
+    // SCRUM-2378: un-SECURED in-period records are surfaced, never silent.
+    expect(res.body.excluded_count).toBe(1);
+    // SCRUM-2379 (§1.5): the jurisdiction-informational disclaimer rides the
+    // response so the FE can render it without hardcoding worker copy.
+    expect(res.body.jurisdiction_disclaimer).toBe(SUCCESS_RESULT.jurisdiction_disclaimer);
     expect(generateCleLogExport).toHaveBeenCalledTimes(1);
   });
 

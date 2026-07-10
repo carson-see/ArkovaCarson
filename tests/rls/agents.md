@@ -13,6 +13,7 @@ Row Level Security integration tests. Verify RLS policies enforce tenant isolati
 - **`scrum-1284-matview-revokes.test.ts`** — materialized view REVOKE tests.
 - **`security-hardening-0160.test.ts`** — security hardening migration verification.
 - **`x402_payments.test.ts`** — x402 payment protocol RLS tests.
+- **`cpe-org-dashboard.test.ts`** — CPE-02 (SCRUM-2380) org CPE dashboard read path: cross-org isolation (two sandbox orgs), org-admin-vs-member within one org, anon denial. Also PINS the standing `anchors_select` behavior that ANY org member can read org-mates' anchor rows (org-wide `get_user_org_id()` branch) — the dashboard's "member sees only own rows" is a query-layer guarantee in `useOrgCpeMemberSummary`, not an RLS one; a new RLS policy (= migration) would be needed to express it. Creates ad-hoc users via `auth.admin.createUser` (seed has no plain-member login) and seeds SECURED anchors with `chain_tx_id` (anchors_chain_data_consistency).
 - **`get_org_members_public.test.ts`** — public org members RPC access tests.
 - **`public-org-profiles-security-invoker.test.ts`** — org profile view security tests.
 - **`docusign-integrations.test.ts`** — RLS for the 6 DocuSign tables, including `member_integrations` (own-rows / org-admin / deny-write).

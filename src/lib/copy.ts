@@ -1776,6 +1776,62 @@ export const PROFESSIONAL_EDUCATION_EXPORT_LABELS = {
 } as const;
 
 // =============================================================================
+// S3 CREDENTIAL-NETWORK (LANE 3) STRINGS — SCRUM-2378 / SCRUM-2379 / SCRUM-2380
+// One contiguous block by design: Sprint-3 streams share copy.ts, so all Lane-3
+// CPE/CLE strings live HERE to minimize merge conflicts. Do not scatter.
+// =============================================================================
+
+export const PROFESSIONAL_EDUCATION_S3_LABELS = {
+  // CPE-01 (SCRUM-2378): the worker excludes ALL non-secured records from
+  // compliance exports — including revoked/expired/superseded ones that will
+  // NEVER become secured. Per §1.5 the notice asserts only what is held (they
+  // aren't secured); it must not promise they will "appear once secured"
+  // (round-1 review finding 2). Surfaced inline — never a blocker, never
+  // silent.
+  EXCLUDED_NOTICE: (count: number) =>
+    count === 1
+      ? "1 record isn't included because it isn't secured."
+      : `${count} records aren't included because they aren't secured.`,
+  // CLE-01 (SCRUM-2379, Constitution §1.5): jurisdiction tags are informational
+  // metadata only. Mirrors JURISDICTION_INFORMATIONAL_DISCLAIMER in
+  // services/worker/src/exports/cle-log-export.ts (embedded in the export
+  // artifacts) — keep the two statements consistent in substance.
+  JURISDICTION_DISCLAIMER:
+    'Jurisdiction tags are informational metadata only. Exports do not determine or assert compliance with, or adequacy under, the continuing education requirements of any jurisdiction or licensing body.',
+} as const;
+
+// CPE-02 (SCRUM-2380): org CPE dashboard MVP.
+export const ORG_CPE_DASHBOARD_LABELS = {
+  TITLE: 'Team CPE Records',
+  DESCRIPTION: 'Per-member continuing education records for the selected reporting period.',
+  PERIOD_LABEL: 'Reporting period',
+  PERIOD_YTD: 'Year to date',
+  PERIOD_90_DAYS: 'Last 90 days',
+  PERIOD_12_MONTHS: 'Last 12 months',
+  PERIOD_ALL_TIME: 'All time',
+  TILE_MEMBERS: 'Members with records',
+  TILE_SECURED: 'Secured records',
+  TILE_PENDING: 'Pending records',
+  COL_MEMBER: 'Member',
+  COL_SECURED: 'Secured',
+  COL_PENDING: 'Pending',
+  COL_LAST_ACTIVITY: 'Last activity',
+  MEMBER_SCOPE_NOTE: 'Showing your records only.',
+  UNKNOWN_MEMBER: 'Unknown member',
+  EMPTY: 'No CPE records in this period',
+  EMPTY_DESC: 'Member records appear here once CPE documents are secured or queued for the selected period.',
+  ERROR: 'Unable to load team CPE records.',
+  NO_ACTIVITY: '—',
+  // Round-1 review finding 1: terminal records (revoked, expired, or
+  // superseded) are counted in neither tile — surface them explicitly so they
+  // never vanish silently from the dashboard.
+  TERMINAL_FOOTNOTE: (count: number) =>
+    count === 1
+      ? '1 record in this period is revoked, expired, or superseded and is not counted in the totals above.'
+      : `${count} records in this period are revoked, expired, or superseded and are not counted in the totals above.`,
+} as const;
+
+// =============================================================================
 // RULE BUILDER WIZARD (ARK-108 / CIBA-HARDEN-04)
 // =============================================================================
 

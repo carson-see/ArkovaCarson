@@ -93,6 +93,7 @@ function wireAuditCapture() {
 const SUCCESS_RESULT = {
   request_id: 'req-1',
   record_count: 3,
+  excluded_count: 2,
   disclaimer: 'disclaimer',
   exports: {
     pdf: { signed_url: 'https://storage.example/exports/x.pdf?token=a', path: 'p.pdf', expires_in: 3600 },
@@ -274,6 +275,8 @@ describe('POST /exports/org/cpe-log — success (admin exports own-org member)',
     expect(res.body.exports.json.signed_url).toMatch(/^https:\/\//);
     expect(typeof res.body.request_id).toBe('string');
     expect(res.body.record_count).toBe(3);
+    // SCRUM-2378: un-SECURED in-period records are surfaced, never silent.
+    expect(res.body.excluded_count).toBe(2);
     // The raw target member user_id is intentionally NOT echoed back on the
     // frozen v1 contract (PR #1045 review) — the caller already supplied it.
     expect(res.body.member_id).toBeUndefined();
