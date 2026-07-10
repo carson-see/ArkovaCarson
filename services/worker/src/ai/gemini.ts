@@ -249,7 +249,19 @@ export class GeminiProvider implements IAIProvider {
       // Parse and validate (shared path for both tuned and standard)
       // NMT-02 / BUG-2026-06-24-014: shared hardened pipeline (fence strip +
       // comment strip + brace-salvage) — same helper used by tags/template.
-      const parsed = parseModelJson(text);
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = parseModelJson(text);
+      } catch (parseError) {
+        if (!isProfessionalEducationText(request.strippedText, request.credentialType)) {
+          throw parseError;
+        }
+        logger.warn(
+          { error: parseError, credentialType: request.credentialType },
+          'Gemini professional-education JSON parse failed; recovering from source text',
+        );
+        parsed = { credentialType: request.credentialType, confidence: 0.55 };
+      }
       const confidence = coerceConfidence(parsed.confidence);
       const { confidence: _, ...rawFields } = parsed;
       const sanitizedFields = sanitizeExtractedFields(rawFields);
@@ -1112,23 +1124,16 @@ function normalizeProfessionalEducationFields(
 ): ExtractedFields {
   const normalized: ExtractedFields = { ...fields };
   const text = strippedText.replace(/\s+/g, ' ').trim();
-  const lower = text.toLowerCase();
-  const hint = credentialTypeHint.toUpperCase();
-  const isCpe = hint === 'CPE'
-    || /\bcpe\b/.test(lower)
-    || /continuing professional education/i.test(text)
-    || /nasba/i.test(text);
-  const isCle = hint === 'CLE'
-    || /\bcle\b/.test(lower)
-    || /continuing legal education/i.test(text)
-    || /\bbar\b/i.test(text)
-    || /\bmcle\b/i.test(text);
+  const { isCpe, isCle } = detectProfessionalEducation(text, credentialTypeHint);
 
   if (!isCpe && !isCle) return normalized;
 
   normalized.credentialType = isCle && !isCpe ? 'CLE' : 'CPE';
-  if (!normalized.creditType || normalized.creditType === 'CERTIFICATE') {
-    normalized.creditType = isCle && !isCpe ? 'CLE' : 'CPE';
+  const baseCreditType = isCle && !isCpe ? 'CLE' : 'CPE';
+  if (/regulatory ethics|professional ethics|ethics requirement/i.test(text)) {
+    normalized.creditType = `${baseCreditType} Ethics`;
+  } else if (!normalized.creditType || !/^C(?:P|L)E(?:\s+Ethics)?$/i.test(normalized.creditType)) {
+    normalized.creditType = baseCreditType;
   }
 
   const creditHours = extractFirstNumber(text, [
@@ -1147,8 +1152,12 @@ function normalizeProfessionalEducationFields(
   if (ethicsHours !== undefined) normalized.ethicsHours = ethicsHours;
 
   const courseId = extractFirstText(text, [
-    /\bCourse\s+(?:ID|Number)\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bC\s*o\s*u\s*r\s*s\s*e\s+(?:ID|Number)\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bCourse\s+(?:ID|Number|Code)\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
     /\bProgram\s+Code\s+([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bProgram\s+ID\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bModule\s+ID\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
+    /\bConference\s+Code\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
     /\bActivity\s+Number\s*[:\-]\s*([A-Z0-9][A-Z0-9._/-]*(?:-[A-Z0-9._/-]+)*)/i,
   ]);
   if (courseId) {
@@ -1159,15 +1168,68 @@ function normalizeProfessionalEducationFields(
   const deliveryMethod = extractFirstText(text, [
     /\bDelivery\s+Method\s*[:\-]\s*([^.;]+)/i,
     /\bDelivery\s*[:\-]\s*([^.;]+)/i,
+    /\bDeli\s*very\s*[:\-]\s*([^.;]+)/i,
   ]);
   if (deliveryMethod) normalized.deliveryMethod = deliveryMethod;
 
   const nasbaStatus = extractFirstText(text, [
     /\bNASBA\s+(?:Sponsor\s+)?Registry(?:\s+Status)?\s*[:\-]\s*(active|lapsed|pending|revoked|not registered)/i,
+    /\bNASBA\s+(?:National\s+)?Registry\s+of\s+CPE\s+Sponsors\s*[:\-]\s*(active|lapsed|pending|revoked|not registered)/i,
+    /\bNASBA\s+Sponsor\s+Status\s*[:\-]\s*(active|lapsed|pending|revoked|not registered)/i,
+    /\bNASBA\s+Spon\s*sor\s+Regis\s*try\s*[:\-]\s*(active|lapsed|pending|revoked|not registered)/i,
   ]);
   if (nasbaStatus) normalized.nasbaStatus = nasbaStatus.toLowerCase();
 
+  const providerName = extractFirstText(text, [
+    /\bSponsor\s*[:\-]\s*([^.;]+)/i,
+    /\bProvider\s*[:\-]\s*([^.;]+)/i,
+    /^(.+?)\s+(?:hereby certifies|Certificate of|CPE Certificate|—\s+Certificate|Annual Assurance Conference)/i,
+  ]);
+  if (providerName) {
+    normalized.providerName = providerName;
+    if (!normalized.issuerName) normalized.issuerName = providerName;
+  }
+
+  if (/nasba/i.test(text)) normalized.accreditingBody = 'NASBA';
+
+  const jurisdiction = extractFirstText(text, [
+    /\bJurisdiction\s*[:\-]\s*([^.;]+)/i,
+    /\bLocation\s*[:\-]\s*[^,.;]+,\s*([A-Z][a-z]+)\b/i,
+    /\bApproved\s+for\s+([A-Z][a-z]+)\s+State\s+Board/i,
+  ]);
+  if (jurisdiction) normalized.jurisdiction = jurisdiction.replace(/,\s*USA$/i, '');
+  else if (!normalized.jurisdiction) normalized.jurisdiction = 'United States';
+
+  const issuedDate = extractIsoDate(text, [
+    /\bCompletion\s+Date\s*[:\-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
+    /\bDate\s+of\s+Completion\s*[:\-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
+    /\bCompleted\s*[:\-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
+    /\bDate\s*[:\-]?\s*([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
+    /\bon\s+([A-Z][a-z]+\s+\d{1,2}\s*,\s*\d{4})/i,
+  ]);
+  if (issuedDate) normalized.issuedDate = issuedDate;
+
   return normalized;
+}
+
+function isProfessionalEducationText(strippedText: string, credentialTypeHint: string): boolean {
+  const { isCpe, isCle } = detectProfessionalEducation(strippedText, credentialTypeHint);
+  return isCpe || isCle;
+}
+
+function detectProfessionalEducation(text: string, credentialTypeHint: string): { isCpe: boolean; isCle: boolean } {
+  const lower = text.toLowerCase();
+  const hint = credentialTypeHint.toUpperCase();
+  const isCpe = hint === 'CPE'
+    || /\bcpe\b/.test(lower)
+    || /continuing professional education/i.test(text)
+    || /nasba/i.test(text);
+  const isCle = hint === 'CLE'
+    || /\bcle\b/.test(lower)
+    || /continuing legal education/i.test(text)
+    || /\bbar\b/i.test(text)
+    || /\bmcle\b/i.test(text);
+  return { isCpe, isCle };
 }
 
 function extractFirstNumber(text: string, patterns: RegExp[]): number | undefined {
@@ -1185,6 +1247,20 @@ function extractFirstText(text: string, patterns: RegExp[]): string | undefined 
     const match = pattern.exec(text);
     const value = match?.[1]?.trim().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '');
     if (value) return value;
+  }
+  return undefined;
+}
+
+function extractIsoDate(text: string, patterns: RegExp[]): string | undefined {
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (!match?.[1]) continue;
+    const parsed = new Date(match[1]);
+    if (Number.isNaN(parsed.getTime())) continue;
+    const year = parsed.getUTCFullYear();
+    const month = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
   return undefined;
 }
