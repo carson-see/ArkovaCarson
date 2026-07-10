@@ -136,6 +136,10 @@ npm run staging:rotate-iam -- --apply --confirm SCRUM-1821
 - Provision the staging Cloud Run service from scratch; current worker deploys go through `scripts/staging/deploy.sh` (see [STAGING_RIG.md](../../docs/reference/STAGING_RIG.md)).
 - Run the soak unattended (the engineer / agent who owns the PR drives it).
 
+## Provision Step-4 Scheduler repair (PR #1492, L2-S2a-FIX, 2026-07-10)
+
+`provision-isolated-rig.sh` Step 4 (Cloud Scheduler → `/jobs/*` wiring for non-mock profiles) previously emitted commands that were **invalid under `--apply`**: `--update-headers` on the create verb (create supports only `--headers`), a hand-built `WORKER_URL` with a literal `<hash>`, and a literal `X-Cron-Secret=<from-…>` that was never fetched — so no Scheduler job was ever created and a chain/gemini rig silently degenerated to a health-only soak. Fixed: create-verb `--headers`; `WORKER_URL` via `resolve_cloud_run_url()` (real URL at apply; labeled placeholder only in dry-run echo); cron secret fetched from Secret Manager at apply time and **never printed** (`run_cmd_cron_redacted` redacts every emitted/logged form). The chain-profile `SCHEDULER_JOBS` list now also arms `org-queue-scheduler` (CTO S3.3 memo R3 recorded decision). `provision-isolated-rig.test.ts` gained apply-mode behavioral tests that stub `gcloud`/`npx` on PATH and assert on the exact executed argv — command validity, not dry-run echo text.
+
 ## Real batch-drain behavioral harness (#1417, 2026-07-07, Lane-1 chain)
 
 - `batch-drain-harness.ts` (`npx tsx scripts/staging/batch-drain-harness.ts`) + `batch-drain-harness-lib.ts` (pure, unit-tested safety guards). Runs the REAL batch drain against a **properly-configured isolated rig** (`ENABLE_BATCH_ANCHORING=on`, seeded >=10k PENDING) — the exercise fleet-audit found rig #1417 SELF-SKIPPED (batch cron hit its entrypoint but no-op'd on the PR's own `ENABLE_BATCH_ANCHORING=off` gate, so Merkle/intent-persist/reconcile ran ZERO times). Synthetic HTTP load (`load-harness.ts`) proves worker health, NOT that a 10k backlog drains into one Merkle-root OP_RETURN.
