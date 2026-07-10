@@ -140,7 +140,7 @@ test.describe('Public Verification', () => {
       filename: 'e2e_public_secured.pdf',
       title: /^Verified on/i,
       badge: 'Secured',
-      subtitle: 'This record is permanently anchored.',
+      subtitle: 'This record’s fingerprint is permanently anchored.',
       showsProof: true,
     },
     {
@@ -213,6 +213,15 @@ test.describe('Public Verification', () => {
         if (statusCase.status === 'SECURED') {
           await expect(page.getByText('ACTIVE', { exact: true })).not.toBeVisible();
         }
+
+        // SCRUM-2495 (ABUSE-DISCLAIMER): the does-not-assert disclaimer is
+        // always-visible on the public verification surface, independent of
+        // status/proof gating — pin it here so a regression that hides it
+        // (e.g. re-gating behind hasProof) fails E2E, not just component tests.
+        await expect(page.getByTestId('does-not-assert-disclaimer')).toBeVisible();
+        await expect(
+          page.getByText('What This Anchor Does and Does Not Assert')
+        ).toBeVisible();
       } finally {
         await deleteTestAnchor(serviceClient, anchor.id);
       }

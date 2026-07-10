@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { EvidenceLevelBadge } from './EvidenceLevelBadge';
+import { EVIDENCE_LEVEL_BADGE_ALT } from '@/lib/copy';
 
 describe('EvidenceLevelBadge', () => {
   it('renders nothing for null level', () => {
@@ -70,4 +71,113 @@ describe('EvidenceLevelBadge', () => {
     expect(screen.getByText('Evidence Level')).toBeInTheDocument();
     expect(screen.getByText('Captured URL Evidence')).toBeInTheDocument();
   });
+});
+
+// ─── SCRUM-2481: badge / provenance honesty ──────────────────────────────────
+describe('EvidenceLevelBadge — SCRUM-2481 honesty guarantees', () => {
+  const ALL_TIERS = [
+    'issuer_anchored',
+    'source_signed',
+    'account_linked',
+    'captured_url',
+    'ai_captured',
+  ] as const;
+
+  const ISSUER_TIERS = ['issuer_anchored', 'source_signed'] as const;
+  const NON_ISSUER_TIERS = ['account_linked', 'captured_url', 'ai_captured'] as const;
+
+  it('tags every tier with a distinct data-evidence-tier attribute', () => {
+    const seen = new Set<string>();
+    for (const tier of ALL_TIERS) {
+      const { container, unmount } = render(<EvidenceLevelBadge level={tier} />);
+      const badge = container.querySelector('[data-evidence-tier]');
+      expect(badge).not.toBeNull();
+      const attr = badge!.getAttribute('data-evidence-tier');
+      expect(attr).toBe(tier);
+      expect(seen.has(attr!)).toBe(false);
+      seen.add(attr!);
+      unmount();
+    }
+    expect(seen.size).toBe(ALL_TIERS.length);
+  });
+
+  it('renders a distinct alt/aria-label per tier (no two tiers share label text)', () => {
+    const labels = new Set<string>();
+    for (const tier of ALL_TIERS) {
+      const { container, unmount } = render(<EvidenceLevelBadge level={tier} />);
+      const badge = container.querySelector('[data-evidence-tier]') as HTMLElement;
+      const label = badge.getAttribute('aria-label');
+      expect(label).toBeTruthy();
+      expect(labels.has(label!)).toBe(false);
+      labels.add(label!);
+      unmount();
+    }
+    expect(labels.size).toBe(ALL_TIERS.length);
+  });
+
+  it('renders visually distinct icon artwork per tier (distinct svg per tier)', () => {
+    const iconSignatures = new Set<string>();
+    for (const tier of ALL_TIERS) {
+      const { container, unmount } = render(<EvidenceLevelBadge level={tier} />);
+      const svg = container.querySelector('svg');
+      expect(svg).not.toBeNull();
+      // lucide sets a stable class token per icon (e.g. "lucide-shield-check")
+      const iconClass = Array.from(svg!.classList).find((c) => c.startsWith('lucide-'));
+      expect(iconClass).toBeTruthy();
+      iconSignatures.add(iconClass!);
+      unmount();
+    }
+    expect(iconSignatures.size).toBe(ALL_TIERS.length);
+  });
+
+  it.each(ISSUER_TIERS)('applies the green issuer treatment for %s', (tier) => {
+    render(<EvidenceLevelBadge level={tier} />);
+    const badge = screen.getByTestId('evidence-level-badge');
+    expect(badge.className).toContain('green');
+  });
+
+  it.each(NON_ISSUER_TIERS)(
+    'NEVER applies the green issuer treatment for %s',
+    (tier) => {
+      render(<EvidenceLevelBadge level={tier} />);
+      const badge = screen.getByTestId('evidence-level-badge');
+      expect(badge.className).not.toContain('green');
+    }
+  );
+
+  it.each(NON_ISSUER_TIERS)(
+    'alt/aria for %s contains NO issuer-family wording (Verified / Issuer / Authenticated)',
+    (tier) => {
+      const { container } = render(<EvidenceLevelBadge level={tier} />);
+      const badge = container.querySelector('[data-evidence-tier]') as HTMLElement;
+      const label = (badge.getAttribute('aria-label') ?? '').toLowerCase();
+      expect(label).not.toContain('verified');
+      expect(label).not.toContain('issuer');
+      expect(label).not.toContain('authenticated');
+    }
+  );
+
+  it('routes the green treatment through the issuer-auth gate for showDescription mode too', () => {
+    render(<EvidenceLevelBadge level="captured_url" showDescription />);
+    const badge = screen.getByTestId('evidence-level-badge');
+    expect(badge.className).not.toContain('green');
+    const labelled = badge.getAttribute('aria-label') ?? '';
+    expect(labelled.toLowerCase()).not.toContain('verified');
+  });
+
+  // "No-op swap" guard: the component currently renders from a local-const
+  // TIER_ALT_FALLBACK, held identical to the canonical EVIDENCE_LEVEL_BADGE_ALT in
+  // copy.ts so the later swap-to-import is a behaviour no-op. Nothing asserted the
+  // two stayed identical, so a one-sided edit to either could silently diverge.
+  // This pins the RENDERED aria-label to the canonical copy.ts source per tier —
+  // it stays green after the component swaps to import from copy.ts, and it fails
+  // the moment the fallback drifts from canon.
+  it.each(ALL_TIERS)(
+    'renders the canonical copy.ts alt text (EVIDENCE_LEVEL_BADGE_ALT) for %s',
+    (tier) => {
+      const { container } = render(<EvidenceLevelBadge level={tier} />);
+      const badge = container.querySelector('[data-evidence-tier]') as HTMLElement;
+      expect(badge.getAttribute('aria-label')).toBe(EVIDENCE_LEVEL_BADGE_ALT[tier]);
+    }
+  );
 });
