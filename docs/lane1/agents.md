@@ -18,7 +18,7 @@ product documentation — the canonical specs live on Confluence.
   no S3-P0 mainnet broadcast until (a)–(c) confirmed AND a real-DB/real-key
   soak proves the bytea header round-trip + no-double-broadcast-on-resume.
 
-### Sprint 3.3 (PR #TBD — lane1/s33-txid-journal-design)
+### Sprint 3.3 (PR #1496 — lane1/s33-txid-journal-design)
 
 - **`s33-prod-drain-topology.md`** — L1-0 read-only prod audit (2026-07-10,
   gcloud-verified): the batch drain's REAL Scheduler triggers (`batch-anchors`
