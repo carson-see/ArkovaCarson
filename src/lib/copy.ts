@@ -3075,8 +3075,14 @@ export const PRIVACY_NOTICE_LABELS = {
   THAILAND_DESCRIPTION: 'Applies to data subjects in Thailand. Your personal data is protected under the PDPA. You have access, portability, objection, deletion, restriction, and rectification rights. Cross-border transfers use SCCs aligned with ASEAN MCCs or GDPR SCCs referencing Thai law.',
   MALAYSIA_TITLE: 'Malaysia PDPA 2010 (as amended 2024)',
   MALAYSIA_DESCRIPTION: 'Applies to data subjects in Malaysia. Your personal data is protected under the PDPA as amended in 2024. You have access, correction, consent withdrawal, and (from 2025) data portability rights. Cross-border transfers use a risk-based Transfer Impact Assessment framework.',
-  DPF_TITLE: 'EU-US Data Privacy Framework',
-  DPF_DESCRIPTION: 'Arkova self-certifies under the EU-US Data Privacy Framework for lawful transatlantic personal data transfers. Individuals have the right to access, correct, or delete their data, and may file complaints with their national DPA or the DPF Panel.',
+  DPF_TITLE: 'EU–US Personal Data Transfers',
+  // SCRUM-2283: the prior copy falsely asserted "Arkova self-certifies under the
+  // EU-US Data Privacy Framework". Arkova does NOT hold an active DPF
+  // self-certification, so that claim is removed (R-7 claims gate). The
+  // replacement lawful-transfer basis (e.g. executed EU Standard Contractual
+  // Clauses) is COUNSEL-REQUIRED and must not be invented here — placeholder
+  // pending legal review.
+  DPF_DESCRIPTION: 'The lawful basis for transatlantic personal data transfers is under review by legal counsel and will be published here once confirmed. Individuals retain the right to access, correct, or delete their data and to file a complaint with their national data protection authority. [Counsel review required — do not assert a specific transfer mechanism until confirmed.]',
   REGULATOR_LABEL: 'Regulator',
   RIGHTS_LABEL: 'Your Rights',
   TRANSFER_BASIS_LABEL: 'Cross-Border Transfer Basis',
