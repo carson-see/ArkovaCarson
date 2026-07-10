@@ -14,6 +14,23 @@
 
 ## Now
 
+### 2026-07-10 (RTE) — S3 release wave: 3 merged; mass soak-runner death detected + all 14 open PRs relaunched on verified clocks
+
+**Merged:** [#1415](https://github.com/carson-see/ArkovaCarson/pull/1415) CPE/CLE export SECURED-gate (worker deployed healthy, `/health` git_sha `c104cc36`, deploy run 2026-07-10T13:17Z success), [#1458](https://github.com/carson-see/ArkovaCarson/pull/1458) false EU-US DPF claim removed (SCRUM-2283 stays open — counsel owns the real transfer basis), [#1416](https://github.com/carson-see/ArkovaCarson/pull/1416) WEBEXT NER self-contained bundle (gate fixed by dropping self-carried checker edits superseded by #1490).
+
+**Mass runner death:** ALL soak load-runners died 2026-07-09T21:25Z–2026-07-10T06:23Z (host session death; verified via `gcloud logging read` request-continuity audit per rig). Every "RUNNING" soak claim was false. All 14 open PRs relaunched with fresh clocks + truthful body updates; gap-waivers uniformly rejected. New windows: T2 (#1471/#1443/#1441/#1439) mature 2026-07-11 ~01:50–02:37Z; T3 (#1408/#1410/#1417/#1427/#1455/#1457/#1459/#1461/#1462) mature 2026-07-12 ~13:52–14:13Z. #1461 runs on Cloud Scheduler (`soak-pr1461-runner`) — the durable pattern; the rest are host-local nohup+caffeinate (survive session death, NOT reboot — **do not reboot/logout the host before 2026-07-12 ~14:30Z**). #1413: GitHub-conflict resolved (union merges → head `7c54a4ff`), rig redeployed via canonical deploy.sh (staging_deploy_log id 223, clean_mirror preflight on `xhoaxtodbslazitlnhgy`); prior soak death root-caused to 1h rig JWT expiry (pool now 14h). #1427 rig preflight now `clean_mirror` at exact head from a PR-head worktree (preflight judges ledger legitimacy against the checkout's migration files — always run it from the PR's head).
+
+**Merge order constraints:** ledger contiguity (prod head 0353, verified via Supabase MCP) forces #1410 → #1427 (0354) → #1457 (0355/0356) → #1455 (0357); RTE prod-applies each per §0 rule 10 as it lands. Webhooks: #1471 before #1443 (delivery.ts byte-identical; scripts-only conflict on the second = tooling-only residual-risk note, no re-soak). #1455+#1462 share Supabase `nwbrkwjkoyabazfpxjbt` — accepted with cross-soak disclosures in both bodies (0357 GUC-OFF inert for #1462's traffic).
+
+**Hygiene sweeps (week 07-06..07-10, 43 merged PRs):** Jira/Confluence — 17 tickets → Done, 19 subtasks closed, 13 Confluence pages created, 4 bug-tracker rows verified on 88768514, SCRUM-2352 mislabel corrected to SCRUM-2624; left open with reasons: SCRUM-2501 (contract only), SCRUM-2377 (needs CE reconciliation note), SCRUM-2603 (fix unbuilt), SCRUM-2283 (counsel). GitHub — 30 merged-PR remote branches deleted, 74 stale bot review threads resolved, 0 label noise; 529 merged local branches + 19 merged-PR worktrees flagged for post-wave cleanup (some hold soak artifacts — do not prune before T3 wave lands).
+
+**Dev-resume conditions (active):** no commits to the 14 soaking branches; new branches off main; next free migration **0358**; no soak-rig touches; no host reboot/logout before the T3 wave closes.
+
+**Prod watch item:** `/health` reports `lastSecuredAt` 2026-06-29 with `pendingCount: 0` — quiet intake, not an alert; check funnels.
+
+_Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run list --workflow deploy-worker.yml` (13:17Z success); `gcloud logging read` per-rig request continuity; Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` (ledger head 0353); `gh pr list/checks/view` across all 17 PRs; specialist reports with per-rig `/health` git_sha checks, staging_deploy_log id 223, preflight artifacts._
+
+
 ### 2026-07-07 (Lane 2 / S3) — 5 draft PRs delivered + reviewed; migration-reality correction
 
 **Migration ledger reality (correcting a branch-checkout staleness that misled S3 planning):** the live prod ledger head is **0353** — `0343` (connector_artifact), `0349` (reconciler fix), `0350`, `0351`, `0352`, `0353` are ALL applied to prod `vzwyaatejekddvltxyye`. The connector loop is unblocked at the schema level; the "0343 prod-apply blocker" that appeared in an early S3 plan draft was stale feature-branch HANDOFF data, not reality. **Next-free Lane-2 migration prefix = 0355** (0354 is reserved by Lane-1 draft #1427).
@@ -96,3 +113,5 @@ Known loose ends:
 _Last refreshed: 2026-07-06 by Codex - verified against Drive readback for final folder `1ItbVr6LtLMzif20hCUwEClYhcHYUsddd`, docs `1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk`, `1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc`, `1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos`, `1cqv_rOc-YnGo0w3ri6VVrsHUIGoHKxd1M4rDaPwoYfI`, `19ptuJWHViaCe8y4F6_zgwrmAPAmsdL6c65D9W_F79RY`, and `17Qyd4kBEJWWdyZbZLSWTtgV9YhCHNHNQCiDFnm-NyK4`; Jira/Confluence trace above; GitHub PR check restored Sprint 3.0 active state; Supermemory saves `CKbwLFbkWtWtDgLRS5ofb6`, `57e6zJKR4SgazS1gKPZrj1`, `ihUSJZ8Tv15MMYxfyhzA3u`, `BZTruDzwRqg29Vcm3QL1qE`, `me9Tr3Qpdx1KkDAuPkywL7`, `AS8CbDkqRGyRUMeoWKG55D`, and `t4D2F5KyrY2YhbdMwzypLV`._
 
 _Last refreshed: 2026-07-07 by Claude — claims verified against gcloud/MCP/CI output (Supabase MCP migration listing on prod `vzwyaatejekddvltxyye`; `gh pr view`/`gh pr checks` for #1434/#1438/#1439/#1441/#1443; Confluence https://arkova.atlassian.net/wiki/spaces/A/pages/94928898)._
+
+_Last refreshed: 2026-07-10 by Claude (RTE) — claims verified against gcloud/MCP/CI output (prod /health git_sha c104cc36; deploy run 2026-07-10T13:17Z; gcloud logging per-rig continuity; Supabase MCP ledger head 0353 on vzwyaatejekddvltxyye; gh pr checks across all 17 PRs; staging_deploy_log id 223)._
