@@ -1644,6 +1644,10 @@ const STAGING_TOOLING_ALLOW = [
   // `count: 'exact'` callsite baseline, coverage-threshold monotonicity). They
   // never ship to prod runtime → T0 tooling.
   /^scripts\/ci\/check-handoff-claims(\.test)?\.ts$/,
+  // S3.3 (SCRUM-2670): rig-day sequencing gate — enumerates open DB-mutating
+  // PRs + prod-green assertion, runs ONLY in CI / operator preflight; never
+  // ships to prod runtime -> T0 tooling (same class as the R0 gates above).
+  /^scripts\/ci\/check-s33-sequencing-gate(\.test)?\.ts$/,
   /^scripts\/ci\/check-count-exact-baseline(\.test)?\.ts$/,
   /^scripts\/ci\/check-coverage-monotonic(\.test)?\.ts$/,
   /^scripts\/ci\/snapshots\//, // CI baselines/snapshots — tooling, never prod runtime

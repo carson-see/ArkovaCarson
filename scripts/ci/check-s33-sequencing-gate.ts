@@ -94,7 +94,7 @@ export function dbMutatingPrs(prs: OpenPrSummary[]): DbMutatingPr[] {
 export function parseGhPrListJson(raw: string): OpenPrSummary[] {
   const parsed: unknown = JSON.parse(raw);
   if (!Array.isArray(parsed)) {
-    throw new Error('gh pr list output is not an array — refusing to evaluate the gate on it.');
+    throw new TypeError('gh pr list output is not an array — refusing to evaluate the gate on it.');
   }
   return parsed.map((entry) => {
     const e = entry as {
@@ -104,7 +104,7 @@ export function parseGhPrListJson(raw: string): OpenPrSummary[] {
       files?: Array<{ path?: unknown }>;
     };
     if (typeof e.number !== 'number' || typeof e.title !== 'string' || !Array.isArray(e.files)) {
-      throw new Error(`gh pr list entry malformed: ${JSON.stringify(entry).slice(0, 200)}`);
+      throw new TypeError(`gh pr list entry malformed: ${JSON.stringify(entry).slice(0, 200)}`);
     }
     return {
       number: e.number,
@@ -151,9 +151,13 @@ export function evaluateSequencingGate(input: SequencingInput): SequencingResult
 
 // ── Runtime (thin; needs gh on PATH) ─────────────────────────────────────────
 
+// Absolute binary path (S4036): no PATH lookup — /usr/bin/gh on GitHub-hosted
+// runners; operators override via GH_BIN locally (e.g. /opt/homebrew/bin/gh).
+const GH_BIN = process.env.GH_BIN ?? '/usr/bin/gh';
+
 function listOpenPrs(): OpenPrSummary[] {
   const raw = execFileSync(
-    'gh',
+    GH_BIN,
     ['pr', 'list', '--state', 'open', '--json', 'number,title,isDraft,files', '--limit', '100'],
     { encoding: 'utf8' },
   );
