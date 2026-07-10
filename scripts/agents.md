@@ -24,6 +24,9 @@ Operational, CI, deployment, and security scripts. Run manually or from CI workf
 - **`check-homepage-jsonld.test.ts`** — tests for homepage JSON-LD structured data.
 - **`enforce-tdd.sh`** — enforces TDD: test must exist before production code.
 - **`ci-supabase-start.sh`** — starts Supabase for CI environments.
+- **`fetch-ner-model.ts`** + **`ner-weights.lock.json`** — vendors + SHA-256-verifies the self-hosted on-device NER model weights into git-ignored `public/models/` at a pinned revision (S1.4b / SCRUM-2503). Runs in `npm run prebuild`; any hash/byte mismatch fails the build closed.
+- **`vendor-ner-runtime.ts`** + **`ner-runtime.lock.json`** — WEBEXT-01 F-1/F-2: vendors + SHA-256-verifies the on-device NER RUNTIME from the exact npm-pinned packages — the SELF-CONTAINED transformers.js 4.2.0 browser bundle (`public/vendor/transformers.bundle.min.js`, committed) and the onnxruntime WASM artifacts (`public/vendor/ort/`, git-ignored). Runs in `npm run prebuild` after the weights fetch. Refuses (exit 1) any ESM artifact containing bare/off-origin module specifiers — the F-1 class (top-level `onnxruntime-web/webgpu` imports in the old `.web.` build) that made native browser module-linking throw and killed NER in prod (PR #1409 §6). `--check` verifies on-disk artifacts; `--update-lock` is the maintainer rebump flow (then re-run the WEBEXT-01 browser-real probe + re-soak).
+- **`vendor-transformers-version.test.ts`** — build-fatal version-skew guard: vendored bundle embedded version == `TRANSFORMERS_JS_VERSION` == the lockfiles' pinned versions.
 
 ## Copy-term linter (`check-copy-terms.ts`, SCRUM-2149 / SCRUM-2148)
 
