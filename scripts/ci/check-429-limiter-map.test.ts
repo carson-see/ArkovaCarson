@@ -80,7 +80,13 @@ describe('429 limiter map — file:line claims ledger', () => {
     expect(existsSync(MAP_PATH), `expected ${MAP_PATH}`).toBe(true);
   });
 
-  it('every ledger claim still holds against the tree (file exists, line contains text)', () => {
+  // REVIEW NOTE (S3.3 cross-lane review): the ledger asserts NEEDLE PRESENCE in
+  // the named file, not exact line position. Line-exact pinning of hot files
+  // (router.ts, gemini.ts) in repo-wide CI would false-fail every unrelated PR
+  // that shifts a line; the map's line numbers are a snapshot locator hint.
+  // The real tripwires — emitter existence + the dead-code mount greps below —
+  // stay strict.
+  it('every ledger claim still holds against the tree (file exists, needle present)', () => {
     const claims = parseClaimsLedger();
     expect(claims.length, 'the ledger must carry the full emitter inventory').toBeGreaterThanOrEqual(20);
 
@@ -91,11 +97,10 @@ describe('429 limiter map — file:line claims ledger', () => {
         failures.push(`[${claim.id}] missing file: ${claim.file}`);
         continue;
       }
-      const lines = readFileSync(filePath, 'utf8').split('\n');
-      const actual = lines[claim.line - 1] ?? '<past end of file>';
-      if (!actual.includes(claim.needle)) {
+      const content = readFileSync(filePath, 'utf8');
+      if (!content.includes(claim.needle)) {
         failures.push(
-          `[${claim.id}] ${claim.file}:${claim.line} drifted.\n    expected to contain: ${claim.needle}\n    actual line:         ${actual.trim()}`,
+          `[${claim.id}] ${claim.file} drifted (claimed near :${claim.line}).\n    expected file to contain: ${claim.needle}`,
         );
       }
     }
