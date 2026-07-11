@@ -181,6 +181,14 @@ playwright-report/
 # public/vendor/ stays tracked; only the downloaded model weights are ignored.
 public/models/
 
+# WEBEXT-01 F-2: onnxruntime WASM artifacts, vendored on-device by
+# `npx tsx scripts/vendor-ner-runtime.ts` (npm run prebuild) from the exact
+# npm-pinned onnxruntime-web package, SHA-256-verified against
+# scripts/ner-runtime.lock.json. ~24 MB binaries — never committed; the
+# build/deploy pipeline re-vendors them. The transformers.js runtime bundle
+# (public/vendor/transformers.bundle.min.js) stays tracked.
+public/vendor/ort/
+
 # Misc
 .cache/
 .parcel-cache/

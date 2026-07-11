@@ -1803,6 +1803,62 @@ export const PROFESSIONAL_EDUCATION_EXPORT_LABELS = {
 } as const;
 
 // =============================================================================
+// S3 CREDENTIAL-NETWORK (LANE 3) STRINGS — SCRUM-2378 / SCRUM-2379 / SCRUM-2380
+// One contiguous block by design: Sprint-3 streams share copy.ts, so all Lane-3
+// CPE/CLE strings live HERE to minimize merge conflicts. Do not scatter.
+// =============================================================================
+
+export const PROFESSIONAL_EDUCATION_S3_LABELS = {
+  // CPE-01 (SCRUM-2378): the worker excludes ALL non-secured records from
+  // compliance exports — including revoked/expired/superseded ones that will
+  // NEVER become secured. Per §1.5 the notice asserts only what is held (they
+  // aren't secured); it must not promise they will "appear once secured"
+  // (round-1 review finding 2). Surfaced inline — never a blocker, never
+  // silent.
+  EXCLUDED_NOTICE: (count: number) =>
+    count === 1
+      ? "1 record isn't included because it isn't secured."
+      : `${count} records aren't included because they aren't secured.`,
+  // CLE-01 (SCRUM-2379, Constitution §1.5): jurisdiction tags are informational
+  // metadata only. Mirrors JURISDICTION_INFORMATIONAL_DISCLAIMER in
+  // services/worker/src/exports/cle-log-export.ts (embedded in the export
+  // artifacts) — keep the two statements consistent in substance.
+  JURISDICTION_DISCLAIMER:
+    'Jurisdiction tags are informational metadata only. Exports do not determine or assert compliance with, or adequacy under, the continuing education requirements of any jurisdiction or licensing body.',
+} as const;
+
+// CPE-02 (SCRUM-2380): org CPE dashboard MVP.
+export const ORG_CPE_DASHBOARD_LABELS = {
+  TITLE: 'Team CPE Records',
+  DESCRIPTION: 'Per-member continuing education records for the selected reporting period.',
+  PERIOD_LABEL: 'Reporting period',
+  PERIOD_YTD: 'Year to date',
+  PERIOD_90_DAYS: 'Last 90 days',
+  PERIOD_12_MONTHS: 'Last 12 months',
+  PERIOD_ALL_TIME: 'All time',
+  TILE_MEMBERS: 'Members with records',
+  TILE_SECURED: 'Secured records',
+  TILE_PENDING: 'Pending records',
+  COL_MEMBER: 'Member',
+  COL_SECURED: 'Secured',
+  COL_PENDING: 'Pending',
+  COL_LAST_ACTIVITY: 'Last activity',
+  MEMBER_SCOPE_NOTE: 'Showing your records only.',
+  UNKNOWN_MEMBER: 'Unknown member',
+  EMPTY: 'No CPE records in this period',
+  EMPTY_DESC: 'Member records appear here once CPE documents are secured or queued for the selected period.',
+  ERROR: 'Unable to load team CPE records.',
+  NO_ACTIVITY: '—',
+  // Round-1 review finding 1: terminal records (revoked, expired, or
+  // superseded) are counted in neither tile — surface them explicitly so they
+  // never vanish silently from the dashboard.
+  TERMINAL_FOOTNOTE: (count: number) =>
+    count === 1
+      ? '1 record in this period is revoked, expired, or superseded and is not counted in the totals above.'
+      : `${count} records in this period are revoked, expired, or superseded and are not counted in the totals above.`,
+} as const;
+
+// =============================================================================
 // RULE BUILDER WIZARD (ARK-108 / CIBA-HARDEN-04)
 // =============================================================================
 
@@ -3046,8 +3102,14 @@ export const PRIVACY_NOTICE_LABELS = {
   THAILAND_DESCRIPTION: 'Applies to data subjects in Thailand. Your personal data is protected under the PDPA. You have access, portability, objection, deletion, restriction, and rectification rights. Cross-border transfers use SCCs aligned with ASEAN MCCs or GDPR SCCs referencing Thai law.',
   MALAYSIA_TITLE: 'Malaysia PDPA 2010 (as amended 2024)',
   MALAYSIA_DESCRIPTION: 'Applies to data subjects in Malaysia. Your personal data is protected under the PDPA as amended in 2024. You have access, correction, consent withdrawal, and (from 2025) data portability rights. Cross-border transfers use a risk-based Transfer Impact Assessment framework.',
-  DPF_TITLE: 'EU-US Data Privacy Framework',
-  DPF_DESCRIPTION: 'Arkova self-certifies under the EU-US Data Privacy Framework for lawful transatlantic personal data transfers. Individuals have the right to access, correct, or delete their data, and may file complaints with their national DPA or the DPF Panel.',
+  DPF_TITLE: 'EU–US Personal Data Transfers',
+  // SCRUM-2283: the prior copy falsely asserted "Arkova self-certifies under the
+  // EU-US Data Privacy Framework". Arkova does NOT hold an active DPF
+  // self-certification, so that claim is removed (R-7 claims gate). The
+  // replacement lawful-transfer basis (e.g. executed EU Standard Contractual
+  // Clauses) is COUNSEL-REQUIRED and must not be invented here — placeholder
+  // pending legal review.
+  DPF_DESCRIPTION: 'The lawful basis for transatlantic personal data transfers is under review by legal counsel and will be published here once confirmed. Individuals retain the right to access, correct, or delete their data and to file a complaint with their national data protection authority. [Counsel review required — do not assert a specific transfer mechanism until confirmed.]',
   REGULATOR_LABEL: 'Regulator',
   RIGHTS_LABEL: 'Your Rights',
   TRANSFER_BASIS_LABEL: 'Cross-Border Transfer Basis',

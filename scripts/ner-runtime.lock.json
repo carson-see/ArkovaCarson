@@ -1,0 +1,22 @@
+{
+  "_comment": "Integrity lockfile for the on-device NER RUNTIME (WEBEXT-01 F-1/F-2 fix, gate #13 / §1.6). scripts/vendor-ner-runtime.ts copies each artifact from the EXACT npm-pinned package in node_modules at build time (npm run prebuild), verifies SHA-256 + byte length against this manifest, refuses any ESM artifact containing bare/off-origin module specifiers (the F-1 dead-on-arrival class that shipped inside transformers.web.min.js), and exits non-zero on any mismatch (fail-closed BUILD). The bundle (public/vendor/transformers.bundle.min.js — the package's SELF-CONTAINED dist/transformers.min.js browser build, onnxruntime inlined) is COMMITTED; the ort WASM artifacts (public/vendor/ort/) are git-ignored and re-vendored each build, served same-origin under CSP 'self' with env.backends.onnx.wasm.wasmPaths pinned to '/vendor/ort/' in src/lib/nerPiiDetector.ts BEFORE any session creation (F-2: unset wasmPaths defaults to a jsdelivr CDN URL the deployed CSP blocks). transformersJsVersion MUST equal TRANSFORMERS_JS_VERSION in src/lib/nerPiiDetector.ts and ner-weights.lock.json transformersJsVersion; onnxruntimeWebVersion MUST equal the exact onnxruntime-web version @huggingface/transformers pins — both enforced by scripts/vendor-ner-runtime.test.ts + scripts/vendor-transformers-version.test.ts. To bump: update the package.json pin, run `npx tsx scripts/vendor-ner-runtime.ts --update-lock`, review the diff, re-run the WEBEXT-01 browser-real probe harness (real in-browser load + inference under the deployed CSP), and re-soak.",
+  "transformersJsVersion": "4.2.0",
+  "onnxruntimeWebVersion": "1.26.0-dev.20260416-b7804b056c",
+  "files": {
+    "public/vendor/transformers.bundle.min.js": {
+      "sha256": "e74bd32ed4453369ebb0edcaa27f6bc6204004a949a0233cdb87b62dda8d6978",
+      "bytes": 558373,
+      "source": "@huggingface/transformers/dist/transformers.min.js"
+    },
+    "public/vendor/ort/ort-wasm-simd-threaded.asyncify.wasm": {
+      "sha256": "e0c0c6d3e73d43b8a249972f8358f845b08cc16fec3c80efafdf8bed40366786",
+      "bytes": 23567050,
+      "source": "onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm"
+    },
+    "public/vendor/ort/ort-wasm-simd-threaded.asyncify.mjs": {
+      "sha256": "5959c6733039619c9af710d8e1bae8d6e84402787990637be987c2b1bd6c5fa9",
+      "bytes": 47389,
+      "source": "onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs"
+    }
+  }
+}
