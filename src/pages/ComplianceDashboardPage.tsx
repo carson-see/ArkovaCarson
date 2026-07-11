@@ -39,6 +39,7 @@ import { MissingDocumentsCard } from '@/components/compliance/MissingDocumentsCa
 import { ExpiringDocumentsCard } from '@/components/compliance/ExpiringDocumentsCard';
 import { RecommendationsCard } from '@/components/compliance/RecommendationsCard';
 import { ProfessionalEducationExportPanel } from '@/components/compliance/ProfessionalEducationExportPanel';
+import { OrgCpeMemberDashboard } from '@/components/compliance/OrgCpeMemberDashboard';
 import { useComplianceScore, useJurisdictionRules } from '@/hooks/useComplianceScore';
 
 type Attestation = Database['public']['Tables']['attestations']['Row'];
@@ -740,6 +741,16 @@ export function ComplianceDashboardPage() {
         </div>
 
         {userId && <ProfessionalEducationExportPanel userId={userId} />}
+
+        {/* CPE-02 (SCRUM-2380): per-member CPE dashboard MVP. Org admins see
+            org members; a plain member's data layer is pinned to own rows. */}
+        {userId && orgId && (
+          <OrgCpeMemberDashboard
+            orgId={orgId}
+            userId={userId}
+            isOrgAdmin={profile?.role === 'ORG_ADMIN'}
+          />
+        )}
 
         {/* Section 0: Nessie Intelligence Query */}
         <NessieIntelligencePanel />
