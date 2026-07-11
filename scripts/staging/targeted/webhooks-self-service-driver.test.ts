@@ -10,29 +10,11 @@ const BASE = 'https://pr-1443---arkova-worker-staging-x-uc.a.run.app';
 
 const ARGS = {
   orgAdminKey: 'ak_admin',
-  endpointId: 'ep-1',
-  deliveryId: 'del-1',
   dlqId: 'dlq-1',
 };
 
-describe('webhooks-self-service-driver: request plan hits test/replay/dlq/resolve', () => {
+describe('webhooks-self-service-driver: request plan hits dlq/resolve', () => {
   const plan = planWebhookSelfServiceRequests(BASE, ARGS);
-
-  it('drives POST /webhooks/test with the ORG_ADMIN key', () => {
-    const test = plan.find((p) => p.label === 'test');
-    expect(test).toBeDefined();
-    expect(test!.method).toBe('POST');
-    expect(test!.endpoint).toBe('/api/v1/webhooks/test');
-    expect(test!.headers?.['X-API-Key']).toBe('ak_admin');
-    expect(JSON.parse(test!.body!)).toEqual({ endpoint_id: 'ep-1' });
-  });
-
-  it('drives POST /webhooks/deliveries/:id/replay', () => {
-    const replay = plan.find((p) => p.label === 'replay');
-    expect(replay).toBeDefined();
-    expect(replay!.endpoint).toBe('/api/v1/webhooks/deliveries/del-1/replay');
-    expect(replay!.method).toBe('POST');
-  });
 
   it('drives GET /webhooks/dlq (list)', () => {
     const dlqList = plan.find((p) => p.label === 'dlq-list');
@@ -47,6 +29,7 @@ describe('webhooks-self-service-driver: request plan hits test/replay/dlq/resolv
     expect(resolve).toBeDefined();
     expect(resolve!.endpoint).toBe('/api/v1/webhooks/dlq/dlq-1/resolve');
     expect(resolve!.method).toBe('POST');
+    expect(resolve!.allowedStatuses).toEqual([200]);
   });
 
   it('includes a cross-org 401 unauthenticated negative (no key)', () => {
@@ -61,11 +44,15 @@ describe('webhooks-self-service-driver: request plan hits test/replay/dlq/resolv
       expect(p.headers?.['X-API-Key']).toBe('ak_admin');
     }
   });
+
+  it('keeps the per-pass request count below the effective staging limiter edge', () => {
+    expect(plan).toHaveLength(3);
+  });
 });
 
 describe('webhooks-self-service-driver: metadata', () => {
-  it('names PR #1443 and the driver', () => {
-    expect(WEBHOOKS_DRIVER.pr).toBe('#1443');
+  it('names PR #1471 and the driver', () => {
+    expect(WEBHOOKS_DRIVER.pr).toBe('#1471');
     expect(WEBHOOKS_DRIVER.driver).toBe('webhooks-self-service');
   });
 });

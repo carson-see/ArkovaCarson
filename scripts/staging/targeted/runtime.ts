@@ -74,7 +74,10 @@ function fetchIamToken(): string {
   const env = process.env.STAGING_GCP_IDENTITY;
   if (env) return env.trim();
   const bin = resolveGcloudPath();
-  return execFileSync(bin, ['auth', 'print-identity-token'], { encoding: 'utf8' }).trim();
+  const args = ['auth', 'print-identity-token'];
+  const audience = process.env.STAGING_GCP_IDENTITY_AUDIENCE?.trim();
+  if (audience) args.push(`--audiences=${audience}`);
+  return execFileSync(bin, args, { encoding: 'utf8' }).trim();
 }
 
 export function iamToken(): string {
