@@ -345,10 +345,13 @@ describe('DH-12: Dead Letter Queue', () => {
     mockDbFrom.mockImplementation((table: string) => {
       if (table === 'webhook_dead_letter_queue') {
         return {
+          // webhook_dead_letter_queue has no FK to webhook_endpoints — org_id
+          // is read directly off the DLQ row's own denormalized column, not
+          // via an embedded join (which fails with PGRST200 in prod).
           select: vi.fn(() => ({
             eq: vi.fn(() => ({
               single: vi.fn().mockResolvedValue({
-                data: { endpoint_id: 'ep-001', webhook_endpoints: { org_id: 'org-001' } },
+                data: { org_id: 'org-001' },
                 error: null,
               }),
             })),
@@ -372,7 +375,7 @@ describe('DH-12: Dead Letter Queue', () => {
           select: vi.fn(() => ({
             eq: vi.fn(() => ({
               single: vi.fn().mockResolvedValue({
-                data: { endpoint_id: 'ep-001', webhook_endpoints: { org_id: 'org-001' } },
+                data: { org_id: 'org-001' },
                 error: null,
               }),
             })),
@@ -385,5 +388,30 @@ describe('DH-12: Dead Letter Queue', () => {
 
     const result = await resolveDlqEntry('dlq-001', 'org-001');
     expect(result).toBe(false);
+  });
+
+  it('resolveDlqEntry fails closed when the DLQ entry belongs to a different org', async () => {
+    const updateEq = vi.fn();
+
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_dead_letter_queue') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: { org_id: 'org-999' },
+                error: null,
+              }),
+            })),
+          })),
+          update: vi.fn(() => ({ eq: updateEq })),
+        };
+      }
+      return {};
+    });
+
+    const result = await resolveDlqEntry('dlq-001', 'org-001');
+    expect(result).toBe(false);
+    expect(updateEq).not.toHaveBeenCalled();
   });
 });
