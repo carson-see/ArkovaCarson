@@ -10,6 +10,7 @@ const scratch = join(process.cwd(), 'docs', 'staging', `.tmp-tsoak-runtime-${pro
 afterEach(() => {
   if (existsSync(scratch)) rmSync(scratch, { recursive: true, force: true });
   delete process.env.STAGING_GCP_IDENTITY;
+  delete process.env.STAGING_GCP_IDENTITY_AUDIENCE;
   delete process.env.TSOAK_REQUIRED_TEST;
   vi.restoreAllMocks();
 });
