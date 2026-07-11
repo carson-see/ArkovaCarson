@@ -27,6 +27,19 @@ export function fingerprintForEntry(entryId: string, salt = ''): string {
   return createHash('sha256').update(`${entryId}:${salt}`).digest('hex');
 }
 
+/**
+ * Per-round fingerprint salt. The worker caches extraction results in
+ * ai_usage_events keyed by fingerprint (EFF-1, api/v1/ai-extract.ts): a
+ * run-level salt only busts that cache for round 1 — every later round of a
+ * multi-round soak replays round 1's cached answers as provider=cache, so a
+ * --require-live soak degrades to exactly ONE live round (root cause of the
+ * PR #1413 window-2/window-3 repeating signature, 2026-07-10/11). Suffixing
+ * the round number gives every round fresh cache keys → real inference.
+ */
+export function saltForRound(runSalt: string, round: number): string {
+  return `${runSalt}#round-${round}`;
+}
+
 /** Map a golden entry to the POST /api/v1/ai/extract request body. */
 export function buildExtractPayload(entry: GoldenEntry, salt = ''): ExtractRequestBody {
   const payload: ExtractRequestBody = {

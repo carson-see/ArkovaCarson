@@ -7,6 +7,7 @@ import {
   buildExtractPayload,
   certifyRound,
   providerFromBody,
+  saltForRound,
   type EvalRecord,
 } from './eval-core.js';
 import type { GoldenEntry } from './scoring.js';
@@ -41,6 +42,27 @@ describe('buildExtractPayload', () => {
     expect(buildExtractPayload(ENTRY, 'run-a').fingerprint).toBe(buildExtractPayload(ENTRY, 'run-a').fingerprint);
     expect(buildExtractPayload(ENTRY, 'run-a').fingerprint).not.toBe(buildExtractPayload(ENTRY, 'run-b').fingerprint);
     expect(buildExtractPayload(ENTRY, 'run-a').fingerprint).not.toBe(buildExtractPayload(ENTRY).fingerprint);
+  });
+});
+
+describe('saltForRound', () => {
+  // Regression: PR #1413 soak windows 2+3 (2026-07-10/11) sent the SAME
+  // run-level salt every round; the worker's EFF-1 fingerprint cache
+  // (ai_usage_events) then served rounds 2+ as provider=cache — only round 1
+  // was live inference. Per-round salts must yield per-round fingerprints.
+  it('yields a distinct fingerprint for every round of the same run', () => {
+    const r1 = buildExtractPayload(ENTRY, saltForRound('run-a', 1)).fingerprint;
+    const r2 = buildExtractPayload(ENTRY, saltForRound('run-a', 2)).fingerprint;
+    const r3 = buildExtractPayload(ENTRY, saltForRound('run-a', 3)).fingerprint;
+    expect(new Set([r1, r2, r3]).size).toBe(3);
+  });
+
+  it('is deterministic for the same run salt + round', () => {
+    expect(saltForRound('run-a', 7)).toBe(saltForRound('run-a', 7));
+  });
+
+  it('keeps different runs disjoint at the same round', () => {
+    expect(saltForRound('run-a', 1)).not.toBe(saltForRound('run-b', 1));
   });
 });
 

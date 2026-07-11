@@ -64,6 +64,7 @@ import {
   buildEvalRecord,
   certifyRound,
   providerFromBody,
+  saltForRound,
   LIVE_PROVIDERS,
   type EvalRecord,
 } from './ai-eval/eval-core.js';
@@ -266,7 +267,7 @@ async function runEvalRounds(config: RunnerConfig): Promise<RunnerSummary> {
       config.apiBase,
       config.identities,
       config.timeoutMs,
-      config.fingerprintSalt,
+      saltForRound(config.fingerprintSalt, round),
     );
     const { merited, notes } = certifyRound(record, providersSeen, config.requireLive);
     if (merited) meritedRounds++;
