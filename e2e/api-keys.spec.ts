@@ -167,11 +167,39 @@ test.describe('API Keys & Verification Flow', () => {
       await orgAdminPage.goto('/settings/api-keys');
       await expectApiKeysPage(orgAdminPage);
 
-      // Usage dashboard or its offline state should be present.
+      // The ApiUsageDashboard renders one of four states
+      // (src/components/api/ApiUsageDashboard.tsx):
+      //   1. loading          -> spinner card (transient; react-query retry
+      //                          backoff can hold it well past 10s)
+      //   2. success          -> USAGE_TITLE heading ('API Usage')
+      //   3. auth-class error -> USAGE_CREATE_KEY_HINT copy
+      //   4. other error      -> USAGE_UNAVAILABLE copy
+      // (!usage renders nothing — that is a regression and must FAIL here.)
+      //
+      // The success state must be matched via the heading role: a bare
+      // getByText('API Usage') is a case-insensitive substring match that
+      // ALSO hits the card description 'Monitor your Verification API
+      // usage for the current billing period.' — a 2-element strict-mode
+      // violation that deterministically failed this spec whenever the
+      // dashboard loaded successfully (blocked #1439 / #1443).
+      const usageHeading = orgAdminPage.getByRole('heading', {
+        name: 'API Usage',
+        exact: true,
+      });
+      // Copy strings mirror USAGE_UNAVAILABLE / USAGE_CREATE_KEY_HINT in
+      // src/lib/copy.ts (e2e specs assert user-visible copy verbatim).
+      const usageUnavailable = orgAdminPage.getByText(
+        'Usage data unavailable — service not connected'
+      );
+      const usageCreateKeyHint = orgAdminPage.getByText(
+        'Usage metrics will appear once you create your first API key'
+      );
+
+      // 20s rides out the loading spinner across react-query retries while
+      // a wholly absent usage section still fails the assertion.
       await expect(
-        orgAdminPage.getByText('API Usage')
-          .or(orgAdminPage.getByText('Usage data unavailable — service not connected'))
-      ).toBeVisible({ timeout: 10000 });
+        usageHeading.or(usageUnavailable).or(usageCreateKeyHint).first()
+      ).toBeVisible({ timeout: 20000 });
     });
   });
 

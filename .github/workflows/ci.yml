@@ -1098,9 +1098,13 @@ jobs:
         run: |
           node --import tsx src/index.ts > "$RUNNER_TEMP/arkova-worker.log" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/arkova-worker.pid"
-          for i in {1..60}; do
+          # 120s health budget: tsx cold-compiles the worker on first boot, so
+          # slow runners can push past the old 60s ceiling. The gate stays
+          # hard-fail (exit 1) — specs must never run against a dead worker;
+          # the longer wait only reduces false negatives on slow boots.
+          for i in {1..120}; do
             if curl -fsS http://localhost:3001/health >/dev/null; then
-              echo "Worker is ready"
+              echo "Worker is ready after ${i}s"
               exit 0
             fi
             sleep 1
