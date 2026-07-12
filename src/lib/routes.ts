@@ -106,6 +106,9 @@ export const ROUTES = {
   ADMIN_CONTROLS: '/admin/controls',
   // SCRUM-2082 / CSI-04D — Issuer Partners admin (Credly, Accredible, Udemy)
   ADMIN_ISSUER_PARTNERSHIPS: '/admin/issuer-partnerships',
+  // SCRUM-2401 (OPS-03) — Platform SLO dashboard (queue depth, secure rate,
+  // credit conservation, delivery success)
+  ADMIN_OPS_SLO: '/admin/ops-slo',
 
   // Billing routes
   BILLING: '/billing',
