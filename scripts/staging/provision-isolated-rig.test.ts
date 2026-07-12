@@ -166,6 +166,21 @@ describe('provision-isolated-rig.sh — safety model preserved under the new ove
     expect(out).toMatch(/DRY-RUN/);
   });
 
+  it('requires a Supabase DB password for live project creation and never prints it', () => {
+    const { code, out } = dryRun(
+      ['--name', 's0-s2a-mock', '--profile', 'mock', '--apply'],
+      { CONFIRM_PROVISION: 's0-s2a-mock' },
+    );
+    expect(code).not.toBe(0);
+    expect(out).toMatch(/STAGING_NEW_SUPABASE_DB_PASSWORD/);
+
+    const dry = dryRun(['--name', 's0-s2a-mock', '--profile', 'mock']);
+    expect(dry.code).toBe(0);
+    expect(dry.out).toMatch(/--db-password/);
+    expect(dry.out).toMatch(/<redacted:STAGING_NEW_SUPABASE_DB_PASSWORD>/);
+    expect(dry.out).not.toMatch(/test-db-password/);
+  });
+
   it('refuses --apply for a real (non-mock) profile without an explicit real-config acknowledgement', () => {
     // Real anchoring/gemini rigs touch real credentials + (chain) real Bitcoin;
     // an --apply on a non-mock profile must require an extra explicit ack so a

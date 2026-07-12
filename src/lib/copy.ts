@@ -3448,3 +3448,47 @@ export const TEMPLATE_REVIEW_LABELS = {
   REVIEW_REQUIRED_NOTICE: 'Confirm or correct the highlighted fields to continue.',
   ALL_REVIEWED_NOTICE: 'All details reviewed. You can continue.',
 } as const;
+
+// =============================================================================
+// OPS SLO DASHBOARD (SCRUM-2401 / OPS-03) — internal-only, platform-admin gated
+// =============================================================================
+
+export const OPS_SLO_LABELS = {
+  PAGE_TITLE: 'Platform SLOs',
+  PAGE_DESCRIPTION: 'Live operational health across securing, queues, credits, and delivery.',
+  ACCESS_RESTRICTED_TITLE: 'Access Restricted',
+  ACCESS_RESTRICTED_DESC: 'Platform SLO monitoring is only available to platform administrators.',
+  RETURN_TO_DASHBOARD: 'Return to Dashboard',
+  REFRESH: 'Refresh',
+  ALL_CLEAR_BADGE: 'All SLOs Healthy',
+  BREACH_BADGE: 'SLO Breach',
+  UNAVAILABLE: 'Unavailable',
+  LAST_CHECKED: 'Last checked',
+
+  ANCHOR_SECURED_RATE_TITLE: 'Anchor Secure Rate',
+  ANCHOR_SECURED_RATE_SUBTITLE: (secured: string, total: string) => `${secured} of ${total} secured`,
+  ANCHOR_SECURED_RATE_UNAVAILABLE: 'Secure-rate cache not yet populated.',
+
+  CONNECTOR_QUEUE_TITLE: 'Connector Queue Depth',
+  CONNECTOR_QUEUE_SUBTITLE: (anchored: string, failed: string) => `${anchored} secured · ${failed} failed`,
+  CONNECTOR_QUEUE_UNAVAILABLE: 'Queue depth temporarily unavailable.',
+
+  CREDIT_CONSERVATION_TITLE: 'Credit Ledger Conservation',
+  CREDIT_CONSERVATION_HEALTHY: 'Conservation holds',
+  CREDIT_CONSERVATION_BREACH: (n: number) => `${n} organization${n === 1 ? '' : 's'} diverged`,
+  CREDIT_CONSERVATION_SUBTITLE: (checked: string) => `${checked} organizations checked`,
+  CREDIT_CONSERVATION_UNAVAILABLE: 'Conservation check temporarily unavailable.',
+
+  WEBHOOK_DELIVERY_TITLE: 'Delivery Success Rate',
+  WEBHOOK_DELIVERY_SUBTITLE: (success: string, total: string, hours: number) =>
+    `${success} of ${total} delivered (last ${hours}h)`,
+  WEBHOOK_DELIVERY_UNAVAILABLE: 'Delivery stats temporarily unavailable.',
+
+  API_ERRORS_TITLE: 'Verification Error Rate',
+  API_ERRORS_SUBTITLE: (errors: string, total: string, hours: number) =>
+    `${errors} of ${total} requests failed (last ${hours}h)`,
+  API_ERRORS_UNAVAILABLE: 'Request stats temporarily unavailable.',
+
+  NO_DATA_YET: 'No data yet',
+  FETCH_ERROR_TITLE: 'Unable to load platform SLOs',
+} as const;

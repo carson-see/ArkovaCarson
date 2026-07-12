@@ -16,8 +16,8 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
-import { type DriverStats } from './driver-core';
-import { makeDbExecutor, validateFixtureRows, type FixtureExecutor } from './fixtures';
+import { type DriverStats } from './driver-core.js';
+import { makeDbExecutor, validateFixtureRows, type FixtureExecutor } from './fixtures.js';
 
 // ─── Pure helpers (unit-tested) ─────────────────────────────────────────────
 
@@ -74,7 +74,10 @@ function fetchIamToken(): string {
   const env = process.env.STAGING_GCP_IDENTITY;
   if (env) return env.trim();
   const bin = resolveGcloudPath();
-  return execFileSync(bin, ['auth', 'print-identity-token'], { encoding: 'utf8' }).trim();
+  const args = ['auth', 'print-identity-token'];
+  const audience = process.env.STAGING_GCP_IDENTITY_AUDIENCE?.trim();
+  if (audience) args.push(`--audiences=${audience}`);
+  return execFileSync(bin, args, { encoding: 'utf8' }).trim();
 }
 
 export function iamToken(): string {
@@ -182,4 +185,4 @@ export async function runDriver<P>(opts: RunDriverOpts<P>): Promise<void> {
 }
 
 /** Re-export so drivers can build a fresh stats object without a second import. */
-export { newDriverStats } from './driver-core';
+export { newDriverStats } from './driver-core.js';

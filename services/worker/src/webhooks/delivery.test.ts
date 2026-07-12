@@ -243,6 +243,7 @@ import {
   deriveResourceKey,
   __resetSequenceForTest,
   resetCircuitBreakers,
+  resolveDlqEntry,
 } from './delivery.js';
 
 // We also need direct access for HMAC verification — import crypto
@@ -1074,7 +1075,7 @@ describe('deliverToEndpoint', () => {
     await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
 
     const updateArg = (deliveryLogUpdate.update.mock.calls as unknown[][])[0][0] as Record<string, string>;
-    expect(updateArg.response_body.length).toBe(1000);
+    expect(updateArg.response_body).toHaveLength(1000);
   });
 
   it('handles network error (fetch throws)', async () => {
@@ -1669,5 +1670,100 @@ describe('processWebhookRetries per-resource ordering (SCRUM-2250)', () => {
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.event_id).toBe('evt-head');
     expect(body.sequence).toBe(100);
+  });
+});
+
+// ================================================================
+// resolveDlqEntry (ARK-SEC-026 org-ownership check)
+//
+// BUG: webhook_dead_letter_queue has no FK relationship to
+// webhook_endpoints, so the embedded-join select
+// `.select('endpoint_id, webhook_endpoints(org_id)')` fails in
+// production with PGRST200 ("Could not find a relationship...").
+// `entry` comes back undefined, `entryOrgId` is always falsy, and
+// resolveDlqEntry() returns false unconditionally — the DLQ
+// dismiss/resolve action always 404s for every org. The fix reads
+// `org_id` directly off webhook_dead_letter_queue, which already
+// carries its own denormalized org_id column.
+// ================================================================
+describe('resolveDlqEntry (ARK-SEC-026 org-ownership check)', () => {
+  it('resolves a DLQ entry owned by the requesting org without an embedded join', async () => {
+    const updateEq = vi.fn().mockResolvedValue({ error: null });
+    const selectSingle = vi.fn().mockResolvedValue({
+      data: { org_id: 'org-001' },
+      error: null,
+    });
+    const selectEq = vi.fn(() => ({ single: selectSingle }));
+    const select = vi.fn(() => ({ eq: selectEq }));
+
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_dead_letter_queue') {
+        return {
+          select,
+          update: vi.fn(() => ({ eq: updateEq })),
+        };
+      }
+      return {};
+    });
+
+    const result = await resolveDlqEntry('dlq-001', 'org-001');
+
+    expect(result).toBe(true);
+    // Regression guard: webhook_dead_letter_queue has no FK to
+    // webhook_endpoints (PGRST200 in prod) — must read org_id directly
+    // off the DLQ row itself, never attempt an embedded join.
+    expect(select).toHaveBeenCalledWith(expect.not.stringContaining('webhook_endpoints'));
+    expect(updateEq).toHaveBeenCalledWith('id', 'dlq-001');
+  });
+
+  it('fails closed when the DLQ entry belongs to a different org', async () => {
+    const updateEq = vi.fn();
+    const selectSingle = vi.fn().mockResolvedValue({
+      data: { org_id: 'org-002' },
+      error: null,
+    });
+    const selectEq = vi.fn(() => ({ single: selectSingle }));
+    const select = vi.fn(() => ({ eq: selectEq }));
+
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_dead_letter_queue') {
+        return {
+          select,
+          update: vi.fn(() => ({ eq: updateEq })),
+        };
+      }
+      return {};
+    });
+
+    const result = await resolveDlqEntry('dlq-001', 'org-001');
+
+    expect(result).toBe(false);
+    expect(updateEq).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      { entryId: 'dlq-001', orgId: 'org-001' },
+      'DLQ entry does not belong to requesting org',
+    );
+  });
+
+  it('fails closed when the DLQ entry does not exist', async () => {
+    const updateEq = vi.fn();
+    const selectSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+    const selectEq = vi.fn(() => ({ single: selectSingle }));
+    const select = vi.fn(() => ({ eq: selectEq }));
+
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_dead_letter_queue') {
+        return {
+          select,
+          update: vi.fn(() => ({ eq: updateEq })),
+        };
+      }
+      return {};
+    });
+
+    const result = await resolveDlqEntry('missing-id', 'org-001');
+
+    expect(result).toBe(false);
+    expect(updateEq).not.toHaveBeenCalled();
   });
 });
