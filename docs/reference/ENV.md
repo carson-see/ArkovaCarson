@@ -402,6 +402,12 @@ PROOF_PACKET_VERIFY_BASE_URL=       # base URL embedded in proof packets for re-
 METADATA_HASH_BYTES=                # bytes of metadata included in fingerprint hash; default 256
 ```
 
+### Back-catalogue proof jobs (PROOF-02 / S3-A)
+```bash
+PROOF_BACKFILL_CONFIRM=             # 'EXECUTE' arms writes for the SCRUM-2491 completeness backfill; unset = dry-run only
+PROOF_CLASSIFIER_CONFIRM=           # 'EXECUTE' arms write mode for the S3-A back-catalogue classifier; unset = dry-run census only (separate token on purpose — arming one write job never arms the other)
+```
+
 ### Cloud logging sink (SCRUM-1093)
 ```bash
 ENABLE_CLOUD_LOGGING_SINK=false     # GCP Cloud Logging sink for audit_events

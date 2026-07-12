@@ -7,6 +7,7 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 | File | Purpose |
 |---|---|
 | `seed.ts` | Synthesize prod-shape data on the staging rig. Tier flag (`--smoke` / `--standard` / `--full`) controls volume. Goes through the `staging_seed_auth_users` RPC (staging-only) so profiles satisfy the `auth.users` FK. Synthetic data only — never copies real customer rows. |
+| `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `classifier`, `reads`, `mixed` (default). Mixed runs webhooks/events/cron/reads concurrently; `classifier` targets `POST /jobs/classify-proof-backcatalog` with concurrent dry-run bursts. Requires `STAGING_API_BASE` to be the per-PR or named train tag URL printed by `deploy.sh`; shared/main staging URLs are refused so parallel soaks don't contaminate each other (SCRUM-1803). |
 | `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `reads`, `mixed` (default). Mixed runs all four pressure types concurrently. Requires `STAGING_API_BASE` to be the per-PR or named train tag URL printed by `deploy.sh`; shared/main staging URLs are refused so parallel soaks don't contaminate each other (SCRUM-1803). **Has NO AI mode** — it never hits `/api/v1/ai/*`. For the AI-path soak use `ai-soak-harness.ts`. |
 | `ai-soak-harness.ts` | **AI-path load generator** for the AI T3 soak (SCRUM-2383 re-tiered T2→T3). Drives the LIVE `POST /api/v1/ai/extract` + `/ai/template` + `/ai/tags` at `--rate` (req/hr; default 5000) across **`--doc-variants`** (pdf-clean/scan-ocr/docx-text/large/oversized/malformed — multi-doctype + size stress) using the vendored AI-01 golden corpus. `/api/v1/ai/*` require a **Supabase user JWT** (`STAGING_AI_JWTS`), NOT an API key; `aiRateLimiter` = 30 req/min/user so it **shards across ≥4 JWTs** and `planRate()` fails loud on an undersized pool. Applies a `--timeout-ms` client deadline. Evidence file carries per-endpoint p50/p95/p99, `byVariant`, and a **first-class `reliability` block (429 / timeout / false-reading rates)** — the founders' headline result. Run: `npx tsx scripts/staging/ai-soak-harness.ts …`. |
 | `ai-eval-gate-runner.ts` | **Live SCRUM-2382 (AI-02) eval-gate runner.** Continuously samples the 48-entry golden GATE split through the LIVE `/ai/extract` endpoint, scores field F1 with the vendored scorer, enforces weighted F1 ≥ 0.80 + per-field floors (creditHours ≥ 0.85, issuedDate ≥ 0.80, credentialType ≥ 0.80). Appends one JSONL record/round (verdict, weighted F1, per-field P/R/F1, misclassifications, extraction-error count, **`falseReadingCount`** + per-round `reliability`). `--require-live` refuses to certify a round merge-grade if the server-reported provider is `mock`/`fast-fallback`. Fail-closed exit. Run: `npx tsx scripts/staging/ai-eval-gate-runner.ts …`. |
@@ -23,7 +24,6 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 | `provision-isolated-rig.sh` | S0-4.1 / **L2-S2a (SCRUM-2673)** one-command isolated-rig provision (create project → schema replay → deploy worker → **Cloud Scheduler /jobs/\* wiring** → **seed baseline fixture** → `clean_mirror` preflight → `ADMISSION_JSON=...`). `--dry-run` default; live run needs `--apply` + `CONFIRM_PROVISION=<name>`. **`--profile mock\|chain\|gemini`** selects the worker env/secret overlay: `mock` (default, safe: `USE_MOCKS=true`, anchoring off, no Scheduler), `chain` (real anchoring — GetBlock RPC + WIF signer + `KMS_PROVIDER`, Scheduler-driven), `gemini` (real tuned model + prompt; chain mocked, Scheduler-driven). Every profile also wires the boot-critical secrets (Stripe / API-key HMAC / cron / `FRONTEND_URL`) so `config.ts`'s production Zod superRefine does not crash-loop the worker. A live **non-mock** profile requires a second ack `CONFIRM_REAL_CONFIG=<profile>` (real credentials / real Bitcoin exposure). All real credentials are Secret Manager references — never inlined. Hard-denies prod (`vzwyaatejekddvltxyye`) + shared staging. Admission JSON carries SHA/base SHA, image digest, Cloud Run service/tag URL, isolated Supabase ref, preflight result, harness/tool version, owner, and stop conditions. |
 | `provision-isolated-rig.test.ts` | Vitest structural + dry-run behavioral contract tests for the profile overlay plumbing (SCRUM-2673): default-mock safety, chain/gemini env-var + secret deltas, all-profiles boot-critical secrets, Cloud Scheduler `/jobs/*` wiring for non-mock profiles, no-inline-credential invariants, and the `CONFIRM_REAL_CONFIG` apply gate. No infra created — every invocation omits `--apply`. |
 | `provision-isolated-rig.test.sh` | Dry-run-only shell contract test for the isolated-rig admission JSON. Runs no Supabase/gcloud side-effect commands. |
-| `targeted/health-batch-drain-deadman.ts` | Read-only targeted driver for batch-drain dead-man `/health?detailed=true` evidence. Requires a tag-routed per-PR or named-train `STAGING_API_BASE`, carries Cloud Run IAM bearer auth, and asserts the actual JSON fields under `checks.anchoring` (`status`, `drainStalled`, `drainReason`, `pendingCount`) instead of generic `/health` status. |
 
 ## Required env
 
@@ -80,6 +80,7 @@ All three are `SECURITY DEFINER`, granted `EXECUTE` to `service_role` only, revo
 | `webhooks`   | `POST /webhooks/{drive,docusign,adobe-sign,checkr}` | 10/min | IAM + provider HMAC headers |
 | `events`     | `POST /api/admin/inject-demo-event` | 100/min | IAM |
 | `cron`       | `POST /jobs/{batch-anchors,check-confirmations,...}` | every 5 min | IAM + `X-Cron-Secret` |
+| `classifier` | `POST /jobs/classify-proof-backcatalog` | --rate (default 100/min) in concurrent dry-run bursts | IAM + `X-Cron-Secret` |
 | `reads`      | `GET /api/v1/verify/...` + `/api/admin/pipeline-stats` | 50/min | IAM + `X-API-Key` |
 | `mixed` (default) | webhooks + events + cron + reads concurrently | per above | per above |
 
@@ -114,12 +115,6 @@ export STAGING_API_BASE="https://train-c-ce---arkova-worker-staging-270018525501
 
 # Check active/idle/blocked soak lanes without mutating GitHub or staging
 npm run staging:soak-lanes
-
-# Targeted batch-drain dead-man health check (read-only; not a soak)
-npx tsx scripts/staging/targeted/health-batch-drain-deadman.ts \
-  --expect-anchoring-status ok \
-  --expect-drain-stalled false \
-  --expect-drain-reason ok
 
 # When done
 ./scripts/staging/claim.sh release <pr-number>
