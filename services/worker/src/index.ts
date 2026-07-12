@@ -117,7 +117,6 @@ app.get('/health', async (req, res) => {
       geminiApiKey: config.geminiApiKey,
       aiProvider: config.aiProvider,
       kmsProvider: config.kmsProvider,
-      bitcoinKmsKeyId: config.bitcoinKmsKeyId,
       gcpKmsKeyResourceName: config.gcpKmsKeyResourceName,
       bitcoinTreasuryWif: config.bitcoinTreasuryWif,
       enableProdNetworkAnchoring: config.enableProdNetworkAnchoring,
@@ -134,6 +133,15 @@ app.get('/health', async (req, res) => {
         .eq('status', 'SUBMITTED')
         .order('updated_at', { ascending: false })
         .limit(1),
+    // Oldest PENDING anchor — powers the batch-drain dead-man's-switch
+    // (Lane-1 S3.5 / BTC-real). Indexed lookup, single row; keeps the
+    // /health?detailed probe sub-second even on the bloated anchors table.
+    getOldestPendingAnchor: async () =>
+      db.from('anchors')
+        .select('created_at')
+        .eq('status', 'PENDING')
+        .order('created_at', { ascending: true })
+        .limit(1),
     getPendingAnchorCount: async () => {
       // SCRUM-1259 (R1-5): swapped exact-count on bloated anchors table
       // for get_anchor_status_counts_fast RPC. /health?detailed=true must
@@ -144,7 +152,8 @@ app.get('/health', async (req, res) => {
         if (error || !data) {
           return { count: null, error: error ? { message: error.message } : null };
         }
-        return { count: data.PENDING ?? null, error: null };
+        const pending = data.PENDING;
+        return { count: typeof pending === 'number' && pending >= 0 ? pending : null, error: null };
       } catch (err) {
         return { count: null, error: { message: err instanceof Error ? err.message : String(err) } };
       }

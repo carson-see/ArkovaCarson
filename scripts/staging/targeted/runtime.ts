@@ -16,8 +16,8 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
-import { type DriverStats } from './driver-core';
-import { makeDbExecutor, validateFixtureRows, type FixtureExecutor } from './fixtures';
+import { type DriverStats } from './driver-core.js';
+import { makeDbExecutor, validateFixtureRows, type FixtureExecutor } from './fixtures.js';
 
 // ─── Pure helpers (unit-tested) ─────────────────────────────────────────────
 
@@ -194,4 +194,4 @@ export async function runDriver<P>(opts: RunDriverOpts<P>): Promise<void> {
 }
 
 /** Re-export so drivers can build a fresh stats object without a second import. */
-export { newDriverStats } from './driver-core';
+export { newDriverStats } from './driver-core.js';

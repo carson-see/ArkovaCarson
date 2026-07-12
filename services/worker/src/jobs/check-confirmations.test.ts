@@ -971,6 +971,29 @@ describe('checkSubmittedConfirmations', () => {
     expect(result).toEqual({ checked: 1, confirmed: 1 });
   });
 
+  it('keeps legal-hold submitted anchors out of mock-mode auto confirmation', async () => {
+    const { config } = await import('../config.js');
+    const originalUseMocks = config.useMocks;
+
+    try {
+      config.useMocks = true;
+      mockAnchorsSelectResult.data = [];
+
+      const { db } = await import('../utils/db.js');
+      const fromSpy = vi.mocked(db.from);
+
+      const result = await checkSubmittedConfirmations();
+
+      expect(result).toEqual({ checked: 0, confirmed: 0 });
+      const anchorsCall = fromSpy.mock.results.find((entry) => entry.type === 'return');
+      const anchorsTable = anchorsCall?.value as unknown as { select?: ReturnType<typeof vi.fn> };
+      const selectResult = anchorsTable.select?.mock.results[0]?.value as { eq?: ReturnType<typeof vi.fn> };
+      expect(selectResult.eq).toHaveBeenCalledWith('legal_hold', false);
+    } finally {
+      config.useMocks = originalUseMocks;
+    }
+  });
+
   it('handles DB update error without crashing', async () => {
     mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
 
