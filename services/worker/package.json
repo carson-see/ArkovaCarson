@@ -13,6 +13,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "smoke:docusign": "tsx scripts/ops/docusign-connect-smoke.ts",
+    "smoke:ops-slo": "tsx scripts/ops/ops-slo-smoke.ts",
     "eval:regression": "tsx scripts/nessie-eval-regression.ts",
     "audit:golden": "tsx scripts/golden-distribution-audit.ts",
     "build:circuit": "bash circuits/build.sh"

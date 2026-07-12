@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "kind": "blocked_t3_admission",
+  "pr": 1459,
+  "pr_url": "https://github.com/carson-see/ArkovaCarson/pull/1459",
+  "assignment": "T3 SECURED-chain-integrity audit + hash-pin + importer guard",
+  "generated_at": "2026-07-09T15:46:25Z",
+  "head_sha_at_admission_attempt": "f053a99a5caeef349f3b46227ca4ff448eecc3e2",
+  "base_sha_at_admission_attempt": "f7a76f196f4f3198263167c09e2d5d1a2fe45f2f",
+  "branch": "lane1/s325-2486-integrity-acs",
+  "decision": "BLOCKED",
+  "valid_clock_started": false,
+  "screen": null,
+  "do_not_count_as_soak": true,
+  "changed_behavior": [
+    "SECURED-chain-integrity read-only back-catalogue audit",
+    "fingerprint-to-on-chain OP_RETURN mapping hash-pin/regression",
+    "connector/importer guard preventing importer-created SECURED or chain-carrying anchors"
+  ],
+  "changed_behavior_driver_inventory": {
+    "live_driver_identified": "services/worker/scripts/audit-secured-chain-integrity.ts",
+    "driver_behavior": "read-only Supabase scan of SECURED anchors for chain_tx_id/fingerprint/block-height invariant",
+    "not_started_reason": "driver was not admissible without a clean isolated Supabase project/ref and preflight"
+  },
+  "exact_head_shared_no_traffic_deploy": {
+    "status": "succeeded_but_not_t3_admission",
+    "workflow_run": "https://github.com/carson-see/ArkovaCarson/actions/runs/29030467853",
+    "command": "gh workflow run deploy-staging.yml --repo carson-see/ArkovaCarson --ref main -f pr_number=1459 -f source_ref=f053a99a5caeef349f3b46227ca4ff448eecc3e2 -f service=arkova-worker-staging",
+    "service": "arkova-worker-staging",
+    "revision": "arkova-worker-staging-00294-tev",
+    "tag": "pr-1459",
+    "tag_url": "https://pr-1459---arkova-worker-staging-kvojbeutfa-uc.a.run.app",
+    "image": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:pr-1459-f053a99a",
+    "image_digest": "sha256:a28c7bb205bca6e769828a1d952038c67cc7596f5834f9326216d85781f6ff7c",
+    "staging_deploy_log_id": 204,
+    "staging_deploy_log_time": "2026-07-09T15:45:17.194958+00:00",
+    "build_sha_match": true,
+    "health_check": {
+      "url": "https://pr-1459---arkova-worker-staging-kvojbeutfa-uc.a.run.app/health?detailed=true",
+      "status": "healthy",
+      "git_sha": "f053a99a5caeef349f3b46227ca4ff448eecc3e2",
+      "database": "ok",
+      "anchoring": "ok",
+      "kms": "ok"
+    },
+    "traffic_safety": {
+      "main_traffic_percent": 100,
+      "main_traffic_revision": "arkova-worker-staging-00121-law",
+      "pr_1459_revision": "arkova-worker-staging-00294-tev",
+      "promoted_main_traffic": false
+    },
+    "why_not_countable": "This deploy is on the shared staging service/tag. It is useful provenance and exact-head image proof, but it is not a clean isolated T3 admission environment."
+  },
+  "isolated_rig_attempt": {
+    "dry_run_command": "IMAGE='us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:pr-1459-f053a99a' ./scripts/staging/provision-isolated-rig.sh --name pr1459-integrity --profile chain --image \"$IMAGE\"",
+    "dry_run_result": "No infrastructure created. Dry-run emitted placeholder admission JSON only.",
+    "planned_service": "arkova-worker-pr1459-integrity-staging",
+    "planned_supabase_project_name": "arkova-soak-pr1459-integrity",
+    "planned_profile": "chain",
+    "blocked_before_apply": true
+  },
+  "blockers": [
+    {
+      "id": "no_clean_isolated_project",
+      "detail": "No Supabase isolated project ref exists for PR #1459; project list showed active shared staging and other isolated rigs, including #1462's chain-resil rig, but no arkova-soak-pr1459-integrity."
+    },
+    {
+      "id": "no_clean_mirror_preflight",
+      "detail": "No scripts/ci/staging-honesty-preflight.ts result exists for a PR #1459 isolated ref; preflight_result is therefore missing and cannot be claimed as environment_type=clean_mirror."
+    },
+    {
+      "id": "supabase_mcp_unavailable",
+      "detail": "Supabase MCP search_docs/get_cost returned Transport closed, so the documented get_cost -> confirm_cost -> create_project path could not be used for a live cost-confirmed project create."
+    },
+    {
+      "id": "isolated_provisioner_apply_not_self_contained",
+      "detail": "scripts/staging/provision-isolated-rig.sh dry-run requires operator steps before/around apply: current CLI help shows projects create expects --db-password; the script does not pass one, does not create the per-rig Secret Manager SUPABASE_URL/SERVICE_ROLE_KEY secrets, and only comments that bootstrap SQL / migration-collision handling must be done via MCP or Management API."
+    },
+    {
+      "id": "do_not_reuse_1462",
+      "detail": "The existing chain-resil isolated rig/project is active for #1462 and must not be reused for #1459 admission."
+    },
+    {
+      "id": "no_admission_json_with_real_facts",
+      "detail": "The only admission JSON produced was dry-run output with placeholders for image_digest, tag_url, supabase_project_ref, and preflight_result; policy requires real values."
+    }
+  ],
+  "explicit_non_actions": [
+    "Did not use stale da9d0abc deployment.",
+    "Did not touch arkova-worker-s3-chain-resil-staging or the active #1462 runner.",
+    "Did not start generic /health traffic as a soak.",
+    "Did not start a 48h T3 screen clock."
+  ],
+  "commands_run": [
+    "gh workflow run deploy-staging.yml --repo carson-see/ArkovaCarson --ref main -f pr_number=1459 -f source_ref=f053a99a5caeef349f3b46227ca4ff448eecc3e2 -f service=arkova-worker-staging",
+    "gcloud artifacts docker images describe us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:pr-1459-f053a99a --project=arkova1 --format=json",
+    "gcloud run services describe arkova-worker-staging --project=arkova1 --region=us-central1 --format=json",
+    "curl -fsS -H 'Authorization: Bearer <cloud-run-id-token>' https://pr-1459---arkova-worker-staging-kvojbeutfa-uc.a.run.app/health?detailed=true",
+    "npx supabase --version",
+    "npx supabase projects list --output json",
+    "npx supabase projects create --help",
+    "npx supabase db push --help",
+    "npx supabase db query --help",
+    "npx supabase projects api-keys --project-ref ujtlwnoqfhtitcmsnrpq --reveal --output json",
+    "IMAGE='us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:pr-1459-f053a99a' ./scripts/staging/provision-isolated-rig.sh --name pr1459-integrity --profile chain --image \"$IMAGE\""
+  ],
+  "next_admissible_path": [
+    "Use a working Supabase cost-confirm path or explicit operator approval to create arkova-soak-pr1459-integrity in org byhkazrpmivhcsuqjtva.",
+    "Bootstrap required extensions/enum values and handle documented migration prefix collisions per docs/reference/STAGING_RIG.md.",
+    "Create Secret Manager secrets supabase-url-pr1459-integrity-staging and supabase-service-role-key-pr1459-integrity-staging from the new project only.",
+    "Deploy exact current PR head image to arkova-worker-pr1459-integrity-staging with no public unauthenticated access and no shared/main traffic mutation.",
+    "Seed scripts/staging/seed-baseline-fixture.sql and require staging-honesty-preflight environment_type=clean_mirror.",
+    "Only then run the SECURED-chain-integrity audit driver under screen/tmux with JSONL evidence and 48h floor."
+  ]
+}

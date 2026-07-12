@@ -46,8 +46,13 @@ import { config } from '../config.js';
  * empty filename / wrong status is rejected before it reaches Postgres. The
  * status-update writes (claim/markStatus/markFailed/markRequeued) persist
  * server-controlled status LITERALS only, so they don't need a schema.
+ *
+ * EXPORTED for the SCRUM-2486 AC-4 importer-cannot-set-SECURED guard test —
+ * `status: z.literal('PENDING')` + `.strict()` is the app-level proof that the
+ * connector/importer path can never construct a SECURED (or chain-carrying)
+ * anchor insert. Do not relax the literal or drop `.strict()`.
  */
-const AnchorInsertPayload = z
+export const AnchorInsertPayload = z
   .object({
     fingerprint: z.string().regex(/^[0-9a-f]{64}$/, 'fingerprint must be 64-hex sha256'),
     status: z.literal('PENDING'),
@@ -343,7 +348,7 @@ async function resolveOrgActorUserId(
  * an earlier pass already created the anchor, so we resolve and reuse it rather
  * than failing the row.
  */
-async function defaultMaterializeAnchor(
+export async function defaultMaterializeAnchor(
   row: ConnectorArtifactRow,
   deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
 ): Promise<MaterializedAnchor> {
