@@ -3,13 +3,22 @@ import { readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { newDriverStats } from './driver-core';
-import { writeEvidenceFile, bearerHeader, iamAuthHeaders, runDriver, requireEnv } from './runtime';
+import {
+  writeEvidenceFile,
+  bearerHeader,
+  iamAuthHeaders,
+  iamOnlyHeaders,
+  resolveGcloudIdentityArgs,
+  runDriver,
+  requireEnv,
+} from './runtime';
 
 const scratch = join(process.cwd(), 'docs', 'staging', `.tmp-tsoak-runtime-${process.pid}`);
 
 afterEach(() => {
   if (existsSync(scratch)) rmSync(scratch, { recursive: true, force: true });
   delete process.env.STAGING_GCP_IDENTITY;
+  delete process.env.STAGING_GCP_IDENTITY_AUDIENCE;
   delete process.env.TSOAK_REQUIRED_TEST;
   vi.restoreAllMocks();
 });
@@ -55,6 +64,23 @@ describe('runtime: IAM/app auth header split', () => {
       'X-Serverless-Authorization': 'Bearer iam-token',
       Authorization: 'Bearer supabase-jwt',
     });
+  });
+
+  it('can carry only Cloud Run IAM without app Authorization for JWT-negative probes', () => {
+    process.env.STAGING_GCP_IDENTITY = 'iam-token';
+    expect(iamOnlyHeaders()).toEqual({
+      'X-Serverless-Authorization': 'Bearer iam-token',
+    });
+  });
+
+  it('requests an audience-bound identity token when STAGING_GCP_IDENTITY_AUDIENCE is set', () => {
+    process.env.STAGING_GCP_IDENTITY_AUDIENCE = 'https://arkova-worker-staging.example.run.app';
+
+    expect(resolveGcloudIdentityArgs()).toEqual([
+      'auth',
+      'print-identity-token',
+      '--audiences=https://arkova-worker-staging.example.run.app',
+    ]);
   });
 });
 

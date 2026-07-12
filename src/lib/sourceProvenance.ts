@@ -131,6 +131,35 @@ export function isStrongEvidence(level: VerificationLevel | string | null | unde
   return getEvidenceLevelStrength(level) >= 4;
 }
 
+/**
+ * ISSUER-AUTHENTICATION HONESTY GATE (SCRUM-2481).
+ *
+ * Returns true ONLY for tiers where the issuing organization itself
+ * authenticated the credential — `issuer_anchored` (direct issuer anchoring)
+ * and `source_signed` (cryptographic signature proving origin). These are the
+ * only tiers permitted to render the green "issuer-verified" treatment.
+ *
+ * `account_linked`, `captured_url`, and `ai_captured` are explicitly EXCLUDED:
+ * an account link, a scraped public URL, or an AI extraction proves possession
+ * or capture — NOT that the issuer stands behind the credential. They must
+ * NEVER compose issuer-verified artwork or wording on any off-platform surface
+ * (LinkedIn Credential URL, shared public verification page).
+ *
+ * This is a strict subset of {@link isStrongEvidence} (strength >= 4): the two
+ * issuer tiers are exactly strength 5 (issuer_anchored) and 4 (source_signed).
+ * It is the single composition point the badge/provenance UI gates on.
+ */
+const ISSUER_AUTHENTICATED_LEVELS: ReadonlySet<VerificationLevel> = new Set<VerificationLevel>([
+  'issuer_anchored',
+  'source_signed',
+]);
+
+export function isIssuerAuthenticated(level: VerificationLevel | string | null | undefined): boolean {
+  const parsed = parseVerificationLevel(level);
+  if (!parsed) return false;
+  return ISSUER_AUTHENTICATED_LEVELS.has(parsed);
+}
+
 const PROVIDER_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   credly: 'Credly',
   linkedin: 'LinkedIn',

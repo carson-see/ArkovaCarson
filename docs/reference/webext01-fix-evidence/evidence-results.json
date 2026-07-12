@@ -1,0 +1,226 @@
+{
+  "control_noCsp_weightsPresent": {
+    "outcome": {
+      "loaded": true,
+      "modelLoadTimeMs": 872,
+      "coldInferenceMs": 172,
+      "reportedColdInferenceMs": 172,
+      "warmInferenceMs": 115,
+      "reportedWarmInferenceMs": 115,
+      "entities": [
+        {
+          "text": "John Smith",
+          "type": "PERSON",
+          "score": 0.999,
+          "start": 0,
+          "end": 10,
+          "spanMatchesText": true
+        },
+        {
+          "text": "Microsoft",
+          "type": "ORGANIZATION",
+          "score": 0.999,
+          "start": 52,
+          "end": 61,
+          "spanMatchesText": true
+        },
+        {
+          "text": "Seattle",
+          "type": "LOCATION",
+          "score": 0.999,
+          "start": 65,
+          "end": 72,
+          "spanMatchesText": true
+        },
+        {
+          "text": "Maria Garcia",
+          "type": "PERSON",
+          "score": 1,
+          "start": 74,
+          "end": 86,
+          "spanMatchesText": true
+        },
+        {
+          "text": "Barcelona",
+          "type": "LOCATION",
+          "score": 0.999,
+          "start": 101,
+          "end": 110,
+          "spanMatchesText": true
+        },
+        {
+          "text": "Acme Corporation",
+          "type": "ORGANIZATION",
+          "score": 0.807,
+          "start": 138,
+          "end": 154,
+          "spanMatchesText": true
+        }
+      ],
+      "entityCount": 6,
+      "piiCategories": [
+        "person_name",
+        "organization",
+        "location"
+      ],
+      "strippedText": "[PERSON_REDACTED] received his engineering credential from [ORG_REDACTED] in [LOCATION_REDACTED]. [PERSON_REDACTED], who lives in [LOCATION_REDACTED], verified the document for [ORG_REDACTED].",
+      "nerUsed": true,
+      "redactionCount": 6,
+      "backend": "wasm",
+      "elapsedMs": 1284,
+      "modelsFetchProbe": {
+        "status": 200,
+        "ok": true
+      },
+      "cspViolations": []
+    },
+    "cspViolations": [],
+    "offOriginRequests": [],
+    "extractEgressAttempted": false,
+    "requestPathsSample": [
+      "/__probe__.html",
+      "/__probe__/probe.js",
+      "/vendor/transformers.bundle.min.js",
+      "/models/Xenova/bert-base-NER/config.json",
+      "/models/Xenova/bert-base-NER/tokenizer_config.json",
+      "/models/Xenova/bert-base-NER/tokenizer.json",
+      "/models/Xenova/bert-base-NER/tokenizer_config.json",
+      "/models/Xenova/bert-base-NER/onnx/model_quantized.onnx",
+      "/vendor/ort/ort-wasm-simd-threaded.asyncify.mjs",
+      "/vendor/ort/ort-wasm-simd-threaded.asyncify.wasm",
+      "/models/Xenova/bert-base-NER/config.json"
+    ],
+    "requestCount": 11,
+    "consoleSample": [
+      "[warning] No available adapters."
+    ]
+  },
+  "phaseA_deployedCsp_weightsPresent": {
+    "outcome": {
+      "loaded": true,
+      "modelLoadTimeMs": 494,
+      "coldInferenceMs": 146,
+      "reportedColdInferenceMs": 145,
+      "warmInferenceMs": 116,
+      "reportedWarmInferenceMs": 116,
+      "entities": [
+        {
+          "text": "John Smith",
+          "type": "PERSON",
+          "score": 0.999,
+          "start": 0,
+          "end": 10,
+          "spanMatchesText": true
+        },
+        {
+          "text": "Microsoft",
+          "type": "ORGANIZATION",
+          "score": 0.999,
+          "start": 52,
+          "end": 61,
+          "spanMatchesText": true
+        },
+        {
+          "text": "Seattle",
+          "type": "LOCATION",
+          "score": 0.999,
+          "start": 65,
+          "end": 72,
+          "spanMatchesText": true
+        },
+        {
+          "text": "Maria Garcia",
+          "type": "PERSON",
+          "score": 1,
+          "start": 74,
+          "end": 86,
+          "spanMatchesText": true
+        },
+        {
+          "text": "Barcelona",
+          "type": "LOCATION",
+          "score": 0.999,
+          "start": 101,
+          "end": 110,
+          "spanMatchesText": true
+        },
+        {
+          "text": "Acme Corporation",
+          "type": "ORGANIZATION",
+          "score": 0.807,
+          "start": 138,
+          "end": 154,
+          "spanMatchesText": true
+        }
+      ],
+      "entityCount": 6,
+      "piiCategories": [
+        "person_name",
+        "organization",
+        "location"
+      ],
+      "strippedText": "[PERSON_REDACTED] received his engineering credential from [ORG_REDACTED] in [LOCATION_REDACTED]. [PERSON_REDACTED], who lives in [LOCATION_REDACTED], verified the document for [ORG_REDACTED].",
+      "nerUsed": true,
+      "redactionCount": 6,
+      "backend": "wasm",
+      "elapsedMs": 874,
+      "modelsFetchProbe": {
+        "status": 200,
+        "ok": true
+      },
+      "cspViolations": []
+    },
+    "cspViolations": [],
+    "offOriginRequests": [],
+    "extractEgressAttempted": false,
+    "requestPathsSample": [
+      "/__probe__.html",
+      "/__probe__/probe.js",
+      "/vendor/transformers.bundle.min.js",
+      "/models/Xenova/bert-base-NER/config.json",
+      "/models/Xenova/bert-base-NER/tokenizer_config.json",
+      "/models/Xenova/bert-base-NER/tokenizer.json",
+      "/models/Xenova/bert-base-NER/tokenizer_config.json",
+      "/models/Xenova/bert-base-NER/onnx/model_quantized.onnx",
+      "/vendor/ort/ort-wasm-simd-threaded.asyncify.mjs",
+      "/vendor/ort/ort-wasm-simd-threaded.asyncify.wasm",
+      "/models/Xenova/bert-base-NER/config.json"
+    ],
+    "requestCount": 11,
+    "consoleSample": [
+      "[warning] No available adapters."
+    ]
+  },
+  "phaseB_deployedCsp_weightsAbsent": {
+    "outcome": {
+      "loaded": false,
+      "errorName": "NERModelLoadError",
+      "errorMessage": "Failed to load the self-hosted NER model from '/models/Xenova/bert-base-NER'. Ensure the weights are vendored under public/models/ (see scripts/fetch-ner-model.ts) and that the runtime bundle is reachable from the app origin. Cause: `local_files_only=true` or `env.allowRemoteModels=false` and file was not found locally at \"/models/Xenova/bert-base-NER/config.json\".",
+      "isPiiStripFailClosedError": true,
+      "isNerModelLoadError": true,
+      "causeName": "Error",
+      "causeMessage": "`local_files_only=true` or `env.allowRemoteModels=false` and file was not found locally at \"/models/Xenova/bert-base-NER/config.json\".",
+      "elapsedMs": 19,
+      "modelsFetchProbe": {
+        "status": 404,
+        "ok": false
+      },
+      "cspViolations": []
+    },
+    "cspViolations": [],
+    "offOriginRequests": [],
+    "extractEgressAttempted": false,
+    "requestPathsSample": [
+      "/__probe__.html",
+      "/__probe__/probe.js",
+      "/vendor/transformers.bundle.min.js",
+      "/models/Xenova/bert-base-NER/config.json",
+      "/models/Xenova/bert-base-NER/config.json"
+    ],
+    "requestCount": 5,
+    "consoleSample": [
+      "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "[error] Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ]
+  }
+}

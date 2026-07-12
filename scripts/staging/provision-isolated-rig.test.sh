@@ -36,6 +36,11 @@ const required = [
   'tag_url',
   'supabase_project_ref',
   'preflight_result',
+  'tier',
+  'duration_min',
+  'driver_path',
+  'driver_sha256',
+  'changed_behavior',
   'harness_version',
   'tool_version',
   'owner',
@@ -53,7 +58,12 @@ assert.equal(payload.image_digest, 'sha256:ccccccccccccccccccccccccccccccccccccc
 assert.equal(payload.tag_url, 'https://lane-a---arkova-worker-s0e4-lane-a-staging.example.run.app');
 assert.equal(payload.supabase_project_ref, 'sveujcebzkqxbhimotbb');
 assert.equal(payload.preflight_result, 'environment_type=clean_mirror');
-assert.equal(payload.harness_version, 'scripts/staging/load-harness.ts@aaaaaaaaaaaa');
+assert.equal(payload.tier, 'T3');
+assert.equal(payload.duration_min, 2880);
+assert.equal(payload.driver_path, 'services/worker/scripts/pr1408-chain-resilience-driver.ts');
+assert.match(payload.driver_sha256, /^[a-f0-9]{64}$/);
+assert.match(payload.changed_behavior, /bounded retry\/backoff/);
+assert.equal(payload.harness_version, 'services/worker/scripts/pr1408-chain-resilience-driver.ts@aaaaaaaaaaaa');
 assert.equal(payload.tool_version, 'scripts/staging/provision-isolated-rig.sh@aaaaaaaaaaaa');
 assert.match(payload.owner, /^rig-owner@/);
 assert.ok(Array.isArray(payload.stop_conditions), 'stop_conditions must be an array');
@@ -75,7 +85,7 @@ EOF
 
 assert_contains() {
   local label="$1" haystack="$2" needle="$3"
-  if grep -Fq "$needle" <<<"$haystack"; then
+  if grep -Fq -- "$needle" <<<"$haystack"; then
     echo "  PASS  $label"
     PASS=$((PASS + 1))
     return 0
@@ -89,7 +99,7 @@ assert_contains() {
 
 assert_file_not_contains() {
   local label="$1" file="$2" needle="$3"
-  if grep -Fq "$needle" "$file"; then
+  if grep -Fq -- "$needle" "$file"; then
     echo "  FAIL  $label"
     echo "        unexpected text: $needle"
     FAIL=$((FAIL + 1))
@@ -148,6 +158,10 @@ if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
   echo '{"id":"abcdefghijklmnopqrst"}'
   exit 0
 fi
+if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "api-keys" ]]; then
+  echo '[{"name":"service_role","api_key":"fake-service-role-key"}]'
+  exit 0
+fi
 if [[ "$1" == "supabase" ]]; then
   exit 0
 fi
@@ -178,8 +192,11 @@ chmod +x "$tmp_bin/gcloud"
 bad_out=$(
   PATH="$tmp_bin:$PATH" \
   CONFIRM_PROVISION=s0e4-lane-b \
+  STAGING_NEW_SUPABASE_DB_PASSWORD=test-db-password \
+  STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY=test-service-role-key \
   GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  STAGING_CHANGED_BEHAVIOR="PR #1408 chain resilience: preflight test behavior" \
   USER=rig-owner \
   "$PROVISION" --name s0e4-lane-b --apply 2>&1
 )
@@ -188,6 +205,15 @@ rm -rf "$tmp_bin"
 
 assert_exit "apply fails when preflight omits environment_type" 1 "$bad_rc"
 assert_contains "apply failure names missing environment_type" "$bad_out" "environment_type"
+assert_contains "apply create command references db password flag" "$bad_out" "--db-password"
+assert_contains "apply output redacts db password" "$bad_out" "<redacted"
+if grep -Fq "test-db-password" <<<"$bad_out"; then
+  echo "  FAIL  apply output does not leak db password"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS  apply output does not leak db password"
+  PASS=$((PASS + 1))
+fi
 
 echo ""
 echo "--- summary -------------------------------------------------"
