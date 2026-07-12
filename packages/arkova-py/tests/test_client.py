@@ -537,3 +537,23 @@ def test_get_merkle_proof_missing_required_member_fails_closed() -> None:
         result = client.get_merkle_proof("abc123")
 
     assert result.proof_bundle is None
+
+
+def test_user_agent_matches_installed_package_version() -> None:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        expected_version = version("arkova")
+    except PackageNotFoundError:  # repo-checkout run without pip install -e .
+        expected_version = "unknown"
+
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("user-agent"))
+        return json_response({"results": [], "next_cursor": None})
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        client.search("anything")
+
+    assert seen == [f"arkova-python/{expected_version}"]

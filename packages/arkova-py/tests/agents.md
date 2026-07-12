@@ -4,7 +4,7 @@ Tests for the Arkova Python SDK.
 
 ## Files
 - **`conftest.py`** — puts `src/` on `sys.path` for repo-checkout runs (no `pip install -e .` needed).
-- **`test_client.py`** — pytest tests for sync/async clients: search, verify, auth header, error handling, retry logic.
+- **`test_client.py`** — pytest tests for sync/async clients: search, verify, auth header, User-Agent (tracks installed package version, "unknown" in uninstalled checkouts), error handling, retry logic.
 - **`test_proofs.py`** — DEV-02 / S3-B proof-helper parity suite: runs the ENTIRE
   fixture manifest (`packages/verifier-cli/fixtures/manifest.json` — synthetic +
   adversarial + PROOF-08 vectors) through `arkova.proofs.verify_bundle` and
