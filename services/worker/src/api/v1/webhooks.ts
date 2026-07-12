@@ -4,6 +4,8 @@
  * Existing (WEBHOOK-3, WEBHOOK-4):
  *   POST /api/v1/webhooks/test         — Send a test webhook to a specified endpoint
  *   GET  /api/v1/webhooks/deliveries   — View delivery logs for self-service debugging
+ *   GET  /api/v1/webhooks/dlq          — View unresolved dead-letter entries
+ *   POST /api/v1/webhooks/dlq/:id/resolve — Mark a dead-letter entry resolved
  *
  * Webhook CRUD (INT-09 / SCRUM-645) — closes the API-only loop:
  *   POST   /api/v1/webhooks            — Register a new webhook endpoint
@@ -26,7 +28,13 @@ import crypto from 'node:crypto';
 import { db } from '../../utils/db.js';
 import type { TablesUpdate } from '../../types/database.types.js';
 import { logger } from '../../utils/logger.js';
-import { isPrivateUrlResolved, replayDelivery, signPayload } from '../../webhooks/delivery.js';
+import {
+  getDeadLetterEntries,
+  isPrivateUrlResolved,
+  replayDelivery,
+  resolveDlqEntry,
+  signPayload,
+} from '../../webhooks/delivery.js';
 import {
   CreateWebhookSchema,
   UpdateWebhookSchema,
@@ -557,6 +565,58 @@ router.post('/deliveries/:id/replay', async (req, res) => {
   } catch (err) {
     logger.error({ error: err, deliveryId: req.params.id }, 'webhook replay failed');
     errorResponse(res, 500, 'internal_error', 'Failed to replay delivery');
+  }
+});
+
+// ─── DLQ self-service: GET /api/v1/webhooks/dlq ───────────────────────────
+// NOTE: Must be registered BEFORE /:id so Express matches the literal path first.
+
+router.get('/dlq', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+  if (!(await requireOrgAdmin(req, res))) return;
+
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+  const entries = await getDeadLetterEntries(req.apiKey.orgId, limit);
+  res.json({ entries, total: entries.length });
+});
+
+// ─── DLQ self-service: POST /api/v1/webhooks/dlq/:id/resolve ──────────────
+// Requires ORG_ADMIN because resolving a DLQ row mutates delivery evidence.
+router.post('/dlq/:id/resolve', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+  if (!(await requireOrgAdmin(req, res))) return;
+
+  try {
+    const resolved = await resolveDlqEntry(req.params.id, req.apiKey.orgId);
+    if (!resolved) {
+      errorResponse(res, 404, 'not_found', 'DLQ entry not found or does not belong to your organization');
+      return;
+    }
+
+    void Promise.resolve(
+      db.from('audit_events').insert({
+        event_type: 'WEBHOOK_DLQ_RESOLVED',
+        event_category: 'ADMIN',
+        actor_id: req.apiKey.userId,
+        target_type: 'webhook_dead_letter_queue',
+        target_id: req.params.id,
+        org_id: req.apiKey.orgId,
+        details: JSON.stringify({ resolved: true }),
+      }),
+    )
+      .then((r) => {
+        if (r?.error) {
+          logger.error({ error: r.error, dlqId: req.params.id }, 'Failed to record WEBHOOK_DLQ_RESOLVED audit event');
+        }
+      })
+      .catch((err: unknown) => {
+        logger.error({ error: err, dlqId: req.params.id }, 'Audit event insert rejected for WEBHOOK_DLQ_RESOLVED');
+      });
+
+    res.json({ resolved: true, id: req.params.id });
+  } catch (err) {
+    logger.error({ error: err, dlqId: req.params.id }, 'webhook DLQ resolve failed');
+    errorResponse(res, 500, 'internal_error', 'Failed to resolve DLQ entry');
   }
 });
 

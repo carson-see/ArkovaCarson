@@ -123,7 +123,12 @@ describe('PublicVerification', () => {
     render(<PublicVerification publicId="ARK-DOC-123" />);
 
     expect(await screen.findByText(/Verified on Apr 1, 2026/)).toBeInTheDocument();
-    expect(screen.getByText('This record is permanently anchored.')).toBeInTheDocument();
+    // SCRUM-2495 claims review: the hero subtitle binds permanence to the
+    // record's FINGERPRINT, never the underlying document — the unscoped
+    // "This record is permanently anchored." read as document-level
+    // protection, contradicting the does-not-assert disclaimer below it.
+    expect(screen.getByText('This record’s fingerprint is permanently anchored.')).toBeInTheDocument();
+    expect(screen.queryByText('This record is permanently anchored.')).not.toBeInTheDocument();
     expect(screen.getByTestId('proof-download')).toBeInTheDocument();
   });
 
@@ -275,6 +280,157 @@ describe('PublicVerification', () => {
     expect(screen.queryByText(/token=secret/)).not.toBeInTheDocument();
   });
 
+  // SCRUM-2481: a captured_url anchor's PUBLIC page must never present the
+  // green issuer-verified evidence badge, and must surface the NOT-asserted
+  // issuer-identity disclaimer.
+  it('never shows the green issuer-verified badge for a captured_url anchor', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_url: 'https://credly.com/badges/abc?id=visible',
+          source_provider: 'credly',
+          verification_level: 'captured_url',
+          evidence_package_hash: 'evidence-hash-123',
+          source_payload_hash: 'payload-hash-456',
+          source_fetched_at: '2026-04-01T11:45:00Z',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    const badge = await screen.findByTestId('evidence-level-badge');
+    expect(badge).toHaveAttribute('data-evidence-tier', 'captured_url');
+    // Structural honesty: no green treatment, no issuer-family wording.
+    expect(badge.className).not.toContain('green');
+    const ariaLabel = (badge.getAttribute('aria-label') ?? '').toLowerCase();
+    expect(ariaLabel).not.toContain('verified');
+    expect(ariaLabel).not.toContain('issuer');
+
+    // The public triad states issuer identity is NOT asserted.
+    const notAsserted = screen.getByTestId('evidence-triad-not-asserted');
+    expect(notAsserted.textContent?.toLowerCase()).toContain('issuer identity');
+  });
+
+  // SCRUM-2481 [P1]: the embeddable Arkova badge + LinkedIn Credential-URL
+  // share helper are issuer-STYLE off-platform affordances. They must be gated
+  // on isIssuerAuthenticated(level) — the same gate that earns the green
+  // treatment — NOT merely on isSecured. A low-trust captured_url /
+  // account_linked / ai_captured record that is SECURED must NOT get an
+  // embeddable/shareable issuer-looking badge.
+  it('does not render the embeddable badge or LinkedIn share for a captured_url anchor', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_provider: 'credly',
+          verification_level: 'captured_url',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    // The record still renders (proof affordances present for a secured anchor)…
+    expect(await screen.findByTestId('proof-download')).toBeInTheDocument();
+    // …but the issuer-style embeddable/shareable affordances are absent.
+    expect(screen.queryByTestId('arkova-badge')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('linkedin-credential-helper')).not.toBeInTheDocument();
+  });
+
+  it('does not render the embeddable badge or LinkedIn share for an account_linked anchor', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_provider: 'linkedin',
+          verification_level: 'account_linked',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('proof-download')).toBeInTheDocument();
+    expect(screen.queryByTestId('arkova-badge')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('linkedin-credential-helper')).not.toBeInTheDocument();
+  });
+
+  it('does not render the embeddable badge or LinkedIn share for a SECURED anchor with no evidence level', async () => {
+    // A plain user-uploaded secured document has no verification_level. It is
+    // not issuer-authenticated, so it must not surface an issuer-style badge.
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('proof-download')).toBeInTheDocument();
+    expect(screen.queryByTestId('arkova-badge')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('linkedin-credential-helper')).not.toBeInTheDocument();
+  });
+
+  it('renders the embeddable badge and LinkedIn share for an issuer_anchored anchor', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_provider: 'credly',
+          verification_level: 'issuer_anchored',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('arkova-badge')).toBeInTheDocument();
+    expect(screen.getByTestId('linkedin-credential-helper')).toBeInTheDocument();
+  });
+
+  it('renders the embeddable badge and LinkedIn share for a source_signed anchor', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_provider: 'accredible',
+          verification_level: 'source_signed',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('arkova-badge')).toBeInTheDocument();
+    expect(screen.getByTestId('linkedin-credential-helper')).toBeInTheDocument();
+  });
+
   it('renders source provenance when only proof hashes are present', async () => {
     rpcMock.mockResolvedValue({
       data: {
@@ -295,5 +451,44 @@ describe('PublicVerification', () => {
     expect(await screen.findByTestId('source-provenance-display')).toBeInTheDocument();
     expect(screen.getByTestId('source-provenance-display')).not.toHaveTextContent('evidence-hash-123');
     expect(screen.getByTestId('proof-download')).toHaveTextContent('evidence-hash-123');
+  });
+
+  // SCRUM-2495 / ABUSE-DISCLAIMER: the does-not-assert disclaimer must always
+  // render on the verification surface, visibly, without requiring a click or
+  // hover to reveal it (CLAUDE.md §1.5).
+  it('always renders the does-not-assert disclaimer, visibly, for a secured record', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    const disclaimer = await screen.findByTestId('does-not-assert-disclaimer');
+    expect(disclaimer).toBeVisible();
+    expect(disclaimer).toHaveTextContent(/Fingerprint/);
+    expect(disclaimer).toHaveTextContent(/Network Observed Time/);
+    expect(disclaimer).toHaveTextContent(/Secured status/);
+    expect(disclaimer).toHaveTextContent(/identity of the signer or uploader/);
+    expect(disclaimer).toHaveTextContent(/legal validity/);
+    expect(disclaimer).toHaveTextContent(/informational metadata only/);
+  });
+
+  it('always renders the does-not-assert disclaimer for a pre-secured (SUBMITTED) record', async () => {
+    rpcMock.mockResolvedValue({
+      data: { ...baseAnchor, status: 'SUBMITTED' },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    // Disclaimer renders regardless of proof-affordance gating (hasProof is
+    // false for SUBMITTED) — it is not conditioned on the proof section.
+    expect(await screen.findByTestId('does-not-assert-disclaimer')).toBeVisible();
   });
 });

@@ -81,7 +81,7 @@ describe('check-staging-evidence', () => {
   describe('TIER_SPECS', () => {
     it('pins the current minimum soak windows', () => {
       expect(TIER_SPECS.T0.soakHours).toBe(0);
-      expect(TIER_SPECS.T1.soakHours).toBe(2);
+      expect(TIER_SPECS.T1.soakHours).toBe(0);
       expect(TIER_SPECS.T2.soakHours).toBe(12);
       expect(TIER_SPECS.T3.soakHours).toBe(48);
     });
@@ -684,8 +684,22 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T1 expedited evidence at exactly 2 hours',
+        'T1 exact-head evidence with optional soak timestamps',
         completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
+        t1Files,
+      ],
+      [
+        'T1 exact-head evidence with no soak window',
+        `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, targeted smoke green
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert this PR and redeploy previous worker image
+- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
+- Human approver: Carson
+`,
         t1Files,
       ],
     ])('passes %s', (_label, body, files) => {
@@ -697,30 +711,6 @@ describe('check-staging-evidence', () => {
     });
 
     it.each([
-      [
-        'T1 expedited evidence with no soak window',
-        `## Staging Soak Evidence
-- Tier: T1
-- PR head SHA: 1234567890abcdef1234567890abcdef12345678
-- Changed behavior: fixture changed behavior under test
-- Targeted evidence: targeted fixture evidence exercised the changed behavior path
-- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
-- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
-- Health/smoke result: health ok, targeted smoke green
-- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
-- Rollback plan: revert this PR and redeploy previous worker image
-- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
-- Human approver: Carson
-`,
-        t1Files,
-        /missing required fields.*Soak start:.*Soak end:/,
-      ],
-      [
-        'T1 shorter than 2 hours',
-        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
-        t1Files,
-        /below the 2h minimum/,
-      ],
       [
         'T2 shorter than 12 hours',
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
@@ -2218,23 +2208,21 @@ describe('check-staging-evidence', () => {
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  // Frontend-T2 evidence mode (decision (a)).
+  // Frontend-T2 targeted evidence mode.
   //
-  // A PR can be required-tier T2 purely by touching a sensitive *frontend*
-  // contract surface (src/components/{anchor,api,auth,billing,public,
-  // verification,verify}/). Such a PR ships no worker code, no migration, and
-  // no SDK/contract change — so it CANNOT produce the worker artifacts the
-  // standard T2 block demands (Worker revision, Image digest, Cloud Run URL,
-  // Staging deploy log id). The frontend-T2 mode lets that narrow case satisfy
-  // T2 with frontend-appropriate evidence (Vercel deployment URL + E2E on the
-  // affected view + a residual-risk note attesting no worker artifacts exist).
+  // A declared-T2 PR can be frontend-only even when it is T1 by path (copy/UI
+  // contract) or T2 by sensitive frontend path. Such a PR ships no worker code,
+  // no migration, and no SDK/contract change — so it CANNOT produce the worker
+  // artifacts the standard T2 block demands. The frontend-T2 mode lets that
+  // narrow case satisfy T2 with RM-approved targeted UI evidence plus
+  // async-cycle/load proof.
   //
   // CRITICAL backward-compat guard: this path activates ONLY when every changed
-  // file is purely frontend (src/** and not a worker/migration/SDK/contract
-  // path). Any worker- or migration-touching T2 PR keeps the unchanged
+  // file is frontend/UAT/test/support-only and not a worker/migration/SDK/
+  // contract path. Any worker- or migration-touching T2 PR keeps the unchanged
   // worker-artifact requirements.
   // ───────────────────────────────────────────────────────────────────────
-  describe('frontend-T2 evidence mode', () => {
+  describe('frontend-T2 targeted evidence mode', () => {
     const headSha = '1234567890abcdef1234567890abcdef12345678';
 
     // The real #1023 fileset: sensitive frontend dirs (anchor, verification)
@@ -2248,37 +2236,39 @@ describe('check-staging-evidence', () => {
 
     const frontendT2Body = (overrides: Partial<{
       tier: string;
-      vercel: string;
       e2e: string;
       ciGreen: string;
       head: string;
       rollback: string;
-      note: string;
+      approval: string;
+      floor: string;
+      changed: string;
+      targeted: string;
+      load: string;
     }> = {}) => {
       const {
         tier = 'T2',
-        vercel = 'https://arkova-26-git-feat-cpe.vercel.app',
         e2e = 'credential-detail + public-verification E2E 18/18 green on head',
         ciGreen = 'Tests, E2E Tests, TypeCheck & Lint all green on current head',
         head = headSha,
         rollback = 'revert PR — additive display-only components, no data/schema/worker state',
-        note = `
-### Residual-risk note
-- No worker artifacts: frontend-only PR — no Cloud Run deploy, no worker revision, no image digest, no staging deploy-log id (no server code, no migration changed)
-- Surfaces touched: credential detail view + public verification view (src/components/{anchor,verification,credentials})
-- Approved by: Carson`,
+        approval = 'Carson/RM approved targeted frontend-only T2 evidence for this UI contract path',
+        floor = 'Async UI validation cycle: copy/route contract assertions plus Playwright affected-view pass under 8 parallel workers',
+        changed = 'verification page copy and UI contract for the credential evidence panel',
+        targeted = 'Playwright verification-copy.spec.ts exercised the changed verification copy and UI contract',
+        load = 'Playwright ran the affected verification UI checks under 8 parallel workers with p95 assertion latency recorded',
       } = overrides;
       return `## Staging Soak Evidence
 - Tier: ${tier}
 - PR head SHA: ${head}
-- Changed behavior: fixture changed behavior under test
-- Targeted evidence: targeted fixture evidence exercised the changed behavior path
-- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
-- Vercel deployment URL: ${vercel}
+- RM-approved targeted evidence: ${approval}
+- Async-cycle floor: ${floor}
+- Changed behavior: ${changed}
+- Targeted evidence: ${targeted}
+- Load/concurrency evidence: ${load}
 - E2E result: ${e2e}
 - CI/E2E green: ${ciGreen}
 - Rollback plan: ${rollback}
-${note}
 `;
     };
 
@@ -2317,10 +2307,47 @@ ${note}
         ])).toBe(true);
       });
 
+      it('is true for a src/ + docs UAT/support fileset', () => {
+        expect(isFrontendOnlyChange([
+          'src/lib/copy.ts',
+          'docs/uat/pr-1438/UAT_REPORT.md',
+          'tests/support/frontend-copy-fixtures.ts',
+        ])).toBe(true);
+      });
+
       it('is false when a CI script is present (scripts/ci is not frontend)', () => {
         expect(isFrontendOnlyChange([
           'src/components/anchor/SecureDocumentDialog.tsx',
           'public/vendor/tesseract/worker.min.js',
+          'scripts/ci/check-csp-runtime-deps.ts',
+        ])).toBe(false);
+      });
+
+      it('is true for the WEBEXT NER browser-runtime support file shape', () => {
+        expect(isFrontendOnlyChange([
+          '.gitignore',
+          'docs/reference/WEBEXT01_FIX_RESULTS.md',
+          'docs/reference/webext01-fix-evidence/evidence-results.json',
+          'package.json',
+          'public/vendor/transformers.bundle.min.js',
+          'public/vendor/transformers.web.min.js',
+          'scripts/agents.md',
+          'scripts/ci/agents.md',
+          'scripts/ci/check-csp-runtime-deps.test.ts',
+          'scripts/ci/check-csp-runtime-deps.ts',
+          'scripts/ner-runtime.lock.json',
+          'scripts/vendor-ner-runtime.test.ts',
+          'scripts/vendor-ner-runtime.ts',
+          'scripts/vendor-transformers-version.test.ts',
+          'src/lib/agents.md',
+          'src/lib/nerPiiDetector.test.ts',
+          'src/lib/nerPiiDetector.ts',
+        ])).toBe(true);
+      });
+
+      it('keeps unrelated scripts/ci changes out of the frontend-T2 path', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/anchor/SecureDocumentDialog.tsx',
           'scripts/ci/check-csp-runtime-deps.ts',
         ])).toBe(false);
       });
@@ -2370,8 +2397,8 @@ ${note}
       });
     });
 
-    // ── Scenario 1 (required): frontend-only T2 + frontend evidence → PASS ──
-    it('Scenario 1: frontend-only T2 with frontend evidence PASSES', () => {
+    // ── Scenario 1 (required): frontend-only T2 + targeted evidence → PASS ──
+    it('Scenario 1: frontend-only T2 with RM-approved targeted evidence PASSES', () => {
       const r = check({
         body: frontendT2Body(),
         files: frontendOnlyT2Files,
@@ -2381,19 +2408,42 @@ ${note}
       expect(r.notes.join(' ')).toMatch(/frontend-T2/i);
     });
 
-    it('Scenario 1b: frontend-only T2 PASSES without any worker-artifact fields present at all', () => {
+    it('Scenario 1b: frontend-only T2 PASSES without any backend artifact/preflight fields present at all', () => {
       // Proves we are not silently requiring the worker fields for this path.
       // Assert that the worker-artifact *list-item field lines* are absent. We
-      // check for the `- <Label>` form the standard T2 block uses (rather than a
-      // bare substring) because the residual-risk prose legitimately names the
-      // artifacts it attests are absent. Plain string matching — no regex — so
-      // there is no backtracking/ReDoS surface.
+      // check for the `- <Label>` form the standard T2 block uses. Plain string
+      // matching — no regex — so there is no backtracking/ReDoS surface.
       const body = frontendT2Body();
       expect(body).not.toContain('- Worker revision:');
       expect(body).not.toContain('- Image digest:');
       expect(body).not.toContain('- Cloud Run service/tag URL:');
       expect(body).not.toContain('- Staging deploy log id:');
+      expect(body).not.toContain('- Staging project ref:');
+      expect(body).not.toContain('- Preflight timestamp:');
+      expect(body).not.toContain('- Preflight result:');
       const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(true);
+    });
+
+    it('Scenario 1c: #1438-like frontend verification copy targeted evidence PASSES', () => {
+      const files = [
+        'src/lib/copy.ts',
+        'src/pages/PublicAttestationVerifyPage.tsx',
+        'e2e/verification-copy.spec.ts',
+        'docs/uat/pr-1438/UAT_REPORT.md',
+      ];
+      expect(requiredTierFor(files).tier).toBe('T1');
+
+      const r = check({
+        body: frontendT2Body({
+          changed: 'frontend verification copy and no-raw-enum UI contract on the public verification page',
+          targeted: 'verification-copy.spec.ts and UAT report exercised the changed public verification copy, no generic /health coverage',
+          load: 'Playwright affected-view suite ran with 8 parallel workers; p95 UI assertion latency and retry-free pass recorded for the copy contract',
+          e2e: 'verification-copy.spec.ts 12/12 passed on current head',
+        }),
+        files,
+        headSha,
+      });
       expect(r.ok).toBe(true);
     });
 
@@ -2443,19 +2493,19 @@ ${note}
       expect(r.ok).toBe(true);
     });
 
-    // ── Scenario 3 (required): frontend-only T2 WITHOUT frontend evidence → FAIL ──
-    it('Scenario 3: frontend-only T2 missing the Vercel deployment URL FAILS', () => {
-      const body = frontendT2Body().replace(/- Vercel deployment URL:.*\n/, '');
+    // ── Scenario 3 (required): frontend-only T2 WITHOUT targeted evidence → FAIL ──
+    it('Scenario 3: frontend-only T2 missing RM approval FAILS', () => {
+      const body = frontendT2Body().replace(/- RM-approved targeted evidence:.*\n/, '');
       const r = check({ body, files: frontendOnlyT2Files, headSha });
       expect(r.ok).toBe(false);
-      expect(r.errors.join(' ')).toMatch(/Vercel deployment URL:/i);
+      expect(r.errors.join(' ')).toMatch(/RM-approved targeted evidence:/i);
     });
 
-    it('Scenario 3b: frontend-only T2 with a non-URL Vercel field FAILS', () => {
-      const body = frontendT2Body({ vercel: 'deployed somewhere' });
+    it('Scenario 3b: frontend-only T2 without Carson/RM approval naming FAILS', () => {
+      const body = frontendT2Body({ approval: 'frontend lead approved this targeted evidence' });
       const r = check({ body, files: frontendOnlyT2Files, headSha });
       expect(r.ok).toBe(false);
-      expect(r.errors.join(' ')).toMatch(/Vercel deployment URL/i);
+      expect(r.errors.join(' ')).toMatch(/release manager approval/i);
     });
 
     it('Scenario 3c: frontend-only T2 with an empty E2E result FAILS', () => {
@@ -2472,24 +2522,18 @@ ${note}
       expect(r.errors.join(' ')).toMatch(/placeholder/i);
     });
 
-    it('Scenario 3e: frontend-only T2 with NO residual-risk note FAILS', () => {
-      const body = frontendT2Body({ note: '' });
+    it('Scenario 3e: frontend-only T2 with PENDING targeted evidence FAILS', () => {
+      const body = frontendT2Body({ targeted: 'PENDING' });
       const r = check({ body, files: frontendOnlyT2Files, headSha });
       expect(r.ok).toBe(false);
-      expect(r.errors.join(' ')).toMatch(/residual-risk/i);
+      expect(r.errors.join(' ')).toMatch(/placeholder/i);
     });
 
-    it('Scenario 3f: frontend-only T2 whose residual-risk note has a blank Approved by FAILS', () => {
-      const body = frontendT2Body({
-        note: `
-### Residual-risk note
-- No worker artifacts: frontend-only — no Cloud Run deploy
-- Surfaces touched: credential detail view
-- Approved by:`,
-      });
+    it('Scenario 3f: frontend-only T2 missing the async-cycle floor FAILS', () => {
+      const body = frontendT2Body().replace(/- Async-cycle floor:.*\n/, '');
       const r = check({ body, files: frontendOnlyT2Files, headSha });
       expect(r.ok).toBe(false);
-      expect(r.errors.join(' ')).toMatch(/Approved by|residual-risk/i);
+      expect(r.errors.join(' ')).toMatch(/Async-cycle floor:/i);
     });
 
     it('Scenario 3g: frontend-only T2 with a stale (mismatched) PR head SHA FAILS (exact-head integrity preserved)', () => {
@@ -2833,9 +2877,9 @@ ${note}
     });
 
     // A pure-frontend PR must NOT reach the offline-package path: it keeps the
-    // frontend-T2 evidence mode. Guards against the two alt-evidence paths
+    // frontend-targeted T2 evidence mode. Guards against the two alt-evidence paths
     // bleeding into each other.
-    it('a frontend-only T2 PR is NOT treated as offline-package (stays frontend-T2)', () => {
+    it('a frontend-only T2 PR is NOT treated as offline-package (stays frontend-targeted T2)', () => {
       expect(isOfflinePackageOnlyChange(['src/components/anchor/AssetDetailView.tsx'])).toBe(false);
     });
   });

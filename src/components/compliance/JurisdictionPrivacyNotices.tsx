@@ -166,15 +166,21 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     color: 'bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/30 dark:text-fuchsia-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
+  // SCRUM-2283: this notice previously asserted "EU-US Data Privacy Framework
+  // self-certification" as the transfer basis. Arkova does NOT hold an active DPF
+  // self-certification, so that claim is removed (R-7 claims gate). The specific
+  // EU→US lawful-transfer basis is counsel-required and must not be invented
+  // here — placeholder pending legal review. The regulator/DPF-panel references
+  // are removed with it since they only apply to a certified organization.
   {
-    id: 'dpf',
+    id: 'eu-us-transfer',
     title: PRIVACY_NOTICE_LABELS.DPF_TITLE,
     description: PRIVACY_NOTICE_LABELS.DPF_DESCRIPTION,
-    regulator: 'U.S. Department of Commerce (International Trade Administration)',
-    regulatorUrl: 'https://www.dataprivacyframework.gov',
-    rights: ['Access', 'Correction', 'Deletion', 'File complaint with DPA', 'Invoke binding arbitration'],
-    transferBasis: 'EU-US Data Privacy Framework self-certification',
-    breachTimeline: '45 days (respond to individual complaints)',
+    regulator: 'Your national data protection authority (EU/EEA)',
+    regulatorUrl: 'https://www.edpb.europa.eu/about-edpb/about-edpb/members_en',
+    rights: ['Access', 'Correction', 'Deletion', 'File complaint with your DPA'],
+    transferBasis: 'Under review by legal counsel — mechanism to be confirmed (counsel-required)',
+    breachTimeline: 'Per applicable GDPR / national law',
     color: 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
   },
 ];

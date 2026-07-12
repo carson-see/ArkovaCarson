@@ -8,21 +8,34 @@
  * lets `_` act as a boundary.
  */
 
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
+  ALLOWLISTABLE_TERMS,
   FORBIDDEN_TERMS,
   LAUNCH_BLOCKER_COPY_TERMS,
   RISKY_ENUM_FIELDS,
+  type AllowlistEntry,
   type BaselineEntry,
   type Violation,
+  checkFile,
   findRawEnumRenders,
   findTermViolations,
+  isNonSuppressibleTerm,
+  loadAllowlist,
+  loadBaseline,
+  partitionAgainstAllowlist,
   partitionAgainstBaseline,
   scanFileContent,
   shouldCheck,
   shouldSkipLine,
   stripClassNameAttributes,
 } from './check-copy-terms.js';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 function matches(term: string, haystack: string): boolean {
   return new RegExp(term, 'gi').test(haystack);
@@ -232,8 +245,8 @@ describe('shouldCheck — coverage expansion (SCRUM-2149)', () => {
     expect(shouldCheck('src/lib/proofPackage.ts')).toBe(true);
   });
 
-  it('still excludes the copy.ts vocabulary file itself', () => {
-    expect(shouldCheck('src/lib/copy.ts')).toBe(false);
+  it('now scans the copy.ts vocabulary file itself (blind-spot closed; sanctioned lines handled via the allowlist)', () => {
+    expect(shouldCheck('src/lib/copy.ts')).toBe(true);
   });
 
   it('now scans src/hooks (previously blind)', () => {
@@ -1109,6 +1122,244 @@ describe('copy-terms-baseline.json — shipped baseline is well-formed (SCRUM-21
       expect(typeof e.term).toBe('string');
       expect(typeof e.reason).toBe('string');
       expect(e.reason.trim().length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// =============================================================================
+// UX-03 follow-up — copy.ts is now enforced via scan-plus-allowlist.
+// The blanket EXCLUDE_PATTERNS entry for src/lib/copy.ts is removed; the file's
+// sanctioned SCRUM-1672 "Issue Credential" strings pass via a dedicated
+// allowlist (copy-terms-allowlist.json), NOT the debt baseline.
+// =============================================================================
+
+describe('copy.ts is enforced end-to-end (scan-plus-allowlist)', () => {
+  it('keeps the linter source text-searchable by avoiding literal NUL bytes', () => {
+    const source = fs.readFileSync(path.join(HERE, 'check-copy-terms.ts'), 'utf-8');
+    expect(source.includes('\u0000')).toBe(false);
+  });
+
+  it('the real src/lib/copy.ts yields ZERO fresh violations through the full pipeline', () => {
+    // Mirrors main(): scan → pardon sanctioned → grandfather debt → what's left is fresh.
+    const copyPath = path.resolve(HERE, '../src/lib/copy.ts');
+    const violations = checkFile(copyPath);
+    const { remaining } = partitionAgainstAllowlist(violations, loadAllowlist());
+    const { fresh } = partitionAgainstBaseline(remaining, loadBaseline());
+    // Sanctioned Issue-Credential lines are allowlisted; the COMP-03 offline-verify
+    // hits are reworded at source. Any NEW banned term in copy.ts must fail here.
+    expect(fresh).toEqual([]);
+  });
+
+  it('a NEW banned term inserted into a copy.ts-shaped object-value string is reported fresh', () => {
+    // The highest-value regression: copy.ts strings are object VALUES (KEY: 'value'),
+    // not JSX text — prove the scanner actually flags one (guards the blind spot the
+    // whole change exists to close).
+    const line = `  SOME_LABEL: 'Your Bitcoin wallet is ready',`;
+    const violations = findTermViolations(line, 42, 'src/lib/copy.ts');
+    const terms = violations.map((v) => v.term.toLowerCase());
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('wallet');
+  });
+});
+
+describe('copy-term allowlist — SCRUM-1672 sanctioned copy (partitionAgainstAllowlist)', () => {
+  const sanctioned: Violation = {
+    file: 'src/lib/copy.ts',
+    line: 733,
+    term: 'Issue Credential',
+    context: "GATE_BLOCKED_TITLE: 'Issue Credential is unavailable'",
+  };
+  const allow: AllowlistEntry[] = [
+    { file: 'src/lib/copy.ts', term: 'issue credential', reason: 'SCRUM-1672 sanctioned restricted-flow copy' },
+  ];
+
+  it('pardons a sanctioned "issue credential" hit in copy.ts', () => {
+    const { allowed, remaining } = partitionAgainstAllowlist([sanctioned], allow);
+    expect(allowed).toHaveLength(1);
+    expect(remaining).toHaveLength(0);
+  });
+
+  it('is term-scoped: a DIFFERENT banned term on a sanctioned line is NOT pardoned', () => {
+    const other: Violation = { ...sanctioned, term: 'Bitcoin' };
+    const { allowed, remaining } = partitionAgainstAllowlist([other], allow);
+    expect(allowed).toHaveLength(0);
+    expect(remaining).toEqual([other]);
+  });
+
+  it('is file-scoped: the same sanctioned term in a component/page is NOT pardoned', () => {
+    const inComponent: Violation = { ...sanctioned, file: 'src/components/foo/Bar.tsx' };
+    const { allowed, remaining } = partitionAgainstAllowlist([inComponent], allow);
+    expect(allowed).toHaveLength(0);
+    expect(remaining).toEqual([inComponent]);
+  });
+
+  it('is line-independent: pardons the sanctioned term regardless of line number (drift-immune)', () => {
+    const moved: Violation = { ...sanctioned, line: 999 };
+    const { allowed } = partitionAgainstAllowlist([moved], allow);
+    expect(allowed).toHaveLength(1);
+  });
+
+  it('loadAllowlist fail-closed: drops entries with an empty reason or a non-allowlistable term', () => {
+    const tmp = path.join(os.tmpdir(), `copy-allow-${process.pid}-${FORBIDDEN_TERMS.length}.json`);
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify({
+        allow: [
+          { file: 'src/lib/copy.ts', term: 'issue credential', reason: 'valid SCRUM-1672' },
+          { file: 'src/lib/copy.ts', term: 'service_role', reason: 'sneaky secret pardon' },
+          { file: 'src/lib/copy.ts', term: 'issue credential', reason: '' },
+          { file: 'src/lib/copy.ts', term: 'wallet', reason: 'not sanctioned anywhere' },
+        ],
+      }),
+    );
+    try {
+      const loaded = loadAllowlist(tmp);
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0].term).toBe('issue credential');
+      expect(loaded[0].reason).toBe('valid SCRUM-1672');
+    } finally {
+      fs.unlinkSync(tmp);
+    }
+  });
+
+  it('loadAllowlist fail-closed: missing/corrupt file yields [] (nothing pardoned)', () => {
+    expect(loadAllowlist(path.join(os.tmpdir(), 'does-not-exist-allow.json'))).toEqual([]);
+  });
+
+  it('the shipped copy-terms-allowlist.json is well-formed and only allowlistable terms', () => {
+    const raw = fs.readFileSync(path.join(HERE, 'ci/snapshots/copy-terms-allowlist.json'), 'utf-8');
+    const parsed = JSON.parse(raw) as { allow: AllowlistEntry[] };
+    expect(Array.isArray(parsed.allow)).toBe(true);
+    expect(parsed.allow.length).toBeGreaterThan(0);
+    for (const e of parsed.allow) {
+      expect(typeof e.file).toBe('string');
+      expect(e.file.length).toBeGreaterThan(0);
+      expect(typeof e.reason).toBe('string');
+      expect(e.reason.trim().length).toBeGreaterThan(0);
+      expect(ALLOWLISTABLE_TERMS.has(e.term.trim().toLowerCase())).toBe(true);
+    }
+  });
+});
+
+describe('non-suppressible terms — no channel may silence a secret/launch-blocker leak', () => {
+  it('ALLOWLISTABLE_TERMS is a deliberately tiny set (only "issue credential")', () => {
+    expect([...ALLOWLISTABLE_TERMS]).toEqual(['issue credential']);
+  });
+
+  it('isNonSuppressibleTerm flags secret + launch-blocker terms, not §1.3 vocabulary', () => {
+    expect(isNonSuppressibleTerm('service_role')).toBe(true);
+    expect(isNonSuppressibleTerm('service role')).toBe(true);
+    expect(isNonSuppressibleTerm('postgrest')).toBe(true);
+    expect(isNonSuppressibleTerm('worker service')).toBe(true);
+    expect(isNonSuppressibleTerm(LAUNCH_BLOCKER_COPY_TERMS[0])).toBe(true);
+    expect(isNonSuppressibleTerm('issue credential')).toBe(false);
+    expect(isNonSuppressibleTerm('hash')).toBe(false);
+    expect(isNonSuppressibleTerm('bitcoin')).toBe(false);
+  });
+
+  it('the allowlist can NEVER pardon a service_role leak, even with a matching entry', () => {
+    const leak: Violation = { file: 'src/lib/copy.ts', line: 5, term: 'service_role', context: '...' };
+    const malicious: AllowlistEntry[] = [{ file: 'src/lib/copy.ts', term: 'service_role', reason: 'x' }];
+    const { allowed, remaining } = partitionAgainstAllowlist([leak], malicious);
+    expect(allowed).toHaveLength(0);
+    expect(remaining).toEqual([leak]);
+  });
+
+  it('the grandfather baseline can NEVER silence a service_role leak, even with a matching row', () => {
+    const leak: Violation = { file: 'src/lib/copy.ts', line: 5, term: 'service_role', context: '...' };
+    const sneaky: BaselineEntry[] = [{ file: 'src/lib/copy.ts', line: 5, term: 'service_role', reason: 'sneaky' }];
+    const { fresh, grandfathered } = partitionAgainstBaseline([leak], sneaky);
+    expect(grandfathered).toHaveLength(0);
+    expect(fresh).toEqual([leak]);
+  });
+
+  it('the grandfather baseline still works for ordinary §1.3 vocabulary debt', () => {
+    const debt: Violation = { file: 'src/lib/validators.ts', line: 148, term: 'hash', context: '...' };
+    const baseline: BaselineEntry[] = [{ file: 'src/lib/validators.ts', line: 148, term: 'hash', reason: 'PR #964' }];
+    const { fresh, grandfathered } = partitionAgainstBaseline([debt], baseline);
+    expect(grandfathered).toEqual([debt]);
+    expect(fresh).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// UPSTREAM suppression must not hide a non-suppressible leak (code-review /
+// pre-mortem finding): shouldSkipLine + isCodeIdentifier run BEFORE the
+// allowlist/baseline guard, so the guarantee must also hold at those layers.
+// =============================================================================
+
+describe('upstream suppression cannot hide a secret / launch-blocker leak', () => {
+  it('a bare-value SECRET/infra string still flags (isCodeIdentifier bypass)', () => {
+    // A whole-value quoted string is normally suppressed (isBareValueString) —
+    // correct for copy.ts vocab DATA — but a secret/infra term never is.
+    expect(
+      findTermViolations(`  MSG: 'service role',`, 1, 'src/lib/copy.ts').map((v) => v.term.toLowerCase()),
+    ).toContain('service role');
+    expect(
+      findTermViolations(`  MSG: 'worker service',`, 1, 'src/lib/copy.ts').map((v) => v.term.toLowerCase()),
+    ).toContain('worker service');
+  });
+
+  it('a VOCAB bare-value stays suppressed (copy.ts legitimately holds the FORBIDDEN/TERM_REPLACEMENTS vocab data)', () => {
+    // Scope guard: the fix must NOT start flagging copy.ts\'s own banned-term
+    // data (e.g. the `'wallet',` entry in the FORBIDDEN_TERMS list), which would
+    // red the file. Single-word vocab bare-values remain a documented gap.
+    expect(findTermViolations(`  'wallet',`, 1, 'src/lib/copy.ts')).toEqual([]);
+  });
+
+  it('a "cryptographic" line skips VOCAB (documented residual) but a SECRET on it still flags', () => {
+    // VOCAB residual: a "hash" co-located with "cryptographic" is whole-line-skipped.
+    const vocab = `  X: 'SHA-256 cryptographic hash shown below',`;
+    expect(shouldSkipLine(vocab, vocab.trim())).toBe(true);
+    // But a secret on a "cryptographic" line is NOT hidden — checkFile re-scans.
+    const tmp = path.join(os.tmpdir(), `copy-crypto-secret-${process.pid}.ts`);
+    fs.writeFileSync(tmp, `  const m = 'cryptographic wrapper leaks service_role';\n`);
+    try {
+      expect(checkFile(tmp).map((v) => v.term.toLowerCase())).toContain('service_role');
+    } finally {
+      fs.unlinkSync(tmp);
+    }
+  });
+
+  it('"cryptographic" on its own is not a violation (crypto term has a word boundary)', () => {
+    expect(findTermViolations(`  X: 'cryptographic verification',`, 1, 'src/lib/copy.ts')).toEqual([]);
+  });
+
+  it('a Web Crypto API line is still skipped for vocab, but a secret on it still flags (checkFile)', () => {
+    const tmp = path.join(os.tmpdir(), `copy-skip-secret-${process.pid}.ts`);
+    fs.writeFileSync(tmp, `  logError('service_role missing'); await crypto.subtle.digest(a, b);\n`);
+    try {
+      const terms = checkFile(tmp).map((v) => v.term.toLowerCase());
+      expect(terms).toContain('service_role'); // secret NOT hidden by the crypto.subtle skip
+      expect(terms).not.toContain('crypto'); // vocab false-positive still suppressed by the skip
+    } finally {
+      fs.unlinkSync(tmp);
+    }
+  });
+
+  it('a secret hidden behind a TRAILING skip-token comment on a shipped string still flags', () => {
+    const tmp = path.join(os.tmpdir(), `copy-trailing-skip-${process.pid}.ts`);
+    fs.writeFileSync(tmp, `  export const MSG = 'service_role reset required'; // uses crypto.subtle\n`);
+    try {
+      expect(checkFile(tmp).map((v) => v.term.toLowerCase())).toContain('service_role');
+    } finally {
+      fs.unlinkSync(tmp);
+    }
+  });
+
+  it('a COMMENT mentioning a non-suppressible term does NOT flag (comments are not shipped copy)', () => {
+    const tmp = path.join(os.tmpdir(), `copy-comment-${process.pid}.ts`);
+    fs.writeFileSync(
+      tmp,
+      [
+        `  // BUG-UAT5-04: leaked "Ensure the worker service is running" to users.`,
+        `  // each was a 60s PostgREST query against service_role paths.`,
+      ].join('\n'),
+    );
+    try {
+      expect(checkFile(tmp)).toEqual([]);
+    } finally {
+      fs.unlinkSync(tmp);
     }
   });
 });

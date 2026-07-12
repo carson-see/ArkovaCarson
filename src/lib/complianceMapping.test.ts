@@ -125,9 +125,10 @@ describe('COMPLIANCE_CONTROLS', () => {
   });
 
   it('all controls have valid framework values', () => {
-    // Updated to track the full INTL expansion (INTL-01..03 LGPD + PDPA +
-    // LFPDPPP) and TRUST-03 EU-US DPF additions. New frameworks added to
-    // complianceMapping.ts must also land here.
+    // Tracks the full INTL expansion (INTL-01..03 LGPD + PDPA + LFPDPPP). New
+    // frameworks added to complianceMapping.ts must also land here.
+    // SCRUM-2283: 'EU-US DPF' removed — Arkova holds no active DPF certification,
+    // so it is no longer a valid framework (false external-status claim).
     const validFrameworks = [
       'SOC 2',
       'GDPR',
@@ -142,10 +143,17 @@ describe('COMPLIANCE_CONTROLS', () => {
       'LGPD',
       'PDPA',
       'LFPDPPP',
-      'EU-US DPF',
     ];
     for (const control of Object.values(COMPLIANCE_CONTROLS)) {
       expect(validFrameworks).toContain(control.framework);
+    }
+  });
+
+  it('SCRUM-2283: defines no EU-US DPF control (false external-status claim removed)', () => {
+    for (const [id, control] of Object.entries(COMPLIANCE_CONTROLS)) {
+      expect(id.startsWith('DPF-')).toBe(false);
+      // 'EU-US DPF' is no longer in the framework union type — compare as string.
+      expect(control.framework as string).not.toBe('EU-US DPF');
     }
   });
 

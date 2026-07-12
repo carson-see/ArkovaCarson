@@ -17,8 +17,15 @@
 export interface ComplianceControl {
   /** Short identifier (e.g., "SOC2-CC6.7") */
   id: string;
-  /** Framework name */
-  framework: 'SOC 2' | 'GDPR' | 'FERPA' | 'ISO 27001' | 'eIDAS' | 'HIPAA' | 'Kenya DPA' | 'APP' | 'POPIA' | 'NDPA' | 'LGPD' | 'PDPA' | 'LFPDPPP' | 'EU-US DPF';
+  /**
+   * Framework name.
+   * SCRUM-2283: 'EU-US DPF' removed — Arkova does NOT hold an active EU-US Data
+   * Privacy Framework certification, so asserting it as a compliance framework on
+   * secured anchors (public verification page + compliance dashboard) was a false
+   * external-status claim (R-7 claims gate / §1.5). Do not re-add without a
+   * counsel-confirmed, verifiable certification.
+   */
+  framework: 'SOC 2' | 'GDPR' | 'FERPA' | 'ISO 27001' | 'eIDAS' | 'HIPAA' | 'Kenya DPA' | 'APP' | 'POPIA' | 'NDPA' | 'LGPD' | 'PDPA' | 'LFPDPPP';
   /** Human-readable control name */
   label: string;
   /** What this control proves about the anchor */
@@ -42,7 +49,7 @@ const FRAMEWORK_COLORS: Record<ComplianceControl['framework'], string> = {
   'LGPD': 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
   'PDPA': 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
   'LFPDPPP': 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300',
-  'EU-US DPF': 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
+  // SCRUM-2283: 'EU-US DPF' color removed with the framework (see above).
 };
 
 /** Helper to build a control entry with color derived from framework */
@@ -86,9 +93,13 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
   // Mexico LFPDPPP (INTL-03)
   'LFPDPPP-6': ctrl('LFPDPPP-6', 'LFPDPPP', 'LFPDPPP Art. 6', 'Data protection principles — lawfulness, consent, information, quality, purpose, loyalty, proportionality, accountability'),
   'LFPDPPP-36': ctrl('LFPDPPP-36', 'LFPDPPP', 'LFPDPPP Art. 36', 'International transfer — recipient must assume same obligations, data subject consent required'),
-  // EU-US Data Privacy Framework (TRUST-03)
-  'DPF-NOTICE': ctrl('DPF-NOTICE', 'EU-US DPF', 'DPF Notice Principle', 'Organizations must inform individuals about data practices, purpose, and their rights under the Framework'),
-  'DPF-ACCOUNTABILITY': ctrl('DPF-ACCOUNTABILITY', 'EU-US DPF', 'DPF Accountability', 'Onward transfer accountability — contractual obligations on third-party recipients of personal data'),
+  // SCRUM-2283 (TRUST-03 reverted): the DPF-NOTICE / DPF-ACCOUNTABILITY controls
+  // asserting an EU-US Data Privacy Framework certification are removed. Arkova
+  // does NOT hold an active certification, and these were in UNIVERSAL_CONTROLS
+  // so they rendered a framework pill on EVERY secured anchor (unauthenticated
+  // public verification page + compliance dashboard) — a false external-status
+  // claim (R-7 / §1.5). Do not re-add without a verifiable, counsel-confirmed
+  // certification and a corresponding measured/asserted/NOT-asserted proof note.
 };
 
 /** All tracked frameworks — derived from COMPLIANCE_CONTROLS to avoid duplication */
@@ -112,8 +123,7 @@ const UNIVERSAL_CONTROLS = [
   'ISO27001-A.10',
   'eIDAS-25',
   'eIDAS-35',
-  'DPF-NOTICE',
-  'DPF-ACCOUNTABILITY',
+  // SCRUM-2283: DPF-NOTICE / DPF-ACCOUNTABILITY removed — see COMPLIANCE_CONTROLS.
 ];
 
 /**
