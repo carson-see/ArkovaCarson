@@ -23,6 +23,7 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 | `provision-isolated-rig.sh` | S0-4.1 / **L2-S2a (SCRUM-2673)** one-command isolated-rig provision (create project → schema replay → deploy worker → **Cloud Scheduler /jobs/\* wiring** → **seed baseline fixture** → `clean_mirror` preflight → `ADMISSION_JSON=...`). `--dry-run` default; live run needs `--apply` + `CONFIRM_PROVISION=<name>`. **`--profile mock\|chain\|gemini`** selects the worker env/secret overlay: `mock` (default, safe: `USE_MOCKS=true`, anchoring off, no Scheduler), `chain` (real anchoring — GetBlock RPC + WIF signer + `KMS_PROVIDER`, Scheduler-driven), `gemini` (real tuned model + prompt; chain mocked, Scheduler-driven). Every profile also wires the boot-critical secrets (Stripe / API-key HMAC / cron / `FRONTEND_URL`) so `config.ts`'s production Zod superRefine does not crash-loop the worker. A live **non-mock** profile requires a second ack `CONFIRM_REAL_CONFIG=<profile>` (real credentials / real Bitcoin exposure). All real credentials are Secret Manager references — never inlined. Hard-denies prod (`vzwyaatejekddvltxyye`) + shared staging. Admission JSON carries SHA/base SHA, image digest, Cloud Run service/tag URL, isolated Supabase ref, preflight result, harness/tool version, owner, and stop conditions. |
 | `provision-isolated-rig.test.ts` | Vitest structural + dry-run behavioral contract tests for the profile overlay plumbing (SCRUM-2673): default-mock safety, chain/gemini env-var + secret deltas, all-profiles boot-critical secrets, Cloud Scheduler `/jobs/*` wiring for non-mock profiles, no-inline-credential invariants, and the `CONFIRM_REAL_CONFIG` apply gate. No infra created — every invocation omits `--apply`. |
 | `provision-isolated-rig.test.sh` | Dry-run-only shell contract test for the isolated-rig admission JSON. Runs no Supabase/gcloud side-effect commands. |
+| `targeted/health-batch-drain-deadman.ts` | Read-only targeted driver for batch-drain dead-man `/health?detailed=true` evidence. Requires a tag-routed per-PR or named-train `STAGING_API_BASE`, carries Cloud Run IAM bearer auth, and asserts the actual JSON fields under `checks.anchoring` (`status`, `drainStalled`, `drainReason`, `pendingCount`) instead of generic `/health` status. |
 
 ## Required env
 
@@ -114,6 +115,12 @@ export STAGING_API_BASE="https://train-c-ce---arkova-worker-staging-270018525501
 # Check active/idle/blocked soak lanes without mutating GitHub or staging
 npm run staging:soak-lanes
 
+# Targeted batch-drain dead-man health check (read-only; not a soak)
+npx tsx scripts/staging/targeted/health-batch-drain-deadman.ts \
+  --expect-anchoring-status ok \
+  --expect-drain-stalled false \
+  --expect-drain-reason ok
+
 # When done
 ./scripts/staging/claim.sh release <pr-number>
 
@@ -135,9 +142,3 @@ npm run staging:rotate-iam -- --apply --confirm SCRUM-1821
 - Create the Supabase project itself (`mcp__supabase__create_project` — operator-run, billed).
 - Provision the staging Cloud Run service from scratch; current worker deploys go through `scripts/staging/deploy.sh` (see [STAGING_RIG.md](../../docs/reference/STAGING_RIG.md)).
 - Run the soak unattended (the engineer / agent who owns the PR drives it).
-
-## Real batch-drain behavioral harness (#1417, 2026-07-07, Lane-1 chain)
-
-- `batch-drain-harness.ts` (`npx tsx scripts/staging/batch-drain-harness.ts`) + `batch-drain-harness-lib.ts` (pure, unit-tested safety guards). Runs the REAL batch drain against a **properly-configured isolated rig** (`ENABLE_BATCH_ANCHORING=on`, seeded >=10k PENDING) — the exercise fleet-audit found rig #1417 SELF-SKIPPED (batch cron hit its entrypoint but no-op'd on the PR's own `ENABLE_BATCH_ANCHORING=off` gate, so Merkle/intent-persist/reconcile ran ZERO times). Synthetic HTTP load (`load-harness.ts`) proves worker health, NOT that a 10k backlog drains into one Merkle-root OP_RETURN.
-- Phases (`--phase seed|drain|proofs|crash|cleanup|all`): SEED >=`--count` PENDING for a synthetic org; DRAIN `POST /jobs/batch-anchors?force=true` (Trigger D) and assert exactly ONE `chain_tx_id` + ONE `merkle_root` across the batch with >=count flipped SUBMITTED/SECURED; PROOFS assert one positional `anchor_proofs` row per leaf (distinct `merkle_index`) — the 2.97M-vs-6,110 proof-gap path; CRASH manufacture a "broadcast-landed-but-submit-never-ran" state (BROADCASTING + `chain_tx_id` set) and assert `recover_stuck_broadcasts` does NOT revert it (the `chain_tx_id IS NULL` guard) so the next drain does not double-broadcast.
-- **Safety:** prod ref `vzwyaatejekddvltxyye` is HARD-BLOCKED (`resolveRigTarget`); `STAGING_API_BASE` must be an isolated tag-routed Cloud Run URL (`resolveStagingApiBase` refuses shared/main staging); `--dry-run` validates env + guards without writing. **This script MUTATES a rig DB — never point it at a live/soaking rig; provision a throwaway isolated rig first.**
