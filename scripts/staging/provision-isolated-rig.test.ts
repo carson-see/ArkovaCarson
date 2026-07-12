@@ -183,7 +183,7 @@ describe('provision-isolated-rig.sh — admission JSON contract', () => {
     expect(script).toMatch(/require_gcloud_secret "\$GETBLOCK_RPC_URL_SECRET"/);
     expect(script).toMatch(/require_gcloud_secret "\$GETBLOCK_RPC_AUTH_SECRET"/);
     expect(script).toMatch(/require_gcloud_secret "\$TREASURY_WIF_SECRET"/);
-    expect(script).toMatch(/ensure_secret_value "\$NEW_SUPABASE_URL_SECRET"/);
+    expect(script).toMatch(/ensure_secret_with_value "\$SUPABASE_URL_SECRET_NAME"/);
     expect(script).toMatch(/supabase projects api-keys/);
     expect(script).toMatch(/PREFLIGHT_ENVIRONMENT" != "clean_mirror"/);
     expect(script).toMatch(/STAGING_CHANGED_BEHAVIOR/);
@@ -204,6 +204,21 @@ describe('provision-isolated-rig.sh — safety model preserved under the new ove
     const { out, code } = dryRun(['--name', 's0-s2a-chain', '--profile', 'chain']);
     expect(code).toBe(0);
     expect(out).toMatch(/DRY-RUN/);
+  });
+
+  it('requires a Supabase DB password for live project creation and never prints it', () => {
+    const { code, out } = dryRun(
+      ['--name', 's0-s2a-mock', '--profile', 'mock', '--apply'],
+      { CONFIRM_PROVISION: 's0-s2a-mock' },
+    );
+    expect(code).not.toBe(0);
+    expect(out).toMatch(/STAGING_NEW_SUPABASE_DB_PASSWORD/);
+
+    const dry = dryRun(['--name', 's0-s2a-mock', '--profile', 'mock']);
+    expect(dry.code).toBe(0);
+    expect(dry.out).toMatch(/--db-password/);
+    expect(dry.out).toMatch(/<redacted:STAGING_NEW_SUPABASE_DB_PASSWORD>/);
+    expect(dry.out).not.toMatch(/test-db-password/);
   });
 
   it('refuses --apply for a real (non-mock) profile without an explicit real-config acknowledgement', () => {

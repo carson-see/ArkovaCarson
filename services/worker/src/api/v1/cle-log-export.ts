@@ -167,7 +167,13 @@ router.post('/', async (req: Request, res: Response) => {
     res.status(200).json({
       request_id: result.request_id,
       record_count: result.record_count,
+      // SCRUM-2378: in-period records excluded because they are not yet
+      // SECURED. Additive field (§1.8) — the FE renders an inline notice.
+      excluded_count: result.excluded_count,
       jurisdiction: result.jurisdiction,
+      // SCRUM-2379 (§1.5): jurisdiction tags are informational metadata only.
+      // Additive field; also embedded verbatim in both artifacts.
+      jurisdiction_disclaimer: result.jurisdiction_disclaimer,
       requested_format: format,
       exports: result.exports,
     });

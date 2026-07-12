@@ -248,6 +248,55 @@ export interface ExportStorageLike {
     path: string,
     expiresIn: number,
   ): Promise<{ signedUrl: string | null; error: Error | null }>;
+  /**
+   * Inspect a bucket's existence + visibility. Returns `exists: false` when the
+   * bucket is absent so the fail-loud guard can raise a clear error instead of
+   * a confusing downstream upload 500, and `isPublic` so a misconfigured PUBLIC
+   * bucket — which would expose unsigned export bodies (CC7) — is rejected too.
+   * Part of the seam so the guard lives INSIDE `uploadAndSignExportArtifacts`
+   * and no exporter can reach an upload without it.
+   */
+  getBucket(
+    bucket: string,
+  ): Promise<{ exists: boolean; isPublic: boolean | null; error: Error | null }>;
+}
+
+/**
+ * Fail-loud precondition: the exports bucket MUST exist and MUST be private.
+ *
+ * Provisioning the bucket is an ops step (see agents.md) — this guard does NOT
+ * create it. It exists so a missing bucket fails with a clear, actionable error
+ * (rather than a confusing upload 500 deeper in the flow), and so a bucket that
+ * was accidentally made PUBLIC is rejected before any export body is written —
+ * a public bucket would expose unsigned export contents and break the CC7
+ * no-content-leak guarantee.
+ *
+ * This is the CANONICAL guard: it lives beside the shared upload helper (which
+ * calls it exactly once per upload), so EVERY per-domain exporter that routes
+ * through `uploadAndSignExportArtifacts` is protected — no exporter can skip it
+ * by calling the upload tail directly (the CLE-path gap Carson flagged in
+ * PR #1415 [P1]). `cpe-log-export.ts` re-exports this symbol for callers/tests.
+ */
+export async function assertExportsBucketReady(
+  storage: Pick<ExportStorageLike, 'getBucket'>,
+  bucket: string,
+): Promise<void> {
+  const { exists, isPublic, error } = await storage.getBucket(bucket);
+  if (error && !exists) {
+    throw new Error(
+      `exports Storage bucket "${bucket}" is unavailable (provision it as a private bucket): ${error.message}`,
+    );
+  }
+  if (!exists) {
+    throw new Error(
+      `exports Storage bucket "${bucket}" does not exist — provision it as a private bucket before exporting`,
+    );
+  }
+  if (isPublic) {
+    throw new Error(
+      `exports Storage bucket "${bucket}" is PUBLIC — exports must use a private bucket so signed URLs are the only access path`,
+    );
+  }
 }
 
 /** One signed artifact descriptor returned to the caller. */
@@ -273,6 +322,13 @@ export interface ExportArtifactPair {
  * TTL, and a short `label` (e.g. `CPE`/`CLE`) used only in thrown error
  * messages. Any Storage failure throws so the HTTP layer can surface a clean
  * 5xx — the exporter never returns a half-built result.
+ *
+ * Private-bucket preflight (PR #1415, Carson [P1]): BEFORE any body is written,
+ * this helper runs `assertExportsBucketReady` exactly once so an accidentally
+ * PUBLIC (or missing) bucket is rejected here — inside the single shared upload
+ * seam — rather than being enforced separately (and skippably) per exporter.
+ * This closes the CLE gap where the export path reached the upload tail with no
+ * visibility check.
  */
 export async function uploadAndSignExportArtifacts(args: {
   storage: ExportStorageLike;
@@ -286,6 +342,13 @@ export async function uploadAndSignExportArtifacts(args: {
   label: string;
 }): Promise<ExportArtifactPair> {
   const { storage, bucket, basePath, pdfBody, jsonBody, expiresIn, label } = args;
+
+  // Fail loud if the destination bucket is missing or public BEFORE writing any
+  // body — a missing/public bucket is an ops misconfiguration that must never
+  // silently 500 mid-upload or leak unsigned bodies. Runs exactly once here so
+  // NO exporter routing through this helper can reach an upload without it.
+  await assertExportsBucketReady(storage, bucket);
+
   const pdfPath = `${basePath}.pdf`;
   const jsonPath = `${basePath}.json`;
 

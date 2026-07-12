@@ -15,6 +15,7 @@ import { handleTreasuryHealth, handleTreasuryStatus, handleTreasuryX402Stats } f
 import { handlePlatformStats } from '../api/admin-stats.js';
 import { handlePipelineStats } from '../api/admin-pipeline-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
+import { handleOpsSloStats } from '../api/admin-ops-slo.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handleAdminOrgMembers, handleAdminUserSearch, handleAdminAddOrgMember } from '../api/admin-org-members.js';
 import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota } from '../api/admin-actions.js';
@@ -96,6 +97,19 @@ adminRouter.get('/admin/system-health', async (req, res) => {
     await handleSystemHealth(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'System health request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── OPS-03 SLO Dashboard Stats (SCRUM-2401) ───
+adminRouter.get('/admin/ops-slo-stats', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+
+  try {
+    await handleOpsSloStats(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Ops SLO stats request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
