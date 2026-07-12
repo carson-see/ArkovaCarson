@@ -30,11 +30,12 @@
  *   3. the build-time integrity pin (scripts/ner-weights.lock.json +
  *      scripts/fetch-ner-model.ts).
  * It does NOT, on its own, deliver the end-to-end §1.6 fail-CLOSED guarantee.
- * That requires the CONSUMER change in #1262 / WEBEXT-03 (Lane 2), which makes
- * `enhancedPiiStripper.ts` THROW on `NERModelLoadError` instead of degrading to
- * regex-only stripping. Until that consumer lands, a raised `NERModelLoadError`
- * is still handled by the existing caller (regex fallback). This module MUST
- * co-merge with #1262 so the typed error is actually acted on fail-CLOSED.
+ * That is delivered by the CONSUMER change in #1262 / WEBEXT-03 (Lane 2), which
+ * makes `enhancedPiiStripper.ts` THROW on `NERModelLoadError` instead of
+ * degrading to regex-only stripping. BOTH halves are on `main`: #1253 merged
+ * 2026-06-24 and #1262 merged 2026-06-25, so a raised `NERModelLoadError` is
+ * now acted on fail-CLOSED end-to-end (see `enhancedPiiStripper.ts` +
+ * `ocrFailClosed.ts` `isPiiStripFailClosedError`).
  *
  * Vendor the weights with `scripts/fetch-ner-model.ts` (ops step; the binaries
  * are git-ignored, never committed).
@@ -57,6 +58,13 @@ export interface NEREntity {
   start: number;
   /** End character offset in the original text */
   end: number;
+  /**
+   * True when the entity was assembled from one or more out-of-vocabulary
+   * (`[UNK]`) subword tokens. The reconstructed `text` cannot represent the
+   * original OOV characters, so such an entity cannot be reliably located or
+   * redacted by literal text — `redactNEREntities` fails CLOSED on it (§1.6).
+   */
+  hasUnknownToken?: boolean;
 }
 
 /** Result from NER-based PII detection */
@@ -110,7 +118,8 @@ export const NER_MODEL_REVISION = '24c7e5aba9ae350923357a6f0b92571be34037ec';
  * Pinned transformers.js runtime version.
  *
  * §1.6 / SCRUM-2503: the vendored browser bundle at
- * `public/vendor/transformers.web.min.js` is what actually resolves the model
+ * `public/vendor/transformers.bundle.min.js` (see TRANSFORMERS_BROWSER_MODULE)
+ * is what actually resolves the model
  * files in the browser, and the integrity lockfile
  * (scripts/ner-weights.lock.json `transformersJsVersion`) was built for the
  * exact file set THIS version requests for `Xenova/bert-base-NER` q8. If the
@@ -127,7 +136,43 @@ export const TRANSFORMERS_JS_VERSION = '4.2.0';
 
 const NER_CONFIDENCE_THRESHOLD = 0.7;
 const MAX_TEXT_LENGTH = 15_000; // Limit input to avoid OOM
-const TRANSFORMERS_BROWSER_MODULE = '/vendor/transformers.web.min.js';
+
+/**
+ * The vendored transformers.js runtime the browser natively imports at runtime.
+ *
+ * WEBEXT-01 F-1 (2026-07-06, PR #1409 §6): this MUST be the package's
+ * SELF-CONTAINED browser build (`dist/transformers.min.js`, onnxruntime
+ * inlined) — NOT the `.web.` build, whose top-level bare specifiers
+ * (`onnxruntime-web/webgpu`, `onnxruntime-common`) no browser can link
+ * without an import map. The `.web.` build shipped to prod and module
+ * linking threw `TypeError: Failed to resolve module specifier` on EVERY
+ * load — weights present or not, CSP irrelevant — hard-blocking NER for all
+ * users (privacy held fail-closed; the feature was dead). Vendored +
+ * hash-locked by scripts/vendor-ner-runtime.ts (scripts/ner-runtime.lock.json);
+ * bare specifiers in the vendored bundle are a build-fatal CI finding
+ * (scripts/ci/check-csp-runtime-deps.ts).
+ *
+ * Exported so the vendoring lock + CI gates assert against the EXACT path the
+ * runtime imports (no drift between loader, lockfile, and served artifact).
+ */
+export const TRANSFORMERS_BROWSER_MODULE = '/vendor/transformers.bundle.min.js';
+
+/**
+ * App-origin path the onnxruntime WASM artifacts are served from.
+ *
+ * WEBEXT-01 F-2 (2026-07-06, PR #1409 §6): when `wasmPaths` is UNSET,
+ * onnxruntime-web defaults it to a third-party CDN URL — which the deployed
+ * CSP (`connect-src 'self'`) correctly blocks, so the model load would die at
+ * the WASM fetch. The loader pins `env.backends.onnx.wasm.wasmPaths` to this
+ * same-origin directory BEFORE any session creation. The artifacts
+ * (`ort-wasm-simd-threaded.asyncify.{wasm,mjs}` — the flavor the pinned 4.2.0
+ * bundle requests) are vendored + hash-locked at build time by
+ * scripts/vendor-ner-runtime.ts into `public/vendor/ort/` (git-ignored, like
+ * the model weights). Must stay a leading-slash app-relative path — never an
+ * absolute HTTP(S)/CDN URL — so §1.6 self-hosting holds; CI-enforced by
+ * scripts/ci/check-csp-runtime-deps.ts (checkOrtWasmPathsPinned).
+ */
+export const ORT_WASM_VENDOR_PATH = '/vendor/ort/';
 
 /**
  * App-origin path the NER model weights are served from.
@@ -150,11 +195,12 @@ export const NER_LOCAL_MODEL_PATH = '/models/';
  *
  * This is intentionally a distinct, typed error: it is the PRODUCER contract
  * (this module / #1253) that the fail-closed PII stripper consumer
- * (`enhancedPiiStripper.ts`, Lane 2 / #1262 / WEBEXT-03) will `instanceof`-detect
- * to refuse to release text — rather than the loader silently returning null and
- * the caller falling back to regex-only stripping (a §1.6 fail-OPEN). The
- * fail-CLOSED behavior is delivered by that consumer change, NOT by this module
- * alone; the two MUST co-merge (see the module header).
+ * (`enhancedPiiStripper.ts`, Lane 2 / #1262 / WEBEXT-03) detects — via
+ * `isPiiStripFailClosedError` (name/prototype match) — to refuse to release
+ * text, rather than the loader silently returning null and the caller falling
+ * back to regex-only stripping (a §1.6 fail-OPEN). Both halves are merged on
+ * `main` (#1253 on 2026-06-24, #1262 on 2026-06-25), so the end-to-end
+ * fail-CLOSED path is live (see the module header).
  */
 export class NERModelLoadError extends Error {
   /**
@@ -186,6 +232,13 @@ interface TransformersJsEnv {
     onnx?: {
       wasm?: {
         numThreads?: number;
+        /**
+         * Where onnxruntime loads its WASM artifacts from. UNSET means the
+         * library's third-party-CDN default (WEBEXT-01 F-2) — must be pinned
+         * to ORT_WASM_VENDOR_PATH before any session creation. 4.2.0 accepts
+         * a directory-prefix string or an explicit `{ wasm, mjs }` pair.
+         */
+        wasmPaths?: string | { wasm?: string; mjs?: string };
       };
     };
   };
@@ -282,7 +335,7 @@ async function getNERPipeline(
         throw new Error(
           `Vendored transformers.js bundle is v${env.version} but the integrity ` +
             `lock + loader are pinned to v${TRANSFORMERS_JS_VERSION}. Re-vendor ` +
-            'public/vendor/transformers.web.min.js at the pinned version.',
+            `${TRANSFORMERS_BROWSER_MODULE} via scripts/vendor-ner-runtime.ts at the pinned version.`,
         );
       }
 
@@ -296,9 +349,26 @@ async function getNERPipeline(
       env.allowLocalModels = true;
       env.localModelPath = NER_LOCAL_MODEL_PATH;
 
+      // §1.6 / WEBEXT-01 F-2: pin the onnxruntime WASM artifacts to the
+      // same-origin vendor path BEFORE any session creation. Left unset,
+      // onnxruntime-web defaults `wasmPaths` to a third-party-CDN URL that the
+      // deployed CSP (`connect-src 'self'`) blocks — the model load would die
+      // at the WASM fetch. If the runtime exposes no ort wasm env to pin,
+      // FAIL CLOSED (typed) rather than create a session that would race the
+      // CSP with that CDN default.
+      const ortWasmEnv = env.backends?.onnx?.wasm;
+      if (!ortWasmEnv) {
+        throw new Error(
+          'Vendored transformers.js runtime exposes no env.backends.onnx.wasm — ' +
+            `cannot pin ort wasmPaths to '${ORT_WASM_VENDOR_PATH}'; refusing to ` +
+            'create a session that would fall back to an off-origin WASM fetch.',
+        );
+      }
+      ortWasmEnv.wasmPaths = ORT_WASM_VENDOR_PATH;
+
       // Configure backend
-      if (backend === 'webgpu' && env.backends?.onnx?.wasm) {
-        env.backends.onnx.wasm.numThreads = 1;
+      if (backend === 'webgpu') {
+        ortWasmEnv.numThreads = 1;
       }
 
       // Determine device based on backend
@@ -350,57 +420,171 @@ async function getNERPipeline(
 }
 
 /**
+ * Raw token-classification output item. WEBEXT-01 F-3: the transformers.js
+ * 4.2.0 browser pipeline emits `{ entity, score, index, word }` — NO
+ * start/end character offsets. They are typed optional so the merge logic
+ * never trusts them blindly (the old code copied `undefined` through, and
+ * `redactNEREntities` then sliced with `undefined`, duplicating the text
+ * with ALL PII STILL PRESENT — a §1.6 leak the browser-real probe caught).
+ */
+interface RawNERToken {
+  entity: string;
+  score: number;
+  word: string;
+  start?: number | null;
+  end?: number | null;
+}
+
+function isValidSpan(start: unknown, end: unknown, textLength: number): boolean {
+  return (
+    Number.isInteger(start) &&
+    Number.isInteger(end) &&
+    (start as number) >= 0 &&
+    (end as number) > (start as number) &&
+    (end as number) <= textLength
+  );
+}
+
+/**
+ * Locate a merged entity's character span in the source text.
+ *
+ * Strategy (deterministic):
+ *   1. exact match of the reconstructed entity text from the search cursor;
+ *   2. exact match from the beginning (defensive — cursor drift);
+ *   3. token-by-token walk from the cursor (handles source texts where the
+ *      inter-word whitespace differs from the single-space reconstruction).
+ * Returns null when the entity cannot be located — the redactor then falls
+ * back to literal-text redaction or fails CLOSED (never silently skips).
+ */
+/**
+ * indexOf anchored at word boundaries where the needle's edges are
+ * alphanumeric — so "John" is not located inside "Johnson". Returns -1 when
+ * absent. Unicode-aware; falls back to a plain indexOf only for needles with
+ * non-alphanumeric edges (punctuation/space) where boundaries don't apply.
+ */
+function indexOfWordBoundary(haystack: string, needle: string, from: number): number {
+  if (!needle) return -1;
+  const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const left = /^[\p{L}\p{N}]/u.test(needle) ? '(?<![\\p{L}\\p{N}_])' : '';
+  const right = /[\p{L}\p{N}]$/u.test(needle) ? '(?![\\p{L}\\p{N}_])' : '';
+  const re = new RegExp(`${left}${esc}${right}`, 'gu');
+  re.lastIndex = Math.max(0, from);
+  const m = re.exec(haystack);
+  return m ? m.index : -1;
+}
+
+function locateSpan(
+  sourceText: string,
+  entityText: string,
+  tokens: readonly string[],
+  from: number,
+): { start: number; end: number } | null {
+  let idx = indexOfWordBoundary(sourceText, entityText, from);
+  if (idx < 0) idx = indexOfWordBoundary(sourceText, entityText, 0);
+  if (idx >= 0) return { start: idx, end: idx + entityText.length };
+
+  let cursor = from;
+  let start = -1;
+  let end = -1;
+  for (const rawWord of tokens) {
+    const word = rawWord.replace(/^##/, '');
+    if (!word || word === '[UNK]') continue;
+    let i = indexOfWordBoundary(sourceText, word, cursor);
+    if (i < 0) i = indexOfWordBoundary(sourceText, word, 0);
+    if (i < 0) return null;
+    if (start < 0) start = i;
+    cursor = i + word.length;
+    end = cursor;
+  }
+  return start >= 0 ? { start, end } : null;
+}
+
+/**
  * Merge subword tokens into complete entity spans.
  *
  * BERT NER uses BIO tagging: B-PER starts an entity, I-PER continues it.
  * Adjacent I-tokens of the same type without a B- prefix also get merged.
+ *
+ * Span source of truth (F-3): pipeline-provided offsets are used when they
+ * are structurally valid; otherwise the span is COMPUTED against
+ * `sourceText` via {@link locateSpan} with a monotonically advancing cursor
+ * (so repeated entity texts map to successive occurrences). An entity that
+ * cannot be located gets `start = end = -1`, which `redactNEREntities`
+ * treats as "redact by literal text or fail closed".
  */
-function mergeEntities(
-  rawEntities: Array<{ entity: string; score: number; word: string; start: number; end: number }>,
-): NEREntity[] {
+function mergeEntities(rawEntities: RawNERToken[], sourceText: string): NEREntity[] {
   const merged: NEREntity[] = [];
   let current: NEREntity | null = null;
+  let currentTokens: string[] = [];
+  let searchCursor = 0;
+
+  const flush = (): void => {
+    if (!current || current.score < NER_CONFIDENCE_THRESHOLD) {
+      current = null;
+      currentTokens = [];
+      return;
+    }
+    if (!isValidSpan(current.start, current.end, sourceText.length)) {
+      const span = locateSpan(sourceText, current.text, currentTokens, searchCursor);
+      if (span) {
+        current.start = span.start;
+        current.end = span.end;
+      } else {
+        current.start = -1;
+        current.end = -1;
+      }
+    }
+    if (current.end > 0) searchCursor = Math.max(searchCursor, current.end);
+    merged.push(current);
+    current = null;
+    currentTokens = [];
+  };
 
   for (const raw of rawEntities) {
     const entityType = mapNERLabel(raw.entity);
     if (!entityType) {
       // O label — flush current entity
-      if (current && current.score >= NER_CONFIDENCE_THRESHOLD) {
-        merged.push(current);
-      }
-      current = null;
+      flush();
       continue;
     }
 
     const isBegin = raw.entity.startsWith('B-');
 
+    const bareWord = raw.word.replace(/^##/, '');
+    const isUnk = bareWord === '[UNK]';
+
     if (isBegin || !current || current.type !== entityType) {
-      // Start new entity
-      if (current && current.score >= NER_CONFIDENCE_THRESHOLD) {
-        merged.push(current);
-      }
+      // Start new entity. An [UNK] leading token contributes no representable
+      // text but still marks the entity as OOV so the redactor fails closed.
+      flush();
       current = {
-        text: raw.word.replace(/^##/, ''),
+        text: isUnk ? '' : bareWord,
         type: entityType,
         score: raw.score,
-        start: raw.start,
-        end: raw.end,
+        start: raw.start ?? -1,
+        end: raw.end ?? -1,
+        hasUnknownToken: isUnk,
       };
+      currentTokens = [raw.word];
     } else {
-      // Continue current entity (I- token)
-      const wordPart = raw.word.startsWith('##')
-        ? raw.word.slice(2) // Subword continuation
-        : ` ${raw.word}`; // New word in same entity
-      current.text += wordPart;
-      current.end = raw.end;
+      // Continue current entity (I- token). Skip [UNK] in the reconstructed
+      // text (it cannot represent the original characters) but record it.
+      if (isUnk) {
+        current.hasUnknownToken = true;
+      } else {
+        const wordPart = raw.word.startsWith('##')
+          ? raw.word.slice(2) // Subword continuation
+          : (current.text ? ` ${bareWord}` : bareWord); // New word in same entity
+        current.text += wordPart;
+      }
+      current.end = raw.end ?? -1;
       current.score = Math.min(current.score, raw.score); // Conservative: use min score
+      currentTokens.push(raw.word);
     }
   }
 
   // Flush last entity
-  if (current && current.score >= NER_CONFIDENCE_THRESHOLD) {
-    merged.push(current);
-  }
+  flush();
 
   return merged;
 }
@@ -431,18 +615,13 @@ export async function detectPIIWithNER(
 
     // Run NER pipeline
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rawResults = await (_pipeline as any)(inputText) as Array<{
-      entity: string;
-      score: number;
-      word: string;
-      start: number;
-      end: number;
-    }>;
+    const rawResults = await (_pipeline as any)(inputText) as RawNERToken[];
 
     const inferenceTimeMs = Date.now() - inferenceStart;
 
-    // Merge subword tokens into complete entities
-    const entities = mergeEntities(rawResults);
+    // Merge subword tokens into complete entities, computing character spans
+    // against the input text (the 4.2.0 pipeline emits no offsets — F-3).
+    const entities = mergeEntities(rawResults, inputText);
 
     // Collect PII categories
     const categories = new Set<string>();
@@ -481,16 +660,97 @@ export async function detectPIIWithNER(
  * - ORGANIZATION → [ORG_REDACTED]
  * - MISC → [ENTITY_REDACTED]
  *
- * Processes entities in reverse order (by position) to preserve offsets.
+ * Entities with a structurally valid span are redacted positionally (reverse
+ * order to preserve offsets). WEBEXT-01 F-3: entities WITHOUT a valid span
+ * (the 4.2.0 pipeline provides no offsets; locateSpan can rarely fail on
+ * tokenizer-normalized text) are redacted by LITERAL text — every occurrence
+ * — and if the entity text cannot be found at all, this function THROWS
+ * rather than silently returning text that still contains PII the model
+ * detected (§1.6 fail-closed; the stripper maps the throw to its typed
+ * fail-closed error before any egress). The thrown message never contains
+ * the entity text — it IS the PII.
  */
+/**
+ * Replace every occurrence of `needle` in `haystack` with `replacement`, anchored at
+ * word boundaries where the needle's edges are alphanumeric. This avoids
+ * garbling a longer word that merely CONTAINS the needle ("John" must not match
+ * inside "Johnson") while still redacting every standalone occurrence.
+ * Unicode-aware (`\p{L}\p{N}` under the `u` flag) so accented letters count as
+ * word characters. Over-matching (redacting too much) is the acceptable failure
+ * mode here; under-matching (leaving PII) is not.
+ */
+function redactAllOccurrences(haystack: string, needle: string, replacement: string): string {
+  if (!needle) return haystack;
+  const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const left = /^[\p{L}\p{N}]/u.test(needle) ? '(?<![\\p{L}\\p{N}_])' : '';
+  const right = /[\p{L}\p{N}]$/u.test(needle) ? '(?![\\p{L}\\p{N}_])' : '';
+  return haystack.replace(new RegExp(`${left}${esc}${right}`, 'gu'), replacement);
+}
+
 export function redactNEREntities(text: string, entities: NEREntity[]): string {
+  // OOV-token entities cannot be represented by `text` (the [UNK] characters are
+  // lost), so neither positional nor literal redaction can guarantee coverage —
+  // fail CLOSED before releasing anything. (Message carries only the type; the
+  // entity text IS the PII.)
+  const unknown = entities.find((e) => e.hasUnknownToken);
+  if (unknown) {
+    throw new Error(
+      `NER detected a ${unknown.type} entity containing out-of-vocabulary characters ` +
+        'that cannot be reliably redacted — refusing to release text (fail-closed).',
+    );
+  }
+
+  // A structurally valid span is only trusted when the text it covers actually
+  // matches the detected entity (whitespace-normalised — the merge step collapses
+  // inter-token whitespace to single spaces). Guards against a wrong upstream
+  // offset (F-3): a mismatching span is demoted to the literal/sweep path rather
+  // than redacting the wrong characters.
+  const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
+  const positional = entities.filter(
+    (e) => isValidSpan(e.start, e.end, text.length) && norm(text.slice(e.start, e.end)) === norm(e.text),
+  );
+  const positionalSet = new Set(positional);
+  const textual = entities.filter((e) => !positionalSet.has(e));
+
   // Sort by start position descending to preserve offsets
-  const sorted = [...entities].sort((a, b) => b.start - a.start);
+  const sorted = [...positional].sort((a, b) => b.start - a.start);
   let result = text;
 
   for (const entity of sorted) {
+    result = result.slice(0, entity.start) + getRedactionToken(entity.type) + result.slice(entity.end);
+  }
+
+  for (const entity of textual) {
     const token = getRedactionToken(entity.type);
-    result = result.slice(0, entity.start) + token + result.slice(entity.end);
+    if (entity.text && result.includes(entity.text)) {
+      result = redactAllOccurrences(result, entity.text, token);
+      continue;
+    }
+    if (entity.text && text.includes(entity.text)) {
+      // Present in the input but already removed by an earlier (overlapping)
+      // redaction — nothing left to redact.
+      continue;
+    }
+    // The model detected PII we cannot locate in the text — refusing to
+    // release the text is the only §1.6-safe outcome. (No entity text in the
+    // message: it is the PII.)
+    throw new Error(
+      `NER detected a ${entity.type} entity that could not be located for redaction — ` +
+        'refusing to release text (fail-closed).',
+    );
+  }
+
+  // Defense-in-depth guarantee (WEBEXT-01 F-3 review-hardening): after the
+  // positional + literal passes, NO detected entity's text may survive in the
+  // output. A positional span can bind to the WRONG occurrence when spans drift
+  // (dropped low-confidence tokens don't advance the merge cursor; substring
+  // locates bind inside longer words), so sweep every detected entity and redact
+  // any remaining word-boundary occurrence by literal text. Over-redaction is
+  // acceptable; a surviving detected entity is a §1.6 breach.
+  for (const entity of entities) {
+    if (entity.text && result.includes(entity.text)) {
+      result = redactAllOccurrences(result, entity.text, getRedactionToken(entity.type));
+    }
   }
 
   return result;

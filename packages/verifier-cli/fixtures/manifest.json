@@ -1,0 +1,410 @@
+{
+  "$schema_note": "S3-B fixture manifest \u2014 the SINGLE versioned list of every verifier conformance fixture and the exact {verdict, reason_code} each MUST produce. Three independent runners consume this file and must agree three-way: the TypeScript verifier (packages/verifier-cli, test/manifest.test.ts), the Python verifier (packages/arkova-py/src/arkova/proofs.py, tests/test_proofs.py), and the comparator (scripts/parity-compare.mjs, `npm run parity`). Synthetic data only \u2014 no PII, no real org/user identifiers, no production keys.",
+  "manifest_version": "1.0.0",
+  "reason_enum_version": "1.0.0",
+  "reason_codes": [
+    "MALFORMED_BUNDLE",
+    "UNSUPPORTED_SCHEMA_VERSION",
+    "EMPTY_BRANCH_UNVERIFIABLE",
+    "MERKLE_MISMATCH",
+    "FORGED_SELF_PAIR",
+    "LEAF_INDEX_OUT_OF_RANGE",
+    "TX_NOT_FOUND",
+    "NOT_IN_BLOCK",
+    "TXID_MISMATCH",
+    "NO_ANCHOR_OUTPUT",
+    "PAYLOAD_MISMATCH",
+    "HEIGHT_MISMATCH",
+    "BLOCK_HASH_MISMATCH",
+    "HEADER_INVALID",
+    "ROOT_NOT_IN_HEADER",
+    "TIMESTAMP_MISMATCH",
+    "SIG_INVALID",
+    "DID_UNRESOLVED"
+  ],
+  "fixture_files": {
+    "synthetic": "synthetic-vectors.json",
+    "adversarial": "adversarial-vectors.json",
+    "proof08": "../../../services/worker/src/proof/fixtures/proof-fixtures.json"
+  },
+  "modes": {
+    "chain": "verify the packet with the fixture's canned independent-node responses (full pipeline)",
+    "recompute": "verify the packet with no independent node (recompute-only; on-chain + timestamp steps skipped)",
+    "signature": "verify the packet recompute-only PLUS the signed bundle against the fixture's published key set"
+  },
+  "fixtures": [
+    {
+      "id": "odd-leaf-pass",
+      "source": "synthetic",
+      "ref": "odd-leaf-pass",
+      "mode": "chain",
+      "expected": {
+        "verdict": "VERIFIED",
+        "reason_code": null
+      }
+    },
+    {
+      "id": "single-leaf-pass",
+      "source": "synthetic",
+      "ref": "single-leaf-pass",
+      "mode": "chain",
+      "expected": {
+        "verdict": "VERIFIED",
+        "reason_code": null
+      }
+    },
+    {
+      "id": "deep-leaf-pass",
+      "source": "synthetic",
+      "ref": "deep-leaf-pass",
+      "mode": "chain",
+      "expected": {
+        "verdict": "VERIFIED",
+        "reason_code": null
+      }
+    },
+    {
+      "id": "tampered-fingerprint-fail",
+      "source": "synthetic",
+      "ref": "tampered-fingerprint-fail",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "MERKLE_MISMATCH"
+      }
+    },
+    {
+      "id": "forged-self-pair-fail",
+      "source": "synthetic",
+      "ref": "forged-self-pair-fail",
+      "mode": "recompute",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "FORGED_SELF_PAIR"
+      }
+    },
+    {
+      "id": "wrong-root-onchain-fail",
+      "source": "synthetic",
+      "ref": "wrong-root-onchain-fail",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "PAYLOAD_MISMATCH"
+      }
+    },
+    {
+      "id": "txid-mismatch-fail",
+      "source": "synthetic",
+      "ref": "txid-mismatch-fail",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "ROOT_NOT_IN_HEADER"
+      }
+    },
+    {
+      "id": "txid-body-mismatch-fail",
+      "source": "synthetic",
+      "ref": "txid-body-mismatch-fail",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "TXID_MISMATCH"
+      }
+    },
+    {
+      "id": "forged-timestamp-fail",
+      "source": "synthetic",
+      "ref": "forged-timestamp-fail",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "TIMESTAMP_MISMATCH"
+      }
+    },
+    {
+      "id": "adv-valid-even-tree-pass",
+      "source": "adversarial",
+      "ref": "adv-valid-even-tree-pass",
+      "mode": "chain",
+      "expected": {
+        "verdict": "VERIFIED",
+        "reason_code": null
+      }
+    },
+    {
+      "id": "adv-valid-metadata-suffix-pass",
+      "source": "adversarial",
+      "ref": "adv-valid-metadata-suffix-pass",
+      "mode": "chain",
+      "expected": {
+        "verdict": "VERIFIED",
+        "reason_code": null
+      }
+    },
+    {
+      "id": "adv-tampered-fingerprint-byte",
+      "source": "adversarial",
+      "ref": "adv-tampered-fingerprint-byte",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "MERKLE_MISMATCH"
+      }
+    },
+    {
+      "id": "adv-app-sibling-order-swapped",
+      "source": "adversarial",
+      "ref": "adv-app-sibling-order-swapped",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "MERKLE_MISMATCH"
+      }
+    },
+    {
+      "id": "adv-leaf-index-off-by-one-selfpair",
+      "source": "adversarial",
+      "ref": "adv-leaf-index-off-by-one-selfpair",
+      "mode": "recompute",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "FORGED_SELF_PAIR"
+      }
+    },
+    {
+      "id": "adv-block-proof-pos-off-by-one",
+      "source": "adversarial",
+      "ref": "adv-block-proof-pos-off-by-one",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "ROOT_NOT_IN_HEADER"
+      }
+    },
+    {
+      "id": "adv-block-proof-sibling-order-swapped",
+      "source": "adversarial",
+      "ref": "adv-block-proof-sibling-order-swapped",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "ROOT_NOT_IN_HEADER"
+      }
+    },
+    {
+      "id": "adv-truncated-header-79-bytes",
+      "source": "adversarial",
+      "ref": "adv-truncated-header-79-bytes",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "HEADER_INVALID"
+      }
+    },
+    {
+      "id": "adv-wrong-marker-arkx",
+      "source": "adversarial",
+      "ref": "adv-wrong-marker-arkx",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "NO_ANCHOR_OUTPUT"
+      }
+    },
+    {
+      "id": "adv-marker-not-at-offset",
+      "source": "adversarial",
+      "ref": "adv-marker-not-at-offset",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "NO_ANCHOR_OUTPUT"
+      }
+    },
+    {
+      "id": "adv-height-mismatch",
+      "source": "adversarial",
+      "ref": "adv-height-mismatch",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "HEIGHT_MISMATCH"
+      }
+    },
+    {
+      "id": "adv-reorg-hash-mismatch",
+      "source": "adversarial",
+      "ref": "adv-reorg-hash-mismatch",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "BLOCK_HASH_MISMATCH"
+      }
+    },
+    {
+      "id": "adv-receipt-not-found",
+      "source": "adversarial",
+      "ref": "adv-receipt-not-found",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "TX_NOT_FOUND"
+      }
+    },
+    {
+      "id": "adv-receipt-unconfirmed",
+      "source": "adversarial",
+      "ref": "adv-receipt-unconfirmed",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "NOT_IN_BLOCK"
+      }
+    },
+    {
+      "id": "adv-unsupported-schema-version",
+      "source": "adversarial",
+      "ref": "adv-unsupported-schema-version",
+      "mode": "chain",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "UNSUPPORTED_SCHEMA_VERSION"
+      }
+    },
+    {
+      "id": "adv-malformed-fingerprint",
+      "source": "adversarial",
+      "ref": "adv-malformed-fingerprint",
+      "mode": "recompute",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "MALFORMED_BUNDLE"
+      }
+    },
+    {
+      "id": "adv-empty-branch-root-mismatch",
+      "source": "adversarial",
+      "ref": "adv-empty-branch-root-mismatch",
+      "mode": "recompute",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "EMPTY_BRANCH_UNVERIFIABLE"
+      }
+    },
+    {
+      "id": "adv-valid-signed-bundle",
+      "source": "adversarial",
+      "ref": "adv-valid-signed-bundle",
+      "mode": "signature",
+      "expected": {
+        "verdict": "VERIFIED",
+        "reason_code": null,
+        "signature": "verified"
+      }
+    },
+    {
+      "id": "adv-forged-signature",
+      "source": "adversarial",
+      "ref": "adv-forged-signature",
+      "mode": "signature",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "SIG_INVALID",
+        "signature": "failed"
+      }
+    },
+    {
+      "id": "adv-unknown-signing-key-id",
+      "source": "adversarial",
+      "ref": "adv-unknown-signing-key-id",
+      "mode": "signature",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "DID_UNRESOLVED",
+        "signature": "failed"
+      }
+    },
+    {
+      "id": "proof08-valid-inclusion",
+      "source": "proof08",
+      "ref": "valid-inclusion",
+      "mode": "recompute",
+      "expected": {
+        "verdict": "VERIFIED",
+        "reason_code": null
+      }
+    },
+    {
+      "id": "proof08-bad-document-hash",
+      "source": "proof08",
+      "ref": "bad-document-hash",
+      "mode": "recompute",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "MERKLE_MISMATCH"
+      }
+    },
+    {
+      "id": "proof08-tampered-merkle-branch",
+      "source": "proof08",
+      "ref": "tampered-merkle-branch",
+      "mode": "recompute",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "MERKLE_MISMATCH"
+      }
+    },
+    {
+      "id": "proof08-flipped-branch-position",
+      "source": "proof08",
+      "ref": "flipped-branch-position",
+      "mode": "recompute",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "MERKLE_MISMATCH"
+      }
+    },
+    {
+      "id": "proof08-duplicated-leaf-attack",
+      "source": "proof08",
+      "ref": "duplicated-leaf-attack",
+      "mode": "recompute",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "FORGED_SELF_PAIR"
+      }
+    },
+    {
+      "id": "proof08-wrong-leaf-index",
+      "source": "proof08",
+      "ref": "wrong-leaf-index",
+      "mode": "recompute",
+      "expected": {
+        "verdict": "NOT_VERIFIED",
+        "reason_code": "LEAF_INDEX_OUT_OF_RANGE"
+      }
+    }
+  ],
+  "excluded": [
+    {
+      "id": "proof08-bad-block-header",
+      "source": "proof08",
+      "ref": "bad-block-header",
+      "why": "Targets consumers that validate a header EMBEDDED in the packet. This verifier never trusts an embedded header \u2014 it independently re-fetches the header from the chosen node \u2014 so the vector is unreachable through verifyProof. The same failure class (non-80-byte header) is covered node-served by adv-truncated-header-79-bytes (HEADER_INVALID)."
+    },
+    {
+      "id": "proof08-bad-signature",
+      "source": "proof08",
+      "ref": "bad-signature",
+      "why": "Materialized as adv-forged-signature: the corpus documents the construction (valid_bundle with signature.value := bad_signature_value); the adversarial file embeds that exact bundle so all three runners execute it identically. A drift pin in test/manifest.test.ts asserts the embedded signature equals the corpus bad_signature_value."
+    },
+    {
+      "id": "proof08-signed-bundle-valid",
+      "source": "proof08",
+      "ref": "signed_bundle.valid_bundle",
+      "why": "Materialized as adv-valid-signed-bundle (same corpus bundle + throwaway TEST key, resolved by signing_key_id). A drift pin in test/manifest.test.ts asserts the embedded bundle matches the corpus."
+    }
+  ]
+}

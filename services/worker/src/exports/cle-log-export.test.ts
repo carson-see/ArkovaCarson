@@ -29,9 +29,11 @@ import {
   generateCleLogExport,
   normalizeJurisdiction,
   CLE_DISCLAIMER_TEXT,
+  JURISDICTION_INFORMATIONAL_DISCLAIMER,
   type CleExportAnchorRow,
   type CleLogExportDeps,
 } from './cle-log-export.js';
+import { NASBA_DISCLAIMER_TEXT } from './cpe-log-export.js';
 
 // ─── Fixtures ────────────────────────────────────────
 function makeAnchor(overrides: Partial<CleExportAnchorRow> = {}): CleExportAnchorRow {
@@ -81,38 +83,89 @@ interface SignedUrlCall {
   expiresIn: number;
 }
 
+/**
+ * Filter-applying Supabase query-builder mock for the anchors table (mirrors
+ * the CPE test's builder). Applies the `status` eq/neq predicates and
+ * `.limit()` to the fixture rows when awaited, and resolves `head: true`
+ * count queries with a real `count` — so the SQL-side SECURED gate (round-1
+ * review finding: post-fetch filtering let non-SECURED rows displace SECURED
+ * rows inside the cap) is actually observable in tests.
+ */
+function makeAnchorBuilder(anchors: CleExportAnchorRow[], opts: { countError?: boolean } = {}) {
+  const state = {
+    statusEq: null as string | null,
+    statusNeq: null as string | null,
+    limit: null as number | null,
+    head: false,
+  };
+  const builder: Record<string, unknown> = { __state: state };
+  builder.select = vi.fn().mockImplementation((_cols: string, selectOpts?: { head?: boolean; count?: string }) => {
+    if (selectOpts?.head) state.head = true;
+    return builder;
+  });
+  const chain = (name: string, record?: (args: unknown[]) => void) => {
+    builder[name] = vi.fn().mockImplementation((...args: unknown[]) => {
+      record?.(args);
+      return builder;
+    });
+  };
+  chain('eq', (args) => {
+    if (args[0] === 'status') state.statusEq = args[1] as string;
+  });
+  chain('neq', (args) => {
+    if (args[0] === 'status') state.statusNeq = args[1] as string;
+  });
+  chain('in');
+  chain('gte');
+  chain('lte');
+  chain('is');
+  chain('or');
+  chain('order');
+  chain('limit', (args) => {
+    state.limit = args[0] as number;
+  });
+  (builder as { then: unknown }).then = (
+    resolve: (v: unknown) => void,
+    reject: (e: unknown) => void,
+  ) => {
+    let rows = anchors;
+    if (state.statusEq !== null) rows = rows.filter((a) => a.status === state.statusEq);
+    if (state.statusNeq !== null) rows = rows.filter((a) => a.status !== state.statusNeq);
+    if (state.head) {
+      if (opts.countError) {
+        return Promise.resolve({ data: null, count: null, error: { message: 'count boom' } }).then(resolve, reject);
+      }
+      return Promise.resolve({ data: null, count: rows.length, error: null }).then(resolve, reject);
+    }
+    const limited = state.limit !== null ? rows.slice(0, state.limit) : rows;
+    return Promise.resolve({ data: limited, error: null }).then(resolve, reject);
+  };
+  return builder;
+}
+
 function makeDeps(opts: {
   anchors?: CleExportAnchorRow[];
   uploadError?: boolean;
   signError?: boolean;
+  countError?: boolean;
+  maxRecords?: number;
+  /** Override the bucket-guard result. Defaults to a private, existing bucket. */
+  bucket?: { exists?: boolean; isPublic?: boolean | null; error?: Error | null };
 } = {}): {
   deps: CleLogExportDeps;
   uploads: UploadCall[];
   signs: SignedUrlCall[];
   audits: Array<Record<string, unknown>>;
-  anchorQuery: Record<string, unknown>;
+  anchorBuilders: Array<Record<string, unknown>>;
 } {
   const uploads: UploadCall[] = [];
   const signs: SignedUrlCall[] = [];
   const audits: Array<Record<string, unknown>> = [];
   const anchors = opts.anchors ?? [makeAnchor()];
 
-  // Minimal Supabase-query-builder mock for the anchors SELECT chain.
-  const anchorQuery: Record<string, unknown> = {};
-  const terminal = () => Promise.resolve({ data: anchors, error: null });
-  anchorQuery.select = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.eq = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.in = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.gte = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.lte = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.is = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.or = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.order = vi.fn().mockReturnValue(anchorQuery);
-  anchorQuery.limit = vi.fn().mockReturnValue(anchorQuery);
-  (anchorQuery as { then: unknown }).then = (
-    resolve: (v: unknown) => void,
-    reject: (e: unknown) => void,
-  ) => terminal().then(resolve, reject);
+  // Each `from('anchors')` call gets a FRESH builder (main data query vs the
+  // separate excluded-count query record independent filter chains).
+  const anchorBuilders: Array<Record<string, unknown>> = [];
 
   const auditInsert = vi.fn().mockImplementation((row: Record<string, unknown>) => {
     audits.push(row);
@@ -125,7 +178,9 @@ function makeDeps(opts: {
         if (table === 'audit_events') {
           return { insert: auditInsert };
         }
-        return anchorQuery;
+        const builder = makeAnchorBuilder(anchors, { countError: opts.countError });
+        anchorBuilders.push(builder);
+        return builder;
       }),
     } as unknown as CleLogExportDeps['db'],
     storage: {
@@ -156,18 +211,25 @@ function makeDeps(opts: {
           });
         },
       ),
-      // `getBucket` is part of the shared `CpeExportStorage` seam (added for the
-      // CPE bucket-guard). The CLE exporter does not call it, but the type
-      // requires it; stub a healthy private bucket so the mock satisfies the
-      // contract the real `createSupabaseStorageAdapter` provides.
-      getBucket: vi.fn().mockResolvedValue({ exists: true, isPublic: false, error: null }),
+      // `getBucket` is part of the shared `CpeExportStorage` seam. It is now
+      // driven by the shared `uploadAndSignExportArtifacts` preflight (the
+      // structural CLE fix — PR #1415), so the default stub is a healthy private
+      // bucket and tests can override it to exercise the fail-loud guard.
+      getBucket: vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          exists: opts.bucket?.exists ?? true,
+          isPublic: opts.bucket?.isPublic ?? false,
+          error: opts.bucket?.error ?? null,
+        }),
+      ),
     },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     frontendUrl: 'https://app.arkova.io',
     bucket: 'exports',
+    ...(opts.maxRecords !== undefined ? { maxRecords: opts.maxRecords } : {}),
   };
 
-  return { deps, uploads, signs, audits, anchorQuery };
+  return { deps, uploads, signs, audits, anchorBuilders };
 }
 
 const BASE_ARGS = {
@@ -446,7 +508,7 @@ describe('generateCleLogExport', () => {
   });
 
   it('filters by org/user/jurisdiction (scope + jurisdiction enforced in the query)', async () => {
-    const { deps, anchorQuery } = makeDeps();
+    const { deps, anchorBuilders } = makeDeps();
     await generateCleLogExport(BASE_ARGS, deps);
 
     const fromMock = deps.db.from as unknown as ReturnType<typeof vi.fn>;
@@ -454,20 +516,33 @@ describe('generateCleLogExport', () => {
 
     // Tenant/owner scope MUST be applied in the query itself (defense in depth,
     // CLAUDE.md §1.4) — assert both the user_id and org_id equality filters, not
-    // merely that `anchors` was queried.
-    const eq = anchorQuery.eq as unknown as ReturnType<typeof vi.fn>;
+    // merely that `anchors` was queried. The main data query is the FIRST
+    // anchors builder; the excluded-count query is the second.
+    const mainQuery = anchorBuilders[0];
+    const eq = mainQuery.eq as unknown as ReturnType<typeof vi.fn>;
     expect(eq).toHaveBeenCalledWith('user_id', 'user-1');
     expect(eq).toHaveBeenCalledWith('org_id', 'org-1');
     // Only CLE credentials, and soft-deleted rows excluded.
     expect(eq).toHaveBeenCalledWith('credential_type', 'CLE');
-    const is = anchorQuery.is as unknown as ReturnType<typeof vi.fn>;
+    const is = mainQuery.is as unknown as ReturnType<typeof vi.fn>;
     expect(is).toHaveBeenCalledWith('deleted_at', null);
     // Jurisdiction filter matches the bare code OR the US- prefixed form.
-    const or = anchorQuery.or as unknown as ReturnType<typeof vi.fn>;
+    const or = mainQuery.or as unknown as ReturnType<typeof vi.fn>;
     expect(or).toHaveBeenCalledTimes(1);
     const orFilter = or.mock.calls[0][0] as string;
     expect(orFilter).toContain('cle_metadata->>jurisdiction.eq.CA');
     expect(orFilter).toContain('cle_metadata->>jurisdiction.eq.US-CA');
+
+    // The excluded-count query carries the SAME tenant + jurisdiction + period
+    // scope (it must count the same population the export drew from).
+    const countQuery = anchorBuilders[1];
+    const countEq = countQuery.eq as unknown as ReturnType<typeof vi.fn>;
+    expect(countEq).toHaveBeenCalledWith('user_id', 'user-1');
+    expect(countEq).toHaveBeenCalledWith('org_id', 'org-1');
+    expect(countEq).toHaveBeenCalledWith('credential_type', 'CLE');
+    const countOr = countQuery.or as unknown as ReturnType<typeof vi.fn>;
+    expect(countOr).toHaveBeenCalledTimes(1);
+    expect(countOr.mock.calls[0][0] as string).toContain('cle_metadata->>jurisdiction.eq.CA');
   });
 
   it('throws when Storage upload fails (so the endpoint can 500 cleanly)', async () => {
@@ -478,6 +553,24 @@ describe('generateCleLogExport', () => {
   it('throws when signed-URL creation fails', async () => {
     const { deps } = makeDeps({ signError: true });
     await expect(generateCleLogExport(BASE_ARGS, deps)).rejects.toThrow();
+  });
+
+  // ─── Private-bucket preflight (PR #1415, Carson [P1]) ──
+  // The CLE path previously called `uploadAndSignExportArtifacts` directly with
+  // NO bucket-visibility check, so an accidentally-public bucket could receive
+  // export bodies despite the signed-URL-only privacy guarantee. The structural
+  // fix moved the guard INTO the shared upload helper, so these prove CLE now
+  // fails loud — writing NOTHING — for a missing or PUBLIC bucket, mirroring CPE.
+  it('fails loud (and uploads NOTHING) when the exports bucket is missing', async () => {
+    const { deps, uploads } = makeDeps({ bucket: { exists: false, isPublic: null } });
+    await expect(generateCleLogExport(BASE_ARGS, deps)).rejects.toThrow(/does not exist/i);
+    expect(uploads).toHaveLength(0);
+  });
+
+  it('fails loud (and uploads NOTHING) when the exports bucket is PUBLIC', async () => {
+    const { deps, uploads } = makeDeps({ bucket: { exists: true, isPublic: true } });
+    await expect(generateCleLogExport(BASE_ARGS, deps)).rejects.toThrow(/PUBLIC/i);
+    expect(uploads).toHaveLength(0);
   });
 
   it('throws on an invalid jurisdiction (caller passed a non-state code)', async () => {
@@ -498,4 +591,192 @@ describe('generateCleLogExport', () => {
     expect(result.record_count).toBe(200);
     expect(elapsedMs).toBeLessThan(10_000);
   }, 15_000);
+});
+
+// ─── SECURED-only export gate (SCRUM-2378 — CPE-01, mirrored for CLE) ──
+describe('SECURED-only export gate (SCRUM-2378 — CLE mirror)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  function mixedAnchors(): CleExportAnchorRow[] {
+    return [
+      makeAnchor(), // SECURED
+      makeAnchor({
+        id: 'anchor-uuid-2',
+        public_id: 'ARK-CLE-0002',
+        status: 'PENDING',
+        label: 'Pending Trial Practice Course',
+        cle_metadata: {
+          jurisdiction: 'CA',
+          credit_hours: 2,
+          ethics_hours: 0,
+          course_title: 'Pending Trial Practice Course',
+          requires_manual_review: false,
+        },
+      }),
+    ];
+  }
+
+  it('excludes un-SECURED records, reports excluded_count, and keeps the summary SECURED-only', async () => {
+    const { deps, uploads } = makeDeps({ anchors: mixedAnchors() });
+    const result = await generateCleLogExport(BASE_ARGS, deps);
+
+    expect(result.record_count).toBe(1);
+    expect(result.excluded_count).toBe(1);
+
+    const jsonUpload = uploads.find((u) => u.contentType === 'application/json');
+    const doc = JSON.parse(jsonUpload!.body as string) as {
+      record_count: number;
+      excluded_count: number;
+      records: Array<{ status: string }>;
+      summary: { total_credit_hours: number };
+    };
+    expect(doc.record_count).toBe(1);
+    expect(doc.excluded_count).toBe(1);
+    expect(doc.records).toHaveLength(1);
+    expect(doc.records.every((r) => r.status === 'SECURED')).toBe(true);
+    // The excluded PENDING record's 2 credit hours must NOT be summed.
+    expect(doc.summary.total_credit_hours).toBe(6);
+    expect(jsonUpload!.body).not.toContain('ARK-CLE-0002');
+    expect(jsonUpload!.body).not.toContain('Pending Trial Practice Course');
+  });
+
+  it('audit details carry excluded_count (metadata only — CC7 still holds)', async () => {
+    const { deps, audits } = makeDeps({ anchors: mixedAnchors() });
+    await generateCleLogExport(BASE_ARGS, deps);
+
+    const event = audits.find((a) => a.event_type === 'cle_log.exported');
+    expect(event).toBeDefined();
+    const detailsRaw = event!.details;
+    const details = typeof detailsRaw === 'string' ? JSON.parse(detailsRaw) : detailsRaw;
+    expect(details.record_count).toBe(1);
+    expect(details.excluded_count).toBe(1);
+    expect(JSON.stringify(event)).not.toContain('Pending Trial Practice Course');
+  });
+
+  it('gates SECURED in the SQL query itself, not post-fetch (round-1 review finding)', async () => {
+    const { deps, anchorBuilders } = makeDeps({ anchors: mixedAnchors() });
+    await generateCleLogExport(BASE_ARGS, deps);
+
+    // Main data query applies .eq('status', 'SECURED') so non-SECURED rows
+    // never occupy the fetch cap.
+    const mainState = anchorBuilders[0].__state as { statusEq: string | null };
+    expect(mainState.statusEq).toBe('SECURED');
+    // Excluded count comes from a SEPARATE count query with .neq('status',
+    // 'SECURED') — not in-cap subtraction (undercounts once the cap is hit).
+    expect(anchorBuilders.length).toBeGreaterThanOrEqual(2);
+    const countState = anchorBuilders[1].__state as { statusNeq: string | null; head: boolean };
+    expect(countState.statusNeq).toBe('SECURED');
+    expect(countState.head).toBe(true);
+  });
+
+  it('cap: non-SECURED rows cannot displace SECURED rows inside the fetch cap, and excluded_count is NOT capped', async () => {
+    // Front-loaded pending rows: with the OLD post-fetch filter and a cap of
+    // 2, the fetch would return the two PENDING rows and silently drop every
+    // SECURED record. With the SQL-side gate the cap applies to SECURED rows
+    // only, and the separate count query reports ALL 3 exclusions (> cap).
+    const anchors = [
+      makeAnchor({ id: 'p1', public_id: 'ARK-CLE-P001', status: 'PENDING' }),
+      makeAnchor({ id: 'p2', public_id: 'ARK-CLE-P002', status: 'PENDING' }),
+      makeAnchor({ id: 'p3', public_id: 'ARK-CLE-P003', status: 'SUBMITTED' }),
+      makeAnchor({ id: 's1', public_id: 'ARK-CLE-S001' }),
+      makeAnchor({ id: 's2', public_id: 'ARK-CLE-S002' }),
+      makeAnchor({ id: 's3', public_id: 'ARK-CLE-S003' }),
+    ];
+    const { deps, uploads } = makeDeps({ anchors, maxRecords: 2 });
+    const result = await generateCleLogExport(BASE_ARGS, deps);
+
+    expect(result.record_count).toBe(2);
+    expect(result.excluded_count).toBe(3);
+
+    const jsonUpload = uploads.find((u) => u.contentType === 'application/json');
+    const doc = JSON.parse(jsonUpload!.body as string) as { records: Array<{ status: string }> };
+    expect(doc.records).toHaveLength(2);
+    expect(doc.records.every((r) => r.status === 'SECURED')).toBe(true);
+  });
+
+  it('throws when the excluded-count query fails (never emits a fabricated count)', async () => {
+    const { deps } = makeDeps({ anchors: mixedAnchors(), countError: true });
+    await expect(generateCleLogExport(BASE_ARGS, deps)).rejects.toThrow(/excluded/i);
+  });
+});
+
+// ─── Jurisdiction-informational disclaimer (SCRUM-2379 — CLE-01) ──
+describe('jurisdiction-informational disclaimer (SCRUM-2379)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('embeds the jurisdiction disclaimer as a JSON field in the export artifact', async () => {
+    const { deps, uploads } = makeDeps();
+    await generateCleLogExport(BASE_ARGS, deps);
+
+    const jsonUpload = uploads.find((u) => u.contentType === 'application/json');
+    const doc = JSON.parse(jsonUpload!.body as string) as { jurisdiction_disclaimer?: string };
+    expect(doc.jurisdiction_disclaimer).toBe(JURISDICTION_INFORMATIONAL_DISCLAIMER);
+  });
+
+  it('renders the jurisdiction disclaimer text into the PDF artifact', async () => {
+    const { deps, uploads } = makeDeps();
+    await generateCleLogExport(BASE_ARGS, deps);
+
+    // jsPDF writes uncompressed text runs; words stay intact across wrapped
+    // lines, so a distinctive phrase fragment is searchable in the raw bytes.
+    const pdfUpload = uploads.find((u) => u.contentType === 'application/pdf');
+    const pdfText = Buffer.from(pdfUpload!.body as Uint8Array).toString('latin1');
+    expect(pdfText).toContain('informational metadata only');
+  });
+
+  it('CleLogV1Schema accepts the additive jurisdiction_disclaimer and stays backward-compatible', () => {
+    const base = {
+      schema: CLE_LOG_SCHEMA_VERSION,
+      generated_at: new Date().toISOString(),
+      jurisdiction: 'CA',
+      period: { start: '2026-01-01', end: '2026-12-31' },
+      record_count: 0,
+      summary: {
+        total_credit_hours: 0,
+        ethics_hours: 0,
+        approved_provider_hours: 0,
+        unverified_provider_hours: 0,
+        hours_by_delivery_format: {},
+      },
+      records: [],
+      disclaimer: CLE_DISCLAIMER_TEXT,
+    };
+    expect(
+      CleLogV1Schema.safeParse({
+        ...base,
+        jurisdiction_disclaimer: JURISDICTION_INFORMATIONAL_DISCLAIMER,
+      }).success,
+    ).toBe(true);
+    // Previously-issued documents without it still validate (additive §1.8).
+    expect(CleLogV1Schema.safeParse(base).success).toBe(true);
+    // A reworded disclaimer is rejected — the text is load-bearing.
+    expect(
+      CleLogV1Schema.safeParse({ ...base, jurisdiction_disclaimer: 'reworded' }).success,
+    ).toBe(false);
+  });
+
+  it('no CLE/CPE disclaimer text overclaims: never "meets", "satisfies", or "legally sufficient"', () => {
+    // Keep this pattern list IDENTICAL to the FE guard in
+    // src/lib/copy-professional-education-overclaim.test.ts (round-1 review:
+    // the two lists had drifted — worker was missing /\bmet\b/ and the
+    // credential-registry variant).
+    const overclaims = [
+      /\bmeets?\b/i,
+      /\bmet\b/i,
+      /\bsatisf(?:y|ies|ied|action)\b/i,
+      /legally\s+sufficient/i,
+      /listed in the (credential )?registry/i,
+    ];
+    for (const text of [
+      CLE_DISCLAIMER_TEXT,
+      NASBA_DISCLAIMER_TEXT,
+      JURISDICTION_INFORMATIONAL_DISCLAIMER,
+    ]) {
+      for (const pattern of overclaims) {
+        expect(text).not.toMatch(pattern);
+      }
+    }
+    // And the jurisdiction disclaimer affirmatively states the §1.5 framing.
+    expect(JURISDICTION_INFORMATIONAL_DISCLAIMER).toContain('informational metadata only');
+  });
 });

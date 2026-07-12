@@ -26,7 +26,11 @@ export const ANCHOR_STATUS_LABELS = {
 export const ANCHOR_STATUS_DESCRIPTIONS = {
   PENDING: 'Your record is being secured. This typically completes within a few minutes.',
   SUBMITTED: 'Your record has been submitted to the network and is awaiting confirmation.',
-  SECURED: 'Your record has been permanently secured with cryptographic verification.',
+  // SCRUM-2495 claims review (§1.5): permanence is bound to the record's
+  // FINGERPRINT, not the underlying document. Arkova records and anchors the
+  // fingerprint permanently; it does not store, monitor, or protect the
+  // document itself after securing.
+  SECURED: "Your record's fingerprint has been permanently secured with cryptographic verification.",
   REVOKED: 'This record has been revoked and is no longer active.',
   EXPIRED: 'This record has passed its expiration date.',
   SUPERSEDED: 'This record has been replaced by a newer version.',
@@ -326,7 +330,9 @@ export const FORM_LABELS = {
 export const MESSAGES = {
   // Success
   ANCHOR_CREATED: 'Your document has been submitted for securing.',
-  ANCHOR_SECURED: 'Your document has been permanently secured.',
+  // SCRUM-2495 claims review (§1.5): the fingerprint is permanently secured,
+  // not the document itself (Arkova never stores or monitors the document).
+  ANCHOR_SECURED: "Your document's fingerprint has been permanently secured.",
   ANCHOR_VERIFIED: 'Document verification successful.',
 
   // Errors
@@ -760,7 +766,13 @@ export const PUBLIC_VERIFICATION_LABELS = {
   REVOKED_DESC: 'This record has been revoked by the issuing organization',
   EXPIRED_DESC: 'This record has passed its expiration date',
   SUPERSEDED_DESC: 'This record has been replaced by a newer version.',
-  VERIFIED_DESC: 'This record is permanently anchored.',
+  // SCRUM-2495 claims review (§1.5): permanence is bound to the record's
+  // FINGERPRINT, never the underlying document. The unscoped "This record is
+  // permanently anchored." read as document-level protection, contradicting
+  // the does-not-assert disclaimer rendered on the same page. The permanence
+  // claim itself is real (anchor/fingerprint permanence is the product's core
+  // value) — only its scope changed.
+  VERIFIED_DESC: 'This record’s fingerprint is permanently anchored.',
   CRYPTOGRAPHIC_PROOF: 'Cryptographic Proof',
   FINGERPRINT_SHA256: 'Fingerprint (SHA-256)',
   NETWORK_RECEIPT: 'Network Receipt',
@@ -773,6 +785,37 @@ export const PUBLIC_VERIFICATION_LABELS = {
   COPY_RECEIPT_ARIA: 'Copy network receipt',
   REPORT_ISSUE: 'Report an Issue',
   REPORT_ISSUE_SUBJECT: 'Issue with credential',
+} as const;
+
+// =============================================================================
+// DOES-NOT-ASSERT DISCLAIMER (SCRUM-2495 / ABUSE-DISCLAIMER)
+// =============================================================================
+// Always-visible block on the proof/verification surface stating what an
+// Arkova anchor MEASURES, ASSERTS, and does NOT assert (CLAUDE.md §1.5).
+// This replaces the prior ad-hoc disclaimer paragraph that was written
+// directly in PublicVerification.tsx JSX (banned per §6 "Text directly in
+// JSX") and that also contained a banned-terminology violation ("Bitcoin
+// blockchain", §1.3) invisible to lint:copy only because the two words fell
+// on the same un-quoted, tag-free JSX text line (a scanner blind spot — see
+// PublicVerification.test.tsx for the regression coverage). Jurisdiction tags
+// are informational metadata only, never a legal claim (§1.5).
+export const DOES_NOT_ASSERT_LABELS = {
+  TITLE: 'What This Anchor Does and Does Not Assert',
+  MEASURED_LABEL: 'Measured',
+  MEASURED_BODY:
+    'The document Fingerprint (a cryptographic digest of the file) at a specific point in time, and the Network Observed Time at which that fingerprint was recorded.',
+  ASSERTED_LABEL: 'Asserted',
+  // §1.5 claims discipline (Carson P1 review): do NOT say "and have not been
+  // altered since" — Arkova does not monitor the document after securing and
+  // makes no post-securing immutability claim about it. What the record
+  // proves: the fingerprint existed and the record reached Secured status at
+  // the recorded time. A document altered later simply produces a different
+  // fingerprint that will not match this record.
+  ASSERTED_BODY:
+    'That this record reached Secured status — its fingerprint and existence were confirmed at the time of securing shown on this record. Arkova does not monitor or make any claim about the document after that moment; a document altered later would produce a different fingerprint and simply would not match this record.',
+  NOT_ASSERTED_LABEL: 'Not Asserted',
+  NOT_ASSERTED_BODY:
+    'The identity of the signer or uploader, the legal validity of the underlying document, or any jurisdiction. Jurisdiction tags shown elsewhere on this record are informational metadata only — not a legal claim. Relying parties should exercise their own due diligence.',
 } as const;
 
 // =============================================================================
@@ -1733,6 +1776,62 @@ export const PROFESSIONAL_EDUCATION_EXPORT_LABELS = {
 } as const;
 
 // =============================================================================
+// S3 CREDENTIAL-NETWORK (LANE 3) STRINGS — SCRUM-2378 / SCRUM-2379 / SCRUM-2380
+// One contiguous block by design: Sprint-3 streams share copy.ts, so all Lane-3
+// CPE/CLE strings live HERE to minimize merge conflicts. Do not scatter.
+// =============================================================================
+
+export const PROFESSIONAL_EDUCATION_S3_LABELS = {
+  // CPE-01 (SCRUM-2378): the worker excludes ALL non-secured records from
+  // compliance exports — including revoked/expired/superseded ones that will
+  // NEVER become secured. Per §1.5 the notice asserts only what is held (they
+  // aren't secured); it must not promise they will "appear once secured"
+  // (round-1 review finding 2). Surfaced inline — never a blocker, never
+  // silent.
+  EXCLUDED_NOTICE: (count: number) =>
+    count === 1
+      ? "1 record isn't included because it isn't secured."
+      : `${count} records aren't included because they aren't secured.`,
+  // CLE-01 (SCRUM-2379, Constitution §1.5): jurisdiction tags are informational
+  // metadata only. Mirrors JURISDICTION_INFORMATIONAL_DISCLAIMER in
+  // services/worker/src/exports/cle-log-export.ts (embedded in the export
+  // artifacts) — keep the two statements consistent in substance.
+  JURISDICTION_DISCLAIMER:
+    'Jurisdiction tags are informational metadata only. Exports do not determine or assert compliance with, or adequacy under, the continuing education requirements of any jurisdiction or licensing body.',
+} as const;
+
+// CPE-02 (SCRUM-2380): org CPE dashboard MVP.
+export const ORG_CPE_DASHBOARD_LABELS = {
+  TITLE: 'Team CPE Records',
+  DESCRIPTION: 'Per-member continuing education records for the selected reporting period.',
+  PERIOD_LABEL: 'Reporting period',
+  PERIOD_YTD: 'Year to date',
+  PERIOD_90_DAYS: 'Last 90 days',
+  PERIOD_12_MONTHS: 'Last 12 months',
+  PERIOD_ALL_TIME: 'All time',
+  TILE_MEMBERS: 'Members with records',
+  TILE_SECURED: 'Secured records',
+  TILE_PENDING: 'Pending records',
+  COL_MEMBER: 'Member',
+  COL_SECURED: 'Secured',
+  COL_PENDING: 'Pending',
+  COL_LAST_ACTIVITY: 'Last activity',
+  MEMBER_SCOPE_NOTE: 'Showing your records only.',
+  UNKNOWN_MEMBER: 'Unknown member',
+  EMPTY: 'No CPE records in this period',
+  EMPTY_DESC: 'Member records appear here once CPE documents are secured or queued for the selected period.',
+  ERROR: 'Unable to load team CPE records.',
+  NO_ACTIVITY: '—',
+  // Round-1 review finding 1: terminal records (revoked, expired, or
+  // superseded) are counted in neither tile — surface them explicitly so they
+  // never vanish silently from the dashboard.
+  TERMINAL_FOOTNOTE: (count: number) =>
+    count === 1
+      ? '1 record in this period is revoked, expired, or superseded and is not counted in the totals above.'
+      : `${count} records in this period are revoked, expired, or superseded and are not counted in the totals above.`,
+} as const;
+
+// =============================================================================
 // RULE BUILDER WIZARD (ARK-108 / CIBA-HARDEN-04)
 // =============================================================================
 
@@ -2682,21 +2781,21 @@ export const INDEPENDENT_VERIFY_LABELS = {
   HERO_TITLE: 'Verify Without Arkova',
   HERO_SUBTITLE: 'Every Arkova credential can be independently verified using publicly available data. If Arkova disappears tomorrow, your proofs still work.',
   STEP_1_TITLE: 'Compute the Document Fingerprint',
-  STEP_1_DESC: 'Generate the SHA-256 hash of your document. This is the same fingerprint Arkova computed when the document was anchored.',
+  STEP_1_DESC: 'Compute the SHA-256 fingerprint of your document. This is the same fingerprint Arkova computed when the document was anchored.',
   STEP_1_CMD: 'shasum -a 256 your-document.pdf',
   STEP_2_TITLE: 'Find the Network Record',
-  STEP_2_DESC: 'Look up the anchoring record on a public block explorer. The OP_RETURN data contains a Merkle root that includes your fingerprint.',
+  STEP_2_DESC: 'Look up the anchoring record on a public network explorer. The OP_RETURN data contains a Merkle root that includes your fingerprint.',
   STEP_2_CMD: 'curl https://mempool.space/api/tx/{txid}',
   STEP_3_TITLE: 'Verify the Merkle Proof',
   STEP_3_DESC: 'Using the Merkle proof from your proof package, verify that your fingerprint is included in the Merkle root.',
-  STEP_3_CMD: './verify.sh --fingerprint {hash} --proof proof-package.json',
+  STEP_3_CMD: './verify.sh --fingerprint {fingerprint} --proof proof-package.json',
   STEP_4_TITLE: 'Verify the Timestamp (Optional)',
   STEP_4_DESC: 'If the credential has an RFC 3161 timestamp, verify it independently using OpenSSL.',
   STEP_4_CMD: 'openssl ts -verify -data signed-attrs.der -in timestamp.tst -CAfile tsa-ca.pem',
   FAQ_SHUTDOWN_Q: 'What if Arkova shuts down?',
   FAQ_SHUTDOWN_A: 'Your proofs remain valid. The network records are permanent and public. The Merkle proofs in your proof packages contain everything needed for independent verification.',
   FAQ_OFFLINE_Q: 'What if the Arkova website is offline?',
-  FAQ_OFFLINE_A: 'You can verify using only the proof package file and a public block explorer. No Arkova API call is required.',
+  FAQ_OFFLINE_A: 'You can verify using only the proof package file and a public network explorer. No Arkova API call is required.',
   FAQ_TRUST_Q: 'Do I need to trust Arkova?',
   FAQ_TRUST_A: 'No. Arkova is a convenience layer. The cryptographic proofs are self-contained and verifiable by anyone with standard tools.',
   DOWNLOAD_SCRIPT: 'Download Verification Script',
@@ -2976,8 +3075,14 @@ export const PRIVACY_NOTICE_LABELS = {
   THAILAND_DESCRIPTION: 'Applies to data subjects in Thailand. Your personal data is protected under the PDPA. You have access, portability, objection, deletion, restriction, and rectification rights. Cross-border transfers use SCCs aligned with ASEAN MCCs or GDPR SCCs referencing Thai law.',
   MALAYSIA_TITLE: 'Malaysia PDPA 2010 (as amended 2024)',
   MALAYSIA_DESCRIPTION: 'Applies to data subjects in Malaysia. Your personal data is protected under the PDPA as amended in 2024. You have access, correction, consent withdrawal, and (from 2025) data portability rights. Cross-border transfers use a risk-based Transfer Impact Assessment framework.',
-  DPF_TITLE: 'EU-US Data Privacy Framework',
-  DPF_DESCRIPTION: 'Arkova self-certifies under the EU-US Data Privacy Framework for lawful transatlantic personal data transfers. Individuals have the right to access, correct, or delete their data, and may file complaints with their national DPA or the DPF Panel.',
+  DPF_TITLE: 'EU–US Personal Data Transfers',
+  // SCRUM-2283: the prior copy falsely asserted "Arkova self-certifies under the
+  // EU-US Data Privacy Framework". Arkova does NOT hold an active DPF
+  // self-certification, so that claim is removed (R-7 claims gate). The
+  // replacement lawful-transfer basis (e.g. executed EU Standard Contractual
+  // Clauses) is COUNSEL-REQUIRED and must not be invented here — placeholder
+  // pending legal review.
+  DPF_DESCRIPTION: 'The lawful basis for transatlantic personal data transfers is under review by legal counsel and will be published here once confirmed. Individuals retain the right to access, correct, or delete their data and to file a complaint with their national data protection authority. [Counsel review required — do not assert a specific transfer mechanism until confirmed.]',
   REGULATOR_LABEL: 'Regulator',
   RIGHTS_LABEL: 'Your Rights',
   TRANSFER_BASIS_LABEL: 'Cross-Border Transfer Basis',
@@ -3056,7 +3161,7 @@ export const EVIDENCE_LEVEL_LABELS = {
 export const EVIDENCE_LEVEL_DESCRIPTIONS = {
   issuer_anchored: 'Verified directly with the issuing organization. The credential was cryptographically anchored by the original issuer.',
   source_signed: 'The credential source provided a cryptographic signature proving origin and integrity.',
-  account_linked: 'Imported from an authenticated account. The holder proved access to the issuing platform.',
+  account_linked: 'Imported from a connected account. Proves the holder had access to that account — the originating organization did not vouch for this record.',
   captured_url: 'Captured from a public URL. The content was fetched and fingerprinted at the recorded time.',
   ai_captured: 'Extracted using AI from an uploaded document. Content was parsed and structured automatically.',
 } as const satisfies Record<EvidenceLevel, string>;
@@ -3161,7 +3266,8 @@ export const QUEUE_LIFECYCLE_DESCRIPTIONS = {
   queued: 'Your document is in the queue to be secured. Queueing is free — no credits are used.',
   processing: 'Your document is being secured now.',
   materialized: 'Your document has its network receipt and is awaiting final confirmation.',
-  anchored: 'Your document is permanently secured and independently verifiable.',
+  // SCRUM-2495 claims review (§1.5): fingerprint is permanently secured, not the document.
+  anchored: "Your document's fingerprint is permanently secured and independently verifiable.",
   failed: 'We could not secure this document. You were not charged. You can try again.',
   skipped: 'This document was not secured — it was a duplicate or you cancelled. No credits were used.',
 } as const;
@@ -3230,6 +3336,73 @@ export const SECURE_QUEUE_LABELS = {
   SECURED_TOAST: 'Your document has been secured.',
 } as const;
 
+// ─── SCRUM-2481 badge honesty (Lane 3) ───────────────────────────────────────
+//
+// Purely additive, collision-safe block. Does NOT edit BADGE_LABELS,
+// EVIDENCE_LEVEL_LABELS, or EVIDENCE_LEVEL_DESCRIPTIONS in place — those objects
+// are edited by the copy.ts-touching soaking PRs. This block is HELD to land
+// AFTER those PRs merge; until then EvidenceLevelBadge.tsx and
+// SourceProvenanceDisplay.tsx carry local-const fallbacks with identical copy,
+// so swapping the components to import from here is a no-op behaviour change.
+//
+// HONESTY INVARIANT (§1.3 / §1.5 / SCRUM-2481): the three non-issuer tiers
+// (account_linked / captured_url / ai_captured) must never compose the word
+// "Verified", "Issuer", "Authenticated" — or any banned §1.3 term — into their
+// alt text or triad. Enforced by EvidenceLevelBadge.test.tsx + npm run lint:copy.
+
+/** Per-tier alt / aria-label. Non-issuer tiers carry NO issuer-family wording. */
+export const EVIDENCE_LEVEL_BADGE_ALT = {
+  issuer_anchored:
+    'Issuer Anchored: authenticated directly by the issuing organization.',
+  source_signed:
+    'Source Signed: the credential source cryptographically signed this record, proving issuer origin.',
+  account_linked:
+    'Account Linked: imported from a connected account. Proves account access only; the originating organization did not vouch for this record.',
+  captured_url:
+    'Captured URL Evidence: fetched from a public web page. Records what was captured, not who published it.',
+  ai_captured:
+    'AI-Captured Evidence: extracted by AI from an uploaded document. Content parsed automatically; source identity not established.',
+} as const satisfies Record<EvidenceLevel, string>;
+
+/** Row labels for the measured / asserted / NOT-asserted triad (§1.5). */
+export const EVIDENCE_TRIAD_LABELS = {
+  MEASURED: 'Measured',
+  ASSERTED: 'Asserted',
+  NOT_ASSERTED: 'Not asserted',
+} as const;
+
+/**
+ * Per-tier measured / asserted / NOT-asserted triad (§1.5 honesty).
+ * Every non-issuer tier lists "issuer identity" under `notAsserted`.
+ */
+export const EVIDENCE_TRIAD = {
+  issuer_anchored: {
+    measured: 'The credential fingerprint and the time it was anchored.',
+    asserted: 'Issuer identity — anchored directly by the issuing organization.',
+    notAsserted: 'The real-world facts the credential describes (e.g. skills held).',
+  },
+  source_signed: {
+    measured: 'The credential fingerprint and the source signature.',
+    asserted: 'Issuer origin — a cryptographic signature proves the source.',
+    notAsserted: 'The real-world facts the credential describes.',
+  },
+  account_linked: {
+    measured: 'The fingerprint of the record imported from the connected account.',
+    asserted: 'That the holder had access to the linked account.',
+    notAsserted: 'Issuer identity — the originating organization did not vouch for this record.',
+  },
+  captured_url: {
+    measured: 'The fingerprint of the page content and the time it was captured.',
+    asserted: 'What was present at the public URL when it was captured.',
+    notAsserted: 'Issuer identity — who published the page is not verified.',
+  },
+  ai_captured: {
+    measured: 'The fingerprint of the uploaded document and its AI-extracted fields.',
+    asserted: 'The structured content an AI parsed from the document.',
+    notAsserted: 'Issuer identity — the source of the document is not established.',
+  },
+} as const satisfies Record<EvidenceLevel, { measured: string; asserted: string; notAsserted: string }>;
+
 // =============================================================================
 // S3 Lane-3 CE strings (CE-06a / SCRUM-2377) — Credential Engine publication
 // status. Claims-review gate (CLAUDE.md §1.13 R-7): Credential Engine approved
@@ -3248,4 +3421,48 @@ export const CE_PUBLICATION_COPY = {
     'Credential Engine has approved Arkova to publish credential data. This approval does not assert any further external status.',
   /** Shown while publication remains switched off (the standing default). */
   PUBLICATION_OFF: 'Publication is not enabled.',
+} as const;
+
+// =============================================================================
+// OPS SLO DASHBOARD (SCRUM-2401 / OPS-03) — internal-only, platform-admin gated
+// =============================================================================
+
+export const OPS_SLO_LABELS = {
+  PAGE_TITLE: 'Platform SLOs',
+  PAGE_DESCRIPTION: 'Live operational health across securing, queues, credits, and delivery.',
+  ACCESS_RESTRICTED_TITLE: 'Access Restricted',
+  ACCESS_RESTRICTED_DESC: 'Platform SLO monitoring is only available to platform administrators.',
+  RETURN_TO_DASHBOARD: 'Return to Dashboard',
+  REFRESH: 'Refresh',
+  ALL_CLEAR_BADGE: 'All SLOs Healthy',
+  BREACH_BADGE: 'SLO Breach',
+  UNAVAILABLE: 'Unavailable',
+  LAST_CHECKED: 'Last checked',
+
+  ANCHOR_SECURED_RATE_TITLE: 'Anchor Secure Rate',
+  ANCHOR_SECURED_RATE_SUBTITLE: (secured: string, total: string) => `${secured} of ${total} secured`,
+  ANCHOR_SECURED_RATE_UNAVAILABLE: 'Secure-rate cache not yet populated.',
+
+  CONNECTOR_QUEUE_TITLE: 'Connector Queue Depth',
+  CONNECTOR_QUEUE_SUBTITLE: (anchored: string, failed: string) => `${anchored} secured · ${failed} failed`,
+  CONNECTOR_QUEUE_UNAVAILABLE: 'Queue depth temporarily unavailable.',
+
+  CREDIT_CONSERVATION_TITLE: 'Credit Ledger Conservation',
+  CREDIT_CONSERVATION_HEALTHY: 'Conservation holds',
+  CREDIT_CONSERVATION_BREACH: (n: number) => `${n} organization${n === 1 ? '' : 's'} diverged`,
+  CREDIT_CONSERVATION_SUBTITLE: (checked: string) => `${checked} organizations checked`,
+  CREDIT_CONSERVATION_UNAVAILABLE: 'Conservation check temporarily unavailable.',
+
+  WEBHOOK_DELIVERY_TITLE: 'Delivery Success Rate',
+  WEBHOOK_DELIVERY_SUBTITLE: (success: string, total: string, hours: number) =>
+    `${success} of ${total} delivered (last ${hours}h)`,
+  WEBHOOK_DELIVERY_UNAVAILABLE: 'Delivery stats temporarily unavailable.',
+
+  API_ERRORS_TITLE: 'Verification Error Rate',
+  API_ERRORS_SUBTITLE: (errors: string, total: string, hours: number) =>
+    `${errors} of ${total} requests failed (last ${hours}h)`,
+  API_ERRORS_UNAVAILABLE: 'Request stats temporarily unavailable.',
+
+  NO_DATA_YET: 'No data yet',
+  FETCH_ERROR_TITLE: 'Unable to load platform SLOs',
 } as const;

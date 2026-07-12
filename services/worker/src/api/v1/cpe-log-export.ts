@@ -153,6 +153,9 @@ router.post('/', async (req: Request, res: Response) => {
     res.status(200).json({
       request_id: result.request_id,
       record_count: result.record_count,
+      // SCRUM-2378 (CPE-01): in-period records excluded because they are not
+      // yet SECURED. Additive field (§1.8) — the FE renders an inline notice.
+      excluded_count: result.excluded_count,
       // Advisory echo only — both `exports.pdf` and `exports.json` are always
       // present regardless of `format`; this just records the caller's intent.
       requested_format: format,
