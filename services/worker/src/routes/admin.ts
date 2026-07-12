@@ -10,6 +10,7 @@ import { Router } from 'express';
 import { logger } from '../utils/logger.js';
 import { rateLimiters } from '../utils/rateLimit.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
+import { isAdminRouterPath } from './admin-paths.js';
 // DEBT-3: Static imports — circular dependency resolved by router extraction
 import { handleTreasuryHealth, handleTreasuryStatus, handleTreasuryX402Stats } from '../api/treasury.js';
 import { handlePlatformStats } from '../api/admin-stats.js';
@@ -34,6 +35,13 @@ import { getRateLimitStoreSize } from '../utils/rateLimit.js';
 
 export const adminRouter = Router();
 
+adminRouter.use((req, _res, next) => {
+  if (!isAdminRouterPath(req.path)) {
+    next('router');
+    return;
+  }
+  next();
+});
 adminRouter.use(corsMiddleware);
 adminRouter.use(rateLimiters.checkout);
 
