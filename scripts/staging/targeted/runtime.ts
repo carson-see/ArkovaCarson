@@ -70,14 +70,18 @@ function resolveGcloudPath(): string {
   }
 }
 
+export function resolveGcloudIdentityArgs(): string[] {
+  const args = ['auth', 'print-identity-token'];
+  const audience = process.env.STAGING_GCP_IDENTITY_AUDIENCE?.trim();
+  if (audience) args.push(`--audiences=${audience}`);
+  return args;
+}
+
 function fetchIamToken(): string {
   const env = process.env.STAGING_GCP_IDENTITY;
   if (env) return env.trim();
   const bin = resolveGcloudPath();
-  const args = ['auth', 'print-identity-token'];
-  const audience = process.env.STAGING_GCP_IDENTITY_AUDIENCE?.trim();
-  if (audience) args.push(`--audiences=${audience}`);
-  return execFileSync(bin, args, { encoding: 'utf8' }).trim();
+  return execFileSync(bin, resolveGcloudIdentityArgs(), { encoding: 'utf8' }).trim();
 }
 
 export function iamToken(): string {
@@ -94,6 +98,11 @@ export function iamAuthHeaders(extra: Record<string, string> = {}): Record<strin
   const hasAppBearer = Object.keys(extra).some((key) => key.toLowerCase() === 'authorization');
   if (hasAppBearer) return { 'X-Serverless-Authorization': iam, ...extra };
   return { Authorization: iam, ...extra };
+}
+
+/** Cloud Run IAM only, leaving app-layer Authorization intentionally absent. */
+export function iamOnlyHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return { 'X-Serverless-Authorization': bearerHeader(iamToken()).Authorization, ...extra };
 }
 
 // ─── Service-role Supabase seeder ───────────────────────────────────────────

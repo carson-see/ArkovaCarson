@@ -36,6 +36,11 @@ const required = [
   'tag_url',
   'supabase_project_ref',
   'preflight_result',
+  'tier',
+  'duration_min',
+  'driver_path',
+  'driver_sha256',
+  'changed_behavior',
   'harness_version',
   'tool_version',
   'owner',
@@ -53,7 +58,12 @@ assert.equal(payload.image_digest, 'sha256:ccccccccccccccccccccccccccccccccccccc
 assert.equal(payload.tag_url, 'https://lane-a---arkova-worker-s0e4-lane-a-staging.example.run.app');
 assert.equal(payload.supabase_project_ref, 'sveujcebzkqxbhimotbb');
 assert.equal(payload.preflight_result, 'environment_type=clean_mirror');
-assert.equal(payload.harness_version, 'scripts/staging/load-harness.ts@aaaaaaaaaaaa');
+assert.equal(payload.tier, 'T3');
+assert.equal(payload.duration_min, 2880);
+assert.equal(payload.driver_path, 'services/worker/scripts/pr1408-chain-resilience-driver.ts');
+assert.match(payload.driver_sha256, /^[a-f0-9]{64}$/);
+assert.match(payload.changed_behavior, /bounded retry\/backoff/);
+assert.equal(payload.harness_version, 'services/worker/scripts/pr1408-chain-resilience-driver.ts@aaaaaaaaaaaa');
 assert.equal(payload.tool_version, 'scripts/staging/provision-isolated-rig.sh@aaaaaaaaaaaa');
 assert.match(payload.owner, /^rig-owner@/);
 assert.ok(Array.isArray(payload.stop_conditions), 'stop_conditions must be an array');
@@ -148,6 +158,10 @@ if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
   echo '{"id":"abcdefghijklmnopqrst"}'
   exit 0
 fi
+if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "api-keys" ]]; then
+  echo '[{"name":"service_role","api_key":"fake-service-role-key"}]'
+  exit 0
+fi
 if [[ "$1" == "supabase" ]]; then
   exit 0
 fi
@@ -182,6 +196,7 @@ bad_out=$(
   STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY=test-service-role-key \
   GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  STAGING_CHANGED_BEHAVIOR="PR #1408 chain resilience: preflight test behavior" \
   USER=rig-owner \
   "$PROVISION" --name s0e4-lane-b --apply 2>&1
 )
