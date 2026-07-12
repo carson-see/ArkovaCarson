@@ -76,12 +76,19 @@ export function PrivacyPage() {
 
           <section className="space-y-3">
             <h2 className="text-lg font-semibold text-foreground">5. International Data Transfers</h2>
+            {/*
+              SCRUM-2283: removed the false "Arkova self-certifies under the EU-US
+              Data Privacy Framework" claim (no active DPF self-certification held;
+              R-7 claims gate). The specific EU→US lawful-transfer basis is
+              counsel-required and must not be invented here — placeholder pending
+              legal review.
+            */}
             <p>
-              Arkova self-certifies under the EU-US Data Privacy Framework (DPF) for lawful
-              transatlantic personal data transfers. We also utilize Standard Contractual Clauses
-              (SCCs) for transfers to jurisdictions without adequacy decisions. Our client-side
-              processing architecture minimizes cross-border data flows — documents never leave
-              your device, and only cryptographic fingerprints are transmitted.
+              The lawful basis for transatlantic personal data transfers is currently under review
+              by our legal counsel and will be published here once confirmed. Regardless of the
+              transfer mechanism, our client-side processing architecture minimizes cross-border
+              data flows — documents never leave your device, and only cryptographic fingerprints
+              are transmitted.
             </p>
             <p>
               For transfers involving Brazilian data subjects, we use ANPD-approved Standard

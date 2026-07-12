@@ -35,8 +35,7 @@
 import * as bitcoin from 'bitcoinjs-lib';
 import { logger } from '../utils/logger.js';
 import type { MerkleProofEntry } from '../utils/merkle.js';
-import { isRetryableError } from './utxo-provider.js';
-import type { ConfirmationProofProvider } from './utxo-provider.js';
+import { HttpError, isRetryableError, type ConfirmationProofProvider } from './utxo-provider.js';
 
 // Re-export so callers/tests can import the provider slice alongside the
 // confirmation-proof types from one module.
@@ -578,9 +577,7 @@ function extractBranchForIndex(
  *   3. Below `minConfirmations` ⇒ `pending`.
  *   4. Fetch raw header (getBlockHeaderHex) + the inclusion proof
  *      (getTxOutProof), parse, verify the branch recomputes to the header
- *      merkleroot. A TRANSIENT provider read failure (network/5xx/timeout/429)
- *      ⇒ `pending` (retry next tick, S3-C2); a definitive negative answer or
- *      malformed/mismatched proof ⇒ `stale` with a reason; NEVER throws.
+ *      merkleroot. Any gap ⇒ `stale` with a reason; NEVER throws.
  *
  * The provider is the `ConfirmationProofProvider` slice of `UtxoProvider`;
  * GetBlock's `GetBlockHybridProvider` is the production implementation.
@@ -661,28 +658,22 @@ export async function fetchConfirmationProof(
       provider.getTxOutProof([chainTxId], blockHash),
     ]);
   } catch (err) {
-    // S3-C2 provider-failure semantics: a TRANSIENT read failure (network,
-    // 5xx, timeout, rate limit) — i.e. the provider's own bounded retries were
-    // exhausted while GetBlock was unreachable — is NOT evidence of a reorg.
-    // Degrade to `pending` so the next tick retries, and NEVER fabricate any
-    // proof field (no header, no branch, no mempool-derived pseudo-proof).
-    // Definitive RPC application errors (e.g. "Not all transactions found in
-    // specified or retrieved block") remain `stale`: the provider answered,
-    // and the answer was negative.
-    if (isRetryableError(err)) {
-      logger.warn(
+    // FAULT CLASSIFICATION (#1408): a header/inclusion-proof fetch failure is
+    // NOT uniformly stale. A TRANSIENT failure (HTTP 5xx / 429, timeout /
+    // AbortError, ECONNRESET/ETIMEDOUT, network TypeError) is recoverable — the
+    // block + tx still exist, the RPC node was just briefly unhappy — so it must
+    // stay `pending` and retry on the next tick, NEVER be poisoned as stale.
+    // Only a DEFINITIVE failure (a JSON-RPC application error such as "Block not
+    // found" / "Transaction not in block", or an HTTP 4xx) means the proof will
+    // never populate from a retry ⇒ `stale`.
+    if (isTransientFetchFault(err)) {
+      logger.debug(
         { chainTxId, blockHash, err: errMsg(err) },
-        'confirmation-proof: transient header/proof fetch failure — pending, will retry',
+        'confirmation-proof: header/proof fetch failed transiently — pending (retry next tick)',
       );
-      return {
-        status: 'pending',
-        chainTxId,
-        blockHash,
-        confirmations,
-        reason: 'transient provider failure fetching header or inclusion proof; will retry',
-      };
+      return { status: 'pending', chainTxId, blockHash, confirmations, reason: 'header or inclusion-proof fetch failed transiently' };
     }
-    logger.warn({ chainTxId, blockHash, err: errMsg(err) }, 'confirmation-proof: header/proof fetch failed');
+    logger.warn({ chainTxId, blockHash, err: errMsg(err) }, 'confirmation-proof: header/proof fetch failed definitively');
     return { status: 'stale', chainTxId, blockHash, confirmations, reason: 'header or inclusion-proof fetch failed' };
   }
 
@@ -739,4 +730,21 @@ export async function fetchConfirmationProof(
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Is a header/inclusion-proof fetch failure TRANSIENT (retryable ⇒ `pending`)
+ * rather than DEFINITIVE (⇒ `stale`)?
+ *
+ * Reuses the provider's own {@link isRetryableError} (HTTP 5xx, network
+ * TypeError, AbortError/timeout, ECONNRESET/ECONNREFUSED/ETIMEDOUT) and ADDS
+ * HTTP 429 (rate-limited): a 429 is a "come back later", the single most likely
+ * transient at 10k-anchor batch scale against a shared GetBlock endpoint, yet
+ * `isRetryableError` treats only `status >= 500` as retryable. A JSON-RPC
+ * application error (surfaced by `rpcCall` as a plain `Error("RPC <m> error:
+ * … (code …)")`) and any other 4xx are DEFINITIVE and fall through to stale.
+ */
+function isTransientFetchFault(err: unknown): boolean {
+  if (err instanceof HttpError && err.status === 429) return true;
+  return isRetryableError(err);
 }

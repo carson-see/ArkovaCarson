@@ -27,7 +27,22 @@ import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Logger } from '../utils/logger.js';
 import { config } from '../config.js';
-import { asString, asNumber, asDateOnly, stripTrailingSlashes, formatUtc } from './export-format-helpers.js';
+import {
+  asString,
+  asNumber,
+  asDateOnly,
+  stripTrailingSlashes,
+  formatUtc,
+  uploadAndSignExportArtifacts,
+  assertExportsBucketReady,
+} from './export-format-helpers.js';
+
+// Re-export the canonical private-bucket guard (now defined beside the shared
+// upload seam in `export-format-helpers.ts`, so `uploadAndSignExportArtifacts`
+// can call it without an import cycle) under its historical name, so existing
+// callers/tests/docs that import `assertExportsBucketReady` from this module
+// keep working. `CpeExportStorage` structurally satisfies its `getBucket` seam.
+export { assertExportsBucketReady };
 
 /** Stable, versioned JSON export schema tag. */
 export const CPE_LOG_SCHEMA_VERSION = 'cpe_log_v1' as const;
@@ -96,12 +111,27 @@ export const CpeLogRecordSchema = z
 
 export type CpeLogRecord = z.infer<typeof CpeLogRecordSchema>;
 
+// NOTE (round-1 review): CpeLogRecordSchema/CpeLogV1Schema are INTERNAL-ONLY
+// validators — they check OUR OWN generated artifact before upload and are not
+// published to external consumers (no SDK/docs export references them). The
+// `.strict()` is therefore safe: it can never reject a third party's payload,
+// only catch our own drift at generation time. If these schemas are ever
+// exported for external parsing, `.strict()` must be revisited (§1.8 additive
+// evolution would break strict consumers).
 export const CpeLogV1Schema = z
   .object({
     schema: z.literal(CPE_LOG_SCHEMA_VERSION),
     generated_at: z.string(),
     period: z.object({ start: z.string(), end: z.string() }).strict(),
     record_count: z.number().int().nonnegative(),
+    /**
+     * SCRUM-2378 (CPE-01): count of in-period records EXCLUDED because they are
+     * not yet SECURED. Additive + optional (§1.8) so previously-issued
+     * documents without the field still validate. Always emitted for new
+     * exports — un-SECURED records are excluded, counted, and surfaced; never
+     * silently dropped and never blocking the export.
+     */
+    excluded_count: z.number().int().nonnegative().optional(),
     records: z.array(CpeLogRecordSchema),
     disclaimer: z.literal(NASBA_DISCLAIMER_TEXT),
   })
@@ -172,38 +202,6 @@ export function createSupabaseStorageAdapter(db: SupabaseClient): CpeExportStora
   };
 }
 
-/**
- * Fail-loud precondition: the exports bucket MUST exist and MUST be private.
- *
- * Provisioning the bucket is an ops step (see agents.md) — this guard does NOT
- * create it. It exists so a missing bucket fails with a clear, actionable error
- * (rather than a confusing upload 500 deeper in the flow), and so a bucket that
- * was accidentally made PUBLIC is rejected before any export body is written —
- * a public bucket would expose unsigned export contents and break the CC7
- * no-content-leak guarantee.
- */
-export async function assertExportsBucketReady(
-  storage: CpeExportStorage,
-  bucket: string,
-): Promise<void> {
-  const { exists, isPublic, error } = await storage.getBucket(bucket);
-  if (error && !exists) {
-    throw new Error(
-      `exports Storage bucket "${bucket}" is unavailable (provision it as a private bucket): ${error.message}`,
-    );
-  }
-  if (!exists) {
-    throw new Error(
-      `exports Storage bucket "${bucket}" does not exist — provision it as a private bucket before exporting`,
-    );
-  }
-  if (isPublic) {
-    throw new Error(
-      `exports Storage bucket "${bucket}" is PUBLIC — exports must use a private bucket so signed URLs are the only access path`,
-    );
-  }
-}
-
 export interface CpeLogExportDeps {
   db: SupabaseClient;
   storage: CpeExportStorage;
@@ -212,6 +210,11 @@ export interface CpeLogExportDeps {
   frontendUrl: string;
   /** Storage bucket override (defaults to EXPORTS_STORAGE_BUCKET or `exports`). */
   bucket?: string;
+  /**
+   * Fetch-cap override (defaults to MAX_EXPORT_RECORDS). Test seam only — lets
+   * the cap-displacement behavior be exercised without 5000-row fixtures.
+   */
+  maxRecords?: number;
 }
 
 export interface CpeLogExportArgs {
@@ -231,6 +234,8 @@ export interface CpeLogExportArtifact {
 export interface CpeLogExportResult {
   request_id: string;
   record_count: number;
+  /** In-period records excluded because they are not yet SECURED (SCRUM-2378). */
+  excluded_count: number;
   disclaimer: string;
   exports: {
     pdf: CpeLogExportArtifact;
@@ -391,7 +396,7 @@ function generateCpeLogPdf(
 // ─── Audit event (METADATA ONLY — CC7) ───────────────
 async function emitCpeLogExportedAudit(
   deps: CpeLogExportDeps,
-  args: { userId: string; orgId: string; periodStart: string; periodEnd: string; recordCount: number; requestId: string },
+  args: { userId: string; orgId: string; periodStart: string; periodEnd: string; recordCount: number; excludedCount: number; requestId: string },
 ): Promise<void> {
   // Only the allowed metadata keys. No titles, providers, public_ids, URLs,
   // or any per-credential content — verified by the CC7 leak test.
@@ -400,6 +405,7 @@ async function emitCpeLogExportedAudit(
     period_end: args.periodEnd,
     format: 'pdf+json',
     record_count: args.recordCount,
+    excluded_count: args.excludedCount,
     request_id: args.requestId,
   };
 
@@ -446,15 +452,20 @@ export async function generateCpeLogExport(
   const requestId = args.requestId ?? randomUUID();
   const bucket = deps.bucket ?? DEFAULT_EXPORTS_BUCKET;
 
-  // 0. Fail loud if the destination bucket is missing or public BEFORE we do any
-  //    work — a missing/public bucket is an ops misconfiguration, not a per-user
-  //    error, and must not silently 500 mid-upload or leak unsigned bodies.
-  await assertExportsBucketReady(deps.storage, bucket);
+  const maxRecords = deps.maxRecords ?? MAX_EXPORT_RECORDS;
 
-  // 1. Fetch the caller's CPE anchors in the reporting period. Service-role
-  //    client; scope is enforced by the explicit user_id + org_id filters.
-  //    `issued_at` is the credential completion date used for the period
-  //    window; rows without issued_at are excluded from the period view.
+  // 1. Fetch the caller's SECURED CPE anchors in the reporting period.
+  //    Service-role client; scope is enforced by the explicit user_id + org_id
+  //    filters. `issued_at` is the credential completion date used for the
+  //    period window; rows without issued_at are excluded from the period view.
+  //
+  //    SECURED-only gate (SCRUM-2378 — CPE-01): only records that have reached
+  //    `SECURED` are auditor-grade evidence. The status filter runs IN SQL —
+  //    not post-fetch — so non-SECURED rows can never displace SECURED rows
+  //    inside the fetch cap (round-1 review finding). SECURED-only semantics
+  //    conform to the FE-PROOF-GATE contract (docs/reference/FE_PROOF_GATE_CONTRACT.md:
+  //    proof evidence is SECURED-only; REVOKED/EXPIRED/SUPERSEDED are never
+  //    treated as secured).
   const { data, error } = await deps.db
     .from('anchors')
     .select(
@@ -463,18 +474,56 @@ export async function generateCpeLogExport(
     .eq('user_id', args.userId)
     .eq('org_id', args.orgId)
     .eq('credential_type', 'CPE')
+    .eq('status', 'SECURED')
     .is('deleted_at', null)
     .gte('issued_at', `${args.periodStart}T00:00:00.000Z`)
     .lte('issued_at', `${args.periodEnd}T23:59:59.999Z`)
     .order('issued_at', { ascending: true })
-    .limit(MAX_EXPORT_RECORDS);
+    .limit(maxRecords);
 
   if (error) {
     throw new Error(`failed to load CPE anchors for export: ${error.message}`);
   }
 
-  const anchors = ((data ?? []) as CpeExportAnchorRow[]).slice(0, MAX_EXPORT_RECORDS);
-  const records = anchors.map((a) => buildCpeLogRecord(a, deps.frontendUrl));
+  const securedAnchors = ((data ?? []) as CpeExportAnchorRow[]).slice(0, maxRecords);
+
+  // 1b. Excluded (non-SECURED) records are counted via a SEPARATE count query
+  //     over the same period predicate — never derived from the capped fetch,
+  //     which would undercount once the cap is hit. Surfaced as
+  //     `excluded_count` in the result, the JSON document, and the audit
+  //     event; never silently dropped and never blocking the export.
+  //
+  //     R0-8 / SCRUM-1254 justification (PR #1415, label `count-exact-allowed`):
+  //     `excluded_count` is rendered to the user as an EXACT integer
+  //     ("N records aren't included because they aren't secured." —
+  //     src/lib/copy.ts EXCLUDED_NOTICE), so an approximate planned/estimated
+  //     count would make the notice dishonest. Unlike the whole-table exact
+  //     count the R0-8 rule targets (unfiltered scans of the ~3M-row anchors
+  //     table that hit the 60s PostgREST timeout), THIS count is tightly
+  //     bounded and index-backed: it is filtered to one caller's own anchors
+  //     (`user_id` + `org_id`) of a single `credential_type` inside a date
+  //     window — a small slice, not a table scan. Exact is both correct and
+  //     safe here; the increase is sanctioned via the `count-exact-allowed`
+  //     override, not a rule weakening for hot-path counts.
+  const excludedRes = await deps.db
+    .from('anchors')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', args.userId)
+    .eq('org_id', args.orgId)
+    .eq('credential_type', 'CPE')
+    .neq('status', 'SECURED')
+    .is('deleted_at', null)
+    .gte('issued_at', `${args.periodStart}T00:00:00.000Z`)
+    .lte('issued_at', `${args.periodEnd}T23:59:59.999Z`);
+
+  if (excludedRes.error) {
+    // Fail loud rather than emit a fabricated/incomplete exclusion count —
+    // excluded_count is an honesty surface (§1.5), not decoration.
+    throw new Error(`failed to count excluded CPE records: ${excludedRes.error.message}`);
+  }
+  const excludedCount = excludedRes.count ?? 0;
+
+  const records = securedAnchors.map((a) => buildCpeLogRecord(a, deps.frontendUrl));
   const recordCount = records.length;
 
   // 2. Build artifacts.
@@ -483,6 +532,7 @@ export async function generateCpeLogExport(
     generated_at: new Date().toISOString(),
     period: { start: args.periodStart, end: args.periodEnd },
     record_count: recordCount,
+    excluded_count: excludedCount,
     records,
     disclaimer: NASBA_DISCLAIMER_TEXT,
   };
@@ -490,29 +540,22 @@ export async function generateCpeLogExport(
   const jsonBody = JSON.stringify(CpeLogV1Schema.parse(jsonDoc), null, 2);
   const pdfBody = generateCpeLogPdf(records, args.periodStart, args.periodEnd);
 
-  // 3. Upload both to Storage under an org/user-scoped, unguessable path.
+  // 3+4. Upload both artifacts to an org/user-scoped, unguessable base path and
+  //      sign each — via the shared generic upload/sign seam. That helper runs
+  //      the private-bucket preflight (`assertExportsBucketReady`) exactly once
+  //      BEFORE any body is written, so a missing/public bucket fails loud here
+  //      too — the guard lives inside the shared seam, not skippably per
+  //      exporter (PR #1415, Carson [P1]).
   const base = `cpe-log/${args.orgId}/${args.userId}/${requestId}`;
-  const pdfPath = `${base}.pdf`;
-  const jsonPath = `${base}.json`;
-
-  const pdfUpload = await deps.storage.upload(bucket, pdfPath, new Uint8Array(pdfBody), 'application/pdf');
-  if (pdfUpload.error) {
-    throw new Error(`failed to upload CPE log PDF: ${pdfUpload.error.message}`);
-  }
-  const jsonUpload = await deps.storage.upload(bucket, jsonPath, jsonBody, 'application/json');
-  if (jsonUpload.error) {
-    throw new Error(`failed to upload CPE log JSON: ${jsonUpload.error.message}`);
-  }
-
-  // 4. Sign both.
-  const pdfSigned = await deps.storage.createSignedUrl(bucket, pdfPath, SIGNED_URL_TTL_SECONDS);
-  if (pdfSigned.error || !pdfSigned.signedUrl) {
-    throw new Error(`failed to sign CPE log PDF URL: ${pdfSigned.error?.message ?? 'no url'}`);
-  }
-  const jsonSigned = await deps.storage.createSignedUrl(bucket, jsonPath, SIGNED_URL_TTL_SECONDS);
-  if (jsonSigned.error || !jsonSigned.signedUrl) {
-    throw new Error(`failed to sign CPE log JSON URL: ${jsonSigned.error?.message ?? 'no url'}`);
-  }
+  const exports = await uploadAndSignExportArtifacts({
+    storage: deps.storage,
+    bucket,
+    basePath: base,
+    pdfBody: new Uint8Array(pdfBody),
+    jsonBody,
+    expiresIn: SIGNED_URL_TTL_SECONDS,
+    label: 'CPE',
+  });
 
   // 5. Audit (metadata only — non-fatal).
   await emitCpeLogExportedAudit(deps, {
@@ -521,21 +564,20 @@ export async function generateCpeLogExport(
     periodStart: args.periodStart,
     periodEnd: args.periodEnd,
     recordCount,
+    excludedCount,
     requestId,
   });
 
   deps.logger.info(
-    { requestId, orgId: args.orgId, recordCount },
+    { requestId, orgId: args.orgId, recordCount, excludedCount },
     'CPE compliance log exported',
   );
 
   return {
     request_id: requestId,
     record_count: recordCount,
+    excluded_count: excludedCount,
     disclaimer: NASBA_DISCLAIMER_TEXT,
-    exports: {
-      pdf: { signed_url: pdfSigned.signedUrl, path: pdfPath, expires_in: SIGNED_URL_TTL_SECONDS },
-      json: { signed_url: jsonSigned.signedUrl, path: jsonPath, expires_in: SIGNED_URL_TTL_SECONDS },
-    },
+    exports,
   };
 }

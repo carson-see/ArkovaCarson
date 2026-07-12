@@ -66,6 +66,7 @@ const TreasuryAdminPage = lazyWithRetry(() => import('@/pages/TreasuryAdminPage'
 const PlatformOverviewPage = lazyWithRetry(() => import('@/pages/PlatformOverviewPage').then(m => ({ default: m.PlatformOverviewPage })));
 const SystemHealthPage = lazyWithRetry(() => import('@/pages/SystemHealthPage').then(m => ({ default: m.SystemHealthPage })));
 const PipelineAdminPage = lazyWithRetry(() => import('@/pages/PipelineAdminPage').then(m => ({ default: m.PipelineAdminPage })));
+const OpsSloDashboardPage = lazyWithRetry(() => import('@/pages/OpsSloDashboardPage').then(m => ({ default: m.OpsSloDashboardPage })));
 const PaymentAnalyticsPage = lazyWithRetry(() => import('@/pages/PaymentAnalyticsPage').then(m => ({ default: m.PaymentAnalyticsPage })));
 const MemberDetailPage = lazyWithRetry(() => import('@/pages/MemberDetailPage').then(m => ({ default: m.MemberDetailPage })));
 const AuthCallbackPage = lazyWithRetry(() => import('@/pages/AuthCallbackPage').then(m => ({ default: m.AuthCallbackPage })));
@@ -305,6 +306,7 @@ export function App() {
           <Route path={ROUTES.ADMIN_HEALTH} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="System Health"><SystemHealthPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_TREASURY} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Treasury"><TreasuryAdminPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_PIPELINE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Pipeline"><PipelineAdminPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_OPS_SLO} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Platform SLOs"><OpsSloDashboardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_PAYMENTS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Payments"><PaymentAnalyticsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_USERS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Users"><AdminUsersPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_RECORDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Records"><AdminRecordsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

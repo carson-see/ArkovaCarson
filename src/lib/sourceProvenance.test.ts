@@ -10,10 +10,12 @@ import {
   getEvidenceLevelDescription,
   getEvidenceLevelStrength,
   isStrongEvidence,
+  isIssuerAuthenticated,
   formatProvider,
   buildEvidenceProofFields,
   badgeUrl,
   linkedInCredentialUrl,
+  VERIFICATION_LEVEL_VALUES,
 } from './sourceProvenance';
 
 afterEach(() => {
@@ -130,6 +132,62 @@ describe('evidence level helpers', () => {
     expect(isStrongEvidence('source_signed')).toBe(true);
     expect(isStrongEvidence('captured_url')).toBe(false);
     expect(isStrongEvidence(null)).toBe(false);
+  });
+});
+
+// ─── SCRUM-2481: issuer-authentication honesty gate ──────────────────────────
+describe('isIssuerAuthenticated (SCRUM-2481)', () => {
+  it('is TRUE only for issuer_anchored and source_signed', () => {
+    expect(isIssuerAuthenticated('issuer_anchored')).toBe(true);
+    expect(isIssuerAuthenticated('source_signed')).toBe(true);
+  });
+
+  it('is FALSE for account_linked, captured_url and ai_captured — these can NEVER present as issuer-verified', () => {
+    expect(isIssuerAuthenticated('account_linked')).toBe(false);
+    expect(isIssuerAuthenticated('captured_url')).toBe(false);
+    expect(isIssuerAuthenticated('ai_captured')).toBe(false);
+  });
+
+  it('is FALSE for unknown / null / undefined levels', () => {
+    expect(isIssuerAuthenticated('unknown_level')).toBe(false);
+    expect(isIssuerAuthenticated(null)).toBe(false);
+    expect(isIssuerAuthenticated(undefined)).toBe(false);
+  });
+
+  it('never lets a non-issuer tier reach the issuer-verified (strength>=4) treatment', () => {
+    // The green issuer treatment is gated by isIssuerAuthenticated, which must
+    // be a strict subset of isStrongEvidence. No tier below source_signed may
+    // ever return true.
+    for (const level of VERIFICATION_LEVEL_VALUES) {
+      if (level === 'issuer_anchored' || level === 'source_signed') continue;
+      expect(isIssuerAuthenticated(level)).toBe(false);
+      expect(getEvidenceLevelStrength(level)).toBeLessThan(4);
+    }
+  });
+
+  it('agrees with isStrongEvidence for the issuer tiers (issuer-auth ⊆ strong)', () => {
+    for (const level of VERIFICATION_LEVEL_VALUES) {
+      if (isIssuerAuthenticated(level)) {
+        expect(isStrongEvidence(level)).toBe(true);
+      }
+    }
+  });
+
+  // The evidence-level DESCRIPTION is rendered as the tooltip body on the public
+  // verification page (EvidenceLevelBadge `showDescription` → Radix TooltipContent,
+  // driven off getEvidenceLevelDescription()). It is an off-platform, unauthenticated
+  // surface, so the honesty invariant that guards the alt/aria-label MUST extend to
+  // the tooltip copy too: a non-issuer tier may not imply issuer authentication.
+  // (RED before the fix: account_linked's description read "Imported from an
+  // authenticated account…", surfacing "authenticated" on a non-issuer tier.)
+  it('non-issuer tier DESCRIPTIONS carry no issuer-family wording (Verified / Issuer / Authenticated)', () => {
+    for (const level of VERIFICATION_LEVEL_VALUES) {
+      if (isIssuerAuthenticated(level)) continue;
+      const description = (getEvidenceLevelDescription(level) ?? '').toLowerCase();
+      expect(description, `${level} description must not claim "authenticated"`).not.toContain('authenticated');
+      expect(description, `${level} description must not claim issuer authentication ("verified")`).not.toContain('verified');
+      expect(description, `${level} description must not imply the "issuer" vouched`).not.toContain('issuer');
+    }
   });
 });
 

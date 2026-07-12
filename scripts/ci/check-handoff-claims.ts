@@ -38,11 +38,11 @@ const PATTERNS: ClaimPattern[] = [
   {
     id: 'cloudrun-revision',
     description: 'Cloud Run revision number assertion',
-    regex: /\b(?:rev(?:ision)?|arkova-worker)[\s-]*(?:[a-z-]+)?(\d{5}-[a-z0-9]{3})/gi,
+    regex: /\b(?:rev(?:ision)?|arkova-worker)[\s-]{0,4}(?:[a-z]{1,32}-)?(\d{5}-[a-z0-9]{3})/gi,
     artifactPatterns: [
       /gcloud run services describe/i,
       /github\.com\/.+\/actions\/runs\/\d+/i,
-      /deploy-worker\.yml.*?run/i,
+      /deploy-worker\.yml[^\n]{0,160}\brun\b/i,
     ],
   },
   {
@@ -88,7 +88,7 @@ const PATTERNS: ClaimPattern[] = [
     // the artifact actually corroborates the claim, not just any ticket
     // reference.
     artifactPatterns: [
-      /SCRUM-\d+.*(?:closed|done|merged|shipped)/i,
+      /SCRUM-\d+[^\n]{0,160}\b(?:closed|done|merged|shipped)\b/i,
       /confluence\.atlassian\.com|arkova\.atlassian\.net\/wiki\/spaces\/A\/pages\/\d+/i,
       /github\.com\/.+\/pull\/\d+/i, // a closed PR list IS evidence of the count
     ],
@@ -106,7 +106,20 @@ const PATTERNS: ClaimPattern[] = [
 
 // Accepts either the strict form `..._Last refreshed: YYYY-MM-DD by <author> — claims verified against gcloud/MCP/CI output._`
 // or the form with optional parenthetical narrative between `output` and `._`.
-const FOOTER_RE = /_Last refreshed:\s*\d{4}-\d{2}-\d{2}\s+by\s+\S+.*?claims verified against gcloud\/MCP\/CI output[^_]*\._/i;
+const FOOTER_PREFIX_RE = /^_Last refreshed:\s*\d{4}-\d{2}-\d{2}\s+by\s+\S+/i;
+const FOOTER_CLAIM_TEXT = 'claims verified against gcloud/MCP/CI output';
+
+function isValidFooter(line: string): boolean {
+  const trimmed = line.trim();
+  if (!FOOTER_PREFIX_RE.test(trimmed) || !trimmed.endsWith('._')) return false;
+
+  const normalized = trimmed.toLowerCase();
+  const claimStart = normalized.indexOf(FOOTER_CLAIM_TEXT.toLowerCase());
+  if (claimStart === -1) return false;
+
+  const afterClaim = trimmed.slice(claimStart + FOOTER_CLAIM_TEXT.length, -2);
+  return !afterClaim.includes('_');
+}
 
 interface Violation {
   pattern: ClaimPattern;
@@ -257,7 +270,7 @@ function main(): void {
   // the LAST non-empty line of the file.
   const handoffBody = readFileSync(HANDOFF_PATH, 'utf8');
   const trailing = handoffBody.split('\n').filter((l) => l.trim().length > 0).slice(-1)[0] ?? '';
-  const footerOk = FOOTER_RE.test(trailing);
+  const footerOk = isValidFooter(trailing);
 
   const override = isOverridden();
   if (violations.length === 0 && footerOk) {
