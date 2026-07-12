@@ -193,7 +193,3 @@ public/vendor/ort/
 .cache/
 .parcel-cache/
 .vercel
-
-# Python bytecode
-__pycache__/
-*.pyc
