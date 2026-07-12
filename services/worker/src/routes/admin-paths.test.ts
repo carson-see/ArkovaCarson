@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isAdminRouterPath } from './admin-paths';
+import { isAdminRouterPath } from './admin-paths.js';
 
 describe('admin router path guard', () => {
   it('matches admin-owned paths mounted below /api', () => {

@@ -20,6 +20,7 @@ import {
   parseTxOutProof,
   type ConfirmationProofProvider,
 } from './confirmation-proof.js';
+import { HttpError } from './utxo-provider.js';
 
 type ProviderSliceType = ConfirmationProofProvider;
 
@@ -604,5 +605,153 @@ describe('fetchConfirmationProof — reorg / stale', () => {
     const proof = await fetchConfirmationProof(provider, { chainTxId: 'not-a-txid' });
     expect(proof.status).toBe('stale');
     expect(provider.getRawTransaction).not.toHaveBeenCalled();
+  });
+});
+
+// ─── S3-C2: provider-failure semantics ──────────────────────────────────────
+// A TRANSIENT GetBlock read failure on the header/inclusion-proof fetch must
+// degrade to `pending` (retry next tick) — NEVER `stale` (reorg/missing), and
+// NEVER a fabricated or mempool-derived pseudo-proof. Definitive application
+// errors (e.g. "tx not in block") stay `stale`.
+
+describe('S3-C2 provider-failure semantics — transient read failure degrades to pending', () => {
+  const txid = '9'.repeat(64);
+  const minedTx = { txid, confirmations: 10, blockhash: 'b'.repeat(64), vout: [] };
+
+  function expectNoProofFields(proof: {
+    blockHeader?: string;
+    blockMerkleRoot?: string;
+    merkleBranch?: unknown;
+    txIndex?: number;
+  }) {
+    expect(proof.blockHeader).toBeUndefined();
+    expect(proof.blockMerkleRoot).toBeUndefined();
+    expect(proof.merkleBranch).toBeUndefined();
+    expect(proof.txIndex).toBeUndefined();
+  }
+
+  it('header fetch failing with a 5xx → pending (NOT stale), no proof fields fabricated', async () => {
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue(minedTx),
+      getBlockHeaderHex: vi.fn().mockRejectedValue(new HttpError('GetBlock down: HTTP 503', 503)),
+      getTxOutProof: vi.fn().mockResolvedValue('00'),
+    });
+    const proof = await fetchConfirmationProof(provider, { chainTxId: txid });
+    expect(proof.status).toBe('pending');
+    expect(proof.reason).toMatch(/transient/i);
+    expectNoProofFields(proof);
+  });
+
+  it('inclusion-proof fetch failing with a network error → pending', async () => {
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue(minedTx),
+      getBlockHeaderHex: vi.fn().mockResolvedValue('11'.repeat(80)),
+      getTxOutProof: vi.fn().mockRejectedValue(new TypeError('fetch failed')),
+    });
+    const proof = await fetchConfirmationProof(provider, { chainTxId: txid });
+    expect(proof.status).toBe('pending');
+    expectNoProofFields(proof);
+  });
+
+  it('timeout (AbortError) → pending', async () => {
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue(minedTx),
+      getBlockHeaderHex: vi.fn().mockRejectedValue(new DOMException('aborted', 'AbortError')),
+      getTxOutProof: vi.fn().mockResolvedValue('00'),
+    });
+    const proof = await fetchConfirmationProof(provider, { chainTxId: txid });
+    expect(proof.status).toBe('pending');
+  });
+
+  it('connection reset (ECONNRESET) → pending', async () => {
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue(minedTx),
+      getBlockHeaderHex: vi.fn().mockResolvedValue('11'.repeat(80)),
+      getTxOutProof: vi.fn().mockRejectedValue(new Error('read ECONNRESET')),
+    });
+    const proof = await fetchConfirmationProof(provider, { chainTxId: txid });
+    expect(proof.status).toBe('pending');
+  });
+
+  it('rate limit (429) → pending', async () => {
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue(minedTx),
+      getBlockHeaderHex: vi.fn().mockRejectedValue(new HttpError('rate limited', 429)),
+      getTxOutProof: vi.fn().mockResolvedValue('00'),
+    });
+    const proof = await fetchConfirmationProof(provider, { chainTxId: txid });
+    expect(proof.status).toBe('pending');
+  });
+
+  it('definitive RPC application error stays stale (e.g. tx not found in block)', async () => {
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue(minedTx),
+      getBlockHeaderHex: vi.fn().mockResolvedValue('11'.repeat(80)),
+      getTxOutProof: vi.fn().mockRejectedValue(
+        new Error('RPC gettxoutproof error: Not all transactions found in specified or retrieved block (code -5)'),
+      ),
+    });
+    const proof = await fetchConfirmationProof(provider, { chainTxId: txid });
+    expect(proof.status).toBe('stale');
+    expectNoProofFields(proof);
+  });
+
+  it('terminal state: a provider that always fails transiently still resolves (pending) — never throws or hangs', async () => {
+    const provider = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue(minedTx),
+      getBlockHeaderHex: vi.fn().mockRejectedValue(new HttpError('still down', 502)),
+      getTxOutProof: vi.fn().mockRejectedValue(new HttpError('still down', 502)),
+    });
+    await expect(fetchConfirmationProof(provider, { chainTxId: txid })).resolves.toMatchObject({
+      status: 'pending',
+      chainTxId: txid,
+    });
+  });
+
+  it('recovery: pending on the failing tick, confirmed with a VERIFIED branch on the next tick', async () => {
+    const leaves = [makeTxidLE(21), makeTxidLE(22), makeTxidLE(23)];
+    const proofHex = buildMerkleBlockHex(leaves, 1);
+    const headerHex = proofHex.slice(0, 160);
+    const blockHash = Buffer.from(dsha(Buffer.from(headerHex, 'hex'))).reverse().toString('hex');
+    const targetTxId = displayHex(leaves[1]);
+    const tx = { txid: targetTxId, confirmations: 9, blockhash: blockHash, vout: [] };
+
+    // Tick 1: GetBlock read failure → pending, nothing fabricated.
+    const failing = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue(tx),
+      getBlockHeaderHex: vi.fn().mockRejectedValue(new HttpError('HTTP 500', 500)),
+      getTxOutProof: vi.fn().mockRejectedValue(new HttpError('HTTP 500', 500)),
+    });
+    const tick1 = await fetchConfirmationProof(failing, { chainTxId: targetTxId });
+    expect(tick1.status).toBe('pending');
+    expectNoProofFields(tick1);
+
+    // Tick 2: provider recovered → full confirmed proof whose branch recomputes.
+    const healthy = makeProvider({
+      getRawTransaction: vi.fn().mockResolvedValue(tx),
+      getBlockHeaderHex: vi.fn().mockResolvedValue(headerHex),
+      getTxOutProof: vi.fn().mockResolvedValue(proofHex),
+    });
+    const tick2 = await fetchConfirmationProof(healthy, { chainTxId: targetTxId });
+    expect(tick2.status).toBe('confirmed');
+    expect(tick2.blockHeader).toBe(headerHex);
+    expect(tick2.blockHash).toBe(blockHash);
+    expect(tick2.merkleBranch).toBeDefined();
+    expect(recomputeFromBranch(targetTxId, tick2.merkleBranch!)).toBe(tick2.blockMerkleRoot);
+  });
+
+  it('mempool-shaped provider (header endpoint but NO gettxoutproof) yields pending with NO pseudo-proof fields', async () => {
+    // mempool.space can serve the raw header, but has no CMerkleBlock-format
+    // inclusion proof — the fetch must NOT substitute a header-only or
+    // mempool-derived pseudo-proof.
+    const provider: ConfirmationProofProvider = {
+      getRawTransaction: vi.fn().mockResolvedValue(minedTx),
+      getBlockHeaderHex: vi.fn().mockResolvedValue('11'.repeat(80)),
+      // no getTxOutProof
+    };
+    const proof = await fetchConfirmationProof(provider, { chainTxId: txid });
+    expect(proof.status).toBe('pending');
+    expect(proof.reason).toMatch(/gettxoutproof|inclusion-proof/i);
+    expectNoProofFields(proof);
   });
 });
