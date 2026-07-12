@@ -5,6 +5,13 @@
  * Manages webhook endpoint CRUD via Supabase RPCs.
  * Secrets are generated server-side and returned once at creation.
  *
+ * WH-01/02/03 (SCRUM-2396/2397/2398): also composes the event catalog, the
+ * signed test-ping action, and the delivery history + failed deliveries
+ * (DLQ) sections. Delivery history is read RLS-scoped to the org
+ * (webhook_delivery_logs_read_org, org-admin only); test ping + replay +
+ * dismiss run on the worker's JWT-authed self-service endpoints, which
+ * re-verify ORG_ADMIN server-side.
+ *
  * @see P7-TS-09
  */
 
@@ -14,7 +21,12 @@ import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { AppShell } from '@/components/layout';
-import { WebhookSettings } from '@/components/webhooks';
+import { WebhookSettings, WebhookEventCatalog, WebhookDeliveryLog } from '@/components/webhooks';
+import {
+  useWebhookDeliveries,
+  useWebhookDlq,
+  sendWebhookTestPing,
+} from '@/hooks/useWebhookDeliveries';
 import { supabase } from '@/lib/supabase';
 import { WEBHOOK_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
@@ -40,6 +52,47 @@ export function WebhookSettingsPage() {
   };
 
   const orgId = profile?.org_id;
+
+  // WH-03: delivery history (RLS-scoped Supabase read) + failed deliveries
+  // (worker DLQ projection). Enabled only once the profile resolves an org —
+  // individuals never fire the org-scoped queries/endpoints.
+  const {
+    deliveries,
+    loading: deliveriesLoading,
+    error: deliveriesError,
+    refresh: refreshDeliveries,
+    replay,
+  } = useWebhookDeliveries({ enabled: !!orgId });
+  const {
+    entries: dlqEntries,
+    loading: dlqLoading,
+    error: dlqError,
+    refresh: refreshDlq,
+    dismiss,
+  } = useWebhookDlq({ enabled: !!orgId });
+
+  // WH-03: replay, then refresh both lists — the replay inserted a NEW
+  // delivery-log row (the original is preserved) and may have cleared a
+  // DLQ condition. Errors are surfaced by WebhookDeliveryLog's own toast.
+  const handleReplay = async (deliveryId: string) => {
+    const result = await replay(deliveryId);
+    if (result.ok) {
+      toast.success(WEBHOOK_LABELS.REPLAY_SUCCESS);
+    } else {
+      toast.error(
+        WEBHOOK_LABELS.REPLAY_FAILURE.replace('{status}', String(result.status_code ?? '—')),
+      );
+    }
+    await Promise.all([refreshDeliveries(), refreshDlq()]);
+  };
+
+  // WH-02: signed test ping — refresh the delivery history afterwards so the
+  // recorded test.ping delivery-log row is immediately visible.
+  const handleTestPing = async (endpointId: string) => {
+    const result = await sendWebhookTestPing(endpointId);
+    await refreshDeliveries();
+    return result;
+  };
 
   async function fetchEndpoints() {
     if (!orgId) return;
@@ -134,13 +187,27 @@ export function WebhookSettingsPage() {
       profileLoading={profileLoading}
       onSignOut={handleSignOut}
     >
-      <WebhookSettings
-        endpoints={endpoints}
-        onAdd={handleAdd}
-        onDelete={handleDelete}
-        onToggle={handleToggle}
-        loading={loading}
-      />
+      <div className="space-y-6">
+        <WebhookSettings
+          endpoints={endpoints}
+          onAdd={handleAdd}
+          onDelete={handleDelete}
+          onToggle={handleToggle}
+          onTestPing={handleTestPing}
+          loading={loading}
+        />
+        <WebhookDeliveryLog
+          deliveries={deliveries}
+          dlqEntries={dlqEntries}
+          loading={deliveriesLoading}
+          dlqLoading={dlqLoading}
+          error={deliveriesError}
+          dlqError={dlqError}
+          onReplay={handleReplay}
+          onDismiss={dismiss}
+        />
+        <WebhookEventCatalog />
+      </div>
     </AppShell>
   );
 }

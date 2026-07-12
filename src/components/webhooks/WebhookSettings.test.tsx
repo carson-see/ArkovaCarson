@@ -448,6 +448,85 @@ describe('WebhookSettings', () => {
   });
 
   // =========================================================================
+  // WH-02 (SCRUM-2397): signed test ping
+  // =========================================================================
+
+  describe('signed test ping', () => {
+    it('shows the test button only on ACTIVE endpoints when onTestPing is provided', () => {
+      const onTestPing = vi.fn().mockResolvedValue({ success: true, status_code: 200, event_id: 'evt-1' });
+      render(<WebhookSettings {...defaultProps} onTestPing={onTestPing} />);
+
+      const buttons = screen.getAllByRole('button', { name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION) });
+      // ep-1 is active, ep-2 is inactive → exactly one test button.
+      expect(buttons).toHaveLength(1);
+    });
+
+    it('does not render test buttons when onTestPing is not provided', () => {
+      render(<WebhookSettings {...defaultProps} />);
+      expect(
+        screen.queryByRole('button', { name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION) }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('calls onTestPing and shows the delivered/accepted result with the response code', async () => {
+      const onTestPing = vi.fn().mockResolvedValue({ success: true, status_code: 200, event_id: 'evt-1' });
+      render(<WebhookSettings {...defaultProps} onTestPing={onTestPing} />);
+
+      await userEvent.click(screen.getByRole('button', { name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION) }));
+
+      await waitFor(() => {
+        expect(onTestPing).toHaveBeenCalledWith('ep-1');
+      });
+      // Success copy interpolates {status}.
+      const expected = WEBHOOK_LABELS.TEST_PING_SUCCESS.replace('{status}', '200');
+      expect(await screen.findByText(expected)).toBeInTheDocument();
+    });
+
+    it('shows the not-accepted result when the receiver returns non-2xx', async () => {
+      const onTestPing = vi.fn().mockResolvedValue({ success: false, status_code: 500, event_id: 'evt-1' });
+      render(<WebhookSettings {...defaultProps} onTestPing={onTestPing} />);
+
+      await userEvent.click(screen.getByRole('button', { name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION) }));
+
+      const expected = WEBHOOK_LABELS.TEST_PING_FAILURE.replace('{status}', '500');
+      expect(await screen.findByText(expected)).toBeInTheDocument();
+    });
+
+    it('shows a friendly error when the ping call itself fails', async () => {
+      const onTestPing = vi.fn().mockRejectedValue(new Error(WEBHOOK_LABELS.TEST_PING_ERROR));
+      render(<WebhookSettings {...defaultProps} onTestPing={onTestPing} />);
+
+      await userEvent.click(screen.getByRole('button', { name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION) }));
+
+      expect(await screen.findByText(WEBHOOK_LABELS.TEST_PING_ERROR)).toBeInTheDocument();
+    });
+
+    it('disables the test button while a ping is in flight (double-click guard)', async () => {
+      let resolvePing: (v: { success: boolean; status_code: number; event_id: string }) => void = () => {};
+      const onTestPing = vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolvePing = resolve;
+          }),
+      );
+      render(<WebhookSettings {...defaultProps} onTestPing={onTestPing} />);
+
+      const button = screen.getByRole('button', { name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION) });
+      await userEvent.click(button);
+
+      const inFlight = screen.getByRole('button', { name: new RegExp(WEBHOOK_LABELS.TEST_PING_SENDING) });
+      expect(inFlight).toBeDisabled();
+      await userEvent.click(inFlight);
+      expect(onTestPing).toHaveBeenCalledTimes(1);
+
+      resolvePing({ success: true, status_code: 200, event_id: 'evt-1' });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION) })).not.toBeDisabled();
+      });
+    });
+  });
+
+  // =========================================================================
   // Header & Metadata
   // =========================================================================
 
