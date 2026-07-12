@@ -14,7 +14,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 import {
   RpcUtxoProvider, MempoolUtxoProvider, GetBlockHybridProvider, createUtxoProvider,
-  HttpError, retryWithBackoff, isRetryableError, isDuplicateTxError,
+  HttpError, RpcApplicationError, retryWithBackoff, isRetryableError, isDuplicateTxError,
 } from './utxo-provider.js';
 import { logger } from '../utils/logger.js';
 
@@ -505,5 +505,361 @@ describe('PROOF-03 getBlockHeaderHex / getTxOutProof', () => {
   it('MempoolUtxoProvider does NOT implement getTxOutProof (forces honest pending, no fabricated branch)', () => {
     const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
     expect((provider as unknown as { getTxOutProof?: unknown }).getTxOutProof).toBeUndefined();
+  });
+});
+
+// ─── S3-C2: chain-resilience hardening ───────────────────────────────────────
+// Bounded retry termination, backoff delay bounding, 429-as-transient, and
+// per-provider broadcast idempotency ("already-known" == success) regressions.
+
+describe('S3-C2 retryWithBackoff bounded termination (no infinite loop)', () => {
+  const noopDelay = () => Promise.resolve();
+
+  it('always-failing retryable error reaches a terminal throw after default attempts (1 + 3 retries)', async () => {
+    const fn = vi.fn().mockRejectedValue(new HttpError('persistent 503', 503));
+    await expect(retryWithBackoff(fn, { name: 'test', delayFn: noopDelay })).rejects.toThrow('persistent 503');
+    expect(fn).toHaveBeenCalledTimes(4);
+  });
+
+  it('maxRetries: Infinity is clamped to the hard cap (8) — terminates, never loops', async () => {
+    let calls = 0;
+    // Escape hatch: if the cap were NOT enforced, the fn eventually succeeds and
+    // the rejection assertion fails FAST instead of the test hanging forever.
+    const fn = vi.fn().mockImplementation(() => {
+      calls++;
+      if (calls > 50) return Promise.resolve('escaped-the-cap');
+      return Promise.reject(new HttpError('always 500', 500));
+    });
+    await expect(
+      retryWithBackoff(fn, { name: 'test', maxRetries: Infinity, delayFn: noopDelay }),
+    ).rejects.toThrow('always 500');
+    expect(fn).toHaveBeenCalledTimes(9); // 1 initial + 8 (hard cap)
+  });
+
+  it('maxRetries: NaN falls back to the default and rethrows the REAL error (not undefined)', async () => {
+    const fn = vi.fn().mockRejectedValue(new HttpError('real error', 502));
+    await expect(
+      retryWithBackoff(fn, { name: 'test', maxRetries: Number.NaN, delayFn: noopDelay }),
+    ).rejects.toThrow('real error');
+    expect(fn).toHaveBeenCalledTimes(4); // default 3 retries
+  });
+
+  it('negative maxRetries clamps to 0 — single attempt, immediate terminal throw', async () => {
+    const fn = vi.fn().mockRejectedValue(new HttpError('boom', 500));
+    await expect(
+      retryWithBackoff(fn, { name: 'test', maxRetries: -5, delayFn: noopDelay }),
+    ).rejects.toThrow('boom');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('fractional maxRetries floors (2.7 → 2 retries: 3 attempts, 2 delays)', async () => {
+    const delays: number[] = [];
+    const fn = vi.fn().mockRejectedValue(new HttpError('x', 500));
+    await expect(
+      retryWithBackoff(fn, {
+        name: 'test',
+        maxRetries: 2.7,
+        delayFn: (ms) => { delays.push(ms); return Promise.resolve(); },
+      }),
+    ).rejects.toThrow();
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(delays).toHaveLength(2);
+  });
+});
+
+describe('S3-C2 backoff delay bounding', () => {
+  it('per-attempt delay is capped at 30s even as the exponential grows', async () => {
+    const delays: number[] = [];
+    const fn = vi.fn().mockRejectedValue(new HttpError('x', 500));
+    await expect(
+      retryWithBackoff(fn, {
+        name: 'test',
+        maxRetries: 4,
+        baseDelayMs: 10_000,
+        delayFn: (ms) => { delays.push(ms); return Promise.resolve(); },
+        randomFn: () => 1,
+      }),
+    ).rejects.toThrow();
+    // Uncapped would be [10000, 20000, 40000, 80000].
+    expect(delays).toEqual([10_000, 20_000, 30_000, 30_000]);
+  });
+
+  it('non-finite baseDelayMs falls back to the default (1000ms)', async () => {
+    const delays: number[] = [];
+    const fn = vi.fn().mockRejectedValue(new HttpError('x', 500));
+    await expect(
+      retryWithBackoff(fn, {
+        name: 'test',
+        maxRetries: 3,
+        baseDelayMs: Number.NaN,
+        delayFn: (ms) => { delays.push(ms); return Promise.resolve(); },
+        randomFn: () => 1,
+      }),
+    ).rejects.toThrow();
+    expect(delays).toEqual([1000, 2000, 4000]);
+  });
+
+  it('non-positive baseDelayMs falls back to the default (1000ms)', async () => {
+    const delays: number[] = [];
+    const fn = vi.fn().mockRejectedValue(new HttpError('x', 500));
+    await expect(
+      retryWithBackoff(fn, {
+        name: 'test',
+        maxRetries: 3,
+        baseDelayMs: -100,
+        delayFn: (ms) => { delays.push(ms); return Promise.resolve(); },
+        randomFn: () => 1,
+      }),
+    ).rejects.toThrow();
+    expect(delays).toEqual([1000, 2000, 4000]);
+  });
+});
+
+describe('S3-C2 HTTP 429 (rate limit) is transient', () => {
+  it('isRetryableError retries HttpError 429', () => {
+    expect(isRetryableError(new HttpError('rate limited', 429))).toBe(true);
+  });
+  it('still does NOT retry other 4xx (404)', () => {
+    expect(isRetryableError(new HttpError('not found', 404))).toBe(false);
+  });
+  it('MempoolUtxoProvider retries a 429 then succeeds', async () => {
+    mockFetch.mockReset();
+    const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 429 });
+    mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('160000') });
+    expect(await provider.getBlockchainInfo()).toEqual({ chain: 'signet', blocks: 160000 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('S3-C2 broadcast idempotency — already-known == success (per provider path)', () => {
+  beforeEach(() => { mockFetch.mockReset(); });
+
+  // ── RpcUtxoProvider path ──
+  it('RpcUtxoProvider: duplicate on a RETRY attempt (first broadcast landed, response lost) is success', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 }); // response lost
+    mockFetch.mockResolvedValueOnce(rpcErr('txn-already-in-mempool', -26)); // retry: it actually landed
+    const result = await provider.broadcastTx('0200aabb');
+    expect(result.txid).toBe('');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('RpcUtxoProvider: every known already-known variant maps to success', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    const variants = [
+      'Transaction already in block chain',
+      'transaction already in mempool',
+      'txn-already-in-mempool',
+      'txn-already-known',
+      'already known',
+      'tx already exists',
+    ];
+    for (const variant of variants) {
+      mockFetch.mockResolvedValueOnce(rpcErr(variant, -27));
+      expect((await provider.broadcastTx('0200aabb')).txid).toBe('');
+    }
+    expect(mockFetch).toHaveBeenCalledTimes(variants.length);
+  });
+
+  // ── MempoolUtxoProvider path ──
+  it('MempoolUtxoProvider: duplicate after a transient 503 retry is success', async () => {
+    const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503, text: () => Promise.resolve('service unavailable') });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 400, text: () => Promise.resolve('txn-already-known') });
+    const result = await provider.broadcastTx('0200aabb');
+    expect(result.txid).toBe('');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('MempoolUtxoProvider: HTTP 500 carrying duplicate text is success on the FIRST attempt (no retry churn)', async () => {
+    const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve('Transaction already in block chain') });
+    const result = await provider.broadcastTx('0200aabb');
+    expect(result.txid).toBe('');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  // ── GetBlockHybridProvider path (production broadcast route) ──
+  it('GetBlockHybridProvider: returns txid on success', async () => {
+    const provider = new GetBlockHybridProvider({ rpcUrl: 'https://go.getblock.io/fake-token' });
+    mockFetch.mockResolvedValueOnce(rpcOk('feedface'));
+    expect((await provider.broadcastTx('0200aabb')).txid).toBe('feedface');
+  });
+
+  it('GetBlockHybridProvider: duplicate RPC error is success', async () => {
+    const provider = new GetBlockHybridProvider({ rpcUrl: 'https://go.getblock.io/fake-token' });
+    mockFetch.mockResolvedValueOnce(rpcErr('Transaction already in block chain', -27));
+    const result = await provider.broadcastTx('0200aabb');
+    expect(result.txid).toBe('');
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'GetBlockHybridProvider.broadcastTx' }),
+      expect.stringContaining('already in mempool/chain'),
+    );
+  });
+
+  it('GetBlockHybridProvider: duplicate on a RETRY attempt is success', async () => {
+    const provider = new GetBlockHybridProvider({ rpcUrl: 'https://go.getblock.io/fake-token' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 502 });
+    mockFetch.mockResolvedValueOnce(rpcErr('txn-already-known', -26));
+    const result = await provider.broadcastTx('0200aabb');
+    expect(result.txid).toBe('');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('GetBlockHybridProvider: non-duplicate RPC error throws without retry (terminal)', async () => {
+    const provider = new GetBlockHybridProvider({ rpcUrl: 'https://go.getblock.io/fake-token' });
+    mockFetch.mockResolvedValueOnce(rpcErr('bad-txns-inputs-missingorspent', -25));
+    await expect(provider.broadcastTx('0200aabb')).rejects.toThrow('bad-txns-inputs-missingorspent');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('GetBlockHybridProvider: persistent 500 exhausts bounded retries then throws (terminal)', async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = new GetBlockHybridProvider({ rpcUrl: 'https://go.getblock.io/fake-token' });
+      mockFetch.mockResolvedValue({ ok: false, status: 500 });
+      const pending = provider.broadcastTx('0200aabb');
+      const guard = expect(pending).rejects.toThrow('HTTP 500');
+      await vi.advanceTimersByTimeAsync(120_000);
+      await guard;
+      expect(mockFetch).toHaveBeenCalledTimes(4); // 1 initial + 3 retries — bounded
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('S3-C2 confirmation-proof provider methods — bounded retry', () => {
+  beforeEach(() => { mockFetch.mockReset(); });
+
+  it('RpcUtxoProvider.getTxOutProof retries a transient 500 then succeeds', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    mockFetch.mockResolvedValueOnce(rpcOk('cafe'));
+    expect(await provider.getTxOutProof(['a'.repeat(64)], 'b'.repeat(64))).toBe('cafe');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('RpcUtxoProvider.getTxOutProof exhausts bounded retries then throws (terminal)', async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+      mockFetch.mockResolvedValue({ ok: false, status: 503 });
+      const pending = provider.getTxOutProof(['a'.repeat(64)]);
+      const guard = expect(pending).rejects.toThrow('HTTP 503');
+      await vi.advanceTimersByTimeAsync(120_000);
+      await guard;
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('GetBlockHybridProvider.getBlockHeaderHex retries a transient network failure then succeeds', async () => {
+    const provider = new GetBlockHybridProvider({ rpcUrl: 'https://go.getblock.io/fake-token' });
+    mockFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+    mockFetch.mockResolvedValueOnce(rpcOk('ab'.repeat(80)));
+    expect(await provider.getBlockHeaderHex('b'.repeat(64))).toBe('ab'.repeat(80));
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─── S3-C2 review #1408-Finding-1: HTTP-wrapped JSON-RPC application errors ──
+// Bitcoin-Core-faithful endpoints wrap JSON-RPC application errors in HTTP 500
+// (`HTTP_INTERNAL_SERVER_ERROR` for every RPC_* app error). rpcCall must parse
+// the response body FIRST on !response.ok: an `{error}` envelope is the REAL,
+// definitive failure. A bare HttpError 500 would (a) misclassify a definitive
+// app error as transient (burning the retry budget) and (b) hide
+// "transaction already in block chain" from the duplicate==success path.
+// Non-JSON / unreadable 5xx bodies keep the fail-safe retryable HttpError.
+
+describe('S3-C2 #1408-Finding-1: rpcCall surfaces HTTP-wrapped JSON-RPC application errors', () => {
+  beforeEach(() => { mockFetch.mockReset(); });
+
+  /** A Bitcoin-Core-faithful failure: HTTP error status, JSON-RPC error body. */
+  function httpWrappedRpcErr(status: number, message: string, code: number) {
+    const body = JSON.stringify({ result: null, error: { message, code }, id: 1 });
+    return { ok: false, status, text: () => Promise.resolve(body) };
+  }
+
+  it('(i) HTTP 500 + {error:{code:-5}} throws a definitive RpcApplicationError — NO retry', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(httpWrappedRpcErr(500, 'Not all transactions found', -5));
+    await expect(provider.getTxOutProof(['a'.repeat(64)])).rejects.toMatchObject({
+      name: 'RpcApplicationError',
+      code: -5,
+      httpStatus: 500,
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1); // definitive → classifier must not retry
+  });
+
+  it('(i) classifier: RpcApplicationError is NOT retryable (definitive), even when HTTP-wrapped', () => {
+    const err = new RpcApplicationError(
+      'RPC gettxoutproof error: Not all transactions found (code -5)', -5, 500,
+    );
+    expect(isRetryableError(err)).toBe(false);
+    expect(err.httpStatus).toBe(500);
+  });
+
+  it('(ii) HTTP 500 + {error:{code:-27, already in block chain}} → duplicate == success', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(httpWrappedRpcErr(500, 'transaction already in block chain', -27));
+    const result = await provider.broadcastTx('0200aabb');
+    expect(result.txid).toBe(''); // prior broadcast landed — success, not unwind
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('(ii) GetBlockHybridProvider: HTTP-wrapped duplicate on broadcast is success too', async () => {
+    const provider = new GetBlockHybridProvider({ rpcUrl: 'https://go.getblock.io/fake-token' });
+    mockFetch.mockResolvedValueOnce(httpWrappedRpcErr(500, 'txn-already-in-mempool', -26));
+    const result = await provider.broadcastTx('0200aabb');
+    expect(result.txid).toBe('');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('(iii) HTTP 500 with a non-JSON body stays a retryable HttpError (fail-safe unchanged)', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve('<html>Internal Server Error</html>') });
+    mockFetch.mockResolvedValueOnce(rpcOk({ chain: 'signet', blocks: 100 }));
+    expect(await provider.getBlockchainInfo()).toEqual({ chain: 'signet', blocks: 100 });
+    expect(mockFetch).toHaveBeenCalledTimes(2); // retried as transient
+  });
+
+  it('(iii) HTTP 500 whose JSON body has NO {error} envelope stays a retryable HttpError', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve('{"result":null}') });
+    mockFetch.mockResolvedValueOnce(rpcOk({ chain: 'signet', blocks: 100 }));
+    expect(await provider.getBlockchainInfo()).toEqual({ chain: 'signet', blocks: 100 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('(iii) unreadable 5xx body (no text()) stays a retryable HttpError — parse never crashes classification', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 502 }); // legacy-mock shape: no .text
+    mockFetch.mockResolvedValueOnce(rpcOk({ chain: 'signet', blocks: 100 }));
+    expect(await provider.getBlockchainInfo()).toEqual({ chain: 'signet', blocks: 100 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('HTTP 4xx with a JSON-RPC error body also surfaces the application error (status preserved)', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(httpWrappedRpcErr(404, 'Method not found', -32601));
+    await expect(provider.getBlockchainInfo()).rejects.toMatchObject({
+      name: 'RpcApplicationError',
+      code: -32601,
+      httpStatus: 404,
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('in-envelope RPC error on HTTP 200 throws the SAME typed RpcApplicationError (single error shape)', async () => {
+    const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+    mockFetch.mockResolvedValueOnce(rpcErr('Wallet not loaded', -18));
+    await expect(provider.getBlockchainInfo()).rejects.toMatchObject({
+      name: 'RpcApplicationError',
+      code: -18,
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });

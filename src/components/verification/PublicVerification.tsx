@@ -15,7 +15,7 @@
 
 import { useState, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
-import { CheckCircle, XCircle, Fingerprint, Copy, Check, Ban, Clock, Flag, AlertTriangle } from 'lucide-react';
+import { CheckCircle, XCircle, Fingerprint, Copy, Check, Ban, Clock, Flag } from 'lucide-react';
 import { AnchorLifecycleTimeline, type AnchorLifecycleData } from '@/components/anchor/AnchorLifecycleTimeline';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { extractCpeMetadataView } from '@/components/credentials/cpeMetadataView';
@@ -23,6 +23,7 @@ import { extractCleMetadataView } from '@/components/credentials/cleMetadataView
 import { ProvenanceTimeline } from '@/components/public/ProvenanceTimeline';
 import { RevocationDetails } from '@/components/verification/RevocationDetails';
 import { VerifierProofDownload } from '@/components/verification/VerifierProofDownload';
+import { DoesNotAssertDisclaimer } from '@/components/verification/DoesNotAssertDisclaimer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import {
   Card,
@@ -49,7 +50,7 @@ import { EvidenceLayersSection } from '@/components/verification/EvidenceLayersS
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { LinkedInCredentialHelper } from '@/components/verification/LinkedInCredentialHelper';
 import { ArkovaBadge } from '@/components/verification/ArkovaBadge';
-import { parseVerificationLevel, sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
+import { isIssuerAuthenticated, parseVerificationLevel, sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 
 interface PublicAnchorData {
   public_id: string;
@@ -300,6 +301,15 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   // Extract DB field (bitcoin_block) to avoid copy-lint trigger in template literal
   const networkRecordBlock = data.bitcoin_block;
   const sourceProvenance = extractSourceProvenance(data);
+  // SCRUM-2481 [P1]: the embeddable Arkova badge + the LinkedIn Credential-URL
+  // share helper are issuer-STYLE off-platform affordances. Gate them on the
+  // SAME issuer-authentication gate that earns the green treatment
+  // (isIssuerAuthenticated) — true ONLY for issuer_anchored / source_signed.
+  // A merely-SECURED low-trust record (captured_url / account_linked /
+  // ai_captured) — or a plain upload with no evidence level — must NOT get an
+  // embeddable/shareable issuer-looking badge (§1.5 / R-7 claims-gate).
+  const isIssuerAuthenticatedRecord = isIssuerAuthenticated(sourceProvenance.verification_level);
+  const canShareIssuerBadge = isSecured && isIssuerAuthenticatedRecord;
   const credentialMetadata = sanitizeCredentialMetadata(data.metadata);
   const hasSourceProvenance = Boolean(
     sanitizeSourceUrl(sourceProvenance.source_url) ||
@@ -515,8 +525,15 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
 
         {/* ============================================================
             SECTION 2f: LinkedIn Share (CSI-03)
-            ============================================================ */}
-        {isSecured && (
+            ============================================================
+            SCRUM-2481 [P1]: the embeddable ArkovaBadge + LinkedIn Credential-URL
+            helper are issuer-STYLE off-platform affordances. They are gated on
+            `canShareIssuerBadge` (isSecured && isIssuerAuthenticated(level)) —
+            the SAME issuer-auth gate as the green treatment. A low-trust
+            captured_url / account_linked / ai_captured record (or a plain
+            upload with no evidence level) must never surface a shareable /
+            embeddable issuer-looking badge (§1.5 / R-7 claims-gate). */}
+        {canShareIssuerBadge && (
           <>
             <Separator />
             <div className="space-y-3">
@@ -630,40 +647,18 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <Separator />
             <VerifierProofDownload
               publicId={data.public_id}
-              fingerprint={data.fingerprint}
               status={publicStatus}
-              issuerName={data.issuer_name}
-              credentialType={data.credential_type}
-              filename={data.filename}
-              securedAt={data.secured_at ?? data.anchor_timestamp}
-              networkReceiptId={data.network_receipt_id}
-              sourceProvenance={sourceProvenance}
             />
           </>
         )}
 
         {/* ============================================================
-            SECTION 6: Anchor Authenticity Disclaimer (IDT WS3)
-            ============================================================ */}
+            SECTION 6: Does-Not-Assert Disclaimer (SCRUM-2495 / IDT WS3)
+            ============================================================
+            Always-visible — not a tooltip, not click-to-reveal (CLAUDE.md
+            §1.5). States what is measured / asserted / NOT asserted. */}
         <Separator />
-        <div className="rounded-lg bg-muted/50 border border-border p-4 space-y-2">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-            <div className="space-y-1.5">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Verification Disclaimer
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Arkova verifies that a document&apos;s cryptographic fingerprint was anchored to the
-                Bitcoin blockchain at the stated time. Arkova does not verify, and makes no
-                representation regarding, the accuracy, authenticity, or legitimacy of the underlying
-                document content. For anchors created by unverified or individual accounts, the
-                identity of the anchoring party has not been independently confirmed by Arkova.
-                Relying parties should exercise their own due diligence.
-              </p>
-            </div>
-          </div>
-        </div>
+        <DoesNotAssertDisclaimer />
 
         {/* Footer */}
         <div className="pt-4 text-center text-xs text-muted-foreground border-t">

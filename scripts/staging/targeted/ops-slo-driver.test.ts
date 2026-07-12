@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  missingOpsSloAdmissionInputs,
   planOpsSloRequests,
   summarizeSurfaceAvailability,
   OPS_SLO_DRIVER,
-} from './ops-slo-driver';
+} from './ops-slo-driver.js';
 
 const BASE = 'https://pr-1441---arkova-worker-staging-x-uc.a.run.app';
 
 describe('ops-slo-driver: request plan', () => {
   it('drives the authenticated platform-admin 200 path when a JWT is supplied', () => {
-    const plan = planOpsSloRequests(BASE, { adminJwt: 'jwt-admin' });
+    const plan = planOpsSloRequests(BASE, { adminJwt: 'jwt-admin', nonAdminJwt: 'jwt-user' });
     const ok = plan.find((p) => p.label === 'admin-ok');
     expect(ok).toBeDefined();
     expect(ok!.endpoint).toBe('/api/admin/ops-slo-stats');
@@ -19,7 +20,7 @@ describe('ops-slo-driver: request plan', () => {
   });
 
   it('drives the 401 unauthenticated branch (no bearer token)', () => {
-    const plan = planOpsSloRequests(BASE, { adminJwt: 'jwt-admin' });
+    const plan = planOpsSloRequests(BASE, { adminJwt: 'jwt-admin', nonAdminJwt: 'jwt-user' });
     const unauth = plan.find((p) => p.label === 'unauthenticated');
     expect(unauth).toBeDefined();
     expect(unauth!.headers?.Authorization).toBeUndefined();
@@ -34,35 +35,61 @@ describe('ops-slo-driver: request plan', () => {
     expect(forbidden!.allowedStatuses).toContain(403);
   });
 
-  it('omits the admin-ok + non-admin cases when their JWTs are absent (401 still runs)', () => {
-    const plan = planOpsSloRequests(BASE, {});
-    expect(plan.find((p) => p.label === 'admin-ok')).toBeUndefined();
-    expect(plan.find((p) => p.label === 'non-admin-forbidden')).toBeUndefined();
-    expect(plan.find((p) => p.label === 'unauthenticated')).toBeDefined();
+  it('fails closed instead of producing hollow 401-only evidence when JWTs are absent', () => {
+    expect(() => planOpsSloRequests(BASE, {})).toThrow(/platform-admin Supabase JWT/);
+    expect(() => planOpsSloRequests(BASE, { adminJwt: 'jwt-admin' })).toThrow(/non-admin Supabase JWT/);
   });
 
   it('captures response bodies to prove per-surface available:false fields', () => {
-    const plan = planOpsSloRequests(BASE, { adminJwt: 'jwt-admin' });
+    const plan = planOpsSloRequests(BASE, { adminJwt: 'jwt-admin', nonAdminJwt: 'jwt-user' });
     expect(plan.every((p) => p.capture === true)).toBe(true);
+  });
+});
+
+describe('ops-slo-driver: admission inputs', () => {
+  it('names the exact missing target/auth/ingress facts', () => {
+    expect(missingOpsSloAdmissionInputs({})).toEqual([
+      'STAGING_API_BASE or WORKER_URL for the deployed PR #1441 tag URL',
+      'STAGING_ADMIN_JWT or OPS_SLO_ADMIN_JWT for a platform-admin Supabase JWT',
+      'STAGING_NON_ADMIN_JWT or OPS_SLO_NON_ADMIN_JWT for an authenticated non-admin Supabase JWT',
+      'STAGING_GCP_IDENTITY, WORKER_IAM_TOKEN, or CLOUD_RUN_IDENTITY_TOKEN for Cloud Run tag ingress',
+    ]);
+  });
+
+  it('accepts the OPS_SLO alias names without requiring secret values on argv', () => {
+    expect(missingOpsSloAdmissionInputs({
+      WORKER_URL: BASE,
+      OPS_SLO_ADMIN_JWT: 'admin.jwt',
+      OPS_SLO_NON_ADMIN_JWT: 'user.jwt',
+      WORKER_IAM_TOKEN: 'iam.jwt',
+    })).toEqual([]);
   });
 });
 
 describe('ops-slo-driver: summarizeSurfaceAvailability', () => {
   it('collects per-surface available flags from the #1441 stats body', () => {
     const body = {
-      surfaces: {
-        anchoring: { available: true, p95_ms: 120 },
-        webhooks: { available: false, p95_ms: null },
-        exports: { available: true, p95_ms: 340 },
-      },
+      anchorSecuredRate: { available: true, breach: false },
+      connectorQueue: { available: false, breach: false },
+      creditConservation: { available: true, breach: false },
+      webhookDelivery: { available: true, breach: false },
+      apiErrors: { available: false, breach: false },
+      overallBreach: false,
+      checkedAt: '2026-07-09T16:00:00.000Z',
     };
     const avail = summarizeSurfaceAvailability(body);
-    expect(avail).toEqual({ anchoring: true, webhooks: false, exports: true });
+    expect(avail).toEqual({
+      anchorSecuredRate: true,
+      connectorQueue: false,
+      creditConservation: true,
+      webhookDelivery: true,
+      apiErrors: false,
+    });
     // The whole point of #1441: at least one surface can be unavailable.
     expect(Object.values(avail)).toContain(false);
   });
 
-  it('returns an empty map when the body has no surfaces key', () => {
+  it('returns an empty map when the body has none of the flat surface keys', () => {
     expect(summarizeSurfaceAvailability({ error: 'x' })).toEqual({});
     expect(summarizeSurfaceAvailability('not-json')).toEqual({});
   });

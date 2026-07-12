@@ -29,6 +29,14 @@ vi.mock('@/lib/platform', () => ({
   isPlatformAdmin: () => false,
 }));
 
+// CPE-02 (SCRUM-2380): the per-member dashboard card is React-Query backed and
+// has its own unit tests (OrgCpeMemberDashboard.test.tsx +
+// useOrgCpeMemberSummary.test.ts); stub the hook here so this page suite does
+// not need a QueryClientProvider.
+vi.mock('@/hooks/useOrgCpeMemberSummary', () => ({
+  useOrgCpeMemberSummary: () => ({ summary: null, loading: false, error: null, refresh: vi.fn() }),
+}));
+
 vi.mock('@/hooks/useComplianceScore', () => ({
   useJurisdictionRules: () => ({ jurisdictions: ['US-CA'], industries: ['accounting'] }),
   useComplianceScore: () => ({
