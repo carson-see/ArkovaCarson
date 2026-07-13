@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "batchId": "S33-W1",
-  "revision": 7,
-  "manifestSha256": "076346d2a6b05efd852fca1c8547215179837b99606a9b4878fc5e90c5859ef7",
+  "revision": 8,
+  "manifestSha256": "3828b3425a1080dd83d2f9e42bee0860e7607389add492861ff46ac6c7b39029",
   "producerLane": "Lane 4",
   "acceptanceAuthority": "Lane 3",
   "status": "PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW",
@@ -347,10 +347,10 @@
         "templateId": "not-applicable-no-template"
       },
       "jurisdiction": "US",
-      "jurisdictionDetail": "United States",
+      "jurisdictionDetail": "The document text names no country or state; no extraction ground-truth jurisdiction is asserted.",
       "credentialType": "CERTIFICATE",
       "subType": "training_certificate",
-      "truthRevisionNote": "Revision 5 removes expiryDate because the source states only a recommended renewal-by date, and removes deliveryMethod because no delivery mode is stated.",
+      "truthRevisionNote": "Revision 5 removes expiryDate because the source states only a recommended renewal-by date, and removes deliveryMethod because no delivery mode is stated. Revision 8 removes unsupported jurisdiction United States because the source names no country or state.",
       "curationAuthor": "Arkova Lane 4",
       "curationDate": "2026-07-13",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
@@ -370,10 +370,10 @@
         "templateId": "not-applicable-no-template"
       },
       "jurisdiction": "US",
-      "jurisdictionDetail": "United States",
+      "jurisdictionDetail": "The document text names no country or state; no extraction ground-truth jurisdiction is asserted.",
       "credentialType": "CERTIFICATE",
       "subType": "completion_certificate",
-      "truthRevisionNote": "Revision 5 removes issuedDate because March 28 is a course completion date rather than a transcript issue date, and removes deliveryMethod because no delivery mode is stated.",
+      "truthRevisionNote": "Revision 5 removes issuedDate because March 28 is a course completion date rather than a transcript issue date, and removes deliveryMethod because no delivery mode is stated. Revision 8 removes unsupported jurisdiction United States and minimally re-authors the source as an issuer-backed certificate of completion containing continuing-education transcript rows, grounding CERTIFICATE/completion_certificate.",
       "curationAuthor": "Arkova Lane 4",
       "curationDate": "2026-07-13",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."

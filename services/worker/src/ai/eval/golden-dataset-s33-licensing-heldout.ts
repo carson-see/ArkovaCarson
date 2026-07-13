@@ -117,7 +117,6 @@ const NURSING_CE: S33HeldoutEntry[] = [
       issuerName: 'Cardiac Care Training Alliance',
       issuedDate: '2026-04-02',
       fieldOfStudy: 'Advanced Cardiovascular Life Support',
-      jurisdiction: 'United States',
       providerName: 'Bayview Simulation Institute',
       fraudSignals: [],
     },
@@ -130,15 +129,14 @@ const NURSING_CE: S33HeldoutEntry[] = [
   },
   {
     id: 'GD-S33-NUR-005',
-    description: 'Multi-course CE transcript with per-course rows and a total-hours line',
+    description: 'Issuer-backed multi-course completion certificate with transcript rows and a total-hours line',
     strippedText:
-      'CONTINUING EDUCATION TRANSCRIPT — NORTHWIND NURSE LEARNING PORTAL. Learner: [NAME_REDACTED], RN. Reporting Period: 01/01/2026 - 03/31/2026.\nCourse 1: Diabetes Management Essentials — 3.0 contact hours — completed 01/15/2026 — Ref NNLP-26-208.\nCourse 2: De-escalation in the Emergency Department — 2.5 contact hours — completed 02/09/2026 — Ref NNLP-26-233.\nCourse 3: Documentation for Legal Protection — 7.0 contact hours — completed 03/28/2026 — Ref NNLP-26-241.\nTotal contact hours this period: 12.5. Provider: Northwind Nurse Learning Portal, accredited provider of nursing continuing professional development.',
+      'CERTIFICATE OF COMPLETION — CONTINUING EDUCATION TRANSCRIPT. Northwind Nurse Learning Portal certifies that [NAME_REDACTED], RN, successfully completed the courses listed below during the reporting period 01/01/2026 - 03/31/2026.\nCourse 1: Diabetes Management Essentials — 3.0 contact hours — completed 01/15/2026 — Ref NNLP-26-208.\nCourse 2: De-escalation in the Emergency Department — 2.5 contact hours — completed 02/09/2026 — Ref NNLP-26-233.\nCourse 3: Documentation for Legal Protection — 7.0 contact hours — completed 03/28/2026 — Ref NNLP-26-241.\nTotal contact hours this period: 12.5. Provider: Northwind Nurse Learning Portal, accredited provider of nursing continuing professional development.',
     credentialTypeHint: 'CERTIFICATE',
     groundTruth: {
       credentialType: 'CERTIFICATE',
       subType: 'completion_certificate',
       issuerName: 'Northwind Nurse Learning Portal',
-      jurisdiction: 'United States',
       creditHours: 12.5,
       creditType: 'CNE Contact Hours',
       providerName: 'Northwind Nurse Learning Portal',

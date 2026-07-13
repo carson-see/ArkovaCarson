@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "batchId": "S33-W1",
-  "revision": 7,
+  "revision": 8,
   "producerLane": "Lane 4",
   "acceptanceAuthority": "Lane 3",
   "status": "PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW",
-  "corpusRevisionParentCommit": "dd3ae1edecb005730762277daf17e15d8009459d",
-  "producerRevisionPredecessorCommit": "dcbe0abd741a66401744a2cf916a583e865e2c9f",
+  "corpusRevisionParentCommit": "c56bc9958f774471ff62a31418c304149afd4bc6",
+  "producerRevisionPredecessorCommit": "c56bc9958f774471ff62a31418c304149afd4bc6",
   "lane3SupportBase": {
     "commit": "dd3ae1edecb005730762277daf17e15d8009459d",
     "typesPath": "services/worker/src/ai/eval/golden-dataset-s33-types.ts",
@@ -14,7 +14,7 @@
     "reviewState": "PENDING_LANE3_REVIEW_PR"
   },
   "corpusSourceBlobs": {
-    "services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts": "ae2f9a77de929001526ce2e9571c9d217e9189e7",
+    "services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts": "4ac117c1663c6aefb63c7715440744af0e0b6a23",
     "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts": "af1f7228d8d9b0a33a894420d8f0902c0fb83ee8",
     "services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts": "33cf4fd3b35ef29fe90a13ed81b7a47ebc8d2fe4"
   },
@@ -161,6 +161,33 @@
           "producerRevisionPredecessorCommit": "dcbe0abd741a66401744a2cf916a583e865e2c9f",
           "directBaseCommit": "dd3ae1edecb005730762277daf17e15d8009459d",
           "sourceBlobsUnchangedFromRevision6": true
+        },
+        {
+          "revision": 8,
+          "authority": "Team 4 same-lane review reject: NUR-004/NUR-005 grounded-truth correction",
+          "changedEntryIds": [
+            "GD-S33-NUR-004",
+            "GD-S33-NUR-005"
+          ],
+          "changes": [
+            "NUR-004 unsupported jurisdiction United States removed because the source names no country or state",
+            "NUR-005 unsupported jurisdiction United States removed because the source names no country or state",
+            "NUR-005 source minimally re-authored as an issuer-backed CERTIFICATE OF COMPLETION containing continuing-education transcript rows, grounding the existing CERTIFICATE/completion_certificate truth"
+          ],
+          "normalizedInputChanged": true,
+          "normalizedInputChangedEntryIds": [
+            "GD-S33-NUR-005"
+          ],
+          "recomputedNormalizedInputSha256": {
+            "GD-S33-NUR-004": "5cf701df727878e681e156e1c2f2cc1f8ad9df124e7668c6843e33eab806bc0d",
+            "GD-S33-NUR-005": "68085d32defe764e6a6462a936c8493844e8c4213ff27943a51ff7026d0c90b9"
+          },
+          "remainingSubstantiveGroundTruthFields": {
+            "GD-S33-NUR-004": 6,
+            "GD-S33-NUR-005": 6
+          },
+          "producerRevisionPredecessorCommit": "c56bc9958f774471ff62a31418c304149afd4bc6",
+          "lane3SupportBaseCommit": "dd3ae1edecb005730762277daf17e15d8009459d"
         }
       ]
     },
@@ -348,7 +375,7 @@
       "id": "GD-S33-NUR-005",
       "domain": "professional-licensing",
       "credentialType": "CERTIFICATE",
-      "normalizedInputSha256": "6334ca54ca4bf32a398f4c09e470fca74f9b67b5d8d99d3e20ad8bb93764f0ff"
+      "normalizedInputSha256": "68085d32defe764e6a6462a936c8493844e8c4213ff27943a51ff7026d0c90b9"
     },
     {
       "id": "GD-S33-NUR-006",
