@@ -41,6 +41,8 @@ interface ScannedJsonString {
   followedByColon: boolean;
 }
 
+type JsonContainerFrame = { kind: 'object'; keys: Set<string> } | { kind: 'array' };
+
 function scanJsonString(raw: string, start: number): ScannedJsonString {
   let end = start + 1;
   while (end < raw.length) {
@@ -58,8 +60,21 @@ function scanJsonString(raw: string, start: number): ScannedJsonString {
   return { end, followedByColon: raw[cursor] === ':' };
 }
 
+function recordObjectKey(
+  frame: JsonContainerFrame | undefined,
+  raw: string,
+  start: number,
+  end: number,
+  label: string,
+): void {
+  if (frame?.kind !== 'object') return;
+  const key = decodeJsonKey(raw, start, end, label);
+  if (frame.keys.has(key)) throw new Error(`${label} contains duplicate JSON key ${key}.`);
+  frame.keys.add(key);
+}
+
 function assertNoDuplicateJsonKeys(raw: string, label: string): void {
-  const stack: Array<{ kind: 'object'; keys: Set<string> } | { kind: 'array' }> = [];
+  const stack: JsonContainerFrame[] = [];
   let index = 0;
   while (index < raw.length) {
     const char = raw[index]!;
@@ -87,13 +102,7 @@ function assertNoDuplicateJsonKeys(raw: string, label: string): void {
     const scanned = scanJsonString(raw, start);
     index = scanned.end + 1;
     if (!scanned.followedByColon) continue;
-
-    const frame = stack[stack.length - 1];
-    if (frame?.kind === 'object') {
-      const key = decodeJsonKey(raw, start, scanned.end, label);
-      if (frame.keys.has(key)) throw new Error(`${label} contains duplicate JSON key ${key}.`);
-      frame.keys.add(key);
-    }
+    recordObjectKey(stack[stack.length - 1], raw, start, scanned.end, label);
   }
 }
 
