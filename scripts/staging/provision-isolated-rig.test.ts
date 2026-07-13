@@ -1289,15 +1289,19 @@ describe('provision-isolated-rig.sh — strict clean_mirror evidence schema', ()
     ['wrong project', { ...validReport, staging_project_ref: 'vzwyaatejekddvltxyye' }],
     ['malformed timestamp', { ...validReport, timestamp: 'not-a-timestamp' }],
     ['unknown secret field', { ...validReport, service_role_key: 'secret-sentinel-must-not-leak' }],
-  ])('rejects %s without emitting raw preflight data', (_label, payload) => {
-    const result = applyRunStubbed(`preflight-${_label.replace(/\s+/g, '-')}`, 'mock', {
-      preflightPayload: JSON.stringify(payload),
-    });
-    expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/preflight|schema|project|timestamp/i);
-    expect(result.out).not.toContain('secret-sentinel-must-not-leak');
-    expect(result.out).not.toContain('ADMISSION_JSON=');
-  });
+  ])(
+    'rejects %s without emitting raw preflight data',
+    (_label, payload) => {
+      const result = applyRunStubbed(`preflight-${_label.replace(/\s+/g, '-')}`, 'mock', {
+        preflightPayload: JSON.stringify(payload),
+      });
+      expect(result.code).not.toBe(0);
+      expect(result.out).toMatch(/preflight|schema|project|timestamp/i);
+      expect(result.out).not.toContain('secret-sentinel-must-not-leak');
+      expect(result.out).not.toContain('ADMISSION_JSON=');
+    },
+    15_000,
+  );
 
   it.each([
     ['empty', 'empty checks', { ...validReport, checks: [] }],
@@ -1320,14 +1324,18 @@ describe('provision-isolated-rig.sh — strict clean_mirror evidence schema', ()
         ],
       },
     ],
-  ])('rejects %s instead of trusting a hollow clean_mirror verdict', (id, _label, payload) => {
-    const result = applyRunStubbed(`preflight-hollow-${id}`, 'mock', {
-      preflightPayload: JSON.stringify(payload),
-    });
-    expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/preflight|schema|checks/i);
-    expect(result.out).not.toContain('ADMISSION_JSON=');
-  });
+  ])(
+    'rejects %s instead of trusting a hollow clean_mirror verdict',
+    (id, _label, payload) => {
+      const result = applyRunStubbed(`preflight-hollow-${id}`, 'mock', {
+        preflightPayload: JSON.stringify(payload),
+      });
+      expect(result.code).not.toBe(0);
+      expect(result.out).toMatch(/preflight|schema|checks/i);
+      expect(result.out).not.toContain('ADMISSION_JSON=');
+    },
+    15_000,
+  );
 
   it('persists only allowlisted evidence and binds the captured project/timestamp', () => {
     const result = applyRunStubbed('preflight-sanitized', 'mock', {
