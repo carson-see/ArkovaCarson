@@ -27,6 +27,7 @@ const metadataLocked = variable("metadataLocked");
 const legalHold = variable("legalHold");
 const credentialTypeLocked = variable("credentialTypeLocked");
 const actor = variable("actor");
+const intentPersisted = variable("intentPersisted");
 
 export const bitcoinAnchorMachine = defineMachine({
   version: 2,
@@ -75,7 +76,19 @@ export const bitcoinAnchorMachine = defineMachine({
       "Anchors",
       enumType("client", "worker"),
       lit("client")
-    )
+    ),
+
+    // S3-P0 (batch producer, no-double-broadcast): TRUE while a signed
+    // broadcast intent for this anchor's batch is durably persisted
+    // (DB shape: anchors.chain_tx_id set while status=BROADCASTING, plus the
+    // anchor_proofs intent record carrying the signed tx hex). The RACE-1
+    // recover_stuck_broadcasts sweep only resets BROADCASTING rows whose
+    // chain_tx_id IS NULL, so an intent-persisted anchor can never be
+    // reverted to PENDING by the crash sweep — the crash-resume reconcile
+    // either finds the tx on-chain (finalize, no rebroadcast) or rebroadcasts
+    // the SAME signed bytes (same txid). Conceptual/derived state like
+    // `actor` — no dedicated DB column.
+    intentPersisted: mapVar("Anchors", boolType(), lit(false))
   },
 
   actions: {
@@ -93,18 +106,97 @@ export const bitcoinAnchorMachine = defineMachine({
       ]
     },
 
-    // Worker successfully broadcasts a BROADCASTING anchor to the mempool.
+    // Worker successfully broadcasts a BROADCASTING anchor to the mempool
+    // WITHOUT a persisted pre-broadcast intent (legacy single-anchor path in
+    // jobs/anchor.ts and the legacy batch fallback — broadcast happens first,
+    // chain_tx_id is recorded after).
     // Maps to: processAnchor() in jobs/anchor.ts after chain submit succeeds
     // Result: BROADCASTING → SUBMITTED, chain_tx_id set
+    // S3-P0: guarded not(intentPersisted) — the intent path finalizes via
+    // broadcastResumeFinalize instead, so the intent flag can never leak into
+    // SUBMITTED (intentOnlyWhileBroadcasting).
     workerBroadcast: {
       params: { a: "Anchors" },
       guard: and(
         eq(index(status, param("a")), lit("BROADCASTING")),
-        eq(index(actor, param("a")), lit("worker"))
+        eq(index(actor, param("a")), lit("worker")),
+        not(index(intentPersisted, param("a")))
       ),
       updates: [
         setMap("status", param("a"), lit("SUBMITTED")),
         setMap("chainTxId", param("a"), lit("has_tx"))
+      ]
+    },
+
+    // S3-P0: Worker persists the signed pre-broadcast intent for a claimed
+    // batch BEFORE any bytes hit the network.
+    // Maps to: batch-anchor.ts Phase 3b — prepareFingerprintTx() (build+sign,
+    // no broadcast), then durably write (i) anchor_proofs rows keyed by the
+    // precomputed txid (receipt_id) with the signed tx hex on the intent row,
+    // and (ii) anchors.chain_tx_id on every claimed BROADCASTING row.
+    // Result: chain_tx_id set while still BROADCASTING — the RACE-1 sweep
+    // (chain_tx_id IS NULL filter) can no longer revert these rows.
+    persistBroadcastIntent: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("BROADCASTING")),
+        eq(index(actor, param("a")), lit("worker")),
+        eq(index(chainTxId, param("a")), lit(null)),
+        not(index(intentPersisted, param("a")))
+      ),
+      updates: [
+        setMap("chainTxId", param("a"), lit("has_tx")),
+        setMap("intentPersisted", param("a"), lit(true))
+      ]
+    },
+
+    // S3-P0: Finalize an intent-persisted batch anchor to SUBMITTED. This is
+    // BOTH the happy path (broadcast succeeded in-process, then
+    // submit_batch_anchors) AND the crash-resume path (worker died between
+    // intent persistence and submit_batch_anchors; the next run's
+    // reconcileBroadcastIntents() finds the txid already on-chain — or
+    // rebroadcasts the SAME signed bytes, yielding the SAME txid — and then
+    // finalizes). Identical DB write either way: submit_batch_anchors moves
+    // BROADCASTING → SUBMITTED. A batch that broadcast once can NEVER
+    // broadcast twice: resume either observes the tx or re-sends identical
+    // bytes (already-known == success at the provider layer).
+    broadcastResumeFinalize: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("BROADCASTING")),
+        eq(index(actor, param("a")), lit("worker")),
+        index(intentPersisted, param("a")),
+        eq(index(chainTxId, param("a")), lit("has_tx"))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("SUBMITTED")),
+        setMap("intentPersisted", param("a"), lit(false))
+      ]
+    },
+
+    // S3-P0: DEFINITIVE broadcast rejection of an intent-persisted batch —
+    // the provider answered with a non-retryable application error (e.g.
+    // dust/min-relay-fee validation reject), i.e. the signed tx was refused
+    // admission to the mempool and provably never relayed. Only then is it
+    // safe to unwind the intent: clear chain_tx_id, delete this batch's
+    // anchor_proofs intent rows, refund queue-run credits, revert to PENDING.
+    // A transient/unknown-outcome failure (timeout / 5xx / 429 after bounded
+    // retries) must NOT take this edge — the tx may have landed; those rows
+    // stay BROADCASTING+intent for reconcileBroadcastIntents().
+    broadcastIntentReject: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("BROADCASTING")),
+        eq(index(actor, param("a")), lit("worker")),
+        index(intentPersisted, param("a"))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("PENDING")),
+        setMap("chainTxId", param("a"), lit(null)),
+        setMap("intentPersisted", param("a"), lit(false)),
+        setMap("actor", param("a"), lit("client")),
+        setMap("fingerprintLocked", param("a"), lit(false)),
+        setMap("credentialTypeLocked", param("a"), lit(false))
       ]
     },
 
@@ -124,13 +216,20 @@ export const bitcoinAnchorMachine = defineMachine({
       ]
     },
 
-    // Broadcast fails — anchor returns to PENDING for retry.
-    // Maps to: processAnchor() error path when chain submit throws
+    // Broadcast fails BEFORE any intent is persisted — anchor returns to
+    // PENDING for retry. Nothing was signed-and-recorded, so nothing can have
+    // reached the network under a recorded txid; a fresh tx next tick is the
+    // FIRST broadcast, not a double.
+    // Maps to: processAnchor() error path when chain submit throws, the
+    // batch pre-intent abort path, AND recover_stuck_broadcasts() (RACE-1) —
+    // whose `chain_tx_id IS NULL` filter is exactly the not(intentPersisted)
+    // guard here (S3-P0: intent-persisted rows are shielded from the sweep).
     broadcastFail: {
       params: { a: "Anchors" },
       guard: and(
         eq(index(status, param("a")), lit("BROADCASTING")),
-        eq(index(actor, param("a")), lit("worker"))
+        eq(index(actor, param("a")), lit("worker")),
+        not(index(intentPersisted, param("a")))
       ),
       updates: [
         setMap("status", param("a"), lit("PENDING")),
@@ -244,7 +343,14 @@ export const bitcoinAnchorMachine = defineMachine({
         setMap("status", param("a"), lit("SUPERSEDED")),
         setMap("fingerprintLocked", param("a"), lit(true)),
         setMap("metadataLocked", param("a"), lit(true)),
-        setMap("credentialTypeLocked", param("a"), lit(true))
+        setMap("credentialTypeLocked", param("a"), lit(true)),
+        // S3-P0: a supersede that lands mid-broadcast consumes the intent —
+        // the row leaves BROADCASTING, so submit_batch_anchors (which only
+        // touches BROADCASTING/PENDING rows) skips it and the reconcile
+        // (which scans BROADCASTING rows) no longer sees it. The already-
+        // signed tx may still commit the fingerprint on-chain; that is
+        // harmless surplus evidence for a SUPERSEDED row.
+        setMap("intentPersisted", param("a"), lit(false))
       ]
     },
 
@@ -325,13 +431,54 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
-    // INV-1c: BROADCASTING anchors must NOT have chain_tx_id (not yet broadcast)
-    broadcastingNoChainTx: {
-      description: "A BROADCASTING anchor has not yet received a chain_tx_id",
+    // INV-1c (S3-P0 REVISED): while BROADCASTING, chain_tx_id is set IFF the
+    // signed pre-broadcast intent is persisted. Pre-S3-P0 this read
+    // "BROADCASTING ⇒ chainTxId = null"; the batch producer now records the
+    // precomputed txid + signed tx hex BEFORE broadcasting (the intent), so
+    // the crash sweep (RACE-1, chain_tx_id IS NULL filter) can never revert
+    // an anchor whose tx may already be on the network — the exact
+    // double-broadcast window this revision closes.
+    broadcastingIntentChainTxCoupling: {
+      description: "A BROADCASTING anchor has chain_tx_id set exactly when its pre-broadcast intent is persisted",
       formula: forall("Anchors", "a",
         or(
           not(eq(index(status, param("a")), lit("BROADCASTING"))),
-          eq(index(chainTxId, param("a")), lit(null))
+          or(
+            and(
+              eq(index(chainTxId, param("a")), lit("has_tx")),
+              index(intentPersisted, param("a"))
+            ),
+            and(
+              eq(index(chainTxId, param("a")), lit(null)),
+              not(index(intentPersisted, param("a")))
+            )
+          )
+        )
+      )
+    },
+
+    // S3-P0: the intent flag exists only during BROADCASTING — finalize,
+    // definitive-reject, and supersede all consume it. No other status may
+    // carry a live intent (a SUBMITTED/SECURED row's chain_tx_id is a
+    // broadcast fact, not an intent).
+    intentOnlyWhileBroadcasting: {
+      description: "A persisted pre-broadcast intent exists only while the anchor is BROADCASTING",
+      formula: forall("Anchors", "a",
+        or(
+          not(index(intentPersisted, param("a"))),
+          eq(index(status, param("a")), lit("BROADCASTING"))
+        )
+      )
+    },
+
+    // S3-P0: only the worker persists intents (service_role-only writes,
+    // Constitution 1.4 — mirrors onlyWorkerSecures).
+    intentRequiresWorkerActor: {
+      description: "A persisted pre-broadcast intent implies the worker actor",
+      formula: forall("Anchors", "a",
+        or(
+          not(index(intentPersisted, param("a"))),
+          eq(index(actor, param("a")), lit("worker"))
         )
       )
     },
@@ -422,14 +569,15 @@ export const bitcoinAnchorMachine = defineMachine({
         domains: {
           Anchors: ids({ prefix: "a", size: 2 })
         },
-        // State count for size=2 is 320^2 = 102,400 (5 statuses × 2^5 bools ×
-        // 2 actors)^2, which marginally exceeds the tla-precheck 100k
-        // graph-equivalence cap introduced after this machine was authored.
-        // Disabling graphEquivalence keeps the invariant checks running and
-        // lets us set a budget slightly above the 100k equivalence cap.
+        // S3-P0: intentPersisted adds a 6th per-anchor bool → raw per-anchor
+        // combos 6 statuses × 2^5 bools × 2 chainTxId × 2 actors = 768;
+        // size=2 → 768^2 = 589,824 raw states (reachable set is far smaller,
+        // but the estimator budgets against the raw product). Budget raised
+        // from 200k accordingly. graphEquivalence stays off (pre-existing:
+        // the raw product exceeds the 100k equivalence cap).
         graphEquivalence: false,
         budgets: {
-          maxEstimatedStates: 200_000,
+          maxEstimatedStates: 1_000_000,
           maxEstimatedBranching: 10_000
         }
       },
@@ -439,8 +587,9 @@ export const bitcoinAnchorMachine = defineMachine({
         },
         graphEquivalence: false,
         budgets: {
-          // size=3 → 320^3 = 32,768,000 states; bump to 50M for nightly.
-          maxEstimatedStates: 50_000_000,
+          // size=3 → 768^3 = 452,984,832 raw states with the S3-P0
+          // intentPersisted bool; bump from 50M to 500M for nightly.
+          maxEstimatedStates: 500_000_000,
           maxEstimatedBranching: 1_000_000
         }
       }

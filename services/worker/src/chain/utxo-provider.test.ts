@@ -15,6 +15,7 @@ vi.stubGlobal('fetch', mockFetch);
 import {
   RpcUtxoProvider, MempoolUtxoProvider, GetBlockHybridProvider, createUtxoProvider,
   HttpError, RpcApplicationError, retryWithBackoff, isRetryableError, isDuplicateTxError,
+  BroadcastRejectedError, isBroadcastRejectedError, isBroadcastRejectText,
 } from './utxo-provider.js';
 import { logger } from '../utils/logger.js';
 
@@ -155,9 +156,14 @@ describe('MempoolUtxoProvider', () => {
     mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('  abc123  \n') });
     expect((await provider.broadcastTx('hex')).txid).toBe('abc123');
   });
-  it('throws on broadcast error with error text', async () => {
+  it('throws a typed BroadcastRejectedError (with the reject text) on an explicit relay reject', async () => {
+    // #1417-HIGH: an explicit mempool reject verdict is typed as a definitive
+    // reject (so the intent unwind can fire safely), carrying the verdict text.
     mockFetch.mockResolvedValueOnce({ ok: false, status: 400, text: () => Promise.resolve('bad-txns-inputs-missingorspent') });
-    await expect(provider.broadcastTx('bad')).rejects.toThrow('broadcast failed');
+    const err = await provider.broadcastTx('bad').catch((e) => e);
+    expect(err).toBeInstanceOf(BroadcastRejectedError);
+    expect(err.message).toContain('bad-txns-inputs-missingorspent');
+    expect(err.httpStatus).toBe(400);
   });
   it('includes HTTP status in error message (4xx)', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 422, text: () => Promise.resolve('Unprocessable Entity') });
@@ -861,5 +867,122 @@ describe('S3-C2 #1408-Finding-1: rpcCall surfaces HTTP-wrapped JSON-RPC applicat
       code: -18,
     });
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── S3-P0 #1417-HIGH: typed broadcast-reject classifier ─────────────────────
+// The double-broadcast HIGH turns on ONE predicate: the intent unwind (refund +
+// delete proofs + revert-to-PENDING) may fire ONLY when the node/API gave a
+// DEFINITIVE broadcast rejection. Auth (401), quota (402), not-found (404),
+// transport 5xx, timeouts, and unknown errors must all DEFER (row stays
+// BROADCASTING; the live tx is never orphaned by a second, different broadcast).
+
+describe('S3-P0 #1417 isBroadcastRejectText — explicit mempool-API reject strings', () => {
+  it.each([
+    'sendrawtransaction RPC error: dust',
+    'min relay fee not met',
+    'bad-txns-inputs-missingorspent',
+    'non-mandatory-script-verify-flag',
+    'insufficient fee, rejected',
+    'txn-mempool-conflict',
+    'mandatory-script-verify-flag-failed (Script failed an OP_EQUALVERIFY operation)',
+    'non-final',
+    'bad-txns-in-belowout',
+    'absurdly-high-fee',
+    'too-long-mempool-chain',
+  ])('classifies %j as a definitive broadcast reject', (text) => {
+    expect(isBroadcastRejectText(text)).toBe(true);
+  });
+
+  it('is case-insensitive', () => {
+    expect(isBroadcastRejectText('MIN RELAY FEE NOT MET')).toBe(true);
+  });
+
+  it.each([
+    'HTTP 402 Payment Required',
+    'HTTP 401 Unauthorized',
+    'HTTP 404 Not Found',
+    'HTTP 500 Internal Server Error',
+    'connect ETIMEDOUT 1.2.3.4:8332',
+    'fetch failed',
+    'transaction already in mempool', // duplicate == success, NOT a reject
+    // Conservative: broad tokens that could appear in a non-reject
+    // proxy/transport message are deliberately NOT classified as rejects — the
+    // HIGH is about never OVER-unwinding. These DEFER (a genuine reject slipping
+    // the net just waits for reconcile — safe; a false positive would double-broadcast).
+    'request rejected by upstream proxy',
+    'unsupported protocol version',
+    'invalid scriptpubkey format in your query',
+  ])('does NOT classify %j as a broadcast reject', (text) => {
+    expect(isBroadcastRejectText(text)).toBe(false);
+  });
+});
+
+describe('S3-P0 #1417 isBroadcastRejectedError — the unwind gate', () => {
+  it('BroadcastRejectedError → true (typed definitive reject)', () => {
+    expect(isBroadcastRejectedError(new BroadcastRejectedError('dust', -26))).toBe(true);
+  });
+
+  it('RpcApplicationError from sendrawtransaction → true (node method-level verdict)', () => {
+    // A JSON-RPC application error IS a definitive broadcast reject.
+    expect(isBroadcastRejectedError(new RpcApplicationError('bad-txns (code -26)', -26, 500))).toBe(true);
+  });
+
+  it('plain Error carrying explicit reject text → true (mempool-API text path)', () => {
+    expect(isBroadcastRejectedError(new Error('Mempool API broadcast failed: HTTP 400 — min relay fee not met'))).toBe(true);
+  });
+
+  it('HttpError 402 (GetBlock quota) → false — DEFER, tx may be live', () => {
+    expect(isBroadcastRejectedError(new HttpError('quota exceeded', 402))).toBe(false);
+  });
+
+  it('HttpError 401 (auth) → false — DEFER', () => {
+    expect(isBroadcastRejectedError(new HttpError('unauthorized', 401))).toBe(false);
+  });
+
+  it('HttpError 404 → false — DEFER (a lookup 404 is not a broadcast reject)', () => {
+    expect(isBroadcastRejectedError(new HttpError('not found', 404))).toBe(false);
+  });
+
+  it('HttpError 5xx → false — DEFER (transient transport)', () => {
+    expect(isBroadcastRejectedError(new HttpError('bad gateway', 502))).toBe(false);
+  });
+
+  it('timeout / network Error → false — DEFER', () => {
+    expect(isBroadcastRejectedError(new Error('connect ETIMEDOUT 1.2.3.4:8332'))).toBe(false);
+    expect(isBroadcastRejectedError(new TypeError('fetch failed'))).toBe(false);
+  });
+
+  it('unknown / non-error values → false — DEFER (fail-safe: never unwind on ambiguity)', () => {
+    expect(isBroadcastRejectedError(new Error('Wallet not loaded'))).toBe(false);
+    expect(isBroadcastRejectedError('string')).toBe(false);
+    expect(isBroadcastRejectedError(null)).toBe(false);
+    expect(isBroadcastRejectedError(undefined)).toBe(false);
+  });
+});
+
+describe('S3-P0 #1417 MempoolUtxoProvider.broadcastTx error typing', () => {
+  const mockFetch = vi.fn();
+  beforeEach(() => { global.fetch = mockFetch as unknown as typeof fetch; mockFetch.mockReset(); });
+
+  it('explicit reject text → BroadcastRejectedError (unwind), NOT a bare HttpError', async () => {
+    const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
+    mockFetch.mockResolvedValue({ ok: false, status: 400, text: () => Promise.resolve('min relay fee not met') });
+    await expect(provider.broadcastTx('deadbeef')).rejects.toMatchObject({ name: 'BroadcastRejectedError' });
+  });
+
+  it('402 quota with no reject text → bare HttpError (DEFER, not a reject)', async () => {
+    const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
+    mockFetch.mockResolvedValue({ ok: false, status: 402, text: () => Promise.resolve('Payment Required') });
+    const err = await provider.broadcastTx('deadbeef').catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err).not.toBeInstanceOf(BroadcastRejectedError);
+    expect(isBroadcastRejectedError(err)).toBe(false);
+  });
+
+  it('duplicate text → success (txid empty), never a reject', async () => {
+    const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
+    mockFetch.mockResolvedValue({ ok: false, status: 400, text: () => Promise.resolve('txn-already-in-mempool') });
+    expect(await provider.broadcastTx('deadbeef')).toEqual({ txid: '' });
   });
 });

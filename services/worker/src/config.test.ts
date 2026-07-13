@@ -698,3 +698,23 @@ describe('SCRUM-1258 aiBatchRowLatencyBudgetMs (typed config, clamped)', () => {
     });
   });
 });
+
+describe('S3-P0 / DISC-03 — bitcoinUtxoProvider default', () => {
+  // Prod deploy (deploy-worker.yml) and both R-5 expected-config JSONs assert
+  // "getblock"; the Zod default was the one remaining 'mempool' divergence
+  // (acknowledged DISC-03 WARN). The code default now matches asserted prod.
+  it("defaults to 'getblock' when BITCOIN_UTXO_PROVIDER is unset", async () => {
+    await withConfig({ BITCOIN_UTXO_PROVIDER: undefined }, (mod) => {
+      expect(mod.config.bitcoinUtxoProvider).toBe('getblock');
+    });
+  });
+
+  it('still honors an explicit BITCOIN_UTXO_PROVIDER override', async () => {
+    await withConfig({ BITCOIN_UTXO_PROVIDER: 'mempool' }, (mod) => {
+      expect(mod.config.bitcoinUtxoProvider).toBe('mempool');
+    });
+    await withConfig({ BITCOIN_UTXO_PROVIDER: 'rpc' }, (mod) => {
+      expect(mod.config.bitcoinUtxoProvider).toBe('rpc');
+    });
+  });
+});

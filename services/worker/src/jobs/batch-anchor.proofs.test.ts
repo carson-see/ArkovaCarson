@@ -67,6 +67,12 @@ vi.mock('../utils/orgCredits.js', () => ({
 }));
 vi.mock('../utils/anchorProofs.js', () => ({ upsertAnchorProofs: mockUpsertAnchorProofs }));
 
+// S3-P0: the batch job is gated on ENABLE_BATCH_ANCHORING — force ON so the
+// FIX-1 proof-persistence pins below still exercise the pipeline.
+vi.mock('../middleware/flagRegistry.js', () => ({
+  flagRegistry: { getFlag: vi.fn(() => true) },
+}));
+
 // db mock: anchors select chain (oldest probe + threshold probes) + update;
 // anchor_proofs is handled by the mocked upsertAnchorProofs.
 vi.mock('../utils/db.js', () => {

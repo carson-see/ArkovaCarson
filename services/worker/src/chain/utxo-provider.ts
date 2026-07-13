@@ -60,6 +60,104 @@ export class RpcApplicationError extends Error {
   }
 }
 
+// ─── BroadcastRejectedError ─────────────────────────────────────────────
+
+/**
+ * A DEFINITIVE broadcast rejection: the node/API examined the transaction and
+ * refused mempool admission (dust, min-relay-fee, bad-txns-*, non-final, …).
+ * The signed bytes provably never relayed, so — and ONLY so — is it safe to
+ * unwind a persisted broadcast intent (refund + delete proof rows + revert to
+ * PENDING).
+ *
+ * #1417-HIGH (double-broadcast): the intent unwind previously keyed off
+ * `!isRetryableError(err)`, which lumped auth (401), quota (402 — GetBlock at
+ * the 3am drain), not-found (404), and unknown errors in with genuine rejects.
+ * A 402/401 on a tx that had ALREADY broadcast then unwound it → the next tick
+ * re-claimed and broadcast a SECOND, DIFFERENT mainnet tx while the first was
+ * live. This typed error, thrown ONLY for a real mempool reject, is the sole
+ * unwind trigger; everything else DEFERS (row stays BROADCASTING + intent).
+ */
+export class BroadcastRejectedError extends Error {
+  constructor(
+    message: string,
+    /** JSON-RPC error code when the reject came from an RPC endpoint. */
+    public readonly code?: number,
+    /** HTTP status when the reject came from a REST endpoint (e.g. mempool.space 400). */
+    public readonly httpStatus?: number,
+  ) {
+    super(message);
+    this.name = 'BroadcastRejectedError';
+  }
+}
+
+/**
+ * Explicit mempool/relay reject strings. These are the node's own verdict text
+ * for a tx it examined and refused — a DEFINITIVE reject, distinct from a
+ * transport/auth/quota failure that never got a verdict. Deliberately DOES NOT
+ * include duplicate-tx phrases (those mean a prior broadcast SUCCEEDED — see
+ * DUPLICATE_TX_PATTERNS) nor generic HTTP status text.
+ */
+const BROADCAST_REJECT_PATTERNS = [
+  'dust',
+  'min relay fee not met',
+  'mempool min fee not met',
+  'insufficient fee',
+  'insufficient priority',
+  'absurdly-high-fee',
+  'bad-txns',
+  'non-mandatory-script-verify-flag',
+  'mandatory-script-verify-flag-failed',
+  'non-final',
+  'non-bip68-final',
+  'txn-mempool-conflict',
+  'too-long-mempool-chain',
+  'tx-size',
+  'scriptsig-not-pushonly',
+  'no-witness-data',
+  'bad-witness-nonstandard',
+];
+// NOTE: deliberately conservative. Over-broad tokens ('version', 'rejected',
+// bare 'scriptpubkey') were EXCLUDED — the HIGH is about never over-unwinding,
+// so a substring that could appear in a non-reject proxy/error message must not
+// trigger the intent unwind. A real reject that slips this net simply DEFERS to
+// reconcile (safe), never double-broadcasts.
+
+/**
+ * Does this text carry an explicit mempool/relay rejection verdict (as opposed
+ * to a transport/auth/quota failure)? Used to type the REST-provider reject
+ * path and, defensively, to classify plain Errors carrying the reject text.
+ */
+export function isBroadcastRejectText(message: string): boolean {
+  const lower = message.toLowerCase();
+  // A duplicate is a prior SUCCESS, never a reject — guard against overlap.
+  if (isDuplicateTxError(lower)) return false;
+  return BROADCAST_REJECT_PATTERNS.some((pattern) => lower.includes(pattern));
+}
+
+/**
+ * The double-broadcast unwind gate. TRUE only for a DEFINITIVE broadcast
+ * rejection; every auth/quota/transport/timeout/unknown error returns FALSE so
+ * the caller DEFERS (never unwinds a possibly-live tx). #1417-HIGH.
+ *
+ *   BroadcastRejectedError                          → true (typed)
+ *   RpcApplicationError (JSON-RPC method verdict)   → true (node refused the method)
+ *   Error whose message is explicit reject text     → true (REST reject not yet typed)
+ *   HttpError (401/402/404/5xx), timeouts, unknown  → false → DEFER
+ */
+export function isBroadcastRejectedError(error: unknown): boolean {
+  if (error instanceof BroadcastRejectedError) return true;
+  // A JSON-RPC application error from sendrawtransaction is the node's
+  // method-level verdict — a definitive reject, regardless of HTTP wrapping.
+  if (error instanceof RpcApplicationError) return true;
+  // Transport-class failures (HttpError, AbortError, network TypeErrors) are
+  // NEVER a broadcast verdict — the node may never have seen the tx. DEFER.
+  if (error instanceof HttpError) return false;
+  // A plain Error can still carry explicit reject text (REST paths that haven't
+  // been retyped); only the reject-text set counts, never generic messages.
+  if (error instanceof Error) return isBroadcastRejectText(error.message);
+  return false;
+}
+
 // ─── Retry with Exponential Backoff ─────────────────────────────────────
 
 interface RetryOptions {
@@ -176,6 +274,12 @@ export function isRetryableError(error: unknown): boolean {
   // of the HTTP status it was wrapped in — #1408-Finding-1). Never retryable:
   // resubmitting the same call cannot change a definitive verdict.
   if (error instanceof RpcApplicationError) {
+    return false;
+  }
+
+  // A definitive broadcast rejection is likewise never retryable — the node
+  // examined the tx and refused it (#1417-HIGH).
+  if (error instanceof BroadcastRejectedError) {
     return false;
   }
 
@@ -560,6 +664,17 @@ export class MempoolUtxoProvider implements UtxoProvider {
         if (isDuplicateTxError(errorText)) {
           logger.info({ operation: 'MempoolUtxoProvider.broadcastTx', httpStatus: response.status }, 'Transaction already in mempool/chain — treating as success');
           return { txid: '' };
+        }
+        // #1417-HIGH: an explicit relay/mempool reject verdict is DEFINITIVE —
+        // type it so the intent unwind can fire safely. A bare non-OK with no
+        // reject text (auth 401 / quota 402 / transport 5xx) stays an HttpError,
+        // which the unwind gate DEFERS (the tx may still be live).
+        if (isBroadcastRejectText(errorText)) {
+          throw new BroadcastRejectedError(
+            `Mempool API broadcast rejected: HTTP ${response.status} — ${errorText}`,
+            undefined,
+            response.status,
+          );
         }
         throw new HttpError(`Mempool API broadcast failed: HTTP ${response.status} — ${errorText}`, response.status);
       }

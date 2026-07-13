@@ -29,7 +29,22 @@ export interface MerkleProofEntry {
 /** Result of building a Merkle tree */
 export interface MerkleTreeResult {
   root: string;
+  /**
+   * Legacy fingerprint-keyed branch map. NOTE: duplicate fingerprints share
+   * ONE map entry whose levels interleave BOTH positions' siblings — unusable
+   * as an inclusion branch for duplicated leaves. Use `proofsByIndex` when the
+   * leaf's POSITION matters (S3-P0: `anchor_proofs.merkle_index` must pair
+   * with the branch for that exact index or the CVE-2012-2459 structural
+   * guard rejects the stored proof). Kept for back-compat with callers whose
+   * leaf sets are unique (publicRecordAnchor, attestationAnchor, backfills).
+   */
   proofs: Map<string, MerkleProofEntry[]>;
+  /**
+   * S3-P0: positional branches — `proofsByIndex[i]` is the inclusion branch
+   * for the leaf at input index `i`. Length === leafCount. Correct for
+   * duplicate fingerprints (each position keeps its own branch).
+   */
+  proofsByIndex: MerkleProofEntry[][];
   leafCount: number;
 }
 
@@ -37,8 +52,16 @@ export interface MerkleTreeResult {
  * Build a Merkle tree from an array of hex-encoded fingerprints.
  * Returns the root hash and inclusion proofs for each leaf.
  *
- * Uses double-SHA256 (Bitcoin standard) for internal nodes.
- * Odd-count levels duplicate the last element.
+ * LEAF-ORDERING CONTRACT (S3-P0, documented): leaves are hashed in the EXACT
+ * array order given by the caller — this function does not reorder. The batch
+ * producer (`jobs/batch-anchor.ts`) sorts claimed anchors by
+ * (fingerprint asc, anchor id asc) before calling, making the committed root a
+ * pure function of the claimed leaf set (deterministic across crash/rerun).
+ *
+ * HASHING RULE: internal nodes are double-SHA256(left ‖ right) — Bitcoin
+ * standard. ODD-NODE RULE: a level with an odd node count duplicates its LAST
+ * element (Bitcoin convention). The verify side (`utils/merkle-verify.ts`)
+ * carries the CVE-2012-2459 structural guard for the duplication.
  */
 export function buildMerkleTree(fingerprints: string[]): MerkleTreeResult {
   if (fingerprints.length === 0) {
@@ -49,6 +72,7 @@ export function buildMerkleTree(fingerprints: string[]): MerkleTreeResult {
     return {
       root: fingerprints[0],
       proofs: new Map([[fingerprints[0], []]]),
+      proofsByIndex: [[]],
       leafCount: 1,
     };
   }
@@ -62,6 +86,10 @@ export function buildMerkleTree(fingerprints: string[]): MerkleTreeResult {
 
   const proofs = new Map<string, MerkleProofEntry[]>();
   fingerprints.forEach((fp) => proofs.set(fp, []));
+
+  // S3-P0: positional branches — one branch per input index, immune to the
+  // duplicate-fingerprint collapse of the legacy map above.
+  const proofsByIndex: MerkleProofEntry[][] = fingerprints.map(() => []);
 
   while (level.length > 1) {
     const nextLevel: Buffer[] = [];
@@ -77,11 +105,16 @@ export function buildMerkleTree(fingerprints: string[]): MerkleTreeResult {
       const isLeft = curIdx % 2 === 0;
       const siblingIdx = isLeft ? curIdx + 1 : curIdx - 1;
       const siblingHash = level[siblingIdx].toString('hex');
-
-      proofs.get(fingerprints[origIdx])!.push({
+      const entry: MerkleProofEntry = {
         hash: siblingHash,
         position: isLeft ? 'right' : 'left',
-      });
+      };
+
+      // Legacy map (pre-existing behavior: duplicate fingerprints interleave
+      // into one shared entry — see MerkleTreeResult.proofs docstring).
+      proofs.get(fingerprints[origIdx])!.push(entry);
+      // Positional branch (each index keeps its own).
+      proofsByIndex[origIdx].push(entry);
 
       // Update index for next level
       indexMap.set(origIdx, Math.floor(curIdx / 2));
@@ -96,6 +129,7 @@ export function buildMerkleTree(fingerprints: string[]): MerkleTreeResult {
   return {
     root: level[0].toString('hex'),
     proofs,
+    proofsByIndex,
     leafCount: fingerprints.length,
   };
 }

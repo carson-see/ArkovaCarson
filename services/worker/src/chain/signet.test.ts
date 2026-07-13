@@ -51,6 +51,7 @@ import {
   type BitcoinClientConfig,
 } from './signet.js';
 import type { UtxoProvider, Utxo } from './utxo-provider.js';
+import { HttpError, RpcApplicationError } from './utxo-provider.js';
 import { WifSigningProvider } from './signing-provider.js';
 import { StaticFeeEstimator } from './fee-estimator.js';
 import type { FeeEstimator } from './fee-estimator.js';
@@ -793,13 +794,59 @@ describe('BitcoinChainClient.getReceipt', () => {
     expect(receipt!.confirmations).toBe(3);
   });
 
-  it('returns null for non-existent transaction', async () => {
+  // S3-P0 #1417-HIGH — getReceipt tri-state:
+  //   found                 → receipt
+  //   definitively-absent   → null  (RPC code -5, or mempool HTTP 404)
+  //   lookup-failed          → THROW (provider outage; caller must DEFER, not
+  //                            treat the tx as unknown → rebroadcast → 4xx → unwind)
+  it('returns null when the RPC node definitively reports the tx absent (code -5)', async () => {
     const provider = createMockProvider({
-      getRawTransaction: vi.fn().mockRejectedValue(new Error('Not found')),
+      getRawTransaction: vi.fn().mockRejectedValue(
+        new RpcApplicationError('No such mempool or blockchain transaction (code -5)', -5, 500),
+      ),
     });
     const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
-    const receipt = await client.getReceipt('nonexistent');
-    expect(receipt).toBeNull();
+    expect(await client.getReceipt('nonexistent')).toBeNull();
+  });
+
+  it('returns null when the mempool API definitively reports the tx absent (HTTP 404)', async () => {
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new HttpError('GET /tx/x failed: HTTP 404', 404)),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    expect(await client.getReceipt('nonexistent')).toBeNull();
+  });
+
+  it('THROWS on a provider quota outage (HTTP 402) — a lookup failure must NOT masquerade as tx-absent', async () => {
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new HttpError('GetBlock quota exceeded', 402)),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    await expect(client.getReceipt('c'.repeat(64))).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('THROWS on a provider auth outage (HTTP 401) — lookup failed, not tx-absent', async () => {
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new HttpError('unauthorized', 401)),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    await expect(client.getReceipt('c'.repeat(64))).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('THROWS on a transient transport failure (HTTP 5xx / timeout) — caller defers', async () => {
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new HttpError('bad gateway', 502)),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    await expect(client.getReceipt('c'.repeat(64))).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('THROWS on an ambiguous unknown error — fail-safe (never assume absent)', async () => {
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new Error('connect ETIMEDOUT 1.2.3.4:8332')),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    await expect(client.getReceipt('c'.repeat(64))).rejects.toThrow();
   });
 
   it('returns receipt without block height for unconfirmed tx', async () => {
@@ -1190,5 +1237,153 @@ describe('BitcoinChainClient.verifyFingerprint', () => {
     expect(result.receipt!.blockHeight).toBe(150042);
     expect(provider.getAddressTxs).toHaveBeenCalled();
     expect(provider.listUnspent).toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// S3-P0 (batch producer) — prepare/broadcast split for persisted pre-broadcast
+// intents. prepareFingerprintTx builds + signs WITHOUT broadcasting;
+// broadcastSignedTx sends previously-signed bytes. submitFingerprint must
+// remain exactly prepare→broadcast composed (back-compat).
+// =============================================================================
+
+describe('S3-P0 — BitcoinChainClient.prepareFingerprintTx', () => {
+  const fundedProvider = (overrides: Partial<UtxoProvider> = {}) => createMockProvider({
+    listUnspent: vi.fn().mockResolvedValue([
+      { txid: DUMMY_TXID, vout: 0, valueSats: 100000, rawTxHex: DUMMY_RAW_TX_HEX },
+    ]),
+    ...overrides,
+  });
+
+  it('builds and signs WITHOUT broadcasting (no provider.broadcastTx call)', async () => {
+    const broadcastTx = vi.fn();
+    const provider = fundedProvider({ broadcastTx });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const prepared = await client.prepareFingerprintTx({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(broadcastTx).not.toHaveBeenCalled();
+    expect(prepared.txHex).toMatch(/^[0-9a-f]+$/i);
+    expect(prepared.txId).toMatch(/^[0-9a-f]{64}$/);
+    expect(prepared.feeSats).toBeGreaterThan(0);
+  });
+
+  it('txId equals the txid of the signed bytes (deterministic rebroadcast key)', async () => {
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: fundedProvider() });
+    const prepared = await client.prepareFingerprintTx({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+    });
+    expect(bitcoin.Transaction.fromHex(prepared.txHex).getId()).toBe(prepared.txId);
+  });
+
+  it('commits exactly ONE OP_RETURN output carrying ARKV + the 32-byte root, ≤ 80 bytes (AC2)', async () => {
+    const root = 'c1'.repeat(32);
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: fundedProvider() });
+    const prepared = await client.prepareFingerprintTx({
+      fingerprint: root,
+      timestamp: new Date().toISOString(),
+    });
+
+    const tx = bitcoin.Transaction.fromHex(prepared.txHex);
+    const opReturnOuts = tx.outs.filter((o) => o.script[0] === bitcoin.opcodes.OP_RETURN);
+    expect(opReturnOuts).toHaveLength(1);
+
+    // Structural decode at canonical offset — same parser the verifier uses.
+    const committed = extractAnchorFingerprint(opReturnOuts[0].script.toString('hex'));
+    expect(committed).toBe(root);
+
+    // Raw committed payload: "ARKV"(4) + root(32) = 36 ≤ 80 bytes, no version byte.
+    expect(prepared.opReturnData).toBe(`41524b56${root}`);
+    expect(prepared.opReturnData.length / 2).toBeLessThanOrEqual(80);
+  });
+
+  it('same UTXO set → identical signed bytes and txid (RFC6979 deterministic signing)', async () => {
+    const mk = () => new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: fundedProvider() });
+    const req = { fingerprint: TEST_FINGERPRINT, timestamp: new Date().toISOString() };
+    const p1 = await mk().prepareFingerprintTx(req);
+    const p2 = await mk().prepareFingerprintTx(req);
+    expect(p1.txHex).toBe(p2.txHex);
+    expect(p1.txId).toBe(p2.txId);
+  });
+});
+
+describe('S3-P0 — BitcoinChainClient.broadcastSignedTx', () => {
+  it('broadcasts the exact provided hex and returns a receipt with the broadcast txid', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: 'broadcast_txid_s3p0' });
+    const provider = createMockProvider({ broadcastTx });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const receipt = await client.broadcastSignedTx(FUNDING_TX.txHex);
+
+    expect(broadcastTx).toHaveBeenCalledWith(FUNDING_TX.txHex);
+    expect(receipt.receiptId).toBe('broadcast_txid_s3p0');
+    expect(receipt.rawTxHex).toBe(FUNDING_TX.txHex);
+  });
+
+  it('falls back to the locally-computed txid when the provider returns an empty txid (already-known == success)', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: '' });
+    const provider = createMockProvider({ broadcastTx });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const receipt = await client.broadcastSignedTx(FUNDING_TX.txHex);
+    expect(receipt.receiptId).toBe(FUNDING_TX.txid);
+  });
+
+  // S3-P0 #1417-HIGH (fix b): broadcastSignedTx MUST be infallible AFTER
+  // broadcastTx succeeds. The post-broadcast getBlockchainInfo() height read is
+  // best-effort observability — if the provider 402/401/5xx's on that follow-up
+  // call, the tx is ALREADY on the wire; throwing here would make the caller
+  // misread a live broadcast as an unknown/failed one and (worse) unwind it.
+  it('does NOT throw when the post-broadcast height read fails (402) — returns a receipt with height 0', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: 'broadcast_txid_live' });
+    const getBlockchainInfo = vi.fn().mockRejectedValue(new HttpError('GetBlock quota exceeded', 402));
+    const provider = createMockProvider({ broadcastTx, getBlockchainInfo });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const receipt = await client.broadcastSignedTx(FUNDING_TX.txHex);
+
+    expect(broadcastTx).toHaveBeenCalledWith(FUNDING_TX.txHex);
+    expect(receipt.receiptId).toBe('broadcast_txid_live'); // the broadcast committed
+    expect(receipt.blockHeight).toBe(0); // height unknown, but broadcast is NOT lost
+    expect(receipt.rawTxHex).toBe(FUNDING_TX.txHex);
+  });
+
+  it('does NOT throw when the post-broadcast height read times out — receipt still returned', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: '' }); // already-known == success
+    const getBlockchainInfo = vi.fn().mockRejectedValue(new Error('connect ETIMEDOUT'));
+    const provider = createMockProvider({ broadcastTx, getBlockchainInfo });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const receipt = await client.broadcastSignedTx(FUNDING_TX.txHex);
+    expect(receipt.receiptId).toBe(FUNDING_TX.txid); // computed fallback
+    expect(receipt.blockHeight).toBe(0);
+  });
+
+  it('submitFingerprint remains prepare→broadcast composed: broadcast bytes == prepared bytes', async () => {
+    const sent: string[] = [];
+    const broadcastTx = vi.fn().mockImplementation(async (hex: string) => {
+      sent.push(hex);
+      return { txid: '' };
+    });
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: DUMMY_TXID, vout: 0, valueSats: 100000, rawTxHex: DUMMY_RAW_TX_HEX },
+      ]),
+      broadcastTx,
+    });
+    const mkClient = () => new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    const req = { fingerprint: TEST_FINGERPRINT, timestamp: new Date().toISOString() };
+
+    const prepared = await mkClient().prepareFingerprintTx(req);
+    const receipt = await mkClient().submitFingerprint(req);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBe(prepared.txHex);
+    expect(receipt.receiptId).toBe(prepared.txId);
+    expect(receipt.rawTxHex).toBe(prepared.txHex);
   });
 });

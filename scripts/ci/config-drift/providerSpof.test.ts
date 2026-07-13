@@ -81,18 +81,18 @@ describe('parsers (fail closed)', () => {
   });
 });
 
-// Smoke test against the REAL source files — documents the live latent SPOF
-// (config.ts default 'mempool' vs prod-intended 'getblock'). If the code default is
-// later aligned to 'getblock' (the recommended fail-safe fix), update these expectations.
+// Smoke test against the REAL source files. S3-P0 / DISC-03 (PR #1510) aligned the
+// config.ts default to 'getblock' — the recommended fail-safe fix — CLOSING the latent
+// mempool SPOF. config default and the deploy override now MATCH; there is no masked gap.
 describe('provider-SPOF on the real tree (current-state smoke)', () => {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
-  it('config.ts still defaults BITCOIN_UTXO_PROVIDER to mempool (latent SPOF is live)', () => {
+  it('config.ts defaults BITCOIN_UTXO_PROVIDER to getblock (SPOF closed, S3-P0/DISC-03 #1510)', () => {
     const src = readFileSync(resolve(repoRoot, 'services/worker/src/config.ts'), 'utf8');
-    expect(parseCodeDefaultProvider(src)).toBe('mempool');
+    expect(parseCodeDefaultProvider(src)).toBe('getblock');
   });
 
-  it('deploy-worker.yml sets BITCOIN_UTXO_PROVIDER=getblock (the override masks the SPOF)', () => {
+  it('deploy-worker.yml sets BITCOIN_UTXO_PROVIDER=getblock (now MATCHES the code default)', () => {
     const yml = readFileSync(resolve(repoRoot, '.github/workflows/deploy-worker.yml'), 'utf8');
     expect(parseDeployedProvider(yml)).toBe('getblock');
   });
