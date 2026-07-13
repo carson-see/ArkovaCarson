@@ -71,7 +71,16 @@ const WAVE1_SOURCE_PATHS = [
   'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
 ] as const;
+const WAVE1_PACKET_PATHS = [
+  'docs/lane4/s33-corpus-datasheet.md',
+  WAVE1_MANIFEST_PATH,
+  'docs/lane4/s33-wave1-entry-datasheet.json',
+  'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
+] as const;
 const WAVE1_INITIAL_LANE3_SUPPORT_COMMIT = 'dd3ae1edecb005730762277daf17e15d8009459d';
+const WAVE1_TEST_SUPPORT_MARKER_PATH = 'services/worker/src/ai/eval/.s33-r10-test-support';
 const WAVE1_REVISION9_COMMIT = 'b9bb1d3221d3567dbb08e1b23cab4dd687486738';
 const WAVE1_REVISION9_PREDECESSOR_COMMIT = '506ff62340db8f838ce68bc46ddfa6407735ce3c';
 const WAVE1_R10_SUPPORT_REVIEW_STATE = 'LANE3_TOOLING_EXACT_HEAD_REVIEW_PASS';
@@ -324,14 +333,7 @@ function productionManifestFixture(bindings: ManifestFixtureBindings = {
           'services/worker/src/ai/eval/golden-dataset-s33-heldout.test.ts',
           WAVE1_TYPES_PATH,
         ],
-        protocolAllowedDiffPaths: [
-          'docs/lane4/s33-corpus-datasheet.md',
-          WAVE1_MANIFEST_PATH,
-          'docs/lane4/s33-wave1-entry-datasheet.json',
-          'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
-          'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
-          'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
-        ],
+        protocolAllowedDiffPaths: [...WAVE1_PACKET_PATHS],
         dependency: {
           owner: 'Lane 3',
           branch: 'codex/s33-l3-acceptance-tooling',
@@ -588,7 +590,10 @@ interface Revision10GitMutation {
   mutateSourceBytes?: boolean;
 }
 
-function revision10GitRepo(mutation: Revision10GitMutation = {}): {
+function revision10GitRepo(
+  mutation: Revision10GitMutation = {},
+  supportObjectRepository = repositoryRoot(),
+): {
   root: string;
   manifest: string;
   manifestPath: string;
@@ -600,10 +605,19 @@ function revision10GitRepo(mutation: Revision10GitMutation = {}): {
   const root = mkdtempSync(join(tmpdir(), 'arkova-s33-r10-git-'));
   tempRoots.push(root);
   execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['fetch', '-q', '--no-tags', repositoryRoot(), 'HEAD'], { cwd: root });
+  execFileSync('git', [
+    'fetch', '-q', '--no-tags', supportObjectRepository, WAVE1_INITIAL_LANE3_SUPPORT_COMMIT,
+  ], { cwd: root });
   execFileSync('git', ['switch', '-q', '--detach', 'FETCH_HEAD'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'lane3-test@arkova.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Lane3 Test'], { cwd: root });
+  writeFileSync(
+    join(root, WAVE1_TEST_SUPPORT_MARKER_PATH),
+    'Hermetic test-only Team 3 support descendant.\n',
+    'utf8',
+  );
+  execFileSync('git', ['add', WAVE1_TEST_SUPPORT_MARKER_PATH], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'synthetic Team 3 support descendant'], { cwd: root });
   const supportCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: root, encoding: 'utf8',
   }).trim();
@@ -695,6 +709,25 @@ function revision10GitRepo(mutation: Revision10GitMutation = {}): {
     cwd: root, encoding: 'utf8',
   }).trim();
   return { root, manifest, manifestPath, supportCommit, revision10Pins, freezeCommitSha, verificationCommitSha };
+}
+
+function outerCheckoutWithPacketPaths(): string {
+  const root = mkdtempSync(join(tmpdir(), 'arkova-s33-r10-outer-'));
+  tempRoots.push(root);
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', [
+    'fetch', '-q', '--no-tags', repositoryRoot(), WAVE1_INITIAL_LANE3_SUPPORT_COMMIT,
+  ], { cwd: root });
+  execFileSync('git', ['switch', '-q', '--detach', 'FETCH_HEAD'], { cwd: root });
+  execFileSync('git', ['config', 'user.email', 'lane3-test@arkova.invalid'], { cwd: root });
+  execFileSync('git', ['config', 'user.name', 'Lane3 Test'], { cwd: root });
+  for (const [index, path] of WAVE1_PACKET_PATHS.entries()) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), `synthetic outer-checkout packet path ${index}\n`, 'utf8');
+  }
+  execFileSync('git', ['add', '--all'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'outer checkout already contains packet'], { cwd: root });
+  return root;
 }
 
 function revision10Ceremony(mutation: Revision10GitMutation = {}) {
@@ -1135,6 +1168,40 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
     };
     expect(() => createProductionS33AcceptanceOrchestrator(productionInput))
       .toThrow(/production.*not configured.*fail closed/i);
+  });
+
+  it('never seeds r10 support from an outer checkout HEAD that already contains the packet', () => {
+    const outerRoot = outerCheckoutWithPacketPaths();
+    const outerHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: outerRoot, encoding: 'utf8',
+    }).trim();
+    const outerPacketPaths = execFileSync('git', [
+      'ls-tree', '-r', '--name-only', outerHead, '--', ...WAVE1_PACKET_PATHS,
+    ], { cwd: outerRoot, encoding: 'utf8' }).trim().split('\n').sort();
+    expect(outerPacketPaths).toEqual([...WAVE1_PACKET_PATHS].sort());
+
+    const repo = revision10GitRepo({}, outerRoot);
+    const supportLineage = execFileSync('git', [
+      'rev-list', '--parents', '-n', '1', repo.supportCommit,
+    ], { cwd: repo.root, encoding: 'utf8' }).trim().split(/\s+/);
+    expect(supportLineage).toEqual([repo.supportCommit, WAVE1_INITIAL_LANE3_SUPPORT_COMMIT]);
+    expect(repo.supportCommit).not.toBe(outerHead);
+    expect(execFileSync('git', [
+      'ls-tree', '-r', '--name-only', repo.supportCommit, '--', ...WAVE1_PACKET_PATHS,
+    ], { cwd: repo.root, encoding: 'utf8' }).toString()).toBe('');
+    expect(execFileSync('git', [
+      'ls-tree', '-r', '--name-only', repo.supportCommit, '--',
+      WAVE1_TYPES_PATH, WAVE1_TEST_SUPPORT_MARKER_PATH,
+    ], { cwd: repo.root, encoding: 'utf8' }).toString().trim().split('\n').sort()).toEqual([
+      WAVE1_TEST_SUPPORT_MARKER_PATH,
+      WAVE1_TYPES_PATH,
+    ].sort());
+
+    const packetDiff = execFileSync('git', [
+      'diff', '--raw', '--no-abbrev', repo.supportCommit, repo.freezeCommitSha,
+    ], { cwd: repo.root, encoding: 'utf8' }).trim().split('\n');
+    expect(packetDiff).toHaveLength(6);
+    expect(packetDiff.every((line) => /^:000000 100644 [0-9a-f]{40} [0-9a-f]{40} A\t/u.test(line))).toBe(true);
   });
 
   it('accepts only the history-preserving r10 restack onto the exact reviewed Team-3 support head', () => {

@@ -52,6 +52,9 @@ _Last updated: 2026-07-13_
   code-owned descriptor. Unit tests never resolve the logically prior r9 Git
   object: the explicitly test-only orchestrator factory may receive a validated,
   deep-frozen synthetic pin descriptor for synthetic temporary repositories.
+  R10 Git fixtures fetch the exact initial support commit `dd3ae1ed`, create a
+  synthetic support-marker child, and never seed from the invoking checkout's
+  `HEAD`; all six producer packet paths must be absent from that support child.
   The public parser and production factory expose no override seam, and tests
   must never check raw or decodable held-out corpus bytes into the support tree.
 - Every selection and lexical result is recursively frozen before it crosses
