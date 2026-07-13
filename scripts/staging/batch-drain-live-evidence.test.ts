@@ -10,6 +10,7 @@ import {
   deriveAndAssertLiveEvidence,
   parseRawCaptureSet,
   type ImmutableRunDeclaration,
+  type ParsedRawCaptureSet,
   type RawCaptureDigests,
   type RawCaptureTextSet,
 } from './batch-drain-live-evidence';
@@ -275,6 +276,11 @@ function digests(raw: RawCaptureTextSet): RawCaptureDigests {
   };
 }
 
+function deriveTrusted(raw: RawCaptureTextSet) {
+  const declaration = trust(declarationValue(), raw);
+  return deriveAndAssertLiveEvidence(declaration, parseRawCaptureSet(raw, declaration));
+}
+
 describe('deriveAndAssertLiveEvidence — independent strict raw-source replay', () => {
   it('fails production verification closed until the CTO key and fingerprint are code-configured', () => {
     expect(() => createProductionEvidenceEnvelopeVerifier()).toThrow(/CTO.*key|not configured/i);
@@ -303,6 +309,59 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
       get: () => raw.scheduler,
     }) as RawCaptureTextSet;
     expect(() => parseRawCaptureSet(accessorRaw, declared)).toThrow(/getter|accessor/i);
+  });
+
+  it.each([
+    ['scheduler', 'recordId'],
+    ['workerLogs', 'recordId'],
+    ['database', 'schedulerExecutionId'],
+    ['signet', 'recordId'],
+    ['cloudRun', 'recordId'],
+    ['supervisor', 'recordId'],
+  ] as const)('rejects duplicate top-level and nested keys in signed %s raw bytes', (source, nestedKey) => {
+    const initial = immutable();
+    const base = rawCaptures(initial);
+    const duplicateTopLevel = {
+      ...base,
+      [source]: base[source].replace('"schemaVersion":1,', '"schemaVersion":1,"schemaVersion":1,'),
+    };
+    const topLevelDeclaration = trust(declarationValue(), duplicateTopLevel);
+    expect(() => parseRawCaptureSet(duplicateTopLevel, topLevelDeclaration)).toThrow(/duplicate.*schemaVersion/i);
+
+    const nestedNeedle = `"${nestedKey}":`;
+    const duplicateNested = {
+      ...base,
+      [source]: base[source].replace(nestedNeedle, `"${nestedKey}":"adversarial-duplicate",${nestedNeedle}`),
+    };
+    const nestedDeclaration = trust(declarationValue(), duplicateNested);
+    expect(() => parseRawCaptureSet(duplicateNested, nestedDeclaration)).toThrow(
+      new RegExp(`duplicate.*${nestedKey}`, 'i'),
+    );
+  });
+
+  it('deeply freezes and provenance-binds a fully verified parsed capture set', () => {
+    const declared = immutable();
+    const raw = rawCaptures(declared);
+    const parsed = parseRawCaptureSet(raw, declared);
+    expect(Object.isFrozen(parsed)).toBe(true);
+    expect(Object.isFrozen(parsed.scheduler.records)).toBe(true);
+    expect(Object.isFrozen(parsed.scheduler.records[0])).toBe(true);
+    expect(Object.isFrozen(parsed.database.proofs[0]!.proofPath)).toBe(true);
+    expect(Object.isFrozen(parsed.database.proofs[0]!.proofPath[0])).toBe(true);
+    expect(Object.isFrozen(parsed.supervisor.cleanMirror)).toBe(true);
+    expect(Object.isFrozen(parsed.contentDigests)).toBe(true);
+    expect(() => { parsed.scheduler.records[0]!.statusCode = 503; }).toThrow(TypeError);
+    expect(() => { parsed.scheduler.records.push(parsed.scheduler.records[0]!); }).toThrow(TypeError);
+    expect(() => { parsed.database.proofs[0]!.proofPath.push({ hash: '0'.repeat(64), position: 'left' }); }).toThrow(TypeError);
+    expect(() => { (parsed.supervisor.cleanMirror as { result: string }).result = 'tampered'; }).toThrow(TypeError);
+    expect(() => { parsed.contentDigests.scheduler = '0'.repeat(64); }).toThrow(TypeError);
+
+    const fabricated = structuredClone(parsed) as ParsedRawCaptureSet;
+    expect(() => deriveAndAssertLiveEvidence(declared, fabricated)).toThrow(/verified.*capture|provenance/i);
+    const independentlyVerifiedDeclaration = trust(declarationValue(), raw);
+    expect(() => deriveAndAssertLiveEvidence(independentlyVerifiedDeclaration, parsed)).toThrow(
+      /verified.*capture|provenance/i,
+    );
   });
 
   it('rejects a caller-recomputed six-digest envelope without the CTO signature', () => {
@@ -425,19 +484,13 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     const signet = JSON.parse(wrongHead.signet) as Record<string, unknown>;
     signet.gitHeadSha = 'e'.repeat(40);
     wrongHead.signet = JSON.stringify(signet);
-    expect(() => deriveAndAssertLiveEvidence(
-      trust(declarationValue(), wrongHead),
-      parseRawCaptureSet(wrongHead, trust(declarationValue(), wrongHead)),
-    )).toThrow(/cross-head/);
+    expect(() => deriveTrusted(wrongHead)).toThrow(/cross-head/);
 
     const duplicates = rawCaptures(declared);
     const supervisor = JSON.parse(duplicates.supervisor) as Record<string, unknown>;
     supervisor.exportId = 'export-signet';
     duplicates.supervisor = JSON.stringify(supervisor);
-    expect(() => deriveAndAssertLiveEvidence(
-      trust(declarationValue(), duplicates),
-      parseRawCaptureSet(duplicates, trust(declarationValue(), duplicates)),
-    )).toThrow(/duplicate identities/);
+    expect(() => deriveTrusted(duplicates)).toThrow(/duplicate identities/);
   });
 
   it('rejects duplicate raw record IDs, undeclared rows, and inconsistent timestamps', () => {
@@ -446,28 +499,19 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     const signet = JSON.parse(duplicate.signet) as { records: Array<Record<string, unknown>> };
     signet.records.push({ ...signet.records[0]! });
     duplicate.signet = JSON.stringify(signet);
-    expect(() => deriveAndAssertLiveEvidence(
-      trust(declarationValue(), duplicate),
-      parseRawCaptureSet(duplicate, trust(declarationValue(), duplicate)),
-    )).toThrow(/exactly one RPC result|duplicate|exact closed set/i);
+    expect(() => deriveTrusted(duplicate)).toThrow(/exactly one RPC result|duplicate|exact closed set/i);
 
     const undeclared = rawCaptures(declared);
     const db = JSON.parse(undeclared.database) as { ledgerDeltas: Array<Record<string, unknown>> };
     db.ledgerDeltas.push({ schedulerExecutionId: 'scheduler-invented', orgId: 'org-x', delta: 0 });
     undeclared.database = JSON.stringify(db);
-    expect(() => deriveAndAssertLiveEvidence(
-      trust(declarationValue(), undeclared),
-      parseRawCaptureSet(undeclared, trust(declarationValue(), undeclared)),
-    )).toThrow(/undeclared or missing drain execution/);
+    expect(() => deriveTrusted(undeclared)).toThrow(/undeclared or missing drain execution/);
 
     const chronology = rawCaptures(declared);
     const scheduler = JSON.parse(chronology.scheduler) as { records: Array<{ firedAt: string; completedAt: string }> };
     scheduler.records[0]!.completedAt = '2026-07-13T11:58:59.000Z';
     chronology.scheduler = JSON.stringify(scheduler);
-    expect(() => deriveAndAssertLiveEvidence(
-      trust(declarationValue(), chronology),
-      parseRawCaptureSet(chronology, trust(declarationValue(), chronology)),
-    )).toThrow(/invalid chronology/);
+    expect(() => deriveTrusted(chronology)).toThrow(/invalid chronology/);
   });
 
   it('rejects even a one-millisecond short worker-uptime clock', () => {
@@ -478,10 +522,7 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     cloudRun.records = cloudRun.records.filter((record) => record.event !== 'heartbeat' || record.occurredAt <= shortEnd);
     cloudRun.records.find((record) => record.event === 'stopped')!.occurredAt = shortEnd;
     raw.cloudRun = JSON.stringify(cloudRun);
-    expect(() => deriveAndAssertLiveEvidence(
-      trust(declarationValue(), raw),
-      parseRawCaptureSet(raw, trust(declarationValue(), raw)),
-    )).toThrow(/fixed 48h worker-uptime floor/);
+    expect(() => deriveTrusted(raw)).toThrow(/fixed 48h worker-uptime floor/);
   });
 
   it('rejects tampering even when the caller recomputes the changed export digest', () => {

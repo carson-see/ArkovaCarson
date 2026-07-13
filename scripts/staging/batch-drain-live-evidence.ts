@@ -26,6 +26,7 @@ import {
   type DrainWindowEvidenceSummary,
   type DrainWindowExpectation,
 } from './batch-drain-observation';
+import { parseJsonRejectingDuplicateKeys } from './batch-drain-strict-json';
 
 export const LIVE_EVIDENCE_ENABLE_VALUE = 'ARKOVA_S33_COLLECT_LIVE_RAW_EVIDENCE';
 export const SOAK_FLOOR_MINUTES = 2_880;
@@ -356,6 +357,8 @@ export interface ParsedRawCaptureSet {
   contentDigests: RawCaptureDigests;
 }
 
+const VERIFIED_CAPTURE_PROVENANCE = new WeakMap<ParsedRawCaptureSet, ImmutableRunDeclaration>();
+
 export interface RawCaptureDigests {
   scheduler: string;
   workerLogs: string;
@@ -443,11 +446,7 @@ function digest(raw: string): string {
 }
 
 function parseJson(raw: string, label: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    throw new Error(`${label} must contain valid JSON.`);
-  }
+  return parseJsonRejectingDuplicateKeys(raw, label);
 }
 
 function parseStrict<T>(schema: z.ZodType<T>, raw: string, label: string): T {
@@ -500,32 +499,6 @@ function validateRunDeclaration(value: RunDeclaration): void {
   }
 }
 
-/** Lexically reject duplicate object keys before JSON.parse can collapse them. */
-function assertNoDuplicateJsonKeys(raw: string, label: string): void {
-  const stack: Array<{ kind: 'object'; keys: Set<string> } | { kind: 'array' }> = [];
-  for (let index = 0; index < raw.length; index += 1) {
-    const char = raw[index]!;
-    if (char === '{') { stack.push({ kind: 'object', keys: new Set() }); continue; }
-    if (char === '[') { stack.push({ kind: 'array' }); continue; }
-    if (char === '}' || char === ']') { stack.pop(); continue; }
-    if (char !== '"') continue;
-    const start = index;
-    index += 1;
-    for (; index < raw.length; index += 1) {
-      if (raw[index] === '\\') { index += 1; continue; }
-      if (raw[index] === '"') break;
-    }
-    let cursor = index + 1;
-    while (/\s/.test(raw[cursor] ?? '')) cursor += 1;
-    if (raw[cursor] !== ':') continue;
-    const frame = stack[stack.length - 1];
-    if (!frame || frame.kind !== 'object') continue;
-    const key = JSON.parse(raw.slice(start, index + 1)) as string;
-    if (frame.keys.has(key)) throw new Error(`${label} contains duplicate JSON key ${key}.`);
-    frame.keys.add(key);
-  }
-}
-
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
@@ -573,7 +546,6 @@ class Ed25519EvidenceEnvelopeVerifier implements EvidenceEnvelopeVerifier {
 
   verify(raw: unknown): ImmutableRunDeclaration {
     if (typeof raw !== 'string') throw new Error('Signed evidence envelope must be a primitive string.');
-    assertNoDuplicateJsonKeys(raw, 'signed evidence envelope');
     const envelope = parseStrict(evidenceTrustRootSchema, raw, 'signed evidence envelope');
     if (envelope.keyFingerprint !== this.keyFingerprint) throw new Error('Signed evidence envelope names an untrusted key fingerprint.');
     const signature = Buffer.from(envelope.signatureBase64, 'base64');
@@ -582,7 +554,6 @@ class Ed25519EvidenceEnvelopeVerifier implements EvidenceEnvelopeVerifier {
     }
 
     // Signature verification precedes the single semantic parse of signed bytes.
-    assertNoDuplicateJsonKeys(envelope.signedPayloadRaw, 'signed evidence payload');
     const payload = parseStrict(evidenceSignedPayloadSchema, envelope.signedPayloadRaw, 'signed evidence payload');
     if (payload.envelopeId !== envelope.envelopeId) throw new Error('Signed envelope and payload identities differ.');
     validateRunDeclaration(payload.declaration);
@@ -683,7 +654,11 @@ export function parseRawCaptureSet(
   const signet = parseStrict(signetCaptureSchema, captured.signet, 'signet RPC raw export');
   const cloudRun = parseStrict(cloudRunCaptureSchema, captured.cloudRun, 'Cloud Run lifecycle raw export');
   const supervisor = parseStrict(supervisorCaptureSchema, captured.supervisor, 'supervisor raw export');
-  return { scheduler, workerLogs, database, signet, cloudRun, supervisor, contentDigests };
+  const parsed = deepFreeze<ParsedRawCaptureSet>({
+    scheduler, workerLogs, database, signet, cloudRun, supervisor, contentDigests,
+  });
+  VERIFIED_CAPTURE_PROVENANCE.set(parsed, declaration);
+  return parsed;
 }
 
 export async function collectLiveRawSources(
@@ -1006,6 +981,9 @@ export function deriveAndAssertLiveEvidence(
 ): LiveEvidenceSummary {
   if (!VERIFIED_DECLARATIONS.has(declaration)) {
     throw new Error('Live evidence derivation requires a declaration from the verified signed evidence envelope.');
+  }
+  if (VERIFIED_CAPTURE_PROVENANCE.get(captures) !== declaration) {
+    throw new Error('Live evidence derivation requires a verified capture set bound to this declaration provenance.');
   }
   assertCommonBindings(declaration, captures);
   assertPreflightAndSupervisor(declaration.value, captures.supervisor);

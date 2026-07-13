@@ -20,6 +20,7 @@ import type {
   RestartEvidence,
   TerminationEvidence,
 } from './batch-drain-crash-control';
+import { parseJsonRejectingDuplicateKeys } from './batch-drain-strict-json';
 
 export const LIVE_CRASH_ENABLE_TOKEN = 'ARKOVA_S33_EXECUTE_LIVE_CRASH_CASE';
 
@@ -185,12 +186,7 @@ export interface CrashReplayCapture {
 }
 
 export function parseCrashReplayCapture(raw: string): CrashReplayCapture {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error('Crash replay capture must contain valid JSON.');
-  }
+  const parsed = parseJsonRejectingDuplicateKeys(raw, 'Crash replay capture');
   const result = crashReplayCaptureSchema.safeParse(parsed);
   if (!result.success) throw new Error(`Crash replay capture schema rejected: ${z.prettifyError(result.error)}`);
   return result.data as CrashReplayCapture;
@@ -251,12 +247,7 @@ const acknowledgementSchema = z.object({
 }).strict();
 
 function parseControllerResponse<T>(schema: z.ZodType<T>, raw: string, action: string): T {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`Live crash controller ${action} response must contain valid JSON.`);
-  }
+  const parsed = parseJsonRejectingDuplicateKeys(raw, `Live crash controller ${action} response`);
   const result = schema.safeParse(parsed);
   if (!result.success) throw new Error(`Live crash controller ${action} response schema rejected: ${z.prettifyError(result.error)}`);
   return result.data;

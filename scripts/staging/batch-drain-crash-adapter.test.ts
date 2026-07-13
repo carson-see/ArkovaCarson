@@ -38,6 +38,18 @@ describe('concrete crash capture adapters', () => {
     );
   });
 
+  it('lexically rejects duplicate top-level and nested replay capture keys before schema parsing', () => {
+    expect(() => parseCrashReplayCapture(
+      '{"schemaVersion":1,"schemaVersion":1,"captureId":"ambiguous"}',
+    )).toThrow(/duplicate.*schemaVersion/i);
+    expect(() => parseCrashReplayCapture(
+      '{"schemaVersion":1,"schema\\u0056ersion":1,"captureId":"escaped-ambiguity"}',
+    )).toThrow(/duplicate.*schemaVersion/i);
+    expect(() => parseCrashReplayCapture(
+      '{"schemaVersion":1,"barrier":{"workerId":"first","workerId":"second"}}',
+    )).toThrow(/duplicate.*workerId/i);
+  });
+
   it('provides a concrete offline replay adapter', () => {
     expect(ReplayCrashControlAdapter).toBeTypeOf('function');
   });
@@ -82,5 +94,25 @@ describe('concrete crash capture adapters', () => {
       schemaVersion: 1, action: 'arm', runId: INPUT.runId, status: 'ok', invented: true,
     })) });
     await expect(adapter.arm(INPUT)).rejects.toThrow(/schema|unrecognized/i);
+  });
+
+  it('lexically rejects duplicate top-level and nested live-controller response keys', async () => {
+    const enabled = {
+      ARKOVA_LIVE_CRASH_EXECUTION: LIVE_CRASH_ENABLE_TOKEN,
+      ARKOVA_LIVE_CRASH_RUN_ID: INPUT.runId,
+    };
+    const duplicateTopLevel = createRigB1LiveCrashControlAdapterForTest(TARGET, enabled, {
+      run: vi.fn(async () => (
+        `{"schemaVersion":1,"schemaVersion":1,"action":"arm","runId":"${INPUT.runId}","status":"ok"}`
+      )),
+    });
+    await expect(duplicateTopLevel.arm(INPUT)).rejects.toThrow(/duplicate.*schemaVersion/i);
+
+    const duplicateNested = createRigB1LiveCrashControlAdapterForTest(TARGET, enabled, {
+      run: vi.fn(async () => (
+        '{"claimedLeaves":[{"orgId":"first","orgId":"second"}]}'
+      )),
+    });
+    await expect(duplicateNested.waitForKillpoint(INPUT)).rejects.toThrow(/duplicate.*orgId/i);
   });
 });
