@@ -747,6 +747,154 @@ const AUTHORIZED_REVISION_KEYS: Readonly<Record<number, readonly string[]>> = Ob
   ],
 });
 
+function wave1AuthorizedRevisionContract(bindings: Wave1ManifestBindings): Record<string, unknown> {
+  return {
+    status: 'PASS',
+    revisions: [
+      {
+        revision: 2,
+        authority: 'RTE protocol-required Wave 1 overlap revision',
+        changedEntryIds: ['GD-S33-NUR-011', 'GD-S33-CPA-011', 'GD-S33-BAR-011', 'GD-S33-PDH-010'],
+        normalizedInputChanged: true,
+      },
+      {
+        revision: 3,
+        authority: 'Lane 3 reject-and-return: material Kenya truth defect',
+        changedEntryIds: ['GD-S33-KE-010'],
+        change: 'removed ungrounded issuedDate 2013-11-30; source states only November 2013',
+        normalizedInputChanged: false,
+        remainingSubstantiveGroundTruthFields: 6,
+      },
+      {
+        revision: 4,
+        authority: 'Lane 3 reject-and-return: union sample grounded-truth adjudication',
+        changedEntryIds: ['GD-S33-AU-007', 'GD-S33-NUR-003'],
+        changes: [
+          'AU-007 fieldOfStudy corrected from Commerce to text-grounded Accounting',
+          'NUR-003 ungrounded ANCC accreditingBody removed',
+        ],
+        normalizedInputChanged: false,
+        remainingSubstantiveGroundTruthFields: {
+          'GD-S33-AU-007': 7,
+          'GD-S33-NUR-003': 11,
+        },
+      },
+      {
+        revision: 5,
+        authority: 'Lane 3 reject-and-return: full non-OOD grounded-truth review',
+        changedEntryIds: ['GD-S33-AU-008', 'GD-S33-NUR-004', 'GD-S33-NUR-005', 'GD-S33-PDH-007'],
+        changes: [
+          'AU-008 unsupported courseId and deliveryMethod removed',
+          'NUR-004 recommendation date not labeled as expiryDate and unstated deliveryMethod removed',
+          'NUR-005 per-course completion date not labeled as transcript issuedDate and unstated deliveryMethod removed',
+          'PDH-007 self-authored activity log replaced with provider-issued completion evidence under the existing CERTIFICATE/completion_certificate ontology',
+        ],
+        normalizedInputChanged: true,
+        normalizedInputChangedEntryIds: ['GD-S33-PDH-007'],
+        remainingSubstantiveGroundTruthFields: {
+          'GD-S33-AU-008': 6,
+          'GD-S33-NUR-004': 7,
+          'GD-S33-NUR-005': 7,
+          'GD-S33-PDH-007': 11,
+        },
+      },
+      {
+        revision: 6,
+        authority: 'Lane 3 internal review reject: PDH-007 grounded-truth jurisdiction',
+        changedEntryIds: ['GD-S33-PDH-007'],
+        change: 'removed unsupported jurisdiction United States because the source names no country or state; source text was not changed',
+        normalizedInputChanged: false,
+        recomputedNormalizedInputSha256: {
+          'GD-S33-PDH-007': '647ce4116d8d36017f31e9cd9174157922592f1bc7e6c59135ae893d71e8d7c0',
+        },
+        remainingSubstantiveGroundTruthFields: { 'GD-S33-PDH-007': 10 },
+      },
+      {
+        revision: 7,
+        authority: 'RTE clean producer resubmission stacked on the Lane 3 support prerequisite',
+        changedEntryIds: [],
+        change: 'transplanted revision 6 corpus bytes onto Lane 3 support commit dd3ae1ed; producer packet metadata now proves the six-file protocol scope',
+        corpusDataChanged: false,
+        normalizedInputChanged: false,
+        producerRevisionPredecessorCommit: 'dcbe0abd741a66401744a2cf916a583e865e2c9f',
+        directBaseCommit: bindings.supportCommit,
+        sourceBlobsUnchangedFromRevision6: true,
+      },
+      {
+        revision: 8,
+        authority: 'Team 4 same-lane review reject: NUR-004/NUR-005 grounded-truth correction',
+        changedEntryIds: ['GD-S33-NUR-004', 'GD-S33-NUR-005'],
+        changes: [
+          'NUR-004 unsupported jurisdiction United States removed because the source names no country or state',
+          'NUR-005 unsupported jurisdiction United States removed because the source names no country or state',
+          'NUR-005 source minimally re-authored as an issuer-backed CERTIFICATE OF COMPLETION containing continuing-education transcript rows, grounding the existing CERTIFICATE/completion_certificate truth',
+        ],
+        normalizedInputChanged: true,
+        normalizedInputChangedEntryIds: ['GD-S33-NUR-005'],
+        recomputedNormalizedInputSha256: {
+          'GD-S33-NUR-004': '5cf701df727878e681e156e1c2f2cc1f8ad9df124e7668c6843e33eab806bc0d',
+          'GD-S33-NUR-005': '68085d32defe764e6a6462a936c8493844e8c4213ff27943a51ff7026d0c90b9',
+        },
+        remainingSubstantiveGroundTruthFields: {
+          'GD-S33-NUR-004': 6,
+          'GD-S33-NUR-005': 6,
+        },
+        producerRevisionPredecessorCommit: 'c56bc9958f774471ff62a31418c304149afd4bc6',
+        lane3SupportBaseCommit: bindings.supportCommit,
+      },
+      {
+        revision: 9,
+        authority: 'RTE Supermemory P1 truth correction and live PR review comment 3570778621',
+        changedEntryIds: [
+          'GD-S33-AU-002', 'GD-S33-AU-011',
+          'GD-S33-OOD-001', 'GD-S33-OOD-002', 'GD-S33-OOD-003',
+          'GD-S33-OOD-004', 'GD-S33-OOD-005', 'GD-S33-OOD-006',
+          'GD-S33-OOD-007', 'GD-S33-OOD-008', 'GD-S33-OOD-009',
+        ],
+        verifiedUnchangedEntryIds: ['GD-S33-NUR-004', 'GD-S33-NUR-005', 'GD-S33-AU-008'],
+        changes: [
+          'All nine OOD entries now carry pure abstention ground truth only: credentialType OTHER, subType other, and empty fraudSignals',
+          'AU-002 issuedDate now uses the explicit extract-generated date 2026-04-22 rather than historical First Registered date 2015-02-02',
+          'AU-011 issuedDate now uses the explicit extract-prepared date 2026-04-16 rather than historical company registration date 2021-11-03',
+          'NUR-004, NUR-005, and AU-008 were re-verified to contain no deliveryMethod and their already-correct corpus bytes were preserved',
+        ],
+        corpusSourceTextChanged: false,
+        normalizedInputChanged: false,
+        normalizedInputPinsPreservedFromRevision8: true,
+        remainingSubstantiveGroundTruthFields: {
+          'GD-S33-AU-002': 9,
+          'GD-S33-AU-011': 8,
+          nonOodMinimum: 5,
+          oodPureAbstention: 2,
+        },
+        producerRevisionPredecessorCommit: bindings.producerRevisionPredecessorCommit,
+        lane3SupportBaseCommit: bindings.supportCommit,
+      },
+    ],
+  };
+}
+
+function assertExactContractValue(actual: unknown, expected: unknown, label: string): void {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual) || actual.length !== expected.length) {
+      throw new Error(`${label} does not match the authoritative Wave-1 array length`);
+    }
+    expected.forEach((entry, index) => assertExactContractValue(actual[index], entry, `${label}[${index}]`));
+    return;
+  }
+  if (isRecord(expected)) {
+    const actualRecord = recordValue(actual, label);
+    assertExactKeys(actualRecord, Object.keys(expected), label);
+    for (const [key, value] of Object.entries(expected)) {
+      assertExactContractValue(actualRecord[key], value, `${label}.${key}`);
+    }
+    return;
+  }
+  if (actual !== expected) {
+    throw new Error(`${label} does not match the authoritative Wave-1 contract value`);
+  }
+}
+
 function validateEntryIdArray(
   value: unknown,
   label: string,
@@ -963,6 +1111,11 @@ function validateWave1SelfChecks(
     && currentRevision.lane3SupportBaseCommit !== bindings.supportCommit) {
     throw new Error('Manifest current authorized revision Lane-3 support commit does not match the root binding');
   }
+  assertExactContractValue(
+    revisions,
+    wave1AuthorizedRevisionContract(bindings),
+    'Manifest selfChecks.authorizedDocumentRevisions',
+  );
 
   const overlap = recordValue(selfChecks.withinTypeTokenOverlap, 'Manifest selfChecks.withinTypeTokenOverlap');
   assertExactKeys(
@@ -2147,6 +2300,14 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     this.verifyDeclaredBlobAtPath(supportTypesBlob, predecessorCommit, WAVE1_TYPES_PATH, 'Producer-base support types');
     this.verifyDeclaredBlobAtPath(supportTypesBlob, commit, WAVE1_TYPES_PATH, 'Frozen support types');
 
+    const selfChecks = recordValue(parsed.selfChecks, 'Manifest selfChecks');
+    const batchScope = recordValue(selfChecks.batchScopeOnly, 'Manifest selfChecks.batchScopeOnly');
+    const authorizedPaths = stringArray(
+      batchScope.protocolAllowedDiffPaths,
+      'Manifest selfChecks.batchScopeOnly.protocolAllowedDiffPaths',
+    );
+    this.verifyProducerDiff(supportCommit, commit, authorizedPaths);
+
     const sourceBlobs = recordValue(parsed.corpusSourceBlobs, 'Manifest corpusSourceBlobs');
     for (const path of WAVE1_SOURCE_BLOB_PATHS) {
       this.verifyDeclaredBlobAtPath(
@@ -2155,6 +2316,65 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
         path,
         'Frozen corpus source',
       );
+    }
+  }
+
+  private verifyProducerDiff(
+    supportCommit: string,
+    freezeCommit: string,
+    authorizedPaths: readonly string[],
+  ): void {
+    let fields: string[];
+    try {
+      const output = execFileSync('git', [
+        '-C', this.#config.repositoryRoot,
+        'diff', '--raw', '-z', '--no-abbrev', '--find-renames', '--find-copies',
+        supportCommit, freezeCommit, '--',
+      ]);
+      fields = output.toString('utf8').split('\0');
+      if (fields.at(-1) === '') fields.pop();
+    } catch (error) {
+      throw new Error('Unable to compute the Lane-3 support-to-freeze producer diff', { cause: error });
+    }
+
+    const actual: Array<{
+      status: string;
+      path: string;
+      oldMode: string;
+      newMode: string;
+      objectType: 'blob' | 'commit';
+      sourcePath?: string;
+    }> = [];
+    for (let index = 0; index < fields.length;) {
+      const header = fields[index++];
+      const match = /^:([0-9]{6}) ([0-9]{6}) ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) ([A-Z][0-9]*)$/.exec(header);
+      if (!match) throw new Error('Producer diff contains a malformed raw status record');
+      const [, oldMode, newMode, , , status] = match;
+      const objectType = newMode === '160000' ? 'commit' as const : 'blob' as const;
+      if (status.startsWith('R') || status.startsWith('C')) {
+        const sourcePath = fields[index++];
+        const path = fields[index++];
+        if (!sourcePath || !path) throw new Error('Producer diff contains a malformed rename/copy record');
+        actual.push({ status, sourcePath, path, oldMode, newMode, objectType });
+      } else {
+        const path = fields[index++];
+        if (!path) throw new Error('Producer diff contains a malformed path record');
+        actual.push({ status, path, oldMode, newMode, objectType });
+      }
+    }
+    if (actual.some(({ status }) => status !== 'A')) {
+      throw new Error('Producer diff may contain additions only; deletion, rename, copy, and type-change statuses are forbidden');
+    }
+    assertSameOrderedValues(
+      actual.map(({ path }) => path),
+      authorizedPaths,
+      'Producer diff exact six authorized paths',
+    );
+
+    for (const entry of actual) {
+      if (entry.oldMode !== '000000' || entry.newMode !== '100644' || entry.objectType !== 'blob') {
+        throw new Error(`Producer diff authorized path ${entry.path} must be a newly added regular non-executable 100644 blob`);
+      }
     }
   }
 

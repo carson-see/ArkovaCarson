@@ -25,11 +25,19 @@ _Last updated: 2026-07-13_
   No CTO key, registry backend, or approval is embedded; both production trust
   dependencies remain null in the code-owned descriptor, so production fails
   closed until the CTO configures them.
+- The S33-W1 revision-history self-check is an exact r2-through-r9 contract,
+  including each authority/change marker, boolean, fingerprint pin, field
+  count/floor, and ordered id set; type-correct substitutions fail closed. Git
+  freeze verification computes the raw diff from the declared Lane-3 support
+  commit and requires exactly the six manifest-authorized additions, each a
+  regular non-executable `100644` blob. Extra paths, deletions, renames,
+  copies, executable bits, symlinks, and gitlinks are rejected.
 - Every selection and lexical result is recursively frozen before it crosses
   the orchestration boundary, including sample ids, metrics/hits, and evidence.
   Audit-transcript reads open the final path with `O_NOFOLLOW`, verify the same
   fd is a single-link regular file with owner-only permissions, and read from
-  that fd; no path re-open exists between validation and parsing.
+  that fd; the append uses that same validated fd under the lock, with no path
+  close/re-open window.
 - Lexical acceptance loads policy-bound held-out/corpus text artifacts and
   recomputes every n=6..13 metric at one orchestration boundary. There is no
   public policy-only apply function and no API accepts caller-supplied metrics

@@ -112,7 +112,12 @@ function productionManifestFixture(bindings: ManifestFixtureBindings = {
     id: `GD-S33-${prefix}-${String(index + 1).padStart(3, '0')}`,
     domain,
     credentialType,
-    normalizedInputSha256: sha256(`${prefix.toLowerCase()}-${index + 1}`),
+    normalizedInputSha256: ({
+      'GD-S33-PDH-007': '647ce4116d8d36017f31e9cd9174157922592f1bc7e6c59135ae893d71e8d7c0',
+      'GD-S33-NUR-004': '5cf701df727878e681e156e1c2f2cc1f8ad9df124e7668c6843e33eab806bc0d',
+      'GD-S33-NUR-005': '68085d32defe764e6a6462a936c8493844e8c4213ff27943a51ff7026d0c90b9',
+    } as Record<string, string>)[`GD-S33-${prefix}-${String(index + 1).padStart(3, '0')}`]
+      ?? sha256(`${prefix.toLowerCase()}-${index + 1}`),
   }));
   const entries: ProductionManifestFixtureEntry[] = [
     ...makeEntries('KE', 11, 'au-ke-priority-documents', 'LICENSE'),
@@ -131,7 +136,6 @@ function productionManifestFixture(bindings: ManifestFixtureBindings = {
     return counts;
   }, {});
   const entryHash = (id: string): string => entries.find((entry) => entry.id === id)!.normalizedInputSha256;
-  const historicalCommit = (character: string): string => character.repeat(40);
   return {
     schemaVersion: 1,
     batchId: 'S33-W1',
@@ -175,25 +179,33 @@ function productionManifestFixture(bindings: ManifestFixtureBindings = {
           },
           {
             revision: 3,
-            authority: 'Lane 3 reject-and-return',
+            authority: 'Lane 3 reject-and-return: material Kenya truth defect',
             changedEntryIds: ['GD-S33-KE-010'],
-            change: 'Removed ungrounded issued date',
+            change: 'removed ungrounded issuedDate 2013-11-30; source states only November 2013',
             normalizedInputChanged: false,
             remainingSubstantiveGroundTruthFields: 6,
           },
           {
             revision: 4,
-            authority: 'Lane 3 union-sample adjudication',
+            authority: 'Lane 3 reject-and-return: union sample grounded-truth adjudication',
             changedEntryIds: ['GD-S33-AU-007', 'GD-S33-NUR-003'],
-            changes: ['Corrected grounded truth'],
+            changes: [
+              'AU-007 fieldOfStudy corrected from Commerce to text-grounded Accounting',
+              'NUR-003 ungrounded ANCC accreditingBody removed',
+            ],
             normalizedInputChanged: false,
             remainingSubstantiveGroundTruthFields: { 'GD-S33-AU-007': 7, 'GD-S33-NUR-003': 11 },
           },
           {
             revision: 5,
-            authority: 'Lane 3 full non-OOD review',
+            authority: 'Lane 3 reject-and-return: full non-OOD grounded-truth review',
             changedEntryIds: ['GD-S33-AU-008', 'GD-S33-NUR-004', 'GD-S33-NUR-005', 'GD-S33-PDH-007'],
-            changes: ['Corrected grounded truth and one source'],
+            changes: [
+              'AU-008 unsupported courseId and deliveryMethod removed',
+              'NUR-004 recommendation date not labeled as expiryDate and unstated deliveryMethod removed',
+              'NUR-005 per-course completion date not labeled as transcript issuedDate and unstated deliveryMethod removed',
+              'PDH-007 self-authored activity log replaced with provider-issued completion evidence under the existing CERTIFICATE/completion_certificate ontology',
+            ],
             normalizedInputChanged: true,
             normalizedInputChangedEntryIds: ['GD-S33-PDH-007'],
             remainingSubstantiveGroundTruthFields: {
@@ -202,29 +214,33 @@ function productionManifestFixture(bindings: ManifestFixtureBindings = {
           },
           {
             revision: 6,
-            authority: 'Lane 3 grounded-truth jurisdiction review',
+            authority: 'Lane 3 internal review reject: PDH-007 grounded-truth jurisdiction',
             changedEntryIds: ['GD-S33-PDH-007'],
-            change: 'Removed unsupported jurisdiction',
+            change: 'removed unsupported jurisdiction United States because the source names no country or state; source text was not changed',
             normalizedInputChanged: false,
             recomputedNormalizedInputSha256: { 'GD-S33-PDH-007': entryHash('GD-S33-PDH-007') },
             remainingSubstantiveGroundTruthFields: { 'GD-S33-PDH-007': 10 },
           },
           {
             revision: 7,
-            authority: 'RTE clean producer resubmission',
+            authority: 'RTE clean producer resubmission stacked on the Lane 3 support prerequisite',
             changedEntryIds: [],
-            change: 'Transplanted revision 6 corpus bytes',
+            change: 'transplanted revision 6 corpus bytes onto Lane 3 support commit dd3ae1ed; producer packet metadata now proves the six-file protocol scope',
             corpusDataChanged: false,
             normalizedInputChanged: false,
-            producerRevisionPredecessorCommit: historicalCommit('7'),
+            producerRevisionPredecessorCommit: 'dcbe0abd741a66401744a2cf916a583e865e2c9f',
             directBaseCommit: bindings.supportCommit,
             sourceBlobsUnchangedFromRevision6: true,
           },
           {
             revision: 8,
-            authority: 'Team 4 same-lane review reject',
+            authority: 'Team 4 same-lane review reject: NUR-004/NUR-005 grounded-truth correction',
             changedEntryIds: ['GD-S33-NUR-004', 'GD-S33-NUR-005'],
-            changes: ['Removed unsupported jurisdictions'],
+            changes: [
+              'NUR-004 unsupported jurisdiction United States removed because the source names no country or state',
+              'NUR-005 unsupported jurisdiction United States removed because the source names no country or state',
+              'NUR-005 source minimally re-authored as an issuer-backed CERTIFICATE OF COMPLETION containing continuing-education transcript rows, grounding the existing CERTIFICATE/completion_certificate truth',
+            ],
             normalizedInputChanged: true,
             normalizedInputChangedEntryIds: ['GD-S33-NUR-005'],
             recomputedNormalizedInputSha256: {
@@ -232,15 +248,20 @@ function productionManifestFixture(bindings: ManifestFixtureBindings = {
               'GD-S33-NUR-005': entryHash('GD-S33-NUR-005'),
             },
             remainingSubstantiveGroundTruthFields: { 'GD-S33-NUR-004': 6, 'GD-S33-NUR-005': 6 },
-            producerRevisionPredecessorCommit: historicalCommit('8'),
+            producerRevisionPredecessorCommit: 'c56bc9958f774471ff62a31418c304149afd4bc6',
             lane3SupportBaseCommit: bindings.supportCommit,
           },
           {
             revision: 9,
-            authority: 'RTE P1 truth correction',
+            authority: 'RTE Supermemory P1 truth correction and live PR review comment 3570778621',
             changedEntryIds: ['GD-S33-AU-002', 'GD-S33-AU-011', ...oodEntryIds],
             verifiedUnchangedEntryIds: ['GD-S33-NUR-004', 'GD-S33-NUR-005', 'GD-S33-AU-008'],
-            changes: ['Corrected OOD truth and issued dates'],
+            changes: [
+              'All nine OOD entries now carry pure abstention ground truth only: credentialType OTHER, subType other, and empty fraudSignals',
+              'AU-002 issuedDate now uses the explicit extract-generated date 2026-04-22 rather than historical First Registered date 2015-02-02',
+              'AU-011 issuedDate now uses the explicit extract-prepared date 2026-04-16 rather than historical company registration date 2021-11-03',
+              'NUR-004, NUR-005, and AU-008 were re-verified to contain no deliveryMethod and their already-correct corpus bytes were preserved',
+            ],
             corpusSourceTextChanged: false,
             normalizedInputChanged: false,
             normalizedInputPinsPreservedFromRevision8: true,
@@ -377,7 +398,13 @@ class TestConsumptionRegistry {
 
 type ManifestMutator = (manifest: Record<string, unknown>) => void;
 
-function gitRepo(mutateManifest?: ManifestMutator): {
+interface GitFixtureMutation {
+  setupSupport?: (root: string) => void;
+  mutateFreezeTree?: (root: string) => void;
+  mutateFreezeIndex?: (root: string, predecessorCommit: string) => void;
+}
+
+function gitRepo(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutation): {
   root: string;
   manifest: string;
   manifestPath: string;
@@ -393,7 +420,8 @@ function gitRepo(mutateManifest?: ManifestMutator): {
 
   mkdirSync(join(root, 'services/worker/src/ai/eval'), { recursive: true });
   writeFileSync(join(root, WAVE1_TYPES_PATH), 'export type Wave1FixtureType = string;\n', 'utf8');
-  execFileSync('git', ['add', WAVE1_TYPES_PATH], { cwd: root });
+  mutateGit?.setupSupport?.(root);
+  execFileSync('git', ['add', '--all'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'lane 3 support base'], { cwd: root });
   const supportCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   const supportTypesBlob = execFileSync('git', ['rev-parse', `${supportCommit}:${WAVE1_TYPES_PATH}`], {
@@ -412,6 +440,7 @@ function gitRepo(mutateManifest?: ManifestMutator): {
   writeFileSync(join(root, 'docs/lane4/s33-wave1-entry-datasheet.json'), '{"entries":81}\n', 'utf8');
   writeFileSync(join(root, WAVE1_SOURCE_PATHS[1]), 'export const revisedAuKeFixture = 9;\n', 'utf8');
   writeFileSync(join(root, WAVE1_SOURCE_PATHS[2]), 'export const revisedOodFixture = 9;\n', 'utf8');
+  mutateGit?.mutateFreezeTree?.(root);
   const sourceBlobs = Object.fromEntries(WAVE1_SOURCE_PATHS.map((path) => [
     path,
     execFileSync('git', ['hash-object', path], { cwd: root, encoding: 'utf8' }).trim(),
@@ -425,7 +454,8 @@ function gitRepo(mutateManifest?: ManifestMutator): {
   mutateManifest?.(manifestObject);
   const manifest = JSON.stringify(manifestObject, null, 2);
   writeFileSync(join(root, manifestPath), manifest, 'utf8');
-  execFileSync('git', ['add', ...WAVE1_SOURCE_PATHS, 'docs/lane4'], { cwd: root });
+  execFileSync('git', ['add', '--all'], { cwd: root });
+  mutateGit?.mutateFreezeIndex?.(root, predecessorCommit);
   execFileSync('git', ['commit', '-qm', 'freeze manifest'], { cwd: root });
   const freezeCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   writeFileSync(join(root, 'verification.txt'), 'verification descendant\n', 'utf8');
@@ -435,8 +465,8 @@ function gitRepo(mutateManifest?: ManifestMutator): {
   return { root, manifest, manifestPath, freezeCommitSha, verificationCommitSha };
 }
 
-function ceremony(mutateManifest?: ManifestMutator) {
-  const repo = gitRepo(mutateManifest);
+function ceremony(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutation) {
+  const repo = gitRepo(mutateManifest, mutateGit);
   const manifest = repo.manifest;
   const { privateKey, trustRoot } = testKey();
   const evidenceRoot = mkdtempSync(join(tmpdir(), 'arkova-s33-ledger-'));
@@ -525,7 +555,7 @@ function recordThroughReveal(context: ReturnType<typeof ceremony>): void {
   context.orchestrator.recordSaltReveal(context.revealContent);
 }
 
-describe('S3.3 authenticated, durable sampling ceremony', () => {
+describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, () => {
   it('does not expose a ledger or arbitrary event append capability', () => {
     const context = ceremony();
     expect(ledgerModule).not.toHaveProperty('DurableAcceptanceLedger');
@@ -877,6 +907,53 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
       .toThrow(/remediated.*pair.*complete.*set/i);
   });
 
+  it('rejects every one-field mutation of the exact r2-r9 revision-history contract', () => {
+    type JsonPath = Array<string | number>;
+    const base = productionManifestFixture();
+    const authoritative = ((base.selfChecks as Record<string, unknown>)
+      .authorizedDocumentRevisions as Record<string, unknown>);
+    const leaves: JsonPath[] = [];
+    const collectLeaves = (value: unknown, path: JsonPath): void => {
+      if (Array.isArray(value)) {
+        value.forEach((entry, index) => collectLeaves(entry, [...path, index]));
+      } else if (value !== null && typeof value === 'object') {
+        Object.entries(value as Record<string, unknown>)
+          .forEach(([key, entry]) => collectLeaves(entry, [...path, key]));
+      } else {
+        leaves.push(path);
+      }
+    };
+    collectLeaves(authoritative, []);
+
+    for (const path of leaves) {
+      const mutated = structuredClone(base);
+      let target = ((mutated.selfChecks as Record<string, unknown>)
+        .authorizedDocumentRevisions as Record<string, unknown> | unknown[]);
+      for (const segment of path.slice(0, -1)) {
+        target = (target as Record<string | number, Record<string, unknown> | unknown[]>)[segment];
+      }
+      const leaf = path.at(-1)!;
+      const current = (target as Record<string | number, unknown>)[leaf];
+      let replacement: unknown;
+      if (typeof current === 'boolean') {
+        replacement = !current;
+      } else if (typeof current === 'number') {
+        replacement = current + 1;
+      } else if (typeof current === 'string' && current.startsWith('GD-S33-')) {
+        replacement = current === 'GD-S33-KE-001' ? 'GD-S33-KE-002' : 'GD-S33-KE-001';
+      } else if (typeof current === 'string' && /^[0-9a-f]{40,64}$/.test(current)) {
+        replacement = (current.startsWith('a') ? 'b' : 'a').repeat(current.length);
+      } else {
+        replacement = `${String(current)} [mutated]`;
+      }
+      (target as Record<string | number, unknown>)[leaf] = replacement;
+      expect.soft(
+        () => parseBatchManifest(JSON.stringify(mutated)),
+        `mutation at authorizedDocumentRevisions.${path.join('.')}`,
+      ).toThrow();
+    }
+  });
+
   it('rejects truncated Git declarations before any ceremony record is written', () => {
     const truncated = productionManifestFixture();
     (truncated.corpusSourceBlobs as Record<string, string>)[WAVE1_SOURCE_PATHS[0]] = 'a'.repeat(39);
@@ -995,6 +1072,8 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
       const revisions = (selfChecks.authorizedDocumentRevisions as {
         revisions: Array<Record<string, unknown>>;
       }).revisions;
+      revisions[5].directBaseCommit = foreign;
+      revisions[6].lane3SupportBaseCommit = foreign;
       revisions.at(-1)!.lane3SupportBaseCommit = foreign;
     });
     foreignSupport.orchestrator.recordSaltCommitment(foreignSupport.commitment.content);
@@ -1008,6 +1087,63 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
     foreignBlob.orchestrator.recordSaltCommitment(foreignBlob.commitment.content);
     expect(() => foreignBlob.orchestrator.recordManifestFreeze(foreignBlob.freeze.content, foreignBlob.manifest))
       .toThrow(/source blob.*does not match|blob.*path/i);
+  });
+
+  it.each([
+    ['a seventh path', {
+      mutateFreezeTree(root: string): void {
+        writeFileSync(join(root, 'docs/lane4/seventh-path.txt'), 'not authorized\n', 'utf8');
+      },
+    }],
+    ['a deletion', {
+      setupSupport(root: string): void {
+        mkdirSync(join(root, 'docs/lane4'), { recursive: true });
+        writeFileSync(join(root, 'docs/lane4/support-only.txt'), 'must not be deleted\n', 'utf8');
+      },
+      mutateFreezeTree(root: string): void {
+        rmSync(join(root, 'docs/lane4/support-only.txt'));
+      },
+    }],
+    ['a rename', {
+      setupSupport(root: string): void {
+        mkdirSync(join(root, 'docs/lane4'), { recursive: true });
+        writeFileSync(join(root, 'docs/lane4/pre-rename.txt'), 'renamed content\n', 'utf8');
+      },
+      mutateFreezeTree(root: string): void {
+        renameSync(
+          join(root, 'docs/lane4/pre-rename.txt'),
+          join(root, 'docs/lane4/post-rename.txt'),
+        );
+      },
+    }],
+    ['an executable mode', {
+      mutateFreezeTree(root: string): void {
+        chmodSync(join(root, 'docs/lane4/s33-corpus-datasheet.md'), 0o755);
+      },
+    }],
+    ['a symbolic-link mode', {
+      mutateFreezeTree(root: string): void {
+        const path = join(root, 'docs/lane4/s33-corpus-datasheet.md');
+        rmSync(path);
+        symlinkSync('s33-wave1-batch-manifest.json', path);
+      },
+    }],
+    ['a submodule/gitlink mode', {
+      mutateFreezeIndex(root: string, predecessorCommit: string): void {
+        execFileSync('git', [
+          'update-index', '--add', '--cacheinfo', '160000', predecessorCommit,
+          'docs/lane4/s33-corpus-datasheet.md',
+        ], { cwd: root });
+      },
+    }],
+  ] satisfies Array<[string, GitFixtureMutation]>)('rejects a support-to-freeze diff containing %s', (
+    _case,
+    mutateGit,
+  ) => {
+    const context = ceremony(undefined, mutateGit);
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.manifest))
+      .toThrow(/producer diff|six authorized paths|status|mode|rename|deletion/i);
   });
 
   it('atomically consumes each policy/batch/revision once across contenders', async () => {
