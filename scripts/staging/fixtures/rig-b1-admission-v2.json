@@ -1,0 +1,85 @@
+{
+  "schema_version": 2,
+  "kind": "isolated_rig_admission",
+  "generated_at": "2026-07-13T11:59:00.000Z",
+  "rig_name": "s33-rig-b1",
+  "rig_id": "RIG-B1",
+  "profile": "chain",
+  "soak_id": "soak-rig-b1-r3",
+  "cloud_run_service": "arkova-worker-s33-rig-b1-staging",
+  "gcp_project_id": "arkova1",
+  "region": "us-central1",
+  "lease_id": "lease-rig-b1-r3",
+  "clean_mirror_attestation_id": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "tier": "T3",
+  "duration_min": 2880,
+  "required_uptime_min": 2880,
+  "required_wall_min": 2910,
+  "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "declared_source_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "base_sha": "0000000000000000000000000000000000000000",
+  "image": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "image_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "deployed_revision": "arkova-worker-s33-rig-b1-staging-00001",
+  "deployed_image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "deployed_image_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "deployed_source_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tag_url": "https://rig-b1---arkova-worker-s33-rig-b1-staging.example.run.app",
+  "supabase_project_ref": "abcdefghijklmnopqrst",
+  "preflight_result": "environment_type=clean_mirror",
+  "clean_mirror": {
+    "result": "environment_type=clean_mirror",
+    "artifact": "docs/staging/s33-rig-b1/clean-mirror-preflight-s33-rig-b1.json",
+    "verified_at": "2026-07-13T11:58:00.000Z",
+    "attestation_id": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "critical_config": {
+    "node_env": "production",
+    "enable_ai_fraud": "false",
+    "enable_ai_reports": "false",
+    "frontend_url": "https://rig-b1.example.test",
+    "use_mocks": "false",
+    "enable_prod_network_anchoring": "true",
+    "bitcoin_network": "signet",
+    "bitcoin_utxo_provider": "getblock",
+    "kms_provider": "gcp",
+    "gemini_tuned_model": "",
+    "gemini_v6_prompt": "",
+    "gemini_tuned_response_schema": "<unset>"
+  },
+  "scheduler": {
+    "applicable": true,
+    "jobs": [
+      {
+        "name": "arkova-worker-s33-rig-b1-staging-batch-anchors-forced-flush",
+        "path": "/jobs/batch-anchors?force=true"
+      },
+      {
+        "name": "arkova-worker-s33-rig-b1-staging-recover-broadcasts",
+        "path": "/jobs/recover-broadcasts"
+      },
+      {
+        "name": "arkova-worker-s33-rig-b1-staging-org-queue-scheduler",
+        "path": "/jobs/org-queue-scheduler"
+      },
+      {
+        "name": "arkova-worker-s33-rig-b1-staging-check-confirmations",
+        "path": "/jobs/check-confirmations"
+      }
+    ],
+    "creation_guard": "non-firing hold schedule; create then immediate pause + PAUSED verification",
+    "paused_through_clean_mirror": true,
+    "state": "resumed_after_clean_mirror"
+  },
+  "driver_path": "scripts/staging/batch-drain-harness.ts",
+  "driver_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "changed_behavior": "RIG-B1 per-trigger signet drain and recovery evidence",
+  "harness_version": "scripts/staging/batch-drain-harness.ts@aaaaaaaaaaaa",
+  "tool_version": "scripts/staging/provision-isolated-rig.sh@aaaaaaaaaaaa",
+  "owner": "lane1-rig-owner",
+  "stop_conditions": [
+    "SHA mismatch between admission JSON and PR head",
+    "image digest mismatch against deployed Cloud Run revision",
+    "dirty preflight (environment_type != clean_mirror)"
+  ]
+}

@@ -465,7 +465,7 @@ function unique<T>(values: T[], label: string): void {
   if (new Set(values).size !== values.length) throw new Error(`${label} contains duplicate identities.`);
 }
 
-function validateRunDeclaration(value: RunDeclaration): void {
+export function assertRunDeclarationInvariants(value: RunDeclaration): void {
   if (value.gitBaseSha === value.gitHeadSha) throw new Error('Declaration git base and tested head must be distinct named commits.');
   if (time(value.soakEndedAt, 'soakEndedAt') - time(value.soakStartedAt, 'soakStartedAt') < SOAK_WALL_FLOOR_MINUTES * 60_000) {
     throw new Error('Declared soak wall window cannot contain the fixed 48h floor plus 30-minute overshoot.');
@@ -556,7 +556,7 @@ class Ed25519EvidenceEnvelopeVerifier implements EvidenceEnvelopeVerifier {
     // Signature verification precedes the single semantic parse of signed bytes.
     const payload = parseStrict(evidenceSignedPayloadSchema, envelope.signedPayloadRaw, 'signed evidence payload');
     if (payload.envelopeId !== envelope.envelopeId) throw new Error('Signed envelope and payload identities differ.');
-    validateRunDeclaration(payload.declaration);
+    assertRunDeclarationInvariants(payload.declaration);
     const contentSha256 = digest(JSON.stringify(payload.declaration));
     const declaration = deepFreeze({
       value: payload.declaration,
