@@ -6,17 +6,20 @@ _Last updated: 2026-07-13_
 
 - `s33-batch-acceptance.ts` parses the actual Lane-4 manifest bytes and derives
   the complete entry universe; callers cannot supply ids or lower the fixed
-  `ceil(10%)`, minimum-5 review floor. Sampling has no predictable/unsigned
-  mode: it requires an immutable Ed25519 policy envelope, a configured pinned
-  CTO public-key fingerprint, an authenticated prior salt commitment, ordered
-  reveal evidence, and a consumed-artifact ledger. No CTO key or approval is
-  embedded in this module; absent a real trust root/artifact, verification
-  fails closed.
-- Lexical acceptance computes n=6..13 at one orchestration boundary. Applying
-  stored metrics requires exactly one internally consistent tuple for every
-  declared heldout × corpus × n pair; empty, partial, duplicate, or fabricated
-  matrices are rejected. Embedding scans reject non-finite inputs and derived
-  dot/norm/cosine overflow.
+  `ceil(10%)`, minimum-5 review floor. The ceremony uses four distinct records:
+  a manifest-free CTO-signed salt commitment, a CTO-signed manifest freeze that
+  proves the exact Git blob/ancestor, a CTO-signed selection policy bound to
+  both digests, and the later salt reveal. `s33-acceptance-ledger.ts` durably
+  enforces commitment < freeze < policy < reveal < one-time consumption with a
+  hash-chained, fsynced ledger plus an O_EXCL marker keyed by policy digest,
+  batch, and revision. No CTO key or approval is embedded; the code-owned
+  production trust descriptor has no issued identity/key fingerprint, so the
+  production loader fails closed.
+- Lexical acceptance loads policy-bound held-out/corpus text artifacts and
+  recomputes every n=6..13 metric at one orchestration boundary. There is no
+  public policy-only apply function and no API accepts caller-supplied metrics
+  or a caller-supplied universe. Embedding scans reject non-finite inputs and
+  derived dot/norm/cosine overflow.
 - `golden-dataset-s33-types.ts` is Lane-3-owned support code, separate from the
   Lane-4 corpus packet. Its v6 taxonomy is drift-tested against the live prompt.
   `S33_PROPOSED_SUBTYPES.CPE` remains explicitly unratified and must not enter a
