@@ -348,7 +348,7 @@ PREFLIGHT_JSON=""
 SCHEDULER_JOBS=()
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
   case "$PROFILE" in
-    chain)  SCHEDULER_JOBS=("batch-anchors" "check-confirmations" "populate-confirmation-proofs") ;;
+    chain)  SCHEDULER_JOBS=("batch-anchors" "check-confirmations" "populate-confirmation-proofs" "org-queue-scheduler") ;;
     gemini) SCHEDULER_JOBS=("classify-proof-backcatalog") ;;
   esac
 fi
@@ -375,33 +375,22 @@ run_cmd() {
   fi
 }
 
-run_scheduler_cmd() {
-  local job_name="$1"
-  local job_uri="$2"
-  local cron_header_value="$3"
-  local redacted_header="X-Cron-Secret=<redacted>"
-  local actual_header="X-Cron-Secret=${cron_header_value}"
-
-  print_cmd gcloud scheduler jobs create http "$job_name" \
-    --project="$GCP_PROJECT" \
-    --location="$CLOUD_RUN_REGION" \
-    --schedule="*/5 * * * *" \
-    --uri="$job_uri" \
-    --http-method=POST \
-    --update-headers="$redacted_header" \
-    --oidc-service-account-email="$CRON_OIDC_SA" \
-    --oidc-token-audience="$WORKER_URL"
+# Like run_cmd, but redacts the X-Cron-Secret header value in everything it
+# prints/logs. The real value (fetched from Secret Manager in apply mode) is
+# passed only to the executed command — never to stdout/stderr.
+run_cmd_cron_redacted() {
+  local display=() arg
+  for arg in "$@"; do
+    if [[ "$arg" == --headers=X-Cron-Secret=* ]]; then
+      display+=("--headers=X-Cron-Secret=<redacted:${CRON_SECRET_SECRET}>")
+    else
+      display+=("$arg")
+    fi
+  done
+  print_cmd "${display[@]}"
   if [[ $APPLY -eq 1 ]]; then
-    echo "executing: gcloud scheduler jobs create http $job_name --update-headers=$redacted_header" >&2
-    gcloud scheduler jobs create http "$job_name" \
-      --project="$GCP_PROJECT" \
-      --location="$CLOUD_RUN_REGION" \
-      --schedule="*/5 * * * *" \
-      --uri="$job_uri" \
-      --http-method=POST \
-      --update-headers="$actual_header" \
-      --oidc-service-account-email="$CRON_OIDC_SA" \
-      --oidc-token-audience="$WORKER_URL"
+    echo "executing: ${display[*]}" >&2
+    "$@"
   fi
 }
 
@@ -863,27 +852,38 @@ echo "# Step 4/6 — Cloud Scheduler -> /jobs/* wiring (node-cron does not fire 
 if [[ $IS_MOCK_PROFILE -eq 1 ]]; then
   echo "#   profile=mock — no behavioral cron to drive; skipping Scheduler job creation."
 else
-  WORKER_URL="https://${CLOUD_RUN_SERVICE}-<hash>.${CLOUD_RUN_REGION}.run.app"
-  CRON_HEADER_VALUE="<from-${CRON_SECRET_SECRET}>"
+  # WORKER_URL: apply mode resolves the REAL URL from the service deployed in
+  # Step 3 (gcloud run services describe); dry-run keeps the clearly-labeled
+  # <captured-cloud-run-url-…> placeholder. Both paths live in
+  # resolve_cloud_run_url() — no hand-built URL, no stale placeholder.
+  WORKER_URL="$(resolve_cloud_run_url)"
   if [[ $APPLY -eq 1 ]]; then
-    WORKER_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
-      --region="$CLOUD_RUN_REGION" \
-      --project="$GCP_PROJECT" \
-      --format="value(status.url)")"
-    if [[ -z "$WORKER_URL" ]]; then
-      echo "ERROR: could not resolve Cloud Run service URL for $CLOUD_RUN_SERVICE." >&2
-      exit 1
-    fi
-    CRON_HEADER_VALUE="$(gcloud secrets versions access latest --secret="$CRON_SECRET_SECRET" --project="$GCP_PROJECT")"
-    if [[ -z "$CRON_HEADER_VALUE" ]]; then
-      echo "ERROR: cron secret '$CRON_SECRET_SECRET' resolved to an empty value." >&2
+    # Fetch the cron secret VALUE from Secret Manager at apply time so the
+    # Scheduler POST passes the worker's cronAuth. The value stays in memory:
+    # every printed/logged command form is redacted (run_cmd_cron_redacted).
+    CRON_SECRET_VALUE="$(gcloud secrets versions access latest \
+      --secret="$CRON_SECRET_SECRET" \
+      --project="$GCP_PROJECT")"
+    if [[ -z "$CRON_SECRET_VALUE" ]]; then
+      echo "ERROR: could not fetch cron secret '$CRON_SECRET_SECRET' from Secret Manager." >&2
       exit 1
     fi
   else
-    echo "#   (apply mode resolves the real service URL via 'gcloud run services describe')"
+    CRON_SECRET_VALUE="<redacted:${CRON_SECRET_SECRET}>"
+    echo "#   (dry-run: WORKER_URL + X-Cron-Secret shown as labeled placeholders; apply mode"
+    echo "#    resolves them via 'gcloud run services describe' + Secret Manager access —"
+    echo "#    the secret value is never printed in either mode.)"
   fi
   for job in "${SCHEDULER_JOBS[@]}"; do
-    run_scheduler_cmd "${CLOUD_RUN_SERVICE}-${job}" "${WORKER_URL}/jobs/${job}" "$CRON_HEADER_VALUE"
+    run_cmd_cron_redacted gcloud scheduler jobs create http "${CLOUD_RUN_SERVICE}-${job}" \
+      --project="$GCP_PROJECT" \
+      --location="$CLOUD_RUN_REGION" \
+      --schedule="*/5 * * * *" \
+      --uri="${WORKER_URL}/jobs/${job}" \
+      --http-method=POST \
+      --headers="X-Cron-Secret=${CRON_SECRET_VALUE}" \
+      --oidc-service-account-email="$CRON_OIDC_SA" \
+      --oidc-token-audience="$WORKER_URL"
   done
 fi
 echo
