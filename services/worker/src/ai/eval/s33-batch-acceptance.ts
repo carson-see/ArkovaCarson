@@ -165,9 +165,8 @@ export function computeLexicalLeakageMetrics(
   validateLexicalNormalizationPolicy(options.normalization);
   validateTextRecords(heldout, 'Held-out set');
   validateTextRecords(corpus, 'Leakage corpus');
-  if (!Number.isInteger(options.minN) || !Number.isInteger(options.maxN)
-    || options.minN < 1 || options.maxN < options.minN) {
-    throw new Error('Invalid lexical n-gram range');
+  if (options.minN !== 6 || options.maxN !== 13) {
+    throw new Error('Lexical acceptance scans must emit the complete n=6–13 range');
   }
 
   const metrics: LexicalLeakageMetric[] = [];

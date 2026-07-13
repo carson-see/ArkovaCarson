@@ -95,6 +95,14 @@ describe('S3.3 batch acceptance — lexical leakage metrics', () => {
       { minN: 6, maxN: 13 } as never,
     )).toThrow(/normalization/i);
   });
+
+  it('refuses a lexical scan that omits any required n=6–13 metric', () => {
+    expect(() => computeLexicalLeakageMetrics(
+      [heldout],
+      [corpus],
+      { minN: 7, maxN: 13, normalization },
+    )).toThrow(/6.*13/i);
+  });
 });
 
 describe('S3.3 batch acceptance — embedding leakage', () => {
