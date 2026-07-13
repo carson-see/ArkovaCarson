@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -49,6 +49,11 @@ const REPO_NON_BASE_ANCESTOR = execFileSync('git', ['rev-parse', `${REPO_BASE}^`
 }).trim();
 const REAL_GIT = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
 const script = readFileSync(SCRIPT, 'utf8');
+
+// Apply-mode cases launch many short-lived git/gcloud/npx shell stubs. They
+// finish in ~1s focused but can exceed Vitest's 5s default when the full
+// 25-file staging suite runs concurrently on a loaded developer host.
+vi.setConfig({ testTimeout: 20_000 });
 
 const VALID_PREFLIGHT_REPORT: PreflightReport = {
   ...buildReport({
