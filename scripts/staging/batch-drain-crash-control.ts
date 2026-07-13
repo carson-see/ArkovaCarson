@@ -96,7 +96,14 @@ export interface ProcessUptimeEvidence extends RuntimeBinding {
   startedAt: string;
   observedUntil: string;
   uptimeMs: number;
-  logEntryIds: string[];
+  lifecycleAudit: ProcessLifecycleAuditEntry[];
+}
+
+export interface ProcessLifecycleAuditEntry {
+  workerId: string;
+  event: 'started' | 'terminated' | 'restarted' | 'observed';
+  logEntryId: string;
+  occurredAt: string;
 }
 
 export interface CrashObservation {
@@ -382,12 +389,21 @@ function validateLifecycle(
     throw new Error('Termination and restart require distinct Cloud Run audit-log identities.');
   }
 
+  const drainCompletedMs = withinWindow(input, observation.drain.execution.completedAt, 'Correlated drain completion');
+  const recoveryStartedMs = withinWindow(input, recovery.startedAt, 'Recovery start');
+  if (
+    observation.drain.execution.schedulerExecutionId !== recovery.correlatedDrainExecutionId
+    || recoveryStartedMs <= drainCompletedMs
+  ) {
+    throw new Error('Recovery must start strictly after the exact correlated drain completion.');
+  }
   const chronology = [
     withinWindow(input, barrier.reachedAt, 'Crash barrier'),
     withinWindow(input, termination.requestedAt, 'Termination request'),
     withinWindow(input, termination.exitedAt, 'Worker exit'),
     withinWindow(input, restart.startedAt, 'Worker restart'),
-    withinWindow(input, recovery.startedAt, 'Recovery start'),
+    drainCompletedMs,
+    recoveryStartedMs,
     withinWindow(input, recovery.completedAt, 'Recovery completion'),
     withinWindow(input, observation.observedAt, 'Post-recovery inspection'),
   ];
@@ -406,21 +422,32 @@ function validateLifecycle(
   }
   for (const item of [initial, replacement]) {
     assertRuntime(input.runtime, item, 'Worker uptime runtime');
-    if (item.source !== 'cloud-run-audit-log' || item.logEntryIds.length === 0 || item.logEntryIds.some((id) => !id.trim())) {
-      throw new Error('Worker uptime must be backed by Cloud Run audit log entries.');
+    if (item.source !== 'cloud-run-audit-log' || item.lifecycleAudit.length !== 2) {
+      throw new Error('Worker uptime requires exactly two typed lifecycle audit entries.');
     }
     const computed = timestamp(item.observedUntil, 'uptime observedUntil') - timestamp(item.startedAt, 'uptime startedAt');
     if (computed < 0 || computed !== item.uptimeMs) throw new Error('Worker uptime milliseconds do not match lifecycle timestamps.');
   }
-  const lifecycleLogIds = observation.processUptime.flatMap((item) => item.logEntryIds);
+  const [initialStart, initialTermination] = initial.lifecycleAudit;
+  const [replacementStart, replacementObserved] = replacement.lifecycleAudit;
+  const lifecycleLogIds = observation.processUptime.flatMap((item) => item.lifecycleAudit.map((entry) => entry.logEntryId));
   if (
-    new Set(lifecycleLogIds).size !== lifecycleLogIds.length
-    || !initial.logEntryIds.includes(termination.logEntryId)
-    || replacement.logEntryIds.includes(termination.logEntryId)
-    || !replacement.logEntryIds.includes(restart.logEntryId)
-    || initial.logEntryIds.includes(restart.logEntryId)
+    lifecycleLogIds.some((logEntryId) => !logEntryId.trim())
+    || new Set(lifecycleLogIds).size !== lifecycleLogIds.length
+    || [initialStart, initialTermination].some((entry) => entry?.workerId !== barrier.workerId)
+    || [replacementStart, replacementObserved].some((entry) => entry?.workerId !== restart.workerId)
+    || initialStart?.event !== 'started'
+    || initialStart.occurredAt !== initial.startedAt
+    || initialTermination?.event !== 'terminated'
+    || initialTermination.logEntryId !== termination.logEntryId
+    || initialTermination.occurredAt !== termination.exitedAt
+    || replacementStart?.event !== 'restarted'
+    || replacementStart.logEntryId !== restart.logEntryId
+    || replacementStart.occurredAt !== restart.startedAt
+    || replacementObserved?.event !== 'observed'
+    || replacementObserved.occurredAt !== observation.observedAt
   ) {
-    throw new Error('Cloud Run log identity bijection must bind termination and restart to the exact process uptime records.');
+    throw new Error('Cloud Run lifecycle audit bijection rejects duplicate, extra, or cross-worker identities.');
   }
   if (
     initial.observedUntil !== termination.exitedAt

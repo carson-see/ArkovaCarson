@@ -1,12 +1,13 @@
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
 import {
   SOAK_WALL_FLOOR_MINUTES,
   SOAK_REQUIRED_UPTIME_MINUTES,
+  createEvidenceEnvelopeVerifierForTest,
+  createProductionEvidenceEnvelopeVerifier,
   deriveAndAssertLiveEvidence,
-  parseImmutableRunDeclaration,
   parseRawCaptureSet,
   type ImmutableRunDeclaration,
   type RawCaptureDigests,
@@ -21,6 +22,15 @@ const FP_DRAINED = '1'.repeat(64);
 const FP_POISON = '2'.repeat(64);
 const TX_ID = 'c'.repeat(64);
 const SIGNED_HASH = 'd'.repeat(64);
+const TEST_KEYPAIR = generateKeyPairSync('ed25519');
+const TEST_PUBLIC_KEY_PEM = TEST_KEYPAIR.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+const TEST_KEY_FINGERPRINT = createHash('sha256')
+  .update(TEST_KEYPAIR.publicKey.export({ type: 'spki', format: 'der' }))
+  .digest('hex');
+const TEST_VERIFIER = createEvidenceEnvelopeVerifierForTest({
+  publicKeyPem: TEST_PUBLIC_KEY_PEM,
+  keyFingerprint: TEST_KEY_FINGERPRINT,
+});
 
 function sha256(raw: string): string {
   return createHash('sha256').update(raw).digest('hex');
@@ -77,16 +87,20 @@ function immutable(value: Record<string, unknown> = declarationValue()): Immutab
 }
 
 function trust(value: Record<string, unknown>, captures: RawCaptureTextSet): ImmutableRunDeclaration {
-  const declarationRaw = JSON.stringify(value);
-  const declarationSha256 = sha256(declarationRaw);
-  const trustRootRaw = JSON.stringify({
+  const signedPayloadRaw = JSON.stringify({
     schemaVersion: 1,
-    trustRootId: 'trust-root-rig-b1-r3',
-    declarationRaw,
-    declarationSha256,
+    envelopeId: 'trust-root-rig-b1-r3',
+    declaration: value,
     rawCaptureDigests: digests(captures),
   });
-  return parseImmutableRunDeclaration(trustRootRaw, sha256(trustRootRaw));
+  const envelopeRaw = JSON.stringify({
+    schemaVersion: 1,
+    envelopeId: 'trust-root-rig-b1-r3',
+    keyFingerprint: TEST_KEY_FINGERPRINT,
+    signedPayloadRaw,
+    signatureBase64: sign(null, Buffer.from(signedPayloadRaw), TEST_KEYPAIR.privateKey).toString('base64'),
+  });
+  return TEST_VERIFIER.verify(envelopeRaw);
 }
 
 function rawCaptures(declaration: ImmutableRunDeclaration): RawCaptureTextSet {
@@ -262,6 +276,101 @@ function digests(raw: RawCaptureTextSet): RawCaptureDigests {
 }
 
 describe('deriveAndAssertLiveEvidence — independent strict raw-source replay', () => {
+  it('fails production verification closed until the CTO key and fingerprint are code-configured', () => {
+    expect(() => createProductionEvidenceEnvelopeVerifier()).toThrow(/CTO.*key|not configured/i);
+  });
+
+  it('authenticates the six digests with Ed25519 and deeply freezes the parsed payload', () => {
+    const declared = immutable();
+    expect(Object.isFrozen(declared)).toBe(true);
+    expect(Object.isFrozen(declared.value)).toBe(true);
+    expect(Object.isFrozen(declared.value.windows)).toBe(true);
+    expect(Object.isFrozen(declared.value.windows[0]!.passes[0]!.claims)).toBe(true);
+    expect(Object.isFrozen(declared.rawCaptureDigests)).toBe(true);
+    const forgedCopy = { ...declared, rawCaptureDigests: { ...declared.rawCaptureDigests } };
+    expect(() => parseRawCaptureSet(rawCaptures(declared), forgedCopy)).toThrow(/verified signed.*envelope/i);
+  });
+
+  it('checks signed capture digests before parsing and rejects accessor/proxy capture containers', () => {
+    const declared = immutable();
+    const raw = rawCaptures(declared);
+    expect(() => parseRawCaptureSet({ ...raw, scheduler: '{"invalid":true}' }, declared)).toThrow(
+      /raw export content digest does not match/i,
+    );
+    expect(() => parseRawCaptureSet(new Proxy(raw, {}) as RawCaptureTextSet, declared)).toThrow(/proxy/i);
+    const accessorRaw = Object.defineProperty({ ...raw }, 'scheduler', {
+      enumerable: true,
+      get: () => raw.scheduler,
+    }) as RawCaptureTextSet;
+    expect(() => parseRawCaptureSet(accessorRaw, declared)).toThrow(/getter|accessor/i);
+  });
+
+  it('rejects a caller-recomputed six-digest envelope without the CTO signature', () => {
+    const initial = immutable();
+    const raw = rawCaptures(initial);
+    const signet = JSON.parse(raw.signet) as { records: Array<{ nodeId: string }> };
+    signet.records[0]!.nodeId = 'caller-rewritten-node';
+    raw.signet = JSON.stringify(signet);
+    const signedPayloadRaw = JSON.stringify({
+      schemaVersion: 1,
+      envelopeId: 'trust-root-rig-b1-r3',
+      declaration: declarationValue(),
+      rawCaptureDigests: digests(raw),
+    });
+    const forgedEnvelope = JSON.stringify({
+      schemaVersion: 1,
+      envelopeId: 'trust-root-rig-b1-r3',
+      keyFingerprint: TEST_KEY_FINGERPRINT,
+      signedPayloadRaw,
+      signatureBase64: Buffer.alloc(64).toString('base64'),
+    });
+    expect(() => TEST_VERIFIER.verify(forgedEnvelope)).toThrow(/signature/i);
+  });
+
+  it('rejects unknown/duplicate JSON ambiguity and non-primitive proxy input', () => {
+    const duplicateOuter = '{"schemaVersion":1,"envelopeId":"one","envelopeId":"two",' +
+      `"keyFingerprint":"${TEST_KEY_FINGERPRINT}","signedPayloadRaw":"{}","signatureBase64":"${Buffer.alloc(64).toString('base64')}"}`;
+    expect(() => TEST_VERIFIER.verify(duplicateOuter)).toThrow(/duplicate/i);
+    expect(() => TEST_VERIFIER.verify(new Proxy(new String('{}'), {}) as unknown as string)).toThrow(/primitive string/i);
+    expect(() => createEvidenceEnvelopeVerifierForTest(new Proxy({
+      publicKeyPem: TEST_PUBLIC_KEY_PEM,
+      keyFingerprint: TEST_KEY_FINGERPRINT,
+    }, {}))).toThrow(/proxy/i);
+    expect(() => createEvidenceEnvelopeVerifierForTest(Object.defineProperty({
+      keyFingerprint: TEST_KEY_FINGERPRINT,
+    }, 'publicKeyPem', { enumerable: true, get: () => TEST_PUBLIC_KEY_PEM }))).toThrow(/getters/i);
+
+    const captures = rawCapturesForDeclaration(sha256(JSON.stringify(declarationValue())));
+    const payloadWithUnknown = JSON.stringify({
+      schemaVersion: 1,
+      envelopeId: 'trust-root-rig-b1-r3',
+      declaration: declarationValue(),
+      rawCaptureDigests: digests(captures),
+      invented: true,
+    });
+    const envelope = JSON.stringify({
+      schemaVersion: 1,
+      envelopeId: 'trust-root-rig-b1-r3',
+      keyFingerprint: TEST_KEY_FINGERPRINT,
+      signedPayloadRaw: payloadWithUnknown,
+      signatureBase64: sign(null, Buffer.from(payloadWithUnknown), TEST_KEYPAIR.privateKey).toString('base64'),
+    });
+    expect(() => TEST_VERIFIER.verify(envelope)).toThrow(/unrecognized|unknown/i);
+
+    const declarationJson = JSON.stringify(declarationValue());
+    const duplicatePayload = `{"schemaVersion":1,"envelopeId":"trust-root-rig-b1-r3",` +
+      `"envelopeId":"trust-root-rig-b1-r3","declaration":${declarationJson},` +
+      `"rawCaptureDigests":${JSON.stringify(digests(captures))}}`;
+    const duplicatePayloadEnvelope = JSON.stringify({
+      schemaVersion: 1,
+      envelopeId: 'trust-root-rig-b1-r3',
+      keyFingerprint: TEST_KEY_FINGERPRINT,
+      signedPayloadRaw: duplicatePayload,
+      signatureBase64: sign(null, Buffer.from(duplicatePayload), TEST_KEYPAIR.privateKey).toString('base64'),
+    });
+    expect(() => TEST_VERIFIER.verify(duplicatePayloadEnvelope)).toThrow(/duplicate/i);
+  });
+
   it('derives a valid rig verdict and binds every exact raw digest', () => {
     const declared = immutable();
     const raw = rawCaptures(declared);
@@ -295,19 +404,19 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     const scheduler = JSON.parse(raw.scheduler) as Record<string, unknown>;
     delete scheduler.exportId;
     raw.scheduler = JSON.stringify(scheduler);
-    expect(() => parseRawCaptureSet(raw, declared)).toThrow(/exportId|required/i);
+    expect(() => parseRawCaptureSet(raw, trust(declarationValue(), raw))).toThrow(/exportId|required/i);
 
     const wrongType = rawCaptures(declared);
     const db = JSON.parse(wrongType.database) as Record<string, unknown>;
     db.queryId = 42;
     wrongType.database = JSON.stringify(db);
-    expect(() => parseRawCaptureSet(wrongType, declared)).toThrow(/queryId|string/i);
+    expect(() => parseRawCaptureSet(wrongType, trust(declarationValue(), wrongType))).toThrow(/queryId|string/i);
 
     const unknown = rawCaptures(declared);
     const signet = JSON.parse(unknown.signet) as Record<string, unknown>;
     signet.invented = true;
     unknown.signet = JSON.stringify(signet);
-    expect(() => parseRawCaptureSet(unknown, declared)).toThrow(/unrecognized/i);
+    expect(() => parseRawCaptureSet(unknown, trust(declarationValue(), unknown))).toThrow(/unrecognized/i);
   });
 
   it('rejects cross-source head and duplicate source IDs', () => {
@@ -440,6 +549,45 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
       faultWindowId: 'window-live-2',
     }];
     expect(() => immutable(value)).toThrow(/recovery.*same.*fault|exact drain.*fault/i);
+  });
+
+  it('requires recovery strictly after its correlated drain and inside the exact fault/trigger timeline', () => {
+    const value = declarationValue();
+    value.recoveries = [{
+      schedulerExecutionId: 'scheduler-recovery-live-1',
+      correlatedDrainExecutionId: 'scheduler-live-1',
+      faultWindowId: 'window-live-1',
+    }];
+    const initial = immutable(value);
+    const makeRecoveryRaw = (firedAt: string, completedAt: string, trigger = 'org-scheduler'): RawCaptureTextSet => {
+      const raw = rawCaptures(initial);
+      const scheduler = JSON.parse(raw.scheduler) as { records: Array<Record<string, unknown>> };
+      scheduler.records.push({
+        recordId: 'scheduler-recovery-record', purpose: 'recovery',
+        schedulerExecutionId: 'scheduler-recovery-live-1', correlatedDrainExecutionId: 'scheduler-live-1',
+        faultWindowId: 'window-live-1', gcpProjectId: 'arkova-rig-b1',
+        workerRevision: 'arkova-worker-rig-b1-00001', workerId: 'worker-live-1',
+        path: '/jobs/recover-broadcasts', trigger, statusCode: 200, firedAt, completedAt,
+      });
+      raw.scheduler = JSON.stringify(scheduler);
+      return raw;
+    };
+
+    for (const [firedAt, completedAt, trigger] of [
+      ['2026-07-13T12:00:19.000Z', '2026-07-13T12:00:21.000Z', 'org-scheduler'],
+      ['2026-07-13T12:01:01.000Z', '2026-07-13T12:01:02.000Z', 'org-scheduler'],
+      ['2026-07-13T12:00:21.000Z', '2026-07-13T12:00:22.000Z', 'global-flush'],
+    ]) {
+      const raw = makeRecoveryRaw(firedAt!, completedAt!, trigger!);
+      const declared = trust(value, raw);
+      expect(() => deriveAndAssertLiveEvidence(declared, parseRawCaptureSet(raw, declared))).toThrow(
+        /recovery.*chronology|fault window|trigger/i,
+      );
+    }
+
+    const valid = makeRecoveryRaw('2026-07-13T12:00:21.000Z', '2026-07-13T12:00:22.000Z');
+    const declared = trust(value, valid);
+    expect(() => deriveAndAssertLiveEvidence(declared, parseRawCaptureSet(valid, declared))).not.toThrow();
   });
 
   it('rejects credit DB metadata outside its exact Scheduler execution', () => {

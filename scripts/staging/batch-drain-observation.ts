@@ -68,6 +68,7 @@ export interface ObservedPassRow {
 export interface ObservedDrainTransaction {
   txId: string;
   batchId: string;
+  schedulerExecutionId: string;
   merkleRoot: string;
   signedBytesSha256: string;
   network: 'signet';
@@ -662,6 +663,9 @@ export function assertDrainPassObservation(
     if (transaction.batchId !== expectation.batchId || transactionsById.has(transaction.txId)) {
       throw new Error('Actual transaction is duplicate or belongs to an unrelated batch.');
     }
+    if (transaction.schedulerExecutionId !== expectation.schedulerExecutionId) {
+      throw new Error('Actual signet transaction is unrelated to the exact Scheduler execution.');
+    }
     transactionsById.set(transaction.txId, transaction);
   }
 
@@ -691,6 +695,22 @@ export function assertDrainPassObservation(
     startedMs,
     completedMs,
   );
+  for (const transaction of observation.transactions) {
+    const acceptedMs = timestamp(transaction.acceptedAt, 'Signet acceptance');
+    if (acceptedMs <= firedMs) throw new Error('Signet acceptance must occur after the observed Scheduler trigger.');
+    for (const leaf of leavesByTx.get(transaction.txId) ?? []) {
+      const gate = observation.creditGateEvents.find((event) => event.fingerprint === leaf.fingerprint);
+      if (!gate || acceptedMs <= timestamp(gate.occurredAt, 'Credit gate event')) {
+        throw new Error('Signet acceptance must occur after the exact credit gate for every transaction leaf.');
+      }
+      const debits = observation.creditLedgerEvents.filter((event) => (
+        event.fingerprint === leaf.fingerprint && event.kind === 'debit'
+      ));
+      if (debits.some((event) => acceptedMs <= timestamp(event.occurredAt, 'Credit debit event'))) {
+        throw new Error('Signet acceptance must occur after the exact credit debit for every transaction leaf.');
+      }
+    }
+  }
   const drainedOrgIds = new Set(derived.orderedDrainedRows.map((row) => row.orgId));
   assertR3TransactionInvariant(expectation.armedTrigger, observation.transactions, leavesByTx, drainedOrgIds);
   if (leafByFingerprint.size !== derived.orderedDrainedRows.length) {

@@ -6,7 +6,7 @@ import {
   SOAK_REQUIRED_UPTIME_MINUTES,
   KnownSourceCollectorsAdapter,
   collectLiveRawSources,
-  parseImmutableRunDeclaration,
+  createProductionEvidenceEnvelopeVerifier,
   parseRawCaptureSet,
   type KnownLiveSourceCollectors,
 } from './batch-drain-live-evidence';
@@ -17,12 +17,11 @@ describe('immutable declaration and independent raw evidence sources', () => {
     expect(SOAK_REQUIRED_UPTIME_MINUTES).toBe(2_880);
   });
 
-  it('rejects a declaration whose exact content hash does not match', () => {
-    const raw = JSON.stringify({ schemaVersion: 1 });
-    expect(() => parseImmutableRunDeclaration(raw, '0'.repeat(64))).toThrow(/content hash/i);
+  it('rejects live declaration verification until the CTO signing key is code-configured', () => {
+    expect(() => createProductionEvidenceEnvelopeVerifier()).toThrow(/CTO.*not configured/i);
   });
 
-  it('strictly rejects unknown raw-source keys before fact derivation', () => {
+  it('refuses raw-source parsing before a signed declaration is verified', () => {
     expect(() => parseRawCaptureSet({
       scheduler: JSON.stringify({ schemaVersion: 1, source: 'cloud-scheduler', records: [], invented: true }),
       workerLogs: '{}',
@@ -30,7 +29,7 @@ describe('immutable declaration and independent raw evidence sources', () => {
       signet: '{}',
       cloudRun: '{}',
       supervisor: '{}',
-    }, {} as never)).toThrow(/unrecognized|unknown/i);
+    }, {} as never)).toThrow(/verified signed.*envelope/i);
   });
 
   it('does not call any known live collector without both gates', async () => {

@@ -113,6 +113,7 @@ function observation(trigger: 'org-scheduler' | 'global-flush' = 'org-scheduler'
     transactions: [{
       txId: TX_ID,
       batchId: BATCH_ID,
+      schedulerExecutionId: EXECUTION_ID,
       merkleRoot: ROOT,
       signedBytesSha256: TX_HASH,
       network: 'signet',
@@ -177,6 +178,7 @@ function observation(trigger: 'org-scheduler' | 'global-flush' = 'org-scheduler'
 function splitIntoTwoTransactions(actual: DrainPassObservation): void {
   const common = {
     batchId: BATCH_ID,
+    schedulerExecutionId: EXECUTION_ID,
     network: 'signet' as const,
     nodeId: 'signet-node-fixture',
     chainState: 'mempool' as const,
@@ -416,9 +418,36 @@ describe('assertDrainPassObservation — event-derived fail-closed R3 evidence',
     earlySignet.transactions[0]!.acceptedAt = '2026-07-13T12:00:04.000Z';
     expect(() => assertDrainPassObservation(expectation(), earlySignet)).toThrow(/signet.*Scheduler execution/i);
 
+    const beforeTrigger = observation();
+    beforeTrigger.transactions[0]!.acceptedAt = '2026-07-13T12:00:05.500Z';
+    expect(() => assertDrainPassObservation(expectation(), beforeTrigger)).toThrow(/signet.*trigger|trigger.*signet/i);
+
+    const beforeGate = observation();
+    beforeGate.transactions[0]!.acceptedAt = '2026-07-13T12:00:06.500Z';
+    expect(() => assertDrainPassObservation(expectation(), beforeGate)).toThrow(/signet.*credit gate|credit gate.*signet/i);
+
     const lateDenial = observation();
     lateDenial.passRows[2]!.queueCreditDeniedAt = '2026-07-13T12:00:21.000Z';
     expect(() => assertDrainPassObservation(expectation(), lateDenial)).toThrow(/queueCreditDeniedAt|credit.*Scheduler execution/i);
+  });
+
+  it('requires signet acceptance after the exact debit for every leaf in its transaction', () => {
+    const actual = observation();
+    actual.creditGateEvents[0] = {
+      ...actual.creditGateEvents[0]!, decision: 'allowed', reason: 'rule.auto_anchor_queue_run',
+      referenceId: 'anchor-1', requiredAmount: 1, balanceBefore: 10, balanceAfter: 9,
+      occurredAt: '2026-07-13T12:00:07.000Z',
+    };
+    actual.passRows[0]!.queueCreditChargedAt = '2026-07-13T12:00:09.000Z';
+    actual.creditLedgerEvents.push({
+      eventId: 'ledger-debit-after-signet', schedulerExecutionId: EXECUTION_ID, fingerprint: FP_1,
+      orgId: ORG_HEALTHY, kind: 'debit', amount: 1, referenceId: 'anchor-1',
+      occurredAt: '2026-07-13T12:00:09.000Z',
+    });
+    actual.orgBalances.find((row) => row.orgId === ORG_HEALTHY)!.after = 9;
+    actual.ledgerDeltas.find((row) => row.orgId === ORG_HEALTHY)!.delta = -1;
+    actual.transactions[0]!.acceptedAt = '2026-07-13T12:00:08.000Z';
+    expect(() => assertDrainPassObservation(expectation(), actual)).toThrow(/signet.*debit|debit.*signet/i);
   });
 
   it('joins poison isolation only from actual pass and remainder facts', () => {

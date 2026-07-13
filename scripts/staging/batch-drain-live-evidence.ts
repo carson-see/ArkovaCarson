@@ -2,20 +2,21 @@
 /**
  * S3.3 RIG-B1 evidence consumer.
  *
- * The immutable run declaration and all six capture digests are pinned by a
- * separate trust-root envelope loaded from a fixed read-only store.
+ * The immutable run declaration and all six capture digests are authenticated
+ * by one independently Ed25519-signed envelope. Filesystem permissions are
+ * defense in depth only and are never treated as the authenticity boundary.
  * Scheduler, worker-log, DB, signet, Cloud Run, and supervisor captures are
  * six independent raw exports whose exact SHA-256 digests are named by that
  * declaration. Runtime facts are derived only after strict schema validation;
  * a combined caller-authored "evidence bundle" is intentionally unsupported.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parseArgs } from 'node:util';
+import { parseArgs, types as utilTypes } from 'node:util';
 
 import { z } from 'zod';
 
@@ -32,6 +33,12 @@ export const SOAK_REQUIRED_UPTIME_MINUTES = SOAK_FLOOR_MINUTES;
 export const SOAK_WALL_FLOOR_MINUTES = SOAK_FLOOR_MINUTES + 30;
 export const MAX_HEARTBEAT_GAP_MINUTES = 5;
 export const DEFAULT_EVIDENCE_TRUST_ROOT = '/var/lib/arkova/s33-evidence/trust-roots';
+
+// CTO-owned launch configuration. These are deliberately null until the CTO
+// approves and commits the production Ed25519 public key + SPKI fingerprint.
+// CLI flags and environment variables are intentionally not consulted.
+const CTO_EVIDENCE_PUBLIC_KEY_PEM: string | null = null;
+const CTO_EVIDENCE_KEY_FINGERPRINT: string | null = null;
 
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
 const headSha = z.string().regex(/^[0-9a-f]{40}$/);
@@ -97,18 +104,27 @@ export const runDeclarationSchema = z.object({
 export type RunDeclaration = z.infer<typeof runDeclarationSchema>;
 
 export interface ImmutableRunDeclaration {
-  value: RunDeclaration;
-  contentSha256: string;
-  trustRootId: string;
-  trustRootSha256: string;
-  rawCaptureDigests: RawCaptureDigests;
+  readonly value: RunDeclaration;
+  readonly contentSha256: string;
+  readonly trustRootId: string;
+  readonly trustRootSha256: string;
+  readonly rawCaptureDigests: RawCaptureDigests;
 }
+
+const VERIFIED_DECLARATIONS = new WeakSet<ImmutableRunDeclaration>();
 
 const evidenceTrustRootSchema = z.object({
   schemaVersion: z.literal(1),
-  trustRootId: z.string().regex(/^[a-z0-9][a-z0-9-]{2,79}$/),
-  declarationRaw: nonEmpty,
-  declarationSha256: sha256Hex,
+  envelopeId: z.string().regex(/^[a-z0-9][a-z0-9-]{2,79}$/),
+  keyFingerprint: sha256Hex,
+  signedPayloadRaw: nonEmpty,
+  signatureBase64: z.string().regex(/^[A-Za-z0-9+/]{86}==$/),
+}).strict();
+
+const evidenceSignedPayloadSchema = z.object({
+  schemaVersion: z.literal(1),
+  envelopeId: z.string().regex(/^[a-z0-9][a-z0-9-]{2,79}$/),
+  declaration: runDeclarationSchema,
   rawCaptureDigests: rawCaptureDigestsSchema,
 }).strict();
 
@@ -450,16 +466,7 @@ function unique<T>(values: T[], label: string): void {
   if (new Set(values).size !== values.length) throw new Error(`${label} contains duplicate identities.`);
 }
 
-export function parseImmutableRunDeclaration(raw: string, expectedContentSha256: string): ImmutableRunDeclaration {
-  if (!/^[0-9a-f]{64}$/.test(expectedContentSha256)) throw new Error('Expected declaration content hash must be lowercase SHA-256.');
-  const trustRootSha256 = digest(raw);
-  if (trustRootSha256 !== expectedContentSha256) throw new Error('Immutable declaration trust-root content hash does not match.');
-  const trustRoot = parseStrict(evidenceTrustRootSchema, raw, 'evidence trust root');
-  const contentSha256 = digest(trustRoot.declarationRaw);
-  if (contentSha256 !== trustRoot.declarationSha256) {
-    throw new Error('Run declaration content does not match the independently pinned trust root.');
-  }
-  const value = parseStrict(runDeclarationSchema, trustRoot.declarationRaw, 'run declaration');
+function validateRunDeclaration(value: RunDeclaration): void {
   if (value.gitBaseSha === value.gitHeadSha) throw new Error('Declaration git base and tested head must be distinct named commits.');
   if (time(value.soakEndedAt, 'soakEndedAt') - time(value.soakStartedAt, 'soakStartedAt') < SOAK_WALL_FLOOR_MINUTES * 60_000) {
     throw new Error('Declared soak wall window cannot contain the fixed 48h floor plus 30-minute overshoot.');
@@ -491,27 +498,134 @@ export function parseImmutableRunDeclaration(raw: string, expectedContentSha256:
   if (value.windows.some((window) => window.passes.some((pass) => pass.armedTrigger !== window.armedTrigger))) {
     throw new Error('Every declared pass must match its window armed trigger.');
   }
-  return {
-    value,
-    contentSha256,
-    trustRootId: trustRoot.trustRootId,
-    trustRootSha256,
-    rawCaptureDigests: trustRoot.rawCaptureDigests,
-  };
+}
+
+/** Lexically reject duplicate object keys before JSON.parse can collapse them. */
+function assertNoDuplicateJsonKeys(raw: string, label: string): void {
+  const stack: Array<{ kind: 'object'; keys: Set<string> } | { kind: 'array' }> = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index]!;
+    if (char === '{') { stack.push({ kind: 'object', keys: new Set() }); continue; }
+    if (char === '[') { stack.push({ kind: 'array' }); continue; }
+    if (char === '}' || char === ']') { stack.pop(); continue; }
+    if (char !== '"') continue;
+    const start = index;
+    index += 1;
+    for (; index < raw.length; index += 1) {
+      if (raw[index] === '\\') { index += 1; continue; }
+      if (raw[index] === '"') break;
+    }
+    let cursor = index + 1;
+    while (/\s/.test(raw[cursor] ?? '')) cursor += 1;
+    if (raw[cursor] !== ':') continue;
+    const frame = stack[stack.length - 1];
+    if (!frame || frame.kind !== 'object') continue;
+    const key = JSON.parse(raw.slice(start, index + 1)) as string;
+    if (frame.keys.has(key)) throw new Error(`${label} contains duplicate JSON key ${key}.`);
+    frame.keys.add(key);
+  }
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export interface EvidenceEnvelopeVerifier {
+  verify(raw: unknown): ImmutableRunDeclaration;
+}
+
+interface EvidenceVerifierConfig {
+  publicKeyPem: string;
+  keyFingerprint: string;
+}
+
+function assertPlainVerifierConfig(config: unknown): asserts config is EvidenceVerifierConfig {
+  if (!config || typeof config !== 'object' || utilTypes.isProxy(config) || Object.getPrototypeOf(config) !== Object.prototype) {
+    throw new Error('Evidence verifier configuration must be a plain non-proxy data object.');
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(config);
+  if (
+    Reflect.ownKeys(config).some((key) => typeof key !== 'string')
+    || Object.keys(descriptors).sort().join(',') !== 'keyFingerprint,publicKeyPem'
+    || Object.values(descriptors).some((descriptor) => !('value' in descriptor) || descriptor.get || descriptor.set)
+    || typeof descriptors.publicKeyPem?.value !== 'string'
+    || typeof descriptors.keyFingerprint?.value !== 'string'
+  ) throw new Error('Evidence verifier configuration rejects getters, unknown keys, and ambiguous values.');
+}
+
+class Ed25519EvidenceEnvelopeVerifier implements EvidenceEnvelopeVerifier {
+  private readonly publicKey;
+  private readonly keyFingerprint: string;
+
+  constructor(config: EvidenceVerifierConfig) {
+    this.publicKey = createPublicKey(config.publicKeyPem);
+    if (this.publicKey.asymmetricKeyType !== 'ed25519') throw new Error('Evidence verification key must be Ed25519.');
+    const actualFingerprint = createHash('sha256')
+      .update(this.publicKey.export({ type: 'spki', format: 'der' }))
+      .digest('hex');
+    if (actualFingerprint !== config.keyFingerprint) throw new Error('Evidence verification key fingerprint mismatch.');
+    this.keyFingerprint = config.keyFingerprint;
+  }
+
+  verify(raw: unknown): ImmutableRunDeclaration {
+    if (typeof raw !== 'string') throw new Error('Signed evidence envelope must be a primitive string.');
+    assertNoDuplicateJsonKeys(raw, 'signed evidence envelope');
+    const envelope = parseStrict(evidenceTrustRootSchema, raw, 'signed evidence envelope');
+    if (envelope.keyFingerprint !== this.keyFingerprint) throw new Error('Signed evidence envelope names an untrusted key fingerprint.');
+    const signature = Buffer.from(envelope.signatureBase64, 'base64');
+    if (!verifySignature(null, Buffer.from(envelope.signedPayloadRaw), this.publicKey, signature)) {
+      throw new Error('Signed evidence envelope Ed25519 signature is invalid.');
+    }
+
+    // Signature verification precedes the single semantic parse of signed bytes.
+    assertNoDuplicateJsonKeys(envelope.signedPayloadRaw, 'signed evidence payload');
+    const payload = parseStrict(evidenceSignedPayloadSchema, envelope.signedPayloadRaw, 'signed evidence payload');
+    if (payload.envelopeId !== envelope.envelopeId) throw new Error('Signed envelope and payload identities differ.');
+    validateRunDeclaration(payload.declaration);
+    const contentSha256 = digest(JSON.stringify(payload.declaration));
+    const declaration = deepFreeze({
+      value: payload.declaration,
+      contentSha256,
+      trustRootId: envelope.envelopeId,
+      trustRootSha256: digest(envelope.signedPayloadRaw),
+      rawCaptureDigests: payload.rawCaptureDigests,
+    });
+    VERIFIED_DECLARATIONS.add(declaration);
+    return declaration;
+  }
+}
+
+export function createProductionEvidenceEnvelopeVerifier(): EvidenceEnvelopeVerifier {
+  if (CTO_EVIDENCE_PUBLIC_KEY_PEM === null || CTO_EVIDENCE_KEY_FINGERPRINT === null) {
+    throw new Error('CTO evidence verification key and fingerprint are not configured; live evidence verification is blocked.');
+  }
+  return new Ed25519EvidenceEnvelopeVerifier({
+    publicKeyPem: CTO_EVIDENCE_PUBLIC_KEY_PEM,
+    keyFingerprint: CTO_EVIDENCE_KEY_FINGERPRINT,
+  });
+}
+
+export function createEvidenceEnvelopeVerifierForTest(config: unknown): EvidenceEnvelopeVerifier {
+  if (process.env.NODE_ENV !== 'test') throw new Error('Evidence verification-key injection is available only in tests.');
+  assertPlainVerifierConfig(config);
+  return new Ed25519EvidenceEnvelopeVerifier(config);
 }
 
 export class TrustedRunDeclarationStore {
   async load(trustRootId: string): Promise<ImmutableRunDeclaration> {
     if (!/^[a-z0-9][a-z0-9-]{2,79}$/.test(trustRootId)) throw new Error('Trust-root id is not allowlisted.');
     const path = join(DEFAULT_EVIDENCE_TRUST_ROOT, `${trustRootId}.json`);
+    const verifier = createProductionEvidenceEnvelopeVerifier();
     const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
     try {
       const stat = await handle.stat();
-      if (!stat.isFile() || (stat.mode & 0o222) !== 0) {
-        throw new Error('Evidence trust root must be a regular immutable file with no write permission bits.');
-      }
+      if (!stat.isFile()) throw new Error('Signed evidence envelope must be a regular file.');
       const raw = await handle.readFile('utf8');
-      const declaration = parseImmutableRunDeclaration(raw, digest(raw));
+      const declaration = verifier.verify(raw);
       if (declaration.trustRootId !== trustRootId) throw new Error('Evidence trust-root filename and content identity differ.');
       return declaration;
     } finally {
@@ -520,29 +634,55 @@ export class TrustedRunDeclarationStore {
   }
 }
 
+function snapshotRawCaptureTextSet(raw: RawCaptureTextSet): Readonly<RawCaptureTextSet> {
+  if (!raw || typeof raw !== 'object' || utilTypes.isProxy(raw) || Object.getPrototypeOf(raw) !== Object.prototype) {
+    throw new Error('Raw capture set must be a plain non-proxy data object.');
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(raw);
+  const expectedKeys = ['cloudRun', 'database', 'scheduler', 'signet', 'supervisor', 'workerLogs'];
+  if (
+    Reflect.ownKeys(raw).some((key) => typeof key !== 'string')
+    || Object.keys(descriptors).sort().join(',') !== expectedKeys.join(',')
+    || Object.values(descriptors).some((descriptor) => !('value' in descriptor) || descriptor.get || descriptor.set)
+    || expectedKeys.some((key) => typeof descriptors[key]?.value !== 'string')
+  ) throw new Error('Raw capture set rejects getters, unknown keys, and ambiguous values.');
+  return Object.freeze({
+    scheduler: descriptors.scheduler!.value as string,
+    workerLogs: descriptors.workerLogs!.value as string,
+    database: descriptors.database!.value as string,
+    signet: descriptors.signet!.value as string,
+    cloudRun: descriptors.cloudRun!.value as string,
+    supervisor: descriptors.supervisor!.value as string,
+  });
+}
+
 export function parseRawCaptureSet(
   raw: RawCaptureTextSet,
   declaration: ImmutableRunDeclaration,
 ): ParsedRawCaptureSet {
-  const scheduler = parseStrict(schedulerCaptureSchema, raw.scheduler, 'cloud-scheduler raw export');
-  const workerLogs = parseStrict(workerLogsCaptureSchema, raw.workerLogs, 'cloud-logging raw export');
-  const database = parseStrict(databaseCaptureSchema, raw.database, 'database raw export');
-  const signet = parseStrict(signetCaptureSchema, raw.signet, 'signet RPC raw export');
-  const cloudRun = parseStrict(cloudRunCaptureSchema, raw.cloudRun, 'Cloud Run lifecycle raw export');
-  const supervisor = parseStrict(supervisorCaptureSchema, raw.supervisor, 'supervisor raw export');
+  if (!VERIFIED_DECLARATIONS.has(declaration)) {
+    throw new Error('Raw captures require a declaration from the verified signed evidence envelope.');
+  }
+  const captured = snapshotRawCaptureTextSet(raw);
   const contentDigests = {
-    scheduler: digest(raw.scheduler),
-    workerLogs: digest(raw.workerLogs),
-    database: digest(raw.database),
-    signet: digest(raw.signet),
-    cloudRun: digest(raw.cloudRun),
-    supervisor: digest(raw.supervisor),
+    scheduler: digest(captured.scheduler),
+    workerLogs: digest(captured.workerLogs),
+    database: digest(captured.database),
+    signet: digest(captured.signet),
+    cloudRun: digest(captured.cloudRun),
+    supervisor: digest(captured.supervisor),
   };
   for (const source of Object.keys(contentDigests) as Array<keyof typeof contentDigests>) {
     if (contentDigests[source] !== declaration.rawCaptureDigests[source]) {
       throw new Error(`${source} raw export content digest does not match its trusted immutable declaration digest.`);
     }
   }
+  const scheduler = parseStrict(schedulerCaptureSchema, captured.scheduler, 'cloud-scheduler raw export');
+  const workerLogs = parseStrict(workerLogsCaptureSchema, captured.workerLogs, 'cloud-logging raw export');
+  const database = parseStrict(databaseCaptureSchema, captured.database, 'database raw export');
+  const signet = parseStrict(signetCaptureSchema, captured.signet, 'signet RPC raw export');
+  const cloudRun = parseStrict(cloudRunCaptureSchema, captured.cloudRun, 'Cloud Run lifecycle raw export');
+  const supervisor = parseStrict(supervisorCaptureSchema, captured.supervisor, 'supervisor raw export');
   return { scheduler, workerLogs, database, signet, cloudRun, supervisor, contentDigests };
 }
 
@@ -781,6 +921,7 @@ function derivePassObservation(
     ) throw new Error('Signet RPC result mismatches the DB transaction/root/signed bytes.');
     return {
       ...row,
+      schedulerExecutionId: result.schedulerExecutionId,
       network: result.network,
       nodeId: result.nodeId,
       chainState: result.state,
@@ -863,6 +1004,9 @@ export function deriveAndAssertLiveEvidence(
   declaration: ImmutableRunDeclaration,
   captures: ParsedRawCaptureSet,
 ): LiveEvidenceSummary {
+  if (!VERIFIED_DECLARATIONS.has(declaration)) {
+    throw new Error('Live evidence derivation requires a declaration from the verified signed evidence envelope.');
+  }
   assertCommonBindings(declaration, captures);
   assertPreflightAndSupervisor(declaration.value, captures.supervisor);
   const workerClock = deriveWorkerUptime(declaration.value, captures.cloudRun);
@@ -943,11 +1087,23 @@ export function deriveAndAssertLiveEvidence(
     const records = recoverySchedulerRows.filter((record) => record.schedulerExecutionId === recovery.schedulerExecutionId);
     if (records.length !== 1) throw new Error('Scheduler recovery execution IDs must join one-to-one.');
     const record = records[0]!;
+    const correlatedDrain = drainSchedulerRows.find((candidate) => (
+      candidate.schedulerExecutionId === recovery.correlatedDrainExecutionId
+    ));
+    const correlatedPass = passDeclarations.find((candidate) => (
+      candidate.schedulerExecutionId === recovery.correlatedDrainExecutionId
+    ));
     if (
-      record.statusCode !== 200
+      !correlatedDrain
+      || !correlatedPass
+      || record.statusCode !== 200
       || record.path !== '/jobs/recover-broadcasts'
       || record.correlatedDrainExecutionId !== recovery.correlatedDrainExecutionId
       || record.faultWindowId !== recovery.faultWindowId
+      || record.trigger !== correlatedPass.armedTrigger
+      || time(record.firedAt, 'recovery firedAt') <= time(correlatedDrain.completedAt, 'correlated drain completedAt')
+      || time(record.firedAt, 'recovery firedAt') < time(correlatedPass.faultWindow.startsAt, 'fault window startsAt')
+      || time(record.completedAt, 'recovery completedAt') > time(correlatedPass.faultWindow.endsAt, 'fault window endsAt')
     ) throw new Error('Scheduler recovery raw record must be an HTTP 200 bound to its declared drain and fault window.');
     assertWorkerCovers(
       workerClock.intervals,

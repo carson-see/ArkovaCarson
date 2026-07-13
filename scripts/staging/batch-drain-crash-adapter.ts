@@ -97,7 +97,8 @@ const passRowSchema = z.object({
   queueCreditDeniedAt: timestamp.nullable(),
 }).strict();
 const transactionSchema = z.object({
-  txId: sha256, batchId: nonEmpty, merkleRoot: sha256, signedBytesSha256: sha256,
+  txId: sha256, batchId: nonEmpty, schedulerExecutionId: nonEmpty,
+  merkleRoot: sha256, signedBytesSha256: sha256,
   network: z.literal('signet'), nodeId: nonEmpty, chainState: z.enum(['mempool', 'confirmed']),
   acceptedAt: timestamp,
 }).strict();
@@ -143,10 +144,17 @@ const drainObservationSchema = z.object({
 const attemptSchema = z.object({
   batchId: nonEmpty, schedulerExecutionId: nonEmpty, txId: sha256, signedBytesSha256: sha256,
 }).strict();
+const lifecycleAuditSchema = z.object({
+  workerId: nonEmpty,
+  event: z.enum(['started', 'terminated', 'restarted', 'observed']),
+  logEntryId: nonEmpty,
+  occurredAt: timestamp,
+}).strict();
 const uptimeSchema = z.object({
   ...runtime,
   workerId: nonEmpty, source: z.literal('cloud-run-audit-log'), startedAt: timestamp,
-  observedUntil: timestamp, uptimeMs: z.number().int().nonnegative(), logEntryIds: z.array(nonEmpty).min(1),
+  observedUntil: timestamp, uptimeMs: z.number().int().nonnegative(),
+  lifecycleAudit: z.tuple([lifecycleAuditSchema, lifecycleAuditSchema]),
 }).strict();
 const observationSchema = z.object({
   runId: nonEmpty, finalWorkerId: nonEmpty, observedAt: timestamp,

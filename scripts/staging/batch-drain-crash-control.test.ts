@@ -91,6 +91,7 @@ function drainObservation(): DrainPassObservation {
     transactions: [{
       txId: TX_ID,
       batchId: BATCH_ID,
+      schedulerExecutionId: EXECUTION_ID,
       merkleRoot: ROOT,
       signedBytesSha256: TX_HASH,
       network: 'signet',
@@ -217,8 +218,8 @@ function recovery(): RecoveryEvidence {
     source: 'cloud-scheduler',
     endpointPath: '/jobs/recover-broadcasts',
     httpStatus: 200,
-    startedAt: '2026-07-13T12:00:14.000Z',
-    completedAt: '2026-07-13T12:00:15.000Z',
+    startedAt: '2026-07-13T12:00:21.000Z',
+    completedAt: '2026-07-13T12:00:22.000Z',
   };
 }
 
@@ -226,7 +227,7 @@ function crashObservation(killpoint: CrashKillpoint): CrashObservation {
   return {
     runId: `offline-${killpoint}`,
     finalWorkerId: 'worker-after',
-    observedAt: '2026-07-13T12:00:20.000Z',
+    observedAt: '2026-07-13T12:00:23.000Z',
     drain: drainObservation(),
     broadcastAttempts: [{
       batchId: BATCH_ID,
@@ -238,13 +239,21 @@ function crashObservation(killpoint: CrashKillpoint): CrashObservation {
       {
         workerId: 'worker-before', source: 'cloud-run-audit-log',
         startedAt: '2026-07-13T11:59:00.000Z', observedUntil: '2026-07-13T12:00:12.000Z',
-        uptimeMs: 72_000, logEntryIds: ['log-start-before', 'log-termination'],
+        uptimeMs: 72_000,
+        lifecycleAudit: [
+          { workerId: 'worker-before', event: 'started', logEntryId: 'log-start-before', occurredAt: '2026-07-13T11:59:00.000Z' },
+          { workerId: 'worker-before', event: 'terminated', logEntryId: 'log-termination', occurredAt: '2026-07-13T12:00:12.000Z' },
+        ],
         headSha: HEAD_SHA, imageDigest: IMAGE_DIGEST,
       },
       {
         workerId: 'worker-after', source: 'cloud-run-audit-log',
-        startedAt: '2026-07-13T12:00:13.000Z', observedUntil: '2026-07-13T12:00:20.000Z',
-        uptimeMs: 7_000, logEntryIds: ['log-restart', 'log-observed'],
+        startedAt: '2026-07-13T12:00:13.000Z', observedUntil: '2026-07-13T12:00:23.000Z',
+        uptimeMs: 10_000,
+        lifecycleAudit: [
+          { workerId: 'worker-after', event: 'restarted', logEntryId: 'log-restart', occurredAt: '2026-07-13T12:00:13.000Z' },
+          { workerId: 'worker-after', event: 'observed', logEntryId: 'log-observed', occurredAt: '2026-07-13T12:00:23.000Z' },
+        ],
         headSha: HEAD_SHA, imageDigest: IMAGE_DIGEST,
       },
     ],
@@ -312,9 +321,9 @@ describe('orchestrateCrashCase — observed five-stage process lifecycle', () =>
       merkleRoots: [ROOT],
       terminatedAt: '2026-07-13T12:00:12.000Z',
       restartedAt: '2026-07-13T12:00:13.000Z',
-      recoveredAt: '2026-07-13T12:00:15.000Z',
+      recoveredAt: '2026-07-13T12:00:22.000Z',
       initialWorkerUptimeMs: 72_000,
-      replacementWorkerUptimeMs: 7_000,
+      replacementWorkerUptimeMs: 10_000,
     });
     expect(events).toContain('terminate:worker-before');
     expect(events[events.length - 1]).toBe(`disarm:${killpoint}`);
@@ -383,6 +392,16 @@ describe('orchestrateCrashCase — observed five-stage process lifecycle', () =>
       makePort('after-claim', { termination: badRuntime }).port,
     )).rejects.toThrow(/exact tested head and image/);
 
+    const earlyRecovery = {
+      ...recovery(),
+      startedAt: '2026-07-13T12:00:19.000Z',
+      completedAt: '2026-07-13T12:00:19.500Z',
+    };
+    await expect(orchestrateCrashCase(
+      makeInput('after-claim'),
+      makePort('after-claim', { recovery: earlyRecovery }).port,
+    )).rejects.toThrow(/recovery.*correlated drain completion/i);
+
     const crossFaultRecovery = { ...recovery(), faultWindowId: 'unrelated-fault-window' };
     await expect(orchestrateCrashCase(
       makeInput('after-claim'),
@@ -406,14 +425,38 @@ describe('orchestrateCrashCase — observed five-stage process lifecycle', () =>
     await expect(orchestrateCrashCase(
       makeInput('after-claim'),
       makePort('after-claim', { observation: unrelated, termination: badTermination }).port,
-    )).rejects.toThrow(/termination.*uptime|log.*bijection/i);
+    )).rejects.toThrow(/termination.*uptime|lifecycle.*bijection/i);
 
     const extra = crashObservation('after-claim');
-    extra.processUptime.push({ ...extra.processUptime[0]!, logEntryIds: [...extra.processUptime[0]!.logEntryIds] });
+    extra.processUptime.push(structuredClone(extra.processUptime[0]!));
     await expect(orchestrateCrashCase(
       makeInput('after-claim'),
       makePort('after-claim', { observation: extra }).port,
     )).rejects.toThrow(/exact.*two|extra.*uptime/i);
+
+    const extraLog = crashObservation('after-claim');
+    extraLog.processUptime[0]!.lifecycleAudit.push({
+      workerId: 'worker-before', event: 'observed', logEntryId: 'unrelated-extra-log',
+      occurredAt: '2026-07-13T12:00:11.000Z',
+    });
+    await expect(orchestrateCrashCase(
+      makeInput('after-claim'),
+      makePort('after-claim', { observation: extraLog }).port,
+    )).rejects.toThrow(/exact.*two|extra.*audit|bijection/i);
+
+    const crossWorker = crashObservation('after-claim');
+    crossWorker.processUptime[0]!.lifecycleAudit[0]!.workerId = 'worker-after';
+    await expect(orchestrateCrashCase(
+      makeInput('after-claim'),
+      makePort('after-claim', { observation: crossWorker }).port,
+    )).rejects.toThrow(/cross-worker|bijection|worker identity/i);
+
+    const emptyAuditId = crashObservation('after-claim');
+    emptyAuditId.processUptime[0]!.lifecycleAudit[0]!.logEntryId = '';
+    await expect(orchestrateCrashCase(
+      makeInput('after-claim'),
+      makePort('after-claim', { observation: emptyAuditId }).port,
+    )).rejects.toThrow(/lifecycle.*identity|audit.*bijection/i);
   });
 
   it('independently derives and rejects an unrelated Merkle root before termination', async () => {
