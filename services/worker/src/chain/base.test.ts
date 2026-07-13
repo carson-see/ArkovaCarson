@@ -197,6 +197,88 @@ describe('BaseChainClient', () => {
     });
   });
 
+  // ── SCRUM-2591 canonical-decode CONTRACT (adversarial corpus) ──
+  //
+  // CONTRACT SPEC: parseAnchorCalldata is a CANONICAL decoder, not a loose
+  // substring scan. Anchor calldata for the Base/EVM path is EXACTLY
+  //   ARKV (4 bytes) + fingerprint (32 bytes)            → 36 bytes, or
+  //   ARKV (4 bytes) + fingerprint (32) + metadataHash(8) → 44 bytes.
+  // ANY other shape — trailing junk after the committed payload, a prefix that
+  // begins at a non-zero offset, a truncated metadata region, an odd-length or
+  // non-hex string — MUST decode to null. This mirrors the Bitcoin-side
+  // structural-decode contract enforced by signet.ts:extractAnchorFingerprint
+  // (BUG-2026-06-24-004): a payload that merely *contains* ARKV<fingerprint>
+  // somewhere is NOT a canonical anchor and must be rejected.
+  describe('parseAnchorCalldata — canonical-decode contract (SCRUM-2591)', () => {
+    const ARKV = '41524b56';
+    const FP = 'a'.repeat(64); // 32-byte fingerprint
+    const META8 = 'b'.repeat(16); // 8-byte truncated metadata hash
+
+    it('(a) rejects ARKV+fingerprint embedded as a substring with trailing junk', () => {
+      // A canonical 36-byte payload with 1 extra trailing byte is NOT canonical.
+      const withJunk = `0x${ARKV}${FP}ff`;
+      expect(parseAnchorCalldata(withJunk)).toBeNull();
+    });
+
+    it('(a2) rejects a long buffer that merely CONTAINS ARKV+fingerprint after the committed region', () => {
+      // 44-byte canonical (36 + 8 metadata) followed by another full ARKV+fp.
+      const embedded = `0x${ARKV}${FP}${META8}${ARKV}${FP}`;
+      expect(parseAnchorCalldata(embedded)).toBeNull();
+    });
+
+    it('(b) rejects an absent/wrong prefix', () => {
+      expect(parseAnchorCalldata(`0xdeadbeef${FP}`)).toBeNull();
+      // Right length (36 bytes) but wrong 4-byte prefix.
+      expect(parseAnchorCalldata(`0x00000000${FP}`)).toBeNull();
+    });
+
+    it('(c) rejects the ARKV prefix at a non-zero offset inside the buffer', () => {
+      // One junk byte, THEN ARKV+fingerprint — a substring scanner would match.
+      const offset = `0xab${ARKV}${FP}`;
+      expect(parseAnchorCalldata(offset)).toBeNull();
+    });
+
+    it('(d) rejects a truncated buffer (< 36 bytes committed)', () => {
+      // ARKV + only 16 fingerprint bytes.
+      expect(parseAnchorCalldata(`0x${ARKV}${'a'.repeat(32)}`)).toBeNull();
+    });
+
+    it('(d2) rejects a truncated metadata region (37..43 bytes — between the two legal lengths)', () => {
+      // Canonical 36-byte payload + a partial (4-byte) metadata region = 40 bytes.
+      const partialMeta = `0x${ARKV}${FP}${'b'.repeat(8)}`;
+      expect(parseAnchorCalldata(partialMeta)).toBeNull();
+    });
+
+    it('(e) rejects odd-length hex (not whole bytes)', () => {
+      // 71 hex chars after 0x — not a whole number of bytes.
+      expect(parseAnchorCalldata(`0x${ARKV}${FP}a`)).toBeNull();
+    });
+
+    it('(g) rejects non-hex characters in the calldata', () => {
+      const nonHex = `0x${ARKV}${'z'.repeat(64)}`;
+      expect(parseAnchorCalldata(nonHex)).toBeNull();
+    });
+
+    it('accepts the two — and only the two — canonical lengths (36 and 44 bytes)', () => {
+      const only36 = parseAnchorCalldata(`0x${ARKV}${FP}`);
+      expect(only36).not.toBeNull();
+      expect(only36!.fingerprint).toBe(FP);
+      expect(only36!.metadataHashTruncated).toBeUndefined();
+
+      const with44 = parseAnchorCalldata(`0x${ARKV}${FP}${META8}`);
+      expect(with44).not.toBeNull();
+      expect(with44!.fingerprint).toBe(FP);
+      expect(with44!.metadataHashTruncated).toBe(META8);
+    });
+
+    it('(h) returns the fingerprint in lowercase regardless of input case', () => {
+      const upper = `0x${ARKV.toUpperCase()}${'A'.repeat(64)}`;
+      const parsed = parseAnchorCalldata(upper);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.fingerprint).toBe('a'.repeat(64));
+    });
+  });
+
   describe('canonicalMetadataJson', () => {
     it('sorts keys alphabetically', () => {
       const json = canonicalMetadataJson({ z: '1', a: '2', m: '3' });
