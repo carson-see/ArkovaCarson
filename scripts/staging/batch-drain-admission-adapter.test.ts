@@ -25,6 +25,25 @@ const APPROVED_SUPABASE_ORG_ID = 'byhkazrpmivhcsuqjtva';
 const SOURCE_HEAD_IMAGE_REF =
   `${APPROVED_IMAGE_REPOSITORY}:${DECLARED_SOURCE_HEAD}`;
 const SOURCE_HEAD_IMAGE_DIGEST = `sha256:${'b'.repeat(64)}`;
+const STEP4_HEADING =
+  '## Provision Step-4 Scheduler repair (PR #1492, L2-S2a-FIX, 2026-07-10)';
+const ADMISSION_V2_HEADING =
+  '## Isolated-rig admission v2 hardening (Lane 2 S3.3 readiness, 2026-07-13)';
+const BATCH_DRAIN_HEADING =
+  '## Real batch-drain behavioral harness (#1417, 2026-07-07, Lane-1 chain)';
+const TEAM1_ADMISSION_PROVENANCE_RULE =
+  '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.\n';
+
+function markdownSection(raw: string, heading: string): string {
+  const start = raw.indexOf(heading);
+  if (start < 0) throw new Error(`Missing agents.md heading: ${heading}`);
+  const next = raw.indexOf('\n## ', start + heading.length);
+  return raw.slice(start, next < 0 ? undefined : next + 1);
+}
+
+function sha256(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex');
+}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -494,7 +513,7 @@ describe('admission v2 to run-declaration identity adapter', () => {
 });
 
 describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
-  it('retains every required Team1 heading and the Team2 admission section exactly once', () => {
+  it('retains every required heading exactly once and in lane-safe order', () => {
     const headings = STAGING_AGENTS_RAW.match(/^## .+$/gm) ?? [];
     expect(headings).toEqual([
       '## What lives here',
@@ -511,8 +530,30 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
       '## Real batch-drain behavioral harness (#1417, 2026-07-07, Lane-1 chain)',
     ]);
     expect(new Set(headings).size).toBe(12);
-    expect(STAGING_AGENTS_RAW).toContain('S3.3 R3 acceptance extensions are split deliberately');
-    expect(STAGING_AGENTS_RAW).toContain('Team 1 review hardening keeps every chronology field');
-    expect(STAGING_AGENTS_RAW).toContain('batch-drain-admission-adapter.ts` is the only Team1 bridge');
+  });
+
+  it('preserves exact Team2 db0 Step-4 and admission-v2 section bodies', () => {
+    const step4 = markdownSection(STAGING_AGENTS_RAW, STEP4_HEADING);
+    const admissionV2 = markdownSection(STAGING_AGENTS_RAW, ADMISSION_V2_HEADING);
+
+    expect(sha256(step4)).toBe('f59687e0347c18d812aab0d5c34710b1b62579e4d4ad4f7f9168144ac37e7b73');
+    expect(sha256(admissionV2)).toBe('b043efd46cf96c08423dccfabfef564fca7b964ed8a8ade723f6454e6d1453de');
+    expect(step4).toContain('SCHEDULER_JOB_SPECS');
+    expect(step4).toContain('binding each job name independently to its exact request path');
+    expect(step4).not.toContain('`SCHEDULER_JOBS` list');
+  });
+
+  it('preserves exact Team1 f61 rules plus the one admission provenance rule', () => {
+    const prefix = STAGING_AGENTS_RAW.slice(0, STAGING_AGENTS_RAW.indexOf(STEP4_HEADING));
+    const batchDrain = markdownSection(STAGING_AGENTS_RAW, BATCH_DRAIN_HEADING);
+    const provenanceOccurrences = batchDrain.split(TEAM1_ADMISSION_PROVENANCE_RULE).length - 1;
+    const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
+
+    expect(sha256(prefix)).toBe('22ef741ccf44982cd7fc6ad981927e565dde31dbab8ae03e293472ac9125918e');
+    expect(sha256(f61BatchDrain)).toBe('4128e8e460051d5d4a8677296d841d491ded72ba6e8e3c5652d17eefa04b7d49');
+    expect(provenanceOccurrences).toBe(1);
+    expect(batchDrain).toContain('S3.3 R3 acceptance extensions are split deliberately');
+    expect(batchDrain).toContain('Team 1 review hardening keeps every chronology field');
+    expect(batchDrain).toContain('batch-drain-admission-adapter.ts` is the only Team1 bridge');
   });
 });
