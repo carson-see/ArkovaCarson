@@ -7,7 +7,7 @@
  * taxonomy extension.
  */
 
-import type { GoldenDatasetEntry } from './types.js';
+import type { GoldenDatasetEntry, GroundTruthFields } from './types.js';
 
 /** Jurisdiction slice marker for the S3.3 corpus. */
 export type S33Jurisdiction = 'US' | 'AU' | 'KE';
@@ -96,6 +96,88 @@ export const S33_EDGE_CLASSES: readonly string[] = [
   'stamp-noise',
   'hint-trap',
 ];
+
+const S33_SUBSTANTIVE_DEPTH_FIELDS = [
+  'issuerName',
+  'recipientIdentifier',
+  'issuedDate',
+  'expiryDate',
+  'fieldOfStudy',
+  'degreeLevel',
+  'licenseNumber',
+  'accreditingBody',
+  'jurisdiction',
+  'creditHours',
+  'creditType',
+  'barNumber',
+  'activityNumber',
+  'courseId',
+  'providerName',
+  'approvedBy',
+  'deliveryMethod',
+  'ethicsHours',
+  'nasbaStatus',
+  'entityType',
+  'stateOfFormation',
+  'registeredAgent',
+  'goodStandingStatus',
+  'einNumber',
+  'taxExemptStatus',
+  'governingBody',
+  'crdNumber',
+  'firmName',
+  'finraRegistration',
+  'seriesLicenses',
+  'contractType',
+  'contractReasoningType',
+  'parties',
+  'signatories',
+  'effectiveDate',
+  'termLength',
+  'autoRenewalTerms',
+  'noticeDeadline',
+  'paymentTerms',
+  'deliverables',
+  'liabilityCap',
+  'indemnificationScope',
+  'terminationRights',
+  'governingLaw',
+  'venue',
+  'arbitrationClause',
+  'confidentialityTerm',
+  'riskFlags',
+  'recommendationUrls',
+  'templateDeviation',
+  'crossDocumentReference',
+  'signatoryAuthority',
+  'regulatoryGap',
+] as const satisfies readonly (keyof GroundTruthFields)[];
+
+function hasS33SubstantiveGroundTruthValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) {
+    return value.some((item) => (
+      typeof item === 'string' ? item.trim().length > 0 : item !== null && item !== undefined
+    ));
+  }
+  return true;
+}
+
+/**
+ * Count extraction facts for the covered-entry five-field quality floor.
+ * Taxonomy labels, fraud-signal bookkeeping, evaluator-only controls, and
+ * present-but-empty values cannot make a shallow truth row look complete. OOD
+ * depth remains a separate CTO-owned protocol decision.
+ */
+export function countS33SubstantiveGroundTruthFields(
+  groundTruth: Readonly<GroundTruthFields>,
+): number {
+  return S33_SUBSTANTIVE_DEPTH_FIELDS
+    .filter((key) => hasS33SubstantiveGroundTruthValue(groundTruth[key]))
+    .length;
+}
 
 /** Normalize document text for duplicate/fingerprint comparison. */
 export function normalizeForFingerprint(text: string): string {

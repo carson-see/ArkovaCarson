@@ -110,6 +110,13 @@ _Last updated: 2026-07-13_
   Lane-4 corpus packet. Its v6 taxonomy is drift-tested against the live prompt.
   `S33_PROPOSED_SUBTYPES.CPE` remains explicitly unratified and must not enter a
   tuning export or be represented as an acceptance decision.
+  The shared covered-entry depth helper excludes `credentialType`, `subType`,
+  `fraudSignals`, and evaluator-only control/reasoning metadata from the
+  five-field floor so taxonomy/bookkeeping cannot inflate corpus quality. It
+  also ignores unknown structural keys and rejects null, blank-string,
+  non-finite-number, and empty-array values while preserving legitimate
+  zero/false facts. It deliberately does not adjudicate OOD depth; the
+  pure-abstention exception remains CTO/Lane-3 gated.
 
 ## 2026-07-06 S3 CPE/CLE golden set + deterministic eval gate (AI-01/AI-02 — SCRUM-2381/2382)
 
