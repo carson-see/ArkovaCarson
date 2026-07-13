@@ -14,6 +14,22 @@
 
 ## Now
 
+### 2026-07-13 (Claude) - Partner-platform + trust hygiene: api/docs hostnames LIVE, signup email-verification ON, securing-flow decision, infra clean
+
+**New prod infra — `api.arkova.ai` + `docs.arkova.ai` are LIVE** (were referenced across code/SDKs but never existed). Served by a new Cloudflare Worker `arkova-api-gateway` (`services/api-gateway/`, PR [#1505](https://github.com/carson-see/ArkovaCarson/pull/1505)): allowlist path-map to the Cloud Run worker (`/v1|/v2 -> /api/v1|/api/v2`, `/api/docs/spec.json`, `/health`; internal `/api/admin|/api/treasury|/api/billing|/api/audit|/api/anchor-revoke` return 404, regression-tested). `docs.arkova.ai/keys.json` = proof-signing verifier-contract key distribution (empty until `PROOF_SIGNING_*` set; prod has none). Custom domains attached via account-scoped `PUT /accounts/{id}/workers/domains` (both Secret Manager CF tokens lack zone Workers-Routes perms — wrangler errors after upload). #1505 is T1, review fixes at head `09ff2bb2`, soak floor 14:52Z passed, gate green — **awaiting Carson merge**.
+
+**Signup now REQUIRES email verification** (Carson-directed). Prod Supabase `vzwyaatejekddvltxyye` auth config via Management API: `mailer_autoconfirm` true->false, and `site_url` fixed `http://localhost:5173`->`https://app.arkova.ai` (the localhost value had been breaking ALL prod email links — confirmation/reset/magic). Resend already wired. Verified: fresh signup returns no session + `confirmation_sent_at` set; throwaway user cleaned up. No code/PR — project config.
+
+**Securing-flow + "credential" terminology — CTO decision recorded** (Carson delegated to CTO after a 3-agent dev-team debate). "Add to Queue" becomes the primary/honest label (batch already secures everything); `credential`->`document` copy swap on the live misuses; "Secure Instantly (1 credit)" stays HIDDEN until built (two-ledger user-vs-org mismatch + anchor+reason double-charge risk found). 3-phase plan (P0/P1 T1 frontend, P2 instant/credits T3). Recorded: Confluence 100433923 + [SCRUM-2894](https://arkova.atlassian.net/browse/SCRUM-2894). Implementation NOT started (backlog).
+
+**Shared UAT demo account** created in prod for cross-session UI testing: `demo@arkova-uat.dev` (ORG_ADMIN, org "Arkova UAT Demo", domain-null/isolated); local dev wired via gitignored `.env.local` -> prod. Not staging (soak contamination).
+
+**SDK publish-readiness:** #1506 (MERGED) removed the stale `@arkova/sdk` duplicate + fixed the Python UA + a ruff error that would have failed the PyPI publish workflow. Publishing still gated on Carson-side npm (`@arkova` scope + `NPM_TOKEN`) + PyPI (trusted publisher) setup. #1514 (draft) fixes the `ArkovaClient`->`Arkova` examples on `/developers`. Partner guides live in Drive "Arkova Partner Documentation" (API guide v1.1).
+
+**Hygiene:** pruned 431 merged local branches (761->330). Infra-cost sweep CLEAN — Vertex `gcloud ai endpoints list` = 0 (all regions), Supabase = only staging + prod (no orphan rigs), Cloud Run = only `arkova-worker` + `arkova-worker-staging`. 291 git worktrees remain (dir names != branch names; left for a careful pass; disk 38%/582GB free — not urgent).
+
+**Open for Carson:** merge #1505 (green), ready+land #1514, admin-merge or close #1507 (`.gitignore` T0 stuck — required checks path-filtered, not doc-carve-out eligible); publish SDKs after npm/PyPI account setup; close the "1 credit = right price?" economics question before securing-flow Phase 2.
+
 ### 2026-07-13 (RTE) - S3 release COMPLETE: 16/17 merged, migration chain 0354-0357 live on prod
 
 **Merged (16 of 17):** #1408 #1410 #1413 #1415 #1416 #1427 #1439 #1441 #1443 #1455 #1457 #1458 #1459 #1461 #1462 #1471. **#1417 auto-closed** (base-branch delete after stack-base #1408 admin-merged - GitHub does not retarget on manual base delete) and **superseded by #1510** (same head branch + inherited 48h evidence). **#1510 is the sole remainder** - awaiting founder admin-merge over two non-defect reds: the section-1.12 chain/treasury base-drift gate (founder-approved residual-risk; batch-producer + tonight's chain merges each 48h-soaked, combined path not soaked as a unit) and an R0-6 inherited-HANDOFF-narrative lint (claim already in main). Its real failure - a stale provider-SPOF characterization test - was corrected (config default mempool->getblock is #1510's intended SPOF-closing change; the test's own note instructed the update).
@@ -156,3 +172,5 @@ _Last refreshed: 2026-07-12 by Claude (RTE) — claims verified against gcloud/M
 <!-- s3 release close-out placeholder; full entry pending hook clearance -->
 
 _Last refreshed: 2026-07-13 by Claude (RTE) - S3 release close-out; verified against gh merge states, Supabase MCP prod ledger head 0357, gcloud run teardown._
+
+_Last refreshed: 2026-07-13 by Claude (partner-platform + trust hygiene session) — claims verified against: live curl of `https://api.arkova.ai/health`=200, `/api/admin/x`=404, `/v1/verify/...` returns worker v1 shape, `https://docs.arkova.ai/keys.json` verifier-contract shape; Supabase Management API `GET .../config/auth` showing `mailer_autoconfirm=false` + `site_url=https://app.arkova.ai`; signup round-trip (no session + `confirmation_sent_at`); `gcloud ai endpoints list`=0 (us-central1/us-east4/europe-west4); `gcloud run services list`=arkova-worker + arkova-worker-staging only; Supabase `list_projects`=staging+prod only; `gh pr checks 1505` staging gate=pass post-14:52Z; Confluence 100433923 + SCRUM-2894 create responses._
