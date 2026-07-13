@@ -706,29 +706,41 @@ function deriveClaimsFromObservedEvents(
   return { orderedDrainedRows, outcomes, rawLedgerByOrg };
 }
 
-export function assertDrainPassObservation(
+interface SchedulerChronology {
+  startedMs: number;
+  completedMs: number;
+  firedMs: number;
+}
+
+interface ObservedTransactionIndex {
+  transactionsById: Map<string, ObservedDrainTransaction>;
+  leavesByTx: Map<string, ObservedTransactionLeaf[]>;
+  leafByFingerprint: Map<string, ObservedTransactionLeaf>;
+}
+
+function validateSchedulerChronology(
   expectation: DrainPassExpectation,
   observation: DrainPassObservation,
-): DrainPassEvidenceSummary {
-  const validated = validateExpectation(expectation);
-  const { startMs, endMs, claimsByFingerprint, claimedOrgIds } = validated;
-  requireNonNegativeInteger(observation.pendingBefore, 'pendingBefore');
-  requireNonNegativeInteger(observation.pendingAfter, 'pendingAfter');
-  if (observation.pendingBefore < expectation.claims.length) {
-    throw new Error('pendingBefore cannot be smaller than the observed claimed set.');
-  }
-
+  startMs: number,
+  endMs: number,
+): SchedulerChronology {
   const execution = observation.execution;
   if (execution.schedulerExecutionId !== expectation.schedulerExecutionId) {
     throw new Error('Observed scheduler execution does not match the declaration.');
   }
-  if (execution.armedTrigger !== expectation.armedTrigger) throw new Error('Observed armed trigger does not match the declaration.');
-  if (execution.faultWindowId !== expectation.faultWindow.id) throw new Error('Observed execution names an unrelated fault window.');
+  if (execution.armedTrigger !== expectation.armedTrigger) {
+    throw new Error('Observed armed trigger does not match the declaration.');
+  }
+  if (execution.faultWindowId !== expectation.faultWindow.id) {
+    throw new Error('Observed execution names an unrelated fault window.');
+  }
   const startedMs = assertInsideWindow(execution.startedAt, 'Scheduler start', startMs, endMs);
   const completedMs = assertInsideWindow(execution.completedAt, 'Scheduler completion', startMs, endMs);
   if (completedMs < startedMs) throw new Error('Scheduler completion predates its start.');
 
-  if (observation.triggerFirings.length !== 1) throw new Error('Actual evidence must contain exactly one trigger firing.');
+  if (observation.triggerFirings.length !== 1) {
+    throw new Error('Actual evidence must contain exactly one trigger firing.');
+  }
   const firing = observation.triggerFirings[0]!;
   if (
     firing.trigger !== expectation.armedTrigger
@@ -738,8 +750,20 @@ export function assertDrainPassObservation(
     throw new Error('Trigger firing is unrelated to the declared trigger, execution, or batch.');
   }
   const firedMs = assertInsideWindow(firing.firedAt, 'Trigger firing', startMs, endMs);
-  if (firedMs < startedMs || firedMs > completedMs) throw new Error('Trigger firing violates scheduler execution chronology.');
+  if (firedMs < startedMs || firedMs > completedMs) {
+    throw new Error('Trigger firing violates scheduler execution chronology.');
+  }
+  return { startedMs, completedMs, firedMs };
+}
 
+function indexObservedTransactions(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+  startMs: number,
+  endMs: number,
+  startedMs: number,
+  completedMs: number,
+): Map<string, ObservedDrainTransaction> {
   const transactionsById = new Map<string, ObservedDrainTransaction>();
   for (const transaction of observation.transactions) {
     requireHash(transaction.txId, 'Actual txId');
@@ -761,7 +785,15 @@ export function assertDrainPassObservation(
     }
     transactionsById.set(transaction.txId, transaction);
   }
+  return transactionsById;
+}
 
+function indexObservedLeaves(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+  claimsByFingerprint: Map<string, ExpectedDrainClaim>,
+  transactionsById: Map<string, ObservedDrainTransaction>,
+): Pick<ObservedTransactionIndex, 'leavesByTx' | 'leafByFingerprint'> {
   const leavesByTx = new Map<string, ObservedTransactionLeaf[]>();
   const leafByFingerprint = new Map<string, ObservedTransactionLeaf>();
   for (const leaf of observation.txLeaves) {
@@ -772,25 +804,47 @@ export function assertDrainPassObservation(
     if (!claim || claim.orgId !== leaf.orgId || leafByFingerprint.has(leaf.fingerprint)) {
       throw new Error('Actual tx-to-leaf/org mapping is duplicate, unclaimed, or mismatched.');
     }
-    if (!Number.isInteger(leaf.merkleIndex) || leaf.merkleIndex < 0) throw new Error('Actual merkleIndex must be non-negative.');
+    if (!Number.isInteger(leaf.merkleIndex) || leaf.merkleIndex < 0) {
+      throw new Error('Actual merkleIndex must be non-negative.');
+    }
     leafByFingerprint.set(leaf.fingerprint, leaf);
     const group = leavesByTx.get(leaf.txId) ?? [];
     group.push(leaf);
     leavesByTx.set(leaf.txId, group);
   }
+  return { leavesByTx, leafByFingerprint };
+}
 
-  const derived = deriveClaimsFromObservedEvents(
+function buildObservedTransactionIndex(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+  validated: ValidatedExpectation,
+  chronology: SchedulerChronology,
+): ObservedTransactionIndex {
+  const transactionsById = indexObservedTransactions(
     expectation,
     observation,
-    validated,
-    leafByFingerprint,
-    transactionsById,
-    startedMs,
-    completedMs,
+    validated.startMs,
+    validated.endMs,
+    chronology.startedMs,
+    chronology.completedMs,
   );
+  return {
+    transactionsById,
+    ...indexObservedLeaves(expectation, observation, validated.claimsByFingerprint, transactionsById),
+  };
+}
+
+function assertSignetChronology(
+  observation: DrainPassObservation,
+  leavesByTx: Map<string, ObservedTransactionLeaf[]>,
+  firedMs: number,
+): void {
   for (const transaction of observation.transactions) {
     const acceptedMs = timestamp(transaction.acceptedAt, 'Signet acceptance');
-    if (acceptedMs <= firedMs) throw new Error('Signet acceptance must occur after the observed Scheduler trigger.');
+    if (acceptedMs <= firedMs) {
+      throw new Error('Signet acceptance must occur after the observed Scheduler trigger.');
+    }
     for (const leaf of leavesByTx.get(transaction.txId) ?? []) {
       const gate = observation.creditGateEvents.find((event) => event.fingerprint === leaf.fingerprint);
       if (!gate || acceptedMs <= timestamp(gate.occurredAt, 'Credit gate event')) {
@@ -804,14 +858,17 @@ export function assertDrainPassObservation(
       }
     }
   }
-  const drainedOrgIds = new Set(derived.orderedDrainedRows.map((row) => row.orgId));
-  assertR3TransactionInvariant(expectation.armedTrigger, observation.transactions, leavesByTx, drainedOrgIds);
-  if (leafByFingerprint.size !== derived.orderedDrainedRows.length) {
-    throw new Error('Actual tx mapping must cover every event-derived drained claim exactly once.');
-  }
+}
 
+function assertObservedMerkleTrees(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+  derived: DerivedClaims,
+  leavesByTx: Map<string, ObservedTransactionLeaf[]>,
+): void {
   for (const transaction of observation.transactions) {
-    const leaves = [...(leavesByTx.get(transaction.txId) ?? [])].sort((left, right) => left.merkleIndex - right.merkleIndex);
+    const leaves = [...(leavesByTx.get(transaction.txId) ?? [])]
+      .sort((left, right) => left.merkleIndex - right.merkleIndex);
     if (leaves.some((leaf, index) => leaf.merkleIndex !== index)) {
       throw new Error('Actual transaction merkle indexes must be contiguous from zero.');
     }
@@ -831,15 +888,22 @@ export function assertDrainPassObservation(
       throw new Error('Actual transaction root does not match the independently recomputed ordered leaves.');
     }
   }
+}
 
+function assertObservedProofs(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+  derived: DerivedClaims,
+  index: ObservedTransactionIndex,
+): void {
   if (observation.proofs.length !== derived.orderedDrainedRows.length) {
     throw new Error('Actual proofs must cover every event-derived drained leaf exactly once.');
   }
   const proofFingerprints = new Set<string>();
   for (const proof of observation.proofs) {
-    const leaf = leafByFingerprint.get(proof.fingerprint);
-    const transaction = transactionsById.get(proof.txId);
-    const txLeafCount = leavesByTx.get(proof.txId)?.length;
+    const leaf = index.leafByFingerprint.get(proof.fingerprint);
+    const transaction = index.transactionsById.get(proof.txId);
+    const txLeafCount = index.leavesByTx.get(proof.txId)?.length;
     if (
       !leaf
       || !transaction
@@ -858,7 +922,14 @@ export function assertDrainPassObservation(
     }
     proofFingerprints.add(proof.fingerprint);
   }
+}
 
+function assertObservedBalancesAndLedger(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+  claimedOrgIds: Set<string>,
+  rawLedgerByOrg: Map<string, number>,
+): void {
   if (
     observation.orgBalances.length !== claimedOrgIds.size
     || observation.ledgerDeltas.length !== claimedOrgIds.size
@@ -867,7 +938,7 @@ export function assertDrainPassObservation(
   }
   const balancesByOrg = new Map<string, ObservedOrgBalance>();
   for (const balance of observation.orgBalances) {
-    const rawDelta = derived.rawLedgerByOrg.get(balance.orgId);
+    const rawDelta = rawLedgerByOrg.get(balance.orgId);
     if (
       balance.schedulerExecutionId !== expectation.schedulerExecutionId
       || rawDelta === undefined
@@ -882,14 +953,50 @@ export function assertDrainPassObservation(
   for (const delta of observation.ledgerDeltas) {
     if (
       delta.schedulerExecutionId !== expectation.schedulerExecutionId
-      || !derived.rawLedgerByOrg.has(delta.orgId)
-      || delta.delta !== derived.rawLedgerByOrg.get(delta.orgId)
+      || !rawLedgerByOrg.has(delta.orgId)
+      || delta.delta !== rawLedgerByOrg.get(delta.orgId)
       || seenLedgerOrgs.has(delta.orgId)
     ) {
       throw new Error('Actual ledger delta is duplicate, cross-org, or mismatches raw debit/refund events.');
     }
     seenLedgerOrgs.add(delta.orgId);
   }
+}
+
+export function assertDrainPassObservation(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+): DrainPassEvidenceSummary {
+  const validated = validateExpectation(expectation);
+  const { startMs, endMs, claimedOrgIds } = validated;
+  requireNonNegativeInteger(observation.pendingBefore, 'pendingBefore');
+  requireNonNegativeInteger(observation.pendingAfter, 'pendingAfter');
+  if (observation.pendingBefore < expectation.claims.length) {
+    throw new Error('pendingBefore cannot be smaller than the observed claimed set.');
+  }
+  const chronology = validateSchedulerChronology(expectation, observation, startMs, endMs);
+  const transactionIndex = buildObservedTransactionIndex(expectation, observation, validated, chronology);
+  const { transactionsById, leavesByTx, leafByFingerprint } = transactionIndex;
+
+  const derived = deriveClaimsFromObservedEvents(
+    expectation,
+    observation,
+    validated,
+    leafByFingerprint,
+    transactionsById,
+    chronology.startedMs,
+    chronology.completedMs,
+  );
+  assertSignetChronology(observation, leavesByTx, chronology.firedMs);
+  const drainedOrgIds = new Set(derived.orderedDrainedRows.map((row) => row.orgId));
+  assertR3TransactionInvariant(expectation.armedTrigger, observation.transactions, leavesByTx, drainedOrgIds);
+  if (leafByFingerprint.size !== derived.orderedDrainedRows.length) {
+    throw new Error('Actual tx mapping must cover every event-derived drained claim exactly once.');
+  }
+
+  assertObservedMerkleTrees(expectation, observation, derived, leavesByTx);
+  assertObservedProofs(expectation, observation, derived, transactionIndex);
+  assertObservedBalancesAndLedger(expectation, observation, claimedOrgIds, derived.rawLedgerByOrg);
 
   const drainedLeaves = derived.orderedDrainedRows.length;
   if (observation.pendingAfter !== observation.pendingBefore - drainedLeaves) {
@@ -911,16 +1018,22 @@ export function assertDrainPassObservation(
     refundedFailureLeaves,
     transactionIds: observation.transactions.map((transaction) => transaction.txId),
     merkleRoots: observation.transactions.map((transaction) => transaction.merkleRoot),
-    startedAt: execution.startedAt,
-    completedAt: execution.completedAt,
+    startedAt: observation.execution.startedAt,
+    completedAt: observation.execution.completedAt,
   };
 }
 
-/** Join multiple observed Scheduler ticks into the named exact or poison wave. */
-export function assertDrainWindowObservation(
+interface DrainWindowFacts {
+  executionIds: string[];
+  transactionIds: string[];
+  drainedLeaves: number;
+  poisonLeaves: number;
+}
+
+function validateDrainWindowDeclaration(
   expectation: DrainWindowExpectation,
   observations: DrainPassObservation[],
-): DrainWindowEvidenceSummary {
+): void {
   requireId(expectation.scenarioId, 'scenarioId');
   if (expectation.passes.length === 0 || expectation.passes.length !== observations.length) {
     throw new Error('Drain window requires one actual observation for every declared Scheduler tick.');
@@ -930,7 +1043,9 @@ export function assertDrainWindowObservation(
   }
   requireNonNegativeInteger(expectation.expectedInitialPending, 'expectedInitialPending');
   requireNonNegativeInteger(expectation.expectedFinalPending, 'expectedFinalPending');
+}
 
+function assertUniqueDrainWindowInputs(expectation: DrainWindowExpectation): void {
   const batchIds = expectation.passes.map((pass) => pass.batchId);
   const faultWindowIds = expectation.passes.map((pass) => pass.faultWindow.id);
   const claimFingerprints = expectation.passes.flatMap((pass) => pass.claims.map((claim) => claim.fingerprint));
@@ -941,10 +1056,16 @@ export function assertDrainWindowObservation(
   ) {
     throw new Error('Claim, batch, or fault-window identity was reused across Scheduler passes.');
   }
+}
 
-  const summaries = expectation.passes.map((pass, index) => assertDrainPassObservation(pass, observations[index]!));
+function assertJoinedSchedulerSummaries(
+  expectation: DrainWindowExpectation,
+  summaries: DrainPassEvidenceSummary[],
+): Pick<DrainWindowFacts, 'executionIds' | 'transactionIds'> {
   const executionIds = summaries.map((summary) => summary.schedulerExecutionId);
-  if (new Set(executionIds).size !== executionIds.length) throw new Error('Every Scheduler tick requires a distinct execution id.');
+  if (new Set(executionIds).size !== executionIds.length) {
+    throw new Error('Every Scheduler tick requires a distinct execution id.');
+  }
   const transactionIds = summaries.flatMap((summary) => summary.transactionIds);
   if (new Set(transactionIds).size !== transactionIds.length) {
     throw new Error('A transaction identity was reused across Scheduler passes.');
@@ -965,40 +1086,79 @@ export function assertDrainWindowObservation(
       throw new Error('Observed Scheduler ticks are not chronological and non-overlapping.');
     }
   }
+  return { executionIds, transactionIds };
+}
 
-  const drainedLeaves = summaries.reduce((sum, summary) => sum + summary.drainedLeaves, 0);
-  const poisonLeaves = summaries.reduce((sum, summary) => sum + summary.poisonLeaves, 0);
+function assertEligible10000Window(
+  expectation: DrainWindowExpectation,
+  summaries: DrainPassEvidenceSummary[],
+  poisonLeaves: number,
+): void {
+  if (
+    expectation.armedTrigger !== 'global-flush'
+    || summaries.length !== 1
+    || expectation.expectedInitialPending !== 10_000
+    || expectation.expectedFinalPending !== 0
+    || summaries[0]!.drainedLeaves !== 10_000
+    || poisonLeaves !== 0
+  ) {
+    throw new Error('eligible-10000 requires one poison-free global Scheduler tick draining exactly 10000 leaves.');
+  }
+}
+
+function assertEligible12500Window(
+  expectation: DrainWindowExpectation,
+  summaries: DrainPassEvidenceSummary[],
+  poisonLeaves: number,
+): void {
+  if (
+    expectation.armedTrigger !== 'global-flush'
+    || summaries.length !== 2
+    || expectation.expectedInitialPending !== 12_500
+    || expectation.expectedFinalPending !== 0
+    || summaries[0]!.drainedLeaves !== 10_000
+    || summaries[0]!.pendingAfter !== 2_500
+    || summaries[1]!.drainedLeaves !== 2_500
+    || poisonLeaves !== 0
+  ) {
+    throw new Error('eligible-12500 requires observed poison-free 10000 and 2500 Scheduler ticks with joined remainder.');
+  }
+}
+
+function assertDrainWindowKind(
+  expectation: DrainWindowExpectation,
+  summaries: DrainPassEvidenceSummary[],
+  facts: Pick<DrainWindowFacts, 'drainedLeaves' | 'poisonLeaves'>,
+): void {
   if (expectation.kind === 'eligible-10000') {
-    if (
-      expectation.armedTrigger !== 'global-flush'
-      || summaries.length !== 1
-      || expectation.expectedInitialPending !== 10_000
-      || expectation.expectedFinalPending !== 0
-      || summaries[0]!.drainedLeaves !== 10_000
-      || poisonLeaves !== 0
-    ) {
-      throw new Error('eligible-10000 requires one poison-free global Scheduler tick draining exactly 10000 leaves.');
-    }
-  } else if (expectation.kind === 'eligible-12500') {
-    if (
-      expectation.armedTrigger !== 'global-flush'
-      || summaries.length !== 2
-      || expectation.expectedInitialPending !== 12_500
-      || expectation.expectedFinalPending !== 0
-      || summaries[0]!.drainedLeaves !== 10_000
-      || summaries[0]!.pendingAfter !== 2_500
-      || summaries[1]!.drainedLeaves !== 2_500
-      || poisonLeaves !== 0
-    ) {
-      throw new Error('eligible-12500 requires observed poison-free 10000 and 2500 Scheduler ticks with joined remainder.');
-    }
-  } else if (expectation.kind === 'poison-isolation') {
-    if (poisonLeaves === 0 || drainedLeaves === 0 || expectation.expectedFinalPending === 0) {
+    assertEligible10000Window(expectation, summaries, facts.poisonLeaves);
+    return;
+  }
+  if (expectation.kind === 'eligible-12500') {
+    assertEligible12500Window(expectation, summaries, facts.poisonLeaves);
+    return;
+  }
+  if (expectation.kind === 'poison-isolation') {
+    if (facts.poisonLeaves === 0 || facts.drainedLeaves === 0 || expectation.expectedFinalPending === 0) {
       throw new Error('poison-isolation requires observed poison rows, healthy drained neighbors, and a pending remainder.');
     }
-  } else {
-    throw new Error(`Unsupported drain window kind: ${String(expectation.kind)}.`);
+    return;
   }
+  throw new Error(`Unsupported drain window kind: ${String(expectation.kind)}.`);
+}
+
+/** Join multiple observed Scheduler ticks into the named exact or poison wave. */
+export function assertDrainWindowObservation(
+  expectation: DrainWindowExpectation,
+  observations: DrainPassObservation[],
+): DrainWindowEvidenceSummary {
+  validateDrainWindowDeclaration(expectation, observations);
+  assertUniqueDrainWindowInputs(expectation);
+  const summaries = expectation.passes.map((pass, index) => assertDrainPassObservation(pass, observations[index]!));
+  const identities = assertJoinedSchedulerSummaries(expectation, summaries);
+  const drainedLeaves = summaries.reduce((sum, summary) => sum + summary.drainedLeaves, 0);
+  const poisonLeaves = summaries.reduce((sum, summary) => sum + summary.poisonLeaves, 0);
+  assertDrainWindowKind(expectation, summaries, { drainedLeaves, poisonLeaves });
 
   return {
     scenarioId: expectation.scenarioId,
@@ -1009,7 +1169,7 @@ export function assertDrainWindowObservation(
     poisonLeaves,
     initialPending: summaries[0]!.pendingBefore,
     finalPending: summaries[summaries.length - 1]!.pendingAfter,
-    schedulerExecutionIds: executionIds,
-    transactionIds: summaries.flatMap((summary) => summary.transactionIds),
+    schedulerExecutionIds: identities.executionIds,
+    transactionIds: identities.transactionIds,
   };
 }
