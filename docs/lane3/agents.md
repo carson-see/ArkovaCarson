@@ -11,7 +11,7 @@ Lane 3 (Credential Network & Intelligence / AI) Sprint 3.3 working documents. In
 | `s33-eval-methodology.md` | Eval design ONLY (no eval-file edits while #1413 soaks): paired bootstrap, no-covered-type-regresses floor, confusion matrices, abstention scoring, missing_both caveat, post-#1413 landing map |
 | `s33-batch-acceptance-protocol.md` | L3↔L4 interface contract: batch format, ≥10% cross-review, prod-model-diff screening under mock-sandwich caps, quality invariants, reject-and-return, held-out freeze |
 | `s33-ce-escalation-send-packet-draft.md` | Current CE continuation draft: org CTID and Jeanne/Jeff roles established from correspondence, June 24 answer reconciled, sandbox usable access still unverified, September 9 exact instant/timezone unknown, explicitly UNSENT/founder-send-reserved |
-| `s33-hakichain-packet-readiness.md` | Internal Haki LOI/Exhibit A readiness index: explicit $500-in-full vs $250-upfront/$250-on-success conflict, Aug 7/Aug 10 clocks, unresolved legal/CTO defects, reviewed-unaccepted Kenya candidate list, explicitly UNSENT/UNSIGNED |
+| `s33-hakichain-packet-readiness.md` | Internal Haki LOI/Exhibit A readiness index: unresolved pre-pilot $500-in-full billing versus post-success commercial-effect/agreement trigger, Aug 7/Aug 10 clocks, unresolved legal/CTO defects, reviewed-unaccepted Kenya candidate list, explicitly UNSENT/UNSIGNED |
 
 Rules for this folder:
 
