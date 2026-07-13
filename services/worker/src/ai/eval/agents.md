@@ -25,13 +25,21 @@ _Last updated: 2026-07-13_
   No CTO key, registry backend, or approval is embedded; both production trust
   dependencies remain null in the code-owned descriptor, so production fails
   closed until the CTO configures them.
-- The S33-W1 revision-history self-check is an exact r2-through-r9 contract,
-  including each authority/change marker, boolean, fingerprint pin, field
+- The S33-W1 revision-history self-check preserves the exact r2-through-r9
+  contract and accepts only one additional metadata-only r10 restack. R10 binds
+  its single Git parent, `directBaseCommit`, and Lane-3 support commit to the
+  reviewed final Team-3 prerequisite while retaining reviewed r9 commit
+  `b9bb1d32` as the logical producer predecessor. It requires empty changed ids,
+  false corpus/normalized-input change flags, true r9 blob/pin preservation
+  flags, and proves all three declared corpus-source blobs are identical at r9
+  and the frozen commit. All revision records still require every
+  authority/change marker, boolean, fingerprint pin, field
   count/floor, and ordered id set; type-correct substitutions fail closed. Git
   freeze verification computes the raw diff from the declared Lane-3 support
   commit and requires exactly the six manifest-authorized additions, each a
   regular non-executable `100644` blob. Extra paths, deletions, renames,
-  copies, executable bits, symlinks, and gitlinks are rejected.
+  copies (including copies from unchanged support-tree sources, detected with
+  `--find-copies-harder`), executable bits, symlinks, and gitlinks are rejected.
 - Every selection and lexical result is recursively frozen before it crosses
   the orchestration boundary, including sample ids, metrics/hits, and evidence.
   Audit-transcript reads open the final path with `O_NOFOLLOW`, verify the same

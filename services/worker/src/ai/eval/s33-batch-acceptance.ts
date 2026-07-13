@@ -274,6 +274,8 @@ interface ParsedLexicalTextArtifact {
 }
 
 const REQUIRED_LEXICAL_N = [6, 7, 8, 9, 10, 11, 12, 13] as const;
+const GIT_EXECUTABLE = '/usr/bin/git';
+const UINT32_RANGE = 4_294_967_296;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const GIT_COMMIT_PATTERN = /^[0-9a-f]{40,64}$/;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
@@ -303,6 +305,9 @@ const WAVE1_TAXONOMY_ADJUDICATION_IDS = [
 ] as const;
 const WAVE1_ISSUED_DATE_ADJUDICATION_IDS = ['GD-S33-BAR-010', 'GD-S33-PDH-012'] as const;
 const WAVE1_REVISION9_RESOLVED_ISSUED_DATE_IDS = ['GD-S33-AU-002', 'GD-S33-AU-011'] as const;
+const WAVE1_INITIAL_LANE3_SUPPORT_COMMIT = 'dd3ae1edecb005730762277daf17e15d8009459d';
+const WAVE1_REVISION9_COMMIT = 'b9bb1d3221d3567dbb08e1b23cab4dd687486738';
+const WAVE1_REVISION9_PREDECESSOR_COMMIT = '506ff62340db8f838ce68bc46ddfa6407735ce3c';
 const WAVE1_REMEDIATED_PAIR_IDS = [
   'GD-S33-NUR-001|GD-S33-NUR-011',
   'GD-S33-CPA-001|GD-S33-CPA-011',
@@ -323,6 +328,7 @@ const WAVE1_REVISION_CHANGED_IDS: Readonly<Record<number, readonly string[]>> = 
     'GD-S33-OOD-004', 'GD-S33-OOD-005', 'GD-S33-OOD-006',
     'GD-S33-OOD-007', 'GD-S33-OOD-008', 'GD-S33-OOD-009',
   ],
+  10: [],
 });
 const WAVE1_NORMALIZED_CHANGED_IDS: Readonly<Record<number, readonly string[]>> = Object.freeze({
   5: ['GD-S33-PDH-007'],
@@ -486,26 +492,27 @@ class StrictJsonParser {
       this.index += 1;
       if (character === '"') return result;
       if (character === '\\') {
-        const escape = this.text[this.index];
-        this.index += 1;
-        const simple: Record<string, string> = {
-          '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t',
-        };
-        if (escape in simple) {
-          result += simple[escape];
-          continue;
-        }
-        if (escape !== 'u') this.fail('invalid JSON string escape');
-        const hex = this.text.slice(this.index, this.index + 4);
-        if (!/^[0-9a-fA-F]{4}$/.test(hex)) this.fail('invalid JSON Unicode escape');
-        result += String.fromCharCode(Number.parseInt(hex, 16));
-        this.index += 4;
+        result += this.parseEscape();
         continue;
       }
-      if (character.charCodeAt(0) <= 0x1f) this.fail('unescaped control character in JSON string');
+      if ((character.codePointAt(0) ?? 0) <= 0x1f) this.fail('unescaped control character in JSON string');
       result += character;
     }
     this.fail('unterminated JSON string');
+  }
+
+  private parseEscape(): string {
+    const escape = this.text[this.index];
+    this.index += 1;
+    const simple: Readonly<Record<string, string>> = {
+      '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t',
+    };
+    if (Object.hasOwn(simple, escape)) return simple[escape];
+    if (escape !== 'u') this.fail('invalid JSON string escape');
+    const hex = this.text.slice(this.index, this.index + 4);
+    if (!/^[\da-fA-F]{4}$/.test(hex)) this.fail('invalid JSON Unicode escape');
+    this.index += 4;
+    return String.fromCodePoint(Number.parseInt(hex, 16));
   }
 
   private parseNumber(): number {
@@ -670,6 +677,7 @@ function countByCorpusSlice(entries: readonly BatchManifestEntry[]): Map<string,
 }
 
 interface Wave1ManifestBindings {
+  corpusRevisionParentCommit: string;
   supportCommit: string;
   supportTypesPath: string;
   supportTypesBlob: string;
@@ -679,11 +687,16 @@ interface Wave1ManifestBindings {
 
 function validateWave1SupportBindings(
   parsed: Readonly<Record<string, unknown>>,
+  manifestRevision: number,
 ): Wave1ManifestBindings {
   assertGitObject(parsed.corpusRevisionParentCommit, 'Manifest corpusRevisionParentCommit');
   assertGitObject(parsed.producerRevisionPredecessorCommit, 'Manifest producerRevisionPredecessorCommit');
-  if (parsed.corpusRevisionParentCommit !== parsed.producerRevisionPredecessorCommit) {
+  if (manifestRevision === 9 && parsed.corpusRevisionParentCommit !== parsed.producerRevisionPredecessorCommit) {
     throw new Error('Manifest producer predecessor must equal the corpus revision parent');
+  }
+  if (manifestRevision === 10
+    && parsed.producerRevisionPredecessorCommit !== WAVE1_REVISION9_COMMIT) {
+    throw new Error('Manifest revision-10 producer predecessor must be the reviewed revision-9 commit');
   }
   const support = recordValue(parsed.lane3SupportBase, 'Manifest lane3SupportBase');
   assertExactKeys(support, ['commit', 'typesPath', 'typesBlob', 'reviewState'], 'Manifest lane3SupportBase');
@@ -695,6 +708,9 @@ function validateWave1SupportBindings(
     'PENDING_LANE3_REVIEW_PR',
     'Manifest lane3SupportBase.reviewState',
   );
+  if (manifestRevision === 10 && support.commit !== parsed.corpusRevisionParentCommit) {
+    throw new Error('Manifest revision-10 Lane-3 support commit must be the single Git parent');
+  }
 
   const sourceBlobs = recordValue(parsed.corpusSourceBlobs, 'Manifest corpusSourceBlobs');
   assertExactKeys(sourceBlobs, WAVE1_SOURCE_BLOB_PATHS, 'Manifest corpusSourceBlobs');
@@ -702,6 +718,7 @@ function validateWave1SupportBindings(
     assertGitObject(sourceBlobs[path], `Manifest corpusSourceBlobs.${path}`);
   }
   return {
+    corpusRevisionParentCommit: parsed.corpusRevisionParentCommit,
     supportCommit: support.commit,
     supportTypesPath: support.typesPath as string,
     supportTypesBlob: support.typesBlob,
@@ -745,12 +762,25 @@ const AUTHORIZED_REVISION_KEYS: Readonly<Record<number, readonly string[]>> = Ob
     'normalizedInputPinsPreservedFromRevision8', 'remainingSubstantiveGroundTruthFields',
     'producerRevisionPredecessorCommit', 'lane3SupportBaseCommit',
   ],
+  10: [
+    'revision', 'authority', 'changedEntryIds', 'change', 'corpusDataChanged',
+    'normalizedInputChanged', 'sourceBlobsUnchangedFromRevision9',
+    'normalizedInputPinsPreservedFromRevision9', 'producerRevisionPredecessorCommit',
+    'directBaseCommit', 'lane3SupportBaseCommit',
+  ],
 });
 
-function wave1AuthorizedRevisionContract(bindings: Wave1ManifestBindings): Record<string, unknown> {
-  return {
-    status: 'PASS',
-    revisions: [
+function wave1AuthorizedRevisionContract(
+  bindings: Wave1ManifestBindings,
+  manifestRevision: number,
+): Record<string, unknown> {
+  const historicalSupportCommit = manifestRevision === 10
+    ? WAVE1_INITIAL_LANE3_SUPPORT_COMMIT
+    : bindings.supportCommit;
+  const revision9PredecessorCommit = manifestRevision === 10
+    ? WAVE1_REVISION9_PREDECESSOR_COMMIT
+    : bindings.producerRevisionPredecessorCommit;
+  const revisions: Array<Record<string, unknown>> = [
       {
         revision: 2,
         authority: 'RTE protocol-required Wave 1 overlap revision',
@@ -817,7 +847,7 @@ function wave1AuthorizedRevisionContract(bindings: Wave1ManifestBindings): Recor
         corpusDataChanged: false,
         normalizedInputChanged: false,
         producerRevisionPredecessorCommit: 'dcbe0abd741a66401744a2cf916a583e865e2c9f',
-        directBaseCommit: bindings.supportCommit,
+        directBaseCommit: historicalSupportCommit,
         sourceBlobsUnchangedFromRevision6: true,
       },
       {
@@ -840,7 +870,7 @@ function wave1AuthorizedRevisionContract(bindings: Wave1ManifestBindings): Recor
           'GD-S33-NUR-005': 6,
         },
         producerRevisionPredecessorCommit: 'c56bc9958f774471ff62a31418c304149afd4bc6',
-        lane3SupportBaseCommit: bindings.supportCommit,
+        lane3SupportBaseCommit: historicalSupportCommit,
       },
       {
         revision: 9,
@@ -867,10 +897,28 @@ function wave1AuthorizedRevisionContract(bindings: Wave1ManifestBindings): Recor
           nonOodMinimum: 5,
           oodPureAbstention: 2,
         },
-        producerRevisionPredecessorCommit: bindings.producerRevisionPredecessorCommit,
-        lane3SupportBaseCommit: bindings.supportCommit,
+        producerRevisionPredecessorCommit: revision9PredecessorCommit,
+        lane3SupportBaseCommit: historicalSupportCommit,
       },
-    ],
+  ];
+  if (manifestRevision === 10) {
+    revisions.push({
+      revision: 10,
+      authority: 'RTE history-preserving restack onto the reviewed final Team 3 prerequisite',
+      changedEntryIds: [],
+      change: 'transplanted revision 9 corpus truth onto the reviewed final Team 3 prerequisite without changing corpus source blobs or normalized-input pins',
+      corpusDataChanged: false,
+      normalizedInputChanged: false,
+      sourceBlobsUnchangedFromRevision9: true,
+      normalizedInputPinsPreservedFromRevision9: true,
+      producerRevisionPredecessorCommit: WAVE1_REVISION9_COMMIT,
+      directBaseCommit: bindings.corpusRevisionParentCommit,
+      lane3SupportBaseCommit: bindings.supportCommit,
+    });
+  }
+  return {
+    status: 'PASS',
+    revisions,
   };
 }
 
@@ -938,6 +986,113 @@ function validateEntryShaMap(
   return map;
 }
 
+function validateOptionalRevisionIdSets(
+  revisionRecord: Record<string, unknown>,
+  revision: number,
+  label: string,
+  entryIds: ReadonlySet<string>,
+): void {
+  if (Object.hasOwn(revisionRecord, 'normalizedInputChangedEntryIds')) {
+    const ids = validateEntryIdArray(
+      revisionRecord.normalizedInputChangedEntryIds,
+      `${label}.normalizedInputChangedEntryIds`,
+      entryIds,
+    );
+    assertSameOrderedValues(
+      ids,
+      WAVE1_NORMALIZED_CHANGED_IDS[revision] ?? [],
+      `${label}.normalizedInputChangedEntryIds complete Wave-1 set`,
+    );
+  }
+  if (Object.hasOwn(revisionRecord, 'verifiedUnchangedEntryIds')) {
+    const ids = validateEntryIdArray(
+      revisionRecord.verifiedUnchangedEntryIds,
+      `${label}.verifiedUnchangedEntryIds`,
+      entryIds,
+    );
+    assertSameOrderedValues(
+      ids,
+      ['GD-S33-NUR-004', 'GD-S33-NUR-005', 'GD-S33-AU-008'],
+      `${label}.verifiedUnchangedEntryIds complete Wave-1 set`,
+    );
+  }
+}
+
+function validateRevisionMetadataFields(
+  revisionRecord: Record<string, unknown>,
+  label: string,
+): void {
+  if (Object.hasOwn(revisionRecord, 'change')) nonEmptyString(revisionRecord.change, `${label}.change`);
+  if (Object.hasOwn(revisionRecord, 'changes')) stringArray(revisionRecord.changes, `${label}.changes`);
+  for (const booleanKey of [
+    'corpusDataChanged', 'sourceBlobsUnchangedFromRevision6', 'corpusSourceTextChanged',
+    'normalizedInputPinsPreservedFromRevision8', 'sourceBlobsUnchangedFromRevision9',
+    'normalizedInputPinsPreservedFromRevision9',
+  ]) {
+    if (Object.hasOwn(revisionRecord, booleanKey)) {
+      booleanValue(revisionRecord[booleanKey], `${label}.${booleanKey}`);
+    }
+  }
+  for (const commitKey of ['producerRevisionPredecessorCommit', 'directBaseCommit', 'lane3SupportBaseCommit']) {
+    if (Object.hasOwn(revisionRecord, commitKey)) {
+      assertGitObject(revisionRecord[commitKey], `${label}.${commitKey}`);
+    }
+  }
+}
+
+function validateRevisionRecomputedHashes(
+  revisionRecord: Record<string, unknown>,
+  revision: number,
+  label: string,
+  entryIds: ReadonlySet<string>,
+  entriesById: ReadonlyMap<string, BatchManifestEntry>,
+): void {
+  if (!Object.hasOwn(revisionRecord, 'recomputedNormalizedInputSha256')) return;
+  const recomputed = validateEntryShaMap(
+    revisionRecord.recomputedNormalizedInputSha256,
+    `${label}.recomputedNormalizedInputSha256`,
+    entryIds,
+  );
+  assertSameOrderedValues(
+    Object.keys(recomputed),
+    WAVE1_RECOMPUTED_IDS[revision] ?? [],
+    `${label}.recomputedNormalizedInputSha256 complete Wave-1 set`,
+  );
+  for (const [id, digest] of Object.entries(recomputed)) {
+    if (digest !== entriesById.get(id)?.normalizedInputSha256) {
+      throw new Error(`${label}.recomputedNormalizedInputSha256.${id} does not match frozen entry content`);
+    }
+  }
+}
+
+function validateRevisionRemainingFields(
+  revisionRecord: Record<string, unknown>,
+  revision: number,
+  label: string,
+  entryIds: ReadonlySet<string>,
+): void {
+  if (!Object.hasOwn(revisionRecord, 'remainingSubstantiveGroundTruthFields')) return;
+  if (revision === 3) {
+    const remaining = positiveInteger(
+      revisionRecord.remainingSubstantiveGroundTruthFields,
+      `${label}.remainingSubstantiveGroundTruthFields`,
+    );
+    if (remaining !== 6) throw new Error(`${label}.remainingSubstantiveGroundTruthFields must be the declared value 6`);
+    return;
+  }
+  const remaining = validateEntryIntegerMap(
+    revisionRecord.remainingSubstantiveGroundTruthFields,
+    `${label}.remainingSubstantiveGroundTruthFields`,
+    entryIds,
+    revision === 9 ? new Set(['nonOodMinimum', 'oodPureAbstention']) : new Set(),
+  );
+  assertSameOrderedValues(
+    Object.keys(remaining),
+    WAVE1_REMAINING_FIELD_KEYS[revision] ?? [],
+    `${label}.remainingSubstantiveGroundTruthFields complete Wave-1 set`,
+  );
+}
+
 function validateAuthorizedRevision(
   value: unknown,
   index: number,
@@ -955,7 +1110,7 @@ function validateAuthorizedRevision(
     revisionRecord.changedEntryIds,
     `${label}.changedEntryIds`,
     entryIds,
-    revision === 7,
+    revision === 7 || revision === 10,
   );
   assertSameOrderedValues(
     changedEntryIds,
@@ -963,104 +1118,17 @@ function validateAuthorizedRevision(
     `${label}.changedEntryIds complete Wave-1 set`,
   );
   booleanValue(revisionRecord.normalizedInputChanged, `${label}.normalizedInputChanged`);
-
-  if (Object.hasOwn(revisionRecord, 'change')) nonEmptyString(revisionRecord.change, `${label}.change`);
-  if (Object.hasOwn(revisionRecord, 'changes')) stringArray(revisionRecord.changes, `${label}.changes`);
-  if (Object.hasOwn(revisionRecord, 'normalizedInputChangedEntryIds')) {
-    const normalizedChangedIds = validateEntryIdArray(
-      revisionRecord.normalizedInputChangedEntryIds,
-      `${label}.normalizedInputChangedEntryIds`,
-      entryIds,
-    );
-    assertSameOrderedValues(
-      normalizedChangedIds,
-      WAVE1_NORMALIZED_CHANGED_IDS[revision] ?? [],
-      `${label}.normalizedInputChangedEntryIds complete Wave-1 set`,
-    );
-  }
-  if (Object.hasOwn(revisionRecord, 'verifiedUnchangedEntryIds')) {
-    const verifiedIds = validateEntryIdArray(
-      revisionRecord.verifiedUnchangedEntryIds,
-      `${label}.verifiedUnchangedEntryIds`,
-      entryIds,
-    );
-    assertSameOrderedValues(
-      verifiedIds,
-      ['GD-S33-NUR-004', 'GD-S33-NUR-005', 'GD-S33-AU-008'],
-      `${label}.verifiedUnchangedEntryIds complete Wave-1 set`,
-    );
-  }
-  for (const booleanKey of [
-    'corpusDataChanged', 'sourceBlobsUnchangedFromRevision6', 'corpusSourceTextChanged',
-    'normalizedInputPinsPreservedFromRevision8',
-  ]) {
-    if (Object.hasOwn(revisionRecord, booleanKey)) {
-      booleanValue(revisionRecord[booleanKey], `${label}.${booleanKey}`);
-    }
-  }
-  for (const commitKey of ['producerRevisionPredecessorCommit', 'directBaseCommit', 'lane3SupportBaseCommit']) {
-    if (Object.hasOwn(revisionRecord, commitKey)) {
-      assertGitObject(revisionRecord[commitKey], `${label}.${commitKey}`);
-    }
-  }
-  if (Object.hasOwn(revisionRecord, 'recomputedNormalizedInputSha256')) {
-    const recomputed = validateEntryShaMap(
-      revisionRecord.recomputedNormalizedInputSha256,
-      `${label}.recomputedNormalizedInputSha256`,
-      entryIds,
-    );
-    assertSameOrderedValues(
-      Object.keys(recomputed),
-      WAVE1_RECOMPUTED_IDS[revision] ?? [],
-      `${label}.recomputedNormalizedInputSha256 complete Wave-1 set`,
-    );
-    for (const [id, digest] of Object.entries(recomputed)) {
-      if (digest !== entriesById.get(id)?.normalizedInputSha256) {
-        throw new Error(`${label}.recomputedNormalizedInputSha256.${id} does not match frozen entry content`);
-      }
-    }
-  }
-  if (Object.hasOwn(revisionRecord, 'remainingSubstantiveGroundTruthFields')) {
-    if (revision === 3) {
-      const remaining = positiveInteger(
-        revisionRecord.remainingSubstantiveGroundTruthFields,
-        `${label}.remainingSubstantiveGroundTruthFields`,
-      );
-      if (remaining !== 6) throw new Error(`${label}.remainingSubstantiveGroundTruthFields must be the declared value 6`);
-    } else {
-      const remaining = validateEntryIntegerMap(
-        revisionRecord.remainingSubstantiveGroundTruthFields,
-        `${label}.remainingSubstantiveGroundTruthFields`,
-        entryIds,
-        revision === 9 ? new Set(['nonOodMinimum', 'oodPureAbstention']) : new Set(),
-      );
-      assertSameOrderedValues(
-        Object.keys(remaining),
-        WAVE1_REMAINING_FIELD_KEYS[revision] ?? [],
-        `${label}.remainingSubstantiveGroundTruthFields complete Wave-1 set`,
-      );
-    }
-  }
+  validateOptionalRevisionIdSets(revisionRecord, revision, label, entryIds);
+  validateRevisionMetadataFields(revisionRecord, label);
+  validateRevisionRecomputedHashes(revisionRecord, revision, label, entryIds, entriesById);
+  validateRevisionRemainingFields(revisionRecord, revision, label, entryIds);
   return revision;
 }
 
-function validateWave1SelfChecks(
-  value: unknown,
+function validateManifestIntegritySelfChecks(
+  selfChecks: Record<string, unknown>,
   entryCount: number,
-  manifestRevision: number,
-  entries: readonly BatchManifestEntry[],
-  bindings: Wave1ManifestBindings,
 ): void {
-  const selfChecks = recordValue(value, 'Manifest selfChecks');
-  assertExactKeys(selfChecks, [
-    'exactCorpusManifestDatasheetBijection', 'normalizedInputFingerprintsPinned',
-    'authorizedDocumentRevisions', 'withinTypeTokenOverlap', 'oodFiveFieldSemantics',
-    'cpeSubtypeRatification', 'taxonomyAdjudicationSet', 'issuedDateAdjudicationSet',
-    'batchScopeOnly', 'lane3Acceptance',
-  ], 'Manifest selfChecks');
-  const entryIds = new Set(entries.map(({ id }) => id));
-  const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
-
   const bijection = recordValue(
     selfChecks.exactCorpusManifestDatasheetBijection,
     'Manifest selfChecks.exactCorpusManifestDatasheetBijection',
@@ -1080,7 +1148,19 @@ function validateWave1SelfChecks(
     'sha256(normalizeForFingerprint(strippedText))',
     'Manifest selfChecks.normalizedInputFingerprintsPinned.algorithm',
   );
+}
 
+function validateWave1RevisionHistory(
+  selfChecks: Record<string, unknown>,
+  manifestRevision: number,
+  entries: readonly BatchManifestEntry[],
+  bindings: Wave1ManifestBindings,
+): void {
+  if (manifestRevision !== 9 && manifestRevision !== 10) {
+    throw new Error('Manifest revision must be the reviewed revision 9 or metadata-only restack revision 10');
+  }
+  const entryIds = new Set(entries.map(({ id }) => id));
+  const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
   const revisions = recordValue(
     selfChecks.authorizedDocumentRevisions,
     'Manifest selfChecks.authorizedDocumentRevisions',
@@ -1097,10 +1177,9 @@ function validateWave1SelfChecks(
     entriesById,
   ));
   const expectedRevisionNumbers = Array.from({ length: manifestRevision - 1 }, (_, index) => index + 2);
-  if (manifestRevision !== 9
-    || revisionNumbers.length !== expectedRevisionNumbers.length
+  if (revisionNumbers.length !== expectedRevisionNumbers.length
     || revisionNumbers.some((revision, index) => revision !== expectedRevisionNumbers[index])) {
-    throw new Error('Manifest authorized revision history must be complete and contiguous from revision 2 through 9');
+    throw new Error(`Manifest authorized revision history must be complete and contiguous from revision 2 through ${manifestRevision}`);
   }
   const currentRevision = revisions.revisions.at(-1) as Record<string, unknown>;
   if (Object.hasOwn(currentRevision, 'producerRevisionPredecessorCommit')
@@ -1113,10 +1192,17 @@ function validateWave1SelfChecks(
   }
   assertExactContractValue(
     revisions,
-    wave1AuthorizedRevisionContract(bindings),
+    wave1AuthorizedRevisionContract(bindings, manifestRevision),
     'Manifest selfChecks.authorizedDocumentRevisions',
   );
+}
 
+function validateWave1OverlapSelfCheck(
+  selfChecks: Record<string, unknown>,
+  entries: readonly BatchManifestEntry[],
+): void {
+  const entryIds = new Set(entries.map(({ id }) => id));
+  const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
   const overlap = recordValue(selfChecks.withinTypeTokenOverlap, 'Manifest selfChecks.withinTypeTokenOverlap');
   assertExactKeys(
     overlap,
@@ -1124,13 +1210,13 @@ function validateWave1SelfChecks(
     'Manifest selfChecks.withinTypeTokenOverlap',
   );
   assertExactString(overlap.status, 'PASS', 'Manifest selfChecks.withinTypeTokenOverlap.status');
-  if (overlap.threshold !== 0.8) throw new Error('Manifest within-type token overlap threshold must be 0.8');
+  if (!Object.is(overlap.threshold, 0.8)) throw new Error('Manifest within-type token overlap threshold must be 0.8');
   nonEmptyString(overlap.metric, 'Manifest selfChecks.withinTypeTokenOverlap.metric');
   if (!Array.isArray(overlap.violations) || overlap.violations.length !== 0) {
     throw new Error('Manifest within-type token overlap violations must be an empty array when status is PASS');
   }
   if (!Array.isArray(overlap.remediatedPairScores)) {
-    throw new Error('Manifest within-type token overlap remediatedPairScores must be an array');
+    throw new TypeError('Manifest within-type token overlap remediatedPairScores must be an array');
   }
   for (const [index, scoreValue] of overlap.remediatedPairScores.entries()) {
     const label = `Manifest selfChecks.withinTypeTokenOverlap.remediatedPairScores[${index}]`;
@@ -1160,7 +1246,13 @@ function validateWave1SelfChecks(
     WAVE1_REMEDIATED_PAIR_IDS,
     'Manifest remediated overlap pair complete set',
   );
+}
 
+function validateWave1AdjudicationSelfChecks(
+  selfChecks: Record<string, unknown>,
+  entries: readonly BatchManifestEntry[],
+): void {
+  const entryIds = new Set(entries.map(({ id }) => id));
   const ood = recordValue(selfChecks.oodFiveFieldSemantics, 'Manifest selfChecks.oodFiveFieldSemantics');
   assertExactKeys(
     ood,
@@ -1228,7 +1320,12 @@ function validateWave1SelfChecks(
     WAVE1_REVISION9_RESOLVED_ISSUED_DATE_IDS,
     'Manifest revision-9 resolved issuedDate complete set',
   );
+}
 
+function validateWave1BatchScope(
+  selfChecks: Record<string, unknown>,
+  bindings: Wave1ManifestBindings,
+): void {
   const scope = recordValue(selfChecks.batchScopeOnly, 'Manifest selfChecks.batchScopeOnly');
   assertExactKeys(
     scope,
@@ -1275,7 +1372,27 @@ function validateWave1SelfChecks(
   }
   nonEmptyString(scope.reason, 'Manifest selfChecks.batchScopeOnly.reason');
   nonEmptyString(scope.authority, 'Manifest selfChecks.batchScopeOnly.authority');
+}
 
+function validateWave1SelfChecks(
+  value: unknown,
+  entryCount: number,
+  manifestRevision: number,
+  entries: readonly BatchManifestEntry[],
+  bindings: Wave1ManifestBindings,
+): void {
+  const selfChecks = recordValue(value, 'Manifest selfChecks');
+  assertExactKeys(selfChecks, [
+    'exactCorpusManifestDatasheetBijection', 'normalizedInputFingerprintsPinned',
+    'authorizedDocumentRevisions', 'withinTypeTokenOverlap', 'oodFiveFieldSemantics',
+    'cpeSubtypeRatification', 'taxonomyAdjudicationSet', 'issuedDateAdjudicationSet',
+    'batchScopeOnly', 'lane3Acceptance',
+  ], 'Manifest selfChecks');
+  validateManifestIntegritySelfChecks(selfChecks, entryCount);
+  validateWave1RevisionHistory(selfChecks, manifestRevision, entries, bindings);
+  validateWave1OverlapSelfCheck(selfChecks, entries);
+  validateWave1AdjudicationSelfChecks(selfChecks, entries);
+  validateWave1BatchScope(selfChecks, bindings);
   const acceptance = recordValue(selfChecks.lane3Acceptance, 'Manifest selfChecks.lane3Acceptance');
   assertExactKeys(acceptance, ['status'], 'Manifest selfChecks.lane3Acceptance');
   assertExactString(
@@ -1311,7 +1428,7 @@ function loadBatchManifest(content: ArtifactContent): LoadedBatchManifest {
     'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
     'Manifest status',
   );
-  const bindings = validateWave1SupportBindings(parsed);
+  const bindings = validateWave1SupportBindings(parsed, revision);
   const entryCount = positiveInteger(parsed.entryCount, 'Manifest entryCount');
   const intendedSplit = nonEmptyString(parsed.intendedSplit, 'Manifest intendedSplit');
   assertExactString(intendedSplit, 'held-out-candidate', 'Manifest intendedSplit');
@@ -1943,8 +2060,67 @@ function xorshift32(seed: number): () => number {
     state ^= state << 13;
     state ^= state >>> 17;
     state ^= state << 5;
-    return (state >>> 0) / 0x1_0000_0000;
+    return (state >>> 0) / UINT32_RANGE;
   };
+}
+
+interface ProducerDiffEntry {
+  status: string;
+  path: string;
+  oldMode: string;
+  newMode: string;
+  objectType: 'blob' | 'commit';
+  sourcePath?: string;
+}
+
+function parseProducerDiffRecord(fields: readonly string[], index: number): {
+  entry: ProducerDiffEntry;
+  nextIndex: number;
+} {
+  const header = fields[index];
+  const match = /^:(\d{6}) (\d{6}) ([\da-f]{40,64}) ([\da-f]{40,64}) ([A-Z]\d*)$/.exec(header);
+  if (!match) throw new Error('Producer diff contains a malformed raw status record');
+  const [, oldMode, newMode, , , status] = match;
+  const objectType = newMode === '160000' ? 'commit' as const : 'blob' as const;
+  const sourcePath = status.startsWith('R') || status.startsWith('C') ? fields[index + 1] : undefined;
+  const pathIndex = sourcePath === undefined ? index + 1 : index + 2;
+  const path = fields[pathIndex];
+  if (!path || (sourcePath !== undefined && sourcePath.length === 0)) {
+    throw new Error('Producer diff contains a malformed path record');
+  }
+  return {
+    entry: { status, path, oldMode, newMode, objectType, ...(sourcePath === undefined ? {} : { sourcePath }) },
+    nextIndex: pathIndex + 1,
+  };
+}
+
+function parseProducerDiffFields(fields: readonly string[]): ProducerDiffEntry[] {
+  const entries: ProducerDiffEntry[] = [];
+  for (let index = 0; index < fields.length;) {
+    const parsed = parseProducerDiffRecord(fields, index);
+    entries.push(parsed.entry);
+    index = parsed.nextIndex;
+  }
+  return entries;
+}
+
+function validateProducerDiffEntries(
+  actual: readonly ProducerDiffEntry[],
+  authorizedPaths: readonly string[],
+): void {
+  if (actual.some(({ status }) => status !== 'A')) {
+    throw new Error('Producer diff may contain additions only; deletion, rename, copy, and type-change statuses are forbidden');
+  }
+  assertSameOrderedValues(
+    actual.map(({ path }) => path),
+    authorizedPaths,
+    'Producer diff exact six authorized paths',
+  );
+  for (const entry of actual) {
+    if (entry.oldMode !== '000000' || entry.newMode !== '100644' || entry.objectType !== 'blob') {
+      throw new Error(`Producer diff authorized path ${entry.path} must be a newly added regular non-executable 100644 blob`);
+    }
+  }
 }
 
 class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
@@ -1956,7 +2132,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
   constructor(config: OrchestratorConfiguration) {
     const createIfAbsent = config.consumptionRegistry?.createIfAbsent;
     if (typeof createIfAbsent !== 'function') {
-      throw new Error('Atomic monotonic consumption registry is required');
+      throw new TypeError('Atomic monotonic consumption registry is required');
     }
     const trustRoot = deepFreeze({
       signerIdentity: config.trustRoot.signerIdentity,
@@ -2100,7 +2276,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
 
     const seedDigest = sha256(`${loadedManifest.rawSha256}:${reveal.salt}`);
     const random = xorshift32(Number.parseInt(seedDigest.slice(0, 8), 16));
-    const shuffled = manifest.entries.map(({ id }) => id).sort();
+    const shuffled = manifest.entries.map(({ id }) => id).sort((left, right) => left.localeCompare(right));
     for (let index = shuffled.length - 1; index > 0; index -= 1) {
       const swapIndex = Math.floor(random() * (index + 1));
       [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
@@ -2235,17 +2411,44 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       throw new Error('Freeze Git manifest path must be the exact Wave-1 manifest path');
     }
     const commit = payload.gitEvidence.freezeCommitSha;
+    this.verifyFreezeCommitExists(commit);
+    this.verifyCommittedManifest(commit, payload);
+    const parsed = manifest.parsedJson;
+    const predecessorCommit = nonEmptyString(
+      parsed.producerRevisionPredecessorCommit,
+      'Manifest producerRevisionPredecessorCommit',
+    );
+    const corpusParentCommit = nonEmptyString(
+      parsed.corpusRevisionParentCommit,
+      'Manifest corpusRevisionParentCommit',
+    );
+    this.verifyFreezeLineage(commit, predecessorCommit, corpusParentCommit);
+    const supportCommit = this.verifySupportLineage(parsed, corpusParentCommit);
+    this.verifyFreezeBlobs(parsed, manifest.revision, supportCommit, predecessorCommit, corpusParentCommit, commit);
+    const selfChecks = recordValue(parsed.selfChecks, 'Manifest selfChecks');
+    const batchScope = recordValue(selfChecks.batchScopeOnly, 'Manifest selfChecks.batchScopeOnly');
+    const authorizedPaths = stringArray(
+      batchScope.protocolAllowedDiffPaths,
+      'Manifest selfChecks.batchScopeOnly.protocolAllowedDiffPaths',
+    );
+    this.verifyProducerDiff(supportCommit, commit, authorizedPaths);
+  }
+
+  private verifyFreezeCommitExists(commit: string): void {
     try {
-      execFileSync('git', ['-C', this.#config.repositoryRoot, 'cat-file', '-e', `${commit}^{commit}`], { stdio: 'ignore' });
-      execFileSync('git', [
+      execFileSync(GIT_EXECUTABLE, ['-C', this.#config.repositoryRoot, 'cat-file', '-e', `${commit}^{commit}`], { stdio: 'ignore' });
+      execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor', commit, this.#config.verificationCommitSha,
       ], { stdio: 'ignore' });
     } catch (error) {
       throw new Error('Freeze Git commit is missing or is not an ancestor of verification commit', { cause: error });
     }
+  }
+
+  private verifyCommittedManifest(commit: string, payload: ManifestFreezePayload): void {
     let committedManifest: Buffer;
     try {
-      committedManifest = execFileSync('git', [
+      committedManifest = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'show', `${commit}:${payload.gitEvidence.manifestPath}`,
       ]);
     } catch (error) {
@@ -2256,66 +2459,70 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       || committed.canonicalSha256 !== payload.manifestCanonicalSha256) {
       throw new Error('Freeze Git blob does not match authenticated raw/canonical manifest hashes');
     }
+  }
 
-    const parsed = manifest.parsedJson;
-    const predecessorCommit = nonEmptyString(
-      parsed.producerRevisionPredecessorCommit,
-      'Manifest producerRevisionPredecessorCommit',
-    );
-    const corpusParentCommit = nonEmptyString(
-      parsed.corpusRevisionParentCommit,
-      'Manifest corpusRevisionParentCommit',
-    );
+  private verifyFreezeLineage(
+    commit: string,
+    predecessorCommit: string,
+    corpusParentCommit: string,
+  ): void {
     let actualParent: string;
     try {
-      const lineage = execFileSync('git', [
+      const lineage = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'rev-list', '--parents', '-n', '1', commit,
       ], { encoding: 'utf8' }).trim().split(/\s+/);
       if (lineage.length !== 2) throw new Error('Freeze commit must have exactly one parent');
       [, actualParent] = lineage;
-      execFileSync('git', [
+      execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${predecessorCommit}^{commit}`,
       ], { stdio: 'ignore' });
     } catch (error) {
       throw new Error('Freeze producer predecessor is missing from Git or freeze lineage is invalid', { cause: error });
     }
-    if (actualParent !== predecessorCommit || actualParent !== corpusParentCommit) {
-      throw new Error('Freeze Git parent does not match the declared producer predecessor/corpus parent');
+    if (actualParent !== corpusParentCommit) {
+      throw new Error('Freeze Git parent does not match the declared corpus revision parent');
     }
+  }
 
+  private verifySupportLineage(
+    parsed: Record<string, unknown>,
+    corpusParentCommit: string,
+  ): string {
     const support = recordValue(parsed.lane3SupportBase, 'Manifest lane3SupportBase');
     const supportCommit = nonEmptyString(support.commit, 'Manifest lane3SupportBase.commit');
-    const supportTypesBlob = nonEmptyString(support.typesBlob, 'Manifest lane3SupportBase.typesBlob');
     try {
-      execFileSync('git', [
+      execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${supportCommit}^{commit}`,
       ], { stdio: 'ignore' });
-      execFileSync('git', [
-        '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor', supportCommit, predecessorCommit,
+      execFileSync(GIT_EXECUTABLE, [
+        '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor', supportCommit, corpusParentCommit,
       ], { stdio: 'ignore' });
     } catch (error) {
-      throw new Error('Lane-3 support commit is missing or is not an ancestor of the producer predecessor', { cause: error });
+      throw new Error('Lane-3 support commit is missing or is not an ancestor of the corpus revision parent', { cause: error });
     }
+    return supportCommit;
+  }
+
+  private verifyFreezeBlobs(
+    parsed: Record<string, unknown>,
+    manifestRevision: number,
+    supportCommit: string,
+    predecessorCommit: string,
+    corpusParentCommit: string,
+    commit: string,
+  ): void {
+    const support = recordValue(parsed.lane3SupportBase, 'Manifest lane3SupportBase');
+    const supportTypesBlob = nonEmptyString(support.typesBlob, 'Manifest lane3SupportBase.typesBlob');
     this.verifyDeclaredBlobAtPath(supportTypesBlob, supportCommit, WAVE1_TYPES_PATH, 'Lane-3 support types');
-    this.verifyDeclaredBlobAtPath(supportTypesBlob, predecessorCommit, WAVE1_TYPES_PATH, 'Producer-base support types');
+    this.verifyDeclaredBlobAtPath(supportTypesBlob, corpusParentCommit, WAVE1_TYPES_PATH, 'Corpus-parent support types');
     this.verifyDeclaredBlobAtPath(supportTypesBlob, commit, WAVE1_TYPES_PATH, 'Frozen support types');
-
-    const selfChecks = recordValue(parsed.selfChecks, 'Manifest selfChecks');
-    const batchScope = recordValue(selfChecks.batchScopeOnly, 'Manifest selfChecks.batchScopeOnly');
-    const authorizedPaths = stringArray(
-      batchScope.protocolAllowedDiffPaths,
-      'Manifest selfChecks.batchScopeOnly.protocolAllowedDiffPaths',
-    );
-    this.verifyProducerDiff(supportCommit, commit, authorizedPaths);
-
     const sourceBlobs = recordValue(parsed.corpusSourceBlobs, 'Manifest corpusSourceBlobs');
     for (const path of WAVE1_SOURCE_BLOB_PATHS) {
-      this.verifyDeclaredBlobAtPath(
-        nonEmptyString(sourceBlobs[path], `Manifest corpusSourceBlobs.${path}`),
-        commit,
-        path,
-        'Frozen corpus source',
-      );
+      const blob = nonEmptyString(sourceBlobs[path], `Manifest corpusSourceBlobs.${path}`);
+      this.verifyDeclaredBlobAtPath(blob, commit, path, 'Frozen corpus source');
+      if (manifestRevision === 10) {
+        this.verifyDeclaredBlobAtPath(blob, predecessorCommit, path, 'Revision-9 predecessor corpus source');
+      }
     }
   }
 
@@ -2326,9 +2533,9 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
   ): void {
     let fields: string[];
     try {
-      const output = execFileSync('git', [
+      const output = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot,
-        'diff', '--raw', '-z', '--no-abbrev', '--find-renames', '--find-copies',
+        'diff', '--raw', '-z', '--no-abbrev', '--find-renames', '--find-copies', '--find-copies-harder',
         supportCommit, freezeCommit, '--',
       ]);
       fields = output.toString('utf8').split('\0');
@@ -2337,45 +2544,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       throw new Error('Unable to compute the Lane-3 support-to-freeze producer diff', { cause: error });
     }
 
-    const actual: Array<{
-      status: string;
-      path: string;
-      oldMode: string;
-      newMode: string;
-      objectType: 'blob' | 'commit';
-      sourcePath?: string;
-    }> = [];
-    for (let index = 0; index < fields.length;) {
-      const header = fields[index++];
-      const match = /^:([0-9]{6}) ([0-9]{6}) ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) ([A-Z][0-9]*)$/.exec(header);
-      if (!match) throw new Error('Producer diff contains a malformed raw status record');
-      const [, oldMode, newMode, , , status] = match;
-      const objectType = newMode === '160000' ? 'commit' as const : 'blob' as const;
-      if (status.startsWith('R') || status.startsWith('C')) {
-        const sourcePath = fields[index++];
-        const path = fields[index++];
-        if (!sourcePath || !path) throw new Error('Producer diff contains a malformed rename/copy record');
-        actual.push({ status, sourcePath, path, oldMode, newMode, objectType });
-      } else {
-        const path = fields[index++];
-        if (!path) throw new Error('Producer diff contains a malformed path record');
-        actual.push({ status, path, oldMode, newMode, objectType });
-      }
-    }
-    if (actual.some(({ status }) => status !== 'A')) {
-      throw new Error('Producer diff may contain additions only; deletion, rename, copy, and type-change statuses are forbidden');
-    }
-    assertSameOrderedValues(
-      actual.map(({ path }) => path),
-      authorizedPaths,
-      'Producer diff exact six authorized paths',
-    );
-
-    for (const entry of actual) {
-      if (entry.oldMode !== '000000' || entry.newMode !== '100644' || entry.objectType !== 'blob') {
-        throw new Error(`Producer diff authorized path ${entry.path} must be a newly added regular non-executable 100644 blob`);
-      }
-    }
+    validateProducerDiffEntries(parseProducerDiffFields(fields), authorizedPaths);
   }
 
   private verifyDeclaredBlobAtPath(
@@ -2386,10 +2555,10 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
   ): void {
     let actualBlob: string;
     try {
-      execFileSync('git', [
+      execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${declaredBlob}^{blob}`,
       ], { stdio: 'ignore' });
-      actualBlob = execFileSync('git', [
+      actualBlob = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'rev-parse', `${commit}:${path}`,
       ], { encoding: 'utf8' }).trim();
     } catch (error) {
@@ -2494,34 +2663,36 @@ function ngramSet(text: string, n: number, policy: LexicalNormalizationPolicy): 
   return ngrams;
 }
 
+function computeLexicalLeakageMetric(
+  heldoutRecord: TextRecord,
+  corpusRecord: TextRecord,
+  n: number,
+  normalization: LexicalNormalizationPolicy,
+): LexicalLeakageMetric {
+  const heldoutNgrams = ngramSet(heldoutRecord.text, n, normalization);
+  const corpusNgrams = ngramSet(corpusRecord.text, n, normalization);
+  const sharedNgrams = [...heldoutNgrams].filter((ngram) => corpusNgrams.has(ngram)).length;
+  const union = heldoutNgrams.size + corpusNgrams.size - sharedNgrams;
+  return {
+    heldoutId: heldoutRecord.id,
+    corpusId: corpusRecord.id,
+    n,
+    heldoutNgrams: heldoutNgrams.size,
+    corpusNgrams: corpusNgrams.size,
+    sharedNgrams,
+    heldoutContainment: heldoutNgrams.size === 0 ? 0 : sharedNgrams / heldoutNgrams.size,
+    jaccard: union === 0 ? 0 : sharedNgrams / union,
+  };
+}
+
 function computeLexicalLeakageMetrics(
   heldout: readonly TextRecord[],
   corpus: readonly TextRecord[],
   normalization: LexicalNormalizationPolicy,
 ): LexicalLeakageMetric[] {
-  const metrics: LexicalLeakageMetric[] = [];
-  for (const heldoutRecord of heldout) {
-    for (const corpusRecord of corpus) {
-      for (const n of REQUIRED_LEXICAL_N) {
-        const heldoutNgrams = ngramSet(heldoutRecord.text, n, normalization);
-        const corpusNgrams = ngramSet(corpusRecord.text, n, normalization);
-        let sharedNgrams = 0;
-        for (const ngram of heldoutNgrams) if (corpusNgrams.has(ngram)) sharedNgrams += 1;
-        const union = heldoutNgrams.size + corpusNgrams.size - sharedNgrams;
-        metrics.push({
-          heldoutId: heldoutRecord.id,
-          corpusId: corpusRecord.id,
-          n,
-          heldoutNgrams: heldoutNgrams.size,
-          corpusNgrams: corpusNgrams.size,
-          sharedNgrams,
-          heldoutContainment: heldoutNgrams.size === 0 ? 0 : sharedNgrams / heldoutNgrams.size,
-          jaccard: union === 0 ? 0 : sharedNgrams / union,
-        });
-      }
-    }
-  }
-  return metrics;
+  return heldout.flatMap((heldoutRecord) => corpus.flatMap((corpusRecord) => REQUIRED_LEXICAL_N.map(
+    (n) => computeLexicalLeakageMetric(heldoutRecord, corpusRecord, n, normalization),
+  )));
 }
 
 function applyLexicalPolicy(
@@ -2657,7 +2828,7 @@ function cosineSimilarity(left: readonly number[], right: readonly number[]): nu
     leftNorm += left[index] * left[index];
     rightNorm += right[index] * right[index];
     if (!Number.isFinite(dot) || !Number.isFinite(leftNorm) || !Number.isFinite(rightNorm)) {
-      throw new Error('Embedding cosine arithmetic overflowed or became non-finite');
+      throw new TypeError('Embedding cosine arithmetic overflowed or became non-finite');
     }
   }
   const denominator = Math.sqrt(leftNorm) * Math.sqrt(rightNorm);

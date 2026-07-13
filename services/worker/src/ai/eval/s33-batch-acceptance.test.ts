@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
 import * as acceptanceModule from './s33-batch-acceptance.js';
@@ -69,6 +69,9 @@ const WAVE1_SOURCE_PATHS = [
   'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
 ] as const;
+const WAVE1_INITIAL_LANE3_SUPPORT_COMMIT = 'dd3ae1edecb005730762277daf17e15d8009459d';
+const WAVE1_REVISION9_COMMIT = 'b9bb1d3221d3567dbb08e1b23cab4dd687486738';
+const WAVE1_REVISION9_PREDECESSOR_COMMIT = '506ff62340db8f838ce68bc46ddfa6407735ce3c';
 
 interface ManifestFixtureBindings {
   supportCommit: string;
@@ -337,6 +340,34 @@ function productionManifestFixture(bindings: ManifestFixtureBindings = {
   };
 }
 
+function revision10ManifestFixture(bindings: ManifestFixtureBindings): Record<string, unknown> {
+  const manifest = productionManifestFixture(bindings);
+  manifest.revision = 10;
+  manifest.corpusRevisionParentCommit = bindings.supportCommit;
+  manifest.producerRevisionPredecessorCommit = WAVE1_REVISION9_COMMIT;
+  const revisions = ((manifest.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+    revisions: Array<Record<string, unknown>>;
+  }).revisions;
+  revisions[5].directBaseCommit = WAVE1_INITIAL_LANE3_SUPPORT_COMMIT;
+  revisions[6].lane3SupportBaseCommit = WAVE1_INITIAL_LANE3_SUPPORT_COMMIT;
+  revisions[7].producerRevisionPredecessorCommit = WAVE1_REVISION9_PREDECESSOR_COMMIT;
+  revisions[7].lane3SupportBaseCommit = WAVE1_INITIAL_LANE3_SUPPORT_COMMIT;
+  revisions.push({
+    revision: 10,
+    authority: 'RTE history-preserving restack onto the reviewed final Team 3 prerequisite',
+    changedEntryIds: [],
+    change: 'transplanted revision 9 corpus truth onto the reviewed final Team 3 prerequisite without changing corpus source blobs or normalized-input pins',
+    corpusDataChanged: false,
+    normalizedInputChanged: false,
+    sourceBlobsUnchangedFromRevision9: true,
+    normalizedInputPinsPreservedFromRevision9: true,
+    producerRevisionPredecessorCommit: WAVE1_REVISION9_COMMIT,
+    directBaseCommit: bindings.supportCommit,
+    lane3SupportBaseCommit: bindings.supportCommit,
+  });
+  return manifest;
+}
+
 function manifestContent(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({ ...productionManifestFixture(), ...overrides }, null, 2);
 }
@@ -465,6 +496,120 @@ function gitRepo(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutatio
   return { root, manifest, manifestPath, freezeCommitSha, verificationCommitSha };
 }
 
+interface Revision10GitMutation {
+  mergeFreezeCommit?: boolean;
+  mutateManifest?: ManifestMutator;
+  mutateSourceBytes?: boolean;
+}
+
+function revision10GitRepo(mutation: Revision10GitMutation = {}): {
+  root: string;
+  manifest: string;
+  manifestPath: string;
+  supportCommit: string;
+  freezeCommitSha: string;
+  verificationCommitSha: string;
+} {
+  const sourceRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    cwd: process.cwd(), encoding: 'utf8',
+  }).trim();
+  const root = mkdtempSync(join(tmpdir(), 'arkova-s33-r10-git-'));
+  tempRoots.push(root);
+  execFileSync('git', ['clone', '-q', '--shared', sourceRoot, root]);
+  execFileSync('git', ['config', 'user.email', 'lane3-test@arkova.invalid'], { cwd: root });
+  execFileSync('git', ['config', 'user.name', 'Lane3 Test'], { cwd: root });
+  const supportCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  const supportTypesBlob = execFileSync('git', ['rev-parse', `${supportCommit}:${WAVE1_TYPES_PATH}`], {
+    cwd: root, encoding: 'utf8',
+  }).trim();
+  const packetPaths = [
+    'docs/lane4/s33-corpus-datasheet.md',
+    'docs/lane4/s33-wave1-entry-datasheet.json',
+    ...WAVE1_SOURCE_PATHS,
+  ];
+  for (const path of packetPaths) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), execFileSync('git', ['show', `${WAVE1_REVISION9_COMMIT}:${path}`], {
+      cwd: root,
+    }));
+  }
+  if (mutation.mutateSourceBytes) {
+    writeFileSync(join(root, WAVE1_SOURCE_PATHS[0]), 'export const changedAfterRevision9 = true;\n', 'utf8');
+  }
+  const sourceBlobs = Object.fromEntries(WAVE1_SOURCE_PATHS.map((path) => [
+    path,
+    execFileSync('git', ['hash-object', path], { cwd: root, encoding: 'utf8' }).trim(),
+  ])) as ManifestFixtureBindings['sourceBlobs'];
+  const manifestObject = revision10ManifestFixture({
+    supportCommit,
+    supportTypesBlob,
+    predecessorCommit: WAVE1_REVISION9_COMMIT,
+    sourceBlobs,
+  });
+  mutation.mutateManifest?.(manifestObject);
+  const manifest = JSON.stringify(manifestObject, null, 2);
+  const manifestPath = WAVE1_MANIFEST_PATH;
+  writeFileSync(join(root, manifestPath), manifest, 'utf8');
+  execFileSync('git', ['add', '--all'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'revision 10 metadata-only restack'], { cwd: root });
+  let freezeCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  if (mutation.mergeFreezeCommit) {
+    const tree = execFileSync('git', ['rev-parse', `${freezeCommitSha}^{tree}`], { cwd: root, encoding: 'utf8' }).trim();
+    freezeCommitSha = execFileSync('git', [
+      'commit-tree', tree, '-p', supportCommit, '-p', WAVE1_REVISION9_COMMIT,
+    ], { cwd: root, encoding: 'utf8', input: 'invalid merge-parent freeze\n' }).trim();
+    execFileSync('git', ['reset', '--hard', '-q', freezeCommitSha], { cwd: root });
+  }
+  writeFileSync(join(root, 'verification.txt'), 'verification descendant\n', 'utf8');
+  execFileSync('git', ['add', 'verification.txt'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'verification descendant'], { cwd: root });
+  const verificationCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  return { root, manifest, manifestPath, supportCommit, freezeCommitSha, verificationCommitSha };
+}
+
+function revision10Ceremony(mutation: Revision10GitMutation = {}) {
+  const repo = revision10GitRepo(mutation);
+  const { privateKey, trustRoot } = testKey();
+  const evidenceRoot = mkdtempSync(join(tmpdir(), 'arkova-s33-r10-ledger-'));
+  tempRoots.push(evidenceRoot);
+  const orchestrator = createTestOnlyS33AcceptanceOrchestrator({
+    trustRoot,
+    consumptionRegistry: new TestConsumptionRegistry(),
+    ledgerPath: join(evidenceRoot, 'acceptance-ledger.jsonl'),
+    repositoryRoot: repo.root,
+    repositoryIdentity: 'test/ArkovaCarson',
+    verificationCommitSha: repo.verificationCommitSha,
+  });
+  const commitment = signedArtifact<SaltCommitmentPayload>({
+    artifactType: 'arkova-s33-salt-commitment',
+    artifactVersion: '1.0.0',
+    commitmentId: 'S33-W1-r10-commitment-1',
+    signerIdentity: 'Arkova CTO',
+    signingKeyId: 'cto-policy-test-key-1',
+    signedAtUtc: '2026-07-13T14:00:00.000Z',
+    saltCommitment: { algorithm: 'sha256', value: sha256('33'.repeat(32)) },
+  }, privateKey);
+  const freeze = signedArtifact<ManifestFreezePayload>({
+    artifactType: 'arkova-s33-manifest-freeze',
+    artifactVersion: '1.0.0',
+    freezeId: 'S33-W1-r10-freeze-1',
+    signerIdentity: 'Arkova CTO',
+    signingKeyId: 'cto-policy-test-key-1',
+    signedAtUtc: '2026-07-13T14:01:00.000Z',
+    commitmentArtifactCanonicalSha256: canonicalManifestHash(commitment.content),
+    batchId: 'S33-W1',
+    revision: 10,
+    manifestRawSha256: rawManifestHash(repo.manifest),
+    manifestCanonicalSha256: canonicalManifestHash(repo.manifest),
+    gitEvidence: {
+      repositoryIdentity: 'test/ArkovaCarson',
+      freezeCommitSha: repo.freezeCommitSha,
+      manifestPath: repo.manifestPath,
+    },
+  }, privateKey);
+  return { repo, orchestrator, commitment, freeze };
+}
+
 function ceremony(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutation) {
   const repo = gitRepo(mutateManifest, mutateGit);
   const manifest = repo.manifest;
@@ -556,6 +701,18 @@ function recordThroughReveal(context: ReturnType<typeof ceremony>): void {
 }
 
 describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, () => {
+  it('requires an atomic registry with a callable create-if-absent operation', () => {
+    const context = ceremony();
+    expect(() => createTestOnlyS33AcceptanceOrchestrator({
+      trustRoot: context.trustRoot,
+      consumptionRegistry: {},
+      ledgerPath: join(context.evidenceRoot, 'invalid-registry-ledger.jsonl'),
+      repositoryRoot: context.repo.root,
+      repositoryIdentity: 'test/ArkovaCarson',
+      verificationCommitSha: context.repo.verificationCommitSha,
+    } as never)).toThrow(TypeError);
+  });
+
   it('does not expose a ledger or arbitrary event append capability', () => {
     const context = ceremony();
     expect(ledgerModule).not.toHaveProperty('DurableAcceptanceLedger');
@@ -812,6 +969,109 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
       .toBe('NOT_RUN_PRODUCER_BOUNDARY');
   });
 
+  it('accepts the r10 single-parent restack with final-Team3 bindings, b9 logical predecessor, preserved blobs, and six A/100644 paths', () => {
+    const context = revision10Ceremony();
+    const parsed = parseBatchManifest(context.repo.manifest).parsedJson;
+    const revisions = ((parsed.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+      revisions: Array<Record<string, unknown>>;
+    }).revisions;
+    const revision10 = revisions.at(-1)!;
+    expect(parsed.revision).toBe(10);
+    expect(parsed.corpusRevisionParentCommit).toBe(context.repo.supportCommit);
+    expect(parsed.producerRevisionPredecessorCommit).toBe(WAVE1_REVISION9_COMMIT);
+    expect((parsed.lane3SupportBase as Record<string, unknown>).commit).toBe(context.repo.supportCommit);
+    expect(revision10.directBaseCommit).toBe(context.repo.supportCommit);
+    expect(revision10.lane3SupportBaseCommit).toBe(context.repo.supportCommit);
+    expect(revision10.producerRevisionPredecessorCommit).toBe(WAVE1_REVISION9_COMMIT);
+    expect(revision10.changedEntryIds).toEqual([]);
+    expect(revision10.corpusDataChanged).toBe(false);
+    expect(revision10.normalizedInputChanged).toBe(false);
+    expect(revision10.sourceBlobsUnchangedFromRevision9).toBe(true);
+    expect(revision10.normalizedInputPinsPreservedFromRevision9).toBe(true);
+
+    const lineage = execFileSync('git', [
+      'rev-list', '--parents', '-n', '1', context.repo.freezeCommitSha,
+    ], { cwd: context.repo.root, encoding: 'utf8' }).trim().split(/\s+/);
+    expect(lineage).toEqual([context.repo.freezeCommitSha, context.repo.supportCommit]);
+    const rawDiff = execFileSync('git', [
+      'diff', '--raw', '--no-abbrev', context.repo.supportCommit, context.repo.freezeCommitSha,
+    ], { cwd: context.repo.root, encoding: 'utf8' }).trim().split('\n');
+    expect(rawDiff).toHaveLength(6);
+    expect(rawDiff.every((line) => /^:000000 100644 [0-9a-f]{40} [0-9a-f]{40} A\t/u.test(line))).toBe(true);
+    for (const path of WAVE1_SOURCE_PATHS) {
+      const revision9Blob = execFileSync('git', ['rev-parse', `${WAVE1_REVISION9_COMMIT}:${path}`], {
+        cwd: context.repo.root, encoding: 'utf8',
+      }).trim();
+      const frozenBlob = execFileSync('git', ['rev-parse', `${context.repo.freezeCommitSha}:${path}`], {
+        cwd: context.repo.root, encoding: 'utf8',
+      }).trim();
+      expect(frozenBlob).toBe(revision9Blob);
+    }
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+      .not.toThrow();
+  });
+
+  it.each([
+    ['changed entry ids', (manifest: Record<string, unknown>) => {
+      const revisions = ((manifest.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+        revisions: Array<Record<string, unknown>>;
+      }).revisions;
+      revisions.at(-1)!.changedEntryIds = ['GD-S33-KE-001'];
+    }],
+    ['changed corpus boolean', (manifest: Record<string, unknown>) => {
+      const revisions = ((manifest.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+        revisions: Array<Record<string, unknown>>;
+      }).revisions;
+      revisions.at(-1)!.corpusDataChanged = true;
+    }],
+    ['stale logical predecessor', (manifest: Record<string, unknown>) => {
+      manifest.producerRevisionPredecessorCommit = WAVE1_REVISION9_PREDECESSOR_COMMIT;
+    }],
+    ['stale final-Team3 direct base', (manifest: Record<string, unknown>) => {
+      const revisions = ((manifest.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+        revisions: Array<Record<string, unknown>>;
+      }).revisions;
+      revisions.at(-1)!.directBaseCommit = WAVE1_INITIAL_LANE3_SUPPORT_COMMIT;
+    }],
+    ['stale historical r9 support base', (manifest: Record<string, unknown>) => {
+      const revisions = ((manifest.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+        revisions: Array<Record<string, unknown>>;
+      }).revisions;
+      revisions[7].lane3SupportBaseCommit = manifest.corpusRevisionParentCommit;
+    }],
+  ] satisfies Array<[string, ManifestMutator]>)('rejects r10 %s metadata', (_case, mutate) => {
+    const supportCommit = 'a'.repeat(40);
+    const manifest = revision10ManifestFixture({
+      supportCommit,
+      supportTypesBlob: 'c'.repeat(40),
+      predecessorCommit: WAVE1_REVISION9_COMMIT,
+      sourceBlobs: {
+        [WAVE1_SOURCE_PATHS[0]]: '1'.repeat(40),
+        [WAVE1_SOURCE_PATHS[1]]: '2'.repeat(40),
+        [WAVE1_SOURCE_PATHS[2]]: '3'.repeat(40),
+      },
+    });
+    mutate(manifest);
+    expect(() => parseBatchManifest(JSON.stringify(manifest))).toThrow();
+  });
+
+  it('rejects an r10 merge-parent freeze and source bytes changed after reviewed r9', () => {
+    const mergeParent = revision10Ceremony({ mergeFreezeCommit: true });
+    mergeParent.orchestrator.recordSaltCommitment(mergeParent.commitment.content);
+    expect(() => mergeParent.orchestrator.recordManifestFreeze(
+      mergeParent.freeze.content,
+      mergeParent.repo.manifest,
+    )).toThrow(/exactly one parent|lineage/i);
+
+    const changedBytes = revision10Ceremony({ mutateSourceBytes: true });
+    changedBytes.orchestrator.recordSaltCommitment(changedBytes.commitment.content);
+    expect(() => changedBytes.orchestrator.recordManifestFreeze(
+      changedBytes.freeze.content,
+      changedBytes.repo.manifest,
+    )).toThrow(/revision-9 predecessor corpus source.*does not match|blob.*path/i);
+  });
+
   it('rejects missing or unknown nested production fields, count drift, and Kenya order drift', () => {
     const withUnknown = productionManifestFixture();
     (withUnknown.lane3SupportBase as Record<string, unknown>).reviewerOverride = true;
@@ -905,6 +1165,12 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
     });
     expect(() => parseBatchManifest(JSON.stringify(extraOverlapPair)))
       .toThrow(/remediated.*pair.*complete.*set/i);
+
+    const nearThreshold = productionManifestFixture();
+    ((nearThreshold.selfChecks as Record<string, unknown>)
+      .withinTypeTokenOverlap as { threshold: number }).threshold = 0.8000000000000002;
+    expect(() => parseBatchManifest(JSON.stringify(nearThreshold)))
+      .toThrow(/overlap threshold must be 0\.8/i);
   });
 
   it('rejects every one-field mutation of the exact r2-r9 revision-history contract', () => {
@@ -1049,6 +1315,24 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
       .toThrow(/git|commit|ancestor/i);
   });
 
+  it('ignores PATH-shadowed Git executables at the freeze trust boundary', () => {
+    const context = ceremony();
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    const hostileBin = mkdtempSync(join(tmpdir(), 'arkova-s33-hostile-path-'));
+    tempRoots.push(hostileBin);
+    const hostileGit = join(hostileBin, 'git');
+    writeFileSync(hostileGit, '#!/bin/sh\nexit 97\n', 'utf8');
+    chmodSync(hostileGit, 0o755);
+    const originalPath = process.env.PATH;
+    try {
+      process.env.PATH = hostileBin;
+      expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.manifest))
+        .not.toThrow();
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
   it('binds the freeze parent, support ancestry, and every declared source blob to Git truth', () => {
     const zeroParent = ceremony((manifest) => {
       const zero = '0'.repeat(40);
@@ -1093,6 +1377,12 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
     ['a seventh path', {
       mutateFreezeTree(root: string): void {
         writeFileSync(join(root, 'docs/lane4/seventh-path.txt'), 'not authorized\n', 'utf8');
+      },
+    }],
+    ['a copy from an unchanged support-tree source', {
+      setupSupport(root: string): void {
+        mkdirSync(join(root, 'docs/lane4'), { recursive: true });
+        writeFileSync(join(root, 'docs/lane4/unchanged-copy-source.md'), '# Corpus datasheet\n', 'utf8');
       },
     }],
     ['a deletion', {
