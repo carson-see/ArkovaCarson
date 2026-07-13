@@ -1,0 +1,27 @@
+# Arkova API Gateway — Cloudflare Worker Configuration
+#
+# Serves two custom domains on the arkova.ai zone:
+#   api.arkova.ai  — public API hostname. Path-mapped proxy to the Cloud Run
+#                    worker: /v1/* and /v2/* map to /api/v1|v2/* (the hostname
+#                    contract declared in the v2 OpenAPI `servers` and the
+#                    Python SDK default base_url), /api/* passes through,
+#                    /health proxies to the worker health endpoint.
+#   docs.arkova.ai — documentation landing + /keys.json, the published
+#                    distribution point for proof-bundle Ed25519 verification
+#                    keys (referenced by services/worker verify-proof.ts).
+#
+# This worker is a PERIPHERAL edge proxy only (CLAUDE.md §1.1): no business
+# logic, no secrets, no data access. Core processing stays in services/worker/.
+#
+# `custom_domain = true` makes Cloudflare create/own the DNS records for both
+# hostnames on deploy — no separate DNS change is needed.
+
+name = "arkova-api-gateway"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+workers_dev = false
+
+routes = [
+  { pattern = "api.arkova.ai", custom_domain = true },
+  { pattern = "docs.arkova.ai", custom_domain = true }
+]
