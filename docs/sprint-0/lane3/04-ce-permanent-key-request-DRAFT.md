@@ -1,13 +1,13 @@
 # CE Permanent-Key + Sandbox Request — HISTORICAL DRAFT (DO NOT SEND)
 
-> **2026-07-13 reconciliation — SUPERSEDED; do not send or reuse as a new request.** The substance below was sent through the existing Jeanne/Jeff channel and Credential Engine answered it on 2026-06-24. CE confirmed that the evaluation ends **2026-09-09** (exact expiry instant/timezone still unknown), said it copied Arkova's account to sandbox and sent an invite, and identified the Developer Agreement plus annual support-tier selection as the continuation path. Receipt/acceptance of the sandbox invite and usable sandbox access were not verified in the reviewed artifacts.
+> **2026-07-13 reconciliation — SUPERSEDED; do not send or reuse as a new request.** The substance below was sent through the existing Jeanne/Jeff channel and Credential Engine answered it on 2026-06-24. CE confirmed Arkova's organization CTID as `ce-cd077a1e-7691-4519-b653-d46d1245687f`, confirmed that the evaluation ends **2026-09-09** (exact expiry instant/timezone still unknown), said it copied Arkova's account to sandbox and sent an invite, and identified the Developer Agreement plus annual support-tier selection as the continuation path. Receipt/acceptance of the sandbox invite and usable sandbox access were not verified in the reviewed artifacts.
 > The current continuation draft is `docs/lane3/s33-ce-escalation-send-packet-draft.md`. It asks for the agreement/tier decision deadline, activation lead time, exact expiry timestamp, and July follow-up; it does **not** repeat the answered sandbox/date request.
 > This file is preserved as relationship history only. The founder reserves any external send; technical claims and key/alerting decisions route to the CTO.
 > **Claims discipline (§1.5):** the draft states only what is true — consuming-only eval, publishing kept sandbox-gated, no "listed in the Registry" claim. Do not let edits introduce an overclaim.
 
 ---
 
-**To:** Jeanne Kitchens (jkitchens@credentialengine.org) — CTSO / relationship owner
+**To:** Jeanne Kitchens (jkitchens@credentialengine.org) — Developer Integration Program / relationship owner
 **Cc:** Jeff Grann — technical/CTDL counterpart
 **Subject:** Arkova — continuation path + key custody ahead of the trial window close (~Sept)
 

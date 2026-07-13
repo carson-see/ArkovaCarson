@@ -14,8 +14,8 @@
 
 ## Commercial and pilot clocks recorded, not adjudicated
 
-- Draft price: **USD $500**.
-- Draft billing deadline: before **2026-08-07 at 5:00 p.m. “EST.”** The timezone label is unresolved because August is daylight-saving time in the relevant US zones; legal/business must replace it with an agreed `ET`, `EDT`, or UTC instant.
+- **Competing payment terms:** the draft LOI states **USD $500 in full before 2026-08-07 at 5:00 p.m. “EST,”** while the Pilot Success Criteria states **$250 upfront and $250 on successful completion**. The reviewed packet does not establish which schedule controls. Legal/business must reconcile the amount, timing, success trigger, and controlling document; this index chooses neither term.
+- The LOI's billing timezone label is also unresolved because August is daylight-saving time in the relevant US zones; legal/business must replace it with an agreed `ET`, `EDT`, or UTC instant.
 - Draft pilot start: **2026-08-10 at 9:00 a.m. “EST.”** The same timezone defect remains unresolved.
 - Draft term/volume: 90 days and up to 2,000 **documents** in the LOI, while the [2026-06-23 meeting record](https://docs.google.com/document/d/19n5hgLrOGW5vreaGsr9WeEzTLy5xyqhjBL5HlZJMhIg/edit) describes 2,000 **credits**. The unit is a material unresolved term.
 - Draft legal condition: local-counsel work for the Kenya pilot must be complete. The reviewed artifacts do not prove that condition satisfied.
@@ -24,7 +24,7 @@
 
 1. **Success-criterion count:** the criteria document says “three criteria” and “all three,” but defines only criteria 1 and 2. The CTO and legal/business owners must decide whether to add a third criterion or change the references to two/both. This index does not invent Criterion 3.
 2. **Exhibit A:** the LOI ends with an Exhibit A placeholder rather than the finalized, attached criteria document.
-3. **Commercial trigger:** the drafts require payment before the pilot but also say commercial terms take effect after success criteria and later countersignature/definitive agreement. Legal/business must reconcile the trigger and payment logic.
+3. **Payment schedule and commercial trigger:** the LOI requires the full **$500 before August 7**, while the Success Criteria requires **$250 upfront plus $250 on success**; other draft language ties commercial effect to success criteria and later countersignature/definitive agreement. Legal/business must identify the controlling document and reconcile these terms without engineering inventing a resolution.
 4. **Credits versus documents:** the meeting record and LOI use different units for the 2,000 allocation.
 5. **Timezone:** both August clock times use unresolved `EST` wording.
 6. **Party fields:** address, city/country, Mercy Wairimu's title, HakiChain's named point of contact, and the signature-block legal name/title remain placeholders or incomplete.
@@ -63,7 +63,7 @@ This list is **candidate packet input only**. Lane 3 has not formally accepted W
 
 - [ ] Criterion-count defect resolved by the authorized owners.
 - [ ] Exhibit A finalized and actually attached.
-- [ ] Commercial trigger, allocation unit, and both timezone labels resolved.
+- [ ] Competing $500-in-full versus $250-upfront/$250-on-success terms, commercial trigger, allocation unit, and both timezone labels resolved by legal/business.
 - [ ] Party/contact/signature placeholders completed and verified.
 - [ ] Kenya legal condition evidenced or explicitly blocked.
 - [ ] Lane 3 formally accepts the applicable corpus input against the binding protocol and leakage manifest.

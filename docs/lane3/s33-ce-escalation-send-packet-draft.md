@@ -11,6 +11,7 @@ The earlier permanent-key and sandbox request is historical and must not be sent
 - the Complimentary Evaluation and API Trial Agreement was completed on 2026-06-09;
 - the three-month evaluation window ends on **2026-09-09**; the exact expiry instant and timezone remain unconfirmed;
 - Credential Engine copied Arkova's account to its sandbox and sent an invite; Arkova's receipt, acceptance, and usable sandbox access are not established by the reviewed artifacts;
+- Credential Engine identified Arkova's organization CTID as **`ce-cd077a1e-7691-4519-b653-d46d1245687f`**; this is organization identity evidence, not proof that Arkova or any credential is published or listed;
 - the continuing production-access path is the Developer Agreement plus a selected annual support tier; and
 - direct CTID retrieval, Graph Search, and offline download remain available consuming options.
 
@@ -50,7 +51,7 @@ Arkova
 
 - **Confirmed:** evaluation agreement completed 2026-06-09; evaluation ends 2026-09-09.
 - **Unknown:** exact expiry time/timezone; selected Developer Agreement support tier; decision/activation lead time; whether the sandbox invite was received and accepted; whether usable sandbox credentials are in Arkova's custody.
-- **Measured in source correspondence:** CE said the production account was approved and named Arkova's organization CTID. This packet does not elevate that to a claim that Arkova or its credentials are published or listed.
+- **Measured in current correspondence:** Jeanne Kitchens owns Credential Engine's Developer Integration Program, Jeff Grann is the technical/CTDL counterpart, and CE named Arkova's organization CTID as `ce-cd077a1e-7691-4519-b653-d46d1245687f`. These facts do not establish that Arkova or any credential is published or listed.
 - **Not asserted:** live Registry publishing, a production Registry-consuming client, credential-level CTID issuance, W3C VC issuance, or partner acceptance of Arkova's implementation.
 - **Secret hygiene:** no API key or secret value belongs in this packet, a ticket, a log, or a reply thread.
 - **Technical decisions:** route implementation, key-custody, alerting, and claims decisions to the CTO. The founder-reserved action is the external send only.
