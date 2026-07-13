@@ -2,25 +2,24 @@ import { resolveRoute, WORKER_ORIGIN } from './router';
 
 /**
  * Published distribution point for proof-bundle Ed25519 verification keys
- * (referenced from services/worker verify-proof.ts). The list is empty until
+ * (referenced from services/worker verify-proof.ts). The shape IS the
+ * verifier contract — `PublishedKeys` in packages/verifier-cli/src/types.ts
+ * and packages/arkova-py/src/arkova/proofs.py: a top-level `keys` array of
+ * {kid, alg, pem} entries that a signed bundle's `signing_key_id` resolves
+ * against (unresolvable ids fail closed). The list is empty until
  * PROOF_SIGNING_* is configured on the production worker; publish the key
  * here in the same change that enables signing.
  */
 const KEYS_JSON = {
-  service: 'arkova-proof-signing-keys',
-  updated: '2026-07-12',
-  bundle_signing_keys: [] as Array<{
-    key_id: string;
-    algorithm: 'Ed25519';
-    public_key_pem: string;
-    valid_from: string;
-  }>,
+  keys: [] as Array<{ kid: string; alg: 'Ed25519'; pem: string }>,
+  updated: '2026-07-13',
   notice:
-    'Verification keys for signed proof envelopes are published here as ' +
-    '{key_id, algorithm, public_key_pem, valid_from}. No signing keys are ' +
-    'currently published; signed proof envelopes (?format=signed) are not ' +
-    'yet enabled in production. Unsigned proof bundles remain independently ' +
-    'verifiable without any key.',
+    'Verification keys for signed proof envelopes are published in the ' +
+    '`keys` array as {kid, alg, pem}; a signed bundle\'s signing_key_id ' +
+    'resolves against keys[].kid. No signing keys are currently published; ' +
+    'signed proof envelopes (?format=signed) are not yet enabled in ' +
+    'production. Unsigned proof bundles remain independently verifiable ' +
+    'without any key.',
 };
 
 const API_INDEX = {

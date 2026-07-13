@@ -12,9 +12,40 @@ describe('resolveRoute — api.arkova.ai', () => {
     expect(r).toEqual({ kind: 'proxy', path: '/api/v2/search' });
   });
 
-  it('passes /api/* through unchanged so canonical full paths keep working', () => {
-    const r = resolveRoute('api.arkova.ai', '/api/v1/verify/batch');
-    expect(r).toEqual({ kind: 'proxy', path: '/api/v1/verify/batch' });
+  it('passes canonical /api/v1/* and /api/v2/* through unchanged', () => {
+    expect(resolveRoute('api.arkova.ai', '/api/v1/verify/batch')).toEqual({
+      kind: 'proxy',
+      path: '/api/v1/verify/batch',
+    });
+    expect(resolveRoute('api.arkova.ai', '/api/v2/search')).toEqual({
+      kind: 'proxy',
+      path: '/api/v2/search',
+    });
+  });
+
+  it('passes the canonical spec path through', () => {
+    expect(resolveRoute('api.arkova.ai', '/api/docs/spec.json')).toEqual({
+      kind: 'proxy',
+      path: '/api/docs/spec.json',
+    });
+  });
+
+  it('does NOT expose non-versioned legacy /api/* surfaces on the public hostname', () => {
+    // P1 review (carson-see, PR #1505): the worker mounts admin, treasury,
+    // billing, audit, and anchor-revoke routes under /api — none of them are
+    // part of the public contract and none may be reachable via api.arkova.ai.
+    for (const path of [
+      '/api/admin/anything',
+      '/api/treasury/balance',
+      '/api/billing/portal',
+      '/api/audit/export',
+      '/api/anchor-revoke',
+      '/api/health',
+      '/api/docs',
+      '/api/docs/other.json',
+    ]) {
+      expect(resolveRoute('api.arkova.ai', path).kind, path).toBe('not_found');
+    }
   });
 
   it('proxies /health to the worker health endpoint', () => {

@@ -19,11 +19,18 @@ code and SDK defaults (v2 OpenAPI `servers`, `packages/arkova-py` default
 - `/v1/*` → worker `/api/v1/*` and `/v2/*` → worker `/api/v2/*` — this is the
   hostname contract the Python SDK (`base_url="https://api.arkova.ai/v2"`,
   sibling-`/v1` routing) and the v2 OpenAPI `servers` entry rely on.
-- `/api/*` → passthrough (canonical full paths keep working).
+- `/api/v1/*`, `/api/v2/*`, `/api/docs/spec.json` → passthrough (canonical
+  full paths keep working). **No blanket `/api/*`** — the worker also mounts
+  non-versioned `/api/admin`, `/api/treasury`, `/api/billing`, `/api/audit`,
+  and `/api/anchor-revoke` surfaces that are NOT public contract and must
+  never resolve on this hostname (P1 review, PR #1505; regression-tested).
 - `/health` → worker `/health`; `/openapi.json` → worker `/api/docs/spec.json`.
 - Everything else → 404. **Deliberately an allowlist**: internal worker
   routes (`/jobs/*`, `/webhook-retries`, cron surfaces) are NOT exposed on
   the public hostname. Do not widen to a catch-all.
+- `docs.arkova.ai/keys.json` shape is the verifier contract (`PublishedKeys`
+  in `packages/verifier-cli/src/types.ts`): top-level `keys[]` of
+  `{kid, alg, pem}` — `signing_key_id` resolves against `keys[].kid`.
 
 ## Rules for this folder
 

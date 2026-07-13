@@ -13,9 +13,12 @@ const NOT_FOUND: Route = { kind: 'not_found' };
 
 /**
  * Deliberately an allowlist, not a catch-all: only the versioned API
- * surface, its /api/* canonical form, /health, and the spec are reachable
- * through api.arkova.ai. Internal worker routes (/jobs/*, /webhook-retries,
- * ...) are not exposed on the public hostname.
+ * surface (/v1, /v2 and their canonical /api/v1, /api/v2 forms), /health,
+ * and the OpenAPI spec are reachable through api.arkova.ai. Everything else
+ * the worker mounts — /jobs/*, /webhook-retries, and the non-versioned
+ * /api/admin, /api/treasury, /api/billing, /api/audit, /api/anchor-revoke
+ * surfaces — is NOT public contract and must never resolve on this hostname
+ * (P1 review, PR #1505).
  */
 export function resolveRoute(hostname: string, pathname: string): Route {
   // Normalize away any dot-segments so /v1/../../jobs can't escape the
@@ -32,7 +35,11 @@ export function resolveRoute(hostname: string, pathname: string): Route {
       return { kind: 'proxy', path: `/api${normalized}` };
     if (normalized === '/v2' || normalized.startsWith('/v2/'))
       return { kind: 'proxy', path: `/api${normalized}` };
-    if (normalized === '/api' || normalized.startsWith('/api/'))
+    if (normalized === '/api/v1' || normalized.startsWith('/api/v1/'))
+      return { kind: 'proxy', path: normalized };
+    if (normalized === '/api/v2' || normalized.startsWith('/api/v2/'))
+      return { kind: 'proxy', path: normalized };
+    if (normalized === '/api/docs/spec.json')
       return { kind: 'proxy', path: normalized };
     return NOT_FOUND;
   }
