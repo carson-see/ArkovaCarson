@@ -1,7 +1,10 @@
 import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { credentialSourcesRouter } from './credential-sources.js';
+import {
+  credentialSourcesRouter,
+  __setCredentialSourceFetchForTests,
+} from './credential-sources.js';
 
 const {
   mockFrom,
@@ -129,6 +132,13 @@ vi.mock('../../utils/orgCredits.js', () => ({
   deductOrgCredit: mockDeductOrgCredit,
 }));
 
+// SCRUM-2484: the router reads config.recipientIdentifierPepper. Mock config so
+// the test does not load the real config singleton (which requires prod secrets
+// at import time). A test pepper is supplied so the keyed-HMAC path is exercised.
+vi.mock('../../config.js', () => ({
+  config: { recipientIdentifierPepper: 'test-recipient-pepper-0123456789' },
+}));
+
 const { mockDispatchWebhookEvent } = vi.hoisted(() => ({
   mockDispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
@@ -175,6 +185,11 @@ describe('credentialSourcesRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockHtmlFetch();
+    // SCRUM-2483: production routes credential-source imports through the
+    // IP-pinned safeFetch (real DNS). These tests stub globalThis.fetch and
+    // mock the urlGuard, so inject a plain fetch override that delegates to the
+    // stubbed global — exercising the router without a DNS server.
+    __setCredentialSourceFetchForTests((url, init) => globalThis.fetch(url, init));
     mockProfileSingle.mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
     mockAnchorsMaybeSingle.mockResolvedValue({ data: null, error: null });
     mockDeductOrgCredit.mockResolvedValue({ allowed: true });
@@ -296,7 +311,10 @@ describe('credentialSourcesRouter', () => {
     });
     expect(anchorPayload.metadata).not.toHaveProperty('credential_recipient_display');
     expect(anchorPayload.metadata).not.toHaveProperty('recipient_display_name');
-    expect(anchorPayload.metadata.recipient_identifier_hash).toMatch(/^[a-f0-9]{64}$/);
+    // SCRUM-2484: the recipient identifier hash is NO LONGER stored in
+    // anchors.metadata (which get_public_anchor projects to anonymous callers).
+    // It lives only in the anchor_recipients linking row.
+    expect(anchorPayload.metadata).not.toHaveProperty('recipient_identifier_hash');
 
     const recipientPayload = mockRecipientInsert.mock.calls[0][0] as Record<string, unknown>;
     expect(recipientPayload).toEqual(expect.objectContaining({

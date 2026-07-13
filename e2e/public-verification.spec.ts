@@ -140,7 +140,7 @@ test.describe('Public Verification', () => {
       filename: 'e2e_public_secured.pdf',
       title: /^Verified on/i,
       badge: 'Secured',
-      subtitle: 'This record is permanently anchored.',
+      subtitle: 'This record’s fingerprint is permanently anchored.',
       showsProof: true,
     },
     {
@@ -187,15 +187,23 @@ test.describe('Public Verification', () => {
           // (any terminal proof state: SECURED/EXPIRED/REVOKED/SUPERSEDED), so it
           // stays visible for a record that HAS a proof.
           await expect(page.getByText('Cryptographic Proof')).toBeVisible();
-          // FE-PROOF-GATE (SCRUM-2501): the "Download Proof" AFFORDANCE is a
-          // separate gate — isProofDownloadable is SECURED-only. A terminal-but-
-          // non-SECURED record (EXPIRED/REVOKED) still shows the proof section but
-          // must NOT offer a downloadable "Verified" proof.
-          if (statusCase.status === 'SECURED') {
-            await expect(page.getByText('Download Proof')).toBeVisible();
-          } else {
+          // FE-PROOF-GATE (SCRUM-2501 / contract §3): the "Download Proof"
+          // affordance now reflects real proof AVAILABILITY, not just status.
+          if (statusCase.status !== 'SECURED') {
+            // Terminal-but-non-SECURED (EXPIRED/REVOKED/SUPERSEDED): the download
+            // gate is closed entirely (isProofDownloadable is SECURED-only) — no
+            // download affordance at all, regardless of the proof endpoint.
             await expect(page.getByText('Download Proof')).not.toBeVisible();
           }
+          // For SECURED we deliberately do NOT assert a specific download
+          // outcome here: this test hits the LIVE worker, and whether a real
+          // batch proof exists for a directly-created fixture is environment-
+          // dependent (404 → honest empty-state, or a real bundle → download).
+          // The full state matrix (state 1 download vs state 2 empty vs the
+          // retry/record-missing branches) is pinned deterministically in
+          // e2e/public-proof-gate.spec.ts via contract-verbatim /proof
+          // interception. Here we only assert the stable, worker-independent
+          // facts (section present above; no ACTIVE badge below).
         } else {
           await expect(page.getByText('Document Verified')).not.toBeVisible();
           await expect(page.getByText('Cryptographic Proof')).not.toBeVisible();
@@ -205,6 +213,15 @@ test.describe('Public Verification', () => {
         if (statusCase.status === 'SECURED') {
           await expect(page.getByText('ACTIVE', { exact: true })).not.toBeVisible();
         }
+
+        // SCRUM-2495 (ABUSE-DISCLAIMER): the does-not-assert disclaimer is
+        // always-visible on the public verification surface, independent of
+        // status/proof gating — pin it here so a regression that hides it
+        // (e.g. re-gating behind hasProof) fails E2E, not just component tests.
+        await expect(page.getByTestId('does-not-assert-disclaimer')).toBeVisible();
+        await expect(
+          page.getByText('What This Anchor Does and Does Not Assert')
+        ).toBeVisible();
       } finally {
         await deleteTestAnchor(serviceClient, anchor.id);
       }

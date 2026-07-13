@@ -1,6 +1,10 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-06-29 (QUEUE-05 manual-run guard — queue-resolution.ts now owner-inclusive + sub-org-aware)_
+_Last updated: 2026-07-06 (OPS-03 SLO stats endpoint — admin-ops-slo.ts)_
+
+## 2026-07-06 — Lane 2 s3: OPS-03 SLO dashboard stats endpoint (SCRUM-2401)
+
+`admin-ops-slo.ts` adds `GET /api/admin/ops-slo-stats` (`handleOpsSloStats`, platform-admin gated via the shared `isPlatformAdmin` DB-flag helper — DB never touched before the gate). Read-only rollup of FIVE SLO surfaces computed **live on every request** (deliberately NO new table/migration — the story is scoped non-migration T2): **anchorSecuredRate** (existing `get_anchor_status_counts_fast` RPC / mig 0324 cache; -1 sentinels map to `available:false`, never a fake zero), **connectorQueue** (`connector_artifact` status scan, bounded 20k; depth = pending|queued|processing|materialized, mirrors the drain's WORK_STATUSES; untyped `(db as any)` cast — 0343 not yet in generated types), **creditConservation** (the SAME `org_credit_ledger_divergence` RPC `credit-conservation-reconciler.ts` calls — the reconciler persists nothing, so the dashboard re-runs the identical live read; response carries org_id + counts ONLY, never raw balance/divergence — §1.4 PII rule matches the reconciler's bucket-only Sentry alert), **webhookDelivery** (`webhook_delivery_logs` 24h window, success-rate), **apiErrors** (`verification_events` 24h window, `result='error'` rate — the only durable per-request API outcome log; rate-limit/query stats are in-memory). Every surface is independently fail-OPEN: a read failure → `available:false, breach:false` (unknown ≠ breach) and never blanks the other four. `overallBreach` = OR of surface breaches. Breach thresholds are module constants (90% secured, 90% delivery, 5% API error, depth>500). Consumed by `src/pages/OpsSloDashboardPage.tsx` via `useOpsSloStats`.
 
 ## 2026-06-29 — Lane 2 s2: manual org queue run guard owner-inclusive + sub-org-aware (QUEUE-05 / SCRUM-2351)
 

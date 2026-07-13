@@ -122,20 +122,34 @@ describe('SCRUM-1613 — accredibleCredentialToEvidence', () => {
   });
 
   it('hashes the recipient email (lowercased + trimmed) into recipientIdentifierHash', () => {
+    // SCRUM-2484: the recipient hash is a keyed HMAC — a pepper is required.
+    const pepper = 'test-recipient-pepper-0123456789';
     const a = accredibleCredentialToEvidence(PLAIN_CREDENTIAL, {
       fetchedAt: '2026-05-01T00:00:00.000Z',
       payloadHash: RAW_BYTES_HASH,
       recipientEmail: 'Pat@Example.com',
+      recipientPepper: pepper,
     });
     const b = accredibleCredentialToEvidence(PLAIN_CREDENTIAL, {
       fetchedAt: '2026-05-01T00:00:00.000Z',
       payloadHash: RAW_BYTES_HASH,
       recipientEmail: '  pat@example.com  ',
+      recipientPepper: pepper,
     });
     expect(a.evidence.credential.recipientIdentifierHash).toEqual(
       b.evidence.credential.recipientIdentifierHash,
     );
     expect(a.evidence.credential.recipientIdentifierHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('omits the recipient hash when no pepper is available (never a bare sha256) (SCRUM-2484)', () => {
+    const result = accredibleCredentialToEvidence(PLAIN_CREDENTIAL, {
+      fetchedAt: '2026-05-01T00:00:00.000Z',
+      payloadHash: RAW_BYTES_HASH,
+      recipientEmail: 'pat@example.com',
+      // no recipientPepper
+    });
+    expect(result.evidence.credential.recipientIdentifierHash).toBeUndefined();
   });
 
   it('does NOT leak the raw recipient email anywhere in the evidence package', () => {
@@ -210,12 +224,14 @@ describe('SCRUM-1613 — accredibleCredentialToEvidence', () => {
         payloadByteLength: RAW_BYTES.length,
       },
     );
-    // Different recipient email -> different recipientIdentifierHash.
+    // Different recipient email -> different recipientIdentifierHash (SCRUM-2484:
+    // the keyed HMAC needs a pepper to produce a hash at all).
     const differentRecipient = accredibleCredentialToEvidence(PLAIN_CREDENTIAL, {
       fetchedAt: '2026-05-01T00:00:00.000Z',
       payloadHash: RAW_BYTES_HASH,
       payloadByteLength: RAW_BYTES.length,
       recipientEmail: 'someone.else@example.com',
+      recipientPepper: 'test-recipient-pepper-0123456789',
     });
 
     expect(differentId.package.evidencePackageHash).not.toBe(

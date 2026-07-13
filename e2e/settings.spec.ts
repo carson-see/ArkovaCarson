@@ -102,6 +102,21 @@ test.describe('Settings', () => {
         await expect(addBtn).toBeVisible();
       }
     });
+
+    // WH-01/02/03 (SCRUM-2396/2397/2398): the page also composes the
+    // delivery history, failed deliveries (DLQ), and event catalog sections.
+    test('webhook page shows delivery history, failed deliveries, and event catalog', async ({ orgAdminPage }) => {
+      await orgAdminPage.goto('/settings/webhooks');
+
+      await expect(orgAdminPage.getByRole('heading', { name: /Delivery History/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByRole('heading', { name: /Failed Deliveries/i })).toBeVisible();
+      await expect(orgAdminPage.getByRole('heading', { name: /Available Events/i })).toBeVisible();
+
+      // WH-01 catalog honesty: live anchor events are marked Active, deferred
+      // credential events are marked Not yet active.
+      await expect(orgAdminPage.getByTestId('catalog-event-anchor.secured').getByText('Active')).toBeVisible();
+      await expect(orgAdminPage.getByTestId('catalog-event-credential.issued').getByText('Not yet active')).toBeVisible();
+    });
   });
 
   test.describe('Credential Templates Page', () => {

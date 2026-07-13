@@ -61,6 +61,10 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
 - `ci.yml` gained three steps: "Audit local migration ledger integrity (SCRUM-2500)" + "Block migration agents.md collisions (S0-E4)" (first lint job) and "Tiered-merge authority (S0-E4)" (policy-lints, advisory).
 - `migration-drift.yml` gained "Full-ledger numeric-integrity audit (SCRUM-2500 / S0-4.2)" — runs `check-ledger-numeric-integrity.ts` over the prod ledger payload the drift step already fetches (read-only; reuses the same token; skipped only when the fetch didn't run, e.g. Dependabot). Closes the gap that let the 2026-06-15 timestamp re-regression pass unseen.
 
+## E2E worker health-wait widened (2026-07-12)
+
+- `ci.yml` "Start worker for E2E tests": health-check budget 60s → 120s (tsx cold-compiles the worker on first boot; observed healthy boots in the #1439/#1443 runs took ~10s, but the margin was thin for cold npm caches). The gate remains hard-fail (`exit 1` + worker-log dump) — specs never run against a dead worker; only the false-negative window shrank. Shipped alongside the `e2e/api-keys.spec.ts:166` strict-mode fix (see `e2e/agents.md` 2026-07-12).
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails

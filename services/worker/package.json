@@ -13,6 +13,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "smoke:docusign": "tsx scripts/ops/docusign-connect-smoke.ts",
+    "smoke:ops-slo": "tsx scripts/ops/ops-slo-smoke.ts",
     "eval:regression": "tsx scripts/nessie-eval-regression.ts",
     "audit:golden": "tsx scripts/golden-distribution-audit.ts",
     "build:circuit": "bash circuits/build.sh"
@@ -55,6 +56,7 @@
     "stripe": "22.2.1",
     "swagger-ui-express": "5.0.1",
     "tiny-secp256k1": "2.2.4",
+    "undici": "7.28.0",
     "unzipper": "0.12.5",
     "viem": "2.54.6",
     "ws": "8.21.0",

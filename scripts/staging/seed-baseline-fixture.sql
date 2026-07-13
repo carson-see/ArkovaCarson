@@ -164,7 +164,7 @@ ON CONFLICT (id) DO NOTHING;
 -- ---------------------------------------------------------------------------
 INSERT INTO public.anchors (
   id, user_id, org_id, filename, fingerprint, status,
-  file_size, file_mime, description, metadata, created_at
+  file_size, file_mime, description, metadata, legal_hold, created_at
 ) VALUES (
   '5eed0000-0000-0000-0000-0000000000c1',
   '5eed0000-0000-0000-0000-0000000000a1',
@@ -176,9 +176,11 @@ INSERT INTO public.anchors (
   'application/pdf',
   'Baseline soak-rig fixture anchor — synthetic; satisfies preflight Check 5 (submitted_anchors).',
   '{"_fixture": true, "_purpose": "staging-honesty-preflight baseline", "_synthetic": true}'::jsonb,
+  true,
   NOW()
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE
+SET legal_hold = true;
 
 COMMIT;
 
