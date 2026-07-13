@@ -5,8 +5,12 @@ _Last updated: 2026-07-13_
 ## 2026-07-13 S3.3 Lane-4 batch acceptance support
 
 - `s33-batch-acceptance.ts` parses the actual Lane-4 manifest bytes and derives
-  the complete entry universe; callers cannot supply ids or lower the fixed
-  `ceil(10%)`, minimum-5 review floor. The ceremony uses four distinct records:
+  the complete entry universe. The strict schema includes the producer/Lane-3
+  bindings, three corpus-source blobs, three reconciled count maps, Kenya-first
+  ids/order, and all ten real Wave-1 self-check records/statuses (including the
+  declared CTO/L3 blockers); toy `selfChecks.structural` manifests fail closed.
+  Callers cannot supply ids or lower the fixed `ceil(10%)`, minimum-5 review
+  floor. The ceremony uses four distinct records:
   a manifest-free CTO-signed salt commitment, a CTO-signed manifest freeze that
   proves the exact Git blob/ancestor, a CTO-signed selection policy bound to
   both digests, and the later salt reveal. All artifact boundaries accept only
@@ -21,6 +25,11 @@ _Last updated: 2026-07-13_
   No CTO key, registry backend, or approval is embedded; both production trust
   dependencies remain null in the code-owned descriptor, so production fails
   closed until the CTO configures them.
+- Every selection and lexical result is recursively frozen before it crosses
+  the orchestration boundary, including sample ids, metrics/hits, and evidence.
+  Audit-transcript reads open the final path with `O_NOFOLLOW`, verify the same
+  fd is a single-link regular file with owner-only permissions, and read from
+  that fd; no path re-open exists between validation and parsing.
 - Lexical acceptance loads policy-bound held-out/corpus text artifacts and
   recomputes every n=6..13 metric at one orchestration boundary. There is no
   public policy-only apply function and no API accepts caller-supplied metrics

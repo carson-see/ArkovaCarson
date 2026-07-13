@@ -7,10 +7,13 @@ import {
 } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -51,26 +54,181 @@ afterEach(() => {
 
 const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex');
 
-function manifestContent(entryCount: number, overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({
+interface ProductionManifestFixtureEntry {
+  id: string;
+  domain: 'au-ke-priority-documents' | 'professional-licensing' | 'out-of-distribution';
+  credentialType: 'LICENSE' | 'DEGREE' | 'CERTIFICATE' | 'OTHER';
+  normalizedInputSha256: string;
+}
+
+const CORPUS_SLICE_BY_DOMAIN = {
+  'au-ke-priority-documents': 's33-au-ke-heldout',
+  'professional-licensing': 's33-licensing-heldout',
+  'out-of-distribution': 's33-ood-negative',
+} as const;
+
+function countByFixtureField(
+  entries: readonly ProductionManifestFixtureEntry[],
+  field: 'domain' | 'credentialType',
+): Record<string, number> {
+  return entries.reduce<Record<string, number>>((counts, entry) => {
+    counts[entry[field]] = (counts[entry[field]] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function productionManifestFixture(entryCount: number): Record<string, unknown> {
+  const kenyaCount = Math.min(11, Math.max(1, Math.floor(entryCount * 11 / 81)));
+  const oodCount = Math.min(entryCount - kenyaCount - 1, Math.max(1, Math.floor(entryCount * 9 / 81)));
+  const auCount = Math.min(
+    entryCount - kenyaCount - oodCount - 1,
+    Math.max(1, Math.floor(entryCount * 11 / 81)),
+  );
+  const licensingCount = entryCount - kenyaCount - auCount - oodCount;
+  const entries: ProductionManifestFixtureEntry[] = [
+    ...Array.from({ length: kenyaCount }, (_, index) => ({
+      id: `GD-S33-KE-${String(index + 1).padStart(3, '0')}`,
+      domain: 'au-ke-priority-documents' as const,
+      credentialType: 'LICENSE' as const,
+      normalizedInputSha256: sha256(`kenya-${index + 1}`),
+    })),
+    ...Array.from({ length: auCount }, (_, index) => ({
+      id: `GD-S33-AU-${String(index + 1).padStart(3, '0')}`,
+      domain: 'au-ke-priority-documents' as const,
+      credentialType: 'DEGREE' as const,
+      normalizedInputSha256: sha256(`australia-${index + 1}`),
+    })),
+    ...Array.from({ length: licensingCount }, (_, index) => ({
+      id: `GD-S33-NUR-${String(index + 1).padStart(3, '0')}`,
+      domain: 'professional-licensing' as const,
+      credentialType: 'CERTIFICATE' as const,
+      normalizedInputSha256: sha256(`licensing-${index + 1}`),
+    })),
+    ...Array.from({ length: oodCount }, (_, index) => ({
+      id: `GD-S33-OOD-${String(index + 1).padStart(3, '0')}`,
+      domain: 'out-of-distribution' as const,
+      credentialType: 'OTHER' as const,
+      normalizedInputSha256: sha256(`ood-${index + 1}`),
+    })),
+  ];
+  const kenyaEntryIds = entries.filter(({ id }) => id.startsWith('GD-S33-KE-')).map(({ id }) => id);
+  const oodEntryIds = entries.filter(({ domain }) => domain === 'out-of-distribution').map(({ id }) => id);
+  const byCorpusSlice = entries.reduce<Record<string, number>>((counts, entry) => {
+    const slice = CORPUS_SLICE_BY_DOMAIN[entry.domain];
+    counts[slice] = (counts[slice] ?? 0) + 1;
+    return counts;
+  }, {});
+  const currentChangedId = entries.find(({ domain }) => domain !== 'out-of-distribution')?.id ?? entries[0].id;
+  const verifiedUnchangedId = entries.find(({ id }) => id !== currentChangedId)?.id ?? currentChangedId;
+  const supportCommit = 'd'.repeat(40);
+  const sourceCommit = '5'.repeat(40);
+  return {
     schemaVersion: 1,
     batchId: 'S33-W1',
-    revision: 6,
+    revision: 9,
+    producerLane: 'Lane 4',
+    acceptanceAuthority: 'Lane 3',
+    status: 'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
+    corpusRevisionParentCommit: sourceCommit,
+    producerRevisionPredecessorCommit: sourceCommit,
+    lane3SupportBase: {
+      commit: supportCommit,
+      typesPath: 'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
+      typesBlob: 'c'.repeat(40),
+      reviewState: 'PENDING_LANE3_REVIEW_PR',
+    },
+    corpusSourceBlobs: {
+      'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts': '1'.repeat(40),
+      'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts': '2'.repeat(40),
+      'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts': '3'.repeat(40),
+    },
     intendedSplit: 'held-out-candidate',
+    reviewOrder: 'kenya-first',
+    acceptanceScope: 'whole-batch-only',
     entryCount,
     counts: {
-      byDomain: { 'professional-licensing': entryCount },
-      byCredentialType: { LICENSE: entryCount },
+      byDomain: countByFixtureField(entries, 'domain'),
+      byCredentialType: countByFixtureField(entries, 'credentialType'),
+      byCorpusSlice,
     },
-    selfChecks: { structural: { status: 'PASS' } },
-    entries: Array.from({ length: entryCount }, (_, index) => ({
-      id: `GD-S33-${String(index + 1).padStart(3, '0')}`,
-      domain: 'professional-licensing',
-      credentialType: 'LICENSE',
-      normalizedInputSha256: sha256(`entry-${index + 1}`),
-    })),
-    ...overrides,
-  }, null, 2);
+    kenyaEntryIds,
+    selfChecks: {
+      exactCorpusManifestDatasheetBijection: { status: 'PASS', entryCount },
+      normalizedInputFingerprintsPinned: {
+        status: 'PASS',
+        algorithm: 'sha256(normalizeForFingerprint(strippedText))',
+      },
+      authorizedDocumentRevisions: {
+        status: 'PASS',
+        revisions: [{
+          revision: 9,
+          authority: 'RTE production-schema fixture',
+          changedEntryIds: [currentChangedId],
+          verifiedUnchangedEntryIds: [verifiedUnchangedId],
+          changes: ['Fixture preserves the production revision-nine contract shape'],
+          corpusSourceTextChanged: false,
+          normalizedInputChanged: false,
+          normalizedInputPinsPreservedFromRevision8: true,
+          remainingSubstantiveGroundTruthFields: {
+            [currentChangedId]: 5,
+            nonOodMinimum: 5,
+            oodPureAbstention: 2,
+          },
+          producerRevisionPredecessorCommit: sourceCommit,
+          lane3SupportBaseCommit: supportCommit,
+        }],
+      },
+      withinTypeTokenOverlap: {
+        status: 'PASS',
+        threshold: 0.8,
+        metric: 'multiset overlap coefficient (shared token occurrences / shorter input token count)',
+        violations: [],
+        remediatedPairScores: [],
+      },
+      oodFiveFieldSemantics: {
+        status: 'BLOCKED_PROTOCOL_CONTRADICTION_CTO_L3',
+        entryIds: oodEntryIds,
+        producerTruth: 'Pure abstention labels contain only the protocol-declared fields.',
+        contradiction: 'The producer must not invent extraction labels to pad abstention truth.',
+        resolutionOwner: 'Lane 3 / CTO',
+      },
+      cpeSubtypeRatification: { status: 'BLOCKED_CTO_L3' },
+      taxonomyAdjudicationSet: { status: 'BLOCKED_CTO_L3', entryIds: kenyaEntryIds.slice(0, 1) },
+      issuedDateAdjudicationSet: {
+        status: 'BLOCKED_CTO_L3',
+        entryIds: [currentChangedId],
+        resolvedEntryIdsInRevision9: [verifiedUnchangedId],
+      },
+      batchScopeOnly: {
+        status: 'PASS',
+        excludedFromBatch: ['services/worker/src/ai/eval/golden-dataset-s33-types.ts'],
+        protocolAllowedDiffPaths: [
+          'docs/lane4/s33-wave1-batch-manifest.json',
+          'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
+          'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
+          'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
+        ],
+        dependency: {
+          owner: 'Lane 3',
+          branch: 'codex/s33-l3-acceptance-tooling',
+          commit: supportCommit,
+          typesPath: 'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
+          typesBlob: 'c'.repeat(40),
+          presentIdenticallyInBase: true,
+          includedInProducerDiff: false,
+          reviewState: 'PENDING_LANE3_REVIEW_PR',
+        },
+        reason: 'The producer diff is limited to the protocol-owned corpus packet.',
+        authority: 'Batch protocol section 1',
+      },
+      lane3Acceptance: { status: 'NOT_RUN_PRODUCER_BOUNDARY' },
+    },
+    entries,
+  };
+}
+
+function manifestContent(entryCount: number, overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({ ...productionManifestFixture(entryCount), ...overrides }, null, 2);
 }
 
 function testKey(): {
@@ -180,13 +338,13 @@ function ceremony(entryCount = 81) {
   const freeze = signedArtifact<ManifestFreezePayload>({
     artifactType: 'arkova-s33-manifest-freeze',
     artifactVersion: '1.0.0',
-    freezeId: 'S33-W1-r6-freeze-1',
+    freezeId: 'S33-W1-r9-freeze-1',
     signerIdentity: 'Arkova CTO',
     signingKeyId: 'cto-policy-test-key-1',
     signedAtUtc: '2026-07-13T13:01:00.000Z',
     commitmentArtifactCanonicalSha256: canonicalManifestHash(commitment.content),
     batchId: 'S33-W1',
-    revision: 6,
+    revision: 9,
     manifestRawSha256: rawManifestHash(manifest),
     manifestCanonicalSha256: canonicalManifestHash(manifest),
     gitEvidence: {
@@ -198,20 +356,20 @@ function ceremony(entryCount = 81) {
   const policy = signedArtifact<SelectionPolicyPayload>({
     artifactType: 'arkova-s33-selection-policy',
     artifactVersion: '1.0.0',
-    policyId: 'S33-W1-r6-selection-1',
+    policyId: 'S33-W1-r9-selection-1',
     signerIdentity: 'Arkova CTO',
     signingKeyId: 'cto-policy-test-key-1',
     signedAtUtc: '2026-07-13T13:02:00.000Z',
     commitmentArtifactCanonicalSha256: canonicalManifestHash(commitment.content),
     freezeArtifactCanonicalSha256: canonicalManifestHash(freeze.content),
     batchId: 'S33-W1',
-    revision: 6,
+    revision: 9,
     prng: 'xorshift32-v1',
     sampleRule: 'ceil(10%),minimum-5,capped-at-entry-count',
   }, privateKey);
   const reveal: SaltRevealRecord = {
     schemaVersion: 1,
-    revealId: 'S33-W1-r6-reveal-1',
+    revealId: 'S33-W1-r9-reveal-1',
     commitmentArtifactCanonicalSha256: canonicalManifestHash(commitment.content),
     freezeArtifactCanonicalSha256: canonicalManifestHash(freeze.content),
     policyArtifactCanonicalSha256: canonicalManifestHash(policy.content),
@@ -415,11 +573,133 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
     expect(releaseRegistry).toBeTypeOf('function');
     releaseRegistry?.(true);
     const result = await pending;
-    expect(result.manifest).toEqual({ batchId: 'S33-W1', revision: 6, entryCount: 6 });
+    expect(result.manifest).toEqual({ batchId: 'S33-W1', revision: 9, entryCount: 6 });
+  });
+
+  it('deep-freezes the returned selection graph and keeps its registry evidence digest stable', async () => {
+    const context = ceremony(6);
+    let registryRecord: Readonly<ConsumptionRegistryRecord> | undefined;
+    const orchestrator = createTestOnlyS33AcceptanceOrchestrator({
+      trustRoot: context.trustRoot,
+      consumptionRegistry: {
+        async createIfAbsent(record: Readonly<ConsumptionRegistryRecord>): Promise<boolean> {
+          registryRecord = record;
+          return true;
+        },
+      },
+      ledgerPath: join(context.evidenceRoot, 'frozen-result-ledger.jsonl'),
+      repositoryRoot: context.repo.root,
+      repositoryIdentity: 'test/ArkovaCarson',
+      verificationCommitSha: context.repo.verificationCommitSha,
+    });
+    orchestrator.recordSaltCommitment(context.commitment.content);
+    orchestrator.recordManifestFreeze(context.freeze.content, context.manifest);
+    orchestrator.recordSelectionPolicy(context.policy.content);
+    orchestrator.recordSaltReveal(context.revealContent);
+    const result = await orchestrator.selectAndConsumeSample({
+      manifestContent: context.manifest,
+      commitmentArtifactContent: context.commitment.content,
+      freezeArtifactContent: context.freeze.content,
+      policyArtifactContent: context.policy.content,
+      revealContent: context.revealContent,
+    });
+
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.sampleEntryIds)).toBe(true);
+    expect(Object.isFrozen(result.manifest)).toBe(true);
+    expect(Object.isFrozen(result.evidence)).toBe(true);
+    expect(Object.isFrozen(result.evidence.durableSequence)).toBe(true);
+    expect(() => (result.sampleEntryIds as string[]).push('attacker-selected-id')).toThrow(TypeError);
+    expect(() => {
+      (result.evidence as { sampleSize: number }).sampleSize = 1;
+    }).toThrow(TypeError);
+
+    const reconstructedConsumptionEvidence = {
+      commitmentArtifactCanonicalSha256: result.evidence.commitmentArtifactCanonicalSha256,
+      commitmentArtifactRawSha256: result.evidence.commitmentArtifactRawSha256,
+      freezeArtifactCanonicalSha256: result.evidence.freezeArtifactCanonicalSha256,
+      freezeArtifactRawSha256: result.evidence.freezeArtifactRawSha256,
+      policyArtifactCanonicalSha256: result.evidence.policyArtifactCanonicalSha256,
+      policyArtifactRawSha256: result.evidence.policyArtifactRawSha256,
+      revealCanonicalSha256: result.evidence.revealCanonicalSha256,
+      revealRawSha256: result.evidence.revealRawSha256,
+      manifestRawSha256: result.evidence.manifestRawSha256,
+      manifestCanonicalSha256: result.evidence.manifestCanonicalSha256,
+      sampleEntryIdsSha256: sha256(canonicaliseJson(result.sampleEntryIds)),
+      sampleSize: result.evidence.sampleSize,
+    };
+    expect(registryRecord).toBeDefined();
+    expect(sha256(canonicaliseJson(reconstructedConsumptionEvidence)))
+      .toBe(registryRecord?.evidenceCanonicalSha256);
+  });
+
+  it('strict-parses the complete Wave-1 production manifest contract and Kenya-first order', () => {
+    const parsed = parseBatchManifest(manifestContent(81));
+    const manifest = parsed.parsedJson;
+    expect(Object.keys(manifest).sort()).toEqual([
+      'acceptanceAuthority', 'acceptanceScope', 'batchId', 'corpusRevisionParentCommit',
+      'corpusSourceBlobs', 'counts', 'entries', 'entryCount', 'intendedSplit', 'kenyaEntryIds',
+      'lane3SupportBase', 'producerLane', 'producerRevisionPredecessorCommit', 'reviewOrder',
+      'revision', 'schemaVersion', 'selfChecks', 'status',
+    ].sort());
+    expect(parsed.entryCount).toBe(81);
+    expect(parsed.entries.slice(0, 11).map(({ id }) => id))
+      .toEqual((manifest.kenyaEntryIds as string[]));
+    expect((manifest.counts as { byCorpusSlice: Record<string, number> }).byCorpusSlice)
+      .toEqual({
+        's33-au-ke-heldout': 22,
+        's33-licensing-heldout': 50,
+        's33-ood-negative': 9,
+      });
+    expect((manifest.selfChecks as Record<string, { status: string }>).oodFiveFieldSemantics.status)
+      .toBe('BLOCKED_PROTOCOL_CONTRADICTION_CTO_L3');
+    expect((manifest.selfChecks as Record<string, { status: string }>).lane3Acceptance.status)
+      .toBe('NOT_RUN_PRODUCER_BOUNDARY');
+  });
+
+  it('rejects missing or unknown nested production fields, count drift, and Kenya order drift', () => {
+    const withUnknown = productionManifestFixture(6);
+    (withUnknown.lane3SupportBase as Record<string, unknown>).reviewerOverride = true;
+    expect(() => parseBatchManifest(JSON.stringify(withUnknown)))
+      .toThrow(/lane3SupportBase.*unknown.*reviewerOverride/i);
+
+    const missingSource = productionManifestFixture(6);
+    delete (missingSource.corpusSourceBlobs as Record<string, unknown>)[
+      'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts'
+    ];
+    expect(() => parseBatchManifest(JSON.stringify(missingSource)))
+      .toThrow(/corpusSourceBlobs.*missing.*ood-negatives/i);
+
+    const unknownSelfCheck = productionManifestFixture(6);
+    const unknownSelfChecks = unknownSelfCheck.selfChecks as {
+      withinTypeTokenOverlap: Record<string, unknown>;
+    };
+    unknownSelfChecks.withinTypeTokenOverlap.reviewerOverride = true;
+    expect(() => parseBatchManifest(JSON.stringify(unknownSelfCheck)))
+      .toThrow(/withinTypeTokenOverlap.*unknown.*reviewerOverride/i);
+
+    const missingSelfCheck = productionManifestFixture(6);
+    const missingSelfChecks = missingSelfCheck.selfChecks as {
+      batchScopeOnly: Record<string, unknown>;
+    };
+    delete missingSelfChecks.batchScopeOnly.dependency;
+    expect(() => parseBatchManifest(JSON.stringify(missingSelfCheck)))
+      .toThrow(/batchScopeOnly.*missing.*dependency/i);
+
+    const countDrift = productionManifestFixture(6);
+    const countMap = (countDrift.counts as { byCorpusSlice: Record<string, number> }).byCorpusSlice;
+    countMap['s33-au-ke-heldout'] += 1;
+    expect(() => parseBatchManifest(JSON.stringify(countDrift)))
+      .toThrow(/byCorpusSlice.*reconcile/i);
+
+    const kenyaOrderDrift = productionManifestFixture(81);
+    (kenyaOrderDrift.kenyaEntryIds as string[]).reverse();
+    expect(() => parseBatchManifest(JSON.stringify(kenyaOrderDrift)))
+      .toThrow(/Kenya.*order/i);
   });
 
   it('rejects duplicate JSON keys and unknown nested manifest fields', () => {
-    const duplicate = manifestContent(6).replace('"revision": 6,', '"revision": 6,\n  "revision": 6,');
+    const duplicate = manifestContent(6).replace('"revision": 9,', '"revision": 9,\n  "revision": 9,');
     expect(() => parseBatchManifest(duplicate)).toThrow(/duplicate.*revision/i);
     const withUnknown = manifestContent(6, {
       entries: Array.from({ length: 6 }, (_, index) => ({
@@ -576,6 +856,41 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
       .toThrow(/transcript|digest|tamper/i);
   });
 
+  it('rejects an adversarial transcript symlink swap and permissive file mode', () => {
+    const swapped = ceremony(6);
+    swapped.orchestrator.recordSaltCommitment(swapped.commitment.content);
+    const swappedPath = join(swapped.evidenceRoot, 'acceptance-ledger.jsonl');
+    const originalPath = join(swapped.evidenceRoot, 'acceptance-ledger-original.jsonl');
+    renameSync(swappedPath, originalPath);
+    symlinkSync(originalPath, swappedPath);
+    expect(() => swapped.orchestrator.recordManifestFreeze(swapped.freeze.content, swapped.manifest))
+      .toThrow(/symbolic|regular file|nofollow/i);
+
+    const parentSwapped = ceremony(6);
+    parentSwapped.orchestrator.recordSaltCommitment(parentSwapped.commitment.content);
+    const originalDirectory = `${parentSwapped.evidenceRoot}-original`;
+    const attackerDirectory = `${parentSwapped.evidenceRoot}-attacker`;
+    tempRoots.push(originalDirectory, attackerDirectory);
+    const validTranscript = readFileSync(
+      join(parentSwapped.evidenceRoot, 'acceptance-ledger.jsonl'),
+      'utf8',
+    );
+    renameSync(parentSwapped.evidenceRoot, originalDirectory);
+    mkdirSync(attackerDirectory, { mode: 0o700 });
+    writeFileSync(join(attackerDirectory, 'acceptance-ledger.jsonl'), validTranscript, { mode: 0o600 });
+    symlinkSync(attackerDirectory, parentSwapped.evidenceRoot, 'dir');
+    expect(() => parentSwapped.orchestrator.recordManifestFreeze(
+      parentSwapped.freeze.content,
+      parentSwapped.manifest,
+    )).toThrow(/containment|directory/i);
+
+    const permissive = ceremony(6);
+    permissive.orchestrator.recordSaltCommitment(permissive.commitment.content);
+    chmodSync(join(permissive.evidenceRoot, 'acceptance-ledger.jsonl'), 0o644);
+    expect(() => permissive.orchestrator.recordManifestFreeze(permissive.freeze.content, permissive.manifest))
+      .toThrow(/permissions|mode|0600/i);
+  });
+
   it('production loader fails closed because no CTO root or monotonic registry is configured', () => {
     const root = mkdtempSync(join(tmpdir(), 'arkova-s33-production-'));
     tempRoots.push(root);
@@ -667,6 +982,16 @@ describe('S3.3 authenticated lexical scan boundary', () => {
     expect(result.metrics).toHaveLength(8);
     expect(result.hits.some((hit) => hit.n === 6)).toBe(true);
     expect(result.evidence.metricAlgorithmVersion).toBe('token-set-ngram-v1');
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.metrics)).toBe(true);
+    expect(Object.isFrozen(result.metrics[0])).toBe(true);
+    expect(Object.isFrozen(result.hits)).toBe(true);
+    expect(Object.isFrozen(result.hits[0])).toBe(true);
+    expect(Object.isFrozen(result.evidence)).toBe(true);
+    expect(() => (result.metrics as unknown[]).pop()).toThrow(TypeError);
+    expect(() => {
+      (result.evidence as { metricCount: number }).metricCount = 0;
+    }).toThrow(TypeError);
     const duplicateHeldout = heldout.replace('"id": "KE-001",', '"id": "KE-001",\n      "id": "KE-001",');
     expect(() => context.orchestrator.scanAuthenticatedLexicalLeakage({
       heldoutArtifactContent: duplicateHeldout,

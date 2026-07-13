@@ -18,9 +18,8 @@ import { execFileSync } from 'node:child_process';
 import {
   closeSync,
   constants,
-  existsSync,
+  fstatSync,
   fsyncSync,
-  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -220,9 +219,9 @@ export interface S33AcceptanceOrchestrator {
 }
 
 export interface ManifestSampleResult {
-  sampleEntryIds: string[];
-  manifest: { batchId: string; revision: number; entryCount: number };
-  evidence: {
+  sampleEntryIds: readonly string[];
+  manifest: Readonly<{ batchId: string; revision: number; entryCount: number }>;
+  evidence: Readonly<{
     policyArtifactCanonicalSha256: string;
     policyArtifactRawSha256: string;
     commitmentArtifactCanonicalSha256: string;
@@ -240,14 +239,14 @@ export interface ManifestSampleResult {
     sampleRule: SelectionPolicyPayload['sampleRule'];
     freezeCommitSha: string;
     verificationCommitSha: string;
-    durableSequence: string[];
-  };
+    durableSequence: readonly string[];
+  }>;
 }
 
 export interface AuthenticatedLexicalScanResult {
-  metrics: LexicalLeakageMetric[];
-  hits: LexicalLeakageMetric[];
-  evidence: {
+  metrics: readonly Readonly<LexicalLeakageMetric>[];
+  hits: readonly Readonly<LexicalLeakageMetric>[];
+  evidence: Readonly<{
     policyArtifactCanonicalSha256: string;
     policyArtifactRawSha256: string;
     publicKeyFingerprintSha256: string;
@@ -261,7 +260,7 @@ export interface AuthenticatedLexicalScanResult {
     corpusEntryCount: number;
     metricAlgorithmVersion: LexicalLeakagePolicyPayload['metricAlgorithmVersion'];
     metricCount: number;
-  };
+  }>;
 }
 
 interface ParsedLexicalTextArtifact {
@@ -278,6 +277,17 @@ const REQUIRED_LEXICAL_N = [6, 7, 8, 9, 10, 11, 12, 13] as const;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const GIT_COMMIT_PATTERN = /^[0-9a-f]{40,64}$/;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+const WAVE1_TYPES_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-types.ts';
+const WAVE1_SOURCE_BLOB_PATHS = [
+  'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
+] as const;
+const WAVE1_CORPUS_SLICE_BY_DOMAIN: Readonly<Record<string, string>> = Object.freeze({
+  'au-ke-priority-documents': 's33-au-ke-heldout',
+  'professional-licensing': 's33-licensing-heldout',
+  'out-of-distribution': 's33-ood-negative',
+});
 
 // CTO-controlled production descriptor. No key/fingerprint has been issued,
 // so production construction intentionally fails before reading the fixed PEM.
@@ -518,6 +528,49 @@ function assertUniqueIds(ids: readonly string[], label: string): void {
   if (new Set(ids).size !== ids.length) throw new Error(`${label} contains duplicate ids`);
 }
 
+function recordValue(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  return value;
+}
+
+function stringArray(value: unknown, label: string, allowEmpty = false): string[] {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0)) {
+    throw new Error(`${label} must be ${allowEmpty ? 'an' : 'a non-empty'} array`);
+  }
+  const strings = value.map((item, index) => nonEmptyString(item, `${label}[${index}]`));
+  if (new Set(strings).size !== strings.length) throw new Error(`${label} contains duplicate values`);
+  return strings;
+}
+
+function booleanValue(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`${label} must be boolean`);
+  return value;
+}
+
+function assertGitObject(value: unknown, label: string): asserts value is string {
+  if (typeof value !== 'string' || !GIT_COMMIT_PATTERN.test(value)) {
+    throw new Error(`${label} must be an exact hexadecimal Git object id`);
+  }
+}
+
+function assertExactString(value: unknown, expected: string, label: string): void {
+  if (value !== expected) throw new Error(`${label} must be ${expected}`);
+}
+
+function assertSafeRelativePath(value: unknown, label: string): string {
+  const path = nonEmptyString(value, label);
+  if (isAbsolute(path) || path.includes(':') || path.split('/').includes('..')) {
+    throw new Error(`${label} must be a safe repository-relative path`);
+  }
+  return path;
+}
+
+function assertSameOrderedValues(actual: readonly string[], expected: readonly string[], label: string): void {
+  if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
+    throw new Error(`${label} does not match the complete declared order`);
+  }
+}
+
 export function canonicalManifestHash(content: ArtifactContent): string {
   return parseStrictJsonDocument(content, 'Artifact content').canonicalSha256;
 }
@@ -550,6 +603,385 @@ function assertCounts(declared: Map<string, number>, actual: Map<string, number>
   }
 }
 
+function countByCorpusSlice(entries: readonly BatchManifestEntry[]): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const entry of entries) {
+    const slice = WAVE1_CORPUS_SLICE_BY_DOMAIN[entry.domain];
+    if (!slice) throw new Error(`Manifest entry ${entry.id} has unsupported Wave-1 domain ${entry.domain}`);
+    result.set(slice, (result.get(slice) ?? 0) + 1);
+  }
+  return result;
+}
+
+interface Wave1ManifestBindings {
+  supportCommit: string;
+  supportTypesPath: string;
+  supportTypesBlob: string;
+  supportReviewState: string;
+  producerRevisionPredecessorCommit: string;
+}
+
+function validateWave1SupportBindings(
+  parsed: Readonly<Record<string, unknown>>,
+): Wave1ManifestBindings {
+  assertGitObject(parsed.corpusRevisionParentCommit, 'Manifest corpusRevisionParentCommit');
+  assertGitObject(parsed.producerRevisionPredecessorCommit, 'Manifest producerRevisionPredecessorCommit');
+  if (parsed.corpusRevisionParentCommit !== parsed.producerRevisionPredecessorCommit) {
+    throw new Error('Manifest producer predecessor must equal the corpus revision parent');
+  }
+  const support = recordValue(parsed.lane3SupportBase, 'Manifest lane3SupportBase');
+  assertExactKeys(support, ['commit', 'typesPath', 'typesBlob', 'reviewState'], 'Manifest lane3SupportBase');
+  assertGitObject(support.commit, 'Manifest lane3SupportBase.commit');
+  assertExactString(support.typesPath, WAVE1_TYPES_PATH, 'Manifest lane3SupportBase.typesPath');
+  assertGitObject(support.typesBlob, 'Manifest lane3SupportBase.typesBlob');
+  assertExactString(
+    support.reviewState,
+    'PENDING_LANE3_REVIEW_PR',
+    'Manifest lane3SupportBase.reviewState',
+  );
+
+  const sourceBlobs = recordValue(parsed.corpusSourceBlobs, 'Manifest corpusSourceBlobs');
+  assertExactKeys(sourceBlobs, WAVE1_SOURCE_BLOB_PATHS, 'Manifest corpusSourceBlobs');
+  for (const path of WAVE1_SOURCE_BLOB_PATHS) {
+    assertGitObject(sourceBlobs[path], `Manifest corpusSourceBlobs.${path}`);
+  }
+  return {
+    supportCommit: support.commit,
+    supportTypesPath: support.typesPath as string,
+    supportTypesBlob: support.typesBlob,
+    supportReviewState: support.reviewState as string,
+    producerRevisionPredecessorCommit: parsed.producerRevisionPredecessorCommit,
+  };
+}
+
+const AUTHORIZED_REVISION_KEYS: Readonly<Record<number, readonly string[]>> = Object.freeze({
+  2: ['revision', 'authority', 'changedEntryIds', 'normalizedInputChanged'],
+  3: [
+    'revision', 'authority', 'changedEntryIds', 'change', 'normalizedInputChanged',
+    'remainingSubstantiveGroundTruthFields',
+  ],
+  4: [
+    'revision', 'authority', 'changedEntryIds', 'changes', 'normalizedInputChanged',
+    'remainingSubstantiveGroundTruthFields',
+  ],
+  5: [
+    'revision', 'authority', 'changedEntryIds', 'changes', 'normalizedInputChanged',
+    'normalizedInputChangedEntryIds', 'remainingSubstantiveGroundTruthFields',
+  ],
+  6: [
+    'revision', 'authority', 'changedEntryIds', 'change', 'normalizedInputChanged',
+    'recomputedNormalizedInputSha256', 'remainingSubstantiveGroundTruthFields',
+  ],
+  7: [
+    'revision', 'authority', 'changedEntryIds', 'change', 'corpusDataChanged',
+    'normalizedInputChanged', 'producerRevisionPredecessorCommit', 'directBaseCommit',
+    'sourceBlobsUnchangedFromRevision6',
+  ],
+  8: [
+    'revision', 'authority', 'changedEntryIds', 'changes', 'normalizedInputChanged',
+    'normalizedInputChangedEntryIds', 'recomputedNormalizedInputSha256',
+    'remainingSubstantiveGroundTruthFields', 'producerRevisionPredecessorCommit',
+    'lane3SupportBaseCommit',
+  ],
+  9: [
+    'revision', 'authority', 'changedEntryIds', 'verifiedUnchangedEntryIds', 'changes',
+    'corpusSourceTextChanged', 'normalizedInputChanged',
+    'normalizedInputPinsPreservedFromRevision8', 'remainingSubstantiveGroundTruthFields',
+    'producerRevisionPredecessorCommit', 'lane3SupportBaseCommit',
+  ],
+});
+
+function validateEntryIdArray(
+  value: unknown,
+  label: string,
+  entryIds: ReadonlySet<string>,
+  allowEmpty = false,
+): string[] {
+  const ids = stringArray(value, label, allowEmpty);
+  const unknown = ids.filter((id) => !entryIds.has(id));
+  if (unknown.length > 0) throw new Error(`${label} references unknown manifest entry id(s): ${unknown.join(', ')}`);
+  return ids;
+}
+
+function validateEntryIntegerMap(
+  value: unknown,
+  label: string,
+  entryIds: ReadonlySet<string>,
+  allowedSummaryKeys: ReadonlySet<string> = new Set(),
+): void {
+  const map = recordValue(value, label);
+  if (Object.keys(map).length === 0) throw new Error(`${label} must not be empty`);
+  for (const [key, count] of Object.entries(map)) {
+    if (!entryIds.has(key) && !allowedSummaryKeys.has(key)) {
+      throw new Error(`${label} contains unknown entry/summary field ${key}`);
+    }
+    positiveInteger(count, `${label}.${key}`);
+  }
+}
+
+function validateEntryShaMap(
+  value: unknown,
+  label: string,
+  entryIds: ReadonlySet<string>,
+): void {
+  const map = recordValue(value, label);
+  if (Object.keys(map).length === 0) throw new Error(`${label} must not be empty`);
+  for (const [key, digest] of Object.entries(map)) {
+    if (!entryIds.has(key)) throw new Error(`${label} contains unknown entry id ${key}`);
+    assertSha256(digest, `${label}.${key}`);
+  }
+}
+
+function validateAuthorizedRevision(
+  value: unknown,
+  index: number,
+  entryIds: ReadonlySet<string>,
+): number {
+  const label = `Manifest selfChecks.authorizedDocumentRevisions.revisions[${index}]`;
+  const revisionRecord = recordValue(value, label);
+  const revision = positiveInteger(revisionRecord.revision, `${label}.revision`);
+  const allowedKeys = AUTHORIZED_REVISION_KEYS[revision];
+  if (!allowedKeys) throw new Error(`${label}.revision ${revision} has no ratified Wave-1 schema`);
+  assertExactKeys(revisionRecord, allowedKeys, label);
+  nonEmptyString(revisionRecord.authority, `${label}.authority`);
+  validateEntryIdArray(revisionRecord.changedEntryIds, `${label}.changedEntryIds`, entryIds, revision === 7);
+  booleanValue(revisionRecord.normalizedInputChanged, `${label}.normalizedInputChanged`);
+
+  if (Object.hasOwn(revisionRecord, 'change')) nonEmptyString(revisionRecord.change, `${label}.change`);
+  if (Object.hasOwn(revisionRecord, 'changes')) stringArray(revisionRecord.changes, `${label}.changes`);
+  if (Object.hasOwn(revisionRecord, 'normalizedInputChangedEntryIds')) {
+    validateEntryIdArray(
+      revisionRecord.normalizedInputChangedEntryIds,
+      `${label}.normalizedInputChangedEntryIds`,
+      entryIds,
+    );
+  }
+  if (Object.hasOwn(revisionRecord, 'verifiedUnchangedEntryIds')) {
+    validateEntryIdArray(revisionRecord.verifiedUnchangedEntryIds, `${label}.verifiedUnchangedEntryIds`, entryIds);
+  }
+  for (const booleanKey of [
+    'corpusDataChanged', 'sourceBlobsUnchangedFromRevision6', 'corpusSourceTextChanged',
+    'normalizedInputPinsPreservedFromRevision8',
+  ]) {
+    if (Object.hasOwn(revisionRecord, booleanKey)) {
+      booleanValue(revisionRecord[booleanKey], `${label}.${booleanKey}`);
+    }
+  }
+  for (const commitKey of ['producerRevisionPredecessorCommit', 'directBaseCommit', 'lane3SupportBaseCommit']) {
+    if (Object.hasOwn(revisionRecord, commitKey)) {
+      assertGitObject(revisionRecord[commitKey], `${label}.${commitKey}`);
+    }
+  }
+  if (Object.hasOwn(revisionRecord, 'recomputedNormalizedInputSha256')) {
+    validateEntryShaMap(revisionRecord.recomputedNormalizedInputSha256, `${label}.recomputedNormalizedInputSha256`, entryIds);
+  }
+  if (Object.hasOwn(revisionRecord, 'remainingSubstantiveGroundTruthFields')) {
+    if (revision === 3) {
+      positiveInteger(
+        revisionRecord.remainingSubstantiveGroundTruthFields,
+        `${label}.remainingSubstantiveGroundTruthFields`,
+      );
+    } else {
+      validateEntryIntegerMap(
+        revisionRecord.remainingSubstantiveGroundTruthFields,
+        `${label}.remainingSubstantiveGroundTruthFields`,
+        entryIds,
+        revision === 9 ? new Set(['nonOodMinimum', 'oodPureAbstention']) : new Set(),
+      );
+    }
+  }
+  return revision;
+}
+
+function validateWave1SelfChecks(
+  value: unknown,
+  entryCount: number,
+  manifestRevision: number,
+  entries: readonly BatchManifestEntry[],
+  bindings: Wave1ManifestBindings,
+): void {
+  const selfChecks = recordValue(value, 'Manifest selfChecks');
+  assertExactKeys(selfChecks, [
+    'exactCorpusManifestDatasheetBijection', 'normalizedInputFingerprintsPinned',
+    'authorizedDocumentRevisions', 'withinTypeTokenOverlap', 'oodFiveFieldSemantics',
+    'cpeSubtypeRatification', 'taxonomyAdjudicationSet', 'issuedDateAdjudicationSet',
+    'batchScopeOnly', 'lane3Acceptance',
+  ], 'Manifest selfChecks');
+  const entryIds = new Set(entries.map(({ id }) => id));
+
+  const bijection = recordValue(
+    selfChecks.exactCorpusManifestDatasheetBijection,
+    'Manifest selfChecks.exactCorpusManifestDatasheetBijection',
+  );
+  assertExactKeys(bijection, ['status', 'entryCount'], 'Manifest selfChecks.exactCorpusManifestDatasheetBijection');
+  assertExactString(bijection.status, 'PASS', 'Manifest selfChecks.exactCorpusManifestDatasheetBijection.status');
+  if (bijection.entryCount !== entryCount) throw new Error('Manifest datasheet bijection entryCount does not reconcile');
+
+  const fingerprints = recordValue(
+    selfChecks.normalizedInputFingerprintsPinned,
+    'Manifest selfChecks.normalizedInputFingerprintsPinned',
+  );
+  assertExactKeys(fingerprints, ['status', 'algorithm'], 'Manifest selfChecks.normalizedInputFingerprintsPinned');
+  assertExactString(fingerprints.status, 'PASS', 'Manifest selfChecks.normalizedInputFingerprintsPinned.status');
+  assertExactString(
+    fingerprints.algorithm,
+    'sha256(normalizeForFingerprint(strippedText))',
+    'Manifest selfChecks.normalizedInputFingerprintsPinned.algorithm',
+  );
+
+  const revisions = recordValue(
+    selfChecks.authorizedDocumentRevisions,
+    'Manifest selfChecks.authorizedDocumentRevisions',
+  );
+  assertExactKeys(revisions, ['status', 'revisions'], 'Manifest selfChecks.authorizedDocumentRevisions');
+  assertExactString(revisions.status, 'PASS', 'Manifest selfChecks.authorizedDocumentRevisions.status');
+  if (!Array.isArray(revisions.revisions) || revisions.revisions.length === 0) {
+    throw new Error('Manifest authorized revision history must be a non-empty array');
+  }
+  const revisionNumbers = revisions.revisions.map((revision, index) => validateAuthorizedRevision(revision, index, entryIds));
+  if (new Set(revisionNumbers).size !== revisionNumbers.length
+    || revisionNumbers.some((revision, index) => index > 0 && revision <= revisionNumbers[index - 1])) {
+    throw new Error('Manifest authorized revisions must be unique and strictly ascending');
+  }
+  if (revisionNumbers.at(-1) !== manifestRevision) {
+    throw new Error('Manifest authorized revision history does not end at the declared revision');
+  }
+  const currentRevision = revisions.revisions.at(-1) as Record<string, unknown>;
+  if (Object.hasOwn(currentRevision, 'producerRevisionPredecessorCommit')
+    && currentRevision.producerRevisionPredecessorCommit !== bindings.producerRevisionPredecessorCommit) {
+    throw new Error('Manifest current authorized revision predecessor does not match the root binding');
+  }
+  if (Object.hasOwn(currentRevision, 'lane3SupportBaseCommit')
+    && currentRevision.lane3SupportBaseCommit !== bindings.supportCommit) {
+    throw new Error('Manifest current authorized revision Lane-3 support commit does not match the root binding');
+  }
+
+  const overlap = recordValue(selfChecks.withinTypeTokenOverlap, 'Manifest selfChecks.withinTypeTokenOverlap');
+  assertExactKeys(
+    overlap,
+    ['status', 'threshold', 'metric', 'violations', 'remediatedPairScores'],
+    'Manifest selfChecks.withinTypeTokenOverlap',
+  );
+  assertExactString(overlap.status, 'PASS', 'Manifest selfChecks.withinTypeTokenOverlap.status');
+  if (overlap.threshold !== 0.8) throw new Error('Manifest within-type token overlap threshold must be 0.8');
+  nonEmptyString(overlap.metric, 'Manifest selfChecks.withinTypeTokenOverlap.metric');
+  if (!Array.isArray(overlap.violations) || overlap.violations.length !== 0) {
+    throw new Error('Manifest within-type token overlap violations must be an empty array when status is PASS');
+  }
+  if (!Array.isArray(overlap.remediatedPairScores)) {
+    throw new Error('Manifest within-type token overlap remediatedPairScores must be an array');
+  }
+  for (const [index, scoreValue] of overlap.remediatedPairScores.entries()) {
+    const label = `Manifest selfChecks.withinTypeTokenOverlap.remediatedPairScores[${index}]`;
+    const score = recordValue(scoreValue, label);
+    assertExactKeys(score, ['leftId', 'rightId', 'credentialType', 'overlap'], label);
+    const leftId = nonEmptyString(score.leftId, `${label}.leftId`);
+    const rightId = nonEmptyString(score.rightId, `${label}.rightId`);
+    if (!entryIds.has(leftId) || !entryIds.has(rightId)) throw new Error(`${label} references an unknown entry id`);
+    nonEmptyString(score.credentialType, `${label}.credentialType`);
+    if (typeof score.overlap !== 'number' || !Number.isFinite(score.overlap)
+      || score.overlap < 0 || score.overlap > 0.8) {
+      throw new Error(`${label}.overlap must be a finite number in [0,0.8]`);
+    }
+  }
+
+  const ood = recordValue(selfChecks.oodFiveFieldSemantics, 'Manifest selfChecks.oodFiveFieldSemantics');
+  assertExactKeys(
+    ood,
+    ['status', 'entryIds', 'producerTruth', 'contradiction', 'resolutionOwner'],
+    'Manifest selfChecks.oodFiveFieldSemantics',
+  );
+  assertExactString(
+    ood.status,
+    'BLOCKED_PROTOCOL_CONTRADICTION_CTO_L3',
+    'Manifest selfChecks.oodFiveFieldSemantics.status',
+  );
+  const declaredOodIds = validateEntryIdArray(
+    ood.entryIds,
+    'Manifest selfChecks.oodFiveFieldSemantics.entryIds',
+    entryIds,
+  );
+  const actualOodIds = entries.filter(({ domain }) => domain === 'out-of-distribution').map(({ id }) => id);
+  assertSameOrderedValues(declaredOodIds, actualOodIds, 'Manifest OOD self-check entry order');
+  nonEmptyString(ood.producerTruth, 'Manifest selfChecks.oodFiveFieldSemantics.producerTruth');
+  nonEmptyString(ood.contradiction, 'Manifest selfChecks.oodFiveFieldSemantics.contradiction');
+  nonEmptyString(ood.resolutionOwner, 'Manifest selfChecks.oodFiveFieldSemantics.resolutionOwner');
+
+  const cpe = recordValue(selfChecks.cpeSubtypeRatification, 'Manifest selfChecks.cpeSubtypeRatification');
+  assertExactKeys(cpe, ['status'], 'Manifest selfChecks.cpeSubtypeRatification');
+  assertExactString(cpe.status, 'BLOCKED_CTO_L3', 'Manifest selfChecks.cpeSubtypeRatification.status');
+
+  const taxonomy = recordValue(selfChecks.taxonomyAdjudicationSet, 'Manifest selfChecks.taxonomyAdjudicationSet');
+  assertExactKeys(taxonomy, ['status', 'entryIds'], 'Manifest selfChecks.taxonomyAdjudicationSet');
+  assertExactString(taxonomy.status, 'BLOCKED_CTO_L3', 'Manifest selfChecks.taxonomyAdjudicationSet.status');
+  validateEntryIdArray(taxonomy.entryIds, 'Manifest selfChecks.taxonomyAdjudicationSet.entryIds', entryIds);
+
+  const issuedDate = recordValue(selfChecks.issuedDateAdjudicationSet, 'Manifest selfChecks.issuedDateAdjudicationSet');
+  assertExactKeys(
+    issuedDate,
+    ['status', 'entryIds', 'resolvedEntryIdsInRevision9'],
+    'Manifest selfChecks.issuedDateAdjudicationSet',
+  );
+  assertExactString(issuedDate.status, 'BLOCKED_CTO_L3', 'Manifest selfChecks.issuedDateAdjudicationSet.status');
+  validateEntryIdArray(issuedDate.entryIds, 'Manifest selfChecks.issuedDateAdjudicationSet.entryIds', entryIds);
+  validateEntryIdArray(
+    issuedDate.resolvedEntryIdsInRevision9,
+    'Manifest selfChecks.issuedDateAdjudicationSet.resolvedEntryIdsInRevision9',
+    entryIds,
+  );
+
+  const scope = recordValue(selfChecks.batchScopeOnly, 'Manifest selfChecks.batchScopeOnly');
+  assertExactKeys(
+    scope,
+    ['status', 'excludedFromBatch', 'protocolAllowedDiffPaths', 'dependency', 'reason', 'authority'],
+    'Manifest selfChecks.batchScopeOnly',
+  );
+  assertExactString(scope.status, 'PASS', 'Manifest selfChecks.batchScopeOnly.status');
+  for (const [field, allowEmpty] of [['excludedFromBatch', false], ['protocolAllowedDiffPaths', false]] as const) {
+    const paths = stringArray(scope[field], `Manifest selfChecks.batchScopeOnly.${field}`, allowEmpty);
+    paths.forEach((path, index) => assertSafeRelativePath(path, `Manifest selfChecks.batchScopeOnly.${field}[${index}]`));
+  }
+  const dependency = recordValue(scope.dependency, 'Manifest selfChecks.batchScopeOnly.dependency');
+  assertExactKeys(dependency, [
+    'owner', 'branch', 'commit', 'typesPath', 'typesBlob', 'presentIdenticallyInBase',
+    'includedInProducerDiff', 'reviewState',
+  ], 'Manifest selfChecks.batchScopeOnly.dependency');
+  assertExactString(dependency.owner, 'Lane 3', 'Manifest selfChecks.batchScopeOnly.dependency.owner');
+  nonEmptyString(dependency.branch, 'Manifest selfChecks.batchScopeOnly.dependency.branch');
+  assertGitObject(dependency.commit, 'Manifest selfChecks.batchScopeOnly.dependency.commit');
+  assertExactString(dependency.typesPath, WAVE1_TYPES_PATH, 'Manifest selfChecks.batchScopeOnly.dependency.typesPath');
+  assertGitObject(dependency.typesBlob, 'Manifest selfChecks.batchScopeOnly.dependency.typesBlob');
+  if (booleanValue(
+    dependency.presentIdenticallyInBase,
+    'Manifest selfChecks.batchScopeOnly.dependency.presentIdenticallyInBase',
+  ) !== true) throw new Error('Manifest Lane-3 dependency must be present identically in the producer base');
+  if (booleanValue(
+    dependency.includedInProducerDiff,
+    'Manifest selfChecks.batchScopeOnly.dependency.includedInProducerDiff',
+  ) !== false) throw new Error('Manifest Lane-3 dependency must not be included in the producer diff');
+  assertExactString(
+    dependency.reviewState,
+    'PENDING_LANE3_REVIEW_PR',
+    'Manifest selfChecks.batchScopeOnly.dependency.reviewState',
+  );
+  if (dependency.commit !== bindings.supportCommit
+    || dependency.typesPath !== bindings.supportTypesPath
+    || dependency.typesBlob !== bindings.supportTypesBlob
+    || dependency.reviewState !== bindings.supportReviewState) {
+    throw new Error('Manifest batch-scope dependency does not match the Lane-3 support-base binding');
+  }
+  nonEmptyString(scope.reason, 'Manifest selfChecks.batchScopeOnly.reason');
+  nonEmptyString(scope.authority, 'Manifest selfChecks.batchScopeOnly.authority');
+
+  const acceptance = recordValue(selfChecks.lane3Acceptance, 'Manifest selfChecks.lane3Acceptance');
+  assertExactKeys(acceptance, ['status'], 'Manifest selfChecks.lane3Acceptance');
+  assertExactString(
+    acceptance.status,
+    'NOT_RUN_PRODUCER_BOUNDARY',
+    'Manifest selfChecks.lane3Acceptance.status',
+  );
+}
+
 interface LoadedBatchManifest {
   manifest: ParsedBatchManifest;
   rawSha256: string;
@@ -560,13 +992,28 @@ function loadBatchManifest(content: ArtifactContent): LoadedBatchManifest {
   const document = parseStrictJsonDocument(content, 'Manifest');
   const parsed = document.parsed;
   assertExactKeys(parsed, [
-    'schemaVersion', 'batchId', 'revision', 'entryCount', 'intendedSplit', 'counts', 'selfChecks', 'entries',
+    'schemaVersion', 'batchId', 'revision', 'producerLane', 'acceptanceAuthority', 'status',
+    'corpusRevisionParentCommit', 'producerRevisionPredecessorCommit', 'lane3SupportBase',
+    'corpusSourceBlobs', 'intendedSplit', 'reviewOrder', 'acceptanceScope', 'entryCount',
+    'counts', 'kenyaEntryIds', 'selfChecks', 'entries',
   ], 'Manifest');
   if (parsed.schemaVersion !== 1) throw new Error('Manifest schemaVersion must be 1');
   const batchId = nonEmptyString(parsed.batchId, 'Manifest batchId');
+  assertExactString(batchId, 'S33-W1', 'Manifest batchId');
   const revision = positiveInteger(parsed.revision, 'Manifest revision');
+  assertExactString(parsed.producerLane, 'Lane 4', 'Manifest producerLane');
+  assertExactString(parsed.acceptanceAuthority, 'Lane 3', 'Manifest acceptanceAuthority');
+  assertExactString(
+    parsed.status,
+    'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
+    'Manifest status',
+  );
+  const bindings = validateWave1SupportBindings(parsed);
   const entryCount = positiveInteger(parsed.entryCount, 'Manifest entryCount');
   const intendedSplit = nonEmptyString(parsed.intendedSplit, 'Manifest intendedSplit');
+  assertExactString(intendedSplit, 'held-out-candidate', 'Manifest intendedSplit');
+  assertExactString(parsed.reviewOrder, 'kenya-first', 'Manifest reviewOrder');
+  assertExactString(parsed.acceptanceScope, 'whole-batch-only', 'Manifest acceptanceScope');
   if (!Array.isArray(parsed.entries) || parsed.entries.length === 0) throw new Error('Manifest entries universe is empty');
   const entries = parsed.entries.map((candidate, index): BatchManifestEntry => {
     if (!isRecord(candidate)) throw new Error(`Manifest entries[${index}] must be an object`);
@@ -584,18 +1031,33 @@ function loadBatchManifest(content: ArtifactContent): LoadedBatchManifest {
   assertUniqueIds(entries.map(({ id }) => id), 'Manifest entries universe');
   if (entryCount !== entries.length) throw new Error('Manifest entryCount does not match entries length');
   if (!isRecord(parsed.counts)) throw new Error('Manifest counts must be an object');
-  assertExactKeys(parsed.counts, ['byDomain', 'byCredentialType'], 'Manifest counts');
+  assertExactKeys(parsed.counts, ['byDomain', 'byCredentialType', 'byCorpusSlice'], 'Manifest counts');
   assertCounts(parseCountMap(parsed.counts.byDomain, 'Manifest counts.byDomain'), countBy(entries, 'domain'), 'Manifest counts.byDomain');
   assertCounts(
     parseCountMap(parsed.counts.byCredentialType, 'Manifest counts.byCredentialType'),
     countBy(entries, 'credentialType'),
     'Manifest counts.byCredentialType',
   );
-  if (!isRecord(parsed.selfChecks)) throw new Error('Manifest selfChecks must be an object');
-  assertExactKeys(parsed.selfChecks, ['structural'], 'Manifest selfChecks');
-  if (!isRecord(parsed.selfChecks.structural)) throw new Error('Manifest selfChecks.structural must be an object');
-  assertExactKeys(parsed.selfChecks.structural, ['status'], 'Manifest selfChecks.structural');
-  if (parsed.selfChecks.structural.status !== 'PASS') throw new Error('Manifest structural self-check must PASS');
+  assertCounts(
+    parseCountMap(parsed.counts.byCorpusSlice, 'Manifest counts.byCorpusSlice'),
+    countByCorpusSlice(entries),
+    'Manifest counts.byCorpusSlice',
+  );
+  const kenyaEntryIds = stringArray(parsed.kenyaEntryIds, 'Manifest kenyaEntryIds');
+  if (kenyaEntryIds.some((id) => !/^GD-S33-KE-\d{3}$/.test(id))) {
+    throw new Error('Manifest Kenya entry ids must use the GD-S33-KE-NNN contract');
+  }
+  const actualKenyaIds = entries.filter(({ id }) => id.startsWith('GD-S33-KE-')).map(({ id }) => id);
+  assertSameOrderedValues(kenyaEntryIds, actualKenyaIds, 'Manifest Kenya ids');
+  assertSameOrderedValues(
+    entries.slice(0, kenyaEntryIds.length).map(({ id }) => id),
+    kenyaEntryIds,
+    'Manifest Kenya-first review order',
+  );
+  if (entries.slice(0, kenyaEntryIds.length).some(({ domain }) => domain !== 'au-ke-priority-documents')) {
+    throw new Error('Manifest Kenya-first entries must belong to au-ke-priority-documents');
+  }
+  validateWave1SelfChecks(parsed.selfChecks, entryCount, revision, entries, bindings);
   const manifest = deepFreeze({
     schemaVersion: 1 as const,
     batchId,
@@ -1075,11 +1537,36 @@ class AcceptanceAuditTranscript {
   }
 
   private readValidatedRecords(): TranscriptRecord[] {
-    if (!existsSync(this.transcriptPath)) return [];
-    if (lstatSync(this.transcriptPath).isSymbolicLink()) {
-      throw new Error('Acceptance audit transcript must not be a symbolic link');
+    const resolvedDirectory = realpathSync(dirname(this.transcriptPath));
+    if (resolvedDirectory !== this.evidenceDirectory) {
+      throw new Error('Acceptance audit transcript directory containment changed after construction');
     }
-    const content = readFileSync(this.transcriptPath, 'utf8');
+    let fd: number;
+    try {
+      fd = openSync(
+        this.transcriptPath,
+        constants.O_RDONLY | constants.O_NOFOLLOW,
+      );
+    } catch (error) {
+      const code = isRecord(error) && typeof error.code === 'string' ? error.code : 'UNKNOWN';
+      if (code === 'ENOENT') return [];
+      if (code === 'ELOOP' || code === 'EMLINK') {
+        throw new Error('Acceptance audit transcript must not be a symbolic link', { cause: error });
+      }
+      throw error;
+    }
+    let content: string;
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile()) throw new Error('Acceptance audit transcript must be a regular file');
+      if ((stat.mode & 0o077) !== 0) {
+        throw new Error('Acceptance audit transcript permissions must be no broader than 0600');
+      }
+      if (stat.nlink !== 1) throw new Error('Acceptance audit transcript must have exactly one filesystem link');
+      content = readFileSync(fd, 'utf8');
+    } finally {
+      closeSync(fd);
+    }
     if (content.length === 0) return [];
     if (!content.endsWith('\n')) throw new Error('Acceptance audit transcript hash chain is truncated');
     const records: TranscriptRecord[] = [];
@@ -1359,7 +1846,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       revision: manifest.revision,
       evidenceCanonicalSha256,
     }, transcriptReferences);
-    return {
+    return deepFreeze({
       sampleEntryIds,
       manifest: { batchId: manifest.batchId, revision: manifest.revision, entryCount: manifest.entryCount },
       evidence: {
@@ -1382,7 +1869,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
         verificationCommitSha: this.#config.verificationCommitSha,
         durableSequence,
       },
-    };
+    });
   }
 
   scanAuthenticatedLexicalLeakage(input: LexicalScanInput): AuthenticatedLexicalScanResult {
@@ -1409,7 +1896,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     }
     const metrics = computeLexicalLeakageMetrics(heldout.records, corpus.records, policy.normalization);
     const hits = applyLexicalPolicy(metrics, policy);
-    return {
+    return deepFreeze({
       metrics,
       hits,
       evidence: {
@@ -1427,7 +1914,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
         metricAlgorithmVersion: policy.metricAlgorithmVersion,
         metricCount: metrics.length,
       },
-    };
+    });
   }
 
   private verifyGitFreeze(payload: ManifestFreezePayload): void {
