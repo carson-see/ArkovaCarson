@@ -38,6 +38,7 @@ const required = [
   'image_digest',
   'tag_url',
   'supabase_project_ref',
+  'supabase_org_id',
   'preflight_result',
   'tier',
   'duration_min',
@@ -84,6 +85,7 @@ assert.equal(payload.base_sha, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
 assert.equal(payload.image_digest, 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc');
 assert.equal(payload.tag_url, 'https://lane-a---arkova-worker-s0e4-lane-a-staging.example.run.app');
 assert.equal(payload.supabase_project_ref, 'sveujcebzkqxbhimotbb');
+assert.equal(payload.supabase_org_id, 'byhkazrpmivhcsuqjtva');
 assert.equal(payload.preflight_result, 'environment_type=clean_mirror');
 assert.equal(payload.tier, 'T3');
 assert.equal(payload.duration_min, 2880);

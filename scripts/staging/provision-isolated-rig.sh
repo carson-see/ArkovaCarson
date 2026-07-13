@@ -58,6 +58,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 PROD_SUPABASE_REF="vzwyaatejekddvltxyye"
 SHARED_STAGING_SUPABASE_REF="ujtlwnoqfhtitcmsnrpq"
+RIG_B1_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
+APPROVED_SOURCE_IMAGE_REPOSITORY="us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker"
 DENIED_CLOUD_RUN_SERVICES=("arkova-worker" "arkova-worker-staging")
 
 # ---------------------------------------------------------------------------
@@ -361,6 +363,12 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       (--image or STAGING_PINNED_IMAGE) in registry/path@sha256:<64-hex> form; mutable tags are refused." >&2
     exit 2
   fi
+  PINNED_IMAGE_REPOSITORY="${PINNED_IMAGE%@sha256:*}"
+  if [[ "$PINNED_IMAGE_REPOSITORY" != "$APPROVED_SOURCE_IMAGE_REPOSITORY" ]]; then
+    echo "ERROR: live provision requires the exact approved source image repository" >&2
+    echo "       '$APPROVED_SOURCE_IMAGE_REPOSITORY'; got '$PINNED_IMAGE_REPOSITORY'." >&2
+    exit 2
+  fi
   if [[ $SOURCE_HEAD_WAS_EXPLICIT -ne 1 || ! "$DECLARED_SOURCE_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
     echo "ERROR: live provision requires an explicit 40-char declared source HEAD via" >&2
     echo "       --source-head or STAGING_SOURCE_HEAD_SHA." >&2
@@ -455,6 +463,10 @@ if [[ $APPLY -eq 1 ]]; then
   # RIG-B1 is the pre-declared signet broadcast/drain rig. Never let the
   # generic chain defaults silently turn it into a mainnet or under-floor run.
   if [[ "$RIG_ID" == "RIG-B1" ]]; then
+    if [[ "$SUPABASE_ORG" != "$RIG_B1_SUPABASE_ORG" ]]; then
+      echo "ERROR: RIG-B1 requires exact Supabase org '$RIG_B1_SUPABASE_ORG'; got '$SUPABASE_ORG'." >&2
+      exit 2
+    fi
     if [[ "$PROFILE" != "chain" ]]; then
       echo "ERROR: RIG-B1 requires profile=chain; got '$PROFILE'." >&2
       exit 2
@@ -842,6 +854,7 @@ write_provision_state() {
     --arg cloud_run_service "$CLOUD_RUN_SERVICE" \
     --arg cloud_run_region "$CLOUD_RUN_REGION" \
     --arg gcp_project "$GCP_PROJECT" \
+    --arg supabase_org_id "$SUPABASE_ORG" \
     --arg supabase_project_name "$PROJECT_NAME" \
     --arg supabase_project_ref "${CREATED_PROJECT_REF:-$NEW_PROJECT_REF}" \
     --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
@@ -875,6 +888,7 @@ write_provision_state() {
       cloud_run_service: $cloud_run_service,
       cloud_run_region: $cloud_run_region,
       gcp_project: $gcp_project,
+      supabase_org_id: $supabase_org_id,
       supabase_project_name: $supabase_project_name,
       supabase_project_ref: $supabase_project_ref,
       secrets: {
@@ -923,8 +937,15 @@ pause_scheduler_jobs_fail_closed() {
       --location="$CLOUD_RUN_REGION" >/dev/null 2>&1; then
       echo "ERROR: failure containment could not pause Scheduler job '$scheduler_job_name'." >&2
       failures=$((failures + 1))
-      continue
     fi
+  done
+
+  # Verification is a separate full pass. A failed pause must not prevent its
+  # own observation, and no earlier failure may stop later jobs from being
+  # paused or verified.
+  for scheduler_spec in "${SCHEDULER_JOB_SPECS[@]}"; do
+    [[ -z "$scheduler_spec" ]] && continue
+    scheduler_job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
     if ! observed_state="$(gcloud scheduler jobs describe "$scheduler_job_name" \
       --project="$GCP_PROJECT" \
       --location="$CLOUD_RUN_REGION" \
@@ -1288,6 +1309,7 @@ emit_admission_json() {
     --arg soak_id "$SOAK_ID" \
     --arg lease_id "$LEASE_ID" \
     --arg gcp_project_id "$GCP_PROJECT" \
+    --arg supabase_org_id "$SUPABASE_ORG" \
     --arg region "$CLOUD_RUN_REGION" \
     --arg cloud_run_service "$cloud_run_service" \
     --arg tier "$TIER" \
@@ -1344,6 +1366,7 @@ emit_admission_json() {
       soak_id: $soak_id,
       lease_id: $lease_id,
       gcp_project_id: $gcp_project_id,
+      supabase_org_id: $supabase_org_id,
       region: $region,
       cloud_run_service: $cloud_run_service,
       tier: $tier,
@@ -1403,10 +1426,12 @@ emit_admission_json() {
         "rig_id or lease_id mismatch against the declared run",
         "base SHA drift with runtime/schema/staging/deploy impact",
         "image digest mismatch against deployed Cloud Run revision",
+        "source image repository differs from the approved Arkova worker repository",
         "dirty preflight (environment_type != clean_mirror)",
         "clean_mirror attestation hash mismatch against sanitized artifact bytes",
         "required worker uptime or wall-clock floor not met",
         "Supabase project ref resolves to prod or shared staging",
+        "RIG-B1 Supabase organization differs from the approved organization",
         "Cloud Run service/tag URL points at shared/main staging",
         "driver_path or driver_sha256 mismatch",
         "soak harness exits non-zero or fails required duration"
@@ -1496,6 +1521,11 @@ if [[ $APPLY -eq 1 ]]; then
   if [[ -z "$NEW_PROJECT_REF" ]]; then
     echo "ERROR: could not capture the new project ref from 'supabase projects create'." >&2
     echo "       Capture it manually, verify it is NOT prod/shared, then run the remaining steps." >&2
+    exit 1
+  fi
+  if [[ ! "$NEW_PROJECT_REF" =~ ^[a-z]{20}$ ]]; then
+    echo "ERROR: created Supabase project ref must be exactly 20 lowercase letters; got '$NEW_PROJECT_REF'." >&2
+    echo "       Refusing every post-create link, schema, secret, deploy, and Scheduler mutation." >&2
     exit 1
   fi
   # Re-validate the freshly created ref against the deny list BEFORE any schema push.

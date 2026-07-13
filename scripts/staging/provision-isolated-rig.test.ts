@@ -339,6 +339,7 @@ interface ApplyRunResult {
 
 interface ApplyRunOptions {
   imageRef?: string | null;
+  projectRef?: string;
   deployedImageRef?: string;
   resolvedImageDigest?: string;
   sourceHead?: string | null;
@@ -354,7 +355,9 @@ interface ApplyRunOptions {
   sourceImageDigest?: string;
   gitFetchFails?: boolean;
   useUntrackedDriver?: boolean;
+  schedulerUpdateFailsAt?: number;
   schedulerResumeFailsAt?: number;
+  schedulerEnabledVerificationFailsAt?: number;
   blockAdmissionArtifactPath?: boolean;
   failFinalStatePersistence?: boolean;
   env?: Record<string, string>;
@@ -378,7 +381,9 @@ function applyRunStubbed(
   const artifactDir = join(stubDir, 'artifacts');
   const admissionArtifactPath = join(artifactDir, `isolated-rig-admission-${name}.json`);
   const provisionStatePath = join(artifactDir, `isolated-rig-provision-${name}.json`);
+  const updateCountFile = join(stubDir, 'scheduler-update-count');
   const resumeCountFile = join(stubDir, 'scheduler-resume-count');
+  const enabledDescribeCountFile = join(stubDir, 'scheduler-enabled-describe-count');
   const finalSchedulerJobSuffix = profile === 'gemini'
     ? 'classify-proof-backcatalog'
     : options.rigId === 'RIG-B1'
@@ -493,6 +498,17 @@ if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "pause" ]]; then
   printf 'PAUSED' > '${schedulerStateDir}/'$4
   exit 0
 fi
+if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "update" ]]; then
+  update_count=0
+  if [[ -f '${updateCountFile}' ]]; then update_count="$(cat '${updateCountFile}')"; fi
+  update_count=$((update_count + 1))
+  printf '%s' "$update_count" > '${updateCountFile}'
+  if [[ "$update_count" == '${options.schedulerUpdateFailsAt ?? 0}' ]]; then
+    echo 'injected Scheduler update failure rc=41' >&2
+    exit 41
+  fi
+  exit 0
+fi
 if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "resume" ]]; then
   mkdir -p '${schedulerStateDir}'
   resume_count=0
@@ -508,6 +524,16 @@ if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "resume" ]]; then
 fi
 if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "describe" ]]; then
   scheduler_state="$(cat '${schedulerStateDir}/'$4)"
+  if [[ "$scheduler_state" == 'ENABLED' ]]; then
+    enabled_describe_count=0
+    if [[ -f '${enabledDescribeCountFile}' ]]; then enabled_describe_count="$(cat '${enabledDescribeCountFile}')"; fi
+    enabled_describe_count=$((enabled_describe_count + 1))
+    printf '%s' "$enabled_describe_count" > '${enabledDescribeCountFile}'
+    if [[ "$enabled_describe_count" == '${options.schedulerEnabledVerificationFailsAt ?? 0}' ]]; then
+      printf 'PAUSED\n'
+      exit 0
+    fi
+  fi
   if [[ '${options.failFinalStatePersistence ? 'true' : 'false'}' == 'true' \
     && "$scheduler_state" == 'ENABLED' && "$4" == *'-${finalSchedulerJobSuffix}' ]]; then
     rm -f '${provisionStatePath}'
@@ -528,7 +554,7 @@ set -euo pipefail
 printf '%s\\n' "$*" >> "${npxLogFile}"
 printf 'npx %s\\n' "$*" >> "${orderLogFile}"
 if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
-  echo '{"id":"abcdefghijklmnopqrst"}'
+  echo '{"id":"${options.projectRef ?? 'abcdefghijklmnopqrst'}"}'
   exit 0
 fi
 if [[ "$1" == "supabase" ]]; then
@@ -627,6 +653,43 @@ exit 64
 afterAll(() => {
   for (const dir of stubDirs) rmSync(dir, { recursive: true, force: true });
 });
+
+function expectEveryDeclaredSchedulerJobContainedAfter(
+  result: ApplyRunResult,
+  failureIndex: number,
+): void {
+  const jobNames = result.gcloudCalls
+    .filter((call) => call.startsWith('scheduler jobs create http '))
+    .map((call) => call.split(' ')[4]);
+  expect(jobNames.length).toBeGreaterThan(1);
+
+  const rollbackPauses = result.callOrder
+    .map((entry, index) => ({ entry, index }))
+    .filter(
+      ({ entry, index }) =>
+        index > failureIndex && entry.startsWith('gcloud scheduler jobs pause '),
+    );
+  expect(rollbackPauses).toHaveLength(jobNames.length);
+  const lastRollbackPauseIndex = Math.max(...rollbackPauses.map(({ index }) => index));
+
+  for (const jobName of jobNames) {
+    expect(
+      rollbackPauses.some(({ entry }) =>
+        entry.startsWith(`gcloud scheduler jobs pause ${jobName} `),
+      ),
+      `containment must pause declared Scheduler job ${jobName}`,
+    ).toBe(true);
+    expect(
+      result.callOrder.some(
+        (entry, index) =>
+          index > lastRollbackPauseIndex &&
+          entry.startsWith(`gcloud scheduler jobs describe ${jobName} `) &&
+          entry.includes('value(state)'),
+      ),
+      `containment must verify declared Scheduler job ${jobName} after pausing the full set`,
+    ).toBe(true);
+  }
+}
 
 describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under --apply (L2-S2a-FIX)', () => {
   const result = applyRunStubbed('s2afix-chain', 'chain');
@@ -897,6 +960,7 @@ describe('provision-isolated-rig.sh — RIG-B1 identity, trigger specs, and admi
       schema_version: 2,
       rig_id: 'RIG-B1',
       gcp_project_id: 'arkova1',
+      supabase_org_id: 'byhkazrpmivhcsuqjtva',
       region: 'us-central1',
       lease_id: leaseId,
       clean_mirror_attestation_id: attestationId,
@@ -954,6 +1018,38 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
     expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
     expect(result.gcloudCalls.some((call) => call.startsWith('scheduler jobs create '))).toBe(false);
     expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('rejects a foreign or cross-project source image repository before secrets or paid project creation', () => {
+    const result = applyRunStubbed('guard-foreign-image', 'mock', {
+      imageRef:
+        `us-central1-docker.pkg.dev/foreign-project/foreign-repo/arkova-worker@${STUB_IMAGE_DIGEST}`,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/source image|repository|arkova-worker-images/i);
+    expect(result.gcloudCalls.some((call) => call.startsWith('secrets '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(
+      false,
+    );
+  });
+
+  it('rejects a RIG-B1 Supabase organization override before paid project creation', () => {
+    const result = applyRunStubbed('guard-b1-org', 'chain', {
+      rigId: 'RIG-B1',
+      env: {
+        STAGING_BITCOIN_NETWORK: 'signet',
+        STAGING_TIER: 'T3',
+        STAGING_DURATION_MIN: '2880',
+        STAGING_REQUIRED_WALL_MIN: '2910',
+        STAGING_SUPABASE_ORG: 'wrong-org-id',
+      },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/RIG-B1|Supabase org|byhkazrpmivhcsuqjtva/i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(
+      false,
+    );
   });
 
   const identityCases: Array<[string, string, string, ApplyRunOptions]> = [
@@ -1263,6 +1359,22 @@ describe('provision-isolated-rig.sh — post-preflight Scheduler invariant', () 
 });
 
 describe('provision-isolated-rig.sh — apply failure containment after Scheduler arming', () => {
+  it('re-pauses and verifies every declared job while preserving a later cadence-update rc', () => {
+    const result = applyRunStubbed('later-update-failure', 'chain', {
+      schedulerUpdateFailsAt: 2,
+    });
+    const updateIndexes = result.callOrder
+      .map((entry, index) => (entry.startsWith('gcloud scheduler jobs update http ') ? index : -1))
+      .filter((index) => index >= 0);
+
+    expect(result.code, result.out).toBe(41);
+    expect(result.out).toMatch(/injected Scheduler update failure rc=41/);
+    expect(updateIndexes).toHaveLength(2);
+    expectEveryDeclaredSchedulerJobContainedAfter(result, updateIndexes[1]);
+    expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
+    expect(result.out).not.toContain('ADMISSION_JSON=');
+  }, 20_000);
+
   it('re-pauses every declared job and preserves the original rc after a partial resume', () => {
     const result = applyRunStubbed('partial-resume-failure', 'chain', {
       schedulerResumeFailsAt: 2,
@@ -1280,6 +1392,26 @@ describe('provision-isolated-rig.sh — apply failure containment after Schedule
     expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
     expect(result.out).not.toContain('ADMISSION_JSON=');
     expect(existsSync(result.admissionArtifactPath)).toBe(false);
+    const resumeIndexes = result.callOrder
+      .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
+      .filter((index) => index >= 0);
+    expectEveryDeclaredSchedulerJobContainedAfter(result, resumeIndexes[1]);
+  }, 20_000);
+
+  it('re-pauses every job when a later post-resume ENABLED verification fails', () => {
+    const result = applyRunStubbed('enabled-verify-failure', 'chain', {
+      schedulerEnabledVerificationFailsAt: 2,
+    });
+    const resumeIndexes = result.callOrder
+      .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
+      .filter((index) => index >= 0);
+
+    expect(result.code, result.out).toBe(1);
+    expect(result.out).toMatch(/ENABLED|state mismatch/i);
+    expect(resumeIndexes).toHaveLength(2);
+    expectEveryDeclaredSchedulerJobContainedAfter(result, resumeIndexes[1] + 1);
+    expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
+    expect(result.out).not.toContain('ADMISSION_JSON=');
   }, 20_000);
 
   it('re-pauses every job when final admission artifact persistence cannot start', () => {
@@ -1296,6 +1428,10 @@ describe('provision-isolated-rig.sh — apply failure containment after Schedule
     expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
     expect(result.out).not.toContain('ADMISSION_JSON=');
     expect(existsSync(result.admissionArtifactPath) && statSync(result.admissionArtifactPath).isDirectory()).toBe(true);
+    const resumeIndexes = result.callOrder
+      .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
+      .filter((index) => index >= 0);
+    expectEveryDeclaredSchedulerJobContainedAfter(result, Math.max(...resumeIndexes) + 1);
   }, 20_000);
 
   it('withdraws the artifact and re-pauses every job when final state persistence fails afterward', () => {
@@ -1312,6 +1448,10 @@ describe('provision-isolated-rig.sh — apply failure containment after Schedule
     expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
     expect(result.out).not.toContain('ADMISSION_JSON=');
     expect(existsSync(result.admissionArtifactPath)).toBe(false);
+    const resumeIndexes = result.callOrder
+      .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
+      .filter((index) => index >= 0);
+    expectEveryDeclaredSchedulerJobContainedAfter(result, Math.max(...resumeIndexes) + 1);
   }, 20_000);
 });
 
@@ -1388,6 +1528,34 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
     const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
     expect(admission.supabase_project_ref).toBe('abcdefghijklmnopqrst');
   }, 15_000);
+
+  it('rejects a malformed created project ref before any downstream mutation', () => {
+    const result = applyRunStubbed('bad-created-project-ref', 'mock', {
+      projectRef: 'abcdefghijklmnopqrs1',
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/project ref|lowercase|20/i);
+    expect(
+      result.npxCalls.filter((call) => call.startsWith('supabase projects create ')),
+    ).toHaveLength(1);
+    expect(
+      result.npxCalls.filter(
+        (call) =>
+          call.startsWith('supabase link ') ||
+          call.startsWith('supabase db push ') ||
+          call.startsWith('supabase projects api-keys '),
+      ),
+    ).toHaveLength(0);
+    expect(
+      result.gcloudCalls.filter(
+        (call) =>
+          call.startsWith('secrets create ') ||
+          call.startsWith('secrets versions add ') ||
+          call.startsWith('run deploy ') ||
+          call.startsWith('scheduler jobs create '),
+      ),
+    ).toHaveLength(0);
+  });
 });
 
 describe('provision-isolated-rig.sh — mock state vocabulary', () => {
