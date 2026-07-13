@@ -203,3 +203,106 @@ describe('verifyMerkleProof', () => {
     expect(verifyMerkleProof(fp, [], result.root)).toBe(true);
   });
 });
+
+// =============================================================================
+// S3-P0 (batch producer) — documented leaf-ordering contract, known vectors,
+// and per-index proofs (duplicate-fingerprint correctness).
+//
+// CONTRACT (see buildMerkleTree docstring):
+//   - Leaves are hashed in the EXACT array order given by the caller. The
+//     batch producer sorts leaves by (fingerprint asc, anchor id asc) before
+//     calling, making the root a pure function of the claimed leaf set.
+//   - Internal nodes: double-SHA256(left ‖ right) — Bitcoin standard.
+//   - Odd-node rule: a level with an odd node count duplicates its LAST
+//     element (Bitcoin convention; the verify side carries the
+//     CVE-2012-2459 structural guard for this).
+// =============================================================================
+
+describe('S3-P0 — known vectors (double-SHA256, odd-node duplication)', () => {
+  const A = 'a'.repeat(64);
+  const B = 'b'.repeat(64);
+  const C = 'c'.repeat(64);
+  const D = 'd'.repeat(64);
+  const E = 'e'.repeat(64);
+
+  // Precomputed with an independent double-SHA256 implementation:
+  //   root2 = dSHA(A‖B)
+  //   root3 = dSHA(dSHA(A‖B) ‖ dSHA(C‖C))          (odd level duplicates C)
+  //   root4 = dSHA(dSHA(A‖B) ‖ dSHA(C‖D))
+  //   root5 = dSHA(dSHA(dSHA(A‖B)‖dSHA(C‖D)) ‖ dSHA(dSHA(E‖E)‖dSHA(E‖E)))
+  it('matches the 2-leaf known vector', () => {
+    expect(buildMerkleTree([A, B]).root).toBe(
+      '499d0d3b39373fb9b7b0f399b7411f7af213d91c32624280e995ae0f8eb776fb',
+    );
+  });
+
+  it('matches the 3-leaf known vector (odd level duplicates the last leaf)', () => {
+    expect(buildMerkleTree([A, B, C]).root).toBe(
+      'd6f226837f442e34974d01825cbac711f4c358d1f564747d3d7203a2d4e94619',
+    );
+  });
+
+  it('matches the 4-leaf known vector', () => {
+    expect(buildMerkleTree([A, B, C, D]).root).toBe(
+      'efe8b66f519d513b0fb54df9bfea1da6d31525e04b67a7e85ff5e97090fb02fd',
+    );
+  });
+
+  it('matches the 5-leaf known vector (odd duplication at two levels)', () => {
+    expect(buildMerkleTree([A, B, C, D, E]).root).toBe(
+      'a86f0a7d69c167657112915b59528d860b6a3af4c4d0b1fed0b8813912af8992',
+    );
+  });
+
+  it('leaf order is significant: [A,B] and [B,A] commit different roots', () => {
+    expect(buildMerkleTree([A, B]).root).not.toBe(buildMerkleTree([B, A]).root);
+  });
+});
+
+describe('S3-P0 — proofsByIndex (positional branches)', () => {
+  it('returns one branch per leaf position, aligned with the input order', () => {
+    const fps = [fakeFingerprint('p0'), fakeFingerprint('p1'), fakeFingerprint('p2')];
+    const result = buildMerkleTree(fps);
+
+    expect(result.proofsByIndex).toHaveLength(3);
+    for (let i = 0; i < fps.length; i++) {
+      expect(verifyMerkleProof(fps[i], result.proofsByIndex[i], result.root)).toBe(true);
+    }
+  });
+
+  it('single-leaf tree yields one empty positional branch', () => {
+    const fp = fakeFingerprint('solo-idx');
+    const result = buildMerkleTree([fp]);
+    expect(result.proofsByIndex).toEqual([[]]);
+  });
+
+  it('positional branches agree with the legacy fingerprint-keyed map for unique leaves', () => {
+    const fps = ['u1', 'u2', 'u3', 'u4', 'u5'].map(fakeFingerprint);
+    const result = buildMerkleTree(fps);
+    for (let i = 0; i < fps.length; i++) {
+      expect(result.proofsByIndex[i]).toEqual(result.proofs.get(fps[i]));
+    }
+  });
+
+  it('DUPLICATE fingerprints: every position gets a branch that is valid FOR ITS OWN INDEX (structural CVE guard)', async () => {
+    // Two different anchors can carry the same fingerprint (cross-user
+    // duplicate). The legacy Map<fingerprint, branch> collapses them — the
+    // last position's branch overwrites the first, so a stored
+    // (merkle_index=i, branch-of-j) pair fails the CVE-2012-2459 structural
+    // check. proofsByIndex must keep them distinct and index-consistent.
+    const { verifyMerkleInclusion } = await import('./merkle-verify.js');
+    const dup = fakeFingerprint('dup');
+    const other = fakeFingerprint('other');
+    // dup appears at index 0 AND index 2 (non-sibling positions).
+    const fps = [dup, other, dup, fakeFingerprint('tail')];
+    const result = buildMerkleTree(fps);
+
+    for (let i = 0; i < fps.length; i++) {
+      const verdict = verifyMerkleInclusion(fps[i], result.proofsByIndex[i], result.root, {
+        leafIndex: i,
+        leafCount: fps.length,
+      });
+      expect(verdict).toEqual({ valid: true });
+    }
+  });
+});

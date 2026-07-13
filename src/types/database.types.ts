@@ -319,6 +319,7 @@ export type Database = {
       anchor_chain_index: {
         Row: {
           anchor_id: string | null
+          chain_block_hash: string | null
           chain_block_height: number | null
           chain_block_timestamp: string | null
           chain_tx_id: string
@@ -330,6 +331,7 @@ export type Database = {
         }
         Insert: {
           anchor_id?: string | null
+          chain_block_hash?: string | null
           chain_block_height?: number | null
           chain_block_timestamp?: string | null
           chain_tx_id: string
@@ -341,6 +343,7 @@ export type Database = {
         }
         Update: {
           anchor_id?: string | null
+          chain_block_hash?: string | null
           chain_block_height?: number | null
           chain_block_timestamp?: string | null
           chain_tx_id?: string
@@ -373,6 +376,7 @@ export type Database = {
           merkle_index: number | null
           merkle_root: string | null
           op_return_payload: string | null
+          proof_completeness_class: string | null
           proof_path: Json | null
           proof_schema_version: number
           raw_response: Json | null
@@ -390,6 +394,7 @@ export type Database = {
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
+          proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
           raw_response?: Json | null
@@ -407,6 +412,7 @@ export type Database = {
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
+          proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
           raw_response?: Json | null
@@ -524,6 +530,7 @@ export type Database = {
       }
       anchors: {
         Row: {
+          chain_block_hash: string | null
           chain_block_height: number | null
           chain_confirmations: number | null
           chain_timestamp: string | null
@@ -567,6 +574,7 @@ export type Database = {
           version_number: number
         }
         Insert: {
+          chain_block_hash?: string | null
           chain_block_height?: number | null
           chain_confirmations?: number | null
           chain_timestamp?: string | null
@@ -612,6 +620,7 @@ export type Database = {
           version_number?: number
         }
         Update: {
+          chain_block_hash?: string | null
           chain_block_height?: number | null
           chain_confirmations?: number | null
           chain_timestamp?: string | null
@@ -3701,6 +3710,7 @@ export type Database = {
           amount: number
           balance_after: number
           created_at: string
+          entry_type: string
           id: string
           org_id: string
           reason: string
@@ -3710,6 +3720,7 @@ export type Database = {
           amount: number
           balance_after: number
           created_at?: string
+          entry_type?: string
           id?: string
           org_id: string
           reason: string
@@ -3719,6 +3730,7 @@ export type Database = {
           amount?: number
           balance_after?: number
           created_at?: string
+          entry_type?: string
           id?: string
           org_id?: string
           reason?: string
@@ -4929,6 +4941,7 @@ export type Database = {
           anchor_id: string | null
           content_hash: string
           created_at: string
+          embedded_at: string | null
           id: string
           metadata: Json | null
           record_type: string
@@ -4943,6 +4956,7 @@ export type Database = {
           anchor_id?: string | null
           content_hash: string
           created_at?: string
+          embedded_at?: string | null
           id?: string
           metadata?: Json | null
           record_type: string
@@ -4957,6 +4971,7 @@ export type Database = {
           anchor_id?: string | null
           content_hash?: string
           created_at?: string
+          embedded_at?: string | null
           id?: string
           metadata?: Json | null
           record_type?: string
@@ -6196,6 +6211,24 @@ export type Database = {
           },
         ]
       }
+      webhook_event_claims: {
+        Row: {
+          claimed_at: string
+          id: string
+          stripe_event_id: string
+        }
+        Insert: {
+          claimed_at?: string
+          id?: string
+          stripe_event_id: string
+        }
+        Update: {
+          claimed_at?: string
+          id?: string
+          stripe_event_id?: string
+        }
+        Relationships: []
+      }
       x402_payments: {
         Row: {
           amount_usd: number
@@ -6565,6 +6598,17 @@ export type Database = {
         Args: { p_events: string[]; p_url: string }
         Returns: Json
       }
+      debit_and_enqueue_anchor: {
+        Args: {
+          p_amount?: number
+          p_anchor_id: string
+          p_expected_status?: Database["public"]["Enums"]["anchor_status"]
+          p_org_id: string
+          p_reason?: string
+          p_target_status?: Database["public"]["Enums"]["anchor_status"]
+        }
+        Returns: Json
+      }
       deduct_ai_credits: {
         Args: { p_amount?: number; p_org_id?: string; p_user_id?: string }
         Returns: boolean
@@ -6600,6 +6644,7 @@ export type Database = {
         | {
             Args: {
               p_batch_size?: number
+              p_block_hash?: string
               p_block_height: number
               p_block_timestamp: string
               p_chain_tx_id: string
@@ -6781,6 +6826,7 @@ export type Database = {
         }[]
       }
       get_pipeline_stats: { Args: never; Returns: Json }
+      get_proof_enforcement_guc: { Args: never; Returns: string }
       get_public_anchor: { Args: { p_public_id: string }; Returns: Json }
       get_public_anchor_by_fingerprint: {
         Args: { p_fingerprint: string }
@@ -6968,6 +7014,18 @@ export type Database = {
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
       next_webhook_sequence: { Args: never; Returns: number }
+      org_credit_ledger_divergence: {
+        Args: { p_org_id?: string }
+        Returns: {
+          balance: number
+          diverged: boolean
+          divergence: number
+          expected: number
+          granted: number
+          ledger_sum: number
+          org_id: string
+        }[]
+      }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string
@@ -7020,6 +7078,13 @@ export type Database = {
       release_claimed_rule_events: {
         Args: { p_error?: string; p_event_ids: string[] }
         Returns: number
+      }
+      reset_unclaimed_connector_broadcasts: {
+        Args: { p_limit?: number; p_org_id: string }
+        Returns: {
+          fingerprint: string
+          id: string
+        }[]
       }
       resolve_anchor_queue: {
         Args: {

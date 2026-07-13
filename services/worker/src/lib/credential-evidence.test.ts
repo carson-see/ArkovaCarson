@@ -224,10 +224,20 @@ describe('credential-evidence', () => {
       credential_title: 'Advanced Data Stewardship Certificate',
       credential_type: 'CERTIFICATE',
       credential_issuer: 'Example University',
-      recipient_identifier_hash: 'b'.repeat(64),
     });
     expect(metadata).not.toHaveProperty('recipientDisplayName');
     expect(metadata).not.toHaveProperty('recipient_display_name');
+  });
+
+  // SCRUM-2484: the recipient identifier hash must NOT be projected into the
+  // public metadata (it flows into stored anchors.metadata → get_public_anchor →
+  // anonymous callers). Even keyed, an identifier that anonymous callers can read
+  // enables correlation; it belongs only in the recipient-linking table.
+  it('does NOT project the recipient identifier hash into public metadata (SCRUM-2484)', () => {
+    const evidence = buildCredentialEvidencePackage(GENERIC_URL_EVIDENCE_INPUT);
+    const metadata = toPublicSafeCredentialEvidenceMetadata(evidence);
+    expect(metadata).not.toHaveProperty('recipient_identifier_hash');
+    expect(metadata).not.toHaveProperty('recipientIdentifierHash');
   });
 
   it('parses only public-safe credential evidence metadata keys', () => {

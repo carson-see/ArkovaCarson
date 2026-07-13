@@ -2,6 +2,10 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-07-06 S3-P0 producer-contract pin (no route changes)
+
+- `verify-proof.bundle-producer.test.ts` pins that a row written EXACTLY the way the S3-P0 batch producer writes it (app-tree branch + `merkle_index` + `batch_id` + `op_return_payload` = "ARKV"‖root with NO version byte, bytea `\x` wire shape) plus the PROOF-03 confirmation columns yields a COMPLETE non-null `proof_bundle` from `buildProofResponse` — the "/proof stops being empty" contract. `verify-proof.ts` itself is UNCHANGED (frozen §1.8 surface; `proof_bundle.signature` remains the reserved always-null inline placeholder — the signed envelope stays at the outer `?format=signed` level).
+
 ## 2026-06-24 Batch AI extraction credit accounting (BUG-2026-06-24-013, T2)
 
 - `ai-extract-batch.ts` (`POST /api/v1/ai/extract-batch`) moved from an UP-FRONT batch debit + failure-only refund to **per-item debit/refund inside `parallelMap`** (parity with the single path `ai-extract.ts`). Batch-level double-accounting is now structurally impossible.

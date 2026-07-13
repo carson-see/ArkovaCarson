@@ -125,6 +125,8 @@ describe('BTC-003: GET /verify/:publicId/proof', () => {
     const res = await request(app).get('/ARK-NONEXIST/proof');
     expect(res.status).toBe(404);
     expect(res.body.error).toBe('Record not found');
+    // Additive machine-readable discriminator (§1.8) — a stale/unknown publicId.
+    expect(res.body.proof_error_code).toBe('RECORD_NOT_FOUND');
   });
 
   it('returns 404 when record has no merkle proof', async () => {
@@ -140,6 +142,8 @@ describe('BTC-003: GET /verify/:publicId/proof', () => {
     const res = await request(app).get('/ARK-2026-TEST-001/proof');
     expect(res.status).toBe(404);
     expect(res.body.error).toContain('No Merkle proof available');
+    // Additive machine-readable discriminator (§1.8) — the honest state-2 signal.
+    expect(res.body.proof_error_code).toBe('NO_BATCH_PROOF');
   });
 
   it('returns 404 when metadata is null', async () => {
@@ -155,6 +159,8 @@ describe('BTC-003: GET /verify/:publicId/proof', () => {
     const res = await request(app).get('/ARK-2026-TEST-001/proof');
     expect(res.status).toBe(404);
     expect(res.body.error).toContain('No Merkle proof available');
+    // Additive machine-readable discriminator (§1.8) — the honest state-2 signal.
+    expect(res.body.proof_error_code).toBe('NO_BATCH_PROOF');
   });
 
   it('returns 500 for malformed proof data', async () => {
@@ -173,6 +179,7 @@ describe('BTC-003: GET /verify/:publicId/proof', () => {
     const res = await request(app).get('/ARK-2026-TEST-001/proof');
     expect(res.status).toBe(500);
     expect(res.body.error).toContain('malformed');
+    expect(res.body.proof_error_code).toBeUndefined();
   });
 
   it('returns 400 for short publicId', async () => {
@@ -184,6 +191,7 @@ describe('BTC-003: GET /verify/:publicId/proof', () => {
     const res = await request(app).get('/ab/proof');
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('Invalid publicId');
+    expect(res.body.proof_error_code).toBeUndefined();
   });
 
   it('handles lookup errors gracefully', async () => {
@@ -195,6 +203,7 @@ describe('BTC-003: GET /verify/:publicId/proof', () => {
     const res = await request(app).get('/ARK-2026-TEST-001/proof');
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('Internal server error');
+    expect(res.body.proof_error_code).toBeUndefined();
   });
 
   it('returns null batch_id when not in metadata', async () => {

@@ -176,6 +176,13 @@ export async function runExtraction(
       .map(([key, value]) => ({
         key,
         value: String(value),
+        // KNOWN LIMITATION (AI-03 / round-1 review): per-field confidence is
+        // NOT real. /ai/extract returns ONE overall confidence for the whole
+        // extraction, and it is stamped onto every field here. Downstream
+        // review gating (TemplateReviewPanel low-confidence flags) is
+        // therefore overall-confidence-driven: either ALL fields flag as
+        // low-confidence or NONE do, until the extraction API returns true
+        // per-field scores (follow-up story).
         confidence: result.confidence,
         status: 'suggested' as const,
       }));

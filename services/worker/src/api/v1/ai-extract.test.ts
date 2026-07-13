@@ -40,7 +40,11 @@ import { createExtractionProvider } from '../../ai/factory.js';
 import { GeminiProvider } from '../../ai/gemini.js';
 import { checkAICredits, deductAICredits } from '../../ai/cost-tracker.js';
 import { Request, Response } from 'express';
-import { AI_EXTRACTION_LATENCY_BUDGET_MS, aiExtractRouter } from './ai-extract.js';
+import {
+  AI_EXTRACTION_LATENCY_BUDGET_MS,
+  aiExtractRouter,
+  resolveExtractionLatencyBudgetMs,
+} from './ai-extract.js';
 
 function getPostHandler() {
   const layer = (aiExtractRouter as { stack: Array<{ route?: { methods: { post: boolean }; stack: Array<{ handle: (...args: unknown[]) => unknown }> } }> }).stack
@@ -455,6 +459,59 @@ describe('AI Extraction Endpoint', () => {
       );
       expect(deductAICredits).toHaveBeenCalledWith('org-456', 'user-123', -1);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the production extraction latency budget unless explicitly configured', () => {
+    expect(resolveExtractionLatencyBudgetMs({})).toBe(AI_EXTRACTION_LATENCY_BUDGET_MS);
+    expect(resolveExtractionLatencyBudgetMs({ AI_EXTRACTION_LATENCY_BUDGET_MS: '9000' })).toBe(9000);
+    expect(resolveExtractionLatencyBudgetMs({ AI_EXTRACTION_LATENCY_BUDGET_MS: '0' })).toBe(AI_EXTRACTION_LATENCY_BUDGET_MS);
+    expect(resolveExtractionLatencyBudgetMs({ AI_EXTRACTION_LATENCY_BUDGET_MS: 'not-a-number' })).toBe(AI_EXTRACTION_LATENCY_BUDGET_MS);
+  });
+
+  it('uses an explicit extraction latency budget before returning fallback metadata', async () => {
+    vi.useFakeTimers();
+    const originalBudget = process.env.AI_EXTRACTION_LATENCY_BUDGET_MS;
+    process.env.AI_EXTRACTION_LATENCY_BUDGET_MS = String(AI_EXTRACTION_LATENCY_BUDGET_MS + 1_000);
+    try {
+      const handler = getPostHandler();
+      const { req, res } = createMockReqRes(validBody, 'user-123');
+
+      mockExtractionDatabase();
+
+      (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+        monthlyAllocation: 500,
+        usedThisMonth: 10,
+        remaining: 490,
+        hasCredits: true,
+      });
+
+      (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+        extractMetadata: vi.fn().mockReturnValue(new Promise(() => {})),
+      });
+
+      const pending = handler!(req, res);
+      await vi.advanceTimersByTimeAsync(AI_EXTRACTION_LATENCY_BUDGET_MS);
+      expect(res.json).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await pending;
+
+      const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(responseJson).toEqual(
+        expect.objectContaining({
+          provider: 'fast-fallback',
+          degraded: true,
+        }),
+      );
+    } finally {
+      if (originalBudget === undefined) {
+        delete process.env.AI_EXTRACTION_LATENCY_BUDGET_MS;
+      } else {
+        process.env.AI_EXTRACTION_LATENCY_BUDGET_MS = originalBudget;
+      }
       vi.useRealTimers();
     }
   });

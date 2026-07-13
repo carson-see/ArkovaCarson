@@ -16,8 +16,8 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
-import { type DriverStats } from './driver-core';
-import { makeDbExecutor, validateFixtureRows, type FixtureExecutor } from './fixtures';
+import { type DriverStats } from './driver-core.js';
+import { makeDbExecutor, validateFixtureRows, type FixtureExecutor } from './fixtures.js';
 
 // ─── Pure helpers (unit-tested) ─────────────────────────────────────────────
 
@@ -70,11 +70,18 @@ function resolveGcloudPath(): string {
   }
 }
 
+export function resolveGcloudIdentityArgs(): string[] {
+  const args = ['auth', 'print-identity-token'];
+  const audience = process.env.STAGING_GCP_IDENTITY_AUDIENCE?.trim();
+  if (audience) args.push(`--audiences=${audience}`);
+  return args;
+}
+
 function fetchIamToken(): string {
   const env = process.env.STAGING_GCP_IDENTITY;
   if (env) return env.trim();
   const bin = resolveGcloudPath();
-  return execFileSync(bin, ['auth', 'print-identity-token'], { encoding: 'utf8' }).trim();
+  return execFileSync(bin, resolveGcloudIdentityArgs(), { encoding: 'utf8' }).trim();
 }
 
 export function iamToken(): string {
@@ -91,6 +98,11 @@ export function iamAuthHeaders(extra: Record<string, string> = {}): Record<strin
   const hasAppBearer = Object.keys(extra).some((key) => key.toLowerCase() === 'authorization');
   if (hasAppBearer) return { 'X-Serverless-Authorization': iam, ...extra };
   return { Authorization: iam, ...extra };
+}
+
+/** Cloud Run IAM only, leaving app-layer Authorization intentionally absent. */
+export function iamOnlyHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return { 'X-Serverless-Authorization': bearerHeader(iamToken()).Authorization, ...extra };
 }
 
 // ─── Service-role Supabase seeder ───────────────────────────────────────────
@@ -182,4 +194,4 @@ export async function runDriver<P>(opts: RunDriverOpts<P>): Promise<void> {
 }
 
 /** Re-export so drivers can build a fresh stats object without a second import. */
-export { newDriverStats } from './driver-core';
+export { newDriverStats } from './driver-core.js';

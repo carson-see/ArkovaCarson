@@ -222,3 +222,52 @@ describe('updateAnchorConfirmationProofs (PROOF-03)', () => {
     expect(result).toEqual({ updated: 0, missing: 1 });
   });
 });
+
+// =============================================================================
+// S3-P0 (batch producer) — op_return_payload persistence + intent raw_response
+// =============================================================================
+
+describe('S3-P0 — upsertAnchorProofs op_return_payload (bytea) support', () => {
+  it('maps opReturnPayload → op_return_payload with the \\x bytea prefix (BUG-4 contract)', async () => {
+    const { client, upsert } = mockClient();
+    const arkvPayload = `41524b56${'ab'.repeat(32)}`; // "ARKV" + 32-byte root
+    await upsertAnchorProofs(client, [
+      { anchorId: 'a1', receiptId: 'tx1', opReturnPayload: arkvPayload },
+    ]);
+    const rows = upsert.mock.calls[0][0];
+    expect(rows[0].op_return_payload).toBe(`\\x${arkvPayload}`);
+  });
+
+  it('OMITS the op_return_payload key entirely when not supplied (no clobber)', async () => {
+    const { client, upsert } = mockClient();
+    await upsertAnchorProofs(client, [{ anchorId: 'a1', receiptId: 'tx1' }]);
+    const rows = upsert.mock.calls[0][0];
+    expect('op_return_payload' in rows[0]).toBe(false);
+  });
+
+  it('writes explicit null when opReturnPayload is passed as null', async () => {
+    const { client, upsert } = mockClient();
+    await upsertAnchorProofs(client, [
+      { anchorId: 'a1', receiptId: 'tx1', opReturnPayload: null },
+    ]);
+    const rows = upsert.mock.calls[0][0];
+    expect(rows[0].op_return_payload).toBeNull();
+  });
+
+  it('passes rawResponse through to raw_response (broadcast-intent record carrier)', async () => {
+    const { client, upsert } = mockClient();
+    const intent = {
+      broadcast_intent: {
+        tx_id: 'txid-1',
+        tx_hex: '02000000deadbeef',
+        fee_sats: 141,
+        prepared_at: '2026-07-06T00:00:00.000Z',
+      },
+    };
+    await upsertAnchorProofs(client, [
+      { anchorId: 'a1', receiptId: 'txid-1', rawResponse: intent },
+    ]);
+    const rows = upsert.mock.calls[0][0];
+    expect(rows[0].raw_response).toEqual(intent);
+  });
+});

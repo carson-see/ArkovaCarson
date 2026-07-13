@@ -36,6 +36,7 @@ Core anchor (document-securing) UI components: upload, confirm, AI extraction, l
 
 ## Recent Changes
 
+- 2026-07-06 AI-03 round-1 review fixes (PR #1413): `SecureDocumentDialog.tsx` zero-field guard — extraction success with zero displayable fields (sparse extraction; template mapper filtered everything) sets `reviewComplete=true` so the absent `TemplateReviewPanel` never soft-locks Continue (same contract as flag-off). Dead per-field accept/reject/accept-all handler wiring removed — the progress-only `AIFieldSuggestions` instance renders with `fields={[]}` so those callbacks can never fire (inline no-ops); post-extraction review is owned by `TemplateReviewPanel`.
 - 2026-06-24 BUG-2026-06-24-008: `AssetDetailView.tsx` "Network Observed Time"
   field renders the network label only when `securedAt` is set; otherwise it
   shows an honest "Record Created" label. Tests in `AssetDetailView.test.tsx`.

@@ -145,11 +145,55 @@ describe('provision-isolated-rig.sh — Cloud Scheduler wiring (node-cron does n
     const { out } = dryRun(['--name', 's0-s2a-chain', '--profile', 'chain']);
     // The worker's /jobs/* routes require cron auth; the Scheduler job must attach it.
     expect(out).toMatch(/X-Cron-Secret|--oidc-service-account-email|--oidc-token-audience/);
+    // Dry-run must show a LABELED redaction placeholder (never a real secret).
+    // L2-S2a-FIX changed the format from the old bare <redacted> to the
+    // self-documenting <redacted:${CRON_SECRET_SECRET}> emitted by
+    // run_cmd_cron_redacted (%q may prefix "<" with a backslash).
+    expect(out).toMatch(/X-Cron-Secret=\\?<redacted:/);
   });
 
   it('does NOT create Scheduler jobs for the pure-mock profile (no behavioral cron to drive)', () => {
     const { out } = dryRun(['--name', 's0-s2a-defaults', '--profile', 'mock']);
     expect(out).not.toMatch(/gcloud scheduler jobs create/);
+  });
+});
+
+describe('provision-isolated-rig.sh — admission JSON contract', () => {
+  it('emits structured admission JSON with driver identity and T3 duration', () => {
+    const { out, code } = dryRun(
+      ['--name', 'pr1408chainreal', '--profile', 'chain'],
+      {
+        GITHUB_SHA: '4f6f9201a5af181ae3699a576969982e9f9b91dd',
+        BASE_SHA: '51615226f87001af2081b4637866e70ab2faf3e0',
+        ADMISSION_GENERATED_AT: '2026-07-09T00:00:00Z',
+      },
+    );
+    expect(code).toBe(0);
+    const line = out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    expect(line).toBeTruthy();
+    const json = JSON.parse(line!.slice('ADMISSION_JSON='.length));
+    expect(json).toMatchObject({
+      kind: 'isolated_rig_admission',
+      tier: 'T3',
+      duration_min: 2880,
+      sha: '4f6f9201a5af181ae3699a576969982e9f9b91dd',
+      base_sha: '51615226f87001af2081b4637866e70ab2faf3e0',
+      driver_path: 'services/worker/scripts/pr1408-chain-resilience-driver.ts',
+    });
+    expect(json.driver_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(json.changed_behavior).toMatch(/PR #1408 chain resilience/);
+    expect(json.stop_conditions).toContain('driver_path or driver_sha256 mismatch');
+  });
+
+  it('apply path has fail-closed secret checks, Supabase secret creation, clean preflight, and driver requirements', () => {
+    expect(script).toMatch(/require_gcloud_secret "\$GETBLOCK_RPC_URL_SECRET"/);
+    expect(script).toMatch(/require_gcloud_secret "\$GETBLOCK_RPC_AUTH_SECRET"/);
+    expect(script).toMatch(/require_gcloud_secret "\$TREASURY_WIF_SECRET"/);
+    expect(script).toMatch(/ensure_secret_with_value "\$SUPABASE_URL_SECRET_NAME"/);
+    expect(script).toMatch(/supabase projects api-keys/);
+    expect(script).toMatch(/PREFLIGHT_ENVIRONMENT" != "clean_mirror"/);
+    expect(script).toMatch(/STAGING_CHANGED_BEHAVIOR/);
+    expect(script).toMatch(/DRIVER_PATH/);
   });
 });
 
@@ -166,6 +210,21 @@ describe('provision-isolated-rig.sh — safety model preserved under the new ove
     const { out, code } = dryRun(['--name', 's0-s2a-chain', '--profile', 'chain']);
     expect(code).toBe(0);
     expect(out).toMatch(/DRY-RUN/);
+  });
+
+  it('requires a Supabase DB password for live project creation and never prints it', () => {
+    const { code, out } = dryRun(
+      ['--name', 's0-s2a-mock', '--profile', 'mock', '--apply'],
+      { CONFIRM_PROVISION: 's0-s2a-mock' },
+    );
+    expect(code).not.toBe(0);
+    expect(out).toMatch(/STAGING_NEW_SUPABASE_DB_PASSWORD/);
+
+    const dry = dryRun(['--name', 's0-s2a-mock', '--profile', 'mock']);
+    expect(dry.code).toBe(0);
+    expect(dry.out).toMatch(/--db-password/);
+    expect(dry.out).toMatch(/<redacted:STAGING_NEW_SUPABASE_DB_PASSWORD>/);
+    expect(dry.out).not.toMatch(/test-db-password/);
   });
 
   it('refuses --apply for a real (non-mock) profile without an explicit real-config acknowledgement', () => {
@@ -267,6 +326,15 @@ exit 64
     STAGING_IMAGE_DIGEST:
       'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
     USER: 'rig-owner',
+    // Apply-mode preconditions carried in by the concurrent main pipeline
+    // (Supabase project create + per-rig runtime secrets + changed-behavior
+    // admission). The Step-4 stub run must satisfy them to reach Step 4 and
+    // run to completion; none of these touch real infra (project create / link /
+    // push / api-keys all resolve through the npx stub above).
+    STAGING_NEW_SUPABASE_DB_PASSWORD: 'stub-db-password-not-real',
+    STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY: 'stub-service-role-key-not-real',
+    STAGING_CHANGED_BEHAVIOR:
+      'L2-S2a-FIX Step-4 Scheduler command validity under --apply (stubbed)',
   };
 
   let out = '';

@@ -1,0 +1,910 @@
+{
+  "meta": {
+    "recordedFrom": "mock-echo",
+    "recordedAt": "2026-07-06",
+    "datasetTag": "s3-cpe-cle",
+    "promptVersionHash": "55995ed0e9cc",
+    "model": "ground-truth-echo (no model)",
+    "note": "DETERMINISTIC MOCK SEED — ground-truth echo, NOT a live-model measurement. Replace via a nightly live-Gemini recording before treating the gate F1 as a real model score."
+  },
+  "outputs": {
+    "GD-S3-CPE-001": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Ridgeline Professional Education Institute",
+        "issuedDate": "2026-04-14",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Ridgeline Professional Education Institute",
+        "courseId": "RPEI-TAX-2026-041",
+        "activityNumber": "RPEI-TAX-2026-041",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-002": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Blue Harbor CPA Academy",
+        "issuedDate": "2025-11-03",
+        "fieldOfStudy": "Auditing",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 6,
+        "creditType": "CPE",
+        "providerName": "Blue Harbor CPA Academy",
+        "courseId": "BHCA-AUD-2025-217",
+        "activityNumber": "BHCA-AUD-2025-217",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-003": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Summit Ledger Learning",
+        "issuedDate": "2026-01-22",
+        "fieldOfStudy": "Accounting (Governmental)",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Colorado",
+        "creditHours": 4,
+        "creditType": "CPE",
+        "providerName": "Summit Ledger Learning",
+        "courseId": "SLL-GOV-2026-009",
+        "activityNumber": "SLL-GOV-2026-009",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-004": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Northwind Tax Institute",
+        "issuedDate": "2026-02-09",
+        "fieldOfStudy": "Regulatory Ethics",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Texas",
+        "creditHours": 4,
+        "creditType": "CPE Ethics",
+        "providerName": "Northwind Tax Institute",
+        "courseId": "NTI-ETH-2026-114",
+        "activityNumber": "NTI-ETH-2026-114",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "active",
+        "ethicsHours": 4,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-005": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Cascade Accounting Seminars LLC",
+        "issuedDate": "2026-03-05",
+        "fieldOfStudy": "Information Technology",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 2,
+        "creditType": "CPE",
+        "providerName": "Cascade Accounting Seminars LLC",
+        "courseId": "CAS-TEC-2026-072",
+        "activityNumber": "CAS-TEC-2026-072",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-006": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Harborview Society of Accountants",
+        "issuedDate": "2025-10-16",
+        "fieldOfStudy": "Auditing (Governmental)",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Washington",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Harborview Society of Accountants",
+        "courseId": "HSA-AUD-2025-331",
+        "activityNumber": "HSA-AUD-2025-331",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-007": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Silverbirch Finance Education",
+        "issuedDate": "2026-05-01",
+        "fieldOfStudy": "Finance",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 0.2,
+        "creditType": "CPE",
+        "providerName": "Silverbirch Finance Education",
+        "courseId": "SFE-FIN-2026-018",
+        "activityNumber": "SFE-FIN-2026-018",
+        "deliveryMethod": "Nano Learning",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-008": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Copperfield CPE Partners",
+        "issuedDate": "2026-02-02",
+        "fieldOfStudy": "Accounting",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 5,
+        "creditType": "CPE",
+        "providerName": "Copperfield CPE Partners",
+        "courseId": "CCP-ACC-2026-127",
+        "activityNumber": "CCP-ACC-2026-127",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "lapsed",
+        "manualReviewExpected": true,
+        "fraudSignals": [
+          "EXPIRED_ACCREDITATION"
+        ]
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-009": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Gleneagle Professional Studies",
+        "issuedDate": "2026-06-11",
+        "fieldOfStudy": "Auditing",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Illinois",
+        "creditHours": 16,
+        "creditType": "CPE",
+        "providerName": "Gleneagle Professional Studies",
+        "courseId": "GPS-CONF-2026-002",
+        "activityNumber": "GPS-CONF-2026-002",
+        "deliveryMethod": "Blended Learning",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-011": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Ridgeline Professional Education Institute",
+        "issuedDate": "2025-12-04",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Ridgeline Professional Education Institute",
+        "courseId": "RPEI-TAX-2025-233",
+        "activityNumber": "RPEI-TAX-2025-233",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-012": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Blue Harbor CPA Academy",
+        "issuedDate": "2026-01-30",
+        "fieldOfStudy": "Auditing",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 4,
+        "creditType": "CPE",
+        "providerName": "Blue Harbor CPA Academy",
+        "courseId": "BHCA-AUD-2026-078",
+        "activityNumber": "BHCA-AUD-2026-078",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-013": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Northwind Tax Institute",
+        "issuedDate": "2025-09-18",
+        "fieldOfStudy": "Regulatory Ethics",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 2,
+        "creditType": "CPE Ethics",
+        "providerName": "Northwind Tax Institute",
+        "courseId": "NTI-ETH-2025-402",
+        "activityNumber": "NTI-ETH-2025-402",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "ethicsHours": 2,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-014": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Summit Ledger Learning",
+        "issuedDate": "2026-04-08",
+        "fieldOfStudy": "Accounting",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Oregon",
+        "creditHours": 6,
+        "creditType": "CPE",
+        "providerName": "Summit Ledger Learning",
+        "courseId": "SLL-ACC-2026-141",
+        "activityNumber": "SLL-ACC-2026-141",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-015": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Cascade Accounting Seminars LLC",
+        "issuedDate": "2025-08-21",
+        "fieldOfStudy": "Information Technology",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 3,
+        "creditType": "CPE",
+        "providerName": "Cascade Accounting Seminars LLC",
+        "courseId": "CAS-TEC-2025-388",
+        "activityNumber": "CAS-TEC-2025-388",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-016": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Gleneagle Professional Studies",
+        "issuedDate": "2026-02-26",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Gleneagle Professional Studies",
+        "courseId": "GPS-TAX-2026-091",
+        "activityNumber": "GPS-TAX-2026-091",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-017": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Silverbirch Finance Education",
+        "issuedDate": "2025-07-07",
+        "fieldOfStudy": "Finance",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 1,
+        "creditType": "CPE",
+        "providerName": "Silverbirch Finance Education",
+        "courseId": "SFE-FIN-2025-260",
+        "activityNumber": "SFE-FIN-2025-260",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-019": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Ridgeline Professional Education Institute",
+        "issuedDate": "2026-03-12",
+        "fieldOfStudy": "Accounting",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 4,
+        "creditType": "CPE",
+        "providerName": "Ridgeline Professional Education Institute",
+        "courseId": "RPEI-ACC-2026-133",
+        "activityNumber": "RPEI-ACC-2026-133",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-020": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Copperfield CPE Partners",
+        "issuedDate": "2026-04-29",
+        "fieldOfStudy": "Auditing",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 2,
+        "creditType": "CPE",
+        "providerName": "Copperfield CPE Partners",
+        "courseId": "CCP-AUD-2026-208",
+        "activityNumber": "CCP-AUD-2026-208",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-022": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Northwind Tax Institute",
+        "issuedDate": "2026-01-15",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Northwind Tax Institute",
+        "courseId": "NTI-TAX-2026-171",
+        "activityNumber": "NTI-TAX-2026-171",
+        "deliveryMethod": "Group Internet Based",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-023": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Summit Ledger Learning",
+        "issuedDate": "2025-11-20",
+        "fieldOfStudy": "Accounting",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 7,
+        "creditType": "CPE",
+        "providerName": "Summit Ledger Learning",
+        "courseId": "SLL-ACC-2025-299",
+        "activityNumber": "SLL-ACC-2025-299",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-025": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Silverbirch Finance Education",
+        "issuedDate": "2026-02-17",
+        "fieldOfStudy": "Finance",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 1.5,
+        "creditType": "CPE",
+        "providerName": "Silverbirch Finance Education",
+        "courseId": "SFE-FIN-2026-042",
+        "activityNumber": "SFE-FIN-2026-042",
+        "deliveryMethod": "QAS Self Study",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-026": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Gleneagle Professional Studies",
+        "issuedDate": "2025-10-02",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 7.25,
+        "creditType": "CPE",
+        "providerName": "Gleneagle Professional Studies",
+        "courseId": "GPS-TAX-2025-310",
+        "activityNumber": "GPS-TAX-2025-310",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-028": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Ridgeline Professional Education Institute",
+        "issuedDate": "2026-01-08",
+        "fieldOfStudy": "Taxes",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "United States",
+        "creditHours": 8,
+        "creditType": "CPE",
+        "providerName": "Ridgeline Professional Education Institute",
+        "courseId": "RPEI-CMB-2026-007",
+        "activityNumber": "RPEI-CMB-2026-007",
+        "deliveryMethod": "Group Live",
+        "nasbaStatus": "active",
+        "ethicsHours": 2,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CPE-029": {
+      "fields": {
+        "credentialType": "CPE",
+        "issuerName": "Harborview Society of Accountants",
+        "issuedDate": "2025-12-12",
+        "fieldOfStudy": "Accounting (Governmental)",
+        "accreditingBody": "NASBA",
+        "jurisdiction": "Washington",
+        "creditHours": 12,
+        "creditType": "CPE",
+        "providerName": "Harborview Society of Accountants",
+        "courseId": "HSA-CLU-2025-054",
+        "activityNumber": "HSA-CLU-2025-054",
+        "deliveryMethod": "Blended Learning",
+        "nasbaStatus": "active",
+        "ethicsHours": 2,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-001": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Lakeshore Legal Education Group",
+        "issuedDate": "2026-03-18",
+        "jurisdiction": "New Caldonia",
+        "creditHours": 6,
+        "creditType": "CLE",
+        "providerName": "Lakeshore Legal Education Group",
+        "approvedBy": "New Caldonia State Bar CLE Board",
+        "activityNumber": "LLEG-SEC-2026-031",
+        "courseId": "LLEG-SEC-2026-031",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-002": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Clearwater Ethics Institute",
+        "issuedDate": "2026-02-25",
+        "jurisdiction": "Westfalia",
+        "creditHours": 2,
+        "creditType": "CLE Ethics",
+        "providerName": "Clearwater Ethics Institute",
+        "approvedBy": "State Bar of Westfalia MCLE Committee",
+        "activityNumber": "CEI-ETH-2026-088",
+        "courseId": "CEI-ETH-2026-088",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 2,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-003": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Meridian Bar Review Institute",
+        "issuedDate": "2026-01-21",
+        "jurisdiction": "Ohio",
+        "creditHours": 3,
+        "creditType": "CLE",
+        "providerName": "Meridian Bar Review Institute",
+        "approvedBy": "Ohio Commission on CLE",
+        "activityNumber": "MBRI-LIT-2026-014",
+        "courseId": "MBRI-LIT-2026-014",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-004": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Oakhollow CLE Partners",
+        "issuedDate": "2025-12-02",
+        "jurisdiction": "California",
+        "creditHours": 1.5,
+        "creditType": "CLE",
+        "providerName": "Oakhollow CLE Partners",
+        "approvedBy": "California MCLE",
+        "activityNumber": "OCP-IPL-2025-201",
+        "courseId": "OCP-IPL-2025-201",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-005": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Pinnacle Legal Studies",
+        "issuedDate": "2026-04-03",
+        "jurisdiction": "Minnesota",
+        "creditHours": 7,
+        "creditType": "CLE",
+        "providerName": "Pinnacle Legal Studies",
+        "approvedBy": "Minnesota State Board of CLE",
+        "activityNumber": "PLS-EMP-2026-119",
+        "courseId": "PLS-EMP-2026-119",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-006": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Bar Association of New Caldonia",
+        "issuedDate": "2026-02-11",
+        "jurisdiction": "New Caldonia",
+        "creditHours": 1,
+        "creditType": "CLE",
+        "providerName": "Bar Association of New Caldonia",
+        "approvedBy": "New Caldonia State Bar CLE Board",
+        "activityNumber": "BANC-LIT-2026-042",
+        "courseId": "BANC-LIT-2026-042",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-007": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Fairport Law Seminars",
+        "issuedDate": "2026-01-12",
+        "jurisdiction": "Westfalia",
+        "creditHours": 2.5,
+        "creditType": "CLE",
+        "providerName": "Fairport Law Seminars",
+        "approvedBy": "Westfalia MCLE Committee",
+        "activityNumber": "FLS-RE-2026-077",
+        "courseId": "FLS-RE-2026-077",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0,
+        "manualReviewExpected": true,
+        "fraudSignals": [
+          "EXPIRED_ACCREDITATION"
+        ]
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-008": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Redwood Legal Learning",
+        "issuedDate": "2026-03-30",
+        "jurisdiction": "Florida",
+        "creditHours": 1,
+        "creditType": "CLE Technology",
+        "providerName": "Redwood Legal Learning",
+        "approvedBy": "Florida Bar CLE Department",
+        "activityNumber": "RLL-TEC-2026-023",
+        "courseId": "RLL-TEC-2026-023",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-009": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Stonegate Legal Institute",
+        "issuedDate": "2025-10-28",
+        "jurisdiction": "New York",
+        "creditHours": 4.5,
+        "creditType": "CLE",
+        "providerName": "Stonegate Legal Institute",
+        "approvedBy": "New York CLE Board",
+        "activityNumber": "SLI-PRV-2025-164",
+        "courseId": "SLI-PRV-2025-164",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0.5,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-011": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Meridian Bar Review Institute",
+        "issuedDate": "2025-11-13",
+        "jurisdiction": "Ohio",
+        "creditHours": 5,
+        "creditType": "CLE",
+        "providerName": "Meridian Bar Review Institute",
+        "approvedBy": "Ohio Commission on CLE",
+        "activityNumber": "MBRI-LIT-2025-289",
+        "courseId": "MBRI-LIT-2025-289",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-012": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Clearwater Ethics Institute",
+        "issuedDate": "2025-09-09",
+        "jurisdiction": "Westfalia",
+        "creditHours": 1,
+        "creditType": "CLE Ethics",
+        "providerName": "Clearwater Ethics Institute",
+        "approvedBy": "State Bar of Westfalia MCLE Committee",
+        "activityNumber": "CEI-ETH-2025-141",
+        "courseId": "CEI-ETH-2025-141",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-013": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Fairport Law Seminars",
+        "issuedDate": "2026-03-04",
+        "jurisdiction": "Westfalia",
+        "creditHours": 3,
+        "creditType": "CLE",
+        "providerName": "Fairport Law Seminars",
+        "approvedBy": "Westfalia MCLE Committee",
+        "activityNumber": "FLS-RE-2026-118",
+        "courseId": "FLS-RE-2026-118",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-014": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Stonegate Legal Institute",
+        "issuedDate": "2026-01-27",
+        "jurisdiction": "New York",
+        "creditHours": 4,
+        "creditType": "CLE",
+        "providerName": "Stonegate Legal Institute",
+        "approvedBy": "New York CLE Board",
+        "activityNumber": "SLI-IMM-2026-036",
+        "courseId": "SLI-IMM-2026-036",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-015": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Pinnacle Legal Studies",
+        "issuedDate": "2025-10-09",
+        "jurisdiction": "Minnesota",
+        "creditHours": 6.5,
+        "creditType": "CLE",
+        "providerName": "Pinnacle Legal Studies",
+        "approvedBy": "Minnesota State Board of CLE",
+        "activityNumber": "PLS-EMP-2025-244",
+        "courseId": "PLS-EMP-2025-244",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0.5,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-016": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Redwood Legal Learning",
+        "issuedDate": "2025-12-18",
+        "jurisdiction": "Florida",
+        "creditHours": 2,
+        "creditType": "CLE",
+        "providerName": "Redwood Legal Learning",
+        "approvedBy": "Florida Bar CLE Department",
+        "activityNumber": "RLL-CRM-2025-310",
+        "courseId": "RLL-CRM-2025-310",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-017": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Oakhollow CLE Partners",
+        "issuedDate": "2026-02-19",
+        "jurisdiction": "California",
+        "creditHours": 1.5,
+        "creditType": "CLE",
+        "providerName": "Oakhollow CLE Partners",
+        "approvedBy": "California MCLE",
+        "activityNumber": "OCP-BKR-2026-054",
+        "courseId": "OCP-BKR-2026-054",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-019": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Stonegate Legal Institute",
+        "issuedDate": "2026-03-25",
+        "jurisdiction": "New York",
+        "creditHours": 2,
+        "creditType": "CLE",
+        "providerName": "Stonegate Legal Institute",
+        "approvedBy": "New York CLE Board",
+        "activityNumber": "SLI-PRV-2026-071",
+        "courseId": "SLI-PRV-2026-071",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-020": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Meridian Bar Review Institute",
+        "issuedDate": "2026-02-05",
+        "jurisdiction": "Ohio",
+        "creditHours": 1,
+        "creditType": "CLE",
+        "providerName": "Meridian Bar Review Institute",
+        "approvedBy": "Ohio Commission on CLE",
+        "activityNumber": "MBRI-APP-2026-063",
+        "courseId": "MBRI-APP-2026-063",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-022": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Lakeshore Legal Education Group",
+        "issuedDate": "2026-01-29",
+        "jurisdiction": "New Caldonia",
+        "creditHours": 5,
+        "creditType": "CLE",
+        "providerName": "Lakeshore Legal Education Group",
+        "approvedBy": "New Caldonia State Bar CLE Board",
+        "activityNumber": "LLEG-INS-2026-058",
+        "courseId": "LLEG-INS-2026-058",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-023": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Oakhollow CLE Partners",
+        "issuedDate": "2025-11-06",
+        "jurisdiction": "California",
+        "creditHours": 5,
+        "creditType": "CLE",
+        "providerName": "Oakhollow CLE Partners",
+        "approvedBy": "California MCLE",
+        "activityNumber": "OCP-ADR-2025-277",
+        "courseId": "OCP-ADR-2025-277",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 0,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-025": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Clearwater Ethics Institute",
+        "issuedDate": "2026-04-21",
+        "jurisdiction": "Westfalia",
+        "creditHours": 0.75,
+        "creditType": "CLE Ethics",
+        "providerName": "Clearwater Ethics Institute",
+        "approvedBy": "State Bar of Westfalia MCLE Committee",
+        "activityNumber": "CEI-ETH-2026-119",
+        "courseId": "CEI-ETH-2026-119",
+        "deliveryMethod": "Live Webcast",
+        "ethicsHours": 0.75,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-026": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Redwood Legal Learning",
+        "issuedDate": "2025-08-14",
+        "jurisdiction": "Florida",
+        "creditHours": 3.25,
+        "creditType": "CLE",
+        "providerName": "Redwood Legal Learning",
+        "approvedBy": "Florida Bar CLE Department",
+        "activityNumber": "RLL-PRV-2025-198",
+        "courseId": "RLL-PRV-2025-198",
+        "deliveryMethod": "On-Demand Video",
+        "ethicsHours": 0.5,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-028": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Willowbrook Attorney Education",
+        "issuedDate": "2026-02-27",
+        "jurisdiction": "Georgia",
+        "creditHours": 8,
+        "creditType": "CLE",
+        "providerName": "Willowbrook Attorney Education",
+        "approvedBy": "Georgia Commission on Continuing Lawyer Competency",
+        "activityNumber": "WAE-SUM-2026-021",
+        "courseId": "WAE-SUM-2026-021",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    },
+    "GD-S3-CLE-029": {
+      "fields": {
+        "credentialType": "CLE",
+        "issuerName": "Stonegate Legal Institute",
+        "issuedDate": "2026-05-15",
+        "jurisdiction": "New York",
+        "creditHours": 12,
+        "creditType": "CLE",
+        "providerName": "Stonegate Legal Institute",
+        "approvedBy": "New York CLE Board",
+        "activityNumber": "SLI-CONF-2026-003",
+        "courseId": "SLI-CONF-2026-003",
+        "deliveryMethod": "In-Person Seminar",
+        "ethicsHours": 1,
+        "fraudSignals": []
+      },
+      "confidence": 0.99
+    }
+  }
+}

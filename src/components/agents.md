@@ -1,5 +1,9 @@
 # agents.md — components
-_Last updated: 2026-05-05_
+_Last updated: 2026-07-06_
+
+## 2026-07-06 AI-03 template-review MVP (SCRUM-2383)
+
+`anchor/TemplateReviewPanel.tsx` — review/correct step rendered in `SecureDocumentDialog`'s completed-extraction view (replacing the completed-state `AIFieldSuggestions` instance; the progress-state instance remains). Every field is editable; fields below `LOW_CONFIDENCE_THRESHOLD` (0.8) are amber-flagged and must be acknowledged ("This is correct") or corrected before the dialog's Continue (`data-testid="extraction-review-continue"`) enables — wired via `onReviewStateChange` → `reviewComplete` state. Gated by `ENABLE_AI_EXTRACTION` (flag off → panel renders nothing AND reports review-complete so the flow is never blocked). Strings in `TEMPLATE_REVIEW_LABELS` (copy.ts). Client telemetry value-omission is test-locked; the server-side counterpart lives in `services/worker/src/api/v1/ai-template.ts`.
 
 ## What This Folder Contains
 

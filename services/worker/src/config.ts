@@ -20,12 +20,12 @@ const positiveNumberWithFallback = (def: number) => z.preprocess((v) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : def;
 }, z.number().positive());
 // Integer env clamped to [min, max] with a default. Mirrors the inline
-// `Math.min(Math.max(min, parseInt(...) || def), max)` idiom in the worker so
+// `Math.min(Math.max(min, Number.parseInt(...) || def), max)` idiom in the worker so
 // ad-hoc reads can migrate into config.ts (SCRUM-1258) with identical runtime
 // behavior: parseInt-style leading-int parse, NaN/0 → def, then clamp (not reject).
 const clampedIntWithFallback = (def: number, min: number, max: number) =>
   z.preprocess((v) => {
-    const parsed = parseInt(String(v ?? ''), 10) || def;
+    const parsed = Number.parseInt(String(v ?? ''), 10) || def;
     return Math.min(Math.max(min, parsed), max);
   }, z.number().int());
 
@@ -51,8 +51,15 @@ const ConfigSchema = z.object({
   bitcoinRpcAuth: z.string().optional(),
   /** Treasury WIF — loaded from env, NEVER logged (Constitution 1.4) */
   bitcoinTreasuryWif: z.string().optional(),
-  /** UTXO provider: 'rpc' (full node), 'mempool' (public API), or 'getblock' (RPC broadcast + mempool UTXO) */
-  bitcoinUtxoProvider: z.enum(['rpc', 'mempool', 'getblock']).default('mempool'),
+  /**
+   * UTXO provider: 'rpc' (full node), 'mempool' (public API), or 'getblock'
+   * (RPC broadcast + mempool UTXO). Default 'getblock' (S3-P0 / DISC-03):
+   * prod deploy (deploy-worker.yml) and both R-5 expected-config JSONs assert
+   * "getblock" — the old 'mempool' Zod default was the acknowledged
+   * code-default-divergence WARN and would have silently degraded broadcast
+   * to the public API if the env var were ever dropped from Cloud Run.
+   */
+  bitcoinUtxoProvider: z.enum(['rpc', 'mempool', 'getblock']).default('getblock'),
   /** Mempool.space API URL override (defaults to Signet endpoint) */
   mempoolApiUrl: z.string().url().optional(),
 
@@ -184,6 +191,13 @@ const ConfigSchema = z.object({
   // Verification API (P4.5)
   /** HMAC-SHA256 secret for API key hashing (Constitution 1.4) — never logged */
   apiKeyHmacSecret: z.string().min(1).optional(),
+  /**
+   * SCRUM-2484: server pepper for keyed HMAC-SHA256 of recipient email
+   * identifiers (recipient_email_hash / recipient_identifier_hash). Without it,
+   * recipient identifiers fall back to an enumerable bare sha256(email). Never
+   * logged. VALUE is Carson/RTE-provisioned in Secret Manager.
+   */
+  recipientIdentifierPepper: z.string().min(16).optional(),
   /** CORS origins for /api/v1/* endpoints (comma-separated) */
   corsAllowedOrigins: z.string().optional(),
 
@@ -400,6 +414,17 @@ const ConfigSchema = z.object({
    * read (SCRUM-1258 — typed, not dynamic).
    */
   proofBackfillConfirm: z.string().optional(),
+
+  // Back-catalogue proof-completeness classifier (S3-A / PROOF-BACKCATALOG)
+  /**
+   * PROOF_CLASSIFIER_CONFIRM — confirmation token for the back-catalogue
+   * classifier (`runBackCatalogClassifier`). The job is DRY-RUN by default
+   * (census only, zero writes); write mode additionally requires this token
+   * to equal the literal `EXECUTE` AND the caller to pass `execute=true`.
+   * Deliberately SEPARATE from PROOF_BACKFILL_CONFIRM so arming one write job
+   * never arms the other. Optional — unset means dry-run-only (safe default).
+   */
+  proofClassifierConfirm: z.string().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -687,6 +712,7 @@ function loadConfig(): Config {
     enableOrgCreditEnforcement: process.env.ENABLE_ORG_CREDIT_ENFORCEMENT,
     disableInProcessAnchorCron: process.env.DISABLE_IN_PROCESS_ANCHOR_CRON,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
+    recipientIdentifierPepper: process.env.RECIPIENT_IDENTIFIER_PEPPER,
     geminiApiKey: process.env.GEMINI_API_KEY,
     geminiModel: process.env.GEMINI_MODEL,
     geminiEmbeddingModel: process.env.GEMINI_EMBEDDING_MODEL,
@@ -780,6 +806,10 @@ function loadConfig(): Config {
     // `|| undefined` so an empty string is treated as unset (dry-run-only),
     // matching the prior dynamic PROOF_BACKFILL_CONFIRM read in the job.
     proofBackfillConfirm: process.env.PROOF_BACKFILL_CONFIRM || undefined,
+
+    // Back-catalogue classifier confirm token (S3-A / PROOF-BACKCATALOG).
+    // `|| undefined` so an empty string is treated as unset (dry-run-only).
+    proofClassifierConfirm: process.env.PROOF_CLASSIFIER_CONFIRM || undefined,
   });
 
   if (!result.success) {

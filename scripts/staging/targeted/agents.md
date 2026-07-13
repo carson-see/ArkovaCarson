@@ -13,8 +13,9 @@ Root cause this replaces: the failed soak fleet ran `load-harness --mode mixed` 
 | `runtime.ts` | Live-rig plumbing (NOT unit-tested beyond the two pure helpers): Cloud Run IAM token (30-min refresh, `STAGING_GCP_IDENTITY` override), service-role Supabase seeder, `writeEvidenceFile`, and the `runDriver` seed-once-then-fire-on-a-30s-cadence loop. |
 | `verify-proof-driver.ts` (**#1439**) | GET `/api/v1/verify/:public_id/proof` — drives BOTH 404 branches (`record-not-found` unknown id → RECORD_NOT_FOUND; `no-batch-proof` seeded SECURED-but-unbatched id → NO_BATCH_PROOF) + a `invalid-public-id` 400. Captures each body's `proof_error_code`. |
 | `ops-slo-driver.ts` (**#1441**) | GET `/api/admin/ops-slo-stats` — `admin-ok` (platform-admin JWT → 200, captures per-surface `available` map incl `available:false`), `non-admin-forbidden` (403), `unauthenticated` (401). |
-| `webhooks-self-service-driver.ts` (**#1443**) | ORG_ADMIN `/api/v1/webhooks/*` — `test`, `replay` (`/deliveries/:id/replay`), `dlq-list` (`/dlq`), `dlq-resolve` (`/dlq/:id/resolve`) against a seeded DLQ fixture, + `unauthenticated` 401. |
+| `webhooks-self-service-driver.ts` (**#1443**) | ORG_ADMIN JWT-gated `/api/v1/webhooks/self-service/*` — `test` (`/:id/test`), `replay` (`/deliveries/:id/replay`), `dlq-list` (`/dlq`), `dlq-resolve` (`/dlq/:id/resolve`) against a seeded DLQ fixture, + `unauthenticated` 401. Paces one pass every 65s so the long run proves the changed behavior without accidentally turning the whole soak into a batch-limiter 429 test. |
 | `cpe-cle-exports-driver.ts` (**#1415**) | POST the three `/api/v1/exports/{cpe,cle,org/cpe}-log` endpoints in BOTH pdf+json, plus an explicit cross-user 403 isolation case, three Zod edges (bad format enum, malformed date, inverted period → 400), and a 401. |
+| `classify-backcatalog-driver.ts` (**#1410**) | POST `/jobs/classify-proof-backcatalog` (back-catalogue proof-completeness classifier census) — `census-dry-run` (default; per-class plan, zero proof writes), `census-bounded` (batch_size+max_batches → resumable cursor/checkpoint path), `census-restart` (restart=true → fresh census from cursor zero), + the two 400 param guards (`batch_size` below the 50 floor; malformed `org_id` uuid). Every request is dry-run (execute never set); auth = cronAuth `X-Cron-Secret` + Cloud Run IAM. Census runs over the rig's existing anchors/anchor_proofs — no bespoke fixture (the baseline fixture supplies rows). |
 
 ## Design contract
 
@@ -37,3 +38,7 @@ Each driver runs directly via `tsx scripts/staging/targeted/<driver>.ts` (delibe
 ## Tests
 
 `driver-core.test.ts`, `fixtures.test.ts`, `runtime.test.ts`, and one `*-driver.test.ts` per driver — all red-first TDD, all pure (no live rig). Run: `npx vitest run scripts/staging/targeted/`.
+
+## classify-backcatalog driver (PR #1493, L2-S8, 2026-07-10)
+
+Rescued the untracked `classify-backcatalog-driver.ts` (targeted driver for #1410's `POST /jobs/classify-proof-backcatalog`) onto a fresh branch off main and closed its folder-contract gap: it shipped without the mandatory `*-driver.test.ts`. The new red-first test covers plan purity (deterministic POST plan, capture on, `execute` never in any query), the two 400 guards as expected-evidence statuses (batch floor 50; org_id uuid), `classifyPath` query building, and the census interpreter (per-class counts extracted, unknown keys dropped, null on guard/non-object bodies). API-verified against main's `driver-core.ts` / `runtime.ts` / `load-harness-env.ts` exports — no shared-module changes needed.

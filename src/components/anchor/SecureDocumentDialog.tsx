@@ -33,6 +33,7 @@ import { WORKER_URL } from '@/lib/workerClient';
 import { TemplateSelector } from './TemplateSelector';
 import type { TemplateOption } from './TemplateSelector';
 import { AIFieldSuggestions } from './AIFieldSuggestions';
+import { TemplateReviewPanel } from './TemplateReviewPanel';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
@@ -100,8 +101,12 @@ export function SecureDocumentDialog({
   const [aiEnabled, setAiEnabled] = useState(false);
   const [extractionProgress, setExtractionProgress] = useState<ExtractionProgress | null>(null);
   const [extractedFields, setExtractedFields] = useState<ExtractionField[]>([]);
+  // AI-03 (SCRUM-2383): low-confidence fields must be acknowledged or corrected
+  // in the TemplateReviewPanel before the user can proceed past extraction.
+  const [reviewComplete, setReviewComplete] = useState(true);
   const [overallConfidence, setOverallConfidence] = useState(0);
-  const [creditsRemaining, setCreditsRemaining] = useState(0);
+  // creditsRemaining display moved out with the AI-03 review panel; the
+  // extraction progress instance of AIFieldSuggestions passes a literal 0.
 
   // Template reconstruction state (populated async after extraction)
   const [templateResult, setTemplateResult] = useState<TemplateReconstructionResult | null>(null);
@@ -377,6 +382,9 @@ export function SecureDocumentDialog({
 
     setStep('extracting');
     setExtractedFields([]);
+    // Hold Continue until the review panel reports its state (it re-enables
+    // immediately when there is nothing low-confidence to review).
+    setReviewComplete(false);
     setExtractionProgress({ stage: 'ocr', progress: 0, message: 'Starting AI analysis...' });
 
     // §1.6 FAIL-CLOSED (WEBEXT-03): capture whether the on-device privacy
@@ -396,22 +404,12 @@ export function SecureDocumentDialog({
 
     if (result) {
       setOverallConfidence(result.overallConfidence);
-      setCreditsRemaining(result.creditsRemaining);
       setExtractionProgress({ stage: 'complete', progress: 100, message: 'Extraction complete' });
 
       // Auto-detect document type and auto-select template
       const typeField = result.fields.find(f => f.key === 'credentialType');
       const detectedType = (typeField && typeField.confidence >= 0.5) ? typeField.value : 'OTHER';
       await autoSelectTemplate(detectedType);
-
-      // Fire off template reconstruction in parallel (non-blocking)
-      const fieldsObj = result.fields.reduce<Record<string, unknown>>((acc, f) => {
-        acc[f.key] = f.value;
-        return acc;
-      }, {});
-      fetchTemplateReconstruction(fieldsObj, result.overallConfidence)
-        .then(tr => { if (tr) setTemplateResult(tr); })
-        .catch(() => { /* template reconstruction is best-effort */ });
 
       // Apply template field schema: reorder, label, validate
       const tmplResult = await applyTemplate(
@@ -428,6 +426,16 @@ export function SecureDocumentDialog({
         f.confidence >= 0.5 ? { ...f, status: 'accepted' as const } : f
       );
       setExtractedFields(autoAccepted);
+
+      // AI-03 zero-field guard (round-1 review): sparse extraction can leave
+      // zero displayable fields (e.g. only credentialType/fraudSignals, both
+      // filtered by the template mapper). The review panel only mounts when
+      // there are fields, so it can never report review-complete — extraction
+      // success with nothing to review must NOT gate Continue (panel absent
+      // AND non-blocking, same contract as flag-off).
+      if (autoAccepted.length === 0) {
+        setReviewComplete(true);
+      }
 
       // Let the user review extracted fields before confirming.
       // The extracting step with stage=complete shows the field list
@@ -468,33 +476,30 @@ export function SecureDocumentDialog({
     }
   }, [fileData, aiEnabled, handleStartExtraction, autoSelectTemplate, handleConfirm]);
 
-  // AI field callbacks
-  const handleFieldAccept = useCallback((key: string, value: string) => {
-    setExtractedFields(prev =>
-      prev.map(f => f.key === key ? { ...f, value, status: 'accepted' as const } : f)
-    );
-  }, []);
-
-  const handleFieldReject = useCallback((key: string) => {
-    setExtractedFields(prev =>
-      prev.map(f => f.key === key ? { ...f, status: 'rejected' as const } : f)
-    );
-  }, []);
-
+  // AI field callbacks (review-panel path; see TemplateReviewPanel)
   const handleFieldEdit = useCallback((key: string, value: string) => {
     setExtractedFields(prev =>
       prev.map(f => f.key === key ? { ...f, value, status: 'edited' as const } : f)
     );
   }, []);
 
-  const handleAcceptAll = useCallback((fields: ExtractionField[]) => {
-    setExtractedFields(prev =>
-      prev.map(f => {
-        const matched = fields.find(sf => sf.key === f.key);
-        return matched ? { ...f, status: 'accepted' as const } : f;
-      })
-    );
-  }, []);
+  const handleExtractionReviewContinue = useCallback(async () => {
+    if (extractedFields.length > 0) {
+      const reviewedFields = extractedFields
+        .filter(f => f.status !== 'rejected')
+        .reduce<Record<string, unknown>>((acc, f) => {
+          acc[f.key] = f.value;
+          return acc;
+        }, {});
+
+      if (Object.keys(reviewedFields).length > 0) {
+        const reconstruction = await fetchTemplateReconstruction(reviewedFields, overallConfidence);
+        if (reconstruction) setTemplateResult(reconstruction);
+      }
+    }
+
+    setStep(selectedTemplate ? 'confirm' : 'template');
+  }, [extractedFields, overallConfidence, selectedTemplate]);
 
   const handleClose = useCallback(() => {
     setStep('upload');
@@ -643,15 +648,20 @@ export function SecureDocumentDialog({
           {step === 'extracting' && (
             <div className="space-y-4">
               {extractionProgress && extractionProgress.stage !== 'complete' && (
+                /* Progress-only instance: fields={[]} means the per-field
+                   accept/reject/edit/accept-all callbacks can never fire —
+                   inline no-ops instead of dead handler wiring (round-1
+                   review cleanup). Post-extraction review is owned by
+                   TemplateReviewPanel below. */
                 <AIFieldSuggestions
                   fields={[]}
                   overallConfidence={0}
                   creditsRemaining={0}
                   progress={extractionProgress}
-                  onFieldAccept={handleFieldAccept}
-                  onFieldReject={handleFieldReject}
-                  onFieldEdit={handleFieldEdit}
-                  onAcceptAll={handleAcceptAll}
+                  onFieldAccept={() => {}}
+                  onFieldReject={() => {}}
+                  onFieldEdit={() => {}}
+                  onAcceptAll={() => {}}
                 />
               )}
 
@@ -679,14 +689,14 @@ export function SecureDocumentDialog({
                       </span>
                     </div>
                   )}
-                  <AIFieldSuggestions
+                  {/* AI-03 (SCRUM-2383): review/correct step — low-confidence
+                      fields are flagged and require acknowledgment or
+                      correction before Continue enables. */}
+                  <TemplateReviewPanel
                     fields={extractedFields}
                     overallConfidence={overallConfidence}
-                    creditsRemaining={creditsRemaining}
-                    onFieldAccept={handleFieldAccept}
-                    onFieldReject={handleFieldReject}
                     onFieldEdit={handleFieldEdit}
-                    onAcceptAll={handleAcceptAll}
+                    onReviewStateChange={setReviewComplete}
                   />
                 </>
               )}
@@ -996,8 +1006,15 @@ export function SecureDocumentDialog({
                   <Button variant="outline" onClick={() => setStep('upload')}>
                     {SECURE_DIALOG_LABELS.BACK}
                   </Button>
-                  {/* Skip template selection if AI auto-detected a type */}
-                  <Button onClick={() => setStep(selectedTemplate ? 'confirm' : 'template')}>
+                  {/* Skip template selection if AI auto-detected a type.
+                      AI-03: disabled until every low-confidence field has been
+                      acknowledged or corrected in the review panel. */}
+                  <Button
+                    onClick={() => void handleExtractionReviewContinue()}
+                    disabled={!reviewComplete}
+                    aria-disabled={!reviewComplete}
+                    data-testid="extraction-review-continue"
+                  >
                     {SECURE_DIALOG_LABELS.CONTINUE}
                   </Button>
                 </>

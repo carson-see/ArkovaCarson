@@ -44,3 +44,7 @@ Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sig
 ## SOC 2 DC 200
 
 System description for this module is documented in Confluence under SCRUM-1735. When changing this module, re-verify the description (services, commitments, components, risk assessment, control environment, CUECs) is still accurate.
+
+## SSRF guard extract (SCRUM-2483)
+
+- The private-IP classifier (`isPrivateIp`, `PRIVATE_IP_PATTERNS`, `BLOCKED_HOSTNAMES`) + DNS-resolution helper were lifted **byte-identically** from `delivery.ts` into `../lib/ssrf-guard.ts` so this webhook guard and the new `safeFetch` egress primitive share ONE source of truth. `delivery.ts` re-exports them, so `isPrivateUrl`/`isPrivateUrlResolved` and every importer (`api/v1/webhooks.ts`, `credential-sources.ts`) are unchanged — no behaviour delta on the webhook delivery path. Edit the blocklist in `ssrf-guard.ts`, not here.

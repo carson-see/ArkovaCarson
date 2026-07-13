@@ -325,6 +325,14 @@ vi.mock('../config.js', () => ({
   config: { nodeEnv: 'test', useMocks: true, maxFeeThresholdSatPerVbyte: 50 },
 }));
 
+// S3-P0 / AC7 (flatten reconciliation with #1417): processBatchAnchors is now
+// HARD-gated on ENABLE_BATCH_ANCHORING (fail-closed). This harness tests the
+// drain's behavior with the feature ON; the gate-off no-op path is pinned in
+// batch-anchor.intent.test.ts.
+vi.mock('../middleware/flagRegistry.js', () => ({
+  flagRegistry: { getFlag: (name: string) => name === 'ENABLE_BATCH_ANCHORING' },
+}));
+
 vi.mock('../chain/client.js', () => ({
   getChainClientAsync: vi.fn(async () => ({
     submitFingerprint: mockSubmitFingerprint,

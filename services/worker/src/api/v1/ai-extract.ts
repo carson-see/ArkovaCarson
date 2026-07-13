@@ -48,17 +48,28 @@ const ISSUER_KEYWORDS = [
 const ISO_LIKE_DATE_PATTERN = /\b(?:20|19)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])\b/;
 
 class ExtractionLatencyError extends Error {
-  constructor() {
-    super(`AI extraction latency budget exceeded (${AI_EXTRACTION_LATENCY_BUDGET_MS}ms)`);
+  constructor(budgetMs: number) {
+    super(`AI extraction latency budget exceeded (${budgetMs}ms)`);
     this.name = 'ExtractionLatencyError';
   }
 }
 
-function withLatencyBudget<T>(operation: Promise<T>): Promise<T> {
+export function resolveExtractionLatencyBudgetMs(
+  env: { AI_EXTRACTION_LATENCY_BUDGET_MS?: string } = process.env,
+): number {
+  const raw = env.AI_EXTRACTION_LATENCY_BUDGET_MS?.trim();
+  if (!raw) return AI_EXTRACTION_LATENCY_BUDGET_MS;
+
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) return AI_EXTRACTION_LATENCY_BUDGET_MS;
+  return parsed;
+}
+
+function withLatencyBudget<T>(operation: Promise<T>, budgetMs = resolveExtractionLatencyBudgetMs()): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => reject(new ExtractionLatencyError()), AI_EXTRACTION_LATENCY_BUDGET_MS);
+    timeout = setTimeout(() => reject(new ExtractionLatencyError(budgetMs)), budgetMs);
   });
 
   return Promise.race([operation, timeoutPromise]).finally(() => {

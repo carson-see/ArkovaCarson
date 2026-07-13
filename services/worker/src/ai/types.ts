@@ -39,8 +39,12 @@ export interface ExtractedFields {
   creditType?: string;
   barNumber?: string;
   activityNumber?: string;
+  courseId?: string;
   providerName?: string;
   approvedBy?: string;
+  deliveryMethod?: string;
+  ethicsHours?: number;
+  nasbaStatus?: string;
   // CHARITY-specific fields
   einNumber?: string;
   taxExemptStatus?: string;

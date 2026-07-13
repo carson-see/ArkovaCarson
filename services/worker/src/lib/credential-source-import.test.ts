@@ -6,6 +6,9 @@ import {
 } from './credential-source-import.js';
 
 const FIXED_NOW = new Date('2026-05-05T18:45:00.000Z');
+// SCRUM-2484: the recipient identifier hash is now a keyed HMAC; a pepper is
+// required for it to be produced at all.
+const TEST_RECIPIENT_PEPPER = 'test-recipient-pepper-0123456789';
 
 function response(body: string, init?: ResponseInit): Response {
   return new Response(body, init);
@@ -34,7 +37,7 @@ describe('credential-source-import', () => {
     const result = await buildCredentialSourceImportPreview({
       source_url: 'https://www.credly.example/badges/badge-123?token=secret&utm_source=ad&locale=en',
       credential_type: 'BADGE',
-    }, { fetchFn, urlGuard, now: () => FIXED_NOW });
+    }, { fetchFn, urlGuard, now: () => FIXED_NOW, recipientPepper: TEST_RECIPIENT_PEPPER });
 
     expect(fetchFn).toHaveBeenCalledWith(
       'https://www.credly.example/badges/badge-123?locale=en',
@@ -60,9 +63,10 @@ describe('credential-source-import', () => {
     expect(result.preview.public_metadata).not.toHaveProperty('token');
     expect(result.preview.public_metadata).not.toHaveProperty('recipient_display_name');
     expect(result.preview.public_metadata).not.toHaveProperty('credential_recipient_display');
-    expect(result.preview.public_metadata).toMatchObject({
-      recipient_identifier_hash: result.preview.credential_recipient_hash,
-    });
+    // SCRUM-2484: the recipient identifier hash is returned in the PREVIEW (for
+    // the authenticated importer) but must NOT appear in public_metadata (which
+    // is spread into stored anchors.metadata → get_public_anchor → anon callers).
+    expect(result.preview.public_metadata).not.toHaveProperty('recipient_identifier_hash');
   });
 
   it('prefers issuer metadata extracted from HTML over the caller hint', async () => {
@@ -97,6 +101,7 @@ describe('credential-source-import', () => {
       }), { headers: { 'content-type': 'application/json' } })),
       urlGuard: vi.fn().mockResolvedValue(false),
       now: () => FIXED_NOW,
+      recipientPepper: TEST_RECIPIENT_PEPPER,
     });
 
     expect(result.preview.credential_issuer).toBe('Structured Issuer');
