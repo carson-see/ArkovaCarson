@@ -239,7 +239,9 @@ test.describe('API Keys & Verification Flow', () => {
         .or(page.getByText(/TypeScript/i));
       if (await tsTab.isVisible({ timeout: 3000 }).catch(() => false)) {
         await tsTab.click();
-        await expect(page.getByText('ArkovaClient')).toBeVisible();
+        // Canonical SDK class is `Arkova` (packages/sdk); the stale
+        // `ArkovaClient` duplicate was removed in PR #1506.
+        await expect(page.getByText("import { Arkova } from '@arkova/sdk'")).toBeVisible();
       }
     });
 
