@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# scripts/staging/provision-isolated-rig.test.sh - local dry-run contract tests.
+# scripts/staging/provision-isolated-rig.test.sh - local contract tests.
 #
-# These tests run the provisioner in its default dry-run mode only. They do not
-# call Supabase, gcloud, or mutate any staging/live resources.
+# These tests run the default dry-run plus a fully stubbed apply failure. They do
+# not call Supabase, gcloud, or mutate any staging/live resources.
 
 set -uo pipefail
 
@@ -170,6 +170,7 @@ assert_file_not_contains "base SHA resolver does not fall back to HEAD~1" "$PROV
 
 tmp_bin="$(mktemp -d)"
 head_sha="$(git rev-parse HEAD)"
+base_sha="$(git merge-base HEAD origin/main)"
 stub_image_ref="us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 cat >"$tmp_bin/npx" <<'EOF'
 #!/usr/bin/env bash
@@ -210,11 +211,9 @@ if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
   exit 0
 fi
 if [[ "$1" == "run" && "$2" == "revisions" && "$3" == "describe" ]]; then
-  if [[ "$*" == *"spec.containers[0].image"* ]]; then
-    echo "${STUB_IMAGE_REF:?}"
-  elif [[ "$*" == *"metadata.labels.arkova-source-head"* ]]; then
-    echo "${STUB_SOURCE_HEAD:?}"
-  fi
+  cat <<JSON
+{"metadata":{"labels":{"arkova-source-head":"${STUB_SOURCE_HEAD:?}"}},"spec":{"containers":[{"image":"${STUB_IMAGE_REF:?}","env":[{"name":"NODE_ENV","value":"production"},{"name":"ENABLE_AI_FRAUD","value":"false"},{"name":"ENABLE_AI_REPORTS","value":"false"},{"name":"CORS_ALLOWED_ORIGINS","value":"https://app.arkova.ai"},{"name":"FRONTEND_URL","value":"https://app.arkova.ai"},{"name":"USE_MOCKS","value":"true"},{"name":"ENABLE_PROD_NETWORK_ANCHORING","value":"false"}]}]},"status":{"imageDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}
+JSON
   exit 0
 fi
 exit 0
@@ -233,7 +232,7 @@ bad_out=$(
   STAGING_ADMISSION_DIR="$tmp_bin/artifacts" \
   STUB_IMAGE_REF="$stub_image_ref" \
   STUB_SOURCE_HEAD="$head_sha" \
-  BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  BASE_SHA="$base_sha" \
   STAGING_CHANGED_BEHAVIOR="PR #1408 chain resilience: preflight test behavior" \
   USER=rig-owner \
   "$PROVISION" --name s0e4-lane-b --apply 2>&1

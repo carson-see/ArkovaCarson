@@ -123,6 +123,7 @@ DRIVER_PATH="${STAGING_DRIVER_PATH:-services/worker/scripts/pr1408-chain-resilie
 TIER="${STAGING_TIER:-T3}"
 DURATION_MIN="${STAGING_DURATION_MIN:-2880}"
 CHANGED_BEHAVIOR="${STAGING_CHANGED_BEHAVIOR:-}"
+VALIDATED_BASE_SHA=""
 
 usage() {
   sed -n '2,38p' "$0"
@@ -293,11 +294,58 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       (3-128 characters: letters, digits, dot, underscore, colon, or hyphen)." >&2
     exit 2
   fi
-  if [[ "$PROFILE" == "gemini" && ! "$GEMINI_TUNED_MODEL_VALUE" =~ ^projects/[^/]+/locations/[^/]+/(endpoints|models)/[^/]+$ ]]; then
+  if [[ "$PROFILE" == "gemini" \
+    && ! "$GEMINI_TUNED_MODEL_VALUE" =~ ^projects/[A-Za-z0-9][A-Za-z0-9._:-]*/locations/[A-Za-z0-9][A-Za-z0-9._-]*/(endpoints|models)/[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
     echo "ERROR: live gemini provision requires STAGING_GEMINI_TUNED_MODEL as a full" >&2
     echo "       projects/<project>/locations/<location>/endpoints/<id> or models/<id> resource." >&2
     exit 2
   fi
+  if [[ "$PROFILE" == "gemini" && "$GEMINI_V6_PROMPT_VALUE" != "true" ]]; then
+    echo "ERROR: live gemini provision requires GEMINI_V6_PROMPT to be the exact activation value 'true'." >&2
+    exit 2
+  fi
+
+  # A paid/live rig cannot truthfully identify as T0. The duration floor is the
+  # canonical staging-evidence floor (T1=2h, T2=12h, T3=48h).
+  case "$TIER" in
+    T1) MIN_DURATION_MIN=120 ;;
+    T2) MIN_DURATION_MIN=720 ;;
+    T3) MIN_DURATION_MIN=2880 ;;
+    *)
+      echo "ERROR: live rig tier must be one of T1, T2, or T3; T0/unknown tiers cannot provision a soak rig." >&2
+      exit 2
+      ;;
+  esac
+  if [[ ! "$DURATION_MIN" =~ ^[1-9][0-9]*$ || ${#DURATION_MIN} -gt 16 ]]; then
+    echo "ERROR: live $TIER duration must be a canonical positive integer >= ${MIN_DURATION_MIN} minutes; got '$DURATION_MIN'." >&2
+    exit 2
+  fi
+  DURATION_MIN_VALUE=$((10#$DURATION_MIN))
+  if (( DURATION_MIN_VALUE > 9007199254740991 || DURATION_MIN_VALUE < MIN_DURATION_MIN )); then
+    echo "ERROR: live $TIER duration must be a safe integer >= ${MIN_DURATION_MIN} minutes; got '$DURATION_MIN'." >&2
+    exit 2
+  fi
+
+  # Admission base provenance is derived from this exact checkout. Caller
+  # metadata may repeat it, but cannot replace it with an arbitrary 40-hex
+  # string or a different ancestor.
+  EXPECTED_BASE_SHA="$(git merge-base "$DECLARED_SOURCE_HEAD" origin/main 2>/dev/null || true)"
+  CANDIDATE_BASE_SHA="${BASE_SHA:-${GITHUB_BASE_SHA:-$EXPECTED_BASE_SHA}}"
+  if [[ ! "$EXPECTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ERROR: could not resolve the HEAD/origin-main merge-base for live admission." >&2
+    exit 2
+  fi
+  if [[ ! "$CANDIDATE_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+    || ! git cat-file -e "${CANDIDATE_BASE_SHA}^{commit}" 2>/dev/null \
+    || ! git merge-base --is-ancestor "$CANDIDATE_BASE_SHA" "$DECLARED_SOURCE_HEAD" 2>/dev/null; then
+    echo "ERROR: live admission BASE_SHA must be an existing 40-hex commit that is an ancestor of declared HEAD." >&2
+    exit 2
+  fi
+  if [[ "$CANDIDATE_BASE_SHA" != "$EXPECTED_BASE_SHA" ]]; then
+    echo "ERROR: live admission BASE_SHA must equal the HEAD/origin-main merge-base." >&2
+    exit 2
+  fi
+  VALIDATED_BASE_SHA="$EXPECTED_BASE_SHA"
 fi
 
 # ---------------------------------------------------------------------------
@@ -345,6 +393,10 @@ ADMISSION_KMS_PROVIDER=""
 ADMISSION_GEMINI_TUNED_MODEL=""
 ADMISSION_GEMINI_V6_PROMPT=""
 ADMISSION_GEMINI_TUNED_RESPONSE_SCHEMA="<unset>"
+ADMISSION_NODE_ENV="production"
+ADMISSION_ENABLE_AI_FRAUD="false"
+ADMISSION_ENABLE_AI_REPORTS="false"
+ADMISSION_FRONTEND_URL="$FRONTEND_URL_VALUE"
 
 case "$PROFILE" in
   mock)
@@ -400,6 +452,33 @@ join_by_comma() {
 }
 WORKER_ENV_VARS="$(join_by_comma "${ENV_VARS[@]}")"
 WORKER_SECRETS="$(join_by_comma "${SECRETS[@]}")"
+
+# gcloud's mapping flags use comma as their default entry delimiter. Reject
+# delimiter/control injection rather than allowing one operator-controlled value
+# to create a second undeclared environment variable or secret binding.
+validate_gcloud_mapping_entries() {
+  local mapping_kind="$1"
+  shift
+  local entry key value
+  for entry in "$@"; do
+    key="${entry%%=*}"
+    value="${entry#*=}"
+    if [[ ! "$key" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+      echo "ERROR: invalid gcloud $mapping_kind mapping key '$key'." >&2
+      exit 2
+    fi
+    if [[ "$value" == *','* || "$value" == *$'\n'* || "$value" == *$'\r'* ]] \
+      || printf '%s' "$value" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+      echo "ERROR: gcloud $mapping_kind value for '$key' contains a forbidden delimiter or control character." >&2
+      exit 2
+    fi
+  done
+}
+
+if [[ $APPLY -eq 1 ]]; then
+  validate_gcloud_mapping_entries "environment" "${ENV_VARS[@]}"
+  validate_gcloud_mapping_entries "secret" "${SECRETS[@]}"
+fi
 SUPABASE_URL_SECRET_NAME="supabase-url-${NAME}-staging"
 SUPABASE_SERVICE_ROLE_SECRET_NAME="supabase-service-role-key-${NAME}-staging"
 STAGING_ADMISSION_DIR="${STAGING_ADMISSION_DIR:-docs/staging/${NAME}}"
@@ -664,7 +743,9 @@ resolve_head_sha() {
 }
 
 resolve_base_sha() {
-  if [[ -n "${BASE_SHA:-}" ]]; then
+  if [[ -n "$VALIDATED_BASE_SHA" ]]; then
+    printf '%s\n' "$VALIDATED_BASE_SHA"
+  elif [[ -n "${BASE_SHA:-}" ]]; then
     printf '%s\n' "$BASE_SHA"
   elif [[ -n "${GITHUB_BASE_SHA:-}" ]]; then
     printf '%s\n' "$GITHUB_BASE_SHA"
@@ -712,18 +793,24 @@ verify_deployed_revision_provenance() {
     exit 1
   fi
 
-  DEPLOYED_IMAGE_REF="$(gcloud run revisions describe "$DEPLOYED_REVISION" \
+  local revision_json expected_digest resolved_digest
+  revision_json="$(gcloud run revisions describe "$DEPLOYED_REVISION" \
     --region="$CLOUD_RUN_REGION" \
     --project="$GCP_PROJECT" \
-    --format="value(spec.containers[0].image)")"
-  DEPLOYED_SOURCE_HEAD="$(gcloud run revisions describe "$DEPLOYED_REVISION" \
-    --region="$CLOUD_RUN_REGION" \
-    --project="$GCP_PROJECT" \
-    --format="value(metadata.labels.arkova-source-head)")"
+    --format=json)"
+  if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$revision_json"; then
+    echo "ERROR: Cloud Run revision describe did not return a valid JSON object." >&2
+    exit 1
+  fi
 
-  local expected_digest
+  DEPLOYED_IMAGE_REF="$(jq -r '.spec.containers[0].image // empty' <<<"$revision_json")"
+  resolved_digest="$(jq -r '.status.imageDigest // empty' <<<"$revision_json")"
+  DEPLOYED_SOURCE_HEAD="$(jq -r '.metadata.labels["arkova-source-head"] // empty' <<<"$revision_json")"
+
   expected_digest="$(image_digest_from_ref "$PINNED_IMAGE")"
-  DEPLOYED_IMAGE_DIGEST="$(image_digest_from_ref "$DEPLOYED_IMAGE_REF" 2>/dev/null || true)"
+  # Cloud Run RevisionStatus.imageDigest is controller-observed and is populated
+  # with the resolved digest even when spec.containers[0].image retains a tag.
+  DEPLOYED_IMAGE_DIGEST="$(image_digest_from_ref "$resolved_digest" 2>/dev/null || true)"
   if [[ -z "$DEPLOYED_IMAGE_DIGEST" || "$DEPLOYED_IMAGE_DIGEST" != "$expected_digest" ]]; then
     echo "ERROR: deployed revision image digest mismatch: expected=$expected_digest got=${DEPLOYED_IMAGE_DIGEST:-<missing>}." >&2
     exit 1
@@ -732,16 +819,70 @@ verify_deployed_revision_provenance() {
     echo "ERROR: deployed revision source HEAD mismatch: expected=$DECLARED_SOURCE_HEAD got=${DEPLOYED_SOURCE_HEAD:-<missing>}." >&2
     exit 1
   fi
+
+  verify_deployed_revision_env "$revision_json"
+}
+
+observed_revision_env_value() {
+  local revision_json="$1"
+  local env_name="$2"
+  jq -r --arg name "$env_name" '
+    [.spec.containers[0].env[]? | select(.name == $name and (.value | type == "string"))]
+    | if length == 1 then .[0].value else empty end
+  ' <<<"$revision_json"
+}
+
+verify_deployed_revision_env() {
+  local revision_json="$1"
+  local entry key expected observed count
+  for entry in "${ENV_VARS[@]}"; do
+    key="${entry%%=*}"
+    expected="${entry#*=}"
+    count="$(jq -r --arg name "$key" '[.spec.containers[0].env[]? | select(.name == $name)] | length' <<<"$revision_json")"
+    observed="$(observed_revision_env_value "$revision_json" "$key")"
+    if [[ "$count" != "1" || "$observed" != "$expected" ]]; then
+      echo "ERROR: deployed revision environment '$key' does not exactly match the declared non-secret value." >&2
+      exit 1
+    fi
+  done
+
+  count="$(jq -r '[.spec.containers[0].env[]? | select(.name == "GEMINI_TUNED_RESPONSE_SCHEMA")] | length' <<<"$revision_json")"
+  if [[ "$count" != "0" ]]; then
+    echo "ERROR: deployed revision environment contains forbidden GEMINI_TUNED_RESPONSE_SCHEMA flag bleed." >&2
+    exit 1
+  fi
+
+  # Admission values come from the immutable deployed revision, not the caller's
+  # requested overlay. --set-env-vars replaces the old set, and this observation
+  # proves the schema selector was actively absent from the resulting revision.
+  ADMISSION_NODE_ENV="$(observed_revision_env_value "$revision_json" "NODE_ENV")"
+  ADMISSION_ENABLE_AI_FRAUD="$(observed_revision_env_value "$revision_json" "ENABLE_AI_FRAUD")"
+  ADMISSION_ENABLE_AI_REPORTS="$(observed_revision_env_value "$revision_json" "ENABLE_AI_REPORTS")"
+  ADMISSION_FRONTEND_URL="$(observed_revision_env_value "$revision_json" "FRONTEND_URL")"
+  USE_MOCKS_VALUE="$(observed_revision_env_value "$revision_json" "USE_MOCKS")"
+  ENABLE_PROD_NETWORK_ANCHORING_VALUE="$(observed_revision_env_value "$revision_json" "ENABLE_PROD_NETWORK_ANCHORING")"
+  if [[ "$PROFILE" == "chain" ]]; then
+    ADMISSION_KMS_PROVIDER="$(observed_revision_env_value "$revision_json" "KMS_PROVIDER")"
+    ADMISSION_BITCOIN_NETWORK="$(observed_revision_env_value "$revision_json" "BITCOIN_NETWORK")"
+    ADMISSION_BITCOIN_UTXO_PROVIDER="$(observed_revision_env_value "$revision_json" "BITCOIN_UTXO_PROVIDER")"
+  elif [[ "$PROFILE" == "gemini" ]]; then
+    ADMISSION_GEMINI_TUNED_MODEL="$(observed_revision_env_value "$revision_json" "GEMINI_TUNED_MODEL")"
+    ADMISSION_GEMINI_V6_PROMPT="$(observed_revision_env_value "$revision_json" "GEMINI_V6_PROMPT")"
+  fi
+  ADMISSION_GEMINI_TUNED_RESPONSE_SCHEMA="<unset>"
 }
 
 verify_scheduler_job_state() {
   local job_name="$1"
   local expected_state="$2"
   local actual_state
-  actual_state="$(gcloud scheduler jobs describe "$job_name" \
+  if ! actual_state="$(gcloud scheduler jobs describe "$job_name" \
     --project="$GCP_PROJECT" \
     --location="$CLOUD_RUN_REGION" \
-    --format="value(state)")"
+    --format="value(state)")"; then
+    echo "ERROR: Scheduler job '$job_name' could not be described while verifying state=$expected_state." >&2
+    exit 1
+  fi
   if [[ "$actual_state" != "$expected_state" ]]; then
     echo "ERROR: Scheduler job '$job_name' state mismatch: expected=$expected_state got=${actual_state:-<missing>}." >&2
     exit 1
@@ -790,7 +931,11 @@ emit_admission_json() {
   local changed_behavior="${13}"
   local owner="${14}"
   local generated_at
-  generated_at="${ADMISSION_GENERATED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+  if [[ $APPLY -eq 1 ]]; then
+    generated_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  else
+    generated_at="${ADMISSION_GENERATED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+  fi
 
   jq -nc \
     --argjson schema_version "$schema_version" \
@@ -816,6 +961,10 @@ emit_admission_json() {
     --arg preflight_result "$preflight_result" \
     --arg preflight_artifact "$PREFLIGHT_ARTIFACT_PATH" \
     --arg preflight_verified_at "$PREFLIGHT_VERIFIED_AT" \
+    --arg node_env "$ADMISSION_NODE_ENV" \
+    --arg enable_ai_fraud "$ADMISSION_ENABLE_AI_FRAUD" \
+    --arg enable_ai_reports "$ADMISSION_ENABLE_AI_REPORTS" \
+    --arg frontend_url "$ADMISSION_FRONTEND_URL" \
     --arg use_mocks "$USE_MOCKS_VALUE" \
     --arg enable_prod_network_anchoring "$ENABLE_PROD_NETWORK_ANCHORING_VALUE" \
     --arg bitcoin_network "$ADMISSION_BITCOIN_NETWORK" \
@@ -863,8 +1012,10 @@ emit_admission_json() {
         verified_at: $preflight_verified_at
       },
       critical_config: {
-        enable_ai_fraud: "false",
-        enable_ai_reports: "false",
+        node_env: $node_env,
+        enable_ai_fraud: $enable_ai_fraud,
+        enable_ai_reports: $enable_ai_reports,
+        frontend_url: $frontend_url,
         use_mocks: $use_mocks,
         enable_prod_network_anchoring: $enable_prod_network_anchoring,
         bitcoin_network: $bitcoin_network,
@@ -1139,18 +1290,85 @@ if [[ $APPLY -eq 1 ]]; then
   PREFLIGHT_JSON="$(npx tsx scripts/ci/staging-honesty-preflight.ts \
     --project-ref "$NEW_PROJECT_REF" \
     --format json)"
-  printf '%s\n' "$PREFLIGHT_JSON"
-  PREFLIGHT_ENVIRONMENT="$(jq -r '.environment_type // empty' <<<"$PREFLIGHT_JSON")"
-  if [[ "$PREFLIGHT_ENVIRONMENT" != "clean_mirror" ]]; then
-    echo "ERROR: staging preflight must be environment_type=clean_mirror; got '${PREFLIGHT_ENVIRONMENT:-<missing>}'." >&2
+  # Accept only the report contract emitted by staging-honesty-preflight.ts.
+  # Unknown keys (including secret-bearing additions), mismatched refs, malformed
+  # timestamps, failed checks, and malformed nested rows all fail closed. Raw
+  # preflight JSON is never echoed or persisted.
+  if ! PREFLIGHT_ARTIFACT_JSON="$(jq -ce --arg project_ref "$NEW_PROJECT_REF" '
+    . as $report |
+    (type == "object") and
+    ((keys | sort) == (["artifact_rows", "checks", "environment_type", "extra_vs_prod", "missing_from_staging", "staging_project_ref", "timestamp"] | sort)) and
+    (.environment_type == "clean_mirror") and
+    (.staging_project_ref == $project_ref) and
+    (.timestamp | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$")) and
+    (.checks | type == "array") and
+    (all(.checks[];
+      (type == "object") and
+      ((keys | sort) == (["details", "name", "passed"] | sort)) and
+      (.name | type == "string" and length > 0) and
+      (.passed | type == "boolean") and
+      (.passed == true) and
+      (.details | type == "string")
+    )) and
+    ([.checks[].name] as $check_names |
+      ($check_names | length) == ($check_names | unique | length) and
+      all($check_names[];
+        . == "staging_only_rows" or
+        . == "duplicate_names" or
+        . == "duplicate_versions" or
+        . == "known_artifacts" or
+        . == "submitted_anchors" or
+        . == "prod_divergence" or
+        . == "org_topology" or
+        . == "prod_facts"
+      ) and
+      all([
+        "staging_only_rows",
+        "duplicate_names",
+        "duplicate_versions",
+        "known_artifacts",
+        "submitted_anchors",
+        "prod_divergence"
+      ][]; . as $required | $check_names | index($required) != null)
+    ) and
+    (.artifact_rows | type == "array") and
+    (all(.artifact_rows[];
+      (type == "object") and
+      ((keys | sort) == (["name", "version"] | sort)) and
+      (.name | type == "string") and
+      (.version | type == "string")
+    )) and
+    (.missing_from_staging | type == "array" and all(.[]; type == "string")) and
+    (.extra_vs_prod | type == "array" and all(.[]; type == "string"))
+    | select(.)
+    | {
+        environment_type: "clean_mirror",
+        staging_project_ref: $project_ref,
+        timestamp: $report.timestamp,
+        checks: ($report.checks | map({name, passed})),
+        artifact_rows: $report.artifact_rows,
+        missing_from_staging: $report.missing_from_staging,
+        extra_vs_prod: $report.extra_vs_prod
+      }
+  ' <<<"$PREFLIGHT_JSON" 2>/dev/null)"; then
+    echo "ERROR: staging preflight failed strict environment_type=clean_mirror schema/project/timestamp validation." >&2
     exit 1
   fi
-  PREFLIGHT_RESULT="environment_type=${PREFLIGHT_ENVIRONMENT}"
-  PREFLIGHT_VERIFIED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  PREFLIGHT_RESULT="environment_type=clean_mirror"
+  PREFLIGHT_VERIFIED_AT="$(jq -r '.timestamp' <<<"$PREFLIGHT_ARTIFACT_JSON")"
   mkdir -p "$STAGING_ADMISSION_DIR"
-  printf '%s\n' "$PREFLIGHT_JSON" | jq . >"$PREFLIGHT_ARTIFACT_PATH"
-  SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON=true
+  printf '%s\n' "$PREFLIGHT_ARTIFACT_JSON" | jq . >"$PREFLIGHT_ARTIFACT_PATH"
+
+  # Re-observe every declared trigger after both seed and clean_mirror. The
+  # initial pause check cannot prove this interval; an enabled, missing, or
+  # partially-created job fails before any cadence update or resume.
   if [[ $SCHEDULER_APPLICABLE_JSON == true ]]; then
+    SCHEDULER_STATE="post_clean_mirror_pause_verification_pending"
+    for job in "${SCHEDULER_JOBS[@]}"; do
+      scheduler_job_name="${CLOUD_RUN_SERVICE}-${job}"
+      verify_scheduler_job_state "$scheduler_job_name" "PAUSED"
+    done
+    SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON=true
     SCHEDULER_STATE="clean_mirror_admitted_scheduler_paused"
   fi
   write_provision_state "clean_mirror_admitted_scheduler_paused" ""
@@ -1162,8 +1380,8 @@ fi
 echo
 
 # Restore the pre-existing job cadence and resume only after clean_mirror was
-# admitted and its evidence artifact was written. A failed preflight exits above,
-# leaving every job verified PAUSED on the hold schedule.
+# admitted, its allowlisted evidence artifact was written, and every declared
+# trigger was re-observed PAUSED. Any failure exits before cadence update/resume.
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
   echo "# Post-admission — restore Scheduler cadence, resume, verify ENABLED"
   for job in "${SCHEDULER_JOBS[@]}"; do
@@ -1204,7 +1422,11 @@ HEAD_SHA="$(resolve_head_sha)"
 BASE_SHA_VALUE="$(resolve_base_sha)"
 IMAGE_DIGEST="$(resolve_image_digest)"
 TAG_URL="$(resolve_cloud_run_url)"
-ADMISSION_SUPABASE_PROJECT_REF="${ADMISSION_SUPABASE_PROJECT_REF:-$NEW_PROJECT_REF}"
+if [[ $APPLY -eq 1 ]]; then
+  ADMISSION_SUPABASE_PROJECT_REF="$NEW_PROJECT_REF"
+else
+  ADMISSION_SUPABASE_PROJECT_REF="${ADMISSION_SUPABASE_PROJECT_REF:-$NEW_PROJECT_REF}"
+fi
 OWNER="$(resolve_owner)"
 DRIVER_SHA256="$(resolve_driver_sha256)"
 if [[ -z "$CHANGED_BEHAVIOR" ]]; then

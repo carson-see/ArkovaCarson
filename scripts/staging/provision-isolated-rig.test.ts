@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dirname, resolve } from 'node:path';
@@ -34,7 +34,34 @@ const REPO_HEAD = execFileSync('git', ['rev-parse', 'HEAD'], {
   cwd: REPO_ROOT,
   encoding: 'utf8',
 }).trim();
+const REPO_BASE = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], {
+  cwd: REPO_ROOT,
+  encoding: 'utf8',
+}).trim();
 const script = readFileSync(SCRIPT, 'utf8');
+
+const REQUIRED_PREFLIGHT_CHECK_NAMES = [
+  'staging_only_rows',
+  'duplicate_names',
+  'duplicate_versions',
+  'known_artifacts',
+  'submitted_anchors',
+  'prod_divergence',
+] as const;
+
+const VALID_PREFLIGHT_REPORT = {
+  environment_type: 'clean_mirror',
+  staging_project_ref: 'abcdefghijklmnopqrst',
+  timestamp: '2026-07-13T12:00:00.000Z',
+  checks: REQUIRED_PREFLIGHT_CHECK_NAMES.map((name) => ({
+    name,
+    passed: true,
+    details: name === 'staging_only_rows' ? 'secret-looking-diagnostic-must-not-persist' : '',
+  })),
+  artifact_rows: [],
+  missing_from_staging: [],
+  extra_vs_prod: [],
+};
 
 /** Run the provisioner in dry-run (no --apply → no side effects) and capture stdout+stderr. */
 function dryRun(args: string[], env: Record<string, string> = {}): { out: string; code: number } {
@@ -203,7 +230,7 @@ describe('provision-isolated-rig.sh — admission JSON contract', () => {
     expect(script).toMatch(/require_gcloud_secret "\$TREASURY_WIF_SECRET"/);
     expect(script).toMatch(/ensure_secret_with_value "\$SUPABASE_URL_SECRET_NAME"/);
     expect(script).toMatch(/supabase projects api-keys/);
-    expect(script).toMatch(/PREFLIGHT_ENVIRONMENT" != "clean_mirror"/);
+    expect(script).toMatch(/strict environment_type=clean_mirror schema/);
     expect(script).toMatch(/STAGING_CHANGED_BEHAVIOR/);
     expect(script).toMatch(/DRIVER_PATH/);
   });
@@ -291,11 +318,17 @@ interface ApplyRunResult {
 
 interface ApplyRunOptions {
   imageRef?: string | null;
+  deployedImageRef?: string;
+  resolvedImageDigest?: string;
   sourceHead?: string | null;
   githubSha?: string | null;
   soakId?: string | null;
   tunedModel?: string;
   preflightPayload?: string;
+  schedulerStateAfterPreflight?: 'PAUSED' | 'ENABLED' | 'MISSING';
+  deployedEnvOverrides?: Record<string, string>;
+  deployedEnvAdditions?: Record<string, string>;
+  env?: Record<string, string>;
 }
 
 const stubDirs: string[] = [];
@@ -317,6 +350,45 @@ function applyRunStubbed(
   writeFileSync(npxLogFile, '');
   writeFileSync(orderLogFile, '');
 
+  const tunedModel =
+    options.tunedModel ?? 'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
+  const deployedEnv: Record<string, string> = {
+    NODE_ENV: 'production',
+    ENABLE_AI_FRAUD: 'false',
+    ENABLE_AI_REPORTS: 'false',
+    CORS_ALLOWED_ORIGINS: 'https://app.arkova.ai',
+    FRONTEND_URL: options.env?.STAGING_FRONTEND_URL ?? 'https://app.arkova.ai',
+    USE_MOCKS: profile === 'chain' ? 'false' : 'true',
+    ENABLE_PROD_NETWORK_ANCHORING: profile === 'chain' ? 'true' : 'false',
+    ...(profile === 'chain'
+      ? {
+          KMS_PROVIDER: options.env?.STAGING_KMS_PROVIDER ?? 'gcp',
+          BITCOIN_NETWORK: options.env?.STAGING_BITCOIN_NETWORK ?? 'mainnet',
+          BITCOIN_UTXO_PROVIDER: options.env?.STAGING_BITCOIN_UTXO_PROVIDER ?? 'getblock',
+        }
+      : {}),
+    ...(profile === 'gemini'
+      ? {
+          GEMINI_TUNED_MODEL: tunedModel,
+          GEMINI_V6_PROMPT: options.env?.STAGING_GEMINI_V6_PROMPT ?? 'true',
+        }
+      : {}),
+    ...options.deployedEnvOverrides,
+    ...options.deployedEnvAdditions,
+  };
+  const revisionPayload = JSON.stringify({
+    metadata: { labels: { 'arkova-source-head': options.sourceHead ?? REPO_HEAD } },
+    spec: {
+      containers: [
+        {
+          image: options.deployedImageRef ?? STUB_IMAGE_REF,
+          env: Object.entries(deployedEnv).map(([name, value]) => ({ name, value })),
+        },
+      ],
+    },
+    status: { imageDigest: options.resolvedImageDigest ?? STUB_IMAGE_DIGEST },
+  });
+
   writeFileSync(
     join(stubDir, 'gcloud'),
     `#!/usr/bin/env bash
@@ -332,11 +404,7 @@ if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
   exit 0
 fi
 if [[ "$1" == "run" && "$2" == "revisions" && "$3" == "describe" ]]; then
-  if [[ "$*" == *"spec.containers[0].image"* ]]; then
-    echo '${options.imageRef ?? STUB_IMAGE_REF}'
-  elif [[ "$*" == *"metadata.labels.arkova-source-head"* ]]; then
-    echo '${options.sourceHead ?? REPO_HEAD}'
-  fi
+  echo '${revisionPayload}'
   exit 0
 fi
 if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
@@ -376,7 +444,9 @@ if [[ "$1" == "supabase" ]]; then
   exit 0
 fi
 if [[ "$1" == "tsx" && "$2" == "scripts/ci/staging-honesty-preflight.ts" ]]; then
-  echo '${options.preflightPayload ?? '{"environment_type":"clean_mirror"}'}'
+  ${options.schedulerStateAfterPreflight === 'ENABLED' ? `for state in '${schedulerStateDir}'/*; do printf 'ENABLED' > "$state"; done` : ':'}
+  ${options.schedulerStateAfterPreflight === 'MISSING' ? `rm -f '${schedulerStateDir}'/*` : ':'}
+  echo '${options.preflightPayload ?? JSON.stringify(VALID_PREFLIGHT_REPORT)}'
   exit 0
 fi
 echo "unexpected npx call: $*" >&2
@@ -390,7 +460,7 @@ exit 64
     CONFIRM_PROVISION: name,
     CONFIRM_REAL_CONFIG: profile,
     GITHUB_SHA: options.githubSha ?? REPO_HEAD,
-    BASE_SHA: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    BASE_SHA: REPO_BASE,
     STAGING_ADMISSION_DIR: artifactDir,
     USER: 'rig-owner',
     // Apply-mode preconditions carried in by the concurrent main pipeline
@@ -407,9 +477,9 @@ exit 64
   if (options.sourceHead !== null) env.STAGING_SOURCE_HEAD_SHA = options.sourceHead ?? REPO_HEAD;
   if (options.soakId !== null) env.STAGING_SOAK_ID = options.soakId ?? `soak-${name}`;
   if (profile === 'gemini') {
-    env.STAGING_GEMINI_TUNED_MODEL =
-      options.tunedModel ?? 'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
+    env.STAGING_GEMINI_TUNED_MODEL = tunedModel;
   }
+  Object.assign(env, options.env ?? {});
 
   let out = '';
   let code = 0;
@@ -509,14 +579,7 @@ describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under 
       result.gcloudCalls.some(
         (call) =>
           call.startsWith(`run revisions describe ${STUB_REVISION}`) &&
-          call.includes('spec.containers[0].image'),
-      ),
-    ).toBe(true);
-    expect(
-      result.gcloudCalls.some(
-        (call) =>
-          call.startsWith(`run revisions describe ${STUB_REVISION}`) &&
-          call.includes('metadata.labels.arkova-source-head'),
+          call.includes('--format=json'),
       ),
     ).toBe(true);
   });
@@ -661,6 +724,68 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
     expect(result.out).toMatch(/projects\/.+\/locations\/.+\/(?:endpoints|models)\//i);
     expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
   });
+
+  it('rejects a malformed full Gemini resource before project creation', () => {
+    const result = applyRunStubbed('guard-gemini-resource', 'gemini', {
+      tunedModel: 'projects/arkova 1/locations/us-central1/endpoints/6611494259700793344',
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/projects\/.+\/locations\/.+\/(?:endpoints|models)\//i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('rejects GEMINI_V6_PROMPT values other than exact true before project creation', () => {
+    const result = applyRunStubbed('guard-gemini-prompt', 'gemini', {
+      env: { STAGING_GEMINI_V6_PROMPT: 'false' },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/GEMINI_V6_PROMPT.+true/i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it.each([
+    ['comma', 'https://app.arkova.ai,GEMINI_TUNED_RESPONSE_SCHEMA=bleed'],
+    ['newline', 'https://app.arkova.ai\nGEMINI_TUNED_RESPONSE_SCHEMA=bleed'],
+    ['control', `https://app.arkova.ai${String.fromCharCode(1)}bleed`],
+  ])('rejects %s-delimited gcloud env injection before project creation', (_label, value) => {
+    const result = applyRunStubbed(`guard-env-${_label}`, 'mock', {
+      env: { STAGING_FRONTEND_URL: value },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/environment|delimiter|control/i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it.each([
+    ['T0', '2880', REPO_BASE, /tier|T0/i],
+    ['T1', '119', REPO_BASE, /duration|120|minimum/i],
+    ['T2', '719', REPO_BASE, /duration|720|minimum/i],
+    ['T3', '0', REPO_BASE, /duration|2880|positive/i],
+    ['T3', '2879', REPO_BASE, /duration|2880|minimum/i],
+    ['T3', '02880', REPO_BASE, /duration|integer|canonical/i],
+    ['T3', '2880', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', /base|commit|merge-base/i],
+    ['T3', '2880', REPO_HEAD, /base|merge-base|ancestor/i],
+  ])(
+    'rejects untruthful apply metadata tier=%s duration=%s base=%s before mutation',
+    (tier, duration, baseSha, message) => {
+      const result = applyRunStubbed(`guard-metadata-${tier.toLowerCase()}-${duration}`, 'mock', {
+        env: { STAGING_TIER: tier, STAGING_DURATION_MIN: duration, BASE_SHA: baseSha },
+      });
+      expect(result.code).not.toBe(0);
+      expect(result.out).toMatch(message);
+      expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    },
+  );
+
+  it('accepts the exact constitutional T1 two-hour floor', () => {
+    const result = applyRunStubbed('guard-tier-t1-floor', 'mock', {
+      env: { STAGING_TIER: 'T1', STAGING_DURATION_MIN: '120', BASE_SHA: REPO_BASE },
+    });
+    expect(result.code, result.out).toBe(0);
+    const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
+    expect(admission).toMatchObject({ tier: 'T1', duration_min: 120 });
+  });
 });
 
 describe('provision-isolated-rig.sh — failed preflight leaves Scheduler paused', () => {
@@ -684,6 +809,144 @@ describe('provision-isolated-rig.sh — failed preflight leaves Scheduler paused
     expect(pauses).toHaveLength(creates.length);
     expect(updates).toHaveLength(0);
     expect(resumes).toHaveLength(0);
+  });
+});
+
+describe('provision-isolated-rig.sh — post-preflight Scheduler invariant', () => {
+  it.each(['ENABLED', 'MISSING'] as const)(
+    'fails when a trigger is %s after clean_mirror and never updates cadence or resumes',
+    (schedulerStateAfterPreflight) => {
+      const result = applyRunStubbed(`post-preflight-${schedulerStateAfterPreflight.toLowerCase()}`, 'chain', {
+        schedulerStateAfterPreflight,
+      });
+      expect(result.code).not.toBe(0);
+      expect(result.out).toMatch(/Scheduler|PAUSED|state/i);
+      expect(
+        result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs update http ')),
+      ).toHaveLength(0);
+      expect(result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '))).toHaveLength(0);
+    },
+  );
+});
+
+describe('provision-isolated-rig.sh — truthful observed provenance and config', () => {
+  it('accepts a tag-form spec image only when status.imageDigest resolves to the requested digest', () => {
+    const result = applyRunStubbed('resolved-digest', 'mock', {
+      deployedImageRef:
+        'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:immutable-build-tag',
+    });
+    expect(result.code, result.out).toBe(0);
+    expect(
+      result.gcloudCalls.some(
+        (call) => call.startsWith(`run revisions describe ${STUB_REVISION}`) && call.includes('--format=json'),
+      ),
+    ).toBe(true);
+    const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
+    expect(admission.deployed_image_ref).toContain(':immutable-build-tag');
+    expect(admission.deployed_image_digest).toBe(STUB_IMAGE_DIGEST);
+  });
+
+  it('rejects a mismatched resolved status.imageDigest', () => {
+    const result = applyRunStubbed('bad-resolved-digest', 'mock', {
+      resolvedImageDigest: `sha256:${'d'.repeat(64)}`,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/image digest mismatch/i);
+  });
+
+  it.each([
+    ['wrong critical value', { USE_MOCKS: 'true' }],
+    ['schema bleed', { GEMINI_TUNED_RESPONSE_SCHEMA: 'bleed' }],
+  ])('rejects deployed revision env with %s', (_label, deployedEnvAdditions) => {
+    const result = applyRunStubbed(`bad-env-${_label.replace(/\s+/g, '-')}`, 'chain', {
+      deployedEnvAdditions,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/deployed revision|environment|GEMINI_TUNED_RESPONSE_SCHEMA/i);
+    expect(result.out).not.toContain('ADMISSION_JSON=');
+  });
+
+  it('forces apply admission to the captured project ref even when a caller supplies an override', () => {
+    const result = applyRunStubbed('captured-project-ref', 'mock', {
+      env: { ADMISSION_SUPABASE_PROJECT_REF: 'prod-project-ref' },
+    });
+    expect(result.code, result.out).toBe(0);
+    const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
+    expect(admission.supabase_project_ref).toBe('abcdefghijklmnopqrst');
+  }, 15_000);
+});
+
+describe('provision-isolated-rig.sh — strict clean_mirror evidence schema', () => {
+  const validReport = VALID_PREFLIGHT_REPORT;
+
+  it.each([
+    ['wrong project', { ...validReport, staging_project_ref: 'vzwyaatejekddvltxyye' }],
+    ['malformed timestamp', { ...validReport, timestamp: 'not-a-timestamp' }],
+    ['unknown secret field', { ...validReport, service_role_key: 'secret-sentinel-must-not-leak' }],
+  ])('rejects %s without emitting raw preflight data', (_label, payload) => {
+    const result = applyRunStubbed(`preflight-${_label.replace(/\s+/g, '-')}`, 'mock', {
+      preflightPayload: JSON.stringify(payload),
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/preflight|schema|project|timestamp/i);
+    expect(result.out).not.toContain('secret-sentinel-must-not-leak');
+    expect(result.out).not.toContain('ADMISSION_JSON=');
+  });
+
+  it.each([
+    ['empty', 'empty checks', { ...validReport, checks: [] }],
+    [
+      'unknown',
+      'unknown check',
+      {
+        ...validReport,
+        checks: [...validReport.checks, { name: 'not-a-real-check', passed: true, details: '' }],
+      },
+    ],
+    [
+      'duplicate',
+      'duplicate check',
+      {
+        ...validReport,
+        checks: [
+          ...validReport.checks,
+          { name: 'staging_only_rows', passed: true, details: '' },
+        ],
+      },
+    ],
+  ])('rejects %s instead of trusting a hollow clean_mirror verdict', (id, _label, payload) => {
+    const result = applyRunStubbed(`preflight-hollow-${id}`, 'mock', {
+      preflightPayload: JSON.stringify(payload),
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/preflight|schema|checks/i);
+    expect(result.out).not.toContain('ADMISSION_JSON=');
+  });
+
+  it('persists only allowlisted evidence and binds the captured project/timestamp', () => {
+    const result = applyRunStubbed('preflight-sanitized', 'mock', {
+      preflightPayload: JSON.stringify(validReport),
+    });
+    expect(result.code, result.out).toBe(0);
+    const artifactPath = join(result.artifactDir, 'clean-mirror-preflight-preflight-sanitized.json');
+    expect(existsSync(artifactPath)).toBe(true);
+    const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
+    expect(artifact).toEqual({
+      environment_type: 'clean_mirror',
+      staging_project_ref: 'abcdefghijklmnopqrst',
+      timestamp: '2026-07-13T12:00:00.000Z',
+      checks: REQUIRED_PREFLIGHT_CHECK_NAMES.map((name) => ({ name, passed: true })),
+      artifact_rows: [],
+      missing_from_staging: [],
+      extra_vs_prod: [],
+    });
+    expect(readFileSync(artifactPath, 'utf8')).not.toContain('secret-looking-diagnostic');
+    const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
+    expect(admission.supabase_project_ref).toBe('abcdefghijklmnopqrst');
+    expect(admission.clean_mirror.verified_at).toBe('2026-07-13T12:00:00.000Z');
   });
 });
 
