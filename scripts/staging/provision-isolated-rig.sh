@@ -651,6 +651,10 @@ SUPABASE_URL_SECRET_NAME="supabase-url-${NAME}-staging"
 SUPABASE_SERVICE_ROLE_SECRET_NAME="supabase-service-role-key-${NAME}-staging"
 STAGING_ADMISSION_DIR="${STAGING_ADMISSION_DIR:-docs/staging/${NAME}}"
 PROVISION_STATE_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-provision-${NAME}.json"
+ADMISSION_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-admission-${NAME}.json"
+ADMISSION_TEMP_PATH="${ADMISSION_ARTIFACT_PATH}.tmp.$$"
+ADMISSION_ARTIFACT_PERSISTED=0
+ADMISSION_FINALIZED=0
 CREATED_PROJECT_REF=""
 CREATED_CLOUD_RUN_SERVICE=0
 CREATED_SUPABASE_SECRETS=0
@@ -669,6 +673,7 @@ SCHEDULER_APPLICABLE_JSON=false
 SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON=false
 SCHEDULER_STATE="not_applicable"
 SCHEDULER_CREATION_GUARD="not_applicable"
+SCHEDULER_FAILURE_CONTAINMENT_ARMED=0
 
 # Cloud Scheduler is required for non-mock profiles: node-cron does NOT fire on a
 # throttled (min-instances=0) Cloud Run service, so the behavioral cron paths
@@ -899,20 +904,98 @@ write_provision_state() {
       created_supabase_secrets: $created_supabase_secrets,
       state_path: $state_path,
       cleanup_hint: "If status is blocked_after_project_create, either resume with the same rig name/ref and verify these secrets, or run scripts/staging/teardown-isolated-rig.sh against the recorded service/ref."
-    }' >"$PROVISION_STATE_PATH"
+    }' >"$PROVISION_STATE_PATH" || return 1
   echo "# provision state: $PROVISION_STATE_PATH"
 }
 
-on_apply_error() {
-  local rc=$?
-  if [[ $APPLY -eq 1 && -n "${CREATED_PROJECT_REF:-}" ]]; then
-    write_provision_state "blocked_after_project_create" "provisioner exited non-zero before clean_mirror admission"
+pause_scheduler_jobs_fail_closed() {
+  local failures=0 scheduler_spec scheduler_job_name observed_state
+  if [[ $SCHEDULER_FAILURE_CONTAINMENT_ARMED -ne 1 ]]; then
+    return 0
   fi
+
+  echo "# failure containment: re-pausing every declared Scheduler job" >&2
+  for scheduler_spec in "${SCHEDULER_JOB_SPECS[@]}"; do
+    [[ -z "$scheduler_spec" ]] && continue
+    scheduler_job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
+    if ! gcloud scheduler jobs pause "$scheduler_job_name" \
+      --project="$GCP_PROJECT" \
+      --location="$CLOUD_RUN_REGION" >/dev/null 2>&1; then
+      echo "ERROR: failure containment could not pause Scheduler job '$scheduler_job_name'." >&2
+      failures=$((failures + 1))
+      continue
+    fi
+    if ! observed_state="$(gcloud scheduler jobs describe "$scheduler_job_name" \
+      --project="$GCP_PROJECT" \
+      --location="$CLOUD_RUN_REGION" \
+      --format="value(state)" 2>/dev/null)" \
+      || [[ "$observed_state" != "PAUSED" ]]; then
+      echo "ERROR: failure containment could not verify Scheduler job '$scheduler_job_name' as PAUSED." >&2
+      failures=$((failures + 1))
+    fi
+  done
+
+  if [[ $failures -ne 0 ]]; then
+    SCHEDULER_STATE="failure_containment_pause_incomplete"
+    return 1
+  fi
+  SCHEDULER_STATE="failure_contained_scheduler_paused"
+  return 0
+}
+
+on_apply_exit() {
+  local rc=$?
+  local pause_result="not-required"
+  local artifact_result="not-persisted"
+  local blocked_reason state_rc
+
+  # Cleanup must never recursively re-enter the EXIT trap or replace the
+  # triggering command's exit status. Every containment action is best-effort;
+  # the original rc remains the process rc even when cleanup itself degrades.
+  trap - EXIT ERR
+  set +e
+
+  # A zero exit before the final artifact/state handshake is itself unsafe.
+  # Successful apply runs remove this trap only after ADMISSION_FINALIZED=1.
+  if [[ $rc -eq 0 && $ADMISSION_FINALIZED -ne 1 ]]; then
+    rc=1
+  fi
+
+  if [[ $SCHEDULER_FAILURE_CONTAINMENT_ARMED -eq 1 ]]; then
+    if pause_scheduler_jobs_fail_closed; then
+      pause_result="verified-paused"
+    else
+      pause_result="incomplete"
+    fi
+  fi
+
+  rm -f -- "$ADMISSION_TEMP_PATH" 2>/dev/null
+  if [[ $ADMISSION_ARTIFACT_PERSISTED -eq 1 && $ADMISSION_FINALIZED -ne 1 ]]; then
+    if rm -f -- "$ADMISSION_ARTIFACT_PATH"; then
+      artifact_result="withdrawn"
+      ADMISSION_ARTIFACT_PERSISTED=0
+    else
+      artifact_result="withdraw-failed"
+      echo "ERROR: failure containment could not withdraw incomplete admission artifact '$ADMISSION_ARTIFACT_PATH'." >&2
+    fi
+  fi
+
+  blocked_reason="original_rc=${rc}; scheduler_pause=${pause_result}; admission_artifact=${artifact_result}"
+  if [[ $APPLY -eq 1 && -n "${CREATED_PROJECT_REF:-}" ]]; then
+    write_provision_state "blocked_after_project_create" "$blocked_reason"
+    state_rc=$?
+    if [[ $state_rc -ne 0 ]]; then
+      echo "ERROR: failure containment could not persist blocked provision state (cleanup_rc=$state_rc)." >&2
+    fi
+  fi
+  echo "ERROR: provision failed; fail-closed cleanup completed with original_rc=$rc." >&2
   exit "$rc"
 }
 
 if [[ $APPLY -eq 1 ]]; then
-  trap on_apply_error ERR
+  # EXIT covers explicit `exit`, set -e termination inside helper functions,
+  # and top-level failures. ERR alone misses several of those paths.
+  trap on_apply_exit EXIT
 fi
 
 ensure_secret_with_value() {
@@ -1331,6 +1414,31 @@ emit_admission_json() {
     }'
 }
 
+persist_admission_artifact() {
+  local raw="$1"
+  mkdir -p "$STAGING_ADMISSION_DIR"
+  if [[ -e "$ADMISSION_ARTIFACT_PATH" && ! -f "$ADMISSION_ARTIFACT_PATH" ]]; then
+    echo "ERROR: admission artifact target is not a regular file: '$ADMISSION_ARTIFACT_PATH'." >&2
+    return 1
+  fi
+  rm -f -- "$ADMISSION_TEMP_PATH"
+  if ! printf '%s\n' "$raw" | jq . >"$ADMISSION_TEMP_PATH"; then
+    rm -f -- "$ADMISSION_TEMP_PATH"
+    echo "ERROR: could not serialize the final admission artifact." >&2
+    return 1
+  fi
+  if ! mv -f -- "$ADMISSION_TEMP_PATH" "$ADMISSION_ARTIFACT_PATH"; then
+    rm -f -- "$ADMISSION_TEMP_PATH"
+    echo "ERROR: could not atomically install the final admission artifact." >&2
+    return 1
+  fi
+  if [[ ! -f "$ADMISSION_ARTIFACT_PATH" ]]; then
+    echo "ERROR: final admission artifact did not persist as a regular file." >&2
+    return 1
+  fi
+  ADMISSION_ARTIFACT_PERSISTED=1
+}
+
 # ---------------------------------------------------------------------------
 # Plan header.
 # ---------------------------------------------------------------------------
@@ -1507,6 +1615,12 @@ else
     echo "#   (dry-run: WORKER_URL + X-Cron-Secret shown as labeled placeholders; apply mode"
     echo "#    resolves them via 'gcloud run services describe' + Secret Manager access —"
     echo "#    the secret value is never printed in either mode.)"
+  fi
+  if [[ $APPLY -eq 1 ]]; then
+    # From the first create attempt through final admission persistence, any
+    # failure re-pauses and re-verifies the complete declared job set. This
+    # contains partial resume and post-resume artifact/state failures.
+    SCHEDULER_FAILURE_CONTAINMENT_ARMED=1
   fi
   for scheduler_spec in "${SCHEDULER_JOB_SPECS[@]}"; do
     [[ -z "$scheduler_spec" ]] && continue
@@ -1745,8 +1859,14 @@ ADMISSION_JSON="$(emit_admission_json \
   "$DRIVER_SHA256" \
   "$CHANGED_BEHAVIOR" \
   "$OWNER")"
-echo "ADMISSION_JSON=$ADMISSION_JSON"
 if [[ $APPLY -eq 1 ]]; then
-  printf '%s\n' "$ADMISSION_JSON" | jq . >"${STAGING_ADMISSION_DIR%/}/isolated-rig-admission-${NAME}.json"
-  write_provision_state "clean_mirror_admitted" ""
+  persist_admission_artifact "$ADMISSION_JSON"
+  if [[ $SCHEDULER_APPLICABLE_JSON == true ]]; then
+    write_provision_state "admission_persisted_scheduler_enabled" ""
+  else
+    write_provision_state "admission_persisted" ""
+  fi
+  ADMISSION_FINALIZED=1
+  trap - EXIT
 fi
+echo "ADMISSION_JSON=$ADMISSION_JSON"

@@ -1,7 +1,17 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dirname, resolve } from 'node:path';
@@ -323,6 +333,8 @@ interface ApplyRunResult {
   callOrder: string[];
   gitCalls: string[];
   artifactDir: string;
+  admissionArtifactPath: string;
+  schedulerStates: Record<string, string>;
 }
 
 interface ApplyRunOptions {
@@ -342,6 +354,9 @@ interface ApplyRunOptions {
   sourceImageDigest?: string;
   gitFetchFails?: boolean;
   useUntrackedDriver?: boolean;
+  schedulerResumeFailsAt?: number;
+  blockAdmissionArtifactPath?: boolean;
+  failFinalStatePersistence?: boolean;
   env?: Record<string, string>;
 }
 
@@ -361,10 +376,21 @@ function applyRunStubbed(
   const gitLogFile = join(stubDir, 'git-calls.log');
   const schedulerStateDir = join(stubDir, 'scheduler-state');
   const artifactDir = join(stubDir, 'artifacts');
+  const admissionArtifactPath = join(artifactDir, `isolated-rig-admission-${name}.json`);
+  const provisionStatePath = join(artifactDir, `isolated-rig-provision-${name}.json`);
+  const resumeCountFile = join(stubDir, 'scheduler-resume-count');
+  const finalSchedulerJobSuffix = profile === 'gemini'
+    ? 'classify-proof-backcatalog'
+    : options.rigId === 'RIG-B1'
+      ? 'recover-broadcasts'
+      : 'org-queue-scheduler';
   writeFileSync(logFile, '');
   writeFileSync(npxLogFile, '');
   writeFileSync(orderLogFile, '');
   writeFileSync(gitLogFile, '');
+  if (options.blockAdmissionArtifactPath) {
+    mkdirSync(admissionArtifactPath, { recursive: true });
+  }
 
   const tunedModel =
     options.tunedModel ?? 'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
@@ -469,11 +495,25 @@ if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "pause" ]]; then
 fi
 if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "resume" ]]; then
   mkdir -p '${schedulerStateDir}'
+  resume_count=0
+  if [[ -f '${resumeCountFile}' ]]; then resume_count="$(cat '${resumeCountFile}')"; fi
+  resume_count=$((resume_count + 1))
+  printf '%s' "$resume_count" > '${resumeCountFile}'
+  if [[ "$resume_count" == '${options.schedulerResumeFailsAt ?? 0}' ]]; then
+    echo 'injected Scheduler resume failure rc=42' >&2
+    exit 42
+  fi
   printf 'ENABLED' > '${schedulerStateDir}/'$4
   exit 0
 fi
 if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "describe" ]]; then
-  cat '${schedulerStateDir}/'$4
+  scheduler_state="$(cat '${schedulerStateDir}/'$4)"
+  if [[ '${options.failFinalStatePersistence ? 'true' : 'false'}' == 'true' \
+    && "$scheduler_state" == 'ENABLED' && "$4" == *'-${finalSchedulerJobSuffix}' ]]; then
+    rm -f '${provisionStatePath}'
+    mkdir -p '${provisionStatePath}'
+  fi
+  printf '%s\n' "$scheduler_state"
   exit 0
 fi
 exit 0
@@ -565,7 +605,23 @@ exit 64
   const gitCalls = readFileSync(gitLogFile, 'utf8')
     .split('\n')
     .filter((line) => line.length > 0);
-  return { out, code, gcloudCalls, npxCalls, callOrder, gitCalls, artifactDir };
+  const schedulerStates = existsSync(schedulerStateDir)
+    ? Object.fromEntries(readdirSync(schedulerStateDir).map((jobName) => [
+        jobName,
+        readFileSync(join(schedulerStateDir, jobName), 'utf8'),
+      ]))
+    : {};
+  return {
+    out,
+    code,
+    gcloudCalls,
+    npxCalls,
+    callOrder,
+    gitCalls,
+    artifactDir,
+    admissionArtifactPath,
+    schedulerStates,
+  };
 }
 
 afterAll(() => {
@@ -1181,7 +1237,9 @@ describe('provision-isolated-rig.sh — failed preflight leaves Scheduler paused
     );
     const resumes = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
     expect(creates.length).toBeGreaterThan(0);
-    expect(pauses).toHaveLength(creates.length);
+    // One pause per job during creation plus one complete fail-closed re-pause
+    // from the EXIT handler, even though the first pause set was already safe.
+    expect(pauses).toHaveLength(creates.length * 2);
     expect(updates).toHaveLength(0);
     expect(resumes).toHaveLength(0);
   });
@@ -1202,6 +1260,59 @@ describe('provision-isolated-rig.sh — post-preflight Scheduler invariant', () 
       expect(result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '))).toHaveLength(0);
     },
   );
+});
+
+describe('provision-isolated-rig.sh — apply failure containment after Scheduler arming', () => {
+  it('re-pauses every declared job and preserves the original rc after a partial resume', () => {
+    const result = applyRunStubbed('partial-resume-failure', 'chain', {
+      schedulerResumeFailsAt: 2,
+    });
+    const creates = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs create http '));
+    const pauses = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs pause '));
+    const resumes = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
+
+    expect(result.code, result.out).toBe(42);
+    expect(result.out).toMatch(/injected Scheduler resume failure rc=42/);
+    expect(creates.length).toBeGreaterThan(1);
+    expect(resumes).toHaveLength(2);
+    expect(pauses).toHaveLength(creates.length * 2);
+    expect(Object.keys(result.schedulerStates)).toHaveLength(creates.length);
+    expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
+    expect(result.out).not.toContain('ADMISSION_JSON=');
+    expect(existsSync(result.admissionArtifactPath)).toBe(false);
+  }, 20_000);
+
+  it('re-pauses every job when final admission artifact persistence cannot start', () => {
+    const result = applyRunStubbed('blocked-admission-path', 'chain', {
+      blockAdmissionArtifactPath: true,
+    });
+    const creates = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs create http '));
+    const pauses = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs pause '));
+    const resumes = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
+
+    expect(result.code).not.toBe(0);
+    expect(resumes).toHaveLength(creates.length);
+    expect(pauses).toHaveLength(creates.length * 2);
+    expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
+    expect(result.out).not.toContain('ADMISSION_JSON=');
+    expect(existsSync(result.admissionArtifactPath) && statSync(result.admissionArtifactPath).isDirectory()).toBe(true);
+  }, 20_000);
+
+  it('withdraws the artifact and re-pauses every job when final state persistence fails afterward', () => {
+    const result = applyRunStubbed('final-state-failure', 'chain', {
+      failFinalStatePersistence: true,
+    });
+    const creates = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs create http '));
+    const pauses = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs pause '));
+    const resumes = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
+
+    expect(result.code, result.out).toBe(1);
+    expect(resumes).toHaveLength(creates.length);
+    expect(pauses).toHaveLength(creates.length * 2);
+    expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
+    expect(result.out).not.toContain('ADMISSION_JSON=');
+    expect(existsSync(result.admissionArtifactPath)).toBe(false);
+  }, 20_000);
 });
 
 describe('provision-isolated-rig.sh — truthful observed provenance and config', () => {

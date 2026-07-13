@@ -148,6 +148,8 @@ Admission v2 also requires explicit `rig_id` and `lease_id` values before mutati
 
 RIG-B1 admission also pins the critical non-secret runtime identity before any external mutation: `STAGING_KMS_PROVIDER=gcp`, `STAGING_BITCOIN_UTXO_PROVIDER=getblock`, and `STAGING_FRONTEND_URL=https://app.arkova.ai` must match exactly. Its admission test asserts the complete 12-field `critical_config` object so provider or frontend drift cannot hide behind a partial match.
 
+Apply failure containment stays armed from the first Scheduler create attempt through final admission persistence. Any failure in that interval re-pauses and re-verifies the complete declared job set (including jobs already resumed before a later failure), preserves the triggering command's exit code, and records cleanup disposition without printing the cron secret. The final admission JSON is installed atomically and is not emitted to stdout until the final provision state succeeds; if state persistence fails after the artifact move, the trap withdraws that incomplete artifact before returning the original error.
+
 ## Real batch-drain behavioral harness (#1417, 2026-07-07, Lane-1 chain)
 
 - `batch-drain-harness.ts` (`npx tsx scripts/staging/batch-drain-harness.ts`) + `batch-drain-harness-lib.ts` (pure, unit-tested safety guards). Runs the REAL batch drain against a **properly-configured isolated rig** (`ENABLE_BATCH_ANCHORING=on`, seeded >=10k PENDING) — the exercise fleet-audit found rig #1417 SELF-SKIPPED (batch cron hit its entrypoint but no-op'd on the PR's own `ENABLE_BATCH_ANCHORING=off` gate, so Merkle/intent-persist/reconcile ran ZERO times). Synthetic HTTP load (`load-harness.ts`) proves worker health, NOT that a 10k backlog drains into one Merkle-root OP_RETURN.
