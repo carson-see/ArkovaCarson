@@ -33,8 +33,8 @@
  *     op_return_payload) via an injected chain source.
  *   - proof-branch-backfill.ts (FIX-1) owns branch REBUILDS with
  *     root-equality self-validation.
- *   - THIS job owns the honest CENSUS + (once 0354 lands) persisting the
- *     class label. It performs zero chain calls and zero reconstruction.
+ *   - THIS job owns the honest CENSUS + persisting the 0354 class label.
+ *     It performs zero chain calls and zero reconstruction.
  *
  * ── Safety ───────────────────────────────────────────────────────────────────
  *   - DRY-RUN BY DEFAULT: emits the per-class plan with zero writes to
@@ -51,11 +51,14 @@
  *     merkle_root / proof_path / merkle_index / block_hash / block_header /
  *     op_return_payload / batch_id / receipt_id (see
  *     CLASSIFIER_READ_ONLY_COLUMNS + tests).
- *   - 0354 SCHEMA GAP (honest stop): 0340 has NO column that can carry the
- *     class label. Persisting {direct_anchored | batch_provable} needs
- *     `anchor_proofs.proof_completeness_class` — that is Carson's 0354
- *     decision. Until then write mode refuses with `schema_gap_0354` and
- *     performs ZERO writes. This module does NOT claim the 0354 prefix.
+ *   - 0354 WRITE PATH (UPDATE-only, one column): migration 0354 added
+ *     `anchor_proofs.proof_completeness_class` + the `get_proof_enforcement_
+ *     guc()` reader RPC. Write mode persists EXACTLY that one column on
+ *     EXISTING proof rows. It NEVER inserts an anchor_proofs row (anchor_id /
+ *     receipt_id are read-only — a row that does not exist cannot honestly be
+ *     conjured to carry a label); anchors lacking a proof row are counted in
+ *     `classUnpersistedNoProofRow` instead. The apply pass re-classifies each
+ *     page fresh and HALTS before writing any page that turns ambiguous.
  *
  * ── Resumable ────────────────────────────────────────────────────────────────
  *   Durable checkpoint row in `job_queue` (type
@@ -185,6 +188,8 @@ export interface ClassifierProofRow {
   merkle_root: string | null;
   proof_path: unknown;
   batch_id: string | null;
+  /** 0354 label already on the row (null = unlabeled). Enables idempotent skip. */
+  proof_completeness_class: string | null;
 }
 
 export type GucState = 'on' | 'off' | 'unknown';
@@ -192,12 +197,11 @@ export type GucState = 'on' | 'off' | 'unknown';
 /**
  * Injectable reader for `arkova.proof_enforce_secured_complete`.
  *
- * NOTE (honest gap): PostgREST cannot read a GUC without a SQL function, and
- * no `get_proof_enforcement_guc()` RPC exists on prod today — 0340 shipped the
- * trigger, not a reader. `createDbGucReader` therefore returns 'unknown' in
- * prod until the reader RPC ships (bundle it with the 0354 migration). The
- * run fail-closes on 'unknown' for write mode and proceeds loudly for the
- * zero-write dry-run census.
+ * The `get_proof_enforcement_guc()` reader RPC ships with migration 0354
+ * (service_role-only SECURITY DEFINER over `current_setting(..., true)`).
+ * On any database where 0354 is not applied (or the RPC errors),
+ * `createDbGucReader` returns 'unknown' — the run fail-closes on 'unknown'
+ * for write mode and proceeds loudly for the zero-write dry-run census.
  */
 export interface GucReader {
   getProofEnforcementGuc(): Promise<GucState>;
@@ -267,8 +271,16 @@ export interface ClassifierSummary {
   plan: PlanCounts;
   ambiguousReasons: Partial<Record<AmbiguityReason, number>>;
   ambiguousSamples: Array<{ anchor_id: string; reason: AmbiguityReason }>;
-  /** Always 0 this wave — see the 0354 schema gap. */
+  /** Cumulative 0354 label updates applied (from the checkpoint). */
   writesApplied: number;
+  /** True when the 0354 label apply pass has completed for this checkpoint. */
+  applyComplete: boolean;
+  /**
+   * Honesty caveat: rows whose class needs persisting but which have NO
+   * anchor_proofs row to carry it. A missing row is COUNTED, never fabricated
+   * (an INSERT would have to write the read-only anchor_id/receipt_id).
+   */
+  classUnpersistedNoProofRow: number;
   /** Last-processed anchor id (the durable resume cursor). */
   cursor: string | null;
   /**
@@ -313,24 +325,6 @@ export const CLASSIFIER_READ_ONLY_COLUMNS = [
   'created_at',
 ] as const;
 
-/**
- * The exact 0354 decision for Carson: 0340 added completeness DATA columns but
- * no column that can carry the completeness CLASS. Without it, the honest
- * classes {direct_anchored, batch_provable} cannot be persisted (and the 0340
- * trigger predicate `merkle_root + proof_path` would forever reject honest
- * direct-anchored rows that legitimately have no branch).
- */
-export const SCHEMA_GAP_0354: SchemaGap = {
-  table: 'anchor_proofs',
-  neededColumn: 'proof_completeness_class',
-  reason:
-    'Migration 0340 has no column for the completeness class. Persisting ' +
-    '{direct_anchored | batch_provable} needs a class/sub-state column (plus a ' +
-    'GUC reader RPC for the worker); until then write mode refuses and only ' +
-    'the dry-run census is available.',
-  decision: '0354 (Carson-gated — this job does not claim the prefix)',
-};
-
 export interface ClassWriteSet {
   /** Column→value map to write, or null when nothing may be written. */
   values: Record<string, unknown> | null;
@@ -340,11 +334,11 @@ export interface ClassWriteSet {
 
 /**
  * Resolve what write-mode may persist for a class. Structurally incapable of
- * emitting a read-only proof column: the ONLY candidate column is the (absent)
- * class column, so today this returns either "nothing to write" or the 0354
- * schema gap. When 0354 lands, the gap branch becomes
- * `{ values: { proof_completeness_class: cls }, schemaGap: null }` and nothing
- * else changes.
+ * emitting a read-only proof column: the ONLY writable column is the 0354
+ * class column (this was the single point that changed when 0354 landed —
+ * the former `schema_gap_0354` refusal branch became the one-column write
+ * set). The `schemaGap` channel stays wired as a generic fail-honest guard
+ * for any FUTURE class that needs a column the schema lacks.
  */
 export function buildClassWriteSet(cls: BackCatalogClass): ClassWriteSet {
   switch (cls) {
@@ -356,7 +350,8 @@ export function buildClassWriteSet(cls: BackCatalogClass): ClassWriteSet {
       return { values: null, schemaGap: null };
     case 'direct_anchored':
     case 'batch_provable':
-      return { values: null, schemaGap: SCHEMA_GAP_0354 };
+      // 0354: persist EXACTLY the class label, nothing else.
+      return { values: { proof_completeness_class: cls }, schemaGap: null };
   }
 }
 
@@ -384,11 +379,11 @@ export function resolveExecuteGuard(
 // ── GUC reader ───────────────────────────────────────────────────────────────
 
 /**
- * Production GUC reader. Calls the (future) `get_proof_enforcement_guc` RPC —
- * a SECURITY DEFINER one-liner over `current_setting('arkova.proof_enforce_
- * secured_complete', true)` that ships with 0354. Until it exists, every call
- * errors → 'unknown' → write mode fail-closes. Zero worker changes needed when
- * the RPC lands.
+ * Production GUC reader. Calls the `get_proof_enforcement_guc` RPC (migration
+ * 0354) — a service_role-only SECURITY DEFINER one-liner over
+ * `current_setting('arkova.proof_enforce_secured_complete', true)`. On any
+ * database without 0354 (or on any RPC error), every call maps to 'unknown'
+ * → write mode fail-closes; the zero-write dry-run census proceeds loudly.
  */
 export function createDbGucReader(client: SupabaseClient): GucReader {
   return {
@@ -576,6 +571,15 @@ interface CheckpointPayload {
   startedAt: string;
   updatedAt: string;
   completedAt: string | null;
+  // ── 0354 label-apply phase (all optional: pre-0354 checkpoints stay loadable) ──
+  /** Last anchor id the apply pass has processed (durable apply resume cursor). */
+  applyCursor?: string | null;
+  /** Set when the apply pass has covered the whole scope. */
+  applyCompletedAt?: string | null;
+  /** Cumulative one-column label updates applied. */
+  writesApplied?: number;
+  /** Cumulative rows whose class had no proof row to carry it (honest caveat). */
+  unpersistedNoProofRow?: number;
 }
 
 interface CheckpointHandle {
@@ -601,6 +605,15 @@ type UntypedDb = {
     };
     update(values: Record<string, unknown>): {
       eq(col: string, val: unknown): PromiseLike<{ error: { message?: string } | null }>;
+      in(
+        col: string,
+        vals: string[],
+      ): {
+        select(cols: string): PromiseLike<{
+          data: Array<{ anchor_id: string }> | null;
+          error: { message?: string } | null;
+        }>;
+      };
     };
   };
 };
@@ -720,7 +733,7 @@ async function fetchProofRows(db: UntypedDb, anchorIds: string[]): Promise<Map<s
   for (const ids of chunk(anchorIds, IN_FILTER_CHUNK)) {
     const { data, error } = await (db
       .from('anchor_proofs')
-      .select('anchor_id, merkle_root, proof_path, batch_id')
+      .select('anchor_id, merkle_root, proof_path, batch_id, proof_completeness_class')
       .in('anchor_id', ids) as unknown as PromiseLike<{
       data: ClassifierProofRow[] | null;
       error: { message?: string } | null;
@@ -840,7 +853,9 @@ function summaryFromCheckpoint(
     plan: { ...cp.payload.plan },
     ambiguousReasons: { ...cp.payload.ambiguousReasons },
     ambiguousSamples: [...cp.payload.ambiguousSamples],
-    writesApplied: 0,
+    writesApplied: cp.payload.writesApplied ?? 0,
+    applyComplete: (cp.payload.applyCompletedAt ?? null) !== null,
+    classUnpersistedNoProofRow: cp.payload.unpersistedNoProofRow ?? 0,
     cursor: cp.payload.cursor,
     softDeletedExcluded: base.softDeletedExcluded,
     // Defensive default: a checkpoint written before F3 lacks this field.
@@ -876,6 +891,8 @@ function buildEmptyRefusal(args: {
     ambiguousReasons: {},
     ambiguousSamples: [],
     writesApplied: 0,
+    applyComplete: false,
+    classUnpersistedNoProofRow: 0,
     cursor: null,
     softDeletedExcluded: 'unknown',
     alreadyCompleteWithoutTx: 0,
@@ -1115,6 +1132,9 @@ async function runCensusUnderLock(
       batchesProcessed: 0,
       resumed,
       deps,
+      orgId: options.orgId,
+      batchSize,
+      maxBatches,
     });
   }
 
@@ -1189,15 +1209,134 @@ async function runCensusUnderLock(
     batchesProcessed,
     resumed,
     deps,
+    orgId: options.orgId,
+    batchSize,
+    maxBatches,
   });
 }
 
 /**
+ * The 0354 label apply: a second bounded, resumable pass over the census
+ * scope that persists `proof_completeness_class` — UPDATE-only against
+ * EXISTING anchor_proofs rows, exactly one column per write. It NEVER inserts
+ * a proof row (anchor_id/receipt_id are read-only; a missing row is counted
+ * in unpersistedNoProofRow, not conjured). Every page is RE-classified fresh
+ * at apply time and the pass HALTS before writing any page containing an
+ * ambiguous row (the census's zero-ambiguity gate is re-proven per page —
+ * data may have changed since the census). Idempotent: rows whose stored
+ * label already matches are skipped, so a re-run applies zero writes.
+ */
+async function runLabelApply(
+  db: UntypedDb,
+  cp: CheckpointHandle,
+  opts: { orgId?: string; batchSize: number; maxBatches: number },
+  logger: ClassifierLogger,
+): Promise<{ halted: boolean }> {
+  const cardinalityMemo = new Map<string, number | null>();
+  let batches = 0;
+
+  while (batches < opts.maxBatches) {
+    const page = await fetchScanPage(db, {
+      orgId: opts.orgId,
+      cursor: cp.payload.applyCursor ?? null,
+      batchSize: opts.batchSize,
+    });
+
+    if (page.length === 0) {
+      cp.payload.applyCompletedAt = new Date().toISOString();
+      cp.payload.updatedAt = cp.payload.applyCompletedAt;
+      await saveCheckpoint(db, cp);
+      break;
+    }
+
+    const proofMap = await fetchProofRows(db, page.map((a) => a.id));
+    await resolveCardinalities(db, txsNeedingCardinality(page, proofMap), cardinalityMemo, logger);
+
+    // Classify the WHOLE page first: any ambiguity halts BEFORE any write.
+    const idsByClass = new Map<BackCatalogClass, string[]>();
+    let unpersisted = 0;
+    for (const a of page) {
+      const proof = proofMap.get(a.id) ?? null;
+      const cardinality = a.chain_tx_id ? (cardinalityMemo.get(a.chain_tx_id) ?? null) : null;
+      const { cls, reason } = classifyAnchor(a, proof, cardinality);
+      if (cls === 'ambiguous') {
+        logger.error(
+          { anchorId: a.id, reason, applyCursor: cp.payload.applyCursor ?? null, scope: cp.payload.scope },
+          'proof-backcatalog-classifier: APPLY HALTED — row classifies ambiguous at apply time (data changed since the census); no labels written for this page',
+        );
+        cp.payload.updatedAt = new Date().toISOString();
+        await saveCheckpoint(db, cp); // progress so far stays durable; cursor NOT advanced past this page
+        return { halted: true };
+      }
+      const ws = buildClassWriteSet(cls);
+      if (!ws.values) continue; // already_complete: nothing to persist
+      if (!proof) {
+        unpersisted += 1; // honest: no proof row to carry the label — NEVER insert one
+        continue;
+      }
+      if (proof.proof_completeness_class === cls) continue; // idempotent skip
+      const list = idsByClass.get(cls) ?? [];
+      list.push(a.id);
+      idsByClass.set(cls, list);
+    }
+
+    // Apply per-class one-column updates, chunked for PostgREST limits.
+    for (const [cls, ids] of idsByClass) {
+      const ws = buildClassWriteSet(cls);
+      if (!ws.values) continue;
+      for (const chunkIds of chunk(ids, IN_FILTER_CHUNK)) {
+        const { data, error } = await db
+          .from('anchor_proofs')
+          .update(ws.values)
+          .in('anchor_id', chunkIds)
+          .select('anchor_id');
+        if (error) {
+          throw new Error(
+            `classifier label update failed (class=${cls}): ${error.message ?? 'unknown'}`,
+          );
+        }
+        const affected = data?.length ?? 0;
+        cp.payload.writesApplied = (cp.payload.writesApplied ?? 0) + affected;
+        if (affected < chunkIds.length) {
+          // A proof row vanished between read and write: count it honestly.
+          unpersisted += chunkIds.length - affected;
+          logger.warn(
+            { cls, targeted: chunkIds.length, affected, scope: cp.payload.scope },
+            'proof-backcatalog-classifier: label update affected fewer rows than targeted — counting the difference as unpersisted',
+          );
+        }
+      }
+    }
+
+    cp.payload.unpersistedNoProofRow = (cp.payload.unpersistedNoProofRow ?? 0) + unpersisted;
+    cp.payload.applyCursor = page[page.length - 1].id;
+    cp.payload.updatedAt = new Date().toISOString();
+    const isLastPage = page.length < opts.batchSize;
+    if (isLastPage) cp.payload.applyCompletedAt = cp.payload.updatedAt;
+    await saveCheckpoint(db, cp);
+    batches += 1;
+
+    logger.info(
+      {
+        scope: cp.payload.scope,
+        applyBatch: batches,
+        writesApplied: cp.payload.writesApplied ?? 0,
+        unpersistedNoProofRow: cp.payload.unpersistedNoProofRow ?? 0,
+        applyCursor: cp.payload.applyCursor,
+      },
+      'proof-backcatalog-classifier: apply page labeled',
+    );
+
+    if (isLastPage) break;
+  }
+
+  return { halted: false };
+}
+
+/**
  * Write-mode gate + apply. Reached only with a COMPLETED census.
- * Order: halt-on-ambiguous → GUC re-check → per-class write sets.
- * Today the write sets surface the 0354 schema gap, so this always returns a
- * refusal (or a vacuous success when nothing needs persisting) with ZERO
- * writes — the structure is in place for when 0354 lands.
+ * Order: halt-on-ambiguous → GUC re-check (fail-closed) → generic schema-gap
+ * guard → 0354 label apply (bounded + resumable; re-invoke to continue).
  */
 async function finalizeWriteMode(
   cp: CheckpointHandle,
@@ -1209,19 +1348,24 @@ async function finalizeWriteMode(
     batchesProcessed: number;
     resumed: boolean;
     deps: ClassifierDeps;
+    orgId?: string;
+    batchSize: number;
+    maxBatches: number;
   },
 ): Promise<ClassifierSummary> {
   const { deps } = ctx;
-  const base = summaryFromCheckpoint(
-    cp,
-    {
-      mode: ctx.mode,
-      gucState: ctx.gucState,
-      executeRefusalReason: ctx.executeRefusalReason,
-      softDeletedExcluded: ctx.softDeletedExcluded,
-    },
-    { resumed: ctx.resumed, batchesProcessed: ctx.batchesProcessed },
-  );
+  const buildBase = () =>
+    summaryFromCheckpoint(
+      cp,
+      {
+        mode: ctx.mode,
+        gucState: ctx.gucState,
+        executeRefusalReason: ctx.executeRefusalReason,
+        softDeletedExcluded: ctx.softDeletedExcluded,
+      },
+      { resumed: ctx.resumed, batchesProcessed: ctx.batchesProcessed },
+    );
+  const base = buildBase();
 
   // AC: the run must HALT (refuse write mode) if ambiguous > 0.
   if (cp.payload.plan.ambiguous > 0) {
@@ -1244,28 +1388,64 @@ async function finalizeWriteMode(
     };
   }
 
-  // Per-class write sets. Classes that need persistence surface the 0354 gap.
-  const classesNeedingWrites = (Object.keys(cp.payload.plan) as BackCatalogClass[]).filter(
+  // Generic fail-honest guard: any FUTURE class whose write set names a
+  // column the schema lacks stops here (the original 0354 gap mechanism,
+  // kept armed even though every current class now resolves).
+  const classesInPlan = (Object.keys(cp.payload.plan) as BackCatalogClass[]).filter(
     (cls) => cp.payload.plan[cls] > 0,
   );
-  for (const cls of classesNeedingWrites) {
+  for (const cls of classesInPlan) {
     const ws = buildClassWriteSet(cls);
     if (ws.schemaGap) {
       deps.logger.error(
         { scope: cp.payload.scope, cls, rows: cp.payload.plan[cls], schemaGap: ws.schemaGap },
-        'proof-backcatalog-classifier: WRITE MODE STOPPED — 0340 lacks the completeness-class column (the 0354 decision); zero writes performed',
+        'proof-backcatalog-classifier: WRITE MODE STOPPED — schema lacks the column this class needs; zero writes performed',
       );
       return { ...base, refused: true, refusalReason: 'schema_gap_0354', schemaGap: ws.schemaGap };
     }
-    // ws.values non-null would be applied here (0354 future); today the only
-    // classes without a schema gap have nothing to persist.
   }
 
-  deps.logger.info(
-    { scope: cp.payload.scope, plan: cp.payload.plan },
-    'proof-backcatalog-classifier: write mode had nothing to persist (all rows already complete)',
+  // Idempotent short-circuit: this checkpoint's apply pass already finished.
+  if ((cp.payload.applyCompletedAt ?? null) !== null) {
+    deps.logger.info(
+      { scope: cp.payload.scope, writesApplied: cp.payload.writesApplied ?? 0 },
+      'proof-backcatalog-classifier: label apply already complete for this census — nothing further to write (restart=true for a fresh census)',
+    );
+    return base;
+  }
+
+  const needsApply = classesInPlan.some((cls) => buildClassWriteSet(cls).values !== null);
+  const db = deps.client as unknown as UntypedDb;
+
+  if (!needsApply) {
+    // Vacuous success: nothing in the plan needs a label.
+    cp.payload.applyCompletedAt = new Date().toISOString();
+    cp.payload.updatedAt = cp.payload.applyCompletedAt;
+    await saveCheckpoint(db, cp);
+    deps.logger.info(
+      { scope: cp.payload.scope, plan: cp.payload.plan },
+      'proof-backcatalog-classifier: write mode had nothing to persist (all rows already complete)',
+    );
+    return buildBase();
+  }
+
+  const { halted } = await runLabelApply(
+    db,
+    cp,
+    { orgId: ctx.orgId, batchSize: ctx.batchSize, maxBatches: ctx.maxBatches },
+    deps.logger,
   );
-  return base;
+  const after = buildBase();
+  if (halted) {
+    return { ...after, refused: true, refusalReason: 'ambiguous_rows_present' };
+  }
+  if ((cp.payload.applyCompletedAt ?? null) === null) {
+    deps.logger.info(
+      { scope: cp.payload.scope, applyCursor: cp.payload.applyCursor ?? null },
+      'proof-backcatalog-classifier: apply budget reached — re-invoke to resume labeling from the durable apply cursor',
+    );
+  }
+  return after;
 }
 
 export const __testing = {
