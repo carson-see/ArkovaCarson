@@ -24,6 +24,7 @@ const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
 const headSha = z.string().regex(/^[0-9a-f]{40}$/);
 const imageDigest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const pinnedImage = z.string().regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/);
+const sourceHeadImageRef = z.string().regex(/^[^\s@]+:[0-9a-f]{40}$/);
 const projectRef = z.string().regex(/^[a-z]{20}$/);
 const runIdentity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
 const gcpProjectId = z.string().regex(/^[a-z][a-z\d-]{4,28}[a-z\d]$/);
@@ -109,6 +110,8 @@ const admissionV2Schema = z.object({
   required_wall_min: z.number().int().min(2_910),
   sha: headSha,
   declared_source_head: headSha,
+  source_head_image_ref: sourceHeadImageRef,
+  source_head_image_digest: imageDigest,
   base_sha: headSha,
   image: pinnedImage,
   image_digest: imageDigest,
@@ -174,11 +177,15 @@ function assertAdmissionInvariants(admission: AdmissionV2): void {
   }
 
   const expectedImageSuffix = `@${admission.deployed_image_digest}`;
+  const imageRepository = admission.image.slice(0, -expectedImageSuffix.length);
+  const expectedSourceHeadImageRef = `${imageRepository}:${admission.declared_source_head}`;
   if (
     admission.image_digest !== admission.deployed_image_digest
+    || admission.source_head_image_digest !== admission.deployed_image_digest
+    || admission.source_head_image_ref !== expectedSourceHeadImageRef
     || !admission.image.endsWith(expectedImageSuffix)
     || !admission.deployed_image_ref.endsWith(expectedImageSuffix)
-  ) throw new Error('Admission v2 contains contradictory deployed image digest identity.');
+  ) throw new Error('Admission v2 contains contradictory source-head/deployed image digest identity.');
 
   if (
     admission.clean_mirror.attestation_id !== admission.clean_mirror_attestation_id

@@ -528,6 +528,11 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
+function compareCodeUnits(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
 export interface EvidenceEnvelopeVerifier {
   verify(raw: unknown): ImmutableRunDeclaration;
 }
@@ -544,7 +549,7 @@ function assertPlainVerifierConfig(config: unknown): asserts config is EvidenceV
   const descriptors = Object.getOwnPropertyDescriptors(config);
   if (
     Reflect.ownKeys(config).some((key) => typeof key !== 'string')
-    || Object.keys(descriptors).sort((left, right) => left.localeCompare(right)).join(',') !== 'keyFingerprint,publicKeyPem'
+    || Object.keys(descriptors).sort(compareCodeUnits).join(',') !== 'keyFingerprint,publicKeyPem'
     || Object.values(descriptors).some((descriptor) => !('value' in descriptor) || descriptor.get || descriptor.set)
     || typeof descriptors.publicKeyPem?.value !== 'string'
     || typeof descriptors.keyFingerprint?.value !== 'string'
@@ -634,7 +639,7 @@ function snapshotRawCaptureTextSet(raw: RawCaptureTextSet): Readonly<RawCaptureT
   const expectedKeys = ['cloudRun', 'database', 'scheduler', 'signet', 'supervisor', 'workerLogs'];
   if (
     Reflect.ownKeys(raw).some((key) => typeof key !== 'string')
-    || Object.keys(descriptors).sort((left, right) => left.localeCompare(right)).join(',') !== expectedKeys.join(',')
+    || Object.keys(descriptors).sort(compareCodeUnits).join(',') !== expectedKeys.join(',')
     || Object.values(descriptors).some((descriptor) => !('value' in descriptor) || descriptor.get || descriptor.set)
     || expectedKeys.some((key) => typeof descriptors[key]?.value !== 'string')
   ) throw new Error('Raw capture set rejects getters, unknown keys, and ambiguous values.');

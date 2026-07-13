@@ -100,6 +100,11 @@ describe('admission v2 to run-declaration identity adapter', () => {
       workerRevision: 'arkova-worker-s33-rig-b1-staging-00001',
       region: 'us-central1',
     });
+    const admission = JSON.parse(ADMISSION_RAW) as JsonRecord;
+    expect(admission.source_head_image_ref).toBe(
+      `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:${'a'.repeat(40)}`,
+    );
+    expect(admission.source_head_image_digest).toBe(admission.deployed_image_digest);
   });
 
   it('rejects duplicate top-level and nested admission keys before semantic parsing', () => {
@@ -129,6 +134,12 @@ describe('admission v2 to run-declaration identity adapter', () => {
     ['extra top-level field', (value: JsonRecord) => { value.manual_identity = 'forged'; }],
     ['wrong rig', (value: JsonRecord) => { value.rig_id = 'RIG-G1'; }],
     ['wrong tier', (value: JsonRecord) => { value.tier = 'T2'; }],
+    ['malformed source-head image ref', (value: JsonRecord) => {
+      value.source_head_image_ref = `repo@sha256:${'b'.repeat(64)}`;
+    }],
+    ['malformed source-head image digest', (value: JsonRecord) => {
+      value.source_head_image_digest = 'b'.repeat(64);
+    }],
   ])('rejects %s in the strict admission schema', (_label, mutate) => {
     expect(() => projectAdmissionV2ToRunDeclaration(admissionWith(mutate), ceremonyRaw())).toThrow(
       /admission v2.*schema|rejected/i,
@@ -142,6 +153,8 @@ describe('admission v2 to run-declaration identity adapter', () => {
     'lease_id',
     'clean_mirror_attestation_id',
     'sha',
+    'source_head_image_ref',
+    'source_head_image_digest',
     'base_sha',
     'deployed_image_digest',
     'supabase_project_ref',
@@ -184,6 +197,15 @@ describe('admission v2 to run-declaration identity adapter', () => {
   it.each([
     ['declared head', (value: JsonRecord) => { value.declared_source_head = 'd'.repeat(40); }],
     ['deployed head', (value: JsonRecord) => { value.deployed_source_head = 'd'.repeat(40); }],
+    ['source-head image digest', (value: JsonRecord) => {
+      value.source_head_image_digest = `sha256:${'d'.repeat(64)}`;
+    }],
+    ['source-head image repository', (value: JsonRecord) => {
+      value.source_head_image_ref = `us-central1-docker.pkg.dev/forged/project/worker:${'a'.repeat(40)}`;
+    }],
+    ['source-head image tag', (value: JsonRecord) => {
+      value.source_head_image_ref = `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:${'d'.repeat(40)}`;
+    }],
     ['input image digest', (value: JsonRecord) => { value.image_digest = `sha256:${'d'.repeat(64)}`; }],
     ['deployed image ref', (value: JsonRecord) => { value.deployed_image_ref = `repo@sha256:${'d'.repeat(64)}`; }],
     ['nested attestation', (value: JsonRecord) => {

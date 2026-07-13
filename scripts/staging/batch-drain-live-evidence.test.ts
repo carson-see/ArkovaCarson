@@ -311,6 +311,17 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     expect(() => parseRawCaptureSet(accessorRaw, declared)).toThrow(/getter|accessor/i);
   });
 
+  it('accepts exact verifier and capture key sets independent of insertion order', () => {
+    expect(() => createEvidenceEnvelopeVerifierForTest({
+      keyFingerprint: TEST_KEY_FINGERPRINT,
+      publicKeyPem: TEST_PUBLIC_KEY_PEM,
+    })).not.toThrow();
+    const declared = immutable();
+    const raw = rawCaptures(declared);
+    const reversed = Object.fromEntries(Object.entries(raw).reverse()) as unknown as RawCaptureTextSet;
+    expect(() => parseRawCaptureSet(reversed, declared)).not.toThrow();
+  });
+
   it.each([
     ['scheduler', 'recordId'],
     ['workerLogs', 'recordId'],
