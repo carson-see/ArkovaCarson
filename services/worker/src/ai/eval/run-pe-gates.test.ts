@@ -13,6 +13,7 @@ import { evaluateEvalGates } from './eval-gates.js';
 import {
   resolveRequestedGates,
   resolveOutputDir,
+  resolveRequireLive,
   applyGeminiModelOverride,
 } from './run-pe-gates.js';
 import { GOLDEN_DATASET_PROFESSIONAL_EDUCATION } from './golden-dataset-professional-education.js';
@@ -115,6 +116,11 @@ describe('professional-education gate path', () => {
     const env: NodeJS.ProcessEnv = { GEMINI_TUNED_MODEL: 'preexisting' };
     applyGeminiModelOverride('gemini', undefined, env);
     expect(env.GEMINI_TUNED_MODEL).toBe('preexisting');
+  });
+
+  it('uses only the explicit --require-live flag for strict replay validation', () => {
+    expect(resolveRequireLive([])).toBe(false);
+    expect(resolveRequireLive(['--require-live'])).toBe(true);
   });
 
   it('fails closed for every gate when the provider extracts nothing', async () => {

@@ -20,10 +20,21 @@
  * gemini → real F1 against Gemini (GEMINI_API_KEY) or Vertex (GEMINI_TUNED_MODEL + ADC).
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { z } from 'zod';
 import { GOLDEN_DATASET_PROFESSIONAL_EDUCATION } from './golden-dataset-professional-education.js';
+import {
+  CPE_CLE_S3_GATE_ENTRIES,
+  CPE_CLE_S3_HELDOUT_ENTRIES,
+  S3_DATASET_TAG,
+} from './golden-dataset-cpe-cle-s3.js';
+import {
+  checkHeldoutLeakage,
+  loadLeakageCorpus,
+  type LeakageViolation,
+} from './heldout-leakage.js';
 import { runEval, getPromptVersionHash, type EntryExtractor } from './runner.js';
 import { createPeEntryExtractor } from './pe-eval-extraction.js';
 import {
@@ -32,23 +43,45 @@ import {
   type EvalGateConfig,
   type EvalGateResult,
 } from './eval-gates.js';
+import type { GoldenDatasetEntry } from './types.js';
 import type { IAIProvider } from '../types.js';
 
 const ALL_GATE_IDS = EVAL_GATE_CONFIGS.map((gate) => gate.gateId);
+
+/**
+ * services/worker root derived from THIS module's location — NOT process.cwd(),
+ * which points the leakage scan at zero files when the CLI is invoked from the
+ * repo root (round-1 review; checkS3LeakagePrecondition also fails closed on an
+ * empty corpus as a second line of defense).
+ */
+const WORKER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+/** The three professional-education gates that ran here before AI-02. */
+const PE_GATE_IDS: Array<EvalGateConfig['gateId']> = ['SCRUM-1962', 'SCRUM-1963', 'SCRUM-2187'];
+
+/**
+ * Committed deterministic replay fixture for the SCRUM-2382 CI gate
+ * (worker-root-relative). Seeded from the mock (ground-truth echo) path —
+ * see the file's `meta.note`: it is NOT a live-model measurement until the
+ * nightly live-Gemini recording replaces it.
+ */
+export const S3_RECORDED_OUTPUTS_DEFAULT_PATH = 'src/ai/eval/recorded/s3-cpe-cle-recorded.json';
 
 type RequestedGates = Array<EvalGateConfig['gateId']>;
 
 /**
  * Resolve the --gates argument into the gate set to evaluate. Fail-closed:
- * an omitted flag means "all gates", but an explicitly-provided-but-empty value
- * (`--gates ""`, whitespace, or only commas) is an error — never an empty set,
- * which would make `gateResults.every(...)` vacuously pass and bypass the gates.
+ * an omitted flag means "the selected dataset's default gates", but an
+ * explicitly-provided-but-empty value (`--gates ""`, whitespace, or only
+ * commas) is an error — never an empty set, which would make
+ * `gateResults.every(...)` vacuously pass and bypass the gates.
  */
 export function resolveRequestedGates(
   rawGatesArg: string | undefined,
+  defaultGates: RequestedGates = PE_GATE_IDS,
 ): { gates: RequestedGates } | { error: string } {
   if (rawGatesArg === undefined) {
-    return { gates: [...ALL_GATE_IDS] };
+    return { gates: [...defaultGates] };
   }
   const parsed = rawGatesArg
     .split(',')
@@ -78,6 +111,208 @@ function argValue(args: string[], flag: string, fallback?: string): string | und
   return idx >= 0 ? args[idx + 1] : fallback;
 }
 
+// ─── AI-02 (SCRUM-2382): dataset selection + fixture replay provider mode ───
+
+export interface DatasetSelection {
+  name: 'pe' | 's3';
+  /** Dataset identity cross-checked against a replay fixture's meta.datasetTag. */
+  tag: string;
+  entries: GoldenDatasetEntry[];
+  defaultGates: RequestedGates;
+}
+
+/**
+ * Resolve --dataset. `pe` (default) is the professional-education set with its
+ * three original gates. `s3` is the AI-01 CPE/CLE golden set's GATE split —
+ * held-out entries are never gate-scored here (they exist for generalization
+ * measurement and are protected by the leakage check below).
+ */
+export function resolveDataset(
+  rawDatasetArg: string | undefined,
+): DatasetSelection | { error: string } {
+  const name = rawDatasetArg ?? 'pe';
+  if (name === 'pe') {
+    return {
+      name: 'pe',
+      tag: 'professional-education',
+      entries: GOLDEN_DATASET_PROFESSIONAL_EDUCATION,
+      defaultGates: [...PE_GATE_IDS],
+    };
+  }
+  if (name === 's3') {
+    return {
+      name: 's3',
+      tag: S3_DATASET_TAG,
+      entries: CPE_CLE_S3_GATE_ENTRIES,
+      defaultGates: ['SCRUM-2382'],
+    };
+  }
+  return { error: `Unknown dataset "${name}". Use pe|s3.` };
+}
+
+const RecordedOutputsSchema = z.object({
+  meta: z.object({
+    recordedFrom: z.string(),
+    recordedAt: z.string(),
+    datasetTag: z.string(),
+    /**
+     * Prompt version the outputs were recorded against. Replay HARD-FAILS on
+     * mismatch with the current getPromptVersionHash() — otherwise a prompt
+     * edit could silently re-certify stale recorded outputs (falsifiability,
+     * round-1 review).
+     */
+    promptVersionHash: z.string(),
+    /** Provider/model identity the outputs came from (e.g. an endpoint id). */
+    model: z.string(),
+    note: z.string(),
+  }),
+  outputs: z.record(
+    z.string(),
+    z.object({
+      fields: z.record(z.string(), z.unknown()),
+      confidence: z.number().min(0).max(1),
+    }),
+  ),
+});
+
+export type RecordedOutputs = z.infer<typeof RecordedOutputsSchema>;
+
+/** Load + validate a recorded-outputs replay fixture. Throws on malformed files. */
+export function loadRecordedOutputs(path: string): RecordedOutputs {
+  const raw: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+  const parsed = RecordedOutputsSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(
+      `Recorded outputs file ${path} is malformed: ${parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; ')}`,
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * Fixture replay extractor — REPLAYS recorded model outputs. Zero live model
+ * calls. Fail-closed: an entry with no recorded output throws (an incomplete
+ * fixture must never score as a silent field miss OR pass).
+ */
+export function createFixtureReplayExtractor(recorded: RecordedOutputs): EntryExtractor {
+  return async (_provider, entry) => {
+    const output = recorded.outputs[entry.id];
+    if (!output) {
+      throw new Error(
+        `Fixture replay: no recorded output for entry ${entry.id}. ` +
+          'Re-seed the recorded fixture file (--seed-recorded) or record a fresh run.',
+      );
+    }
+    return {
+      fields: { ...output.fields },
+      confidence: output.confidence,
+      tokensUsed: 0,
+    };
+  };
+}
+
+/**
+ * Seed a recorded-outputs fixture from the ground truth (the mock echo path).
+ * Deterministic by construction and clearly marked: F1 computed from this seed
+ * proves the gate WIRING, not model quality.
+ */
+export function buildRecordedOutputsFromGroundTruth(
+  entries: readonly GoldenDatasetEntry[],
+  datasetTag: string,
+): RecordedOutputs {
+  const outputs: RecordedOutputs['outputs'] = {};
+  for (const entry of entries) {
+    outputs[entry.id] = {
+      fields: { ...(entry.groundTruth as Record<string, unknown>) },
+      confidence: 0.99,
+    };
+  }
+  return {
+    meta: {
+      recordedFrom: 'mock-echo',
+      recordedAt: new Date().toISOString().slice(0, 10),
+      datasetTag,
+      promptVersionHash: getPromptVersionHash(),
+      model: 'ground-truth-echo (no model)',
+      note:
+        'DETERMINISTIC MOCK SEED — ground-truth echo, NOT a live-model measurement. ' +
+        'Replace via a nightly live-Gemini recording before treating the gate F1 as a real model score.',
+    },
+    outputs,
+  };
+}
+
+export interface ReplayFixtureExpectations {
+  /** The tag of the dataset selected for THIS run (see resolveDataset). */
+  expectedDatasetTag: string;
+  /** Current getPromptVersionHash() — replay is invalid across prompt edits. */
+  currentPromptVersionHash: string;
+  /**
+   * Strict mode (--require-live): mock-echo seeds HARD-FAIL so a
+   * wiring-determinism fixture can never masquerade as model-quality evidence.
+   */
+  requireLive: boolean;
+}
+
+/**
+ * Falsifiability guard for fixture replay (round-1 review): a recorded fixture
+ * is only valid evidence for the exact dataset + prompt version it was
+ * recorded against, and a mock-echo seed is never live evidence. Returns
+ * human-readable errors (empty = valid). Fail-closed at the callsite.
+ */
+export function validateReplayFixture(
+  recorded: RecordedOutputs,
+  expectations: ReplayFixtureExpectations,
+): string[] {
+  const errors: string[] = [];
+  if (recorded.meta.datasetTag !== expectations.expectedDatasetTag) {
+    errors.push(
+      `Recorded fixture dataset tag "${recorded.meta.datasetTag}" does not match the selected dataset ` +
+        `"${expectations.expectedDatasetTag}" — replaying it would score the wrong dataset.`,
+    );
+  }
+  if (recorded.meta.promptVersionHash !== expectations.currentPromptVersionHash) {
+    errors.push(
+      `Recorded fixture prompt version "${recorded.meta.promptVersionHash}" does not match the current ` +
+        `prompt version "${expectations.currentPromptVersionHash}" — re-record against the current prompt.`,
+    );
+  }
+  if (expectations.requireLive && recorded.meta.recordedFrom === 'mock-echo') {
+    errors.push(
+      'Strict mode (--require-live): the fixture is a mock-echo seed, ' +
+        'not a live-model recording — it proves gate WIRING only and cannot be model-quality evidence.',
+    );
+  }
+  return errors;
+}
+
+export function resolveRequireLive(args: string[]): boolean {
+  return args.includes('--require-live');
+}
+
+/**
+ * AI-01 leakage precondition, wired into the s3 gate run: the held-out split
+ * must be absent from every committed prompt/few-shot/tuning corpus. Returns
+ * violations (fixture ids + corpus paths only — never fixture content).
+ *
+ * FAIL-CLOSED on an empty corpus (round-1 review): scanning zero files is not
+ * a clean scan — it means the CLI was pointed at the wrong root (e.g. run from
+ * the repo root instead of services/worker), so it THROWS instead of passing.
+ */
+export function checkS3LeakagePrecondition(workerRoot: string): LeakageViolation[] {
+  const corpus = loadLeakageCorpus(workerRoot);
+  if (corpus.length === 0) {
+    throw new Error(
+      `Held-out leakage corpus is EMPTY under "${workerRoot}" — the scan covered zero files, ` +
+        'which is a wrong-root invocation, not a clean result. Run from services/worker ' +
+        '(or fix the worker-root resolution); refusing to treat an unscanned repo as leak-free.',
+    );
+  }
+  return checkHeldoutLeakage(CPE_CLE_S3_HELDOUT_ENTRIES, corpus);
+}
+
 /**
  * Gemini selects its tuned Vertex endpoint from GEMINI_TUNED_MODEL, read at
  * construction time (gemini.ts) — not from a constructor arg. So `--model` for
@@ -98,7 +333,9 @@ export function applyGeminiModelOverride(
 }
 
 async function buildProvider(providerArg: string, modelOverride: string | undefined): Promise<IAIProvider> {
-  if (providerArg === 'mock') {
+  if (providerArg === 'mock' || providerArg === 'fixture') {
+    // `fixture` needs no live provider — replay happens in the extractor. The
+    // inert mock satisfies the runner's provider interface without any network.
     const { MockAIProvider } = await import('../mock.js');
     return new MockAIProvider();
   }
@@ -126,7 +363,7 @@ async function buildProvider(providerArg: string, modelOverride: string | undefi
     const { TogetherProvider } = await import('../together.js');
     return new TogetherProvider(undefined, modelOverride);
   }
-  console.error(`ERROR: Unknown provider "${providerArg}". Use mock|gemini|nessie|together.`);
+  console.error(`ERROR: Unknown provider "${providerArg}". Use mock|fixture|gemini|nessie|together.`);
   process.exit(2);
 }
 
@@ -142,7 +379,13 @@ const echoGroundTruthExtractor: EntryExtractor = async (_provider, entry) => ({
   tokensUsed: 0,
 });
 
-function selectExtractor(providerArg: string): EntryExtractor {
+function selectExtractor(providerArg: string, recorded: RecordedOutputs | null): EntryExtractor {
+  if (providerArg === 'fixture') {
+    if (!recorded) {
+      throw new Error('fixture provider requires --recorded <path> (or the committed default).');
+    }
+    return createFixtureReplayExtractor(recorded);
+  }
   return providerArg === 'mock' ? echoGroundTruthExtractor : createPeEntryExtractor();
 }
 
@@ -161,7 +404,11 @@ function gateReasonLabel(reason: EvalGateResult['reason']): string {
   }
 }
 
-function formatGateReport(
+/**
+ * Format the gate report. VALUE-OMISSION CONTRACT (AI-02): the report carries
+ * field NAMES + scores only — never fixture/extraction field values.
+ */
+export function formatGateReport(
   gateResults: EvalGateResult[],
   meta: { provider: string; promptVersionHash: string; timestamp: string; totalEntries: number },
 ): string {
@@ -206,8 +453,9 @@ async function main(): Promise<void> {
 
   // Launch-gate parity (Constitution §1.6): the eval extraction flow is an
   // AI-extraction code path and must fail closed when the flag is off — the
-  // mock provider (no model call) is exempt so the gate-wiring smoke stays green.
-  if (providerArg !== 'mock' && process.env.ENABLE_AI_EXTRACTION !== 'true') {
+  // mock and fixture providers (no model call, no document text egress) are
+  // exempt so the deterministic CI gate stays green.
+  if (providerArg !== 'mock' && providerArg !== 'fixture' && process.env.ENABLE_AI_EXTRACTION !== 'true') {
     console.error('ERROR: ENABLE_AI_EXTRACTION must be "true" to run live PE eval extraction.');
     process.exit(2);
   }
@@ -216,16 +464,71 @@ async function main(): Promise<void> {
   // provider is constructed (gemini reads the endpoint from env at construction).
   applyGeminiModelOverride(providerArg, modelOverride);
 
-  const gateSelection = resolveRequestedGates(argValue(args, '--gates'));
+  const dataset = resolveDataset(argValue(args, '--dataset'));
+  if ('error' in dataset) {
+    console.error(`ERROR: ${dataset.error}`);
+    process.exit(2);
+  }
+
+  // AI-01→AI-02 leakage precondition: an s3 gate run on a contaminated repo is
+  // not evidence. Fail-closed before any scoring. Violations print fixture ids
+  // and corpus paths ONLY — never fixture content.
+  if (dataset.name === 's3') {
+    const violations = checkS3LeakagePrecondition(WORKER_ROOT);
+    if (violations.length > 0) {
+      console.error('ERROR: held-out leakage detected — s3 gate run aborted (fail-closed):');
+      for (const violation of violations) {
+        console.error(`   ${violation.kind}-leak: ${violation.fixtureId} found in ${violation.corpusFile}`);
+      }
+      process.exit(2);
+    }
+  }
+
+  // --seed-recorded <path>: write a deterministic mock-echo replay fixture and
+  // exit. Explicitly NOT a live-model measurement (see meta.note).
+  const seedPath = argValue(args, '--seed-recorded');
+  if (seedPath) {
+    const seeded = buildRecordedOutputsFromGroundTruth(dataset.entries, dataset.tag);
+    writeFileSync(resolve(process.cwd(), seedPath), JSON.stringify(seeded, null, 2) + '\n', 'utf-8');
+    console.log(`Seeded recorded outputs (${Object.keys(seeded.outputs).length} entries) → ${seedPath}`);
+    console.log('NOTE: mock-echo seed — replace via a nightly live-Gemini recording before treating F1 as real.');
+    process.exit(0);
+  }
+
+  let recorded: RecordedOutputs | null = null;
+  if (providerArg === 'fixture') {
+    const recordedPath = argValue(args, '--recorded', S3_RECORDED_OUTPUTS_DEFAULT_PATH)!;
+    recorded = loadRecordedOutputs(resolve(process.cwd(), recordedPath));
+    console.log(`   Replay fixture: ${recordedPath} (recordedFrom=${recorded.meta.recordedFrom}, model=${recorded.meta.model})`);
+    // Falsifiability guard (round-1 review): dataset tag + prompt version must
+    // match this run, and strict mode refuses mock-echo seeds outright.
+    const requireLive = resolveRequireLive(args);
+    const replayErrors = validateReplayFixture(recorded, {
+      expectedDatasetTag: dataset.tag,
+      currentPromptVersionHash: getPromptVersionHash(),
+      requireLive,
+    });
+    if (replayErrors.length > 0) {
+      for (const error of replayErrors) {
+        console.error(`ERROR: ${error}`);
+      }
+      process.exit(2);
+    }
+    if (recorded.meta.recordedFrom === 'mock-echo') {
+      console.log('   ⚠ mock-echo seed — gate proves WIRING determinism, not model quality.');
+    }
+  }
+
+  const gateSelection = resolveRequestedGates(argValue(args, '--gates'), dataset.defaultGates);
   if ('error' in gateSelection) {
     console.error(`ERROR: ${gateSelection.error}`);
     process.exit(2);
   }
   const requestedGates = gateSelection.gates;
 
-  console.log('\n🔬 Professional-Education Eval Gate Runner (SCRUM-2188)');
+  console.log('\n🔬 Professional-Education Eval Gate Runner (SCRUM-2188 / SCRUM-2382)');
   console.log(`   Provider: ${providerArg}`);
-  console.log(`   PE dataset: ${GOLDEN_DATASET_PROFESSIONAL_EDUCATION.length} entries`);
+  console.log(`   Dataset: ${dataset.name} (${dataset.entries.length} entries)`);
   console.log(`   Gates: ${requestedGates.join(', ')}`);
   console.log(`   Prompt version: ${getPromptVersionHash()}`);
   console.log('');
@@ -234,9 +537,9 @@ async function main(): Promise<void> {
 
   const result = await runEval({
     provider,
-    entries: GOLDEN_DATASET_PROFESSIONAL_EDUCATION,
+    entries: dataset.entries,
     concurrency: providerArg === 'gemini' ? 1 : 10,
-    extract: selectExtractor(providerArg),
+    extract: selectExtractor(providerArg, recorded),
     onProgress: (completed, total) => {
       const pct = ((completed / total) * 100).toFixed(0);
       process.stdout.write(`\r   Progress: ${completed}/${total} (${pct}%)`);

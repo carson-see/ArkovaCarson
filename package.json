@@ -40,6 +40,7 @@
     "ci:staging-evidence": "tsx scripts/ci/check-staging-evidence.ts",
     "staging:seed": "tsx scripts/staging/seed.ts",
     "staging:load": "tsx scripts/staging/load-harness.ts",
+    "staging:ai-soak": "tsx scripts/staging/ai-soak-harness.ts",
     "staging:soak-lanes": "tsx scripts/staging/soak-lanes.ts",
     "staging:claim": "./scripts/staging/claim.sh",
     "staging:janitor": "./scripts/staging/cleanup-orphan-tags.sh",

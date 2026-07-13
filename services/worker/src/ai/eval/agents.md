@@ -1,6 +1,21 @@
 # agents.md — services/worker/src/ai/eval/
 
-_Last updated: 2026-05-22_
+_Last updated: 2026-07-06_
+
+## 2026-07-06 S3 CPE/CLE golden set + deterministic eval gate (AI-01/AI-02 — SCRUM-2381/2382)
+
+- `golden-dataset-cpe-cle-s3.ts` — 60 synthetic labeled fixtures (30 CPE × 30 CLE), stratified/tagged: `clean` | `degraded-scan` × adversarial classes (`ambiguous-provider`, `near-duplicate-credits`, `fractional-hours`, `multi-credit`). 12-entry `held-out` split; `eval-gates.ts` excludes `held-out` from all merge gates. Counts + held-out fingerprints are version-pinned in `cpe-cle-s3-manifest.json` (regeneration-guarded by tests — regenerate the manifest whenever the dataset changes).
+- `heldout-leakage.ts` — leakage control: SHA-256 fingerprints over normalized fixture text; `loadLeakageCorpus` scans `training-data/**` + `src/ai/**` (excluding the dataset/manifest/tests themselves) and the check FAILS on held-out content or id appearing in any committed prompt/few-shot/tuning corpus. NEVER add a held-out fixture (or its id) to a prompt or tuning export.
+- `run-pe-gates.ts` gains `--dataset pe|s3`, a `fixture` provider mode (replays `recorded/s3-cpe-cle-recorded.json`, zero live model calls — the CI path), `--seed-recorded` (mock-echo seeding), and runs the leakage check as a fail-closed precondition of every s3 run. Gate `SCRUM-2382` in `eval-gates.ts`: aggregate weighted F1 ≥ 0.80 AND per-field floors (creditHours 0.85, issuedDate 0.80, credentialType 0.80), coverage hard-coded at 48. Reports emit field NAMES + scores only (value-omission is test-locked).
+- `recorded/s3-cpe-cle-recorded.json` is a **mock-echo seed** (see `meta.note`) — it proves gate wiring determinism, NOT model quality. Replace via a nightly live-Gemini recording (run with `--provider gemini --dataset s3`, then record) before quoting the F1 as a model score. Held-out ids must never enter this committed file.
+- npm scripts: `eval:s3-gate` (deterministic CI gate), `eval:s3-gate:seed` (re-seed after dataset changes).
+
+## 2026-07-06 Round-1 review hardening (PR #1413)
+
+- `golden-dataset-cpe-cle-s3.ts` refactored to `cpe()`/`cle()` fixture builders (Sonar new-code duplication fix): fixtures carry only deltas; shared structure (NASBA, credit-type defaults, provider = issuer, activity number = course id, empty fraud signals) lives in the builders. Emitted entries are byte-identical to the previous literals (verified against a pre-refactor JSON snapshot + the pinned manifest fingerprints). All 60 fixtures preserved.
+- `run-pe-gates.ts` replay falsifiability: recorded-fixture `meta` now REQUIRES `promptVersionHash` + `model`; `validateReplayFixture` fail-closes on prompt-version mismatch, dataset-tag mismatch (the seed builder no longer hardcodes `s3-cpe-cle` — it takes the selected dataset's tag), and — in strict mode (`--require-live` / `EVAL_REQUIRE_LIVE=true`) — on `recordedFrom: 'mock-echo'`. Re-seed with `eval:s3-gate:seed` after any prompt change.
+- `heldout-leakage.ts`: self-exclusions are EXACT relative paths (+ `.test.ts` suffix) via `isLeakageSelfExclusion`, not substrings; corpus roots now include `scripts/**`; `checkS3LeakagePrecondition` THROWS on an empty corpus (a wrong-root invocation is an error, not a pass) and `run-pe-gates.ts` derives the worker root from the module location, not `process.cwd()`.
+- `eval-gates.ts` `computeWeightedF1`: documented the `missing_both`-as-TP caveat — correct abstention inflates aggregate F1 vs the classical definition; the per-field floors (`computeFieldF1` counts a missing field as FN) are the guard. Don't compare the aggregate against externally-reported F1 numbers.
 
 ## 2026-05-22 Professional Education Phase 5 Dataset
 
