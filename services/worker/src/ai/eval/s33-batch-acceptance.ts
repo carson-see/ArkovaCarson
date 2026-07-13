@@ -280,6 +280,8 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const GIT_COMMIT_PATTERN = /^[0-9a-f]{40,64}$/;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const WAVE1_MANIFEST_PATH = 'docs/lane4/s33-wave1-batch-manifest.json';
+const WAVE1_CORPUS_DATASHEET_PATH = 'docs/lane4/s33-corpus-datasheet.md';
+const WAVE1_ENTRY_DATASHEET_PATH = 'docs/lane4/s33-wave1-entry-datasheet.json';
 const WAVE1_TYPES_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-types.ts';
 const WAVE1_SOURCE_BLOB_PATHS = [
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
@@ -293,9 +295,9 @@ const WAVE1_EXCLUDED_PATHS = [
   WAVE1_TYPES_PATH,
 ] as const;
 const WAVE1_PROTOCOL_ALLOWED_DIFF_PATHS = [
-  'docs/lane4/s33-corpus-datasheet.md',
+  WAVE1_CORPUS_DATASHEET_PATH,
   WAVE1_MANIFEST_PATH,
-  'docs/lane4/s33-wave1-entry-datasheet.json',
+  WAVE1_ENTRY_DATASHEET_PATH,
   'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
@@ -1494,6 +1496,208 @@ function loadBatchManifest(content: ArtifactContent): LoadedBatchManifest {
   });
 }
 
+const ENTRY_DATASHEET_ROW_REQUIRED_KEYS = [
+  'id', 'domain', 'realOrSynthetic', 'authorshipMethod', 'generatorDerived',
+  'sourceProvenance', 'lawfulBasis', 'generator', 'jurisdiction', 'jurisdictionDetail',
+  'credentialType', 'subType', 'curationAuthor', 'curationDate', 'licenseConsentNote',
+] as const;
+const ENTRY_DATASHEET_ROW_OPTIONAL_KEYS = ['priorityDocumentType', 'truthRevisionNote'] as const;
+const REVISION10_DATASHEET_KEYS = [
+  'authority', 'change', 'changedEntryIds', 'corpusDataChanged', 'normalizedInputChanged',
+  'sourceBlobsUnchangedFromRevision9', 'normalizedInputPinsPreservedFromRevision9',
+] as const;
+
+function assertRequiredAndOptionalKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  label: string,
+): void {
+  const keys = Object.keys(value);
+  const missing = required.filter((key) => !Object.hasOwn(value, key));
+  const allowed = new Set([...required, ...optional]);
+  const unknown = keys.filter((key) => !allowed.has(key));
+  if (missing.length > 0 || unknown.length > 0) {
+    throw new Error(`${label} schema mismatch; missing=[${missing.join(',')}], unknown=[${unknown.join(',')}]`);
+  }
+}
+
+function currentAuthorizedRevision(manifest: ParsedBatchManifest): Record<string, unknown> {
+  const selfChecks = recordValue(manifest.parsedJson.selfChecks, 'Manifest selfChecks');
+  const history = recordValue(
+    selfChecks.authorizedDocumentRevisions,
+    'Manifest selfChecks.authorizedDocumentRevisions',
+  );
+  if (!Array.isArray(history.revisions) || !isRecord(history.revisions.at(-1))) {
+    throw new Error('Manifest current authorized revision is missing');
+  }
+  return history.revisions.at(-1);
+}
+
+function validateEntryDatasheetRow(
+  value: unknown,
+  index: number,
+  manifestEntry: BatchManifestEntry,
+): string {
+  const label = `Entry datasheet rows[${index}]`;
+  const row = recordValue(value, label);
+  assertRequiredAndOptionalKeys(
+    row,
+    ENTRY_DATASHEET_ROW_REQUIRED_KEYS,
+    ENTRY_DATASHEET_ROW_OPTIONAL_KEYS,
+    label,
+  );
+  const id = nonEmptyString(row.id, `${label}.id`);
+  assertExactString(row.domain, manifestEntry.domain, `${label}.domain`);
+  assertExactString(row.credentialType, manifestEntry.credentialType, `${label}.credentialType`);
+  const realOrSynthetic = nonEmptyString(row.realOrSynthetic, `${label}.realOrSynthetic`);
+  if (realOrSynthetic !== 'real' && realOrSynthetic !== 'synthetic') {
+    throw new Error(`${label}.realOrSynthetic must be real or synthetic`);
+  }
+  for (const key of [
+    'authorshipMethod', 'sourceProvenance', 'lawfulBasis', 'jurisdiction',
+    'subType', 'curationAuthor', 'curationDate', 'licenseConsentNote',
+  ]) nonEmptyString(row[key], `${label}.${key}`);
+  if (row.jurisdictionDetail === null) {
+    if (manifestEntry.domain !== 'out-of-distribution') {
+      throw new Error(`${label}.jurisdictionDetail may be null only for out-of-distribution rows`);
+    }
+  } else {
+    nonEmptyString(row.jurisdictionDetail, `${label}.jurisdictionDetail`);
+  }
+  booleanValue(row.generatorDerived, `${label}.generatorDerived`);
+  const generator = recordValue(row.generator, `${label}.generator`);
+  assertExactKeys(generator, ['name', 'version', 'seed', 'templateId'], `${label}.generator`);
+  for (const key of ['name', 'version', 'seed', 'templateId']) {
+    nonEmptyString(generator[key], `${label}.generator.${key}`);
+  }
+  for (const key of ENTRY_DATASHEET_ROW_OPTIONAL_KEYS) {
+    if (Object.hasOwn(row, key)) nonEmptyString(row[key], `${label}.${key}`);
+  }
+  return id;
+}
+
+function expectedRevision10DatasheetContract(manifest: ParsedBatchManifest): Record<string, unknown> {
+  const revision = currentAuthorizedRevision(manifest);
+  return Object.fromEntries(REVISION10_DATASHEET_KEYS.map((key) => [key, revision[key]]));
+}
+
+function validateEntryDatasheet(
+  content: ArtifactContent,
+  manifest: LoadedBatchManifest,
+): void {
+  const document = parseStrictJsonDocument(content, 'Entry datasheet');
+  const parsed = document.parsed;
+  const baseKeys = [
+    'schemaVersion', 'batchId', 'revision', 'manifestSha256', 'producerLane',
+    'acceptanceAuthority', 'status', 'entryCount', 'reviewOrder', 'acceptanceScope',
+    'authorshipNote', 'rows',
+  ];
+  const revision10Keys = [
+    'corpusRevisionParentCommit', 'producerRevisionPredecessorCommit', 'lane3SupportBase',
+    'revision10', 'lane3Acceptance',
+  ];
+  assertExactKeys(
+    parsed,
+    manifest.manifest.revision === 10 ? [...baseKeys, ...revision10Keys] : baseKeys,
+    'Entry datasheet',
+  );
+  const manifestJson = manifest.manifest.parsedJson;
+  assertExactContractValue(parsed.schemaVersion, 1, 'Entry datasheet.schemaVersion');
+  for (const key of [
+    'batchId', 'revision', 'producerLane', 'acceptanceAuthority', 'status',
+    'entryCount', 'reviewOrder', 'acceptanceScope',
+  ]) assertExactContractValue(parsed[key], manifestJson[key], `Entry datasheet.${key}`);
+  assertSha256(parsed.manifestSha256, 'Entry datasheet.manifestSha256');
+  assertExactContractValue(
+    parsed.manifestSha256,
+    manifest.rawSha256,
+    'Entry datasheet.manifestSha256',
+  );
+  nonEmptyString(parsed.authorshipNote, 'Entry datasheet.authorshipNote');
+  if (manifest.manifest.revision === 10) {
+    for (const key of ['corpusRevisionParentCommit', 'producerRevisionPredecessorCommit', 'lane3SupportBase']) {
+      assertExactContractValue(parsed[key], manifestJson[key], `Entry datasheet.${key}`);
+    }
+    assertExactContractValue(
+      parsed.revision10,
+      expectedRevision10DatasheetContract(manifest.manifest),
+      'Entry datasheet.revision10',
+    );
+    const selfChecks = recordValue(manifestJson.selfChecks, 'Manifest selfChecks');
+    assertExactContractValue(
+      parsed.lane3Acceptance,
+      selfChecks.lane3Acceptance,
+      'Entry datasheet.lane3Acceptance',
+    );
+  }
+  if (!Array.isArray(parsed.rows) || parsed.rows.length !== manifest.manifest.entryCount) {
+    throw new Error('Entry datasheet rows must match the manifest entryCount');
+  }
+  const rowIds = parsed.rows.map((row, index) => validateEntryDatasheetRow(
+    row,
+    index,
+    manifest.manifest.entries[index],
+  ));
+  assertUniqueIds(rowIds, 'Entry datasheet rows');
+  assertSameOrderedValues(
+    rowIds,
+    manifest.manifest.entries.map(({ id }) => id),
+    'Entry datasheet/manifest row bijection',
+  );
+}
+
+function assertUniqueMarkdownFragment(content: string, fragment: string, label: string): void {
+  const first = content.indexOf(fragment);
+  if (first < 0 || content.indexOf(fragment, first + fragment.length) >= 0) {
+    throw new Error(`Corpus datasheet ${label} must occur exactly once`);
+  }
+}
+
+function validateCorpusDatasheet(
+  content: ArtifactContent,
+  manifest: LoadedBatchManifest,
+): void {
+  const markdown = bytes(content, 'Corpus datasheet').toString('utf8');
+  const parsed = manifest.manifest.parsedJson;
+  const revision = manifest.manifest.revision;
+  const parent = nonEmptyString(parsed.corpusRevisionParentCommit, 'Manifest corpusRevisionParentCommit');
+  const predecessor = nonEmptyString(
+    parsed.producerRevisionPredecessorCommit,
+    'Manifest producerRevisionPredecessorCommit',
+  );
+  const support = recordValue(parsed.lane3SupportBase, 'Manifest lane3SupportBase');
+  const supportCommit = nonEmptyString(support.commit, 'Manifest lane3SupportBase.commit');
+  const typesBlob = nonEmptyString(support.typesBlob, 'Manifest lane3SupportBase.typesBlob');
+  const fragments = [
+    [`# S3.3 Golden Held-Out Corpus — Datasheet (Wave 1, Revision ${revision})`, 'title revision'],
+    [`**Revision ${revision}:**`, 'authored revision'],
+    [`Current producer revision: \`S33-W1\` revision ${revision}`, 'producer revision'],
+    [`exact raw-file SHA-256 \`${manifest.rawSha256}\``, 'manifest raw SHA-256'],
+    ['The manifest and datasheet each contain exactly 81 unique rows in exact bijection with the corpus.', '81-row bijection'],
+    [`blob \`${typesBlob}\` on commit \`${supportCommit}\``, 'support blob/commit'],
+  ] as const;
+  for (const [fragment, label] of fragments) assertUniqueMarkdownFragment(markdown, fragment, label);
+  if (revision === 10) {
+    assertUniqueMarkdownFragment(
+      markdown,
+      `Revision 10 is the RTE history-preserving restack onto reviewed Team 3 prerequisite \`${parent}\`, with logical producer predecessor \`${predecessor}\`; it changes no corpus source blob, row, or normalized-input pin.`,
+      'revision-10 authority/change/preservation provenance',
+    );
+    assertUniqueMarkdownFragment(
+      markdown,
+      `The producer manifest pins revision-10 direct parent and Lane-3 support base \`${parent}\`, logical revision-9 producer predecessor \`${predecessor}\``,
+      'revision-10 parent/support/predecessor provenance',
+    );
+    return;
+  }
+  assertUniqueMarkdownFragment(
+    markdown,
+    `The producer manifest pins revision-${revision} direct parent/predecessor \`${predecessor}\`, Lane-3 support base \`${supportCommit}\``,
+    'producer parent/support provenance',
+  );
+}
+
 export function parseBatchManifest(content: ArtifactContent): ParsedBatchManifest {
   return loadBatchManifest(content).manifest;
 }
@@ -2412,7 +2616,8 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     }
     const commit = payload.gitEvidence.freezeCommitSha;
     this.verifyFreezeCommitExists(commit);
-    this.verifyCommittedManifest(commit, payload);
+    const committed = this.verifyCommittedManifest(commit, payload);
+    this.verifyPacketDatasheets(commit, committed);
     const parsed = manifest.parsedJson;
     const predecessorCommit = nonEmptyString(
       parsed.producerRevisionPredecessorCommit,
@@ -2445,7 +2650,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     }
   }
 
-  private verifyCommittedManifest(commit: string, payload: ManifestFreezePayload): void {
+  private verifyCommittedManifest(commit: string, payload: ManifestFreezePayload): LoadedBatchManifest {
     let committedManifest: Buffer;
     try {
       committedManifest = execFileSync(GIT_EXECUTABLE, [
@@ -2458,6 +2663,28 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     if (committed.rawSha256 !== payload.manifestRawSha256
       || committed.canonicalSha256 !== payload.manifestCanonicalSha256) {
       throw new Error('Freeze Git blob does not match authenticated raw/canonical manifest hashes');
+    }
+    return committed;
+  }
+
+  private verifyPacketDatasheets(commit: string, manifest: LoadedBatchManifest): void {
+    validateEntryDatasheet(
+      this.readCommittedPacketPath(commit, WAVE1_ENTRY_DATASHEET_PATH, 'entry datasheet'),
+      manifest,
+    );
+    validateCorpusDatasheet(
+      this.readCommittedPacketPath(commit, WAVE1_CORPUS_DATASHEET_PATH, 'corpus datasheet'),
+      manifest,
+    );
+  }
+
+  private readCommittedPacketPath(commit: string, path: string, label: string): Buffer {
+    try {
+      return execFileSync(GIT_EXECUTABLE, [
+        '-C', this.#config.repositoryRoot, 'show', `${commit}:${path}`,
+      ]);
+    } catch (error) {
+      throw new Error(`Freeze Git commit does not contain the declared ${label} path`, { cause: error });
     }
   }
 

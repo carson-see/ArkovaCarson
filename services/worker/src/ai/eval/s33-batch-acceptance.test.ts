@@ -63,6 +63,8 @@ interface ProductionManifestFixtureEntry {
 }
 
 const WAVE1_MANIFEST_PATH = 'docs/lane4/s33-wave1-batch-manifest.json';
+const WAVE1_CORPUS_DATASHEET_PATH = 'docs/lane4/s33-corpus-datasheet.md';
+const WAVE1_ENTRY_DATASHEET_PATH = 'docs/lane4/s33-wave1-entry-datasheet.json';
 const WAVE1_TYPES_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-types.ts';
 const WAVE1_SOURCE_PATHS = [
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
@@ -370,6 +372,103 @@ function revision10ManifestFixture(bindings: ManifestFixtureBindings): Record<st
   return manifest;
 }
 
+function manifestRevisionRecord(manifest: Record<string, unknown>): Record<string, unknown> {
+  const selfChecks = manifest.selfChecks as Record<string, unknown>;
+  const revisions = (selfChecks.authorizedDocumentRevisions as {
+    revisions: Array<Record<string, unknown>>;
+  }).revisions;
+  return revisions.at(-1)!;
+}
+
+function entryDatasheetFixture(
+  manifest: Record<string, unknown>,
+  manifestSha256: string,
+): Record<string, unknown> {
+  const entries = manifest.entries as ProductionManifestFixtureEntry[];
+  const base: Record<string, unknown> = {
+    schemaVersion: 1,
+    batchId: manifest.batchId,
+    revision: manifest.revision,
+    manifestSha256,
+    producerLane: manifest.producerLane,
+    acceptanceAuthority: manifest.acceptanceAuthority,
+    status: manifest.status,
+    entryCount: manifest.entryCount,
+    reviewOrder: manifest.reviewOrder,
+    acceptanceScope: manifest.acceptanceScope,
+    authorshipNote: 'All rows are independently authored synthetic-realistic heldout candidates.',
+    rows: entries.map((entry) => ({
+      id: entry.id,
+      domain: entry.domain,
+      realOrSynthetic: 'synthetic',
+      authorshipMethod: 'independently-authored',
+      generatorDerived: false,
+      sourceProvenance: `authored-s33-lane4 | fixture/${entry.id}`,
+      lawfulBasis: 'not-applicable: independently-authored synthetic text',
+      generator: {
+        name: 'none-independent-human-authorship',
+        version: 'not-applicable-no-generator',
+        seed: 'not-applicable-no-rng',
+        templateId: 'not-applicable-no-template',
+      },
+      jurisdiction: entry.id.includes('-KE-') ? 'KE' : 'test-jurisdiction',
+      jurisdictionDetail: entry.domain === 'out-of-distribution'
+        ? null
+        : entry.id.includes('-KE-') ? 'Kenya' : 'Test jurisdiction',
+      credentialType: entry.credentialType,
+      subType: 'fixture_subtype',
+      curationAuthor: 'Arkova Lane 4',
+      curationDate: '2026-07-10',
+      licenseConsentNote: 'Arkova-authored synthetic evaluation text.',
+    })),
+  };
+  if (manifest.revision === 10) {
+    const currentRevision = manifestRevisionRecord(manifest);
+    base.corpusRevisionParentCommit = manifest.corpusRevisionParentCommit;
+    base.producerRevisionPredecessorCommit = manifest.producerRevisionPredecessorCommit;
+    base.lane3SupportBase = structuredClone(manifest.lane3SupportBase);
+    base.revision10 = Object.fromEntries([
+      'authority', 'change', 'changedEntryIds', 'corpusDataChanged', 'normalizedInputChanged',
+      'sourceBlobsUnchangedFromRevision9', 'normalizedInputPinsPreservedFromRevision9',
+    ].map((key) => [key, structuredClone(currentRevision[key])]));
+    base.lane3Acceptance = structuredClone(
+      (manifest.selfChecks as Record<string, unknown>).lane3Acceptance,
+    );
+  }
+  return base;
+}
+
+function corpusDatasheetFixture(
+  manifest: Record<string, unknown>,
+  manifestSha256: string,
+): string {
+  const revision = manifest.revision as number;
+  const parent = manifest.corpusRevisionParentCommit as string;
+  const predecessor = manifest.producerRevisionPredecessorCommit as string;
+  const support = manifest.lane3SupportBase as Record<string, unknown>;
+  const revisionLine = revision === 10
+    ? `Revision 10 is the RTE history-preserving restack onto reviewed Team 3 prerequisite \`${parent}\`, with logical producer predecessor \`${predecessor}\`; it changes no corpus source blob, row, or normalized-input pin.`
+    : `Revision ${revision} is pinned to producer predecessor \`${predecessor}\` and Lane-3 support \`${String(support.commit)}\`.`;
+  const provenanceLine = revision === 10
+    ? `The producer manifest pins revision-10 direct parent and Lane-3 support base \`${parent}\`, logical revision-9 producer predecessor \`${predecessor}\`.`
+    : `The producer manifest pins revision-${revision} direct parent/predecessor \`${predecessor}\`, Lane-3 support base \`${String(support.commit)}\`.`;
+  return [
+    `# S3.3 Golden Held-Out Corpus — Datasheet (Wave 1, Revision ${revision})`,
+    '',
+    `**Authored by:** Lane 4 (Corpus & Data) · **Revision ${revision}:** 2026-07-13`,
+    '',
+    `- Current producer revision: \`S33-W1\` revision ${revision}; the datasheet pins the complete manifest file at exact raw-file SHA-256 \`${manifestSha256}\`.`,
+    '- The manifest and datasheet each contain exactly 81 unique rows in exact bijection with the corpus.',
+    `- ${revisionLine}`,
+    '',
+    `Shared type definitions use blob \`${String(support.typesBlob)}\` on commit \`${String(support.commit)}\`.`,
+    '',
+    '## Provenance & integrity',
+    provenanceLine,
+    '',
+  ].join('\n');
+}
+
 function manifestContent(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({ ...productionManifestFixture(), ...overrides }, null, 2);
 }
@@ -470,6 +569,8 @@ interface GitFixtureMutation {
   setupSupport?: (root: string) => void;
   mutateFreezeTree?: (root: string) => void;
   mutateFreezeIndex?: (root: string, predecessorCommit: string) => void;
+  mutateEntryDatasheet?: (datasheet: Record<string, unknown>) => void;
+  mutateCorpusDatasheet?: (datasheet: string) => string;
 }
 
 function gitRepo(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutation): {
@@ -504,11 +605,8 @@ function gitRepo(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutatio
   const predecessorCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 
   mkdirSync(join(root, 'docs/lane4'), { recursive: true });
-  writeFileSync(join(root, 'docs/lane4/s33-corpus-datasheet.md'), '# Corpus datasheet\n', 'utf8');
-  writeFileSync(join(root, 'docs/lane4/s33-wave1-entry-datasheet.json'), '{"entries":81}\n', 'utf8');
   writeFileSync(join(root, WAVE1_SOURCE_PATHS[1]), 'export const revisedAuKeFixture = 9;\n', 'utf8');
   writeFileSync(join(root, WAVE1_SOURCE_PATHS[2]), 'export const revisedOodFixture = 9;\n', 'utf8');
-  mutateGit?.mutateFreezeTree?.(root);
   const sourceBlobs = Object.fromEntries(WAVE1_SOURCE_PATHS.map((path) => [
     path,
     execFileSync('git', ['hash-object', path], { cwd: root, encoding: 'utf8' }).trim(),
@@ -521,7 +619,16 @@ function gitRepo(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutatio
   });
   mutateManifest?.(manifestObject);
   const manifest = JSON.stringify(manifestObject, null, 2);
+  const manifestSha256 = sha256(manifest);
+  const entryDatasheet = entryDatasheetFixture(manifestObject, manifestSha256);
+  mutateGit?.mutateEntryDatasheet?.(entryDatasheet);
+  const corpusDatasheet = mutateGit?.mutateCorpusDatasheet?.(
+    corpusDatasheetFixture(manifestObject, manifestSha256),
+  ) ?? corpusDatasheetFixture(manifestObject, manifestSha256);
   writeFileSync(join(root, manifestPath), manifest, 'utf8');
+  writeFileSync(join(root, WAVE1_ENTRY_DATASHEET_PATH), JSON.stringify(entryDatasheet, null, 2), 'utf8');
+  writeFileSync(join(root, WAVE1_CORPUS_DATASHEET_PATH), corpusDatasheet, 'utf8');
+  mutateGit?.mutateFreezeTree?.(root);
   execFileSync('git', ['add', '--all'], { cwd: root });
   mutateGit?.mutateFreezeIndex?.(root, predecessorCommit);
   execFileSync('git', ['commit', '-qm', 'freeze manifest'], { cwd: root });
@@ -537,6 +644,8 @@ interface Revision10GitMutation {
   mergeFreezeCommit?: boolean;
   mutateManifest?: ManifestMutator;
   mutateSourceBytes?: boolean;
+  mutateEntryDatasheet?: (datasheet: Record<string, unknown>) => void;
+  mutateCorpusDatasheet?: (datasheet: string) => string;
 }
 
 function revision10GitRepo(mutation: Revision10GitMutation = {}): {
@@ -564,11 +673,7 @@ function revision10GitRepo(mutation: Revision10GitMutation = {}): {
   const supportTypesBlob = execFileSync('git', ['rev-parse', `${supportCommit}:${WAVE1_TYPES_PATH}`], {
     cwd: root, encoding: 'utf8',
   }).trim();
-  const packetPaths = [
-    'docs/lane4/s33-corpus-datasheet.md',
-    'docs/lane4/s33-wave1-entry-datasheet.json',
-    ...WAVE1_SOURCE_PATHS,
-  ];
+  const packetPaths = [...WAVE1_SOURCE_PATHS];
   for (const path of packetPaths) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), execFileSync('git', ['show', `${WAVE1_REVISION9_COMMIT}:${path}`], {
@@ -590,8 +695,17 @@ function revision10GitRepo(mutation: Revision10GitMutation = {}): {
   });
   mutation.mutateManifest?.(manifestObject);
   const manifest = JSON.stringify(manifestObject, null, 2);
+  const manifestSha256 = sha256(manifest);
+  const entryDatasheet = entryDatasheetFixture(manifestObject, manifestSha256);
+  mutation.mutateEntryDatasheet?.(entryDatasheet);
+  const corpusDatasheet = mutation.mutateCorpusDatasheet?.(
+    corpusDatasheetFixture(manifestObject, manifestSha256),
+  ) ?? corpusDatasheetFixture(manifestObject, manifestSha256);
   const manifestPath = WAVE1_MANIFEST_PATH;
+  mkdirSync(join(root, 'docs/lane4'), { recursive: true });
   writeFileSync(join(root, manifestPath), manifest, 'utf8');
+  writeFileSync(join(root, WAVE1_ENTRY_DATASHEET_PATH), JSON.stringify(entryDatasheet, null, 2), 'utf8');
+  writeFileSync(join(root, WAVE1_CORPUS_DATASHEET_PATH), corpusDatasheet, 'utf8');
   execFileSync('git', ['add', '--all'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'revision 10 metadata-only restack'], { cwd: root });
   let freezeCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
@@ -1056,6 +1170,100 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
   });
 
   it.each([
+    ['revision', (datasheet: Record<string, unknown>) => { datasheet.revision = 9; }],
+    ['manifest raw hash', (datasheet: Record<string, unknown>) => { datasheet.manifestSha256 = '0'.repeat(64); }],
+    ['corpus parent', (datasheet: Record<string, unknown>) => { datasheet.corpusRevisionParentCommit = 'a'.repeat(40); }],
+    ['logical predecessor', (datasheet: Record<string, unknown>) => {
+      datasheet.producerRevisionPredecessorCommit = WAVE1_REVISION9_PREDECESSOR_COMMIT;
+    }],
+    ['support commit', (datasheet: Record<string, unknown>) => {
+      (datasheet.lane3SupportBase as Record<string, unknown>).commit = 'a'.repeat(40);
+    }],
+    ['r10 authority', (datasheet: Record<string, unknown>) => {
+      (datasheet.revision10 as Record<string, unknown>).authority = 'fabricated authority';
+    }],
+    ['r10 change', (datasheet: Record<string, unknown>) => {
+      (datasheet.revision10 as Record<string, unknown>).change = 'fabricated change';
+    }],
+    ['r10 changed ids', (datasheet: Record<string, unknown>) => {
+      (datasheet.revision10 as Record<string, unknown>).changedEntryIds = ['GD-S33-KE-001'];
+    }],
+    ['r10 corpus boolean', (datasheet: Record<string, unknown>) => {
+      (datasheet.revision10 as Record<string, unknown>).corpusDataChanged = true;
+    }],
+    ['r10 normalized-input boolean', (datasheet: Record<string, unknown>) => {
+      (datasheet.revision10 as Record<string, unknown>).normalizedInputChanged = true;
+    }],
+    ['r10 source-blob preservation', (datasheet: Record<string, unknown>) => {
+      (datasheet.revision10 as Record<string, unknown>).sourceBlobsUnchangedFromRevision9 = false;
+    }],
+    ['r10 normalized-pin preservation', (datasheet: Record<string, unknown>) => {
+      (datasheet.revision10 as Record<string, unknown>).normalizedInputPinsPreservedFromRevision9 = false;
+    }],
+  ] satisfies Array<[string, (datasheet: Record<string, unknown>) => void]>) (
+    'rejects r10 entry-datasheet %s drift from the active manifest',
+    (_case, mutateEntryDatasheet) => {
+      const context = revision10Ceremony({ mutateEntryDatasheet });
+      context.orchestrator.recordSaltCommitment(context.commitment.content);
+      expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+        .toThrow(/entry datasheet|provenance|manifest/i);
+    },
+  );
+
+  it.each([
+    ['entry count', (datasheet: Record<string, unknown>) => { datasheet.entryCount = 80; }],
+    ['missing row', (datasheet: Record<string, unknown>) => {
+      (datasheet.rows as unknown[]).pop();
+    }],
+    ['duplicate row id', (datasheet: Record<string, unknown>) => {
+      const rows = datasheet.rows as Array<Record<string, unknown>>;
+      rows[1].id = rows[0].id;
+    }],
+    ['row domain', (datasheet: Record<string, unknown>) => {
+      (datasheet.rows as Array<Record<string, unknown>>)[0].domain = 'out-of-distribution';
+    }],
+    ['row credential type', (datasheet: Record<string, unknown>) => {
+      (datasheet.rows as Array<Record<string, unknown>>)[0].credentialType = 'OTHER';
+    }],
+  ] satisfies Array<[string, (datasheet: Record<string, unknown>) => void]>) (
+    'rejects r10 entry-datasheet %s bijection drift',
+    (_case, mutateEntryDatasheet) => {
+      const context = revision10Ceremony({ mutateEntryDatasheet });
+      context.orchestrator.recordSaltCommitment(context.commitment.content);
+      expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+        .toThrow(/entry datasheet|bijection|row|entryCount/i);
+    },
+  );
+
+  it.each([
+    ['revision', (datasheet: string) => datasheet.replace('Revision 10', 'Revision 9')],
+    ['manifest raw hash', (datasheet: string) => datasheet.replace(
+      /SHA-256 `[\da-f]{64}`/u,
+      `SHA-256 \`${'0'.repeat(64)}\``,
+    )],
+    ['parent/support', (datasheet: string) => datasheet.replaceAll(
+      WAVE1_FINAL_TEAM3_SUPPORT_COMMIT,
+      'a'.repeat(40),
+    )],
+    ['logical predecessor', (datasheet: string) => datasheet.replaceAll(
+      WAVE1_REVISION9_COMMIT,
+      WAVE1_REVISION9_PREDECESSOR_COMMIT,
+    )],
+    ['r10 no-change semantics', (datasheet: string) => datasheet.replace(
+      'it changes no corpus source blob, row, or normalized-input pin',
+      'it changes corpus source blobs and normalized-input pins',
+    )],
+  ] satisfies Array<[string, (datasheet: string) => string]>) (
+    'rejects r10 corpus-datasheet %s drift from the active manifest',
+    (_case, mutateCorpusDatasheet) => {
+      const context = revision10Ceremony({ mutateCorpusDatasheet });
+      context.orchestrator.recordSaltCommitment(context.commitment.content);
+      expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+        .toThrow(/corpus datasheet|provenance|manifest/i);
+    },
+  );
+
+  it.each([
     ['changed entry ids', (manifest: Record<string, unknown>) => {
       const revisions = ((manifest.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
         revisions: Array<Record<string, unknown>>;
@@ -1395,7 +1603,11 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
     ['a copy from an unchanged support-tree source', {
       setupSupport(root: string): void {
         mkdirSync(join(root, 'docs/lane4'), { recursive: true });
-        writeFileSync(join(root, 'docs/lane4/unchanged-copy-source.md'), '# Corpus datasheet\n', 'utf8');
+        writeFileSync(
+          join(root, 'docs/lane4/unchanged-copy-source.md'),
+          'export const revisedAuKeFixture = 9;\n',
+          'utf8',
+        );
       },
     }],
     ['a deletion', {
@@ -1446,7 +1658,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
     const context = ceremony(undefined, mutateGit);
     context.orchestrator.recordSaltCommitment(context.commitment.content);
     expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.manifest))
-      .toThrow(/producer diff|six authorized paths|status|mode|rename|deletion/i);
+      .toThrow(/producer diff|six authorized paths|status|mode|rename|deletion|corpus datasheet title revision must occur exactly once/i);
   });
 
   it('atomically consumes each policy/batch/revision once across contenders', async () => {

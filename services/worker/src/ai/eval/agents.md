@@ -49,6 +49,17 @@ _Last updated: 2026-07-13_
   regular non-executable `100644` blob. Extra paths, deletions, renames,
   copies (including copies from unchanged support-tree sources, detected with
   `--find-copies-harder`), executable bits, symlinks, and gitlinks are rejected.
+- Git-freeze verification also reads the committed Wave-1 corpus datasheet and
+  entry datasheet from the authenticated freeze commit. The entry datasheet has
+  a revision-specific exact root schema (legacy r9 versus the extended r10
+  provenance contract), binds the manifest's raw SHA and parent/support/logical
+  predecessor/revision-10/acceptance records, and requires an ordered 81-row
+  id/domain/type bijection with strict row and generator schemas. A nullable
+  `jurisdictionDetail` is permitted only for out-of-distribution rows. The
+  Markdown datasheet must contain each exact revision/hash/support/provenance
+  marker once. This cross-artifact check deliberately uses manifest-derived
+  commitments instead of a datasheet self-hash, so the packet cannot create a
+  circular/self-hash contract.
 - Every selection and lexical result is recursively frozen before it crosses
   the orchestration boundary, including sample ids, metrics/hits, and evidence.
   Audit-transcript reads open the final path with `O_NOFOLLOW`, verify the same
