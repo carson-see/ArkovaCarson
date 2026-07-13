@@ -647,14 +647,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <Separator />
             <VerifierProofDownload
               publicId={data.public_id}
-              fingerprint={data.fingerprint}
               status={publicStatus}
-              issuerName={data.issuer_name}
-              credentialType={data.credential_type}
-              filename={data.filename}
-              securedAt={data.secured_at ?? data.anchor_timestamp}
-              networkReceiptId={data.network_receipt_id}
-              sourceProvenance={sourceProvenance}
             />
           </>
         )}

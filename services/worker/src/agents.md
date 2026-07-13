@@ -1,7 +1,11 @@
 # services/worker/src/
-_Last updated: 2026-05-21 (PR #841 prod containment)_
+_Last updated: 2026-07-06 (S3-A back-catalogue classifier confirm token)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
+
+## 2026-07-06 S3-A Classifier Confirm Token
+
+- `config.ts` exposes `proofClassifierConfirm` (`PROOF_CLASSIFIER_CONFIRM`, optional). The S3-A back-catalogue classifier (`jobs/proof-backcatalog-classifier.ts`) is dry-run-only unless this equals `EXECUTE` AND the caller passes `execute=true`. Deliberately a SEPARATE token from `PROOF_BACKFILL_CONFIRM` so arming one proof write-job never arms the other.
 
 ## 2026-05-20 AI Fraud Safety Note
 
