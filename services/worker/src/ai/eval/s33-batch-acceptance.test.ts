@@ -110,6 +110,125 @@ const CORPUS_SLICE_BY_DOMAIN = {
   'out-of-distribution': 's33-ood-negative',
 } as const;
 
+const REVIEWED_WAVE1_DEFAULT_CREDENTIAL_TYPE = {
+  KE: 'LICENSE',
+  NUR: 'CERTIFICATE',
+  CPA: 'CPE',
+  BAR: 'CLE',
+  PDH: 'CERTIFICATE',
+  AU: 'LICENSE',
+  OOD: 'OTHER',
+} as const;
+
+const REVIEWED_WAVE1_CREDENTIAL_TYPE_OVERRIDES: Readonly<Record<string, string>> = Object.freeze({
+  'GD-S33-KE-006': 'IDENTITY',
+  'GD-S33-KE-007': 'ATTESTATION',
+  'GD-S33-KE-008': 'BUSINESS_ENTITY',
+  'GD-S33-KE-009': 'ATTESTATION',
+  'GD-S33-KE-010': 'CERTIFICATE',
+  'GD-S33-KE-011': 'DEGREE',
+  'GD-S33-NUR-006': 'LICENSE',
+  'GD-S33-CPA-006': 'LICENSE',
+  'GD-S33-CPA-012': 'LICENSE',
+  'GD-S33-BAR-006': 'LICENSE',
+  'GD-S33-BAR-009': 'ATTESTATION',
+  'GD-S33-PDH-002': 'LICENSE',
+  'GD-S33-PDH-009': 'LICENSE',
+  'GD-S33-AU-006': 'DEGREE',
+  'GD-S33-AU-007': 'TRANSCRIPT',
+  'GD-S33-AU-008': 'CERTIFICATE',
+  'GD-S33-AU-009': 'CERTIFICATE',
+  'GD-S33-AU-010': 'FINANCIAL',
+  'GD-S33-AU-011': 'BUSINESS_ENTITY',
+});
+
+// Immutable reviewed r9/r10 entry pins; revision 11 preserves the same entry
+// and normalized-input digests. Keeping these bytes hermetic catches seams
+// between synthetic test taxonomy and the production pin descriptor.
+const REVIEWED_WAVE1_NORMALIZED_INPUT_BY_ID: Readonly<Record<string, string>> = Object.freeze({
+  'GD-S33-KE-001': '645c1f9a06b0458839e100425052c1b80a972d0bd5d9a3461283c389d3907593',
+  'GD-S33-KE-002': 'a4d0c194fb80a7e94a21525bcc87eb5dd556c7aadb5eb72a02b14c6686cfee23',
+  'GD-S33-KE-003': '84f0671c2bf9eddaef054c8bebc03c7ad901ca40a17c7f237f36e7486bb7c608',
+  'GD-S33-KE-004': '9c564704c5e644d2b5fdb051ee5495fe4ce038e984bc1daae65c85ddcfd53e49',
+  'GD-S33-KE-005': '11c1773fe4c613ae0c336bf18025a67008f888712d9e349df0c61004618ce6fc',
+  'GD-S33-KE-006': 'f50ef6d1447459ca54c6a1348884cdc3e326763ba066084031bd99ccaa305727',
+  'GD-S33-KE-007': '12081c016ac59b171a02d30f51ac2924a626eb3bdccbb8c5d14821d89eb35bbb',
+  'GD-S33-KE-008': 'c12e5e797269a62d94bff341e6cf2c0217aa35a1798903e1076cf0886ed71f2b',
+  'GD-S33-KE-009': '6ca53d0a7bf19e9ba69f2c7380b6bd48cda0355784ce23b8f26afd8ca01b2d90',
+  'GD-S33-KE-010': 'ce82032fb54edbd163f67cab7f94b03f5a17a39ab511822d361765fe1b8a17f6',
+  'GD-S33-KE-011': '9e5ed6796a770da6da5c6886fbdc55bb4814c759a18ff88d4115ab09dc9365c3',
+  'GD-S33-NUR-001': 'c28f61da8430d4572e88e343b107bf7d96b0ba025729d3e2ca2929a00f8aecf5',
+  'GD-S33-NUR-002': 'd85e24c90fe0e21e9c1afcc553a7632a8b0a74acf099749d7cc551cd6c5e38db',
+  'GD-S33-NUR-003': 'd5e0743d93a38c05bb4919efa45933e81be16c332e6d514793e28e8b3eeb035f',
+  'GD-S33-NUR-004': '5cf701df727878e681e156e1c2f2cc1f8ad9df124e7668c6843e33eab806bc0d',
+  'GD-S33-NUR-005': '68085d32defe764e6a6462a936c8493844e8c4213ff27943a51ff7026d0c90b9',
+  'GD-S33-NUR-006': 'a45859a89c9d176f1f441619f520ea1c3c37fa3895fe849c0334a220207b8149',
+  'GD-S33-NUR-007': '59023621de09b65b4cc85e4cc890664190e87381aef1e8b8bce18707cf45458a',
+  'GD-S33-NUR-008': '5bb1f67abc5a3c1eb5bff93223cf8cafb152c76e06ea323b3fce0549fc5b5d1a',
+  'GD-S33-NUR-009': '751fd5db1bf2723c794d20f11aa73ac5a35b026111ee6966dc34a8c92a0deced',
+  'GD-S33-NUR-010': '569a500f8900723e8f5ffd3f2818cafd3ab88d16d6b27e9a91b86ace6c03f491',
+  'GD-S33-NUR-011': 'dc5ed8e9a44e6eba3a224018dc146de6de5ba79ecc473e60c10fdc3bbb3298a4',
+  'GD-S33-NUR-012': '343c6d243c1c47bb742beb8655124920504d0daadf2174f139e32b048856a159',
+  'GD-S33-CPA-001': '9be94967199b447cc8905cb4c0345d06a7623dfadb2c58c093a0926e0e46d5d5',
+  'GD-S33-CPA-002': '95b8319b327ab84270892de8f0623571cf19032cf6025bc6860d54eb12cbd95a',
+  'GD-S33-CPA-003': '823e0dbd9dfd9ccc13f7a5a5e4807e992c4404d66582b323bcb32d9612b80b08',
+  'GD-S33-CPA-004': 'f6ae5fc58db8183ef1482b770ca381a5fcb232a010e514467affbf742d082afd',
+  'GD-S33-CPA-005': 'ee49a2671a6b8d72ae35ca5d63ba1aec16235196a0ddbd0dcd9abbe2fafea344',
+  'GD-S33-CPA-006': '8932c96ae385c735541be2beaab59b47bab4a11bf9977be839acf34fed832277',
+  'GD-S33-CPA-007': '5398d33898c9f536b03143036ccfc5982b5f646740a5ea5cb42acc311dc7cbaf',
+  'GD-S33-CPA-008': '700033d05a59c84e412e7c1089e6bcbd94f798ce1424834ff2bee75130fb6a42',
+  'GD-S33-CPA-009': 'fbfb31fad049b16d2e559561aed43e15c6bcd0f77830fefa4e53181e540b703a',
+  'GD-S33-CPA-010': '7c6d4827503b8e5074b0e4ed7905d1360aadf4954b2ce27ded7fb3e63fc6a08c',
+  'GD-S33-CPA-011': 'cac5a0a74aaaf1f3d510bbbcb2f832974b2bd9f70e66ee838b7b1598da97deac',
+  'GD-S33-CPA-012': 'e0c714a0de0ae64975ad749b4b0a2d168eb25394902f9987cab7a461548d5c6a',
+  'GD-S33-CPA-013': 'e7711ae12d2d4e060d41eea4fd452ff38dbe1268d5fe17c1d27c16e6f4e6eca3',
+  'GD-S33-BAR-001': '17249229201823dcd33f1bdfe1ae5d255a4cfdcefeb5bcc9bfe5954fee5b39a5',
+  'GD-S33-BAR-002': 'bcbe9725b397be508662b637eaeec91d966da4345d734d496013a3fbd479b02d',
+  'GD-S33-BAR-003': 'b3d2e8e7a4afeccba1f2544c90d70e48202c97020b5f98e36a006c0c72afc9ae',
+  'GD-S33-BAR-004': '5d38a00b66fff319e384acf930f4e36df5aa2ccf8cc0860d1cb17f0cb74665d2',
+  'GD-S33-BAR-005': '7070e5d2d883defd2c617682eb37eb6931671dbe4d2c2c5a31850a01a73b1803',
+  'GD-S33-BAR-006': '9efa59f6e5f367f66f580843a5760695bdc80572cb84d8b0e66161ad44455219',
+  'GD-S33-BAR-007': '7136a0690efbc805ab22934e2446935e4984ee4aaa1cc19171f7a615013acb65',
+  'GD-S33-BAR-008': 'c3bbc2ef8168e444f4e31fd804ee3d317e3f6f146d75ac05016b51aef087fbde',
+  'GD-S33-BAR-009': '038bdd9254f6623fd0030c8ad77e287b305d97473e245e40bb661e420ba96d86',
+  'GD-S33-BAR-010': '3e477a5da9f7b37813fe0ba503244db33710892f11357e138973dc684b92fc98',
+  'GD-S33-BAR-011': 'ddfa9aab8dc3411b1f2a5f75fd686116b9a0ccd2fbaf91fe88e476055dc2c60d',
+  'GD-S33-BAR-012': '07417ba6594ab2d55c0bf4b271238cd74af9080b4d7a19b1f0a4d4cca2b43fc1',
+  'GD-S33-BAR-013': 'e04c783e7f404411547593bfb2407099954aa05bbedec2de5b79eba19a20c7d4',
+  'GD-S33-PDH-001': 'cb85dc592154125f6aa06e8f8adcaa19f7d71270e980dfcbdfcc7bc29e4d0425',
+  'GD-S33-PDH-002': '7a92970e27597f2a2fc08e64fd8644780ca124e94face5a920f2a97b7fa7ce2e',
+  'GD-S33-PDH-003': '5081fb6f2304fdb19904c90df1db0826272f84cb718e90c0d718c990329becd8',
+  'GD-S33-PDH-004': '479037e9b0b964ad15dd2ae5fe19495afcbf3a42ee7c115759ecb08a3495828c',
+  'GD-S33-PDH-005': '9725d1d9758982055f9de66925404b107656881ee68bad858d715cdbd96051ff',
+  'GD-S33-PDH-006': 'ae38feebb935a0ff36e74439ae0c167369156c07143d52952bfac26bc6099df2',
+  'GD-S33-PDH-007': '647ce4116d8d36017f31e9cd9174157922592f1bc7e6c59135ae893d71e8d7c0',
+  'GD-S33-PDH-008': 'ac6c421654b08a59c8bc21df07b597227960969bfe53cc4fafa31cae0d6cb4ab',
+  'GD-S33-PDH-009': '62dc6e4c91f96a4612213b5f879201623706a07fd4d07e3aa29c03231bd1f6eb',
+  'GD-S33-PDH-010': 'b078bb5d6ee46ac0232c1df7289da8d6905f0b0870ec4a00eca07e8f90a1f679',
+  'GD-S33-PDH-011': 'dfd2788949848e54dcddf9f81817c4316eeca649ce8aa9963c3d77c4de274ce5',
+  'GD-S33-PDH-012': 'e20eedc7f9cf4376eb5aac2436f93074ec181498c00cf47ab7e66412e19d5960',
+  'GD-S33-AU-001': '262d1b07704e9abbd754ef0a77c563f1f43e57dda02310e715fd418530de4a7a',
+  'GD-S33-AU-002': 'ec320ce8418e4ff0adab38a2be0c589c9b7f589252e4c300923d2e3f03250afb',
+  'GD-S33-AU-003': 'b73bca5adffd85f9dbb514ae798549cdd93904fd5fba77b410ffd1efabfe8e3a',
+  'GD-S33-AU-004': '0e7a7cf07243efe6f735bd2e6d5418e24301cde51bcc930e941e044943357f8e',
+  'GD-S33-AU-005': 'b4492230cb9fbaf7c3809315fb9d92b6db98a59728a493cb07bc247cad5b7fbc',
+  'GD-S33-AU-006': 'ef3aa3e2da761f28b093ae0b57bc2be6da9d653b3896df0104d6f88caa366e0e',
+  'GD-S33-AU-007': '818025a8b825e49a16e1f207d467790ec40d5b0bdaa3950c97c14bd9fd58262b',
+  'GD-S33-AU-008': 'ef02391fdfd561ce043bf07d51d033a626a29cd9762f76d696447672dc11e873',
+  'GD-S33-AU-009': '2e079b9ea1d4e78aadd65827d7db8b0a04d9c2aad154411eddabc634e6a8e267',
+  'GD-S33-AU-010': 'bc7f3a77b2b94bfbbc96f4adc37158c532cce8e2beae033c80e83678c589a838',
+  'GD-S33-AU-011': '6da044092708ca3f6c9dcbd0014e87e9d1dd124f800460e3501102c0d6df357b',
+  'GD-S33-OOD-001': '5d30f859adc08bc338e01b86d48d677641b65f939181f63494d3401ce4b3e168',
+  'GD-S33-OOD-002': '882a7ce5065b55e28f70dd3d35ddcc094484b18006ec4138f9e5ddb5c7309d7f',
+  'GD-S33-OOD-003': 'fe603b0d71bdd65f891b2b133d8459180c376bf7a9daa402f8a5c7abb0741003',
+  'GD-S33-OOD-004': '575446305f461c617544fb15994f04a6a9805ad61d353597d24a9a45bab0b941',
+  'GD-S33-OOD-005': '49b2f3454b9603ad0ffcca4f4bd9a44442dbe9b79369a9e273314ec36b1ac14c',
+  'GD-S33-OOD-006': '6afa9b780f3f536b3da1253ca205888361752fb4f316ff0ce9994f0a1a53eddc',
+  'GD-S33-OOD-007': 'b0a036b6f52fda9fae564ac8f6342a3a91b26cff8740c53ec83c17515cc0ca68',
+  'GD-S33-OOD-008': '7a7f4869ab9b4f80719571411f2235c44f136b8679b006004178102f44b80240',
+  'GD-S33-OOD-009': 'dde1e4f23d6d8913c8a259ca206d53feef0083659d83c73c1a6784fc84c5affc',
+});
+
 function countByFixtureField(
   entries: readonly ProductionManifestFixtureEntry[],
   field: 'domain' | 'credentialType',
@@ -134,26 +253,30 @@ function productionManifestFixture(bindings: ManifestFixtureBindings = {
     prefix: string,
     count: number,
     domain: ProductionManifestFixtureEntry['domain'],
-    credentialType: string,
-  ): ProductionManifestFixtureEntry[] => Array.from({ length: count }, (_, index) => ({
-    id: `GD-S33-${prefix}-${String(index + 1).padStart(3, '0')}`,
-    domain,
-    credentialType,
-    normalizedInputSha256: ({
-      'GD-S33-PDH-007': '647ce4116d8d36017f31e9cd9174157922592f1bc7e6c59135ae893d71e8d7c0',
-      'GD-S33-NUR-004': '5cf701df727878e681e156e1c2f2cc1f8ad9df124e7668c6843e33eab806bc0d',
-      'GD-S33-NUR-005': '68085d32defe764e6a6462a936c8493844e8c4213ff27943a51ff7026d0c90b9',
-    } as Record<string, string>)[`GD-S33-${prefix}-${String(index + 1).padStart(3, '0')}`]
-      ?? sha256(`${prefix.toLowerCase()}-${index + 1}`),
-  }));
+  ): ProductionManifestFixtureEntry[] => Array.from({ length: count }, (_, index) => {
+    const id = `GD-S33-${prefix}-${String(index + 1).padStart(3, '0')}`;
+    const normalizedInputSha256 = REVIEWED_WAVE1_NORMALIZED_INPUT_BY_ID[id];
+    const defaultCredentialType = REVIEWED_WAVE1_DEFAULT_CREDENTIAL_TYPE[
+      prefix as keyof typeof REVIEWED_WAVE1_DEFAULT_CREDENTIAL_TYPE
+    ];
+    if (!normalizedInputSha256 || !defaultCredentialType) {
+      throw new Error(`Missing hermetic reviewed Wave-1 fixture pin for ${id}`);
+    }
+    return {
+      id,
+      domain,
+      credentialType: REVIEWED_WAVE1_CREDENTIAL_TYPE_OVERRIDES[id] ?? defaultCredentialType,
+      normalizedInputSha256,
+    };
+  });
   const entries: ProductionManifestFixtureEntry[] = [
-    ...makeEntries('KE', 11, 'au-ke-priority-documents', 'LICENSE'),
-    ...makeEntries('NUR', 12, 'professional-licensing', 'CERTIFICATE'),
-    ...makeEntries('CPA', 13, 'professional-licensing', 'CPE'),
-    ...makeEntries('BAR', 13, 'professional-licensing', 'CLE'),
-    ...makeEntries('PDH', 12, 'professional-licensing', 'CERTIFICATE'),
-    ...makeEntries('AU', 11, 'au-ke-priority-documents', 'DEGREE'),
-    ...makeEntries('OOD', 9, 'out-of-distribution', 'OTHER'),
+    ...makeEntries('KE', 11, 'au-ke-priority-documents'),
+    ...makeEntries('NUR', 12, 'professional-licensing'),
+    ...makeEntries('CPA', 13, 'professional-licensing'),
+    ...makeEntries('BAR', 13, 'professional-licensing'),
+    ...makeEntries('PDH', 12, 'professional-licensing'),
+    ...makeEntries('AU', 11, 'au-ke-priority-documents'),
+    ...makeEntries('OOD', 9, 'out-of-distribution'),
   ];
   const kenyaEntryIds = entries.filter(({ id }) => id.startsWith('GD-S33-KE-')).map(({ id }) => id);
   const oodEntryIds = entries.filter(({ domain }) => domain === 'out-of-distribution').map(({ id }) => id);
@@ -523,7 +646,7 @@ function parseRevision10WithSyntheticPins(manifest: Record<string, unknown>) {
       cwd: repositoryRoot(),
       encoding: 'utf8',
     }).trim(),
-    revision10Pins: syntheticRevision10Pins(revision10ParserFixture()),
+    revision10Pins: syntheticRevision10Pins(manifest),
   }).parseBatchManifestForTest(JSON.stringify(manifest));
 }
 
@@ -1224,6 +1347,36 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       .toBe('NOT_RUN_PRODUCER_BOUNDARY');
   });
 
+  it('accepts the hermetic reviewed producer entries with the immutable production pins', () => {
+    const manifest = revision10ManifestFixture({
+      supportCommit: WAVE1_REVISION10_SUPPORT_COMMIT,
+      supportTypesBlob: 'dcc94b716f18240787640ba07dcdd4ad46a7cfe6',
+      predecessorCommit: WAVE1_REVISION9_COMMIT,
+      sourceBlobs: { ...WAVE1_REVISION9_SOURCE_BLOBS },
+    });
+    const entries = manifest.entries as ProductionManifestFixtureEntry[];
+    expect(sha256(canonicaliseJson(entries))).toBe(WAVE1_REVISION9_ENTRIES_SHA256);
+    expect(sha256(canonicaliseJson(entries.map(({ id, normalizedInputSha256 }) => ({
+      id,
+      normalizedInputSha256,
+    }))))).toBe(WAVE1_REVISION9_NORMALIZED_PINS_SHA256);
+    expect((manifest.counts as { byCredentialType: Record<string, number> }).byCredentialType)
+      .toEqual({
+        ATTESTATION: 3,
+        BUSINESS_ENTITY: 2,
+        CERTIFICATE: 24,
+        CLE: 11,
+        CPE: 11,
+        DEGREE: 2,
+        FINANCIAL: 1,
+        IDENTITY: 1,
+        LICENSE: 16,
+        OTHER: 9,
+        TRANSCRIPT: 1,
+      });
+    expect(() => parseBatchManifest(JSON.stringify(manifest))).not.toThrow();
+  });
+
   it('locks immutable exact production r9 pins without resolving the logical r9 Git object', () => {
     expect(S33_WAVE1_REVISION10_PRODUCTION_PINS).toEqual({
       sourceBlobs: WAVE1_REVISION9_SOURCE_BLOBS,
@@ -1326,6 +1479,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
 
   it('cannot override production r10 pins through the public parser or production factory', () => {
     const manifest = revision10ParserFixture();
+    (manifest.entries as ProductionManifestFixtureEntry[])[0].normalizedInputSha256 = '0'.repeat(64);
     const syntheticPins = syntheticRevision10Pins(manifest);
     expect(() => parseRevision10WithSyntheticPins(manifest)).not.toThrow();
 

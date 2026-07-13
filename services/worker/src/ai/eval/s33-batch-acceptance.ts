@@ -354,12 +354,17 @@ const WAVE1_DOMAIN_COUNTS = Object.freeze({
   'out-of-distribution': 9,
 });
 const WAVE1_CREDENTIAL_TYPE_COUNTS = Object.freeze({
-  LICENSE: 11,
+  ATTESTATION: 3,
+  BUSINESS_ENTITY: 2,
   CERTIFICATE: 24,
-  CPE: 13,
-  CLE: 13,
-  DEGREE: 11,
+  CLE: 11,
+  CPE: 11,
+  DEGREE: 2,
+  FINANCIAL: 1,
+  IDENTITY: 1,
+  LICENSE: 16,
   OTHER: 9,
+  TRANSCRIPT: 1,
 });
 const WAVE1_CORPUS_SLICE_COUNTS = Object.freeze({
   's33-au-ke-heldout': 22,

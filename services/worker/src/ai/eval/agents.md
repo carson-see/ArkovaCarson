@@ -10,6 +10,10 @@ _Last updated: 2026-07-13_
   all three fixed count maps, the exact 11-entry Kenya-first and 9-entry OOD
   sets, and all ten real Wave-1 self-check records/statuses (including the
   declared CTO/L3 blockers); toy `selfChecks.structural` manifests fail closed.
+  The credential-type contract is the reviewed r9-r11 11-category distribution,
+  not a synthetic prefix-derived taxonomy; a hermetic real-entry seam test must
+  reproduce both immutable production digests before parsing with production
+  pins.
   Callers cannot supply ids or lower the fixed `ceil(10%)`, minimum-5 review
   floor. The ceremony uses four distinct records:
   a manifest-free CTO-signed salt commitment, a CTO-signed manifest freeze that
