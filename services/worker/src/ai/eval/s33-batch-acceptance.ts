@@ -169,6 +169,14 @@ interface OrchestratorConfiguration {
   verificationCommitSha: string;
 }
 
+export interface TestOnlyOrchestratorConfiguration extends OrchestratorConfiguration {
+  revision10Pins?: Wave1Revision10Pins;
+}
+
+export interface TestOnlyS33AcceptanceOrchestrator extends S33AcceptanceOrchestrator {
+  parseBatchManifestForTest(content: ArtifactContent): ParsedBatchManifest;
+}
+
 interface ProductionOrchestratorInput {
   ledgerPath: string;
   repositoryRoot: string;
@@ -286,6 +294,12 @@ const WAVE1_SOURCE_BLOB_PATHS = [
   'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
 ] as const;
+export interface Wave1Revision10Pins {
+  readonly sourceBlobs: Readonly<Record<(typeof WAVE1_SOURCE_BLOB_PATHS)[number], string>>;
+  readonly entriesSha256: string;
+  readonly normalizedPinsSha256: string;
+  readonly entryRowsSha256: string;
+}
 const WAVE1_EXCLUDED_PATHS = [
   '.sonarcloud.properties',
   'docs/lane4/s33-lane4-plan.md',
@@ -312,13 +326,15 @@ const WAVE1_REVISION9_COMMIT = 'b9bb1d3221d3567dbb08e1b23cab4dd687486738';
 const WAVE1_REVISION9_PREDECESSOR_COMMIT = '506ff62340db8f838ce68bc46ddfa6407735ce3c';
 const WAVE1_R9_SUPPORT_REVIEW_STATE = 'PENDING_LANE3_REVIEW_PR';
 const WAVE1_R10_SUPPORT_REVIEW_STATE = 'LANE3_TOOLING_EXACT_HEAD_REVIEW_PASS';
-const WAVE1_REVISION9_ENTRIES_SHA256 = '591b4f4b37e188f1ad7286f8bc2a7a6b407eb89674ed6321e898123c347800c0';
-const WAVE1_REVISION9_NORMALIZED_PINS_SHA256 = '8b4af182dcc161a041a8d933ec5d7277f2131f32cc6709ad75a2cd5acde2e7e2';
-const WAVE1_REVISION9_ENTRY_ROWS_SHA256 = '37f0e9d32b9f25422c93aeec985a624b2840deab3f33e7a453c14531591befdf';
-const WAVE1_REVISION9_SOURCE_BLOBS: Readonly<Record<(typeof WAVE1_SOURCE_BLOB_PATHS)[number], string>> = Object.freeze({
-  'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts': '4ac117c1663c6aefb63c7715440744af0e0b6a23',
-  'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts': '5000824f2bd4dd7ac9cd58243daeb7ba23c4c0cd',
-  'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts': 'a261cf690c930040f7dee0361ed29d73d1d23426',
+export const S33_WAVE1_REVISION10_PRODUCTION_PINS: Wave1Revision10Pins = deepFreeze({
+  sourceBlobs: {
+    'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts': '4ac117c1663c6aefb63c7715440744af0e0b6a23',
+    'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts': '5000824f2bd4dd7ac9cd58243daeb7ba23c4c0cd',
+    'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts': 'a261cf690c930040f7dee0361ed29d73d1d23426',
+  },
+  entriesSha256: '591b4f4b37e188f1ad7286f8bc2a7a6b407eb89674ed6321e898123c347800c0',
+  normalizedPinsSha256: '8b4af182dcc161a041a8d933ec5d7277f2131f32cc6709ad75a2cd5acde2e7e2',
+  entryRowsSha256: '37f0e9d32b9f25422c93aeec985a624b2840deab3f33e7a453c14531591befdf',
 });
 const WAVE1_REMEDIATED_PAIR_IDS = [
   'GD-S33-NUR-001|GD-S33-NUR-011',
@@ -627,6 +643,30 @@ function assertGitObject(value: unknown, label: string): asserts value is string
   }
 }
 
+function normalizeWave1Revision10Pins(value: Wave1Revision10Pins): Wave1Revision10Pins {
+  const pins = recordValue(value, 'Wave-1 revision-10 pins');
+  assertExactKeys(
+    pins,
+    ['sourceBlobs', 'entriesSha256', 'normalizedPinsSha256', 'entryRowsSha256'],
+    'Wave-1 revision-10 pins',
+  );
+  const sourceBlobs = recordValue(pins.sourceBlobs, 'Wave-1 revision-10 pins.sourceBlobs');
+  assertExactKeys(sourceBlobs, WAVE1_SOURCE_BLOB_PATHS, 'Wave-1 revision-10 pins.sourceBlobs');
+  const normalizedSourceBlobs = Object.fromEntries(WAVE1_SOURCE_BLOB_PATHS.map((path) => {
+    assertGitObject(sourceBlobs[path], `Wave-1 revision-10 pins.sourceBlobs.${path}`);
+    return [path, sourceBlobs[path]];
+  })) as Record<(typeof WAVE1_SOURCE_BLOB_PATHS)[number], string>;
+  assertSha256(pins.entriesSha256, 'Wave-1 revision-10 pins.entriesSha256');
+  assertSha256(pins.normalizedPinsSha256, 'Wave-1 revision-10 pins.normalizedPinsSha256');
+  assertSha256(pins.entryRowsSha256, 'Wave-1 revision-10 pins.entryRowsSha256');
+  return deepFreeze({
+    sourceBlobs: normalizedSourceBlobs,
+    entriesSha256: pins.entriesSha256,
+    normalizedPinsSha256: pins.normalizedPinsSha256,
+    entryRowsSha256: pins.entryRowsSha256,
+  });
+}
+
 function assertExactString(value: unknown, expected: string, label: string): void {
   if (value !== expected) throw new Error(`${label} must be ${expected}`);
 }
@@ -699,6 +739,7 @@ interface Wave1ManifestBindings {
 function validateWave1SupportBindings(
   parsed: Readonly<Record<string, unknown>>,
   manifestRevision: number,
+  revision10Pins: Wave1Revision10Pins,
 ): Wave1ManifestBindings {
   assertGitObject(parsed.corpusRevisionParentCommit, 'Manifest corpusRevisionParentCommit');
   assertGitObject(parsed.producerRevisionPredecessorCommit, 'Manifest producerRevisionPredecessorCommit');
@@ -728,7 +769,7 @@ function validateWave1SupportBindings(
   assertExactKeys(sourceBlobs, WAVE1_SOURCE_BLOB_PATHS, 'Manifest corpusSourceBlobs');
   for (const path of WAVE1_SOURCE_BLOB_PATHS) {
     assertGitObject(sourceBlobs[path], `Manifest corpusSourceBlobs.${path}`);
-    if (manifestRevision === 10 && sourceBlobs[path] !== WAVE1_REVISION9_SOURCE_BLOBS[path]) {
+    if (manifestRevision === 10 && sourceBlobs[path] !== revision10Pins.sourceBlobs[path]) {
       throw new Error(`Manifest revision-10 corpus source blob ${path} must preserve the reviewed revision-9 pin`);
     }
   }
@@ -1355,7 +1396,10 @@ interface LoadedBatchManifest {
   canonicalSha256: string;
 }
 
-function loadBatchManifest(content: ArtifactContent): LoadedBatchManifest {
+function loadBatchManifest(
+  content: ArtifactContent,
+  revision10Pins: Wave1Revision10Pins = S33_WAVE1_REVISION10_PRODUCTION_PINS,
+): LoadedBatchManifest {
   const document = parseStrictJsonDocument(content, 'Manifest');
   const parsed = document.parsed;
   assertExactKeys(parsed, [
@@ -1375,7 +1419,7 @@ function loadBatchManifest(content: ArtifactContent): LoadedBatchManifest {
     'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
     'Manifest status',
   );
-  const bindings = validateWave1SupportBindings(parsed, revision);
+  const bindings = validateWave1SupportBindings(parsed, revision, revision10Pins);
   const entryCount = positiveInteger(parsed.entryCount, 'Manifest entryCount');
   const intendedSplit = nonEmptyString(parsed.intendedSplit, 'Manifest intendedSplit');
   assertExactString(intendedSplit, 'held-out-candidate', 'Manifest intendedSplit');
@@ -1401,10 +1445,10 @@ function loadBatchManifest(content: ArtifactContent): LoadedBatchManifest {
       id,
       normalizedInputSha256,
     }))));
-    if (normalizedPinsSha256 !== WAVE1_REVISION9_NORMALIZED_PINS_SHA256) {
+    if (normalizedPinsSha256 !== revision10Pins.normalizedPinsSha256) {
       throw new Error('Manifest revision-10 normalized-input pins must preserve the reviewed revision-9 pin set');
     }
-    if (sha256(canonicaliseJson(entries)) !== WAVE1_REVISION9_ENTRIES_SHA256) {
+    if (sha256(canonicaliseJson(entries)) !== revision10Pins.entriesSha256) {
       throw new Error('Manifest revision-10 entries must preserve the reviewed revision-9 ground-truth set');
     }
   }
@@ -2025,11 +2069,15 @@ function xorshift32(seed: number): () => number {
 
 class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
   readonly #config: OrchestratorConfiguration;
+  readonly #revision10Pins: Wave1Revision10Pins;
   readonly #transcript: AcceptanceAuditTranscript;
   readonly #publicKeyFingerprintSha256: string;
   readonly #createConsumptionRecord: ConsumptionRegistry['createIfAbsent'];
 
-  constructor(config: OrchestratorConfiguration) {
+  constructor(
+    config: OrchestratorConfiguration,
+    revision10Pins: Wave1Revision10Pins = S33_WAVE1_REVISION10_PRODUCTION_PINS,
+  ) {
     const createIfAbsent = config.consumptionRegistry?.createIfAbsent;
     if (typeof createIfAbsent !== 'function') {
       throw new TypeError('Atomic monotonic consumption registry is required');
@@ -2045,6 +2093,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       trustRoot,
       repositoryRoot: realpathSync(config.repositoryRoot),
     };
+    this.#revision10Pins = normalizeWave1Revision10Pins(revision10Pins);
     if (!GIT_COMMIT_PATTERN.test(config.verificationCommitSha)) throw new Error('Verification Git commit must be exact');
     this.#createConsumptionRecord = createIfAbsent.bind(config.consumptionRegistry);
     this.#publicKeyFingerprintSha256 = validateTrustRoot(trustRoot).fingerprint;
@@ -2077,7 +2126,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       validateFreezePayload,
     );
     const payload = verified.payload;
-    const loadedManifest = loadBatchManifest(manifestContent);
+    const loadedManifest = loadBatchManifest(manifestContent, this.#revision10Pins);
     const manifest = loadedManifest.manifest;
     if (manifest.batchId !== payload.batchId || manifest.revision !== payload.revision) throw new Error('Freeze batch/revision does not match manifest');
     if (loadedManifest.rawSha256 !== payload.manifestRawSha256
@@ -2162,7 +2211,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       throw new Error('Ceremony artifact digest references do not form one authenticated chain');
     }
     if (sha256(reveal.salt) !== commitment.payload.saltCommitment.value) throw new Error('Revealed salt does not match signed commitment');
-    const loadedManifest = loadBatchManifest(input.manifestContent);
+    const loadedManifest = loadBatchManifest(input.manifestContent, this.#revision10Pins);
     const manifest = loadedManifest.manifest;
     if (manifest.batchId !== freezePayload.batchId || manifest.revision !== freezePayload.revision
       || manifest.batchId !== policyPayload.batchId || manifest.revision !== policyPayload.revision) {
@@ -2327,7 +2376,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     } catch (error) {
       throw new Error('Freeze Git commit does not contain the declared manifest path', { cause: error });
     }
-    const committed = loadBatchManifest(committedManifest);
+    const committed = loadBatchManifest(committedManifest, this.#revision10Pins);
     if (committed.rawSha256 !== payload.manifestRawSha256
       || committed.canonicalSha256 !== payload.manifestCanonicalSha256) {
       throw new Error('Freeze Git blob does not match authenticated raw/canonical manifest hashes');
@@ -2448,7 +2497,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     if (!Array.isArray(datasheet.rows) || datasheet.rows.length !== manifest.entryCount) {
       throw new Error('Revision-10 entry datasheet rows must match the complete authenticated manifest count');
     }
-    if (sha256(canonicaliseJson(datasheet.rows)) !== WAVE1_REVISION9_ENTRY_ROWS_SHA256) {
+    if (sha256(canonicaliseJson(datasheet.rows)) !== this.#revision10Pins.entryRowsSha256) {
       throw new Error('Revision-10 entry datasheet rows must preserve the reviewed revision-9 canonical row set');
     }
   }
@@ -2534,6 +2583,22 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     }
   }
 
+}
+
+class TestOnlyAcceptanceOrchestrator
+  extends AcceptanceOrchestrator
+  implements TestOnlyS33AcceptanceOrchestrator {
+  readonly #testRevision10Pins: Wave1Revision10Pins;
+
+  constructor(config: OrchestratorConfiguration, revision10Pins: Wave1Revision10Pins) {
+    const normalizedPins = normalizeWave1Revision10Pins(revision10Pins);
+    super(config, normalizedPins);
+    this.#testRevision10Pins = normalizedPins;
+  }
+
+  parseBatchManifestForTest(content: ArtifactContent): ParsedBatchManifest {
+    return loadBatchManifest(content, this.#testRevision10Pins).manifest;
+  }
 }
 
 function validateLexicalNormalization(policy: unknown): asserts policy is LexicalNormalizationPolicy {
@@ -2721,10 +2786,11 @@ export function createProductionS33AcceptanceOrchestrator(
 
 /** Test-only trust-root injection. Runtime callers cannot use this factory. */
 export function createTestOnlyS33AcceptanceOrchestrator(
-  input: OrchestratorConfiguration,
-): S33AcceptanceOrchestrator {
+  input: TestOnlyOrchestratorConfiguration,
+): TestOnlyS33AcceptanceOrchestrator {
   if (process.env.NODE_ENV !== 'test') throw new Error('Test-only S3.3 trust-root injection is disabled outside NODE_ENV=test');
-  return new AcceptanceOrchestrator(input);
+  const { revision10Pins = S33_WAVE1_REVISION10_PRODUCTION_PINS, ...configuration } = input;
+  return new TestOnlyAcceptanceOrchestrator(configuration, revision10Pins);
 }
 
 export interface EmbeddingRecord {

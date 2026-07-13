@@ -48,6 +48,12 @@ _Last updated: 2026-07-13_
   `100644` blobs. Extra paths, deletions, renames, copies (including copies from
   unchanged support-tree sources, detected with `--find-copies-harder`),
   executable bits, symlinks, and gitlinks are rejected.
+- Production r10 source/blob and canonical metadata pins are one immutable
+  code-owned descriptor. Unit tests never resolve the logically prior r9 Git
+  object: the explicitly test-only orchestrator factory may receive a validated,
+  deep-frozen synthetic pin descriptor for synthetic temporary repositories.
+  The public parser and production factory expose no override seam, and tests
+  must never check raw or decodable held-out corpus bytes into the support tree.
 - Every selection and lexical result is recursively frozen before it crosses
   the orchestration boundary, including sample ids, metrics/hits, and evidence.
   Audit-transcript reads open the final path with `O_NOFOLLOW`, verify the same

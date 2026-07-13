@@ -32,6 +32,7 @@ import {
   createTestOnlyS33AcceptanceOrchestrator,
   parseBatchManifest,
   rawManifestHash,
+  S33_WAVE1_REVISION10_PRODUCTION_PINS,
   scanEmbeddingLeakage,
   type EmbeddingBatchProvider,
   type ConsumptionRegistryRecord,
@@ -43,6 +44,7 @@ import {
   type SignedPolicyArtifact,
   type SamplingTrustRoot,
   type S33AcceptanceOrchestrator,
+  type Wave1Revision10Pins,
 } from './s33-batch-acceptance.js';
 
 // @ts-expect-error — callers cannot advance chronology with an arbitrary event.
@@ -357,9 +359,12 @@ function repositoryRoot(): string {
 }
 
 function revision10ManifestFixture(bindings: ManifestFixtureBindings): Record<string, unknown> {
-  const manifest = JSON.parse(execFileSync('git', [
-    'show', `${WAVE1_REVISION9_COMMIT}:${WAVE1_MANIFEST_PATH}`,
-  ], { cwd: repositoryRoot(), encoding: 'utf8' })) as Record<string, unknown>;
+  const manifest = productionManifestFixture({
+    supportCommit: WAVE1_INITIAL_LANE3_SUPPORT_COMMIT,
+    supportTypesBlob: bindings.supportTypesBlob,
+    predecessorCommit: WAVE1_REVISION9_PREDECESSOR_COMMIT,
+    sourceBlobs: bindings.sourceBlobs,
+  });
   manifest.revision = 10;
   manifest.corpusRevisionParentCommit = bindings.supportCommit;
   manifest.producerRevisionPredecessorCommit = WAVE1_REVISION9_COMMIT;
@@ -403,6 +408,49 @@ function revision10ParserFixture(): Record<string, unknown> {
     predecessorCommit: WAVE1_REVISION9_COMMIT,
     sourceBlobs: { ...WAVE1_REVISION9_SOURCE_BLOBS },
   });
+}
+
+function syntheticEntryDatasheetRows(manifest: Record<string, unknown>): Array<Record<string, unknown>> {
+  return (manifest.entries as ProductionManifestFixtureEntry[]).map(({ id }, index) => ({
+    id,
+    reviewPosition: index + 1,
+    fixtureKind: 'synthetic-test-only',
+  }));
+}
+
+function syntheticRevision10Pins(
+  manifest: Record<string, unknown>,
+  rows: readonly Record<string, unknown>[] = syntheticEntryDatasheetRows(manifest),
+  sourceBlobs: ManifestFixtureBindings['sourceBlobs'] = manifest.corpusSourceBlobs as ManifestFixtureBindings['sourceBlobs'],
+): Wave1Revision10Pins {
+  const entries = manifest.entries as ProductionManifestFixtureEntry[];
+  return {
+    sourceBlobs: { ...sourceBlobs },
+    entriesSha256: sha256(canonicaliseJson(entries)),
+    normalizedPinsSha256: sha256(canonicaliseJson(entries.map(({ id, normalizedInputSha256 }) => ({
+      id,
+      normalizedInputSha256,
+    })))),
+    entryRowsSha256: sha256(canonicaliseJson(rows)),
+  };
+}
+
+function parseRevision10WithSyntheticPins(manifest: Record<string, unknown>) {
+  const { trustRoot } = testKey();
+  const evidenceRoot = mkdtempSync(join(tmpdir(), 'arkova-s33-r10-parser-'));
+  tempRoots.push(evidenceRoot);
+  return createTestOnlyS33AcceptanceOrchestrator({
+    trustRoot,
+    consumptionRegistry: new TestConsumptionRegistry(),
+    ledgerPath: join(evidenceRoot, 'acceptance-ledger.jsonl'),
+    repositoryRoot: repositoryRoot(),
+    repositoryIdentity: 'test/ArkovaCarson',
+    verificationCommitSha: execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: repositoryRoot(),
+      encoding: 'utf8',
+    }).trim(),
+    revision10Pins: syntheticRevision10Pins(revision10ParserFixture()),
+  }).parseBatchManifestForTest(JSON.stringify(manifest));
 }
 
 function manifestContent(overrides: Record<string, unknown> = {}): string {
@@ -545,6 +593,7 @@ function revision10GitRepo(mutation: Revision10GitMutation = {}): {
   manifest: string;
   manifestPath: string;
   supportCommit: string;
+  revision10Pins: Wave1Revision10Pins;
   freezeCommitSha: string;
   verificationCommitSha: string;
 } {
@@ -561,17 +610,26 @@ function revision10GitRepo(mutation: Revision10GitMutation = {}): {
   const supportTypesBlob = execFileSync('git', ['rev-parse', `${supportCommit}:${WAVE1_TYPES_PATH}`], {
     cwd: root, encoding: 'utf8',
   }).trim();
-  const packetPaths = [
-    'docs/lane4/s33-corpus-datasheet.md',
-    'docs/lane4/s33-wave1-entry-datasheet.json',
-    ...WAVE1_SOURCE_PATHS,
-  ];
-  for (const path of packetPaths) {
+  for (const [index, path] of WAVE1_SOURCE_PATHS.entries()) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
-    writeFileSync(join(root, path), execFileSync('git', [
-      'show', `${WAVE1_REVISION9_COMMIT}:${path}`,
-    ], { cwd: repositoryRoot() }));
+    writeFileSync(
+      join(root, path),
+      `export const syntheticRevision10Fixture${index} = 'test-only-${index}';\n`,
+      'utf8',
+    );
   }
+  const pinnedSourceBlobs = Object.fromEntries(WAVE1_SOURCE_PATHS.map((path) => [
+    path,
+    execFileSync('git', ['hash-object', path], { cwd: root, encoding: 'utf8' }).trim(),
+  ])) as ManifestFixtureBindings['sourceBlobs'];
+  const pinnedManifest = revision10ManifestFixture({
+    supportCommit,
+    supportTypesBlob,
+    predecessorCommit: WAVE1_REVISION9_COMMIT,
+    sourceBlobs: pinnedSourceBlobs,
+  });
+  const pinnedRows = syntheticEntryDatasheetRows(pinnedManifest);
+  const revision10Pins = syntheticRevision10Pins(pinnedManifest, pinnedRows, pinnedSourceBlobs);
   if (mutation.mutateSourceBytes) {
     writeFileSync(join(root, WAVE1_SOURCE_PATHS[0]), 'export const changedAfterRevision9 = true;\n', 'utf8');
   }
@@ -588,17 +646,29 @@ function revision10GitRepo(mutation: Revision10GitMutation = {}): {
   mutation.mutateManifest?.(manifestObject);
   const manifest = JSON.stringify(manifestObject, null, 2);
   const manifestPath = WAVE1_MANIFEST_PATH;
+  mkdirSync(join(root, 'docs/lane4'), { recursive: true });
   writeFileSync(join(root, manifestPath), manifest, 'utf8');
   const entryDatasheetPath = 'docs/lane4/s33-wave1-entry-datasheet.json';
-  const entryDatasheet = JSON.parse(readFileSync(join(root, entryDatasheetPath), 'utf8')) as Record<string, unknown>;
-  entryDatasheet.revision = 10;
-  entryDatasheet.manifestSha256 = sha256(manifest);
+  const entryDatasheet: Record<string, unknown> = {
+    schemaVersion: 1,
+    batchId: 'S33-W1',
+    revision: 10,
+    manifestSha256: sha256(manifest),
+    producerLane: 'Lane 4',
+    acceptanceAuthority: 'Lane 3',
+    status: 'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
+    entryCount: 81,
+    reviewOrder: 'kenya-first',
+    acceptanceScope: 'whole-batch-only',
+    authorshipNote: 'All rows are independently authored synthetic-realistic heldout candidates; no template generator or random seed was used.',
+    rows: pinnedRows,
+  };
   mutation.mutateEntryDatasheet?.(entryDatasheet);
   writeFileSync(join(root, entryDatasheetPath), JSON.stringify(entryDatasheet, null, 2), 'utf8');
   const corpusDatasheetPath = 'docs/lane4/s33-corpus-datasheet.md';
   writeFileSync(
     join(root, corpusDatasheetPath),
-    `${readFileSync(join(root, corpusDatasheetPath), 'utf8')}\nRevision 10 restack metadata: Team-3 exact-head tooling review passed.\n`,
+    '# Synthetic revision-10 corpus datasheet\n\nTooling review only; formal Lane-3 acceptance remains NOT_RUN.\n',
     'utf8',
   );
   execFileSync('git', ['add', '--all'], { cwd: root });
@@ -616,7 +686,7 @@ function revision10GitRepo(mutation: Revision10GitMutation = {}): {
     const verificationCommitSha = execFileSync('git', [
       'commit-tree', tree, '-p', freezeCommitSha,
     ], { cwd: root, encoding: 'utf8', input: 'verification descendant\n' }).trim();
-    return { root, manifest, manifestPath, supportCommit, freezeCommitSha, verificationCommitSha };
+    return { root, manifest, manifestPath, supportCommit, revision10Pins, freezeCommitSha, verificationCommitSha };
   }
   writeFileSync(join(root, 'verification.txt'), 'verification descendant\n', 'utf8');
   execFileSync('git', ['add', 'verification.txt'], { cwd: root });
@@ -624,7 +694,7 @@ function revision10GitRepo(mutation: Revision10GitMutation = {}): {
   const verificationCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: root, encoding: 'utf8',
   }).trim();
-  return { root, manifest, manifestPath, supportCommit, freezeCommitSha, verificationCommitSha };
+  return { root, manifest, manifestPath, supportCommit, revision10Pins, freezeCommitSha, verificationCommitSha };
 }
 
 function revision10Ceremony(mutation: Revision10GitMutation = {}) {
@@ -639,6 +709,7 @@ function revision10Ceremony(mutation: Revision10GitMutation = {}) {
     repositoryRoot: repo.root,
     repositoryIdentity: 'test/ArkovaCarson',
     verificationCommitSha: repo.verificationCommitSha,
+    revision10Pins: repo.revision10Pins,
   });
   const commitment = signedArtifact<SaltCommitmentPayload>({
     artifactType: 'arkova-s33-salt-commitment',
@@ -1029,39 +1100,46 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       .toBe('NOT_RUN_PRODUCER_BOUNDARY');
   });
 
-  it('locks the no-LF canonical r9 pin digests and source blobs to the reviewed b9 fixture', () => {
-    const root = repositoryRoot();
-    const revision9Manifest = JSON.parse(execFileSync('git', [
-      'show', `${WAVE1_REVISION9_COMMIT}:${WAVE1_MANIFEST_PATH}`,
-    ], { cwd: root, encoding: 'utf8' })) as { entries: ProductionManifestFixtureEntry[] };
-    const entriesCanonical = canonicaliseJson(revision9Manifest.entries);
-    expect(entriesCanonical.endsWith('\n')).toBe(false);
-    expect(sha256(entriesCanonical)).toBe(WAVE1_REVISION9_ENTRIES_SHA256);
-    const normalizedPinsCanonical = canonicaliseJson(revision9Manifest.entries.map(({
-      id,
-      normalizedInputSha256,
-    }) => ({ id, normalizedInputSha256 })));
-    expect(normalizedPinsCanonical.endsWith('\n')).toBe(false);
-    expect(sha256(normalizedPinsCanonical)).toBe(WAVE1_REVISION9_NORMALIZED_PINS_SHA256);
+  it('locks immutable exact production r9 pins without resolving the logical r9 Git object', () => {
+    expect(S33_WAVE1_REVISION10_PRODUCTION_PINS).toEqual({
+      sourceBlobs: WAVE1_REVISION9_SOURCE_BLOBS,
+      entriesSha256: WAVE1_REVISION9_ENTRIES_SHA256,
+      normalizedPinsSha256: WAVE1_REVISION9_NORMALIZED_PINS_SHA256,
+      entryRowsSha256: WAVE1_REVISION9_ENTRY_ROWS_SHA256,
+    });
+    expect(Object.isFrozen(S33_WAVE1_REVISION10_PRODUCTION_PINS)).toBe(true);
+    expect(Object.isFrozen(S33_WAVE1_REVISION10_PRODUCTION_PINS.sourceBlobs)).toBe(true);
+    expect(() => {
+      (S33_WAVE1_REVISION10_PRODUCTION_PINS.sourceBlobs as Record<string, string>)[WAVE1_SOURCE_PATHS[0]] = '0'.repeat(40);
+    }).toThrow(TypeError);
+  });
 
-    const entryDatasheet = JSON.parse(execFileSync('git', [
-      'show', `${WAVE1_REVISION9_COMMIT}:docs/lane4/s33-wave1-entry-datasheet.json`,
-    ], { cwd: root, encoding: 'utf8' })) as { rows: unknown[] };
-    const rowsCanonical = canonicaliseJson(entryDatasheet.rows);
-    expect(rowsCanonical.endsWith('\n')).toBe(false);
-    expect(sha256(rowsCanonical)).toBe(WAVE1_REVISION9_ENTRY_ROWS_SHA256);
+  it('cannot override production r10 pins through the public parser or production factory', () => {
+    const manifest = revision10ParserFixture();
+    const syntheticPins = syntheticRevision10Pins(manifest);
+    expect(() => parseRevision10WithSyntheticPins(manifest)).not.toThrow();
 
-    for (const path of WAVE1_SOURCE_PATHS) {
-      expect(execFileSync('git', ['rev-parse', `${WAVE1_REVISION9_COMMIT}:${path}`], {
-        cwd: root,
-        encoding: 'utf8',
-      }).trim()).toBe(WAVE1_REVISION9_SOURCE_BLOBS[path]);
-    }
+    const adversarialPublicParser = parseBatchManifest as unknown as (
+      content: string,
+      pins: Wave1Revision10Pins,
+    ) => unknown;
+    expect(() => adversarialPublicParser(JSON.stringify(manifest), syntheticPins))
+      .toThrow(/revision-10 .*reviewed revision-9/i);
+
+    const productionInput: Parameters<typeof createProductionS33AcceptanceOrchestrator>[0] = {
+      ledgerPath: join(tmpdir(), 'must-not-create.jsonl'),
+      repositoryRoot: repositoryRoot(),
+      verificationCommitSha: 'a'.repeat(40),
+      // @ts-expect-error — production input intentionally exposes no test-pin seam.
+      revision10Pins: syntheticPins,
+    };
+    expect(() => createProductionS33AcceptanceOrchestrator(productionInput))
+      .toThrow(/production.*not configured.*fail closed/i);
   });
 
   it('accepts only the history-preserving r10 restack onto the exact reviewed Team-3 support head', () => {
     const context = revision10Ceremony();
-    const parsed = parseBatchManifest(context.repo.manifest).parsedJson;
+    const parsed = context.orchestrator.parseBatchManifestForTest(context.repo.manifest).parsedJson;
     const support = parsed.lane3SupportBase as Record<string, unknown>;
     const revisions = ((parsed.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
       revisions: Array<Record<string, unknown>>;
@@ -1124,7 +1202,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       revisions: Array<Record<string, unknown>>;
     }).revisions;
     revisions.at(-1)![field] = replacement;
-    expect(() => parseBatchManifest(JSON.stringify(manifest))).toThrow();
+    expect(() => parseRevision10WithSyntheticPins(manifest)).toThrow();
   });
 
   it.each([
@@ -1173,7 +1251,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
   ] satisfies Array<[string, ManifestMutator]>)('rejects an r10 binding mutation of %s', (_case, mutate) => {
     const manifest = revision10ParserFixture();
     mutate(manifest);
-    expect(() => parseBatchManifest(JSON.stringify(manifest))).toThrow();
+    expect(() => parseRevision10WithSyntheticPins(manifest)).toThrow();
   });
 
   it.each([
@@ -1191,7 +1269,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       revisions: Array<Record<string, unknown>>;
     }).revisions;
     revisions[revisionIndex][field] = 'd'.repeat(40);
-    expect(() => parseBatchManifest(JSON.stringify(manifest))).toThrow();
+    expect(() => parseRevision10WithSyntheticPins(manifest)).toThrow();
   });
 
   it('rejects an r10 freeze with multiple physical parents', () => {
