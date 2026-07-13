@@ -32,6 +32,8 @@ const payload = JSON.parse(process.env.ADMISSION_JSON);
 const required = [
   'sha',
   'declared_source_head',
+  'source_head_image_ref',
+  'source_head_image_digest',
   'base_sha',
   'image_digest',
   'tag_url',
@@ -71,6 +73,7 @@ for (const field of required) {
 assert.equal(payload.sha, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 assert.equal(payload.schema_version, 2);
 assert.equal(payload.declared_source_head, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+assert.equal(payload.source_head_image_digest, '<verified-full-sha-image-digest-in-apply>');
 assert.equal(payload.profile, 'mock');
 assert.equal(payload.soak_id, 'soak-s0e4-lane-a');
 assert.equal(payload.rig_id, 'RIG-G1');
@@ -200,7 +203,18 @@ assert_file_not_contains "base SHA resolver does not fall back to HEAD~1" "$PROV
 tmp_bin="$(mktemp -d)"
 head_sha="$(git rev-parse HEAD)"
 base_sha="$(git merge-base HEAD origin/main)"
+real_git="$(command -v git)"
 stub_image_ref="us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+cat >"$tmp_bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\$1" == "fetch" ]]; then
+  exit 0
+fi
+exec "$real_git" "\$@"
+EOF
+chmod +x "$tmp_bin/git"
+
 cat >"$tmp_bin/npx" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -241,7 +255,7 @@ if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
 fi
 if [[ "$1" == "run" && "$2" == "revisions" && "$3" == "describe" ]]; then
   cat <<JSON
-{"metadata":{"labels":{"arkova-source-head":"${STUB_SOURCE_HEAD:?}"}},"spec":{"containers":[{"image":"${STUB_IMAGE_REF:?}","env":[{"name":"NODE_ENV","value":"production"},{"name":"ENABLE_AI_FRAUD","value":"false"},{"name":"ENABLE_AI_REPORTS","value":"false"},{"name":"CORS_ALLOWED_ORIGINS","value":"https://app.arkova.ai"},{"name":"FRONTEND_URL","value":"https://app.arkova.ai"},{"name":"USE_MOCKS","value":"true"},{"name":"ENABLE_PROD_NETWORK_ANCHORING","value":"false"}]}]},"status":{"imageDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}
+{"metadata":{"labels":{"arkova-source-head":"${STUB_SOURCE_HEAD:?}"}},"spec":{"containers":[{"image":"${STUB_IMAGE_REF:?}","env":[{"name":"NODE_ENV","value":"production"},{"name":"ENABLE_AI_FRAUD","value":"false"},{"name":"ENABLE_AI_REPORTS","value":"false"},{"name":"CORS_ALLOWED_ORIGINS","value":"https://app.arkova.ai"},{"name":"FRONTEND_URL","value":"https://app.arkova.ai"},{"name":"USE_MOCKS","value":"true"},{"name":"ENABLE_PROD_NETWORK_ANCHORING","value":"false"},{"name":"SUPABASE_URL","valueSource":{}},{"name":"SUPABASE_SERVICE_ROLE_KEY","valueSource":{}},{"name":"STRIPE_SECRET_KEY","valueSource":{}},{"name":"STRIPE_WEBHOOK_SECRET","valueSource":{}},{"name":"API_KEY_HMAC_SECRET","valueSource":{}},{"name":"CRON_SECRET","valueSource":{}}]}]},"status":{"imageDigest":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}
 JSON
   exit 0
 fi

@@ -6,6 +6,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  buildReport,
+  type PreflightReport,
+} from '../ci/staging-honesty-preflight';
 
 /**
  * SCRUM-2673 (L2-S2a) — real-config parameterization of provision-isolated-rig.sh.
@@ -39,30 +43,24 @@ const REPO_BASE = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], {
   cwd: REPO_ROOT,
   encoding: 'utf8',
 }).trim();
+const REPO_NON_BASE_ANCESTOR = execFileSync('git', ['rev-parse', `${REPO_BASE}^`], {
+  cwd: REPO_ROOT,
+  encoding: 'utf8',
+}).trim();
+const REAL_GIT = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
 const script = readFileSync(SCRIPT, 'utf8');
 
-const REQUIRED_PREFLIGHT_CHECK_NAMES = [
-  'staging_only_rows',
-  'duplicate_names',
-  'duplicate_versions',
-  'known_artifacts',
-  'submitted_anchors',
-  'prod_divergence',
-] as const;
-
-const VALID_PREFLIGHT_REPORT = {
-  environment_type: 'clean_mirror',
-  staging_project_ref: 'abcdefghijklmnopqrst',
+const VALID_PREFLIGHT_REPORT: PreflightReport = {
+  ...buildReport({
+    projectRef: 'abcdefghijklmnopqrst',
+    migrationRows: [{ version: '00000000000000', name: 'baseline_at_main_HEAD' }],
+    submittedAnchorCount: 1,
+    prodVersions: ['00000000000000'],
+  }),
   timestamp: '2026-07-13T12:00:00.000Z',
-  checks: REQUIRED_PREFLIGHT_CHECK_NAMES.map((name) => ({
-    name,
-    passed: true,
-    details: name === 'staging_only_rows' ? 'secret-looking-diagnostic-must-not-persist' : '',
-  })),
-  artifact_rows: [],
-  missing_from_staging: [],
-  extra_vs_prod: [],
 };
+VALID_PREFLIGHT_REPORT.checks[0].details = 'secret-looking-diagnostic-must-not-persist';
+const REQUIRED_PREFLIGHT_CHECK_NAMES = VALID_PREFLIGHT_REPORT.checks.map(({ name }) => name);
 
 /** Run the provisioner in dry-run (no --apply → no side effects) and capture stdout+stderr. */
 function dryRun(args: string[], env: Record<string, string> = {}): { out: string; code: number } {
@@ -318,6 +316,7 @@ interface ApplyRunResult {
   gcloudCalls: string[];
   npxCalls: string[];
   callOrder: string[];
+  gitCalls: string[];
   artifactDir: string;
 }
 
@@ -335,6 +334,9 @@ interface ApplyRunOptions {
   schedulerStateAfterPreflight?: 'PAUSED' | 'ENABLED' | 'MISSING';
   deployedEnvOverrides?: Record<string, string>;
   deployedEnvAdditions?: Record<string, string>;
+  sourceImageDigest?: string;
+  gitFetchFails?: boolean;
+  useUntrackedDriver?: boolean;
   env?: Record<string, string>;
 }
 
@@ -351,11 +353,13 @@ function applyRunStubbed(
   const logFile = join(stubDir, 'gcloud-calls.log');
   const npxLogFile = join(stubDir, 'npx-calls.log');
   const orderLogFile = join(stubDir, 'call-order.log');
+  const gitLogFile = join(stubDir, 'git-calls.log');
   const schedulerStateDir = join(stubDir, 'scheduler-state');
   const artifactDir = join(stubDir, 'artifacts');
   writeFileSync(logFile, '');
   writeFileSync(npxLogFile, '');
   writeFileSync(orderLogFile, '');
+  writeFileSync(gitLogFile, '');
 
   const tunedModel =
     options.tunedModel ?? 'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
@@ -383,18 +387,49 @@ function applyRunStubbed(
     ...options.deployedEnvOverrides,
     ...options.deployedEnvAdditions,
   };
+  const deployedSecretNames = [
+    'SUPABASE_URL',
+    'SUPABASE_SERVICE_ROLE_KEY',
+    'STRIPE_SECRET_KEY',
+    'STRIPE_WEBHOOK_SECRET',
+    'API_KEY_HMAC_SECRET',
+    'CRON_SECRET',
+    ...(profile === 'chain'
+      ? ['BITCOIN_RPC_URL', 'BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF']
+      : []),
+    ...(profile === 'gemini' ? ['GEMINI_API_KEY'] : []),
+  ];
   const revisionPayload = JSON.stringify({
     metadata: { labels: { 'arkova-source-head': options.sourceHead ?? REPO_HEAD } },
     spec: {
       containers: [
         {
           image: options.deployedImageRef ?? STUB_IMAGE_REF,
-          env: Object.entries(deployedEnv).map(([name, value]) => ({ name, value })),
+          env: [
+            ...Object.entries(deployedEnv).map(([name, value]) => ({ name, value })),
+            ...deployedSecretNames.map((name) => ({
+              name,
+              valueSource: { secretKeyRef: { secret: `stub-${name.toLowerCase()}`, version: 'latest' } },
+            })),
+          ],
         },
       ],
     },
     status: { imageDigest: options.resolvedImageDigest ?? STUB_IMAGE_DIGEST },
   });
+
+  writeFileSync(
+    join(stubDir, 'git'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "${gitLogFile}"
+if [[ "$1" == "fetch" ]]; then
+  ${options.gitFetchFails ? 'exit 1' : 'exit 0'}
+fi
+exec "${REAL_GIT}" "$@"
+`,
+  );
+  chmodSync(join(stubDir, 'git'), 0o755);
 
   writeFileSync(
     join(stubDir, 'gcloud'),
@@ -412,6 +447,10 @@ if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
 fi
 if [[ "$1" == "run" && "$2" == "revisions" && "$3" == "describe" ]]; then
   echo '${revisionPayload}'
+  exit 0
+fi
+if [[ "$1" == "artifacts" && "$2" == "docker" && "$3" == "images" && "$4" == "describe" ]]; then
+  echo 'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${options.sourceImageDigest ?? STUB_IMAGE_DIGEST}'
   exit 0
 fi
 if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
@@ -482,6 +521,11 @@ exit 64
     STAGING_RIG_ID: options.rigId === null ? '' : (options.rigId ?? `rig-${name}`),
     STAGING_LEASE_ID: options.leaseId === null ? '' : (options.leaseId ?? `lease-${name}`),
   };
+  if (options.useUntrackedDriver) {
+    const untrackedDriver = join(stubDir, 'untracked-driver.ts');
+    writeFileSync(untrackedDriver, 'export const untracked = true;\n');
+    env.STAGING_DRIVER_PATH = untrackedDriver;
+  }
   if (options.imageRef !== null) env.STAGING_PINNED_IMAGE = options.imageRef ?? STUB_IMAGE_REF;
   if (options.sourceHead !== null) env.STAGING_SOURCE_HEAD_SHA = options.sourceHead ?? REPO_HEAD;
   if (options.soakId !== null) env.STAGING_SOAK_ID = options.soakId ?? `soak-${name}`;
@@ -513,7 +557,10 @@ exit 64
   const callOrder = readFileSync(orderLogFile, 'utf8')
     .split('\n')
     .filter((line) => line.length > 0);
-  return { out, code, gcloudCalls, npxCalls, callOrder, artifactDir };
+  const gitCalls = readFileSync(gitLogFile, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0);
+  return { out, code, gcloudCalls, npxCalls, callOrder, gitCalls, artifactDir };
 }
 
 afterAll(() => {
@@ -1071,7 +1118,7 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
     ['T3', '2879', REPO_BASE, /duration|2880|minimum/i],
     ['T3', '02880', REPO_BASE, /duration|integer|canonical/i],
     ['T3', '2880', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', /base|commit|merge-base/i],
-    ['T3', '2880', REPO_HEAD, /base|merge-base|ancestor/i],
+    ['T3', '2880', REPO_NON_BASE_ANCESTOR, /base|merge-base|ancestor/i],
   ])(
     'rejects untruthful apply metadata tier=%s duration=%s base=%s before mutation',
     (tier, duration, baseSha, message) => {
@@ -1092,6 +1139,22 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
     const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
     const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
     expect(admission).toMatchObject({ tier: 'T1', duration_min: 120 });
+  });
+
+  it('fails closed before mutation when origin/main cannot be refreshed', () => {
+    const result = applyRunStubbed('guard-origin-fetch', 'mock', { gitFetchFails: true });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/fetch|origin\/main|base/i);
+    expect(result.npxCalls).toEqual([]);
+  });
+
+  it('rejects an untracked driver instead of attesting working-tree-only bytes', () => {
+    const result = applyRunStubbed('guard-untracked-driver', 'mock', {
+      useUntrackedDriver: true,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/driver|tracked|declared.*HEAD/i);
+    expect(result.npxCalls).toEqual([]);
   });
 });
 
@@ -1137,6 +1200,31 @@ describe('provision-isolated-rig.sh — post-preflight Scheduler invariant', () 
 });
 
 describe('provision-isolated-rig.sh — truthful observed provenance and config', () => {
+  it('binds the supplied digest to the declared full-SHA Artifact Registry tag', () => {
+    const result = applyRunStubbed('source-image-binding', 'mock');
+    expect(result.code, result.out).toBe(0);
+    expect(
+      result.gcloudCalls.some(
+        (call) =>
+          call.startsWith('artifacts docker images describe ') &&
+          call.includes(`arkova-worker:${REPO_HEAD}`),
+      ),
+    ).toBe(true);
+    const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
+    expect(admission.source_head_image_ref).toContain(`arkova-worker:${REPO_HEAD}`);
+    expect(admission.source_head_image_digest).toBe(STUB_IMAGE_DIGEST);
+  });
+
+  it('rejects a stale-build digest before creating the paid project', () => {
+    const result = applyRunStubbed('stale-source-image', 'mock', {
+      sourceImageDigest: `sha256:${'d'.repeat(64)}`,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/declared source HEAD|image digest|build/i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
   it('accepts a tag-form spec image only when status.imageDigest resolves to the requested digest', () => {
     const result = applyRunStubbed('resolved-digest', 'mock', {
       deployedImageRef:
@@ -1165,6 +1253,7 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
   it.each([
     ['wrong critical value', { USE_MOCKS: 'true' }],
     ['schema bleed', { GEMINI_TUNED_RESPONSE_SCHEMA: 'bleed' }],
+    ['extra', { UNDECLARED_FLAG: 'true' }],
   ])('rejects deployed revision env with %s', (_label, deployedEnvAdditions) => {
     const result = applyRunStubbed(`bad-env-${_label.replace(/\s+/g, '-')}`, 'chain', {
       deployedEnvAdditions,
@@ -1183,6 +1272,14 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
     const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
     expect(admission.supabase_project_ref).toBe('abcdefghijklmnopqrst');
   }, 15_000);
+});
+
+describe('provision-isolated-rig.sh — mock state vocabulary', () => {
+  it('never records scheduler_paused for a profile where Scheduler is not applicable', () => {
+    expect(script).toMatch(
+      /if \[\[ \$SCHEDULER_APPLICABLE_JSON == true \]\]; then\s+write_provision_state "clean_mirror_admitted_scheduler_paused" ""\s+else\s+write_provision_state "clean_mirror_admitted" ""/,
+    );
+  });
 });
 
 describe('provision-isolated-rig.sh — strict clean_mirror evidence schema', () => {

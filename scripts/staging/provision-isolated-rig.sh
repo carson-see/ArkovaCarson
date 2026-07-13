@@ -129,6 +129,8 @@ REQUIRED_WALL_MIN="${STAGING_REQUIRED_WALL_MIN:-}"
 DURATION_MIN="$REQUIRED_UPTIME_MIN"
 CHANGED_BEHAVIOR="${STAGING_CHANGED_BEHAVIOR:-}"
 VALIDATED_BASE_SHA=""
+SOURCE_HEAD_IMAGE_REF="<verified-full-sha-image-tag-in-apply>"
+SOURCE_HEAD_IMAGE_DIGEST="<verified-full-sha-image-digest-in-apply>"
 
 usage() {
   sed -n '2,38p' "$0"
@@ -239,6 +241,66 @@ esac
 # ---------------------------------------------------------------------------
 deny() { echo "REFUSING: $*" >&2; exit 1; }
 
+image_digest_from_ref() {
+  local image_ref="$1"
+  case "$image_ref" in
+    *@sha256:*) printf 'sha256:%s\n' "${image_ref##*@sha256:}" ;;
+    sha256:*) printf '%s\n' "$image_ref" ;;
+    *) return 1 ;;
+  esac
+}
+
+verify_checkout_inputs_match_declared_head() {
+  local repo_root script_absolute script_relative path
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  script_absolute="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
+  if [[ -z "$repo_root" || "$script_absolute" != "$repo_root"/* ]]; then
+    echo "ERROR: live provision must run from a Git checkout containing this provisioner." >&2
+    exit 2
+  fi
+  script_relative="${script_absolute#"$repo_root"/}"
+
+  if [[ "$DRIVER_PATH" == /* || "$DRIVER_PATH" == ".." || "$DRIVER_PATH" == ../* \
+    || "$DRIVER_PATH" == */../* || "$DRIVER_PATH" == */.. ]]; then
+    echo "ERROR: live provision requires STAGING_DRIVER_PATH to be a repo-relative tracked path." >&2
+    exit 2
+  fi
+
+  for path in "$script_relative" "$DRIVER_PATH"; do
+    if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1 \
+      || ! git cat-file -e "${DECLARED_SOURCE_HEAD}:${path}" 2>/dev/null; then
+      echo "ERROR: live provision input '$path' is not tracked at declared source HEAD." >&2
+      exit 2
+    fi
+  done
+
+  if ! git diff --quiet "$DECLARED_SOURCE_HEAD" -- "$script_relative" "$DRIVER_PATH"; then
+    echo "ERROR: provisioner/driver working-tree bytes differ from declared source HEAD; commit or restore them first." >&2
+    exit 2
+  fi
+}
+
+verify_source_head_image_digest() {
+  local image_repository observed_ref observed_digest expected_digest
+  image_repository="${PINNED_IMAGE%@sha256:*}"
+  SOURCE_HEAD_IMAGE_REF="${image_repository}:${DECLARED_SOURCE_HEAD}"
+  expected_digest="$(image_digest_from_ref "$PINNED_IMAGE")"
+  if ! observed_ref="$(gcloud artifacts docker images describe "$SOURCE_HEAD_IMAGE_REF" \
+    --project="$GCP_PROJECT" \
+    --format="value(image_summary.fully_qualified_digest)")"; then
+    echo "ERROR: could not resolve the declared source HEAD image tag '$SOURCE_HEAD_IMAGE_REF'." >&2
+    echo "       Build and push the exact checkout before provisioning; labels are not build provenance." >&2
+    exit 2
+  fi
+  observed_digest="$(image_digest_from_ref "$observed_ref" 2>/dev/null || true)"
+  if [[ -z "$observed_digest" || "$observed_digest" != "$expected_digest" ]]; then
+    echo "ERROR: pinned image digest does not match the image built for declared source HEAD." >&2
+    echo "       expected=$expected_digest observed=${observed_digest:-<missing>} tag=$SOURCE_HEAD_IMAGE_REF" >&2
+    exit 2
+  fi
+  SOURCE_HEAD_IMAGE_DIGEST="$observed_digest"
+}
+
 for denied in "${DENIED_CLOUD_RUN_SERVICES[@]}"; do
   if [[ "$CLOUD_RUN_SERVICE" == "$denied" ]]; then
     deny "derived Cloud Run service '$CLOUD_RUN_SERVICE' is a shared/prod service."
@@ -313,6 +375,7 @@ if [[ $APPLY -eq 1 ]]; then
     echo "ERROR: declared source HEAD mismatch: declared=$DECLARED_SOURCE_HEAD GITHUB_SHA=$GITHUB_SHA." >&2
     exit 2
   fi
+  verify_checkout_inputs_match_declared_head
   if [[ "$SOAK_ID" == \<required-in-apply:* || ! "$SOAK_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]]; then
     echo "ERROR: live provision requires an explicit soak_id via --soak-id or STAGING_SOAK_ID" >&2
     echo "       (3-128 characters: letters, digits, dot, underscore, colon, or hyphen)." >&2
@@ -429,6 +492,10 @@ if [[ $APPLY -eq 1 ]]; then
   # Admission base provenance is derived from this exact checkout. Caller
   # metadata may repeat it, but cannot replace it with an arbitrary 40-hex
   # string or a different ancestor.
+  if ! git fetch --quiet origin main; then
+    echo "ERROR: could not refresh origin/main; refusing to attest a potentially stale base SHA." >&2
+    exit 2
+  fi
   EXPECTED_BASE_SHA="$(git merge-base "$DECLARED_SOURCE_HEAD" origin/main 2>/dev/null || true)"
   CANDIDATE_BASE_SHA="${BASE_SHA:-${GITHUB_BASE_SHA:-$EXPECTED_BASE_SHA}}"
   if [[ ! "$EXPECTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -446,6 +513,7 @@ if [[ $APPLY -eq 1 ]]; then
     exit 2
   fi
   VALIDATED_BASE_SHA="$EXPECTED_BASE_SHA"
+  verify_source_head_image_digest
 fi
 
 # ---------------------------------------------------------------------------
@@ -775,6 +843,8 @@ write_provision_state() {
     --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
     --arg image "$PINNED_IMAGE" \
     --arg declared_source_head "$DECLARED_SOURCE_HEAD" \
+    --arg source_head_image_ref "$SOURCE_HEAD_IMAGE_REF" \
+    --arg source_head_image_digest "$SOURCE_HEAD_IMAGE_DIGEST" \
     --arg soak_id "$SOAK_ID" \
     --arg rig_id "$RIG_ID" \
     --arg lease_id "$LEASE_ID" \
@@ -808,6 +878,8 @@ write_provision_state() {
       },
       image: $image,
       declared_source_head: $declared_source_head,
+      source_head_image_ref: $source_head_image_ref,
+      source_head_image_digest: $source_head_image_digest,
       soak_id: $soak_id,
       rig_id: $rig_id,
       lease_id: $lease_id,
@@ -939,15 +1011,6 @@ resolve_owner() {
   printf '%s@%s\n' "${USER:-unknown}" "$(hostname -s 2>/dev/null || echo host)"
 }
 
-image_digest_from_ref() {
-  local image_ref="$1"
-  case "$image_ref" in
-    *@sha256:*) printf 'sha256:%s\n' "${image_ref##*@sha256:}" ;;
-    sha256:*) printf '%s\n' "$image_ref" ;;
-    *) return 1 ;;
-  esac
-}
-
 resolve_image_digest() {
   if image_digest_from_ref "$PINNED_IMAGE"; then
     return 0
@@ -1006,9 +1069,11 @@ observed_revision_env_value() {
 
 verify_deployed_revision_env() {
   local revision_json="$1"
-  local entry key expected observed count
+  local entry key expected observed count expected_names_json observed_names_json
+  local expected_names=()
   for entry in "${ENV_VARS[@]}"; do
     key="${entry%%=*}"
+    expected_names+=("$key")
     expected="${entry#*=}"
     count="$(jq -r --arg name "$key" '[.spec.containers[0].env[]? | select(.name == $name)] | length' <<<"$revision_json")"
     observed="$(observed_revision_env_value "$revision_json" "$key")"
@@ -1017,6 +1082,18 @@ verify_deployed_revision_env() {
       exit 1
     fi
   done
+  for entry in "${SECRETS[@]}"; do
+    expected_names+=("${entry%%=*}")
+  done
+
+  expected_names_json="$(printf '%s\n' "${expected_names[@]}" \
+    | jq -Rsc 'split("\n") | map(select(length > 0)) | sort | unique')"
+  observed_names_json="$(jq -c \
+    '[.spec.containers[0].env[]? | .name] | sort' <<<"$revision_json")"
+  if [[ "$observed_names_json" != "$expected_names_json" ]]; then
+    echo "ERROR: deployed revision environment name set differs from the declared env/secret set." >&2
+    exit 1
+  fi
 
   count="$(jq -r '[.spec.containers[0].env[]? | select(.name == "GEMINI_TUNED_RESPONSE_SCHEMA")] | length' <<<"$revision_json")"
   if [[ "$count" != "0" ]]; then
@@ -1070,6 +1147,10 @@ resolve_driver_sha256() {
   if [[ ! -f "$DRIVER_PATH" ]]; then
     echo "ERROR: required staging driver '$DRIVER_PATH' does not exist." >&2
     exit 1
+  fi
+  if [[ $APPLY -eq 1 ]]; then
+    git show "${DECLARED_SOURCE_HEAD}:${DRIVER_PATH}" | shasum -a 256 | awk '{print $1}'
+    return 0
   fi
   sha256_file "$DRIVER_PATH"
 }
@@ -1132,6 +1213,8 @@ emit_admission_json() {
     --argjson required_wall_min "$REQUIRED_WALL_MIN" \
     --arg sha "$head_sha" \
     --arg declared_source_head "$DECLARED_SOURCE_HEAD" \
+    --arg source_head_image_ref "$SOURCE_HEAD_IMAGE_REF" \
+    --arg source_head_image_digest "$SOURCE_HEAD_IMAGE_DIGEST" \
     --arg base_sha "$base_sha" \
     --arg image "$image" \
     --arg image_digest "$image_digest" \
@@ -1186,6 +1269,8 @@ emit_admission_json() {
       required_wall_min: $required_wall_min,
       sha: $sha,
       declared_source_head: $declared_source_head,
+      source_head_image_ref: $source_head_image_ref,
+      source_head_image_digest: $source_head_image_digest,
       base_sha: $base_sha,
       image: $image,
       image_digest: $image_digest,
@@ -1578,7 +1663,11 @@ if [[ $APPLY -eq 1 ]]; then
     SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON=true
     SCHEDULER_STATE="clean_mirror_admitted_scheduler_paused"
   fi
-  write_provision_state "clean_mirror_admitted_scheduler_paused" ""
+  if [[ $SCHEDULER_APPLICABLE_JSON == true ]]; then
+    write_provision_state "clean_mirror_admitted_scheduler_paused" ""
+  else
+    write_provision_state "clean_mirror_admitted" ""
+  fi
 else
   run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
     --project-ref "$NEW_PROJECT_REF" \
