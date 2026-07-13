@@ -11,6 +11,12 @@ import {
 
 describe('S3.3 batch acceptance — manifest-seeded sampling', () => {
   const ids = Array.from({ length: 81 }, (_, index) => `S33-${String(index + 1).padStart(3, '0')}`);
+  const canonicalPolicy = {
+    manifestHash: canonicalManifestHash({ batchId: 's33-wave-1', revision: 2, entryCount: 81 }),
+    hashRepresentation: 'canonical-json-sha256',
+    prng: 'xorshift32-v1',
+    unpredictability: { mode: 'predictable-signed' },
+  } as const;
 
   it('canonicalizes object key order before hashing', () => {
     expect(canonicalManifestHash({ batchId: 'wave-1', revision: 2, counts: { ke: 11, au: 11 } }))
@@ -18,9 +24,8 @@ describe('S3.3 batch acceptance — manifest-seeded sampling', () => {
   });
 
   it('selects ceil(10%) of 81 entries, deterministically and without duplicates', () => {
-    const manifest = { batchId: 's33-wave-1', revision: 2, entryCount: 81 };
-    const first = selectManifestSeededSample(ids, manifest, { ratio: 0.1, minimum: 5 });
-    const second = selectManifestSeededSample([...ids].reverse(), manifest, { ratio: 0.1, minimum: 5 });
+    const first = selectManifestSeededSample(ids, canonicalPolicy, { ratio: 0.1, minimum: 5 });
+    const second = selectManifestSeededSample([...ids].reverse(), canonicalPolicy, { ratio: 0.1, minimum: 5 });
 
     expect(first).toHaveLength(9);
     expect(new Set(first)).toHaveLength(9);
@@ -28,8 +33,28 @@ describe('S3.3 batch acceptance — manifest-seeded sampling', () => {
   });
 
   it('fails closed on an empty batch or duplicate entry ids', () => {
-    expect(() => selectManifestSeededSample([], { batchId: 'empty' })).toThrow(/empty/i);
-    expect(() => selectManifestSeededSample(['A', 'A'], { batchId: 'dupe' })).toThrow(/duplicate/i);
+    expect(() => selectManifestSeededSample([], canonicalPolicy)).toThrow(/empty/i);
+    expect(() => selectManifestSeededSample(['A', 'A'], canonicalPolicy)).toThrow(/duplicate/i);
+  });
+
+  it('requires an explicit hash representation, PRNG, and unpredictability policy', () => {
+    expect(() => selectManifestSeededSample(ids, undefined as never)).toThrow(/sampling policy/i);
+    expect(() => selectManifestSeededSample(ids, {
+      ...canonicalPolicy,
+      hashRepresentation: 'unspecified',
+    } as never)).toThrow(/sampling policy/i);
+  });
+
+  it('supports a signed salt/commit-reveal policy without silently reusing the predictable seed', () => {
+    const committed = selectManifestSeededSample(ids, {
+      ...canonicalPolicy,
+      unpredictability: {
+        mode: 'lane3-salt-commit-reveal-v1',
+        revealedSalt: '11'.repeat(32),
+      },
+    });
+    expect(committed).toHaveLength(9);
+    expect(committed).not.toEqual(selectManifestSeededSample(ids, canonicalPolicy));
   });
 });
 

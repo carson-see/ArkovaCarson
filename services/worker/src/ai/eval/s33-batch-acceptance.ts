@@ -20,6 +20,15 @@ export interface SampleOptions {
   minimum?: number;
 }
 
+export interface ManifestSamplePolicy {
+  manifestHash: string;
+  hashRepresentation: 'raw-file-sha256' | 'canonical-json-sha256';
+  prng: 'xorshift32-v1';
+  unpredictability:
+    | { mode: 'predictable-signed' }
+    | { mode: 'lane3-salt-commit-reveal-v1'; revealedSalt: string };
+}
+
 function canonicalizeJson(value: unknown, path = '$'): string {
   if (value === null) return 'null';
   if (typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
@@ -63,13 +72,13 @@ function xorshift32(seed: number): () => number {
 }
 
 /**
- * Deterministically select the Lane-3 cross-review sample from the manifest
- * hash. Entry ids are sorted before shuffling so producer file order cannot
- * influence the sample.
+ * Deterministically select the Lane-3 cross-review sample under an explicit
+ * signed hash/PRNG/unpredictability policy. Entry ids are sorted before
+ * shuffling so producer file order cannot influence the sample.
  */
 export function selectManifestSeededSample(
   entryIds: readonly string[],
-  manifest: unknown,
+  policy: ManifestSamplePolicy,
   options: SampleOptions = {},
 ): string[] {
   assertUniqueNonEmptyIds(entryIds, 'Batch');
@@ -78,8 +87,23 @@ export function selectManifestSeededSample(
   if (!(ratio > 0 && ratio <= 1)) throw new Error('Sample ratio must be in (0, 1]');
   if (!Number.isInteger(minimum) || minimum < 1) throw new Error('Sample minimum must be a positive integer');
 
-  const hash = canonicalManifestHash(manifest);
-  const random = xorshift32(Number.parseInt(hash.slice(0, 8), 16));
+  if (!policy
+    || !/^[0-9a-f]{64}$/.test(policy.manifestHash)
+    || !['raw-file-sha256', 'canonical-json-sha256'].includes(policy.hashRepresentation)
+    || policy.prng !== 'xorshift32-v1'
+    || !policy.unpredictability
+    || !['predictable-signed', 'lane3-salt-commit-reveal-v1'].includes(policy.unpredictability.mode)
+    || (policy.unpredictability.mode === 'lane3-salt-commit-reveal-v1'
+      && !/^[0-9a-f]{64,}$/.test(policy.unpredictability.revealedSalt))) {
+    throw new Error('Invalid sampling policy; signed hash representation, PRNG, and unpredictability rule required');
+  }
+
+  const seedDigest = policy.unpredictability.mode === 'predictable-signed'
+    ? policy.manifestHash
+    : createHash('sha256')
+      .update(`${policy.manifestHash}:${policy.unpredictability.revealedSalt}`, 'utf8')
+      .digest('hex');
+  const random = xorshift32(Number.parseInt(seedDigest.slice(0, 8), 16));
   const shuffled = [...entryIds].sort();
   for (let index = shuffled.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(random() * (index + 1));
