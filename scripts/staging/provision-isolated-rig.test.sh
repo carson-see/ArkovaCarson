@@ -97,8 +97,20 @@ assert.ok(Array.isArray(payload.stop_conditions), 'stop_conditions must be an ar
 assert.ok(payload.stop_conditions.length >= 3, 'stop_conditions must be actionable');
 assert.ok(payload.stop_conditions.some((condition) => /SHA mismatch/i.test(condition)));
 assert.ok(payload.stop_conditions.some((condition) => /dirty preflight/i.test(condition)));
-assert.equal(payload.critical_config.use_mocks, 'true');
-assert.equal(payload.critical_config.enable_prod_network_anchoring, 'false');
+assert.deepEqual(payload.critical_config, {
+  node_env: 'production',
+  enable_ai_fraud: 'false',
+  enable_ai_reports: 'false',
+  frontend_url: 'https://app.arkova.ai',
+  use_mocks: 'true',
+  enable_prod_network_anchoring: 'false',
+  bitcoin_network: '',
+  bitcoin_utxo_provider: '',
+  kms_provider: '',
+  gemini_tuned_model: '',
+  gemini_v6_prompt: '',
+  gemini_tuned_response_schema: '<unset>',
+});
 assert.equal(payload.scheduler.applicable, false);
 assert.deepEqual(payload.scheduler.jobs, []);
 EOF

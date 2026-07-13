@@ -400,6 +400,18 @@ if [[ $APPLY -eq 1 ]]; then
       echo "ERROR: RIG-B1 requires explicit BITCOIN_NETWORK=signet; got '$BITCOIN_NETWORK_VALUE'." >&2
       exit 2
     fi
+    if [[ "$KMS_PROVIDER_VALUE" != "gcp" ]]; then
+      echo "ERROR: RIG-B1 requires exact STAGING_KMS_PROVIDER=gcp; got '$KMS_PROVIDER_VALUE'." >&2
+      exit 2
+    fi
+    if [[ "$BITCOIN_UTXO_PROVIDER_VALUE" != "getblock" ]]; then
+      echo "ERROR: RIG-B1 requires exact STAGING_BITCOIN_UTXO_PROVIDER=getblock; got '$BITCOIN_UTXO_PROVIDER_VALUE'." >&2
+      exit 2
+    fi
+    if [[ "$FRONTEND_URL_VALUE" != "https://app.arkova.ai" ]]; then
+      echo "ERROR: RIG-B1 requires exact STAGING_FRONTEND_URL=https://app.arkova.ai; got '$FRONTEND_URL_VALUE'." >&2
+      exit 2
+    fi
     if [[ "$TIER" != "T3" ]]; then
       echo "ERROR: RIG-B1 requires Tier T3; got '$TIER'." >&2
       exit 2

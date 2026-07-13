@@ -683,16 +683,20 @@ describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under 
         paused_through_clean_mirror: true,
         state: 'resumed_after_clean_mirror',
       },
-      critical_config: {
-        use_mocks: 'false',
-        enable_prod_network_anchoring: 'true',
-        bitcoin_network: 'mainnet',
-        bitcoin_utxo_provider: 'getblock',
-        kms_provider: 'gcp',
-        gemini_tuned_model: '',
-        gemini_v6_prompt: '',
-        gemini_tuned_response_schema: '<unset>',
-      },
+    });
+    expect(json.critical_config).toEqual({
+      node_env: 'production',
+      enable_ai_fraud: 'false',
+      enable_ai_reports: 'false',
+      frontend_url: 'https://app.arkova.ai',
+      use_mocks: 'false',
+      enable_prod_network_anchoring: 'true',
+      bitcoin_network: 'mainnet',
+      bitcoin_utxo_provider: 'getblock',
+      kms_provider: 'gcp',
+      gemini_tuned_model: '',
+      gemini_v6_prompt: '',
+      gemini_tuned_response_schema: '<unset>',
     });
     expect(json.clean_mirror.verified_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(readFileSync(json.clean_mirror.artifact, 'utf8')).toContain('clean_mirror');
@@ -791,13 +795,26 @@ describe('provision-isolated-rig.sh — RIG-B1 identity, trigger specs, and admi
       required_uptime_min: 2880,
       required_wall_min: 2910,
       duration_min: 2880,
-      critical_config: { bitcoin_network: 'signet' },
       clean_mirror: { attestation_id: attestationId },
       scheduler: {
         applicable: true,
         paused_through_clean_mirror: true,
         state: 'resumed_after_clean_mirror',
       },
+    });
+    expect(admission.critical_config).toEqual({
+      node_env: 'production',
+      enable_ai_fraud: 'false',
+      enable_ai_reports: 'false',
+      frontend_url: 'https://app.arkova.ai',
+      use_mocks: 'false',
+      enable_prod_network_anchoring: 'true',
+      bitcoin_network: 'signet',
+      bitcoin_utxo_provider: 'getblock',
+      kms_provider: 'gcp',
+      gemini_tuned_model: '',
+      gemini_v6_prompt: '',
+      gemini_tuned_response_schema: '<unset>',
     });
     expect(admission.scheduler.jobs).toEqual(
       expect.arrayContaining(expectedSpecs.map((spec) => expect.objectContaining(spec))),
@@ -894,6 +911,42 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
     expect(result.gcloudCalls).toEqual([]);
     expect(result.npxCalls).toEqual([]);
   });
+
+  it.each([
+    [
+      'kms-provider',
+      { STAGING_KMS_PROVIDER: 'aws' },
+      /STAGING_KMS_PROVIDER.+gcp/i,
+    ],
+    [
+      'utxo-provider',
+      { STAGING_BITCOIN_UTXO_PROVIDER: 'mempool' },
+      /STAGING_BITCOIN_UTXO_PROVIDER.+getblock/i,
+    ],
+    [
+      'frontend-url',
+      { STAGING_FRONTEND_URL: 'https://staging.arkova.ai' },
+      /STAGING_FRONTEND_URL.+https:\/\/app\.arkova\.ai/i,
+    ],
+  ] as const)(
+    'rejects the RIG-B1 %s mismatch before every external mutation',
+    (id, criticalConfigOverride, message) => {
+      const result = applyRunStubbed(`guard-b1-${id}`, 'chain', {
+        rigId: 'RIG-B1',
+        env: {
+          STAGING_BITCOIN_NETWORK: 'signet',
+          STAGING_TIER: 'T3',
+          STAGING_DURATION_MIN: '2880',
+          STAGING_REQUIRED_WALL_MIN: '2910',
+          ...criticalConfigOverride,
+        },
+      });
+      expect(result.code).not.toBe(0);
+      expect(result.out).toMatch(message);
+      expect(result.gcloudCalls).toEqual([]);
+      expect(result.npxCalls).toEqual([]);
+    },
+  );
 
   it('rejects a bare Gemini model label before project creation', () => {
     const result = applyRunStubbed('guard-gemini-model', 'gemini', {
