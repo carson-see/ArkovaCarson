@@ -144,7 +144,6 @@ class TestMerkleRecomputeUnit:
     def test_non_integral_float_index_disables_structure(self):
         # A non-integral float is NOT an integer in either runtime → the
         # structural guard stays off (parity with Number.isInteger(1.5) === false).
-        leaf = "ab" * 32
         assert _proofs._as_int(1.5) is None
         assert _proofs._as_int(True) is None
         assert _proofs._as_int("1") is None

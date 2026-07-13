@@ -4,6 +4,7 @@ import asyncio
 import email.utils
 import time
 from collections.abc import Callable, Mapping
+from importlib.metadata import PackageNotFoundError, version as _package_version
 from typing import Any, TypeVar
 from urllib.parse import quote
 
@@ -28,6 +29,11 @@ from .models import (
 
 DEFAULT_BASE_URL = "https://api.arkova.ai/v2"
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+
+try:
+    _VERSION = _package_version("arkova")
+except PackageNotFoundError:  # running from a source tree without an install
+    _VERSION = "unknown"
 T = TypeVar("T")
 
 
@@ -35,7 +41,7 @@ def _headers(api_key: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {api_key}",
         "Accept": "application/json",
-        "User-Agent": "arkova-python/0.1.0",
+        "User-Agent": f"arkova-python/{_VERSION}",
     }
 
 
