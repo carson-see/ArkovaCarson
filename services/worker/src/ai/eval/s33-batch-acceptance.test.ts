@@ -72,6 +72,8 @@ const WAVE1_SOURCE_PATHS = [
 const WAVE1_INITIAL_LANE3_SUPPORT_COMMIT = 'dd3ae1edecb005730762277daf17e15d8009459d';
 const WAVE1_REVISION9_COMMIT = 'b9bb1d3221d3567dbb08e1b23cab4dd687486738';
 const WAVE1_REVISION9_PREDECESSOR_COMMIT = '506ff62340db8f838ce68bc46ddfa6407735ce3c';
+// Test-only historical base for the real r10 restack; production trusts each validated manifest binding.
+const WAVE1_FINAL_TEAM3_SUPPORT_COMMIT = '53aa5ef1157488e6ddb243e831b33c38744cc060';
 
 interface ManifestFixtureBindings {
   supportCommit: string;
@@ -428,6 +430,41 @@ class TestConsumptionRegistry {
 }
 
 type ManifestMutator = (manifest: Record<string, unknown>) => void;
+type JsonPath = Array<string | number>;
+
+function jsonLeafPaths(value: unknown, path: JsonPath = []): JsonPath[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) => jsonLeafPaths(entry, [...path, index]));
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .flatMap(([key, entry]) => jsonLeafPaths(entry, [...path, key]));
+  }
+  return [path];
+}
+
+function mutatedJsonLeaf(current: unknown): unknown {
+  if (typeof current === 'boolean') return !current;
+  if (typeof current === 'number') return current + 1;
+  if (typeof current === 'string' && current.startsWith('GD-S33-')) {
+    return current === 'GD-S33-KE-001' ? 'GD-S33-KE-002' : 'GD-S33-KE-001';
+  }
+  if (typeof current === 'string' && /^[0-9a-f]{40,64}$/.test(current)) {
+    return (current.startsWith('a') ? 'b' : 'a').repeat(current.length);
+  }
+  return `${String(current)} [mutated]`;
+}
+
+function jsonParentAtPath(
+  root: Record<string, unknown> | unknown[],
+  path: JsonPath,
+): { parent: Record<string | number, unknown>; leaf: string | number } {
+  let parent = root;
+  for (const segment of path.slice(0, -1)) {
+    parent = (parent as Record<string | number, Record<string, unknown> | unknown[]>)[segment];
+  }
+  return { parent: parent as Record<string | number, unknown>, leaf: path.at(-1)! };
+}
 
 interface GitFixtureMutation {
   setupSupport?: (root: string) => void;
@@ -518,6 +555,11 @@ function revision10GitRepo(mutation: Revision10GitMutation = {}): {
   execFileSync('git', ['clone', '-q', '--shared', sourceRoot, root]);
   execFileSync('git', ['config', 'user.email', 'lane3-test@arkova.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Lane3 Test'], { cwd: root });
+  execFileSync('git', ['cat-file', '-e', `${WAVE1_FINAL_TEAM3_SUPPORT_COMMIT}^{commit}`], { cwd: root });
+  execFileSync('git', [
+    'merge-base', '--is-ancestor', WAVE1_FINAL_TEAM3_SUPPORT_COMMIT, 'HEAD',
+  ], { cwd: root });
+  execFileSync('git', ['checkout', '-q', '--detach', WAVE1_FINAL_TEAM3_SUPPORT_COMMIT], { cwd: root });
   const supportCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   const supportTypesBlob = execFileSync('git', ['rev-parse', `${supportCommit}:${WAVE1_TYPES_PATH}`], {
     cwd: root, encoding: 'utf8',
@@ -977,6 +1019,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
     }).revisions;
     const revision10 = revisions.at(-1)!;
     expect(parsed.revision).toBe(10);
+    expect(context.repo.supportCommit).toBe(WAVE1_FINAL_TEAM3_SUPPORT_COMMIT);
     expect(parsed.corpusRevisionParentCommit).toBe(context.repo.supportCommit);
     expect(parsed.producerRevisionPredecessorCommit).toBe(WAVE1_REVISION9_COMMIT);
     expect((parsed.lane3SupportBase as Record<string, unknown>).commit).toBe(context.repo.supportCommit);
@@ -1174,45 +1217,15 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
   });
 
   it('rejects every one-field mutation of the exact r2-r9 revision-history contract', () => {
-    type JsonPath = Array<string | number>;
     const base = productionManifestFixture();
     const authoritative = ((base.selfChecks as Record<string, unknown>)
       .authorizedDocumentRevisions as Record<string, unknown>);
-    const leaves: JsonPath[] = [];
-    const collectLeaves = (value: unknown, path: JsonPath): void => {
-      if (Array.isArray(value)) {
-        value.forEach((entry, index) => collectLeaves(entry, [...path, index]));
-      } else if (value !== null && typeof value === 'object') {
-        Object.entries(value as Record<string, unknown>)
-          .forEach(([key, entry]) => collectLeaves(entry, [...path, key]));
-      } else {
-        leaves.push(path);
-      }
-    };
-    collectLeaves(authoritative, []);
-
-    for (const path of leaves) {
+    for (const path of jsonLeafPaths(authoritative)) {
       const mutated = structuredClone(base);
-      let target = ((mutated.selfChecks as Record<string, unknown>)
+      const revisionHistory = ((mutated.selfChecks as Record<string, unknown>)
         .authorizedDocumentRevisions as Record<string, unknown> | unknown[]);
-      for (const segment of path.slice(0, -1)) {
-        target = (target as Record<string | number, Record<string, unknown> | unknown[]>)[segment];
-      }
-      const leaf = path.at(-1)!;
-      const current = (target as Record<string | number, unknown>)[leaf];
-      let replacement: unknown;
-      if (typeof current === 'boolean') {
-        replacement = !current;
-      } else if (typeof current === 'number') {
-        replacement = current + 1;
-      } else if (typeof current === 'string' && current.startsWith('GD-S33-')) {
-        replacement = current === 'GD-S33-KE-001' ? 'GD-S33-KE-002' : 'GD-S33-KE-001';
-      } else if (typeof current === 'string' && /^[0-9a-f]{40,64}$/.test(current)) {
-        replacement = (current.startsWith('a') ? 'b' : 'a').repeat(current.length);
-      } else {
-        replacement = `${String(current)} [mutated]`;
-      }
-      (target as Record<string | number, unknown>)[leaf] = replacement;
+      const { parent, leaf } = jsonParentAtPath(revisionHistory, path);
+      parent[leaf] = mutatedJsonLeaf(parent[leaf]);
       expect.soft(
         () => parseBatchManifest(JSON.stringify(mutated)),
         `mutation at authorizedDocumentRevisions.${path.join('.')}`,

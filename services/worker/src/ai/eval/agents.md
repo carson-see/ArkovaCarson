@@ -32,7 +32,16 @@ _Last updated: 2026-07-13_
   `b9bb1d32` as the logical producer predecessor. It requires empty changed ids,
   false corpus/normalized-input change flags, true r9 blob/pin preservation
   flags, and proves all three declared corpus-source blobs are identical at r9
-  and the frozen commit. All revision records still require every
+  and the frozen commit. The r10 Git fixture uses test-only historical base
+  `53aa5ef1`, the exact reviewed final-Team3 support commit; it must not derive
+  the support base
+  from the test runner's current `HEAD`, because Team-4 corpus heads already
+  contain the six packet paths and would collapse the security diff to a
+  manifest-only change. The code-owned pin must exist and be an ancestor of the
+  invoking checkout; there is no caller/environment checkout override. This
+  fixture pin does not constrain the production validator, which verifies the
+  authenticated manifest's declared binding. All revision records still
+  require every
   authority/change marker, boolean, fingerprint pin, field
   count/floor, and ordered id set; type-correct substitutions fail closed. Git
   freeze verification computes the raw diff from the declared Lane-3 support
