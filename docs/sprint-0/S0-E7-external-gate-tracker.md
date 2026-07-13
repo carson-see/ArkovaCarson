@@ -1,13 +1,13 @@
 # S0-E7 — External-Gate Tracker (kickoff)
 
-> **Sprint-0 deliverable S0-E7 / Story 7.1.** Status: **TRACKER DRAFTED — every kickoff ACTION (outreach, key moves) is GATED to Carson.** Retires risk **R-6** (external-gate slip).
-> Facts sourced from the read-only Drive+Gmail sweep (S0-E2), 2026-06-17. This belongs on Confluence as the live tracker — propose creating it there on Carson's OK (Drive/Confluence writes are gated).
+> **Sprint-0 deliverable S0-E7 / Story 7.1.** Historical tracker reconciled 2026-07-13. External partner sends and the HakiChain LOI signature are founder-reserved; technical decisions route to the CTO, and live changes require an approved operator. This tracker authorizes none of them. Retires risk **R-6** (external-gate slip).
+> Original facts came from the read-only Drive+Gmail sweep (S0-E2), 2026-06-17; the CE row was reconciled against the 2026-06-24 response on 2026-07-13. Confluence remains canonical, but no Drive or Confluence write occurred in this reconciliation.
 
 ## The five long-lead gates
 
-| Gate | Owner | Target / clock | Status (2026-06-17) | Next kickoff action (GATED) | Evidence |
+| Gate | Owner | Target / clock | Status / last evidence | Next kickoff action (GATED) | Evidence |
 |---|---|---|---|---|---|
-| **CE key + sandbox** (Q1.9 / SCRUM-1867) | L3 + Biz (Carson ↔ Jeanne Kitchens / Jeff Grann) | **~Sept 2026** (trial-key expiry — the hard PI-1 clock) | Trial agreement **eSigned 2026-06-09**; **temporary keys LIVE**; permanent key + sandbox **PENDING** | (a) Move CE key → **Secret Manager** + rotation + named owner (S0-7.2); (b) request **permanent key + sandbox** from CE; (c) claims-review: no "listed in the Registry" claim | Jeanne email 2026-06-10 (`19eb16eb9378a212`); eSign complete (`19eac3785c69de8a`) |
+| **CE evaluation continuation** (Q1.9 / SCRUM-1867) | L3 technical owner + Biz partner contact (Jeanne Kitchens / Jeff Grann) | **2026-09-09** (date confirmed; exact expiry instant/timezone unknown) | Trial agreement completed **2026-06-09**. CE replied **2026-06-24**: sandbox copy/invite sent; Developer Agreement + annual support tier is the continuation path. Invite receipt/acceptance, usable sandbox access, selected tier, activation lead time, and exact expiry instant remain unverified. | Prepare the new **UNSENT** continuation packet; confirm agreement/tier decision deadline, activation lead time, exact expiry timestamp, and July follow-up. Do not repeat the answered sandbox/date request. Keep “listed in the Registry” and live-publishing claims prohibited. | CE shared notes Google Doc `17IxHYJ6zvDm0vWGkP6swTYRajo-2Ycrltlo52P-oRSA`; current draft `docs/lane3/s33-ce-escalation-send-packet-draft.md` |
 | **Google CASA** | CTO + L3 | before drive.readonly GA (Q3.4) | **NOT STARTED** — zero outreach found | Scope CASA assessor + book the security assessment (gates Drive restricted-scope GA) | none (empty Gmail search) |
 | **SOC 2 Type II auditor** (Q2.1 / SCRUM-1043) | CTO + L1 | observation window start S6/S7 | Readiness-only — advisor **Matthew Webster (Cyvergence)** doing architecture/BIA; **auditor NOT engaged** | Solicit 2–3 auditor quotes; pick a firm; set observation-window start date | Webster threads (`19e7493e…`, `19e427cb…`) |
 | **FCRA counsel** (SCRUM-883, gates Q4.1 NVI) | CPO (Carson) | before any NVI/background-screening feature | **Needs Human** — Foley & Lardner **privacy** intro held 2026-06-02/03 (Peter Stockburger), **not FCRA-specific** | Confirm FCRA scope with counsel (or engage FCRA-specialist) | Foley thread (`19e8572e…`), notes doc `11T8N1U…` |
@@ -24,4 +24,6 @@ Lane 1 supplies the **chain/security technical contact** for the gates that touc
 
 - **Adjacent (not one of the five):** AUDD grant (Australian fintech) application in progress — track separately, not a launch gate.
 - **CSA STAR L1** (separate from CASA/SOC2): 197-control CAIQ pack, prod 107/107 RLS verified, awaiting CEO review → submit (v2 sheets regenerated 2026-06-17). CSA STAR **L2** is the Q2.6 roadmap epic (SCRUM-712).
-- All kickoff actions above are **GATED** — this tracker arms the T-30 alarm (the L2 key-expiry dashboard, S0-5.1/VIS-01, will mechanize the CE-clock alert). Nothing was sent/moved this session.
+- The CE date is known, but the time/timezone is not. Any T-30 alert must preserve that uncertainty until CE supplies an exact expiry instant.
+- External partner sends and the HakiChain LOI signature are founder-reserved. Technical/claims decisions route to the CTO; this tracker does not make or delegate live changes.
+- Nothing was sent, signed, moved, or changed in partner/live systems by the 2026-07-13 documentation reconciliation.

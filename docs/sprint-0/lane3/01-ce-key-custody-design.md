@@ -1,8 +1,8 @@
 # S0-7.2 — Credential Engine Key → Secret Manager Custody + Rotation (DESIGN)
 
 **Epic:** SCRUM-1867 (R-LEGAL-01-CTDL) · **Lane 3** (Credential Network & Intelligence) · **Sprint 0** (Foundation & Hardening — design only, no build)
-**Mitigates:** Roadmap risk **R-1 (FATAL)** — CE 3-month trial consuming key expires ~Sept 2026.
-**Date:** 2026-06-19 · **Tier:** T0 (this design) / **T2** (the live secret write + IAM = Carson-executes) · **Status:** Draft for Carson review.
+**Mitigates:** Roadmap risk **R-1 (FATAL)** — CE confirmed that the 3-month evaluation ends 2026-09-09; exact expiry instant/timezone is unknown.
+**Date:** 2026-06-19 · reconciled 2026-07-13 · **Tier:** T0 historical design / T2 for any live secret or IAM change · **Status:** Historical design; no live action authorized. Current technical decisions route to the CTO and an approved operator.
 
 > Secret hygiene: no secret value was read, printed, or logged. All gcloud calls were metadata-only (`describe`, `versions list`, `get-iam-policy`, `list`).
 
@@ -21,9 +21,19 @@
 ## 0a. UPDATE — 2026-06-19 (executed; supersedes the rename recommendation below)
 
 Carson confirmed the CE key is **already in Secret Manager** as `Credential_Engine` — there is **no "move" to do**. Acting on that:
+
 - **DONE this session (in place; value never read):** added the per-secret `roles/secretmanager.secretAccessor` binding for the worker runtime SA (`270018525501-compute@developer.gserviceaccount.com`, region us-central1) and inventory labels (`owner=lane3, category=api-key, service=credential-engine, risk=r-1, rotation-cadence-days=90`) on `Credential_Engine`. Verified via `gcloud secrets get-iam-policy` + `describe`. The project-level grant is unaffected; this is additive least-privilege.
 - **Decision change:** keep `Credential_Engine` as the live secret. The kebab-case rename + 2-secret split in §2/§4 below is **NOT pursued** — a rename would force an unnecessary value migration. If/when CE issues a distinct sandbox key, add `credential-engine-api-key-sandbox` then; until then the single hardened secret stands. Treat §2/§4's "create/migrate" steps as **superseded**; §4's rotation procedure still applies to `Credential_Engine` in place.
-- **Still open (genuinely external):** the permanent-key/sandbox request to CE (drafted in Gmail + doc 04) and the paid Developer Agreement decision before ~2026-09-09. The rotation-reminder code wiring (SCRUM-2536) is a Sprint-1 build.
+- **2026-07-13 correction:** the permanent-key/sandbox request is no longer open. CE answered on 2026-06-24, confirmed the evaluation ends 2026-09-09, said it copied the account to sandbox and sent an invite, and identified the Developer Agreement plus annual support-tier selection as the continuing-production-access path. Still open: exact expiry instant/timezone, sandbox invite receipt/acceptance and usable access, agreement/tier decision, activation lead time, and rotation-reminder wiring. Doc 04 is historical and must not be sent.
+
+## 0b. UPDATE — 2026-07-13 correspondence reconciliation
+
+- **Confirmed date:** 2026-09-09. Do not downgrade it to “~September” or invent an expiry time.
+- **Continuation mechanism:** current Developer Agreement plus annual support-tier selection; the reviewed sources do not establish which tier Arkova will choose or the activation lead time.
+- **Sandbox:** CE reported that it copied Arkova's account and sent an invite. The reviewed artifacts do not prove receipt, acceptance, working credentials, or which secret—if any—holds them.
+- **Consuming options:** direct GET by CTID, Graph Search, and offline download remain available. This design does not assert a live production consuming client.
+- **Claims boundary:** an approved production account or organization CTID is not proof that Arkova or any credential is published or listed in the Registry.
+- **Authority:** the founder reserves the external partner send. Key custody, alerting, secret/IAM changes, and implementation decisions route to the CTO and require an approved operator; this document authorizes none of them.
 
 ## 1. Current-state detail (file:line)
 
@@ -55,20 +65,20 @@ Carson confirmed the CE key is **already in Secret Manager** as `Credential_Engi
 
 | Field | Value |
 |---|---|
-| Cadence | 90 days for the permanent key (matches `ROTATION_PERIOD_DAYS=90`). Sandbox/trial: **expiry-driven**, hard target **T-60 / T-30 before ~Sept 2026**. |
+| Cadence | 90 days for a future permanent key (historical design assumption; confirm against the executed agreement). Evaluation access: **expiry-driven**, confirmed date **2026-09-09** with exact instant/timezone unknown. |
 | Procedure (zero-downtime) | new key from CE portal → `versions add` → flip worker + confirm `/health` → `versions disable <old>` (keep for rollback) → `destroy` after a clean soak. |
-| Named owner | **Carson** executes all rotations. CE-relationship renewal owner = **CONFIRM** (Jeff Grann vs Jeanne Kitchens). |
+| Named owner | Technical decisions route to the **CTO**; execution requires an approved operator. Jeanne Kitchens owns CE's Developer Integration Program; Jeff Grann is the technical/CTDL counterpart. The founder-reserved action is the external send, not secret rotation. |
 | Advance alert | Revive + extend the rotation reminder (SCRUM-2536). |
 
 **Fixing SCRUM-2536 (code scoped to Sprint-1; inventory row designed now):** read real `lastRotatedAt` from SM version `createTime` (or a `last-rotated` label), not `new Date()`; add an expiry-aware branch (secrets with an `expires-at` label alert at T-60/T-30); wire to a daily cron (`POST /cron/secret-rotation`) behind a kill-switch flag, fanning to `SLACK_OPS_WEBHOOK_URL` + the Sprint-1 dashboard.
 
 **KEY-EXPIRY dashboard handoff (SCRUM-2507, Sprint-1):** inventory row is the data contract — `{ secret_id, category, owner, cadence_days | expires_at, last_rotated_at, status: healthy|expiring|overdue, risk_tag }`. The CE sandbox row is the dashboard's first FATAL-risk (`R-1`) entry; sort to top. **Design the row here; do not build the dashboard.**
 
-## 4. Exact gcloud commands — DRAFTED for Carson
+## 4. Historical gcloud sketch — SUPERSEDED; DO NOT EXECUTE
 
-```
->>> CARSON EXECUTES — do not run from the train <<<
-# T2: live secret write + IAM change. Operator-only per CLAUDE.md §1.11/§1.12.
+```bash
+>>> HISTORICAL DESIGN ONLY — DO NOT EXECUTE <<<
+# T2: live secret write + IAM change. Requires a current CTO decision and approved operator.
 # Project: arkova1 | Worker runtime SA: 270018525501-compute@developer.gserviceaccount.com
 # Run where YOU hold the CE key value. NEVER paste the key into chat, a ticket, a log, or VCS.
 # Pipe from a local file you delete after.
@@ -82,11 +92,12 @@ gcloud secrets create credential-engine-api-key --project="$PROJECT" \
   --labels=owner=lane3,category=api-key,service=credential-engine,risk=r-1,rotation-cadence-days=90
 printf '%s' "$CE_PROD_KEY" | gcloud secrets versions add credential-engine-api-key --project="$PROJECT" --data-file=-
 
-# 2. SANDBOX / trial key (the ~Sept-2026 expiring one) — separate secret
+# 2. SANDBOX / evaluation key — historical proposed layout only
 gcloud secrets create credential-engine-api-key-sandbox --project="$PROJECT" \
   --replication-policy=user-managed --locations=us-central1,us-east1 \
-  --labels=owner=lane3,category=api-key,service=credential-engine,risk=r-1,expires-at=2026-09-15
-  # ^ set expires-at to the REAL trial expiry from the CE portal before running.
+  --labels=owner=lane3,category=api-key,service=credential-engine,risk=r-1
+  # CE confirmed the date 2026-09-09, but the exact expiry instant/timezone is unknown.
+  # Do not add an expires-at label or execute this sketch until that instant is verified.
 printf '%s' "$CE_SANDBOX_KEY" | gcloud secrets versions add credential-engine-api-key-sandbox --project="$PROJECT" --data-file=-
 
 # 3. Least-privilege IAM: accessor on the SPECIFIC secrets only
@@ -112,14 +123,18 @@ Sprint 0 builds nothing. When SCRUM-1928 unblocks: add `credentialEngineEnv` to 
 ## 6. Lane-1 handoff (CE-key Secret-Manager entry)
 
 > **To Lane 1 (Security / Secret-Manager / IAM hardening):** two cross-cutting items are yours because they touch the whole secret estate:
+>
 > 1. **Per-secret IAM vs project-wide grant.** Worker SA `270018525501-compute@...` holds **project-level** `secretAccessor` (every secret readable; `Credential_Engine` + `gemini-api-key` have empty per-secret policies). Lane 3's design requires explicit **per-secret** accessor bindings for the two CE secrets. Fold into the estate decision (keep broad grant + per-secret defense-in-depth, or migrate to per-secret and drop the broad grant) — either way the CE per-secret binding stands.
 > 2. **Replication residency.** New CE secrets are `user-managed` US-pinned; the legacy estate (incl. `Credential_Engine`) is `automatic`. Apply any global standard you set.
 >
 > **Owned by Lane 3 (do not touch):** CE secret naming (`credential-engine-*`), the `CREDENTIAL_ENGINE_ENV` selector, retirement of the orphan `Credential_Engine`, the CE inventory rows.
 > **Shared (SCRUM-2536):** reviving `secret-rotation-reminder.ts` is a general fix; Lane 3 needs the CE rows + T-30/T-60 expiry branch. Coordinate the cron wiring so it isn't double-wired.
 
-## 7. Open items / unverified (for Carson)
-- **CE contact owner** — Jeff Grann (Confluence) vs Jeanne Kitchens (brief/memory). Unverified; both may be valid CE contacts. Confirm the renewal owner.
-- **Exact trial-key expiry date** — "~Sept 2026" approximate; the `expires-at` label + dashboard row need the real CE-portal date.
+## 7. Open items / unverified
+
+- **Relationship roles** — Jeanne Kitchens owns the Developer Integration Program; Jeff Grann is the technical/CTDL counterpart. The current packet is addressed to Jeanne with Jeff copied.
+- **Exact expiry instant** — the date is confirmed as 2026-09-09; time and timezone remain unknown. The `expires-at` label and alert must not invent an instant.
+- **Continuation decision** — Developer Agreement version, annual support tier, decision deadline, and activation lead time remain unresolved.
+- **Sandbox state** — CE said it copied the account and sent an invite; receipt, acceptance, usable credentials, and custody are unverified.
 - **What `Credential_Engine` holds** (trial vs permanent) — not inspected (value never read). Confirm + migrate into the correct kebab-case secret.
 - **SCRUM-1928 still externally Blocked** — no CE consuming endpoint to call yet, so §5 client work cannot start regardless of custody readiness.
