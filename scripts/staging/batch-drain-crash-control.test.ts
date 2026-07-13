@@ -15,6 +15,7 @@ import {
   type RestartEvidence,
   type TerminationEvidence,
 } from './batch-drain-crash-control';
+import { parseCrashReplayCapture, ReplayCrashControlAdapter } from './batch-drain-crash-adapter';
 import type { DrainPassExpectation, DrainPassObservation } from './batch-drain-observation';
 
 const BATCH_ID = 'batch-crash-offline';
@@ -123,6 +124,10 @@ function drainObservation(): DrainPassObservation {
       orgId: ORG_ID,
       decision: 'not-required' as const,
       reason: null,
+      referenceId: null,
+      requiredAmount: 0,
+      balanceBefore: null,
+      balanceAfter: null,
       occurredAt: '2026-07-13T12:00:07.000Z',
     })),
     creditLedgerEvents: [],
@@ -415,5 +420,28 @@ describe('orchestrateCrashCase — observed five-stage process lifecycle', () =>
     expect(caught).toBeInstanceOf(CrashDisarmAggregateError);
     expect((caught as CrashDisarmAggregateError).errors).toHaveLength(2);
     expect(events).toEqual(['arm:after-claim', 'disarm:after-claim']);
+  });
+
+  it('validates and replays a strict captured crash lifecycle offline', async () => {
+    const killpoint: CrashKillpoint = 'after-intent-persist';
+    const capture = parseCrashReplayCapture(JSON.stringify({
+      schemaVersion: 1,
+      captureId: 'crash-replay-offline',
+      runId: `offline-${killpoint}`,
+      barrier: makeBarrier(killpoint),
+      termination: termination(),
+      restart: restart(),
+      recovery: recovery(),
+      observation: crashObservation(killpoint),
+    }));
+    await expect(orchestrateCrashCase(
+      makeInput(killpoint),
+      new ReplayCrashControlAdapter(capture),
+    )).resolves.toMatchObject({
+      verdict: 'pass',
+      postIntent: { txId: TX_ID, signedBytesSha256: TX_HASH },
+      restartedFrom: 'worker-before',
+      restartedTo: 'worker-after',
+    });
   });
 });

@@ -149,23 +149,26 @@ function observation(trigger: 'org-scheduler' | 'global-flush' = 'org-scheduler'
     creditGateEvents: [
       {
         eventId: 'gate-1', schedulerExecutionId: EXECUTION_ID, fingerprint: FP_1,
-        orgId: ORG_HEALTHY, decision: 'not-required', reason: null, occurredAt: '2026-07-13T12:00:07.000Z',
+        orgId: ORG_HEALTHY, decision: 'not-required', reason: null, referenceId: null,
+        requiredAmount: 0, balanceBefore: null, balanceAfter: null, occurredAt: '2026-07-13T12:00:07.000Z',
       },
       {
         eventId: 'gate-2', schedulerExecutionId: EXECUTION_ID, fingerprint: FP_2,
-        orgId: secondOrg, decision: 'not-required', reason: null, occurredAt: '2026-07-13T12:00:07.000Z',
+        orgId: secondOrg, decision: 'not-required', reason: null, referenceId: null,
+        requiredAmount: 0, balanceBefore: null, balanceAfter: null, occurredAt: '2026-07-13T12:00:07.000Z',
       },
       {
         eventId: 'gate-3', schedulerExecutionId: EXECUTION_ID, fingerprint: FP_POISON,
-        orgId: ORG_POISON, decision: 'denied', reason: 'insufficient_credits', occurredAt: '2026-07-13T12:00:08.000Z',
+        orgId: ORG_POISON, decision: 'denied', reason: 'insufficient_credits', referenceId: 'anchor-poison',
+        requiredAmount: 1, balanceBefore: 0, balanceAfter: 0, occurredAt: '2026-07-13T12:00:08.000Z',
       },
     ],
     creditLedgerEvents: [],
     orgBalances: orgs.map((orgId) => ({
       schedulerExecutionId: EXECUTION_ID,
       orgId,
-      before: 10,
-      after: 10,
+      before: orgId === ORG_POISON ? 0 : 10,
+      after: orgId === ORG_POISON ? 0 : 10,
     })),
     ledgerDeltas: orgs.map((orgId) => ({ schedulerExecutionId: EXECUTION_ID, orgId, delta: 0 })),
   };
@@ -253,10 +256,41 @@ describe('assertDrainPassObservation — event-derived fail-closed R3 evidence',
     expect(() => assertDrainPassObservation(expectation(), wrong)).toThrow(/gate, refund, and DB facts/);
   });
 
+  it('rejects contradictory denied-credit balances and a debit with a different reference', () => {
+    const wrongBalance = observation();
+    Object.assign(wrongBalance.creditGateEvents[2]!, {
+      referenceId: 'anchor-poison',
+      requiredAmount: 1,
+      balanceBefore: 3,
+      balanceAfter: 3,
+    });
+    expect(() => assertDrainPassObservation(expectation(), wrongBalance)).toThrow(/insufficient.*balance/i);
+
+    const wrongReference = observation();
+    Object.assign(wrongReference.creditGateEvents[0]!, {
+      decision: 'allowed',
+      reason: 'rule.auto_anchor_queue_run',
+      referenceId: 'anchor-expected',
+      requiredAmount: 1,
+      balanceBefore: 10,
+      balanceAfter: 9,
+    });
+    wrongReference.passRows[0]!.queueCreditChargedAt = '2026-07-13T12:00:09.000Z';
+    wrongReference.creditLedgerEvents.push({
+      eventId: 'ledger-wrong-reference', schedulerExecutionId: EXECUTION_ID, fingerprint: FP_1,
+      orgId: ORG_HEALTHY, kind: 'debit', amount: 1, referenceId: 'anchor-other',
+      occurredAt: '2026-07-13T12:00:08.000Z',
+    });
+    wrongReference.orgBalances.find((row) => row.orgId === ORG_HEALTHY)!.after = 9;
+    wrongReference.ledgerDeltas.find((row) => row.orgId === ORG_HEALTHY)!.delta = -1;
+    expect(() => assertDrainPassObservation(expectation(), wrongReference)).toThrow(/reference/i);
+  });
+
   it('derives credit debit and balance truth from raw events', () => {
     const actual = observation();
     actual.creditGateEvents[0] = {
       ...actual.creditGateEvents[0]!, decision: 'allowed', reason: 'rule.auto_anchor_queue_run',
+      referenceId: 'anchor-1', requiredAmount: 1, balanceBefore: 10, balanceAfter: 9,
     };
     actual.passRows[0]!.queueCreditChargedAt = '2026-07-13T12:00:08.000Z';
     actual.creditLedgerEvents.push({
@@ -275,6 +309,7 @@ describe('assertDrainPassObservation — event-derived fail-closed R3 evidence',
     const actual = observation();
     actual.creditGateEvents[2] = {
       ...actual.creditGateEvents[2]!, decision: 'allowed', reason: 'rule.auto_anchor_queue_run',
+      referenceId: 'anchor-poison', requiredAmount: 1, balanceBefore: 1, balanceAfter: 0,
     };
     actual.passRows[2] = {
       ...actual.passRows[2]!, creditDenialReason: null, queueCreditDeniedAt: null,
@@ -290,11 +325,76 @@ describe('assertDrainPassObservation — event-derived fail-closed R3 evidence',
         orgId: ORG_POISON, kind: 'refund', amount: 1, referenceId: 'anchor-poison', occurredAt: '2026-07-13T12:00:09.000Z',
       },
     );
+    actual.orgBalances.find((row) => row.orgId === ORG_POISON)!.before = 1;
+    actual.orgBalances.find((row) => row.orgId === ORG_POISON)!.after = 1;
     expect(assertDrainPassObservation(expectation(), actual)).toMatchObject({
       poisonLeaves: 1,
       creditStarvedLeaves: 0,
       refundedFailureLeaves: 1,
     });
+  });
+
+  it('rejects charged+denied DB metadata and refund-before-debit chronology', () => {
+    const contradictoryMetadata = observation();
+    contradictoryMetadata.passRows[2]!.queueCreditChargedAt = '2026-07-13T12:00:08.500Z';
+    expect(() => assertDrainPassObservation(expectation(), contradictoryMetadata)).toThrow(/both charged and denied/);
+
+    const reversed = observation();
+    reversed.creditGateEvents[2] = {
+      ...reversed.creditGateEvents[2]!,
+      decision: 'allowed',
+      reason: 'rule.auto_anchor_queue_run',
+      referenceId: 'anchor-poison',
+      requiredAmount: 1,
+      balanceBefore: 1,
+      balanceAfter: 0,
+    };
+    reversed.passRows[2] = {
+      ...reversed.passRows[2]!,
+      creditDenialReason: null,
+      queueCreditDeniedAt: null,
+      queueCreditChargedAt: '2026-07-13T12:00:09.000Z',
+    };
+    reversed.creditLedgerEvents.push(
+      {
+        eventId: 'ledger-debit-reversed', schedulerExecutionId: EXECUTION_ID, fingerprint: FP_POISON,
+        orgId: ORG_POISON, kind: 'debit', amount: 1, referenceId: 'anchor-poison',
+        occurredAt: '2026-07-13T12:00:09.000Z',
+      },
+      {
+        eventId: 'ledger-refund-reversed', schedulerExecutionId: EXECUTION_ID, fingerprint: FP_POISON,
+        orgId: ORG_POISON, kind: 'refund', amount: 1, referenceId: 'anchor-poison',
+        occurredAt: '2026-07-13T12:00:08.500Z',
+      },
+    );
+    reversed.orgBalances.find((row) => row.orgId === ORG_POISON)!.before = 1;
+    reversed.orgBalances.find((row) => row.orgId === ORG_POISON)!.after = 1;
+    expect(() => assertDrainPassObservation(expectation(), reversed)).toThrow(/refund must occur strictly after its debit/);
+  });
+
+  it('rejects per-org gate balances that do not form one chronological sequence', () => {
+    const actual = observation();
+    for (const [index, fingerprint] of [FP_1, FP_2].entries()) {
+      actual.creditGateEvents[index] = {
+        ...actual.creditGateEvents[index]!,
+        decision: 'allowed',
+        reason: 'rule.auto_anchor_queue_run',
+        referenceId: `anchor-${index + 1}`,
+        requiredAmount: 1,
+        balanceBefore: 10,
+        balanceAfter: 9,
+        occurredAt: `2026-07-13T12:00:0${7 + index}.000Z`,
+      };
+      actual.passRows[index]!.queueCreditChargedAt = `2026-07-13T12:00:0${8 + index}.000Z`;
+      actual.creditLedgerEvents.push({
+        eventId: `ledger-sequence-${index}`, schedulerExecutionId: EXECUTION_ID, fingerprint,
+        orgId: ORG_HEALTHY, kind: 'debit', amount: 1, referenceId: `anchor-${index + 1}`,
+        occurredAt: `2026-07-13T12:00:0${8 + index}.000Z`,
+      });
+    }
+    actual.orgBalances.find((row) => row.orgId === ORG_HEALTHY)!.after = 8;
+    actual.ledgerDeltas.find((row) => row.orgId === ORG_HEALTHY)!.delta = -2;
+    expect(() => assertDrainPassObservation(expectation(), actual)).toThrow(/coherent chronological sequence/);
   });
 
   it('rejects malformed declaration identities before any adapter can arm', () => {
