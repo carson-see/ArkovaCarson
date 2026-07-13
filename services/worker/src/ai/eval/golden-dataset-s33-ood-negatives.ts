@@ -30,7 +30,6 @@ export const S33_OOD_NEGATIVES: S33HeldoutEntry[] = [
     groundTruth: {
       credentialType: 'OTHER',
       subType: 'other',
-      issuerName: 'Savanna Power & Lighting Company',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/ood/utility-bill',
@@ -49,8 +48,6 @@ export const S33_OOD_NEGATIVES: S33HeldoutEntry[] = [
     groundTruth: {
       credentialType: 'OTHER',
       subType: 'other',
-      issuerName: 'Kite String Airways',
-      issuedDate: '2026-05-22',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/ood/boarding-pass',
@@ -69,8 +66,6 @@ export const S33_OOD_NEGATIVES: S33HeldoutEntry[] = [
     groundTruth: {
       credentialType: 'OTHER',
       subType: 'other',
-      issuerName: 'The Copper Kettle Bistro',
-      issuedDate: '2026-04-03',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/ood/restaurant-receipt',
@@ -89,9 +84,6 @@ export const S33_OOD_NEGATIVES: S33HeldoutEntry[] = [
     groundTruth: {
       credentialType: 'OTHER',
       subType: 'other',
-      issuerName: 'National Transport and Safety Authority',
-      issuedDate: '2026-01-15',
-      jurisdiction: 'Kenya',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/ood/ke-ntsa-logbook',
@@ -110,9 +102,6 @@ export const S33_OOD_NEGATIVES: S33HeldoutEntry[] = [
     groundTruth: {
       credentialType: 'OTHER',
       subType: 'other',
-      issuerName: 'Ministry of Lands',
-      issuedDate: '2021-06-18',
-      jurisdiction: 'Kenya',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/ood/ke-land-title',
@@ -131,9 +120,6 @@ export const S33_OOD_NEGATIVES: S33HeldoutEntry[] = [
     groundTruth: {
       credentialType: 'OTHER',
       subType: 'other',
-      issuerName: 'Wattle & Bay Hotel',
-      issuedDate: '2026-03-14',
-      jurisdiction: 'Australia',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/ood/au-hotel-folio',
@@ -152,8 +138,6 @@ export const S33_OOD_NEGATIVES: S33HeldoutEntry[] = [
     groundTruth: {
       credentialType: 'OTHER',
       subType: 'other',
-      issuerName: 'Ironbark Fitness Club',
-      issuedDate: '2026-02-01',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/ood/gym-membership-letter',
@@ -172,8 +156,6 @@ export const S33_OOD_NEGATIVES: S33HeldoutEntry[] = [
     groundTruth: {
       credentialType: 'OTHER',
       subType: 'other',
-      issuerName: 'Cascade Outdoor Equipment Pty Ltd',
-      issuedDate: '2026-04-09',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/ood/warranty-registration',
@@ -192,8 +174,6 @@ export const S33_OOD_NEGATIVES: S33HeldoutEntry[] = [
     groundTruth: {
       credentialType: 'OTHER',
       subType: 'other',
-      issuerName: 'LedgerCon',
-      issuedDate: '2026-09-16',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/ood/conference-registration',

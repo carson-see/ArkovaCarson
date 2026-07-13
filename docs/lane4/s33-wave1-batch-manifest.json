@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "batchId": "S33-W1",
-  "revision": 8,
+  "revision": 9,
   "producerLane": "Lane 4",
   "acceptanceAuthority": "Lane 3",
   "status": "PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW",
-  "corpusRevisionParentCommit": "c56bc9958f774471ff62a31418c304149afd4bc6",
-  "producerRevisionPredecessorCommit": "c56bc9958f774471ff62a31418c304149afd4bc6",
+  "corpusRevisionParentCommit": "506ff62340db8f838ce68bc46ddfa6407735ce3c",
+  "producerRevisionPredecessorCommit": "506ff62340db8f838ce68bc46ddfa6407735ce3c",
   "lane3SupportBase": {
     "commit": "dd3ae1edecb005730762277daf17e15d8009459d",
     "typesPath": "services/worker/src/ai/eval/golden-dataset-s33-types.ts",
@@ -15,8 +15,8 @@
   },
   "corpusSourceBlobs": {
     "services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts": "4ac117c1663c6aefb63c7715440744af0e0b6a23",
-    "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts": "af1f7228d8d9b0a33a894420d8f0902c0fb83ee8",
-    "services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts": "33cf4fd3b35ef29fe90a13ed81b7a47ebc8d2fe4"
+    "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts": "5000824f2bd4dd7ac9cd58243daeb7ba23c4c0cd",
+    "services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts": "a261cf690c930040f7dee0361ed29d73d1d23426"
   },
   "intendedSplit": "held-out-candidate",
   "reviewOrder": "kenya-first",
@@ -188,6 +188,45 @@
           },
           "producerRevisionPredecessorCommit": "c56bc9958f774471ff62a31418c304149afd4bc6",
           "lane3SupportBaseCommit": "dd3ae1edecb005730762277daf17e15d8009459d"
+        },
+        {
+          "revision": 9,
+          "authority": "RTE Supermemory P1 truth correction and live PR review comment 3570778621",
+          "changedEntryIds": [
+            "GD-S33-AU-002",
+            "GD-S33-AU-011",
+            "GD-S33-OOD-001",
+            "GD-S33-OOD-002",
+            "GD-S33-OOD-003",
+            "GD-S33-OOD-004",
+            "GD-S33-OOD-005",
+            "GD-S33-OOD-006",
+            "GD-S33-OOD-007",
+            "GD-S33-OOD-008",
+            "GD-S33-OOD-009"
+          ],
+          "verifiedUnchangedEntryIds": [
+            "GD-S33-NUR-004",
+            "GD-S33-NUR-005",
+            "GD-S33-AU-008"
+          ],
+          "changes": [
+            "All nine OOD entries now carry pure abstention ground truth only: credentialType OTHER, subType other, and empty fraudSignals",
+            "AU-002 issuedDate now uses the explicit extract-generated date 2026-04-22 rather than historical First Registered date 2015-02-02",
+            "AU-011 issuedDate now uses the explicit extract-prepared date 2026-04-16 rather than historical company registration date 2021-11-03",
+            "NUR-004, NUR-005, and AU-008 were re-verified to contain no deliveryMethod and their already-correct corpus bytes were preserved"
+          ],
+          "corpusSourceTextChanged": false,
+          "normalizedInputChanged": false,
+          "normalizedInputPinsPreservedFromRevision8": true,
+          "remainingSubstantiveGroundTruthFields": {
+            "GD-S33-AU-002": 9,
+            "GD-S33-AU-011": 8,
+            "nonOodMinimum": 5,
+            "oodPureAbstention": 2
+          },
+          "producerRevisionPredecessorCommit": "506ff62340db8f838ce68bc46ddfa6407735ce3c",
+          "lane3SupportBaseCommit": "dd3ae1edecb005730762277daf17e15d8009459d"
         }
       ]
     },
@@ -224,7 +263,21 @@
       ]
     },
     "oodFiveFieldSemantics": {
-      "status": "BLOCKED_CTO_L3"
+      "status": "BLOCKED_PROTOCOL_CONTRADICTION_CTO_L3",
+      "entryIds": [
+        "GD-S33-OOD-001",
+        "GD-S33-OOD-002",
+        "GD-S33-OOD-003",
+        "GD-S33-OOD-004",
+        "GD-S33-OOD-005",
+        "GD-S33-OOD-006",
+        "GD-S33-OOD-007",
+        "GD-S33-OOD-008",
+        "GD-S33-OOD-009"
+      ],
+      "producerTruth": "Pure abstention labels contain only credentialType OTHER, subType other, and empty fraudSignals.",
+      "contradiction": "Acceptance protocol section 3 requires at least five non-null ground-truth fields and forbids subType other for every entry; padding OOD truth would invent extraction labels and violate the RTE P1 correction.",
+      "resolutionOwner": "Lane 3 / CTO"
     },
     "cpeSubtypeRatification": {
       "status": "BLOCKED_CTO_L3"
@@ -241,10 +294,12 @@
     "issuedDateAdjudicationSet": {
       "status": "BLOCKED_CTO_L3",
       "entryIds": [
-        "GD-S33-AU-002",
-        "GD-S33-AU-011",
         "GD-S33-BAR-010",
         "GD-S33-PDH-012"
+      ],
+      "resolvedEntryIdsInRevision9": [
+        "GD-S33-AU-002",
+        "GD-S33-AU-011"
       ]
     },
     "batchScopeOnly": {
