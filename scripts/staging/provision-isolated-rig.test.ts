@@ -29,6 +29,11 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(here, 'provision-isolated-rig.sh');
+const REPO_ROOT = resolve(here, '../..');
+const REPO_HEAD = execFileSync('git', ['rev-parse', 'HEAD'], {
+  cwd: REPO_ROOT,
+  encoding: 'utf8',
+}).trim();
 const script = readFileSync(SCRIPT, 'utf8');
 
 /** Run the provisioner in dry-run (no --apply → no side effects) and capture stdout+stderr. */
@@ -113,6 +118,13 @@ describe('provision-isolated-rig.sh — gemini profile model/prompt overrides', 
     // gemini rig still has no real chain exposure — mocks stay on, anchoring off.
     expect(out).toMatch(/USE_MOCKS=true/);
     expect(out).toMatch(/ENABLE_PROD_NETWORK_ANCHORING=false/);
+  });
+
+  it('defaults the v6 prompt selector to the exact activation value true', () => {
+    const { out, code } = dryRun(['--name', 's0-s2a-gemini', '--profile', 'gemini']);
+    expect(code).toBe(0);
+    expect(out).toMatch(/GEMINI_V6_PROMPT=true/);
+    expect(out).not.toMatch(/GEMINI_V6_PROMPT=v6(?:,|\s|$)/);
   });
 });
 
@@ -262,33 +274,87 @@ describe('provision-isolated-rig.sh — safety model preserved under the new ove
 
 const STUB_CRON_SECRET = 'stub-cron-secret-value-8f3a17';
 const STUB_SERVICE_URL = 'https://arkova-worker-stub.example.run.app';
+const STUB_REVISION = 'arkova-worker-stub-00001-abc';
+const STUB_IMAGE_DIGEST =
+  'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+const STUB_IMAGE_REF =
+  `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${STUB_IMAGE_DIGEST}`;
 
 interface ApplyRunResult {
   out: string;
   code: number;
   gcloudCalls: string[];
+  npxCalls: string[];
+  callOrder: string[];
+  artifactDir: string;
+}
+
+interface ApplyRunOptions {
+  imageRef?: string | null;
+  sourceHead?: string | null;
+  githubSha?: string | null;
+  soakId?: string | null;
+  tunedModel?: string;
+  preflightPayload?: string;
 }
 
 const stubDirs: string[] = [];
 
 /** Run the provisioner with --apply against a stubbed gcloud/npx PATH. */
-function applyRunStubbed(name: string, profile: string): ApplyRunResult {
+function applyRunStubbed(
+  name: string,
+  profile: string,
+  options: ApplyRunOptions = {},
+): ApplyRunResult {
   const stubDir = mkdtempSync(join(tmpdir(), 'provision-step4-stub-'));
   stubDirs.push(stubDir);
   const logFile = join(stubDir, 'gcloud-calls.log');
+  const npxLogFile = join(stubDir, 'npx-calls.log');
+  const orderLogFile = join(stubDir, 'call-order.log');
+  const schedulerStateDir = join(stubDir, 'scheduler-state');
+  const artifactDir = join(stubDir, 'artifacts');
   writeFileSync(logFile, '');
+  writeFileSync(npxLogFile, '');
+  writeFileSync(orderLogFile, '');
 
   writeFileSync(
     join(stubDir, 'gcloud'),
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "${logFile}"
+printf 'gcloud %s\\n' "$*" >> "${orderLogFile}"
 if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
-  echo '${STUB_SERVICE_URL}'
+  if [[ "$*" == *"status.latestReadyRevisionName"* ]]; then
+    echo '${STUB_REVISION}'
+  else
+    echo '${STUB_SERVICE_URL}'
+  fi
+  exit 0
+fi
+if [[ "$1" == "run" && "$2" == "revisions" && "$3" == "describe" ]]; then
+  if [[ "$*" == *"spec.containers[0].image"* ]]; then
+    echo '${options.imageRef ?? STUB_IMAGE_REF}'
+  elif [[ "$*" == *"metadata.labels.arkova-source-head"* ]]; then
+    echo '${options.sourceHead ?? REPO_HEAD}'
+  fi
   exit 0
 fi
 if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
   echo '${STUB_CRON_SECRET}'
+  exit 0
+fi
+if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "pause" ]]; then
+  mkdir -p '${schedulerStateDir}'
+  printf 'PAUSED' > '${schedulerStateDir}/'$4
+  exit 0
+fi
+if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "resume" ]]; then
+  mkdir -p '${schedulerStateDir}'
+  printf 'ENABLED' > '${schedulerStateDir}/'$4
+  exit 0
+fi
+if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "describe" ]]; then
+  cat '${schedulerStateDir}/'$4
   exit 0
 fi
 exit 0
@@ -300,6 +366,8 @@ exit 0
     join(stubDir, 'npx'),
     `#!/usr/bin/env bash
 set -euo pipefail
+printf '%s\\n' "$*" >> "${npxLogFile}"
+printf 'npx %s\\n' "$*" >> "${orderLogFile}"
 if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
   echo '{"id":"abcdefghijklmnopqrst"}'
   exit 0
@@ -308,7 +376,7 @@ if [[ "$1" == "supabase" ]]; then
   exit 0
 fi
 if [[ "$1" == "tsx" && "$2" == "scripts/ci/staging-honesty-preflight.ts" ]]; then
-  echo '{"environment_type":"clean_mirror"}'
+  echo '${options.preflightPayload ?? '{"environment_type":"clean_mirror"}'}'
   exit 0
 fi
 echo "unexpected npx call: $*" >&2
@@ -321,10 +389,9 @@ exit 64
     PATH: `${stubDir}:${process.env.PATH ?? ''}`,
     CONFIRM_PROVISION: name,
     CONFIRM_REAL_CONFIG: profile,
-    GITHUB_SHA: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    GITHUB_SHA: options.githubSha ?? REPO_HEAD,
     BASE_SHA: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    STAGING_IMAGE_DIGEST:
-      'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+    STAGING_ADMISSION_DIR: artifactDir,
     USER: 'rig-owner',
     // Apply-mode preconditions carried in by the concurrent main pipeline
     // (Supabase project create + per-rig runtime secrets + changed-behavior
@@ -336,6 +403,13 @@ exit 64
     STAGING_CHANGED_BEHAVIOR:
       'L2-S2a-FIX Step-4 Scheduler command validity under --apply (stubbed)',
   };
+  if (options.imageRef !== null) env.STAGING_PINNED_IMAGE = options.imageRef ?? STUB_IMAGE_REF;
+  if (options.sourceHead !== null) env.STAGING_SOURCE_HEAD_SHA = options.sourceHead ?? REPO_HEAD;
+  if (options.soakId !== null) env.STAGING_SOAK_ID = options.soakId ?? `soak-${name}`;
+  if (profile === 'gemini') {
+    env.STAGING_GEMINI_TUNED_MODEL =
+      options.tunedModel ?? 'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
+  }
 
   let out = '';
   let code = 0;
@@ -354,7 +428,13 @@ exit 64
   const gcloudCalls = readFileSync(logFile, 'utf8')
     .split('\n')
     .filter((line) => line.length > 0);
-  return { out, code, gcloudCalls };
+  const npxCalls = readFileSync(npxLogFile, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0);
+  const callOrder = readFileSync(orderLogFile, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0);
+  return { out, code, gcloudCalls, npxCalls, callOrder, artifactDir };
 }
 
 afterAll(() => {
@@ -416,6 +496,213 @@ describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under 
     );
     expect(orgQueue, 'chain SCHEDULER_JOBS must include org-queue-scheduler').toBeDefined();
     expect(orgQueue).toContain(`--uri=${STUB_SERVICE_URL}/jobs/org-queue-scheduler`);
+  });
+
+  it('deploys only the declared digest ref and stamps the declared source HEAD on the revision', () => {
+    const deploy = result.gcloudCalls.find((call) => call.startsWith('run deploy '));
+    expect(deploy).toContain(`--image=${STUB_IMAGE_REF}`);
+    expect(deploy).toContain(`--labels=arkova-source-head=${REPO_HEAD}`);
+  });
+
+  it('re-reads the deployed revision and verifies its image digest and source-HEAD label', () => {
+    expect(
+      result.gcloudCalls.some(
+        (call) =>
+          call.startsWith(`run revisions describe ${STUB_REVISION}`) &&
+          call.includes('spec.containers[0].image'),
+      ),
+    ).toBe(true);
+    expect(
+      result.gcloudCalls.some(
+        (call) =>
+          call.startsWith(`run revisions describe ${STUB_REVISION}`) &&
+          call.includes('metadata.labels.arkova-source-head'),
+      ),
+    ).toBe(true);
+  });
+
+  it('immediately pauses every created Scheduler job and verifies PAUSED before continuing', () => {
+    for (const create of schedulerCreates) {
+      const jobName = create.split(' ')[4];
+      expect(create).toContain('--schedule=0 0 31 2 *');
+      const createIndex = result.callOrder.indexOf(`gcloud ${create}`);
+      const pauseIndex = result.callOrder.findIndex(
+        (entry) => entry.startsWith(`gcloud scheduler jobs pause ${jobName} `),
+      );
+      const verifyIndex = result.callOrder.findIndex(
+        (entry) =>
+          entry.startsWith(`gcloud scheduler jobs describe ${jobName} `) &&
+          entry.includes('value(state)'),
+      );
+      expect(createIndex).toBeGreaterThanOrEqual(0);
+      expect(pauseIndex).toBe(createIndex + 1);
+      expect(verifyIndex).toBe(pauseIndex + 1);
+    }
+  });
+
+  it('keeps Scheduler paused through seed + clean_mirror, then resumes and verifies ENABLED', () => {
+    const lastPausedVerification = Math.max(
+      ...result.callOrder
+        .map((entry, index) =>
+          entry.startsWith('gcloud scheduler jobs describe ') && entry.includes('value(state)')
+            ? index
+            : -1,
+        )
+        .filter((index) => index >= 0)
+        .slice(0, schedulerCreates.length),
+    );
+    const seedIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith('npx supabase db query --linked --file '),
+    );
+    const preflightIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith('npx tsx scripts/ci/staging-honesty-preflight.ts '),
+    );
+    const firstResumeIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith('gcloud scheduler jobs resume '),
+    );
+    expect(lastPausedVerification).toBeLessThan(seedIndex);
+    expect(seedIndex).toBeLessThan(preflightIndex);
+    expect(preflightIndex).toBeLessThan(firstResumeIndex);
+
+    const resumes = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
+    const cadenceUpdates = result.gcloudCalls.filter((call) =>
+      call.startsWith('scheduler jobs update http '),
+    );
+    expect(resumes).toHaveLength(schedulerCreates.length);
+    expect(cadenceUpdates).toHaveLength(schedulerCreates.length);
+    for (const resume of resumes) {
+      const jobName = resume.split(' ')[3];
+      const resumeIndex = result.callOrder.indexOf(`gcloud ${resume}`);
+      const cadenceUpdateIndex = result.callOrder.findIndex(
+        (entry) =>
+          entry.startsWith(`gcloud scheduler jobs update http ${jobName} `) &&
+          entry.includes('--schedule=*/5 * * * *'),
+      );
+      expect(cadenceUpdateIndex).toBeGreaterThan(preflightIndex);
+      expect(cadenceUpdateIndex).toBeLessThan(resumeIndex);
+      const enabledVerification = result.callOrder.findIndex(
+        (entry, index) =>
+          index > resumeIndex &&
+          entry.startsWith(`gcloud scheduler jobs describe ${jobName} `) &&
+          entry.includes('value(state)'),
+      );
+      expect(enabledVerification).toBe(resumeIndex + 1);
+    }
+  });
+
+  it('emits admission v2 with provenance, non-secret critical config, preflight artifact, Scheduler state, and soak id', () => {
+    const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    expect(line).toBeTruthy();
+    const json = JSON.parse(line!.slice('ADMISSION_JSON='.length));
+    expect(json).toMatchObject({
+      schema_version: 2,
+      profile: 'chain',
+      soak_id: 'soak-s2afix-chain',
+      declared_source_head: REPO_HEAD,
+      deployed_revision: STUB_REVISION,
+      deployed_image_digest: STUB_IMAGE_DIGEST,
+      deployed_source_head: REPO_HEAD,
+      clean_mirror: {
+        result: 'environment_type=clean_mirror',
+        artifact: `${result.artifactDir}/clean-mirror-preflight-s2afix-chain.json`,
+      },
+      scheduler: {
+        applicable: true,
+        paused_through_clean_mirror: true,
+        state: 'resumed_after_clean_mirror',
+      },
+      critical_config: {
+        use_mocks: 'false',
+        enable_prod_network_anchoring: 'true',
+        bitcoin_network: 'mainnet',
+        bitcoin_utxo_provider: 'getblock',
+        kms_provider: 'gcp',
+        gemini_tuned_model: '',
+        gemini_v6_prompt: '',
+        gemini_tuned_response_schema: '<unset>',
+      },
+    });
+    expect(json.clean_mirror.verified_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(readFileSync(json.clean_mirror.artifact, 'utf8')).toContain('clean_mirror');
+  });
+});
+
+describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
+  it.each([
+    ['missing explicit image', { imageRef: null }, /immutable|digest|image/i],
+    [
+      'mutable image tag',
+      {
+        imageRef:
+          'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:mutable',
+      },
+      /immutable|digest|image/i,
+    ],
+    [
+      'declared source mismatch',
+      { sourceHead: 'dddddddddddddddddddddddddddddddddddddddd' },
+      /source|HEAD|SHA|mismatch/i,
+    ],
+    ['missing soak id', { soakId: null }, /soak[_ -]?id/i],
+  ] as const)('rejects %s before any infrastructure mutation', (_label, options, message) => {
+    const result = applyRunStubbed(`guard-${String(_label).replace(/\s+/g, '-').slice(0, 20)}`, 'mock', options);
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(message);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('scheduler jobs create '))).toBe(false);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('rejects a bare Gemini model label before project creation', () => {
+    const result = applyRunStubbed('guard-gemini-model', 'gemini', {
+      tunedModel: 'nessie-golden-v6',
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/projects\/.+\/locations\/.+\/(?:endpoints|models)\//i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+});
+
+describe('provision-isolated-rig.sh — failed preflight leaves Scheduler paused', () => {
+  const result = applyRunStubbed('paused-on-failure', 'chain', {
+    preflightPayload: '{"checks":[]}',
+  });
+
+  it('fails closed after clean_mirror rejection', () => {
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/environment_type/);
+  });
+
+  it('pauses every created job and never resumes any job', () => {
+    const creates = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs create http '));
+    const pauses = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs pause '));
+    const updates = result.gcloudCalls.filter((call) =>
+      call.startsWith('scheduler jobs update http '),
+    );
+    const resumes = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
+    expect(creates.length).toBeGreaterThan(0);
+    expect(pauses).toHaveLength(creates.length);
+    expect(updates).toHaveLength(0);
+    expect(resumes).toHaveLength(0);
+  });
+});
+
+describe('provision-isolated-rig.sh — valid Gemini admission', () => {
+  const endpoint = 'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
+  const result = applyRunStubbed('admit-gemini', 'gemini', { tunedModel: endpoint });
+
+  it('accepts a full endpoint resource and records exact non-secret prompt/schema values', () => {
+    expect(result.code, result.out).toBe(0);
+    const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    expect(line).toBeTruthy();
+    const json = JSON.parse(line!.slice('ADMISSION_JSON='.length));
+    expect(json.critical_config).toMatchObject({
+      gemini_tuned_model: endpoint,
+      gemini_v6_prompt: 'true',
+      gemini_tuned_response_schema: '<unset>',
+      use_mocks: 'true',
+      enable_prod_network_anchoring: 'false',
+    });
   });
 });
 

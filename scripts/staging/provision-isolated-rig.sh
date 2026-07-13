@@ -69,7 +69,13 @@ SUPABASE_REGION="${STAGING_SUPABASE_REGION:-us-east-2}"
 SUPABASE_PG_MAJOR="${STAGING_SUPABASE_PG_MAJOR:-17}"
 SUPABASE_ORG="${STAGING_SUPABASE_ORG:-byhkazrpmivhcsuqjtva}"
 SUPABASE_DB_PASSWORD="${STAGING_NEW_SUPABASE_DB_PASSWORD:-}"
-PINNED_IMAGE="${STAGING_PINNED_IMAGE:-us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:30e56792d1b1cdb8b2d658782d1e7d88994eaaa5}"
+IMAGE_WAS_EXPLICIT=0
+if [[ -n "${STAGING_PINNED_IMAGE:-}" ]]; then
+  PINNED_IMAGE="$STAGING_PINNED_IMAGE"
+  IMAGE_WAS_EXPLICIT=1
+else
+  PINNED_IMAGE="<required-in-apply:--image-or-STAGING_PINNED_IMAGE@sha256>"
+fi
 RUNTIME_SA="${STAGING_RUNTIME_SA_EMAIL:-270018525501-compute@developer.gserviceaccount.com}"
 
 # Profile selects the env/secret overlay for the worker deploy.
@@ -97,14 +103,22 @@ GEMINI_API_KEY_SECRET="${STAGING_GEMINI_API_KEY_SECRET:-gemini-api-key-staging}"
 KMS_PROVIDER_VALUE="${STAGING_KMS_PROVIDER:-gcp}"
 BITCOIN_NETWORK_VALUE="${STAGING_BITCOIN_NETWORK:-mainnet}"
 BITCOIN_UTXO_PROVIDER_VALUE="${STAGING_BITCOIN_UTXO_PROVIDER:-getblock}"
-GEMINI_TUNED_MODEL_VALUE="${STAGING_GEMINI_TUNED_MODEL:-nessie-golden-v6}"
-GEMINI_V6_PROMPT_VALUE="${STAGING_GEMINI_V6_PROMPT:-v6}"
+GEMINI_TUNED_MODEL_VALUE="${STAGING_GEMINI_TUNED_MODEL:-<required-in-gemini-apply:projects/.../locations/.../endpoints-or-models/...>}"
+GEMINI_V6_PROMPT_VALUE="${STAGING_GEMINI_V6_PROMPT:-true}"
 FRONTEND_URL_VALUE="${STAGING_FRONTEND_URL:-https://app.arkova.ai}"
 CRON_OIDC_SA="${STAGING_CRON_OIDC_SA:-$RUNTIME_SA}"
 
 NAME=""
 APPLY=0
-ADMISSION_SCHEMA_VERSION=1
+ADMISSION_SCHEMA_VERSION=2
+SOURCE_HEAD_WAS_EXPLICIT=0
+if [[ -n "${STAGING_SOURCE_HEAD_SHA:-}" ]]; then
+  DECLARED_SOURCE_HEAD="$STAGING_SOURCE_HEAD_SHA"
+  SOURCE_HEAD_WAS_EXPLICIT=1
+else
+  DECLARED_SOURCE_HEAD="${GITHUB_SHA:-<required-in-apply:--source-head-or-STAGING_SOURCE_HEAD_SHA>}"
+fi
+SOAK_ID="${STAGING_SOAK_ID:-<required-in-apply:--soak-id-or-STAGING_SOAK_ID>}"
 DRIVER_PATH="${STAGING_DRIVER_PATH:-services/worker/scripts/pr1408-chain-resilience-driver.ts}"
 TIER="${STAGING_TIER:-T3}"
 DURATION_MIN="${STAGING_DURATION_MIN:-2880}"
@@ -115,7 +129,8 @@ usage() {
   echo
   echo "Usage: $0 --name <rig-name> [--profile mock|chain|gemini] [--apply]"
   echo "          [--region us-east-2] [--gcp-region us-central1]"
-  echo "          [--image <ref>] [--org <supabase-org>] [--gcp-project arkova1]"
+  echo "          [--image <ref@sha256:digest>] [--source-head <40-char-sha>]"
+  echo "          [--soak-id <exclusive-soak-id>] [--org <supabase-org>] [--gcp-project arkova1]"
   echo "          [--artifact-dir docs/staging/<pr-or-rig>]"
   echo
   echo "  --profile mock   (default) safe: USE_MOCKS=true, anchoring off, no Scheduler."
@@ -133,7 +148,9 @@ while [[ $# -gt 0 ]]; do
     --apply) APPLY=1; shift ;;
     --region) SUPABASE_REGION="${2:?}"; shift 2 ;;
     --gcp-region) CLOUD_RUN_REGION="${2:?}"; shift 2 ;;
-    --image) PINNED_IMAGE="${2:?}"; shift 2 ;;
+    --image) PINNED_IMAGE="${2:?}"; IMAGE_WAS_EXPLICIT=1; shift 2 ;;
+    --source-head) DECLARED_SOURCE_HEAD="${2:?}"; SOURCE_HEAD_WAS_EXPLICIT=1; shift 2 ;;
+    --soak-id) SOAK_ID="${2:?}"; shift 2 ;;
     --org) SUPABASE_ORG="${2:?}"; shift 2 ;;
     --gcp-project) GCP_PROJECT="${2:?}"; shift 2 ;;
     --pg-major) SUPABASE_PG_MAJOR="${2:?}"; shift 2 ;;
@@ -249,6 +266,38 @@ if [[ $APPLY -eq 1 ]]; then
     echo "ERROR: live provision requires STAGING_DRIVER_PATH to exist; got '$DRIVER_PATH'." >&2
     exit 2
   fi
+  # Admission foundations fail before any cloud/database mutation. A tag is a
+  # mutable pointer, even when its text happens to contain a Git SHA; live rigs
+  # accept only a fully qualified digest reference supplied by the operator.
+  if [[ $IMAGE_WAS_EXPLICIT -ne 1 || ! "$PINNED_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: live provision requires an explicitly supplied immutable image ref" >&2
+    echo "       (--image or STAGING_PINNED_IMAGE) in registry/path@sha256:<64-hex> form; mutable tags are refused." >&2
+    exit 2
+  fi
+  if [[ $SOURCE_HEAD_WAS_EXPLICIT -ne 1 || ! "$DECLARED_SOURCE_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ERROR: live provision requires an explicit 40-char declared source HEAD via" >&2
+    echo "       --source-head or STAGING_SOURCE_HEAD_SHA." >&2
+    exit 2
+  fi
+  LOCAL_HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+  if [[ "$DECLARED_SOURCE_HEAD" != "$LOCAL_HEAD_SHA" ]]; then
+    echo "ERROR: declared source HEAD mismatch: declared=$DECLARED_SOURCE_HEAD git_HEAD=${LOCAL_HEAD_SHA:-<unresolved>}." >&2
+    exit 2
+  fi
+  if [[ -n "${GITHUB_SHA:-}" && "$DECLARED_SOURCE_HEAD" != "$GITHUB_SHA" ]]; then
+    echo "ERROR: declared source HEAD mismatch: declared=$DECLARED_SOURCE_HEAD GITHUB_SHA=$GITHUB_SHA." >&2
+    exit 2
+  fi
+  if [[ "$SOAK_ID" == \<required-in-apply:* || ! "$SOAK_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]]; then
+    echo "ERROR: live provision requires an explicit soak_id via --soak-id or STAGING_SOAK_ID" >&2
+    echo "       (3-128 characters: letters, digits, dot, underscore, colon, or hyphen)." >&2
+    exit 2
+  fi
+  if [[ "$PROFILE" == "gemini" && ! "$GEMINI_TUNED_MODEL_VALUE" =~ ^projects/[^/]+/locations/[^/]+/(endpoints|models)/[^/]+$ ]]; then
+    echo "ERROR: live gemini provision requires STAGING_GEMINI_TUNED_MODEL as a full" >&2
+    echo "       projects/<project>/locations/<location>/endpoints/<id> or models/<id> resource." >&2
+    exit 2
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -288,16 +337,31 @@ BASE_SECRETS=(
 
 ENV_VARS=("${BASE_ENV_VARS[@]}")
 SECRETS=("${BASE_SECRETS[@]}")
+USE_MOCKS_VALUE=""
+ENABLE_PROD_NETWORK_ANCHORING_VALUE=""
+ADMISSION_BITCOIN_NETWORK=""
+ADMISSION_BITCOIN_UTXO_PROVIDER=""
+ADMISSION_KMS_PROVIDER=""
+ADMISSION_GEMINI_TUNED_MODEL=""
+ADMISSION_GEMINI_V6_PROMPT=""
+ADMISSION_GEMINI_TUNED_RESPONSE_SCHEMA="<unset>"
 
 case "$PROFILE" in
   mock)
     # Safe default: no real chain, no real model.
+    USE_MOCKS_VALUE="true"
+    ENABLE_PROD_NETWORK_ANCHORING_VALUE="false"
     ENV_VARS+=("USE_MOCKS=true" "ENABLE_PROD_NETWORK_ANCHORING=false")
     ;;
   chain)
     # Real anchoring. USE_MOCKS off + prod-network on + KMS_PROVIDER + signer +
     # GetBlock RPC. config.ts superRefine requires KMS_PROVIDER + a signer when
     # mainnet anchoring is on, or the worker fails closed at boot (by design).
+    USE_MOCKS_VALUE="false"
+    ENABLE_PROD_NETWORK_ANCHORING_VALUE="true"
+    ADMISSION_BITCOIN_NETWORK="$BITCOIN_NETWORK_VALUE"
+    ADMISSION_BITCOIN_UTXO_PROVIDER="$BITCOIN_UTXO_PROVIDER_VALUE"
+    ADMISSION_KMS_PROVIDER="$KMS_PROVIDER_VALUE"
     ENV_VARS+=(
       "USE_MOCKS=false"
       "ENABLE_PROD_NETWORK_ANCHORING=true"
@@ -315,6 +379,10 @@ case "$PROFILE" in
     # Real tuned model + prompt. Chain stays mocked (no Bitcoin exposure for an
     # AI-behavior soak). Tuned model + prompt are non-secret selectors; the key
     # is a secret.
+    USE_MOCKS_VALUE="true"
+    ENABLE_PROD_NETWORK_ANCHORING_VALUE="false"
+    ADMISSION_GEMINI_TUNED_MODEL="$GEMINI_TUNED_MODEL_VALUE"
+    ADMISSION_GEMINI_V6_PROMPT="$GEMINI_V6_PROMPT_VALUE"
     ENV_VARS+=(
       "USE_MOCKS=true"
       "ENABLE_PROD_NETWORK_ANCHORING=false"
@@ -340,13 +408,36 @@ CREATED_PROJECT_REF=""
 CREATED_CLOUD_RUN_SERVICE=0
 CREATED_SUPABASE_SECRETS=0
 PREFLIGHT_JSON=""
+PREFLIGHT_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/clean-mirror-preflight-${NAME}.json"
+PREFLIGHT_VERIFIED_AT="<captured-after-clean_mirror>"
+DEPLOYED_REVISION="<captured-after-deploy>"
+DEPLOYED_IMAGE_REF="$PINNED_IMAGE"
+case "$PINNED_IMAGE" in
+  *@sha256:*) DEPLOYED_IMAGE_DIGEST="sha256:${PINNED_IMAGE##*@sha256:}" ;;
+  *) DEPLOYED_IMAGE_DIGEST="<verified-after-deploy>" ;;
+esac
+DEPLOYED_SOURCE_HEAD="$DECLARED_SOURCE_HEAD"
+SCHEDULER_APPLICABLE_JSON=false
+SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON=false
+SCHEDULER_STATE="not_applicable"
+SCHEDULER_CREATION_GUARD="not_applicable"
 
 # Cloud Scheduler is required for non-mock profiles: node-cron does NOT fire on a
 # throttled (min-instances=0) Cloud Run service, so the behavioral cron paths
 # (batch-anchors, check-confirmations, classify-proof-backcatalog, …) never run
 # without an external Scheduler POST. mock rigs have no behavioral cron to drive.
-SCHEDULER_JOBS=()
+# Bash 3.2 treats an expanded empty array as unset under `set -u`; retain one
+# empty sentinel for mock admission JSON, filtered out by the jq encoder below.
+SCHEDULER_JOBS=("")
+SCHEDULER_CONFIGURED_SCHEDULE="*/5 * * * *"
+# create-http has no atomic --paused flag. Create against a syntactically valid
+# non-firing hold schedule, pause + verify, then restore the pre-existing cadence
+# while still paused after clean_mirror. This changes no job/matrix semantics.
+SCHEDULER_HOLD_SCHEDULE="0 0 31 2 *"
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
+  SCHEDULER_APPLICABLE_JSON=true
+  SCHEDULER_STATE="planned_paused_until_clean_mirror_then_resume"
+  SCHEDULER_CREATION_GUARD="non-firing hold schedule; create then immediate pause + PAUSED verification"
   case "$PROFILE" in
     chain)  SCHEDULER_JOBS=("batch-anchors" "check-confirmations" "populate-confirmation-proofs" "org-queue-scheduler") ;;
     gemini) SCHEDULER_JOBS=("classify-proof-backcatalog") ;;
@@ -442,6 +533,15 @@ write_provision_state() {
     --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
     --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
     --arg image "$PINNED_IMAGE" \
+    --arg declared_source_head "$DECLARED_SOURCE_HEAD" \
+    --arg soak_id "$SOAK_ID" \
+    --arg deployed_revision "$DEPLOYED_REVISION" \
+    --arg deployed_image_digest "$DEPLOYED_IMAGE_DIGEST" \
+    --arg deployed_source_head "$DEPLOYED_SOURCE_HEAD" \
+    --arg scheduler_state "$SCHEDULER_STATE" \
+    --arg scheduler_creation_guard "$SCHEDULER_CREATION_GUARD" \
+    --arg preflight_artifact "$PREFLIGHT_ARTIFACT_PATH" \
+    --arg preflight_verified_at "$PREFLIGHT_VERIFIED_AT" \
     --arg state_path "$PROVISION_STATE_PATH" \
     --argjson created_cloud_run_service "$CREATED_CLOUD_RUN_SERVICE" \
     --argjson created_supabase_secrets "$CREATED_SUPABASE_SECRETS" \
@@ -461,6 +561,17 @@ write_provision_state() {
         supabase_service_role_key: $supabase_service_role_secret
       },
       image: $image,
+      declared_source_head: $declared_source_head,
+      soak_id: $soak_id,
+      deployed_revision: $deployed_revision,
+      deployed_image_digest: $deployed_image_digest,
+      deployed_source_head: $deployed_source_head,
+      scheduler_state: $scheduler_state,
+      scheduler_creation_guard: $scheduler_creation_guard,
+      clean_mirror: {
+        artifact: $preflight_artifact,
+        verified_at: $preflight_verified_at
+      },
       created_cloud_run_service: $created_cloud_run_service,
       created_supabase_secrets: $created_supabase_secrets,
       state_path: $state_path,
@@ -543,7 +654,9 @@ create_supabase_runtime_secrets() {
 }
 
 resolve_head_sha() {
-  if [[ -n "${GITHUB_SHA:-}" ]]; then
+  if [[ "$DECLARED_SOURCE_HEAD" != \<required-in-apply:* ]]; then
+    printf '%s\n' "$DECLARED_SOURCE_HEAD"
+  elif [[ -n "${GITHUB_SHA:-}" ]]; then
     printf '%s\n' "$GITHUB_SHA"
   else
     git rev-parse HEAD 2>/dev/null || printf 'unknown\n'
@@ -583,27 +696,56 @@ image_digest_from_ref() {
 }
 
 resolve_image_digest() {
-  if [[ -n "${STAGING_IMAGE_DIGEST:-}" ]]; then
-    printf '%s\n' "$STAGING_IMAGE_DIGEST"
-    return 0
-  fi
   if image_digest_from_ref "$PINNED_IMAGE"; then
     return 0
   fi
-  if [[ $APPLY -eq 1 ]]; then
-    local resolved digest
-    resolved="$(gcloud artifacts docker images describe "$PINNED_IMAGE" \
-      --project="$GCP_PROJECT" \
-      --format="value(image_summary.fully_qualified_digest)")"
-    digest="${resolved##*@}"
-    if [[ -z "$digest" || "$digest" == "$resolved" || "$digest" != sha256:* ]]; then
-      echo "ERROR: could not resolve image digest for $PINNED_IMAGE." >&2
-      exit 1
-    fi
-    printf '%s\n' "$digest"
-    return 0
+  printf '<required-immutable-image-digest>\n'
+}
+
+verify_deployed_revision_provenance() {
+  DEPLOYED_REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+    --region="$CLOUD_RUN_REGION" \
+    --project="$GCP_PROJECT" \
+    --format="value(status.latestReadyRevisionName)")"
+  if [[ -z "$DEPLOYED_REVISION" ]]; then
+    echo "ERROR: could not resolve latest ready revision for '$CLOUD_RUN_SERVICE'." >&2
+    exit 1
   fi
-  printf '<resolve-in-apply:%s>\n' "$PINNED_IMAGE"
+
+  DEPLOYED_IMAGE_REF="$(gcloud run revisions describe "$DEPLOYED_REVISION" \
+    --region="$CLOUD_RUN_REGION" \
+    --project="$GCP_PROJECT" \
+    --format="value(spec.containers[0].image)")"
+  DEPLOYED_SOURCE_HEAD="$(gcloud run revisions describe "$DEPLOYED_REVISION" \
+    --region="$CLOUD_RUN_REGION" \
+    --project="$GCP_PROJECT" \
+    --format="value(metadata.labels.arkova-source-head)")"
+
+  local expected_digest
+  expected_digest="$(image_digest_from_ref "$PINNED_IMAGE")"
+  DEPLOYED_IMAGE_DIGEST="$(image_digest_from_ref "$DEPLOYED_IMAGE_REF" 2>/dev/null || true)"
+  if [[ -z "$DEPLOYED_IMAGE_DIGEST" || "$DEPLOYED_IMAGE_DIGEST" != "$expected_digest" ]]; then
+    echo "ERROR: deployed revision image digest mismatch: expected=$expected_digest got=${DEPLOYED_IMAGE_DIGEST:-<missing>}." >&2
+    exit 1
+  fi
+  if [[ "$DEPLOYED_SOURCE_HEAD" != "$DECLARED_SOURCE_HEAD" ]]; then
+    echo "ERROR: deployed revision source HEAD mismatch: expected=$DECLARED_SOURCE_HEAD got=${DEPLOYED_SOURCE_HEAD:-<missing>}." >&2
+    exit 1
+  fi
+}
+
+verify_scheduler_job_state() {
+  local job_name="$1"
+  local expected_state="$2"
+  local actual_state
+  actual_state="$(gcloud scheduler jobs describe "$job_name" \
+    --project="$GCP_PROJECT" \
+    --location="$CLOUD_RUN_REGION" \
+    --format="value(state)")"
+  if [[ "$actual_state" != "$expected_state" ]]; then
+    echo "ERROR: Scheduler job '$job_name' state mismatch: expected=$expected_state got=${actual_state:-<missing>}." >&2
+    exit 1
+  fi
 }
 
 resolve_driver_sha256() {
@@ -655,16 +797,38 @@ emit_admission_json() {
     --arg kind "isolated_rig_admission" \
     --arg generated_at "$generated_at" \
     --arg rig_name "$rig_name" \
+    --arg profile "$PROFILE" \
+    --arg soak_id "$SOAK_ID" \
     --arg cloud_run_service "$cloud_run_service" \
     --arg tier "$TIER" \
     --argjson duration_min "$DURATION_MIN" \
     --arg sha "$head_sha" \
+    --arg declared_source_head "$DECLARED_SOURCE_HEAD" \
     --arg base_sha "$base_sha" \
     --arg image "$image" \
     --arg image_digest "$image_digest" \
+    --arg deployed_revision "$DEPLOYED_REVISION" \
+    --arg deployed_image_ref "$DEPLOYED_IMAGE_REF" \
+    --arg deployed_image_digest "$DEPLOYED_IMAGE_DIGEST" \
+    --arg deployed_source_head "$DEPLOYED_SOURCE_HEAD" \
     --arg tag_url "$tag_url" \
     --arg supabase_project_ref "$supabase_project_ref" \
     --arg preflight_result "$preflight_result" \
+    --arg preflight_artifact "$PREFLIGHT_ARTIFACT_PATH" \
+    --arg preflight_verified_at "$PREFLIGHT_VERIFIED_AT" \
+    --arg use_mocks "$USE_MOCKS_VALUE" \
+    --arg enable_prod_network_anchoring "$ENABLE_PROD_NETWORK_ANCHORING_VALUE" \
+    --arg bitcoin_network "$ADMISSION_BITCOIN_NETWORK" \
+    --arg bitcoin_utxo_provider "$ADMISSION_BITCOIN_UTXO_PROVIDER" \
+    --arg kms_provider "$ADMISSION_KMS_PROVIDER" \
+    --arg gemini_tuned_model "$ADMISSION_GEMINI_TUNED_MODEL" \
+    --arg gemini_v6_prompt "$ADMISSION_GEMINI_V6_PROMPT" \
+    --arg gemini_tuned_response_schema "$ADMISSION_GEMINI_TUNED_RESPONSE_SCHEMA" \
+    --argjson scheduler_applicable "$SCHEDULER_APPLICABLE_JSON" \
+    --argjson scheduler_paused_through_clean_mirror "$SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON" \
+    --arg scheduler_state "$SCHEDULER_STATE" \
+    --arg scheduler_creation_guard "$SCHEDULER_CREATION_GUARD" \
+    --argjson scheduler_jobs "$(printf '%s\n' "${SCHEDULER_JOBS[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
     --arg driver_path "$driver_path" \
     --arg driver_sha256 "$driver_sha256" \
     --arg changed_behavior "$changed_behavior" \
@@ -676,16 +840,47 @@ emit_admission_json() {
       kind: $kind,
       generated_at: $generated_at,
       rig_name: $rig_name,
+      profile: $profile,
+      soak_id: $soak_id,
       cloud_run_service: $cloud_run_service,
       tier: $tier,
       duration_min: $duration_min,
       sha: $sha,
+      declared_source_head: $declared_source_head,
       base_sha: $base_sha,
       image: $image,
       image_digest: $image_digest,
+      deployed_revision: $deployed_revision,
+      deployed_image_ref: $deployed_image_ref,
+      deployed_image_digest: $deployed_image_digest,
+      deployed_source_head: $deployed_source_head,
       tag_url: $tag_url,
       supabase_project_ref: $supabase_project_ref,
       preflight_result: $preflight_result,
+      clean_mirror: {
+        result: $preflight_result,
+        artifact: $preflight_artifact,
+        verified_at: $preflight_verified_at
+      },
+      critical_config: {
+        enable_ai_fraud: "false",
+        enable_ai_reports: "false",
+        use_mocks: $use_mocks,
+        enable_prod_network_anchoring: $enable_prod_network_anchoring,
+        bitcoin_network: $bitcoin_network,
+        bitcoin_utxo_provider: $bitcoin_utxo_provider,
+        kms_provider: $kms_provider,
+        gemini_tuned_model: $gemini_tuned_model,
+        gemini_v6_prompt: $gemini_v6_prompt,
+        gemini_tuned_response_schema: $gemini_tuned_response_schema
+      },
+      scheduler: {
+        applicable: $scheduler_applicable,
+        jobs: $scheduler_jobs,
+        creation_guard: $scheduler_creation_guard,
+        paused_through_clean_mirror: $scheduler_paused_through_clean_mirror,
+        state: $scheduler_state
+      },
       driver_path: $driver_path,
       driver_sha256: $driver_sha256,
       changed_behavior: $changed_behavior,
@@ -718,6 +913,8 @@ echo "Cloud Run service: $CLOUD_RUN_SERVICE"
 echo "Cloud Run region:  $CLOUD_RUN_REGION"
 echo "GCP project:       $GCP_PROJECT"
 echo "Pinned image:      $PINNED_IMAGE"
+echo "Declared source:   $DECLARED_SOURCE_HEAD"
+echo "Soak id:           $SOAK_ID"
 echo "Runtime SA:        $RUNTIME_SA"
 echo "mode:              $MODE_LABEL"
 echo "artifact dir:      $STAGING_ADMISSION_DIR"
@@ -817,6 +1014,7 @@ run_cmd gcloud run deploy "$CLOUD_RUN_SERVICE" \
   --project="$GCP_PROJECT" \
   --region="$CLOUD_RUN_REGION" \
   --image="$PINNED_IMAGE" \
+  --labels="arkova-source-head=${DECLARED_SOURCE_HEAD}" \
   --service-account="$RUNTIME_SA" \
   --no-allow-unauthenticated \
   --min-instances=0 \
@@ -828,7 +1026,8 @@ run_cmd gcloud run deploy "$CLOUD_RUN_SERVICE" \
   --set-secrets="$WORKER_SECRETS"
 if [[ $APPLY -eq 1 ]]; then
   CREATED_CLOUD_RUN_SERVICE=1
-  write_provision_state "cloud_run_deployed" ""
+  verify_deployed_revision_provenance
+  write_provision_state "cloud_run_provenance_verified" ""
 fi
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
   echo "#   NOTE (profile=$PROFILE): the real-config secrets referenced above must already"
@@ -875,16 +1074,32 @@ else
     echo "#    the secret value is never printed in either mode.)"
   fi
   for job in "${SCHEDULER_JOBS[@]}"; do
-    run_cmd_cron_redacted gcloud scheduler jobs create http "${CLOUD_RUN_SERVICE}-${job}" \
+    scheduler_job_name="${CLOUD_RUN_SERVICE}-${job}"
+    run_cmd_cron_redacted gcloud scheduler jobs create http "$scheduler_job_name" \
       --project="$GCP_PROJECT" \
       --location="$CLOUD_RUN_REGION" \
-      --schedule="*/5 * * * *" \
+      --schedule="$SCHEDULER_HOLD_SCHEDULE" \
       --uri="${WORKER_URL}/jobs/${job}" \
       --http-method=POST \
       --headers="X-Cron-Secret=${CRON_SECRET_VALUE}" \
       --oidc-service-account-email="$CRON_OIDC_SA" \
       --oidc-token-audience="$WORKER_URL"
+    # Cloud Scheduler's create-http command has no create-paused flag. The hold
+    # schedule cannot fire; pause immediately, verify PAUSED, and do not execute
+    # seed/preflight until every job is confirmed paused.
+    run_cmd gcloud scheduler jobs pause "$scheduler_job_name" \
+      --project="$GCP_PROJECT" \
+      --location="$CLOUD_RUN_REGION"
+    if [[ $APPLY -eq 1 ]]; then
+      verify_scheduler_job_state "$scheduler_job_name" "PAUSED"
+    else
+      print_cmd gcloud scheduler jobs describe "$scheduler_job_name" \
+        --project="$GCP_PROJECT" \
+        --location="$CLOUD_RUN_REGION" \
+        --format="value(state)"
+    fi
   done
+  SCHEDULER_STATE="paused_before_seed"
 fi
 echo
 
@@ -931,12 +1146,51 @@ if [[ $APPLY -eq 1 ]]; then
     exit 1
   fi
   PREFLIGHT_RESULT="environment_type=${PREFLIGHT_ENVIRONMENT}"
+  PREFLIGHT_VERIFIED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  mkdir -p "$STAGING_ADMISSION_DIR"
+  printf '%s\n' "$PREFLIGHT_JSON" | jq . >"$PREFLIGHT_ARTIFACT_PATH"
+  SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON=true
+  if [[ $SCHEDULER_APPLICABLE_JSON == true ]]; then
+    SCHEDULER_STATE="clean_mirror_admitted_scheduler_paused"
+  fi
+  write_provision_state "clean_mirror_admitted_scheduler_paused" ""
 else
   run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
     --project-ref "$NEW_PROJECT_REF" \
     --format json
 fi
 echo
+
+# Restore the pre-existing job cadence and resume only after clean_mirror was
+# admitted and its evidence artifact was written. A failed preflight exits above,
+# leaving every job verified PAUSED on the hold schedule.
+if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
+  echo "# Post-admission — restore Scheduler cadence, resume, verify ENABLED"
+  for job in "${SCHEDULER_JOBS[@]}"; do
+    scheduler_job_name="${CLOUD_RUN_SERVICE}-${job}"
+    run_cmd gcloud scheduler jobs update http "$scheduler_job_name" \
+      --project="$GCP_PROJECT" \
+      --location="$CLOUD_RUN_REGION" \
+      --schedule="$SCHEDULER_CONFIGURED_SCHEDULE"
+    run_cmd gcloud scheduler jobs resume "$scheduler_job_name" \
+      --project="$GCP_PROJECT" \
+      --location="$CLOUD_RUN_REGION"
+    if [[ $APPLY -eq 1 ]]; then
+      verify_scheduler_job_state "$scheduler_job_name" "ENABLED"
+    else
+      print_cmd gcloud scheduler jobs describe "$scheduler_job_name" \
+        --project="$GCP_PROJECT" \
+        --location="$CLOUD_RUN_REGION" \
+        --format="value(state)"
+    fi
+  done
+  if [[ $APPLY -eq 1 ]]; then
+    SCHEDULER_STATE="resumed_after_clean_mirror"
+  else
+    SCHEDULER_STATE="planned_resume_after_clean_mirror"
+  fi
+fi
+
 echo "# Provision plan complete."
 if [[ $APPLY -eq 1 ]]; then
   echo "# Admission JSON below is the rig inventory seed (see the 'Isolated Soak-Rig Automation Runbook'"
