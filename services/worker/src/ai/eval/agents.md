@@ -6,8 +6,9 @@ _Last updated: 2026-07-13_
 
 - `s33-batch-acceptance.ts` parses the actual Lane-4 manifest bytes and derives
   the complete entry universe. The strict schema includes the producer/Lane-3
-  bindings, three corpus-source blobs, three reconciled count maps, Kenya-first
-  ids/order, and all ten real Wave-1 self-check records/statuses (including the
+  bindings, three corpus-source blobs, the exact 81-entry id/order contract,
+  all three fixed count maps, the exact 11-entry Kenya-first and 9-entry OOD
+  sets, and all ten real Wave-1 self-check records/statuses (including the
   declared CTO/L3 blockers); toy `selfChecks.structural` manifests fail closed.
   Callers cannot supply ids or lower the fixed `ceil(10%)`, minimum-5 review
   floor. The ceremony uses four distinct records:
@@ -17,7 +18,10 @@ _Last updated: 2026-07-13_
   copied UTF-8 bytes/string, reject duplicate/unknown JSON keys, deep-freeze the
   verified snapshot, and bind raw-byte and canonical-JSON digests separately.
   The module-private, fixed-method audit transcript records commitment < freeze
-  < policy < reveal < consumption with a hash chain + fsync; it is explicitly
+  < policy < reveal < consumption with a hash chain + fsync. Before append, a
+  reveal must prove its freeze and policy bind the same selected commitment and
+  batch/revision; mixing valid records from separate ceremony chains fails
+  closed without poisoning the legitimate reveal. The transcript is explicitly
   NOT the privileged anti-replay root. One-time consumption is owned by an
   injected external atomic/monotonic `ConsumptionRegistry` keying policy digest
   + batch + revision before any result can return. `s33-acceptance-ledger.ts` is
@@ -67,7 +71,37 @@ _Last updated: 2026-07-13_
   recomputes every n=6..13 metric at one orchestration boundary. There is no
   public policy-only apply function and no API accepts caller-supplied metrics
   or a caller-supplied universe. Embedding scans reject non-finite inputs and
-  derived dot/norm/cosine overflow.
+  derived dot/norm/cosine overflow. Their provider and threshold are supplied
+  by the caller, so the exported scan is explicitly `diagnostic-untrusted` and
+  cannot serve as Lane-3 acceptance evidence; a future evidence-grade embedding
+  path must bind a CTO-signed policy, exact artifacts, and provider identity.
+- Harmless cosine rounding overshoot within `1e-12` is clamped to `[-1,1]`, so
+  an exact duplicate reports a hit instead of crashing. Grossly out-of-range or
+  non-finite arithmetic still fails closed.
+- Revision 11 is the exact three-entry governance/truth correction from the
+  final Lane-4 same-lane review: AU-002 `issuerName` is source-stated `Ahpra`,
+  KE-009 no longer derives an exact expiry date from issue date plus a 12-month
+  validity statement, and AU-002/AU-011 issued-date choices remain explicitly
+  `BLOCKED_CTO_L3` rather than self-certified. The revision-11 AU-KE blob,
+  entry set, normalized-input set, and datasheet-row digests are immutable
+  code-owned pins; r2-r10 history remains exact, including the revision-10
+  support head. OOD pure-abstention remains a declared CTO/protocol blocker.
+- Revision history intentionally passes both a schema/type layer and the exact
+  authoritative contract layer. Keep their mutation tests synchronized; the
+  duplicated checks are separate fail-closed controls, not interchangeable
+  implementations of one parser.
+- Sampling sorts ids with explicit ECMAScript UTF-16 code-unit order; never use
+  locale/ICU collation because it would make the signed sample host-dependent.
+- Ceremony hosts must provide the audited Git executable at `/usr/bin/git`.
+  Every production Git subprocess receives a fixed allowlisted environment;
+  inherited `GIT_DIR`, `GIT_WORK_TREE`, object-store alternates, `GIT_CONFIG*`,
+  loader, PATH, replacement refs, and external-diff redirection cannot alter
+  repository evidence.
+  Git object ids are exactly 40-hex SHA-1 or 64-hex SHA-256, never an in-between
+  length.
+  The transcript lock is deliberately fail-closed and is not auto-reaped. After
+  a crash, confirm the PID recorded in `<transcript>.lock` is not running, then
+  remove only that `.lock` file; never edit or remove the transcript.
 - `golden-dataset-s33-types.ts` is Lane-3-owned support code, separate from the
   Lane-4 corpus packet. Its v6 taxonomy is drift-tested against the live prompt.
   `S33_PROPOSED_SUBTYPES.CPE` remains explicitly unratified and must not enter a

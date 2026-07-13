@@ -171,6 +171,7 @@ interface OrchestratorConfiguration {
 
 export interface TestOnlyOrchestratorConfiguration extends OrchestratorConfiguration {
   revision10Pins?: Wave1Revision10Pins;
+  revision11Pins?: Wave1Revision11Pins;
 }
 
 export interface TestOnlyS33AcceptanceOrchestrator extends S33AcceptanceOrchestrator {
@@ -282,9 +283,26 @@ interface ParsedLexicalTextArtifact {
 }
 
 const REQUIRED_LEXICAL_N = [6, 7, 8, 9, 10, 11, 12, 13] as const;
+// Deliberately immune to PATH substitution. Any host that enables the CTO
+// trust root must provide the audited Git binary at this exact location. Git
+// also receives only this fixed environment so repository/config/object-store
+// redirection variables from the worker process cannot change the trust root.
 const GIT_EXECUTABLE = '/usr/bin/git';
+const GIT_SUBPROCESS_ENV = Object.freeze({
+  PATH: '/usr/bin:/bin',
+  LANG: 'C',
+  LC_ALL: 'C',
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+  GIT_CONFIG_COUNT: '0',
+  GIT_TERMINAL_PROMPT: '0',
+  GIT_OPTIONAL_LOCKS: '0',
+  GIT_ATTR_NOSYSTEM: '1',
+  GIT_NO_REPLACE_OBJECTS: '1',
+});
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-const GIT_COMMIT_PATTERN = /^[0-9a-f]{40,64}$/;
+const GIT_COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const WAVE1_MANIFEST_PATH = 'docs/lane4/s33-wave1-batch-manifest.json';
 const WAVE1_ENTRY_DATASHEET_PATH = 'docs/lane4/s33-wave1-entry-datasheet.json';
@@ -300,6 +318,7 @@ export interface Wave1Revision10Pins {
   readonly normalizedPinsSha256: string;
   readonly entryRowsSha256: string;
 }
+export type Wave1Revision11Pins = Wave1Revision10Pins;
 const WAVE1_EXCLUDED_PATHS = [
   '.sonarcloud.properties',
   'docs/lane4/s33-lane4-plan.md',
@@ -314,16 +333,54 @@ const WAVE1_PROTOCOL_ALLOWED_DIFF_PATHS = [
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
 ] as const;
+const wave1EntryIdRange = (prefix: string, count: number): string[] => Array.from(
+  { length: count },
+  (_, index) => `GD-S33-${prefix}-${String(index + 1).padStart(3, '0')}`,
+);
+const WAVE1_KENYA_ENTRY_IDS = Object.freeze(wave1EntryIdRange('KE', 11));
+const WAVE1_OOD_ENTRY_IDS = Object.freeze(wave1EntryIdRange('OOD', 9));
+const WAVE1_ENTRY_IDS = Object.freeze([
+  ...WAVE1_KENYA_ENTRY_IDS,
+  ...wave1EntryIdRange('NUR', 12),
+  ...wave1EntryIdRange('CPA', 13),
+  ...wave1EntryIdRange('BAR', 13),
+  ...wave1EntryIdRange('PDH', 12),
+  ...wave1EntryIdRange('AU', 11),
+  ...WAVE1_OOD_ENTRY_IDS,
+]);
+const WAVE1_DOMAIN_COUNTS = Object.freeze({
+  'au-ke-priority-documents': 22,
+  'professional-licensing': 50,
+  'out-of-distribution': 9,
+});
+const WAVE1_CREDENTIAL_TYPE_COUNTS = Object.freeze({
+  LICENSE: 11,
+  CERTIFICATE: 24,
+  CPE: 13,
+  CLE: 13,
+  DEGREE: 11,
+  OTHER: 9,
+});
+const WAVE1_CORPUS_SLICE_COUNTS = Object.freeze({
+  's33-au-ke-heldout': 22,
+  's33-licensing-heldout': 50,
+  's33-ood-negative': 9,
+});
 const WAVE1_TAXONOMY_ADJUDICATION_IDS = [
   'GD-S33-KE-003', 'GD-S33-AU-003', 'GD-S33-KE-006', 'GD-S33-AU-010',
 ] as const;
 const WAVE1_ISSUED_DATE_ADJUDICATION_IDS = ['GD-S33-BAR-010', 'GD-S33-PDH-012'] as const;
+const WAVE1_REVISION11_ISSUED_DATE_ADJUDICATION_IDS = [
+  'GD-S33-AU-002', 'GD-S33-AU-011', 'GD-S33-BAR-010', 'GD-S33-PDH-012',
+] as const;
 const WAVE1_REVISION9_RESOLVED_ISSUED_DATE_IDS = ['GD-S33-AU-002', 'GD-S33-AU-011'] as const;
 const WAVE1_INITIAL_LANE3_SUPPORT_COMMIT = 'dd3ae1edecb005730762277daf17e15d8009459d';
 // R9 is a logical history identifier and is intentionally not required to be
 // reachable from the final Team-3 support checkout used for the r10 restack.
 const WAVE1_REVISION9_COMMIT = 'b9bb1d3221d3567dbb08e1b23cab4dd687486738';
 const WAVE1_REVISION9_PREDECESSOR_COMMIT = '506ff62340db8f838ce68bc46ddfa6407735ce3c';
+const WAVE1_REVISION10_COMMIT = '1018e36844834537df29fb60eb871cb54475bc14';
+const WAVE1_REVISION10_SUPPORT_COMMIT = 'ee7bba26fc0e34a7a58bb684f45e4e3c4e6b2977';
 const WAVE1_R9_SUPPORT_REVIEW_STATE = 'PENDING_LANE3_REVIEW_PR';
 const WAVE1_R10_SUPPORT_REVIEW_STATE = 'LANE3_TOOLING_EXACT_HEAD_REVIEW_PASS';
 export const S33_WAVE1_REVISION10_PRODUCTION_PINS: Wave1Revision10Pins = deepFreeze({
@@ -335,6 +392,16 @@ export const S33_WAVE1_REVISION10_PRODUCTION_PINS: Wave1Revision10Pins = deepFre
   entriesSha256: '591b4f4b37e188f1ad7286f8bc2a7a6b407eb89674ed6321e898123c347800c0',
   normalizedPinsSha256: '8b4af182dcc161a041a8d933ec5d7277f2131f32cc6709ad75a2cd5acde2e7e2',
   entryRowsSha256: '37f0e9d32b9f25422c93aeec985a624b2840deab3f33e7a453c14531591befdf',
+});
+export const S33_WAVE1_REVISION11_PRODUCTION_PINS: Wave1Revision11Pins = deepFreeze({
+  sourceBlobs: {
+    'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts': '4ac117c1663c6aefb63c7715440744af0e0b6a23',
+    'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts': 'a1578a511e47bd839fda9ae31e5f3f93c99a3857',
+    'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts': 'a261cf690c930040f7dee0361ed29d73d1d23426',
+  },
+  entriesSha256: '591b4f4b37e188f1ad7286f8bc2a7a6b407eb89674ed6321e898123c347800c0',
+  normalizedPinsSha256: '8b4af182dcc161a041a8d933ec5d7277f2131f32cc6709ad75a2cd5acde2e7e2',
+  entryRowsSha256: '65a8a8a93cc098d2a7a3e284462f3e208ad7037bd950f077effe31456571da06',
 });
 const WAVE1_REMEDIATED_PAIR_IDS = [
   'GD-S33-NUR-001|GD-S33-NUR-011',
@@ -357,6 +424,7 @@ const WAVE1_REVISION_CHANGED_IDS: Readonly<Record<number, readonly string[]>> = 
     'GD-S33-OOD-007', 'GD-S33-OOD-008', 'GD-S33-OOD-009',
   ],
   10: [],
+  11: ['GD-S33-AU-002', 'GD-S33-AU-011', 'GD-S33-KE-009'],
 });
 const WAVE1_NORMALIZED_CHANGED_IDS: Readonly<Record<number, readonly string[]>> = Object.freeze({
   5: ['GD-S33-PDH-007'],
@@ -372,6 +440,10 @@ const WAVE1_REMAINING_FIELD_KEYS: Readonly<Record<number, readonly string[]>> = 
   6: ['GD-S33-PDH-007'],
   8: ['GD-S33-NUR-004', 'GD-S33-NUR-005'],
   9: ['GD-S33-AU-002', 'GD-S33-AU-011', 'nonOodMinimum', 'oodPureAbstention'],
+  11: [
+    'GD-S33-AU-002', 'GD-S33-AU-011', 'GD-S33-KE-009',
+    'nonOodMinimum', 'oodPureAbstention',
+  ],
 });
 const WAVE1_CORPUS_SLICE_BY_DOMAIN: Readonly<Record<string, string>> = Object.freeze({
   'au-ke-priority-documents': 's33-au-ke-heldout',
@@ -519,25 +591,25 @@ class StrictJsonParser {
       const character = this.text[this.index];
       this.index += 1;
       if (character === '"') return result;
-      if (character === '\\') {
-        const escape = this.text[this.index];
-        this.index += 1;
-        const simple: Record<string, string> = {
-          '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t',
-        };
-        if (escape in simple) {
-          result += simple[escape];
-          continue;
-        }
-        if (escape !== 'u') this.fail('invalid JSON string escape');
-        const hex = this.text.slice(this.index, this.index + 4);
-        if (!/^[0-9a-fA-F]{4}$/.test(hex)) this.fail('invalid JSON Unicode escape');
-        result += String.fromCharCode(Number.parseInt(hex, 16));
-        this.index += 4;
+      if (character !== '\\') {
+        if ((character.codePointAt(0) ?? 0) <= 0x1f) this.fail('unescaped control character in JSON string');
+        result += character;
         continue;
       }
-      if (character.charCodeAt(0) <= 0x1f) this.fail('unescaped control character in JSON string');
-      result += character;
+      const escape = this.text[this.index];
+      this.index += 1;
+      const simple: Record<string, string> = {
+        '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t',
+      };
+      if (Object.hasOwn(simple, escape)) {
+        result += simple[escape];
+        continue;
+      }
+      if (escape !== 'u') this.fail('invalid JSON string escape');
+      const hex = this.text.slice(this.index, this.index + 4);
+      if (!/^[\da-fA-F]{4}$/.test(hex)) this.fail('invalid JSON Unicode escape');
+      result += String.fromCodePoint(Number.parseInt(hex, 16));
+      this.index += 4;
     }
     this.fail('unterminated JSON string');
   }
@@ -643,22 +715,26 @@ function assertGitObject(value: unknown, label: string): asserts value is string
   }
 }
 
-function normalizeWave1Revision10Pins(value: Wave1Revision10Pins): Wave1Revision10Pins {
-  const pins = recordValue(value, 'Wave-1 revision-10 pins');
+function normalizeWave1RevisionPins(
+  value: Wave1Revision10Pins,
+  revision: 10 | 11,
+): Wave1Revision10Pins {
+  const label = `Wave-1 revision-${revision} pins`;
+  const pins = recordValue(value, label);
   assertExactKeys(
     pins,
     ['sourceBlobs', 'entriesSha256', 'normalizedPinsSha256', 'entryRowsSha256'],
-    'Wave-1 revision-10 pins',
+    label,
   );
-  const sourceBlobs = recordValue(pins.sourceBlobs, 'Wave-1 revision-10 pins.sourceBlobs');
-  assertExactKeys(sourceBlobs, WAVE1_SOURCE_BLOB_PATHS, 'Wave-1 revision-10 pins.sourceBlobs');
+  const sourceBlobs = recordValue(pins.sourceBlobs, `${label}.sourceBlobs`);
+  assertExactKeys(sourceBlobs, WAVE1_SOURCE_BLOB_PATHS, `${label}.sourceBlobs`);
   const normalizedSourceBlobs = Object.fromEntries(WAVE1_SOURCE_BLOB_PATHS.map((path) => {
-    assertGitObject(sourceBlobs[path], `Wave-1 revision-10 pins.sourceBlobs.${path}`);
+    assertGitObject(sourceBlobs[path], `${label}.sourceBlobs.${path}`);
     return [path, sourceBlobs[path]];
   })) as Record<(typeof WAVE1_SOURCE_BLOB_PATHS)[number], string>;
-  assertSha256(pins.entriesSha256, 'Wave-1 revision-10 pins.entriesSha256');
-  assertSha256(pins.normalizedPinsSha256, 'Wave-1 revision-10 pins.normalizedPinsSha256');
-  assertSha256(pins.entryRowsSha256, 'Wave-1 revision-10 pins.entryRowsSha256');
+  assertSha256(pins.entriesSha256, `${label}.entriesSha256`);
+  assertSha256(pins.normalizedPinsSha256, `${label}.normalizedPinsSha256`);
+  assertSha256(pins.entryRowsSha256, `${label}.entryRowsSha256`);
   return deepFreeze({
     sourceBlobs: normalizedSourceBlobs,
     entriesSha256: pins.entriesSha256,
@@ -740,6 +816,7 @@ function validateWave1SupportBindings(
   parsed: Readonly<Record<string, unknown>>,
   manifestRevision: number,
   revision10Pins: Wave1Revision10Pins,
+  revision11Pins: Wave1Revision11Pins,
 ): Wave1ManifestBindings {
   assertGitObject(parsed.corpusRevisionParentCommit, 'Manifest corpusRevisionParentCommit');
   assertGitObject(parsed.producerRevisionPredecessorCommit, 'Manifest producerRevisionPredecessorCommit');
@@ -751,6 +828,10 @@ function validateWave1SupportBindings(
     && parsed.producerRevisionPredecessorCommit !== WAVE1_REVISION9_COMMIT) {
     throw new Error('Manifest revision-10 producer predecessor must be the reviewed revision-9 commit');
   }
+  if (manifestRevision === 11
+    && parsed.producerRevisionPredecessorCommit !== WAVE1_REVISION10_COMMIT) {
+    throw new Error('Manifest revision-11 producer predecessor must be the reviewed revision-10 commit');
+  }
   const support = recordValue(parsed.lane3SupportBase, 'Manifest lane3SupportBase');
   assertExactKeys(support, ['commit', 'typesPath', 'typesBlob', 'reviewState'], 'Manifest lane3SupportBase');
   assertGitObject(support.commit, 'Manifest lane3SupportBase.commit');
@@ -758,19 +839,23 @@ function validateWave1SupportBindings(
   assertGitObject(support.typesBlob, 'Manifest lane3SupportBase.typesBlob');
   assertExactString(
     support.reviewState,
-    manifestRevision === 10 ? WAVE1_R10_SUPPORT_REVIEW_STATE : WAVE1_R9_SUPPORT_REVIEW_STATE,
+    manifestRevision >= 10 ? WAVE1_R10_SUPPORT_REVIEW_STATE : WAVE1_R9_SUPPORT_REVIEW_STATE,
     'Manifest lane3SupportBase.reviewState',
   );
-  if (manifestRevision === 10 && support.commit !== parsed.corpusRevisionParentCommit) {
-    throw new Error('Manifest revision-10 Lane-3 support commit must be the single Git parent');
+  if (manifestRevision >= 10 && support.commit !== parsed.corpusRevisionParentCommit) {
+    throw new Error(`Manifest revision-${manifestRevision} Lane-3 support commit must be the single Git parent`);
   }
 
   const sourceBlobs = recordValue(parsed.corpusSourceBlobs, 'Manifest corpusSourceBlobs');
   assertExactKeys(sourceBlobs, WAVE1_SOURCE_BLOB_PATHS, 'Manifest corpusSourceBlobs');
+  const activePins = manifestRevision === 11 ? revision11Pins : revision10Pins;
   for (const path of WAVE1_SOURCE_BLOB_PATHS) {
     assertGitObject(sourceBlobs[path], `Manifest corpusSourceBlobs.${path}`);
-    if (manifestRevision === 10 && sourceBlobs[path] !== revision10Pins.sourceBlobs[path]) {
-      throw new Error(`Manifest revision-10 corpus source blob ${path} must preserve the reviewed revision-9 pin`);
+    if (manifestRevision >= 10 && sourceBlobs[path] !== activePins.sourceBlobs[path]) {
+      const pinDescription = manifestRevision === 10
+        ? 'must preserve the reviewed revision-9 pin'
+        : 'does not match its reviewed revision-11 pin';
+      throw new Error(`Manifest revision-${manifestRevision} corpus source blob ${path} ${pinDescription}`);
     }
   }
   return {
@@ -824,16 +909,22 @@ const AUTHORIZED_REVISION_KEYS: Readonly<Record<number, readonly string[]>> = Ob
     'normalizedInputPinsPreservedFromRevision9', 'producerRevisionPredecessorCommit',
     'directBaseCommit', 'lane3SupportBaseCommit',
   ],
+  11: [
+    'revision', 'authority', 'changedEntryIds', 'changes', 'corpusSourceTextChanged',
+    'normalizedInputChanged', 'normalizedInputPinsPreservedFromRevision10',
+    'remainingSubstantiveGroundTruthFields', 'producerRevisionPredecessorCommit',
+    'lane3SupportBaseCommit',
+  ],
 });
 
 function wave1AuthorizedRevisionContract(
   bindings: Wave1ManifestBindings,
   manifestRevision: number,
 ): Record<string, unknown> {
-  const historicalSupportCommit = manifestRevision === 10
+  const historicalSupportCommit = manifestRevision >= 10
     ? WAVE1_INITIAL_LANE3_SUPPORT_COMMIT
     : bindings.supportCommit;
-  const revision9PredecessorCommit = manifestRevision === 10
+  const revision9PredecessorCommit = manifestRevision >= 10
     ? WAVE1_REVISION9_PREDECESSOR_COMMIT
     : bindings.producerRevisionPredecessorCommit;
   const revisions: Array<Record<string, unknown>> = [
@@ -957,7 +1048,7 @@ function wave1AuthorizedRevisionContract(
         lane3SupportBaseCommit: historicalSupportCommit,
       },
   ];
-  if (manifestRevision === 10) {
+  if (manifestRevision >= 10) {
     revisions.push({
       revision: 10,
       authority: 'RTE history-preserving restack onto the reviewed final Team 3 prerequisite',
@@ -968,7 +1059,35 @@ function wave1AuthorizedRevisionContract(
       sourceBlobsUnchangedFromRevision9: true,
       normalizedInputPinsPreservedFromRevision9: true,
       producerRevisionPredecessorCommit: WAVE1_REVISION9_COMMIT,
-      directBaseCommit: bindings.corpusRevisionParentCommit,
+      directBaseCommit: manifestRevision === 10
+        ? bindings.corpusRevisionParentCommit
+        : WAVE1_REVISION10_SUPPORT_COMMIT,
+      lane3SupportBaseCommit: manifestRevision === 10
+        ? bindings.supportCommit
+        : WAVE1_REVISION10_SUPPORT_COMMIT,
+    });
+  }
+  if (manifestRevision === 11) {
+    revisions.push({
+      revision: 11,
+      authority: 'Lane 4 same-lane review reject: source-grounding corrections and issued-date adjudication declaration',
+      changedEntryIds: ['GD-S33-AU-002', 'GD-S33-AU-011', 'GD-S33-KE-009'],
+      changes: [
+        'AU-002 issuerName corrected from expanded Australian Health Practitioner Regulation Agency to source-stated Ahpra',
+        'KE-009 removed the derived expiryDate because the source states only issue date and 12-month validity, not the exact expiry date',
+        'AU-002 and AU-011 issuedDate choices declared BLOCKED_CTO_L3 pending L3/CTO adjudication rather than self-certified',
+      ],
+      corpusSourceTextChanged: false,
+      normalizedInputChanged: false,
+      normalizedInputPinsPreservedFromRevision10: true,
+      remainingSubstantiveGroundTruthFields: {
+        'GD-S33-AU-002': 9,
+        'GD-S33-AU-011': 8,
+        'GD-S33-KE-009': 6,
+        nonOodMinimum: 5,
+        oodPureAbstention: 2,
+      },
+      producerRevisionPredecessorCommit: WAVE1_REVISION10_COMMIT,
       lane3SupportBaseCommit: bindings.supportCommit,
     });
   }
@@ -1097,7 +1216,7 @@ function validateAuthorizedRevision(
   for (const booleanKey of [
     'corpusDataChanged', 'sourceBlobsUnchangedFromRevision6', 'corpusSourceTextChanged',
     'normalizedInputPinsPreservedFromRevision8', 'sourceBlobsUnchangedFromRevision9',
-    'normalizedInputPinsPreservedFromRevision9',
+    'normalizedInputPinsPreservedFromRevision9', 'normalizedInputPinsPreservedFromRevision10',
   ]) {
     if (Object.hasOwn(revisionRecord, booleanKey)) {
       booleanValue(revisionRecord[booleanKey], `${label}.${booleanKey}`);
@@ -1137,7 +1256,9 @@ function validateAuthorizedRevision(
         revisionRecord.remainingSubstantiveGroundTruthFields,
         `${label}.remainingSubstantiveGroundTruthFields`,
         entryIds,
-        revision === 9 ? new Set(['nonOodMinimum', 'oodPureAbstention']) : new Set(),
+        revision === 9 || revision === 11
+          ? new Set(['nonOodMinimum', 'oodPureAbstention'])
+          : new Set(),
       );
       assertSameOrderedValues(
         Object.keys(remaining),
@@ -1202,10 +1323,10 @@ function validateWave1SelfChecks(
     entriesById,
   ));
   const expectedRevisionNumbers = Array.from({ length: manifestRevision - 1 }, (_, index) => index + 2);
-  if (![9, 10].includes(manifestRevision)
+  if (![9, 10, 11].includes(manifestRevision)
     || revisionNumbers.length !== expectedRevisionNumbers.length
     || revisionNumbers.some((revision, index) => revision !== expectedRevisionNumbers[index])) {
-    throw new Error('Manifest authorized revision history must be complete and contiguous through the declared revision 9 or 10');
+    throw new Error('Manifest authorized revision history must be complete and contiguous through the declared revision 9, 10, or 11');
   }
   const currentRevision = revisions.revisions.at(-1) as Record<string, unknown>;
   if (Object.hasOwn(currentRevision, 'producerRevisionPredecessorCommit')
@@ -1229,13 +1350,16 @@ function validateWave1SelfChecks(
     'Manifest selfChecks.withinTypeTokenOverlap',
   );
   assertExactString(overlap.status, 'PASS', 'Manifest selfChecks.withinTypeTokenOverlap.status');
-  if (overlap.threshold !== 0.8) throw new Error('Manifest within-type token overlap threshold must be 0.8');
+  if (typeof overlap.threshold !== 'number'
+    || Math.abs(overlap.threshold - 0.8) > Number.EPSILON / 4) {
+    throw new Error('Manifest within-type token overlap threshold must be 0.8');
+  }
   nonEmptyString(overlap.metric, 'Manifest selfChecks.withinTypeTokenOverlap.metric');
   if (!Array.isArray(overlap.violations) || overlap.violations.length !== 0) {
     throw new Error('Manifest within-type token overlap violations must be an empty array when status is PASS');
   }
   if (!Array.isArray(overlap.remediatedPairScores)) {
-    throw new Error('Manifest within-type token overlap remediatedPairScores must be an array');
+    throw new TypeError('Manifest within-type token overlap remediatedPairScores must be an array');
   }
   for (const [index, scoreValue] of overlap.remediatedPairScores.entries()) {
     const label = `Manifest selfChecks.withinTypeTokenOverlap.remediatedPairScores[${index}]`;
@@ -1307,11 +1431,10 @@ function validateWave1SelfChecks(
   );
 
   const issuedDate = recordValue(selfChecks.issuedDateAdjudicationSet, 'Manifest selfChecks.issuedDateAdjudicationSet');
-  assertExactKeys(
-    issuedDate,
-    ['status', 'entryIds', 'resolvedEntryIdsInRevision9'],
-    'Manifest selfChecks.issuedDateAdjudicationSet',
-  );
+  const issuedDateKeys = manifestRevision === 11
+    ? ['status', 'entryIds']
+    : ['status', 'entryIds', 'resolvedEntryIdsInRevision9'];
+  assertExactKeys(issuedDate, issuedDateKeys, 'Manifest selfChecks.issuedDateAdjudicationSet');
   assertExactString(issuedDate.status, 'BLOCKED_CTO_L3', 'Manifest selfChecks.issuedDateAdjudicationSet.status');
   const issuedDateIds = validateEntryIdArray(
     issuedDate.entryIds,
@@ -1320,19 +1443,23 @@ function validateWave1SelfChecks(
   );
   assertSameOrderedValues(
     issuedDateIds,
-    WAVE1_ISSUED_DATE_ADJUDICATION_IDS,
+    manifestRevision === 11
+      ? WAVE1_REVISION11_ISSUED_DATE_ADJUDICATION_IDS
+      : WAVE1_ISSUED_DATE_ADJUDICATION_IDS,
     'Manifest issuedDate adjudication complete set',
   );
-  const resolvedIssuedDateIds = validateEntryIdArray(
-    issuedDate.resolvedEntryIdsInRevision9,
-    'Manifest selfChecks.issuedDateAdjudicationSet.resolvedEntryIdsInRevision9',
-    entryIds,
-  );
-  assertSameOrderedValues(
-    resolvedIssuedDateIds,
-    WAVE1_REVISION9_RESOLVED_ISSUED_DATE_IDS,
-    'Manifest revision-9 resolved issuedDate complete set',
-  );
+  if (manifestRevision !== 11) {
+    const resolvedIssuedDateIds = validateEntryIdArray(
+      issuedDate.resolvedEntryIdsInRevision9,
+      'Manifest selfChecks.issuedDateAdjudicationSet.resolvedEntryIdsInRevision9',
+      entryIds,
+    );
+    assertSameOrderedValues(
+      resolvedIssuedDateIds,
+      WAVE1_REVISION9_RESOLVED_ISSUED_DATE_IDS,
+      'Manifest revision-9 resolved issuedDate complete set',
+    );
+  }
 
   const scope = recordValue(selfChecks.batchScopeOnly, 'Manifest selfChecks.batchScopeOnly');
   assertExactKeys(
@@ -1399,6 +1526,7 @@ interface LoadedBatchManifest {
 function loadBatchManifest(
   content: ArtifactContent,
   revision10Pins: Wave1Revision10Pins = S33_WAVE1_REVISION10_PRODUCTION_PINS,
+  revision11Pins: Wave1Revision11Pins = S33_WAVE1_REVISION11_PRODUCTION_PINS,
 ): LoadedBatchManifest {
   const document = parseStrictJsonDocument(content, 'Manifest');
   const parsed = document.parsed;
@@ -1419,7 +1547,7 @@ function loadBatchManifest(
     'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
     'Manifest status',
   );
-  const bindings = validateWave1SupportBindings(parsed, revision, revision10Pins);
+  const bindings = validateWave1SupportBindings(parsed, revision, revision10Pins, revision11Pins);
   const entryCount = positiveInteger(parsed.entryCount, 'Manifest entryCount');
   const intendedSplit = nonEmptyString(parsed.intendedSplit, 'Manifest intendedSplit');
   assertExactString(intendedSplit, 'held-out-candidate', 'Manifest intendedSplit');
@@ -1439,30 +1567,72 @@ function loadBatchManifest(
       normalizedInputSha256: candidate.normalizedInputSha256,
     };
   });
-  assertUniqueIds(entries.map(({ id }) => id), 'Manifest entries universe');
-  if (revision === 10) {
+  const entryIds = entries.map(({ id }) => id);
+  assertUniqueIds(entryIds, 'Manifest entries universe');
+  if (entryCount !== WAVE1_ENTRY_IDS.length || entries.length !== WAVE1_ENTRY_IDS.length) {
+    throw new Error('Manifest exact Wave-1 universe must contain all 81 entries');
+  }
+  const actualKenyaIds = entries.filter(({ id }) => id.startsWith('GD-S33-KE-')).map(({ id }) => id);
+  assertSameOrderedValues(
+    actualKenyaIds,
+    WAVE1_KENYA_ENTRY_IDS,
+    'Manifest exact Wave-1 Kenya 11-entry id set',
+  );
+  const prefixedOodIds = entries.filter(({ id }) => id.startsWith('GD-S33-OOD-')).map(({ id }) => id);
+  assertSameOrderedValues(
+    prefixedOodIds,
+    WAVE1_OOD_ENTRY_IDS,
+    'Manifest exact Wave-1 OOD 9-entry id set',
+  );
+  assertSameOrderedValues(entryIds, WAVE1_ENTRY_IDS, 'Manifest exact Wave-1 81-entry universe');
+  if (revision >= 10) {
+    const activePins = revision === 11 ? revision11Pins : revision10Pins;
     const normalizedPinsSha256 = sha256(canonicaliseJson(entries.map(({ id, normalizedInputSha256 }) => ({
       id,
       normalizedInputSha256,
     }))));
-    if (normalizedPinsSha256 !== revision10Pins.normalizedPinsSha256) {
-      throw new Error('Manifest revision-10 normalized-input pins must preserve the reviewed revision-9 pin set');
+    if (normalizedPinsSha256 !== activePins.normalizedPinsSha256) {
+      const pinDescription = revision === 10
+        ? 'must preserve the reviewed revision-9 pin set'
+        : 'do not match the reviewed revision-11 pin set';
+      throw new Error(`Manifest revision-${revision} normalized-input pins ${pinDescription}`);
     }
-    if (sha256(canonicaliseJson(entries)) !== revision10Pins.entriesSha256) {
-      throw new Error('Manifest revision-10 entries must preserve the reviewed revision-9 ground-truth set');
+    if (sha256(canonicaliseJson(entries)) !== activePins.entriesSha256) {
+      const pinDescription = revision === 10
+        ? 'must preserve the reviewed revision-9 ground-truth set'
+        : 'do not match the reviewed revision-11 ground-truth pin';
+      throw new Error(`Manifest revision-${revision} entries ${pinDescription}`);
     }
   }
   if (entryCount !== entries.length) throw new Error('Manifest entryCount does not match entries length');
   if (!isRecord(parsed.counts)) throw new Error('Manifest counts must be an object');
   assertExactKeys(parsed.counts, ['byDomain', 'byCredentialType', 'byCorpusSlice'], 'Manifest counts');
-  assertCounts(parseCountMap(parsed.counts.byDomain, 'Manifest counts.byDomain'), countBy(entries, 'domain'), 'Manifest counts.byDomain');
+  const byDomain = parseCountMap(parsed.counts.byDomain, 'Manifest counts.byDomain');
   assertCounts(
-    parseCountMap(parsed.counts.byCredentialType, 'Manifest counts.byCredentialType'),
+    byDomain,
+    new Map(Object.entries(WAVE1_DOMAIN_COUNTS)),
+    'Manifest counts.byDomain exact Wave-1 contract',
+  );
+  assertCounts(byDomain, countBy(entries, 'domain'), 'Manifest counts.byDomain');
+  const byCredentialType = parseCountMap(parsed.counts.byCredentialType, 'Manifest counts.byCredentialType');
+  assertCounts(
+    byCredentialType,
+    new Map(Object.entries(WAVE1_CREDENTIAL_TYPE_COUNTS)),
+    'Manifest counts.byCredentialType exact Wave-1 contract',
+  );
+  assertCounts(
+    byCredentialType,
     countBy(entries, 'credentialType'),
     'Manifest counts.byCredentialType',
   );
+  const byCorpusSlice = parseCountMap(parsed.counts.byCorpusSlice, 'Manifest counts.byCorpusSlice');
   assertCounts(
-    parseCountMap(parsed.counts.byCorpusSlice, 'Manifest counts.byCorpusSlice'),
+    byCorpusSlice,
+    new Map(Object.entries(WAVE1_CORPUS_SLICE_COUNTS)),
+    'Manifest counts.byCorpusSlice exact Wave-1 contract',
+  );
+  assertCounts(
+    byCorpusSlice,
     countByCorpusSlice(entries),
     'Manifest counts.byCorpusSlice',
   );
@@ -1470,7 +1640,11 @@ function loadBatchManifest(
   if (kenyaEntryIds.some((id) => !/^GD-S33-KE-\d{3}$/.test(id))) {
     throw new Error('Manifest Kenya entry ids must use the GD-S33-KE-NNN contract');
   }
-  const actualKenyaIds = entries.filter(({ id }) => id.startsWith('GD-S33-KE-')).map(({ id }) => id);
+  assertSameOrderedValues(
+    kenyaEntryIds,
+    WAVE1_KENYA_ENTRY_IDS,
+    'Manifest declared exact Wave-1 Kenya 11-entry id set',
+  );
   assertSameOrderedValues(kenyaEntryIds, actualKenyaIds, 'Manifest Kenya ids');
   assertSameOrderedValues(
     entries.slice(0, kenyaEntryIds.length).map(({ id }) => id),
@@ -1480,6 +1654,12 @@ function loadBatchManifest(
   if (entries.slice(0, kenyaEntryIds.length).some(({ domain }) => domain !== 'au-ke-priority-documents')) {
     throw new Error('Manifest Kenya-first entries must belong to au-ke-priority-documents');
   }
+  const actualOodIds = entries.filter(({ domain }) => domain === 'out-of-distribution').map(({ id }) => id);
+  assertSameOrderedValues(
+    actualOodIds,
+    WAVE1_OOD_ENTRY_IDS,
+    'Manifest domain-bound exact Wave-1 OOD 9-entry id set',
+  );
   validateWave1SelfChecks(parsed.selfChecks, entryCount, revision, entries, bindings);
   const manifest = deepFreeze({
     schemaVersion: 1 as const,
@@ -1835,9 +2015,20 @@ class AcceptanceAuditTranscript {
     this.appendFixed(event, (events) => {
       const indices = this.sequenceIndices(events, event);
       const commitment = events[indices.commitment];
+      const freeze = events[indices.freeze];
+      const policy = events[indices.policy];
       if (commitment.kind !== 'salt-commitment-recorded'
         || commitment.saltCommitmentSha256 !== event.revealedSaltSha256) {
         throw new Error('Revealed salt does not match the durably recorded signed commitment');
+      }
+      if (freeze.kind !== 'manifest-freeze-recorded'
+        || freeze.commitmentArtifactCanonicalSha256 !== event.commitmentArtifactCanonicalSha256
+        || policy.kind !== 'selection-policy-recorded'
+        || policy.commitmentArtifactCanonicalSha256 !== event.commitmentArtifactCanonicalSha256
+        || policy.freezeArtifactCanonicalSha256 !== event.freezeArtifactCanonicalSha256
+        || policy.batchId !== freeze.batchId
+        || policy.revision !== freeze.revision) {
+        throw new Error('Reveal must bind the same authenticated commitment, freeze, and policy; mixed ceremony chains are forbidden');
       }
       if (events.some((prior) => prior.kind === 'salt-reveal-recorded'
         && prior.commitmentArtifactCanonicalSha256 === event.commitmentArtifactCanonicalSha256)) {
@@ -1891,16 +2082,13 @@ class AcceptanceAuditTranscript {
     reveal: number;
   } {
     const commitment = events.findIndex((event) => event.kind === 'salt-commitment-recorded'
-      && (references.commitmentArtifactCanonicalSha256 === ''
-        || event.artifactCanonicalSha256 === references.commitmentArtifactCanonicalSha256));
+      && event.artifactCanonicalSha256 === references.commitmentArtifactCanonicalSha256);
     const freeze = events.findIndex((event) => event.kind === 'manifest-freeze-recorded'
-      && (references.freezeArtifactCanonicalSha256 === ''
-        || event.artifactCanonicalSha256 === references.freezeArtifactCanonicalSha256));
+      && event.artifactCanonicalSha256 === references.freezeArtifactCanonicalSha256);
     const policy = events.findIndex((event) => event.kind === 'selection-policy-recorded'
       && event.artifactCanonicalSha256 === references.policyArtifactCanonicalSha256);
     const reveal = events.findIndex((event) => event.kind === 'salt-reveal-recorded'
-      && (references.revealCanonicalSha256 === ''
-        || event.revealCanonicalSha256 === references.revealCanonicalSha256));
+      && event.revealCanonicalSha256 === references.revealCanonicalSha256);
     if (commitment < 0) throw new Error('Salt commitment is not durably recorded');
     if (freeze < 0) throw new Error('Manifest freeze is not durably recorded');
     if (policy < 0) throw new Error('Selection policy is not durably recorded');
@@ -1938,7 +2126,11 @@ class AcceptanceAuditTranscript {
       );
     } catch (error) {
       if (isRecord(error) && error.code === 'EEXIST') {
-        throw new Error('Acceptance audit transcript is locked by another process', { cause: error });
+        throw new Error(
+          'Acceptance audit transcript is locked. For crash recovery, confirm the recorded process is not running, '
+          + 'then remove only the .lock file; never alter or remove the transcript.',
+          { cause: error },
+        );
       }
       throw error;
     }
@@ -2063,13 +2255,20 @@ function xorshift32(seed: number): () => number {
     state ^= state << 13;
     state ^= state >>> 17;
     state ^= state << 5;
-    return (state >>> 0) / 0x1_0000_0000;
+    return (state >>> 0) / (2 ** 32);
   };
+}
+
+/** ECMAScript lexicographic UTF-16 code-unit order; independent of host locale/ICU data. */
+function compareCodeUnitStrings(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
   readonly #config: OrchestratorConfiguration;
   readonly #revision10Pins: Wave1Revision10Pins;
+  readonly #revision11Pins: Wave1Revision11Pins;
   readonly #transcript: AcceptanceAuditTranscript;
   readonly #publicKeyFingerprintSha256: string;
   readonly #createConsumptionRecord: ConsumptionRegistry['createIfAbsent'];
@@ -2077,6 +2276,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
   constructor(
     config: OrchestratorConfiguration,
     revision10Pins: Wave1Revision10Pins = S33_WAVE1_REVISION10_PRODUCTION_PINS,
+    revision11Pins: Wave1Revision11Pins = S33_WAVE1_REVISION11_PRODUCTION_PINS,
   ) {
     const createIfAbsent = config.consumptionRegistry?.createIfAbsent;
     if (typeof createIfAbsent !== 'function') {
@@ -2093,7 +2293,8 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       trustRoot,
       repositoryRoot: realpathSync(config.repositoryRoot),
     };
-    this.#revision10Pins = normalizeWave1Revision10Pins(revision10Pins);
+    this.#revision10Pins = normalizeWave1RevisionPins(revision10Pins, 10);
+    this.#revision11Pins = normalizeWave1RevisionPins(revision11Pins, 11);
     if (!GIT_COMMIT_PATTERN.test(config.verificationCommitSha)) throw new Error('Verification Git commit must be exact');
     this.#createConsumptionRecord = createIfAbsent.bind(config.consumptionRegistry);
     this.#publicKeyFingerprintSha256 = validateTrustRoot(trustRoot).fingerprint;
@@ -2126,7 +2327,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       validateFreezePayload,
     );
     const payload = verified.payload;
-    const loadedManifest = loadBatchManifest(manifestContent, this.#revision10Pins);
+    const loadedManifest = loadBatchManifest(manifestContent, this.#revision10Pins, this.#revision11Pins);
     const manifest = loadedManifest.manifest;
     if (manifest.batchId !== payload.batchId || manifest.revision !== payload.revision) throw new Error('Freeze batch/revision does not match manifest');
     if (loadedManifest.rawSha256 !== payload.manifestRawSha256
@@ -2211,7 +2412,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       throw new Error('Ceremony artifact digest references do not form one authenticated chain');
     }
     if (sha256(reveal.salt) !== commitment.payload.saltCommitment.value) throw new Error('Revealed salt does not match signed commitment');
-    const loadedManifest = loadBatchManifest(input.manifestContent, this.#revision10Pins);
+    const loadedManifest = loadBatchManifest(input.manifestContent, this.#revision10Pins, this.#revision11Pins);
     const manifest = loadedManifest.manifest;
     if (manifest.batchId !== freezePayload.batchId || manifest.revision !== freezePayload.revision
       || manifest.batchId !== policyPayload.batchId || manifest.revision !== policyPayload.revision) {
@@ -2225,7 +2426,8 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
 
     const seedDigest = sha256(`${loadedManifest.rawSha256}:${reveal.salt}`);
     const random = xorshift32(Number.parseInt(seedDigest.slice(0, 8), 16));
-    const shuffled = manifest.entries.map(({ id }) => id).sort();
+    const shuffled = manifest.entries.map(({ id }) => id)
+      .sort(compareCodeUnitStrings);
     for (let index = shuffled.length - 1; index > 0; index -= 1) {
       const swapIndex = Math.floor(random() * (index + 1));
       [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
@@ -2361,10 +2563,13 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     }
     const commit = payload.gitEvidence.freezeCommitSha;
     try {
-      execFileSync(GIT_EXECUTABLE, ['-C', this.#config.repositoryRoot, 'cat-file', '-e', `${commit}^{commit}`], { stdio: 'ignore' });
+      execFileSync(GIT_EXECUTABLE, ['-C', this.#config.repositoryRoot, 'cat-file', '-e', `${commit}^{commit}`], {
+        env: GIT_SUBPROCESS_ENV,
+        stdio: 'ignore',
+      });
       execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor', commit, this.#config.verificationCommitSha,
-      ], { stdio: 'ignore' });
+      ], { env: GIT_SUBPROCESS_ENV, stdio: 'ignore' });
     } catch (error) {
       throw new Error('Freeze Git commit is missing or is not an ancestor of verification commit', { cause: error });
     }
@@ -2372,11 +2577,11 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     try {
       committedManifest = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'show', `${commit}:${payload.gitEvidence.manifestPath}`,
-      ]);
+      ], { env: GIT_SUBPROCESS_ENV });
     } catch (error) {
       throw new Error('Freeze Git commit does not contain the declared manifest path', { cause: error });
     }
-    const committed = loadBatchManifest(committedManifest, this.#revision10Pins);
+    const committed = loadBatchManifest(committedManifest, this.#revision10Pins, this.#revision11Pins);
     if (committed.rawSha256 !== payload.manifestRawSha256
       || committed.canonicalSha256 !== payload.manifestCanonicalSha256) {
       throw new Error('Freeze Git blob does not match authenticated raw/canonical manifest hashes');
@@ -2395,13 +2600,13 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     try {
       const lineage = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'rev-list', '--parents', '-n', '1', commit,
-      ], { encoding: 'utf8' }).trim().split(/\s+/);
+      ], { encoding: 'utf8', env: GIT_SUBPROCESS_ENV }).trim().split(/\s+/);
       if (lineage.length !== 2) throw new Error('Freeze commit must have exactly one parent');
       [, actualParent] = lineage;
       if (manifest.revision === 9) {
         execFileSync(GIT_EXECUTABLE, [
           '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${predecessorCommit}^{commit}`,
-        ], { stdio: 'ignore' });
+        ], { env: GIT_SUBPROCESS_ENV, stdio: 'ignore' });
       }
     } catch (error) {
       throw new Error('Freeze producer predecessor is missing from Git or freeze lineage is invalid', { cause: error });
@@ -2415,15 +2620,15 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     try {
       execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${supportCommit}^{commit}`,
-      ], { stdio: 'ignore' });
+      ], { env: GIT_SUBPROCESS_ENV, stdio: 'ignore' });
       execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor', supportCommit, corpusParentCommit,
-      ], { stdio: 'ignore' });
-      if (manifest.revision === 10) {
+      ], { env: GIT_SUBPROCESS_ENV, stdio: 'ignore' });
+      if (manifest.revision >= 10) {
         execFileSync(GIT_EXECUTABLE, [
           '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor',
           WAVE1_INITIAL_LANE3_SUPPORT_COMMIT, supportCommit,
-        ], { stdio: 'ignore' });
+        ], { env: GIT_SUBPROCESS_ENV, stdio: 'ignore' });
       }
     } catch (error) {
       throw new Error('Lane-3 support lineage is missing or does not retain the initial reviewed support commit', { cause: error });
@@ -2440,8 +2645,8 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     );
     this.verifyProducerDiff(supportCommit, commit, authorizedPaths);
 
-    if (manifest.revision === 10) {
-      this.verifyRevision10EntryDatasheet(commit, payload, manifest);
+    if (manifest.revision >= 10) {
+      this.verifyRevisionEntryDatasheet(commit, payload, manifest);
     }
 
     const sourceBlobs = recordValue(parsed.corpusSourceBlobs, 'Manifest corpusSourceBlobs');
@@ -2451,54 +2656,60 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     }
   }
 
-  private verifyRevision10EntryDatasheet(
+  private verifyRevisionEntryDatasheet(
     commit: string,
     payload: ManifestFreezePayload,
     manifest: ParsedBatchManifest,
   ): void {
+    const revision = manifest.revision;
+    const pins = revision === 11 ? this.#revision11Pins : this.#revision10Pins;
     let content: Buffer;
     try {
       content = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'show', `${commit}:${WAVE1_ENTRY_DATASHEET_PATH}`,
-      ]);
+      ], { env: GIT_SUBPROCESS_ENV });
     } catch (error) {
-      throw new Error('Frozen revision-10 entry datasheet is missing', { cause: error });
+      throw new Error(`Frozen revision-${revision} entry datasheet is missing`, { cause: error });
     }
-    const datasheet = parseStrictJsonDocument(content, 'Revision-10 entry datasheet').parsed;
+    const label = `Revision-${revision} entry datasheet`;
+    const datasheet = parseStrictJsonDocument(content, label).parsed;
     assertExactKeys(datasheet, [
       'schemaVersion', 'batchId', 'revision', 'manifestSha256', 'producerLane',
       'acceptanceAuthority', 'status', 'entryCount', 'reviewOrder', 'acceptanceScope',
       'authorshipNote', 'rows',
-    ], 'Revision-10 entry datasheet');
-    if (datasheet.schemaVersion !== 1) throw new Error('Revision-10 entry datasheet schemaVersion must be 1');
-    assertExactString(datasheet.batchId, 'S33-W1', 'Revision-10 entry datasheet batchId');
-    if (datasheet.revision !== 10) throw new Error('Revision-10 entry datasheet revision must be 10');
-    assertSha256(datasheet.manifestSha256, 'Revision-10 entry datasheet manifestSha256');
+    ], label);
+    if (datasheet.schemaVersion !== 1) throw new Error(`${label} schemaVersion must be 1`);
+    assertExactString(datasheet.batchId, 'S33-W1', `${label} batchId`);
+    if (datasheet.revision !== revision) throw new Error(`${label} revision must be ${revision}`);
+    assertSha256(datasheet.manifestSha256, `${label} manifestSha256`);
     if (datasheet.manifestSha256 !== payload.manifestRawSha256) {
-      throw new Error('Revision-10 entry datasheet manifestSha256 must match the authenticated raw manifest');
+      throw new Error(`${label} manifestSha256 must match the authenticated raw manifest`);
     }
-    assertExactString(datasheet.producerLane, 'Lane 4', 'Revision-10 entry datasheet producerLane');
-    assertExactString(datasheet.acceptanceAuthority, 'Lane 3', 'Revision-10 entry datasheet acceptanceAuthority');
+    assertExactString(datasheet.producerLane, 'Lane 4', `${label} producerLane`);
+    assertExactString(datasheet.acceptanceAuthority, 'Lane 3', `${label} acceptanceAuthority`);
     assertExactString(
       datasheet.status,
       'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
-      'Revision-10 entry datasheet status',
+      `${label} status`,
     );
     if (datasheet.entryCount !== manifest.entryCount) {
-      throw new Error('Revision-10 entry datasheet entryCount must match the authenticated manifest');
+      throw new Error(`${label} entryCount must match the authenticated manifest`);
     }
-    assertExactString(datasheet.reviewOrder, 'kenya-first', 'Revision-10 entry datasheet reviewOrder');
-    assertExactString(datasheet.acceptanceScope, 'whole-batch-only', 'Revision-10 entry datasheet acceptanceScope');
+    assertExactString(datasheet.reviewOrder, 'kenya-first', `${label} reviewOrder`);
+    assertExactString(datasheet.acceptanceScope, 'whole-batch-only', `${label} acceptanceScope`);
     assertExactString(
       datasheet.authorshipNote,
       'All rows are independently authored synthetic-realistic heldout candidates; no template generator or random seed was used.',
-      'Revision-10 entry datasheet authorshipNote',
+      `${label} authorshipNote`,
     );
     if (!Array.isArray(datasheet.rows) || datasheet.rows.length !== manifest.entryCount) {
-      throw new Error('Revision-10 entry datasheet rows must match the complete authenticated manifest count');
+      throw new Error(`${label} rows must match the complete authenticated manifest count`);
     }
-    if (sha256(canonicaliseJson(datasheet.rows)) !== this.#revision10Pins.entryRowsSha256) {
-      throw new Error('Revision-10 entry datasheet rows must preserve the reviewed revision-9 canonical row set');
+    if (sha256(canonicaliseJson(datasheet.rows)) !== pins.entryRowsSha256) {
+      const pinDescription = revision === 10
+        ? 'must preserve the reviewed revision-9 canonical row set'
+        : 'must match the reviewed revision-11 canonical row pin';
+      throw new Error(`${label} rows ${pinDescription}`);
     }
   }
 
@@ -2511,9 +2722,9 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     try {
       const output = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot,
-        'diff', '--raw', '-z', '--no-abbrev', '--find-renames', '--find-copies', '--find-copies-harder',
+        'diff', '--no-ext-diff', '--raw', '-z', '--no-abbrev', '--find-renames', '--find-copies', '--find-copies-harder',
         supportCommit, freezeCommit, '--',
-      ]);
+      ], { env: GIT_SUBPROCESS_ENV });
       fields = output.toString('utf8').split('\0');
       if (fields.at(-1) === '') fields.pop();
     } catch (error) {
@@ -2530,7 +2741,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     }> = [];
     for (let index = 0; index < fields.length;) {
       const header = fields[index++];
-      const match = /^:([0-9]{6}) ([0-9]{6}) ([0-9a-f]{40,64}) ([0-9a-f]{40,64}) ([A-Z][0-9]*)$/.exec(header);
+      const match = /^:(\d{6}) (\d{6}) ((?:[\da-f]{40}|[\da-f]{64})) ((?:[\da-f]{40}|[\da-f]{64})) ([A-Z]\d*)$/.exec(header);
       if (!match) throw new Error('Producer diff contains a malformed raw status record');
       const [, oldMode, newMode, , , status] = match;
       const objectType = newMode === '160000' ? 'commit' as const : 'blob' as const;
@@ -2571,10 +2782,10 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     try {
       execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${declaredBlob}^{blob}`,
-      ], { stdio: 'ignore' });
+      ], { env: GIT_SUBPROCESS_ENV, stdio: 'ignore' });
       actualBlob = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'rev-parse', `${commit}:${path}`,
-      ], { encoding: 'utf8' }).trim();
+      ], { encoding: 'utf8', env: GIT_SUBPROCESS_ENV }).trim();
     } catch (error) {
       throw new Error(`${label} declared blob or exact Git path is missing`, { cause: error });
     }
@@ -2589,15 +2800,22 @@ class TestOnlyAcceptanceOrchestrator
   extends AcceptanceOrchestrator
   implements TestOnlyS33AcceptanceOrchestrator {
   readonly #testRevision10Pins: Wave1Revision10Pins;
+  readonly #testRevision11Pins: Wave1Revision11Pins;
 
-  constructor(config: OrchestratorConfiguration, revision10Pins: Wave1Revision10Pins) {
-    const normalizedPins = normalizeWave1Revision10Pins(revision10Pins);
-    super(config, normalizedPins);
-    this.#testRevision10Pins = normalizedPins;
+  constructor(
+    config: OrchestratorConfiguration,
+    revision10Pins: Wave1Revision10Pins,
+    revision11Pins: Wave1Revision11Pins,
+  ) {
+    const normalizedRevision10Pins = normalizeWave1RevisionPins(revision10Pins, 10);
+    const normalizedRevision11Pins = normalizeWave1RevisionPins(revision11Pins, 11);
+    super(config, normalizedRevision10Pins, normalizedRevision11Pins);
+    this.#testRevision10Pins = normalizedRevision10Pins;
+    this.#testRevision11Pins = normalizedRevision11Pins;
   }
 
   parseBatchManifestForTest(content: ArtifactContent): ParsedBatchManifest {
-    return loadBatchManifest(content, this.#testRevision10Pins).manifest;
+    return loadBatchManifest(content, this.#testRevision10Pins, this.#testRevision11Pins).manifest;
   }
 }
 
@@ -2687,11 +2905,42 @@ function normalizeLeakageText(text: string, policy: LexicalNormalizationPolicy):
   return normalized.trim();
 }
 
-function ngramSet(text: string, n: number, policy: LexicalNormalizationPolicy): Set<string> {
-  const tokens = normalizeLeakageText(text, policy).split(/\s+/u).filter(Boolean);
+function ngramSet(tokens: readonly string[], n: number): ReadonlySet<string> {
   const ngrams = new Set<string>();
   for (let index = 0; index + n <= tokens.length; index += 1) ngrams.add(tokens.slice(index, index + n).join(' '));
   return ngrams;
+}
+
+function indexLexicalNgrams(
+  records: readonly TextRecord[],
+  normalization: LexicalNormalizationPolicy,
+): ReadonlyMap<string, ReadonlyMap<number, ReadonlySet<string>>> {
+  return new Map(records.map((record) => {
+    const tokens = normalizeLeakageText(record.text, normalization).split(/\s+/u).filter(Boolean);
+    return [record.id, new Map(REQUIRED_LEXICAL_N.map((n) => [n, ngramSet(tokens, n)]))];
+  }));
+}
+
+function lexicalMetric(
+  heldoutRecord: TextRecord,
+  corpusRecord: TextRecord,
+  n: number,
+  heldoutNgrams: ReadonlySet<string>,
+  corpusNgrams: ReadonlySet<string>,
+): LexicalLeakageMetric {
+  let sharedNgrams = 0;
+  for (const ngram of heldoutNgrams) if (corpusNgrams.has(ngram)) sharedNgrams += 1;
+  const union = heldoutNgrams.size + corpusNgrams.size - sharedNgrams;
+  return {
+    heldoutId: heldoutRecord.id,
+    corpusId: corpusRecord.id,
+    n,
+    heldoutNgrams: heldoutNgrams.size,
+    corpusNgrams: corpusNgrams.size,
+    sharedNgrams,
+    heldoutContainment: heldoutNgrams.size === 0 ? 0 : sharedNgrams / heldoutNgrams.size,
+    jaccard: union === 0 ? 0 : sharedNgrams / union,
+  };
 }
 
 function computeLexicalLeakageMetrics(
@@ -2699,29 +2948,16 @@ function computeLexicalLeakageMetrics(
   corpus: readonly TextRecord[],
   normalization: LexicalNormalizationPolicy,
 ): LexicalLeakageMetric[] {
-  const metrics: LexicalLeakageMetric[] = [];
-  for (const heldoutRecord of heldout) {
-    for (const corpusRecord of corpus) {
-      for (const n of REQUIRED_LEXICAL_N) {
-        const heldoutNgrams = ngramSet(heldoutRecord.text, n, normalization);
-        const corpusNgrams = ngramSet(corpusRecord.text, n, normalization);
-        let sharedNgrams = 0;
-        for (const ngram of heldoutNgrams) if (corpusNgrams.has(ngram)) sharedNgrams += 1;
-        const union = heldoutNgrams.size + corpusNgrams.size - sharedNgrams;
-        metrics.push({
-          heldoutId: heldoutRecord.id,
-          corpusId: corpusRecord.id,
-          n,
-          heldoutNgrams: heldoutNgrams.size,
-          corpusNgrams: corpusNgrams.size,
-          sharedNgrams,
-          heldoutContainment: heldoutNgrams.size === 0 ? 0 : sharedNgrams / heldoutNgrams.size,
-          jaccard: union === 0 ? 0 : sharedNgrams / union,
-        });
-      }
-    }
-  }
-  return metrics;
+  const heldoutIndex = indexLexicalNgrams(heldout, normalization);
+  const corpusIndex = indexLexicalNgrams(corpus, normalization);
+  return heldout.flatMap((heldoutRecord) => corpus.flatMap((corpusRecord) => REQUIRED_LEXICAL_N.map((n) =>
+    lexicalMetric(
+      heldoutRecord,
+      corpusRecord,
+      n,
+      heldoutIndex.get(heldoutRecord.id)!.get(n)!,
+      corpusIndex.get(corpusRecord.id)!.get(n)!,
+    ))));
 }
 
 function applyLexicalPolicy(
@@ -2789,8 +3025,12 @@ export function createTestOnlyS33AcceptanceOrchestrator(
   input: TestOnlyOrchestratorConfiguration,
 ): TestOnlyS33AcceptanceOrchestrator {
   if (process.env.NODE_ENV !== 'test') throw new Error('Test-only S3.3 trust-root injection is disabled outside NODE_ENV=test');
-  const { revision10Pins = S33_WAVE1_REVISION10_PRODUCTION_PINS, ...configuration } = input;
-  return new TestOnlyAcceptanceOrchestrator(configuration, revision10Pins);
+  const {
+    revision10Pins = S33_WAVE1_REVISION10_PRODUCTION_PINS,
+    revision11Pins = S33_WAVE1_REVISION11_PRODUCTION_PINS,
+    ...configuration
+  } = input;
+  return new TestOnlyAcceptanceOrchestrator(configuration, revision10Pins, revision11Pins);
 }
 
 export interface EmbeddingRecord {
@@ -2809,6 +3049,12 @@ export interface EmbeddingLeakageHit {
   corpusId: string;
   model: string;
   cosineSimilarity: number;
+}
+
+export interface EmbeddingLeakageDiagnosticResult {
+  evidenceGrade: 'diagnostic-untrusted';
+  limitations: readonly ['caller-supplied-policy', 'caller-supplied-provider'];
+  hits: readonly EmbeddingLeakageHit[];
 }
 
 export interface EmbeddingBatchProvider {
@@ -2858,16 +3104,24 @@ function cosineSimilarity(left: readonly number[], right: readonly number[]): nu
     leftNorm += left[index] * left[index];
     rightNorm += right[index] * right[index];
     if (!Number.isFinite(dot) || !Number.isFinite(leftNorm) || !Number.isFinite(rightNorm)) {
-      throw new Error('Embedding cosine arithmetic overflowed or became non-finite');
+      throw new TypeError('Embedding cosine arithmetic overflowed or became non-finite');
     }
   }
   const denominator = Math.sqrt(leftNorm) * Math.sqrt(rightNorm);
   if (!Number.isFinite(denominator) || denominator <= 0) throw new Error('Embedding cosine denominator is non-finite');
   const similarity = dot / denominator;
-  if (!Number.isFinite(similarity) || similarity < -1 || similarity > 1) throw new Error('Embedding cosine result is non-finite');
-  return similarity;
+  if (!Number.isFinite(similarity)) throw new TypeError('Embedding cosine result is non-finite');
+  const roundingTolerance = 1e-12;
+  if (similarity < -1 - roundingTolerance || similarity > 1 + roundingTolerance) {
+    throw new RangeError('Embedding cosine result is outside the mathematical range');
+  }
+  return Math.max(-1, Math.min(1, similarity));
 }
 
+/**
+ * Pure diagnostic comparison only. The caller supplies the policy and vectors,
+ * so this result is not a signed Lane-3 acceptance artifact.
+ */
 export function compareEmbeddingLeakage(
   heldout: readonly EmbeddingRecord[],
   corpus: readonly EmbeddingRecord[],
@@ -2911,7 +3165,7 @@ export async function scanEmbeddingLeakage(
   corpus: readonly TextRecord[],
   provider: EmbeddingBatchProvider,
   policy: EmbeddingLeakagePolicy,
-): Promise<EmbeddingLeakageHit[]> {
+): Promise<EmbeddingLeakageDiagnosticResult> {
   validateEmbeddingPolicy(policy);
   validateTextRecords(heldout, 'Held-out set');
   validateTextRecords(corpus, 'Leakage corpus');
@@ -2919,5 +3173,9 @@ export async function scanEmbeddingLeakage(
   const corpusEmbeddings = await provider.embed(corpus, policy.model);
   assertProviderOutput(heldout, heldoutEmbeddings, 'Held-out');
   assertProviderOutput(corpus, corpusEmbeddings, 'Corpus');
-  return compareEmbeddingLeakage(heldoutEmbeddings, corpusEmbeddings, policy);
+  return deepFreeze({
+    evidenceGrade: 'diagnostic-untrusted' as const,
+    limitations: ['caller-supplied-policy', 'caller-supplied-provider'] as const,
+    hits: compareEmbeddingLeakage(heldoutEmbeddings, corpusEmbeddings, policy),
+  });
 }

@@ -33,6 +33,7 @@ import {
   parseBatchManifest,
   rawManifestHash,
   S33_WAVE1_REVISION10_PRODUCTION_PINS,
+  S33_WAVE1_REVISION11_PRODUCTION_PINS,
   scanEmbeddingLeakage,
   type EmbeddingBatchProvider,
   type ConsumptionRegistryRecord,
@@ -45,6 +46,7 @@ import {
   type SamplingTrustRoot,
   type S33AcceptanceOrchestrator,
   type Wave1Revision10Pins,
+  type Wave1Revision11Pins,
 } from './s33-batch-acceptance.js';
 
 // @ts-expect-error — callers cannot advance chronology with an arbitrary event.
@@ -83,6 +85,8 @@ const WAVE1_INITIAL_LANE3_SUPPORT_COMMIT = 'dd3ae1edecb005730762277daf17e15d8009
 const WAVE1_TEST_SUPPORT_MARKER_PATH = 'services/worker/src/ai/eval/.s33-r10-test-support';
 const WAVE1_REVISION9_COMMIT = 'b9bb1d3221d3567dbb08e1b23cab4dd687486738';
 const WAVE1_REVISION9_PREDECESSOR_COMMIT = '506ff62340db8f838ce68bc46ddfa6407735ce3c';
+const WAVE1_REVISION10_COMMIT = '1018e36844834537df29fb60eb871cb54475bc14';
+const WAVE1_REVISION10_SUPPORT_COMMIT = 'ee7bba26fc0e34a7a58bb684f45e4e3c4e6b2977';
 const WAVE1_R10_SUPPORT_REVIEW_STATE = 'LANE3_TOOLING_EXACT_HEAD_REVIEW_PASS';
 const WAVE1_REVISION9_ENTRIES_SHA256 = '591b4f4b37e188f1ad7286f8bc2a7a6b407eb89674ed6321e898123c347800c0';
 const WAVE1_REVISION9_NORMALIZED_PINS_SHA256 = '8b4af182dcc161a041a8d933ec5d7277f2131f32cc6709ad75a2cd5acde2e7e2';
@@ -412,6 +416,74 @@ function revision10ParserFixture(): Record<string, unknown> {
   });
 }
 
+function revision11ManifestFixture(bindings: ManifestFixtureBindings): Record<string, unknown> {
+  const manifest = revision10ManifestFixture({
+    supportCommit: WAVE1_REVISION10_SUPPORT_COMMIT,
+    supportTypesBlob: bindings.supportTypesBlob,
+    predecessorCommit: WAVE1_REVISION9_COMMIT,
+    sourceBlobs: { ...WAVE1_REVISION9_SOURCE_BLOBS },
+  });
+  manifest.revision = 11;
+  manifest.corpusRevisionParentCommit = bindings.supportCommit;
+  manifest.producerRevisionPredecessorCommit = bindings.predecessorCommit;
+  manifest.corpusSourceBlobs = bindings.sourceBlobs;
+
+  const support = manifest.lane3SupportBase as Record<string, unknown>;
+  support.commit = bindings.supportCommit;
+  support.typesBlob = bindings.supportTypesBlob;
+  support.reviewState = WAVE1_R10_SUPPORT_REVIEW_STATE;
+
+  const selfChecks = manifest.selfChecks as Record<string, unknown>;
+  const revisions = (selfChecks.authorizedDocumentRevisions as {
+    revisions: Array<Record<string, unknown>>;
+  }).revisions;
+  revisions.push({
+    revision: 11,
+    authority: 'Lane 4 same-lane review reject: source-grounding corrections and issued-date adjudication declaration',
+    changedEntryIds: ['GD-S33-AU-002', 'GD-S33-AU-011', 'GD-S33-KE-009'],
+    changes: [
+      'AU-002 issuerName corrected from expanded Australian Health Practitioner Regulation Agency to source-stated Ahpra',
+      'KE-009 removed the derived expiryDate because the source states only issue date and 12-month validity, not the exact expiry date',
+      'AU-002 and AU-011 issuedDate choices declared BLOCKED_CTO_L3 pending L3/CTO adjudication rather than self-certified',
+    ],
+    corpusSourceTextChanged: false,
+    normalizedInputChanged: false,
+    normalizedInputPinsPreservedFromRevision10: true,
+    remainingSubstantiveGroundTruthFields: {
+      'GD-S33-AU-002': 9,
+      'GD-S33-AU-011': 8,
+      'GD-S33-KE-009': 6,
+      nonOodMinimum: 5,
+      oodPureAbstention: 2,
+    },
+    producerRevisionPredecessorCommit: bindings.predecessorCommit,
+    lane3SupportBaseCommit: bindings.supportCommit,
+  });
+  selfChecks.issuedDateAdjudicationSet = {
+    status: 'BLOCKED_CTO_L3',
+    entryIds: ['GD-S33-AU-002', 'GD-S33-AU-011', 'GD-S33-BAR-010', 'GD-S33-PDH-012'],
+  };
+  const dependency = (selfChecks.batchScopeOnly as {
+    dependency: Record<string, unknown>;
+  }).dependency;
+  dependency.commit = bindings.supportCommit;
+  dependency.typesBlob = bindings.supportTypesBlob;
+  dependency.reviewState = WAVE1_R10_SUPPORT_REVIEW_STATE;
+  return manifest;
+}
+
+function revision11ParserFixture(): Record<string, unknown> {
+  return revision11ManifestFixture({
+    supportCommit: 'f'.repeat(40),
+    supportTypesBlob: 'c'.repeat(40),
+    predecessorCommit: WAVE1_REVISION10_COMMIT,
+    sourceBlobs: {
+      ...WAVE1_REVISION9_SOURCE_BLOBS,
+      [WAVE1_SOURCE_PATHS[1]]: 'b'.repeat(40),
+    },
+  });
+}
+
 function syntheticEntryDatasheetRows(manifest: Record<string, unknown>): Array<Record<string, unknown>> {
   return (manifest.entries as ProductionManifestFixtureEntry[]).map(({ id }, index) => ({
     id,
@@ -452,6 +524,25 @@ function parseRevision10WithSyntheticPins(manifest: Record<string, unknown>) {
       encoding: 'utf8',
     }).trim(),
     revision10Pins: syntheticRevision10Pins(revision10ParserFixture()),
+  }).parseBatchManifestForTest(JSON.stringify(manifest));
+}
+
+function parseRevision11WithSyntheticPins(manifest: Record<string, unknown>) {
+  const { trustRoot } = testKey();
+  const evidenceRoot = mkdtempSync(join(tmpdir(), 'arkova-s33-r11-parser-'));
+  tempRoots.push(evidenceRoot);
+  return createTestOnlyS33AcceptanceOrchestrator({
+    trustRoot,
+    consumptionRegistry: new TestConsumptionRegistry(),
+    ledgerPath: join(evidenceRoot, 'acceptance-ledger.jsonl'),
+    repositoryRoot: repositoryRoot(),
+    repositoryIdentity: 'test/ArkovaCarson',
+    verificationCommitSha: execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: repositoryRoot(),
+      encoding: 'utf8',
+    }).trim(),
+    revision10Pins: syntheticRevision10Pins(revision10ParserFixture()),
+    revision11Pins: syntheticRevision10Pins(manifest),
   }).parseBatchManifestForTest(JSON.stringify(manifest));
 }
 
@@ -1147,6 +1238,92 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
     }).toThrow(TypeError);
   });
 
+  it('locks the reviewed revision-11 truth-correction pins independently from revision 10', () => {
+    const pins: Wave1Revision11Pins = S33_WAVE1_REVISION11_PRODUCTION_PINS;
+    expect(pins).toEqual({
+      sourceBlobs: {
+        [WAVE1_SOURCE_PATHS[0]]: WAVE1_REVISION9_SOURCE_BLOBS[WAVE1_SOURCE_PATHS[0]],
+        [WAVE1_SOURCE_PATHS[1]]: 'a1578a511e47bd839fda9ae31e5f3f93c99a3857',
+        [WAVE1_SOURCE_PATHS[2]]: WAVE1_REVISION9_SOURCE_BLOBS[WAVE1_SOURCE_PATHS[2]],
+      },
+      entriesSha256: WAVE1_REVISION9_ENTRIES_SHA256,
+      normalizedPinsSha256: WAVE1_REVISION9_NORMALIZED_PINS_SHA256,
+      entryRowsSha256: '65a8a8a93cc098d2a7a3e284462f3e208ad7037bd950f077effe31456571da06',
+    });
+    expect(Object.isFrozen(pins)).toBe(true);
+    expect(Object.isFrozen(pins.sourceBlobs)).toBe(true);
+  });
+
+  it('accepts only the exact revision-11 truth-correction history shape with reviewed synthetic pins', () => {
+    const manifest = revision11ParserFixture();
+    const parsed = parseRevision11WithSyntheticPins(manifest).parsedJson;
+    const revisions = ((parsed.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+      revisions: Array<Record<string, unknown>>;
+    }).revisions;
+    expect(parsed.revision).toBe(11);
+    expect(revisions.at(-2)).toMatchObject({
+      revision: 10,
+      directBaseCommit: WAVE1_REVISION10_SUPPORT_COMMIT,
+      lane3SupportBaseCommit: WAVE1_REVISION10_SUPPORT_COMMIT,
+    });
+    expect(revisions.at(-1)).toEqual({
+      revision: 11,
+      authority: 'Lane 4 same-lane review reject: source-grounding corrections and issued-date adjudication declaration',
+      changedEntryIds: ['GD-S33-AU-002', 'GD-S33-AU-011', 'GD-S33-KE-009'],
+      changes: [
+        'AU-002 issuerName corrected from expanded Australian Health Practitioner Regulation Agency to source-stated Ahpra',
+        'KE-009 removed the derived expiryDate because the source states only issue date and 12-month validity, not the exact expiry date',
+        'AU-002 and AU-011 issuedDate choices declared BLOCKED_CTO_L3 pending L3/CTO adjudication rather than self-certified',
+      ],
+      corpusSourceTextChanged: false,
+      normalizedInputChanged: false,
+      normalizedInputPinsPreservedFromRevision10: true,
+      remainingSubstantiveGroundTruthFields: {
+        'GD-S33-AU-002': 9,
+        'GD-S33-AU-011': 8,
+        'GD-S33-KE-009': 6,
+        nonOodMinimum: 5,
+        oodPureAbstention: 2,
+      },
+      producerRevisionPredecessorCommit: WAVE1_REVISION10_COMMIT,
+      lane3SupportBaseCommit: 'f'.repeat(40),
+    });
+    expect((parsed.selfChecks as Record<string, unknown>).issuedDateAdjudicationSet).toEqual({
+      status: 'BLOCKED_CTO_L3',
+      entryIds: ['GD-S33-AU-002', 'GD-S33-AU-011', 'GD-S33-BAR-010', 'GD-S33-PDH-012'],
+    });
+  });
+
+  it.each([
+    ['authority', 'unreviewed correction'],
+    ['changedEntryIds', ['GD-S33-AU-002']],
+    ['changes', ['partial correction']],
+    ['corpusSourceTextChanged', true],
+    ['normalizedInputChanged', true],
+    ['normalizedInputPinsPreservedFromRevision10', false],
+    ['remainingSubstantiveGroundTruthFields', { 'GD-S33-AU-002': 4 }],
+    ['producerRevisionPredecessorCommit', 'd'.repeat(40)],
+    ['lane3SupportBaseCommit', 'd'.repeat(40)],
+  ] satisfies Array<[string, unknown]>)('rejects a revision-11 history mutation of %s', (field, replacement) => {
+    const manifest = revision11ParserFixture();
+    const revisions = ((manifest.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+      revisions: Array<Record<string, unknown>>;
+    }).revisions;
+    revisions.at(-1)![field] = replacement;
+    expect(() => parseRevision11WithSyntheticPins(manifest)).toThrow();
+  });
+
+  it.each([
+    ['status', 'PASS'],
+    ['entryIds', ['GD-S33-BAR-010', 'GD-S33-PDH-012']],
+    ['resolvedEntryIdsInRevision9', ['GD-S33-AU-002', 'GD-S33-AU-011']],
+  ] satisfies Array<[string, unknown]>)('rejects a revision-11 issuedDate adjudication mutation of %s', (field, replacement) => {
+    const manifest = revision11ParserFixture();
+    const issuedDate = (manifest.selfChecks as Record<string, unknown>).issuedDateAdjudicationSet as Record<string, unknown>;
+    issuedDate[field] = replacement;
+    expect(() => parseRevision11WithSyntheticPins(manifest)).toThrow();
+  });
+
   it('cannot override production r10 pins through the public parser or production factory', () => {
     const manifest = revision10ParserFixture();
     const syntheticPins = syntheticRevision10Pins(manifest);
@@ -1442,6 +1619,41 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       .toThrow(/Kenya.*order/i);
   });
 
+  it('rejects internally reconciled attempts to shrink or substitute the exact Wave-1 universe', () => {
+    const shrunken = productionManifestFixture();
+    const entries = shrunken.entries as ProductionManifestFixtureEntry[];
+    const removed = entries.splice(entries.findIndex(({ id }) => id === 'GD-S33-NUR-012'), 1)[0];
+    shrunken.entryCount = 80;
+    const counts = shrunken.counts as {
+      byDomain: Record<string, number>;
+      byCredentialType: Record<string, number>;
+      byCorpusSlice: Record<string, number>;
+    };
+    counts.byDomain[removed.domain] -= 1;
+    counts.byCredentialType[removed.credentialType] -= 1;
+    counts.byCorpusSlice[CORPUS_SLICE_BY_DOMAIN[removed.domain]] -= 1;
+    ((shrunken.selfChecks as Record<string, unknown>)
+      .exactCorpusManifestDatasheetBijection as Record<string, unknown>).entryCount = 80;
+    expect(() => parseBatchManifest(JSON.stringify(shrunken)))
+      .toThrow(/exact Wave-1.*81|81-entry Wave-1/i);
+
+    const substitutedKenya = productionManifestFixture();
+    const kenyaEntries = substitutedKenya.entries as ProductionManifestFixtureEntry[];
+    kenyaEntries.find(({ id }) => id === 'GD-S33-KE-011')!.id = 'GD-S33-KE-012';
+    (substitutedKenya.kenyaEntryIds as string[])[10] = 'GD-S33-KE-012';
+    expect(() => parseBatchManifest(JSON.stringify(substitutedKenya)))
+      .toThrow(/exact Wave-1 Kenya.*11|Kenya.*exact/i);
+
+    const substitutedOod = productionManifestFixture();
+    const oodEntries = substitutedOod.entries as ProductionManifestFixtureEntry[];
+    oodEntries.find(({ id }) => id === 'GD-S33-OOD-009')!.id = 'GD-S33-OOD-010';
+    const oodSemantics = ((substitutedOod.selfChecks as Record<string, unknown>)
+      .oodFiveFieldSemantics as { entryIds: string[] });
+    oodSemantics.entryIds[8] = 'GD-S33-OOD-010';
+    expect(() => parseBatchManifest(JSON.stringify(substitutedOod)))
+      .toThrow(/exact Wave-1 OOD.*9|OOD.*exact/i);
+  });
+
   it('rejects duplicate JSON keys and unknown nested manifest fields', () => {
     const duplicate = manifestContent().replace('"revision": 9,', '"revision": 9,\n  "revision": 9,');
     expect(() => parseBatchManifest(duplicate)).toThrow(/duplicate.*revision/i);
@@ -1536,7 +1748,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
         replacement = current + 1;
       } else if (typeof current === 'string' && current.startsWith('GD-S33-')) {
         replacement = current === 'GD-S33-KE-001' ? 'GD-S33-KE-002' : 'GD-S33-KE-001';
-      } else if (typeof current === 'string' && /^[0-9a-f]{40,64}$/.test(current)) {
+      } else if (typeof current === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(current)) {
         replacement = (current.startsWith('a') ? 'b' : 'a').repeat(current.length);
       } else {
         replacement = `${String(current)} [mutated]`;
@@ -1549,12 +1761,15 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
     }
   });
 
-  it('rejects truncated Git declarations before any ceremony record is written', () => {
-    const truncated = productionManifestFixture();
-    (truncated.corpusSourceBlobs as Record<string, string>)[WAVE1_SOURCE_PATHS[0]] = 'a'.repeat(39);
-    expect(() => parseBatchManifest(JSON.stringify(truncated)))
+  it.each([39, 41, 63, 65])(
+    'rejects a %i-character Git declaration before any ceremony record is written',
+    (length) => {
+      const malformed = productionManifestFixture();
+      (malformed.corpusSourceBlobs as Record<string, string>)[WAVE1_SOURCE_PATHS[0]] = 'a'.repeat(length);
+      expect(() => parseBatchManifest(JSON.stringify(malformed)))
       .toThrow(/corpusSourceBlobs.*exact hexadecimal Git object/i);
-  });
+    },
+  );
 
   it('durably records commitment < freeze < policy < reveal < verification and selects the fixed floor', async () => {
     const context = ceremony();
@@ -1644,7 +1859,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       .toThrow(/git|commit|ancestor/i);
   });
 
-  it('ignores PATH-shadowed Git executables at the freeze trust boundary', () => {
+  it('ignores PATH shadowing and Git-environment redirection at the freeze trust boundary', () => {
     const context = ceremony();
     context.orchestrator.recordSaltCommitment(context.commitment.content);
     const hostileBin = mkdtempSync(join(tmpdir(), 'arkova-s33-hostile-path-'));
@@ -1652,14 +1867,85 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
     const hostileGit = join(hostileBin, 'git');
     writeFileSync(hostileGit, '#!/bin/sh\nexit 97\n', 'utf8');
     chmodSync(hostileGit, 0o755);
-    const originalPath = process.env.PATH;
+    const hostileEnvironment = {
+      PATH: hostileBin,
+      GIT_DIR: join(hostileBin, 'attacker-git-dir'),
+      GIT_WORK_TREE: join(hostileBin, 'attacker-work-tree'),
+      GIT_OBJECT_DIRECTORY: join(hostileBin, 'attacker-object-directory'),
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: join(hostileBin, 'attacker-alternate-objects'),
+      GIT_CONFIG_GLOBAL: join(hostileBin, 'attacker-global-config'),
+      GIT_CONFIG_SYSTEM: join(hostileBin, 'attacker-system-config'),
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.bare',
+      GIT_CONFIG_VALUE_0: 'true',
+    } as const;
+    const originalEnvironment = Object.fromEntries(
+      Object.keys(hostileEnvironment).map((key) => [key, process.env[key]]),
+    );
     try {
-      process.env.PATH = hostileBin;
+      Object.assign(process.env, hostileEnvironment);
       expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.manifest))
         .not.toThrow();
     } finally {
-      process.env.PATH = originalPath;
+      for (const [key, value] of Object.entries(originalEnvironment)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
+  });
+
+  it('ignores repository-local replacement refs for every signed Git object lookup', () => {
+    const context = ceremony();
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    const predecessorCommit = execFileSync('git', [
+      'rev-parse', `${context.repo.freezeCommitSha}^`,
+    ], { cwd: context.repo.root, encoding: 'utf8' }).trim();
+    execFileSync('git', [
+      'replace', context.repo.freezeCommitSha, predecessorCommit,
+    ], { cwd: context.repo.root });
+
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.manifest))
+      .not.toThrow();
+  });
+
+  it('rejects a mixed-chain reveal before it can poison a valid commitment', () => {
+    const context = ceremony();
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    context.orchestrator.recordManifestFreeze(context.freeze.content, context.manifest);
+    context.orchestrator.recordSelectionPolicy(context.policy.content);
+
+    const secondSalt = '22'.repeat(32);
+    const secondCommitment = signedArtifact<SaltCommitmentPayload>({
+      ...context.commitment.object.payload,
+      commitmentId: 'S33-W1-commitment-2',
+      signedAtUtc: '2026-07-13T13:04:00.000Z',
+      saltCommitment: { algorithm: 'sha256', value: sha256(secondSalt) },
+    }, context.privateKey);
+    const secondFreeze = signedArtifact<ManifestFreezePayload>({
+      ...context.freeze.object.payload,
+      freezeId: 'S33-W1-r9-freeze-2',
+      signedAtUtc: '2026-07-13T13:05:00.000Z',
+      commitmentArtifactCanonicalSha256: canonicalManifestHash(secondCommitment.content),
+    }, context.privateKey);
+    const secondPolicy = signedArtifact<SelectionPolicyPayload>({
+      ...context.policy.object.payload,
+      policyId: 'S33-W1-r9-selection-2',
+      signedAtUtc: '2026-07-13T13:06:00.000Z',
+      commitmentArtifactCanonicalSha256: canonicalManifestHash(secondCommitment.content),
+      freezeArtifactCanonicalSha256: canonicalManifestHash(secondFreeze.content),
+    }, context.privateKey);
+    context.orchestrator.recordSaltCommitment(secondCommitment.content);
+    context.orchestrator.recordManifestFreeze(secondFreeze.content, context.manifest);
+    context.orchestrator.recordSelectionPolicy(secondPolicy.content);
+
+    expect(() => context.orchestrator.recordSaltReveal(JSON.stringify({
+      ...context.reveal,
+      revealId: 'S33-W1-r9-mixed-reveal',
+      freezeArtifactCanonicalSha256: canonicalManifestHash(secondFreeze.content),
+      policyArtifactCanonicalSha256: canonicalManifestHash(secondPolicy.content),
+    }))).toThrow(/same authenticated commitment.*freeze.*policy|mixed ceremony chain/i);
+
+    expect(() => context.orchestrator.recordSaltReveal(context.revealContent)).not.toThrow();
   });
 
   it('binds the freeze parent, support ancestry, and every declared source blob to Git truth', () => {
@@ -1872,9 +2158,11 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       .toThrow(/regular file/i);
   });
 
-  it('uses one validated transcript descriptor for read and append under the lock', () => {
-    const source = readFileSync(new URL('./s33-batch-acceptance.ts', import.meta.url), 'utf8');
-    expect(source.match(/openSync\(\s*this\.transcriptPath/g) ?? []).toHaveLength(1);
+  it('gives a fail-closed stale-lock recovery procedure without altering the transcript', () => {
+    const context = ceremony();
+    writeFileSync(join(context.evidenceRoot, 'acceptance-ledger.jsonl.lock'), '999999\n', { mode: 0o600 });
+    expect(() => context.orchestrator.recordSaltCommitment(context.commitment.content))
+      .toThrow(/confirm.*process.*not running.*remove only.*\.lock.*never.*transcript/i);
   });
 
   it('production loader fails closed because no CTO root or monotonic registry is configured', () => {
@@ -2053,6 +2341,21 @@ describe('S3.3 authenticated lexical scan boundary', () => {
 });
 
 describe('S3.3 embedding arithmetic', () => {
+  it('clamps harmless floating-point cosine overshoot and reports the exact duplicate', () => {
+    const identical = Array.from({ length: 64 }, (_, index) => index + 1);
+    const hits = compareEmbeddingLeakage(
+      [{ id: 'held', model: 'model-a', vector: identical }],
+      [{ id: 'corpus', model: 'model-a', vector: identical }],
+      { model: 'model-a', minimumCosineSimilarity: 0.99 },
+    );
+    expect(hits).toEqual([{
+      heldoutId: 'held',
+      corpusId: 'corpus',
+      model: 'model-a',
+      cosineSimilarity: 1,
+    }]);
+  });
+
   it('rejects non-finite derived dot/norm/cosine arithmetic', () => {
     expect(() => compareEmbeddingLeakage(
       [{ id: 'held', model: 'model-a', vector: [1e308, 1e308] }],
@@ -2071,5 +2374,26 @@ describe('S3.3 embedding arithmetic', () => {
       failedProvider,
       { model: 'model-a', minimumCosineSimilarity: 0.9 },
     )).rejects.toThrow(/provider unavailable/i);
+  });
+
+  it('marks caller-controlled provider and policy results as diagnostic-only', async () => {
+    const provider: EmbeddingBatchProvider = {
+      embed: vi.fn(async (records: readonly { id: string; text: string }[], model: string) => records.map(({ id }) => ({
+        id,
+        model,
+        vector: [1, 0],
+      }))),
+    };
+    const result = await scanEmbeddingLeakage(
+      [{ id: 'held', text: 'held text' }],
+      [{ id: 'corpus', text: 'corpus text' }],
+      provider,
+      { model: 'model-a', minimumCosineSimilarity: 0.9 },
+    );
+    expect(result).toMatchObject({
+      evidenceGrade: 'diagnostic-untrusted',
+      limitations: ['caller-supplied-policy', 'caller-supplied-provider'],
+      hits: [{ heldoutId: 'held', corpusId: 'corpus', cosineSimilarity: 1 }],
+    });
   });
 });
