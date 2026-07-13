@@ -59,6 +59,11 @@ const REPO_NON_BASE_ANCESTOR = execFileSync('git', ['rev-parse', `${REPO_BASE}^`
 }).trim();
 const REAL_GIT = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
 const script = readFileSync(SCRIPT, 'utf8');
+const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
+const TEAM1_ADMISSION_PROVENANCE_RULE =
+  '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
+const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
+  '7cdfddd9133cad40a8232b8e32a156da145bc3b6d33f911c10fdd2fa5c3a77de';
 
 // Apply-mode cases launch many short-lived git/gcloud/npx shell stubs. They
 // finish in ~1s focused but can exceed Vitest's 5s default when the full
@@ -72,6 +77,21 @@ vi.setConfig({ testTimeout: 20_000 });
 // deadline without weakening those cases.
 const PROVISION_CHILD_TIMEOUT_MS = 15_000;
 const CHILD_TIMEOUT_EXIT_CODE = 124;
+
+describe('scripts/staging/agents.md — exact cross-lane semantic union', () => {
+  it('retains the complete 13-section body shared by both current lane heads', () => {
+    const headings = stagingAgents.match(/^## .+$/gm) ?? [];
+    expect(headings).toHaveLength(13);
+    expect(new Set(headings).size).toBe(13);
+    expect(createHash('sha256').update(stagingAgents).digest('hex')).toBe(
+      CANONICAL_CROSS_LANE_AGENTS_SHA256,
+    );
+  });
+
+  it('retains Team 1 admission provenance exactly once, beyond heading-count coverage', () => {
+    expect(stagingAgents.split(TEAM1_ADMISSION_PROVENANCE_RULE)).toHaveLength(2);
+  });
+});
 
 interface SyncRunResult {
   out: string;
