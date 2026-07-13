@@ -4,6 +4,7 @@ import {
   BATCH_SIZE,
   buildR3AcceptancePlan,
   planGlobalFlush,
+  planGlobalFlushForOrgs,
   planOrgScheduler,
   resolveRigTarget,
   runOrgId,
@@ -146,6 +147,47 @@ describe('R3 trigger expectations — org scheduler and global flush stay distin
     });
   });
 
+  it('derives global eligibility from actual org inputs and leaves poison rows pending', () => {
+    const rows = [
+      { orgId: runOrgIdN('global-poison', 0), rank: 1, anchors: 10_500, cohort: 'healthy' as const },
+      { orgId: runOrgIdN('global-poison', 1), rank: 2, anchors: 1_000, cohort: 'credit-starved' as const },
+      { orgId: runOrgIdN('global-poison', 2), rank: 3, anchors: 1_000, cohort: 'bad-fingerprint' as const },
+    ];
+    const expected = planGlobalFlushForOrgs(rows);
+
+    expect(expected.initialPending).toBe(12_500);
+    expect(expected.eligiblePending).toBe(10_500);
+    expect(expected.excludedPending).toBe(2_000);
+    expect(expected.passes).toEqual([
+      { pass: 1, transactions: 1, leaves: 10_000, eligibleRemainder: 500, pendingRemainder: 2_500 },
+      { pass: 2, transactions: 1, leaves: 500, eligibleRemainder: 0, pendingRemainder: 2_000 },
+    ]);
+    expect(expected.poisons).toEqual([
+      {
+        orgId: rows[1]!.orgId,
+        cohort: 'credit-starved',
+        anchorsRemaining: 1_000,
+        globalOutcome: 'credit-gate-excluded',
+      },
+      {
+        orgId: rows[2]!.orgId,
+        cohort: 'bad-fingerprint',
+        anchorsRemaining: 1_000,
+        globalOutcome: 'preflight-failed-contained',
+      },
+    ]);
+  });
+
+  it('fails closed on empty or unknown-cohort global org inputs', () => {
+    expect(() => planGlobalFlushForOrgs([])).toThrow(/at least one org input/);
+    expect(() => planGlobalFlushForOrgs([{
+      orgId: runOrgIdN('unknown-cohort', 0),
+      rank: 1,
+      anchors: 1,
+      cohort: 'unknown' as never,
+    }])).toThrow(/cohort/);
+  });
+
   it('models a >10k org as exactly one tx per scheduler pass', () => {
     const orgId = runOrgIdN('single-org-cross-pass', 0);
     const expected = planOrgScheduler([{ orgId, rank: 1, anchors: 12_500, cohort: 'healthy' }]);
@@ -182,7 +224,14 @@ describe('R3 trigger expectations — org scheduler and global flush stay distin
     expect(expected.batchSize).toBe(10_000);
     expect(expected.distribution).toHaveLength(30);
     expect(expected.global10k.totalTransactions).toBe(1);
-    expect(expected.global12500.passes[0]?.remainder).toBe(2_500);
+    expect(expected.global10k.orgInputs.reduce((sum, row) => sum + row.anchors, 0)).toBe(10_000);
+    expect(expected.global10k.excludedPending).toBeGreaterThan(0);
+    expect(expected.global12500.orgInputs.reduce((sum, row) => sum + row.anchors, 0)).toBe(12_500);
+    expect(expected.global12500.passes[0]?.pendingRemainder).toBe(2_500);
+    expect(expected.global12500.passes[0]?.eligibleRemainder).toBe(
+      2_500 - expected.global12500.excludedPending,
+    );
+    expect(expected.global12500.poisons).toHaveLength(3);
     expect(expected.singleOrgCrossPass.totalTransactions).toBe(2);
     expect(() => buildR3AcceptancePlan({ runId: 'too-small', orgs: 29 })).toThrow(/at least 30 orgs/);
   });

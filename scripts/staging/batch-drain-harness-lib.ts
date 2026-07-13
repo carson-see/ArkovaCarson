@@ -268,6 +268,87 @@ export function planGlobalFlush(
   };
 }
 
+export interface OrgGlobalFlushPass {
+  pass: number;
+  transactions: 1;
+  leaves: number;
+  eligibleRemainder: number;
+  pendingRemainder: number;
+}
+
+export interface OrgGlobalFlushExpectation {
+  trigger: 'global-flush';
+  orgInputs: OrgDrainPlanRow[];
+  initialPending: number;
+  eligiblePending: number;
+  excludedPending: number;
+  totalTransactions: number;
+  passes: OrgGlobalFlushPass[];
+  poisons: GlobalPoisonExpectation[];
+}
+
+export interface GlobalPoisonExpectation {
+  orgId: string;
+  cohort: Exclude<OrgCohort, 'healthy'>;
+  anchorsRemaining: number;
+  globalOutcome: 'credit-gate-excluded' | 'preflight-failed-contained';
+}
+
+/**
+ * R3 Trigger D expectation derived from actual per-org inputs. Poison rows are
+ * explicit retained backlog and can never be silently counted as drained.
+ */
+export function planGlobalFlushForOrgs(
+  rows: OrgDrainPlanRow[],
+  batchSize = BATCH_SIZE,
+): OrgGlobalFlushExpectation {
+  requirePositiveInteger(batchSize, 'batchSize');
+  if (rows.length === 0) throw new Error('Global flush planning requires at least one org input.');
+  validatePlanRows(rows);
+
+  const initialPending = rows.reduce((sum, row) => sum + row.anchors, 0);
+  const eligiblePending = rows
+    .filter((row) => row.cohort === 'healthy')
+    .reduce((sum, row) => sum + row.anchors, 0);
+  const excludedPending = initialPending - eligiblePending;
+  const poisons: GlobalPoisonExpectation[] = rows.flatMap((row) => {
+    if (row.cohort === 'healthy') return [];
+    return [{
+      orgId: row.orgId,
+      cohort: row.cohort,
+      anchorsRemaining: row.anchors,
+      globalOutcome: row.cohort === 'credit-starved'
+        ? 'credit-gate-excluded'
+        : 'preflight-failed-contained',
+    }];
+  });
+
+  const passes: OrgGlobalFlushPass[] = [];
+  let eligibleRemainder = eligiblePending;
+  while (eligibleRemainder > 0) {
+    const leaves = Math.min(eligibleRemainder, batchSize);
+    eligibleRemainder -= leaves;
+    passes.push({
+      pass: passes.length + 1,
+      transactions: 1,
+      leaves,
+      eligibleRemainder,
+      pendingRemainder: eligibleRemainder + excludedPending,
+    });
+  }
+
+  return {
+    trigger: 'global-flush',
+    orgInputs: rows.map((row) => ({ ...row })),
+    initialPending,
+    eligiblePending,
+    excludedPending,
+    totalTransactions: passes.length,
+    passes,
+    poisons,
+  };
+}
+
 export interface OrgSchedulerTransaction {
   orgId: string;
   leaves: number;
@@ -299,6 +380,9 @@ function validatePlanRows(rows: OrgDrainPlanRow[]): void {
     if (!row.orgId?.trim()) throw new Error('Every org scheduler row requires an orgId.');
     requirePositiveInteger(row.rank, 'rank');
     requirePositiveInteger(row.anchors, 'anchors');
+    if (row.cohort !== 'healthy' && row.cohort !== 'credit-starved' && row.cohort !== 'bad-fingerprint') {
+      throw new Error(`Unknown org cohort: ${String(row.cohort)}.`);
+    }
     if (orgIds.has(row.orgId)) throw new Error(`Duplicate orgId in scheduler plan: ${row.orgId}.`);
     if (ranks.has(row.rank)) throw new Error(`Duplicate rank in scheduler plan: ${row.rank}.`);
     orgIds.add(row.orgId);
@@ -357,8 +441,8 @@ export interface R3AcceptancePlan {
   batchSize: number;
   distribution: OrgDrainPlanRow[];
   orgScheduler: OrgSchedulerExpectation;
-  global10k: GlobalFlushExpectation;
-  global12500: GlobalFlushExpectation;
+  global10k: OrgGlobalFlushExpectation;
+  global12500: OrgGlobalFlushExpectation;
   singleOrgCrossPass: OrgSchedulerExpectation;
 }
 
@@ -374,13 +458,23 @@ export function buildR3AcceptancePlan(
     orgs,
     count: options.multiOrgCount ?? 12_500,
   });
+  const global10kInputs = zipfOrgPlan({
+    runId: `${options.runId}-global-10k`,
+    orgs,
+    count: 10_000,
+  });
+  const global12500Inputs = zipfOrgPlan({
+    runId: `${options.runId}-global-12500`,
+    orgs,
+    count: 12_500,
+  });
   const singleOrgId = runOrgIdN(`${options.runId}-single-org-cross-pass`, 0);
   return {
     batchSize: BATCH_SIZE,
     distribution,
     orgScheduler: planOrgScheduler(distribution),
-    global10k: planGlobalFlush(10_000),
-    global12500: planGlobalFlush(12_500),
+    global10k: planGlobalFlushForOrgs(global10kInputs),
+    global12500: planGlobalFlushForOrgs(global12500Inputs),
     singleOrgCrossPass: planOrgScheduler([
       { orgId: singleOrgId, rank: 1, anchors: 12_500, cohort: 'healthy' },
     ]),
