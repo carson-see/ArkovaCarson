@@ -7,10 +7,13 @@
  *
  * Mock strategy (production code path stays intact end to end):
  *  - The on-device NER runtime is stubbed by intercepting the app-origin
- *    `/vendor/transformers.web.min.js` module: the stub loads a pipeline that
- *    finds zero entities, so the REAL regex PII stripper still runs on-device
- *    (the file's SSN/email sentinels are stripped by it) without needing the
- *    ~100MB vendored model weights in CI.
+ *    vendored transformers.js module (TRANSFORMERS_BROWSER_MODULE — imported
+ *    from the source constant so a vendor-bundle rename can never silently
+ *    strand this intercept again; main's #1416 renamed `.web.min.js` →
+ *    `.bundle.min.js` and did exactly that to the original hardcoded glob):
+ *    the stub loads a pipeline that finds zero entities, so the REAL regex
+ *    PII stripper still runs on-device (the file's SSN/email sentinels are
+ *    stripped by it) without needing the ~100MB vendored model weights in CI.
  *  - The worker extraction + template endpoints are fulfilled with canned
  *    responses (no live Gemini) while their REQUEST bodies are captured and
  *    asserted against the privacy contract.
@@ -19,6 +22,7 @@
  */
 
 import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
+import { TRANSFORMERS_BROWSER_MODULE } from '../src/lib/nerPiiDetector';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -92,8 +96,13 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     });
 
     // ── Network seams ──
-    // 1. On-device NER runtime stub (same-origin module intercept).
-    await page.context().route('**/vendor/transformers.web.min.js*', (route) =>
+    // 1. On-device NER runtime stub (same-origin module intercept). Routed on
+    //    the EXACT module path the production loader dynamically imports
+    //    (src/lib/nerPiiDetector.ts TRANSFORMERS_BROWSER_MODULE) — if this
+    //    pattern misses, the real loader runs, the git-ignored weights are
+    //    absent in CI, and the §1.6 fail-closed path blocks the flow before
+    //    the review panel (that exact drift broke this spec after #1416).
+    await page.context().route(`**${TRANSFORMERS_BROWSER_MODULE}*`, (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/javascript',
