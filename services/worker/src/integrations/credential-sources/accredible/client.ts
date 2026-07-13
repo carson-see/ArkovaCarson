@@ -88,6 +88,12 @@ export const AccredibleCredentialPageSchema = z.object({
 export type AccredibleCredentialPage = z.infer<typeof AccredibleCredentialPageSchema>;
 
 export interface AccredibleClientDeps {
+  /**
+   * SCRUM-2483: production callers MUST inject the IP-pinned SSRF-guarded fetch
+   * (`createSafeProviderFetch()` from `../safe-provider-fetch.js`), never the raw
+   * `fetch` global — a rebinding provider host must not reach a private/metadata
+   * address. Tests inject a stub.
+   */
   fetch: FetchLike;
   /** API base. Defaults to `DEFAULT_ACCREDIBLE_API_BASE`. */
   apiBase?: string;

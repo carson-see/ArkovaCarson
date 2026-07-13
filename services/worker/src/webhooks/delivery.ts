@@ -10,44 +10,21 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { Sentry } from '../utils/sentry.js';
 import { validateWebhookPayload } from './payload-schemas.js';
+// ─── SSRF Protection (INJ-02) ─────────────────────────────────────────
+// SCRUM-2483: the private-IP classifier + hostname blocklist + DNS-resolution
+// helper were lifted verbatim into ../lib/ssrf-guard.js so this webhook guard
+// and the new safeFetch egress primitive share ONE source of truth. The guard
+// body is byte-identical to the previous inline definition — no behaviour delta
+// on the webhook delivery path. delivery.ts re-exports the shared symbols so
+// existing importers (api/v1/webhooks.ts, credential-sources.ts) are unchanged.
+import {
+  BLOCKED_HOSTNAMES,
+  PRIVATE_IP_PATTERNS,
+  isPrivateIp,
+} from '../lib/ssrf-guard.js';
 
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 1000;
-
-// ─── SSRF Protection (INJ-02) ─────────────────────────────────────────
-// Block webhook delivery to private/internal IP ranges to prevent SSRF attacks.
-// Covers RFC 1918, loopback, link-local, AWS metadata, and IPv6 equivalents.
-
-const PRIVATE_IP_PATTERNS = [
-  /^127\./, // 127.0.0.0/8 loopback
-  /^10\./, // 10.0.0.0/8 private
-  /^172\.(1[6-9]|2\d|3[01])\./, // 172.16.0.0/12 private
-  /^192\.168\./, // 192.168.0.0/16 private
-  /^169\.254\./, // 169.254.0.0/16 link-local
-  /^0\./, // 0.0.0.0/8
-  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // 100.64.0.0/10 CGNAT
-  /^192\.0\.0\./, // 192.0.0.0/24 IETF protocol assignments
-  /^198\.1[89]\./, // 198.18.0.0/15 benchmark testing
-  /^::1$/, // IPv6 loopback
-  /^fe80:/i, // IPv6 link-local
-  /^fc/i, // IPv6 unique local (fc00::/7)
-  /^fd/i, // IPv6 unique local (fc00::/7)
-];
-
-const BLOCKED_HOSTNAMES = new Set([
-  'localhost',
-  'metadata.google.internal', // GCP metadata
-  'metadata.google',
-]);
-
-/**
- * Check if an IP address is private/internal.
- * Blocks RFC 1918 ranges, loopback, link-local, cloud metadata endpoints.
- */
-function isPrivateIp(ip: string): boolean {
-  if (ip === '169.254.169.254') return true;
-  return PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(ip));
-}
 
 /**
  * Check if a webhook URL targets a private/internal network address.

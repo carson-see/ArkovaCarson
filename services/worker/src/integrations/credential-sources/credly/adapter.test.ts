@@ -99,20 +99,34 @@ describe('SCRUM-1612 — credlyBadgeToEvidence', () => {
   });
 
   it('hashes the recipient email (lowercased + trimmed) into recipientIdentifierHash', () => {
+    // SCRUM-2484: the recipient hash is a keyed HMAC — a pepper is required.
+    const pepper = 'test-recipient-pepper-0123456789';
     const a = credlyBadgeToEvidence(PLAIN_BADGE, {
       fetchedAt: '2026-05-01T00:00:00.000Z',
       payloadHash: RAW_BYTES_HASH,
       recipientEmail: 'Alex@Example.com',
+      recipientPepper: pepper,
     });
     const b = credlyBadgeToEvidence(PLAIN_BADGE, {
       fetchedAt: '2026-05-01T00:00:00.000Z',
       payloadHash: RAW_BYTES_HASH,
       recipientEmail: '  alex@example.com  ',
+      recipientPepper: pepper,
     });
     expect(a.evidence.credential.recipientIdentifierHash).toEqual(
       b.evidence.credential.recipientIdentifierHash,
     );
     expect(a.evidence.credential.recipientIdentifierHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('omits the recipient hash when no pepper is available (never a bare sha256) (SCRUM-2484)', () => {
+    const result = credlyBadgeToEvidence(PLAIN_BADGE, {
+      fetchedAt: '2026-05-01T00:00:00.000Z',
+      payloadHash: RAW_BYTES_HASH,
+      recipientEmail: 'alex@example.com',
+      // no recipientPepper
+    });
+    expect(result.evidence.credential.recipientIdentifierHash).toBeUndefined();
   });
 
   it('hashes the credential id rather than copying it', () => {

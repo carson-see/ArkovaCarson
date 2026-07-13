@@ -109,6 +109,14 @@ jobs:
       - name: Block tracked filenames with spaces (SCRUM-1294)
         run: npx tsx scripts/ci/check-filename-spaces.ts
 
+      # SCRUM-2483 — ban raw fetch()/undici in services/worker/src outside a
+      # reviewed allow-list; worker egress must route through the IP-pinned
+      # safeFetch primitive (src/lib/safe-fetch.ts). WARN-FIRST: this step always
+      # exits 0 and only annotates. The WARN→ERROR ratchet (BAN_RAW_FETCH_MODE=
+      # error) lands in a SEPARATE PR after all egress is migrated to safeFetch.
+      - name: Ban raw fetch/undici in worker egress (SCRUM-2483, warn-first)
+        run: npx tsx scripts/ci/ban-raw-fetch-worker.ts
+
       # WEBEXT-04 / SCRUM-2506 — CSP↔runtime-deps drift gate. Parses the deployed
       # CSP (vercel.json) and fails if any on-device runtime dep (Tesseract OCR /
       # NER model / PDF.js) would need an off-origin fetch or wasm eval the CSP
