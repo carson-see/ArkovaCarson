@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
   applyLexicalLeakagePolicy,
   canonicalManifestHash,
@@ -46,15 +47,26 @@ describe('S3.3 batch acceptance — manifest-seeded sampling', () => {
   });
 
   it('supports a signed salt/commit-reveal policy without silently reusing the predictable seed', () => {
+    const revealedSalt = '11'.repeat(32);
+    const saltCommitment = createHash('sha256').update(revealedSalt, 'utf8').digest('hex');
     const committed = selectManifestSeededSample(ids, {
       ...canonicalPolicy,
       unpredictability: {
         mode: 'lane3-salt-commit-reveal-v1',
-        revealedSalt: '11'.repeat(32),
+        saltCommitment,
+        revealedSalt,
       },
     });
     expect(committed).toHaveLength(9);
     expect(committed).not.toEqual(selectManifestSeededSample(ids, canonicalPolicy));
+    expect(() => selectManifestSeededSample(ids, {
+      ...canonicalPolicy,
+      unpredictability: {
+        mode: 'lane3-salt-commit-reveal-v1',
+        saltCommitment: '00'.repeat(32),
+        revealedSalt,
+      },
+    })).toThrow(/commitment/i);
   });
 });
 

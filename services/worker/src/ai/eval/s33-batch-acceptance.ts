@@ -26,7 +26,11 @@ export interface ManifestSamplePolicy {
   prng: 'xorshift32-v1';
   unpredictability:
     | { mode: 'predictable-signed' }
-    | { mode: 'lane3-salt-commit-reveal-v1'; revealedSalt: string };
+    | {
+      mode: 'lane3-salt-commit-reveal-v1';
+      saltCommitment: string;
+      revealedSalt: string;
+    };
 }
 
 function canonicalizeJson(value: unknown, path = '$'): string {
@@ -94,8 +98,18 @@ export function selectManifestSeededSample(
     || !policy.unpredictability
     || !['predictable-signed', 'lane3-salt-commit-reveal-v1'].includes(policy.unpredictability.mode)
     || (policy.unpredictability.mode === 'lane3-salt-commit-reveal-v1'
-      && !/^[0-9a-f]{64,}$/.test(policy.unpredictability.revealedSalt))) {
+      && (!/^[0-9a-f]{64}$/.test(policy.unpredictability.saltCommitment)
+        || !/^[0-9a-f]{64,}$/.test(policy.unpredictability.revealedSalt)))) {
     throw new Error('Invalid sampling policy; signed hash representation, PRNG, and unpredictability rule required');
+  }
+
+  if (policy.unpredictability.mode === 'lane3-salt-commit-reveal-v1') {
+    const actualCommitment = createHash('sha256')
+      .update(policy.unpredictability.revealedSalt, 'utf8')
+      .digest('hex');
+    if (actualCommitment !== policy.unpredictability.saltCommitment) {
+      throw new Error('Revealed Lane-3 sampling salt does not match its signed commitment');
+    }
   }
 
   const seedDigest = policy.unpredictability.mode === 'predictable-signed'
