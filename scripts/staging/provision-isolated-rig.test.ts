@@ -65,6 +65,60 @@ const script = readFileSync(SCRIPT, 'utf8');
 // 25-file staging suite runs concurrently on a loaded developer host.
 vi.setConfig({ testTimeout: 20_000 });
 
+// A wedged synchronous child must fail before Vitest's 20s budget so the test
+// runner can report the actual subprocess timeout instead of hanging until the
+// enclosing test is killed. Keep the default generous enough for the existing
+// loaded-host/contention cases; the regression below injects a much smaller
+// deadline without weakening those cases.
+const PROVISION_CHILD_TIMEOUT_MS = 15_000;
+const CHILD_TIMEOUT_EXIT_CODE = 124;
+
+interface SyncRunResult {
+  out: string;
+  code: number;
+  timedOut: boolean;
+  errorCode?: string;
+}
+
+function boundedChildTimeoutMs(requestedTimeoutMs: number): number {
+  if (
+    !Number.isInteger(requestedTimeoutMs) ||
+    requestedTimeoutMs <= 0 ||
+    requestedTimeoutMs > PROVISION_CHILD_TIMEOUT_MS
+  ) {
+    throw new Error(
+      `child timeout must be an integer in 1..${PROVISION_CHILD_TIMEOUT_MS}ms; got ${requestedTimeoutMs}`,
+    );
+  }
+  return requestedTimeoutMs;
+}
+
+function normalizeSyncRunFailure(error: unknown, timeoutMs: number): SyncRunResult {
+  const err = error as {
+    status?: number | null;
+    code?: string;
+    stdout?: unknown;
+    stderr?: unknown;
+  };
+  const timedOut = err.code === 'ETIMEDOUT';
+  const code = timedOut
+    ? CHILD_TIMEOUT_EXIT_CODE
+    : typeof err.status === 'number' && err.status !== 0
+      ? err.status
+      : 1;
+  const stdout = err.stdout == null ? '' : String(err.stdout);
+  const stderr = err.stderr == null ? '' : String(err.stderr);
+  const timeoutDiagnostic = timedOut
+    ? `ERROR: provisioner child ETIMEDOUT after ${timeoutMs}ms (reported code ${code}).\n`
+    : '';
+  return {
+    out: `${stdout}${stderr}${timeoutDiagnostic}`,
+    code,
+    timedOut,
+    errorCode: typeof err.code === 'string' ? err.code : undefined,
+  };
+}
+
 const VALID_PREFLIGHT_REPORT: PreflightReport = {
   ...buildReport({
     projectRef: 'abcdefghijklmnopqrst',
@@ -78,17 +132,23 @@ VALID_PREFLIGHT_REPORT.checks[0].details = 'secret-looking-diagnostic-must-not-p
 const REQUIRED_PREFLIGHT_CHECK_NAMES = VALID_PREFLIGHT_REPORT.checks.map(({ name }) => name);
 
 /** Run the provisioner in dry-run (no --apply → no side effects) and capture stdout+stderr. */
-function dryRun(args: string[], env: Record<string, string> = {}): { out: string; code: number } {
+function dryRun(
+  args: string[],
+  env: Record<string, string> = {},
+  requestedChildTimeoutMs = PROVISION_CHILD_TIMEOUT_MS,
+): SyncRunResult {
+  const childTimeoutMs = boundedChildTimeoutMs(requestedChildTimeoutMs);
   try {
     const out = execFileSync('bash', [SCRIPT, ...args], {
       env: { ...process.env, ...env },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: childTimeoutMs,
+      killSignal: 'SIGKILL',
     });
-    return { out, code: 0 };
+    return { out, code: 0, timedOut: false };
   } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string };
-    return { out: `${err.stdout ?? ''}${err.stderr ?? ''}`, code: err.status ?? 1 };
+    return normalizeSyncRunFailure(e, childTimeoutMs);
   }
 }
 
@@ -325,9 +385,7 @@ const STUB_IMAGE_DIGEST =
 const STUB_IMAGE_REF =
   `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${STUB_IMAGE_DIGEST}`;
 
-interface ApplyRunResult {
-  out: string;
-  code: number;
+interface ApplyRunResult extends SyncRunResult {
   gcloudCalls: string[];
   npxCalls: string[];
   callOrder: string[];
@@ -360,6 +418,7 @@ interface ApplyRunOptions {
   schedulerEnabledVerificationFailsAt?: number;
   blockAdmissionArtifactPath?: boolean;
   failFinalStatePersistence?: boolean;
+  childTimeoutMs?: number;
   env?: Record<string, string>;
 }
 
@@ -607,16 +666,25 @@ exit 64
 
   let out = '';
   let code = 0;
+  let timedOut = false;
+  let errorCode: string | undefined;
+  const childTimeoutMs = boundedChildTimeoutMs(
+    options.childTimeoutMs ?? PROVISION_CHILD_TIMEOUT_MS,
+  );
   try {
     out = execFileSync('bash', [SCRIPT, '--name', name, '--profile', profile, '--apply'], {
       env: { ...process.env, ...env },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: childTimeoutMs,
+      killSignal: 'SIGKILL',
     });
   } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string };
-    out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
-    code = err.status ?? 1;
+    const failure = normalizeSyncRunFailure(e, childTimeoutMs);
+    out = failure.out;
+    code = failure.code;
+    timedOut = failure.timedOut;
+    errorCode = failure.errorCode;
   }
 
   const gcloudCalls = readFileSync(logFile, 'utf8')
@@ -640,6 +708,8 @@ exit 64
   return {
     out,
     code,
+    timedOut,
+    errorCode,
     gcloudCalls,
     npxCalls,
     callOrder,
@@ -652,6 +722,44 @@ exit 64
 
 afterAll(() => {
   for (const dir of stubDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+describe('provision-isolated-rig.sh — bounded synchronous child execution', () => {
+  it('terminates hung dry-run and apply helpers with deterministic ETIMEDOUT reporting', () => {
+    const hangDir = mkdtempSync(join(tmpdir(), 'provision-child-timeout-'));
+    stubDirs.push(hangDir);
+    const bashEnv = join(hangDir, 'hang-before-provisioner.sh');
+    writeFileSync(bashEnv, 'while :; do :; done\n');
+    const timeoutMs = 150;
+    const cases: Array<[string, () => SyncRunResult]> = [
+      [
+        'dryRun',
+        () => dryRun(
+          ['--name', 'bounded-dry-run'],
+          { BASH_ENV: bashEnv },
+          timeoutMs,
+        ),
+      ],
+      [
+        'applyRunStubbed',
+        () => applyRunStubbed('bounded-apply-run', 'mock', {
+          childTimeoutMs: timeoutMs,
+          env: { BASH_ENV: bashEnv },
+        }),
+      ],
+    ];
+
+    for (const [helperName, run] of cases) {
+      const startedAt = Date.now();
+      const result = run();
+      const elapsedMs = Date.now() - startedAt;
+      expect(result.code, `${helperName}: ${result.out}`).toBe(CHILD_TIMEOUT_EXIT_CODE);
+      expect(result.timedOut, helperName).toBe(true);
+      expect(result.errorCode, helperName).toBe('ETIMEDOUT');
+      expect(result.out, helperName).toContain(`ETIMEDOUT after ${timeoutMs}ms`);
+      expect(elapsedMs, `${helperName} exceeded the bounded hang-test wall time`).toBeLessThan(2_000);
+    }
+  });
 });
 
 function expectEveryDeclaredSchedulerJobContainedAfter(
