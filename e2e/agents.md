@@ -1,6 +1,10 @@
 # agents.md — e2e/
 _Last updated: 2026-05-30_
 
+## 2026-07-06 AI-03 template-review privacy-contract spec (SCRUM-2383)
+
+`template-review.spec.ts` — upload-mock → on-device extract (mocked at network seams) → review → correct → confirm, asserting NO request body ever carries raw document content or unstripped PII. Mocking pattern worth reusing: the on-device NER runtime is stubbed by intercepting the app-origin vendored transformers.js module — routed on `TRANSFORMERS_BROWSER_MODULE` **imported from `src/lib/nerPiiDetector`**, never a hardcoded path (a stub `pipeline()` returning zero entities), so the REAL regex PII stripper and the full production React flow run without the gitignored ~100MB model weights; worker `/api/v1/ai/extract` + `/ai/template` are fulfilled canned while their request bodies are captured for the privacy assertions; `rpc/get_flag` is routed to force `ENABLE_AI_EXTRACTION` on deterministically. Uses a `.txt` upload so on-device text extraction needs no OCR engine. **2026-07-13 defect record (release gate, PR #1413):** the original spec hardcoded `**/vendor/transformers.web.min.js*`; main's #1416 (WEBEXT-01-FIX, merged 2026-07-10, after the spec was written) deleted that file and renamed the loader target to `/vendor/transformers.bundle.min.js` — the stub silently stopped matching, the real loader ran, CI has no weights under `public/models/` → `NERModelLoadError` → §1.6 fail-CLOSED stripper throw → the flow blocked before the review panel and `template-review-panel` timed out deterministically (30s × 3; worker log showed zero `/api/v1/ai/extract` hits, proving failure was before the network seam). FE flow was NOT broken — the privacy fail-closed path behaved as designed; spec-only fix couples the route glob to the source constant so a future rename fails at import/typecheck time instead of stranding the intercept.
+
 ## What This Folder Contains
 
 Playwright E2E test specs and shared fixtures for the Arkova application.

@@ -13,7 +13,7 @@
  * It uses the vendored AI-01 golden set as a representative, PII-free corpus so
  * the load exercises real model inference on real document shapes.
  *
- * ── Auth + rate limits (see ai-eval/ai-client.ts header for the full note) ───
+ * -- Auth + rate limits (see ai-eval/ai-client.ts header for the full note) ---
  *   /api/v1/ai/* require a Supabase user JWT (Authorization: Bearer <jwt>).
  *   aiRateLimiter = 30 req/min/user; anon per-IP = 100 req/min. To sustain
  *   >= 5k req/hr the harness shards across N JWTs (STAGING_AI_JWTS) and paces
@@ -27,11 +27,11 @@
  *
  * Usage:
  *   # 15-min dry-run smoke with an evidence file
- *   STAGING_API_BASE=… STAGING_AI_JWTS=… \
+ *   STAGING_API_BASE=... STAGING_AI_JWTS=... \
  *     npx tsx scripts/staging/ai-soak-harness.ts --duration 15 --rate 5000 --evidence-out docs/staging/ai-dryrun.json
  *
  *   # 48-hour T3 AI soak at 5k req/hr, extract+template+tags
- *   STAGING_API_BASE=… STAGING_AI_JWTS=… \
+ *   STAGING_API_BASE=... STAGING_AI_JWTS=... \
  *     npx tsx scripts/staging/ai-soak-harness.ts --duration 2880 --rate 5000 \
  *       --endpoints extract,template,tags --evidence-out docs/staging/ai-soak-pr1413.json
  */
@@ -71,15 +71,15 @@ import {
 
 const { values: args } = parseArgs({
   options: {
-    duration: { type: 'string', default: '15' }, // minutes
-    rate: { type: 'string', default: '5000' }, // requests/hour
+    duration: { type: 'string', default: '15' },
+    rate: { type: 'string', default: '5000' },
     endpoints: { type: 'string', default: 'extract,template,tags' },
-    'doc-variants': { type: 'string' }, // default: all (pdf/scan/docx/large/oversized/malformed)
-    'timeout-ms': { type: 'string', default: '10000' }, // client request deadline
-    'no-rotate-ip': { type: 'boolean', default: false }, // disable X-Forwarded-For rotation
+    'doc-variants': { type: 'string' },
+    'timeout-ms': { type: 'string', default: '10000' },
+    'no-rotate-ip': { type: 'boolean', default: false },
     'evidence-out': { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
-    'allow-undersized-pool': { type: 'boolean', default: false }, // force-run despite plan.sufficient=false
+    'allow-undersized-pool': { type: 'boolean', default: false },
   },
 });
 
@@ -100,7 +100,6 @@ function parseEndpoints(raw: string): AiEndpoint[] {
     console.error(`::error::--endpoints must be a comma-list of extract|template|tags; got \`${raw}\``);
     process.exit(2);
   }
-  // Preserve canonical order so the weighted rotation in selectEndpointForSequence applies.
   return known.filter((k) => selected.includes(k));
 }
 
@@ -162,19 +161,18 @@ async function main(): Promise<void> {
 
   const apiBase = resolveStagingApiBase(process.env);
   const identities: WorkerIdentity[] = parseIdentities(process.env.STAGING_AI_JWTS);
-  // Multi-doctype + size corpus: golden fixtures × document variants.
   const corpus = buildVariantCorpus(allGoldenEntries(), variants);
 
   const plan = planRate(ratePerHour, identities);
   const mode = `ai-${endpoints.join('+')}`;
 
-  console.log(`▶ ai-soak-harness ${mode} at ${new Date().toISOString()}`);
+  console.log(`> ai-soak-harness ${mode} at ${new Date().toISOString()}`);
   console.log(`  api_base=${apiBase}`);
   console.log(`  duration=${durationMin}min  target=${ratePerHour} req/hr  interval=${plan.intervalMs}ms  client_timeout=${timeoutMs}ms  rotate_ip=${rotateIp}`);
-  console.log(`  identities=${identities.length} (min ${plan.minUsers})  per_user≈${plan.perUserPerMin.toFixed(1)}/min (limit 30)`);
-  console.log(`  corpus=${corpus.length} items (${allGoldenEntries().length} fixtures × ${variants.length} variants: ${variants.join(',')})`);
+  console.log(`  identities=${identities.length} (min ${plan.minUsers})  per_user~${plan.perUserPerMin.toFixed(1)}/min (limit 30)`);
+  console.log(`  corpus=${corpus.length} items (${allGoldenEntries().length} fixtures x ${variants.length} variants: ${variants.join(',')})`);
   console.log(`  endpoints=${endpoints.join(',')}`);
-  if (plan.warning) console.warn(`  ⚠ ${plan.warning}`);
+  if (plan.warning) console.warn(`  WARN ${plan.warning}`);
 
   if (identities.length === 0) {
     console.error('::error::STAGING_AI_JWTS is required — /api/v1/ai/* rejects unauthenticated calls (401).');
@@ -203,7 +201,7 @@ async function main(): Promise<void> {
     console.log(
       `[t+${elapsedSec.toFixed(0)}s] total=${stats.total} 429=${r.rate_limited} ` +
       `timeout=${r.client_timeout + r.server_unavailable} false=${r.false_reading} ` +
-      `achieved≈${((stats.total / Math.max(elapsedSec, 1)) * 3600).toFixed(0)}/hr`,
+      `achieved~${((stats.total / Math.max(elapsedSec, 1)) * 3600).toFixed(0)}/hr`,
     );
   }, 60_000);
 
@@ -213,9 +211,6 @@ async function main(): Promise<void> {
     while (Date.now() < endAt) {
       const endpoint = selectEndpointForSequence(seq, endpoints);
       const item = corpus[seq % corpus.length];
-      // Load-only variants (oversized/malformed) test the ENDPOINT'S failure
-      // handling — only meaningful on extract (template/tags take metadata, not
-      // document text). Route them to extract regardless of the rotation.
       const effectiveEndpoint = isLoadOnlyVariant(item.variant) ? 'extract' : endpoint;
       const identity = pickIdentity(identities, seq);
       const forwardedFor = rotateIp ? randomForwardedFor() : undefined;
@@ -253,7 +248,7 @@ async function main(): Promise<void> {
   if (evidencePath) {
     mkdirSync(dirname(evidencePath), { recursive: true }); // NOSONAR S8707 — resolveEvidenceOutputPath confines writes to docs/staging.
     writeFileSync(evidencePath, JSON.stringify(summary, null, 2) + '\n'); // NOSONAR S8707 — resolveEvidenceOutputPath confines writes to docs/staging.
-    console.log(`\n📄 Evidence written: ${evidencePath}`);
+    console.log(`\nEvidence written: ${evidencePath}`);
   }
 }
 

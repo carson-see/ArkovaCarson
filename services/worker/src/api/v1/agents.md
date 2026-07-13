@@ -2,6 +2,11 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-07-06 AI-03 recursive byte-smuggling guard (Carson P1, PR #1413)
+
+- `ai-template.ts` `assertNoDocumentPayload` is now RECURSIVE over nested objects/arrays (the schema accepts `z.unknown()` values, so a first-level-only walk let `{fields:{metadata:{rawDocument:"<base64>"}}}` through to `GeminiProvider.reconstructTemplate`). At ANY depth it rejects: banned document-shaped keys, `data:` URIs, base64-shaped strings (≥512 chars pure base64/base64url alphabet), per-value length > 20k, key names > 256 chars, nesting > 8 levels, and a CUMULATIVE string budget (50k across all values + key names) that blocks documents chunked across many small keys. Issues carry key paths + bounded messages only — never values.
+- The two route handlers (`/template`, `/tags`) share one `aiRouteHandler` factory (auth → validate → invoke → value-free log → respond); per-route deltas are declarative specs. AI-03 value-omission lock-ins unchanged and still test-locked in `__tests__/ai-template.contract.test.ts`.
+
 ## 2026-06-24 Batch AI extraction credit accounting (BUG-2026-06-24-013, T2)
 
 - `ai-extract-batch.ts` (`POST /api/v1/ai/extract-batch`) moved from an UP-FRONT batch debit + failure-only refund to **per-item debit/refund inside `parallelMap`** (parity with the single path `ai-extract.ts`). Batch-level double-accounting is now structurally impossible.
@@ -16,15 +21,6 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 
 - `credentials-ctdl.ts` treats `CtdlPiiSafetyError` from the serializer as a fail-closed public response: HTTP 404 `{ error: 'not_found' }` with `ctdl.requested` audit outcome `safety_blocked`. Never return a CTDL body when the serializer blocks on transcript/education learner-name PII confidence. The credential's public contract (status/date/identifier/revocation fields) is otherwise unchanged from main.
 - CTDL `ceterms:ctid` is optional (shipped via #1178). The endpoint must not invent CE CTIDs from Arkova public IDs; only explicit real CE CTIDs may appear.
-
-## 2026-07-06 CE-04 contact-hour sourcing in normalizeAnchorRow (SCRUM-2375, S3)
-
-- `normalizeAnchorRow` additionally derives `contactHours` (CE continuing-education ContactHour credit) from an allow-listed metadata key set (`contact_hours`/`credit_hours`/`ce_credit_hours` + camelCase) via `contactHoursFromMetadata`, accepting plain numbers or CANONICAL decimal strings only (`/^\d+(\.\d+)?$/` — round-1 review fix on PR #1412: `Number()`-coercible forms like `'0x10'`/`'1e3'`/`'Infinity'`/`'+5'` are ignored) and gating through the serializer-exported `normalizeContactHours` plausibility check (0 < v ≤ `MAX_CONTACT_HOURS` = 1000, the constant shared with `ctdl-validation.ts`). `ceu`/`ceus` are NOT allow-listed — no fabricated unit conversion. The serializer emits it as `ceterms:creditValue` (ValueProfile + `creditUnit:ContactHour`) for CPE/CLE only; see `ctdl/agents.md`. Additive optional field on the public CTDL body (§1.8-safe). CONFLATION GUARD: unrelated to the billing `credit_ledger`.
-
-## 2026-07-06 CE-06a claims_blocked audit outcome + revocationReason PII (PR #1412 round-1 review fixes)
-
-- `credentials-ctdl.ts` now catches `ProhibitedClaimError` from the serializer's final claims assert with its own audit outcome `claims_blocked` (HTTP 500 `internal_error`, no body, value-free error message), mirroring `CtdlPiiSafetyError`'s `safety_blocked` instead of the generic `error` bucket — claims blocks are observable in `audit_events`.
-- BUG-2026-07-06-002 / SCRUM-2630 (pre-existing): a PII-bearing `revocation_reason` no longer ships on the public 410 body — the serializer routes it through `cleanPublicFreeText` (honest omission; 410 + `ceterms:revocationDate` unchanged). See `ctdl/agents.md`.
 
 ## 2026-07-01 CE-03 expiration sourcing in normalizeAnchorRow (SCRUM-2374, S2)
 
@@ -69,7 +65,7 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 
 ## 2026-05-31 CPE compliance-log export (SCRUM-1848 / SCRUM-1859 + SCRUM-1860)
 
-- `POST /api/v1/exports/cpe-log` — JWT-authed (mounted behind `requireAuth`), per-user **10 requests/hour** rate limit (`cpeLogExportRateLimiter`, in-memory `rateLimit()` bucket keyed `cpe-log-export:<userId>`; 11th → 429 + `Retry-After`). Body `{ user_id, period_start, period_end, format: 'pdf'|'json' }` (Zod `.strict()`, `period_start<=period_end`). Generates **both** PDF + JSON synchronously, uploads to Supabase Storage (bucket `EXPORTS_STORAGE_BUCKET`, default `exports`), and returns a signed URL for each (1h TTL) plus `request_id` + `record_count`. SCRUM-2378: response also carries `excluded_count` (in-period rows excluded server-side because not yet SECURED; additive field). The CLE endpoint additionally echoes `jurisdiction_disclaimer` (SCRUM-2379, section 1.5); the org export mirrors `excluded_count`.
+- `POST /api/v1/exports/cpe-log` — JWT-authed (mounted behind `requireAuth`), per-user **10 requests/hour** rate limit (`cpeLogExportRateLimiter`, in-memory `rateLimit()` bucket keyed `cpe-log-export:<userId>`; 11th → 429 + `Retry-After`). Body `{ user_id, period_start, period_end, format: 'pdf'|'json' }` (Zod `.strict()`, `period_start<=period_end`). Generates **both** PDF + JSON synchronously, uploads to Supabase Storage (bucket `EXPORTS_STORAGE_BUCKET`, default `exports`), and returns a signed URL for each (1h TTL) plus `request_id` + `record_count`.
 - Org/user scope: a caller may export only **their own** records. `user_id !== req.authUserId` → 403; no org membership → 403. The worker query is filtered by BOTH `user_id` AND `org_id` (defense in depth); `org_id` is resolved from the caller's `profiles` row, never trusted from the body.
 - Worker logic lives in `services/worker/src/exports/cpe-log-export.ts` (DI `db`/`storage`/`logger` — no Storage *migration* required; bucket is provisioned as an ops step, keeping this T2 not T3). `cpe_log_v1` JSON schema is `.strict()` + frozen-friendly. Per-credential fields: title, provider, NASBA status, CPE hours, field of study, delivery method, completion date, Arkova verification URL (`${frontendUrl}/verify/<public_id>`), anchor timestamp (`chain_timestamp` = Network Observed Time), evidence level. **`extraction_confidence` / `extraction_source` are deliberately NOT exported.**
 - PDF carries the mandatory NASBA non-affiliation disclaimer **verbatim** (`NASBA_DISCLAIMER_TEXT`).

@@ -27,8 +27,12 @@ export const ExtractedFieldsSchema = z.object({
   creditType: z.string().optional(),
   barNumber: z.string().optional(),
   activityNumber: z.string().optional(),
+  courseId: z.string().optional(),
   providerName: z.string().optional(),
   approvedBy: z.string().optional(),
+  deliveryMethod: z.string().optional(),
+  ethicsHours: z.number().optional(),
+  nasbaStatus: z.string().optional(),
   // CHARITY-specific fields (GME-21)
   einNumber: z.string().optional(),
   taxExemptStatus: z.string().optional(),

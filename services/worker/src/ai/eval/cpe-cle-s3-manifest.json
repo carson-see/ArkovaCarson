@@ -1,0 +1,44 @@
+{
+  "version": "1.0.0",
+  "datasetTag": "s3-cpe-cle",
+  "createdAt": "2026-07-06",
+  "story": "SCRUM-2381 (AI-01)",
+  "totalEntries": 60,
+  "heldOutEntries": 12,
+  "gateEntries": 48,
+  "counts": {
+    "byCredentialType": {
+      "cpe": 30,
+      "cle": 30
+    },
+    "byQuality": {
+      "clean": 36,
+      "degraded-scan": 24
+    },
+    "byAdversarialClass": {
+      "ambiguous-provider": 6,
+      "near-duplicate-credits": 6,
+      "fractional-hours": 6,
+      "multi-credit": 6
+    },
+    "heldOutByCredentialType": {
+      "cpe": 6,
+      "cle": 6
+    }
+  },
+  "heldOutFingerprints": {
+    "GD-S3-CPE-010": "41e241abb6ffe287307b38d977754b36c584b42c89f25f294dcef509ac3ecbb8",
+    "GD-S3-CPE-018": "501841c42f9eaa0e2f0409877668c87d6e5483960e820791a0ed6ff49a20e50f",
+    "GD-S3-CPE-021": "9360fd9c6e1a3e4c0ddcfc1e4dc85a8aa3d72b5647a87619172ad8492e7840ff",
+    "GD-S3-CPE-024": "c418a08f292aab9e92595efe84c5c02a6167f8f549d2d0ef6a76307dda46ea8a",
+    "GD-S3-CPE-027": "eb4df0944ed0c6cafe855cff233838581babd47f8fe7f8937c499e689c1d7ffb",
+    "GD-S3-CPE-030": "b72e672f659d39b9c2b76f8e0ae5cf2ecb676fe3d7fdc310098f84397bdecdf1",
+    "GD-S3-CLE-010": "fd003bdc86c346adf1fd8a69652f31afb466ee93db7742e38b9a805f5c894bf0",
+    "GD-S3-CLE-018": "3b402ef4563448abc185159b9cf46d1ba254cece90a6fa31f098b2cd09e23f52",
+    "GD-S3-CLE-021": "9c6f57116035ccdd5c2a78d5bf555011048c57f6315d4338ce37800ab5df60a8",
+    "GD-S3-CLE-024": "3e65303f0f75449d8a752122b76667f1669987a2913a59500874a02d18e4941e",
+    "GD-S3-CLE-027": "c4a256e813e5f7cb82d824069f6f7e0a18f70bc96bbdbd24cdbba216d676d36d",
+    "GD-S3-CLE-030": "b66e24e767619e2f6447e2dea93a06aef6a6a3bcfd1868e1be2b938721900333"
+  },
+  "coverageRationale": "Stratified 30 CPE x 30 CLE to mirror the two professional-education document families the extraction pipeline must serve at parity. Within each kind: 10 clean fixtures establish the baseline; 8 degraded-scan fixtures (casing damage, 0/O substitution, split tokens, table remnants, edge cuts) cover the OCR-noise regime real uploads exhibit; 12 adversarial fixtures (3 per class) target the four known failure modes — ambiguous provider fields (platform/venue/co-sponsor vs accredited sponsor of record), near-duplicate credit values (minutes vs credits, requested vs approved, 50- vs 60-minute hours, rescan duplicates), fractional hours (0.2-7.75), and multi-credit certificates (allocation tables, per-day totals, ethics splits). The 12-entry held-out split (1 clean, 1 degraded, 1 per adversarial class, per kind) preserves every stratum so held-out F1 measures generalization across the full difficulty surface; held-out fixtures are fingerprint-pinned here and leak-checked against all committed prompt/few-shot/tuning corpora by heldout-leakage.ts."
+}

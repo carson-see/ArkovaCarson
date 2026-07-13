@@ -201,6 +201,76 @@ describe('GeminiProvider', () => {
       expect(result.fields.issuerName).toBe('University of Michigan');
     });
 
+    it('repairs common malformed Gemini JSON instead of falling back on SyntaxError', async () => {
+      mockGenerateContent.mockResolvedValue({
+        response: {
+          text: () => [
+            '{',
+            '  "credentialType": "CERTIFICATE",',
+            '  "issuerName": "Ridgeline Professional Education Institute",',
+            '  "reasoning": "Clean certificate',
+            'with line break",',
+            '  "confidence": 0.9,',
+            '}',
+          ].join('\n'),
+          usageMetadata: { totalTokenCount: 140 },
+        },
+      });
+
+      const provider = new GeminiProvider('test-key');
+      const result = await provider.extractMetadata({
+        strippedText: [
+          'Certificate of Completion — Continuing Professional Education.',
+          'Course ID: RPEI-TAX-2026-041.',
+          'CPE Credits: 8.0.',
+          'Delivery Method: Group Internet Based.',
+          'NASBA Registry Status: Active.',
+          'Completion Date: April 14, 2026.',
+        ].join(' '),
+        credentialType: 'CPE',
+        fingerprint: 'b'.repeat(64),
+      });
+
+      expect(result.provider).toBe('gemini');
+      expect(result.fields.credentialType).toBe('CPE');
+      expect(result.fields.creditHours).toBe(8);
+    });
+
+    it('normalizes explicit CPE fields from source text for the live eval gate', async () => {
+      mockGenerateContent.mockResolvedValue({
+        response: {
+          text: () => JSON.stringify({
+            credentialType: 'CERTIFICATE',
+            issuerName: 'Blue Harbor CPA Academy',
+            fieldOfStudy: 'Auditing',
+            confidence: 0.9,
+          }),
+          usageMetadata: { totalTokenCount: 130 },
+        },
+      });
+
+      const provider = new GeminiProvider('test-key');
+      const result = await provider.extractMetadata({
+        strippedText: [
+          'Blue Harbor CPA Academy hereby certifies completion.',
+          'Program Code BHCA-AUD-2025-217.',
+          'Credits Awarded: 6.0 CPE.',
+          'Delivery Method: QAS Self Study.',
+          'NASBA Sponsor Registry: Active.',
+        ].join(' '),
+        credentialType: 'CPE',
+        fingerprint: 'c'.repeat(64),
+      });
+
+      expect(result.fields.credentialType).toBe('CPE');
+      expect(result.fields.creditType).toBe('CPE');
+      expect(result.fields.creditHours).toBe(6);
+      expect(result.fields.courseId).toBe('BHCA-AUD-2025-217');
+      expect(result.fields.activityNumber).toBe('BHCA-AUD-2025-217');
+      expect(result.fields.deliveryMethod).toBe('QAS Self Study');
+      expect(result.fields.nasbaStatus).toBe('active');
+    });
+
     it('clamps confidence to [0, 1] range', async () => {
       mockGenerateContent.mockResolvedValue({
         response: {
