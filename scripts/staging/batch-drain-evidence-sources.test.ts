@@ -14,7 +14,7 @@ import {
 describe('immutable declaration and independent raw evidence sources', () => {
   it('hardcodes the 48h floor and Soak v2 +30m requirement', () => {
     expect(SOAK_FLOOR_MINUTES).toBe(2_880);
-    expect(SOAK_REQUIRED_UPTIME_MINUTES).toBe(2_910);
+    expect(SOAK_REQUIRED_UPTIME_MINUTES).toBe(2_880);
   });
 
   it('rejects a declaration whose exact content hash does not match', () => {
@@ -30,7 +30,7 @@ describe('immutable declaration and independent raw evidence sources', () => {
       signet: '{}',
       cloudRun: '{}',
       supervisor: '{}',
-    }, {} as never, {} as never)).toThrow(/unrecognized|unknown/i);
+    }, {} as never)).toThrow(/unrecognized|unknown/i);
   });
 
   it('does not call any known live collector without both gates', async () => {

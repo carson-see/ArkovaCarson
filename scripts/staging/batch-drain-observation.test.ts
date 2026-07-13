@@ -411,6 +411,14 @@ describe('assertDrainPassObservation — event-derived fail-closed R3 evidence',
     const early = observation();
     early.triggerFirings[0]!.firedAt = '2026-07-13T12:00:04.000Z';
     expect(() => assertDrainPassObservation(expectation(), early)).toThrow(/scheduler execution chronology/);
+
+    const earlySignet = observation();
+    earlySignet.transactions[0]!.acceptedAt = '2026-07-13T12:00:04.000Z';
+    expect(() => assertDrainPassObservation(expectation(), earlySignet)).toThrow(/signet.*Scheduler execution/i);
+
+    const lateDenial = observation();
+    lateDenial.passRows[2]!.queueCreditDeniedAt = '2026-07-13T12:00:21.000Z';
+    expect(() => assertDrainPassObservation(expectation(), lateDenial)).toThrow(/queueCreditDeniedAt|credit.*Scheduler execution/i);
   });
 
   it('joins poison isolation only from actual pass and remainder facts', () => {
@@ -428,6 +436,45 @@ describe('assertDrainPassObservation — event-derived fail-closed R3 evidence',
       poisonLeaves: 1,
       finalPending: 1,
     });
+  });
+
+  it('rejects one transaction and claimed identity set reused across passes', () => {
+    const expectedFirst = expectation();
+    const expectedSecond = structuredClone(expectedFirst);
+    expectedSecond.schedulerExecutionId = 'scheduler-offline-r3-second';
+    expectedSecond.faultWindow.id = 'fault-window-offline-r3-second';
+
+    const first = observation();
+    first.pendingBefore = 5;
+    first.pendingAfter = 3;
+
+    const second = observation();
+    second.pendingBefore = 3;
+    second.pendingAfter = 1;
+    second.execution.schedulerExecutionId = expectedSecond.schedulerExecutionId;
+    second.execution.faultWindowId = expectedSecond.faultWindow.id;
+    second.execution.startedAt = '2026-07-13T12:00:21.000Z';
+    second.execution.completedAt = '2026-07-13T12:00:40.000Z';
+    second.triggerFirings[0]!.schedulerExecutionId = expectedSecond.schedulerExecutionId;
+    second.triggerFirings[0]!.firedAt = '2026-07-13T12:00:22.000Z';
+    for (const row of second.passRows) row.schedulerExecutionId = expectedSecond.schedulerExecutionId;
+    for (const gate of second.creditGateEvents) {
+      gate.schedulerExecutionId = expectedSecond.schedulerExecutionId;
+      gate.occurredAt = '2026-07-13T12:00:23.000Z';
+    }
+    second.passRows[2]!.queueCreditDeniedAt = '2026-07-13T12:00:23.000Z';
+    second.transactions[0]!.acceptedAt = '2026-07-13T12:00:30.000Z';
+    for (const balance of second.orgBalances) balance.schedulerExecutionId = expectedSecond.schedulerExecutionId;
+    for (const delta of second.ledgerDeltas) delta.schedulerExecutionId = expectedSecond.schedulerExecutionId;
+
+    expect(() => assertDrainWindowObservation({
+      scenarioId: 'replay-window',
+      kind: 'poison-isolation',
+      armedTrigger: 'org-scheduler',
+      expectedInitialPending: 5,
+      expectedFinalPending: 1,
+      passes: [expectedFirst, expectedSecond],
+    }, [first, second])).toThrow(/reused.*transaction|claim.*reused/i);
   });
 
   it.each([

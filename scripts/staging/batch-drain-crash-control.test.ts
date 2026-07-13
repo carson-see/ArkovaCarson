@@ -213,6 +213,7 @@ function recovery(): RecoveryEvidence {
   return {
     recoverySchedulerExecutionId: 'scheduler-recovery-offline',
     correlatedDrainExecutionId: EXECUTION_ID,
+    faultWindowId: FAULT_WINDOW_ID,
     source: 'cloud-scheduler',
     endpointPath: '/jobs/recover-broadcasts',
     httpStatus: 200,
@@ -265,6 +266,7 @@ function makePort(killpoint: CrashKillpoint, overrides: PortOverrides = {}): { p
   return {
     events,
     port: {
+      evidenceMode: 'offline-replay',
       async arm(input) {
         events.push(`arm:${input.killpoint}`);
         if (overrides.armError) throw overrides.armError;
@@ -304,6 +306,7 @@ describe('orchestrateCrashCase — observed five-stage process lifecycle', () =>
     const evidence = await orchestrateCrashCase(makeInput(killpoint), port);
     expect(evidence).toMatchObject({
       verdict: 'pass',
+      evidenceMode: 'offline-replay',
       batchId: BATCH_ID,
       transactionIds: [TX_ID],
       merkleRoots: [ROOT],
@@ -379,6 +382,12 @@ describe('orchestrateCrashCase — observed five-stage process lifecycle', () =>
       makeInput('after-claim'),
       makePort('after-claim', { termination: badRuntime }).port,
     )).rejects.toThrow(/exact tested head and image/);
+
+    const crossFaultRecovery = { ...recovery(), faultWindowId: 'unrelated-fault-window' };
+    await expect(orchestrateCrashCase(
+      makeInput('after-claim'),
+      makePort('after-claim', { recovery: crossFaultRecovery }).port,
+    )).rejects.toThrow(/recovery.*fault window|fault window.*recovery/i);
   });
 
   it('rejects fabricated uptime arithmetic or missing audit entries', async () => {
@@ -388,6 +397,23 @@ describe('orchestrateCrashCase — observed five-stage process lifecycle', () =>
       makeInput('after-claim'),
       makePort('after-claim', { observation: actual }).port,
     )).rejects.toThrow(/uptime milliseconds/);
+  });
+
+  it('requires exact lifecycle-to-uptime log identity bijection and no extra records', async () => {
+    const unrelated = crashObservation('after-claim');
+    const badTermination = termination();
+    badTermination.logEntryId = 'not-present-in-initial-uptime';
+    await expect(orchestrateCrashCase(
+      makeInput('after-claim'),
+      makePort('after-claim', { observation: unrelated, termination: badTermination }).port,
+    )).rejects.toThrow(/termination.*uptime|log.*bijection/i);
+
+    const extra = crashObservation('after-claim');
+    extra.processUptime.push({ ...extra.processUptime[0]!, logEntryIds: [...extra.processUptime[0]!.logEntryIds] });
+    await expect(orchestrateCrashCase(
+      makeInput('after-claim'),
+      makePort('after-claim', { observation: extra }).port,
+    )).rejects.toThrow(/exact.*two|extra.*uptime/i);
   });
 
   it('independently derives and rejects an unrelated Merkle root before termination', async () => {
@@ -439,6 +465,7 @@ describe('orchestrateCrashCase — observed five-stage process lifecycle', () =>
       new ReplayCrashControlAdapter(capture),
     )).resolves.toMatchObject({
       verdict: 'pass',
+      evidenceMode: 'offline-replay',
       postIntent: { txId: TX_ID, signedBytesSha256: TX_HASH },
       restartedFrom: 'worker-before',
       restartedTo: 'worker-after',

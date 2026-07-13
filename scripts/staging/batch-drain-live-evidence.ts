@@ -2,7 +2,8 @@
 /**
  * S3.3 RIG-B1 evidence consumer.
  *
- * The immutable run declaration is a separate, externally hash-pinned file.
+ * The immutable run declaration and all six capture digests are pinned by a
+ * separate trust-root envelope loaded from a fixed read-only store.
  * Scheduler, worker-log, DB, signet, Cloud Run, and supervisor captures are
  * six independent raw exports whose exact SHA-256 digests are named by that
  * declaration. Runtime facts are derived only after strict schema validation;
@@ -10,7 +11,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { open, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -25,7 +28,10 @@ import {
 
 export const LIVE_EVIDENCE_ENABLE_VALUE = 'ARKOVA_S33_COLLECT_LIVE_RAW_EVIDENCE';
 export const SOAK_FLOOR_MINUTES = 2_880;
-export const SOAK_REQUIRED_UPTIME_MINUTES = SOAK_FLOOR_MINUTES + 30;
+export const SOAK_REQUIRED_UPTIME_MINUTES = SOAK_FLOOR_MINUTES;
+export const SOAK_WALL_FLOOR_MINUTES = SOAK_FLOOR_MINUTES + 30;
+export const MAX_HEARTBEAT_GAP_MINUTES = 5;
+export const DEFAULT_EVIDENCE_TRUST_ROOT = '/var/lib/arkova/s33-evidence/trust-roots';
 
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
 const headSha = z.string().regex(/^[0-9a-f]{40}$/);
@@ -35,6 +41,14 @@ const nonEmpty = z.string().min(1);
 const isoTimestamp = z.string().refine((value) => Number.isFinite(Date.parse(value)), 'invalid timestamp');
 const nonNegativeInteger = z.number().int().nonnegative();
 const positiveInteger = z.number().int().positive();
+const rawCaptureDigestsSchema = z.object({
+  scheduler: sha256Hex,
+  workerLogs: sha256Hex,
+  database: sha256Hex,
+  signet: sha256Hex,
+  cloudRun: sha256Hex,
+  supervisor: sha256Hex,
+}).strict();
 
 const claimSchema = z.object({ fingerprint: sha256Hex, orgId: nonEmpty }).strict();
 const faultWindowSchema = z.object({ id: nonEmpty, startsAt: isoTimestamp, endsAt: isoTimestamp }).strict();
@@ -52,6 +66,11 @@ const windowExpectationSchema = z.object({
   expectedInitialPending: nonNegativeInteger,
   expectedFinalPending: nonNegativeInteger,
   passes: z.array(passExpectationSchema).min(1),
+}).strict();
+const recoveryExpectationSchema = z.object({
+  schedulerExecutionId: nonEmpty,
+  correlatedDrainExecutionId: nonEmpty,
+  faultWindowId: nonEmpty,
 }).strict();
 
 export const runDeclarationSchema = z.object({
@@ -71,6 +90,7 @@ export const runDeclarationSchema = z.object({
   region: nonEmpty,
   soakStartedAt: isoTimestamp,
   soakEndedAt: isoTimestamp,
+  recoveries: z.array(recoveryExpectationSchema),
   windows: z.array(windowExpectationSchema).min(1),
 }).strict();
 
@@ -79,7 +99,18 @@ export type RunDeclaration = z.infer<typeof runDeclarationSchema>;
 export interface ImmutableRunDeclaration {
   value: RunDeclaration;
   contentSha256: string;
+  trustRootId: string;
+  trustRootSha256: string;
+  rawCaptureDigests: RawCaptureDigests;
 }
+
+const evidenceTrustRootSchema = z.object({
+  schemaVersion: z.literal(1),
+  trustRootId: z.string().regex(/^[a-z0-9][a-z0-9-]{2,79}$/),
+  declarationRaw: nonEmpty,
+  declarationSha256: sha256Hex,
+  rawCaptureDigests: rawCaptureDigestsSchema,
+}).strict();
 
 const commonRawFields = {
   schemaVersion: z.literal(1),
@@ -96,8 +127,11 @@ const schedulerRecordSchema = z.object({
   recordId: nonEmpty,
   purpose: z.enum(['preclock', 'drain', 'recovery']),
   schedulerExecutionId: nonEmpty,
+  correlatedDrainExecutionId: nonEmpty.nullable(),
+  faultWindowId: nonEmpty.nullable(),
   gcpProjectId: nonEmpty,
   workerRevision: nonEmpty,
+  workerId: nonEmpty,
   path: z.string().regex(/^\/jobs\/[a-z0-9-]+(?:\?[A-Za-z0-9_=&%-]+)?$/),
   trigger: z.enum(['org-scheduler', 'global-flush']),
   statusCode: z.number().int(),
@@ -114,6 +148,7 @@ const workerLogRecordSchema = z.object({
   recordId: nonEmpty,
   insertId: nonEmpty,
   traceId: nonEmpty,
+  workerId: nonEmpty,
   event: z.enum(['trigger-fired', 'credit-gate']),
   schedulerExecutionId: nonEmpty,
   batchId: nonEmpty,
@@ -138,6 +173,7 @@ const dbExecutionSchema = z.object({
   schedulerExecutionId: nonEmpty,
   armedTrigger: z.enum(['org-scheduler', 'global-flush']),
   faultWindowId: nonEmpty,
+  workerId: nonEmpty,
   startedAt: isoTimestamp,
   completedAt: isoTimestamp,
   pendingBefore: nonNegativeInteger,
@@ -216,6 +252,8 @@ const signetRecordSchema = z.object({
   recordId: nonEmpty,
   rpcRequestId: nonEmpty,
   rpcMethod: z.enum(['getrawtransaction', 'getmempoolentry', 'gettransaction']),
+  schedulerExecutionId: nonEmpty,
+  workerId: nonEmpty,
   txId: sha256Hex,
   batchId: nonEmpty,
   merkleRoot: sha256Hex,
@@ -234,7 +272,7 @@ const signetCaptureSchema = z.object({
 const cloudRunLifecycleSchema = z.object({
   recordId: nonEmpty,
   workerId: nonEmpty,
-  event: z.enum(['started', 'stopped', 'crash-loop', 'endpoint-eviction']),
+  event: z.enum(['started', 'heartbeat', 'stopped', 'crash-loop', 'endpoint-eviction']),
   occurredAt: isoTimestamp,
 }).strict();
 const cloudRunCaptureSchema = z.object({
@@ -414,15 +452,32 @@ function unique<T>(values: T[], label: string): void {
 
 export function parseImmutableRunDeclaration(raw: string, expectedContentSha256: string): ImmutableRunDeclaration {
   if (!/^[0-9a-f]{64}$/.test(expectedContentSha256)) throw new Error('Expected declaration content hash must be lowercase SHA-256.');
-  const contentSha256 = digest(raw);
-  if (contentSha256 !== expectedContentSha256) throw new Error('Immutable declaration content hash does not match.');
-  const value = parseStrict(runDeclarationSchema, raw, 'run declaration');
+  const trustRootSha256 = digest(raw);
+  if (trustRootSha256 !== expectedContentSha256) throw new Error('Immutable declaration trust-root content hash does not match.');
+  const trustRoot = parseStrict(evidenceTrustRootSchema, raw, 'evidence trust root');
+  const contentSha256 = digest(trustRoot.declarationRaw);
+  if (contentSha256 !== trustRoot.declarationSha256) {
+    throw new Error('Run declaration content does not match the independently pinned trust root.');
+  }
+  const value = parseStrict(runDeclarationSchema, trustRoot.declarationRaw, 'run declaration');
   if (value.gitBaseSha === value.gitHeadSha) throw new Error('Declaration git base and tested head must be distinct named commits.');
-  if (time(value.soakEndedAt, 'soakEndedAt') - time(value.soakStartedAt, 'soakStartedAt') < SOAK_REQUIRED_UPTIME_MINUTES * 60_000) {
+  if (time(value.soakEndedAt, 'soakEndedAt') - time(value.soakStartedAt, 'soakStartedAt') < SOAK_WALL_FLOOR_MINUTES * 60_000) {
     throw new Error('Declared soak wall window cannot contain the fixed 48h floor plus 30-minute overshoot.');
   }
   unique(value.windows.map((window) => window.scenarioId), 'declaration windows');
-  unique(value.windows.flatMap((window) => window.passes.map((pass) => pass.schedulerExecutionId)), 'declaration passes');
+  const passes = value.windows.flatMap((window) => window.passes);
+  unique(passes.map((pass) => pass.schedulerExecutionId), 'declaration passes');
+  unique(passes.map((pass) => pass.batchId), 'declaration batch IDs');
+  unique(passes.map((pass) => pass.faultWindow.id), 'declaration fault-window IDs');
+  unique(passes.flatMap((pass) => pass.claims.map((claim) => claim.fingerprint)), 'declaration claim fingerprints');
+  unique(value.recoveries.map((recovery) => recovery.schedulerExecutionId), 'declaration recovery executions');
+  const drainExecutionIds = new Set(passes.map((pass) => pass.schedulerExecutionId));
+  const faultWindowByDrainExecution = new Map(passes.map((pass) => [pass.schedulerExecutionId, pass.faultWindow.id]));
+  if (value.recoveries.some((recovery) => (
+    !drainExecutionIds.has(recovery.correlatedDrainExecutionId)
+    || faultWindowByDrainExecution.get(recovery.correlatedDrainExecutionId) !== recovery.faultWindowId
+    || drainExecutionIds.has(recovery.schedulerExecutionId)
+  ))) throw new Error('Every recovery must be distinct and correlate to the exact same declared drain execution and fault window.');
   const soakStartMs = time(value.soakStartedAt, 'soakStartedAt');
   const soakEndMs = time(value.soakEndedAt, 'soakEndedAt');
   for (const pass of value.windows.flatMap((window) => window.passes)) {
@@ -436,13 +491,38 @@ export function parseImmutableRunDeclaration(raw: string, expectedContentSha256:
   if (value.windows.some((window) => window.passes.some((pass) => pass.armedTrigger !== window.armedTrigger))) {
     throw new Error('Every declared pass must match its window armed trigger.');
   }
-  return { value, contentSha256 };
+  return {
+    value,
+    contentSha256,
+    trustRootId: trustRoot.trustRootId,
+    trustRootSha256,
+    rawCaptureDigests: trustRoot.rawCaptureDigests,
+  };
+}
+
+export class TrustedRunDeclarationStore {
+  async load(trustRootId: string): Promise<ImmutableRunDeclaration> {
+    if (!/^[a-z0-9][a-z0-9-]{2,79}$/.test(trustRootId)) throw new Error('Trust-root id is not allowlisted.');
+    const path = join(DEFAULT_EVIDENCE_TRUST_ROOT, `${trustRootId}.json`);
+    const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || (stat.mode & 0o222) !== 0) {
+        throw new Error('Evidence trust root must be a regular immutable file with no write permission bits.');
+      }
+      const raw = await handle.readFile('utf8');
+      const declaration = parseImmutableRunDeclaration(raw, digest(raw));
+      if (declaration.trustRootId !== trustRootId) throw new Error('Evidence trust-root filename and content identity differ.');
+      return declaration;
+    } finally {
+      await handle.close();
+    }
+  }
 }
 
 export function parseRawCaptureSet(
   raw: RawCaptureTextSet,
   declaration: ImmutableRunDeclaration,
-  expectedDigests: RawCaptureDigests,
 ): ParsedRawCaptureSet {
   const scheduler = parseStrict(schedulerCaptureSchema, raw.scheduler, 'cloud-scheduler raw export');
   const workerLogs = parseStrict(workerLogsCaptureSchema, raw.workerLogs, 'cloud-logging raw export');
@@ -459,8 +539,8 @@ export function parseRawCaptureSet(
     supervisor: digest(raw.supervisor),
   };
   for (const source of Object.keys(contentDigests) as Array<keyof typeof contentDigests>) {
-    if (!/^[0-9a-f]{64}$/.test(expectedDigests[source]) || contentDigests[source] !== expectedDigests[source]) {
-      throw new Error(`${source} raw export content digest does not match its independently supplied SHA-256.`);
+    if (contentDigests[source] !== declaration.rawCaptureDigests[source]) {
+      throw new Error(`${source} raw export content digest does not match its trusted immutable declaration digest.`);
     }
   }
   return { scheduler, workerLogs, database, signet, cloudRun, supervisor, contentDigests };
@@ -564,9 +644,39 @@ function assertPreflightAndSupervisor(declaration: RunDeclaration, capture: Supe
       return at < startMs || at > endMs;
     })
   ) throw new Error('Soak v2 supervisor records do not prove a continuous log-and-continue runner.');
+  assertHeartbeatCadence(
+    heartbeats.map((record) => record.occurredAt),
+    startMs,
+    endMs,
+    'Soak v2 supervisor',
+  );
 }
 
-function deriveWorkerUptime(declaration: RunDeclaration, capture: CloudRunCapture): number {
+interface WorkerInterval {
+  workerId: string;
+  start: number;
+  end: number;
+  countedStart: number;
+  countedEnd: number;
+}
+
+function assertHeartbeatCadence(values: string[], startMs: number, endMs: number, label: string): void {
+  const times = values
+    .map((value) => time(value, `${label} heartbeat`))
+    .filter((value) => value >= startMs && value <= endMs)
+    .sort((left, right) => left - right);
+  unique(times, `${label} heartbeat timestamps`);
+  const points = [startMs, ...times, endMs];
+  const maximumGap = MAX_HEARTBEAT_GAP_MINUTES * 60_000;
+  if (points.some((point, index) => index > 0 && point - points[index - 1]! > maximumGap)) {
+    throw new Error(`${label} heartbeat gap exceeds the continuous ${MAX_HEARTBEAT_GAP_MINUTES}-minute cadence.`);
+  }
+}
+
+function deriveWorkerUptime(
+  declaration: RunDeclaration,
+  capture: CloudRunCapture,
+): { uptimeMs: number; intervals: WorkerInterval[] } {
   unique(capture.records.map((record) => record.recordId), 'Cloud Run lifecycle record IDs');
   if (capture.records.some((record) => record.event === 'crash-loop' || record.event === 'endpoint-eviction')) {
     throw new Error('Crash-loop or endpoint eviction voids the worker-uptime clock.');
@@ -580,25 +690,49 @@ function deriveWorkerUptime(declaration: RunDeclaration, capture: CloudRunCaptur
     byWorker.set(record.workerId, records);
   }
   let uptimeMs = 0;
-  const intervals: Array<{ start: number; end: number }> = [];
+  const intervals: WorkerInterval[] = [];
   for (const [workerId, records] of byWorker) {
     const starts = records.filter((record) => record.event === 'started');
     const stops = records.filter((record) => record.event === 'stopped');
+    const heartbeats = records.filter((record) => record.event === 'heartbeat');
     if (starts.length !== 1 || stops.length !== 1) throw new Error(`Worker ${workerId} lacks one start/stop lifecycle pair.`);
     const start = time(starts[0]!.occurredAt, 'worker start');
     const end = time(stops[0]!.occurredAt, 'worker stop');
-    if (start < startMs || end > endMs || end <= start) throw new Error('Worker lifecycle interval is outside the declared soak window.');
-    intervals.push({ start, end });
-    uptimeMs += end - start;
+    if (end <= start) throw new Error('Worker lifecycle interval is not chronological.');
+    const countedStart = Math.max(start, startMs);
+    const countedEnd = Math.min(end, endMs);
+    if (countedEnd <= countedStart) throw new Error('Worker lifecycle interval does not overlap the declared soak clock.');
+    assertHeartbeatCadence(
+      heartbeats.map((record) => record.occurredAt),
+      countedStart,
+      countedEnd,
+      `Cloud Run worker ${workerId}`,
+    );
+    intervals.push({ workerId, start, end, countedStart, countedEnd });
+    uptimeMs += countedEnd - countedStart;
   }
   intervals.sort((left, right) => left.start - right.start);
   if (intervals.some((interval, index) => index > 0 && interval.start < intervals[index - 1]!.end)) {
     throw new Error('Cloud Run worker uptime intervals overlap and would double-count the soak clock.');
   }
   if (uptimeMs < SOAK_REQUIRED_UPTIME_MINUTES * 60_000) {
-    throw new Error('Cloud Run worker uptime is below the fixed 48h floor plus 30-minute overshoot.');
+    throw new Error('Cloud Run worker uptime is below the fixed 48h worker-uptime floor.');
   }
-  return uptimeMs;
+  return { uptimeMs, intervals };
+}
+
+function assertWorkerCovers(
+  intervals: WorkerInterval[],
+  workerId: string,
+  startedAt: string,
+  completedAt: string,
+  label: string,
+): void {
+  const start = time(startedAt, `${label} start`);
+  const end = time(completedAt, `${label} completion`);
+  if (!intervals.some((interval) => interval.workerId === workerId && interval.start <= start && interval.end >= end)) {
+    throw new Error(`${label} is not bound to the declared active Cloud Run worker identity.`);
+  }
 }
 
 function expectedDrainPath(trigger: 'org-scheduler' | 'global-flush'): string {
@@ -621,6 +755,7 @@ function derivePassObservation(
   if (
     triggerLog.batchId !== pass.batchId
     || triggerLog.trigger !== pass.armedTrigger
+    || triggerLog.workerId !== execution.workerId
     || triggerLog.fingerprint !== null
     || triggerLog.orgId !== null
     || triggerLog.decision !== null
@@ -641,6 +776,8 @@ function derivePassObservation(
       result.batchId !== row.batchId
       || result.merkleRoot !== row.merkleRoot
       || result.rawTxSha256 !== row.signedBytesSha256
+      || result.schedulerExecutionId !== pass.schedulerExecutionId
+      || result.workerId !== execution.workerId
     ) throw new Error('Signet RPC result mismatches the DB transaction/root/signed bytes.');
     return {
       ...row,
@@ -662,6 +799,7 @@ function derivePassObservation(
       || record.batchId !== pass.batchId
       || record.trigger !== pass.armedTrigger
       || record.traceId !== triggerLog.traceId
+      || record.workerId !== execution.workerId
     ) throw new Error('Credit-gate raw log is missing typed gate fields.');
     return {
       eventId: record.recordId,
@@ -707,6 +845,8 @@ function derivePassObservation(
 export interface LiveEvidenceSummary {
   declarationId: string;
   declarationSha256: string;
+  trustRootId: string;
+  trustRootSha256: string;
   rigId: 'RIG-B1';
   soakId: string;
   gitBaseSha: string;
@@ -725,7 +865,8 @@ export function deriveAndAssertLiveEvidence(
 ): LiveEvidenceSummary {
   assertCommonBindings(declaration, captures);
   assertPreflightAndSupervisor(declaration.value, captures.supervisor);
-  const workerUptimeMs = deriveWorkerUptime(declaration.value, captures.cloudRun);
+  const workerClock = deriveWorkerUptime(declaration.value, captures.cloudRun);
+  const workerUptimeMs = workerClock.uptimeMs;
   const soakStartMs = time(declaration.value.soakStartedAt, 'soakStartedAt');
   unique(captures.scheduler.records.map((record) => record.recordId), 'Scheduler record IDs');
   unique(captures.scheduler.records.map((record) => record.schedulerExecutionId), 'Scheduler execution IDs');
@@ -733,8 +874,17 @@ export function deriveAndAssertLiveEvidence(
   if (
     preclock.length !== 1
     || preclock[0]!.statusCode !== 200
+    || preclock[0]!.correlatedDrainExecutionId !== null
+    || preclock[0]!.faultWindowId !== null
     || time(preclock[0]!.completedAt, 'preclock completedAt') > soakStartMs
   ) throw new Error('Raw Scheduler export must prove one /jobs/* HTTP 200 before the soak clock.');
+  assertWorkerCovers(
+    workerClock.intervals,
+    preclock[0]!.workerId,
+    preclock[0]!.firedAt,
+    preclock[0]!.completedAt,
+    'preclock Scheduler execution',
+  );
 
   const passDeclarations = declaration.value.windows.flatMap((window) => window.passes);
   const declaredExecutionIds = new Set(passDeclarations.map((pass) => pass.schedulerExecutionId));
@@ -752,6 +902,12 @@ export function deriveAndAssertLiveEvidence(
     drainSchedulerRows.length !== passDeclarations.length
     || drainSchedulerRows.some((record) => !declaredExecutionIds.has(record.schedulerExecutionId))
   ) throw new Error('Scheduler raw export must cover exactly every declared drain execution.');
+  const declaredRecoveryIds = new Set(declaration.value.recoveries.map((recovery) => recovery.schedulerExecutionId));
+  const recoverySchedulerRows = captures.scheduler.records.filter((record) => record.purpose === 'recovery');
+  if (
+    recoverySchedulerRows.length !== declaration.value.recoveries.length
+    || recoverySchedulerRows.some((record) => !declaredRecoveryIds.has(record.schedulerExecutionId))
+  ) throw new Error('Scheduler raw export contains an undeclared recovery or omits a declared recovery execution.');
   if (captures.scheduler.records.some((record) => (
     record.gcpProjectId !== declaration.value.gcpProjectId
     || record.workerRevision !== declaration.value.workerRevision
@@ -769,9 +925,37 @@ export function deriveAndAssertLiveEvidence(
       || record.statusCode !== 200
       || record.trigger !== pass.armedTrigger
       || record.path !== expectedDrainPath(pass.armedTrigger)
+      || record.correlatedDrainExecutionId !== null
+      || record.faultWindowId !== pass.faultWindow.id
+      || record.workerId !== dbExecution.workerId
       || time(record.firedAt, 'Scheduler firedAt') > time(dbExecution.startedAt, 'DB execution start')
       || time(record.completedAt, 'Scheduler completedAt') < time(dbExecution.completedAt, 'DB execution completion')
     ) throw new Error('Scheduler raw record mismatches project/revision/path/trigger/200 or DB chronology.');
+    assertWorkerCovers(
+      workerClock.intervals,
+      record.workerId,
+      record.firedAt,
+      record.completedAt,
+      `drain Scheduler execution ${pass.schedulerExecutionId}`,
+    );
+  }
+  for (const recovery of declaration.value.recoveries) {
+    const records = recoverySchedulerRows.filter((record) => record.schedulerExecutionId === recovery.schedulerExecutionId);
+    if (records.length !== 1) throw new Error('Scheduler recovery execution IDs must join one-to-one.');
+    const record = records[0]!;
+    if (
+      record.statusCode !== 200
+      || record.path !== '/jobs/recover-broadcasts'
+      || record.correlatedDrainExecutionId !== recovery.correlatedDrainExecutionId
+      || record.faultWindowId !== recovery.faultWindowId
+    ) throw new Error('Scheduler recovery raw record must be an HTTP 200 bound to its declared drain and fault window.');
+    assertWorkerCovers(
+      workerClock.intervals,
+      record.workerId,
+      record.firedAt,
+      record.completedAt,
+      `recovery Scheduler execution ${recovery.schedulerExecutionId}`,
+    );
   }
 
   unique(captures.workerLogs.records.map((record) => record.recordId), 'worker log record IDs');
@@ -799,9 +983,15 @@ export function deriveAndAssertLiveEvidence(
     const observations = window.passes.map((pass) => derivePassObservation(declaration.value, captures, pass));
     return assertDrainWindowObservation(window as DrainWindowExpectation, observations);
   });
+  const transactionIds = windows.flatMap((window) => window.transactionIds);
+  if (new Set(transactionIds).size !== transactionIds.length) {
+    throw new Error('A transaction identity was reused across declared drain windows or Scheduler passes.');
+  }
   return {
     declarationId: declaration.value.declarationId,
     declarationSha256: declaration.contentSha256,
+    trustRootId: declaration.trustRootId,
+    trustRootSha256: declaration.trustRootSha256,
     rigId: 'RIG-B1',
     soakId: declaration.value.soakId,
     gitBaseSha: declaration.value.gitBaseSha,
@@ -825,20 +1015,13 @@ export function deriveAndAssertLiveEvidence(
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
-      'declaration-file': { type: 'string' },
-      'declaration-sha256': { type: 'string' },
+      'trust-root-id': { type: 'string' },
       'scheduler-export': { type: 'string' },
       'worker-logs-export': { type: 'string' },
       'database-export': { type: 'string' },
       'signet-export': { type: 'string' },
       'cloud-run-export': { type: 'string' },
       'supervisor-export': { type: 'string' },
-      'scheduler-sha256': { type: 'string' },
-      'worker-logs-sha256': { type: 'string' },
-      'database-sha256': { type: 'string' },
-      'signet-sha256': { type: 'string' },
-      'cloud-run-sha256': { type: 'string' },
-      'supervisor-sha256': { type: 'string' },
     },
   });
   const required = (name: keyof typeof values): string => {
@@ -846,8 +1029,7 @@ async function main(): Promise<void> {
     if (typeof value !== 'string' || !value.trim()) throw new Error(`--${name} is required.`);
     return value;
   };
-  const declarationRaw = await readFile(required('declaration-file'), 'utf8');
-  const declaration = parseImmutableRunDeclaration(declarationRaw, required('declaration-sha256'));
+  const declaration = await new TrustedRunDeclarationStore().load(required('trust-root-id'));
   const raw = await new CapturedFileRawSourceCollector({
     schedulerFile: required('scheduler-export'),
     workerLogsFile: required('worker-logs-export'),
@@ -856,14 +1038,7 @@ async function main(): Promise<void> {
     cloudRunFile: required('cloud-run-export'),
     supervisorFile: required('supervisor-export'),
   }).collect();
-  const summary = deriveAndAssertLiveEvidence(declaration, parseRawCaptureSet(raw, declaration, {
-    scheduler: required('scheduler-sha256'),
-    workerLogs: required('worker-logs-sha256'),
-    database: required('database-sha256'),
-    signet: required('signet-sha256'),
-    cloudRun: required('cloud-run-sha256'),
-    supervisor: required('supervisor-sha256'),
-  }));
+  const summary = deriveAndAssertLiveEvidence(declaration, parseRawCaptureSet(raw, declaration));
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 }
 

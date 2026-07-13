@@ -472,6 +472,12 @@ function deriveClaimsFromObservedEvents(
     const refunds = ledger.filter((event) => event.kind === 'refund').reduce((sum, event) => sum + event.amount, 0);
     const leaf = leafByFingerprint.get(row.fingerprint);
     const terminal = row.status === 'SUBMITTED' || row.status === 'SECURED';
+    const chargedAtMs = row.queueCreditChargedAt === null
+      ? null
+      : assertInsideWindow(row.queueCreditChargedAt, 'queueCreditChargedAt', executionStartedMs, executionCompletedMs);
+    const deniedAtMs = row.queueCreditDeniedAt === null
+      ? null
+      : assertInsideWindow(row.queueCreditDeniedAt, 'queueCreditDeniedAt', executionStartedMs, executionCompletedMs);
     if (row.queueCreditChargedAt !== null && (row.queueCreditDeniedAt !== null || row.creditDenialReason !== null)) {
       throw new Error('Observed DB credit metadata cannot be both charged and denied.');
     }
@@ -512,8 +518,9 @@ function deriveClaimsFromObservedEvents(
           gate.balanceAfter !== gate.balanceBefore! - gate.requiredAmount
           || debits !== gate.requiredAmount
           || refunds !== 0
-          || !row.queueCreditChargedAt
-          || timestamp(row.queueCreditChargedAt, 'queueCreditChargedAt') < gateMs
+          || chargedAtMs === null
+          || chargedAtMs < gateMs
+          || debitEvents.some((event) => timestamp(event.occurredAt, 'debit occurredAt') > chargedAtMs)
           || row.creditDenialReason !== null
         ) {
           throw new Error('Credit-gated drained row requires one observed debit and charged DB metadata.');
@@ -523,6 +530,7 @@ function deriveClaimsFromObservedEvents(
         || debits !== 0
         || refunds !== 0
         || row.queueCreditChargedAt !== null
+        || row.queueCreditDeniedAt !== null
         || row.creditDenialReason !== null
       ) {
         throw new Error('Non-credit-gated drained row must have zero ledger events and zero credit metadata.');
@@ -542,8 +550,8 @@ function deriveClaimsFromObservedEvents(
       && debits === 0
       && refunds === 0
       && row.creditDenialReason === 'insufficient_credits'
-      && row.queueCreditDeniedAt
-      && timestamp(row.queueCreditDeniedAt, 'queueCreditDeniedAt') >= gateMs
+      && deniedAtMs !== null
+      && deniedAtMs >= gateMs
     ) {
       outcomes.set(row.fingerprint, 'credit-starved');
       continue;
@@ -553,8 +561,11 @@ function deriveClaimsFromObservedEvents(
       && gate.balanceAfter === gate.balanceBefore! - gate.requiredAmount
       && debits === gate.requiredAmount
       && refunds === gate.requiredAmount
-      && row.queueCreditChargedAt
-      && timestamp(row.queueCreditChargedAt, 'queueCreditChargedAt') >= gateMs
+      && chargedAtMs !== null
+      && chargedAtMs >= gateMs
+      && debitEvents.every((event) => timestamp(event.occurredAt, 'debit occurredAt') <= chargedAtMs)
+      && refundEvents.every((event) => timestamp(event.occurredAt, 'refund occurredAt') > chargedAtMs)
+      && row.queueCreditDeniedAt === null
       && row.creditDenialReason === null
     ) {
       outcomes.set(row.fingerprint, 'refunded-failure');
@@ -644,7 +655,10 @@ export function assertDrainPassObservation(
     if (transaction.network !== 'signet' || (transaction.chainState !== 'mempool' && transaction.chainState !== 'confirmed')) {
       throw new Error('Actual chain result must be an accepted signet mempool or confirmation observation.');
     }
-    assertInsideWindow(transaction.acceptedAt, 'Signet acceptance', startMs, endMs);
+    const acceptedMs = assertInsideWindow(transaction.acceptedAt, 'Signet acceptance', startMs, endMs);
+    if (acceptedMs < startedMs || acceptedMs > completedMs) {
+      throw new Error('Signet acceptance is outside the correlated Scheduler execution.');
+    }
     if (transaction.batchId !== expectation.batchId || transactionsById.has(transaction.txId)) {
       throw new Error('Actual transaction is duplicate or belongs to an unrelated batch.');
     }
@@ -804,9 +818,24 @@ export function assertDrainWindowObservation(
   requireNonNegativeInteger(expectation.expectedInitialPending, 'expectedInitialPending');
   requireNonNegativeInteger(expectation.expectedFinalPending, 'expectedFinalPending');
 
+  const batchIds = expectation.passes.map((pass) => pass.batchId);
+  const faultWindowIds = expectation.passes.map((pass) => pass.faultWindow.id);
+  const claimFingerprints = expectation.passes.flatMap((pass) => pass.claims.map((claim) => claim.fingerprint));
+  if (
+    new Set(batchIds).size !== batchIds.length
+    || new Set(faultWindowIds).size !== faultWindowIds.length
+    || new Set(claimFingerprints).size !== claimFingerprints.length
+  ) {
+    throw new Error('Claim, batch, or fault-window identity was reused across Scheduler passes.');
+  }
+
   const summaries = expectation.passes.map((pass, index) => assertDrainPassObservation(pass, observations[index]!));
   const executionIds = summaries.map((summary) => summary.schedulerExecutionId);
   if (new Set(executionIds).size !== executionIds.length) throw new Error('Every Scheduler tick requires a distinct execution id.');
+  const transactionIds = summaries.flatMap((summary) => summary.transactionIds);
+  if (new Set(transactionIds).size !== transactionIds.length) {
+    throw new Error('A transaction identity was reused across Scheduler passes.');
+  }
   if (summaries[0]!.pendingBefore !== expectation.expectedInitialPending) {
     throw new Error('First observed pending count does not match the named drain-window entry count.');
   }

@@ -128,6 +128,7 @@ export interface RestartEvidence extends RuntimeBinding {
 export interface RecoveryEvidence {
   recoverySchedulerExecutionId: string;
   correlatedDrainExecutionId: string;
+  faultWindowId: string;
   source: 'cloud-scheduler';
   endpointPath: '/jobs/recover-broadcasts';
   httpStatus: 200;
@@ -136,6 +137,7 @@ export interface RecoveryEvidence {
 }
 
 export interface CrashControlPort {
+  readonly evidenceMode: 'offline-replay' | 'live-rig';
   arm(input: CrashCaseInput): Promise<void>;
   start(input: CrashCaseInput): Promise<void>;
   waitForKillpoint(input: CrashCaseInput): Promise<CrashBarrier>;
@@ -147,6 +149,7 @@ export interface CrashControlPort {
 }
 
 export interface CrashCaseEvidence extends DrainPassEvidenceSummary {
+  evidenceMode: 'offline-replay' | 'live-rig';
   runId: string;
   killpoint: CrashKillpoint;
   verdict: 'pass';
@@ -364,14 +367,19 @@ function validateLifecycle(
     !recovery.recoverySchedulerExecutionId?.trim()
     || recovery.recoverySchedulerExecutionId === input.expectation.schedulerExecutionId
     || recovery.correlatedDrainExecutionId !== input.expectation.schedulerExecutionId
+    || recovery.faultWindowId !== input.expectation.faultWindow.id
     || recovery.source !== 'cloud-scheduler'
     || recovery.endpointPath !== '/jobs/recover-broadcasts'
     || recovery.httpStatus !== 200
   ) {
-    throw new Error('Recovery evidence must be a distinct, correlated Cloud-Scheduler /jobs/recover-broadcasts 200.');
+    throw new Error('Recovery evidence must be a distinct Cloud-Scheduler 200 correlated to the exact drain execution and fault window.');
   }
   if (observation.runId !== input.runId || observation.finalWorkerId !== restart.workerId) {
     throw new Error('Crash observation was not produced by the correlated replacement worker.');
+  }
+
+  if (termination.logEntryId === restart.logEntryId) {
+    throw new Error('Termination and restart require distinct Cloud Run audit-log identities.');
   }
 
   const chronology = [
@@ -387,6 +395,9 @@ function validateLifecycle(
     throw new Error('Termination, restart, recovery, and inspection chronology is not monotonic.');
   }
 
+  if (observation.processUptime.length !== 2) {
+    throw new Error('Process lifecycle requires exactly two uptime records: initial and replacement.');
+  }
   const byWorker = new Map(observation.processUptime.map((item) => [item.workerId, item]));
   const initial = byWorker.get(barrier.workerId);
   const replacement = byWorker.get(restart.workerId);
@@ -400,6 +411,16 @@ function validateLifecycle(
     }
     const computed = timestamp(item.observedUntil, 'uptime observedUntil') - timestamp(item.startedAt, 'uptime startedAt');
     if (computed < 0 || computed !== item.uptimeMs) throw new Error('Worker uptime milliseconds do not match lifecycle timestamps.');
+  }
+  const lifecycleLogIds = observation.processUptime.flatMap((item) => item.logEntryIds);
+  if (
+    new Set(lifecycleLogIds).size !== lifecycleLogIds.length
+    || !initial.logEntryIds.includes(termination.logEntryId)
+    || replacement.logEntryIds.includes(termination.logEntryId)
+    || !replacement.logEntryIds.includes(restart.logEntryId)
+    || initial.logEntryIds.includes(restart.logEntryId)
+  ) {
+    throw new Error('Cloud Run log identity bijection must bind termination and restart to the exact process uptime records.');
   }
   if (
     initial.observedUntil !== termination.exitedAt
@@ -463,6 +484,7 @@ export async function orchestrateCrashCase(
     const { summary, txIds } = validateObservation(input, postIntent, observation);
     result = {
       ...summary,
+      evidenceMode: port.evidenceMode,
       runId: input.runId,
       killpoint: input.killpoint,
       verdict: 'pass',
