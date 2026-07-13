@@ -9,12 +9,18 @@ _Last updated: 2026-07-13_
   `ceil(10%)`, minimum-5 review floor. The ceremony uses four distinct records:
   a manifest-free CTO-signed salt commitment, a CTO-signed manifest freeze that
   proves the exact Git blob/ancestor, a CTO-signed selection policy bound to
-  both digests, and the later salt reveal. `s33-acceptance-ledger.ts` durably
-  enforces commitment < freeze < policy < reveal < one-time consumption with a
-  hash-chained, fsynced ledger plus an O_EXCL marker keyed by policy digest,
-  batch, and revision. No CTO key or approval is embedded; the code-owned
-  production trust descriptor has no issued identity/key fingerprint, so the
-  production loader fails closed.
+  both digests, and the later salt reveal. All artifact boundaries accept only
+  copied UTF-8 bytes/string, reject duplicate/unknown JSON keys, deep-freeze the
+  verified snapshot, and bind raw-byte and canonical-JSON digests separately.
+  The module-private, fixed-method audit transcript records commitment < freeze
+  < policy < reveal < consumption with a hash chain + fsync; it is explicitly
+  NOT the privileged anti-replay root. One-time consumption is owned by an
+  injected external atomic/monotonic `ConsumptionRegistry` keying policy digest
+  + batch + revision before any result can return. `s33-acceptance-ledger.ts` is
+  intentionally an empty compatibility module with no ledger/append export.
+  No CTO key, registry backend, or approval is embedded; both production trust
+  dependencies remain null in the code-owned descriptor, so production fails
+  closed until the CTO configures them.
 - Lexical acceptance loads policy-bound held-out/corpus text artifacts and
   recomputes every n=6..13 metric at one orchestration boundary. There is no
   public policy-only apply function and no API accepts caller-supplied metrics
