@@ -86,6 +86,14 @@ export function runOrgId(runId: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+function digestRunOrgId(runId: string, index: number): string {
+  const hex = createHash('sha256')
+    .update(`batch-drain-${runId}-org-${index}`)
+    .digest('hex')
+    .slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 /**
  * Deterministic indexed org id for a multi-org run. Index zero deliberately
  * preserves the original runOrgId output so existing single-org fixtures stay
@@ -99,11 +107,7 @@ export function runOrgIdN(runId: string, index: number): string {
   }
   if (index === 0) return runOrgId(runId);
 
-  const hex = createHash('sha256')
-    .update(`batch-drain-${runId}-org-${index}`)
-    .digest('hex')
-    .slice(0, 32);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  return digestRunOrgId(runId, index);
 }
 
 export type OrgCohort = 'healthy' | 'credit-starved' | 'bad-fingerprint';
@@ -230,6 +234,18 @@ export function zipfOrgPlan(options: ZipfOrgPlanOptions): OrgDrainPlanRow[] {
       cohort,
     };
   });
+}
+
+/**
+ * R3 scenarios share one umbrella run id but must never share org identities.
+ * Re-key every rank, including rank one, from the complete scenario id. The
+ * public zipfOrgPlan contract retains its legacy index-zero compatibility.
+ */
+function r3ScenarioOrgPlan(options: ZipfOrgPlanOptions): OrgDrainPlanRow[] {
+  return zipfOrgPlan(options).map((row, index) => ({
+    ...row,
+    orgId: digestRunOrgId(options.runId, index),
+  }));
 }
 
 export interface OrgGlobalFlushPass {
@@ -472,30 +488,30 @@ export function buildR3AcceptancePlan(
   const orgs = options.orgs ?? 30;
   if (orgs < 30) throw new Error(`R3 acceptance requires at least 30 orgs; received ${orgs}.`);
 
-  const distribution = zipfOrgPlan({
-    runId: options.runId,
+  const distribution = r3ScenarioOrgPlan({
+    runId: `${options.runId}-distribution`,
     orgs,
     count: options.multiOrgCount ?? 12_500,
   });
-  const globalEligible10000Inputs = zipfOrgPlan({
+  const globalEligible10000Inputs = r3ScenarioOrgPlan({
     runId: `${options.runId}-global-eligible-10000`,
     orgs,
     count: 10_000,
     creditStarved: 0,
   });
-  const globalEligible12500Inputs = zipfOrgPlan({
+  const globalEligible12500Inputs = r3ScenarioOrgPlan({
     runId: `${options.runId}-global-eligible-12500`,
     orgs,
     count: 12_500,
     creditStarved: 0,
   });
-  const poisonIsolationInputs = zipfOrgPlan({
+  const poisonIsolationInputs = r3ScenarioOrgPlan({
     runId: `${options.runId}-poison-isolation`,
     orgs,
     count: 12_500,
     creditStarved: 2,
   });
-  const singleOrgId = runOrgIdN(`${options.runId}-single-org-cross-pass`, 0);
+  const singleOrgId = digestRunOrgId(`${options.runId}-single-org-cross-pass`, 0);
   return {
     batchSize: BATCH_SIZE,
     distribution,

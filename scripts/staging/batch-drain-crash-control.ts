@@ -13,6 +13,7 @@ import {
   type DrainPassObservation,
   type DrainTrigger,
 } from './batch-drain-observation';
+import { parseUtcTimestamp } from './batch-drain-time';
 
 export const CRASH_KILLPOINTS = [
   'after-claim',
@@ -194,9 +195,7 @@ const POST_INTENT = new Set<CrashKillpoint>([
 ]);
 
 function timestamp(value: string, name: string): number {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new Error(`${name} must be a valid timestamp.`);
-  return parsed;
+  return parseUtcTimestamp(value, name);
 }
 
 function withinWindow(input: CrashCaseInput, value: string, name: string): number {

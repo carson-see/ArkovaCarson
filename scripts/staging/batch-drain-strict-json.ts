@@ -7,20 +7,23 @@
 
 function decodeJsonKey(raw: string, start: number, end: number, label: string): string {
   let decoded = '';
-  for (let index = start + 1; index < end; index += 1) {
+  let index = start + 1;
+  while (index < end) {
     const char = raw[index]!;
     if (char !== '\\') {
       decoded += char;
+      index += 1;
       continue;
     }
     const escaped = raw[index + 1];
     if (escaped === undefined) throw new Error(`${label} must contain valid JSON.`);
-    index += 1;
     if (escaped === 'u') {
-      const hex = raw.slice(index + 1, index + 5);
+      const hex = raw.slice(index + 2, index + 6);
       if (!/^[0-9a-fA-F]{4}$/.test(hex)) throw new Error(`${label} must contain valid JSON.`);
+      // JSON \u escapes are UTF-16 code units. Surrogate pairs must remain two
+      // units here so semantic duplicate keys match JSON.parse exactly.
       decoded += String.fromCharCode(Number.parseInt(hex, 16));
-      index += 4;
+      index += 6;
       continue;
     }
     const escapes: Record<string, string> = {
@@ -28,34 +31,69 @@ function decodeJsonKey(raw: string, start: number, end: number, label: string): 
     };
     if (!(escaped in escapes)) throw new Error(`${label} must contain valid JSON.`);
     decoded += escapes[escaped]!;
+    index += 2;
   }
   return decoded;
 }
 
+interface ScannedJsonString {
+  end: number;
+  followedByColon: boolean;
+}
+
+function scanJsonString(raw: string, start: number): ScannedJsonString {
+  let end = start + 1;
+  while (end < raw.length) {
+    if (raw[end] === '\\') {
+      end += 2;
+      continue;
+    }
+    if (raw[end] === '"') break;
+    end += 1;
+  }
+  if (end >= raw.length) return { end: raw.length, followedByColon: false };
+
+  let cursor = end + 1;
+  while (/\s/.test(raw[cursor] ?? '')) cursor += 1;
+  return { end, followedByColon: raw[cursor] === ':' };
+}
+
 function assertNoDuplicateJsonKeys(raw: string, label: string): void {
   const stack: Array<{ kind: 'object'; keys: Set<string> } | { kind: 'array' }> = [];
-  for (let index = 0; index < raw.length; index += 1) {
+  let index = 0;
+  while (index < raw.length) {
     const char = raw[index]!;
-    if (char === '{') { stack.push({ kind: 'object', keys: new Set() }); continue; }
-    if (char === '[') { stack.push({ kind: 'array' }); continue; }
-    if (char === '}' || char === ']') { stack.pop(); continue; }
-    if (char !== '"') continue;
+    if (char === '{') {
+      stack.push({ kind: 'object', keys: new Set() });
+      index += 1;
+      continue;
+    }
+    if (char === '[') {
+      stack.push({ kind: 'array' });
+      index += 1;
+      continue;
+    }
+    if (char === '}' || char === ']') {
+      stack.pop();
+      index += 1;
+      continue;
+    }
+    if (char !== '"') {
+      index += 1;
+      continue;
+    }
 
     const start = index;
-    index += 1;
-    for (; index < raw.length; index += 1) {
-      if (raw[index] === '\\') { index += 1; continue; }
-      if (raw[index] === '"') break;
-    }
-    if (index >= raw.length) break;
-    let cursor = index + 1;
-    while (/\s/.test(raw[cursor] ?? '')) cursor += 1;
-    if (raw[cursor] !== ':') continue;
+    const scanned = scanJsonString(raw, start);
+    index = scanned.end + 1;
+    if (!scanned.followedByColon) continue;
+
     const frame = stack[stack.length - 1];
-    if (!frame || frame.kind !== 'object') continue;
-    const key = decodeJsonKey(raw, start, index, label);
-    if (frame.keys.has(key)) throw new Error(`${label} contains duplicate JSON key ${key}.`);
-    frame.keys.add(key);
+    if (frame?.kind === 'object') {
+      const key = decodeJsonKey(raw, start, scanned.end, label);
+      if (frame.keys.has(key)) throw new Error(`${label} contains duplicate JSON key ${key}.`);
+      frame.keys.add(key);
+    }
   }
 }
 

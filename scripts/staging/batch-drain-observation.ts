@@ -8,6 +8,8 @@
 
 import { createHash } from 'node:crypto';
 
+import { parseUtcTimestamp } from './batch-drain-time';
+
 export const R3_BATCH_SIZE = 10_000;
 
 export type DrainTrigger = 'org-scheduler' | 'global-flush';
@@ -206,9 +208,7 @@ function requireNonNegativeInteger(value: number, name: string): void {
 }
 
 function timestamp(value: string, name: string): number {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new Error(`${name} must be a valid timestamp.`);
-  return parsed;
+  return parseUtcTimestamp(value, name);
 }
 
 function sha256(bytes: Uint8Array): Buffer {
@@ -356,15 +356,26 @@ interface DerivedClaims {
   rawLedgerByOrg: Map<string, number>;
 }
 
-function deriveClaimsFromObservedEvents(
+interface IndexedLedgerEvents {
+  ledgerByFingerprint: Map<string, ObservedCreditLedgerEvent[]>;
+  rawLedgerByOrg: Map<string, number>;
+}
+
+interface ClaimCreditFacts {
+  debits: number;
+  refunds: number;
+  debitEvents: ObservedCreditLedgerEvent[];
+  refundEvents: ObservedCreditLedgerEvent[];
+  chargedAtMs: number | null;
+  deniedAtMs: number | null;
+  gateMs: number;
+}
+
+function validateObservedPassRows(
   expectation: DrainPassExpectation,
   observation: DrainPassObservation,
   validated: ValidatedExpectation,
-  leafByFingerprint: Map<string, ObservedTransactionLeaf>,
-  transactionsById: Map<string, ObservedDrainTransaction>,
-  executionStartedMs: number,
-  executionCompletedMs: number,
-): DerivedClaims {
+): ObservedPassRow[] {
   if (observation.passRows.length !== expectation.claims.length) {
     throw new Error('Actual pass rows must exactly equal the declared claimed identity set.');
   }
@@ -391,7 +402,16 @@ function deriveClaimsFromObservedEvents(
   if (orderedRows.some((row, index) => row.claimOrder !== index + 1)) {
     throw new Error('Observed durable claimOrder must be contiguous from one.');
   }
+  return orderedRows;
+}
 
+function indexCreditGates(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+  validated: ValidatedExpectation,
+  executionStartedMs: number,
+  executionCompletedMs: number,
+): Map<string, ObservedCreditGateEvent> {
   const gateByFingerprint = new Map<string, ObservedCreditGateEvent>();
   for (const gate of observation.creditGateEvents) {
     const claim = validated.claimsByFingerprint.get(gate.fingerprint);
@@ -420,8 +440,7 @@ function deriveClaimsFromObservedEvents(
       }
     } else if (
       !gate.reason?.trim()
-      ||
-      !gate.referenceId?.trim()
+      || !gate.referenceId?.trim()
       || !Number.isInteger(gate.requiredAmount)
       || gate.requiredAmount <= 0
       || !Number.isInteger(gate.balanceBefore)
@@ -436,7 +455,16 @@ function deriveClaimsFromObservedEvents(
   if (gateByFingerprint.size !== expectation.claims.length) {
     throw new Error('Every claimed row requires one observed credit gate decision, including not-required.');
   }
+  return gateByFingerprint;
+}
 
+function indexCreditLedger(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+  validated: ValidatedExpectation,
+  executionStartedMs: number,
+  executionCompletedMs: number,
+): IndexedLedgerEvents {
   const ledgerByFingerprint = new Map<string, ObservedCreditLedgerEvent[]>();
   const rawLedgerByOrg = new Map([...validated.claimedOrgIds].map((orgId) => [orgId, 0]));
   const ledgerEventIds = new Set<string>();
@@ -452,7 +480,9 @@ function deriveClaimsFromObservedEvents(
     }
     requireId(event.eventId, 'credit ledger eventId');
     requireId(event.referenceId, 'credit ledger referenceId');
-    if (!Number.isInteger(event.amount) || event.amount <= 0) throw new Error('Credit ledger amount must be a positive integer.');
+    if (!Number.isInteger(event.amount) || event.amount <= 0) {
+      throw new Error('Credit ledger amount must be a positive integer.');
+    }
     const eventMs = assertInsideWindow(event.occurredAt, 'Credit ledger event', validated.startMs, validated.endMs);
     if (eventMs < executionStartedMs || eventMs > executionCompletedMs) {
       throw new Error('Credit ledger event is outside the correlated Scheduler execution.');
@@ -464,120 +494,151 @@ function deriveClaimsFromObservedEvents(
     const signedAmount = event.kind === 'debit' ? -event.amount : event.amount;
     rawLedgerByOrg.set(event.orgId, rawLedgerByOrg.get(event.orgId)! + signedAmount);
   }
+  return { ledgerByFingerprint, rawLedgerByOrg };
+}
 
-  const outcomes = new Map<string, DerivedClaimOutcome>();
-  for (const row of orderedRows) {
-    const gate = gateByFingerprint.get(row.fingerprint)!;
-    const ledger = ledgerByFingerprint.get(row.fingerprint) ?? [];
-    const debits = ledger.filter((event) => event.kind === 'debit').reduce((sum, event) => sum + event.amount, 0);
-    const refunds = ledger.filter((event) => event.kind === 'refund').reduce((sum, event) => sum + event.amount, 0);
-    const leaf = leafByFingerprint.get(row.fingerprint);
-    const terminal = row.status === 'SUBMITTED' || row.status === 'SECURED';
-    const chargedAtMs = row.queueCreditChargedAt === null
-      ? null
-      : assertInsideWindow(row.queueCreditChargedAt, 'queueCreditChargedAt', executionStartedMs, executionCompletedMs);
-    const deniedAtMs = row.queueCreditDeniedAt === null
-      ? null
-      : assertInsideWindow(row.queueCreditDeniedAt, 'queueCreditDeniedAt', executionStartedMs, executionCompletedMs);
-    if (row.queueCreditChargedAt !== null && (row.queueCreditDeniedAt !== null || row.creditDenialReason !== null)) {
-      throw new Error('Observed DB credit metadata cannot be both charged and denied.');
-    }
-    if (ledger.some((event) => event.referenceId !== gate.referenceId)) {
-      throw new Error('Credit gate and debit/refund events must share the exact reference identity.');
-    }
-    const gateMs = timestamp(gate.occurredAt, 'Credit gate occurredAt');
-    const debitEvents = ledger.filter((event) => event.kind === 'debit');
-    const refundEvents = ledger.filter((event) => event.kind === 'refund');
-    if (ledger.some((event) => timestamp(event.occurredAt, 'Credit ledger occurredAt') < gateMs)) {
-      throw new Error('Credit debit/refund event predates its gate decision.');
-    }
-    if (
-      debitEvents.length > 0
-      && refundEvents.length > 0
-      && Math.min(...refundEvents.map((event) => timestamp(event.occurredAt, 'refund occurredAt')))
-        <= Math.max(...debitEvents.map((event) => timestamp(event.occurredAt, 'debit occurredAt')))
-    ) {
-      throw new Error('Credit refund must occur strictly after its debit.');
-    }
-    if (
-      gate.decision === 'denied'
-      && gate.reason === 'insufficient_credits'
-      && (gate.balanceBefore! >= gate.requiredAmount || gate.balanceAfter !== gate.balanceBefore)
-    ) {
-      throw new Error('Denied insufficient-credit balance must be below required amount and remain unchanged.');
-    }
-
-    if (terminal) {
-      if (!leaf) throw new Error('Terminal drained row has no observed transaction leaf.');
-      const transaction = transactionsById.get(leaf.txId)!;
-      if (row.chainTxId !== transaction.txId || row.merkleRoot !== transaction.merkleRoot) {
-        throw new Error('Drained pass row lacks the derived terminal tx/root state.');
-      }
-      if (gate.decision === 'denied') throw new Error('A denied credit gate cannot produce a terminal drained row.');
-      if (gate.decision === 'allowed') {
-        if (
-          gate.balanceAfter !== gate.balanceBefore! - gate.requiredAmount
-          || debits !== gate.requiredAmount
-          || refunds !== 0
-          || chargedAtMs === null
-          || chargedAtMs < gateMs
-          || debitEvents.some((event) => timestamp(event.occurredAt, 'debit occurredAt') > chargedAtMs)
-          || row.creditDenialReason !== null
-        ) {
-          throw new Error('Credit-gated drained row requires one observed debit and charged DB metadata.');
-        }
-      } else if (
-        gate.decision !== 'not-required'
-        || debits !== 0
-        || refunds !== 0
-        || row.queueCreditChargedAt !== null
-        || row.queueCreditDeniedAt !== null
-        || row.creditDenialReason !== null
-      ) {
-        throw new Error('Non-credit-gated drained row must have zero ledger events and zero credit metadata.');
-      }
-      outcomes.set(row.fingerprint, 'drained');
-      continue;
-    }
-
-    if (row.status !== 'PENDING' || leaf || row.chainTxId !== null || row.merkleRoot !== null) {
-      throw new Error('Non-drained claimed row must remain PENDING with zero tx/root attribution.');
-    }
-    if (
-      gate.decision === 'denied'
-      && gate.reason === 'insufficient_credits'
-      && gate.balanceBefore! < gate.requiredAmount
-      && gate.balanceAfter === gate.balanceBefore
-      && debits === 0
-      && refunds === 0
-      && row.creditDenialReason === 'insufficient_credits'
-      && deniedAtMs !== null
-      && deniedAtMs >= gateMs
-    ) {
-      outcomes.set(row.fingerprint, 'credit-starved');
-      continue;
-    }
-    if (
-      gate.decision === 'allowed'
-      && gate.balanceAfter === gate.balanceBefore! - gate.requiredAmount
-      && debits === gate.requiredAmount
-      && refunds === gate.requiredAmount
-      && chargedAtMs !== null
-      && chargedAtMs >= gateMs
-      && debitEvents.every((event) => timestamp(event.occurredAt, 'debit occurredAt') <= chargedAtMs)
-      && refundEvents.every((event) => timestamp(event.occurredAt, 'refund occurredAt') > chargedAtMs)
-      && row.queueCreditDeniedAt === null
-      && row.creditDenialReason === null
-    ) {
-      outcomes.set(row.fingerprint, 'refunded-failure');
-      continue;
-    }
-    throw new Error('Pending poison truth is not supported by observed gate, refund, and DB facts.');
+function claimCreditFacts(
+  row: ObservedPassRow,
+  gate: ObservedCreditGateEvent,
+  ledger: ObservedCreditLedgerEvent[],
+  executionStartedMs: number,
+  executionCompletedMs: number,
+): ClaimCreditFacts {
+  const debitEvents = ledger.filter((event) => event.kind === 'debit');
+  const refundEvents = ledger.filter((event) => event.kind === 'refund');
+  const debits = debitEvents.reduce((sum, event) => sum + event.amount, 0);
+  const refunds = refundEvents.reduce((sum, event) => sum + event.amount, 0);
+  const chargedAtMs = row.queueCreditChargedAt === null
+    ? null
+    : assertInsideWindow(row.queueCreditChargedAt, 'queueCreditChargedAt', executionStartedMs, executionCompletedMs);
+  const deniedAtMs = row.queueCreditDeniedAt === null
+    ? null
+    : assertInsideWindow(row.queueCreditDeniedAt, 'queueCreditDeniedAt', executionStartedMs, executionCompletedMs);
+  if (row.queueCreditChargedAt !== null && (row.queueCreditDeniedAt !== null || row.creditDenialReason !== null)) {
+    throw new Error('Observed DB credit metadata cannot be both charged and denied.');
   }
+  if (ledger.some((event) => event.referenceId !== gate.referenceId)) {
+    throw new Error('Credit gate and debit/refund events must share the exact reference identity.');
+  }
+  const gateMs = timestamp(gate.occurredAt, 'Credit gate occurredAt');
+  if (ledger.some((event) => timestamp(event.occurredAt, 'Credit ledger occurredAt') < gateMs)) {
+    throw new Error('Credit debit/refund event predates its gate decision.');
+  }
+  if (
+    debitEvents.length > 0
+    && refundEvents.length > 0
+    && Math.min(...refundEvents.map((event) => timestamp(event.occurredAt, 'refund occurredAt')))
+      <= Math.max(...debitEvents.map((event) => timestamp(event.occurredAt, 'debit occurredAt')))
+  ) {
+    throw new Error('Credit refund must occur strictly after its debit.');
+  }
+  if (
+    gate.decision === 'denied'
+    && gate.reason === 'insufficient_credits'
+    && (gate.balanceBefore! >= gate.requiredAmount || gate.balanceAfter !== gate.balanceBefore)
+  ) {
+    throw new Error('Denied insufficient-credit balance must be below required amount and remain unchanged.');
+  }
+  return { debits, refunds, debitEvents, refundEvents, chargedAtMs, deniedAtMs, gateMs };
+}
 
-  const orderedDrainedRows = orderedRows.filter((row) => outcomes.get(row.fingerprint) === 'drained');
-  if (orderedDrainedRows.length === 0) throw new Error('R3 pass evidence requires at least one observed eligible drained claim.');
+function deriveTerminalOutcome(
+  row: ObservedPassRow,
+  gate: ObservedCreditGateEvent,
+  facts: ClaimCreditFacts,
+  leaf: ObservedTransactionLeaf | undefined,
+  transactionsById: Map<string, ObservedDrainTransaction>,
+): DerivedClaimOutcome | null {
+  if (row.status !== 'SUBMITTED' && row.status !== 'SECURED') return null;
+  if (!leaf) throw new Error('Terminal drained row has no observed transaction leaf.');
+  const transaction = transactionsById.get(leaf.txId)!;
+  if (row.chainTxId !== transaction.txId || row.merkleRoot !== transaction.merkleRoot) {
+    throw new Error('Drained pass row lacks the derived terminal tx/root state.');
+  }
+  if (gate.decision === 'denied') throw new Error('A denied credit gate cannot produce a terminal drained row.');
+  if (gate.decision === 'allowed') {
+    if (
+      gate.balanceAfter !== gate.balanceBefore! - gate.requiredAmount
+      || facts.debits !== gate.requiredAmount
+      || facts.refunds !== 0
+      || facts.chargedAtMs === null
+      || facts.chargedAtMs < facts.gateMs
+      || facts.debitEvents.some((event) => timestamp(event.occurredAt, 'debit occurredAt') > facts.chargedAtMs!)
+      || row.creditDenialReason !== null
+    ) {
+      throw new Error('Credit-gated drained row requires one observed debit and charged DB metadata.');
+    }
+  } else if (
+    gate.decision !== 'not-required'
+    || facts.debits !== 0
+    || facts.refunds !== 0
+    || row.queueCreditChargedAt !== null
+    || row.queueCreditDeniedAt !== null
+    || row.creditDenialReason !== null
+  ) {
+    throw new Error('Non-credit-gated drained row must have zero ledger events and zero credit metadata.');
+  }
+  return 'drained';
+}
 
+function derivePendingOutcome(
+  row: ObservedPassRow,
+  gate: ObservedCreditGateEvent,
+  facts: ClaimCreditFacts,
+  leaf: ObservedTransactionLeaf | undefined,
+): DerivedClaimOutcome {
+  if (row.status !== 'PENDING' || leaf || row.chainTxId !== null || row.merkleRoot !== null) {
+    throw new Error('Non-drained claimed row must remain PENDING with zero tx/root attribution.');
+  }
+  if (
+    gate.decision === 'denied'
+    && gate.reason === 'insufficient_credits'
+    && gate.balanceBefore! < gate.requiredAmount
+    && gate.balanceAfter === gate.balanceBefore
+    && facts.debits === 0
+    && facts.refunds === 0
+    && row.creditDenialReason === 'insufficient_credits'
+    && facts.deniedAtMs !== null
+    && facts.deniedAtMs >= facts.gateMs
+  ) {
+    return 'credit-starved';
+  }
+  if (
+    gate.decision === 'allowed'
+    && gate.balanceAfter === gate.balanceBefore! - gate.requiredAmount
+    && facts.debits === gate.requiredAmount
+    && facts.refunds === gate.requiredAmount
+    && facts.chargedAtMs !== null
+    && facts.chargedAtMs >= facts.gateMs
+    && facts.debitEvents.every((event) => timestamp(event.occurredAt, 'debit occurredAt') <= facts.chargedAtMs!)
+    && facts.refundEvents.every((event) => timestamp(event.occurredAt, 'refund occurredAt') > facts.chargedAtMs!)
+    && row.queueCreditDeniedAt === null
+    && row.creditDenialReason === null
+  ) {
+    return 'refunded-failure';
+  }
+  throw new Error('Pending poison truth is not supported by observed gate, refund, and DB facts.');
+}
+
+function deriveClaimOutcome(
+  row: ObservedPassRow,
+  gate: ObservedCreditGateEvent,
+  ledger: ObservedCreditLedgerEvent[],
+  leaf: ObservedTransactionLeaf | undefined,
+  transactionsById: Map<string, ObservedDrainTransaction>,
+  executionStartedMs: number,
+  executionCompletedMs: number,
+): DerivedClaimOutcome {
+  const facts = claimCreditFacts(row, gate, ledger, executionStartedMs, executionCompletedMs);
+  return deriveTerminalOutcome(row, gate, facts, leaf, transactionsById)
+    ?? derivePendingOutcome(row, gate, facts, leaf);
+}
+
+function assertChronologicalOrgBalances(
+  observation: DrainPassObservation,
+  gateByFingerprint: Map<string, ObservedCreditGateEvent>,
+  orderedRows: ObservedPassRow[],
+): void {
   const claimOrderByFingerprint = new Map(orderedRows.map((row) => [row.fingerprint, row.claimOrder]));
   for (const balance of observation.orgBalances) {
     const gates = [...gateByFingerprint.values()]
@@ -610,6 +671,38 @@ function deriveClaimsFromObservedEvents(
       throw new Error('Observed per-org final balance does not follow the chronological gate/refund sequence.');
     }
   }
+}
+
+function deriveClaimsFromObservedEvents(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+  validated: ValidatedExpectation,
+  leafByFingerprint: Map<string, ObservedTransactionLeaf>,
+  transactionsById: Map<string, ObservedDrainTransaction>,
+  executionStartedMs: number,
+  executionCompletedMs: number,
+): DerivedClaims {
+  const orderedRows = validateObservedPassRows(expectation, observation, validated);
+  const gateByFingerprint = indexCreditGates(
+    expectation, observation, validated, executionStartedMs, executionCompletedMs,
+  );
+  const { ledgerByFingerprint, rawLedgerByOrg } = indexCreditLedger(
+    expectation, observation, validated, executionStartedMs, executionCompletedMs,
+  );
+  const outcomes = new Map<string, DerivedClaimOutcome>();
+  for (const row of orderedRows) {
+    const gate = gateByFingerprint.get(row.fingerprint)!;
+    const ledger = ledgerByFingerprint.get(row.fingerprint) ?? [];
+    const leaf = leafByFingerprint.get(row.fingerprint);
+    outcomes.set(row.fingerprint, deriveClaimOutcome(
+      row, gate, ledger, leaf, transactionsById, executionStartedMs, executionCompletedMs,
+    ));
+  }
+
+  const orderedDrainedRows = orderedRows.filter((row) => outcomes.get(row.fingerprint) === 'drained');
+  if (orderedDrainedRows.length === 0) throw new Error('R3 pass evidence requires at least one observed eligible drained claim.');
+
+  assertChronologicalOrgBalances(observation, gateByFingerprint, orderedRows);
   return { orderedDrainedRows, outcomes, rawLedgerByOrg };
 }
 

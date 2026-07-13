@@ -13,8 +13,8 @@
 
 import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { open, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { open } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs, types as utilTypes } from 'node:util';
 
@@ -27,6 +27,7 @@ import {
   type DrainWindowExpectation,
 } from './batch-drain-observation';
 import { parseJsonRejectingDuplicateKeys } from './batch-drain-strict-json';
+import { parseUtcTimestamp, strictUtcTimestampSchema } from './batch-drain-time';
 
 export const LIVE_EVIDENCE_ENABLE_VALUE = 'ARKOVA_S33_COLLECT_LIVE_RAW_EVIDENCE';
 export const SOAK_FLOOR_MINUTES = 2_880;
@@ -34,6 +35,7 @@ export const SOAK_REQUIRED_UPTIME_MINUTES = SOAK_FLOOR_MINUTES;
 export const SOAK_WALL_FLOOR_MINUTES = SOAK_FLOOR_MINUTES + 30;
 export const MAX_HEARTBEAT_GAP_MINUTES = 5;
 export const DEFAULT_EVIDENCE_TRUST_ROOT = '/var/lib/arkova/s33-evidence/trust-roots';
+export const DEFAULT_EVIDENCE_CAPTURE_ROOT = '/var/lib/arkova/s33-evidence/captures';
 
 // CTO-owned launch configuration. These are deliberately null until the CTO
 // approves and commits the production Ed25519 public key + SPKI fingerprint.
@@ -46,7 +48,7 @@ const headSha = z.string().regex(/^[0-9a-f]{40}$/);
 const imageDigest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const projectRef = z.string().regex(/^[a-z]{20}$/);
 const nonEmpty = z.string().min(1);
-const isoTimestamp = z.string().refine((value) => Number.isFinite(Date.parse(value)), 'invalid timestamp');
+const isoTimestamp = strictUtcTimestampSchema;
 const nonNegativeInteger = z.number().int().nonnegative();
 const positiveInteger = z.number().int().positive();
 const rawCaptureDigestsSchema = z.object({
@@ -430,14 +432,35 @@ export class CapturedFileRawSourceCollector {
 
   async collect(): Promise<RawCaptureTextSet> {
     const [scheduler, workerLogs, database, signet, cloudRun, supervisor] = await Promise.all([
-      readFile(this.files.schedulerFile, 'utf8'),
-      readFile(this.files.workerLogsFile, 'utf8'),
-      readFile(this.files.databaseFile, 'utf8'),
-      readFile(this.files.signetFile, 'utf8'),
-      readFile(this.files.cloudRunFile, 'utf8'),
-      readFile(this.files.supervisorFile, 'utf8'),
+      readCaptureFile(this.files.schedulerFile),
+      readCaptureFile(this.files.workerLogsFile),
+      readCaptureFile(this.files.databaseFile),
+      readCaptureFile(this.files.signetFile),
+      readCaptureFile(this.files.cloudRunFile),
+      readCaptureFile(this.files.supervisorFile),
     ]);
     return { scheduler, workerLogs, database, signet, cloudRun, supervisor };
+  }
+}
+
+export function resolveCaptureFilePath(filePath: string): string {
+  const resolved = resolve(filePath);
+  if (
+    dirname(resolved) !== DEFAULT_EVIDENCE_CAPTURE_ROOT
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{2,127}\.json$/.test(basename(resolved))
+  ) throw new Error('Capture file path must be one allowlisted JSON file directly inside the fixed capture root.');
+  return resolved;
+}
+
+async function readCaptureFile(filePath: string): Promise<string> {
+  const safePath = resolveCaptureFilePath(filePath);
+  const handle = await open(safePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error('Raw capture export must be a regular file.');
+    return await handle.readFile('utf8');
+  } finally {
+    await handle.close();
   }
 }
 
@@ -456,9 +479,7 @@ function parseStrict<T>(schema: z.ZodType<T>, raw: string, label: string): T {
 }
 
 function time(value: string, label: string): number {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new Error(`${label} must be a timestamp.`);
-  return parsed;
+  return parseUtcTimestamp(value, label);
 }
 
 function unique<T>(values: T[], label: string): void {
@@ -523,7 +544,7 @@ function assertPlainVerifierConfig(config: unknown): asserts config is EvidenceV
   const descriptors = Object.getOwnPropertyDescriptors(config);
   if (
     Reflect.ownKeys(config).some((key) => typeof key !== 'string')
-    || Object.keys(descriptors).sort().join(',') !== 'keyFingerprint,publicKeyPem'
+    || Object.keys(descriptors).sort((left, right) => left.localeCompare(right)).join(',') !== 'keyFingerprint,publicKeyPem'
     || Object.values(descriptors).some((descriptor) => !('value' in descriptor) || descriptor.get || descriptor.set)
     || typeof descriptors.publicKeyPem?.value !== 'string'
     || typeof descriptors.keyFingerprint?.value !== 'string'
@@ -613,7 +634,7 @@ function snapshotRawCaptureTextSet(raw: RawCaptureTextSet): Readonly<RawCaptureT
   const expectedKeys = ['cloudRun', 'database', 'scheduler', 'signet', 'supervisor', 'workerLogs'];
   if (
     Reflect.ownKeys(raw).some((key) => typeof key !== 'string')
-    || Object.keys(descriptors).sort().join(',') !== expectedKeys.join(',')
+    || Object.keys(descriptors).sort((left, right) => left.localeCompare(right)).join(',') !== expectedKeys.join(',')
     || Object.values(descriptors).some((descriptor) => !('value' in descriptor) || descriptor.get || descriptor.set)
     || expectedKeys.some((key) => typeof descriptors[key]?.value !== 'string')
   ) throw new Error('Raw capture set rejects getters, unknown keys, and ambiguous values.');

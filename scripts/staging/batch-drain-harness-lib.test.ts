@@ -235,6 +235,14 @@ describe('R3 trigger expectations — org scheduler and global flush stay distin
     ]);
     expect(expected.poisonIsolation.poisons).toHaveLength(2);
     expect(expected.singleOrgCrossPass.totalTransactions).toBe(2);
+    const scenarioRankOneOrgIds = [
+      expected.distribution[0]!.orgId,
+      expected.globalEligible10000.orgInputs[0]!.orgId,
+      expected.globalEligible12500.orgInputs[0]!.orgId,
+      expected.poisonIsolation.orgInputs[0]!.orgId,
+      expected.singleOrgCrossPass.passes[0]!.transactions[0]!.orgId,
+    ];
+    expect(new Set(scenarioRankOneOrgIds).size).toBe(scenarioRankOneOrgIds.length);
     expect(() => buildR3AcceptancePlan({ runId: 'too-small', orgs: 29 })).toThrow(/at least 30 orgs/);
   });
 });

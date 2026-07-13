@@ -338,6 +338,18 @@ describe('admission v2 to run-declaration identity adapter', () => {
     }))).toThrow(/admission.*wall|2910/i);
   });
 
+  it('rejects non-UTC chronology and project refs outside the reviewed lowercase-only contract', () => {
+    expect(() => projectAdmissionV2ToRunDeclaration(admissionWith((value) => {
+      value.generated_at = '2026-07-13T11:59:00';
+    }), ceremonyRaw())).toThrow(/RFC3339|timestamp|schema/i);
+    expect(() => projectAdmissionV2ToRunDeclaration(ADMISSION_RAW, ceremonyRaw((value) => {
+      value.soakStartedAt = '2026-07-13T12:00:00';
+    }))).toThrow(/RFC3339|timestamp|schema/i);
+    expect(() => projectAdmissionV2ToRunDeclaration(admissionWith((value) => {
+      value.supabase_project_ref = 'abcdefghij1lmnopqrst';
+    }), ceremonyRaw())).toThrow(/project|schema|rejected/i);
+  });
+
   it('rejects object clones, getters, proxies, and ceremony duplicate keys', () => {
     expect(() => projectAdmissionV2ToRunDeclaration(JSON.parse(ADMISSION_RAW), ceremonyRaw())).toThrow(
       /primitive string/i,

@@ -431,6 +431,16 @@ describe('assertDrainPassObservation — event-derived fail-closed R3 evidence',
     expect(() => assertDrainPassObservation(expectation(), lateDenial)).toThrow(/queueCreditDeniedAt|credit.*Scheduler execution/i);
   });
 
+  it.each([
+    '2026-07-13T12:00:05',
+    '2026-07-13T08:00:05-04:00',
+    'July 13, 2026 12:00:05',
+  ])('rejects machine-dependent Scheduler timestamp %s', (value) => {
+    const actual = observation();
+    actual.execution.startedAt = value;
+    expect(() => assertDrainPassObservation(expectation(), actual)).toThrow(/RFC3339 UTC/i);
+  });
+
   it('requires signet acceptance after the exact debit for every leaf in its transaction', () => {
     const actual = observation();
     actual.creditGateEvents[0] = {

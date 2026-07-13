@@ -21,6 +21,7 @@ import type {
   TerminationEvidence,
 } from './batch-drain-crash-control';
 import { parseJsonRejectingDuplicateKeys } from './batch-drain-strict-json';
+import { strictUtcTimestampSchema } from './batch-drain-time';
 
 export const LIVE_CRASH_ENABLE_TOKEN = 'ARKOVA_S33_EXECUTE_LIVE_CRASH_CASE';
 
@@ -28,7 +29,7 @@ const nonEmpty = z.string().min(1);
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
 const headSha = z.string().regex(/^[0-9a-f]{40}$/);
 const imageDigest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
-const timestamp = z.string().refine((value) => Number.isFinite(Date.parse(value)), 'invalid timestamp');
+const timestamp = strictUtcTimestampSchema;
 const runtime = { headSha, imageDigest };
 
 const claimSchema = z.object({
@@ -241,6 +242,9 @@ function assertLiveGate(input: CrashCaseInput, env: LiveCrashExecutionEnv): void
 
 const CONTROLLER_BINARY = '/usr/local/bin/arkova-rig-crash-control';
 const RIG_B1_SERVICE = 'arkova-worker-s33-rig-b1-staging';
+export const LIVE_CRASH_CONTROLLER_TIMEOUT_MS = 60_000;
+export const LIVE_CRASH_CONTROLLER_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+const controllerIdentity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
 const actionSchema = z.enum(['arm', 'start', 'wait-for-killpoint', 'terminate', 'wait-for-restart', 'recover', 'inspect', 'disarm']);
 const acknowledgementSchema = z.object({
   schemaVersion: z.literal(1), action: actionSchema, runId: nonEmpty, status: z.literal('ok'),
@@ -262,10 +266,21 @@ function assertTarget(target: RigB1LiveCrashTarget): void {
   ) throw new Error('Live crash target is outside the fixed RIG-B1 allowlist.');
 }
 
+function assertControllerIdentity(value: string, label: string): void {
+  if (!controllerIdentity.safeParse(value).success) {
+    throw new Error(`${label} is outside the live-controller argument identity allowlist.`);
+  }
+}
+
 class NodeLiveCrashCommandRunner implements LiveCrashCommandRunner {
   async run(args: readonly string[]): Promise<string> {
     return new Promise((resolve, reject) => {
-      execFile(CONTROLLER_BINARY, [...args], { encoding: 'utf8', shell: false }, (error, stdout, stderr) => {
+      execFile(CONTROLLER_BINARY, [...args], {
+        encoding: 'utf8',
+        shell: false,
+        timeout: LIVE_CRASH_CONTROLLER_TIMEOUT_MS,
+        maxBuffer: LIVE_CRASH_CONTROLLER_MAX_BUFFER_BYTES,
+      }, (error, stdout, stderr) => {
         if (error) {
           reject(new Error(`Live crash controller failed: ${stderr.trim() || error.message}`));
           return;
@@ -289,6 +304,10 @@ class RigB1LiveCrashControlAdapter implements CrashControlPort {
 
   private args(action: z.infer<typeof actionSchema>, input: CrashCaseInput, extra: readonly string[] = []): string[] {
     assertLiveGate(input, this.env);
+    assertControllerIdentity(input.runId, 'runId');
+    assertControllerIdentity(input.expectation.batchId, 'batchId');
+    assertControllerIdentity(input.expectation.schedulerExecutionId, 'schedulerExecutionId');
+    assertControllerIdentity(input.expectation.faultWindow.id, 'faultWindow.id');
     return [
       action,
       '--rig', this.target.rigId,
@@ -330,6 +349,7 @@ class RigB1LiveCrashControlAdapter implements CrashControlPort {
   }
 
   async terminate(input: CrashCaseInput & { workerId: string }): Promise<TerminationEvidence> {
+    assertControllerIdentity(input.workerId, 'workerId');
     return parseControllerResponse(
       terminationSchema,
       await this.runner.run(this.args('terminate', input, ['--worker-id', input.workerId])),
@@ -338,6 +358,7 @@ class RigB1LiveCrashControlAdapter implements CrashControlPort {
   }
 
   async waitForRestart(input: CrashCaseInput & { previousWorkerId: string }): Promise<RestartEvidence> {
+    assertControllerIdentity(input.previousWorkerId, 'previousWorkerId');
     return parseControllerResponse(
       restartSchema,
       await this.runner.run(this.args('wait-for-restart', input, ['--previous-worker-id', input.previousWorkerId])),

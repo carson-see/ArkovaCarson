@@ -1,13 +1,18 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   LIVE_EVIDENCE_ENABLE_VALUE,
+  DEFAULT_EVIDENCE_CAPTURE_ROOT,
   SOAK_FLOOR_MINUTES,
   SOAK_REQUIRED_UPTIME_MINUTES,
   KnownSourceCollectorsAdapter,
   collectLiveRawSources,
   createProductionEvidenceEnvelopeVerifier,
   parseRawCaptureSet,
+  resolveCaptureFilePath,
   type KnownLiveSourceCollectors,
 } from './batch-drain-live-evidence';
 
@@ -75,5 +80,23 @@ describe('immutable declaration and independent raw evidence sources', () => {
       },
     });
     expect(Object.values(collectors).every((collector) => collector.mock.calls.length === 1)).toBe(true);
+  });
+
+  it('confines raw capture file arguments to direct regular-file candidates in the fixed capture root', () => {
+    expect(resolveCaptureFilePath(`${DEFAULT_EVIDENCE_CAPTURE_ROOT}/scheduler-export.json`)).toBe(
+      `${DEFAULT_EVIDENCE_CAPTURE_ROOT}/scheduler-export.json`,
+    );
+    expect(() => resolveCaptureFilePath('/tmp/scheduler-export.json')).toThrow(/capture root|allowlist/i);
+    expect(() => resolveCaptureFilePath(`${DEFAULT_EVIDENCE_CAPTURE_ROOT}/../trust-roots/key.json`)).toThrow(
+      /capture root|allowlist/i,
+    );
+    expect(() => resolveCaptureFilePath(`${DEFAULT_EVIDENCE_CAPTURE_ROOT}/nested/export.json`)).toThrow(
+      /capture root|allowlist/i,
+    );
+  });
+
+  it('wires the evidence-specific lint command into native CI', () => {
+    const workflow = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    expect(workflow).toMatch(/name: Lint batch-drain evidence tooling[\s\S]*run: npm run lint:batch-drain-evidence/);
   });
 });

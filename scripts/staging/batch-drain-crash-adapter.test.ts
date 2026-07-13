@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   LIVE_CRASH_ENABLE_TOKEN,
+  LIVE_CRASH_CONTROLLER_MAX_BUFFER_BYTES,
+  LIVE_CRASH_CONTROLLER_TIMEOUT_MS,
   createRigB1LiveCrashControlAdapter,
   createRigB1LiveCrashControlAdapterForTest,
   parseCrashReplayCapture,
@@ -80,6 +82,32 @@ describe('concrete crash capture adapters', () => {
       'arm', '--rig', 'RIG-B1', '--project', 'arkova1', '--service', TARGET.workerService,
       '--region', 'us-central1', '--run-id', INPUT.runId, '--killpoint', INPUT.killpoint,
     ]));
+  });
+
+  it('bounds fixed-controller execution for the declared 10k-leaf response ceiling', () => {
+    expect(LIVE_CRASH_CONTROLLER_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(LIVE_CRASH_CONTROLLER_TIMEOUT_MS).toBeLessThanOrEqual(120_000);
+    expect(LIVE_CRASH_CONTROLLER_MAX_BUFFER_BYTES).toBeGreaterThanOrEqual(16 * 1024 * 1024);
+    expect(LIVE_CRASH_CONTROLLER_MAX_BUFFER_BYTES).toBeLessThanOrEqual(64 * 1024 * 1024);
+  });
+
+  it.each([
+    ['runId', (input: CrashCaseInput) => { input.runId = '--run-override'; }],
+    ['batchId', (input: CrashCaseInput) => { input.expectation.batchId = '--batch-override'; }],
+    ['schedulerExecutionId', (input: CrashCaseInput) => {
+      input.expectation.schedulerExecutionId = '--scheduler-override';
+    }],
+    ['faultWindow.id', (input: CrashCaseInput) => { input.expectation.faultWindow.id = '--fault-override'; }],
+  ] as const)('rejects flag-shaped controller identity %s before invocation', async (_label, mutate) => {
+    const input = structuredClone(INPUT);
+    mutate(input);
+    const run = vi.fn();
+    const adapter = createRigB1LiveCrashControlAdapterForTest(TARGET, {
+      ARKOVA_LIVE_CRASH_EXECUTION: LIVE_CRASH_ENABLE_TOKEN,
+      ARKOVA_LIVE_CRASH_RUN_ID: input.runId,
+    }, { run });
+    await expect(adapter.arm(input)).rejects.toThrow(/identity|argument|allowlist/i);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('fails closed on a non-RIG-B1 target and unknown controller response fields', async () => {

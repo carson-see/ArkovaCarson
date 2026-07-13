@@ -444,6 +444,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Lint batch-drain evidence tooling
+        run: npm run lint:batch-drain-evidence
+
       - name: Lint UI copy terms
         run: npm run lint:copy
 

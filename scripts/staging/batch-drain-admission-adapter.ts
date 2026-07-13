@@ -16,6 +16,7 @@ import {
   type RunDeclaration,
 } from './batch-drain-live-evidence';
 import { parseJsonRejectingDuplicateKeys } from './batch-drain-strict-json';
+import { parseUtcTimestamp, strictUtcTimestampSchema } from './batch-drain-time';
 
 const nonEmpty = z.string().min(1);
 const sha256 = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -25,10 +26,10 @@ const imageDigest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const pinnedImage = z.string().regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/);
 const projectRef = z.string().regex(/^[a-z]{20}$/);
 const runIdentity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
-const gcpProjectId = z.string().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/);
-const gcpRegion = z.string().regex(/^[a-z]+-[a-z]+[0-9]$/);
-const cloudRunName = z.string().regex(/^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/);
-const isoTimestamp = z.string().refine((value) => Number.isFinite(Date.parse(value)), 'invalid timestamp');
+const gcpProjectId = z.string().regex(/^[a-z][a-z\d-]{4,28}[a-z\d]$/);
+const gcpRegion = z.string().regex(/^[a-z]+-[a-z]+\d$/);
+const cloudRunName = z.string().regex(/^[a-z](?:[a-z\d-]{0,61}[a-z\d])?$/);
+const isoTimestamp = strictUtcTimestampSchema;
 const TEAM2_RIG_B1_CREATION_GUARD =
   'non-firing hold schedule; create then immediate pause + PAUSED verification';
 const TEAM2_RIG_B1_SCHEDULER_SPECS = [
@@ -182,7 +183,8 @@ function assertAdmissionInvariants(admission: AdmissionV2): void {
   if (
     admission.clean_mirror.attestation_id !== admission.clean_mirror_attestation_id
     || admission.clean_mirror.result !== admission.preflight_result
-    || Date.parse(admission.clean_mirror.verified_at) > Date.parse(admission.generated_at)
+    || parseUtcTimestamp(admission.clean_mirror.verified_at, 'clean_mirror.verified_at')
+      > parseUtcTimestamp(admission.generated_at, 'generated_at')
   ) throw new Error('Admission v2 clean_mirror attestation identity is contradictory.');
 
   const names = admission.scheduler.jobs.map((job) => job.name);
@@ -233,7 +235,10 @@ function buildRunDeclaration(admission: AdmissionV2, ceremony: DeclarationCeremo
   };
   const result = runDeclarationSchema.safeParse(candidate);
   if (!result.success) throw new Error(`Projected run declaration schema rejected: ${z.prettifyError(result.error)}`);
-  const wallMinutes = (Date.parse(result.data.soakEndedAt) - Date.parse(result.data.soakStartedAt)) / 60_000;
+  const wallMinutes = (
+    parseUtcTimestamp(result.data.soakEndedAt, 'soakEndedAt')
+    - parseUtcTimestamp(result.data.soakStartedAt, 'soakStartedAt')
+  ) / 60_000;
   if (wallMinutes < admission.required_wall_min) {
     throw new Error('Projected run declaration does not meet the admission required wall minutes.');
   }
