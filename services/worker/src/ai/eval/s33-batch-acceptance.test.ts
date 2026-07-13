@@ -34,6 +34,12 @@ describe('S3.3 batch acceptance — manifest-seeded sampling', () => {
 });
 
 describe('S3.3 batch acceptance — lexical leakage metrics', () => {
+  const normalization = {
+    unicodeForm: 'NFKC',
+    caseFold: 'lowercase',
+    nonAlphanumeric: 'space',
+    whitespace: 'collapse',
+  } as const;
   const heldout = {
     id: 'KE-001',
     text: 'Nursing Council registration certificate for a licensed practitioner in Nairobi County',
@@ -44,7 +50,11 @@ describe('S3.3 batch acceptance — lexical leakage metrics', () => {
   };
 
   it('emits auditable 6–13 token metrics without silently choosing a verdict threshold', () => {
-    const metrics = computeLexicalLeakageMetrics([heldout], [corpus], { minN: 6, maxN: 13 });
+    const metrics = computeLexicalLeakageMetrics(
+      [heldout],
+      [corpus],
+      { minN: 6, maxN: 13, normalization },
+    );
 
     expect(metrics.map((metric) => metric.n)).toEqual([6, 7, 8, 9, 10, 11, 12, 13]);
     expect(metrics[0]).toMatchObject({
@@ -57,7 +67,11 @@ describe('S3.3 batch acceptance — lexical leakage metrics', () => {
   });
 
   it('requires an explicit signed-policy shape to turn metrics into hits', () => {
-    const metrics = computeLexicalLeakageMetrics([heldout], [corpus], { minN: 6, maxN: 13 });
+    const metrics = computeLexicalLeakageMetrics(
+      [heldout],
+      [corpus],
+      { minN: 6, maxN: 13, normalization },
+    );
 
     const hits = applyLexicalLeakagePolicy(metrics, {
       allowedN: [6, 7, 8, 9, 10, 11, 12, 13],
@@ -72,6 +86,14 @@ describe('S3.3 batch acceptance — lexical leakage metrics', () => {
       minimumHeldoutContainment: -1,
       combination: 'all',
     })).toThrow(/policy/i);
+  });
+
+  it('fails closed when the signed normalization policy is absent', () => {
+    expect(() => computeLexicalLeakageMetrics(
+      [heldout],
+      [corpus],
+      { minN: 6, maxN: 13 } as never,
+    )).toThrow(/normalization/i);
   });
 });
 

@@ -92,6 +92,14 @@ export function selectManifestSeededSample(
 export interface LexicalMetricOptions {
   minN: number;
   maxN: number;
+  normalization: LexicalNormalizationPolicy;
+}
+
+export interface LexicalNormalizationPolicy {
+  unicodeForm: 'none' | 'NFC' | 'NFKC';
+  caseFold: 'preserve' | 'lowercase';
+  nonAlphanumeric: 'preserve' | 'space';
+  whitespace: 'preserve' | 'collapse';
 }
 
 export interface LexicalLeakageMetric {
@@ -112,13 +120,28 @@ export interface LexicalLeakagePolicy {
   combination: 'all' | 'any';
 }
 
-/** NFKC, lowercase, Unicode letters/numbers, then whitespace collapse. */
-export function normalizeLeakageText(text: string): string {
-  return text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+function validateLexicalNormalizationPolicy(policy: LexicalNormalizationPolicy | undefined): void {
+  if (!policy
+    || !['none', 'NFC', 'NFKC'].includes(policy.unicodeForm)
+    || !['preserve', 'lowercase'].includes(policy.caseFold)
+    || !['preserve', 'space'].includes(policy.nonAlphanumeric)
+    || !['preserve', 'collapse'].includes(policy.whitespace)) {
+    throw new Error('Invalid lexical normalization policy; a signed explicit policy is required');
+  }
 }
 
-function ngramSet(text: string, n: number): Set<string> {
-  const tokens = normalizeLeakageText(text).split(' ').filter(Boolean);
+/** Apply only the explicitly supplied, signed normalization policy. */
+export function normalizeLeakageText(text: string, policy: LexicalNormalizationPolicy): string {
+  validateLexicalNormalizationPolicy(policy);
+  let normalized = policy.unicodeForm === 'none' ? text : text.normalize(policy.unicodeForm);
+  if (policy.caseFold === 'lowercase') normalized = normalized.toLowerCase();
+  if (policy.nonAlphanumeric === 'space') normalized = normalized.replace(/[^\p{L}\p{N}]+/gu, ' ');
+  if (policy.whitespace === 'collapse') normalized = normalized.replace(/\s+/gu, ' ');
+  return normalized.trim();
+}
+
+function ngramSet(text: string, n: number, normalization: LexicalNormalizationPolicy): Set<string> {
+  const tokens = normalizeLeakageText(text, normalization).split(/\s+/u).filter(Boolean);
   const result = new Set<string>();
   for (let index = 0; index + n <= tokens.length; index += 1) {
     result.add(tokens.slice(index, index + n).join(' '));
@@ -128,8 +151,8 @@ function ngramSet(text: string, n: number): Set<string> {
 
 function validateTextRecords(records: readonly TextRecord[], label: string): void {
   assertUniqueNonEmptyIds(records.map((record) => record.id), label);
-  if (records.some((record) => normalizeLeakageText(record.text).length === 0)) {
-    throw new Error(`${label} contains empty normalized text`);
+  if (records.some((record) => record.text.trim().length === 0)) {
+    throw new Error(`${label} contains empty text`);
   }
 }
 
@@ -139,6 +162,7 @@ export function computeLexicalLeakageMetrics(
   corpus: readonly TextRecord[],
   options: LexicalMetricOptions,
 ): LexicalLeakageMetric[] {
+  validateLexicalNormalizationPolicy(options.normalization);
   validateTextRecords(heldout, 'Held-out set');
   validateTextRecords(corpus, 'Leakage corpus');
   if (!Number.isInteger(options.minN) || !Number.isInteger(options.maxN)
@@ -150,8 +174,8 @@ export function computeLexicalLeakageMetrics(
   for (const heldoutRecord of heldout) {
     for (const corpusRecord of corpus) {
       for (let n = options.minN; n <= options.maxN; n += 1) {
-        const heldoutNgrams = ngramSet(heldoutRecord.text, n);
-        const corpusNgrams = ngramSet(corpusRecord.text, n);
+        const heldoutNgrams = ngramSet(heldoutRecord.text, n, options.normalization);
+        const corpusNgrams = ngramSet(corpusRecord.text, n, options.normalization);
         let sharedNgrams = 0;
         for (const ngram of heldoutNgrams) {
           if (corpusNgrams.has(ngram)) sharedNgrams += 1;
