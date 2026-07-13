@@ -120,9 +120,13 @@ else
   DECLARED_SOURCE_HEAD="${GITHUB_SHA:-<required-in-apply:--source-head-or-STAGING_SOURCE_HEAD_SHA>}"
 fi
 SOAK_ID="${STAGING_SOAK_ID:-<required-in-apply:--soak-id-or-STAGING_SOAK_ID>}"
+RIG_ID="${STAGING_RIG_ID:-<required-in-apply:--rig-id-or-STAGING_RIG_ID>}"
+LEASE_ID="${STAGING_LEASE_ID:-<required-in-apply:--lease-id-or-STAGING_LEASE_ID>}"
 DRIVER_PATH="${STAGING_DRIVER_PATH:-services/worker/scripts/pr1408-chain-resilience-driver.ts}"
 TIER="${STAGING_TIER:-T3}"
-DURATION_MIN="${STAGING_DURATION_MIN:-2880}"
+REQUIRED_UPTIME_MIN="${STAGING_REQUIRED_UPTIME_MIN:-${STAGING_DURATION_MIN:-2880}}"
+REQUIRED_WALL_MIN="${STAGING_REQUIRED_WALL_MIN:-}"
+DURATION_MIN="$REQUIRED_UPTIME_MIN"
 CHANGED_BEHAVIOR="${STAGING_CHANGED_BEHAVIOR:-}"
 VALIDATED_BASE_SHA=""
 
@@ -132,7 +136,9 @@ usage() {
   echo "Usage: $0 --name <rig-name> [--profile mock|chain|gemini] [--apply]"
   echo "          [--region us-east-2] [--gcp-region us-central1]"
   echo "          [--image <ref@sha256:digest>] [--source-head <40-char-sha>]"
-  echo "          [--soak-id <exclusive-soak-id>] [--org <supabase-org>] [--gcp-project arkova1]"
+  echo "          [--soak-id <exclusive-soak-id>] [--rig-id <rig-id>] [--lease-id <lease-id>]"
+  echo "          [--required-uptime-min <minutes>] [--required-wall-min <minutes>]"
+  echo "          [--org <supabase-org>] [--gcp-project arkova1]"
   echo "          [--artifact-dir docs/staging/<pr-or-rig>]"
   echo
   echo "  --profile mock   (default) safe: USE_MOCKS=true, anchoring off, no Scheduler."
@@ -153,6 +159,10 @@ while [[ $# -gt 0 ]]; do
     --image) PINNED_IMAGE="${2:?}"; IMAGE_WAS_EXPLICIT=1; shift 2 ;;
     --source-head) DECLARED_SOURCE_HEAD="${2:?}"; SOURCE_HEAD_WAS_EXPLICIT=1; shift 2 ;;
     --soak-id) SOAK_ID="${2:?}"; shift 2 ;;
+    --rig-id) RIG_ID="${2:?}"; shift 2 ;;
+    --lease-id) LEASE_ID="${2:?}"; shift 2 ;;
+    --required-uptime-min|--duration-min) REQUIRED_UPTIME_MIN="${2:?}"; shift 2 ;;
+    --required-wall-min) REQUIRED_WALL_MIN="${2:?}"; shift 2 ;;
     --org) SUPABASE_ORG="${2:?}"; shift 2 ;;
     --gcp-project) GCP_PROJECT="${2:?}"; shift 2 ;;
     --pg-major) SUPABASE_PG_MAJOR="${2:?}"; shift 2 ;;
@@ -161,6 +171,19 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+# Preserve the historical duration input as a compatibility alias while making
+# worker uptime and wall-clock floor separate, explicit admission identities.
+DURATION_MIN="$REQUIRED_UPTIME_MIN"
+if [[ -z "$REQUIRED_WALL_MIN" ]]; then
+  if [[ "$REQUIRED_UPTIME_MIN" =~ ^[1-9][0-9]*$ && ${#REQUIRED_UPTIME_MIN} -le 16 ]]; then
+    REQUIRED_WALL_MIN=$((10#$REQUIRED_UPTIME_MIN + 30))
+  else
+    # Apply-mode validation below emits the actionable uptime error before this
+    # sentinel could ever enter a paid operation or an admission artifact.
+    REQUIRED_WALL_MIN="0"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Validate inputs.
@@ -295,15 +318,28 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       (3-128 characters: letters, digits, dot, underscore, colon, or hyphen)." >&2
     exit 2
   fi
-  if [[ "$PROFILE" == "gemini" ]]; then
+  if [[ "$RIG_ID" == \<required-in-apply:* || ! "$RIG_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,63}$ ]]; then
+    echo "ERROR: live provision requires an explicit rig_id via --rig-id or STAGING_RIG_ID" >&2
+    echo "       (3-64 characters: letters, digits, dot, underscore, colon, or hyphen)." >&2
+    exit 2
+  fi
+  if [[ "$LEASE_ID" == \<required-in-apply:* || ! "$LEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]]; then
+    echo "ERROR: live provision requires an explicit lease_id via --lease-id or STAGING_LEASE_ID" >&2
+    echo "       (3-128 characters: letters, digits, dot, underscore, colon, or hyphen)." >&2
+    exit 2
+  fi
+  if [[ "$PROFILE" == "gemini" || "$RIG_ID" == "RIG-B1" ]]; then
     if [[ ! "$APPROVED_GCP_PROJECT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
-      echo "ERROR: live gemini provision requires a valid approved GCP project identity; got '$APPROVED_GCP_PROJECT'." >&2
+      echo "ERROR: live admission requires a valid approved GCP project identity; got '$APPROVED_GCP_PROJECT'." >&2
       exit 2
     fi
     if [[ "$GCP_PROJECT" != "$APPROVED_GCP_PROJECT" ]]; then
-      echo "ERROR: live gemini provision only supports approved GCP project '$APPROVED_GCP_PROJECT'; got '$GCP_PROJECT'." >&2
+      echo "ERROR: live admission for profile='$PROFILE' rig_id='$RIG_ID' only supports approved GCP project" >&2
+      echo "       '$APPROVED_GCP_PROJECT'; got '$GCP_PROJECT'." >&2
       exit 2
     fi
+  fi
+  if [[ "$PROFILE" == "gemini" ]]; then
     if [[ ! "$GEMINI_TUNED_MODEL_VALUE" =~ ^projects/([^/]+)/locations/us-central1/endpoints/([1-9][0-9]*)$ ]]; then
       echo "ERROR: live gemini provision requires STAGING_GEMINI_TUNED_MODEL as the exact canonical resource" >&2
       echo "       projects/<approved-project>/locations/us-central1/endpoints/<numeric-id>." >&2
@@ -321,8 +357,8 @@ if [[ $APPLY -eq 1 ]]; then
     exit 2
   fi
 
-  # A paid/live rig cannot truthfully identify as T0. The duration floor is the
-  # canonical staging-evidence floor (T1=2h, T2=12h, T3=48h).
+  # A paid/live rig cannot truthfully identify as T0. Required worker uptime
+  # keeps the canonical staging-evidence floor (T1=2h, T2=12h, T3=48h).
   case "$TIER" in
     T1) MIN_DURATION_MIN=120 ;;
     T2) MIN_DURATION_MIN=720 ;;
@@ -332,14 +368,50 @@ if [[ $APPLY -eq 1 ]]; then
       exit 2
       ;;
   esac
-  if [[ ! "$DURATION_MIN" =~ ^[1-9][0-9]*$ || ${#DURATION_MIN} -gt 16 ]]; then
-    echo "ERROR: live $TIER duration must be a canonical positive integer >= ${MIN_DURATION_MIN} minutes; got '$DURATION_MIN'." >&2
+  if [[ ! "$REQUIRED_UPTIME_MIN" =~ ^[1-9][0-9]*$ || ${#REQUIRED_UPTIME_MIN} -gt 16 ]]; then
+    echo "ERROR: live $TIER required uptime must be a canonical positive integer >= ${MIN_DURATION_MIN} minutes; got '$REQUIRED_UPTIME_MIN'." >&2
     exit 2
   fi
-  DURATION_MIN_VALUE=$((10#$DURATION_MIN))
-  if (( DURATION_MIN_VALUE > 9007199254740991 || DURATION_MIN_VALUE < MIN_DURATION_MIN )); then
-    echo "ERROR: live $TIER duration must be a safe integer >= ${MIN_DURATION_MIN} minutes; got '$DURATION_MIN'." >&2
+  REQUIRED_UPTIME_MIN_VALUE=$((10#$REQUIRED_UPTIME_MIN))
+  if (( REQUIRED_UPTIME_MIN_VALUE > 9007199254740991 || REQUIRED_UPTIME_MIN_VALUE < MIN_DURATION_MIN )); then
+    echo "ERROR: live $TIER required uptime must be a safe integer >= ${MIN_DURATION_MIN} minutes; got '$REQUIRED_UPTIME_MIN'." >&2
     exit 2
+  fi
+  if [[ ! "$REQUIRED_WALL_MIN" =~ ^[1-9][0-9]*$ || ${#REQUIRED_WALL_MIN} -gt 16 ]]; then
+    echo "ERROR: live required wall floor must be a canonical positive integer; got '$REQUIRED_WALL_MIN'." >&2
+    exit 2
+  fi
+  REQUIRED_WALL_MIN_VALUE=$((10#$REQUIRED_WALL_MIN))
+  if (( REQUIRED_WALL_MIN_VALUE > 9007199254740991 || REQUIRED_WALL_MIN_VALUE < REQUIRED_UPTIME_MIN_VALUE )); then
+    echo "ERROR: live required wall floor must be a safe integer >= required uptime ($REQUIRED_UPTIME_MIN);" >&2
+    echo "       got '$REQUIRED_WALL_MIN'." >&2
+    exit 2
+  fi
+  DURATION_MIN="$REQUIRED_UPTIME_MIN"
+
+  # RIG-B1 is the pre-declared signet broadcast/drain rig. Never let the
+  # generic chain defaults silently turn it into a mainnet or under-floor run.
+  if [[ "$RIG_ID" == "RIG-B1" ]]; then
+    if [[ "$PROFILE" != "chain" ]]; then
+      echo "ERROR: RIG-B1 requires profile=chain; got '$PROFILE'." >&2
+      exit 2
+    fi
+    if [[ "$BITCOIN_NETWORK_VALUE" != "signet" ]]; then
+      echo "ERROR: RIG-B1 requires explicit BITCOIN_NETWORK=signet; got '$BITCOIN_NETWORK_VALUE'." >&2
+      exit 2
+    fi
+    if [[ "$TIER" != "T3" ]]; then
+      echo "ERROR: RIG-B1 requires Tier T3; got '$TIER'." >&2
+      exit 2
+    fi
+    if (( REQUIRED_UPTIME_MIN_VALUE != 2880 )); then
+      echo "ERROR: RIG-B1 requires required worker uptime exactly 2880 minutes; got '$REQUIRED_UPTIME_MIN'." >&2
+      exit 2
+    fi
+    if (( REQUIRED_WALL_MIN_VALUE < 2910 )); then
+      echo "ERROR: RIG-B1 requires required wall floor >=2910 minutes; got '$REQUIRED_WALL_MIN'." >&2
+      exit 2
+    fi
   fi
 
   # Admission base provenance is derived from this exact checkout. Caller
@@ -505,6 +577,7 @@ CREATED_SUPABASE_SECRETS=0
 PREFLIGHT_JSON=""
 PREFLIGHT_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/clean-mirror-preflight-${NAME}.json"
 PREFLIGHT_VERIFIED_AT="<captured-after-clean_mirror>"
+CLEAN_MIRROR_ATTESTATION_ID="<sha256-of-sanitized-clean_mirror-artifact>"
 DEPLOYED_REVISION="<captured-after-deploy>"
 DEPLOYED_IMAGE_REF="$PINNED_IMAGE"
 case "$PINNED_IMAGE" in
@@ -521,9 +594,12 @@ SCHEDULER_CREATION_GUARD="not_applicable"
 # throttled (min-instances=0) Cloud Run service, so the behavioral cron paths
 # (batch-anchors, check-confirmations, classify-proof-backcatalog, …) never run
 # without an external Scheduler POST. mock rigs have no behavioral cron to drive.
-# Bash 3.2 treats an expanded empty array as unset under `set -u`; retain one
-# empty sentinel for mock admission JSON, filtered out by the jq encoder below.
-SCHEDULER_JOBS=("")
+# Each spec is an internal, validated `<job-suffix><TAB><exact-request-path>`
+# pair. Names and request paths are deliberately independent: forced flush is a
+# distinct Scheduler job whose path carries `?force=true`, not a name==path
+# guess. Bash 3.2 treats an expanded empty array as unset under `set -u`; retain
+# one empty sentinel for mock admission JSON, filtered out by the encoder.
+SCHEDULER_JOB_SPECS=("")
 SCHEDULER_CONFIGURED_SCHEDULE="*/5 * * * *"
 # create-http has no atomic --paused flag. Create against a syntactically valid
 # non-firing hold schedule, pause + verify, then restore the pre-existing cadence
@@ -534,10 +610,68 @@ if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
   SCHEDULER_STATE="planned_paused_until_clean_mirror_then_resume"
   SCHEDULER_CREATION_GUARD="non-firing hold schedule; create then immediate pause + PAUSED verification"
   case "$PROFILE" in
-    chain)  SCHEDULER_JOBS=("batch-anchors" "check-confirmations" "populate-confirmation-proofs" "org-queue-scheduler") ;;
-    gemini) SCHEDULER_JOBS=("classify-proof-backcatalog") ;;
+    chain)
+      SCHEDULER_JOB_SPECS=(
+        $'batch-anchors\t/jobs/batch-anchors'
+        $'check-confirmations\t/jobs/check-confirmations'
+        $'populate-confirmation-proofs\t/jobs/populate-confirmation-proofs'
+        $'org-queue-scheduler\t/jobs/org-queue-scheduler'
+      )
+      if [[ "$RIG_ID" == "RIG-B1" ]]; then
+        SCHEDULER_JOB_SPECS+=(
+          $'batch-anchors-forced-flush\t/jobs/batch-anchors?force=true'
+          $'recover-broadcasts\t/jobs/recover-broadcasts'
+        )
+      fi
+      ;;
+    gemini)
+      SCHEDULER_JOB_SPECS=($'classify-proof-backcatalog\t/jobs/classify-proof-backcatalog')
+      ;;
   esac
 fi
+
+scheduler_spec_suffix() { printf '%s\n' "${1%%$'\t'*}"; }
+scheduler_spec_path() { printf '%s\n' "${1#*$'\t'}"; }
+scheduler_job_name_for_spec() { printf '%s-%s\n' "$CLOUD_RUN_SERVICE" "$(scheduler_spec_suffix "$1")"; }
+
+validate_scheduler_job_specs() {
+  local spec suffix path seen_names="|" seen_paths="|"
+  for spec in "${SCHEDULER_JOB_SPECS[@]}"; do
+    [[ -z "$spec" ]] && continue
+    if [[ "$spec" != *$'\t'* ]]; then
+      echo "ERROR: internal Scheduler spec is missing its name/path delimiter." >&2
+      exit 2
+    fi
+    suffix="$(scheduler_spec_suffix "$spec")"
+    path="$(scheduler_spec_path "$spec")"
+    if [[ ! "$suffix" =~ ^[a-z0-9][a-z0-9-]*[a-z0-9]$ ]]; then
+      echo "ERROR: internal Scheduler job suffix is not canonical: '$suffix'." >&2
+      exit 2
+    fi
+    if [[ ! "$path" =~ ^/jobs/[a-z0-9][a-z0-9-]*([?]force=true)?$ ]]; then
+      echo "ERROR: internal Scheduler request path is not canonical: '$path'." >&2
+      exit 2
+    fi
+    case "$seen_names" in
+      *"|$suffix|"*) echo "ERROR: duplicate Scheduler job suffix '$suffix'." >&2; exit 2 ;;
+    esac
+    case "$seen_paths" in
+      *"|$path|"*) echo "ERROR: duplicate Scheduler request path '$path'." >&2; exit 2 ;;
+    esac
+    seen_names="${seen_names}${suffix}|"
+    seen_paths="${seen_paths}${path}|"
+  done
+}
+
+scheduler_jobs_json() {
+  printf '%s\n' "${SCHEDULER_JOB_SPECS[@]}" | jq -Rsc --arg service "$CLOUD_RUN_SERVICE" '
+    split("\n")
+    | map(select(length > 0) | split("\t"))
+    | map(select(length == 2) | {name: ($service + "-" + .[0]), path: .[1]})
+  '
+}
+
+validate_scheduler_job_specs
 
 # ---------------------------------------------------------------------------
 # Command emitter — print always; execute only under --apply.
@@ -630,6 +764,10 @@ write_provision_state() {
     --arg image "$PINNED_IMAGE" \
     --arg declared_source_head "$DECLARED_SOURCE_HEAD" \
     --arg soak_id "$SOAK_ID" \
+    --arg rig_id "$RIG_ID" \
+    --arg lease_id "$LEASE_ID" \
+    --argjson required_uptime_min "$REQUIRED_UPTIME_MIN" \
+    --argjson required_wall_min "$REQUIRED_WALL_MIN" \
     --arg deployed_revision "$DEPLOYED_REVISION" \
     --arg deployed_image_digest "$DEPLOYED_IMAGE_DIGEST" \
     --arg deployed_source_head "$DEPLOYED_SOURCE_HEAD" \
@@ -637,6 +775,7 @@ write_provision_state() {
     --arg scheduler_creation_guard "$SCHEDULER_CREATION_GUARD" \
     --arg preflight_artifact "$PREFLIGHT_ARTIFACT_PATH" \
     --arg preflight_verified_at "$PREFLIGHT_VERIFIED_AT" \
+    --arg clean_mirror_attestation_id "$CLEAN_MIRROR_ATTESTATION_ID" \
     --arg state_path "$PROVISION_STATE_PATH" \
     --argjson created_cloud_run_service "$CREATED_CLOUD_RUN_SERVICE" \
     --argjson created_supabase_secrets "$CREATED_SUPABASE_SECRETS" \
@@ -658,6 +797,10 @@ write_provision_state() {
       image: $image,
       declared_source_head: $declared_source_head,
       soak_id: $soak_id,
+      rig_id: $rig_id,
+      lease_id: $lease_id,
+      required_uptime_min: $required_uptime_min,
+      required_wall_min: $required_wall_min,
       deployed_revision: $deployed_revision,
       deployed_image_digest: $deployed_image_digest,
       deployed_source_head: $deployed_source_head,
@@ -665,7 +808,8 @@ write_provision_state() {
       scheduler_creation_guard: $scheduler_creation_guard,
       clean_mirror: {
         artifact: $preflight_artifact,
-        verified_at: $preflight_verified_at
+        verified_at: $preflight_verified_at,
+        attestation_id: $clean_mirror_attestation_id
       },
       created_cloud_run_service: $created_cloud_run_service,
       created_supabase_secrets: $created_supabase_secrets,
@@ -905,12 +1049,17 @@ verify_scheduler_job_state() {
   fi
 }
 
+sha256_file() {
+  local path="$1"
+  shasum -a 256 "$path" | awk '{print $1}'
+}
+
 resolve_driver_sha256() {
   if [[ ! -f "$DRIVER_PATH" ]]; then
     echo "ERROR: required staging driver '$DRIVER_PATH' does not exist." >&2
     exit 1
   fi
-  shasum -a 256 "$DRIVER_PATH" | awk '{print $1}'
+  sha256_file "$DRIVER_PATH"
 }
 
 resolve_cloud_run_url() {
@@ -958,11 +1107,17 @@ emit_admission_json() {
     --arg kind "isolated_rig_admission" \
     --arg generated_at "$generated_at" \
     --arg rig_name "$rig_name" \
+    --arg rig_id "$RIG_ID" \
     --arg profile "$PROFILE" \
     --arg soak_id "$SOAK_ID" \
+    --arg lease_id "$LEASE_ID" \
+    --arg gcp_project_id "$GCP_PROJECT" \
+    --arg region "$CLOUD_RUN_REGION" \
     --arg cloud_run_service "$cloud_run_service" \
     --arg tier "$TIER" \
     --argjson duration_min "$DURATION_MIN" \
+    --argjson required_uptime_min "$REQUIRED_UPTIME_MIN" \
+    --argjson required_wall_min "$REQUIRED_WALL_MIN" \
     --arg sha "$head_sha" \
     --arg declared_source_head "$DECLARED_SOURCE_HEAD" \
     --arg base_sha "$base_sha" \
@@ -977,6 +1132,7 @@ emit_admission_json() {
     --arg preflight_result "$preflight_result" \
     --arg preflight_artifact "$PREFLIGHT_ARTIFACT_PATH" \
     --arg preflight_verified_at "$PREFLIGHT_VERIFIED_AT" \
+    --arg clean_mirror_attestation_id "$CLEAN_MIRROR_ATTESTATION_ID" \
     --arg node_env "$ADMISSION_NODE_ENV" \
     --arg enable_ai_fraud "$ADMISSION_ENABLE_AI_FRAUD" \
     --arg enable_ai_reports "$ADMISSION_ENABLE_AI_REPORTS" \
@@ -993,7 +1149,7 @@ emit_admission_json() {
     --argjson scheduler_paused_through_clean_mirror "$SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON" \
     --arg scheduler_state "$SCHEDULER_STATE" \
     --arg scheduler_creation_guard "$SCHEDULER_CREATION_GUARD" \
-    --argjson scheduler_jobs "$(printf '%s\n' "${SCHEDULER_JOBS[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
+    --argjson scheduler_jobs "$(scheduler_jobs_json)" \
     --arg driver_path "$driver_path" \
     --arg driver_sha256 "$driver_sha256" \
     --arg changed_behavior "$changed_behavior" \
@@ -1005,11 +1161,17 @@ emit_admission_json() {
       kind: $kind,
       generated_at: $generated_at,
       rig_name: $rig_name,
+      rig_id: $rig_id,
       profile: $profile,
       soak_id: $soak_id,
+      lease_id: $lease_id,
+      gcp_project_id: $gcp_project_id,
+      region: $region,
       cloud_run_service: $cloud_run_service,
       tier: $tier,
       duration_min: $duration_min,
+      required_uptime_min: $required_uptime_min,
+      required_wall_min: $required_wall_min,
       sha: $sha,
       declared_source_head: $declared_source_head,
       base_sha: $base_sha,
@@ -1022,10 +1184,12 @@ emit_admission_json() {
       tag_url: $tag_url,
       supabase_project_ref: $supabase_project_ref,
       preflight_result: $preflight_result,
+      clean_mirror_attestation_id: $clean_mirror_attestation_id,
       clean_mirror: {
         result: $preflight_result,
         artifact: $preflight_artifact,
-        verified_at: $preflight_verified_at
+        verified_at: $preflight_verified_at,
+        attestation_id: $clean_mirror_attestation_id
       },
       critical_config: {
         node_env: $node_env,
@@ -1056,9 +1220,12 @@ emit_admission_json() {
       owner: $owner,
       stop_conditions: [
         "SHA mismatch between admission JSON and PR head",
+        "rig_id or lease_id mismatch against the declared run",
         "base SHA drift with runtime/schema/staging/deploy impact",
         "image digest mismatch against deployed Cloud Run revision",
         "dirty preflight (environment_type != clean_mirror)",
+        "clean_mirror attestation hash mismatch against sanitized artifact bytes",
+        "required worker uptime or wall-clock floor not met",
         "Supabase project ref resolves to prod or shared staging",
         "Cloud Run service/tag URL points at shared/main staging",
         "driver_path or driver_sha256 mismatch",
@@ -1072,7 +1239,11 @@ emit_admission_json() {
 # ---------------------------------------------------------------------------
 echo "S0-4.1 isolated soak-rig provision"
 echo "rig name:          $NAME"
+echo "rig id:            $RIG_ID"
+echo "lease id:          $LEASE_ID"
 echo "profile:           $PROFILE"
+echo "required uptime:   $REQUIRED_UPTIME_MIN min"
+echo "required wall:     $REQUIRED_WALL_MIN min"
 echo "Supabase project:  $PROJECT_NAME (NEW standalone project, NOT a preview branch)"
 echo "Supabase region:   $SUPABASE_REGION (PG ${SUPABASE_PG_MAJOR}.x)"
 echo "Supabase org:      $SUPABASE_ORG"
@@ -1240,13 +1411,15 @@ else
     echo "#    resolves them via 'gcloud run services describe' + Secret Manager access —"
     echo "#    the secret value is never printed in either mode.)"
   fi
-  for job in "${SCHEDULER_JOBS[@]}"; do
-    scheduler_job_name="${CLOUD_RUN_SERVICE}-${job}"
+  for scheduler_spec in "${SCHEDULER_JOB_SPECS[@]}"; do
+    [[ -z "$scheduler_spec" ]] && continue
+    scheduler_job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
+    scheduler_request_path="$(scheduler_spec_path "$scheduler_spec")"
     run_cmd_cron_redacted gcloud scheduler jobs create http "$scheduler_job_name" \
       --project="$GCP_PROJECT" \
       --location="$CLOUD_RUN_REGION" \
       --schedule="$SCHEDULER_HOLD_SCHEDULE" \
-      --uri="${WORKER_URL}/jobs/${job}" \
+      --uri="${WORKER_URL}${scheduler_request_path}" \
       --http-method=POST \
       --headers="X-Cron-Secret=${CRON_SECRET_VALUE}" \
       --oidc-service-account-email="$CRON_OIDC_SA" \
@@ -1374,14 +1547,20 @@ if [[ $APPLY -eq 1 ]]; then
   PREFLIGHT_VERIFIED_AT="$(jq -r '.timestamp' <<<"$PREFLIGHT_ARTIFACT_JSON")"
   mkdir -p "$STAGING_ADMISSION_DIR"
   printf '%s\n' "$PREFLIGHT_ARTIFACT_JSON" | jq . >"$PREFLIGHT_ARTIFACT_PATH"
+  CLEAN_MIRROR_ATTESTATION_ID="sha256:$(sha256_file "$PREFLIGHT_ARTIFACT_PATH")"
+  if [[ ! "$CLEAN_MIRROR_ATTESTATION_ID" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: could not derive clean_mirror attestation identity from sanitized artifact bytes." >&2
+    exit 1
+  fi
 
   # Re-observe every declared trigger after both seed and clean_mirror. The
   # initial pause check cannot prove this interval; an enabled, missing, or
   # partially-created job fails before any cadence update or resume.
   if [[ $SCHEDULER_APPLICABLE_JSON == true ]]; then
     SCHEDULER_STATE="post_clean_mirror_pause_verification_pending"
-    for job in "${SCHEDULER_JOBS[@]}"; do
-      scheduler_job_name="${CLOUD_RUN_SERVICE}-${job}"
+    for scheduler_spec in "${SCHEDULER_JOB_SPECS[@]}"; do
+      [[ -z "$scheduler_spec" ]] && continue
+      scheduler_job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
       verify_scheduler_job_state "$scheduler_job_name" "PAUSED"
     done
     SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON=true
@@ -1400,8 +1579,9 @@ echo
 # trigger was re-observed PAUSED. Any failure exits before cadence update/resume.
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
   echo "# Post-admission — restore Scheduler cadence, resume, verify ENABLED"
-  for job in "${SCHEDULER_JOBS[@]}"; do
-    scheduler_job_name="${CLOUD_RUN_SERVICE}-${job}"
+  for scheduler_spec in "${SCHEDULER_JOB_SPECS[@]}"; do
+    [[ -z "$scheduler_spec" ]] && continue
+    scheduler_job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
     run_cmd gcloud scheduler jobs update http "$scheduler_job_name" \
       --project="$GCP_PROJECT" \
       --location="$CLOUD_RUN_REGION" \

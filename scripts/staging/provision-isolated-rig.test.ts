@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -233,6 +234,10 @@ describe('provision-isolated-rig.sh — admission JSON contract', () => {
     expect(script).toMatch(/strict environment_type=clean_mirror schema/);
     expect(script).toMatch(/STAGING_CHANGED_BEHAVIOR/);
     expect(script).toMatch(/DRIVER_PATH/);
+    expect(script).toMatch(/--rig-id/);
+    expect(script).toMatch(/--lease-id/);
+    expect(script).toMatch(/--required-uptime-min/);
+    expect(script).toMatch(/--required-wall-min/);
   });
 });
 
@@ -323,6 +328,8 @@ interface ApplyRunOptions {
   sourceHead?: string | null;
   githubSha?: string | null;
   soakId?: string | null;
+  rigId?: string | null;
+  leaseId?: string | null;
   tunedModel?: string;
   preflightPayload?: string;
   schedulerStateAfterPreflight?: 'PAUSED' | 'ENABLED' | 'MISSING';
@@ -472,6 +479,8 @@ exit 64
     STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY: 'stub-service-role-key-not-real',
     STAGING_CHANGED_BEHAVIOR:
       'L2-S2a-FIX Step-4 Scheduler command validity under --apply (stubbed)',
+    STAGING_RIG_ID: options.rigId === null ? '' : (options.rigId ?? `rig-${name}`),
+    STAGING_LEASE_ID: options.leaseId === null ? '' : (options.leaseId ?? `lease-${name}`),
   };
   if (options.imageRef !== null) env.STAGING_PINNED_IMAGE = options.imageRef ?? STUB_IMAGE_REF;
   if (options.sourceHead !== null) env.STAGING_SOURCE_HEAD_SHA = options.sourceHead ?? REPO_HEAD;
@@ -690,6 +699,112 @@ describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under 
   });
 });
 
+describe('provision-isolated-rig.sh — RIG-B1 identity, trigger specs, and admission bindings', () => {
+  const leaseId = 'lease-rig-b1-s33-window';
+  const result = applyRunStubbed('rig-b1-chain', 'chain', {
+    rigId: 'RIG-B1',
+    leaseId,
+    env: {
+      STAGING_BITCOIN_NETWORK: 'signet',
+      STAGING_TIER: 'T3',
+      STAGING_DURATION_MIN: '2880',
+      STAGING_REQUIRED_WALL_MIN: '2910',
+    },
+  });
+  const schedulerCreates = result.gcloudCalls.filter((call) =>
+    call.startsWith('scheduler jobs create http '),
+  );
+  const expectedSpecs = [
+    {
+      name: 'arkova-worker-rig-b1-chain-staging-batch-anchors-forced-flush',
+      path: '/jobs/batch-anchors?force=true',
+    },
+    {
+      name: 'arkova-worker-rig-b1-chain-staging-recover-broadcasts',
+      path: '/jobs/recover-broadcasts',
+    },
+    {
+      name: 'arkova-worker-rig-b1-chain-staging-org-queue-scheduler',
+      path: '/jobs/org-queue-scheduler',
+    },
+  ];
+
+  it('admits the explicit signet/T3 RIG-B1 declaration', () => {
+    expect(result.code, result.out).toBe(0);
+  });
+
+  it.each(expectedSpecs)('creates distinct Scheduler job $name targeting exact $path', (spec) => {
+    const create = schedulerCreates.find((call) => call.split(' ')[4] === spec.name);
+    expect(create, `missing create for ${spec.name}`).toBeDefined();
+    expect(create).toContain(`--uri=${STUB_SERVICE_URL}${spec.path}`);
+  });
+
+  it.each(expectedSpecs)('holds, pauses, re-observes, restores, and resumes $name', (spec) => {
+    const createIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith(`gcloud scheduler jobs create http ${spec.name} `),
+    );
+    const pauseIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith(`gcloud scheduler jobs pause ${spec.name} `),
+    );
+    const preflightIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith('npx tsx scripts/ci/staging-honesty-preflight.ts '),
+    );
+    const describeIndexes = result.callOrder
+      .map((entry, index) =>
+        entry.startsWith(`gcloud scheduler jobs describe ${spec.name} `) &&
+        entry.includes('value(state)')
+          ? index
+          : -1,
+      )
+      .filter((index) => index >= 0);
+    const updateIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith(`gcloud scheduler jobs update http ${spec.name} `),
+    );
+    const resumeIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith(`gcloud scheduler jobs resume ${spec.name} `),
+    );
+
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    expect(result.callOrder[createIndex]).toContain('--schedule=0 0 31 2 *');
+    expect(pauseIndex).toBe(createIndex + 1);
+    expect(describeIndexes.some((index) => index === pauseIndex + 1)).toBe(true);
+    expect(describeIndexes.some((index) => index > preflightIndex && index < updateIndex)).toBe(true);
+    expect(updateIndex).toBeGreaterThan(preflightIndex);
+    expect(resumeIndex).toBe(updateIndex + 1);
+    expect(describeIndexes.some((index) => index === resumeIndex + 1)).toBe(true);
+  });
+
+  it('binds rig/lease/location/floors, exact job specs, and sanitized clean_mirror bytes', () => {
+    const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    expect(line).toBeTruthy();
+    const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
+    const artifactBytes = readFileSync(admission.clean_mirror.artifact);
+    const attestationId = `sha256:${createHash('sha256').update(artifactBytes).digest('hex')}`;
+
+    expect(admission).toMatchObject({
+      schema_version: 2,
+      rig_id: 'RIG-B1',
+      gcp_project_id: 'arkova1',
+      region: 'us-central1',
+      lease_id: leaseId,
+      clean_mirror_attestation_id: attestationId,
+      required_uptime_min: 2880,
+      required_wall_min: 2910,
+      duration_min: 2880,
+      critical_config: { bitcoin_network: 'signet' },
+      clean_mirror: { attestation_id: attestationId },
+      scheduler: {
+        applicable: true,
+        paused_through_clean_mirror: true,
+        state: 'resumed_after_clean_mirror',
+      },
+    });
+    expect(admission.scheduler.jobs).toEqual(
+      expect.arrayContaining(expectedSpecs.map((spec) => expect.objectContaining(spec))),
+    );
+  });
+});
+
 describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
   it.each([
     ['missing explicit image', { imageRef: null }, /immutable|digest|image/i],
@@ -714,6 +829,70 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
     expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
     expect(result.gcloudCalls.some((call) => call.startsWith('scheduler jobs create '))).toBe(false);
     expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  const identityCases: Array<[string, string, string, ApplyRunOptions]> = [
+    ['no-rig', 'missing rig id', 'mock', { rigId: null }],
+    ['bad-rig', 'malformed rig id', 'mock', { rigId: 'RIG B1' }],
+    ['no-lease', 'missing lease id', 'mock', { leaseId: null }],
+    ['bad-lease', 'malformed lease id', 'mock', { leaseId: 'lease\nsmuggle' }],
+    ['b1-mock', 'RIG-B1 mock profile', 'mock', { rigId: 'RIG-B1' }],
+    ['b1-main', 'RIG-B1 mainnet chain', 'chain', { rigId: 'RIG-B1' }],
+    [
+      'b1-project',
+      'RIG-B1 unapproved GCP project',
+      'chain',
+      {
+        rigId: 'RIG-B1',
+        env: { STAGING_BITCOIN_NETWORK: 'signet', STAGING_GCP_PROJECT: 'foreign-project' },
+      },
+    ],
+    [
+      'b1-tier',
+      'RIG-B1 non-T3 tier',
+      'chain',
+      {
+        rigId: 'RIG-B1',
+        env: {
+          STAGING_BITCOIN_NETWORK: 'signet',
+          STAGING_TIER: 'T2',
+          STAGING_DURATION_MIN: '720',
+        },
+      },
+    ],
+    [
+      'b1-uptime',
+      'RIG-B1 non-2880 uptime',
+      'chain',
+      {
+        rigId: 'RIG-B1',
+        env: {
+          STAGING_BITCOIN_NETWORK: 'signet',
+          STAGING_DURATION_MIN: '2881',
+          STAGING_REQUIRED_WALL_MIN: '2911',
+        },
+      },
+    ],
+    [
+      'b1-wall',
+      'RIG-B1 wall floor below 2910',
+      'chain',
+      {
+        rigId: 'RIG-B1',
+        env: {
+          STAGING_BITCOIN_NETWORK: 'signet',
+          STAGING_REQUIRED_WALL_MIN: '2909',
+        },
+      },
+    ],
+  ];
+
+  it.each(identityCases)('rejects %s (%s) before every external mutation', (id, _label, profile, options) => {
+    const result = applyRunStubbed(`guard-${id}`, profile, options);
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/rig|lease|RIG-B1|profile|network|signet|project|tier|uptime|wall/i);
+    expect(result.gcloudCalls).toEqual([]);
+    expect(result.npxCalls).toEqual([]);
   });
 
   it('rejects a bare Gemini model label before project creation', () => {
@@ -791,7 +970,7 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
     );
 
     expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/live gemini provision/i);
+    expect(result.out).toMatch(/live (?:gemini provision|admission)/i);
     expect(result.gcloudCalls).toEqual([]);
     expect(result.npxCalls).toEqual([]);
   });
