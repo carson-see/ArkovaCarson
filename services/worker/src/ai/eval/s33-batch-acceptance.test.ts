@@ -8,6 +8,7 @@ import {
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -57,8 +58,23 @@ const sha256 = (value: string | Uint8Array): string => createHash('sha256').upda
 interface ProductionManifestFixtureEntry {
   id: string;
   domain: 'au-ke-priority-documents' | 'professional-licensing' | 'out-of-distribution';
-  credentialType: 'LICENSE' | 'DEGREE' | 'CERTIFICATE' | 'OTHER';
+  credentialType: string;
   normalizedInputSha256: string;
+}
+
+const WAVE1_MANIFEST_PATH = 'docs/lane4/s33-wave1-batch-manifest.json';
+const WAVE1_TYPES_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-types.ts';
+const WAVE1_SOURCE_PATHS = [
+  'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
+] as const;
+
+interface ManifestFixtureBindings {
+  supportCommit: string;
+  supportTypesBlob: string;
+  predecessorCommit: string;
+  sourceBlobs: Record<(typeof WAVE1_SOURCE_PATHS)[number], string>;
 }
 
 const CORPUS_SLICE_BY_DOMAIN = {
@@ -77,39 +93,35 @@ function countByFixtureField(
   }, {});
 }
 
-function productionManifestFixture(entryCount: number): Record<string, unknown> {
-  const kenyaCount = Math.min(11, Math.max(1, Math.floor(entryCount * 11 / 81)));
-  const oodCount = Math.min(entryCount - kenyaCount - 1, Math.max(1, Math.floor(entryCount * 9 / 81)));
-  const auCount = Math.min(
-    entryCount - kenyaCount - oodCount - 1,
-    Math.max(1, Math.floor(entryCount * 11 / 81)),
-  );
-  const licensingCount = entryCount - kenyaCount - auCount - oodCount;
+function productionManifestFixture(bindings: ManifestFixtureBindings = {
+  supportCommit: 'd'.repeat(40),
+  supportTypesBlob: 'c'.repeat(40),
+  predecessorCommit: '5'.repeat(40),
+  sourceBlobs: {
+    [WAVE1_SOURCE_PATHS[0]]: '1'.repeat(40),
+    [WAVE1_SOURCE_PATHS[1]]: '2'.repeat(40),
+    [WAVE1_SOURCE_PATHS[2]]: '3'.repeat(40),
+  },
+}): Record<string, unknown> {
+  const makeEntries = (
+    prefix: string,
+    count: number,
+    domain: ProductionManifestFixtureEntry['domain'],
+    credentialType: string,
+  ): ProductionManifestFixtureEntry[] => Array.from({ length: count }, (_, index) => ({
+    id: `GD-S33-${prefix}-${String(index + 1).padStart(3, '0')}`,
+    domain,
+    credentialType,
+    normalizedInputSha256: sha256(`${prefix.toLowerCase()}-${index + 1}`),
+  }));
   const entries: ProductionManifestFixtureEntry[] = [
-    ...Array.from({ length: kenyaCount }, (_, index) => ({
-      id: `GD-S33-KE-${String(index + 1).padStart(3, '0')}`,
-      domain: 'au-ke-priority-documents' as const,
-      credentialType: 'LICENSE' as const,
-      normalizedInputSha256: sha256(`kenya-${index + 1}`),
-    })),
-    ...Array.from({ length: auCount }, (_, index) => ({
-      id: `GD-S33-AU-${String(index + 1).padStart(3, '0')}`,
-      domain: 'au-ke-priority-documents' as const,
-      credentialType: 'DEGREE' as const,
-      normalizedInputSha256: sha256(`australia-${index + 1}`),
-    })),
-    ...Array.from({ length: licensingCount }, (_, index) => ({
-      id: `GD-S33-NUR-${String(index + 1).padStart(3, '0')}`,
-      domain: 'professional-licensing' as const,
-      credentialType: 'CERTIFICATE' as const,
-      normalizedInputSha256: sha256(`licensing-${index + 1}`),
-    })),
-    ...Array.from({ length: oodCount }, (_, index) => ({
-      id: `GD-S33-OOD-${String(index + 1).padStart(3, '0')}`,
-      domain: 'out-of-distribution' as const,
-      credentialType: 'OTHER' as const,
-      normalizedInputSha256: sha256(`ood-${index + 1}`),
-    })),
+    ...makeEntries('KE', 11, 'au-ke-priority-documents', 'LICENSE'),
+    ...makeEntries('NUR', 12, 'professional-licensing', 'CERTIFICATE'),
+    ...makeEntries('CPA', 13, 'professional-licensing', 'CPE'),
+    ...makeEntries('BAR', 13, 'professional-licensing', 'CLE'),
+    ...makeEntries('PDH', 12, 'professional-licensing', 'CERTIFICATE'),
+    ...makeEntries('AU', 11, 'au-ke-priority-documents', 'DEGREE'),
+    ...makeEntries('OOD', 9, 'out-of-distribution', 'OTHER'),
   ];
   const kenyaEntryIds = entries.filter(({ id }) => id.startsWith('GD-S33-KE-')).map(({ id }) => id);
   const oodEntryIds = entries.filter(({ domain }) => domain === 'out-of-distribution').map(({ id }) => id);
@@ -118,10 +130,8 @@ function productionManifestFixture(entryCount: number): Record<string, unknown> 
     counts[slice] = (counts[slice] ?? 0) + 1;
     return counts;
   }, {});
-  const currentChangedId = entries.find(({ domain }) => domain !== 'out-of-distribution')?.id ?? entries[0].id;
-  const verifiedUnchangedId = entries.find(({ id }) => id !== currentChangedId)?.id ?? currentChangedId;
-  const supportCommit = 'd'.repeat(40);
-  const sourceCommit = '5'.repeat(40);
+  const entryHash = (id: string): string => entries.find((entry) => entry.id === id)!.normalizedInputSha256;
+  const historicalCommit = (character: string): string => character.repeat(40);
   return {
     schemaVersion: 1,
     batchId: 'S33-W1',
@@ -129,23 +139,19 @@ function productionManifestFixture(entryCount: number): Record<string, unknown> 
     producerLane: 'Lane 4',
     acceptanceAuthority: 'Lane 3',
     status: 'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
-    corpusRevisionParentCommit: sourceCommit,
-    producerRevisionPredecessorCommit: sourceCommit,
+    corpusRevisionParentCommit: bindings.predecessorCommit,
+    producerRevisionPredecessorCommit: bindings.predecessorCommit,
     lane3SupportBase: {
-      commit: supportCommit,
-      typesPath: 'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
-      typesBlob: 'c'.repeat(40),
+      commit: bindings.supportCommit,
+      typesPath: WAVE1_TYPES_PATH,
+      typesBlob: bindings.supportTypesBlob,
       reviewState: 'PENDING_LANE3_REVIEW_PR',
     },
-    corpusSourceBlobs: {
-      'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts': '1'.repeat(40),
-      'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts': '2'.repeat(40),
-      'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts': '3'.repeat(40),
-    },
+    corpusSourceBlobs: bindings.sourceBlobs,
     intendedSplit: 'held-out-candidate',
     reviewOrder: 'kenya-first',
     acceptanceScope: 'whole-batch-only',
-    entryCount,
+    entryCount: 81,
     counts: {
       byDomain: countByFixtureField(entries, 'domain'),
       byCredentialType: countByFixtureField(entries, 'credentialType'),
@@ -153,37 +159,110 @@ function productionManifestFixture(entryCount: number): Record<string, unknown> 
     },
     kenyaEntryIds,
     selfChecks: {
-      exactCorpusManifestDatasheetBijection: { status: 'PASS', entryCount },
+      exactCorpusManifestDatasheetBijection: { status: 'PASS', entryCount: 81 },
       normalizedInputFingerprintsPinned: {
         status: 'PASS',
         algorithm: 'sha256(normalizeForFingerprint(strippedText))',
       },
       authorizedDocumentRevisions: {
         status: 'PASS',
-        revisions: [{
-          revision: 9,
-          authority: 'RTE production-schema fixture',
-          changedEntryIds: [currentChangedId],
-          verifiedUnchangedEntryIds: [verifiedUnchangedId],
-          changes: ['Fixture preserves the production revision-nine contract shape'],
-          corpusSourceTextChanged: false,
-          normalizedInputChanged: false,
-          normalizedInputPinsPreservedFromRevision8: true,
-          remainingSubstantiveGroundTruthFields: {
-            [currentChangedId]: 5,
-            nonOodMinimum: 5,
-            oodPureAbstention: 2,
+        revisions: [
+          {
+            revision: 2,
+            authority: 'RTE protocol-required Wave 1 overlap revision',
+            changedEntryIds: ['GD-S33-NUR-011', 'GD-S33-CPA-011', 'GD-S33-BAR-011', 'GD-S33-PDH-010'],
+            normalizedInputChanged: true,
           },
-          producerRevisionPredecessorCommit: sourceCommit,
-          lane3SupportBaseCommit: supportCommit,
-        }],
+          {
+            revision: 3,
+            authority: 'Lane 3 reject-and-return',
+            changedEntryIds: ['GD-S33-KE-010'],
+            change: 'Removed ungrounded issued date',
+            normalizedInputChanged: false,
+            remainingSubstantiveGroundTruthFields: 6,
+          },
+          {
+            revision: 4,
+            authority: 'Lane 3 union-sample adjudication',
+            changedEntryIds: ['GD-S33-AU-007', 'GD-S33-NUR-003'],
+            changes: ['Corrected grounded truth'],
+            normalizedInputChanged: false,
+            remainingSubstantiveGroundTruthFields: { 'GD-S33-AU-007': 7, 'GD-S33-NUR-003': 11 },
+          },
+          {
+            revision: 5,
+            authority: 'Lane 3 full non-OOD review',
+            changedEntryIds: ['GD-S33-AU-008', 'GD-S33-NUR-004', 'GD-S33-NUR-005', 'GD-S33-PDH-007'],
+            changes: ['Corrected grounded truth and one source'],
+            normalizedInputChanged: true,
+            normalizedInputChangedEntryIds: ['GD-S33-PDH-007'],
+            remainingSubstantiveGroundTruthFields: {
+              'GD-S33-AU-008': 6, 'GD-S33-NUR-004': 7, 'GD-S33-NUR-005': 7, 'GD-S33-PDH-007': 11,
+            },
+          },
+          {
+            revision: 6,
+            authority: 'Lane 3 grounded-truth jurisdiction review',
+            changedEntryIds: ['GD-S33-PDH-007'],
+            change: 'Removed unsupported jurisdiction',
+            normalizedInputChanged: false,
+            recomputedNormalizedInputSha256: { 'GD-S33-PDH-007': entryHash('GD-S33-PDH-007') },
+            remainingSubstantiveGroundTruthFields: { 'GD-S33-PDH-007': 10 },
+          },
+          {
+            revision: 7,
+            authority: 'RTE clean producer resubmission',
+            changedEntryIds: [],
+            change: 'Transplanted revision 6 corpus bytes',
+            corpusDataChanged: false,
+            normalizedInputChanged: false,
+            producerRevisionPredecessorCommit: historicalCommit('7'),
+            directBaseCommit: bindings.supportCommit,
+            sourceBlobsUnchangedFromRevision6: true,
+          },
+          {
+            revision: 8,
+            authority: 'Team 4 same-lane review reject',
+            changedEntryIds: ['GD-S33-NUR-004', 'GD-S33-NUR-005'],
+            changes: ['Removed unsupported jurisdictions'],
+            normalizedInputChanged: true,
+            normalizedInputChangedEntryIds: ['GD-S33-NUR-005'],
+            recomputedNormalizedInputSha256: {
+              'GD-S33-NUR-004': entryHash('GD-S33-NUR-004'),
+              'GD-S33-NUR-005': entryHash('GD-S33-NUR-005'),
+            },
+            remainingSubstantiveGroundTruthFields: { 'GD-S33-NUR-004': 6, 'GD-S33-NUR-005': 6 },
+            producerRevisionPredecessorCommit: historicalCommit('8'),
+            lane3SupportBaseCommit: bindings.supportCommit,
+          },
+          {
+            revision: 9,
+            authority: 'RTE P1 truth correction',
+            changedEntryIds: ['GD-S33-AU-002', 'GD-S33-AU-011', ...oodEntryIds],
+            verifiedUnchangedEntryIds: ['GD-S33-NUR-004', 'GD-S33-NUR-005', 'GD-S33-AU-008'],
+            changes: ['Corrected OOD truth and issued dates'],
+            corpusSourceTextChanged: false,
+            normalizedInputChanged: false,
+            normalizedInputPinsPreservedFromRevision8: true,
+            remainingSubstantiveGroundTruthFields: {
+              'GD-S33-AU-002': 9, 'GD-S33-AU-011': 8, nonOodMinimum: 5, oodPureAbstention: 2,
+            },
+            producerRevisionPredecessorCommit: bindings.predecessorCommit,
+            lane3SupportBaseCommit: bindings.supportCommit,
+          },
+        ],
       },
       withinTypeTokenOverlap: {
         status: 'PASS',
         threshold: 0.8,
         metric: 'multiset overlap coefficient (shared token occurrences / shorter input token count)',
         violations: [],
-        remediatedPairScores: [],
+        remediatedPairScores: [
+          { leftId: 'GD-S33-NUR-001', rightId: 'GD-S33-NUR-011', credentialType: 'CERTIFICATE', overlap: 0.34 },
+          { leftId: 'GD-S33-CPA-001', rightId: 'GD-S33-CPA-011', credentialType: 'CPE', overlap: 0.37 },
+          { leftId: 'GD-S33-BAR-001', rightId: 'GD-S33-BAR-011', credentialType: 'CLE', overlap: 0.4 },
+          { leftId: 'GD-S33-PDH-001', rightId: 'GD-S33-PDH-010', credentialType: 'CERTIFICATE', overlap: 0.28 },
+        ],
       },
       oodFiveFieldSemantics: {
         status: 'BLOCKED_PROTOCOL_CONTRADICTION_CTO_L3',
@@ -193,17 +272,27 @@ function productionManifestFixture(entryCount: number): Record<string, unknown> 
         resolutionOwner: 'Lane 3 / CTO',
       },
       cpeSubtypeRatification: { status: 'BLOCKED_CTO_L3' },
-      taxonomyAdjudicationSet: { status: 'BLOCKED_CTO_L3', entryIds: kenyaEntryIds.slice(0, 1) },
+      taxonomyAdjudicationSet: {
+        status: 'BLOCKED_CTO_L3',
+        entryIds: ['GD-S33-KE-003', 'GD-S33-AU-003', 'GD-S33-KE-006', 'GD-S33-AU-010'],
+      },
       issuedDateAdjudicationSet: {
         status: 'BLOCKED_CTO_L3',
-        entryIds: [currentChangedId],
-        resolvedEntryIdsInRevision9: [verifiedUnchangedId],
+        entryIds: ['GD-S33-BAR-010', 'GD-S33-PDH-012'],
+        resolvedEntryIdsInRevision9: ['GD-S33-AU-002', 'GD-S33-AU-011'],
       },
       batchScopeOnly: {
         status: 'PASS',
-        excludedFromBatch: ['services/worker/src/ai/eval/golden-dataset-s33-types.ts'],
+        excludedFromBatch: [
+          '.sonarcloud.properties',
+          'docs/lane4/s33-lane4-plan.md',
+          'services/worker/src/ai/eval/golden-dataset-s33-heldout.test.ts',
+          WAVE1_TYPES_PATH,
+        ],
         protocolAllowedDiffPaths: [
-          'docs/lane4/s33-wave1-batch-manifest.json',
+          'docs/lane4/s33-corpus-datasheet.md',
+          WAVE1_MANIFEST_PATH,
+          'docs/lane4/s33-wave1-entry-datasheet.json',
           'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
           'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
           'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
@@ -211,9 +300,9 @@ function productionManifestFixture(entryCount: number): Record<string, unknown> 
         dependency: {
           owner: 'Lane 3',
           branch: 'codex/s33-l3-acceptance-tooling',
-          commit: supportCommit,
-          typesPath: 'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
-          typesBlob: 'c'.repeat(40),
+          commit: bindings.supportCommit,
+          typesPath: WAVE1_TYPES_PATH,
+          typesBlob: bindings.supportTypesBlob,
           presentIdenticallyInBase: true,
           includedInProducerDiff: false,
           reviewState: 'PENDING_LANE3_REVIEW_PR',
@@ -227,8 +316,8 @@ function productionManifestFixture(entryCount: number): Record<string, unknown> 
   };
 }
 
-function manifestContent(entryCount: number, overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({ ...productionManifestFixture(entryCount), ...overrides }, null, 2);
+function manifestContent(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({ ...productionManifestFixture(), ...overrides }, null, 2);
 }
 
 function testKey(): {
@@ -286,33 +375,69 @@ class TestConsumptionRegistry {
   }
 }
 
-function gitRepo(manifest: string): {
+type ManifestMutator = (manifest: Record<string, unknown>) => void;
+
+function gitRepo(mutateManifest?: ManifestMutator): {
   root: string;
+  manifest: string;
   manifestPath: string;
   freezeCommitSha: string;
   verificationCommitSha: string;
 } {
   const root = mkdtempSync(join(tmpdir(), 'arkova-s33-git-'));
   tempRoots.push(root);
-  const manifestPath = 'docs/lane4/s33-wave1-batch-manifest.json';
-  mkdirSync(join(root, 'docs/lane4'), { recursive: true });
-  writeFileSync(join(root, manifestPath), manifest, 'utf8');
+  const manifestPath = WAVE1_MANIFEST_PATH;
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 'lane3-test@arkova.invalid'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Lane3 Test'], { cwd: root });
-  execFileSync('git', ['add', manifestPath], { cwd: root });
+
+  mkdirSync(join(root, 'services/worker/src/ai/eval'), { recursive: true });
+  writeFileSync(join(root, WAVE1_TYPES_PATH), 'export type Wave1FixtureType = string;\n', 'utf8');
+  execFileSync('git', ['add', WAVE1_TYPES_PATH], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'lane 3 support base'], { cwd: root });
+  const supportCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  const supportTypesBlob = execFileSync('git', ['rev-parse', `${supportCommit}:${WAVE1_TYPES_PATH}`], {
+    cwd: root, encoding: 'utf8',
+  }).trim();
+
+  for (const [index, path] of WAVE1_SOURCE_PATHS.entries()) {
+    writeFileSync(join(root, path), `export const initialFixture${index} = ${index};\n`, 'utf8');
+  }
+  execFileSync('git', ['add', ...WAVE1_SOURCE_PATHS], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'producer revision predecessor'], { cwd: root });
+  const predecessorCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+
+  mkdirSync(join(root, 'docs/lane4'), { recursive: true });
+  writeFileSync(join(root, 'docs/lane4/s33-corpus-datasheet.md'), '# Corpus datasheet\n', 'utf8');
+  writeFileSync(join(root, 'docs/lane4/s33-wave1-entry-datasheet.json'), '{"entries":81}\n', 'utf8');
+  writeFileSync(join(root, WAVE1_SOURCE_PATHS[1]), 'export const revisedAuKeFixture = 9;\n', 'utf8');
+  writeFileSync(join(root, WAVE1_SOURCE_PATHS[2]), 'export const revisedOodFixture = 9;\n', 'utf8');
+  const sourceBlobs = Object.fromEntries(WAVE1_SOURCE_PATHS.map((path) => [
+    path,
+    execFileSync('git', ['hash-object', path], { cwd: root, encoding: 'utf8' }).trim(),
+  ])) as ManifestFixtureBindings['sourceBlobs'];
+  const manifestObject = productionManifestFixture({
+    supportCommit,
+    supportTypesBlob,
+    predecessorCommit,
+    sourceBlobs,
+  });
+  mutateManifest?.(manifestObject);
+  const manifest = JSON.stringify(manifestObject, null, 2);
+  writeFileSync(join(root, manifestPath), manifest, 'utf8');
+  execFileSync('git', ['add', ...WAVE1_SOURCE_PATHS, 'docs/lane4'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'freeze manifest'], { cwd: root });
   const freezeCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   writeFileSync(join(root, 'verification.txt'), 'verification descendant\n', 'utf8');
   execFileSync('git', ['add', 'verification.txt'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'verification descendant'], { cwd: root });
   const verificationCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-  return { root, manifestPath, freezeCommitSha, verificationCommitSha };
+  return { root, manifest, manifestPath, freezeCommitSha, verificationCommitSha };
 }
 
-function ceremony(entryCount = 81) {
-  const manifest = manifestContent(entryCount);
-  const repo = gitRepo(manifest);
+function ceremony(mutateManifest?: ManifestMutator) {
+  const repo = gitRepo(mutateManifest);
+  const manifest = repo.manifest;
   const { privateKey, trustRoot } = testKey();
   const evidenceRoot = mkdtempSync(join(tmpdir(), 'arkova-s33-ledger-'));
   tempRoots.push(evidenceRoot);
@@ -402,7 +527,7 @@ function recordThroughReveal(context: ReturnType<typeof ceremony>): void {
 
 describe('S3.3 authenticated, durable sampling ceremony', () => {
   it('does not expose a ledger or arbitrary event append capability', () => {
-    const context = ceremony(6);
+    const context = ceremony();
     expect(ledgerModule).not.toHaveProperty('DurableAcceptanceLedger');
     expect(context.orchestrator).not.toHaveProperty('append');
     expect(context.orchestrator).not.toHaveProperty('transcript');
@@ -410,7 +535,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('uses the injected monotonic registry as the one-time consumption authority', async () => {
-    const context = ceremony(6);
+    const context = ceremony();
     const createIfAbsent = vi.fn(async (record: Readonly<ConsumptionRegistryRecord>) => {
       expect(Object.isFrozen(record)).toBe(true);
       return true;
@@ -438,7 +563,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('keeps the external key consumed when transcript append fails before return', async () => {
-    const context = ceremony(6);
+    const context = ceremony();
     const transcriptPath = join(context.evidenceRoot, 'crash-ledger.jsonl');
     const keys = new Set<string>();
     let transcriptBeforeConsumption = '';
@@ -478,7 +603,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('fails closed when the external registry loses its acknowledgement after atomic create', async () => {
-    const context = ceremony(6);
+    const context = ceremony();
     const keys = new Set<string>();
     let loseAcknowledgement = true;
     const consumptionRegistry = {
@@ -517,7 +642,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('rejects live getter/proxy signed-artifact objects before reading them', () => {
-    const context = ceremony(6);
+    const context = ceremony();
     let reads = 0;
     const liveArtifact = new Proxy(context.commitment.object, {
       get(target, property, receiver) {
@@ -540,7 +665,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('never rereads mutable caller bytes after producing verified frozen snapshots', async () => {
-    const context = ceremony(6);
+    const context = ceremony();
     let releaseRegistry: ((created: boolean) => void) | undefined;
     const consumptionRegistry = {
       createIfAbsent(): Promise<boolean> {
@@ -573,11 +698,11 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
     expect(releaseRegistry).toBeTypeOf('function');
     releaseRegistry?.(true);
     const result = await pending;
-    expect(result.manifest).toEqual({ batchId: 'S33-W1', revision: 9, entryCount: 6 });
+    expect(result.manifest).toEqual({ batchId: 'S33-W1', revision: 9, entryCount: 81 });
   });
 
   it('deep-freezes the returned selection graph and keeps its registry evidence digest stable', async () => {
-    const context = ceremony(6);
+    const context = ceremony();
     let registryRecord: Readonly<ConsumptionRegistryRecord> | undefined;
     const orchestrator = createTestOnlyS33AcceptanceOrchestrator({
       trustRoot: context.trustRoot,
@@ -634,7 +759,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('strict-parses the complete Wave-1 production manifest contract and Kenya-first order', () => {
-    const parsed = parseBatchManifest(manifestContent(81));
+    const parsed = parseBatchManifest(manifestContent());
     const manifest = parsed.parsedJson;
     expect(Object.keys(manifest).sort()).toEqual([
       'acceptanceAuthority', 'acceptanceScope', 'batchId', 'corpusRevisionParentCommit',
@@ -658,19 +783,19 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('rejects missing or unknown nested production fields, count drift, and Kenya order drift', () => {
-    const withUnknown = productionManifestFixture(6);
+    const withUnknown = productionManifestFixture();
     (withUnknown.lane3SupportBase as Record<string, unknown>).reviewerOverride = true;
     expect(() => parseBatchManifest(JSON.stringify(withUnknown)))
       .toThrow(/lane3SupportBase.*unknown.*reviewerOverride/i);
 
-    const missingSource = productionManifestFixture(6);
+    const missingSource = productionManifestFixture();
     delete (missingSource.corpusSourceBlobs as Record<string, unknown>)[
       'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts'
     ];
     expect(() => parseBatchManifest(JSON.stringify(missingSource)))
       .toThrow(/corpusSourceBlobs.*missing.*ood-negatives/i);
 
-    const unknownSelfCheck = productionManifestFixture(6);
+    const unknownSelfCheck = productionManifestFixture();
     const unknownSelfChecks = unknownSelfCheck.selfChecks as {
       withinTypeTokenOverlap: Record<string, unknown>;
     };
@@ -678,7 +803,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
     expect(() => parseBatchManifest(JSON.stringify(unknownSelfCheck)))
       .toThrow(/withinTypeTokenOverlap.*unknown.*reviewerOverride/i);
 
-    const missingSelfCheck = productionManifestFixture(6);
+    const missingSelfCheck = productionManifestFixture();
     const missingSelfChecks = missingSelfCheck.selfChecks as {
       batchScopeOnly: Record<string, unknown>;
     };
@@ -686,22 +811,22 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
     expect(() => parseBatchManifest(JSON.stringify(missingSelfCheck)))
       .toThrow(/batchScopeOnly.*missing.*dependency/i);
 
-    const countDrift = productionManifestFixture(6);
+    const countDrift = productionManifestFixture();
     const countMap = (countDrift.counts as { byCorpusSlice: Record<string, number> }).byCorpusSlice;
     countMap['s33-au-ke-heldout'] += 1;
     expect(() => parseBatchManifest(JSON.stringify(countDrift)))
       .toThrow(/byCorpusSlice.*reconcile/i);
 
-    const kenyaOrderDrift = productionManifestFixture(81);
+    const kenyaOrderDrift = productionManifestFixture();
     (kenyaOrderDrift.kenyaEntryIds as string[]).reverse();
     expect(() => parseBatchManifest(JSON.stringify(kenyaOrderDrift)))
       .toThrow(/Kenya.*order/i);
   });
 
   it('rejects duplicate JSON keys and unknown nested manifest fields', () => {
-    const duplicate = manifestContent(6).replace('"revision": 9,', '"revision": 9,\n  "revision": 9,');
+    const duplicate = manifestContent().replace('"revision": 9,', '"revision": 9,\n  "revision": 9,');
     expect(() => parseBatchManifest(duplicate)).toThrow(/duplicate.*revision/i);
-    const withUnknown = manifestContent(6, {
+    const withUnknown = manifestContent({
       entries: Array.from({ length: 6 }, (_, index) => ({
         id: `GD-S33-${String(index + 1).padStart(3, '0')}`,
         domain: 'professional-licensing',
@@ -713,8 +838,54 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
     expect(() => parseBatchManifest(withUnknown)).toThrow(/unknown.*reviewerOverride/i);
   });
 
+  it('rejects incomplete revision history and false or incomplete declared Wave-1 sets', () => {
+    const incompleteHistory = productionManifestFixture();
+    const history = ((incompleteHistory.selfChecks as Record<string, unknown>)
+      .authorizedDocumentRevisions as { revisions: unknown[] }).revisions;
+    history.splice(3, 1);
+    expect(() => parseBatchManifest(JSON.stringify(incompleteHistory)))
+      .toThrow(/revision history.*contiguous|revisions.*2.*9/i);
+
+    const fabricatedScope = productionManifestFixture();
+    const scope = ((fabricatedScope.selfChecks as Record<string, unknown>)
+      .batchScopeOnly as { protocolAllowedDiffPaths: string[] });
+    scope.protocolAllowedDiffPaths[0] = 'docs/lane4/fabricated-datasheet.md';
+    expect(() => parseBatchManifest(JSON.stringify(fabricatedScope)))
+      .toThrow(/protocolAllowedDiffPaths.*complete.*scope|six-path/i);
+
+    const falseTaxonomy = productionManifestFixture();
+    const taxonomy = ((falseTaxonomy.selfChecks as Record<string, unknown>)
+      .taxonomyAdjudicationSet as { entryIds: string[] });
+    taxonomy.entryIds[0] = 'GD-S33-KE-004';
+    expect(() => parseBatchManifest(JSON.stringify(falseTaxonomy)))
+      .toThrow(/taxonomy.*complete.*set/i);
+
+    const missingIssuedDate = productionManifestFixture();
+    const issuedDate = ((missingIssuedDate.selfChecks as Record<string, unknown>)
+      .issuedDateAdjudicationSet as { entryIds: string[] });
+    issuedDate.entryIds.pop();
+    expect(() => parseBatchManifest(JSON.stringify(missingIssuedDate)))
+      .toThrow(/issuedDate.*complete.*set/i);
+
+    const extraOverlapPair = productionManifestFixture();
+    const pairScores = ((extraOverlapPair.selfChecks as Record<string, unknown>)
+      .withinTypeTokenOverlap as { remediatedPairScores: unknown[] }).remediatedPairScores;
+    pairScores.push({
+      leftId: 'GD-S33-KE-001', rightId: 'GD-S33-KE-002', credentialType: 'LICENSE', overlap: 0.1,
+    });
+    expect(() => parseBatchManifest(JSON.stringify(extraOverlapPair)))
+      .toThrow(/remediated.*pair.*complete.*set/i);
+  });
+
+  it('rejects truncated Git declarations before any ceremony record is written', () => {
+    const truncated = productionManifestFixture();
+    (truncated.corpusSourceBlobs as Record<string, string>)[WAVE1_SOURCE_PATHS[0]] = 'a'.repeat(39);
+    expect(() => parseBatchManifest(JSON.stringify(truncated)))
+      .toThrow(/corpusSourceBlobs.*exact hexadecimal Git object/i);
+  });
+
   it('durably records commitment < freeze < policy < reveal < verification and selects the fixed floor', async () => {
-    const context = ceremony(81);
+    const context = ceremony();
     recordThroughReveal(context);
     const result = await context.orchestrator.selectAndConsumeSample({
       manifestContent: context.manifest,
@@ -739,7 +910,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('keeps the signed salt commitment strictly manifest-free', () => {
-    const context = ceremony(6);
+    const context = ceremony();
     const poisonedPayload = {
       ...context.commitment.object.payload,
       manifestSha256: rawManifestHash(context.manifest),
@@ -750,7 +921,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('strict-parses signed artifacts and rejects duplicate or unknown nested fields', () => {
-    const context = ceremony(6);
+    const context = ceremony();
     const duplicate = context.commitment.content.replace(
       '"commitmentId": "S33-W1-commitment-1",',
       '"commitmentId": "S33-W1-commitment-1",\n    "commitmentId": "S33-W1-commitment-1",',
@@ -768,7 +939,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('rejects freeze or reveal when durable predecessor records do not exist', () => {
-    const context = ceremony(6);
+    const context = ceremony();
     expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.manifest))
       .toThrow(/commitment.*durably recorded/i);
     context.orchestrator.recordSaltCommitment(context.commitment.content);
@@ -777,7 +948,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('rejects a reveal that does not open the durably recorded signed commitment', () => {
-    const context = ceremony(6);
+    const context = ceremony();
     context.orchestrator.recordSaltCommitment(context.commitment.content);
     context.orchestrator.recordManifestFreeze(context.freeze.content, context.manifest);
     context.orchestrator.recordSelectionPolicy(context.policy.content);
@@ -788,7 +959,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('verifies the frozen Git blob and ancestor relation, not asserted timestamps alone', () => {
-    const context = ceremony(6);
+    const context = ceremony();
     context.orchestrator.recordSaltCommitment(context.commitment.content);
     const wrongCommit = signedArtifact<ManifestFreezePayload>({
       ...context.freeze.object.payload,
@@ -801,8 +972,46 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
       .toThrow(/git|commit|ancestor/i);
   });
 
+  it('binds the freeze parent, support ancestry, and every declared source blob to Git truth', () => {
+    const zeroParent = ceremony((manifest) => {
+      const zero = '0'.repeat(40);
+      manifest.corpusRevisionParentCommit = zero;
+      manifest.producerRevisionPredecessorCommit = zero;
+      const revisions = (((manifest.selfChecks as Record<string, unknown>)
+        .authorizedDocumentRevisions as { revisions: Array<Record<string, unknown>> }).revisions);
+      revisions.at(-1)!.producerRevisionPredecessorCommit = zero;
+    });
+    zeroParent.orchestrator.recordSaltCommitment(zeroParent.commitment.content);
+    expect(() => zeroParent.orchestrator.recordManifestFreeze(zeroParent.freeze.content, zeroParent.manifest))
+      .toThrow(/predecessor|parent.*Git|missing.*commit/i);
+
+    const foreignSupport = ceremony((manifest) => {
+      const foreign = 'f'.repeat(40);
+      const support = manifest.lane3SupportBase as Record<string, unknown>;
+      support.commit = foreign;
+      const selfChecks = manifest.selfChecks as Record<string, unknown>;
+      const dependency = (selfChecks.batchScopeOnly as { dependency: Record<string, unknown> }).dependency;
+      dependency.commit = foreign;
+      const revisions = (selfChecks.authorizedDocumentRevisions as {
+        revisions: Array<Record<string, unknown>>;
+      }).revisions;
+      revisions.at(-1)!.lane3SupportBaseCommit = foreign;
+    });
+    foreignSupport.orchestrator.recordSaltCommitment(foreignSupport.commitment.content);
+    expect(() => foreignSupport.orchestrator.recordManifestFreeze(foreignSupport.freeze.content, foreignSupport.manifest))
+      .toThrow(/support.*commit|support.*ancestor|missing.*Git/i);
+
+    const foreignBlob = ceremony((manifest) => {
+      const support = manifest.lane3SupportBase as { typesBlob: string };
+      (manifest.corpusSourceBlobs as Record<string, string>)[WAVE1_SOURCE_PATHS[0]] = support.typesBlob;
+    });
+    foreignBlob.orchestrator.recordSaltCommitment(foreignBlob.commitment.content);
+    expect(() => foreignBlob.orchestrator.recordManifestFreeze(foreignBlob.freeze.content, foreignBlob.manifest))
+      .toThrow(/source blob.*does not match|blob.*path/i);
+  });
+
   it('atomically consumes each policy/batch/revision once across contenders', async () => {
-    const context = ceremony(6);
+    const context = ceremony();
     recordThroughReveal(context);
     const input = {
       manifestContent: context.manifest,
@@ -826,12 +1035,12 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
     expect(attempts.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
     expect(attempts.filter(({ status }) => status === 'rejected')).toHaveLength(1);
     const winner = attempts.find((attempt) => attempt.status === 'fulfilled');
-    expect(winner?.status === 'fulfilled' ? winner.value.sampleEntryIds : []).toHaveLength(5);
+    expect(winner?.status === 'fulfilled' ? winner.value.sampleEntryIds : []).toHaveLength(9);
     expect(context.consumptionRegistry.keys.size).toBe(1);
   });
 
   it('binds raw bytes separately from canonical content before consuming a registry key', async () => {
-    const context = ceremony(6);
+    const context = ceremony();
     recordThroughReveal(context);
     const rawVariant = `${context.commitment.content}\n`;
     expect(canonicalManifestHash(rawVariant)).toBe(canonicalManifestHash(context.commitment.content));
@@ -847,7 +1056,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('fails closed when the append-only ledger hash chain is modified', () => {
-    const context = ceremony(6);
+    const context = ceremony();
     context.orchestrator.recordSaltCommitment(context.commitment.content);
     const ledgerPath = join(context.evidenceRoot, 'acceptance-ledger.jsonl');
     const tampered = readFileSync(ledgerPath, 'utf8').replace('commitment-1', 'commitment-X');
@@ -857,7 +1066,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
   });
 
   it('rejects an adversarial transcript symlink swap and permissive file mode', () => {
-    const swapped = ceremony(6);
+    const swapped = ceremony();
     swapped.orchestrator.recordSaltCommitment(swapped.commitment.content);
     const swappedPath = join(swapped.evidenceRoot, 'acceptance-ledger.jsonl');
     const originalPath = join(swapped.evidenceRoot, 'acceptance-ledger-original.jsonl');
@@ -866,7 +1075,7 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
     expect(() => swapped.orchestrator.recordManifestFreeze(swapped.freeze.content, swapped.manifest))
       .toThrow(/symbolic|regular file|nofollow/i);
 
-    const parentSwapped = ceremony(6);
+    const parentSwapped = ceremony();
     parentSwapped.orchestrator.recordSaltCommitment(parentSwapped.commitment.content);
     const originalDirectory = `${parentSwapped.evidenceRoot}-original`;
     const attackerDirectory = `${parentSwapped.evidenceRoot}-attacker`;
@@ -884,11 +1093,33 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
       parentSwapped.manifest,
     )).toThrow(/containment|directory/i);
 
-    const permissive = ceremony(6);
+    const permissive = ceremony();
     permissive.orchestrator.recordSaltCommitment(permissive.commitment.content);
     chmodSync(join(permissive.evidenceRoot, 'acceptance-ledger.jsonl'), 0o644);
     expect(() => permissive.orchestrator.recordManifestFreeze(permissive.freeze.content, permissive.manifest))
       .toThrow(/permissions|mode|0600/i);
+  });
+
+  it('rejects transcript hard links and non-regular replacements', () => {
+    const hardLinked = ceremony();
+    hardLinked.orchestrator.recordSaltCommitment(hardLinked.commitment.content);
+    const hardLinkedPath = join(hardLinked.evidenceRoot, 'acceptance-ledger.jsonl');
+    linkSync(hardLinkedPath, join(hardLinked.evidenceRoot, 'acceptance-ledger-alias.jsonl'));
+    expect(() => hardLinked.orchestrator.recordManifestFreeze(hardLinked.freeze.content, hardLinked.manifest))
+      .toThrow(/exactly one filesystem link|hard.?link/i);
+
+    const nonRegular = ceremony();
+    nonRegular.orchestrator.recordSaltCommitment(nonRegular.commitment.content);
+    const nonRegularPath = join(nonRegular.evidenceRoot, 'acceptance-ledger.jsonl');
+    renameSync(nonRegularPath, `${nonRegularPath}.original`);
+    mkdirSync(nonRegularPath, { mode: 0o600 });
+    expect(() => nonRegular.orchestrator.recordManifestFreeze(nonRegular.freeze.content, nonRegular.manifest))
+      .toThrow(/regular file/i);
+  });
+
+  it('uses one validated transcript descriptor for read and append under the lock', () => {
+    const source = readFileSync(new URL('./s33-batch-acceptance.ts', import.meta.url), 'utf8');
+    expect(source.match(/openSync\(\s*this\.transcriptPath/g) ?? []).toHaveLength(1);
   });
 
   it('production loader fails closed because no CTO root or monotonic registry is configured', () => {
@@ -901,8 +1132,8 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
     })).toThrow(/CTO trust root.*monotonic consumption registry.*not configured|fail closed/i);
   });
 
-  it('parses the complete manifest universe and cannot lower the fixed 1/100 floor', async () => {
-    const context = ceremony(100);
+  it('parses the complete 81-entry Wave-1 universe and cannot lower its fixed sample floor', async () => {
+    const context = ceremony();
     recordThroughReveal(context);
     await expect(context.orchestrator.selectAndConsumeSample({
       manifestContent: context.manifest,
@@ -920,8 +1151,8 @@ describe('S3.3 authenticated, durable sampling ceremony', () => {
       policyArtifactContent: context.policy.content,
       revealContent: context.revealContent,
     });
-    expect(result.sampleEntryIds).toHaveLength(10);
-    expect(parseBatchManifest(context.manifest).entries).toHaveLength(100);
+    expect(result.sampleEntryIds).toHaveLength(9);
+    expect(parseBatchManifest(context.manifest).entries).toHaveLength(81);
   });
 });
 
@@ -940,7 +1171,7 @@ function lexicalTextArtifact(
 
 describe('S3.3 authenticated lexical scan boundary', () => {
   it('loads authenticated text artifacts and recomputes n=6..13 before verdict', () => {
-    const context = ceremony(6);
+    const context = ceremony();
     const heldout = lexicalTextArtifact('heldout', [{
       id: 'KE-001',
       text: 'Nursing Council registration certificate for a licensed practitioner in Nairobi County',
@@ -1003,7 +1234,7 @@ describe('S3.3 authenticated lexical scan boundary', () => {
   it('has no public policy-only API and rejects a complete fabricated all-zero matrix', () => {
     expect(acceptanceModule).not.toHaveProperty('applyLexicalLeakagePolicy');
     expect(acceptanceModule).not.toHaveProperty('computeLexicalLeakageMetrics');
-    const context = ceremony(6);
+    const context = ceremony();
     const heldout = lexicalTextArtifact('heldout', [{ id: 'H', text: 'one two three four five six seven eight' }]);
     const corpus = lexicalTextArtifact('corpus', [{ id: 'C', text: 'one two three four five six seven eight' }]);
     const policy = signedArtifact<LexicalLeakagePolicyPayload>({
@@ -1040,7 +1271,7 @@ describe('S3.3 authenticated lexical scan boundary', () => {
   });
 
   it('rejects text-content hash or signed artifact binding mismatches', () => {
-    const context = ceremony(6);
+    const context = ceremony();
     const heldout = lexicalTextArtifact('heldout', [{ id: 'H', text: 'one two three four five six' }]);
     const corpusObject = JSON.parse(lexicalTextArtifact('corpus', [{ id: 'C', text: 'one two three four five six' }])) as {
       records: Array<{ text: string }>;
