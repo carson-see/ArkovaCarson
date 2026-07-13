@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -143,7 +145,11 @@ describe('provision-isolated-rig.sh — Cloud Scheduler wiring (node-cron does n
     const { out } = dryRun(['--name', 's0-s2a-chain', '--profile', 'chain']);
     // The worker's /jobs/* routes require cron auth; the Scheduler job must attach it.
     expect(out).toMatch(/X-Cron-Secret|--oidc-service-account-email|--oidc-token-audience/);
-    expect(out).toMatch(/X-Cron-Secret=\\?<redacted\\?>/);
+    // Dry-run must show a LABELED redaction placeholder (never a real secret).
+    // L2-S2a-FIX changed the format from the old bare <redacted> to the
+    // self-documenting <redacted:${CRON_SECRET_SECRET}> emitted by
+    // run_cmd_cron_redacted (%q may prefix "<" with a backslash).
+    expect(out).toMatch(/X-Cron-Secret=\\?<redacted:/);
   });
 
   it('does NOT create Scheduler jobs for the pure-mock profile (no behavioral cron to drive)', () => {
@@ -231,5 +237,196 @@ describe('provision-isolated-rig.sh — safety model preserved under the new ove
     );
     expect(code).not.toBe(0);
     expect(out).toMatch(/CONFIRM_REAL_CONFIG|real-config|non-mock/i);
+  });
+});
+
+/**
+ * L2-S2a-FIX (Sprint 3.3) — Step-4 Scheduler COMMAND VALIDITY.
+ *
+ * The merged SCRUM-2673 tests above regex-match the dry-run TEXT, which let
+ * three stacked apply-mode defects through:
+ *   1. `gcloud scheduler jobs create http` was invoked with --update-headers —
+ *      an update-verb flag the create verb does not support → the command
+ *      errors under --apply and NO Scheduler job is ever created.
+ *   2. WORKER_URL carried a literal "<hash>" placeholder instead of the URL
+ *      resolved from the deployed service (resolve_cloud_run_url()).
+ *   3. The X-Cron-Secret header carried the literal "<from-…>" placeholder —
+ *      never fetched from Secret Manager → cronAuth 401s every POST.
+ *
+ * These tests run the script in --apply mode against a FULLY STUBBED PATH
+ * (gcloud + npx are shell stubs that log their argv and answer canned JSON),
+ * so the assertions are on the EXACT argv the script executes — command
+ * validity, not echo text. No real infra is touched: every binary with a
+ * side effect is a stub.
+ */
+
+const STUB_CRON_SECRET = 'stub-cron-secret-value-8f3a17';
+const STUB_SERVICE_URL = 'https://arkova-worker-stub.example.run.app';
+
+interface ApplyRunResult {
+  out: string;
+  code: number;
+  gcloudCalls: string[];
+}
+
+const stubDirs: string[] = [];
+
+/** Run the provisioner with --apply against a stubbed gcloud/npx PATH. */
+function applyRunStubbed(name: string, profile: string): ApplyRunResult {
+  const stubDir = mkdtempSync(join(tmpdir(), 'provision-step4-stub-'));
+  stubDirs.push(stubDir);
+  const logFile = join(stubDir, 'gcloud-calls.log');
+  writeFileSync(logFile, '');
+
+  writeFileSync(
+    join(stubDir, 'gcloud'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "${logFile}"
+if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
+  echo '${STUB_SERVICE_URL}'
+  exit 0
+fi
+if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
+  echo '${STUB_CRON_SECRET}'
+  exit 0
+fi
+exit 0
+`,
+  );
+  chmodSync(join(stubDir, 'gcloud'), 0o755);
+
+  writeFileSync(
+    join(stubDir, 'npx'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
+  echo '{"id":"abcdefghijklmnopqrst"}'
+  exit 0
+fi
+if [[ "$1" == "supabase" ]]; then
+  exit 0
+fi
+if [[ "$1" == "tsx" && "$2" == "scripts/ci/staging-honesty-preflight.ts" ]]; then
+  echo '{"environment_type":"clean_mirror"}'
+  exit 0
+fi
+echo "unexpected npx call: $*" >&2
+exit 64
+`,
+  );
+  chmodSync(join(stubDir, 'npx'), 0o755);
+
+  const env: Record<string, string> = {
+    PATH: `${stubDir}:${process.env.PATH ?? ''}`,
+    CONFIRM_PROVISION: name,
+    CONFIRM_REAL_CONFIG: profile,
+    GITHUB_SHA: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    BASE_SHA: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    STAGING_IMAGE_DIGEST:
+      'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+    USER: 'rig-owner',
+    // Apply-mode preconditions carried in by the concurrent main pipeline
+    // (Supabase project create + per-rig runtime secrets + changed-behavior
+    // admission). The Step-4 stub run must satisfy them to reach Step 4 and
+    // run to completion; none of these touch real infra (project create / link /
+    // push / api-keys all resolve through the npx stub above).
+    STAGING_NEW_SUPABASE_DB_PASSWORD: 'stub-db-password-not-real',
+    STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY: 'stub-service-role-key-not-real',
+    STAGING_CHANGED_BEHAVIOR:
+      'L2-S2a-FIX Step-4 Scheduler command validity under --apply (stubbed)',
+  };
+
+  let out = '';
+  let code = 0;
+  try {
+    out = execFileSync('bash', [SCRIPT, '--name', name, '--profile', profile, '--apply'], {
+      env: { ...process.env, ...env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (e) {
+    const err = e as { status?: number; stdout?: string; stderr?: string };
+    out = `${err.stdout ?? ''}${err.stderr ?? ''}`;
+    code = err.status ?? 1;
+  }
+
+  const gcloudCalls = readFileSync(logFile, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0);
+  return { out, code, gcloudCalls };
+}
+
+afterAll(() => {
+  for (const dir of stubDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under --apply (L2-S2a-FIX)', () => {
+  const result = applyRunStubbed('s2afix-chain', 'chain');
+  const schedulerCreates = result.gcloudCalls.filter((c) =>
+    c.startsWith('scheduler jobs create http'),
+  );
+
+  it('apply run completes cleanly against the stubbed infra', () => {
+    expect(result.code, result.out).toBe(0);
+  });
+
+  it('creates Scheduler jobs with the create-verb --headers flag, never --update-headers', () => {
+    expect(schedulerCreates.length).toBeGreaterThan(0);
+    for (const call of schedulerCreates) {
+      expect(call, 'create verb must use --headers').toContain('--headers=');
+      expect(call, '--update-headers is an update-verb flag; create rejects it').not.toContain(
+        '--update-headers',
+      );
+    }
+  });
+
+  it('resolves WORKER_URL from the deployed service — no literal <hash> placeholder in any executed --uri', () => {
+    for (const call of schedulerCreates) {
+      expect(call).not.toContain('<hash>');
+      expect(call).toContain(`--uri=${STUB_SERVICE_URL}/jobs/`);
+      expect(call).toContain(`--oidc-token-audience=${STUB_SERVICE_URL}`);
+    }
+  });
+
+  it('fetches the cron secret from Secret Manager at apply time and passes the REAL value to cronAuth', () => {
+    expect(
+      result.gcloudCalls.some(
+        (c) => c.startsWith('secrets versions access latest') && c.includes('--secret=cron-secret'),
+      ),
+      'must fetch the cron secret value via gcloud secrets versions access',
+    ).toBe(true);
+    for (const call of schedulerCreates) {
+      expect(call, 'the executed header must carry the fetched secret value').toContain(
+        `X-Cron-Secret=${STUB_CRON_SECRET}`,
+      );
+      expect(call, 'the <from-…> placeholder must never reach an executed command').not.toContain(
+        '<from-',
+      );
+    }
+  });
+
+  it('never prints the cron secret value to stdout/stderr (redacted in the emitted plan)', () => {
+    expect(result.out).not.toContain(STUB_CRON_SECRET);
+  });
+
+  it('chain profile arms the org-scoped drain: org-queue-scheduler Scheduler job is created (CTO R3)', () => {
+    const orgQueue = schedulerCreates.find((c) =>
+      c.includes('arkova-worker-s2afix-chain-staging-org-queue-scheduler'),
+    );
+    expect(orgQueue, 'chain SCHEDULER_JOBS must include org-queue-scheduler').toBeDefined();
+    expect(orgQueue).toContain(`--uri=${STUB_SERVICE_URL}/jobs/org-queue-scheduler`);
+  });
+});
+
+describe('provision-isolated-rig.sh — Step-4 dry-run placeholders are labeled, not defect literals', () => {
+  it('the chain-profile dry-run plan carries no literal <hash> URL and no <from-…> cron header', () => {
+    const { out, code } = dryRun(['--name', 's2afix-dry', '--profile', 'chain']);
+    expect(code).toBe(0);
+    expect(out).not.toContain('<hash>');
+    // Dry-run shows a clearly-labeled <redacted:…> placeholder for the secret,
+    // but never the old defect literal that leaked into executed commands.
+    // (%q escaping may prefix "<" with a backslash in the emitted plan.)
+    expect(out).not.toMatch(/X-Cron-Secret=\\?<from-/);
   });
 });
