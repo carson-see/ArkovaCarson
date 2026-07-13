@@ -556,6 +556,18 @@ function recordThroughReveal(context: ReturnType<typeof ceremony>): void {
 }
 
 describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, () => {
+  it('requires an atomic registry with a callable create-if-absent operation', () => {
+    const context = ceremony();
+    expect(() => createTestOnlyS33AcceptanceOrchestrator({
+      trustRoot: context.trustRoot,
+      consumptionRegistry: {},
+      ledgerPath: join(context.evidenceRoot, 'invalid-registry-ledger.jsonl'),
+      repositoryRoot: context.repo.root,
+      repositoryIdentity: 'test/ArkovaCarson',
+      verificationCommitSha: context.repo.verificationCommitSha,
+    } as never)).toThrow(TypeError);
+  });
+
   it('does not expose a ledger or arbitrary event append capability', () => {
     const context = ceremony();
     expect(ledgerModule).not.toHaveProperty('DurableAcceptanceLedger');
@@ -905,6 +917,12 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
     });
     expect(() => parseBatchManifest(JSON.stringify(extraOverlapPair)))
       .toThrow(/remediated.*pair.*complete.*set/i);
+
+    const nearThreshold = productionManifestFixture();
+    ((nearThreshold.selfChecks as Record<string, unknown>)
+      .withinTypeTokenOverlap as { threshold: number }).threshold = 0.8000000000000002;
+    expect(() => parseBatchManifest(JSON.stringify(nearThreshold)))
+      .toThrow(/overlap threshold must be 0\.8/i);
   });
 
   it('rejects every one-field mutation of the exact r2-r9 revision-history contract', () => {
@@ -1049,6 +1067,24 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
       .toThrow(/git|commit|ancestor/i);
   });
 
+  it('ignores PATH-shadowed Git executables at the freeze trust boundary', () => {
+    const context = ceremony();
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    const hostileBin = mkdtempSync(join(tmpdir(), 'arkova-s33-hostile-path-'));
+    tempRoots.push(hostileBin);
+    const hostileGit = join(hostileBin, 'git');
+    writeFileSync(hostileGit, '#!/bin/sh\nexit 97\n', 'utf8');
+    chmodSync(hostileGit, 0o755);
+    const originalPath = process.env.PATH;
+    try {
+      process.env.PATH = hostileBin;
+      expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.manifest))
+        .not.toThrow();
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
   it('binds the freeze parent, support ancestry, and every declared source blob to Git truth', () => {
     const zeroParent = ceremony((manifest) => {
       const zero = '0'.repeat(40);
@@ -1093,6 +1129,12 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
     ['a seventh path', {
       mutateFreezeTree(root: string): void {
         writeFileSync(join(root, 'docs/lane4/seventh-path.txt'), 'not authorized\n', 'utf8');
+      },
+    }],
+    ['a copy from an unchanged support-tree source', {
+      setupSupport(root: string): void {
+        mkdirSync(join(root, 'docs/lane4'), { recursive: true });
+        writeFileSync(join(root, 'docs/lane4/unchanged-copy-source.md'), '# Corpus datasheet\n', 'utf8');
       },
     }],
     ['a deletion', {

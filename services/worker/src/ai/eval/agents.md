@@ -31,7 +31,8 @@ _Last updated: 2026-07-13_
   freeze verification computes the raw diff from the declared Lane-3 support
   commit and requires exactly the six manifest-authorized additions, each a
   regular non-executable `100644` blob. Extra paths, deletions, renames,
-  copies, executable bits, symlinks, and gitlinks are rejected.
+  copies (including copies from unchanged support-tree sources, detected with
+  `--find-copies-harder`), executable bits, symlinks, and gitlinks are rejected.
 - Every selection and lexical result is recursively frozen before it crosses
   the orchestration boundary, including sample ids, metrics/hits, and evidence.
   Audit-transcript reads open the final path with `O_NOFOLLOW`, verify the same

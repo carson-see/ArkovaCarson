@@ -274,6 +274,7 @@ interface ParsedLexicalTextArtifact {
 }
 
 const REQUIRED_LEXICAL_N = [6, 7, 8, 9, 10, 11, 12, 13] as const;
+const GIT_EXECUTABLE = '/usr/bin/git';
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const GIT_COMMIT_PATTERN = /^[0-9a-f]{40,64}$/;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
@@ -1956,7 +1957,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
   constructor(config: OrchestratorConfiguration) {
     const createIfAbsent = config.consumptionRegistry?.createIfAbsent;
     if (typeof createIfAbsent !== 'function') {
-      throw new Error('Atomic monotonic consumption registry is required');
+      throw new TypeError('Atomic monotonic consumption registry is required');
     }
     const trustRoot = deepFreeze({
       signerIdentity: config.trustRoot.signerIdentity,
@@ -2236,8 +2237,8 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     }
     const commit = payload.gitEvidence.freezeCommitSha;
     try {
-      execFileSync('git', ['-C', this.#config.repositoryRoot, 'cat-file', '-e', `${commit}^{commit}`], { stdio: 'ignore' });
-      execFileSync('git', [
+      execFileSync(GIT_EXECUTABLE, ['-C', this.#config.repositoryRoot, 'cat-file', '-e', `${commit}^{commit}`], { stdio: 'ignore' });
+      execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor', commit, this.#config.verificationCommitSha,
       ], { stdio: 'ignore' });
     } catch (error) {
@@ -2245,7 +2246,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     }
     let committedManifest: Buffer;
     try {
-      committedManifest = execFileSync('git', [
+      committedManifest = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'show', `${commit}:${payload.gitEvidence.manifestPath}`,
       ]);
     } catch (error) {
@@ -2268,12 +2269,12 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     );
     let actualParent: string;
     try {
-      const lineage = execFileSync('git', [
+      const lineage = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'rev-list', '--parents', '-n', '1', commit,
       ], { encoding: 'utf8' }).trim().split(/\s+/);
       if (lineage.length !== 2) throw new Error('Freeze commit must have exactly one parent');
       [, actualParent] = lineage;
-      execFileSync('git', [
+      execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${predecessorCommit}^{commit}`,
       ], { stdio: 'ignore' });
     } catch (error) {
@@ -2287,10 +2288,10 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     const supportCommit = nonEmptyString(support.commit, 'Manifest lane3SupportBase.commit');
     const supportTypesBlob = nonEmptyString(support.typesBlob, 'Manifest lane3SupportBase.typesBlob');
     try {
-      execFileSync('git', [
+      execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${supportCommit}^{commit}`,
       ], { stdio: 'ignore' });
-      execFileSync('git', [
+      execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor', supportCommit, predecessorCommit,
       ], { stdio: 'ignore' });
     } catch (error) {
@@ -2326,9 +2327,9 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
   ): void {
     let fields: string[];
     try {
-      const output = execFileSync('git', [
+      const output = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot,
-        'diff', '--raw', '-z', '--no-abbrev', '--find-renames', '--find-copies',
+        'diff', '--raw', '-z', '--no-abbrev', '--find-renames', '--find-copies', '--find-copies-harder',
         supportCommit, freezeCommit, '--',
       ]);
       fields = output.toString('utf8').split('\0');
@@ -2386,10 +2387,10 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
   ): void {
     let actualBlob: string;
     try {
-      execFileSync('git', [
+      execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${declaredBlob}^{blob}`,
       ], { stdio: 'ignore' });
-      actualBlob = execFileSync('git', [
+      actualBlob = execFileSync(GIT_EXECUTABLE, [
         '-C', this.#config.repositoryRoot, 'rev-parse', `${commit}:${path}`,
       ], { encoding: 'utf8' }).trim();
     } catch (error) {
