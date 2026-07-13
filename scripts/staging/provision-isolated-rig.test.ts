@@ -721,8 +721,9 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
       tunedModel: 'nessie-golden-v6',
     });
     expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/projects\/.+\/locations\/.+\/(?:endpoints|models)\//i);
-    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    expect(result.out).toMatch(/approved GCP project|canonical resource/i);
+    expect(result.gcloudCalls).toEqual([]);
+    expect(result.npxCalls).toEqual([]);
   });
 
   it('rejects a malformed full Gemini resource before project creation', () => {
@@ -730,8 +731,82 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
       tunedModel: 'projects/arkova 1/locations/us-central1/endpoints/6611494259700793344',
     });
     expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/projects\/.+\/locations\/.+\/(?:endpoints|models)\//i);
-    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    expect(result.out).toMatch(/approved GCP project|canonical resource/i);
+    expect(result.gcloudCalls).toEqual([]);
+    expect(result.npxCalls).toEqual([]);
+  });
+
+  it.each([
+    [
+      'foreign project',
+      'projects/foreign-project/locations/us-central1/endpoints/6611494259700793344',
+      {},
+    ],
+    [
+      'foreign project even when the requested deployment project follows it',
+      'projects/foreign-project/locations/us-central1/endpoints/6611494259700793344',
+      { STAGING_GCP_PROJECT: 'foreign-project' },
+    ],
+    [
+      'unapproved requested deployment project',
+      'projects/arkova1/locations/us-central1/endpoints/6611494259700793344',
+      { STAGING_GCP_PROJECT: 'foreign-project' },
+    ],
+    [
+      'wrong region',
+      'projects/arkova1/locations/europe-west1/endpoints/6611494259700793344',
+      {},
+    ],
+    [
+      'model resource',
+      'projects/arkova1/locations/us-central1/models/6611494259700793344',
+      {},
+    ],
+    [
+      'publisher model resource',
+      'projects/arkova1/locations/us-central1/publishers/google/models/gemini-2.5-pro',
+      {},
+    ],
+    [
+      'alphabetic endpoint id',
+      'projects/arkova1/locations/us-central1/endpoints/endpoint-alpha',
+      {},
+    ],
+    ['empty endpoint id', 'projects/arkova1/locations/us-central1/endpoints/', {}],
+    [
+      'trailing slash',
+      'projects/arkova1/locations/us-central1/endpoints/6611494259700793344/',
+      {},
+    ],
+    [
+      'query suffix',
+      'projects/arkova1/locations/us-central1/endpoints/6611494259700793344?alt=json',
+      {},
+    ],
+  ])('rejects a non-canonical Gemini endpoint (%s) before any mutation', (_label, tunedModel, env) => {
+    const result = applyRunStubbed(
+      `gcanon-${String(_label).replace(/\s+/g, '-').slice(0, 12)}`,
+      'gemini',
+      { tunedModel, env },
+    );
+
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/live gemini provision/i);
+    expect(result.gcloudCalls).toEqual([]);
+    expect(result.npxCalls).toEqual([]);
+  });
+
+  it('binds a canonical Gemini endpoint to the configured approved project identity', () => {
+    const result = applyRunStubbed('guard-gemini-approved-project', 'gemini', {
+      tunedModel: 'projects/approved-s33/locations/us-central1/endpoints/1234567890',
+      env: {
+        STAGING_APPROVED_GCP_PROJECT: 'approved-s33',
+        STAGING_GCP_PROJECT: 'approved-s33',
+      },
+    });
+
+    expect(result.code, result.out).toBe(0);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(true);
   });
 
   it('rejects GEMINI_V6_PROMPT values other than exact true before project creation', () => {

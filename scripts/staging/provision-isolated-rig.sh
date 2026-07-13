@@ -64,6 +64,7 @@ DENIED_CLOUD_RUN_SERVICES=("arkova-worker" "arkova-worker-staging")
 # Defaults (overridable via flags / env).
 # ---------------------------------------------------------------------------
 GCP_PROJECT="${STAGING_GCP_PROJECT:-arkova1}"
+APPROVED_GCP_PROJECT="${STAGING_APPROVED_GCP_PROJECT:-arkova1}"
 CLOUD_RUN_REGION="${STAGING_CLOUD_RUN_REGION:-us-central1}"
 SUPABASE_REGION="${STAGING_SUPABASE_REGION:-us-east-2}"
 SUPABASE_PG_MAJOR="${STAGING_SUPABASE_PG_MAJOR:-17}"
@@ -103,7 +104,7 @@ GEMINI_API_KEY_SECRET="${STAGING_GEMINI_API_KEY_SECRET:-gemini-api-key-staging}"
 KMS_PROVIDER_VALUE="${STAGING_KMS_PROVIDER:-gcp}"
 BITCOIN_NETWORK_VALUE="${STAGING_BITCOIN_NETWORK:-mainnet}"
 BITCOIN_UTXO_PROVIDER_VALUE="${STAGING_BITCOIN_UTXO_PROVIDER:-getblock}"
-GEMINI_TUNED_MODEL_VALUE="${STAGING_GEMINI_TUNED_MODEL:-<required-in-gemini-apply:projects/.../locations/.../endpoints-or-models/...>}"
+GEMINI_TUNED_MODEL_VALUE="${STAGING_GEMINI_TUNED_MODEL:-<required-in-gemini-apply:projects/<approved-project>/locations/us-central1/endpoints/<numeric-id>>}"
 GEMINI_V6_PROMPT_VALUE="${STAGING_GEMINI_V6_PROMPT:-true}"
 FRONTEND_URL_VALUE="${STAGING_FRONTEND_URL:-https://app.arkova.ai}"
 CRON_OIDC_SA="${STAGING_CRON_OIDC_SA:-$RUNTIME_SA}"
@@ -294,11 +295,26 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       (3-128 characters: letters, digits, dot, underscore, colon, or hyphen)." >&2
     exit 2
   fi
-  if [[ "$PROFILE" == "gemini" \
-    && ! "$GEMINI_TUNED_MODEL_VALUE" =~ ^projects/[A-Za-z0-9][A-Za-z0-9._:-]*/locations/[A-Za-z0-9][A-Za-z0-9._-]*/(endpoints|models)/[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-    echo "ERROR: live gemini provision requires STAGING_GEMINI_TUNED_MODEL as a full" >&2
-    echo "       projects/<project>/locations/<location>/endpoints/<id> or models/<id> resource." >&2
-    exit 2
+  if [[ "$PROFILE" == "gemini" ]]; then
+    if [[ ! "$APPROVED_GCP_PROJECT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+      echo "ERROR: live gemini provision requires a valid approved GCP project identity; got '$APPROVED_GCP_PROJECT'." >&2
+      exit 2
+    fi
+    if [[ "$GCP_PROJECT" != "$APPROVED_GCP_PROJECT" ]]; then
+      echo "ERROR: live gemini provision only supports approved GCP project '$APPROVED_GCP_PROJECT'; got '$GCP_PROJECT'." >&2
+      exit 2
+    fi
+    if [[ ! "$GEMINI_TUNED_MODEL_VALUE" =~ ^projects/([^/]+)/locations/us-central1/endpoints/([1-9][0-9]*)$ ]]; then
+      echo "ERROR: live gemini provision requires STAGING_GEMINI_TUNED_MODEL as the exact canonical resource" >&2
+      echo "       projects/<approved-project>/locations/us-central1/endpoints/<numeric-id>." >&2
+      exit 2
+    fi
+    GEMINI_RESOURCE_PROJECT="${BASH_REMATCH[1]}"
+    if [[ "$GEMINI_RESOURCE_PROJECT" != "$APPROVED_GCP_PROJECT" ]]; then
+      echo "ERROR: live gemini provision endpoint project must equal approved GCP project '$APPROVED_GCP_PROJECT';" >&2
+      echo "       got '$GEMINI_RESOURCE_PROJECT'." >&2
+      exit 2
+    fi
   fi
   if [[ "$PROFILE" == "gemini" && "$GEMINI_V6_PROMPT_VALUE" != "true" ]]; then
     echo "ERROR: live gemini provision requires GEMINI_V6_PROMPT to be the exact activation value 'true'." >&2
