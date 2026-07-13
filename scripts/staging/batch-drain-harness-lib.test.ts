@@ -218,15 +218,22 @@ describe('R3 trigger expectations — org scheduler and global flush stay distin
 
     expect(expected.batchSize).toBe(10_000);
     expect(expected.distribution).toHaveLength(30);
-    expect('global10k' in expected).toBe(false);
-    expect(expected.globalBacklog10000.initialPending).toBe(10_000);
-    expect(expected.globalBacklog10000.passes[0]!.leaves).toBeLessThan(10_000);
-    expect(expected.globalBacklog12500.initialPending).toBe(12_500);
-    expect(expected.globalBacklog12500.passes[0]!.pendingRemainder).toBe(
-      12_500 - expected.globalBacklog12500.passes[0]!.eligibleLeaves,
-    );
-    expect(expected.globalBacklog12500.passes[0]!.pendingRemainder).toBeGreaterThan(2_500);
-    expect(expected.globalBacklog12500.poisons).toHaveLength(2);
+    expect(expected.globalEligible10000.initialPending).toBe(10_000);
+    expect(expected.globalEligible10000.poisons).toHaveLength(0);
+    expect(expected.globalEligible10000.passes.map((pass) => ({
+      leaves: pass.leaves,
+      pendingRemainder: pass.pendingRemainder,
+    }))).toEqual([{ leaves: 10_000, pendingRemainder: 0 }]);
+    expect(expected.globalEligible12500.initialPending).toBe(12_500);
+    expect(expected.globalEligible12500.poisons).toHaveLength(0);
+    expect(expected.globalEligible12500.passes.map((pass) => ({
+      leaves: pass.leaves,
+      pendingRemainder: pass.pendingRemainder,
+    }))).toEqual([
+      { leaves: 10_000, pendingRemainder: 2_500 },
+      { leaves: 2_500, pendingRemainder: 0 },
+    ]);
+    expect(expected.poisonIsolation.poisons).toHaveLength(2);
     expect(expected.singleOrgCrossPass.totalTransactions).toBe(2);
     expect(() => buildR3AcceptancePlan({ runId: 'too-small', orgs: 29 })).toThrow(/at least 30 orgs/);
   });

@@ -1,7 +1,7 @@
 /**
- * Offline port contract for a supervised crash matrix. This module validates
- * evidence ordering and correlation but has no process, network, DB, broadcast,
- * secret, or rig adapter. Passing these assertions is never itself rig evidence.
+ * Supervised crash-matrix orchestration contract. The port is implemented by
+ * a rig adapter; this module validates durable barriers, signet identity, and
+ * Cloud Run lifecycle evidence without performing live actions itself.
  */
 
 import {
@@ -24,6 +24,11 @@ export const CRASH_KILLPOINTS = [
 
 export type CrashKillpoint = typeof CRASH_KILLPOINTS[number];
 
+export interface RuntimeBinding {
+  headSha: string;
+  imageDigest: string;
+}
+
 export interface PostIntentIdentity {
   txId: string;
   signedBytesSha256: string;
@@ -32,22 +37,21 @@ export interface PostIntentIdentity {
 export interface CrashCaseInput {
   runId: string;
   killpoint: CrashKillpoint;
-  /** Pre-intent declaration: never includes a future transaction identity. */
   expectation: DrainPassExpectation;
-  /** Required only at/after durable intent; forbidden before intent exists. */
-  postIntent?: PostIntentIdentity;
+  runtime: RuntimeBinding;
 }
 
 export interface CrashClaimIdentity {
   fingerprint: string;
   orgId: string;
+  claimOrder: number;
 }
 
 export interface NetworkAcceptanceEvidence {
   txId: string;
-  /** SHA-256 of raw transaction bytes returned by the observing node. */
   rawTxSha256: string;
   nodeId: string;
+  network: 'signet';
   state: 'mempool' | 'confirmed';
   observedAt: string;
 }
@@ -59,7 +63,7 @@ export interface Phase4PersistenceEvidence {
   persistedAt: string;
 }
 
-export interface CrashBarrier {
+export interface CrashBarrier extends RuntimeBinding {
   runId: string;
   killpoint: CrashKillpoint;
   batchId: string;
@@ -86,20 +90,58 @@ export interface CrashBroadcastAttempt {
   signedBytesSha256: string;
 }
 
+export interface ProcessUptimeEvidence extends RuntimeBinding {
+  workerId: string;
+  source: 'cloud-run-audit-log';
+  startedAt: string;
+  observedUntil: string;
+  uptimeMs: number;
+  logEntryIds: string[];
+}
+
 export interface CrashObservation {
   runId: string;
   finalWorkerId: string;
+  observedAt: string;
   drain: DrainPassObservation;
   broadcastAttempts: CrashBroadcastAttempt[];
+  processUptime: ProcessUptimeEvidence[];
+}
+
+export interface TerminationEvidence extends RuntimeBinding {
+  workerId: string;
+  source: 'cloud-run-audit-log';
+  logEntryId: string;
+  signal: 'SIGKILL' | 'SIGTERM';
+  requestedAt: string;
+  exitedAt: string;
+}
+
+export interface RestartEvidence extends RuntimeBinding {
+  previousWorkerId: string;
+  workerId: string;
+  source: 'cloud-run-audit-log';
+  logEntryId: string;
+  startedAt: string;
+}
+
+export interface RecoveryEvidence {
+  recoverySchedulerExecutionId: string;
+  correlatedDrainExecutionId: string;
+  source: 'cloud-scheduler';
+  endpointPath: '/jobs/recover-broadcasts';
+  httpStatus: 200;
+  startedAt: string;
+  completedAt: string;
 }
 
 export interface CrashControlPort {
   arm(input: CrashCaseInput): Promise<void>;
   start(input: CrashCaseInput): Promise<void>;
   waitForKillpoint(input: CrashCaseInput): Promise<CrashBarrier>;
-  terminate(input: CrashCaseInput & { workerId: string }): Promise<void>;
-  waitForRestart(input: CrashCaseInput & { previousWorkerId: string }): Promise<{ workerId: string }>;
-  recover(input: CrashCaseInput): Promise<void>;
+  terminate(input: CrashCaseInput & { workerId: string }): Promise<TerminationEvidence>;
+  waitForRestart(input: CrashCaseInput & { previousWorkerId: string }): Promise<RestartEvidence>;
+  recover(input: CrashCaseInput): Promise<RecoveryEvidence>;
   inspect(input: CrashCaseInput): Promise<CrashObservation>;
   disarm(input: CrashCaseInput): Promise<void>;
 }
@@ -112,6 +154,12 @@ export interface CrashCaseEvidence extends DrainPassEvidenceSummary {
   broadcastAttempts: number;
   restartedFrom: string;
   restartedTo: string;
+  postIntent: PostIntentIdentity | null;
+  terminatedAt: string;
+  restartedAt: string;
+  recoveredAt: string;
+  initialWorkerUptimeMs: number;
+  replacementWorkerUptimeMs: number;
 }
 
 export class CrashDisarmAggregateError extends AggregateError {
@@ -127,6 +175,8 @@ export class CrashDisarmAggregateError extends AggregateError {
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+const HEAD_SHA = /^[0-9a-f]{40}$/;
+const IMAGE_DIGEST = /^sha256:[0-9a-f]{64}$/;
 const POST_INTENT = new Set<CrashKillpoint>([
   'after-intent-persist',
   'after-broadcast-before-submit',
@@ -147,14 +197,10 @@ function withinWindow(input: CrashCaseInput, value: string, name: string): numbe
   return actualMs;
 }
 
-function drainedClaims(input: CrashCaseInput): CrashClaimIdentity[] {
-  return input.expectation.claims
-    .filter((claim) => claim.outcome === 'drained')
-    .map(({ fingerprint, orgId }) => ({ fingerprint, orgId }));
-}
-
-function expectedRoot(input: CrashCaseInput): string {
-  return computeMerkleRootFromFingerprints(drainedClaims(input).map((claim) => claim.fingerprint));
+function assertRuntime(expected: RuntimeBinding, actual: RuntimeBinding, name: string): void {
+  if (actual.headSha !== expected.headSha || actual.imageDigest !== expected.imageDigest) {
+    throw new Error(`${name} does not match the exact tested head and image digest.`);
+  }
 }
 
 function validateInput(input: CrashCaseInput): void {
@@ -162,36 +208,29 @@ function validateInput(input: CrashCaseInput): void {
   if (!(CRASH_KILLPOINTS as readonly string[]).includes(input.killpoint)) {
     throw new Error(`Unsupported crash killpoint: ${input.killpoint}.`);
   }
+  if (!HEAD_SHA.test(input.runtime.headSha) || !IMAGE_DIGEST.test(input.runtime.imageDigest)) {
+    throw new Error('Crash case requires exact lowercase head SHA and sha256 image digest.');
+  }
+  if ('postIntent' in input) {
+    throw new Error('postIntent is captured only after the durable intent barrier and must not be predeclared.');
+  }
   validateDrainPassExpectation(input.expectation);
-
-  const isPostIntent = POST_INTENT.has(input.killpoint);
-  if (!isPostIntent && input.postIntent) {
-    throw new Error('A pre-intent crash case must not declare a future post-intent transaction identity.');
-  }
-  if (isPostIntent && !input.postIntent) throw new Error('A post-intent crash case requires its durable post-intent identity.');
-  if (input.postIntent && (
-    !SHA256_HEX.test(input.postIntent.txId)
-    || !SHA256_HEX.test(input.postIntent.signedBytesSha256)
-  )) {
-    throw new Error('Post-intent identity requires lowercase 64-hex txId and signedBytesSha256.');
-  }
-
-  const drained = drainedClaims(input);
-  const orgs = new Set(drained.map((claim) => claim.orgId));
+  const orgs = new Set(input.expectation.claims.map((claim) => claim.orgId));
   if (input.expectation.armedTrigger === 'org-scheduler' && orgs.size !== 1) {
-    throw new Error('A crash case represents one org-scheduler batch and therefore exactly one drained org.');
+    throw new Error('A crash case represents one org-scheduler batch and therefore exactly one org.');
   }
   if (input.expectation.armedTrigger === 'global-flush' && orgs.size < 2) {
     throw new Error('A global crash case requires the mixed-org R3 invariant.');
   }
-  if (drained.length > 10_000) throw new Error('A crash case transaction may contain at most 10000 leaves.');
+  if (input.expectation.claims.length > 10_000) throw new Error('A crash case transaction may contain at most 10000 leaves.');
 }
 
-function sameClaims(expected: CrashClaimIdentity[], actual: CrashClaimIdentity[]): boolean {
-  if (expected.length !== actual.length) return false;
-  const expectedMap = new Map(expected.map((claim) => [claim.fingerprint, claim.orgId]));
-  return actual.every((claim) => expectedMap.get(claim.fingerprint) === claim.orgId)
-    && new Set(actual.map((claim) => claim.fingerprint)).size === actual.length;
+function sameOrderedClaims(expected: DrainPassExpectation['claims'], actual: CrashClaimIdentity[]): boolean {
+  return expected.length === actual.length && actual.every((claim, index) => (
+    claim.claimOrder === index + 1
+    && claim.fingerprint === expected[index]!.fingerprint
+    && claim.orgId === expected[index]!.orgId
+  ));
 }
 
 function forbidLaterStageEvidence(barrier: CrashBarrier, fields: Array<keyof CrashBarrier>): void {
@@ -200,12 +239,27 @@ function forbidLaterStageEvidence(barrier: CrashBarrier, fields: Array<keyof Cra
   }
 }
 
-function validateBarrier(input: CrashCaseInput, barrier: CrashBarrier): void {
+function postIntentFromBarrier(input: CrashCaseInput, barrier: CrashBarrier): PostIntentIdentity | null {
+  if (!POST_INTENT.has(input.killpoint)) return null;
+  if (
+    !barrier.intentTxId
+    || !barrier.signedBytesSha256
+    || !SHA256_HEX.test(barrier.intentTxId)
+    || !SHA256_HEX.test(barrier.signedBytesSha256)
+    || !barrier.intentPersistedAt
+  ) {
+    throw new Error('Durable intent barrier did not expose a valid postIntent identity and timestamp.');
+  }
+  return { txId: barrier.intentTxId, signedBytesSha256: barrier.signedBytesSha256 };
+}
+
+function validateBarrier(input: CrashCaseInput, barrier: CrashBarrier): PostIntentIdentity | null {
   const expected = input.expectation;
   if (barrier.runId !== input.runId || barrier.killpoint !== input.killpoint) {
     throw new Error('Crash barrier does not match the armed runId and killpoint.');
   }
   if (!barrier.workerId?.trim()) throw new Error('Crash barrier must identify the worker to terminate.');
+  assertRuntime(input.runtime, barrier, 'Crash barrier runtime');
   if (
     barrier.batchId !== expected.batchId
     || barrier.armedTrigger !== expected.armedTrigger
@@ -214,12 +268,12 @@ function validateBarrier(input: CrashCaseInput, barrier: CrashBarrier): void {
   ) {
     throw new Error('Crash barrier is unrelated to the declared batch, trigger, execution, or fault window.');
   }
-  if (!sameClaims(expected.claims, barrier.claimedLeaves)) {
-    throw new Error('Crash barrier claimed leaves/orgs do not exactly match the declaration.');
+  if (!sameOrderedClaims(expected.claims, barrier.claimedLeaves)) {
+    throw new Error('Crash barrier does not preserve the exact durable claim order and identity.');
   }
 
   const chronology: number[] = [withinWindow(input, barrier.claimedAt, 'Claim stage')];
-  const root = expectedRoot(input);
+  const root = computeMerkleRootFromFingerprints(expected.claims.map((claim) => claim.fingerprint));
   if (input.killpoint === 'after-claim') {
     forbidLaterStageEvidence(barrier, [
       'merkleRoot', 'merkleBuiltAt', 'intentTxId', 'signedBytesSha256',
@@ -232,54 +286,43 @@ function validateBarrier(input: CrashCaseInput, barrier: CrashBarrier): void {
     if (!barrier.merkleBuiltAt) throw new Error('Post-Merkle barrier requires merkleBuiltAt.');
     chronology.push(withinWindow(input, barrier.merkleBuiltAt, 'Merkle stage'));
   }
-
   if (input.killpoint === 'after-merkle-tree') {
     forbidLaterStageEvidence(barrier, [
       'intentTxId', 'signedBytesSha256', 'intentPersistedAt', 'networkAcceptance', 'phase4Persisted',
     ]);
   }
 
-  if (POST_INTENT.has(input.killpoint)) {
-    if (
-      barrier.intentTxId !== input.postIntent!.txId
-      || barrier.signedBytesSha256 !== input.postIntent!.signedBytesSha256
-      || !barrier.intentPersistedAt
-    ) {
-      throw new Error('Intent barrier does not match the durable post-intent txid, signed bytes, and timestamp.');
-    }
+  const postIntent = postIntentFromBarrier(input, barrier);
+  if (postIntent && barrier.intentPersistedAt) {
     chronology.push(withinWindow(input, barrier.intentPersistedAt, 'Intent stage'));
   }
-  if (input.killpoint === 'after-intent-persist') {
-    forbidLaterStageEvidence(barrier, ['networkAcceptance', 'phase4Persisted']);
-  }
+  if (input.killpoint === 'after-intent-persist') forbidLaterStageEvidence(barrier, ['networkAcceptance', 'phase4Persisted']);
 
   if (input.killpoint === 'after-broadcast-before-submit' || input.killpoint === 'after-submit-persist') {
     const acceptance = barrier.networkAcceptance;
     if (!acceptance) throw new Error('Post-broadcast kill requires node network acceptance evidence.');
-    if (!acceptance.nodeId?.trim() || (acceptance.state !== 'mempool' && acceptance.state !== 'confirmed')) {
-      throw new Error('Network acceptance must identify the observing node and state.');
-    }
-    if (acceptance.txId !== input.postIntent!.txId) {
-      throw new Error('Network acceptance does not match the exact post-intent txid.');
-    }
-    if (acceptance.rawTxSha256 !== input.postIntent!.signedBytesSha256) {
-      throw new Error('Network acceptance does not prove the exact signed bytes returned by the node.');
+    if (
+      acceptance.network !== 'signet'
+      || !acceptance.nodeId?.trim()
+      || (acceptance.state !== 'mempool' && acceptance.state !== 'confirmed')
+      || acceptance.txId !== postIntent!.txId
+      || acceptance.rawTxSha256 !== postIntent!.signedBytesSha256
+    ) {
+      throw new Error('Network acceptance does not prove the exact durable signed transaction on signet.');
     }
     chronology.push(withinWindow(input, acceptance.observedAt, 'Network acceptance stage'));
   }
-  if (input.killpoint === 'after-broadcast-before-submit') {
-    forbidLaterStageEvidence(barrier, ['phase4Persisted']);
-  }
+  if (input.killpoint === 'after-broadcast-before-submit') forbidLaterStageEvidence(barrier, ['phase4Persisted']);
 
   if (input.killpoint === 'after-submit-persist') {
     const persisted = barrier.phase4Persisted;
     if (!persisted) throw new Error('Post-submit kill requires Phase-4 persistence evidence.');
     if (
       persisted.batchId !== expected.batchId
-      || persisted.txId !== input.postIntent!.txId
-      || persisted.rowCount !== drainedClaims(input).length
+      || persisted.txId !== postIntent!.txId
+      || persisted.rowCount !== expected.claims.length
     ) {
-      throw new Error('Phase-4 persistence does not match the batch, txid, and drained row count.');
+      throw new Error('Phase-4 persistence does not match the batch, txid, and ordered row count.');
     }
     chronology.push(withinWindow(input, persisted.persistedAt, 'Phase-4 persistence stage'));
   }
@@ -288,31 +331,102 @@ function validateBarrier(input: CrashCaseInput, barrier: CrashBarrier): void {
   if (chronology.some((value, index) => index > 0 && value < chronology[index - 1]!)) {
     throw new Error('Crash barrier stage chronology is not monotonic before termination.');
   }
+  return postIntent;
+}
+
+function validateLifecycle(
+  input: CrashCaseInput,
+  barrier: CrashBarrier,
+  termination: TerminationEvidence,
+  restart: RestartEvidence,
+  recovery: RecoveryEvidence,
+  observation: CrashObservation,
+): { initialUptimeMs: number; replacementUptimeMs: number } {
+  assertRuntime(input.runtime, termination, 'Termination runtime');
+  assertRuntime(input.runtime, restart, 'Restart runtime');
+  if (
+    termination.workerId !== barrier.workerId
+    || termination.source !== 'cloud-run-audit-log'
+    || !termination.logEntryId?.trim()
+  ) {
+    throw new Error('Termination evidence is not a correlated Cloud Run lifecycle event.');
+  }
+  if (
+    restart.previousWorkerId !== barrier.workerId
+    || !restart.workerId?.trim()
+    || restart.workerId === barrier.workerId
+    || restart.source !== 'cloud-run-audit-log'
+    || !restart.logEntryId?.trim()
+  ) {
+    throw new Error('Restart evidence is not a distinct correlated Cloud Run replacement.');
+  }
+  if (
+    !recovery.recoverySchedulerExecutionId?.trim()
+    || recovery.recoverySchedulerExecutionId === input.expectation.schedulerExecutionId
+    || recovery.correlatedDrainExecutionId !== input.expectation.schedulerExecutionId
+    || recovery.source !== 'cloud-scheduler'
+    || recovery.endpointPath !== '/jobs/recover-broadcasts'
+    || recovery.httpStatus !== 200
+  ) {
+    throw new Error('Recovery evidence must be a distinct, correlated Cloud-Scheduler /jobs/recover-broadcasts 200.');
+  }
+  if (observation.runId !== input.runId || observation.finalWorkerId !== restart.workerId) {
+    throw new Error('Crash observation was not produced by the correlated replacement worker.');
+  }
+
+  const chronology = [
+    withinWindow(input, barrier.reachedAt, 'Crash barrier'),
+    withinWindow(input, termination.requestedAt, 'Termination request'),
+    withinWindow(input, termination.exitedAt, 'Worker exit'),
+    withinWindow(input, restart.startedAt, 'Worker restart'),
+    withinWindow(input, recovery.startedAt, 'Recovery start'),
+    withinWindow(input, recovery.completedAt, 'Recovery completion'),
+    withinWindow(input, observation.observedAt, 'Post-recovery inspection'),
+  ];
+  if (chronology.some((value, index) => index > 0 && value < chronology[index - 1]!)) {
+    throw new Error('Termination, restart, recovery, and inspection chronology is not monotonic.');
+  }
+
+  const byWorker = new Map(observation.processUptime.map((item) => [item.workerId, item]));
+  const initial = byWorker.get(barrier.workerId);
+  const replacement = byWorker.get(restart.workerId);
+  if (!initial || !replacement || byWorker.size !== 2) {
+    throw new Error('Process lifecycle requires exact initial and replacement worker uptime evidence.');
+  }
+  for (const item of [initial, replacement]) {
+    assertRuntime(input.runtime, item, 'Worker uptime runtime');
+    if (item.source !== 'cloud-run-audit-log' || item.logEntryIds.length === 0 || item.logEntryIds.some((id) => !id.trim())) {
+      throw new Error('Worker uptime must be backed by Cloud Run audit log entries.');
+    }
+    const computed = timestamp(item.observedUntil, 'uptime observedUntil') - timestamp(item.startedAt, 'uptime startedAt');
+    if (computed < 0 || computed !== item.uptimeMs) throw new Error('Worker uptime milliseconds do not match lifecycle timestamps.');
+  }
+  if (
+    initial.observedUntil !== termination.exitedAt
+    || timestamp(initial.startedAt, 'initial worker start') > timestamp(barrier.claimedAt, 'claim time')
+    || replacement.startedAt !== restart.startedAt
+    || replacement.observedUntil !== observation.observedAt
+  ) {
+    throw new Error('Worker uptime intervals do not join the claim, termination, restart, and inspection facts.');
+  }
+  return { initialUptimeMs: initial.uptimeMs, replacementUptimeMs: replacement.uptimeMs };
 }
 
 function validateObservation(
   input: CrashCaseInput,
-  barrier: CrashBarrier,
-  replacementWorkerId: string,
+  postIntent: PostIntentIdentity | null,
   observation: CrashObservation,
 ): { summary: DrainPassEvidenceSummary; txIds: string[] } {
-  if (observation.runId !== input.runId) throw new Error('Crash observation runId does not match the case.');
-  if (observation.finalWorkerId !== replacementWorkerId) {
-    throw new Error('Crash observation was not produced by the replacement worker.');
-  }
   const summary = assertDrainPassObservation(input.expectation, observation.drain);
   if (summary.transactionIds.length !== 1) throw new Error('A crash case must resolve to exactly one derived transaction.');
-
   const actualTransaction = observation.drain.transactions[0]!;
-  if (input.postIntent && (
-    actualTransaction.txId !== input.postIntent.txId
-    || actualTransaction.signedBytesSha256 !== input.postIntent.signedBytesSha256
+  if (postIntent && (
+    actualTransaction.txId !== postIntent.txId
+    || actualTransaction.signedBytesSha256 !== postIntent.signedBytesSha256
   )) {
-    throw new Error('Actual recovered transaction does not match the declared post-intent identity.');
+    throw new Error('Recovered transaction does not match postIntent captured at the durable barrier.');
   }
-  if (observation.broadcastAttempts.length === 0) {
-    throw new Error('Crash recovery requires at least one correlated broadcast attempt.');
-  }
+  if (observation.broadcastAttempts.length === 0) throw new Error('Crash recovery requires a correlated broadcast attempt.');
   for (const attempt of observation.broadcastAttempts) {
     if (
       attempt.batchId !== input.expectation.batchId
@@ -332,24 +446,22 @@ export async function orchestrateCrashCase(
 ): Promise<CrashCaseEvidence> {
   validateInput(input);
   let disarmRequired = false;
-  let hasPrimaryError = false;
+  let result: CrashCaseEvidence | undefined;
   let primaryError: unknown;
+
   try {
     disarmRequired = true;
     await port.arm(input);
     await port.start(input);
     const barrier = await port.waitForKillpoint(input);
-    validateBarrier(input, barrier);
-
-    await port.terminate({ ...input, workerId: barrier.workerId });
-    const replacement = await port.waitForRestart({ ...input, previousWorkerId: barrier.workerId });
-    if (!replacement.workerId?.trim() || replacement.workerId === barrier.workerId) {
-      throw new Error('Crash worker did not restart with a distinct worker id.');
-    }
-    await port.recover(input);
+    const postIntent = validateBarrier(input, barrier);
+    const termination = await port.terminate({ ...input, workerId: barrier.workerId });
+    const restart = await port.waitForRestart({ ...input, previousWorkerId: barrier.workerId });
+    const recovery = await port.recover(input);
     const observation = await port.inspect(input);
-    const { summary, txIds } = validateObservation(input, barrier, replacement.workerId, observation);
-    return {
+    const uptime = validateLifecycle(input, barrier, termination, restart, recovery, observation);
+    const { summary, txIds } = validateObservation(input, postIntent, observation);
+    result = {
       ...summary,
       runId: input.runId,
       killpoint: input.killpoint,
@@ -357,20 +469,31 @@ export async function orchestrateCrashCase(
       uniqueNetworkTxIds: txIds,
       broadcastAttempts: observation.broadcastAttempts.length,
       restartedFrom: barrier.workerId,
-      restartedTo: replacement.workerId,
+      restartedTo: restart.workerId,
+      postIntent,
+      terminatedAt: termination.exitedAt,
+      restartedAt: restart.startedAt,
+      recoveredAt: recovery.completedAt,
+      initialWorkerUptimeMs: uptime.initialUptimeMs,
+      replacementWorkerUptimeMs: uptime.replacementUptimeMs,
     };
   } catch (error) {
-    hasPrimaryError = true;
     primaryError = error;
-    throw error;
-  } finally {
-    if (disarmRequired) {
-      try {
-        await port.disarm(input);
-      } catch (disarmError) {
-        if (hasPrimaryError) throw new CrashDisarmAggregateError(primaryError, disarmError);
-        throw disarmError;
-      }
+  }
+
+  let disarmError: unknown;
+  if (disarmRequired) {
+    try {
+      await port.disarm(input);
+    } catch (error) {
+      disarmError = error;
     }
   }
+  if (primaryError !== undefined && disarmError !== undefined) {
+    throw new CrashDisarmAggregateError(primaryError, disarmError);
+  }
+  if (primaryError !== undefined) throw primaryError;
+  if (disarmError !== undefined) throw disarmError;
+  if (!result) throw new Error('Crash orchestration completed without evidence.');
+  return result;
 }

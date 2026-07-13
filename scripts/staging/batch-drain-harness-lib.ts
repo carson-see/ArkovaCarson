@@ -153,7 +153,7 @@ function allocateWeighted(total: number, weights: number[]): number[] {
   const distributable = total - weights.length;
   const raw = weights.map((weight) => (distributable * weight) / weightTotal);
   const allocated = raw.map((share) => 1 + Math.floor(share));
-  let remainder = total - allocated.reduce((sum, count) => sum + count, 0);
+  const remainder = total - allocated.reduce((sum, count) => sum + count, 0);
 
   const byRemainder = raw
     .map((share, index) => ({ index, remainder: share - Math.floor(share) }))
@@ -290,7 +290,14 @@ export function buildOrderedGlobalRows(rows: OrgDrainPlanRow[]): OrderedGlobalPe
     .sort((left, right) => left.relativeOrder - right.relativeOrder
       || left.orgRank - right.orgRank
       || left.orgOrdinal - right.orgOrdinal)
-    .map(({ relativeOrder: _relativeOrder, ...row }, index) => ({ ...row, claimOrder: index + 1 }));
+    .map((row, index) => ({
+      rowId: row.rowId,
+      orgId: row.orgId,
+      cohort: row.cohort,
+      orgRank: row.orgRank,
+      orgOrdinal: row.orgOrdinal,
+      claimOrder: index + 1,
+    }));
 }
 
 /**
@@ -449,8 +456,12 @@ export interface R3AcceptancePlan {
   batchSize: number;
   distribution: OrgDrainPlanRow[];
   orgScheduler: OrgSchedulerExpectation;
-  globalBacklog10000: OrgGlobalFlushExpectation;
-  globalBacklog12500: OrgGlobalFlushExpectation;
+  /** Exact eligible-only Trigger-D case: one Scheduler tick, 10k leaves, zero remainder. */
+  globalEligible10000: OrgGlobalFlushExpectation;
+  /** Exact eligible-only Trigger-D case: 10k then 2.5k on two observed ticks. */
+  globalEligible12500: OrgGlobalFlushExpectation;
+  /** Credit-starved isolation is deliberately not mixed into the exact volume cases. */
+  poisonIsolation: OrgGlobalFlushExpectation;
   singleOrgCrossPass: OrgSchedulerExpectation;
 }
 
@@ -466,23 +477,32 @@ export function buildR3AcceptancePlan(
     orgs,
     count: options.multiOrgCount ?? 12_500,
   });
-  const globalBacklog10000Inputs = zipfOrgPlan({
-    runId: `${options.runId}-global-backlog-10000`,
+  const globalEligible10000Inputs = zipfOrgPlan({
+    runId: `${options.runId}-global-eligible-10000`,
     orgs,
     count: 10_000,
+    creditStarved: 0,
   });
-  const globalBacklog12500Inputs = zipfOrgPlan({
-    runId: `${options.runId}-global-backlog-12500`,
+  const globalEligible12500Inputs = zipfOrgPlan({
+    runId: `${options.runId}-global-eligible-12500`,
     orgs,
     count: 12_500,
+    creditStarved: 0,
+  });
+  const poisonIsolationInputs = zipfOrgPlan({
+    runId: `${options.runId}-poison-isolation`,
+    orgs,
+    count: 12_500,
+    creditStarved: 2,
   });
   const singleOrgId = runOrgIdN(`${options.runId}-single-org-cross-pass`, 0);
   return {
     batchSize: BATCH_SIZE,
     distribution,
     orgScheduler: planOrgScheduler(distribution),
-    globalBacklog10000: planGlobalFlushForOrgs(globalBacklog10000Inputs),
-    globalBacklog12500: planGlobalFlushForOrgs(globalBacklog12500Inputs),
+    globalEligible10000: planGlobalFlushForOrgs(globalEligible10000Inputs),
+    globalEligible12500: planGlobalFlushForOrgs(globalEligible12500Inputs),
+    poisonIsolation: planGlobalFlushForOrgs(poisonIsolationInputs),
     singleOrgCrossPass: planOrgScheduler([
       { orgId: singleOrgId, rank: 1, anchors: 12_500, cohort: 'healthy' },
     ]),

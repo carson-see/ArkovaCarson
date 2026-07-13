@@ -11,6 +11,9 @@ import {
   type CrashControlPort,
   type CrashKillpoint,
   type CrashObservation,
+  type RecoveryEvidence,
+  type RestartEvidence,
+  type TerminationEvidence,
 } from './batch-drain-crash-control';
 import type { DrainPassExpectation, DrainPassObservation } from './batch-drain-observation';
 
@@ -20,6 +23,8 @@ const FAULT_WINDOW_ID = 'fault-window-crash-offline';
 const ORG_ID = 'org-crash-offline';
 const TX_ID = 'a'.repeat(64);
 const TX_HASH = 'b'.repeat(64);
+const HEAD_SHA = 'c'.repeat(40);
+const IMAGE_DIGEST = `sha256:${'d'.repeat(64)}`;
 const FINGERPRINTS = ['1'.repeat(64), '2'.repeat(64)];
 
 function doubleSha256(bytes: Uint8Array): string {
@@ -39,19 +44,16 @@ function drainExpectation(): DrainPassExpectation {
       startsAt: '2026-07-13T12:00:00.000Z',
       endsAt: '2026-07-13T12:05:00.000Z',
     },
-    claims: FINGERPRINTS.map((fingerprint) => ({ fingerprint, orgId: ORG_ID, outcome: 'drained' as const })),
+    claims: FINGERPRINTS.map((fingerprint) => ({ fingerprint, orgId: ORG_ID })),
   };
 }
 
 function makeInput(killpoint: CrashKillpoint): CrashCaseInput {
-  const postIntent = killpoint === 'after-intent-persist'
-    || killpoint === 'after-broadcast-before-submit'
-    || killpoint === 'after-submit-persist';
   return {
     runId: `offline-${killpoint}`,
     killpoint,
     expectation: drainExpectation(),
-    ...(postIntent ? { postIntent: { txId: TX_ID, signedBytesSha256: TX_HASH } } : {}),
+    runtime: { headSha: HEAD_SHA, imageDigest: IMAGE_DIGEST },
   };
 }
 
@@ -70,17 +72,31 @@ function drainObservation(): DrainPassObservation {
       batchId: BATCH_ID,
       firedAt: '2026-07-13T12:00:06.000Z',
     }],
-    passRows: FINGERPRINTS.map((fingerprint) => ({
+    pendingBefore: 2,
+    pendingAfter: 0,
+    passRows: FINGERPRINTS.map((fingerprint, index) => ({
       fingerprint,
       orgId: ORG_ID,
       batchId: BATCH_ID,
       schedulerExecutionId: EXECUTION_ID,
+      claimOrder: index + 1,
       status: 'SUBMITTED' as const,
       chainTxId: TX_ID,
       merkleRoot: ROOT,
-      observedOutcome: 'drained' as const,
+      creditDenialReason: null,
+      queueCreditChargedAt: null,
+      queueCreditDeniedAt: null,
     })),
-    transactions: [{ txId: TX_ID, batchId: BATCH_ID, merkleRoot: ROOT, signedBytesSha256: TX_HASH }],
+    transactions: [{
+      txId: TX_ID,
+      batchId: BATCH_ID,
+      merkleRoot: ROOT,
+      signedBytesSha256: TX_HASH,
+      network: 'signet',
+      nodeId: 'signet-node-offline-fixture',
+      chainState: 'mempool',
+      acceptedAt: '2026-07-13T12:00:12.000Z',
+    }],
     txLeaves: FINGERPRINTS.map((fingerprint, merkleIndex) => ({
       txId: TX_ID,
       batchId: BATCH_ID,
@@ -90,27 +106,28 @@ function drainObservation(): DrainPassObservation {
     })),
     proofs: [
       {
-        txId: TX_ID,
-        batchId: BATCH_ID,
-        fingerprint: FINGERPRINTS[0]!,
-        orgId: ORG_ID,
-        merkleRoot: ROOT,
-        merkleIndex: 0,
-        leafCount: 2,
+        txId: TX_ID, batchId: BATCH_ID, fingerprint: FINGERPRINTS[0]!, orgId: ORG_ID,
+        merkleRoot: ROOT, merkleIndex: 0, leafCount: 2,
         proofPath: [{ hash: FINGERPRINTS[1]!, position: 'right' }],
       },
       {
-        txId: TX_ID,
-        batchId: BATCH_ID,
-        fingerprint: FINGERPRINTS[1]!,
-        orgId: ORG_ID,
-        merkleRoot: ROOT,
-        merkleIndex: 1,
-        leafCount: 2,
+        txId: TX_ID, batchId: BATCH_ID, fingerprint: FINGERPRINTS[1]!, orgId: ORG_ID,
+        merkleRoot: ROOT, merkleIndex: 1, leafCount: 2,
         proofPath: [{ hash: FINGERPRINTS[0]!, position: 'left' }],
       },
     ],
-    ledgerDeltas: [{ schedulerExecutionId: EXECUTION_ID, orgId: ORG_ID, delta: -2 }],
+    creditGateEvents: FINGERPRINTS.map((fingerprint, index) => ({
+      eventId: `gate-${index}`,
+      schedulerExecutionId: EXECUTION_ID,
+      fingerprint,
+      orgId: ORG_ID,
+      decision: 'not-required' as const,
+      reason: null,
+      occurredAt: '2026-07-13T12:00:07.000Z',
+    })),
+    creditLedgerEvents: [],
+    orgBalances: [{ schedulerExecutionId: EXECUTION_ID, orgId: ORG_ID, before: 10, after: 10 }],
+    ledgerDeltas: [{ schedulerExecutionId: EXECUTION_ID, orgId: ORG_ID, delta: 0 }],
   };
 }
 
@@ -130,7 +147,11 @@ function makeBarrier(killpoint: CrashKillpoint): CrashBarrier {
     claimedAt: '2026-07-13T12:00:07.000Z',
     reachedAt: '2026-07-13T12:00:10.000Z',
     workerId: 'worker-before',
-    claimedLeaves: FINGERPRINTS.map((fingerprint) => ({ fingerprint, orgId: ORG_ID })),
+    headSha: HEAD_SHA,
+    imageDigest: IMAGE_DIGEST,
+    claimedLeaves: FINGERPRINTS.map((fingerprint, index) => ({
+      fingerprint, orgId: ORG_ID, claimOrder: index + 1,
+    })),
     ...(afterMerkle ? { merkleRoot: ROOT, merkleBuiltAt: '2026-07-13T12:00:08.000Z' } : {}),
     ...(afterIntent ? {
       intentTxId: TX_ID,
@@ -142,6 +163,7 @@ function makeBarrier(killpoint: CrashKillpoint): CrashBarrier {
         txId: TX_ID,
         rawTxSha256: TX_HASH,
         nodeId: 'signet-node-offline-fixture',
+        network: 'signet' as const,
         state: 'mempool' as const,
         observedAt: '2026-07-13T12:00:09.000Z',
       },
@@ -157,23 +179,48 @@ function makeBarrier(killpoint: CrashKillpoint): CrashBarrier {
   };
 }
 
-interface PortOverrides {
-  barrier?: CrashBarrier;
-  observation?: CrashObservation;
-  replacementWorkerId?: string;
-  armError?: Error;
-  disarmError?: Error;
+function termination(): TerminationEvidence {
+  return {
+    workerId: 'worker-before',
+    source: 'cloud-run-audit-log',
+    logEntryId: 'log-termination',
+    signal: 'SIGKILL',
+    requestedAt: '2026-07-13T12:00:11.000Z',
+    exitedAt: '2026-07-13T12:00:12.000Z',
+    headSha: HEAD_SHA,
+    imageDigest: IMAGE_DIGEST,
+  };
 }
 
-function makePort(
-  killpoint: CrashKillpoint,
-  overrides: PortOverrides = {},
-): { port: CrashControlPort; events: string[] } {
-  const events: string[] = [];
-  const barrier = overrides.barrier ?? makeBarrier(killpoint);
-  const observation: CrashObservation = overrides.observation ?? {
+function restart(): RestartEvidence {
+  return {
+    previousWorkerId: 'worker-before',
+    workerId: 'worker-after',
+    source: 'cloud-run-audit-log',
+    logEntryId: 'log-restart',
+    startedAt: '2026-07-13T12:00:13.000Z',
+    headSha: HEAD_SHA,
+    imageDigest: IMAGE_DIGEST,
+  };
+}
+
+function recovery(): RecoveryEvidence {
+  return {
+    recoverySchedulerExecutionId: 'scheduler-recovery-offline',
+    correlatedDrainExecutionId: EXECUTION_ID,
+    source: 'cloud-scheduler',
+    endpointPath: '/jobs/recover-broadcasts',
+    httpStatus: 200,
+    startedAt: '2026-07-13T12:00:14.000Z',
+    completedAt: '2026-07-13T12:00:15.000Z',
+  };
+}
+
+function crashObservation(killpoint: CrashKillpoint): CrashObservation {
+  return {
     runId: `offline-${killpoint}`,
-    finalWorkerId: overrides.replacementWorkerId ?? 'worker-after',
+    finalWorkerId: 'worker-after',
+    observedAt: '2026-07-13T12:00:20.000Z',
     drain: drainObservation(),
     broadcastAttempts: [{
       batchId: BATCH_ID,
@@ -181,7 +228,35 @@ function makePort(
       txId: TX_ID,
       signedBytesSha256: TX_HASH,
     }],
+    processUptime: [
+      {
+        workerId: 'worker-before', source: 'cloud-run-audit-log',
+        startedAt: '2026-07-13T11:59:00.000Z', observedUntil: '2026-07-13T12:00:12.000Z',
+        uptimeMs: 72_000, logEntryIds: ['log-start-before', 'log-termination'],
+        headSha: HEAD_SHA, imageDigest: IMAGE_DIGEST,
+      },
+      {
+        workerId: 'worker-after', source: 'cloud-run-audit-log',
+        startedAt: '2026-07-13T12:00:13.000Z', observedUntil: '2026-07-13T12:00:20.000Z',
+        uptimeMs: 7_000, logEntryIds: ['log-restart', 'log-observed'],
+        headSha: HEAD_SHA, imageDigest: IMAGE_DIGEST,
+      },
+    ],
   };
+}
+
+interface PortOverrides {
+  barrier?: CrashBarrier;
+  observation?: CrashObservation;
+  termination?: TerminationEvidence;
+  restart?: RestartEvidence;
+  recovery?: RecoveryEvidence;
+  armError?: Error;
+  disarmError?: Error;
+}
+
+function makePort(killpoint: CrashKillpoint, overrides: PortOverrides = {}): { port: CrashControlPort; events: string[] } {
+  const events: string[] = [];
   return {
     events,
     port: {
@@ -190,14 +265,26 @@ function makePort(
         if (overrides.armError) throw overrides.armError;
       },
       async start(input) { events.push(`start:${input.runId}`); },
-      async waitForKillpoint(input) { events.push(`barrier:${input.killpoint}`); return barrier; },
-      async terminate(input) { events.push(`terminate:${input.workerId}`); },
+      async waitForKillpoint(input) {
+        events.push(`barrier:${input.killpoint}`);
+        return overrides.barrier ?? makeBarrier(killpoint);
+      },
+      async terminate(input) {
+        events.push(`terminate:${input.workerId}`);
+        return overrides.termination ?? termination();
+      },
       async waitForRestart(input) {
         events.push(`restart:${input.previousWorkerId}`);
-        return { workerId: overrides.replacementWorkerId ?? 'worker-after' };
+        return overrides.restart ?? restart();
       },
-      async recover(input) { events.push(`recover:${input.runId}`); },
-      async inspect(input) { events.push(`inspect:${input.runId}`); return observation; },
+      async recover(input) {
+        events.push(`recover:${input.runId}`);
+        return overrides.recovery ?? recovery();
+      },
+      async inspect(input) {
+        events.push(`inspect:${input.runId}`);
+        return overrides.observation ?? crashObservation(killpoint);
+      },
       async disarm(input) {
         events.push(`disarm:${input.killpoint}`);
         if (overrides.disarmError) throw overrides.disarmError;
@@ -206,7 +293,7 @@ function makePort(
   };
 }
 
-describe('orchestrateCrashCase — exact five-stage offline control plane', () => {
+describe('orchestrateCrashCase — observed five-stage process lifecycle', () => {
   it.each(CRASH_KILLPOINTS)('passes a fully correlated %s case', async (killpoint) => {
     const { port, events } = makePort(killpoint);
     const evidence = await orchestrateCrashCase(makeInput(killpoint), port);
@@ -215,29 +302,39 @@ describe('orchestrateCrashCase — exact five-stage offline control plane', () =
       batchId: BATCH_ID,
       transactionIds: [TX_ID],
       merkleRoots: [ROOT],
+      terminatedAt: '2026-07-13T12:00:12.000Z',
+      restartedAt: '2026-07-13T12:00:13.000Z',
+      recoveredAt: '2026-07-13T12:00:15.000Z',
+      initialWorkerUptimeMs: 72_000,
+      replacementWorkerUptimeMs: 7_000,
     });
     expect(events).toContain('terminate:worker-before');
     expect(events[events.length - 1]).toBe(`disarm:${killpoint}`);
   });
 
-  it('splits post-intent identity from pre-intent declarations', async () => {
-    expect(makeInput('after-claim').postIntent).toBeUndefined();
-    expect(makeInput('after-merkle-tree').postIntent).toBeUndefined();
+  it('captures postIntent only after a durable barrier, never from input', async () => {
+    expect('postIntent' in makeInput('after-intent-persist')).toBe(false);
+    const early = await orchestrateCrashCase(makeInput('after-claim'), makePort('after-claim').port);
+    expect(early.postIntent).toBeNull();
+    const late = await orchestrateCrashCase(
+      makeInput('after-intent-persist'),
+      makePort('after-intent-persist').port,
+    );
+    expect(late.postIntent).toEqual({ txId: TX_ID, signedBytesSha256: TX_HASH });
 
-    const early = makeInput('after-claim');
-    early.postIntent = { txId: TX_ID, signedBytesSha256: TX_HASH };
-    const earlyPort = makePort('after-claim');
-    await expect(orchestrateCrashCase(early, earlyPort.port)).rejects.toThrow(/pre-intent.*must not declare/i);
-    expect(earlyPort.events).toEqual([]);
-
-    const late = makeInput('after-intent-persist');
-    delete late.postIntent;
-    const latePort = makePort('after-intent-persist');
-    await expect(orchestrateCrashCase(late, latePort.port)).rejects.toThrow(/post-intent identity/i);
-    expect(latePort.events).toEqual([]);
+    const injected = { ...makeInput('after-claim'), postIntent: { txId: TX_ID, signedBytesSha256: TX_HASH } };
+    await expect(orchestrateCrashCase(injected, makePort('after-claim').port)).rejects.toThrow(/must not be predeclared/);
   });
 
-  it('forbids later-stage evidence at earlier killpoints', async () => {
+  it('preserves durable claim order as Merkle identity', async () => {
+    const barrier = makeBarrier('after-merkle-tree');
+    barrier.claimedLeaves.reverse();
+    const { port, events } = makePort('after-merkle-tree', { barrier });
+    await expect(orchestrateCrashCase(makeInput('after-merkle-tree'), port)).rejects.toThrow(/durable claim order/);
+    expect(events).not.toContain('terminate:worker-before');
+  });
+
+  it('forbids later-stage evidence at an earlier killpoint', async () => {
     const barrier = makeBarrier('after-claim');
     barrier.merkleRoot = ROOT;
     barrier.merkleBuiltAt = '2026-07-13T12:00:08.000Z';
@@ -246,30 +343,16 @@ describe('orchestrateCrashCase — exact five-stage offline control plane', () =
     expect(events).not.toContain('terminate:worker-before');
   });
 
-  it('requires monotonic stage timestamps before releasing a barrier', async () => {
-    const barrier = makeBarrier('after-intent-persist');
-    barrier.merkleBuiltAt = '2026-07-13T12:00:06.000Z';
-    const { port, events } = makePort('after-intent-persist', { barrier });
-    await expect(orchestrateCrashCase(makeInput('after-intent-persist'), port)).rejects.toThrow(/stage chronology/);
+  it('requires exact signet acceptance before a post-broadcast kill', async () => {
+    const killpoint: CrashKillpoint = 'after-broadcast-before-submit';
+    const barrier = makeBarrier(killpoint);
+    barrier.networkAcceptance!.rawTxSha256 = 'e'.repeat(64);
+    const { port, events } = makePort(killpoint, { barrier });
+    await expect(orchestrateCrashCase(makeInput(killpoint), port)).rejects.toThrow(/exact durable signed transaction/);
     expect(events).not.toContain('terminate:worker-before');
   });
 
-  it('requires node acceptance of the exact signed transaction before a post-broadcast kill', async () => {
-    const killpoint: CrashKillpoint = 'after-broadcast-before-submit';
-    const missing = makeBarrier(killpoint);
-    delete missing.networkAcceptance;
-    const first = makePort(killpoint, { barrier: missing });
-    await expect(orchestrateCrashCase(makeInput(killpoint), first.port)).rejects.toThrow(/network acceptance/);
-    expect(first.events).not.toContain('terminate:worker-before');
-
-    const mismatched = makeBarrier(killpoint);
-    mismatched.networkAcceptance!.rawTxSha256 = 'd'.repeat(64);
-    const second = makePort(killpoint, { barrier: mismatched });
-    await expect(orchestrateCrashCase(makeInput(killpoint), second.port)).rejects.toThrow(/exact signed bytes/);
-    expect(second.events).not.toContain('terminate:worker-before');
-  });
-
-  it('requires Phase-4 persistence evidence before the post-submit kill', async () => {
+  it('requires Phase-4 persistence before the post-submit kill', async () => {
     const barrier = makeBarrier('after-submit-persist');
     delete barrier.phase4Persisted;
     const { port, events } = makePort('after-submit-persist', { barrier });
@@ -277,9 +360,34 @@ describe('orchestrateCrashCase — exact five-stage offline control plane', () =
     expect(events).not.toContain('terminate:worker-before');
   });
 
+  it('validates real termination/restart/recovery chronology and exact runtime', async () => {
+    const badRestart = restart();
+    badRestart.startedAt = '2026-07-13T12:00:11.500Z';
+    await expect(orchestrateCrashCase(
+      makeInput('after-claim'),
+      makePort('after-claim', { restart: badRestart }).port,
+    )).rejects.toThrow(/chronology/);
+
+    const badRuntime = termination();
+    badRuntime.imageDigest = `sha256:${'e'.repeat(64)}`;
+    await expect(orchestrateCrashCase(
+      makeInput('after-claim'),
+      makePort('after-claim', { termination: badRuntime }).port,
+    )).rejects.toThrow(/exact tested head and image/);
+  });
+
+  it('rejects fabricated uptime arithmetic or missing audit entries', async () => {
+    const actual = crashObservation('after-claim');
+    actual.processUptime[1]!.uptimeMs = 8_000;
+    await expect(orchestrateCrashCase(
+      makeInput('after-claim'),
+      makePort('after-claim', { observation: actual }).port,
+    )).rejects.toThrow(/uptime milliseconds/);
+  });
+
   it('independently derives and rejects an unrelated Merkle root before termination', async () => {
     const barrier = makeBarrier('after-merkle-tree');
-    barrier.merkleRoot = 'd'.repeat(64);
+    barrier.merkleRoot = 'e'.repeat(64);
     const { port, events } = makePort('after-merkle-tree', { barrier });
     await expect(orchestrateCrashCase(makeInput('after-merkle-tree'), port)).rejects.toThrow(/recomputed claimed-leaf root/);
     expect(events).not.toContain('terminate:worker-before');

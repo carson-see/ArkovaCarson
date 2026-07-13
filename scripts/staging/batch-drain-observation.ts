@@ -1,7 +1,9 @@
 /**
- * Pure fail-closed assertions for evidence collected by a supervised drain
- * adapter. This module never queries a database, scheduler, chain node, or rig;
- * callers must supply the complete actual observation for the declared pass.
+ * Fail-closed assertions for Scheduler, database, credit-ledger, Merkle, and
+ * signet facts collected by a supervised rig adapter. Expectations identify
+ * seeded rows and the armed trigger only: pass outcome is derived exclusively
+ * from observed DB state, gate decisions, balance snapshots, ledger events,
+ * and chain acceptance.
  */
 
 import { createHash } from 'node:crypto';
@@ -9,8 +11,7 @@ import { createHash } from 'node:crypto';
 export const R3_BATCH_SIZE = 10_000;
 
 export type DrainTrigger = 'org-scheduler' | 'global-flush';
-export type DrainClaimOutcome = 'drained' | 'credit-starved';
-export type ObservedClaimOutcome = 'drained' | 'succeeded-no-broadcast';
+export type DerivedClaimOutcome = 'drained' | 'credit-starved' | 'refunded-failure';
 
 export interface DrainFaultWindow {
   id: string;
@@ -19,10 +20,8 @@ export interface DrainFaultWindow {
 }
 
 export interface ExpectedDrainClaim {
-  /** Ordered leaf identity: array order is the declared Merkle leaf order. */
   fingerprint: string;
   orgId: string;
-  outcome: DrainClaimOutcome;
 }
 
 export interface DrainPassExpectation {
@@ -30,6 +29,7 @@ export interface DrainPassExpectation {
   armedTrigger: DrainTrigger;
   schedulerExecutionId: string;
   faultWindow: DrainFaultWindow;
+  /** Identity set only. Outcome and committed order are observed facts. */
   claims: ExpectedDrainClaim[];
 }
 
@@ -55,10 +55,14 @@ export interface ObservedPassRow {
   orgId: string;
   batchId: string;
   schedulerExecutionId: string;
+  /** One-based durable ordering used to reconstruct the committed leaf identity. */
+  claimOrder: number;
   status: ObservedAnchorStatus;
   chainTxId: string | null;
   merkleRoot: string | null;
-  observedOutcome: ObservedClaimOutcome;
+  creditDenialReason: string | null;
+  queueCreditChargedAt: string | null;
+  queueCreditDeniedAt: string | null;
 }
 
 export interface ObservedDrainTransaction {
@@ -66,6 +70,10 @@ export interface ObservedDrainTransaction {
   batchId: string;
   merkleRoot: string;
   signedBytesSha256: string;
+  network: 'signet';
+  nodeId: string;
+  chainState: 'mempool' | 'confirmed';
+  acceptedAt: string;
 }
 
 export interface ObservedTransactionLeaf {
@@ -87,6 +95,34 @@ export interface ObservedAnchorProof extends ObservedTransactionLeaf {
   proofPath: MerkleProofSibling[];
 }
 
+export interface ObservedCreditGateEvent {
+  eventId: string;
+  schedulerExecutionId: string;
+  fingerprint: string;
+  orgId: string;
+  decision: 'not-required' | 'allowed' | 'denied';
+  reason: string | null;
+  occurredAt: string;
+}
+
+export interface ObservedCreditLedgerEvent {
+  eventId: string;
+  schedulerExecutionId: string;
+  fingerprint: string;
+  orgId: string;
+  kind: 'debit' | 'refund';
+  amount: number;
+  referenceId: string;
+  occurredAt: string;
+}
+
+export interface ObservedOrgBalance {
+  schedulerExecutionId: string;
+  orgId: string;
+  before: number;
+  after: number;
+}
+
 export interface ObservedLedgerDelta {
   schedulerExecutionId: string;
   orgId: string;
@@ -96,10 +132,15 @@ export interface ObservedLedgerDelta {
 export interface DrainPassObservation {
   execution: ObservedSchedulerExecution;
   triggerFirings: ObservedTriggerFiring[];
+  pendingBefore: number;
+  pendingAfter: number;
   passRows: ObservedPassRow[];
   transactions: ObservedDrainTransaction[];
   txLeaves: ObservedTransactionLeaf[];
   proofs: ObservedAnchorProof[];
+  creditGateEvents: ObservedCreditGateEvent[];
+  creditLedgerEvents: ObservedCreditLedgerEvent[];
+  orgBalances: ObservedOrgBalance[];
   ledgerDeltas: ObservedLedgerDelta[];
 }
 
@@ -108,11 +149,41 @@ export interface DrainPassEvidenceSummary {
   armedTrigger: DrainTrigger;
   schedulerExecutionId: string;
   faultWindowId: string;
+  pendingBefore: number;
+  pendingAfter: number;
   claimedLeaves: number;
   drainedLeaves: number;
   poisonLeaves: number;
+  creditStarvedLeaves: number;
+  refundedFailureLeaves: number;
   transactionIds: string[];
   merkleRoots: string[];
+  startedAt: string;
+  completedAt: string;
+}
+
+export type DrainWindowKind = 'eligible-10000' | 'eligible-12500' | 'poison-isolation';
+
+export interface DrainWindowExpectation {
+  scenarioId: string;
+  kind: DrainWindowKind;
+  armedTrigger: DrainTrigger;
+  expectedInitialPending: number;
+  expectedFinalPending: number;
+  passes: DrainPassExpectation[];
+}
+
+export interface DrainWindowEvidenceSummary {
+  scenarioId: string;
+  kind: DrainWindowKind;
+  armedTrigger: DrainTrigger;
+  schedulerTicks: number;
+  drainedLeaves: number;
+  poisonLeaves: number;
+  initialPending: number;
+  finalPending: number;
+  schedulerExecutionIds: string[];
+  transactionIds: string[];
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
@@ -123,6 +194,10 @@ function requireId(value: string, name: string): void {
 
 function requireHash(value: string, name: string): void {
   if (!SHA256_HEX.test(value)) throw new Error(`${name} must be lowercase 64-hex.`);
+}
+
+function requireNonNegativeInteger(value: number, name: string): void {
+  if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer.`);
 }
 
 function timestamp(value: string, name: string): number {
@@ -150,14 +225,13 @@ export function computeMerkleRootFromFingerprints(fingerprints: string[]): strin
     if (level.length % 2 === 1) level = [...level, level[level.length - 1]!];
     const next: Buffer[] = [];
     for (let index = 0; index < level.length; index += 2) {
-      next.push(doubleSha256(Buffer.concat([level[index]!, level[index + 1]!])));
+      next.push(doubleSha256(Buffer.concat([level[index]!, level[index + 1]!] )));
     }
     level = next;
   }
   return level[0]!.toString('hex');
 }
 
-/** Recompute one positional proof, including odd-width duplication structure. */
 function recomputeProofRoot(proof: ObservedAnchorProof): string {
   requireHash(proof.fingerprint, 'Proof fingerprint');
   if (!Number.isInteger(proof.leafCount) || proof.leafCount <= 0) {
@@ -200,9 +274,7 @@ interface ValidatedExpectation {
   startMs: number;
   endMs: number;
   claimsByFingerprint: Map<string, ExpectedDrainClaim>;
-  drainedClaims: ExpectedDrainClaim[];
-  drainedOrgIds: Set<string>;
-  derivedLedger: Map<string, number>;
+  claimedOrgIds: Set<string>;
 }
 
 function validateExpectation(expectation: DrainPassExpectation): ValidatedExpectation {
@@ -218,42 +290,17 @@ function validateExpectation(expectation: DrainPassExpectation): ValidatedExpect
   if (expectation.claims.length === 0) throw new Error('Drain expectation requires claimed leaves.');
 
   const claimsByFingerprint = new Map<string, ExpectedDrainClaim>();
-  const outcomesByOrg = new Map<string, DrainClaimOutcome>();
-  const derivedLedger = new Map<string, number>();
+  const claimedOrgIds = new Set<string>();
   for (const claim of expectation.claims) {
     requireHash(claim.fingerprint, 'claim fingerprint');
     requireId(claim.orgId, 'claim orgId');
-    if (claim.outcome === ('bad-fingerprint' as DrainClaimOutcome)) {
-      throw new Error('bad-fingerprint cohorts are DB-unseedable and cannot declare drain evidence.');
-    }
-    if (claim.outcome !== 'drained' && claim.outcome !== 'credit-starved') {
-      throw new Error(`Unsupported claim outcome: ${String(claim.outcome)}.`);
-    }
     if (claimsByFingerprint.has(claim.fingerprint)) throw new Error(`Duplicate claimed fingerprint ${claim.fingerprint}.`);
-    const existingOutcome = outcomesByOrg.get(claim.orgId);
-    if (existingOutcome && existingOutcome !== claim.outcome) {
-      throw new Error(`Org ${claim.orgId} mixes eligible and poison claim outcomes.`);
-    }
     claimsByFingerprint.set(claim.fingerprint, claim);
-    outcomesByOrg.set(claim.orgId, claim.outcome);
-    if (!derivedLedger.has(claim.orgId)) derivedLedger.set(claim.orgId, 0);
-    if (claim.outcome === 'drained') {
-      derivedLedger.set(claim.orgId, derivedLedger.get(claim.orgId)! - 1);
-    }
+    claimedOrgIds.add(claim.orgId);
   }
-  const drainedClaims = expectation.claims.filter((claim) => claim.outcome === 'drained');
-  if (drainedClaims.length === 0) throw new Error('R3 pass evidence requires at least one eligible drained claim.');
-  return {
-    startMs,
-    endMs,
-    claimsByFingerprint,
-    drainedClaims,
-    drainedOrgIds: new Set(drainedClaims.map((claim) => claim.orgId)),
-    derivedLedger,
-  };
+  return { startMs, endMs, claimsByFingerprint, claimedOrgIds };
 }
 
-/** Validate only caller-controlled declarations, before any adapter is armed. */
 export function validateDrainPassExpectation(expectation: DrainPassExpectation): void {
   validateExpectation(expectation);
 }
@@ -264,7 +311,6 @@ function assertInsideWindow(value: string, name: string, startMs: number, endMs:
   return actualMs;
 }
 
-/** Assert the trigger-specific R3 shape from actual transactions and mappings. */
 function assertR3TransactionInvariant(
   trigger: DrainTrigger,
   transactions: ObservedDrainTransaction[],
@@ -278,9 +324,7 @@ function assertR3TransactionInvariant(
   }
 
   if (trigger === 'global-flush') {
-    if (transactions.length !== 1) {
-      throw new Error('A global-flush pass must produce exactly one mixed-org transaction.');
-    }
+    if (transactions.length !== 1) throw new Error('A global-flush pass must produce exactly one mixed-org transaction.');
     const orgs = new Set((leavesByTx.get(transactions[0]!.txId) ?? []).map((leaf) => leaf.orgId));
     if (orgs.size < 2) throw new Error('A global-flush transaction must be mixed-org (at least two orgs).');
     return;
@@ -301,16 +345,166 @@ function assertR3TransactionInvariant(
   }
 }
 
-/**
- * Assert a complete actual pass. Transaction counts, roots, proofs, and ledger
- * deltas are derived here; none are accepted from caller expectations.
- */
+interface DerivedClaims {
+  orderedDrainedRows: ObservedPassRow[];
+  outcomes: Map<string, DerivedClaimOutcome>;
+  rawLedgerByOrg: Map<string, number>;
+}
+
+function deriveClaimsFromObservedEvents(
+  expectation: DrainPassExpectation,
+  observation: DrainPassObservation,
+  validated: ValidatedExpectation,
+  leafByFingerprint: Map<string, ObservedTransactionLeaf>,
+  transactionsById: Map<string, ObservedDrainTransaction>,
+): DerivedClaims {
+  if (observation.passRows.length !== expectation.claims.length) {
+    throw new Error('Actual pass rows must exactly equal the declared claimed identity set.');
+  }
+  const rowsByFingerprint = new Map<string, ObservedPassRow>();
+  const claimOrders = new Set<number>();
+  for (const row of observation.passRows) {
+    const claim = validated.claimsByFingerprint.get(row.fingerprint);
+    if (
+      !claim
+      || claim.orgId !== row.orgId
+      || row.batchId !== expectation.batchId
+      || row.schedulerExecutionId !== expectation.schedulerExecutionId
+      || rowsByFingerprint.has(row.fingerprint)
+    ) {
+      throw new Error('Actual pass row is duplicate, unrelated, or mismatches the claimed identity set.');
+    }
+    if (!Number.isInteger(row.claimOrder) || row.claimOrder <= 0 || claimOrders.has(row.claimOrder)) {
+      throw new Error('Observed durable claimOrder must be unique positive integers.');
+    }
+    rowsByFingerprint.set(row.fingerprint, row);
+    claimOrders.add(row.claimOrder);
+  }
+  const orderedRows = [...observation.passRows].sort((left, right) => left.claimOrder - right.claimOrder);
+  if (orderedRows.some((row, index) => row.claimOrder !== index + 1)) {
+    throw new Error('Observed durable claimOrder must be contiguous from one.');
+  }
+
+  const gateByFingerprint = new Map<string, ObservedCreditGateEvent>();
+  for (const gate of observation.creditGateEvents) {
+    const claim = validated.claimsByFingerprint.get(gate.fingerprint);
+    if (
+      !claim
+      || claim.orgId !== gate.orgId
+      || gate.schedulerExecutionId !== expectation.schedulerExecutionId
+      || gateByFingerprint.has(gate.fingerprint)
+    ) {
+      throw new Error('Credit gate event is duplicate, cross-org, or unrelated to this pass.');
+    }
+    requireId(gate.eventId, 'credit gate eventId');
+    assertInsideWindow(gate.occurredAt, 'Credit gate event', validated.startMs, validated.endMs);
+    gateByFingerprint.set(gate.fingerprint, gate);
+  }
+  if (gateByFingerprint.size !== expectation.claims.length) {
+    throw new Error('Every claimed row requires one observed credit gate decision, including not-required.');
+  }
+
+  const ledgerByFingerprint = new Map<string, ObservedCreditLedgerEvent[]>();
+  const rawLedgerByOrg = new Map([...validated.claimedOrgIds].map((orgId) => [orgId, 0]));
+  const ledgerEventIds = new Set<string>();
+  for (const event of observation.creditLedgerEvents) {
+    const claim = validated.claimsByFingerprint.get(event.fingerprint);
+    if (
+      !claim
+      || claim.orgId !== event.orgId
+      || event.schedulerExecutionId !== expectation.schedulerExecutionId
+      || ledgerEventIds.has(event.eventId)
+    ) {
+      throw new Error('Credit ledger event is duplicate, cross-org, or unrelated to this pass.');
+    }
+    requireId(event.eventId, 'credit ledger eventId');
+    requireId(event.referenceId, 'credit ledger referenceId');
+    if (!Number.isInteger(event.amount) || event.amount <= 0) throw new Error('Credit ledger amount must be a positive integer.');
+    assertInsideWindow(event.occurredAt, 'Credit ledger event', validated.startMs, validated.endMs);
+    ledgerEventIds.add(event.eventId);
+    const events = ledgerByFingerprint.get(event.fingerprint) ?? [];
+    events.push(event);
+    ledgerByFingerprint.set(event.fingerprint, events);
+    const signedAmount = event.kind === 'debit' ? -event.amount : event.amount;
+    rawLedgerByOrg.set(event.orgId, rawLedgerByOrg.get(event.orgId)! + signedAmount);
+  }
+
+  const outcomes = new Map<string, DerivedClaimOutcome>();
+  for (const row of orderedRows) {
+    const gate = gateByFingerprint.get(row.fingerprint)!;
+    const ledger = ledgerByFingerprint.get(row.fingerprint) ?? [];
+    const debits = ledger.filter((event) => event.kind === 'debit').reduce((sum, event) => sum + event.amount, 0);
+    const refunds = ledger.filter((event) => event.kind === 'refund').reduce((sum, event) => sum + event.amount, 0);
+    const leaf = leafByFingerprint.get(row.fingerprint);
+    const terminal = row.status === 'SUBMITTED' || row.status === 'SECURED';
+
+    if (terminal) {
+      if (!leaf) throw new Error('Terminal drained row has no observed transaction leaf.');
+      const transaction = transactionsById.get(leaf.txId)!;
+      if (row.chainTxId !== transaction.txId || row.merkleRoot !== transaction.merkleRoot) {
+        throw new Error('Drained pass row lacks the derived terminal tx/root state.');
+      }
+      if (gate.decision === 'denied') throw new Error('A denied credit gate cannot produce a terminal drained row.');
+      if (gate.decision === 'allowed') {
+        if (debits !== 1 || refunds !== 0 || !row.queueCreditChargedAt || row.creditDenialReason !== null) {
+          throw new Error('Credit-gated drained row requires one observed debit and charged DB metadata.');
+        }
+      } else if (
+        gate.decision !== 'not-required'
+        || debits !== 0
+        || refunds !== 0
+        || row.queueCreditChargedAt !== null
+        || row.creditDenialReason !== null
+      ) {
+        throw new Error('Non-credit-gated drained row must have zero ledger events and zero credit metadata.');
+      }
+      outcomes.set(row.fingerprint, 'drained');
+      continue;
+    }
+
+    if (row.status !== 'PENDING' || leaf || row.chainTxId !== null || row.merkleRoot !== null) {
+      throw new Error('Non-drained claimed row must remain PENDING with zero tx/root attribution.');
+    }
+    if (
+      gate.decision === 'denied'
+      && gate.reason === 'insufficient_credits'
+      && debits === 0
+      && refunds === 0
+      && row.creditDenialReason === 'insufficient_credits'
+      && row.queueCreditDeniedAt
+    ) {
+      outcomes.set(row.fingerprint, 'credit-starved');
+      continue;
+    }
+    if (
+      gate.decision === 'allowed'
+      && debits === 1
+      && refunds === 1
+      && row.queueCreditChargedAt
+      && row.creditDenialReason === null
+    ) {
+      outcomes.set(row.fingerprint, 'refunded-failure');
+      continue;
+    }
+    throw new Error('Pending poison truth is not supported by observed gate, refund, and DB facts.');
+  }
+
+  const orderedDrainedRows = orderedRows.filter((row) => outcomes.get(row.fingerprint) === 'drained');
+  if (orderedDrainedRows.length === 0) throw new Error('R3 pass evidence requires at least one observed eligible drained claim.');
+  return { orderedDrainedRows, outcomes, rawLedgerByOrg };
+}
+
 export function assertDrainPassObservation(
   expectation: DrainPassExpectation,
   observation: DrainPassObservation,
 ): DrainPassEvidenceSummary {
   const validated = validateExpectation(expectation);
-  const { startMs, endMs, claimsByFingerprint, drainedClaims, drainedOrgIds, derivedLedger } = validated;
+  const { startMs, endMs, claimsByFingerprint, claimedOrgIds } = validated;
+  requireNonNegativeInteger(observation.pendingBefore, 'pendingBefore');
+  requireNonNegativeInteger(observation.pendingAfter, 'pendingAfter');
+  if (observation.pendingBefore < expectation.claims.length) {
+    throw new Error('pendingBefore cannot be smaller than the observed claimed set.');
+  }
 
   const execution = observation.execution;
   if (execution.schedulerExecutionId !== expectation.schedulerExecutionId) {
@@ -332,15 +526,18 @@ export function assertDrainPassObservation(
     throw new Error('Trigger firing is unrelated to the declared trigger, execution, or batch.');
   }
   const firedMs = assertInsideWindow(firing.firedAt, 'Trigger firing', startMs, endMs);
-  if (firedMs < startedMs || firedMs > completedMs) {
-    throw new Error('Trigger firing violates scheduler execution chronology.');
-  }
+  if (firedMs < startedMs || firedMs > completedMs) throw new Error('Trigger firing violates scheduler execution chronology.');
 
   const transactionsById = new Map<string, ObservedDrainTransaction>();
   for (const transaction of observation.transactions) {
     requireHash(transaction.txId, 'Actual txId');
     requireHash(transaction.merkleRoot, 'Actual merkleRoot');
     requireHash(transaction.signedBytesSha256, 'Actual signedBytesSha256');
+    requireId(transaction.nodeId, 'signet nodeId');
+    if (transaction.network !== 'signet' || (transaction.chainState !== 'mempool' && transaction.chainState !== 'confirmed')) {
+      throw new Error('Actual chain result must be an accepted signet mempool or confirmation observation.');
+    }
+    assertInsideWindow(transaction.acceptedAt, 'Signet acceptance', startMs, endMs);
     if (transaction.batchId !== expectation.batchId || transactionsById.has(transaction.txId)) {
       throw new Error('Actual transaction is duplicate or belongs to an unrelated batch.');
     }
@@ -354,8 +551,8 @@ export function assertDrainPassObservation(
       throw new Error('Actual tx leaf belongs to an unrelated transaction or batch.');
     }
     const claim = claimsByFingerprint.get(leaf.fingerprint);
-    if (!claim || claim.outcome !== 'drained' || claim.orgId !== leaf.orgId || leafByFingerprint.has(leaf.fingerprint)) {
-      throw new Error('Actual tx-to-leaf/org mapping is duplicate, unclaimed, poison, or mismatched.');
+    if (!claim || claim.orgId !== leaf.orgId || leafByFingerprint.has(leaf.fingerprint)) {
+      throw new Error('Actual tx-to-leaf/org mapping is duplicate, unclaimed, or mismatched.');
     }
     if (!Number.isInteger(leaf.merkleIndex) || leaf.merkleIndex < 0) throw new Error('Actual merkleIndex must be non-negative.');
     leafByFingerprint.set(leaf.fingerprint, leaf);
@@ -364,10 +561,11 @@ export function assertDrainPassObservation(
     leavesByTx.set(leaf.txId, group);
   }
 
-  // Enforce the actual trigger invariant before later sparse evidence checks.
+  const derived = deriveClaimsFromObservedEvents(expectation, observation, validated, leafByFingerprint, transactionsById);
+  const drainedOrgIds = new Set(derived.orderedDrainedRows.map((row) => row.orgId));
   assertR3TransactionInvariant(expectation.armedTrigger, observation.transactions, leavesByTx, drainedOrgIds);
-  if (leafByFingerprint.size !== drainedClaims.length) {
-    throw new Error('Actual tx mapping must cover every eligible drained claim exactly once.');
+  if (leafByFingerprint.size !== derived.orderedDrainedRows.length) {
+    throw new Error('Actual tx mapping must cover every event-derived drained claim exactly once.');
   }
 
   for (const transaction of observation.transactions) {
@@ -376,15 +574,15 @@ export function assertDrainPassObservation(
       throw new Error('Actual transaction merkle indexes must be contiguous from zero.');
     }
     const expectedFingerprints = expectation.armedTrigger === 'global-flush'
-      ? drainedClaims.map((claim) => claim.fingerprint)
-      : drainedClaims
-          .filter((claim) => claim.orgId === leaves[0]!.orgId)
-          .map((claim) => claim.fingerprint);
+      ? derived.orderedDrainedRows.map((row) => row.fingerprint)
+      : derived.orderedDrainedRows
+          .filter((row) => row.orgId === leaves[0]!.orgId)
+          .map((row) => row.fingerprint);
     if (
       expectedFingerprints.length !== leaves.length
       || leaves.some((leaf, index) => leaf.fingerprint !== expectedFingerprints[index])
     ) {
-      throw new Error('Actual Merkle leaves do not preserve the declared claim order for this transaction.');
+      throw new Error('Actual Merkle leaves do not preserve observed durable claim order for this transaction.');
     }
     const recomputedRoot = computeMerkleRootFromFingerprints(leaves.map((leaf) => leaf.fingerprint));
     if (recomputedRoot !== transaction.merkleRoot) {
@@ -392,49 +590,8 @@ export function assertDrainPassObservation(
     }
   }
 
-  if (observation.passRows.length !== expectation.claims.length) {
-    throw new Error('Actual pass rows must exactly equal the declared claimed leaves.');
-  }
-  const rowsByFingerprint = new Map<string, ObservedPassRow>();
-  for (const row of observation.passRows) {
-    if (rowsByFingerprint.has(row.fingerprint)) throw new Error(`Duplicate actual pass row ${row.fingerprint}.`);
-    rowsByFingerprint.set(row.fingerprint, row);
-  }
-  for (const claim of expectation.claims) {
-    const row = rowsByFingerprint.get(claim.fingerprint);
-    if (
-      !row
-      || row.orgId !== claim.orgId
-      || row.batchId !== expectation.batchId
-      || row.schedulerExecutionId !== expectation.schedulerExecutionId
-    ) {
-      throw new Error(`Actual pass row for ${claim.fingerprint} is missing or unrelated.`);
-    }
-    if (claim.outcome === 'credit-starved') {
-      if (
-        row.observedOutcome !== 'succeeded-no-broadcast'
-        || row.status !== 'PENDING'
-        || row.chainTxId !== null
-        || row.merkleRoot !== null
-      ) {
-        throw new Error('Credit-starved poison row must stay PENDING with zero tx/root attribution.');
-      }
-      continue;
-    }
-    const leaf = leafByFingerprint.get(claim.fingerprint)!;
-    const transaction = transactionsById.get(leaf.txId)!;
-    if (
-      row.observedOutcome !== 'drained'
-      || (row.status !== 'SUBMITTED' && row.status !== 'SECURED')
-      || row.chainTxId !== transaction.txId
-      || row.merkleRoot !== transaction.merkleRoot
-    ) {
-      throw new Error('Drained pass row lacks the derived terminal tx/root state.');
-    }
-  }
-
-  if (observation.proofs.length !== drainedClaims.length) {
-    throw new Error('Actual proofs must cover every drained leaf exactly once.');
+  if (observation.proofs.length !== derived.orderedDrainedRows.length) {
+    throw new Error('Actual proofs must cover every event-derived drained leaf exactly once.');
   }
   const proofFingerprints = new Set<string>();
   for (const proof of observation.proofs) {
@@ -460,31 +617,142 @@ export function assertDrainPassObservation(
     proofFingerprints.add(proof.fingerprint);
   }
 
-  if (observation.ledgerDeltas.length !== derivedLedger.size) {
-    throw new Error('Actual ledger deltas must cover exactly all claimed orgs, including poison zeros.');
+  if (
+    observation.orgBalances.length !== claimedOrgIds.size
+    || observation.ledgerDeltas.length !== claimedOrgIds.size
+  ) {
+    throw new Error('Balance and ledger observations must cover exactly every claimed org.');
+  }
+  const balancesByOrg = new Map<string, ObservedOrgBalance>();
+  for (const balance of observation.orgBalances) {
+    const rawDelta = derived.rawLedgerByOrg.get(balance.orgId);
+    if (
+      balance.schedulerExecutionId !== expectation.schedulerExecutionId
+      || rawDelta === undefined
+      || balancesByOrg.has(balance.orgId)
+      || balance.after - balance.before !== rawDelta
+    ) {
+      throw new Error('Observed org balance is duplicate, cross-org, or mismatches raw debit/refund events.');
+    }
+    balancesByOrg.set(balance.orgId, balance);
   }
   const seenLedgerOrgs = new Set<string>();
   for (const delta of observation.ledgerDeltas) {
     if (
       delta.schedulerExecutionId !== expectation.schedulerExecutionId
-      || !derivedLedger.has(delta.orgId)
-      || delta.delta !== derivedLedger.get(delta.orgId)
+      || !derived.rawLedgerByOrg.has(delta.orgId)
+      || delta.delta !== derived.rawLedgerByOrg.get(delta.orgId)
       || seenLedgerOrgs.has(delta.orgId)
     ) {
-      throw new Error('Actual derived ledger delta is duplicate, unrelated, or mismatches eligible drained counts.');
+      throw new Error('Actual ledger delta is duplicate, cross-org, or mismatches raw debit/refund events.');
     }
     seenLedgerOrgs.add(delta.orgId);
   }
 
+  const drainedLeaves = derived.orderedDrainedRows.length;
+  if (observation.pendingAfter !== observation.pendingBefore - drainedLeaves) {
+    throw new Error('Observed pending remainder does not equal pending-before minus event-derived drained leaves.');
+  }
+  const creditStarvedLeaves = [...derived.outcomes.values()].filter((value) => value === 'credit-starved').length;
+  const refundedFailureLeaves = [...derived.outcomes.values()].filter((value) => value === 'refunded-failure').length;
   return {
     batchId: expectation.batchId,
     armedTrigger: expectation.armedTrigger,
     schedulerExecutionId: expectation.schedulerExecutionId,
     faultWindowId: expectation.faultWindow.id,
+    pendingBefore: observation.pendingBefore,
+    pendingAfter: observation.pendingAfter,
     claimedLeaves: expectation.claims.length,
-    drainedLeaves: drainedClaims.length,
-    poisonLeaves: expectation.claims.length - drainedClaims.length,
+    drainedLeaves,
+    poisonLeaves: creditStarvedLeaves + refundedFailureLeaves,
+    creditStarvedLeaves,
+    refundedFailureLeaves,
     transactionIds: observation.transactions.map((transaction) => transaction.txId),
     merkleRoots: observation.transactions.map((transaction) => transaction.merkleRoot),
+    startedAt: execution.startedAt,
+    completedAt: execution.completedAt,
+  };
+}
+
+/** Join multiple observed Scheduler ticks into the named exact or poison wave. */
+export function assertDrainWindowObservation(
+  expectation: DrainWindowExpectation,
+  observations: DrainPassObservation[],
+): DrainWindowEvidenceSummary {
+  requireId(expectation.scenarioId, 'scenarioId');
+  if (expectation.passes.length === 0 || expectation.passes.length !== observations.length) {
+    throw new Error('Drain window requires one actual observation for every declared Scheduler tick.');
+  }
+  if (expectation.passes.some((pass) => pass.armedTrigger !== expectation.armedTrigger)) {
+    throw new Error('Every drain-window pass must use the declared armed trigger.');
+  }
+  requireNonNegativeInteger(expectation.expectedInitialPending, 'expectedInitialPending');
+  requireNonNegativeInteger(expectation.expectedFinalPending, 'expectedFinalPending');
+
+  const summaries = expectation.passes.map((pass, index) => assertDrainPassObservation(pass, observations[index]!));
+  const executionIds = summaries.map((summary) => summary.schedulerExecutionId);
+  if (new Set(executionIds).size !== executionIds.length) throw new Error('Every Scheduler tick requires a distinct execution id.');
+  if (summaries[0]!.pendingBefore !== expectation.expectedInitialPending) {
+    throw new Error('First observed pending count does not match the named drain-window entry count.');
+  }
+  if (summaries[summaries.length - 1]!.pendingAfter !== expectation.expectedFinalPending) {
+    throw new Error('Final observed pending remainder does not match the drain-window declaration.');
+  }
+  for (let index = 1; index < summaries.length; index += 1) {
+    const previous = summaries[index - 1]!;
+    const current = summaries[index]!;
+    if (current.pendingBefore !== previous.pendingAfter) {
+      throw new Error('Observed pending remainder does not join across Scheduler ticks.');
+    }
+    if (timestamp(current.startedAt, 'Scheduler start') <= timestamp(previous.completedAt, 'Scheduler completion')) {
+      throw new Error('Observed Scheduler ticks are not chronological and non-overlapping.');
+    }
+  }
+
+  const drainedLeaves = summaries.reduce((sum, summary) => sum + summary.drainedLeaves, 0);
+  const poisonLeaves = summaries.reduce((sum, summary) => sum + summary.poisonLeaves, 0);
+  if (expectation.kind === 'eligible-10000') {
+    if (
+      expectation.armedTrigger !== 'global-flush'
+      || summaries.length !== 1
+      || expectation.expectedInitialPending !== 10_000
+      || expectation.expectedFinalPending !== 0
+      || summaries[0]!.drainedLeaves !== 10_000
+      || poisonLeaves !== 0
+    ) {
+      throw new Error('eligible-10000 requires one poison-free global Scheduler tick draining exactly 10000 leaves.');
+    }
+  } else if (expectation.kind === 'eligible-12500') {
+    if (
+      expectation.armedTrigger !== 'global-flush'
+      || summaries.length !== 2
+      || expectation.expectedInitialPending !== 12_500
+      || expectation.expectedFinalPending !== 0
+      || summaries[0]!.drainedLeaves !== 10_000
+      || summaries[0]!.pendingAfter !== 2_500
+      || summaries[1]!.drainedLeaves !== 2_500
+      || poisonLeaves !== 0
+    ) {
+      throw new Error('eligible-12500 requires observed poison-free 10000 and 2500 Scheduler ticks with joined remainder.');
+    }
+  } else if (expectation.kind === 'poison-isolation') {
+    if (poisonLeaves === 0 || drainedLeaves === 0 || expectation.expectedFinalPending === 0) {
+      throw new Error('poison-isolation requires observed poison rows, healthy drained neighbors, and a pending remainder.');
+    }
+  } else {
+    throw new Error(`Unsupported drain window kind: ${String(expectation.kind)}.`);
+  }
+
+  return {
+    scenarioId: expectation.scenarioId,
+    kind: expectation.kind,
+    armedTrigger: expectation.armedTrigger,
+    schedulerTicks: summaries.length,
+    drainedLeaves,
+    poisonLeaves,
+    initialPending: summaries[0]!.pendingBefore,
+    finalPending: summaries[summaries.length - 1]!.pendingAfter,
+    schedulerExecutionIds: executionIds,
+    transactionIds: summaries.flatMap((summary) => summary.transactionIds),
   };
 }
