@@ -279,6 +279,7 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const GIT_COMMIT_PATTERN = /^[0-9a-f]{40,64}$/;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const WAVE1_MANIFEST_PATH = 'docs/lane4/s33-wave1-batch-manifest.json';
+const WAVE1_ENTRY_DATASHEET_PATH = 'docs/lane4/s33-wave1-entry-datasheet.json';
 const WAVE1_TYPES_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-types.ts';
 const WAVE1_SOURCE_BLOB_PATHS = [
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
@@ -294,7 +295,7 @@ const WAVE1_EXCLUDED_PATHS = [
 const WAVE1_PROTOCOL_ALLOWED_DIFF_PATHS = [
   'docs/lane4/s33-corpus-datasheet.md',
   WAVE1_MANIFEST_PATH,
-  'docs/lane4/s33-wave1-entry-datasheet.json',
+  WAVE1_ENTRY_DATASHEET_PATH,
   'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
@@ -304,6 +305,21 @@ const WAVE1_TAXONOMY_ADJUDICATION_IDS = [
 ] as const;
 const WAVE1_ISSUED_DATE_ADJUDICATION_IDS = ['GD-S33-BAR-010', 'GD-S33-PDH-012'] as const;
 const WAVE1_REVISION9_RESOLVED_ISSUED_DATE_IDS = ['GD-S33-AU-002', 'GD-S33-AU-011'] as const;
+const WAVE1_INITIAL_LANE3_SUPPORT_COMMIT = 'dd3ae1edecb005730762277daf17e15d8009459d';
+// R9 is a logical history identifier and is intentionally not required to be
+// reachable from the final Team-3 support checkout used for the r10 restack.
+const WAVE1_REVISION9_COMMIT = 'b9bb1d3221d3567dbb08e1b23cab4dd687486738';
+const WAVE1_REVISION9_PREDECESSOR_COMMIT = '506ff62340db8f838ce68bc46ddfa6407735ce3c';
+const WAVE1_R9_SUPPORT_REVIEW_STATE = 'PENDING_LANE3_REVIEW_PR';
+const WAVE1_R10_SUPPORT_REVIEW_STATE = 'LANE3_TOOLING_EXACT_HEAD_REVIEW_PASS';
+const WAVE1_REVISION9_ENTRIES_SHA256 = '591b4f4b37e188f1ad7286f8bc2a7a6b407eb89674ed6321e898123c347800c0';
+const WAVE1_REVISION9_NORMALIZED_PINS_SHA256 = '8b4af182dcc161a041a8d933ec5d7277f2131f32cc6709ad75a2cd5acde2e7e2';
+const WAVE1_REVISION9_ENTRY_ROWS_SHA256 = '37f0e9d32b9f25422c93aeec985a624b2840deab3f33e7a453c14531591befdf';
+const WAVE1_REVISION9_SOURCE_BLOBS: Readonly<Record<(typeof WAVE1_SOURCE_BLOB_PATHS)[number], string>> = Object.freeze({
+  'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts': '4ac117c1663c6aefb63c7715440744af0e0b6a23',
+  'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts': '5000824f2bd4dd7ac9cd58243daeb7ba23c4c0cd',
+  'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts': 'a261cf690c930040f7dee0361ed29d73d1d23426',
+});
 const WAVE1_REMEDIATED_PAIR_IDS = [
   'GD-S33-NUR-001|GD-S33-NUR-011',
   'GD-S33-CPA-001|GD-S33-CPA-011',
@@ -324,6 +340,7 @@ const WAVE1_REVISION_CHANGED_IDS: Readonly<Record<number, readonly string[]>> = 
     'GD-S33-OOD-004', 'GD-S33-OOD-005', 'GD-S33-OOD-006',
     'GD-S33-OOD-007', 'GD-S33-OOD-008', 'GD-S33-OOD-009',
   ],
+  10: [],
 });
 const WAVE1_NORMALIZED_CHANGED_IDS: Readonly<Record<number, readonly string[]>> = Object.freeze({
   5: ['GD-S33-PDH-007'],
@@ -671,6 +688,7 @@ function countByCorpusSlice(entries: readonly BatchManifestEntry[]): Map<string,
 }
 
 interface Wave1ManifestBindings {
+  corpusRevisionParentCommit: string;
   supportCommit: string;
   supportTypesPath: string;
   supportTypesBlob: string;
@@ -680,11 +698,17 @@ interface Wave1ManifestBindings {
 
 function validateWave1SupportBindings(
   parsed: Readonly<Record<string, unknown>>,
+  manifestRevision: number,
 ): Wave1ManifestBindings {
   assertGitObject(parsed.corpusRevisionParentCommit, 'Manifest corpusRevisionParentCommit');
   assertGitObject(parsed.producerRevisionPredecessorCommit, 'Manifest producerRevisionPredecessorCommit');
-  if (parsed.corpusRevisionParentCommit !== parsed.producerRevisionPredecessorCommit) {
+  if (manifestRevision === 9
+    && parsed.corpusRevisionParentCommit !== parsed.producerRevisionPredecessorCommit) {
     throw new Error('Manifest producer predecessor must equal the corpus revision parent');
+  }
+  if (manifestRevision === 10
+    && parsed.producerRevisionPredecessorCommit !== WAVE1_REVISION9_COMMIT) {
+    throw new Error('Manifest revision-10 producer predecessor must be the reviewed revision-9 commit');
   }
   const support = recordValue(parsed.lane3SupportBase, 'Manifest lane3SupportBase');
   assertExactKeys(support, ['commit', 'typesPath', 'typesBlob', 'reviewState'], 'Manifest lane3SupportBase');
@@ -693,16 +717,23 @@ function validateWave1SupportBindings(
   assertGitObject(support.typesBlob, 'Manifest lane3SupportBase.typesBlob');
   assertExactString(
     support.reviewState,
-    'PENDING_LANE3_REVIEW_PR',
+    manifestRevision === 10 ? WAVE1_R10_SUPPORT_REVIEW_STATE : WAVE1_R9_SUPPORT_REVIEW_STATE,
     'Manifest lane3SupportBase.reviewState',
   );
+  if (manifestRevision === 10 && support.commit !== parsed.corpusRevisionParentCommit) {
+    throw new Error('Manifest revision-10 Lane-3 support commit must be the single Git parent');
+  }
 
   const sourceBlobs = recordValue(parsed.corpusSourceBlobs, 'Manifest corpusSourceBlobs');
   assertExactKeys(sourceBlobs, WAVE1_SOURCE_BLOB_PATHS, 'Manifest corpusSourceBlobs');
   for (const path of WAVE1_SOURCE_BLOB_PATHS) {
     assertGitObject(sourceBlobs[path], `Manifest corpusSourceBlobs.${path}`);
+    if (manifestRevision === 10 && sourceBlobs[path] !== WAVE1_REVISION9_SOURCE_BLOBS[path]) {
+      throw new Error(`Manifest revision-10 corpus source blob ${path} must preserve the reviewed revision-9 pin`);
+    }
   }
   return {
+    corpusRevisionParentCommit: parsed.corpusRevisionParentCommit,
     supportCommit: support.commit,
     supportTypesPath: support.typesPath as string,
     supportTypesBlob: support.typesBlob,
@@ -746,12 +777,25 @@ const AUTHORIZED_REVISION_KEYS: Readonly<Record<number, readonly string[]>> = Ob
     'normalizedInputPinsPreservedFromRevision8', 'remainingSubstantiveGroundTruthFields',
     'producerRevisionPredecessorCommit', 'lane3SupportBaseCommit',
   ],
+  10: [
+    'revision', 'authority', 'changedEntryIds', 'change', 'corpusDataChanged',
+    'normalizedInputChanged', 'sourceBlobsUnchangedFromRevision9',
+    'normalizedInputPinsPreservedFromRevision9', 'producerRevisionPredecessorCommit',
+    'directBaseCommit', 'lane3SupportBaseCommit',
+  ],
 });
 
-function wave1AuthorizedRevisionContract(bindings: Wave1ManifestBindings): Record<string, unknown> {
-  return {
-    status: 'PASS',
-    revisions: [
+function wave1AuthorizedRevisionContract(
+  bindings: Wave1ManifestBindings,
+  manifestRevision: number,
+): Record<string, unknown> {
+  const historicalSupportCommit = manifestRevision === 10
+    ? WAVE1_INITIAL_LANE3_SUPPORT_COMMIT
+    : bindings.supportCommit;
+  const revision9PredecessorCommit = manifestRevision === 10
+    ? WAVE1_REVISION9_PREDECESSOR_COMMIT
+    : bindings.producerRevisionPredecessorCommit;
+  const revisions: Array<Record<string, unknown>> = [
       {
         revision: 2,
         authority: 'RTE protocol-required Wave 1 overlap revision',
@@ -818,7 +862,7 @@ function wave1AuthorizedRevisionContract(bindings: Wave1ManifestBindings): Recor
         corpusDataChanged: false,
         normalizedInputChanged: false,
         producerRevisionPredecessorCommit: 'dcbe0abd741a66401744a2cf916a583e865e2c9f',
-        directBaseCommit: bindings.supportCommit,
+        directBaseCommit: historicalSupportCommit,
         sourceBlobsUnchangedFromRevision6: true,
       },
       {
@@ -841,7 +885,7 @@ function wave1AuthorizedRevisionContract(bindings: Wave1ManifestBindings): Recor
           'GD-S33-NUR-005': 6,
         },
         producerRevisionPredecessorCommit: 'c56bc9958f774471ff62a31418c304149afd4bc6',
-        lane3SupportBaseCommit: bindings.supportCommit,
+        lane3SupportBaseCommit: historicalSupportCommit,
       },
       {
         revision: 9,
@@ -868,10 +912,28 @@ function wave1AuthorizedRevisionContract(bindings: Wave1ManifestBindings): Recor
           nonOodMinimum: 5,
           oodPureAbstention: 2,
         },
-        producerRevisionPredecessorCommit: bindings.producerRevisionPredecessorCommit,
-        lane3SupportBaseCommit: bindings.supportCommit,
+        producerRevisionPredecessorCommit: revision9PredecessorCommit,
+        lane3SupportBaseCommit: historicalSupportCommit,
       },
-    ],
+  ];
+  if (manifestRevision === 10) {
+    revisions.push({
+      revision: 10,
+      authority: 'RTE history-preserving restack onto the reviewed final Team 3 prerequisite',
+      changedEntryIds: [],
+      change: 'transplanted revision 9 corpus truth onto the reviewed final Team 3 prerequisite without changing corpus source blobs or normalized-input pins',
+      corpusDataChanged: false,
+      normalizedInputChanged: false,
+      sourceBlobsUnchangedFromRevision9: true,
+      normalizedInputPinsPreservedFromRevision9: true,
+      producerRevisionPredecessorCommit: WAVE1_REVISION9_COMMIT,
+      directBaseCommit: bindings.corpusRevisionParentCommit,
+      lane3SupportBaseCommit: bindings.supportCommit,
+    });
+  }
+  return {
+    status: 'PASS',
+    revisions,
   };
 }
 
@@ -956,7 +1018,7 @@ function validateAuthorizedRevision(
     revisionRecord.changedEntryIds,
     `${label}.changedEntryIds`,
     entryIds,
-    revision === 7,
+    revision === 7 || revision === 10,
   );
   assertSameOrderedValues(
     changedEntryIds,
@@ -993,7 +1055,8 @@ function validateAuthorizedRevision(
   }
   for (const booleanKey of [
     'corpusDataChanged', 'sourceBlobsUnchangedFromRevision6', 'corpusSourceTextChanged',
-    'normalizedInputPinsPreservedFromRevision8',
+    'normalizedInputPinsPreservedFromRevision8', 'sourceBlobsUnchangedFromRevision9',
+    'normalizedInputPinsPreservedFromRevision9',
   ]) {
     if (Object.hasOwn(revisionRecord, booleanKey)) {
       booleanValue(revisionRecord[booleanKey], `${label}.${booleanKey}`);
@@ -1098,10 +1161,10 @@ function validateWave1SelfChecks(
     entriesById,
   ));
   const expectedRevisionNumbers = Array.from({ length: manifestRevision - 1 }, (_, index) => index + 2);
-  if (manifestRevision !== 9
+  if (![9, 10].includes(manifestRevision)
     || revisionNumbers.length !== expectedRevisionNumbers.length
     || revisionNumbers.some((revision, index) => revision !== expectedRevisionNumbers[index])) {
-    throw new Error('Manifest authorized revision history must be complete and contiguous from revision 2 through 9');
+    throw new Error('Manifest authorized revision history must be complete and contiguous through the declared revision 9 or 10');
   }
   const currentRevision = revisions.revisions.at(-1) as Record<string, unknown>;
   if (Object.hasOwn(currentRevision, 'producerRevisionPredecessorCommit')
@@ -1114,7 +1177,7 @@ function validateWave1SelfChecks(
   }
   assertExactContractValue(
     revisions,
-    wave1AuthorizedRevisionContract(bindings),
+    wave1AuthorizedRevisionContract(bindings, manifestRevision),
     'Manifest selfChecks.authorizedDocumentRevisions',
   );
 
@@ -1265,7 +1328,7 @@ function validateWave1SelfChecks(
   ) !== false) throw new Error('Manifest Lane-3 dependency must not be included in the producer diff');
   assertExactString(
     dependency.reviewState,
-    'PENDING_LANE3_REVIEW_PR',
+    bindings.supportReviewState,
     'Manifest selfChecks.batchScopeOnly.dependency.reviewState',
   );
   if (dependency.commit !== bindings.supportCommit
@@ -1312,7 +1375,7 @@ function loadBatchManifest(content: ArtifactContent): LoadedBatchManifest {
     'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
     'Manifest status',
   );
-  const bindings = validateWave1SupportBindings(parsed);
+  const bindings = validateWave1SupportBindings(parsed, revision);
   const entryCount = positiveInteger(parsed.entryCount, 'Manifest entryCount');
   const intendedSplit = nonEmptyString(parsed.intendedSplit, 'Manifest intendedSplit');
   assertExactString(intendedSplit, 'held-out-candidate', 'Manifest intendedSplit');
@@ -1333,6 +1396,18 @@ function loadBatchManifest(content: ArtifactContent): LoadedBatchManifest {
     };
   });
   assertUniqueIds(entries.map(({ id }) => id), 'Manifest entries universe');
+  if (revision === 10) {
+    const normalizedPinsSha256 = sha256(canonicaliseJson(entries.map(({ id, normalizedInputSha256 }) => ({
+      id,
+      normalizedInputSha256,
+    }))));
+    if (normalizedPinsSha256 !== WAVE1_REVISION9_NORMALIZED_PINS_SHA256) {
+      throw new Error('Manifest revision-10 normalized-input pins must preserve the reviewed revision-9 pin set');
+    }
+    if (sha256(canonicaliseJson(entries)) !== WAVE1_REVISION9_ENTRIES_SHA256) {
+      throw new Error('Manifest revision-10 entries must preserve the reviewed revision-9 ground-truth set');
+    }
+  }
   if (entryCount !== entries.length) throw new Error('Manifest entryCount does not match entries length');
   if (!isRecord(parsed.counts)) throw new Error('Manifest counts must be an object');
   assertExactKeys(parsed.counts, ['byDomain', 'byCredentialType', 'byCorpusSlice'], 'Manifest counts');
@@ -2274,16 +2349,17 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       ], { encoding: 'utf8' }).trim().split(/\s+/);
       if (lineage.length !== 2) throw new Error('Freeze commit must have exactly one parent');
       [, actualParent] = lineage;
-      execFileSync(GIT_EXECUTABLE, [
-        '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${predecessorCommit}^{commit}`,
-      ], { stdio: 'ignore' });
+      if (manifest.revision === 9) {
+        execFileSync(GIT_EXECUTABLE, [
+          '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${predecessorCommit}^{commit}`,
+        ], { stdio: 'ignore' });
+      }
     } catch (error) {
       throw new Error('Freeze producer predecessor is missing from Git or freeze lineage is invalid', { cause: error });
     }
-    if (actualParent !== predecessorCommit || actualParent !== corpusParentCommit) {
-      throw new Error('Freeze Git parent does not match the declared producer predecessor/corpus parent');
+    if (actualParent !== corpusParentCommit) {
+      throw new Error('Freeze Git parent does not match the declared corpus revision parent');
     }
-
     const support = recordValue(parsed.lane3SupportBase, 'Manifest lane3SupportBase');
     const supportCommit = nonEmptyString(support.commit, 'Manifest lane3SupportBase.commit');
     const supportTypesBlob = nonEmptyString(support.typesBlob, 'Manifest lane3SupportBase.typesBlob');
@@ -2292,13 +2368,19 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
         '-C', this.#config.repositoryRoot, 'cat-file', '-e', `${supportCommit}^{commit}`,
       ], { stdio: 'ignore' });
       execFileSync(GIT_EXECUTABLE, [
-        '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor', supportCommit, predecessorCommit,
+        '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor', supportCommit, corpusParentCommit,
       ], { stdio: 'ignore' });
+      if (manifest.revision === 10) {
+        execFileSync(GIT_EXECUTABLE, [
+          '-C', this.#config.repositoryRoot, 'merge-base', '--is-ancestor',
+          WAVE1_INITIAL_LANE3_SUPPORT_COMMIT, supportCommit,
+        ], { stdio: 'ignore' });
+      }
     } catch (error) {
-      throw new Error('Lane-3 support commit is missing or is not an ancestor of the producer predecessor', { cause: error });
+      throw new Error('Lane-3 support lineage is missing or does not retain the initial reviewed support commit', { cause: error });
     }
     this.verifyDeclaredBlobAtPath(supportTypesBlob, supportCommit, WAVE1_TYPES_PATH, 'Lane-3 support types');
-    this.verifyDeclaredBlobAtPath(supportTypesBlob, predecessorCommit, WAVE1_TYPES_PATH, 'Producer-base support types');
+    this.verifyDeclaredBlobAtPath(supportTypesBlob, corpusParentCommit, WAVE1_TYPES_PATH, 'Corpus-parent support types');
     this.verifyDeclaredBlobAtPath(supportTypesBlob, commit, WAVE1_TYPES_PATH, 'Frozen support types');
 
     const selfChecks = recordValue(parsed.selfChecks, 'Manifest selfChecks');
@@ -2309,14 +2391,65 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
     );
     this.verifyProducerDiff(supportCommit, commit, authorizedPaths);
 
+    if (manifest.revision === 10) {
+      this.verifyRevision10EntryDatasheet(commit, payload, manifest);
+    }
+
     const sourceBlobs = recordValue(parsed.corpusSourceBlobs, 'Manifest corpusSourceBlobs');
     for (const path of WAVE1_SOURCE_BLOB_PATHS) {
-      this.verifyDeclaredBlobAtPath(
-        nonEmptyString(sourceBlobs[path], `Manifest corpusSourceBlobs.${path}`),
-        commit,
-        path,
-        'Frozen corpus source',
-      );
+      const blob = nonEmptyString(sourceBlobs[path], `Manifest corpusSourceBlobs.${path}`);
+      this.verifyDeclaredBlobAtPath(blob, commit, path, 'Frozen corpus source');
+    }
+  }
+
+  private verifyRevision10EntryDatasheet(
+    commit: string,
+    payload: ManifestFreezePayload,
+    manifest: ParsedBatchManifest,
+  ): void {
+    let content: Buffer;
+    try {
+      content = execFileSync(GIT_EXECUTABLE, [
+        '-C', this.#config.repositoryRoot, 'show', `${commit}:${WAVE1_ENTRY_DATASHEET_PATH}`,
+      ]);
+    } catch (error) {
+      throw new Error('Frozen revision-10 entry datasheet is missing', { cause: error });
+    }
+    const datasheet = parseStrictJsonDocument(content, 'Revision-10 entry datasheet').parsed;
+    assertExactKeys(datasheet, [
+      'schemaVersion', 'batchId', 'revision', 'manifestSha256', 'producerLane',
+      'acceptanceAuthority', 'status', 'entryCount', 'reviewOrder', 'acceptanceScope',
+      'authorshipNote', 'rows',
+    ], 'Revision-10 entry datasheet');
+    if (datasheet.schemaVersion !== 1) throw new Error('Revision-10 entry datasheet schemaVersion must be 1');
+    assertExactString(datasheet.batchId, 'S33-W1', 'Revision-10 entry datasheet batchId');
+    if (datasheet.revision !== 10) throw new Error('Revision-10 entry datasheet revision must be 10');
+    assertSha256(datasheet.manifestSha256, 'Revision-10 entry datasheet manifestSha256');
+    if (datasheet.manifestSha256 !== payload.manifestRawSha256) {
+      throw new Error('Revision-10 entry datasheet manifestSha256 must match the authenticated raw manifest');
+    }
+    assertExactString(datasheet.producerLane, 'Lane 4', 'Revision-10 entry datasheet producerLane');
+    assertExactString(datasheet.acceptanceAuthority, 'Lane 3', 'Revision-10 entry datasheet acceptanceAuthority');
+    assertExactString(
+      datasheet.status,
+      'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
+      'Revision-10 entry datasheet status',
+    );
+    if (datasheet.entryCount !== manifest.entryCount) {
+      throw new Error('Revision-10 entry datasheet entryCount must match the authenticated manifest');
+    }
+    assertExactString(datasheet.reviewOrder, 'kenya-first', 'Revision-10 entry datasheet reviewOrder');
+    assertExactString(datasheet.acceptanceScope, 'whole-batch-only', 'Revision-10 entry datasheet acceptanceScope');
+    assertExactString(
+      datasheet.authorshipNote,
+      'All rows are independently authored synthetic-realistic heldout candidates; no template generator or random seed was used.',
+      'Revision-10 entry datasheet authorshipNote',
+    );
+    if (!Array.isArray(datasheet.rows) || datasheet.rows.length !== manifest.entryCount) {
+      throw new Error('Revision-10 entry datasheet rows must match the complete authenticated manifest count');
+    }
+    if (sha256(canonicaliseJson(datasheet.rows)) !== WAVE1_REVISION9_ENTRY_ROWS_SHA256) {
+      throw new Error('Revision-10 entry datasheet rows must preserve the reviewed revision-9 canonical row set');
     }
   }
 
@@ -2400,6 +2533,7 @@ class AcceptanceOrchestrator implements S33AcceptanceOrchestrator {
       throw new Error(`${label} blob does not match the exact path in the declared commit`);
     }
   }
+
 }
 
 function validateLexicalNormalization(policy: unknown): asserts policy is LexicalNormalizationPolicy {

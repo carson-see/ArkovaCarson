@@ -25,14 +25,29 @@ _Last updated: 2026-07-13_
   No CTO key, registry backend, or approval is embedded; both production trust
   dependencies remain null in the code-owned descriptor, so production fails
   closed until the CTO configures them.
-- The S33-W1 revision-history self-check is an exact r2-through-r9 contract,
-  including each authority/change marker, boolean, fingerprint pin, field
-  count/floor, and ordered id set; type-correct substitutions fail closed. Git
-  freeze verification computes the raw diff from the declared Lane-3 support
-  commit and requires exactly the six manifest-authorized additions, each a
-  regular non-executable `100644` blob. Extra paths, deletions, renames,
-  copies (including copies from unchanged support-tree sources, detected with
-  `--find-copies-harder`), executable bits, symlinks, and gitlinks are rejected.
+- The S33-W1 revision-history self-check preserves the exact r2-through-r9
+  contract and permits one metadata-only r10 restack. R10 keeps historical
+  support anchored to `dd3ae1ed`, binds its logical prior producer revision to
+  reviewed r9 `b9bb1d32` (with declared predecessor `506ff623`), and separately binds
+  `corpusRevisionParentCommit` plus `directBaseCommit` to the freeze commit's
+  sole physical parent: the reviewed final Team-3 support head. Both r10
+  support-state bindings must say `LANE3_TOOLING_EXACT_HEAD_REVIEW_PASS`; that
+  means tooling review only, never corpus acceptance, merge, production, or
+  launch approval. The logical r9 commit need not be reachable in the support
+  checkout: r10 declares no corpus or normalized-input changes and is checked
+  against the three hard-pinned reviewed-r9 source blobs, the no-LF canonical
+  entry-datasheet row digest, and the no-LF canonical ordered normalized-input
+  pin digest. A separate no-LF canonical digest pins every four-field manifest
+  entry, including domain and credential-type ground truth. The r10 entry
+  datasheet may change only its revision and manifest hash metadata; its exact
+  schema/static invariants and rows are revalidated.
+  The corpus markdown may truthfully describe the r10 restack. Every history
+  field remains exact and type-correct substitutions fail closed. The
+  support-to-freeze raw diff must contain
+  exactly the six manifest-authorized additions as regular non-executable
+  `100644` blobs. Extra paths, deletions, renames, copies (including copies from
+  unchanged support-tree sources, detected with `--find-copies-harder`),
+  executable bits, symlinks, and gitlinks are rejected.
 - Every selection and lexical result is recursively frozen before it crosses
   the orchestration boundary, including sample ids, metrics/hits, and evidence.
   Audit-transcript reads open the final path with `O_NOFOLLOW`, verify the same

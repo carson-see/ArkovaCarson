@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
 import * as acceptanceModule from './s33-batch-acceptance.js';
@@ -69,6 +69,18 @@ const WAVE1_SOURCE_PATHS = [
   'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
 ] as const;
+const WAVE1_INITIAL_LANE3_SUPPORT_COMMIT = 'dd3ae1edecb005730762277daf17e15d8009459d';
+const WAVE1_REVISION9_COMMIT = 'b9bb1d3221d3567dbb08e1b23cab4dd687486738';
+const WAVE1_REVISION9_PREDECESSOR_COMMIT = '506ff62340db8f838ce68bc46ddfa6407735ce3c';
+const WAVE1_R10_SUPPORT_REVIEW_STATE = 'LANE3_TOOLING_EXACT_HEAD_REVIEW_PASS';
+const WAVE1_REVISION9_ENTRIES_SHA256 = '591b4f4b37e188f1ad7286f8bc2a7a6b407eb89674ed6321e898123c347800c0';
+const WAVE1_REVISION9_NORMALIZED_PINS_SHA256 = '8b4af182dcc161a041a8d933ec5d7277f2131f32cc6709ad75a2cd5acde2e7e2';
+const WAVE1_REVISION9_ENTRY_ROWS_SHA256 = '37f0e9d32b9f25422c93aeec985a624b2840deab3f33e7a453c14531591befdf';
+const WAVE1_REVISION9_SOURCE_BLOBS = {
+  [WAVE1_SOURCE_PATHS[0]]: '4ac117c1663c6aefb63c7715440744af0e0b6a23',
+  [WAVE1_SOURCE_PATHS[1]]: '5000824f2bd4dd7ac9cd58243daeb7ba23c4c0cd',
+  [WAVE1_SOURCE_PATHS[2]]: 'a261cf690c930040f7dee0361ed29d73d1d23426',
+} as const;
 
 interface ManifestFixtureBindings {
   supportCommit: string;
@@ -337,6 +349,62 @@ function productionManifestFixture(bindings: ManifestFixtureBindings = {
   };
 }
 
+function repositoryRoot(): string {
+  return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  }).trim();
+}
+
+function revision10ManifestFixture(bindings: ManifestFixtureBindings): Record<string, unknown> {
+  const manifest = JSON.parse(execFileSync('git', [
+    'show', `${WAVE1_REVISION9_COMMIT}:${WAVE1_MANIFEST_PATH}`,
+  ], { cwd: repositoryRoot(), encoding: 'utf8' })) as Record<string, unknown>;
+  manifest.revision = 10;
+  manifest.corpusRevisionParentCommit = bindings.supportCommit;
+  manifest.producerRevisionPredecessorCommit = WAVE1_REVISION9_COMMIT;
+  manifest.corpusSourceBlobs = bindings.sourceBlobs;
+
+  const support = manifest.lane3SupportBase as Record<string, unknown>;
+  support.commit = bindings.supportCommit;
+  support.typesBlob = bindings.supportTypesBlob;
+  support.reviewState = WAVE1_R10_SUPPORT_REVIEW_STATE;
+
+  const selfChecks = manifest.selfChecks as Record<string, unknown>;
+  const revisions = (selfChecks.authorizedDocumentRevisions as {
+    revisions: Array<Record<string, unknown>>;
+  }).revisions;
+  revisions.push({
+    revision: 10,
+    authority: 'RTE history-preserving restack onto the reviewed final Team 3 prerequisite',
+    changedEntryIds: [],
+    change: 'transplanted revision 9 corpus truth onto the reviewed final Team 3 prerequisite without changing corpus source blobs or normalized-input pins',
+    corpusDataChanged: false,
+    normalizedInputChanged: false,
+    sourceBlobsUnchangedFromRevision9: true,
+    normalizedInputPinsPreservedFromRevision9: true,
+    producerRevisionPredecessorCommit: WAVE1_REVISION9_COMMIT,
+    directBaseCommit: bindings.supportCommit,
+    lane3SupportBaseCommit: bindings.supportCommit,
+  });
+  const dependency = (selfChecks.batchScopeOnly as {
+    dependency: Record<string, unknown>;
+  }).dependency;
+  dependency.commit = bindings.supportCommit;
+  dependency.typesBlob = bindings.supportTypesBlob;
+  dependency.reviewState = WAVE1_R10_SUPPORT_REVIEW_STATE;
+  return manifest;
+}
+
+function revision10ParserFixture(): Record<string, unknown> {
+  return revision10ManifestFixture({
+    supportCommit: 'a'.repeat(40),
+    supportTypesBlob: 'c'.repeat(40),
+    predecessorCommit: WAVE1_REVISION9_COMMIT,
+    sourceBlobs: { ...WAVE1_REVISION9_SOURCE_BLOBS },
+  });
+}
+
 function manifestContent(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({ ...productionManifestFixture(), ...overrides }, null, 2);
 }
@@ -465,6 +533,143 @@ function gitRepo(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutatio
   return { root, manifest, manifestPath, freezeCommitSha, verificationCommitSha };
 }
 
+interface Revision10GitMutation {
+  mergeFreezeCommit?: boolean;
+  mutateEntryDatasheet?: ManifestMutator;
+  mutateManifest?: ManifestMutator;
+  mutateSourceBytes?: boolean;
+}
+
+function revision10GitRepo(mutation: Revision10GitMutation = {}): {
+  root: string;
+  manifest: string;
+  manifestPath: string;
+  supportCommit: string;
+  freezeCommitSha: string;
+  verificationCommitSha: string;
+} {
+  const root = mkdtempSync(join(tmpdir(), 'arkova-s33-r10-git-'));
+  tempRoots.push(root);
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['fetch', '-q', '--no-tags', repositoryRoot(), 'HEAD'], { cwd: root });
+  execFileSync('git', ['switch', '-q', '--detach', 'FETCH_HEAD'], { cwd: root });
+  execFileSync('git', ['config', 'user.email', 'lane3-test@arkova.invalid'], { cwd: root });
+  execFileSync('git', ['config', 'user.name', 'Lane3 Test'], { cwd: root });
+  const supportCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: root, encoding: 'utf8',
+  }).trim();
+  const supportTypesBlob = execFileSync('git', ['rev-parse', `${supportCommit}:${WAVE1_TYPES_PATH}`], {
+    cwd: root, encoding: 'utf8',
+  }).trim();
+  const packetPaths = [
+    'docs/lane4/s33-corpus-datasheet.md',
+    'docs/lane4/s33-wave1-entry-datasheet.json',
+    ...WAVE1_SOURCE_PATHS,
+  ];
+  for (const path of packetPaths) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), execFileSync('git', [
+      'show', `${WAVE1_REVISION9_COMMIT}:${path}`,
+    ], { cwd: repositoryRoot() }));
+  }
+  if (mutation.mutateSourceBytes) {
+    writeFileSync(join(root, WAVE1_SOURCE_PATHS[0]), 'export const changedAfterRevision9 = true;\n', 'utf8');
+  }
+  const sourceBlobs = Object.fromEntries(WAVE1_SOURCE_PATHS.map((path) => [
+    path,
+    execFileSync('git', ['hash-object', path], { cwd: root, encoding: 'utf8' }).trim(),
+  ])) as ManifestFixtureBindings['sourceBlobs'];
+  const manifestObject = revision10ManifestFixture({
+    supportCommit,
+    supportTypesBlob,
+    predecessorCommit: WAVE1_REVISION9_COMMIT,
+    sourceBlobs,
+  });
+  mutation.mutateManifest?.(manifestObject);
+  const manifest = JSON.stringify(manifestObject, null, 2);
+  const manifestPath = WAVE1_MANIFEST_PATH;
+  writeFileSync(join(root, manifestPath), manifest, 'utf8');
+  const entryDatasheetPath = 'docs/lane4/s33-wave1-entry-datasheet.json';
+  const entryDatasheet = JSON.parse(readFileSync(join(root, entryDatasheetPath), 'utf8')) as Record<string, unknown>;
+  entryDatasheet.revision = 10;
+  entryDatasheet.manifestSha256 = sha256(manifest);
+  mutation.mutateEntryDatasheet?.(entryDatasheet);
+  writeFileSync(join(root, entryDatasheetPath), JSON.stringify(entryDatasheet, null, 2), 'utf8');
+  const corpusDatasheetPath = 'docs/lane4/s33-corpus-datasheet.md';
+  writeFileSync(
+    join(root, corpusDatasheetPath),
+    `${readFileSync(join(root, corpusDatasheetPath), 'utf8')}\nRevision 10 restack metadata: Team-3 exact-head tooling review passed.\n`,
+    'utf8',
+  );
+  execFileSync('git', ['add', '--all'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'revision 10 metadata-only restack'], { cwd: root });
+  let freezeCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: root, encoding: 'utf8',
+  }).trim();
+  if (mutation.mergeFreezeCommit) {
+    const tree = execFileSync('git', ['rev-parse', `${freezeCommitSha}^{tree}`], {
+      cwd: root, encoding: 'utf8',
+    }).trim();
+    freezeCommitSha = execFileSync('git', [
+      'commit-tree', tree, '-p', supportCommit, '-p', WAVE1_INITIAL_LANE3_SUPPORT_COMMIT,
+    ], { cwd: root, encoding: 'utf8', input: 'invalid merge-parent freeze\n' }).trim();
+    const verificationCommitSha = execFileSync('git', [
+      'commit-tree', tree, '-p', freezeCommitSha,
+    ], { cwd: root, encoding: 'utf8', input: 'verification descendant\n' }).trim();
+    return { root, manifest, manifestPath, supportCommit, freezeCommitSha, verificationCommitSha };
+  }
+  writeFileSync(join(root, 'verification.txt'), 'verification descendant\n', 'utf8');
+  execFileSync('git', ['add', 'verification.txt'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'verification descendant'], { cwd: root });
+  const verificationCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: root, encoding: 'utf8',
+  }).trim();
+  return { root, manifest, manifestPath, supportCommit, freezeCommitSha, verificationCommitSha };
+}
+
+function revision10Ceremony(mutation: Revision10GitMutation = {}) {
+  const repo = revision10GitRepo(mutation);
+  const { privateKey, trustRoot } = testKey();
+  const evidenceRoot = mkdtempSync(join(tmpdir(), 'arkova-s33-r10-ledger-'));
+  tempRoots.push(evidenceRoot);
+  const orchestrator = createTestOnlyS33AcceptanceOrchestrator({
+    trustRoot,
+    consumptionRegistry: new TestConsumptionRegistry(),
+    ledgerPath: join(evidenceRoot, 'acceptance-ledger.jsonl'),
+    repositoryRoot: repo.root,
+    repositoryIdentity: 'test/ArkovaCarson',
+    verificationCommitSha: repo.verificationCommitSha,
+  });
+  const commitment = signedArtifact<SaltCommitmentPayload>({
+    artifactType: 'arkova-s33-salt-commitment',
+    artifactVersion: '1.0.0',
+    commitmentId: 'S33-W1-r10-commitment-1',
+    signerIdentity: 'Arkova CTO',
+    signingKeyId: 'cto-policy-test-key-1',
+    signedAtUtc: '2026-07-13T14:00:00.000Z',
+    saltCommitment: { algorithm: 'sha256', value: sha256('33'.repeat(32)) },
+  }, privateKey);
+  const freeze = signedArtifact<ManifestFreezePayload>({
+    artifactType: 'arkova-s33-manifest-freeze',
+    artifactVersion: '1.0.0',
+    freezeId: 'S33-W1-r10-freeze-1',
+    signerIdentity: 'Arkova CTO',
+    signingKeyId: 'cto-policy-test-key-1',
+    signedAtUtc: '2026-07-13T14:01:00.000Z',
+    commitmentArtifactCanonicalSha256: canonicalManifestHash(commitment.content),
+    batchId: 'S33-W1',
+    revision: 10,
+    manifestRawSha256: rawManifestHash(repo.manifest),
+    manifestCanonicalSha256: canonicalManifestHash(repo.manifest),
+    gitEvidence: {
+      repositoryIdentity: 'test/ArkovaCarson',
+      freezeCommitSha: repo.freezeCommitSha,
+      manifestPath: repo.manifestPath,
+    },
+  }, privateKey);
+  return { repo, orchestrator, commitment, freeze };
+}
+
 function ceremony(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutation) {
   const repo = gitRepo(mutateManifest, mutateGit);
   const manifest = repo.manifest;
@@ -555,7 +760,7 @@ function recordThroughReveal(context: ReturnType<typeof ceremony>): void {
   context.orchestrator.recordSaltReveal(context.revealContent);
 }
 
-describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, () => {
+describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, () => {
   it('requires an atomic registry with a callable create-if-absent operation', () => {
     const context = ceremony();
     expect(() => createTestOnlyS33AcceptanceOrchestrator({
@@ -822,6 +1027,233 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 15_000 }, (
       .toBe('BLOCKED_PROTOCOL_CONTRADICTION_CTO_L3');
     expect((manifest.selfChecks as Record<string, { status: string }>).lane3Acceptance.status)
       .toBe('NOT_RUN_PRODUCER_BOUNDARY');
+  });
+
+  it('locks the no-LF canonical r9 pin digests and source blobs to the reviewed b9 fixture', () => {
+    const root = repositoryRoot();
+    const revision9Manifest = JSON.parse(execFileSync('git', [
+      'show', `${WAVE1_REVISION9_COMMIT}:${WAVE1_MANIFEST_PATH}`,
+    ], { cwd: root, encoding: 'utf8' })) as { entries: ProductionManifestFixtureEntry[] };
+    const entriesCanonical = canonicaliseJson(revision9Manifest.entries);
+    expect(entriesCanonical.endsWith('\n')).toBe(false);
+    expect(sha256(entriesCanonical)).toBe(WAVE1_REVISION9_ENTRIES_SHA256);
+    const normalizedPinsCanonical = canonicaliseJson(revision9Manifest.entries.map(({
+      id,
+      normalizedInputSha256,
+    }) => ({ id, normalizedInputSha256 })));
+    expect(normalizedPinsCanonical.endsWith('\n')).toBe(false);
+    expect(sha256(normalizedPinsCanonical)).toBe(WAVE1_REVISION9_NORMALIZED_PINS_SHA256);
+
+    const entryDatasheet = JSON.parse(execFileSync('git', [
+      'show', `${WAVE1_REVISION9_COMMIT}:docs/lane4/s33-wave1-entry-datasheet.json`,
+    ], { cwd: root, encoding: 'utf8' })) as { rows: unknown[] };
+    const rowsCanonical = canonicaliseJson(entryDatasheet.rows);
+    expect(rowsCanonical.endsWith('\n')).toBe(false);
+    expect(sha256(rowsCanonical)).toBe(WAVE1_REVISION9_ENTRY_ROWS_SHA256);
+
+    for (const path of WAVE1_SOURCE_PATHS) {
+      expect(execFileSync('git', ['rev-parse', `${WAVE1_REVISION9_COMMIT}:${path}`], {
+        cwd: root,
+        encoding: 'utf8',
+      }).trim()).toBe(WAVE1_REVISION9_SOURCE_BLOBS[path]);
+    }
+  });
+
+  it('accepts only the history-preserving r10 restack onto the exact reviewed Team-3 support head', () => {
+    const context = revision10Ceremony();
+    const parsed = parseBatchManifest(context.repo.manifest).parsedJson;
+    const support = parsed.lane3SupportBase as Record<string, unknown>;
+    const revisions = ((parsed.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+      revisions: Array<Record<string, unknown>>;
+    }).revisions;
+    const revision10 = revisions.at(-1)!;
+    expect(parsed.revision).toBe(10);
+    expect(parsed.corpusRevisionParentCommit).toBe(context.repo.supportCommit);
+    expect(parsed.producerRevisionPredecessorCommit).toBe(WAVE1_REVISION9_COMMIT);
+    expect(support.commit).toBe(context.repo.supportCommit);
+    expect(support.reviewState).toBe(WAVE1_R10_SUPPORT_REVIEW_STATE);
+    expect(revisions[5].directBaseCommit).toBe(WAVE1_INITIAL_LANE3_SUPPORT_COMMIT);
+    expect(revisions[6].lane3SupportBaseCommit).toBe(WAVE1_INITIAL_LANE3_SUPPORT_COMMIT);
+    expect(revisions[7].producerRevisionPredecessorCommit).toBe(WAVE1_REVISION9_PREDECESSOR_COMMIT);
+    expect(revisions[7].lane3SupportBaseCommit).toBe(WAVE1_INITIAL_LANE3_SUPPORT_COMMIT);
+    expect(revision10).toMatchObject({
+      revision: 10,
+      changedEntryIds: [],
+      corpusDataChanged: false,
+      normalizedInputChanged: false,
+      sourceBlobsUnchangedFromRevision9: true,
+      normalizedInputPinsPreservedFromRevision9: true,
+      producerRevisionPredecessorCommit: WAVE1_REVISION9_COMMIT,
+      directBaseCommit: context.repo.supportCommit,
+      lane3SupportBaseCommit: context.repo.supportCommit,
+    });
+
+    const freezeLineage = execFileSync('git', [
+      'rev-list', '--parents', '-n', '1', context.repo.freezeCommitSha,
+    ], { cwd: context.repo.root, encoding: 'utf8' }).trim().split(/\s+/);
+    expect(freezeLineage).toEqual([context.repo.freezeCommitSha, context.repo.supportCommit]);
+    expect(() => execFileSync('git', [
+      'cat-file', '-e', `${WAVE1_REVISION9_COMMIT}^{commit}`,
+    ], { cwd: context.repo.root, stdio: 'ignore' })).toThrow();
+    const rawDiff = execFileSync('git', [
+      'diff', '--raw', '--no-abbrev', context.repo.supportCommit, context.repo.freezeCommitSha,
+    ], { cwd: context.repo.root, encoding: 'utf8' }).trim().split('\n');
+    expect(rawDiff).toHaveLength(6);
+    expect(rawDiff.every((line) => /^:000000 100644 [0-9a-f]{40} [0-9a-f]{40} A\t/u.test(line))).toBe(true);
+
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+      .not.toThrow();
+  });
+
+  it.each([
+    ['revision', 11],
+    ['authority', 'unreviewed restack'],
+    ['changedEntryIds', ['GD-S33-KE-001']],
+    ['change', 'corpus bytes may have changed'],
+    ['corpusDataChanged', true],
+    ['normalizedInputChanged', true],
+    ['sourceBlobsUnchangedFromRevision9', false],
+    ['normalizedInputPinsPreservedFromRevision9', false],
+    ['producerRevisionPredecessorCommit', 'd'.repeat(40)],
+    ['directBaseCommit', 'd'.repeat(40)],
+    ['lane3SupportBaseCommit', 'd'.repeat(40)],
+  ] satisfies Array<[string, unknown]>)('rejects an r10 history mutation of %s', (field, replacement) => {
+    const manifest = revision10ParserFixture();
+    const revisions = ((manifest.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+      revisions: Array<Record<string, unknown>>;
+    }).revisions;
+    revisions.at(-1)![field] = replacement;
+    expect(() => parseBatchManifest(JSON.stringify(manifest))).toThrow();
+  });
+
+  it.each([
+    ['corpus parent', (manifest: Record<string, unknown>) => {
+      manifest.corpusRevisionParentCommit = 'd'.repeat(40);
+    }],
+    ['logical predecessor', (manifest: Record<string, unknown>) => {
+      manifest.producerRevisionPredecessorCommit = WAVE1_REVISION9_PREDECESSOR_COMMIT;
+    }],
+    ['support commit', (manifest: Record<string, unknown>) => {
+      (manifest.lane3SupportBase as Record<string, unknown>).commit = 'd'.repeat(40);
+    }],
+    ['support types path', (manifest: Record<string, unknown>) => {
+      (manifest.lane3SupportBase as Record<string, unknown>).typesPath = 'services/worker/src/ai/eval/other.ts';
+    }],
+    ['support types blob', (manifest: Record<string, unknown>) => {
+      (manifest.lane3SupportBase as Record<string, unknown>).typesBlob = 'd'.repeat(40);
+    }],
+    ['support review state', (manifest: Record<string, unknown>) => {
+      (manifest.lane3SupportBase as Record<string, unknown>).reviewState = 'PENDING_LANE3_REVIEW_PR';
+    }],
+    ['dependency commit', (manifest: Record<string, unknown>) => {
+      const selfChecks = manifest.selfChecks as Record<string, unknown>;
+      ((selfChecks.batchScopeOnly as { dependency: Record<string, unknown> }).dependency).commit = 'd'.repeat(40);
+    }],
+    ['dependency types path', (manifest: Record<string, unknown>) => {
+      const selfChecks = manifest.selfChecks as Record<string, unknown>;
+      ((selfChecks.batchScopeOnly as { dependency: Record<string, unknown> }).dependency).typesPath = 'other.ts';
+    }],
+    ['dependency types blob', (manifest: Record<string, unknown>) => {
+      const selfChecks = manifest.selfChecks as Record<string, unknown>;
+      ((selfChecks.batchScopeOnly as { dependency: Record<string, unknown> }).dependency).typesBlob = 'd'.repeat(40);
+    }],
+    ['dependency review state', (manifest: Record<string, unknown>) => {
+      const selfChecks = manifest.selfChecks as Record<string, unknown>;
+      ((selfChecks.batchScopeOnly as { dependency: Record<string, unknown> }).dependency).reviewState = 'PENDING_LANE3_REVIEW_PR';
+    }],
+    ['dependency presence flag', (manifest: Record<string, unknown>) => {
+      const selfChecks = manifest.selfChecks as Record<string, unknown>;
+      ((selfChecks.batchScopeOnly as { dependency: Record<string, unknown> }).dependency).presentIdenticallyInBase = false;
+    }],
+    ['dependency diff flag', (manifest: Record<string, unknown>) => {
+      const selfChecks = manifest.selfChecks as Record<string, unknown>;
+      ((selfChecks.batchScopeOnly as { dependency: Record<string, unknown> }).dependency).includedInProducerDiff = true;
+    }],
+  ] satisfies Array<[string, ManifestMutator]>)('rejects an r10 binding mutation of %s', (_case, mutate) => {
+    const manifest = revision10ParserFixture();
+    mutate(manifest);
+    expect(() => parseBatchManifest(JSON.stringify(manifest))).toThrow();
+  });
+
+  it.each([
+    ['revision-7 initial support', 5, 'directBaseCommit'],
+    ['revision-8 initial support', 6, 'lane3SupportBaseCommit'],
+    ['revision-9 predecessor', 7, 'producerRevisionPredecessorCommit'],
+    ['revision-9 initial support', 7, 'lane3SupportBaseCommit'],
+  ] satisfies Array<[string, number, string]>)('rejects an r10 restack that rewrites the %s anchor', (
+    _case,
+    revisionIndex,
+    field,
+  ) => {
+    const manifest = revision10ParserFixture();
+    const revisions = ((manifest.selfChecks as Record<string, unknown>).authorizedDocumentRevisions as {
+      revisions: Array<Record<string, unknown>>;
+    }).revisions;
+    revisions[revisionIndex][field] = 'd'.repeat(40);
+    expect(() => parseBatchManifest(JSON.stringify(manifest))).toThrow();
+  });
+
+  it('rejects an r10 freeze with multiple physical parents', () => {
+    const context = revision10Ceremony({ mergeFreezeCommit: true });
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+      .toThrow(/exactly one parent|lineage/i);
+  });
+
+  it('rejects r10 corpus-source blob drift from the reviewed r9 commit', () => {
+    const context = revision10Ceremony({ mutateSourceBytes: true });
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+      .toThrow(/revision-10 corpus source blob.*reviewed revision-9 pin/i);
+  });
+
+  it('rejects r10 entry-datasheet row drift from the reviewed r9 packet', () => {
+    const context = revision10Ceremony({
+      mutateEntryDatasheet(datasheet): void {
+        const rows = datasheet.rows as Array<Record<string, unknown>>;
+        rows[0].jurisdiction = 'US';
+      },
+    });
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+      .toThrow(/entry datasheet rows.*reviewed revision-9 canonical row set/i);
+  });
+
+  it.each([
+    ['stale revision', (datasheet: Record<string, unknown>) => { datasheet.revision = 9; }],
+    ['wrong manifest hash', (datasheet: Record<string, unknown>) => { datasheet.manifestSha256 = '0'.repeat(64); }],
+    ['unknown approval field', (datasheet: Record<string, unknown>) => { datasheet.operatorApproval = true; }],
+    ['false acceptance status', (datasheet: Record<string, unknown>) => { datasheet.status = 'ACCEPTED'; }],
+  ] satisfies Array<[string, ManifestMutator]>)('rejects r10 entry-datasheet %s metadata', (_case, mutate) => {
+    const context = revision10Ceremony({ mutateEntryDatasheet: mutate });
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+      .toThrow(/revision-10 entry datasheet/i);
+  });
+
+  it('rejects r10 normalized-input pin drift from the reviewed r9 manifest', () => {
+    const context = revision10Ceremony({
+      mutateManifest(manifest): void {
+        const entries = manifest.entries as Array<Record<string, unknown>>;
+        entries[0].normalizedInputSha256 = 'f'.repeat(64);
+      },
+    });
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+      .toThrow(/revision-10 normalized-input pins.*reviewed revision-9 pin set/i);
+  });
+
+  it('rejects r10 non-pin ground-truth drift from the reviewed r9 manifest', () => {
+    const context = revision10Ceremony({
+      mutateManifest(manifest): void {
+        const entries = manifest.entries as Array<Record<string, unknown>>;
+        entries[0].credentialType = 'CERTIFICATE';
+      },
+    });
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+      .toThrow(/revision-10 entries.*reviewed revision-9 ground-truth set/i);
   });
 
   it('rejects missing or unknown nested production fields, count drift, and Kenya order drift', () => {
