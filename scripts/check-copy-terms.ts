@@ -104,7 +104,6 @@ const INCLUDE_ROOTS = [
 
 // Files/patterns to exclude
 const EXCLUDE_PATTERNS = [
-  'src/lib/copy.ts', // This file documents the rules
   '**/*.test.ts',
   '**/*.test.tsx',
   '**/node_modules/**',
@@ -127,6 +126,15 @@ export interface BaselineEntry {
   term: string;
   reason: string;
 }
+
+/**
+ * The ONLY terms a copy-terms-allowlist entry may pardon. Deliberately a
+ * set-of-one: the sole §1.3-sanctioned term inside src/lib/copy.ts is
+ * "Issue Credential" — the restricted verified-organisation issuance action
+ * (SCRUM-1672 / §1.3 exception). No other banned term has a sanctioned use in
+ * copy.ts, so nothing else is allowlistable.
+ */
+export const ALLOWLISTABLE_TERMS = new Set<string>(['issue credential']);
 
 function globToRegex(pattern: string): RegExp {
   const regexStr = pattern
@@ -181,6 +189,17 @@ export function shouldCheck(filePath: string): boolean {
 // the bulk of `lint:copy` runtime.
 const FORBIDDEN_REGEXES = FORBIDDEN_TERMS.map((t) => new RegExp(t, 'gi'));
 const LAUNCH_BLOCKER_REGEXES = LAUNCH_BLOCKER_COPY_TERMS.map((t) => new RegExp(t, 'gi'));
+
+export function isNonSuppressibleTerm(term: string): boolean {
+  const normalised = normaliseTerm(term);
+  return (
+    normalised === 'service_role' ||
+    normalised === 'service role' ||
+    normalised === 'postgrest' ||
+    normalised === 'worker service' ||
+    LAUNCH_BLOCKER_COPY_TERMS.some((launchBlocker) => normaliseTerm(launchBlocker) === normalised)
+  );
+}
 
 /**
  * Returns true if the line should be skipped (comments, imports, crypto API).
@@ -493,14 +512,16 @@ function normaliseTerm(term: string): string {
   return term.trim().toLowerCase();
 }
 
+const MATCH_KEY_SEP = '\\0';
+
 // Match key = normalised file + line + normalised term. SCRUM-2149 fix2:
-// `term` is part of the key (NUL-separated so it can never collide with the
+// `term` is part of the key (NUL-separated at runtime so it can never collide with the
 // `:line` segment) so that a NEW, *different* banned term/raw-enum added to an
 // already-grandfathered line is reported as `fresh` (→ fails CI) instead of
 // being silently tolerated as "existing". A violation is grandfathered only
 // when file + line + term all match a recorded baseline entry.
 function baselineKey(file: string, line: number, term: string): string {
-  return `${normaliseFile(file)}:${line} ${normaliseTerm(term)}`;
+  return `${normaliseFile(file)}:${line}${MATCH_KEY_SEP}${normaliseTerm(term)}`;
 }
 
 /**
@@ -552,7 +573,7 @@ export function partitionAgainstBaseline(
 
   for (const v of violations) {
     const key = baselineKey(v.file, v.line, v.term);
-    if (baselineKeys.has(key)) {
+    if (!isNonSuppressibleTerm(v.term) && baselineKeys.has(key)) {
       grandfathered.push(v);
       matchedKeys.add(key);
     } else {
@@ -562,6 +583,85 @@ export function partitionAgainstBaseline(
 
   const stale = baseline.filter((e) => !matchedKeys.has(baselineKey(e.file, e.line, e.term)));
   return { fresh, grandfathered, stale };
+}
+
+// =============================================================================
+// UX-03 follow-up — SCRUM-1672 sanctioned-copy allowlist (permanent policy).
+// Distinct from the grandfather baseline (transient debt): this file records
+// PERMANENT §1.3 carve-outs, keyed on normalised (file, term) with NO line
+// number, so it is immune to copy.ts line drift.
+// =============================================================================
+
+const ALLOWLIST_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'ci',
+  'snapshots',
+  'copy-terms-allowlist.json',
+);
+
+/** One sanctioned-copy carve-out. `term` must be in {@link ALLOWLISTABLE_TERMS}. */
+export interface AllowlistEntry {
+  file: string;
+  term: string;
+  reason: string;
+}
+
+export function loadAllowlist(allowlistPath: string = ALLOWLIST_PATH): AllowlistEntry[] {
+  try {
+    const raw = fs.readFileSync(allowlistPath, 'utf-8');
+    const parsed = JSON.parse(raw) as { allow?: AllowlistEntry[] };
+    if (!parsed || !Array.isArray(parsed.allow)) return [];
+    return parsed.allow.filter(
+      (e): e is AllowlistEntry =>
+        !!e &&
+        typeof e.file === 'string' &&
+        e.file.trim().length > 0 &&
+        typeof e.term === 'string' &&
+        typeof e.reason === 'string' &&
+        e.reason.trim().length > 0 &&
+        ALLOWLISTABLE_TERMS.has(normaliseTerm(e.term)) &&
+        !isNonSuppressibleTerm(e.term),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export interface AllowlistPartition {
+  /** Violations pardoned by a sanctioned-copy allowlist entry. */
+  allowed: Violation[];
+  /** Violations NOT pardoned — passed on to the baseline partition. */
+  remaining: Violation[];
+  /** Allowlist entries with no matching current violation — prompt cleanup. */
+  staleAllow: AllowlistEntry[];
+}
+
+export function partitionAgainstAllowlist(
+  violations: Violation[],
+  allowlist: AllowlistEntry[],
+): AllowlistPartition {
+  const allowKeys = new Set(
+    allowlist.map((e) => `${normaliseFile(e.file)}${MATCH_KEY_SEP}${normaliseTerm(e.term)}`),
+  );
+  const matched = new Set<string>();
+  const allowed: Violation[] = [];
+  const remaining: Violation[] = [];
+
+  for (const v of violations) {
+    const term = normaliseTerm(v.term);
+    const key = `${normaliseFile(v.file)}${MATCH_KEY_SEP}${term}`;
+    if (ALLOWLISTABLE_TERMS.has(term) && !isNonSuppressibleTerm(v.term) && allowKeys.has(key)) {
+      allowed.push(v);
+      matched.add(key);
+    } else {
+      remaining.push(v);
+    }
+  }
+
+  const staleAllow = allowlist.filter(
+    (e) => !matched.has(`${normaliseFile(e.file)}${MATCH_KEY_SEP}${normaliseTerm(e.term)}`),
+  );
+  return { allowed, remaining, staleAllow };
 }
 
 /**
@@ -630,7 +730,12 @@ export function findTermViolations(
     regex.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = regex.exec(cleaned)) !== null) {
-      if (isCodeIdentifier(cleaned, match.index, match[0].length)) continue;
+      if (
+        isCodeIdentifier(cleaned, match.index, match[0].length) &&
+        !isNonSuppressibleTerm(match[0])
+      ) {
+        continue;
+      }
       results.push({
         file: filePath,
         line: lineNum,
@@ -969,7 +1074,20 @@ export function scanFileContent(content: string, filePath: string): Violation[] 
     }
 
     if (shouldSkipLine(line, trimmed)) {
-      // Skipped for SCANNING only — the line still advances the JSX state
+      // A line-skip suppresses vocab false-positives (`crypto.subtle`→"crypto",
+      // the DOM `block:` param, URL `token` key). On a real CODE line it must
+      // NEVER hide a secret / launch-blocker leak in a same-line shipped string
+      // (e.g. `toast('service_role failed'); el.scrollIntoView()`), so we still
+      // scan those for the non-suppressible terms. Comments and imports are
+      // exempt — they are not shipped copy and legitimately mention infra terms.
+      const isCommentOrImport =
+        trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('import ');
+      if (!isCommentOrImport) {
+        violations.push(
+          ...findTermViolations(line, i + 1, filePath).filter((v) => isNonSuppressibleTerm(v.term)),
+        );
+      }
+      // Skipped for normal SCANNING only — the line still advances the JSX state
       // machine (e.g. a copy line exempted via `cryptographic` is still text).
       if (trackJsx) updateJsxTextState(line, jsx);
       continue;
@@ -993,7 +1111,7 @@ export function scanFileContent(content: string, filePath: string): Violation[] 
   return violations;
 }
 
-function checkFile(filePath: string): Violation[] {
+export function checkFile(filePath: string): Violation[] {
   return scanFileContent(fs.readFileSync(filePath, 'utf-8'), filePath);
 }
 
@@ -1042,10 +1160,31 @@ function main(): void {
     allViolations.push(...violations);
   }
 
-  // SCRUM-2148: partition against the grandfather baseline. Only NEW (fresh)
-  // violations fail the build; recorded pre-existing ones are tolerated.
+  // SCRUM-1672 sanctioned-copy allowlist (permanent §1.3 policy) runs FIRST —
+  // it pardons the "Issue Credential" restricted-flow strings in copy.ts.
+  const allowlist = loadAllowlist();
+  const { allowed, remaining, staleAllow } = partitionAgainstAllowlist(allViolations, allowlist);
+
+  // SCRUM-2148: whatever the allowlist did NOT pardon is partitioned against the
+  // grandfather baseline (transient debt). Only NEW (fresh) violations fail.
   const baseline = loadBaseline();
-  const { fresh, grandfathered, stale } = partitionAgainstBaseline(allViolations, baseline);
+  const { fresh, grandfathered, stale } = partitionAgainstBaseline(remaining, baseline);
+
+  if (allowed.length > 0) {
+    console.log(
+      `Allowing ${allowed.length} sanctioned copy string(s) via copy-terms-allowlist.json (SCRUM-1672 permanent carve-out).\n`,
+    );
+  }
+
+  if (staleAllow.length > 0) {
+    console.log(
+      `⚠️  ${staleAllow.length} stale allowlist entr(y/ies) — no longer matching any violation, consider removing from copy-terms-allowlist.json:`,
+    );
+    for (const e of staleAllow) {
+      console.log(`    - ${e.file} ("${e.term}")`);
+    }
+    console.log('');
+  }
 
   if (grandfathered.length > 0) {
     console.log(

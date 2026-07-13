@@ -167,3 +167,104 @@ describe('ProfessionalEducationExportPanel', () => {
     expect(screen.queryByRole('button', { name: 'Exporting CPE log' })).not.toBeInTheDocument();
   });
 });
+
+// ─── SCRUM-2378 (CPE-01): SECURED-only gate notice ───────────────────────────
+describe('ProfessionalEducationExportPanel — excluded-records notice (SCRUM-2378)', () => {
+  beforeEach(() => {
+    workerFetchMock.mockReset();
+    openMock.mockReset();
+  });
+
+  function exportResponseWithExcluded(excluded: number) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        request_id: 'request-1',
+        record_count: 2,
+        excluded_count: excluded,
+        requested_format: 'pdf',
+        exports: {
+          pdf: { signed_url: 'https://exports.example/cpe.pdf', path: 'cpe.pdf', expires_in: 3600 },
+          json: { signed_url: 'https://exports.example/cpe.json', path: 'cpe.json', expires_in: 3600 },
+        },
+      }),
+    } as Response;
+  }
+
+  it('renders the inline not-ready notice when the server excluded pending records', async () => {
+    const user = userEvent.setup();
+    workerFetchMock.mockResolvedValueOnce(exportResponseWithExcluded(3));
+
+    render(<ProfessionalEducationExportPanel userId={userId} />);
+    await user.type(screen.getByLabelText('CPE period start'), '2026-01-01');
+    await user.type(screen.getByLabelText('CPE period end'), '2026-12-31');
+    await user.click(screen.getByRole('button', { name: 'Export CPE log' }));
+
+    // The export is NOT blocked — the success message still appears…
+    expect(await screen.findByText('CPE log ready. 2 records included.')).toBeInTheDocument();
+    // …and the excluded records are surfaced, never silently dropped.
+    expect(
+      screen.getByText("3 records aren't included because they aren't secured."),
+    ).toBeInTheDocument();
+    expect(openMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses singular phrasing for a single excluded record', async () => {
+    const user = userEvent.setup();
+    workerFetchMock.mockResolvedValueOnce(exportResponseWithExcluded(1));
+
+    render(<ProfessionalEducationExportPanel userId={userId} />);
+    await user.type(screen.getByLabelText('CPE period start'), '2026-01-01');
+    await user.type(screen.getByLabelText('CPE period end'), '2026-12-31');
+    await user.click(screen.getByRole('button', { name: 'Export CPE log' }));
+
+    expect(
+      await screen.findByText("1 record isn't included because it isn't secured."),
+    ).toBeInTheDocument();
+  });
+
+  it('shows no notice when nothing was excluded (excluded_count 0 or absent)', async () => {
+    const user = userEvent.setup();
+    workerFetchMock.mockResolvedValueOnce(exportResponseWithExcluded(0));
+
+    render(<ProfessionalEducationExportPanel userId={userId} />);
+    await user.type(screen.getByLabelText('CPE period start'), '2026-01-01');
+    await user.type(screen.getByLabelText('CPE period end'), '2026-12-31');
+    await user.click(screen.getByRole('button', { name: 'Export CPE log' }));
+
+    expect(await screen.findByText('CPE log ready. 2 records included.')).toBeInTheDocument();
+    expect(screen.queryByTestId('excluded-records-notice')).not.toBeInTheDocument();
+  });
+
+  it('clears a stale notice when a later export excludes nothing', async () => {
+    const user = userEvent.setup();
+    workerFetchMock
+      .mockResolvedValueOnce(exportResponseWithExcluded(2))
+      .mockResolvedValueOnce(exportResponseWithExcluded(0));
+
+    render(<ProfessionalEducationExportPanel userId={userId} />);
+    await user.type(screen.getByLabelText('CPE period start'), '2026-01-01');
+    await user.type(screen.getByLabelText('CPE period end'), '2026-12-31');
+    await user.click(screen.getByRole('button', { name: 'Export CPE log' }));
+    expect(await screen.findByTestId('excluded-records-notice')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Export CPE log' }));
+    await waitFor(() =>
+      expect(screen.queryByTestId('excluded-records-notice')).not.toBeInTheDocument(),
+    );
+  });
+});
+
+// ─── SCRUM-2379 (CLE-01): jurisdiction-informational disclaimer ──────────────
+describe('ProfessionalEducationExportPanel — jurisdiction disclaimer (SCRUM-2379)', () => {
+  it('always renders the informational-only jurisdiction disclaimer', () => {
+    render(<ProfessionalEducationExportPanel userId={userId} />);
+    const disclaimer = screen.getByTestId('jurisdiction-disclaimer');
+    expect(disclaimer).toHaveTextContent(/informational metadata only/i);
+    // Claims-review gate (R-7 / §1.5): the disclaimer must never overclaim.
+    expect(disclaimer.textContent).not.toMatch(/\bmeets?\b/i);
+    expect(disclaimer.textContent).not.toMatch(/\bsatisf/i);
+    expect(disclaimer.textContent).not.toMatch(/legally sufficient/i);
+  });
+});

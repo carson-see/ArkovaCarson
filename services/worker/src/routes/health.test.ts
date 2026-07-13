@@ -35,7 +35,6 @@ function createMockDeps(overrides: Partial<HealthCheckDeps> = {}): HealthCheckDe
       geminiApiKey: 'key',
       aiProvider: 'mock',
       kmsProvider: 'gcp' as const,
-      bitcoinKmsKeyId: undefined,
       gcpKmsKeyResourceName: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
       bitcoinTreasuryWif: 'wif_test',
       enableProdNetworkAnchoring: false,
@@ -227,6 +226,60 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       expect(checks(result).anchoring.lastBatchAt).toBeNull();
     });
 
+    // ── Batch-drain dead-man's-switch (Lane-1 S3.5 / BTC-real) ──
+    // A stalled nightly drain and a healthy empty-queue flush both surface as
+    // HTTP 200; anchoring.status must become 'warning' ONLY when a real PENDING
+    // backlog is proven to be aging without being drained.
+    describe('batch-drain dead-man\'s-switch', () => {
+      it('anchoring.status stays ok when the PENDING queue is empty (prod steady state)', async () => {
+        const deps = createMockDeps({
+          getPendingAnchorCount: async () => ({ count: 0, error: null }),
+          getLastBatchAnchor: async () => ({ data: [{ updated_at: '2026-06-30T07:48:00Z' }], error: null }),
+        });
+        const result = await buildHealthResponse(deps, true);
+        expect(checks(result).anchoring.status).toBe('ok');
+        // Empty queue is healthy even though last batch was days ago.
+        expect(result.body.status).toBe('healthy');
+      });
+
+      it('anchoring.status becomes warning when a PENDING backlog has aged past the drain ceiling', async () => {
+        const staleIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(); // 6h old
+        const deps = createMockDeps({
+          getPendingAnchorCount: async () => ({ count: 250, error: null }),
+          getOldestPendingAnchor: async () => ({ data: [{ created_at: staleIso }], error: null }),
+          getLastBatchAnchor: async () => ({ data: [{ updated_at: new Date().toISOString() }], error: null }),
+        });
+        const result = await buildHealthResponse(deps, true);
+        expect(checks(result).anchoring.status).toBe('warning');
+        expect(checks(result).anchoring.drainStalled).toBe(true);
+        expect(checks(result).anchoring.drainReason).toBe('backlog_aged');
+      });
+
+      it('anchoring.status becomes warning when no batch has landed in >24h with a live backlog', async () => {
+        const youngIso = new Date(Date.now() - 5 * 60 * 1000).toISOString(); // 5m old
+        const staleBatchIso = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(); // 26h ago
+        const deps = createMockDeps({
+          getPendingAnchorCount: async () => ({ count: 3, error: null }),
+          getOldestPendingAnchor: async () => ({ data: [{ created_at: youngIso }], error: null }),
+          getLastBatchAnchor: async () => ({ data: [{ updated_at: staleBatchIso }], error: null }),
+        });
+        const result = await buildHealthResponse(deps, true);
+        expect(checks(result).anchoring.status).toBe('warning');
+        expect(checks(result).anchoring.drainReason).toBe('batch_stale');
+      });
+
+      it('drain switch is not evaluated in basic (non-detailed) mode', async () => {
+        const staleIso = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+        const deps = createMockDeps({
+          getPendingAnchorCount: async () => ({ count: 250, error: null }),
+          getOldestPendingAnchor: async () => ({ data: [{ created_at: staleIso }], error: null }),
+        });
+        const result = await buildHealthResponse(deps, false);
+        // Basic mode does no anchoring enrichment → compact anchoring stays 'ok'.
+        expect(checks(result).anchoring).toBe('ok');
+      });
+    });
+
     it('handles anchor query errors gracefully without degrading overall status', async () => {
       const deps = createMockDeps({
         getLastSecuredAnchor: async () => ({ data: null, error: { message: 'query failed' } }),
@@ -251,7 +304,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       expect(checks(result).kms.provider).toBe('gcp');
     });
 
-    it('reports KMS as configured when AWS KMS key is set', async () => {
+    it('does not report KMS as configured from a non-GCP provider without an active signer', async () => {
       const deps = createMockDeps({
         config: {
           bitcoinNetwork: 'mainnet' as const,
@@ -259,8 +312,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
           sentryDsn: undefined,
           geminiApiKey: undefined,
           aiProvider: 'mock',
-          kmsProvider: 'aws' as const,
-          bitcoinKmsKeyId: 'key-123',
+          kmsProvider: 'legacy',
           gcpKmsKeyResourceName: undefined,
           bitcoinTreasuryWif: undefined,
           enableProdNetworkAnchoring: true,
@@ -268,8 +320,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       });
       const result = await buildHealthResponse(deps, true);
 
-      expect(checks(result).kms.status).toBe('ok');
-      expect(checks(result).kms.provider).toBe('aws');
+      expect(checks(result).kms.status).toBe('warning');
+      expect(checks(result).kms.provider).toBe('none');
     });
 
     it('reports KMS as unconfigured when no key is available', async () => {
@@ -280,8 +332,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
           sentryDsn: undefined,
           geminiApiKey: undefined,
           aiProvider: 'mock',
-          kmsProvider: 'aws' as const,
-          bitcoinKmsKeyId: undefined,
+          kmsProvider: 'gcp' as const,
           gcpKmsKeyResourceName: undefined,
           bitcoinTreasuryWif: undefined,
           enableProdNetworkAnchoring: true,
@@ -301,8 +352,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
           sentryDsn: undefined,
           geminiApiKey: undefined,
           aiProvider: 'mock',
-          kmsProvider: 'aws' as const,
-          bitcoinKmsKeyId: undefined,
+          kmsProvider: 'gcp' as const,
           gcpKmsKeyResourceName: undefined,
           bitcoinTreasuryWif: 'wif_test',
           enableProdNetworkAnchoring: true,

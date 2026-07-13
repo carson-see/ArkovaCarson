@@ -93,3 +93,28 @@ except ArkovaError as exc:
 
 The client retries `429` and `5xx` responses by default and respects `Retry-After`.
 Pass `retries=0` to disable retries.
+
+## Offline proof verification (no network, no API key)
+
+`verify_bundle` verifies an exported Arkova proof package entirely offline —
+an independent re-derivation of the documented bundle format (Merkle
+recompute with the CVE-2012-2459 structural guard, fixed-offset on-chain
+payload decode, 80-byte header rules, timestamp honesty, Ed25519 signed
+bundles). It makes zero network calls and never contacts Arkova; on-chain
+confirmation runs only against canned or caller-supplied independent-node
+responses.
+
+```python
+import json
+from arkova import verify_bundle
+
+packet = json.load(open("proof.json"))
+outcome = verify_bundle(packet)          # recompute-only
+print(outcome.verdict, outcome.reason_code)  # "VERIFIED" / None, or a frozen code
+```
+
+Every NOT-VERIFIED outcome carries one frozen machine reason code
+(`arkova.REASON_CODES`), kept in lockstep with the TypeScript reference
+verifier via a cross-runtime parity gate in the Arkova repo. A passing
+signature never substitutes for the cryptographic recompute; a failing
+explicitly-requested signature check fails the verdict closed.

@@ -196,9 +196,39 @@ export interface MerkleProofResponse {
   proof_bundle: ProofBundle | null;
 }
 
+/**
+ * Stable, machine-readable discriminator for the two `/proof` 404 states.
+ *
+ * Additive per Constitution §1.8 — a NEW optional field, NOT a breaking change
+ * and NOT a v2. The human-readable `error` prose is unchanged (older clients
+ * that exact-match it keep working); this code lets a consumer (the FE
+ * proof-availability classifier — src/lib/proofAvailability.ts) route on a
+ * stable token instead of the prose, which would silently misroute if the copy
+ * is ever localized or a typo is corrected.
+ *
+ * Only the two 404 bodies carry a code today:
+ *   - NO_BATCH_PROOF    record exists (not deleted) but has NO Merkle proof —
+ *                       the honest "state 2" back-catalogue signal (empty state)
+ *   - RECORD_NOT_FOUND  unknown or soft-deleted publicId — a real error state
+ *
+ * 400 / 500 / 503 bodies intentionally omit it (undefined) — consumers MUST
+ * treat its absence as "fall back to the `error` string / HTTP status".
+ */
+export const PROOF_ERROR_CODE = {
+  NO_BATCH_PROOF: 'NO_BATCH_PROOF',
+  RECORD_NOT_FOUND: 'RECORD_NOT_FOUND',
+} as const;
+export type ProofErrorCode = (typeof PROOF_ERROR_CODE)[keyof typeof PROOF_ERROR_CODE];
+
 /** Error response */
 export interface ProofErrorResponse {
   error: string;
+  /**
+   * Additive (§1.8) machine-readable 404 discriminator. Present only on the two
+   * `/proof` 404 bodies; absent (undefined) on 400/500/503 and every response
+   * that predates this field — consumers MUST fall back to `error` when absent.
+   */
+  proof_error_code?: ProofErrorCode;
 }
 
 /** Injectable lookup for testing */
@@ -614,6 +644,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
         if (result === null) {
           res.status(404).json({
             error: 'No Merkle proof available for this record. It may not have been batch-anchored.',
+            proof_error_code: PROOF_ERROR_CODE.NO_BATCH_PROOF,
           } as ProofErrorResponse);
           return;
         }
@@ -652,7 +683,10 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
     }
 
     if (!anchor) {
-      res.status(404).json({ error: 'Record not found' } as ProofErrorResponse);
+      res.status(404).json({
+        error: 'Record not found',
+        proof_error_code: PROOF_ERROR_CODE.RECORD_NOT_FOUND,
+      } as ProofErrorResponse);
       return;
     }
 
@@ -661,6 +695,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
     if (result === null) {
       res.status(404).json({
         error: 'No Merkle proof available for this record. It may not have been batch-anchored.',
+        proof_error_code: PROOF_ERROR_CODE.NO_BATCH_PROOF,
       } as ProofErrorResponse);
       return;
     }

@@ -2,8 +2,8 @@
  * QA-CHAOS-02: Mempool.space Unavailability Simulation
  *
  * Validates retry + fallback behavior when mempool.space API is unavailable:
- * - retryWithBackoff retries on 5xx and network errors
- * - retryWithBackoff does NOT retry on 4xx
+ * - retryWithBackoff retries on 5xx, 429 (rate limit — S3-C2) and network errors
+ * - retryWithBackoff does NOT retry on other 4xx
  * - MempoolFeeEstimator falls back to static rate on failure
  * - isRetryableError correctly classifies error types
  * - isDuplicateTxError handles previous-attempt success detection
@@ -45,8 +45,10 @@ describe('QA-CHAOS-02: Mempool.space Unavailability', () => {
       expect(isRetryableError(new HttpError('unavailable', 503))).toBe(true);
     });
 
-    it('retries 429 is NOT retryable (HttpError < 500)', () => {
-      expect(isRetryableError(new HttpError('rate limited', 429))).toBe(false);
+    it('retries 429 Too Many Requests (rate limit is transient — S3-C2)', () => {
+      // S3-C2 chain-resilience hardening: a rate limit is transient by
+      // definition; bounded backoff-with-jitter is the correct response.
+      expect(isRetryableError(new HttpError('rate limited', 429))).toBe(true);
     });
 
     it('does NOT retry 400 Bad Request', () => {

@@ -16,6 +16,7 @@ import { test, expect } from './fixtures';
 
 const API_KEYS_DESCRIPTION = 'Manage API keys for programmatic access to the Verification API.';
 const DEVELOPER_OVERVIEW_LINK = /Developer Platform|API Documentation|developer overview/i;
+const API_KEY_SECRET_PATTERN = /^ak_(live|test)_[a-f0-9]{64}$/;
 
 async function expectApiKeysPage(page: Page) {
   await expect(
@@ -103,8 +104,11 @@ test.describe('API Keys & Verification Flow', () => {
       // After creation, the secret display phase should show
       // Either the key is created successfully or there is an error
       // (worker may not be running in CI, so we check for both states)
-      const keyCreatedTitle = orgAdminPage.getByText('API Key Created');
-      const errorAlert = orgAdminPage.locator('[role="alert"]');
+      const dialog = orgAdminPage.getByRole('dialog');
+      const keyCreatedTitle = dialog.getByRole('heading', { name: 'API Key Created' });
+      const errorAlert = dialog
+        .locator('[role="alert"]')
+        .filter({ hasText: /failed|error|invalid|unauthorized|forbidden|too many requests|rate limit|429/i });
 
       await expect(keyCreatedTitle.or(errorAlert)).toBeVisible({ timeout: 15000 });
 
@@ -112,12 +116,12 @@ test.describe('API Keys & Verification Flow', () => {
       if (await keyCreatedTitle.isVisible().catch(() => false)) {
         // Warning message about one-time display
         await expect(
-          orgAdminPage.getByText('Copy this key now. It will not be shown again.')
+          dialog.getByText('Copy this key now. It will not be shown again.')
         ).toBeVisible();
 
-        // The key value should be displayed in a monospace alert
-        const keyDisplay = orgAdminPage.locator('[role="alert"] .font-mono').filter({ hasText: /^ark_/ });
-        await expect(keyDisplay).toBeVisible();
+        // The key value should be displayed in a monospace alert.
+        const keyDisplay = dialog.locator('[role="alert"] .font-mono');
+        await expect(keyDisplay).toHaveText(API_KEY_SECRET_PATTERN);
 
         // Copy to Clipboard button should be visible
         await expect(
@@ -163,11 +167,39 @@ test.describe('API Keys & Verification Flow', () => {
       await orgAdminPage.goto('/settings/api-keys');
       await expectApiKeysPage(orgAdminPage);
 
-      // Usage dashboard or its offline state should be present.
+      // The ApiUsageDashboard renders one of four states
+      // (src/components/api/ApiUsageDashboard.tsx):
+      //   1. loading          -> spinner card (transient; react-query retry
+      //                          backoff can hold it well past 10s)
+      //   2. success          -> USAGE_TITLE heading ('API Usage')
+      //   3. auth-class error -> USAGE_CREATE_KEY_HINT copy
+      //   4. other error      -> USAGE_UNAVAILABLE copy
+      // (!usage renders nothing — that is a regression and must FAIL here.)
+      //
+      // The success state must be matched via the heading role: a bare
+      // getByText('API Usage') is a case-insensitive substring match that
+      // ALSO hits the card description 'Monitor your Verification API
+      // usage for the current billing period.' — a 2-element strict-mode
+      // violation that deterministically failed this spec whenever the
+      // dashboard loaded successfully (blocked #1439 / #1443).
+      const usageHeading = orgAdminPage.getByRole('heading', {
+        name: 'API Usage',
+        exact: true,
+      });
+      // Copy strings mirror USAGE_UNAVAILABLE / USAGE_CREATE_KEY_HINT in
+      // src/lib/copy.ts (e2e specs assert user-visible copy verbatim).
+      const usageUnavailable = orgAdminPage.getByText(
+        'Usage data unavailable — service not connected'
+      );
+      const usageCreateKeyHint = orgAdminPage.getByText(
+        'Usage metrics will appear once you create your first API key'
+      );
+
+      // 20s rides out the loading spinner across react-query retries while
+      // a wholly absent usage section still fails the assertion.
       await expect(
-        orgAdminPage.getByText('API Usage')
-          .or(orgAdminPage.getByText('Usage data unavailable — service not connected'))
-      ).toBeVisible({ timeout: 10000 });
+        usageHeading.or(usageUnavailable).or(usageCreateKeyHint).first()
+      ).toBeVisible({ timeout: 20000 });
     });
   });
 

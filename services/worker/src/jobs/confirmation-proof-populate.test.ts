@@ -19,7 +19,7 @@ import {
   populateConfirmationProofsForSecuredAnchors,
   type ConfirmationProofCandidate,
 } from './confirmation-proof-populate.js';
-import type { ConfirmationProofProvider } from '../chain/utxo-provider.js';
+import { HttpError, type ConfirmationProofProvider } from '../chain/utxo-provider.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 function dsha(b: Buffer): Buffer {
@@ -243,6 +243,120 @@ describe('populateConfirmationProofs', () => {
     await expect(
       populateConfirmationProofs(client, provider, [{ anchorId: 'a', chainTxId: txId }]),
     ).resolves.toBeDefined();
+  });
+
+  // ── #1408: fault classification propagates through the fan-out ──
+  // The tx IS mined (getRawTransaction resolves confirmed), but the header/proof
+  // fetch throws. A TRANSIENT throw ⇒ txPending (retry, NOT persisted); a
+  // DEFINITIVE throw ⇒ txStale (NOT persisted). This is the exact contract the
+  // #1408 rig never exercised (0 hits in 6h), verified here through the real
+  // populate fan-out rather than only at fetchConfirmationProof.
+
+  function minedProviderWithFailingProofFetch(err: unknown): {
+    provider: ConfirmationProofProvider;
+    txId: string;
+  } {
+    const leaf = makeTxidLE(0x1408);
+    const txId = displayHex(leaf);
+    const { blockHash } = buildSingleTxProof(leaf);
+    const provider: ConfirmationProofProvider = {
+      getRawTransaction: vi.fn().mockResolvedValue({ txid: txId, confirmations: 12, blockhash: blockHash, vout: [] }),
+      getBlockHeaderHex: vi.fn().mockRejectedValue(err),
+      getTxOutProof: vi.fn().mockRejectedValue(err),
+    };
+    return { provider, txId };
+  }
+
+  it('counts a TRANSIENT proof-fetch fault (HTTP 503) as txPending and persists nothing', async () => {
+    const { provider, txId } = minedProviderWithFailingProofFetch(
+      new HttpError('RPC gettxoutproof failed: HTTP 503', 503),
+    );
+    const { client, update } = mockClient();
+    const result = await populateConfirmationProofs(
+      client,
+      provider,
+      [{ anchorId: 'a', chainTxId: txId }],
+      { minConfirmations: 6 },
+    );
+    expect(result.txPending).toBe(1);
+    expect(result.txStale).toBe(0);
+    expect(result.txConfirmed).toBe(0);
+    expect(result.anchorsUpdated).toBe(0);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('counts a TRANSIENT proof-fetch fault (HTTP 429 rate-limit) as txPending', async () => {
+    const { provider, txId } = minedProviderWithFailingProofFetch(
+      new HttpError('RPC gettxoutproof failed: HTTP 429', 429),
+    );
+    const { client, update } = mockClient();
+    const result = await populateConfirmationProofs(
+      client,
+      provider,
+      [{ anchorId: 'a', chainTxId: txId }],
+      { minConfirmations: 6 },
+    );
+    expect(result.txPending).toBe(1);
+    expect(result.txStale).toBe(0);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('counts a DEFINITIVE proof-fetch fault (RPC "Block not found") as txStale and persists nothing', async () => {
+    const { provider, txId } = minedProviderWithFailingProofFetch(
+      new Error('RPC gettxoutproof error: Block not found (code -5)'),
+    );
+    const { client, update } = mockClient();
+    const result = await populateConfirmationProofs(
+      client,
+      provider,
+      [{ anchorId: 'a', chainTxId: txId }],
+      { minConfirmations: 6 },
+    );
+    expect(result.txStale).toBe(1);
+    expect(result.txPending).toBe(0);
+    expect(result.txConfirmed).toBe(0);
+    expect(result.anchorsUpdated).toBe(0);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('classifies transient vs definitive INDEPENDENTLY across a mixed batch (2 unique txs)', async () => {
+    const leafT = makeTxidLE(0x7777);
+    const leafD = makeTxidLE(0x9999);
+    const txT = displayHex(leafT); // transiently-failing tx
+    const txD = displayHex(leafD); // definitively-failing tx
+    const pT = buildSingleTxProof(leafT);
+    const pD = buildSingleTxProof(leafD);
+    const transient = new HttpError('RPC getblockheader failed: HTTP 500', 500);
+    const definitive = new Error('RPC gettxoutproof error: Transaction not in block (code -5)');
+
+    const provider: ConfirmationProofProvider = {
+      getRawTransaction: vi.fn(async (txid: string) =>
+        txid === txT
+          ? { txid: txT, confirmations: 9, blockhash: pT.blockHash, vout: [] }
+          : { txid: txD, confirmations: 9, blockhash: pD.blockHash, vout: [] },
+      ),
+      getBlockHeaderHex: vi.fn(async (hash: string) => {
+        throw hash === pT.blockHash ? transient : definitive;
+      }),
+      getTxOutProof: vi.fn(async (txids: string[]) => {
+        throw txids[0] === txT ? transient : definitive;
+      }),
+    };
+    const { client, update } = mockClient();
+    const result = await populateConfirmationProofs(
+      client,
+      provider,
+      [
+        { anchorId: 'a', chainTxId: txT },
+        { anchorId: 'b', chainTxId: txD },
+      ],
+      { minConfirmations: 6 },
+    );
+    expect(result.txAttempted).toBe(2);
+    expect(result.txPending).toBe(1); // the transient one retries
+    expect(result.txStale).toBe(1); // the definitive one is parked
+    expect(result.txConfirmed).toBe(0);
+    expect(update).not.toHaveBeenCalled();
   });
 });
 

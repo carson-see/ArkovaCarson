@@ -56,6 +56,41 @@ vi.mock('@/hooks/useProfile', () => ({
   }),
 }));
 
+// WH-02/03: the page composes the delivery-log hooks + test-ping action.
+// They have their own unit tests (useWebhookDeliveries.test.ts); mocked here
+// so page tests stay focused on wiring.
+const mockReplay = vi.fn();
+const mockDismiss = vi.fn();
+const mockSendTestPing = vi.fn();
+vi.mock('@/hooks/useWebhookDeliveries', () => ({
+  useWebhookDeliveries: () => ({
+    deliveries: [
+      {
+        id: 'log-1',
+        event_type: 'anchor.secured',
+        status: 'failed',
+        response_status: 503,
+        attempt_number: 5,
+        created_at: '2026-07-01T00:00:00Z',
+        delivered_at: null,
+        endpoint_url: 'https://example.com/webhooks',
+      },
+    ],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    replay: mockReplay,
+  }),
+  useWebhookDlq: () => ({
+    entries: [],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    dismiss: mockDismiss,
+  }),
+  sendWebhookTestPing: (...args: unknown[]) => mockSendTestPing(...args),
+}));
+
 // Mock navigator.clipboard
 Object.assign(navigator, {
   clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -471,6 +506,65 @@ describe('WebhookSettingsPage', () => {
 
       await waitFor(() => {
         expect(screen.getByText('No webhook endpoints configured')).toBeInTheDocument();
+      });
+    });
+  });
+
+  // =========================================================================
+  // WH-01/02/03 wiring: catalog + test ping + delivery log sections
+  // =========================================================================
+
+  describe('WH-01/02/03 page composition', () => {
+    it('renders the event catalog (WH-01)', async () => {
+      renderPage();
+
+      await waitFor(() => {
+        expect(screen.getByText(WEBHOOK_LABELS.CATALOG_TITLE)).toBeInTheDocument();
+      });
+      expect(screen.getByText(WEBHOOK_LABELS.CATALOG_REDACTION_NOTE)).toBeInTheDocument();
+    });
+
+    it('renders the delivery history + failed deliveries sections (WH-03)', async () => {
+      renderPage();
+
+      await waitFor(() => {
+        expect(screen.getByText(WEBHOOK_LABELS.DELIVERIES_TITLE)).toBeInTheDocument();
+      });
+      expect(screen.getByText(WEBHOOK_LABELS.FAILED_TITLE)).toBeInTheDocument();
+      // Delivery row from the mocked hook is rendered.
+      expect(screen.getByTestId('delivery-row-log-1')).toBeInTheDocument();
+    });
+
+    it('wires the test-ping action to sendWebhookTestPing (WH-02)', async () => {
+      mockSendTestPing.mockResolvedValue({ success: true, status_code: 200, event_id: 'evt-1' });
+
+      renderPage();
+
+      await waitFor(() => {
+        expect(screen.getByText('https://example.com/webhooks')).toBeInTheDocument();
+      });
+
+      await userEvent.click(
+        screen.getByRole('button', { name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION) }),
+      );
+
+      await waitFor(() => {
+        expect(mockSendTestPing).toHaveBeenCalledWith('ep-1');
+      });
+    });
+
+    it('wires the replay action to the deliveries hook (WH-03)', async () => {
+      mockReplay.mockResolvedValue({ replayed: true, ok: true, delivery_id: 'log-2', status_code: 200 });
+
+      renderPage();
+
+      const failedRow = await screen.findByTestId('delivery-row-log-1');
+      await userEvent.click(
+        within(failedRow).getByRole('button', { name: new RegExp(WEBHOOK_LABELS.REPLAY_ACTION) }),
+      );
+
+      await waitFor(() => {
+        expect(mockReplay).toHaveBeenCalledWith('log-1');
       });
     });
   });

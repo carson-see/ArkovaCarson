@@ -68,6 +68,34 @@ export const RUNTIME_DEP_SOURCES: readonly string[] = [
   'src/lib/mlRuntime.ts',
 ];
 
+/**
+ * Vendored runtime ESM bundles loaded via NATIVE browser `import()` (not
+ * bundled by Vite). WEBEXT-01 F-1: a top-level bare specifier in one of these
+ * (e.g. `import ... from "onnxruntime-web/webgpu"`) makes module LINKING throw
+ * in every browser — before CSP, before weights, before a single line of our
+ * code runs. That exact failure shipped to prod inside
+ * `transformers.web.min.js` and hard-blocked NER for every user (PR #1409 §6).
+ * These files are scanned for bare/off-origin specifiers on every PR.
+ *
+ * NOTE: these bundles are NOT scanned with FORBIDDEN_CDN_PATTERNS — the
+ * inlined onnxruntime code legitimately CONTAINS the jsdelivr default-URL
+ * string in a dead branch; what matters is (1) the module links (no bare
+ * specifiers) and (2) our loader pins `wasmPaths` same-origin BEFORE any
+ * session creation (see checkOrtWasmPathsPinned), so that branch never runs.
+ */
+export const VENDORED_RUNTIME_ESM: readonly string[] = [
+  'public/vendor/transformers.bundle.min.js',
+];
+
+/**
+ * The source file that must pin onnxruntime-web's `wasmPaths` to the
+ * same-origin vendor path (WEBEXT-01 F-2). Without the pin, ort defaults
+ * `wasmPaths` to `https://cdn.jsdelivr.net/npm/onnxruntime-web@<ver>/dist/`
+ * — which the deployed CSP (`connect-src 'self'`) correctly blocks, so the
+ * model load dies at the WASM fetch instead.
+ */
+export const ORT_WASM_PIN_SOURCE = 'src/lib/nerPiiDetector.ts';
+
 export interface CspFinding {
   kind: 'csp' | 'source';
   /** Source path for kind='source'; undefined for kind='csp'. */
@@ -153,6 +181,157 @@ export function scanSourceForForbiddenOrigins(
   return findings;
 }
 
+// ─── WEBEXT-01 F-1: vendored-ESM bare-specifier gate ──────────────────────
+
+export interface ModuleSpecifier {
+  specifier: string;
+  /** true = string-literal dynamic `import("x")`; false = static import/export clause. */
+  dynamic: boolean;
+}
+
+/**
+ * Extract every module specifier a browser would try to RESOLVE when loading
+ * this ESM source: static `import ... from "x"` / `import "x"` /
+ * `export ... from "x"` clauses and string-literal dynamic `import("x")`.
+ * Non-literal dynamic imports (`import(expr)`) and `import.meta` are ignored.
+ * Works on minified output (no whitespace between tokens).
+ */
+export function extractModuleSpecifiersDetailed(src: string): ModuleSpecifier[] {
+  const out = new Map<string, ModuleSpecifier>();
+  // Static forms. The clause charset ([\w$*{},\s]) is exactly what a minified
+  // import/export clause may contain (`import*as x from"y"`, `import a,{b}from"y"`,
+  // `export{a as b}from"y"`); it excludes `(`/`.`, so dynamic `import(...)` and
+  // `import.meta` never match here.
+  const staticRe = /\b(?:import|export)\s*(?:[\w$*{},\s]*?\bfrom\s*)?["']([^"']+)["']/g;
+  for (const m of src.matchAll(staticRe)) {
+    out.set(`s:${m[1]}`, { specifier: m[1], dynamic: false });
+  }
+  // Dynamic string-literal form.
+  const dynamicRe = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+  for (const m of src.matchAll(dynamicRe)) {
+    out.set(`d:${m[1]}`, { specifier: m[1], dynamic: true });
+  }
+  return [...out.values()];
+}
+
+/** Flat convenience form of extractModuleSpecifiersDetailed (unique specifiers). */
+export function extractModuleSpecifiers(src: string): string[] {
+  return [...new Set(extractModuleSpecifiersDetailed(src).map((s) => s.specifier))];
+}
+
+/** A browser can resolve these without an import map; anything else cannot. */
+function isRelativeOrRootSpecifier(spec: string): boolean {
+  return spec.startsWith('/') || spec.startsWith('./') || spec.startsWith('../');
+}
+
+/**
+ * Node builtins that emscripten/ort factories DYNAMICALLY import behind
+ * `globalThis.process?.versions?.node` environment guards. These never execute
+ * in a browser and — being dynamic — never participate in link-time resolution
+ * (the F-1 class). Allowed ONLY in dynamic position; a STATIC import of any of
+ * these is still link-fatal in a browser and stays a finding.
+ */
+const NODE_BUILTIN_DYNAMIC_ALLOWLIST: ReadonlySet<string> = new Set([
+  'module',
+  'worker_threads',
+  'fs',
+  'path',
+  'url',
+  'os',
+]);
+
+function isNodeBuiltin(spec: string): boolean {
+  return spec.startsWith('node:') || NODE_BUILTIN_DYNAMIC_ALLOWLIST.has(spec);
+}
+
+/**
+ * Scan vendored runtime ESM bundles for module specifiers a browser cannot
+ * link/load same-origin:
+ *   - STATIC bare specifiers — F-1: module LINKING throws
+ *     (`TypeError: Failed to resolve module specifier`) before any code runs;
+ *   - absolute off-origin URLs (static or dynamic) — an import the CSP would
+ *     have to allow off-origin, forbidden for §1.6 runtimes;
+ *   - DYNAMIC bare specifiers, except Node builtins behind environment guards
+ *     (the standard emscripten pattern in the ort wasm factory).
+ */
+export function scanVendoredEsmForBareSpecifiers(
+  files: ReadonlyArray<{ path: string; content: string }>,
+): CspFinding[] {
+  const findings: CspFinding[] = [];
+  for (const { path, content } of files) {
+    for (const { specifier: spec, dynamic } of extractModuleSpecifiersDetailed(content)) {
+      if (isRelativeOrRootSpecifier(spec)) continue;
+      if (/^https?:\/\//i.test(spec)) {
+        findings.push({
+          kind: 'source',
+          path,
+          message:
+            `vendored ESM imports an off-origin URL "${spec}" — ` +
+            "runtime module code must load from 'self' (re-vendor a self-contained bundle)",
+        });
+        continue;
+      }
+      if (dynamic && isNodeBuiltin(spec)) continue; // guarded Node-only path, browser-inert
+      findings.push({
+        kind: 'source',
+        path,
+        message:
+          `vendored ESM contains a ${dynamic ? 'dynamic' : 'static'} bare specifier "${spec}" — ` +
+          'native browser import cannot resolve it ' +
+          '(F-1 dead-on-arrival class; re-vendor a SELF-CONTAINED bundle with all deps inlined)',
+      });
+    }
+  }
+  return findings;
+}
+
+// ─── WEBEXT-01 F-2: ort wasmPaths same-origin pin gate ────────────────────
+
+/**
+ * Assert the NER loader pins onnxruntime-web's `wasmPaths` to a same-origin
+ * vendor path BEFORE any session creation:
+ *   1. an `ORT_WASM_VENDOR_PATH` constant exists and is app-origin-relative
+ *      (leading `/`, no scheme, no CDN host), and
+ *   2. `wasmPaths` is actually assigned from that constant.
+ * If either is missing, ort's jsdelivr default would win and the deployed CSP
+ * (`connect-src 'self'`) kills the WASM fetch — the F-2 latent break.
+ */
+export function checkOrtWasmPathsPinned(content: string): CspFinding[] {
+  const findings: CspFinding[] = [];
+  const code = content; // do NOT strip comments here: the pin must be real code, and the
+  // regexes below match assignments, which comments cannot satisfy anyway.
+
+  const constMatch = code.match(/ORT_WASM_VENDOR_PATH\s*=\s*['"]([^'"]+)['"]/);
+  if (!constMatch) {
+    findings.push({
+      kind: 'source',
+      path: ORT_WASM_PIN_SOURCE,
+      message:
+        'ORT_WASM_VENDOR_PATH constant not found — the ort WASM artifacts must be pinned to a same-origin /vendor/ path (WEBEXT-01 F-2)',
+    });
+  } else {
+    const value = constMatch[1];
+    if (!value.startsWith('/') || /^https?:/i.test(value) || /jsdelivr|unpkg|huggingface|hf\.co|cdn\./i.test(value)) {
+      findings.push({
+        kind: 'source',
+        path: ORT_WASM_PIN_SOURCE,
+        message: `ORT_WASM_VENDOR_PATH is "${value}" — must be an app-origin-relative path (leading '/', never a CDN/absolute URL)`,
+      });
+    }
+  }
+
+  if (!/\.wasmPaths\s*=\s*ORT_WASM_VENDOR_PATH/.test(code)) {
+    findings.push({
+      kind: 'source',
+      path: ORT_WASM_PIN_SOURCE,
+      message:
+        'wasmPaths is never assigned from ORT_WASM_VENDOR_PATH — onnxruntime-web would default to its jsdelivr CDN URL, which the deployed CSP blocks (WEBEXT-01 F-2)',
+    });
+  }
+
+  return findings;
+}
+
 // ─── Repo wiring ──────────────────────────────────────────────────────────
 
 /**
@@ -184,9 +363,12 @@ export function loadDeployedCsp(repoRoot: string): string {
   throw new Error('No Content-Security-Policy header found in vercel.json');
 }
 
-function readRuntimeSources(repoRoot: string): Array<{ path: string; content: string }> {
+function readRepoFiles(
+  repoRoot: string,
+  rels: readonly string[],
+): Array<{ path: string; content: string }> {
   const files: Array<{ path: string; content: string }> = [];
-  for (const rel of RUNTIME_DEP_SOURCES) {
+  for (const rel of rels) {
     // Constrain to repo root (no traversal).
     const abs = resolve(repoRoot, rel);
     if (!abs.startsWith(repoRoot + sep)) continue;
@@ -196,13 +378,40 @@ function readRuntimeSources(repoRoot: string): Array<{ path: string; content: st
   return files;
 }
 
-/** Full evaluation over the real repo: CSP checks + source scan. */
+/** Full evaluation over the real repo: CSP checks + source scan + vendored-ESM link gate + ort wasm pin. */
 export function evaluateCspRuntimeDeps(repoRoot: string = resolveRepoRoot()): CspFinding[] {
   const csp = loadDeployedCsp(repoRoot);
   const directives = parseCspDirectives(csp);
   const cspFindings = cspAllowsSelfWasmEval(directives);
-  const sourceFindings = scanSourceForForbiddenOrigins(readRuntimeSources(repoRoot));
-  return [...cspFindings, ...sourceFindings];
+  const sourceFindings = scanSourceForForbiddenOrigins(readRepoFiles(repoRoot, RUNTIME_DEP_SOURCES));
+
+  // WEBEXT-01 F-1: the vendored runtime bundles must LINK in a browser. A
+  // missing bundle is itself a finding — the loader imports it by absolute
+  // path, so absence means NER is dead-on-arrival in the built app.
+  const vendoredFiles = readRepoFiles(repoRoot, VENDORED_RUNTIME_ESM);
+  const bareFindings = scanVendoredEsmForBareSpecifiers(vendoredFiles);
+  const missingBundles: CspFinding[] = VENDORED_RUNTIME_ESM.filter(
+    (rel) => !vendoredFiles.some((f) => f.path === rel),
+  ).map((rel) => ({
+    kind: 'source',
+    path: rel,
+    message: 'vendored runtime ESM bundle is missing — the NER loader imports it natively at runtime (run scripts/vendor-ner-runtime.ts)',
+  }));
+
+  // WEBEXT-01 F-2: the ort wasmPaths same-origin pin must exist in the loader.
+  const pinSources = readRepoFiles(repoRoot, [ORT_WASM_PIN_SOURCE]);
+  const pinFindings =
+    pinSources.length === 1
+      ? checkOrtWasmPathsPinned(pinSources[0].content)
+      : [
+          {
+            kind: 'source',
+            path: ORT_WASM_PIN_SOURCE,
+            message: 'ort wasmPaths pin source file not found',
+          } satisfies CspFinding,
+        ];
+
+  return [...cspFindings, ...sourceFindings, ...missingBundles, ...bareFindings, ...pinFindings];
 }
 
 function isMainModule(metaUrl: string, argvPath: string | undefined): boolean {

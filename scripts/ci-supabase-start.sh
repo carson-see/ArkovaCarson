@@ -214,6 +214,40 @@ if [[ "${CI:-}" == "true" ]] && command -v sudo >/dev/null 2>&1; then
   echo "Docker registry mirror configured (best-effort)."
 fi
 
+# --- Escape public.ecr.aws anonymous rate limits for generated types ---
+# `supabase gen types --local` shells out to a postgres-meta container after
+# `supabase start`. With CLI 1.123.0 that path requests
+# public.ecr.aws/supabase/postgres-meta:v0.96.1 directly, bypassing the
+# docker.io mirror above and intermittently failing CI with ECR
+# `toomanyrequests`. Seed the same image from GHCR and tag it with the ECR
+# name so Docker satisfies the later Supabase request from the local cache.
+# Best-effort: if GHCR is unavailable, keep the old path rather than blocking.
+seed_supabase_ecr_image_from_ghcr() {
+  local ecr_image="$1"
+  local ghcr_image="$2"
+
+  if [[ "${CI:-}" != "true" ]] || ! command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if docker image inspect "$ecr_image" >/dev/null 2>&1; then
+    echo "Supabase image already cached: $ecr_image"
+    return 0
+  fi
+
+  echo "Pre-seeding $ecr_image from $ghcr_image to avoid public.ecr.aws rate limits..."
+  if docker pull "$ghcr_image" >/dev/null 2>&1; then
+    docker tag "$ghcr_image" "$ecr_image" >/dev/null 2>&1 || true
+    echo "Pre-seeded $ecr_image from GHCR."
+  else
+    echo "::warning::Could not pre-seed $ecr_image from GHCR; falling back to Supabase's default pull"
+  fi
+}
+
+seed_supabase_ecr_image_from_ghcr \
+  "public.ecr.aws/supabase/postgres-meta:v0.96.1" \
+  "ghcr.io/supabase/postgres-meta:v0.96.1"
+
 # --- Start Supabase ---
 echo "Stopping any existing local Supabase containers..."
 supabase stop --no-backup >/dev/null 2>&1 || true

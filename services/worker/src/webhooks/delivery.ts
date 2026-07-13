@@ -331,7 +331,7 @@ async function deliverToEndpoint(
     return false;
   }
 
-  if (existing && existing.status === 'success') {
+  if (existing?.status === 'success') {
     logger.debug({ endpointId: endpoint.id, eventId: payload.event_id }, 'Webhook already delivered');
     return true;
   }
@@ -844,14 +844,19 @@ export async function resolveDlqEntry(entryId: string, orgId: string): Promise<b
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any;
 
-  // ARK-SEC-026: Always verify the DLQ entry belongs to the requesting org
+  // ARK-SEC-026: Always verify the DLQ entry belongs to the requesting org.
+  // webhook_dead_letter_queue has no FK relationship to webhook_endpoints, so
+  // an embedded-join select (`endpoint_id, webhook_endpoints(org_id)`) fails
+  // in production with PGRST200 ("Could not find a relationship..."), making
+  // this check always fail closed. webhook_dead_letter_queue already carries
+  // its own denormalized org_id column — read it directly, no join needed.
   const { data: entry } = await dbAny
     .from('webhook_dead_letter_queue')
-    .select('endpoint_id, webhook_endpoints(org_id)')
+    .select('org_id')
     .eq('id', entryId)
     .single();
 
-  const entryOrgId = entry?.webhook_endpoints?.org_id;
+  const entryOrgId = entry?.org_id;
   if (!entryOrgId || entryOrgId !== orgId) {
     logger.warn({ entryId, orgId }, 'DLQ entry does not belong to requesting org');
     return false;
@@ -1099,7 +1104,9 @@ export async function processWebhookRetries(): Promise<number> {
       // Deterministic tie-break when sequences collide (shouldn't, but legacy
       // rows can both be -Infinity): older attempt first, then id.
       if (a.attempt_number !== b.attempt_number) return a.attempt_number - b.attempt_number;
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      if (a.id < b.id) return -1;
+      if (a.id > b.id) return 1;
+      return 0;
     });
     headRows.push(bucket[0]);
   }

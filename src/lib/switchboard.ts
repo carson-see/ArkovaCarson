@@ -20,7 +20,6 @@ export const FLAGS = {
   ENABLE_NEW_CHECKOUTS: true,
   ENABLE_REPORTS: true,
   MAINTENANCE_MODE: false,
-  ENABLE_BATCH_ANCHORING: false,
   ENABLE_AI_EXTRACTION: true,
   // SCRUM-1958 — default OFF in code so non-prod (local dev / preview) hides
   // smart search until the credential_embeddings backfill lands. Production is
@@ -179,13 +178,6 @@ export async function isReportsEnabled(): Promise<boolean> {
  */
 export async function isMaintenanceMode(): Promise<boolean> {
   return getFlag('MAINTENANCE_MODE');
-}
-
-/**
- * Check if batch anchoring is enabled (MVP-23)
- */
-export async function isBatchAnchoringEnabled(): Promise<boolean> {
-  return getFlag('ENABLE_BATCH_ANCHORING');
 }
 
 /**
