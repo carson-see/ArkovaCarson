@@ -1,4 +1,5 @@
 # agents.md — verification
+_Last updated: 2026-07-06 (SCRUM-2501 FE-PROOF-GATE proof-availability state machine)_
 _Last updated: 2026-07-06 (SCRUM-2495 does-not-assert disclaimer)_
 
 ## What This Folder Contains
@@ -34,6 +35,37 @@ confirmed the underlying transaction.
   proof sections visible.
 - **SUPERSEDED** → `Record Superseded`, gray XCircle, neutral badge, terminal
   proof sections visible. Never collapse this to PENDING or SECURED.
+
+## Proof availability state machine (SCRUM-2501, 2026-07-06)
+
+`VerifierProofDownload.tsx` no longer downloads a hand-assembled JSON subset
+gated only on status. It calls `GET /api/v1/verify/:publicId/proof` (public,
+anonymous) via `useProofAvailability` and renders per
+`docs/reference/FE_PROOF_GATE_CONTRACT.md`:
+
+- **State 1** (`200` + `verified: true` + `proof_bundle !== null`) → live
+  download control; the downloaded artifact is the `proof_bundle` object
+  VERBATIM — never rebuilt, augmented, or renamed (the bundle's `tx_id` /
+  `block_header` field names are the frozen API contract, exempt from §1.3).
+- **State 1b** (`200` + `proof_bundle: null`) and **state 2** (`404` "No
+  Merkle proof available…" — the ~2.97M direct-anchored back catalogue) →
+  honest empty-state (`PROOF_AVAILABILITY_LABELS.NOT_YET_AVAILABLE_*`):
+  NO download control, NO disabled button, NO error toast.
+- **State 3** (not SECURED) → the component returns `null` without fetching;
+  the page hero ("Submitting to Network…", proof sections hidden) is the
+  securing-in-progress presentation.
+- `404` `Record not found` → real error state (`proof-record-missing`),
+  distinct from state 2. `429` → render nothing (transient). `5xx` /
+  `verified: false` on 200 / network failure → retryable affordance
+  (`proof-retry`), never state-2 copy.
+
+The FE gate is `isProofDownloadable(status) && 200 && verified === true &&
+proof_bundle !== null` (belt-and-braces status check per contract §3 — the
+route itself is proof-existence-gated, not status-gated). Classification is
+pure in `src/lib/proofAvailability.ts`; fetch in
+`src/hooks/useProofAvailability.ts`. E2E: `e2e/public-proof-gate.spec.ts`.
+The PROOF-04 PDF path (`ENABLE_PROOF_PDF_DOWNLOAD`) is untouched and stays
+default-OFF.
 
 ## Source provenance (SCRUM-1599, 2026-05-19)
 

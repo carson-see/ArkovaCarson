@@ -39,12 +39,10 @@ import type {
   SubmitFingerprintRequest,
   VerificationResult,
 } from './types.js';
+import { buildAnchorCalldata, parseAnchorCalldata } from './base-calldata.js';
+export { buildAnchorCalldata, parseAnchorCalldata } from './base-calldata.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────
-
-/** ARKV prefix as hex (4 bytes: 0x41524b56) */
-const ARKV_PREFIX_HEX = '41524b56';
-const _ARKV_PREFIX_BYTES = new Uint8Array([0x41, 0x52, 0x4b, 0x56]);
 
 /** Maximum retries for transient RPC failures */
 const MAX_RETRIES = 3;
@@ -57,12 +55,6 @@ const CONFIRMATION_POLL_MS = 2_000;
 
 /** Timeout for waiting for tx receipt (5 minutes) */
 const RECEIPT_TIMEOUT_MS = 300_000;
-
-/**
- * Truncated metadata hash length in bytes (appended after fingerprint in calldata).
- * Matches Bitcoin client's 8-byte default for consistency.
- */
-const METADATA_HASH_TRUNCATED_BYTES = 8;
 
 // ─── Configuration ───────────────────────────────────────────────────────
 
@@ -103,69 +95,6 @@ export function canonicalMetadataJson(metadata: Record<string, unknown>): string
 export function hashMetadata(metadata: Record<string, unknown>): string {
   const canonical = canonicalMetadataJson(metadata);
   return createHash('sha256').update(canonical).digest('hex');
-}
-
-/**
- * Build calldata for an anchor transaction.
- *
- * Format: ARKV (4 bytes) + fingerprint (32 bytes) + [metadataHash (8 bytes)]
- * Total: 36 bytes without metadata, 44 bytes with metadata
- *
- * @returns Hex-encoded calldata with 0x prefix
- */
-export function buildAnchorCalldata(
-  fingerprint: string,
-  metadataHash?: string,
-): `0x${string}` {
-  if (!/^[a-f0-9]{64}$/i.test(fingerprint)) {
-    throw new Error('Fingerprint must be a 64-character hex string (SHA-256)');
-  }
-
-  let calldataHex = ARKV_PREFIX_HEX + fingerprint.toLowerCase();
-
-  if (metadataHash) {
-    if (!/^[a-f0-9]{64}$/i.test(metadataHash)) {
-      throw new Error('Metadata hash must be a 64-character hex string (SHA-256)');
-    }
-    // Truncate to METADATA_HASH_TRUNCATED_BYTES (8 bytes = 16 hex chars)
-    calldataHex += metadataHash.toLowerCase().slice(0, METADATA_HASH_TRUNCATED_BYTES * 2);
-  }
-
-  return `0x${calldataHex}`;
-}
-
-/**
- * Parse calldata to extract fingerprint and optional metadata hash.
- * Returns null if calldata doesn't match ARKV format.
- */
-export function parseAnchorCalldata(calldata: string): {
-  fingerprint: string;
-  metadataHashTruncated?: string;
-} | null {
-  // Strip 0x prefix
-  const hex = calldata.startsWith('0x') ? calldata.slice(2) : calldata;
-
-  // Must start with ARKV prefix
-  if (!hex.toLowerCase().startsWith(ARKV_PREFIX_HEX)) {
-    return null;
-  }
-
-  const afterPrefix = hex.slice(ARKV_PREFIX_HEX.length);
-
-  // Fingerprint is 64 hex chars (32 bytes)
-  if (afterPrefix.length < 64) {
-    return null;
-  }
-
-  const fingerprint = afterPrefix.slice(0, 64).toLowerCase();
-
-  // Optional metadata hash (16 hex chars = 8 bytes)
-  const remaining = afterPrefix.slice(64);
-  const metadataHashTruncated = remaining.length >= METADATA_HASH_TRUNCATED_BYTES * 2
-    ? remaining.slice(0, METADATA_HASH_TRUNCATED_BYTES * 2).toLowerCase()
-    : undefined;
-
-  return { fingerprint, metadataHashTruncated };
 }
 
 /**

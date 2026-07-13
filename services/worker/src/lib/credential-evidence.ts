@@ -414,7 +414,13 @@ export function toPublicSafeCredentialEvidenceMetadata(
     credential_issued_at: evidencePackage.credential.issuedAt,
     credential_expires_at: evidencePackage.credential.expiresAt,
     credential_id_hash: evidencePackage.credential.credentialIdHash,
-    recipient_identifier_hash: evidencePackage.credential.recipientIdentifierHash,
+    // SCRUM-2484: recipient_identifier_hash is DELIBERATELY not projected into
+    // public metadata. This object is spread into stored anchors.metadata, which
+    // get_public_anchor projects to ANONYMOUS callers — an identifier readable by
+    // the public enables correlation even when keyed. The recipient hash lives
+    // only in the recipient-linking table (anchor_recipients), never in public
+    // metadata. (recipientIdentifierHash remains on the evidence PACKAGE for the
+    // canonical hash + internal linking; it is simply not surfaced publicly.)
   });
 }
 

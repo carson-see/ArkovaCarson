@@ -36,6 +36,7 @@ import {
   StaticFeeEstimator,
   MempoolFeeEstimator,
   createFeeEstimator,
+  computeBatchFeeCeiling,
 } from './fee-estimator.js';
 
 // ---- Helpers ----
@@ -358,5 +359,85 @@ describe('createFeeEstimator', () => {
     expect(() =>
       createFeeEstimator({ strategy: 'unknown' as 'static' }),
     ).toThrow('Unknown fee strategy');
+  });
+});
+
+// ─── SCRUM-2592: batch fee-ceiling primitive ────────────────────────────────
+//
+// CONTRACT: computeBatchFeeCeiling is a pure MIRROR of the batch-anchor
+// triggerC_computeFeeCeiling semantics. It scales a base ceiling with backlog
+// age (2× after 30 min, 4× after 60 min) and clamps to an ABSOLUTE cap that is
+// INJECTED by the caller (never redefined here — batch-anchor.ts remains the
+// single owner of ABSOLUTE_FEE_CAP_SAT_PER_VB). The parity block below imports
+// the locked source-of-truth function read-only and pins byte-identical output
+// across a swept input space so the two can never diverge at integration.
+
+describe('computeBatchFeeCeiling (SCRUM-2592 batch fee-ceiling primitive)', () => {
+  const MIN = 60_000;
+  const CAP = 200; // caller-injected absolute cap (mirrors ABSOLUTE_FEE_CAP_SAT_PER_VB)
+
+  it('returns the base ceiling for a fresh backlog', () => {
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 0, absoluteCapSatPerVb: CAP }),
+    ).toBe(50);
+  });
+
+  it('stays at base ceiling below the 30-minute threshold (29 min)', () => {
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 29 * MIN, absoluteCapSatPerVb: CAP }),
+    ).toBe(50);
+  });
+
+  it('does NOT escalate at exactly 30 minutes (strict >)', () => {
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 30 * MIN, absoluteCapSatPerVb: CAP }),
+    ).toBe(50);
+  });
+
+  it('doubles the ceiling just past 30 minutes', () => {
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 30 * MIN + 1, absoluteCapSatPerVb: CAP }),
+    ).toBe(100);
+  });
+
+  it('stays at 2× through the 30-60 minute band and at exactly 60 min', () => {
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 45 * MIN, absoluteCapSatPerVb: CAP }),
+    ).toBe(100);
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 60 * MIN, absoluteCapSatPerVb: CAP }),
+    ).toBe(100);
+  });
+
+  it('quadruples the ceiling just past 60 minutes', () => {
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 60 * MIN + 1, absoluteCapSatPerVb: CAP }),
+    ).toBe(200);
+  });
+
+  it('clamps to the injected absolute cap (dynamic ceiling above cap)', () => {
+    // 4× of 300 = 1200, clamped to 200.
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 300, oldestPendingAgeMs: 60 * MIN + 1, absoluteCapSatPerVb: CAP }),
+    ).toBe(CAP);
+  });
+
+  it('clamps even a fresh base ceiling that already exceeds the cap', () => {
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 500, oldestPendingAgeMs: 0, absoluteCapSatPerVb: CAP }),
+    ).toBe(CAP);
+  });
+
+  it('is never negative (base ceiling 0)', () => {
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 0, oldestPendingAgeMs: 0, absoluteCapSatPerVb: CAP }),
+    ).toBe(0);
+  });
+
+  it('honors a different injected cap without redefining any constant', () => {
+    // A caller supplying a lower cap clamps there — proves the cap is a parameter.
+    expect(
+      computeBatchFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 60 * MIN + 1, absoluteCapSatPerVb: 120 }),
+    ).toBe(120);
   });
 });

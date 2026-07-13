@@ -21,6 +21,7 @@ import {
   type CredentialEvidencePackage,
   buildCredentialEvidencePackage,
 } from '../../../lib/credential-evidence.js';
+import { hashRecipientEmail } from '../../../lib/recipient-identity.js';
 
 import type { AccredibleCredential } from './client.js';
 
@@ -40,6 +41,12 @@ export interface AccredibleAdapterDeps {
   payloadByteLength?: number;
   /** Optional recipient email; hashed into the package if provided. */
   recipientEmail?: string;
+  /**
+   * SCRUM-2484: server pepper for the keyed HMAC of the recipient email. When
+   * absent, NO recipient identifier hash is produced — never a bare, enumerable
+   * sha256(email). Callers pass `config.recipientIdentifierPepper`.
+   */
+  recipientPepper?: string;
 }
 
 export interface AccredibleAdapterResult {
@@ -80,9 +87,13 @@ export function accredibleCredentialToEvidence(
     credential.public_url ??
     `https://api.accredible.com/v1/credentials/${encodeURIComponent(rawId)}`;
 
-  const recipientIdentifierHash = deps.recipientEmail
-    ? sha256Hex(deps.recipientEmail.trim().toLowerCase())
-    : undefined;
+  // SCRUM-2484: keyed HMAC (pepper) — not a bare sha256 — so the recipient
+  // identifier cannot be precomputed/enumerated offline. Omitted entirely when
+  // no pepper is available (never a bare sha256 fallback).
+  const recipientIdentifierHash =
+    deps.recipientEmail && deps.recipientPepper
+      ? hashRecipientEmail(deps.recipientEmail, deps.recipientPepper)
+      : undefined;
 
   const proofDetected =
     (credential.proof !== undefined && credential.proof !== null) ||

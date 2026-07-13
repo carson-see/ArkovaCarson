@@ -26,6 +26,7 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
+import { runBackCatalogClassifier, createDbGucReader, createDbLocker } from '../jobs/proof-backcatalog-classifier.js';
 import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
@@ -288,7 +289,7 @@ cronRouter.post('/professional-education-extraction', async (req, res) => {
     }
 
     const maxJobs = req.body?.maxJobs
-      ? Math.min(Math.max(parseInt(String(req.body.maxJobs), 10) || 10, 1), 100)
+      ? Math.min(Math.max(Number.parseInt(String(req.body.maxJobs), 10) || 10, 1), 100)
       : 10;
     const result = await processProfessionalEducationExtractionJobs(maxJobs);
     res.json(result);
@@ -329,6 +330,93 @@ cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Confirmation-proof backfill failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// S3-A (PROOF-BACKCATALOG): back-catalogue proof-completeness CLASSIFIER.
+//
+// MANUAL TRIGGER ONLY — deliberately NOT scheduled (no Cloud Scheduler
+// binding, no in-process backup): the census is an operator-driven run, and
+// any future write mode is Carson-gated. Follows the Cloud Scheduler → HTTP
+// pattern anyway (node-cron is dormant under Cloud Run CPU throttling, so an
+// authenticated POST is the only trigger that actually fires in prod).
+//
+// DRY-RUN BY DEFAULT: emits the per-class plan {direct_anchored,
+// batch_provable, already_complete, ambiguous} with zero writes to the proof
+// catalogue (anchors/anchor_proofs); the resumable census still persists its
+// own durable job_queue checkpoint row in both modes. Write mode needs
+// execute=true AND PROOF_CLASSIFIER_CONFIRM=EXECUTE, halts when ambiguous > 0,
+// refuses while the 0340 GUC is on (or unconfirmable), and today stops on the
+// honest 0354 schema gap (no class column exists yet).
+// Resumable via a durable job_queue checkpoint — re-POST to continue a long
+// census; restart=true starts a fresh one.
+// F1 CONCURRENCY GUARD: createDbLocker gives the run a (scope,mode)-keyed
+// pg_try_advisory_lock so two concurrent POSTs can't interleave their
+// read-modify-write of the ONE checkpoint row (which would rewind the cursor +
+// silently corrupt the plan). The second concurrent run returns
+// refused/lock_not_acquired; the lock releases in a finally on every path.
+// Zod boundary validation (§1.1: every write path — the classifier persists a
+// job_queue checkpoint row even in dry-run). Booleans accept JSON booleans or
+// the query-string forms; numbers are coerced and BOUNDED here so a mistyped
+// value fails loudly with a 400 instead of being silently coerced/defaulted.
+// Bounds mirror the classifier's own clamps (batch 50–2000, batches 1–200).
+const ClassifierBooleanishSchema = z.union([z.boolean(), z.enum(['true', 'false', '1', '0'])]);
+const ClassifyProofBackcatalogParamsSchema = z.object({
+  execute: ClassifierBooleanishSchema.optional(),
+  batch_size: z.coerce.number().int().min(50).max(2000).optional(),
+  max_batches: z.coerce.number().int().min(1).max(200).optional(),
+  restart: ClassifierBooleanishSchema.optional(),
+});
+
+cronRouter.post('/classify-proof-backcatalog', async (req, res) => {
+  try {
+    const rawOrgId = req.query.org_id ?? req.body?.org_id;
+    let orgId: string | undefined;
+    if (rawOrgId !== undefined) {
+      const parsedOrgId = z.string().uuid().safeParse(String(rawOrgId).trim());
+      if (!parsedOrgId.success) {
+        res.status(400).json({ error: 'Invalid org_id' });
+        return;
+      }
+      orgId = parsedOrgId.data;
+    }
+
+    const parsedParams = ClassifyProofBackcatalogParamsSchema.safeParse({
+      execute: req.query.execute ?? req.body?.execute,
+      batch_size: req.query.batch_size ?? req.body?.batch_size,
+      max_batches: req.query.max_batches ?? req.body?.max_batches,
+      restart: req.query.restart ?? req.body?.restart,
+    });
+    if (!parsedParams.success) {
+      res.status(400).json({
+        error: 'Invalid classifier parameters',
+        details: parsedParams.error.flatten().fieldErrors,
+      });
+      return;
+    }
+    const flag = (v: boolean | 'true' | 'false' | '1' | '0' | undefined) =>
+      v === true || v === 'true' || v === '1';
+
+    const result = await runBackCatalogClassifier(
+      {
+        client: db,
+        guc: createDbGucReader(db),
+        locker: createDbLocker(db),
+        logger,
+        confirmToken: config.proofClassifierConfirm,
+      },
+      {
+        execute: flag(parsedParams.data.execute),
+        orgId,
+        batchSize: parsedParams.data.batch_size,
+        maxBatches: parsedParams.data.max_batches,
+        restart: flag(parsedParams.data.restart),
+      },
+    );
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Back-catalogue proof classifier failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

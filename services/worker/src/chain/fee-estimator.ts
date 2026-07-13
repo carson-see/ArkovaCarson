@@ -156,6 +156,58 @@ export class MempoolFeeEstimator implements FeeEstimator {
   }
 }
 
+// ─── Batch fee-ceiling primitive (SCRUM-2592) ───────────────────────────────
+
+/**
+ * Escalation thresholds for the dynamic batch fee ceiling. These MIRROR the
+ * bands in `jobs/batch-anchor.ts:triggerC_computeFeeCeiling` — the batch-anchor
+ * function remains the single source of truth; this primitive is a pure,
+ * dependency-light mirror so the estimator layer can reason about the ceiling
+ * without importing the DB-heavy batch-anchor module (which would create an
+ * import cycle: chain/client → chain/fee-estimator → jobs/batch-anchor →
+ * chain/client). The `fee-ceiling-parity.test.ts` suite pins byte-identical
+ * output against the locked source-of-truth across a swept input space.
+ */
+const DYNAMIC_CEILING_2X_AGE_MS = 30 * 60 * 1000; // > 30 min → 2×
+const DYNAMIC_CEILING_4X_AGE_MS = 60 * 60 * 1000; // > 60 min → 4×
+
+export interface BatchFeeCeilingInput {
+  /** Base ceiling in sat/vByte (the configured max fee threshold). */
+  baseCeiling: number;
+  /** Age of the oldest pending anchor in ms — scales the ceiling. */
+  oldestPendingAgeMs: number;
+  /**
+   * Absolute hard cap in sat/vByte. INJECTED by the caller — this primitive
+   * does NOT own or redefine the constant; batch-anchor's
+   * `ABSOLUTE_FEE_CAP_SAT_PER_VB` is passed in at the wire-up call site so the
+   * two never diverge.
+   */
+  absoluteCapSatPerVb: number;
+}
+
+/**
+ * Compute the effective batch fee ceiling in sat/vByte.
+ *
+ * The ceiling scales with backlog age so a very-stale backlog still ships:
+ *   - age ≤ 30 min      → baseCeiling (1×)
+ *   - 30 min < age ≤ 1h → baseCeiling × 2
+ *   - age > 1h          → baseCeiling × 4
+ * clamped to `absoluteCapSatPerVb` (never exceeds the hard cap, and never goes
+ * negative when baseCeiling is 0).
+ *
+ * Mirror of `triggerC_computeFeeCeiling` (batch-anchor.ts). Boundaries are
+ * strict `>` so exactly 30 min stays 1× and exactly 60 min stays 2×.
+ */
+export function computeBatchFeeCeiling(input: BatchFeeCeilingInput): number {
+  let ceiling = input.baseCeiling;
+  if (input.oldestPendingAgeMs > DYNAMIC_CEILING_4X_AGE_MS) {
+    ceiling = input.baseCeiling * 4;
+  } else if (input.oldestPendingAgeMs > DYNAMIC_CEILING_2X_AGE_MS) {
+    ceiling = input.baseCeiling * 2;
+  }
+  return Math.min(ceiling, input.absoluteCapSatPerVb);
+}
+
 // ─── Factory ────────────────────────────────────────────────────────────
 
 export type FeeStrategy = 'static' | 'mempool';

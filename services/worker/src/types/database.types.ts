@@ -376,6 +376,7 @@ export type Database = {
           merkle_index: number | null
           merkle_root: string | null
           op_return_payload: string | null
+          proof_completeness_class: string | null
           proof_path: Json | null
           proof_schema_version: number
           raw_response: Json | null
@@ -393,6 +394,7 @@ export type Database = {
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
+          proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
           raw_response?: Json | null
@@ -410,6 +412,7 @@ export type Database = {
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
+          proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
           raw_response?: Json | null
@@ -1574,6 +1577,96 @@ export type Database = {
           },
           {
             foreignKeyName: "connector_alert_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      connector_artifact: {
+        Row: {
+          anchor_id: string | null
+          byte_length: number | null
+          created_at: string
+          credit_deduction_id: string | null
+          external_ref: string
+          external_revision: string | null
+          fingerprint_sha256: string
+          id: string
+          integration_id: string | null
+          metadata: Json
+          org_id: string
+          source: string
+          source_timestamp: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          anchor_id?: string | null
+          byte_length?: number | null
+          created_at?: string
+          credit_deduction_id?: string | null
+          external_ref: string
+          external_revision?: string | null
+          fingerprint_sha256: string
+          id?: string
+          integration_id?: string | null
+          metadata?: Json
+          org_id: string
+          source: string
+          source_timestamp?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          anchor_id?: string | null
+          byte_length?: number | null
+          created_at?: string
+          credit_deduction_id?: string | null
+          external_ref?: string
+          external_revision?: string | null
+          fingerprint_sha256?: string
+          id?: string
+          integration_id?: string | null
+          metadata?: Json
+          org_id?: string
+          source?: string
+          source_timestamp?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connector_artifact_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connector_artifact_credit_deduction_id_fkey"
+            columns: ["credit_deduction_id"]
+            isOneToOne: false
+            referencedRelation: "org_credit_deductions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connector_artifact_integration_id_fkey"
+            columns: ["integration_id"]
+            isOneToOne: false
+            referencedRelation: "org_integrations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connector_artifact_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connector_artifact_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "public_org_profiles"
@@ -3617,6 +3710,7 @@ export type Database = {
           amount: number
           balance_after: number
           created_at: string
+          entry_type: string
           id: string
           org_id: string
           reason: string
@@ -3626,6 +3720,7 @@ export type Database = {
           amount: number
           balance_after: number
           created_at?: string
+          entry_type?: string
           id?: string
           org_id: string
           reason: string
@@ -3635,6 +3730,7 @@ export type Database = {
           amount?: number
           balance_after?: number
           created_at?: string
+          entry_type?: string
           id?: string
           org_id?: string
           reason?: string
@@ -4845,6 +4941,7 @@ export type Database = {
           anchor_id: string | null
           content_hash: string
           created_at: string
+          embedded_at: string | null
           id: string
           metadata: Json | null
           record_type: string
@@ -4859,6 +4956,7 @@ export type Database = {
           anchor_id?: string | null
           content_hash: string
           created_at?: string
+          embedded_at?: string | null
           id?: string
           metadata?: Json | null
           record_type: string
@@ -4873,6 +4971,7 @@ export type Database = {
           anchor_id?: string | null
           content_hash?: string
           created_at?: string
+          embedded_at?: string | null
           id?: string
           metadata?: Json | null
           record_type?: string
@@ -6499,6 +6598,17 @@ export type Database = {
         Args: { p_events: string[]; p_url: string }
         Returns: Json
       }
+      debit_and_enqueue_anchor: {
+        Args: {
+          p_amount?: number
+          p_anchor_id: string
+          p_expected_status?: Database["public"]["Enums"]["anchor_status"]
+          p_org_id: string
+          p_reason?: string
+          p_target_status?: Database["public"]["Enums"]["anchor_status"]
+        }
+        Returns: Json
+      }
       deduct_ai_credits: {
         Args: { p_amount?: number; p_org_id?: string; p_user_id?: string }
         Returns: boolean
@@ -6534,6 +6644,7 @@ export type Database = {
         | {
             Args: {
               p_batch_size?: number
+              p_block_hash?: string
               p_block_height: number
               p_block_timestamp: string
               p_chain_tx_id: string
@@ -6551,6 +6662,19 @@ export type Database = {
             }
             Returns: Json
           }
+      enqueue_connector_artifact: {
+        Args: {
+          p_byte_length?: number
+          p_external_ref: string
+          p_external_revision?: string
+          p_fingerprint_sha256?: string
+          p_metadata?: Json
+          p_org_id: string
+          p_source: string
+          p_source_timestamp?: string
+        }
+        Returns: string
+      }
       enqueue_rule_event: {
         Args: {
           p_external_file_id?: string
@@ -6702,6 +6826,7 @@ export type Database = {
         }[]
       }
       get_pipeline_stats: { Args: never; Returns: Json }
+      get_proof_enforcement_guc: { Args: never; Returns: string }
       get_public_anchor: { Args: { p_public_id: string }; Returns: Json }
       get_public_anchor_by_fingerprint: {
         Args: { p_fingerprint: string }
@@ -6893,6 +7018,18 @@ export type Database = {
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
       next_webhook_sequence: { Args: never; Returns: number }
+      org_credit_ledger_divergence: {
+        Args: { p_org_id?: string }
+        Returns: {
+          balance: number
+          diverged: boolean
+          divergence: number
+          expected: number
+          granted: number
+          ledger_sum: number
+          org_id: string
+        }[]
+      }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string
@@ -6945,6 +7082,13 @@ export type Database = {
       release_claimed_rule_events: {
         Args: { p_error?: string; p_event_ids: string[] }
         Returns: number
+      }
+      reset_unclaimed_connector_broadcasts: {
+        Args: { p_limit?: number; p_org_id: string }
+        Returns: {
+          fingerprint: string
+          id: string
+        }[]
       }
       resolve_anchor_queue: {
         Args: {

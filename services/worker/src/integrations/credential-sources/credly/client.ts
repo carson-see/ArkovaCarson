@@ -107,6 +107,12 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const ERROR_DETAIL_MAX_LENGTH = 160;
 
 export interface CredlyClientDeps {
+  /**
+   * SCRUM-2483: production callers MUST inject the IP-pinned SSRF-guarded fetch
+   * (`createSafeProviderFetch()` from `../safe-provider-fetch.js`), never the raw
+   * `fetch` global — a rebinding provider host must not reach a private/metadata
+   * address. Tests inject a stub.
+   */
   fetch: FetchLike;
   /** Returns "now" ms epoch — overridable for deterministic tests. */
   now: () => number;

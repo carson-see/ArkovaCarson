@@ -39,9 +39,15 @@ vi.mock('@/components/public/ProvenanceTimeline', () => ({
 }));
 
 vi.mock('@/components/verification/VerifierProofDownload', () => ({
-  VerifierProofDownload: ({ sourceProvenance }: { sourceProvenance?: unknown }) => (
+  // FE-PROOF-GATE (SCRUM-2501): VerifierProofDownload now sources its proof
+  // data live from GET /api/v1/verify/:publicId/proof, not from client-side
+  // sourceProvenance/metadata — it only needs publicId + status to run its
+  // own gate + fetch (see VerifierProofDownload.test.tsx for the full state
+  // machine coverage). The mock here just proves PublicVerification wires
+  // the right publicId/status through and gates the section on hasProof.
+  VerifierProofDownload: ({ publicId, status }: { publicId: string; status: string }) => (
     <div data-testid="proof-download">
-      {JSON.stringify(sourceProvenance ?? {})}
+      {publicId}:{status}
     </div>
   ),
 }));
@@ -268,14 +274,15 @@ describe('PublicVerification', () => {
     expect(screen.getByText('Credly')).toBeInTheDocument();
     expect(screen.getByText('Source Signed')).toBeInTheDocument();
 
-    const proofDownload = screen.getByTestId('proof-download');
     const credentialRenderer = screen.getByTestId('credential-renderer');
-    expect(proofDownload).toHaveTextContent('evidence-hash-123');
-    expect(proofDownload).toHaveTextContent('payload-hash-456');
+    // FE-PROOF-GATE (SCRUM-2501): proof-download no longer receives
+    // sourceProvenance/evidence hashes at all — it fetches its own data live
+    // from /api/v1/verify/:publicId/proof. The security-relevant assertion
+    // (no PII/secret leak) stays; it's exercised against credential-renderer
+    // and the page body, not the (now hash-free) proof-download mock.
     expect(credentialRenderer).not.toHaveTextContent('private@example.com');
     expect(credentialRenderer).not.toHaveTextContent('token=secret');
     expect(credentialRenderer).not.toHaveTextContent('evidence-hash-123');
-    expect(proofDownload).not.toHaveTextContent('private@example.com');
     expect(screen.queryByText('private@example.com')).not.toBeInTheDocument();
     expect(screen.queryByText(/token=secret/)).not.toBeInTheDocument();
   });
@@ -450,7 +457,6 @@ describe('PublicVerification', () => {
 
     expect(await screen.findByTestId('source-provenance-display')).toBeInTheDocument();
     expect(screen.getByTestId('source-provenance-display')).not.toHaveTextContent('evidence-hash-123');
-    expect(screen.getByTestId('proof-download')).toHaveTextContent('evidence-hash-123');
   });
 
   // SCRUM-2495 / ABUSE-DISCLAIMER: the does-not-assert disclaimer must always
