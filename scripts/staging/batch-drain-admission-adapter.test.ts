@@ -16,6 +16,30 @@ const ADMISSION_RAW = readFileSync(
 
 type JsonRecord = Record<string, unknown>;
 
+const TEAM2_RIG_B1_SCHEDULER_SPECS = [
+  ['batch-anchors', '/jobs/batch-anchors'],
+  ['check-confirmations', '/jobs/check-confirmations'],
+  ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs'],
+  ['org-queue-scheduler', '/jobs/org-queue-scheduler'],
+  ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true'],
+  ['recover-broadcasts', '/jobs/recover-broadcasts'],
+] as const;
+
+const TEAM2_RIG_B1_CRITICAL_CONFIG = {
+  node_env: 'production',
+  enable_ai_fraud: 'false',
+  enable_ai_reports: 'false',
+  frontend_url: 'https://app.arkova.ai',
+  use_mocks: 'false',
+  enable_prod_network_anchoring: 'true',
+  bitcoin_network: 'signet',
+  bitcoin_utxo_provider: 'getblock',
+  kms_provider: 'gcp',
+  gemini_tuned_model: '',
+  gemini_v6_prompt: '',
+  gemini_tuned_response_schema: '<unset>',
+} as const;
+
 function admissionWith(mutator: (value: JsonRecord) => void): string {
   const value = JSON.parse(ADMISSION_RAW) as JsonRecord;
   mutator(value);
@@ -177,6 +201,7 @@ describe('admission v2 to run-declaration identity adapter', () => {
     ['duration alias', (value: JsonRecord) => { value.duration_min = 2_879; }],
     ['wall floor', (value: JsonRecord) => { value.required_wall_min = 2_909; }],
     ['network', (value: JsonRecord) => { (value.critical_config as JsonRecord).bitcoin_network = 'mainnet'; }],
+    ['Scheduler applicability', (value: JsonRecord) => { (value.scheduler as JsonRecord).applicable = false; }],
     ['paused proof', (value: JsonRecord) => { (value.scheduler as JsonRecord).paused_through_clean_mirror = false; }],
     ['resume state', (value: JsonRecord) => { (value.scheduler as JsonRecord).state = 'PAUSED'; }],
   ])('rejects invalid %s admission gate', (_label, mutate) => {
@@ -185,16 +210,99 @@ describe('admission v2 to run-declaration identity adapter', () => {
     );
   });
 
-  it.each([
-    '/jobs/batch-anchors?force=true',
-    '/jobs/recover-broadcasts',
-    '/jobs/org-queue-scheduler',
-  ])('requires the exact Scheduler spec %s', (requiredPath) => {
-    const raw = admissionWith((value) => {
-      const scheduler = value.scheduler as JsonRecord;
-      scheduler.jobs = (scheduler.jobs as JsonRecord[]).filter((job) => job.path !== requiredPath);
+  it.each(TEAM2_RIG_B1_SCHEDULER_SPECS)(
+    'requires the exact Scheduler pair %s -> %s',
+    (suffix, requiredPath) => {
+      const raw = admissionWith((value) => {
+        const scheduler = value.scheduler as JsonRecord;
+        scheduler.jobs = (scheduler.jobs as JsonRecord[]).filter((job) => (
+          job.name !== `arkova-worker-s33-rig-b1-staging-${suffix}`
+          || job.path !== requiredPath
+        ));
+      });
+      expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).toThrow(/exact.*Scheduler|contract/i);
+    },
+  );
+
+  it.each(TEAM2_RIG_B1_SCHEDULER_SPECS.map((_spec, index) => index))(
+    'rejects arbitrary Scheduler name at exact pair index %s',
+    (index) => {
+      const raw = admissionWith((value) => {
+        const jobs = (value.scheduler as JsonRecord).jobs as JsonRecord[];
+        jobs[index]!.name = `arkova-worker-s33-rig-b1-staging-forged-${index}`;
+      });
+      expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).toThrow(/exact.*Scheduler|contract/i);
+    },
+  );
+
+  it.each(TEAM2_RIG_B1_SCHEDULER_SPECS.map((_spec, index) => index))(
+    'rejects a path swapped away from exact Scheduler pair index %s',
+    (index) => {
+      const raw = admissionWith((value) => {
+        const jobs = (value.scheduler as JsonRecord).jobs as JsonRecord[];
+        const otherIndex = (index + 1) % jobs.length;
+        const currentPath = jobs[index]!.path;
+        jobs[index]!.path = jobs[otherIndex]!.path;
+        jobs[otherIndex]!.path = currentPath;
+      });
+      expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).toThrow(/exact.*Scheduler|contract/i);
+    },
+  );
+
+  it('rejects extra Scheduler jobs and accepts the complete exact set in any array order', () => {
+    const extra = admissionWith((value) => {
+      const jobs = (value.scheduler as JsonRecord).jobs as JsonRecord[];
+      jobs.push({
+        name: 'arkova-worker-s33-rig-b1-staging-arbitrary-extra',
+        path: '/jobs/arbitrary-extra',
+      });
     });
-    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).toThrow(/required Scheduler path/i);
+    expect(() => projectAdmissionV2ToRunDeclaration(extra, ceremonyRaw())).toThrow(/exact.*Scheduler|contract/i);
+    const reordered = admissionWith((value) => {
+      const jobs = (value.scheduler as JsonRecord).jobs as JsonRecord[];
+      jobs.reverse();
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(reordered, ceremonyRaw())).not.toThrow();
+  });
+
+  it.each([
+    'PAUSED',
+    'non-firing hold schedule; create then immediate pause + PAUSED verification (manual)',
+    'non-firing hold schedule; create then immediate pause + PAUSED-ish verification',
+  ])('requires Team2 exact Scheduler creation guard, rejecting %s', (creationGuard) => {
+    const raw = admissionWith((value) => {
+      (value.scheduler as JsonRecord).creation_guard = creationGuard;
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).toThrow(/creation_guard|Scheduler.*schema|contract/i);
+  });
+
+  it.each(Object.entries({
+    node_env: 'development',
+    enable_ai_fraud: 'true',
+    enable_ai_reports: 'true',
+    frontend_url: 'https://forged.example.test',
+    use_mocks: 'true',
+    enable_prod_network_anchoring: 'false',
+    bitcoin_network: 'mainnet',
+    bitcoin_utxo_provider: 'arbitrary-provider',
+    kms_provider: 'local',
+    gemini_tuned_model: 'projects/forged/locations/us-central1/endpoints/1',
+    gemini_v6_prompt: 'true',
+    gemini_tuned_response_schema: '{}',
+  }))('rejects contradictory RIG-B1 critical_config.%s=%s', (field, contradictoryValue) => {
+    const raw = admissionWith((value) => {
+      (value.critical_config as JsonRecord)[field] = contradictoryValue;
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).toThrow(/critical_config|live-chain|contract/i);
+  });
+
+  it('fixture carries Team2 complete exact RIG-B1 scheduler and critical config contracts', () => {
+    const admission = JSON.parse(ADMISSION_RAW) as JsonRecord;
+    const service = admission.cloud_run_service as string;
+    expect((admission.scheduler as JsonRecord).jobs).toEqual(
+      TEAM2_RIG_B1_SCHEDULER_SPECS.map(([suffix, path]) => ({ name: `${service}-${suffix}`, path })),
+    );
+    expect(admission.critical_config).toEqual(TEAM2_RIG_B1_CRITICAL_CONFIG);
   });
 
   it('rejects duplicate/cross-service Scheduler specs and non-PAUSED creation proof', () => {
@@ -203,6 +311,11 @@ describe('admission v2 to run-declaration identity adapter', () => {
       jobs[1]!.name = jobs[0]!.name;
     });
     expect(() => projectAdmissionV2ToRunDeclaration(duplicateName, ceremonyRaw())).toThrow(/Scheduler.*duplicate/i);
+    const duplicatePath = admissionWith((value) => {
+      const jobs = (value.scheduler as JsonRecord).jobs as JsonRecord[];
+      jobs[1]!.path = jobs[0]!.path;
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(duplicatePath, ceremonyRaw())).toThrow(/Scheduler.*duplicate/i);
     const crossService = admissionWith((value) => {
       const jobs = (value.scheduler as JsonRecord).jobs as JsonRecord[];
       jobs[0]!.name = 'unrelated-service-batch-anchors';
@@ -211,7 +324,9 @@ describe('admission v2 to run-declaration identity adapter', () => {
     const missingPaused = admissionWith((value) => {
       (value.scheduler as JsonRecord).creation_guard = 'created without a hold';
     });
-    expect(() => projectAdmissionV2ToRunDeclaration(missingPaused, ceremonyRaw())).toThrow(/PAUSED.*proof/i);
+    expect(() => projectAdmissionV2ToRunDeclaration(missingPaused, ceremonyRaw())).toThrow(
+      /PAUSED.*verification|creation_guard/i,
+    );
   });
 
   it('rejects caller identity rebinding and ceremony duration below the admission wall requirement', () => {

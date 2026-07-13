@@ -29,6 +29,30 @@ const gcpProjectId = z.string().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/);
 const gcpRegion = z.string().regex(/^[a-z]+-[a-z]+[0-9]$/);
 const cloudRunName = z.string().regex(/^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/);
 const isoTimestamp = z.string().refine((value) => Number.isFinite(Date.parse(value)), 'invalid timestamp');
+const TEAM2_RIG_B1_CREATION_GUARD =
+  'non-firing hold schedule; create then immediate pause + PAUSED verification';
+const TEAM2_RIG_B1_SCHEDULER_SPECS = [
+  ['batch-anchors', '/jobs/batch-anchors'],
+  ['check-confirmations', '/jobs/check-confirmations'],
+  ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs'],
+  ['org-queue-scheduler', '/jobs/org-queue-scheduler'],
+  ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true'],
+  ['recover-broadcasts', '/jobs/recover-broadcasts'],
+] as const;
+const TEAM2_RIG_B1_LIVE_CHAIN_CRITICAL_CONFIG = {
+  node_env: 'production',
+  enable_ai_fraud: 'false',
+  enable_ai_reports: 'false',
+  frontend_url: 'https://app.arkova.ai',
+  use_mocks: 'false',
+  enable_prod_network_anchoring: 'true',
+  bitcoin_network: 'signet',
+  bitcoin_utxo_provider: 'getblock',
+  kms_provider: 'gcp',
+  gemini_tuned_model: '',
+  gemini_v6_prompt: '',
+  gemini_tuned_response_schema: '<unset>',
+} as const;
 
 const criticalConfigSchema = z.object({
   node_env: z.string(),
@@ -37,7 +61,7 @@ const criticalConfigSchema = z.object({
   frontend_url: z.string(),
   use_mocks: z.string(),
   enable_prod_network_anchoring: z.string(),
-  bitcoin_network: z.literal('signet'),
+  bitcoin_network: z.string(),
   bitcoin_utxo_provider: z.string(),
   kms_provider: z.string(),
   gemini_tuned_model: z.string(),
@@ -53,7 +77,7 @@ const schedulerJobSchema = z.object({
 const schedulerSchema = z.object({
   applicable: z.literal(true),
   jobs: z.array(schedulerJobSchema).min(3),
-  creation_guard: nonEmpty,
+  creation_guard: z.literal(TEAM2_RIG_B1_CREATION_GUARD),
   paused_through_clean_mirror: z.literal(true),
   state: z.literal('resumed_after_clean_mirror'),
 }).strict();
@@ -122,11 +146,6 @@ export interface AdmissionBoundRunDeclaration {
 }
 
 const DECLARATION_BY_ADMISSION_HANDLE = new WeakMap<AdmissionBoundRunDeclaration, RunDeclaration>();
-const REQUIRED_SCHEDULER_PATHS = [
-  '/jobs/batch-anchors?force=true',
-  '/jobs/recover-broadcasts',
-  '/jobs/org-queue-scheduler',
-] as const;
 
 function parseStrict<T>(schema: z.ZodType<T>, raw: unknown, label: string): T {
   const result = schema.safeParse(parseJsonRejectingDuplicateKeys(raw, label));
@@ -171,14 +190,23 @@ function assertAdmissionInvariants(admission: AdmissionV2): void {
   if (new Set(names).size !== names.length || new Set(paths).size !== paths.length) {
     throw new Error('Admission v2 Scheduler specs contain duplicate names or paths.');
   }
-  if (names.some((name) => !name.startsWith(`${admission.cloud_run_service}-`))) {
-    throw new Error('Admission v2 Scheduler job names must bind to the exact Cloud Run service.');
+  const expectedSchedulerJobs = new Map<string, string>(TEAM2_RIG_B1_SCHEDULER_SPECS.map(([suffix, path]) => (
+    [`${admission.cloud_run_service}-${suffix}`, path] as const
+  )));
+  if (
+    admission.scheduler.jobs.length !== expectedSchedulerJobs.size
+    || admission.scheduler.jobs.some((job) => expectedSchedulerJobs.get(job.name) !== job.path)
+  ) {
+    throw new Error('Admission v2 must match the complete exact Team2 RIG-B1 Scheduler service-derived contract.');
   }
-  for (const path of REQUIRED_SCHEDULER_PATHS) {
-    if (!paths.includes(path)) throw new Error(`Admission v2 omits required Scheduler path ${path}.`);
-  }
-  if (!/PAUSED/.test(admission.scheduler.creation_guard)) {
-    throw new Error('Admission v2 Scheduler creation guard lacks PAUSED-through-clean-mirror proof.');
+
+  for (const [field, expected] of Object.entries(TEAM2_RIG_B1_LIVE_CHAIN_CRITICAL_CONFIG)) {
+    const actual = admission.critical_config[field as keyof typeof admission.critical_config];
+    if (actual !== expected) {
+      throw new Error(
+        `Admission v2 critical_config.${field} contradicts the exact RIG-B1 live-chain contract; expected ${JSON.stringify(expected)}.`,
+      );
+    }
   }
 }
 

@@ -37,7 +37,7 @@
     "node_env": "production",
     "enable_ai_fraud": "false",
     "enable_ai_reports": "false",
-    "frontend_url": "https://rig-b1.example.test",
+    "frontend_url": "https://app.arkova.ai",
     "use_mocks": "false",
     "enable_prod_network_anchoring": "true",
     "bitcoin_network": "signet",
@@ -51,20 +51,28 @@
     "applicable": true,
     "jobs": [
       {
-        "name": "arkova-worker-s33-rig-b1-staging-batch-anchors-forced-flush",
-        "path": "/jobs/batch-anchors?force=true"
+        "name": "arkova-worker-s33-rig-b1-staging-batch-anchors",
+        "path": "/jobs/batch-anchors"
       },
       {
-        "name": "arkova-worker-s33-rig-b1-staging-recover-broadcasts",
-        "path": "/jobs/recover-broadcasts"
+        "name": "arkova-worker-s33-rig-b1-staging-check-confirmations",
+        "path": "/jobs/check-confirmations"
+      },
+      {
+        "name": "arkova-worker-s33-rig-b1-staging-populate-confirmation-proofs",
+        "path": "/jobs/populate-confirmation-proofs"
       },
       {
         "name": "arkova-worker-s33-rig-b1-staging-org-queue-scheduler",
         "path": "/jobs/org-queue-scheduler"
       },
       {
-        "name": "arkova-worker-s33-rig-b1-staging-check-confirmations",
-        "path": "/jobs/check-confirmations"
+        "name": "arkova-worker-s33-rig-b1-staging-batch-anchors-forced-flush",
+        "path": "/jobs/batch-anchors?force=true"
+      },
+      {
+        "name": "arkova-worker-s33-rig-b1-staging-recover-broadcasts",
+        "path": "/jobs/recover-broadcasts"
       }
     ],
     "creation_guard": "non-firing hold schedule; create then immediate pause + PAUSED verification",
