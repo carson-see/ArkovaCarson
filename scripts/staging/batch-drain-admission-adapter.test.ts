@@ -29,6 +29,8 @@ const STEP4_HEADING =
   '## Provision Step-4 Scheduler repair (PR #1492, L2-S2a-FIX, 2026-07-10)';
 const ADMISSION_V2_HEADING =
   '## Isolated-rig admission v2 hardening (Lane 2 S3.3 readiness, 2026-07-13)';
+const ADMISSION_ROLLBACK_HEADING =
+  '## Admission rollback and identity pins (Team 2 review remediation, 2026-07-13)';
 const BATCH_DRAIN_HEADING =
   '## Real batch-drain behavioral harness (#1417, 2026-07-07, Lane-1 chain)';
 const TEAM1_ADMISSION_PROVENANCE_RULE =
@@ -43,6 +45,10 @@ function markdownSection(raw: string, heading: string): string {
 
 function sha256(raw: string): string {
   return createHash('sha256').update(raw).digest('hex');
+}
+
+function occurrenceCount(raw: string, exact: string): number {
+  return raw.split(exact).length - 1;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -527,26 +533,43 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
       '## What this folder does NOT do',
       '## Provision Step-4 Scheduler repair (PR #1492, L2-S2a-FIX, 2026-07-10)',
       '## Isolated-rig admission v2 hardening (Lane 2 S3.3 readiness, 2026-07-13)',
+      '## Admission rollback and identity pins (Team 2 review remediation, 2026-07-13)',
       '## Real batch-drain behavioral harness (#1417, 2026-07-07, Lane-1 chain)',
     ]);
-    expect(new Set(headings).size).toBe(12);
+    expect(new Set(headings).size).toBe(13);
   });
 
-  it('preserves exact Team2 db0 Step-4 and admission-v2 section bodies', () => {
+  it('preserves each authoritative Team2 section body exactly once', () => {
     const step4 = markdownSection(STAGING_AGENTS_RAW, STEP4_HEADING);
     const admissionV2 = markdownSection(STAGING_AGENTS_RAW, ADMISSION_V2_HEADING);
+    const admissionRollback = markdownSection(STAGING_AGENTS_RAW, ADMISSION_ROLLBACK_HEADING);
 
     expect(sha256(step4)).toBe('f59687e0347c18d812aab0d5c34710b1b62579e4d4ad4f7f9168144ac37e7b73');
     expect(sha256(admissionV2)).toBe('b043efd46cf96c08423dccfabfef564fca7b964ed8a8ade723f6454e6d1453de');
+    expect(sha256(admissionRollback)).toBe('7b833be979de8b493535800df5393e57ece6541523ed9e5eeaaeadd8766dc5c3');
+    for (const [heading, section] of [
+      [STEP4_HEADING, step4],
+      [ADMISSION_V2_HEADING, admissionV2],
+      [ADMISSION_ROLLBACK_HEADING, admissionRollback],
+    ]) {
+      expect(occurrenceCount(STAGING_AGENTS_RAW, heading)).toBe(1);
+      expect(occurrenceCount(STAGING_AGENTS_RAW, section)).toBe(1);
+    }
     expect(step4).toContain('SCHEDULER_JOB_SPECS');
     expect(step4).toContain('binding each job name independently to its exact request path');
-    expect(step4).not.toContain('`SCHEDULER_JOBS` list');
+    expect(admissionRollback).toContain('complete pause pass before a separate complete verification pass');
+    expect(admissionRollback).toContain('pins RIG-B1 to Supabase org `byhkazrpmivhcsuqjtva`');
+    expect(admissionRollback).toContain(
+      'accepts images only from `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker`',
+    );
+    expect(STAGING_AGENTS_RAW).not.toContain('`SCHEDULER_JOBS` list');
+    expect(STAGING_AGENTS_RAW).not.toContain('## Admission rollback and identity pins\n');
   });
 
   it('preserves exact Team1 f61 rules plus the one admission provenance rule', () => {
     const prefix = STAGING_AGENTS_RAW.slice(0, STAGING_AGENTS_RAW.indexOf(STEP4_HEADING));
     const batchDrain = markdownSection(STAGING_AGENTS_RAW, BATCH_DRAIN_HEADING);
-    const provenanceOccurrences = batchDrain.split(TEAM1_ADMISSION_PROVENANCE_RULE).length - 1;
+    const provenanceOccurrences = occurrenceCount(batchDrain, TEAM1_ADMISSION_PROVENANCE_RULE);
     const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
 
     expect(sha256(prefix)).toBe('22ef741ccf44982cd7fc6ad981927e565dde31dbab8ae03e293472ac9125918e');
