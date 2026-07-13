@@ -25,6 +25,9 @@ const headSha = z.string().regex(/^[0-9a-f]{40}$/);
 const imageDigest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const pinnedImage = z.string().regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/);
 const sourceHeadImageRef = z.string().regex(/^[^\s@]+:[0-9a-f]{40}$/);
+const APPROVED_IMAGE_REPOSITORY =
+  'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker';
+const APPROVED_SUPABASE_ORG_ID = 'byhkazrpmivhcsuqjtva';
 const projectRef = z.string().regex(/^[a-z]{20}$/);
 const runIdentity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
 const gcpProjectId = z.string().regex(/^[a-z][a-z\d-]{4,28}[a-z\d]$/);
@@ -101,6 +104,7 @@ const admissionV2Schema = z.object({
   soak_id: runIdentity,
   cloud_run_service: cloudRunName,
   gcp_project_id: gcpProjectId,
+  supabase_org_id: z.literal(APPROVED_SUPABASE_ORG_ID),
   region: gcpRegion,
   lease_id: runIdentity,
   clean_mirror_attestation_id: sha256,
@@ -176,16 +180,16 @@ function assertAdmissionInvariants(admission: AdmissionV2): void {
     throw new Error('Admission v2 deployed revision must bind to the exact Cloud Run service identity.');
   }
 
-  const expectedImageSuffix = `@${admission.deployed_image_digest}`;
-  const imageRepository = admission.image.slice(0, -expectedImageSuffix.length);
-  const expectedSourceHeadImageRef = `${imageRepository}:${admission.declared_source_head}`;
+  const expectedPinnedImageRef = `${APPROVED_IMAGE_REPOSITORY}@${admission.deployed_image_digest}`;
+  const expectedSourceHeadImageRef = `${APPROVED_IMAGE_REPOSITORY}:${admission.declared_source_head}`;
   if (
     admission.image_digest !== admission.deployed_image_digest
+    || admission.source_head_image_digest !== admission.image_digest
     || admission.source_head_image_digest !== admission.deployed_image_digest
     || admission.source_head_image_ref !== expectedSourceHeadImageRef
-    || !admission.image.endsWith(expectedImageSuffix)
-    || !admission.deployed_image_ref.endsWith(expectedImageSuffix)
-  ) throw new Error('Admission v2 contains contradictory source-head/deployed image digest identity.');
+    || admission.image !== expectedPinnedImageRef
+    || admission.deployed_image_ref !== expectedPinnedImageRef
+  ) throw new Error('Admission v2 contains contradictory source-head or deployed image digest identity.');
 
   if (
     admission.clean_mirror.attestation_id !== admission.clean_mirror_attestation_id

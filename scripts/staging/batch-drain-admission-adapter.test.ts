@@ -13,6 +13,18 @@ const ADMISSION_RAW = readFileSync(
   join(process.cwd(), 'scripts/staging/fixtures/rig-b1-admission-v2.json'),
   'utf8',
 );
+const STAGING_AGENTS_RAW = readFileSync(
+  join(process.cwd(), 'scripts/staging/agents.md'),
+  'utf8',
+);
+
+const DECLARED_SOURCE_HEAD = 'a'.repeat(40);
+const APPROVED_IMAGE_REPOSITORY =
+  'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker';
+const APPROVED_SUPABASE_ORG_ID = 'byhkazrpmivhcsuqjtva';
+const SOURCE_HEAD_IMAGE_REF =
+  `${APPROVED_IMAGE_REPOSITORY}:${DECLARED_SOURCE_HEAD}`;
+const SOURCE_HEAD_IMAGE_DIGEST = `sha256:${'b'.repeat(64)}`;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -44,6 +56,15 @@ function admissionWith(mutator: (value: JsonRecord) => void): string {
   const value = JSON.parse(ADMISSION_RAW) as JsonRecord;
   mutator(value);
   return JSON.stringify(value);
+}
+
+function exactTeam2AdmissionWith(mutator?: (value: JsonRecord) => void): string {
+  return admissionWith((value) => {
+    value.source_head_image_ref = SOURCE_HEAD_IMAGE_REF;
+    value.source_head_image_digest = SOURCE_HEAD_IMAGE_DIGEST;
+    value.supabase_org_id = APPROVED_SUPABASE_ORG_ID;
+    mutator?.(value);
+  });
 }
 
 function ceremonyValue(): JsonRecord {
@@ -80,6 +101,66 @@ function ceremonyRaw(mutator?: (value: JsonRecord) => void): string {
 }
 
 describe('admission v2 to run-declaration identity adapter', () => {
+  it('accepts the exact Team2 source-head image packet contract', () => {
+    const raw = ADMISSION_RAW;
+    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).not.toThrow();
+    expect(JSON.parse(raw)).toMatchObject({
+      declared_source_head: DECLARED_SOURCE_HEAD,
+      source_head_image_ref: SOURCE_HEAD_IMAGE_REF,
+      source_head_image_digest: SOURCE_HEAD_IMAGE_DIGEST,
+      image_digest: SOURCE_HEAD_IMAGE_DIGEST,
+      deployed_image_digest: SOURCE_HEAD_IMAGE_DIGEST,
+      supabase_org_id: APPROVED_SUPABASE_ORG_ID,
+    });
+  });
+
+  it('requires the exact approved Team2 Supabase organization identity', () => {
+    expect(() => projectAdmissionV2ToRunDeclaration(exactTeam2AdmissionWith((value) => {
+      delete value.supabase_org_id;
+    }), ceremonyRaw())).toThrow(/admission v2.*schema|rejected|Supabase.*org/i);
+    expect(() => projectAdmissionV2ToRunDeclaration(exactTeam2AdmissionWith((value) => {
+      value.supabase_org_id = 'foreignorganization';
+    }), ceremonyRaw())).toThrow(/admission v2.*schema|rejected|Supabase.*org/i);
+  });
+
+  it.each([
+    'source_head_image_ref',
+    'source_head_image_digest',
+  ])('requires Team2 source-head image field %s', (field) => {
+    expect(() => projectAdmissionV2ToRunDeclaration(exactTeam2AdmissionWith((value) => {
+      delete value[field];
+    }), ceremonyRaw())).toThrow(/admission v2.*schema|rejected/i);
+  });
+
+  it.each([
+    ['malformed source-head tag', (value: JsonRecord) => { value.source_head_image_ref = 'repo:not-a-full-sha'; }],
+    ['digest-form source-head ref', (value: JsonRecord) => {
+      value.source_head_image_ref = `repo@sha256:${'b'.repeat(64)}`;
+    }],
+    ['malformed source-head digest', (value: JsonRecord) => { value.source_head_image_digest = 'b'.repeat(64); }],
+    ['source-head tag mismatch', (value: JsonRecord) => {
+      value.source_head_image_ref = `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:${'d'.repeat(40)}`;
+    }],
+    ['source-head repository mismatch', (value: JsonRecord) => {
+      value.source_head_image_ref = `us-central1-docker.pkg.dev/arkova1/other/arkova-worker:${DECLARED_SOURCE_HEAD}`;
+    }],
+    ['internally consistent foreign source/image repository', (value: JsonRecord) => {
+      const foreignRepository = 'us-central1-docker.pkg.dev/foreign/other/arkova-worker';
+      value.image = `${foreignRepository}@${SOURCE_HEAD_IMAGE_DIGEST}`;
+      value.source_head_image_ref = `${foreignRepository}:${DECLARED_SOURCE_HEAD}`;
+    }],
+    ['foreign deployed image repository', (value: JsonRecord) => {
+      value.deployed_image_ref = `us-central1-docker.pkg.dev/foreign/other/arkova-worker@${SOURCE_HEAD_IMAGE_DIGEST}`;
+    }],
+    ['source-head digest mismatch', (value: JsonRecord) => {
+      value.source_head_image_digest = `sha256:${'d'.repeat(64)}`;
+    }],
+  ])('rejects %s', (_label, mutate) => {
+    expect(() => projectAdmissionV2ToRunDeclaration(exactTeam2AdmissionWith(mutate), ceremonyRaw())).toThrow(
+      /admission v2.*schema|rejected|source.head|image|digest|contradict/i,
+    );
+  });
+
   it('strictly projects every run identity from Team2 admission v2 only', () => {
     const bound = projectAdmissionV2ToRunDeclaration(ADMISSION_RAW, ceremonyRaw());
     const declaration = requireAdmissionBoundRunDeclaration(bound);
@@ -409,5 +490,29 @@ describe('admission v2 to run-declaration identity adapter', () => {
       /provenance|adapter/i,
     );
     expect(() => requireAdmissionBoundRunDeclaration(new Proxy(bound, {}))).toThrow(/provenance|adapter/i);
+  });
+});
+
+describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
+  it('retains every required Team1 heading and the Team2 admission section exactly once', () => {
+    const headings = STAGING_AGENTS_RAW.match(/^## .+$/gm) ?? [];
+    expect(headings).toEqual([
+      '## What lives here',
+      '## Required env',
+      '## Optional env',
+      '## Seed tier matrix',
+      '## Staging-only helper RPCs',
+      '## Load harness modes',
+      '## Workflow',
+      '## S0-E4 isolated-rig automation (2026-06-17, story S0-4.1)',
+      '## What this folder does NOT do',
+      '## Provision Step-4 Scheduler repair (PR #1492, L2-S2a-FIX, 2026-07-10)',
+      '## Isolated-rig admission v2 hardening (Lane 2 S3.3 readiness, 2026-07-13)',
+      '## Real batch-drain behavioral harness (#1417, 2026-07-07, Lane-1 chain)',
+    ]);
+    expect(new Set(headings).size).toBe(12);
+    expect(STAGING_AGENTS_RAW).toContain('S3.3 R3 acceptance extensions are split deliberately');
+    expect(STAGING_AGENTS_RAW).toContain('Team 1 review hardening keeps every chronology field');
+    expect(STAGING_AGENTS_RAW).toContain('batch-drain-admission-adapter.ts` is the only Team1 bridge');
   });
 });

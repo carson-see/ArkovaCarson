@@ -8,6 +8,7 @@
   "soak_id": "soak-rig-b1-r3",
   "cloud_run_service": "arkova-worker-s33-rig-b1-staging",
   "gcp_project_id": "arkova1",
+  "supabase_org_id": "byhkazrpmivhcsuqjtva",
   "region": "us-central1",
   "lease_id": "lease-rig-b1-r3",
   "clean_mirror_attestation_id": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
