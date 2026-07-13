@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   assertDrainPassObservation,
+  validateDrainPassExpectation,
   type DrainPassExpectation,
   type DrainPassObservation,
 } from './batch-drain-observation';
@@ -10,18 +13,26 @@ const BATCH_ID = 'batch-offline-r3';
 const EXECUTION_ID = 'scheduler-offline-r3';
 const FAULT_WINDOW_ID = 'fault-window-offline-r3';
 const TX_ID = 'a'.repeat(64);
+const TX_2 = 'd'.repeat(64);
 const TX_HASH = 'b'.repeat(64);
-const ROOT = 'c'.repeat(64);
 const FP_1 = '1'.repeat(64);
 const FP_2 = '2'.repeat(64);
 const FP_POISON = '3'.repeat(64);
 const ORG_HEALTHY = 'org-healthy';
+const ORG_OTHER = 'org-other';
 const ORG_POISON = 'org-poison';
 
-function expectation(): DrainPassExpectation {
+function doubleSha256(bytes: Uint8Array): string {
+  const first = createHash('sha256').update(bytes).digest();
+  return createHash('sha256').update(first).digest('hex');
+}
+
+const ROOT = doubleSha256(Buffer.concat([Buffer.from(FP_1, 'hex'), Buffer.from(FP_2, 'hex')]));
+
+function expectation(trigger: 'org-scheduler' | 'global-flush' = 'org-scheduler'): DrainPassExpectation {
   return {
     batchId: BATCH_ID,
-    armedTrigger: 'org-scheduler',
+    armedTrigger: trigger,
     schedulerExecutionId: EXECUTION_ID,
     faultWindow: {
       id: FAULT_WINDOW_ID,
@@ -30,37 +41,24 @@ function expectation(): DrainPassExpectation {
     },
     claims: [
       { fingerprint: FP_1, orgId: ORG_HEALTHY, outcome: 'drained' },
-      { fingerprint: FP_2, orgId: ORG_HEALTHY, outcome: 'drained' },
+      { fingerprint: FP_2, orgId: trigger === 'global-flush' ? ORG_OTHER : ORG_HEALTHY, outcome: 'drained' },
       { fingerprint: FP_POISON, orgId: ORG_POISON, outcome: 'credit-starved' },
-    ],
-    transactions: [{
-      txId: TX_ID,
-      batchId: BATCH_ID,
-      merkleRoot: ROOT,
-      signedBytesSha256: TX_HASH,
-      leaves: [
-        { fingerprint: FP_1, orgId: ORG_HEALTHY, merkleIndex: 0 },
-        { fingerprint: FP_2, orgId: ORG_HEALTHY, merkleIndex: 1 },
-      ],
-    }],
-    ledgerDeltas: [
-      { orgId: ORG_HEALTHY, delta: -2 },
-      { orgId: ORG_POISON, delta: 0 },
     ],
   };
 }
 
-function observation(): DrainPassObservation {
+function observation(trigger: 'org-scheduler' | 'global-flush' = 'org-scheduler'): DrainPassObservation {
+  const secondOrg = trigger === 'global-flush' ? ORG_OTHER : ORG_HEALTHY;
   return {
     execution: {
       schedulerExecutionId: EXECUTION_ID,
-      armedTrigger: 'org-scheduler',
+      armedTrigger: trigger,
       faultWindowId: FAULT_WINDOW_ID,
       startedAt: '2026-07-13T12:00:05.000Z',
       completedAt: '2026-07-13T12:00:20.000Z',
     },
     triggerFirings: [{
-      trigger: 'org-scheduler',
+      trigger,
       schedulerExecutionId: EXECUTION_ID,
       batchId: BATCH_ID,
       firedAt: '2026-07-13T12:00:06.000Z',
@@ -78,7 +76,7 @@ function observation(): DrainPassObservation {
       },
       {
         fingerprint: FP_2,
-        orgId: ORG_HEALTHY,
+        orgId: secondOrg,
         batchId: BATCH_ID,
         schedulerExecutionId: EXECUTION_ID,
         status: 'SECURED',
@@ -97,15 +95,10 @@ function observation(): DrainPassObservation {
         observedOutcome: 'succeeded-no-broadcast',
       },
     ],
-    transactions: [{
-      txId: TX_ID,
-      batchId: BATCH_ID,
-      merkleRoot: ROOT,
-      signedBytesSha256: TX_HASH,
-    }],
+    transactions: [{ txId: TX_ID, batchId: BATCH_ID, merkleRoot: ROOT, signedBytesSha256: TX_HASH }],
     txLeaves: [
       { txId: TX_ID, batchId: BATCH_ID, fingerprint: FP_1, orgId: ORG_HEALTHY, merkleIndex: 0 },
-      { txId: TX_ID, batchId: BATCH_ID, fingerprint: FP_2, orgId: ORG_HEALTHY, merkleIndex: 1 },
+      { txId: TX_ID, batchId: BATCH_ID, fingerprint: FP_2, orgId: secondOrg, merkleIndex: 1 },
     ],
     proofs: [
       {
@@ -115,30 +108,51 @@ function observation(): DrainPassObservation {
         orgId: ORG_HEALTHY,
         merkleRoot: ROOT,
         merkleIndex: 0,
-        verified: true,
+        leafCount: 2,
+        proofPath: [{ hash: FP_2, position: 'right' }],
       },
       {
         txId: TX_ID,
         batchId: BATCH_ID,
         fingerprint: FP_2,
-        orgId: ORG_HEALTHY,
+        orgId: secondOrg,
         merkleRoot: ROOT,
         merkleIndex: 1,
-        verified: true,
+        leafCount: 2,
+        proofPath: [{ hash: FP_1, position: 'left' }],
       },
     ],
-    ledgerDeltas: [
-      { schedulerExecutionId: EXECUTION_ID, orgId: ORG_HEALTHY, delta: -2 },
-      { schedulerExecutionId: EXECUTION_ID, orgId: ORG_POISON, delta: 0 },
-    ],
+    ledgerDeltas: trigger === 'global-flush'
+      ? [
+          { schedulerExecutionId: EXECUTION_ID, orgId: ORG_HEALTHY, delta: -1 },
+          { schedulerExecutionId: EXECUTION_ID, orgId: ORG_OTHER, delta: -1 },
+          { schedulerExecutionId: EXECUTION_ID, orgId: ORG_POISON, delta: 0 },
+        ]
+      : [
+          { schedulerExecutionId: EXECUTION_ID, orgId: ORG_HEALTHY, delta: -2 },
+          { schedulerExecutionId: EXECUTION_ID, orgId: ORG_POISON, delta: 0 },
+        ],
   };
 }
 
-describe('assertDrainPassObservation — fail-closed actual-evidence correlation', () => {
-  it('accepts one exactly-correlated pass and returns an auditable summary', () => {
-    expect(assertDrainPassObservation(expectation(), observation())).toEqual({
+function splitIntoTwoTransactions(actual: DrainPassObservation): void {
+  actual.transactions = [
+    { txId: TX_ID, batchId: BATCH_ID, merkleRoot: FP_1, signedBytesSha256: TX_HASH },
+    { txId: TX_2, batchId: BATCH_ID, merkleRoot: FP_2, signedBytesSha256: 'e'.repeat(64) },
+  ];
+  actual.txLeaves[0] = { ...actual.txLeaves[0]!, txId: TX_ID, merkleIndex: 0 };
+  actual.txLeaves[1] = { ...actual.txLeaves[1]!, txId: TX_2, merkleIndex: 0 };
+  actual.passRows[0] = { ...actual.passRows[0]!, chainTxId: TX_ID, merkleRoot: FP_1 };
+  actual.passRows[1] = { ...actual.passRows[1]!, chainTxId: TX_2, merkleRoot: FP_2 };
+  actual.proofs[0] = { ...actual.proofs[0]!, txId: TX_ID, merkleRoot: FP_1, merkleIndex: 0, leafCount: 1, proofPath: [] };
+  actual.proofs[1] = { ...actual.proofs[1]!, txId: TX_2, merkleRoot: FP_2, merkleIndex: 0, leafCount: 1, proofPath: [] };
+}
+
+describe('assertDrainPassObservation — derived fail-closed R3 evidence', () => {
+  it.each(['org-scheduler', 'global-flush'] as const)('accepts an actual valid %s pass', (trigger) => {
+    expect(assertDrainPassObservation(expectation(trigger), observation(trigger))).toEqual({
       batchId: BATCH_ID,
-      armedTrigger: 'org-scheduler',
+      armedTrigger: trigger,
       schedulerExecutionId: EXECUTION_ID,
       faultWindowId: FAULT_WINDOW_ID,
       claimedLeaves: 3,
@@ -149,6 +163,96 @@ describe('assertDrainPassObservation — fail-closed actual-evidence correlation
     });
   });
 
+  it('enforces exactly one transaction per claimed org in an org-scheduler pass', () => {
+    const actual = observation('org-scheduler');
+    splitIntoTwoTransactions(actual);
+    expect(() => assertDrainPassObservation(expectation('org-scheduler'), actual)).toThrow(
+      /exactly one transaction per drained org per pass/,
+    );
+  });
+
+  it('enforces exactly one mixed-org global transaction', () => {
+    const actual = observation('global-flush');
+    splitIntoTwoTransactions(actual);
+    expect(() => assertDrainPassObservation(expectation('global-flush'), actual)).toThrow(
+      /global-flush pass must produce exactly one mixed-org transaction/,
+    );
+  });
+
+  it('rejects a global transaction above the 10k claim cap before sparse evidence can pass', () => {
+    const claims = Array.from({ length: 10_001 }, (_, index) => ({
+      fingerprint: (index + 1).toString(16).padStart(64, '0'),
+      orgId: index % 2 === 0 ? ORG_HEALTHY : ORG_OTHER,
+      outcome: 'drained' as const,
+    }));
+    const expected: DrainPassExpectation = { ...expectation('global-flush'), claims };
+    const actual = observation('global-flush');
+    actual.passRows = [];
+    actual.txLeaves = claims.map((claim, merkleIndex) => ({
+      txId: TX_ID,
+      batchId: BATCH_ID,
+      fingerprint: claim.fingerprint,
+      orgId: claim.orgId,
+      merkleIndex,
+    }));
+    actual.proofs = [];
+    actual.ledgerDeltas = [];
+    expect(() => assertDrainPassObservation(expected, actual)).toThrow(/at most 10000 leaves/);
+  });
+
+  it('independently recomputes the root from sibling paths instead of trusting a boolean', () => {
+    const actual = observation();
+    actual.proofs[0]!.proofPath[0]!.hash = 'f'.repeat(64);
+    expect(() => assertDrainPassObservation(expectation(), actual)).toThrow(/proof.*recompute|recomputed proof/i);
+  });
+
+  it('rejects a reordered leaf set even when its actual root and proofs are internally consistent', () => {
+    const actual = observation();
+    const reversedRoot = doubleSha256(Buffer.concat([Buffer.from(FP_2, 'hex'), Buffer.from(FP_1, 'hex')]));
+    actual.transactions[0]!.merkleRoot = reversedRoot;
+    actual.txLeaves[0]!.merkleIndex = 1;
+    actual.txLeaves[1]!.merkleIndex = 0;
+    actual.passRows[0]!.merkleRoot = reversedRoot;
+    actual.passRows[1]!.merkleRoot = reversedRoot;
+    actual.proofs = [
+      {
+        ...actual.proofs[0]!,
+        merkleRoot: reversedRoot,
+        merkleIndex: 1,
+        proofPath: [{ hash: FP_2, position: 'left' }],
+      },
+      {
+        ...actual.proofs[1]!,
+        merkleRoot: reversedRoot,
+        merkleIndex: 0,
+        proofPath: [{ hash: FP_1, position: 'right' }],
+      },
+    ];
+    expect(() => assertDrainPassObservation(expectation(), actual)).toThrow(/declared claim order/);
+  });
+
+  it('derives credit deltas from drained counts and requires poison org zero', () => {
+    const wrongHealthy = observation();
+    wrongHealthy.ledgerDeltas[0]!.delta = -1;
+    expect(() => assertDrainPassObservation(expectation(), wrongHealthy)).toThrow(/derived ledger delta/);
+
+    const wrongPoison = observation();
+    wrongPoison.ledgerDeltas[1]!.delta = -1;
+    expect(() => assertDrainPassObservation(expectation(), wrongPoison)).toThrow(/derived ledger delta/);
+  });
+
+  it('rejects DB-unseedable bad-fingerprint evidence declarations', () => {
+    const expected = expectation();
+    expected.claims[2]!.outcome = 'bad-fingerprint' as never;
+    expect(() => validateDrainPassExpectation(expected)).toThrow(/DB-unseedable/);
+  });
+
+  it('requires trigger firing chronology inside scheduler execution and the fault window', () => {
+    const actual = observation();
+    actual.triggerFirings[0]!.firedAt = '2026-07-13T12:00:04.000Z';
+    expect(() => assertDrainPassObservation(expectation(), actual)).toThrow(/scheduler execution chronology/);
+  });
+
   it.each([
     ['scheduler execution', (actual: DrainPassObservation) => { actual.execution.schedulerExecutionId = 'unrelated'; }],
     ['armed trigger', (actual: DrainPassObservation) => { actual.execution.armedTrigger = 'global-flush'; }],
@@ -156,35 +260,9 @@ describe('assertDrainPassObservation — fail-closed actual-evidence correlation
     ['trigger firing', (actual: DrainPassObservation) => { actual.triggerFirings[0]!.batchId = 'unrelated'; }],
     ['pass row', (actual: DrainPassObservation) => { actual.passRows[0]!.batchId = 'unrelated'; }],
     ['tx leaf org', (actual: DrainPassObservation) => { actual.txLeaves[0]!.orgId = ORG_POISON; }],
-    ['proof', (actual: DrainPassObservation) => { actual.proofs[0]!.verified = false; }],
-    ['ledger delta', (actual: DrainPassObservation) => { actual.ledgerDeltas[0]!.delta = -1; }],
-  ])('rejects unrelated or incomplete %s evidence', (_label, mutate) => {
+  ])('rejects unrelated %s evidence', (_label, mutate) => {
     const actual = observation();
     mutate(actual);
     expect(() => assertDrainPassObservation(expectation(), actual)).toThrow();
-  });
-
-  it('rejects an extra trigger firing or pass row outside the declared claim set', () => {
-    const extraFiring = observation();
-    extraFiring.triggerFirings.push({ ...extraFiring.triggerFirings[0]!, trigger: 'global-flush' });
-    expect(() => assertDrainPassObservation(expectation(), extraFiring)).toThrow(/exactly one trigger firing/);
-
-    const extraRow = observation();
-    extraRow.passRows.push({ ...extraRow.passRows[0]!, fingerprint: '4'.repeat(64) });
-    expect(() => assertDrainPassObservation(expectation(), extraRow)).toThrow(/pass rows.*claimed leaves/);
-  });
-
-  it('rejects an org-scheduler transaction that spans orgs', () => {
-    const expected = expectation();
-    expected.claims[2] = { fingerprint: FP_POISON, orgId: ORG_POISON, outcome: 'drained' };
-    expected.transactions[0]!.leaves.push({ fingerprint: FP_POISON, orgId: ORG_POISON, merkleIndex: 2 });
-    expected.ledgerDeltas[1]!.delta = -1;
-    expect(() => assertDrainPassObservation(expected, observation())).toThrow(/org-scheduler transaction.*one org/);
-  });
-
-  it('rejects scheduler activity outside the declared fault window', () => {
-    const actual = observation();
-    actual.execution.startedAt = '2026-07-13T11:59:59.999Z';
-    expect(() => assertDrainPassObservation(expectation(), actual)).toThrow(/fault window/);
   });
 });

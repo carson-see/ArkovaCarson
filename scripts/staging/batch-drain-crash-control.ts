@@ -1,13 +1,12 @@
 /**
- * Port-driven crash-matrix orchestration for the batch-drain harness.
- *
- * This module defines strict ordering/correlation contracts but performs no
- * process, network, database, broadcast, or rig operation. A supervised rig
- * adapter must implement CrashControlPort; offline tests use an in-memory fake.
+ * Offline port contract for a supervised crash matrix. This module validates
+ * evidence ordering and correlation but has no process, network, DB, broadcast,
+ * secret, or rig adapter. Passing these assertions is never itself rig evidence.
  */
 
 import {
   assertDrainPassObservation,
+  computeMerkleRootFromFingerprints,
   validateDrainPassExpectation,
   type DrainPassEvidenceSummary,
   type DrainPassExpectation,
@@ -25,10 +24,18 @@ export const CRASH_KILLPOINTS = [
 
 export type CrashKillpoint = typeof CRASH_KILLPOINTS[number];
 
+export interface PostIntentIdentity {
+  txId: string;
+  signedBytesSha256: string;
+}
+
 export interface CrashCaseInput {
   runId: string;
   killpoint: CrashKillpoint;
+  /** Pre-intent declaration: never includes a future transaction identity. */
   expectation: DrainPassExpectation;
+  /** Required only at/after durable intent; forbidden before intent exists. */
+  postIntent?: PostIntentIdentity;
 }
 
 export interface CrashClaimIdentity {
@@ -59,12 +66,15 @@ export interface CrashBarrier {
   armedTrigger: DrainTrigger;
   schedulerExecutionId: string;
   faultWindowId: string;
-  reachedAt: string;
   workerId: string;
   claimedLeaves: CrashClaimIdentity[];
+  claimedAt: string;
+  reachedAt: string;
   merkleRoot?: string;
+  merkleBuiltAt?: string;
   intentTxId?: string;
   signedBytesSha256?: string;
+  intentPersistedAt?: string;
   networkAcceptance?: NetworkAcceptanceEvidence;
   phase4Persisted?: Phase4PersistenceEvidence;
 }
@@ -84,21 +94,13 @@ export interface CrashObservation {
 }
 
 export interface CrashControlPort {
-  /** Enable exactly one named deterministic barrier for this case. */
   arm(input: CrashCaseInput): Promise<void>;
-  /** Start the declared scheduler case under a supervisor. */
   start(input: CrashCaseInput): Promise<void>;
-  /** Return complete, boundary-specific, batch-correlated barrier evidence. */
   waitForKillpoint(input: CrashCaseInput): Promise<CrashBarrier>;
-  /** Terminate exactly the worker proved by the validated barrier. */
   terminate(input: CrashCaseInput & { workerId: string }): Promise<void>;
-  /** Resolve only after the supervisor reports a distinct replacement. */
   waitForRestart(input: CrashCaseInput & { previousWorkerId: string }): Promise<{ workerId: string }>;
-  /** Invoke the trigger-specific recovery path after replacement is proven. */
   recover(input: CrashCaseInput): Promise<void>;
-  /** Return the complete actual pass observation; sparse evidence must fail. */
   inspect(input: CrashCaseInput): Promise<CrashObservation>;
-  /** Disable the named barrier in pass and failure paths. */
   disarm(input: CrashCaseInput): Promise<void>;
 }
 
@@ -112,7 +114,6 @@ export interface CrashCaseEvidence extends DrainPassEvidenceSummary {
   restartedTo: string;
 }
 
-/** Retains both failures when cleanup itself fails after a primary failure. */
 export class CrashDisarmAggregateError extends AggregateError {
   readonly primaryError: unknown;
   readonly disarmError: unknown;
@@ -126,18 +127,8 @@ export class CrashDisarmAggregateError extends AggregateError {
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
-const POST_MERKLE_KILLPOINTS = new Set<CrashKillpoint>([
-  'after-merkle-tree',
+const POST_INTENT = new Set<CrashKillpoint>([
   'after-intent-persist',
-  'after-broadcast-before-submit',
-  'after-submit-persist',
-]);
-const POST_INTENT_KILLPOINTS = new Set<CrashKillpoint>([
-  'after-intent-persist',
-  'after-broadcast-before-submit',
-  'after-submit-persist',
-]);
-const POST_NETWORK_KILLPOINTS = new Set<CrashKillpoint>([
   'after-broadcast-before-submit',
   'after-submit-persist',
 ]);
@@ -152,10 +143,18 @@ function withinWindow(input: CrashCaseInput, value: string, name: string): numbe
   const startMs = timestamp(input.expectation.faultWindow.startsAt, 'faultWindow.startsAt');
   const endMs = timestamp(input.expectation.faultWindow.endsAt, 'faultWindow.endsAt');
   const actualMs = timestamp(value, name);
-  if (endMs <= startMs || actualMs < startMs || actualMs > endMs) {
-    throw new Error(`${name} is outside the declared fault window.`);
-  }
+  if (actualMs < startMs || actualMs > endMs) throw new Error(`${name} is outside the declared fault window.`);
   return actualMs;
+}
+
+function drainedClaims(input: CrashCaseInput): CrashClaimIdentity[] {
+  return input.expectation.claims
+    .filter((claim) => claim.outcome === 'drained')
+    .map(({ fingerprint, orgId }) => ({ fingerprint, orgId }));
+}
+
+function expectedRoot(input: CrashCaseInput): string {
+  return computeMerkleRootFromFingerprints(drainedClaims(input).map((claim) => claim.fingerprint));
 }
 
 function validateInput(input: CrashCaseInput): void {
@@ -163,23 +162,46 @@ function validateInput(input: CrashCaseInput): void {
   if (!(CRASH_KILLPOINTS as readonly string[]).includes(input.killpoint)) {
     throw new Error(`Unsupported crash killpoint: ${input.killpoint}.`);
   }
-  if (input.expectation.transactions.length !== 1) {
-    throw new Error('A crash case must declare exactly one transaction for one correlated batch.');
-  }
-  if (input.expectation.claims.length === 0) throw new Error('A crash case requires claimed leaves.');
   validateDrainPassExpectation(input.expectation);
+
+  const isPostIntent = POST_INTENT.has(input.killpoint);
+  if (!isPostIntent && input.postIntent) {
+    throw new Error('A pre-intent crash case must not declare a future post-intent transaction identity.');
+  }
+  if (isPostIntent && !input.postIntent) throw new Error('A post-intent crash case requires its durable post-intent identity.');
+  if (input.postIntent && (
+    !SHA256_HEX.test(input.postIntent.txId)
+    || !SHA256_HEX.test(input.postIntent.signedBytesSha256)
+  )) {
+    throw new Error('Post-intent identity requires lowercase 64-hex txId and signedBytesSha256.');
+  }
+
+  const drained = drainedClaims(input);
+  const orgs = new Set(drained.map((claim) => claim.orgId));
+  if (input.expectation.armedTrigger === 'org-scheduler' && orgs.size !== 1) {
+    throw new Error('A crash case represents one org-scheduler batch and therefore exactly one drained org.');
+  }
+  if (input.expectation.armedTrigger === 'global-flush' && orgs.size < 2) {
+    throw new Error('A global crash case requires the mixed-org R3 invariant.');
+  }
+  if (drained.length > 10_000) throw new Error('A crash case transaction may contain at most 10000 leaves.');
 }
 
 function sameClaims(expected: CrashClaimIdentity[], actual: CrashClaimIdentity[]): boolean {
   if (expected.length !== actual.length) return false;
-  const expectedByFingerprint = new Map(expected.map((claim) => [claim.fingerprint, claim.orgId]));
-  return actual.every((claim) => expectedByFingerprint.get(claim.fingerprint) === claim.orgId)
+  const expectedMap = new Map(expected.map((claim) => [claim.fingerprint, claim.orgId]));
+  return actual.every((claim) => expectedMap.get(claim.fingerprint) === claim.orgId)
     && new Set(actual.map((claim) => claim.fingerprint)).size === actual.length;
+}
+
+function forbidLaterStageEvidence(barrier: CrashBarrier, fields: Array<keyof CrashBarrier>): void {
+  if (fields.some((field) => barrier[field] !== undefined)) {
+    throw new Error(`${barrier.killpoint} barrier contains later-stage evidence and cannot prove an exact kill boundary.`);
+  }
 }
 
 function validateBarrier(input: CrashCaseInput, barrier: CrashBarrier): void {
   const expected = input.expectation;
-  const transaction = expected.transactions[0]!;
   if (barrier.runId !== input.runId || barrier.killpoint !== input.killpoint) {
     throw new Error('Crash barrier does not match the armed runId and killpoint.');
   }
@@ -190,67 +212,81 @@ function validateBarrier(input: CrashCaseInput, barrier: CrashBarrier): void {
     || barrier.schedulerExecutionId !== expected.schedulerExecutionId
     || barrier.faultWindowId !== expected.faultWindow.id
   ) {
-    throw new Error('Crash barrier is not correlated to the declared batch, armed trigger, scheduler execution, and fault window.');
+    throw new Error('Crash barrier is unrelated to the declared batch, trigger, execution, or fault window.');
   }
-  const reachedAtMs = withinWindow(input, barrier.reachedAt, 'Crash barrier');
   if (!sameClaims(expected.claims, barrier.claimedLeaves)) {
-    throw new Error('Crash barrier claimed leaves/orgs do not exactly match the declared claims.');
+    throw new Error('Crash barrier claimed leaves/orgs do not exactly match the declaration.');
   }
 
-  if (POST_MERKLE_KILLPOINTS.has(input.killpoint) && barrier.merkleRoot !== transaction.merkleRoot) {
-    throw new Error('Crash barrier merkle root does not match the claimed batch root.');
-  }
-  if (POST_INTENT_KILLPOINTS.has(input.killpoint)) {
-    if (
-      !SHA256_HEX.test(barrier.intentTxId ?? '')
-      || !SHA256_HEX.test(barrier.signedBytesSha256 ?? '')
-      || barrier.intentTxId !== transaction.txId
-      || barrier.signedBytesSha256 !== transaction.signedBytesSha256
-    ) {
-      throw new Error('Post-intent barrier txid/signed bytes do not match the declared batch transaction.');
+  const chronology: number[] = [withinWindow(input, barrier.claimedAt, 'Claim stage')];
+  const root = expectedRoot(input);
+  if (input.killpoint === 'after-claim') {
+    forbidLaterStageEvidence(barrier, [
+      'merkleRoot', 'merkleBuiltAt', 'intentTxId', 'signedBytesSha256',
+      'intentPersistedAt', 'networkAcceptance', 'phase4Persisted',
+    ]);
+  } else {
+    if (barrier.merkleRoot !== root) {
+      throw new Error('Crash barrier root does not match the independently recomputed claimed-leaf root.');
     }
+    if (!barrier.merkleBuiltAt) throw new Error('Post-Merkle barrier requires merkleBuiltAt.');
+    chronology.push(withinWindow(input, barrier.merkleBuiltAt, 'Merkle stage'));
   }
 
-  if (POST_NETWORK_KILLPOINTS.has(input.killpoint)) {
+  if (input.killpoint === 'after-merkle-tree') {
+    forbidLaterStageEvidence(barrier, [
+      'intentTxId', 'signedBytesSha256', 'intentPersistedAt', 'networkAcceptance', 'phase4Persisted',
+    ]);
+  }
+
+  if (POST_INTENT.has(input.killpoint)) {
+    if (
+      barrier.intentTxId !== input.postIntent!.txId
+      || barrier.signedBytesSha256 !== input.postIntent!.signedBytesSha256
+      || !barrier.intentPersistedAt
+    ) {
+      throw new Error('Intent barrier does not match the durable post-intent txid, signed bytes, and timestamp.');
+    }
+    chronology.push(withinWindow(input, barrier.intentPersistedAt, 'Intent stage'));
+  }
+  if (input.killpoint === 'after-intent-persist') {
+    forbidLaterStageEvidence(barrier, ['networkAcceptance', 'phase4Persisted']);
+  }
+
+  if (input.killpoint === 'after-broadcast-before-submit' || input.killpoint === 'after-submit-persist') {
     const acceptance = barrier.networkAcceptance;
-    if (!acceptance) {
-      throw new Error('Post-broadcast kill requires node network acceptance evidence before termination.');
-    }
+    if (!acceptance) throw new Error('Post-broadcast kill requires node network acceptance evidence.');
     if (!acceptance.nodeId?.trim() || (acceptance.state !== 'mempool' && acceptance.state !== 'confirmed')) {
-      throw new Error('Network acceptance evidence must identify the observing node and accepted state.');
+      throw new Error('Network acceptance must identify the observing node and state.');
     }
-    if (acceptance.txId !== transaction.txId || acceptance.txId !== barrier.intentTxId) {
-      throw new Error('Network acceptance evidence does not match the exact intended txid.');
+    if (acceptance.txId !== input.postIntent!.txId) {
+      throw new Error('Network acceptance does not match the exact post-intent txid.');
     }
-    if (
-      !SHA256_HEX.test(acceptance.rawTxSha256)
-      || acceptance.rawTxSha256 !== transaction.signedBytesSha256
-      || acceptance.rawTxSha256 !== barrier.signedBytesSha256
-    ) {
-      throw new Error('Network acceptance evidence does not prove the exact signed bytes returned by the node.');
+    if (acceptance.rawTxSha256 !== input.postIntent!.signedBytesSha256) {
+      throw new Error('Network acceptance does not prove the exact signed bytes returned by the node.');
     }
-    const acceptedAtMs = withinWindow(input, acceptance.observedAt, 'Network acceptance');
-    if (acceptedAtMs > reachedAtMs) {
-      throw new Error('Network acceptance must be observed before the crash barrier is released.');
-    }
+    chronology.push(withinWindow(input, acceptance.observedAt, 'Network acceptance stage'));
+  }
+  if (input.killpoint === 'after-broadcast-before-submit') {
+    forbidLaterStageEvidence(barrier, ['phase4Persisted']);
   }
 
   if (input.killpoint === 'after-submit-persist') {
     const persisted = barrier.phase4Persisted;
-    const drainedLeaves = expected.claims.filter((claim) => claim.outcome === 'drained').length;
-    if (!persisted) throw new Error('Post-submit kill requires Phase-4 persistence evidence before termination.');
+    if (!persisted) throw new Error('Post-submit kill requires Phase-4 persistence evidence.');
     if (
       persisted.batchId !== expected.batchId
-      || persisted.txId !== transaction.txId
-      || persisted.rowCount !== drainedLeaves
+      || persisted.txId !== input.postIntent!.txId
+      || persisted.rowCount !== drainedClaims(input).length
     ) {
-      throw new Error('Phase-4 persistence evidence does not match the declared batch, txid, and row count.');
+      throw new Error('Phase-4 persistence does not match the batch, txid, and drained row count.');
     }
-    const persistedAtMs = withinWindow(input, persisted.persistedAt, 'Phase-4 persistence');
-    const acceptedAtMs = timestamp(barrier.networkAcceptance!.observedAt, 'Network acceptance');
-    if (persistedAtMs < acceptedAtMs || persistedAtMs > reachedAtMs) {
-      throw new Error('Phase-4 persistence must follow network acceptance and precede barrier release.');
-    }
+    chronology.push(withinWindow(input, persisted.persistedAt, 'Phase-4 persistence stage'));
+  }
+
+  chronology.push(withinWindow(input, barrier.reachedAt, 'Crash barrier'));
+  if (chronology.some((value, index) => index > 0 && value < chronology[index - 1]!)) {
+    throw new Error('Crash barrier stage chronology is not monotonic before termination.');
   }
 }
 
@@ -264,42 +300,32 @@ function validateObservation(
   if (observation.finalWorkerId !== replacementWorkerId) {
     throw new Error('Crash observation was not produced by the replacement worker.');
   }
-
   const summary = assertDrainPassObservation(input.expectation, observation.drain);
-  const transaction = input.expectation.transactions[0]!;
+  if (summary.transactionIds.length !== 1) throw new Error('A crash case must resolve to exactly one derived transaction.');
+
+  const actualTransaction = observation.drain.transactions[0]!;
+  if (input.postIntent && (
+    actualTransaction.txId !== input.postIntent.txId
+    || actualTransaction.signedBytesSha256 !== input.postIntent.signedBytesSha256
+  )) {
+    throw new Error('Actual recovered transaction does not match the declared post-intent identity.');
+  }
   if (observation.broadcastAttempts.length === 0) {
-    throw new Error('Crash recovery requires at least one correlated broadcast-attempt record.');
+    throw new Error('Crash recovery requires at least one correlated broadcast attempt.');
   }
   for (const attempt of observation.broadcastAttempts) {
     if (
       attempt.batchId !== input.expectation.batchId
       || attempt.schedulerExecutionId !== input.expectation.schedulerExecutionId
-      || attempt.txId !== transaction.txId
-      || attempt.signedBytesSha256 !== transaction.signedBytesSha256
+      || attempt.txId !== actualTransaction.txId
+      || attempt.signedBytesSha256 !== actualTransaction.signedBytesSha256
     ) {
-      throw new Error('Broadcast attempt is unrelated or does not reuse the exact declared signed transaction.');
+      throw new Error('Broadcast attempt is unrelated or does not reuse the exact derived signed transaction.');
     }
   }
-
-  const txIds = [...new Set(observation.broadcastAttempts.map((attempt) => attempt.txId))];
-  const signedHashes = new Set(observation.broadcastAttempts.map((attempt) => attempt.signedBytesSha256));
-  if (txIds.length !== 1 || signedHashes.size !== 1) {
-    throw new Error('Crash recovery must converge on exactly one txid and one signed-byte hash.');
-  }
-  if (
-    POST_INTENT_KILLPOINTS.has(input.killpoint)
-    && (txIds[0] !== barrier.intentTxId || [...signedHashes][0] !== barrier.signedBytesSha256)
-  ) {
-    throw new Error('Recovered broadcast does not match the durable intent txid and signed bytes.');
-  }
-
-  return { summary, txIds };
+  return { summary, txIds: [actualTransaction.txId] };
 }
 
-/**
- * Drive one deterministic crash case through a supplied supervisor adapter.
- * Termination is impossible until the complete boundary evidence validates.
- */
 export async function orchestrateCrashCase(
   input: CrashCaseInput,
   port: CrashControlPort,
@@ -309,8 +335,6 @@ export async function orchestrateCrashCase(
   let hasPrimaryError = false;
   let primaryError: unknown;
   try {
-    // An adapter can arm its barrier and then fail while reporting success.
-    // From this point onward cleanup is mandatory even when arm() rejects.
     disarmRequired = true;
     await port.arm(input);
     await port.start(input);
@@ -322,7 +346,6 @@ export async function orchestrateCrashCase(
     if (!replacement.workerId?.trim() || replacement.workerId === barrier.workerId) {
       throw new Error('Crash worker did not restart with a distinct worker id.');
     }
-
     await port.recover(input);
     const observation = await port.inspect(input);
     const { summary, txIds } = validateObservation(input, barrier, replacement.workerId, observation);

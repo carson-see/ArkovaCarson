@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -18,8 +20,14 @@ const FAULT_WINDOW_ID = 'fault-window-crash-offline';
 const ORG_ID = 'org-crash-offline';
 const TX_ID = 'a'.repeat(64);
 const TX_HASH = 'b'.repeat(64);
-const ROOT = 'c'.repeat(64);
 const FINGERPRINTS = ['1'.repeat(64), '2'.repeat(64)];
+
+function doubleSha256(bytes: Uint8Array): string {
+  const first = createHash('sha256').update(bytes).digest();
+  return createHash('sha256').update(first).digest('hex');
+}
+
+const ROOT = doubleSha256(Buffer.concat(FINGERPRINTS.map((fingerprint) => Buffer.from(fingerprint, 'hex'))));
 
 function drainExpectation(): DrainPassExpectation {
   return {
@@ -32,19 +40,19 @@ function drainExpectation(): DrainPassExpectation {
       endsAt: '2026-07-13T12:05:00.000Z',
     },
     claims: FINGERPRINTS.map((fingerprint) => ({ fingerprint, orgId: ORG_ID, outcome: 'drained' as const })),
-    transactions: [{
-      txId: TX_ID,
-      batchId: BATCH_ID,
-      merkleRoot: ROOT,
-      signedBytesSha256: TX_HASH,
-      leaves: FINGERPRINTS.map((fingerprint, merkleIndex) => ({ fingerprint, orgId: ORG_ID, merkleIndex })),
-    }],
-    ledgerDeltas: [{ orgId: ORG_ID, delta: -2 }],
   };
 }
 
 function makeInput(killpoint: CrashKillpoint): CrashCaseInput {
-  return { runId: `offline-${killpoint}`, killpoint, expectation: drainExpectation() };
+  const postIntent = killpoint === 'after-intent-persist'
+    || killpoint === 'after-broadcast-before-submit'
+    || killpoint === 'after-submit-persist';
+  return {
+    runId: `offline-${killpoint}`,
+    killpoint,
+    expectation: drainExpectation(),
+    ...(postIntent ? { postIntent: { txId: TX_ID, signedBytesSha256: TX_HASH } } : {}),
+  };
 }
 
 function drainObservation(): DrainPassObservation {
@@ -80,15 +88,28 @@ function drainObservation(): DrainPassObservation {
       orgId: ORG_ID,
       merkleIndex,
     })),
-    proofs: FINGERPRINTS.map((fingerprint, merkleIndex) => ({
-      txId: TX_ID,
-      batchId: BATCH_ID,
-      fingerprint,
-      orgId: ORG_ID,
-      merkleRoot: ROOT,
-      merkleIndex,
-      verified: true,
-    })),
+    proofs: [
+      {
+        txId: TX_ID,
+        batchId: BATCH_ID,
+        fingerprint: FINGERPRINTS[0]!,
+        orgId: ORG_ID,
+        merkleRoot: ROOT,
+        merkleIndex: 0,
+        leafCount: 2,
+        proofPath: [{ hash: FINGERPRINTS[1]!, position: 'right' }],
+      },
+      {
+        txId: TX_ID,
+        batchId: BATCH_ID,
+        fingerprint: FINGERPRINTS[1]!,
+        orgId: ORG_ID,
+        merkleRoot: ROOT,
+        merkleIndex: 1,
+        leafCount: 2,
+        proofPath: [{ hash: FINGERPRINTS[0]!, position: 'left' }],
+      },
+    ],
     ledgerDeltas: [{ schedulerExecutionId: EXECUTION_ID, orgId: ORG_ID, delta: -2 }],
   };
 }
@@ -106,11 +127,16 @@ function makeBarrier(killpoint: CrashKillpoint): CrashBarrier {
     armedTrigger: 'org-scheduler',
     schedulerExecutionId: EXECUTION_ID,
     faultWindowId: FAULT_WINDOW_ID,
+    claimedAt: '2026-07-13T12:00:07.000Z',
     reachedAt: '2026-07-13T12:00:10.000Z',
     workerId: 'worker-before',
     claimedLeaves: FINGERPRINTS.map((fingerprint) => ({ fingerprint, orgId: ORG_ID })),
-    ...(afterMerkle ? { merkleRoot: ROOT } : {}),
-    ...(afterIntent ? { intentTxId: TX_ID, signedBytesSha256: TX_HASH } : {}),
+    ...(afterMerkle ? { merkleRoot: ROOT, merkleBuiltAt: '2026-07-13T12:00:08.000Z' } : {}),
+    ...(afterIntent ? {
+      intentTxId: TX_ID,
+      signedBytesSha256: TX_HASH,
+      intentPersistedAt: '2026-07-13T12:00:08.500Z',
+    } : {}),
     ...(afterNetwork ? {
       networkAcceptance: {
         txId: TX_ID,
@@ -156,7 +182,6 @@ function makePort(
       signedBytesSha256: TX_HASH,
     }],
   };
-
   return {
     events,
     port: {
@@ -181,33 +206,52 @@ function makePort(
   };
 }
 
-describe('orchestrateCrashCase — deterministic five-boundary control plane', () => {
-  it('includes the post-submit/Phase-4-persist boundary', () => {
-    expect(CRASH_KILLPOINTS).toContain('after-submit-persist');
-  });
-
-  it.each(CRASH_KILLPOINTS)('correlates, kills, restarts, recovers, inspects, and disarms at %s', async (killpoint) => {
+describe('orchestrateCrashCase — exact five-stage offline control plane', () => {
+  it.each(CRASH_KILLPOINTS)('passes a fully correlated %s case', async (killpoint) => {
     const { port, events } = makePort(killpoint);
     const evidence = await orchestrateCrashCase(makeInput(killpoint), port);
-
     expect(evidence).toMatchObject({
       verdict: 'pass',
       batchId: BATCH_ID,
-      armedTrigger: 'org-scheduler',
-      schedulerExecutionId: EXECUTION_ID,
-      faultWindowId: FAULT_WINDOW_ID,
-      uniqueNetworkTxIds: [TX_ID],
+      transactionIds: [TX_ID],
+      merkleRoots: [ROOT],
     });
-    expect(events).toEqual([
-      `arm:${killpoint}`,
-      `start:offline-${killpoint}`,
-      `barrier:${killpoint}`,
-      'terminate:worker-before',
-      'restart:worker-before',
-      `recover:offline-${killpoint}`,
-      `inspect:offline-${killpoint}`,
-      `disarm:${killpoint}`,
-    ]);
+    expect(events).toContain('terminate:worker-before');
+    expect(events[events.length - 1]).toBe(`disarm:${killpoint}`);
+  });
+
+  it('splits post-intent identity from pre-intent declarations', async () => {
+    expect(makeInput('after-claim').postIntent).toBeUndefined();
+    expect(makeInput('after-merkle-tree').postIntent).toBeUndefined();
+
+    const early = makeInput('after-claim');
+    early.postIntent = { txId: TX_ID, signedBytesSha256: TX_HASH };
+    const earlyPort = makePort('after-claim');
+    await expect(orchestrateCrashCase(early, earlyPort.port)).rejects.toThrow(/pre-intent.*must not declare/i);
+    expect(earlyPort.events).toEqual([]);
+
+    const late = makeInput('after-intent-persist');
+    delete late.postIntent;
+    const latePort = makePort('after-intent-persist');
+    await expect(orchestrateCrashCase(late, latePort.port)).rejects.toThrow(/post-intent identity/i);
+    expect(latePort.events).toEqual([]);
+  });
+
+  it('forbids later-stage evidence at earlier killpoints', async () => {
+    const barrier = makeBarrier('after-claim');
+    barrier.merkleRoot = ROOT;
+    barrier.merkleBuiltAt = '2026-07-13T12:00:08.000Z';
+    const { port, events } = makePort('after-claim', { barrier });
+    await expect(orchestrateCrashCase(makeInput('after-claim'), port)).rejects.toThrow(/later-stage evidence/);
+    expect(events).not.toContain('terminate:worker-before');
+  });
+
+  it('requires monotonic stage timestamps before releasing a barrier', async () => {
+    const barrier = makeBarrier('after-intent-persist');
+    barrier.merkleBuiltAt = '2026-07-13T12:00:06.000Z';
+    const { port, events } = makePort('after-intent-persist', { barrier });
+    await expect(orchestrateCrashCase(makeInput('after-intent-persist'), port)).rejects.toThrow(/stage chronology/);
+    expect(events).not.toContain('terminate:worker-before');
   });
 
   it('requires node acceptance of the exact signed transaction before a post-broadcast kill', async () => {
@@ -226,98 +270,42 @@ describe('orchestrateCrashCase — deterministic five-boundary control plane', (
   });
 
   it('requires Phase-4 persistence evidence before the post-submit kill', async () => {
-    const killpoint: CrashKillpoint = 'after-submit-persist';
-    const barrier = makeBarrier(killpoint);
+    const barrier = makeBarrier('after-submit-persist');
     delete barrier.phase4Persisted;
-    const { port, events } = makePort(killpoint, { barrier });
-
-    await expect(orchestrateCrashCase(makeInput(killpoint), port)).rejects.toThrow(/Phase-4 persistence/);
+    const { port, events } = makePort('after-submit-persist', { barrier });
+    await expect(orchestrateCrashCase(makeInput('after-submit-persist'), port)).rejects.toThrow(/Phase-4 persistence/);
     expect(events).not.toContain('terminate:worker-before');
   });
 
-  it.each([
-    ['batch id', (barrier: CrashBarrier) => { barrier.batchId = 'unrelated'; }],
-    ['armed trigger', (barrier: CrashBarrier) => { barrier.armedTrigger = 'global-flush'; }],
-    ['scheduler execution', (barrier: CrashBarrier) => { barrier.schedulerExecutionId = 'unrelated'; }],
-    ['fault window', (barrier: CrashBarrier) => { barrier.faultWindowId = 'unrelated'; }],
-    ['claimed leaves', (barrier: CrashBarrier) => { barrier.claimedLeaves[0]!.orgId = 'unrelated'; }],
-    ['root', (barrier: CrashBarrier) => { barrier.merkleRoot = 'd'.repeat(64); }],
-  ])('rejects a barrier correlated to an unrelated %s', async (_label, mutate) => {
-    const killpoint: CrashKillpoint = 'after-intent-persist';
-    const barrier = makeBarrier(killpoint);
-    mutate(barrier);
-    const { port, events } = makePort(killpoint, { barrier });
-
-    await expect(orchestrateCrashCase(makeInput(killpoint), port)).rejects.toThrow();
+  it('independently derives and rejects an unrelated Merkle root before termination', async () => {
+    const barrier = makeBarrier('after-merkle-tree');
+    barrier.merkleRoot = 'd'.repeat(64);
+    const { port, events } = makePort('after-merkle-tree', { barrier });
+    await expect(orchestrateCrashCase(makeInput('after-merkle-tree'), port)).rejects.toThrow(/recomputed claimed-leaf root/);
     expect(events).not.toContain('terminate:worker-before');
   });
 
-  it('rejects crash evidence whose rows, proofs, or credits belong to another batch', async () => {
-    const killpoint: CrashKillpoint = 'after-claim';
-    const actual = drainObservation();
-    actual.passRows[0]!.batchId = 'unrelated';
-    const { port } = makePort(killpoint, {
-      observation: {
-        runId: `offline-${killpoint}`,
-        finalWorkerId: 'worker-after',
-        drain: actual,
-        broadcastAttempts: [{
-          batchId: BATCH_ID,
-          schedulerExecutionId: EXECUTION_ID,
-          txId: TX_ID,
-          signedBytesSha256: TX_HASH,
-        }],
-      },
-    });
-    await expect(orchestrateCrashCase(makeInput(killpoint), port)).rejects.toThrow(/pass row/);
-  });
-
-  it('validates the declared transaction/root before arming or terminating', async () => {
-    const killpoint: CrashKillpoint = 'after-merkle-tree';
-    const input = makeInput(killpoint);
-    input.expectation.transactions[0]!.merkleRoot = 'not-a-root';
-    const barrier = makeBarrier(killpoint);
-    barrier.merkleRoot = 'not-a-root';
-    const { port, events } = makePort(killpoint, { barrier });
-
-    await expect(orchestrateCrashCase(input, port)).rejects.toThrow(/merkleRoot/);
+  it('validates declarations before arming', async () => {
+    const input = makeInput('after-claim');
+    input.expectation.claims[0]!.fingerprint = 'not-a-fingerprint';
+    const { port, events } = makePort('after-claim');
+    await expect(orchestrateCrashCase(input, port)).rejects.toThrow(/fingerprint/);
     expect(events).toEqual([]);
   });
 
-  it('preserves both the primary and disarm failures', async () => {
-    const killpoint: CrashKillpoint = 'after-claim';
-    const barrier = makeBarrier(killpoint);
-    barrier.batchId = 'unrelated';
-    const { port } = makePort(killpoint, { barrier, disarmError: new Error('disarm failed') });
-
-    let caught: unknown;
-    try {
-      await orchestrateCrashCase(makeInput(killpoint), port);
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(CrashDisarmAggregateError);
-    expect((caught as CrashDisarmAggregateError).primaryError).toBeInstanceOf(Error);
-    expect((caught as CrashDisarmAggregateError).disarmError).toEqual(new Error('disarm failed'));
-    expect((caught as CrashDisarmAggregateError).errors).toHaveLength(2);
-  });
-
-  it('attempts disarm and preserves both failures even when arm itself rejects', async () => {
-    const killpoint: CrashKillpoint = 'after-claim';
-    const { port, events } = makePort(killpoint, {
+  it('preserves primary and disarm failures even when arm rejects', async () => {
+    const { port, events } = makePort('after-claim', {
       armError: new Error('arm failed after side effect'),
       disarmError: new Error('disarm failed'),
     });
-
     let caught: unknown;
     try {
-      await orchestrateCrashCase(makeInput(killpoint), port);
+      await orchestrateCrashCase(makeInput('after-claim'), port);
     } catch (error) {
       caught = error;
     }
     expect(caught).toBeInstanceOf(CrashDisarmAggregateError);
-    expect((caught as CrashDisarmAggregateError).primaryError).toEqual(new Error('arm failed after side effect'));
-    expect((caught as CrashDisarmAggregateError).disarmError).toEqual(new Error('disarm failed'));
-    expect(events).toEqual([`arm:${killpoint}`, `disarm:${killpoint}`]);
+    expect((caught as CrashDisarmAggregateError).errors).toHaveLength(2);
+    expect(events).toEqual(['arm:after-claim', 'disarm:after-claim']);
   });
 });

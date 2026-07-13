@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   BATCH_SIZE,
   buildR3AcceptancePlan,
-  planGlobalFlush,
   planGlobalFlushForOrgs,
   planOrgScheduler,
   resolveRigTarget,
@@ -86,7 +85,7 @@ describe('zipfOrgPlan — deterministic multi-org population', () => {
       whales: 3,
       whaleShare: 0.5,
       creditStarved: 2,
-      badFingerprint: 1,
+      badFingerprint: 0,
     });
 
     expect(plan).toHaveLength(30);
@@ -100,7 +99,7 @@ describe('zipfOrgPlan — deterministic multi-org population', () => {
     expect(whaleShare).toBeCloseTo(0.5, 2);
   });
 
-  it('assigns disjoint deterministic poison sets in the long tail', () => {
+  it('assigns deterministic seedable credit-starved orgs and rejects DB-unseedable fingerprints', () => {
     const input = {
       runId: 's33-poison',
       orgs: 30,
@@ -109,15 +108,15 @@ describe('zipfOrgPlan — deterministic multi-org population', () => {
       whales: 3,
       whaleShare: 0.5,
       creditStarved: 2,
-      badFingerprint: 1,
+      badFingerprint: 0,
     } as const;
     const first = zipfOrgPlan(input);
     const second = zipfOrgPlan(input);
 
     expect(second).toEqual(first);
     expect(first.filter((row) => row.cohort === 'credit-starved').map((row) => row.rank)).toEqual([29, 30]);
-    expect(first.filter((row) => row.cohort === 'bad-fingerprint').map((row) => row.rank)).toEqual([28]);
-    expect(first.filter((row) => row.cohort === 'healthy')).toHaveLength(27);
+    expect(first.filter((row) => row.cohort === 'healthy')).toHaveLength(28);
+    expect(() => zipfOrgPlan({ ...input, badFingerprint: 1 })).toThrow(/DB-unseedable/);
   });
 
   it('keeps index zero backward-compatible and creates unique v4-shaped org ids', () => {
@@ -129,51 +128,42 @@ describe('zipfOrgPlan — deterministic multi-org population', () => {
 });
 
 describe('R3 trigger expectations — org scheduler and global flush stay distinct', () => {
-  it('models global 10k as one invocation and 12.5k as a next-tick remainder', () => {
-    expect(planGlobalFlush(10_000)).toEqual({
-      trigger: 'global-flush',
-      initialPending: 10_000,
-      totalTransactions: 1,
-      passes: [{ pass: 1, transactions: 1, leaves: 10_000, remainder: 0 }],
-    });
-    expect(planGlobalFlush(12_500)).toEqual({
-      trigger: 'global-flush',
-      initialPending: 12_500,
-      totalTransactions: 2,
-      passes: [
-        { pass: 1, transactions: 1, leaves: 10_000, remainder: 2_500 },
-        { pass: 2, transactions: 1, leaves: 2_500, remainder: 0 },
-      ],
-    });
-  });
-
-  it('derives global eligibility from actual org inputs and leaves poison rows pending', () => {
+  it('models claim-before-credit-gate from deterministic ordered rows', () => {
     const rows = [
-      { orgId: runOrgIdN('global-poison', 0), rank: 1, anchors: 10_500, cohort: 'healthy' as const },
+      { orgId: runOrgIdN('global-poison', 0), rank: 1, anchors: 11_500, cohort: 'healthy' as const },
       { orgId: runOrgIdN('global-poison', 1), rank: 2, anchors: 1_000, cohort: 'credit-starved' as const },
-      { orgId: runOrgIdN('global-poison', 2), rank: 3, anchors: 1_000, cohort: 'bad-fingerprint' as const },
     ];
     const expected = planGlobalFlushForOrgs(rows);
 
     expect(expected.initialPending).toBe(12_500);
-    expect(expected.eligiblePending).toBe(10_500);
-    expect(expected.excludedPending).toBe(2_000);
-    expect(expected.passes).toEqual([
-      { pass: 1, transactions: 1, leaves: 10_000, eligibleRemainder: 500, pendingRemainder: 2_500 },
-      { pass: 2, transactions: 1, leaves: 500, eligibleRemainder: 0, pendingRemainder: 2_000 },
-    ]);
+    expect(expected.orderedRows).toHaveLength(12_500);
+    expect(new Set(expected.orderedRows.map((row) => row.rowId)).size).toBe(12_500);
+    expect(expected.orderedRows.map((row) => row.claimOrder)).toEqual(
+      Array.from({ length: 12_500 }, (_, index) => index + 1),
+    );
+    expect(expected.passes[0]).toMatchObject({
+      pass: 1,
+      claimedLeaves: 10_000,
+      transactions: 1,
+    });
+    expect(expected.passes[0]!.eligibleLeaves).toBeLessThan(10_000);
+    expect(expected.passes[0]!.excludedLeaves).toBeGreaterThan(0);
+    expect(expected.passes[0]!.leaves).toBe(expected.passes[0]!.eligibleLeaves);
+    expect(expected.passes[0]!.pendingRemainder).toBe(
+      expected.initialPending - expected.passes[0]!.eligibleLeaves,
+    );
+    expect(expected.passes[expected.passes.length - 1]).toMatchObject({
+      transactions: 0,
+      eligibleLeaves: 0,
+      pendingRemainder: 1_000,
+    });
+    expect(expected.stalledOnPoison).toBe(true);
     expect(expected.poisons).toEqual([
       {
         orgId: rows[1]!.orgId,
         cohort: 'credit-starved',
         anchorsRemaining: 1_000,
         globalOutcome: 'credit-gate-excluded',
-      },
-      {
-        orgId: rows[2]!.orgId,
-        cohort: 'bad-fingerprint',
-        anchorsRemaining: 1_000,
-        globalOutcome: 'preflight-failed-contained',
       },
     ]);
   });
@@ -186,6 +176,12 @@ describe('R3 trigger expectations — org scheduler and global flush stay distin
       anchors: 1,
       cohort: 'unknown' as never,
     }])).toThrow(/cohort/);
+    expect(() => planGlobalFlushForOrgs([{
+      orgId: runOrgIdN('bad-fingerprint', 0),
+      rank: 1,
+      anchors: 1,
+      cohort: 'bad-fingerprint',
+    }])).toThrow(/DB-unseedable/);
   });
 
   it('models a >10k org as exactly one tx per scheduler pass', () => {
@@ -206,13 +202,12 @@ describe('R3 trigger expectations — org scheduler and global flush stay distin
       orgs: 30,
       count: 12_500,
       creditStarved: 2,
-      badFingerprint: 1,
+      badFingerprint: 0,
     });
     const expected = planOrgScheduler(rows);
 
-    expect(expected.poisons).toHaveLength(3);
+    expect(expected.poisons).toHaveLength(2);
     expect(expected.poisons.filter((row) => row.schedulerOutcome === 'succeeded-no-broadcast')).toHaveLength(2);
-    expect(expected.poisons.filter((row) => row.schedulerOutcome === 'failed-contained')).toHaveLength(1);
     for (const pass of expected.passes) {
       expect(new Set(pass.transactions.map((tx) => tx.orgId)).size).toBe(pass.transactions.length);
     }
@@ -223,15 +218,15 @@ describe('R3 trigger expectations — org scheduler and global flush stay distin
 
     expect(expected.batchSize).toBe(10_000);
     expect(expected.distribution).toHaveLength(30);
-    expect(expected.global10k.totalTransactions).toBe(1);
-    expect(expected.global10k.orgInputs.reduce((sum, row) => sum + row.anchors, 0)).toBe(10_000);
-    expect(expected.global10k.excludedPending).toBeGreaterThan(0);
-    expect(expected.global12500.orgInputs.reduce((sum, row) => sum + row.anchors, 0)).toBe(12_500);
-    expect(expected.global12500.passes[0]?.pendingRemainder).toBe(2_500);
-    expect(expected.global12500.passes[0]?.eligibleRemainder).toBe(
-      2_500 - expected.global12500.excludedPending,
+    expect('global10k' in expected).toBe(false);
+    expect(expected.globalBacklog10000.initialPending).toBe(10_000);
+    expect(expected.globalBacklog10000.passes[0]!.leaves).toBeLessThan(10_000);
+    expect(expected.globalBacklog12500.initialPending).toBe(12_500);
+    expect(expected.globalBacklog12500.passes[0]!.pendingRemainder).toBe(
+      12_500 - expected.globalBacklog12500.passes[0]!.eligibleLeaves,
     );
-    expect(expected.global12500.poisons).toHaveLength(3);
+    expect(expected.globalBacklog12500.passes[0]!.pendingRemainder).toBeGreaterThan(2_500);
+    expect(expected.globalBacklog12500.poisons).toHaveLength(2);
     expect(expected.singleOrgCrossPass.totalTransactions).toBe(2);
     expect(() => buildR3AcceptancePlan({ runId: 'too-small', orgs: 29 })).toThrow(/at least 30 orgs/);
   });

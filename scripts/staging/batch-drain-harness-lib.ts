@@ -179,7 +179,7 @@ export function zipfOrgPlan(options: ZipfOrgPlanOptions): OrgDrainPlanRow[] {
     whales = 3,
     whaleShare = 0.5,
     creditStarved = 2,
-    badFingerprint = 1,
+    badFingerprint = 0,
   } = options;
 
   if (!runId?.trim()) throw new Error('runId is required for zipfOrgPlan.');
@@ -188,6 +188,9 @@ export function zipfOrgPlan(options: ZipfOrgPlanOptions): OrgDrainPlanRow[] {
   requireNonNegativeInteger(whales, 'whales');
   requireNonNegativeInteger(creditStarved, 'creditStarved');
   requireNonNegativeInteger(badFingerprint, 'badFingerprint');
+  if (badFingerprint > 0) {
+    throw new Error('bad-fingerprint cohorts are DB-unseedable on the live schema; refusing to invent containment evidence.');
+  }
   if (count < orgs) throw new Error(`count must be at least orgs (${orgs}) so every org receives one anchor.`);
   if (whales > orgs) throw new Error(`whales must not exceed orgs (${orgs}).`);
   if (!Number.isFinite(s) || s <= 0) throw new Error(`s must be positive and finite; received ${s}.`);
@@ -217,11 +220,9 @@ export function zipfOrgPlan(options: ZipfOrgPlanOptions): OrgDrainPlanRow[] {
   }
 
   const creditStart = orgs - creditStarved;
-  const fingerprintStart = creditStart - badFingerprint;
   return anchors.map((anchorCount, index) => {
     let cohort: OrgCohort = 'healthy';
     if (index >= creditStart) cohort = 'credit-starved';
-    else if (index >= fingerprintStart) cohort = 'bad-fingerprint';
     return {
       orgId: runOrgIdN(runId, index),
       rank: index + 1,
@@ -231,72 +232,71 @@ export function zipfOrgPlan(options: ZipfOrgPlanOptions): OrgDrainPlanRow[] {
   });
 }
 
-export interface GlobalFlushPass {
-  pass: number;
-  transactions: 1;
-  leaves: number;
-  remainder: number;
-}
-
-export interface GlobalFlushExpectation {
-  trigger: 'global-flush';
-  initialPending: number;
-  totalTransactions: number;
-  passes: GlobalFlushPass[];
-}
-
-/** R3 Trigger D: one mixed-org transaction, capped at BATCH_SIZE, per tick. */
-export function planGlobalFlush(
-  totalPending: number,
-  batchSize = BATCH_SIZE,
-): GlobalFlushExpectation {
-  requireNonNegativeInteger(totalPending, 'totalPending');
-  requirePositiveInteger(batchSize, 'batchSize');
-
-  const passes: GlobalFlushPass[] = [];
-  let remainder = totalPending;
-  while (remainder > 0) {
-    const leaves = Math.min(remainder, batchSize);
-    remainder -= leaves;
-    passes.push({ pass: passes.length + 1, transactions: 1, leaves, remainder });
-  }
-  return {
-    trigger: 'global-flush',
-    initialPending: totalPending,
-    totalTransactions: passes.length,
-    passes,
-  };
-}
-
 export interface OrgGlobalFlushPass {
   pass: number;
-  transactions: 1;
+  claimedRowIds: string[];
+  claimedLeaves: number;
+  eligibleLeaves: number;
+  excludedLeaves: number;
+  transactions: 0 | 1;
   leaves: number;
-  eligibleRemainder: number;
   pendingRemainder: number;
+}
+
+export interface OrderedGlobalPendingRow {
+  rowId: string;
+  orgId: string;
+  cohort: 'healthy' | 'credit-starved';
+  orgRank: number;
+  orgOrdinal: number;
+  claimOrder: number;
 }
 
 export interface OrgGlobalFlushExpectation {
   trigger: 'global-flush';
   orgInputs: OrgDrainPlanRow[];
+  orderedRows: OrderedGlobalPendingRow[];
   initialPending: number;
-  eligiblePending: number;
-  excludedPending: number;
   totalTransactions: number;
   passes: OrgGlobalFlushPass[];
   poisons: GlobalPoisonExpectation[];
+  finalPending: number;
+  stalledOnPoison: boolean;
 }
 
 export interface GlobalPoisonExpectation {
   orgId: string;
-  cohort: Exclude<OrgCohort, 'healthy'>;
+  cohort: 'credit-starved';
   anchorsRemaining: number;
-  globalOutcome: 'credit-gate-excluded' | 'preflight-failed-contained';
+  globalOutcome: 'credit-gate-excluded';
 }
 
 /**
- * R3 Trigger D expectation derived from actual per-org inputs. Poison rows are
- * explicit retained backlog and can never be silently counted as drained.
+ * Expand aggregate org counts into a deterministic oldest-first seed order.
+ * Normalized org ordinal interleaves cohorts proportionally; the returned
+ * claimOrder is the exact row order the offline claim simulation consumes.
+ */
+export function buildOrderedGlobalRows(rows: OrgDrainPlanRow[]): OrderedGlobalPendingRow[] {
+  validatePlanRows(rows);
+  return rows
+    .flatMap((row) => Array.from({ length: row.anchors }, (_, index) => ({
+      rowId: `${row.orgId}:${index + 1}`,
+      orgId: row.orgId,
+      cohort: row.cohort as 'healthy' | 'credit-starved',
+      orgRank: row.rank,
+      orgOrdinal: index + 1,
+      relativeOrder: (index + 0.5) / row.anchors,
+    })))
+    .sort((left, right) => left.relativeOrder - right.relativeOrder
+      || left.orgRank - right.orgRank
+      || left.orgOrdinal - right.orgOrdinal)
+    .map(({ relativeOrder: _relativeOrder, ...row }, index) => ({ ...row, claimOrder: index + 1 }));
+}
+
+/**
+ * R3 Trigger D claim-before-credit-gate simulation. Each pass claims the first
+ * <=10k ordered PENDING rows; only then does the credit gate remove eligible
+ * rows. Credit-starved rows retain their original place and can stall the tail.
  */
 export function planGlobalFlushForOrgs(
   rows: OrgDrainPlanRow[],
@@ -306,46 +306,53 @@ export function planGlobalFlushForOrgs(
   if (rows.length === 0) throw new Error('Global flush planning requires at least one org input.');
   validatePlanRows(rows);
 
-  const initialPending = rows.reduce((sum, row) => sum + row.anchors, 0);
-  const eligiblePending = rows
-    .filter((row) => row.cohort === 'healthy')
-    .reduce((sum, row) => sum + row.anchors, 0);
-  const excludedPending = initialPending - eligiblePending;
+  const orderedRows = buildOrderedGlobalRows(rows);
+  const initialPending = orderedRows.length;
   const poisons: GlobalPoisonExpectation[] = rows.flatMap((row) => {
     if (row.cohort === 'healthy') return [];
     return [{
       orgId: row.orgId,
-      cohort: row.cohort,
+      cohort: 'credit-starved' as const,
       anchorsRemaining: row.anchors,
-      globalOutcome: row.cohort === 'credit-starved'
-        ? 'credit-gate-excluded'
-        : 'preflight-failed-contained',
+      globalOutcome: 'credit-gate-excluded' as const,
     }];
   });
 
   const passes: OrgGlobalFlushPass[] = [];
-  let eligibleRemainder = eligiblePending;
-  while (eligibleRemainder > 0) {
-    const leaves = Math.min(eligibleRemainder, batchSize);
-    eligibleRemainder -= leaves;
+  let pending = [...orderedRows];
+  let stalledOnPoison = false;
+  while (pending.length > 0) {
+    const claimed = pending.slice(0, batchSize);
+    const eligible = claimed.filter((row) => row.cohort === 'healthy');
+    const excludedLeaves = claimed.length - eligible.length;
+    const eligibleIds = new Set(eligible.map((row) => row.rowId));
+    if (eligible.length > 0) pending = pending.filter((row) => !eligibleIds.has(row.rowId));
     passes.push({
       pass: passes.length + 1,
-      transactions: 1,
-      leaves,
-      eligibleRemainder,
-      pendingRemainder: eligibleRemainder + excludedPending,
+      claimedRowIds: claimed.map((row) => row.rowId),
+      claimedLeaves: claimed.length,
+      eligibleLeaves: eligible.length,
+      excludedLeaves,
+      transactions: eligible.length > 0 ? 1 : 0,
+      leaves: eligible.length,
+      pendingRemainder: pending.length,
     });
+    if (eligible.length === 0) {
+      stalledOnPoison = true;
+      break;
+    }
   }
 
   return {
     trigger: 'global-flush',
     orgInputs: rows.map((row) => ({ ...row })),
+    orderedRows,
     initialPending,
-    eligiblePending,
-    excludedPending,
-    totalTransactions: passes.length,
+    totalTransactions: passes.reduce((sum, pass) => sum + pass.transactions, 0),
     passes,
     poisons,
+    finalPending: pending.length,
+    stalledOnPoison,
   };
 }
 
@@ -361,9 +368,9 @@ export interface OrgSchedulerPass {
 
 export interface PoisonExpectation {
   orgId: string;
-  cohort: Exclude<OrgCohort, 'healthy'>;
+  cohort: 'credit-starved';
   anchorsRemaining: number;
-  schedulerOutcome: 'succeeded-no-broadcast' | 'failed-contained';
+  schedulerOutcome: 'succeeded-no-broadcast';
 }
 
 export interface OrgSchedulerExpectation {
@@ -382,6 +389,9 @@ function validatePlanRows(rows: OrgDrainPlanRow[]): void {
     requirePositiveInteger(row.anchors, 'anchors');
     if (row.cohort !== 'healthy' && row.cohort !== 'credit-starved' && row.cohort !== 'bad-fingerprint') {
       throw new Error(`Unknown org cohort: ${String(row.cohort)}.`);
+    }
+    if (row.cohort === 'bad-fingerprint') {
+      throw new Error('bad-fingerprint cohorts are DB-unseedable on the live schema; refusing to plan evidence.');
     }
     if (orgIds.has(row.orgId)) throw new Error(`Duplicate orgId in scheduler plan: ${row.orgId}.`);
     if (ranks.has(row.rank)) throw new Error(`Duplicate rank in scheduler plan: ${row.rank}.`);
@@ -415,11 +425,9 @@ export function planOrgScheduler(
     if (row.cohort === 'healthy') return [];
     return [{
       orgId: row.orgId,
-      cohort: row.cohort,
+      cohort: 'credit-starved' as const,
       anchorsRemaining: row.anchors,
-      schedulerOutcome: row.cohort === 'credit-starved'
-        ? 'succeeded-no-broadcast'
-        : 'failed-contained',
+      schedulerOutcome: 'succeeded-no-broadcast' as const,
     }];
   });
 
@@ -441,8 +449,8 @@ export interface R3AcceptancePlan {
   batchSize: number;
   distribution: OrgDrainPlanRow[];
   orgScheduler: OrgSchedulerExpectation;
-  global10k: OrgGlobalFlushExpectation;
-  global12500: OrgGlobalFlushExpectation;
+  globalBacklog10000: OrgGlobalFlushExpectation;
+  globalBacklog12500: OrgGlobalFlushExpectation;
   singleOrgCrossPass: OrgSchedulerExpectation;
 }
 
@@ -458,13 +466,13 @@ export function buildR3AcceptancePlan(
     orgs,
     count: options.multiOrgCount ?? 12_500,
   });
-  const global10kInputs = zipfOrgPlan({
-    runId: `${options.runId}-global-10k`,
+  const globalBacklog10000Inputs = zipfOrgPlan({
+    runId: `${options.runId}-global-backlog-10000`,
     orgs,
     count: 10_000,
   });
-  const global12500Inputs = zipfOrgPlan({
-    runId: `${options.runId}-global-12500`,
+  const globalBacklog12500Inputs = zipfOrgPlan({
+    runId: `${options.runId}-global-backlog-12500`,
     orgs,
     count: 12_500,
   });
@@ -473,8 +481,8 @@ export function buildR3AcceptancePlan(
     batchSize: BATCH_SIZE,
     distribution,
     orgScheduler: planOrgScheduler(distribution),
-    global10k: planGlobalFlushForOrgs(global10kInputs),
-    global12500: planGlobalFlushForOrgs(global12500Inputs),
+    globalBacklog10000: planGlobalFlushForOrgs(globalBacklog10000Inputs),
+    globalBacklog12500: planGlobalFlushForOrgs(globalBacklog12500Inputs),
     singleOrgCrossPass: planOrgScheduler([
       { orgId: singleOrgId, rank: 1, anchors: 12_500, cohort: 'healthy' },
     ]),
