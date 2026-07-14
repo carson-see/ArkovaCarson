@@ -52,10 +52,15 @@ Soft targets (tracked per batch, trended; sustained misses escalate to the train
 
 ## 5. Held-out freeze (before the eval window)
 
-1. At corpus close, Lane 3 records the final held-out set at the exact #1498 single-parent head. The freeze identity is the producer head SHA, its Git tree SHA, and the committed manifest's raw and canonical SHA-256 digests.
-2. From the freeze commit onward: no held-out entry may be edited, moved, or referenced by any generator/tuning export; the leakage CI (fail-closed, #1413 pattern) enforces this mechanically.
-3. **Curate-before-seed commit order** is binding: held-out entries must land in git BEFORE any synthetic generator seeding that could observe them; datasheet timestamps + commit order are the audit trail.
-4. Any post-freeze corpus change voids the window evidence for affected domains (§1.11A analogue: evidence is exact-content, not vibes).
+1. At corpus close, Lane 3 records the final held-out set at the exact #1498 single-parent head. Revision 12 uses two independent histories: the Lane-4 producer history (`r10 → r11′ → r12`) and the Lane-3 support history (`support baseline → S12`). The support tree is never treated as the producer's parent and `support..producer` is never accepted as provenance.
+2. The code-owned revision-12 descriptor pins r10, the support baseline, S12, r11′, r12, their unique merge base, nonempty exact declared subsets of the six packet paths on both producer edges, all six packet blobs/digests, the historical r11′ failure set/digest, and all CTO adjudication objects. r11′ must be the exact direct single-parent child of r10: intermediate commits and tamper-then-revert history are forbidden. Each producer edge permits only `A`/`M` regular non-executable `100644` blobs inside the six packet paths; deletes, renames, copies, type changes, symlinks, gitlinks, executable bits, and outside paths fail closed.
+3. The lexical transition universe is exact: the code-owned **LEAKAGE32** set plus the sole separately authorized non-leakage transition `GD-S33-KE-006` under `CTO_R12_TAXONOMY_AND_DEPTH_ADJUDICATION`. Those sets must be disjoint; their 33-entry union must equal the raw `strippedText` changes, source-text-change list, normalized-input-change list, recomputed-fingerprint keys, and parent-to-r12 transition keys. LEAKAGE32 alone owns the leakage hit set/counters; every other r11′ raw `strippedText` byte sequence and normalized fingerprint must remain unchanged.
+4. r11′ is retained as `HISTORICAL_BLOCKED` and its final Lane-3 acceptance is rejected against its exact expected failure set. r12 must independently pass the full 81-row packet/manifest/datasheet/source bijection, digest pins, adjudications, and zero post-validation ground-truth failures.
+5. Lane 3 proves the histories compose without rewriting either one: the pinned merge base to r12 is exactly six `100644` additions; `git merge-tree --write-tree S12 r12` must be conflict-free; and the final freeze F12 must be a single-parent child of S12 whose tree equals that virtual merge tree. `S12 → F12` is exactly six `100644` additions, every F12 packet blob equals r12, and the Lane-3 support/types blob equals S12.
+6. The freeze identity is F12's head SHA and Git tree SHA plus the committed manifest's raw and canonical SHA-256 digests and the dual-DAG verification-report digest.
+7. From the freeze commit onward: no held-out entry may be edited, moved, or referenced by any generator/tuning export; the leakage CI (fail-closed, #1413 pattern) enforces this mechanically.
+8. **Curate-before-seed commit order** is binding: held-out entries must land in git BEFORE any synthetic generator seeding that could observe them; datasheet timestamps + commit order are the audit trail.
+9. Any post-freeze corpus change voids the window evidence for affected domains (§1.11A analogue: evidence is exact-content, not vibes).
 
 ## 6. Accountability
 
