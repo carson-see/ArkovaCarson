@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -25,6 +25,7 @@ import {
   S33_PREMERGE_API_QUERY,
   verifyS33PrerequisiteInventory,
   validatePrerequisiteWorkflowIdentity,
+  validateS33AuthorityRulings,
   verifyGitHubTrustRoot,
   type GitHubEvidenceSnapshot,
 } from '../../services/worker/src/ai/eval/s33-wave1-github-evidence.js';
@@ -1083,7 +1084,7 @@ function writeIntegrationReports(input: {
     hits: [],
   });
   const embeddingModelConfig = {
-    taskType: 'SEMANTIC_SIMILARITY', dimensions: 3072, batchSize: 16,
+    taskType: 'SEMANTIC_SIMILARITY', outputDimensionality: 3072, batchSize: 16,
     timeoutMs: 30_000, concurrency: 1, retryCount: 0,
     chunkTokens: 1500, chunkOverlapTokens: 128,
     maxTrainingChunks: 2048, maxVectorInputs: 2129, maxHttpRequests: 134,
@@ -1358,6 +1359,41 @@ function brandedOptions(harness: BrandedIntegrationHarness, overrides: Partial<{
   };
 }
 
+function syntheticAcceptanceRecord(evidence: unknown): Readonly<Record<string, unknown>> {
+  assertAuthenticatedS33Wave1EvidenceBundle(evidence);
+  const withoutDigest = {
+    schemaVersion: 1,
+    artifactType: 'arkova-s33-wave1-acceptance',
+    batchId: 'S33-W1',
+    revision: 0,
+    acceptedAtUtc: evidence.acceptedAtUtc,
+    acceptanceAuthority: 'Lane 3',
+    trustRoot: 'github-authenticated-exact-head-ci',
+    repositoryIdentity: evidence.repositoryIdentity,
+    pullRequestNumber: evidence.pullRequestNumber,
+    producerHeadSha: evidence.producerHeadSha,
+    producerTreeSha: evidence.producerTreeSha,
+    manifestPath: evidence.manifestPath,
+    manifestRawSha256: evidence.manifestRawSha256,
+    manifestCanonicalSha256: evidence.manifestCanonicalSha256,
+    trustedMain: {
+      headSha: evidence.trustedMainHeadSha,
+      supportPullRequestNumber: 1529,
+      supportMergeCommitSha: evidence.supportMergeCommitSha,
+      supportMergeIsAncestorOfMain: true,
+      branchProtectionRuleIds: [...evidence.branchProtectionRuleIds],
+    },
+    manifestEntryIds: [...evidence.manifestEntryIds],
+    githubAuthentication: evidence.approval,
+    prerequisiteInventory: evidence.prerequisiteInventory,
+    prodDiffAdjudication: evidence.prodDiffAdjudication,
+  };
+  return Object.freeze({
+    ...withoutDigest,
+    artifactDigestSha256: sha256(canonicaliseJson(withoutDigest)),
+  });
+}
+
 describe('authenticated same-process two-repository integration', { timeout: 30_000 }, () => {
   it('brands live facts, consumes a separate bare producer, and emits the Lane-3 acceptance artifact', async () => {
     const harness = await createBrandedIntegrationHarness();
@@ -1399,37 +1435,7 @@ describe('authenticated same-process two-repository integration', { timeout: 30_
         expect(sha256(bytes)).toBe(report.rawSha256);
         expect(sha256(canonicaliseJson(JSON.parse(bytes.toString('utf8'))))).toBe(report.canonicalSha256);
       }
-      const withoutDigest = {
-        schemaVersion: 1,
-        artifactType: 'arkova-s33-wave1-acceptance',
-        batchId: 'S33-W1',
-        revision: 0,
-        acceptedAtUtc: evidence.acceptedAtUtc,
-        acceptanceAuthority: 'Lane 3',
-        trustRoot: 'github-authenticated-exact-head-ci',
-        repositoryIdentity: evidence.repositoryIdentity,
-        pullRequestNumber: evidence.pullRequestNumber,
-        producerHeadSha: evidence.producerHeadSha,
-        producerTreeSha: evidence.producerTreeSha,
-        manifestPath: evidence.manifestPath,
-        manifestRawSha256: evidence.manifestRawSha256,
-        manifestCanonicalSha256: evidence.manifestCanonicalSha256,
-        trustedMain: {
-          headSha: evidence.trustedMainHeadSha,
-          supportPullRequestNumber: 1529,
-          supportMergeCommitSha: evidence.supportMergeCommitSha,
-          supportMergeIsAncestorOfMain: true,
-          branchProtectionRuleIds: [...evidence.branchProtectionRuleIds],
-        },
-        manifestEntryIds: [...evidence.manifestEntryIds],
-        githubAuthentication: evidence.approval,
-        prerequisiteInventory: evidence.prerequisiteInventory,
-        prodDiffAdjudication: evidence.prodDiffAdjudication,
-      };
-      return Object.freeze({
-        ...withoutDigest,
-        artifactDigestSha256: sha256(canonicaliseJson(withoutDigest)),
-      });
+      return syntheticAcceptanceRecord(evidence);
     });
     vi.doMock('../../services/worker/src/ai/eval/s33-batch-acceptance.js', () => ({
       createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence: consumer,
@@ -1451,6 +1457,74 @@ describe('authenticated same-process two-repository integration', { timeout: 30_
       revision: 0,
     }));
     expect((acceptance.trustedMain as Record<string, unknown>).headSha).toBe(harness.mainHeadSha);
+    expect(readdirSync(harness.outputDirectory).sort()).toEqual([
+      'cross-review-plan.json',
+      'cross-review.json',
+      'embedding-diagnostic.json',
+      'github-evidence-report.md',
+      'github-evidence.json',
+      'lexical-leakage.json',
+      'prerequisite-inventory.json',
+      'prod-model-diff.json',
+      's33-wave1-acceptance.json',
+    ]);
+    for (const filename of [
+      'cross-review-plan.json', 'prod-model-diff.json',
+      'lexical-leakage.json', 'embedding-diagnostic.json',
+    ]) {
+      expect(readFileSync(join(harness.outputDirectory, filename))).toEqual(
+        readFileSync(join(harness.reportDirectory, filename)),
+      );
+    }
+    expect(readFileSync(join(harness.outputDirectory, 'prerequisite-inventory.json'))).toEqual(
+      readFileSync(join(harness.prerequisiteDirectory, 'prerequisite-inventory.json')),
+    );
+  });
+
+  it('rejects post-verification source drift and output symlink collisions before packaging', async () => {
+    let mutateAfterBrand = (): void => undefined;
+    const consumer = vi.fn((evidence: unknown) => {
+      assertAuthenticatedS33Wave1EvidenceBundle(evidence);
+      mutateAfterBrand();
+      return syntheticAcceptanceRecord(evidence);
+    });
+    vi.doMock('../../services/worker/src/ai/eval/s33-batch-acceptance.js', () => ({
+      createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence: consumer,
+    }));
+
+    const driftHarness = await createBrandedIntegrationHarness();
+    mutateAfterBrand = () => {
+      const path = join(driftHarness.reportDirectory, 'cross-review-plan.json');
+      writeFileSync(path, `${readFileSync(path, 'utf8')}\n`);
+    };
+    await expect(authenticateS33Wave1GitHubEvidence(brandedOptions(driftHarness)))
+      .rejects.toThrow(/source cross-review-plan\.json drifted after verification/i);
+
+    const collisionHarness = await createBrandedIntegrationHarness();
+    mutateAfterBrand = () => {
+      symlinkSync(
+        join(collisionHarness.reportDirectory, 'prod-model-diff.json'),
+        join(collisionHarness.outputDirectory, 'prod-model-diff.json'),
+      );
+    };
+    await expect(authenticateS33Wave1GitHubEvidence(brandedOptions(collisionHarness)))
+      .rejects.toThrow(/output collision for prod-model-diff\.json/i);
+
+    const inventoryDriftHarness = await createBrandedIntegrationHarness();
+    mutateAfterBrand = () => {
+      const path = join(inventoryDriftHarness.prerequisiteDirectory, 'prerequisite-inventory.json');
+      writeFileSync(path, `${readFileSync(path, 'utf8')}\n`);
+    };
+    await expect(authenticateS33Wave1GitHubEvidence(brandedOptions(inventoryDriftHarness)))
+      .rejects.toThrow(/source prerequisite-inventory\.json drifted after verification/i);
+
+    const extraFileHarness = await createBrandedIntegrationHarness();
+    mutateAfterBrand = () => {
+      writeFileSync(join(extraFileHarness.outputDirectory, 'unexpected.txt'), 'not canonical\n');
+    };
+    await expect(authenticateS33Wave1GitHubEvidence(brandedOptions(extraFileHarness)))
+      .rejects.toThrow(/canonical upload inventory must contain exactly/i);
+    expect(consumer).toHaveBeenCalledTimes(4);
   });
 
   it('fails the branded path when support ancestry, trusted-main root, or producer mirror changes', async () => {
@@ -1549,6 +1623,36 @@ describe('s33-wave1-acceptance workflow contract', () => {
 });
 
 describe('S3.3 authenticated module graph', () => {
+  it('pins the complete ordered CTO authority provenance without nonexistent comment ids', () => {
+    const configuration = JSON.parse(readFileSync(
+      '.github/s33-wave1-acceptance-authorities.json',
+      'utf8',
+    )) as { rulings: string[] };
+    expect(configuration.rulings.map((url) => new URL(url).searchParams.get('focusedCommentId'))).toEqual([
+      '102596609', '102629377', '102793217', '102858753', '102891521',
+      '102957057', '102989825', '103022593', '103088129', '103120897',
+      '103219201', '103251969',
+    ]);
+    expect(configuration.rulings.some((url) => url.includes('103055361'))).toBe(false);
+    expect(validateS33AuthorityRulings(configuration.rulings)).toEqual(configuration.rulings);
+    const mutations = [
+      configuration.rulings.slice(0, -1),
+      configuration.rulings.map((url, index) => index === 10 ? configuration.rulings[9] : url),
+      configuration.rulings.map((url, index) => index === 7
+        ? url.replace('103022593', '103055361')
+        : url),
+      configuration.rulings.map((url, index) => index === 7
+        ? url.replace('/pages/99024897/', '/pages/99999999/')
+        : url),
+      configuration.rulings.map((url, index) => index === 7
+        ? configuration.rulings[8]
+        : index === 8 ? configuration.rulings[7] : url),
+    ];
+    for (const mutation of mutations) {
+      expect(() => validateS33AuthorityRulings(mutation)).toThrow(/twelve|exact ordered/i);
+    }
+  });
+
   it('keeps the CLI thin and makes auth late-load the static brand consumer in the same worker package', () => {
     const wrapper = readFileSync('scripts/ci/s33-wave1-github-evidence.ts', 'utf8');
     const auth = readFileSync('services/worker/src/ai/eval/s33-wave1-github-evidence.ts', 'utf8');

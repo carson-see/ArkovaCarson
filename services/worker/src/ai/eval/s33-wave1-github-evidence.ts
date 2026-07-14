@@ -25,6 +25,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   unlinkSync,
@@ -51,10 +52,20 @@ const OUTPUT_FILENAMES = Object.freeze({
   crossReview: 'cross-review.json',
   lane3Acceptance: 's33-wave1-acceptance.json',
   githubEvidence: 'github-evidence.json',
-  acceptanceInput: 'acceptance-input.json',
   report: 'github-evidence-report.md',
   comment: 'github-comment.md',
 });
+const CANONICAL_UPLOAD_FILENAMES = Object.freeze([
+  OUTPUT_FILENAMES.lane3Acceptance,
+  OUTPUT_FILENAMES.githubEvidence,
+  OUTPUT_FILENAMES.crossReview,
+  WORKFLOW_REPORT_FILENAMES.crossReviewPlan,
+  WORKFLOW_REPORT_FILENAMES.prodModelDiff,
+  WORKFLOW_REPORT_FILENAMES.lexicalLeakage,
+  WORKFLOW_REPORT_FILENAMES.embeddingDiagnostic,
+  'prerequisite-inventory.json',
+  OUTPUT_FILENAMES.report,
+].sort());
 const SHA1_RE = /^[a-f0-9]{40}$/u;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const REQUIRED_LEXICAL_N = [6, 7, 8, 9, 10, 11, 12, 13] as const;
@@ -84,7 +95,7 @@ interface AuthorityConfiguration {
   supportPullRequestNumber: typeof FIXED_SUPPORT_PULL_REQUEST_NUMBER;
   primary: PinnedIdentity;
   fallbacks: PinnedIdentity[];
-  rulings: string[];
+  rulings: readonly string[];
   crossReview: {
     marker: typeof CROSS_REVIEW_MARKER;
     sampleAlgorithm: typeof SAMPLE_ALGORITHM;
@@ -541,6 +552,35 @@ function parseJsonBytes(bytes: Uint8Array, label: string): Record<string, unknow
   return object;
 }
 
+const EXPECTED_CTO_RULINGS = Object.freeze([
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897?focusedCommentId=102596609',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897?focusedCommentId=102629377',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=102793217',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=102858753',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=102891521',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=102957057',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=102989825',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=103022593',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=103088129',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=103120897',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=103219201',
+  'https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=103251969',
+] as const);
+
+export function validateS33AuthorityRulings(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length !== EXPECTED_CTO_RULINGS.length) {
+    throw new Error('S3.3 authority configuration must cite all twelve binding CTO rulings');
+  }
+  const rulings = value.map((candidate, index) => assertHttpsUrl(candidate, `CTO ruling[${index}]`));
+  for (const [index, expected] of EXPECTED_CTO_RULINGS.entries()) {
+    if (rulings[index] !== expected) {
+      const id = new URL(expected).searchParams.get('focusedCommentId');
+      throw new Error(`S3.3 authority configuration is missing exact ordered CTO ruling ${id}`);
+    }
+  }
+  return Object.freeze([...rulings]);
+}
+
 function loadAuthorityConfiguration(): Readonly<AuthorityConfiguration> {
   const parsed = parseJsonBytes(readFileSync(AUTHORITY_CONFIG_PATH), 'S3.3 authority configuration');
   assertExactKeys(parsed, [
@@ -575,15 +615,7 @@ function loadAuthorityConfiguration(): Readonly<AuthorityConfiguration> {
       throw new Error(`S3.3 authority identity[${index}] does not match the CTO-pinned identity`);
     }
   });
-  if (!Array.isArray(parsed.rulings) || parsed.rulings.length !== 9) {
-    throw new Error('S3.3 authority configuration must cite all nine binding CTO rulings');
-  }
-  const rulings = parsed.rulings.map((value, index) => assertHttpsUrl(value, `CTO ruling[${index}]`));
-  for (const id of ['102596609', '102629377', '102793217', '102858753', '102891521', '102957057', '102989825', '103088129', '103120897']) {
-    if (!rulings.some((url) => url.includes(`focusedCommentId=${id}`))) {
-      throw new Error(`S3.3 authority configuration is missing CTO ruling ${id}`);
-    }
-  }
+  const rulings = validateS33AuthorityRulings(parsed.rulings);
   const crossReview = record(parsed.crossReview, 'crossReview configuration');
   assertExactKeys(crossReview, ['marker', 'sampleAlgorithm', 'sampleRule'], 'crossReview configuration');
   if (crossReview.marker !== CROSS_REVIEW_MARKER
@@ -2232,7 +2264,56 @@ function writeCanonical(path: string, value: unknown): { rawSha256: string; cano
   const canonical = canonicaliseJson(value);
   writeFileSync(path, canonical, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   const digest = sha256(canonical);
+  const stat = lstatSync(path);
+  const stored = readFileSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || !stored.equals(Buffer.from(canonical, 'utf8'))
+    || sha256(stored) !== digest) {
+    throw new Error(`Canonical output ${basename(path)} drifted while being written`);
+  }
   return { rawSha256: digest, canonicalSha256: digest };
+}
+
+function assertCanonicalUploadInventory(outputDirectory: string): void {
+  const actual = readdirSync(outputDirectory).sort();
+  if (canonicaliseJson(actual) !== canonicaliseJson(CANONICAL_UPLOAD_FILENAMES)) {
+    throw new Error(`Canonical upload inventory must contain exactly ${CANONICAL_UPLOAD_FILENAMES.join(', ')}`);
+  }
+  for (const filename of CANONICAL_UPLOAD_FILENAMES) {
+    const path = join(outputDirectory, filename);
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`Canonical upload ${filename} must be a fixed regular non-symlink file`);
+    }
+  }
+}
+
+function preserveAuthenticatedOutputFile(input: {
+  expectedBytes: Uint8Array;
+  filename: string;
+  outputDirectory: string;
+  sourcePath: string;
+}): void {
+  const sourceStat = lstatSync(input.sourcePath);
+  if (!sourceStat.isFile() || sourceStat.isSymbolicLink()
+    || basename(input.sourcePath) !== input.filename
+    || basename(realpathSync(input.sourcePath)) !== input.filename) {
+    throw new Error(`Authenticated output source ${input.filename} must remain a fixed regular non-symlink file`);
+  }
+  const sourceBytes = readFileSync(input.sourcePath);
+  if (!sourceBytes.equals(Buffer.from(input.expectedBytes))) {
+    throw new Error(`Authenticated output source ${input.filename} drifted after verification`);
+  }
+  const destination = join(input.outputDirectory, input.filename);
+  try {
+    writeFileSync(destination, sourceBytes, { flag: 'wx', mode: 0o600 });
+  } catch {
+    throw new Error(`Authenticated output collision for ${input.filename}`);
+  }
+  const destinationStat = lstatSync(destination);
+  if (!destinationStat.isFile() || destinationStat.isSymbolicLink()
+    || !readFileSync(destination).equals(sourceBytes)) {
+    throw new Error(`Authenticated output ${input.filename} is not a byte-preserved regular file`);
+  }
 }
 
 function reportDigestRecord(report: LoadedWorkflowReport): Record<string, unknown> {
@@ -2349,20 +2430,22 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     manifestEntryIds: manifest.manifestEntryIds,
   };
   const trust = verifyGitHubTrustRoot(snapshot, facts);
-  const reports = loadWorkflowReportBundle({
+  const reportPaths = {
     crossReviewPlan: join(reportDirectory, WORKFLOW_REPORT_FILENAMES.crossReviewPlan),
     prodModelDiff: join(reportDirectory, WORKFLOW_REPORT_FILENAMES.prodModelDiff),
     lexicalLeakage: join(reportDirectory, WORKFLOW_REPORT_FILENAMES.lexicalLeakage),
     embeddingDiagnostic: join(reportDirectory, WORKFLOW_REPORT_FILENAMES.embeddingDiagnostic),
-  }, {
+  };
+  const reports = loadWorkflowReportBundle(reportPaths, {
     producerHeadSha: facts.localProducerHeadSha,
     manifestRawSha256: facts.manifestRawSha256,
     manifestEntryIds: facts.manifestEntryIds,
   });
-  const storedInventory = loadPrerequisiteInventory(join(
+  const prerequisiteInventoryPath = join(
     prerequisiteDirectory,
     PREREQUISITE_INVENTORY_FILENAME,
-  ));
+  );
+  const storedInventory = loadPrerequisiteInventory(prerequisiteInventoryPath);
   const inventory = await reauthenticatePrerequisiteInventory({
     token: options.token,
     mainRepositoryRoot,
@@ -2491,6 +2574,23 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     join(outputDirectory, OUTPUT_FILENAMES.lane3Acceptance),
     lane3Acceptance,
   );
+  for (const [kind, filename] of Object.entries(WORKFLOW_REPORT_FILENAMES) as Array<[
+    keyof typeof WORKFLOW_REPORT_FILENAMES,
+    string,
+  ]>) {
+    preserveAuthenticatedOutputFile({
+      expectedBytes: reports[kind].bytes,
+      filename,
+      outputDirectory,
+      sourcePath: reportPaths[kind],
+    });
+  }
+  preserveAuthenticatedOutputFile({
+    expectedBytes: Buffer.from(canonicaliseJson(inventory), 'utf8'),
+    filename: PREREQUISITE_INVENTORY_FILENAME,
+    outputDirectory,
+    sourcePath: prerequisiteInventoryPath,
+  });
   const acceptedAtUtc = trust.approval.submittedAt;
   const acceptanceInput = {
     repositoryIdentity: FIXED_REPOSITORY,
@@ -2534,10 +2634,8 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
       },
     },
   };
-  const acceptanceInputDigests = writeCanonical(
-    join(outputDirectory, OUTPUT_FILENAMES.acceptanceInput),
-    acceptanceInput,
-  );
+  const acceptanceInputCanonical = canonicaliseJson(acceptanceInput);
+  const acceptanceInputDigest = sha256(acceptanceInputCanonical);
   const githubEvidence = {
     schemaVersion: 1,
     artifactType: 'arkova-s33-wave1-github-evidence',
@@ -2575,8 +2673,9 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
       embeddingDiagnostic: reportDigestRecord(reports.embeddingDiagnostic),
     },
     acceptanceInput: {
-      filename: OUTPUT_FILENAMES.acceptanceInput,
-      ...acceptanceInputDigests,
+      storage: 'in-memory-not-uploaded',
+      rawSha256: acceptanceInputDigest,
+      canonicalSha256: acceptanceInputDigest,
     },
     rulings: trust.rulings,
   };
@@ -2586,6 +2685,7 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     renderEvidenceReport(githubEvidence),
     { encoding: 'utf8', mode: 0o600, flag: 'wx' },
   );
+  assertCanonicalUploadInventory(outputDirectory);
 }
 
 function renderComment(outputDirectory: string): void {
