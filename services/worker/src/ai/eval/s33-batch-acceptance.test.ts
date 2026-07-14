@@ -2123,6 +2123,58 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
   );
 
   it.each([
+    ['realOrSynthetic', (row: Record<string, unknown>) => { row.realOrSynthetic = 'real'; }],
+    ['authorshipMethod', (row: Record<string, unknown>) => { row.authorshipMethod = 'template-generated'; }],
+    ['generatorDerived', (row: Record<string, unknown>) => { row.generatorDerived = true; }],
+    ['generator.name', (row: Record<string, unknown>) => {
+      (row.generator as Record<string, unknown>).name = 'unreviewed-generator';
+    }],
+    ['generator.version', (row: Record<string, unknown>) => {
+      (row.generator as Record<string, unknown>).version = 'v1';
+    }],
+    ['generator.seed', (row: Record<string, unknown>) => {
+      (row.generator as Record<string, unknown>).seed = '42';
+    }],
+    ['generator.templateId', (row: Record<string, unknown>) => {
+      (row.generator as Record<string, unknown>).templateId = 'template-1';
+    }],
+  ] satisfies Array<[string, (row: Record<string, unknown>) => void]>) (
+    'rejects repinned Wave-1 provenance tuple drift in %s with row context',
+    (field, mutateRow) => {
+      const context = revision10Ceremony({
+        mutateEntryDatasheet(datasheet): void {
+          mutateRow((datasheet.rows as Array<Record<string, unknown>>)[0]);
+        },
+        repinMutatedEntryRows: true,
+      });
+      context.orchestrator.recordSaltCommitment(context.commitment.content);
+      expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+        .toThrow(new RegExp(`Entry datasheet rows\\[0\\] \\(GD-S33-KE-001\\)\\.${field.replace('.', '\\.')} must be`, 'u'));
+    },
+  );
+
+  it('accepts the canonical synthetic independent-authorship no-generator tuple', () => {
+    const context = revision10Ceremony({
+      mutateEntryDatasheet(datasheet): void {
+        const row = (datasheet.rows as Array<Record<string, unknown>>)[0];
+        row.realOrSynthetic = 'synthetic';
+        row.authorshipMethod = 'independently-authored';
+        row.generatorDerived = false;
+        row.generator = {
+          name: 'none-independent-human-authorship',
+          version: 'not-applicable-no-generator',
+          seed: 'not-applicable-no-rng',
+          templateId: 'not-applicable-no-template',
+        };
+      },
+      repinMutatedEntryRows: true,
+    });
+    context.orchestrator.recordSaltCommitment(context.commitment.content);
+    expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+      .not.toThrow();
+  });
+
+  it.each([
     ['revision marker', (content: string) => content.replace('**Revision 10:**', '**Revision 9:**')],
     ['manifest digest', (content: string) => content.replace(
       /(?<=exact raw-file SHA-256 `)[0-9a-f]{64}(?=`)/u,

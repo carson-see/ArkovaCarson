@@ -634,14 +634,13 @@ function validateEntryDatasheetRow(
     label,
   );
   const id = nonEmptyString(row.id, `${label}.id`);
+  const rowLabel = `${label} (${id})`;
   assertExactString(row.domain, manifestEntry.domain, `${label}.domain`);
   assertExactString(row.credentialType, manifestEntry.credentialType, `${label}.credentialType`);
-  const realOrSynthetic = nonEmptyString(row.realOrSynthetic, `${label}.realOrSynthetic`);
-  if (realOrSynthetic !== 'real' && realOrSynthetic !== 'synthetic') {
-    throw new Error(`${label}.realOrSynthetic must be real or synthetic`);
-  }
+  assertExactString(row.realOrSynthetic, 'synthetic', `${rowLabel}.realOrSynthetic`);
+  assertExactString(row.authorshipMethod, 'independently-authored', `${rowLabel}.authorshipMethod`);
   for (const key of [
-    'authorshipMethod', 'sourceProvenance', 'lawfulBasis', 'jurisdiction',
+    'sourceProvenance', 'lawfulBasis', 'jurisdiction',
     'subType', 'curationAuthor', 'curationDate', 'licenseConsentNote',
   ]) nonEmptyString(row[key], `${label}.${key}`);
   if (row.jurisdictionDetail === null) {
@@ -651,11 +650,18 @@ function validateEntryDatasheetRow(
   } else {
     nonEmptyString(row.jurisdictionDetail, `${label}.jurisdictionDetail`);
   }
-  booleanValue(row.generatorDerived, `${label}.generatorDerived`);
-  const generator = recordValue(row.generator, `${label}.generator`);
-  assertExactKeys(generator, ['name', 'version', 'seed', 'templateId'], `${label}.generator`);
-  for (const key of ['name', 'version', 'seed', 'templateId']) {
-    nonEmptyString(generator[key], `${label}.generator.${key}`);
+  if (booleanValue(row.generatorDerived, `${rowLabel}.generatorDerived`)) {
+    throw new Error(`${rowLabel}.generatorDerived must be false`);
+  }
+  const generator = recordValue(row.generator, `${rowLabel}.generator`);
+  assertExactKeys(generator, ['name', 'version', 'seed', 'templateId'], `${rowLabel}.generator`);
+  for (const [key, expected] of Object.entries({
+    name: 'none-independent-human-authorship',
+    version: 'not-applicable-no-generator',
+    seed: 'not-applicable-no-rng',
+    templateId: 'not-applicable-no-template',
+  })) {
+    assertExactString(generator[key], expected, `${rowLabel}.generator.${key}`);
   }
   for (const key of ENTRY_DATASHEET_ROW_OPTIONAL_KEYS) {
     if (Object.hasOwn(row, key)) nonEmptyString(row[key], `${label}.${key}`);
