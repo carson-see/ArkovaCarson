@@ -575,11 +575,11 @@ function loadAuthorityConfiguration(): Readonly<AuthorityConfiguration> {
       throw new Error(`S3.3 authority identity[${index}] does not match the CTO-pinned identity`);
     }
   });
-  if (!Array.isArray(parsed.rulings) || parsed.rulings.length !== 7) {
-    throw new Error('S3.3 authority configuration must cite all seven binding CTO rulings');
+  if (!Array.isArray(parsed.rulings) || parsed.rulings.length !== 8) {
+    throw new Error('S3.3 authority configuration must cite all eight binding CTO rulings');
   }
   const rulings = parsed.rulings.map((value, index) => assertHttpsUrl(value, `CTO ruling[${index}]`));
-  for (const id of ['102596609', '102629377', '102793217', '102858753', '102891521', '102957057', '102989825']) {
+  for (const id of ['102596609', '102629377', '102793217', '102858753', '102891521', '102957057', '102989825', '103088129']) {
     if (!rulings.some((url) => url.includes(`focusedCommentId=${id}`))) {
       throw new Error(`S3.3 authority configuration is missing CTO ruling ${id}`);
     }
