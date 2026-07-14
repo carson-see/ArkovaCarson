@@ -34,6 +34,12 @@ import {
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+function compareUtf16CodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 export const FIXED_REPOSITORY = 'carson-see/ArkovaCarson' as const;
 export const FIXED_PULL_REQUEST_NUMBER = 1498 as const;
 export const FIXED_SUPPORT_PULL_REQUEST_NUMBER = 1529 as const;
@@ -65,7 +71,7 @@ const CANONICAL_UPLOAD_FILENAMES = Object.freeze([
   WORKFLOW_REPORT_FILENAMES.embeddingDiagnostic,
   'prerequisite-inventory.json',
   OUTPUT_FILENAMES.report,
-].sort());
+].sort(compareUtf16CodeUnits));
 const SHA1_RE = /^[a-f0-9]{40}$/u;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const REQUIRED_LEXICAL_N = [6, 7, 8, 9, 10, 11, 12, 13] as const;

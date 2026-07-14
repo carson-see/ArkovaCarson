@@ -392,6 +392,8 @@ describe('check-staging-evidence', () => {
         'services/worker/src/ai/eval/s33-acceptance-ledger.ts',
         'services/worker/src/ai/eval/s33-batch-acceptance.test.ts',
         'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+        'services/worker/src/ai/eval/s33-wave1-dual-dag.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-dual-dag.ts',
         'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
         'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.test.ts',
         'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
@@ -427,6 +429,8 @@ describe('check-staging-evidence', () => {
         'services/worker/src/ai/eval/s33-acceptance-ledger.ts',
         'services/worker/src/ai/eval/s33-batch-acceptance.test.ts',
         'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+        'services/worker/src/ai/eval/s33-wave1-dual-dag.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-dual-dag.ts',
         'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
         'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.test.ts',
         'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
@@ -435,11 +439,28 @@ describe('check-staging-evidence', () => {
         'services/worker/src/ai/eval/s33-wave1-workflow-reports.test.ts',
         'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
       ];
+      expect(candidate).toHaveLength(28);
       const realRuntimeImporters = findS33RuntimeImporters();
       expect(realRuntimeImporters).toEqual([]);
       expect(requiredTierFor(candidate, {
         s33RuntimeImporterProvider: () => realRuntimeImporters,
       }).tier).toBe('T0');
+    });
+
+    it('keeps the dual-DAG implementation T0 only while the runtime graph is readable and unreachable', () => {
+      const dualDag = ['services/worker/src/ai/eval/s33-wave1-dual-dag.ts'];
+
+      expect(requiredTierFor(dualDag, {
+        s33RuntimeImporterProvider: () => [],
+      }).tier).toBe('T0');
+      expect(requiredTierFor(dualDag, {
+        s33RuntimeImporterProvider: () => ['services/worker/src/index.ts'],
+      }).tier).toBe('T2');
+      expect(requiredTierFor(dualDag, {
+        s33RuntimeImporterProvider: () => {
+          throw new Error('runtime graph unreadable');
+        },
+      }).tier).toBe('T2');
     });
 
     it('classifies the exact Wave-1 producer corpus files as T0 only while unimported by runtime', () => {
@@ -1105,6 +1126,17 @@ describe('check-staging-evidence', () => {
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/below required tier T3/);
+    });
+
+    it('preserves the under-declared tier error when the evidence section is also missing', () => {
+      const r = check({
+        body: '## Summary\nTier: T0\nNo staging evidence block.',
+        files: ['services/worker/src/api/v1/example.ts'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below required tier T2/i);
+      expect(r.errors.join(' ')).toMatch(/missing a .*Staging Soak Evidence.* section/i);
     });
 
     it('passes a complete T3 PR', () => {

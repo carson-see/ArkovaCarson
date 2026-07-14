@@ -159,6 +159,12 @@ export const S33_COVERED_MINIMUM_POST_VALIDATION_DEPTH = 5;
 const S33_OOD_ID_PATTERN = /^GD-S33-OOD-\d{3}$/;
 const S33_OOD_GROUND_TRUTH_KEYS = ['credentialType', 'fraudSignals', 'subType'] as const;
 
+function compareUtf16CodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 export interface S33HeldoutGroundTruthContractResult {
   accepted: boolean;
   entryId: string;
@@ -196,7 +202,7 @@ export function countS33SubstantiveGroundTruthFields(
 }
 
 function isExactS33OodAbstentionTruth(groundTruth: Readonly<GroundTruthFields>): boolean {
-  const keys = Object.keys(groundTruth).sort();
+  const keys = Object.keys(groundTruth).sort(compareUtf16CodeUnits);
   return keys.length === S33_OOD_GROUND_TRUTH_KEYS.length
     && keys.every((key, index) => key === S33_OOD_GROUND_TRUTH_KEYS[index])
     && groundTruth.credentialType === 'OTHER'

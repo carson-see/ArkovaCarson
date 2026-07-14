@@ -32,6 +32,12 @@ import {
   type ParsedBatchManifest,
 } from './s33-batch-acceptance.js';
 
+function compareUtf16CodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 interface ParsedProducerEntry {
@@ -109,7 +115,7 @@ const WAVE1_PACKET_PATHS = Object.freeze([
   WAVE1_MANIFEST_PATH,
   WAVE1_ENTRY_DATASHEET_PATH,
   ...WAVE1_SOURCE_BLOB_PATHS,
-].sort());
+].sort(compareUtf16CodeUnits));
 
 const SOURCE_CONTRACTS = Object.freeze({
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts': {
@@ -177,8 +183,8 @@ function requiredString(value: unknown, label: string): string {
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[], label: string): void {
-  const actual = Object.keys(value).sort();
-  const sortedExpected = [...expected].sort();
+  const actual = Object.keys(value).sort(compareUtf16CodeUnits);
+  const sortedExpected = [...expected].sort(compareUtf16CodeUnits);
   if (actual.length !== sortedExpected.length
     || actual.some((key, index) => key !== sortedExpected[index])) {
     throw new Error(`${label} must contain exactly [${sortedExpected.join(', ')}]`);
@@ -376,8 +382,8 @@ function assertCountMap(
 function assertExactUniverse(entries: readonly ParsedProducerEntry[]): void {
   const ids = entries.map(({ id }) => id);
   if (new Set(ids).size !== ids.length) throw new Error('Producer corpus contains duplicate entry ids');
-  const actual = [...ids].sort();
-  const expected = [...WAVE1_ENTRY_IDS].sort();
+  const actual = [...ids].sort(compareUtf16CodeUnits);
+  const expected = [...WAVE1_ENTRY_IDS].sort(compareUtf16CodeUnits);
   if (actual.length !== expected.length || actual.some((id, index) => id !== expected[index])) {
     throw new Error('Producer corpus does not match the exact Wave-1 81-id universe');
   }
@@ -425,7 +431,7 @@ function verifyProvenance(
       throw new Error(`Wave-1 producer diff contains a rename, copy, deletion, or ambiguous status: ${row}`);
     }
     return fields[1];
-  }).sort();
+  }).sort(compareUtf16CodeUnits);
   if (producerChangedPaths.length !== WAVE1_PACKET_PATHS.length
     || producerChangedPaths.some((path, index) => path !== WAVE1_PACKET_PATHS[index])) {
     throw new Error('Wave-1 producer commit must change exactly the six protocol packet paths');

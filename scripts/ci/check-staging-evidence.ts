@@ -311,6 +311,7 @@ const S33_OFFLINE_ACCEPTANCE_FILES = new Set([
   'services/worker/src/ai/eval/heldout-leakage.ts',
   'services/worker/src/ai/eval/s33-acceptance-ledger.ts',
   'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+  'services/worker/src/ai/eval/s33-wave1-dual-dag.ts',
   'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
   'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
   'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
@@ -321,6 +322,12 @@ const MODULE_CANDIDATE_SUFFIXES = [
   '', '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs',
   '/index.ts', '/index.tsx', '/index.mts', '/index.cts',
 ] as const;
+
+function compareUtf16CodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
 
 function stringSpecifier(expression: ts.Expression): string | null {
   return ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)
@@ -503,7 +510,7 @@ export function findS33RuntimeImporters(repositoryRoot = REPO): string[] {
         else if (!TEST_FILE_RE.test(importedPath)) queued.push(importedPath);
       }
     }
-    return [...importers].sort();
+    return [...importers].sort(compareUtf16CodeUnits);
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'unknown import-graph failure';
     return [`<unreadable services/worker runtime module graph: ${reason}>`];
@@ -2588,14 +2595,11 @@ export function check(opts: CheckOptions): CheckResult {
   }
 
   if (!hasEvidenceSection(body)) {
-    return {
-      ok: false,
-      errors: [
-        'PR body is missing a `## Staging Soak Evidence` section. '
-        + 'Use docs/staging/PR_TEMPLATE.md as a starting point.',
-      ],
-      notes: result.notes,
-    };
+    addErrors(result, [
+      'PR body is missing a `## Staging Soak Evidence` section. '
+      + 'Use docs/staging/PR_TEMPLATE.md as a starting point.',
+    ]);
+    return result;
   }
 
   const standard = standardEvidenceErrors(body, declared, opts);

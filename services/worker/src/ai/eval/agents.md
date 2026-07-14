@@ -2,6 +2,33 @@
 
 _Last updated: 2026-07-14_
 
+## 2026-07-14 CTO dual-DAG ruling — revision-12 provenance
+
+- `s33-wave1-dual-dag.ts` keeps the Lane-4 producer history and Lane-3 support
+  history independent. The generic verifier pins r10 and the unique merge base,
+  requires r11′ to be r10's exact direct single-parent child with no hidden
+  intermediate or tamper/revert commits, verifies nonempty exact declared
+  subsets of the six packet paths on both `r10 -> r11′` and `r11′ -> r12`, preserves
+  r11′ as `HISTORICAL_BLOCKED` with its exact failure-set digest, and requires
+  r12 to pass the full 81-row packet/bijection/adjudication contract with zero
+  post-validation failures.
+- The r12 normalized-input transition universe is exactly code-owned LEAKAGE32
+  plus the sole disjoint non-leakage transition `GD-S33-KE-006`, authorized by
+  `CTO_R12_TAXONOMY_AND_DEPTH_ADJUDICATION`. Their union must be the exact 33
+  raw `strippedText`, source-text, normalized-input, recomputed-fingerprint, and
+  transition-map ids; KE-006 is excluded from leakage counters and all other raw
+  `strippedText` byte sequences and normalized fingerprints stay unchanged.
+- Never use a two-tree `support..producer` diff as provenance. The composition
+  proof is a conflict-free `git merge-tree --write-tree S12 r12`, followed by
+  an exact F12 single-parent child of S12 whose tree equals the virtual tree.
+  Both `merge-base -> r12` and `S12 -> F12` are exactly the six regular
+  non-executable `100644` packet additions; all F12 packet blobs equal r12 and
+  the support/types blob equals S12.
+- Exact r10/r11′/r12/S12/F12 SHAs, both producer-edge subsets, and production packet
+  pins are intentionally added only after Lane 4 freezes the candidate. The
+  generic architecture and malicious topology tests do not authorize a
+  candidate or make #1529 ready.
+
 ## 2026-07-14 CTO ruling 102498305 — active Wave-1 acceptance contract
 
 - `golden-dataset-s33-types.ts` applies the production

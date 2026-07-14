@@ -796,7 +796,7 @@ function validateActiveWave1SelfChecks(
     'Wave-1 committed manifest overlap self-check',
   );
   assertExactString(overlap.status, 'PASS', 'Wave-1 committed manifest overlap status');
-  if (overlap.threshold !== 0.8) throw new Error('Wave-1 committed manifest overlap threshold must be 0.8');
+  if (!Object.is(overlap.threshold, 0.8)) throw new Error('Wave-1 committed manifest overlap threshold must be 0.8');
   nonEmptyString(overlap.metric, 'Wave-1 committed manifest overlap metric');
   if (!Array.isArray(overlap.violations) || overlap.violations.length !== 0) {
     throw new Error('Wave-1 committed manifest overlap violations must be empty when PASS');
@@ -1338,7 +1338,7 @@ function assertS33ProdModelConfig(value: unknown): void {
     || config.promptBuilder !== 'buildExtractionPrompt'
     || config.promptBuilderProbeSha256 !== sha256(buildExtractionPrompt('__S33_PIN__', 'OTHER', undefined))
     || generationConfig.responseMimeType !== 'application/json'
-    || generationConfig.temperature !== 0.1
+    || !Object.is(generationConfig.temperature, 0.1)
     || generationConfig.maxOutputTokens !== 2048
     || canonicaliseJson(config.absentFlags) !== canonicaliseJson([
       'GEMINI_TUNED_MODEL', 'GEMINI_V6_PROMPT', 'GEMINI_TUNED_RESPONSE_SCHEMA',

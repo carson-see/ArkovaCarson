@@ -40,6 +40,12 @@ const SAMPLE_RULE = 'ceil(10%),minimum-5,capped-at-entry-count';
 
 type JsonRecord = Record<string, unknown>;
 
+function compareUtf16CodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function sha256(value: string | Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -66,8 +72,8 @@ function string(value: unknown, label: string): string {
 }
 
 function exactKeys(value: JsonRecord, expected: readonly string[], label: string): void {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
+  const actual = Object.keys(value).sort(compareUtf16CodeUnits);
+  const wanted = [...expected].sort(compareUtf16CodeUnits);
   if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
     throw new Error(`${label} must contain exactly [${wanted.join(', ')}]`);
   }
@@ -522,7 +528,7 @@ function assertExactProdModelConfig(modelConfig: JsonRecord): void {
     || modelConfig.promptBuilder !== 'buildExtractionPrompt'
     || modelConfig.promptBuilderProbeSha256 !== sha256(buildExtractionPrompt('__S33_PIN__', 'OTHER', undefined))
     || generationConfig.responseMimeType !== 'application/json'
-    || generationConfig.temperature !== 0.1
+    || !Object.is(generationConfig.temperature, 0.1)
     || generationConfig.maxOutputTokens !== 2048
     || canonicaliseJson(modelConfig.absentFlags) !== canonicaliseJson([
       'GEMINI_TUNED_MODEL', 'GEMINI_V6_PROMPT', 'GEMINI_TUNED_RESPONSE_SCHEMA',
