@@ -326,7 +326,9 @@ const S33_LANE1_LINT_SCRIPT_LINE = '"lint:batch-drain-evidence": "eslint --no-ig
 
 const RUNTIME_SOURCE_PATH_RE = /^(?:src\/|services\/[^/]+\/src\/|packages\/[^/]+\/src\/|integrations\/[^/]+\/src\/|sdks\/)/;
 const RUNTIME_SOURCE_EXT_RE = /\.(?:[cm]?[jt]sx?)$/;
-const NON_RUNTIME_SOURCE_RE = /(?:^|\/)(?:__tests__|test|tests|test-utils|fixtures)(?:\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)agents\.md$/;
+const NON_RUNTIME_DIRECTORY_RE = /(?:^|\/)(?:__tests__|test|tests|test-utils|fixtures)(?:\/|$)/;
+const TEST_SOURCE_FILE_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+const AGENTS_DOC_RE = /(?:^|\/)agents\.md$/;
 const IMPORT_SPECIFIER_RE = /\b(?:from|import|require)\s*(?:\(\s*)?['"]([^'"\r\n]+)['"]\s*\)?/g;
 
 // A changed line in deploy-worker.yml that is "harmless" for prod runtime: a
@@ -396,10 +398,16 @@ export function isS33Lane1RootLintScriptOnly(diff: string | null | undefined): b
     && changedLines[0]?.slice(1).trim() === S33_LANE1_LINT_SCRIPT_LINE;
 }
 
+function isNonRuntimeSourcePath(file: string): boolean {
+  return NON_RUNTIME_DIRECTORY_RE.test(file)
+    || TEST_SOURCE_FILE_RE.test(file)
+    || AGENTS_DOC_RE.test(file);
+}
+
 function isRuntimeSourcePath(file: string): boolean {
   return RUNTIME_SOURCE_PATH_RE.test(file)
     && RUNTIME_SOURCE_EXT_RE.test(file)
-    && !NON_RUNTIME_SOURCE_RE.test(file);
+    && !isNonRuntimeSourcePath(file);
 }
 
 function isScriptsStagingTarget(path: string): boolean {
@@ -407,7 +415,7 @@ function isScriptsStagingTarget(path: string): boolean {
 }
 
 function specifierTargetsStagingTooling(importer: string, specifier: string): boolean {
-  const normalizedSpecifier = specifier.replace(/\\/g, '/');
+  const normalizedSpecifier = specifier.replaceAll('\\', '/');
   if (isScriptsStagingTarget(normalizedSpecifier)) return true;
   if (!normalizedSpecifier.startsWith('.')) return false;
   const resolved = posix.normalize(posix.join(posix.dirname(importer), normalizedSpecifier));
@@ -436,7 +444,13 @@ export function findS33Lane1RuntimeImporters(files: SourceFileText[]): string[] 
       }
     }
   }
-  return [...importers].sort();
+  return [...importers].sort(compareCodeUnits);
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 function gitS33Lane1ImportScan(): S33Lane1ImportScan {
