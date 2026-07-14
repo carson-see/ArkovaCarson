@@ -393,15 +393,21 @@ function assertSha(value: unknown, expression: RegExp, label: string): asserts v
   if (typeof value !== 'string' || !expression.test(value)) throw new Error(`${label} is invalid`);
 }
 
+function errorWithCause(message: string, cause: unknown): Error {
+  const symptom = new Error(message);
+  Object.defineProperty(symptom, 'cause', { value: cause, configurable: true, writable: true });
+  return symptom;
+}
+
 function assertHttpsUrl(value: unknown, label: string): string {
   const text = nonEmptyString(value, label);
   let parsed: URL;
   try {
     parsed = new URL(text);
   } catch (error) {
-    throw new Error(
+    throw errorWithCause(
       `${label} must be an HTTPS URL: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
+      error,
     );
   }
   if (parsed.protocol !== 'https:') throw new Error(`${label} must be an HTTPS URL`);
@@ -541,9 +547,9 @@ function parseJsonBytes(bytes: Uint8Array, label: string): Record<string, unknow
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch (error) {
-    throw new Error(
+    throw errorWithCause(
       `${label} must be valid UTF-8: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
+      error,
     );
   }
   new DuplicateJsonKeyScanner(text, label).scan();
@@ -551,9 +557,9 @@ function parseJsonBytes(bytes: Uint8Array, label: string): Record<string, unknow
   try {
     parsed = JSON.parse(text) as unknown;
   } catch (error) {
-    throw new Error(
+    throw errorWithCause(
       `${label} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
+      error,
     );
   }
   const object = record(parsed, label);
@@ -1086,9 +1092,9 @@ function readWorkflowReport<T extends WorkflowReportEnvelope>(
   try {
     stat = lstatSync(path);
   } catch (error) {
-    throw new Error(
+    throw errorWithCause(
       `Missing workflow report ${expectedFilename}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
+      error,
     );
   }
   if (!stat.isFile() || stat.isSymbolicLink()) {
@@ -1121,9 +1127,9 @@ export function loadWorkflowReportBundle(
     try {
       return realpathSync(dirname(path));
     } catch (error) {
-      throw new Error(
+      throw errorWithCause(
         `Missing workflow report directory for ${path}: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
+        error,
       );
     }
   });
