@@ -71,7 +71,7 @@ function assertWorkflowContract(workflow: string): void {
   const checkoutRefs = checkouts.flatMap((checkout) =>
     [...checkout.matchAll(/^ {10}ref:\s*(.+)$/gmu)].map((match) => match[1]),
   );
-  expect(checkoutRefs).toEqual(["${{ github.ref }}"]);
+  expect(checkoutRefs).toEqual(["${{ github.sha }}"]);
   expect(checkoutRefs).not.toContain(
     "${{ github.event.pull_request.head.sha }}",
   );
