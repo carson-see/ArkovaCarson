@@ -493,15 +493,15 @@ describe('check-staging-evidence', () => {
     });
 
     it.each([
-      'services/worker/src/ai/eval/heldout-leakage.ts',
-      'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
-      'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
-    ])('forces T2 when runtime imports newly carved offline file %s', (offlinePath) => {
-      const pathSegments = offlinePath.split('/');
-      const filename = pathSegments[pathSegments.length - 1];
+      ['services/worker/src/ai/eval/heldout-leakage.ts', './ai/eval/heldout-leakage.js'],
+      ['services/worker/src/ai/eval/s33-wave1-github-evidence.ts', './ai/eval/s33-wave1-github-evidence.js'],
+      ['services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts', './ai/eval/s33-wave1-prerequisite-runner.js'],
+      ['scripts/ci/s33-wave1-github-evidence.ts', '../../../scripts/ci/s33-wave1-github-evidence.js'],
+      ['.github/s33-wave1-acceptance-authorities.json', '../../../.github/s33-wave1-acceptance-authorities.json'],
+    ])('forces T2 when runtime imports newly carved offline file %s', (offlinePath, specifier) => {
       withRuntimeFixture({
-        'services/worker/src/index.ts': `import './ai/eval/${filename.replace(/\.ts$/u, '.js')}';\n`,
-        [offlinePath]: 'export const offline = true;\n',
+        'services/worker/src/index.ts': `import ${JSON.stringify(specifier)};\n`,
+        [offlinePath]: offlinePath.endsWith('.json') ? '{}\n' : 'export const offline = true;\n',
       }, (root) => {
         expect(findS33RuntimeImporters(root)).toEqual(['services/worker/src/index.ts']);
         expect(requiredTierFor([offlinePath], {
@@ -542,9 +542,18 @@ describe('check-staging-evidence', () => {
       withRuntimeFixture({
         'services/worker/src/index.ts': body,
       }, (root) => {
-        expect(findS33RuntimeImporters(root)).toEqual([
+        const importers = findS33RuntimeImporters(root);
+        expect(importers).toEqual([
           `<unsafe services/worker/src/index.ts: ${loadKind}>`,
         ]);
+        for (const companionPath of [
+          'scripts/ci/s33-wave1-github-evidence.ts',
+          '.github/s33-wave1-acceptance-authorities.json',
+        ]) {
+          expect(requiredTierFor([companionPath], {
+            s33RuntimeImporterProvider: () => importers,
+          }).tier).toBe('T2');
+        }
       });
     });
 
@@ -555,9 +564,15 @@ describe('check-staging-evidence', () => {
         const importers = findS33RuntimeImporters(root);
         expect(importers).toHaveLength(1);
         expect(importers[0]).toMatch(/^<unreadable services\/worker runtime module graph:/u);
-        expect(requiredTierFor([
+        for (const offlinePath of [
           'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
-        ], { s33RuntimeImporterProvider: () => importers }).tier).toBe('T2');
+          'scripts/ci/s33-wave1-github-evidence.ts',
+          '.github/s33-wave1-acceptance-authorities.json',
+        ]) {
+          expect(requiredTierFor([offlinePath], {
+            s33RuntimeImporterProvider: () => importers,
+          }).tier).toBe('T2');
+        }
       });
     });
   });

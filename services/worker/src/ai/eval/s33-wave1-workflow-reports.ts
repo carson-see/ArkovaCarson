@@ -442,7 +442,7 @@ export function normalizeEmbeddingDiagnostic(
       throw new Error(`Embedding requests[${index}] is not the deterministic pinned batch request`);
     }
   });
-  const results = heldout.map(({ row, vector }, index) => {
+  const results = heldout.map(({ row, vector }) => {
     let nearestIndex = 0;
     let nearest = cosine(vector, trainingVectors[0].vector);
     for (let candidate = 1; candidate < trainingVectors.length; candidate += 1) {
@@ -492,10 +492,10 @@ export function normalizeEmbeddingDiagnostic(
 
 function assertExactEmbeddingModelConfig(modelConfig: JsonRecord): void {
   exactKeys(modelConfig, [
-    'taskType', 'dimensions', 'batchSize', 'timeoutMs', 'concurrency', 'retryCount',
+    'taskType', 'outputDimensionality', 'batchSize', 'timeoutMs', 'concurrency', 'retryCount',
     'chunkTokens', 'chunkOverlapTokens', 'maxTrainingChunks', 'maxVectorInputs', 'maxHttpRequests',
   ], 'Embedding modelConfig');
-  if (modelConfig.taskType !== 'SEMANTIC_SIMILARITY' || modelConfig.dimensions !== 3072
+  if (modelConfig.taskType !== 'SEMANTIC_SIMILARITY' || modelConfig.outputDimensionality !== 3072
     || modelConfig.batchSize !== 16 || modelConfig.timeoutMs !== 30_000
     || modelConfig.concurrency !== 1 || modelConfig.retryCount !== 0
     || modelConfig.chunkTokens !== 1500 || modelConfig.chunkOverlapTokens !== 128
@@ -557,12 +557,6 @@ function cosine(left: readonly number[], right: readonly number[]): number {
   }
   if (leftNorm === 0 || rightNorm === 0) throw new Error('Embedding vector has zero magnitude');
   return Math.max(-1, Math.min(1, dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm))));
-}
-
-function requiredEnvironmentPath(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required`);
-  return resolve(value);
 }
 
 function optionalEnvironmentPath(name: string): string | undefined {

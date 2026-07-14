@@ -17,7 +17,9 @@ import {
 } from './s33-batch-acceptance.js';
 import {
   assertS33SourceParseDiagnostics,
+  parseS33Wave1ProducerVerifierCliArgs,
   parseS33ProducerModule,
+  runS33Wave1ProducerVerifierCli,
   verifyS33Wave1ProducerHead,
 } from './s33-wave1-producer-verifier.js';
 
@@ -398,6 +400,34 @@ describe('trusted-main S3.3 Wave-1 producer verifier', { timeout: 30_000 }, () =
     expect(() => {
       (report.counts as { covered: number }).covered = 0;
     }).toThrow(TypeError);
+
+    const output: string[] = [];
+    const cliReport = runS33Wave1ProducerVerifierCli([
+      'verify',
+      '--repository-root', repo.root,
+      '--producer-head', repo.head,
+    ], (message) => output.push(message));
+    expect(cliReport.reportDigestSha256).toBe(report.reportDigestSha256);
+    expect(output).toEqual([
+      expect.stringMatching(/^S3\.3 Wave-1 producer verifier: PASS .*reportDigestSha256=[0-9a-f]{64}\n$/u),
+    ]);
+  });
+
+  it('requires one explicit verify command and exact unique CLI flags', () => {
+    const head = 'a'.repeat(40);
+    expect(parseS33Wave1ProducerVerifierCliArgs([
+      'verify', '--repository-root', '/tmp/repository.git', '--producer-head', head,
+    ])).toEqual({ repositoryRoot: '/tmp/repository.git', producerHeadSha: head });
+    for (const invalid of [
+      ['--repository-root', '/tmp/repository.git', '--producer-head', head],
+      ['accept', '--repository-root', '/tmp/repository.git', '--producer-head', head],
+      ['verify', 'verify', '--repository-root', '/tmp/repository.git', '--producer-head', head],
+      ['verify', '--repository-root', '/tmp/repository.git'],
+      ['verify', '--repository-root', '/tmp/repository.git', '--repository-root', '/tmp/other', '--producer-head', head],
+      ['verify', '--repository-root', '/tmp/repository.git', '--producer-head', head, '--unexpected', 'value'],
+    ]) {
+      expect(() => parseS33Wave1ProducerVerifierCliArgs(invalid)).toThrow(/explicit verify|invalid|duplicated|mismatch/i);
+    }
   });
 
   it('rejects a shallow late covered row and malformed late OOD row', () => {

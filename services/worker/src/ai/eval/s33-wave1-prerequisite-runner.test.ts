@@ -71,17 +71,20 @@ function generationResponse(text = '{"credentialType":"OTHER","subType":"other",
   };
 }
 
-function prodInput(fetchImpl: typeof fetch, now: () => Date = () => new Date('2026-07-14T12:00:00Z')) {
+function prodInput(
+  fetchImpl: typeof fetch,
+  now: () => Date = () => new Date('2026-07-14T12:00:00Z'),
+): Parameters<typeof runS33ProdReplay>[0] {
   return {
     apiKey: 'test-api-key', entries, fetchImpl, now, producer,
     workerRoot: join(process.cwd()), workflow,
-  } as any;
+  };
 }
 
 function embeddingInput(
   fetchImpl: typeof fetch,
   now: () => Date = () => new Date('2026-07-14T12:00:00Z'),
-) {
+): Parameters<typeof runS33EmbeddingDiagnostic>[0] {
   return {
     apiKey: 'test-api-key',
     corpus: [{ path: 'training-data/one.txt', content: 'alpha beta gamma delta epsilon zeta' }],
@@ -90,7 +93,7 @@ function embeddingInput(
     now,
     producer,
     workflow,
-  } as any;
+  };
 }
 
 beforeEach(() => {
@@ -115,7 +118,11 @@ describe('S3.3 prerequisite runner network contracts', () => {
       );
       expect(init?.method).toBe('POST');
       expect((init?.headers as Record<string, string>)['x-goog-api-key']).toBe('test-api-key');
-      const body = JSON.parse(String(init?.body)) as Record<string, any>;
+      const body = JSON.parse(String(init?.body)) as {
+        contents: Array<{ role: string; parts: Array<{ text: string }> }>;
+        generationConfig: Record<string, unknown>;
+        systemInstruction: { role: string; parts: Array<{ text: string }> };
+      };
       expect(body.systemInstruction).toEqual({ role: 'system', parts: [{ text: EXTRACTION_SYSTEM_PROMPT }] });
       expect(body.generationConfig).toEqual({
         responseMimeType: 'application/json', temperature: 0.1, maxOutputTokens: 2048,
@@ -215,7 +222,10 @@ describe('S3.3 prerequisite runner network contracts', () => {
       return jsonResponse({ embeddings: body.requests.slice(1).map(() => ({ values: Array(3072).fill(0.01) })) });
     }, /count does not match/u],
   ])('rejects embedding %s after one call without retry', async (_label, implementation, message) => {
-    const fetchImpl = vi.fn(implementation as any) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(implementation as (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => Promise<Response>) as unknown as typeof fetch;
     await expect(runS33EmbeddingDiagnostic(embeddingInput(fetchImpl))).rejects.toThrow(message);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });

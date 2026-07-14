@@ -8,6 +8,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
 import type { GroundTruthFields } from './types.js';
@@ -628,4 +629,54 @@ export function loadS33Wave1WorkflowReportEntries(input: Readonly<{
       strippedText: entry.strippedText,
     };
   }));
+}
+
+export function parseS33Wave1ProducerVerifierCliArgs(argv: readonly string[]): Readonly<{
+  producerHeadSha: string;
+  repositoryRoot: string;
+}> {
+  if (argv[0] !== 'verify') {
+    throw new Error('S3.3 Wave-1 producer verifier requires the explicit verify command');
+  }
+  const values = new Map<string, string>();
+  const args = argv.slice(1);
+  if (args.length % 2 !== 0) {
+    throw new Error('Invalid S3.3 Wave-1 producer verifier CLI arguments');
+  }
+  for (let index = 0; index < args.length; index += 2) {
+    const key = args[index];
+    const value = args[index + 1];
+    if (!key?.startsWith('--') || !value || value.startsWith('--') || values.has(key)) {
+      throw new Error('Invalid or duplicated S3.3 Wave-1 producer verifier CLI argument');
+    }
+    values.set(key, value);
+  }
+  const allowed = ['--repository-root', '--producer-head'] as const;
+  const unknown = [...values.keys()].filter((key) => !allowed.includes(key as (typeof allowed)[number]));
+  const missing = allowed.filter((key) => !values.has(key));
+  if (unknown.length > 0 || missing.length > 0 || values.size !== allowed.length) {
+    throw new Error(
+      `S3.3 Wave-1 producer verifier CLI arguments mismatch; missing=[${missing.join(',')}], unknown=[${unknown.join(',')}]`,
+    );
+  }
+  return Object.freeze({
+    producerHeadSha: values.get('--producer-head')!,
+    repositoryRoot: values.get('--repository-root')!,
+  });
+}
+
+export function runS33Wave1ProducerVerifierCli(
+  argv: readonly string[],
+  write: (message: string) => void = (message): void => { process.stdout.write(message); },
+): Readonly<S33Wave1ProducerValidationReport> {
+  const input = parseS33Wave1ProducerVerifierCliArgs(argv);
+  const report = verifyS33Wave1ProducerHead(input);
+  write(
+    `S3.3 Wave-1 producer verifier: PASS — producerHeadSha=${report.producerHeadSha}, reportDigestSha256=${report.reportDigestSha256}\n`,
+  );
+  return report;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runS33Wave1ProducerVerifierCli(process.argv.slice(2));
 }

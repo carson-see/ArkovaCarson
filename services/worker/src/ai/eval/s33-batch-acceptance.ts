@@ -1344,10 +1344,10 @@ function assertS33ProdModelConfig(value: unknown): void {
 function assertS33EmbeddingModelConfig(value: unknown): void {
   const config = recordValue(value, 'Wave-1 embedding modelConfig');
   assertExactKeys(config, [
-    'taskType', 'dimensions', 'batchSize', 'timeoutMs', 'concurrency', 'retryCount',
+    'taskType', 'outputDimensionality', 'batchSize', 'timeoutMs', 'concurrency', 'retryCount',
     'chunkTokens', 'chunkOverlapTokens', 'maxTrainingChunks', 'maxVectorInputs', 'maxHttpRequests',
   ], 'Wave-1 embedding modelConfig');
-  if (config.taskType !== 'SEMANTIC_SIMILARITY' || config.dimensions !== 3072
+  if (config.taskType !== 'SEMANTIC_SIMILARITY' || config.outputDimensionality !== 3072
     || config.batchSize !== 16 || config.timeoutMs !== 30_000 || config.concurrency !== 1
     || config.retryCount !== 0 || config.chunkTokens !== 1500 || config.chunkOverlapTokens !== 128
     || config.maxTrainingChunks !== 2048 || config.maxVectorInputs !== 2129

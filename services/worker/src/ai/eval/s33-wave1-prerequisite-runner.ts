@@ -426,7 +426,7 @@ export async function runS33EmbeddingDiagnostic(input: Readonly<{
   }
   const modelConfig = {
     taskType: 'SEMANTIC_SIMILARITY',
-    dimensions: EMBEDDING_DIMENSIONS,
+    outputDimensionality: EMBEDDING_DIMENSIONS,
     batchSize: EMBEDDING_BATCH_SIZE,
     timeoutMs: PROD_TIMEOUT_MS,
     concurrency: 1,

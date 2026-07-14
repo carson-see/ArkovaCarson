@@ -169,6 +169,7 @@ jobs:
         run: |
           set -euo pipefail
           npx --no-install tsx scripts/ci/s33-wave1-github-evidence.ts \
+            verify \
             --main-repository "${GITHUB_WORKSPACE}" \
             --producer-repository "${RUNNER_TEMP}/s33-producer.git" \
             --prerequisite-directory "${RUNNER_TEMP}/s33-wave1-prerequisites" \

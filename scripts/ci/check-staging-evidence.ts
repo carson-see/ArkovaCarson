@@ -213,6 +213,11 @@ export const PATH_RULES: PathRule[] = [
     reason: 'auth-sensitive worker logic',
   },
   {
+    pattern: /^(?:scripts\/ci\/s33-wave1-github-evidence\.ts|\.github\/s33-wave1-acceptance-authorities\.json)$/,
+    minTier: 'T2',
+    reason: 'S3.3 acceptance companion reachable from production runtime',
+  },
+  {
     pattern: /^services\/worker\/src\/(?:ai|agents|nessie|llm|model)\//,
     minTier: 'T2',
     reason: 'AI behavior',
@@ -297,6 +302,8 @@ export interface TierClassifyOpts {
 const DEPLOY_WORKER_WORKFLOW = '.github/workflows/deploy-worker.yml';
 
 const S33_OFFLINE_ACCEPTANCE_FILES = new Set([
+  '.github/s33-wave1-acceptance-authorities.json',
+  'scripts/ci/s33-wave1-github-evidence.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
@@ -1861,10 +1868,6 @@ interface StagingFilesOnlyResult {
  */
 const STAGING_TOOLING_ALLOW = [
   /^scripts\/staging\//,
-  // CTO 103022593/103055361: exact Wave-1 trust-gate CLI adapter and
-  // authority registry are offline CI inputs; no broad scripts/.github carve-out.
-  /^scripts\/ci\/s33-wave1-github-evidence\.ts$/,
-  /^\.github\/s33-wave1-acceptance-authorities\.json$/,
   // CI-only local-Supabase bootstrap for the types/tests/e2e jobs (sourced by
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
   /^scripts\/ci-supabase-start\.sh$/,

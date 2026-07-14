@@ -102,7 +102,7 @@ function embeddingRaw(corpus = [{ path: 'training.jsonl', content: 'unrelated tr
   const corpusEntries = entries();
   const inputs = [...corpusEntries.map(({ strippedText }) => strippedText), ...training.chunks.map(({ text }) => text)];
   const modelConfig = {
-    taskType: 'SEMANTIC_SIMILARITY', dimensions: 3072, batchSize: 16, timeoutMs: 30_000,
+    taskType: 'SEMANTIC_SIMILARITY', outputDimensionality: 3072, batchSize: 16, timeoutMs: 30_000,
     concurrency: 1, retryCount: 0, chunkTokens: 1500, chunkOverlapTokens: 128,
     maxTrainingChunks: 2048, maxVectorInputs: 2129, maxHttpRequests: 134,
   };
@@ -202,5 +202,13 @@ describe('S3.3 Wave-1 trusted workflow reports', () => {
     ((drift.vectors as Array<Record<string, unknown>>)[0].vector as unknown[]).pop();
     expect(() => normalizeEmbeddingDiagnostic(Buffer.from(JSON.stringify(drift)), producer(), entries(), corpus))
       .toThrow(/exactly 3072/i);
+
+    const legacy = JSON.parse(embeddingRaw(corpus).toString('utf8')) as Record<string, unknown>;
+    const legacyConfig = legacy.modelConfig as Record<string, unknown>;
+    legacyConfig.dimensions = legacyConfig.outputDimensionality;
+    delete legacyConfig.outputDimensionality;
+    legacy.modelConfigCanonicalSha256 = sha256(canonicaliseJson(legacyConfig));
+    expect(() => normalizeEmbeddingDiagnostic(Buffer.from(JSON.stringify(legacy)), producer(), entries(), corpus))
+      .toThrow(/modelConfig must contain exactly/i);
   });
 });

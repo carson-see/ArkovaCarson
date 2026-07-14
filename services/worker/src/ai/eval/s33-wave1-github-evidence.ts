@@ -399,7 +399,10 @@ function assertHttpsUrl(value: unknown, label: string): string {
   try {
     parsed = new URL(text);
   } catch (error) {
-    throw new Error(`${label} must be an HTTPS URL: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `${label} must be an HTTPS URL: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
   if (parsed.protocol !== 'https:') throw new Error(`${label} must be an HTTPS URL`);
   return parsed.toString();
@@ -538,14 +541,20 @@ function parseJsonBytes(bytes: Uint8Array, label: string): Record<string, unknow
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch (error) {
-    throw new Error(`${label} must be valid UTF-8: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `${label} must be valid UTF-8: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
   new DuplicateJsonKeyScanner(text, label).scan();
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
   } catch (error) {
-    throw new Error(`${label} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `${label} must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
   const object = record(parsed, label);
   assertNoDangerousKeys(object);
@@ -1077,7 +1086,10 @@ function readWorkflowReport<T extends WorkflowReportEnvelope>(
   try {
     stat = lstatSync(path);
   } catch (error) {
-    throw new Error(`Missing workflow report ${expectedFilename}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Missing workflow report ${expectedFilename}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   }
   if (!stat.isFile() || stat.isSymbolicLink()) {
     throw new Error(`Workflow report ${expectedFilename} must be a regular non-symlink file`);
@@ -1109,7 +1121,10 @@ export function loadWorkflowReportBundle(
     try {
       return realpathSync(dirname(path));
     } catch (error) {
-      throw new Error(`Missing workflow report directory for ${path}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Missing workflow report directory for ${path}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   });
   if (new Set(directories).size !== 1) {
@@ -1811,15 +1826,16 @@ export async function fetchS33PrerequisiteArtifacts(options: {
   )[0];
   const selectedRunHeadSha = nonEmptyString(selectedRun.head_sha, 'Newest prerequisite workflow run head_sha');
   assertSha(selectedRunHeadSha, SHA1_RE, 'Newest prerequisite workflow run head_sha');
-  let runHeadIsReachableFromCurrentMain = false;
-  try {
-    execFileSync('/usr/bin/git', [
-      '-C', mainRepositoryRoot, 'merge-base', '--is-ancestor', selectedRunHeadSha, mainHeadSha,
-    ], { stdio: 'ignore' });
-    runHeadIsReachableFromCurrentMain = true;
-  } catch {
-    runHeadIsReachableFromCurrentMain = false;
-  }
+  const runHeadIsReachableFromCurrentMain = (() => {
+    try {
+      execFileSync('/usr/bin/git', [
+        '-C', mainRepositoryRoot, 'merge-base', '--is-ancestor', selectedRunHeadSha, mainHeadSha,
+      ], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
   const inventory = verifyS33PrerequisiteInventory({
     runsResponse,
     artifactsResponse,
@@ -1929,15 +1945,16 @@ async function reauthenticatePrerequisiteInventory(options: {
   const mainHeadSha = git(options.mainRepositoryRoot, ['rev-parse', 'HEAD']);
   const runHeadSha = nonEmptyString(selectedRun.head_sha, 'Final prerequisite workflow run head_sha');
   assertSha(runHeadSha, SHA1_RE, 'Final prerequisite workflow run head_sha');
-  let reachable = false;
-  try {
-    execFileSync('/usr/bin/git', [
-      '-C', options.mainRepositoryRoot, 'merge-base', '--is-ancestor', runHeadSha, mainHeadSha,
-    ], { stdio: 'ignore' });
-    reachable = true;
-  } catch {
-    reachable = false;
-  }
+  const reachable = (() => {
+    try {
+      execFileSync('/usr/bin/git', [
+        '-C', options.mainRepositoryRoot, 'merge-base', '--is-ancestor', runHeadSha, mainHeadSha,
+      ], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
   const liveInventory = verifyS33PrerequisiteInventory({
     runsResponse,
     artifactsResponse,
@@ -2738,15 +2755,18 @@ function renderComment(outputDirectory: string): void {
   );
 }
 
-function parseCli(argv: readonly string[]): { command: 'verify' | 'render-comment' | 'preflight' | 'fetch-prerequisites'; values: Map<string, string> } {
-  const command = argv[0] === 'render-comment'
-    ? 'render-comment'
-    : argv[0] === 'preflight'
-      ? 'preflight'
-      : argv[0] === 'fetch-prerequisites'
-        ? 'fetch-prerequisites'
-      : 'verify';
-  const args = command === 'verify' ? argv : argv.slice(1);
+export function parseS33Wave1GitHubEvidenceCliArgs(argv: readonly string[]): {
+  command: 'verify' | 'render-comment' | 'preflight' | 'fetch-prerequisites';
+  values: Map<string, string>;
+} {
+  const command = argv[0];
+  if (command !== 'verify'
+    && command !== 'render-comment'
+    && command !== 'preflight'
+    && command !== 'fetch-prerequisites') {
+    throw new Error('S3.3 GitHub evidence CLI requires an explicit recognized command');
+  }
+  const args = argv.slice(1);
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index];
@@ -2772,7 +2792,7 @@ function parseCli(argv: readonly string[]): { command: 'verify' | 'render-commen
 }
 
 export async function runS33Wave1GitHubEvidenceCli(argv: readonly string[]): Promise<void> {
-  const cli = parseCli(argv);
+  const cli = parseS33Wave1GitHubEvidenceCliArgs(argv);
   if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REPOSITORY !== FIXED_REPOSITORY) {
     throw new Error('S3.3 Wave-1 GitHub evidence may run only inside the fixed Arkova GitHub Actions workflow');
   }

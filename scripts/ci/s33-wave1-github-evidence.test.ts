@@ -20,6 +20,7 @@ import {
   FIXED_REPOSITORY,
   loadWorkflowReportBundle,
   PROD_DIFF_ADJUDICATION_MARKER,
+  parseS33Wave1GitHubEvidenceCliArgs,
   runS33PremergeApiPreflight,
   recursivelyFreeze,
   S33_PREMERGE_API_QUERY,
@@ -1603,6 +1604,7 @@ describe('s33-wave1-acceptance workflow contract', () => {
     expect(workflow).toContain('ref: ${{ github.sha }}');
     expect(workflow).toContain('fetch-depth: 0');
     expect(workflow).toContain('test "${GITHUB_RUN_ATTEMPT}" = "1"');
+    expect(workflow.match(/s33-wave1-github-evidence\.ts\s+\\\n\s+verify/gu)).toHaveLength(1);
     const fetchPrerequisites = workflow.indexOf('Fetch and authenticate fresh prerequisite artifacts');
     const trustedParse = workflow.indexOf('Parse producer bytes with trusted-main Team-3 verifier');
     expect(fetchPrerequisites).toBeGreaterThan(0);
@@ -1619,6 +1621,26 @@ describe('s33-wave1-acceptance workflow contract', () => {
       workflow.indexOf('authenticate-wave1:'),
     );
     expect(preflightJob).not.toMatch(/upload-artifact|issues\/1498\/comments|cross-review\.json|s33-wave1-reports/u);
+  });
+
+  it('requires explicit verify and rejects omitted, unknown, or duplicated commands', () => {
+    const required = [
+      '--main-repository', '/tmp/main',
+      '--producer-repository', '/tmp/producer.git',
+      '--prerequisite-directory', '/tmp/prerequisites',
+      '--report-directory', '/tmp/reports',
+      '--output-directory', '/tmp/output',
+    ];
+    expect(parseS33Wave1GitHubEvidenceCliArgs(['verify', ...required])).toMatchObject({ command: 'verify' });
+    for (const argv of [
+      required,
+      ['accept', ...required],
+      ['verify', 'verify', ...required],
+      ['verify', ...required, '--output-directory', '/tmp/duplicate'],
+    ]) {
+      expect(() => parseS33Wave1GitHubEvidenceCliArgs(argv))
+        .toThrow(/explicit recognized command|invalid|duplicated|mismatch/i);
+    }
   });
 });
 
@@ -1698,6 +1720,15 @@ describe('s33-wave1-prerequisites workflow contract', () => {
     expect(workflow).toContain('google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093');
     expect(workflow).toContain('google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262');
     expect(workflow).toContain('gemini_api_key:arkova1/gemini-api-key');
+    const verifierInvocations = workflow.match(/s33-wave1-producer-verifier\.ts\s+verify/gu);
+    expect(verifierInvocations).toHaveLength(1);
+    const dependencyInstall = workflow.indexOf('Install trusted-main worker dependencies');
+    const producerVerify = workflow.indexOf('s33-wave1-producer-verifier.ts verify');
+    const gcpAuth = workflow.indexOf('Authenticate to GCP');
+    const modelRunner = workflow.indexOf('s33-wave1-prerequisite-runner.ts prerequisites');
+    expect(producerVerify).toBeGreaterThan(dependencyInstall);
+    expect(producerVerify).toBeLessThan(gcpAuth);
+    expect(producerVerify).toBeLessThan(modelRunner);
     expect(workflow).toContain('s33-wave1-prerequisite-runner.ts prerequisites');
     expect(workflow).toContain('--raw-output-dir "${S33_RAW_OUTPUT_DIRECTORY}"');
     expect(workflow.match(/uses: actions\/upload-artifact@/gu)).toHaveLength(2);

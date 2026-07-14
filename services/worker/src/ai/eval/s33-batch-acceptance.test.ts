@@ -1164,7 +1164,7 @@ function githubCiAcceptanceInput(
   });
   const embeddingModelConfig = {
     taskType: 'SEMANTIC_SIMILARITY',
-    dimensions: 3072,
+    outputDimensionality: 3072,
     batchSize: 16,
     timeoutMs: 30_000,
     concurrency: 1,
@@ -1417,6 +1417,17 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       (report.payload as Record<string, unknown>).n = [6, 7, 8];
     });
     expect(() => createTestOnlyS33Wave1AcceptanceArtifact(incompleteN)).toThrow(/6.*13/i);
+
+    const legacyEmbeddingConfig = githubCiAcceptanceInput(repo);
+    mutateWorkflowReport(legacyEmbeddingConfig, 'embedding-diagnostic.json', (report) => {
+      const payload = report.payload as Record<string, unknown>;
+      const config = payload.modelConfig as Record<string, unknown>;
+      config.dimensions = config.outputDimensionality;
+      delete config.outputDimensionality;
+      payload.modelConfigCanonicalSha256 = sha256(canonicaliseJson(config));
+    });
+    expect(() => createTestOnlyS33Wave1AcceptanceArtifact(legacyEmbeddingConfig))
+      .toThrow(/embedding.*modelConfig must contain exactly/i);
   });
 
   it('rejects GitHub approval or CI evidence that is not bound to the exact producer head', () => {
