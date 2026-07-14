@@ -3,15 +3,18 @@
 Lane 3 (Credential Network & Intelligence) Sprint-0 deliverables. **T0 design/audit only — no code/migration/CLAUDE.md/database.types.ts touched.** See [README.md](README.md) for the index + DoD scorecard.
 
 ## What's here
+
 - `00-ceremonies.md` — refinement / planning / pre-mortem / review+retro
-- `01-ce-key-custody-design.md` — S0-7.2 (↔ epic SCRUM-1867); the **T2 secret move + IAM is Carson-gated** (drafted gcloud runbook in §4)
+- `01-ce-key-custody-design.md` — S0-7.2 (↔ epic SCRUM-1867); current state keeps the already-labeled, per-secret-IAM-hardened `Credential_Engine` in place; superseded two-secret/migration/retirement design is historical only; any live change requires a current CTO decision + approved operator
 - `02-bigquery-analytics-design.md` — extends the shipped SCRUM-1062 subsystem (not greenfield)
 - `03-partnership-history-audit.md` — S0-E2 support; CE/CPE/CLE/Haki current-state + claims-review + external-gate rows
-- `04-ce-permanent-key-request-DRAFT.md` — outward partner email; **DRAFT / do not send (premature)** — real near-term action is the consuming smoke (SCRUM-1921), continuation near deadline via Jeanne/Jeff
+- `04-ce-permanent-key-request-DRAFT.md` — historical outward email; **answered 2026-06-24 / do not send again**. Current UNSENT continuation draft is `../../lane3/s33-ce-escalation-send-packet-draft.md`
 - `README.md` — index + DoD scorecard
 
 ## Guardrails honored
-Read-only on all infra + every existing PR/branch (Train C #1154, Train D rigs, #1208/#1211/#1213 untouched); no prod/staging/Supabase/Cloud Run/soak mutation; **CE key value never read/logged**; CE Secret-Manager/IAM cross-cutting work routed to **Lane 1 via handoff** (doc 01 §6), not edited.
+
+Read-only on all infra + every existing PR/branch (Train C #1154, Train D rigs, #1208/#1211/#1213 untouched); no prod/staging/Supabase/Cloud Run/soak mutation; **CE key value never read/logged**. The CE-specific labels/IAM were applied historically on 2026-06-19; only any future estate-wide Secret-Manager/IAM decision routes to **Lane 1** (doc 01 §6). This reconciliation performs no live action.
 
 ## Tracking
-Jira: **SCRUM-2542** (Needs Human) + subtasks 2543/2544 (Done), 2545 (review/retro), 2546 (Carson-gated close-out). Confluence: **85393410** (under Sprint-0 AUDIT 83689473). Related: SCRUM-1867 (CE) · 1062 (BigQuery) · 1703 (HakiChain) · 2523 (external-gate tracker) · 2536 (dead rotation reminder, confirmed).
+
+Jira: **SCRUM-2542** (Needs Human) + subtasks 2543/2544 (Done), 2545 (review/retro), 2546 (close-out: founder reserves only the external send; technical decisions/execution route through CTO + approved operator). Confluence: **85393410** (under Sprint-0 AUDIT 83689473). Related: SCRUM-1867 (CE) · 1062 (BigQuery) · 1703 (HakiChain) · 2523 (external-gate tracker) · 2536 (dead rotation reminder, confirmed).

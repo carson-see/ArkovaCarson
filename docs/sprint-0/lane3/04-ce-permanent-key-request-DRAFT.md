@@ -1,13 +1,13 @@
-# CE Permanent-Key + Sandbox Request — DRAFT (DO NOT SEND NOW)
+# CE Permanent-Key + Sandbox Request — HISTORICAL DRAFT (DO NOT SEND)
 
-> **2026-06-19 — SUPERSEDED: do not send this now.** Raising a permanent-key / paid-Developer-Agreement ask ~80 days before expiry, ~10 days into a fresh free trial that hasn't been exercised, is premature and inverts the right sequence: **use the trial → show value → discuss continuation near the deadline through the existing Jeanne/Jeff channel.** The real near-term CE action is the **consuming smoke (SCRUM-1921)**, not outreach.
-> Kept below only as raw material a near-deadline continuation note could draw on. A copy was placed in Carson's Gmail drafts — **discard it.**
-> **Why the expiry still matters:** the CE 3-month trial (executed 6/9/2026) auto-expires **~2026-09-09** (risk R-1, FATAL) — but the mitigation is exercising + valuing the trial now and negotiating continuation near the deadline, not an early ask.
+> **2026-07-13 reconciliation — SUPERSEDED; do not send or reuse as a new request.** The substance below was sent through the existing Jeanne/Jeff channel and Credential Engine answered it on 2026-06-24. CE confirmed Arkova's organization CTID as `ce-cd077a1e-7691-4519-b653-d46d1245687f`, confirmed that the evaluation ends **2026-09-09** (exact expiry instant/timezone still unknown), said it copied Arkova's account to sandbox and sent an invite, and identified the Developer Agreement plus annual support-tier selection as the continuation path. Receipt/acceptance of the sandbox invite and usable sandbox access were not verified in the reviewed artifacts.
+> The current continuation draft is `docs/lane3/s33-ce-escalation-send-packet-draft.md`. It asks for the agreement/tier decision deadline, activation lead time, exact expiry timestamp, and July follow-up; it does **not** repeat the answered sandbox/date request.
+> This file is preserved as relationship history only. The founder reserves any external send; technical claims and key/alerting decisions route to the CTO.
 > **Claims discipline (§1.5):** the draft states only what is true — consuming-only eval, publishing kept sandbox-gated, no "listed in the Registry" claim. Do not let edits introduce an overclaim.
 
 ---
 
-**To:** Jeanne Kitchens (jkitchens@credentialengine.org) — CTSO / relationship owner
+**To:** Jeanne Kitchens (jkitchens@credentialengine.org) — Developer Integration Program / relationship owner
 **Cc:** Jeff Grann — technical/CTDL counterpart
 **Subject:** Arkova — continuation path + key custody ahead of the trial window close (~Sept)
 
@@ -22,6 +22,7 @@ As we approach the close of the 3-month complimentary evaluation window (~early 
 2. **Sandbox continuity.** Can we keep (or stand up) a **sandbox/non-production key** alongside the production one, so we can keep validating consuming flows against a non-live target without touching the production Registry? We're keeping any Registry **publishing** sandbox-gated for now per the roles you approved (Quality Assurance Org + Competency Framework Org) — this is purely about a safe place to exercise the consuming path.
 
 A couple of small technical confirmations for Jeff while we're here:
+
 - The exact expiry date/time of the current trial credentials (so our rotation alert fires with the right lead time).
 - Whether the consuming methods we should build against remain the Graph Search API + offline download as discussed.
 
@@ -33,8 +34,10 @@ Arkova
 
 ---
 
-## Internal notes (not part of the email)
-- **Owner:** Carson is the relationship + send owner; Jeanne holds the keys/agreement.
-- **Overdue Arkova action (from the 6/16 sync):** the dev-questions list owed to Jeff Grann — fold it in or send separately.
-- **After send:** log the request + date in the S0-E7 external-gate tracker (SCRUM-2523) and the KEY-EXPIRY inventory (doc 01 §3); set the rotation alert once the exact expiry date comes back.
+## Historical internal notes (not part of the email)
+
+- **Send boundary:** Carson was the relationship sender; the current session reserves only the external send to the founder. Jeanne owns CE's Developer Integration Program; Jeff is the technical/CTDL counterpart.
+- **Development questions:** Jeff replied inline on 2026-06-19; do not carry the old “overdue” label forward.
+- **June 24 answer:** record 2026-09-09 as the confirmed date, but keep the expiry time/timezone unknown until CE supplies it. Do not invent an alert timestamp.
+- **Continuation:** the open item is the Developer Agreement/support-tier decision and activation lead time, not another sandbox/permanent-key request.
 - **Do not** state or imply: credentials "listed in the Registry," live Registry publishing, credential-level CTIDs, or signed W3C VC issuance — none are true today (doc 03 claims-review).
