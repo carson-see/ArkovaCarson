@@ -280,6 +280,21 @@ describe('verifyGitHubTrustRoot', () => {
     expect(() => verify(fallback)).toThrow(/live WRITE.*permission/i);
   });
 
+  it('lets the latest exact-head review state mask every older approval from that authority', () => {
+    for (const state of ['CHANGES_REQUESTED', 'DISMISSED']) {
+      const value = snapshot();
+      value.repository.pullRequest.reviews.nodes.push({
+        ...value.repository.pullRequest.reviews.nodes[0],
+        id: `PRR_latest_${state}`,
+        databaseId: 6100,
+        state,
+        submittedAt: '2026-07-14T12:03:00Z',
+        body: '',
+      });
+      expect(() => verify(value)).toThrow(new RegExp(`latest exact-head review.*${state}.*not APPROVED`, 'i'));
+    }
+  });
+
   it('authenticates the strict deterministic cross-review block and rejects defects or sample substitution', () => {
     const defect = snapshot();
     defect.repository.pullRequest.reviews.nodes[0].body = crossReviewBody({ materialLabelDefectCount: 1 });
@@ -500,10 +515,9 @@ describe('runS33PremergeApiPreflight', () => {
   it('uses injected same-token GraphQL/REST enumerators without network or acceptance side effects', async () => {
     const graphql = vi.fn(async () => premergeData());
     const rest = vi.fn(async (path: string) => {
-      if (path.endsWith('/actions/workflows/s33-wave1-prerequisites.yml')) {
-        return { id: 77, path: '.github/workflows/s33-wave1-prerequisites.yml', state: 'active' };
+      if (path.endsWith('/actions/workflows?per_page=100')) {
+        return { total_count: 1, workflows: [{ id: 12, path: '.github/workflows/ci.yml' }] };
       }
-      if (path.includes('/actions/workflows/77/runs?')) return { total_count: 0, workflow_runs: [] };
       return { total_count: 7, artifacts: [{ id: 1 }] };
     });
     const result = await runS33PremergeApiPreflight({
@@ -517,16 +531,16 @@ describe('runS33PremergeApiPreflight', () => {
     });
     expect(graphql).toHaveBeenCalledOnce();
     expect(graphql).toHaveBeenCalledWith(S33_PREMERGE_API_QUERY);
-    expect(rest).toHaveBeenNthCalledWith(1, '/repos/carson-see/ArkovaCarson/actions/workflows/s33-wave1-prerequisites.yml');
-    expect(rest).toHaveBeenNthCalledWith(2, '/repos/carson-see/ArkovaCarson/actions/workflows/77/runs?branch=main&event=workflow_dispatch&per_page=1');
-    expect(rest).toHaveBeenNthCalledWith(3, '/repos/carson-see/ArkovaCarson/actions/artifacts?per_page=1');
+    expect(rest).toHaveBeenNthCalledWith(1, '/repos/carson-see/ArkovaCarson/actions/workflows?per_page=100');
+    expect(rest).toHaveBeenNthCalledWith(2, '/repos/carson-see/ArkovaCarson/actions/artifacts?per_page=1');
     expect(result).toEqual({
       requiredContextCount: 1,
       checkContextCount: 1,
       reviewCount: 0,
       writableFallbacks: ['BestNessie', 'alibama'],
       artifactCount: 7,
-      prerequisiteWorkflowId: 77,
+      listedWorkflowCount: 1,
+      prerequisiteWorkflowRegistered: false,
     });
   });
 
@@ -535,11 +549,9 @@ describe('runS33PremergeApiPreflight', () => {
       repository: { full_name: FIXED_REPOSITORY },
       pull_request: { number: 1529, head: { sha: HEAD } },
     };
-    const rest = async (path: string) => path.endsWith('/actions/workflows/s33-wave1-prerequisites.yml')
-      ? { id: 77, path: '.github/workflows/s33-wave1-prerequisites.yml', state: 'active' }
-      : path.includes('/actions/workflows/77/runs?')
-        ? { total_count: 0, workflow_runs: [] }
-        : { total_count: 0, artifacts: [] };
+    const rest = async (path: string) => path.endsWith('/actions/workflows?per_page=100')
+      ? { total_count: 1, workflows: [{ id: 12, path: '.github/workflows/ci.yml' }] }
+      : { total_count: 0, artifacts: [] };
 
     const stale = premergeData();
     (stale.repository as any).supportPullRequest.headRefOid = '9'.repeat(40);
@@ -556,6 +568,13 @@ describe('runS33PremergeApiPreflight', () => {
     (noWrite.repository as any).alibama.edges[0].permission = 'READ';
     await expect(runS33PremergeApiPreflight({ token: 'x', event, graphql: async () => noWrite, rest }))
       .rejects.toThrow(/no exact fallback.*WRITE/i);
+
+    const unexpectedlyRegistered = async (path: string) => path.endsWith('/actions/workflows?per_page=100')
+      ? { total_count: 1, workflows: [{ id: 77, path: '.github/workflows/s33-wave1-prerequisites.yml' }] }
+      : { total_count: 0, artifacts: [] };
+    await expect(runS33PremergeApiPreflight({
+      token: 'x', event, graphql: async () => premergeData(), rest: unexpectedlyRegistered,
+    })).rejects.toThrow(/unexpectedly already has a numeric/i);
   });
 });
 
@@ -853,6 +872,7 @@ describe('s33-wave1-acceptance workflow contract', () => {
     expect(workflow).toContain('S33_EMBEDDING_DIAGNOSTIC_FINAL_PATH: ${{ runner.temp }}/s33-wave1-prerequisites/embedding-diagnostic.json');
     expect(workflow).not.toContain('S33_PROD_MODEL_DIFF_RAW_PATH');
     expect(workflow).toContain('ref: ${{ github.sha }}');
+    expect(workflow).toContain('fetch-depth: 0');
     expect(workflow).toContain('test "${GITHUB_RUN_ATTEMPT}" = "1"');
     const fetchPrerequisites = workflow.indexOf('Fetch and authenticate fresh prerequisite artifacts');
     const trustedParse = workflow.indexOf('Parse producer bytes with trusted-main Team-3 verifier');

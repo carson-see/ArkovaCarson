@@ -22,9 +22,11 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
   lstatSync,
+  mkdtempSync,
   mkdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -328,6 +330,10 @@ export interface WorkflowReportBundle {
     payload: Record<string, unknown> & {
       role: 'diagnostic-only';
       canOverrideExactScan: false;
+      workflowRunId: number;
+      workflowRunAttempt: 1;
+      trustedMainRunSha: string;
+      workflowPath: typeof PREREQUISITE_WORKFLOW_PATH;
     };
   }>;
 }
@@ -567,11 +573,11 @@ function loadAuthorityConfiguration(): Readonly<AuthorityConfiguration> {
       throw new Error(`S3.3 authority identity[${index}] does not match the CTO-pinned identity`);
     }
   });
-  if (!Array.isArray(parsed.rulings) || parsed.rulings.length !== 5) {
-    throw new Error('S3.3 authority configuration must cite all five binding CTO rulings');
+  if (!Array.isArray(parsed.rulings) || parsed.rulings.length !== 6) {
+    throw new Error('S3.3 authority configuration must cite all six binding CTO rulings');
   }
   const rulings = parsed.rulings.map((value, index) => assertHttpsUrl(value, `CTO ruling[${index}]`));
-  for (const id of ['102596609', '102629377', '102793217', '102858753', '102957057']) {
+  for (const id of ['102596609', '102629377', '102793217', '102858753', '102891521', '102957057']) {
     if (!rulings.some((url) => url.includes(`focusedCommentId=${id}`))) {
       throw new Error(`S3.3 authority configuration is missing CTO ruling ${id}`);
     }
@@ -870,15 +876,17 @@ function selectApproval(
   const authorities = [AUTHORITY_CONFIGURATION.primary, ...AUTHORITY_CONFIGURATION.fallbacks];
   for (const [index, identity] of authorities.entries()) {
     const candidates = pullRequest.reviews.nodes.filter((review) => (
-      review.state === 'APPROVED'
-      && identityMatches(review.author, identity)
+      identityMatches(review.author, identity)
       && review.commit?.oid === facts.localProducerHeadSha
     )).sort((left, right) => (
       compareCodeUnits(right.submittedAt, left.submittedAt) || compareCodeUnits(right.id, left.id)
     ));
     if (candidates.length === 0) continue;
     if (candidates.length > 1 && candidates[0].submittedAt === candidates[1].submittedAt) {
-      throw new Error(`Authorized reviewer ${identity.login} has ambiguous latest APPROVED reviews`);
+      throw new Error(`Authorized reviewer ${identity.login} has ambiguous latest exact-head reviews`);
+    }
+    if (candidates[0].state !== 'APPROVED') {
+      throw new Error(`Latest exact-head review from authorized reviewer ${identity.login} is ${candidates[0].state}, not APPROVED`);
     }
     if (index > 0) assertFallbackWritePermission(repository, identity);
     return { review: candidates[0], identity, kind: index === 0 ? 'primary' : 'fallback' };
@@ -1203,7 +1211,7 @@ query S33Wave1GitHubEvidence {
           }
         }
       }
-      reviews(last: 100, states: APPROVED) {
+      reviews(last: 100) {
         pageInfo { hasPreviousPage }
         nodes {
           id databaseId url state submittedAt body
@@ -1356,13 +1364,19 @@ export interface AuthenticatedS33Wave1EvidenceBundle {
   repositoryIdentity: typeof FIXED_REPOSITORY;
   pullRequestNumber: typeof FIXED_PULL_REQUEST_NUMBER;
   producerRepositoryRoot: string;
+  trustedMainHeadSha: string;
+  supportMergeCommitSha: string;
+  supportMergeIsAncestorOfMain: true;
   producerHeadSha: string;
   producerTreeSha: string;
   manifestPath: typeof FIXED_MANIFEST_PATH;
   manifestRawSha256: string;
   manifestCanonicalSha256: string;
+  manifestEntryIds: readonly string[];
   acceptedAtUtc: string;
   approval: VerifiedGitHubTrustRoot['approval'];
+  authenticatedReviewBody: string;
+  branchProtectionRuleIds: readonly string[];
   requiredChecks: VerifiedGitHubTrustRoot['requiredChecks'];
   reports: {
     crossReview: AuthenticatedReportBytes;
@@ -1852,6 +1866,74 @@ function loadPrerequisiteInventory(path: string): Readonly<VerifiedPrerequisiteI
   });
 }
 
+async function reauthenticatePrerequisiteInventory(options: {
+  token: string;
+  mainRepositoryRoot: string;
+  producerHeadSha: string;
+  manifestRawSha256: string;
+  prerequisiteDirectory: string;
+  storedInventory: Readonly<VerifiedPrerequisiteInventory>;
+  rest?: GitHubRest;
+  download?: GitHubDownload;
+}): Promise<Readonly<VerifiedPrerequisiteInventory>> {
+  const rest = options.rest ?? ((path: string) => liveGitHubRest(options.token, path));
+  const workflowIdentity = await rest('/repos/carson-see/ArkovaCarson/actions/workflows/s33-wave1-prerequisites.yml');
+  const workflowId = validatePrerequisiteWorkflowIdentity(workflowIdentity);
+  const runsResponse = await rest(`/repos/carson-see/ArkovaCarson/actions/workflows/${workflowId}/runs?branch=main&event=workflow_dispatch&per_page=100`);
+  if (!Array.isArray(runsResponse.workflow_runs) || runsResponse.workflow_runs.length === 0) {
+    throw new Error('Final verifier cannot re-authenticate the prerequisite workflow run');
+  }
+  const selectedRun = rankPrerequisiteRuns(
+    runsResponse.workflow_runs.map((value) => record(value, 'Final prerequisite workflow run')),
+  )[0];
+  const runId = integer(selectedRun.id, 'Final prerequisite workflow run id');
+  const artifactsResponse = await rest(`/repos/carson-see/ArkovaCarson/actions/runs/${runId}/artifacts?per_page=100`);
+  const mainHeadSha = git(options.mainRepositoryRoot, ['rev-parse', 'HEAD']);
+  const runHeadSha = nonEmptyString(selectedRun.head_sha, 'Final prerequisite workflow run head_sha');
+  assertSha(runHeadSha, SHA1_RE, 'Final prerequisite workflow run head_sha');
+  let reachable = false;
+  try {
+    execFileSync('/usr/bin/git', [
+      '-C', options.mainRepositoryRoot, 'merge-base', '--is-ancestor', runHeadSha, mainHeadSha,
+    ], { stdio: 'ignore' });
+    reachable = true;
+  } catch {
+    reachable = false;
+  }
+  const liveInventory = verifyS33PrerequisiteInventory({
+    runsResponse,
+    artifactsResponse,
+    currentMainHeadSha: mainHeadSha,
+    runHeadIsReachableFromCurrentMain: reachable,
+    producerHeadSha: options.producerHeadSha,
+  });
+  if (canonicaliseJson(liveInventory) !== canonicaliseJson(options.storedInventory)) {
+    throw new Error('Final verifier prerequisite inventory changed after initial download');
+  }
+  const temporaryDirectory = mkdtempSync(join(dirname(options.prerequisiteDirectory), '.s33-prerequisite-reauth-'));
+  try {
+    const download = options.download ?? ((path: string) => liveGitHubDownload(options.token, path));
+    for (const artifact of [liveInventory.artifacts.prodModelDiff, liveInventory.artifacts.embeddingDiagnostic]) {
+      const archiveBytes = await download(`/repos/carson-see/ArkovaCarson/actions/artifacts/${artifact.id}/zip`);
+      extractSingleFileArchive({
+        archiveBytes,
+        artifact,
+        outputDirectory: temporaryDirectory,
+        producerHeadSha: options.producerHeadSha,
+        manifestRawSha256: options.manifestRawSha256,
+      });
+      const storedPath = join(options.prerequisiteDirectory, artifact.filename);
+      const reauthenticatedPath = join(temporaryDirectory, artifact.filename);
+      if (!readFileSync(storedPath).equals(readFileSync(reauthenticatedPath))) {
+        throw new Error(`Final verifier prerequisite report bytes changed for ${artifact.filename}`);
+      }
+    }
+  } finally {
+    rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+  return liveInventory;
+}
+
 export function extractProdDiffAdjudication(
   body: string,
   submittedAt: string,
@@ -2017,7 +2099,7 @@ export async function runS33PremergeApiPreflight(options: {
   event: PremergePullRequestEvent;
   graphql?: PremergeGraphql;
   rest?: GitHubRest;
-}): Promise<Readonly<{ requiredContextCount: number; checkContextCount: number; reviewCount: number; writableFallbacks: string[]; artifactCount: number; prerequisiteWorkflowId: number }>> {
+}): Promise<Readonly<{ requiredContextCount: number; checkContextCount: number; reviewCount: number; writableFallbacks: string[]; artifactCount: number; listedWorkflowCount: number; prerequisiteWorkflowRegistered: false }>> {
   if (options.event.repository.full_name !== FIXED_REPOSITORY
     || options.event.pull_request.number !== FIXED_SUPPORT_PULL_REQUEST_NUMBER) {
     throw new Error('Pre-merge same-token API preflight is fixed to ArkovaCarson PR #1529');
@@ -2067,12 +2149,23 @@ export async function runS33PremergeApiPreflight(options: {
   }
   const writableFallbacks = validatePremergeFallbacks(repository);
   const rest = options.rest ?? ((path: string) => liveGitHubRest(options.token, path));
-  const workflowIdentity = await rest('/repos/carson-see/ArkovaCarson/actions/workflows/s33-wave1-prerequisites.yml');
-  const prerequisiteWorkflowId = validatePrerequisiteWorkflowIdentity(workflowIdentity);
-  const workflowRuns = await rest(`/repos/carson-see/ArkovaCarson/actions/workflows/${prerequisiteWorkflowId}/runs?branch=main&event=workflow_dispatch&per_page=1`);
-  integer(workflowRuns.total_count, 'Pre-merge prerequisite workflow run total_count');
-  if (!Array.isArray(workflowRuns.workflow_runs)) {
-    throw new Error('Pre-merge prerequisite numeric-workflow runs enumeration is malformed');
+  const workflowListing = await rest('/repos/carson-see/ArkovaCarson/actions/workflows?per_page=100');
+  if (!Array.isArray(workflowListing.workflows)) {
+    throw new Error('Pre-merge Actions workflow listing is malformed');
+  }
+  const listedWorkflowCount = integer(workflowListing.total_count, 'Pre-merge Actions workflow total_count');
+  if (listedWorkflowCount === 0 || listedWorkflowCount !== workflowListing.workflows.length) {
+    throw new Error('Pre-merge Actions workflow listing is empty or paginated; actions:read is not fully proven');
+  }
+  for (const [index, value] of workflowListing.workflows.entries()) {
+    const workflow = record(value, `Pre-merge Actions workflow[${index}]`);
+    if (integer(workflow.id, `Pre-merge Actions workflow[${index}].id`) <= 0) {
+      throw new Error('Pre-merge Actions workflow id must be positive');
+    }
+    nonEmptyString(workflow.path, `Pre-merge Actions workflow[${index}].path`);
+  }
+  if (workflowListing.workflows.some((value) => record(value, 'Pre-merge Actions workflow').path === PREREQUISITE_WORKFLOW_PATH)) {
+    throw new Error('Pre-merge prerequisite workflow unexpectedly already has a numeric main-branch identity');
   }
   const artifacts = await rest('/repos/carson-see/ArkovaCarson/actions/artifacts?per_page=1');
   const artifactCount = integer(artifacts.total_count, 'Pre-merge actions artifacts total_count');
@@ -2083,7 +2176,8 @@ export async function runS33PremergeApiPreflight(options: {
     reviewCount: reviews.nodes.length,
     writableFallbacks,
     artifactCount,
-    prerequisiteWorkflowId,
+    listedWorkflowCount,
+    prerequisiteWorkflowRegistered: false as const,
   });
 }
 
@@ -2180,6 +2274,8 @@ interface AuthenticateOptions {
   outputDirectory: string;
   token: string;
   graphql?: GitHubGraphql;
+  rest?: GitHubRest;
+  download?: GitHubDownload;
 }
 
 export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOptions): Promise<void> {
@@ -2230,10 +2326,27 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     manifestRawSha256: facts.manifestRawSha256,
     manifestEntryIds: facts.manifestEntryIds,
   });
-  const inventory = loadPrerequisiteInventory(join(
+  const storedInventory = loadPrerequisiteInventory(join(
     prerequisiteDirectory,
     PREREQUISITE_INVENTORY_FILENAME,
   ));
+  const inventory = await reauthenticatePrerequisiteInventory({
+    token: options.token,
+    mainRepositoryRoot,
+    producerHeadSha,
+    manifestRawSha256: manifest.manifestRawSha256,
+    prerequisiteDirectory,
+    storedInventory,
+    rest: options.rest,
+    download: options.download,
+  });
+  const embeddingPayload = reports.embeddingDiagnostic.parsed.payload;
+  if (embeddingPayload.workflowRunId !== inventory.run.id
+    || embeddingPayload.workflowRunAttempt !== 1
+    || embeddingPayload.trustedMainRunSha !== inventory.run.headSha
+    || embeddingPayload.workflowPath !== PREREQUISITE_WORKFLOW_PATH) {
+    throw new Error('Embedding report prerequisite run binding disagrees with authenticated GitHub inventory');
+  }
   const prodDiffAdjudication = extractProdDiffAdjudication(
     trust.authenticatedReviewBody,
     trust.approval.submittedAt,
@@ -2281,13 +2394,19 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     repositoryIdentity: FIXED_REPOSITORY,
     pullRequestNumber: FIXED_PULL_REQUEST_NUMBER,
     producerRepositoryRoot,
+    trustedMainHeadSha: trust.mainHeadSha,
+    supportMergeCommitSha: trust.supportMergeCommitSha,
+    supportMergeIsAncestorOfMain: true,
     producerHeadSha,
     producerTreeSha,
     manifestPath: FIXED_MANIFEST_PATH,
     manifestRawSha256: manifest.manifestRawSha256,
     manifestCanonicalSha256: manifest.manifestCanonicalSha256,
+    manifestEntryIds: [...manifest.manifestEntryIds],
     acceptedAtUtc: trust.approval.submittedAt,
     approval: trust.approval,
+    authenticatedReviewBody: trust.authenticatedReviewBody,
+    branchProtectionRuleIds: trust.branchProtectionRuleIds,
     requiredChecks: trust.requiredChecks,
     reports: {
       crossReview: {
@@ -2488,7 +2607,7 @@ async function main(): Promise<void> {
     const eventPath = realpathSync(nonEmptyString(process.env.GITHUB_EVENT_PATH, 'GITHUB_EVENT_PATH'));
     const event = parseJsonBytes(readFileSync(eventPath), 'GitHub pull_request event') as unknown as PremergePullRequestEvent;
     const result = await runS33PremergeApiPreflight({ token, event });
-    process.stdout.write(`S3.3 pre-merge API preflight: PASS — requiredContexts=${result.requiredContextCount}, checks=${result.checkContextCount}, reviews=${result.reviewCount}, writableFallbacks=${result.writableFallbacks.join(',')}, prerequisiteWorkflowId=${result.prerequisiteWorkflowId}, artifacts=${result.artifactCount}\n`);
+    process.stdout.write(`S3.3 pre-merge API preflight: PASS — requiredContexts=${result.requiredContextCount}, checks=${result.checkContextCount}, reviews=${result.reviewCount}, writableFallbacks=${result.writableFallbacks.join(',')}, listedWorkflows=${result.listedWorkflowCount}, prerequisiteWorkflowRegistered=${result.prerequisiteWorkflowRegistered}, artifacts=${result.artifactCount}\n`);
     return;
   }
   if (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || process.env.GITHUB_REF !== 'refs/heads/main') {
