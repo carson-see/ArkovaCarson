@@ -1427,7 +1427,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       payload.modelConfigCanonicalSha256 = sha256(canonicaliseJson(config));
     });
     expect(() => createTestOnlyS33Wave1AcceptanceArtifact(legacyEmbeddingConfig))
-      .toThrow(/embedding.*modelConfig must contain exactly/i);
+      .toThrow(/^Wave-1 embedding modelConfig contains unknown field\(s\): dimensions; manifest-free and fail-closed$/u);
   });
 
   it('rejects GitHub approval or CI evidence that is not bound to the exact producer head', () => {
