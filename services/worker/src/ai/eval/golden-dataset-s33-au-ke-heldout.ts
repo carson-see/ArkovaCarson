@@ -32,16 +32,16 @@ const AU_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-AU-001',
     description: 'Ahpra certificate of registration — Registered Nurse (Division 1)',
     strippedText:
-      'Australian Health Practitioner Regulation Agency (Ahpra). CERTIFICATE OF REGISTRATION. This is to certify that [NAME_REDACTED] is registered with the Nursing and Midwifery Board of Australia as a REGISTERED NURSE (Division 1). Registration Number: NMW0001923847. Registration Type: General. Endorsements: Nil. Conditions: Nil. Registration expiry: 31 May 2027. Date of issue: 14 March 2026. Registration status can be verified on the national Register of practitioners.',
+      'Ahpra REGISTRATION RECORD. Practitioner: [NAME_REDACTED]. Profession/division: REGISTERED NURSE (Division 1). Board: NMBA. Registration NMW0001923847; type General. Conditions: Nil. Endorsements: Nil. Record issued 14 March 2026 and current through 31 May 2027. The national practitioner register provides the live status for this registration.',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
       subType: 'nursing_rn',
-      issuerName: 'Australian Health Practitioner Regulation Agency',
+      issuerName: 'Ahpra',
       issuedDate: '2026-03-14',
       expiryDate: '2027-05-31',
       licenseNumber: 'NMW0001923847',
-      accreditingBody: 'Nursing and Midwifery Board of Australia',
+      accreditingBody: 'NMBA',
       jurisdiction: 'Australia',
       fraudSignals: [],
     },
@@ -81,12 +81,12 @@ const AU_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-AU-003',
     description: 'NSW solicitor Australian practising certificate',
     strippedText:
-      'THE LAW SOCIETY OF NEW SOUTH WALES. AUSTRALIAN PRACTISING CERTIFICATE issued under the Legal Profession Uniform Law (NSW). Solicitor: [NAME_REDACTED]. Practising Certificate Number: 55018342. Certificate Type: Employee of a law practice. Conditions: Must engage in supervised legal practice. Period of validity: 1 July 2025 to 30 June 2026. Granted by the Council of the Law Society of New South Wales on 24 June 2025.',
+      'LAW SOCIETY OF NSW — AUSTRALIAN PRACTISING CERTIFICATE. Solicitor [NAME_REDACTED]; certificate 55018342. Holder category: employee of a law practice. Supervised legal practice is required. The certificate operates from 1 July 2025 until 30 June 2026 under the Legal Profession Uniform Law (NSW). The Law Society Council granted it on 24 June 2025.',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
       subType: 'law_bar_admission',
-      issuerName: 'The Law Society of New South Wales',
+      issuerName: 'Law Society of NSW',
       issuedDate: '2025-06-24',
       expiryDate: '2026-06-30',
       licenseNumber: '55018342',
@@ -114,6 +114,7 @@ const AU_HELDOUT: S33HeldoutEntry[] = [
       licenseNumber: '512347',
       firmName: 'Coralridge Wealth Advisers Pty Ltd',
       jurisdiction: 'Australia',
+      recipientIdentifier: 'Coralridge Wealth Advisers Pty Ltd',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/au-ke/au-afsl',
@@ -127,7 +128,7 @@ const AU_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-AU-005',
     description: 'Tax Practitioners Board tax agent registration certificate',
     strippedText:
-      'TAX PRACTITIONERS BOARD. CERTIFICATE OF REGISTRATION. This certifies that [NAME_REDACTED] is registered as a TAX AGENT under the Tax Agent Services Act 2009. Registration Number: 26011234. Registration period: 1 April 2026 to 31 March 2029. Business address suppressed on request. Registered tax practitioners appear on the TPB Register at tpb.gov.au. Issued by the Tax Practitioners Board on 1 April 2026.',
+      'TAX PRACTITIONERS BOARD — REGISTRATION RECORD. Practitioner: [NAME_REDACTED]. Registered role: TAX AGENT. Number 26011234. Authority: Tax Agent Services Act 2009. Commencement: 1 April 2026; registration end: 31 March 2029. The practitioner requested suppression of the business address. Current details appear in the TPB Register at tpb.gov.au. Board issue date: 1 April 2026.',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
@@ -150,7 +151,7 @@ const AU_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-AU-006',
     description: 'AQF testamur — Bachelor of Engineering (Honours) with common-seal wording',
     strippedText:
-      'COOLAMON UNIVERSITY. By resolution of the Council and on the recommendation of the Academic Board, the University confers upon [NAME_REDACTED] the degree of BACHELOR OF ENGINEERING (HONOURS) in Civil Engineering with all the rights and privileges thereto appertaining. Conferred at Wagga Wagga, New South Wales, on 18 December 2025. This award is recognised within the Australian Qualifications Framework. The Common Seal of Coolamon University was affixed hereto in the presence of the Vice-Chancellor and the Chancellor.',
+      'COOLAMON UNIVERSITY — AWARD TESTAMUR. Graduate: [NAME_REDACTED]. Qualification awarded: BACHELOR OF ENGINEERING (HONOURS). Field: Civil Engineering. The Academic Board recommended the award and the University Council resolved to grant it with the associated rights and privileges. Conferral took place at Wagga Wagga, New South Wales, on 18 December 2025. Australian Qualifications Framework recognition applies. The Vice-Chancellor and Chancellor witnessed application of the University Common Seal.',
     credentialTypeHint: 'DEGREE',
     groundTruth: {
       credentialType: 'DEGREE',
@@ -173,7 +174,7 @@ const AU_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-AU-007',
     description: 'Australian academic transcript / record of results with WAM',
     strippedText:
-      'COOLAMON UNIVERSITY — RECORD OF RESULTS (OFFICIAL ACADEMIC TRANSCRIPT). Student: [NAME_REDACTED]. Student ID: [ID_REDACTED]. Program: Bachelor of Commerce. Majors: Accounting. Session 1 2024: ACCT1101 Introductory Accounting — Distinction; ECON1201 Microeconomics — Credit. Session 2 2024: ACCT1202 Financial Accounting — High Distinction; STAT1301 Business Statistics — Distinction. Weighted Average Mark (WAM): 76.4. Award conferred: 10 December 2025. Issued by the Academic Registrar on 5 March 2026. Printed transcripts bear the University seal; verify authenticity via the My eQuals digital credentials service.',
+      'COOLAMON UNIVERSITY | CERTIFIED RECORD OF RESULTS. Learner: [NAME_REDACTED]; university ID [ID_REDACTED]. Bachelor of Commerce program, Accounting major. 2024 Session 1 — ACCT1101 Introductory Accounting: Distinction; ECON1201 Microeconomics: Credit. 2024 Session 2 — ACCT1202 Financial Accounting: High Distinction; STAT1301 Business Statistics: Distinction. WAM 76.4. Award conferral date: 10 December 2025. Academic Registrar issued this official transcript on 5 March 2026. Printed copies carry the University seal; My eQuals supplies digital-authenticity verification.',
     credentialTypeHint: 'TRANSCRIPT',
     groundTruth: {
       credentialType: 'TRANSCRIPT',
@@ -204,6 +205,7 @@ const AU_HELDOUT: S33HeldoutEntry[] = [
       issuerName: 'Southern Ranges Training Institute',
       issuedDate: '2026-02-27',
       fieldOfStudy: 'Construction Safety',
+      licenseNumber: 'SRTI-SOA-30447',
       jurisdiction: 'Australia',
       fraudSignals: [],
     },
@@ -249,6 +251,7 @@ const AU_HELDOUT: S33HeldoutEntry[] = [
       subType: 'tax_return',
       issuerName: 'Australian Taxation Office',
       issuedDate: '2025-08-12',
+      fieldOfStudy: 'Income Tax',
       jurisdiction: 'Australia',
       recipientIdentifier: '[TFN_REDACTED]',
       fraudSignals: [],
@@ -291,7 +294,7 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-KE-001',
     description: 'NCK registration certificate — legacy typewritten register with seal wording',
     strippedText:
-      'REPUBLIC OF KENYA. NURSING COUNCIL OF KENYA. CERTIFICATE OF REGISTRATION. This is to CERTIFY that [NAME_REDACTED] having satisfied the Council as to her training and qualifications was on the 9th day of March 2026 duly REGISTERED as a KENYA REGISTERED COMMUNITY HEALTH NURSE and her name entered in the Register of Nurses maintained under the Nurses Act (Cap. 257). Registration No. KRCHN 45812. Given under the Common Seal of the Council. (SEAL AFFIXED) Registrar, Nursing Council of Kenya. [Rubber stamp: NURSING COUNCIL OF KENYA — REGISTRAR — 09 MAR 2026]',
+      'REPUBLIC OF KENYA. NURSING COUNCIL OF KENYA. REGISTER ENTRY CERTIFICATE — No. KRCHN 45812. Holder recorded: [NAME_REDACTED]. Register category: KENYA REGISTERED COMMUNITY HEALTH NURSE. Entry made: 9 March 2026. The Registrar records that the holder met the prescribed training and qualification requirements before entry in the nurses register maintained under the Nurses Act (Cap. 257). Executed beneath the Common Seal of the Council. (SEAL IMPRESSION) Registrar. [Rubber stamp: NURSING COUNCIL OF KENYA — REGISTRAR — 09 MAR 2026]',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
@@ -300,6 +303,7 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
       issuedDate: '2026-03-09',
       licenseNumber: 'KRCHN 45812',
       jurisdiction: 'Kenya',
+      recipientIdentifier: '[NAME_REDACTED]',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/au-ke/ke-nck-legacy-register',
@@ -313,12 +317,12 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-KE-002',
     description: 'KMPDC annual practising licence — modern portal PDF with QR verification',
     strippedText:
-      'KENYA MEDICAL PRACTITIONERS AND DENTISTS COUNCIL. ANNUAL PRACTISING LICENCE 2026. Licence No: KMPDC/PL/2026/08841. Practitioner: [NAME_REDACTED]. Registration No: A9123. Qualification: MBChB. Speciality: General Practice. Practice Address: [ADDRESS_REDACTED]. Valid From: 1 January 2026. Valid To: 31 December 2026. This licence is issued under the Medical Practitioners and Dentists Act. Scan the QR code or visit the Council online services portal to verify this licence. Document Serial: OSP-2026-114327.',
+      'KMPDC — ANNUAL PRACTISING LICENCE • 2026. Licence KMPDC/PL/2026/08841; portal serial OSP-2026-114327. Registered practitioner: [NAME_REDACTED] (registration A9123). Qualification: MBChB. Approved speciality: General Practice. Practice address: [ADDRESS_REDACTED]. Effective date: 1 January 2026. End date: 31 December 2026. Authority derives from the Medical Practitioners and Dentists Act. Verification is available by scanning the document QR mark or entering its serial in the Council online-services portal.',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
       subType: 'medical_md',
-      issuerName: 'Kenya Medical Practitioners and Dentists Council',
+      issuerName: 'KMPDC',
       issuedDate: '2026-01-01',
       expiryDate: '2026-12-31',
       licenseNumber: 'KMPDC/PL/2026/08841',
@@ -337,12 +341,12 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-KE-003',
     description: 'Advocate practising certificate issued by the Registrar of the High Court',
     strippedText:
-      'REPUBLIC OF KENYA — IN THE HIGH COURT OF KENYA. PRACTISING CERTIFICATE. Pursuant to the Advocates Act, it is certified that [NAME_REDACTED], Advocate, whose name appears on the Roll of Advocates under Admission Number [ADM_REDACTED], is entitled to practise as an ADVOCATE of the High Court of Kenya for the year ending 31 December 2026. Certificate No: PC/2026/03187. Law Society of Kenya membership current for 2026. Issued at Nairobi this 20th day of January 2026. Registrar of the High Court.',
+      'REPUBLIC OF KENYA — KENYA HIGH COURT REGISTRY. ADVOCATE PRACTISING CERTIFICATE PC/2026/03187. Holder: [NAME_REDACTED], Advocate. Roll entry: Admission No. [ADM_REDACTED]. The Registry confirms that the named holder appears on the Roll of Advocates and may practise before Kenya\'s High Court through 31 December 2026 under the Advocates Act. Law Society of Kenya membership is current for 2026. Place and issue date: Nairobi, 20 January 2026.',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
       subType: 'law_bar_admission',
-      issuerName: 'Registrar of the High Court of Kenya',
+      issuerName: 'Kenya High Court Registry',
       issuedDate: '2026-01-20',
       expiryDate: '2026-12-31',
       licenseNumber: 'PC/2026/03187',
@@ -360,7 +364,7 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-KE-004',
     description: 'TSC certificate of registration as a teacher',
     strippedText:
-      'TEACHERS SERVICE COMMISSION — KENYA. CERTIFICATE OF REGISTRATION. This is to certify that [NAME_REDACTED] is registered as a teacher under section 23 of the Teachers Service Commission Act, 2012. TSC Number: 913482. Date of Registration: 11 February 2026. Qualification at registration: Bachelor of Education (Arts). This certificate remains the property of the Commission and registration status may be confirmed through the TSC online portal.',
+      'TEACHERS SERVICE COMMISSION | KENYA. TEACHER REGISTRATION RECORD. TSC number 913482 belongs to [NAME_REDACTED]. Registered capacity: teacher. Statutory basis: section 23, Teachers Service Commission Act, 2012. Registration entered on 11 February 2026. Qualification presented at entry: Bachelor of Education (Arts); field recorded as Education. The Commission retains ownership of this document. Current registration may be checked through its TSC online portal.',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
@@ -383,7 +387,7 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-KE-005',
     description: 'EBK professional engineer registration — legacy typed certificate',
     strippedText:
-      'ENGINEERS BOARD OF KENYA. CERTIFICATE OF REGISTRATION. It is hereby certified that [NAME_REDACTED] has this day been registered under the Engineers Act, 2011 as a PROFESSIONAL ENGINEER in the discipline of Civil Engineering. Registration Number: P.E. 4172. Dated at Nairobi this 5th day of December 2025. (Embossed seal of the Board) Registrar/CEO, Engineers Board of Kenya. Note: annual practising licence issued separately upon payment of the prescribed fee.',
+      'ENGINEERS BOARD OF KENYA. PROFESSIONAL ENGINEER REGISTER — CERTIFIED EXTRACT. Registration P.E. 4172 identifies [NAME_REDACTED]. Discipline entered: Civil Engineering. On 5 December 2025 at Nairobi, the Board placed the holder in the Professional Engineer class under the Engineers Act, 2011. (Embossed Board seal) Registrar/CEO. A separate annual practising licence is available only after the prescribed fee is paid.',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
@@ -406,13 +410,14 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-KE-006',
     description: 'KRA PIN certificate generated from the iTax portal',
     strippedText:
-      'KENYA REVENUE AUTHORITY — PERSONAL IDENTIFICATION NUMBER CERTIFICATE. PIN: [PIN_REDACTED]. Taxpayer: [NAME_REDACTED]. Email Address: [EMAIL_REDACTED]. Registered Address: [ADDRESS_REDACTED]. Tax Obligation(s): Income Tax — Resident Individual, effective from 04/03/2019; Value Added Tax (VAT), effective from 12/01/2026. Certificate Date: 12 January 2026. This certificate is generated from the iTax system; scan the QR code to confirm its authenticity. Tulipe Ushuru, Tujitegemee.',
+      'KENYA REVENUE AUTHORITY — PERSONAL IDENTIFICATION NUMBER CERTIFICATE. Certificate Number: KRA-PIN-2026-88142. PIN: [PIN_REDACTED]. Taxpayer: [NAME_REDACTED]. Email Address: [EMAIL_REDACTED]. Registered Address: [ADDRESS_REDACTED]. Tax Obligation(s): Income Tax — Resident Individual, effective from 04/03/2019; Value Added Tax (VAT), effective from 12/01/2026. Certificate Date: 12 January 2026. This certificate is generated from the iTax system; scan the QR code to confirm its authenticity. Tulipe Ushuru, Tujitegemee.',
     credentialTypeHint: 'IDENTITY',
     groundTruth: {
       credentialType: 'IDENTITY',
       subType: 'government_id',
       issuerName: 'Kenya Revenue Authority',
       issuedDate: '2026-01-12',
+      licenseNumber: 'KRA-PIN-2026-88142',
       recipientIdentifier: '[PIN_REDACTED]',
       jurisdiction: 'Kenya',
       fraudSignals: [],
@@ -428,7 +433,7 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-KE-007',
     description: 'KRA tax compliance certificate with validity window',
     strippedText:
-      'KENYA REVENUE AUTHORITY — TAX COMPLIANCE CERTIFICATE. TCC Number: KRATCC0026731184. This is to certify that [NAME_REDACTED], PIN [PIN_REDACTED], has filed all tax returns and paid all taxes due as provided by law, or has an approved payment plan. Certificate Date: 3 February 2026. Expiry Date: 2 February 2027. This certificate is issued subject to continued compliance and may be withdrawn. Verify the certificate through the iTax checker using the TCC number above.',
+      'KENYA REVENUE AUTHORITY. TAX COMPLIANCE CERTIFICATE KRATCC0026731184. Taxpayer: [NAME_REDACTED]; PIN: [PIN_REDACTED]. Recorded standing: TAX COMPLIANT. As of 3 February 2026, KRA records show the taxpayer has submitted required returns and settled taxes due, or holds an approved payment arrangement. Valid until 2 February 2027, subject to continued compliance; KRA may withdraw the certificate. The iTax certificate checker accepts the TCC number printed above.',
     credentialTypeHint: 'ATTESTATION',
     groundTruth: {
       credentialType: 'ATTESTATION',
@@ -438,6 +443,7 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
       expiryDate: '2027-02-02',
       goodStandingStatus: 'tax compliant',
       jurisdiction: 'Kenya',
+      recipientIdentifier: '[PIN_REDACTED]',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/au-ke/ke-kra-tcc',
@@ -461,6 +467,7 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
       entityType: 'Private company limited by shares',
       firmName: 'Baraka Ridge Logistics Limited',
       jurisdiction: 'Kenya',
+      recipientIdentifier: 'PVT-Y2U7DKQJ',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/au-ke/ke-brs-incorporation',
@@ -474,15 +481,17 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-KE-009',
     description: 'DCI police clearance ("good conduct") uploaded with a misleading LICENSE hint',
     strippedText:
-      'REPUBLIC OF KENYA — DIRECTORATE OF CRIMINAL INVESTIGATIONS. POLICE CLEARANCE CERTIFICATE. Ref No: PCC/2026/0473311. This is to certify that the fingerprints and particulars of [NAME_REDACTED], National ID [ID_REDACTED], have been checked against criminal records held by the Directorate and NO RECORD of criminal conviction has been traced as at the date of issue. Date of Issue: 24 February 2026. This certificate is valid for twelve (12) months from the date of issue. Issued through the eCitizen platform; authenticity may be verified using the reference number. Director of Criminal Investigations.',
+      'REPUBLIC OF KENYA. DIRECTORATE OF CRIMINAL INVESTIGATIONS — POLICE CLEARANCE. Reference PCC/2026/0473311. Applicant details: [NAME_REDACTED], National ID [ID_REDACTED]. DCI compared the supplied fingerprints and particulars with records held by the Directorate. Search result on the issue date: NO RECORD of criminal conviction traced. Issued 24 February 2026; expires 24 February 2027 after a twelve-month validity period. The eCitizen verification service accepts the reference above. Director of Criminal Investigations.',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'ATTESTATION',
       subType: 'good_standing',
       issuerName: 'Directorate of Criminal Investigations',
       issuedDate: '2026-02-24',
+      expiryDate: '2027-02-24',
       goodStandingStatus: 'no criminal record traced',
       jurisdiction: 'Kenya',
+      recipientIdentifier: '[ID_REDACTED]',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/au-ke/ke-dci-good-conduct',
@@ -496,13 +505,14 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-KE-010',
     description: 'KNEC KCSE certificate — legacy printed register with index number and grades',
     strippedText:
-      'THE KENYA NATIONAL EXAMINATIONS COUNCIL. KENYA CERTIFICATE OF SECONDARY EDUCATION. This is to certify that [NAME_REDACTED], Index No. 20407104/041, of MILIMANI SECONDARY SCHOOL, sat the Kenya Certificate of Secondary Education examination in November 2013 and attained the results shown: English B, Kiswahili B+, Mathematics A-, Biology B+, Chemistry B, Geography A-, Business Studies A. MEAN GRADE: B PLUS (B+). Certificate Serial No. KCSE A0912284. Any alteration or erasure renders this certificate INVALID. Issued at Nairobi. Secretary/Chief Executive, The Kenya National Examinations Council. (Embossed security seal)',
+      'EXAMINATION AWARD RECORD. Issuer: The Kenya National Examinations Council. Award: Kenya Certificate of Secondary Education. Candidate [NAME_REDACTED] attended MILIMANI SECONDARY SCHOOL; index 20407104/041. Examination sitting: November 2013. Recorded grades — English B; Kiswahili B+; Mathematics A-; Biology B+; Chemistry B; Geography A-; Business Studies A. Overall result: B PLUS (B+). Certificate serial KCSE A0912284. Alteration or erasure invalidates the award document. Nairobi issue office; Secretary/Chief Executive. (Embossed KNEC security seal)',
     credentialTypeHint: 'CERTIFICATE',
     groundTruth: {
       credentialType: 'CERTIFICATE',
       subType: 'completion_certificate',
       issuerName: 'The Kenya National Examinations Council',
       fieldOfStudy: 'Secondary Education',
+      licenseNumber: 'KCSE A0912284',
       jurisdiction: 'Kenya',
       recipientIdentifier: '20407104/041',
       fraudSignals: [],
@@ -518,7 +528,7 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
     id: 'GD-S33-KE-011',
     description: 'University degree with attached KNQA equation reference — issuer ambiguity',
     strippedText:
-      'MILIMANI UNIVERSITY. The Senate of the University, on the recommendation of the Faculty of Commerce, has conferred upon [NAME_REDACTED] the degree of BACHELOR OF COMMERCE (FINANCE OPTION), Second Class Honours (Upper Division), at a Congregation held at Nairobi on 12 December 2025. Vice-Chancellor. Academic Registrar. — ATTACHMENT: KENYA NATIONAL QUALIFICATIONS AUTHORITY, Certificate of Equation Ref KNQA/EQ/2026/0177 dated 30 January 2026, confirming the above award is recognised at KNQF Level 7. The degree is awarded by Milimani University; the KNQA attachment records recognition only.',
+      'MILIMANI UNIVERSITY | AWARD TESTAMUR. Recipient: [NAME_REDACTED]. Award authorised by the University Senate following the Faculty of Commerce recommendation: BACHELOR OF COMMERCE (FINANCE OPTION), Second Class Honours (Upper Division). Congregation place/date: Nairobi, 12 December 2025. Vice-Chancellor; Academic Registrar. ATTACHED RECOGNITION NOTE — Kenya National Qualifications Authority, equation reference KNQA/EQ/2026/0177, dated 30 January 2026: the award is recognised at KNQF Level 7. Milimani University remains the degree issuer; KNQA records recognition only.',
     credentialTypeHint: 'DEGREE',
     groundTruth: {
       credentialType: 'DEGREE',

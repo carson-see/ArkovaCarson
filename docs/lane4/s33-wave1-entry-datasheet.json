@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "batchId": "S33-W1",
-  "revision": 11,
-  "manifestSha256": "9625ed06da78fef266df49bd7f4941d4ee9b1f8825cad229e146fe34296d961d",
+  "revision": 12,
+  "manifestSha256": "eeb7c1b4bbd71642b4a7429864c0e04e9a5e3daf74b2cd78dd26442592f56e20",
   "producerLane": "Lane 4",
   "acceptanceAuthority": "Lane 3",
-  "status": "HISTORICAL_BLOCKED",
+  "status": "PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE",
   "entryCount": 81,
   "reviewOrder": "kenya-first",
   "acceptanceScope": "whole-batch-only",
@@ -30,8 +30,9 @@
       "jurisdictionDetail": "Kenya",
       "credentialType": "LICENSE",
       "subType": "nursing_rn",
+      "truthRevisionNote": "Revision 12 adds the source-explicit redacted registrant identifier so the covered row retains five substantive fields after production validation. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -54,8 +55,9 @@
       "credentialType": "LICENSE",
       "subType": "medical_md",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-KE-003",
@@ -76,8 +78,9 @@
       "jurisdictionDetail": "Kenya",
       "credentialType": "LICENSE",
       "subType": "law_bar_admission",
+      "truthRevisionNote": "Revision 12 records the binding CTO taxonomy adjudication LICENSE/law_bar_admission; the source truth is unchanged. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -100,8 +103,9 @@
       "credentialType": "LICENSE",
       "subType": "teaching",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-KE-005",
@@ -123,8 +127,9 @@
       "credentialType": "LICENSE",
       "subType": "engineering_pe",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-KE-006",
@@ -145,12 +150,13 @@
       "jurisdictionDetail": "Kenya",
       "credentialType": "IDENTITY",
       "subType": "government_id",
+      "truthRevisionNote": "Revision 12 confirms the binding CTO taxonomy IDENTITY/government_id and adds a distinct source-explicit certificate number without duplicating the redacted PIN, reaching five production fields.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
-  {
-    "id": "GD-S33-KE-007",
+    {
+      "id": "GD-S33-KE-007",
       "domain": "au-ke-priority-documents",
       "priorityDocumentType": "Kenya Revenue Authority Tax Compliance Certificate",
       "realOrSynthetic": "synthetic",
@@ -168,8 +174,9 @@
       "jurisdictionDetail": "Kenya",
       "credentialType": "ATTESTATION",
       "subType": "good_standing",
+      "truthRevisionNote": "Revision 12 adds the source-explicit redacted PIN as recipientIdentifier so five substantive fields remain after production strips goodStandingStatus. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -191,12 +198,13 @@
       "jurisdictionDetail": "Kenya",
       "credentialType": "BUSINESS_ENTITY",
       "subType": "corporation",
+      "truthRevisionNote": "Revision 12 adds the source-explicit company number as recipientIdentifier so five substantive fields remain after production strips firmName.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
-  {
-    "id": "GD-S33-KE-009",
+    {
+      "id": "GD-S33-KE-009",
       "domain": "au-ke-priority-documents",
       "priorityDocumentType": "Directorate of Criminal Investigations police clearance certificate",
       "realOrSynthetic": "synthetic",
@@ -214,9 +222,9 @@
       "jurisdictionDetail": "Kenya",
       "credentialType": "ATTESTATION",
       "subType": "good_standing",
-      "truthRevisionNote": "Revision 11 removes the computed expiryDate 2027-02-24 because the source states only an issue date and a twelve-month validity term; source text and normalized-input fingerprint are unchanged.",
+      "truthRevisionNote": "Revision 11 removes the computed expiryDate because the source then stated only an issue date and a twelve-month validity term. Revision 12 explicitly authors the exact expiry date 2027-02-24 in the source and restores that grounded truth, and adds the redacted recipient identifier so five fields remain after production strips goodStandingStatus. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -238,9 +246,9 @@
       "jurisdictionDetail": "Kenya",
       "credentialType": "CERTIFICATE",
       "subType": "completion_certificate",
-      "truthRevisionNote": "Revision 3 removes issuedDate because the source grounds only month-level November 2013 precision; no day was inferred.",
+      "truthRevisionNote": "Revision 3 removes issuedDate because the source grounds only month-level November 2013 precision; no day was inferred. Revision 12 adds the source-explicit certificate serial as licenseNumber so this covered row retains five substantive production fields. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -263,8 +271,9 @@
       "credentialType": "DEGREE",
       "subType": "bachelor",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-NUR-001",
@@ -282,10 +291,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit nursing continuing-professional-development award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -304,10 +314,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "California",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit nursing continuing-professional-development award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -326,11 +337,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
-      "truthRevisionNote": "Revision 4 removes accreditingBody because 'Per ANCC convention' does not assert ANCC accreditation.",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 4 removes accreditingBody because 'Per ANCC convention' does not assert ANCC accreditation. Revision 12 reclassifies the source-explicit nursing CE award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -351,9 +362,9 @@
       "jurisdictionDetail": "The document text names no country or state; no extraction ground-truth jurisdiction is asserted.",
       "credentialType": "CERTIFICATE",
       "subType": "training_certificate",
-      "truthRevisionNote": "Revision 5 removes expiryDate because the source states only a recommended renewal-by date, and removes deliveryMethod because no delivery mode is stated. Revision 8 removes unsupported jurisdiction United States because the source names no country or state. Revision 9 re-verifies that deliveryMethod remains absent; corpus bytes are unchanged.",
+      "truthRevisionNote": "Revision 5 removes expiryDate because the source states only a recommended renewal-by date, and removes deliveryMethod because no delivery mode is stated. Revision 8 removes unsupported jurisdiction United States because the source names no country or state. Revision 9 re-verifies that deliveryMethod remains absent. Revision 12 keeps this ACLS provider card as CERTIFICATE/training_certificate and adds the source-explicit recipient and eCard identifiers to retain five production fields. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -372,11 +383,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "The document text names no country or state; no extraction ground-truth jurisdiction is asserted.",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
-      "truthRevisionNote": "Revision 5 removes issuedDate because March 28 is a course completion date rather than a transcript issue date, and removes deliveryMethod because no delivery mode is stated. Revision 8 removes unsupported jurisdiction United States and minimally re-authors the source as an issuer-backed certificate of completion containing continuing-education transcript rows, grounding CERTIFICATE/completion_certificate. Revision 9 re-verifies that deliveryMethod remains absent; corpus bytes are unchanged.",
+      "credentialType": "CPE",
+      "subType": "general_cpe",
+      "truthRevisionNote": "Revision 5 removes issuedDate because March 28 is a course completion date rather than a transcript issue date, and removes deliveryMethod because no delivery mode is stated. Revision 8 removes unsupported jurisdiction United States and minimally re-authors the issuer-backed source. Revision 12 reclassifies the multi-course award to acceptance-only CPE/general_cpe and adds the source-explicit recipient so five production fields remain; the subtype is not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -398,8 +409,9 @@
       "credentialType": "LICENSE",
       "subType": "nursing_rn",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-NUR-007",
@@ -417,10 +429,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit nursing continuing-professional-development award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -439,10 +452,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit nursing continuing-professional-development award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -461,10 +475,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit nursing continuing-professional-development award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -483,10 +498,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit nursing professional-education clock-hour award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -505,10 +521,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "Arizona",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit nursing continuing-professional-development award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -527,10 +544,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit nursing continuing-professional-development award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -552,8 +570,9 @@
       "credentialType": "CPE",
       "subType": "general_cpe",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-CPA-002",
@@ -596,8 +615,9 @@
       "credentialType": "CPE",
       "subType": "specialized_cpe",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-CPA-004",
@@ -662,8 +682,9 @@
       "credentialType": "LICENSE",
       "subType": "cpa",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-CPA-007",
@@ -706,8 +727,9 @@
       "credentialType": "CPE",
       "subType": "general_cpe",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-CPA-009",
@@ -728,8 +750,9 @@
       "credentialType": "CPE",
       "subType": "general_cpe",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-CPA-010",
@@ -750,8 +773,9 @@
       "credentialType": "CPE",
       "subType": "ethics_cpe",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-CPA-011",
@@ -793,8 +817,9 @@
       "jurisdictionDetail": "Missouri",
       "credentialType": "LICENSE",
       "subType": "cpa",
+      "truthRevisionNote": "Revision 12 adds the source-explicit redacted certificate recipient so the covered row retains five substantive production fields.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -838,8 +863,9 @@
       "credentialType": "CLE",
       "subType": "general_cle",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-BAR-002",
@@ -860,8 +886,9 @@
       "credentialType": "CLE",
       "subType": "ethics_cle",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-BAR-003",
@@ -882,8 +909,9 @@
       "credentialType": "CLE",
       "subType": "elimination_of_bias",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-BAR-004",
@@ -947,8 +975,9 @@
       "jurisdictionDetail": "Colorado",
       "credentialType": "LICENSE",
       "subType": "law_bar_admission",
+      "truthRevisionNote": "Revision 12 adds the source-explicit redacted admittee so five substantive fields remain after production strips barNumber. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -992,8 +1021,9 @@
       "credentialType": "CLE",
       "subType": "general_cle",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-BAR-009",
@@ -1013,8 +1043,9 @@
       "jurisdictionDetail": "Oregon",
       "credentialType": "ATTESTATION",
       "subType": "good_standing",
+      "truthRevisionNote": "Revision 12 explicitly authors and labels the exact expiry date 2026-07-08 and adds the source-explicit redacted recipient so five substantive fields remain after production strips goodStandingStatus. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1035,8 +1066,9 @@
       "jurisdictionDetail": "United States",
       "credentialType": "CLE",
       "subType": "general_cle",
+      "truthRevisionNote": "Revision 12 applies the binding CTO issuedDate ruling 2026-01-05 from the certificate-generated date rather than the underlying program date. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1121,10 +1153,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit engineering PDH award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1145,8 +1178,9 @@
       "jurisdictionDetail": "Florida",
       "credentialType": "LICENSE",
       "subType": "engineering_pe",
+      "truthRevisionNote": "Revision 12 keeps this renewal notice as LICENSE/engineering_pe and adds the source-explicit redacted licensee so it retains five substantive production fields.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1165,10 +1199,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit engineering PDH award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1187,10 +1222,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "ethics_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit engineering ethics PDH award to acceptance-only CPE/ethics_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1209,10 +1245,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit engineering PDH award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1231,10 +1268,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit engineering PDH award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1253,11 +1291,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
-      "truthRevisionNote": "Revision 5 replaces a self-authored activity log that could not ground credential truth with provider-issued completion evidence under the existing CERTIFICATE/completion_certificate ontology. Revision 6 removes extraction groundTruth jurisdiction because the source names no country or state; this row's US jurisdiction is author-assigned corpus-slice metadata, not model ground truth.",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 5 replaces a self-authored activity log with provider-issued completion evidence. Revision 6 removes unsupported extraction jurisdiction. Revision 12 reclassifies the source-explicit PDH award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1276,10 +1314,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "general_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit multi-session engineering conference PDH award to acceptance-only CPE/general_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1301,8 +1340,9 @@
       "credentialType": "LICENSE",
       "subType": "engineering_pe",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-PDH-010",
@@ -1320,10 +1360,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "Louisiana",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit engineering PDH award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1342,10 +1383,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "Kansas",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this source-explicit engineering PDH award to acceptance-only CPE/specialized_cpe; the subtype is evaluator-only and not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1364,10 +1406,11 @@
       },
       "jurisdiction": "US",
       "jurisdictionDetail": "United States",
-      "credentialType": "CERTIFICATE",
-      "subType": "completion_certificate",
+      "credentialType": "CPE",
+      "subType": "specialized_cpe",
+      "truthRevisionNote": "Revision 12 reclassifies this board-audit PDH verification to acceptance-only CPE/specialized_cpe and applies the binding CTO issuedDate ruling 2026-04-28 from the reissued verification letter; the subtype is not v6 tuning-export approved.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1389,8 +1432,9 @@
       "credentialType": "LICENSE",
       "subType": "nursing_rn",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-AU-002",
@@ -1410,9 +1454,9 @@
       "jurisdictionDetail": "Australia",
       "credentialType": "LICENSE",
       "subType": "medical_md",
-      "truthRevisionNote": "Revision 9 applies the candidate issuedDate 2026-04-22 from the extract-generated date rather than the historical First Registered date 2015-02-02; that issuedDate policy remains BLOCKED_CTO_L3 pending L3/CTO adjudication. Revision 11 changes issuerName to the source-grounded Ahpra abbreviation instead of rewarding an unstated expansion; source text and normalized-input fingerprint are unchanged.",
+      "truthRevisionNote": "Revision 9 applies issuedDate 2026-04-22 from the extract-generated date rather than historical First Registered date 2015-02-02. Revision 11 changes issuerName to source-grounded Ahpra. Revision 12 records the binding CTO issuedDate adjudication; source truth is unchanged.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1433,8 +1477,9 @@
       "jurisdictionDetail": "New South Wales, Australia",
       "credentialType": "LICENSE",
       "subType": "law_bar_admission",
+      "truthRevisionNote": "Revision 12 records the binding CTO taxonomy adjudication LICENSE/law_bar_admission; the source truth is unchanged. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1455,8 +1500,9 @@
       "jurisdictionDetail": "Australia",
       "credentialType": "LICENSE",
       "subType": "general",
+      "truthRevisionNote": "Revision 12 adds the source-explicit licensee company as recipientIdentifier so five substantive fields remain after production strips firmName.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1478,8 +1524,9 @@
       "credentialType": "LICENSE",
       "subType": "general",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-AU-006",
@@ -1500,8 +1547,9 @@
       "credentialType": "DEGREE",
       "subType": "bachelor",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
-      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
+      "curationDate": "2026-07-14",
+      "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required.",
+      "truthRevisionNote": "Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder."
     },
     {
       "id": "GD-S33-AU-007",
@@ -1521,9 +1569,9 @@
       "jurisdictionDetail": "Australia",
       "credentialType": "TRANSCRIPT",
       "subType": "official_undergraduate",
-      "truthRevisionNote": "Revision 4 corrects fieldOfStudy from Commerce to the explicit major Accounting.",
+      "truthRevisionNote": "Revision 4 corrects fieldOfStudy from Commerce to the explicit major Accounting. Revision 12 CTO remediation B independently re-authors this source text to clear exact normalized n=6–13 leakage while preserving every grounded fact, date, label, edge-case intent, and privacy placeholder.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1544,9 +1592,9 @@
       "jurisdictionDetail": "Australia",
       "credentialType": "CERTIFICATE",
       "subType": "training_certificate",
-      "truthRevisionNote": "Revision 5 removes courseId because SRTI-SOA-30447 is labeled as a parchment number, and removes deliveryMethod because no delivery mode is stated. Revision 9 re-verifies that deliveryMethod remains absent; corpus bytes are unchanged.",
+      "truthRevisionNote": "Revision 5 removes courseId because SRTI-SOA-30447 is labeled as a parchment number, and removes deliveryMethod because no delivery mode is stated. Revision 9 re-verifies that deliveryMethod remains absent. Revision 12 adds the source-explicit parchment number as licenseNumber so this covered row retains five production fields.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1589,8 +1637,9 @@
       "jurisdictionDetail": "Australia",
       "credentialType": "FINANCIAL",
       "subType": "tax_return",
+      "truthRevisionNote": "Revision 12 records the binding CTO taxonomy FINANCIAL/tax_return and adds the source-explicit Income Tax field of study so this covered row retains five production fields.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1611,9 +1660,9 @@
       "jurisdictionDetail": "Queensland, Australia",
       "credentialType": "BUSINESS_ENTITY",
       "subType": "corporation",
-      "truthRevisionNote": "Revision 9 applies the candidate issuedDate 2026-04-16 from the extract-prepared date rather than the historical company Registration date 2021-11-03; that issuedDate policy remains BLOCKED_CTO_L3 pending L3/CTO adjudication. Source text and normalized-input fingerprint are unchanged.",
+      "truthRevisionNote": "Revision 9 applies issuedDate 2026-04-16 from the extract-prepared date rather than historical company Registration date 2021-11-03. Revision 12 records the binding CTO issuedDate adjudication; source truth and normalized-input fingerprint are unchanged.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-13",
+      "curationDate": "2026-07-14",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {

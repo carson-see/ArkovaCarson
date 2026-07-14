@@ -26,11 +26,11 @@ const NURSING_CE: S33HeldoutEntry[] = [
     id: 'GD-S33-NUR-001',
     description: 'Clean ANCC-accredited contact-hour certificate, pharmacology webinar',
     strippedText:
-      'CERTIFICATE OF COMPLETION — CONTINUING NURSING EDUCATION. This certifies that [NAME_REDACTED], RN, has successfully completed "Anticoagulation Update for Medical-Surgical Nurses". Provider: Lakeshore Nursing Education Collaborative. Accredited as a provider of nursing continuing professional development by the American Nurses Credentialing Center. Activity Code: LNEC-2026-PHRM-114. Contact Hours Awarded: 6.0. Format: Live Webinar. Date of Completion: March 11, 2026. Nurse Planner: [NAME_REDACTED], MSN, RN.',
-    credentialTypeHint: 'CERTIFICATE',
+      'LAKESHORE NURSING EDUCATION COLLABORATIVE — CNE ACTIVITY RECORD. RN learner [NAME_REDACTED] completed “Anticoagulation Update for Medical-Surgical Nurses” by Live Webinar on March 11, 2026. Activity LNEC-2026-PHRM-114. Pharmacology credit: 6.0 CNE Contact Hours. Lakeshore holds provider accreditation through the American Nurses Credentialing Center for nursing continuing professional development. Nurse planner: [NAME_REDACTED], MSN, RN.',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Lakeshore Nursing Education Collaborative',
       issuedDate: '2026-03-11',
       fieldOfStudy: 'Pharmacology',
@@ -55,10 +55,10 @@ const NURSING_CE: S33HeldoutEntry[] = [
     description: 'California BRN-approved provider certificate with fractional contact hours',
     strippedText:
       'Certificate of Continuing Education. Course Title: Wound Assessment and Documentation in Home Health. Licensee: [NAME_REDACTED], RN. Provider: Goldfield Health Sciences Institute, approved by the California Board of Registered Nursing (Provider Number CEP 17742) for 4.5 contact hours. Course Number: HHWC-26-031. Method of Delivery: Self-Paced Online. Completion Date: February 7, 2026. Retain this certificate for four years for audit purposes.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Goldfield Health Sciences Institute',
       issuedDate: '2026-02-07',
       fieldOfStudy: 'Wound Care',
@@ -83,10 +83,10 @@ const NURSING_CE: S33HeldoutEntry[] = [
     description: 'CEU-to-contact-hour unit trap: 0.6 CEUs stated before 6.0 contact hours',
     strippedText:
       'CONTINUING EDUCATION AWARD RECORD. Program: Sepsis Recognition and Early Intervention. Participant: [NAME_REDACTED], RN, BSN. Award: 0.6 CEUs. Per ANCC convention this program equals 6.0 nursing contact hours. Provider: Prairie Rose Health Education Services. Program ID: PRHES-SEP-2026-02. Delivery: In-Person Workshop. Completed: January 22, 2026. Note: one CEU equals ten contact hours; report CONTACT HOURS to your board of nursing.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Prairie Rose Health Education Services',
       issuedDate: '2026-01-22',
       fieldOfStudy: 'Critical Care',
@@ -109,7 +109,7 @@ const NURSING_CE: S33HeldoutEntry[] = [
     id: 'GD-S33-NUR-004',
     description: 'Resuscitation provider card with issue and renewal-by dates',
     strippedText:
-      'ADVANCED CARDIOVASCULAR LIFE SUPPORT — PROVIDER. This card certifies that [NAME_REDACTED] has successfully completed the national cognitive and skills evaluations in accordance with the ACLS curriculum of the Cardiac Care Training Alliance. Training Center: Bayview Simulation Institute. Issue Date: April 2, 2026. Recommended Renewal By: April 30, 2028. eCard Code: CCTA-ACLS-7183-2026. Instructor: [NAME_REDACTED].',
+      'ADVANCED CARDIOVASCULAR LIFE SUPPORT | PROVIDER CARD. Holder [NAME_REDACTED]. Cardiac Care Training Alliance records successful completion of its ACLS cognitive and skills evaluations. Training site: Bayview Simulation Institute. Card issued April 2, 2026. Recommended renewal date: April 30, 2028. eCard CCTA-ACLS-7183-2026. Instructor [NAME_REDACTED].',
     credentialTypeHint: 'CERTIFICATE',
     groundTruth: {
       credentialType: 'CERTIFICATE',
@@ -118,6 +118,8 @@ const NURSING_CE: S33HeldoutEntry[] = [
       issuedDate: '2026-04-02',
       fieldOfStudy: 'Advanced Cardiovascular Life Support',
       providerName: 'Bayview Simulation Institute',
+      recipientIdentifier: '[NAME_REDACTED]',
+      licenseNumber: 'CCTA-ACLS-7183-2026',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/licensing/nursing-ce-acls-card',
@@ -132,14 +134,15 @@ const NURSING_CE: S33HeldoutEntry[] = [
     description: 'Issuer-backed multi-course completion certificate with transcript rows and a total-hours line',
     strippedText:
       'CERTIFICATE OF COMPLETION — CONTINUING EDUCATION TRANSCRIPT. Northwind Nurse Learning Portal certifies that [NAME_REDACTED], RN, successfully completed the courses listed below during the reporting period 01/01/2026 - 03/31/2026.\nCourse 1: Diabetes Management Essentials — 3.0 contact hours — completed 01/15/2026 — Ref NNLP-26-208.\nCourse 2: De-escalation in the Emergency Department — 2.5 contact hours — completed 02/09/2026 — Ref NNLP-26-233.\nCourse 3: Documentation for Legal Protection — 7.0 contact hours — completed 03/28/2026 — Ref NNLP-26-241.\nTotal contact hours this period: 12.5. Provider: Northwind Nurse Learning Portal, accredited provider of nursing continuing professional development.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'general_cpe',
       issuerName: 'Northwind Nurse Learning Portal',
       creditHours: 12.5,
       creditType: 'CNE Contact Hours',
       providerName: 'Northwind Nurse Learning Portal',
+      recipientIdentifier: '[NAME_REDACTED]',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/licensing/nursing-ce-multicourse-transcript',
@@ -153,7 +156,7 @@ const NURSING_CE: S33HeldoutEntry[] = [
     id: 'GD-S33-NUR-006',
     description: 'RN license renewal notice with CE requirement decoy hours',
     strippedText:
-      'OHIO BOARD OF NURSING — LICENSE RENEWAL CONFIRMATION. Licensee: [NAME_REDACTED]. License Type: Registered Nurse. License Number: RN.389215. Renewal Effective: September 1, 2025. License Expires: August 31, 2027. Continuing education requirement for this renewal period: 24 contact hours including 1 hour of Category A law and rules. This notice confirms renewal; it does not award contact hours.',
+      'OHIO BOARD OF NURSING — RN RENEWAL NOTICE. Holder [NAME_REDACTED]; licence RN.389215; professional class Registered Nurse. Renewal became effective September 1, 2025 and expires August 31, 2027. Compliance reminder: this period requires 24 contact hours, including one Category A hour on law and rules. The numbers are renewal requirements only; this notice awards no contact hours.',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
@@ -177,10 +180,10 @@ const NURSING_CE: S33HeldoutEntry[] = [
     description: 'OCR-degraded scan of a contact-hour certificate (glyph corruption)',
     strippedText:
       'CERT1FICATE OF C0MPLETION — C0NTINUING NURSING EDUCATI0N. Nurse: [NAME_REDACTED], RN. Pr0gram: Fa11 Prevention in L0ng-Term Care. C0ntact H0urs: 3.O. Activity C0de: SRCE-26-O87. Pr0vider: Silver Ridge Care Educati0n. Accredited pr0vider of nursing c0ntinuing pr0fessional devel0pment. F0rmat: 0n-Demand Webinar. C0mpleted: February l4, 2026.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Silver Ridge Care Education',
       issuedDate: '2026-02-14',
       fieldOfStudy: 'Fall Prevention',
@@ -204,10 +207,10 @@ const NURSING_CE: S33HeldoutEntry[] = [
     description: 'Nurse practitioner pharmacology CE with embedded pharm-hours breakdown',
     strippedText:
       'ADVANCED PRACTICE CONTINUING EDUCATION CERTIFICATE. Awarded to [NAME_REDACTED], APRN, FNP-C. Course: Prescribing Controlled Substances: Current Standards. Total Contact Hours: 8.0, of which 2.0 are pharmacotherapeutics contact hours. Course Reference: GPAC-RX-2026-19. Provider: Granite Peak APRN Collaborative. Jointly accredited for interprofessional continuing education. Delivery Method: Live Webinar. Date Completed: March 30, 2026.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Granite Peak APRN Collaborative',
       issuedDate: '2026-03-30',
       fieldOfStudy: 'Pharmacology',
@@ -231,10 +234,10 @@ const NURSING_CE: S33HeldoutEntry[] = [
     description: 'Ambiguous provider: hospital presents, consortium is the accredited provider',
     strippedText:
       'CONTINUING NURSING EDUCATION CERTIFICATE. Program: Stroke Care Pathways 2026, presented by Riverbend Medical Center in partnership with the Great Plains Nursing Consortium. Continuing nursing education credit is provided by the Great Plains Nursing Consortium, accredited as a provider of nursing continuing professional development. Attendee: [NAME_REDACTED], RN. Contact Hours: 5.0. Program Code: GPNC-STK-2026-11. Format: Hybrid (Live + Recorded Sessions). Date: March 6, 2026.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Great Plains Nursing Consortium',
       issuedDate: '2026-03-06',
       fieldOfStudy: 'Stroke Care',
@@ -257,11 +260,11 @@ const NURSING_CE: S33HeldoutEntry[] = [
     id: 'GD-S33-NUR-010',
     description: 'LPN IV-therapy course completion certificate',
     strippedText:
-      'CERTIFICATE OF COMPLETION. This is to certify that [NAME_REDACTED], LPN, has completed the 24-hour Intravenous Therapy Course for Licensed Practical Nurses as approved by the state board of nursing. Course Provider: Cedar Valley Technical College, Continuing Education Division. Course Number: CVTC-IV-2026-03. Clock Hours: 24.0. Instruction Mode: Classroom and Supervised Clinical. Completion Date: January 31, 2026. Program Director: [NAME_REDACTED].',
-    credentialTypeHint: 'CERTIFICATE',
+      'CEDAR VALLEY TECHNICAL COLLEGE — COURSE RECORD. LPN learner [NAME_REDACTED] completed Intravenous Therapy for Licensed Practical Nurses on January 31, 2026. Course CVTC-IV-2026-03; total 24.0 Clock Hours. Instruction combined Classroom and Supervised Clinical work. The state board of nursing approved the 24-hour course. Provider: Cedar Valley Technical College, Continuing Education Division. Program director [NAME_REDACTED].',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Cedar Valley Technical College',
       issuedDate: '2026-01-31',
       fieldOfStudy: 'Intravenous Therapy',
@@ -285,10 +288,10 @@ const NURSING_CE: S33HeldoutEntry[] = [
     description: 'Joint-provider emergency-nursing simulation record with fractional contact hours',
     strippedText:
       'LEARNER COMPLETION RECORD — NURSING PROFESSIONAL DEVELOPMENT. Record issued by Red Mesa Clinical Learning Center. Learner: [NAME_REDACTED], RN. Activity ID: RMCLC-EN-2605-42. Simulation: Emergency Stabilization and Rapid Triage. Field of Study: Emergency Nursing. Completion date: May 22, 2026. Delivery: In-Person Simulation. Award: 3.25 CNE Contact Hours. Joint-provider note: Desert Basin Hospital supplied the simulation laboratory but is not the issuer. Red Mesa Clinical Learning Center is approved by the Arizona Nurses Association to provide continuing nursing education. Jurisdiction: Arizona.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Red Mesa Clinical Learning Center',
       issuedDate: '2026-05-22',
       fieldOfStudy: 'Emergency Nursing',
@@ -313,10 +316,10 @@ const NURSING_CE: S33HeldoutEntry[] = [
     description: 'Contact-hour certificate from a provider whose approval has lapsed',
     strippedText:
       'CONTINUING EDUCATION CERTIFICATE. Course: Telehealth Triage Fundamentals. Nurse: [NAME_REDACTED], RN. Contact Hours: 2.0. Course Code: HTEC-TT-2026-05. Provider: Hilltop Education Company. Provider approval status: EXPIRED 12/31/2025 — reapproval application pending with the board of nursing. Delivery: On-Demand Webinar. Completion Date: February 21, 2026. Credits earned under an expired approval may not be accepted for license renewal; verify with your board before reporting.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Hilltop Education Company',
       issuedDate: '2026-02-21',
       fieldOfStudy: 'Telehealth',
@@ -343,7 +346,7 @@ const CPA_CPE: S33HeldoutEntry[] = [
     id: 'GD-S33-CPA-001',
     description: 'Clean QAS self-study CPE certificate, taxation',
     strippedText:
-      'CERTIFICATE OF COMPLETION — CONTINUING PROFESSIONAL EDUCATION. Participant: [NAME_REDACTED], CPA. Course Title: Partnership Taxation: Allocations and Basis. Course ID: HCI-TAX-2026-207. CPE Credits Awarded: 8.0. Field of Study: Taxes. Instructional Delivery Method: QAS Self-Study. Sponsor: Harborview CPE Institute. NASBA Registry Status: Active. Date of Completion: March 18, 2026. In accordance with the standards of the National Registry of CPE Sponsors, CPE credits have been granted based on a 50-minute hour.',
+      'HARBORVIEW CPE INSTITUTE — LEARNER COMPLETION RECORD. CPA participant [NAME_REDACTED] finished “Partnership Taxation: Allocations and Basis” on March 18, 2026. Program HCI-TAX-2026-207. CPE award: 8.0; subject classification: Taxes. Study format: QAS Self-Study. NASBA listing: Active, National Registry of CPE Sponsors. Credits use that registry’s 50-minute-hour standard. Provider and issuer: Harborview CPE Institute.',
     credentialTypeHint: 'CPE',
     groundTruth: {
       credentialType: 'CPE',
@@ -401,7 +404,7 @@ const CPA_CPE: S33HeldoutEntry[] = [
     id: 'GD-S33-CPA-003',
     description: 'Decoy IDs: sponsor, registry, and firm PO numbers surround the course ID',
     strippedText:
-      'CPE COMPLETION VOUCHER. Sponsor Number (NASBA): 108552. National Registry Confirmation: NRC-2026-4471. Firm Purchase Order: PO-88123. Participant: [NAME_REDACTED], CPA. Program: Revenue Recognition for SaaS Contracts. Program Code: TBP-AA-2026-152. Credits: 6.0 CPE. Field of Study: Accounting. Delivery Method: Group Internet Based. Sponsor: Two Bridges Professional Education. NASBA Registry Status: Active. Session Date: February 25, 2026.',
+      'TWO BRIDGES PROFESSIONAL EDUCATION | CPE VOUCHER. Learner [NAME_REDACTED], CPA. Completed program: Revenue Recognition for SaaS Contracts. Course identifier TBP-AA-2026-152. Session date February 25, 2026. Credit award 6.0 CPE; Accounting field; Group Internet Based presentation. NASBA sponsor number 108552 and registry status Active. Registry confirmation NRC-2026-4471. Firm purchasing reference PO-88123 is administrative and is not the course identifier.',
     credentialTypeHint: 'CPE',
     groundTruth: {
       credentialType: 'CPE',
@@ -487,12 +490,12 @@ const CPA_CPE: S33HeldoutEntry[] = [
     id: 'GD-S33-CPA-006',
     description: 'CPA license renewal with triennial CPE requirement as decoy hours',
     strippedText:
-      'TEXAS STATE BOARD OF PUBLIC ACCOUNTANCY — LICENSE RENEWAL RECEIPT. Licensee: [NAME_REDACTED]. Certificate Number: 118427. License Status: Active. Renewal Period: 02/01/2026 through 01/31/2027. CPE compliance basis: 120 hours per rolling three-year period, minimum 20 hours per year, including a board-approved 4-hour ethics course every two years. This receipt confirms renewal of the license to practice public accountancy in Texas; it does not award CPE.',
+      'TSBPA — CPA LICENSE RENEWAL RECEIPT. Licensee [NAME_REDACTED]; certificate 118427; status Active. Renewed effective 02/01/2026, with expiration 01/31/2027. Compliance reminder only: 120 CPE hours per rolling three years, at least 20 annually, plus a board-approved four-hour ethics course every two years. Those figures describe renewal requirements and award no CPE. This receipt evidences the Texas licence to practise public accountancy.',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
       subType: 'cpa',
-      issuerName: 'Texas State Board of Public Accountancy',
+      issuerName: 'TSBPA',
       issuedDate: '2026-02-01',
       expiryDate: '2027-01-31',
       licenseNumber: '118427',
@@ -539,7 +542,7 @@ const CPA_CPE: S33HeldoutEntry[] = [
     id: 'GD-S33-CPA-008',
     description: 'Nano-learning certificate with 0.2 CPE credit increment',
     strippedText:
-      'NANO-LEARNING COMPLETION CERTIFICATE. Learner: [NAME_REDACTED], CPA. Module: Lease Modification Decision Tree in Two Scenarios. Module Code: QL-NANO-2026-118. CPE Credit: 0.2 (nano-learning). Field of Study: Accounting. Delivery Method: Nano-Learning. Sponsor: QuickLedger Learning Lab. NASBA Registry Status: Active — approved nano-learning sponsor. Completed: April 22, 2026. Note: some state boards do not accept nano-learning credit; confirm acceptance with your board.',
+      'QUICKLEDGER LEARNING LAB — NANO MODULE RECORD. CPA learner [NAME_REDACTED] completed “Lease Modification Decision Tree in Two Scenarios” on April 22, 2026. Module QL-NANO-2026-118. Awarded amount: 0.2 CPE, classified as nano-learning. Accounting is the study field; Nano-Learning is the delivery mode. NASBA registry listing: Active and approved for nano-learning. Acceptance varies by state board, so the learner must confirm local eligibility.',
     credentialTypeHint: 'CPE',
     groundTruth: {
       credentialType: 'CPE',
@@ -569,7 +572,7 @@ const CPA_CPE: S33HeldoutEntry[] = [
     id: 'GD-S33-CPA-009',
     description: 'Single-course conference summary with clean single credit line',
     strippedText:
-      'SESSION COMPLETION SUMMARY — GREAT LAKES TAX FORUM 2026. Registrant: [NAME_REDACTED], CPA. Session Attended: State and Local Tax Nexus after Recent Legislation. Session Code: GLTF26-S14. CPE Credit for this session: 2.0. Field of Study: Taxes. Delivery Method: Group Live. Sponsor: Great Lakes Tax Forum, an approved continuing education sponsor. Session Date: May 14, 2026.',
+      'GREAT LAKES TAX FORUM 2026 — SESSION RECORD. CPA registrant [NAME_REDACTED] attended “State and Local Tax Nexus after Recent Legislation” on May 14, 2026. Session GLTF26-S14. The forum awards 2.0 CPE credits for this single session. Subject classification: Taxes. Presentation setting: Group Live. Great Lakes Tax Forum is the issuing approved continuing-education sponsor.',
     credentialTypeHint: 'CPE',
     groundTruth: {
       credentialType: 'CPE',
@@ -596,7 +599,7 @@ const CPA_CPE: S33HeldoutEntry[] = [
     id: 'GD-S33-CPA-010',
     description: 'CPE certificate that also advertises IRS CE credit (dual-credit wording)',
     strippedText:
-      'CERTIFICATE OF COMPLETION. Participant: [NAME_REDACTED], CPA, EA. Course: Circular 230 Practice Standards and Penalty Exposure. Course ID: PPS-C230-2026-71. CPE Credits: 3.0 (Field of Study: Regulatory Ethics). This course is also registered for 3.0 IRS Continuing Education credits for Enrolled Agents under a separate program number. Sponsor: Prairie Professional Seminars. NASBA Registry Status: Active. Delivery Method: Group Internet Based. Completion Date: February 18, 2026.',
+      'PRAIRIE PROFESSIONAL SEMINARS | DUAL-CREDIT COMPLETION RECORD. Participant [NAME_REDACTED], CPA, EA. “Circular 230 Practice Standards and Penalty Exposure,” course PPS-C230-2026-71, completed February 18, 2026. Award: 3.0 CPE Ethics hours; subject classification Regulatory Ethics. Separately, the program is registered for 3.0 IRS Continuing Education credits for Enrolled Agents under another program number. NASBA registry status Active. Delivery: Group Internet Based.',
     credentialTypeHint: 'CPE',
     groundTruth: {
       credentialType: 'CPE',
@@ -664,6 +667,7 @@ const CPA_CPE: S33HeldoutEntry[] = [
       issuedDate: '2026-02-20',
       licenseNumber: '2026-01584',
       jurisdiction: 'Missouri',
+      recipientIdentifier: '[NAME_REDACTED]',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/licensing/cpa-wall-certificate',
@@ -709,7 +713,7 @@ const BAR_CLE: S33HeldoutEntry[] = [
     id: 'GD-S33-BAR-001',
     description: 'Clean state MCLE certificate of attendance, general credit',
     strippedText:
-      'CERTIFICATE OF ATTENDANCE — MINIMUM CONTINUING LEGAL EDUCATION. Attorney: [NAME_REDACTED]. State Bar Number: [BAR_NO_REDACTED]. Program: Discovery Strategy in Commercial Litigation. Activity Number: MLEG-TX-2026-310. MCLE Credit: 3.0 hours (participatory). Ethics Credit: none. Provider: Meridian Legal Education Group, accredited MCLE sponsor. Delivery: Live Webcast. Program Date: March 24, 2026. Jurisdiction of accreditation: Texas.',
+      'MCLE ATTENDANCE RECORD — TEXAS. Participant [NAME_REDACTED]; state bar number [BAR_NO_REDACTED]. Meridian Legal Education Group records full participation in Discovery Strategy in Commercial Litigation on March 24, 2026. Activity MLEG-TX-2026-310. Award: 3.0 participatory CLE hours; ethics component: none. Sponsor status: accredited MCLE provider. Presentation mode: Live Webcast. Accreditation jurisdiction: Texas.',
     credentialTypeHint: 'CLE',
     groundTruth: {
       credentialType: 'CLE',
@@ -737,7 +741,7 @@ const BAR_CLE: S33HeldoutEntry[] = [
     id: 'GD-S33-BAR-002',
     description: 'Ethics CLE certificate, all hours ethics',
     strippedText:
-      'CONTINUING LEGAL EDUCATION CERTIFICATE. This certifies that [NAME_REDACTED], Esq., completed "Conflicts of Interest in Multi-Party Representation". Course Number: PLI-ETH-2026-77. Total Credit: 2.0 hours, all qualifying as Legal Ethics. Provider: Pinnacle Law Institute. Approved by the Illinois MCLE Board. Format: In-Person Seminar. Date: February 10, 2026.',
+      'PINNACLE LAW INSTITUTE | ETHICS CLE COMPLETION RECORD. Learner: [NAME_REDACTED], Esq. Program completed: “Conflicts of Interest in Multi-Party Representation.” Course PLI-ETH-2026-77. Credit awarded: 2.0 hours, entirely Legal Ethics. Illinois MCLE Board approval applies. Attendance format: In-Person seminar. Completion date: February 10, 2026.',
     credentialTypeHint: 'CLE',
     groundTruth: {
       credentialType: 'CLE',
@@ -766,7 +770,7 @@ const BAR_CLE: S33HeldoutEntry[] = [
     id: 'GD-S33-BAR-003',
     description: 'Elimination-of-bias credit category (Minnesota-style requirement)',
     strippedText:
-      'MINNESOTA CLE AFFIDAVIT OF ATTENDANCE. Attorney: [NAME_REDACTED]. Attorney Registration Number: [REG_NO_REDACTED]. Course: Recognizing and Countering Implicit Bias in Jury Selection. Event Code: NSLC-EOB-2026-21. Credit Approved: 2.0 hours, category: Elimination of Bias. Sponsor: North Star Legal Collaborative. Approved by the Minnesota State Board of Continuing Legal Education. Delivery: Live Webcast. Date of Program: January 29, 2026.',
+      'MINNESOTA CLE BOARD — AFFIDAVIT OF PARTICIPATION. Attorney [NAME_REDACTED], registration [REG_NO_REDACTED], attended “Recognizing and Countering Implicit Bias in Jury Selection.” Event NSLC-EOB-2026-21. North Star Legal Collaborative delivered the program by Live Webcast on January 29, 2026. Approved award: 2.0 CLE hours in Elimination of Bias.',
     credentialTypeHint: 'CLE',
     groundTruth: {
       credentialType: 'CLE',
@@ -774,7 +778,7 @@ const BAR_CLE: S33HeldoutEntry[] = [
       issuerName: 'North Star Legal Collaborative',
       issuedDate: '2026-01-29',
       fieldOfStudy: 'Elimination of Bias',
-      approvedBy: 'Minnesota State Board of Continuing Legal Education',
+      approvedBy: 'Minnesota CLE Board',
       jurisdiction: 'Minnesota',
       creditHours: 2,
       creditType: 'CLE',
@@ -850,16 +854,17 @@ const BAR_CLE: S33HeldoutEntry[] = [
     id: 'GD-S33-BAR-006',
     description: 'Bar admission certificate from a state supreme court',
     strippedText:
-      'SUPREME COURT OF THE STATE OF COLORADO. BE IT KNOWN that [NAME_REDACTED], having been examined and found qualified, and having taken the oath prescribed by law, was on the fourth day of May, 2026, admitted to practice as an ATTORNEY AND COUNSELOR AT LAW in all the courts of this State. Attorney Registration Number: 61Q84. In witness whereof, the seal of the Court is affixed. Clerk of the Supreme Court: [NAME_REDACTED].',
+      'COLORADO SUPREME COURT — ATTORNEY ADMISSION RECORD. Registrant [NAME_REDACTED]; attorney number 61Q84. The Court found the applicant qualified after examination and recorded completion of the oath required by law. Admission date: 4 May 2026. Status conferred: ATTORNEY AND COUNSELOR AT LAW, authorised for Colorado state courts. The Court seal authenticates this record. Supreme Court Clerk: [NAME_REDACTED].',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
       subType: 'law_bar_admission',
-      issuerName: 'Supreme Court of the State of Colorado',
+      issuerName: 'Colorado Supreme Court',
       issuedDate: '2026-05-04',
       barNumber: '61Q84',
       licenseNumber: '61Q84',
       jurisdiction: 'Colorado',
+      recipientIdentifier: '[NAME_REDACTED]',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/licensing/bar-admission-certificate',
@@ -902,7 +907,7 @@ const BAR_CLE: S33HeldoutEntry[] = [
     id: 'GD-S33-BAR-008',
     description: 'Hallucination trap: attendance letter with no activity/course number at all',
     strippedText:
-      'Dear Counsel, this letter confirms that [NAME_REDACTED] attended the full-day workshop "Negotiating Settlement Agreements" hosted by the Harbor City Bar Association on 6 hours of instruction, held March 13, 2026, at the association offices. The program has been accredited for six (6) hours of continuing legal education in this jurisdiction (New Jersey). No ethics component was offered. Please retain this letter as evidence of attendance. Sincerely, Director of Programs, Harbor City Bar Association.',
+      'ATTENDANCE MEMORANDUM. To: [NAME_REDACTED]. Harbor City Bar Association records your full-day, in-person participation in “Negotiating Settlement Agreements” at its offices on March 13, 2026. Instruction totalled six (6) hours. New Jersey accreditation covers all six hours as general continuing legal education; the workshop offered no ethics component. No activity or course number was assigned. Retain this memorandum as attendance evidence. Director of Programs, Harbor City Bar Association.',
     credentialTypeHint: 'CLE',
     groundTruth: {
       credentialType: 'CLE',
@@ -928,15 +933,17 @@ const BAR_CLE: S33HeldoutEntry[] = [
     id: 'GD-S33-BAR-009',
     description: 'Certificate of good standing for an attorney (not a CE award)',
     strippedText:
-      'STATE OF OREGON — CERTIFICATE OF GOOD STANDING. I, Clerk of the Supreme Court of the State of Oregon, certify that [NAME_REDACTED] was admitted to the bar of this state on October 3, 2017, and is now, and has been continuously since admission, an active member in good standing of the bar of this state, with no disciplinary proceedings pending. Issued at Salem, Oregon, on April 9, 2026. This certificate expires ninety days from issuance for filing purposes.',
+      'OREGON SUPREME COURT — ATTORNEY STATUS CERTIFICATE. Subject: [NAME_REDACTED]. Original bar admission: October 3, 2017. The Clerk’s register shows continuous active membership since admission, current GOOD STANDING, and no pending disciplinary proceeding. Place/date of issue: Salem, Oregon — April 9, 2026. Filing validity ends July 8, 2026, the stated ninety-day expiration. Clerk of Court.',
     credentialTypeHint: 'ATTESTATION',
     groundTruth: {
       credentialType: 'ATTESTATION',
       subType: 'good_standing',
-      issuerName: 'Supreme Court of the State of Oregon',
+      issuerName: 'Oregon Supreme Court',
       issuedDate: '2026-04-09',
+      expiryDate: '2026-07-08',
       jurisdiction: 'Oregon',
       goodStandingStatus: 'good standing',
+      recipientIdentifier: '[NAME_REDACTED]',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/licensing/bar-good-standing',
@@ -950,13 +957,13 @@ const BAR_CLE: S33HeldoutEntry[] = [
     id: 'GD-S33-BAR-010',
     description: 'Date trap: program date, certificate print date, and reporting deadline compete',
     strippedText:
-      'UNIFORM CERTIFICATE OF ATTENDANCE. Attorney: [NAME_REDACTED]. Program: Appellate Brief Writing Intensive. Program Number: WLS-APP-2026-09. Credit Hours: 4.0 general. Program Held: December 12, 2025. Certificate Generated: January 5, 2026. Reminder: credits must be reported to the state bar by March 1, 2026 for the 2025 compliance year. Provider: Westgate Legal Seminars. Delivery Method: Live Webcast.',
+      'WESTGATE LEGAL SEMINARS — CLE ATTENDANCE STATEMENT. Attorney [NAME_REDACTED] completed Appellate Brief Writing Intensive by Live Webcast. Program WLS-APP-2026-09; general CLE award 4.0 hours. Event date: December 12, 2025. Statement generated: January 5, 2026. For the 2025 compliance year, the state-bar reporting deadline is March 1, 2026.',
     credentialTypeHint: 'CLE',
     groundTruth: {
       credentialType: 'CLE',
       subType: 'general_cle',
       issuerName: 'Westgate Legal Seminars',
-      issuedDate: '2025-12-12',
+      issuedDate: '2026-01-05',
       fieldOfStudy: 'Appellate Practice',
       jurisdiction: 'United States',
       creditHours: 4,
@@ -1064,10 +1071,10 @@ const PE_PDH: S33HeldoutEntry[] = [
     description: 'Clean PDH certificate for a structural engineering webinar',
     strippedText:
       'PROFESSIONAL DEVELOPMENT HOUR CERTIFICATE. Awarded to: [NAME_REDACTED], P.E. Course: Wind Load Provisions in the Current Building Standard. Course Number: SEE-WND-2026-116. PDH Awarded: 2.0. Provider: Summit Engineering Education. Delivery Method: Live Webinar. Date of Completion: March 25, 2026. This certificate is issued for professional development hour documentation as required by state engineering licensure boards.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Summit Engineering Education',
       issuedDate: '2026-03-25',
       fieldOfStudy: 'Structural Engineering',
@@ -1099,6 +1106,7 @@ const PE_PDH: S33HeldoutEntry[] = [
       expiryDate: '2028-02-28',
       licenseNumber: 'PE 91284',
       jurisdiction: 'Florida',
+      recipientIdentifier: '[NAME_REDACTED]',
       fraudSignals: [],
     },
     source: 'authored/s33-lane4/licensing/pe-license-renewal-decoy',
@@ -1113,10 +1121,10 @@ const PE_PDH: S33HeldoutEntry[] = [
     description: 'CEU-to-PDH unit trap: 0.4 CEUs equals 4 PDH',
     strippedText:
       'CONTINUING EDUCATION UNIT AWARD. Participant: [NAME_REDACTED], P.E. Course: Stormwater Detention Design Workshop. Reference: RWA-SW-2026-071. Award: 0.4 CEUs. For engineering licensure purposes this equals 4.0 professional development hours (1 CEU = 10 PDH). Provider: Riverworks Academy. Delivery: In-Person Workshop. Date: February 12, 2026. Report PDH, not CEUs, to your state board unless your board specifies otherwise.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Riverworks Academy',
       issuedDate: '2026-02-12',
       fieldOfStudy: 'Civil Engineering',
@@ -1140,10 +1148,10 @@ const PE_PDH: S33HeldoutEntry[] = [
     description: 'Engineering ethics PDH course',
     strippedText:
       'CERTIFICATE OF COMPLETION. Engineer: [NAME_REDACTED], P.E. Course Title: Ethical Obligations in Public Infrastructure Projects. Course ID: BEC-ETH-2026-12. Professional Development Hours: 1.0 (Ethics). Provider: Bridgestone Engineering Campus. Delivery Method: On-Demand Video. Completion Date: January 8, 2026. Satisfies the professional ethics PDH requirement in most jurisdictions; verify with your board.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'ethics_cpe',
       issuerName: 'Bridgestone Engineering Campus',
       issuedDate: '2026-01-08',
       fieldOfStudy: 'Engineering Ethics',
@@ -1167,10 +1175,10 @@ const PE_PDH: S33HeldoutEntry[] = [
     description: 'OCR-degraded scan of a geotechnical seminar certificate',
     strippedText:
       'PR0FESSI0NAL DEVEL0PMENT H0UR CERTIF1CATE. Engineer 0f Rec0rd: [NAME_REDACTED], P.E. Seminar: S1ope Stability Analysis: Meth0ds and Case Studies. Seminar C0de: GEC-SL0-2O26-O44. PDH Awarded: 6.O. Pr0vider: Ge0techn1cal Educati0n C0uncil. De1ivery: Gr0up Live Seminar. Date: March l7, 2026.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Geotechnical Education Council',
       issuedDate: '2026-03-17',
       fieldOfStudy: 'Geotechnical Engineering',
@@ -1194,10 +1202,10 @@ const PE_PDH: S33HeldoutEntry[] = [
     description: 'Multi-state acceptance wording on a single-course certificate',
     strippedText:
       'CERTIFICATE OF COMPLETION — PROFESSIONAL DEVELOPMENT. Recipient: [NAME_REDACTED], P.E. Course: HVAC Load Calculations for Commercial Retrofit. Course Number: MEP-HVAC-2026-33. PDH: 3.0. Provider: Meridian Engineering Programs, an approved continuing education provider whose courses are accepted by the engineering boards of Florida, Texas, New York, and most other states. Delivery Method: Live Webinar. Completed: April 21, 2026.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Meridian Engineering Programs',
       issuedDate: '2026-04-21',
       fieldOfStudy: 'Mechanical Engineering',
@@ -1221,10 +1229,10 @@ const PE_PDH: S33HeldoutEntry[] = [
     description: 'Provider-issued PDH completion certificate with annual-requirement decoy',
     strippedText:
       'CONTINUING PROFESSIONAL DEVELOPMENT CERTIFICATE OF COMPLETION. Riverworks Academy certifies that [NAME_REDACTED], P.E., completed the Bridge Inspection and Seismic Retrofit Workshop. Field of study: Structural Engineering. Course ID: RWA-BISR-2604. Delivery: Live Webinar. Completion Date: April 15, 2026. Professional Development Hours awarded: 15.5 PDH. The board annual requirement is 15 PDH; that requirement is not the award. Certificate issued by Riverworks Academy on May 1, 2026.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Riverworks Academy',
       issuedDate: '2026-05-01',
       fieldOfStudy: 'Structural Engineering',
@@ -1247,10 +1255,10 @@ const PE_PDH: S33HeldoutEntry[] = [
     description: 'Conference certificate where total conference hours exceed PDH awarded',
     strippedText:
       'CONFERENCE COMPLETION CERTIFICATE. Attendee: [NAME_REDACTED], P.E. Event: National Water Infrastructure Congress 2026. Registration Code: NWIC26-2231. Total scheduled conference hours: 20 (including exhibits, networking, and plenary sessions). PDH awarded for qualifying technical sessions attended: 12.0. Host: Water Infrastructure Alliance. Delivery: Group Live. Dates: March 9-11, 2026.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'general_cpe',
       issuerName: 'Water Infrastructure Alliance',
       issuedDate: '2026-03-11',
       fieldOfStudy: 'Water Resources Engineering',
@@ -1273,12 +1281,12 @@ const PE_PDH: S33HeldoutEntry[] = [
     id: 'GD-S33-PDH-009',
     description: 'PE license wall certificate with seal wording',
     strippedText:
-      'STATE OF WASHINGTON — BOARD OF REGISTRATION FOR PROFESSIONAL ENGINEERS AND LAND SURVEYORS. This certifies that [NAME_REDACTED], having given satisfactory evidence of the qualifications required by law, is duly registered as a PROFESSIONAL ENGINEER in the branch of Civil Engineering. Registration Number: 60Q1573. Date of Registration: January 16, 2026. Given under the seal of the Board. Chair: [NAME_REDACTED].',
+      'WASHINGTON BRPELS — PROFESSIONAL ENGINEER WALL CERTIFICATE. Holder [NAME_REDACTED]. The Board accepted satisfactory evidence that the holder met every qualification required by law. Register class: PROFESSIONAL ENGINEER; branch: Civil Engineering. Registration 60Q1573 entered January 16, 2026. Authenticated beneath the Board seal. Chair [NAME_REDACTED].',
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
       subType: 'engineering_pe',
-      issuerName: 'Washington Board of Registration for Professional Engineers and Land Surveyors',
+      issuerName: 'Washington BRPELS',
       issuedDate: '2026-01-16',
       licenseNumber: '60Q1573',
       fieldOfStudy: 'Civil Engineering',
@@ -1297,10 +1305,10 @@ const PE_PDH: S33HeldoutEntry[] = [
     description: 'Field-workshop PDH completion record with fractional water-resources credit',
     strippedText:
       'FIELD WORKSHOP COMPLETION RECORD. Gulf Prairie Engineering Forum records that Engineer: [NAME_REDACTED], P.E., completed the supervised workshop "Drainage Outfall Inspection and Hydraulic Controls." Workshop code GPEF-HYD-0526. Discipline / Field of Study: Water Resources Engineering. Location and jurisdiction: Baton Rouge, Louisiana. Instruction format: Field Workshop. Completion date: May 30, 2026. Qualifying instructional time: 3.5 Professional Development Hours (PDH). Gulf Prairie Engineering Forum is both the provider and issuer of this record; travel and meal periods were excluded from credit.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Gulf Prairie Engineering Forum',
       issuedDate: '2026-05-30',
       fieldOfStudy: 'Water Resources Engineering',
@@ -1324,10 +1332,10 @@ const PE_PDH: S33HeldoutEntry[] = [
     description: 'Seminar sign-in-sheet-style attendance record',
     strippedText:
       'SEMINAR ATTENDANCE RECORD — VERIFIED SIGN-IN. Event: Foundations Design for Expansive Soils. Event Code: PES-FND-2026-27. Host: Plains Engineering Society, Continuing Education Committee. Location: Wichita, Kansas. Date: April 3, 2026. Attendee: [NAME_REDACTED], P.E. Sign-in: 8:02 AM. Sign-out: 12:15 PM. Qualifying instruction time: 4.0 hours = 4.0 PDH. Verified by committee chair initials on file.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Plains Engineering Society',
       issuedDate: '2026-04-03',
       fieldOfStudy: 'Geotechnical Engineering',
@@ -1351,12 +1359,12 @@ const PE_PDH: S33HeldoutEntry[] = [
     description: 'Provider verification-of-completion letter for board audit',
     strippedText:
       'VERIFICATION OF COMPLETION — ISSUED FOR BOARD AUDIT. To whom it may concern: Summit Engineering Education verifies that [NAME_REDACTED], P.E., completed the course "Retaining Wall Design: Drainage and Surcharge Loads" (Course Number SEE-RET-2025-201) on November 14, 2025, earning 4.0 professional development hours. Delivery method: On-Demand Video with graded quiz (passing score 80%). This letter re-issues the original certificate at the licensee request for a state board continuing education audit. Issued: April 28, 2026.',
-    credentialTypeHint: 'CERTIFICATE',
+    credentialTypeHint: 'CPE',
     groundTruth: {
-      credentialType: 'CERTIFICATE',
-      subType: 'completion_certificate',
+      credentialType: 'CPE',
+      subType: 'specialized_cpe',
       issuerName: 'Summit Engineering Education',
-      issuedDate: '2025-11-14',
+      issuedDate: '2026-04-28',
       fieldOfStudy: 'Structural Engineering',
       jurisdiction: 'United States',
       creditHours: 4,
