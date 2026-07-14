@@ -12,6 +12,7 @@ import {
   FIXED_REPOSITORY,
   loadWorkflowReportBundle,
   runS33PremergeApiPreflight,
+  recursivelyFreeze,
   S33_PREMERGE_API_QUERY,
   verifyS33PrerequisiteInventory,
   validatePrerequisiteWorkflowIdentity,
@@ -299,6 +300,20 @@ describe('verifyGitHubTrustRoot', () => {
 const tempDirectories: string[] = [];
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+describe('authenticated bundle recursive freeze primitive', () => {
+  it('freezes every nested object and array so authenticated facts cannot mutate', () => {
+    const value = { approval: { reviewer: { login: 'fixed' } }, checks: [{ name: 'required' }] };
+    const frozen = recursivelyFreeze(value);
+    expect(Object.isFrozen(frozen)).toBe(true);
+    expect(Object.isFrozen(frozen.approval)).toBe(true);
+    expect(Object.isFrozen(frozen.approval.reviewer)).toBe(true);
+    expect(Object.isFrozen(frozen.checks)).toBe(true);
+    expect(Object.isFrozen(frozen.checks[0])).toBe(true);
+    expect(() => { (frozen.approval.reviewer as { login: string }).login = 'mutated'; }).toThrow();
+    expect(frozen.approval.reviewer.login).toBe('fixed');
+  });
 });
 
 describe('loadWorkflowReportBundle', () => {

@@ -567,11 +567,11 @@ function loadAuthorityConfiguration(): Readonly<AuthorityConfiguration> {
       throw new Error(`S3.3 authority identity[${index}] does not match the CTO-pinned identity`);
     }
   });
-  if (!Array.isArray(parsed.rulings) || parsed.rulings.length !== 4) {
-    throw new Error('S3.3 authority configuration must cite all four binding CTO rulings');
+  if (!Array.isArray(parsed.rulings) || parsed.rulings.length !== 5) {
+    throw new Error('S3.3 authority configuration must cite all five binding CTO rulings');
   }
   const rulings = parsed.rulings.map((value, index) => assertHttpsUrl(value, `CTO ruling[${index}]`));
-  for (const id of ['102596609', '102629377', '102793217', '102858753']) {
+  for (const id of ['102596609', '102629377', '102793217', '102858753', '102957057']) {
     if (!rulings.some((url) => url.includes(`focusedCommentId=${id}`))) {
       throw new Error(`S3.3 authority configuration is missing CTO ruling ${id}`);
     }
@@ -1394,7 +1394,15 @@ export function assertAuthenticatedS33Wave1EvidenceBundle(
 function registerAuthenticatedS33Wave1EvidenceBundle(
   value: AuthenticatedS33Wave1EvidenceBundle,
 ): Readonly<AuthenticatedS33Wave1EvidenceBundle> {
-  AUTHENTICATED_EVIDENCE_BUNDLES.add(value);
+  const frozen = recursivelyFreeze(value);
+  AUTHENTICATED_EVIDENCE_BUNDLES.add(frozen);
+  return frozen;
+}
+
+export function recursivelyFreeze<T>(value: T, seen = new WeakSet<object>()): Readonly<T> {
+  if (value === null || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value as Record<string, unknown>)) recursivelyFreeze(child, seen);
   return Object.freeze(value);
 }
 
