@@ -141,17 +141,6 @@ interface CommitUser {
 export interface GitHubEvidenceSnapshot {
   repository: {
     defaultBranchRef: { name: string; target: { oid: string } };
-    branchProtectionRules: {
-      pageInfo?: { hasNextPage: boolean };
-      nodes: Array<{
-        id: string;
-        pattern: string;
-        requiresStatusChecks: boolean;
-        requiredStatusCheckContexts: string[];
-        requiredStatusChecks: Array<{ context: string; app: GitHubAppIdentity | null }>;
-        matchingRefs: { nodes: Array<{ name: string }> };
-      }>;
-    };
     pullRequest: {
       number: number;
       state: string;
@@ -241,7 +230,10 @@ export interface VerifiedGitHubTrustRoot {
   mainHeadSha: string;
   supportMergeCommitSha: string;
   producerHeadSha: string;
-  branchProtectionRuleIds: string[];
+  branchProtection: {
+    url: string;
+    digestSha256: string;
+  };
   requiredChecks: Array<{
     name: string;
     conclusion: 'SUCCESS';
@@ -780,49 +772,92 @@ function extractCrossReview(body: string, facts: DerivedRepositoryFacts): Authen
   };
 }
 
-function effectiveRequiredChecks(repository: NonNullable<GitHubEvidenceSnapshot['repository']>): {
-  ruleIds: string[];
-  checks: Array<{ context: string; app: GitHubAppIdentity | null }>;
-} {
-  if (repository.branchProtectionRules.pageInfo?.hasNextPage) {
-    throw new Error('Live branchProtectionRules query was truncated; cannot authenticate main protection');
+const FIXED_MAIN_BRANCH_PATH = '/repos/carson-see/ArkovaCarson/branches/main';
+const FIXED_MAIN_PROTECTION_URL = 'https://api.github.com/repos/carson-see/ArkovaCarson/branches/main/protection';
+
+export interface VerifiedS33MainBranchProtection {
+  headSha: string;
+  branchProtection: Readonly<{
+    url: typeof FIXED_MAIN_PROTECTION_URL;
+    digestSha256: string;
+  }>;
+  requiredStatusChecks: readonly Readonly<{
+    context: string;
+    appId: number;
+  }>[];
+}
+
+/**
+ * Validate the same-token `GET /branches/main` response and reduce it to the
+ * exact CTO-ratified, order-independent projection used by durable evidence.
+ */
+export function verifyS33MainBranchProtection(
+  value: unknown,
+  expectedHeadSha: string,
+): Readonly<VerifiedS33MainBranchProtection> {
+  assertSha(expectedHeadSha, SHA1_RE, 'Expected main branch head SHA');
+  const branch = record(value, 'Live main branch REST response');
+  if (branch.name !== 'main') throw new Error('Live branch REST response must identify main');
+  const commit = record(branch.commit, 'Live main branch commit');
+  const headSha = nonEmptyString(commit.sha, 'Live main branch commit.sha');
+  assertSha(headSha, SHA1_RE, 'Live main branch commit.sha');
+  if (headSha !== expectedHeadSha) {
+    throw new Error('Live main branch REST head does not equal the authenticated GitHub main head');
   }
-  const matching = repository.branchProtectionRules.nodes.filter((rule) => (
-    rule.matchingRefs.nodes.some(({ name }) => name === 'main')
+  if (branch.protected !== true) throw new Error('Live main branch must be protected');
+  const protection = record(branch.protection, 'Live main branch protection');
+  if (protection.enabled !== true) throw new Error('Live main branch protection must be enabled');
+  const protectionUrl = assertHttpsUrl(branch.protection_url, 'Live main branch protection_url');
+  if (protectionUrl !== FIXED_MAIN_PROTECTION_URL) {
+    throw new Error('Live main branch protection_url does not match the fixed repository branch');
+  }
+  const required = record(
+    protection.required_status_checks,
+    'Live main branch protection.required_status_checks',
+  );
+  if (!Array.isArray(required.contexts) || !Array.isArray(required.checks)) {
+    throw new Error('Live main branch protection must expose legacy contexts and app-qualified checks');
+  }
+  const legacyContexts = required.contexts.map((candidate, index) => (
+    nonEmptyString(candidate, `Live main branch legacy context[${index}]`)
   ));
-  if (matching.length === 0) throw new Error('No live branchProtectionRule matches main');
-  if (matching.some((rule) => !rule.requiresStatusChecks)) {
-    throw new Error('A live main branchProtectionRule does not require status checks');
+  if (new Set(legacyContexts).size !== legacyContexts.length) {
+    throw new Error('Live main branch legacy required contexts must be unique');
   }
-  const byContext = new Map<string, { context: string; app: GitHubAppIdentity | null }>();
-  for (const rule of matching) {
-    const describedContexts = new Set(rule.requiredStatusChecks.map(({ context }) => context));
-    for (const context of rule.requiredStatusCheckContexts) {
-      if (!describedContexts.has(context)) {
-        throw new Error(`Live main branch protection context ${context} has no app-qualified description`);
-      }
-    }
-    for (const description of rule.requiredStatusChecks) {
-      const previous = byContext.get(description.context);
-      if (previous) {
-        const previousApp = previous.app;
-        const nextApp = description.app;
-        if ((previousApp?.databaseId ?? null) !== (nextApp?.databaseId ?? null)
-          || (previousApp?.slug ?? null) !== (nextApp?.slug ?? null)
-          || (previousApp?.id ?? null) !== (nextApp?.id ?? null)) {
-          throw new Error(`Conflicting live main branch-protection app bindings for ${description.context}`);
-        }
-      } else {
-        byContext.set(description.context, description);
-      }
-    }
-  }
-  const checks = [...byContext.values()].sort((left, right) => compareCodeUnits(left.context, right.context));
+  const checks = required.checks.map((candidate, index) => {
+    const check = record(candidate, `Live main branch required check[${index}]`);
+    const context = nonEmptyString(check.context, `Live main branch required check[${index}].context`);
+    const appId = integer(check.app_id, `Live main branch required check ${context}.app_id`);
+    if (appId <= 0) throw new Error(`Live main branch required check ${context}.app_id must be positive`);
+    return { context, appId };
+  }).sort((left, right) => (
+    compareCodeUnits(left.context, right.context) || left.appId - right.appId
+  ));
   if (checks.length === 0) throw new Error('Live main branch protection has zero required status checks');
-  return {
-    ruleIds: matching.map(({ id }) => id).sort(compareCodeUnits),
-    checks,
+  if (new Set(checks.map(({ context }) => context)).size !== checks.length) {
+    throw new Error('Live main branch app-qualified required check contexts must be unique');
+  }
+  const sortedLegacyContexts = [...legacyContexts].sort(compareCodeUnits);
+  const configuredContexts = checks.map(({ context }) => context);
+  if (canonicaliseJson(sortedLegacyContexts) !== canonicaliseJson(configuredContexts)) {
+    throw new Error('Live main branch legacy contexts do not exactly match app-qualified required checks');
+  }
+  const projection = {
+    name: 'main' as const,
+    headSha,
+    protected: true as const,
+    protectionEnabled: true as const,
+    protectionUrl: FIXED_MAIN_PROTECTION_URL,
+    requiredStatusChecks: checks,
   };
+  return recursivelyFreeze({
+    headSha,
+    branchProtection: {
+      url: FIXED_MAIN_PROTECTION_URL,
+      digestSha256: sha256(canonicaliseJson(projection)),
+    },
+    requiredStatusChecks: checks,
+  });
 }
 
 function contextName(context: GitHubStatusContextNode): string {
@@ -840,7 +875,7 @@ function contextFreshness(context: GitHubStatusContextNode): string {
 
 function selectLatestContext(
   contexts: readonly GitHubStatusContextNode[],
-  required: { context: string; app: GitHubAppIdentity | null },
+  required: { context: string },
 ): GitHubStatusContextNode {
   const candidates = contexts.filter((context) => contextName(context) === required.context);
   if (candidates.length === 0) throw new Error(`Missing required check: ${required.context}`);
@@ -856,7 +891,7 @@ function selectLatestContext(
 
 function authenticateRequiredCheck(
   context: GitHubStatusContextNode,
-  required: { context: string; app: GitHubAppIdentity | null },
+  required: { context: string; appId: number },
   producerHeadSha: string,
 ): VerifiedGitHubTrustRoot['requiredChecks'][number] {
   if (context.__typename !== 'CheckRun') {
@@ -869,10 +904,7 @@ function authenticateRequiredCheck(
     throw new Error(`Required check ${required.context} does not report isRequired=true for PR #1498`);
   }
   const actualApp = context.checkSuite?.app ?? null;
-  if (required.app === null || actualApp === null
-    || actualApp.id !== required.app.id
-    || actualApp.databaseId !== required.app.databaseId
-    || actualApp.slug !== required.app.slug) {
+  if (actualApp === null || actualApp.databaseId !== required.appId) {
     throw new Error(`Required check ${required.context} checkSuite app mismatch`);
   }
   return {
@@ -953,6 +985,7 @@ function selectApproval(
 export function verifyGitHubTrustRoot(
   snapshot: GitHubEvidenceSnapshot,
   facts: DerivedRepositoryFacts,
+  branchResponse: unknown,
 ): Readonly<VerifiedGitHubTrustRoot> {
   assertSha(facts.localMainHeadSha, SHA1_RE, 'Local main head SHA');
   assertSha(facts.localProducerHeadSha, SHA1_RE, 'Local producer head SHA');
@@ -992,8 +1025,8 @@ export function verifyGitHubTrustRoot(
   if (contexts.pageInfo.hasNextPage) {
     throw new Error('GitHub exact-head statusCheckRollup was truncated; cannot authenticate required checks');
   }
-  const required = effectiveRequiredChecks(repository);
-  const requiredChecks = required.checks.map((description) => authenticateRequiredCheck(
+  const required = verifyS33MainBranchProtection(branchResponse, facts.localMainHeadSha);
+  const requiredChecks = required.requiredStatusChecks.map((description) => authenticateRequiredCheck(
     selectLatestContext(contexts.nodes, description),
     description,
     facts.localProducerHeadSha,
@@ -1022,7 +1055,7 @@ export function verifyGitHubTrustRoot(
     mainHeadSha: facts.localMainHeadSha,
     supportMergeCommitSha: support.mergeCommit.oid,
     producerHeadSha: facts.localProducerHeadSha,
-    branchProtectionRuleIds: required.ruleIds,
+    branchProtection: { ...required.branchProtection },
     requiredChecks,
     approval: {
       status: 'APPROVED' as const,
@@ -1216,14 +1249,6 @@ export const S33_GITHUB_EVIDENCE_QUERY = `
 query S33Wave1GitHubEvidence {
   repository(owner: "carson-see", name: "ArkovaCarson") {
     defaultBranchRef { name target { ... on Commit { oid } } }
-    branchProtectionRules(first: 100) {
-      pageInfo { hasNextPage }
-      nodes {
-        id pattern requiresStatusChecks requiredStatusCheckContexts
-        requiredStatusChecks { context app { id databaseId slug } }
-        matchingRefs(first: 10, query: "main") { nodes { name } }
-      }
-    }
     pullRequest(number: 1498) {
       number state baseRefName headRefOid headRepository { nameWithOwner }
       author { login ... on User { databaseId id } ... on Bot { databaseId id } }
@@ -1301,14 +1326,6 @@ export const S33_PREMERGE_API_QUERY = `
 query S33Wave1PremergeApiPreflight {
   repository(owner: "carson-see", name: "ArkovaCarson") {
     defaultBranchRef { name target { ... on Commit { oid } } }
-    branchProtectionRules(first: 100) {
-      pageInfo { hasNextPage }
-      nodes {
-        id pattern requiresStatusChecks requiredStatusCheckContexts
-        requiredStatusChecks { context app { id databaseId slug } }
-        matchingRefs(first: 10, query: "main") { nodes { name } }
-      }
-    }
     supportPullRequest: pullRequest(number: 1529) {
       number state headRefOid headRepository { nameWithOwner }
       author { login ... on User { databaseId id } ... on Bot { databaseId id } }
@@ -1432,7 +1449,10 @@ export interface AuthenticatedS33Wave1EvidenceBundle {
   acceptedAtUtc: string;
   approval: VerifiedGitHubTrustRoot['approval'];
   authenticatedReviewBody: string;
-  branchProtectionRuleIds: readonly string[];
+  branchProtection: Readonly<{
+    url: string;
+    digestSha256: string;
+  }>;
   requiredChecks: VerifiedGitHubTrustRoot['requiredChecks'];
   reports: {
     crossReview: AuthenticatedReportBytes;
@@ -2101,44 +2121,6 @@ export function extractProdDiffAdjudication(
   });
 }
 
-function validatePremergeBranchProtection(repository: Record<string, unknown>): number {
-  const connection = record(repository.branchProtectionRules, 'Pre-merge branchProtectionRules');
-  const pageInfo = record(connection.pageInfo, 'Pre-merge branchProtectionRules.pageInfo');
-  if (pageInfo.hasNextPage === true) throw new Error('Pre-merge branchProtectionRules enumeration was truncated');
-  if (!Array.isArray(connection.nodes)) throw new Error('Pre-merge branchProtectionRules.nodes must be an array');
-  const matching = connection.nodes.map((value, index) => record(value, `Pre-merge branch rule[${index}]`))
-    .filter((rule) => {
-      const refs = record(rule.matchingRefs, 'Pre-merge branch rule matchingRefs');
-      return Array.isArray(refs.nodes)
-        && refs.nodes.some((value) => record(value, 'Pre-merge matching ref').name === 'main');
-    });
-  if (matching.length === 0) throw new Error('Pre-merge same-token query found no branch-protection rule matching main');
-  let contextCount = 0;
-  for (const rule of matching) {
-    if (rule.requiresStatusChecks !== true || !Array.isArray(rule.requiredStatusChecks)) {
-      throw new Error('Pre-merge main branch rule must expose requiredStatusChecks');
-    }
-    const legacy = Array.isArray(rule.requiredStatusCheckContexts)
-      ? rule.requiredStatusCheckContexts
-      : [];
-    const descriptions = rule.requiredStatusChecks.map((value, index) => {
-      const description = record(value, `Pre-merge required status check[${index}]`);
-      const context = nonEmptyString(description.context, `Pre-merge required status check[${index}].context`);
-      const app = record(description.app, `Pre-merge required status check ${context}.app`);
-      nonEmptyString(app.id, `Pre-merge required status check ${context}.app.id`);
-      integer(app.databaseId, `Pre-merge required status check ${context}.app.databaseId`);
-      nonEmptyString(app.slug, `Pre-merge required status check ${context}.app.slug`);
-      return context;
-    });
-    if (legacy.some((context) => !descriptions.includes(context))) {
-      throw new Error('Pre-merge main branch rule has a context without an app-qualified description');
-    }
-    contextCount += descriptions.length;
-  }
-  if (contextCount === 0) throw new Error('Pre-merge same-token query returned zero required contexts/apps');
-  return contextCount;
-}
-
 function validatePremergeFallbacks(repository: Record<string, unknown>): string[] {
   const writable: string[] = [];
   for (const identity of AUTHORITY_CONFIGURATION.fallbacks) {
@@ -2166,12 +2148,20 @@ export async function runS33PremergeApiPreflight(options: {
     throw new Error('Pre-merge same-token API preflight is fixed to ArkovaCarson PR #1529');
   }
   assertSha(options.event.pull_request.head.sha, SHA1_RE, 'Pre-merge event PR head SHA');
+  const rest = options.rest ?? ((path: string) => liveGitHubRest(options.token, path));
   const graphql = options.graphql ?? ((query: string) => liveGitHubGraphqlRecord(options.token, query));
   const data = await graphql(S33_PREMERGE_API_QUERY);
   const repository = record(data.repository, 'Pre-merge GitHub repository');
   const defaultBranch = record(repository.defaultBranchRef, 'Pre-merge defaultBranchRef');
   if (defaultBranch.name !== 'main') throw new Error('Pre-merge repository default branch must be main');
-  const requiredContextCount = validatePremergeBranchProtection(repository);
+  const defaultTarget = record(defaultBranch.target, 'Pre-merge defaultBranchRef.target');
+  const mainHeadSha = nonEmptyString(defaultTarget.oid, 'Pre-merge defaultBranchRef.target.oid');
+  assertSha(mainHeadSha, SHA1_RE, 'Pre-merge default branch head SHA');
+  const branchProtection = verifyS33MainBranchProtection(
+    await rest(FIXED_MAIN_BRANCH_PATH),
+    mainHeadSha,
+  );
+  const requiredContextCount = branchProtection.requiredStatusChecks.length;
   const pullRequest = record(repository.supportPullRequest, 'Pre-merge PR #1529');
   if (pullRequest.number !== FIXED_SUPPORT_PULL_REQUEST_NUMBER
     || pullRequest.state !== 'OPEN'
@@ -2209,7 +2199,6 @@ export async function runS33PremergeApiPreflight(options: {
     throw new Error('Pre-merge review API enumeration is truncated or malformed');
   }
   const writableFallbacks = validatePremergeFallbacks(repository);
-  const rest = options.rest ?? ((path: string) => liveGitHubRest(options.token, path));
   const workflowListing = await rest('/repos/carson-see/ArkovaCarson/actions/workflows?per_page=100');
   if (!Array.isArray(workflowListing.workflows)) {
     throw new Error('Pre-merge Actions workflow listing is malformed');
@@ -2371,11 +2360,39 @@ function authenticatedLane3AcceptanceFacts(evidence: Record<string, unknown>): {
   };
 }
 
+function authenticatedBranchProtectionFacts(evidence: Record<string, unknown>): {
+  url: typeof FIXED_MAIN_PROTECTION_URL;
+  digestSha256: string;
+} {
+  const branchProtection = record(
+    evidence.branchProtection,
+    'Authenticated GitHub evidence branchProtection',
+  );
+  assertExactKeys(
+    branchProtection,
+    ['url', 'digestSha256'],
+    'Authenticated GitHub evidence branchProtection',
+  );
+  if (branchProtection.url !== FIXED_MAIN_PROTECTION_URL) {
+    throw new Error('Authenticated GitHub evidence branchProtection URL is invalid');
+  }
+  assertSha(
+    branchProtection.digestSha256,
+    SHA256_RE,
+    'Authenticated GitHub evidence branchProtection digestSha256',
+  );
+  return {
+    url: FIXED_MAIN_PROTECTION_URL,
+    digestSha256: branchProtection.digestSha256 as string,
+  };
+}
+
 function renderEvidenceReport(evidence: Record<string, unknown>): string {
   const approval = evidence.approval as VerifiedGitHubTrustRoot['approval'];
   const checks = evidence.requiredChecks as VerifiedGitHubTrustRoot['requiredChecks'];
   const reports = evidence.workflowReports as Record<string, { rawSha256: string; canonicalSha256: string }>;
   const lane3 = authenticatedLane3AcceptanceFacts(evidence);
+  const branchProtection = authenticatedBranchProtectionFacts(evidence);
   const lines = [
     '# S3.3 Wave-1 GitHub-authenticated evidence',
     '',
@@ -2385,6 +2402,7 @@ function renderEvidenceReport(evidence: Record<string, unknown>): string {
     `- Producer tree: ${String(evidence.producerTreeSha)}`,
     `- Manifest raw SHA-256: ${String(evidence.manifestRawSha256)}`,
     `- Manifest canonical SHA-256: ${String(evidence.manifestCanonicalSha256)}`,
+    `- Branch protection: ${branchProtection.url} (digest ${branchProtection.digestSha256})`,
     `- Reviewer: ${approval.reviewer.login} (databaseId ${approval.reviewer.databaseId}; nodeId ${approval.reviewer.id})`,
     `- Review: ${approval.reviewId}`,
     `- Lane-3 acceptance artifact digest: ${lane3.artifactDigestSha256}`,
@@ -2433,6 +2451,8 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
   const manifest = deriveManifestFacts(producerRepositoryRoot);
   const graphql = options.graphql ?? ((query: string) => liveGitHubGraphql(options.token, query));
   const snapshot = await graphql(S33_GITHUB_EVIDENCE_QUERY);
+  const rest = options.rest ?? ((path: string) => liveGitHubRest(options.token, path));
+  const mainBranch = await rest(FIXED_MAIN_BRANCH_PATH);
   const supportMergeSha = snapshot.repository?.supportPullRequest?.mergeCommit?.oid;
   let supportMergeIsAncestorOfMain = false;
   if (typeof supportMergeSha === 'string') {
@@ -2452,7 +2472,7 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     manifestRawSha256: manifest.manifestRawSha256,
     manifestEntryIds: manifest.manifestEntryIds,
   };
-  const trust = verifyGitHubTrustRoot(snapshot, facts);
+  const trust = verifyGitHubTrustRoot(snapshot, facts, mainBranch);
   const reportPaths = {
     crossReviewPlan: join(reportDirectory, WORKFLOW_REPORT_FILENAMES.crossReviewPlan),
     prodModelDiff: join(reportDirectory, WORKFLOW_REPORT_FILENAMES.prodModelDiff),
@@ -2476,7 +2496,7 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     manifestRawSha256: manifest.manifestRawSha256,
     prerequisiteDirectory,
     storedInventory,
-    rest: options.rest,
+    rest,
     download: options.download,
   });
   const embeddingPayload = reports.embeddingDiagnostic.parsed.payload;
@@ -2546,7 +2566,7 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     acceptedAtUtc: trust.approval.submittedAt,
     approval: trust.approval,
     authenticatedReviewBody: trust.authenticatedReviewBody,
-    branchProtectionRuleIds: trust.branchProtectionRuleIds,
+    branchProtection: { ...trust.branchProtection },
     requiredChecks: trust.requiredChecks,
     reports: {
       crossReview: {
@@ -2674,7 +2694,7 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     manifestPath: FIXED_MANIFEST_PATH,
     manifestRawSha256: manifest.manifestRawSha256,
     manifestCanonicalSha256: manifest.manifestCanonicalSha256,
-    branchProtectionRuleIds: trust.branchProtectionRuleIds,
+    branchProtection: { ...trust.branchProtection },
     requiredChecks: trust.requiredChecks,
     approval: trust.approval,
     prodDiffAdjudication,
@@ -2711,7 +2731,24 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
   assertCanonicalUploadInventory(outputDirectory);
 }
 
-function renderComment(outputDirectory: string): void {
+export interface S33Wave1GitHubActionsEnvironment {
+  GITHUB_ACTIONS: string | undefined;
+  GITHUB_REPOSITORY: string | undefined;
+  GITHUB_TOKEN: string | undefined;
+  GITHUB_EVENT_NAME: string | undefined;
+  GITHUB_EVENT_PATH: string | undefined;
+  GITHUB_REF: string | undefined;
+  GITHUB_WORKSPACE: string | undefined;
+  RUNNER_TEMP: string | undefined;
+  S33_UPLOAD_ARTIFACT_ID: string | undefined;
+  S33_UPLOAD_ARTIFACT_URL: string | undefined;
+  S33_UPLOAD_ARTIFACT_DIGEST: string | undefined;
+}
+
+function renderComment(
+  outputDirectory: string,
+  environment: Readonly<S33Wave1GitHubActionsEnvironment>,
+): void {
   const evidencePath = join(realpathSync(outputDirectory), OUTPUT_FILENAMES.githubEvidence);
   const evidenceBytes = readFileSync(evidencePath);
   const evidence = parseJsonBytes(evidenceBytes, 'Authenticated GitHub evidence');
@@ -2719,9 +2756,9 @@ function renderComment(outputDirectory: string): void {
   if (!Buffer.from(evidenceBytes).equals(Buffer.from(canonical, 'utf8'))) {
     throw new Error('Authenticated GitHub evidence bytes are not canonical');
   }
-  const artifactId = nonEmptyString(process.env.S33_UPLOAD_ARTIFACT_ID, 'S33_UPLOAD_ARTIFACT_ID');
-  const artifactUrl = assertHttpsUrl(process.env.S33_UPLOAD_ARTIFACT_URL, 'S33_UPLOAD_ARTIFACT_URL');
-  const artifactDigest = nonEmptyString(process.env.S33_UPLOAD_ARTIFACT_DIGEST, 'S33_UPLOAD_ARTIFACT_DIGEST')
+  const artifactId = nonEmptyString(environment.S33_UPLOAD_ARTIFACT_ID, 'S33_UPLOAD_ARTIFACT_ID');
+  const artifactUrl = assertHttpsUrl(environment.S33_UPLOAD_ARTIFACT_URL, 'S33_UPLOAD_ARTIFACT_URL');
+  const artifactDigest = nonEmptyString(environment.S33_UPLOAD_ARTIFACT_DIGEST, 'S33_UPLOAD_ARTIFACT_DIGEST')
     .replace(/^sha256:/u, '');
   assertSha(artifactDigest, SHA256_RE, 'Uploaded artifact SHA-256');
   const approval = evidence.approval as VerifiedGitHubTrustRoot['approval'];
@@ -2729,6 +2766,7 @@ function renderComment(outputDirectory: string): void {
   const workflowReports = evidence.workflowReports as Record<string, { rawSha256: string; canonicalSha256: string }>;
   const crossReview = evidence.crossReview as { rawSha256: string; canonicalSha256: string };
   const lane3 = authenticatedLane3AcceptanceFacts(evidence);
+  const branchProtection = authenticatedBranchProtectionFacts(evidence);
   const lines = [
     '<!-- arkova-s33-wave1-github-evidence -->',
     '### S3.3 Wave-1 authenticated evidence (new immutable run comment)',
@@ -2738,6 +2776,7 @@ function renderComment(outputDirectory: string): void {
     `- GitHub evidence raw/canonical SHA-256: \`${sha256(evidenceBytes)}\``,
     `- Producer head/tree: \`${String(evidence.producerHeadSha)}\` / \`${String(evidence.producerTreeSha)}\``,
     `- Manifest raw/canonical SHA-256: \`${String(evidence.manifestRawSha256)}\` / \`${String(evidence.manifestCanonicalSha256)}\``,
+    `- Branch protection: [fixed main rule](${branchProtection.url}); digest \`${branchProtection.digestSha256}\``,
     `- APPROVED review: \`${approval.reviewId}\`; reviewer \`${approval.reviewer.login}\` (databaseId \`${approval.reviewer.databaseId}\`, nodeId \`${approval.reviewer.id}\`)`,
     `- Cross-review raw/canonical SHA-256: \`${crossReview.rawSha256}\` / \`${crossReview.canonicalSha256}\``,
     `- Lane-3 acceptance artifact digest: \`${lane3.artifactDigestSha256}\``,
@@ -2797,31 +2836,34 @@ export function parseS33Wave1GitHubEvidenceCliArgs(argv: readonly string[]): {
   return { command, values };
 }
 
-export async function runS33Wave1GitHubEvidenceCli(argv: readonly string[]): Promise<void> {
+export async function runS33Wave1GitHubEvidenceCli(
+  argv: readonly string[],
+  environment: Readonly<S33Wave1GitHubActionsEnvironment>,
+): Promise<void> {
   const cli = parseS33Wave1GitHubEvidenceCliArgs(argv);
-  if (process.env.GITHUB_ACTIONS !== 'true' || process.env.GITHUB_REPOSITORY !== FIXED_REPOSITORY) {
+  if (environment.GITHUB_ACTIONS !== 'true' || environment.GITHUB_REPOSITORY !== FIXED_REPOSITORY) {
     throw new Error('S3.3 Wave-1 GitHub evidence may run only inside the fixed Arkova GitHub Actions workflow');
   }
-  const token = nonEmptyString(process.env.GITHUB_TOKEN, 'GITHUB_TOKEN');
+  const token = nonEmptyString(environment.GITHUB_TOKEN, 'GITHUB_TOKEN');
   if (cli.command === 'preflight') {
-    if (process.env.GITHUB_EVENT_NAME !== 'pull_request') {
+    if (environment.GITHUB_EVENT_NAME !== 'pull_request') {
       throw new Error('S3.3 same-token preflight may run only on the #1529 pull_request event');
     }
-    const eventPath = realpathSync(nonEmptyString(process.env.GITHUB_EVENT_PATH, 'GITHUB_EVENT_PATH'));
+    const eventPath = realpathSync(nonEmptyString(environment.GITHUB_EVENT_PATH, 'GITHUB_EVENT_PATH'));
     const event = parseJsonBytes(readFileSync(eventPath), 'GitHub pull_request event') as unknown as PremergePullRequestEvent;
     const result = await runS33PremergeApiPreflight({ token, event });
     process.stdout.write(`S3.3 pre-merge API preflight: PASS — requiredContexts=${result.requiredContextCount}, checks=${result.checkContextCount}, reviews=${result.reviewCount}, writableFallbacks=${result.writableFallbacks.join(',')}, listedWorkflows=${result.listedWorkflowCount}, prerequisiteWorkflowRegistered=${result.prerequisiteWorkflowRegistered}, artifacts=${result.artifactCount}\n`);
     return;
   }
-  if (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || process.env.GITHUB_REF !== 'refs/heads/main') {
+  if (environment.GITHUB_EVENT_NAME !== 'workflow_dispatch' || environment.GITHUB_REF !== 'refs/heads/main') {
     throw new Error('S3.3 Wave-1 acceptance may run only from workflow_dispatch on trusted main');
   }
   if (cli.command === 'render-comment') {
-    renderComment(cli.values.get('--output-directory')!);
+    renderComment(cli.values.get('--output-directory')!, environment);
     return;
   }
-  const workspace = realpathSync(nonEmptyString(process.env.GITHUB_WORKSPACE, 'GITHUB_WORKSPACE'));
-  const runnerTemp = realpathSync(nonEmptyString(process.env.RUNNER_TEMP, 'RUNNER_TEMP'));
+  const workspace = realpathSync(nonEmptyString(environment.GITHUB_WORKSPACE, 'GITHUB_WORKSPACE'));
+  const runnerTemp = realpathSync(nonEmptyString(environment.RUNNER_TEMP, 'RUNNER_TEMP'));
   const expectedPaths = {
     main: workspace,
     producer: join(runnerTemp, 's33-producer.git'),

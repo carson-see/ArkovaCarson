@@ -23,11 +23,13 @@ import {
   parseS33Wave1GitHubEvidenceCliArgs,
   runS33PremergeApiPreflight,
   recursivelyFreeze,
+  S33_GITHUB_EVIDENCE_QUERY,
   S33_PREMERGE_API_QUERY,
   verifyS33PrerequisiteInventory,
   validatePrerequisiteWorkflowIdentity,
   validateS33AuthorityRulings,
   verifyGitHubTrustRoot,
+  verifyS33MainBranchProtection,
   type GitHubEvidenceSnapshot,
 } from '../../services/worker/src/ai/eval/s33-wave1-github-evidence.js';
 
@@ -47,6 +49,7 @@ const REVIEWER = {
   id: 'BOT_kgDOC98s_g',
 };
 const ENTRY_IDS = Array.from({ length: 81 }, (_, index) => `GD-S33-${String(index + 1).padStart(3, '0')}`);
+const MAIN_PROTECTION_URL = 'https://api.github.com/repos/carson-see/ArkovaCarson/branches/main/protection';
 
 function sha256(value: string | Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
@@ -97,16 +100,6 @@ function snapshot(): GitHubEvidenceSnapshot {
   return {
     repository: {
       defaultBranchRef: { name: 'main', target: { oid: MAIN } },
-      branchProtectionRules: {
-        nodes: [{
-          id: 'BPR_main',
-          pattern: 'main',
-          requiresStatusChecks: true,
-          requiredStatusCheckContexts: ['TypeCheck & Lint'],
-          requiredStatusChecks: [{ context: 'TypeCheck & Lint', app: APP }],
-          matchingRefs: { nodes: [{ name: 'main' }] },
-        }],
-      },
       pullRequest: {
         number: FIXED_PULL_REQUEST_NUMBER,
         state: 'OPEN',
@@ -179,15 +172,133 @@ function snapshot(): GitHubEvidenceSnapshot {
   };
 }
 
-function verify(value = snapshot()) {
+function mainBranchResponse(
+  headSha = MAIN,
+  checks: Array<{ context: string; app_id: number }> = [{ context: 'TypeCheck & Lint', app_id: APP.databaseId }],
+): Record<string, unknown> {
+  return {
+    name: 'main',
+    commit: { sha: headSha },
+    protected: true,
+    protection: {
+      enabled: true,
+      required_status_checks: {
+        enforcement_level: 'non_admins',
+        contexts: checks.map(({ context }) => context),
+        checks,
+      },
+    },
+    protection_url: MAIN_PROTECTION_URL,
+  };
+}
+
+interface MutableMainBranchResponse extends Record<string, unknown> {
+  commit?: Record<string, unknown>;
+  protection?: Record<string, unknown>;
+}
+
+function requiredStatusChecksOf(value: MutableMainBranchResponse): Record<string, unknown> {
+  return value.protection?.required_status_checks as Record<string, unknown>;
+}
+
+function requiredCheckRowsOf(value: MutableMainBranchResponse): Array<Record<string, unknown>> {
+  return requiredStatusChecksOf(value).checks as Array<Record<string, unknown>>;
+}
+
+function legacyContextRowsOf(value: MutableMainBranchResponse): unknown[] {
+  return requiredStatusChecksOf(value).contexts as unknown[];
+}
+
+function expectedMainBranchProtectionDigest(
+  headSha: string,
+  checks: Array<{ context: string; app_id: number }> = [{ context: 'TypeCheck & Lint', app_id: APP.databaseId }],
+): string {
+  const requiredStatusChecks = checks.map(({ context, app_id: appId }) => ({ context, appId }))
+    .sort((left, right) => left.context.localeCompare(right.context) || left.appId - right.appId);
+  return sha256(canonicaliseJson({
+    name: 'main',
+    headSha,
+    protected: true,
+    protectionEnabled: true,
+    protectionUrl: MAIN_PROTECTION_URL,
+    requiredStatusChecks,
+  }));
+}
+
+function verify(value = snapshot(), branch: unknown = mainBranchResponse()) {
   return verifyGitHubTrustRoot(value, {
     localMainHeadSha: MAIN,
     localProducerHeadSha: HEAD,
     supportMergeIsAncestorOfMain: true,
     manifestRawSha256: MANIFEST_SHA,
     manifestEntryIds: ENTRY_IDS,
-  });
+  }, branch);
 }
+
+describe('verifyS33MainBranchProtection', () => {
+  it('accepts the live GET branches/main shape and hashes only the exact sorted CTO projection', () => {
+    const live = mainBranchResponse(MAIN, [
+      { context: 'TypeCheck & Lint', app_id: 15368 },
+      { context: 'AI Eval Regression Gate', app_id: 12526 },
+    ]);
+    Object.assign(live, {
+      _links: { self: 'https://api.github.com/repos/carson-see/ArkovaCarson/branches/main' },
+      irrelevant_future_field: 'not evidence',
+    });
+    const protection = (live.protection as Record<string, unknown>);
+    (protection.required_status_checks as Record<string, unknown>).enforcement_level = 'future-value-is-not-bound';
+    const result = verifyS33MainBranchProtection(live, MAIN);
+    expect(result.requiredStatusChecks).toEqual([
+      { context: 'AI Eval Regression Gate', appId: 12526 },
+      { context: 'TypeCheck & Lint', appId: 15368 },
+    ]);
+    expect(result.branchProtection).toEqual({
+      url: MAIN_PROTECTION_URL,
+      digestSha256: sha256(canonicaliseJson({
+        name: 'main',
+        headSha: MAIN,
+        protected: true,
+        protectionEnabled: true,
+        protectionUrl: MAIN_PROTECTION_URL,
+        requiredStatusChecks: [
+          { context: 'AI Eval Regression Gate', appId: 12526 },
+          { context: 'TypeCheck & Lint', appId: 15368 },
+        ],
+      })),
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.requiredStatusChecks)).toBe(true);
+  });
+
+  it.each([
+    ['wrong branch', (value: MutableMainBranchResponse) => { value.name = 'develop'; }, /identify main/i],
+    ['missing commit', (value: MutableMainBranchResponse) => { delete value.commit; }, /commit must be an object/i],
+    ['stale head', (value: MutableMainBranchResponse) => { value.commit!.sha = '9'.repeat(40); }, /REST head/i],
+    ['unprotected', (value: MutableMainBranchResponse) => { value.protected = false; }, /must be protected/i],
+    ['missing protection', (value: MutableMainBranchResponse) => { delete value.protection; }, /protection must be an object/i],
+    ['disabled', (value: MutableMainBranchResponse) => { value.protection!.enabled = false; }, /must be enabled/i],
+    ['wrong URL', (value: MutableMainBranchResponse) => { value.protection_url = 'https://api.github.com/repos/other/repo/branches/main/protection'; }, /fixed repository branch/i],
+    ['missing required status checks', (value: MutableMainBranchResponse) => { delete value.protection!.required_status_checks; }, /required_status_checks must be an object/i],
+    ['malformed checks', (value: MutableMainBranchResponse) => { requiredStatusChecksOf(value).checks = 'invalid'; }, /legacy contexts and app-qualified checks/i],
+    ['empty checks', (value: MutableMainBranchResponse) => {
+      requiredStatusChecksOf(value).contexts = [];
+      requiredStatusChecksOf(value).checks = [];
+    }, /zero required/i],
+    ['missing app id', (value: MutableMainBranchResponse) => { delete requiredCheckRowsOf(value)[0].app_id; }, /safe integer/i],
+    ['string app id', (value: MutableMainBranchResponse) => { requiredCheckRowsOf(value)[0].app_id = '15368'; }, /safe integer/i],
+    ['unsafe app id', (value: MutableMainBranchResponse) => { requiredCheckRowsOf(value)[0].app_id = Number.MAX_SAFE_INTEGER + 1; }, /safe integer/i],
+    ['nonpositive app id', (value: MutableMainBranchResponse) => { requiredCheckRowsOf(value)[0].app_id = 0; }, /must be positive/i],
+    ['duplicate check context', (value: MutableMainBranchResponse) => {
+      legacyContextRowsOf(value).push('TypeCheck & Lint');
+      requiredCheckRowsOf(value).push({ context: 'TypeCheck & Lint', app_id: 12526 });
+    }, /must be unique/i],
+    ['legacy drift', (value: MutableMainBranchResponse) => { legacyContextRowsOf(value)[0] = 'Different'; }, /legacy contexts.*exactly match/i],
+  ])('fails closed on %s', (_case, mutate, message) => {
+    const value = mainBranchResponse() as MutableMainBranchResponse;
+    mutate(value);
+    expect(() => verifyS33MainBranchProtection(value, MAIN)).toThrow(message);
+  });
+});
 
 describe('verifyGitHubTrustRoot', () => {
   it('binds the live main protection rule, exact-head required check app, and primary approval', () => {
@@ -195,6 +306,10 @@ describe('verifyGitHubTrustRoot', () => {
     expect(result.repositoryIdentity).toBe(FIXED_REPOSITORY);
     expect(result.pullRequestNumber).toBe(FIXED_PULL_REQUEST_NUMBER);
     expect(result.producerHeadSha).toBe(HEAD);
+    expect(result.branchProtection).toEqual(expect.objectContaining({
+      url: MAIN_PROTECTION_URL,
+      digestSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    }));
     expect(result.requiredChecks).toEqual([expect.objectContaining({
       name: 'TypeCheck & Lint',
       checkRunId: 'CR_required',
@@ -221,6 +336,11 @@ describe('verifyGitHubTrustRoot', () => {
       mutate(value);
       expect(() => verify(value)).toThrow(expected);
     }
+
+    expect(() => verify(
+      snapshot(),
+      mainBranchResponse(MAIN, [{ context: 'TypeCheck & Lint', app_id: 999 }]),
+    )).toThrow(/app mismatch/i);
   });
 
   it('selects only the unique latest duplicate and rejects an ambiguous latest timestamp', () => {
@@ -260,7 +380,7 @@ describe('verifyGitHubTrustRoot', () => {
       supportMergeIsAncestorOfMain: true,
       manifestRawSha256: MANIFEST_SHA,
       manifestEntryIds: ENTRY_IDS,
-    })).toThrow(/producer checkout.*exact GitHub head/i);
+    }, mainBranchResponse())).toThrow(/producer checkout.*exact GitHub head/i);
 
     expect(() => verifyGitHubTrustRoot(snapshot(), {
       localMainHeadSha: MAIN,
@@ -268,7 +388,7 @@ describe('verifyGitHubTrustRoot', () => {
       supportMergeIsAncestorOfMain: false,
       manifestRawSha256: MANIFEST_SHA,
       manifestEntryIds: ENTRY_IDS,
-    })).toThrow(/#1529 merge commit.*ancestor/i);
+    }, mainBranchResponse())).toThrow(/#1529 merge commit.*ancestor/i);
   });
 
   it('rejects an author/committer as reviewer and checks fallback WRITE live', () => {
@@ -325,6 +445,7 @@ describe('verifyGitHubTrustRoot', () => {
 
 const tempDirectories: string[] = [];
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.doUnmock('../../services/worker/src/ai/eval/s33-batch-acceptance.js');
   vi.resetModules();
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
@@ -467,17 +588,6 @@ function premergeData(): Record<string, unknown> {
   return {
     repository: {
       defaultBranchRef: { name: 'main', target: { oid: MAIN } },
-      branchProtectionRules: {
-        pageInfo: { hasNextPage: false },
-        nodes: [{
-          id: 'BPR_main',
-          pattern: 'main',
-          requiresStatusChecks: true,
-          requiredStatusCheckContexts: ['TypeCheck & Lint'],
-          requiredStatusChecks: [{ context: 'TypeCheck & Lint', app: APP }],
-          matchingRefs: { nodes: [{ name: 'main' }] },
-        }],
-      },
       supportPullRequest: {
         number: 1529,
         state: 'OPEN',
@@ -528,6 +638,7 @@ describe('runS33PremergeApiPreflight', () => {
   it('uses injected same-token GraphQL/REST enumerators without network or acceptance side effects', async () => {
     const graphql = vi.fn(async () => premergeData());
     const rest = vi.fn(async (path: string) => {
+      if (path.endsWith('/branches/main')) return mainBranchResponse();
       if (path.endsWith('/actions/workflows?per_page=100')) {
         return { total_count: 1, workflows: [{ id: 12, path: '.github/workflows/ci.yml' }] };
       }
@@ -544,8 +655,9 @@ describe('runS33PremergeApiPreflight', () => {
     });
     expect(graphql).toHaveBeenCalledOnce();
     expect(graphql).toHaveBeenCalledWith(S33_PREMERGE_API_QUERY);
-    expect(rest).toHaveBeenNthCalledWith(1, '/repos/carson-see/ArkovaCarson/actions/workflows?per_page=100');
-    expect(rest).toHaveBeenNthCalledWith(2, '/repos/carson-see/ArkovaCarson/actions/artifacts?per_page=1');
+    expect(rest).toHaveBeenNthCalledWith(1, '/repos/carson-see/ArkovaCarson/branches/main');
+    expect(rest).toHaveBeenNthCalledWith(2, '/repos/carson-see/ArkovaCarson/actions/workflows?per_page=100');
+    expect(rest).toHaveBeenNthCalledWith(3, '/repos/carson-see/ArkovaCarson/actions/artifacts?per_page=1');
     expect(result).toEqual({
       requiredContextCount: 1,
       checkContextCount: 1,
@@ -562,19 +674,31 @@ describe('runS33PremergeApiPreflight', () => {
       repository: { full_name: FIXED_REPOSITORY },
       pull_request: { number: 1529, head: { sha: HEAD } },
     };
-    const rest = async (path: string) => path.endsWith('/actions/workflows?per_page=100')
-      ? { total_count: 1, workflows: [{ id: 12, path: '.github/workflows/ci.yml' }] }
-      : { total_count: 0, artifacts: [] };
+    const rest = async (path: string) => {
+      if (path.endsWith('/branches/main')) return mainBranchResponse();
+      return path.endsWith('/actions/workflows?per_page=100')
+        ? { total_count: 1, workflows: [{ id: 12, path: '.github/workflows/ci.yml' }] }
+        : { total_count: 0, artifacts: [] };
+    };
 
     const stale = premergeData();
     (stale.repository as any).supportPullRequest.headRefOid = '9'.repeat(40);
     await expect(runS33PremergeApiPreflight({ token: 'x', event, graphql: async () => stale, rest }))
       .rejects.toThrow(/exact #1529 event head/i);
 
-    const missingApp = premergeData();
-    (missingApp.repository as any).branchProtectionRules.nodes[0].requiredStatusChecks[0].app = null;
-    await expect(runS33PremergeApiPreflight({ token: 'x', event, graphql: async () => missingApp, rest }))
-      .rejects.toThrow(/must be an object/i);
+    const missingAppRest = async (path: string) => {
+      if (path.endsWith('/branches/main')) {
+        const response = mainBranchResponse();
+        delete (((response.protection as Record<string, unknown>).required_status_checks as {
+          checks: Array<Record<string, unknown>>;
+        }).checks[0].app_id);
+        return response;
+      }
+      return await rest(path);
+    };
+    await expect(runS33PremergeApiPreflight({
+      token: 'x', event, graphql: async () => premergeData(), rest: missingAppRest,
+    })).rejects.toThrow(/safe integer/i);
 
     const noWrite = premergeData();
     (noWrite.repository as any).bestNessie.edges[0].permission = 'READ';
@@ -582,12 +706,30 @@ describe('runS33PremergeApiPreflight', () => {
     await expect(runS33PremergeApiPreflight({ token: 'x', event, graphql: async () => noWrite, rest }))
       .rejects.toThrow(/no exact fallback.*WRITE/i);
 
-    const unexpectedlyRegistered = async (path: string) => path.endsWith('/actions/workflows?per_page=100')
-      ? { total_count: 1, workflows: [{ id: 77, path: '.github/workflows/s33-wave1-prerequisites.yml' }] }
-      : { total_count: 0, artifacts: [] };
+    const unexpectedlyRegistered = async (path: string) => {
+      if (path.endsWith('/branches/main')) return mainBranchResponse();
+      return path.endsWith('/actions/workflows?per_page=100')
+        ? { total_count: 1, workflows: [{ id: 77, path: '.github/workflows/s33-wave1-prerequisites.yml' }] }
+        : { total_count: 0, artifacts: [] };
+    };
     await expect(runS33PremergeApiPreflight({
       token: 'x', event, graphql: async () => premergeData(), rest: unexpectedlyRegistered,
     })).rejects.toThrow(/unexpectedly already has a numeric/i);
+  });
+
+  it('fails closed when the same Actions token is denied GET branches/main', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ message: 'Resource not accessible by integration' }),
+      { status: 403, headers: { 'content-type': 'application/json' } },
+    )));
+    await expect(runS33PremergeApiPreflight({
+      token: 'denied-token',
+      event: {
+        repository: { full_name: FIXED_REPOSITORY },
+        pull_request: { number: 1529, head: { sha: HEAD } },
+      },
+      graphql: async () => premergeData(),
+    })).rejects.toThrow(/REST.*branches\/main.*HTTP 403/i);
   });
 });
 
@@ -1288,6 +1430,7 @@ async function createBrandedIntegrationHarness(): Promise<BrandedIntegrationHarn
     ],
   };
   const rest = async (path: string): Promise<Record<string, unknown>> => {
+    if (path.endsWith('/branches/main')) return mainBranchResponse(main.mainHeadSha);
     if (path.endsWith('/actions/workflows/s33-wave1-prerequisites.yml')) {
       return { id: INTEGRATION_WORKFLOW_ID, path: '.github/workflows/s33-wave1-prerequisites.yml', state: 'active' };
     }
@@ -1382,7 +1525,7 @@ function syntheticAcceptanceRecord(evidence: unknown): Readonly<Record<string, u
       supportPullRequestNumber: 1529,
       supportMergeCommitSha: evidence.supportMergeCommitSha,
       supportMergeIsAncestorOfMain: true,
-      branchProtectionRuleIds: [...evidence.branchProtectionRuleIds],
+      branchProtection: { ...evidence.branchProtection },
     },
     manifestEntryIds: [...evidence.manifestEntryIds],
     githubAuthentication: evidence.approval,
@@ -1420,6 +1563,10 @@ describe('authenticated same-process two-repository integration', { timeout: 30_
       expect(evidence.manifestCanonicalSha256).toBe(expectedProducer.manifestCanonicalSha256);
       expect(evidence.trustedMainHeadSha).toBe(harness.mainHeadSha);
       expect(evidence.supportMergeCommitSha).toBe(harness.supportMergeCommitSha);
+      expect(evidence.branchProtection).toEqual({
+        url: MAIN_PROTECTION_URL,
+        digestSha256: expectedMainBranchProtectionDigest(harness.mainHeadSha),
+      });
       expect(evidence.manifestEntryIds).toEqual(syntheticIntegrationEntryIds());
       expect(evidence.prerequisiteInventory.run).toEqual(expect.objectContaining({
         id: INTEGRATION_RUN_ID,
@@ -1458,6 +1605,21 @@ describe('authenticated same-process two-repository integration', { timeout: 30_
       revision: 0,
     }));
     expect((acceptance.trustedMain as Record<string, unknown>).headSha).toBe(harness.mainHeadSha);
+    expect((acceptance.trustedMain as Record<string, unknown>).branchProtection).toEqual({
+      url: MAIN_PROTECTION_URL,
+      digestSha256: expectedMainBranchProtectionDigest(harness.mainHeadSha),
+    });
+    const githubEvidence = JSON.parse(readFileSync(
+      join(harness.outputDirectory, 'github-evidence.json'),
+      'utf8',
+    )) as Record<string, unknown>;
+    expect(githubEvidence.branchProtection).toEqual({
+      url: MAIN_PROTECTION_URL,
+      digestSha256: expectedMainBranchProtectionDigest(harness.mainHeadSha),
+    });
+    const report = readFileSync(join(harness.outputDirectory, 'github-evidence-report.md'), 'utf8');
+    expect(report).toContain(MAIN_PROTECTION_URL);
+    expect(report).toContain(expectedMainBranchProtectionDigest(harness.mainHeadSha));
     expect(readdirSync(harness.outputDirectory).sort()).toEqual([
       'cross-review-plan.json',
       'cross-review.json',
@@ -1596,10 +1758,10 @@ describe('s33-wave1-acceptance workflow contract', () => {
     expect(workflow).toContain('refs/pull/1498/head:refs/heads/producer');
     expect(workflow).not.toMatch(/working-directory:\s*\.s33-producer|npm\s+ci[^\n]*\.s33-producer|npx[^\n]*\.s33-producer\/services/u);
     expect(workflow).toContain('services/worker/src/ai/eval/s33-wave1-workflow-reports.ts');
-    expect(workflow).toContain('S33_REPOSITORY_ROOT: ${{ runner.temp }}/s33-producer.git');
-    expect(workflow).toContain('S33_PROD_MODEL_DIFF_FINAL_PATH: ${{ runner.temp }}/s33-wave1-prerequisites/prod-model-diff.json');
+    expect(workflow).toContain('--repository-root "${RUNNER_TEMP}/s33-producer.git"');
+    expect(workflow).toContain('--prod-model-diff-final-path "${RUNNER_TEMP}/s33-wave1-prerequisites/prod-model-diff.json"');
     expect(workflow).toContain("'services/worker/src/ai/eval/s33-wave1-github-evidence.ts'");
-    expect(workflow).toContain('S33_EMBEDDING_DIAGNOSTIC_FINAL_PATH: ${{ runner.temp }}/s33-wave1-prerequisites/embedding-diagnostic.json');
+    expect(workflow).toContain('--embedding-diagnostic-final-path "${RUNNER_TEMP}/s33-wave1-prerequisites/embedding-diagnostic.json"');
     expect(workflow).not.toContain('S33_PROD_MODEL_DIFF_RAW_PATH');
     expect(workflow).toContain('ref: ${{ github.sha }}');
     expect(workflow).toContain('fetch-depth: 0');
@@ -1681,8 +1843,20 @@ describe('S3.3 authenticated module graph', () => {
     const acceptance = readFileSync('services/worker/src/ai/eval/s33-batch-acceptance.ts', 'utf8');
 
     expect(wrapper).toContain("from '../../services/worker/src/ai/eval/s33-wave1-github-evidence.js'");
-    expect(wrapper).toContain('runS33Wave1GitHubEvidenceCli(process.argv.slice(2))');
+    expect(wrapper).toContain('runS33Wave1GitHubEvidenceCli(process.argv.slice(2), environment)');
     expect(wrapper).not.toMatch(/WeakSet|registerAuthenticated|createS33Wave1AcceptanceArtifact/u);
+    expect(auth).not.toContain('process.env');
+    expect(wrapper).toContain('recursivelyFreeze({');
+    const capturedEnvironmentNames = [...wrapper.matchAll(/process\.env\.([A-Z0-9_]+)/gu)]
+      .map((match) => match[1]);
+    expect(capturedEnvironmentNames).toEqual([
+      'GITHUB_ACTIONS', 'GITHUB_REPOSITORY', 'GITHUB_TOKEN', 'GITHUB_EVENT_NAME',
+      'GITHUB_EVENT_PATH', 'GITHUB_REF', 'GITHUB_WORKSPACE', 'RUNNER_TEMP',
+      'S33_UPLOAD_ARTIFACT_ID', 'S33_UPLOAD_ARTIFACT_URL', 'S33_UPLOAD_ARTIFACT_DIGEST',
+    ]);
+
+    expect(S33_GITHUB_EVIDENCE_QUERY).not.toContain('branchProtectionRules');
+    expect(S33_PREMERGE_API_QUERY).not.toContain('branchProtectionRules');
 
     expect(auth).not.toMatch(/from\s+['"]\.\/s33-batch-acceptance\.js['"]/u);
     const brand = auth.indexOf('const authenticatedBundle = registerAuthenticatedS33Wave1EvidenceBundle');

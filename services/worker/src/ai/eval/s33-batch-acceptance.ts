@@ -375,7 +375,10 @@ export interface S33Wave1AuthenticatedAcceptanceArtifact
     supportPullRequestNumber: 1529;
     supportMergeCommitSha: string;
     supportMergeIsAncestorOfMain: true;
-    branchProtectionRuleIds: readonly string[];
+    branchProtection: Readonly<{
+      url: string;
+      digestSha256: string;
+    }>;
   }>;
   manifestEntryIds: readonly string[];
   githubAuthentication: Readonly<{
@@ -4319,6 +4322,24 @@ function decodeAuthenticatedReport(
   return decoded;
 }
 
+export function validateS33AuthenticatedBranchProtection(value: unknown): Readonly<{
+  url: 'https://api.github.com/repos/carson-see/ArkovaCarson/branches/main/protection';
+  digestSha256: string;
+}> {
+  const branchProtection = recordValue(value, 'Authenticated branch protection evidence');
+  assertExactKeys(
+    branchProtection,
+    ['url', 'digestSha256'],
+    'Authenticated branch protection evidence',
+  );
+  const url = 'https://api.github.com/repos/carson-see/ArkovaCarson/branches/main/protection' as const;
+  if (branchProtection.url !== url) {
+    throw new Error('Authenticated branch protection URL must identify the fixed main branch');
+  }
+  assertSha256(branchProtection.digestSha256, 'Authenticated branch protection digest SHA-256');
+  return deepFreeze({ url, digestSha256: branchProtection.digestSha256 as string });
+}
+
 /**
  * Production Wave-1 acceptance owner. Only Team 2's live GitHub verifier can
  * construct the WeakSet-branded bundle accepted here; JSON/plain-object callers
@@ -4334,7 +4355,7 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
     'trustedMainHeadSha', 'supportMergeCommitSha', 'supportMergeIsAncestorOfMain',
     'producerHeadSha', 'producerTreeSha', 'manifestPath', 'manifestRawSha256',
     'manifestCanonicalSha256', 'manifestEntryIds', 'acceptedAtUtc', 'approval',
-    'authenticatedReviewBody', 'branchProtectionRuleIds', 'requiredChecks', 'reports',
+    'authenticatedReviewBody', 'branchProtection', 'requiredChecks', 'reports',
     'prodDiffAdjudication', 'prerequisiteInventory',
   ], 'Authenticated Wave-1 evidence bundle');
   if (evidence.repositoryIdentity !== 'carson-see/ArkovaCarson'
@@ -4363,7 +4384,7 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
     || !authenticatedReviewBody.includes(`<!-- ${PROD_DIFF_ADJUDICATION_MARKER} -->`)) {
     throw new Error('Authenticated Lane-3 review body is missing its fixed acceptance/adjudication markers');
   }
-  assertUniqueIds(evidence.branchProtectionRuleIds, 'Authenticated branch-protection rule ids');
+  const branchProtection = validateS33AuthenticatedBranchProtection(evidence.branchProtection);
   try {
     const trustedMainRoot = realpathSync(evidence.trustedMainRepositoryRoot);
     if (trustedMainRoot !== evidence.trustedMainRepositoryRoot) {
@@ -4491,7 +4512,10 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
         supportPullRequestNumber: 1529 as const,
         supportMergeCommitSha: evidence.supportMergeCommitSha,
         supportMergeIsAncestorOfMain: true as const,
-        branchProtectionRuleIds: [...evidence.branchProtectionRuleIds],
+        branchProtection: {
+          url: branchProtection.url,
+          digestSha256: branchProtection.digestSha256,
+        },
       },
       manifestEntryIds: [...evidence.manifestEntryIds],
       githubAuthentication: {

@@ -38,6 +38,7 @@ import {
   S33_WAVE1_REVISION10_PRODUCTION_PINS,
   S33_WAVE1_REVISION11_PRODUCTION_PINS,
   scanEmbeddingLeakage,
+  validateS33AuthenticatedBranchProtection,
   type EmbeddingBatchProvider,
   type ConsumptionRegistryRecord,
   type LexicalLeakagePolicyPayload,
@@ -1355,6 +1356,23 @@ function recordThroughReveal(context: ReturnType<typeof ceremony>): void {
 }
 
 describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, () => {
+  it('fails closed on authenticated branch-protection digest or schema drift', () => {
+    const valid = {
+      url: 'https://api.github.com/repos/carson-see/ArkovaCarson/branches/main/protection',
+      digestSha256: 'a'.repeat(64),
+    };
+    expect(validateS33AuthenticatedBranchProtection(valid)).toEqual(valid);
+    for (const invalid of [
+      { ...valid, digestSha256: 'A'.repeat(64) },
+      { ...valid, digestSha256: 'a'.repeat(63) },
+      { ...valid, url: 'https://api.github.com/repos/other/repo/branches/main/protection' },
+      { ...valid, unexpected: true },
+    ]) {
+      expect(() => validateS33AuthenticatedBranchProtection(invalid))
+        .toThrow(/branch protection.*(?:digest|URL|schema|unknown field)/i);
+    }
+  });
+
   it('rejects every serialized or plain-object production acceptance bundle', () => {
     expect(() => createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence({} as never))
       .toThrow(/in-memory Team-2 authenticated evidence bundle/i);
