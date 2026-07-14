@@ -18,7 +18,7 @@ import {
   validatePrerequisiteWorkflowIdentity,
   verifyGitHubTrustRoot,
   type GitHubEvidenceSnapshot,
-} from './s33-wave1-github-evidence.js';
+} from '../../services/worker/src/ai/eval/s33-wave1-github-evidence.js';
 
 const HEAD = '1'.repeat(40);
 const MAIN = '2'.repeat(40);
@@ -869,6 +869,7 @@ describe('s33-wave1-acceptance workflow contract', () => {
     expect(workflow).toContain('services/worker/src/ai/eval/s33-wave1-workflow-reports.ts');
     expect(workflow).toContain('S33_REPOSITORY_ROOT: ${{ runner.temp }}/s33-producer.git');
     expect(workflow).toContain('S33_PROD_MODEL_DIFF_FINAL_PATH: ${{ runner.temp }}/s33-wave1-prerequisites/prod-model-diff.json');
+    expect(workflow).toContain("'services/worker/src/ai/eval/s33-wave1-github-evidence.ts'");
     expect(workflow).toContain('S33_EMBEDDING_DIAGNOSTIC_FINAL_PATH: ${{ runner.temp }}/s33-wave1-prerequisites/embedding-diagnostic.json');
     expect(workflow).not.toContain('S33_PROD_MODEL_DIFF_RAW_PATH');
     expect(workflow).toContain('ref: ${{ github.sha }}');
@@ -890,6 +891,36 @@ describe('s33-wave1-acceptance workflow contract', () => {
       workflow.indexOf('authenticate-wave1:'),
     );
     expect(preflightJob).not.toMatch(/upload-artifact|issues\/1498\/comments|cross-review\.json|s33-wave1-reports/u);
+  });
+});
+
+describe('S3.3 authenticated module graph', () => {
+  it('keeps the CLI thin and makes auth late-load the static brand consumer in the same worker package', () => {
+    const wrapper = readFileSync('scripts/ci/s33-wave1-github-evidence.ts', 'utf8');
+    const auth = readFileSync('services/worker/src/ai/eval/s33-wave1-github-evidence.ts', 'utf8');
+    const acceptance = readFileSync('services/worker/src/ai/eval/s33-batch-acceptance.ts', 'utf8');
+
+    expect(wrapper).toContain("from '../../services/worker/src/ai/eval/s33-wave1-github-evidence.js'");
+    expect(wrapper).toContain('runS33Wave1GitHubEvidenceCli(process.argv.slice(2))');
+    expect(wrapper).not.toMatch(/WeakSet|registerAuthenticated|createS33Wave1AcceptanceArtifact/u);
+
+    expect(auth).not.toMatch(/from\s+['"]\.\/s33-batch-acceptance\.js['"]/u);
+    const brand = auth.indexOf('const authenticatedBundle = registerAuthenticatedS33Wave1EvidenceBundle');
+    const lateImport = auth.indexOf('await import(LANE3_ACCEPTANCE_MODULE)', brand);
+    expect(auth).toContain("const LANE3_ACCEPTANCE_MODULE: string = './s33-batch-acceptance.js'");
+    expect(brand).toBeGreaterThan(0);
+    expect(lateImport).toBeGreaterThan(brand);
+
+    expect(acceptance).toMatch(/from\s+['"]\.\/s33-wave1-github-evidence\.js['"]/u);
+    expect(acceptance).toMatch(/createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence\([\s\S]*?\)\s*:[^{]+\{\s*assertAuthenticatedS33Wave1EvidenceBundle\(evidence\);/u);
+  });
+
+  it('strictly renders the separate Lane-3 acceptance artifact digests in the immutable comment', () => {
+    const auth = readFileSync('services/worker/src/ai/eval/s33-wave1-github-evidence.ts', 'utf8');
+    expect(auth).toContain("lane3Acceptance: 's33-wave1-acceptance.json'");
+    expect(auth).toContain("assertExactKeys(lane3, [\n    'filename', 'artifactDigestSha256', 'rawSha256', 'canonicalSha256'");
+    expect(auth).toContain('Lane-3 acceptance artifact digest: \\`');
+    expect(auth).toContain('Lane-3 acceptance raw/canonical SHA-256: \\`');
   });
 });
 
