@@ -1,8 +1,30 @@
 # agents.md — services/worker/src/ai/eval/
 
-_Last updated: 2026-07-13_
+_Last updated: 2026-07-14_
 
-## 2026-07-13 S3.3 Lane-4 batch acceptance support
+## 2026-07-14 CTO ruling 102498305 — active Wave-1 acceptance contract
+
+- `golden-dataset-s33-types.ts` applies the production
+  `validateFieldsForType()` sanitizer before measuring ground-truth depth. All
+  covered rows must retain at least five substantive fields and a concrete
+  non-`other` subtype. Only ids in the fixed `GD-S33-OOD-NNN` set are exempt,
+  and their ground truth must be exactly `{ credentialType: 'OTHER', subType:
+  'other', fraudSignals: [] }` with no padding.
+- `s33-batch-acceptance.ts` strictly validates the committed entry datasheet
+  against the manifest and checks the corpus Markdown producer revision,
+  manifest SHA, 81-row bijection, support blob/commit, and physical-parent to
+  logical-predecessor provenance sentence. The active machine-readable
+  acceptance artifact reads the exact #1498 producer head, tree, and manifest
+  from Git and binds them to GitHub approval, successful CI checks, exact
+  normalized 6–13-gram zero-match evidence, offline production-model replay,
+  and diagnostic-only embeddings. No caller supplies Git digests.
+- GitHub authentication and CI are the trust root. The active path has no
+  external signer, registry, commitment/reveal ceremony, or live endpoint.
+  The old signed sampling implementation remains only behind the explicitly
+  test-only injected factory for security-regression coverage; its production
+  factory always throws the CTO-retirement error.
+
+## 2026-07-13 S3.3 Lane-4 batch acceptance support (historical pre-ruling harness)
 
 - `s33-batch-acceptance.ts` parses the actual Lane-4 manifest bytes and derives
   the complete entry universe. The strict schema includes the producer/Lane-3
@@ -14,8 +36,8 @@ _Last updated: 2026-07-13_
   not a synthetic prefix-derived taxonomy; a hermetic real-entry seam test must
   reproduce both immutable production digests before parsing with production
   pins.
-  Callers cannot supply ids or lower the fixed `ceil(10%)`, minimum-5 review
-  floor. The ceremony uses four distinct records:
+  The historical test-only harness does not accept supplied ids or a lowered
+  fixed `ceil(10%)`, minimum-5 review floor. It uses four distinct records:
   a manifest-free CTO-signed salt commitment, a CTO-signed manifest freeze that
   proves the exact Git blob/ancestor, a CTO-signed selection policy bound to
   both digests, and the later salt reveal. All artifact boundaries accept only
@@ -30,9 +52,8 @@ _Last updated: 2026-07-13_
   injected external atomic/monotonic `ConsumptionRegistry` keying policy digest
   + batch + revision before any result can return. `s33-acceptance-ledger.ts` is
   intentionally an empty compatibility module with no ledger/append export.
-  No CTO key, registry backend, or approval is embedded; both production trust
-  dependencies remain null in the code-owned descriptor, so production fails
-  closed until the CTO configures them.
+  This machinery is not the active Wave-1 production acceptance path and must
+  not be presented as requiring CTO keys, an external registry, or a ceremony.
 - The S33-W1 revision-history self-check preserves the exact r2-through-r9
   contract and permits one metadata-only r10 restack. R10 keeps historical
   support anchored to `dd3ae1ed`, binds its logical prior producer revision to
@@ -63,7 +84,7 @@ _Last updated: 2026-07-13_
   R10 Git fixtures fetch the exact initial support commit `dd3ae1ed`, create a
   synthetic support-marker child, and never seed from the invoking checkout's
   `HEAD`; all six producer packet paths must be absent from that support child.
-  The public parser and production factory expose no override seam, and tests
+  The public parser and retired production factory expose no override seam, and tests
   must never check raw or decodable held-out corpus bytes into the support tree.
 - Every selection and lexical result is recursively frozen before it crosses
   the orchestration boundary, including sample ids, metrics/hits, and evidence.
@@ -96,8 +117,8 @@ _Last updated: 2026-07-13_
   implementations of one parser.
 - Sampling sorts ids with explicit ECMAScript UTF-16 code-unit order; never use
   locale/ICU collation because it would make the signed sample host-dependent.
-- Ceremony hosts must provide the audited Git executable at `/usr/bin/git`.
-  Every production Git subprocess receives a fixed allowlisted environment;
+- Legacy-harness tests use the audited Git executable at `/usr/bin/git`.
+  Every Git subprocess receives a fixed allowlisted environment;
   inherited `GIT_DIR`, `GIT_WORK_TREE`, object-store alternates, `GIT_CONFIG*`,
   loader, PATH, replacement refs, and external-diff redirection cannot alter
   repository evidence.
@@ -115,8 +136,8 @@ _Last updated: 2026-07-13_
   five-field floor so taxonomy/bookkeeping cannot inflate corpus quality. It
   also ignores unknown structural keys and rejects null, blank-string,
   non-finite-number, and empty-array values while preserving legitimate
-  zero/false facts. It deliberately does not adjudicate OOD depth; the
-  pure-abstention exception remains CTO/Lane-3 gated.
+  zero/false facts. The production post-validation contract now adjudicates
+  covered depth and the exact OOD pure-abstention exception as described above.
 
 ## 2026-07-06 S3 CPE/CLE golden set + deterministic eval gate (AI-01/AI-02 — SCRUM-2381/2382)
 

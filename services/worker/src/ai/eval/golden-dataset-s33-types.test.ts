@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { EXTRACTION_V6_SYSTEM_PROMPT } from '../prompts/extraction-v6.js';
 import {
+  S33_COVERED_MINIMUM_POST_VALIDATION_DEPTH,
   S33_PROPOSED_SUBTYPES,
   V6_SUBTYPE_TAXONOMY,
+  assertS33HeldoutGroundTruthContract,
   countS33SubstantiveGroundTruthFields,
+  evaluateS33HeldoutGroundTruthContract,
   normalizeForFingerprint,
 } from './golden-dataset-s33-types.js';
 
@@ -102,5 +105,130 @@ describe('S3.3 held-out shared taxonomy support', () => {
     };
 
     expect(countS33SubstantiveGroundTruthFields(groundTruthWithExtras)).toBe(1);
+  });
+
+  it.each([
+    ['CERTIFICATE', 'providerName', {
+      issuerName: 'Issuer', issuedDate: '2026-01-01', fieldOfStudy: 'Safety', jurisdiction: 'KE',
+    }],
+    ['CERTIFICATE', 'courseId', {
+      issuerName: 'Issuer', issuedDate: '2026-01-01', fieldOfStudy: 'Safety', jurisdiction: 'KE',
+    }],
+    ['FINANCIAL', 'providerName', {
+      issuerName: 'Issuer', issuedDate: '2026-01-01', fieldOfStudy: 'Audit', jurisdiction: 'KE',
+    }],
+    ['IDENTITY', 'deliveryMethod', {
+      issuerName: 'Issuer', issuedDate: '2026-01-01', expiryDate: '2036-01-01', jurisdiction: 'KE',
+    }],
+    ['LICENSE', 'goodStandingStatus', {
+      issuerName: 'Board', issuedDate: '2026-01-01', licenseNumber: 'L-1', jurisdiction: 'KE',
+    }],
+    ['ATTESTATION', 'goodStandingStatus', {
+      issuerName: 'Board', issuedDate: '2026-01-01', fieldOfStudy: 'Law', jurisdiction: 'KE',
+    }],
+    ['BUSINESS_ENTITY', 'firmName', {
+      issuerName: 'Registry', issuedDate: '2026-01-01', entityType: 'LLC', jurisdiction: 'KE',
+    }],
+    ['LICENSE', 'barNumber', {
+      issuerName: 'Bar', issuedDate: '2026-01-01', licenseNumber: 'B-1', jurisdiction: 'KE',
+    }],
+  ] as const)(
+    'measures %s depth after production strips invalid %s',
+    (credentialType, invalidField, validGroundTruth) => {
+      const groundTruth = {
+        credentialType,
+        subType: 'concrete',
+        fraudSignals: [],
+        ...validGroundTruth,
+        [invalidField]: 'must-not-count',
+      };
+
+      expect(countS33SubstantiveGroundTruthFields(groundTruth)).toBe(4);
+      expect(evaluateS33HeldoutGroundTruthContract({
+        id: 'GD-S33-COVERED-001',
+        groundTruth,
+      })).toMatchObject({
+        accepted: false,
+        kind: 'covered',
+        postValidationDepth: 4,
+        strippedFields: expect.arrayContaining([invalidField]),
+      });
+    },
+  );
+
+  it('accepts only the exact OOD abstention shape and exempts it from depth/subtype floors', () => {
+    expect(evaluateS33HeldoutGroundTruthContract({
+      id: 'GD-S33-OOD-001',
+      groundTruth: {
+        credentialType: 'OTHER',
+        subType: 'other',
+        fraudSignals: [],
+      },
+    })).toEqual({
+      accepted: true,
+      entryId: 'GD-S33-OOD-001',
+      errors: [],
+      kind: 'ood-abstention',
+      postValidationDepth: null,
+      strippedFields: [],
+    });
+
+    expect(evaluateS33HeldoutGroundTruthContract({
+      id: 'GD-S33-OOD-002',
+      groundTruth: {
+        credentialType: 'OTHER',
+        subType: 'other',
+        fraudSignals: [],
+        issuerName: 'invented padding',
+      },
+    })).toMatchObject({ accepted: false, kind: 'ood-abstention' });
+
+    expect(evaluateS33HeldoutGroundTruthContract({
+      id: 'GD-S33-KE-001',
+      groundTruth: {
+        credentialType: 'OTHER',
+        subType: 'other',
+        fraudSignals: [],
+      },
+    })).toMatchObject({ accepted: false, kind: 'covered' });
+  });
+
+  it('enforces the concrete subtype rule on covered entries after the CTO OOD split', () => {
+    expect(evaluateS33HeldoutGroundTruthContract({
+      id: 'GD-S33-KE-001',
+      groundTruth: {
+        credentialType: 'LICENSE',
+        subType: 'other',
+        issuerName: 'Board',
+        issuedDate: '2026-01-01',
+        expiryDate: '2027-01-01',
+        licenseNumber: 'L-1',
+        jurisdiction: 'KE',
+      },
+    })).toMatchObject({
+      accepted: false,
+      postValidationDepth: S33_COVERED_MINIMUM_POST_VALIDATION_DEPTH,
+    });
+  });
+
+  it('checks every covered row rather than accepting a sampled prefix', () => {
+    const coveredEntries = Array.from({ length: 72 }, (_, index) => ({
+      id: `GD-S33-COVERED-${String(index + 1).padStart(3, '0')}`,
+      groundTruth: {
+        credentialType: 'LICENSE',
+        subType: 'nursing_rn',
+        issuerName: 'Board',
+        issuedDate: '2026-01-01',
+        expiryDate: '2027-01-01',
+        licenseNumber: `L-${index + 1}`,
+        jurisdiction: 'KE',
+        fraudSignals: [],
+      },
+    }));
+
+    expect(() => assertS33HeldoutGroundTruthContract(coveredEntries)).not.toThrow();
+    Reflect.deleteProperty(coveredEntries[71].groundTruth, 'expiryDate');
+    expect(() => assertS33HeldoutGroundTruthContract(coveredEntries))
+      .toThrow(/GD-S33-COVERED-072.*post-production.*4.*minimum 5/i);
   });
 });

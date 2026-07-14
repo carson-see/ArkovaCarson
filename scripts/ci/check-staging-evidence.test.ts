@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   check,
   extractDeclaredTier,
+  findS33RuntimeImporters,
   hasEvidenceSection,
   hasResidualRiskException,
   isDeployWorkerUsesOnlyBump,
@@ -372,6 +376,71 @@ describe('check-staging-evidence', () => {
       expect(
         requiredTierFor(['services/worker/src/proof/signed-bundle.ts']).tier,
       ).not.toBe('T0');
+    });
+
+    it('classifies only the exact CTO-ratified S3.3 offline support files as T0', () => {
+      expect(requiredTierFor([
+        '.sonarcloud.properties',
+        'docs/lane3/s33-batch-acceptance-protocol.md',
+        'scripts/ci/check-staging-evidence.test.ts',
+        'scripts/ci/check-staging-evidence.ts',
+        'services/worker/src/ai/eval/agents.md',
+        'services/worker/src/ai/eval/golden-dataset-s33-types.test.ts',
+        'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
+        'services/worker/src/ai/eval/s33-acceptance-ledger.ts',
+        'services/worker/src/ai/eval/s33-batch-acceptance.test.ts',
+        'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+      ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');
+
+      expect(requiredTierFor([
+        'services/worker/src/ai/eval/s33-eval-runner.ts',
+      ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T2');
+    });
+
+    it('classifies the exact Wave-1 producer corpus files as T0 only while unimported by runtime', () => {
+      expect(requiredTierFor([
+        'docs/lane4/s33-corpus-datasheet.md',
+        'docs/lane4/s33-wave1-batch-manifest.json',
+        'docs/lane4/s33-wave1-entry-datasheet.json',
+        'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
+        'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
+        'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
+      ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');
+    });
+
+    it('fails the S3.3 T0 carve-out closed when any production source imports it', () => {
+      expect(requiredTierFor([
+        'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+      ], {
+        s33RuntimeImporterProvider: () => ['services/worker/src/routes/cron.ts'],
+      }).tier).toBe('T2');
+    });
+  });
+
+  describe('findS33RuntimeImporters', () => {
+    it('finds a non-test runtime import and ignores imports inside the offline set and tests', () => {
+      const root = mkdtempSync(join(tmpdir(), 's33-import-guard-'));
+      try {
+        const sourceRoot = join(root, 'services/worker/src');
+        mkdirSync(join(sourceRoot, 'ai/eval'), { recursive: true });
+        mkdirSync(join(sourceRoot, 'routes'), { recursive: true });
+        writeFileSync(
+          join(sourceRoot, 'ai/eval/s33-batch-acceptance.ts'),
+          "import './golden-dataset-s33-types.js';\n",
+        );
+        writeFileSync(
+          join(sourceRoot, 'ai/eval/s33-batch-acceptance.test.ts'),
+          "import './s33-batch-acceptance.js';\n",
+        );
+        writeFileSync(
+          join(sourceRoot, 'routes/cron.ts'),
+          "import '../ai/eval/s33-batch-acceptance.js';\n",
+        );
+
+        expect(findS33RuntimeImporters(root)).toEqual(['services/worker/src/routes/cron.ts']);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
   });
 

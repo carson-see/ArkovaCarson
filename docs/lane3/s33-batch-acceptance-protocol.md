@@ -1,6 +1,6 @@
 # L3 ↔ Lane 4 Corpus Batch Acceptance Protocol (Sprint 3.3)
 
-> **Status:** interface contract, effective immediately (2026-07-10). Lane 4 owns corpus PRODUCTION; Lane 3 retains candidate selection, eval gates, A/B, leakage audit, and batch ACCEPTANCE authority (CTO R11/R12). Internal engineering notes; audited spec in Confluence (96894977).
+> **Status:** interface contract, amended 2026-07-14 by binding CTO ruling 102498305. Lane 4 owns corpus PRODUCTION; Lane 3 retains candidate selection, eval gates, A/B, leakage audit, and batch ACCEPTANCE authority (CTO R11/R12). Internal engineering notes; audited spec in Confluence (96894977).
 > **Audience:** Lane 4 (corpus lane) — this is the contract your batches are accepted against. Lane 3 — this is the checklist you sign.
 
 ## 1. Batch submission format (Lane 4 → Lane 3)
@@ -17,19 +17,20 @@ Batches that mix held-out candidates and training/gate entries in one undifferen
 
 Run in order; stop at first failure.
 
-1. **Structural check** — manifest parses; every entry has a datasheet row; counts reconcile.
+1. **Structural check** — manifest parses; every entry has a strict-schema datasheet row; entry id/domain/type/order reconcile across artifacts; the committed corpus Markdown carries the exact revision, manifest digest, producer parent/predecessor, and Lane-3 support markers.
 2. **Quality invariant checklist (§3)** — deterministic script + human spot-check.
-3. **≥10% cross-review** — Lane 3 reviews a ≥10% random sample (min 5 entries), sampled with a deterministic seed derived from the batch manifest hash (reproducible; Lane 4 cannot predict the sample at authoring time). Review = independently re-derive ground truth from the document text; any material label disagreement counts as a defect.
-4. **Prod-model-diff screening** — run the current prod extraction path (public `gemini-2.5-flash`, Developer-API surface, v5 prompt) over the batch via the Gemini API under **mock-sandwich caps (CTO R14)**: bounded request count per batch, kill switch in the driver, spend logged against the sprint envelope. Diff prod-model output vs Lane 4 ground truth. Mismatches are NOT auto-defects (the model can be wrong — that is the point of the corpus); each mismatch is flagged for human adjudication: label error → defect; model error → keep, tag as model-hard. Precedent: v7 design §11 ("run v6 on new entries + diff flags mismatches for human review") — the control this replaces was skipped for phase18 and cost −21pp on FINANCIAL.
-5. **Leakage / contamination audit** — held-out candidates must be REAL or independently curated, never generator-derived; n-gram overlap (n=6–13) + embedding near-dup scan vs training corpus, generator templates, and tuning JSONL exports (template mimicry evades lexical checks); extends #1413's `heldout-leakage.ts` manifest once merged.
+3. **Whole-batch machine validation + ≥10% human cross-review** — the post-validation depth/OOD contract runs over every row, Kenya first. Lane 3 then independently re-derives ground truth for a deterministic ≥10% sample (minimum 5) bound to the committed manifest digest; any material label disagreement counts as a defect. GitHub exact-head review and CI are the trust root; no salt commitment/reveal or external signer is required.
+4. **Prod-model-diff screening** — replay the production extraction path offline within the existing request/spend envelope; no live endpoint is required. Diff production-model output vs Lane 4 ground truth. Mismatches are not auto-defects (the model can be wrong — that is the point of the corpus); each mismatch receives human adjudication: label error → defect; model error → keep and tag as model-hard.
+5. **Leakage / contamination audit** — held-out candidates must be real or independently curated, never generator-derived. Run the exact normalized token n-gram scan for every n=6–13 against the merged training leakage manifest and require **zero exact matches**. The embedding near-duplicate scan is diagnostic only: it may trigger human review but can neither pass a failed exact scan nor reject an otherwise passing exact scan by itself.
 6. **Acceptance defect thresholds** — any of the following rejects the batch: >5% of cross-reviewed sample has material label defects; any §3 hard invariant fails; any leakage hit on a held-out candidate; datasheet rows missing or false (e.g., synthetic marked real — this one is a trust incident, not just a defect).
 
 ## 3. Quality invariant checklist
 
 Hard invariants (any failure = reject):
 
-- [ ] ≥5 non-null ground-truth fields per entry (bounds the `missing_both` F1 inflation — see eval methodology §4).
-- [ ] Concrete `subType` per entry — no `other`, no missing (v6 quality bar; the phase18 subType inconsistency cost −14.9pp emission).
+- [ ] Every **covered** entry retains ≥5 substantive ground-truth fields **after** production `validateFieldsForType()` applies the production v6 per-type allowlist. Taxonomy labels, evaluator/reasoning fields, fraud bookkeeping, stripped type-invalid fields, and invented padding do not count.
+- [ ] Every **covered** entry has a concrete `subType` — no `other`, no missing.
+- [ ] Every `GD-S33-OOD-*` row is exactly `{credentialType: 'OTHER', subType: 'other', fraudSignals: []}` and is exempt from the depth and concrete-subtype floors; it is scored as abstention only.
 - [ ] No two entries within a type share >80% token overlap.
 - [ ] Held-out candidates: real/independently-curated only; zero generator-derived entries.
 - [ ] Synthetic entries carry generator version + seed + template ID in the datasheet.
@@ -51,12 +52,14 @@ Soft targets (tracked per batch, trended; sustained misses escalate to the train
 
 ## 5. Held-out freeze (before the eval window)
 
-1. At corpus close (before the 48h A/B window opens, L3-S4), Lane 3 declares the final held-out set and lands a **freeze commit**: the held-out manifest (entry ids + normalized-content SHA-256 fingerprints) pinned at a named commit SHA, recorded in the rc-manifest AI section.
+1. At corpus close, Lane 3 records the final held-out set at the exact #1498 single-parent head. The freeze identity is the producer head SHA, its Git tree SHA, and the committed manifest's raw and canonical SHA-256 digests.
 2. From the freeze commit onward: no held-out entry may be edited, moved, or referenced by any generator/tuning export; the leakage CI (fail-closed, #1413 pattern) enforces this mechanically.
 3. **Curate-before-seed commit order** is binding: held-out entries must land in git BEFORE any synthetic generator seeding that could observe them; datasheet timestamps + commit order are the audit trail.
 4. Any post-freeze corpus change voids the window evidence for affected domains (§1.11A analogue: evidence is exact-content, not vibes).
 
 ## 6. Accountability
 
-- Every accepted batch gets a signed acceptance record (Lane 3 session, date, pipeline results, spend used by step 4) appended to the corpus datasheet.
-- Lane 3's acceptance signature is what the rc-manifest AI section cites for corpus integrity. If it is not signed, it is not in the eval.
+- Every accepted batch gets a separate machine-readable Lane-3 acceptance artifact. It binds the #1498 PR number, producer head/tree, committed manifest digests, GitHub exact-head approval, successful CI checks, cross-review evidence, offline prod-model-diff evidence, and zero-hit exact leakage evidence. It does not mutate the frozen producer packet.
+- GitHub authentication and CI are the Wave-1 trust root. No external signing key, signer identity, monotonic registry, salt commitment/reveal, or separate ceremony is required.
+- Embedding evidence is recorded as `diagnostic-only` with `canOverrideExactScan: false`.
+- The rc-manifest AI section cites the machine-readable artifact digest. Without that exact-head artifact, the batch is not accepted and is not in the eval.

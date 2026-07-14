@@ -7,6 +7,7 @@
  * taxonomy extension.
  */
 
+import { validateFieldsForType } from '../crossFieldFraudChecks.js';
 import type { GoldenDatasetEntry, GroundTruthFields } from './types.js';
 
 /** Jurisdiction slice marker for the S3.3 corpus. */
@@ -153,6 +154,20 @@ const S33_SUBSTANTIVE_DEPTH_FIELDS = [
   'regulatoryGap',
 ] as const satisfies readonly (keyof GroundTruthFields)[];
 
+export const S33_COVERED_MINIMUM_POST_VALIDATION_DEPTH = 5;
+
+const S33_OOD_ID_PATTERN = /^GD-S33-OOD-\d{3}$/;
+const S33_OOD_GROUND_TRUTH_KEYS = ['credentialType', 'fraudSignals', 'subType'] as const;
+
+export interface S33HeldoutGroundTruthContractResult {
+  accepted: boolean;
+  entryId: string;
+  errors: readonly string[];
+  kind: 'covered' | 'ood-abstention';
+  postValidationDepth: number | null;
+  strippedFields: readonly string[];
+}
+
 function hasS33SubstantiveGroundTruthValue(value: unknown): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value === 'string') return value.trim().length > 0;
@@ -174,9 +189,88 @@ function hasS33SubstantiveGroundTruthValue(value: unknown): boolean {
 export function countS33SubstantiveGroundTruthFields(
   groundTruth: Readonly<GroundTruthFields>,
 ): number {
+  const { fields } = validateFieldsForType({ ...groundTruth });
   return S33_SUBSTANTIVE_DEPTH_FIELDS
-    .filter((key) => hasS33SubstantiveGroundTruthValue(groundTruth[key]))
+    .filter((key) => hasS33SubstantiveGroundTruthValue(fields[key]))
     .length;
+}
+
+function isExactS33OodAbstentionTruth(groundTruth: Readonly<GroundTruthFields>): boolean {
+  const keys = Object.keys(groundTruth).sort();
+  return keys.length === S33_OOD_GROUND_TRUTH_KEYS.length
+    && keys.every((key, index) => key === S33_OOD_GROUND_TRUTH_KEYS[index])
+    && groundTruth.credentialType === 'OTHER'
+    && groundTruth.subType === 'other'
+    && Array.isArray(groundTruth.fraudSignals)
+    && groundTruth.fraudSignals.length === 0;
+}
+
+/**
+ * Apply the CTO-ratified Wave-1 truth contract to one held-out row.
+ *
+ * Covered rows are measured only after the production per-type validator has
+ * removed fields that the extraction path would discard. The nine OOD rows
+ * instead carry one exact abstention truth shape and are exempt from depth and
+ * concrete-subtype floors.
+ */
+export function evaluateS33HeldoutGroundTruthContract(entry: Readonly<{
+  id: string;
+  groundTruth: Readonly<GroundTruthFields>;
+}>): S33HeldoutGroundTruthContractResult {
+  const kind = S33_OOD_ID_PATTERN.test(entry.id) ? 'ood-abstention' : 'covered';
+  if (kind === 'ood-abstention') {
+    const accepted = isExactS33OodAbstentionTruth(entry.groundTruth);
+    return Object.freeze({
+      accepted,
+      entryId: entry.id,
+      errors: Object.freeze(accepted ? [] : [
+        'OOD truth must be exactly credentialType=OTHER, subType=other, fraudSignals=[]',
+      ]),
+      kind,
+      postValidationDepth: null,
+      strippedFields: Object.freeze([]),
+    });
+  }
+
+  const validation = validateFieldsForType({ ...entry.groundTruth });
+  const postValidationDepth = S33_SUBSTANTIVE_DEPTH_FIELDS
+    .filter((key) => hasS33SubstantiveGroundTruthValue(validation.fields[key]))
+    .length;
+  const errors: string[] = [];
+  if (postValidationDepth < S33_COVERED_MINIMUM_POST_VALIDATION_DEPTH) {
+    errors.push(
+      `post-production validation depth ${postValidationDepth} is below minimum ${S33_COVERED_MINIMUM_POST_VALIDATION_DEPTH}`,
+    );
+  }
+  if (typeof validation.fields.subType !== 'string'
+    || validation.fields.subType.trim().length === 0
+    || validation.fields.subType.toLowerCase() === 'other') {
+    errors.push('covered entry requires a concrete non-other subType');
+  }
+  if (validation.fields.credentialType === 'OTHER') {
+    errors.push('covered entry cannot use the OOD credentialType OTHER');
+  }
+
+  return Object.freeze({
+    accepted: errors.length === 0,
+    entryId: entry.id,
+    errors: Object.freeze(errors),
+    kind,
+    postValidationDepth,
+    strippedFields: Object.freeze([...validation.stripped]),
+  });
+}
+
+/** Validate every row; a valid prefix cannot hide a shallow final entry. */
+export function assertS33HeldoutGroundTruthContract(entries: readonly Readonly<{
+  id: string;
+  groundTruth: Readonly<GroundTruthFields>;
+}>[]): void {
+  const failures = entries
+    .map(evaluateS33HeldoutGroundTruthContract)
+    .filter(({ accepted }) => !accepted);
+  if (failures.length === 0) return;
+  throw new Error(failures.map(({ entryId, errors }) => `${entryId}: ${errors.join('; ')}`).join('\n'));
 }
 
 /** Normalize document text for duplicate/fingerprint comparison. */

@@ -29,7 +29,7 @@
  * contract-touching T2 PR keeps the full worker-artifact requirements.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve, sep } from 'node:path';
 import {
@@ -288,11 +288,77 @@ const DOCS_ONLY_RE = /^(?:docs\/|README\.md|ARKOVA_WORKSPACE_README\.md|WORKSPAC
  */
 export type DiffProvider = (file: string) => string | null;
 
-interface TierClassifyOpts {
+export interface TierClassifyOpts {
   diffProvider?: DiffProvider;
+  s33RuntimeImporterProvider?: () => readonly string[];
 }
 
 const DEPLOY_WORKER_WORKFLOW = '.github/workflows/deploy-worker.yml';
+
+const S33_OFFLINE_ACCEPTANCE_FILES = new Set([
+  'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
+  'services/worker/src/ai/eval/s33-acceptance-ledger.ts',
+  'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+]);
+const S33_OFFLINE_IMPORT_STEMS = [
+  'golden-dataset-s33-au-ke-heldout',
+  'golden-dataset-s33-licensing-heldout',
+  'golden-dataset-s33-ood-negatives',
+  'golden-dataset-s33-types',
+  's33-acceptance-ledger',
+  's33-batch-acceptance',
+] as const;
+const S33_OFFLINE_IMPORT_RE = new RegExp(
+  String.raw`(?:from\s*|import\s*(?:\(\s*)?|require\s*\(\s*)['"][^'"\n]*(?:${S33_OFFLINE_IMPORT_STEMS.join('|')})(?:\.[cm]?[jt]s)?['"]`,
+  'u',
+);
+const RUNTIME_SOURCE_FILE_RE = /\.[cm]?[jt]sx?$/u;
+
+/**
+ * Return production-source importers of the CTO-ratified offline S3.3 files.
+ * Any unreadable tree is represented as a synthetic importer so callers fail
+ * closed instead of silently granting the T0 carve-out.
+ */
+export function findS33RuntimeImporters(repositoryRoot = REPO): string[] {
+  const importers: string[] = [];
+  const sourceRoot = resolve(repositoryRoot, 'services/worker/src');
+  const visit = (directory: string, relativeDirectory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const relativePath = relativeDirectory.length === 0
+        ? entry.name
+        : `${relativeDirectory}/${entry.name}`;
+      const absolutePath = resolve(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(absolutePath, relativePath);
+        continue;
+      }
+      if (!entry.isFile() || !RUNTIME_SOURCE_FILE_RE.test(entry.name)) continue;
+      const repositoryPath = `services/worker/src/${relativePath}`;
+      if (TEST_FILE_RE.test(repositoryPath) || S33_OFFLINE_ACCEPTANCE_FILES.has(repositoryPath)) continue;
+      if (S33_OFFLINE_IMPORT_RE.test(readFileSync(absolutePath, 'utf8'))) importers.push(repositoryPath);
+    }
+  };
+
+  try {
+    visit(sourceRoot, '');
+    return importers.sort();
+  } catch {
+    return ['<unreadable services/worker/src import graph>'];
+  }
+}
+
+function isS33OfflineAcceptanceFile(file: string, opts?: TierClassifyOpts): boolean {
+  if (!S33_OFFLINE_ACCEPTANCE_FILES.has(file)) return false;
+  try {
+    const importers = opts?.s33RuntimeImporterProvider?.() ?? findS33RuntimeImporters();
+    return importers.length === 0;
+  } catch {
+    return false;
+  }
+}
 
 // A changed line in deploy-worker.yml that is "harmless" for prod runtime: a
 // GitHub-Actions `uses:` pin (the Dependabot bump target), a YAML comment, or a
@@ -375,6 +441,10 @@ function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
   // bump touches no prod runtime config — exempt it to CI-tooling (T0) when the
   // diff confirms it. Checked BEFORE the PATH_RULES.some() T2 short-circuit.
   if (isDeployWorkerUsesOnlyExempt(file, opts)) return true;
+  // Sprint 3.3 Wave-1 acceptance/data is an exact, CTO-ratified offline T0
+  // surface. The carve-out disappears immediately if any production source
+  // imports one of these files; sibling eval/runtime files stay T2.
+  if (isS33OfflineAcceptanceFile(file, opts)) return true;
   // PROOF-08 (SCRUM-2341): the proof test-fixtures subtree lives under
   // services/worker/src/, which matches the T2 `services/worker/src/` PATH_RULE.
   // Its loader (index.ts) + JSON are imported ONLY by test suites (verified no
@@ -1676,6 +1746,7 @@ const STAGING_TOOLING_ALLOW = [
   /^\.github\/workflows\/staging-evidence\.yml$/,
   /^\.github\/workflows\/deploy-staging\.yml$/,
   /^\.mergify\.yml$/,
+  /^\.sonarcloud\.properties$/,
   /^CLAUDE\.md$/,
   /^HANDOFF\.md$/,
   /^\.gitignore$/,

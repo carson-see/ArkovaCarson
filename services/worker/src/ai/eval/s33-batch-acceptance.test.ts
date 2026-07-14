@@ -28,6 +28,7 @@ type _ForbiddenDirectLedgerImport = import('./s33-acceptance-ledger.js').Durable
 import {
   canonicalManifestHash,
   compareEmbeddingLeakage,
+  createS33Wave1AcceptanceArtifact,
   createProductionS33AcceptanceOrchestrator,
   createTestOnlyS33AcceptanceOrchestrator,
   parseBatchManifest,
@@ -44,6 +45,7 @@ import {
   type SelectionPolicyPayload,
   type SignedPolicyArtifact,
   type SamplingTrustRoot,
+  type S33Wave1AcceptanceArtifactInput,
   type S33AcceptanceOrchestrator,
   type Wave1Revision10Pins,
   type Wave1Revision11Pins,
@@ -67,6 +69,7 @@ interface ProductionManifestFixtureEntry {
 }
 
 const WAVE1_MANIFEST_PATH = 'docs/lane4/s33-wave1-batch-manifest.json';
+const WAVE1_CORPUS_DATASHEET_PATH = 'docs/lane4/s33-corpus-datasheet.md';
 const WAVE1_TYPES_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-types.ts';
 const WAVE1_SOURCE_PATHS = [
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
@@ -608,11 +611,47 @@ function revision11ParserFixture(): Record<string, unknown> {
 }
 
 function syntheticEntryDatasheetRows(manifest: Record<string, unknown>): Array<Record<string, unknown>> {
-  return (manifest.entries as ProductionManifestFixtureEntry[]).map(({ id }, index) => ({
+  return (manifest.entries as ProductionManifestFixtureEntry[]).map(({ id, domain, credentialType }) => ({
     id,
-    reviewPosition: index + 1,
-    fixtureKind: 'synthetic-test-only',
+    domain,
+    realOrSynthetic: 'synthetic',
+    authorshipMethod: 'independently-authored',
+    generatorDerived: false,
+    sourceProvenance: `test-only/${id}`,
+    lawfulBasis: 'test-only synthetic fixture',
+    generator: {
+      name: 'none-independent-human-authorship',
+      version: 'not-applicable-no-generator',
+      seed: 'not-applicable-no-rng',
+      templateId: 'not-applicable-no-template',
+    },
+    jurisdiction: domain === 'out-of-distribution' ? 'KE' : 'US',
+    jurisdictionDetail: domain === 'out-of-distribution' ? null : 'Test jurisdiction',
+    credentialType,
+    subType: domain === 'out-of-distribution' ? 'other' : 'test-subtype',
+    curationAuthor: 'Arkova Lane 4 test fixture',
+    curationDate: '2026-07-10',
+    licenseConsentNote: 'test-only synthetic fixture',
   }));
+}
+
+function corpusDatasheetFixture(manifest: Record<string, unknown>, manifestSha256: string): string {
+  const revision = manifest.revision as number;
+  const parent = manifest.corpusRevisionParentCommit as string;
+  const predecessor = manifest.producerRevisionPredecessorCommit as string;
+  const support = manifest.lane3SupportBase as Record<string, string>;
+  return [
+    `# S3.3 Golden Held-Out Corpus — Datasheet (Wave 1, Revision ${revision})`,
+    '',
+    `**Revision ${revision}:** test-only producer packet`,
+    '',
+    `- Current producer revision: \`S33-W1\` revision ${revision}; exact raw-file SHA-256 \`${manifestSha256}\`.`,
+    '- The manifest and datasheet each contain exactly 81 unique rows in exact bijection with the corpus.',
+    `- Shared type definitions: blob \`${support.typesBlob}\` on commit \`${support.commit}\`.`,
+    '',
+    `Revision ${revision} has sole physical parent, direct base, and Lane-3 support commit \`${parent}\`; its logical producer predecessor is exact commit \`${predecessor}\`.`,
+    '',
+  ].join('\n');
 }
 
 function syntheticRevision10Pins(
@@ -800,8 +839,10 @@ function gitRepo(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutatio
 interface Revision10GitMutation {
   mergeFreezeCommit?: boolean;
   mutateEntryDatasheet?: ManifestMutator;
+  mutateCorpusDatasheet?: (content: string) => string;
   mutateManifest?: ManifestMutator;
   mutateSourceBytes?: boolean;
+  repinMutatedEntryRows?: boolean;
 }
 
 function revision10GitRepo(
@@ -857,7 +898,7 @@ function revision10GitRepo(
     sourceBlobs: pinnedSourceBlobs,
   });
   const pinnedRows = syntheticEntryDatasheetRows(pinnedManifest);
-  const revision10Pins = syntheticRevision10Pins(pinnedManifest, pinnedRows, pinnedSourceBlobs);
+  let revision10Pins = syntheticRevision10Pins(pinnedManifest, pinnedRows, pinnedSourceBlobs);
   if (mutation.mutateSourceBytes) {
     writeFileSync(join(root, WAVE1_SOURCE_PATHS[0]), 'export const changedAfterRevision9 = true;\n', 'utf8');
   }
@@ -892,11 +933,18 @@ function revision10GitRepo(
     rows: pinnedRows,
   };
   mutation.mutateEntryDatasheet?.(entryDatasheet);
+  if (mutation.repinMutatedEntryRows) {
+    revision10Pins = {
+      ...revision10Pins,
+      entryRowsSha256: sha256(canonicaliseJson(entryDatasheet.rows)),
+    };
+  }
   writeFileSync(join(root, entryDatasheetPath), JSON.stringify(entryDatasheet, null, 2), 'utf8');
-  const corpusDatasheetPath = 'docs/lane4/s33-corpus-datasheet.md';
+  const corpusDatasheetPath = WAVE1_CORPUS_DATASHEET_PATH;
+  const corpusDatasheet = corpusDatasheetFixture(manifestObject, sha256(manifest));
   writeFileSync(
     join(root, corpusDatasheetPath),
-    '# Synthetic revision-10 corpus datasheet\n\nTooling review only; formal Lane-3 acceptance remains NOT_RUN.\n',
+    mutation.mutateCorpusDatasheet?.(corpusDatasheet) ?? corpusDatasheet,
     'utf8',
   );
   execFileSync('git', ['add', '--all'], { cwd: root });
@@ -986,6 +1034,50 @@ function revision10Ceremony(mutation: Revision10GitMutation = {}) {
     },
   }, privateKey);
   return { repo, orchestrator, commitment, freeze };
+}
+
+function githubCiAcceptanceInput(
+  repo: ReturnType<typeof revision10GitRepo>,
+): S33Wave1AcceptanceArtifactInput {
+  return {
+    repositoryRoot: repo.root,
+    repositoryIdentity: 'carson-see/ArkovaCarson',
+    pullRequestNumber: 1498,
+    producerHeadSha: repo.freezeCommitSha,
+    acceptedAtUtc: '2026-07-14T13:00:00.000Z',
+    githubVerdict: {
+      status: 'APPROVED',
+      headSha: repo.freezeCommitSha,
+      url: 'https://github.com/carson-see/ArkovaCarson/pull/1498#issuecomment-1',
+      checks: [
+        {
+          name: 'Tests', conclusion: 'SUCCESS', headSha: repo.freezeCommitSha,
+          detailsUrl: 'https://github.com/carson-see/ArkovaCarson/actions/runs/1',
+        },
+        {
+          name: 'Staging Soak Evidence Gate', conclusion: 'SUCCESS', headSha: repo.freezeCommitSha,
+          detailsUrl: 'https://github.com/carson-see/ArkovaCarson/actions/runs/2',
+        },
+      ],
+    },
+    evidence: {
+      crossReviewArtifactSha256: '1'.repeat(64),
+      prodModelDiffArtifactSha256: '2'.repeat(64),
+      prodModelDiffMode: 'offline-replay',
+      lexicalLeakage: {
+        algorithm: 'normalized-token-exact-ngram-v1',
+        n: [6, 7, 8, 9, 10, 11, 12, 13],
+        trainingManifestSha256: '3'.repeat(64),
+        evidenceArtifactSha256: '4'.repeat(64),
+        exactMatchCount: 0,
+      },
+      embedding: {
+        role: 'diagnostic-only',
+        canOverrideExactScan: false,
+        evidenceArtifactSha256: '5'.repeat(64),
+      },
+    },
+  };
 }
 
 function ceremony(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutation) {
@@ -1079,6 +1171,84 @@ function recordThroughReveal(context: ReturnType<typeof ceremony>): void {
 }
 
 describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, () => {
+  it('builds a signer-free GitHub/CI acceptance artifact bound to the exact producer head/tree/manifest', () => {
+    const repo = revision10GitRepo();
+    const artifact = createS33Wave1AcceptanceArtifact(githubCiAcceptanceInput(repo));
+    const expectedTree = execFileSync('git', ['rev-parse', `${repo.freezeCommitSha}^{tree}`], {
+      cwd: repo.root,
+      encoding: 'utf8',
+    }).trim();
+
+    expect(artifact).toMatchObject({
+      schemaVersion: 1,
+      artifactType: 'arkova-s33-wave1-acceptance',
+      batchId: 'S33-W1',
+      revision: 10,
+      acceptanceAuthority: 'Lane 3',
+      trustRoot: 'github-authenticated-exact-head-ci',
+      repositoryIdentity: 'carson-see/ArkovaCarson',
+      pullRequestNumber: 1498,
+      producerHeadSha: repo.freezeCommitSha,
+      producerTreeSha: expectedTree,
+      manifestPath: WAVE1_MANIFEST_PATH,
+      manifestRawSha256: sha256(repo.manifest),
+      githubVerdict: { status: 'APPROVED', headSha: repo.freezeCommitSha },
+      evidence: {
+        lexicalLeakage: { exactMatchCount: 0, n: [6, 7, 8, 9, 10, 11, 12, 13] },
+        embedding: { role: 'diagnostic-only', canOverrideExactScan: false },
+      },
+    });
+    expect(Object.isFrozen(artifact)).toBe(true);
+    expect(JSON.stringify(artifact)).not.toMatch(/signer|signature|registry|ceremony/i);
+    const { artifactDigestSha256, ...unsigned } = artifact;
+    expect(artifactDigestSha256).toBe(sha256(canonicaliseJson(unsigned)));
+  });
+
+  it('rejects a Wave-1 artifact unless CI is green and the normalized 6-13 exact scan has zero hits', () => {
+    const repo = revision10GitRepo();
+    const failedCheck = githubCiAcceptanceInput(repo);
+    failedCheck.githubVerdict.checks[0] = {
+      ...failedCheck.githubVerdict.checks[0],
+      conclusion: 'FAILURE' as never,
+    };
+    expect(() => createS33Wave1AcceptanceArtifact(failedCheck)).toThrow(/GitHub.*check.*SUCCESS/i);
+
+    const lexicalHit = githubCiAcceptanceInput(repo);
+    lexicalHit.evidence.lexicalLeakage.exactMatchCount = 1 as never;
+    expect(() => createS33Wave1AcceptanceArtifact(lexicalHit)).toThrow(/exact.*zero/i);
+
+    const incompleteN = githubCiAcceptanceInput(repo);
+    incompleteN.evidence.lexicalLeakage.n = [6, 7, 8] as never;
+    expect(() => createS33Wave1AcceptanceArtifact(incompleteN)).toThrow(/6.*13/i);
+  });
+
+  it('rejects GitHub approval or CI evidence that is not bound to the exact producer head', () => {
+    const repo = revision10GitRepo();
+    const staleApproval = githubCiAcceptanceInput(repo);
+    staleApproval.githubVerdict.headSha = 'a'.repeat(40);
+    expect(() => createS33Wave1AcceptanceArtifact(staleApproval)).toThrow(/APPROVED.*exact.*producer head/i);
+
+    const staleCheck = githubCiAcceptanceInput(repo);
+    staleCheck.githubVerdict.checks[0].headSha = 'b'.repeat(40);
+    expect(() => createS33Wave1AcceptanceArtifact(staleCheck)).toThrow(/CI check.*exact.*producer head/i);
+  });
+
+  it('runs the approved cross-artifact and committed corpus provenance checks on the active path', () => {
+    const domainDrift = revision10GitRepo({
+      mutateEntryDatasheet(datasheet): void {
+        (datasheet.rows as Array<Record<string, unknown>>)[0].domain = 'out-of-distribution';
+      },
+      repinMutatedEntryRows: true,
+    });
+    expect(() => createS33Wave1AcceptanceArtifact(githubCiAcceptanceInput(domainDrift)))
+      .toThrow(/entry datasheet.*domain/i);
+
+    const corpusDrift = revision10GitRepo({
+      mutateCorpusDatasheet: (content) => content.replace('**Revision 10:**', '**Revision 9:**'),
+    });
+    expect(() => createS33Wave1AcceptanceArtifact(githubCiAcceptanceInput(corpusDrift)))
+      .toThrow(/corpus datasheet.*revision/i);
+  });
   it('requires an atomic registry with a callable create-if-absent operation', () => {
     const context = ceremony();
     expect(() => createTestOnlyS33AcceptanceOrchestrator({
@@ -1498,7 +1668,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       revision10Pins: syntheticPins,
     };
     expect(() => createProductionS33AcceptanceOrchestrator(productionInput))
-      .toThrow(/production.*not configured.*fail closed/i);
+      .toThrow(/retired.*CTO ruling 102498305.*GitHub\/CI-bound/i);
   });
 
   it('never seeds r10 support from an outer checkout HEAD that already contains the packet', () => {
@@ -1688,13 +1858,56 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
     const context = revision10Ceremony({
       mutateEntryDatasheet(datasheet): void {
         const rows = datasheet.rows as Array<Record<string, unknown>>;
-        rows[0].jurisdiction = 'US';
+        rows[0].jurisdiction = 'CA';
       },
     });
     context.orchestrator.recordSaltCommitment(context.commitment.content);
     expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
       .toThrow(/entry datasheet rows.*reviewed revision-9 canonical row set/i);
   });
+
+  it.each([
+    ['manifest domain', (row: Record<string, unknown>) => { row.domain = 'out-of-distribution'; }],
+    ['manifest credential type', (row: Record<string, unknown>) => { row.credentialType = 'OTHER'; }],
+    ['required provenance', (row: Record<string, unknown>) => { delete row.sourceProvenance; }],
+    ['generator contract', (row: Record<string, unknown>) => {
+      delete (row.generator as Record<string, unknown>).templateId;
+    }],
+  ] satisfies Array<[string, (row: Record<string, unknown>) => void]>) (
+    'rejects repinned entry-datasheet %s cross-artifact drift',
+    (_case, mutateRow) => {
+      const context = revision10Ceremony({
+        mutateEntryDatasheet(datasheet): void {
+          mutateRow((datasheet.rows as Array<Record<string, unknown>>)[0]);
+        },
+        repinMutatedEntryRows: true,
+      });
+      context.orchestrator.recordSaltCommitment(context.commitment.content);
+      expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+        .toThrow(/entry datasheet.*(?:domain|credentialType|schema|sourceProvenance|generator)/i);
+    },
+  );
+
+  it.each([
+    ['revision marker', (content: string) => content.replace('**Revision 10:**', '**Revision 9:**')],
+    ['manifest digest', (content: string) => content.replace(
+      /(?<=exact raw-file SHA-256 `)[0-9a-f]{64}(?=`)/u,
+      '0'.repeat(64),
+    )],
+    ['support binding', (content: string) => content.replace(
+      /(?<=on commit `)[0-9a-f]{40}(?=`)/u,
+      '0'.repeat(40),
+    )],
+    ['producer predecessor', (content: string) => content.replace(WAVE1_REVISION9_COMMIT, '0'.repeat(40))],
+  ] satisfies Array<[string, (content: string) => string]>) (
+    'rejects corpus-Markdown %s provenance drift',
+    (_case, mutateCorpusDatasheet) => {
+      const context = revision10Ceremony({ mutateCorpusDatasheet });
+      context.orchestrator.recordSaltCommitment(context.commitment.content);
+      expect(() => context.orchestrator.recordManifestFreeze(context.freeze.content, context.repo.manifest))
+        .toThrow(/corpus datasheet.*(?:revision|digest|support|predecessor|provenance)/i);
+    },
+  );
 
   it.each([
     ['stale revision', (datasheet: Record<string, unknown>) => { datasheet.revision = 9; }],
@@ -2319,14 +2532,14 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       .toThrow(/confirm.*process.*not running.*remove only.*\.lock.*never.*transcript/i);
   });
 
-  it('production loader fails closed because no CTO root or monotonic registry is configured', () => {
+  it('retires the legacy signer/registry production factory in favor of GitHub/CI evidence', () => {
     const root = mkdtempSync(join(tmpdir(), 'arkova-s33-production-'));
     tempRoots.push(root);
     expect(() => createProductionS33AcceptanceOrchestrator({
       ledgerPath: join(root, 'ledger.jsonl'),
       repositoryRoot: root,
       verificationCommitSha: '00'.repeat(20),
-    })).toThrow(/CTO trust root.*monotonic consumption registry.*not configured|fail closed/i);
+    })).toThrow(/retired.*CTO ruling 102498305.*GitHub\/CI-bound/i);
   });
 
   it('parses the complete 81-entry Wave-1 universe and cannot lower its fixed sample floor', async () => {
