@@ -236,7 +236,7 @@ jobs:
         # step is skipped entirely (see "Skip Sonatype Lifecycle notice"
         # below). When secrets ARE set, real findings should fail the PR.
         if: env.SONATYPE_LIFECYCLE_URL != '' && env.SONATYPE_LIFECYCLE_USERNAME != '' && env.SONATYPE_LIFECYCLE_PASSWORD != '' && env.SONATYPE_LIFECYCLE_APPLICATION_ID != ''
-        uses: sonatype/actions/evaluate@3bec72e6daf541cf541636e4493212c2fcf0a149 # v1
+        uses: sonatype/actions/evaluate@207984d4ff92b2f2aee69821a233fa086080794e # v1
         with:
           iq-server-url: ${{ env.SONATYPE_LIFECYCLE_URL }}
           username: ${{ env.SONATYPE_LIFECYCLE_USERNAME }}
