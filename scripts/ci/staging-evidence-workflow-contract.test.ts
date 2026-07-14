@@ -35,6 +35,12 @@ function rootCheckoutSteps(workflow: string): string[] {
 
 function assertWorkflowContract(workflow: string): void {
   expect(workflow).toContain("  pull_request:\n");
+  expect(workflow.match(/actions\/checkout@/gu) ?? []).toHaveLength(1);
+  expect(workflow.match(/HEAD_REF_SHA/gu) ?? []).toHaveLength(1);
+  expect(
+    workflow.match(/github\.event\.pull_request\.head\.sha/gu) ?? [],
+  ).toHaveLength(1);
+
   const checkouts = rootCheckoutSteps(workflow);
   expect(
     checkouts,
@@ -42,7 +48,7 @@ function assertWorkflowContract(workflow: string): void {
   ).toHaveLength(1);
 
   const branchHeadCheckoutRef =
-    /^\s+ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha\s*\}\}\s*$/mu;
+    /^\s+ref:\s*["']?\s*\$\{\{\s*github\.event\.pull_request\.head\.sha\s*\}\}\s*["']?\s*$/mu;
   expect(
     checkouts.some((checkout) => branchHeadCheckoutRef.test(checkout)),
   ).toBe(false);
@@ -63,7 +69,9 @@ function assertWorkflowContract(workflow: string): void {
   expect(fetchDepths).toEqual(["0"]);
 
   const headEvidenceBindings = [
-    ...workflow.matchAll(/^( +)HEAD_REF_SHA:\s*(.+)$/gmu),
+    ...workflow.matchAll(
+      /^( +)(?:HEAD_REF_SHA|"HEAD_REF_SHA"|'HEAD_REF_SHA'):\s*(.+)$/gmu,
+    ),
   ].map((match) => ({ indentation: match[1].length, value: match[2] }));
   expect(headEvidenceBindings).toEqual([
     {
@@ -98,6 +106,44 @@ describe("staging-evidence workflow integration-ref contract", () => {
       "      - name: Shadow exact-head evidence",
       "        env:",
       "          HEAD_REF_SHA: ${{ github.ref }}",
+      "        run: echo shadowed",
+    ].join("\n")}\n`;
+
+    expect(() => assertWorkflowContract(mutated)).toThrow();
+  });
+
+  it("rejects a later double-quoted checkout and quoted branch-head ref", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = `${workflow}\n${[
+      "      - name: Quoted branch-head checkout",
+      '        uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"',
+      "        with:",
+      '          ref: "${{ github.event.pull_request.head.sha }}"',
+      "          fetch-depth: 0",
+    ].join("\n")}\n`;
+
+    expect(() => assertWorkflowContract(mutated)).toThrow();
+  });
+
+  it("rejects a later single-quoted checkout and quoted branch-head ref", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = `${workflow}\n${[
+      "      - name: Single-quoted branch-head checkout",
+      "        uses: 'actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0'",
+      "        with:",
+      "          ref: '${{ github.event.pull_request.head.sha }}'",
+      "          fetch-depth: 0",
+    ].join("\n")}\n`;
+
+    expect(() => assertWorkflowContract(mutated)).toThrow();
+  });
+
+  it("rejects a quoted step-level HEAD_REF_SHA key", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = `${workflow}\n${[
+      "      - name: Quote-shadow exact-head evidence",
+      "        env:",
+      '          "HEAD_REF_SHA": ${{ github.ref }}',
       "        run: echo shadowed",
     ].join("\n")}\n`;
 
