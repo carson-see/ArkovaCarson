@@ -559,16 +559,68 @@ function cosine(left: readonly number[], right: readonly number[]): number {
   return Math.max(-1, Math.min(1, dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm))));
 }
 
-function optionalEnvironmentPath(name: string): string | undefined {
-  const value = process.env[name];
-  return value ? resolve(value) : undefined;
-}
+export type S33Wave1WorkflowReportsCli = Readonly<{
+  mode: 'raw';
+  embeddingDiagnosticRawPath: string;
+  outputDir: string;
+  prodModelDiffRawPath: string;
+  producerHeadSha: string;
+  repositoryRoot: string;
+}> | Readonly<{
+  mode: 'final';
+  embeddingDiagnosticFinalPath: string;
+  outputDir: string;
+  prodModelDiffFinalPath: string;
+  producerHeadSha: string;
+  repositoryRoot: string;
+}>;
 
-function outputDirectory(args: readonly string[]): string {
-  if (args.length !== 2 || args[0] !== '--output-dir' || args[1].trim().length === 0) {
-    throw new Error('Expected exactly --output-dir <dir>');
+export function parseS33Wave1WorkflowReportsCliArgs(argv: readonly string[]): S33Wave1WorkflowReportsCli {
+  const mode = argv[0];
+  if (mode !== 'raw' && mode !== 'final') {
+    throw new Error('S3.3 workflow reports CLI requires the explicit raw or final command');
   }
-  return resolve(args[1]);
+  const args = argv.slice(1);
+  if (args.length % 2 !== 0) throw new Error('Invalid S3.3 workflow reports CLI arguments');
+  const values = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 2) {
+    const key = args[index];
+    const value = args[index + 1];
+    if (!key?.startsWith('--') || !value || value.trim().length === 0
+      || value.startsWith('--') || values.has(key)) {
+      throw new Error('Invalid or duplicated S3.3 workflow reports CLI argument');
+    }
+    values.set(key, value);
+  }
+  const common = ['--repository-root', '--producer-head', '--output-dir'] as const;
+  const modeSpecific = mode === 'raw'
+    ? ['--prod-model-diff-raw-path', '--embedding-diagnostic-raw-path'] as const
+    : ['--prod-model-diff-final-path', '--embedding-diagnostic-final-path'] as const;
+  const allowed = [...common, ...modeSpecific];
+  const unknown = [...values.keys()].filter((key) => !allowed.includes(key as (typeof allowed)[number]));
+  const missing = allowed.filter((key) => !values.has(key));
+  if (unknown.length > 0 || missing.length > 0 || values.size !== allowed.length) {
+    throw new Error(
+      `S3.3 workflow reports ${mode} CLI arguments mismatch; missing=[${missing.join(',')}], unknown=[${unknown.join(',')}]`,
+    );
+  }
+  const base = {
+    mode,
+    outputDir: resolve(values.get('--output-dir')!),
+    producerHeadSha: values.get('--producer-head')!,
+    repositoryRoot: resolve(values.get('--repository-root')!),
+  };
+  return mode === 'raw' ? Object.freeze({
+    ...base,
+    mode: 'raw',
+    embeddingDiagnosticRawPath: resolve(values.get('--embedding-diagnostic-raw-path')!),
+    prodModelDiffRawPath: resolve(values.get('--prod-model-diff-raw-path')!),
+  }) : Object.freeze({
+    ...base,
+    mode: 'final',
+    embeddingDiagnosticFinalPath: resolve(values.get('--embedding-diagnostic-final-path')!),
+    prodModelDiffFinalPath: resolve(values.get('--prod-model-diff-final-path')!),
+  });
 }
 
 function writeReport(outputDir: string, filename: (typeof REPORT_FILENAMES)[number], value: JsonRecord): void {
@@ -586,7 +638,7 @@ export function generateWorkflowReports(input: Readonly<{
   producerHeadSha: string;
   repositoryRoot: string;
 }>): void {
-  assertSha(input.producerHeadSha, 'S33_PRODUCER_HEAD_SHA');
+  assertSha(input.producerHeadSha, 'Wave-1 producer head');
   const producer = verifyS33Wave1ProducerHead({
     repositoryRoot: input.repositoryRoot,
     producerHeadSha: input.producerHeadSha,
@@ -619,7 +671,7 @@ export function generateAcceptanceWorkflowReports(input: Readonly<{
   producerHeadSha: string;
   repositoryRoot: string;
 }>): void {
-  assertSha(input.producerHeadSha, 'S33_PRODUCER_HEAD_SHA');
+  assertSha(input.producerHeadSha, 'Wave-1 producer head');
   const producer = verifyS33Wave1ProducerHead({
     repositoryRoot: input.repositoryRoot,
     producerHeadSha: input.producerHeadSha,
@@ -774,36 +826,12 @@ function validateFinalReportBytes(
 }
 
 function main(): void {
-  const repositoryRoot = process.env.S33_REPOSITORY_ROOT
-    ? resolve(process.env.S33_REPOSITORY_ROOT)
-    : resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
-  const outputDir = outputDirectory(process.argv.slice(2));
-  const producerHeadSha = string(process.env.S33_PRODUCER_HEAD_SHA, 'S33_PRODUCER_HEAD_SHA');
-  const rawProd = optionalEnvironmentPath('S33_PROD_MODEL_DIFF_RAW_PATH');
-  const rawEmbedding = optionalEnvironmentPath('S33_EMBEDDING_DIAGNOSTIC_RAW_PATH');
-  const finalProd = optionalEnvironmentPath('S33_PROD_MODEL_DIFF_FINAL_PATH');
-  const finalEmbedding = optionalEnvironmentPath('S33_EMBEDDING_DIAGNOSTIC_FINAL_PATH');
-  if (rawProd && rawEmbedding && !finalProd && !finalEmbedding) {
-    generateWorkflowReports({
-      embeddingDiagnosticRawPath: rawEmbedding,
-      outputDir,
-      prodModelDiffRawPath: rawProd,
-      producerHeadSha,
-      repositoryRoot,
-    });
+  const cli = parseS33Wave1WorkflowReportsCliArgs(process.argv.slice(2));
+  if (cli.mode === 'raw') {
+    generateWorkflowReports(cli);
     return;
   }
-  if (finalProd && finalEmbedding && !rawProd && !rawEmbedding) {
-    generateAcceptanceWorkflowReports({
-      embeddingDiagnosticFinalPath: finalEmbedding,
-      outputDir,
-      prodModelDiffFinalPath: finalProd,
-      producerHeadSha,
-      repositoryRoot,
-    });
-    return;
-  }
-  throw new Error('Set exactly one complete RAW or FINAL prerequisite report path pair');
+  generateAcceptanceWorkflowReports(cli);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

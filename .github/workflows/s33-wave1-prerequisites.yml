@@ -128,19 +128,18 @@ jobs:
           test -f "${S33_RAW_OUTPUT_DIRECTORY}/embedding-diagnostic.raw.json"
 
       - name: Normalize prerequisite reports once with trusted-main code
-        env:
-          S33_REPOSITORY_ROOT: ${{ runner.temp }}/s33-producer.git
-          S33_PRODUCER_HEAD_SHA: ${{ steps.producer.outputs.head_sha }}
-          S33_PROD_MODEL_DIFF_RAW_PATH: ${{ runner.temp }}/s33-wave1-prerequisite-raw/prod-model-diff.raw.json
-          S33_EMBEDDING_DIAGNOSTIC_RAW_PATH: ${{ runner.temp }}/s33-wave1-prerequisite-raw/embedding-diagnostic.raw.json
-          S33_FINAL_OUTPUT_DIRECTORY: ${{ runner.temp }}/s33-wave1-prerequisite-finals
         run: |
           set -euo pipefail
           npm --prefix services/worker exec -- tsx \
             src/ai/eval/s33-wave1-workflow-reports.ts \
-            --output-dir "${S33_FINAL_OUTPUT_DIRECTORY}"
-          test -f "${S33_FINAL_OUTPUT_DIRECTORY}/prod-model-diff.json"
-          test -f "${S33_FINAL_OUTPUT_DIRECTORY}/embedding-diagnostic.json"
+            raw \
+            --repository-root "${RUNNER_TEMP}/s33-producer.git" \
+            --producer-head "${{ steps.producer.outputs.head_sha }}" \
+            --output-dir "${RUNNER_TEMP}/s33-wave1-prerequisite-finals" \
+            --prod-model-diff-raw-path "${RUNNER_TEMP}/s33-wave1-prerequisite-raw/prod-model-diff.raw.json" \
+            --embedding-diagnostic-raw-path "${RUNNER_TEMP}/s33-wave1-prerequisite-raw/embedding-diagnostic.raw.json"
+          test -f "${RUNNER_TEMP}/s33-wave1-prerequisite-finals/prod-model-diff.json"
+          test -f "${RUNNER_TEMP}/s33-wave1-prerequisite-finals/embedding-diagnostic.json"
 
       - name: Revalidate frozen #1498 head tree manifest and final bindings before upload
         env:

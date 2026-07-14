@@ -144,22 +144,21 @@ jobs:
             --output-directory "${S33_PREREQUISITE_DIRECTORY}"
 
       - name: Parse producer bytes with trusted-main Team-3 verifier
-        env:
-          S33_REPORT_DIRECTORY: ${{ runner.temp }}/s33-wave1-reports
-          S33_REPOSITORY_ROOT: ${{ runner.temp }}/s33-producer.git
-          S33_PRODUCER_HEAD_SHA: ${{ steps.producer.outputs.head_sha }}
-          S33_PROD_MODEL_DIFF_FINAL_PATH: ${{ runner.temp }}/s33-wave1-prerequisites/prod-model-diff.json
-          S33_EMBEDDING_DIAGNOSTIC_FINAL_PATH: ${{ runner.temp }}/s33-wave1-prerequisites/embedding-diagnostic.json
         run: |
           set -euo pipefail
-          install -d -m 0700 "${S33_REPORT_DIRECTORY}"
+          install -d -m 0700 "${RUNNER_TEMP}/s33-wave1-reports"
           npx --no-install tsx \
             services/worker/src/ai/eval/s33-wave1-workflow-reports.ts \
-            --output-dir "${S33_REPORT_DIRECTORY}"
-          test -f "${S33_REPORT_DIRECTORY}/cross-review-plan.json"
-          test -f "${S33_REPORT_DIRECTORY}/prod-model-diff.json"
-          test -f "${S33_REPORT_DIRECTORY}/lexical-leakage.json"
-          test -f "${S33_REPORT_DIRECTORY}/embedding-diagnostic.json"
+            final \
+            --repository-root "${RUNNER_TEMP}/s33-producer.git" \
+            --producer-head "${{ steps.producer.outputs.head_sha }}" \
+            --output-dir "${RUNNER_TEMP}/s33-wave1-reports" \
+            --prod-model-diff-final-path "${RUNNER_TEMP}/s33-wave1-prerequisites/prod-model-diff.json" \
+            --embedding-diagnostic-final-path "${RUNNER_TEMP}/s33-wave1-prerequisites/embedding-diagnostic.json"
+          test -f "${RUNNER_TEMP}/s33-wave1-reports/cross-review-plan.json"
+          test -f "${RUNNER_TEMP}/s33-wave1-reports/prod-model-diff.json"
+          test -f "${RUNNER_TEMP}/s33-wave1-reports/lexical-leakage.json"
+          test -f "${RUNNER_TEMP}/s33-wave1-reports/embedding-diagnostic.json"
 
       - name: Authenticate live GitHub trust root and canonicalize evidence
         env:

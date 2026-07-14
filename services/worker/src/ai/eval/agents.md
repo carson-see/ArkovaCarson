@@ -40,8 +40,12 @@ _Last updated: 2026-07-14_
   field coercion, professional-education recovery, per-type stripping, and
   cross-field fraud-signal merging without changing runtime `gemini.ts`.
 - `s33-wave1-workflow-reports.ts` runs only after producer verification. Its
-  CLI remains `npx tsx .../s33-wave1-workflow-reports.ts --output-dir <dir>`
-  and requires exactly one complete RAW or FINAL prerequisite path pair. RAW
+  CLI is exactly `raw --repository-root <bare> --producer-head <sha>
+  --output-dir <dir> --prod-model-diff-raw-path <path>
+  --embedding-diagnostic-raw-path <path>` or `final --repository-root <bare>
+  --producer-head <sha> --output-dir <dir> --prod-model-diff-final-path <path>
+  --embedding-diagnostic-final-path <path>`. It has no environment-variable
+  fallback and rejects unknown, duplicate, missing, or mixed-mode flags. RAW
   mode deterministically normalizes private runner output; FINAL mode strictly
   revalidates and byte-preserves authenticated prerequisite finals while
   recomputing the current lexical corpus manifest. It emits the fixed report

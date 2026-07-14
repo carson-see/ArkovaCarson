@@ -17,6 +17,7 @@ import {
   deterministicSampleIds,
   normalizeEmbeddingDiagnostic,
   normalizeProdModelDiff,
+  parseS33Wave1WorkflowReportsCliArgs,
 } from './s33-wave1-workflow-reports.js';
 
 const HEAD = '1'.repeat(40);
@@ -27,6 +28,7 @@ const MANIFEST_CANONICAL = '5'.repeat(64);
 const RUN_SHA = '6'.repeat(40);
 const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex');
 const workerRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+const repositoryRoot = resolve(workerRoot, '../..');
 
 function producer(): S33Wave1ProducerValidationReport {
   return {
@@ -142,6 +144,79 @@ function embeddingRaw(corpus = [{ path: 'training.jsonl', content: 'unrelated tr
 }
 
 describe('S3.3 Wave-1 trusted workflow reports', () => {
+  it('requires an explicit, complete, unmixed raw-or-final CLI contract without environment reads', () => {
+    const common = [
+      '--repository-root', '/tmp/producer.git',
+      '--producer-head', HEAD,
+      '--output-dir', '/tmp/output',
+    ];
+    expect(parseS33Wave1WorkflowReportsCliArgs([
+      'raw', ...common,
+      '--prod-model-diff-raw-path', '/tmp/prod.raw.json',
+      '--embedding-diagnostic-raw-path', '/tmp/embedding.raw.json',
+    ])).toEqual({
+      mode: 'raw', repositoryRoot: '/tmp/producer.git', producerHeadSha: HEAD, outputDir: '/tmp/output',
+      prodModelDiffRawPath: '/tmp/prod.raw.json', embeddingDiagnosticRawPath: '/tmp/embedding.raw.json',
+    });
+    expect(parseS33Wave1WorkflowReportsCliArgs([
+      'final', ...common,
+      '--prod-model-diff-final-path', '/tmp/prod.json',
+      '--embedding-diagnostic-final-path', '/tmp/embedding.json',
+    ])).toEqual({
+      mode: 'final', repositoryRoot: '/tmp/producer.git', producerHeadSha: HEAD, outputDir: '/tmp/output',
+      prodModelDiffFinalPath: '/tmp/prod.json', embeddingDiagnosticFinalPath: '/tmp/embedding.json',
+    });
+    const validRaw = [
+      'raw', ...common,
+      '--prod-model-diff-raw-path', '/tmp/prod.raw.json',
+      '--embedding-diagnostic-raw-path', '/tmp/embedding.raw.json',
+    ];
+    for (const invalid of [
+      common,
+      ['normalize', ...common],
+      validRaw.slice(0, -2),
+      [...validRaw, '--unexpected', '/tmp/value'],
+      [...validRaw, '--output-dir', '/tmp/duplicate'],
+      [...validRaw, '--prod-model-diff-final-path', '/tmp/mixed.json'],
+    ]) {
+      expect(() => parseS33Wave1WorkflowReportsCliArgs(invalid))
+        .toThrow(/explicit raw or final|invalid|duplicated|mismatch/i);
+    }
+    expect(readFileSync(join(workerRoot, 'src/ai/eval/s33-wave1-workflow-reports.ts'), 'utf8'))
+      .not.toContain('process.env');
+  });
+
+  it('invokes exact raw and final report modes with explicit paths in the two workflows', () => {
+    const prerequisiteWorkflow = readFileSync(
+      join(repositoryRoot, '.github/workflows/s33-wave1-prerequisites.yml'),
+      'utf8',
+    );
+    const acceptanceWorkflow = readFileSync(
+      join(repositoryRoot, '.github/workflows/s33-wave1-acceptance.yml'),
+      'utf8',
+    );
+    const prerequisiteStep = prerequisiteWorkflow.slice(
+      prerequisiteWorkflow.indexOf('Normalize prerequisite reports once with trusted-main code'),
+      prerequisiteWorkflow.indexOf('Revalidate frozen #1498'),
+    );
+    const acceptanceStep = acceptanceWorkflow.slice(
+      acceptanceWorkflow.indexOf('Parse producer bytes with trusted-main Team-3 verifier'),
+      acceptanceWorkflow.indexOf('Authenticate live GitHub trust root'),
+    );
+    expect(prerequisiteStep.match(/s33-wave1-workflow-reports\.ts\s+\\\n\s+raw/gu)).toHaveLength(1);
+    expect(acceptanceStep.match(/s33-wave1-workflow-reports\.ts\s+\\\n\s+final/gu)).toHaveLength(1);
+    for (const flag of [
+      '--repository-root', '--producer-head', '--output-dir',
+      '--prod-model-diff-raw-path', '--embedding-diagnostic-raw-path',
+    ]) expect(prerequisiteStep).toContain(flag);
+    for (const flag of [
+      '--repository-root', '--producer-head', '--output-dir',
+      '--prod-model-diff-final-path', '--embedding-diagnostic-final-path',
+    ]) expect(acceptanceStep).toContain(flag);
+    expect(prerequisiteStep).not.toMatch(/S33_(?:REPOSITORY_ROOT|PRODUCER_HEAD_SHA|PROD_MODEL_DIFF_RAW_PATH|EMBEDDING_DIAGNOSTIC_RAW_PATH):/u);
+    expect(acceptanceStep).not.toMatch(/S33_(?:REPOSITORY_ROOT|PRODUCER_HEAD_SHA|PROD_MODEL_DIFF_FINAL_PATH|EMBEDDING_DIAGNOSTIC_FINAL_PATH):/u);
+  });
+
   it('creates the locked deterministic nine-entry cross-review plan without a human verdict', () => {
     const sample = deterministicSampleIds(MANIFEST_RAW, WAVE1_ENTRY_IDS);
     expect(sample).toHaveLength(9);
