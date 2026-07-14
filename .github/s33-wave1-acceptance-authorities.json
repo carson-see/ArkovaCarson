@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "repository": "carson-see/ArkovaCarson",
+  "pullRequestNumber": 1498,
+  "supportPullRequestNumber": 1529,
+  "primary": {
+    "login": "chatgpt-codex-connector[bot]",
+    "databaseId": 199175422,
+    "nodeId": "BOT_kgDOC98s_g",
+    "requiresLiveWritePermission": false
+  },
+  "fallbacks": [
+    {
+      "login": "BestNessie",
+      "databaseId": 129661809,
+      "nodeId": "U_kgDOB7p7cQ",
+      "requiresLiveWritePermission": true
+    },
+    {
+      "login": "alibama",
+      "databaseId": 911386,
+      "nodeId": "MDQ6VXNlcjkxMTM4Ng==",
+      "requiresLiveWritePermission": true
+    }
+  ],
+  "rulings": [
+    "https://arkova.atlassian.net/wiki/spaces/A/pages/99024897?focusedCommentId=102596609",
+    "https://arkova.atlassian.net/wiki/spaces/A/pages/99024897?focusedCommentId=102629377",
+    "https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=102793217",
+    "https://arkova.atlassian.net/wiki/spaces/A/pages/99024897/SCRUM-S3.3+CTO+Rulings+Founder+Ratifications+Amended+Exit+Criteria+Soak+Standard+v2?focusedCommentId=102858753"
+  ],
+  "crossReview": {
+    "marker": "arkova-s33-wave1-cross-review-v1",
+    "sampleAlgorithm": "sha256-manifest-entry-rank-v1",
+    "sampleRule": "ceil(10%),minimum-5,capped-at-entry-count"
+  }
+}

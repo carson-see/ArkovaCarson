@@ -1,0 +1,185 @@
+name: S3.3 Wave-1 Prerequisites
+
+# CTO 102793217 + 102858753: one no-input trusted-main dispatch after the
+# #1498 freeze. The producer ref is fetched into a bare object database and is
+# parsed as data only; no producer checkout, import, package install, or script
+# execution is permitted.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: s33-wave1-prerequisites
+  cancel-in-progress: false
+
+jobs:
+  build-prerequisites:
+    name: Build bounded offline prerequisite artifacts
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      pull-requests: read
+    steps:
+      - name: Checkout trusted main only
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Refuse non-main or rerun attempt
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME}" = "workflow_dispatch"
+          test "${GITHUB_REPOSITORY}" = "carson-see/ArkovaCarson"
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${GITHUB_RUN_ATTEMPT}" = "1"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+
+      - name: Fetch exact #1498 Git objects as data (bare; never checkout)
+        id: producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          S33_PRODUCER_OBJECT_REPOSITORY: ${{ runner.temp }}/s33-producer.git
+        run: |
+          set -euo pipefail
+          PR_JSON=$(gh api /repos/carson-see/ArkovaCarson/pulls/1498)
+          test "$(jq -r '.state' <<<"${PR_JSON}")" = "open"
+          test "$(jq -r '.base.ref' <<<"${PR_JSON}")" = "main"
+          test "$(jq -r '.head.repo.full_name' <<<"${PR_JSON}")" = "carson-see/ArkovaCarson"
+          PRODUCER_HEAD_SHA=$(jq -r '.head.sha' <<<"${PR_JSON}")
+          test "${PRODUCER_HEAD_SHA}" != "null"
+          git init --bare --quiet "${S33_PRODUCER_OBJECT_REPOSITORY}"
+          BASIC_AUTH=$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)
+          git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" \
+            -c http.extraHeader="AUTHORIZATION: basic ${BASIC_AUTH}" \
+            fetch --quiet --no-tags --depth=2 \
+            https://github.com/carson-see/ArkovaCarson.git \
+            refs/pull/1498/head:refs/heads/producer
+          unset BASIC_AUTH
+          git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" symbolic-ref HEAD refs/heads/producer
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse HEAD)" = "${PRODUCER_HEAD_SHA}"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-list --parents -n 1 HEAD | wc -w | tr -d ' ')" = "2"
+          PRODUCER_TREE_SHA=$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse 'HEAD^{tree}')
+          git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" show \
+            "HEAD:docs/lane4/s33-wave1-batch-manifest.json" > "${RUNNER_TEMP}/s33-wave1-manifest.initial.json"
+          MANIFEST_RAW_SHA256=$(sha256sum "${RUNNER_TEMP}/s33-wave1-manifest.initial.json" | cut -d ' ' -f1)
+          MANIFEST_CANONICAL_SHA256=$(jq -cS . "${RUNNER_TEMP}/s33-wave1-manifest.initial.json" \
+            | tr -d '\n' | sha256sum | cut -d ' ' -f1)
+          echo "head_sha=${PRODUCER_HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "tree_sha=${PRODUCER_TREE_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "manifest_raw_sha256=${MANIFEST_RAW_SHA256}" >> "${GITHUB_OUTPUT}"
+          echo "manifest_canonical_sha256=${MANIFEST_CANONICAL_SHA256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: services/worker/package-lock.json
+
+      - name: Install trusted-main worker dependencies
+        working-directory: services/worker
+        run: npm ci --ignore-scripts
+
+      - id: gcp-auth
+        name: Authenticate to GCP via existing Workload Identity Federation
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - id: gemini-secret
+        name: Read existing Gemini API key from GCP Secret Manager
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
+        with:
+          secrets: |
+            gemini_api_key:arkova1/gemini-api-key
+
+      - name: Run bounded public-production replay and embedding prerequisite
+        env:
+          ENABLE_AI_EXTRACTION: 'true'
+          GEMINI_API_KEY: ${{ steps.gemini-secret.outputs.gemini_api_key }}
+          S33_PRODUCER_HEAD_SHA: ${{ steps.producer.outputs.head_sha }}
+          S33_REPOSITORY_ROOT: ${{ runner.temp }}/s33-producer.git
+          S33_RAW_OUTPUT_DIRECTORY: ${{ runner.temp }}/s33-wave1-prerequisite-raw
+        run: |
+          set -euo pipefail
+          test -n "${GEMINI_API_KEY}"
+          npm --prefix services/worker exec -- tsx \
+            src/ai/eval/s33-wave1-prerequisite-runner.ts prerequisites \
+            --producer-head "${S33_PRODUCER_HEAD_SHA}" \
+            --raw-output-dir "${S33_RAW_OUTPUT_DIRECTORY}"
+          test -f "${S33_RAW_OUTPUT_DIRECTORY}/prod-model-diff.raw.json"
+          test -f "${S33_RAW_OUTPUT_DIRECTORY}/embedding-diagnostic.raw.json"
+
+      - name: Normalize prerequisite reports once with trusted-main code
+        env:
+          S33_REPOSITORY_ROOT: ${{ runner.temp }}/s33-producer.git
+          S33_PRODUCER_HEAD_SHA: ${{ steps.producer.outputs.head_sha }}
+          S33_PROD_MODEL_DIFF_RAW_PATH: ${{ runner.temp }}/s33-wave1-prerequisite-raw/prod-model-diff.raw.json
+          S33_EMBEDDING_DIAGNOSTIC_RAW_PATH: ${{ runner.temp }}/s33-wave1-prerequisite-raw/embedding-diagnostic.raw.json
+          S33_FINAL_OUTPUT_DIRECTORY: ${{ runner.temp }}/s33-wave1-prerequisite-finals
+        run: |
+          set -euo pipefail
+          npm --prefix services/worker exec -- tsx \
+            src/ai/eval/s33-wave1-workflow-reports.ts \
+            --output-dir "${S33_FINAL_OUTPUT_DIRECTORY}"
+          test -f "${S33_FINAL_OUTPUT_DIRECTORY}/prod-model-diff.json"
+          test -f "${S33_FINAL_OUTPUT_DIRECTORY}/embedding-diagnostic.json"
+
+      - name: Revalidate frozen #1498 head tree manifest and final bindings before upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          S33_PRODUCER_OBJECT_REPOSITORY: ${{ runner.temp }}/s33-producer.git
+          S33_FINAL_OUTPUT_DIRECTORY: ${{ runner.temp }}/s33-wave1-prerequisite-finals
+          S33_INITIAL_HEAD_SHA: ${{ steps.producer.outputs.head_sha }}
+          S33_INITIAL_TREE_SHA: ${{ steps.producer.outputs.tree_sha }}
+          S33_INITIAL_MANIFEST_RAW_SHA256: ${{ steps.producer.outputs.manifest_raw_sha256 }}
+          S33_INITIAL_MANIFEST_CANONICAL_SHA256: ${{ steps.producer.outputs.manifest_canonical_sha256 }}
+        run: |
+          set -euo pipefail
+          PR_JSON=$(gh api /repos/carson-see/ArkovaCarson/pulls/1498)
+          test "$(jq -r '.state' <<<"${PR_JSON}")" = "open"
+          test "$(jq -r '.base.ref' <<<"${PR_JSON}")" = "main"
+          test "$(jq -r '.head.repo.full_name' <<<"${PR_JSON}")" = "carson-see/ArkovaCarson"
+          test "$(jq -r '.head.sha' <<<"${PR_JSON}")" = "${S33_INITIAL_HEAD_SHA}"
+          BASIC_AUTH=$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)
+          git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" \
+            -c http.extraHeader="AUTHORIZATION: basic ${BASIC_AUTH}" \
+            fetch --quiet --no-tags --depth=2 \
+            https://github.com/carson-see/ArkovaCarson.git \
+            +refs/pull/1498/head:refs/heads/final
+          unset BASIC_AUTH
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/final)" = "${S33_INITIAL_HEAD_SHA}"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse 'refs/heads/final^{tree}')" = "${S33_INITIAL_TREE_SHA}"
+          git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" show \
+            "refs/heads/final:docs/lane4/s33-wave1-batch-manifest.json" > "${RUNNER_TEMP}/s33-wave1-manifest.final.json"
+          test "$(sha256sum "${RUNNER_TEMP}/s33-wave1-manifest.final.json" | cut -d ' ' -f1)" = "${S33_INITIAL_MANIFEST_RAW_SHA256}"
+          test "$(jq -cS . "${RUNNER_TEMP}/s33-wave1-manifest.final.json" | tr -d '\n' | sha256sum | cut -d ' ' -f1)" = "${S33_INITIAL_MANIFEST_CANONICAL_SHA256}"
+          for REPORT in prod-model-diff.json embedding-diagnostic.json; do
+            test "$(jq -r '.producerHeadSha' "${S33_FINAL_OUTPUT_DIRECTORY}/${REPORT}")" = "${S33_INITIAL_HEAD_SHA}"
+            test "$(jq -r '.manifestRawSha256' "${S33_FINAL_OUTPUT_DIRECTORY}/${REPORT}")" = "${S33_INITIAL_MANIFEST_RAW_SHA256}"
+            test "$(jq -r '.payload.producerTreeSha' "${S33_FINAL_OUTPUT_DIRECTORY}/${REPORT}")" = "${S33_INITIAL_TREE_SHA}"
+            test "$(jq -r '.payload.manifestCanonicalSha256' "${S33_FINAL_OUTPUT_DIRECTORY}/${REPORT}")" = "${S33_INITIAL_MANIFEST_CANONICAL_SHA256}"
+          done
+
+      - name: Upload exact prod-model-diff final
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s33-wave1-prod-model-diff-${{ steps.producer.outputs.head_sha }}
+          path: ${{ runner.temp }}/s33-wave1-prerequisite-finals/prod-model-diff.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload exact embedding-diagnostic final
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s33-wave1-embedding-diagnostic-${{ steps.producer.outputs.head_sha }}
+          path: ${{ runner.temp }}/s33-wave1-prerequisite-finals/embedding-diagnostic.json
+          if-no-files-found: error
+          retention-days: 14
