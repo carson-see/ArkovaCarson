@@ -34,8 +34,23 @@ function rootCheckoutSteps(workflow: string): string[] {
 }
 
 function assertWorkflowContract(workflow: string): void {
+  const yamlAnchorOrAlias =
+    /(?:^|\s|:|\[|\{|,)[&*][A-Za-z0-9_][A-Za-z0-9_.-]*(?=$|[\s\]},#])/gmu;
+  const yamlTag = /(?:^|\s|:|\[|\{|,)!(?:!|<|[A-Za-z0-9_])/gmu;
+  const yamlMergeKey = /<<\s*:/gu;
+  const forbiddenHeadRefBinding =
+    /^\s+(?:ref|"ref"|'ref'):\s*.*github\.head_ref.*$/gmu;
+
   expect(workflow).toContain("  pull_request:\n");
-  expect(workflow.match(/actions\/checkout@/gu) ?? []).toHaveLength(1);
+  expect(workflow.match(/\\/gu) ?? []).toHaveLength(0);
+  expect(workflow.match(yamlAnchorOrAlias) ?? []).toHaveLength(0);
+  expect(workflow.match(yamlTag) ?? []).toHaveLength(0);
+  expect(workflow.match(yamlMergeKey) ?? []).toHaveLength(0);
+  expect(workflow.match(/actions\/checkout@/giu) ?? []).toHaveLength(1);
+  expect(workflow.match(forbiddenHeadRefBinding) ?? []).toHaveLength(0);
+  expect(
+    workflow.match(/github\.event\.pull_request\.head\.ref/gu) ?? [],
+  ).toHaveLength(0);
   expect(workflow.match(/HEAD_REF_SHA/gu) ?? []).toHaveLength(1);
   expect(
     workflow.match(/github\.event\.pull_request\.head\.sha/gu) ?? [],
@@ -146,6 +161,36 @@ describe("staging-evidence workflow integration-ref contract", () => {
       '          "HEAD_REF_SHA": ${{ github.ref }}',
       "        run: echo shadowed",
     ].join("\n")}\n`;
+
+    expect(() => assertWorkflowContract(mutated)).toThrow();
+  });
+
+  it("rejects an escaped checkout action that semantically resolves to a branch-head checkout", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = `${workflow}\n${[
+      "      - name: Escaped branch-head checkout",
+      '        uses: "actions\\u002fcheckout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"',
+      "        with:",
+      "          ref: ${{ github.head_ref }}",
+      "          fetch-depth: 0",
+    ].join("\n")}\n`;
+
+    expect(() => assertWorkflowContract(mutated)).toThrow();
+  });
+
+  it("rejects an anchored checkout reused through a step alias", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const checkoutLine =
+      "      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0";
+    const anchored = workflow.replace(
+      checkoutLine,
+      [
+        "      - &staging_checkout",
+        "        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
+      ].join("\n"),
+    );
+    expect(anchored).not.toBe(workflow);
+    const mutated = `${anchored}\n      - *staging_checkout\n`;
 
     expect(() => assertWorkflowContract(mutated)).toThrow();
   });
