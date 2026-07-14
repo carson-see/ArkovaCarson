@@ -29,9 +29,10 @@
  * contract-touching T2 PR keeps the full worker-artifact requirements.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { resolve, sep } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
+import ts from 'typescript';
 import {
   REPO,
   getBaseRef,
@@ -300,22 +301,175 @@ const S33_OFFLINE_ACCEPTANCE_FILES = new Set([
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
+  'services/worker/src/ai/eval/heldout-leakage.ts',
   'services/worker/src/ai/eval/s33-acceptance-ledger.ts',
   'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+  'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
+  'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
+  'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+  'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
 ]);
-const S33_OFFLINE_IMPORT_STEMS = [
-  'golden-dataset-s33-au-ke-heldout',
-  'golden-dataset-s33-licensing-heldout',
-  'golden-dataset-s33-ood-negatives',
-  'golden-dataset-s33-types',
-  's33-acceptance-ledger',
-  's33-batch-acceptance',
+const S33_RUNTIME_ENTRYPOINTS = ['services/worker/src/index.ts'] as const;
+const MODULE_CANDIDATE_SUFFIXES = [
+  '', '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs',
+  '/index.ts', '/index.tsx', '/index.mts', '/index.cts',
 ] as const;
-const S33_OFFLINE_IMPORT_RE = new RegExp(
-  String.raw`(?:from\s*|import\s*(?:\(\s*)?|require\s*\(\s*)['"][^'"\n]*(?:${S33_OFFLINE_IMPORT_STEMS.join('|')})(?:\.[cm]?[jt]s)?['"]`,
-  'u',
-);
-const RUNTIME_SOURCE_FILE_RE = /\.[cm]?[jt]sx?$/u;
+
+function stringSpecifier(expression: ts.Expression): string | null {
+  return ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)
+    ? expression.text
+    : null;
+}
+
+function repositoryPath(repositoryRoot: string, absolutePath: string): string {
+  return relative(resolve(repositoryRoot), absolutePath).split(sep).join('/');
+}
+
+function resolveRuntimeModule(
+  repositoryRoot: string,
+  importerPath: string,
+  specifier: string,
+): string | null {
+  if (!specifier.startsWith('.')) return null;
+  const absoluteSpecifier = resolve(repositoryRoot, dirname(importerPath), specifier);
+  const stems = [absoluteSpecifier];
+  if (/\.(?:mjs|cjs|jsx|js)$/u.test(absoluteSpecifier)) {
+    stems.push(absoluteSpecifier.replace(/\.(?:mjs|cjs|jsx|js)$/u, ''));
+  }
+  for (const stem of stems) {
+    for (const suffix of MODULE_CANDIDATE_SUFFIXES) {
+      const candidate = `${stem}${suffix}`;
+      if (existsSync(candidate) && statSync(candidate).isFile()) {
+        return repositoryPath(repositoryRoot, candidate);
+      }
+    }
+  }
+  throw new Error(`${importerPath} has an unresolved local runtime module ${specifier}`);
+}
+
+interface RuntimeModuleParse {
+  localSpecifiers: string[];
+  unsafeConstructedLoads: string[];
+}
+
+/** Parse runtime module edges; no source module is executed. */
+function parseRuntimeModule(sourceText: string, importerPath: string): RuntimeModuleParse {
+  const source = ts.createSourceFile(
+    importerPath,
+    sourceText,
+    ts.ScriptTarget.ES2022,
+    true,
+    importerPath.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const diagnostics = (source as ts.SourceFile & {
+    readonly parseDiagnostics?: readonly ts.Diagnostic[];
+  }).parseDiagnostics;
+  if (!Array.isArray(diagnostics)) {
+    throw new Error(`${importerPath} TypeScript parser did not expose parse diagnostics`);
+  }
+  if (diagnostics.length > 0) throw new Error(`${importerPath} has TypeScript parse diagnostics`);
+
+  const localSpecifiers: string[] = [];
+  const unsafeConstructedLoads: string[] = [];
+  const createRequireImports = new Set<string>();
+  const moduleNamespaceImports = new Set<string>();
+  const requireCallers = new Set<string>(['require']);
+
+  const isNodeModuleRequire = (expression: ts.Expression | undefined): boolean => {
+    if (!expression || !ts.isCallExpression(expression)
+      || !ts.isIdentifier(expression.expression) || expression.expression.text !== 'require'
+      || expression.arguments.length !== 1) return false;
+    return stringSpecifier(expression.arguments[0]) === 'node:module';
+  };
+
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement)
+      || stringSpecifier(statement.moduleSpecifier) !== 'node:module'
+      || !statement.importClause) continue;
+    const bindings = statement.importClause.namedBindings;
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        if ((element.propertyName?.text ?? element.name.text) === 'createRequire') {
+          createRequireImports.add(element.name.text);
+        }
+      }
+    } else if (bindings && ts.isNamespaceImport(bindings)) {
+      moduleNamespaceImports.add(bindings.name.text);
+    }
+  }
+
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!isNodeModuleRequire(declaration.initializer)) continue;
+      if (ts.isIdentifier(declaration.name)) {
+        moduleNamespaceImports.add(declaration.name.text);
+        continue;
+      }
+      if (!ts.isObjectBindingPattern(declaration.name)) continue;
+      for (const element of declaration.name.elements) {
+        if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
+        const importedName = element.propertyName && ts.isIdentifier(element.propertyName)
+          ? element.propertyName.text
+          : element.name.text;
+        if (importedName === 'createRequire') createRequireImports.add(element.name.text);
+      }
+    }
+  }
+
+  const isCreateRequireCall = (expression: ts.Expression): boolean => {
+    if (!ts.isCallExpression(expression)) return false;
+    if (ts.isIdentifier(expression.expression)) {
+      return createRequireImports.has(expression.expression.text);
+    }
+    return ts.isPropertyAccessExpression(expression.expression)
+      && expression.expression.name.text === 'createRequire'
+      && ts.isIdentifier(expression.expression.expression)
+      && moduleNamespaceImports.has(expression.expression.expression.text);
+  };
+
+  const findRequireAliases = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node)
+      && ts.isIdentifier(node.name)
+      && node.initializer
+      && isCreateRequireCall(node.initializer)) {
+      requireCallers.add(node.name.text);
+    }
+    ts.forEachChild(node, findRequireAliases);
+  };
+  findRequireAliases(source);
+
+  const addModuleSpecifier = (specifier: string): void => {
+    if (specifier.startsWith('.')) localSpecifiers.push(specifier);
+  };
+  const inspect = (node: ts.Node): void => {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+      const specifier = stringSpecifier(node.moduleSpecifier);
+      if (specifier === null) unsafeConstructedLoads.push(`${importerPath}: static import/export`);
+      else addModuleSpecifier(specifier);
+    } else if (ts.isImportEqualsDeclaration(node)
+      && ts.isExternalModuleReference(node.moduleReference)
+      && node.moduleReference.expression) {
+      const specifier = stringSpecifier(node.moduleReference.expression);
+      if (specifier === null) unsafeConstructedLoads.push(`${importerPath}: import-equals`);
+      else addModuleSpecifier(specifier);
+    } else if (ts.isCallExpression(node)) {
+      const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const requireLike = ts.isIdentifier(node.expression) && requireCallers.has(node.expression.text);
+      if (dynamicImport || requireLike) {
+        const specifier = node.arguments.length === 1 ? stringSpecifier(node.arguments[0]) : null;
+        if (specifier === null) {
+          unsafeConstructedLoads.push(`${importerPath}: ${dynamicImport ? 'dynamic import' : 'require/createRequire'}`);
+        } else {
+          addModuleSpecifier(specifier);
+        }
+      }
+    }
+    ts.forEachChild(node, inspect);
+  };
+  inspect(source);
+  return { localSpecifiers, unsafeConstructedLoads };
+}
 
 /**
  * Return production-source importers of the CTO-ratified offline S3.3 files.
@@ -323,30 +477,29 @@ const RUNTIME_SOURCE_FILE_RE = /\.[cm]?[jt]sx?$/u;
  * closed instead of silently granting the T0 carve-out.
  */
 export function findS33RuntimeImporters(repositoryRoot = REPO): string[] {
-  const importers: string[] = [];
-  const sourceRoot = resolve(repositoryRoot, 'services/worker/src');
-  const visit = (directory: string, relativeDirectory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const relativePath = relativeDirectory.length === 0
-        ? entry.name
-        : `${relativeDirectory}/${entry.name}`;
-      const absolutePath = resolve(directory, entry.name);
-      if (entry.isDirectory()) {
-        visit(absolutePath, relativePath);
-        continue;
-      }
-      if (!entry.isFile() || !RUNTIME_SOURCE_FILE_RE.test(entry.name)) continue;
-      const repositoryPath = `services/worker/src/${relativePath}`;
-      if (TEST_FILE_RE.test(repositoryPath) || S33_OFFLINE_ACCEPTANCE_FILES.has(repositoryPath)) continue;
-      if (S33_OFFLINE_IMPORT_RE.test(readFileSync(absolutePath, 'utf8'))) importers.push(repositoryPath);
-    }
-  };
-
+  const importers = new Set<string>();
+  const queued: string[] = [...S33_RUNTIME_ENTRYPOINTS];
+  const visited = new Set<string>();
   try {
-    visit(sourceRoot, '');
-    return importers.sort();
-  } catch {
-    return ['<unreadable services/worker/src import graph>'];
+    while (queued.length > 0) {
+      const importerPath = queued.shift()!;
+      if (visited.has(importerPath)) continue;
+      visited.add(importerPath);
+      const absolutePath = resolve(repositoryRoot, importerPath);
+      if (!existsSync(absolutePath)) throw new Error(`missing runtime entry/module ${importerPath}`);
+      const parsed = parseRuntimeModule(readFileSync(absolutePath, 'utf8'), importerPath);
+      for (const unsafe of parsed.unsafeConstructedLoads) importers.add(`<unsafe ${unsafe}>`);
+      for (const specifier of parsed.localSpecifiers) {
+        const importedPath = resolveRuntimeModule(repositoryRoot, importerPath, specifier);
+        if (importedPath === null) continue;
+        if (S33_OFFLINE_ACCEPTANCE_FILES.has(importedPath)) importers.add(importerPath);
+        else if (!TEST_FILE_RE.test(importedPath)) queued.push(importedPath);
+      }
+    }
+    return [...importers].sort();
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'unknown import-graph failure';
+    return [`<unreadable services/worker runtime module graph: ${reason}>`];
   }
 }
 
@@ -463,14 +616,24 @@ export function requiredTierFor(
   opts?: TierClassifyOpts,
 ): { tier: Tier; reason: string } {
   if (files.length === 0) return { tier: 'T0', reason: 'no changed files' };
-  if (files.every((f) => isT0OnlyFile(f, opts))) {
+  let cachedRuntimeImporters: readonly string[] | undefined;
+  const classifyOpts = opts?.s33RuntimeImporterProvider
+    ? opts
+    : {
+        ...opts,
+        s33RuntimeImporterProvider: (): readonly string[] => {
+          cachedRuntimeImporters ??= findS33RuntimeImporters();
+          return cachedRuntimeImporters;
+        },
+      };
+  if (files.every((f) => isT0OnlyFile(f, classifyOpts))) {
     return { tier: 'T0', reason: 'docs/tests/CI/tooling-only' };
   }
 
   let best: Tier = 'T1';
   let reason = 'default frontend / additive change';
   for (const f of files) {
-    if (isT0OnlyFile(f, opts)) continue;
+    if (isT0OnlyFile(f, classifyOpts)) continue;
     for (const rule of PATH_RULES) {
       if (rule.pattern.test(f) && TIER_RANK[rule.minTier] > TIER_RANK[best]) {
         best = rule.minTier;
@@ -1698,6 +1861,10 @@ interface StagingFilesOnlyResult {
  */
 const STAGING_TOOLING_ALLOW = [
   /^scripts\/staging\//,
+  // CTO 103022593/103055361: exact Wave-1 trust-gate CLI adapter and
+  // authority registry are offline CI inputs; no broad scripts/.github carve-out.
+  /^scripts\/ci\/s33-wave1-github-evidence\.ts$/,
+  /^\.github\/s33-wave1-acceptance-authorities\.json$/,
   // CI-only local-Supabase bootstrap for the types/tests/e2e jobs (sourced by
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
   /^scripts\/ci-supabase-start\.sh$/,

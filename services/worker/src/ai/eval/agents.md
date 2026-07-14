@@ -23,6 +23,33 @@ _Last updated: 2026-07-14_
   The old signed sampling implementation remains only behind the explicitly
   test-only injected factory for security-regression coverage; its production
   factory always throws the CTO-retirement error.
+- `s33-wave1-producer-verifier.ts` is the trusted-main, no-execution producer
+  boundary. It parses only a directly exported `const` literal array graph,
+  caps expansion at 81 rows, fails if TypeScript diagnostics are unavailable,
+  derives the sole parent/tree/source/support blobs and exact six-path diff from
+  Git, then validates all 81 rows after production field stripping. Never
+  replace it with an import of producer code or accept caller-supplied Git
+  facts. The current remote #1498 r10 correctly fails this gate at KE-001
+  because its post-validation depth is four; do not weaken the floor.
+- `s33-wave1-prerequisite-runner.ts` is the no-retry trusted-main network
+  runner. Its exact CLI is `prerequisites --producer-head <sha>
+  --raw-output-dir <dir>`. It makes 81 ordered `gemini-2.5-flash` production
+  prompt calls, then bounded 3072-dimensional diagnostic embedding batches;
+  it rejects model/tuned/schema overrides and publishes both raw reports
+  atomically. Its offline response comparator mirrors successful production
+  field coercion, professional-education recovery, per-type stripping, and
+  cross-field fraud-signal merging without changing runtime `gemini.ts`.
+- `s33-wave1-workflow-reports.ts` runs only after producer verification. Its
+  CLI remains `npx tsx .../s33-wave1-workflow-reports.ts --output-dir <dir>`
+  and requires exactly one complete RAW or FINAL prerequisite path pair. RAW
+  mode deterministically normalizes private runner output; FINAL mode strictly
+  revalidates and byte-preserves authenticated prerequisite finals while
+  recomputing the current lexical corpus manifest. It emits the fixed report
+  set using the common Team-2 envelope. Lane 3 never authenticates a review or
+  emits `cross-review.json`; `s33-wave1-github-evidence.ts` owns that private
+  WeakSet-branded GitHub boundary and late-loads the Lane-3 finalizer. The
+  lexical report requires zero normalized exact n=6–13 matches, and embedding
+  evidence is always diagnostic-only/non-overriding.
 
 ## 2026-07-13 S3.3 Lane-4 batch acceptance support (historical pre-ruling harness)
 

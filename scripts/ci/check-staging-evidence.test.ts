@@ -387,14 +387,59 @@ describe('check-staging-evidence', () => {
         'services/worker/src/ai/eval/agents.md',
         'services/worker/src/ai/eval/golden-dataset-s33-types.test.ts',
         'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
+        'services/worker/src/ai/eval/heldout-leakage.test.ts',
+        'services/worker/src/ai/eval/heldout-leakage.ts',
         'services/worker/src/ai/eval/s33-acceptance-ledger.ts',
         'services/worker/src/ai/eval/s33-batch-acceptance.test.ts',
         'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+        'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
+        'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-verifier.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+        'services/worker/src/ai/eval/s33-wave1-workflow-reports.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
       ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');
 
       expect(requiredTierFor([
         'services/worker/src/ai/eval/s33-eval-runner.ts',
       ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T2');
+    });
+
+    it('classifies the real full #1529 candidate as T0 using the actual runtime graph', () => {
+      const candidate = [
+        '.github/s33-wave1-acceptance-authorities.json',
+        '.github/workflows/s33-wave1-acceptance.yml',
+        '.github/workflows/s33-wave1-prerequisites.yml',
+        '.sonarcloud.properties',
+        'docs/lane3/agents.md',
+        'docs/lane3/s33-batch-acceptance-protocol.md',
+        'scripts/ci/agents.md',
+        'scripts/ci/check-staging-evidence.test.ts',
+        'scripts/ci/check-staging-evidence.ts',
+        'scripts/ci/s33-wave1-github-evidence.test.ts',
+        'scripts/ci/s33-wave1-github-evidence.ts',
+        'services/worker/src/ai/eval/agents.md',
+        'services/worker/src/ai/eval/golden-dataset-s33-types.test.ts',
+        'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
+        'services/worker/src/ai/eval/heldout-leakage.test.ts',
+        'services/worker/src/ai/eval/heldout-leakage.ts',
+        'services/worker/src/ai/eval/s33-acceptance-ledger.ts',
+        'services/worker/src/ai/eval/s33-batch-acceptance.test.ts',
+        'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+        'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
+        'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-verifier.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+        'services/worker/src/ai/eval/s33-wave1-workflow-reports.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
+      ];
+      const realRuntimeImporters = findS33RuntimeImporters();
+      expect(realRuntimeImporters).toEqual([]);
+      expect(requiredTierFor(candidate, {
+        s33RuntimeImporterProvider: () => realRuntimeImporters,
+      }).tier).toBe('T0');
     });
 
     it('classifies the exact Wave-1 producer corpus files as T0 only while unimported by runtime', () => {
@@ -418,29 +463,102 @@ describe('check-staging-evidence', () => {
   });
 
   describe('findS33RuntimeImporters', () => {
-    it('finds a non-test runtime import and ignores imports inside the offline set and tests', () => {
+    const withRuntimeFixture = (
+      files: Readonly<Record<string, string>>,
+      assertion: (root: string) => void,
+    ): void => {
       const root = mkdtempSync(join(tmpdir(), 's33-import-guard-'));
       try {
-        const sourceRoot = join(root, 'services/worker/src');
-        mkdirSync(join(sourceRoot, 'ai/eval'), { recursive: true });
-        mkdirSync(join(sourceRoot, 'routes'), { recursive: true });
-        writeFileSync(
-          join(sourceRoot, 'ai/eval/s33-batch-acceptance.ts'),
-          "import './golden-dataset-s33-types.js';\n",
-        );
-        writeFileSync(
-          join(sourceRoot, 'ai/eval/s33-batch-acceptance.test.ts'),
-          "import './s33-batch-acceptance.js';\n",
-        );
-        writeFileSync(
-          join(sourceRoot, 'routes/cron.ts'),
-          "import '../ai/eval/s33-batch-acceptance.js';\n",
-        );
-
-        expect(findS33RuntimeImporters(root)).toEqual(['services/worker/src/routes/cron.ts']);
+        for (const [path, content] of Object.entries(files)) {
+          const absolute = join(root, path);
+          mkdirSync(join(absolute, '..'), { recursive: true });
+          writeFileSync(absolute, content);
+        }
+        assertion(root);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
+    };
+
+    it('walks the runtime-entrypoint module graph and ignores unreachable/test imports', () => {
+      withRuntimeFixture({
+        'services/worker/src/index.ts': "import './routes/cron.js';\n",
+        'services/worker/src/routes/cron.ts': "export * from '../ai/eval/s33-batch-acceptance.js';\n",
+        'services/worker/src/routes/unreachable.ts': "import '../ai/eval/s33-batch-acceptance.js';\n",
+        'services/worker/src/routes/cron.test.ts': "import '../ai/eval/s33-batch-acceptance.js';\n",
+        'services/worker/src/ai/eval/s33-batch-acceptance.ts': 'export const offline = true;\n',
+      }, (root) => {
+        expect(findS33RuntimeImporters(root)).toEqual(['services/worker/src/routes/cron.ts']);
+      });
+    });
+
+    it.each([
+      'services/worker/src/ai/eval/heldout-leakage.ts',
+      'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
+      'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
+    ])('forces T2 when runtime imports newly carved offline file %s', (offlinePath) => {
+      const pathSegments = offlinePath.split('/');
+      const filename = pathSegments[pathSegments.length - 1];
+      withRuntimeFixture({
+        'services/worker/src/index.ts': `import './ai/eval/${filename.replace(/\.ts$/u, '.js')}';\n`,
+        [offlinePath]: 'export const offline = true;\n',
+      }, (root) => {
+        expect(findS33RuntimeImporters(root)).toEqual(['services/worker/src/index.ts']);
+        expect(requiredTierFor([offlinePath], {
+          s33RuntimeImporterProvider: () => findS33RuntimeImporters(root),
+        }).tier).toBe('T2');
+      });
+    });
+
+    it('recognises literal dynamic import, require, and createRequire edges', () => {
+      for (const body of [
+        "void import('./ai/eval/s33-batch-acceptance.js');\n",
+        "require('./ai/eval/s33-batch-acceptance.js');\n",
+        "import { createRequire } from 'node:module';\nconst req = createRequire(import.meta.url);\nreq('./ai/eval/s33-batch-acceptance.js');\n",
+        "const { createRequire: makeRequire } = require('node:module');\nconst req = makeRequire(import.meta.url);\nreq('./ai/eval/s33-batch-acceptance.js');\n",
+        "const moduleApi = require('node:module');\nconst req = moduleApi.createRequire(import.meta.url);\nreq('./ai/eval/s33-batch-acceptance.js');\n",
+      ]) {
+        withRuntimeFixture({
+          'services/worker/src/index.ts': body,
+          'services/worker/src/ai/eval/s33-batch-acceptance.ts': 'export const offline = true;\n',
+        }, (root) => {
+          expect(findS33RuntimeImporters(root)).toEqual(['services/worker/src/index.ts']);
+        });
+      }
+    });
+
+    it.each([
+      ["const part = 's33-batch-acceptance.js'; void import('./ai/eval/' + part);\n", 'dynamic import'],
+      ["const part = 's33-batch-acceptance.js'; require('./ai/eval/' + part);\n", 'require/createRequire'],
+      [
+        "import { createRequire } from 'node:module';\nconst req = createRequire(import.meta.url);\nconst part = 's33-batch-acceptance.js';\nreq('./ai/eval/' + part);\n",
+        'require/createRequire',
+      ],
+      [
+        "const { createRequire } = require('node:module');\nconst req = createRequire(import.meta.url);\nconst part = 's33-batch-acceptance.js';\nreq('./ai/eval/' + part);\n",
+        'require/createRequire',
+      ],
+    ])('fails closed on a reachable constructed module load', (body, loadKind) => {
+      withRuntimeFixture({
+        'services/worker/src/index.ts': body,
+      }, (root) => {
+        expect(findS33RuntimeImporters(root)).toEqual([
+          `<unsafe services/worker/src/index.ts: ${loadKind}>`,
+        ]);
+      });
+    });
+
+    it('fails closed to T2 when a reachable runtime module cannot be resolved', () => {
+      withRuntimeFixture({
+        'services/worker/src/index.ts': "import './routes/missing-runtime.js';\n",
+      }, (root) => {
+        const importers = findS33RuntimeImporters(root);
+        expect(importers).toHaveLength(1);
+        expect(importers[0]).toMatch(/^<unreadable services\/worker runtime module graph:/u);
+        expect(requiredTierFor([
+          'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
+        ], { s33RuntimeImporterProvider: () => importers }).tier).toBe('T2');
+      });
     });
   });
 

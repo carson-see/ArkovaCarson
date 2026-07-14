@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
+import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from '../prompts/extraction.js';
 import * as acceptanceModule from './s33-batch-acceptance.js';
 import * as ledgerModule from './s33-acceptance-ledger.js';
 // @ts-expect-error — the audit transcript state machine must remain module-private.
@@ -28,7 +29,8 @@ type _ForbiddenDirectLedgerImport = import('./s33-acceptance-ledger.js').Durable
 import {
   canonicalManifestHash,
   compareEmbeddingLeakage,
-  createS33Wave1AcceptanceArtifact,
+  createTestOnlyS33Wave1AcceptanceArtifact,
+  createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence,
   createProductionS33AcceptanceOrchestrator,
   createTestOnlyS33AcceptanceOrchestrator,
   parseBatchManifest,
@@ -45,7 +47,7 @@ import {
   type SelectionPolicyPayload,
   type SignedPolicyArtifact,
   type SamplingTrustRoot,
-  type S33Wave1AcceptanceArtifactInput,
+  type TestOnlyS33Wave1AcceptanceArtifactInput,
   type S33AcceptanceOrchestrator,
   type Wave1Revision10Pins,
   type Wave1Revision11Pins,
@@ -1038,7 +1040,175 @@ function revision10Ceremony(mutation: Revision10GitMutation = {}) {
 
 function githubCiAcceptanceInput(
   repo: ReturnType<typeof revision10GitRepo>,
-): S33Wave1AcceptanceArtifactInput {
+): TestOnlyS33Wave1AcceptanceArtifactInput {
+  const evidenceReportDirectory = mkdtempSync(join(tmpdir(), 'arkova-s33-wave1-reports-'));
+  tempRoots.push(evidenceReportDirectory);
+  const manifest = JSON.parse(repo.manifest) as Record<string, unknown>;
+  const entries = manifest.entries as Array<Record<string, unknown>>;
+  const manifestRawSha256 = sha256(repo.manifest);
+  const sampleEntryIds = entries.map(({ id }) => String(id))
+    .map((id) => ({ id, rank: sha256(`${manifestRawSha256}\0${id}`) }))
+    .sort((left, right) => left.rank < right.rank
+      ? -1
+      : left.rank > right.rank ? 1 : left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+    .slice(0, 9)
+    .map(({ id }) => id);
+  const producerTreeSha = execFileSync('git', ['rev-parse', `${repo.freezeCommitSha}^{tree}`], {
+    cwd: repo.root,
+    encoding: 'utf8',
+  }).trim();
+  const common = {
+    schemaVersion: 1,
+    batchId: 'S33-W1',
+    producerHeadSha: repo.freezeCommitSha,
+    manifestRawSha256,
+    status: 'PASS',
+  };
+  const writeReport = (filename: string, artifactType: string, payload: Record<string, unknown>) => {
+    const report = {
+      ...common,
+      artifactType,
+      payload,
+    };
+    const text = JSON.stringify(report, null, 2);
+    writeFileSync(join(evidenceReportDirectory, filename), text);
+    return { rawSha256: sha256(text), canonicalSha256: sha256(canonicaliseJson(report)) };
+  };
+  writeReport('cross-review.json', 'arkova-s33-wave1-cross-review', {
+    sampleAlgorithm: 'sha256-manifest-entry-rank-v1',
+    sampleRule: 'ceil(10%),minimum-5,capped-at-entry-count',
+    manifestEntryCount: 81,
+    sampleEntryIds,
+    materialLabelDefectCount: 0,
+    adjudications: sampleEntryIds.map((entryId) => ({
+      entryId,
+      verdict: 'PASS',
+      note: 'Independent source-grounded review passed.',
+    })),
+    wholeBatchVerdict: 'ACCEPT',
+    githubAuthentication: {
+      status: 'APPROVED',
+      headSha: repo.freezeCommitSha,
+      url: 'https://github.com/carson-see/ArkovaCarson/pull/1498#pullrequestreview-1',
+      reviewId: 'PRR_kwDO-test',
+      reviewDatabaseId: 1,
+      submittedAt: '2026-07-14T12:57:00Z',
+      authorityKind: 'primary',
+      reviewer: {
+        login: 'chatgpt-codex-connector[bot]',
+        databaseId: 199175422,
+        id: 'BOT_kgDOC98s_g',
+      },
+    },
+  });
+  const universeSha256 = sha256(canonicaliseJson(entries.map(({ id }) => id)));
+  const prodModelConfig = {
+    promptModule: 'services/worker/src/ai/prompts/extraction.ts',
+    promptModuleRawSha256: sha256(readFileSync(join(process.cwd(), 'src/ai/prompts/extraction.ts'))),
+    systemPromptExport: 'EXTRACTION_SYSTEM_PROMPT',
+    systemPromptSha256: sha256(EXTRACTION_SYSTEM_PROMPT),
+    promptBuilder: 'buildExtractionPrompt',
+    promptBuilderProbeSha256: sha256(buildExtractionPrompt('__S33_PIN__', 'OTHER', undefined)),
+    generationConfig: {
+      responseMimeType: 'application/json',
+      temperature: 0.1,
+      maxOutputTokens: 2048,
+    },
+    absentFlags: ['GEMINI_TUNED_MODEL', 'GEMINI_V6_PROMPT', 'GEMINI_TUNED_RESPONSE_SCHEMA'],
+    timeoutMs: 30_000,
+    concurrency: 1,
+    maxRequests: 81,
+    maxEntryCharacters: 50_000,
+    maxAggregateInputCharacters: 4_050_000,
+  };
+  const prodReport = writeReport('prod-model-diff.json', 'arkova-s33-wave1-prod-model-diff', {
+    mode: 'offline-prod-parity-replay',
+    producerTreeSha,
+    manifestCanonicalSha256: canonicalManifestHash(repo.manifest),
+    entryUniverseSha256: universeSha256,
+    providerSurface: 'google-generative-language-developer-api',
+    model: 'gemini-2.5-flash',
+    modelConfig: prodModelConfig,
+    modelConfigCanonicalSha256: sha256(canonicaliseJson(prodModelConfig)),
+    workflowRunId: 123,
+    workflowRunAttempt: 1,
+    trustedMainRunSha: 'a'.repeat(40),
+    workflowPath: '.github/workflows/s33-wave1-prerequisites.yml',
+    startedAtUtc: '2026-07-14T12:48:00.000Z',
+    completedAtUtc: '2026-07-14T12:58:00.000Z',
+    requestCount: 81,
+    retryCount: 0,
+    entryCount: 81,
+    results: entries.map(({ id }) => ({
+      id,
+      modelOutputRawSha256: '1'.repeat(64),
+      modelOutputCanonicalSha256: '2'.repeat(64),
+      groundTruthCanonicalSha256: '3'.repeat(64),
+      classification: 'MATCH',
+      differingFields: [],
+    })),
+    rawReportSha256: '4'.repeat(64),
+    rawReportCanonicalSha256: '5'.repeat(64),
+  });
+  writeReport('lexical-leakage.json', 'arkova-s33-wave1-lexical-leakage', {
+    algorithm: 'normalized-token-exact-ngram-v1',
+    normalization: 'NFKC;lowercase;non-alphanumeric-space;whitespace-collapse',
+    n: [6, 7, 8, 9, 10, 11, 12, 13],
+    producerTreeSha,
+    manifestCanonicalSha256: canonicalManifestHash(repo.manifest),
+    entryCount: 81,
+    trainingCorpusFileCount: 1,
+    trainingManifestSha256: '4'.repeat(64),
+    exactMatchCount: 0,
+    hits: [],
+  });
+  const embeddingModelConfig = {
+    taskType: 'SEMANTIC_SIMILARITY',
+    dimensions: 3072,
+    batchSize: 16,
+    timeoutMs: 30_000,
+    concurrency: 1,
+    retryCount: 0,
+    chunkTokens: 1500,
+    chunkOverlapTokens: 128,
+    maxTrainingChunks: 2048,
+    maxVectorInputs: 2129,
+    maxHttpRequests: 134,
+  };
+  writeReport('embedding-diagnostic.json', 'arkova-s33-wave1-embedding-diagnostic', {
+    role: 'diagnostic-only',
+    canOverrideExactScan: false,
+    producerTreeSha,
+    manifestCanonicalSha256: canonicalManifestHash(repo.manifest),
+    entryUniverseSha256: universeSha256,
+    providerSurface: 'google-generative-language-developer-api',
+    model: 'gemini-embedding-001',
+    modelConfig: embeddingModelConfig,
+    modelConfigCanonicalSha256: sha256(canonicaliseJson(embeddingModelConfig)),
+    workflowRunId: 123,
+    workflowRunAttempt: 1,
+    trustedMainRunSha: 'a'.repeat(40),
+    workflowPath: '.github/workflows/s33-wave1-prerequisites.yml',
+    startedAtUtc: '2026-07-14T12:48:00.000Z',
+    completedAtUtc: '2026-07-14T12:59:00.000Z',
+    heldoutRecordCount: 81,
+    trainingFileCount: 1,
+    trainingChunkCount: 1,
+    vectorInputCount: 82,
+    requestCount: 6,
+    retryCount: 0,
+    lexicalTrainingManifestSha256: '4'.repeat(64),
+    trainingChunkManifestCanonicalSha256: '7'.repeat(64),
+    entryCount: 81,
+    results: entries.map(({ id }) => ({
+      id,
+      nearestTrainingDocumentSha256: '8'.repeat(64),
+      nearestTrainingChunkSha256: '9'.repeat(64),
+      cosineSimilarity: 0.25,
+    })),
+    rawReportSha256: 'a'.repeat(64),
+    rawReportCanonicalSha256: 'b'.repeat(64),
+  });
   return {
     repositoryRoot: repo.root,
     repositoryIdentity: 'carson-see/ArkovaCarson',
@@ -1060,24 +1230,38 @@ function githubCiAcceptanceInput(
         },
       ],
     },
-    evidence: {
-      crossReviewArtifactSha256: '1'.repeat(64),
-      prodModelDiffArtifactSha256: '2'.repeat(64),
-      prodModelDiffMode: 'offline-replay',
-      lexicalLeakage: {
-        algorithm: 'normalized-token-exact-ngram-v1',
-        n: [6, 7, 8, 9, 10, 11, 12, 13],
-        trainingManifestSha256: '3'.repeat(64),
-        evidenceArtifactSha256: '4'.repeat(64),
-        exactMatchCount: 0,
+    evidenceReportDirectory,
+    prodDiffAdjudication: {
+      schemaVersion: 1,
+      artifactType: 'arkova-s33-wave1-prod-diff-adjudication',
+      batchId: 'S33-W1',
+      producerHeadSha: repo.freezeCommitSha,
+      manifestRawSha256,
+      prerequisite: {
+        workflowRunId: 123,
+        workflowRunNumber: 1,
+        workflowRunAttempt: 1,
+        trustedMainRunSha: 'a'.repeat(40),
+        prodModelDiffArtifactId: 456,
+        prodModelDiffArchiveSha256: 'c'.repeat(64),
+        prodModelDiffReportRawSha256: prodReport.rawSha256,
+        prodModelDiffReportCanonicalSha256: prodReport.canonicalSha256,
       },
-      embedding: {
-        role: 'diagnostic-only',
-        canOverrideExactScan: false,
-        evidenceArtifactSha256: '5'.repeat(64),
-      },
+      mismatchCount: 0,
+      adjudications: [],
     },
   };
+}
+
+function mutateWorkflowReport(
+  input: TestOnlyS33Wave1AcceptanceArtifactInput,
+  filename: string,
+  mutate: (report: Record<string, unknown>) => void,
+): void {
+  const path = join(input.evidenceReportDirectory, filename);
+  const report = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  mutate(report);
+  writeFileSync(path, JSON.stringify(report, null, 2));
 }
 
 function ceremony(mutateManifest?: ManifestMutator, mutateGit?: GitFixtureMutation) {
@@ -1171,9 +1355,16 @@ function recordThroughReveal(context: ReturnType<typeof ceremony>): void {
 }
 
 describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, () => {
+  it('rejects every serialized or plain-object production acceptance bundle', () => {
+    expect(() => createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence({} as never))
+      .toThrow(/in-memory Team-2 authenticated evidence bundle/i);
+    expect(() => createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
+      JSON.parse('{"repositoryIdentity":"carson-see/ArkovaCarson"}') as never,
+    )).toThrow(/in-memory Team-2 authenticated evidence bundle/i);
+  });
   it('builds a signer-free GitHub/CI acceptance artifact bound to the exact producer head/tree/manifest', () => {
     const repo = revision10GitRepo();
-    const artifact = createS33Wave1AcceptanceArtifact(githubCiAcceptanceInput(repo));
+    const artifact = createTestOnlyS33Wave1AcceptanceArtifact(githubCiAcceptanceInput(repo));
     const expectedTree = execFileSync('git', ['rev-parse', `${repo.freezeCommitSha}^{tree}`], {
       cwd: repo.root,
       encoding: 'utf8',
@@ -1211,26 +1402,58 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       ...failedCheck.githubVerdict.checks[0],
       conclusion: 'FAILURE' as never,
     };
-    expect(() => createS33Wave1AcceptanceArtifact(failedCheck)).toThrow(/GitHub.*check.*SUCCESS/i);
+    expect(() => createTestOnlyS33Wave1AcceptanceArtifact(failedCheck)).toThrow(/GitHub.*check.*SUCCESS/i);
 
     const lexicalHit = githubCiAcceptanceInput(repo);
-    lexicalHit.evidence.lexicalLeakage.exactMatchCount = 1 as never;
-    expect(() => createS33Wave1AcceptanceArtifact(lexicalHit)).toThrow(/exact.*zero/i);
+    mutateWorkflowReport(lexicalHit, 'lexical-leakage.json', (report) => {
+      const payload = report.payload as Record<string, unknown>;
+      payload.exactMatchCount = 1;
+      payload.hits = [{ entryId: 'GD-S33-KE-001', n: 6, ngramSha256: '7'.repeat(64) }];
+    });
+    expect(() => createTestOnlyS33Wave1AcceptanceArtifact(lexicalHit)).toThrow(/exact.*zero/i);
 
     const incompleteN = githubCiAcceptanceInput(repo);
-    incompleteN.evidence.lexicalLeakage.n = [6, 7, 8] as never;
-    expect(() => createS33Wave1AcceptanceArtifact(incompleteN)).toThrow(/6.*13/i);
+    mutateWorkflowReport(incompleteN, 'lexical-leakage.json', (report) => {
+      (report.payload as Record<string, unknown>).n = [6, 7, 8];
+    });
+    expect(() => createTestOnlyS33Wave1AcceptanceArtifact(incompleteN)).toThrow(/6.*13/i);
   });
 
   it('rejects GitHub approval or CI evidence that is not bound to the exact producer head', () => {
     const repo = revision10GitRepo();
     const staleApproval = githubCiAcceptanceInput(repo);
     staleApproval.githubVerdict.headSha = 'a'.repeat(40);
-    expect(() => createS33Wave1AcceptanceArtifact(staleApproval)).toThrow(/APPROVED.*exact.*producer head/i);
+    expect(() => createTestOnlyS33Wave1AcceptanceArtifact(staleApproval)).toThrow(/APPROVED.*exact.*producer head/i);
 
     const staleCheck = githubCiAcceptanceInput(repo);
     staleCheck.githubVerdict.checks[0].headSha = 'b'.repeat(40);
-    expect(() => createS33Wave1AcceptanceArtifact(staleCheck)).toThrow(/CI check.*exact.*producer head/i);
+    expect(() => createTestOnlyS33Wave1AcceptanceArtifact(staleCheck)).toThrow(/CI check.*exact.*producer head/i);
+  });
+
+  it('requires the complete CTO-authorized reviewer identity tuple', () => {
+    const repo = revision10GitRepo();
+    const wrongPrimaryNode = githubCiAcceptanceInput(repo);
+    mutateWorkflowReport(wrongPrimaryNode, 'cross-review.json', (report) => {
+      const payload = report.payload as Record<string, unknown>;
+      const authentication = payload.githubAuthentication as Record<string, unknown>;
+      const reviewer = authentication.reviewer as Record<string, unknown>;
+      reviewer.id = 'BOT_wrong';
+    });
+    expect(() => createTestOnlyS33Wave1AcceptanceArtifact(wrongPrimaryNode))
+      .toThrow(/CTO-authorized authority identity/i);
+
+    const fallback = githubCiAcceptanceInput(repo);
+    mutateWorkflowReport(fallback, 'cross-review.json', (report) => {
+      const payload = report.payload as Record<string, unknown>;
+      const authentication = payload.githubAuthentication as Record<string, unknown>;
+      authentication.authorityKind = 'fallback';
+      authentication.reviewer = {
+        login: 'BestNessie',
+        databaseId: 129661809,
+        id: 'U_kgDOB7p7cQ',
+      };
+    });
+    expect(() => createTestOnlyS33Wave1AcceptanceArtifact(fallback)).not.toThrow();
   });
 
   it('runs the approved cross-artifact and committed corpus provenance checks on the active path', () => {
@@ -1240,13 +1463,13 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       },
       repinMutatedEntryRows: true,
     });
-    expect(() => createS33Wave1AcceptanceArtifact(githubCiAcceptanceInput(domainDrift)))
+    expect(() => createTestOnlyS33Wave1AcceptanceArtifact(githubCiAcceptanceInput(domainDrift)))
       .toThrow(/entry datasheet.*domain/i);
 
     const corpusDrift = revision10GitRepo({
       mutateCorpusDatasheet: (content) => content.replace('**Revision 10:**', '**Revision 9:**'),
     });
-    expect(() => createS33Wave1AcceptanceArtifact(githubCiAcceptanceInput(corpusDrift)))
+    expect(() => createTestOnlyS33Wave1AcceptanceArtifact(githubCiAcceptanceInput(corpusDrift)))
       .toThrow(/corpus datasheet.*revision/i);
   });
   it('requires an atomic registry with a callable create-if-absent operation', () => {

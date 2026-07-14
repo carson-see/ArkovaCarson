@@ -20,22 +20,35 @@ import {
   fstatSync,
   fsyncSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   realpathSync,
+  rmSync,
   unlinkSync,
+  writeFileSync,
   writeSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import {
   basename,
   dirname,
   isAbsolute,
   join,
+  resolve,
 } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isUint8Array } from 'node:util/types';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
+import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from '../prompts/extraction.js';
+import {
+  assertAuthenticatedS33Wave1EvidenceBundle,
+  CROSS_REVIEW_MARKER,
+  PROD_DIFF_ADJUDICATION_MARKER,
+  type S33AuthenticatedEvidenceBundle,
+} from './s33-wave1-github-evidence.js';
 
-type ArtifactContent = string | Uint8Array;
+export type ArtifactContent = string | Uint8Array;
 
 export interface TextRecord {
   id: string;
@@ -269,7 +282,7 @@ export interface AuthenticatedLexicalScanResult {
   }>;
 }
 
-export interface S33Wave1AcceptanceArtifactInput {
+export interface TestOnlyS33Wave1AcceptanceArtifactInput {
   repositoryRoot: string;
   repositoryIdentity: 'carson-see/ArkovaCarson';
   pullRequestNumber: 1498;
@@ -286,23 +299,33 @@ export interface S33Wave1AcceptanceArtifactInput {
       detailsUrl: string;
     }>;
   };
-  evidence: {
-    crossReviewArtifactSha256: string;
-    prodModelDiffArtifactSha256: string;
-    prodModelDiffMode: 'offline-replay';
-    lexicalLeakage: {
-      algorithm: 'normalized-token-exact-ngram-v1';
-      n: number[];
-      trainingManifestSha256: string;
-      evidenceArtifactSha256: string;
-      exactMatchCount: number;
-    };
-    embedding: {
-      role: 'diagnostic-only';
-      canOverrideExactScan: false;
-      evidenceArtifactSha256: string;
-    };
-  };
+  /** Directory containing the four fixed trusted-workflow JSON reports. */
+  evidenceReportDirectory: string;
+  prodDiffAdjudication: S33ProdDiffAdjudication;
+}
+
+export interface S33ProdDiffAdjudication {
+  schemaVersion: 1;
+  artifactType: 'arkova-s33-wave1-prod-diff-adjudication';
+  batchId: 'S33-W1';
+  producerHeadSha: string;
+  manifestRawSha256: string;
+  prerequisite: Readonly<{
+    workflowRunId: number;
+    workflowRunNumber: number;
+    workflowRunAttempt: 1;
+    trustedMainRunSha: string;
+    prodModelDiffArtifactId: number;
+    prodModelDiffArchiveSha256: string;
+    prodModelDiffReportRawSha256: string;
+    prodModelDiffReportCanonicalSha256: string;
+  }>;
+  mismatchCount: number;
+  adjudications: readonly Readonly<{
+    entryId: string;
+    disposition: 'MODEL_HARD';
+    rationale: string;
+  }>[];
 }
 
 export interface S33Wave1AcceptanceArtifact {
@@ -320,8 +343,60 @@ export interface S33Wave1AcceptanceArtifact {
   manifestPath: typeof WAVE1_MANIFEST_PATH;
   manifestRawSha256: string;
   manifestCanonicalSha256: string;
-  githubVerdict: Readonly<S33Wave1AcceptanceArtifactInput['githubVerdict']>;
-  evidence: Readonly<S33Wave1AcceptanceArtifactInput['evidence']>;
+  githubVerdict: Readonly<TestOnlyS33Wave1AcceptanceArtifactInput['githubVerdict']>;
+  evidence: Readonly<{
+    crossReviewArtifactSha256: string;
+    crossReviewArtifactCanonicalSha256: string;
+    prodModelDiffArtifactSha256: string;
+    prodModelDiffArtifactCanonicalSha256: string;
+    prodModelDiffMode: 'offline-prod-parity-replay';
+    lexicalLeakage: Readonly<{
+      algorithm: 'normalized-token-exact-ngram-v1';
+      n: readonly number[];
+      trainingManifestSha256: string;
+      evidenceArtifactSha256: string;
+      evidenceArtifactCanonicalSha256: string;
+      exactMatchCount: 0;
+    }>;
+    embedding: Readonly<{
+      role: 'diagnostic-only';
+      canOverrideExactScan: false;
+      evidenceArtifactSha256: string;
+      evidenceArtifactCanonicalSha256: string;
+    }>;
+  }>;
+  artifactDigestSha256: string;
+}
+
+export interface S33Wave1AuthenticatedAcceptanceArtifact
+  extends Omit<S33Wave1AcceptanceArtifact, 'artifactDigestSha256'> {
+  trustedMain: Readonly<{
+    headSha: string;
+    supportPullRequestNumber: 1529;
+    supportMergeCommitSha: string;
+    supportMergeIsAncestorOfMain: true;
+    branchProtectionRuleIds: readonly string[];
+  }>;
+  manifestEntryIds: readonly string[];
+  githubAuthentication: Readonly<{
+    reviewId: string;
+    reviewDatabaseId: number | null;
+    submittedAt: string;
+    authorityKind: 'primary' | 'fallback';
+    reviewer: Readonly<{ login: string; databaseId: number; id: string }>;
+    authenticatedReviewBodySha256: string;
+    requiredChecks: readonly Readonly<{
+      name: string;
+      conclusion: 'SUCCESS';
+      headSha: string;
+      detailsUrl: string;
+      checkRunId: string;
+      checkRunDatabaseId: number | null;
+      app: Readonly<{ id: string; databaseId: number; slug: string }>;
+    }>[];
+  }>;
+  prerequisiteInventory: Readonly<S33AuthenticatedEvidenceBundle['prerequisiteInventory']>;
+  prodDiffAdjudication: Readonly<S33ProdDiffAdjudication>;
   artifactDigestSha256: string;
 }
 
@@ -357,11 +432,11 @@ const GIT_SUBPROCESS_ENV = Object.freeze({
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const GIT_COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
-const WAVE1_MANIFEST_PATH = 'docs/lane4/s33-wave1-batch-manifest.json';
-const WAVE1_CORPUS_DATASHEET_PATH = 'docs/lane4/s33-corpus-datasheet.md';
-const WAVE1_ENTRY_DATASHEET_PATH = 'docs/lane4/s33-wave1-entry-datasheet.json';
-const WAVE1_TYPES_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-types.ts';
-const WAVE1_SOURCE_BLOB_PATHS = [
+export const WAVE1_MANIFEST_PATH = 'docs/lane4/s33-wave1-batch-manifest.json';
+export const WAVE1_CORPUS_DATASHEET_PATH = 'docs/lane4/s33-corpus-datasheet.md';
+export const WAVE1_ENTRY_DATASHEET_PATH = 'docs/lane4/s33-wave1-entry-datasheet.json';
+export const WAVE1_TYPES_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-types.ts';
+export const WAVE1_SOURCE_BLOB_PATHS = [
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
@@ -391,9 +466,9 @@ const wave1EntryIdRange = (prefix: string, count: number): string[] => Array.fro
   { length: count },
   (_, index) => `GD-S33-${prefix}-${String(index + 1).padStart(3, '0')}`,
 );
-const WAVE1_KENYA_ENTRY_IDS = Object.freeze(wave1EntryIdRange('KE', 11));
-const WAVE1_OOD_ENTRY_IDS = Object.freeze(wave1EntryIdRange('OOD', 9));
-const WAVE1_ENTRY_IDS = Object.freeze([
+export const WAVE1_KENYA_ENTRY_IDS = Object.freeze(wave1EntryIdRange('KE', 11));
+export const WAVE1_OOD_ENTRY_IDS = Object.freeze(wave1EntryIdRange('OOD', 9));
+export const WAVE1_ENTRY_IDS = Object.freeze([
   ...WAVE1_KENYA_ENTRY_IDS,
   ...wave1EntryIdRange('NUR', 12),
   ...wave1EntryIdRange('CPA', 13),
@@ -402,12 +477,12 @@ const WAVE1_ENTRY_IDS = Object.freeze([
   ...wave1EntryIdRange('AU', 11),
   ...WAVE1_OOD_ENTRY_IDS,
 ]);
-const WAVE1_DOMAIN_COUNTS = Object.freeze({
+export const WAVE1_DOMAIN_COUNTS = Object.freeze({
   'au-ke-priority-documents': 22,
   'professional-licensing': 50,
   'out-of-distribution': 9,
 });
-const WAVE1_CREDENTIAL_TYPE_COUNTS = Object.freeze({
+export const WAVE1_CREDENTIAL_TYPE_COUNTS = Object.freeze({
   ATTESTATION: 3,
   BUSINESS_ENTITY: 2,
   CERTIFICATE: 24,
@@ -420,7 +495,7 @@ const WAVE1_CREDENTIAL_TYPE_COUNTS = Object.freeze({
   OTHER: 9,
   TRANSCRIPT: 1,
 });
-const WAVE1_CORPUS_SLICE_COUNTS = Object.freeze({
+export const WAVE1_CORPUS_SLICE_COUNTS = Object.freeze({
   's33-au-ke-heldout': 22,
   's33-licensing-heldout': 50,
   's33-ood-negative': 9,
@@ -636,16 +711,170 @@ function validateCorpusDatasheet(
     ['The manifest and datasheet each contain exactly 81 unique rows in exact bijection with the corpus.', '81-row bijection'],
     [`blob \`${typesBlob}\` on commit \`${supportCommit}\``, 'support binding'],
     [
-      `Revision ${revision} has sole physical parent, direct base, and Lane-3 support commit \`${parent}\`; its logical producer predecessor is exact commit \`${predecessor}\`.`,
-      'producer predecessor',
+      `Revision ${revision} has sole physical parent, direct base, and Lane-3 support commit \`${parent}\``,
+      'producer parent',
     ],
   ] as const;
   for (const [fragment, label] of fragments) assertUniqueMarkdownFragment(markdown, fragment, label);
+  const predecessorMarkers = [
+    `logical producer predecessor is exact commit \`${predecessor}\``,
+    `logical producer predecessor is the separately reviewed revision-9 identifier \`${predecessor}\``,
+  ];
+  if (predecessorMarkers.reduce((count, marker) => count + (markdown.includes(marker) ? 1 : 0), 0) !== 1) {
+    throw new Error('Corpus datasheet producer predecessor provenance marker must occur exactly once');
+  }
 }
 
-function activeWave1Manifest(content: ArtifactContent): ParsedBatchManifest {
+function validateActiveWave1SelfChecks(
+  value: unknown,
+  entryCount: number,
+  revision: number,
+  entries: readonly BatchManifestEntry[],
+  support: Readonly<Record<string, unknown>>,
+): void {
+  const selfChecks = recordValue(value, 'Wave-1 committed manifest selfChecks');
+  assertExactKeys(selfChecks, [
+    'exactCorpusManifestDatasheetBijection', 'normalizedInputFingerprintsPinned',
+    'authorizedDocumentRevisions', 'withinTypeTokenOverlap', 'oodFiveFieldSemantics',
+    'cpeSubtypeRatification', 'taxonomyAdjudicationSet', 'issuedDateAdjudicationSet',
+    'batchScopeOnly', 'lane3Acceptance',
+  ], 'Wave-1 committed manifest selfChecks');
+  const entryIds = new Set(entries.map(({ id }) => id));
+
+  const bijection = recordValue(
+    selfChecks.exactCorpusManifestDatasheetBijection,
+    'Wave-1 committed manifest selfChecks.exactCorpusManifestDatasheetBijection',
+  );
+  assertExactKeys(bijection, ['status', 'entryCount'], 'Wave-1 committed manifest bijection self-check');
+  assertExactString(bijection.status, 'PASS', 'Wave-1 committed manifest bijection status');
+  if (bijection.entryCount !== entryCount) throw new Error('Wave-1 committed manifest bijection count must reconcile');
+
+  const fingerprints = recordValue(
+    selfChecks.normalizedInputFingerprintsPinned,
+    'Wave-1 committed manifest normalized-input self-check',
+  );
+  assertExactKeys(fingerprints, ['status', 'algorithm'], 'Wave-1 committed manifest normalized-input self-check');
+  assertExactString(fingerprints.status, 'PASS', 'Wave-1 committed manifest normalized-input status');
+  assertExactString(
+    fingerprints.algorithm,
+    'sha256(normalizeForFingerprint(strippedText))',
+    'Wave-1 committed manifest normalized-input algorithm',
+  );
+
+  const revisions = recordValue(
+    selfChecks.authorizedDocumentRevisions,
+    'Wave-1 committed manifest authorized revisions',
+  );
+  assertExactKeys(revisions, ['status', 'revisions'], 'Wave-1 committed manifest authorized revisions');
+  assertExactString(revisions.status, 'PASS', 'Wave-1 committed manifest authorized revisions status');
+  if (!Array.isArray(revisions.revisions) || revisions.revisions.length === 0) {
+    throw new Error('Wave-1 committed manifest authorized revisions must be a non-empty array');
+  }
+  const declaredRevisions = revisions.revisions.map((candidate, index) => {
+    const record = recordValue(candidate, `Wave-1 committed manifest authorized revisions[${index}]`);
+    nonEmptyString(record.authority, `Wave-1 committed manifest authorized revisions[${index}].authority`);
+    return positiveInteger(record.revision, `Wave-1 committed manifest authorized revisions[${index}].revision`);
+  });
+  if (declaredRevisions.at(-1) !== revision
+    || declaredRevisions.some((declared, index) => index > 0 && declared !== declaredRevisions[index - 1] + 1)) {
+    throw new Error('Wave-1 committed manifest authorized revisions must be contiguous through the active revision');
+  }
+
+  const overlap = recordValue(selfChecks.withinTypeTokenOverlap, 'Wave-1 committed manifest overlap self-check');
+  assertExactKeys(
+    overlap,
+    ['status', 'threshold', 'metric', 'violations', 'remediatedPairScores'],
+    'Wave-1 committed manifest overlap self-check',
+  );
+  assertExactString(overlap.status, 'PASS', 'Wave-1 committed manifest overlap status');
+  if (overlap.threshold !== 0.8) throw new Error('Wave-1 committed manifest overlap threshold must be 0.8');
+  nonEmptyString(overlap.metric, 'Wave-1 committed manifest overlap metric');
+  if (!Array.isArray(overlap.violations) || overlap.violations.length !== 0) {
+    throw new Error('Wave-1 committed manifest overlap violations must be empty when PASS');
+  }
+  if (!Array.isArray(overlap.remediatedPairScores)) {
+    throw new Error('Wave-1 committed manifest overlap remediatedPairScores must be an array');
+  }
+
+  const ood = recordValue(selfChecks.oodFiveFieldSemantics, 'Wave-1 committed manifest OOD self-check');
+  assertExactKeys(
+    ood,
+    ['status', 'entryIds', 'producerTruth', 'contradiction', 'resolutionOwner'],
+    'Wave-1 committed manifest OOD self-check',
+  );
+  assertExactString(ood.status, 'BLOCKED_PROTOCOL_CONTRADICTION_CTO_L3', 'Wave-1 committed manifest OOD status');
+  const oodIds = stringArray(ood.entryIds, 'Wave-1 committed manifest OOD self-check entryIds');
+  assertSameOrderedValues(oodIds, WAVE1_OOD_ENTRY_IDS, 'Wave-1 committed manifest OOD self-check ids');
+  nonEmptyString(ood.producerTruth, 'Wave-1 committed manifest OOD producerTruth');
+  nonEmptyString(ood.contradiction, 'Wave-1 committed manifest OOD contradiction');
+  nonEmptyString(ood.resolutionOwner, 'Wave-1 committed manifest OOD resolutionOwner');
+
+  for (const [field, label] of [
+    ['cpeSubtypeRatification', 'CPE'],
+    ['taxonomyAdjudicationSet', 'taxonomy'],
+    ['issuedDateAdjudicationSet', 'issued-date'],
+  ] as const) {
+    const check = recordValue(selfChecks[field], `Wave-1 committed manifest ${label} self-check`);
+    if (!Object.hasOwn(check, 'status')) throw new Error(`Wave-1 committed manifest ${label} self-check needs status`);
+    assertExactString(check.status, 'BLOCKED_CTO_L3', `Wave-1 committed manifest ${label} status`);
+    if (Object.hasOwn(check, 'entryIds')) {
+      for (const id of stringArray(check.entryIds, `Wave-1 committed manifest ${label} entryIds`)) {
+        if (!entryIds.has(id)) throw new Error(`Wave-1 committed manifest ${label} self-check references unknown id ${id}`);
+      }
+    }
+  }
+
+  const scope = recordValue(selfChecks.batchScopeOnly, 'Wave-1 committed manifest batch-scope self-check');
+  assertExactKeys(
+    scope,
+    ['status', 'excludedFromBatch', 'protocolAllowedDiffPaths', 'dependency', 'reason', 'authority'],
+    'Wave-1 committed manifest batch-scope self-check',
+  );
+  assertExactString(scope.status, 'PASS', 'Wave-1 committed manifest batch-scope status');
+  for (const [field, expected] of [
+    ['excludedFromBatch', WAVE1_EXCLUDED_PATHS],
+    ['protocolAllowedDiffPaths', WAVE1_PROTOCOL_ALLOWED_DIFF_PATHS],
+  ] as const) {
+    const paths = stringArray(scope[field], `Wave-1 committed manifest batch-scope ${field}`);
+    assertSameOrderedValues(paths, expected, `Wave-1 committed manifest batch-scope ${field}`);
+  }
+  const dependency = recordValue(scope.dependency, 'Wave-1 committed manifest batch-scope dependency');
+  assertExactKeys(dependency, [
+    'owner', 'branch', 'commit', 'typesPath', 'typesBlob', 'presentIdenticallyInBase',
+    'includedInProducerDiff', 'reviewState',
+  ], 'Wave-1 committed manifest batch-scope dependency');
+  assertExactString(dependency.owner, 'Lane 3', 'Wave-1 committed manifest dependency owner');
+  nonEmptyString(dependency.branch, 'Wave-1 committed manifest dependency branch');
+  if (dependency.commit !== support.commit
+    || dependency.typesPath !== support.typesPath
+    || dependency.typesBlob !== support.typesBlob
+    || dependency.reviewState !== support.reviewState) {
+    throw new Error('Wave-1 committed manifest batch-scope dependency must match lane3SupportBase');
+  }
+  if (dependency.presentIdenticallyInBase !== true || dependency.includedInProducerDiff !== false) {
+    throw new Error('Wave-1 committed manifest dependency must be retained in base and excluded from producer diff');
+  }
+  nonEmptyString(scope.reason, 'Wave-1 committed manifest batch-scope reason');
+  nonEmptyString(scope.authority, 'Wave-1 committed manifest batch-scope authority');
+
+  const acceptance = recordValue(selfChecks.lane3Acceptance, 'Wave-1 committed manifest Lane-3 acceptance');
+  assertExactKeys(acceptance, ['status'], 'Wave-1 committed manifest Lane-3 acceptance');
+  assertExactString(
+    acceptance.status,
+    'NOT_RUN_PRODUCER_BOUNDARY',
+    'Wave-1 committed manifest Lane-3 acceptance status',
+  );
+}
+
+export function parseActiveS33Wave1Manifest(content: ArtifactContent): ParsedBatchManifest {
   const document = parseStrictJsonDocument(content, 'Wave-1 committed manifest');
   const parsed = document.parsed;
+  assertExactKeys(parsed, [
+    'schemaVersion', 'batchId', 'revision', 'producerLane', 'acceptanceAuthority', 'status',
+    'corpusRevisionParentCommit', 'producerRevisionPredecessorCommit', 'lane3SupportBase',
+    'corpusSourceBlobs', 'intendedSplit', 'reviewOrder', 'acceptanceScope', 'entryCount',
+    'counts', 'kenyaEntryIds', 'selfChecks', 'entries',
+  ], 'Wave-1 committed manifest');
   if (parsed.schemaVersion !== 1) {
     throw new Error('Wave-1 committed manifest schemaVersion must be 1');
   }
@@ -668,12 +897,35 @@ function activeWave1Manifest(content: ArtifactContent): ParsedBatchManifest {
     'Wave-1 committed manifest acceptanceScope',
   );
   const revision = positiveInteger(parsed.revision, 'Wave-1 committed manifest revision');
+  assertGitObject(parsed.corpusRevisionParentCommit, 'Wave-1 committed manifest corpusRevisionParentCommit');
+  assertGitObject(parsed.producerRevisionPredecessorCommit, 'Wave-1 committed manifest producerRevisionPredecessorCommit');
+  const support = recordValue(parsed.lane3SupportBase, 'Wave-1 committed manifest lane3SupportBase');
+  assertExactKeys(support, ['commit', 'typesPath', 'typesBlob', 'reviewState'], 'Wave-1 committed manifest lane3SupportBase');
+  assertGitObject(support.commit, 'Wave-1 committed manifest lane3SupportBase.commit');
+  assertExactString(support.typesPath, WAVE1_TYPES_PATH, 'Wave-1 committed manifest lane3SupportBase.typesPath');
+  assertGitObject(support.typesBlob, 'Wave-1 committed manifest lane3SupportBase.typesBlob');
+  assertExactString(
+    support.reviewState,
+    WAVE1_R10_SUPPORT_REVIEW_STATE,
+    'Wave-1 committed manifest lane3SupportBase.reviewState',
+  );
+  const sourceBlobs = recordValue(parsed.corpusSourceBlobs, 'Wave-1 committed manifest corpusSourceBlobs');
+  assertExactKeys(sourceBlobs, WAVE1_SOURCE_BLOB_PATHS, 'Wave-1 committed manifest corpusSourceBlobs');
+  for (const path of WAVE1_SOURCE_BLOB_PATHS) {
+    assertGitObject(sourceBlobs[path], `Wave-1 committed manifest corpusSourceBlobs.${path}`);
+  }
+  assertExactString(parsed.intendedSplit, 'held-out-candidate', 'Wave-1 committed manifest intendedSplit');
   const entryCount = positiveInteger(parsed.entryCount, 'Wave-1 committed manifest entryCount');
   if (entryCount !== 81 || !Array.isArray(parsed.entries) || parsed.entries.length !== entryCount) {
     throw new Error('Wave-1 committed manifest must contain the complete 81-entry universe');
   }
   const entries = parsed.entries.map((value, index): BatchManifestEntry => {
     const entry = recordValue(value, `Wave-1 committed manifest entries[${index}]`);
+    assertExactKeys(
+      entry,
+      ['id', 'domain', 'credentialType', 'normalizedInputSha256'],
+      `Wave-1 committed manifest entries[${index}]`,
+    );
     const id = nonEmptyString(entry.id, `Wave-1 committed manifest entries[${index}].id`);
     const domain = nonEmptyString(entry.domain, `Wave-1 committed manifest entries[${index}].domain`);
     if (!Object.hasOwn(WAVE1_CORPUS_SLICE_BY_DOMAIN, domain)) {
@@ -697,16 +949,64 @@ function activeWave1Manifest(content: ArtifactContent): ParsedBatchManifest {
   });
   assertUniqueIds(entries.map(({ id }) => id), 'Wave-1 committed manifest entries');
   assertSameOrderedValues(
+    entries.map(({ id }) => id),
+    WAVE1_ENTRY_IDS,
+    'Wave-1 committed manifest exact 81-entry universe',
+  );
+  assertSameOrderedValues(
     entries.slice(0, WAVE1_KENYA_ENTRY_IDS.length).map(({ id }) => id),
     WAVE1_KENYA_ENTRY_IDS,
     'Wave-1 committed manifest Kenya-first review order',
   );
+  const declaredKenyaIds = stringArray(parsed.kenyaEntryIds, 'Wave-1 committed manifest kenyaEntryIds');
+  assertSameOrderedValues(declaredKenyaIds, WAVE1_KENYA_ENTRY_IDS, 'Wave-1 committed manifest declared Kenya ids');
+  if (entries.slice(0, WAVE1_KENYA_ENTRY_IDS.length)
+    .some(({ domain }) => domain !== 'au-ke-priority-documents')) {
+    throw new Error('Wave-1 committed manifest Kenya entries must belong to au-ke-priority-documents');
+  }
+  const actualOodIds = entries
+    .filter(({ domain }) => domain === 'out-of-distribution')
+    .map(({ id }) => id);
+  assertSameOrderedValues(actualOodIds, WAVE1_OOD_ENTRY_IDS, 'Wave-1 committed manifest domain-bound OOD ids');
+  const counts = recordValue(parsed.counts, 'Wave-1 committed manifest counts');
+  assertExactKeys(counts, ['byDomain', 'byCredentialType', 'byCorpusSlice'], 'Wave-1 committed manifest counts');
+  assertCounts(
+    parseCountMap(counts.byDomain, 'Wave-1 committed manifest counts.byDomain'),
+    countBy(entries, 'domain'),
+    'Wave-1 committed manifest domain counts',
+  );
+  assertCounts(
+    parseCountMap(counts.byCredentialType, 'Wave-1 committed manifest counts.byCredentialType'),
+    countBy(entries, 'credentialType'),
+    'Wave-1 committed manifest credential-type counts',
+  );
+  assertCounts(
+    parseCountMap(counts.byCorpusSlice, 'Wave-1 committed manifest counts.byCorpusSlice'),
+    countByCorpusSlice(entries),
+    'Wave-1 committed manifest corpus-slice counts',
+  );
+  assertCounts(
+    new Map(Object.entries(WAVE1_DOMAIN_COUNTS)),
+    countBy(entries, 'domain'),
+    'Wave-1 committed manifest canonical domain counts',
+  );
+  assertCounts(
+    new Map(Object.entries(WAVE1_CREDENTIAL_TYPE_COUNTS)),
+    countBy(entries, 'credentialType'),
+    'Wave-1 committed manifest canonical credential-type counts',
+  );
+  assertCounts(
+    new Map(Object.entries(WAVE1_CORPUS_SLICE_COUNTS)),
+    countByCorpusSlice(entries),
+    'Wave-1 committed manifest canonical corpus-slice counts',
+  );
+  validateActiveWave1SelfChecks(parsed.selfChecks, entryCount, revision, entries, support);
   return deepFreeze({
     schemaVersion: 1,
     batchId: 'S33-W1',
     revision,
     entryCount,
-    intendedSplit: nonEmptyString(parsed.intendedSplit, 'Wave-1 committed manifest intendedSplit'),
+    intendedSplit: parsed.intendedSplit as string,
     entries,
     parsedJson: parsed as Record<string, unknown>,
   });
@@ -727,12 +1027,12 @@ function readCommittedWave1Path(
   }
 }
 
-function validateActiveWave1Packet(
+export function validateActiveS33Wave1PacketMirrors(
   repositoryRoot: string,
   producerHeadSha: string,
   manifestContent: ArtifactContent,
 ): ParsedBatchManifest {
-  const manifest = activeWave1Manifest(manifestContent);
+  const manifest = parseActiveS33Wave1Manifest(manifestContent);
   const manifestRawSha256 = rawManifestHash(manifestContent);
   const entryDatasheetContent = readCommittedWave1Path(
     repositoryRoot,
@@ -787,7 +1087,7 @@ function validateActiveWave1Packet(
   return manifest;
 }
 
-interface StrictJsonDocument {
+export interface StrictJsonDocument {
   parsed: Readonly<Record<string, unknown>>;
   rawSha256: string;
   canonicalSha256: string;
@@ -949,7 +1249,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function parseStrictJsonDocument(content: ArtifactContent, label: string): StrictJsonDocument {
+export function parseStrictJsonDocument(content: ArtifactContent, label: string): StrictJsonDocument {
   const raw = bytes(content, label);
   let text: string;
   try {
@@ -1002,6 +1302,58 @@ function assertUniqueIds(ids: readonly string[], label: string): void {
 function recordValue(value: unknown, label: string): Record<string, unknown> {
   if (!isRecord(value)) throw new Error(`${label} must be an object`);
   return value;
+}
+
+function assertS33ProdModelConfig(value: unknown): void {
+  const config = recordValue(value, 'Wave-1 prod-model-diff modelConfig');
+  assertExactKeys(config, [
+    'promptModule', 'promptModuleRawSha256', 'systemPromptExport', 'systemPromptSha256',
+    'promptBuilder', 'promptBuilderProbeSha256', 'generationConfig', 'absentFlags',
+    'timeoutMs', 'concurrency', 'maxRequests', 'maxEntryCharacters',
+    'maxAggregateInputCharacters',
+  ], 'Wave-1 prod-model-diff modelConfig');
+  const generationConfig = recordValue(
+    config.generationConfig,
+    'Wave-1 prod-model-diff generationConfig',
+  );
+  assertExactKeys(
+    generationConfig,
+    ['responseMimeType', 'temperature', 'maxOutputTokens'],
+    'Wave-1 prod-model-diff generationConfig',
+  );
+  const workerRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+  if (config.promptModule !== 'services/worker/src/ai/prompts/extraction.ts'
+    || config.promptModuleRawSha256 !== sha256(readFileSync(join(workerRoot, 'src/ai/prompts/extraction.ts')))
+    || config.systemPromptExport !== 'EXTRACTION_SYSTEM_PROMPT'
+    || config.systemPromptSha256 !== sha256(EXTRACTION_SYSTEM_PROMPT)
+    || config.promptBuilder !== 'buildExtractionPrompt'
+    || config.promptBuilderProbeSha256 !== sha256(buildExtractionPrompt('__S33_PIN__', 'OTHER', undefined))
+    || generationConfig.responseMimeType !== 'application/json'
+    || generationConfig.temperature !== 0.1
+    || generationConfig.maxOutputTokens !== 2048
+    || canonicaliseJson(config.absentFlags) !== canonicaliseJson([
+      'GEMINI_TUNED_MODEL', 'GEMINI_V6_PROMPT', 'GEMINI_TUNED_RESPONSE_SCHEMA',
+    ])
+    || config.timeoutMs !== 30_000 || config.concurrency !== 1
+    || config.maxRequests !== 81 || config.maxEntryCharacters !== 50_000
+    || config.maxAggregateInputCharacters !== 4_050_000) {
+    throw new Error('Wave-1 prod-model-diff modelConfig is not the CTO-pinned prod-parity configuration');
+  }
+}
+
+function assertS33EmbeddingModelConfig(value: unknown): void {
+  const config = recordValue(value, 'Wave-1 embedding modelConfig');
+  assertExactKeys(config, [
+    'taskType', 'dimensions', 'batchSize', 'timeoutMs', 'concurrency', 'retryCount',
+    'chunkTokens', 'chunkOverlapTokens', 'maxTrainingChunks', 'maxVectorInputs', 'maxHttpRequests',
+  ], 'Wave-1 embedding modelConfig');
+  if (config.taskType !== 'SEMANTIC_SIMILARITY' || config.dimensions !== 3072
+    || config.batchSize !== 16 || config.timeoutMs !== 30_000 || config.concurrency !== 1
+    || config.retryCount !== 0 || config.chunkTokens !== 1500 || config.chunkOverlapTokens !== 128
+    || config.maxTrainingChunks !== 2048 || config.maxVectorInputs !== 2129
+    || config.maxHttpRequests !== 134) {
+    throw new Error('Wave-1 embedding modelConfig is not the CTO-pinned diagnostic configuration');
+  }
 }
 
 function stringArray(value: unknown, label: string, allowEmpty = false): string[] {
@@ -3316,6 +3668,495 @@ function assertHttpsUrl(value: unknown, label: string): string {
   return url.toString();
 }
 
+type S33WorkflowReportName =
+  | 'cross-review.json'
+  | 'prod-model-diff.json'
+  | 'lexical-leakage.json'
+  | 'embedding-diagnostic.json';
+
+interface ParsedS33WorkflowReport {
+  document: StrictJsonDocument;
+  payload: Readonly<Record<string, unknown>>;
+}
+
+function readFixedS33WorkflowReport(directory: string, filename: S33WorkflowReportName): Buffer {
+  const realDirectory = realpathSync(directory);
+  const path = join(realDirectory, filename);
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size <= 0 || stat.size > 50 * 1024 * 1024) {
+      throw new Error('must be one non-empty regular file of at most 50 MiB with link count one');
+    }
+    return readFileSync(fd);
+  } catch (error) {
+    throw new Error(`Wave-1 workflow report ${filename} is missing or unsafe`, { cause: error });
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function parseS33WorkflowReport(
+  directory: string,
+  filename: S33WorkflowReportName,
+  artifactType: string,
+  producerHeadSha: string,
+  manifestRawSha256: string,
+): ParsedS33WorkflowReport {
+  const document = parseStrictJsonDocument(
+    readFixedS33WorkflowReport(directory, filename),
+    `Wave-1 workflow report ${filename}`,
+  );
+  const parsed = document.parsed;
+  assertExactKeys(parsed, [
+    'schemaVersion', 'batchId', 'artifactType', 'producerHeadSha',
+    'manifestRawSha256', 'status', 'payload',
+  ], `Wave-1 workflow report ${filename}`);
+  if (parsed.schemaVersion !== 1
+    || parsed.batchId !== 'S33-W1'
+    || parsed.artifactType !== artifactType
+    || parsed.producerHeadSha !== producerHeadSha
+    || parsed.manifestRawSha256 !== manifestRawSha256
+    || parsed.status !== 'PASS') {
+    throw new Error(`Wave-1 workflow report ${filename} is not a PASS bound to the exact producer/manifest`);
+  }
+  return { document, payload: recordValue(parsed.payload, `Wave-1 workflow report ${filename}.payload`) };
+}
+
+function validateWorkflowReportEntryUniverse(
+  value: unknown,
+  manifest: ParsedBatchManifest,
+  label: string,
+): readonly Readonly<Record<string, unknown>>[] {
+  if (!Array.isArray(value) || value.length !== manifest.entryCount) {
+    throw new Error(`${label} must contain the exact ${manifest.entryCount}-entry producer universe`);
+  }
+  const rows = value.map((row, index) => recordValue(row, `${label}[${index}]`));
+  assertSameOrderedValues(
+    rows.map((row, index) => nonEmptyString(row.id, `${label}[${index}].id`)),
+    manifest.entries.map(({ id }) => id),
+    `${label} ordered ids`,
+  );
+  return rows;
+}
+
+function deterministicWave1ReviewSample(
+  manifestRawSha256: string,
+  entryIds: readonly string[],
+): string[] {
+  const sampleSize = Math.min(entryIds.length, Math.max(5, Math.ceil(entryIds.length * 0.1)));
+  return entryIds.map((id) => ({ id, rank: sha256(`${manifestRawSha256}\0${id}`) }))
+    .sort((left, right) => {
+      const rankOrder = compareCodeUnitStrings(left.rank, right.rank);
+      return rankOrder === 0 ? compareCodeUnitStrings(left.id, right.id) : rankOrder;
+    })
+    .slice(0, sampleSize)
+    .map(({ id }) => id);
+}
+
+function readAndValidateS33WorkflowReports(input: Readonly<{
+  directory: string;
+  manifest: ParsedBatchManifest;
+  manifestCanonicalSha256: string;
+  manifestRawSha256: string;
+  producerHeadSha: string;
+  producerTreeSha: string;
+  prodDiffAdjudication: S33ProdDiffAdjudication;
+}>): Readonly<{
+  crossReview: StrictJsonDocument;
+  embedding: StrictJsonDocument;
+  lexical: { document: StrictJsonDocument; trainingManifestSha256: string };
+  prodModelDiff: StrictJsonDocument;
+}> {
+  const crossReview = parseS33WorkflowReport(
+    input.directory,
+    'cross-review.json',
+    'arkova-s33-wave1-cross-review',
+    input.producerHeadSha,
+    input.manifestRawSha256,
+  );
+  assertExactKeys(crossReview.payload, [
+    'sampleAlgorithm', 'sampleRule', 'manifestEntryCount', 'sampleEntryIds',
+    'materialLabelDefectCount', 'adjudications', 'wholeBatchVerdict', 'githubAuthentication',
+  ], 'Wave-1 cross-review payload');
+  assertExactString(
+    crossReview.payload.sampleAlgorithm,
+    'sha256-manifest-entry-rank-v1',
+    'Wave-1 cross-review sampleAlgorithm',
+  );
+  assertExactString(
+    crossReview.payload.sampleRule,
+    'ceil(10%),minimum-5,capped-at-entry-count',
+    'Wave-1 cross-review sampleRule',
+  );
+  if (crossReview.payload.manifestEntryCount !== input.manifest.entryCount
+    || crossReview.payload.materialLabelDefectCount !== 0
+    || crossReview.payload.wholeBatchVerdict !== 'ACCEPT') {
+    throw new Error('Wave-1 cross-review must accept the complete batch with zero material label defects');
+  }
+  const expectedSampleIds = deterministicWave1ReviewSample(
+    input.manifestRawSha256,
+    input.manifest.entries.map(({ id }) => id),
+  );
+  const sampleEntryIds = stringArray(crossReview.payload.sampleEntryIds, 'Wave-1 cross-review sampleEntryIds');
+  assertSameOrderedValues(sampleEntryIds, expectedSampleIds, 'Wave-1 cross-review deterministic sample ids');
+  if (!Array.isArray(crossReview.payload.adjudications)
+    || crossReview.payload.adjudications.length !== expectedSampleIds.length) {
+    throw new Error('Wave-1 cross-review adjudications must cover the deterministic sample');
+  }
+  for (const [index, candidate] of crossReview.payload.adjudications.entries()) {
+    const adjudication = recordValue(candidate, `Wave-1 cross-review adjudications[${index}]`);
+    assertExactKeys(
+      adjudication,
+      ['entryId', 'verdict', 'note'],
+      `Wave-1 cross-review adjudications[${index}]`,
+    );
+    if (adjudication.entryId !== expectedSampleIds[index] || adjudication.verdict !== 'PASS') {
+      throw new Error(`Wave-1 cross-review adjudications[${index}] is not the deterministic PASS finding`);
+    }
+    if (nonEmptyString(adjudication.note, `Wave-1 cross-review adjudications[${index}].note`).length < 20) {
+      throw new Error(`Wave-1 cross-review adjudications[${index}].note must be at least 20 characters`);
+    }
+  }
+  const authentication = recordValue(
+    crossReview.payload.githubAuthentication,
+    'Wave-1 cross-review githubAuthentication',
+  );
+  assertExactKeys(authentication, [
+    'status', 'headSha', 'url', 'reviewId', 'reviewDatabaseId', 'submittedAt',
+    'authorityKind', 'reviewer',
+  ], 'Wave-1 cross-review githubAuthentication');
+  if (authentication.status !== 'APPROVED'
+    || authentication.headSha !== input.producerHeadSha
+    || !['primary', 'fallback'].includes(String(authentication.authorityKind))) {
+    throw new Error('Wave-1 cross-review GitHub authentication is not exact-head APPROVED');
+  }
+  nonEmptyString(authentication.reviewId, 'Wave-1 cross-review reviewId');
+  if (authentication.reviewDatabaseId !== null
+    && (!Number.isSafeInteger(authentication.reviewDatabaseId)
+      || (authentication.reviewDatabaseId as number) < 1)) {
+    throw new Error('Wave-1 cross-review reviewDatabaseId must be null or a positive integer');
+  }
+  assertIsoUtc(authentication.submittedAt, 'Wave-1 cross-review submittedAt');
+  const authenticationUrl = new URL(assertHttpsUrl(authentication.url, 'Wave-1 cross-review URL'));
+  if (authenticationUrl.hostname !== 'github.com'
+    || authenticationUrl.pathname !== '/carson-see/ArkovaCarson/pull/1498') {
+    throw new Error('Wave-1 cross-review URL must belong to carson-see/ArkovaCarson PR #1498');
+  }
+  const reviewer = recordValue(authentication.reviewer, 'Wave-1 cross-review reviewer');
+  assertExactKeys(reviewer, ['login', 'databaseId', 'id'], 'Wave-1 cross-review reviewer');
+  const reviewerLogin = nonEmptyString(reviewer.login, 'Wave-1 cross-review reviewer.login');
+  if (!Number.isSafeInteger(reviewer.databaseId) || (reviewer.databaseId as number) < 1) {
+    throw new Error('Wave-1 cross-review reviewer.databaseId must be a positive integer');
+  }
+  const reviewerNodeId = nonEmptyString(reviewer.id, 'Wave-1 cross-review reviewer.id');
+  const primary = reviewerLogin === 'chatgpt-codex-connector[bot]'
+    && reviewer.databaseId === 199175422
+    && reviewerNodeId === 'BOT_kgDOC98s_g';
+  const fallback = (reviewerLogin === 'BestNessie'
+      && reviewer.databaseId === 129661809
+      && reviewerNodeId === 'U_kgDOB7p7cQ')
+    || (reviewerLogin === 'alibama'
+      && reviewer.databaseId === 911386
+      && reviewerNodeId === 'MDQ6VXNlcjkxMTM4Ng==');
+  if ((authentication.authorityKind === 'primary' && !primary)
+    || (authentication.authorityKind === 'fallback' && !fallback)) {
+    throw new Error('Wave-1 cross-review reviewer is not the CTO-authorized authority identity');
+  }
+
+  const prodModelDiff = parseS33WorkflowReport(
+    input.directory,
+    'prod-model-diff.json',
+    'arkova-s33-wave1-prod-model-diff',
+    input.producerHeadSha,
+    input.manifestRawSha256,
+  );
+  assertExactKeys(prodModelDiff.payload, [
+    'mode', 'producerTreeSha', 'manifestCanonicalSha256', 'entryUniverseSha256',
+    'providerSurface', 'model', 'modelConfig', 'modelConfigCanonicalSha256',
+    'workflowRunId', 'workflowRunAttempt', 'trustedMainRunSha', 'workflowPath',
+    'startedAtUtc', 'completedAtUtc', 'requestCount', 'retryCount', 'entryCount',
+    'results', 'rawReportSha256', 'rawReportCanonicalSha256',
+  ], 'Wave-1 prod-model-diff payload');
+  assertExactString(
+    prodModelDiff.payload.mode,
+    'offline-prod-parity-replay',
+    'Wave-1 prod-model-diff mode',
+  );
+  if (prodModelDiff.payload.producerTreeSha !== input.producerTreeSha
+    || prodModelDiff.payload.manifestCanonicalSha256 !== input.manifestCanonicalSha256
+    || prodModelDiff.payload.entryCount !== input.manifest.entryCount
+    || prodModelDiff.payload.providerSurface !== 'google-generative-language-developer-api'
+    || prodModelDiff.payload.model !== 'gemini-2.5-flash'
+    || prodModelDiff.payload.workflowRunAttempt !== 1
+    || prodModelDiff.payload.workflowPath !== '.github/workflows/s33-wave1-prerequisites.yml'
+    || prodModelDiff.payload.requestCount !== 81
+    || prodModelDiff.payload.retryCount !== 0) {
+    throw new Error('Wave-1 prod-model-diff payload is not bound to the exact tree/manifest/universe');
+  }
+  assertSha256(prodModelDiff.payload.entryUniverseSha256, 'Wave-1 prod-model-diff universe SHA-256');
+  assertSha256(prodModelDiff.payload.modelConfigCanonicalSha256, 'Wave-1 prod-model-diff model config SHA-256');
+  assertS33ProdModelConfig(prodModelDiff.payload.modelConfig);
+  if (prodModelDiff.payload.modelConfigCanonicalSha256
+    !== sha256(canonicaliseJson(prodModelDiff.payload.modelConfig))) {
+    throw new Error('Wave-1 prod-model-diff modelConfig digest does not match its canonical bytes');
+  }
+  if (prodModelDiff.payload.entryUniverseSha256
+    !== sha256(canonicaliseJson(input.manifest.entries.map(({ id }) => id)))) {
+    throw new Error('Wave-1 prod-model-diff entry-universe digest does not match the manifest ids');
+  }
+  positiveInteger(prodModelDiff.payload.workflowRunId, 'Wave-1 prod-model-diff workflow run id');
+  assertGitObject(prodModelDiff.payload.trustedMainRunSha as string, 'Wave-1 prod-model-diff trusted-main SHA');
+  assertIsoUtc(prodModelDiff.payload.startedAtUtc, 'Wave-1 prod-model-diff startedAtUtc');
+  assertIsoUtc(prodModelDiff.payload.completedAtUtc, 'Wave-1 prod-model-diff completedAtUtc');
+  assertSha256(prodModelDiff.payload.rawReportSha256, 'Wave-1 prod-model-diff raw-report SHA-256');
+  assertSha256(prodModelDiff.payload.rawReportCanonicalSha256, 'Wave-1 prod-model-diff canonical raw-report SHA-256');
+  const prodRows = validateWorkflowReportEntryUniverse(
+    prodModelDiff.payload.results,
+    input.manifest,
+    'Wave-1 prod-model-diff results',
+  );
+  const mismatchIds: string[] = [];
+  for (const [index, row] of prodRows.entries()) {
+    assertExactKeys(row, [
+      'id', 'modelOutputRawSha256', 'modelOutputCanonicalSha256',
+      'groundTruthCanonicalSha256', 'classification', 'differingFields',
+    ], `Wave-1 prod-model-diff results[${index}]`);
+    assertSha256(row.modelOutputRawSha256, `Wave-1 prod-model-diff results[${index}].modelOutputRawSha256`);
+    assertSha256(row.modelOutputCanonicalSha256, `Wave-1 prod-model-diff results[${index}].modelOutputCanonicalSha256`);
+    assertSha256(row.groundTruthCanonicalSha256, `Wave-1 prod-model-diff results[${index}].groundTruthCanonicalSha256`);
+    if (!['MATCH', 'MISMATCH'].includes(String(row.classification)) || !Array.isArray(row.differingFields)) {
+      throw new Error(`Wave-1 prod-model-diff results[${index}] has an invalid machine diff`);
+    }
+    if ((row.classification === 'MATCH') !== (row.differingFields.length === 0)) {
+      throw new Error(`Wave-1 prod-model-diff results[${index}] classification conflicts with differingFields`);
+    }
+    if (row.classification === 'MISMATCH') mismatchIds.push(row.id as string);
+  }
+  validateProdDiffAdjudication(input.prodDiffAdjudication, {
+    manifestRawSha256: input.manifestRawSha256,
+    mismatchIds,
+    producerHeadSha: input.producerHeadSha,
+    report: prodModelDiff.document,
+    reportPayload: prodModelDiff.payload,
+  });
+
+  const lexical = parseS33WorkflowReport(
+    input.directory,
+    'lexical-leakage.json',
+    'arkova-s33-wave1-lexical-leakage',
+    input.producerHeadSha,
+    input.manifestRawSha256,
+  );
+  assertExactKeys(lexical.payload, [
+    'algorithm', 'normalization', 'n', 'producerTreeSha', 'manifestCanonicalSha256',
+    'entryCount', 'trainingCorpusFileCount', 'trainingManifestSha256', 'exactMatchCount', 'hits',
+  ], 'Wave-1 lexical-leakage payload');
+  assertExactString(
+    lexical.payload.algorithm,
+    'normalized-token-exact-ngram-v1',
+    'Wave-1 lexical-leakage algorithm',
+  );
+  if (lexical.payload.producerTreeSha !== input.producerTreeSha
+    || lexical.payload.manifestCanonicalSha256 !== input.manifestCanonicalSha256
+    || lexical.payload.entryCount !== input.manifest.entryCount) {
+    throw new Error('Wave-1 lexical-leakage payload is not bound to the exact tree/manifest/universe');
+  }
+  assertSameOrderedValues(
+    lexical.payload.n as readonly number[],
+    REQUIRED_LEXICAL_N,
+    'Wave-1 lexical-leakage exact n=6-13 range',
+  );
+  if (lexical.payload.exactMatchCount !== 0
+    || !Array.isArray(lexical.payload.hits)
+    || lexical.payload.hits.length !== 0) {
+    throw new Error('Wave-1 normalized exact n-gram leakage count must be zero');
+  }
+  positiveInteger(lexical.payload.trainingCorpusFileCount, 'Wave-1 lexical training corpus file count');
+  assertSha256(lexical.payload.trainingManifestSha256, 'Wave-1 lexical training-manifest SHA-256');
+
+  const embedding = parseS33WorkflowReport(
+    input.directory,
+    'embedding-diagnostic.json',
+    'arkova-s33-wave1-embedding-diagnostic',
+    input.producerHeadSha,
+    input.manifestRawSha256,
+  );
+  assertExactKeys(embedding.payload, [
+    'role', 'canOverrideExactScan', 'producerTreeSha', 'manifestCanonicalSha256',
+    'entryUniverseSha256', 'providerSurface', 'model', 'modelConfig',
+    'modelConfigCanonicalSha256', 'workflowRunId', 'workflowRunAttempt',
+    'trustedMainRunSha', 'workflowPath', 'startedAtUtc', 'completedAtUtc',
+    'heldoutRecordCount', 'trainingFileCount', 'trainingChunkCount', 'vectorInputCount',
+    'requestCount', 'retryCount', 'lexicalTrainingManifestSha256',
+    'trainingChunkManifestCanonicalSha256', 'entryCount', 'results',
+    'rawReportSha256', 'rawReportCanonicalSha256',
+  ], 'Wave-1 embedding-diagnostic payload');
+  assertExactString(embedding.payload.role, 'diagnostic-only', 'Wave-1 embedding role');
+  if (embedding.payload.canOverrideExactScan !== false
+    || embedding.payload.producerTreeSha !== input.producerTreeSha
+    || embedding.payload.manifestCanonicalSha256 !== input.manifestCanonicalSha256
+    || embedding.payload.entryCount !== input.manifest.entryCount
+    || embedding.payload.heldoutRecordCount !== input.manifest.entryCount
+    || embedding.payload.providerSurface !== 'google-generative-language-developer-api'
+    || embedding.payload.model !== 'gemini-embedding-001'
+    || embedding.payload.workflowRunAttempt !== 1
+    || embedding.payload.workflowPath !== '.github/workflows/s33-wave1-prerequisites.yml'
+    || embedding.payload.retryCount !== 0) {
+    throw new Error('Wave-1 embedding diagnostic can neither override exact scan nor drift from the producer');
+  }
+  assertSha256(embedding.payload.entryUniverseSha256, 'Wave-1 embedding universe SHA-256');
+  assertSha256(embedding.payload.modelConfigCanonicalSha256, 'Wave-1 embedding model config SHA-256');
+  assertS33EmbeddingModelConfig(embedding.payload.modelConfig);
+  if (embedding.payload.modelConfigCanonicalSha256
+    !== sha256(canonicaliseJson(embedding.payload.modelConfig))) {
+    throw new Error('Wave-1 embedding modelConfig digest does not match its canonical bytes');
+  }
+  if (embedding.payload.entryUniverseSha256
+    !== sha256(canonicaliseJson(input.manifest.entries.map(({ id }) => id)))) {
+    throw new Error('Wave-1 embedding entry-universe digest does not match the manifest ids');
+  }
+  positiveInteger(embedding.payload.trainingFileCount, 'Wave-1 embedding training file count');
+  const trainingChunkCount = positiveInteger(
+    embedding.payload.trainingChunkCount,
+    'Wave-1 embedding training chunk count',
+  );
+  const vectorInputCount = positiveInteger(
+    embedding.payload.vectorInputCount,
+    'Wave-1 embedding vector input count',
+  );
+  const requestCount = positiveInteger(embedding.payload.requestCount, 'Wave-1 embedding request count');
+  if (embedding.payload.trainingFileCount !== lexical.payload.trainingCorpusFileCount
+    || trainingChunkCount > 2048
+    || vectorInputCount !== input.manifest.entryCount + trainingChunkCount
+    || vectorInputCount > 2129
+    || requestCount !== Math.ceil(vectorInputCount / 16)
+    || requestCount > 134) {
+    throw new Error('Wave-1 embedding counts are not exact for the accepted corpus and 81-entry universe');
+  }
+  positiveInteger(embedding.payload.workflowRunId, 'Wave-1 embedding workflow run id');
+  assertGitObject(embedding.payload.trustedMainRunSha as string, 'Wave-1 embedding trusted-main SHA');
+  assertIsoUtc(embedding.payload.startedAtUtc, 'Wave-1 embedding startedAtUtc');
+  assertIsoUtc(embedding.payload.completedAtUtc, 'Wave-1 embedding completedAtUtc');
+  assertSha256(embedding.payload.rawReportSha256, 'Wave-1 embedding raw-report SHA-256');
+  assertSha256(embedding.payload.rawReportCanonicalSha256, 'Wave-1 embedding canonical raw-report SHA-256');
+  assertSha256(
+    embedding.payload.lexicalTrainingManifestSha256,
+    'Wave-1 embedding lexical training-manifest SHA-256',
+  );
+  assertSha256(
+    embedding.payload.trainingChunkManifestCanonicalSha256,
+    'Wave-1 embedding chunk-manifest SHA-256',
+  );
+  const embeddingRows = validateWorkflowReportEntryUniverse(
+    embedding.payload.results,
+    input.manifest,
+    'Wave-1 embedding results',
+  );
+  for (const [index, row] of embeddingRows.entries()) {
+    assertExactKeys(
+      row,
+      ['id', 'nearestTrainingDocumentSha256', 'nearestTrainingChunkSha256', 'cosineSimilarity'],
+      `Wave-1 embedding results[${index}]`,
+    );
+    assertSha256(
+      row.nearestTrainingDocumentSha256,
+      `Wave-1 embedding results[${index}].nearestTrainingDocumentSha256`,
+    );
+    assertSha256(
+      row.nearestTrainingChunkSha256,
+      `Wave-1 embedding results[${index}].nearestTrainingChunkSha256`,
+    );
+    if (typeof row.cosineSimilarity !== 'number'
+      || !Number.isFinite(row.cosineSimilarity)
+      || row.cosineSimilarity < -1
+      || row.cosineSimilarity > 1) {
+      throw new Error(`Wave-1 embedding results[${index}].cosineSimilarity must be finite in [-1,1]`);
+    }
+  }
+  if (embedding.payload.lexicalTrainingManifestSha256 !== lexical.payload.trainingManifestSha256) {
+    throw new Error('Wave-1 embedding diagnostic is stale against the accepted lexical training manifest');
+  }
+
+  return deepFreeze({
+    crossReview: crossReview.document,
+    prodModelDiff: prodModelDiff.document,
+    lexical: {
+      document: lexical.document,
+      trainingManifestSha256: lexical.payload.trainingManifestSha256 as string,
+    },
+    embedding: embedding.document,
+  });
+}
+
+function validateProdDiffAdjudication(
+  value: S33ProdDiffAdjudication,
+  binding: Readonly<{
+    manifestRawSha256: string;
+    mismatchIds: readonly string[];
+    producerHeadSha: string;
+    report: StrictJsonDocument;
+    reportPayload: Readonly<Record<string, unknown>>;
+  }>,
+): void {
+  const adjudication = recordValue(value, 'Wave-1 prod-diff adjudication');
+  assertExactKeys(adjudication, [
+    'schemaVersion', 'artifactType', 'batchId', 'producerHeadSha', 'manifestRawSha256',
+    'prerequisite', 'mismatchCount', 'adjudications',
+  ], 'Wave-1 prod-diff adjudication');
+  if (adjudication.schemaVersion !== 1
+    || adjudication.artifactType !== 'arkova-s33-wave1-prod-diff-adjudication'
+    || adjudication.batchId !== 'S33-W1'
+    || adjudication.producerHeadSha !== binding.producerHeadSha
+    || adjudication.manifestRawSha256 !== binding.manifestRawSha256
+    || adjudication.mismatchCount !== binding.mismatchIds.length) {
+    throw new Error('Wave-1 prod-diff adjudication is not bound to the exact report universe');
+  }
+  const prerequisite = recordValue(adjudication.prerequisite, 'Wave-1 prod-diff adjudication prerequisite');
+  assertExactKeys(prerequisite, [
+    'workflowRunId', 'workflowRunNumber', 'workflowRunAttempt', 'trustedMainRunSha',
+    'prodModelDiffArtifactId', 'prodModelDiffArchiveSha256',
+    'prodModelDiffReportRawSha256', 'prodModelDiffReportCanonicalSha256',
+  ], 'Wave-1 prod-diff adjudication prerequisite');
+  positiveInteger(prerequisite.workflowRunId, 'Wave-1 prod-diff adjudication workflow run id');
+  positiveInteger(prerequisite.workflowRunNumber, 'Wave-1 prod-diff adjudication workflow run number');
+  positiveInteger(prerequisite.prodModelDiffArtifactId, 'Wave-1 prod-diff adjudication artifact id');
+  if (prerequisite.workflowRunAttempt !== 1
+    || prerequisite.workflowRunId !== binding.reportPayload.workflowRunId
+    || prerequisite.trustedMainRunSha !== binding.reportPayload.trustedMainRunSha
+    || prerequisite.prodModelDiffReportRawSha256 !== binding.report.rawSha256
+    || prerequisite.prodModelDiffReportCanonicalSha256 !== binding.report.canonicalSha256) {
+    throw new Error('Wave-1 prod-diff adjudication prerequisite does not bind the exact report/run');
+  }
+  assertGitObject(prerequisite.trustedMainRunSha as string, 'Wave-1 prod-diff adjudication trusted-main SHA');
+  assertSha256(prerequisite.prodModelDiffArchiveSha256, 'Wave-1 prod-diff adjudication archive SHA-256');
+  assertSha256(prerequisite.prodModelDiffReportRawSha256, 'Wave-1 prod-diff adjudication report raw SHA-256');
+  assertSha256(
+    prerequisite.prodModelDiffReportCanonicalSha256,
+    'Wave-1 prod-diff adjudication report canonical SHA-256',
+  );
+  if (!Array.isArray(adjudication.adjudications)) {
+    throw new Error('Wave-1 prod-diff adjudications must be an array');
+  }
+  const rows = adjudication.adjudications.map((candidate, index) => {
+    const row = recordValue(candidate, `Wave-1 prod-diff adjudications[${index}]`);
+    assertExactKeys(row, ['entryId', 'disposition', 'rationale'], `Wave-1 prod-diff adjudications[${index}]`);
+    if (row.disposition !== 'MODEL_HARD') {
+      throw new Error(`Wave-1 prod-diff adjudications[${index}] is not MODEL_HARD`);
+    }
+    if (nonEmptyString(row.rationale, `Wave-1 prod-diff adjudications[${index}].rationale`).length < 20) {
+      throw new Error(`Wave-1 prod-diff adjudications[${index}].rationale must be at least 20 characters`);
+    }
+    return row;
+  });
+  assertSameOrderedValues(
+    rows.map((row) => row.entryId as string),
+    binding.mismatchIds,
+    'Wave-1 prod-diff every-and-only mismatch adjudication ids',
+  );
+}
+
 /**
  * Build the CTO-ratified Wave-1 acceptance record from GitHub/CI evidence.
  *
@@ -3323,8 +4164,8 @@ function assertHttpsUrl(value: unknown, label: string): string {
  * callers cannot supply their digests. No signer, external registry, or
  * commitment/reveal record is part of this acceptance path.
  */
-export function createS33Wave1AcceptanceArtifact(
-  input: S33Wave1AcceptanceArtifactInput,
+function buildS33Wave1AcceptanceArtifact(
+  input: TestOnlyS33Wave1AcceptanceArtifactInput,
 ): Readonly<S33Wave1AcceptanceArtifact> {
   if (input.repositoryIdentity !== 'carson-see/ArkovaCarson') {
     throw new Error('Wave-1 acceptance repository identity must be carson-see/ArkovaCarson');
@@ -3369,27 +4210,6 @@ export function createS33Wave1AcceptanceArtifact(
     };
   }).sort((left, right) => compareCodeUnitStrings(left.name, right.name));
 
-  const lexical = input.evidence.lexicalLeakage;
-  assertExactString(
-    lexical.algorithm,
-    'normalized-token-exact-ngram-v1',
-    'Wave-1 lexical leakage algorithm',
-  );
-  assertSameOrderedValues(lexical.n, REQUIRED_LEXICAL_N, 'Wave-1 lexical leakage exact n=6-13 range');
-  if (lexical.exactMatchCount !== 0) {
-    throw new Error('Wave-1 normalized exact n-gram leakage count must be zero');
-  }
-  assertSha256(lexical.trainingManifestSha256, 'Wave-1 training manifest SHA-256');
-  assertSha256(lexical.evidenceArtifactSha256, 'Wave-1 lexical evidence artifact SHA-256');
-  assertSha256(input.evidence.crossReviewArtifactSha256, 'Wave-1 cross-review artifact SHA-256');
-  assertSha256(input.evidence.prodModelDiffArtifactSha256, 'Wave-1 prod-model-diff artifact SHA-256');
-  assertExactString(input.evidence.prodModelDiffMode, 'offline-replay', 'Wave-1 prod-model-diff mode');
-  assertExactString(input.evidence.embedding.role, 'diagnostic-only', 'Wave-1 embedding evidence role');
-  if (input.evidence.embedding.canOverrideExactScan !== false) {
-    throw new Error('Wave-1 embedding diagnostic cannot override exact leakage scan');
-  }
-  assertSha256(input.evidence.embedding.evidenceArtifactSha256, 'Wave-1 embedding evidence artifact SHA-256');
-
   let producerTreeSha: string;
   let manifestContent: Buffer;
   try {
@@ -3410,11 +4230,20 @@ export function createS33Wave1AcceptanceArtifact(
     throw new Error('Unable to bind Wave-1 acceptance to the exact producer head/tree/manifest', { cause: error });
   }
   const manifestDocument = parseStrictJsonDocument(manifestContent, 'Wave-1 committed manifest');
-  const manifest = validateActiveWave1Packet(
+  const manifest = validateActiveS33Wave1PacketMirrors(
     input.repositoryRoot,
     input.producerHeadSha,
     manifestContent,
   );
+  const reports = readAndValidateS33WorkflowReports({
+    directory: input.evidenceReportDirectory,
+    manifest,
+    manifestCanonicalSha256: manifestDocument.canonicalSha256,
+    manifestRawSha256: manifestDocument.rawSha256,
+    producerHeadSha: input.producerHeadSha,
+    producerTreeSha,
+    prodDiffAdjudication: input.prodDiffAdjudication,
+  });
 
   const withoutDigest = {
     schemaVersion: 1 as const,
@@ -3438,20 +4267,24 @@ export function createS33Wave1AcceptanceArtifact(
       checks,
     },
     evidence: {
-      crossReviewArtifactSha256: input.evidence.crossReviewArtifactSha256,
-      prodModelDiffArtifactSha256: input.evidence.prodModelDiffArtifactSha256,
-      prodModelDiffMode: 'offline-replay' as const,
+      crossReviewArtifactSha256: reports.crossReview.rawSha256,
+      crossReviewArtifactCanonicalSha256: reports.crossReview.canonicalSha256,
+      prodModelDiffArtifactSha256: reports.prodModelDiff.rawSha256,
+      prodModelDiffArtifactCanonicalSha256: reports.prodModelDiff.canonicalSha256,
+      prodModelDiffMode: 'offline-prod-parity-replay' as const,
       lexicalLeakage: {
         algorithm: 'normalized-token-exact-ngram-v1' as const,
         n: [...REQUIRED_LEXICAL_N],
-        trainingManifestSha256: lexical.trainingManifestSha256,
-        evidenceArtifactSha256: lexical.evidenceArtifactSha256,
-        exactMatchCount: 0,
+        trainingManifestSha256: reports.lexical.trainingManifestSha256,
+        evidenceArtifactSha256: reports.lexical.document.rawSha256,
+        evidenceArtifactCanonicalSha256: reports.lexical.document.canonicalSha256,
+        exactMatchCount: 0 as const,
       },
       embedding: {
         role: 'diagnostic-only' as const,
         canOverrideExactScan: false as const,
-        evidenceArtifactSha256: input.evidence.embedding.evidenceArtifactSha256,
+        evidenceArtifactSha256: reports.embedding.rawSha256,
+        evidenceArtifactCanonicalSha256: reports.embedding.canonicalSha256,
       },
     },
   };
@@ -3461,12 +4294,245 @@ export function createS33Wave1AcceptanceArtifact(
   });
 }
 
+function decodeAuthenticatedReport(
+  report: S33AuthenticatedEvidenceBundle['reports'][keyof S33AuthenticatedEvidenceBundle['reports']],
+  expectedFilename: S33WorkflowReportName,
+): Buffer {
+  if (report.filename !== expectedFilename || report.bytesBase64.length === 0) {
+    throw new Error(`Authenticated Wave-1 report must be ${expectedFilename}`);
+  }
+  const decoded = Buffer.from(report.bytesBase64, 'base64');
+  if (decoded.length === 0 || decoded.length > 50 * 1024 * 1024
+    || decoded.toString('base64') !== report.bytesBase64) {
+    throw new Error(`Authenticated Wave-1 report ${expectedFilename} has invalid canonical base64 bytes`);
+  }
+  const document = parseStrictJsonDocument(decoded, `Authenticated Wave-1 report ${expectedFilename}`);
+  if (report.rawSha256 !== document.rawSha256 || report.canonicalSha256 !== document.canonicalSha256) {
+    throw new Error(`Authenticated Wave-1 report ${expectedFilename} digest claims do not match its bytes`);
+  }
+  return decoded;
+}
+
+/**
+ * Production Wave-1 acceptance owner. Only Team 2's live GitHub verifier can
+ * construct the WeakSet-branded bundle accepted here; JSON/plain-object callers
+ * fail before any producer or report bytes are consumed.
+ */
+export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
+  evidence: Readonly<S33AuthenticatedEvidenceBundle>,
+): Readonly<S33Wave1AuthenticatedAcceptanceArtifact> {
+  assertAuthenticatedS33Wave1EvidenceBundle(evidence);
+  const evidenceRecord = recordValue(evidence, 'Authenticated Wave-1 evidence bundle');
+  assertExactKeys(evidenceRecord, [
+    'repositoryIdentity', 'pullRequestNumber', 'producerRepositoryRoot', 'trustedMainRepositoryRoot',
+    'trustedMainHeadSha', 'supportMergeCommitSha', 'supportMergeIsAncestorOfMain',
+    'producerHeadSha', 'producerTreeSha', 'manifestPath', 'manifestRawSha256',
+    'manifestCanonicalSha256', 'manifestEntryIds', 'acceptedAtUtc', 'approval',
+    'authenticatedReviewBody', 'branchProtectionRuleIds', 'requiredChecks', 'reports',
+    'prodDiffAdjudication', 'prerequisiteInventory',
+  ], 'Authenticated Wave-1 evidence bundle');
+  if (evidence.repositoryIdentity !== 'carson-see/ArkovaCarson'
+    || evidence.pullRequestNumber !== 1498
+    || evidence.manifestPath !== WAVE1_MANIFEST_PATH
+    || evidence.supportMergeIsAncestorOfMain !== true) {
+    throw new Error('Authenticated Wave-1 bundle has invalid fixed repository/support facts');
+  }
+  assertGitObject(evidence.trustedMainHeadSha, 'Authenticated trusted-main SHA');
+  assertGitObject(evidence.supportMergeCommitSha, 'Authenticated #1529 support merge SHA');
+  assertGitObject(evidence.producerHeadSha, 'Authenticated producer SHA');
+  assertGitObject(evidence.producerTreeSha, 'Authenticated producer tree SHA');
+  assertSha256(evidence.manifestRawSha256, 'Authenticated manifest raw SHA-256');
+  assertSha256(evidence.manifestCanonicalSha256, 'Authenticated manifest canonical SHA-256');
+  assertUniqueIds(evidence.manifestEntryIds, 'Authenticated manifest entry ids');
+  if (evidence.manifestEntryIds.length !== 81) throw new Error('Authenticated manifest must contain exactly 81 ids');
+  assertIsoUtc(evidence.acceptedAtUtc, 'Authenticated acceptedAtUtc');
+  if (evidence.acceptedAtUtc !== evidence.approval.submittedAt) {
+    throw new Error('Authenticated acceptedAtUtc must equal the GitHub approval submittedAt timestamp');
+  }
+  const authenticatedReviewBody = nonEmptyString(
+    evidence.authenticatedReviewBody,
+    'Authenticated Lane-3 review body',
+  );
+  if (!authenticatedReviewBody.includes(`<!-- ${CROSS_REVIEW_MARKER} -->`)
+    || !authenticatedReviewBody.includes(`<!-- ${PROD_DIFF_ADJUDICATION_MARKER} -->`)) {
+    throw new Error('Authenticated Lane-3 review body is missing its fixed acceptance/adjudication markers');
+  }
+  assertUniqueIds(evidence.branchProtectionRuleIds, 'Authenticated branch-protection rule ids');
+  try {
+    const trustedMainRoot = realpathSync(evidence.trustedMainRepositoryRoot);
+    if (trustedMainRoot !== evidence.trustedMainRepositoryRoot) {
+      throw new Error('trusted-main repository root must already be canonical');
+    }
+    const derivedMainHead = execFileSync(GIT_EXECUTABLE, [
+      '-C', trustedMainRoot, 'rev-parse', 'HEAD',
+    ], { encoding: 'utf8', env: GIT_SUBPROCESS_ENV }).trim();
+    if (derivedMainHead !== evidence.trustedMainHeadSha) {
+      throw new Error('trusted-main repository HEAD does not match the authenticated SHA');
+    }
+    execFileSync(GIT_EXECUTABLE, [
+      '-C', trustedMainRoot, 'cat-file', '-e', `${evidence.supportMergeCommitSha}^{commit}`,
+    ], { stdio: 'ignore', env: GIT_SUBPROCESS_ENV });
+    execFileSync(GIT_EXECUTABLE, [
+      '-C', trustedMainRoot, 'merge-base', '--is-ancestor',
+      evidence.supportMergeCommitSha, evidence.trustedMainHeadSha,
+    ], { stdio: 'ignore', env: GIT_SUBPROCESS_ENV });
+  } catch (error) {
+    throw new Error('Authenticated #1529 support merge is not an ancestor of trusted-main HEAD', { cause: error });
+  }
+  const reports = {
+    'cross-review.json': decodeAuthenticatedReport(evidence.reports.crossReview, 'cross-review.json'),
+    'prod-model-diff.json': decodeAuthenticatedReport(evidence.reports.prodModelDiff, 'prod-model-diff.json'),
+    'lexical-leakage.json': decodeAuthenticatedReport(evidence.reports.lexicalLeakage, 'lexical-leakage.json'),
+    'embedding-diagnostic.json': decodeAuthenticatedReport(
+      evidence.reports.embeddingDiagnostic,
+      'embedding-diagnostic.json',
+    ),
+  } satisfies Record<S33WorkflowReportName, Buffer>;
+  const prodReport = parseStrictJsonDocument(
+    reports['prod-model-diff.json'],
+    'Authenticated prod-model-diff report',
+  ).parsed;
+  const crossReviewReport = parseStrictJsonDocument(
+    reports['cross-review.json'],
+    'Authenticated cross-review report',
+  ).parsed;
+  const embeddingReport = parseStrictJsonDocument(
+    reports['embedding-diagnostic.json'],
+    'Authenticated embedding report',
+  ).parsed;
+  const prodPayload = recordValue(prodReport.payload, 'Authenticated prod-model-diff payload');
+  const crossReviewPayload = recordValue(crossReviewReport.payload, 'Authenticated cross-review payload');
+  const crossReviewAuthentication = recordValue(
+    crossReviewPayload.githubAuthentication,
+    'Authenticated cross-review githubAuthentication',
+  );
+  if (canonicaliseJson(crossReviewAuthentication) !== canonicaliseJson(evidence.approval)) {
+    throw new Error('Authenticated cross-review githubAuthentication must exactly equal the bundled approval');
+  }
+  const embeddingPayload = recordValue(embeddingReport.payload, 'Authenticated embedding payload');
+  const inventory = evidence.prerequisiteInventory;
+  const prodArtifact = inventory.artifacts.prodModelDiff;
+  const embeddingArtifact = inventory.artifacts.embeddingDiagnostic;
+  if (inventory.run.runAttempt !== 1
+    || inventory.run.headSha !== prodPayload.trustedMainRunSha
+    || inventory.run.headSha !== embeddingPayload.trustedMainRunSha
+    || inventory.run.id !== prodPayload.workflowRunId
+    || inventory.run.id !== embeddingPayload.workflowRunId
+    || prodArtifact.name !== `s33-wave1-prod-model-diff-${evidence.producerHeadSha}`
+    || prodArtifact.filename !== 'prod-model-diff.json'
+    || embeddingArtifact.name !== `s33-wave1-embedding-diagnostic-${evidence.producerHeadSha}`
+    || embeddingArtifact.filename !== 'embedding-diagnostic.json'
+    || evidence.prodDiffAdjudication.prerequisite.workflowRunId !== inventory.run.id
+    || evidence.prodDiffAdjudication.prerequisite.workflowRunNumber !== inventory.run.runNumber
+    || evidence.prodDiffAdjudication.prerequisite.prodModelDiffArtifactId !== prodArtifact.id
+    || evidence.prodDiffAdjudication.prerequisite.prodModelDiffArchiveSha256 !== prodArtifact.apiDigestSha256) {
+    throw new Error('Authenticated Wave-1 prerequisite inventory/report/adjudication binding is inconsistent');
+  }
+  const prodCompletedAt = Date.parse(nonEmptyString(prodPayload.completedAtUtc, 'Prod report completedAtUtc'));
+  const reviewSubmittedAt = Date.parse(evidence.approval.submittedAt);
+  if (!Number.isFinite(prodCompletedAt) || !Number.isFinite(reviewSubmittedAt)
+    || reviewSubmittedAt <= prodCompletedAt) {
+    throw new Error('Authenticated Lane-3 approval must postdate the prod-model-diff report');
+  }
+
+  const evidenceDirectory = mkdtempSync(join(tmpdir(), 'arkova-s33-authenticated-evidence-'));
+  try {
+    for (const [filename, bytes] of Object.entries(reports)) {
+      writeFileSync(join(evidenceDirectory, filename), bytes, { flag: 'wx', mode: 0o600 });
+    }
+    const artifact = buildS33Wave1AcceptanceArtifact({
+      repositoryRoot: evidence.producerRepositoryRoot,
+      repositoryIdentity: evidence.repositoryIdentity,
+      pullRequestNumber: evidence.pullRequestNumber,
+      producerHeadSha: evidence.producerHeadSha,
+      acceptedAtUtc: evidence.acceptedAtUtc,
+      githubVerdict: {
+        status: 'APPROVED',
+        headSha: evidence.approval.headSha,
+        url: evidence.approval.url,
+        checks: evidence.requiredChecks.map((check) => ({
+          name: check.name,
+          conclusion: 'SUCCESS',
+          headSha: check.headSha,
+          detailsUrl: check.detailsUrl,
+        })),
+      },
+      evidenceReportDirectory: evidenceDirectory,
+      prodDiffAdjudication: evidence.prodDiffAdjudication,
+    });
+    const manifestBytes = execFileSync(GIT_EXECUTABLE, [
+      '-C', evidence.producerRepositoryRoot, 'show', `${evidence.producerHeadSha}:${WAVE1_MANIFEST_PATH}`,
+    ], { env: GIT_SUBPROCESS_ENV });
+    const manifestJson = parseStrictJsonDocument(manifestBytes, 'Authenticated producer manifest').parsed;
+    const manifestRows = manifestJson.entries;
+    if (!Array.isArray(manifestRows)) throw new Error('Authenticated producer manifest entries are missing');
+    const derivedManifestEntryIds = manifestRows.map((candidate, index) => nonEmptyString(
+      recordValue(candidate, `Authenticated producer manifest entries[${index}]`).id,
+      `Authenticated producer manifest entries[${index}].id`,
+    ));
+    if (artifact.producerTreeSha !== evidence.producerTreeSha
+      || artifact.manifestPath !== evidence.manifestPath
+      || artifact.manifestRawSha256 !== evidence.manifestRawSha256
+      || artifact.manifestCanonicalSha256 !== evidence.manifestCanonicalSha256
+      || canonicaliseJson(derivedManifestEntryIds) !== canonicaliseJson(evidence.manifestEntryIds)) {
+      throw new Error('Authenticated bundle producer/tree/manifest mirrors do not match derived Git evidence');
+    }
+    const { artifactDigestSha256: _baseDigest, ...baseArtifact } = artifact;
+    const withoutDigest = {
+      ...baseArtifact,
+      trustedMain: {
+        headSha: evidence.trustedMainHeadSha,
+        supportPullRequestNumber: 1529 as const,
+        supportMergeCommitSha: evidence.supportMergeCommitSha,
+        supportMergeIsAncestorOfMain: true as const,
+        branchProtectionRuleIds: [...evidence.branchProtectionRuleIds],
+      },
+      manifestEntryIds: [...evidence.manifestEntryIds],
+      githubAuthentication: {
+        reviewId: evidence.approval.reviewId,
+        reviewDatabaseId: evidence.approval.reviewDatabaseId,
+        submittedAt: evidence.approval.submittedAt,
+        authorityKind: evidence.approval.authorityKind,
+        reviewer: { ...evidence.approval.reviewer },
+        authenticatedReviewBodySha256: sha256(authenticatedReviewBody),
+        requiredChecks: evidence.requiredChecks.map((check) => ({
+          name: check.name,
+          conclusion: check.conclusion,
+          headSha: check.headSha,
+          detailsUrl: check.detailsUrl,
+          checkRunId: check.checkRunId,
+          checkRunDatabaseId: check.checkRunDatabaseId,
+          app: { ...check.app },
+        })),
+      },
+      prerequisiteInventory: evidence.prerequisiteInventory,
+      prodDiffAdjudication: evidence.prodDiffAdjudication,
+    };
+    return deepFreeze({
+      ...withoutDigest,
+      artifactDigestSha256: sha256(canonicaliseJson(withoutDigest)),
+    });
+  } finally {
+    rmSync(evidenceDirectory, { recursive: true, force: true });
+  }
+}
+
+/** Test-only wrapper; production callers cannot forge the Team-2 trust brand. */
+export function createTestOnlyS33Wave1AcceptanceArtifact(
+  input: TestOnlyS33Wave1AcceptanceArtifactInput,
+): Readonly<S33Wave1AcceptanceArtifact> {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Test-only Wave-1 acceptance input is disabled outside NODE_ENV=test');
+  }
+  return buildS33Wave1AcceptanceArtifact(input);
+}
+
 export function createProductionS33AcceptanceOrchestrator(
   _input: ProductionOrchestratorInput,
 ): never {
   throw new Error(
     'Legacy signed S3.3 sampling production factory retired by CTO ruling 102498305; '
-    + 'use the GitHub/CI-bound createS33Wave1AcceptanceArtifact path',
+    + 'use the GitHub/CI-bound createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence path',
   );
 }
 
