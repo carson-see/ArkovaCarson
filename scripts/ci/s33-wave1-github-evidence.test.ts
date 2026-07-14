@@ -1,16 +1,25 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { canonicaliseJson } from '../../services/worker/src/utils/canonical-json.js';
 import {
+  EXTRACTION_SYSTEM_PROMPT,
+  buildExtractionPrompt,
+} from '../../services/worker/src/ai/prompts/extraction.js';
+import {
+  authenticateS33Wave1GitHubEvidence,
+  assertAuthenticatedS33Wave1EvidenceBundle,
   CROSS_REVIEW_MARKER,
   extractSingleFileArchive,
   extractProdDiffAdjudication,
+  fetchS33PrerequisiteArtifacts,
   FIXED_PULL_REQUEST_NUMBER,
   FIXED_REPOSITORY,
   loadWorkflowReportBundle,
+  PROD_DIFF_ADJUDICATION_MARKER,
   runS33PremergeApiPreflight,
   recursivelyFreeze,
   S33_PREMERGE_API_QUERY,
@@ -314,6 +323,8 @@ describe('verifyGitHubTrustRoot', () => {
 
 const tempDirectories: string[] = [];
 afterEach(() => {
+  vi.doUnmock('../../services/worker/src/ai/eval/s33-batch-acceptance.js');
+  vi.resetModules();
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -853,6 +864,649 @@ describe('extractProdDiffAdjudication', () => {
     }), '2026-07-14T12:06:00Z', HEAD, MANIFEST_SHA, report as any, inventory)).toThrow(/every and only MISMATCH|LABEL_DEFECT/i);
     expect(() => extractProdDiffAdjudication(prodDiffAdjudicationBody('9'.repeat(64), report.canonicalSha256), '2026-07-14T12:06:00Z', HEAD, MANIFEST_SHA, report as any, inventory))
       .toThrow(/report\/artifact\/run digests/i);
+  });
+});
+
+const INTEGRATION_WORKFLOW_ID = 77;
+const INTEGRATION_RUN_ID = 500;
+
+interface BrandedIntegrationHarness {
+  mainRepositoryRoot: string;
+  producerRepositoryRoot: string;
+  prerequisiteDirectory: string;
+  reportDirectory: string;
+  outputDirectory: string;
+  mainHeadSha: string;
+  producerHeadSha: string;
+  supportMergeCommitSha: string;
+  snapshot: GitHubEvidenceSnapshot;
+  graphql: () => Promise<GitHubEvidenceSnapshot>;
+  rest: (path: string) => Promise<Record<string, unknown>>;
+  download: (path: string) => Promise<Uint8Array>;
+  root: string;
+}
+
+function gitText(repositoryRoot: string, args: readonly string[]): string {
+  return execFileSync('/usr/bin/git', ['-C', repositoryRoot, ...args], { encoding: 'utf8' }).trim();
+}
+
+function commitFixtureFile(repositoryRoot: string, filename: string, content: string, message: string): string {
+  writeFileSync(join(repositoryRoot, filename), content);
+  execFileSync('/usr/bin/git', ['-C', repositoryRoot, 'add', filename]);
+  execFileSync('/usr/bin/git', ['-C', repositoryRoot, 'commit', '--quiet', '-m', message]);
+  return gitText(repositoryRoot, ['rev-parse', 'HEAD']);
+}
+
+function createTrustedMainRepository(root: string): {
+  mainRepositoryRoot: string;
+  mainHeadSha: string;
+  supportMergeCommitSha: string;
+} {
+  const mainRepositoryRoot = join(root, 'trusted-main');
+  execFileSync('/usr/bin/git', ['init', '--quiet', '--initial-branch=main', mainRepositoryRoot]);
+  execFileSync('/usr/bin/git', ['-C', mainRepositoryRoot, 'config', 'user.name', 'S33 Trust Test']);
+  execFileSync('/usr/bin/git', ['-C', mainRepositoryRoot, 'config', 'user.email', 's33-test@arkova.invalid']);
+  const supportMergeCommitSha = commitFixtureFile(
+    mainRepositoryRoot,
+    'support-merge.txt',
+    'Hermetic #1529 support merge.\n',
+    'merge support prerequisite',
+  );
+  const mainHeadSha = commitFixtureFile(
+    mainRepositoryRoot,
+    'main-head.txt',
+    'Trusted main descendant.\n',
+    'trusted main head',
+  );
+  return { mainRepositoryRoot, mainHeadSha, supportMergeCommitSha };
+}
+
+function syntheticIntegrationEntryIds(): string[] {
+  const ids = (prefix: string, count: number) => Array.from(
+    { length: count },
+    (_, index) => `GD-S33-${prefix}-${String(index + 1).padStart(3, '0')}`,
+  );
+  return [
+    ...ids('KE', 11), ...ids('NUR', 12), ...ids('CPA', 13), ...ids('BAR', 13),
+    ...ids('PDH', 12), ...ids('AU', 11), ...ids('OOD', 9),
+  ];
+}
+
+function createBareProducerRepository(root: string, name = 'producer.git'): {
+  producerHeadSha: string;
+  producerRepositoryRoot: string;
+} {
+  const source = join(root, `${name}.source`);
+  execFileSync('/usr/bin/git', ['init', '--quiet', '--initial-branch=producer', source]);
+  execFileSync('/usr/bin/git', ['-C', source, 'config', 'user.name', 'S33 Synthetic Producer']);
+  execFileSync('/usr/bin/git', ['-C', source, 'config', 'user.email', 's33-test@arkova.invalid']);
+  commitFixtureFile(source, 'synthetic-base.txt', 'Zero-real-data producer base.\n', 'synthetic base');
+  const manifestPath = join(source, 'docs/lane4');
+  mkdirSync(manifestPath, { recursive: true });
+  writeFileSync(join(manifestPath, 's33-wave1-batch-manifest.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    batchId: 'S33-W1',
+    revision: 0,
+    testOnlyProvenance: 'zero-real-heldout-data-authentication-fixture',
+    entryCount: 81,
+    entries: syntheticIntegrationEntryIds().map((id) => ({ id })),
+  }, null, 2)}\n`);
+  execFileSync('/usr/bin/git', ['-C', source, 'add', 'docs/lane4/s33-wave1-batch-manifest.json']);
+  execFileSync('/usr/bin/git', ['-C', source, 'commit', '--quiet', '-m', 'synthetic producer head']);
+  const producerHeadSha = gitText(source, ['rev-parse', 'HEAD']);
+  const producerRepositoryRoot = join(root, name);
+  execFileSync('/usr/bin/git', ['clone', '--bare', '--quiet', source, producerRepositoryRoot]);
+  expect(gitText(producerRepositoryRoot, ['rev-parse', '--is-bare-repository'])).toBe('true');
+  expect(gitText(producerRepositoryRoot, ['rev-parse', 'HEAD'])).toBe(producerHeadSha);
+  return { producerRepositoryRoot, producerHeadSha };
+}
+
+function integrationProducerFacts(producerRepositoryRoot: string): {
+  entryIds: string[];
+  manifestCanonicalSha256: string;
+  manifestRawSha256: string;
+  producerHeadSha: string;
+  producerTreeSha: string;
+} {
+  const producerHeadSha = gitText(producerRepositoryRoot, ['rev-parse', 'HEAD']);
+  const manifestBytes = execFileSync('/usr/bin/git', [
+    '-C', producerRepositoryRoot, 'show', `${producerHeadSha}:docs/lane4/s33-wave1-batch-manifest.json`,
+  ]);
+  const manifest = JSON.parse(manifestBytes.toString('utf8')) as { entries: Array<{ id: string }> };
+  return {
+    entryIds: manifest.entries.map(({ id }) => id),
+    manifestCanonicalSha256: sha256(canonicaliseJson(manifest)),
+    manifestRawSha256: sha256(manifestBytes),
+    producerHeadSha,
+    producerTreeSha: gitText(producerRepositoryRoot, ['rev-parse', `${producerHeadSha}^{tree}`]),
+  };
+}
+
+function integrationSample(manifestRawSha256: string, entryIds: readonly string[]): string[] {
+  return entryIds.map((entryId) => ({
+    entryId,
+    rank: sha256(`${manifestRawSha256}\0${entryId}`),
+  })).sort((left, right) => left.rank.localeCompare(right.rank)
+    || left.entryId.localeCompare(right.entryId))
+    .slice(0, 9)
+    .map(({ entryId }) => entryId);
+}
+
+function writeIntegrationReports(input: {
+  reportDirectory: string;
+  mainHeadSha: string;
+  producer: ReturnType<typeof integrationProducerFacts>;
+  times: ReturnType<typeof integrationTimes>;
+}): { prodCanonicalSha256: string; prodRawSha256: string } {
+  mkdirSync(input.reportDirectory, { recursive: true });
+  const entryUniverseSha256 = sha256(canonicaliseJson(input.producer.entryIds));
+  const common = {
+    schemaVersion: 1,
+    batchId: 'S33-W1',
+    producerHeadSha: input.producer.producerHeadSha,
+    manifestRawSha256: input.producer.manifestRawSha256,
+    status: 'PASS',
+  };
+  const writeReport = (filename: string, artifactType: string, payload: Record<string, unknown>) => {
+    const report = { ...common, artifactType, payload };
+    const bytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`, 'utf8');
+    writeFileSync(join(input.reportDirectory, filename), bytes);
+    return { rawSha256: sha256(bytes), canonicalSha256: sha256(canonicaliseJson(report)) };
+  };
+  const sampleEntryIds = integrationSample(input.producer.manifestRawSha256, input.producer.entryIds);
+  writeReport('cross-review-plan.json', 'arkova-s33-wave1-cross-review-plan', {
+    producerTreeSha: input.producer.producerTreeSha,
+    manifestCanonicalSha256: input.producer.manifestCanonicalSha256,
+    sampleAlgorithm: 'sha256-manifest-entry-rank-v1',
+    sampleRule: 'ceil(10%),minimum-5,capped-at-entry-count',
+    manifestEntryCount: 81,
+    sampleEntryIds,
+    wholeBatchMachineValidation: {
+      status: 'PASS', covered: 72, ood: 9, total: 81, reportDigestSha256: '1'.repeat(64),
+    },
+    kenyaFirst: { status: 'PASS', entryIds: input.producer.entryIds.slice(0, 11) },
+  });
+  const prodModelConfig = {
+    promptModule: 'services/worker/src/ai/prompts/extraction.ts',
+    promptModuleRawSha256: sha256(readFileSync('services/worker/src/ai/prompts/extraction.ts')),
+    systemPromptExport: 'EXTRACTION_SYSTEM_PROMPT',
+    systemPromptSha256: sha256(EXTRACTION_SYSTEM_PROMPT),
+    promptBuilder: 'buildExtractionPrompt',
+    promptBuilderProbeSha256: sha256(buildExtractionPrompt('__S33_PIN__', 'OTHER', undefined)),
+    generationConfig: { responseMimeType: 'application/json', temperature: 0.1, maxOutputTokens: 2048 },
+    absentFlags: ['GEMINI_TUNED_MODEL', 'GEMINI_V6_PROMPT', 'GEMINI_TUNED_RESPONSE_SCHEMA'],
+    timeoutMs: 30_000,
+    concurrency: 1,
+    maxRequests: 81,
+    maxEntryCharacters: 50_000,
+    maxAggregateInputCharacters: 4_050_000,
+  };
+  const prod = writeReport('prod-model-diff.json', 'arkova-s33-wave1-prod-model-diff', {
+    mode: 'offline-prod-parity-replay',
+    producerTreeSha: input.producer.producerTreeSha,
+    manifestCanonicalSha256: input.producer.manifestCanonicalSha256,
+    entryUniverseSha256,
+    providerSurface: 'google-generative-language-developer-api',
+    model: 'gemini-2.5-flash',
+    modelConfig: prodModelConfig,
+    modelConfigCanonicalSha256: sha256(canonicaliseJson(prodModelConfig)),
+    workflowRunId: INTEGRATION_RUN_ID,
+    workflowRunAttempt: 1,
+    trustedMainRunSha: input.mainHeadSha,
+    workflowPath: '.github/workflows/s33-wave1-prerequisites.yml',
+    startedAtUtc: input.times.phaseStartedAt,
+    completedAtUtc: input.times.phaseCompletedAt,
+    requestCount: 81,
+    retryCount: 0,
+    entryCount: 81,
+    results: input.producer.entryIds.map((id) => ({
+      id,
+      modelOutputRawSha256: '2'.repeat(64),
+      modelOutputCanonicalSha256: '3'.repeat(64),
+      groundTruthCanonicalSha256: '4'.repeat(64),
+      classification: 'MATCH',
+      differingFields: [],
+    })),
+    rawReportSha256: '5'.repeat(64),
+    rawReportCanonicalSha256: '6'.repeat(64),
+  });
+  writeReport('lexical-leakage.json', 'arkova-s33-wave1-lexical-leakage', {
+    algorithm: 'normalized-token-exact-ngram-v1',
+    normalization: 'NFKC;lowercase;non-alphanumeric-space;whitespace-collapse',
+    n: [6, 7, 8, 9, 10, 11, 12, 13],
+    producerTreeSha: input.producer.producerTreeSha,
+    manifestCanonicalSha256: input.producer.manifestCanonicalSha256,
+    entryCount: 81,
+    trainingCorpusFileCount: 1,
+    trainingManifestSha256: '7'.repeat(64),
+    exactMatchCount: 0,
+    hits: [],
+  });
+  const embeddingModelConfig = {
+    taskType: 'SEMANTIC_SIMILARITY', dimensions: 3072, batchSize: 16,
+    timeoutMs: 30_000, concurrency: 1, retryCount: 0,
+    chunkTokens: 1500, chunkOverlapTokens: 128,
+    maxTrainingChunks: 2048, maxVectorInputs: 2129, maxHttpRequests: 134,
+  };
+  writeReport('embedding-diagnostic.json', 'arkova-s33-wave1-embedding-diagnostic', {
+    role: 'diagnostic-only',
+    canOverrideExactScan: false,
+    producerTreeSha: input.producer.producerTreeSha,
+    manifestCanonicalSha256: input.producer.manifestCanonicalSha256,
+    entryUniverseSha256,
+    providerSurface: 'google-generative-language-developer-api',
+    model: 'gemini-embedding-001',
+    modelConfig: embeddingModelConfig,
+    modelConfigCanonicalSha256: sha256(canonicaliseJson(embeddingModelConfig)),
+    workflowRunId: INTEGRATION_RUN_ID,
+    workflowRunAttempt: 1,
+    trustedMainRunSha: input.mainHeadSha,
+    workflowPath: '.github/workflows/s33-wave1-prerequisites.yml',
+    startedAtUtc: input.times.phaseStartedAt,
+    completedAtUtc: input.times.phaseCompletedAt,
+    heldoutRecordCount: 81,
+    trainingFileCount: 1,
+    trainingChunkCount: 1,
+    vectorInputCount: 82,
+    requestCount: 6,
+    retryCount: 0,
+    lexicalTrainingManifestSha256: '7'.repeat(64),
+    trainingChunkManifestCanonicalSha256: '8'.repeat(64),
+    entryCount: 81,
+    results: input.producer.entryIds.map((id) => ({
+      id,
+      nearestTrainingDocumentSha256: '9'.repeat(64),
+      nearestTrainingChunkSha256: 'a'.repeat(64),
+      cosineSimilarity: 0.25,
+    })),
+    rawReportSha256: 'b'.repeat(64),
+    rawReportCanonicalSha256: 'c'.repeat(64),
+  });
+  return { prodRawSha256: prod.rawSha256, prodCanonicalSha256: prod.canonicalSha256 };
+}
+
+function integrationTimes(nowMs = Date.now()): {
+  phaseStartedAt: string;
+  phaseCompletedAt: string;
+  runCreatedAt: string;
+  artifactUpdatedAt: string;
+  reviewSubmittedAt: string;
+  expiresAt: string;
+  nowMs: number;
+} {
+  const iso = (offsetMs: number) => new Date(nowMs + offsetMs).toISOString();
+  return {
+    phaseStartedAt: iso(-10 * 60_000),
+    phaseCompletedAt: iso(-8 * 60_000),
+    runCreatedAt: iso(-12 * 60_000),
+    artifactUpdatedAt: iso(-6 * 60_000),
+    reviewSubmittedAt: iso(-4 * 60_000),
+    expiresAt: iso(14 * 24 * 60 * 60_000 - 12 * 60_000),
+    nowMs,
+  };
+}
+
+function zipReport(root: string, reportDirectory: string, filename: string, label: string): Buffer {
+  const archive = join(root, `${label}.zip`);
+  execFileSync('/usr/bin/zip', ['-q', '-X', archive, filename], { cwd: reportDirectory });
+  return readFileSync(archive);
+}
+
+function integrationReviewBody(input: {
+  archiveSha256: string;
+  entryIds: readonly string[];
+  manifestRawSha256: string;
+  mainHeadSha: string;
+  producerHeadSha: string;
+  prodCanonicalSha256: string;
+  prodRawSha256: string;
+}): string {
+  const sampleEntryIds = integrationSample(input.manifestRawSha256, input.entryIds);
+  const crossReview = {
+    schemaVersion: 1,
+    artifactType: 'arkova-s33-wave1-cross-review',
+    batchId: 'S33-W1',
+    producerHeadSha: input.producerHeadSha,
+    manifestRawSha256: input.manifestRawSha256,
+    sampleAlgorithm: 'sha256-manifest-entry-rank-v1',
+    sampleRule: 'ceil(10%),minimum-5,capped-at-entry-count',
+    manifestEntryCount: 81,
+    sampleEntryIds,
+    materialLabelDefectCount: 0,
+    adjudications: sampleEntryIds.map((entryId) => ({
+      entryId,
+      verdict: 'PASS',
+      note: `Independent source-grounded re-derivation passed for ${entryId}.`,
+    })),
+    wholeBatchVerdict: 'ACCEPT',
+  };
+  const prodAdjudication = {
+    schemaVersion: 1,
+    artifactType: 'arkova-s33-wave1-prod-diff-adjudication',
+    batchId: 'S33-W1',
+    producerHeadSha: input.producerHeadSha,
+    manifestRawSha256: input.manifestRawSha256,
+    prerequisite: {
+      workflowRunId: INTEGRATION_RUN_ID,
+      workflowRunNumber: 20,
+      workflowRunAttempt: 1,
+      trustedMainRunSha: input.mainHeadSha,
+      prodModelDiffArtifactId: 700,
+      prodModelDiffArchiveSha256: input.archiveSha256,
+      prodModelDiffReportRawSha256: input.prodRawSha256,
+      prodModelDiffReportCanonicalSha256: input.prodCanonicalSha256,
+    },
+    mismatchCount: 0,
+    adjudications: [],
+  };
+  const block = (marker: string, value: unknown) => [
+    `<!-- ${marker} -->`, '```json', JSON.stringify(value, null, 2), '```', `<!-- /${marker} -->`,
+  ].join('\n');
+  return `${block(CROSS_REVIEW_MARKER, crossReview)}\n\n${block(PROD_DIFF_ADJUDICATION_MARKER, prodAdjudication)}`;
+}
+
+function integrationSnapshot(input: {
+  body: string;
+  mainHeadSha: string;
+  producer: ReturnType<typeof integrationProducerFacts>;
+  reviewSubmittedAt: string;
+  supportMergeCommitSha: string;
+}): GitHubEvidenceSnapshot {
+  const value = snapshot();
+  value.repository.defaultBranchRef.target.oid = input.mainHeadSha;
+  const pullRequest = value.repository.pullRequest;
+  pullRequest.headRefOid = input.producer.producerHeadSha;
+  pullRequest.headCommit.nodes[0].commit.oid = input.producer.producerHeadSha;
+  pullRequest.allCommits.nodes[0].commit.oid = input.producer.producerHeadSha;
+  pullRequest.reviews.nodes[0] = {
+    ...pullRequest.reviews.nodes[0],
+    body: input.body,
+    commit: { oid: input.producer.producerHeadSha },
+    submittedAt: input.reviewSubmittedAt,
+  };
+  value.repository.supportPullRequest = {
+    state: 'MERGED',
+    merged: true,
+    mergedAt: input.reviewSubmittedAt,
+    mergeCommit: { oid: input.supportMergeCommitSha },
+  };
+  return value;
+}
+
+async function createBrandedIntegrationHarness(): Promise<BrandedIntegrationHarness> {
+  const root = mkdtempSync(join(tmpdir(), 's33-branded-two-repo-'));
+  tempDirectories.push(root);
+  const main = createTrustedMainRepository(root);
+  const producerRepository = createBareProducerRepository(root);
+  const { producerRepositoryRoot, producerHeadSha } = producerRepository;
+  const producer = integrationProducerFacts(producerRepositoryRoot);
+  expect(producer.entryIds).toHaveLength(81);
+  const times = integrationTimes();
+  const reportDirectory = join(root, 'reports');
+  const reportDigests = writeIntegrationReports({
+    reportDirectory,
+    mainHeadSha: main.mainHeadSha,
+    producer,
+    times,
+  });
+  const prodArchive = zipReport(root, reportDirectory, 'prod-model-diff.json', 'prod-model-diff');
+  const embeddingArchive = zipReport(root, reportDirectory, 'embedding-diagnostic.json', 'embedding-diagnostic');
+  const artifact = (id: number, name: string, archive: Buffer) => ({
+    id,
+    name,
+    expired: false,
+    size_in_bytes: archive.length,
+    digest: `sha256:${sha256(archive)}`,
+    created_at: times.runCreatedAt,
+    updated_at: times.artifactUpdatedAt,
+    expires_at: times.expiresAt,
+    workflow_run: { id: INTEGRATION_RUN_ID, head_sha: main.mainHeadSha },
+  });
+  const runsResponse = {
+    total_count: 1,
+    workflow_runs: [{
+      id: INTEGRATION_RUN_ID,
+      run_number: 20,
+      run_attempt: 1,
+      path: '.github/workflows/s33-wave1-prerequisites.yml',
+      event: 'workflow_dispatch',
+      head_branch: 'main',
+      head_sha: main.mainHeadSha,
+      status: 'completed',
+      conclusion: 'success',
+      created_at: times.runCreatedAt,
+      updated_at: times.artifactUpdatedAt,
+    }],
+  };
+  const artifactsResponse = {
+    total_count: 2,
+    artifacts: [
+      artifact(700, `s33-wave1-prod-model-diff-${producerHeadSha}`, prodArchive),
+      artifact(701, `s33-wave1-embedding-diagnostic-${producerHeadSha}`, embeddingArchive),
+    ],
+  };
+  const rest = async (path: string): Promise<Record<string, unknown>> => {
+    if (path.endsWith('/actions/workflows/s33-wave1-prerequisites.yml')) {
+      return { id: INTEGRATION_WORKFLOW_ID, path: '.github/workflows/s33-wave1-prerequisites.yml', state: 'active' };
+    }
+    if (path.includes(`/actions/workflows/${INTEGRATION_WORKFLOW_ID}/runs?`)) return runsResponse;
+    if (path.includes(`/actions/runs/${INTEGRATION_RUN_ID}/artifacts?`)) return artifactsResponse;
+    throw new Error(`Unexpected integration REST path: ${path}`);
+  };
+  const download = async (path: string): Promise<Uint8Array> => {
+    if (path.endsWith('/700/zip')) return prodArchive;
+    if (path.endsWith('/701/zip')) return embeddingArchive;
+    throw new Error(`Unexpected integration download path: ${path}`);
+  };
+  const prerequisiteDirectory = join(root, 'prerequisites');
+  await fetchS33PrerequisiteArtifacts({
+    token: 'hermetic-token',
+    mainRepositoryRoot: main.mainRepositoryRoot,
+    producerRepositoryRoot,
+    outputDirectory: prerequisiteDirectory,
+    rest,
+    download,
+    nowMs: times.nowMs,
+  });
+  const body = integrationReviewBody({
+    archiveSha256: sha256(prodArchive),
+    entryIds: producer.entryIds,
+    manifestRawSha256: producer.manifestRawSha256,
+    mainHeadSha: main.mainHeadSha,
+    producerHeadSha,
+    prodCanonicalSha256: reportDigests.prodCanonicalSha256,
+    prodRawSha256: reportDigests.prodRawSha256,
+  });
+  const liveSnapshot = integrationSnapshot({
+    body,
+    mainHeadSha: main.mainHeadSha,
+    producer,
+    reviewSubmittedAt: times.reviewSubmittedAt,
+    supportMergeCommitSha: main.supportMergeCommitSha,
+  });
+  return {
+    ...main,
+    producerHeadSha,
+    producerRepositoryRoot,
+    prerequisiteDirectory,
+    reportDirectory,
+    outputDirectory: join(root, 'authenticated-output'),
+    snapshot: liveSnapshot,
+    graphql: async () => liveSnapshot,
+    rest,
+    download,
+    root,
+  };
+}
+
+function brandedOptions(harness: BrandedIntegrationHarness, overrides: Partial<{
+  mainRepositoryRoot: string;
+  producerRepositoryRoot: string;
+  outputDirectory: string;
+  graphql: () => Promise<GitHubEvidenceSnapshot>;
+}> = {}) {
+  return {
+    mainRepositoryRoot: overrides.mainRepositoryRoot ?? harness.mainRepositoryRoot,
+    producerRepositoryRoot: overrides.producerRepositoryRoot ?? harness.producerRepositoryRoot,
+    prerequisiteDirectory: harness.prerequisiteDirectory,
+    reportDirectory: harness.reportDirectory,
+    outputDirectory: overrides.outputDirectory ?? harness.outputDirectory,
+    token: 'hermetic-token',
+    graphql: overrides.graphql ?? harness.graphql,
+    rest: harness.rest,
+    download: harness.download,
+  };
+}
+
+describe('authenticated same-process two-repository integration', { timeout: 30_000 }, () => {
+  it('brands live facts, consumes a separate bare producer, and emits the Lane-3 acceptance artifact', async () => {
+    const harness = await createBrandedIntegrationHarness();
+    expect(harness.mainRepositoryRoot).not.toBe(harness.producerRepositoryRoot);
+    expect(gitText(harness.producerRepositoryRoot, ['rev-parse', '--is-bare-repository'])).toBe('true');
+    expect(() => execFileSync('/usr/bin/git', [
+      '-C', harness.producerRepositoryRoot, 'cat-file', '-e', `${harness.supportMergeCommitSha}^{commit}`,
+    ], { stdio: 'ignore' })).toThrow();
+
+    const unbranded = Object.freeze({
+      producerHeadSha: harness.producerHeadSha,
+      trustedMainRepositoryRoot: harness.mainRepositoryRoot,
+    });
+    expect(() => assertAuthenticatedS33Wave1EvidenceBundle(unbranded)).toThrow(/in-memory.*authenticated/i);
+    const consumer = vi.fn((evidence: unknown) => {
+      assertAuthenticatedS33Wave1EvidenceBundle(evidence);
+      const expectedProducer = integrationProducerFacts(harness.producerRepositoryRoot);
+      expect(evidence.producerRepositoryRoot).toBe(realpathSync(harness.producerRepositoryRoot));
+      expect(evidence.trustedMainRepositoryRoot).toBe(realpathSync(harness.mainRepositoryRoot));
+      expect(evidence.producerHeadSha).toBe(harness.producerHeadSha);
+      expect(evidence.producerTreeSha).toBe(expectedProducer.producerTreeSha);
+      expect(evidence.manifestRawSha256).toBe(expectedProducer.manifestRawSha256);
+      expect(evidence.manifestCanonicalSha256).toBe(expectedProducer.manifestCanonicalSha256);
+      expect(evidence.trustedMainHeadSha).toBe(harness.mainHeadSha);
+      expect(evidence.supportMergeCommitSha).toBe(harness.supportMergeCommitSha);
+      expect(evidence.manifestEntryIds).toEqual(syntheticIntegrationEntryIds());
+      expect(evidence.prerequisiteInventory.run).toEqual(expect.objectContaining({
+        id: INTEGRATION_RUN_ID,
+        runAttempt: 1,
+        headSha: harness.mainHeadSha,
+      }));
+      expect(evidence.prodDiffAdjudication.prerequisite.prodModelDiffArchiveSha256).toBe(
+        evidence.prerequisiteInventory.artifacts.prodModelDiff.apiDigestSha256,
+      );
+      expect(evidence.authenticatedReviewBody).toContain(`<!-- ${CROSS_REVIEW_MARKER} -->`);
+      expect(evidence.authenticatedReviewBody).toContain(`<!-- ${PROD_DIFF_ADJUDICATION_MARKER} -->`);
+      for (const report of Object.values(evidence.reports)) {
+        const bytes = Buffer.from(report.bytesBase64, 'base64');
+        expect(sha256(bytes)).toBe(report.rawSha256);
+        expect(sha256(canonicaliseJson(JSON.parse(bytes.toString('utf8'))))).toBe(report.canonicalSha256);
+      }
+      const withoutDigest = {
+        schemaVersion: 1,
+        artifactType: 'arkova-s33-wave1-acceptance',
+        batchId: 'S33-W1',
+        revision: 0,
+        acceptedAtUtc: evidence.acceptedAtUtc,
+        acceptanceAuthority: 'Lane 3',
+        trustRoot: 'github-authenticated-exact-head-ci',
+        repositoryIdentity: evidence.repositoryIdentity,
+        pullRequestNumber: evidence.pullRequestNumber,
+        producerHeadSha: evidence.producerHeadSha,
+        producerTreeSha: evidence.producerTreeSha,
+        manifestPath: evidence.manifestPath,
+        manifestRawSha256: evidence.manifestRawSha256,
+        manifestCanonicalSha256: evidence.manifestCanonicalSha256,
+        trustedMain: {
+          headSha: evidence.trustedMainHeadSha,
+          supportPullRequestNumber: 1529,
+          supportMergeCommitSha: evidence.supportMergeCommitSha,
+          supportMergeIsAncestorOfMain: true,
+          branchProtectionRuleIds: [...evidence.branchProtectionRuleIds],
+        },
+        manifestEntryIds: [...evidence.manifestEntryIds],
+        githubAuthentication: evidence.approval,
+        prerequisiteInventory: evidence.prerequisiteInventory,
+        prodDiffAdjudication: evidence.prodDiffAdjudication,
+      };
+      return Object.freeze({
+        ...withoutDigest,
+        artifactDigestSha256: sha256(canonicaliseJson(withoutDigest)),
+      });
+    });
+    vi.doMock('../../services/worker/src/ai/eval/s33-batch-acceptance.js', () => ({
+      createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence: consumer,
+    }));
+    try {
+      await authenticateS33Wave1GitHubEvidence(brandedOptions(harness));
+    } finally {
+      vi.doUnmock('../../services/worker/src/ai/eval/s33-batch-acceptance.js');
+    }
+    expect(consumer).toHaveBeenCalledOnce();
+
+    const acceptance = JSON.parse(readFileSync(
+      join(harness.outputDirectory, 's33-wave1-acceptance.json'),
+      'utf8',
+    )) as Record<string, unknown>;
+    expect(acceptance).toEqual(expect.objectContaining({
+      artifactType: 'arkova-s33-wave1-acceptance',
+      producerHeadSha: harness.producerHeadSha,
+      revision: 0,
+    }));
+    expect((acceptance.trustedMain as Record<string, unknown>).headSha).toBe(harness.mainHeadSha);
+  });
+
+  it('fails the branded path when support ancestry, trusted-main root, or producer mirror changes', async () => {
+    const harness = await createBrandedIntegrationHarness();
+    const consumer = vi.fn(() => {
+      throw new Error('late consumer must not run for rejected authentication evidence');
+    });
+    vi.doMock('../../services/worker/src/ai/eval/s33-batch-acceptance.js', () => ({
+      createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence: consumer,
+    }));
+    const nonAncestorTree = gitText(harness.mainRepositoryRoot, ['rev-parse', 'HEAD^{tree}']);
+    const nonAncestor = execFileSync('/usr/bin/git', [
+      '-C', harness.mainRepositoryRoot,
+      '-c', 'user.name=S33 Trust Test', '-c', 'user.email=s33-test@arkova.invalid',
+      'commit-tree', nonAncestorTree,
+    ], { encoding: 'utf8', input: 'non-ancestor support object\n' }).trim();
+    const ancestrySnapshot = structuredClone(harness.snapshot);
+    ancestrySnapshot.repository.supportPullRequest.mergeCommit = { oid: nonAncestor };
+    await expect(authenticateS33Wave1GitHubEvidence(brandedOptions(harness, {
+      outputDirectory: join(harness.root, 'reject-ancestry'),
+      graphql: async () => ancestrySnapshot,
+    }))).rejects.toThrow(/support.*ancestor/i);
+
+    const rogueMain = join(harness.root, 'rogue-main');
+    execFileSync('/usr/bin/git', ['clone', '--quiet', harness.mainRepositoryRoot, rogueMain]);
+    execFileSync('/usr/bin/git', ['-C', rogueMain, 'config', 'user.name', 'S33 Trust Test']);
+    execFileSync('/usr/bin/git', ['-C', rogueMain, 'config', 'user.email', 's33-test@arkova.invalid']);
+    commitFixtureFile(rogueMain, 'rogue-main.txt', 'Changed main mirror.\n', 'mutate main mirror');
+    await expect(authenticateS33Wave1GitHubEvidence(brandedOptions(harness, {
+      mainRepositoryRoot: rogueMain,
+      outputDirectory: join(harness.root, 'reject-main'),
+    }))).rejects.toThrow(/trusted local main checkout/i);
+
+    const rogueProducer = join(harness.root, 'rogue-producer.git');
+    execFileSync('/usr/bin/git', ['clone', '--bare', '--quiet', harness.producerRepositoryRoot, rogueProducer]);
+    const producerTree = gitText(rogueProducer, ['rev-parse', 'HEAD^{tree}']);
+    const rogueProducerHead = execFileSync('/usr/bin/git', [
+      '-C', rogueProducer,
+      '-c', 'user.name=S33 Producer Test', '-c', 'user.email=s33-test@arkova.invalid',
+      'commit-tree', producerTree, '-p', harness.producerHeadSha,
+    ], { encoding: 'utf8', input: 'mutated producer mirror\n' }).trim();
+    execFileSync('/usr/bin/git', ['-C', rogueProducer, 'update-ref', 'refs/heads/producer', rogueProducerHead]);
+    await expect(authenticateS33Wave1GitHubEvidence(brandedOptions(harness, {
+      producerRepositoryRoot: rogueProducer,
+      outputDirectory: join(harness.root, 'reject-producer'),
+    }))).rejects.toThrow(/local producer checkout/i);
+
+    const reportPath = join(harness.reportDirectory, 'prod-model-diff.json');
+    const alteredReport = JSON.parse(readFileSync(reportPath, 'utf8')) as Record<string, unknown>;
+    (alteredReport.payload as Record<string, unknown>).retryCount = 1;
+    writeFileSync(reportPath, `${JSON.stringify(alteredReport, null, 2)}\n`);
+    await expect(authenticateS33Wave1GitHubEvidence(brandedOptions(harness, {
+      outputDirectory: join(harness.root, 'reject-report'),
+    }))).rejects.toThrow(/production replay contract/i);
+    expect(consumer).not.toHaveBeenCalled();
+    vi.doUnmock('../../services/worker/src/ai/eval/s33-batch-acceptance.js');
   });
 });
 
