@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "batchId": "S33-W1",
-  "revision": 10,
-  "manifestSha256": "495e2ef3c72de7a33e32dbfb868f038e10afa9e78c0a8b1ac6ff5a937557fbff",
+  "revision": 11,
+  "manifestSha256": "9625ed06da78fef266df49bd7f4941d4ee9b1f8825cad229e146fe34296d961d",
   "producerLane": "Lane 4",
   "acceptanceAuthority": "Lane 3",
-  "status": "PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW",
+  "status": "HISTORICAL_BLOCKED",
   "entryCount": 81,
   "reviewOrder": "kenya-first",
   "acceptanceScope": "whole-batch-only",
@@ -149,8 +149,8 @@
       "curationDate": "2026-07-10",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
-    {
-      "id": "GD-S33-KE-007",
+  {
+    "id": "GD-S33-KE-007",
       "domain": "au-ke-priority-documents",
       "priorityDocumentType": "Kenya Revenue Authority Tax Compliance Certificate",
       "realOrSynthetic": "synthetic",
@@ -195,8 +195,8 @@
       "curationDate": "2026-07-10",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
-    {
-      "id": "GD-S33-KE-009",
+  {
+    "id": "GD-S33-KE-009",
       "domain": "au-ke-priority-documents",
       "priorityDocumentType": "Directorate of Criminal Investigations police clearance certificate",
       "realOrSynthetic": "synthetic",
@@ -214,8 +214,9 @@
       "jurisdictionDetail": "Kenya",
       "credentialType": "ATTESTATION",
       "subType": "good_standing",
+      "truthRevisionNote": "Revision 11 removes the computed expiryDate 2027-02-24 because the source states only an issue date and a twelve-month validity term; source text and normalized-input fingerprint are unchanged.",
       "curationAuthor": "Arkova Lane 4",
-      "curationDate": "2026-07-10",
+      "curationDate": "2026-07-13",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
     },
     {
@@ -1409,7 +1410,7 @@
       "jurisdictionDetail": "Australia",
       "credentialType": "LICENSE",
       "subType": "medical_md",
-      "truthRevisionNote": "Revision 9 sets issuedDate to the explicit extract-generated date 2026-04-22 rather than the historical First Registered date 2015-02-02; source text and normalized-input fingerprint are unchanged.",
+      "truthRevisionNote": "Revision 9 applies the candidate issuedDate 2026-04-22 from the extract-generated date rather than the historical First Registered date 2015-02-02; that issuedDate policy remains BLOCKED_CTO_L3 pending L3/CTO adjudication. Revision 11 changes issuerName to the source-grounded Ahpra abbreviation instead of rewarding an unstated expansion; source text and normalized-input fingerprint are unchanged.",
       "curationAuthor": "Arkova Lane 4",
       "curationDate": "2026-07-13",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."
@@ -1610,7 +1611,7 @@
       "jurisdictionDetail": "Queensland, Australia",
       "credentialType": "BUSINESS_ENTITY",
       "subType": "corporation",
-      "truthRevisionNote": "Revision 9 sets issuedDate to the explicit extract-prepared date 2026-04-16 rather than the historical company Registration date 2021-11-03; source text and normalized-input fingerprint are unchanged.",
+      "truthRevisionNote": "Revision 9 applies the candidate issuedDate 2026-04-16 from the extract-prepared date rather than the historical company Registration date 2021-11-03; that issuedDate policy remains BLOCKED_CTO_L3 pending L3/CTO adjudication. Source text and normalized-input fingerprint are unchanged.",
       "curationAuthor": "Arkova Lane 4",
       "curationDate": "2026-07-13",
       "licenseConsentNote": "Arkova-authored synthetic evaluation text; no third-party document license or consent required."

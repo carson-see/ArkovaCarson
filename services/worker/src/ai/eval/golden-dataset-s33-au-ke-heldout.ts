@@ -61,7 +61,7 @@ const AU_HELDOUT: S33HeldoutEntry[] = [
     groundTruth: {
       credentialType: 'LICENSE',
       subType: 'medical_md',
-      issuerName: 'Australian Health Practitioner Regulation Agency',
+      issuerName: 'Ahpra',
       issuedDate: '2026-04-22',
       expiryDate: '2026-09-30',
       licenseNumber: 'MED0002031185',
@@ -481,7 +481,6 @@ const KE_HELDOUT: S33HeldoutEntry[] = [
       subType: 'good_standing',
       issuerName: 'Directorate of Criminal Investigations',
       issuedDate: '2026-02-24',
-      expiryDate: '2027-02-24',
       goodStandingStatus: 'no criminal record traced',
       jurisdiction: 'Kenya',
       fraudSignals: [],

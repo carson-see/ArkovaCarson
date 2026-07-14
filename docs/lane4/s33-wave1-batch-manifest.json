@@ -1,21 +1,21 @@
 {
   "schemaVersion": 1,
   "batchId": "S33-W1",
-  "revision": 10,
+  "revision": 11,
   "producerLane": "Lane 4",
   "acceptanceAuthority": "Lane 3",
-  "status": "PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW",
-  "corpusRevisionParentCommit": "ee7bba26fc0e34a7a58bb684f45e4e3c4e6b2977",
-  "producerRevisionPredecessorCommit": "b9bb1d3221d3567dbb08e1b23cab4dd687486738",
+  "status": "HISTORICAL_BLOCKED",
+  "corpusRevisionParentCommit": "1018e36844834537df29fb60eb871cb54475bc14",
+  "producerRevisionPredecessorCommit": "1018e36844834537df29fb60eb871cb54475bc14",
   "lane3SupportBase": {
-    "commit": "ee7bba26fc0e34a7a58bb684f45e4e3c4e6b2977",
+    "commit": "e8a9ba3d2ba8023fe59781b6a0499c8208cc59af",
     "typesPath": "services/worker/src/ai/eval/golden-dataset-s33-types.ts",
-    "typesBlob": "dcc94b716f18240787640ba07dcdd4ad46a7cfe6",
-    "reviewState": "LANE3_TOOLING_EXACT_HEAD_REVIEW_PASS"
+    "typesBlob": "fbc05660e4575c3c527204658571246f9294ceb9",
+    "reviewState": "CTO_APPROVED_DUAL_DAG_R12_EVALUATOR_ROOT"
   },
   "corpusSourceBlobs": {
     "services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts": "4ac117c1663c6aefb63c7715440744af0e0b6a23",
-    "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts": "5000824f2bd4dd7ac9cd58243daeb7ba23c4c0cd",
+    "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts": "a1578a511e47bd839fda9ae31e5f3f93c99a3857",
     "services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts": "a261cf690c930040f7dee0361ed29d73d1d23426"
   },
   "intendedSplit": "held-out-candidate",
@@ -68,6 +68,47 @@
     "normalizedInputFingerprintsPinned": {
       "status": "PASS",
       "algorithm": "sha256(normalizeForFingerprint(strippedText))"
+    },
+    "productionDepthContract": {
+      "status": "HISTORICAL_BLOCKED",
+      "evaluatorSupportCommit": "e8a9ba3d2ba8023fe59781b6a0499c8208cc59af",
+      "postValidationMinimum": 5,
+      "failedEntryCount": 32,
+      "failedEntryIdsSha256": "c3e588bbc990c7d913b2c21c0ab232c9624bbde86f803d1ba3fcd1a561f327eb",
+      "failedEntryIds": [
+        "GD-S33-NUR-002",
+        "GD-S33-NUR-003",
+        "GD-S33-NUR-004",
+        "GD-S33-NUR-005",
+        "GD-S33-NUR-007",
+        "GD-S33-NUR-008",
+        "GD-S33-NUR-009",
+        "GD-S33-NUR-010",
+        "GD-S33-NUR-012",
+        "GD-S33-CPA-012",
+        "GD-S33-BAR-006",
+        "GD-S33-BAR-009",
+        "GD-S33-PDH-001",
+        "GD-S33-PDH-002",
+        "GD-S33-PDH-003",
+        "GD-S33-PDH-004",
+        "GD-S33-PDH-005",
+        "GD-S33-PDH-006",
+        "GD-S33-PDH-007",
+        "GD-S33-PDH-008",
+        "GD-S33-PDH-010",
+        "GD-S33-PDH-011",
+        "GD-S33-PDH-012",
+        "GD-S33-AU-004",
+        "GD-S33-AU-008",
+        "GD-S33-AU-010",
+        "GD-S33-KE-001",
+        "GD-S33-KE-006",
+        "GD-S33-KE-007",
+        "GD-S33-KE-008",
+        "GD-S33-KE-009",
+        "GD-S33-KE-010"
+      ]
     },
     "authorizedDocumentRevisions": {
       "status": "PASS",
@@ -240,6 +281,33 @@
           "producerRevisionPredecessorCommit": "b9bb1d3221d3567dbb08e1b23cab4dd687486738",
           "directBaseCommit": "ee7bba26fc0e34a7a58bb684f45e4e3c4e6b2977",
           "lane3SupportBaseCommit": "ee7bba26fc0e34a7a58bb684f45e4e3c4e6b2977"
+        },
+        {
+          "revision": 11,
+          "authority": "Lane 4 same-lane review reject: source-grounding corrections and issued-date adjudication declaration",
+          "changedEntryIds": [
+            "GD-S33-AU-002",
+            "GD-S33-AU-011",
+            "GD-S33-KE-009"
+          ],
+          "changes": [
+            "AU-002 issuerName corrected from expanded Australian Health Practitioner Regulation Agency to source-stated Ahpra",
+            "KE-009 removed the derived expiryDate because the source states only issue date and 12-month validity, not the exact expiry date",
+            "AU-002 and AU-011 issuedDate choices declared BLOCKED_CTO_L3 pending L3/CTO adjudication rather than self-certified"
+          ],
+          "corpusSourceTextChanged": false,
+          "normalizedInputChanged": false,
+          "normalizedInputPinsPreservedFromRevision10": true,
+          "remainingSubstantiveGroundTruthFields": {
+            "GD-S33-AU-002": 9,
+            "GD-S33-AU-011": 8,
+            "GD-S33-KE-009": 6,
+            "nonOodMinimum": 5,
+            "oodPureAbstention": 2
+          },
+          "producerRevisionPredecessorCommit": "1018e36844834537df29fb60eb871cb54475bc14",
+          "directBaseCommit": "1018e36844834537df29fb60eb871cb54475bc14",
+          "lane3SupportBaseCommit": "e8a9ba3d2ba8023fe59781b6a0499c8208cc59af"
         }
       ]
     },
@@ -307,16 +375,20 @@
     "issuedDateAdjudicationSet": {
       "status": "BLOCKED_CTO_L3",
       "entryIds": [
+        "GD-S33-AU-002",
+        "GD-S33-AU-011",
         "GD-S33-BAR-010",
         "GD-S33-PDH-012"
-      ],
-      "resolvedEntryIdsInRevision9": [
-        "GD-S33-AU-002",
-        "GD-S33-AU-011"
       ]
     },
     "batchScopeOnly": {
       "status": "PASS",
+      "producerChangedPaths": [
+        "docs/lane4/s33-corpus-datasheet.md",
+        "docs/lane4/s33-wave1-batch-manifest.json",
+        "docs/lane4/s33-wave1-entry-datasheet.json",
+        "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts"
+      ],
       "excludedFromBatch": [
         ".sonarcloud.properties",
         "docs/lane4/s33-lane4-plan.md",
@@ -333,19 +405,19 @@
       ],
       "dependency": {
         "owner": "Lane 3",
-        "branch": "codex/s33-l3-final-review-fixes",
-        "commit": "ee7bba26fc0e34a7a58bb684f45e4e3c4e6b2977",
+        "branch": "exact-final-support-head",
+        "commit": "e8a9ba3d2ba8023fe59781b6a0499c8208cc59af",
         "typesPath": "services/worker/src/ai/eval/golden-dataset-s33-types.ts",
-        "typesBlob": "dcc94b716f18240787640ba07dcdd4ad46a7cfe6",
-        "presentIdenticallyInBase": true,
+        "typesBlob": "fbc05660e4575c3c527204658571246f9294ceb9",
+        "presentIdenticallyInBase": false,
         "includedInProducerDiff": false,
-        "reviewState": "LANE3_TOOLING_EXACT_HEAD_REVIEW_PASS"
+        "reviewState": "CTO_APPROVED_DUAL_DAG_R12_EVALUATOR_ROOT"
       },
-      "reason": "The producer diff contains exactly the six protocol-allowed corpus/datasheet/manifest files. Lane 3 owns the shared type/taxonomy support in the exact-head-reviewed parent; CPE subtype values remain PROPOSED/unratified and are not an acceptance decision.",
+      "reason": "The immediate revision-10 to revision-11-prime producer edge changes the exact declared four-path A/M subset and no outside path. Lane 3 owns the shared type/taxonomy support in the separate CTO-approved evaluator DAG; it is absent from the producer ancestry and diff. CPE subtype values remain PROPOSED/unratified and are not an acceptance decision.",
       "authority": "Batch protocol section 1 and Confluence SCRUM-2777 AC8 / page 99057789"
     },
     "lane3Acceptance": {
-      "status": "NOT_RUN_PRODUCER_BOUNDARY"
+      "status": "REJECTED_HISTORICAL_BLOCKED"
     }
   },
   "entries": [
