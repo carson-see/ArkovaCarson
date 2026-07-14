@@ -1,0 +1,281 @@
+{
+  "artifactType": "arkova-s33-wave1-r12-dual-dag-verification",
+  "schemaVersion": 1,
+  "selfPinned": false,
+  "bindingContext": {
+    "supportBaselineTreeSha": "9c797db5716062d8cef5bd54db7f952dde3bb7f4",
+    "evidenceCommitPolicy": "A12 is a child of F12 and does not pin itself; it changes no packet path or verifier implementation path."
+  },
+  "pins": {
+    "schemaVersion": 1,
+    "supportBaseline": {
+      "commitSha": "e8a9ba3d2ba8023fe59781b6a0499c8208cc59af",
+      "typesBlobSha": "fbc05660e4575c3c527204658571246f9294ceb9"
+    },
+    "support": {
+      "headSha": "a8a2de57d18a152c55800bda8f9c3047fc69f141",
+      "typesBlobSha": "fbc05660e4575c3c527204658571246f9294ceb9"
+    },
+    "mergeBaseSha": "ee7bba26fc0e34a7a58bb684f45e4e3c4e6b2977",
+    "revision10": {
+      "headSha": "1018e36844834537df29fb60eb871cb54475bc14",
+      "declaredHistoricalChangedPaths": [
+        "docs/lane4/s33-corpus-datasheet.md",
+        "docs/lane4/s33-wave1-batch-manifest.json",
+        "docs/lane4/s33-wave1-entry-datasheet.json",
+        "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts"
+      ]
+    },
+    "historical": {
+      "headSha": "48c42dcee17eb121bc79323f94c62d7c5b9ff5b9",
+      "revision": 11,
+      "status": "HISTORICAL_BLOCKED",
+      "lane3AcceptanceStatus": "REJECTED_HISTORICAL_BLOCKED",
+      "adjudications": {
+        "cpeSubtypeRatification": {
+          "status": "BLOCKED_CTO_L3"
+        },
+        "taxonomyAdjudicationSet": {
+          "status": "BLOCKED_CTO_L3",
+          "entryIds": [
+            "GD-S33-KE-003",
+            "GD-S33-AU-003",
+            "GD-S33-KE-006",
+            "GD-S33-AU-010"
+          ]
+        },
+        "issuedDateAdjudicationSet": {
+          "status": "BLOCKED_CTO_L3",
+          "entryIds": [
+            "GD-S33-AU-002",
+            "GD-S33-AU-011",
+            "GD-S33-BAR-010",
+            "GD-S33-PDH-012"
+          ]
+        },
+        "oodFiveFieldSemantics": {
+          "status": "BLOCKED_PROTOCOL_CONTRADICTION_CTO_L3",
+          "entryIds": [
+            "GD-S33-OOD-001",
+            "GD-S33-OOD-002",
+            "GD-S33-OOD-003",
+            "GD-S33-OOD-004",
+            "GD-S33-OOD-005",
+            "GD-S33-OOD-006",
+            "GD-S33-OOD-007",
+            "GD-S33-OOD-008",
+            "GD-S33-OOD-009"
+          ],
+          "producerTruth": "Pure abstention labels contain only credentialType OTHER, subType other, and empty fraudSignals.",
+          "contradiction": "Acceptance protocol section 3 requires at least five non-null ground-truth fields and forbids subType other for every entry; padding OOD truth would invent extraction labels and violate the RTE P1 correction.",
+          "resolutionOwner": "Lane 3 / CTO"
+        }
+      },
+      "packet": {
+        "packetBlobs": {
+          "docs/lane4/s33-corpus-datasheet.md": "246820e962993851293e014560cf3554cfe6915f",
+          "docs/lane4/s33-wave1-batch-manifest.json": "eacc049a3d4068e2ac24c9a93cc688abf06d8183",
+          "docs/lane4/s33-wave1-entry-datasheet.json": "6f49566a95727af1c38596138dee331608561627",
+          "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts": "a1578a511e47bd839fda9ae31e5f3f93c99a3857",
+          "services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts": "4ac117c1663c6aefb63c7715440744af0e0b6a23",
+          "services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts": "a261cf690c930040f7dee0361ed29d73d1d23426"
+        },
+        "manifestRawSha256": "9625ed06da78fef266df49bd7f4941d4ee9b1f8825cad229e146fe34296d961d",
+        "manifestCanonicalSha256": "5b027abd658c08d6956de1d08e2513e88373630e0bc40778b4f3891194a623ca",
+        "entryDatasheetRawSha256": "96f51b09e821ca80ca66d79bc506792c09af70810dc7562e57a4ac0e22498ec5",
+        "entryDatasheetCanonicalSha256": "038a0dc4e905a7091cb149610480add20b63b2649658f07454b512a4b233e703",
+        "entriesSha256": "591b4f4b37e188f1ad7286f8bc2a7a6b407eb89674ed6321e898123c347800c0",
+        "normalizedPinsSha256": "8b4af182dcc161a041a8d933ec5d7277f2131f32cc6709ad75a2cd5acde2e7e2",
+        "entryRowsSha256": "65a8a8a93cc098d2a7a3e284462f3e208ad7037bd950f077effe31456571da06"
+      },
+      "expectedGroundTruthFailureIds": [
+        "GD-S33-NUR-002",
+        "GD-S33-NUR-003",
+        "GD-S33-NUR-004",
+        "GD-S33-NUR-005",
+        "GD-S33-NUR-007",
+        "GD-S33-NUR-008",
+        "GD-S33-NUR-009",
+        "GD-S33-NUR-010",
+        "GD-S33-NUR-012",
+        "GD-S33-CPA-012",
+        "GD-S33-BAR-006",
+        "GD-S33-BAR-009",
+        "GD-S33-PDH-001",
+        "GD-S33-PDH-002",
+        "GD-S33-PDH-003",
+        "GD-S33-PDH-004",
+        "GD-S33-PDH-005",
+        "GD-S33-PDH-006",
+        "GD-S33-PDH-007",
+        "GD-S33-PDH-008",
+        "GD-S33-PDH-010",
+        "GD-S33-PDH-011",
+        "GD-S33-PDH-012",
+        "GD-S33-AU-004",
+        "GD-S33-AU-008",
+        "GD-S33-AU-010",
+        "GD-S33-KE-001",
+        "GD-S33-KE-006",
+        "GD-S33-KE-007",
+        "GD-S33-KE-008",
+        "GD-S33-KE-009",
+        "GD-S33-KE-010"
+      ],
+      "expectedGroundTruthFailureDigestSha256": "51bbcb0b30cacbf0413cd26a65507ddfc1c261d2066a934d65e07999b5a75005"
+    },
+    "revision12": {
+      "headSha": "618e08d5a11cb73cb61394bc0343d33f4353ef39",
+      "revision": 12,
+      "status": "PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE",
+      "lane3AcceptanceStatus": "NOT_RUN_PRODUCER_BOUNDARY",
+      "adjudications": {
+        "cpeSubtypeRatification": {
+          "status": "PASS_ACCEPTANCE_EVALUATOR_ONLY",
+          "allowed": [
+            "general_cpe",
+            "specialized_cpe",
+            "ethics_cpe"
+          ],
+          "scope": "S3.3 Wave-1 acceptance/evaluator taxonomy only",
+          "v6SubtypeTaxonomyChanged": false,
+          "tuningExportApproved": false,
+          "modelMismatchDisposition": "MODEL_HARD"
+        },
+        "issuedDateAdjudicationSet": {
+          "status": "PASS_CTO_L3_R12",
+          "entryIds": [
+            "GD-S33-AU-002",
+            "GD-S33-AU-011",
+            "GD-S33-BAR-010",
+            "GD-S33-PDH-012"
+          ],
+          "resolvedValues": {
+            "GD-S33-AU-002": "2026-04-22",
+            "GD-S33-AU-011": "2026-04-16",
+            "GD-S33-BAR-010": "2026-01-05",
+            "GD-S33-PDH-012": "2026-04-28"
+          }
+        },
+        "oodFiveFieldSemantics": {
+          "status": "PASS_CTO_L3_R12_PURE_ABSTENTION",
+          "entryIds": [
+            "GD-S33-OOD-001",
+            "GD-S33-OOD-002",
+            "GD-S33-OOD-003",
+            "GD-S33-OOD-004",
+            "GD-S33-OOD-005",
+            "GD-S33-OOD-006",
+            "GD-S33-OOD-007",
+            "GD-S33-OOD-008",
+            "GD-S33-OOD-009"
+          ],
+          "producerTruth": "Pure abstention labels contain only credentialType OTHER, subType other, and empty fraudSignals.",
+          "resolution": "Binding CTO exception: these exact nine OOD rows are exempt from the covered-entry five-field and concrete-subtype floor; adding any other ground-truth key is forbidden.",
+          "authority": "CTO ruling 2026-07-14"
+        },
+        "taxonomyAdjudicationSet": {
+          "status": "PASS_CTO_L3_R12",
+          "entryIds": [
+            "GD-S33-KE-003",
+            "GD-S33-AU-003",
+            "GD-S33-KE-006",
+            "GD-S33-AU-010"
+          ],
+          "resolvedValues": {
+            "GD-S33-AU-003": "LICENSE/law_bar_admission",
+            "GD-S33-KE-003": "LICENSE/law_bar_admission",
+            "GD-S33-KE-006": "IDENTITY/government_id",
+            "GD-S33-AU-010": "FINANCIAL/tax_return"
+          }
+        }
+      },
+      "packet": {
+        "packetBlobs": {
+          "docs/lane4/s33-corpus-datasheet.md": "693c756117e5744fe4a532449ee932c61fc7dcb9",
+          "docs/lane4/s33-wave1-batch-manifest.json": "ebee08ac088f2b8f195d9b827a38f5b774c6e1b9",
+          "docs/lane4/s33-wave1-entry-datasheet.json": "6ccd8f2b60c561cffa8a5537584c7e3d6570dae1",
+          "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts": "7826dc6a34b475bdf2c73f9059026b8d19ec1b1f",
+          "services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts": "78090443bad793d248fdd1e3d22f7e468d618777",
+          "services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts": "a261cf690c930040f7dee0361ed29d73d1d23426"
+        },
+        "manifestRawSha256": "eeb7c1b4bbd71642b4a7429864c0e04e9a5e3daf74b2cd78dd26442592f56e20",
+        "manifestCanonicalSha256": "d360d688fd2ae810e7dcd34777173d3654982350232e509d84b1397f4d0622c3",
+        "entryDatasheetRawSha256": "da27f796454edf975b2adcb1a21a37fbbb9daecbe79b8c693a9963f4a83bdd64",
+        "entryDatasheetCanonicalSha256": "08c00cec4afb643db214f92af0ea2fbcac7510cab0503fc5ecfbb5f24cf41393",
+        "entriesSha256": "b228babd58a7d685bc77f85798e988708b13f26d64cffd7f012c99f8cf65f35c",
+        "normalizedPinsSha256": "70af685aff98ac64f8416de6b6de8d18fdeda619581b41c238493c5191f17116",
+        "entryRowsSha256": "0aae06a387dbea50edbaa521682572a2b18066ef09756af0ed93d65827fffcd5"
+      },
+      "expectedGroundTruthFailureIds": [],
+      "expectedGroundTruthFailureDigestSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "declaredImmediateParentChangedPaths": [
+        "docs/lane4/s33-corpus-datasheet.md",
+        "docs/lane4/s33-wave1-batch-manifest.json",
+        "docs/lane4/s33-wave1-entry-datasheet.json",
+        "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts",
+        "services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts"
+      ]
+    },
+    "final": {
+      "headSha": "e6c2b9ceca212bee1e712888111f5ba97dd6f164"
+    }
+  },
+  "report": {
+    "algorithmVersion": "s33-wave1-dual-dag-v1",
+    "supportBaseline": {
+      "commitSha": "e8a9ba3d2ba8023fe59781b6a0499c8208cc59af",
+      "typesBlobSha": "fbc05660e4575c3c527204658571246f9294ceb9"
+    },
+    "support": {
+      "headSha": "a8a2de57d18a152c55800bda8f9c3047fc69f141",
+      "treeSha": "b4ca9339292f7a00d60eb4766320012a8445f892",
+      "typesBlobSha": "fbc05660e4575c3c527204658571246f9294ceb9"
+    },
+    "mergeBaseSha": "ee7bba26fc0e34a7a58bb684f45e4e3c4e6b2977",
+    "revision10": {
+      "headSha": "1018e36844834537df29fb60eb871cb54475bc14"
+    },
+    "historical": {
+      "disposition": "HISTORICAL_BLOCKED",
+      "failureCount": 32,
+      "failureDigestSha256": "51bbcb0b30cacbf0413cd26a65507ddfc1c261d2066a934d65e07999b5a75005",
+      "headSha": "48c42dcee17eb121bc79323f94c62d7c5b9ff5b9"
+    },
+    "revision12": {
+      "disposition": "STRUCTURALLY_VALID_ZERO_FAILURES",
+      "failureCount": 0,
+      "headSha": "618e08d5a11cb73cb61394bc0343d33f4353ef39",
+      "immediateParentChangedPaths": [
+        "docs/lane4/s33-corpus-datasheet.md",
+        "docs/lane4/s33-wave1-batch-manifest.json",
+        "docs/lane4/s33-wave1-entry-datasheet.json",
+        "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts",
+        "services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts"
+      ],
+      "packetBlobs": {
+        "docs/lane4/s33-corpus-datasheet.md": "693c756117e5744fe4a532449ee932c61fc7dcb9",
+        "docs/lane4/s33-wave1-batch-manifest.json": "ebee08ac088f2b8f195d9b827a38f5b774c6e1b9",
+        "docs/lane4/s33-wave1-entry-datasheet.json": "6ccd8f2b60c561cffa8a5537584c7e3d6570dae1",
+        "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts": "7826dc6a34b475bdf2c73f9059026b8d19ec1b1f",
+        "services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts": "78090443bad793d248fdd1e3d22f7e468d618777",
+        "services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts": "a261cf690c930040f7dee0361ed29d73d1d23426"
+      }
+    },
+    "final": {
+      "headSha": "e6c2b9ceca212bee1e712888111f5ba97dd6f164",
+      "packetBlobs": {
+        "docs/lane4/s33-corpus-datasheet.md": "693c756117e5744fe4a532449ee932c61fc7dcb9",
+        "docs/lane4/s33-wave1-batch-manifest.json": "ebee08ac088f2b8f195d9b827a38f5b774c6e1b9",
+        "docs/lane4/s33-wave1-entry-datasheet.json": "6ccd8f2b60c561cffa8a5537584c7e3d6570dae1",
+        "services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts": "7826dc6a34b475bdf2c73f9059026b8d19ec1b1f",
+        "services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts": "78090443bad793d248fdd1e3d22f7e468d618777",
+        "services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts": "a261cf690c930040f7dee0361ed29d73d1d23426"
+      },
+      "treeSha": "7df7340bc63448246e86d332760151ffe948fab5",
+      "typesBlobSha": "fbc05660e4575c3c527204658571246f9294ceb9",
+      "virtualMergeTreeSha": "7df7340bc63448246e86d332760151ffe948fab5"
+    },
+    "reportDigestSha256": "203a45991618bd04c2172998ba484bf2af6ee6002d2ca9db7dafcc1d15ae6254"
+  }
+}
