@@ -60,4 +60,6 @@ Operational, CI, deployment, and security scripts. Run manually or from CI workf
 
 ## Conventions
 - Deploy scripts must use `linux/amd64` images and full 40-char Git SHAs.
+- Live isolated-rig provisioning must fail before mutation unless the operator supplies a digest-pinned image whose digest also resolves from the declared full-SHA Artifact Registry tag, an explicit source HEAD matching local `git HEAD`/`GITHUB_SHA`, tracked provisioner + driver bytes matching that commit, a freshly fetched `origin/main` base, and an exclusive soak ID. Dry-runs may emit labeled placeholders only.
+- Scheduler-backed isolated rigs create jobs on a non-firing hold schedule, immediately pause and verify them, keep them paused through fixture seed plus `clean_mirror`, then restore the existing configured cadence and resume only after the timestamped preflight artifact is recorded. Stubbed apply tests must put admission artifacts under their temporary directory; they must never leak `docs/staging/**` files into the worktree.
 - CI scripts exit 0 = pass, exit 1 = fail with actionable message.
