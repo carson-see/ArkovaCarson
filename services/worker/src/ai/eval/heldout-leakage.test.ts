@@ -13,7 +13,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
   fingerprintFixtureText,
@@ -118,12 +118,44 @@ describe('checkHeldoutLeakage — REAL repo scan (fail-closed gate input)', () =
     // The real self-files are excluded…
     expect(isLeakageSelfExclusion('src/ai/eval/golden-dataset-cpe-cle-s3.ts')).toBe(true);
     expect(isLeakageSelfExclusion('src/ai/eval/cpe-cle-s3-manifest.json')).toBe(true);
+    expect(isLeakageSelfExclusion('src/ai/eval/golden-dataset-s33-au-ke-heldout.ts')).toBe(true);
+    expect(isLeakageSelfExclusion('src/ai/eval/golden-dataset-s33-licensing-heldout.ts')).toBe(true);
+    expect(isLeakageSelfExclusion('src/ai/eval/golden-dataset-s33-ood-negatives.ts')).toBe(true);
     expect(isLeakageSelfExclusion('src/ai/eval/heldout-leakage.ts')).toBe(true);
     expect(isLeakageSelfExclusion('src/ai/eval/heldout-leakage.test.ts')).toBe(true);
     // …but a DIFFERENT file merely mentioning the dataset name in its own name
     // is NOT silently skipped (the old substring rule skipped these).
     expect(isLeakageSelfExclusion('src/ai/prompts/golden-dataset-cpe-cle-s3-fewshot.ts')).toBe(false);
+    expect(isLeakageSelfExclusion('src/ai/eval/golden-dataset-s33-au-ke-heldout-fewshot.ts')).toBe(false);
     expect(isLeakageSelfExclusion('scripts/heldout-leakage-report.md')).toBe(false);
+  });
+
+  it('includes and detects a similarly named Wave-1 source instead of substring-excluding it', () => {
+    const workerRoot = mkdtempSync(resolve(tmpdir(), 's33-leakage-near-name-'));
+    const nearName = resolve(
+      workerRoot,
+      'src/ai/eval/golden-dataset-s33-au-ke-heldout-fewshot.ts',
+    );
+    const fixture = {
+      id: 'GD-S33-NEAR-NAME-001',
+      strippedText: 'Adversarial heldout phrase alpha beta gamma delta epsilon zeta eta theta.',
+      tags: ['held-out'],
+    };
+    try {
+      mkdirSync(dirname(nearName), { recursive: true });
+      writeFileSync(nearName, `export const leaked = ${JSON.stringify(fixture.strippedText)};\n`);
+      const corpus = loadLeakageCorpus(workerRoot, { failOnUnreadable: false });
+      expect(corpus.map(({ path }) => path)).toContain(
+        'src/ai/eval/golden-dataset-s33-au-ke-heldout-fewshot.ts',
+      );
+      expect(checkHeldoutLeakage([fixture], corpus)).toContainEqual({
+        fixtureId: fixture.id,
+        corpusFile: 'src/ai/eval/golden-dataset-s33-au-ke-heldout-fewshot.ts',
+        kind: 'content',
+      });
+    } finally {
+      rmSync(workerRoot, { recursive: true, force: true });
+    }
   });
 
   it('checkS3LeakagePrecondition FAILS CLOSED when the scanned corpus is empty', () => {
