@@ -11,6 +11,8 @@
 
 `staging-evidence.yml` passes both `BASE_REF_SHA` and `HEAD_REF_SHA` into `scripts/ci/check-staging-evidence.ts`; the gate compares those SHAs against the PR-body evidence. Exact PR head SHA must always match. Base SHA movement is impact-assessed: T0 docs/tests/CI/tooling-only drift can preserve soak evidence with an approved `Base drift impact:` note, while runtime/schema/staging/deploy drift still fails closed.
 
+The root `typecheck-lint` job also runs `npm run lint:batch-drain-evidence`. Keep that focused command current when a batch-drain evidence, admission, crash, observation, or shared time/parser file is added; local-only lint is not an enforceable gate.
+
 ## SCRUM-1068 — Sonatype SCA
 
 - `ci.yml` includes a non-blocking `sonatype-sca` PR job for the first sprint.
