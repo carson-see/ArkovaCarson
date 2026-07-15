@@ -34,6 +34,13 @@ _Last updated: 2026-07-14_
   lexical scanner reuses the existing Wave-1 n-gram implementation without
   changing signed/historical Wave-1 callers. Additional leakage self-exclusions
   are exact paths derived only from already accepted registry batches.
+- Candidate raw diffs force `--abbrev=40`; manifest source/datasheet bindings
+  are full SHA-1 object ids, so Git's default abbreviated raw ids are never
+  compared to them or admitted into a preflight snapshot.
+- The CTO top-15 registry schema requires `productionOrder` to name all 45
+  unique type ids exactly once in the ratified domain-interleaved tranches:
+  legal/financial/education 1-5, then 6-10, then 11-15. Unknown, duplicate, or
+  reordered ids fail closed.
 
 ## 2026-07-14 CTO correction topology — revision-12 provenance
 
