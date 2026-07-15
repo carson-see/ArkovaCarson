@@ -87,6 +87,10 @@ const schedulerSchema = z.object({
   state: z.literal('resumed_after_clean_mirror'),
 }).strict();
 
+const preClockSchedulerSchema = schedulerSchema.extend({
+  state: z.literal('paused_after_clean_mirror'),
+});
+
 const cleanMirrorSchema = z.object({
   result: z.literal('environment_type=clean_mirror'),
   artifact: nonEmpty,
@@ -138,6 +142,11 @@ const admissionV2Schema = z.object({
   stop_conditions: z.array(nonEmpty).min(3),
 }).strict();
 
+/** A separate pre-clock packet cannot claim that Scheduler already resumed. */
+const preClockAdmissionV2Schema = admissionV2Schema.extend({
+  scheduler: preClockSchedulerSchema,
+});
+
 const ceremonySchema = runDeclarationSchema.pick({
   declarationId: true,
   soakStartedAt: true,
@@ -147,13 +156,30 @@ const ceremonySchema = runDeclarationSchema.pick({
 }).strict();
 
 type AdmissionV2 = z.infer<typeof admissionV2Schema>;
+type PreClockAdmissionV2 = z.infer<typeof preClockAdmissionV2Schema>;
 type DeclarationCeremony = z.infer<typeof ceremonySchema>;
 
 export interface AdmissionBoundRunDeclaration {
   readonly admissionSha256: string;
 }
 
+export interface PreClockAdmissionBoundIdentity {
+  readonly admissionSha256: string;
+}
+
+export interface PreClockAdmissionIdentity {
+  readonly gitHeadSha: string;
+  readonly imageDigest: string;
+  readonly gcpProjectId: string;
+  readonly workerService: string;
+  readonly cleanMirrorAttestationId: string;
+}
+
 const DECLARATION_BY_ADMISSION_HANDLE = new WeakMap<AdmissionBoundRunDeclaration, RunDeclaration>();
+const IDENTITY_BY_PRE_CLOCK_HANDLE = new WeakMap<
+  PreClockAdmissionBoundIdentity,
+  PreClockAdmissionIdentity
+>();
 
 function parseStrict<T>(schema: z.ZodType<T>, raw: unknown, label: string): T {
   const result = schema.safeParse(parseJsonRejectingDuplicateKeys(raw, label));
@@ -169,7 +195,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function assertAdmissionInvariants(admission: AdmissionV2): void {
+function assertAdmissionInvariants(admission: AdmissionV2 | PreClockAdmissionV2): void {
   if (
     admission.sha !== admission.declared_source_head
     || admission.sha !== admission.deployed_source_head
@@ -272,6 +298,33 @@ export function projectAdmissionV2ToRunDeclaration(
   return handle;
 }
 
+/**
+ * Project strict, clean-mirror-complete admission into a pre-clock identity.
+ * No soak ceremony is accepted here, and Scheduler must still be paused.
+ */
+export function projectAdmissionV2ToPreClockIdentity(
+  admissionRaw: unknown,
+): PreClockAdmissionBoundIdentity {
+  const admission = parseStrict(
+    preClockAdmissionV2Schema,
+    admissionRaw,
+    'Pre-clock admission v2',
+  );
+  assertAdmissionInvariants(admission);
+  const identity = deepFreeze<PreClockAdmissionIdentity>({
+    gitHeadSha: admission.sha,
+    imageDigest: admission.deployed_image_digest,
+    gcpProjectId: admission.gcp_project_id,
+    workerService: admission.cloud_run_service,
+    cleanMirrorAttestationId: admission.clean_mirror_attestation_id,
+  });
+  const handle = deepFreeze<PreClockAdmissionBoundIdentity>({
+    admissionSha256: createHash('sha256').update(admissionRaw as string).digest('hex'),
+  });
+  IDENTITY_BY_PRE_CLOCK_HANDLE.set(handle, identity);
+  return handle;
+}
+
 export function requireAdmissionBoundRunDeclaration(candidate: unknown): RunDeclaration {
   if (!candidate || typeof candidate !== 'object') {
     throw new Error('Run declaration requires an admission-adapter provenance handle.');
@@ -279,4 +332,13 @@ export function requireAdmissionBoundRunDeclaration(candidate: unknown): RunDecl
   const declaration = DECLARATION_BY_ADMISSION_HANDLE.get(candidate as AdmissionBoundRunDeclaration);
   if (!declaration) throw new Error('Run declaration requires an admission-adapter provenance handle.');
   return declaration;
+}
+
+export function requirePreClockAdmissionIdentity(candidate: unknown): PreClockAdmissionIdentity {
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error('Pre-clock readiness requires a paused admission provenance handle.');
+  }
+  const identity = IDENTITY_BY_PRE_CLOCK_HANDLE.get(candidate as PreClockAdmissionBoundIdentity);
+  if (!identity) throw new Error('Pre-clock readiness requires a paused admission provenance handle.');
+  return identity;
 }
