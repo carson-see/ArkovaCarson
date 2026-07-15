@@ -44,6 +44,14 @@ import { GeminiProvider } from './gemini.js';
 import type { ExtractionRequest } from './types.js';
 import { logger } from '../utils/logger.js';
 
+function upstreamLogAttempts(): unknown[] {
+  return vi.mocked(logger.error).mock.calls
+    .filter(([details]) => (
+      (details as { event?: unknown } | undefined)?.event === 'ai_upstream_http_error'
+    ))
+    .map(([details]) => (details as { attempt?: unknown }).attempt);
+}
+
 describe('GeminiProvider', () => {
   // §1.6: ENABLE_AI_EXTRACTION defaults TRUE in production. Mirror that here so the
   // standard extraction tests exercise the production-default state; tests that
@@ -338,6 +346,39 @@ describe('GeminiProvider', () => {
       expect(result.confidence).toBeGreaterThan(0.5);
       expect(result.confidence).toBeLessThanOrEqual(0.85);
       expect(mockGenerateContent).toHaveBeenCalledTimes(2);
+    });
+
+    it('emits bounded retry-loop attempt identity on every Developer API 429', async () => {
+      vi.useFakeTimers();
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      mockGenerateContent.mockRejectedValue({
+        status: 429,
+        message: 'Jane Doe jane.doe@example.com secret-provider-body',
+        headers: { get: (name: string) => (name === 'retry-after' ? '11' : null) },
+      });
+
+      try {
+        const provider = new GeminiProvider('test-key');
+        const outcome = provider.extractMetadata(request).catch((error: unknown) => error);
+        await vi.runAllTimersAsync();
+        const error = await outcome;
+
+        expect(error).toMatchObject({
+          name: 'AIProviderHttpError',
+          status: 429,
+          retryAfterSec: 11,
+          apiSurface: 'Developer-API',
+        });
+        expect(mockGenerateContent).toHaveBeenCalledTimes(3);
+        expect(upstreamLogAttempts()).toEqual([1, 2, 3]);
+        const serializedLogs = JSON.stringify(vi.mocked(logger.error).mock.calls);
+        expect(serializedLogs).not.toContain('Jane Doe');
+        expect(serializedLogs).not.toContain('jane.doe@example.com');
+        expect(serializedLogs).not.toContain('secret-provider-body');
+      } finally {
+        randomSpy.mockRestore();
+        vi.useRealTimers();
+      }
     });
 
     it('does not retry on auth errors', async () => {
@@ -699,6 +740,7 @@ describe('GeminiProvider', () => {
           responseMimeType: 'application/json',
         });
         expect(fetchSpy).toHaveBeenCalledTimes(3);
+        expect(upstreamLogAttempts()).toEqual([1, 2, 3]);
         expect(logger.error).toHaveBeenCalledWith(
           expect.objectContaining({
             event: 'ai_upstream_http_error',
@@ -782,6 +824,7 @@ describe('GeminiProvider', () => {
           responseMimeType: 'application/json',
         });
         expect(fetchSpy).toHaveBeenCalledTimes(6);
+        expect(upstreamLogAttempts()).toEqual([1, 2, 3]);
         expect(logger.error).toHaveBeenCalledWith(
           expect.objectContaining({
             event: 'ai_upstream_http_error',

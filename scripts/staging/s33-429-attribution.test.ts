@@ -39,6 +39,7 @@ const ANON_LOG = {
 
 const UPSTREAM_429 = {
   correlationId: 'req-upstream-001',
+  attempt: 1,
   observedAt: '2026-07-15T14:00:01.000Z',
   source: 'worker-structured-log',
   event: 'ai_upstream_http_error',
@@ -234,9 +235,9 @@ describe('S3.3 five-bucket 429 attribution evidence', () => {
 
   it('coalesces exhausted upstream retries by inbound correlation ID while preserving each attempt', () => {
     const attempts = [
-      { ...UPSTREAM_429, observedAt: '2026-07-15T14:00:01.000Z', retryAfterSec: 20 },
-      { ...UPSTREAM_429, observedAt: '2026-07-15T14:00:02.000Z', retryAfterSec: 10 },
-      { ...UPSTREAM_429, observedAt: '2026-07-15T14:00:04.000Z', retryAfterSec: 5 },
+      { ...UPSTREAM_429, attempt: 1, observedAt: '2026-07-15T14:00:01.000Z', retryAfterSec: 20 },
+      { ...UPSTREAM_429, attempt: 2, observedAt: '2026-07-15T14:00:02.000Z', retryAfterSec: 10 },
+      { ...UPSTREAM_429, attempt: 3, observedAt: '2026-07-15T14:00:04.000Z', retryAfterSec: 5 },
     ] as const;
 
     const evidence = buildS33429AttributionEvidence({
@@ -258,6 +259,51 @@ describe('S3.3 five-bucket 429 attribution evidence', () => {
         { attempt: 3, observedAt: attempts[2].observedAt, retryAfterSec: 5 },
       ],
     });
+  });
+
+  it('fails closed when one correlation ID contains more attempts than the retry loop permits', () => {
+    expect(() => buildS33429AttributionEvidence({
+      ...completeInput(),
+      client429s: [],
+      limiterLogs: [],
+      upstream429s: [
+        { ...UPSTREAM_429, attempt: 1, observedAt: '2026-07-15T14:00:01.000Z' },
+        { ...UPSTREAM_429, attempt: 2, observedAt: '2026-07-15T14:00:02.000Z' },
+        { ...UPSTREAM_429, attempt: 3, observedAt: '2026-07-15T14:00:03.000Z' },
+        { ...UPSTREAM_429, attempt: 4, observedAt: '2026-07-15T14:00:04.000Z' },
+      ],
+    })).toThrow(/attempt|retry|maximum|three/i);
+  });
+
+  it('fails closed when a client reuses one correlation ID for distinct requests hours apart', () => {
+    expect(() => buildS33429AttributionEvidence({
+      ...completeInput(),
+      client429s: [],
+      limiterLogs: [],
+      upstream429s: [
+        { ...UPSTREAM_429, attempt: 1, observedAt: '2026-07-15T01:00:00.000Z' },
+        { ...UPSTREAM_429, attempt: 1, observedAt: '2026-07-15T23:00:00.000Z' },
+      ],
+    })).toThrow(/attempt|duplicate|correlation|request/i);
+  });
+
+  it('fails closed when explicit retry attempts do not start at one or are not contiguous', () => {
+    expect(() => buildS33429AttributionEvidence({
+      ...completeInput(),
+      client429s: [],
+      limiterLogs: [],
+      upstream429s: [{ ...UPSTREAM_429, attempt: 2 }],
+    })).toThrow(/attempt|contiguous|expected/i);
+
+    expect(() => buildS33429AttributionEvidence({
+      ...completeInput(),
+      client429s: [],
+      limiterLogs: [],
+      upstream429s: [
+        { ...UPSTREAM_429, attempt: 1 },
+        { ...UPSTREAM_429, attempt: 3, observedAt: '2026-07-15T14:00:03.000Z' },
+      ],
+    })).toThrow(/attempt|contiguous|expected/i);
   });
 
   it('normalizes request targets to pathname-only evidence without query or fragment PII', () => {

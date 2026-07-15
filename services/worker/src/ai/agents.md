@@ -5,8 +5,8 @@ _Last updated: 2026-07-15_
 ## 2026-07-15 S3.3 Wave 2 Upstream 429 Attribution
 
 - `gemini.ts` converts Gemini Developer API and Vertex regional HTTP failures into `AIProviderHttpError`, retaining only bounded status, `Retry-After`, API surface, model, region, prompt-version, schema-state, and MIME metadata. Provider bodies, prompts, response objects, credentials, and raw headers must never be retained, logged, thrown, or traced.
-- `withRetry()` preserves those allowlisted fields across retry clones; 400/401/403/422 authentication or validation failures are non-retriable. `fallback-chain.ts` classifies 429 as `rate_limit` and 502/503/504 as `provider_unavailable`, and observer events expose only the bounded reason.
-- Upstream attribution logs use `event=ai_upstream_http_error` and inherit the request correlation ID from the logger context. Release evidence joins that event to one declared arm; do not infer upstream counts from raw messages or sum them with client-side limiter buckets.
+- `withRetry()` preserves those allowlisted fields across retry clones and is the sole source of the explicit bounded attempt identity (`1..3`) passed to every upstream HTTP-error logger; 400/401/403/422 authentication or validation failures are non-retriable. `fallback-chain.ts` classifies 429 as `rate_limit` and 502/503/504 as `provider_unavailable`, and observer events expose only the bounded reason.
+- Upstream attribution logs use `event=ai_upstream_http_error`, include the retry-loop `attempt`, and inherit the request correlation ID from the logger context. Release evidence joins that event to one declared arm; do not infer attempt order from timestamps, infer upstream counts from raw messages, or sum them with client-side limiter buckets.
 
 ## 2026-05-22 Batch Embedding Review Hardening
 

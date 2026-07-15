@@ -2,8 +2,9 @@
  * S3.3 Wave 2 five-bucket 429 attribution contract.
  *
  * This module consumes only normalized, bounded metadata. It canonicalizes
- * request targets to pathnames and coalesces provider retries per inbound
- * correlation ID. Collectors must strip response bodies, raw limiter keys,
+ * request targets to pathnames and coalesces provider retries only when the
+ * worker emitted an explicit bounded retry-attempt identity. Collectors must
+ * strip response bodies, raw limiter keys,
  * provider payloads, prompts, fingerprints, JWTs, and API keys before calling
  * it. Strict schemas reject those extra fields instead of silently carrying
  * them into release evidence.
@@ -100,6 +101,7 @@ const limiterLogSchema = z.object({
 
 const upstream429Schema = z.object({
   correlationId: z.string().regex(SAFE_ID),
+  attempt: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   observedAt: z.string().datetime({ offset: true }),
   source: z.literal('worker-structured-log'),
   event: z.literal('ai_upstream_http_error'),
@@ -185,10 +187,10 @@ function assertUniqueCorrelationIds(
 function assertUniqueUpstreamAttempts(entries: readonly ParsedUpstream429[]): void {
   const seen = new Set<string>();
   for (const entry of entries) {
-    const attemptKey = `${entry.correlationId}\u0000${entry.observedAt}`;
+    const attemptKey = `${entry.correlationId}\u0000${entry.attempt}`;
     if (seen.has(attemptKey)) {
       throw new Error(
-        `Duplicate upstream 429 attempt for ${entry.correlationId} at ${entry.observedAt}`,
+        `Duplicate upstream 429 attempt ${entry.attempt} for ${entry.correlationId}`,
       );
     }
     seen.add(attemptKey);
@@ -319,12 +321,20 @@ export function buildS33429AttributionEvidence(input: unknown): S33429Attributio
 
   for (const [correlationId, unsortedAttempts] of upstreamByCorrelation) {
     const sortedAttempts = [...unsortedAttempts].sort(
-      (left, right) => Date.parse(left.observedAt) - Date.parse(right.observedAt),
+      (left, right) => left.attempt - right.attempt,
     );
+    for (const [index, attempt] of sortedAttempts.entries()) {
+      const expectedAttempt = index + 1;
+      if (attempt.attempt !== expectedAttempt) {
+        throw new Error(
+          `Upstream 429 attempts for ${correlationId} must be contiguous from 1; expected ${expectedAttempt}, received ${attempt.attempt}`,
+        );
+      }
+    }
     const firstAttempt = sortedAttempts[0]!;
     const lastAttempt = sortedAttempts[sortedAttempts.length - 1]!;
-    const attempts = Object.freeze(sortedAttempts.map((attempt, index) => Object.freeze({
-      attempt: index + 1,
+    const attempts = Object.freeze(sortedAttempts.map((attempt) => Object.freeze({
+      attempt: attempt.attempt,
       observedAt: attempt.observedAt,
       retryAfterSec: attempt.retryAfterSec,
     })));
