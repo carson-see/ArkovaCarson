@@ -579,27 +579,31 @@ function isS33OfflineAcceptanceFile(file: string, opts?: TierClassifyOpts): bool
 }
 
 // A changed line in deploy-worker.yml that is "harmless" for prod runtime: a
-// GitHub-Actions `uses:` pin (the Dependabot bump target), a YAML comment, or a
-// blank line. Anything else (env, secrets, min/max-instances, image, region,
-// service account, --set-env-vars, scaling, …) is a real runtime change.
+// GitHub-Actions `uses:` pin (the Dependabot bump target), an additive
+// `fetch-depth: 0` checkout hardening, a YAML comment, or a blank line.
+// Anything else (env, secrets, min/max-instances, image, region, service
+// account, --set-env-vars, scaling, …) is a real runtime change.
 // Note the optional dash + its trailing whitespace are grouped together rather
 // than written as two adjacent `[^\S\r\n]*` runs — the adjacent form lets the
 // engine split a whitespace span ambiguously (super-linear backtracking Sonar
 // flags). Behaviour is identical: optional indent, optional `- ` list marker,
 // then `uses:`.
 const DEPLOY_WORKER_USES_LINE_RE = /^[^\S\r\n]*(?:-[^\S\r\n]*)?uses:[^\S\r\n]*\S/;
+const DEPLOY_WORKER_FULL_HISTORY_LINE_RE = /^[^\S\r\n]*fetch-depth:[^\S\r\n]*0[^\S\r\n]*(?:#.*)?$/;
+const YAML_WITH_LINE_RE = /^[^\S\r\n]*with:[^\S\r\n]*(?:#.*)?$/;
 const YAML_COMMENT_OR_BLANK_RE = /^[^\S\r\n]*(?:#.*)?$/;
 
 /**
  * True iff a unified diff for {@link DEPLOY_WORKER_WORKFLOW} changes ONLY
- * `uses:` action-version/SHA lines (plus YAML comments / blank lines). Used to
- * exempt a Dependabot GitHub-Actions version bump from the T2 deploy-config rule
- * without weakening the gate for real runtime-config edits.
+ * `uses:` action-version/SHA lines, or additively configures checkout with
+ * `fetch-depth: 0` (plus YAML comments / blank lines). These are CI mechanics,
+ * so they are exempt from the T2 deploy-runtime rule without weakening the gate
+ * for real runtime-config edits.
  *
  * Fail-closed: returns false for an empty/`null` diff, and for any diff that
- * contains at least one added/removed line which is not a `uses:`/comment/blank
- * line. A diff with no added/removed lines at all is also false (nothing
- * attestable as a uses-only bump → keep the path-rule tier).
+ * contains at least one added/removed line outside that narrow set. Removing
+ * full-history checkout or changing it to a shallow depth is never exempt. A
+ * diff with no added/removed lines at all is also false.
  */
 export function isDeployWorkerUsesOnlyBump(diff: string | null | undefined): boolean {
   if (!diff || diff.trim().length === 0) return false;
@@ -617,7 +621,17 @@ export function isDeployWorkerUsesOnlyBump(diff: string | null | undefined): boo
         sawChange = true;
         continue;
       }
-      // A real (non-uses) changed line → not a uses-only bump. Fail closed.
+      if (rawLine.startsWith('+') && DEPLOY_WORKER_FULL_HISTORY_LINE_RE.test(content)) {
+        sawChange = true;
+        continue;
+      }
+      // `with:` is structural YAML required when the checkout had no existing
+      // input map. It is tolerated only as an addition; by itself it never
+      // makes the diff eligible because `sawChange` remains false.
+      if (rawLine.startsWith('+') && YAML_WITH_LINE_RE.test(content)) {
+        continue;
+      }
+      // A real changed line, including any shallow fetch depth, fails closed.
       return false;
     }
     // Context line (leading space) or stray line — ignored for the decision.
@@ -723,11 +737,12 @@ function hasCleanS33Lane1ImportScan(opts?: TierClassifyOpts): boolean {
 }
 
 /**
- * deploy-worker.yml is normally a T2 prod-runtime surface. The ONLY exemption is
- * a Dependabot GitHub-Actions `uses:`-version bump (verified against the file's
- * diff via {@link isDeployWorkerUsesOnlyBump}); such a change touches no prod
- * runtime config and is treated as CI-tooling (T0). Fail-closed: without a diff
- * provider, or when the diff can't be obtained, the file stays T2.
+ * deploy-worker.yml is normally a T2 prod-runtime surface. The narrow
+ * exemptions are a Dependabot GitHub-Actions `uses:`-version bump and an
+ * additive full-history checkout fix (verified against the file's diff via
+ * {@link isDeployWorkerUsesOnlyBump}); neither changes prod runtime config, so
+ * each is treated as CI-tooling (T0). Fail-closed: without a diff provider, or
+ * when the diff can't be obtained, the file stays T2.
  *
  * Possible future carve-out (NOT implemented — a separate policy call for the
  * operator): a `@types/*`-only manifest/lockfile bump. Deliberately left out.

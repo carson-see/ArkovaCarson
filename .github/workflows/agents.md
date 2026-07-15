@@ -91,6 +91,15 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
   single-item `s33-wave2-corpus` queue and requires the authenticated exact-head
   status; ordinary and hotfix queues explicitly exclude those paths.
 
+## Deploy Worker full-history preflight parity (2026-07-15)
+
+- The `pre-deploy-checks` checkout in `deploy-worker.yml` must use
+  `fetch-depth: 0`. S3.3 worker acceptance tests verify immutable commit
+  ancestry and cannot run correctly from the default shallow checkout.
+- `scripts/ci/deploy-worker-history-contract.test.ts` pins this ordering before
+  `npm test`. The staging-tier classifier treats only an additive full-history
+  checkout change as T0; removing it or choosing a shallow depth fails closed.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails

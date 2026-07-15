@@ -32,6 +32,25 @@ const USES_ONLY_DEPLOY_WORKER_DIFF = `@@ -41,7 +41,7 @@ jobs:
          uses: actions/setup-node@v4
 `;
 
+// The deploy preflight runs worker tests that verify immutable Git ancestry.
+// Adding an explicit full-history checkout changes CI mechanics only; it does
+// not alter the built image, runtime env, scaling, secrets, or deployed code.
+const FULL_HISTORY_DEPLOY_WORKER_DIFF = `@@ -28,6 +28,8 @@ jobs:
+     steps:
+       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
++        with:
++          fetch-depth: 0
+
+       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+`;
+
+const SHALLOW_HISTORY_DEPLOY_WORKER_DIFF = `@@ -28,8 +28,8 @@ jobs:
+       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+         with:
+-          fetch-depth: 0
++          fetch-depth: 1
+`;
+
 // A real runtime-config change in deploy-worker.yml: bumps --min-instances. This
 // MUST keep classifying T2 — it is exactly the prod-runtime surface the gate guards.
 const RUNTIME_CONFIG_DEPLOY_WORKER_DIFF = `@@ -78,7 +78,7 @@ jobs:
@@ -720,6 +739,14 @@ describe('check-staging-evidence', () => {
       expect(isDeployWorkerUsesOnlyBump(USES_ONLY_DEPLOY_WORKER_DIFF)).toBe(true);
     });
 
+    it('returns true for an additive full-history checkout fix', () => {
+      expect(isDeployWorkerUsesOnlyBump(FULL_HISTORY_DEPLOY_WORKER_DIFF)).toBe(true);
+    });
+
+    it('returns false when checkout is weakened back to shallow history', () => {
+      expect(isDeployWorkerUsesOnlyBump(SHALLOW_HISTORY_DEPLOY_WORKER_DIFF)).toBe(false);
+    });
+
     it('returns false for a runtime-config (--min-instances) change', () => {
       expect(isDeployWorkerUsesOnlyBump(RUNTIME_CONFIG_DEPLOY_WORKER_DIFF)).toBe(false);
     });
@@ -741,6 +768,12 @@ describe('check-staging-evidence', () => {
     it('classifies a uses:-only deploy-worker.yml bump as T0 (CI tooling)', () => {
       expect(
         requiredTierFor([file], { diffProvider: diffProvider(USES_ONLY_DEPLOY_WORKER_DIFF) }).tier,
+      ).toBe('T0');
+    });
+
+    it('classifies an additive fetch-depth: 0 checkout fix as T0 (CI tooling)', () => {
+      expect(
+        requiredTierFor([file], { diffProvider: diffProvider(FULL_HISTORY_DEPLOY_WORKER_DIFF) }).tier,
       ).toBe('T0');
     });
 
