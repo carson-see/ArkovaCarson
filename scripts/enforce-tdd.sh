@@ -34,6 +34,22 @@ TEST_PATTERNS="\.test\.\|\.spec\.\|tests/\|e2e/"
 # Files that are exempt from TDD requirement (config, types, copy, CSS)
 EXEMPT_PATTERNS="\.css$\|\.json$\|copy\.ts$\|routes\.ts$\|database\.types\.ts$\|\.d\.ts$\|index\.ts$"
 
+# Binding Sprint 3.3 Wave-1 corpus contract: these exact modules are immutable
+# offline evaluation data, not executable production behavior. Keep this as an
+# exact allowlist so sibling AI/eval source remains subject to TDD enforcement.
+is_s33_frozen_offline_corpus() {
+  case "$1" in
+    services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts|\
+    services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts|\
+    services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # ── Parse args ────────────────────────────────────────────────────────
 
 MODE=""
@@ -100,7 +116,7 @@ while IFS= read -r file; do
   [[ -z "$file" ]] && continue
 
   # Skip exempt files
-  if echo "$file" | grep -q "$EXEMPT_PATTERNS"; then
+  if echo "$file" | grep -q "$EXEMPT_PATTERNS" || is_s33_frozen_offline_corpus "$file"; then
     continue
   fi
 
