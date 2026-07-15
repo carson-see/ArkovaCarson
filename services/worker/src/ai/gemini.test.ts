@@ -657,6 +657,162 @@ describe('GeminiProvider', () => {
       );
       fetchSpy.mockRestore();
     });
+
+    it('preserves a Developer API 429 and Retry-After through every safe retry clone', async () => {
+      vi.useFakeTimers();
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      const providerErrorBody = JSON.stringify({
+        error: {
+          message: 'Quota hit for Jane Doe jane.doe@example.com',
+          apiKey: 'secret-provider-key',
+        },
+      });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+        new Response(providerErrorBody, {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': String(providerErrorBody.length),
+            'Retry-After': '17',
+          },
+        })
+      ));
+
+      try {
+        const provider = new GeminiProvider('test-key');
+        const outcome = provider.generateEmbedding('PII-stripped input').then(
+          () => null,
+          (error: unknown) => error,
+        );
+        await vi.runAllTimersAsync();
+        const error = await outcome;
+
+        expect(error).toMatchObject({
+          name: 'AIProviderHttpError',
+          status: 429,
+          retryAfterSec: 17,
+          apiSurface: 'Developer-API',
+          model: 'gemini-embedding-001',
+          region: 'global',
+          v6PromptActive: false,
+          responseSchema: 'unset',
+          responseMimeType: 'application/json',
+        });
+        expect(fetchSpy).toHaveBeenCalledTimes(3);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({
+            event: 'ai_upstream_http_error',
+            bucket: 'upstream-model',
+            status: 429,
+            retryAfterSec: 17,
+            apiSurface: 'Developer-API',
+          }),
+          'Gemini embedding API error',
+        );
+        const serializedLogs = JSON.stringify(vi.mocked(logger.error).mock.calls);
+        expect(serializedLogs).not.toContain('Jane Doe');
+        expect(serializedLogs).not.toContain('jane.doe@example.com');
+        expect(serializedLogs).not.toContain('secret-provider-key');
+        expect(serializedLogs).not.toContain(providerErrorBody);
+      } finally {
+        fetchSpy.mockRestore();
+        randomSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('tuned Vertex upstream errors', () => {
+    it('preserves 429 provenance and Retry-After without retaining or logging the provider body', async () => {
+      vi.useFakeTimers();
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      const originalTunedModel = process.env.GEMINI_TUNED_MODEL;
+      const originalV6Prompt = process.env.GEMINI_V6_PROMPT;
+      const originalResponseSchema = process.env.GEMINI_TUNED_RESPONSE_SCHEMA;
+      const tunedModel = 'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
+      process.env.GEMINI_TUNED_MODEL = tunedModel;
+      process.env.GEMINI_V6_PROMPT = 'true';
+      delete process.env.GEMINI_TUNED_RESPONSE_SCHEMA;
+
+      const providerErrorBody = JSON.stringify({
+        error: {
+          message: 'Quota hit while processing Jane Doe jane.doe@example.com',
+          authorization: 'Bearer secret-token',
+        },
+      });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        if (String(input).includes('metadata.google.internal')) {
+          return new Response(JSON.stringify({ access_token: 'metadata-token' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(providerErrorBody, {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': String(providerErrorBody.length),
+            'Retry-After': '23',
+          },
+        });
+      });
+
+      try {
+        const provider = new GeminiProvider('test-key');
+        const outcome = provider.extractMetadata({
+          strippedText: 'PII-stripped credential text',
+          credentialType: 'DEGREE',
+          fingerprint: 'a'.repeat(64),
+        }).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        await vi.runAllTimersAsync();
+        const error = await outcome;
+
+        expect(error).toMatchObject({
+          name: 'AIProviderHttpError',
+          status: 429,
+          retryAfterSec: 23,
+          apiSurface: 'Vertex-regional',
+          model: tunedModel,
+          region: 'us-central1',
+          v6PromptActive: true,
+          responseSchema: 'unset',
+          responseMimeType: 'application/json',
+        });
+        expect(fetchSpy).toHaveBeenCalledTimes(6);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({
+            event: 'ai_upstream_http_error',
+            bucket: 'upstream-model',
+            status: 429,
+            retryAfterSec: 23,
+            apiSurface: 'Vertex-regional',
+            model: tunedModel,
+            region: 'us-central1',
+            v6PromptActive: true,
+            responseSchema: 'unset',
+          }),
+          'Vertex AI tuned model error',
+        );
+        const serializedLogs = JSON.stringify(vi.mocked(logger.error).mock.calls);
+        expect(serializedLogs).not.toContain('Jane Doe');
+        expect(serializedLogs).not.toContain('jane.doe@example.com');
+        expect(serializedLogs).not.toContain('secret-token');
+        expect(serializedLogs).not.toContain(providerErrorBody);
+      } finally {
+        fetchSpy.mockRestore();
+        randomSpy.mockRestore();
+        vi.useRealTimers();
+        if (originalTunedModel === undefined) delete process.env.GEMINI_TUNED_MODEL;
+        else process.env.GEMINI_TUNED_MODEL = originalTunedModel;
+        if (originalV6Prompt === undefined) delete process.env.GEMINI_V6_PROMPT;
+        else process.env.GEMINI_V6_PROMPT = originalV6Prompt;
+        if (originalResponseSchema === undefined) delete process.env.GEMINI_TUNED_RESPONSE_SCHEMA;
+        else process.env.GEMINI_TUNED_RESPONSE_SCHEMA = originalResponseSchema;
+      }
+    });
   });
 
   describe('healthCheck', () => {

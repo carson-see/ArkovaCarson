@@ -93,6 +93,288 @@ const NUMBER_EXTRACTION_FIELDS = new Set(['creditHours', 'ethicsHours']);
 const STRING_ARRAY_EXTRACTION_FIELDS = new Set(['fraudSignals', 'concerns']);
 const BOOLEAN_EXTRACTION_FIELDS = new Set(['issuerVerified']);
 
+export type AIProviderApiSurface = 'Developer-API' | 'Vertex-regional';
+export type AIProviderResponseSchemaState = 'unset' | 'enabled';
+
+export interface AIProviderHttpErrorMetadata {
+  status: number;
+  retryAfterSec?: number;
+  apiSurface: AIProviderApiSurface;
+  model: string;
+  region: string;
+  v6PromptActive: boolean;
+  responseSchema: AIProviderResponseSchemaState;
+  responseMimeType: 'application/json';
+}
+
+/**
+ * Safe, bounded metadata retained from an upstream AI HTTP failure.
+ *
+ * Provider bodies, response objects, request content, and credentials are
+ * deliberately absent so retry clones, fallback metrics, logs, and telemetry
+ * cannot retain PII or secret-bearing upstream payloads.
+ */
+export class AIProviderHttpError extends Error implements AIProviderHttpErrorMetadata {
+  readonly status: number;
+  readonly retryAfterSec?: number;
+  readonly apiSurface: AIProviderApiSurface;
+  readonly model: string;
+  readonly region: string;
+  readonly v6PromptActive: boolean;
+  readonly responseSchema: AIProviderResponseSchemaState;
+  readonly responseMimeType = 'application/json' as const;
+
+  constructor(message: string, metadata: AIProviderHttpErrorMetadata) {
+    super(message);
+    this.name = 'AIProviderHttpError';
+    this.status = metadata.status;
+    this.retryAfterSec = metadata.retryAfterSec;
+    this.apiSurface = metadata.apiSurface;
+    this.model = metadata.model;
+    this.region = metadata.region;
+    this.v6PromptActive = metadata.v6PromptActive;
+    this.responseSchema = metadata.responseSchema;
+  }
+}
+
+interface ProviderErrorContext {
+  apiSurface: AIProviderApiSurface;
+  model: string;
+  region: string;
+  v6PromptActive: boolean;
+  responseSchema: AIProviderResponseSchemaState;
+  responseMimeType: 'application/json';
+}
+
+function safeHttpStatus(value: unknown): number | undefined {
+  return typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && value >= 100
+    && value <= 599
+    ? value
+    : undefined;
+}
+
+function parseRetryAfterSec(value: unknown, nowMs = Date.now()): number | undefined {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  }
+  if (typeof value !== 'string' || value.length > 128) return undefined;
+
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return Number.isSafeInteger(seconds) ? seconds : undefined;
+  }
+
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isFinite(dateMs)) return undefined;
+  return Math.max(0, Math.ceil((dateMs - nowMs) / 1000));
+}
+
+function parseGoogleRetryDelay(value: unknown): number | undefined {
+  if (typeof value === 'string') {
+    const match = /^(\d+(?:\.\d+)?)s$/.exec(value.trim());
+    if (!match) return undefined;
+    const seconds = Number(match[1]);
+    return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : undefined;
+  }
+  if (!value || typeof value !== 'object') return undefined;
+  const record = value as Record<string, unknown>;
+  const seconds = Number(record.seconds ?? 0);
+  const nanos = Number(record.nanos ?? 0);
+  if (!Number.isFinite(seconds) || !Number.isFinite(nanos) || seconds < 0 || nanos < 0) {
+    return undefined;
+  }
+  return Math.ceil(seconds + nanos / 1_000_000_000);
+}
+
+function retryAfterSecFromError(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const record = error as Record<string, unknown>;
+
+  const direct = parseRetryAfterSec(record.retryAfterSec ?? record.retryAfter);
+  if (direct !== undefined) return direct;
+
+  const headers = record.headers;
+  if (headers && typeof headers === 'object') {
+    const get = (headers as { get?: unknown }).get;
+    if (typeof get === 'function') {
+      try {
+        const fromHeader = parseRetryAfterSec(
+          (get as (name: string) => unknown).call(headers, 'retry-after'),
+        );
+        if (fromHeader !== undefined) return fromHeader;
+      } catch {
+        // A hostile/non-standard headers getter is ignored; no raw value escapes.
+      }
+    }
+  }
+
+  if (Array.isArray(record.errorDetails)) {
+    for (const detail of record.errorDetails) {
+      if (!detail || typeof detail !== 'object') continue;
+      const retryDelay = parseGoogleRetryDelay((detail as Record<string, unknown>).retryDelay);
+      if (retryDelay !== undefined) return retryDelay;
+    }
+  }
+
+  return undefined;
+}
+
+function responseSchemaState(): AIProviderResponseSchemaState {
+  return process.env.GEMINI_TUNED_RESPONSE_SCHEMA === 'true' ? 'enabled' : 'unset';
+}
+
+function developerApiContext(model: string): ProviderErrorContext {
+  return {
+    apiSurface: 'Developer-API',
+    model,
+    region: 'global',
+    v6PromptActive: false,
+    responseSchema: 'unset',
+    responseMimeType: 'application/json',
+  };
+}
+
+function logUpstreamHttpError(
+  error: AIProviderHttpError,
+  message: string,
+  contentLength?: string,
+): void {
+  logger.error(
+    {
+      event: 'ai_upstream_http_error',
+      bucket: 'upstream-model',
+      status: error.status,
+      retryAfterSec: error.retryAfterSec,
+      apiSurface: error.apiSurface,
+      model: error.model,
+      region: error.region,
+      v6PromptActive: error.v6PromptActive,
+      responseSchema: error.responseSchema,
+      responseMimeType: error.responseMimeType,
+      contentLength,
+    },
+    message,
+  );
+}
+
+async function upstreamResponseError(
+  response: Response,
+  context: ProviderErrorContext,
+  errorMessage: string,
+  logMessage: string,
+): Promise<AIProviderHttpError> {
+  const contentLengthHeader = response.headers.get('content-length');
+  const contentLength = contentLengthHeader && /^\d{1,20}$/.test(contentLengthHeader)
+    ? contentLengthHeader
+    : undefined;
+  const error = new AIProviderHttpError(errorMessage, {
+    ...context,
+    status: response.status,
+    retryAfterSec: parseRetryAfterSec(response.headers.get('retry-after')),
+  });
+
+  // Drain and discard. Never retain, log, throw, or trace the provider body: it
+  // can echo request content and credentials.
+  await response.text().catch(() => undefined);
+  logUpstreamHttpError(error, logMessage, contentLength);
+  return error;
+}
+
+function normalizeDeveloperApiError(
+  input: unknown,
+  context: ProviderErrorContext,
+  operation: string,
+): Error {
+  const record = input && typeof input === 'object'
+    ? input as Record<string, unknown>
+    : undefined;
+  const status = safeHttpStatus(record?.status);
+  if (status !== undefined) {
+    const error = new AIProviderHttpError(`${operation} (${status})`, {
+      ...context,
+      status,
+      retryAfterSec: retryAfterSecFromError(input),
+    });
+    logUpstreamHttpError(error, operation);
+    return error;
+  }
+
+  // The legacy SDK includes raw service text in Error.message. Convert it to a
+  // small classified message before OpenTelemetry sees the exception.
+  const original = input instanceof Error ? input : new Error(String(input));
+  const lower = original.message.toLowerCase();
+  let safeMessage = `${operation} failed`;
+  if (lower.includes('api_key_invalid')) {
+    safeMessage = 'API_KEY_INVALID';
+  } else if (/^\s*unavailable\s*$/i.test(original.message)) {
+    safeMessage = 'UNAVAILABLE';
+  } else if (lower.includes('api_key') || lower.includes('authentication') || lower.includes('unauthorized')) {
+    safeMessage = `${operation} authentication failed`;
+  } else if (lower.includes('invalid_argument') || lower.includes('validation')) {
+    safeMessage = `${operation} validation failed`;
+  } else if (lower.includes('timeout') || lower.includes('timed out') || original.name === 'AbortError') {
+    safeMessage = `${operation} timed out`;
+  } else if (lower.includes('deprecated')) {
+    safeMessage = `${operation} model deprecated`;
+  } else if (lower.includes('unavailable') || lower.includes('not found')) {
+    safeMessage = `${operation} provider unavailable`;
+  }
+  const sanitized = new Error(safeMessage);
+  sanitized.name = original.name;
+  return sanitized;
+}
+
+async function withDeveloperApiErrorAttribution<T>(
+  fn: () => Promise<T>,
+  context: ProviderErrorContext,
+  operation: string,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    throw normalizeDeveloperApiError(error, context, operation);
+  }
+}
+
+function cloneSafeRetryError(input: unknown): Error {
+  if (input instanceof AIProviderHttpError) {
+    return new AIProviderHttpError(input.message, {
+      status: input.status,
+      retryAfterSec: input.retryAfterSec,
+      apiSurface: input.apiSurface,
+      model: input.model,
+      region: input.region,
+      v6PromptActive: input.v6PromptActive,
+      responseSchema: input.responseSchema,
+      responseMimeType: input.responseMimeType,
+    });
+  }
+
+  const original = input instanceof Error ? input : new Error(String(input));
+  const lastError = new Error(original.message);
+  lastError.name = original.name;
+  const status = safeHttpStatus((input as { status?: unknown } | null)?.status);
+  if (status !== undefined) (lastError as Error & { status: number }).status = status;
+  const retryAfterSec = retryAfterSecFromError(input);
+  if (retryAfterSec !== undefined) {
+    (lastError as Error & { retryAfterSec: number }).retryAfterSec = retryAfterSec;
+  }
+  return lastError;
+}
+
+function isNonRetriableProviderError(error: Error): boolean {
+  const status = safeHttpStatus((error as Error & { status?: unknown }).status);
+  if (status === 400 || status === 401 || status === 403 || status === 422) return true;
+  const message = error.message.toLowerCase();
+  return message.includes('api_key')
+    || message.includes('authentication failed')
+    || message.includes('invalid_argument')
+    || message.includes('validation failed');
+}
+
 function validateGeminiBatchEmbeddingValues(
   embeddings: Array<{ values?: unknown }>,
   model: string,
@@ -232,9 +514,13 @@ export class GeminiProvider implements IAIProvider {
               model: this.modelName,
               inputCharacterCount: prompt.length,
             },
-            () => model.generateContent(
-              { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-              { signal: controller.signal },
+            () => withDeveloperApiErrorAttribution(
+              () => model.generateContent(
+                { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+                { signal: controller.signal },
+              ),
+              developerApiContext(this.modelName),
+              'Gemini generation API error',
             ),
             (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
           );
@@ -400,11 +686,14 @@ export class GeminiProvider implements IAIProvider {
             model: this.modelName,
             inputCharacterCount: args.userPrompt.length,
           },
-          () =>
-            model.generateContent(
+          () => withDeveloperApiErrorAttribution(
+            () => model.generateContent(
               { contents: [{ role: 'user', parts: [{ text: args.userPrompt }] }] },
               { signal: controller.signal },
             ),
+            developerApiContext(this.modelName),
+            'Gemini generation API error',
+          ),
           (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
         );
         return {
@@ -462,9 +751,13 @@ export class GeminiProvider implements IAIProvider {
           model: GEMINI_LITE_MODEL,
           inputCharacterCount: prompt.length,
         },
-        () => model.generateContent(
-          { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-          { signal: AbortSignal.timeout(15_000) },
+        () => withDeveloperApiErrorAttribution(
+          () => model.generateContent(
+            { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+            { signal: AbortSignal.timeout(15_000) },
+          ),
+          developerApiContext(GEMINI_LITE_MODEL),
+          'Gemini tags API error',
         ),
         (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
       );
@@ -511,9 +804,13 @@ export class GeminiProvider implements IAIProvider {
           model: this.modelName,
           inputCharacterCount: prompt.length,
         },
-        () => model.generateContent(
-          { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-          { signal: AbortSignal.timeout(30_000) },
+        () => withDeveloperApiErrorAttribution(
+          () => model.generateContent(
+            { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+            { signal: AbortSignal.timeout(30_000) },
+          ),
+          developerApiContext(this.modelName),
+          'Gemini template API error',
         ),
         (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
       );
@@ -566,10 +863,12 @@ export class GeminiProvider implements IAIProvider {
           );
 
           if (!response.ok) {
-            const errorBody = await response.text();
-            // Log full error server-side for debugging, but never surface to client
-            logger.error({ status: response.status, errorBody, model }, 'Gemini embedding API error');
-            throw new Error(`Embedding generation failed (status ${response.status})`);
+            throw await upstreamResponseError(
+              response,
+              developerApiContext(model),
+              `Embedding generation failed (status ${response.status})`,
+              'Gemini embedding API error',
+            );
           }
 
           const data = (await response.json()) as { embedding: { values: number[] } };
@@ -631,12 +930,12 @@ export class GeminiProvider implements IAIProvider {
           );
 
           if (!response.ok) {
-            // Discard raw error body — it may echo request content containing PII.
-            // Log only HTTP status and content-length for debugging.
-            const contentLength = response.headers.get('content-length');
-            await response.text(); // drain body
-            logger.error({ status: response.status, contentLength, model }, 'Gemini batch embedding API error');
-            throw new Error(`Batch embedding generation failed (status ${response.status})`);
+            throw await upstreamResponseError(
+              response,
+              developerApiContext(model),
+              `Batch embedding generation failed (status ${response.status})`,
+              'Gemini batch embedding API error',
+            );
           }
 
           const data = (await response.json()) as { embeddings?: Array<{ values?: unknown }> };
@@ -799,12 +1098,19 @@ export class GeminiProvider implements IAIProvider {
         });
 
         if (!response.ok) {
-          const errBody = await response.text();
-          logger.error(
-            { status: response.status, errBody, tunedModel: this.tunedModelPath },
+          throw await upstreamResponseError(
+            response,
+            {
+              apiSurface: 'Vertex-regional',
+              model: resourcePath,
+              region: VERTEX_AI_REGION,
+              v6PromptActive: isV6PromptActive(),
+              responseSchema: responseSchemaState(),
+              responseMimeType: 'application/json',
+            },
+            `Vertex AI tuned model error (${response.status})`,
             'Vertex AI tuned model error',
           );
-          throw new Error(`Vertex AI tuned model error (${response.status})`);
         }
 
         const data = (await response.json()) as {
@@ -860,13 +1166,13 @@ export class GeminiProvider implements IAIProvider {
       } catch (err) {
         // Store only message + name, not full error object (prevents holding
         // large API response bodies, stack traces, and request context in memory
-        // during sustained Gemini API degradation — see LEAK-4)
-        const original = err instanceof Error ? err : new Error(String(err));
-        lastError = new Error(original.message);
-        lastError.name = original.name;
+        // during sustained Gemini API degradation — see LEAK-4). Whitelist the
+        // bounded HTTP attribution fields needed by fallback/evidence; never
+        // copy cause, response, body, details, headers, or request context.
+        lastError = cloneSafeRetryError(err);
 
         // Don't retry on auth/validation errors
-        if (lastError.message.includes('API_KEY') || lastError.message.includes('INVALID_ARGUMENT')) {
+        if (isNonRetriableProviderError(lastError)) {
           this.recordFailure();
           throw lastError;
         }
