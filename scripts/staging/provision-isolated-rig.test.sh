@@ -77,7 +77,7 @@ assert.equal(payload.declared_source_head, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 assert.equal(payload.source_head_image_digest, '<verified-full-sha-image-digest-in-apply>');
 assert.equal(payload.profile, 'mock');
 assert.equal(payload.soak_id, 'soak-s0e4-lane-a');
-assert.equal(payload.rig_id, 'RIG-G1');
+assert.equal(payload.rig_id, 'RIG-M1');
 assert.equal(payload.gcp_project_id, 'arkova1');
 assert.equal(payload.region, 'us-central1');
 assert.equal(payload.lease_id, 'lease-s0e4-lane-a');
@@ -167,7 +167,7 @@ out=$(
   BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
   STAGING_PINNED_IMAGE=us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
   STAGING_SOAK_ID=soak-s0e4-lane-a \
-  STAGING_RIG_ID=RIG-G1 \
+  STAGING_RIG_ID=RIG-M1 \
   STAGING_LEASE_ID=lease-s0e4-lane-a \
   STAGING_RIG_TAG_URL=https://lane-a---arkova-worker-s0e4-lane-a-staging.example.run.app \
   ADMISSION_SUPABASE_PROJECT_REF=sveujcebzkqxbhimotbb \
@@ -274,7 +274,7 @@ bad_out=$(
   STAGING_SOURCE_HEAD_SHA="$head_sha" \
   STAGING_PINNED_IMAGE="$stub_image_ref" \
   STAGING_SOAK_ID=soak-s0e4-lane-b \
-  STAGING_RIG_ID=RIG-G1 \
+  STAGING_RIG_ID=RIG-M1 \
   STAGING_LEASE_ID=lease-s0e4-lane-b \
   STAGING_ADMISSION_DIR="$tmp_bin/artifacts" \
   STUB_IMAGE_REF="$stub_image_ref" \

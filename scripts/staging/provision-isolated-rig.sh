@@ -59,6 +59,9 @@ set -euo pipefail
 PROD_SUPABASE_REF="vzwyaatejekddvltxyye"
 SHARED_STAGING_SUPABASE_REF="ujtlwnoqfhtitcmsnrpq"
 RIG_B1_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
+RIG_G1_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
+RIG_G1_PUBLIC_MODEL="gemini-2.5-flash"
+RIG_G1_CANDIDATE_MODEL="models/6611494259700793344"
 APPROVED_SOURCE_IMAGE_REPOSITORY="us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker"
 DENIED_CLOUD_RUN_SERVICES=("arkova-worker" "arkova-worker-staging")
 
@@ -165,6 +168,24 @@ else
   CRON_OIDC_SA="$RUNTIME_SA"
 fi
 SCHEDULER_ACTIVATION_MODE="${STAGING_SCHEDULER_ACTIVATION_MODE:-PAUSED}"
+
+# RIG-G1 is the paired Gemini experiment approved in the S3.3 plan. These are
+# control-plane identities only: the external A/B harness owns the distinct run
+# and queue routing, while both workers remain PAUSED with background execution
+# disabled until a separately authorized post-Wave-3 start.
+G1_CORPUS_DIGEST="${STAGING_G1_CORPUS_DIGEST:-}"
+G1_CONTROL_RUN_ID="${STAGING_G1_CONTROL_RUN_ID:-}"
+G1_TUNED_RUN_ID="${STAGING_G1_TUNED_RUN_ID:-}"
+G1_CONTROL_QUEUE="${STAGING_G1_CONTROL_QUEUE:-}"
+G1_TUNED_QUEUE="${STAGING_G1_TUNED_QUEUE:-}"
+G1_OWNER="${STAGING_G1_OWNER:-}"
+G1_EXPIRES_AT="${STAGING_G1_EXPIRES_AT:-}"
+G1_STOP_AUTHORITY="${STAGING_G1_STOP_AUTHORITY:-}"
+G1_TEARDOWN_OWNER="${STAGING_G1_TEARDOWN_OWNER:-}"
+G1_SPEND_AUTHORITY_ID="${STAGING_G1_SPEND_AUTHORITY_ID:-}"
+S33_COST_CAP_USD="${STAGING_S33_COST_CAP_USD:-}"
+G1_COMPUTE_MODEL_CAP_USD="${STAGING_G1_COMPUTE_MODEL_CAP_USD:-}"
+RIG_PROJECT_MONTHLY_USD="${STAGING_RIG_PROJECT_MONTHLY_USD:-}"
 
 NAME=""
 APPLY=0
@@ -284,6 +305,25 @@ esac
 
 PROJECT_NAME="arkova-soak-${NAME}"
 CLOUD_RUN_SERVICE="arkova-worker-${NAME}-staging"
+IS_G1_RIG=0
+G1_CONTROL_SERVICE=""
+G1_TUNED_SERVICE=""
+G1_ENDPOINT_ID=""
+
+case "$RIG_ID" in
+  RIG-G1)
+    IS_G1_RIG=1
+    G1_CONTROL_SERVICE="arkova-worker-${NAME}-public-staging"
+    G1_TUNED_SERVICE="arkova-worker-${NAME}-tuned-staging"
+    # Keep the legacy top-level admission identity pointed at the public/control
+    # arm; the complete two-arm binding is emitted under admission.g1.
+    CLOUD_RUN_SERVICE="$G1_CONTROL_SERVICE"
+    ;;
+  RIG-R)
+    echo "ERROR: RIG-R has no CTO-selected service/profile binding; refusing to guess one." >&2
+    exit 2
+    ;;
+esac
 
 case "$SUPABASE_PG_MAJOR" in
   17) ;;
@@ -314,6 +354,106 @@ esac
 if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" && $IS_MOCK_PROFILE -eq 1 ]]; then
   echo "ERROR: FORCE_ACCELERATED_RIG_ONLY is invalid for a mock profile with no Scheduler topology." >&2
   exit 2
+fi
+
+# RIG-G1 has a frozen two-arm identity. Validate its complete declarative
+# packet even in dry-run so the printed plan cannot look executable while
+# omitting a budget, TTL, owner, immutable corpus, or independent route.
+if [[ $IS_G1_RIG -eq 1 ]]; then
+  if [[ "$PROFILE" != "gemini" ]]; then
+    echo "ERROR: RIG-G1 requires profile=gemini; got '$PROFILE'." >&2
+    exit 2
+  fi
+  if [[ "$SUPABASE_ORG" != "$RIG_G1_SUPABASE_ORG" ]]; then
+    echo "ERROR: RIG-G1 requires exact Supabase org '$RIG_G1_SUPABASE_ORG'; got '$SUPABASE_ORG'." >&2
+    exit 2
+  fi
+  if [[ "$SUPABASE_REGION" != "us-east-2" || "$SUPABASE_PG_MAJOR" != "17" ]]; then
+    echo "ERROR: RIG-G1 requires a standalone Supabase us-east-2 / PG17 project." >&2
+    exit 2
+  fi
+  if [[ "$CLOUD_RUN_REGION" != "us-central1" || "$GCP_PROJECT" != "$APPROVED_GCP_PROJECT" ]]; then
+    echo "ERROR: RIG-G1 requires approved GCP project '$APPROVED_GCP_PROJECT' in us-central1." >&2
+    exit 2
+  fi
+  if [[ ! "$G1_CORPUS_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: RIG-G1 requires STAGING_G1_CORPUS_DIGEST=sha256:<64-hex>." >&2
+    exit 2
+  fi
+  for g1_identity_var in \
+    STAGING_G1_CONTROL_RUN_ID STAGING_G1_TUNED_RUN_ID \
+    STAGING_G1_CONTROL_QUEUE STAGING_G1_TUNED_QUEUE \
+    STAGING_G1_OWNER STAGING_G1_STOP_AUTHORITY STAGING_G1_TEARDOWN_OWNER \
+    STAGING_G1_SPEND_AUTHORITY_ID; do
+    case "$g1_identity_var" in
+      STAGING_G1_CONTROL_RUN_ID) g1_identity_value="$G1_CONTROL_RUN_ID" ;;
+      STAGING_G1_TUNED_RUN_ID) g1_identity_value="$G1_TUNED_RUN_ID" ;;
+      STAGING_G1_CONTROL_QUEUE) g1_identity_value="$G1_CONTROL_QUEUE" ;;
+      STAGING_G1_TUNED_QUEUE) g1_identity_value="$G1_TUNED_QUEUE" ;;
+      STAGING_G1_OWNER) g1_identity_value="$G1_OWNER" ;;
+      STAGING_G1_STOP_AUTHORITY) g1_identity_value="$G1_STOP_AUTHORITY" ;;
+      STAGING_G1_TEARDOWN_OWNER) g1_identity_value="$G1_TEARDOWN_OWNER" ;;
+      STAGING_G1_SPEND_AUTHORITY_ID) g1_identity_value="$G1_SPEND_AUTHORITY_ID" ;;
+    esac
+    if [[ ! "$g1_identity_value" =~ ^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$ ]]; then
+      echo "ERROR: RIG-G1 requires canonical $g1_identity_var (3-128 safe identity characters)." >&2
+      exit 2
+    fi
+  done
+  if [[ "$G1_CONTROL_RUN_ID" == "$G1_TUNED_RUN_ID" ]]; then
+    echo "ERROR: RIG-G1 control and tuned run IDs must be distinct." >&2
+    exit 2
+  fi
+  if [[ "$G1_CONTROL_QUEUE" == "$G1_TUNED_QUEUE" ]]; then
+    echo "ERROR: RIG-G1 control and tuned queue identities must be distinct." >&2
+    exit 2
+  fi
+  if [[ ! "$G1_EXPIRES_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+    echo "ERROR: RIG-G1 requires STAGING_G1_EXPIRES_AT as exact UTC YYYY-MM-DDTHH:MM:SSZ." >&2
+    exit 2
+  fi
+  for g1_budget_var in STAGING_S33_COST_CAP_USD STAGING_G1_COMPUTE_MODEL_CAP_USD STAGING_RIG_PROJECT_MONTHLY_USD; do
+    case "$g1_budget_var" in
+      STAGING_S33_COST_CAP_USD) g1_budget_value="$S33_COST_CAP_USD" ;;
+      STAGING_G1_COMPUTE_MODEL_CAP_USD) g1_budget_value="$G1_COMPUTE_MODEL_CAP_USD" ;;
+      STAGING_RIG_PROJECT_MONTHLY_USD) g1_budget_value="$RIG_PROJECT_MONTHLY_USD" ;;
+    esac
+    if [[ ! "$g1_budget_value" =~ ^[1-9][0-9]{0,3}$ ]]; then
+      echo "ERROR: RIG-G1 requires $g1_budget_var as a canonical positive whole-USD cap." >&2
+      exit 2
+    fi
+  done
+  if (( 10#$S33_COST_CAP_USD > 200 )); then
+    echo "ERROR: RIG-G1 S3.3 all-in cost cap cannot exceed USD 200." >&2
+    exit 2
+  fi
+  if (( 10#$RIG_PROJECT_MONTHLY_USD != 10 )); then
+    echo "ERROR: RIG-G1 standalone Supabase project estimate must remain USD 10/month." >&2
+    exit 2
+  fi
+  if (( 10#$G1_COMPUTE_MODEL_CAP_USD + 10#$RIG_PROJECT_MONTHLY_USD > 10#$S33_COST_CAP_USD )); then
+    echo "ERROR: RIG-G1 compute/model cap plus project estimate exceeds the S3.3 all-in cap." >&2
+    exit 2
+  fi
+  if [[ ! "$GEMINI_TUNED_MODEL_VALUE" =~ ^projects/([^/]+)/locations/us-central1/endpoints/([1-9][0-9]*)$ ]]; then
+    echo "ERROR: RIG-G1 requires STAGING_GEMINI_TUNED_MODEL as an exact approved-project us-central1 endpoint." >&2
+    exit 2
+  fi
+  G1_ENDPOINT_PROJECT="${BASH_REMATCH[1]}"
+  G1_ENDPOINT_ID="${BASH_REMATCH[2]}"
+  if [[ "$G1_ENDPOINT_PROJECT" != "$APPROVED_GCP_PROJECT" ]]; then
+    echo "ERROR: RIG-G1 tuned endpoint project must equal approved GCP project '$APPROVED_GCP_PROJECT'." >&2
+    exit 2
+  fi
+  if [[ "$GEMINI_V6_PROMPT_VALUE" != "true" ]]; then
+    echo "ERROR: RIG-G1 tuned arm requires STAGING_GEMINI_V6_PROMPT=true." >&2
+    exit 2
+  fi
+  if [[ "$TIER" != "T3" || "$REQUIRED_UPTIME_MIN" != "2880" \
+    || ! "$REQUIRED_WALL_MIN" =~ ^[1-9][0-9]*$ || 10#$REQUIRED_WALL_MIN -lt 2910 ]]; then
+    echo "ERROR: RIG-G1 requires Tier T3, exactly 2880 worker-uptime minutes, and >=2910 wall minutes." >&2
+    exit 2
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -382,6 +522,26 @@ verify_source_head_image_digest() {
   SOURCE_HEAD_IMAGE_DIGEST="$observed_digest"
 }
 
+verify_g1_candidate_endpoint_binding() {
+  [[ $IS_G1_RIG -eq 1 ]] || return 0
+  local endpoint_json expected_model_resource
+  expected_model_resource="projects/${APPROVED_GCP_PROJECT}/locations/us-central1/${RIG_G1_CANDIDATE_MODEL}"
+  if ! endpoint_json="$(gcloud ai endpoints describe "$G1_ENDPOINT_ID" \
+    --project="$APPROVED_GCP_PROJECT" \
+    --region="us-central1" \
+    --format=json)"; then
+    echo "ERROR: RIG-G1 could not observe tuned endpoint '$GEMINI_TUNED_MODEL_VALUE'." >&2
+    exit 2
+  fi
+  if ! jq -e --arg expected "$expected_model_resource" '
+    type == "object"
+    and ([.deployedModels[]? | select(.model == $expected)] | length == 1)
+  ' >/dev/null 2>&1 <<<"$endpoint_json"; then
+    echo "ERROR: RIG-G1 tuned endpoint does not contain exactly one deployment of candidate '$RIG_G1_CANDIDATE_MODEL'." >&2
+    exit 2
+  fi
+}
+
 for denied in "${DENIED_CLOUD_RUN_SERVICES[@]}"; do
   if [[ "$CLOUD_RUN_SERVICE" == "$denied" ]]; then
     deny "derived Cloud Run service '$CLOUD_RUN_SERVICE' is a shared/prod service."
@@ -429,6 +589,28 @@ if [[ $APPLY -eq 1 ]]; then
     if [[ "${CONFIRM_SCHEDULER_ACTIVATION:-}" != "FORCE_ACCELERATED_RIG_ONLY" ]]; then
       echo "ERROR: accelerated Scheduler activation requires the second exact acknowledgement" >&2
       echo "       CONFIRM_SCHEDULER_ACTIVATION=FORCE_ACCELERATED_RIG_ONLY." >&2
+      exit 2
+    fi
+  fi
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    # Wave 3 itself authorizes no rig or spend. A live G1 provision is therefore
+    # possible only after the post-Wave-3 gate and the named spend authority are
+    # acknowledged separately from the generic provision/config confirmations.
+    if [[ "${CONFIRM_POST_W3_PROVISION:-}" != "RIG-G1" ]]; then
+      echo "ERROR: live RIG-G1 provision requires CONFIRM_POST_W3_PROVISION=RIG-G1." >&2
+      exit 2
+    fi
+    if [[ "$G1_SPEND_AUTHORITY_ID" == *pending* \
+      || "${CONFIRM_G1_SPEND_AUTHORITY:-}" != "$G1_SPEND_AUTHORITY_ID" ]]; then
+      echo "ERROR: live RIG-G1 provision requires a final (non-pending) spend authority ID and" >&2
+      echo "       matching CONFIRM_G1_SPEND_AUTHORITY=<STAGING_G1_SPEND_AUTHORITY_ID>." >&2
+      exit 2
+    fi
+    if ! node -e '
+      const expiresAt = Date.parse(process.argv[1]);
+      process.exit(Number.isFinite(expiresAt) && expiresAt > Date.now() ? 0 : 1);
+    ' "$G1_EXPIRES_AT"; then
+      echo "ERROR: live RIG-G1 provision requires STAGING_G1_EXPIRES_AT to be a future UTC instant." >&2
       exit 2
     fi
   fi
@@ -663,6 +845,7 @@ if [[ $APPLY -eq 1 ]]; then
   fi
   VALIDATED_BASE_SHA="$EXPECTED_BASE_SHA"
   verify_source_head_image_digest
+  verify_g1_candidate_endpoint_binding
 fi
 
 # ---------------------------------------------------------------------------
@@ -702,6 +885,8 @@ BASE_SECRETS=(
 
 ENV_VARS=("${BASE_ENV_VARS[@]}")
 SECRETS=("${BASE_SECRETS[@]}")
+G1_CONTROL_ENV_VARS=()
+G1_TUNED_ENV_VARS=()
 USE_MOCKS_VALUE=""
 ENABLE_PROD_NETWORK_ANCHORING_VALUE=""
 ADMISSION_BITCOIN_NETWORK=""
@@ -750,14 +935,39 @@ case "$PROFILE" in
     # is a secret.
     USE_MOCKS_VALUE="true"
     ENABLE_PROD_NETWORK_ANCHORING_VALUE="false"
-    ADMISSION_GEMINI_TUNED_MODEL="$GEMINI_TUNED_MODEL_VALUE"
-    ADMISSION_GEMINI_V6_PROMPT="$GEMINI_V6_PROMPT_VALUE"
-    ENV_VARS+=(
-      "USE_MOCKS=true"
-      "ENABLE_PROD_NETWORK_ANCHORING=false"
-      "GEMINI_TUNED_MODEL=${GEMINI_TUNED_MODEL_VALUE}"
-      "GEMINI_V6_PROMPT=${GEMINI_V6_PROMPT_VALUE}"
-    )
+    if [[ $IS_G1_RIG -eq 1 ]]; then
+      # Both arms share the exact app image, database/corpus, JSON MIME behavior,
+      # and collision-safe background flags. Only the declared model/prompt
+      # selectors differ. Do not set GEMINI_TUNED_RESPONSE_SCHEMA on either arm.
+      ENV_VARS+=(
+        "USE_MOCKS=true"
+        "ENABLE_PROD_NETWORK_ANCHORING=false"
+        "GEMINI_MODEL=${RIG_G1_PUBLIC_MODEL}"
+        "DISABLE_IN_PROCESS_ANCHOR_CRON=true"
+        "ENABLE_QUEUE_REMINDERS=false"
+        "ENABLE_RULES_ENGINE=false"
+        "ENABLE_RULE_ACTION_DISPATCHER=false"
+      )
+      G1_CONTROL_ENV_VARS=("${ENV_VARS[@]}")
+      G1_TUNED_ENV_VARS=(
+        "${ENV_VARS[@]}"
+        "GEMINI_TUNED_MODEL=${GEMINI_TUNED_MODEL_VALUE}"
+        "GEMINI_V6_PROMPT=${GEMINI_V6_PROMPT_VALUE}"
+      )
+      # The backward-compatible top-level config describes the public/control
+      # service; arm-specific values are recorded under admission.g1.arms.
+      ADMISSION_GEMINI_TUNED_MODEL=""
+      ADMISSION_GEMINI_V6_PROMPT=""
+    else
+      ADMISSION_GEMINI_TUNED_MODEL="$GEMINI_TUNED_MODEL_VALUE"
+      ADMISSION_GEMINI_V6_PROMPT="$GEMINI_V6_PROMPT_VALUE"
+      ENV_VARS+=(
+        "USE_MOCKS=true"
+        "ENABLE_PROD_NETWORK_ANCHORING=false"
+        "GEMINI_TUNED_MODEL=${GEMINI_TUNED_MODEL_VALUE}"
+        "GEMINI_V6_PROMPT=${GEMINI_V6_PROMPT_VALUE}"
+      )
+    fi
     SECRETS+=("GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:latest")
     ;;
 esac
@@ -769,6 +979,10 @@ join_by_comma() {
 }
 WORKER_ENV_VARS="$(join_by_comma "${ENV_VARS[@]}")"
 WORKER_SECRETS="$(join_by_comma "${SECRETS[@]}")"
+G1_TUNED_WORKER_ENV_VARS=""
+if [[ $IS_G1_RIG -eq 1 ]]; then
+  G1_TUNED_WORKER_ENV_VARS="$(join_by_comma "${G1_TUNED_ENV_VARS[@]}")"
+fi
 
 # gcloud's mapping flags use comma as their default entry delimiter. Reject
 # delimiter/control injection rather than allowing one operator-controlled value
@@ -794,6 +1008,9 @@ validate_gcloud_mapping_entries() {
 
 if [[ $APPLY -eq 1 ]]; then
   validate_gcloud_mapping_entries "environment" "${ENV_VARS[@]}"
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    validate_gcloud_mapping_entries "tuned-arm environment" "${G1_TUNED_ENV_VARS[@]}"
+  fi
   validate_gcloud_mapping_entries "secret" "${SECRETS[@]}"
 fi
 SUPABASE_URL_SECRET_NAME="supabase-url-${NAME}-staging"
@@ -818,6 +1035,10 @@ case "$PINNED_IMAGE" in
   *) DEPLOYED_IMAGE_DIGEST="<verified-after-deploy>" ;;
 esac
 DEPLOYED_SOURCE_HEAD="$DECLARED_SOURCE_HEAD"
+G1_CONTROL_DEPLOYED_REVISION="<captured-after-public-control-deploy>"
+G1_TUNED_DEPLOYED_REVISION="<captured-after-tuned-deploy>"
+G1_CONTROL_TAG_URL="<captured-cloud-run-url-for-${G1_CONTROL_SERVICE:-public-control-arm}>"
+G1_TUNED_TAG_URL="<captured-cloud-run-url-for-${G1_TUNED_SERVICE:-tuned-arm}>"
 SCHEDULER_APPLICABLE_JSON=false
 SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON=false
 SCHEDULER_STATE="not_applicable"
@@ -842,7 +1063,7 @@ SCHEDULER_RETRY_MAX_DOUBLINGS="5"
 # non-firing hold schedule, pause + verify, then restore the pre-existing cadence
 # while still paused after clean_mirror. This changes no job/matrix semantics.
 SCHEDULER_HOLD_SCHEDULE="0 0 31 2 *"
-if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
+if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 ]]; then
   SCHEDULER_APPLICABLE_JSON=true
   SCHEDULER_STATE="planned_paused_after_clean_mirror"
   SCHEDULER_CREATION_GUARD="non-firing hold schedule; create then immediate pause + PAUSED verification"
@@ -1528,22 +1749,126 @@ resolve_driver_sha256() {
   sha256_file "$DRIVER_PATH"
 }
 
-resolve_cloud_run_url() {
+resolve_cloud_run_url_for_service() {
+  local service="$1"
   if [[ $APPLY -eq 1 ]]; then
     local url
-    url="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+    url="$(gcloud run services describe "$service" \
       --region="$CLOUD_RUN_REGION" \
       --project="$GCP_PROJECT" \
       --format="value(status.url)")"
     if [[ -z "$url" ]]; then
-      echo "ERROR: could not resolve Cloud Run service URL for $CLOUD_RUN_SERVICE." >&2
+      echo "ERROR: could not resolve Cloud Run service URL for $service." >&2
       exit 1
     fi
     printf '%s\n' "$url"
     return 0
   fi
 
-  printf '%s\n' "${STAGING_RIG_TAG_URL:-<captured-cloud-run-url-for-${CLOUD_RUN_SERVICE}>}"
+  printf '<captured-cloud-run-url-for-%s>\n' "$service"
+}
+
+resolve_cloud_run_url() {
+  if [[ $APPLY -ne 1 && -n "${STAGING_RIG_TAG_URL:-}" ]]; then
+    printf '%s\n' "$STAGING_RIG_TAG_URL"
+    return 0
+  fi
+  resolve_cloud_run_url_for_service "$CLOUD_RUN_SERVICE"
+}
+
+g1_topology_json() {
+  local supabase_project_ref="$1"
+  if [[ $IS_G1_RIG -ne 1 ]]; then
+    printf 'null\n'
+    return 0
+  fi
+
+  local teardown_command
+  teardown_command="scripts/staging/teardown-isolated-rig.sh --project-ref ${supabase_project_ref} --rig-name ${NAME} --service ${G1_CONTROL_SERVICE} --service ${G1_TUNED_SERVICE}"
+  jq -nc \
+    --arg candidate_model "$RIG_G1_CANDIDATE_MODEL" \
+    --arg candidate_model_resource "projects/${APPROVED_GCP_PROJECT}/locations/us-central1/${RIG_G1_CANDIDATE_MODEL}" \
+    --arg corpus_digest "$G1_CORPUS_DIGEST" \
+    --arg supabase_project_ref "$supabase_project_ref" \
+    --arg owner "$G1_OWNER" \
+    --arg expires_at "$G1_EXPIRES_AT" \
+    --arg stop_authority "$G1_STOP_AUTHORITY" \
+    --arg teardown_owner "$G1_TEARDOWN_OWNER" \
+    --arg spend_authority_id "$G1_SPEND_AUTHORITY_ID" \
+    --argjson s33_cost_cap_usd "$S33_COST_CAP_USD" \
+    --argjson compute_model_cap_usd "$G1_COMPUTE_MODEL_CAP_USD" \
+    --argjson project_monthly_usd "$RIG_PROJECT_MONTHLY_USD" \
+    --arg control_service "$G1_CONTROL_SERVICE" \
+    --arg tuned_service "$G1_TUNED_SERVICE" \
+    --arg control_revision "$G1_CONTROL_DEPLOYED_REVISION" \
+    --arg tuned_revision "$G1_TUNED_DEPLOYED_REVISION" \
+    --arg control_url "$G1_CONTROL_TAG_URL" \
+    --arg tuned_url "$G1_TUNED_TAG_URL" \
+    --arg control_run_id "$G1_CONTROL_RUN_ID" \
+    --arg tuned_run_id "$G1_TUNED_RUN_ID" \
+    --arg control_queue "$G1_CONTROL_QUEUE" \
+    --arg tuned_queue "$G1_TUNED_QUEUE" \
+    --arg public_model "$RIG_G1_PUBLIC_MODEL" \
+    --arg tuned_model "$GEMINI_TUNED_MODEL_VALUE" \
+    --arg v6_prompt "$GEMINI_V6_PROMPT_VALUE" \
+    --arg image "$PINNED_IMAGE" \
+    --arg teardown_command "$teardown_command" \
+    '{
+      candidate_model: $candidate_model,
+      candidate_model_resource: $candidate_model_resource,
+      corpus_digest: $corpus_digest,
+      execution_state: "PAUSED",
+      background_execution: "disabled",
+      owner: $owner,
+      expires_at: $expires_at,
+      stop_authority: $stop_authority,
+      teardown_owner: $teardown_owner,
+      budget: {
+        s33_cost_cap_usd: $s33_cost_cap_usd,
+        compute_model_cap_usd: $compute_model_cap_usd,
+        project_monthly_usd: $project_monthly_usd,
+        spend_authority_id: $spend_authority_id
+      },
+      shared_inputs: {
+        image: $image,
+        corpus_digest: $corpus_digest,
+        supabase_project_ref: $supabase_project_ref
+      },
+      arms: [
+        {
+          arm: "public_control",
+          service: $control_service,
+          revision: $control_revision,
+          url: $control_url,
+          run_id: $control_run_id,
+          queue: $control_queue,
+          queue_binding: "external_harness",
+          gemini_model: $public_model,
+          gemini_tuned_model: "<unset>",
+          gemini_v6_prompt: "<unset>",
+          gemini_tuned_response_schema: "<unset>"
+        },
+        {
+          arm: "tuned_v6",
+          service: $tuned_service,
+          revision: $tuned_revision,
+          url: $tuned_url,
+          run_id: $tuned_run_id,
+          queue: $tuned_queue,
+          queue_binding: "external_harness",
+          gemini_model: $public_model,
+          gemini_tuned_model: $tuned_model,
+          gemini_v6_prompt: $v6_prompt,
+          gemini_tuned_response_schema: "<unset>"
+        }
+      ],
+      teardown: {
+        owner: $teardown_owner,
+        command: $teardown_command,
+        default_mode: "dry-run",
+        live_confirmation: "CONFIRM_TEARDOWN=<exact-project-ref>"
+      }
+    }'
 }
 
 emit_admission_json() {
@@ -1626,6 +1951,7 @@ emit_admission_json() {
     --arg harness_version "$driver_path@$(short_sha "$head_sha")" \
     --arg tool_version "scripts/staging/provision-isolated-rig.sh@$(short_sha "$head_sha")" \
     --arg owner "$owner" \
+    --argjson g1_topology "$(g1_topology_json "$supabase_project_ref")" \
     '{
       schema_version: $schema_version,
       kind: $kind,
@@ -1707,7 +2033,8 @@ emit_admission_json() {
         "driver_path or driver_sha256 mismatch",
         "soak harness exits non-zero or fails required duration"
       ]
-    }'
+    }
+    + (if $g1_topology == null then {} else {g1: $g1_topology} end)'
 }
 
 persist_admission_artifact() {
@@ -1852,28 +2179,87 @@ echo
 # tuned-model config; for every profile it carries the boot-critical Stripe / HMAC
 # / cron secrets so config.ts's production superRefine does not crash-loop.
 # ---------------------------------------------------------------------------
-echo "# Step 3/6 — deploy isolated worker '$CLOUD_RUN_SERVICE' on pinned image (profile=$PROFILE)"
-echo "#   env-vars: $WORKER_ENV_VARS"
-run_cmd gcloud run deploy "$CLOUD_RUN_SERVICE" \
-  --project="$GCP_PROJECT" \
-  --region="$CLOUD_RUN_REGION" \
-  --image="$PINNED_IMAGE" \
-  --labels="arkova-source-head=${DECLARED_SOURCE_HEAD}" \
-  --service-account="$RUNTIME_SA" \
-  --no-allow-unauthenticated \
-  --min-instances=0 \
-  --max-instances=2 \
-  --memory=1Gi \
-  --cpu=1 \
-  --timeout=300 \
-  --set-env-vars="$WORKER_ENV_VARS" \
-  --set-secrets="$WORKER_SECRETS"
-if [[ $APPLY -eq 1 ]]; then
-  CREATED_CLOUD_RUN_SERVICE=1
-  verify_deployed_revision_provenance
-  write_provision_state "cloud_run_provenance_verified" ""
+if [[ $IS_G1_RIG -eq 1 ]]; then
+  echo "# Step 3/6 — deploy RIG-G1 public/control + tuned workers on one pinned image (PAUSED)"
+  echo "#   public/control env-vars: $WORKER_ENV_VARS"
+  run_cmd gcloud run deploy "$G1_CONTROL_SERVICE" \
+    --project="$GCP_PROJECT" \
+    --region="$CLOUD_RUN_REGION" \
+    --image="$PINNED_IMAGE" \
+    --labels="arkova-source-head=${DECLARED_SOURCE_HEAD},arkova-rig-id=rig-g1,arkova-g1-arm=public-control" \
+    --service-account="$RUNTIME_SA" \
+    --no-allow-unauthenticated \
+    --min-instances=0 \
+    --max-instances=2 \
+    --memory=1Gi \
+    --cpu=1 \
+    --timeout=300 \
+    --set-env-vars="$WORKER_ENV_VARS" \
+    --set-secrets="$WORKER_SECRETS"
+  if [[ $APPLY -eq 1 ]]; then
+    CREATED_CLOUD_RUN_SERVICE=1
+    CLOUD_RUN_SERVICE="$G1_CONTROL_SERVICE"
+    ENV_VARS=("${G1_CONTROL_ENV_VARS[@]}")
+    verify_deployed_revision_provenance
+    G1_CONTROL_DEPLOYED_REVISION="$DEPLOYED_REVISION"
+    G1_CONTROL_TAG_URL="$(resolve_cloud_run_url_for_service "$G1_CONTROL_SERVICE")"
+  fi
+
+  echo "#   tuned-v6 env-vars: $G1_TUNED_WORKER_ENV_VARS"
+  run_cmd gcloud run deploy "$G1_TUNED_SERVICE" \
+    --project="$GCP_PROJECT" \
+    --region="$CLOUD_RUN_REGION" \
+    --image="$PINNED_IMAGE" \
+    --labels="arkova-source-head=${DECLARED_SOURCE_HEAD},arkova-rig-id=rig-g1,arkova-g1-arm=tuned-v6" \
+    --service-account="$RUNTIME_SA" \
+    --no-allow-unauthenticated \
+    --min-instances=0 \
+    --max-instances=2 \
+    --memory=1Gi \
+    --cpu=1 \
+    --timeout=300 \
+    --set-env-vars="$G1_TUNED_WORKER_ENV_VARS" \
+    --set-secrets="$WORKER_SECRETS"
+  if [[ $APPLY -eq 1 ]]; then
+    CLOUD_RUN_SERVICE="$G1_TUNED_SERVICE"
+    ENV_VARS=("${G1_TUNED_ENV_VARS[@]}")
+    verify_deployed_revision_provenance
+    G1_TUNED_DEPLOYED_REVISION="$DEPLOYED_REVISION"
+    G1_TUNED_TAG_URL="$(resolve_cloud_run_url_for_service "$G1_TUNED_SERVICE")"
+
+    # Restore the top-level compatibility fields to the public/control arm.
+    CLOUD_RUN_SERVICE="$G1_CONTROL_SERVICE"
+    ENV_VARS=("${G1_CONTROL_ENV_VARS[@]}")
+    WORKER_ENV_VARS="$(join_by_comma "${ENV_VARS[@]}")"
+    DEPLOYED_REVISION="$G1_CONTROL_DEPLOYED_REVISION"
+    ADMISSION_GEMINI_TUNED_MODEL=""
+    ADMISSION_GEMINI_V6_PROMPT=""
+    write_provision_state "g1_arm_provenance_verified_paused" ""
+  fi
+else
+  echo "# Step 3/6 — deploy isolated worker '$CLOUD_RUN_SERVICE' on pinned image (profile=$PROFILE)"
+  echo "#   env-vars: $WORKER_ENV_VARS"
+  run_cmd gcloud run deploy "$CLOUD_RUN_SERVICE" \
+    --project="$GCP_PROJECT" \
+    --region="$CLOUD_RUN_REGION" \
+    --image="$PINNED_IMAGE" \
+    --labels="arkova-source-head=${DECLARED_SOURCE_HEAD}" \
+    --service-account="$RUNTIME_SA" \
+    --no-allow-unauthenticated \
+    --min-instances=0 \
+    --max-instances=2 \
+    --memory=1Gi \
+    --cpu=1 \
+    --timeout=300 \
+    --set-env-vars="$WORKER_ENV_VARS" \
+    --set-secrets="$WORKER_SECRETS"
+  if [[ $APPLY -eq 1 ]]; then
+    CREATED_CLOUD_RUN_SERVICE=1
+    verify_deployed_revision_provenance
+    write_provision_state "cloud_run_provenance_verified" ""
+  fi
 fi
-if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
+if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 ]]; then
   echo "#   NOTE (profile=$PROFILE): the real-config secrets referenced above must already"
   echo "#         exist in Secret Manager (project $GCP_PROJECT) and hold the intended"
   echo "#         test-tier credentials — the operator verifies this before --apply."
@@ -1892,8 +2278,12 @@ echo
 # mock rigs skip this entirely (no behavioral cron to drive).
 # ---------------------------------------------------------------------------
 echo "# Step 4/6 — Cloud Scheduler -> /jobs/* wiring (node-cron does not fire on throttled Cloud Run)"
-if [[ $IS_MOCK_PROFILE -eq 1 ]]; then
+if [[ $IS_MOCK_PROFILE -eq 1 || $IS_G1_RIG -eq 1 ]]; then
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    echo "#   RIG-G1 — external A/B harness only; Scheduler and in-process background execution remain disabled."
+  else
   echo "#   profile=mock — no behavioral cron to drive; skipping Scheduler job creation."
+  fi
 else
   # WORKER_URL: apply mode resolves the REAL URL from the service deployed in
   # Step 3 (gcloud run services describe); dry-run keeps the clearly-labeled
@@ -2102,7 +2492,7 @@ echo
 # FORCE_ACCELERATED_RIG_ONLY mode may replace those cadences with the CTO's
 # five-minute rig cadence and resume. Shared production job identities are never
 # referenced or mutated here.
-if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
+if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 ]]; then
   if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
     echo "# Post-admission — FORCE_ACCELERATED_RIG_ONLY: set five-minute rig cadence, resume, verify ENABLED"
   else
