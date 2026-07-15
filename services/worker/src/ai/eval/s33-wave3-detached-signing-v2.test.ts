@@ -194,6 +194,49 @@ describe('S3.3 Wave-3 detached signing v2', () => {
       .toString('base64url');
   }
 
+  function activePolicyForKey(
+    signingKeyId: string,
+    activatedAtUtc = '2026-07-15T17:00:00.000Z',
+  ): S33DetachedSigningTrustPolicyV2 {
+    return validateS33DetachedSigningTrustPolicyV2({
+      ...activePolicy,
+      signingKeyId,
+      activatedAtUtc,
+    });
+  }
+
+  function activePolicySetForKey(
+    signingKeyId: string,
+  ): S33DetachedSigningTrustPolicySetV2 {
+    const policy = activePolicyForKey(signingKeyId);
+    return validateS33DetachedSigningTrustPolicySetV2({
+      ...activePolicySet,
+      activeSigningKeyId: signingKeyId,
+      keys: [policy],
+    });
+  }
+
+  function hardCutover(
+    current: S33DetachedSigningTrustPolicySetV2,
+    nextSigningKeyId: string,
+  ): S33DetachedSigningTrustPolicySetV2 {
+    const cutoverAtUtc = '2026-07-15T19:00:00.000Z';
+    const currentActive = current.keys.find(
+      ({ signingKeyId }) => signingKeyId === current.activeSigningKeyId,
+    )!;
+    const nextActive = activePolicyForKey(nextSigningKeyId, cutoverAtUtc);
+    const keys = [{
+      ...currentActive,
+      state: 'RETIRED' as const,
+      retiredAtUtc: cutoverAtUtc,
+    }, nextActive].sort((left, right) => left.signingKeyId.localeCompare(right.signingKeyId));
+    return transitionS33DetachedSigningTrustPolicySetV2(current, {
+      ...current,
+      activeSigningKeyId: nextSigningKeyId,
+      keys,
+    });
+  }
+
   it('keeps production unconfigured with no fabricated public material', () => {
     expect(S33_DETACHED_SIGNING_TRUST_POLICY_V2).toMatchObject({
       state: 'UNCONFIGURED',
@@ -378,6 +421,58 @@ describe('S3.3 Wave-3 detached signing v2', () => {
       activeSigningKeyId: signingKeyIdB,
       keys: [...revokedWithoutReplacement.keys, policyB],
     }).activeSigningKeyId).toBe(signingKeyIdB);
+  });
+
+  it('requires strictly forward key versions for cutover and post-revocation recovery', () => {
+    expect(() => validateS33DetachedSigningTrustPolicyV2({
+      ...activePolicy,
+      signingKeyId: 'arkova-s33-cto-release-2026q3-00',
+    })).toThrow(/not versioned/i);
+
+    expect(() => hardCutover(
+      activePolicySetForKey('arkova-s33-cto-release-2026q3-02'),
+      'arkova-s33-cto-release-2026q3-01',
+    )).toThrow(/strictly forward/i);
+    expect(() => hardCutover(
+      activePolicySetForKey('arkova-s33-cto-release-2026q4-02'),
+      'arkova-s33-cto-release-2026q3-99',
+    )).toThrow(/strictly forward/i);
+
+    expect(hardCutover(
+      activePolicySetForKey('arkova-s33-cto-release-2026q3-01'),
+      'arkova-s33-cto-release-2026q3-02',
+    ).activeSigningKeyId).toBe('arkova-s33-cto-release-2026q3-02');
+    expect(hardCutover(
+      activePolicySetForKey('arkova-s33-cto-release-2026q3-99'),
+      'arkova-s33-cto-release-2026q4-01',
+    ).activeSigningKeyId).toBe('arkova-s33-cto-release-2026q4-01');
+
+    const revokedKeyId = 'arkova-s33-cto-release-2026q4-02';
+    const current = activePolicySetForKey(revokedKeyId);
+    const revoked = transitionS33DetachedSigningTrustPolicySetV2(current, {
+      ...current,
+      activeSigningKeyId: null,
+      keys: [{
+        ...current.keys[0],
+        state: 'REVOKED',
+        revokedAtUtc: '2026-07-15T18:00:00.000Z',
+        revocationReason: 'CTO-declared compromise response',
+      }],
+    });
+    const backwardRecovery = activePolicyForKey(
+      'arkova-s33-cto-release-2026q3-99',
+      '2026-07-15T19:00:00.000Z',
+    );
+    expect(() => transitionS33DetachedSigningTrustPolicySetV2(revoked, {
+      ...revoked,
+      activeSigningKeyId: backwardRecovery.signingKeyId,
+      keys: [backwardRecovery, ...revoked.keys],
+    })).toThrow(/strictly forward/i);
+    expect(() => validateS33DetachedSigningTrustPolicySetV2({
+      ...revoked,
+      activeSigningKeyId: revokedKeyId,
+      keys: [revoked.keys[0], activePolicyForKey(revokedKeyId)],
+    })).toThrow(/duplicate signing key id/i);
   });
 
   it('separates historical audit, in-flight HOLD, and revoked merged-evidence HOLD', () => {

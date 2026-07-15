@@ -32,7 +32,7 @@ const ROTATION_MODE = 'reviewed-hard-cutover-no-overlap' as const;
 const REVOCATION_MODE = 'immediate-hold' as const;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SIGNATURE_BASE64URL = /^[A-Za-z0-9_-]{86}$/u;
-const KEY_ID = /^arkova-s33-cto-release-\d{4}q[1-4]-\d{2}$/u;
+const KEY_ID = /^arkova-s33-cto-release-(\d{4})q([1-4])-(0[1-9]|[1-9]\d)$/u;
 const PUBLIC_SPKI_PEM = /^-----BEGIN PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END PUBLIC KEY-----$/u;
 const PLACEHOLDER = /^(?:n\/?a|none|null|pending|tbd|todo|unknown|placeholder)$/iu;
 
@@ -244,6 +244,28 @@ function versionedSigningKeyId(value: unknown, label = 'S3.3 detached signing ke
   const parsed = nonEmpty(value, label);
   if (!KEY_ID.test(parsed)) throw new Error(`${label} is not versioned`);
   return parsed;
+}
+
+function signingKeyVersion(signingKeyId: string): readonly [number, number, number] {
+  const match = KEY_ID.exec(signingKeyId);
+  if (!match) throw new Error('S3.3 detached signing key id is not versioned');
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function assertStrictlyForwardSigningKeyId(
+  previousSigningKeyId: string,
+  nextSigningKeyId: string,
+  transition: string,
+): void {
+  const previous = signingKeyVersion(previousSigningKeyId);
+  const next = signingKeyVersion(nextSigningKeyId);
+  for (let index = 0; index < previous.length; index += 1) {
+    if (next[index] > previous[index]) return;
+    if (next[index] < previous[index]) break;
+  }
+  throw new Error(
+    `S3.3 detached ${transition} signing key id must advance strictly forward from ${previousSigningKeyId} to ${nextSigningKeyId}`,
+  );
 }
 
 function nullableString(value: unknown, label: string): string | null {
@@ -708,6 +730,11 @@ function assertPostRevocationRecovery(
   }
   assertInitialActivation(added, changed, nextActive);
   const newActive = nextById.get(nextActive)!;
+  assertStrictlyForwardSigningKeyId(
+    latestTerminal.signingKeyId,
+    newActive.signingKeyId,
+    'post-revocation recovery',
+  );
   if (newActive.activatedAtUtc === null
     || Date.parse(newActive.activatedAtUtc) < Date.parse(latestTerminal.revokedAtUtc)) {
     throw new Error('S3.3 detached recovery key activation predates the latest revocation');
@@ -743,6 +770,11 @@ function assertHardCutover(
     || added[0].signingKeyId !== nextActive) {
     throw new Error('S3.3 detached hard cutover must add exactly one new versioned ACTIVE key');
   }
+  assertStrictlyForwardSigningKeyId(
+    oldActive.signingKeyId,
+    newActive.signingKeyId,
+    'hard cutover',
+  );
   assertOnlyChanged(changed, currentActive, 'hard cutover');
   if (oldActive.state !== 'ACTIVE' || retiredOld.state !== 'RETIRED' || newActive.state !== 'ACTIVE'
     || retiredOld.retiredAtUtc !== newActive.activatedAtUtc) {
