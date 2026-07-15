@@ -588,10 +588,13 @@ function isS33OfflineAcceptanceFile(file: string, opts?: TierClassifyOpts): bool
 // engine split a whitespace span ambiguously (super-linear backtracking Sonar
 // flags). Behaviour is identical: optional indent, optional `- ` list marker,
 // then `uses:`.
-const DEPLOY_WORKER_USES_LINE_RE = /^[^\S\r\n]*(?:-[^\S\r\n]*)?uses:[^\S\r\n]*\S/;
-const DEPLOY_WORKER_FULL_HISTORY_LINE_RE = /^[^\S\r\n]*fetch-depth:[^\S\r\n]*0[^\S\r\n]*(?:#.*)?$/;
-const YAML_WITH_LINE_RE = /^[^\S\r\n]*with:[^\S\r\n]*(?:#.*)?$/;
-const YAML_COMMENT_OR_BLANK_RE = /^[^\S\r\n]*(?:#.*)?$/;
+const deployWorkerUsesLineRe = /^[^\S\r\n]*(?:-[^\S\r\n]*)?uses:[^\S\r\n]*\S/;
+const deployWorkerCheckoutUsesLineRe = /^[^\S\r\n]*-[^\S\r\n]*uses:[^\S\r\n]*actions\/checkout@\S/;
+const deployWorkerFullHistoryLineRe = /^[^\S\r\n]*fetch-depth:[^\S\r\n]*0[^\S\r\n]*(?:#.*)?$/;
+const deployWorkerIsolatedCredentialsLineRe = /^[^\S\r\n]*persist-credentials:[^\S\r\n]*false[^\S\r\n]*(?:#.*)?$/;
+const yamlStepStartRe = /^[^\S\r\n]*-[^\S\r\n]*[A-Za-z][\w-]*:/;
+const yamlWithLineRe = /^[^\S\r\n]*with:[^\S\r\n]*(?:#.*)?$/;
+const yamlCommentOrBlankRe = /^[^\S\r\n]*(?:#.*)?$/;
 
 /**
  * True iff a unified diff for {@link DEPLOY_WORKER_WORKFLOW} changes ONLY
@@ -608,35 +611,51 @@ const YAML_COMMENT_OR_BLANK_RE = /^[^\S\r\n]*(?:#.*)?$/;
 export function isDeployWorkerUsesOnlyBump(diff: string | null | undefined): boolean {
   if (!diff || diff.trim().length === 0) return false;
 
-  let sawChange = false;
+  let inCheckoutStep = false;
+  let sawEligibleChange = false;
   for (const rawLine of diff.split(/\r?\n/)) {
     // Skip unified-diff file headers (`+++`/`---`) and hunk headers (`@@ … @@`);
     // they are not content lines.
-    if (rawLine.startsWith('+++') || rawLine.startsWith('---') || rawLine.startsWith('@@')) {
+    if (rawLine.startsWith('+++') || rawLine.startsWith('---')) {
       continue;
     }
-    if (rawLine.startsWith('+') || rawLine.startsWith('-')) {
-      const content = rawLine.slice(1);
-      if (DEPLOY_WORKER_USES_LINE_RE.test(content) || YAML_COMMENT_OR_BLANK_RE.test(content)) {
-        sawChange = true;
+    if (rawLine.startsWith('@@')) {
+      inCheckoutStep = false;
+      continue;
+    }
+
+    const isChangedLine = rawLine.startsWith('+') || rawLine.startsWith('-');
+    const content = isChangedLine || rawLine.startsWith(' ') ? rawLine.slice(1) : rawLine;
+    if (yamlStepStartRe.test(content)) {
+      inCheckoutStep = deployWorkerCheckoutUsesLineRe.test(content);
+    }
+
+    if (isChangedLine) {
+      if (yamlCommentOrBlankRe.test(content)) {
         continue;
       }
-      if (rawLine.startsWith('+') && DEPLOY_WORKER_FULL_HISTORY_LINE_RE.test(content)) {
-        sawChange = true;
+      if (deployWorkerUsesLineRe.test(content)) {
+        sawEligibleChange = true;
         continue;
       }
-      // `with:` is structural YAML required when the checkout had no existing
-      // input map. It is tolerated only as an addition; by itself it never
-      // makes the diff eligible because `sawChange` remains false.
-      if (rawLine.startsWith('+') && YAML_WITH_LINE_RE.test(content)) {
+      if (rawLine.startsWith('+') && inCheckoutStep
+        && (deployWorkerFullHistoryLineRe.test(content)
+          || deployWorkerIsolatedCredentialsLineRe.test(content))) {
+        sawEligibleChange = true;
         continue;
       }
-      // A real changed line, including any shallow fetch depth, fails closed.
+      // `with:` is structural YAML required when checkout had no existing
+      // input map. It is permitted only inside that checkout step and does not
+      // make a diff eligible by itself.
+      if (rawLine.startsWith('+') && inCheckoutStep && yamlWithLineRe.test(content)) {
+        continue;
+      }
+      // A real changed line—including checkout inputs on the wrong action,
+      // credential persistence, or shallow history—fails closed.
       return false;
     }
-    // Context line (leading space) or stray line — ignored for the decision.
   }
-  return sawChange;
+  return sawEligibleChange;
 }
 
 /**
@@ -1880,7 +1899,7 @@ function gitFileDiffProvider(baseSha: string): DiffProvider {
     try {
       const out = execFileSync(
         GIT_BIN,
-        ['diff', '--unified=0', `${baseSha}...HEAD`, '--', file],
+        ['diff', '--unified=3', `${baseSha}...HEAD`, '--', file],
         { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
       );
       return out.trim().length > 0 ? out : null;

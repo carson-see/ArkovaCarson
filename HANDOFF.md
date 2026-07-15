@@ -16,9 +16,11 @@
 
 ### 2026-07-15 (RTE) - S3.3 Wave 3 release rail re-baselined after #1554 merge; deploy preflight fix in review
 
-[PR #1554](https://github.com/carson-see/ArkovaCarson/pull/1554) was merged by Carson at exact merge commit `49ce6fe7d2e26e1a47b9a68c38360e353e67f2dd`. The push-to-main CI passed its worker Tests job, but the automatic `Deploy Worker` run stopped before build/deploy because its shallow checkout could not resolve the immutable S3.3 evidence commits required by the worker acceptance tests. Production was not changed by that failed run.
+[PR #1554](https://github.com/carson-see/ArkovaCarson/pull/1554) was merged by Carson at exact merge commit `49ce6fe7d2e26e1a47b9a68c38360e353e67f2dd`. The push-to-main [CI run 29450641252](https://github.com/carson-see/ArkovaCarson/actions/runs/29450641252) passed its worker Tests job, but the automatic [Deploy Worker run 29450641054](https://github.com/carson-see/ArkovaCarson/actions/runs/29450641054) stopped before build/deploy because its shallow checkout could not resolve the immutable S3.3 evidence commits required by the worker acceptance tests. Production was not changed by that failed run.
 
-The scoped T0 remediation makes the pre-deploy checkout use `fetch-depth: 0`, matching main CI, and adds a regression contract plus a fail-closed tier-classifier carve-out: adding full history is CI-only T0, while removing it or selecting a shallow depth remains T2. No rig, soak, deployment, secret, migration, or production mutation was performed by this remediation.
+The scoped T0 remediation makes the pre-deploy checkout use `fetch-depth: 0`, matching main CI, and disables checkout credential persistence before repository tests execute. It adds a regression contract plus a fail-closed tier-classifier carve-out: additive full history and credential isolation on the checkout step are CI-only T0, while applying those inputs to another action, removing them, enabling persistence, or selecting a shallow depth remains T2. No rig, soak, deployment, secret, migration, or production mutation was performed by this remediation.
+
+_Last refreshed: 2026-07-15 by RTE — claims verified against GitHub Actions runs 29450641054 and 29450641252._
 
 ### 2026-07-15 (Lane 3) - S3.3 Wave 3 detached signing v2 implemented; #1554 open for Lane 4 cross-review
 
