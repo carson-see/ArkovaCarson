@@ -167,8 +167,12 @@ export interface S33429AttributionEvidence {
   buckets: Readonly<Record<S33429Bucket, Readonly<S33429BucketEvidence>>>;
   reportedNotMeasured: Readonly<{
     perOrgRateLimit: Readonly<{
-      status: 'structurally_zero';
-      reason: 'unmounted';
+      status: 'mounted_excluded';
+      reason: 'write-surfaces-outside-headline-soak';
+    }>;
+    x402PayerRateLimit: Readonly<{
+      status: 'mounted_excluded';
+      reason: 'nessie-only-outside-headline-soak';
     }>;
   }>;
 }
@@ -381,8 +385,12 @@ export function buildS33429AttributionEvidence(input: unknown): S33429Attributio
   });
   const reportedNotMeasured = Object.freeze({
     perOrgRateLimit: Object.freeze({
-      status: 'structurally_zero' as const,
-      reason: 'unmounted' as const,
+      status: 'mounted_excluded' as const,
+      reason: 'write-surfaces-outside-headline-soak' as const,
+    }),
+    x402PayerRateLimit: Object.freeze({
+      status: 'mounted_excluded' as const,
+      reason: 'nessie-only-outside-headline-soak' as const,
     }),
   });
 
