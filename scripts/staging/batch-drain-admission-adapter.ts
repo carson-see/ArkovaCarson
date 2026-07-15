@@ -229,7 +229,12 @@ function assertAdmissionInvariants(admission: AdmissionV2): void {
   if (new Set(names).size !== names.length || new Set(paths).size !== paths.length) {
     throw new Error('Admission v2 Scheduler specs contain duplicate names or paths.');
   }
-  const expectedSchedulerJobs = new Map(TEAM2_RIG_B1_SCHEDULER_SPECS.map(([
+  const expectedSchedulerJobs: ReadonlyMap<string, Readonly<{
+    path: string;
+    schedule: string;
+    timeZone: string;
+    attemptDeadline: string;
+  }>> = new Map(TEAM2_RIG_B1_SCHEDULER_SPECS.map(([
     suffix, path, schedule, timeZone, attemptDeadline,
   ]) => (
     [`${admission.cloud_run_service}-${suffix}`, {

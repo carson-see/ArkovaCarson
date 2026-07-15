@@ -210,7 +210,7 @@ describe('S3.3 teardown inventory dry-run verifier', () => {
   });
 
   it('rejects declared Scheduler jobs captured outside the declared location and owning rig service', () => {
-    const declaredNames = new Set(declaration.rigs.flatMap((rig) => [...rig.schedulerJobNames]));
+    const declaredNames = new Set<string>(declaration.rigs.flatMap((rig) => [...rig.schedulerJobNames]));
     const wrongBefore = {
       ...before,
       resources: {

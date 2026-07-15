@@ -617,7 +617,7 @@ fi
 	  exit 0
 	fi
 	if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "create" ]]; then
-	  write_scheduler_config "$4" "$@"
+	  write_scheduler_config "$5" "$@"
 	  exit 0
 	fi
 	if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "pause" ]]; then
@@ -634,7 +634,7 @@ if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "update" ]]; then
     echo 'injected Scheduler update failure rc=41' >&2
 	    exit 41
 	  fi
-	  write_scheduler_config "$4" "$@"
+	  write_scheduler_config "$5" "$@"
 	  exit 0
 fi
 if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "resume" ]]; then
@@ -1217,7 +1217,7 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
       call.startsWith('scheduler jobs update http '),
     );
     expect(cadenceUpdates).toHaveLength(6);
-    expect(cadenceUpdates.map((call) => call.split('--schedule=')[1])).toEqual([
+    expect(cadenceUpdates.map((call) => call.split('--schedule=')[1]!.split(' --time-zone=')[0])).toEqual([
       '*/30 * * * *',
       '*/30 * * * *',
       '*/15 * * * *',
