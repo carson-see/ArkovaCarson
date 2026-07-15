@@ -51,7 +51,10 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
   the deploy workflow runs history-bound worker tests. The narrow
   `deploy-worker.yml` classifier exemption now also accepts only an additive
   full-history checkout; deletion, `fetch-depth: 1`, mixed runtime edits, and
-  unavailable diffs remain T2.
+  unavailable diffs remain T2. Live GitHub Actions consumers that do not inject
+  a diff provider (notably Merge Authority) resolve the existing
+  `BASE_REF_SHA` and reuse the same per-file diff, preventing a staging-T0 /
+  merge-authority-T2 split; tests and non-Actions callers remain fail-closed.
 - 2026-07-15 S3.3 Wave-3 deterministic evaluator (SCRUM-2681/2686/2687):
   `check-staging-evidence.ts` classifies only the exact inert
   `services/worker/src/ai/eval/s33-wave3-deterministic-eval-gates.ts` path as

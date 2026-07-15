@@ -741,16 +741,24 @@ function hasCleanS33Lane1ImportScan(opts?: TierClassifyOpts): boolean {
  * exemptions are a Dependabot GitHub-Actions `uses:`-version bump and an
  * additive full-history checkout fix (verified against the file's diff via
  * {@link isDeployWorkerUsesOnlyBump}); neither changes prod runtime config, so
- * each is treated as CI-tooling (T0). Fail-closed: without a diff provider, or
- * when the diff can't be obtained, the file stays T2.
+ * each is treated as CI-tooling (T0). The staging gate injects its provider;
+ * other live GitHub Actions consumers reuse the resolved CI base automatically
+ * so merge-authority and staging cannot disagree. Tests and non-Actions callers
+ * stay pure/fail-closed unless they inject a provider. Any unavailable diff
+ * keeps the file T2.
  *
  * Possible future carve-out (NOT implemented — a separate policy call for the
  * operator): a `@types/*`-only manifest/lockfile bump. Deliberately left out.
  */
 function isDeployWorkerUsesOnlyExempt(file: string, opts?: TierClassifyOpts): boolean {
   if (file !== DEPLOY_WORKER_WORKFLOW) return false;
-  if (!opts?.diffProvider) return false;
-  return isDeployWorkerUsesOnlyBump(opts.diffProvider(file));
+  let provider = opts?.diffProvider;
+  if (!provider && process.env.GITHUB_ACTIONS === 'true' && process.env.VITEST !== 'true') {
+    const baseRef = getBaseRef({ required: false });
+    if (baseRef) provider = gitFileDiffProvider(baseRef);
+  }
+  if (!provider) return false;
+  return isDeployWorkerUsesOnlyBump(provider(file));
 }
 
 function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
