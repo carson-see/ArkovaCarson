@@ -18,15 +18,13 @@ import {
   type S33Wave2Top15Registry,
 } from './s33-wave2-coverage-audit.js';
 import {
-  type S33Wave2AcceptedEntryInput,
-} from './s33-wave2-acceptance-envelope.js';
-import {
   S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
   S33_DETACHED_SIGNING_TRUST_POLICY_V2,
   createS33DetachedSigningTestHarnessV2,
   emitS33DetachedSigningRequestV2,
   validateS33DetachedSigningTrustPolicySetV2,
   validateS33DetachedSigningTrustPolicyV2,
+  type S33DetachedAcceptedEntryInputV2,
   type S33DetachedAcceptanceEnvelopeV2,
   type S33DetachedSigningTestHarnessV2,
 } from './s33-wave3-detached-signing-v2.js';
@@ -76,8 +74,8 @@ function acceptedEntryInput(
   id: string,
   batchId: string,
   revision: number,
-  overrides: Partial<S33Wave2AcceptedEntryInput> = {},
-): S33Wave2AcceptedEntryInput {
+  overrides: Partial<S33DetachedAcceptedEntryInputV2> = {},
+): S33DetachedAcceptedEntryInputV2 {
   return {
     id,
     registryTypeId: 'legal-01-contract',
@@ -106,7 +104,7 @@ interface AcceptanceOptions {
   resultingRegistryDigestSha256?: string;
   coverageRegistryRawSha256?: string;
   coverageRegistryCanonicalSha256?: string;
-  acceptedEntries?: S33Wave2AcceptedEntryInput[];
+  acceptedEntries?: S33DetachedAcceptedEntryInputV2[];
   privateKey?: KeyObject;
   signingHarness?: S33DetachedSigningTestHarnessV2;
 }

@@ -10,13 +10,11 @@ import {
   emitS33DetachedSigningRequestV2,
   regenerateS33DetachedSigningRequestForActiveKeyV2,
   verifyS33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedAcceptanceBindingsV2,
+  type S33DetachedAcceptancePayloadInputV2,
   type S33DetachedAcceptanceEnvelopeV2,
   type S33DetachedSigningRequestV2,
 } from '../../services/worker/src/ai/eval/s33-wave3-detached-signing-v2.js';
-import type {
-  S33Wave2AcceptanceBindings,
-  S33Wave2AcceptancePayloadInput,
-} from '../../services/worker/src/ai/eval/s33-wave2-acceptance-envelope.js';
 import { writeS33Wave2Evidence } from './s33-wave2-batch-acceptance.js';
 
 type Command = 'emit-request' | 'regenerate-request' | 'assemble' | 'verify';
@@ -97,7 +95,7 @@ export function runS33DetachedSigningCli(argv: readonly string[]): CliResult {
     const input = readStrictJson(
       required(options, '--payload-input'),
       'S3.3 detached unsigned payload input',
-    ) as S33Wave2AcceptancePayloadInput;
+    ) as S33DetachedAcceptancePayloadInputV2;
     result = emitS33DetachedSigningRequestV2(input);
   } else if (command === 'regenerate-request') {
     const request = readStrictJson(
@@ -133,7 +131,7 @@ export function runS33DetachedSigningCli(argv: readonly string[]): CliResult {
     const bindings = readStrictJson(
       required(options, '--bindings'),
       'S3.3 detached caller bindings',
-    ) as S33Wave2AcceptanceBindings;
+    ) as S33DetachedAcceptanceBindingsV2;
     result = verifyS33DetachedAcceptanceEnvelopeV2(envelope, bindings, {
       verifiedAtUtc: required(options, '--verified-at-utc'),
     });

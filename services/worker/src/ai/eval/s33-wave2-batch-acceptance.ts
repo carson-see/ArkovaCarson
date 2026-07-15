@@ -22,13 +22,11 @@ import {
 } from './s33-batch-acceptance.js';
 import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
 import {
-  computeS33Wave2AcceptedEntryOrderSha256,
-  type S33Wave2AcceptanceBindings,
-  type S33Wave2AcceptedEntryInput,
-} from './s33-wave2-acceptance-envelope.js';
-import {
+  computeS33DetachedAcceptedEntryOrderSha256V2,
   verifyS33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedAcceptanceBindingsV2,
   type S33DetachedAcceptanceVerificationContextV2,
+  type S33DetachedAcceptedEntryInputV2,
   type S33DetachedAcceptanceEnvelopeV2,
   type S33DetachedSigningTestHarnessV2,
 } from './s33-wave3-detached-signing-v2.js';
@@ -117,7 +115,7 @@ export interface S33Wave2BatchPreflight {
     canonicalSha256: string;
   }>;
   readonly registryEntries: readonly S33Wave2RegistryEntry[];
-  readonly acceptanceEntries: readonly S33Wave2AcceptedEntryInput[];
+  readonly acceptanceEntries: readonly S33DetachedAcceptedEntryInputV2[];
   readonly batch: S33Wave2RegistryBatch;
   readonly leakage: Readonly<{ corpusFileCount: number; comparisons: number; exactMatchCount: 0 }>;
   readonly artifactDigestSha256: string;
@@ -431,12 +429,12 @@ function validateCandidateRows(
   coverageRegistry: ParsedCoverageRegistry,
 ): Readonly<{
   registryEntries: readonly S33Wave2RegistryEntry[];
-  acceptanceEntries: readonly S33Wave2AcceptedEntryInput[];
+  acceptanceEntries: readonly S33DetachedAcceptedEntryInputV2[];
 }> {
   if (snapshot.parsedEntries.length !== manifest.entryCount) throw new Error('Wave-2 source row count is not the whole manifest batch');
   const knownIds = new Set(registry.entries.map(({ id }) => id));
   const knownInputs = new Set(registry.entries.map(({ normalizedInputSha256 }) => normalizedInputSha256));
-  const acceptanceEntries: S33Wave2AcceptedEntryInput[] = [];
+  const acceptanceEntries: S33DetachedAcceptedEntryInputV2[] = [];
   const registryEntries = snapshot.parsedEntries.map((candidate, index): S33Wave2RegistryEntry => {
     const manifestEntry = manifest.entries[index];
     const datasheetRow = datasheet[index];
@@ -628,7 +626,7 @@ export interface S33Wave2BatchCandidateAcceptanceInput {
 
 type S33DetachedAcceptanceVerifierV2 = (
   value: unknown,
-  bindings: S33Wave2AcceptanceBindings,
+  bindings: S33DetachedAcceptanceBindingsV2,
   context: S33DetachedAcceptanceVerificationContextV2,
 ) => S33DetachedAcceptanceEnvelopeV2;
 
@@ -642,7 +640,7 @@ function acceptS33Wave2BatchCandidateWithVerifier(
     preflight.batch,
     preflight.registryEntries,
   );
-  const acceptedEntryOrderSha256 = computeS33Wave2AcceptedEntryOrderSha256(
+  const acceptedEntryOrderSha256 = computeS33DetachedAcceptedEntryOrderSha256V2(
     preflight.acceptanceEntries.map(({ id }) => id),
   );
   const verified = verifyAcceptance(

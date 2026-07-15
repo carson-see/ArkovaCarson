@@ -24,15 +24,13 @@ import {
   extendS33Wave2CorpusRegistry,
 } from './s33-wave2-corpus-registry.js';
 import {
-  type S33Wave2AcceptancePayloadInput,
-} from './s33-wave2-acceptance-envelope.js';
-import {
   S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
   S33_DETACHED_SIGNING_TRUST_POLICY_V2,
   createS33DetachedSigningTestHarnessV2,
   emitS33DetachedSigningRequestV2,
   validateS33DetachedSigningTrustPolicySetV2,
   validateS33DetachedSigningTrustPolicyV2,
+  type S33DetachedAcceptancePayloadInputV2,
   type S33DetachedAcceptanceEnvelopeV2,
 } from './s33-wave3-detached-signing-v2.js';
 import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
@@ -277,11 +275,11 @@ function loadSnapshotFixture(): Readonly<{
 
 function authenticatedAcceptance(
   value: ReturnType<typeof fixture>,
-  mutate?: (input: S33Wave2AcceptancePayloadInput) => void,
+  mutate?: (input: S33DetachedAcceptancePayloadInputV2) => void,
 ): S33DetachedAcceptanceEnvelopeV2 {
   const preflight = preflightS33Wave2BatchCandidate(registry, value.snapshot);
   const resultingRegistry = extendS33Wave2CorpusRegistry(registry, preflight.batch, preflight.registryEntries);
-  const input: S33Wave2AcceptancePayloadInput = {
+  const input: S33DetachedAcceptancePayloadInputV2 = {
     repositoryIdentity: 'carson-see/ArkovaCarson',
     pullRequestNumber: 1600,
     candidateBaseSha: value.snapshot.candidateBaseSha,

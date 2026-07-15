@@ -40,15 +40,13 @@ import { S33_AU_KE_HELDOUT } from './golden-dataset-s33-au-ke-heldout.js';
 import { S33_LICENSING_HELDOUT } from './golden-dataset-s33-licensing-heldout.js';
 import { S33_OOD_NEGATIVES } from './golden-dataset-s33-ood-negatives.js';
 import {
-  type S33Wave2AcceptancePayloadInput,
-} from './s33-wave2-acceptance-envelope.js';
-import {
   S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
   S33_DETACHED_SIGNING_TRUST_POLICY_V2,
   createS33DetachedSigningTestHarnessV2,
   emitS33DetachedSigningRequestV2,
   validateS33DetachedSigningTrustPolicySetV2,
   validateS33DetachedSigningTrustPolicyV2,
+  type S33DetachedAcceptancePayloadInputV2,
   type S33DetachedAcceptanceEnvelopeV2,
 } from './s33-wave3-detached-signing-v2.js';
 
@@ -366,7 +364,7 @@ function authenticatedFixtureAcceptance(
   const batchId = options.batchId ?? 'S33-W3-FIXTURE';
   const manifestPath = options.manifestPath ?? 'test/manifest.json';
   const manifestRawSha256 = options.manifestRawSha256 ?? sha256('manifest');
-  const input: S33Wave2AcceptancePayloadInput = {
+  const input: S33DetachedAcceptancePayloadInputV2 = {
     repositoryIdentity: 'carson-see/ArkovaCarson',
     pullRequestNumber: 1601,
     candidateBaseSha: '5'.repeat(40),

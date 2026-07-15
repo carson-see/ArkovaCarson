@@ -1,9 +1,9 @@
 /**
  * Authenticated whole-batch acceptance contract for Sprint 3.3 Wave 2.
  *
- * This v1 schema remains only as the strict unsigned-payload compatibility
- * layer used by detached-signing v2 and as a legacy security-regression test
- * harness. It has no production trust root or production verification path.
+ * This v1 schema remains only as a legacy security-regression test harness.
+ * Detached-signing v2 owns a native payload contract and never imports this
+ * module. This module has no production trust root or verification path.
  */
 
 import {

@@ -16,13 +16,11 @@ import {
 } from './s33-batch-acceptance.js';
 import { V6_SUBTYPE_TAXONOMY } from './golden-dataset-s33-types.js';
 import {
-  S33_WAVE2_ACCEPTANCE_CONSTANTS,
-  computeS33Wave2AcceptedEntryOrderSha256,
-  type S33Wave2AcceptanceBindings,
-  type S33Wave2AcceptedEntry,
-} from './s33-wave2-acceptance-envelope.js';
-import {
+  S33_DETACHED_ACCEPTANCE_PAYLOAD_V2_CONSTANTS,
+  computeS33DetachedAcceptedEntryOrderSha256V2,
   verifyS33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedAcceptanceBindingsV2,
+  type S33DetachedAcceptedEntryV2,
   type S33DetachedAcceptanceEnvelopeV2,
   type S33DetachedSigningTestHarnessV2,
 } from './s33-wave3-detached-signing-v2.js';
@@ -94,7 +92,7 @@ const registrySchema = z.object({
 }).strict();
 
 export type S33Wave2Top15Registry = z.infer<typeof registrySchema>;
-export type S33AcceptedCoverageEntry = S33Wave2AcceptedEntry;
+export type S33AcceptedCoverageEntry = S33DetachedAcceptedEntryV2;
 export type S33RegistryType = S33Wave2Top15Registry['domains'][number]['types'][number];
 type S33RegistryDomainId = typeof domainIds[number];
 
@@ -238,7 +236,7 @@ function acceptanceBindingsFromEnvelope(
   input: unknown,
   coverageRegistryRawSha256: string,
   coverageRegistryCanonicalSha256: string,
-): S33Wave2AcceptanceBindings {
+): S33DetachedAcceptanceBindingsV2 {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('Wave-2 authenticated Lane-3 acceptance must be an envelope object.');
   }
@@ -259,12 +257,12 @@ function acceptanceBindingsFromEnvelope(
   if (!Array.isArray(payload.acceptedEntries)) {
     throw new Error('Wave-2 authenticated Lane-3 acceptance must contain accepted entries.');
   }
-  const acceptedEntryOrderSha256 = computeS33Wave2AcceptedEntryOrderSha256(
+  const acceptedEntryOrderSha256 = computeS33DetachedAcceptedEntryOrderSha256V2(
     payload.acceptedEntries.map((entry) => entry?.id),
   );
 
   return {
-    repositoryIdentity: S33_WAVE2_ACCEPTANCE_CONSTANTS.repositoryIdentity,
+    repositoryIdentity: S33_DETACHED_ACCEPTANCE_PAYLOAD_V2_CONSTANTS.repositoryIdentity,
     pullRequestNumber: payload.pullRequestNumber,
     candidateBaseSha: payload.candidateBaseSha,
     candidateHeadSha: payload.candidateHeadSha,
@@ -279,7 +277,7 @@ function acceptanceBindingsFromEnvelope(
     preflightArtifactDigestSha256: payload.preflightArtifactDigestSha256,
     baseRegistryDigestSha256: payload.baseRegistryDigestSha256,
     resultingRegistryDigestSha256: payload.resultingRegistryDigestSha256,
-    coverageRegistryPath: S33_WAVE2_ACCEPTANCE_CONSTANTS.coverageRegistryPath,
+    coverageRegistryPath: S33_DETACHED_ACCEPTANCE_PAYLOAD_V2_CONSTANTS.coverageRegistryPath,
     coverageRegistryRawSha256,
     coverageRegistryCanonicalSha256,
     acceptedEntryOrderSha256,
@@ -346,7 +344,7 @@ function orderAuthenticatedAcceptanceChain(
   return Object.freeze(ordered);
 }
 
-function assertUniqueAcceptedEntries(entries: readonly S33Wave2AcceptedEntry[]): void {
+function assertUniqueAcceptedEntries(entries: readonly S33DetachedAcceptedEntryV2[]): void {
   const seenIds = new Set<string>();
   const seenInputs = new Set<string>();
   const seenFingerprints = new Set<string>();
@@ -366,7 +364,7 @@ function assertUniqueAcceptedEntries(entries: readonly S33Wave2AcceptedEntry[]):
 
 type S33DetachedAcceptanceVerifierV2 = (
   value: unknown,
-  bindings: S33Wave2AcceptanceBindings,
+  bindings: S33DetachedAcceptanceBindingsV2,
 ) => S33DetachedAcceptanceEnvelopeV2;
 
 function auditS33Wave2CoverageWithVerifier(

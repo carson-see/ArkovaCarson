@@ -14,12 +14,10 @@ import { validateFieldsForType } from '../crossFieldFraudChecks.js';
 import type { ExtractedFields } from '../types.js';
 import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
 import {
-  computeS33Wave2AcceptedEntryOrderSha256,
-  type S33Wave2AcceptanceBindings,
-} from './s33-wave2-acceptance-envelope.js';
-import {
+  computeS33DetachedAcceptedEntryOrderSha256V2,
   getS33DetachedSigningAuthorityV2,
   verifyS33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedAcceptanceBindingsV2,
   type S33DetachedAcceptanceEnvelopeV2,
   type S33DetachedSigningAuthorityV2,
   type S33DetachedSigningTestHarnessV2,
@@ -1341,7 +1339,7 @@ function validateTrustedGoldSources(
 
 type S33DetachedAcceptanceVerifierV2 = (
   value: unknown,
-  bindings: S33Wave2AcceptanceBindings,
+  bindings: S33DetachedAcceptanceBindingsV2,
 ) => S33DetachedAcceptanceEnvelopeV2;
 
 function validateAuthenticatedAcceptanceChain(
@@ -1391,7 +1389,7 @@ function validateAuthenticatedAcceptanceChain(
       throw new Error('Wave-3 final authenticated registry digest does not bind the supplied corpus');
     }
     const batchEntries = corpus.entries.filter(({ batchId }) => batchId === batch.batchId);
-    const acceptedEntryOrderSha256 = computeS33Wave2AcceptedEntryOrderSha256(
+    const acceptedEntryOrderSha256 = computeS33DetachedAcceptedEntryOrderSha256V2(
       batchEntries.map(({ id }) => id),
     );
     const verified = verifyAcceptance(

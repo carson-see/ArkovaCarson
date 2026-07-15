@@ -15,6 +15,8 @@ import {
   S33_DETACHED_SIGNING_V2_CONSTANTS,
   assembleS33DetachedAcceptanceEnvelopeV2,
   auditS33DetachedAcceptanceEnvelopeV2,
+  buildS33DetachedAcceptancePayloadV2,
+  computeS33DetachedAcceptedEntryOrderSha256V2,
   createS33DetachedSigningTestHarnessV2,
   emitS33DetachedSigningRequestV2,
   regenerateS33DetachedSigningRequestForActiveKeyV2,
@@ -22,16 +24,19 @@ import {
   transitionS33DetachedSigningTrustPolicyV2,
   validateS33DetachedSigningTrustPolicySetV2,
   validateS33DetachedSigningTrustPolicyV2,
+  validateS33DetachedAcceptancePayloadV2,
   verifyS33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedAcceptanceBindingsV2,
   type S33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedAcceptancePayloadInputV2,
   type S33DetachedSigningTestHarnessV2,
   type S33DetachedSigningTrustPolicySetV2,
   type S33DetachedSigningTrustPolicyV2,
 } from './s33-wave3-detached-signing-v2.js';
 import {
-  computeS33Wave2AcceptedEntryOrderSha256,
-  type S33Wave2AcceptanceBindings,
-  type S33Wave2AcceptancePayloadInput,
+  buildAndSignS33Wave2AcceptanceForTest,
+  buildS33Wave2AcceptancePayload,
+  validateS33Wave2AcceptancePayload,
 } from './s33-wave2-acceptance-envelope.js';
 
 const SHA1_A = 'a'.repeat(40);
@@ -49,7 +54,7 @@ const TRUSTED_VERIFICATION_CONTEXT = Object.freeze({
   verifiedAtUtc: '2026-07-15T21:00:00.000Z',
 });
 
-function payloadInput(): S33Wave2AcceptancePayloadInput {
+function payloadInput(): S33DetachedAcceptancePayloadInputV2 {
   return {
     repositoryIdentity: 'carson-see/ArkovaCarson',
     pullRequestNumber: 1701,
@@ -113,7 +118,7 @@ function payloadInput(): S33Wave2AcceptancePayloadInput {
   };
 }
 
-function bindings(input = payloadInput()): S33Wave2AcceptanceBindings {
+function bindings(input = payloadInput()): S33DetachedAcceptanceBindingsV2 {
   return {
     repositoryIdentity: input.repositoryIdentity,
     pullRequestNumber: input.pullRequestNumber,
@@ -133,7 +138,7 @@ function bindings(input = payloadInput()): S33Wave2AcceptanceBindings {
     coverageRegistryPath: input.coverageRegistryPath,
     coverageRegistryRawSha256: input.coverageRegistryRawSha256,
     coverageRegistryCanonicalSha256: input.coverageRegistryCanonicalSha256,
-    acceptedEntryOrderSha256: computeS33Wave2AcceptedEntryOrderSha256(
+    acceptedEntryOrderSha256: computeS33DetachedAcceptedEntryOrderSha256V2(
       input.acceptedEntries.map(({ id }) => id),
     ),
   };
@@ -277,6 +282,104 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     }
   });
 
+  it('has no production dependency on the legacy-v1 acceptance contract', () => {
+    const repositoryRoot = resolve(__dirname, '../../../../../');
+    const candidates = execFileSync(
+      'git',
+      ['-C', repositoryRoot, 'grep', '-I', '-l', 's33-wave2-acceptance-envelope'],
+      { encoding: 'utf8' },
+    ).trim().split('\n').filter(Boolean);
+    const violations: string[] = [];
+    for (const file of candidates) {
+      if (!/\.[cm]?[jt]sx?$/u.test(file)
+        || /(?:^|\/)(?:__tests__\/|[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$)/u.test(file)) {
+        continue;
+      }
+      const source = readFileSync(resolve(repositoryRoot, file), 'utf8');
+      if (/(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s*)['"][^'"]*s33-wave2-acceptance-envelope/mu.test(source)) {
+        violations.push(file);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('preserves every non-authority payload semantic in the native v2 builder', () => {
+    const input = payloadInput();
+    const legacy = buildS33Wave2AcceptancePayload(input);
+    const native = buildS33DetachedAcceptancePayloadV2(input);
+    const {
+      schemaVersion: _legacySchema,
+      artifactType: _legacyArtifact,
+      signerIdentity: _legacySigner,
+      signingKeyId: _legacyKey,
+      ...legacySemantics
+    } = legacy;
+    const {
+      schemaVersion: _nativeSchema,
+      artifactType: _nativeArtifact,
+      signerIdentity: _nativeSigner,
+      signingKeyId: _nativeKey,
+      ...nativeSemantics
+    } = native;
+
+    expect(nativeSemantics).toEqual(legacySemantics);
+    expect(native).toMatchObject({
+      schemaVersion: 2,
+      artifactType: 'arkova-s33-detached-batch-acceptance-payload',
+      signerIdentity: 'arkova-s33-cto-release',
+      signingKeyId: S33_DETACHED_SIGNING_V2_CONSTANTS.initialSigningKeyId,
+    });
+    expect(validateS33DetachedAcceptancePayloadV2(native)).toEqual(native);
+    expect(Object.isFrozen(native)).toBe(true);
+  });
+
+  it('rejects valid v1 payloads and every cross-version identity rewrite', () => {
+    const legacy = validateS33Wave2AcceptancePayload(
+      buildS33Wave2AcceptancePayload(payloadInput()),
+    );
+    expect(() => validateS33DetachedAcceptancePayloadV2(legacy))
+      .toThrow(/detached payload.*tuple|strict v2 schema/iu);
+
+    const native = buildS33DetachedAcceptancePayloadV2(payloadInput());
+    const rewritten = {
+      ...native,
+      schemaVersion: 1,
+      artifactType: 'arkova-s33-wave2-batch-acceptance-payload',
+      signerIdentity: 'arkova-s33-wave2-cto-release',
+      signingKeyId: 'arkova-s33-wave2-cto-release',
+    };
+    expect(() => validateS33DetachedAcceptancePayloadV2(rewritten))
+      .toThrow(/detached payload.*tuple/iu);
+
+    const request = structuredClone(emitS33DetachedSigningRequestV2(payloadInput()));
+    request.payload = legacy as unknown as typeof request.payload;
+    expect(() => testHarness.assemble(
+      request,
+      'A'.repeat(86),
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(/detached payload.*tuple|strict v2 schema/iu);
+
+    if (
+      activePolicy.publicKeySpkiPem === null
+      || activePolicy.publicKeyFingerprintSha256 === null
+    ) throw new Error('active test policy must retain public key material');
+    const legacyEnvelope = buildAndSignS33Wave2AcceptanceForTest(
+      payloadInput(),
+      privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      {
+        signerIdentity: 'arkova-s33-wave2-cto-release',
+        signingKeyId: 'arkova-s33-wave2-cto-release',
+        publicKeySpkiPem: activePolicy.publicKeySpkiPem,
+        publicKeyFingerprintSha256: activePolicy.publicKeyFingerprintSha256,
+      },
+    );
+    expect(() => testHarness.verify(
+      legacyEnvelope,
+      bindings(),
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(/detached envelope.*tuple|strict v2 schema/iu);
+  });
+
   it('statically isolates every test-authority factory from non-test entrypoints', () => {
     const repositoryRoot = resolve(__dirname, '../../../../../');
     const definitions = new Set([
@@ -354,11 +457,11 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     'coverageRegistryCanonicalSha256', 'acceptedEntryOrderSha256',
   ] as const)('rejects a stale %s caller binding', (key) => {
     const envelope = signedEnvelope();
-    const stale = { ...bindings() } as Record<keyof S33Wave2AcceptanceBindings, string | number>;
+    const stale = { ...bindings() } as Record<keyof S33DetachedAcceptanceBindingsV2, string | number>;
     stale[key] = typeof stale[key] === 'number' ? stale[key] + 1 : `stale-${key}`;
     expect(() => testHarness.verify(
       envelope,
-      stale as unknown as S33Wave2AcceptanceBindings,
+      stale as unknown as S33DetachedAcceptanceBindingsV2,
       TRUSTED_VERIFICATION_CONTEXT,
     )).toThrow(new RegExp(`binding mismatch: ${key}`, 'iu'));
   });
