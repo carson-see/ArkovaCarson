@@ -47,7 +47,7 @@ const barrierSchema = z.object({
   runId: nonEmpty,
   killpoint: z.enum(['after-claim', 'after-merkle-tree', 'after-intent-persist', 'after-broadcast-before-submit', 'after-submit-persist']),
   batchId: nonEmpty,
-  armedTrigger: z.enum(['org-scheduler', 'global-flush']),
+  armedTrigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   schedulerExecutionId: nonEmpty,
   faultWindowId: nonEmpty,
   workerId: nonEmpty,
@@ -83,11 +83,11 @@ const recoverySchema = z.object({
   completedAt: timestamp,
 }).strict();
 const executionSchema = z.object({
-  schedulerExecutionId: nonEmpty, armedTrigger: z.enum(['org-scheduler', 'global-flush']),
+  schedulerExecutionId: nonEmpty, armedTrigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   faultWindowId: nonEmpty, startedAt: timestamp, completedAt: timestamp,
 }).strict();
 const triggerSchema = z.object({
-  trigger: z.enum(['org-scheduler', 'global-flush']), schedulerExecutionId: nonEmpty,
+  trigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']), schedulerExecutionId: nonEmpty,
   batchId: nonEmpty, firedAt: timestamp,
 }).strict();
 const passRowSchema = z.object({

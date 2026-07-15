@@ -2,6 +2,10 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-07-15 — S3.3 Wave 2 L1-A: durable txid journal recovery (SCRUM-2692)
+
+`txid-journal.ts` defines the fail-closed ADOPT/REVERT/HOLD decision table for the immutable transaction id known after signing and before broadcast. `batch-anchor.ts` now writes `anchor_txid_journal` before proof/anchor intent markers and before network I/O; a journal-write failure produces zero broadcasts. Exact txid observation ADOPTs without rebroadcast, only affirmative absence after the bounded ambiguity window REVERTs, and outages/mismatch/conflict HOLD. PENDING/HELD scans rotate by `updated_at` and block the legacy intent path when protection cannot be loaded. `broadcast-recovery.ts` reconciles journals first and refuses both SQL and manual generic recovery on an untrusted protection scan. Migration 0358 owns atomic cohort resolution and the in-database HELD exclusion; no staging or production application occurred in this branch.
+
 ## 2026-07-06 — Lane 1 S3-P0: batch producer — persisted pre-broadcast intent + no-double-broadcast crash-resume (`batch-anchor.ts`)
 
 The batch pipeline (PENDING → claim → BROADCASTING → ONE OP_RETURN tx committing the batch Merkle ROOT → SUBMITTED) now closes the documented crash window where a worker dying between broadcast and `submit_batch_anchors` caused the RACE-1 sweep to revert rows to PENDING and re-broadcast a SECOND, DIFFERENT tx (broadcast-recovery.ts "scenario 2").

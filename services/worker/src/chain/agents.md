@@ -6,6 +6,10 @@ _Last updated: 2026-07-06_
 
 Bitcoin chain client implementation for anchoring document fingerprints on-chain via OP_RETURN transactions.
 
+## 2026-07-15 — SCRUM-2692 pre-broadcast durable-write barrier
+
+`SubmitFingerprintRequest.preBroadcastHook` is an optional barrier invoked with the immutable `PreparedChainTx` after signing and before `broadcastSignedTx`. Both Bitcoin single-input and fragmented multi-input construction paths share this boundary; a rejected hook makes zero provider broadcast calls. `MockChainClient` mirrors the same prepare → hook → broadcast composition. Signer selection is unchanged: active signet WIF behavior is reused and the production mainnet KMS path is untouched.
+
 ## 2026-07-07 — Lane 1 s3.25: frozen fingerprint→on-chain mapping regression pin (SCRUM-2486 AC-3)
 
 `fingerprint-mapping-regression.test.ts` PINS the fingerprint → OP_RETURN payload → verify-extract round-trip with HARD-CODED expected bytes (a frozen fixture computed out-of-band, NOT recomputed from the code under test) so any future refactor that changes the mapping fails loudly. This mapping is a FROZEN WIRE CONTRACT — ~2.97M anchors are already committed under it. The test IMPORTS the real exported pure functions from `signet.ts` (`canonicalMetadataJson`, `hashMetadata`, `truncateMetadataHash`, `extractAnchorFingerprint`) — it does NOT modify the soak-locked `signet.ts`. Pinned: the `ARKV` prefix + byte layout (36B no-meta / 44B with-8B-meta), the compiled OP_RETURN scriptPubKey hex, the canonical-JSON key-sort, the sha256 metadata hash + its 8-byte truncation, and the extract round-trip (including that a trailing metadata hash doesn't disturb fingerprint extraction). A DRIFT-GUARD case confirms a changed prefix would NOT match the pin. Fixture provenance: `fingerprint = sha256("arkova-scrum-2486-frozen-fixture-v1")`. If the wire format is ever INTENTIONALLY versioned, recompute + bump the frozen constants with a migration/re-anchor plan — do NOT edit them to make a red test green. Apply/soak deferred to Sprint-4; pure unit test (T0/T1). Companion ACs AC-2/AC-4 live in `src/jobs/` (see that folder's agents.md).
