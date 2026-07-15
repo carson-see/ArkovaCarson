@@ -835,6 +835,9 @@ SCHEDULER_FAILURE_CONTAINMENT_ARMED=0
 # one empty sentinel for mock admission JSON, filtered out by the encoder.
 SCHEDULER_JOB_SPECS=("")
 SCHEDULER_ACCELERATED_SCHEDULE="*/5 * * * *"
+SCHEDULER_RETRY_MIN_BACKOFF="5s"
+SCHEDULER_RETRY_MAX_BACKOFF="3600s"
+SCHEDULER_RETRY_MAX_DOUBLINGS="5"
 # create-http has no atomic --paused flag. Create against a syntactically valid
 # non-firing hold schedule, pause + verify, then restore the pre-existing cadence
 # while still paused after clean_mirror. This changes no job/matrix semantics.
@@ -882,6 +885,31 @@ scheduler_spec_production_schedule() {
   esac
 }
 
+scheduler_spec_time_zone() {
+  case "$(scheduler_spec_suffix "$1")" in
+    batch-anchors-forced-flush) printf '%s\n' 'America/New_York' ;;
+    batch-anchors|check-confirmations|populate-confirmation-proofs|org-queue-scheduler|recover-broadcasts|classify-proof-backcatalog)
+      printf '%s\n' 'Etc/UTC'
+      ;;
+    *)
+      echo "ERROR: Scheduler timezone is undefined for spec '$1'." >&2
+      exit 2
+      ;;
+  esac
+}
+
+scheduler_spec_attempt_deadline() {
+  case "$(scheduler_spec_suffix "$1")" in
+    batch-anchors|recover-broadcasts) printf '%s\n' '120s' ;;
+    check-confirmations|populate-confirmation-proofs|classify-proof-backcatalog) printf '%s\n' '300s' ;;
+    org-queue-scheduler|batch-anchors-forced-flush) printf '%s\n' '600s' ;;
+    *)
+      echo "ERROR: Scheduler attempt deadline is undefined for spec '$1'." >&2
+      exit 2
+      ;;
+  esac
+}
+
 validate_scheduler_job_specs() {
   local spec suffix path seen_names="|" seen_paths="|"
   for spec in "${SCHEDULER_JOB_SPECS[@]}"; do
@@ -906,6 +934,9 @@ validate_scheduler_job_specs() {
     case "$seen_paths" in
       *"|$path|"*) echo "ERROR: duplicate Scheduler request path '$path'." >&2; exit 2 ;;
     esac
+    scheduler_spec_production_schedule "$spec" >/dev/null
+    scheduler_spec_time_zone "$spec" >/dev/null
+    scheduler_spec_attempt_deadline "$spec" >/dev/null
     seen_names="${seen_names}${suffix}|"
     seen_paths="${seen_paths}${path}|"
   done
@@ -935,11 +966,41 @@ validate_rig_b1_scheduler_topology() {
 }
 
 scheduler_jobs_json() {
-  printf '%s\n' "${SCHEDULER_JOB_SPECS[@]}" | jq -Rsc --arg service "$CLOUD_RUN_SERVICE" '
-    split("\n")
-    | map(select(length > 0) | split("\t"))
-    | map(select(length == 2) | {name: ($service + "-" + .[0]), path: .[1]})
-  '
+  local jobs='[]' spec suffix path schedule time_zone attempt_deadline
+  for spec in "${SCHEDULER_JOB_SPECS[@]}"; do
+    [[ -z "$spec" ]] && continue
+    suffix="$(scheduler_spec_suffix "$spec")"
+    path="$(scheduler_spec_path "$spec")"
+    if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+      schedule="$SCHEDULER_ACCELERATED_SCHEDULE"
+    else
+      schedule="$(scheduler_spec_production_schedule "$spec")"
+    fi
+    time_zone="$(scheduler_spec_time_zone "$spec")"
+    attempt_deadline="$(scheduler_spec_attempt_deadline "$spec")"
+    jobs="$(jq -c \
+      --arg name "${CLOUD_RUN_SERVICE}-${suffix}" \
+      --arg path "$path" \
+      --arg schedule "$schedule" \
+      --arg time_zone "$time_zone" \
+      --arg attempt_deadline "$attempt_deadline" \
+      --arg min_backoff "$SCHEDULER_RETRY_MIN_BACKOFF" \
+      --arg max_backoff "$SCHEDULER_RETRY_MAX_BACKOFF" \
+      --argjson max_doublings "$SCHEDULER_RETRY_MAX_DOUBLINGS" \
+      '. + [{
+        name: $name,
+        path: $path,
+        schedule: $schedule,
+        time_zone: $time_zone,
+        attempt_deadline: $attempt_deadline,
+        retry: {
+          min_backoff: $min_backoff,
+          max_backoff: $max_backoff,
+          max_doublings: $max_doublings
+        }
+      }]' <<<"$jobs")"
+  done
+  printf '%s\n' "$jobs"
 }
 
 validate_scheduler_job_specs
@@ -1417,6 +1478,39 @@ verify_scheduler_job_state() {
   fi
 }
 
+verify_scheduler_job_config() {
+  local scheduler_spec="$1"
+  local expected_schedule="$2"
+  local job_name expected_time_zone expected_attempt_deadline observed_json
+  job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
+  expected_time_zone="$(scheduler_spec_time_zone "$scheduler_spec")"
+  expected_attempt_deadline="$(scheduler_spec_attempt_deadline "$scheduler_spec")"
+  if ! observed_json="$(gcloud scheduler jobs describe "$job_name" \
+    --project="$GCP_PROJECT" \
+    --location="$CLOUD_RUN_REGION" \
+    --format="json(schedule,timeZone,attemptDeadline,retryConfig)")"; then
+    echo "ERROR: Scheduler job '$job_name' could not be described while verifying binding config." >&2
+    exit 1
+  fi
+  if ! jq -e \
+    --arg schedule "$expected_schedule" \
+    --arg time_zone "$expected_time_zone" \
+    --arg attempt_deadline "$expected_attempt_deadline" \
+    --arg min_backoff "$SCHEDULER_RETRY_MIN_BACKOFF" \
+    --arg max_backoff "$SCHEDULER_RETRY_MAX_BACKOFF" \
+    --arg max_doublings "$SCHEDULER_RETRY_MAX_DOUBLINGS" \
+    '.schedule == $schedule
+      and .timeZone == $time_zone
+      and .attemptDeadline == $attempt_deadline
+      and .retryConfig.minBackoffDuration == $min_backoff
+      and .retryConfig.maxBackoffDuration == $max_backoff
+      and (.retryConfig.maxDoublings | tostring) == $max_doublings' \
+    >/dev/null <<<"$observed_json"; then
+    echo "ERROR: Scheduler job '$job_name' binding config differs from its declared schedule/timezone/deadline/retry contract." >&2
+    exit 1
+  fi
+}
+
 sha256_file() {
   local path="$1"
   shasum -a 256 "$path" | awk '{print $1}'
@@ -1833,10 +1927,17 @@ else
     [[ -z "$scheduler_spec" ]] && continue
     scheduler_job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
     scheduler_request_path="$(scheduler_spec_path "$scheduler_spec")"
+    scheduler_time_zone="$(scheduler_spec_time_zone "$scheduler_spec")"
+    scheduler_attempt_deadline="$(scheduler_spec_attempt_deadline "$scheduler_spec")"
     run_cmd_cron_redacted gcloud scheduler jobs create http "$scheduler_job_name" \
       --project="$GCP_PROJECT" \
       --location="$CLOUD_RUN_REGION" \
       --schedule="$SCHEDULER_HOLD_SCHEDULE" \
+      --time-zone="$scheduler_time_zone" \
+      --attempt-deadline="$scheduler_attempt_deadline" \
+      --min-backoff="$SCHEDULER_RETRY_MIN_BACKOFF" \
+      --max-backoff="$SCHEDULER_RETRY_MAX_BACKOFF" \
+      --max-doublings="$SCHEDULER_RETRY_MAX_DOUBLINGS" \
       --uri="${WORKER_URL}${scheduler_request_path}" \
       --http-method=POST \
       --headers="X-Cron-Secret=${CRON_SECRET_VALUE}" \
@@ -2015,10 +2116,17 @@ if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
     else
       scheduler_schedule="$(scheduler_spec_production_schedule "$scheduler_spec")"
     fi
+    scheduler_time_zone="$(scheduler_spec_time_zone "$scheduler_spec")"
+    scheduler_attempt_deadline="$(scheduler_spec_attempt_deadline "$scheduler_spec")"
     run_cmd gcloud scheduler jobs update http "$scheduler_job_name" \
       --project="$GCP_PROJECT" \
       --location="$CLOUD_RUN_REGION" \
-      --schedule="$scheduler_schedule"
+      --schedule="$scheduler_schedule" \
+      --time-zone="$scheduler_time_zone" \
+      --attempt-deadline="$scheduler_attempt_deadline" \
+      --min-backoff="$SCHEDULER_RETRY_MIN_BACKOFF" \
+      --max-backoff="$SCHEDULER_RETRY_MAX_BACKOFF" \
+      --max-doublings="$SCHEDULER_RETRY_MAX_DOUBLINGS"
     if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
       run_cmd gcloud scheduler jobs resume "$scheduler_job_name" \
         --project="$GCP_PROJECT" \
@@ -2040,6 +2148,14 @@ if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
           --location="$CLOUD_RUN_REGION" \
           --format="value(state)"
       fi
+    fi
+    if [[ $APPLY -eq 1 ]]; then
+      verify_scheduler_job_config "$scheduler_spec" "$scheduler_schedule"
+    else
+      print_cmd gcloud scheduler jobs describe "$scheduler_job_name" \
+        --project="$GCP_PROJECT" \
+        --location="$CLOUD_RUN_REGION" \
+        --format="json(schedule,timeZone,attemptDeadline,retryConfig)"
     fi
   done
   if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then

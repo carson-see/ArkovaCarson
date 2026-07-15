@@ -15,6 +15,8 @@ const gitSha = z.string().regex(/^[0-9a-f]{40}$/);
 const nonEmpty = z.string().min(1);
 const safeId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
 const capturedAt = z.string().datetime({ offset: true });
+const gcpProjectId = z.string().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/);
+const gcpRegion = z.string().regex(/^[a-z]+-[a-z]+\d$/);
 const RIG_B1_SCHEDULER_SUFFIXES = [
   'batch-anchors',
   'check-confirmations',
@@ -25,8 +27,8 @@ const RIG_B1_SCHEDULER_SUFFIXES = [
 ] as const;
 
 const scopeSchema = z.object({
-  gcpProjectId: z.string().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/),
-  gcpRegion: z.string().regex(/^[a-z]+-[a-z]+\d$/),
+  gcpProjectId,
+  gcpRegion,
   supabaseOrgId: z.string().regex(/^[a-z]{20}$/),
 }).strict();
 
@@ -57,12 +59,14 @@ const supabaseProjectSchema = z.object({
 
 const cloudRunServiceSchema = z.object({
   name: nonEmpty,
-  region: nonEmpty,
+  projectId: gcpProjectId,
+  region: gcpRegion,
 }).strict();
 
 const schedulerJobSchema = z.object({
   name: nonEmpty,
-  location: nonEmpty,
+  projectId: gcpProjectId,
+  location: gcpRegion,
   targetService: nonEmpty,
 }).strict();
 
@@ -181,7 +185,10 @@ function validateDeclaration(declaration: Declaration): void {
   }
 
   const rigB1 = declaration.rigs.find(({ rigId }) => rigId === 'RIG-B1');
-  if (!rigB1 || rigB1.cloudRunServiceNames.length !== 1) {
+  if (declaration.rigs.some(({ cloudRunServiceNames }) => cloudRunServiceNames.length !== 1)) {
+    throw new Error('Each teardown rig requires exactly one owning Cloud Run service identity.');
+  }
+  if (!rigB1) {
     throw new Error('RIG-B1 teardown requires exactly one Cloud Run service identity.');
   }
   const [rigB1Service] = rigB1.cloudRunServiceNames;
@@ -218,13 +225,13 @@ function namedResources(resources: ResourceCollection): Record<keyof ResourceCol
       identity: `${ref}\u0000${name}`,
       display: `${name} (${ref})`,
     })),
-    cloudRunServices: resources.cloudRunServices.map(({ name, region }) => ({
-      identity: `${region}\u0000${name}`,
-      display: `${name} (${region})`,
+    cloudRunServices: resources.cloudRunServices.map(({ name, projectId, region }) => ({
+      identity: `${projectId}\u0000${region}\u0000${name}`,
+      display: `${name} (${projectId}/${region})`,
     })),
-    schedulerJobs: resources.schedulerJobs.map(({ name, location, targetService }) => ({
-      identity: `${location}\u0000${name}\u0000${targetService}`,
-      display: `${name} (${location} -> ${targetService})`,
+    schedulerJobs: resources.schedulerJobs.map(({ name, projectId, location, targetService }) => ({
+      identity: `${projectId}\u0000${location}\u0000${name}\u0000${targetService}`,
+      display: `${name} (${projectId}/${location} -> ${targetService})`,
     })),
     vertexEndpoints: resources.vertexEndpoints.map((endpoint) => ({
       identity: stable(endpoint),
@@ -257,6 +264,20 @@ function validateInventoryUniqueness(inventory: Inventory, label: string): void 
   );
 }
 
+function validateInventoryScope(inventory: Inventory, label: string): void {
+  const { gcpProjectId: projectId, gcpRegion: region } = inventory.scope;
+  if (inventory.resources.cloudRunServices.some(
+    (service) => service.projectId !== projectId || service.region !== region,
+  )) throw new Error(`${label} Cloud Run capture contains a project/region outside its declared scope.`);
+  if (inventory.resources.schedulerJobs.some(
+    (job) => job.projectId !== projectId || job.location !== region,
+  )) throw new Error(`${label} Scheduler capture contains a project/location outside its declared scope.`);
+  const vertexPrefix = `projects/${projectId}/locations/${region}/endpoints/`;
+  if (inventory.resources.vertexEndpoints.some(
+    (endpoint) => endpoint.location !== region || !endpoint.resourceName.startsWith(vertexPrefix),
+  )) throw new Error(`${label} Vertex capture contains a project/location outside its declared scope.`);
+}
+
 function diff(before: readonly NamedResource[], after: readonly NamedResource[]): S33NamedInventoryDiff {
   const beforeByIdentity = new Map(before.map((entry) => [entry.identity, entry.display]));
   const afterByIdentity = new Map(after.map((entry) => [entry.identity, entry.display]));
@@ -284,14 +305,12 @@ function targetIdentities(declaration: Declaration, before: Inventory): Record<k
       ({ supabaseProjectRef, supabaseProjectName }) => `${supabaseProjectRef}\u0000${supabaseProjectName}`,
     )),
     cloudRunServices: new Set(declaration.rigs.flatMap((rig) => rig.cloudRunServiceNames.map(
-      (name) => `${declaration.scope.gcpRegion}\u0000${name}`,
+      (name) => `${declaration.scope.gcpProjectId}\u0000${declaration.scope.gcpRegion}\u0000${name}`,
     ))),
-    schedulerJobs: new Set(declaration.rigs.flatMap((rig) => rig.schedulerJobNames.map((name) => {
-      const captured = before.resources.schedulerJobs.find((job) => job.name === name);
-      return captured
-        ? `${captured.location}\u0000${captured.name}\u0000${captured.targetService}`
-        : `missing-scheduler\u0000${name}`;
-    }))),
+    schedulerJobs: new Set(declaration.rigs.flatMap((rig) => rig.schedulerJobNames.map(
+      (name) => `${declaration.scope.gcpProjectId}\u0000${declaration.scope.gcpRegion}\u0000${name}`
+        + `\u0000${rig.cloudRunServiceNames[0]}`,
+    ))),
     vertexEndpoints: new Set(before.resources.vertexEndpoints
       .filter(({ resourceName }) => vertexNames.has(resourceName))
       .map((endpoint) => stable(endpoint))),
@@ -336,6 +355,17 @@ function targetPresenceFailures(
     failures.push('vertexEndpoints target inventory is incomplete before teardown.');
     allRecurringTargetsRemoved = false;
   }
+  const declaredRigServices = new Set(declaration.rigs.flatMap(({ cloudRunServiceNames }) => cloudRunServiceNames));
+  const allowedSchedulerTargets = targets.schedulerJobs;
+  const undeclaredRigTargetJobs = [...before.resources.schedulerJobs, ...after.resources.schedulerJobs]
+    .filter(({ targetService }) => declaredRigServices.has(targetService))
+    .filter(({ name, projectId, location, targetService }) => !allowedSchedulerTargets.has(
+      `${projectId}\u0000${location}\u0000${name}\u0000${targetService}`,
+    ));
+  if (undeclaredRigTargetJobs.length > 0) {
+    failures.push('Undeclared Scheduler job targets a declared rig service.');
+    allRecurringTargetsRemoved = false;
+  }
   return { failures, allRecurringTargetsRemoved };
 }
 
@@ -350,6 +380,8 @@ export function verifyS33TeardownDryRun(
   validateDeclaration(declaration);
   validateInventoryUniqueness(before, 'Before inventory');
   validateInventoryUniqueness(after, 'After inventory');
+  validateInventoryScope(before, 'Before inventory');
+  validateInventoryScope(after, 'After inventory');
 
   if (before.phase !== 'before' || after.phase !== 'after') {
     throw new Error('Teardown captures must be ordered before then after.');

@@ -62,11 +62,12 @@ const targetSupabaseProjects = declaration.rigs.map((rig) => ({
   name: rig.supabaseProjectName,
 }));
 const targetCloudRunServices = declaration.rigs.flatMap((rig) =>
-  rig.cloudRunServiceNames.map((name) => ({ name, region: scope.gcpRegion })),
+  rig.cloudRunServiceNames.map((name) => ({ name, projectId: scope.gcpProjectId, region: scope.gcpRegion })),
 );
 const targetSchedulerJobs = declaration.rigs.flatMap((rig) =>
   rig.schedulerJobNames.map((name) => ({
     name,
+    projectId: scope.gcpProjectId,
     location: scope.gcpRegion,
     targetService: rig.cloudRunServiceNames[0],
   })),
@@ -88,11 +89,16 @@ const before = {
     ],
     cloudRunServices: [
       ...targetCloudRunServices,
-      { name: 'unrelated-service', region: scope.gcpRegion },
+      { name: 'unrelated-service', projectId: scope.gcpProjectId, region: scope.gcpRegion },
     ],
     schedulerJobs: [
       ...targetSchedulerJobs,
-      { name: 'unrelated-job', location: scope.gcpRegion, targetService: 'unrelated-service' },
+      {
+        name: 'unrelated-job',
+        projectId: scope.gcpProjectId,
+        location: scope.gcpRegion,
+        targetService: 'unrelated-service',
+      },
     ],
     vertexEndpoints: [
       {
@@ -122,9 +128,16 @@ const after = {
   capturedAt: '2026-07-15T17:00:00.000Z',
   resources: {
     supabaseProjects: [{ ref: 'zabcdefghijklmnopqrs', name: 'unrelated-project' }],
-    cloudRunServices: [{ name: 'unrelated-service', region: scope.gcpRegion }],
+    cloudRunServices: [{
+      name: 'unrelated-service', projectId: scope.gcpProjectId, region: scope.gcpRegion,
+    }],
     schedulerJobs: [
-      { name: 'unrelated-job', location: scope.gcpRegion, targetService: 'unrelated-service' },
+      {
+        name: 'unrelated-job',
+        projectId: scope.gcpProjectId,
+        location: scope.gcpRegion,
+        targetService: 'unrelated-service',
+      },
     ],
     vertexEndpoints: [before.resources.vertexEndpoints[1]],
     secretNames: [...declaration.protectedSharedSecretNames, 'unrelated-secret'],
@@ -194,6 +207,50 @@ describe('S3.3 teardown inventory dry-run verifier', () => {
         schedulerJobs: [...after.resources.schedulerJobs, omittedJob],
       },
     })).toThrow(/RIG-B1|six|Scheduler|target|exact/i);
+  });
+
+  it('rejects declared Scheduler jobs captured outside the declared location and owning rig service', () => {
+    const declaredNames = new Set(declaration.rigs.flatMap((rig) => [...rig.schedulerJobNames]));
+    const wrongBefore = {
+      ...before,
+      resources: {
+        ...before.resources,
+        schedulerJobs: before.resources.schedulerJobs.map((job) => declaredNames.has(job.name)
+          ? { ...job, location: 'europe-west1', targetService: 'unrelated-service' }
+          : job),
+      },
+    };
+
+    expect(() => verifyS33TeardownDryRun(declaration, wrongBefore, after)).toThrow(
+      /project|scope|location|region|target|service|Scheduler/i,
+    );
+  });
+
+  it('rejects an undeclared Scheduler job targeting any declared rig service even when unchanged', () => {
+    const targetService = declaration.rigs.find((rig) => rig.rigId === 'RIG-B1')!.cloudRunServiceNames[0];
+    const undeclared = {
+      name: `${targetService}-undeclared-recurring-job`,
+      projectId: scope.gcpProjectId,
+      location: scope.gcpRegion,
+      targetService,
+    };
+    const result = verifyS33TeardownDryRun(declaration, {
+      ...before,
+      resources: {
+        ...before.resources,
+        schedulerJobs: [...before.resources.schedulerJobs, undeclared],
+      },
+    }, {
+      ...after,
+      resources: {
+        ...after.resources,
+        schedulerJobs: [...after.resources.schedulerJobs, undeclared],
+      },
+    });
+
+    expect(result.verified).toBe(false);
+    expect(result.zeroRecurringRigCost).toBe(false);
+    expect(result.failures.join('\n')).toMatch(/undeclared|Scheduler|rig.*service|target/i);
   });
 
   it('fails when a protected shared secret disappears or unrelated inventory drifts', () => {

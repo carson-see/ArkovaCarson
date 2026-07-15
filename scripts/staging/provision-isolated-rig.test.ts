@@ -63,7 +63,7 @@ const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  '5abaf54634695c64f2a2b2de59d6576d4d38203d15a68fa96d391e8e47e8d4fe';
+  '77411819a80af19aa59a0a1c11c97201de0e889edc9978dade23e3d7b2afc29d';
 
 // Apply-mode cases launch many short-lived git/gcloud/npx shell stubs. They
 // finish in ~1s focused but can exceed Vitest's 5s default when the full
@@ -480,6 +480,7 @@ function applyRunStubbed(
   const orderLogFile = join(stubDir, 'call-order.log');
   const gitLogFile = join(stubDir, 'git-calls.log');
   const schedulerStateDir = join(stubDir, 'scheduler-state');
+  const schedulerConfigDir = join(stubDir, 'scheduler-config');
   const artifactDir = join(stubDir, 'artifacts');
   const admissionArtifactPath = join(artifactDir, `isolated-rig-admission-${name}.json`);
   const provisionStatePath = join(artifactDir, `isolated-rig-provision-${name}.json`);
@@ -571,9 +572,29 @@ exec "${REAL_GIT}" "$@"
 
   writeFileSync(
     join(stubDir, 'gcloud'),
-    `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> "${logFile}"
+	    `#!/usr/bin/env bash
+	set -euo pipefail
+	write_scheduler_config() {
+	  local job_name="$1"
+	  shift
+	  local schedule='' time_zone='' attempt_deadline='' min_backoff='' max_backoff='' max_doublings=''
+	  local arg
+	  for arg in "$@"; do
+	    case "$arg" in
+	      --schedule=*) schedule="\${arg#--schedule=}" ;;
+	      --time-zone=*) time_zone="\${arg#--time-zone=}" ;;
+	      --attempt-deadline=*) attempt_deadline="\${arg#--attempt-deadline=}" ;;
+	      --min-backoff=*) min_backoff="\${arg#--min-backoff=}" ;;
+	      --max-backoff=*) max_backoff="\${arg#--max-backoff=}" ;;
+	      --max-doublings=*) max_doublings="\${arg#--max-doublings=}" ;;
+	    esac
+	  done
+	  mkdir -p '${schedulerConfigDir}'
+	  printf '{"schedule":"%s","timeZone":"%s","attemptDeadline":"%s","retryConfig":{"minBackoffDuration":"%s","maxBackoffDuration":"%s","maxDoublings":%s}}\n' \
+	    "$schedule" "$time_zone" "$attempt_deadline" "$min_backoff" "$max_backoff" "$max_doublings" \
+	    > '${schedulerConfigDir}/'"$job_name"
+	}
+	printf '%s\\n' "$*" >> "${logFile}"
 printf 'gcloud %s\\n' "$*" >> "${orderLogFile}"
 if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
   if [[ "$*" == *"status.latestReadyRevisionName"* ]]; then
@@ -591,11 +612,15 @@ if [[ "$1" == "artifacts" && "$2" == "docker" && "$3" == "images" && "$4" == "de
   echo 'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${options.sourceImageDigest ?? STUB_IMAGE_DIGEST}'
   exit 0
 fi
-if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
+	if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
   echo '${STUB_CRON_SECRET}'
-  exit 0
-fi
-if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "pause" ]]; then
+	  exit 0
+	fi
+	if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "create" ]]; then
+	  write_scheduler_config "$4" "$@"
+	  exit 0
+	fi
+	if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "pause" ]]; then
   mkdir -p '${schedulerStateDir}'
   printf 'PAUSED' > '${schedulerStateDir}/'$4
   exit 0
@@ -607,9 +632,10 @@ if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "update" ]]; then
   printf '%s' "$update_count" > '${updateCountFile}'
   if [[ "$update_count" == '${options.schedulerUpdateFailsAt ?? 0}' ]]; then
     echo 'injected Scheduler update failure rc=41' >&2
-    exit 41
-  fi
-  exit 0
+	    exit 41
+	  fi
+	  write_scheduler_config "$4" "$@"
+	  exit 0
 fi
 if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "resume" ]]; then
   mkdir -p '${schedulerStateDir}'
@@ -624,8 +650,12 @@ if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "resume" ]]; then
   printf 'ENABLED' > '${schedulerStateDir}/'$4
   exit 0
 fi
-if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "describe" ]]; then
-  scheduler_state="$(cat '${schedulerStateDir}/'$4)"
+	if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "describe" ]]; then
+	  if [[ "$*" == *"--format=json(schedule,timeZone,attemptDeadline,retryConfig)"* ]]; then
+	    cat '${schedulerConfigDir}/'$4
+	    exit 0
+	  fi
+	  scheduler_state="$(cat '${schedulerStateDir}/'$4)"
   if [[ "$scheduler_state" == 'ENABLED' ]]; then
     enabled_describe_count=0
     if [[ -f '${enabledDescribeCountFile}' ]]; then enabled_describe_count="$(cat '${enabledDescribeCountFile}')"; fi
@@ -1156,6 +1186,14 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
     ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true'],
     ['recover-broadcasts', '/jobs/recover-broadcasts'],
   ] as const;
+  const bindingTopology = [
+    ['batch-anchors', '*/30 * * * *', 'Etc/UTC', '120s'],
+    ['check-confirmations', '*/30 * * * *', 'Etc/UTC', '300s'],
+    ['populate-confirmation-proofs', '*/15 * * * *', 'Etc/UTC', '300s'],
+    ['org-queue-scheduler', '0 * * * *', 'Etc/UTC', '600s'],
+    ['batch-anchors-forced-flush', '0 3 * * *', 'America/New_York', '600s'],
+    ['recover-broadcasts', '*/15 * * * *', 'Etc/UTC', '120s'],
+  ] as const;
 
   it('freezes the exact six-job topology and uses only service-derived job identities', () => {
     expect(paused.code, paused.out).toBe(0);
@@ -1194,6 +1232,51 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
       activation_mode: 'PAUSED',
       state: 'paused_after_clean_mirror',
     });
+  });
+
+  it('carries the binding timezone, deadline, and retry topology through create/update and admission evidence', () => {
+    expect(paused.code, paused.out).toBe(0);
+    const admissionLine = paused.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    const admission = JSON.parse(admissionLine!.slice('ADMISSION_JSON='.length));
+    for (const [suffix, schedule, timeZone, attemptDeadline] of bindingTopology) {
+      const jobName = `arkova-worker-w3c-rig-b1-paused-staging-${suffix}`;
+      const create = paused.gcloudCalls.find((call) => call.startsWith(`scheduler jobs create http ${jobName} `));
+      const update = paused.gcloudCalls.find((call) => call.startsWith(`scheduler jobs update http ${jobName} `));
+      for (const call of [create, update]) {
+        expect(call).toContain(`--time-zone=${timeZone}`);
+        expect(call).toContain(`--attempt-deadline=${attemptDeadline}`);
+        expect(call).toContain('--min-backoff=5s');
+        expect(call).toContain('--max-backoff=3600s');
+        expect(call).toContain('--max-doublings=5');
+      }
+      expect(update).toContain(`--schedule=${schedule}`);
+      expect(admission.scheduler.jobs).toContainEqual({
+        name: jobName,
+        path: exactTopology.find(([candidate]) => candidate === suffix)![1],
+        schedule,
+        time_zone: timeZone,
+        attempt_deadline: attemptDeadline,
+        retry: { min_backoff: '5s', max_backoff: '3600s', max_doublings: 5 },
+      });
+    }
+  });
+
+  it('re-observes binding config and lets acceleration change cadence only', () => {
+    const configDescribes = paused.gcloudCalls.filter((call) =>
+      call.startsWith('scheduler jobs describe ') &&
+      call.includes('--format=json(schedule,timeZone,attemptDeadline,retryConfig)'),
+    );
+    expect(configDescribes).toHaveLength(6);
+    for (const [suffix, , timeZone, attemptDeadline] of bindingTopology) {
+      const jobName = `arkova-worker-w3c-rig-b1-accelerated-staging-${suffix}`;
+      const update = accelerated.gcloudCalls.find((call) => call.startsWith(`scheduler jobs update http ${jobName} `));
+      expect(update).toContain('--schedule=*/5 * * * *');
+      expect(update).toContain(`--time-zone=${timeZone}`);
+      expect(update).toContain(`--attempt-deadline=${attemptDeadline}`);
+      expect(update).toContain('--min-backoff=5s');
+      expect(update).toContain('--max-backoff=3600s');
+      expect(update).toContain('--max-doublings=5');
+    }
   });
 
   it('uses explicit per-rig secret and runtime/OIDC identities instead of shared defaults', () => {
