@@ -1,4 +1,5 @@
 #!/usr/bin/env -S npx tsx
+/// <reference lib="es2022" />
 /** Thin CLI adapter; the trust root and private brand live in Lane 3. */
 
 import {
