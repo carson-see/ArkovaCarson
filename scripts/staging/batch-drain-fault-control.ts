@@ -337,6 +337,29 @@ function validateProviderLookups(
   }
 }
 
+function assertProviderRecoveryChronology(
+  active: FaultObservation,
+  cleared: FaultObservation,
+  supportingFoundLookups: JournalChainLookupObservation[],
+): void {
+  const activeHeldObservedAt = time(active.observedAt, 'fault-active HELD observation');
+  const resolvedAt = time(cleared.journal!.resolvedAt!, 'fault-cleared provider resolution');
+  const clearedJournalObservedAt = time(cleared.journal!.observedAt, 'fault-cleared journal observation');
+  const clearedObservedAt = time(cleared.observedAt, 'fault-cleared observation');
+  if (resolvedAt < activeHeldObservedAt) {
+    throw new Error('Provider recovery chronology resolves before the active HELD observation.');
+  }
+  if (supportingFoundLookups.some((lookup) => {
+    const foundAt = time(lookup.observedAt, 'fault-cleared affirmative provider lookup');
+    return foundAt < activeHeldObservedAt || foundAt > resolvedAt;
+  })) {
+    throw new Error('Provider recovery chronology requires every affirmative lookup after the active HELD observation and before resolution.');
+  }
+  if (resolvedAt > clearedJournalObservedAt || clearedJournalObservedAt > clearedObservedAt) {
+    throw new Error('Provider recovery chronology must place resolution before the cleared journal and outer observations.');
+  }
+}
+
 function isReorgTerminalStatus(status: TxidJournalSnapshot['recoveryStatus']): status is 'ADOPTED' | 'PERSISTED' {
   return status === 'ADOPTED' || status === 'PERSISTED';
 }
@@ -428,6 +451,8 @@ function assertProviderCase(input: FaultCaseInput, active: FaultObservation, cle
     || [...clearedCohort.values()].some((row) => row.status !== 'SUBMITTED' || row.chainTxId !== input.txId)
   ) throw new Error('Provider recovery must continue the same journal row and exact-tx ADOPT without rebroadcast, refund, or false SECURED.');
   validateProviderLookups(input, cleared, 'fault-cleared');
+  const supportingFoundLookups = cleared.provider!.lookups.filter((lookup) => lookup.outcome === 'found');
+  assertProviderRecoveryChronology(active, cleared, supportingFoundLookups);
   return {
     verdict: 'pass', evidenceMode: 'offline-replay', runId: input.runId, scenario: input.scenario,
     resolution: 'PROVIDER_HELD_THEN_ADOPTED', exactHeadSha: input.runtime.headSha,

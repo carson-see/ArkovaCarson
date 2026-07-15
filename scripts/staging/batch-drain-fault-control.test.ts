@@ -39,6 +39,14 @@ function journal(status: TxidJournalSnapshot['recoveryStatus']): TxidJournalSnap
   };
 }
 
+function providerRecoveredJournal(): TxidJournalSnapshot {
+  return {
+    ...journal('ADOPTED'),
+    resolvedAt: '2026-07-15T13:00:07.250Z',
+    observedAt: '2026-07-15T13:00:07.500Z',
+  };
+}
+
 function input(scenario: FaultScenario): FaultCaseInput {
   return {
     schemaVersion: 1,
@@ -145,7 +153,7 @@ function recovered(scenario: FaultScenario): FaultObservation {
       evaluatedBeforeClaim: true,
     };
   } else if (scenario === 'provider-outage') {
-    value.journal = journal('ADOPTED');
+    value.journal = providerRecoveredJournal();
     value.anchors = anchors('SUBMITTED', TX_ID);
     value.networkTxIds = [TX_ID];
     value.provider = {
@@ -305,6 +313,22 @@ describe('orchestrateFaultCase — SCRUM-2693 fault contracts', () => {
       input('provider-outage'),
       port('provider-outage', { cleared: foreignClearedLookup }).port,
     )).rejects.toThrow(/lookup.*exact.*tx|lookup.*declared.*tx|foreign.*lookup/i);
+  });
+
+  it('causally orders the HELD observation, exact-tx recovery lookup, resolution, and cleared observations', async () => {
+    const resolvedBeforeHeldObservation = recovered('provider-outage');
+    resolvedBeforeHeldObservation.journal!.resolvedAt = '2026-07-15T13:00:05.999Z';
+    await expect(orchestrateFaultCase(
+      input('provider-outage'),
+      port('provider-outage', { cleared: resolvedBeforeHeldObservation }).port,
+    )).rejects.toThrow(/provider recovery chronology|HELD observation|resolution/i);
+
+    const resolvedBeforeAffirmativeLookup = recovered('provider-outage');
+    resolvedBeforeAffirmativeLookup.journal!.resolvedAt = '2026-07-15T13:00:06.500Z';
+    await expect(orchestrateFaultCase(
+      input('provider-outage'),
+      port('provider-outage', { cleared: resolvedBeforeAffirmativeLookup }).port,
+    )).rejects.toThrow(/provider recovery chronology|affirmative lookup|resolution/i);
   });
 
   it('reorg requires a pinned block conflict, stale proof, audit event, and SECURED to SUBMITTED retraction', async () => {
