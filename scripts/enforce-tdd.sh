@@ -38,7 +38,9 @@ EXEMPT_PATTERNS="\.css$\|\.json$\|copy\.ts$\|routes\.ts$\|database\.types\.ts$\|
 # offline evaluation data, not executable production behavior. Keep this as an
 # exact allowlist so sibling AI/eval source remains subject to TDD enforcement.
 is_s33_frozen_offline_corpus() {
-  case "$1" in
+  local file_path="$1"
+
+  case "$file_path" in
     services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts|\
     services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts|\
     services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts)
