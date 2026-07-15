@@ -596,10 +596,27 @@ function deriveErrorWindows(
   runner: S33LoadRunnerOutput,
 ): Array<S33ErrorWindow & { rate: number }> {
   const windowMs = 5 * 60_000;
+  const plannedWindowCount = Math.ceil(plan.durationMinutes / 5);
+  let latestCoveredOffsetMs = 0;
+  for (const arrival of runner.arrivals) {
+    latestCoveredOffsetMs = Math.max(
+      latestCoveredOffsetMs,
+      arrival.scheduledOffsetMs,
+    );
+  }
+  for (const pass of runner.observationPasses) {
+    latestCoveredOffsetMs = Math.max(
+      latestCoveredOffsetMs,
+      pass.scheduledOffsetMs,
+    );
+  }
   const count =
     runner.termination.state === "HARD_STOPPED"
-      ? Math.max(1, runner.observationPasses.length)
-      : Math.ceil(plan.durationMinutes / 5);
+      ? Math.min(
+          plannedWindowCount,
+          Math.floor(latestCoveredOffsetMs / windowMs) + 1,
+        )
+      : plannedWindowCount;
   const start = Date.parse(plan.plannedStartAt);
   const windows = Array.from({ length: count }, (_, index) => ({
     windowId: `window-${String(index + 1).padStart(4, "0")}`,
@@ -610,11 +627,13 @@ function deriveErrorWindows(
     rate: 0,
   }));
   for (const arrival of runner.arrivals) {
-    const index = Math.min(
-      windows.length - 1,
-      Math.floor(arrival.scheduledOffsetMs / windowMs),
-    );
-    const window = windows[index]!;
+    const index = Math.floor(arrival.scheduledOffsetMs / windowMs);
+    const window = windows[index];
+    if (!window) {
+      throw new Error(
+        "Runner arrival is outside the derived error-window coverage",
+      );
+    }
     window.totalRequests++;
     if (arrival.status !== arrival.expectedStatus) {
       if (arrival.injectedFailure) window.injectedErrors++;
