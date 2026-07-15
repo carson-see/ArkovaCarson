@@ -6,26 +6,61 @@
  * DEFERRED_POST_WAVE3. It does not collect or write evidence itself.
  */
 
+import { z } from "zod";
+
 import {
   S33_429_BUCKETS,
+  buildS33429AttributionEvidence,
   type S33429AttributionEvidence,
+  type S33429AttributionSourcePacket,
   type S33429Bucket,
   type S33429BucketEvidence,
 } from "./s33-429-attribution.js";
 import {
+  buildS33LoadPlan,
   canonicalS33Json,
   digestS33LoadPlan,
   digestS33Value,
   iterateOpenArrivals,
   type S33LoadPlan,
+  type S33LoadPlanInput,
+  type S33LoadProfileId,
   type S33PlannedArrival,
 } from "./s33-load-plan.js";
 import {
   getS33HardStopReasons,
+  parseS33LoadRunnerOutput,
   type S33LoadRunnerOutput,
 } from "./s33-load-runner.js";
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
+
+const targetedLimiterLaneSchema = z
+  .object({
+    observed429s: z.number().int().nonnegative().safe(),
+    headlineEligible: z.literal(false),
+  })
+  .strict();
+
+const targetedLimiterTelemetrySchema = z
+  .object({
+    perOrgRateLimit: targetedLimiterLaneSchema,
+    x402PayerRateLimit: targetedLimiterLaneSchema,
+  })
+  .strict();
+
+const LOAD_EVIDENCE_INPUT_KEYS = Object.freeze([
+  "plan",
+  "planSourcePacket",
+  "planDigestSha256",
+  "runner",
+  "runnerArtifactSha256",
+  "attribution",
+  "attributionSourcePacket",
+  "attributionArtifactSha256",
+  "targetedLimiterTelemetry",
+  "rawArtifactDigests",
+]);
 
 export interface S33ErrorWindow {
   windowId: string;
@@ -35,17 +70,18 @@ export interface S33ErrorWindow {
   nonInjectedErrors: number;
 }
 
-export interface S33TargetedLimiterTelemetry {
-  perOrgRateLimit: { observed429s: number; headlineEligible: false };
-  x402PayerRateLimit: { observed429s: number; headlineEligible: false };
-}
+export type S33TargetedLimiterTelemetry = z.infer<
+  typeof targetedLimiterTelemetrySchema
+>;
 
 export interface S33LoadEvidenceInput {
   plan: S33LoadPlan;
+  planSourcePacket: S33LoadPlanInput;
   planDigestSha256: string;
   runner: S33LoadRunnerOutput;
   runnerArtifactSha256: string;
   attribution: S33429AttributionEvidence;
+  attributionSourcePacket: S33429AttributionSourcePacket;
   attributionArtifactSha256: string;
   targetedLimiterTelemetry: S33TargetedLimiterTelemetry;
   rawArtifactDigests: string[];
@@ -54,9 +90,12 @@ export interface S33LoadEvidenceInput {
 export interface S33LoadEvidence {
   schemaVersion: "arkova.s33.l2.load-evidence/v1";
   runId: string;
+  profileId: S33LoadProfileId;
   evidenceMode: "OFFLINE_FIXTURE" | "LIVE_POST_WAVE3";
   exactHeadSha: string;
   exactTreeSha: string;
+  windowStartedAt: string;
+  windowEndedAt: string;
   planDigestSha256: string;
   runnerSchemaVersion: S33LoadRunnerOutput["schemaVersion"];
   runnerArtifactSha256: string;
@@ -65,7 +104,12 @@ export interface S33LoadEvidence {
   headline429Buckets: Readonly<
     Record<S33429Bucket, Readonly<S33429BucketEvidence>>
   >;
-  targetedLimiterTelemetry: S33TargetedLimiterTelemetry;
+  targetedLimiterTelemetry: Readonly<{
+    perOrgRateLimit: Readonly<S33TargetedLimiterTelemetry["perOrgRateLimit"]>;
+    x402PayerRateLimit: Readonly<
+      S33TargetedLimiterTelemetry["x402PayerRateLimit"]
+    >;
+  }>;
   errorWindows: readonly S33ErrorWindow[];
   stopReasons: readonly string[];
   pauseReasons: readonly string[];
@@ -80,11 +124,6 @@ export interface S33LoadEvidence {
   evidenceDigestSha256: string;
 }
 
-function assertFiniteCount(value: number, label: string): void {
-  if (!Number.isSafeInteger(value) || value < 0)
-    throw new Error(`${label} must be a non-negative safe integer`);
-}
-
 function assertRawArtifactDigests(digests: readonly string[]): void {
   if (digests.length === 0)
     throw new Error("At least one raw artifact digest is required");
@@ -94,9 +133,83 @@ function assertRawArtifactDigests(digests: readonly string[]): void {
     throw new Error("Raw artifact digests must be unique");
 }
 
-function assertArtifactBindings(input: S33LoadEvidenceInput): void {
-  const expectedRunnerDigest = digestS33Value(input.runner);
-  const expectedAttributionDigest = digestS33Value(input.attribution);
+function assertStrictLoadEvidenceInput(input: unknown): void {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new TypeError("Load-evidence source packet must be an object");
+  }
+  const prototype = Object.getPrototypeOf(input) as unknown;
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError("Load-evidence source packet must be a plain object");
+  }
+  const actualKeys = Object.keys(input);
+  const unknownKeys = actualKeys.filter(
+    (key) => !LOAD_EVIDENCE_INPUT_KEYS.includes(key),
+  );
+  const missingKeys = LOAD_EVIDENCE_INPUT_KEYS.filter(
+    (key) => !actualKeys.includes(key),
+  );
+  if (unknownKeys.length > 0 || missingKeys.length > 0) {
+    throw new TypeError(
+      `Load-evidence source packet keys are invalid; unknown=${unknownKeys.join(",") || "none"}; missing=${missingKeys.join(",") || "none"}`,
+    );
+  }
+}
+
+function rebuildLoadPlanArtifact(input: S33LoadEvidenceInput): S33LoadPlan {
+  const rebuilt = buildS33LoadPlan(input.planSourcePacket);
+  if (canonicalS33Json(input.plan) !== canonicalS33Json(rebuilt)) {
+    throw new TypeError(
+      "Serialized load plan does not match its strict source packet",
+    );
+  }
+  const expectedDigest = digestS33LoadPlan(rebuilt);
+  if (input.planDigestSha256 !== expectedDigest) {
+    throw new Error(`Load plan digest mismatch: expected ${expectedDigest}`);
+  }
+  return rebuilt;
+}
+
+function parseRunnerArtifact(
+  input: S33LoadEvidenceInput,
+): S33LoadRunnerOutput {
+  const parsed = parseS33LoadRunnerOutput(input.runner);
+  if (canonicalS33Json(input.runner) !== canonicalS33Json(parsed)) {
+    throw new TypeError(
+      "Serialized load runner does not match its strict parsed artifact",
+    );
+  }
+  return parsed;
+}
+
+function rebuildAttributionArtifact(
+  input: S33LoadEvidenceInput,
+): S33429AttributionEvidence {
+  const rebuilt = buildS33429AttributionEvidence(
+    input.attributionSourcePacket,
+  );
+  if (
+    canonicalS33Json(input.attribution) !== canonicalS33Json(rebuilt)
+  ) {
+    throw new TypeError(
+      "Validated attribution artifact bytes do not match the raw 429 source packet",
+    );
+  }
+  const expectedDigest = digestS33Value(rebuilt);
+  if (input.attributionArtifactSha256 !== expectedDigest) {
+    throw new Error(
+      `429 attribution artifact digest mismatch: expected ${expectedDigest}`,
+    );
+  }
+  return rebuilt;
+}
+
+function assertArtifactBindings(
+  input: S33LoadEvidenceInput,
+  runner: S33LoadRunnerOutput,
+  attribution: S33429AttributionEvidence,
+): void {
+  const expectedRunnerDigest = digestS33Value(runner);
+  const expectedAttributionDigest = digestS33Value(attribution);
   if (input.runnerArtifactSha256 !== expectedRunnerDigest) {
     throw new Error(
       `Runner artifact digest mismatch: expected ${expectedRunnerDigest}`,
@@ -111,7 +224,7 @@ function assertArtifactBindings(input: S33LoadEvidenceInput): void {
     input.runnerArtifactSha256,
     input.attributionArtifactSha256,
   ]);
-  for (const pass of input.runner.observationPasses) {
+  for (const pass of runner.observationPasses) {
     required.add(pass.opsSlo.artifactSha256);
     required.add(pass.sentry.artifactSha256);
     required.add(pass.connector.artifactSha256);
@@ -134,6 +247,14 @@ function assertExactFiveBuckets(attribution: S33429AttributionEvidence): void {
       `Headline 429 evidence must contain exactly five ordered buckets: ${S33_429_BUCKETS.join(", ")}`,
     );
   }
+  for (const bucket of S33_429_BUCKETS) {
+    const evidence = attribution.buckets[bucket];
+    if (evidence.count !== evidence.events.length) {
+      throw new Error(
+        `Headline 429 bucket ${bucket} count does not match its events`,
+      );
+    }
+  }
   if (
     attribution.reportedNotMeasured.perOrgRateLimit.status !==
       "mounted_excluded" ||
@@ -146,19 +267,87 @@ function assertExactFiveBuckets(attribution: S33429AttributionEvidence): void {
   }
 }
 
-function assertRunnerCoverage(
+type RunnerPass = S33LoadRunnerOutput["observationPasses"][number];
+type HardStoppedTermination = Extract<
+  S33LoadRunnerOutput["termination"],
+  { state: "HARD_STOPPED" }
+>;
+
+interface RunnerPassInspection {
+  fullExpectedPasses: number;
+  firstHardStopIndex: number | null;
+  firstHardStopReasons: readonly string[];
+}
+
+function assertRunnerPlanIdentity(
   plan: S33LoadPlan,
   runner: S33LoadRunnerOutput,
 ): void {
-  if (runner.runId !== plan.runId)
+  if (runner.runId !== plan.runId) {
     throw new Error("Runner run ID does not match the load plan");
-  if (runner.evidenceMode !== plan.evidenceMode)
+  }
+  if (runner.evidenceMode !== plan.evidenceMode) {
     throw new Error("Runner evidence mode does not match the load plan");
+  }
   if (runner.executionModel !== "open-arrival-absolute-schedule") {
     throw new Error(
       "Runner did not use the required open-arrival absolute schedule",
     );
   }
+}
+
+function assertObservationPass(
+  plan: S33LoadPlan,
+  pass: RunnerPass,
+  index: number,
+  seen: Set<string>,
+): readonly string[] {
+  const expectedPassId = `pass-${String(index).padStart(4, "0")}`;
+  const expectedOffset = index * plan.observation.cadenceMinutes * 60_000;
+  if (
+    pass.passId !== expectedPassId ||
+    pass.scheduledOffsetMs !== expectedOffset
+  ) {
+    throw new Error(`Observation pass ${index} does not bind to the plan cadence`);
+  }
+  if (seen.has(pass.passId)) {
+    throw new Error(`Duplicate observation pass ${pass.passId}`);
+  }
+  seen.add(pass.passId);
+  const observations = [
+    pass.opsSlo,
+    pass.sentry,
+    pass.connector,
+    pass.heartbeat,
+  ];
+  if (observations.some((observation) => observation.passId !== pass.passId)) {
+    throw new Error(`Observation identity mismatch for ${pass.passId}`);
+  }
+  if (
+    observations.some(
+      (observation) => !SHA256.test(observation.artifactSha256),
+    )
+  ) {
+    throw new Error(
+      `Observation pass ${pass.passId} lacks a pinned raw artifact`,
+    );
+  }
+  if (
+    observations.some(
+      (observation) => !Number.isFinite(Date.parse(observation.observedAt)),
+    )
+  ) {
+    throw new TypeError(
+      `Observation pass ${pass.passId} has an invalid timestamp`,
+    );
+  }
+  return getS33HardStopReasons(plan, pass);
+}
+
+function inspectObservationCoverage(
+  plan: S33LoadPlan,
+  runner: S33LoadRunnerOutput,
+): RunnerPassInspection {
   const fullExpectedPasses = Math.ceil(
     plan.durationMinutes / plan.observation.cadenceMinutes,
   );
@@ -174,124 +363,97 @@ function assertRunnerCoverage(
   let firstHardStopIndex: number | null = null;
   let firstHardStopReasons: readonly string[] = [];
   for (const [index, pass] of runner.observationPasses.entries()) {
-    const expectedPassId = `pass-${String(index).padStart(4, "0")}`;
-    const expectedOffset = index * plan.observation.cadenceMinutes * 60_000;
-    if (
-      pass.passId !== expectedPassId ||
-      pass.scheduledOffsetMs !== expectedOffset
-    ) {
-      throw new Error(
-        `Observation pass ${index} does not bind to the plan cadence`,
-      );
-    }
-    if (seen.has(pass.passId))
-      throw new Error(`Duplicate observation pass ${pass.passId}`);
-    seen.add(pass.passId);
-    if (
-      pass.opsSlo.passId !== pass.passId ||
-      pass.sentry.passId !== pass.passId ||
-      pass.connector.passId !== pass.passId ||
-      pass.heartbeat.passId !== pass.passId
-    ) {
-      throw new Error(`Observation identity mismatch for ${pass.passId}`);
-    }
-    if (
-      ![
-        pass.opsSlo.artifactSha256,
-        pass.sentry.artifactSha256,
-        pass.connector.artifactSha256,
-        pass.heartbeat.artifactSha256,
-      ].every((digest) => SHA256.test(digest))
-    ) {
-      throw new Error(
-        `Observation pass ${pass.passId} lacks a pinned raw artifact`,
-      );
-    }
-    if (
-      [pass.opsSlo, pass.sentry, pass.connector, pass.heartbeat].some(
-        (observation) => !Number.isFinite(Date.parse(observation.observedAt)),
-      )
-    ) {
-      throw new Error(
-        `Observation pass ${pass.passId} has an invalid timestamp`,
-      );
-    }
-    const hardStopReasons = getS33HardStopReasons(plan, pass);
-    if (hardStopReasons.length > 0 && firstHardStopIndex === null) {
+    const reasons = assertObservationPass(plan, pass, index, seen);
+    if (reasons.length > 0 && firstHardStopIndex === null) {
       firstHardStopIndex = index;
-      firstHardStopReasons = hardStopReasons;
+      firstHardStopReasons = reasons;
     }
   }
+  return { fullExpectedPasses, firstHardStopIndex, firstHardStopReasons };
+}
 
-  if (runner.termination.state === "COMPLETED") {
-    if (runner.observationPasses.length !== fullExpectedPasses) {
-      throw new Error(
-        `Missing per-pass SLO/Sentry/heartbeat observation: expected ${fullExpectedPasses}, received ${runner.observationPasses.length}`,
-      );
-    }
-    if (firstHardStopIndex !== null) {
-      throw new Error(
-        "Runner claims completion despite a predeclared hard-stop observation",
-      );
-    }
-  } else if (runner.termination.state === "HARD_STOPPED") {
-    if (runner.termination.trigger.kind === "OBSERVATION") {
-      const lastIndex = runner.observationPasses.length - 1;
-      const stopPass = runner.observationPasses[lastIndex]!;
-      if (firstHardStopIndex === null || firstHardStopIndex !== lastIndex) {
-        throw new Error(
-          "Runner observation hard-stop is not the exact first-stop pass prefix",
-        );
-      }
-      if (
-        runner.termination.trigger.passId !== stopPass.passId ||
-        runner.termination.trigger.scheduledOffsetMs !==
-          stopPass.scheduledOffsetMs ||
-        canonicalS33Json(runner.termination.reasons) !==
-          canonicalS33Json(firstHardStopReasons)
-      ) {
-        throw new Error(
-          "Runner hard-stop metadata does not bind to the stop pass",
-        );
-      }
-    } else if (
-      canonicalS33Json(runner.termination.reasons) !==
+function assertCompletedTermination(
+  runner: S33LoadRunnerOutput,
+  inspection: RunnerPassInspection,
+): void {
+  if (runner.observationPasses.length !== inspection.fullExpectedPasses) {
+    throw new Error(
+      `Missing per-pass SLO/Sentry/heartbeat observation: expected ${inspection.fullExpectedPasses}, received ${runner.observationPasses.length}`,
+    );
+  }
+  if (inspection.firstHardStopIndex !== null) {
+    throw new Error(
+      "Runner claims completion despite a predeclared hard-stop observation",
+    );
+  }
+}
+
+function assertObservationStopBinding(
+  runner: S33LoadRunnerOutput,
+  termination: HardStoppedTermination,
+  inspection: RunnerPassInspection,
+): void {
+  const lastIndex = runner.observationPasses.length - 1;
+  const stopPass = runner.observationPasses[lastIndex]!;
+  if (
+    inspection.firstHardStopIndex === null ||
+    inspection.firstHardStopIndex !== lastIndex
+  ) {
+    throw new Error(
+      "Runner observation hard-stop is not the exact first-stop pass prefix",
+    );
+  }
+  if (
+    termination.trigger.kind !== "OBSERVATION" ||
+    termination.trigger.passId !== stopPass.passId ||
+    termination.trigger.scheduledOffsetMs !== stopPass.scheduledOffsetMs ||
+    canonicalS33Json(termination.reasons) !==
+      canonicalS33Json(inspection.firstHardStopReasons)
+  ) {
+    throw new Error("Runner hard-stop metadata does not bind to the stop pass");
+  }
+}
+
+function assertHardStoppedTermination(
+  runner: S33LoadRunnerOutput,
+  termination: HardStoppedTermination,
+  inspection: RunnerPassInspection,
+): void {
+  if (termination.trigger.kind === "OBSERVATION") {
+    assertObservationStopBinding(runner, termination, inspection);
+    return;
+  }
+  if (termination.trigger.kind === "ANON_IP_429") {
+    if (
+      canonicalS33Json(termination.reasons) !==
       canonicalS33Json(["ANON_IP_429_SIGNAL"])
     ) {
       throw new Error("Runner anonymous-IP stop has invalid reasons");
     }
-  } else {
-    throw new Error("Runner termination state is invalid");
+    return;
   }
+  throw new Error("Runner hard-stop trigger is invalid");
+}
 
-  const fullExpectedArrivals = Array.from(
-    iterateOpenArrivals(plan, runner.profileId),
-  );
-  const lastDispatchedSequence = runner.termination.lastDispatchedSequence;
-  if (
-    lastDispatchedSequence !== null &&
-    (!Number.isSafeInteger(lastDispatchedSequence) ||
-      lastDispatchedSequence < 0 ||
-      lastDispatchedSequence >= fullExpectedArrivals.length)
-  ) {
-    throw new Error("Runner last-dispatched sequence is outside the load plan");
+function assertRunnerTermination(
+  runner: S33LoadRunnerOutput,
+  inspection: RunnerPassInspection,
+): void {
+  if (runner.termination.state === "COMPLETED") {
+    assertCompletedTermination(runner, inspection);
+    return;
   }
-  const expectedArrivals = fullExpectedArrivals.slice(
-    0,
-    lastDispatchedSequence === null ? 0 : lastDispatchedSequence + 1,
-  );
-  if (
-    runner.termination.state === "COMPLETED" &&
-    expectedArrivals.length !== fullExpectedArrivals.length
-  ) {
-    throw new Error("Completed runner does not bind the full arrival schedule");
+  if (runner.termination.state === "HARD_STOPPED") {
+    assertHardStoppedTermination(runner, runner.termination, inspection);
+    return;
   }
-  if (runner.arrivals.length !== expectedArrivals.length) {
-    throw new Error(
-      `Runner arrival coverage mismatch: expected ${expectedArrivals.length}, received ${runner.arrivals.length}`,
-    );
-  }
-  const plannedFields = (arrival: S33PlannedArrival): S33PlannedArrival => ({
+  throw new Error("Runner termination state is invalid");
+}
+
+function plannedArrivalFields(
+  arrival: S33PlannedArrival,
+): S33PlannedArrival {
+  return {
     sequence: arrival.sequence,
     scheduledOffsetMs: arrival.scheduledOffsetMs,
     profileId: arrival.profileId,
@@ -304,23 +466,61 @@ function assertRunnerCoverage(
     expectedStatus: arrival.expectedStatus,
     expectedClass: arrival.expectedClass,
     jurisdictionFixtureId: arrival.jurisdictionFixtureId,
-  });
-  for (let index = 0; index < expectedArrivals.length; index++) {
-    const expected = expectedArrivals[index]!;
+  };
+}
+
+function expectedArrivalPrefix(
+  plan: S33LoadPlan,
+  runner: S33LoadRunnerOutput,
+): S33PlannedArrival[] {
+  const fullSchedule = Array.from(iterateOpenArrivals(plan, runner.profileId));
+  const lastSequence = runner.termination.lastDispatchedSequence;
+  if (
+    lastSequence !== null &&
+    (!Number.isSafeInteger(lastSequence) ||
+      lastSequence < 0 ||
+      lastSequence >= fullSchedule.length)
+  ) {
+    throw new Error("Runner last-dispatched sequence is outside the load plan");
+  }
+  const prefix = fullSchedule.slice(0, lastSequence === null ? 0 : lastSequence + 1);
+  if (
+    runner.termination.state === "COMPLETED" &&
+    prefix.length !== fullSchedule.length
+  ) {
+    throw new Error("Completed runner does not bind the full arrival schedule");
+  }
+  return prefix;
+}
+
+function assertArrivalRecords(
+  runner: S33LoadRunnerOutput,
+  expectedArrivals: readonly S33PlannedArrival[],
+): void {
+  if (runner.arrivals.length !== expectedArrivals.length) {
+    throw new Error(
+      `Runner arrival coverage mismatch: expected ${expectedArrivals.length}, received ${runner.arrivals.length}`,
+    );
+  }
+  for (const [index, expected] of expectedArrivals.entries()) {
     const actual = runner.arrivals[index]!;
     if (
-      canonicalS33Json(plannedFields(actual)) !== canonicalS33Json(expected)
+      canonicalS33Json(plannedArrivalFields(actual)) !==
+      canonicalS33Json(expected)
     ) {
       throw new Error(
         `Runner arrival ${index} does not bind to the exact seeded plan`,
       );
     }
     if (!Number.isFinite(Date.parse(actual.observedAt))) {
-      throw new Error(
+      throw new TypeError(
         `Runner arrival ${index} has an invalid observation timestamp`,
       );
     }
   }
+}
+
+function assertAnonymousStopBinding(runner: S33LoadRunnerOutput): void {
   const anonSignals = runner.arrivals.filter(
     (arrival) => arrival.status === 429 && arrival.xRateLimitLimit === 100,
   );
@@ -328,33 +528,48 @@ function assertRunnerCoverage(
     throw new Error("Runner ignored an anonymous-IP 429 hard-stop signal");
   }
   if (
-    runner.termination.state === "HARD_STOPPED" &&
-    runner.termination.trigger.kind === "ANON_IP_429"
+    runner.termination.state !== "HARD_STOPPED" ||
+    runner.termination.trigger.kind !== "ANON_IP_429"
   ) {
-    const trigger = runner.termination.trigger;
-    const match = anonSignals.find(
-      (arrival) =>
-        arrival.sequence === trigger.sequence &&
-        arrival.correlationId === trigger.correlationId,
+    return;
+  }
+  const trigger = runner.termination.trigger;
+  const matchesTrigger = anonSignals.some(
+    (arrival) =>
+      arrival.sequence === trigger.sequence &&
+      arrival.correlationId === trigger.correlationId,
+  );
+  if (!matchesTrigger) {
+    throw new Error(
+      "Runner anonymous-IP stop does not bind to a dispatched 429 result",
     );
-    if (!match) {
-      throw new Error(
-        "Runner anonymous-IP stop does not bind to a dispatched 429 result",
-      );
-    }
   }
 }
 
-function assertAnonAttributionBinding(input: S33LoadEvidenceInput): void {
-  const runnerCorrelationIds = input.runner.arrivals
+function assertRunnerCoverage(
+  plan: S33LoadPlan,
+  runner: S33LoadRunnerOutput,
+): void {
+  assertRunnerPlanIdentity(plan, runner);
+  const inspection = inspectObservationCoverage(plan, runner);
+  assertRunnerTermination(runner, inspection);
+  assertArrivalRecords(runner, expectedArrivalPrefix(plan, runner));
+  assertAnonymousStopBinding(runner);
+}
+
+function assertAnonAttributionBinding(
+  runner: S33LoadRunnerOutput,
+  attribution: S33429AttributionEvidence,
+): void {
+  const runnerCorrelationIds = runner.arrivals
     .filter(
       (arrival) => arrival.status === 429 && arrival.xRateLimitLimit === 100,
     )
     .map((arrival) => arrival.correlationId)
-    .sort();
-  const attributedCorrelationIds = input.attribution.buckets["anon-IP"].events
+    .sort((left, right) => left.localeCompare(right));
+  const attributedCorrelationIds = attribution.buckets["anon-IP"].events
     .map((event) => event.correlationId)
-    .sort();
+    .sort((left, right) => left.localeCompare(right));
   if (
     canonicalS33Json(runnerCorrelationIds) !==
     canonicalS33Json(attributedCorrelationIds)
@@ -364,10 +579,10 @@ function assertAnonAttributionBinding(input: S33LoadEvidenceInput): void {
     );
   }
   if (
-    input.runner.termination.state === "HARD_STOPPED" &&
-    input.runner.termination.trigger.kind === "ANON_IP_429" &&
+    runner.termination.state === "HARD_STOPPED" &&
+    runner.termination.trigger.kind === "ANON_IP_429" &&
     !attributedCorrelationIds.includes(
-      input.runner.termination.trigger.correlationId,
+      runner.termination.trigger.correlationId,
     )
   ) {
     throw new Error(
@@ -421,91 +636,91 @@ function hasThreeConsecutiveBreaches(
   for (const window of windows) {
     const at = Date.parse(window.startedAt);
     const adjacent = previousAt === null || at - previousAt === 5 * 60_000;
-    consecutive =
-      adjacent && window.rate > 0.01
-        ? consecutive + 1
-        : window.rate > 0.01
-          ? 1
-          : 0;
+    if (window.rate <= 0.01) consecutive = 0;
+    else if (adjacent) consecutive++;
+    else consecutive = 1;
     if (consecutive >= 3) return true;
     previousAt = at;
   }
   return false;
 }
 
-function assertTargetedTelemetry(telemetry: S33TargetedLimiterTelemetry): void {
-  assertFiniteCount(
-    telemetry.perOrgRateLimit.observed429s,
-    "perOrgRateLimit.observed429s",
-  );
-  assertFiniteCount(
-    telemetry.x402PayerRateLimit.observed429s,
-    "x402PayerRateLimit.observed429s",
-  );
-  if (
-    telemetry.perOrgRateLimit.headlineEligible !== false ||
-    telemetry.x402PayerRateLimit.headlineEligible !== false
-  ) {
-    throw new Error(
-      "Targeted organization/payer limiter telemetry is never headline eligible",
-    );
-  }
+function parseTargetedTelemetry(
+  telemetry: unknown,
+): S33LoadEvidence["targetedLimiterTelemetry"] {
+  const parsed = targetedLimiterTelemetrySchema.parse(telemetry);
+  return Object.freeze({
+    perOrgRateLimit: Object.freeze({ ...parsed.perOrgRateLimit }),
+    x402PayerRateLimit: Object.freeze({ ...parsed.x402PayerRateLimit }),
+  });
+}
+
+function deriveExecutionDisposition(
+  stopReasons: readonly string[],
+  pauseReasons: readonly string[],
+): S33LoadEvidence["executionDisposition"] {
+  if (stopReasons.length > 0) return "STOP";
+  if (pauseReasons.length > 0) return "PAUSE";
+  return "CONTINUE";
 }
 
 export function buildS33LoadEvidence(
   input: S33LoadEvidenceInput,
 ): S33LoadEvidence {
-  const expectedPlanDigest = digestS33LoadPlan(input.plan);
-  if (input.planDigestSha256 !== expectedPlanDigest) {
-    throw new Error(
-      `Load plan digest mismatch: expected ${expectedPlanDigest}`,
-    );
-  }
+  assertStrictLoadEvidenceInput(input);
+  const plan = rebuildLoadPlanArtifact(input);
+  const runner = parseRunnerArtifact(input);
+  const attribution = rebuildAttributionArtifact(input);
   assertRawArtifactDigests(input.rawArtifactDigests);
-  assertExactFiveBuckets(input.attribution);
-  assertRunnerCoverage(input.plan, input.runner);
-  assertAnonAttributionBinding(input);
-  assertTargetedTelemetry(input.targetedLimiterTelemetry);
-  assertArtifactBindings(input);
-  if (input.attribution.run.runId !== input.plan.runId) {
+  assertExactFiveBuckets(attribution);
+  assertRunnerCoverage(plan, runner);
+  assertAnonAttributionBinding(runner, attribution);
+  const targetedLimiterTelemetry = parseTargetedTelemetry(
+    input.targetedLimiterTelemetry,
+  );
+  assertArtifactBindings(input, runner, attribution);
+  if (attribution.run.runId !== plan.runId) {
     throw new Error("429 attribution run ID does not match the load plan");
   }
 
   const stopReasons: string[] = [];
   const pauseReasons: string[] = [];
-  if (input.attribution.buckets["anon-IP"].count > 0)
+  if (attribution.buckets["anon-IP"].count > 0)
     stopReasons.push("SELF_INFLICTED_ANON_IP_429");
 
-  for (const pass of input.runner.observationPasses) {
-    stopReasons.push(...getS33HardStopReasons(input.plan, pass));
+  for (const pass of runner.observationPasses) {
+    stopReasons.push(...getS33HardStopReasons(plan, pass));
   }
 
-  const errorWindows = deriveErrorWindows(input.plan, input.runner);
+  const errorWindows = deriveErrorWindows(plan, runner);
   if (hasThreeConsecutiveBreaches(errorWindows)) {
     pauseReasons.push("NON_INJECTED_ERROR_RATE_GT_1_PERCENT_3X5M");
   }
   const uniqueStops = [...new Set(stopReasons)];
   const uniquePauses = [...new Set(pauseReasons)];
-  const executionDisposition: S33LoadEvidence["executionDisposition"] =
-    uniqueStops.length > 0
-      ? "STOP"
-      : uniquePauses.length > 0
-        ? "PAUSE"
-        : "CONTINUE";
+  const executionDisposition = deriveExecutionDisposition(
+    uniqueStops,
+    uniquePauses,
+  );
 
   const evidenceWithoutDigest = {
     schemaVersion: "arkova.s33.l2.load-evidence/v1" as const,
-    runId: input.plan.runId,
-    evidenceMode: input.plan.evidenceMode,
-    exactHeadSha: input.plan.exactHeadSha,
-    exactTreeSha: input.plan.exactTreeSha,
+    runId: plan.runId,
+    profileId: runner.profileId,
+    evidenceMode: plan.evidenceMode,
+    exactHeadSha: plan.exactHeadSha,
+    exactTreeSha: plan.exactTreeSha,
+    windowStartedAt: plan.plannedStartAt,
+    windowEndedAt: new Date(
+      Date.parse(plan.plannedStartAt) + plan.durationMinutes * 60_000,
+    ).toISOString(),
     planDigestSha256: input.planDigestSha256,
-    runnerSchemaVersion: input.runner.schemaVersion,
+    runnerSchemaVersion: runner.schemaVersion,
     runnerArtifactSha256: input.runnerArtifactSha256,
     attributionArtifactSha256: input.attributionArtifactSha256,
     rawArtifactDigests: Object.freeze([...input.rawArtifactDigests]),
-    headline429Buckets: input.attribution.buckets,
-    targetedLimiterTelemetry: input.targetedLimiterTelemetry,
+    headline429Buckets: attribution.buckets,
+    targetedLimiterTelemetry,
     errorWindows: Object.freeze(
       errorWindows.map((window) =>
         Object.freeze({
@@ -521,12 +736,12 @@ export function buildS33LoadEvidence(
     pauseReasons: Object.freeze(uniquePauses),
     executionDisposition,
     releaseStatus:
-      input.plan.evidenceMode === "OFFLINE_FIXTURE"
+      plan.evidenceMode === "OFFLINE_FIXTURE"
         ? ("DEFERRED_POST_WAVE3" as const)
         : ("AWAITING_CTO_VERDICT" as const),
     claims: Object.freeze({
       measurements:
-        input.plan.evidenceMode === "OFFLINE_FIXTURE"
+        plan.evidenceMode === "OFFLINE_FIXTURE"
           ? ("fixture-only-not-measured" as const)
           : ("measured-from-pinned-live-artifacts" as const),
       headline429s: "five-separate-buckets-never-summed" as const,
