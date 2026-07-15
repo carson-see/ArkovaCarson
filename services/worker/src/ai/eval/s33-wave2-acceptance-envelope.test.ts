@@ -200,8 +200,9 @@ describe('S3.3 Wave-2 authenticated whole-batch acceptance', () => {
     expect(artifact.payload.acceptedEntryOrderSha256).toBe(bindings().acceptedEntryOrderSha256);
   });
 
-  it('fails closed while the production SPKI/fingerprint has not been committed', () => {
-    expect(() => verifyS33Wave2AuthenticatedBatchAcceptance(signed(), bindings())).toThrow(/trust root.*not configured/i);
+  it('has no production authority after the detached-v2 cutover', () => {
+    expect(() => verifyS33Wave2AuthenticatedBatchAcceptance(signed(), bindings()))
+      .toThrow(/legacy-v1 verification is test-only.*detached signing v2/i);
   });
 
   it.each([

@@ -2,6 +2,8 @@ import {
   createHash,
   createPublicKey,
   generateKeyPairSync,
+  sign,
+  type KeyObject,
 } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -10,16 +12,24 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
 import {
   auditS33Wave2Coverage,
+  createS33Wave2CoverageAuditTestHarnessV2,
   parseS33Wave2Top15Registry,
   s33Wave2CoverageReportSha256,
   type S33Wave2Top15Registry,
 } from './s33-wave2-coverage-audit.js';
 import {
-  buildAndSignS33Wave2AcceptanceForTest,
-  type S33Wave2AcceptanceTrustRoot,
   type S33Wave2AcceptedEntryInput,
-  type S33Wave2AuthenticatedBatchAcceptance,
 } from './s33-wave2-acceptance-envelope.js';
+import {
+  S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+  S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+  createS33DetachedSigningTestHarnessV2,
+  emitS33DetachedSigningRequestV2,
+  validateS33DetachedSigningTrustPolicySetV2,
+  validateS33DetachedSigningTrustPolicyV2,
+  type S33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedSigningTestHarnessV2,
+} from './s33-wave3-detached-signing-v2.js';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(testDir, '../../../../..');
@@ -28,6 +38,7 @@ const baselineEvidencePath = resolve(
   repositoryRoot,
   'docs/lane4/evidence/s33-wave2-coverage-baseline.json',
 );
+const WAVE1_BASE_REGISTRY_DIGEST = '412a08227608a58172569a4fcbf3cd1025dc67fc1beeaddd6c163d22c4cb80d6';
 
 interface BaselineEvidence {
   registryRawSha256: string;
@@ -96,28 +107,44 @@ interface AcceptanceOptions {
   coverageRegistryRawSha256?: string;
   coverageRegistryCanonicalSha256?: string;
   acceptedEntries?: S33Wave2AcceptedEntryInput[];
-  privateKeyPkcs8Pem?: string;
-  trustRoot?: S33Wave2AcceptanceTrustRoot;
+  privateKey?: KeyObject;
+  signingHarness?: S33DetachedSigningTestHarnessV2;
 }
 
-let testPrivateKeyPkcs8Pem = '';
-let testTrustRoot: S33Wave2AcceptanceTrustRoot;
+let testPrivateKey: KeyObject;
+let testSigningHarness: S33DetachedSigningTestHarnessV2;
+let coverageAuditTestHarness: ReturnType<typeof createS33Wave2CoverageAuditTestHarnessV2>;
 
 beforeAll(() => {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
   const publicKeySpkiPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
-  testPrivateKeyPkcs8Pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-  testTrustRoot = {
-    signerIdentity: 'arkova-s33-wave2-cto-release',
-    signingKeyId: 'arkova-s33-wave2-cto-release',
+  testPrivateKey = privateKey;
+  const policy = validateS33DetachedSigningTrustPolicyV2({
+    ...S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+    state: 'ACTIVE',
     publicKeySpkiPem,
     publicKeyFingerprintSha256: createHash('sha256')
       .update(createPublicKey(publicKeySpkiPem).export({ type: 'spki', format: 'der' }))
       .digest('hex'),
-  };
+    authorizedOperator: 'lane3-coverage-fixture',
+    fingerprintConfirmation: {
+      method: 'cto-out-of-band',
+      confirmedBy: 'lane3-coverage-cto',
+      confirmedAtUtc: '2026-07-15T13:58:00.000Z',
+    },
+    activatedAtUtc: '2026-07-15T13:59:00.000Z',
+  });
+  testSigningHarness = createS33DetachedSigningTestHarnessV2(
+    validateS33DetachedSigningTrustPolicySetV2({
+      ...S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+      activeSigningKeyId: policy.signingKeyId,
+      keys: [policy],
+    }),
+  );
+  coverageAuditTestHarness = createS33Wave2CoverageAuditTestHarnessV2(testSigningHarness);
 });
 
-function buildAcceptance(options: AcceptanceOptions = {}): S33Wave2AuthenticatedBatchAcceptance {
+function buildAcceptance(options: AcceptanceOptions = {}): S33DetachedAcceptanceEnvelopeV2 {
   const batchId = options.batchId ?? 'S33-W2-L01-05';
   const revision = options.revision ?? 1;
   const pullRequestNumber = options.pullRequestNumber ?? 1601;
@@ -126,7 +153,7 @@ function buildAcceptance(options: AcceptanceOptions = {}): S33Wave2Authenticated
   const entries = options.acceptedEntries ?? [
     acceptedEntryInput(`GD-${batchId}-001`, batchId, revision, { sourceBlobSha }),
   ];
-  return buildAndSignS33Wave2AcceptanceForTest({
+  const request = emitS33DetachedSigningRequestV2({
     repositoryIdentity: 'carson-see/ArkovaCarson',
     pullRequestNumber,
     candidateBaseSha: sha1(`${batchId}:candidate-base`),
@@ -140,7 +167,7 @@ function buildAcceptance(options: AcceptanceOptions = {}): S33Wave2Authenticated
     sourceBlobSha,
     datasheetBlobSha: sha1(`${batchId}:datasheet`),
     preflightArtifactDigestSha256: digest(`${batchId}:preflight`),
-    baseRegistryDigestSha256: options.baseRegistryDigestSha256 ?? digest('registry-root'),
+    baseRegistryDigestSha256: options.baseRegistryDigestSha256 ?? WAVE1_BASE_REGISTRY_DIGEST,
     resultingRegistryDigestSha256: options.resultingRegistryDigestSha256 ?? digest(`${batchId}:registry-result`),
     coverageRegistryPath: 'docs/lane4/s33-wave2-top15-registry.json',
     coverageRegistryRawSha256: options.coverageRegistryRawSha256
@@ -167,19 +194,30 @@ function buildAcceptance(options: AcceptanceOptions = {}): S33Wave2Authenticated
       machineValidationArtifactSha256: digest(`${batchId}:machine-validation`),
       machineValidationFailureCount: 0,
       humanCrossReviewArtifactSha256: digest(`${batchId}:human-review`),
-      humanCrossReviewSampleSize: Math.min(entries.length, 5),
+      humanCrossReviewSampleSize: Math.max(
+        Math.min(entries.length, 5),
+        Math.ceil(entries.length * 0.1),
+      ),
       materialLabelDefectCount: 0,
       prodModelDiffArtifactSha256: digest(`${batchId}:prod-model-diff`),
       exactLeakageArtifactSha256: digest(`${batchId}:leakage`),
       exactLeakageHitCount: 0,
     },
     acceptedEntries: entries,
-  }, options.privateKeyPkcs8Pem ?? testPrivateKeyPkcs8Pem, options.trustRoot ?? testTrustRoot);
+  });
+  const signature = sign(
+    null,
+    Buffer.from(request.signingBytesBase64Url, 'base64url'),
+    options.privateKey ?? testPrivateKey,
+  ).toString('base64url');
+  return (options.signingHarness ?? testSigningHarness).assemble(request, signature, {
+    verifiedAtUtc: '2026-07-15T14:01:00.000Z',
+  });
 }
 
 function withRefreshedArtifactDigest(
-  envelope: S33Wave2AuthenticatedBatchAcceptance,
-): S33Wave2AuthenticatedBatchAcceptance {
+  envelope: S33DetachedAcceptanceEnvelopeV2,
+): S33DetachedAcceptanceEnvelopeV2 {
   const digestInput = { ...envelope } as Record<string, unknown>;
   delete digestInput.artifactDigestSha256;
   return {
@@ -280,10 +318,12 @@ describe('S3.3 Wave 2 top-15 registry', () => {
 });
 
 describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
-  const auditWithTestRoot = (envelopes: readonly unknown[]) => auditS33Wave2Coverage(
-    readRegistryBytes(),
-    envelopes,
-    { testOnlyTrustRoot: testTrustRoot },
+  const auditWithTestRoot = (envelopes: readonly unknown[]) => (
+    coverageAuditTestHarness.audit(
+      readRegistryBytes(),
+      envelopes,
+      '2026-07-15T14:01:00.000Z',
+    )
   );
 
   it('reports the honest Wave 1 baseline as 45 gaps and 540 missing rows without requiring a trust root', () => {
@@ -349,11 +389,66 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
       acceptedBatchCount: 1,
       acceptedEntryCount: 12,
       acceptanceArtifactDigests: [envelope.artifactDigestSha256],
-      acceptedRegistryRootSha256: envelope.payload.baseRegistryDigestSha256,
-      acceptedRegistryHeadSha256: envelope.payload.resultingRegistryDigestSha256,
+      acceptedRegistryRootSha256: envelope.request.payload.baseRegistryDigestSha256,
+      acceptedRegistryHeadSha256: envelope.request.payload.resultingRegistryDigestSha256,
       completeTypeCount: 1,
       missingEntryCount: 528,
     });
+  });
+
+  it('cryptographically verifies the complete three-by-180 chain before reporting all 540 rows', () => {
+    const registry = parseS33Wave2Top15Registry(readRegistry());
+    const typeById = new Map(registry.domains.flatMap((domain) => (
+      domain.types.map((type) => [type.id, type] as const)
+    )));
+    const batchIds = [
+      'S33-W2-TOP15-01-05',
+      'S33-W2-TOP15-06-10',
+      'S33-W2-TOP15-11-15',
+    ];
+    const heads = batchIds.map((batchId) => digest(`${batchId}:complete-registry`));
+    const envelopes = batchIds.map((batchId, batchIndex) => {
+      const entries = registry.productionOrder
+        .slice(batchIndex * 15, (batchIndex + 1) * 15)
+        .flatMap((registryTypeId) => {
+          const mapping = typeById.get(registryTypeId)!.mappings[0]!;
+          return Array.from({ length: 12 }, (_, entryIndex) => acceptedEntryInput(
+            `GD-${batchIndex + 1}-${registryTypeId}-${String(entryIndex + 1).padStart(2, '0')}`,
+            batchId,
+            1,
+            {
+              registryTypeId,
+              credentialType: mapping.credentialType,
+              subType: mapping.subType,
+              edgeCase: entryIndex < 4,
+            },
+          ));
+        });
+      expect(entries).toHaveLength(180);
+      return buildAcceptance({
+        batchId,
+        pullRequestNumber: 1620 + batchIndex,
+        baseRegistryDigestSha256: batchIndex === 0
+          ? WAVE1_BASE_REGISTRY_DIGEST
+          : heads[batchIndex - 1],
+        resultingRegistryDigestSha256: heads[batchIndex],
+        acceptedEntries: entries,
+      });
+    });
+
+    const report = auditWithTestRoot([envelopes[2], envelopes[0], envelopes[1]]);
+    expect(report).toMatchObject({
+      acceptedBatchCount: 3,
+      acceptedEntryCount: 540,
+      completeTypeCount: 45,
+      incompleteTypeCount: 0,
+      missingEntryCount: 0,
+      acceptedRegistryRootSha256: WAVE1_BASE_REGISTRY_DIGEST,
+      acceptedRegistryHeadSha256: heads[2],
+    });
+    expect(report.acceptanceArtifactDigests).toEqual(
+      envelopes.map(({ artifactDigestSha256 }) => artifactDigestSha256),
+    );
   });
 
   it('keeps a type incomplete when its signed 30% edge-case threshold is short', () => {
@@ -399,18 +494,22 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
     expect(() => auditWithTestRoot(fabricated)).toThrow(/authenticated Lane-3 acceptance/iu);
   });
 
-  it('fails closed for a valid envelope until the production CTO trust root is committed', () => {
+  it('fails closed for a valid envelope until the production v2 policy is activated', () => {
     const envelope = buildAcceptance();
-    expect(() => auditS33Wave2Coverage(readRegistryBytes(), [envelope]))
-      .toThrow(/CTO release trust root is not configured/iu);
+    expect(() => auditS33Wave2Coverage(
+      readRegistryBytes(),
+      [envelope],
+      '2026-07-15T14:01:00.000Z',
+    ))
+      .toThrow(/UNCONFIGURED|no configured ACTIVE key/iu);
   });
 
   it('binds acceptance to the exact raw and canonical coverage-registry bytes', () => {
     const envelope = buildAcceptance();
-    expect(() => auditS33Wave2Coverage(
+    expect(() => coverageAuditTestHarness.audit(
       Buffer.concat([readRegistryBytes(), Buffer.from(' ')]),
       [envelope],
-      { testOnlyTrustRoot: testTrustRoot },
+      '2026-07-15T14:01:00.000Z',
     )).toThrow(/coverageRegistryRawSha256/iu);
 
     const wrongRegistry = buildAcceptance({ coverageRegistryCanonicalSha256: '0'.repeat(64) });
@@ -420,7 +519,7 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
   it('rejects payload tampering and an invalid Ed25519 signature', () => {
     const envelope = buildAcceptance();
     const tampered = structuredClone(envelope);
-    tampered.payload.acceptedEntries[0]!.edgeCase = !tampered.payload.acceptedEntries[0]!.edgeCase;
+    tampered.request.payload.acceptedEntries[0]!.edgeCase = !tampered.request.payload.acceptedEntries[0]!.edgeCase;
     expect(() => auditWithTestRoot([withRefreshedArtifactDigest(tampered)]))
       .toThrow(/entry digest mismatch/iu);
 
@@ -434,23 +533,37 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
   it('rejects a signer outside the CTO release trust root', () => {
     const { privateKey, publicKey } = generateKeyPairSync('ed25519');
     const publicKeySpkiPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
-    const foreignRoot: S33Wave2AcceptanceTrustRoot = {
-      signerIdentity: 'arkova-s33-wave2-cto-release',
-      signingKeyId: 'arkova-s33-wave2-cto-release',
+    const foreignPolicy = validateS33DetachedSigningTrustPolicyV2({
+      ...S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+      state: 'ACTIVE',
       publicKeySpkiPem,
       publicKeyFingerprintSha256: createHash('sha256')
         .update(publicKey.export({ type: 'spki', format: 'der' }))
         .digest('hex'),
-    };
+      authorizedOperator: 'foreign-fixture-operator',
+      fingerprintConfirmation: {
+        method: 'cto-out-of-band',
+        confirmedBy: 'foreign-fixture-cto',
+        confirmedAtUtc: '2026-07-15T13:58:00.000Z',
+      },
+      activatedAtUtc: '2026-07-15T13:59:00.000Z',
+    });
+    const foreignHarness = createS33DetachedSigningTestHarnessV2(
+      validateS33DetachedSigningTrustPolicySetV2({
+        ...S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+        activeSigningKeyId: foreignPolicy.signingKeyId,
+        keys: [foreignPolicy],
+      }),
+    );
     const envelope = buildAcceptance({
-      privateKeyPkcs8Pem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
-      trustRoot: foreignRoot,
+      privateKey,
+      signingHarness: foreignHarness,
     });
     expect(() => auditWithTestRoot([envelope])).toThrow(/fingerprint does not match/iu);
   });
 
   it('orders one unbroken registry chain before flattening accepted entries', () => {
-    const root = digest('chain-root');
+    const root = WAVE1_BASE_REGISTRY_DIGEST;
     const middle = digest('chain-middle');
     const head = digest('chain-head');
     const first = buildAcceptance({
@@ -475,6 +588,16 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
     expect(report.acceptedRegistryHeadSha256).toBe(head);
   });
 
+  it('rejects a validly signed chain rooted anywhere except the immutable Wave-1 digest', () => {
+    const wrongRoot = buildAcceptance({
+      batchId: 'S33-W2-WRONG-ROOT',
+      baseRegistryDigestSha256: digest('attacker-selected-root'),
+      resultingRegistryDigestSha256: digest('attacker-selected-head'),
+    });
+    expect(() => auditWithTestRoot([wrongRoot]))
+      .toThrow(/not rooted at the immutable Wave-1 registry/iu);
+  });
+
   it('rejects duplicate artifacts and a repeated batch id at another revision', () => {
     const envelope = buildAcceptance();
     expect(() => auditWithTestRoot([envelope, envelope])).toThrow(/duplicate.+artifact/iu);
@@ -485,7 +608,7 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
       batchId,
       revision: 1,
       pullRequestNumber: 1604,
-      baseRegistryDigestSha256: digest('repeated-root'),
+      baseRegistryDigestSha256: WAVE1_BASE_REGISTRY_DIGEST,
       resultingRegistryDigestSha256: middle,
     });
     const revisionTwoEntries = [acceptedEntryInput('GD-REPEATED-REVISION-2', batchId, 2)];
@@ -501,7 +624,7 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
   });
 
   it('rejects duplicate entry ids and normalized-input fingerprints across batches', () => {
-    const root = digest('duplicate-entry-root');
+    const root = WAVE1_BASE_REGISTRY_DIGEST;
     const middle = digest('duplicate-entry-middle');
     const duplicateId = 'GD-S33-W2-DUPLICATE';
     const firstBatch = 'S33-W2-DUPLICATE-01';
@@ -548,7 +671,7 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
   });
 
   it('rejects registry-chain forks, disconnected roots, and cycles', () => {
-    const root = digest('bad-chain-root');
+    const root = WAVE1_BASE_REGISTRY_DIGEST;
     const forkOne = buildAcceptance({
       batchId: 'S33-W2-FORK-01',
       pullRequestNumber: 1610,

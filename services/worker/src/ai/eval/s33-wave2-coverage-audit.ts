@@ -18,15 +18,18 @@ import { V6_SUBTYPE_TAXONOMY } from './golden-dataset-s33-types.js';
 import {
   S33_WAVE2_ACCEPTANCE_CONSTANTS,
   computeS33Wave2AcceptedEntryOrderSha256,
-  verifyS33Wave2AuthenticatedBatchAcceptance,
   type S33Wave2AcceptanceBindings,
-  type S33Wave2AcceptanceTrustRoot,
   type S33Wave2AcceptedEntry,
-  type S33Wave2AuthenticatedBatchAcceptance,
 } from './s33-wave2-acceptance-envelope.js';
+import {
+  verifyS33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedSigningTestHarnessV2,
+} from './s33-wave3-detached-signing-v2.js';
 
 const gitShaPattern = /^[a-f0-9]{40}$/;
 const domainIds = ['legal', 'financial', 'education'] as const;
+const WAVE1_BASE_REGISTRY_DIGEST_SHA256 = '412a08227608a58172569a4fcbf3cd1025dc67fc1beeaddd6c163d22c4cb80d6';
 
 const mappingSchema = z.object({
   credentialType: z.string().min(1),
@@ -143,11 +146,6 @@ export interface S33Wave2CoverageReport {
   readonly types: readonly S33TypeCoverage[];
 }
 
-export interface S33Wave2CoverageAuditOptions {
-  /** Test-only key injection; the shared verifier rejects it outside NODE_ENV=test. */
-  readonly testOnlyTrustRoot?: S33Wave2AcceptanceTrustRoot;
-}
-
 function expectedProductionOrder(registry: S33Wave2Top15Registry): string[] {
   const domainMap = new Map(registry.domains.map((domain) => [domain.id, domain]));
   const ordered: string[] = [];
@@ -244,11 +242,20 @@ function acceptanceBindingsFromEnvelope(
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('Wave-2 authenticated Lane-3 acceptance must be an envelope object.');
   }
-  const payloadValue = (input as { payload?: unknown }).payload;
+  const envelope = input as { schemaVersion?: unknown; artifactType?: unknown; request?: unknown };
+  if (envelope.schemaVersion !== 2
+    || envelope.artifactType !== 'arkova-s33-detached-acceptance-envelope') {
+    throw new Error('Wave-2 authenticated Lane-3 acceptance must use the detached v2 envelope.');
+  }
+  const request = envelope.request;
+  if (request === null || typeof request !== 'object' || Array.isArray(request)) {
+    throw new Error('Wave-2 authenticated Lane-3 acceptance must contain a v2 signing request.');
+  }
+  const payloadValue = (request as { payload?: unknown }).payload;
   if (payloadValue === null || typeof payloadValue !== 'object' || Array.isArray(payloadValue)) {
     throw new Error('Wave-2 authenticated Lane-3 acceptance must contain a payload object.');
   }
-  const payload = payloadValue as S33Wave2AuthenticatedBatchAcceptance['payload'];
+  const payload = payloadValue as S33DetachedAcceptanceEnvelopeV2['request']['payload'];
   if (!Array.isArray(payload.acceptedEntries)) {
     throw new Error('Wave-2 authenticated Lane-3 acceptance must contain accepted entries.');
   }
@@ -280,17 +287,17 @@ function acceptanceBindingsFromEnvelope(
 }
 
 function orderAuthenticatedAcceptanceChain(
-  envelopes: readonly S33Wave2AuthenticatedBatchAcceptance[],
-): readonly S33Wave2AuthenticatedBatchAcceptance[] {
+  envelopes: readonly S33DetachedAcceptanceEnvelopeV2[],
+): readonly S33DetachedAcceptanceEnvelopeV2[] {
   if (envelopes.length === 0) return Object.freeze([]);
 
   const artifactDigests = new Set<string>();
   const batchIds = new Set<string>();
   const resultDigests = new Set<string>();
-  const successorByBase = new Map<string, S33Wave2AuthenticatedBatchAcceptance>();
+  const successorByBase = new Map<string, S33DetachedAcceptanceEnvelopeV2>();
 
   for (const envelope of envelopes) {
-    const { payload } = envelope;
+    const { payload } = envelope.request;
     if (artifactDigests.has(envelope.artifactDigestSha256)) {
       throw new Error(`Duplicate authenticated Lane-3 acceptance artifact: ${envelope.artifactDigestSha256}.`);
     }
@@ -312,21 +319,26 @@ function orderAuthenticatedAcceptanceChain(
     resultDigests.add(payload.resultingRegistryDigestSha256);
   }
 
-  const roots = envelopes.filter(({ payload }) => !resultDigests.has(payload.baseRegistryDigestSha256));
+  const roots = envelopes.filter(({ request }) => (
+    !resultDigests.has(request.payload.baseRegistryDigestSha256)
+  ));
   if (roots.length !== 1) {
     throw new Error(`Authenticated Lane-3 registry chain must have exactly one root; found ${roots.length}.`);
   }
+  if (roots[0].request.payload.baseRegistryDigestSha256 !== WAVE1_BASE_REGISTRY_DIGEST_SHA256) {
+    throw new Error('Authenticated Lane-3 registry chain is not rooted at the immutable Wave-1 registry.');
+  }
 
-  const ordered: S33Wave2AuthenticatedBatchAcceptance[] = [];
+  const ordered: S33DetachedAcceptanceEnvelopeV2[] = [];
   const visited = new Set<string>();
-  let current: S33Wave2AuthenticatedBatchAcceptance | undefined = roots[0];
+  let current: S33DetachedAcceptanceEnvelopeV2 | undefined = roots[0];
   while (current !== undefined) {
     if (visited.has(current.artifactDigestSha256)) {
       throw new Error('Authenticated Lane-3 registry chain contains a cycle.');
     }
     visited.add(current.artifactDigestSha256);
     ordered.push(current);
-    current = successorByBase.get(current.payload.resultingRegistryDigestSha256);
+    current = successorByBase.get(current.request.payload.resultingRegistryDigestSha256);
   }
   if (ordered.length !== envelopes.length) {
     throw new Error('Authenticated Lane-3 registry chain is disconnected or cyclic.');
@@ -352,29 +364,30 @@ function assertUniqueAcceptedEntries(entries: readonly S33Wave2AcceptedEntry[]):
   }
 }
 
-/** Audit only cryptographically authenticated Lane-3 held-out batches against all signed thresholds. */
-export function auditS33Wave2Coverage(
+type S33DetachedAcceptanceVerifierV2 = (
+  value: unknown,
+  bindings: S33Wave2AcceptanceBindings,
+) => S33DetachedAcceptanceEnvelopeV2;
+
+function auditS33Wave2CoverageWithVerifier(
   registryContent: ArtifactContent,
   acceptanceEnvelopeInputs: readonly unknown[],
-  options: S33Wave2CoverageAuditOptions = {},
+  verifyAcceptance: S33DetachedAcceptanceVerifierV2,
 ): S33Wave2CoverageReport {
   const registryDocument = parseStrictJsonDocument(registryContent, 'S3.3 Wave-2 top-15 coverage registry');
   const registry = parseS33Wave2Top15Registry(registryDocument.parsed);
   const verifiedEnvelopes = acceptanceEnvelopeInputs.map((envelope) => (
-    verifyS33Wave2AuthenticatedBatchAcceptance(
+    verifyAcceptance(
       envelope,
       acceptanceBindingsFromEnvelope(
         envelope,
         registryDocument.rawSha256,
         registryDocument.canonicalSha256,
       ),
-      options.testOnlyTrustRoot === undefined
-        ? undefined
-        : { testOnlyTrustRoot: options.testOnlyTrustRoot },
     )
   ));
   const acceptanceChain = orderAuthenticatedAcceptanceChain(verifiedEnvelopes);
-  const entries = acceptanceChain.flatMap(({ payload }) => payload.acceptedEntries);
+  const entries = acceptanceChain.flatMap(({ request }) => request.payload.acceptedEntries);
   assertUniqueAcceptedEntries(entries);
   const typeById = new Map<string, S33RegistryTypeLocation>();
 
@@ -446,14 +459,66 @@ export function auditS33Wave2Coverage(
     acceptanceArtifactDigests: Object.freeze(
       acceptanceChain.map(({ artifactDigestSha256 }) => artifactDigestSha256),
     ),
-    acceptedRegistryRootSha256: acceptanceChain[0]?.payload.baseRegistryDigestSha256 ?? null,
-    acceptedRegistryHeadSha256: acceptanceChain.at(-1)?.payload.resultingRegistryDigestSha256 ?? null,
+    acceptedRegistryRootSha256: acceptanceChain[0]?.request.payload.baseRegistryDigestSha256 ?? null,
+    acceptedRegistryHeadSha256: acceptanceChain.at(-1)?.request.payload.resultingRegistryDigestSha256 ?? null,
     completeTypeCount,
     incompleteTypeCount: 45 - completeTypeCount,
     minimumRequiredEntryCount,
     missingEntryCount,
     productionOrder: Object.freeze([...registry.productionOrder]),
     types: Object.freeze(types),
+  });
+}
+
+/** Audit only detached-v2 authenticated Lane-3 batches against all signed thresholds. */
+export function auditS33Wave2Coverage(
+  registryContent: ArtifactContent,
+  acceptanceEnvelopeInputs: readonly unknown[],
+  verifiedAtUtc?: string,
+): S33Wave2CoverageReport {
+  if (acceptanceEnvelopeInputs.length > 0 && verifiedAtUtc === undefined) {
+    throw new Error('Wave-2 coverage audit requires a trusted verification time for nonempty acceptance');
+  }
+  return auditS33Wave2CoverageWithVerifier(
+    registryContent,
+    acceptanceEnvelopeInputs,
+    (value, bindings) => verifyS33DetachedAcceptanceEnvelopeV2(
+      value,
+      bindings,
+      { verifiedAtUtc: verifiedAtUtc! },
+    ),
+  );
+}
+
+/** Isolated fixture seam; production audit exposes no caller-supplied policy. */
+export function createS33Wave2CoverageAuditTestHarnessV2(
+  detachedSigningHarness: S33DetachedSigningTestHarnessV2,
+): Readonly<{
+  audit(
+    registryContent: ArtifactContent,
+    acceptanceEnvelopeInputs: readonly unknown[],
+    verifiedAtUtc: string,
+  ): S33Wave2CoverageReport;
+}> {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Wave-2 coverage audit test harness is disabled');
+  }
+  return Object.freeze({
+    audit: (
+      registryContent: ArtifactContent,
+      acceptanceEnvelopeInputs: readonly unknown[],
+      verifiedAtUtc: string,
+    ) => (
+      auditS33Wave2CoverageWithVerifier(
+        registryContent,
+        acceptanceEnvelopeInputs,
+        (value, bindings) => detachedSigningHarness.verify(
+          value,
+          bindings,
+          { verifiedAtUtc },
+        ),
+      )
+    ),
   });
 }
 

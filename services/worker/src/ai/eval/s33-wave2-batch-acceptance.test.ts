@@ -2,6 +2,7 @@ import {
   createHash,
   createPublicKey,
   generateKeyPairSync,
+  sign,
 } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeForFingerprint } from './golden-dataset-s33-types.js';
 import {
   acceptS33Wave2BatchCandidate,
+  createS33Wave2BatchAcceptanceTestHarnessV2,
   consumeMergedS33Wave2Batches,
   loadS33Wave2CandidateSnapshot,
   preflightS33Wave2BatchCandidate,
@@ -22,11 +24,17 @@ import {
   extendS33Wave2CorpusRegistry,
 } from './s33-wave2-corpus-registry.js';
 import {
-  buildAndSignS33Wave2AcceptanceForTest,
   type S33Wave2AcceptancePayloadInput,
-  type S33Wave2AcceptanceTrustRoot,
-  type S33Wave2AuthenticatedBatchAcceptance,
 } from './s33-wave2-acceptance-envelope.js';
+import {
+  S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+  S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+  createS33DetachedSigningTestHarnessV2,
+  emitS33DetachedSigningRequestV2,
+  validateS33DetachedSigningTrustPolicySetV2,
+  validateS33DetachedSigningTrustPolicyV2,
+  type S33DetachedAcceptanceEnvelopeV2,
+} from './s33-wave3-detached-signing-v2.js';
 import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
 
 const repositoryRoot = execFileSync('/usr/bin/git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
@@ -41,16 +49,30 @@ const datasheetPath = 'docs/lane4/s33-wave2-batches/depth-audit/datasheet.json';
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
 const testKeys = generateKeyPairSync('ed25519');
-const testPrivateKey = testKeys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 const testPublicKey = testKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
-const testTrustRoot: S33Wave2AcceptanceTrustRoot = {
-  signerIdentity: 'arkova-s33-wave2-cto-release',
-  signingKeyId: 'arkova-s33-wave2-cto-release',
+const testPolicy = validateS33DetachedSigningTrustPolicyV2({
+  ...S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+  state: 'ACTIVE',
   publicKeySpkiPem: testPublicKey,
   publicKeyFingerprintSha256: createHash('sha256').update(
     createPublicKey(testPublicKey).export({ type: 'spki', format: 'der' }),
   ).digest('hex'),
-};
+  authorizedOperator: 'lane3-fixture-operator',
+  fingerprintConfirmation: {
+    method: 'cto-out-of-band',
+    confirmedBy: 'lane3-fixture-cto',
+    confirmedAtUtc: '2026-07-15T13:58:00.000Z',
+  },
+  activatedAtUtc: '2026-07-15T13:59:00.000Z',
+});
+const testSigningHarness = createS33DetachedSigningTestHarnessV2(
+  validateS33DetachedSigningTrustPolicySetV2({
+    ...S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+    activeSigningKeyId: testPolicy.signingKeyId,
+    keys: [testPolicy],
+  }),
+);
+const batchAcceptanceTestHarness = createS33Wave2BatchAcceptanceTestHarnessV2(testSigningHarness);
 
 function coverageRegistryContent(): string {
   const domainIds = ['legal', 'financial', 'education'];
@@ -256,7 +278,7 @@ function loadSnapshotFixture(): Readonly<{
 function authenticatedAcceptance(
   value: ReturnType<typeof fixture>,
   mutate?: (input: S33Wave2AcceptancePayloadInput) => void,
-): S33Wave2AuthenticatedBatchAcceptance {
+): S33DetachedAcceptanceEnvelopeV2 {
   const preflight = preflightS33Wave2BatchCandidate(registry, value.snapshot);
   const resultingRegistry = extendS33Wave2CorpusRegistry(registry, preflight.batch, preflight.registryEntries);
   const input: S33Wave2AcceptancePayloadInput = {
@@ -303,7 +325,15 @@ function authenticatedAcceptance(
     acceptedEntries: [...preflight.acceptanceEntries],
   };
   mutate?.(input);
-  return buildAndSignS33Wave2AcceptanceForTest(input, testPrivateKey, testTrustRoot);
+  const request = emitS33DetachedSigningRequestV2(input);
+  const signature = sign(
+    null,
+    Buffer.from(request.signingBytesBase64Url, 'base64url'),
+    testKeys.privateKey,
+  ).toString('base64url');
+  return testSigningHarness.assemble(request, signature, {
+    verifiedAtUtc: '2026-07-15T14:01:00.000Z',
+  });
 }
 
 function gitRun(root: string, args: readonly string[]): string {
@@ -346,11 +376,10 @@ function mergedPacketFixture() {
     candidateTreeSha: candidateTree,
     changedPaths,
   };
-  const signed = authenticatedAcceptance(fixtureValue);
-  const acceptance: S33Wave2AuthenticatedBatchAcceptance = {
-    ...signed,
-    payload: { ...signed.payload, candidateHeadSha: candidateHead, candidateTreeSha: candidateTree },
-  };
+  const acceptance = authenticatedAcceptance(fixtureValue, (input) => {
+    input.candidateHeadSha = candidateHead;
+    input.candidateTreeSha = candidateTree;
+  });
   return { root, mergedHead, snapshot, acceptance };
 }
 
@@ -372,15 +401,26 @@ describe('S3.3 Wave-2 whole-batch acceptance', () => {
   it('accepts one complete, non-leaking, independently curated batch', () => {
     const value = fixture();
     const artifact = authenticatedAcceptance(value);
-    const accepted = acceptS33Wave2BatchCandidate({
+    const accepted = batchAcceptanceTestHarness.accept({
       registry,
       snapshot: value.snapshot,
       pullRequestNumber: 1600,
+      verifiedAtUtc: '2026-07-15T14:01:00.000Z',
       authenticatedAcceptance: artifact,
-      testOnlyTrustRoot: testTrustRoot,
     });
-    expect(accepted.payload.verdict).toBe('APPROVED_WHOLE_BATCH');
-    expect(accepted.payload.acceptedEntryCount).toBe(4);
+    expect(accepted.request.payload.verdict).toBe('APPROVED_WHOLE_BATCH');
+    expect(accepted.request.payload.acceptedEntryCount).toBe(4);
+  });
+
+  it('keeps the production acceptor fail-closed while the v2 policy is unconfigured', () => {
+    const value = fixture();
+    expect(() => acceptS33Wave2BatchCandidate({
+      registry,
+      snapshot: value.snapshot,
+      pullRequestNumber: 1600,
+      verifiedAtUtc: '2026-07-15T14:01:00.000Z',
+      authenticatedAcceptance: authenticatedAcceptance(value),
+    })).toThrow(/UNCONFIGURED|no configured ACTIVE key/iu);
   });
 
   it('loads default-abbreviated Git raw diffs as full object ids and preflights the real registry shape', () => {
@@ -444,12 +484,12 @@ describe('S3.3 Wave-2 whole-batch acceptance', () => {
     const artifact = authenticatedAcceptance(value, (input) => {
       input.candidateHeadSha = 'e'.repeat(40);
     });
-    expect(() => acceptS33Wave2BatchCandidate({
+    expect(() => batchAcceptanceTestHarness.accept({
       registry,
       snapshot: value.snapshot,
       pullRequestNumber: 1600,
+      verifiedAtUtc: '2026-07-15T14:01:00.000Z',
       authenticatedAcceptance: artifact,
-      testOnlyTrustRoot: testTrustRoot,
     })).toThrow(/binding.*candidateHeadSha/iu);
   });
 
@@ -459,12 +499,12 @@ describe('S3.3 Wave-2 whole-batch acceptance', () => {
       input.acceptedEntries = input.acceptedEntries.slice(0, 3);
       input.proof.humanCrossReviewSampleSize = 3;
     });
-    expect(() => acceptS33Wave2BatchCandidate({
+    expect(() => batchAcceptanceTestHarness.accept({
       registry,
       snapshot: value.snapshot,
       pullRequestNumber: 1600,
+      verifiedAtUtc: '2026-07-15T14:01:00.000Z',
       authenticatedAcceptance: artifact,
-      testOnlyTrustRoot: testTrustRoot,
     })).toThrow(/order|per-entry|binding/iu);
   });
 

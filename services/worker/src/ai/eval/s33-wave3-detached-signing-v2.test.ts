@@ -5,6 +5,7 @@ import {
   sign,
   type KeyObject,
 } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -44,6 +45,9 @@ const SHA256_C = 'c'.repeat(64);
 const SHA256_D = 'd'.repeat(64);
 const SHA256_E = 'e'.repeat(64);
 const SHA256_F = 'f'.repeat(64);
+const TRUSTED_VERIFICATION_CONTEXT = Object.freeze({
+  verifiedAtUtc: '2026-07-15T21:00:00.000Z',
+});
 
 function payloadInput(): S33Wave2AcceptancePayloadInput {
   return {
@@ -186,7 +190,7 @@ describe('S3.3 Wave-3 detached signing v2', () => {
       Buffer.from(request.signingBytesBase64Url, 'base64url'),
       privateKey,
     ).toString('base64url');
-    return testHarness.assemble(request, signature);
+    return testHarness.assemble(request, signature, TRUSTED_VERIFICATION_CONTEXT);
   }
 
   function signRequest(request: { signingBytesBase64Url: string }, key: KeyObject): string {
@@ -253,6 +257,64 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     });
   });
 
+  it('is the only production authority consulted by whole-batch consumers', () => {
+    const evalDirectory = resolve(__dirname);
+    const legacyEnvelopeSource = readFileSync(
+      resolve(evalDirectory, 's33-wave2-acceptance-envelope.ts'),
+      'utf8',
+    );
+    expect(legacyEnvelopeSource).not.toContain('S33_WAVE2_CTO_RELEASE_TRUST_ROOT');
+
+    for (const file of [
+      's33-wave2-batch-acceptance.ts',
+      's33-wave2-coverage-audit.ts',
+      's33-wave3-deterministic-eval-gates.ts',
+    ]) {
+      const source = readFileSync(resolve(evalDirectory, file), 'utf8');
+      expect(source, file).not.toContain('verifyS33Wave2AuthenticatedBatchAcceptance');
+      expect(source, file).not.toContain('S33_WAVE2_CTO_RELEASE_TRUST_ROOT');
+      expect(source, file).toContain('verifyS33DetachedAcceptanceEnvelopeV2');
+    }
+  });
+
+  it('statically isolates every test-authority factory from non-test entrypoints', () => {
+    const repositoryRoot = resolve(__dirname, '../../../../../');
+    const definitions = new Set([
+      'services/worker/src/ai/eval/s33-wave2-acceptance-envelope.ts',
+      'services/worker/src/ai/eval/s33-wave2-batch-acceptance.ts',
+      'services/worker/src/ai/eval/s33-wave2-coverage-audit.ts',
+      'services/worker/src/ai/eval/s33-wave3-detached-signing-v2.ts',
+      'services/worker/src/ai/eval/s33-wave3-deterministic-eval-gates.ts',
+    ]);
+    const forbiddenSymbols = [
+      'createS33DetachedSigningTestHarnessV2',
+      'createS33Wave2BatchAcceptanceTestHarnessV2',
+      'createS33Wave2CoverageAuditTestHarnessV2',
+      'createS33Wave3EvaluationTestHarnessV2',
+      'verifyS33Wave2AuthenticatedBatchAcceptance',
+      'buildAndSignS33Wave2AcceptanceForTest',
+    ];
+    let matchingFiles: string[] = [];
+    try {
+      matchingFiles = execFileSync(
+        'git',
+        ['-C', repositoryRoot, 'grep', '-I', '-l', '-E', forbiddenSymbols.join('|')],
+        { encoding: 'utf8' },
+      ).trim().split('\n').filter(Boolean);
+    } catch (error) {
+      if ((error as { status?: number }).status !== 1) throw error;
+    }
+    const violations = matchingFiles.filter((file) => (
+      /\.(?:[cm]?[jt]sx?|ya?ml)$/u.test(file)
+      && !/(?:^|\/)(?:__tests__\/|[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$)/u.test(file)
+      && !definitions.has(file)
+    ));
+    expect(
+      violations,
+      'S3.3 test-authority factories are forbidden from every tracked non-test code/workflow entrypoint',
+    ).toEqual([]);
+  });
+
   it('emits deterministic canonical domain-separated bytes without private material', () => {
     const first = emitS33DetachedSigningRequestV2(payloadInput());
     const second = emitS33DetachedSigningRequestV2(payloadInput());
@@ -280,15 +342,41 @@ describe('S3.3 Wave-3 detached signing v2', () => {
 
   it('assembles from only a detached signature and verifies every caller binding', () => {
     const envelope = signedEnvelope();
-    expect(testHarness.verify(envelope, bindings())).toEqual(envelope);
+    expect(testHarness.verify(envelope, bindings(), TRUSTED_VERIFICATION_CONTEXT)).toEqual(envelope);
+  });
+
+  it.each([
+    'repositoryIdentity', 'pullRequestNumber', 'candidateBaseSha', 'candidateHeadSha',
+    'candidateTreeSha', 'batchId', 'revision', 'manifestPath', 'manifestRawSha256',
+    'manifestCanonicalSha256', 'sourceBlobSha', 'datasheetBlobSha',
+    'preflightArtifactDigestSha256', 'baseRegistryDigestSha256',
+    'resultingRegistryDigestSha256', 'coverageRegistryPath', 'coverageRegistryRawSha256',
+    'coverageRegistryCanonicalSha256', 'acceptedEntryOrderSha256',
+  ] as const)('rejects a stale %s caller binding', (key) => {
+    const envelope = signedEnvelope();
+    const stale = { ...bindings() } as Record<keyof S33Wave2AcceptanceBindings, string | number>;
+    stale[key] = typeof stale[key] === 'number' ? stale[key] + 1 : `stale-${key}`;
+    expect(() => testHarness.verify(
+      envelope,
+      stale as unknown as S33Wave2AcceptanceBindings,
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(new RegExp(`binding mismatch: ${key}`, 'iu'));
   });
 
   it('fails closed under the production UNCONFIGURED policy', () => {
     const request = emitS33DetachedSigningRequestV2(payloadInput());
     const signature = sign(null, Buffer.from(request.signingBytesBase64Url, 'base64url'), privateKey)
       .toString('base64url');
-    expect(() => assembleS33DetachedAcceptanceEnvelopeV2(request, signature)).toThrow(/UNCONFIGURED/i);
-    expect(() => verifyS33DetachedAcceptanceEnvelopeV2(signedEnvelope(), bindings())).toThrow(/UNCONFIGURED/i);
+    expect(() => assembleS33DetachedAcceptanceEnvelopeV2(
+      request,
+      signature,
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(/UNCONFIGURED/i);
+    expect(() => verifyS33DetachedAcceptanceEnvelopeV2(
+      signedEnvelope(),
+      bindings(),
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(/UNCONFIGURED/i);
     expect(() => auditS33DetachedAcceptanceEnvelopeV2(signedEnvelope(), bindings(), {
       evidenceState: 'MERGED',
       mergedAtUtc: '2026-07-15T18:30:00.000Z',
@@ -300,14 +388,78 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     const envelope = signedEnvelope();
     const tampered = structuredClone(envelope);
     tampered.request.payload.candidateHeadSha = SHA1_B;
-    expect(() => testHarness.verify(tampered, bindings())).toThrow();
+    expect(() => testHarness.verify(
+      tampered,
+      bindings(),
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow();
 
     const request = emitS33DetachedSigningRequestV2(payloadInput());
-    expect(() => testHarness.assemble(request, 'A'.repeat(86))).toThrow(/signature/i);
+    expect(() => testHarness.assemble(
+      request,
+      'A'.repeat(86),
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(/signature/i);
 
     expect(() => testHarness.verify(envelope, {
       ...bindings(), candidateTreeSha: SHA1_C,
-    })).toThrow(/binding mismatch.*candidateTreeSha/i);
+    }, TRUSTED_VERIFICATION_CONTEXT)).toThrow(/binding mismatch.*candidateTreeSha/i);
+  });
+
+  it.each([
+    ['outer schema', (envelope: Record<string, unknown>) => { envelope.schemaVersion = 1; }],
+    ['outer artifact', (envelope: Record<string, unknown>) => { envelope.artifactType = 'legacy'; }],
+    ['outer algorithm', (envelope: Record<string, unknown>) => { envelope.signatureAlgorithm = 'RSA'; }],
+    ['outer signer identity', (envelope: Record<string, unknown>) => { envelope.signerIdentity = 'attacker'; }],
+    ['request schema', (envelope: Record<string, unknown>) => {
+      (envelope.request as Record<string, unknown>).schemaVersion = 1;
+    }],
+    ['request artifact', (envelope: Record<string, unknown>) => {
+      (envelope.request as Record<string, unknown>).artifactType = 'legacy';
+    }],
+    ['request algorithm', (envelope: Record<string, unknown>) => {
+      (envelope.request as Record<string, unknown>).signatureAlgorithm = 'RSA';
+    }],
+    ['request signer identity', (envelope: Record<string, unknown>) => {
+      (envelope.request as Record<string, unknown>).signerIdentity = 'attacker';
+    }],
+    ['request domain', (envelope: Record<string, unknown>) => {
+      (envelope.request as Record<string, unknown>).domainSeparator = 'attacker-domain';
+    }],
+    ['unknown outer field', (envelope: Record<string, unknown>) => {
+      envelope.attackerControlled = true;
+    }],
+  ] as const)('rejects a malformed %s tuple', (_label, mutate) => {
+    const malformed = structuredClone(signedEnvelope()) as unknown as Record<string, unknown>;
+    mutate(malformed);
+    expect(() => testHarness.verify(
+      malformed,
+      bindings(),
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow();
+  });
+
+  it('rejects future-dated signatures against explicit trusted verifier time', () => {
+    const futureInput = payloadInput();
+    futureInput.signedAtUtc = '2099-01-01T00:00:00.000Z';
+    const request = emitS33DetachedSigningRequestV2(futureInput);
+    const signature = signRequest(request, privateKey);
+    expect(() => testHarness.assemble(
+      request,
+      signature,
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(/future-dated.*trusted verification time/i);
+    const futureEnvelope = testHarness.assemble(request, signature, {
+      verifiedAtUtc: '2099-01-01T00:00:00.000Z',
+    });
+    expect(() => testHarness.verify(
+      futureEnvelope,
+      bindings(futureInput),
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(/future-dated.*trusted verification time/i);
+    expect(() => testHarness.assemble(request, signature, {
+      verifiedAtUtc: '2026-07-15 21:00:00Z',
+    })).toThrow(/canonical UTC ISO-8601/i);
   });
 
   it('enforces activation, retirement, and revocation transitions', () => {
@@ -338,7 +490,11 @@ describe('S3.3 Wave-3 detached signing v2', () => {
       keys: [revoked],
     });
     expect(() => createS33DetachedSigningTestHarnessV2(revokedSet)
-      .assemble(emitS33DetachedSigningRequestV2(payloadInput()), 'A'.repeat(86))).toThrow(/ACTIVE/i);
+      .assemble(
+        emitS33DetachedSigningRequestV2(payloadInput()),
+        'A'.repeat(86),
+        TRUSTED_VERIFICATION_CONTEXT,
+      )).toThrow(/ACTIVE/i);
   });
 
   it('performs a real A-to-B hard cutover and regenerates in-flight requests', () => {
@@ -378,7 +534,11 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     const requestA = emitS33DetachedSigningRequestV2(payloadInput());
     const signatureA = signRequest(requestA, privateKey);
     const rotatedHarness = createS33DetachedSigningTestHarnessV2(rotated);
-    expect(() => rotatedHarness.assemble(requestA, signatureA)).toThrow(/active.*key/i);
+    expect(() => rotatedHarness.assemble(
+      requestA,
+      signatureA,
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(/active.*key/i);
 
     const requestB = regenerateS33DetachedSigningRequestForActiveKeyV2(
       requestA,
@@ -389,11 +549,27 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     expect(requestB.payload.signingKeyId).toBe(signingKeyIdB);
     expect(requestB.payload.signedAtUtc).toBe(cutoverAtUtc);
     expect(requestB.requestDigestSha256).not.toBe(requestA.requestDigestSha256);
-    const envelopeB = rotatedHarness.assemble(requestB, signRequest(requestB, pairB.privateKey));
-    expect(rotatedHarness.verify(envelopeB, bindings())).toEqual(envelopeB);
-    expect(() => testHarness.assemble(requestB, signRequest(requestB, pairB.privateKey)))
+    const envelopeB = rotatedHarness.assemble(
+      requestB,
+      signRequest(requestB, pairB.privateKey),
+      TRUSTED_VERIFICATION_CONTEXT,
+    );
+    expect(rotatedHarness.verify(
+      envelopeB,
+      bindings(),
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toEqual(envelopeB);
+    expect(() => testHarness.assemble(
+      requestB,
+      signRequest(requestB, pairB.privateKey),
+      TRUSTED_VERIFICATION_CONTEXT,
+    ))
       .toThrow(/active.*key/i);
-    expect(() => rotatedHarness.verify(signedEnvelope(), bindings())).toThrow(/active.*key/i);
+    expect(() => rotatedHarness.verify(
+      signedEnvelope(),
+      bindings(),
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(/active.*key/i);
 
     const retiredWithoutReplacement = transitionS33DetachedSigningTrustPolicySetV2(activePolicySet, {
       ...activePolicySet,
@@ -536,7 +712,11 @@ describe('S3.3 Wave-3 detached signing v2', () => {
       keys: [retiredPolicy],
     });
     const retiredHarness = createS33DetachedSigningTestHarnessV2(retiredSet);
-    expect(() => retiredHarness.verify(envelopeA, bindings())).toThrow(/ACTIVE/i);
+    expect(() => retiredHarness.verify(
+      envelopeA,
+      bindings(),
+      TRUSTED_VERIFICATION_CONTEXT,
+    )).toThrow(/ACTIVE/i);
     expect(retiredHarness.audit(envelopeA, bindings(), {
       evidenceState: 'MERGED',
       mergedAtUtc: '2026-07-15T18:30:00.000Z',
@@ -634,6 +814,7 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     const source = readFileSync(resolve(__dirname, 's33-wave3-detached-signing-v2.ts'), 'utf8');
     expect(source).not.toMatch(/createPrivateKey|privateKeyPkcs8|process\.env\.(?!NODE_ENV)/u);
     expect(source).not.toMatch(/\bsign\s*\(/u);
+    expect(source).not.toMatch(/Date\.now\s*\(|new Date\(\s*\)/u);
   });
 
   it('publishes exactly the CTO-recommended 16 offline gates', () => {

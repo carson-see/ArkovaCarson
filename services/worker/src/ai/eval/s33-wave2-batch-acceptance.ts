@@ -23,11 +23,15 @@ import {
 import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
 import {
   computeS33Wave2AcceptedEntryOrderSha256,
-  verifyS33Wave2AuthenticatedBatchAcceptance,
+  type S33Wave2AcceptanceBindings,
   type S33Wave2AcceptedEntryInput,
-  type S33Wave2AcceptanceTrustRoot,
-  type S33Wave2AuthenticatedBatchAcceptance,
 } from './s33-wave2-acceptance-envelope.js';
+import {
+  verifyS33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedAcceptanceVerificationContextV2,
+  type S33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedSigningTestHarnessV2,
+} from './s33-wave3-detached-signing-v2.js';
 import {
   extendS33Wave2CorpusRegistry,
   type S33Wave2CorpusRegistry,
@@ -614,14 +618,24 @@ export function preflightS33Wave2BatchCandidate(
   return deepFreeze({ ...withoutDigest, artifactDigestSha256: sha256(canonicaliseJson(withoutDigest)) });
 }
 
-/** Authenticate Lane-3 authority and bind it to a recomputed whole-batch preflight. */
-export function acceptS33Wave2BatchCandidate(input: Readonly<{
+export interface S33Wave2BatchCandidateAcceptanceInput {
   registry: S33Wave2CorpusRegistry;
   snapshot: S33Wave2CandidateSnapshot;
   pullRequestNumber: number;
   authenticatedAcceptance: unknown;
-  testOnlyTrustRoot?: S33Wave2AcceptanceTrustRoot;
-}>): S33Wave2AuthenticatedBatchAcceptance {
+  verifiedAtUtc: string;
+}
+
+type S33DetachedAcceptanceVerifierV2 = (
+  value: unknown,
+  bindings: S33Wave2AcceptanceBindings,
+  context: S33DetachedAcceptanceVerificationContextV2,
+) => S33DetachedAcceptanceEnvelopeV2;
+
+function acceptS33Wave2BatchCandidateWithVerifier(
+  input: Readonly<S33Wave2BatchCandidateAcceptanceInput>,
+  verifyAcceptance: S33DetachedAcceptanceVerifierV2,
+): S33DetachedAcceptanceEnvelopeV2 {
   const preflight = preflightS33Wave2BatchCandidate(input.registry, input.snapshot);
   const resultingRegistry = extendS33Wave2CorpusRegistry(
     input.registry,
@@ -631,7 +645,7 @@ export function acceptS33Wave2BatchCandidate(input: Readonly<{
   const acceptedEntryOrderSha256 = computeS33Wave2AcceptedEntryOrderSha256(
     preflight.acceptanceEntries.map(({ id }) => id),
   );
-  const verified = verifyS33Wave2AuthenticatedBatchAcceptance(
+  const verified = verifyAcceptance(
     input.authenticatedAcceptance,
     {
       repositoryIdentity: 'carson-see/ArkovaCarson',
@@ -654,13 +668,44 @@ export function acceptS33Wave2BatchCandidate(input: Readonly<{
       coverageRegistryCanonicalSha256: preflight.coverageRegistry.canonicalSha256,
       acceptedEntryOrderSha256,
     },
-    input.testOnlyTrustRoot ? { testOnlyTrustRoot: input.testOnlyTrustRoot } : undefined,
+    { verifiedAtUtc: input.verifiedAtUtc },
   );
-  const signedEntries = verified.payload.acceptedEntries.map(({ entryCanonicalSha256: _fingerprint, ...entry }) => entry);
+  const signedEntries = verified.request.payload.acceptedEntries.map(
+    ({ entryCanonicalSha256: _fingerprint, ...entry }) => entry,
+  );
   if (canonicaliseJson(signedEntries) !== canonicaliseJson(preflight.acceptanceEntries)) {
     throw new Error('Wave-2 authenticated per-entry facts do not match trusted-main recomputation');
   }
   return verified;
+}
+
+/** Authenticate v2 Lane-3 authority and bind it to the recomputed whole-batch preflight. */
+export function acceptS33Wave2BatchCandidate(
+  input: Readonly<S33Wave2BatchCandidateAcceptanceInput>,
+): S33DetachedAcceptanceEnvelopeV2 {
+  return acceptS33Wave2BatchCandidateWithVerifier(
+    input,
+    verifyS33DetachedAcceptanceEnvelopeV2,
+  );
+}
+
+/** Isolated fixture seam; production callers cannot inject a policy or verifier. */
+export function createS33Wave2BatchAcceptanceTestHarnessV2(
+  detachedSigningHarness: S33DetachedSigningTestHarnessV2,
+): Readonly<{
+  accept(input: Readonly<S33Wave2BatchCandidateAcceptanceInput>): S33DetachedAcceptanceEnvelopeV2;
+}> {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Wave-2 detached acceptance test harness is disabled');
+  }
+  return Object.freeze({
+    accept: (input: Readonly<S33Wave2BatchCandidateAcceptanceInput>) => (
+      acceptS33Wave2BatchCandidateWithVerifier(
+        input,
+        detachedSigningHarness.verify.bind(detachedSigningHarness),
+      )
+    ),
+  });
 }
 
 export interface S33Wave2TrustedMainConsumption {
@@ -685,7 +730,7 @@ export function verifyS33Wave2MergedBatch(input: Readonly<{
   mergedMainRepositoryRoot: string;
   mergedMainHeadSha: string;
   snapshot: S33Wave2CandidateSnapshot;
-  acceptance: S33Wave2AuthenticatedBatchAcceptance;
+  acceptance: S33DetachedAcceptanceEnvelopeV2;
 }>): S33Wave2TrustedMainConsumption {
   objectId(input.mergedMainHeadSha, 'Wave-2 merged-main head');
   const repositoryRoot = realpathSync(input.mergedMainRepositoryRoot);
@@ -693,8 +738,8 @@ export function verifyS33Wave2MergedBatch(input: Readonly<{
   if (resolvedHead !== input.mergedMainHeadSha || git(repositoryRoot, ['rev-parse', 'HEAD'], 'utf8').trim() !== resolvedHead) {
     throw new Error('Wave-2 merged-main checkout is not the exact declared commit');
   }
-  if (input.acceptance.payload.candidateHeadSha !== input.snapshot.candidateHeadSha
-    || input.acceptance.payload.candidateTreeSha !== input.snapshot.candidateTreeSha) {
+  if (input.acceptance.request.payload.candidateHeadSha !== input.snapshot.candidateHeadSha
+    || input.acceptance.request.payload.candidateTreeSha !== input.snapshot.candidateTreeSha) {
     throw new Error('Wave-2 acceptance does not bind the candidate snapshot being consumed');
   }
   try {
@@ -713,7 +758,7 @@ export function verifyS33Wave2MergedBatch(input: Readonly<{
   ], 'utf8').trim().length > 0) {
     throw new Error('Wave-2 merged-main packet checkout is dirty');
   }
-  const payload = input.acceptance.payload;
+  const payload = input.acceptance.request.payload;
   const withoutDigest = {
     schemaVersion: 1 as const,
     artifactType: 'arkova-s33-wave2-trusted-main-consumption' as const,
