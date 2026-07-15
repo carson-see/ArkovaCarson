@@ -10,9 +10,21 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
+import {
+  parseStrictJsonDocument,
+  type ArtifactContent,
+} from './s33-batch-acceptance.js';
 import { V6_SUBTYPE_TAXONOMY } from './golden-dataset-s33-types.js';
+import {
+  S33_WAVE2_ACCEPTANCE_CONSTANTS,
+  computeS33Wave2AcceptedEntryOrderSha256,
+  verifyS33Wave2AuthenticatedBatchAcceptance,
+  type S33Wave2AcceptanceBindings,
+  type S33Wave2AcceptanceTrustRoot,
+  type S33Wave2AcceptedEntry,
+  type S33Wave2AuthenticatedBatchAcceptance,
+} from './s33-wave2-acceptance-envelope.js';
 
-const sha256Pattern = /^[a-f0-9]{64}$/;
 const gitShaPattern = /^[a-f0-9]{40}$/;
 const domainIds = ['legal', 'financial', 'education'] as const;
 
@@ -78,27 +90,8 @@ const registrySchema = z.object({
   productionOrder: z.array(z.string().min(1)).length(45),
 }).strict();
 
-const acceptedCoverageEntrySchema = z.object({
-  id: z.string().min(1),
-  registryTypeId: z.string().min(1),
-  batchId: z.string().min(1),
-  credentialType: z.string().min(1),
-  subType: z.string().min(1),
-  authorshipMethod: z.enum(['real-source', 'independently-authored']),
-  generatorDerived: z.literal(false),
-  trainingExposed: z.literal(false),
-  intendedSplit: z.literal('held-out'),
-  productionValidSubstantiveFieldCount: z.number().int().nonnegative(),
-  edgeCase: z.boolean(),
-  acceptance: z.object({
-    lane: z.literal('lane3'),
-    artifactSha256: z.string().regex(sha256Pattern),
-    acceptedHeadCommit: z.string().regex(gitShaPattern),
-  }).strict(),
-}).strict();
-
 export type S33Wave2Top15Registry = z.infer<typeof registrySchema>;
-export type S33AcceptedCoverageEntry = z.infer<typeof acceptedCoverageEntrySchema>;
+export type S33AcceptedCoverageEntry = S33Wave2AcceptedEntry;
 export type S33RegistryType = S33Wave2Top15Registry['domains'][number]['types'][number];
 type S33RegistryDomainId = typeof domainIds[number];
 
@@ -137,13 +130,22 @@ export interface S33Wave2CoverageReport {
   readonly planningBaseCommit: string;
   readonly baseline: Readonly<S33CoverageBaseline>;
   readonly registryTypeCount: 45;
+  readonly acceptedBatchCount: number;
   readonly acceptedEntryCount: number;
+  readonly acceptanceArtifactDigests: readonly string[];
+  readonly acceptedRegistryRootSha256: string | null;
+  readonly acceptedRegistryHeadSha256: string | null;
   readonly completeTypeCount: number;
   readonly incompleteTypeCount: number;
   readonly minimumRequiredEntryCount: number;
   readonly missingEntryCount: number;
   readonly productionOrder: readonly string[];
   readonly types: readonly S33TypeCoverage[];
+}
+
+export interface S33Wave2CoverageAuditOptions {
+  /** Test-only key injection; the shared verifier rejects it outside NODE_ENV=test. */
+  readonly testOnlyTrustRoot?: S33Wave2AcceptanceTrustRoot;
 }
 
 function expectedProductionOrder(registry: S33Wave2Top15Registry): string[] {
@@ -234,14 +236,146 @@ export function parseS33Wave2Top15Registry(input: unknown): S33Wave2Top15Registr
   return registry;
 }
 
-/** Audit only Lane-3-authenticated held-out entries against all signed thresholds. */
+function acceptanceBindingsFromEnvelope(
+  input: unknown,
+  coverageRegistryRawSha256: string,
+  coverageRegistryCanonicalSha256: string,
+): S33Wave2AcceptanceBindings {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Wave-2 authenticated Lane-3 acceptance must be an envelope object.');
+  }
+  const payloadValue = (input as { payload?: unknown }).payload;
+  if (payloadValue === null || typeof payloadValue !== 'object' || Array.isArray(payloadValue)) {
+    throw new Error('Wave-2 authenticated Lane-3 acceptance must contain a payload object.');
+  }
+  const payload = payloadValue as S33Wave2AuthenticatedBatchAcceptance['payload'];
+  if (!Array.isArray(payload.acceptedEntries)) {
+    throw new Error('Wave-2 authenticated Lane-3 acceptance must contain accepted entries.');
+  }
+  const acceptedEntryOrderSha256 = computeS33Wave2AcceptedEntryOrderSha256(
+    payload.acceptedEntries.map((entry) => entry?.id),
+  );
+
+  return {
+    repositoryIdentity: S33_WAVE2_ACCEPTANCE_CONSTANTS.repositoryIdentity,
+    pullRequestNumber: payload.pullRequestNumber,
+    candidateBaseSha: payload.candidateBaseSha,
+    candidateHeadSha: payload.candidateHeadSha,
+    candidateTreeSha: payload.candidateTreeSha,
+    batchId: payload.batchId,
+    revision: payload.revision,
+    manifestPath: payload.manifestPath,
+    manifestRawSha256: payload.manifestRawSha256,
+    manifestCanonicalSha256: payload.manifestCanonicalSha256,
+    sourceBlobSha: payload.sourceBlobSha,
+    datasheetBlobSha: payload.datasheetBlobSha,
+    preflightArtifactDigestSha256: payload.preflightArtifactDigestSha256,
+    baseRegistryDigestSha256: payload.baseRegistryDigestSha256,
+    resultingRegistryDigestSha256: payload.resultingRegistryDigestSha256,
+    coverageRegistryPath: S33_WAVE2_ACCEPTANCE_CONSTANTS.coverageRegistryPath,
+    coverageRegistryRawSha256,
+    coverageRegistryCanonicalSha256,
+    acceptedEntryOrderSha256,
+  };
+}
+
+function orderAuthenticatedAcceptanceChain(
+  envelopes: readonly S33Wave2AuthenticatedBatchAcceptance[],
+): readonly S33Wave2AuthenticatedBatchAcceptance[] {
+  if (envelopes.length === 0) return Object.freeze([]);
+
+  const artifactDigests = new Set<string>();
+  const batchIds = new Set<string>();
+  const resultDigests = new Set<string>();
+  const successorByBase = new Map<string, S33Wave2AuthenticatedBatchAcceptance>();
+
+  for (const envelope of envelopes) {
+    const { payload } = envelope;
+    if (artifactDigests.has(envelope.artifactDigestSha256)) {
+      throw new Error(`Duplicate authenticated Lane-3 acceptance artifact: ${envelope.artifactDigestSha256}.`);
+    }
+    artifactDigests.add(envelope.artifactDigestSha256);
+    if (batchIds.has(payload.batchId)) {
+      throw new Error(`Duplicate authenticated Lane-3 batch id across revisions: ${payload.batchId}.`);
+    }
+    batchIds.add(payload.batchId);
+    if (payload.baseRegistryDigestSha256 === payload.resultingRegistryDigestSha256) {
+      throw new Error(`Authenticated Lane-3 batch ${payload.batchId} does not advance the accepted registry.`);
+    }
+    if (successorByBase.has(payload.baseRegistryDigestSha256)) {
+      throw new Error(`Authenticated Lane-3 registry chain forks at ${payload.baseRegistryDigestSha256}.`);
+    }
+    successorByBase.set(payload.baseRegistryDigestSha256, envelope);
+    if (resultDigests.has(payload.resultingRegistryDigestSha256)) {
+      throw new Error(`Authenticated Lane-3 registry chain converges twice at ${payload.resultingRegistryDigestSha256}.`);
+    }
+    resultDigests.add(payload.resultingRegistryDigestSha256);
+  }
+
+  const roots = envelopes.filter(({ payload }) => !resultDigests.has(payload.baseRegistryDigestSha256));
+  if (roots.length !== 1) {
+    throw new Error(`Authenticated Lane-3 registry chain must have exactly one root; found ${roots.length}.`);
+  }
+
+  const ordered: S33Wave2AuthenticatedBatchAcceptance[] = [];
+  const visited = new Set<string>();
+  let current: S33Wave2AuthenticatedBatchAcceptance | undefined = roots[0];
+  while (current !== undefined) {
+    if (visited.has(current.artifactDigestSha256)) {
+      throw new Error('Authenticated Lane-3 registry chain contains a cycle.');
+    }
+    visited.add(current.artifactDigestSha256);
+    ordered.push(current);
+    current = successorByBase.get(current.payload.resultingRegistryDigestSha256);
+  }
+  if (ordered.length !== envelopes.length) {
+    throw new Error('Authenticated Lane-3 registry chain is disconnected or cyclic.');
+  }
+  return Object.freeze(ordered);
+}
+
+function assertUniqueAcceptedEntries(entries: readonly S33Wave2AcceptedEntry[]): void {
+  const seenIds = new Set<string>();
+  const seenInputs = new Set<string>();
+  const seenFingerprints = new Set<string>();
+  for (const entry of entries) {
+    if (seenIds.has(entry.id)) throw new Error(`Duplicate accepted held-out entry id: ${entry.id}.`);
+    if (seenInputs.has(entry.normalizedInputSha256)) {
+      throw new Error(`Duplicate accepted normalized-input fingerprint: ${entry.normalizedInputSha256}.`);
+    }
+    if (seenFingerprints.has(entry.entryCanonicalSha256)) {
+      throw new Error(`Duplicate accepted entry fingerprint: ${entry.entryCanonicalSha256}.`);
+    }
+    seenIds.add(entry.id);
+    seenInputs.add(entry.normalizedInputSha256);
+    seenFingerprints.add(entry.entryCanonicalSha256);
+  }
+}
+
+/** Audit only cryptographically authenticated Lane-3 held-out batches against all signed thresholds. */
 export function auditS33Wave2Coverage(
-  registryInput: unknown,
-  acceptedEntryInputs: readonly unknown[],
+  registryContent: ArtifactContent,
+  acceptanceEnvelopeInputs: readonly unknown[],
+  options: S33Wave2CoverageAuditOptions = {},
 ): S33Wave2CoverageReport {
-  const registry = parseS33Wave2Top15Registry(registryInput);
-  const entries = acceptedEntryInputs.map((entry) => acceptedCoverageEntrySchema.parse(entry));
-  const ids = new Set<string>();
+  const registryDocument = parseStrictJsonDocument(registryContent, 'S3.3 Wave-2 top-15 coverage registry');
+  const registry = parseS33Wave2Top15Registry(registryDocument.parsed);
+  const verifiedEnvelopes = acceptanceEnvelopeInputs.map((envelope) => (
+    verifyS33Wave2AuthenticatedBatchAcceptance(
+      envelope,
+      acceptanceBindingsFromEnvelope(
+        envelope,
+        registryDocument.rawSha256,
+        registryDocument.canonicalSha256,
+      ),
+      options.testOnlyTrustRoot === undefined
+        ? undefined
+        : { testOnlyTrustRoot: options.testOnlyTrustRoot },
+    )
+  ));
+  const acceptanceChain = orderAuthenticatedAcceptanceChain(verifiedEnvelopes);
+  const entries = acceptanceChain.flatMap(({ payload }) => payload.acceptedEntries);
+  assertUniqueAcceptedEntries(entries);
   const typeById = new Map<string, S33RegistryTypeLocation>();
 
   for (const domain of registry.domains) {
@@ -249,9 +383,6 @@ export function auditS33Wave2Coverage(
   }
 
   for (const entry of entries) {
-    if (ids.has(entry.id)) throw new Error(`Duplicate accepted held-out entry id: ${entry.id}.`);
-    ids.add(entry.id);
-
     const registryType = typeById.get(entry.registryTypeId);
     if (!registryType) throw new Error(`Accepted entry ${entry.id} names unknown registry type ${entry.registryTypeId}.`);
     if (entry.productionValidSubstantiveFieldCount < registry.coveragePolicy.minimumProductionValidSubstantiveFields) {
@@ -310,7 +441,13 @@ export function auditS33Wave2Coverage(
       top15CoverageDisposition: registry.acceptedBaseline.top15CoverageDisposition,
     }),
     registryTypeCount: 45,
+    acceptedBatchCount: acceptanceChain.length,
     acceptedEntryCount: entries.length,
+    acceptanceArtifactDigests: Object.freeze(
+      acceptanceChain.map(({ artifactDigestSha256 }) => artifactDigestSha256),
+    ),
+    acceptedRegistryRootSha256: acceptanceChain[0]?.payload.baseRegistryDigestSha256 ?? null,
+    acceptedRegistryHeadSha256: acceptanceChain.at(-1)?.payload.resultingRegistryDigestSha256 ?? null,
     completeTypeCount,
     incompleteTypeCount: 45 - completeTypeCount,
     minimumRequiredEntryCount,

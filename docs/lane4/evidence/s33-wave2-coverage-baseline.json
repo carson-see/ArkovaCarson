@@ -6,10 +6,11 @@
   "planningBaseCommit": "42530fd73f9bd0cb7e4e70fc1259324810780b2c",
   "registryPath": "docs/lane4/s33-wave2-top15-registry.json",
   "registryRawSha256": "1716bfd035bd481669dfa28c0fb8eb07c33f928da57dc17107228dc6d372f813",
-  "acceptedEntryArtifact": null,
-  "reportCanonicalSha256": "c1c850b6dff3f7605665ccb2f747e017a0c286197fedf2aa295701f736ecddfa",
+  "authenticatedAcceptanceArtifacts": [],
+  "reportCanonicalSha256": "277215c579b5d20f06cf8b926a92965de29c8f206f82a48dec967b865f25f9cf",
   "summary": {
     "registryTypeCount": 45,
+    "acceptedBatchCount": 0,
     "acceptedEntryCount": 0,
     "completeTypeCount": 0,
     "incompleteTypeCount": 45,

@@ -10,10 +10,16 @@ _Last updated: 2026-07-15_
   credential/subtype pair against `V6_SUBTYPE_TAXONOMY`, pins the merged Wave-1
   revision-12 baseline without claiming unprovided top-15 coverage, and emits a
   canonical deterministic report digest.
-- Coverage counts only strict Lane-3 acceptance records for real-source or
-  independently-authored held-out entries. Generator-derived, training-exposed,
-  shallow, duplicate, unknown-type, or taxonomy-mismatched inputs fail closed;
-  Lane 4 cannot accept its own producer records. A type is complete only at
+- Coverage counts only whole-batch Lane-3 acceptance envelopes verified by the
+  shared Ed25519 CTO-release trust root. The audit recomputes the raw and
+  canonical coverage-registry digests, verifies the signed entry order, rejects
+  duplicate artifacts/batches/entry fingerprints, and requires one unbroken
+  base-to-result registry chain with no fork, cycle, or disconnected component.
+  A missing production trust root fails closed for nonempty acceptance input;
+  the pre-corpus empty baseline remains reproducible. Generator-derived,
+  training-exposed, shallow, duplicate, unknown-type, or taxonomy-mismatched
+  entries fail closed; a producer-supplied `lane3` label grants no authority and
+  Lane 4 cannot accept its own records. A type is complete only at
   12 accepted rows with at least `ceil(12 * 0.30) = 4` edge cases; both total
   and edge-case deficits contribute to the fail-closed missing count.
 - `docs/lane4/evidence/s33-wave2-coverage-baseline.json` is the reproducible
