@@ -306,6 +306,91 @@ describe("S3.3 load evidence", () => {
     ).toThrow(/exact final header\/log attribution join/i);
   });
 
+  it("keeps a boundary anonymous-IP stop in its actual later error window", () => {
+    const plan = buildS33LoadPlan(
+      loadPlanInput({ durationMinutes: 6, seed: "boundary-379" }),
+    );
+    const fullRunner = runnerOutput(plan);
+    const boundaryArrival = fullRunner.arrivals.find(
+      (arrival) => arrival.scheduledOffsetMs === 300_000,
+    );
+    if (!boundaryArrival) {
+      throw new Error("Boundary regression seed has no arrival at offset 300000");
+    }
+    boundaryArrival.status = 429;
+    boundaryArrival.correlationId = "anon-rate-limit-001";
+    boundaryArrival.retryAfterSec = 12;
+    boundaryArrival.xRateLimitLimit = 100;
+
+    const runner = structuredClone(fullRunner);
+    runner.arrivals = runner.arrivals.slice(0, boundaryArrival.sequence + 1);
+    runner.observationPasses = runner.observationPasses.slice(0, 1);
+    runner.termination = {
+      state: "HARD_STOPPED",
+      trigger: {
+        kind: "ANON_IP_429",
+        sequence: boundaryArrival.sequence,
+        correlationId: boundaryArrival.correlationId,
+      },
+      reasons: ["ANON_IP_429_SIGNAL"],
+      lastDispatchedSequence: boundaryArrival.sequence,
+    };
+
+    const evidence = buildS33LoadEvidence(
+      evidenceInput({
+        plan,
+        runner,
+        attribution: attribution(true),
+        attributionSourcePacket: attributionSource(true),
+      }),
+    );
+    expect(evidence.errorWindows).toHaveLength(2);
+    expect(evidence.errorWindows[1]).toEqual({
+      windowId: "window-0002",
+      startedAt: new Date(
+        Date.parse(plan.plannedStartAt) + 300_000,
+      ).toISOString(),
+      totalRequests: 1,
+      injectedErrors: 0,
+      nonInjectedErrors: 1,
+    });
+    const secondWindow = evidence.errorWindows[1]!;
+    expect(
+      secondWindow.nonInjectedErrors /
+        (secondWindow.totalRequests - secondWindow.injectedErrors),
+    ).toBe(1);
+    const { evidenceDigestSha256, ...evidenceWithoutDigest } = evidence;
+    expect(evidenceDigestSha256).toBe(digestS33Value(evidenceWithoutDigest));
+    expect(evidence.stopReasons).toContain("SELF_INFLICTED_ANON_IP_429");
+    expect(evidence.executionDisposition).toBe("STOP");
+    expect(evidence.headline429Buckets["anon-IP"].events).toEqual([
+      expect.objectContaining({ correlationId: boundaryArrival.correlationId }),
+    ]);
+
+    const nonPrefix = structuredClone(runner);
+    nonPrefix.arrivals.push(fullRunner.arrivals[boundaryArrival.sequence + 1]!);
+    expect(() =>
+      buildS33LoadEvidence(
+        evidenceInput({
+          plan,
+          runner: nonPrefix,
+          attribution: attribution(true),
+          attributionSourcePacket: attributionSource(true),
+        }),
+      ),
+    ).toThrow(/arrival coverage|exact seeded plan|prefix/i);
+    expect(() =>
+      buildS33LoadEvidence(
+        evidenceInput({
+          plan,
+          runner,
+          attribution: attribution(false),
+          attributionSourcePacket: attributionSource(false),
+        }),
+      ),
+    ).toThrow(/exact final header\/log attribution join/i);
+  });
+
   it("pauses only after >1% non-injected errors in three consecutive five-minute windows", () => {
     const plan = buildS33LoadPlan(loadPlanInput({ durationMinutes: 16 }));
     const threeBreaches = runnerOutput(plan);
