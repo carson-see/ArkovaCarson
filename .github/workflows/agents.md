@@ -67,6 +67,10 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
 
 - `ci.yml` "Start worker for E2E tests": health-check budget 60s → 120s (tsx cold-compiles the worker on first boot; observed healthy boots in the #1439/#1443 runs took ~10s, but the margin was thin for cold npm caches). The gate remains hard-fail (`exit 1` + worker-log dump) — specs never run against a dead worker; only the false-negative window shrank. Shipped alongside the `e2e/api-keys.spec.ts:166` strict-mode fix (see `e2e/agents.md` 2026-07-12).
 
+## S3.3 trusted-main Worker TSX cwd contract (2026-07-15)
+
+- Worker TypeScript CLIs launched from repository-root workflow steps with `npm --prefix services/worker exec -- tsx` must pass a repository-root-valid `services/worker/src/...` target. A bare `src/...` target resolves against the repository root and fails before the CLI loads. `scripts/ci/s33-wave1-github-evidence.test.ts` pins the exact four prerequisite and one acceptance targets so this cannot silently recur.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails

@@ -142,7 +142,7 @@ jobs:
         run: |
           set -euo pipefail
           npm --prefix services/worker exec -- tsx \
-            src/ai/eval/s33-wave1-producer-verifier.ts verify \
+            services/worker/src/ai/eval/s33-wave1-producer-verifier.ts verify \
             --repository-root "${S33_PRODUCER_OBJECT_REPOSITORY}" \
             --producer-head "${S33_PRODUCER_HEAD_SHA}"
 
