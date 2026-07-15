@@ -280,7 +280,7 @@ function captureComposerInputs(input: S33ReleaseEvidenceChainInput): {
   if (!input || typeof input !== 'object') {
     throw new TypeError('Release evidence composer input must be an object.');
   }
-  const keys = Object.keys(input).sort();
+  const keys = Object.keys(input).sort((left, right) => left.localeCompare(right));
   if (
     keys.length !== COMPOSER_INPUT_KEYS.length
     || keys.some((key, index) => key !== COMPOSER_INPUT_KEYS[index])
