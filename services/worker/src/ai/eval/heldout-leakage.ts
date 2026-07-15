@@ -101,6 +101,9 @@ const CORPUS_EXTENSIONS = ['.jsonl', '.json', '.ts', '.txt', '.md'];
 const SELF_EXCLUSION_EXACT_PATHS = new Set([
   'src/ai/eval/golden-dataset-cpe-cle-s3.ts',
   'src/ai/eval/cpe-cle-s3-manifest.json',
+  'src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
+  'src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
+  'src/ai/eval/golden-dataset-s33-ood-negatives.ts',
   'src/ai/eval/heldout-leakage.ts',
 ]);
 
@@ -114,11 +117,12 @@ export function isLeakageSelfExclusion(relPath: string): boolean {
   return SELF_EXCLUSION_EXACT_PATHS.has(posixPath) || posixPath.endsWith('.test.ts');
 }
 
-function walk(dir: string, out: string[]): void {
+function walk(dir: string, out: string[], failOnUnreadable = false): void {
   let names: string[];
   try {
     names = readdirSync(dir);
-  } catch {
+  } catch (error) {
+    if (failOnUnreadable) throw new Error(`Cannot enumerate leakage-corpus directory ${dir}`, { cause: error });
     return;
   }
   for (const name of names) {
@@ -126,12 +130,13 @@ function walk(dir: string, out: string[]): void {
     let stats;
     try {
       stats = statSync(full);
-    } catch {
+    } catch (error) {
+      if (failOnUnreadable) throw new Error(`Cannot stat leakage-corpus path ${full}`, { cause: error });
       continue;
     }
     if (stats.isDirectory()) {
       if (name === 'node_modules' || name === 'dist') continue;
-      walk(full, out);
+      walk(full, out, failOnUnreadable);
     } else if (CORPUS_EXTENSIONS.some((ext) => name.endsWith(ext))) {
       out.push(full);
     }
@@ -148,7 +153,10 @@ function walk(dir: string, out: string[]): void {
  *
  * @param workerRoot absolute path to `services/worker`
  */
-export function loadLeakageCorpus(workerRoot: string): CorpusFile[] {
+export function loadLeakageCorpus(
+  workerRoot: string,
+  options: Readonly<{ failOnUnreadable?: boolean }> = {},
+): CorpusFile[] {
   const roots = [
     join(workerRoot, 'training-data'),
     join(workerRoot, 'src', 'ai'),
@@ -156,7 +164,7 @@ export function loadLeakageCorpus(workerRoot: string): CorpusFile[] {
   ];
   const files: string[] = [];
   for (const root of roots) {
-    walk(root, files);
+    walk(root, files, options.failOnUnreadable === true);
   }
   const corpus: CorpusFile[] = [];
   for (const file of files) {
@@ -164,7 +172,10 @@ export function loadLeakageCorpus(workerRoot: string): CorpusFile[] {
     if (isLeakageSelfExclusion(rel)) continue;
     try {
       corpus.push({ path: rel, content: readFileSync(file, 'utf-8') });
-    } catch {
+    } catch (error) {
+      if (options.failOnUnreadable === true) {
+        throw new Error(`Cannot read leakage-corpus file ${file}`, { cause: error });
+      }
       // Unreadable file — skip; checkS3LeakagePrecondition and the test-suite
       // sanity assertions fail closed if the corpus ends up empty.
     }

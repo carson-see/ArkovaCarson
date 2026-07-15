@@ -36,6 +36,8 @@ useDefault = true
     '''YOUR_API_KEY''',
     # Compliance-framework enum identifiers (services/worker/src/ai/constrained-schemas.ts)
     '''(hipaa|hitech|gdpr|soc2|iso27001|ccpa)-[0-9a-z-]+''',
+    # S3.3 schema constant access; identifier text, not a credential
+    '''S33_OOD_GROUND_TRUTH_KEYS\.length''',
     # Secret Manager REFERENCES in deploy YAML (name=secret:latest) — mappings, not values
     '''[A-Z_]+=[a-z0-9-]+:latest''',
     # Documented Stripe TEST/placeholder keys in bug/investigation docs

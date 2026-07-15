@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   S33_LANE1_OFFLINE_EVIDENCE_FILES,
   check,
   extractDeclaredTier,
+  findS33RuntimeImporters,
   findS33Lane1RuntimeImporters,
   hasEvidenceSection,
   hasResidualRiskException,
@@ -407,6 +411,229 @@ describe('check-staging-evidence', () => {
       expect(
         requiredTierFor(['services/worker/src/proof/signed-bundle.ts']).tier,
       ).not.toBe('T0');
+    });
+
+    it('classifies only the exact CTO-ratified S3.3 offline support files as T0', () => {
+      expect(requiredTierFor([
+        '.sonarcloud.properties',
+        'docs/lane3/s33-batch-acceptance-protocol.md',
+        'scripts/ci/check-staging-evidence.test.ts',
+        'scripts/ci/check-staging-evidence.ts',
+        'services/worker/src/ai/eval/agents.md',
+        'services/worker/src/ai/eval/golden-dataset-s33-types.test.ts',
+        'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
+        'services/worker/src/ai/eval/heldout-leakage.test.ts',
+        'services/worker/src/ai/eval/heldout-leakage.ts',
+        'services/worker/src/ai/eval/s33-acceptance-ledger.ts',
+        'services/worker/src/ai/eval/s33-batch-acceptance.test.ts',
+        'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+        'services/worker/src/ai/eval/s33-wave1-dual-dag.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-dual-dag.ts',
+        'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
+        'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-verifier.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-parser.ts',
+        'services/worker/src/ai/eval/s33-wave1-workflow-reports.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
+      ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');
+
+      expect(requiredTierFor([
+        'services/worker/src/ai/eval/s33-eval-runner.ts',
+      ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T2');
+    });
+
+    it('classifies the real full #1545 candidate as T0 using the actual runtime graph', () => {
+      const candidate = [
+        '.gitleaks.toml',
+        '.github/s33-wave1-acceptance-authorities.json',
+        '.github/workflows/s33-wave1-acceptance.yml',
+        '.github/workflows/s33-wave1-prerequisites.yml',
+        '.sonarcloud.properties',
+        'docs/lane3/agents.md',
+        'docs/lane3/s33-batch-acceptance-protocol.md',
+        'scripts/ci/agents.md',
+        'scripts/ci/check-staging-evidence.test.ts',
+        'scripts/ci/check-staging-evidence.ts',
+        'scripts/ci/s33-wave1-github-evidence.test.ts',
+        'scripts/ci/s33-wave1-github-evidence.ts',
+        'services/worker/src/ai/eval/agents.md',
+        'services/worker/src/ai/eval/golden-dataset-s33-types.test.ts',
+        'services/worker/src/ai/eval/golden-dataset-s33-types.ts',
+        'services/worker/src/ai/eval/heldout-leakage.test.ts',
+        'services/worker/src/ai/eval/heldout-leakage.ts',
+        'services/worker/src/ai/eval/s33-acceptance-ledger.ts',
+        'services/worker/src/ai/eval/s33-batch-acceptance.test.ts',
+        'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+        'services/worker/src/ai/eval/s33-wave1-dual-dag.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-dual-dag.ts',
+        'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
+        'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-verifier.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-parser.ts',
+        'services/worker/src/ai/eval/s33-wave1-workflow-reports.test.ts',
+        'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
+      ];
+      expect(candidate).toHaveLength(30);
+      const realRuntimeImporters = findS33RuntimeImporters();
+      expect(realRuntimeImporters).toEqual([]);
+      expect(requiredTierFor(candidate, {
+        s33RuntimeImporterProvider: () => realRuntimeImporters,
+      }).tier).toBe('T0');
+    });
+
+    it('keeps the dual-DAG implementation T0 only while the runtime graph is readable and unreachable', () => {
+      const dualDag = ['services/worker/src/ai/eval/s33-wave1-dual-dag.ts'];
+
+      expect(requiredTierFor(dualDag, {
+        s33RuntimeImporterProvider: () => [],
+      }).tier).toBe('T0');
+      expect(requiredTierFor(dualDag, {
+        s33RuntimeImporterProvider: () => ['services/worker/src/index.ts'],
+      }).tier).toBe('T2');
+      expect(requiredTierFor(dualDag, {
+        s33RuntimeImporterProvider: () => {
+          throw new Error('runtime graph unreadable');
+        },
+      }).tier).toBe('T2');
+    });
+
+    it('classifies the exact Wave-1 producer corpus files as T0 only while unimported by runtime', () => {
+      expect(requiredTierFor([
+        'docs/lane4/s33-corpus-datasheet.md',
+        'docs/lane4/s33-wave1-batch-manifest.json',
+        'docs/lane4/s33-wave1-entry-datasheet.json',
+        'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
+        'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
+        'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
+      ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');
+    });
+
+    it('fails the S3.3 T0 carve-out closed when any production source imports it', () => {
+      expect(requiredTierFor([
+        'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+      ], {
+        s33RuntimeImporterProvider: () => ['services/worker/src/routes/cron.ts'],
+      }).tier).toBe('T2');
+    });
+  });
+
+  describe('findS33RuntimeImporters', () => {
+    const withRuntimeFixture = (
+      files: Readonly<Record<string, string>>,
+      assertion: (root: string) => void,
+    ): void => {
+      const root = mkdtempSync(join(tmpdir(), 's33-import-guard-'));
+      try {
+        for (const [path, content] of Object.entries(files)) {
+          const absolute = join(root, path);
+          mkdirSync(join(absolute, '..'), { recursive: true });
+          writeFileSync(absolute, content);
+        }
+        assertion(root);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    };
+
+    it('walks the runtime-entrypoint module graph and ignores unreachable/test imports', () => {
+      withRuntimeFixture({
+        'services/worker/src/index.ts': "import './routes/cron.js';\n",
+        'services/worker/src/routes/cron.ts': "export * from '../ai/eval/s33-batch-acceptance.js';\n",
+        'services/worker/src/routes/unreachable.ts': "import '../ai/eval/s33-batch-acceptance.js';\n",
+        'services/worker/src/routes/cron.test.ts': "import '../ai/eval/s33-batch-acceptance.js';\n",
+        'services/worker/src/ai/eval/s33-batch-acceptance.ts': 'export const offline = true;\n',
+      }, (root) => {
+        expect(findS33RuntimeImporters(root)).toEqual(['services/worker/src/routes/cron.ts']);
+      });
+    });
+
+    it.each([
+      ['services/worker/src/ai/eval/heldout-leakage.ts', './ai/eval/heldout-leakage.js'],
+      ['services/worker/src/ai/eval/s33-wave1-github-evidence.ts', './ai/eval/s33-wave1-github-evidence.js'],
+      ['services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts', './ai/eval/s33-wave1-prerequisite-runner.js'],
+      ['services/worker/src/ai/eval/s33-wave1-producer-parser.ts', './ai/eval/s33-wave1-producer-parser.js'],
+      ['scripts/ci/s33-wave1-github-evidence.ts', '../../../scripts/ci/s33-wave1-github-evidence.js'],
+      ['.github/s33-wave1-acceptance-authorities.json', '../../../.github/s33-wave1-acceptance-authorities.json'],
+    ])('forces T2 when runtime imports newly carved offline file %s', (offlinePath, specifier) => {
+      withRuntimeFixture({
+        'services/worker/src/index.ts': `import ${JSON.stringify(specifier)};\n`,
+        [offlinePath]: offlinePath.endsWith('.json') ? '{}\n' : 'export const offline = true;\n',
+      }, (root) => {
+        expect(findS33RuntimeImporters(root)).toEqual(['services/worker/src/index.ts']);
+        expect(requiredTierFor([offlinePath], {
+          s33RuntimeImporterProvider: () => findS33RuntimeImporters(root),
+        }).tier).toBe('T2');
+      });
+    });
+
+    it('recognises literal dynamic import, require, and createRequire edges', () => {
+      for (const body of [
+        "void import('./ai/eval/s33-batch-acceptance.js');\n",
+        "require('./ai/eval/s33-batch-acceptance.js');\n",
+        "import { createRequire } from 'node:module';\nconst req = createRequire(import.meta.url);\nreq('./ai/eval/s33-batch-acceptance.js');\n",
+        "const { createRequire: makeRequire } = require('node:module');\nconst req = makeRequire(import.meta.url);\nreq('./ai/eval/s33-batch-acceptance.js');\n",
+        "const moduleApi = require('node:module');\nconst req = moduleApi.createRequire(import.meta.url);\nreq('./ai/eval/s33-batch-acceptance.js');\n",
+      ]) {
+        withRuntimeFixture({
+          'services/worker/src/index.ts': body,
+          'services/worker/src/ai/eval/s33-batch-acceptance.ts': 'export const offline = true;\n',
+        }, (root) => {
+          expect(findS33RuntimeImporters(root)).toEqual(['services/worker/src/index.ts']);
+        });
+      }
+    });
+
+    it.each([
+      ["const part = 's33-batch-acceptance.js'; void import('./ai/eval/' + part);\n", 'dynamic import'],
+      ["const part = 's33-batch-acceptance.js'; require('./ai/eval/' + part);\n", 'require/createRequire'],
+      [
+        "import { createRequire } from 'node:module';\nconst req = createRequire(import.meta.url);\nconst part = 's33-batch-acceptance.js';\nreq('./ai/eval/' + part);\n",
+        'require/createRequire',
+      ],
+      [
+        "const { createRequire } = require('node:module');\nconst req = createRequire(import.meta.url);\nconst part = 's33-batch-acceptance.js';\nreq('./ai/eval/' + part);\n",
+        'require/createRequire',
+      ],
+    ])('fails closed on a reachable constructed module load', (body, loadKind) => {
+      withRuntimeFixture({
+        'services/worker/src/index.ts': body,
+      }, (root) => {
+        const importers = findS33RuntimeImporters(root);
+        expect(importers).toEqual([
+          `<unsafe services/worker/src/index.ts: ${loadKind}>`,
+        ]);
+        for (const companionPath of [
+          'scripts/ci/s33-wave1-github-evidence.ts',
+          '.github/s33-wave1-acceptance-authorities.json',
+        ]) {
+          expect(requiredTierFor([companionPath], {
+            s33RuntimeImporterProvider: () => importers,
+          }).tier).toBe('T2');
+        }
+      });
+    });
+
+    it('fails closed to T2 when a reachable runtime module cannot be resolved', () => {
+      withRuntimeFixture({
+        'services/worker/src/index.ts': "import './routes/missing-runtime.js';\n",
+      }, (root) => {
+        const importers = findS33RuntimeImporters(root);
+        expect(importers).toHaveLength(1);
+        expect(importers[0]).toMatch(/^<unreadable services\/worker runtime module graph:/u);
+        for (const offlinePath of [
+          'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
+          'scripts/ci/s33-wave1-github-evidence.ts',
+          '.github/s33-wave1-acceptance-authorities.json',
+        ]) {
+          expect(requiredTierFor([offlinePath], {
+            s33RuntimeImporterProvider: () => importers,
+          }).tier).toBe('T2');
+        }
+      });
     });
   });
 
@@ -1019,6 +1246,17 @@ describe('check-staging-evidence', () => {
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/below required tier T3/);
+    });
+
+    it('preserves the under-declared tier error when the evidence section is also missing', () => {
+      const r = check({
+        body: '## Summary\nTier: T0\nNo staging evidence block.',
+        files: ['services/worker/src/api/v1/example.ts'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below required tier T2/i);
+      expect(r.errors.join(' ')).toMatch(/missing a .*Staging Soak Evidence.* section/i);
     });
 
     it('passes a complete T3 PR', () => {

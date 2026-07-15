@@ -1,6 +1,208 @@
 # agents.md — services/worker/src/ai/eval/
 
-_Last updated: 2026-07-06_
+_Last updated: 2026-07-14_
+
+## 2026-07-14 CTO correction topology — revision-12 provenance
+
+- `s33-wave1-dual-dag.ts` keeps the Lane-4 producer history and Lane-3 support
+  history independent. The generic verifier pins r10 and the unique merge base,
+  requires r11′ to be r10's exact direct single-parent child with no hidden
+  intermediate or tamper/revert commits, verifies nonempty exact declared
+  subsets of the six packet paths on both `r10 -> r11′` and `r11′ -> r12`, preserves
+  r11′ as `HISTORICAL_BLOCKED` with its exact failure-set digest, and requires
+  r12 to pass the full 81-row packet/bijection/adjudication contract with zero
+  post-validation failures.
+- The r12 normalized-input transition universe is exactly code-owned LEAKAGE32
+  plus the sole disjoint non-leakage transition `GD-S33-KE-006`, authorized by
+  `CTO_R12_TAXONOMY_AND_DEPTH_ADJUDICATION`. Their union must be the exact 33
+  raw `strippedText`, source-text, normalized-input, recomputed-fingerprint, and
+  transition-map ids; KE-006 is excluded from leakage counters and all other raw
+  `strippedText` byte sequences and normalized fingerprints stay unchanged.
+- Never use a two-tree `support..producer` diff as provenance. The composition
+  proof is a conflict-free `git merge-tree --write-tree S12 r12`, followed by
+  exact F12C `447326ddd` single-parent child of immutable S12 `032371134`
+  whose tree equals the virtual tree. Both `merge-base -> r12` and
+  `S12 -> F12C` are exactly the six regular non-executable `100644` packet
+  additions; all F12C packet blobs equal r12 and the support/types blob equals
+  S12. A12C `3508e5e9c` is the sole child of F12C and adds only the reviewed
+  `100644` dual-DAG evidence JSON. It is deliberately `selfPinned: false`.
+- Production code pins the exact r10/r11′/r12/S12/F12C/A12C SHAs, both named
+  create-only F12C/A12C refs, both producer-edge subsets, all packet blobs, the
+  A12C evidence blob/raw/canonical digests, and the recomputed report digest.
+  The four edge universes (5M, 6A, 6A, 1A) are never conflated. Historical
+  F12/A12 refs, the later #1545 delivery tip substituted for S12, moved refs,
+  missing history, or caller-supplied pins fail closed.
+
+## 2026-07-14 CTO ruling 102498305 — active Wave-1 acceptance contract
+
+- `golden-dataset-s33-types.ts` applies the production
+  `validateFieldsForType()` sanitizer before measuring ground-truth depth. All
+  covered rows must retain at least five substantive fields and a concrete
+  non-`other` subtype. Only ids in the fixed `GD-S33-OOD-NNN` set are exempt,
+  and their ground truth must be exactly `{ credentialType: 'OTHER', subType:
+  'other', fraudSignals: [] }` with no padding.
+- `s33-batch-acceptance.ts` strictly validates the committed entry datasheet
+  against the manifest and checks the corpus Markdown producer revision,
+  manifest SHA, 81-row bijection, support blob/commit, and physical-parent to
+  logical-predecessor provenance sentence. The active machine-readable
+  acceptance artifact reads the exact #1544 producer head, tree, and manifest
+  from Git and binds them to GitHub approval, successful CI checks, exact
+  normalized 6–13-gram zero-match evidence, offline production-model replay,
+  and diagnostic-only embeddings. No caller supplies Git digests.
+- GitHub authentication and CI are the trust root. The active path has no
+  external signer, registry, commitment/reveal ceremony, or live endpoint.
+  The old signed sampling implementation remains only behind the explicitly
+  test-only injected factory for security-regression coverage; its production
+  factory always throws the CTO-retirement error.
+- `s33-wave1-producer-verifier.ts` is the sole authoritative trusted-main,
+  no-execution producer boundary used by its CLI, prerequisite runner, and
+  workflow-report raw/final/reload paths. It strictly dispatches the exact
+  manifest revision/status tuple: historical blocked packets retain the legacy
+  verifier, while r12 must authenticate the fixed F12C/A12C evidence and full
+  dual-DAG proof before it can report success. `s33-wave1-producer-parser.ts`
+  owns the neutral literal-only TypeScript parser so the producer verifier may
+  depend on the dual-DAG verifier without a circular import. It caps expansion
+  at 81 rows and fails if parser diagnostics are unavailable. Never import or
+  execute producer/evidence code, accept caller-supplied Git facts, or bypass
+  the shared verifier from a non-test call site.
+- `s33-wave1-prerequisite-runner.ts` is the no-retry trusted-main network
+  runner. Its exact CLI is `prerequisites --producer-head <sha>
+  --raw-output-dir <dir>`. It makes 81 ordered `gemini-2.5-flash` production
+  prompt calls, then bounded 3072-dimensional diagnostic embedding batches;
+  it rejects model/tuned/schema overrides and publishes both raw reports
+  atomically. Its offline response comparator mirrors successful production
+  field coercion, professional-education recovery, per-type stripping, and
+  cross-field fraud-signal merging without changing runtime `gemini.ts`.
+- `s33-wave1-workflow-reports.ts` runs only after producer verification. Its
+  CLI is exactly `raw --repository-root <bare> --producer-head <sha>
+  --output-dir <dir> --prod-model-diff-raw-path <path>
+  --embedding-diagnostic-raw-path <path>` or `final --repository-root <bare>
+  --producer-head <sha> --output-dir <dir> --prod-model-diff-final-path <path>
+  --embedding-diagnostic-final-path <path>`. It has no environment-variable
+  fallback and rejects unknown, duplicate, missing, or mixed-mode flags. RAW
+  mode deterministically normalizes private runner output; FINAL mode strictly
+  revalidates and byte-preserves authenticated prerequisite finals while
+  recomputing the current lexical corpus manifest. It emits the fixed report
+  set using the common Team-2 envelope. Lane 3 never authenticates a review or
+  emits `cross-review.json`; `s33-wave1-github-evidence.ts` owns that private
+  WeakSet-branded GitHub boundary and late-loads the Lane-3 finalizer. The
+  lexical report requires zero normalized exact n=6–13 matches, and embedding
+  evidence is always diagnostic-only/non-overriding.
+
+## 2026-07-13 S3.3 Lane-4 batch acceptance support (historical pre-ruling harness)
+
+- `s33-batch-acceptance.ts` parses the actual Lane-4 manifest bytes and derives
+  the complete entry universe. The strict schema includes the producer/Lane-3
+  bindings, three corpus-source blobs, the exact 81-entry id/order contract,
+  all three fixed count maps, the exact 11-entry Kenya-first and 9-entry OOD
+  sets, and all ten real Wave-1 self-check records/statuses (including the
+  declared CTO/L3 blockers); toy `selfChecks.structural` manifests fail closed.
+  The credential-type contract is the reviewed r9-r11 11-category distribution,
+  not a synthetic prefix-derived taxonomy; a hermetic real-entry seam test must
+  reproduce both immutable production digests before parsing with production
+  pins.
+  The historical test-only harness does not accept supplied ids or a lowered
+  fixed `ceil(10%)`, minimum-5 review floor. It uses four distinct records:
+  a manifest-free CTO-signed salt commitment, a CTO-signed manifest freeze that
+  proves the exact Git blob/ancestor, a CTO-signed selection policy bound to
+  both digests, and the later salt reveal. All artifact boundaries accept only
+  copied UTF-8 bytes/string, reject duplicate/unknown JSON keys, deep-freeze the
+  verified snapshot, and bind raw-byte and canonical-JSON digests separately.
+  The module-private, fixed-method audit transcript records commitment < freeze
+  < policy < reveal < consumption with a hash chain + fsync. Before append, a
+  reveal must prove its freeze and policy bind the same selected commitment and
+  batch/revision; mixing valid records from separate ceremony chains fails
+  closed without poisoning the legitimate reveal. The transcript is explicitly
+  NOT the privileged anti-replay root. One-time consumption is owned by an
+  injected external atomic/monotonic `ConsumptionRegistry` keying policy digest
+  + batch + revision before any result can return. `s33-acceptance-ledger.ts` is
+  intentionally an empty compatibility module with no ledger/append export.
+  This machinery is not the active Wave-1 production acceptance path and must
+  not be presented as requiring CTO keys, an external registry, or a ceremony.
+- The S33-W1 revision-history self-check preserves the exact r2-through-r9
+  contract and permits one metadata-only r10 restack. R10 keeps historical
+  support anchored to `dd3ae1ed`, binds its logical prior producer revision to
+  reviewed r9 `b9bb1d32` (with declared predecessor `506ff623`), and separately binds
+  `corpusRevisionParentCommit` plus `directBaseCommit` to the freeze commit's
+  sole physical parent: the reviewed final Team-3 support head. Both r10
+  support-state bindings must say `LANE3_TOOLING_EXACT_HEAD_REVIEW_PASS`; that
+  means tooling review only, never corpus acceptance, merge, production, or
+  launch approval. The logical r9 commit need not be reachable in the support
+  checkout: r10 declares no corpus or normalized-input changes and is checked
+  against the three hard-pinned reviewed-r9 source blobs, the no-LF canonical
+  entry-datasheet row digest, and the no-LF canonical ordered normalized-input
+  pin digest. A separate no-LF canonical digest pins every four-field manifest
+  entry, including domain and credential-type ground truth. The r10 entry
+  datasheet may change only its revision and manifest hash metadata; its exact
+  schema/static invariants and rows are revalidated.
+  The corpus markdown may truthfully describe the r10 restack. Every history
+  field remains exact and type-correct substitutions fail closed. The
+  support-to-freeze raw diff must contain
+  exactly the six manifest-authorized additions as regular non-executable
+  `100644` blobs. Extra paths, deletions, renames, copies (including copies from
+  unchanged support-tree sources, detected with `--find-copies-harder`),
+  executable bits, symlinks, and gitlinks are rejected.
+- Production r10 source/blob and canonical metadata pins are one immutable
+  code-owned descriptor. Unit tests never resolve the logically prior r9 Git
+  object: the explicitly test-only orchestrator factory may receive a validated,
+  deep-frozen synthetic pin descriptor for synthetic temporary repositories.
+  R10 Git fixtures fetch the exact initial support commit `dd3ae1ed`, create a
+  synthetic support-marker child, and never seed from the invoking checkout's
+  `HEAD`; all six producer packet paths must be absent from that support child.
+  The public parser and retired production factory expose no override seam, and tests
+  must never check raw or decodable held-out corpus bytes into the support tree.
+- Every selection and lexical result is recursively frozen before it crosses
+  the orchestration boundary, including sample ids, metrics/hits, and evidence.
+  Audit-transcript reads open the final path with `O_NOFOLLOW`, verify the same
+  fd is a single-link regular file with owner-only permissions, and read from
+  that fd; the append uses that same validated fd under the lock, with no path
+  close/re-open window.
+- Lexical acceptance loads policy-bound held-out/corpus text artifacts and
+  recomputes every n=6..13 metric at one orchestration boundary. There is no
+  public policy-only apply function and no API accepts caller-supplied metrics
+  or a caller-supplied universe. Embedding scans reject non-finite inputs and
+  derived dot/norm/cosine overflow. Their provider and threshold are supplied
+  by the caller, so the exported scan is explicitly `diagnostic-untrusted` and
+  cannot serve as Lane-3 acceptance evidence; a future evidence-grade embedding
+  path must bind a CTO-signed policy, exact artifacts, and provider identity.
+- Harmless cosine rounding overshoot within `1e-12` is clamped to `[-1,1]`, so
+  an exact duplicate reports a hit instead of crashing. Grossly out-of-range or
+  non-finite arithmetic still fails closed.
+- Revision 11 is the exact three-entry governance/truth correction from the
+  final Lane-4 same-lane review: AU-002 `issuerName` is source-stated `Ahpra`,
+  KE-009 no longer derives an exact expiry date from issue date plus a 12-month
+  validity statement, and AU-002/AU-011 issued-date choices remain explicitly
+  `BLOCKED_CTO_L3` rather than self-certified. The revision-11 AU-KE blob,
+  entry set, normalized-input set, and datasheet-row digests are immutable
+  code-owned pins; r2-r10 history remains exact, including the revision-10
+  support head. OOD pure-abstention remains a declared CTO/protocol blocker.
+- Revision history intentionally passes both a schema/type layer and the exact
+  authoritative contract layer. Keep their mutation tests synchronized; the
+  duplicated checks are separate fail-closed controls, not interchangeable
+  implementations of one parser.
+- Sampling sorts ids with explicit ECMAScript UTF-16 code-unit order; never use
+  locale/ICU collation because it would make the signed sample host-dependent.
+- Legacy-harness tests use the audited Git executable at `/usr/bin/git`.
+  Every Git subprocess receives a fixed allowlisted environment;
+  inherited `GIT_DIR`, `GIT_WORK_TREE`, object-store alternates, `GIT_CONFIG*`,
+  loader, PATH, replacement refs, and external-diff redirection cannot alter
+  repository evidence.
+  Git object ids are exactly 40-hex SHA-1 or 64-hex SHA-256, never an in-between
+  length.
+  The transcript lock is deliberately fail-closed and is not auto-reaped. After
+  a crash, confirm the PID recorded in `<transcript>.lock` is not running, then
+  remove only that `.lock` file; never edit or remove the transcript.
+- `golden-dataset-s33-types.ts` is Lane-3-owned support code, separate from the
+  Lane-4 corpus packet. Its v6 taxonomy is drift-tested against the live prompt.
+  `S33_PROPOSED_SUBTYPES.CPE` remains explicitly unratified and must not enter a
+  tuning export or be represented as an acceptance decision.
+  The shared covered-entry depth helper excludes `credentialType`, `subType`,
+  `fraudSignals`, and evaluator-only control/reasoning metadata from the
+  five-field floor so taxonomy/bookkeeping cannot inflate corpus quality. It
+  also ignores unknown structural keys and rejects null, blank-string,
+  non-finite-number, and empty-array values while preserving legitimate
+  zero/false facts. The production post-validation contract now adjudicates
+  covered depth and the exact OOD pure-abstention exception as described above.
 
 ## 2026-07-06 S3 CPE/CLE golden set + deterministic eval gate (AI-01/AI-02 — SCRUM-2381/2382)
 

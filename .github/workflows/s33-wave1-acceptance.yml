@@ -1,0 +1,226 @@
+name: S3.3 Wave-1 Acceptance
+
+# Binding CTO rulings 102596609 + 102629377: pull_request performs a
+# side-effect-free same-token API preflight for #1545; workflow_dispatch is the
+# trusted-main post-merge acceptance ceremony. Neither mode accepts
+# caller-controlled trust facts.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - '.github/s33-wave1-acceptance-authorities.json'
+      - '.github/workflows/s33-wave1-acceptance.yml'
+      - '.github/workflows/s33-wave1-prerequisites.yml'
+      - 'scripts/ci/s33-wave1-github-evidence.test.ts'
+      - 'scripts/ci/s33-wave1-github-evidence.ts'
+      - 'services/worker/src/ai/eval/s33-wave1-github-evidence.ts'
+  workflow_dispatch:
+
+concurrency:
+  group: s33-wave1-acceptance
+  cancel-in-progress: false
+
+jobs:
+  premerge-api-preflight:
+    name: Pre-merge same-token API preflight
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 1545
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+      statuses: read
+    steps:
+      - name: Checkout exact PR head (tooling only)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install tooling dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Enumerate same-token GitHub trust APIs (no acceptance side effects)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx --no-install tsx scripts/ci/s33-wave1-github-evidence.ts preflight
+
+  authenticate-wave1:
+    name: Authenticate Wave-1 exact-head acceptance
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: write
+      statuses: read
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Refuse non-main or pre-#1545 dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME}" = "workflow_dispatch"
+          test "${GITHUB_REPOSITORY}" = "carson-see/ArkovaCarson"
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${GITHUB_RUN_ATTEMPT}" = "1"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          SUPPORT_JSON=$(gh api /repos/carson-see/ArkovaCarson/pulls/1545)
+          test "$(jq -r '.merged' <<<"${SUPPORT_JSON}")" = "true"
+          SUPPORT_MERGE_SHA=$(jq -r '.merge_commit_sha' <<<"${SUPPORT_JSON}")
+          test "${SUPPORT_MERGE_SHA}" != "null"
+          git merge-base --is-ancestor "${SUPPORT_MERGE_SHA}" HEAD
+
+      - name: Fetch complete #1544 and fixed F12C/A12C histories as data (bare; never checkout)
+        id: producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          S33_PRODUCER_OBJECT_REPOSITORY: ${{ runner.temp }}/s33-producer.git
+        run: |
+          set -euo pipefail
+          PR_JSON=$(gh api /repos/carson-see/ArkovaCarson/pulls/1544)
+          test "$(jq -r '.state' <<<"${PR_JSON}")" = "open"
+          test "$(jq -r '.base.ref' <<<"${PR_JSON}")" = "main"
+          test "$(jq -r '.head.repo.full_name' <<<"${PR_JSON}")" = "carson-see/ArkovaCarson"
+          PRODUCER_HEAD_SHA=$(jq -r '.head.sha' <<<"${PR_JSON}")
+          test "${PRODUCER_HEAD_SHA}" != "null"
+          git init --bare --quiet "${S33_PRODUCER_OBJECT_REPOSITORY}"
+          BASIC_AUTH=$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)
+          git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" \
+            -c http.extraHeader="AUTHORIZATION: basic ${BASIC_AUTH}" \
+            fetch --atomic --quiet --no-tags \
+            https://github.com/carson-see/ArkovaCarson.git \
+            refs/pull/1544/head:refs/heads/producer \
+            refs/heads/codex/s33-wave1-f12c-freeze-20260714:refs/heads/codex/s33-wave1-f12c-freeze-20260714 \
+            refs/heads/codex/s33-wave1-a12c-evidence-20260714:refs/heads/codex/s33-wave1-a12c-evidence-20260714
+          unset BASIC_AUTH
+          git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" symbolic-ref HEAD refs/heads/producer
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse HEAD)" = "${PRODUCER_HEAD_SHA}"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/codex/s33-wave1-a12c-evidence-20260714)" = "3508e5e9c7e100e9c55c0cba129d8d7b9d123bec"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/codex/s33-wave1-f12c-freeze-20260714)" = "447326ddd2225524895f35cbafda58b15555ed30"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-list --parents -n 1 HEAD | wc -w | tr -d ' ')" = "2"
+          echo "head_sha=${PRODUCER_HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
+
+      - name: Install trusted-main tooling dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install trusted-main worker dependencies
+        working-directory: services/worker
+        run: npm ci --ignore-scripts
+
+      - name: Recompute fixed revision-12 dual-DAG proof before evidence consumption
+        env:
+          S33_PRODUCER_HEAD_SHA: ${{ steps.producer.outputs.head_sha }}
+          S33_PRODUCER_OBJECT_REPOSITORY: ${{ runner.temp }}/s33-producer.git
+        run: |
+          set -euo pipefail
+          npm --prefix services/worker exec -- tsx \
+            src/ai/eval/s33-wave1-producer-verifier.ts verify \
+            --repository-root "${S33_PRODUCER_OBJECT_REPOSITORY}" \
+            --producer-head "${S33_PRODUCER_HEAD_SHA}"
+
+      - name: Fetch and authenticate fresh prerequisite artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          S33_PREREQUISITE_DIRECTORY: ${{ runner.temp }}/s33-wave1-prerequisites
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/ci/s33-wave1-github-evidence.ts \
+            fetch-prerequisites \
+            --main-repository "${GITHUB_WORKSPACE}" \
+            --producer-repository "${RUNNER_TEMP}/s33-producer.git" \
+            --output-directory "${S33_PREREQUISITE_DIRECTORY}"
+
+      - name: Parse producer bytes with trusted-main Team-3 verifier
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "${RUNNER_TEMP}/s33-wave1-reports"
+          npx --no-install tsx \
+            services/worker/src/ai/eval/s33-wave1-workflow-reports.ts \
+            final \
+            --repository-root "${RUNNER_TEMP}/s33-producer.git" \
+            --producer-head "${{ steps.producer.outputs.head_sha }}" \
+            --output-dir "${RUNNER_TEMP}/s33-wave1-reports" \
+            --prod-model-diff-final-path "${RUNNER_TEMP}/s33-wave1-prerequisites/prod-model-diff.json" \
+            --embedding-diagnostic-final-path "${RUNNER_TEMP}/s33-wave1-prerequisites/embedding-diagnostic.json"
+          test -f "${RUNNER_TEMP}/s33-wave1-reports/cross-review-plan.json"
+          test -f "${RUNNER_TEMP}/s33-wave1-reports/prod-model-diff.json"
+          test -f "${RUNNER_TEMP}/s33-wave1-reports/lexical-leakage.json"
+          test -f "${RUNNER_TEMP}/s33-wave1-reports/embedding-diagnostic.json"
+
+      - name: Authenticate live GitHub trust root and canonicalize evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          S33_REPORT_DIRECTORY: ${{ runner.temp }}/s33-wave1-reports
+          S33_OUTPUT_DIRECTORY: ${{ runner.temp }}/s33-wave1-authenticated
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/ci/s33-wave1-github-evidence.ts \
+            verify \
+            --main-repository "${GITHUB_WORKSPACE}" \
+            --producer-repository "${RUNNER_TEMP}/s33-producer.git" \
+            --prerequisite-directory "${RUNNER_TEMP}/s33-wave1-prerequisites" \
+            --report-directory "${S33_REPORT_DIRECTORY}" \
+            --output-directory "${S33_OUTPUT_DIRECTORY}"
+
+      # This upload MUST precede the PR comment. The comment is a fresh POST and
+      # contains the immutable artifact id/digest emitted by this step.
+      - name: Upload canonical Wave-1 evidence
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s33-wave1-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/s33-wave1-authenticated/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Render post-upload immutable comment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          S33_OUTPUT_DIRECTORY: ${{ runner.temp }}/s33-wave1-authenticated
+          S33_UPLOAD_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          S33_UPLOAD_ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          S33_UPLOAD_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx scripts/ci/s33-wave1-github-evidence.ts \
+            render-comment --output-directory "${S33_OUTPUT_DIRECTORY}"
+
+      - name: POST new github-actions bot comment (never edit)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          S33_OUTPUT_DIRECTORY: ${{ runner.temp }}/s33-wave1-authenticated
+        run: |
+          set -euo pipefail
+          jq -n --rawfile body "${S33_OUTPUT_DIRECTORY}/github-comment.md" \
+            '{body: $body}' > "${RUNNER_TEMP}/s33-wave1-comment-request.json"
+          gh api --method POST \
+            /repos/carson-see/ArkovaCarson/issues/1544/comments \
+            --input "${RUNNER_TEMP}/s33-wave1-comment-request.json"
