@@ -252,20 +252,37 @@ function signingKeyVersion(signingKeyId: string): readonly [number, number, numb
   return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
+function compareSigningKeyIds(leftSigningKeyId: string, rightSigningKeyId: string): number {
+  const [leftYear, leftQuarter, leftSequence] = signingKeyVersion(leftSigningKeyId);
+  const [rightYear, rightQuarter, rightSequence] = signingKeyVersion(rightSigningKeyId);
+  if (leftYear !== rightYear) return leftYear < rightYear ? -1 : 1;
+  if (leftQuarter !== rightQuarter) return leftQuarter < rightQuarter ? -1 : 1;
+  if (leftSequence !== rightSequence) return leftSequence < rightSequence ? -1 : 1;
+  return 0;
+}
+
 function assertStrictlyForwardSigningKeyId(
   previousSigningKeyId: string,
   nextSigningKeyId: string,
   transition: string,
 ): void {
-  const previous = signingKeyVersion(previousSigningKeyId);
-  const next = signingKeyVersion(nextSigningKeyId);
-  for (let index = 0; index < previous.length; index += 1) {
-    if (next[index] > previous[index]) return;
-    if (next[index] < previous[index]) break;
-  }
+  if (compareSigningKeyIds(nextSigningKeyId, previousSigningKeyId) > 0) return;
   throw new Error(
     `S3.3 detached ${transition} signing key id must advance strictly forward from ${previousSigningKeyId} to ${nextSigningKeyId}`,
   );
+}
+
+function maximumSigningKeyId(
+  policies: readonly S33DetachedSigningTrustPolicyV2[],
+): string {
+  let maximum: string | null = null;
+  for (const policy of policies) {
+    if (maximum === null || compareSigningKeyIds(policy.signingKeyId, maximum) > 0) {
+      maximum = policy.signingKeyId;
+    }
+  }
+  if (maximum === null) throw new Error('S3.3 detached trust-policy ring has no versioned key');
+  return maximum;
 }
 
 function nullableString(value: unknown, label: string): string | null {
@@ -731,7 +748,7 @@ function assertPostRevocationRecovery(
   assertInitialActivation(added, changed, nextActive);
   const newActive = nextById.get(nextActive)!;
   assertStrictlyForwardSigningKeyId(
-    latestTerminal.signingKeyId,
+    maximumSigningKeyId(current.keys),
     newActive.signingKeyId,
     'post-revocation recovery',
   );

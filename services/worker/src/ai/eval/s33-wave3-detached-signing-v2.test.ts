@@ -475,6 +475,54 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     })).toThrow(/duplicate signing key id/i);
   });
 
+  it('compares recovery against the maximum key version ever used in the ring', () => {
+    const rotated = hardCutover(
+      activePolicySetForKey('arkova-s33-cto-release-2026q3-01'),
+      'arkova-s33-cto-release-2026q4-99',
+    );
+    const revokedB = transitionS33DetachedSigningTrustPolicySetV2(rotated, {
+      ...rotated,
+      activeSigningKeyId: null,
+      keys: rotated.keys.map((policy) => policy.state === 'ACTIVE' ? {
+        ...policy,
+        state: 'REVOKED' as const,
+        revokedAtUtc: '2026-07-15T20:00:00.000Z',
+        revocationReason: 'CTO-declared B compromise response',
+      } : policy),
+    });
+    const laterRevokedA = transitionS33DetachedSigningTrustPolicySetV2(revokedB, {
+      ...revokedB,
+      keys: revokedB.keys.map((policy) => policy.state === 'RETIRED' ? {
+        ...policy,
+        state: 'REVOKED' as const,
+        revokedAtUtc: '2026-07-15T21:00:00.000Z',
+        revocationReason: 'CTO-declared historical A compromise response',
+      } : policy),
+    });
+    const recover = (signingKeyId: string, activatedAtUtc: string) => {
+      const recovery = activePolicyForKey(signingKeyId, activatedAtUtc);
+      return transitionS33DetachedSigningTrustPolicySetV2(laterRevokedA, {
+        ...laterRevokedA,
+        activeSigningKeyId: signingKeyId,
+        keys: [...laterRevokedA.keys, recovery]
+          .sort((left, right) => left.signingKeyId.localeCompare(right.signingKeyId)),
+      });
+    };
+
+    expect(() => recover(
+      'arkova-s33-cto-release-2026q4-01',
+      '2026-07-15T22:00:00.000Z',
+    )).toThrow(/strictly forward/i);
+    expect(() => recover(
+      'arkova-s33-cto-release-2027q1-01',
+      '2026-07-15T20:30:00.000Z',
+    )).toThrow(/latest revocation/i);
+    expect(recover(
+      'arkova-s33-cto-release-2027q1-01',
+      '2026-07-15T22:00:00.000Z',
+    ).activeSigningKeyId).toBe('arkova-s33-cto-release-2027q1-01');
+  });
+
   it('separates historical audit, in-flight HOLD, and revoked merged-evidence HOLD', () => {
     const envelopeA = signedEnvelope();
     const retiredPolicy = transitionS33DetachedSigningTrustPolicyV2(activePolicy, {
