@@ -7099,6 +7099,17 @@ export type Database = {
           org_id: string
         }[]
       }
+      persist_anchor_txid_journal: {
+        Args: {
+          p_anchor_ids: string[]
+          p_batch_id: string
+          p_fingerprint_root: string
+          p_leaf_order: Json
+          p_signed_at: string
+          p_txid: string
+        }
+        Returns: Json
+      }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string

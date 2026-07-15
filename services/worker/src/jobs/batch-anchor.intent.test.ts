@@ -69,6 +69,11 @@ const {
     journalAnchorRows: [] as Array<Record<string, unknown>>,
     /** Optional journal insert failure for the zero-broadcast barrier test. */
     journalInsertError: null as { message: string } | null,
+    /** Persistence result distinguishes a newly authorized broadcast from recovery ownership. */
+    journalPersistResult: { journal_id: 'journal-1', created: true } as {
+      journal_id: string;
+      created: boolean;
+    },
     /** Per-chunk responses for anchors.chain_tx_id intent-mark updates. */
     intentMarkResults: [] as Array<{ data?: Array<{ id: string }>; count?: number | null; error?: { message?: string } | null }>,
     /** Oldest-PENDING row for the trigger probe. */
@@ -280,6 +285,11 @@ const CLAIMED_OUT_OF_ORDER = [
 function mockClaimReturns(anchors: Array<Record<string, unknown>>) {
   mockDbRpc.mockImplementation(async (name: string) => {
     if (name === 'claim_pending_anchors') return { data: anchors, error: null };
+    if (name === 'persist_anchor_txid_journal') {
+      callOrder.push('persistJournal');
+      if (dbState.journalInsertError) return { data: null, error: dbState.journalInsertError };
+      return { data: dbState.journalPersistResult, error: null };
+    }
     if (name === 'submit_batch_anchors') {
       callOrder.push('submitBatchAnchors');
       return { data: anchors.length, error: null };
@@ -294,6 +304,11 @@ function mockClaimReturns(anchors: Array<Record<string, unknown>>) {
       if (claimed) return { data: [], error: null };
       claimed = true;
       return { data: anchors, error: null };
+    }
+    if (name === 'persist_anchor_txid_journal') {
+      callOrder.push('persistJournal');
+      if (dbState.journalInsertError) return { data: null, error: dbState.journalInsertError };
+      return { data: dbState.journalPersistResult, error: null };
     }
     if (name === 'submit_batch_anchors') {
       callOrder.push('submitBatchAnchors');
@@ -314,6 +329,7 @@ beforeEach(() => {
   dbState.journalRows = [];
   dbState.journalAnchorRows = [];
   dbState.journalInsertError = null;
+  dbState.journalPersistResult = { journal_id: 'journal-1', created: true };
   dbState.intentMarkResults = [];
   dbState.oldest = { data: { created_at: '2026-01-01T00:00:00Z' }, error: null };
 
@@ -417,6 +433,12 @@ describe('S3-P0 — pre-broadcast intent persistence (happy path)', () => {
     expect(mockSubmitFingerprint).not.toHaveBeenCalled();
     // Broadcast sends the exact prepared bytes.
     expect(mockBroadcastSigned).toHaveBeenCalledWith(TX_HEX);
+    const persistCall = mockDbRpc.mock.calls.find(([name]) => name === 'persist_anchor_txid_journal');
+    expect(persistCall?.[1]).toMatchObject({
+      p_txid: TX_ID,
+      p_fingerprint_root: SORTED_ROOT,
+      p_anchor_ids: ['anchor-a', 'anchor-b', 'anchor-c'],
+    });
     expect(mockDbRpc.mock.calls.some(
       ([name, params]) => name === 'resolve_anchor_txid_journal' && params.p_action === 'PERSISTED',
     )).toBe(true);
@@ -482,6 +504,26 @@ describe('S3-P0 — pre-broadcast intent persistence (happy path)', () => {
     expect(mockUpsertAnchorProofs).not.toHaveBeenCalled();
     expect(callOrder).toContain('persistJournal');
     expect(callOrder).toContain('revertToPending');
+  });
+
+  it('defers exact live-journal retries to recovery with zero broadcast or destructive unwind', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    dbState.journalPersistResult = { journal_id: 'journal-existing', created: false };
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result).toEqual({
+      processed: 0,
+      batchId: expect.any(String),
+      merkleRoot: SORTED_ROOT,
+      txId: TX_ID,
+    });
+    expect(mockBroadcastSigned).not.toHaveBeenCalled();
+    expect(mockUpsertAnchorProofs).not.toHaveBeenCalled();
+    expect(callOrder).not.toContain('persistChainTxId');
+    expect(callOrder).not.toContain('revertToPending');
+    expect(proofDeletes).toHaveLength(0);
+    expect(mockDbRpc.mock.calls.some(([name]) => name === 'refund_org_credit')).toBe(false);
   });
 });
 
@@ -576,6 +618,29 @@ describe('SCRUM-2692 — durable journal integration', () => {
         && params.p_reason === 'affirmative_absence_after_ambiguity_window',
     )).toBe(true);
     expect(mockBroadcastSigned).not.toHaveBeenCalled();
+  });
+
+  it('fails the compatibility path closed while more than one journal page remains unresolved', async () => {
+    dbState.journalRows = Array.from({ length: 101 }, (_, index) => {
+      const suffix = index.toString(16).padStart(64, '0');
+      return {
+        id: `journal-${index}`,
+        batch_id: `batch-${index}`,
+        txid: suffix,
+        fingerprint_root: FP_A,
+        anchor_ids: [`anchor-${index}`],
+        leaf_order: [{ anchor_id: `anchor-${index}`, fingerprint: FP_A }],
+        signed_at: new Date().toISOString(),
+        recovery_status: 'PENDING',
+      };
+    });
+    mockGetReceipt.mockResolvedValue(null);
+
+    const result = await reconcileTxidJournals(client());
+
+    expect(result.protectionLoaded).toBe(false);
+    expect(result.scanned).toBe(100);
+    expect(result.held).toBe(100);
   });
 });
 

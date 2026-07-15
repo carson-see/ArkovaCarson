@@ -618,6 +618,7 @@ export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}):
 /** Rows younger than this are assumed to belong to an in-flight run. */
 const INTENT_STALE_MINUTES = 5;
 const INTENT_CHUNK_SIZE = 500;
+const TXID_JOURNAL_RECONCILE_LIMIT = 100;
 
 interface IntentAnchorRow {
   id: string;
@@ -720,7 +721,7 @@ async function persistTxidJournal(
   tree: MerkleTreeResult,
   prepared: PreparedChainTx,
   batchId: string,
-): Promise<{ id: string; entry: TxidJournalEntry }> {
+): Promise<{ id: string; entry: TxidJournalEntry; created: boolean }> {
   const entry = buildTxidJournalEntry({
     batchId,
     txid: prepared.txId,
@@ -736,23 +737,27 @@ async function persistTxidJournal(
     anchor_id: leaf.anchorId,
     fingerprint: leaf.fingerprint,
   })) as Json;
-  const { data, error } = await db
-    .from('anchor_txid_journal')
-    .insert({
-      batch_id: entry.batchId,
-      txid: entry.txid,
-      fingerprint_root: entry.fingerprintRoot,
-      anchor_ids: entry.anchorIds,
-      leaf_order: leafOrder,
-      signed_at: entry.signedAt,
-    })
-    .select('id')
-    .single();
+  const { data, error } = await db.rpc('persist_anchor_txid_journal', {
+    p_batch_id: entry.batchId,
+    p_txid: entry.txid,
+    p_fingerprint_root: entry.fingerprintRoot,
+    p_anchor_ids: entry.anchorIds,
+    p_leaf_order: leafOrder,
+    p_signed_at: entry.signedAt,
+  });
 
-  if (error || !data?.id) {
-    throw new Error(`Txid journal persistence failed: ${error?.message ?? 'missing inserted id'}`);
+  if (error) {
+    throw new Error(`Txid journal persistence failed: ${error?.message ?? 'missing journal id'}`);
   }
-  return { id: data.id, entry };
+  if (data === null || Array.isArray(data) || typeof data !== 'object') {
+    throw new Error('Txid journal persistence failed: malformed persistence result');
+  }
+  const result = data as { journal_id?: unknown; created?: unknown };
+  if (typeof result.journal_id !== 'string' || result.journal_id.length === 0
+    || typeof result.created !== 'boolean') {
+    throw new Error('Txid journal persistence failed: malformed persistence result');
+  }
+  return { id: result.journal_id, entry, created: result.created };
 }
 
 async function deleteUnbroadcastTxidJournal(journalId: string): Promise<void> {
@@ -1019,13 +1024,21 @@ export async function reconcileTxidJournals(
       // cohorts so every row is rechecked without starvation.
       .order('recovery_status', { ascending: false })
       .order('updated_at', { ascending: true })
-      .limit(100);
+      .limit(TXID_JOURNAL_RECONCILE_LIMIT + 1);
     if (response.error) {
       logger.warn({ error: response.error }, 'Txid journal scan failed — generic recovery remains fail-closed');
       return result;
     }
-    rows = (response.data ?? []) as TxidJournalDbRow[];
-    result.protectionLoaded = true;
+    const scannedRows = (response.data ?? []) as TxidJournalDbRow[];
+    const scanCapped = scannedRows.length > TXID_JOURNAL_RECONCILE_LIMIT;
+    rows = scannedRows.slice(0, TXID_JOURNAL_RECONCILE_LIMIT);
+    result.protectionLoaded = !scanCapped;
+    if (scanCapped) {
+      logger.error(
+        { limit: TXID_JOURNAL_RECONCILE_LIMIT },
+        'Txid journal scan has another unresolved page — compatibility recovery remains fail-closed',
+      );
+    }
   } catch (error) {
     logger.warn({ error }, 'Txid journal scan threw — generic recovery remains fail-closed');
     return result;
@@ -1573,6 +1586,13 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     try {
       const journal = await persistTxidJournal(orderedAnchors, tree, prepared, batchId);
       journalId = journal.id;
+      if (!journal.created) {
+        logger.warn(
+          { journalId, txId: prepared.txId, count: orderedAnchors.length },
+          'Existing live txid journal owns this cohort — deferring without broadcast or destructive unwind',
+        );
+        return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
+      }
       await persistBroadcastIntentProofs(orderedAnchors, tree, prepared, batchId);
       await markBroadcastIntent(anchorIds, prepared.txId);
       intentPersisted = true;

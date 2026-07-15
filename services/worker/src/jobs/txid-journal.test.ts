@@ -159,14 +159,56 @@ describe('SCRUM-2692 migration contract', () => {
     const sql = readFileSync(migrationUrl, 'utf8');
 
     expect(sql).toMatch(/CREATE TABLE public\.anchor_txid_journal/i);
-    expect(sql).toMatch(/UNIQUE\s*\(batch_id\)/i);
-    expect(sql).toMatch(/UNIQUE\s*\(txid\)/i);
     expect(sql).toMatch(/anchor_ids\s+uuid\[\]\s+NOT NULL/i);
     expect(sql).toMatch(/recovery_status[\s\S]*PENDING[\s\S]*HELD[\s\S]*ADOPTED[\s\S]*REVERTED[\s\S]*PERSISTED/i);
     expect(sql).toMatch(/ENABLE ROW LEVEL SECURITY/i);
     expect(sql).toMatch(/FORCE ROW LEVEL SECURITY/i);
+    expect(sql).toMatch(/CREATE POLICY anchor_txid_journal_deny_clients[\s\S]*TO anon, authenticated[\s\S]*USING \(false\)[\s\S]*WITH CHECK \(false\)/i);
     expect(sql).toMatch(/REVOKE ALL ON TABLE public\.anchor_txid_journal FROM anon, authenticated/i);
-    expect(sql).toMatch(/GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public\.anchor_txid_journal TO service_role/i);
+    expect(sql).toMatch(/REVOKE ALL ON TABLE public\.anchor_txid_journal FROM service_role/i);
+    expect(sql).toMatch(/GRANT SELECT, DELETE ON TABLE public\.anchor_txid_journal TO service_role/i);
+    expect(sql).not.toMatch(/GRANT[^;]*\b(?:INSERT|UPDATE)\b[^;]*anchor_txid_journal[^;]*service_role/i);
+  });
+
+  it('serializes journal persistence with lifecycle transitions and permits exact retries after REVERT', () => {
+    const sql = readFileSync(migrationUrl, 'utf8');
+
+    expect(sql).toMatch(/CREATE UNIQUE INDEX anchor_txid_journal_live_batch_id_unique[\s\S]*\(batch_id\)[\s\S]*WHERE recovery_status <> 'REVERTED'/i);
+    expect(sql).toMatch(/CREATE UNIQUE INDEX anchor_txid_journal_live_txid_unique[\s\S]*\(txid\)[\s\S]*WHERE recovery_status <> 'REVERTED'/i);
+    expect(sql).not.toMatch(/CONSTRAINT anchor_txid_journal_(?:batch_id|txid)_unique UNIQUE/i);
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.persist_anchor_txid_journal/i);
+    expect(sql).toMatch(/FROM public\.anchors a[\s\S]*ORDER BY a\.id[\s\S]*FOR UPDATE/i);
+    expect(sql).toMatch(/v_locked_count <> cardinality\(p_anchor_ids\)/i);
+    expect(sql).toMatch(/a\.status <> 'BROADCASTING'/i);
+    expect(sql).toMatch(/a\.chain_tx_id IS NOT NULL/i);
+    expect(sql).toMatch(/RETURNS jsonb/i);
+    expect(sql).toMatch(/'created', false/i);
+    expect(sql).toMatch(/'created', true/i);
+    expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.persist_anchor_txid_journal/i);
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.persist_anchor_txid_journal[\s\S]*TO service_role/i);
+  });
+
+  it('blocks supersede/revoke only while a journal is unresolved and keeps supersede aligned with the state machine', () => {
+    const sql = readFileSync(migrationUrl, 'utf8');
+    const machine = readFileSync(
+      new URL('../../../../machines/bitcoinAnchor.machine.ts', import.meta.url),
+      'utf8',
+    );
+
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.guard_anchor_txid_journal_lifecycle/i);
+    expect(sql).toMatch(/NEW\.status IN \('REVOKED', 'SUPERSEDED'\)[\s\S]*recovery_status IN \('PENDING', 'HELD'\)/i);
+    expect(sql).toMatch(/CREATE TRIGGER guard_anchor_txid_journal_lifecycle/i);
+    expect(sql).not.toMatch(/CREATE OR REPLACE FUNCTION public\.revoke_anchor/i);
+    const supersedeAction = machine.match(/supersede:\s*\{[\s\S]*?\n\s*\},\n\n\s*\/\/ Reorg detection/)?.[0] ?? '';
+    expect(supersedeAction).toContain('eq(index(journalRecovery, param("a")), lit("NONE"))');
+    expect(supersedeAction).not.toContain('setMap("journalRecovery", param("a"), lit("NONE"))');
+  });
+
+  it('uses a symbolic missing-row condition so quota policy lint cannot misread a SQLSTATE literal', () => {
+    const sql = readFileSync(migrationUrl, 'utf8');
+
+    expect(sql).toMatch(/RAISE no_data_found[\s\S]*Txid journal not found/i);
+    expect(sql).not.toContain("ERRCODE = 'P0002'");
   });
 
   it('protects PENDING/HELD cohorts inside the atomic generic recovery RPC', () => {
@@ -223,6 +265,8 @@ describe('SCRUM-2692 scheduled recovery ordering', () => {
     expect(batchSource).toContain('protectionLoaded: false');
     expect(batchSource).toContain(".order('recovery_status', { ascending: false })");
     expect(batchSource).toContain(".order('updated_at', { ascending: true })");
+    expect(batchSource).toContain('TXID_JOURNAL_RECONCILE_LIMIT + 1');
+    expect(batchSource).toContain('scanCapped');
     expect(batchSource).toContain('if (!journal.protectionLoaded) return result');
     expect(recoverySource).toContain('if (!journal.protectionLoaded)');
   });

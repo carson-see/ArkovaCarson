@@ -25,8 +25,6 @@ CREATE TABLE public.anchor_txid_journal (
   resolved_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT anchor_txid_journal_batch_id_unique UNIQUE (batch_id),
-  CONSTRAINT anchor_txid_journal_txid_unique UNIQUE (txid),
   CONSTRAINT anchor_txid_journal_batch_id_bounded CHECK (char_length(batch_id) BETWEEN 1 AND 200),
   CONSTRAINT anchor_txid_journal_txid_hex CHECK (txid ~ '^[0-9a-f]{64}$'),
   CONSTRAINT anchor_txid_journal_root_hex CHECK (fingerprint_root ~ '^[0-9a-f]{64}$'),
@@ -54,15 +52,199 @@ CREATE INDEX anchor_txid_journal_unresolved_recovery_idx
   ON public.anchor_txid_journal (recovery_status DESC, updated_at, id)
   WHERE recovery_status IN ('PENDING', 'HELD');
 
+-- Resolved REVERT rows are durable audit history, not a permanent retry ban.
+-- A deterministic signer may produce the same txid/batch after affirmative
+-- absence; uniqueness therefore applies only while a prior attempt remains
+-- live or was actually adopted/persisted.
+CREATE UNIQUE INDEX anchor_txid_journal_live_batch_id_unique
+  ON public.anchor_txid_journal (batch_id)
+  WHERE recovery_status <> 'REVERTED';
+
+CREATE UNIQUE INDEX anchor_txid_journal_live_txid_unique
+  ON public.anchor_txid_journal (txid)
+  WHERE recovery_status <> 'REVERTED';
+
 ALTER TABLE public.anchor_txid_journal ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.anchor_txid_journal FORCE ROW LEVEL SECURITY;
 
+CREATE POLICY anchor_txid_journal_deny_clients
+  ON public.anchor_txid_journal
+  FOR ALL
+  TO anon, authenticated
+  USING (false)
+  WITH CHECK (false);
+
 REVOKE ALL ON TABLE public.anchor_txid_journal FROM PUBLIC;
 REVOKE ALL ON TABLE public.anchor_txid_journal FROM anon, authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.anchor_txid_journal TO service_role;
+REVOKE ALL ON TABLE public.anchor_txid_journal FROM service_role;
+GRANT SELECT, DELETE ON TABLE public.anchor_txid_journal TO service_role;
 
 COMMENT ON TABLE public.anchor_txid_journal IS
   'SCRUM-2692 service-role-only pre-broadcast txid/cohort journal. PENDING/HELD rows protect their anchors from generic stale recovery.';
+
+-- Journal creation and terminal lifecycle transitions serialize on the same
+-- anchor row locks. This prevents a supersede/revoke from committing between
+-- a worker's cohort validation and journal insert (or vice versa).
+CREATE OR REPLACE FUNCTION public.persist_anchor_txid_journal(
+  p_batch_id text,
+  p_txid text,
+  p_fingerprint_root text,
+  p_anchor_ids uuid[],
+  p_leaf_order jsonb,
+  p_signed_at timestamptz
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+SET statement_timeout = '60s'
+AS $$
+DECLARE
+  v_locked_count integer := 0;
+  v_existing public.anchor_txid_journal%ROWTYPE;
+  v_journal_id uuid;
+BEGIN
+  IF p_anchor_ids IS NULL OR cardinality(p_anchor_ids) NOT BETWEEN 1 AND 10000 THEN
+    RAISE check_violation
+      USING MESSAGE = 'Txid journal anchor cohort must contain 1..10000 rows';
+  END IF;
+  IF jsonb_typeof(p_leaf_order) IS DISTINCT FROM 'array'
+    OR jsonb_array_length(p_leaf_order) <> cardinality(p_anchor_ids) THEN
+    RAISE check_violation
+      USING MESSAGE = 'Txid journal leaf order must match the anchor cohort size';
+  END IF;
+
+  -- Deterministic lock order prevents deadlocks between overlapping batches.
+  PERFORM a.id
+  FROM public.anchors a
+  WHERE a.id = ANY(p_anchor_ids)
+  ORDER BY a.id
+  FOR UPDATE;
+  GET DIAGNOSTICS v_locked_count = ROW_COUNT;
+
+  IF v_locked_count <> cardinality(p_anchor_ids) THEN
+    RAISE check_violation
+      USING MESSAGE = format(
+        'Txid journal locked %s/%s anchors',
+        v_locked_count,
+        cardinality(p_anchor_ids)
+      );
+  END IF;
+
+  -- The anchor locks serialize concurrent persistence attempts. Re-read the
+  -- live journal set after acquiring them. Any non-REVERTED batch/txid match,
+  -- or unresolved overlap with this cohort, belongs to recovery and must never
+  -- be returned as fresh authorization to broadcast signed bytes again.
+  SELECT * INTO v_existing
+  FROM public.anchor_txid_journal j
+  WHERE j.recovery_status <> 'REVERTED'
+    AND (
+      j.batch_id = p_batch_id
+      OR j.txid = lower(p_txid)
+      OR (
+        j.recovery_status IN ('PENDING', 'HELD')
+        AND j.anchor_ids && p_anchor_ids
+      )
+    )
+  ORDER BY j.created_at, j.id
+  LIMIT 1
+  FOR UPDATE;
+
+  IF FOUND THEN
+    RETURN jsonb_build_object(
+      'journal_id', v_existing.id,
+      'created', false
+    );
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.anchors a
+    WHERE a.id = ANY(p_anchor_ids)
+      AND (
+        a.deleted_at IS NOT NULL
+        OR a.status <> 'BROADCASTING'
+        OR a.chain_tx_id IS NOT NULL
+      )
+  ) THEN
+    RAISE check_violation
+      USING MESSAGE = 'Txid journal cohort is no longer uniformly unbroadcast BROADCASTING';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM unnest(p_anchor_ids) WITH ORDINALITY AS input(anchor_id, ordinal)
+    JOIN public.anchors a ON a.id = input.anchor_id
+    WHERE (p_leaf_order -> ((input.ordinal - 1)::integer) ->> 'anchor_id')
+            IS DISTINCT FROM input.anchor_id::text
+       OR lower(p_leaf_order -> ((input.ordinal - 1)::integer) ->> 'fingerprint')
+            IS DISTINCT FROM lower(a.fingerprint::text)
+  ) THEN
+    RAISE check_violation
+      USING MESSAGE = 'Txid journal leaf order does not match the locked anchor cohort';
+  END IF;
+
+  INSERT INTO public.anchor_txid_journal (
+    batch_id,
+    txid,
+    fingerprint_root,
+    anchor_ids,
+    leaf_order,
+    signed_at
+  ) VALUES (
+    p_batch_id,
+    lower(p_txid),
+    lower(p_fingerprint_root),
+    p_anchor_ids,
+    p_leaf_order,
+    p_signed_at
+  )
+  RETURNING id INTO v_journal_id;
+
+  RETURN jsonb_build_object(
+    'journal_id', v_journal_id,
+    'created', true
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.persist_anchor_txid_journal(text, text, text, uuid[], jsonb, timestamptz) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.persist_anchor_txid_journal(text, text, text, uuid[], jsonb, timestamptz) TO service_role;
+
+-- Defense in depth for every status-write path, including service-role code:
+-- terminal lifecycle decisions wait until the journal resolves instead of
+-- silently making its exact cohort impossible to ADOPT/REVERT/PERSIST.
+CREATE OR REPLACE FUNCTION public.guard_anchor_txid_journal_lifecycle()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.status IS DISTINCT FROM OLD.status
+    AND NEW.status IN ('REVOKED', 'SUPERSEDED')
+    AND EXISTS (
+      SELECT 1
+      FROM public.anchor_txid_journal j
+      WHERE j.recovery_status IN ('PENDING', 'HELD')
+        AND NEW.id = ANY(j.anchor_ids)
+    ) THEN
+    RAISE check_violation
+      USING MESSAGE = format(
+        'Anchor %s has an unresolved txid journal; resolve it before %s',
+        NEW.id,
+        NEW.status
+      );
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.guard_anchor_txid_journal_lifecycle() FROM PUBLIC, anon, authenticated;
+
+CREATE TRIGGER guard_anchor_txid_journal_lifecycle
+  BEFORE UPDATE OF status ON public.anchors
+  FOR EACH ROW
+  EXECUTE FUNCTION public.guard_anchor_txid_journal_lifecycle();
 
 -- Resolve the journal and its anchor cohort in one transaction. The worker
 -- performs any idempotent credit refund before requesting REVERT; this RPC
@@ -95,8 +277,8 @@ BEGIN
   FOR UPDATE;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'Txid journal not found: %', p_journal_id
-      USING ERRCODE = 'P0002';
+    RAISE no_data_found
+      USING MESSAGE = format('Txid journal not found: %s', p_journal_id);
   END IF;
 
   cohort_size := cardinality(j.anchor_ids);
@@ -307,6 +489,9 @@ GRANT EXECUTE ON FUNCTION public.recover_stuck_broadcasts(integer) TO service_ro
 NOTIFY pgrst, 'reload schema';
 
 -- ROLLBACK (run on an isolated mirror, then re-apply this migration):
+--   DROP TRIGGER IF EXISTS guard_anchor_txid_journal_lifecycle ON public.anchors;
+--   DROP FUNCTION IF EXISTS public.guard_anchor_txid_journal_lifecycle();
+--   DROP FUNCTION IF EXISTS public.persist_anchor_txid_journal(text, text, text, uuid[], jsonb, timestamptz);
 --   DROP FUNCTION IF EXISTS public.resolve_anchor_txid_journal(uuid, text, text, bigint, timestamptz);
 --   Recreate the pre-0358 public.recover_stuck_broadcasts(integer) definition
 --   from 00000000000000_baseline_at_main_HEAD.sql, including its

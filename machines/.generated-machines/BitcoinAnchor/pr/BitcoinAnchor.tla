@@ -176,14 +176,13 @@ removeLegalHold(a) ==
   /\ UNCHANGED <<status, chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, actor, intentPersisted, journalRecovery>>
 supersede(a) ==
   /\ a \in Anchors
-  /\ (~(status[a] \in {"REVOKED", "SUPERSEDED"})) /\ (~(legalHold[a]))
+  /\ (~(status[a] \in {"REVOKED", "SUPERSEDED"})) /\ (~(legalHold[a])) /\ (journalRecovery[a] = "NONE")
   /\ status' = [status EXCEPT ![a] = "SUPERSEDED"]
   /\ fingerprintLocked' = [fingerprintLocked EXCEPT ![a] = TRUE]
   /\ metadataLocked' = [metadataLocked EXCEPT ![a] = TRUE]
   /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT ![a] = TRUE]
   /\ intentPersisted' = [intentPersisted EXCEPT ![a] = FALSE]
-  /\ journalRecovery' = [journalRecovery EXCEPT ![a] = "NONE"]
-  /\ UNCHANGED <<chainTxId, legalHold, actor>>
+  /\ UNCHANGED <<chainTxId, legalHold, actor, journalRecovery>>
 reorgDetected(a) ==
   /\ a \in Anchors
   /\ (status[a] = "SECURED") /\ (actor[a] = "worker") /\ (chainTxId[a] = "has_tx") /\ (~(legalHold[a]))
@@ -410,23 +409,21 @@ Action_removeLegalHold_2 ==
   /\ legalHold' = [legalHold EXCEPT !["a2"] = FALSE]
   /\ UNCHANGED <<status, chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, actor, intentPersisted, journalRecovery>>
 Action_supersede_1 ==
-  /\ (~(status["a1"] \in {"REVOKED", "SUPERSEDED"})) /\ (~(legalHold["a1"]))
+  /\ (~(status["a1"] \in {"REVOKED", "SUPERSEDED"})) /\ (~(legalHold["a1"])) /\ (journalRecovery["a1"] = "NONE")
   /\ status' = [status EXCEPT !["a1"] = "SUPERSEDED"]
   /\ fingerprintLocked' = [fingerprintLocked EXCEPT !["a1"] = TRUE]
   /\ metadataLocked' = [metadataLocked EXCEPT !["a1"] = TRUE]
   /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT !["a1"] = TRUE]
   /\ intentPersisted' = [intentPersisted EXCEPT !["a1"] = FALSE]
-  /\ journalRecovery' = [journalRecovery EXCEPT !["a1"] = "NONE"]
-  /\ UNCHANGED <<chainTxId, legalHold, actor>>
+  /\ UNCHANGED <<chainTxId, legalHold, actor, journalRecovery>>
 Action_supersede_2 ==
-  /\ (~(status["a2"] \in {"REVOKED", "SUPERSEDED"})) /\ (~(legalHold["a2"]))
+  /\ (~(status["a2"] \in {"REVOKED", "SUPERSEDED"})) /\ (~(legalHold["a2"])) /\ (journalRecovery["a2"] = "NONE")
   /\ status' = [status EXCEPT !["a2"] = "SUPERSEDED"]
   /\ fingerprintLocked' = [fingerprintLocked EXCEPT !["a2"] = TRUE]
   /\ metadataLocked' = [metadataLocked EXCEPT !["a2"] = TRUE]
   /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT !["a2"] = TRUE]
   /\ intentPersisted' = [intentPersisted EXCEPT !["a2"] = FALSE]
-  /\ journalRecovery' = [journalRecovery EXCEPT !["a2"] = "NONE"]
-  /\ UNCHANGED <<chainTxId, legalHold, actor>>
+  /\ UNCHANGED <<chainTxId, legalHold, actor, journalRecovery>>
 Action_reorgDetected_1 ==
   /\ (status["a1"] = "SECURED") /\ (actor["a1"] = "worker") /\ (chainTxId["a1"] = "has_tx") /\ (~(legalHold["a1"]))
   /\ status' = [status EXCEPT !["a1"] = "SUBMITTED"]

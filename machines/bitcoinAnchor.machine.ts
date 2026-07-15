@@ -447,7 +447,10 @@ export const bitcoinAnchorMachine = defineMachine({
 
     // Org admin supersedes an anchor with a new fingerprint.
     // Maps to: supersede_anchor() RPC (migration 0226). Allowed from any
-    // non-terminal status; blocked if the anchor is under legal hold.
+    // non-terminal status; blocked if the anchor is under legal hold OR its
+    // exact-tx journal is unresolved. Migration 0358 serializes journal
+    // persistence and terminal lifecycle writes on the same anchor lock, so
+    // supersede can never strand a PENDING/HELD cohort.
     // Terminal: locks fingerprint, metadata, and credential_type so no
     // future writes are possible (downstream from SUPERSEDED there is no
     // action with a guard that admits it).
@@ -455,21 +458,18 @@ export const bitcoinAnchorMachine = defineMachine({
       params: { a: "Anchors" },
       guard: and(
         not(isin(index(status, param("a")), setOf(lit("REVOKED"), lit("SUPERSEDED")))),
-        not(index(legalHold, param("a")))
+        not(index(legalHold, param("a"))),
+        eq(index(journalRecovery, param("a")), lit("NONE"))
       ),
       updates: [
         setMap("status", param("a"), lit("SUPERSEDED")),
         setMap("fingerprintLocked", param("a"), lit(true)),
         setMap("metadataLocked", param("a"), lit(true)),
         setMap("credentialTypeLocked", param("a"), lit(true)),
-        // S3-P0: a supersede that lands mid-broadcast consumes the intent —
-        // the row leaves BROADCASTING, so submit_batch_anchors (which only
-        // touches BROADCASTING/PENDING rows) skips it and the reconcile
-        // (which scans BROADCASTING rows) no longer sees it. The already-
-        // signed tx may still commit the fingerprint on-chain; that is
-        // harmless surplus evidence for a SUPERSEDED row.
-        setMap("intentPersisted", param("a"), lit(false)),
-        setMap("journalRecovery", param("a"), lit("NONE"))
+        // An unjournaled legacy intent may still be consumed by supersede.
+        // The 0358 journal path cannot reach this action until recovery has
+        // already resolved to NONE.
+        setMap("intentPersisted", param("a"), lit(false))
       ]
     },
 
