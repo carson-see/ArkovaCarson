@@ -86,6 +86,25 @@ function controlledAbsoluteClock() {
   };
 }
 
+function settleBefore<T>(promise: Promise<T>, timeoutMs = 100): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("TIMEOUT: runner did not fail closed")),
+      timeoutMs,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
 describe("S3.3 load runner kernel", () => {
   it("dispatches against absolute seeded arrivals without waiting for the prior response", async () => {
     const plan = buildS33LoadPlan(loadPlanInput({ durationMinutes: 1 }));
@@ -361,6 +380,118 @@ describe("S3.3 load runner kernel", () => {
     await clock.advanceTo(60_000);
 
     expect(dispatched).toEqual([]);
+  });
+
+  it("does not hang when dispatch rejects while a control adapter never settles", async () => {
+    const plan = buildS33LoadPlan(loadPlanInput({ durationMinutes: 1 }));
+    const never = new Promise<never>(() => {});
+    const run = runS33LoadProfile(
+      plan,
+      "fixture500",
+      adapter({
+        dispatchArrival: async () => {
+          throw new Error("dispatch-failed-with-stuck-control");
+        },
+        pollSentry: async () => never,
+      }),
+    );
+
+    await expect(settleBefore(run)).rejects.toThrow(
+      "dispatch-failed-with-stuck-control",
+    );
+  });
+
+  it("does not hang when control rejects while a dispatched request never settles", async () => {
+    const plan = buildS33LoadPlan(loadPlanInput({ durationMinutes: 1 }));
+    let markDispatchStarted!: () => void;
+    const dispatchStarted = new Promise<void>((resolve) => {
+      markDispatchStarted = resolve;
+    });
+    const never = new Promise<never>(() => {});
+    const run = runS33LoadProfile(
+      plan,
+      "fixture500",
+      adapter({
+        dispatchArrival: async () => {
+          markDispatchStarted();
+          return never;
+        },
+        pollOpsSlo: async () => {
+          await dispatchStarted;
+          throw new Error("control-failed-with-stuck-dispatch");
+        },
+      }),
+    );
+
+    await expect(settleBefore(run)).rejects.toThrow(
+      "control-failed-with-stuck-dispatch",
+    );
+  });
+
+  it("bounds a scheduler adapter that never resolves its absolute sleep", async () => {
+    const plan = buildS33LoadPlan(loadPlanInput({ durationMinutes: 1 }));
+    const never = new Promise<never>(() => {});
+    const run = runS33LoadProfile(
+      plan,
+      "fixture500",
+      adapter({ sleepUntilOffset: async () => never }),
+      { adapterCallTimeoutMs: 20 },
+    );
+
+    await expect(settleBefore(run)).rejects.toThrow(
+      /absolute schedule sleep.*timeout/i,
+    );
+  });
+
+  it("bounds a dispatched request when every control adapter completes", async () => {
+    const plan = buildS33LoadPlan(loadPlanInput({ durationMinutes: 1 }));
+    const never = new Promise<never>(() => {});
+    const run = runS33LoadProfile(
+      plan,
+      "fixture500",
+      adapter({ dispatchArrival: async () => never }),
+      { adapterCallTimeoutMs: 20 },
+    );
+
+    await expect(settleBefore(run)).rejects.toThrow(
+      /arrival dispatch.*timeout/i,
+    );
+  });
+
+  it("bounds a control poll when dispatches complete", async () => {
+    const plan = buildS33LoadPlan(loadPlanInput({ durationMinutes: 1 }));
+    const never = new Promise<never>(() => {});
+    const run = runS33LoadProfile(
+      plan,
+      "fixture500",
+      adapter({ pollSentry: async () => never }),
+      { adapterCallTimeoutMs: 20 },
+    );
+
+    await expect(settleBefore(run)).rejects.toThrow(/Sentry poll.*timeout/i);
+  });
+
+  it("retains a late rejection handler after sibling cancellation", async () => {
+    const plan = buildS33LoadPlan(loadPlanInput({ durationMinutes: 1 }));
+    let rejectLate!: (error: Error) => void;
+    const late = new Promise<never>((_resolve, reject) => {
+      rejectLate = reject;
+    });
+    const run = runS33LoadProfile(
+      plan,
+      "fixture500",
+      adapter({
+        dispatchArrival: async () => {
+          throw new Error("primary-dispatch-failure");
+        },
+        pollSentry: async () => late,
+      }),
+    );
+
+    await expect(settleBefore(run)).rejects.toThrow("primary-dispatch-failure");
+    rejectLate(new Error("late-control-rejection"));
+    await Promise.resolve();
+    await Promise.resolve();
   });
 
   it("rejects unbounded response/body fields instead of retaining secrets in evidence", async () => {

@@ -236,4 +236,20 @@ describe("S3.3 Lane 2 load plan", () => {
       ),
     ).toThrow(/declared before/i);
   });
+
+  it("rejects a prod-shape baseline observed after the planned run starts", () => {
+    expect(() =>
+      buildS33LoadPlan(
+        loadPlanInput({
+          evidenceMode: "LIVE_POST_WAVE3",
+          prodShapeBaseline: {
+            claimClass: "measured-in-window",
+            ratePerHour: 500,
+            observedAt: "2026-07-16T00:00:00.001Z",
+            sourceArtifactSha256: `sha256:${"9".repeat(64)}`,
+          },
+        }),
+      ),
+    ).toThrow(/baseline.*before|future.*baseline|planned start/i);
+  });
 });

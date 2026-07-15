@@ -118,6 +118,17 @@ const inputSchema = z
           "Offline fixture plans cannot claim an in-window measured baseline",
       });
     }
+    if (
+      input.prodShapeBaseline &&
+      Date.parse(input.prodShapeBaseline.observedAt) >=
+        Date.parse(input.plannedStartAt)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["prodShapeBaseline", "observedAt"],
+        message: "Production-shape baseline must be observed before planned start",
+      });
+    }
   });
 
 export type S33LoadPlanInput = z.input<typeof inputSchema>;

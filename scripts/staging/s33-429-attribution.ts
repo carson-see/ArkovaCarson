@@ -124,6 +124,8 @@ const inputSchema = z.object({
   upstream429s: z.array(upstream429Schema),
 }).strict();
 
+export type S33429AttributionSourcePacket = z.input<typeof inputSchema>;
+
 type ParsedRun = z.infer<typeof runSchema>;
 type ParsedClient429 = z.infer<typeof client429Schema>;
 type ParsedLimiterLog = z.infer<typeof limiterLogSchema>;

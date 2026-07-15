@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildS33429AttributionEvidence } from "./s33-429-attribution.js";
+import {
+  buildS33429AttributionEvidence,
+  type S33429AttributionSourcePacket,
+} from "./s33-429-attribution.js";
 import {
   buildS33LoadEvidence,
   type S33LoadEvidenceInput,
@@ -11,14 +14,17 @@ import {
   digestS33Value,
   iterateOpenArrivals,
   type S33LoadPlan,
+  type S33LoadPlanInput,
 } from "./s33-load-plan.js";
 import { loadPlanInput } from "./s33-load-plan.test.js";
 import type { S33LoadRunnerOutput } from "./s33-load-runner.js";
 
 const SHA = (character: string) => `sha256:${character.repeat(64)}`;
 
-function attribution(anon429 = false) {
-  return buildS33429AttributionEvidence({
+function attributionSource(
+  anon429 = false,
+): S33429AttributionSourcePacket {
+  return {
     run: {
       runId: "s33-w3-l2b-fixture-20260715",
       arm: "public",
@@ -55,7 +61,11 @@ function attribution(anon429 = false) {
         ]
       : [],
     upstream429s: [],
-  });
+  };
+}
+
+function attribution(anon429 = false) {
+  return buildS33429AttributionEvidence(attributionSource(anon429));
 }
 
 function runnerOutput(plan: S33LoadPlan): S33LoadRunnerOutput {
@@ -127,6 +137,36 @@ function runnerOutput(plan: S33LoadPlan): S33LoadRunnerOutput {
   };
 }
 
+function planSourcePacket(plan: S33LoadPlan): S33LoadPlanInput {
+  const replay = plan.profiles.prodShapeReplay;
+  return {
+    evidenceMode: plan.evidenceMode,
+    runId: plan.runId,
+    seed: plan.seed,
+    exactHeadSha: plan.exactHeadSha,
+    exactTreeSha: plan.exactTreeSha,
+    plannedStartAt: plan.plannedStartAt,
+    stopPolicyDeclaredAt: plan.observation.sentryStopPolicy.declaredAt,
+    durationMinutes: plan.durationMinutes,
+    orgIds: [...plan.tenancy.orgIds],
+    jwtShardIds: [...plan.tenancy.jwtShardIds],
+    sourceLaneIds: [...plan.tenancy.sourceLaneIds],
+    monthlyApiKeyId: plan.tenancy.monthlyApiKeyId,
+    sentryMaxIssueRatePerMinute:
+      plan.observation.sentryStopPolicy.maxIssueRatePerMinute,
+    ...(replay.status === "READY_FROM_IN_WINDOW_BASELINE"
+      ? {
+          prodShapeBaseline: {
+            claimClass: "measured-in-window" as const,
+            ratePerHour: replay.ratePerHour,
+            observedAt: replay.observedAt,
+            sourceArtifactSha256: replay.sourceArtifactSha256,
+          },
+        }
+      : {}),
+  };
+}
+
 function evidenceInput(
   overrides: Partial<S33LoadEvidenceInput> = {},
 ): S33LoadEvidenceInput {
@@ -134,6 +174,8 @@ function evidenceInput(
     overrides.plan ?? buildS33LoadPlan(loadPlanInput({ durationMinutes: 1 }));
   const runner = overrides.runner ?? runnerOutput(plan);
   const attributionEvidence = overrides.attribution ?? attribution();
+  const attributionSourcePacket =
+    overrides.attributionSourcePacket ?? attributionSource();
   const runnerArtifactSha256 =
     overrides.runnerArtifactSha256 ?? digestS33Value(runner);
   const attributionArtifactSha256 =
@@ -146,10 +188,13 @@ function evidenceInput(
   ]);
   return {
     plan,
+    planSourcePacket:
+      overrides.planSourcePacket ?? planSourcePacket(plan),
     planDigestSha256: overrides.planDigestSha256 ?? digestS33LoadPlan(plan),
     runner,
     runnerArtifactSha256,
     attribution: attributionEvidence,
+    attributionSourcePacket,
     attributionArtifactSha256,
     targetedLimiterTelemetry: overrides.targetedLimiterTelemetry ?? {
       perOrgRateLimit: { observed429s: 0, headlineEligible: false },
@@ -185,6 +230,20 @@ function injectUnexpectedStatus(
 }
 
 describe("S3.3 load evidence", () => {
+  it("independently verifies JSON-round-tripped attribution source and artifact packets", () => {
+    const input = evidenceInput();
+    input.attribution = JSON.parse(
+      JSON.stringify(input.attribution),
+    ) as S33LoadEvidenceInput["attribution"];
+    input.attributionSourcePacket = JSON.parse(
+      JSON.stringify(input.attributionSourcePacket),
+    ) as S33LoadEvidenceInput["attributionSourcePacket"];
+
+    const evidence = buildS33LoadEvidence(input);
+    expect(evidence.headline429Buckets).toEqual(input.attribution.buckets);
+    expect(Object.isFrozen(evidence.headline429Buckets)).toBe(true);
+  });
+
   it("composes exactly five unsummed headline buckets and keeps targeted org/payer telemetry outside them", () => {
     const evidence = buildS33LoadEvidence(evidenceInput());
 
@@ -226,13 +285,23 @@ describe("S3.3 load evidence", () => {
       lastDispatchedSequence: arrival.sequence,
     };
     const evidence = buildS33LoadEvidence(
-      evidenceInput({ plan, runner, attribution: attribution(true) }),
+      evidenceInput({
+        plan,
+        runner,
+        attribution: attribution(true),
+        attributionSourcePacket: attributionSource(true),
+      }),
     );
     expect(evidence.stopReasons).toContain("SELF_INFLICTED_ANON_IP_429");
     expect(evidence.executionDisposition).toBe("STOP");
     expect(() =>
       buildS33LoadEvidence(
-        evidenceInput({ plan, runner, attribution: attribution(false) }),
+        evidenceInput({
+          plan,
+          runner,
+          attribution: attribution(false),
+          attributionSourcePacket: attributionSource(false),
+        }),
       ),
     ).toThrow(/exact final header\/log attribution join/i);
   });
@@ -336,6 +405,57 @@ describe("S3.3 load evidence", () => {
 
     expect(() => buildS33LoadEvidence(input)).toThrow(
       /raw artifact digest set is missing/i,
+    );
+  });
+
+  it("rejects a self-hashed forged attribution bucket instead of trusting its supplied digest", () => {
+    const forged = structuredClone(attribution()) as S33LoadEvidenceInput["attribution"];
+    (forged.buckets.keyed as { count: number }).count = 999;
+    const input = evidenceInput({ attribution: forged });
+    input.attributionArtifactSha256 = digestS33Value(forged);
+    input.rawArtifactDigests = [
+      input.runnerArtifactSha256,
+      input.attributionArtifactSha256,
+      ...input.runner.observationPasses.flatMap((pass) => [
+        pass.opsSlo.artifactSha256,
+        pass.sentry.artifactSha256,
+        pass.connector.artifactSha256,
+        pass.heartbeat.artifactSha256,
+      ]),
+    ];
+
+    expect(() => buildS33LoadEvidence(input)).toThrow(
+      /attribution.*provenance|validated.*attribution|bucket.*count/i,
+    );
+  });
+
+  it("strict-parses, copies, and deeply freezes targeted limiter telemetry", () => {
+    const withSecret = {
+      perOrgRateLimit: { observed429s: 0, headlineEligible: false },
+      x402PayerRateLimit: { observed429s: 0, headlineEligible: false },
+      secret: "must-not-survive",
+    } as unknown as S33LoadEvidenceInput["targetedLimiterTelemetry"];
+    expect(() =>
+      buildS33LoadEvidence(
+        evidenceInput({ targetedLimiterTelemetry: withSecret }),
+      ),
+    ).toThrow(/unrecognized|secret|strict/i);
+
+    const telemetry: S33LoadEvidenceInput["targetedLimiterTelemetry"] = {
+      perOrgRateLimit: { observed429s: 1, headlineEligible: false },
+      x402PayerRateLimit: { observed429s: 2, headlineEligible: false },
+    };
+    const evidence = buildS33LoadEvidence(
+      evidenceInput({ targetedLimiterTelemetry: telemetry }),
+    );
+    const digestBeforeMutation = evidence.evidenceDigestSha256;
+    telemetry.perOrgRateLimit.observed429s = 999;
+
+    expect(evidence.targetedLimiterTelemetry.perOrgRateLimit.observed429s).toBe(1);
+    expect(evidence.evidenceDigestSha256).toBe(digestBeforeMutation);
+    expect(Object.isFrozen(evidence.targetedLimiterTelemetry)).toBe(true);
+    expect(Object.isFrozen(evidence.targetedLimiterTelemetry.perOrgRateLimit)).toBe(
+      true,
     );
   });
 

@@ -8,7 +8,15 @@
 
 import { z } from "zod";
 
+import {
+  buildS33LoadEvidence,
+  type S33LoadEvidence,
+  type S33LoadEvidenceInput,
+} from "./s33-load-evidence.js";
+import { canonicalS33Json, digestS33Value } from "./s33-load-plan.js";
+
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
+const GIT_SHA = /^[a-f0-9]{40}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
 
 const httpsUrl = z
@@ -22,6 +30,8 @@ const measurementSchema = z
   .object({
     claimClass: z.enum(["measured", "synthetic-test-fixture"]),
     runId: z.string().regex(SAFE_ID),
+    exactHeadSha: z.string().regex(GIT_SHA),
+    exactTreeSha: z.string().regex(GIT_SHA),
     sourceArtifactSha256: z.string().regex(SHA256),
     startedAt: z.string().datetime({ offset: true }),
     endedAt: z.string().datetime({ offset: true }),
@@ -69,12 +79,193 @@ const pricingSchema = z
   })
   .strict();
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null;
+}
+
+const liveEvidencePacketSchema = z
+  .object({
+    artifact: z.custom<S33LoadEvidence>(isPlainObject, {
+      message: "Load-evidence artifact must be a plain object",
+    }),
+    source: z.custom<S33LoadEvidenceInput>(isPlainObject, {
+      message: "Load-evidence source must be a plain object",
+    }),
+  })
+  .strict();
+
+const liveEvidencePacketsSchema = z
+  .object({
+    fixture500: liveEvidencePacketSchema,
+    stress5000: liveEvidencePacketSchema,
+  })
+  .strict();
+
+type LiveEvidencePackets = z.infer<typeof liveEvidencePacketsSchema>;
+
+export interface S33VerifiedLiveEvidenceBinding {
+  profileId: "fixture500" | "stress5000";
+  runId: string;
+  exactHeadSha: string;
+  exactTreeSha: string;
+  windowStartedAt: string;
+  windowEndedAt: string;
+  loadEvidenceArtifactSha256: string;
+}
+
+function validateLiveEvidencePacketPresence(
+  evidenceMode: "TEST_FIXTURE" | "LIVE_POST_WAVE3",
+  packets: LiveEvidencePackets | undefined,
+  context: z.RefinementCtx,
+): void {
+  if (evidenceMode === "TEST_FIXTURE") {
+    if (packets) {
+      context.addIssue({
+        code: "custom",
+        path: ["liveEvidencePackets"],
+        message: "TEST_FIXTURE cannot carry live load-evidence packets",
+      });
+    }
+    return;
+  }
+  if (!packets) {
+    context.addIssue({
+      code: "custom",
+      path: ["liveEvidencePackets"],
+      message:
+        "LIVE_POST_WAVE3 requires independently verifiable load-evidence packets for fixture500 and stress5000",
+    });
+  }
+}
+
+function assertSerializedEvidenceDigest(artifact: unknown, profile: string): void {
+  if (!isPlainObject(artifact)) {
+    throw new TypeError(`${profile} load-evidence artifact must be an object`);
+  }
+  const { evidenceDigestSha256, ...body } = artifact as Record<string, unknown>;
+  if (
+    typeof evidenceDigestSha256 !== "string" ||
+    evidenceDigestSha256 !== digestS33Value(body)
+  ) {
+    throw new Error(`${profile} load-evidence artifact digest is invalid`);
+  }
+}
+
+function assertVerifiedEvidenceIdentity(
+  evidence: S33LoadEvidence,
+  expectedProfile: "fixture500" | "stress5000",
+  measurement: z.infer<typeof measurementSchema>,
+): void {
+  if (evidence.profileId !== expectedProfile) {
+    throw new Error(
+      `${expectedProfile} packet contains swapped profile ${evidence.profileId}`,
+    );
+  }
+  if (
+    evidence.evidenceMode !== "LIVE_POST_WAVE3" ||
+    evidence.claims.measurements !== "measured-from-pinned-live-artifacts" ||
+    evidence.executionDisposition !== "CONTINUE" ||
+    evidence.releaseStatus !== "AWAITING_CTO_VERDICT"
+  ) {
+    throw new Error(
+      `${expectedProfile} requires continuing measured live load evidence awaiting CTO verdict`,
+    );
+  }
+  if (evidence.runId !== measurement.runId) {
+    throw new Error(`${expectedProfile} evidence run does not match measurement`);
+  }
+  if (
+    evidence.exactHeadSha !== measurement.exactHeadSha ||
+    evidence.exactTreeSha !== measurement.exactTreeSha
+  ) {
+    throw new Error(
+      `${expectedProfile} evidence does not bind the measured exact head and tree`,
+    );
+  }
+  if (
+    evidence.windowStartedAt !== measurement.startedAt ||
+    evidence.windowEndedAt !== measurement.endedAt
+  ) {
+    throw new Error(
+      `${expectedProfile} load-evidence window does not match the measured window`,
+    );
+  }
+}
+
+function verifyLiveEvidencePacket(
+  packet: LiveEvidencePackets["fixture500"],
+  expectedProfile: "fixture500" | "stress5000",
+  measurement: z.infer<typeof measurementSchema>,
+): S33LoadEvidence {
+  assertSerializedEvidenceDigest(packet.artifact, expectedProfile);
+  const rebuilt = buildS33LoadEvidence(packet.source);
+  if (canonicalS33Json(packet.artifact) !== canonicalS33Json(rebuilt)) {
+    throw new Error(
+      `${expectedProfile} serialized load-evidence artifact does not match its verified source packet`,
+    );
+  }
+  assertVerifiedEvidenceIdentity(rebuilt, expectedProfile, measurement);
+  return rebuilt;
+}
+
+function evidenceBinding(
+  evidence: S33LoadEvidence,
+): Readonly<S33VerifiedLiveEvidenceBinding> {
+  return Object.freeze({
+    profileId: evidence.profileId as "fixture500" | "stress5000",
+    runId: evidence.runId,
+    exactHeadSha: evidence.exactHeadSha,
+    exactTreeSha: evidence.exactTreeSha,
+    windowStartedAt: evidence.windowStartedAt,
+    windowEndedAt: evidence.windowEndedAt,
+    loadEvidenceArtifactSha256: evidence.evidenceDigestSha256,
+  });
+}
+
+function verifyLiveEvidencePackets(
+  evidenceMode: "TEST_FIXTURE" | "LIVE_POST_WAVE3",
+  packets: LiveEvidencePackets | undefined,
+  measurement: z.infer<typeof measurementSchema>,
+): S33PtSizingResult["liveEvidenceBindings"] {
+  if (evidenceMode === "TEST_FIXTURE") return null;
+  if (!packets) {
+    throw new Error("Live load-evidence packets are required");
+  }
+  const fixture = verifyLiveEvidencePacket(
+    packets.fixture500,
+    "fixture500",
+    measurement,
+  );
+  const stress = verifyLiveEvidencePacket(
+    packets.stress5000,
+    "stress5000",
+    measurement,
+  );
+  if (fixture.evidenceDigestSha256 === stress.evidenceDigestSha256) {
+    throw new Error("Live profiles require distinct load-evidence artifacts");
+  }
+  if (!stress.rawArtifactDigests.includes(measurement.sourceArtifactSha256)) {
+    throw new Error(
+      "stress5000 load evidence does not pin the sizing measurement artifact",
+    );
+  }
+  return Object.freeze({
+    fixture500: evidenceBinding(fixture),
+    stress5000: evidenceBinding(stress),
+  });
+}
+
 const inputSchema = z
   .object({
     evidenceMode: z.enum(["TEST_FIXTURE", "LIVE_POST_WAVE3"]),
     memoId: z.string().regex(SAFE_ID),
     generatedAt: z.string().datetime({ offset: true }),
     measurement: measurementSchema,
+    liveEvidencePackets: liveEvidencePacketsSchema.optional(),
     capacity: capacitySchema,
     pricing: pricingSchema,
     assumptions: z
@@ -88,6 +279,11 @@ const inputSchema = z
   })
   .strict()
   .superRefine((input, context) => {
+    validateLiveEvidencePacketPresence(
+      input.evidenceMode,
+      input.liveEvidencePackets,
+      context,
+    );
     const requiredClaimClasses =
       input.evidenceMode === "LIVE_POST_WAVE3"
         ? ({
@@ -183,6 +379,7 @@ export interface S33PtMemoTemplate {
   recommendation: null;
   requiredClaims: {
     windowInputs: "measured";
+    profileEvidence: "exact-head-bound-fixture500-and-stress5000";
     capacityAndPricing: "asserted-from-dated-source";
     projections: "derived-not-measured-spend";
   };
@@ -201,6 +398,10 @@ export interface S33PtSizingResult {
   status:
     "TEST_ONLY_NOT_RELEASE_EVIDENCE" | "DRAFT_RECOMMENDATION_REQUIRES_CTO";
   measurement: z.infer<typeof measurementSchema>;
+  liveEvidenceBindings: Readonly<{
+    fixture500: Readonly<S33VerifiedLiveEvidenceBinding>;
+    stress5000: Readonly<S33VerifiedLiveEvidenceBinding>;
+  }> | null;
   capacity: z.infer<typeof capacitySchema>;
   pricing: z.infer<typeof pricingSchema>;
   assumptions: z.infer<typeof inputSchema>["assumptions"];
@@ -229,6 +430,9 @@ export interface S33PtSizingResult {
     pricing: "asserted-from-dated-source" | "synthetic-test-fixture";
     costProjection: "derived-not-measured-spend";
     recommendation: "derived-requires-cto-decision";
+    profileEvidence:
+      | "test-fixture-no-live-binding"
+      | "exact-head-bound-fixture500-and-stress5000";
   };
 }
 
@@ -244,6 +448,7 @@ export function buildS33PtMemoTemplate(memoId: string): S33PtMemoTemplate {
     recommendation: null,
     requiredClaims: Object.freeze({
       windowInputs: "measured",
+      profileEvidence: "exact-head-bound-fixture500-and-stress5000",
       capacityAndPricing: "asserted-from-dated-source",
       projections: "derived-not-measured-spend",
     }),
@@ -262,6 +467,11 @@ export function buildS33PtMemoTemplate(memoId: string): S33PtMemoTemplate {
 
 export function calculateS33PtSizing(rawInput: unknown): S33PtSizingResult {
   const input = inputSchema.parse(rawInput);
+  const liveEvidenceBindings = verifyLiveEvidencePackets(
+    input.evidenceMode,
+    input.liveEvidencePackets,
+    input.measurement,
+  );
   const normalizedTokensPerQuery =
     input.measurement.meanInputTokensPerQuery *
       input.capacity.inputTokenBurndown +
@@ -301,6 +511,7 @@ export function calculateS33PtSizing(rawInput: unknown): S33PtSizingResult {
         ? "TEST_ONLY_NOT_RELEASE_EVIDENCE"
         : "DRAFT_RECOMMENDATION_REQUIRES_CTO",
     measurement: Object.freeze({ ...input.measurement }),
+    liveEvidenceBindings,
     capacity: Object.freeze({ ...input.capacity }),
     pricing: Object.freeze({ ...input.pricing }),
     assumptions: Object.freeze({ ...input.assumptions }),
@@ -329,6 +540,10 @@ export function calculateS33PtSizing(rawInput: unknown): S33PtSizingResult {
       pricing: input.pricing.claimClass,
       costProjection: "derived-not-measured-spend",
       recommendation: "derived-requires-cto-decision",
+      profileEvidence:
+        input.evidenceMode === "TEST_FIXTURE"
+          ? "test-fixture-no-live-binding"
+          : "exact-head-bound-fixture500-and-stress5000",
     }),
   });
 }
