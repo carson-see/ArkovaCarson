@@ -83,6 +83,30 @@ _Last updated: 2026-07-15_
   payload builder/parser for reuse. This does not activate the v1 or v2 signer
   and does not connect v2 to whole-batch acceptance; corpus acceptance remains
   impossible while the committed policies are unconfigured.
+## 2026-07-15 S3.3 Wave-2 top-15 coverage gate
+
+- `s33-wave2-coverage-audit.ts` is an offline Lane-4 registry/coverage gate;
+  it is not imported by the worker runtime and does not call a model. It parses
+  the CTO-signed 45-type Legal/Financial/Education registry, checks every
+  credential/subtype pair against `V6_SUBTYPE_TAXONOMY`, pins the merged Wave-1
+  revision-12 baseline without claiming unprovided top-15 coverage, and emits a
+  canonical deterministic report digest.
+- Coverage counts only whole-batch Lane-3 acceptance envelopes verified by the
+  shared Ed25519 CTO-release trust root. The audit recomputes the raw and
+  canonical coverage-registry digests, verifies the signed entry order, rejects
+  duplicate artifacts/batches/entry fingerprints, and requires one unbroken
+  base-to-result registry chain with no fork, cycle, or disconnected component.
+  A missing production trust root fails closed for nonempty acceptance input;
+  the pre-corpus empty baseline remains reproducible. Generator-derived,
+  training-exposed, shallow, duplicate, unknown-type, or taxonomy-mismatched
+  entries fail closed; a producer-supplied `lane3` label grants no authority and
+  Lane 4 cannot accept its own records. A type is complete only at
+  12 accepted rows with at least `ceil(12 * 0.30) = 4` edge cases; both total
+  and edge-case deficits contribute to the fail-closed missing count.
+- `docs/lane4/evidence/s33-wave2-coverage-baseline.json` is the reproducible
+  pre-corpus zero-state: 45 incomplete types and 540 minimum missing entries.
+  Later corpus batches must preserve the fixed domain-interleaved production
+  order and replace this zero-state only with exact Lane-3-accepted artifacts.
 
 ## 2026-07-15 S3.3 Wave-2 trusted-main corpus acceptance
 
@@ -115,7 +139,18 @@ _Last updated: 2026-07-15_
   ceiling; Wave 2 uses the new explicit-limit wrapper. The exported exact
   lexical scanner reuses the existing Wave-1 n-gram implementation without
   changing signed/historical Wave-1 callers. Additional leakage self-exclusions
-  are exact paths derived only from already accepted registry batches.
+  are exact paths derived from already accepted registry batches. The three
+  reserved `golden-dataset-s33-wave2-top15-{01-05,06-10,11-15}-heldout.ts`
+  tranche sources are also explicit prerequisite exclusions so shared Wave-1
+  report callers cannot self-match them; similarly named prompt/few-shot paths
+  remain scanned. Never replace these literals with a glob or prefix rule.
+- Candidate raw diffs force `--abbrev=40`; manifest source/datasheet bindings
+  are full SHA-1 object ids, so Git's default abbreviated raw ids are never
+  compared to them or admitted into a preflight snapshot.
+- The CTO top-15 registry schema requires `productionOrder` to name all 45
+  unique type ids exactly once in the ratified domain-interleaved tranches:
+  legal/financial/education 1-5, then 6-10, then 11-15. Unknown, duplicate, or
+  reordered ids fail closed.
 
 ## 2026-07-14 CTO correction topology — revision-12 provenance
 
