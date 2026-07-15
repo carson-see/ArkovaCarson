@@ -1,0 +1,202 @@
+name: S3.3 Wave 2 Corpus Acceptance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/lane4/s33-wave2-batches/**"
+      - "services/worker/src/ai/eval/golden-dataset-s33-wave2-*-heldout.ts"
+      - "services/worker/src/ai/eval/s33-wave2-*.ts"
+      - "scripts/ci/s33-wave2-batch-acceptance.ts"
+      - ".github/workflows/s33-wave2-batch-acceptance.yml"
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - "docs/lane4/s33-wave2-batches/**"
+      - "services/worker/src/ai/eval/golden-dataset-s33-wave2-*-heldout.ts"
+      - "services/worker/src/ai/eval/golden-dataset-s33-wave2-*-heldout.test.ts"
+  pull_request_review:
+    branches: [main]
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: s33-wave2-corpus-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  consume-trusted-main:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
+      - name: Install trusted evaluator dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix services/worker ci --ignore-scripts
+      - name: Consume immutable Wave 1 tuple from merged main
+        run: >-
+          npx tsx scripts/ci/s33-wave2-batch-acceptance.ts consume-main
+          --trusted-main-root "$GITHUB_WORKSPACE"
+          --trusted-main-head "$GITHUB_SHA"
+          --output "$RUNNER_TEMP/s33-wave2-main-registry.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s33-wave2-main-registry-${{ github.sha }}
+          path: ${{ runner.temp }}/s33-wave2-main-registry.json
+          if-no-files-found: error
+          retention-days: 90
+
+  candidate-preflight:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout trusted base evaluator
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: trusted
+      - name: Checkout candidate as inert Git objects
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: candidate
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            trusted/package-lock.json
+            trusted/services/worker/package-lock.json
+      - name: Install trusted evaluator dependencies only
+        working-directory: trusted
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix services/worker ci --ignore-scripts
+      - name: Preflight candidate without executing candidate code
+        working-directory: trusted
+        run: >-
+          npx tsx scripts/ci/s33-wave2-batch-acceptance.ts preflight
+          --trusted-main-root "$GITHUB_WORKSPACE/trusted"
+          --trusted-main-head "${{ github.event.pull_request.base.sha }}"
+          --candidate-repository "$GITHUB_WORKSPACE/candidate"
+          --candidate-head "${{ github.event.pull_request.head.sha }}"
+          --output "$RUNNER_TEMP/s33-wave2-preflight.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s33-wave2-preflight-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/s33-wave2-preflight.json
+          if-no-files-found: error
+          retention-days: 90
+
+  classify-review:
+    if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.paths.outputs.relevant }}
+    steps:
+      - id: paths
+        name: Admit only Wave 2 corpus PR reviews
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          relevant=false
+          while IFS= read -r path; do
+            case "$path" in
+              docs/lane4/s33-wave2-batches/*|services/worker/src/ai/eval/golden-dataset-s33-wave2-*-heldout.ts|services/worker/src/ai/eval/golden-dataset-s33-wave2-*-heldout.test.ts)
+                relevant=true
+                ;;
+            esac
+          done < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --jq '.[].filename')
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
+  exact-head-acceptance:
+    needs: classify-review
+    if: needs.classify-review.outputs.relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout trusted base evaluator
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: trusted
+      - name: Checkout candidate as inert Git objects
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: candidate
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            trusted/package-lock.json
+            trusted/services/worker/package-lock.json
+      - name: Install trusted evaluator dependencies only
+        working-directory: trusted
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix services/worker ci --ignore-scripts
+      - name: Materialize authenticated exact-head review evidence
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha }}
+          REVIEW_COMMIT: ${{ github.event.review.commit_id }}
+          AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+          REVIEWER_LOGIN: ${{ github.event.review.user.login }}
+          REVIEW_URL: ${{ github.event.review.html_url }}
+        run: |
+          jq -n \
+            --argjson pullRequestNumber "$PR_NUMBER" \
+            --arg candidateHeadSha "$CANDIDATE_HEAD" \
+            --arg reviewCommitSha "$REVIEW_COMMIT" \
+            --arg authorLogin "$AUTHOR_LOGIN" \
+            --arg reviewerLogin "$REVIEWER_LOGIN" \
+            --arg reviewUrl "$REVIEW_URL" \
+            '{schemaVersion:1,artifactType:"arkova-s33-wave2-exact-head-review",repositoryIdentity:"carson-see/ArkovaCarson",pullRequestNumber:$pullRequestNumber,candidateHeadSha:$candidateHeadSha,authorLogin:$authorLogin,authorLane:"Lane 4",reviewerLogin:$reviewerLogin,reviewerLane:"Lane 3",reviewState:"APPROVED",reviewCommitSha:$reviewCommitSha,reviewUrl:$reviewUrl,scope:"whole-batch"}' \
+            > "$RUNNER_TEMP/s33-wave2-review.json"
+      - name: Accept the whole batch without executing candidate code
+        working-directory: trusted
+        run: >-
+          npx tsx scripts/ci/s33-wave2-batch-acceptance.ts accept
+          --trusted-main-root "$GITHUB_WORKSPACE/trusted"
+          --trusted-main-head "${{ github.event.pull_request.base.sha }}"
+          --candidate-repository "$GITHUB_WORKSPACE/candidate"
+          --candidate-head "${{ github.event.pull_request.head.sha }}"
+          --review-evidence "$RUNNER_TEMP/s33-wave2-review.json"
+          --output "$RUNNER_TEMP/s33-wave2-acceptance.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s33-wave2-acceptance-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/s33-wave2-acceptance.json
+          if-no-files-found: error
+          retention-days: 90

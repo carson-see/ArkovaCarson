@@ -2,6 +2,30 @@
 
 _Last updated: 2026-07-14_
 
+## 2026-07-15 S3.3 Wave-2 trusted-main corpus acceptance
+
+- `s33-wave2-corpus-registry.ts` consumes Wave 1 only from the immutable merged
+  PR #1544 tuple (`42530fd7` merge, `618e08d5` producer) and re-verifies its
+  ancestry, trees, six packet blobs, raw digests, exact 81-row manifest, and
+  entry-datasheet bijection at the declared trusted-main head. Registry content
+  identity excludes the moving verification head/tree; exact-base freshness is
+  a separate mandatory gate.
+- `s33-wave2-batch-acceptance.ts` admits exactly one four-file Lane-4 tranche,
+  parses the candidate array with the literal-only parser, and never imports or
+  executes candidate source or tests. Manifest/source/datasheet bijection,
+  provenance, no-production-user-document declaration, PII/secret scans,
+  post-validation depth, duplicate ids/fingerprints, nonempty trusted corpus
+  roots, and normalized exact n=6..13 zero-overlap all fail closed.
+- Acceptance is whole-batch only and requires an APPROVED Lane-3 review bound
+  to the exact current PR head. Stale review commits, partial id lists, Lane-4
+  self-review, non-addition diffs, symlinks/executable modes, or any path outside
+  the declared manifest/datasheet/source/non-executed-test quartet are rejected.
+- Wave-1 behavior stays fixed: `parseS33ProducerModule()` retains its 81-row
+  ceiling; Wave 2 uses the new explicit-limit wrapper. The exported exact
+  lexical scanner reuses the existing Wave-1 n-gram implementation without
+  changing signed/historical Wave-1 callers. Additional leakage self-exclusions
+  are exact paths derived only from already accepted registry batches.
+
 ## 2026-07-14 CTO correction topology — revision-12 provenance
 
 - `s33-wave1-dual-dag.ts` keeps the Lane-4 producer history and Lane-3 support

@@ -46,6 +46,15 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - Fail messages must tell the operator (a) what failed, (b) why it matters, (c) how to fix or override.
 
 ## Recent Changes
+- 2026-07-15 S3.3 Wave-2 corpus acceptance (SCRUM-2777/2781/2782):
+  `s33-wave2-batch-acceptance.ts` exposes offline `consume-main`, `preflight`,
+  and `accept` commands. It uses trusted-main evaluator code, reads candidate
+  content as inert Git objects, and creates one owner-only evidence file with
+  `O_EXCL|O_NOFOLLOW`. `check-staging-evidence.ts` grants T0 only to the exact
+  new registry/acceptor/runner files and the strict
+  `golden-dataset-s33-wave2-<slug>-heldout.ts` producer shape while the worker
+  runtime import graph remains readable and cannot reach them; sibling files
+  and runtime imports remain T2.
 - 2026-07-15 S3.3 trusted-main Worker TSX cwd regression: `s33-wave1-github-evidence.test.ts` now enumerates the exact four Worker CLI targets in `s33-wave1-prerequisites.yml` and the one target in `s33-wave1-acceptance.yml`, requires repository-root-valid `services/worker/src/...` paths, and reads every target from disk. This closes the run-29416344643 class where filename/count assertions passed but `npm --prefix` did not change the shell cwd and `tsx src/...` resolved outside `services/worker`.
 - 2026-07-14 S3.3 offline-acceptance T0 classifier (CTO 102498305):
   `check-staging-evidence.ts` grants T0 only to the exact three Wave-1 corpus

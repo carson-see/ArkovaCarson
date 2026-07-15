@@ -485,6 +485,37 @@ describe('check-staging-evidence', () => {
       }).tier).toBe('T0');
     });
 
+    it('classifies the exact Wave-2 trusted-main acceptance boundary as offline T0', () => {
+      const candidate = [
+        '.github/workflows/s33-wave2-batch-acceptance.yml',
+        'scripts/ci/agents.md',
+        'scripts/ci/check-staging-evidence.test.ts',
+        'scripts/ci/check-staging-evidence.ts',
+        'scripts/ci/s33-wave2-batch-acceptance.test.ts',
+        'scripts/ci/s33-wave2-batch-acceptance.ts',
+        'services/worker/src/ai/eval/agents.md',
+        'services/worker/src/ai/eval/heldout-leakage.ts',
+        'services/worker/src/ai/eval/s33-batch-acceptance.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-parser.ts',
+        'services/worker/src/ai/eval/s33-wave2-batch-acceptance.test.ts',
+        'services/worker/src/ai/eval/s33-wave2-batch-acceptance.ts',
+        'services/worker/src/ai/eval/s33-wave2-corpus-registry.test.ts',
+        'services/worker/src/ai/eval/s33-wave2-corpus-registry.ts',
+      ];
+      expect(requiredTierFor(candidate, { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');
+    });
+
+    it('allows only the exact inert Wave-2 corpus filename shape and fails closed on runtime reachability', () => {
+      const corpus = 'services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-heldout.ts';
+      expect(requiredTierFor([corpus], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');
+      expect(requiredTierFor([corpus], {
+        s33RuntimeImporterProvider: () => ['services/worker/src/index.ts'],
+      }).tier).toBe('T2');
+      expect(requiredTierFor([
+        'services/worker/src/ai/eval/golden-dataset-s33-wave2-top15.ts',
+      ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T2');
+    });
+
     it('keeps the dual-DAG implementation T0 only while the runtime graph is readable and unreachable', () => {
       const dualDag = ['services/worker/src/ai/eval/s33-wave1-dual-dag.ts'];
 

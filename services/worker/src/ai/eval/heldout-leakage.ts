@@ -112,9 +112,14 @@ const SELF_EXCLUSION_EXACT_PATHS = new Set([
  * matches plus test files (tests assert ON the fixtures, so they contain
  * them by design).
  */
-export function isLeakageSelfExclusion(relPath: string): boolean {
+export function isLeakageSelfExclusion(
+  relPath: string,
+  additionalExactPaths: ReadonlySet<string> = new Set(),
+): boolean {
   const posixPath = relPath.split('\\').join('/');
-  return SELF_EXCLUSION_EXACT_PATHS.has(posixPath) || posixPath.endsWith('.test.ts');
+  return SELF_EXCLUSION_EXACT_PATHS.has(posixPath)
+    || additionalExactPaths.has(posixPath)
+    || posixPath.endsWith('.test.ts');
 }
 
 function walk(dir: string, out: string[], failOnUnreadable = false): void {
@@ -155,7 +160,10 @@ function walk(dir: string, out: string[], failOnUnreadable = false): void {
  */
 export function loadLeakageCorpus(
   workerRoot: string,
-  options: Readonly<{ failOnUnreadable?: boolean }> = {},
+  options: Readonly<{
+    failOnUnreadable?: boolean;
+    additionalExactSelfExclusions?: readonly string[];
+  }> = {},
 ): CorpusFile[] {
   const roots = [
     join(workerRoot, 'training-data'),
@@ -167,9 +175,12 @@ export function loadLeakageCorpus(
     walk(root, files, options.failOnUnreadable === true);
   }
   const corpus: CorpusFile[] = [];
+  const additionalExactPaths = new Set(
+    (options.additionalExactSelfExclusions ?? []).map((path) => path.split('\\').join('/')),
+  );
   for (const file of files) {
     const rel = relative(workerRoot, file);
-    if (isLeakageSelfExclusion(rel)) continue;
+    if (isLeakageSelfExclusion(rel, additionalExactPaths)) continue;
     try {
       corpus.push({ path: rel, content: readFileSync(file, 'utf-8') });
     } catch (error) {

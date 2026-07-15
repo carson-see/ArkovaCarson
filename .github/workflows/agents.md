@@ -71,6 +71,19 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
 
 - Worker TypeScript CLIs launched from repository-root workflow steps with `npm --prefix services/worker exec -- tsx` must pass a repository-root-valid `services/worker/src/...` target. A bare `src/...` target resolves against the repository root and fails before the CLI loads. `scripts/ci/s33-wave1-github-evidence.test.ts` pins the exact four prerequisite and one acceptance targets so this cannot silently recur.
 
+## S3.3 Wave-2 trusted-main corpus acceptance (2026-07-15)
+
+- `s33-wave2-batch-acceptance.yml` runs post-merge registry consumption on
+  `main`, inert candidate preflight on `pull_request_target`, and whole-batch
+  acceptance only on an APPROVED `pull_request_review` event. Permissions are
+  read-only. Every action is SHA-pinned and every npm install uses
+  `--ignore-scripts`.
+- The evaluator and dependencies are checked out/installed from the exact PR
+  base in `trusted/`. Candidate Git objects are checked out separately in
+  `candidate/`; no command uses that directory as a working directory, imports
+  candidate TypeScript, runs candidate tests, or installs candidate packages.
+  Exact review `commit_id` must equal the current PR head or acceptance fails.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
