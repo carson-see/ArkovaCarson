@@ -3,7 +3,7 @@ import {
   createPublicKey,
   generateKeyPairSync,
 } from 'node:crypto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildAndSignS33Wave2AcceptanceForTest,
   computeS33Wave2AcceptedEntryOrderSha256,
@@ -25,6 +25,10 @@ const SHA256_C = 'c'.repeat(64);
 const SHA256_D = 'd'.repeat(64);
 const SHA256_E = 'e'.repeat(64);
 const SHA256_F = 'f'.repeat(64);
+const originalNodeEnv = {
+  present: Object.prototype.hasOwnProperty.call(process.env, 'NODE_ENV'),
+  value: process.env.NODE_ENV,
+};
 
 function fingerprint(publicKeySpkiPem: string): string {
   const key = createPublicKey(publicKeySpkiPem);
@@ -145,6 +149,21 @@ function bindings(value = input()): S33Wave2AcceptanceBindings {
 describe('S3.3 Wave-2 authenticated whole-batch acceptance', () => {
   let privateKeyPkcs8Pem: string;
   let trustRoot: S33Wave2AcceptanceTrustRoot;
+
+  afterEach(() => {
+    if (originalNodeEnv.present) {
+      process.env.NODE_ENV = originalNodeEnv.value;
+    } else {
+      delete process.env.NODE_ENV;
+    }
+  });
+
+  afterAll(() => {
+    expect(Object.prototype.hasOwnProperty.call(process.env, 'NODE_ENV')).toBe(
+      originalNodeEnv.present,
+    );
+    expect(process.env.NODE_ENV).toBe(originalNodeEnv.value);
+  });
 
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
