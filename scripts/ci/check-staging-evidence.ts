@@ -417,8 +417,18 @@ interface RuntimeModuleParse {
   unsafeConstructedLoads: string[];
 }
 
-/** Parse runtime module edges; no source module is executed. */
-function parseRuntimeModule(sourceText: string, importerPath: string): RuntimeModuleParse {
+interface RuntimeRequireNames {
+  createRequireImports: Set<string>;
+  moduleNamespaceImports: Set<string>;
+  requireCallers: Set<string>;
+}
+
+interface RuntimeLoad {
+  expression: ts.Expression | undefined;
+  kind: string;
+}
+
+function runtimeSourceFile(sourceText: string, importerPath: string): ts.SourceFile {
   const source = ts.createSourceFile(
     importerPath,
     sourceText,
@@ -430,110 +440,173 @@ function parseRuntimeModule(sourceText: string, importerPath: string): RuntimeMo
     readonly parseDiagnostics?: readonly ts.Diagnostic[];
   }).parseDiagnostics;
   if (!Array.isArray(diagnostics)) {
-    throw new Error(`${importerPath} TypeScript parser did not expose parse diagnostics`);
+    throw new TypeError(`${importerPath} TypeScript parser did not expose parse diagnostics`);
   }
   if (diagnostics.length > 0) throw new Error(`${importerPath} has TypeScript parse diagnostics`);
+  return source;
+}
 
-  const localSpecifiers: string[] = [];
-  const unsafeConstructedLoads: string[] = [];
-  const createRequireImports = new Set<string>();
-  const moduleNamespaceImports = new Set<string>();
-  const requireCallers = new Set<string>(['require']);
-
-  const isNodeModuleRequire = (expression: ts.Expression | undefined): boolean => {
-    if (!expression || !ts.isCallExpression(expression)
-      || !ts.isIdentifier(expression.expression) || expression.expression.text !== 'require'
-      || expression.arguments.length !== 1) return false;
-    return stringSpecifier(expression.arguments[0]) === 'node:module';
+function runtimeRequireNames(): RuntimeRequireNames {
+  return {
+    createRequireImports: new Set<string>(),
+    moduleNamespaceImports: new Set<string>(),
+    requireCallers: new Set<string>(['require']),
   };
+}
 
-  for (const statement of source.statements) {
-    if (!ts.isImportDeclaration(statement)
-      || stringSpecifier(statement.moduleSpecifier) !== 'node:module'
-      || !statement.importClause) continue;
-    const bindings = statement.importClause.namedBindings;
-    if (bindings && ts.isNamedImports(bindings)) {
-      for (const element of bindings.elements) {
-        if ((element.propertyName?.text ?? element.name.text) === 'createRequire') {
-          createRequireImports.add(element.name.text);
-        }
-      }
-    } else if (bindings && ts.isNamespaceImport(bindings)) {
-      moduleNamespaceImports.add(bindings.name.text);
+function isNodeModuleRequire(expression: ts.Expression | undefined): boolean {
+  if (!expression || !ts.isCallExpression(expression)) return false;
+  if (!ts.isIdentifier(expression.expression) || expression.expression.text !== 'require') {
+    return false;
+  }
+  return expression.arguments.length === 1
+    && stringSpecifier(expression.arguments[0]) === 'node:module';
+}
+
+function addNodeModuleImportAliases(
+  statement: ts.Statement,
+  names: RuntimeRequireNames,
+): void {
+  if (!ts.isImportDeclaration(statement)) return;
+  if (stringSpecifier(statement.moduleSpecifier) !== 'node:module') return;
+  const bindings = statement.importClause?.namedBindings;
+  if (!bindings) return;
+  if (ts.isNamespaceImport(bindings)) {
+    names.moduleNamespaceImports.add(bindings.name.text);
+    return;
+  }
+  for (const element of bindings.elements) {
+    if ((element.propertyName?.text ?? element.name.text) === 'createRequire') {
+      names.createRequireImports.add(element.name.text);
     }
   }
+}
 
+function addNodeModuleRequireDeclaration(
+  declaration: ts.VariableDeclaration,
+  names: RuntimeRequireNames,
+): void {
+  if (!isNodeModuleRequire(declaration.initializer)) return;
+  if (ts.isIdentifier(declaration.name)) {
+    names.moduleNamespaceImports.add(declaration.name.text);
+    return;
+  }
+  if (!ts.isObjectBindingPattern(declaration.name)) return;
+  for (const element of declaration.name.elements) {
+    if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
+    const importedName = element.propertyName && ts.isIdentifier(element.propertyName)
+      ? element.propertyName.text
+      : element.name.text;
+    if (importedName === 'createRequire') {
+      names.createRequireImports.add(element.name.text);
+    }
+  }
+}
+
+function collectNodeModuleAliases(source: ts.SourceFile, names: RuntimeRequireNames): void {
   for (const statement of source.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    for (const declaration of statement.declarationList.declarations) {
-      if (!isNodeModuleRequire(declaration.initializer)) continue;
-      if (ts.isIdentifier(declaration.name)) {
-        moduleNamespaceImports.add(declaration.name.text);
-        continue;
-      }
-      if (!ts.isObjectBindingPattern(declaration.name)) continue;
-      for (const element of declaration.name.elements) {
-        if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
-        const importedName = element.propertyName && ts.isIdentifier(element.propertyName)
-          ? element.propertyName.text
-          : element.name.text;
-        if (importedName === 'createRequire') createRequireImports.add(element.name.text);
+    addNodeModuleImportAliases(statement, names);
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        addNodeModuleRequireDeclaration(declaration, names);
       }
     }
   }
+}
 
-  const isCreateRequireCall = (expression: ts.Expression): boolean => {
-    if (!ts.isCallExpression(expression)) return false;
-    if (ts.isIdentifier(expression.expression)) {
-      return createRequireImports.has(expression.expression.text);
-    }
-    return ts.isPropertyAccessExpression(expression.expression)
-      && expression.expression.name.text === 'createRequire'
-      && ts.isIdentifier(expression.expression.expression)
-      && moduleNamespaceImports.has(expression.expression.expression.text);
-  };
+function isCreateRequireCall(expression: ts.Expression, names: RuntimeRequireNames): boolean {
+  if (!ts.isCallExpression(expression)) return false;
+  if (ts.isIdentifier(expression.expression)) {
+    return names.createRequireImports.has(expression.expression.text);
+  }
+  if (!ts.isPropertyAccessExpression(expression.expression)) return false;
+  return expression.expression.name.text === 'createRequire'
+    && ts.isIdentifier(expression.expression.expression)
+    && names.moduleNamespaceImports.has(expression.expression.expression.text);
+}
 
-  const findRequireAliases = (node: ts.Node): void => {
+function collectRequireCallers(source: ts.SourceFile, names: RuntimeRequireNames): void {
+  const visit = (node: ts.Node): void => {
     if (ts.isVariableDeclaration(node)
       && ts.isIdentifier(node.name)
       && node.initializer
-      && isCreateRequireCall(node.initializer)) {
-      requireCallers.add(node.name.text);
+      && isCreateRequireCall(node.initializer, names)) {
+      names.requireCallers.add(node.name.text);
     }
-    ts.forEachChild(node, findRequireAliases);
+    ts.forEachChild(node, visit);
   };
-  findRequireAliases(source);
+  visit(source);
+}
 
-  const addModuleSpecifier = (specifier: string): void => {
-    if (specifier.startsWith('.')) localSpecifiers.push(specifier);
+function callRuntimeLoad(node: ts.CallExpression, names: RuntimeRequireNames): RuntimeLoad | null {
+  const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+  const requireLike = ts.isIdentifier(node.expression)
+    && names.requireCallers.has(node.expression.text);
+  if (!dynamicImport && !requireLike) return null;
+  return {
+    expression: node.arguments.length === 1 ? node.arguments[0] : undefined,
+    kind: dynamicImport ? 'dynamic import' : 'require/createRequire',
   };
+}
+
+function runtimeLoad(node: ts.Node, names: RuntimeRequireNames): RuntimeLoad | null {
+  if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+    return { expression: node.moduleSpecifier, kind: 'static import/export' };
+  }
+  if (ts.isImportEqualsDeclaration(node)
+    && ts.isExternalModuleReference(node.moduleReference)
+    && node.moduleReference.expression) {
+    return { expression: node.moduleReference.expression, kind: 'import-equals' };
+  }
+  return ts.isCallExpression(node) ? callRuntimeLoad(node, names) : null;
+}
+
+function recordRuntimeLoad(
+  load: RuntimeLoad,
+  importerPath: string,
+  parsed: RuntimeModuleParse,
+): void {
+  const specifier = load.expression ? stringSpecifier(load.expression) : null;
+  if (specifier === null) {
+    parsed.unsafeConstructedLoads.push(`${importerPath}: ${load.kind}`);
+  } else if (specifier.startsWith('.')) {
+    parsed.localSpecifiers.push(specifier);
+  }
+}
+
+/** Parse runtime module edges; no source module is executed. */
+function parseRuntimeModule(sourceText: string, importerPath: string): RuntimeModuleParse {
+  const source = runtimeSourceFile(sourceText, importerPath);
+  const names = runtimeRequireNames();
+  collectNodeModuleAliases(source, names);
+  collectRequireCallers(source, names);
+  const parsed: RuntimeModuleParse = { localSpecifiers: [], unsafeConstructedLoads: [] };
   const inspect = (node: ts.Node): void => {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
-      const specifier = stringSpecifier(node.moduleSpecifier);
-      if (specifier === null) unsafeConstructedLoads.push(`${importerPath}: static import/export`);
-      else addModuleSpecifier(specifier);
-    } else if (ts.isImportEqualsDeclaration(node)
-      && ts.isExternalModuleReference(node.moduleReference)
-      && node.moduleReference.expression) {
-      const specifier = stringSpecifier(node.moduleReference.expression);
-      if (specifier === null) unsafeConstructedLoads.push(`${importerPath}: import-equals`);
-      else addModuleSpecifier(specifier);
-    } else if (ts.isCallExpression(node)) {
-      const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
-      const requireLike = ts.isIdentifier(node.expression) && requireCallers.has(node.expression.text);
-      if (dynamicImport || requireLike) {
-        const specifier = node.arguments.length === 1 ? stringSpecifier(node.arguments[0]) : null;
-        if (specifier === null) {
-          unsafeConstructedLoads.push(`${importerPath}: ${dynamicImport ? 'dynamic import' : 'require/createRequire'}`);
-        } else {
-          addModuleSpecifier(specifier);
-        }
-      }
-    }
+    const load = runtimeLoad(node, names);
+    if (load) recordRuntimeLoad(load, importerPath, parsed);
     ts.forEachChild(node, inspect);
   };
   inspect(source);
+  const { localSpecifiers, unsafeConstructedLoads } = parsed;
   return { localSpecifiers, unsafeConstructedLoads };
+}
+
+function scanRuntimeModule(
+  repositoryRoot: string,
+  importerPath: string,
+  importers: Set<string>,
+  queued: string[],
+): void {
+  const absolutePath = resolve(repositoryRoot, importerPath);
+  if (!existsSync(absolutePath)) throw new Error(`missing runtime entry/module ${importerPath}`);
+  const parsed = parseRuntimeModule(readFileSync(absolutePath, 'utf8'), importerPath);
+  for (const unsafe of parsed.unsafeConstructedLoads) importers.add(`<unsafe ${unsafe}>`);
+  for (const specifier of parsed.localSpecifiers) {
+    const importedPath = resolveRuntimeModule(repositoryRoot, importerPath, specifier);
+    if (importedPath === null) continue;
+    if (isS33OfflineAcceptancePath(importedPath)) importers.add(importerPath);
+    else if (!TEST_FILE_RE.test(importedPath)) queued.push(importedPath);
+  }
 }
 
 /**
@@ -550,16 +623,7 @@ export function findS33RuntimeImporters(repositoryRoot = REPO): string[] {
       const importerPath = queued.shift()!;
       if (visited.has(importerPath)) continue;
       visited.add(importerPath);
-      const absolutePath = resolve(repositoryRoot, importerPath);
-      if (!existsSync(absolutePath)) throw new Error(`missing runtime entry/module ${importerPath}`);
-      const parsed = parseRuntimeModule(readFileSync(absolutePath, 'utf8'), importerPath);
-      for (const unsafe of parsed.unsafeConstructedLoads) importers.add(`<unsafe ${unsafe}>`);
-      for (const specifier of parsed.localSpecifiers) {
-        const importedPath = resolveRuntimeModule(repositoryRoot, importerPath, specifier);
-        if (importedPath === null) continue;
-        if (isS33OfflineAcceptancePath(importedPath)) importers.add(importerPath);
-        else if (!TEST_FILE_RE.test(importedPath)) queued.push(importedPath);
-      }
+      scanRuntimeModule(repositoryRoot, importerPath, importers, queued);
     }
     return [...importers].sort(compareUtf16CodeUnits);
   } catch (error) {
@@ -579,50 +643,86 @@ function isS33OfflineAcceptanceFile(file: string, opts?: TierClassifyOpts): bool
 }
 
 // A changed line in deploy-worker.yml that is "harmless" for prod runtime: a
-// GitHub-Actions `uses:` pin (the Dependabot bump target), a YAML comment, or a
-// blank line. Anything else (env, secrets, min/max-instances, image, region,
-// service account, --set-env-vars, scaling, …) is a real runtime change.
+// GitHub-Actions `uses:` pin (the Dependabot bump target), an additive
+// `fetch-depth: 0` checkout hardening, a YAML comment, or a blank line.
+// Anything else (env, secrets, min/max-instances, image, region, service
+// account, --set-env-vars, scaling, …) is a real runtime change.
 // Note the optional dash + its trailing whitespace are grouped together rather
 // than written as two adjacent `[^\S\r\n]*` runs — the adjacent form lets the
 // engine split a whitespace span ambiguously (super-linear backtracking Sonar
 // flags). Behaviour is identical: optional indent, optional `- ` list marker,
 // then `uses:`.
-const DEPLOY_WORKER_USES_LINE_RE = /^[^\S\r\n]*(?:-[^\S\r\n]*)?uses:[^\S\r\n]*\S/;
-const YAML_COMMENT_OR_BLANK_RE = /^[^\S\r\n]*(?:#.*)?$/;
+const deployWorkerUsesLineRe = /^[^\S\r\n]*(?:-[^\S\r\n]*)?uses:[^\S\r\n]*\S/;
+const deployWorkerCheckoutUsesLineRe = /^[^\S\r\n]*-[^\S\r\n]*uses:[^\S\r\n]*actions\/checkout@\S/;
+const deployWorkerFullHistoryLineRe = /^[^\S\r\n]*fetch-depth:[^\S\r\n]*0[^\S\r\n]*(?:#.*)?$/;
+const deployWorkerIsolatedCredentialsLineRe = /^[^\S\r\n]*persist-credentials:[^\S\r\n]*false[^\S\r\n]*(?:#.*)?$/;
+const yamlStepStartRe = /^[^\S\r\n]*-[^\S\r\n]*[A-Za-z][\w-]*:/;
+const yamlWithLineRe = /^[^\S\r\n]*with:[^\S\r\n]*(?:#.*)?$/;
+const yamlCommentOrBlankRe = /^[^\S\r\n]*(?:#.*)?$/;
+
+type DeployWorkerChange = 'ignored' | 'eligible' | 'invalid';
+
+function diffContent(rawLine: string): string {
+  return /^[ +-]/u.test(rawLine) ? rawLine.slice(1) : rawLine;
+}
+
+function checkoutStepContext(content: string, current: boolean): boolean {
+  return yamlStepStartRe.test(content)
+    ? deployWorkerCheckoutUsesLineRe.test(content)
+    : current;
+}
+
+function deployWorkerChange(
+  rawLine: string,
+  content: string,
+  inCheckoutStep: boolean,
+): DeployWorkerChange {
+  if (yamlCommentOrBlankRe.test(content)) return 'ignored';
+  if (deployWorkerUsesLineRe.test(content)) return 'eligible';
+  if (!rawLine.startsWith('+') || !inCheckoutStep) return 'invalid';
+  if (deployWorkerFullHistoryLineRe.test(content)
+    || deployWorkerIsolatedCredentialsLineRe.test(content)) return 'eligible';
+  // `with:` is structural YAML required when checkout had no existing input
+  // map. It is permitted only there and does not make a diff eligible itself.
+  return yamlWithLineRe.test(content) ? 'ignored' : 'invalid';
+}
 
 /**
  * True iff a unified diff for {@link DEPLOY_WORKER_WORKFLOW} changes ONLY
- * `uses:` action-version/SHA lines (plus YAML comments / blank lines). Used to
- * exempt a Dependabot GitHub-Actions version bump from the T2 deploy-config rule
- * without weakening the gate for real runtime-config edits.
+ * `uses:` action-version/SHA lines, or additively configures checkout with
+ * `fetch-depth: 0` (plus YAML comments / blank lines). These are CI mechanics,
+ * so they are exempt from the T2 deploy-runtime rule without weakening the gate
+ * for real runtime-config edits.
  *
  * Fail-closed: returns false for an empty/`null` diff, and for any diff that
- * contains at least one added/removed line which is not a `uses:`/comment/blank
- * line. A diff with no added/removed lines at all is also false (nothing
- * attestable as a uses-only bump → keep the path-rule tier).
+ * contains at least one added/removed line outside that narrow set. Removing
+ * full-history checkout or changing it to a shallow depth is never exempt. A
+ * diff with no added/removed lines at all is also false.
  */
 export function isDeployWorkerUsesOnlyBump(diff: string | null | undefined): boolean {
   if (!diff || diff.trim().length === 0) return false;
 
-  let sawChange = false;
+  let inCheckoutStep = false;
+  let sawEligibleChange = false;
   for (const rawLine of diff.split(/\r?\n/)) {
-    // Skip unified-diff file headers (`+++`/`---`) and hunk headers (`@@ … @@`);
-    // they are not content lines.
-    if (rawLine.startsWith('+++') || rawLine.startsWith('---') || rawLine.startsWith('@@')) {
+    // Unified-diff file headers are not content lines.
+    if (rawLine.startsWith('+++') || rawLine.startsWith('---')) {
       continue;
     }
-    if (rawLine.startsWith('+') || rawLine.startsWith('-')) {
-      const content = rawLine.slice(1);
-      if (DEPLOY_WORKER_USES_LINE_RE.test(content) || YAML_COMMENT_OR_BLANK_RE.test(content)) {
-        sawChange = true;
-        continue;
-      }
-      // A real (non-uses) changed line → not a uses-only bump. Fail closed.
-      return false;
+    if (rawLine.startsWith('@@')) {
+      inCheckoutStep = false;
+      continue;
     }
-    // Context line (leading space) or stray line — ignored for the decision.
+
+    const isChangedLine = rawLine.startsWith('+') || rawLine.startsWith('-');
+    const content = diffContent(rawLine);
+    inCheckoutStep = checkoutStepContext(content, inCheckoutStep);
+    if (!isChangedLine) continue;
+    const change = deployWorkerChange(rawLine, content, inCheckoutStep);
+    if (change === 'invalid') return false;
+    if (change === 'eligible') sawEligibleChange = true;
   }
-  return sawChange;
+  return sawEligibleChange;
 }
 
 /**
@@ -691,13 +791,7 @@ export function findS33Lane1RuntimeImporters(files: SourceFileText[]): string[] 
       }
     }
   }
-  return [...importers].sort(compareCodeUnits);
-}
-
-function compareCodeUnits(left: string, right: string): number {
-  if (left < right) return -1;
-  if (left > right) return 1;
-  return 0;
+  return [...importers].sort(compareUtf16CodeUnits);
 }
 
 function gitS33Lane1ImportScan(): S33Lane1ImportScan {
@@ -723,19 +817,28 @@ function hasCleanS33Lane1ImportScan(opts?: TierClassifyOpts): boolean {
 }
 
 /**
- * deploy-worker.yml is normally a T2 prod-runtime surface. The ONLY exemption is
- * a Dependabot GitHub-Actions `uses:`-version bump (verified against the file's
- * diff via {@link isDeployWorkerUsesOnlyBump}); such a change touches no prod
- * runtime config and is treated as CI-tooling (T0). Fail-closed: without a diff
- * provider, or when the diff can't be obtained, the file stays T2.
+ * deploy-worker.yml is normally a T2 prod-runtime surface. The narrow
+ * exemptions are a Dependabot GitHub-Actions `uses:`-version bump and an
+ * additive full-history checkout fix (verified against the file's diff via
+ * {@link isDeployWorkerUsesOnlyBump}); neither changes prod runtime config, so
+ * each is treated as CI-tooling (T0). The staging gate injects its provider;
+ * other live GitHub Actions consumers reuse the resolved CI base automatically
+ * so merge-authority and staging cannot disagree. Tests and non-Actions callers
+ * stay pure/fail-closed unless they inject a provider. Any unavailable diff
+ * keeps the file T2.
  *
  * Possible future carve-out (NOT implemented — a separate policy call for the
  * operator): a `@types/*`-only manifest/lockfile bump. Deliberately left out.
  */
 function isDeployWorkerUsesOnlyExempt(file: string, opts?: TierClassifyOpts): boolean {
   if (file !== DEPLOY_WORKER_WORKFLOW) return false;
-  if (!opts?.diffProvider) return false;
-  return isDeployWorkerUsesOnlyBump(opts.diffProvider(file));
+  let provider = opts?.diffProvider;
+  if (!provider && process.env.GITHUB_ACTIONS === 'true' && process.env.VITEST !== 'true') {
+    const baseRef = getBaseRef({ required: false });
+    if (baseRef) provider = gitFileDiffProvider(baseRef);
+  }
+  if (!provider) return false;
+  return isDeployWorkerUsesOnlyBump(provider(file));
 }
 
 function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
@@ -1857,7 +1960,7 @@ function gitFileDiffProvider(baseSha: string): DiffProvider {
     try {
       const out = execFileSync(
         GIT_BIN,
-        ['diff', '--unified=0', `${baseSha}...HEAD`, '--', file],
+        ['diff', '--unified=3', `${baseSha}...HEAD`, '--', file],
         { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
       );
       return out.trim().length > 0 ? out : null;
