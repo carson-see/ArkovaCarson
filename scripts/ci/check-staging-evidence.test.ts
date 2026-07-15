@@ -511,6 +511,23 @@ describe('check-staging-evidence', () => {
       expect(requiredTierFor(candidate, { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');
     });
 
+    it('classifies only the exact Wave-3 detached-signing tooling as offline T0', () => {
+      const candidate = [
+        'docs/lane3/s33-wave3-v71-offline-gates.json',
+        'scripts/ci/s33-wave3-detached-signing-v2.test.ts',
+        'scripts/ci/s33-wave3-detached-signing-v2.ts',
+        'services/worker/src/ai/eval/s33-wave3-detached-signing-v2.test.ts',
+        'services/worker/src/ai/eval/s33-wave3-detached-signing-v2.ts',
+      ];
+      expect(requiredTierFor(candidate, { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');
+      expect(requiredTierFor(candidate, {
+        s33RuntimeImporterProvider: () => ['services/worker/src/index.ts'],
+      }).tier).toBe('T2');
+      expect(requiredTierFor([
+        'services/worker/src/ai/eval/s33-wave3-detached-signing-v3.ts',
+      ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T2');
+    });
+
     it('allows only the exact inert Wave-2 corpus filename shape and fails closed on runtime reachability', () => {
       const corpus = 'services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-heldout.ts';
       expect(requiredTierFor([corpus], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');

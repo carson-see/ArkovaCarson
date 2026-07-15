@@ -488,7 +488,8 @@ function computeAcceptedEntrySetSha256(entries: readonly S33Wave2AcceptedEntry[]
   return canonicalDigest(sortedIds);
 }
 
-function validatePayload(value: unknown): S33Wave2AcceptancePayload {
+/** Strictly parse and normalize an unsigned Wave-2 acceptance payload. */
+export function validateS33Wave2AcceptancePayload(value: unknown): S33Wave2AcceptancePayload {
   const payload = record(value, 'Wave-2 acceptance payload');
   exactKeys(payload, [
     'schemaVersion', 'artifactType', 'verdict', 'signerIdentity', 'signingKeyId',
@@ -700,7 +701,7 @@ export function verifyS33Wave2AuthenticatedBatchAcceptance(
     || envelope.signingKeyId !== SIGNER_IDENTITY) {
     throw new Error('Wave-2 acceptance envelope identity/algorithm/authority tuple is invalid');
   }
-  const payload = validatePayload(envelope.payload);
+  const payload = validateS33Wave2AcceptancePayload(envelope.payload);
   const payloadCanonicalSha256 = digest(envelope.payloadCanonicalSha256, 'Wave-2 payload canonical digest');
   if (canonicalDigest(payload) !== payloadCanonicalSha256) throw new Error('Wave-2 payload canonical digest mismatch');
   const signatureBase64Url = nonEmpty(envelope.signatureBase64Url, 'Wave-2 Ed25519 signature');
@@ -737,8 +738,14 @@ function assertTestEnvironment(): void {
   if (process.env.NODE_ENV !== 'test') throw new Error('Wave-2 test-only acceptance builder is disabled');
 }
 
-function buildPayload(input: S33Wave2AcceptancePayloadInput): S33Wave2AcceptancePayload {
-  const candidate = record(input, 'Wave-2 test acceptance input');
+/**
+ * Build a canonical unsigned payload. This function never accepts or handles
+ * signing material; detached-signing tooling owns the separate authority step.
+ */
+export function buildS33Wave2AcceptancePayload(
+  input: S33Wave2AcceptancePayloadInput,
+): S33Wave2AcceptancePayload {
+  const candidate = record(input, 'Wave-2 unsigned acceptance input');
   exactKeys(candidate, [
     'repositoryIdentity', 'pullRequestNumber', 'candidateBaseSha', 'candidateHeadSha',
     'candidateTreeSha', 'batchId', 'revision', 'manifestPath', 'manifestRawSha256',
@@ -747,20 +754,20 @@ function buildPayload(input: S33Wave2AcceptancePayloadInput): S33Wave2Acceptance
     'resultingRegistryDigestSha256', 'coverageRegistryPath',
     'coverageRegistryRawSha256', 'coverageRegistryCanonicalSha256', 'signedAtUtc',
     'reviewer', 'proof', 'acceptedEntries',
-  ], 'Wave-2 test acceptance input');
+  ], 'Wave-2 unsigned acceptance input');
   if (!Array.isArray(input.acceptedEntries) || input.acceptedEntries.length === 0) {
-    throw new Error('Wave-2 test acceptance requires a non-empty whole batch');
+    throw new Error('Wave-2 unsigned acceptance requires a non-empty whole batch');
   }
-  const sourceBlobSha = sha1(input.sourceBlobSha, 'Wave-2 test input source blob');
+  const sourceBlobSha = sha1(input.sourceBlobSha, 'Wave-2 unsigned input source blob');
   const acceptedEntries = input.acceptedEntries.map((entry, index) => buildEntry(
     entry,
     input.batchId,
     input.revision,
     sourceBlobSha,
-    `Wave-2 test acceptedEntries[${index}]`,
+    `Wave-2 unsigned acceptedEntries[${index}]`,
   ));
   assertUniqueEntries(acceptedEntries);
-  return validatePayload({
+  return validateS33Wave2AcceptancePayload({
     schemaVersion: 1,
     artifactType: 'arkova-s33-wave2-batch-acceptance-payload',
     verdict: 'APPROVED_WHOLE_BATCH',
@@ -781,7 +788,7 @@ export function buildAndSignS33Wave2AcceptanceForTest(
   trustRootValue: S33Wave2AcceptanceTrustRoot,
 ): S33Wave2AuthenticatedBatchAcceptance {
   assertTestEnvironment();
-  const payload = buildPayload(input);
+  const payload = buildS33Wave2AcceptancePayload(input);
   const { trustRoot } = validateTrustRoot(trustRootValue);
   let privateKey: KeyObject;
   try {
