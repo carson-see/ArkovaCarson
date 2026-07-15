@@ -461,6 +461,25 @@ interface LeafForProof {
   fingerprint: string;
 }
 
+class TxidJournalPersistenceRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TxidJournalPersistenceRejectedError';
+  }
+}
+
+class TxidJournalPersistenceOutcomeUnknownError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TxidJournalPersistenceOutcomeUnknownError';
+  }
+}
+
+/** A five-character SQLSTATE proves PostgreSQL rejected and rolled back the RPC transaction. */
+function isDefinitiveDatabaseRejection(error: { code?: unknown } | null): boolean {
+  return typeof error?.code === 'string' && /^[0-9A-Z]{5}$/.test(error.code);
+}
+
 /**
  * FIX-1 (SCRUM-2471): persist each leaf's Merkle branch + integer index into
  * `anchor_proofs` so SECURED customer anchors carry a recomputable proof
@@ -647,6 +666,7 @@ interface TxidJournalDbRow {
   anchor_ids: string[];
   leaf_order: unknown;
   signed_at: string;
+  created_at: string;
   recovery_status: 'PENDING' | 'HELD';
 }
 
@@ -721,7 +741,14 @@ async function persistTxidJournal(
   tree: MerkleTreeResult,
   prepared: PreparedChainTx,
   batchId: string,
-): Promise<{ id: string; entry: TxidJournalEntry; created: boolean }> {
+): Promise<{
+  id: string;
+  entry: TxidJournalEntry;
+  created: boolean;
+  outcome: 'CREATED' | 'EXACT_REPLAY' | 'CONFLICT_UNWOUND';
+  conflictReason?: string;
+  releasedAnchorIds: string[];
+}> {
   const entry = buildTxidJournalEntry({
     batchId,
     txid: prepared.txId,
@@ -743,21 +770,120 @@ async function persistTxidJournal(
     p_fingerprint_root: entry.fingerprintRoot,
     p_anchor_ids: entry.anchorIds,
     p_leaf_order: leafOrder,
-    p_signed_at: entry.signedAt,
   });
 
   if (error) {
-    throw new Error(`Txid journal persistence failed: ${error?.message ?? 'missing journal id'}`);
+    const message = `Txid journal persistence failed: ${error?.message ?? 'missing journal id'}`;
+    if (isDefinitiveDatabaseRejection(error)) {
+      throw new TxidJournalPersistenceRejectedError(message);
+    }
+    // A transport/PostgREST/schema-cache failure can arrive after PostgreSQL
+    // committed. Treat it as unknown; a blanket refund/requeue could destroy
+    // an existing journal owner's protected cohort.
+    throw new TxidJournalPersistenceOutcomeUnknownError(message);
   }
   if (data === null || Array.isArray(data) || typeof data !== 'object') {
-    throw new Error('Txid journal persistence failed: malformed persistence result');
+    throw new TxidJournalPersistenceOutcomeUnknownError(
+      'Txid journal persistence failed: malformed persistence result',
+    );
   }
-  const result = data as { journal_id?: unknown; created?: unknown };
+  const result = data as {
+    journal_id?: unknown;
+    created?: unknown;
+    outcome?: unknown;
+    conflict_reason?: unknown;
+    owner_batch_id?: unknown;
+    owner_txid?: unknown;
+    owner_fingerprint_root?: unknown;
+    owner_anchor_ids?: unknown;
+    owner_leaf_order?: unknown;
+    owner_journal_ids?: unknown;
+    protected_anchor_ids?: unknown;
+    released_anchor_ids?: unknown;
+  };
   if (typeof result.journal_id !== 'string' || result.journal_id.length === 0
-    || typeof result.created !== 'boolean') {
-    throw new Error('Txid journal persistence failed: malformed persistence result');
+    || typeof result.created !== 'boolean'
+    || !['CREATED', 'EXACT_REPLAY', 'CONFLICT_UNWOUND'].includes(String(result.outcome))
+    || !Array.isArray(result.owner_anchor_ids)
+    || !Array.isArray(result.owner_leaf_order)
+    || !Array.isArray(result.owner_journal_ids)
+    || !Array.isArray(result.protected_anchor_ids)
+    || !Array.isArray(result.released_anchor_ids)) {
+    throw new TxidJournalPersistenceOutcomeUnknownError(
+      'Txid journal persistence failed: malformed persistence result',
+    );
   }
-  return { id: result.journal_id, entry, created: result.created };
+
+  const outcome = result.outcome as 'CREATED' | 'EXACT_REPLAY' | 'CONFLICT_UNWOUND';
+  const ownerMatchesRequest =
+    result.owner_batch_id === entry.batchId
+    && result.owner_txid === entry.txid
+    && result.owner_fingerprint_root === entry.fingerprintRoot
+    && JSON.stringify(result.owner_anchor_ids) === JSON.stringify(entry.anchorIds)
+    && JSON.stringify(result.owner_leaf_order) === JSON.stringify(leafOrder);
+  const releasedAnchorIds = result.released_anchor_ids.filter(
+    (id): id is string => typeof id === 'string',
+  );
+  const protectedAnchorIds = result.protected_anchor_ids.filter(
+    (id): id is string => typeof id === 'string',
+  );
+  const ownerJournalIds = result.owner_journal_ids.filter(
+    (id): id is string => typeof id === 'string' && id.length > 0,
+  );
+  const releasedSet = new Set(releasedAnchorIds);
+  const protectedSet = new Set(protectedAnchorIds);
+  const ownerJournalSet = new Set(ownerJournalIds);
+  if (ownerJournalIds.length === 0
+    || ownerJournalIds.length !== result.owner_journal_ids.length
+    || ownerJournalSet.size !== ownerJournalIds.length
+    || !ownerJournalSet.has(result.journal_id)) {
+    throw new TxidJournalPersistenceOutcomeUnknownError(
+      'Txid journal persistence failed: malformed owner journal cohort',
+    );
+  }
+  if (releasedAnchorIds.length !== result.released_anchor_ids.length
+    || protectedAnchorIds.length !== result.protected_anchor_ids.length
+    || releasedSet.size !== releasedAnchorIds.length
+    || protectedSet.size !== protectedAnchorIds.length
+    || releasedAnchorIds.some((id) => !entry.anchorIds.includes(id))
+    || releasedAnchorIds.some((id) => protectedSet.has(id))
+    || entry.anchorIds.some((id) => releasedSet.has(id) === protectedSet.has(id))) {
+    throw new TxidJournalPersistenceOutcomeUnknownError(
+      'Txid journal persistence failed: malformed released cohort',
+    );
+  }
+
+  if (outcome === 'CREATED') {
+    if (!result.created || !ownerMatchesRequest || releasedAnchorIds.length !== 0
+      || protectedAnchorIds.length !== entry.anchorIds.length) {
+      throw new TxidJournalPersistenceOutcomeUnknownError(
+        'Txid journal persistence failed: invalid CREATED ownership',
+      );
+    }
+  } else if (outcome === 'EXACT_REPLAY') {
+    if (result.created || !ownerMatchesRequest || releasedAnchorIds.length !== 0
+      || protectedAnchorIds.length !== entry.anchorIds.length) {
+      throw new TxidJournalPersistenceOutcomeUnknownError(
+        'Txid journal persistence failed: invalid EXACT_REPLAY ownership',
+      );
+    }
+  } else if (result.created
+    || !['disjoint_batch_or_tx_collision', 'overlapping_immutable_request_conflict'].includes(
+      String(result.conflict_reason),
+    )) {
+    throw new TxidJournalPersistenceOutcomeUnknownError(
+      'Txid journal persistence failed: invalid conflict outcome',
+    );
+  }
+
+  return {
+    id: result.journal_id,
+    entry,
+    created: result.created,
+    outcome,
+    conflictReason: typeof result.conflict_reason === 'string' ? result.conflict_reason : undefined,
+    releasedAnchorIds,
+  };
 }
 
 async function deleteUnbroadcastTxidJournal(journalId: string): Promise<void> {
@@ -822,7 +948,9 @@ function parseTxidJournalRow(row: TxidJournalDbRow): TxidJournalEntry {
     txid: row.txid,
     fingerprintRoot: row.fingerprint_root,
     leafOrder: leaves,
-    signedAt: row.signed_at,
+    // Recovery age is anchored to a database-authored timestamp. The worker's
+    // signing clock is deliberately not part of this decision boundary.
+    signedAt: row.created_at,
   });
   if (
     entry.anchorIds.length !== row.anchor_ids.length ||
@@ -1017,7 +1145,7 @@ export async function reconcileTxidJournals(
   try {
     const response = await db
       .from('anchor_txid_journal')
-      .select('id, batch_id, txid, fingerprint_root, anchor_ids, leaf_order, signed_at, recovery_status')
+      .select('id, batch_id, txid, fingerprint_root, anchor_ids, leaf_order, signed_at, created_at, recovery_status')
       .in('recovery_status', ['PENDING', 'HELD'])
       // PENDING rows represent fresh broadcasts and must not queue behind a
       // large HELD backlog. Re-HOLD updates updated_at, rotating ambiguous
@@ -1115,36 +1243,8 @@ export async function reconcileTxidJournals(
       continue;
     }
 
-    // REVERT is reachable only after an affirmative not-found verdict beyond
-    // the ambiguity window. Refund the cohort first; the refund RPC is
-    // idempotent per anchor reference, so a partial failure safely retries.
-    let anchors: IntentAnchorRow[];
-    try {
-      const anchorResponse = await db
-        .from('anchors')
-        .select('id, chain_tx_id, org_id, metadata, credential_type')
-        .in('id', entry.anchorIds);
-      if (anchorResponse.error || !Array.isArray(anchorResponse.data)) {
-        throw new Error(anchorResponse.error?.message ?? 'anchor cohort unavailable');
-      }
-      anchors = anchorResponse.data as IntentAnchorRow[];
-      if (anchors.length !== entry.anchorIds.length) {
-        throw new Error(`journal cohort read ${anchors.length}/${entry.anchorIds.length} anchors`);
-      }
-    } catch (error) {
-      logger.error({ error, journalId: row.id }, 'Txid journal cohort read failed — HOLD');
-      await resolveTxidJournal(row.id, 'HOLD', { reason: 'cohort_read_failed' });
-      result.held += 1;
-      continue;
-    }
-
-    const refundFailed = await refundChargedIntentAnchors(anchors);
-    if (refundFailed.length > 0) {
-      await resolveTxidJournal(row.id, 'HOLD', { reason: 'credit_refund_failed' });
-      result.held += 1;
-      continue;
-    }
-
+    // The resolver locks and validates the complete cohort, compensates any
+    // queue credits, and rewrites proof/anchor/journal state in one transaction.
     const reverted = await resolveTxidJournal(row.id, 'REVERT', { reason: decision.reason });
     if (reverted) {
       result.reverted += 1;
@@ -1583,22 +1683,24 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     }
 
     // ── Phase 3b: persist the broadcast intent DURABLY, pre-network ──
+    let journal: Awaited<ReturnType<typeof persistTxidJournal>>;
     try {
-      const journal = await persistTxidJournal(orderedAnchors, tree, prepared, batchId);
-      journalId = journal.id;
-      if (!journal.created) {
-        logger.warn(
-          { journalId, txId: prepared.txId, count: orderedAnchors.length },
-          'Existing live txid journal owns this cohort — deferring without broadcast or destructive unwind',
+      journal = await persistTxidJournal(orderedAnchors, tree, prepared, batchId);
+    } catch (error) {
+      if (!(error instanceof TxidJournalPersistenceRejectedError)) {
+        // The RPC may have committed a CREATED journal or an atomic collision
+        // unwind before its response was lost/malformed. Never blanket-refund
+        // or requeue here: that could mutate anchors protected by another
+        // immutable owner. The journal/generic stale recovery owns the state.
+        logger.error(
+          { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
+          'Txid journal persistence outcome unknown — preserving cohort for database recovery',
         );
         return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
       }
-      await persistBroadcastIntentProofs(orderedAnchors, tree, prepared, batchId);
-      await markBroadcastIntent(anchorIds, prepared.txId);
-      intentPersisted = true;
-    } catch (error) {
       // Intent persistence incomplete — NOTHING has been broadcast, so a
-      // full unwind is safe: clear any partial marks/rows, refund, revert.
+      // PostgreSQL definitively rejected and rolled back the RPC transaction,
+      // so a full unwind is safe: clear partial local writes, refund, revert.
       logger.error(
         { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
         'Broadcast-intent persistence failed — unwinding (nothing was broadcast)',
@@ -1608,6 +1710,46 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       await refundQueueRunCredits(chargedAnchors, 'broadcast-intent persistence failed');
       await bulkRevertToPending(anchorIds);
       if (journalId) await deleteUnbroadcastTxidJournal(journalId);
+      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+    }
+
+    if (journal.outcome === 'CONFLICT_UNWOUND') {
+      logger.error(
+        {
+          ownerJournalId: journal.id,
+          conflictReason: journal.conflictReason,
+          releasedAnchorIds: journal.releasedAnchorIds,
+          txId: prepared.txId,
+        },
+        'Txid journal identity collision — database compensated and released the unowned cohort',
+      );
+      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+    }
+    journalId = journal.id;
+    if (journal.outcome === 'EXACT_REPLAY') {
+      logger.warn(
+        { journalId, txId: prepared.txId, count: orderedAnchors.length },
+        'Existing live txid journal owns this cohort — deferring without broadcast or destructive unwind',
+      );
+      return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
+    }
+
+    try {
+      await persistBroadcastIntentProofs(orderedAnchors, tree, prepared, batchId);
+      await markBroadcastIntent(anchorIds, prepared.txId);
+      intentPersisted = true;
+    } catch (error) {
+      // This exact CREATED journal is known to have committed and no bytes
+      // reached the network. Cleanup cannot affect a different owner.
+      logger.error(
+        { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
+        'Broadcast-intent persistence failed after journal creation — unwinding (nothing was broadcast)',
+      );
+      await clearBroadcastIntentMarks(anchorIds, prepared.txId);
+      await deleteIntentProofRows(anchorIds, prepared.txId);
+      await refundQueueRunCredits(chargedAnchors, 'broadcast-intent persistence failed');
+      await bulkRevertToPending(anchorIds);
+      await deleteUnbroadcastTxidJournal(journalId);
       return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
     }
 
@@ -1638,10 +1780,8 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
         'Batch broadcast definitively rejected — unwinding intent',
       );
-      // Refund FIRST: if a refund fails this throws, leaving rows
-      // BROADCASTING+intent so the reconcile retries the refund via metadata
-      // instead of a revert double-charging on re-claim.
-      await refundQueueRunCredits(chargedAnchors, 'batch broadcast definitively rejected');
+      // The SQL resolver validates the full locked cohort before refunding and
+      // commits credit compensation + REVERT atomically.
       if (!journalId || !await resolveTxidJournal(journalId, 'REVERT', { reason: 'definitive_broadcast_reject' })) {
         logger.error(
           { journalId, txId: prepared.txId },

@@ -555,7 +555,7 @@ export type Database = {
           leaf_order: Json
           recovery_status?: string
           resolved_at?: string | null
-          signed_at: string
+          signed_at?: string
           txid: string
           updated_at?: string
         }
@@ -7105,7 +7105,6 @@ export type Database = {
           p_batch_id: string
           p_fingerprint_root: string
           p_leaf_order: Json
-          p_signed_at: string
           p_txid: string
         }
         Returns: Json

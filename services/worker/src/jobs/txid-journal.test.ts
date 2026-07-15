@@ -170,6 +170,16 @@ describe('SCRUM-2692 migration contract', () => {
     expect(sql).not.toMatch(/GRANT[^;]*\b(?:INSERT|UPDATE)\b[^;]*anchor_txid_journal[^;]*service_role/i);
   });
 
+  it('uses the database clock for the ambiguity window and never accepts worker-supplied recovery age', () => {
+    const sql = readFileSync(migrationUrl, 'utf8');
+    const batchSource = readFileSync(new URL('./batch-anchor.ts', import.meta.url), 'utf8');
+
+    expect(sql).toMatch(/signed_at\s+timestamptz\s+NOT NULL\s+DEFAULT\s+now\(\)/i);
+    expect(sql).not.toMatch(/persist_anchor_txid_journal\([\s\S]*?p_signed_at\s+timestamptz/i);
+    expect(sql).toMatch(/INSERT INTO public\.anchor_txid_journal\s*\([\s\S]*?leaf_order\s*\)\s*VALUES/i);
+    expect(batchSource).not.toContain('p_signed_at: entry.signedAt');
+  });
+
   it('serializes journal persistence with lifecycle transitions and permits exact retries after REVERT', () => {
     const sql = readFileSync(migrationUrl, 'utf8');
 
@@ -186,6 +196,35 @@ describe('SCRUM-2692 migration contract', () => {
     expect(sql).toMatch(/'created', true/i);
     expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.persist_anchor_txid_journal/i);
     expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.persist_anchor_txid_journal[\s\S]*TO service_role/i);
+  });
+
+  it('distinguishes an exact immutable replay from a disjoint collision and atomically releases the loser', () => {
+    const sql = readFileSync(migrationUrl, 'utf8');
+
+    expect(sql).toMatch(/'outcome',\s*'EXACT_REPLAY'/i);
+    expect(sql).toMatch(/j\.anchor_ids\s*=\s*p_anchor_ids/i);
+    expect(sql).toMatch(/j\.leaf_order\s*=\s*p_leaf_order/i);
+    expect(sql).toMatch(/'outcome',\s*'CONFLICT_UNWOUND'/i);
+    expect(sql).toMatch(/'owner_anchor_ids',\s*v_existing\.anchor_ids/i);
+    expect(sql).toMatch(/'released_anchor_ids',\s*v_release_anchor_ids/i);
+  });
+
+  it('locks every matching owner and excludes the full unresolved-owner union before collision release', () => {
+    const sql = readFileSync(migrationUrl, 'utf8');
+    const lockAll = sql.indexOf('PERFORM j.id');
+    const deterministicOrder = sql.indexOf('ORDER BY j.created_at, j.id', lockAll);
+    const lock = sql.indexOf('FOR UPDATE', deterministicOrder);
+    const ownerUnion = sql.indexOf('array_agg(DISTINCT protected.anchor_id', lock);
+    const release = sql.indexOf('NOT (input.anchor_id = ANY(v_protected_anchor_ids))', ownerUnion);
+
+    expect(lockAll).toBeGreaterThan(-1);
+    expect(deterministicOrder).toBeGreaterThan(lockAll);
+    expect(lock).toBeGreaterThan(deterministicOrder);
+    expect(ownerUnion).toBeGreaterThan(lock);
+    expect(release).toBeGreaterThan(ownerUnion);
+    expect(sql).toMatch(/IF v_matching_count = 1 AND v_exact_count = 1 THEN/i);
+    expect(sql).toMatch(/'owner_journal_ids',\s*v_matching_journal_ids/i);
+    expect(sql).toMatch(/'protected_anchor_ids',\s*v_protected_anchor_ids/i);
   });
 
   it('blocks supersede/revoke only while a journal is unresolved and keeps supersede aligned with the state machine', () => {
@@ -236,6 +275,21 @@ describe('SCRUM-2692 migration contract', () => {
     expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.resolve_anchor_txid_journal[\s\S]*TO service_role/i);
     expect(sql).toMatch(/ROLLBACK[\s\S]*DROP FUNCTION IF EXISTS public\.resolve_anchor_txid_journal/i);
     expect(sql).toMatch(/ROLLBACK[\s\S]*DROP TABLE IF EXISTS public\.anchor_txid_journal/i);
+  });
+
+  it('validates the complete REVERT cohort before refund and rolls refund/state changes back together', () => {
+    const sql = readFileSync(migrationUrl, 'utf8');
+    const revertStart = sql.lastIndexOf("IF p_action = 'REVERT' THEN");
+    const revertEnd = sql.indexOf('-- PERSISTED is the in-process happy path', revertStart);
+    const revertBlock = sql.slice(revertStart, revertEnd);
+
+    const eligibility = revertBlock.indexOf("a.status <> 'BROADCASTING'");
+    const refund = revertBlock.indexOf('public.refund_org_credit');
+    const stateRewrite = revertBlock.indexOf("SET status = 'PENDING'");
+    expect(eligibility).toBeGreaterThan(-1);
+    expect(refund).toBeGreaterThan(eligibility);
+    expect(stateRewrite).toBeGreaterThan(refund);
+    expect(revertBlock).toMatch(/finalized_size <> cohort_size/i);
   });
 });
 

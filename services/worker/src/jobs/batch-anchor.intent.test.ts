@@ -68,11 +68,12 @@ const {
     /** Anchors loaded by journal REVERT for idempotent credit refund. */
     journalAnchorRows: [] as Array<Record<string, unknown>>,
     /** Optional journal insert failure for the zero-broadcast barrier test. */
-    journalInsertError: null as { message: string } | null,
+    journalInsertError: null as { message: string; code?: string } | null,
     /** Persistence result distinguishes a newly authorized broadcast from recovery ownership. */
     journalPersistResult: { journal_id: 'journal-1', created: true } as {
       journal_id: string;
       created: boolean;
+      [key: string]: unknown;
     },
     /** Per-chunk responses for anchors.chain_tx_id intent-mark updates. */
     intentMarkResults: [] as Array<{ data?: Array<{ id: string }>; count?: number | null; error?: { message?: string } | null }>,
@@ -283,12 +284,28 @@ const CLAIMED_OUT_OF_ORDER = [
 ];
 
 function mockClaimReturns(anchors: Array<Record<string, unknown>>) {
-  mockDbRpc.mockImplementation(async (name: string) => {
+  const materializeJournalPersistResult = (params: Record<string, unknown>) => {
+    const configured = dbState.journalPersistResult;
+    if (typeof configured.outcome === 'string') return configured;
+    return {
+      ...configured,
+      outcome: configured.created ? 'CREATED' : 'EXACT_REPLAY',
+      owner_batch_id: params.p_batch_id,
+      owner_txid: params.p_txid,
+      owner_fingerprint_root: params.p_fingerprint_root,
+      owner_anchor_ids: params.p_anchor_ids,
+      owner_leaf_order: params.p_leaf_order,
+      owner_journal_ids: [configured.journal_id],
+      protected_anchor_ids: params.p_anchor_ids,
+      released_anchor_ids: [],
+    };
+  };
+  mockDbRpc.mockImplementation(async (name: string, params?: Record<string, unknown>) => {
     if (name === 'claim_pending_anchors') return { data: anchors, error: null };
     if (name === 'persist_anchor_txid_journal') {
       callOrder.push('persistJournal');
       if (dbState.journalInsertError) return { data: null, error: dbState.journalInsertError };
-      return { data: dbState.journalPersistResult, error: null };
+      return { data: materializeJournalPersistResult(params ?? {}), error: null };
     }
     if (name === 'submit_batch_anchors') {
       callOrder.push('submitBatchAnchors');
@@ -299,7 +316,7 @@ function mockClaimReturns(anchors: Array<Record<string, unknown>>) {
   });
   // Only the FIRST claim chunk returns rows; subsequent chunks are empty.
   let claimed = false;
-  mockDbRpc.mockImplementation(async (name: string) => {
+  mockDbRpc.mockImplementation(async (name: string, params?: Record<string, unknown>) => {
     if (name === 'claim_pending_anchors') {
       if (claimed) return { data: [], error: null };
       claimed = true;
@@ -308,7 +325,7 @@ function mockClaimReturns(anchors: Array<Record<string, unknown>>) {
     if (name === 'persist_anchor_txid_journal') {
       callOrder.push('persistJournal');
       if (dbState.journalInsertError) return { data: null, error: dbState.journalInsertError };
-      return { data: dbState.journalPersistResult, error: null };
+      return { data: materializeJournalPersistResult(params ?? {}), error: null };
     }
     if (name === 'submit_batch_anchors') {
       callOrder.push('submitBatchAnchors');
@@ -495,7 +512,7 @@ describe('S3-P0 — pre-broadcast intent persistence (happy path)', () => {
 
   it('aborts with zero network calls when the durable journal insert fails', async () => {
     mockClaimReturns(CLAIMED_OUT_OF_ORDER);
-    dbState.journalInsertError = { message: 'journal unavailable' };
+    dbState.journalInsertError = { message: 'journal rejected the cohort', code: '23514' };
 
     const result = await processBatchAnchors({ force: true });
 
@@ -525,6 +542,121 @@ describe('S3-P0 — pre-broadcast intent persistence (happy path)', () => {
     expect(proofDeletes).toHaveLength(0);
     expect(mockDbRpc.mock.calls.some(([name]) => name === 'refund_org_credit')).toBe(false);
   });
+
+  it('fails a disjoint batch/tx collision closed after the database atomically releases this unowned cohort', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    dbState.journalPersistResult = {
+      journal_id: 'journal-existing',
+      created: false,
+      outcome: 'CONFLICT_UNWOUND',
+      conflict_reason: 'disjoint_batch_or_tx_collision',
+      owner_batch_id: 'other-batch',
+      owner_txid: 'e2'.repeat(32),
+      owner_fingerprint_root: 'd3'.repeat(32),
+      owner_anchor_ids: ['other-anchor'],
+      owner_leaf_order: [{ anchor_id: 'other-anchor', fingerprint: 'd4'.repeat(32) }],
+      owner_journal_ids: ['journal-existing'],
+      protected_anchor_ids: ['other-anchor'],
+      released_anchor_ids: CLAIMED_OUT_OF_ORDER.map((anchor) => anchor.id),
+    };
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: SORTED_ROOT, txId: null });
+    expect(mockBroadcastSigned).not.toHaveBeenCalled();
+    expect(mockUpsertAnchorProofs).not.toHaveBeenCalled();
+    expect(callOrder).not.toContain('persistChainTxId');
+  });
+
+  it('fails closed without destructive unwind when a committed collision omits a claimed anchor from both cohorts', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    dbState.journalPersistResult = {
+      journal_id: 'journal-existing',
+      created: false,
+      outcome: 'CONFLICT_UNWOUND',
+      conflict_reason: 'overlapping_immutable_request_conflict',
+      owner_batch_id: 'other-batch',
+      owner_txid: 'e2'.repeat(32),
+      owner_fingerprint_root: 'd3'.repeat(32),
+      owner_anchor_ids: ['anchor-b'],
+      owner_leaf_order: [{ anchor_id: 'anchor-b', fingerprint: FP_B }],
+      owner_journal_ids: ['journal-existing'],
+      protected_anchor_ids: ['anchor-b'],
+      // anchor-c is malformedly absent from both sides of the partition.
+      released_anchor_ids: ['anchor-a'],
+    };
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result).toEqual({
+      processed: 0,
+      batchId: expect.any(String),
+      merkleRoot: SORTED_ROOT,
+      txId: TX_ID,
+    });
+    expect(mockBroadcastSigned).not.toHaveBeenCalled();
+    expect(mockUpsertAnchorProofs).not.toHaveBeenCalled();
+    expect(callOrder).not.toContain('revertToPending');
+    expect(mockDbRpc.mock.calls.some(([name]) => name === 'refund_org_credit')).toBe(false);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringContaining('malformed released cohort') }),
+      'Txid journal persistence outcome unknown — preserving cohort for database recovery',
+    );
+  });
+
+  it('rejects duplicate collision cohort members without refunding or requeueing protected anchors', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    dbState.journalPersistResult = {
+      journal_id: 'journal-existing',
+      created: false,
+      outcome: 'CONFLICT_UNWOUND',
+      conflict_reason: 'overlapping_immutable_request_conflict',
+      owner_batch_id: 'other-batch',
+      owner_txid: 'e2'.repeat(32),
+      owner_fingerprint_root: 'd3'.repeat(32),
+      owner_anchor_ids: ['anchor-b', 'anchor-c'],
+      owner_leaf_order: [],
+      owner_journal_ids: ['journal-existing'],
+      protected_anchor_ids: ['anchor-b', 'anchor-c'],
+      released_anchor_ids: ['anchor-a', 'anchor-a'],
+    };
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result).toMatchObject({ processed: 0, batchId: expect.any(String), txId: TX_ID });
+    expect(mockBroadcastSigned).not.toHaveBeenCalled();
+    expect(callOrder).not.toContain('revertToPending');
+    expect(mockDbRpc.mock.calls.some(([name]) => name === 'refund_org_credit')).toBe(false);
+  });
+
+  it.each([
+    ['empty owner set', []],
+    ['non-string owner', [42]],
+    ['journal id outside owner set', ['different-journal']],
+  ])('rejects %s without destructive unwind', async (_label, ownerJournalIds) => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    dbState.journalPersistResult = {
+      journal_id: 'journal-existing',
+      created: false,
+      outcome: 'CONFLICT_UNWOUND',
+      conflict_reason: 'disjoint_batch_or_tx_collision',
+      owner_batch_id: 'other-batch',
+      owner_txid: 'e2'.repeat(32),
+      owner_fingerprint_root: 'd3'.repeat(32),
+      owner_anchor_ids: ['other-anchor'],
+      owner_leaf_order: [],
+      owner_journal_ids: ownerJournalIds,
+      protected_anchor_ids: ['other-anchor'],
+      released_anchor_ids: ['anchor-a', 'anchor-b', 'anchor-c'],
+    };
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result).toMatchObject({ processed: 0, batchId: expect.any(String), txId: TX_ID });
+    expect(mockBroadcastSigned).not.toHaveBeenCalled();
+    expect(callOrder).not.toContain('revertToPending');
+    expect(mockDbRpc.mock.calls.some(([name]) => name === 'refund_org_credit')).toBe(false);
+  });
 });
 
 // =============================================================================
@@ -533,6 +665,7 @@ describe('S3-P0 — pre-broadcast intent persistence (happy path)', () => {
 
 describe('SCRUM-2692 — durable journal integration', () => {
   function stageJournal(overrides: Record<string, unknown> = {}) {
+    const oldEnough = new Date(Date.now() - 31 * 60_000).toISOString();
     dbState.journalRows = [{
       id: 'journal-recovery-1',
       batch_id: 'batch_1721044800000_1',
@@ -540,7 +673,8 @@ describe('SCRUM-2692 — durable journal integration', () => {
       fingerprint_root: FP_A,
       anchor_ids: ['anchor-a'],
       leaf_order: [{ anchor_id: 'anchor-a', fingerprint: FP_A }],
-      signed_at: new Date(Date.now() - 31 * 60_000).toISOString(),
+      signed_at: oldEnough,
+      created_at: oldEnough,
       recovery_status: 'PENDING',
       ...overrides,
     }];
@@ -592,12 +726,29 @@ describe('SCRUM-2692 — durable journal integration', () => {
   });
 
   it('HOLDs affirmative absence inside the ambiguity window', async () => {
-    stageJournal({ signed_at: new Date().toISOString() });
+    stageJournal({ signed_at: new Date().toISOString(), created_at: new Date().toISOString() });
     mockGetReceipt.mockResolvedValue(null);
 
     const result = await reconcileTxidJournals(client());
 
     expect(result.held).toBe(1);
+    expect(mockDbRpc.mock.calls.some(
+      ([name, params]) => name === 'resolve_anchor_txid_journal'
+        && params.p_action === 'HOLD'
+        && params.p_reason === 'absence_inside_ambiguity_window',
+    )).toBe(true);
+  });
+
+  it('HOLDs a fresh database journal even when the worker signed_at is arbitrarily old', async () => {
+    stageJournal({
+      signed_at: new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
+      created_at: new Date().toISOString(),
+    });
+    mockGetReceipt.mockResolvedValue(null);
+
+    const result = await reconcileTxidJournals(client());
+
+    expect(result).toMatchObject({ reverted: 0, held: 1 });
     expect(mockDbRpc.mock.calls.some(
       ([name, params]) => name === 'resolve_anchor_txid_journal'
         && params.p_action === 'HOLD'
@@ -620,6 +771,35 @@ describe('SCRUM-2692 — durable journal integration', () => {
     expect(mockBroadcastSigned).not.toHaveBeenCalled();
   });
 
+  it.each(['SUBMITTED', 'SECURED'])('never refunds before SQL rejects a %s cohort REVERT', async (status) => {
+    stageJournal();
+    dbState.journalAnchorRows = [{
+      id: 'anchor-a',
+      chain_tx_id: TX_ID,
+      org_id: '11111111-1111-4111-8111-111111111111',
+      metadata: {
+        queue_credit_source: 'org_credits',
+        queue_credit_charged_at: '2026-07-15T12:00:00.000Z',
+      },
+      credential_type: null,
+      status,
+    }];
+    mockGetReceipt.mockResolvedValue(null);
+    mockDbRpc.mockImplementation(async (name: string, params?: { p_action?: string }) => {
+      if (name === 'resolve_anchor_txid_journal' && params?.p_action === 'REVERT') {
+        return { data: null, error: { message: `Refusing REVERT for ${status}` } };
+      }
+      if (name === 'refund_org_credit') return { data: { success: true }, error: null };
+      return { data: null, error: null };
+    });
+
+    const result = await reconcileTxidJournals(client());
+
+    expect(result).toMatchObject({ reverted: 0, held: 1 });
+    expect(mockDbRpc.mock.calls.some(([name]) => name === 'refund_org_credit')).toBe(false);
+    expect(anchorsUpdates).toHaveLength(0);
+  });
+
   it('fails the compatibility path closed while more than one journal page remains unresolved', async () => {
     dbState.journalRows = Array.from({ length: 101 }, (_, index) => {
       const suffix = index.toString(16).padStart(64, '0');
@@ -631,6 +811,7 @@ describe('SCRUM-2692 — durable journal integration', () => {
         anchor_ids: [`anchor-${index}`],
         leaf_order: [{ anchor_id: `anchor-${index}`, fingerprint: FP_A }],
         signed_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
         recovery_status: 'PENDING',
       };
     });
@@ -783,7 +964,7 @@ describe('S3-P0 — definitive broadcast reject unwinds the intent safely', () =
     expect(callOrder).not.toContain('submitBatchAnchors');
   });
 
-  it('refunds queue-run credits charged for the rejected batch', async () => {
+  it('delegates charged-batch refund and REVERT to the atomic SQL resolver', async () => {
     const chargedDocusign = {
       id: 'anchor-ds',
       org_id: '11111111-1111-4111-8111-111111111111',
@@ -801,7 +982,7 @@ describe('S3-P0 — definitive broadcast reject unwinds the intent safely', () =
     // deductOrgCredit path: org credit RPC deduction is mocked at the orgCredits
     // module level in the main suite; here the deduct goes through the real
     // helper which calls db.rpc('deduct_org_credit') — return success.
-    mockDbRpc.mockImplementation(async (name: string) => {
+    mockDbRpc.mockImplementation(async (name: string, params?: Record<string, unknown>) => {
       if (name === 'claim_pending_anchors') {
         const first = mockDbRpc.mock.calls.filter(([n]) => n === 'claim_pending_anchors').length === 1;
         return { data: first ? [chargedDocusign] : [], error: null };
@@ -809,15 +990,37 @@ describe('S3-P0 — definitive broadcast reject unwinds the intent safely', () =
       if (name === 'deduct_org_credit') {
         return { data: { success: true, balance: 9 }, error: null };
       }
+      if (name === 'persist_anchor_txid_journal') {
+        return {
+          data: {
+            journal_id: 'journal-1',
+            created: true,
+            outcome: 'CREATED',
+            owner_batch_id: params?.p_batch_id,
+            owner_txid: params?.p_txid,
+            owner_fingerprint_root: params?.p_fingerprint_root,
+            owner_anchor_ids: params?.p_anchor_ids,
+            owner_leaf_order: params?.p_leaf_order,
+            owner_journal_ids: ['journal-1'],
+            protected_anchor_ids: params?.p_anchor_ids,
+            released_anchor_ids: [],
+          },
+          error: null,
+        };
+      }
+      if (name === 'resolve_anchor_txid_journal') return { data: 1, error: null };
       if (name === 'refund_org_credit') return { data: { success: true }, error: null };
       return { data: null, error: null };
     });
 
     await processBatchAnchors({ force: true });
 
-    const refundCall = mockDbRpc.mock.calls.find(([name]) => name === 'refund_org_credit');
-    expect(refundCall).toBeDefined();
-    expect(refundCall![1]).toMatchObject({ p_org_id: chargedDocusign.org_id });
+    expect(mockDbRpc.mock.calls.some(([name]) => name === 'refund_org_credit')).toBe(false);
+    const resolution = mockDbRpc.mock.calls.find(
+      ([name, params]) => name === 'resolve_anchor_txid_journal' && params.p_action === 'REVERT',
+    );
+    expect(resolution).toBeDefined();
+    expect(resolution![1]).toMatchObject({ p_journal_id: 'journal-1' });
   });
 });
 
