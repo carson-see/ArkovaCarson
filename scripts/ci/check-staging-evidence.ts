@@ -2028,6 +2028,8 @@ interface StagingFilesOnlyResult {
  * CI suite but do not need staging evidence.
  */
 const STAGING_TOOLING_ALLOW = [
+  // Secret-scanner policy is CI-only; it never ships to application runtime.
+  /^\.gitleaks\.toml$/,
   /^scripts\/staging\//,
   // CI-only local-Supabase bootstrap for the types/tests/e2e jobs (sourced by
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.

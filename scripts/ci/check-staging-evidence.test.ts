@@ -446,6 +446,7 @@ describe('check-staging-evidence', () => {
 
     it('classifies the real full #1545 candidate as T0 using the actual runtime graph', () => {
       const candidate = [
+        '.gitleaks.toml',
         '.github/s33-wave1-acceptance-authorities.json',
         '.github/workflows/s33-wave1-acceptance.yml',
         '.github/workflows/s33-wave1-prerequisites.yml',
@@ -476,7 +477,7 @@ describe('check-staging-evidence', () => {
         'services/worker/src/ai/eval/s33-wave1-workflow-reports.test.ts',
         'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
       ];
-      expect(candidate).toHaveLength(29);
+      expect(candidate).toHaveLength(30);
       const realRuntimeImporters = findS33RuntimeImporters();
       expect(realRuntimeImporters).toEqual([]);
       expect(requiredTierFor(candidate, {
