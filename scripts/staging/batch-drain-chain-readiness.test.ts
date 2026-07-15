@@ -29,6 +29,22 @@ function preClockAdmissionRaw(): string {
   return JSON.stringify(admission);
 }
 
+function acceleratedAdmissionRaw(): string {
+  const admission = JSON.parse(ADMISSION_RAW) as {
+    scheduler: {
+      activation_mode: string;
+      state: string;
+      jobs: Array<{ schedule: string }>;
+    };
+  };
+  admission.scheduler.activation_mode = 'FORCE_ACCELERATED_RIG_ONLY';
+  admission.scheduler.state = 'accelerated_rig_only_enabled';
+  for (const job of admission.scheduler.jobs) {
+    job.schedule = RIG_B1_ACCELERATED_SCHEDULER_CADENCE;
+  }
+  return JSON.stringify(admission);
+}
+
 function completedCeremonyRaw(): string {
   return JSON.stringify({
     declarationId: 'decl-rig-b1-completed-only',
@@ -143,7 +159,7 @@ function observation(
 describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
   it('builds before any clock only from paused admission and rejects resumed/completed-soak input', () => {
     expect(plan()).toMatchObject({ mode: 'OFFLINE_PLAN_ONLY' });
-    expect(() => projectAdmissionV2ToPreClockIdentity(ADMISSION_RAW))
+    expect(() => projectAdmissionV2ToPreClockIdentity(acceleratedAdmissionRaw()))
       .toThrow(/paused_after_clean_mirror|Pre-clock admission/i);
 
     const completed = JSON.parse(preClockAdmissionRaw()) as Record<string, unknown>;

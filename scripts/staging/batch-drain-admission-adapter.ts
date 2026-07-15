@@ -100,12 +100,14 @@ const schedulerSharedShape = {
   paused_through_clean_mirror: z.literal(true),
 } as const;
 
+const pausedSchedulerSchema = z.object({
+  ...schedulerSharedShape,
+  activation_mode: z.literal('PAUSED'),
+  state: z.literal('paused_after_clean_mirror'),
+}).strict();
+
 const schedulerSchema = z.discriminatedUnion('activation_mode', [
-  z.object({
-    ...schedulerSharedShape,
-    activation_mode: z.literal('PAUSED'),
-    state: z.literal('paused_after_clean_mirror'),
-  }).strict(),
+  pausedSchedulerSchema,
   z.object({
     ...schedulerSharedShape,
     activation_mode: z.literal('FORCE_ACCELERATED_RIG_ONLY'),
@@ -113,9 +115,7 @@ const schedulerSchema = z.discriminatedUnion('activation_mode', [
   }).strict(),
 ]);
 
-const preClockSchedulerSchema = schedulerSchema.extend({
-  state: z.literal('paused_after_clean_mirror'),
-});
+const preClockSchedulerSchema = pausedSchedulerSchema;
 
 const cleanMirrorSchema = z.object({
   result: z.literal('environment_type=clean_mirror'),
