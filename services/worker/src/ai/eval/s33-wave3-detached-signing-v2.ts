@@ -2,7 +2,7 @@
  * Sprint 3.3 Wave-3 detached release signing.
  *
  * This module can emit canonical unsigned requests, but it cannot sign. The
- * production trust policy is intentionally UNCONFIGURED until the CTO supplies
+ * production trust-policy set is intentionally UNCONFIGURED until the CTO supplies
  * and independently confirms the public SPKI, fingerprint, and operator. Only
  * an ACTIVE reviewed policy may assemble or verify a signed acceptance.
  */
@@ -66,6 +66,16 @@ export interface S33DetachedSigningTrustPolicyV2 {
   revocationReason: string | null;
 }
 
+export interface S33DetachedSigningTrustPolicySetV2 {
+  schemaVersion: 2;
+  artifactType: 'arkova-s33-detached-signing-trust-policy-set';
+  signatureAlgorithm: typeof SIGNATURE_ALGORITHM;
+  signerIdentity: typeof SIGNER_IDENTITY;
+  rotationMode: typeof ROTATION_MODE;
+  activeSigningKeyId: string | null;
+  keys: readonly S33DetachedSigningTrustPolicyV2[];
+}
+
 export interface S33DetachedAcceptancePayloadV2 extends Omit<
   S33Wave2AcceptancePayload,
   'schemaVersion' | 'artifactType' | 'signerIdentity' | 'signingKeyId'
@@ -73,7 +83,7 @@ export interface S33DetachedAcceptancePayloadV2 extends Omit<
   schemaVersion: 2;
   artifactType: 'arkova-s33-detached-batch-acceptance-payload';
   signerIdentity: typeof SIGNER_IDENTITY;
-  signingKeyId: typeof INITIAL_SIGNING_KEY_ID;
+  signingKeyId: string;
 }
 
 export interface S33DetachedSigningRequestV2 {
@@ -81,7 +91,7 @@ export interface S33DetachedSigningRequestV2 {
   artifactType: 'arkova-s33-detached-signing-request';
   signatureAlgorithm: typeof SIGNATURE_ALGORITHM;
   signerIdentity: typeof SIGNER_IDENTITY;
-  signingKeyId: typeof INITIAL_SIGNING_KEY_ID;
+  signingKeyId: string;
   domainSeparator: typeof DOMAIN_SEPARATOR;
   payload: S33DetachedAcceptancePayloadV2;
   payloadCanonicalJson: string;
@@ -96,7 +106,7 @@ export interface S33DetachedAcceptanceEnvelopeV2 {
   artifactType: 'arkova-s33-detached-acceptance-envelope';
   signatureAlgorithm: typeof SIGNATURE_ALGORITHM;
   signerIdentity: typeof SIGNER_IDENTITY;
-  signingKeyId: typeof INITIAL_SIGNING_KEY_ID;
+  signingKeyId: string;
   publicKeyFingerprintSha256: string;
   request: S33DetachedSigningRequestV2;
   signatureBase64Url: string;
@@ -109,6 +119,33 @@ export interface S33DetachedSigningTestHarnessV2 {
     envelope: unknown,
     bindings: S33Wave2AcceptanceBindings,
   ): S33DetachedAcceptanceEnvelopeV2;
+  audit(
+    envelope: unknown,
+    bindings: S33Wave2AcceptanceBindings,
+    context: S33DetachedHistoricalAuditContextV2,
+  ): S33DetachedHistoricalAuditResultV2;
+}
+
+export interface S33DetachedHistoricalAuditContextV2 {
+  evidenceState: 'UNMERGED' | 'MERGED';
+  mergedAtUtc: string | null;
+  auditedAtUtc: string;
+}
+
+export interface S33DetachedHistoricalAuditResultV2 {
+  schemaVersion: 2;
+  artifactType: 'arkova-s33-detached-historical-audit-result';
+  acceptanceAuthority: false;
+  cryptographicVerification: 'VERIFIED';
+  disposition: 'HISTORICAL_AUDIT_VERIFIED' | 'CTO_HOLD' | 'REJECTED_NEW_ACCEPTANCE';
+  signingKeyId: string;
+  keyState: S33DetachedSigningTrustStateV2;
+  keyStateEffectiveAtUtc: string;
+  envelopeArtifactDigestSha256: string;
+  signedAtUtc: string;
+  mergedAtUtc: string | null;
+  auditedAtUtc: string;
+  reason: string;
 }
 
 export const S33_DETACHED_SIGNING_V2_CONSTANTS = Object.freeze({
@@ -142,6 +179,17 @@ export const S33_DETACHED_SIGNING_TRUST_POLICY_V2: S33DetachedSigningTrustPolicy
   retiredAtUtc: null,
   revokedAtUtc: null,
   revocationReason: null,
+});
+
+/** Production key ring: no active key and no configured public material. */
+export const S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2: S33DetachedSigningTrustPolicySetV2 = deepFreeze({
+  schemaVersion: SCHEMA_VERSION,
+  artifactType: 'arkova-s33-detached-signing-trust-policy-set',
+  signatureAlgorithm: SIGNATURE_ALGORITHM,
+  signerIdentity: SIGNER_IDENTITY,
+  rotationMode: ROTATION_MODE,
+  activeSigningKeyId: null,
+  keys: [S33_DETACHED_SIGNING_TRUST_POLICY_V2],
 });
 
 function sha256(value: string | Buffer): string {
@@ -189,6 +237,12 @@ function nonEmpty(value: unknown, label: string): string {
 function nonPlaceholder(value: unknown, label: string): string {
   const parsed = nonEmpty(value, label);
   if (PLACEHOLDER.test(parsed.trim())) throw new Error(`${label} cannot be a placeholder`);
+  return parsed;
+}
+
+function versionedSigningKeyId(value: unknown, label = 'S3.3 detached signing key id'): string {
+  const parsed = nonEmpty(value, label);
+  if (!KEY_ID.test(parsed)) throw new Error(`${label} is not versioned`);
   return parsed;
 }
 
@@ -448,8 +502,7 @@ function parseTrustPolicy(value: unknown): {
     'activatedAtUtc', 'retiredAtUtc', 'revokedAtUtc', 'revocationReason',
   ], 'S3.3 detached signing trust policy');
   assertTrustPolicyIdentity(policy);
-  const signingKeyId = nonEmpty(policy.signingKeyId, 'S3.3 detached signing key id');
-  if (!KEY_ID.test(signingKeyId)) throw new Error('S3.3 detached signing key id is not versioned');
+  const signingKeyId = versionedSigningKeyId(policy.signingKeyId);
   const state = trustPolicyState(policy.state);
   const material = parseTrustPolicyMaterial(policy);
   if (state === 'UNCONFIGURED') {
@@ -514,7 +567,226 @@ export function transitionS33DetachedSigningTrustPolicyV2(
   return next;
 }
 
-function v2PayloadFromV1(payload: S33Wave2AcceptancePayload): S33DetachedAcceptancePayloadV2 {
+interface S33ResolvedTrustPolicySetV2 {
+  policySet: S33DetachedSigningTrustPolicySetV2;
+  resolvedKeys: ReadonlyMap<string, ReturnType<typeof parseTrustPolicy>>;
+}
+
+function parseTrustPolicySet(value: unknown): S33ResolvedTrustPolicySetV2 {
+  const candidate = record(value, 'S3.3 detached signing trust-policy set');
+  exactKeys(candidate, [
+    'schemaVersion', 'artifactType', 'signatureAlgorithm', 'signerIdentity',
+    'rotationMode', 'activeSigningKeyId', 'keys',
+  ], 'S3.3 detached signing trust-policy set');
+  if (candidate.schemaVersion !== SCHEMA_VERSION
+    || candidate.artifactType !== 'arkova-s33-detached-signing-trust-policy-set'
+    || candidate.signatureAlgorithm !== SIGNATURE_ALGORITHM
+    || candidate.signerIdentity !== SIGNER_IDENTITY
+    || candidate.rotationMode !== ROTATION_MODE) {
+    throw new Error('S3.3 detached trust-policy set identity/mode tuple is invalid');
+  }
+  if (!Array.isArray(candidate.keys) || candidate.keys.length === 0) {
+    throw new Error('S3.3 detached trust-policy set requires at least one versioned key');
+  }
+  const resolved = candidate.keys.map((key) => parseTrustPolicy(key));
+  const keyIds = resolved.map(({ policy }) => policy.signingKeyId);
+  if (new Set(keyIds).size !== keyIds.length) {
+    throw new Error('S3.3 detached trust-policy set contains a duplicate signing key id');
+  }
+  const sortedKeyIds = [...keyIds].sort(compareUtf16CodeUnits);
+  if (keyIds.some((keyId, index) => keyId !== sortedKeyIds[index])) {
+    throw new Error('S3.3 detached trust-policy set keys must be ordered by versioned key id');
+  }
+  const activeSigningKeyId = candidate.activeSigningKeyId === null
+    ? null
+    : versionedSigningKeyId(candidate.activeSigningKeyId, 'S3.3 detached active signing key id');
+  const active = resolved.filter(({ policy }) => policy.state === 'ACTIVE');
+  if (active.length > 1) throw new Error('S3.3 detached trust-policy set permits only one ACTIVE key');
+  if (activeSigningKeyId === null && active.length !== 0) {
+    throw new Error('S3.3 detached trust-policy set has an ACTIVE key but no active key id');
+  }
+  if (activeSigningKeyId !== null
+    && (active.length !== 1 || active[0].policy.signingKeyId !== activeSigningKeyId)) {
+    throw new Error('S3.3 detached trust-policy set active key id/state mismatch');
+  }
+  const keys = resolved.map(({ policy }) => policy);
+  const policySet = deepFreeze({
+    schemaVersion: SCHEMA_VERSION,
+    artifactType: 'arkova-s33-detached-signing-trust-policy-set' as const,
+    signatureAlgorithm: SIGNATURE_ALGORITHM,
+    signerIdentity: SIGNER_IDENTITY,
+    rotationMode: ROTATION_MODE,
+    activeSigningKeyId,
+    keys,
+  });
+  return {
+    policySet,
+    resolvedKeys: new Map(resolved.map((key) => [key.policy.signingKeyId, key])),
+  };
+}
+
+export function validateS33DetachedSigningTrustPolicySetV2(
+  value: unknown,
+): S33DetachedSigningTrustPolicySetV2 {
+  return parseTrustPolicySet(value).policySet;
+}
+
+function changedPolicyIds(
+  current: S33DetachedSigningTrustPolicySetV2,
+  next: S33DetachedSigningTrustPolicySetV2,
+): string[] {
+  const nextById = new Map(next.keys.map((policy) => [policy.signingKeyId, policy]));
+  return current.keys
+    .filter((policy) => canonicaliseJson(policy) !== canonicaliseJson(nextById.get(policy.signingKeyId)))
+    .map(({ signingKeyId }) => signingKeyId);
+}
+
+function assertOnlyChanged(changed: readonly string[], expected: string, label: string): void {
+  if (changed.length !== 1 || changed[0] !== expected) {
+    throw new Error(`S3.3 detached ${label} must change only key ${expected}`);
+  }
+}
+
+function assertExistingPolicyTransitions(
+  current: S33DetachedSigningTrustPolicySetV2,
+  nextById: ReadonlyMap<string, S33DetachedSigningTrustPolicyV2>,
+): void {
+  for (const policy of current.keys) {
+    const nextPolicy = nextById.get(policy.signingKeyId);
+    if (!nextPolicy) throw new Error(`S3.3 detached trust-policy set removed key ${policy.signingKeyId}`);
+    if (canonicaliseJson(policy) !== canonicaliseJson(nextPolicy)) {
+      transitionS33DetachedSigningTrustPolicyV2(policy, nextPolicy);
+    }
+  }
+}
+
+function assertInitialActivation(
+  added: readonly S33DetachedSigningTrustPolicyV2[],
+  changed: readonly string[],
+  nextActive: string,
+): void {
+  if (added.length > 1 || (added.length === 1 && added[0].signingKeyId !== nextActive)) {
+    throw new Error('S3.3 detached initial activation may introduce only its ACTIVE key');
+  }
+  if (added.length === 0) assertOnlyChanged(changed, nextActive, 'initial activation');
+  if (added.length === 1 && changed.length !== 0) {
+    throw new Error('S3.3 detached initial activation cannot mutate an existing key');
+  }
+}
+
+function terminalPolicyTime(policy: S33DetachedSigningTrustPolicyV2): string | null {
+  if (policy.state === 'REVOKED') return policy.revokedAtUtc;
+  if (policy.state === 'RETIRED') return policy.retiredAtUtc;
+  return null;
+}
+
+function latestTerminalPolicy(
+  policies: readonly S33DetachedSigningTrustPolicyV2[],
+): S33DetachedSigningTrustPolicyV2 | null {
+  let latest: S33DetachedSigningTrustPolicyV2 | null = null;
+  for (const policy of policies) {
+    const transitionAtUtc = terminalPolicyTime(policy);
+    const latestAtUtc = latest === null ? null : terminalPolicyTime(latest);
+    if (transitionAtUtc !== null
+      && (latestAtUtc === null || Date.parse(transitionAtUtc) >= Date.parse(latestAtUtc))) {
+      latest = policy;
+    }
+  }
+  return latest;
+}
+
+function assertPostRevocationRecovery(
+  current: S33DetachedSigningTrustPolicySetV2,
+  nextById: ReadonlyMap<string, S33DetachedSigningTrustPolicyV2>,
+  added: readonly S33DetachedSigningTrustPolicyV2[],
+  changed: readonly string[],
+  nextActive: string,
+): void {
+  const latestTerminal = latestTerminalPolicy(current.keys);
+  if (latestTerminal?.state !== 'REVOKED' || latestTerminal.revokedAtUtc === null) {
+    throw new Error('S3.3 detached RETIRED key recovery is forbidden; use an atomic A-to-B hard cutover');
+  }
+  assertInitialActivation(added, changed, nextActive);
+  const newActive = nextById.get(nextActive)!;
+  if (newActive.activatedAtUtc === null
+    || Date.parse(newActive.activatedAtUtc) < Date.parse(latestTerminal.revokedAtUtc)) {
+    throw new Error('S3.3 detached recovery key activation predates the latest revocation');
+  }
+}
+
+function assertDeactivation(
+  nextById: ReadonlyMap<string, S33DetachedSigningTrustPolicyV2>,
+  added: readonly S33DetachedSigningTrustPolicyV2[],
+  changed: readonly string[],
+  currentActive: string,
+): void {
+  if (added.length !== 0) throw new Error('S3.3 detached deactivation cannot add a key');
+  assertOnlyChanged(changed, currentActive, 'deactivation');
+  const terminalState = nextById.get(currentActive)!.state;
+  if (terminalState !== 'RETIRED' && terminalState !== 'REVOKED') {
+    throw new Error('S3.3 detached deactivation must retire or revoke the ACTIVE key');
+  }
+}
+
+function assertHardCutover(
+  currentById: ReadonlyMap<string, S33DetachedSigningTrustPolicyV2>,
+  nextById: ReadonlyMap<string, S33DetachedSigningTrustPolicyV2>,
+  added: readonly S33DetachedSigningTrustPolicyV2[],
+  changed: readonly string[],
+  currentActive: string,
+  nextActive: string,
+): void {
+  const oldActive = currentById.get(currentActive);
+  const retiredOld = nextById.get(currentActive);
+  const newActive = nextById.get(nextActive);
+  if (!oldActive || !retiredOld || !newActive || added.length !== 1
+    || added[0].signingKeyId !== nextActive) {
+    throw new Error('S3.3 detached hard cutover must add exactly one new versioned ACTIVE key');
+  }
+  assertOnlyChanged(changed, currentActive, 'hard cutover');
+  if (oldActive.state !== 'ACTIVE' || retiredOld.state !== 'RETIRED' || newActive.state !== 'ACTIVE'
+    || retiredOld.retiredAtUtc !== newActive.activatedAtUtc) {
+    throw new Error('S3.3 detached hard cutover must retire A exactly when B activates');
+  }
+}
+
+/** Validate atomic activation, no-gap retirement, revocation, and A-to-B cutover. */
+export function transitionS33DetachedSigningTrustPolicySetV2(
+  currentValue: unknown,
+  nextValue: unknown,
+): S33DetachedSigningTrustPolicySetV2 {
+  const current = validateS33DetachedSigningTrustPolicySetV2(currentValue);
+  const next = validateS33DetachedSigningTrustPolicySetV2(nextValue);
+  const currentById = new Map(current.keys.map((policy) => [policy.signingKeyId, policy]));
+  const nextById = new Map(next.keys.map((policy) => [policy.signingKeyId, policy]));
+  assertExistingPolicyTransitions(current, nextById);
+  const added = next.keys.filter((policy) => !currentById.has(policy.signingKeyId));
+  const changed = changedPolicyIds(current, next);
+  const currentActive = current.activeSigningKeyId;
+  const nextActive = next.activeSigningKeyId;
+
+  if (currentActive === nextActive) {
+    if (added.length !== 0) throw new Error('S3.3 detached trust-policy set cannot add an inactive key');
+    return next;
+  }
+  if (currentActive === null && nextActive !== null) {
+    const priorTerminal = latestTerminalPolicy(current.keys);
+    if (priorTerminal === null) assertInitialActivation(added, changed, nextActive);
+    else assertPostRevocationRecovery(current, nextById, added, changed, nextActive);
+    return next;
+  }
+  if (currentActive !== null && nextActive === null) {
+    assertDeactivation(nextById, added, changed, currentActive);
+    return next;
+  }
+  assertHardCutover(currentById, nextById, added, changed, currentActive!, nextActive!);
+  return next;
+}
+
+function v2PayloadFromV1(
+  payload: S33Wave2AcceptancePayload,
+  signingKeyId: string,
+): S33DetachedAcceptancePayloadV2 {
   const minimumHumanSample = Math.min(
     payload.acceptedEntryCount,
     Math.max(5, Math.ceil(payload.acceptedEntryCount * 0.1)),
@@ -529,7 +801,7 @@ function v2PayloadFromV1(payload: S33Wave2AcceptancePayload): S33DetachedAccepta
     schemaVersion: SCHEMA_VERSION,
     artifactType: 'arkova-s33-detached-batch-acceptance-payload',
     signerIdentity: SIGNER_IDENTITY,
-    signingKeyId: INITIAL_SIGNING_KEY_ID,
+    signingKeyId,
   });
 }
 
@@ -537,10 +809,13 @@ function validateV2Payload(value: unknown): S33DetachedAcceptancePayloadV2 {
   const payload = record(value, 'S3.3 detached acceptance payload');
   if (payload.schemaVersion !== SCHEMA_VERSION
     || payload.artifactType !== 'arkova-s33-detached-batch-acceptance-payload'
-    || payload.signerIdentity !== SIGNER_IDENTITY
-    || payload.signingKeyId !== INITIAL_SIGNING_KEY_ID) {
+    || payload.signerIdentity !== SIGNER_IDENTITY) {
     throw new Error('S3.3 detached payload identity/schema tuple is invalid');
   }
+  const signingKeyId = versionedSigningKeyId(
+    payload.signingKeyId,
+    'S3.3 detached payload signing key id',
+  );
   const normalizedV1 = validateS33Wave2AcceptancePayload({
     ...payload,
     schemaVersion: 1,
@@ -548,7 +823,7 @@ function validateV2Payload(value: unknown): S33DetachedAcceptancePayloadV2 {
     signerIdentity: 'arkova-s33-wave2-cto-release',
     signingKeyId: 'arkova-s33-wave2-cto-release',
   });
-  return v2PayloadFromV1(normalizedV1);
+  return v2PayloadFromV1(normalizedV1, signingKeyId);
 }
 
 function signingBytes(payload: S33DetachedAcceptancePayloadV2): Buffer {
@@ -561,11 +836,8 @@ function requestWithoutDigest(
   return request;
 }
 
-/** Emit the exact bytes for CTO-controlled detached signing. */
-export function emitS33DetachedSigningRequestV2(
-  input: S33Wave2AcceptancePayloadInput,
-): S33DetachedSigningRequestV2 {
-  const payload = v2PayloadFromV1(buildS33Wave2AcceptancePayload(input));
+function signingRequestFromPayload(payloadValue: unknown): S33DetachedSigningRequestV2 {
+  const payload = validateV2Payload(payloadValue);
   const payloadCanonicalJson = canonicaliseJson(payload);
   const bytes = signingBytes(payload);
   const withoutDigest = requestWithoutDigest({
@@ -573,7 +845,7 @@ export function emitS33DetachedSigningRequestV2(
     artifactType: 'arkova-s33-detached-signing-request',
     signatureAlgorithm: SIGNATURE_ALGORITHM,
     signerIdentity: SIGNER_IDENTITY,
-    signingKeyId: INITIAL_SIGNING_KEY_ID,
+    signingKeyId: payload.signingKeyId,
     domainSeparator: DOMAIN_SEPARATOR,
     payload,
     payloadCanonicalJson,
@@ -587,6 +859,18 @@ export function emitS33DetachedSigningRequestV2(
   });
 }
 
+/** Emit the exact bytes for CTO-controlled detached signing. */
+export function emitS33DetachedSigningRequestV2(
+  input: S33Wave2AcceptancePayloadInput,
+  signingKeyIdValue: string = INITIAL_SIGNING_KEY_ID,
+): S33DetachedSigningRequestV2 {
+  const signingKeyId = versionedSigningKeyId(signingKeyIdValue);
+  return signingRequestFromPayload(v2PayloadFromV1(
+    buildS33Wave2AcceptancePayload(input),
+    signingKeyId,
+  ));
+}
+
 function validateSigningRequest(value: unknown): S33DetachedSigningRequestV2 {
   const request = record(value, 'S3.3 detached signing request');
   exactKeys(request, [
@@ -598,11 +882,17 @@ function validateSigningRequest(value: unknown): S33DetachedSigningRequestV2 {
     || request.artifactType !== 'arkova-s33-detached-signing-request'
     || request.signatureAlgorithm !== SIGNATURE_ALGORITHM
     || request.signerIdentity !== SIGNER_IDENTITY
-    || request.signingKeyId !== INITIAL_SIGNING_KEY_ID
     || request.domainSeparator !== DOMAIN_SEPARATOR) {
     throw new Error('S3.3 detached signing-request identity/domain tuple is invalid');
   }
+  const signingKeyId = versionedSigningKeyId(
+    request.signingKeyId,
+    'S3.3 detached request signing key id',
+  );
   const payload = validateV2Payload(request.payload);
+  if (payload.signingKeyId !== signingKeyId) {
+    throw new Error('S3.3 detached signing-request key id does not match its payload');
+  }
   const payloadCanonicalJson = nonEmpty(request.payloadCanonicalJson, 'S3.3 canonical payload JSON');
   if (payloadCanonicalJson !== canonicaliseJson(payload)) {
     throw new Error('S3.3 detached signing-request canonical payload mismatch');
@@ -625,7 +915,7 @@ function validateSigningRequest(value: unknown): S33DetachedSigningRequestV2 {
     artifactType: 'arkova-s33-detached-signing-request',
     signatureAlgorithm: SIGNATURE_ALGORITHM,
     signerIdentity: SIGNER_IDENTITY,
-    signingKeyId: INITIAL_SIGNING_KEY_ID,
+    signingKeyId,
     domainSeparator: DOMAIN_SEPARATOR,
     payload,
     payloadCanonicalJson,
@@ -640,15 +930,57 @@ function validateSigningRequest(value: unknown): S33DetachedSigningRequestV2 {
   return deepFreeze({ ...withoutDigest, requestDigestSha256 });
 }
 
-function requireActiveTrustPolicy(value: unknown): {
+type S33ActiveTrustPolicyV2 = {
   policy: S33DetachedSigningTrustPolicyV2;
   publicKey: KeyObject;
-} {
-  const resolved = parseTrustPolicy(value);
-  if (resolved.policy.state !== 'ACTIVE' || resolved.publicKey === null) {
-    throw new Error(`S3.3 detached trust policy is ${resolved.policy.state}; acceptance fails closed`);
+};
+
+function requireActiveTrustPolicySet(
+  resolvedSet: S33ResolvedTrustPolicySetV2,
+): S33ActiveTrustPolicyV2 {
+  const activeSigningKeyId = resolvedSet.policySet.activeSigningKeyId;
+  const resolved = activeSigningKeyId === null
+    ? undefined
+    : resolvedSet.resolvedKeys.get(activeSigningKeyId);
+  if (!resolved || resolved.policy.state !== 'ACTIVE' || resolved.publicKey === null) {
+    const states = resolvedSet.policySet.keys.map(({ state }) => state).join(', ');
+    throw new Error(
+      `S3.3 detached trust-policy set has no configured ACTIVE key (${states}); acceptance fails closed`,
+    );
   }
   return { policy: resolved.policy, publicKey: resolved.publicKey };
+}
+
+/**
+ * Rebind an unsigned in-flight request to the sole ACTIVE post-cutover key.
+ * The returned bytes require a new CTO-controlled detached signature.
+ */
+export function regenerateS33DetachedSigningRequestForActiveKeyV2(
+  requestValue: unknown,
+  signedAtUtcValue: string,
+  trustPolicySetValue: unknown,
+): S33DetachedSigningRequestV2 {
+  const request = validateSigningRequest(requestValue);
+  const resolvedSet = parseTrustPolicySet(trustPolicySetValue);
+  const active = requireActiveTrustPolicySet(resolvedSet).policy;
+  const prior = resolvedSet.resolvedKeys.get(request.signingKeyId)?.policy;
+  if (!prior || prior.state !== 'RETIRED' || prior.retiredAtUtc === null) {
+    throw new Error('S3.3 detached regeneration requires the request key to be RETIRED');
+  }
+  if (request.signingKeyId === active.signingKeyId
+    || active.activatedAtUtc === null
+    || prior.retiredAtUtc !== active.activatedAtUtc) {
+    throw new Error('S3.3 detached regeneration requires an exact A-to-B hard cutover');
+  }
+  const signedAtUtc = isoUtc(signedAtUtcValue, 'S3.3 detached regenerated signing time');
+  if (Date.parse(signedAtUtc) < Date.parse(active.activatedAtUtc)) {
+    throw new Error('S3.3 detached regenerated signing time precedes the active-key cutover');
+  }
+  return signingRequestFromPayload({
+    ...request.payload,
+    signingKeyId: active.signingKeyId,
+    signedAtUtc,
+  });
 }
 
 function assertRequestPolicy(
@@ -656,7 +988,11 @@ function assertRequestPolicy(
   policy: S33DetachedSigningTrustPolicyV2,
 ): void {
   if (request.signerIdentity !== policy.signerIdentity || request.signingKeyId !== policy.signingKeyId) {
-    throw new Error('S3.3 detached request does not match the active CTO signer/key identity');
+    throw new Error('S3.3 detached request does not match the ACTIVE trust-policy key identity');
+  }
+  if (policy.activatedAtUtc === null
+    || Date.parse(request.payload.signedAtUtc) < Date.parse(policy.activatedAtUtc)) {
+    throw new Error('S3.3 detached request predates the selected trust-policy key activation');
   }
 }
 
@@ -697,7 +1033,7 @@ function assembleWithTrustPolicy(
     artifactType: 'arkova-s33-detached-acceptance-envelope',
     signatureAlgorithm: SIGNATURE_ALGORITHM,
     signerIdentity: SIGNER_IDENTITY,
-    signingKeyId: INITIAL_SIGNING_KEY_ID,
+    signingKeyId: policy.signingKeyId,
     publicKeyFingerprintSha256: policy.publicKeyFingerprintSha256!,
     request,
     signatureBase64Url: signature,
@@ -715,7 +1051,7 @@ export function assembleS33DetachedAcceptanceEnvelopeV2(
   return assembleWithTrustPolicy(
     requestValue,
     signatureValue,
-    requireActiveTrustPolicy(S33_DETACHED_SIGNING_TRUST_POLICY_V2),
+    requireActiveTrustPolicySet(parseTrustPolicySet(S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2)),
   );
 }
 
@@ -755,11 +1091,17 @@ function verifyWithTrustPolicy(
   if (envelope.schemaVersion !== SCHEMA_VERSION
     || envelope.artifactType !== 'arkova-s33-detached-acceptance-envelope'
     || envelope.signatureAlgorithm !== SIGNATURE_ALGORITHM
-    || envelope.signerIdentity !== SIGNER_IDENTITY
-    || envelope.signingKeyId !== INITIAL_SIGNING_KEY_ID) {
+    || envelope.signerIdentity !== SIGNER_IDENTITY) {
     throw new Error('S3.3 detached envelope identity/schema tuple is invalid');
   }
+  const signingKeyId = versionedSigningKeyId(
+    envelope.signingKeyId,
+    'S3.3 detached envelope signing key id',
+  );
   const request = validateSigningRequest(envelope.request);
+  if (request.signingKeyId !== signingKeyId) {
+    throw new Error('S3.3 detached envelope key id does not match its request');
+  }
   const publicKeyFingerprintSha256 = digest(
     envelope.publicKeyFingerprintSha256,
     'S3.3 detached envelope public-key fingerprint',
@@ -770,7 +1112,7 @@ function verifyWithTrustPolicy(
     artifactType: 'arkova-s33-detached-acceptance-envelope',
     signatureAlgorithm: SIGNATURE_ALGORITHM,
     signerIdentity: SIGNER_IDENTITY,
-    signingKeyId: INITIAL_SIGNING_KEY_ID,
+    signingKeyId,
     publicKeyFingerprintSha256,
     request,
     signatureBase64Url: signature,
@@ -782,7 +1124,7 @@ function verifyWithTrustPolicy(
   const { policy, publicKey } = trustPolicy;
   assertRequestPolicy(request, policy);
   if (publicKeyFingerprintSha256 !== policy.publicKeyFingerprintSha256) {
-    throw new Error('S3.3 detached envelope fingerprint does not match the active CTO trust policy');
+    throw new Error('S3.3 detached envelope fingerprint does not match the selected CTO trust policy');
   }
   verifySignature(request, signature, publicKey);
   assertPayloadBindings(request.payload, bindings);
@@ -797,28 +1139,180 @@ export function verifyS33DetachedAcceptanceEnvelopeV2(
   return verifyWithTrustPolicy(
     value,
     bindings,
-    requireActiveTrustPolicy(S33_DETACHED_SIGNING_TRUST_POLICY_V2),
+    requireActiveTrustPolicySet(parseTrustPolicySet(S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2)),
+  );
+}
+
+function parseHistoricalAuditContext(value: unknown): S33DetachedHistoricalAuditContextV2 {
+  const context = record(value, 'S3.3 detached historical audit context');
+  exactKeys(
+    context,
+    ['evidenceState', 'mergedAtUtc', 'auditedAtUtc'],
+    'S3.3 detached historical audit context',
+  );
+  if (context.evidenceState !== 'MERGED' && context.evidenceState !== 'UNMERGED') {
+    throw new Error('S3.3 detached historical audit evidence state is invalid');
+  }
+  const auditedAtUtc = isoUtc(context.auditedAtUtc, 'S3.3 detached historical audit time');
+  const mergedAtUtc = nullableIsoUtc(context.mergedAtUtc, 'S3.3 detached evidence merge time');
+  if ((context.evidenceState === 'MERGED') !== (mergedAtUtc !== null)) {
+    throw new Error('S3.3 detached historical audit merge state/time mismatch');
+  }
+  return deepFreeze({ evidenceState: context.evidenceState, mergedAtUtc, auditedAtUtc });
+}
+
+function assertHistoricalAuditTimeline(
+  envelope: S33DetachedAcceptanceEnvelopeV2,
+  policy: S33DetachedSigningTrustPolicyV2,
+  context: S33DetachedHistoricalAuditContextV2,
+): void {
+  const signedAtUtc = envelope.request.payload.signedAtUtc;
+  if (Date.parse(context.auditedAtUtc) < Date.parse(signedAtUtc)) {
+    throw new Error('S3.3 detached historical audit predates the signed payload');
+  }
+  if (context.mergedAtUtc !== null) {
+    if (Date.parse(context.mergedAtUtc) < Date.parse(signedAtUtc)) {
+      throw new Error('S3.3 detached evidence merge predates the signed payload');
+    }
+    if (Date.parse(context.auditedAtUtc) < Date.parse(context.mergedAtUtc)) {
+      throw new Error('S3.3 detached historical audit predates the evidence merge');
+    }
+  }
+  const terminalAtUtc = policy.state === 'REVOKED' ? policy.revokedAtUtc : policy.retiredAtUtc;
+  if (terminalAtUtc !== null && Date.parse(context.auditedAtUtc) < Date.parse(terminalAtUtc)) {
+    throw new Error('S3.3 detached historical audit predates the key state transition');
+  }
+}
+
+function historicalDisposition(
+  envelope: S33DetachedAcceptanceEnvelopeV2,
+  policy: S33DetachedSigningTrustPolicyV2,
+  context: S33DetachedHistoricalAuditContextV2,
+): Pick<S33DetachedHistoricalAuditResultV2, 'disposition' | 'reason'> {
+  if (context.evidenceState === 'UNMERGED') {
+    return {
+      disposition: 'REJECTED_NEW_ACCEPTANCE',
+      reason: `New or unmerged evidence is rejected under ${policy.state} key ${policy.signingKeyId}`,
+    };
+  }
+  if (policy.state === 'REVOKED') {
+    return {
+      disposition: 'CTO_HOLD',
+      reason: `CTO HOLD: signing key was revoked: ${policy.revocationReason!}`,
+    };
+  }
+  if (policy.state === 'RETIRED') {
+    const cutoverAtUtc = policy.retiredAtUtc!;
+    if (Date.parse(envelope.request.payload.signedAtUtc) >= Date.parse(cutoverAtUtc)
+      || Date.parse(context.mergedAtUtc!) >= Date.parse(cutoverAtUtc)) {
+      return {
+        disposition: 'CTO_HOLD',
+        reason: 'CTO HOLD: evidence crossed the hard cutover and must be regenerated under the ACTIVE key',
+      };
+    }
+    return {
+      disposition: 'HISTORICAL_AUDIT_VERIFIED',
+      reason: 'Historical signature verified before retirement; audit result grants no acceptance authority',
+    };
+  }
+  return {
+    disposition: 'HISTORICAL_AUDIT_VERIFIED',
+    reason: 'Historical signature verified; audit result grants no acceptance authority',
+  };
+}
+
+function policyStateEffectiveAtUtc(policy: S33DetachedSigningTrustPolicyV2): string {
+  if (policy.state === 'REVOKED') return policy.revokedAtUtc!;
+  if (policy.state === 'RETIRED') return policy.retiredAtUtc!;
+  return policy.activatedAtUtc!;
+}
+
+function auditWithTrustPolicySet(
+  value: unknown,
+  bindings: S33Wave2AcceptanceBindings,
+  contextValue: S33DetachedHistoricalAuditContextV2,
+  resolvedSet: S33ResolvedTrustPolicySetV2,
+): S33DetachedHistoricalAuditResultV2 {
+  const envelopeCandidate = record(value, 'S3.3 detached acceptance envelope');
+  const signingKeyId = versionedSigningKeyId(
+    envelopeCandidate.signingKeyId,
+    'S3.3 detached historical envelope signing key id',
+  );
+  const resolved = resolvedSet.resolvedKeys.get(signingKeyId);
+  if (!resolved || resolved.publicKey === null || resolved.policy.state === 'UNCONFIGURED') {
+    throw new Error('S3.3 detached historical audit has no configured public root for the envelope key');
+  }
+  const envelope = verifyWithTrustPolicy(value, bindings, {
+    policy: resolved.policy,
+    publicKey: resolved.publicKey,
+  });
+  const context = parseHistoricalAuditContext(contextValue);
+  assertHistoricalAuditTimeline(envelope, resolved.policy, context);
+  const { disposition, reason } = historicalDisposition(envelope, resolved.policy, context);
+  const keyStateEffectiveAtUtc = policyStateEffectiveAtUtc(resolved.policy);
+  return deepFreeze({
+    schemaVersion: SCHEMA_VERSION,
+    artifactType: 'arkova-s33-detached-historical-audit-result',
+    acceptanceAuthority: false,
+    cryptographicVerification: 'VERIFIED',
+    disposition,
+    signingKeyId,
+    keyState: resolved.policy.state,
+    keyStateEffectiveAtUtc,
+    envelopeArtifactDigestSha256: envelope.artifactDigestSha256,
+    signedAtUtc: envelope.request.payload.signedAtUtc,
+    mergedAtUtc: context.mergedAtUtc,
+    auditedAtUtc: context.auditedAtUtc,
+    reason,
+  });
+}
+
+/** Verify retained public-root evidence for audit only; never grants acceptance authority. */
+export function auditS33DetachedAcceptanceEnvelopeV2(
+  value: unknown,
+  bindings: S33Wave2AcceptanceBindings,
+  context: S33DetachedHistoricalAuditContextV2,
+): S33DetachedHistoricalAuditResultV2 {
+  return auditWithTrustPolicySet(
+    value,
+    bindings,
+    context,
+    parseTrustPolicySet(S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2),
   );
 }
 
 /**
- * Ephemeral-key tests use a separate factory; production entry points expose
- * no caller-supplied policy parameter and always resolve the committed root.
+ * Ephemeral-key tests use a separate factory; production acceptance and audit
+ * entry points expose no caller-supplied policy and resolve the committed ring.
  */
 export function createS33DetachedSigningTestHarnessV2(
-  trustPolicyValue: unknown,
+  trustPolicySetValue: unknown,
 ): S33DetachedSigningTestHarnessV2 {
   if (process.env.NODE_ENV !== 'test') {
     throw new Error('S3.3 detached test-only trust-policy harness is disabled');
   }
-  const trustPolicy = requireActiveTrustPolicy(trustPolicyValue);
+  const resolvedSet = parseTrustPolicySet(trustPolicySetValue);
   return Object.freeze({
     assemble: (request: unknown, signature: string): S33DetachedAcceptanceEnvelopeV2 => (
-      assembleWithTrustPolicy(request, signature, trustPolicy)
+      assembleWithTrustPolicy(request, signature, requireActiveTrustPolicySet(resolvedSet))
     ),
     verify: (
       envelope: unknown,
       bindings: S33Wave2AcceptanceBindings,
-    ): S33DetachedAcceptanceEnvelopeV2 => verifyWithTrustPolicy(envelope, bindings, trustPolicy),
+    ): S33DetachedAcceptanceEnvelopeV2 => verifyWithTrustPolicy(
+      envelope,
+      bindings,
+      requireActiveTrustPolicySet(resolvedSet),
+    ),
+    audit: (
+      envelope: unknown,
+      bindings: S33Wave2AcceptanceBindings,
+      context: S33DetachedHistoricalAuditContextV2,
+    ): S33DetachedHistoricalAuditResultV2 => auditWithTrustPolicySet(
+      envelope,
+      bindings,
+      context,
+      resolvedSet,
+    ),
   });
 }

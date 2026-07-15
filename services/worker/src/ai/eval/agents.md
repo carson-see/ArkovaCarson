@@ -8,17 +8,25 @@ _Last updated: 2026-07-15_
   canonical `arkova:s33:detached-acceptance:v2` unsigned request, accepts only a
   64-byte detached Ed25519 signature for assembly, and verifies the strict
   request/envelope digests plus all caller-recomputed batch bindings.
-- Production policy is deliberately `UNCONFIGURED`: public SPKI, DER SHA-256
+- The production key ring is deliberately `UNCONFIGURED`: it has no active key,
+  and the initial policy's public SPKI, DER SHA-256
   fingerprint, authorized operator, CTO out-of-band fingerprint confirmation,
   and activation time are all `null`. There
   is no placeholder root, private-key API, signer, or environment override, so
   production assembly and verification fail closed until a reviewed CTO input
   commit activates the policy.
-- The trust-policy state machine permits only `UNCONFIGURED -> ACTIVE`,
-  `ACTIVE -> RETIRED|REVOKED`, and `RETIRED -> REVOKED`; activation requires a
-  canonical CTO out-of-band confirmation recorded no later than activation.
-  Ephemeral-key tests use a separately named test harness guarded by
-  `NODE_ENV=test`; production assemble/verify entry points accept no policy.
+- The versioned trust-policy set permits at most one active key and retains old
+  public roots. A normal A-to-B rotation is atomic: A becomes `RETIRED` at the
+  exact instant B becomes `ACTIVE`, with no overlap; unsigned in-flight A
+  requests must be regenerated with B's id/time and signed anew. Normal
+  assemble/verify resolves only the active key, so retired/revoked keys cannot
+  authorize new acceptance. Historical verification is a separate audit-only
+  path whose result always has `acceptanceAuthority: false`: unmerged evidence
+  is rejected, cutover-crossing merged evidence is put on CTO HOLD, and every
+  merged envelope under a revoked key is put on a reasoned CTO HOLD. Activation
+  still requires canonical CTO out-of-band confirmation. Ephemeral-key tests
+  use a separately named harness guarded by `NODE_ENV=test`; production
+  assemble/verify/audit entry points accept no caller-supplied policy.
 - `s33-wave2-acceptance-envelope.ts` now exports its already-strict unsigned
   payload builder/parser for reuse. This does not activate the v1 or v2 signer
   and does not connect v2 to whole-batch acceptance; corpus acceptance remains

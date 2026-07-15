@@ -47,8 +47,11 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 
 ## Recent Changes
 - 2026-07-15 S3.3 Wave-3 detached release signing (SCRUM-2777):
-  `s33-wave3-detached-signing-v2.ts` exposes only `emit-request`, `assemble`,
-  and `verify`. Input is strict JSON, output uses the existing owner-only
+  `s33-wave3-detached-signing-v2.ts` exposes `emit-request`,
+  `regenerate-request`, `assemble`, and `verify`. `regenerate-request` accepts a
+  reviewed versioned public trust-policy set only to replace a retired-key
+  unsigned request with the sole active post-cutover key; it does not accept a
+  signature or private material. Input is strict JSON, output uses the existing owner-only
   `O_EXCL|O_NOFOLLOW` evidence writer, and no private-key or environment-root
   flag exists. `assemble`/`verify` fail closed while the committed production
   trust policy is `UNCONFIGURED`. The staging classifier grants T0 only to the

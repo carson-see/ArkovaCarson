@@ -1,7 +1,15 @@
+import { createHash, createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import {
+  S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+  S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+  transitionS33DetachedSigningTrustPolicySetV2,
+  validateS33DetachedSigningTrustPolicySetV2,
+  validateS33DetachedSigningTrustPolicyV2,
+} from '../../services/worker/src/ai/eval/s33-wave3-detached-signing-v2.js';
 import { runS33DetachedSigningCli } from './s33-wave3-detached-signing-v2.js';
 
 const SHA1_A = 'a'.repeat(40);
@@ -78,6 +86,12 @@ function payloadInput(): object {
   };
 }
 
+function publicFingerprint(publicKeySpkiPem: string): string {
+  return createHash('sha256')
+    .update(createPublicKey(publicKeySpkiPem).export({ type: 'spki', format: 'der' }))
+    .digest('hex');
+}
+
 describe('S3.3 Wave-3 detached-signing CLI', () => {
   it('emits one owner-only unsigned request and accepts no private-key flag', () => {
     const root = mkdtempSync(join(tmpdir(), 's33-v2-cli-'));
@@ -106,5 +120,71 @@ describe('S3.3 Wave-3 detached-signing CLI', () => {
       'assemble', '--signing-request', request, '--signature', signature,
       '--output', join(root, 'envelope.json'),
     ])).toThrow(/UNCONFIGURED/i);
+  });
+
+  it('regenerates an in-flight request for the sole active post-cutover key', () => {
+    const root = mkdtempSync(join(tmpdir(), 's33-v2-cli-'));
+    const input = join(root, 'payload-input.json');
+    const requestA = join(root, 'request-a.json');
+    const requestB = join(root, 'request-b.json');
+    const trustPolicySet = join(root, 'trust-policy-set.json');
+    writeFileSync(input, JSON.stringify(payloadInput()));
+    runS33DetachedSigningCli(['emit-request', '--payload-input', input, '--output', requestA]);
+
+    const pairA = generateKeyPairSync('ed25519');
+    const publicKeyA = pairA.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const activeA = validateS33DetachedSigningTrustPolicyV2({
+      ...S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+      state: 'ACTIVE',
+      publicKeySpkiPem: publicKeyA,
+      publicKeyFingerprintSha256: publicFingerprint(publicKeyA),
+      authorizedOperator: 'cto-release-operator-a',
+      fingerprintConfirmation: {
+        method: 'cto-out-of-band',
+        confirmedBy: 'cto',
+        confirmedAtUtc: '2026-07-15T16:59:00.000Z',
+      },
+      activatedAtUtc: '2026-07-15T17:00:00.000Z',
+    });
+    const activeSetA = validateS33DetachedSigningTrustPolicySetV2({
+      ...S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+      activeSigningKeyId: activeA.signingKeyId,
+      keys: [activeA],
+    });
+    const pairB = generateKeyPairSync('ed25519');
+    const publicKeyB = pairB.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const keyIdB = 'arkova-s33-cto-release-2026q3-02';
+    const cutoverAtUtc = '2026-07-15T19:00:00.000Z';
+    const activeB = validateS33DetachedSigningTrustPolicyV2({
+      ...S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+      signingKeyId: keyIdB,
+      state: 'ACTIVE',
+      publicKeySpkiPem: publicKeyB,
+      publicKeyFingerprintSha256: publicFingerprint(publicKeyB),
+      authorizedOperator: 'cto-release-operator-b',
+      fingerprintConfirmation: {
+        method: 'cto-out-of-band',
+        confirmedBy: 'cto',
+        confirmedAtUtc: '2026-07-15T18:59:00.000Z',
+      },
+      activatedAtUtc: cutoverAtUtc,
+    });
+    const rotated = transitionS33DetachedSigningTrustPolicySetV2(activeSetA, {
+      ...activeSetA,
+      activeSigningKeyId: keyIdB,
+      keys: [{ ...activeA, state: 'RETIRED', retiredAtUtc: cutoverAtUtc }, activeB],
+    });
+    writeFileSync(trustPolicySet, JSON.stringify(rotated));
+
+    const result = runS33DetachedSigningCli([
+      'regenerate-request', '--signing-request', requestA,
+      '--signed-at-utc', cutoverAtUtc, '--trust-policy-set', trustPolicySet,
+      '--output', requestB,
+    ]);
+    expect(result).toMatchObject({
+      signingKeyId: keyIdB,
+      payload: { signingKeyId: keyIdB, signedAtUtc: cutoverAtUtc },
+    });
+    expect(JSON.parse(readFileSync(requestB, 'utf8'))).toEqual(result);
   });
 });

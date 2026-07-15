@@ -8,6 +8,7 @@ import { parseStrictJsonDocument } from '../../services/worker/src/ai/eval/s33-b
 import {
   assembleS33DetachedAcceptanceEnvelopeV2,
   emitS33DetachedSigningRequestV2,
+  regenerateS33DetachedSigningRequestForActiveKeyV2,
   verifyS33DetachedAcceptanceEnvelopeV2,
   type S33DetachedAcceptanceEnvelopeV2,
   type S33DetachedSigningRequestV2,
@@ -18,11 +19,14 @@ import type {
 } from '../../services/worker/src/ai/eval/s33-wave2-acceptance-envelope.js';
 import { writeS33Wave2Evidence } from './s33-wave2-batch-acceptance.js';
 
-type Command = 'emit-request' | 'assemble' | 'verify';
+type Command = 'emit-request' | 'regenerate-request' | 'assemble' | 'verify';
 type CliResult = S33DetachedSigningRequestV2 | S33DetachedAcceptanceEnvelopeV2;
 
 const COMMAND_FLAGS: Readonly<Record<Command, readonly string[]>> = Object.freeze({
   'emit-request': Object.freeze(['--payload-input', '--output']),
+  'regenerate-request': Object.freeze([
+    '--signing-request', '--signed-at-utc', '--trust-policy-set', '--output',
+  ]),
   assemble: Object.freeze(['--signing-request', '--signature', '--output']),
   verify: Object.freeze(['--acceptance-envelope', '--bindings', '--output']),
 });
@@ -31,6 +35,7 @@ function usage(): never {
   throw new Error([
     'Usage:',
     '  s33-wave3-detached-signing-v2.ts emit-request --payload-input FILE --output FILE',
+    '  s33-wave3-detached-signing-v2.ts regenerate-request --signing-request FILE --signed-at-utc UTC --trust-policy-set FILE --output FILE',
     '  s33-wave3-detached-signing-v2.ts assemble --signing-request FILE --signature FILE --output FILE',
     '  s33-wave3-detached-signing-v2.ts verify --acceptance-envelope FILE --bindings FILE --output FILE',
     'The CLI accepts no private-key or environment trust-root input.',
@@ -90,6 +95,20 @@ export function runS33DetachedSigningCli(argv: readonly string[]): CliResult {
       'S3.3 detached unsigned payload input',
     ) as S33Wave2AcceptancePayloadInput;
     result = emitS33DetachedSigningRequestV2(input);
+  } else if (command === 'regenerate-request') {
+    const request = readStrictJson(
+      required(options, '--signing-request'),
+      'S3.3 detached stale signing request',
+    );
+    const trustPolicySet = readStrictJson(
+      required(options, '--trust-policy-set'),
+      'S3.3 detached reviewed trust-policy set',
+    );
+    result = regenerateS33DetachedSigningRequestForActiveKeyV2(
+      request,
+      required(options, '--signed-at-utc'),
+      trustPolicySet,
+    );
   } else if (command === 'assemble') {
     const request = readStrictJson(
       required(options, '--signing-request'),
