@@ -33,6 +33,7 @@ import {
 
 const GIT_SHA = /^[0-9a-f]{40}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
 
 const metadataSchema = z.object({
@@ -55,6 +56,118 @@ const metadataSchema = z.object({
     envelope: z.null(),
   }).strict(),
 }).strict();
+
+const admissionHandleSchema = z.object({
+  admissionSha256: z.string().regex(SHA256_HEX),
+}).strict();
+
+const admissionIdentitySchema = z.object({
+  gitHeadSha: z.string().regex(GIT_SHA),
+  imageDigest: z.string().regex(SHA256),
+  gcpProjectId: z.string().min(1),
+  workerService: z.string().min(1),
+  cleanMirrorAttestationId: z.string().min(1),
+}).strict();
+
+const drainPlanSnapshotSchema = z.object({
+  mode: z.literal('OFFLINE_PLAN_ONLY'),
+  liveEvidenceStatus: z.literal('DEFERRED_POST_WAVE3'),
+  runId: z.string().regex(SAFE_ID),
+  gitHeadSha: z.string().regex(GIT_SHA),
+  imageDigest: z.string().regex(SHA256),
+  planDigest: z.string().regex(SHA256),
+  eligible10000: z.unknown(),
+  eligible12500: z.unknown(),
+  poisonIsolation: z.unknown(),
+  orgScheduler: z.unknown(),
+  backlog: z.unknown(),
+  triggerSpecs: z.array(z.unknown()).min(1),
+  triggerExecutionPlan: z.array(z.unknown()).length(5),
+}).strict();
+
+const signatureUnavailableSchema = z.object({
+  authority: z.literal('LANE3_GENERIC_SIGNATURE_AUTHORITY'),
+  status: z.literal('BLOCKED_UNAVAILABLE'),
+  envelope: z.null(),
+}).strict();
+
+const runwaySnapshotSchema = z.object({
+  schemaVersion: z.literal('arkova.s33.l1.treasury-runway-result/v1'),
+  status: z.literal('OFFLINE_PAPER_UNSIGNED'),
+  releaseAcceptance: z.literal(false),
+  modelId: z.string().regex(SAFE_ID),
+  generatedAt: z.string().datetime({ offset: true }),
+  exactHeadSha: z.string().regex(GIT_SHA),
+  exactTreeSha: z.string().regex(GIT_SHA),
+  illustrativeTreasuryBalanceSats: z.number().int().positive().safe(),
+  feeModel: z.unknown(),
+  baselineRows: z.array(z.unknown()).min(1),
+  fanoutRows: z.array(z.unknown()).min(1),
+  signetMechanism: z.object({
+    claimClass: z.literal('MECHANISM_ONLY_NOT_MAINNET_COST'),
+    status: z.literal('DEFERRED_POST_WAVE3'),
+    measuredVbytes: z.null(),
+    artifactSha256: z.null(),
+  }).strict(),
+  signature: signatureUnavailableSchema,
+  producerDependencies: z.tuple([
+    z.literal('LANE3_GENERIC_SIGNATURE_AUTHORITY_UNAVAILABLE'),
+  ]),
+  claims: z.object({
+    mainnetCost: z.literal('asserted-from-fee-model-not-measured-on-chain'),
+    signetMechanism: z.literal('separate-and-deferred'),
+    treasuryBalance: z.literal('illustrative-not-a-treasury-read'),
+    fanout: z.literal('N-transactions-per-day-versus-one-asserted-baseline'),
+  }).strict(),
+  inputDigestSha256: z.string().regex(SHA256),
+  resultDigestSha256: z.string().regex(SHA256),
+}).strict();
+
+const teardownInventoryDiffSchema = z.object({
+  provider: z.enum(['GCP', 'SUPABASE']),
+  kind: z.string().min(1),
+  scopeId: z.string().min(1),
+  resourceId: z.string().min(1),
+  billingClass: z.enum(['RECURRING_PAID', 'NO_RECURRING_CHARGE']),
+  terminalState: z.enum(['DELETED', 'DOWNGRADED_ZERO_RECURRING']),
+  projectedMonthlyRecurringUsd: z.literal(0),
+  evidenceArtifactSha256: z.string().regex(SHA256),
+}).strict();
+
+const teardownSnapshotSchema = z.object({
+  schemaVersion: z.literal('arkova.s33.l1.teardown-zero-cost-result/v1'),
+  status: z.literal('OFFLINE_DIFF_VERIFIED_PRODUCER_BLOCKED'),
+  releaseAcceptance: z.literal(false),
+  runId: z.string().regex(SAFE_ID),
+  exactHeadSha: z.string().regex(GIT_SHA),
+  exactTreeSha: z.string().regex(GIT_SHA),
+  beforeCapturedAt: z.string().datetime({ offset: true }),
+  afterCapturedAt: z.string().datetime({ offset: true }),
+  beforeArtifactSha256: z.string().regex(SHA256),
+  afterArtifactSha256: z.string().regex(SHA256),
+  resourceCount: z.number().int().positive().safe(),
+  deletedCount: z.number().int().nonnegative().safe(),
+  downgradedZeroRecurringCount: z.number().int().nonnegative().safe(),
+  projectedMonthlyRecurringUsd: z.literal(0),
+  zeroRecurringProjected: z.literal(true),
+  inventoryDiff: z.array(teardownInventoryDiffSchema).min(1),
+  signature: signatureUnavailableSchema,
+  producerDependencies: z.tuple([
+    z.literal('LANE2_TEARDOWN_INVENTORY_IDENTITY_UNAVAILABLE'),
+    z.literal('LANE3_GENERIC_SIGNATURE_AUTHORITY_UNAVAILABLE'),
+  ]),
+  inputDigestSha256: z.string().regex(SHA256),
+  resultDigestSha256: z.string().regex(SHA256),
+}).strict();
+
+const COMPOSER_INPUT_KEYS = Object.freeze([
+  'admissionHandle',
+  'drainPlan',
+  'metadata',
+  'runwayResult',
+  'teardownResult',
+  'triggerCaptures',
+] as const);
 
 export type S33ReleaseEvidenceChainMetadata = z.input<typeof metadataSchema>;
 
@@ -156,6 +269,60 @@ export interface S33ReleaseEvidenceChainResult {
 
 const CHAIN_RESULTS = new WeakSet<S33ReleaseEvidenceChainResult>();
 
+function captureComposerInputs(input: S33ReleaseEvidenceChainInput): {
+  readonly metadata: unknown;
+  readonly admissionHandle: PreClockAdmissionBoundIdentity;
+  readonly drainPlan: Wave3DrainDriverPlan;
+  readonly triggerCaptures: unknown;
+  readonly runwayResult: S33TreasuryRunwayResult;
+  readonly teardownResult: S33TeardownZeroCostResult;
+} {
+  if (!input || typeof input !== 'object') {
+    throw new TypeError('Release evidence composer input must be an object.');
+  }
+  const keys = Object.keys(input).sort();
+  if (
+    keys.length !== COMPOSER_INPUT_KEYS.length
+    || keys.some((key, index) => key !== COMPOSER_INPUT_KEYS[index])
+  ) {
+    throw new Error('Release evidence composer input has missing or unrecognized top-level fields.');
+  }
+  const {
+    metadata,
+    admissionHandle,
+    drainPlan,
+    triggerCaptures,
+    runwayResult,
+    teardownResult,
+  } = input;
+  return {
+    metadata,
+    admissionHandle,
+    drainPlan,
+    triggerCaptures,
+    runwayResult,
+    teardownResult,
+  };
+}
+
+function strictFrozenSnapshot<T>(
+  schema: z.ZodType<T>,
+  value: unknown,
+  label: string,
+): T {
+  let clone: unknown;
+  try {
+    clone = structuredClone(value);
+  } catch (error) {
+    throw new TypeError(`${label} cannot be captured as immutable data.`, { cause: error });
+  }
+  const parsed = schema.safeParse(clone);
+  if (!parsed.success) {
+    throw new Error(`${label} strict snapshot rejected: ${z.prettifyError(parsed.error)}`);
+  }
+  return freezeS33Evidence(parsed.data);
+}
+
 function requireAllEqual(label: string, values: readonly string[]): void {
   if (new Set(values).size !== 1) {
     throw new Error(`${label} identity is stale or contradictory across release evidence.`);
@@ -174,22 +341,47 @@ function requireUniqueDigests(label: string, values: readonly string[]): void {
 export function composeS33ReleaseEvidenceChain(
   input: S33ReleaseEvidenceChainInput,
 ): S33ReleaseEvidenceChainResult {
-  const metadata = metadataSchema.parse(input.metadata);
-  const admission = requirePreClockAdmissionIdentity(input.admissionHandle);
-  const captures = freezeS33Evidence(
-    structuredClone(input.triggerCaptures),
-  ) as readonly Wave3TriggerObservation[];
+  const captured = captureComposerInputs(input);
+  const metadata = strictFrozenSnapshot(
+    metadataSchema,
+    captured.metadata,
+    'Release metadata',
+  );
+  const admissionHandle = strictFrozenSnapshot(
+    admissionHandleSchema,
+    captured.admissionHandle,
+    'Admission handle',
+  );
+  const admission = freezeS33Evidence(admissionIdentitySchema.parse(
+    requirePreClockAdmissionIdentity(captured.admissionHandle),
+  ));
+  const drainPlan = strictFrozenSnapshot(
+    drainPlanSnapshotSchema,
+    captured.drainPlan,
+    'Drain plan',
+  );
+  const captures = freezeS33Evidence(structuredClone(
+    captured.triggerCaptures,
+  )) as readonly Wave3TriggerObservation[];
   const triggerSummary = assertTriggerIdentityCaptures(
-    input.drainPlan,
+    captured.drainPlan,
     captures,
   );
-  const runway = requireS33TreasuryRunwayResult(input.runwayResult);
-  const teardown = requireS33TeardownZeroCostResult(input.teardownResult);
+  const runway = strictFrozenSnapshot(
+    runwaySnapshotSchema,
+    requireS33TreasuryRunwayResult(captured.runwayResult),
+    'Runway result',
+  );
+  const teardown = strictFrozenSnapshot(
+    teardownSnapshotSchema,
+    requireS33TeardownZeroCostResult(captured.teardownResult),
+    'Teardown result',
+  );
 
   requireAllEqual('Exact head', [
     metadata.exactHeadSha,
     admission.gitHeadSha,
-    input.drainPlan.gitHeadSha,
+    drainPlan.gitHeadSha,
     runway.exactHeadSha,
     teardown.exactHeadSha,
   ]);
@@ -200,12 +392,12 @@ export function composeS33ReleaseEvidenceChain(
   ]);
   requireAllEqual('Run', [
     metadata.runId,
-    input.drainPlan.runId,
+    drainPlan.runId,
     teardown.runId,
   ]);
   requireAllEqual('Deployed image', [
     admission.imageDigest,
-    input.drainPlan.imageDigest,
+    drainPlan.imageDigest,
   ]);
 
   const bindsWorker = teardown.inventoryDiff.some((resource) => (
@@ -249,14 +441,14 @@ export function composeS33ReleaseEvidenceChain(
   ) as unknown as S33ReleaseEvidenceChainResult['drain']['executionSignature'];
 
   const sourceArtifactDigests = [
-    `sha256:${input.admissionHandle.admissionSha256}`,
+    `sha256:${admissionHandle.admissionSha256}`,
     ...triggerEvidence.map(({ evidenceArtifactSha256 }) => evidenceArtifactSha256),
     teardown.beforeArtifactSha256,
     teardown.afterArtifactSha256,
     ...teardown.inventoryDiff.map(({ evidenceArtifactSha256 }) => evidenceArtifactSha256),
   ];
   const derivedManifestDigests = [
-    input.drainPlan.planDigest,
+    drainPlan.planDigest,
     ...triggerEvidence.map(({ observationDigestSha256 }) => observationDigestSha256),
     runway.inputDigestSha256,
     runway.resultDigestSha256,
@@ -276,7 +468,7 @@ export function composeS33ReleaseEvidenceChain(
     exactTreeSha: metadata.exactTreeSha,
     admission: {
       sourceSchemaVersion: 2 as const,
-      artifactSha256: `sha256:${input.admissionHandle.admissionSha256}`,
+      artifactSha256: `sha256:${admissionHandle.admissionSha256}`,
       gitHeadSha: admission.gitHeadSha,
       imageDigest: admission.imageDigest,
       gcpProjectId: admission.gcpProjectId,
@@ -284,7 +476,7 @@ export function composeS33ReleaseEvidenceChain(
       cleanMirrorAttestationId: admission.cleanMirrorAttestationId,
     },
     drain: {
-      planDigest: input.drainPlan.planDigest,
+      planDigest: drainPlan.planDigest,
       executionSignature,
       triggerEvidence,
       exactIdentity: triggerSummary.exactIdentity,

@@ -278,6 +278,99 @@ describe('S3.3 W3-C release evidence-chain consumer', () => {
     });
   });
 
+  it('uses the one provenance-validated drain plan captured at function ingress', () => {
+    const input = fixture();
+    const validatedPlan = input.drainPlan;
+    const switchedPlan = buildWave3DrainDriverPlan({
+      runId: validatedPlan.runId,
+      gitHeadSha: validatedPlan.gitHeadSha,
+      imageDigest: validatedPlan.imageDigest,
+      orgs: 31,
+    });
+    expect(switchedPlan.planDigest).not.toBe(validatedPlan.planDigest);
+    let reads = 0;
+    Object.defineProperty(input, 'drainPlan', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        reads += 1;
+        return reads === 1 ? validatedPlan : switchedPlan;
+      },
+    });
+
+    const result = composeS33ReleaseEvidenceChain(input);
+
+    expect(reads).toBe(1);
+    expect(result.drain.planDigest).toBe(validatedPlan.planDigest);
+    expect(result.derivedManifestDigests[0]).toBe(validatedPlan.planDigest);
+    expect(result.drain.triggerEvidence.every(
+      ({ observationDigestSha256 }) => result.derivedManifestDigests.includes(
+        observationDigestSha256,
+      ),
+    )).toBe(true);
+  });
+
+  it('uses the one authenticated admission handle captured at function ingress', () => {
+    const input = fixture();
+    const authenticatedHandle = input.admissionHandle;
+    const unauthenticatedSwitch = { admissionSha256: 'a'.repeat(64) };
+    let reads = 0;
+    Object.defineProperty(input, 'admissionHandle', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        reads += 1;
+        return reads === 1 ? authenticatedHandle : unauthenticatedSwitch;
+      },
+    });
+
+    const result = composeS33ReleaseEvidenceChain(input);
+    const authenticatedDigest = `sha256:${authenticatedHandle.admissionSha256}`;
+
+    expect(reads).toBe(1);
+    expect(result.admission.artifactSha256).toBe(authenticatedDigest);
+    expect(result.sourceArtifactDigests[0]).toBe(authenticatedDigest);
+    expect(result.sourceArtifactDigests).not.toContain(`sha256:${'a'.repeat(64)}`);
+  });
+
+  it('reads every top-level composer dependency exactly once', () => {
+    const values = fixture();
+    const keys = [
+      'metadata',
+      'admissionHandle',
+      'drainPlan',
+      'triggerCaptures',
+      'runwayResult',
+      'teardownResult',
+    ] as const;
+    const reads = Object.fromEntries(keys.map((key) => [key, 0])) as Record<
+      (typeof keys)[number],
+      number
+    >;
+    const input = {} as typeof values;
+    for (const key of keys) {
+      Object.defineProperty(input, key, {
+        enumerable: true,
+        get() {
+          reads[key] += 1;
+          return values[key];
+        },
+      });
+    }
+
+    const result = composeS33ReleaseEvidenceChain(input);
+
+    expect(result.drain.exactIdentity).toBe(true);
+    expect(reads).toEqual({
+      metadata: 1,
+      admissionHandle: 1,
+      drainPlan: 1,
+      triggerCaptures: 1,
+      runwayResult: 1,
+      teardownResult: 1,
+    });
+  });
+
   it('fails closed on stale head/tree/image bindings or incomplete trigger multiplicity', () => {
     const staleHead = fixture();
     staleHead.metadata.exactHeadSha = 'd'.repeat(40);
