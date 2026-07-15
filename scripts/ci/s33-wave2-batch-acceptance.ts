@@ -9,25 +9,25 @@ import {
   consumeMergedS33Wave2Batches,
   loadS33Wave2CandidateSnapshot,
   preflightS33Wave2BatchCandidate,
-  type S33Wave2ReviewEvidence,
+  verifyS33Wave2MergedBatch,
 } from '../../services/worker/src/ai/eval/s33-wave2-batch-acceptance.js';
 import { buildS33Wave2BaseCorpusRegistry } from '../../services/worker/src/ai/eval/s33-wave2-corpus-registry.js';
 import { parseStrictJsonDocument } from '../../services/worker/src/ai/eval/s33-batch-acceptance.js';
 
-type Command = 'consume-main' | 'preflight' | 'accept';
+type Command = 'preflight' | 'accept' | 'consume-merged';
 
 function usage(): never {
   throw new Error([
     'Usage:',
-    '  s33-wave2-batch-acceptance.ts consume-main --trusted-main-root ROOT --trusted-main-head SHA --output FILE',
     '  s33-wave2-batch-acceptance.ts preflight --trusted-main-root ROOT --trusted-main-head SHA --candidate-repository ROOT --candidate-head SHA --output FILE',
-    '  s33-wave2-batch-acceptance.ts accept --trusted-main-root ROOT --trusted-main-head SHA --candidate-repository ROOT --candidate-head SHA --review-evidence FILE --output FILE',
+    '  s33-wave2-batch-acceptance.ts accept --trusted-main-root ROOT --trusted-main-head SHA --candidate-repository ROOT --candidate-head SHA --pull-request-number NUMBER --acceptance-envelope FILE --output FILE',
+    '  s33-wave2-batch-acceptance.ts consume-merged --trusted-main-root ROOT --trusted-main-head SHA --candidate-repository ROOT --candidate-head SHA --pull-request-number NUMBER --acceptance-envelope FILE --merged-main-root ROOT --merged-main-head SHA --output FILE',
   ].join('\n'));
 }
 
 function parseArguments(argv: readonly string[]): Readonly<{ command: Command; options: ReadonlyMap<string, string> }> {
   const command = argv[0] as Command | undefined;
-  if (!command || !['consume-main', 'preflight', 'accept'].includes(command)) usage();
+  if (!command || !['preflight', 'accept', 'consume-merged'].includes(command)) usage();
   const options = new Map<string, string>();
   for (let index = 1; index < argv.length; index += 2) {
     const flag = argv[index];
@@ -76,11 +76,6 @@ export function runS33Wave2AcceptanceCli(argv: readonly string[]): unknown {
     trustedMainRepositoryRoot: trustedMainRoot,
     registry: baseRegistry,
   });
-  if (command === 'consume-main') {
-    writeS33Wave2Evidence(output, registry);
-    return registry;
-  }
-
   const candidateRepositoryRoot = realpathSync(required(options, '--candidate-repository'));
   const candidateHeadSha = required(options, '--candidate-head');
   const snapshot = loadS33Wave2CandidateSnapshot({
@@ -96,19 +91,31 @@ export function runS33Wave2AcceptanceCli(argv: readonly string[]): unknown {
     return preflight;
   }
 
-  const reviewPath = required(options, '--review-evidence');
-  const review = parseStrictJsonDocument(
-    readFileSync(reviewPath),
-    'Wave-2 exact-head review evidence',
-  ).parsed as unknown as S33Wave2ReviewEvidence;
+  const acceptancePath = required(options, '--acceptance-envelope');
+  const authenticatedAcceptance = parseStrictJsonDocument(
+    readFileSync(acceptancePath),
+    'Wave-2 authenticated acceptance envelope',
+  ).parsed;
+  const pullRequestNumber = Number(required(options, '--pull-request-number'));
+  if (!Number.isSafeInteger(pullRequestNumber) || pullRequestNumber < 1) {
+    throw new Error('Wave-2 pull request number must be a positive safe integer');
+  }
   const acceptance = acceptS33Wave2BatchCandidate({
     registry,
     snapshot,
-    review,
-    acceptedEntryIds: preflight.manifest.entries.map(({ id }) => id),
+    pullRequestNumber,
+    authenticatedAcceptance,
   });
-  writeS33Wave2Evidence(output, acceptance);
-  return acceptance;
+  const result = command === 'accept'
+    ? acceptance
+    : verifyS33Wave2MergedBatch({
+      mergedMainRepositoryRoot: realpathSync(required(options, '--merged-main-root')),
+      mergedMainHeadSha: required(options, '--merged-main-head'),
+      snapshot,
+      acceptance,
+    });
+  writeS33Wave2Evidence(output, result);
+  return result;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

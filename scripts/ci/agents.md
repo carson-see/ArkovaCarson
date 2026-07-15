@@ -47,11 +47,15 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 
 ## Recent Changes
 - 2026-07-15 S3.3 Wave-2 corpus acceptance (SCRUM-2777/2781/2782):
-  `s33-wave2-batch-acceptance.ts` exposes offline `consume-main`, `preflight`,
-  and `accept` commands. It uses trusted-main evaluator code, reads candidate
-  content as inert Git objects, and creates one owner-only evidence file with
-  `O_EXCL|O_NOFOLLOW`. `check-staging-evidence.ts` grants T0 only to the exact
-  new registry/acceptor/runner files and the strict
+  `s33-wave2-batch-acceptance.ts` exposes offline `preflight`, authenticated
+  `accept`, and exact-tree `consume-merged` commands. It uses trusted-main
+  evaluator code, reads candidate content as inert Git objects, and creates one
+  owner-only evidence file with `O_EXCL|O_NOFOLLOW`.
+  `s33-wave2-github-transport.ts` strictly extracts one marked envelope and
+  reconciles its issue-comment/formal-review ids, node ids, URL, timestamp, and
+  actor tuple against live GitHub; review state and distinct login are ignored.
+  `check-staging-evidence.ts` grants T0 only to the exact new
+  registry/acceptor/envelope/transport files and the strict
   `golden-dataset-s33-wave2-<slug>-heldout.ts` producer shape while the worker
   runtime import graph remains readable and cannot reach them; sibling files
   and runtime imports remain T2.

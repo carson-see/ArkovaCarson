@@ -37,10 +37,39 @@ priority_rules:
 # ---------------------------------------------------------------------------
 
 queue_rules:
+  - name: s33-wave2-corpus
+    queue_conditions:
+      - -draft
+      - files~=^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)
+      - -label = work-in-progress
+      - -label = do-not-merge
+      - "#changes-requested-reviews-by = 0"
+      - check-success = Staging Soak Evidence Gate
+      - check-success = S3.3 Wave 2 Exact-Head Acceptance
+    merge_conditions:
+      - check-success = TypeCheck & Lint
+      - check-success = Tests
+      - check-success = Generated Types Check
+      - check-success = Migration Safety Check
+      - check-success = Lockfile Integrity
+      - check-success = Secret Scanning
+      - check-success = Dependency Scanning
+      - check-success = TDD Enforcement
+      - check-success = TLA+ Verification
+      - check-success = Check supabase/migrations vs prod
+      - check-success = AI Eval Regression Gate
+      - check-success = SonarCloud Code Analysis
+      - check-success = E2E Tests
+      - check-success = Staging Soak Evidence Gate
+      - check-success = S3.3 Wave 2 Exact-Head Acceptance
+    merge_method: merge
+    batch_size: 1
+
   - name: urgent
     queue_conditions:
       - -draft
       - label = hotfix
+      - -files~=^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)
       - "#changes-requested-reviews-by = 0"
     merge_conditions:
       # All 13 required status checks from branch protection
@@ -65,6 +94,7 @@ queue_rules:
   - name: default
     queue_conditions:
       - -draft
+      - -files~=^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)
       - -label = work-in-progress
       - -label = do-not-merge
       - -label = hotfix
@@ -111,11 +141,28 @@ merge_queue:
 # ---------------------------------------------------------------------------
 
 pull_request_rules:
+  # Corpus packets use a dedicated single-PR queue. Any matching path routes
+  # the entire PR here, so adding unrelated files cannot bypass acceptance.
+  - name: Queue authenticated S3.3 Wave 2 corpus PRs
+    conditions:
+      - base = main
+      - -draft
+      - files~=^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)
+      - -label = work-in-progress
+      - -label = do-not-merge
+      - "#changes-requested-reviews-by = 0"
+      - check-success = Staging Soak Evidence Gate
+      - check-success = S3.3 Wave 2 Exact-Head Acceptance
+    actions:
+      queue:
+        name: s33-wave2-corpus
+
   # Auto-queue PRs once all CI checks pass
   - name: Queue CI-green PRs
     conditions:
       - base = main
       - -draft
+      - -files~=^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)
       - -label = work-in-progress
       - -label = do-not-merge
       - -label = hotfix
@@ -131,6 +178,7 @@ pull_request_rules:
       - base = main
       - -draft
       - label = hotfix
+      - -files~=^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)
       - check-success = Staging Soak Evidence Gate
     actions:
       queue:

@@ -1,15 +1,31 @@
-import { createHash } from 'node:crypto';
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+} from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { normalizeForFingerprint } from './golden-dataset-s33-types.js';
 import {
   acceptS33Wave2BatchCandidate,
   consumeMergedS33Wave2Batches,
   preflightS33Wave2BatchCandidate,
+  verifyS33Wave2MergedBatch,
   type S33Wave2CandidateSnapshot,
-  type S33Wave2ReviewEvidence,
 } from './s33-wave2-batch-acceptance.js';
-import { buildS33Wave2BaseCorpusRegistry } from './s33-wave2-corpus-registry.js';
+import {
+  buildS33Wave2BaseCorpusRegistry,
+  extendS33Wave2CorpusRegistry,
+} from './s33-wave2-corpus-registry.js';
+import {
+  buildAndSignS33Wave2AcceptanceForTest,
+  type S33Wave2AcceptancePayloadInput,
+  type S33Wave2AcceptanceTrustRoot,
+  type S33Wave2AuthenticatedBatchAcceptance,
+} from './s33-wave2-acceptance-envelope.js';
 import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
 
 const repositoryRoot = execFileSync('/usr/bin/git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
@@ -22,6 +38,48 @@ const manifestPath = 'docs/lane4/s33-wave2-batches/depth-audit/manifest.json';
 const datasheetPath = 'docs/lane4/s33-wave2-batches/depth-audit/datasheet.json';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
+
+const testKeys = generateKeyPairSync('ed25519');
+const testPrivateKey = testKeys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+const testPublicKey = testKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+const testTrustRoot: S33Wave2AcceptanceTrustRoot = {
+  signerIdentity: 'arkova-s33-wave2-cto-release',
+  signingKeyId: 'arkova-s33-wave2-cto-release',
+  publicKeySpkiPem: testPublicKey,
+  publicKeyFingerprintSha256: createHash('sha256').update(
+    createPublicKey(testPublicKey).export({ type: 'spki', format: 'der' }),
+  ).digest('hex'),
+};
+
+function coverageRegistryContent(): string {
+  const domainIds = ['legal', 'financial', 'education'];
+  return JSON.stringify({
+    schemaVersion: 1,
+    artifactType: 'arkova-s33-wave2-top15-registry',
+    status: 'CTO_SIGNED_SCOPE',
+    decisionRecord: {},
+    coveragePolicy: {
+      minimumHeldoutPerType: 12,
+      targetEdgeCaseRatio: 0.3,
+      minimumProductionValidSubstantiveFields: 5,
+      acceptedAuthorshipMethods: ['real-source', 'independently-authored'],
+      generatorDerivedAllowed: false,
+      trainingExposedAllowed: false,
+      acceptanceLane: 'lane3',
+    },
+    acceptedBaseline: {},
+    domains: domainIds.map((domainId, domainIndex) => ({
+      id: domainId,
+      order: domainIndex + 1,
+      types: Array.from({ length: 15 }, (_, typeIndex) => ({
+        id: `${domainId}-${String(typeIndex + 1).padStart(2, '0')}-fixture`,
+        order: typeIndex + 1,
+        documentType: `Fixture ${domainId} ${typeIndex + 1}`,
+        mappings: [{ credentialType: 'LICENSE', subType: 'nursing_rn' }],
+      })),
+    })),
+  });
+}
 
 function fixture() {
   const rows = Array.from({ length: 4 }, (_, index) => {
@@ -60,7 +118,7 @@ function fixture() {
     testPath,
     entryCount: rows.length,
     entries: rows.map((row) => ({
-      id: row.id, domain: 'professional-licensing', credentialType: 'LICENSE',
+      id: row.id, domain: 'professional-licensing', registryTypeId: 'legal-01-fixture', credentialType: 'LICENSE',
       normalizedInputSha256: sha256(normalizeForFingerprint(row.strippedText)),
     })),
   };
@@ -78,7 +136,9 @@ function fixture() {
     rows: rows.map((row, index) => ({
       id: row.id, domain: 'professional-licensing', credentialType: 'LICENSE', subType: 'nursing_rn',
       jurisdiction: 'US', edgeCase: row.edgeCase, edgeClass: index === 0 ? 'date-trap' : null,
+      authorshipMethod: 'independently-authored',
       realOrSynthetic: 'synthetic-realistic', independentlyCurated: true,
+      generatorDerived: false, trainingExposed: false,
       generatorName: null, generatorVersion: null, seed: null, templateId: null,
       sourceGrounding: 'Synthetic Michigan nursing-board record authored from public schema facts.',
       curationAuthor: 'Arkova Lane 4', curationDate: '2026-07-15',
@@ -98,6 +158,7 @@ function fixture() {
     sourceContent: 'export const inertCandidate = true;',
     datasheetContent: JSON.stringify(datasheet),
     testContent: 'export {};',
+    coverageRegistryContent: coverageRegistryContent(),
     parsedEntries: rows,
     leakageCorpus: [
       { path: 'training-data/a.jsonl', content: 'tundra' },
@@ -106,19 +167,108 @@ function fixture() {
     ],
     leakageCorpusRootCounts: { 'training-data': 1, 'src/ai': 1, scripts: 1 },
   };
-  const review: S33Wave2ReviewEvidence = {
-    schemaVersion: 1,
-    artifactType: 'arkova-s33-wave2-exact-head-review',
+  return { rows, manifest, datasheet, snapshot };
+}
+
+function authenticatedAcceptance(
+  value: ReturnType<typeof fixture>,
+  mutate?: (input: S33Wave2AcceptancePayloadInput) => void,
+): S33Wave2AuthenticatedBatchAcceptance {
+  const preflight = preflightS33Wave2BatchCandidate(registry, value.snapshot);
+  const resultingRegistry = extendS33Wave2CorpusRegistry(registry, preflight.batch, preflight.registryEntries);
+  const input: S33Wave2AcceptancePayloadInput = {
     repositoryIdentity: 'carson-see/ArkovaCarson',
     pullRequestNumber: 1600,
-    candidateHeadSha,
-    authorLogin: 'lane4-author', authorLane: 'Lane 4',
-    reviewerLogin: 'lane3-reviewer', reviewerLane: 'Lane 3',
-    reviewState: 'APPROVED', reviewCommitSha: candidateHeadSha,
-    reviewUrl: 'https://github.com/carson-see/ArkovaCarson/pull/1600#pullrequestreview-1',
-    scope: 'whole-batch',
+    candidateBaseSha: value.snapshot.candidateBaseSha,
+    candidateHeadSha: value.snapshot.candidateHeadSha,
+    candidateTreeSha: value.snapshot.candidateTreeSha,
+    batchId: preflight.manifest.batchId,
+    revision: preflight.manifest.revision,
+    manifestPath: preflight.manifestPath,
+    manifestRawSha256: preflight.manifest.rawSha256,
+    manifestCanonicalSha256: preflight.manifest.canonicalSha256,
+    sourceBlobSha: preflight.manifest.source.blobSha,
+    datasheetBlobSha: preflight.manifest.datasheet.blobSha,
+    preflightArtifactDigestSha256: preflight.artifactDigestSha256,
+    baseRegistryDigestSha256: registry.registryDigestSha256,
+    resultingRegistryDigestSha256: resultingRegistry.registryDigestSha256,
+    coverageRegistryPath: preflight.coverageRegistry.path,
+    coverageRegistryRawSha256: preflight.coverageRegistry.rawSha256,
+    coverageRegistryCanonicalSha256: preflight.coverageRegistry.canonicalSha256,
+    signedAtUtc: '2026-07-15T14:00:00.000Z',
+    reviewer: {
+      lane: 'Lane 3',
+      transport: 'github-issue-comment',
+      evidence: {
+        id: 1,
+        nodeId: 'IC_fixture',
+        url: 'https://github.com/carson-see/ArkovaCarson/pull/1600#issuecomment-1',
+        submittedAtUtc: '2026-07-15T13:59:00.000Z',
+        actor: { login: 'carson-see', databaseId: 1, nodeId: 'U_fixture' },
+      },
+    },
+    proof: {
+      machineValidationArtifactSha256: '1'.repeat(64),
+      machineValidationFailureCount: 0,
+      humanCrossReviewArtifactSha256: '2'.repeat(64),
+      humanCrossReviewSampleSize: value.rows.length,
+      materialLabelDefectCount: 0,
+      prodModelDiffArtifactSha256: '3'.repeat(64),
+      exactLeakageArtifactSha256: '4'.repeat(64),
+      exactLeakageHitCount: 0,
+    },
+    acceptedEntries: [...preflight.acceptanceEntries],
   };
-  return { rows, manifest, datasheet, snapshot, review };
+  mutate?.(input);
+  return buildAndSignS33Wave2AcceptanceForTest(input, testPrivateKey, testTrustRoot);
+}
+
+function gitRun(root: string, args: readonly string[]): string {
+  return execFileSync('/usr/bin/git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
+}
+
+function mergedPacketFixture() {
+  const root = mkdtempSync(join(tmpdir(), 's33-w2-merged-'));
+  gitRun(root, ['init', '-b', 'main']);
+  gitRun(root, ['config', 'user.email', 'lane3-test@arkova.test']);
+  gitRun(root, ['config', 'user.name', 'Lane 3 Test']);
+  writeFileSync(join(root, 'README.md'), 'base\n');
+  gitRun(root, ['add', 'README.md']);
+  gitRun(root, ['commit', '-m', 'base']);
+  const baseSha = gitRun(root, ['rev-parse', 'HEAD']);
+  gitRun(root, ['checkout', '-b', 'candidate']);
+  for (const path of [manifestPath, datasheetPath, sourcePath, testPath]) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), `${path}\n`);
+  }
+  gitRun(root, ['add', manifestPath, datasheetPath, sourcePath, testPath]);
+  gitRun(root, ['commit', '-m', 'candidate']);
+  const candidateHead = gitRun(root, ['rev-parse', 'HEAD']);
+  const candidateTree = gitRun(root, ['rev-parse', 'HEAD^{tree}']);
+  const changedPaths = [manifestPath, datasheetPath, sourcePath, testPath].map((path) => ({
+    status: 'A',
+    path,
+    mode: '100644',
+    objectType: 'blob',
+    blobSha: gitRun(root, ['rev-parse', `${candidateHead}:${path}`]),
+  }));
+  gitRun(root, ['checkout', 'main']);
+  gitRun(root, ['merge', '--no-ff', 'candidate', '-m', 'merge candidate']);
+  const mergedHead = gitRun(root, ['rev-parse', 'HEAD']);
+  const fixtureValue = fixture();
+  const snapshot: S33Wave2CandidateSnapshot = {
+    ...fixtureValue.snapshot,
+    candidateBaseSha: baseSha,
+    candidateHeadSha: candidateHead,
+    candidateTreeSha: candidateTree,
+    changedPaths,
+  };
+  const signed = authenticatedAcceptance(fixtureValue);
+  const acceptance: S33Wave2AuthenticatedBatchAcceptance = {
+    ...signed,
+    payload: { ...signed.payload, candidateHeadSha: candidateHead, candidateTreeSha: candidateTree },
+  };
+  return { root, mergedHead, snapshot, acceptance };
 }
 
 describe('S3.3 Wave-2 whole-batch acceptance', () => {
@@ -131,32 +281,64 @@ describe('S3.3 Wave-2 whole-batch acceptance', () => {
 
   it('accepts one complete, non-leaking, independently curated batch', () => {
     const value = fixture();
+    const artifact = authenticatedAcceptance(value);
     const accepted = acceptS33Wave2BatchCandidate({
-      registry, snapshot: value.snapshot, review: value.review,
-      acceptedEntryIds: value.rows.map(({ id }) => id),
+      registry,
+      snapshot: value.snapshot,
+      pullRequestNumber: 1600,
+      authenticatedAcceptance: artifact,
+      testOnlyTrustRoot: testTrustRoot,
     });
-    expect(accepted.verdict).toBe('APPROVED_WHOLE_BATCH');
-    expect(accepted.resultingRegistry.entries).toHaveLength(85);
+    expect(accepted.payload.verdict).toBe('APPROVED_WHOLE_BATCH');
+    expect(accepted.payload.acceptedEntryCount).toBe(4);
   });
 
-  it.each([
-    ['stale review', (value: ReturnType<typeof fixture>) => ({ ...value.review, reviewCommitSha: 'e'.repeat(40) }), /stale/iu],
-    ['self review', (value: ReturnType<typeof fixture>) => ({ ...value.review, reviewerLogin: value.review.authorLogin }), /self-review/iu],
-  ])('rejects %s', (_label, mutate, pattern) => {
+  it('admits the exact real-source authorship alternative without treating GitHub login as authority', () => {
     const value = fixture();
+    const realSourceDatasheet = {
+      ...value.datasheet,
+      authorshipNote: 'Every row is grounded in a lawful real source and contains no production user document.',
+      rows: value.datasheet.rows.map((row) => ({
+        ...row,
+        authorshipMethod: 'real-source',
+        realOrSynthetic: 'real',
+        independentlyCurated: false,
+      })),
+    };
+    const preflight = preflightS33Wave2BatchCandidate(registry, {
+      ...value.snapshot,
+      datasheetContent: JSON.stringify(realSourceDatasheet),
+    });
+    expect(preflight.acceptanceEntries.every(({ authorshipMethod }) => authorshipMethod === 'real-source')).toBe(true);
+  });
+
+  it('rejects a cryptographically valid acceptance for a stale candidate head', () => {
+    const value = fixture();
+    const artifact = authenticatedAcceptance(value, (input) => {
+      input.candidateHeadSha = 'e'.repeat(40);
+    });
     expect(() => acceptS33Wave2BatchCandidate({
-      registry, snapshot: value.snapshot,
-      review: mutate(value) as S33Wave2ReviewEvidence,
-      acceptedEntryIds: value.rows.map(({ id }) => id),
-    })).toThrow(pattern);
+      registry,
+      snapshot: value.snapshot,
+      pullRequestNumber: 1600,
+      authenticatedAcceptance: artifact,
+      testOnlyTrustRoot: testTrustRoot,
+    })).toThrow(/binding.*candidateHeadSha/iu);
   });
 
   it('rejects partial acceptance', () => {
     const value = fixture();
+    const artifact = authenticatedAcceptance(value, (input) => {
+      input.acceptedEntries = input.acceptedEntries.slice(0, 3);
+      input.proof.humanCrossReviewSampleSize = 3;
+    });
     expect(() => acceptS33Wave2BatchCandidate({
-      registry, snapshot: value.snapshot, review: value.review,
-      acceptedEntryIds: value.rows.slice(0, 3).map(({ id }) => id),
-    })).toThrow(/partial acceptance/iu);
+      registry,
+      snapshot: value.snapshot,
+      pullRequestNumber: 1600,
+      authenticatedAcceptance: artifact,
+      testOnlyTrustRoot: testTrustRoot,
+    })).toThrow(/order|per-entry|binding/iu);
   });
 
   it('rejects a stale candidate base and a partial exact n=6 corpus overlap', () => {
@@ -240,5 +422,27 @@ describe('S3.3 Wave-2 whole-batch acceptance', () => {
     `;
     expect(parseS33ProducerModuleWithLimit(source, 'candidate.ts', 'S33_WAVE2_TEST_HELDOUT', 2)).toHaveLength(2);
     expect(() => parseS33ProducerModuleWithLimit(source, 'candidate.ts', 'S33_WAVE2_TEST_HELDOUT', 1)).toThrow(/maximum 1-row/iu);
+  });
+
+  it('consumes only a merged tree carrying the byte-identical authenticated packet', () => {
+    const value = mergedPacketFixture();
+    const result = verifyS33Wave2MergedBatch({
+      mergedMainRepositoryRoot: value.root,
+      mergedMainHeadSha: value.mergedHead,
+      snapshot: value.snapshot,
+      acceptance: value.acceptance,
+    });
+    expect(result.packetBlobs).toHaveLength(4);
+    expect(result.candidateHeadSha).toBe(value.snapshot.candidateHeadSha);
+
+    writeFileSync(join(value.root, sourcePath), 'post-merge tamper\n');
+    gitRun(value.root, ['add', sourcePath]);
+    gitRun(value.root, ['commit', '-m', 'tamper packet']);
+    expect(() => verifyS33Wave2MergedBatch({
+      mergedMainRepositoryRoot: value.root,
+      mergedMainHeadSha: gitRun(value.root, ['rev-parse', 'HEAD']),
+      snapshot: value.snapshot,
+      acceptance: value.acceptance,
+    })).toThrow(/blob differs/i);
   });
 });

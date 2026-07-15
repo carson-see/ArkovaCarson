@@ -7,8 +7,10 @@ import { join } from 'node:path';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
 import {
   assertS33HeldoutGroundTruthContract,
+  countS33SubstantiveGroundTruthFields,
   normalizeForFingerprint,
 } from './golden-dataset-s33-types.js';
+import type { GroundTruthFields } from './types.js';
 import {
   checkHeldoutLeakage,
   loadLeakageCorpus,
@@ -19,6 +21,13 @@ import {
   scanS33ExactLexicalLeakage,
 } from './s33-batch-acceptance.js';
 import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
+import {
+  computeS33Wave2AcceptedEntryOrderSha256,
+  verifyS33Wave2AuthenticatedBatchAcceptance,
+  type S33Wave2AcceptedEntryInput,
+  type S33Wave2AcceptanceTrustRoot,
+  type S33Wave2AuthenticatedBatchAcceptance,
+} from './s33-wave2-acceptance-envelope.js';
 import {
   extendS33Wave2CorpusRegistry,
   type S33Wave2CorpusRegistry,
@@ -37,13 +46,14 @@ const GIT_OBJECT = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const SLUG = '[a-z0-9]+(?:-[a-z0-9]+)*';
 const MANIFEST_PATH = new RegExp(`^docs/lane4/s33-wave2-batches/(${SLUG})/manifest\\.json$`, 'u');
-const HTTPS_URL = /^https:\/\/github\.com\/carson-see\/ArkovaCarson\/pull\/\d+(?:#pullrequestreview-\d+)?$/u;
+const COVERAGE_REGISTRY_PATH = 'docs/lane4/s33-wave2-top15-registry.json' as const;
 
 type JsonRecord = Record<string, unknown>;
 
 export interface S33Wave2ManifestEntry {
   readonly id: string;
   readonly domain: string;
+  readonly registryTypeId: string;
   readonly credentialType: string;
   readonly normalizedInputSha256: string;
 }
@@ -59,22 +69,6 @@ export interface ParsedS33Wave2BatchManifest {
   readonly entries: readonly S33Wave2ManifestEntry[];
   readonly rawSha256: string;
   readonly canonicalSha256: string;
-}
-
-export interface S33Wave2ReviewEvidence {
-  readonly schemaVersion: 1;
-  readonly artifactType: 'arkova-s33-wave2-exact-head-review';
-  readonly repositoryIdentity: 'carson-see/ArkovaCarson';
-  readonly pullRequestNumber: number;
-  readonly candidateHeadSha: string;
-  readonly authorLogin: string;
-  readonly authorLane: 'Lane 4';
-  readonly reviewerLogin: string;
-  readonly reviewerLane: 'Lane 3';
-  readonly reviewState: 'APPROVED';
-  readonly reviewCommitSha: string;
-  readonly reviewUrl: string;
-  readonly scope: 'whole-batch';
 }
 
 export interface S33Wave2CandidateSnapshot {
@@ -93,6 +87,7 @@ export interface S33Wave2CandidateSnapshot {
   readonly sourceContent: string;
   readonly datasheetContent: string;
   readonly testContent: string;
+  readonly coverageRegistryContent: string;
   readonly parsedEntries: readonly JsonRecord[];
   readonly leakageCorpus: readonly CorpusFile[];
   readonly leakageCorpusRootCounts: Readonly<Record<'training-data' | 'src/ai' | 'scripts', number>>;
@@ -106,23 +101,15 @@ export interface S33Wave2BatchPreflight {
   readonly candidateTreeSha: string;
   readonly manifestPath: string;
   readonly manifest: ParsedS33Wave2BatchManifest;
+  readonly coverageRegistry: Readonly<{
+    path: typeof COVERAGE_REGISTRY_PATH;
+    rawSha256: string;
+    canonicalSha256: string;
+  }>;
   readonly registryEntries: readonly S33Wave2RegistryEntry[];
+  readonly acceptanceEntries: readonly S33Wave2AcceptedEntryInput[];
   readonly batch: S33Wave2RegistryBatch;
   readonly leakage: Readonly<{ corpusFileCount: number; comparisons: number; exactMatchCount: 0 }>;
-  readonly artifactDigestSha256: string;
-}
-
-export interface S33Wave2BatchAcceptance {
-  readonly schemaVersion: 1;
-  readonly artifactType: 'arkova-s33-wave2-batch-acceptance';
-  readonly verdict: 'APPROVED_WHOLE_BATCH';
-  readonly candidateHeadSha: string;
-  readonly candidateTreeSha: string;
-  readonly pullRequestNumber: number;
-  readonly reviewerLogin: string;
-  readonly acceptedEntryIds: readonly string[];
-  readonly preflightArtifactDigestSha256: string;
-  readonly resultingRegistry: S33Wave2CorpusRegistry;
   readonly artifactDigestSha256: string;
 }
 
@@ -210,10 +197,15 @@ function parseManifest(content: string, manifestPath: string): ParsedS33Wave2Bat
   }
   const entries = parsed.entries.map((candidate, index): S33Wave2ManifestEntry => {
     const entry = record(candidate, `Wave-2 manifest entries[${index}]`);
-    exactKeys(entry, ['id', 'domain', 'credentialType', 'normalizedInputSha256'], `Wave-2 manifest entries[${index}]`);
+    exactKeys(
+      entry,
+      ['id', 'domain', 'registryTypeId', 'credentialType', 'normalizedInputSha256'],
+      `Wave-2 manifest entries[${index}]`,
+    );
     return {
       id: text(entry.id, `Wave-2 manifest entries[${index}].id`),
       domain: text(entry.domain, `Wave-2 manifest entries[${index}].domain`),
+      registryTypeId: text(entry.registryTypeId, `Wave-2 manifest entries[${index}].registryTypeId`),
       credentialType: text(entry.credentialType, `Wave-2 manifest entries[${index}].credentialType`),
       normalizedInputSha256: digest(entry.normalizedInputSha256, `Wave-2 manifest entries[${index}].normalizedInputSha256`),
     };
@@ -243,6 +235,72 @@ interface ParsedDatasheetRow {
   subType: string;
   jurisdiction: string;
   edgeCase: boolean;
+  authorshipMethod: 'real-source' | 'independently-authored';
+}
+
+interface ParsedCoverageRegistry {
+  path: typeof COVERAGE_REGISTRY_PATH;
+  rawSha256: string;
+  canonicalSha256: string;
+  mappingsByTypeId: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+function parseCoverageRegistry(content: string): ParsedCoverageRegistry {
+  const document = parseStrictJsonDocument(content, 'Wave-2 top-15 coverage registry');
+  const parsed = document.parsed as JsonRecord;
+  exactKeys(parsed, [
+    'schemaVersion', 'artifactType', 'status', 'decisionRecord', 'coveragePolicy',
+    'acceptedBaseline', 'domains',
+  ], 'Wave-2 top-15 coverage registry');
+  if (parsed.schemaVersion !== 1 || parsed.artifactType !== 'arkova-s33-wave2-top15-registry'
+    || parsed.status !== 'CTO_SIGNED_SCOPE' || !Array.isArray(parsed.domains) || parsed.domains.length !== 3) {
+    throw new Error('Wave-2 top-15 coverage registry identity/status/domain tuple is invalid');
+  }
+  const policy = record(parsed.coveragePolicy, 'Wave-2 top-15 coverage policy');
+  exactKeys(policy, [
+    'minimumHeldoutPerType', 'targetEdgeCaseRatio', 'minimumProductionValidSubstantiveFields',
+    'acceptedAuthorshipMethods', 'generatorDerivedAllowed', 'trainingExposedAllowed',
+    'acceptanceLane',
+  ], 'Wave-2 top-15 coverage policy');
+  if (policy.minimumHeldoutPerType !== 12 || policy.targetEdgeCaseRatio !== 0.3
+    || policy.minimumProductionValidSubstantiveFields !== 5
+    || canonicaliseJson(policy.acceptedAuthorshipMethods) !== canonicaliseJson(['real-source', 'independently-authored'])
+    || policy.generatorDerivedAllowed !== false || policy.trainingExposedAllowed !== false
+    || policy.acceptanceLane !== 'lane3') {
+    throw new Error('Wave-2 top-15 coverage policy does not match the CTO-approved scope');
+  }
+  const mappingsByTypeId = new Map<string, ReadonlySet<string>>();
+  parsed.domains.forEach((candidate, domainIndex) => {
+    const domain = record(candidate, `Wave-2 coverage domains[${domainIndex}]`);
+    exactKeys(domain, ['id', 'order', 'types'], `Wave-2 coverage domains[${domainIndex}]`);
+    if (domain.order !== domainIndex + 1 || !Array.isArray(domain.types) || domain.types.length !== 15) {
+      throw new Error(`Wave-2 coverage domain ${domainIndex} must contain the ordered top 15`);
+    }
+    domain.types.forEach((typeCandidate, typeIndex) => {
+      const type = record(typeCandidate, `Wave-2 coverage domains[${domainIndex}].types[${typeIndex}]`);
+      exactKeys(type, ['id', 'order', 'documentType', 'mappings'], `Wave-2 coverage type ${typeIndex}`);
+      const typeId = text(type.id, `Wave-2 coverage type ${typeIndex}.id`);
+      if (type.order !== typeIndex + 1 || mappingsByTypeId.has(typeId)
+        || !Array.isArray(type.mappings) || type.mappings.length < 1) {
+        throw new Error(`Wave-2 coverage type ${typeId} order/id/mappings are invalid`);
+      }
+      text(type.documentType, `Wave-2 coverage type ${typeId}.documentType`);
+      const mappings = new Set(type.mappings.map((mappingCandidate, mappingIndex) => {
+        const mapping = record(mappingCandidate, `Wave-2 coverage type ${typeId}.mappings[${mappingIndex}]`);
+        exactKeys(mapping, ['credentialType', 'subType'], `Wave-2 coverage type ${typeId} mapping`);
+        return `${text(mapping.credentialType, 'Wave-2 mapping credentialType')}\u0000${text(mapping.subType, 'Wave-2 mapping subType')}`;
+      }));
+      if (mappings.size !== type.mappings.length) throw new Error(`Wave-2 coverage type ${typeId} has duplicate mappings`);
+      mappingsByTypeId.set(typeId, mappings);
+    });
+  });
+  if (mappingsByTypeId.size !== 45) throw new Error('Wave-2 coverage registry must contain exactly 45 unique types');
+  return deepFreeze({
+    path: COVERAGE_REGISTRY_PATH,
+    rawSha256: document.rawSha256,
+    canonicalSha256: document.canonicalSha256,
+    mappingsByTypeId,
+  }) as ParsedCoverageRegistry;
 }
 
 function parseDatasheet(
@@ -264,22 +322,30 @@ function parseDatasheet(
     || !Array.isArray(parsed.rows) || parsed.rows.length !== manifest.entryCount) {
     throw new Error('Wave-2 datasheet identity/provenance/count tuple is invalid');
   }
-  if (!text(parsed.authorshipNote, 'Wave-2 datasheet authorshipNote').toLowerCase().includes('independently')) {
-    throw new Error('Wave-2 datasheet must document independent curation');
+  const authorshipNote = text(parsed.authorshipNote, 'Wave-2 datasheet authorshipNote').toLowerCase();
+  if (!authorshipNote.includes('independent') && !authorshipNote.includes('real source')
+    && !authorshipNote.includes('real-source')) {
+    throw new Error('Wave-2 datasheet must document real-source or independent authorship');
   }
   return parsed.rows.map((candidate, index): ParsedDatasheetRow => {
     const row = record(candidate, `Wave-2 datasheet rows[${index}]`);
     exactKeys(row, [
       'id', 'domain', 'credentialType', 'subType', 'jurisdiction', 'edgeCase', 'edgeClass',
-      'realOrSynthetic', 'independentlyCurated', 'generatorName', 'generatorVersion',
-      'seed', 'templateId', 'sourceGrounding', 'curationAuthor', 'curationDate',
-      'licenseConsentNote',
+      'authorshipMethod', 'realOrSynthetic', 'independentlyCurated', 'generatorDerived',
+      'trainingExposed', 'generatorName', 'generatorVersion', 'seed', 'templateId',
+      'sourceGrounding', 'curationAuthor', 'curationDate', 'licenseConsentNote',
     ], `Wave-2 datasheet rows[${index}]`);
-    if (row.realOrSynthetic !== 'synthetic-realistic' || row.independentlyCurated !== true
+    const authorshipMethod = row.authorshipMethod;
+    if (!['real-source', 'independently-authored'].includes(authorshipMethod as string)
+      || row.generatorDerived !== false || row.trainingExposed !== false
       || row.generatorName !== null || row.generatorVersion !== null
       || row.seed !== null || row.templateId !== null) {
       throw new Error(`Wave-2 datasheet row ${index} is generator-derived or lacks independent provenance`);
     }
+    const authorshipShapeValid = authorshipMethod === 'independently-authored'
+      ? row.realOrSynthetic === 'synthetic-realistic' && row.independentlyCurated === true
+      : row.realOrSynthetic === 'real' && row.independentlyCurated === false;
+    if (!authorshipShapeValid) throw new Error(`Wave-2 datasheet row ${index} authorship fields disagree`);
     if (row.curationAuthor !== 'Arkova Lane 4'
       || !/^\d{4}-\d{2}-\d{2}$/u.test(text(row.curationDate, `Wave-2 datasheet rows[${index}].curationDate`))
       || text(row.sourceGrounding, `Wave-2 datasheet rows[${index}].sourceGrounding`).length < 20
@@ -297,6 +363,7 @@ function parseDatasheet(
       subType: text(row.subType, `Wave-2 datasheet rows[${index}].subType`),
       jurisdiction: text(row.jurisdiction, `Wave-2 datasheet rows[${index}].jurisdiction`),
       edgeCase: row.edgeCase,
+      authorshipMethod: authorshipMethod as ParsedDatasheetRow['authorshipMethod'],
     };
   });
 }
@@ -322,11 +389,16 @@ function validateCandidateRows(
   manifest: ParsedS33Wave2BatchManifest,
   datasheet: readonly ParsedDatasheetRow[],
   registry: S33Wave2CorpusRegistry,
-): readonly S33Wave2RegistryEntry[] {
+  coverageRegistry: ParsedCoverageRegistry,
+): Readonly<{
+  registryEntries: readonly S33Wave2RegistryEntry[];
+  acceptanceEntries: readonly S33Wave2AcceptedEntryInput[];
+}> {
   if (snapshot.parsedEntries.length !== manifest.entryCount) throw new Error('Wave-2 source row count is not the whole manifest batch');
   const knownIds = new Set(registry.entries.map(({ id }) => id));
   const knownInputs = new Set(registry.entries.map(({ normalizedInputSha256 }) => normalizedInputSha256));
-  const results = snapshot.parsedEntries.map((candidate, index): S33Wave2RegistryEntry => {
+  const acceptanceEntries: S33Wave2AcceptedEntryInput[] = [];
+  const registryEntries = snapshot.parsedEntries.map((candidate, index): S33Wave2RegistryEntry => {
     const manifestEntry = manifest.entries[index];
     const datasheetRow = datasheet[index];
     const id = text(candidate.id, `Wave-2 source entries[${index}].id`);
@@ -342,6 +414,10 @@ function validateCandidateRows(
       || candidate.jurisdictionSlice !== datasheetRow.jurisdiction
       || candidate.edgeCase !== datasheetRow.edgeCase) {
       throw new Error(`Wave-2 manifest/source/datasheet bijection failed at ${id}`);
+    }
+    const allowedMappings = coverageRegistry.mappingsByTypeId.get(manifestEntry.registryTypeId);
+    if (!allowedMappings?.has(`${manifestEntry.credentialType}\u0000${datasheetRow.subType}`)) {
+      throw new Error(`Wave-2 entry ${id} does not match registry type ${manifestEntry.registryTypeId}`);
     }
     if (candidate.provenance !== 'authored-s33-lane4'
       || typeof candidate.source !== 'string'
@@ -366,6 +442,26 @@ function validateCandidateRows(
     if (knownInputs.has(normalizedInputSha256)) throw new Error(`Wave-2 duplicate normalized input: ${id}`);
     knownIds.add(id);
     knownInputs.add(normalizedInputSha256);
+    const productionValidSubstantiveFieldCount = countS33SubstantiveGroundTruthFields(
+      groundTruth as unknown as GroundTruthFields,
+    );
+    acceptanceEntries.push({
+      id,
+      registryTypeId: manifestEntry.registryTypeId,
+      batchId: manifest.batchId,
+      revision: manifest.revision,
+      credentialType: manifestEntry.credentialType,
+      subType: datasheetRow.subType,
+      normalizedInputSha256,
+      groundTruthSha256: sha256(canonicaliseJson(groundTruth)),
+      authorshipMethod: datasheetRow.authorshipMethod,
+      generatorDerived: false,
+      trainingExposed: false,
+      intendedSplit: 'held-out',
+      productionValidSubstantiveFieldCount,
+      edgeCase: datasheetRow.edgeCase,
+      sourceBlobSha: manifest.source.blobSha,
+    });
     return {
       ...manifestEntry,
       batchId: manifest.batchId,
@@ -378,7 +474,7 @@ function validateCandidateRows(
   if (datasheet.length >= 4 && (edgeRatio < 0.25 || edgeRatio > 0.4)) {
     throw new Error('Wave-2 batch edge-case share must remain approximately 30% (25%-40%)');
   }
-  return results;
+  return deepFreeze({ registryEntries, acceptanceEntries });
 }
 
 /** Validate a candidate snapshot using only trusted-main evaluator code. */
@@ -415,7 +511,14 @@ export function preflightS33Wave2BatchCandidate(
   }
 
   const datasheet = parseDatasheet(snapshot.datasheetContent, manifest);
-  const entries = validateCandidateRows(snapshot, manifest, datasheet, registry);
+  const coverageRegistry = parseCoverageRegistry(snapshot.coverageRegistryContent);
+  const { registryEntries, acceptanceEntries } = validateCandidateRows(
+    snapshot,
+    manifest,
+    datasheet,
+    registry,
+    coverageRegistry,
+  );
   for (const root of ['training-data', 'src/ai', 'scripts'] as const) {
     if (!Number.isSafeInteger(snapshot.leakageCorpusRootCounts[root])
       || snapshot.leakageCorpusRootCounts[root] < 1) {
@@ -457,7 +560,13 @@ export function preflightS33Wave2BatchCandidate(
     candidateTreeSha: snapshot.candidateTreeSha,
     manifestPath: snapshot.manifestPath,
     manifest,
-    registryEntries: entries,
+    coverageRegistry: {
+      path: coverageRegistry.path,
+      rawSha256: coverageRegistry.rawSha256,
+      canonicalSha256: coverageRegistry.canonicalSha256,
+    },
+    registryEntries,
+    acceptanceEntries,
     batch,
     leakage: {
       corpusFileCount: snapshot.leakageCorpus.length,
@@ -468,57 +577,120 @@ export function preflightS33Wave2BatchCandidate(
   return deepFreeze({ ...withoutDigest, artifactDigestSha256: sha256(canonicaliseJson(withoutDigest)) });
 }
 
-/** Add exact-head, cross-lane review to a successful whole-batch preflight. */
+/** Authenticate Lane-3 authority and bind it to a recomputed whole-batch preflight. */
 export function acceptS33Wave2BatchCandidate(input: Readonly<{
   registry: S33Wave2CorpusRegistry;
   snapshot: S33Wave2CandidateSnapshot;
-  review: S33Wave2ReviewEvidence;
-  acceptedEntryIds: readonly string[];
-}>): S33Wave2BatchAcceptance {
+  pullRequestNumber: number;
+  authenticatedAcceptance: unknown;
+  testOnlyTrustRoot?: S33Wave2AcceptanceTrustRoot;
+}>): S33Wave2AuthenticatedBatchAcceptance {
   const preflight = preflightS33Wave2BatchCandidate(input.registry, input.snapshot);
-  const review = input.review;
-  exactKeys(record(review, 'Wave-2 review evidence'), [
-    'schemaVersion', 'artifactType', 'repositoryIdentity', 'pullRequestNumber',
-    'candidateHeadSha', 'authorLogin', 'authorLane', 'reviewerLogin', 'reviewerLane',
-    'reviewState', 'reviewCommitSha', 'reviewUrl', 'scope',
-  ], 'Wave-2 review evidence');
-  if (review.schemaVersion !== 1 || review.artifactType !== 'arkova-s33-wave2-exact-head-review'
-    || review.repositoryIdentity !== 'carson-see/ArkovaCarson' || !Number.isSafeInteger(review.pullRequestNumber)
-    || review.pullRequestNumber < 1 || review.authorLane !== 'Lane 4' || review.reviewerLane !== 'Lane 3'
-    || review.reviewState !== 'APPROVED' || review.scope !== 'whole-batch') {
-    throw new Error('Wave-2 review evidence identity/authority/scope tuple is invalid');
-  }
-  if (review.authorLogin.trim().toLowerCase() === review.reviewerLogin.trim().toLowerCase()) {
-    throw new Error('Wave-2 producer may not self-review');
-  }
-  if (review.candidateHeadSha !== input.snapshot.candidateHeadSha
-    || review.reviewCommitSha !== input.snapshot.candidateHeadSha) {
-    throw new Error('Wave-2 review evidence is stale; exact candidate head required');
-  }
-  if (!HTTPS_URL.test(review.reviewUrl)
-    || !review.reviewUrl.includes(`/pull/${review.pullRequestNumber}`)) {
-    throw new Error('Wave-2 review URL is not bound to the declared Arkova PR');
-  }
-  const expectedIds = preflight.manifest.entries.map(({ id }) => id);
-  if (canonicaliseJson(input.acceptedEntryIds) !== canonicaliseJson(expectedIds)) {
-    throw new Error('Wave-2 partial acceptance is forbidden; every manifest id must be accepted in order');
-  }
   const resultingRegistry = extendS33Wave2CorpusRegistry(
     input.registry,
     preflight.batch,
     preflight.registryEntries,
   );
+  const acceptedEntryOrderSha256 = computeS33Wave2AcceptedEntryOrderSha256(
+    preflight.acceptanceEntries.map(({ id }) => id),
+  );
+  const verified = verifyS33Wave2AuthenticatedBatchAcceptance(
+    input.authenticatedAcceptance,
+    {
+      repositoryIdentity: 'carson-see/ArkovaCarson',
+      pullRequestNumber: input.pullRequestNumber,
+      candidateBaseSha: input.snapshot.candidateBaseSha,
+      candidateHeadSha: input.snapshot.candidateHeadSha,
+      candidateTreeSha: input.snapshot.candidateTreeSha,
+      batchId: preflight.manifest.batchId,
+      revision: preflight.manifest.revision,
+      manifestPath: preflight.manifestPath,
+      manifestRawSha256: preflight.manifest.rawSha256,
+      manifestCanonicalSha256: preflight.manifest.canonicalSha256,
+      sourceBlobSha: preflight.manifest.source.blobSha,
+      datasheetBlobSha: preflight.manifest.datasheet.blobSha,
+      preflightArtifactDigestSha256: preflight.artifactDigestSha256,
+      baseRegistryDigestSha256: input.registry.registryDigestSha256,
+      resultingRegistryDigestSha256: resultingRegistry.registryDigestSha256,
+      coverageRegistryPath: preflight.coverageRegistry.path,
+      coverageRegistryRawSha256: preflight.coverageRegistry.rawSha256,
+      coverageRegistryCanonicalSha256: preflight.coverageRegistry.canonicalSha256,
+      acceptedEntryOrderSha256,
+    },
+    input.testOnlyTrustRoot ? { testOnlyTrustRoot: input.testOnlyTrustRoot } : undefined,
+  );
+  const signedEntries = verified.payload.acceptedEntries.map(({ entryCanonicalSha256: _fingerprint, ...entry }) => entry);
+  if (canonicaliseJson(signedEntries) !== canonicaliseJson(preflight.acceptanceEntries)) {
+    throw new Error('Wave-2 authenticated per-entry facts do not match trusted-main recomputation');
+  }
+  return verified;
+}
+
+export interface S33Wave2TrustedMainConsumption {
+  readonly schemaVersion: 1;
+  readonly artifactType: 'arkova-s33-wave2-trusted-main-consumption';
+  readonly repositoryIdentity: 'carson-see/ArkovaCarson';
+  readonly pullRequestNumber: number;
+  readonly candidateHeadSha: string;
+  readonly candidateTreeSha: string;
+  readonly mergedMainHeadSha: string;
+  readonly mergedMainTreeSha: string;
+  readonly batchId: string;
+  readonly revision: number;
+  readonly acceptanceArtifactDigestSha256: string;
+  readonly resultingRegistryDigestSha256: string;
+  readonly packetBlobs: readonly Readonly<{ path: string; blobSha: string }>[];
+  readonly artifactDigestSha256: string;
+}
+
+/** Prove that the exact authenticated candidate packet is now reachable from trusted main. */
+export function verifyS33Wave2MergedBatch(input: Readonly<{
+  mergedMainRepositoryRoot: string;
+  mergedMainHeadSha: string;
+  snapshot: S33Wave2CandidateSnapshot;
+  acceptance: S33Wave2AuthenticatedBatchAcceptance;
+}>): S33Wave2TrustedMainConsumption {
+  objectId(input.mergedMainHeadSha, 'Wave-2 merged-main head');
+  const repositoryRoot = realpathSync(input.mergedMainRepositoryRoot);
+  const resolvedHead = git(repositoryRoot, ['rev-parse', `${input.mergedMainHeadSha}^{commit}`], 'utf8').trim();
+  if (resolvedHead !== input.mergedMainHeadSha || git(repositoryRoot, ['rev-parse', 'HEAD'], 'utf8').trim() !== resolvedHead) {
+    throw new Error('Wave-2 merged-main checkout is not the exact declared commit');
+  }
+  if (input.acceptance.payload.candidateHeadSha !== input.snapshot.candidateHeadSha
+    || input.acceptance.payload.candidateTreeSha !== input.snapshot.candidateTreeSha) {
+    throw new Error('Wave-2 acceptance does not bind the candidate snapshot being consumed');
+  }
+  try {
+    git(repositoryRoot, ['merge-base', '--is-ancestor', input.snapshot.candidateHeadSha, resolvedHead]);
+  } catch (error) {
+    throw new Error('Wave-2 authenticated candidate head is not reachable from merged main', { cause: error });
+  }
+  const packetBlobs = input.snapshot.changedPaths.map(({ path, blobSha }) => {
+    const merged = mergedPathEvidence(repositoryRoot, resolvedHead, path);
+    if (merged.blobSha !== blobSha) throw new Error(`Wave-2 merged packet blob differs from accepted candidate: ${path}`);
+    return { path, blobSha };
+  });
+  if (git(repositoryRoot, [
+    'status', '--porcelain=v1', '--untracked-files=all', '--',
+    ...packetBlobs.map(({ path }) => path),
+  ], 'utf8').trim().length > 0) {
+    throw new Error('Wave-2 merged-main packet checkout is dirty');
+  }
+  const payload = input.acceptance.payload;
   const withoutDigest = {
     schemaVersion: 1 as const,
-    artifactType: 'arkova-s33-wave2-batch-acceptance' as const,
-    verdict: 'APPROVED_WHOLE_BATCH' as const,
-    candidateHeadSha: input.snapshot.candidateHeadSha,
-    candidateTreeSha: input.snapshot.candidateTreeSha,
-    pullRequestNumber: review.pullRequestNumber,
-    reviewerLogin: review.reviewerLogin,
-    acceptedEntryIds: expectedIds,
-    preflightArtifactDigestSha256: preflight.artifactDigestSha256,
-    resultingRegistry,
+    artifactType: 'arkova-s33-wave2-trusted-main-consumption' as const,
+    repositoryIdentity: 'carson-see/ArkovaCarson' as const,
+    pullRequestNumber: payload.pullRequestNumber,
+    candidateHeadSha: payload.candidateHeadSha,
+    candidateTreeSha: payload.candidateTreeSha,
+    mergedMainHeadSha: resolvedHead,
+    mergedMainTreeSha: git(repositoryRoot, ['rev-parse', `${resolvedHead}^{tree}`], 'utf8').trim(),
+    batchId: payload.batchId,
+    revision: payload.revision,
+    acceptanceArtifactDigestSha256: input.acceptance.artifactDigestSha256,
+    resultingRegistryDigestSha256: payload.resultingRegistryDigestSha256,
+    packetBlobs,
   };
   return deepFreeze({ ...withoutDigest, artifactDigestSha256: sha256(canonicaliseJson(withoutDigest)) });
 }
@@ -610,6 +782,16 @@ export function loadS33Wave2CandidateSnapshot(input: Readonly<{
     'src/ai': leakageCorpus.filter(({ path }) => path.startsWith('src/ai/')).length,
     scripts: leakageCorpus.filter(({ path }) => path.startsWith('scripts/')).length,
   };
+  let coverageRegistryContent: string;
+  try {
+    coverageRegistryContent = git(
+      trustedMainRepositoryRoot,
+      ['show', `${input.registry.verificationHeadSha}:${COVERAGE_REGISTRY_PATH}`],
+      'utf8',
+    );
+  } catch (error) {
+    throw new Error(`Wave-2 CTO coverage registry is missing from trusted main: ${COVERAGE_REGISTRY_PATH}`, { cause: error });
+  }
   return deepFreeze({
     candidateBaseSha: input.candidateBaseSha,
     candidateHeadSha: input.candidateHeadSha,
@@ -620,6 +802,7 @@ export function loadS33Wave2CandidateSnapshot(input: Readonly<{
     sourceContent,
     datasheetContent,
     testContent,
+    coverageRegistryContent,
     parsedEntries,
     leakageCorpus,
     leakageCorpusRootCounts,
@@ -705,6 +888,7 @@ export function consumeMergedS33Wave2Batches(input: Readonly<{
       sourceContent,
       datasheetContent,
       testContent,
+      coverageRegistryContent: git(repositoryRoot, ['show', `${head}:${COVERAGE_REGISTRY_PATH}`], 'utf8'),
       parsedEntries,
       leakageCorpus,
       leakageCorpusRootCounts: {

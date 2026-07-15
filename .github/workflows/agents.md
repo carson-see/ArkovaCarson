@@ -73,16 +73,20 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
 
 ## S3.3 Wave-2 trusted-main corpus acceptance (2026-07-15)
 
-- `s33-wave2-batch-acceptance.yml` runs post-merge registry consumption on
-  `main`, inert candidate preflight on `pull_request_target`, and whole-batch
-  acceptance only on an APPROVED `pull_request_review` event. Permissions are
-  read-only. Every action is SHA-pinned and every npm install uses
-  `--ignore-scripts`.
+- `s33-wave2-batch-acceptance.yml` runs inert candidate preflight on
+  `pull_request_target`, accepts a CTO Ed25519 envelope delivered by either an
+  issue comment or formal review, publishes an exact-head commit status only
+  after preserving the verified artifact, then re-verifies and consumes the
+  identical packet on the merged-main commit. GitHub state/login is transport
+  evidence, never acceptance authority. Status write permission exists only on
+  the two jobs that publish those exact success statuses.
 - The evaluator and dependencies are checked out/installed from the exact PR
-  base in `trusted/`. Candidate Git objects are checked out separately in
-  `candidate/`; no command uses that directory as a working directory, imports
-  candidate TypeScript, runs candidate tests, or installs candidate packages.
-  Exact review `commit_id` must equal the current PR head or acceptance fails.
+  base in `trusted/` before candidate data is fetched. Candidate Git objects
+  live only in an inert bare repository under `RUNNER_TEMP`; no candidate
+  checkout, cache, import, test, package install, or working directory exists.
+  Mergify routes every corpus-touching PR (including mixed-path PRs) to the
+  single-item `s33-wave2-corpus` queue and requires the authenticated exact-head
+  status; ordinary and hotfix queues explicitly exclude those paths.
 
 ## Related
 

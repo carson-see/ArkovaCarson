@@ -1,202 +1,376 @@
 name: S3.3 Wave 2 Corpus Acceptance
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "docs/lane4/s33-wave2-batches/**"
-      - "services/worker/src/ai/eval/golden-dataset-s33-wave2-*-heldout.ts"
-      - "services/worker/src/ai/eval/s33-wave2-*.ts"
-      - "scripts/ci/s33-wave2-batch-acceptance.ts"
-      - ".github/workflows/s33-wave2-batch-acceptance.yml"
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened]
-    paths:
-      - "docs/lane4/s33-wave2-batches/**"
-      - "services/worker/src/ai/eval/golden-dataset-s33-wave2-*-heldout.ts"
-      - "services/worker/src/ai/eval/golden-dataset-s33-wave2-*-heldout.test.ts"
   pull_request_review:
     branches: [main]
-    types: [submitted]
+    types: [submitted, edited]
+  issue_comment:
+    types: [created, edited]
+  pull_request:
+    branches: [main]
+    types: [closed]
 
 permissions:
+  actions: read
   contents: read
+  issues: read
   pull-requests: read
 
 concurrency:
-  group: s33-wave2-corpus-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: true
+  group: s33-wave2-corpus-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
-  consume-trusted-main:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            services/worker/package-lock.json
-      - name: Install trusted evaluator dependencies
-        run: |
-          npm ci --ignore-scripts
-          npm --prefix services/worker ci --ignore-scripts
-      - name: Consume immutable Wave 1 tuple from merged main
-        run: >-
-          npx tsx scripts/ci/s33-wave2-batch-acceptance.ts consume-main
-          --trusted-main-root "$GITHUB_WORKSPACE"
-          --trusted-main-head "$GITHUB_SHA"
-          --output "$RUNNER_TEMP/s33-wave2-main-registry.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: s33-wave2-main-registry-${{ github.sha }}
-          path: ${{ runner.temp }}/s33-wave2-main-registry.json
-          if-no-files-found: error
-          retention-days: 90
-
   candidate-preflight:
+    name: S3.3 Wave 2 Candidate Preflight
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - id: scope
+        name: Detect Wave 2 corpus packet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          relevant=false
+          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --jq '.[].filename' \
+            | grep -Eq '^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)'; then
+            relevant=true
+          fi
+          echo "relevant=${relevant}" >> "$GITHUB_OUTPUT"
       - name: Checkout trusted base evaluator
+        if: steps.scope.outputs.relevant == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
           path: trusted
-      - name: Checkout candidate as inert Git objects
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-          path: candidate
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Set up trusted Node runtime
+        if: steps.scope.outputs.relevant == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: |
-            trusted/package-lock.json
-            trusted/services/worker/package-lock.json
       - name: Install trusted evaluator dependencies only
+        if: steps.scope.outputs.relevant == 'true'
         working-directory: trusted
         run: |
           npm ci --ignore-scripts
           npm --prefix services/worker ci --ignore-scripts
-      - name: Preflight candidate without executing candidate code
+      - name: Fetch candidate into an inert bare object store
+        if: steps.scope.outputs.relevant == 'true'
+        env:
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          case "$HEAD_REPOSITORY" in
+            *[!A-Za-z0-9_.\/-]*|/*|*/|*//* ) exit 1 ;;
+          esac
+          case "$HEAD_SHA" in
+            *[!0-9a-f]*) exit 1 ;;
+          esac
+          test "${#HEAD_SHA}" -eq 40
+          git init --bare "$RUNNER_TEMP/candidate.git"
+          git -c protocol.version=2 -C "$RUNNER_TEMP/candidate.git" fetch \
+            --no-tags "https://github.com/${HEAD_REPOSITORY}.git" "$HEAD_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate.git" rev-parse "${HEAD_SHA}^{commit}")" = "$HEAD_SHA"
+      - name: Preflight candidate using trusted code only
+        if: steps.scope.outputs.relevant == 'true'
         working-directory: trusted
         run: >-
           npx tsx scripts/ci/s33-wave2-batch-acceptance.ts preflight
           --trusted-main-root "$GITHUB_WORKSPACE/trusted"
           --trusted-main-head "${{ github.event.pull_request.base.sha }}"
-          --candidate-repository "$GITHUB_WORKSPACE/candidate"
+          --candidate-repository "$RUNNER_TEMP/candidate.git"
           --candidate-head "${{ github.event.pull_request.head.sha }}"
           --output "$RUNNER_TEMP/s33-wave2-preflight.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Preserve exact-head preflight
+        if: steps.scope.outputs.relevant == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: s33-wave2-preflight-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
           path: ${{ runner.temp }}/s33-wave2-preflight.json
           if-no-files-found: error
           retention-days: 90
 
-  classify-review:
-    if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
+  exact-head-acceptance:
+    name: S3.3 Wave 2 Exact-Head Acceptance
+    if: >-
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       contains(github.event.comment.body, '<!-- arkova-s33-wave2-authenticated-acceptance:v1 -->')) ||
+      (github.event_name == 'pull_request_review' &&
+       contains(github.event.review.body, '<!-- arkova-s33-wave2-authenticated-acceptance:v1 -->'))
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+      statuses: write
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      relevant: ${{ steps.paths.outputs.relevant }}
+    timeout-minutes: 25
     steps:
-      - id: paths
-        name: Admit only Wave 2 corpus PR reviews
+      - id: pr
+        name: Resolve the live pull request tuple
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER=$(jq -r '.issue.number // .pull_request.number // empty' "$GITHUB_EVENT_PATH")
+          case "$PR_NUMBER" in ''|*[!0-9]*) exit 1 ;; esac
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > "$RUNNER_TEMP/pr.json"
+          BASE_SHA=$(jq -r '.base.sha' "$RUNNER_TEMP/pr.json")
+          HEAD_SHA=$(jq -r '.head.sha' "$RUNNER_TEMP/pr.json")
+          HEAD_REPOSITORY=$(jq -r '.head.repo.full_name' "$RUNNER_TEMP/pr.json")
+          STATE=$(jq -r '.state' "$RUNNER_TEMP/pr.json")
+          case "$BASE_SHA:$HEAD_SHA" in *[!0-9a-f:]*) exit 1 ;; esac
+          test "${#BASE_SHA}" -eq 40
+          test "${#HEAD_SHA}" -eq 40
+          test "$STATE" = open
+          case "$HEAD_REPOSITORY" in *[!A-Za-z0-9_.\/-]*|/*|*/|*//* ) exit 1 ;; esac
+          if ! gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --jq '.[].filename' \
+            | grep -Eq '^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)'; then
+            exit 1
+          fi
+          echo "number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "base_sha=${BASE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "head_repository=${HEAD_REPOSITORY}" >> "$GITHUB_OUTPUT"
+      - name: Checkout trusted base evaluator
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: trusted
+      - name: Set up trusted Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+      - name: Install trusted evaluator dependencies before candidate fetch
+        working-directory: trusted
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix services/worker ci --ignore-scripts
+      - name: Extract one signed envelope from the triggering body
+        working-directory: trusted
+        run: |
+          jq -r '.comment.body // .review.body // empty' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/acceptance-body.md"
+          npx tsx scripts/ci/s33-wave2-github-transport.ts extract \
+            --body "$RUNNER_TEMP/acceptance-body.md" \
+            --output "$RUNNER_TEMP/s33-wave2-acceptance-envelope.json"
+      - name: Fetch and verify the signature-bound GitHub transport
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        working-directory: trusted
+        run: |
+          TRANSPORT=$(jq -r '.payload.reviewer.transport' "$RUNNER_TEMP/s33-wave2-acceptance-envelope.json")
+          TRANSPORT_ID=$(jq -r '.payload.reviewer.evidence.id' "$RUNNER_TEMP/s33-wave2-acceptance-envelope.json")
+          case "$TRANSPORT_ID" in ''|*[!0-9]*) exit 1 ;; esac
+          case "$TRANSPORT" in
+            github-issue-comment)
+              gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${TRANSPORT_ID}" > "$RUNNER_TEMP/live-transport.json"
+              ;;
+            github-formal-review)
+              gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews/${TRANSPORT_ID}" > "$RUNNER_TEMP/live-transport.json"
+              ;;
+            *) exit 1 ;;
+          esac
+          npx tsx scripts/ci/s33-wave2-github-transport.ts verify \
+            --acceptance "$RUNNER_TEMP/s33-wave2-acceptance-envelope.json" \
+            --github-evidence "$RUNNER_TEMP/live-transport.json" \
+            --pull-request-number "$PR_NUMBER" \
+            --output "$RUNNER_TEMP/s33-wave2-live-transport-proof.json"
+      - name: Fetch candidate into an inert bare object store
+        env:
+          HEAD_REPOSITORY: ${{ steps.pr.outputs.head_repository }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          git init --bare "$RUNNER_TEMP/candidate.git"
+          git -c protocol.version=2 -C "$RUNNER_TEMP/candidate.git" fetch \
+            --no-tags "https://github.com/${HEAD_REPOSITORY}.git" "$HEAD_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate.git" rev-parse "${HEAD_SHA}^{commit}")" = "$HEAD_SHA"
+      - name: Verify authenticated whole-batch acceptance at the exact head
+        working-directory: trusted
+        run: >-
+          npx tsx scripts/ci/s33-wave2-batch-acceptance.ts accept
+          --trusted-main-root "$GITHUB_WORKSPACE/trusted"
+          --trusted-main-head "${{ steps.pr.outputs.base_sha }}"
+          --candidate-repository "$RUNNER_TEMP/candidate.git"
+          --candidate-head "${{ steps.pr.outputs.head_sha }}"
+          --pull-request-number "${{ steps.pr.outputs.number }}"
+          --acceptance-envelope "$RUNNER_TEMP/s33-wave2-acceptance-envelope.json"
+          --output "$RUNNER_TEMP/s33-wave2-authenticated-acceptance.json"
+      - name: Preserve authenticated acceptance before publishing status
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s33-wave2-acceptance-pr-${{ steps.pr.outputs.number }}-${{ steps.pr.outputs.head_sha }}
+          path: |
+            ${{ runner.temp }}/s33-wave2-authenticated-acceptance.json
+            ${{ runner.temp }}/s33-wave2-live-transport-proof.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish the exact-head required merge status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state=success \
+            -f context='S3.3 Wave 2 Exact-Head Acceptance' \
+            -f description='CTO Ed25519 whole-batch acceptance verified at this exact head' \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+  consume-trusted-main:
+    name: S3.3 Wave 2 Trusted-Main Consumption
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+      statuses: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - id: scope
+        name: Admit only a merged Wave 2 corpus packet
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           relevant=false
-          while IFS= read -r path; do
-            case "$path" in
-              docs/lane4/s33-wave2-batches/*|services/worker/src/ai/eval/golden-dataset-s33-wave2-*-heldout.ts|services/worker/src/ai/eval/golden-dataset-s33-wave2-*-heldout.test.ts)
-                relevant=true
-                ;;
-            esac
-          done < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --jq '.[].filename')
-          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
-
-  exact-head-acceptance:
-    needs: classify-review
-    if: needs.classify-review.outputs.relevant == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout trusted base evaluator
+          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --jq '.[].filename' \
+            | grep -Eq '^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)'; then
+            relevant=true
+          fi
+          echo "relevant=${relevant}" >> "$GITHUB_OUTPUT"
+      - name: Checkout the trusted candidate base
+        if: steps.scope.outputs.relevant == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
           path: trusted
-      - name: Checkout candidate as inert Git objects
+      - name: Checkout the exact merged-main commit
+        if: steps.scope.outputs.relevant == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
           persist-credentials: false
-          path: candidate
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+          path: merged
+      - name: Set up trusted Node runtime
+        if: steps.scope.outputs.relevant == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: |
-            trusted/package-lock.json
-            trusted/services/worker/package-lock.json
-      - name: Install trusted evaluator dependencies only
+      - name: Install trusted evaluator dependencies before candidate fetch
+        if: steps.scope.outputs.relevant == 'true'
         working-directory: trusted
         run: |
           npm ci --ignore-scripts
           npm --prefix services/worker ci --ignore-scripts
-      - name: Materialize authenticated exact-head review evidence
+      - id: prior
+        name: Locate the successful exact-head acceptance artifact
+        if: steps.scope.outputs.relevant == 'true'
         env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha }}
-          REVIEW_COMMIT: ${{ github.event.review.commit_id }}
-          AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
-          REVIEWER_LOGIN: ${{ github.event.review.user.login }}
-          REVIEW_URL: ${{ github.event.review.html_url }}
         run: |
-          jq -n \
-            --argjson pullRequestNumber "$PR_NUMBER" \
-            --arg candidateHeadSha "$CANDIDATE_HEAD" \
-            --arg reviewCommitSha "$REVIEW_COMMIT" \
-            --arg authorLogin "$AUTHOR_LOGIN" \
-            --arg reviewerLogin "$REVIEWER_LOGIN" \
-            --arg reviewUrl "$REVIEW_URL" \
-            '{schemaVersion:1,artifactType:"arkova-s33-wave2-exact-head-review",repositoryIdentity:"carson-see/ArkovaCarson",pullRequestNumber:$pullRequestNumber,candidateHeadSha:$candidateHeadSha,authorLogin:$authorLogin,authorLane:"Lane 4",reviewerLogin:$reviewerLogin,reviewerLane:"Lane 3",reviewState:"APPROVED",reviewCommitSha:$reviewCommitSha,reviewUrl:$reviewUrl,scope:"whole-batch"}' \
-            > "$RUNNER_TEMP/s33-wave2-review.json"
-      - name: Accept the whole batch without executing candidate code
+          TARGET_URL=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/status" \
+            --jq '[.statuses[] | select(.context == "S3.3 Wave 2 Exact-Head Acceptance" and .state == "success")][0].target_url // empty')
+          RUN_ID=${TARGET_URL##*/}
+          case "$RUN_ID" in ''|*[!0-9]*) exit 1 ;; esac
+          ARTIFACT_NAME="s33-wave2-acceptance-pr-${PR_NUMBER}-${HEAD_SHA}"
+          ARTIFACT_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
+            --jq ".artifacts[] | select(.name == \"${ARTIFACT_NAME}\" and .expired == false) | .id" | head -n 1)
+          case "$ARTIFACT_ID" in ''|*[!0-9]*) exit 1 ;; esac
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
+      - name: Download the immutable acceptance artifact
+        if: steps.scope.outputs.relevant == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.prior.outputs.artifact_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/prior-acceptance"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > "$RUNNER_TEMP/prior-acceptance.zip"
+          unzip -q "$RUNNER_TEMP/prior-acceptance.zip" -d "$RUNNER_TEMP/prior-acceptance"
+          test -f "$RUNNER_TEMP/prior-acceptance/s33-wave2-authenticated-acceptance.json"
+      - name: Re-verify the signature-bound live GitHub transport
+        if: steps.scope.outputs.relevant == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        working-directory: trusted
+        run: |
+          ACCEPTANCE="$RUNNER_TEMP/prior-acceptance/s33-wave2-authenticated-acceptance.json"
+          TRANSPORT=$(jq -r '.payload.reviewer.transport' "$ACCEPTANCE")
+          TRANSPORT_ID=$(jq -r '.payload.reviewer.evidence.id' "$ACCEPTANCE")
+          case "$TRANSPORT_ID" in ''|*[!0-9]*) exit 1 ;; esac
+          case "$TRANSPORT" in
+            github-issue-comment)
+              gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${TRANSPORT_ID}" > "$RUNNER_TEMP/live-transport.json"
+              ;;
+            github-formal-review)
+              gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews/${TRANSPORT_ID}" > "$RUNNER_TEMP/live-transport.json"
+              ;;
+            *) exit 1 ;;
+          esac
+          npx tsx scripts/ci/s33-wave2-github-transport.ts verify \
+            --acceptance "$ACCEPTANCE" \
+            --github-evidence "$RUNNER_TEMP/live-transport.json" \
+            --pull-request-number "$PR_NUMBER" \
+            --output "$RUNNER_TEMP/post-merge-live-transport-proof.json"
+      - name: Fetch candidate into an inert bare object store
+        if: steps.scope.outputs.relevant == 'true'
+        env:
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          case "$HEAD_REPOSITORY" in *[!A-Za-z0-9_.\/-]*|/*|*/|*//* ) exit 1 ;; esac
+          git init --bare "$RUNNER_TEMP/candidate.git"
+          git -c protocol.version=2 -C "$RUNNER_TEMP/candidate.git" fetch \
+            --no-tags "https://github.com/${HEAD_REPOSITORY}.git" "$HEAD_SHA"
+          test "$(git -C "$RUNNER_TEMP/candidate.git" rev-parse "${HEAD_SHA}^{commit}")" = "$HEAD_SHA"
+      - name: Re-verify acceptance and consume only the identical merged packet
+        if: steps.scope.outputs.relevant == 'true'
         working-directory: trusted
         run: >-
-          npx tsx scripts/ci/s33-wave2-batch-acceptance.ts accept
+          npx tsx scripts/ci/s33-wave2-batch-acceptance.ts consume-merged
           --trusted-main-root "$GITHUB_WORKSPACE/trusted"
           --trusted-main-head "${{ github.event.pull_request.base.sha }}"
-          --candidate-repository "$GITHUB_WORKSPACE/candidate"
+          --candidate-repository "$RUNNER_TEMP/candidate.git"
           --candidate-head "${{ github.event.pull_request.head.sha }}"
-          --review-evidence "$RUNNER_TEMP/s33-wave2-review.json"
-          --output "$RUNNER_TEMP/s33-wave2-acceptance.json"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          --pull-request-number "${{ github.event.pull_request.number }}"
+          --acceptance-envelope "$RUNNER_TEMP/prior-acceptance/s33-wave2-authenticated-acceptance.json"
+          --merged-main-root "$GITHUB_WORKSPACE/merged"
+          --merged-main-head "${{ github.event.pull_request.merge_commit_sha }}"
+          --output "$RUNNER_TEMP/s33-wave2-trusted-main-consumption.json"
+      - name: Preserve trusted-main consumption proof
+        if: steps.scope.outputs.relevant == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: s33-wave2-acceptance-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
-          path: ${{ runner.temp }}/s33-wave2-acceptance.json
+          name: s33-wave2-consumption-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.merge_commit_sha }}
+          path: |
+            ${{ runner.temp }}/s33-wave2-trusted-main-consumption.json
+            ${{ runner.temp }}/post-merge-live-transport-proof.json
           if-no-files-found: error
           retention-days: 90
+      - name: Publish trusted-main consumption status
+        if: steps.scope.outputs.relevant == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${MERGE_SHA}" \
+            -f state=success \
+            -f context='S3.3 Wave 2 Trusted-Main Consumption' \
+            -f description='Authenticated exact candidate packet consumed from merged main' \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"

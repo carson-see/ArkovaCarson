@@ -487,18 +487,24 @@ describe('check-staging-evidence', () => {
 
     it('classifies the exact Wave-2 trusted-main acceptance boundary as offline T0', () => {
       const candidate = [
+        '.mergify.yml',
         '.github/workflows/s33-wave2-batch-acceptance.yml',
         'scripts/ci/agents.md',
         'scripts/ci/check-staging-evidence.test.ts',
         'scripts/ci/check-staging-evidence.ts',
         'scripts/ci/s33-wave2-batch-acceptance.test.ts',
         'scripts/ci/s33-wave2-batch-acceptance.ts',
+        'scripts/ci/s33-wave2-github-transport.test.ts',
+        'scripts/ci/s33-wave2-github-transport.ts',
+        'scripts/ci/s33-wave2-workflow-contract.test.ts',
         'services/worker/src/ai/eval/agents.md',
         'services/worker/src/ai/eval/heldout-leakage.ts',
         'services/worker/src/ai/eval/s33-batch-acceptance.ts',
         'services/worker/src/ai/eval/s33-wave1-producer-parser.ts',
         'services/worker/src/ai/eval/s33-wave2-batch-acceptance.test.ts',
         'services/worker/src/ai/eval/s33-wave2-batch-acceptance.ts',
+        'services/worker/src/ai/eval/s33-wave2-acceptance-envelope.test.ts',
+        'services/worker/src/ai/eval/s33-wave2-acceptance-envelope.ts',
         'services/worker/src/ai/eval/s33-wave2-corpus-registry.test.ts',
         'services/worker/src/ai/eval/s33-wave2-corpus-registry.ts',
       ];
