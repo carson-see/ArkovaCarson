@@ -54,13 +54,18 @@ function occurrenceCount(raw: string, exact: string): number {
 type JsonRecord = Record<string, unknown>;
 
 const TEAM2_RIG_B1_SCHEDULER_SPECS = [
-  ['batch-anchors', '/jobs/batch-anchors'],
-  ['check-confirmations', '/jobs/check-confirmations'],
-  ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs'],
-  ['org-queue-scheduler', '/jobs/org-queue-scheduler'],
-  ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true'],
-  ['recover-broadcasts', '/jobs/recover-broadcasts'],
+  ['batch-anchors', '/jobs/batch-anchors', '*/30 * * * *', 'Etc/UTC', '120s'],
+  ['check-confirmations', '/jobs/check-confirmations', '*/30 * * * *', 'Etc/UTC', '300s'],
+  ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs', '*/15 * * * *', 'Etc/UTC', '300s'],
+  ['org-queue-scheduler', '/jobs/org-queue-scheduler', '0 * * * *', 'Etc/UTC', '600s'],
+  ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true', '0 3 * * *', 'America/New_York', '600s'],
+  ['recover-broadcasts', '/jobs/recover-broadcasts', '*/15 * * * *', 'Etc/UTC', '120s'],
 ] as const;
+const TEAM2_RIG_B1_RETRY = {
+  min_backoff: '5s',
+  max_backoff: '3600s',
+  max_doublings: 5,
+} as const;
 
 const TEAM2_RIG_B1_CRITICAL_CONFIG = {
   node_env: 'production',
@@ -137,6 +142,35 @@ describe('admission v2 to run-declaration identity adapter', () => {
       deployed_image_digest: SOURCE_HEAD_IMAGE_DIGEST,
       supabase_org_id: APPROVED_SUPABASE_ORG_ID,
     });
+  });
+
+  it.each([
+    ['paused', 'PAUSED', 'paused_after_clean_mirror'],
+    ['explicit accelerated rig-only', 'FORCE_ACCELERATED_RIG_ONLY', 'accelerated_rig_only_enabled'],
+  ])('accepts the W3-C %s Scheduler activation/state pair', (_label, activationMode, state) => {
+    const raw = admissionWith((value) => {
+      const scheduler = value.scheduler as JsonRecord;
+      scheduler.activation_mode = activationMode;
+      scheduler.state = state;
+      if (activationMode === 'FORCE_ACCELERATED_RIG_ONLY') {
+        for (const job of scheduler.jobs as JsonRecord[]) job.schedule = '*/5 * * * *';
+      }
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).not.toThrow();
+  });
+
+  it.each([
+    ['PAUSED', 'accelerated_rig_only_enabled'],
+    ['FORCE_ACCELERATED_RIG_ONLY', 'paused_after_clean_mirror'],
+  ])('rejects a contradictory Scheduler activation/state pair %s -> %s', (activationMode, state) => {
+    const raw = admissionWith((value) => {
+      const scheduler = value.scheduler as JsonRecord;
+      scheduler.activation_mode = activationMode;
+      scheduler.state = state;
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).toThrow(
+      /activation|state|scheduler|schema|rejected/i,
+    );
   });
 
   it('requires the exact approved Team2 Supabase organization identity', () => {
@@ -282,8 +316,14 @@ describe('admission v2 to run-declaration identity adapter', () => {
     ['scheduler.jobs[].name', (value: JsonRecord) => {
       delete (((value.scheduler as JsonRecord).jobs as JsonRecord[])[0]!).name;
     }],
+    ['scheduler.jobs[].time_zone', (value: JsonRecord) => {
+      delete (((value.scheduler as JsonRecord).jobs as JsonRecord[])[0]!).time_zone;
+    }],
     ['scheduler.paused_through_clean_mirror', (value: JsonRecord) => {
       delete (value.scheduler as JsonRecord).paused_through_clean_mirror;
+    }],
+    ['scheduler.activation_mode', (value: JsonRecord) => {
+      delete (value.scheduler as JsonRecord).activation_mode;
     }],
     ['clean_mirror.attestation_id', (value: JsonRecord) => {
       delete (value.clean_mirror as JsonRecord).attestation_id;
@@ -383,6 +423,10 @@ describe('admission v2 to run-declaration identity adapter', () => {
       jobs.push({
         name: 'arkova-worker-s33-rig-b1-staging-arbitrary-extra',
         path: '/jobs/arbitrary-extra',
+        schedule: '*/15 * * * *',
+        time_zone: 'Etc/UTC',
+        attempt_deadline: '300s',
+        retry: TEAM2_RIG_B1_RETRY,
       });
     });
     expect(() => projectAdmissionV2ToRunDeclaration(extra, ceremonyRaw())).toThrow(/exact.*Scheduler|contract/i);
@@ -427,8 +471,19 @@ describe('admission v2 to run-declaration identity adapter', () => {
   it('fixture carries Team2 complete exact RIG-B1 scheduler and critical config contracts', () => {
     const admission = JSON.parse(ADMISSION_RAW) as JsonRecord;
     const service = admission.cloud_run_service as string;
+    expect(admission.scheduler).toMatchObject({
+      activation_mode: 'PAUSED',
+      state: 'paused_after_clean_mirror',
+    });
     expect((admission.scheduler as JsonRecord).jobs).toEqual(
-      TEAM2_RIG_B1_SCHEDULER_SPECS.map(([suffix, path]) => ({ name: `${service}-${suffix}`, path })),
+      TEAM2_RIG_B1_SCHEDULER_SPECS.map(([suffix, path, schedule, timeZone, attemptDeadline]) => ({
+        name: `${service}-${suffix}`,
+        path,
+        schedule,
+        time_zone: timeZone,
+        attempt_deadline: attemptDeadline,
+        retry: TEAM2_RIG_B1_RETRY,
+      })),
     );
     expect(admission.critical_config).toEqual(TEAM2_RIG_B1_CRITICAL_CONFIG);
   });
@@ -545,7 +600,7 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     const admissionRollback = markdownSection(STAGING_AGENTS_RAW, ADMISSION_ROLLBACK_HEADING);
 
     expect(sha256(step4)).toBe('f59687e0347c18d812aab0d5c34710b1b62579e4d4ad4f7f9168144ac37e7b73');
-    expect(sha256(admissionV2)).toBe('b043efd46cf96c08423dccfabfef564fca7b964ed8a8ade723f6454e6d1453de');
+    expect(sha256(admissionV2)).toBe('c776963e19cad6a958dfa48e38e9fb537480ddf0d30f419b11b7363fc43556f1');
     expect(sha256(admissionRollback)).toBe('7b833be979de8b493535800df5393e57ece6541523ed9e5eeaaeadd8766dc5c3');
     for (const [heading, section] of [
       [STEP4_HEADING, step4],
@@ -572,8 +627,8 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     const provenanceOccurrences = occurrenceCount(batchDrain, TEAM1_ADMISSION_PROVENANCE_RULE);
     const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
 
-    expect(sha256(prefix)).toBe('22ef741ccf44982cd7fc6ad981927e565dde31dbab8ae03e293472ac9125918e');
-    expect(sha256(f61BatchDrain)).toBe('1a5d7b03c06becb69a0427e0dbf63749f41bb64b86793f07ba88b3a261fac86f');
+    expect(sha256(prefix)).toBe('95c488f2003fb7b16cf2fd517924b39a4e6ae5f1cc5ad487ca2a72e547e31fd7');
+    expect(sha256(f61BatchDrain)).toBe('fad2fec21d636a5736b4844f9b1bf90cfd74e1a0138916dbb1b8215dbc27d14d');
     expect(provenanceOccurrences).toBe(1);
     expect(batchDrain).toContain('S3.3 R3 acceptance extensions are split deliberately');
     expect(batchDrain).toContain('Team 1 review hardening keeps every chronology field');

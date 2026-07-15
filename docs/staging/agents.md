@@ -10,7 +10,7 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - **`train-c-environment-request-*.md`** — approval-request notes for Train C environment isolation. These files do not create services, apply Scheduler jobs, change Supabase, deploy code, or start soak.
 - **`train-c-*-lane-packet-*.md`** — lane-specific start packets with exact candidate heads, expected tag URL, deploy/smoke commands, start gates, and live attempt log.
 - **`PATH_C_*.md`** — path-C cutover verification records.
-- **`429-limiter-map-s33.md`** (L2-S0, Sprint 3.3) — the five-bucket 429 attribution map: every 429 emitter in the worker with in-tree-verified `file:line`, the two dead-code claims (perOrgRateLimit unmounted; x402 payer limiter orphan), the upstream-Vertex-429-misclassified-as-`provider_error` bug, the header+log-join attribution spec, and the exit-criterion-3a bucket list (CTO memo R2). Its `Claims ledger` table is machine-read by `scripts/ci/check-429-limiter-map.test.ts`, which fails CI when the tree drifts from the map.
+- **`429-limiter-map-s33.md`** (L2-S0/L2-A, Sprint 3.3; Wave 3 refreshed) — the five-bucket 429 attribution map: every headline 429 emitter in the worker with in-tree-verified `file:line`, plus the mounted-but-excluded per-org and Nessie verified-payer limiters, safe upstream status/`Retry-After` preservation, pathname-only client evidence, and request-level coalescing by a worker-generated per-`withRetry` UUID. Retry attempts are unique, strictly increasing, and bounded per server request instance; sparse 429 attempt sets are valid because other statuses are absent, and client correlation reuse cannot collapse invocations. Monthly quota evidence requires keyed header `1000`. The map also defines the strict header+log/upstream-event attribution contract and unchanged exit-criterion-3a five-bucket list. Its `Claims ledger` table is machine-read by `scripts/ci/check-429-limiter-map.test.ts`, which fails CI when the tree drifts from the map.
 - **`soak-pr*.json`** — machine-readable soak evidence for specific PRs.
 - **`staging-only-rpcs.sql`** — staging-specific RPCs (not applied to prod).
 - **`staging_lease.sql`** — lease table DDL for the staging environment.
@@ -21,3 +21,11 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - T0 docs/tests/CI/tooling-only PRs need CI only; T1/T2/T3 prod-bound PRs must include a `## Staging Soak Evidence` block with the exact fields in `PR_TEMPLATE.md`.
 - Soak JSON files are append-only evidence; do not modify after creation.
 - These are engineering artifacts, not documentation (Confluence is the doc source of truth).
+
+## 2026-07-15 S3.3 Wave 3 Lane 2
+
+- `429-limiter-map-s33.md` now records per-org and Nessie payer limiters as
+  mounted-but-excluded from the unchanged five headline soak buckets.
+- `s33-w3-l2-security-review.md` is changed-file/offline-test evidence only.
+  It records the non-atomic cross-instance capacity residual and must never be
+  represented as staging, soak, production, or release proof.

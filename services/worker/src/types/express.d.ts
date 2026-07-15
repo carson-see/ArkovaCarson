@@ -13,6 +13,7 @@
  *   - `userId`            — set by requireAuth (src/routes/middleware.ts)
  *   - `paymentResolution` — set by paymentTierRouter (src/middleware/paymentTierRouter.ts)
  *   - `rawBody`           — set by raw-body parser for webhook HMAC verification
+ *   - `x402PayerContext`  — trusted bypass or opaque verified-payer identity
  */
 
 import type { PaymentResolution } from '../middleware/paymentTierRouter.js';
@@ -28,6 +29,10 @@ declare global {
       rawBody?: Buffer | string;
       /** Request ID, set by request-id middleware (e.g. express-request-id). */
       id?: string;
+      /** Set only by x402PaymentGate; raw wallet addresses are never stored here. */
+      x402PayerContext?:
+        | { kind: 'bypass'; reason: 'api-key' | 'payments-disabled' }
+        | { kind: 'verified'; payerKey: string };
     }
   }
 }

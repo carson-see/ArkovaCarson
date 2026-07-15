@@ -28,3 +28,12 @@ Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test ba
 
 ## Open work
 - SCRUM-1736 (PR #734) — `scheduled.ts` test counts updated for the new entry (3/3 tests pass after counter bump from 13/8/5 to 14/9/5).
+
+## 2026-07-15 SCRUM-2703 persisted rule capacity
+
+- Real `POST /api/rules` verifies the Supabase JWT, resolves the authoritative
+  `profiles.org_id`, then applies `rules_total` capacity before the existing
+  create handler. Request-body org identifiers are never trusted.
+- Authentication/org lookup errors and promise rejections return 503; missing
+  identity returns 401/403. The handler independently re-resolves org scope.
+- No `/rules/draft` route is mounted and no second rule meter is allowed.
