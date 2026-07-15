@@ -341,6 +341,8 @@ const IMPORT_SPECIFIER_RE = /\b(?:from|import|require)\s*(?:\(\s*)?['"]([^'"\r\n
 const S33_OFFLINE_ACCEPTANCE_FILES = new Set([
   '.github/s33-wave1-acceptance-authorities.json',
   'scripts/ci/s33-wave1-github-evidence.ts',
+  'scripts/ci/s33-wave2-batch-acceptance.ts',
+  'scripts/ci/s33-wave2-github-transport.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
@@ -354,7 +356,15 @@ const S33_OFFLINE_ACCEPTANCE_FILES = new Set([
   'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
   'services/worker/src/ai/eval/s33-wave1-producer-parser.ts',
   'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
+  'services/worker/src/ai/eval/s33-wave2-batch-acceptance.ts',
+  'services/worker/src/ai/eval/s33-wave2-acceptance-envelope.ts',
+  'services/worker/src/ai/eval/s33-wave2-corpus-registry.ts',
 ]);
+const S33_WAVE2_OFFLINE_CORPUS_RE = /^services\/worker\/src\/ai\/eval\/golden-dataset-s33-wave2-[a-z0-9]+(?:-[a-z0-9]+)*-heldout\.ts$/u;
+
+function isS33OfflineAcceptancePath(file: string): boolean {
+  return S33_OFFLINE_ACCEPTANCE_FILES.has(file) || S33_WAVE2_OFFLINE_CORPUS_RE.test(file);
+}
 const S33_RUNTIME_ENTRYPOINTS = ['services/worker/src/index.ts'] as const;
 const MODULE_CANDIDATE_SUFFIXES = [
   '', '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs',
@@ -544,7 +554,7 @@ export function findS33RuntimeImporters(repositoryRoot = REPO): string[] {
       for (const specifier of parsed.localSpecifiers) {
         const importedPath = resolveRuntimeModule(repositoryRoot, importerPath, specifier);
         if (importedPath === null) continue;
-        if (S33_OFFLINE_ACCEPTANCE_FILES.has(importedPath)) importers.add(importerPath);
+        if (isS33OfflineAcceptancePath(importedPath)) importers.add(importerPath);
         else if (!TEST_FILE_RE.test(importedPath)) queued.push(importedPath);
       }
     }
@@ -556,7 +566,7 @@ export function findS33RuntimeImporters(repositoryRoot = REPO): string[] {
 }
 
 function isS33OfflineAcceptanceFile(file: string, opts?: TierClassifyOpts): boolean {
-  if (!S33_OFFLINE_ACCEPTANCE_FILES.has(file)) return false;
+  if (!isS33OfflineAcceptancePath(file)) return false;
   try {
     const importers = opts?.s33RuntimeImporterProvider?.() ?? findS33RuntimeImporters();
     return importers.length === 0;

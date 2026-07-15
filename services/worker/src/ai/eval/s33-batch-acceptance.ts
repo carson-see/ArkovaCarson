@@ -415,6 +415,7 @@ interface ParsedLexicalTextArtifact {
 }
 
 const REQUIRED_LEXICAL_N = [6, 7, 8, 9, 10, 11, 12, 13] as const;
+export const S33_EXACT_LEXICAL_N = REQUIRED_LEXICAL_N;
 // Deliberately immune to PATH substitution. Any host that enables the CTO
 // trust root must provide the audited Git binary at this exact location. Git
 // also receives only this fixed environment so repository/config/object-store
@@ -3651,6 +3652,37 @@ function computeLexicalLeakageMetrics(
       heldoutIndex.get(heldoutRecord.id)!.get(n)!,
       corpusIndex.get(corpusRecord.id)!.get(n)!,
     ))));
+}
+
+export interface S33ExactLexicalLeakageResult {
+  readonly algorithmVersion: 'token-set-ngram-v1';
+  readonly allowedN: readonly number[];
+  readonly comparisons: number;
+  readonly hits: readonly LexicalLeakageMetric[];
+}
+
+/**
+ * Fixed n=6..13 exact lexical overlap scan for Wave 2. This intentionally
+ * reuses the Wave-1 tokenizer and metric implementation without changing the
+ * signed Wave-1 policy or any Wave-1 caller.
+ */
+export function scanS33ExactLexicalLeakage(
+  heldout: readonly TextRecord[],
+  corpus: readonly TextRecord[],
+): S33ExactLexicalLeakageResult {
+  const normalization: LexicalNormalizationPolicy = {
+    unicodeForm: 'NFKC',
+    caseFold: 'lowercase',
+    nonAlphanumeric: 'space',
+    whitespace: 'collapse',
+  };
+  const metrics = computeLexicalLeakageMetrics(heldout, corpus, normalization);
+  return deepFreeze({
+    algorithmVersion: 'token-set-ngram-v1',
+    allowedN: [...REQUIRED_LEXICAL_N],
+    comparisons: metrics.length,
+    hits: metrics.filter(({ sharedNgrams }) => sharedNgrams > 0),
+  });
 }
 
 function applyLexicalPolicy(

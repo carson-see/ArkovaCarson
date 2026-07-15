@@ -9,6 +9,7 @@ interface ProducerArrayContext {
   declarations: ReadonlyMap<string, ProducerDeclaration>;
   evaluated: Map<string, Record<string, unknown>[]>;
   evaluating: Set<string>;
+  maxRows: number;
   sourcePath: string;
 }
 
@@ -146,8 +147,8 @@ function appendProducerRows(
   additions: readonly Record<string, unknown>[],
   label: string,
 ): void {
-  if (target.length + additions.length > MAX_WAVE1_PRODUCER_ROWS) {
-    throw new Error(`${context.sourcePath} ${label} exceeds the maximum 81-row Wave-1 corpus`);
+  if (target.length + additions.length > context.maxRows) {
+    throw new Error(`${context.sourcePath} ${label} exceeds the maximum ${context.maxRows}-row corpus`);
   }
   target.push(...additions);
 }
@@ -212,6 +213,27 @@ export function parseS33ProducerModule(
   sourcePath: string,
   exportName: string,
 ): Record<string, unknown>[] {
+  return parseS33ProducerModuleWithLimit(
+    sourceText,
+    sourcePath,
+    exportName,
+    MAX_WAVE1_PRODUCER_ROWS,
+  );
+}
+
+/**
+ * Parse a later S3.3 producer array with an explicit, caller-owned row ceiling.
+ * Wave 1 remains pinned to 81 rows through `parseS33ProducerModule` above.
+ */
+export function parseS33ProducerModuleWithLimit(
+  sourceText: string,
+  sourcePath: string,
+  exportName: string,
+  maxRows: number,
+): Record<string, unknown>[] {
+  if (!Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 10_000) {
+    throw new Error('S3.3 producer parser maxRows must be an integer in [1, 10000]');
+  }
   const source = ts.createSourceFile(sourcePath, sourceText, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
   assertS33SourceParseDiagnostics(source, sourcePath);
   const { declarations, exported } = collectProducerDeclarations(source, sourcePath);
@@ -222,6 +244,7 @@ export function parseS33ProducerModule(
     declarations,
     evaluated: new Map(),
     evaluating: new Set(),
+    maxRows,
     sourcePath,
   }, exportedDeclaration.initializer, exportName);
 }

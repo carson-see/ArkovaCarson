@@ -71,6 +71,26 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
 
 - Worker TypeScript CLIs launched from repository-root workflow steps with `npm --prefix services/worker exec -- tsx` must pass a repository-root-valid `services/worker/src/...` target. A bare `src/...` target resolves against the repository root and fails before the CLI loads. `scripts/ci/s33-wave1-github-evidence.test.ts` pins the exact four prerequisite and one acceptance targets so this cannot silently recur.
 
+## S3.3 Wave-2 trusted-main corpus acceptance (2026-07-15)
+
+- `s33-wave2-batch-acceptance.yml` runs inert candidate preflight on
+  `pull_request_target`, accepts a CTO Ed25519 envelope delivered by either an
+  issue comment or formal review, publishes an exact-head commit status only
+  after preserving the verified artifact, then re-verifies and consumes the
+  identical packet on the merged-main commit. GitHub state/login is transport
+  evidence, never acceptance authority. The workflow-level token has no
+  permissions; each job declares its own read scope, and status write exists
+  only on the two jobs that publish those exact success statuses.
+- The evaluator is materialized from an exact base commit proven to be an
+  ancestor of the live `main` tip, then its dependencies are installed in
+  `trusted/` before candidate data is fetched. Privileged jobs do not invoke
+  `actions/checkout`; candidate Git objects live only in an inert bare
+  repository under `RUNNER_TEMP`, with no candidate checkout, cache, import,
+  test, package install, or working directory.
+  Mergify routes every corpus-touching PR (including mixed-path PRs) to the
+  single-item `s33-wave2-corpus` queue and requires the authenticated exact-head
+  status; ordinary and hotfix queues explicitly exclude those paths.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
