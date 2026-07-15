@@ -104,6 +104,7 @@ const SELF_EXCLUSION_EXACT_PATHS = new Set([
   'src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
   'src/ai/eval/golden-dataset-s33-ood-negatives.ts',
+  'src/ai/eval/golden-dataset-s33-wave2-top15-01-05-heldout.ts',
   'src/ai/eval/heldout-leakage.ts',
 ]);
 
