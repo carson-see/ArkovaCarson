@@ -25,12 +25,16 @@ import {
   verifyS33TeardownZeroCost,
   type S33TeardownZeroCostInput,
 } from './s33-teardown-zero-cost';
+import {
+  TEST_TEARDOWN_TREE_SHA,
+  buildTestTeardownCapturedVerification,
+} from './s33-teardown-inventory.test-fixture';
 
 const ADMISSION_RAW = readFileSync(
   join(process.cwd(), 'scripts/staging/fixtures/rig-b1-admission-v2.json'),
   'utf8',
 );
-const TREE_SHA = 'f'.repeat(40);
+const TREE_SHA = TEST_TEARDOWN_TREE_SHA;
 const RUN_ID = 's33-w3-c-release-chain-fixture';
 const SHA = (character: string) => `sha256:${character.repeat(64)}`;
 
@@ -103,80 +107,39 @@ function fixture(options: {
       envelope: null,
     },
   };
+  const teardownVerification = buildTestTeardownCapturedVerification({
+    beforeCapturedAt: options.teardownBeforeAt,
+    afterCapturedAt: options.teardownAfterAt,
+  });
   const teardownInput: S33TeardownZeroCostInput = {
-    schemaVersion: 'arkova.s33.l1.teardown-zero-cost-input/v1',
-    evidenceMode: 'OFFLINE_FIXTURE',
-    runId: RUN_ID,
-    exactHeadSha: identity.gitHeadSha,
-    exactTreeSha: TREE_SHA,
-    producerBoundary: {
-      lane2TeardownSchemaVersion: null,
-      lane2TeardownIdentity: null,
-      status: 'BLOCKED_UNAVAILABLE',
+    metadata: {
+      schemaVersion: 'arkova.s33.l1.teardown-zero-cost-input/v2',
+      evidenceMode: 'CAPTURED_INVENTORY_SIGNATURE_BLOCKED',
+      runId: RUN_ID,
+      exactHeadSha: identity.gitHeadSha,
+      exactTreeSha: TREE_SHA,
+      signature: {
+        authority: 'LANE3_GENERIC_SIGNATURE_AUTHORITY',
+        status: 'BLOCKED_UNAVAILABLE',
+        envelope: null,
+      },
     },
-    before: {
-      capturedAt: options.teardownBeforeAt ?? '2026-07-16T13:00:00.000Z',
-      artifactSha256: SHA('6'),
-      resources: [
-        {
-          provider: 'GCP',
-          kind: 'cloud-run-service',
-          scopeId: identity.gcpProjectId,
-          resourceId: identity.workerService,
-          billingClass: 'RECURRING_PAID',
-        },
-        {
-          provider: 'SUPABASE',
-          kind: 'isolated-project',
-          scopeId: 'org-arkova',
-          resourceId: 'project-rig-b1',
-          billingClass: 'RECURRING_PAID',
-        },
-      ],
-    },
-    after: {
-      capturedAt: options.teardownAfterAt ?? '2026-07-16T13:10:00.000Z',
-      artifactSha256: SHA('7'),
-      resources: [
-        {
-          provider: 'GCP',
-          kind: 'cloud-run-service',
-          scopeId: identity.gcpProjectId,
-          resourceId: identity.workerService,
-          state: 'DELETED',
-          projectedMonthlyRecurringUsd: 0,
-          evidenceArtifactSha256: SHA('8'),
-        },
-        {
-          provider: 'SUPABASE',
-          kind: 'isolated-project',
-          scopeId: 'org-arkova',
-          resourceId: 'project-rig-b1',
-          state: 'DOWNGRADED_ZERO_RECURRING',
-          projectedMonthlyRecurringUsd: 0,
-          evidenceArtifactSha256: SHA('9'),
-        },
-      ],
-    },
-    signature: {
-      authority: 'LANE3_GENERIC_SIGNATURE_AUTHORITY',
-      status: 'BLOCKED_UNAVAILABLE',
-      envelope: null,
-    },
+    teardownVerification,
   };
+  const teardownResult = verifyS33TeardownZeroCost(teardownInput);
   const metadata: S33ReleaseEvidenceChainMetadata = {
-    schemaVersion: 'arkova.s33.l1.release-evidence-chain-input/v1',
-    evidenceMode: 'OFFLINE_COMPOSITION_PRODUCER_BLOCKED',
+    schemaVersion: 'arkova.s33.l1.release-evidence-chain-input/v2',
+    evidenceMode: 'OFFLINE_COMPOSITION_SIGNATURE_BLOCKED',
     runId: RUN_ID,
     composedAt: options.composedAt ?? '2026-07-16T13:15:00.000Z',
     exactHeadSha: identity.gitHeadSha,
     exactTreeSha: TREE_SHA,
     producerBoundary: {
-      lane2TeardownSchemaVersion: null,
-      lane2TeardownIdentity: null,
+      lane2TeardownSchemaVersion: 'arkova.s33.l2.teardown-captured-verification/v1',
+      lane2TeardownIdentity: teardownResult.producerIdentity,
       lane3SignatureSchemaVersion: null,
       lane3SignatureAuthority: 'LANE3_GENERIC_SIGNATURE_AUTHORITY',
-      status: 'BLOCKED_UNAVAILABLE',
+      status: 'LANE2_VERIFIED_SIGNATURE_BLOCKED',
     },
     signature: {
       authority: 'LANE3_GENERIC_SIGNATURE_AUTHORITY',
@@ -189,7 +152,7 @@ function fixture(options: {
     drainPlan,
     triggerCaptures,
     runwayResult: calculateS33TreasuryRunway(runwayInput),
-    teardownResult: verifyS33TeardownZeroCost(teardownInput),
+    teardownResult,
     metadata,
   };
 }
@@ -200,7 +163,7 @@ describe('S3.3 W3-C release evidence-chain consumer', () => {
     const result = composeS33ReleaseEvidenceChain(input);
 
     expect(result).toMatchObject({
-      status: 'OFFLINE_CHAIN_DRAFT_PRODUCER_BLOCKED',
+      status: 'OFFLINE_CHAIN_DRAFT_SIGNATURE_BLOCKED',
       releaseAcceptance: false,
       runId: RUN_ID,
       exactHeadSha: input.metadata.exactHeadSha,
@@ -219,14 +182,15 @@ describe('S3.3 W3-C release evidence-chain consumer', () => {
       releaseAcceptance: false,
     });
     expect(result.teardown).toMatchObject({
-      status: 'OFFLINE_DIFF_VERIFIED_PRODUCER_BLOCKED',
+      status: 'CAPTURED_INVENTORY_VERIFIED_SIGNATURE_BLOCKED',
+      producerIdentity: input.teardownResult.producerIdentity,
+      recurring_cost_zero: true,
       zeroRecurringProjected: true,
       projectedMonthlyRecurringUsd: 0,
       releaseAcceptance: false,
     });
     expect(result.signature.envelope).toBeNull();
     expect(result.producerDependencies).toEqual([
-      'LANE2_TEARDOWN_INVENTORY_IDENTITY_UNAVAILABLE',
       'LANE3_GENERIC_SIGNATURE_AUTHORITY_UNAVAILABLE',
     ]);
     expect(new Set(result.sourceArtifactDigests).size)

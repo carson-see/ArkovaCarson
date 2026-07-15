@@ -2,60 +2,26 @@ import { describe, expect, it } from 'vitest';
 
 import {
   S33_TEARDOWN_SCHEMA_VERSION,
+  captureS33TeardownInventory,
+  requireS33TeardownCapturedVerification,
+  verifyS33TeardownCapturedInventories,
   verifyS33TeardownDryRun,
 } from './s33-teardown-inventory';
+import {
+  TEST_TEARDOWN_DECLARATION,
+  TEST_TEARDOWN_HEAD_SHA,
+  TEST_ONLY_RIG_R_TARGET_ENDPOINT,
+  TEST_PRE_SOAK_TEARDOWN_DECLARATION,
+  TEST_PROTECTED_G1_V6_ENDPOINT,
+  TEST_TEARDOWN_TREE_SHA,
+  testTeardownAfterInventory,
+  testTeardownBeforeInventory,
+  testTeardownCaptureMetadata,
+} from './s33-teardown-inventory.test-fixture';
 
-const headSha = 'a'.repeat(40);
-const scope = {
-  gcpProjectId: 'arkova1',
-  gcpRegion: 'us-central1',
-  supabaseOrgId: 'byhkazrpmivhcsuqjtva',
-};
-
-const declaration = {
-  schemaVersion: 1,
-  kind: 's33-teardown-declaration',
-  closeoutId: 's33-rc-2026-07-15',
-  gitHeadSha: headSha,
-  scope,
-  rigs: [
-    {
-      rigId: 'RIG-G1',
-      supabaseProjectRef: 'abcdefghijklmnopqrst',
-      supabaseProjectName: 'arkova-soak-rig-g1',
-      cloudRunServiceNames: ['arkova-worker-rig-g1-staging'],
-      schedulerJobNames: ['arkova-worker-rig-g1-staging-classify-proof-backcatalog'],
-      perRigSecretNames: ['cron-rig-g1', 'supabase-service-role-key-rig-g1-staging'],
-    },
-    {
-      rigId: 'RIG-B1',
-      supabaseProjectRef: 'bcdefghijklmnopqrstu',
-      supabaseProjectName: 'arkova-soak-rig-b1',
-      cloudRunServiceNames: ['arkova-worker-rig-b1-staging'],
-      schedulerJobNames: [
-        'arkova-worker-rig-b1-staging-batch-anchors',
-        'arkova-worker-rig-b1-staging-check-confirmations',
-        'arkova-worker-rig-b1-staging-populate-confirmation-proofs',
-        'arkova-worker-rig-b1-staging-org-queue-scheduler',
-        'arkova-worker-rig-b1-staging-batch-anchors-forced-flush',
-        'arkova-worker-rig-b1-staging-recover-broadcasts',
-      ],
-      perRigSecretNames: ['cron-rig-b1', 'supabase-service-role-key-rig-b1-staging'],
-    },
-    {
-      rigId: 'RIG-R',
-      supabaseProjectRef: 'cdefghijklmnopqrstuv',
-      supabaseProjectName: 'arkova-soak-rig-r',
-      cloudRunServiceNames: ['arkova-worker-rig-r-staging'],
-      schedulerJobNames: ['arkova-worker-rig-r-staging-classify-proof-backcatalog'],
-      perRigSecretNames: ['cron-rig-r', 'supabase-service-role-key-rig-r-staging'],
-    },
-  ],
-  vertexEndpointResourceNames: [
-    'projects/arkova1/locations/us-central1/endpoints/6611494259700793344',
-  ],
-  protectedSharedSecretNames: ['api-key-hmac-secret-staging', 'stripe-secret-key-staging'],
-} as const;
+const headSha = TEST_TEARDOWN_HEAD_SHA;
+const scope = TEST_TEARDOWN_DECLARATION.scope;
+const declaration = TEST_TEARDOWN_DECLARATION;
 
 const targetSupabaseProjects = declaration.rigs.map((rig) => ({
   ref: rig.supabaseProjectRef,
@@ -102,10 +68,16 @@ const before = {
     ],
     vertexEndpoints: [
       {
-        resourceName: declaration.vertexEndpointResourceNames[0],
-        displayName: 'rig-r-v6',
+        resourceName: TEST_ONLY_RIG_R_TARGET_ENDPOINT,
+        displayName: 'test-only-rig-r-endpoint',
         location: scope.gcpRegion,
-        deployedModelIds: ['model-rig-r'],
+        deployedModelIds: ['test-only-rig-r-model'],
+      },
+      {
+        resourceName: TEST_PROTECTED_G1_V6_ENDPOINT,
+        displayName: 'g1-v6-existing',
+        location: scope.gcpRegion,
+        deployedModelIds: ['model-g1-v6'],
       },
       {
         resourceName: 'projects/arkova1/locations/us-central1/endpoints/1000000000000000001',
@@ -139,7 +111,7 @@ const after = {
         targetService: 'unrelated-service',
       },
     ],
-    vertexEndpoints: [before.resources.vertexEndpoints[1]],
+    vertexEndpoints: before.resources.vertexEndpoints.slice(1),
     secretNames: [...declaration.protectedSharedSecretNames, 'unrelated-secret'],
   },
 } as const;
@@ -165,7 +137,7 @@ describe('S3.3 teardown inventory dry-run verifier', () => {
       targetSupabaseProjects.map(({ ref, name }) => `${name} (${ref})`).sort(),
     );
     expect(result.namedDiffs.vertexEndpoints.removed).toEqual([
-      'rig-r-v6 (projects/arkova1/locations/us-central1/endpoints/6611494259700793344)',
+      `test-only-rig-r-endpoint (${TEST_ONLY_RIG_R_TARGET_ENDPOINT})`,
     ]);
     expect(result.namedDiffs.schedulerJobs.removed).toHaveLength(targetSchedulerJobs.length);
     expect(result.namedDiffs.secretNames.removed).toEqual([...targetSecretNames].sort());
@@ -298,5 +270,283 @@ describe('S3.3 teardown inventory dry-run verifier', () => {
       before,
       after,
     )).toThrow(/RIG-G1|RIG-B1|RIG-R|three|rig/i);
+  });
+});
+
+describe('S3.3 immutable teardown capture and recurring-cost verdict', () => {
+  function captures() {
+    return {
+      before: captureS33TeardownInventory(
+        TEST_TEARDOWN_DECLARATION,
+        testTeardownBeforeInventory(),
+        testTeardownCaptureMetadata('before'),
+      ),
+      after: captureS33TeardownInventory(
+        TEST_TEARDOWN_DECLARATION,
+        testTeardownAfterInventory(),
+        testTeardownCaptureMetadata('after'),
+      ),
+    };
+  }
+
+  it('accepts the exact G1/B1 pre-soak boundary while failing closed on unbound RIG-R', () => {
+    const fullInventory = testTeardownBeforeInventory();
+    const rigR = TEST_TEARDOWN_DECLARATION.rigs.find(({ rigId }) => rigId === 'RIG-R')!;
+    const g1 = TEST_PRE_SOAK_TEARDOWN_DECLARATION.rigs.find(({ rigId }) => rigId === 'RIG-G1')!;
+    const rigRServices = new Set<string>(rigR.cloudRunServiceNames);
+    const rigRSchedulers = new Set<string>(rigR.schedulerJobNames);
+    const rigRSecrets = new Set<string>(rigR.perRigSecretNames);
+    const partialInventory = {
+      ...fullInventory,
+      resources: {
+        ...fullInventory.resources,
+        supabaseProjects: fullInventory.resources.supabaseProjects.filter(
+          ({ ref }) => ref !== rigR.supabaseProjectRef,
+        ),
+        cloudRunServices: fullInventory.resources.cloudRunServices.filter(
+          ({ name }) => !rigRServices.has(name),
+        ),
+        schedulerJobs: fullInventory.resources.schedulerJobs.filter(
+          ({ name }) => !rigRSchedulers.has(name),
+        ),
+        vertexEndpoints: fullInventory.resources.vertexEndpoints.filter(
+          ({ resourceName }) => resourceName !== TEST_ONLY_RIG_R_TARGET_ENDPOINT,
+        ),
+        secretNames: fullInventory.resources.secretNames.filter(
+          (name) => !rigRSecrets.has(name),
+        ),
+      },
+    };
+    const capture = captureS33TeardownInventory(
+      TEST_PRE_SOAK_TEARDOWN_DECLARATION,
+      partialInventory,
+      testTeardownCaptureMetadata('before'),
+    );
+
+    expect(capture.resourceBoundary).toMatchObject({
+      boundaryStatus: 'PARTIAL_RIG_R_CTO_BINDING_REQUIRED',
+      releaseBoundaryComplete: false,
+      unboundRigIds: ['RIG-R'],
+    });
+    expect(capture.resourceBoundary.targetResources).toHaveLength(15);
+    expect(capture.resourceBoundary.targetResources.filter(
+      ({ rigId, kind }) => rigId === 'RIG-G1' && kind === 'cloud-run-service',
+    ).map(({ resourceId }) => resourceId).sort()).toEqual([
+      'arkova-worker-s33-g1-public-staging',
+      'arkova-worker-s33-g1-tuned-staging',
+    ]);
+    expect(capture.resourceBoundary.targetResources.filter(
+      ({ rigId, kind }) => rigId === 'RIG-G1' && kind === 'cloud-scheduler-job',
+    )).toEqual([]);
+    expect(capture.resourceBoundary.targetResources.filter(
+      ({ rigId }) => rigId === 'RIG-G1',
+    ).every(({ targetProvenance }) => (
+      targetProvenance.authority === 'CTO'
+      && targetProvenance.decisionArtifactSha256
+        === g1.targetBinding!.decisionArtifactSha256
+      && targetProvenance.provisionArtifactSha256
+        === g1.targetBinding!.provisionArtifactSha256
+    ))).toBe(true);
+    expect(capture.resourceBoundary.protectedResources).toContainEqual(
+      expect.objectContaining({
+        kind: 'vertex-endpoint',
+        resourceId: TEST_PROTECTED_G1_V6_ENDPOINT,
+        protectionClass: 'DECLARED_PRE_EXISTING_VERTEX_INPUT',
+      }),
+    );
+
+    const partialAfterCapture = captureS33TeardownInventory(
+      TEST_PRE_SOAK_TEARDOWN_DECLARATION,
+      testTeardownAfterInventory(),
+      testTeardownCaptureMetadata('after'),
+    );
+    const partialVerification = verifyS33TeardownCapturedInventories(
+      TEST_PRE_SOAK_TEARDOWN_DECLARATION,
+      capture,
+      partialAfterCapture,
+    );
+    expect(partialVerification).toMatchObject({
+      verified: true,
+      releaseBoundaryComplete: false,
+      boundaryStatus: 'PARTIAL_RIG_R_CTO_BINDING_REQUIRED',
+      unboundRigIds: ['RIG-R'],
+      recurringCostVerdict: 'blocked',
+      recurring_cost_zero: false,
+      projectedMonthlyRecurringUsd: null,
+    });
+
+    expect(() => captureS33TeardownInventory({
+      ...TEST_PRE_SOAK_TEARDOWN_DECLARATION,
+      vertexEndpointTargets: [{
+        resourceName: TEST_PROTECTED_G1_V6_ENDPOINT,
+        ownerRigId: 'RIG-G1',
+        provenance: {
+          authority: 'CTO',
+          origin: 'S33_ISOLATED_RIG_RESOURCE',
+          decisionArtifactSha256: g1.targetBinding!.decisionArtifactSha256,
+          provisionArtifactSha256: g1.targetBinding!.provisionArtifactSha256,
+        },
+      }],
+    }, partialInventory, testTeardownCaptureMetadata('before'))).toThrow(
+      /Vertex|protected|target|overlap|pre-existing/i,
+    );
+  });
+
+  it('binds immutable before/after artifacts to one explicit rig/resource boundary', () => {
+    const { before: beforeCapture, after: afterCapture } = captures();
+    const result = verifyS33TeardownCapturedInventories(
+      TEST_TEARDOWN_DECLARATION,
+      beforeCapture,
+      afterCapture,
+    );
+
+    expect(beforeCapture).toMatchObject({
+      schemaVersion: 'arkova.s33.l2.teardown-inventory-capture/v1',
+      kind: 's33-teardown-inventory-capture',
+      gitHeadSha: TEST_TEARDOWN_HEAD_SHA,
+      gitTreeSha: TEST_TEARDOWN_TREE_SHA,
+      phase: 'before',
+    });
+    expect(beforeCapture.resourceBoundary.targetResources).toHaveLength(21);
+    expect(beforeCapture.resourceBoundary.rigIds).toEqual(['RIG-B1', 'RIG-G1', 'RIG-R']);
+    expect(beforeCapture.resourceBoundary.protectedResources).toHaveLength(8);
+    expect(beforeCapture.resourceBoundary.releaseBoundaryComplete).toBe(true);
+    expect(beforeCapture.resourceBoundarySha256).toBe(afterCapture.resourceBoundarySha256);
+    expect(beforeCapture.inventoryArtifactSha256).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(beforeCapture.captureArtifactSha256).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(beforeCapture.captureArtifactSha256).not.toBe(afterCapture.captureArtifactSha256);
+    expect(Object.isFrozen(beforeCapture)).toBe(true);
+    expect(Object.isFrozen(beforeCapture.resourceBoundary.targetResources)).toBe(true);
+
+    expect(result).toMatchObject({
+      schemaVersion: 'arkova.s33.l2.teardown-captured-verification/v1',
+      kind: 's33-teardown-captured-verification',
+      mode: 'CAPTURED_IMMUTABLE_VERIFY_ONLY',
+      gitHeadSha: TEST_TEARDOWN_HEAD_SHA,
+      gitTreeSha: TEST_TEARDOWN_TREE_SHA,
+      verified: true,
+      protectedResourcesUntouched: true,
+      releaseAcceptance: false,
+      recurringCostVerdict: 'recurring_cost_zero',
+      recurring_cost_zero: true,
+      projectedMonthlyRecurringUsd: 0,
+      signatureVerification: 'UNVERIFIED_EXTERNAL_ARTIFACT',
+      mutationsAttempted: 0,
+      failures: [],
+    });
+    expect(result.targetOutcomes).toHaveLength(21);
+    expect(result.targetOutcomes.every(({ state }) => state === 'REMOVED')).toBe(true);
+    expect(result.verificationDigestSha256).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(requireS33TeardownCapturedVerification(result)).toBe(result);
+    expect(() => requireS33TeardownCapturedVerification(structuredClone(result)))
+      .toThrow(/provenance|captured|verification/i);
+  });
+
+  it('snapshots mutable inputs once and rejects mutable raw inventory as consumer evidence', () => {
+    const mutableBefore = structuredClone(testTeardownBeforeInventory()) as unknown as {
+      resources: { supabaseProjects: unknown[] };
+    };
+    const beforeCapture = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      mutableBefore,
+      testTeardownCaptureMetadata('before'),
+    );
+    mutableBefore.resources.supabaseProjects.length = 0;
+    expect(beforeCapture.inventory.resources.supabaseProjects).toHaveLength(4);
+
+    const afterCapture = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      testTeardownAfterInventory(),
+      testTeardownCaptureMetadata('after'),
+    );
+    expect(() => verifyS33TeardownCapturedInventories(
+      TEST_TEARDOWN_DECLARATION,
+      testTeardownBeforeInventory(),
+      afterCapture,
+    )).toThrow(/provenance|capture|immutable/i);
+  });
+
+  it('blocks recurring_cost_zero on any protected-resource drift', () => {
+    const beforeCapture = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      testTeardownBeforeInventory(),
+      testTeardownCaptureMetadata('before'),
+    );
+    const driftedAfter = structuredClone(testTeardownAfterInventory()) as unknown as {
+      resources: { cloudRunServices: unknown[] };
+    };
+    driftedAfter.resources.cloudRunServices = [];
+    const afterCapture = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      driftedAfter,
+      testTeardownCaptureMetadata('after'),
+    );
+    const result = verifyS33TeardownCapturedInventories(
+      TEST_TEARDOWN_DECLARATION,
+      beforeCapture,
+      afterCapture,
+    );
+
+    expect(result.verified).toBe(false);
+    expect(result.protectedResourcesUntouched).toBe(false);
+    expect(result.recurringCostVerdict).toBe('blocked');
+    expect(result.recurring_cost_zero).toBe(false);
+    expect(result.projectedMonthlyRecurringUsd).toBeNull();
+    expect(result.failures.join('\n')).toMatch(/protected|boundary|non-target|drift/i);
+  });
+
+  it('binds operator/signer metadata but never promotes unverified metadata to release authority', () => {
+    const beforeCapture = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      testTeardownBeforeInventory(),
+      testTeardownCaptureMetadata('before'),
+    );
+    const afterCapture = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      testTeardownAfterInventory(),
+      testTeardownCaptureMetadata('after'),
+    );
+    const result = verifyS33TeardownCapturedInventories(
+      TEST_TEARDOWN_DECLARATION,
+      beforeCapture,
+      afterCapture,
+    );
+
+    expect(result.operator).toEqual({
+      operatorId: 'rte-s33-closeout',
+      role: 'RTE',
+      organization: 'ARKOVA',
+    });
+    expect(result.signer).toMatchObject({
+      keyId: 'arkova-s33-cto-release-test-only',
+      algorithm: 'Ed25519',
+      publicKeyFingerprintSha256: `sha256:${'c'.repeat(64)}`,
+      verificationStatus: 'UNVERIFIED_EXTERNAL_ARTIFACT',
+    });
+    expect(result.signatureVerification).toBe('UNVERIFIED_EXTERNAL_ARTIFACT');
+    expect(result.releaseAcceptance).toBe(false);
+
+    expect(() => captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      testTeardownBeforeInventory(),
+      testTeardownCaptureMetadata('before', { privateKey: 'must-never-be-accepted' }),
+    )).toThrow(/schema|unrecognized|privateKey/i);
+
+    const mismatchedAfter = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      testTeardownAfterInventory(),
+      testTeardownCaptureMetadata('after', {
+        operator: {
+          operatorId: 'different-operator',
+          role: 'RTE',
+          organization: 'ARKOVA',
+        },
+      }),
+    );
+    expect(() => verifyS33TeardownCapturedInventories(
+      TEST_TEARDOWN_DECLARATION,
+      beforeCapture,
+      mismatchedAfter,
+    )).toThrow(/operator|identity|contradict/i);
   });
 });
