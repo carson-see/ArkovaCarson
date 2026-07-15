@@ -1,0 +1,146 @@
+{
+  "schemaVersion": "arkova.s33.v71.offline-gates/v1",
+  "artifactType": "arkova-s33-v71-offline-gate-registry",
+  "allMustPass": true,
+  "missingMetricDisposition": "FAIL",
+  "nonFiniteMetricDisposition": "FAIL",
+  "corpusDigestMismatchDisposition": "FAIL",
+  "evaluationCorpus": "frozen-lane3-accepted-heldout-corpus",
+  "pairedBootstrap": {
+    "replicates": 2000,
+    "seedPolicy": "sha256-frozen-corpus-and-arm-manifests",
+    "confidenceLevel": 0.95,
+    "domainsPooled": false
+  },
+  "gates": [
+    {
+      "id": "G01_CORPUS_INTEGRITY",
+      "assertions": {
+        "validationErrorCount": { "op": "eq", "value": 0 },
+        "heldoutLeakageNgram6To13Count": { "op": "eq", "value": 0 },
+        "trainingOrGeneratorDerivedRowCount": { "op": "eq", "value": 0 },
+        "productionCustomerDocumentCount": { "op": "eq", "value": 0 }
+      }
+    },
+    {
+      "id": "G02_SURGERY_CONFIG",
+      "assertions": {
+        "droppedTrainingIds": {
+          "op": "set_eq",
+          "value": [
+            "GD-3030", "GD-3031", "GD-3032", "GD-3033", "GD-3034",
+            "GD-3035", "GD-3036", "GD-3037", "GD-3038", "GD-3039",
+            "GD-3040", "GD-3041", "GD-3042", "GD-3043", "GD-3044"
+          ]
+        },
+        "goodStandingStatusTrainingType": { "op": "eq", "value": "string" },
+        "concreteSubtypeRate": { "op": "eq", "value": 1 },
+        "fraudStream": { "op": "eq", "value": "split" },
+        "exportLastCheckpointOnly": { "op": "eq", "value": true }
+      }
+    },
+    {
+      "id": "G03_JSON_PARSE",
+      "metric": "jsonParseRate",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "id": "G04_MACRO_F1",
+      "metric": "macroF1",
+      "op": "gte",
+      "value": 0.82
+    },
+    {
+      "id": "G05_WEIGHTED_F1",
+      "metric": "weightedF1",
+      "op": "gte",
+      "value": 0.85
+    },
+    {
+      "id": "G06_ALL_TYPE_FLOOR",
+      "metric": "minF1AcrossFrozen24TypeMap",
+      "op": "gte",
+      "value": 0.75
+    },
+    {
+      "id": "G07_CRITICAL_TYPE_FLOORS",
+      "metric": "perTypeF1",
+      "op": "map_gte",
+      "value": {
+        "RESUME": 0.75,
+        "FINANCIAL": 0.8,
+        "LEGAL": 0.8,
+        "MEDICAL": 0.8,
+        "CHARITY": 0.8,
+        "BUSINESS_ENTITY": 0.75
+      }
+    },
+    {
+      "id": "G08_TYPE_REGRESSION",
+      "metric": "minPerTypeDeltaVsV6",
+      "op": "gte",
+      "value": -0.05
+    },
+    {
+      "id": "G09_LEGAL_UPLIFT",
+      "scope": "LEGAL",
+      "assertions": {
+        "meanPairedDelta": { "op": "gte", "value": 0.05 },
+        "ci95Lower": { "op": "gt", "value": 0 },
+        "bootstrapReplicates": { "op": "gte", "value": 2000 }
+      }
+    },
+    {
+      "id": "G10_FINANCIAL_UPLIFT",
+      "scope": "FINANCIAL",
+      "assertions": {
+        "meanPairedDelta": { "op": "gte", "value": 0.05 },
+        "ci95Lower": { "op": "gt", "value": 0 },
+        "bootstrapReplicates": { "op": "gte", "value": 2000 }
+      }
+    },
+    {
+      "id": "G11_EDUCATION_UPLIFT",
+      "scope": "EDUCATION",
+      "assertions": {
+        "meanPairedDelta": { "op": "gte", "value": 0.05 },
+        "ci95Lower": { "op": "gt", "value": 0 },
+        "bootstrapReplicates": { "op": "gte", "value": 2000 }
+      }
+    },
+    {
+      "id": "G12_SUBTYPE_EMISSION",
+      "metric": "concreteSubtypeEmissionRate",
+      "op": "gte",
+      "value": 0.9
+    },
+    {
+      "id": "G13_DESCRIPTION_EMISSION",
+      "metric": "descriptionEmissionRate",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "id": "G14_EFFICIENCY",
+      "assertions": {
+        "meanLatencyDeltaVsV6Ms": { "op": "lte", "value": 0 },
+        "p50LatencyMs": { "op": "lte", "value": 3500 },
+        "p95LatencyMs": { "op": "lte", "value": 5500 },
+        "meanTokensDeltaVsV6": { "op": "lte", "value": 0 }
+      }
+    },
+    {
+      "id": "G15_CALIBRATION_GAP",
+      "metric": "calibratedMeanGap",
+      "op": "lte",
+      "value": 0.05
+    },
+    {
+      "id": "G16_CALIBRATION_ECE",
+      "metric": "calibratedECE",
+      "op": "lte",
+      "value": 0.1
+    }
+  ]
+}

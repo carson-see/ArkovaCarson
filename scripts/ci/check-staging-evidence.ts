@@ -343,6 +343,7 @@ const S33_OFFLINE_ACCEPTANCE_FILES = new Set([
   'scripts/ci/s33-wave1-github-evidence.ts',
   'scripts/ci/s33-wave2-batch-acceptance.ts',
   'scripts/ci/s33-wave2-github-transport.ts',
+  'scripts/ci/s33-wave3-detached-signing-v2.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts',
   'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts',
@@ -359,6 +360,8 @@ const S33_OFFLINE_ACCEPTANCE_FILES = new Set([
   'services/worker/src/ai/eval/s33-wave2-batch-acceptance.ts',
   'services/worker/src/ai/eval/s33-wave2-acceptance-envelope.ts',
   'services/worker/src/ai/eval/s33-wave2-corpus-registry.ts',
+  'services/worker/src/ai/eval/s33-wave3-deterministic-eval-gates.ts',
+  'services/worker/src/ai/eval/s33-wave3-detached-signing-v2.ts',
 ]);
 const S33_WAVE2_OFFLINE_CORPUS_RE = /^services\/worker\/src\/ai\/eval\/golden-dataset-s33-wave2-[a-z0-9]+(?:-[a-z0-9]+)*-heldout\.ts$/u;
 

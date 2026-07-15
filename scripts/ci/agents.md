@@ -46,6 +46,24 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - Fail messages must tell the operator (a) what failed, (b) why it matters, (c) how to fix or override.
 
 ## Recent Changes
+- 2026-07-15 S3.3 Wave-3 deterministic evaluator (SCRUM-2681/2686/2687):
+  `check-staging-evidence.ts` classifies only the exact inert
+  `services/worker/src/ai/eval/s33-wave3-deterministic-eval-gates.ts` path as
+  T0. The exception is conditional on a readable runtime graph with zero
+  production importers. Its adjacent test remains test-class T0; sibling names
+  remain T2, and any production-runtime reachability immediately restores T2.
+- 2026-07-15 S3.3 Wave-3 detached release signing (SCRUM-2777):
+  `s33-wave3-detached-signing-v2.ts` exposes `emit-request`,
+  `regenerate-request`, `assemble`, and `verify`. `regenerate-request` accepts a
+  reviewed versioned public trust-policy set only to replace a retired-key
+  unsigned request with the sole active post-cutover key; it does not accept a
+  signature or private material. Input is strict JSON, output uses the existing owner-only
+  `O_EXCL|O_NOFOLLOW` evidence writer, and no private-key or environment-root
+  flag exists. `assemble`/`verify` fail closed while the committed production
+  trust policy is `UNCONFIGURED`. The staging classifier grants T0 only to the
+  exact CLI/shared-module pair while the production runtime import graph is
+  readable and cannot reach them; sibling names and runtime reachability remain
+  T2.
 - 2026-07-15 S3.3 Wave-2 corpus acceptance (SCRUM-2777/2781/2782):
   `s33-wave2-batch-acceptance.ts` exposes offline `preflight`, authenticated
   `accept`, and exact-tree `consume-merged` commands. It uses trusted-main
