@@ -32,7 +32,7 @@ const ROTATION_MODE = 'reviewed-hard-cutover-no-overlap' as const;
 const REVOCATION_MODE = 'immediate-hold' as const;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SIGNATURE_BASE64URL = /^[A-Za-z0-9_-]{86}$/u;
-const KEY_ID = /^arkova-s33-cto-release-[0-9]{4}q[1-4]-[0-9]{2}$/u;
+const KEY_ID = /^arkova-s33-cto-release-\d{4}q[1-4]-\d{2}$/u;
 const PLACEHOLDER = /^(?:n\/?a|none|null|pending|tbd|todo|unknown|placeholder)$/iu;
 
 type JsonRecord = Record<string, unknown>;
@@ -283,17 +283,27 @@ function configuredPublicKey(
   return publicKey;
 }
 
-function parseTrustPolicy(value: unknown): {
-  policy: S33DetachedSigningTrustPolicyV2;
-  publicKey: KeyObject | null;
-} {
-  const policy = record(value, 'S3.3 detached signing trust policy');
-  exactKeys(policy, [
-    'schemaVersion', 'artifactType', 'signatureAlgorithm', 'signerIdentity', 'signingKeyId',
-    'state', 'activationMode', 'rotationMode', 'revocationMode', 'publicKeySpkiPem',
-    'publicKeyFingerprintSha256', 'authorizedOperator', 'fingerprintConfirmation',
-    'activatedAtUtc', 'retiredAtUtc', 'revokedAtUtc', 'revocationReason',
-  ], 'S3.3 detached signing trust policy');
+type S33TrustPolicyMaterialV2 = Pick<
+  S33DetachedSigningTrustPolicyV2,
+  | 'publicKeySpkiPem'
+  | 'publicKeyFingerprintSha256'
+  | 'authorizedOperator'
+  | 'fingerprintConfirmation'
+  | 'activatedAtUtc'
+  | 'retiredAtUtc'
+  | 'revokedAtUtc'
+  | 'revocationReason'
+>;
+
+interface S33ConfiguredTrustPolicyMaterialV2 extends S33TrustPolicyMaterialV2 {
+  publicKeySpkiPem: string;
+  publicKeyFingerprintSha256: string;
+  authorizedOperator: string;
+  fingerprintConfirmation: S33DetachedSigningFingerprintConfirmationV2;
+  activatedAtUtc: string;
+}
+
+function assertTrustPolicyIdentity(policy: JsonRecord): void {
   if (policy.schemaVersion !== SCHEMA_VERSION
     || policy.artifactType !== 'arkova-s33-detached-signing-trust-policy'
     || policy.signatureAlgorithm !== SIGNATURE_ALGORITHM
@@ -303,67 +313,51 @@ function parseTrustPolicy(value: unknown): {
     || policy.revocationMode !== REVOCATION_MODE) {
     throw new Error('S3.3 detached trust-policy identity/mode tuple is invalid');
   }
-  const signingKeyId = nonEmpty(policy.signingKeyId, 'S3.3 detached signing key id');
-  if (!KEY_ID.test(signingKeyId)) throw new Error('S3.3 detached signing key id is not versioned');
-  const state = policy.state;
-  if (!['UNCONFIGURED', 'ACTIVE', 'RETIRED', 'REVOKED'].includes(state as string)) {
-    throw new Error('S3.3 detached trust-policy state is invalid');
-  }
-  const publicKeySpkiPem = nullableString(policy.publicKeySpkiPem, 'S3.3 detached public SPKI');
-  const publicKeyFingerprintSha256 = nullableDigest(
-    policy.publicKeyFingerprintSha256,
-    'S3.3 detached public-key fingerprint',
-  );
-  const authorizedOperator = policy.authorizedOperator === null
-    ? null
-    : nonPlaceholder(policy.authorizedOperator, 'S3.3 detached authorized operator');
-  const fingerprintConfirmation = parseFingerprintConfirmation(policy.fingerprintConfirmation);
-  const activatedAtUtc = nullableIsoUtc(policy.activatedAtUtc, 'S3.3 detached activation time');
-  const retiredAtUtc = nullableIsoUtc(policy.retiredAtUtc, 'S3.3 detached retirement time');
-  const revokedAtUtc = nullableIsoUtc(policy.revokedAtUtc, 'S3.3 detached revocation time');
-  const revocationReason = policy.revocationReason === null
-    ? null
-    : nonPlaceholder(policy.revocationReason, 'S3.3 detached revocation reason');
+}
 
-  if (state === 'UNCONFIGURED') {
-    if ([publicKeySpkiPem, publicKeyFingerprintSha256, authorizedOperator, fingerprintConfirmation,
-      activatedAtUtc,
-      retiredAtUtc, revokedAtUtc, revocationReason].some((field) => field !== null)) {
-      throw new Error('S3.3 UNCONFIGURED trust policy must keep all public/operator/time fields null');
-    }
-    return {
-      policy: deepFreeze({
-        schemaVersion: SCHEMA_VERSION,
-        artifactType: 'arkova-s33-detached-signing-trust-policy',
-        signatureAlgorithm: SIGNATURE_ALGORITHM,
-        signerIdentity: SIGNER_IDENTITY,
-        signingKeyId,
-        state,
-        activationMode: ACTIVATION_MODE,
-        rotationMode: ROTATION_MODE,
-        revocationMode: REVOCATION_MODE,
-        publicKeySpkiPem,
-        publicKeyFingerprintSha256,
-        authorizedOperator,
-        fingerprintConfirmation,
-        activatedAtUtc,
-        retiredAtUtc,
-        revokedAtUtc,
-        revocationReason,
-      }),
-      publicKey: null,
-    };
+function trustPolicyState(value: unknown): S33DetachedSigningTrustStateV2 {
+  switch (value) {
+    case 'UNCONFIGURED':
+    case 'ACTIVE':
+    case 'RETIRED':
+    case 'REVOKED':
+      return value;
+    default:
+      throw new Error('S3.3 detached trust-policy state is invalid');
   }
+}
 
-  if (publicKeySpkiPem === null || publicKeyFingerprintSha256 === null
-    || authorizedOperator === null || fingerprintConfirmation === null || activatedAtUtc === null) {
-    throw new Error(
-      `S3.3 ${state as string} trust policy requires SPKI, fingerprint, operator, confirmation, and activation`,
-    );
+function parseTrustPolicyMaterial(policy: JsonRecord): S33TrustPolicyMaterialV2 {
+  return {
+    publicKeySpkiPem: nullableString(policy.publicKeySpkiPem, 'S3.3 detached public SPKI'),
+    publicKeyFingerprintSha256: nullableDigest(
+      policy.publicKeyFingerprintSha256,
+      'S3.3 detached public-key fingerprint',
+    ),
+    authorizedOperator: policy.authorizedOperator === null
+      ? null
+      : nonPlaceholder(policy.authorizedOperator, 'S3.3 detached authorized operator'),
+    fingerprintConfirmation: parseFingerprintConfirmation(policy.fingerprintConfirmation),
+    activatedAtUtc: nullableIsoUtc(policy.activatedAtUtc, 'S3.3 detached activation time'),
+    retiredAtUtc: nullableIsoUtc(policy.retiredAtUtc, 'S3.3 detached retirement time'),
+    revokedAtUtc: nullableIsoUtc(policy.revokedAtUtc, 'S3.3 detached revocation time'),
+    revocationReason: policy.revocationReason === null
+      ? null
+      : nonPlaceholder(policy.revocationReason, 'S3.3 detached revocation reason'),
+  };
+}
+
+function assertUnconfiguredMaterial(material: S33TrustPolicyMaterialV2): void {
+  if (Object.values(material).some((field) => field !== null)) {
+    throw new Error('S3.3 UNCONFIGURED trust policy must keep all public/operator/time fields null');
   }
-  if (Date.parse(fingerprintConfirmation.confirmedAtUtc) > Date.parse(activatedAtUtc)) {
-    throw new Error('S3.3 detached fingerprint must be confirmed before policy activation');
-  }
+}
+
+function assertConfiguredStateTimeline(
+  state: Exclude<S33DetachedSigningTrustStateV2, 'UNCONFIGURED'>,
+  material: S33ConfiguredTrustPolicyMaterialV2,
+): void {
+  const { activatedAtUtc, retiredAtUtc, revokedAtUtc, revocationReason } = material;
   if (state === 'ACTIVE' && (retiredAtUtc !== null || revokedAtUtc !== null || revocationReason !== null)) {
     throw new Error('S3.3 ACTIVE trust policy cannot carry retirement or revocation fields');
   }
@@ -385,28 +379,89 @@ function parseTrustPolicy(value: unknown): {
       }
     }
   }
-  const normalized: S33DetachedSigningTrustPolicyV2 = {
-    schemaVersion: SCHEMA_VERSION,
-    artifactType: 'arkova-s33-detached-signing-trust-policy',
-    signatureAlgorithm: SIGNATURE_ALGORITHM,
-    signerIdentity: SIGNER_IDENTITY,
-    signingKeyId,
-    state: state as S33DetachedSigningTrustStateV2,
-    activationMode: ACTIVATION_MODE,
-    rotationMode: ROTATION_MODE,
-    revocationMode: REVOCATION_MODE,
+}
+
+function configuredTrustPolicyMaterial(
+  state: Exclude<S33DetachedSigningTrustStateV2, 'UNCONFIGURED'>,
+  material: S33TrustPolicyMaterialV2,
+): S33ConfiguredTrustPolicyMaterialV2 {
+  const {
     publicKeySpkiPem,
     publicKeyFingerprintSha256,
     authorizedOperator,
     fingerprintConfirmation,
     activatedAtUtc,
-    retiredAtUtc,
-    revokedAtUtc,
-    revocationReason,
+  } = material;
+  if (publicKeySpkiPem === null || publicKeyFingerprintSha256 === null
+    || authorizedOperator === null || fingerprintConfirmation === null || activatedAtUtc === null) {
+    throw new Error(
+      `S3.3 ${state} trust policy requires SPKI, fingerprint, operator, confirmation, and activation`,
+    );
+  }
+  if (Date.parse(fingerprintConfirmation.confirmedAtUtc) > Date.parse(activatedAtUtc)) {
+    throw new Error('S3.3 detached fingerprint must be confirmed before policy activation');
+  }
+  const configured = {
+    ...material,
+    publicKeySpkiPem,
+    publicKeyFingerprintSha256,
+    authorizedOperator,
+    fingerprintConfirmation,
+    activatedAtUtc,
   };
+  assertConfiguredStateTimeline(state, configured);
+  return configured;
+}
+
+function normalizedTrustPolicy(
+  signingKeyId: string,
+  state: S33DetachedSigningTrustStateV2,
+  material: S33TrustPolicyMaterialV2,
+): S33DetachedSigningTrustPolicyV2 {
   return {
-    policy: deepFreeze(normalized),
-    publicKey: configuredPublicKey(publicKeySpkiPem, publicKeyFingerprintSha256),
+    schemaVersion: SCHEMA_VERSION,
+    artifactType: 'arkova-s33-detached-signing-trust-policy',
+    signatureAlgorithm: SIGNATURE_ALGORITHM,
+    signerIdentity: SIGNER_IDENTITY,
+    signingKeyId,
+    state,
+    activationMode: ACTIVATION_MODE,
+    rotationMode: ROTATION_MODE,
+    revocationMode: REVOCATION_MODE,
+    ...material,
+  };
+}
+
+function parseTrustPolicy(value: unknown): {
+  policy: S33DetachedSigningTrustPolicyV2;
+  publicKey: KeyObject | null;
+} {
+  const policy = record(value, 'S3.3 detached signing trust policy');
+  exactKeys(policy, [
+    'schemaVersion', 'artifactType', 'signatureAlgorithm', 'signerIdentity', 'signingKeyId',
+    'state', 'activationMode', 'rotationMode', 'revocationMode', 'publicKeySpkiPem',
+    'publicKeyFingerprintSha256', 'authorizedOperator', 'fingerprintConfirmation',
+    'activatedAtUtc', 'retiredAtUtc', 'revokedAtUtc', 'revocationReason',
+  ], 'S3.3 detached signing trust policy');
+  assertTrustPolicyIdentity(policy);
+  const signingKeyId = nonEmpty(policy.signingKeyId, 'S3.3 detached signing key id');
+  if (!KEY_ID.test(signingKeyId)) throw new Error('S3.3 detached signing key id is not versioned');
+  const state = trustPolicyState(policy.state);
+  const material = parseTrustPolicyMaterial(policy);
+  if (state === 'UNCONFIGURED') {
+    assertUnconfiguredMaterial(material);
+    return {
+      policy: deepFreeze(normalizedTrustPolicy(signingKeyId, state, material)),
+      publicKey: null,
+    };
+  }
+  const configured = configuredTrustPolicyMaterial(state, material);
+  return {
+    policy: deepFreeze(normalizedTrustPolicy(signingKeyId, state, configured)),
+    publicKey: configuredPublicKey(
+      configured.publicKeySpkiPem,
+      configured.publicKeyFingerprintSha256,
+    ),
   };
 }
 
