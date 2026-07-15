@@ -39,6 +39,7 @@ const ANON_LOG = {
 
 const UPSTREAM_429 = {
   correlationId: 'req-upstream-001',
+  requestInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   attempt: 1,
   observedAt: '2026-07-15T14:00:01.000Z',
   source: 'worker-structured-log',
@@ -127,6 +128,7 @@ describe('S3.3 five-bucket 429 attribution evidence', () => {
     expect(evidence.buckets['usageTracking-monthly'].events[0].source).toBe('quota-response');
     expect(evidence.buckets['upstream-model'].events[0]).toMatchObject({
       source: 'worker-structured-log',
+      requestInstanceId: UPSTREAM_429.requestInstanceId,
       apiSurface: 'Vertex-regional',
       model: TUNED_RUN.model,
       region: 'us-central1',
@@ -233,7 +235,7 @@ describe('S3.3 five-bucket 429 attribution evidence', () => {
     })).toThrow(/unmatched|unconsumed/i);
   });
 
-  it('coalesces exhausted upstream retries by inbound correlation ID while preserving each attempt', () => {
+  it('coalesces exhausted upstream retries by server request instance while preserving each attempt', () => {
     const attempts = [
       { ...UPSTREAM_429, attempt: 1, observedAt: '2026-07-15T14:00:01.000Z', retryAfterSec: 20 },
       { ...UPSTREAM_429, attempt: 2, observedAt: '2026-07-15T14:00:02.000Z', retryAfterSec: 10 },
@@ -250,6 +252,7 @@ describe('S3.3 five-bucket 429 attribution evidence', () => {
     expect(evidence.buckets['upstream-model'].count).toBe(1);
     expect(evidence.buckets['upstream-model'].events[0]).toMatchObject({
       correlationId: UPSTREAM_429.correlationId,
+      requestInstanceId: UPSTREAM_429.requestInstanceId,
       observedAt: attempts[0].observedAt,
       retryAfterSec: attempts[2].retryAfterSec,
       attemptCount: 3,
@@ -287,15 +290,57 @@ describe('S3.3 five-bucket 429 attribution evidence', () => {
     })).toThrow(/attempt|duplicate|correlation|request/i);
   });
 
-  it('fails closed when explicit retry attempts do not start at one or are not contiguous', () => {
-    expect(() => buildS33429AttributionEvidence({
+  it('counts distinct server request instances when one client correlation ID is reused and non-429 attempts are absent', () => {
+    const firstRequestInstanceId = '11111111-1111-4111-8111-111111111111';
+    const secondRequestInstanceId = '22222222-2222-4222-8222-222222222222';
+
+    const evidence = buildS33429AttributionEvidence({
       ...completeInput(),
       client429s: [],
       limiterLogs: [],
-      upstream429s: [{ ...UPSTREAM_429, attempt: 2 }],
-    })).toThrow(/attempt|contiguous|expected/i);
+      upstream429s: [
+        {
+          ...UPSTREAM_429,
+          requestInstanceId: firstRequestInstanceId,
+          attempt: 1,
+          observedAt: '2026-07-15T01:00:00.000Z',
+        },
+        {
+          ...UPSTREAM_429,
+          requestInstanceId: secondRequestInstanceId,
+          attempt: 2,
+          observedAt: '2026-07-15T23:00:00.000Z',
+        },
+        {
+          ...UPSTREAM_429,
+          requestInstanceId: secondRequestInstanceId,
+          attempt: 3,
+          observedAt: '2026-07-15T23:00:01.000Z',
+        },
+      ],
+    });
 
-    expect(() => buildS33429AttributionEvidence({
+    expect(evidence.buckets['upstream-model'].count).toBe(2);
+    expect(evidence.buckets['upstream-model'].events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        correlationId: UPSTREAM_429.correlationId,
+        requestInstanceId: firstRequestInstanceId,
+        attemptCount: 1,
+      }),
+      expect.objectContaining({
+        correlationId: UPSTREAM_429.correlationId,
+        requestInstanceId: secondRequestInstanceId,
+        attemptCount: 2,
+        attempts: [
+          expect.objectContaining({ attempt: 2 }),
+          expect.objectContaining({ attempt: 3 }),
+        ],
+      }),
+    ]));
+  });
+
+  it('accepts sparse 429 attempt identities because non-429 attempts are intentionally absent', () => {
+    const evidence = buildS33429AttributionEvidence({
       ...completeInput(),
       client429s: [],
       limiterLogs: [],
@@ -303,7 +348,48 @@ describe('S3.3 five-bucket 429 attribution evidence', () => {
         { ...UPSTREAM_429, attempt: 1 },
         { ...UPSTREAM_429, attempt: 3, observedAt: '2026-07-15T14:00:03.000Z' },
       ],
-    })).toThrow(/attempt|contiguous|expected/i);
+    });
+
+    expect(evidence.buckets['upstream-model']).toMatchObject({
+      count: 1,
+      events: [{
+        requestInstanceId: UPSTREAM_429.requestInstanceId,
+        attemptCount: 2,
+        attempts: [
+          expect.objectContaining({ attempt: 1 }),
+          expect.objectContaining({ attempt: 3 }),
+        ],
+      }],
+    });
+  });
+
+  it('fails closed when observed 429 attempts for one server request instance are out of sequence', () => {
+    expect(() => buildS33429AttributionEvidence({
+      ...completeInput(),
+      client429s: [],
+      limiterLogs: [],
+      upstream429s: [
+        { ...UPSTREAM_429, attempt: 3 },
+        { ...UPSTREAM_429, attempt: 2, observedAt: '2026-07-15T14:00:03.000Z' },
+      ],
+    })).toThrow(/attempt|sequence|request instance/i);
+  });
+
+  it('fails closed if one server request instance spans multiple correlation IDs', () => {
+    expect(() => buildS33429AttributionEvidence({
+      ...completeInput(),
+      client429s: [],
+      limiterLogs: [],
+      upstream429s: [
+        { ...UPSTREAM_429, attempt: 1 },
+        {
+          ...UPSTREAM_429,
+          correlationId: 'req-upstream-other',
+          attempt: 2,
+          observedAt: '2026-07-15T14:00:03.000Z',
+        },
+      ],
+    })).toThrow(/request instance|correlation/i);
   });
 
   it('normalizes request targets to pathname-only evidence without query or fragment PII', () => {
@@ -334,6 +420,19 @@ describe('S3.3 five-bucket 429 attribution evidence', () => {
     expect(serialized).not.toContain('fingerprint-aaaaaaaaaaaaaaaa');
     expect(serialized).not.toContain('?');
     expect(serialized).not.toContain('#');
+  });
+
+  it('fails closed when monthly quota evidence lacks the keyed limiter header or contradicts it', () => {
+    const monthly = completeInput().client429s.find((entry) => 'quotaLimit' in entry)!;
+
+    for (const xRateLimitLimit of [undefined, 30, 100] as const) {
+      expect(() => buildS33429AttributionEvidence({
+        ...completeInput(),
+        client429s: [{ ...monthly, xRateLimitLimit }],
+        limiterLogs: [],
+        upstream429s: [],
+      })).toThrow(/monthly|quota|keyed|1000|limit/i);
+    }
   });
 
   it('rejects arm provenance or fairness flags that do not match the upstream event', () => {

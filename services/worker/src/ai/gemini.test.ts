@@ -52,6 +52,16 @@ function upstreamLogAttempts(): unknown[] {
     .map(([details]) => (details as { attempt?: unknown }).attempt);
 }
 
+function upstreamLogRequestInstanceIds(): unknown[] {
+  return vi.mocked(logger.error).mock.calls
+    .filter(([details]) => (
+      (details as { event?: unknown } | undefined)?.event === 'ai_upstream_http_error'
+    ))
+    .map(([details]) => (
+      (details as { requestInstanceId?: unknown }).requestInstanceId
+    ));
+}
+
 describe('GeminiProvider', () => {
   // §1.6: ENABLE_AI_EXTRACTION defaults TRUE in production. Mirror that here so the
   // standard extraction tests exercise the production-default state; tests that
@@ -371,10 +381,44 @@ describe('GeminiProvider', () => {
         });
         expect(mockGenerateContent).toHaveBeenCalledTimes(3);
         expect(upstreamLogAttempts()).toEqual([1, 2, 3]);
+        expect(upstreamLogRequestInstanceIds()).toHaveLength(3);
+        expect(new Set(upstreamLogRequestInstanceIds()).size).toBe(1);
+        expect(upstreamLogRequestInstanceIds()[0]).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        );
         const serializedLogs = JSON.stringify(vi.mocked(logger.error).mock.calls);
         expect(serializedLogs).not.toContain('Jane Doe');
         expect(serializedLogs).not.toContain('jane.doe@example.com');
         expect(serializedLogs).not.toContain('secret-provider-body');
+      } finally {
+        randomSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('generates a distinct server request-instance ID for each withRetry invocation', async () => {
+      vi.useFakeTimers();
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      mockGenerateContent.mockRejectedValue({ status: 429, message: 'rate limited' });
+
+      try {
+        const provider = new GeminiProvider('test-key');
+        const firstOutcome = provider.extractMetadata(request).catch((error: unknown) => error);
+        await vi.runAllTimersAsync();
+        await firstOutcome;
+        const firstIds = upstreamLogRequestInstanceIds();
+
+        vi.mocked(logger.error).mockClear();
+        const secondOutcome = provider.extractMetadata(request).catch((error: unknown) => error);
+        await vi.runAllTimersAsync();
+        await secondOutcome;
+        const secondIds = upstreamLogRequestInstanceIds();
+
+        expect(firstIds).toHaveLength(3);
+        expect(secondIds).toHaveLength(3);
+        expect(new Set(firstIds).size).toBe(1);
+        expect(new Set(secondIds).size).toBe(1);
+        expect(firstIds[0]).not.toBe(secondIds[0]);
       } finally {
         randomSpy.mockRestore();
         vi.useRealTimers();

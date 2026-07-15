@@ -12,6 +12,7 @@
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { randomUUID } from 'node:crypto';
 import type {
   IAIProvider,
   ExtractionRequest,
@@ -242,6 +243,7 @@ function logUpstreamHttpError(
   error: AIProviderHttpError,
   message: string,
   attempt: AIProviderRetryAttempt,
+  requestInstanceId: string,
   contentLength?: string,
 ): void {
   logger.error(
@@ -249,6 +251,7 @@ function logUpstreamHttpError(
       event: 'ai_upstream_http_error',
       bucket: 'upstream-model',
       attempt,
+      requestInstanceId,
       status: error.status,
       retryAfterSec: error.retryAfterSec,
       apiSurface: error.apiSurface,
@@ -269,6 +272,7 @@ async function upstreamResponseError(
   errorMessage: string,
   logMessage: string,
   attempt: AIProviderRetryAttempt,
+  requestInstanceId: string,
 ): Promise<AIProviderHttpError> {
   const contentLengthHeader = response.headers.get('content-length');
   const contentLength = contentLengthHeader && /^\d{1,20}$/.test(contentLengthHeader)
@@ -283,7 +287,7 @@ async function upstreamResponseError(
   // Drain and discard. Never retain, log, throw, or trace the provider body: it
   // can echo request content and credentials.
   await response.text().catch(() => undefined);
-  logUpstreamHttpError(error, logMessage, attempt, contentLength);
+  logUpstreamHttpError(error, logMessage, attempt, requestInstanceId, contentLength);
   return error;
 }
 
@@ -292,6 +296,7 @@ function normalizeDeveloperApiError(
   context: ProviderErrorContext,
   operation: string,
   attempt: AIProviderRetryAttempt,
+  requestInstanceId: string,
 ): Error {
   const record = input && typeof input === 'object'
     ? input as Record<string, unknown>
@@ -303,7 +308,7 @@ function normalizeDeveloperApiError(
       status,
       retryAfterSec: retryAfterSecFromError(input),
     });
-    logUpstreamHttpError(error, operation, attempt);
+    logUpstreamHttpError(error, operation, attempt, requestInstanceId);
     return error;
   }
 
@@ -337,11 +342,12 @@ async function withDeveloperApiErrorAttribution<T>(
   context: ProviderErrorContext,
   operation: string,
   attempt: AIProviderRetryAttempt,
+  requestInstanceId: string,
 ): Promise<T> {
   try {
     return await fn();
   } catch (error) {
-    throw normalizeDeveloperApiError(error, context, operation, attempt);
+    throw normalizeDeveloperApiError(error, context, operation, attempt, requestInstanceId);
   }
 }
 
@@ -473,7 +479,7 @@ export class GeminiProvider implements IAIProvider {
       request.issuerHint,
     );
 
-    const result = await this.withRetry(async (attempt) => {
+    const result = await this.withRetry(async (attempt, requestInstanceId) => {
       let text: string;
       let tokensUsed: number | undefined;
 
@@ -486,7 +492,12 @@ export class GeminiProvider implements IAIProvider {
         const userPromptToUse = useV6
           ? buildV6UserPrompt(request.strippedText, request.credentialType, request.issuerHint)
           : prompt;
-        const tunedResult = await this.callTunedModel(systemPromptToUse, userPromptToUse, attempt);
+        const tunedResult = await this.callTunedModel(
+          systemPromptToUse,
+          userPromptToUse,
+          attempt,
+          requestInstanceId,
+        );
         text = tunedResult.text;
         tokensUsed = tunedResult.tokensUsed;
         logger.info({ tunedModel: this.tunedModelPath, tokensUsed, v6Prompt: useV6 }, 'Gemini: extraction via tuned model');
@@ -528,6 +539,7 @@ export class GeminiProvider implements IAIProvider {
               developerApiContext(this.modelName),
               'Gemini generation API error',
               attempt,
+              requestInstanceId,
             ),
             (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
           );
@@ -669,9 +681,14 @@ export class GeminiProvider implements IAIProvider {
     assertExtractionEnabled();
     this.checkCircuit();
 
-    return this.withRetry(async (attempt) => {
+    return this.withRetry(async (attempt, requestInstanceId) => {
       if (this.tunedModelPath) {
-        return this.callTunedModel(args.systemPrompt, args.userPrompt, attempt);
+        return this.callTunedModel(
+          args.systemPrompt,
+          args.userPrompt,
+          attempt,
+          requestInstanceId,
+        );
       }
 
       const controller = new AbortController();
@@ -701,6 +718,7 @@ export class GeminiProvider implements IAIProvider {
             developerApiContext(this.modelName),
             'Gemini generation API error',
             attempt,
+            requestInstanceId,
           ),
           (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
         );
@@ -737,7 +755,7 @@ export class GeminiProvider implements IAIProvider {
 
     const prompt = buildTagsPrompt(extractedFields);
 
-    const result = await this.withRetry(async (attempt) => {
+    const result = await this.withRetry(async (attempt, requestInstanceId) => {
       // GME-18: Route lightweight tasks to Flash Lite for cost savings
       const model = this.client.getGenerativeModel({
         model: GEMINI_LITE_MODEL,
@@ -767,6 +785,7 @@ export class GeminiProvider implements IAIProvider {
           developerApiContext(GEMINI_LITE_MODEL),
           'Gemini tags API error',
           attempt,
+          requestInstanceId,
         ),
         (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
       );
@@ -795,7 +814,7 @@ export class GeminiProvider implements IAIProvider {
       this.name,
     );
 
-    const result = await this.withRetry(async (attempt) => {
+    const result = await this.withRetry(async (attempt, requestInstanceId) => {
       const model = this.client.getGenerativeModel({
         model: this.modelName,
         systemInstruction: TEMPLATE_RECONSTRUCTION_SYSTEM_PROMPT,
@@ -821,6 +840,7 @@ export class GeminiProvider implements IAIProvider {
           developerApiContext(this.modelName),
           'Gemini template API error',
           attempt,
+          requestInstanceId,
         ),
         (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
       );
@@ -839,7 +859,7 @@ export class GeminiProvider implements IAIProvider {
   async generateEmbedding(text: string, taskType?: EmbeddingTaskType): Promise<EmbeddingResult> {
     this.checkCircuit();
 
-    const result = await this.withRetry(async (attempt) => {
+    const result = await this.withRetry(async (attempt, requestInstanceId) => {
       // CRIT-1 fix: Use header auth instead of URL query parameter to prevent API key leakage in logs/proxies.
       // CRIT-2 fix: Log full error server-side, return generic message to caller.
       const apiKey = this.apiKey;
@@ -879,6 +899,7 @@ export class GeminiProvider implements IAIProvider {
               `Embedding generation failed (status ${response.status})`,
               'Gemini embedding API error',
               attempt,
+              requestInstanceId,
             );
           }
 
@@ -904,7 +925,7 @@ export class GeminiProvider implements IAIProvider {
       return { embeddings: [], model: this.embeddingModelName };
     }
 
-    const result = await this.withRetry(async (attempt) => {
+    const result = await this.withRetry(async (attempt, requestInstanceId) => {
       const apiKey = this.apiKey;
       const model = this.embeddingModelName;
       const requests = inputs.map((input) => {
@@ -947,6 +968,7 @@ export class GeminiProvider implements IAIProvider {
               `Batch embedding generation failed (status ${response.status})`,
               'Gemini batch embedding API error',
               attempt,
+              requestInstanceId,
             );
           }
 
@@ -1006,6 +1028,7 @@ export class GeminiProvider implements IAIProvider {
     systemPrompt: string,
     userPrompt: string,
     attempt: AIProviderRetryAttempt,
+    requestInstanceId: string,
   ): Promise<{ text: string; tokensUsed?: number }> {
     if (!this.tunedModelPath) {
       throw new Error('No tuned model configured');
@@ -1124,6 +1147,7 @@ export class GeminiProvider implements IAIProvider {
             `Vertex AI tuned model error (${response.status})`,
             'Vertex AI tuned model error',
             attempt,
+            requestInstanceId,
           );
         }
 
@@ -1169,16 +1193,19 @@ export class GeminiProvider implements IAIProvider {
   }
 
   private async withRetry<T>(
-    fn: (attempt: AIProviderRetryAttempt) => Promise<T>,
+    fn: (attempt: AIProviderRetryAttempt, requestInstanceId: string) => Promise<T>,
   ): Promise<T> {
     let lastError: Error | undefined;
+    // Generated by the worker once per provider operation. Client-controlled
+    // correlation IDs can be reused, so they cannot identify retry cohorts.
+    const requestInstanceId = randomUUID();
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         // MAX_RETRIES is fixed at three, so this conversion is the only source
         // of attempt identity emitted in upstream 429 evidence.
         const retryAttempt = (attempt + 1) as AIProviderRetryAttempt;
-        const result = await fn(retryAttempt);
+        const result = await fn(retryAttempt, requestInstanceId);
         lastError = undefined; // Release error reference on success
         this.resetCircuit();
         return result;

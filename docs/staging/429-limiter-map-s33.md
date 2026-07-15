@@ -40,10 +40,10 @@ Every path in `services/worker/` that can return HTTP 429, with what it limits, 
 
 | Path | Where | Behavior |
 |---|---|---|
-| Developer API generation | `services/worker/src/ai/gemini.ts:290-344` | SDK failures are normalized before tracing. Numeric HTTP status and `Retry-After` are retained in `AIProviderHttpError`; the current attempt is supplied by `withRetry()`. Raw SDK messages, bodies, request context, headers, and credentials are not retained. |
-| Developer API embeddings (single / batch) | `gemini.ts:876-884` / `:944-952` | Non-OK responses become `AIProviderHttpError` through `upstreamResponseError()`. The provider body is drained and discarded; the structured event records only bounded attribution metadata plus the retry-loop attempt. |
-| Tuned model (Vertex regional endpoint) | `gemini.ts:1114-1129` | Non-OK responses preserve status, parsed `Retry-After`, exact model resource, region, v6 prompt flag, schema state, MIME type, API surface, and the retry-loop attempt. The body is never logged, thrown, or traced. |
-| Retry wrapper | `gemini.ts:1171-1210`, `MAX_RETRIES = 3` at `:53` | `withRetry()` is the only source of attempt identity (`1..3`) and passes it into every upstream HTTP-error logging path. `cloneSafeRetryError()` preserves only allowlisted status/attribution fields. Auth/validation statuses 400/401/403/422 do not retry; 429 and transient availability failures remain eligible for retry/fallback. |
+| Developer API generation | `services/worker/src/ai/gemini.ts:294-349` | SDK failures are normalized before tracing. Numeric HTTP status and `Retry-After` are retained in `AIProviderHttpError`; the current attempt and per-invocation server UUID are supplied by `withRetry()`. Raw SDK messages, bodies, request context, headers, and credentials are not retained. |
+| Developer API embeddings (single / batch) | `gemini.ts:895-903` / `:964-972` | Non-OK responses become `AIProviderHttpError` through `upstreamResponseError()`. The provider body is drained and discarded; the structured event records only bounded attribution metadata, request-instance UUID, and retry-loop attempt. |
+| Tuned model (Vertex regional endpoint) | `gemini.ts:1136-1151` | Non-OK responses preserve status, parsed `Retry-After`, exact model resource, region, v6 prompt flag, schema state, MIME type, API surface, request-instance UUID, and retry-loop attempt. The body is never logged, thrown, or traced. |
+| Retry wrapper | `gemini.ts:1195-1237`, `MAX_RETRIES = 3` near `:54` | `withRetry()` generates one server-side UUID per provider invocation and supplies that same ID plus attempt identity (`1..3`) to every upstream HTTP-error logging path. `cloneSafeRetryError()` preserves only allowlisted status/attribution fields. Auth/validation statuses 400/401/403/422 do not retry; 429 and transient availability failures remain eligible for retry/fallback. |
 | Fallback classification | `services/worker/src/ai/fallback-chain.ts:51-98` | Validated status `429` classifies as `rate_limit`; 502/503/504 classify as `provider_unavailable`. Fallback metrics retain only the bounded classification, never a raw provider error string. |
 
 ## 2. Why the response body cannot attribute (client-blind)
@@ -65,8 +65,8 @@ Buckets, evaluated on BOTH A/B arms, **never summed** (they measure different po
 | 1. `anon-IP` | 429 + `X-RateLimit-Limit: 100` (+ log key = IP) | Must be **ZERO self-inflicted** (exit criterion 3b) — nonzero means the harness polluted its own arms; pace per-source <100/min/IP or go multi-IP. |
 | 2. `keyed` | 429 + `X-RateLimit-Limit: 1000` (+ log key = keyId) | API-key surfaces only (tier-mix lane). |
 | 3. `aiRateLimiter` | 429 + `X-RateLimit-Limit: 30` (+ log key prefix `ai:`) | The only per-user AI limit that exists today. |
-| 4. `usageTracking-monthly` | 429 body with `limit: 10000` (`usageTracking.ts:171`) | API-key callers only; monthly window — a per-window count, not a rate. |
-| 5. `upstream-model` | Structured `event=ai_upstream_http_error` worker logs (`gemini.ts:241-263`) with status `429`; `fallback_reason=rate_limit` is corroborating classification, not the evidence source of truth | Tag by API surface: **Developer-API** (public `gemini-2.5-flash` key surface) vs **Vertex-regional** (tuned endpoint) — the two arms sit on different quota pools and R2 requires the distinction. Exact model, region, v6 prompt flag, response-schema state, MIME type, correlation ID, retry-loop attempt, and `Retry-After` must match the arm declaration. Logs coalesce into one request-level event only when attempts for that correlation ID are unique, contiguous from 1, and bounded at 3. A duplicate/gap/fourth attempt—or a client-reused correlation ID that starts again at attempt 1—rejects the entire artifact; timestamps never create attempt identity. |
+| 4. `usageTracking-monthly` | 429 body with `limit: 10000` (`usageTracking.ts:171`) plus `X-RateLimit-Limit: 1000` | API-key callers only and downstream of `keyedRateLimiter`; missing or contradictory keyed-header metadata rejects the artifact. Monthly window — a per-window count, not a rate. |
+| 5. `upstream-model` | Structured `event=ai_upstream_http_error` worker logs (`gemini.ts:242-264`) with status `429`; `fallback_reason=rate_limit` is corroborating classification, not the evidence source of truth | Tag by API surface: **Developer-API** (public `gemini-2.5-flash` key surface) vs **Vertex-regional** (tuned endpoint) — the two arms sit on different quota pools and R2 requires the distinction. Exact model, region, v6 prompt flag, response-schema state, MIME type, server-generated request-instance UUID, client correlation ID, retry-loop attempt, and `Retry-After` must match the arm declaration. Logs coalesce only by request-instance UUID; attempts are unique, strictly increasing, and bounded at 3. Sparse 429 attempts are valid because intervening non-429 attempts are intentionally absent. Client correlation reuse cannot collapse distinct invocations, and timestamps never create identity. |
 | — `perOrgRateLimit` | Reported as **`structurally_zero (unmounted)`** with the bug link, NOT as a measured zero | Drift-linted; if it gets mounted mid-sprint the lint fails and this spec must be revised. |
 
 Mechanism honesty (exit criterion 3c, R-7): the rc-manifest states that 429 mitigation comes from **rate-limiter architecture + traffic smoothing + surface choice + provisioned throughput**, NOT from tuning (a tuned model shares the base-model quota pool, cannot use the global endpoint, and is plausibly MORE exposed). "≥90% cut" language is **banned**.
@@ -78,7 +78,7 @@ buckets:
   - anon-IP              # X-RateLimit-Limit=100 header + IP log key; must be 0 self-inflicted
   - keyed                # X-RateLimit-Limit=1000 + keyId log key
   - aiRateLimiter        # X-RateLimit-Limit=30 + "ai:" log key prefix
-  - usageTracking-monthly # body limit:10000; API-key surfaces only
+  - usageTracking-monthly # body limit:10000 + keyed X-RateLimit-Limit=1000
   - upstream-model       # worker structured logs only; tagged Developer-API vs Vertex-regional
 reported_not_measured:
   - perOrgRateLimit: structurally_zero (unmounted; SCALE-01/SCRUM-1023 half-landed — bug filed)
@@ -86,13 +86,14 @@ rules:
   - buckets are never summed
   - attribution = X-RateLimit-Limit header + server-log key-prefix join
   - upstream bucket comes from event=ai_upstream_http_error; fallback_reason is corroborating only
-  - upstream retry identity comes only from explicit worker attempt=1..3; never timestamps
+  - upstream request identity comes only from worker requestInstanceId UUID; never client correlation/timestamps
+  - upstream 429 attempts are unique, strictly increasing, and bounded to 1..3 per requestInstanceId; sparse sets are valid
   - every observed 429 carries a valid Retry-After value
   - public arm = Developer-API/global/production prompt/no tuned model/schema unset
   - tuned arm = Vertex-regional/exact tuned model/v6 prompt/schema unset
 ```
 
-`scripts/staging/s33-429-attribution.ts` enforces this packet fail-closed: strict metadata-only schemas, client request-target canonicalization to pathname only (query and fragment suffixes are stripped), exact correlation joins with at most 60 seconds of skew, request-level coalescing only from explicit worker attempts that are unique/contiguous from 1/bounded at 3, run-to-upstream provenance matching, the five separate buckets with no total field, and `perOrgRateLimit=structurally_zero (unmounted)`. Duplicate, gapped, out-of-range, missing, or client-reused attempt identity rejects the whole artifact; timestamps are evidence fields, never grouping identity. Unknown fields are rejected so raw bodies, raw limiter keys, prompts, fingerprints, PII, JWTs, and API keys cannot enter the evidence record.
+`scripts/staging/s33-429-attribution.ts` enforces this packet fail-closed: strict metadata-only schemas, client request-target canonicalization to pathname only (query and fragment suffixes are stripped), exact generic-limiter correlation joins with at most 60 seconds of skew, keyed-header `1000` on monthly quota rows, request-level coalescing only by a required worker-generated UUID, unique/strictly-increasing/bounded attempts per UUID, run-to-upstream provenance matching, the five separate buckets with no total field, and `perOrgRateLimit=structurally_zero (unmounted)`. Sparse 429 attempt sets are accepted because non-429 attempts are not inputs; duplicate/out-of-sequence/out-of-range attempts or one server UUID spanning client correlations reject the artifact. Client correlation IDs and timestamps are context fields, never grouping identity. Unknown fields are rejected so raw bodies, raw limiter keys, prompts, fingerprints, PII, JWTs, and API keys cannot enter the evidence record.
 
 ## 5. Bugs surfaced by this map (tracker: Confluence 88768514)
 
@@ -144,5 +145,5 @@ Machine-readable; parsed by `scripts/ci/check-429-limiter-map.test.ts`. Each row
 | 34 | services/worker/src/ai/gemini.ts | 1191 | lastError = cloneSafeRetryError(err); |
 | 35 | scripts/staging/s33-429-attribution.ts | 15 | export const S33_429_BUCKETS = [ |
 | 36 | scripts/staging/s33-429-attribution.ts | 260 | export function buildS33429AttributionEvidence(input: unknown): S33429AttributionEvidence { |
-| 37 | services/worker/src/ai/gemini.ts | 1172 | fn: (attempt: AIProviderRetryAttempt) => Promise<T>, |
+| 37 | services/worker/src/ai/gemini.ts | 1196 | fn: (attempt: AIProviderRetryAttempt, requestInstanceId: string) => Promise<T>, |
 <!-- claims:end -->

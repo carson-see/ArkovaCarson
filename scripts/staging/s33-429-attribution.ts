@@ -101,6 +101,7 @@ const limiterLogSchema = z.object({
 
 const upstream429Schema = z.object({
   correlationId: z.string().regex(SAFE_ID),
+  requestInstanceId: z.string().uuid(),
   attempt: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   observedAt: z.string().datetime({ offset: true }),
   source: z.literal('worker-structured-log'),
@@ -130,6 +131,7 @@ type ParsedUpstream429 = z.infer<typeof upstream429Schema>;
 
 export interface S33429AttributionEvent {
   correlationId: string;
+  requestInstanceId?: string;
   observedAt: string;
   source: 'header+log' | 'quota-response' | 'worker-structured-log';
   status: 429;
@@ -187,10 +189,10 @@ function assertUniqueCorrelationIds(
 function assertUniqueUpstreamAttempts(entries: readonly ParsedUpstream429[]): void {
   const seen = new Set<string>();
   for (const entry of entries) {
-    const attemptKey = `${entry.correlationId}\u0000${entry.attempt}`;
+    const attemptKey = `${entry.requestInstanceId}\u0000${entry.attempt}`;
     if (seen.has(attemptKey)) {
       throw new Error(
-        `Duplicate upstream 429 attempt ${entry.attempt} for ${entry.correlationId}`,
+        `Duplicate upstream 429 attempt ${entry.attempt} for request instance ${entry.requestInstanceId}`,
       );
     }
     seen.add(attemptKey);
@@ -277,6 +279,11 @@ export function buildS33429AttributionEvidence(input: unknown): S33429Attributio
 
   for (const client of parsed.client429s) {
     if (client.quotaLimit === 10_000) {
+      if (client.xRateLimitLimit !== 1000) {
+        throw new Error(
+          `Monthly quota 429 for ${client.correlationId} requires keyed X-RateLimit-Limit 1000`,
+        );
+      }
       events['usageTracking-monthly'].push({
         correlationId: client.correlationId,
         observedAt: client.observedAt,
@@ -311,29 +318,34 @@ export function buildS33429AttributionEvidence(input: unknown): S33429Attributio
     throw new Error(`Unconsumed/unmatched limiter logs: ${unconsumed.join(', ')}`);
   }
 
-  const upstreamByCorrelation = new Map<string, ParsedUpstream429[]>();
+  const upstreamByRequestInstance = new Map<string, ParsedUpstream429[]>();
   for (const upstream of parsed.upstream429s) {
     assertUpstreamMatchesRun(upstream, parsed.run);
-    const attempts = upstreamByCorrelation.get(upstream.correlationId) ?? [];
+    const attempts = upstreamByRequestInstance.get(upstream.requestInstanceId) ?? [];
     attempts.push(upstream);
-    upstreamByCorrelation.set(upstream.correlationId, attempts);
+    upstreamByRequestInstance.set(upstream.requestInstanceId, attempts);
   }
 
-  for (const [correlationId, unsortedAttempts] of upstreamByCorrelation) {
-    const sortedAttempts = [...unsortedAttempts].sort(
-      (left, right) => left.attempt - right.attempt,
-    );
-    for (const [index, attempt] of sortedAttempts.entries()) {
-      const expectedAttempt = index + 1;
-      if (attempt.attempt !== expectedAttempt) {
+  for (const [requestInstanceId, unsortedAttempts] of upstreamByRequestInstance) {
+    for (let index = 1; index < unsortedAttempts.length; index++) {
+      const previous = unsortedAttempts[index - 1]!;
+      const current = unsortedAttempts[index]!;
+      if (current.attempt <= previous.attempt) {
         throw new Error(
-          `Upstream 429 attempts for ${correlationId} must be contiguous from 1; expected ${expectedAttempt}, received ${attempt.attempt}`,
+          `Upstream 429 attempts for request instance ${requestInstanceId} are out of sequence: ${previous.attempt} then ${current.attempt}`,
         );
       }
     }
-    const firstAttempt = sortedAttempts[0]!;
-    const lastAttempt = sortedAttempts[sortedAttempts.length - 1]!;
-    const attempts = Object.freeze(sortedAttempts.map((attempt) => Object.freeze({
+    const orderedAttempts = [...unsortedAttempts];
+    const correlationIds = new Set(orderedAttempts.map((attempt) => attempt.correlationId));
+    if (correlationIds.size !== 1) {
+      throw new Error(
+        `Upstream request instance ${requestInstanceId} spans multiple correlation IDs`,
+      );
+    }
+    const firstAttempt = orderedAttempts[0]!;
+    const lastAttempt = orderedAttempts[orderedAttempts.length - 1]!;
+    const attempts = Object.freeze(orderedAttempts.map((attempt) => Object.freeze({
       attempt: attempt.attempt,
       observedAt: attempt.observedAt,
       retryAfterSec: attempt.retryAfterSec,
@@ -343,7 +355,8 @@ export function buildS33429AttributionEvidence(input: unknown): S33429Attributio
     // remain visible in the bounded attempts array instead of inflating the
     // upstream bucket or colliding on the inherited correlation ID.
     events['upstream-model'].push({
-      correlationId,
+      correlationId: firstAttempt.correlationId,
+      requestInstanceId,
       observedAt: firstAttempt.observedAt,
       source: 'worker-structured-log',
       status: 429,
