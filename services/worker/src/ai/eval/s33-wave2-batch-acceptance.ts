@@ -130,9 +130,13 @@ function record(value: unknown, label: string): JsonRecord {
   return value as JsonRecord;
 }
 
+function compareStrings(left: string, right: string): number {
+  return left.localeCompare(right, 'en');
+}
+
 function exactKeys(value: JsonRecord, expected: readonly string[], label: string): void {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
+  const actual = Object.keys(value).sort(compareStrings);
+  const wanted = [...expected].sort(compareStrings);
   if (canonicaliseJson(actual) !== canonicaliseJson(wanted)) {
     throw new Error(`${label} keys must be exactly: ${wanted.join(', ')}`);
   }
@@ -262,7 +266,7 @@ function parseCoverageRegistry(content: string): ParsedCoverageRegistry {
     'acceptedAuthorshipMethods', 'generatorDerivedAllowed', 'trainingExposedAllowed',
     'acceptanceLane',
   ], 'Wave-2 top-15 coverage policy');
-  if (policy.minimumHeldoutPerType !== 12 || policy.targetEdgeCaseRatio !== 0.3
+  if (policy.minimumHeldoutPerType !== 12 || canonicaliseJson(policy.targetEdgeCaseRatio) !== '0.3'
     || policy.minimumProductionValidSubstantiveFields !== 5
     || canonicaliseJson(policy.acceptedAuthorshipMethods) !== canonicaliseJson(['real-source', 'independently-authored'])
     || policy.generatorDerivedAllowed !== false || policy.trainingExposedAllowed !== false
@@ -490,8 +494,9 @@ export function preflightS33Wave2BatchCandidate(
   if (sha256(snapshot.sourceContent) === '' || snapshot.sourceContent.trim().length === 0 || snapshot.testContent.trim().length === 0) {
     throw new Error('Wave-2 source and non-executed test evidence must be non-empty');
   }
-  const expectedPaths = [snapshot.manifestPath, manifest.datasheet.path, manifest.source.path, manifest.testPath].sort();
-  const actualPaths = snapshot.changedPaths.map(({ path }) => path).sort();
+  const expectedPaths = [snapshot.manifestPath, manifest.datasheet.path, manifest.source.path, manifest.testPath]
+    .sort(compareStrings);
+  const actualPaths = snapshot.changedPaths.map(({ path }) => path).sort(compareStrings);
   if (canonicaliseJson(actualPaths) !== canonicaliseJson(expectedPaths)
     || snapshot.changedPaths.some(({ status, mode, objectType }) => (
       status !== 'A' || mode !== '100644' || objectType !== 'blob'

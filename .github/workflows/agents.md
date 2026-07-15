@@ -80,10 +80,12 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
   identical packet on the merged-main commit. GitHub state/login is transport
   evidence, never acceptance authority. Status write permission exists only on
   the two jobs that publish those exact success statuses.
-- The evaluator and dependencies are checked out/installed from the exact PR
-  base in `trusted/` before candidate data is fetched. Candidate Git objects
-  live only in an inert bare repository under `RUNNER_TEMP`; no candidate
-  checkout, cache, import, test, package install, or working directory exists.
+- The evaluator is materialized from an exact base commit proven to be an
+  ancestor of the live `main` tip, then its dependencies are installed in
+  `trusted/` before candidate data is fetched. Privileged jobs do not invoke
+  `actions/checkout`; candidate Git objects live only in an inert bare
+  repository under `RUNNER_TEMP`, with no candidate checkout, cache, import,
+  test, package install, or working directory.
   Mergify routes every corpus-touching PR (including mixed-path PRs) to the
   single-item `s33-wave2-corpus` queue and requires the authenticated exact-head
   status; ordinary and hotfix queues explicitly exclude those paths.

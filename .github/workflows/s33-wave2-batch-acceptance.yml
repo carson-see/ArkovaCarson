@@ -5,7 +5,6 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened]
   pull_request_review:
-    branches: [main]
     types: [submitted, edited]
   issue_comment:
     types: [created, edited]
@@ -42,14 +41,26 @@ jobs:
             relevant=true
           fi
           echo "relevant=${relevant}" >> "$GITHUB_OUTPUT"
-      - name: Checkout trusted base evaluator
+      - name: Materialize the ancestry-verified trusted base evaluator
         if: steps.scope.outputs.relevant == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-          path: trusted
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$BASE_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$BASE_REF" = main
+          case "$BASE_SHA" in *[!0-9a-f]*) exit 1 ;; esac
+          test "${#BASE_SHA}" -eq 40
+          git init --bare "$RUNNER_TEMP/trusted-main.git"
+          git -c protocol.version=2 -C "$RUNNER_TEMP/trusted-main.git" fetch \
+            --no-tags "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main
+          CURRENT_MAIN=$(git -C "$RUNNER_TEMP/trusted-main.git" rev-parse 'FETCH_HEAD^{commit}')
+          git -C "$RUNNER_TEMP/trusted-main.git" cat-file -e "${BASE_SHA}^{commit}"
+          git -C "$RUNNER_TEMP/trusted-main.git" merge-base --is-ancestor "$BASE_SHA" "$CURRENT_MAIN"
+          git -C "$RUNNER_TEMP/trusted-main.git" worktree add \
+            --detach "$GITHUB_WORKSPACE/trusted" "$BASE_SHA"
+          test "$(git -C "$GITHUB_WORKSPACE/trusted" rev-parse HEAD)" = "$BASE_SHA"
       - name: Set up trusted Node runtime
         if: steps.scope.outputs.relevant == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -122,6 +133,8 @@ jobs:
           case "$PR_NUMBER" in ''|*[!0-9]*) exit 1 ;; esac
           gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > "$RUNNER_TEMP/pr.json"
           BASE_SHA=$(jq -r '.base.sha' "$RUNNER_TEMP/pr.json")
+          BASE_REPOSITORY=$(jq -r '.base.repo.full_name' "$RUNNER_TEMP/pr.json")
+          BASE_REF=$(jq -r '.base.ref' "$RUNNER_TEMP/pr.json")
           HEAD_SHA=$(jq -r '.head.sha' "$RUNNER_TEMP/pr.json")
           HEAD_REPOSITORY=$(jq -r '.head.repo.full_name' "$RUNNER_TEMP/pr.json")
           STATE=$(jq -r '.state' "$RUNNER_TEMP/pr.json")
@@ -129,6 +142,8 @@ jobs:
           test "${#BASE_SHA}" -eq 40
           test "${#HEAD_SHA}" -eq 40
           test "$STATE" = open
+          test "$BASE_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$BASE_REF" = main
           case "$HEAD_REPOSITORY" in *[!A-Za-z0-9_.\/-]*|/*|*/|*//* ) exit 1 ;; esac
           if ! gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --jq '.[].filename' \
             | grep -Eq '^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)'; then
@@ -138,13 +153,21 @@ jobs:
           echo "base_sha=${BASE_SHA}" >> "$GITHUB_OUTPUT"
           echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
           echo "head_repository=${HEAD_REPOSITORY}" >> "$GITHUB_OUTPUT"
-      - name: Checkout trusted base evaluator
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ steps.pr.outputs.base_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-          path: trusted
+      - name: Materialize the ancestry-verified trusted base evaluator
+        env:
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+        run: |
+          case "$BASE_SHA" in *[!0-9a-f]*) exit 1 ;; esac
+          test "${#BASE_SHA}" -eq 40
+          git init --bare "$RUNNER_TEMP/trusted-main.git"
+          git -c protocol.version=2 -C "$RUNNER_TEMP/trusted-main.git" fetch \
+            --no-tags "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main
+          CURRENT_MAIN=$(git -C "$RUNNER_TEMP/trusted-main.git" rev-parse 'FETCH_HEAD^{commit}')
+          git -C "$RUNNER_TEMP/trusted-main.git" cat-file -e "${BASE_SHA}^{commit}"
+          git -C "$RUNNER_TEMP/trusted-main.git" merge-base --is-ancestor "$BASE_SHA" "$CURRENT_MAIN"
+          git -C "$RUNNER_TEMP/trusted-main.git" worktree add \
+            --detach "$GITHUB_WORKSPACE/trusted" "$BASE_SHA"
+          test "$(git -C "$GITHUB_WORKSPACE/trusted" rev-parse HEAD)" = "$BASE_SHA"
       - name: Set up trusted Node runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -248,22 +271,30 @@ jobs:
             relevant=true
           fi
           echo "relevant=${relevant}" >> "$GITHUB_OUTPUT"
-      - name: Checkout the trusted candidate base
+      - name: Materialize the ancestry-verified trusted candidate base
         if: steps.scope.outputs.relevant == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-          path: trusted
-      - name: Checkout the exact merged-main commit
-        if: steps.scope.outputs.relevant == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-          path: merged
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          test "$BASE_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$BASE_REF" = main
+          case "$BASE_SHA:$MERGE_SHA" in *[!0-9a-f:]*) exit 1 ;; esac
+          test "${#BASE_SHA}" -eq 40
+          test "${#MERGE_SHA}" -eq 40
+          git init --bare "$RUNNER_TEMP/trusted-main.git"
+          git -c protocol.version=2 -C "$RUNNER_TEMP/trusted-main.git" fetch \
+            --no-tags "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main
+          CURRENT_MAIN=$(git -C "$RUNNER_TEMP/trusted-main.git" rev-parse 'FETCH_HEAD^{commit}')
+          git -C "$RUNNER_TEMP/trusted-main.git" cat-file -e "${BASE_SHA}^{commit}"
+          git -C "$RUNNER_TEMP/trusted-main.git" cat-file -e "${MERGE_SHA}^{commit}"
+          git -C "$RUNNER_TEMP/trusted-main.git" merge-base --is-ancestor "$BASE_SHA" "$MERGE_SHA"
+          git -C "$RUNNER_TEMP/trusted-main.git" merge-base --is-ancestor "$MERGE_SHA" "$CURRENT_MAIN"
+          git -C "$RUNNER_TEMP/trusted-main.git" worktree add \
+            --detach "$GITHUB_WORKSPACE/trusted" "$BASE_SHA"
+          test "$(git -C "$GITHUB_WORKSPACE/trusted" rev-parse HEAD)" = "$BASE_SHA"
       - name: Set up trusted Node runtime
         if: steps.scope.outputs.relevant == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -275,6 +306,14 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm --prefix services/worker ci --ignore-scripts
+      - name: Materialize the exact merged-main tree without executing it
+        if: steps.scope.outputs.relevant == 'true'
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          git -C "$RUNNER_TEMP/trusted-main.git" worktree add \
+            --detach "$GITHUB_WORKSPACE/merged" "$MERGE_SHA"
+          test "$(git -C "$GITHUB_WORKSPACE/merged" rev-parse HEAD)" = "$MERGE_SHA"
       - id: prior
         name: Locate the successful exact-head acceptance artifact
         if: steps.scope.outputs.relevant == 'true'

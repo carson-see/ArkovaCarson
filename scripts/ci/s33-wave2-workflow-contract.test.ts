@@ -26,6 +26,9 @@ describe('S3.3 Wave-2 trusted-main workflow contract', () => {
     expect(workflow).not.toContain('working-directory: candidate');
     expect(workflow).not.toMatch(/ref:\s*\$\{\{[^\n]*head\.sha/iu);
     expect(workflow).not.toMatch(/cache:\s*npm/iu);
+    expect(workflow).not.toContain('actions/checkout@');
+    expect(workflow).toContain('refs/heads/main');
+    expect(workflow).toContain('merge-base --is-ancestor');
   });
 
   it('publishes success only after preserving authenticated evidence at the exact head', () => {

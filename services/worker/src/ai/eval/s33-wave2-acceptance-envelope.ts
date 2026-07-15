@@ -482,9 +482,7 @@ export function computeS33Wave2AcceptedEntryOrderSha256(entryIds: readonly strin
 }
 
 function computeAcceptedEntrySetSha256(entries: readonly S33Wave2AcceptedEntry[]): string {
-  const sortedIds = entries.map(({ id }) => id).sort((left, right) => (
-    left < right ? -1 : left > right ? 1 : 0
-  ));
+  const sortedIds = entries.map(({ id }) => id).sort((left, right) => left.localeCompare(right, 'en'));
   return canonicalDigest(sortedIds);
 }
 
