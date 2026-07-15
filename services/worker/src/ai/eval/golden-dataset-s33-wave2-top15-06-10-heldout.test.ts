@@ -13,7 +13,7 @@ import { S33_WAVE2_TOP15_01_05_HELDOUT } from './golden-dataset-s33-wave2-top15-
 import { S33_WAVE2_TOP15_06_10_HELDOUT } from './golden-dataset-s33-wave2-top15-06-10-heldout.js';
 
 const BATCH_ID = 'S33-W2-TOP15-06-10';
-const REGISTRY_DIGEST_SHA256 = '412a08227608a58172569a4fcbf3cd1025dc67fc1beeaddd6c163d22c4cb80d6';
+const REGISTRY_DIGEST_SHA256 = '2ef6e6d3a5974aecf4a39339ee6bc4a328f2cb1395dff83f87385db130e9f154';
 const SOURCE_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-06-10-heldout.ts';
 const MANIFEST_PATH = 'docs/lane4/s33-wave2-batches/top15-06-10/manifest.json';
 const DATASHEET_PATH = 'docs/lane4/s33-wave2-batches/top15-06-10/datasheet.json';
