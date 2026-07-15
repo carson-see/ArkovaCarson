@@ -5,7 +5,9 @@ import {
   assertPoisonIsolationAndLeakage,
   assertTriggerIdentityCaptures,
   buildWave3DrainDriverPlan,
+  digestWave3TriggerObservation,
   type PoisonIsolationRowObservation,
+  type Wave3TriggerObservation,
 } from './batch-drain-wave3-driver';
 
 const HEAD_SHA = 'a'.repeat(40);
@@ -17,6 +19,21 @@ function buildPlan() {
     gitHeadSha: HEAD_SHA,
     imageDigest: IMAGE_DIGEST,
     orgs: 30,
+  });
+}
+
+function triggerObservations(): Wave3TriggerObservation[] {
+  const plan = buildPlan();
+  return plan.triggerExecutionPlan.map((execution, index) => {
+    const observation = {
+      ...structuredClone(execution),
+      observedAt: `2026-07-16T12:${String(index * 5).padStart(2, '0')}:00.000Z`,
+      evidenceArtifactSha256: `sha256:${String(index + 1).repeat(64)}`,
+    };
+    return {
+      ...observation,
+      observationDigestSha256: digestWave3TriggerObservation(observation),
+    };
   });
 }
 
@@ -46,50 +63,157 @@ describe('Wave 3 B deterministic 10k/12.5k drain driver', () => {
       runId: 'too-small', gitHeadSha: HEAD_SHA, imageDigest: IMAGE_DIGEST, orgs: 29,
     })).toThrow(/at least 30/i);
   });
+
+  it('rejects non-canonical or overlong run identities before digesting the plan', () => {
+    for (const runId of ['', ' leading-space', 'trailing-space ', 'x'.repeat(129)]) {
+      expect(() => buildWave3DrainDriverPlan({
+        runId, gitHeadSha: HEAD_SHA, imageDigest: IMAGE_DIGEST, orgs: 30,
+      })).toThrow(/runId|1-128|whitespace/i);
+    }
+  });
 });
 
-describe('exact global-policy/global-flush/org-scheduler identity capture', () => {
-  it('binds distinct execution IDs to the exact POST path, empty body, head, image, and plan digest', () => {
+describe('exact Trigger A/B/D cause and identity capture', () => {
+  it('binds two size cycles, age convergence, and force control to exact causes and immutable identities', () => {
     const plan = buildPlan();
-    expect(plan.triggerIdentities).toEqual([
+    expect(plan.triggerExecutionPlan).toEqual([
       expect.objectContaining({
-        trigger: 'global-policy', method: 'POST', path: '/jobs/batch-anchors', body: null,
+        trigger: 'trigger-a-size', cause: 'SIZE_THRESHOLD',
+        method: 'POST', path: '/jobs/batch-anchors', body: null,
+        preconditions: { pending: 12_500, oldestPendingAgeSeconds: null, force: false },
+        remainder: {
+          stateId: 'over-capacity-cycle-1', pendingBefore: 12_500,
+          drainedLeaves: 10_000, pendingAfter: 2_500, converged: false,
+        },
         gitHeadSha: HEAD_SHA, imageDigest: IMAGE_DIGEST, planDigest: plan.planDigest,
       }),
       expect.objectContaining({
-        trigger: 'global-flush', method: 'POST', path: '/jobs/batch-anchors?force=true', body: null,
+        trigger: 'trigger-a-size', cause: 'SIZE_THRESHOLD',
+        method: 'POST', path: '/jobs/batch-anchors', body: null,
+        preconditions: { pending: 15_000, oldestPendingAgeSeconds: null, force: false },
+        remainder: {
+          stateId: 'over-capacity-cycle-2', pendingBefore: 15_000,
+          drainedLeaves: 10_000, pendingAfter: 5_000, converged: false,
+        },
         gitHeadSha: HEAD_SHA, imageDigest: IMAGE_DIGEST, planDigest: plan.planDigest,
       }),
       expect.objectContaining({
-        trigger: 'org-scheduler', method: 'POST', path: '/jobs/org-queue-scheduler', body: null,
+        trigger: 'trigger-b-age', cause: 'AGE_THRESHOLD',
+        method: 'POST', path: '/jobs/batch-anchors', body: null,
+        preconditions: { pending: 5_000, oldestPendingAgeSeconds: 10_800, force: false },
+        remainder: {
+          stateId: 'convergence-cycle-3', pendingBefore: 5_000,
+          drainedLeaves: 5_000, pendingAfter: 0, converged: true,
+        },
+        gitHeadSha: HEAD_SHA, imageDigest: IMAGE_DIGEST, planDigest: plan.planDigest,
+      }),
+      expect.objectContaining({
+        trigger: 'trigger-d-force', cause: 'FORCE',
+        method: 'POST', path: '/jobs/batch-anchors?force=true', body: null,
+        preconditions: { pending: 2_500, oldestPendingAgeSeconds: 0, force: true },
+        remainder: {
+          stateId: 'forced-control', pendingBefore: 2_500,
+          drainedLeaves: 2_500, pendingAfter: 0, converged: true,
+        },
+        gitHeadSha: HEAD_SHA, imageDigest: IMAGE_DIGEST, planDigest: plan.planDigest,
+      }),
+      expect.objectContaining({
+        trigger: 'org-scheduler', cause: 'ORG_SCHEDULER',
+        method: 'POST', path: '/jobs/org-queue-scheduler', body: null,
         gitHeadSha: HEAD_SHA, imageDigest: IMAGE_DIGEST, planDigest: plan.planDigest,
       }),
     ]);
-    expect(new Set(plan.triggerIdentities.map(({ schedulerExecutionId }) => schedulerExecutionId)).size).toBe(3);
-    expect(assertTriggerIdentityCaptures(plan, structuredClone(plan.triggerIdentities))).toMatchObject({
-      capturedTriggers: ['global-policy', 'global-flush', 'org-scheduler'],
+    const observations = triggerObservations();
+    expect(new Set(observations.map(({ schedulerExecutionId }) => schedulerExecutionId)).size).toBe(5);
+    expect(new Set(observations.map(({ evidenceArtifactSha256 }) => evidenceArtifactSha256)).size).toBe(5);
+    expect(assertTriggerIdentityCaptures(plan, observations)).toMatchObject({
+      capturedTriggers: ['trigger-a-size', 'trigger-b-age', 'trigger-d-force'],
+      orgSchedulerCaptured: true,
+      executionCount: 5,
       exactIdentity: true,
     });
   });
 
-  it('rejects route-based trigger collapse, execution reuse, stale heads, and non-empty request bodies', () => {
+  it('rejects route-only/collapsed A+B, execution reuse, stale heads, and mutable evidence identity', () => {
     const plan = buildPlan();
+    const valid = triggerObservations();
 
-    const collapsed = plan.triggerIdentities.map((identity) => ({ ...identity }));
-    collapsed[0] = { ...collapsed[0]!, path: '/jobs/batch-anchors?force=true' };
-    expect(() => assertTriggerIdentityCaptures(plan, collapsed)).toThrow(/global-policy|path|identity/i);
+    const collapsed = structuredClone(valid);
+    collapsed[2] = {
+      ...collapsed[2]!,
+      trigger: 'trigger-a-size',
+      cause: 'SIZE_THRESHOLD',
+      preconditions: { ...collapsed[0]!.preconditions },
+    };
+    collapsed[2]!.observationDigestSha256 = digestWave3TriggerObservation(collapsed[2]!);
+    expect(() => assertTriggerIdentityCaptures(plan, collapsed)).toThrow(/Trigger B|cause|precondition|collapsed/i);
 
-    const reused = plan.triggerIdentities.map((identity) => ({ ...identity }));
+    const reused = structuredClone(valid);
     reused[1] = { ...reused[1]!, schedulerExecutionId: reused[0]!.schedulerExecutionId };
+    reused[1]!.observationDigestSha256 = digestWave3TriggerObservation(reused[1]!);
     expect(() => assertTriggerIdentityCaptures(plan, reused)).toThrow(/execution|unique|reuse/i);
 
-    const stale = plan.triggerIdentities.map((identity) => ({ ...identity }));
+    const stale = structuredClone(valid);
     stale[2] = { ...stale[2]!, gitHeadSha: 'c'.repeat(40) };
+    stale[2]!.observationDigestSha256 = digestWave3TriggerObservation(stale[2]!);
     expect(() => assertTriggerIdentityCaptures(plan, stale)).toThrow(/head|identity/i);
 
-    const body = plan.triggerIdentities.map((identity) => ({ ...identity }));
-    body[1] = { ...body[1]!, body: {} as never };
-    expect(() => assertTriggerIdentityCaptures(plan, body)).toThrow(/body|empty|identity/i);
+    const mutableEvidence = structuredClone(valid);
+    mutableEvidence[0] = {
+      ...mutableEvidence[0]!,
+      remainder: { ...mutableEvidence[0]!.remainder, pendingAfter: 2_499 },
+    };
+    expect(() => assertTriggerIdentityCaptures(plan, mutableEvidence)).toThrow(/digest|remainder|identity/i);
+  });
+
+  it('rejects a dropped org-scheduler execution and unknown top-level or nested observation fields', () => {
+    const plan = buildPlan();
+    const droppedOrgScheduler = triggerObservations().slice(0, 4);
+    expect(() => assertTriggerIdentityCaptures(plan, droppedOrgScheduler))
+      .toThrow(/org.scheduler|five|exact/i);
+
+    const extraTopLevel = structuredClone(triggerObservations()) as unknown as Array<Record<string, unknown>>;
+    extraTopLevel[0]!.secret = 'must-not-survive';
+    expect(() => assertTriggerIdentityCaptures(plan, extraTopLevel))
+      .toThrow(/unrecognized|unknown|strict|secret/i);
+
+    const extraNested = structuredClone(triggerObservations()) as unknown as Array<Record<string, unknown>>;
+    (extraNested[2]!.preconditions as Record<string, unknown>).routeOnlyAlias = true;
+    expect(() => assertTriggerIdentityCaptures(plan, extraNested))
+      .toThrow(/unrecognized|unknown|strict|routeOnlyAlias/i);
+
+    const paddedIdentity = structuredClone(triggerObservations());
+    paddedIdentity[0] = { ...paddedIdentity[0]!, runId: ` ${paddedIdentity[0]!.runId}` };
+    paddedIdentity[0]!.observationDigestSha256 = digestWave3TriggerObservation(paddedIdentity[0]!);
+    expect(() => assertTriggerIdentityCaptures(plan, paddedIdentity))
+      .toThrow(/runId|whitespace|identity/i);
+  });
+
+  it('rejects Trigger A below 10k, Trigger B outside 3k..<10k or younger than 3h, and non-forced D', () => {
+    const plan = buildPlan();
+    const aBelow = triggerObservations();
+    aBelow[0] = {
+      ...aBelow[0]!,
+      preconditions: { ...aBelow[0]!.preconditions, pending: 9_999 },
+    };
+    aBelow[0]!.observationDigestSha256 = digestWave3TriggerObservation(aBelow[0]!);
+    expect(() => assertTriggerIdentityCaptures(plan, aBelow)).toThrow(/Trigger A|10,?000|precondition/i);
+
+    const bTooYoung = triggerObservations();
+    bTooYoung[2] = {
+      ...bTooYoung[2]!,
+      preconditions: { ...bTooYoung[2]!.preconditions, oldestPendingAgeSeconds: 10_799 },
+    };
+    bTooYoung[2]!.observationDigestSha256 = digestWave3TriggerObservation(bTooYoung[2]!);
+    expect(() => assertTriggerIdentityCaptures(plan, bTooYoung)).toThrow(/Trigger B|3h|precondition/i);
+
+    const dUnforced = triggerObservations();
+    dUnforced[3] = {
+      ...dUnforced[3]!,
+      preconditions: { ...dUnforced[3]!.preconditions, force: false },
+    };
+    dUnforced[3]!.observationDigestSha256 = digestWave3TriggerObservation(dUnforced[3]!);
+    expect(() => assertTriggerIdentityCaptures(plan, dUnforced)).toThrow(/Trigger D|force|precondition/i);
   });
 });
 

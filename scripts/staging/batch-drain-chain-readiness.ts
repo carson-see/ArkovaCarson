@@ -33,6 +33,8 @@ export const RIG_B1_SIGNET_SECRET_NAMES = Object.freeze({
   treasuryWif: 'arkova-s33-rig-b1-treasury-wif-signet',
 });
 
+export const RIG_B1_ACCELERATED_SCHEDULER_CADENCE = '*/5 * * * *' as const;
+
 export type RigB1SecretEnv = 'BITCOIN_RPC_URL' | 'BITCOIN_RPC_AUTH' | 'BITCOIN_TREASURY_WIF';
 
 export interface RigB1SecretReference {
@@ -43,6 +45,17 @@ export interface RigB1SecretReference {
 export interface RigB1SchedulerJob {
   readonly name: string;
   readonly path: string;
+  readonly cadence: typeof RIG_B1_ACCELERATED_SCHEDULER_CADENCE;
+}
+
+export interface RigB1SchedulerPolicy {
+  readonly decision: 'FORCE_ACCELERATED_RIG_ONLY';
+  readonly scope: 'ISOLATED_NON_PRODUCTION_S33_ONLY';
+  readonly cadence: typeof RIG_B1_ACCELERATED_SCHEDULER_CADENCE;
+  readonly requiredStateThroughCleanMirror: 'PAUSED';
+  readonly enablePhase: 'AUTHORIZED_POST_WAVE3_EVIDENCE_ONLY';
+  readonly productionCadenceMutation: 'FORBIDDEN';
+  readonly productionTopologyMutation: 'FORBIDDEN';
 }
 
 export interface RigB1ReadinessPlan {
@@ -58,6 +71,7 @@ export interface RigB1ReadinessPlan {
   readonly treasuryAddress: string;
   readonly signerChallengeSha256: string;
   readonly secretReferences: readonly RigB1SecretReference[];
+  readonly schedulerPolicy: Readonly<RigB1SchedulerPolicy>;
   readonly schedulerJobs: readonly RigB1SchedulerJob[];
   readonly drainTriggers: readonly Wave3DrainTriggerSpec[];
 }
@@ -72,7 +86,19 @@ export interface RigB1PreClockObservation {
     secretName: string;
     resource: string;
   }>;
-  schedulerJobs: Array<RigB1SchedulerJob & { state: 'PAUSED' | 'ENABLED' }>;
+  schedulerPolicy: RigB1SchedulerPolicy & {
+    productionCadenceMutationAttempted: boolean;
+    productionTopologyMutationAttempted: boolean;
+    cleanMirrorAdmissionComplete: boolean;
+    evidencePhaseAuthorized: boolean;
+    observedAt: string;
+  };
+  schedulerJobs: Array<RigB1SchedulerJob & {
+    state: 'PAUSED' | 'ENABLED';
+    createdPaused: boolean;
+    pausedThroughCleanMirror: boolean;
+    enabledAt: string | null;
+  }>;
   getBlockchainInfo: {
     provider: string;
     rpcMethod: string;
@@ -111,6 +137,8 @@ export interface RigB1PreClockObservation {
 export interface RigB1PreClockReadinessSummary {
   readonly status: 'PRE_CLOCK_READY';
   readonly schedulerJobsPaused: 6;
+  readonly schedulerCadence: typeof RIG_B1_ACCELERATED_SCHEDULER_CADENCE;
+  readonly schedulerScope: 'ISOLATED_NON_PRODUCTION_S33_ONLY';
   readonly confirmedUtxos: number;
   readonly fundedBroadcastAccepted: true;
 }
@@ -178,7 +206,17 @@ export function buildRigB1ReadinessPlan(
   const schedulerJobs: RigB1SchedulerJob[] = JOB_SUFFIXES.map(([suffix, path]) => ({
     name: `${admission.workerService}-${suffix}`,
     path,
+    cadence: RIG_B1_ACCELERATED_SCHEDULER_CADENCE,
   }));
+  const schedulerPolicy: RigB1SchedulerPolicy = {
+    decision: 'FORCE_ACCELERATED_RIG_ONLY',
+    scope: 'ISOLATED_NON_PRODUCTION_S33_ONLY',
+    cadence: RIG_B1_ACCELERATED_SCHEDULER_CADENCE,
+    requiredStateThroughCleanMirror: 'PAUSED',
+    enablePhase: 'AUTHORIZED_POST_WAVE3_EVIDENCE_ONLY',
+    productionCadenceMutation: 'FORBIDDEN',
+    productionTopologyMutation: 'FORBIDDEN',
+  };
   const plan = deepFreeze<RigB1ReadinessPlan>({
     mode: 'OFFLINE_PLAN_ONLY',
     liveEvidenceStatus: 'DEFERRED_POST_WAVE3',
@@ -196,6 +234,7 @@ export function buildRigB1ReadinessPlan(
       treasuryAddress: treasurySplitPlan.treasuryAddress,
     }),
     secretReferences,
+    schedulerPolicy,
     schedulerJobs,
     drainTriggers: WAVE3_DRAIN_TRIGGER_SPECS.map((trigger) => ({ ...trigger })),
   });
@@ -239,6 +278,28 @@ export function assertRigB1PreClockReadiness(
     }
   });
 
+  parseUtcTimestamp(observation.schedulerPolicy.observedAt, 'Scheduler policy observedAt');
+  if (
+    observation.schedulerPolicy.decision !== plan.schedulerPolicy.decision
+    || observation.schedulerPolicy.scope !== plan.schedulerPolicy.scope
+    || observation.schedulerPolicy.cadence !== plan.schedulerPolicy.cadence
+    || observation.schedulerPolicy.requiredStateThroughCleanMirror
+      !== plan.schedulerPolicy.requiredStateThroughCleanMirror
+    || observation.schedulerPolicy.enablePhase !== plan.schedulerPolicy.enablePhase
+    || observation.schedulerPolicy.productionCadenceMutation
+      !== plan.schedulerPolicy.productionCadenceMutation
+    || observation.schedulerPolicy.productionTopologyMutation
+      !== plan.schedulerPolicy.productionTopologyMutation
+  ) throw new Error('RIG-B1 Scheduler policy does not match FORCE_ACCELERATED_RIG_ONLY.');
+  if (
+    observation.schedulerPolicy.productionCadenceMutationAttempted
+    || observation.schedulerPolicy.productionTopologyMutationAttempted
+  ) throw new Error('Production Scheduler cadence/topology mutation is forbidden.');
+  if (
+    !observation.schedulerPolicy.cleanMirrorAdmissionComplete
+    || observation.schedulerPolicy.evidencePhaseAuthorized
+  ) throw new Error('RIG-B1 pre-clock Scheduler policy requires completed clean-mirror admission and no evidence-phase enable authority.');
+
   if (observation.schedulerJobs.length !== plan.schedulerJobs.length) {
     throw new Error('RIG-B1 Scheduler observation must include all six jobs PAUSED.');
   }
@@ -248,8 +309,14 @@ export function assertRigB1PreClockReadiness(
       !actual
       || actual.name !== expected.name
       || actual.path !== expected.path
+      || actual.cadence !== RIG_B1_ACCELERATED_SCHEDULER_CADENCE
       || actual.state !== 'PAUSED'
-    ) throw new Error(`RIG-B1 Scheduler job ${expected.path} must match exactly and remain PAUSED.`);
+      || !actual.createdPaused
+      || !actual.pausedThroughCleanMirror
+      || actual.enabledAt !== null
+    ) throw new Error(
+      `RIG-B1 Scheduler job ${expected.path} must use the isolated-rig cadence and remain PAUSED through clean-mirror admission without an enable timestamp.`,
+    );
   });
 
   parseUtcTimestamp(observation.getBlockchainInfo.observedAt, 'getblockchaininfo observedAt');
@@ -299,6 +366,8 @@ export function assertRigB1PreClockReadiness(
   return deepFreeze({
     status: 'PRE_CLOCK_READY' as const,
     schedulerJobsPaused: 6 as const,
+    schedulerCadence: RIG_B1_ACCELERATED_SCHEDULER_CADENCE,
+    schedulerScope: 'ISOLATED_NON_PRODUCTION_S33_ONLY' as const,
     confirmedUtxos: observation.treasurySplit.confirmedUtxos,
     fundedBroadcastAccepted: true as const,
   });

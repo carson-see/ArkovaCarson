@@ -573,7 +573,7 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
 
     expect(sha256(prefix)).toBe('22ef741ccf44982cd7fc6ad981927e565dde31dbab8ae03e293472ac9125918e');
-    expect(sha256(f61BatchDrain)).toBe('744634a0a1945062dedaf5b3de9ca85434be92e6c1dc58661c1884cdc9e047a0');
+    expect(sha256(f61BatchDrain)).toBe('1a5d7b03c06becb69a0427e0dbf63749f41bb64b86793f07ba88b3a261fac86f');
     expect(provenanceOccurrences).toBe(1);
     expect(batchDrain).toContain('S3.3 R3 acceptance extensions are split deliberately');
     expect(batchDrain).toContain('Team 1 review hardening keeps every chronology field');

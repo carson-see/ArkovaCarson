@@ -9,6 +9,7 @@ import {
 } from './batch-drain-admission-adapter';
 import { planTreasuryPresplit, type TreasuryPresplitPlan } from './batch-drain-utxo-fanout';
 import {
+  RIG_B1_ACCELERATED_SCHEDULER_CADENCE,
   RIG_B1_SIGNET_SECRET_NAMES,
   assertRigB1PreClockReadiness,
   buildRigB1ReadinessPlan,
@@ -92,7 +93,21 @@ function observation(
       secretName: reference.secretName,
       resource: `projects/${readiness.gcpProjectId}/secrets/${reference.secretName}/versions/${index + 1}`,
     })),
-    schedulerJobs: readiness.schedulerJobs.map((job) => ({ ...job, state: 'PAUSED' as const })),
+    schedulerPolicy: {
+      ...readiness.schedulerPolicy,
+      productionCadenceMutationAttempted: false,
+      productionTopologyMutationAttempted: false,
+      cleanMirrorAdmissionComplete: true,
+      evidencePhaseAuthorized: false,
+      observedAt,
+    },
+    schedulerJobs: readiness.schedulerJobs.map((job) => ({
+      ...job,
+      state: 'PAUSED' as const,
+      createdPaused: true,
+      pausedThroughCleanMirror: true,
+      enabledAt: null,
+    })),
     getBlockchainInfo: {
       provider: 'getblock',
       rpcMethod: 'getblockchaininfo',
@@ -148,7 +163,7 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
     )).toThrow(/paused admission provenance|pre-clock readiness/i);
   });
 
-  it('freezes net-new signet secret names, all six paused jobs, and exact trigger paths', () => {
+  it('freezes net-new signet secret names, the rig-only five-minute cadence, and exact A/B/D causes', () => {
     const readiness = plan();
 
     expect(readiness.mode).toBe('OFFLINE_PLAN_ONLY');
@@ -162,6 +177,16 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
     ]);
     expect(readiness.secretReferences.every(({ secretName }) => secretName.includes('signet'))).toBe(true);
     expect(readiness.secretReferences.map(({ secretName }) => secretName)).not.toContain('bitcoin-rpc-url-staging');
+    expect(readiness.schedulerPolicy).toEqual({
+      decision: 'FORCE_ACCELERATED_RIG_ONLY',
+      scope: 'ISOLATED_NON_PRODUCTION_S33_ONLY',
+      cadence: RIG_B1_ACCELERATED_SCHEDULER_CADENCE,
+      requiredStateThroughCleanMirror: 'PAUSED',
+      enablePhase: 'AUTHORIZED_POST_WAVE3_EVIDENCE_ONLY',
+      productionCadenceMutation: 'FORBIDDEN',
+      productionTopologyMutation: 'FORBIDDEN',
+    });
+    expect(readiness.schedulerJobs.every(({ cadence }) => cadence === '*/5 * * * *')).toBe(true);
     expect(readiness.schedulerJobs.map(({ path }) => path)).toEqual([
       '/jobs/batch-anchors',
       '/jobs/batch-anchors?force=true',
@@ -171,9 +196,22 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
       '/jobs/recover-broadcasts',
     ]);
     expect(readiness.drainTriggers).toEqual([
-      { trigger: 'global-policy', method: 'POST', path: '/jobs/batch-anchors', body: null },
-      { trigger: 'global-flush', method: 'POST', path: '/jobs/batch-anchors?force=true', body: null },
-      { trigger: 'org-scheduler', method: 'POST', path: '/jobs/org-queue-scheduler', body: null },
+      expect.objectContaining({
+        trigger: 'trigger-a-size', cause: 'SIZE_THRESHOLD',
+        path: '/jobs/batch-anchors',
+      }),
+      expect.objectContaining({
+        trigger: 'trigger-b-age', cause: 'AGE_THRESHOLD',
+        path: '/jobs/batch-anchors',
+      }),
+      expect.objectContaining({
+        trigger: 'trigger-d-force', cause: 'FORCE',
+        path: '/jobs/batch-anchors?force=true',
+      }),
+      expect.objectContaining({
+        trigger: 'org-scheduler', cause: 'ORG_SCHEDULER',
+        path: '/jobs/org-queue-scheduler',
+      }),
     ]);
   });
 
@@ -221,8 +259,24 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
     expect(() => assertRigB1PreClockReadiness(readiness, staleMirror)).toThrow(/clean.mirror|attestation/i);
 
     const enabled = observation(readiness);
-    enabled.schedulerJobs[2] = { ...enabled.schedulerJobs[2]!, state: 'ENABLED' };
-    expect(() => assertRigB1PreClockReadiness(readiness, enabled)).toThrow(/PAUSED|Scheduler/i);
+    enabled.schedulerJobs[2] = {
+      ...enabled.schedulerJobs[2]!,
+      state: 'ENABLED',
+      pausedThroughCleanMirror: false,
+      enabledAt: '2026-07-16T11:59:00.000Z',
+    };
+    expect(() => assertRigB1PreClockReadiness(readiness, enabled))
+      .toThrow(/PAUSED|admission|enabled|Scheduler/i);
+
+    const productionCadence = observation(readiness);
+    productionCadence.schedulerPolicy.productionCadenceMutationAttempted = true;
+    expect(() => assertRigB1PreClockReadiness(readiness, productionCadence))
+      .toThrow(/production|cadence|forbidden/i);
+
+    const productionTopology = observation(readiness);
+    productionTopology.schedulerPolicy.productionTopologyMutationAttempted = true;
+    expect(() => assertRigB1PreClockReadiness(readiness, productionTopology))
+      .toThrow(/production|topology|forbidden/i);
   });
 
   it('rejects live-adapter reachability gaps, unverified signer readiness, and silent node-cron', () => {
