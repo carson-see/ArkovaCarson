@@ -9,10 +9,16 @@ describe('S3.3 Wave-2 trusted-main workflow contract', () => {
     expect(workflow).toContain('issue_comment:');
     expect(workflow).toContain('pull_request_review:');
     expect(workflow).toContain("types: [closed]");
-    expect(workflow).toContain('arkova-s33-wave2-authenticated-acceptance:v1');
+    expect(workflow).toContain('arkova-s33-detached-acceptance:v2');
+    expect(workflow).not.toContain('arkova-s33-wave2-authenticated-acceptance:v1');
+    expect(workflow).toContain("jq -r '.request.payload.reviewer.transport'");
+    expect(workflow).toContain("jq -r '.request.payload.reviewer.evidence.id'");
     expect(workflow).toContain('s33-wave2-github-transport.ts verify');
     expect(workflow).toContain('s33-wave2-batch-acceptance.ts accept');
     expect(workflow).toContain('s33-wave2-batch-acceptance.ts consume-merged');
+    expect(workflow.match(/--verified-at-utc/gu)).toHaveLength(2);
+    expect(workflow.match(/actions\/runs\/\$\{GITHUB_RUN_ID\}.*run_started_at/gu)).toHaveLength(2);
+    expect(workflow).not.toContain('date -');
   });
 
   it('installs trusted code before fetching candidate data and never checks candidate code out', () => {

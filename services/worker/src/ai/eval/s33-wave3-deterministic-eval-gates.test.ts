@@ -2,6 +2,7 @@ import {
   createHash,
   createPublicKey,
   generateKeyPairSync,
+  sign,
 } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -21,8 +22,9 @@ import {
   assessS33Wave3ReleaseCorpusFreeze,
   createS33Wave3ArmManifest,
   createS33Wave3InputPacketDigests,
+  createS33Wave3EvaluationTestHarnessV2,
   deriveS33Wave3ValidatedGoldFields,
-  evaluateS33Wave3OfflineGates,
+  evaluateS33Wave3OfflineGates as evaluateS33Wave3OfflineGatesProduction,
   scoreS33FieldComparisons,
   type S33Wave3EvaluationInput,
   type S33Wave3Observation,
@@ -38,11 +40,17 @@ import { S33_AU_KE_HELDOUT } from './golden-dataset-s33-au-ke-heldout.js';
 import { S33_LICENSING_HELDOUT } from './golden-dataset-s33-licensing-heldout.js';
 import { S33_OOD_NEGATIVES } from './golden-dataset-s33-ood-negatives.js';
 import {
-  buildAndSignS33Wave2AcceptanceForTest,
   type S33Wave2AcceptancePayloadInput,
-  type S33Wave2AcceptanceTrustRoot,
-  type S33Wave2AuthenticatedBatchAcceptance,
 } from './s33-wave2-acceptance-envelope.js';
+import {
+  S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+  S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+  createS33DetachedSigningTestHarnessV2,
+  emitS33DetachedSigningRequestV2,
+  validateS33DetachedSigningTrustPolicySetV2,
+  validateS33DetachedSigningTrustPolicyV2,
+  type S33DetachedAcceptanceEnvelopeV2,
+} from './s33-wave3-detached-signing-v2.js';
 
 const FIXTURE_SOURCE_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-wave2-fixture-heldout.ts';
 const FIXTURE_EXPORT_NAME = 'S33_WAVE2_FIXTURE_HELDOUT';
@@ -92,22 +100,35 @@ function gitBlobSha1(value: string): string {
 }
 
 const fixtureKeyPair = generateKeyPairSync('ed25519');
-const fixturePrivateKeyPkcs8Pem = fixtureKeyPair.privateKey.export({
-  type: 'pkcs8',
-  format: 'pem',
-}).toString();
 const fixturePublicKeySpkiPem = fixtureKeyPair.publicKey.export({
   type: 'spki',
   format: 'pem',
 }).toString();
-const fixtureTrustRoot: S33Wave2AcceptanceTrustRoot = {
-  signerIdentity: 'arkova-s33-wave2-cto-release',
-  signingKeyId: 'arkova-s33-wave2-cto-release',
+const fixturePolicy = validateS33DetachedSigningTrustPolicyV2({
+  ...S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+  state: 'ACTIVE',
   publicKeySpkiPem: fixturePublicKeySpkiPem,
   publicKeyFingerprintSha256: createHash('sha256').update(
     createPublicKey(fixturePublicKeySpkiPem).export({ type: 'spki', format: 'der' }),
   ).digest('hex'),
-};
+  authorizedOperator: 'lane3-evaluation-fixture',
+  fingerprintConfirmation: {
+    method: 'cto-out-of-band',
+    confirmedBy: 'lane3-evaluation-cto',
+    confirmedAtUtc: '2026-07-15T13:58:00.000Z',
+  },
+  activatedAtUtc: '2026-07-15T13:59:00.000Z',
+});
+const fixtureSigningHarness = createS33DetachedSigningTestHarnessV2(
+  validateS33DetachedSigningTrustPolicySetV2({
+    ...S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+    activeSigningKeyId: fixturePolicy.signingKeyId,
+    keys: [fixturePolicy],
+  }),
+);
+const evaluationTestHarness = createS33Wave3EvaluationTestHarnessV2(fixtureSigningHarness);
+const evaluateS33Wave3OfflineGates = evaluationTestHarness.evaluate;
+const TRUSTED_ACCEPTANCE_VERIFICATION_TIME = '2026-07-15T14:01:00.000Z';
 
 function normalizedInput(entry: FixtureEntry): string {
   return entry.strippedText ?? `Trusted fixture document ${entry.id}`;
@@ -341,7 +362,7 @@ function authenticatedFixtureAcceptance(
     fallbackRegistryTypeId?: string;
     signedEdgeCaseOverride?: (entry: FixtureEntry) => boolean;
   } = {},
-): S33Wave2AuthenticatedBatchAcceptance {
+): S33DetachedAcceptanceEnvelopeV2 {
   const batchId = options.batchId ?? 'S33-W3-FIXTURE';
   const manifestPath = options.manifestPath ?? 'test/manifest.json';
   const manifestRawSha256 = options.manifestRawSha256 ?? sha256('manifest');
@@ -408,7 +429,15 @@ function authenticatedFixtureAcceptance(
       sourceBlobSha,
     })),
   };
-  return buildAndSignS33Wave2AcceptanceForTest(input, fixturePrivateKeyPkcs8Pem, fixtureTrustRoot);
+  const request = emitS33DetachedSigningRequestV2(input);
+  const signature = sign(
+    null,
+    Buffer.from(request.signingBytesBase64Url, 'base64url'),
+    fixtureKeyPair.privateKey,
+  ).toString('base64url');
+  return fixtureSigningHarness.assemble(request, signature, {
+    verifiedAtUtc: TRUSTED_ACCEPTANCE_VERIFICATION_TIME,
+  });
 }
 
 const TOP15_BATCH_IDS = [
@@ -443,7 +472,7 @@ function releaseCorpusFreezeVector(options: {
   }).filter((_batch, index) => index !== options.missingBatchIndex);
 
   let previousRegistryDigestSha256 = WAVE1_BASE_REGISTRY_DIGEST;
-  const acceptances: S33Wave2AuthenticatedBatchAcceptance[] = [];
+  const acceptances: S33DetachedAcceptanceEnvelopeV2[] = [];
   for (const [index, { batchId, entries }] of batches.entries()) {
     const resultingRegistryDigestSha256 = sha256(`release-registry:${index}:${batchId}`);
     const sourceBlobSha = gitBlobSha1(fixtureSource(entries));
@@ -564,11 +593,11 @@ function makeFixture(options: {
 
   return {
     gateRegistryJson: GATE_REGISTRY_JSON,
+    acceptanceVerifiedAtUtc: TRUSTED_ACCEPTANCE_VERIFICATION_TIME,
     founderCoverageRegistryJson: founderRegistryJson(),
     acceptedCorpusRegistry: registry,
     trustedGoldSources,
     authenticatedBatchAcceptances,
-    testOnlyAcceptanceTrustRoot: fixtureTrustRoot,
     armManifests: manifests,
     observations,
     integrityEvidence,
@@ -740,7 +769,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
     expect(first.verdict).toBe('NO-GO');
     expect(first.bindings.acceptanceAuthority).toEqual({
       verificationMode: 'test-injected',
-      publicKeyFingerprintSha256: fixtureTrustRoot.publicKeyFingerprintSha256,
+      publicKeyFingerprintSha256: fixturePolicy.publicKeyFingerprintSha256,
       authenticatedBatchCount: 1,
       releaseAuthority: false,
     });
@@ -767,10 +796,8 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
     expect(report.evidenceClass).toBe('fixture-only');
     expect(report.verdict).toBe('NO-GO');
 
-    const noInjectedAuthority = makeFixture();
-    delete noInjectedAuthority.testOnlyAcceptanceTrustRoot;
-    expect(() => evaluateS33Wave3OfflineGates(noInjectedAuthority)).toThrow(
-      /CTO release trust root is not configured/u,
+    expect(() => evaluateS33Wave3OfflineGatesProduction(makeFixture())).toThrow(
+      /UNCONFIGURED|no configured ACTIVE key/u,
     );
   });
 
@@ -809,14 +836,14 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
     expect(finalDigestMismatch.passed).toBe(false);
   });
 
-  it('validates a malformed injected root even when no acceptance is supplied', () => {
-    const input = makeFixture();
-    input.authenticatedBatchAcceptances = [];
-    input.testOnlyAcceptanceTrustRoot = {
-      ...fixtureTrustRoot,
-      publicKeySpkiPem: 'not an Ed25519 SPKI',
-    };
-    expect(() => evaluateS33Wave3OfflineGates(input)).toThrow(/trust-root SPKI PEM is invalid/u);
+  it('exposes no acceptance-policy injection field on the evaluator input', () => {
+    const input = makeFixture() as S33Wave3EvaluationInput & Record<string, unknown>;
+    input.testOnlyAcceptanceTrustRoot = { attacker: true };
+    expect(evaluateS33Wave3OfflineGates(input).bindings.acceptanceAuthority.verificationMode)
+      .toBe('test-injected');
+    expect(() => evaluateS33Wave3OfflineGatesProduction(input)).toThrow(
+      /UNCONFIGURED|no configured ACTIVE key/u,
+    );
   });
 
   it('reports per-domain confusion, abstention, calibration, and a deterministic coverage curve', () => {

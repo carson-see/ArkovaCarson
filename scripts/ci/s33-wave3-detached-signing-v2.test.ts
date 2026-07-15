@@ -118,6 +118,7 @@ describe('S3.3 Wave-3 detached-signing CLI', () => {
     writeFileSync(signature, JSON.stringify({ signatureBase64Url: 'A'.repeat(86) }));
     expect(() => runS33DetachedSigningCli([
       'assemble', '--signing-request', request, '--signature', signature,
+      '--verified-at-utc', '2026-07-15T21:00:00.000Z',
       '--output', join(root, 'envelope.json'),
     ])).toThrow(/UNCONFIGURED/i);
   });

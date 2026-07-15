@@ -113,11 +113,30 @@ export interface S33DetachedAcceptanceEnvelopeV2 {
   artifactDigestSha256: string;
 }
 
+export interface S33DetachedSigningAuthorityV2 {
+  readonly signerIdentity: typeof SIGNER_IDENTITY;
+  readonly signingKeyId: string;
+  readonly publicKeyFingerprintSha256: string;
+  readonly authorizedOperator: string;
+  readonly activatedAtUtc: string;
+}
+
+export interface S33DetachedAcceptanceVerificationContextV2 {
+  /** Trusted external time (for example GitHub Actions run_started_at). */
+  readonly verifiedAtUtc: string;
+}
+
 export interface S33DetachedSigningTestHarnessV2 {
-  assemble(request: unknown, signatureBase64Url: string): S33DetachedAcceptanceEnvelopeV2;
+  readonly authority: S33DetachedSigningAuthorityV2;
+  assemble(
+    request: unknown,
+    signatureBase64Url: string,
+    context: S33DetachedAcceptanceVerificationContextV2,
+  ): S33DetachedAcceptanceEnvelopeV2;
   verify(
     envelope: unknown,
     bindings: S33Wave2AcceptanceBindings,
+    context: S33DetachedAcceptanceVerificationContextV2,
   ): S33DetachedAcceptanceEnvelopeV2;
   audit(
     envelope: unknown,
@@ -1000,6 +1019,31 @@ function requireActiveTrustPolicySet(
   return { policy: resolved.policy, publicKey: resolved.publicKey };
 }
 
+function signingAuthority(
+  active: S33ActiveTrustPolicyV2,
+): S33DetachedSigningAuthorityV2 {
+  const { policy } = active;
+  if (policy.publicKeyFingerprintSha256 === null
+    || policy.authorizedOperator === null
+    || policy.activatedAtUtc === null) {
+    throw new Error('S3.3 detached ACTIVE trust policy is missing release-authority material');
+  }
+  return deepFreeze({
+    signerIdentity: SIGNER_IDENTITY,
+    signingKeyId: policy.signingKeyId,
+    publicKeyFingerprintSha256: policy.publicKeyFingerprintSha256,
+    authorizedOperator: policy.authorizedOperator,
+    activatedAtUtc: policy.activatedAtUtc,
+  });
+}
+
+/** Resolve the sole committed production authority; UNCONFIGURED fails closed. */
+export function getS33DetachedSigningAuthorityV2(): S33DetachedSigningAuthorityV2 {
+  return signingAuthority(
+    requireActiveTrustPolicySet(parseTrustPolicySet(S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2)),
+  );
+}
+
 /**
  * Rebind an unsigned in-flight request to the sole ACTIVE post-cutover key.
  * The returned bytes require a new CTO-controlled detached signature.
@@ -1035,6 +1079,7 @@ export function regenerateS33DetachedSigningRequestForActiveKeyV2(
 function assertRequestPolicy(
   request: S33DetachedSigningRequestV2,
   policy: S33DetachedSigningTrustPolicyV2,
+  contextValue: S33DetachedAcceptanceVerificationContextV2,
 ): void {
   if (request.signerIdentity !== policy.signerIdentity || request.signingKeyId !== policy.signingKeyId) {
     throw new Error('S3.3 detached request does not match the ACTIVE trust-policy key identity');
@@ -1042,6 +1087,15 @@ function assertRequestPolicy(
   if (policy.activatedAtUtc === null
     || Date.parse(request.payload.signedAtUtc) < Date.parse(policy.activatedAtUtc)) {
     throw new Error('S3.3 detached request predates the selected trust-policy key activation');
+  }
+  const context = record(contextValue, 'S3.3 detached trusted verification context');
+  exactKeys(context, ['verifiedAtUtc'], 'S3.3 detached trusted verification context');
+  const verifiedAtUtc = isoUtc(
+    context.verifiedAtUtc,
+    'S3.3 detached trusted verification time',
+  );
+  if (Date.parse(request.payload.signedAtUtc) > Date.parse(verifiedAtUtc)) {
+    throw new Error('S3.3 detached request is future-dated relative to trusted verification time');
   }
 }
 
@@ -1071,11 +1125,12 @@ function assembleWithTrustPolicy(
   requestValue: unknown,
   signatureValue: string,
   trustPolicy: { policy: S33DetachedSigningTrustPolicyV2; publicKey: KeyObject },
+  context: S33DetachedAcceptanceVerificationContextV2,
 ): S33DetachedAcceptanceEnvelopeV2 {
   const request = validateSigningRequest(requestValue);
   const signature = signatureBase64Url(signatureValue);
   const { policy, publicKey } = trustPolicy;
-  assertRequestPolicy(request, policy);
+  assertRequestPolicy(request, policy, context);
   verifySignature(request, signature, publicKey);
   const withoutDigest = envelopeWithoutDigest({
     schemaVersion: SCHEMA_VERSION,
@@ -1096,11 +1151,13 @@ function assembleWithTrustPolicy(
 export function assembleS33DetachedAcceptanceEnvelopeV2(
   requestValue: unknown,
   signatureValue: string,
+  context: S33DetachedAcceptanceVerificationContextV2,
 ): S33DetachedAcceptanceEnvelopeV2 {
   return assembleWithTrustPolicy(
     requestValue,
     signatureValue,
     requireActiveTrustPolicySet(parseTrustPolicySet(S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2)),
+    context,
   );
 }
 
@@ -1131,6 +1188,7 @@ function verifyWithTrustPolicy(
   value: unknown,
   bindings: S33Wave2AcceptanceBindings,
   trustPolicy: { policy: S33DetachedSigningTrustPolicyV2; publicKey: KeyObject },
+  context: S33DetachedAcceptanceVerificationContextV2,
 ): S33DetachedAcceptanceEnvelopeV2 {
   const envelope = record(value, 'S3.3 detached acceptance envelope');
   exactKeys(envelope, [
@@ -1171,7 +1229,7 @@ function verifyWithTrustPolicy(
     throw new Error('S3.3 detached acceptance-envelope artifact digest mismatch');
   }
   const { policy, publicKey } = trustPolicy;
-  assertRequestPolicy(request, policy);
+  assertRequestPolicy(request, policy, context);
   if (publicKeyFingerprintSha256 !== policy.publicKeyFingerprintSha256) {
     throw new Error('S3.3 detached envelope fingerprint does not match the selected CTO trust policy');
   }
@@ -1184,11 +1242,13 @@ function verifyWithTrustPolicy(
 export function verifyS33DetachedAcceptanceEnvelopeV2(
   value: unknown,
   bindings: S33Wave2AcceptanceBindings,
+  context: S33DetachedAcceptanceVerificationContextV2,
 ): S33DetachedAcceptanceEnvelopeV2 {
   return verifyWithTrustPolicy(
     value,
     bindings,
     requireActiveTrustPolicySet(parseTrustPolicySet(S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2)),
+    context,
   );
 }
 
@@ -1291,11 +1351,11 @@ function auditWithTrustPolicySet(
   if (!resolved || resolved.publicKey === null || resolved.policy.state === 'UNCONFIGURED') {
     throw new Error('S3.3 detached historical audit has no configured public root for the envelope key');
   }
+  const context = parseHistoricalAuditContext(contextValue);
   const envelope = verifyWithTrustPolicy(value, bindings, {
     policy: resolved.policy,
     publicKey: resolved.publicKey,
-  });
-  const context = parseHistoricalAuditContext(contextValue);
+  }, { verifiedAtUtc: context.auditedAtUtc });
   assertHistoricalAuditTimeline(envelope, resolved.policy, context);
   const { disposition, reason } = historicalDisposition(envelope, resolved.policy, context);
   const keyStateEffectiveAtUtc = policyStateEffectiveAtUtc(resolved.policy);
@@ -1342,16 +1402,25 @@ export function createS33DetachedSigningTestHarnessV2(
   }
   const resolvedSet = parseTrustPolicySet(trustPolicySetValue);
   return Object.freeze({
-    assemble: (request: unknown, signature: string): S33DetachedAcceptanceEnvelopeV2 => (
-      assembleWithTrustPolicy(request, signature, requireActiveTrustPolicySet(resolvedSet))
+    get authority(): S33DetachedSigningAuthorityV2 {
+      return signingAuthority(requireActiveTrustPolicySet(resolvedSet));
+    },
+    assemble: (
+      request: unknown,
+      signature: string,
+      context: S33DetachedAcceptanceVerificationContextV2,
+    ): S33DetachedAcceptanceEnvelopeV2 => (
+      assembleWithTrustPolicy(request, signature, requireActiveTrustPolicySet(resolvedSet), context)
     ),
     verify: (
       envelope: unknown,
       bindings: S33Wave2AcceptanceBindings,
+      context: S33DetachedAcceptanceVerificationContextV2,
     ): S33DetachedAcceptanceEnvelopeV2 => verifyWithTrustPolicy(
       envelope,
       bindings,
       requireActiveTrustPolicySet(resolvedSet),
+      context,
     ),
     audit: (
       envelope: unknown,

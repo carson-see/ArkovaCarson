@@ -27,8 +27,12 @@ const COMMAND_FLAGS: Readonly<Record<Command, readonly string[]>> = Object.freez
   'regenerate-request': Object.freeze([
     '--signing-request', '--signed-at-utc', '--trust-policy-set', '--output',
   ]),
-  assemble: Object.freeze(['--signing-request', '--signature', '--output']),
-  verify: Object.freeze(['--acceptance-envelope', '--bindings', '--output']),
+  assemble: Object.freeze([
+    '--signing-request', '--signature', '--verified-at-utc', '--output',
+  ]),
+  verify: Object.freeze([
+    '--acceptance-envelope', '--bindings', '--verified-at-utc', '--output',
+  ]),
 });
 
 function usage(): never {
@@ -36,8 +40,8 @@ function usage(): never {
     'Usage:',
     '  s33-wave3-detached-signing-v2.ts emit-request --payload-input FILE --output FILE',
     '  s33-wave3-detached-signing-v2.ts regenerate-request --signing-request FILE --signed-at-utc UTC --trust-policy-set FILE --output FILE',
-    '  s33-wave3-detached-signing-v2.ts assemble --signing-request FILE --signature FILE --output FILE',
-    '  s33-wave3-detached-signing-v2.ts verify --acceptance-envelope FILE --bindings FILE --output FILE',
+    '  s33-wave3-detached-signing-v2.ts assemble --signing-request FILE --signature FILE --verified-at-utc UTC --output FILE',
+    '  s33-wave3-detached-signing-v2.ts verify --acceptance-envelope FILE --bindings FILE --verified-at-utc UTC --output FILE',
     'The CLI accepts no private-key or environment trust-root input.',
   ].join('\n'));
 }
@@ -118,7 +122,9 @@ export function runS33DetachedSigningCli(argv: readonly string[]): CliResult {
       required(options, '--signature'),
       'S3.3 detached signature',
     ));
-    result = assembleS33DetachedAcceptanceEnvelopeV2(request, signature);
+    result = assembleS33DetachedAcceptanceEnvelopeV2(request, signature, {
+      verifiedAtUtc: required(options, '--verified-at-utc'),
+    });
   } else {
     const envelope = readStrictJson(
       required(options, '--acceptance-envelope'),
@@ -128,7 +134,9 @@ export function runS33DetachedSigningCli(argv: readonly string[]): CliResult {
       required(options, '--bindings'),
       'S3.3 detached caller bindings',
     ) as S33Wave2AcceptanceBindings;
-    result = verifyS33DetachedAcceptanceEnvelopeV2(envelope, bindings);
+    result = verifyS33DetachedAcceptanceEnvelopeV2(envelope, bindings, {
+      verifiedAtUtc: required(options, '--verified-at-utc'),
+    });
   }
   writeS33Wave2Evidence(output, result);
   return result;

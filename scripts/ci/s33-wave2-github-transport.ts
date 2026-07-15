@@ -9,7 +9,7 @@ import { writeS33Wave2Evidence } from './s33-wave2-batch-acceptance.js';
 
 type JsonRecord = Record<string, unknown>;
 
-export const S33_WAVE2_ACCEPTANCE_COMMENT_MARKER = '<!-- arkova-s33-wave2-authenticated-acceptance:v1 -->';
+export const S33_WAVE2_ACCEPTANCE_COMMENT_MARKER = '<!-- arkova-s33-detached-acceptance:v2 -->';
 
 function record(value: unknown, label: string): JsonRecord {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -62,7 +62,19 @@ interface SignedTransport {
 
 function signedTransport(value: unknown): SignedTransport {
   const envelope = record(value, 'Wave-2 acceptance envelope');
-  const payload = record(envelope.payload, 'Wave-2 acceptance payload');
+  if (envelope.schemaVersion !== 2
+    || envelope.artifactType !== 'arkova-s33-detached-acceptance-envelope'
+    || envelope.signatureAlgorithm !== 'Ed25519'
+    || envelope.signerIdentity !== 'arkova-s33-cto-release') {
+    throw new Error('Wave-2 acceptance transport requires the detached v2 envelope');
+  }
+  const request = record(envelope.request, 'Wave-2 detached signing request');
+  if (request.schemaVersion !== 2
+    || request.artifactType !== 'arkova-s33-detached-signing-request'
+    || request.domainSeparator !== 'arkova:s33:detached-acceptance:v2\n') {
+    throw new Error('Wave-2 acceptance transport requires the detached v2 request domain');
+  }
+  const payload = record(request.payload, 'Wave-2 acceptance payload');
   const reviewer = record(payload.reviewer, 'Wave-2 acceptance reviewer');
   const evidence = record(reviewer.evidence, 'Wave-2 transport evidence');
   const actor = record(evidence.actor, 'Wave-2 transport actor');

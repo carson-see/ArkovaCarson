@@ -1,11 +1,9 @@
 /**
  * Authenticated whole-batch acceptance contract for Sprint 3.3 Wave 2.
  *
- * Lane 3 acceptance authority is a dedicated Ed25519 identity. GitHub reviews
- * and issue comments are durable transport evidence only: a login, review
- * state, or distinct account never grants acceptance authority. Production
- * remains deliberately fail-closed until the CTO commits the public SPKI and
- * fingerprint below; tests may inject a generated key only in NODE_ENV=test.
+ * This v1 schema remains only as the strict unsigned-payload compatibility
+ * layer used by detached-signing v2 and as a legacy security-regression test
+ * harness. It has no production trust root or production verification path.
  */
 
 import {
@@ -187,16 +185,9 @@ export interface S33Wave2AcceptanceBindings {
 }
 
 export interface S33Wave2VerificationOptions {
-  /** Test-only escape hatch. Production callers cannot provide a key. */
+  /** Required legacy-v1 test fixture. Production authority is v2 only. */
   testOnlyTrustRoot?: S33Wave2AcceptanceTrustRoot;
 }
-
-/**
- * CTO must replace this null with the reviewed public SPKI/fingerprint in a
- * dedicated commit. No environment variable or caller-supplied production key
- * is accepted, so absence is an intentional release stop.
- */
-export const S33_WAVE2_CTO_RELEASE_TRUST_ROOT: S33Wave2AcceptanceTrustRoot | null = null;
 
 export const S33_WAVE2_ACCEPTANCE_CONSTANTS = Object.freeze({
   repositoryIdentity: REPOSITORY,
@@ -611,14 +602,10 @@ function validateTrustRoot(trustRoot: unknown): { trustRoot: S33Wave2AcceptanceT
 }
 
 function resolveTrustRoot(options: S33Wave2VerificationOptions | undefined): ReturnType<typeof validateTrustRoot> {
-  if (options?.testOnlyTrustRoot !== undefined) {
-    if (process.env.NODE_ENV !== 'test') throw new Error('Wave-2 test-only trust-root injection is disabled');
-    return validateTrustRoot(options.testOnlyTrustRoot);
+  if (process.env.NODE_ENV !== 'test' || options?.testOnlyTrustRoot === undefined) {
+    throw new Error('Wave-2 legacy-v1 verification is test-only; production acceptance requires detached signing v2');
   }
-  if (S33_WAVE2_CTO_RELEASE_TRUST_ROOT === null) {
-    throw new Error('Wave-2 CTO release trust root is not configured; acceptance fails closed');
-  }
-  return validateTrustRoot(S33_WAVE2_CTO_RELEASE_TRUST_ROOT);
+  return validateTrustRoot(options.testOnlyTrustRoot);
 }
 
 function validateBindings(value: unknown): S33Wave2AcceptanceBindings {
