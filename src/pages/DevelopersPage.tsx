@@ -43,14 +43,14 @@ const SDK_EXAMPLES = {
   curl: `curl -X GET \\
   ${PUBLIC_API_URL}/api/v1/verify/abc123-def456 \\
   -H "Authorization: Bearer YOUR_API_KEY"`,
-  typescript: `import { ArkovaClient } from '@arkova/sdk';
+  typescript: `import { Arkova } from '@arkova/sdk';
 
-const client = new ArkovaClient({ apiKey: 'YOUR_API_KEY' });
+const client = new Arkova({ apiKey: 'YOUR_API_KEY' });
 const result = await client.verify('abc123-def456');
 console.log(result.status); // 'ACTIVE'`,
-  python: `from arkova import ArkovaClient
+  python: `from arkova import Arkova
 
-client = ArkovaClient(api_key="YOUR_API_KEY")
+client = Arkova(api_key="YOUR_API_KEY")
 result = client.verify("abc123-def456")
 print(result.status)  # "ACTIVE"`,
 };
