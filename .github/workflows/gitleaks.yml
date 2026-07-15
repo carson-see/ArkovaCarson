@@ -1,0 +1,72 @@
+name: gitleaks
+
+# Secret-scanning gate. Runs the repo's .gitleaks.toml (SEC-015) against the
+# PR's NEW commits only — legacy fixtures already in history do not trip it,
+# so this is safe to add without wedging the Mergify queue. It becomes a
+# blocking gate only if/when branch protection promotes it to a required check.
+#
+# Added 2026-07-14 after the Sekura phase-1 SAST scan: the config existed but
+# nothing ran it. This closes that gap.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Newer commits cancel stale runs — saves Actions minutes (matches ci.yml).
+concurrency:
+  group: gitleaks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the diff range resolves
+
+      - name: Install gitleaks
+        run: |
+          VERSION=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" -o gitleaks.tgz
+          tar -xzf gitleaks.tgz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan new commits for hardcoded secrets
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            RANGE="origin/${{ github.base_ref }}..HEAD"
+          else
+            BEFORE="${{ github.event.before }}"
+            # First push to a new branch reports an all-zero "before" SHA.
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              RANGE="HEAD~1..HEAD"
+            else
+              RANGE="${BEFORE}..${{ github.sha }}"
+            fi
+          fi
+          echo "Scanning commit range: $RANGE"
+          gitleaks git \
+            --config .gitleaks.toml \
+            --log-opts="$RANGE" \
+            --redact \
+            --verbose \
+            --report-format json \
+            --report-path gitleaks-report.json
+
+      - name: Upload findings report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          if-no-files-found: ignore

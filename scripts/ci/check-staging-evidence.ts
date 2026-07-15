@@ -31,7 +31,7 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { dirname, relative, resolve, sep } from 'node:path';
+import { dirname, posix, relative, resolve, sep } from 'node:path';
 import ts from 'typescript';
 import {
   REPO,
@@ -297,9 +297,46 @@ export type DiffProvider = (file: string) => string | null;
 export interface TierClassifyOpts {
   diffProvider?: DiffProvider;
   s33RuntimeImporterProvider?: () => readonly string[];
+  s33Lane1ImportScan?: S33Lane1ImportScan;
 }
 
 const DEPLOY_WORKER_WORKFLOW = '.github/workflows/deploy-worker.yml';
+const ROOT_PACKAGE_MANIFEST = 'package.json';
+
+export interface S33Lane1ImportScan {
+  complete: boolean;
+  importers: string[];
+}
+
+interface SourceFileText {
+  path: string;
+  content: string;
+}
+
+/**
+ * CTO ruling 102498305: these are the complete non-test Lane-1 evidence
+ * verifier modules eligible for the S3.3 offline-T0 decision. Keep this list
+ * exact. A new sibling file does not inherit the carve-out.
+ */
+export const S33_LANE1_OFFLINE_EVIDENCE_FILES = new Set([
+  'scripts/staging/batch-drain-admission-adapter.ts',
+  'scripts/staging/batch-drain-crash-adapter.ts',
+  'scripts/staging/batch-drain-crash-control.ts',
+  'scripts/staging/batch-drain-harness-lib.ts',
+  'scripts/staging/batch-drain-live-evidence.ts',
+  'scripts/staging/batch-drain-observation.ts',
+  'scripts/staging/batch-drain-strict-json.ts',
+  'scripts/staging/batch-drain-time.ts',
+]);
+
+const S33_LANE1_LINT_SCRIPT_LINE = '"lint:batch-drain-evidence": "eslint --no-ignore scripts/staging/batch-drain-harness-lib.ts scripts/staging/batch-drain-harness-lib.test.ts scripts/staging/batch-drain-observation.ts scripts/staging/batch-drain-observation.test.ts scripts/staging/batch-drain-crash-control.ts scripts/staging/batch-drain-crash-control.test.ts scripts/staging/batch-drain-crash-adapter.ts scripts/staging/batch-drain-crash-adapter.test.ts scripts/staging/batch-drain-strict-json.ts scripts/staging/batch-drain-strict-json.test.ts scripts/staging/batch-drain-time.ts scripts/staging/batch-drain-time.test.ts scripts/staging/batch-drain-live-evidence.ts scripts/staging/batch-drain-live-evidence.test.ts scripts/staging/batch-drain-evidence-sources.test.ts scripts/staging/batch-drain-admission-adapter.ts scripts/staging/batch-drain-admission-adapter.test.ts",';
+
+const RUNTIME_SOURCE_PATH_RE = /^(?:src\/|services\/[^/]+\/src\/|packages\/[^/]+\/src\/|integrations\/[^/]+\/src\/|sdks\/)/;
+const RUNTIME_SOURCE_EXT_RE = /\.(?:[cm]?[jt]sx?)$/;
+const NON_RUNTIME_DIRECTORY_RE = /(?:^|\/)(?:__tests__|test|tests|test-utils|fixtures)(?:\/|$)/;
+const TEST_SOURCE_FILE_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+const AGENTS_DOC_RE = /(?:^|\/)agents\.md$/;
+const IMPORT_SPECIFIER_RE = /\b(?:from|import|require)\s*(?:\(\s*)?['"]([^'"\r\n]+)['"]\s*\)?/g;
 
 const S33_OFFLINE_ACCEPTANCE_FILES = new Set([
   '.github/s33-wave1-acceptance-authorities.json',
@@ -576,6 +613,103 @@ export function isDeployWorkerUsesOnlyBump(diff: string | null | undefined): boo
 }
 
 /**
+ * Root package.json normally stays above T0 because it governs the app/runtime
+ * dependency tree. The sole S3.3 exception is the exact one-line lint command
+ * that gives CI coverage to the file-scoped offline verifier modules above.
+ * Any second changed line, command drift, deletion, or unavailable diff keeps
+ * the manifest at its normal tier.
+ */
+export function isS33Lane1RootLintScriptOnly(diff: string | null | undefined): boolean {
+  if (!diff || diff.trim().length === 0) return false;
+
+  const changedLines = diff.split(/\r?\n/).filter((line) => {
+    if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) return false;
+    return line.startsWith('+') || line.startsWith('-');
+  });
+
+  return changedLines.length === 1
+    && changedLines[0]?.startsWith('+') === true
+    && changedLines[0]?.slice(1).trim() === S33_LANE1_LINT_SCRIPT_LINE;
+}
+
+function isNonRuntimeSourcePath(file: string): boolean {
+  return NON_RUNTIME_DIRECTORY_RE.test(file)
+    || TEST_SOURCE_FILE_RE.test(file)
+    || AGENTS_DOC_RE.test(file);
+}
+
+function isRuntimeSourcePath(file: string): boolean {
+  return RUNTIME_SOURCE_PATH_RE.test(file)
+    && RUNTIME_SOURCE_EXT_RE.test(file)
+    && !isNonRuntimeSourcePath(file);
+}
+
+function isScriptsStagingTarget(path: string): boolean {
+  return /(?:^|\/)scripts\/staging(?:\/|$)/.test(path);
+}
+
+function specifierTargetsStagingTooling(importer: string, specifier: string): boolean {
+  const normalizedSpecifier = specifier.replaceAll('\\', '/');
+  if (isScriptsStagingTarget(normalizedSpecifier)) return true;
+  if (!normalizedSpecifier.startsWith('.')) return false;
+  const resolved = posix.normalize(posix.join(posix.dirname(importer), normalizedSpecifier));
+  return isScriptsStagingTarget(resolved);
+}
+
+/**
+ * Returns production-runtime files that statically import staging tooling.
+ * Test/spec/fixture sources are excluded because the CTO ruling permits offline
+ * tests; frontend, worker, service, package, integration, and SDK source roots
+ * are all scanned. The matcher intentionally treats any runtime import from
+ * scripts/staging as a blocker: a staging barrel could otherwise hide a
+ * transitive import of one of the exact verifier files.
+ */
+export function findS33Lane1RuntimeImporters(files: SourceFileText[]): string[] {
+  const importers = new Set<string>();
+  for (const file of files) {
+    if (!isRuntimeSourcePath(file.path)) continue;
+    IMPORT_SPECIFIER_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = IMPORT_SPECIFIER_RE.exec(file.content)) !== null) {
+      const specifier = match[1];
+      if (specifier && specifierTargetsStagingTooling(file.path, specifier)) {
+        importers.add(file.path);
+        break;
+      }
+    }
+  }
+  return [...importers].sort(compareCodeUnits);
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function gitS33Lane1ImportScan(): S33Lane1ImportScan {
+  try {
+    const tracked = execFileSync(
+      GIT_BIN,
+      ['ls-files', '--', 'src', 'services', 'packages', 'integrations', 'sdks'],
+      { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ).split('\n').map((line) => line.trim()).filter(Boolean);
+    const sourceFiles = tracked.filter(isRuntimeSourcePath).map((path) => ({
+      path,
+      content: readFileSync(resolve(REPO, path), 'utf8'),
+    }));
+    return { complete: true, importers: findS33Lane1RuntimeImporters(sourceFiles) };
+  } catch {
+    return { complete: false, importers: [] };
+  }
+}
+
+function hasCleanS33Lane1ImportScan(opts?: TierClassifyOpts): boolean {
+  return opts?.s33Lane1ImportScan?.complete === true
+    && opts.s33Lane1ImportScan.importers.length === 0;
+}
+
+/**
  * deploy-worker.yml is normally a T2 prod-runtime surface. The ONLY exemption is
  * a Dependabot GitHub-Actions `uses:`-version bump (verified against the file's
  * diff via {@link isDeployWorkerUsesOnlyBump}); such a change touches no prod
@@ -594,6 +728,18 @@ function isDeployWorkerUsesOnlyExempt(file: string, opts?: TierClassifyOpts): bo
 function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
   if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
   if (TEST_FILE_RE.test(file) || file.endsWith('agents.md')) return true;
+  // Binding CTO ruling 102498305: these exact non-test modules are T0 only
+  // while a complete production-source scan proves no runtime imports anything
+  // from scripts/staging. Missing scan data or any importer voids the carve-out.
+  if (S33_LANE1_OFFLINE_EVIDENCE_FILES.has(file)) {
+    return hasCleanS33Lane1ImportScan(opts);
+  }
+  // The root manifest exception is equally narrow: exact lint-script line only,
+  // and only while the same runtime-import proof is clean.
+  if (file === ROOT_PACKAGE_MANIFEST) {
+    return hasCleanS33Lane1ImportScan(opts)
+      && isS33Lane1RootLintScriptOnly(opts?.diffProvider?.(file));
+  }
   // Dependency bumps that don't touch a core runtime surface are T0:
   //   - ANY package-lock.json (root / packages/* / services/* / integrations/*) —
   //     a lockfile is a deterministic re-resolution of the manifest, not a source
@@ -645,8 +791,15 @@ export function requiredTierFor(
     return { tier: 'T0', reason: 'docs/tests/CI/tooling-only' };
   }
 
-  let best: Tier = 'T1';
-  let reason = 'default frontend / additive change';
+  const touchesS33Lane1OfflineEvidence = files.some((file) => (
+    S33_LANE1_OFFLINE_EVIDENCE_FILES.has(file)
+  ));
+  const s33Lane1CarveoutFailed = touchesS33Lane1OfflineEvidence
+    && !hasCleanS33Lane1ImportScan(opts);
+  let best: Tier = s33Lane1CarveoutFailed ? 'T2' : 'T1';
+  let reason = s33Lane1CarveoutFailed
+    ? 'S3.3 Lane 1 offline verifier import scan missing/incomplete or runtime importer detected'
+    : 'default frontend / additive change';
   for (const f of files) {
     if (isT0OnlyFile(f, classifyOpts)) continue;
     for (const rule of PATH_RULES) {
@@ -2001,6 +2154,11 @@ interface CheckOptions {
    * in {@link main}; tests inject a stub. Absent → carve-out fails closed (T2).
    */
   diffProvider?: DiffProvider;
+  /**
+   * Complete production-source import scan required by CTO ruling 102498305.
+   * Missing/incomplete data or any importer voids the offline-T0 carve-out.
+   */
+  s33Lane1ImportScan?: S33Lane1ImportScan;
 }
 
 function addErrors(result: CheckResult, errors: string[]): void {
@@ -2544,7 +2702,10 @@ export function check(opts: CheckOptions): CheckResult {
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
 
-  const required = requiredTierFor(files, { diffProvider: opts.diffProvider });
+  const required = requiredTierFor(files, {
+    diffProvider: opts.diffProvider,
+    s33Lane1ImportScan: opts.s33Lane1ImportScan,
+  });
   if (required.tier === 'T0') {
     result.notes.push(`T0 CI-only PR (${required.reason}) — no staging soak evidence required.`);
     return result;
@@ -2626,6 +2787,7 @@ function main(): void {
     baseSha: baseRef,
     prNumber,
     diffProvider: gitFileDiffProvider(baseRef),
+    s33Lane1ImportScan: gitS33Lane1ImportScan(),
   });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);

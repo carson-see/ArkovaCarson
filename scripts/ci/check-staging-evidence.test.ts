@@ -3,14 +3,17 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  S33_LANE1_OFFLINE_EVIDENCE_FILES,
   check,
   extractDeclaredTier,
   findS33RuntimeImporters,
+  findS33Lane1RuntimeImporters,
   hasEvidenceSection,
   hasResidualRiskException,
   isDeployWorkerUsesOnlyBump,
   isFrontendOnlyChange,
   isOfflinePackageOnlyChange,
+  isS33Lane1RootLintScriptOnly,
   isStagingToolingOnly,
   missingFields,
   requiredTierFor,
@@ -49,6 +52,38 @@ const MIXED_DEPLOY_WORKER_DIFF = `@@ -41,7 +41,7 @@ jobs:
 -          ENABLE_AI_EXTRACTION=true \\
 +          ENABLE_AI_EXTRACTION=false \\
 `;
+
+const S33_LANE1_ROOT_LINT_DIFF = `@@ -16,6 +16,7 @@
+     "typecheck": "tsc --noEmit",
+     "lint": "eslint src/",
+     "lint:copy": "tsx scripts/check-copy-terms.ts",
++    "lint:batch-drain-evidence": "eslint --no-ignore scripts/staging/batch-drain-harness-lib.ts scripts/staging/batch-drain-harness-lib.test.ts scripts/staging/batch-drain-observation.ts scripts/staging/batch-drain-observation.test.ts scripts/staging/batch-drain-crash-control.ts scripts/staging/batch-drain-crash-control.test.ts scripts/staging/batch-drain-crash-adapter.ts scripts/staging/batch-drain-crash-adapter.test.ts scripts/staging/batch-drain-strict-json.ts scripts/staging/batch-drain-strict-json.test.ts scripts/staging/batch-drain-time.ts scripts/staging/batch-drain-time.test.ts scripts/staging/batch-drain-live-evidence.ts scripts/staging/batch-drain-live-evidence.test.ts scripts/staging/batch-drain-evidence-sources.test.ts scripts/staging/batch-drain-admission-adapter.ts scripts/staging/batch-drain-admission-adapter.test.ts",
+     "gen:types": "supabase gen types typescript --local > src/types/database.types.ts",
+`;
+
+const S33_LANE1_FILES = [
+  'scripts/staging/batch-drain-admission-adapter.ts',
+  'scripts/staging/batch-drain-crash-adapter.ts',
+  'scripts/staging/batch-drain-crash-control.ts',
+  'scripts/staging/batch-drain-harness-lib.ts',
+  'scripts/staging/batch-drain-live-evidence.ts',
+  'scripts/staging/batch-drain-observation.ts',
+  'scripts/staging/batch-drain-strict-json.ts',
+  'scripts/staging/batch-drain-time.ts',
+  'package.json',
+  '.github/workflows/ci.yml',
+];
+
+const S33_LANE1_EXACT_MODULES = [
+  'scripts/staging/batch-drain-admission-adapter.ts',
+  'scripts/staging/batch-drain-crash-adapter.ts',
+  'scripts/staging/batch-drain-crash-control.ts',
+  'scripts/staging/batch-drain-harness-lib.ts',
+  'scripts/staging/batch-drain-live-evidence.ts',
+  'scripts/staging/batch-drain-observation.ts',
+  'scripts/staging/batch-drain-strict-json.ts',
+  'scripts/staging/batch-drain-time.ts',
+];
 
 const T3_BODY = `
 ## Summary
@@ -665,6 +700,87 @@ describe('check-staging-evidence', () => {
           diffProvider: () => USES_ONLY_DEPLOY_WORKER_DIFF,
         }).tier,
       ).toBe('T2');
+    });
+  });
+
+  describe('S3.3 Lane 1 offline-evidence T0 carve-out', () => {
+    const cleanImportScan = { complete: true, importers: [] as string[] };
+    const diffProvider = (file: string) => (
+      file === 'package.json' ? S33_LANE1_ROOT_LINT_DIFF : null
+    );
+
+    it('accepts only the exact root lint-script addition', () => {
+      expect(isS33Lane1RootLintScriptOnly(S33_LANE1_ROOT_LINT_DIFF)).toBe(true);
+      expect(isS33Lane1RootLintScriptOnly(`${S33_LANE1_ROOT_LINT_DIFF}+    "start": "node server.js",\n`)).toBe(false);
+      expect(isS33Lane1RootLintScriptOnly(null)).toBe(false);
+    });
+
+    it('pins the stricter import-scan carve-out to the authoritative eight modules', () => {
+      expect([...S33_LANE1_OFFLINE_EVIDENCE_FILES].sort()).toEqual(S33_LANE1_EXACT_MODULES);
+    });
+
+    it('classifies the exact offline file set as T0 after a complete clean runtime-import scan', () => {
+      expect(requiredTierFor(S33_LANE1_FILES, {
+        diffProvider,
+        s33Lane1ImportScan: cleanImportScan,
+      })).toEqual({ tier: 'T0', reason: 'docs/tests/CI/tooling-only' });
+    });
+
+    it('fails closed to T2 when the runtime-import scan is absent or incomplete', () => {
+      expect(requiredTierFor(S33_LANE1_FILES, { diffProvider }).tier).toBe('T2');
+      expect(requiredTierFor(S33_LANE1_FILES, {
+        diffProvider,
+        s33Lane1ImportScan: { complete: false, importers: [] },
+      }).tier).toBe('T2');
+    });
+
+    it('fails closed to T2 when any production runtime imports staging tooling', () => {
+      const importers = findS33Lane1RuntimeImporters([
+        {
+          path: 'services/worker/src/jobs/runtime-consumer.ts',
+          content: "import { verify } from '../../../../scripts/staging/batch-drain-live-evidence.js';\n",
+        },
+        {
+          path: 'src/lib/runtime-consumer.ts',
+          content: "export * from '../../scripts/staging';\n",
+        },
+        {
+          path: 'packages/embed/src/runtime-consumer.ts',
+          content: "const verifier = await import('../../../scripts/staging');\n",
+        },
+        {
+          path: 'services/worker/src/jobs/runtime-consumer.test.ts',
+          content: "import '../../../../scripts/staging/batch-drain-live-evidence.js';\n",
+        },
+      ]);
+      expect(importers).toEqual([
+        'packages/embed/src/runtime-consumer.ts',
+        'services/worker/src/jobs/runtime-consumer.ts',
+        'src/lib/runtime-consumer.ts',
+      ]);
+      expect(requiredTierFor(S33_LANE1_FILES, {
+        diffProvider,
+        s33Lane1ImportScan: { complete: true, importers },
+      }).tier).toBe('T2');
+    });
+
+    it('does not exempt a mixed root-manifest change', () => {
+      const mixedDiff = `${S33_LANE1_ROOT_LINT_DIFF}+    "start": "node server.js",\n`;
+      expect(requiredTierFor(S33_LANE1_FILES, {
+        diffProvider: (file) => (file === 'package.json' ? mixedDiff : null),
+        s33Lane1ImportScan: cleanImportScan,
+      }).tier).toBe('T1');
+    });
+
+    it('passes the evidence gate with no soak block only for the exact clean T0 case', () => {
+      const r = check({
+        body: '## Staging Soak Evidence\n- Tier: T0\n',
+        files: S33_LANE1_FILES,
+        diffProvider,
+        s33Lane1ImportScan: cleanImportScan,
+      });
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/T0 CI-only/i);
     });
   });
 
