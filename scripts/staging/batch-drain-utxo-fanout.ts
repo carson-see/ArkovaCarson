@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { parseUtcTimestamp } from './batch-drain-time';
 
 const TX_ID = /^[0-9a-f]{64}$/;
+const SIGNET_TREASURY_ADDRESS = /^tb1[a-z0-9]{20,87}$/;
 
 export interface TreasuryInput {
   readonly txId: string;
@@ -127,6 +128,7 @@ export interface OrgFanOutEvidenceSummary {
 }
 
 const CONFIRMED_SPLITS = new WeakSet<ConfirmedTreasurySplit>();
+const TREASURY_PRESPLIT_PLANS = new WeakSet<TreasuryPresplitPlan>();
 
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -171,8 +173,10 @@ function outpoint(value: { txId: string; vout: number }): string {
 
 export function planTreasuryPresplit(input: TreasuryPresplitPlanInput): TreasuryPresplitPlan {
   requireId(input.planId, 'planId');
-  requireId(input.treasuryAddress, 'treasuryAddress');
   if (input.network !== 'signet') throw new Error('Treasury pre-split plans are signet-only.');
+  if (!SIGNET_TREASURY_ADDRESS.test(input.treasuryAddress)) {
+    throw new Error('treasuryAddress must be a bounded lowercase tb1 signet treasury address.');
+  }
   if (input.outputCount !== 32) throw new Error('Treasury pre-split must create exactly 32 outputs.');
   requireSafeInteger(input.feeSats, 'feeSats', 0);
   requireSafeInteger(input.minOutputSats, 'minOutputSats', 1);
@@ -223,13 +227,27 @@ export function planTreasuryPresplit(input: TreasuryPresplitPlanInput): Treasury
     feeSats: input.feeSats,
     minOutputSats: input.minOutputSats,
   };
-  return deepFreeze({ ...core, planDigest: digest(core) });
+  const plan = deepFreeze<TreasuryPresplitPlan>({ ...core, planDigest: digest(core) });
+  TREASURY_PRESPLIT_PLANS.add(plan);
+  return plan;
+}
+
+export function requireTreasuryPresplitPlan(candidate: unknown): TreasuryPresplitPlan {
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error('Treasury readiness requires a validated pre-split plan provenance handle.');
+  }
+  const plan = candidate as TreasuryPresplitPlan;
+  if (!TREASURY_PRESPLIT_PLANS.has(plan)) {
+    throw new Error('Treasury readiness requires a validated pre-split plan provenance handle.');
+  }
+  return plan;
 }
 
 export function assertTreasuryPresplitObservation(
   plan: TreasuryPresplitPlan,
   observation: TreasuryPresplitObservation,
 ): ConfirmedTreasurySplit {
+  requireTreasuryPresplitPlan(plan);
   if (observation.planDigest !== plan.planDigest) throw new Error('Treasury split observation plan digest mismatch.');
   if (observation.network !== 'signet') throw new Error('Treasury split observation must be on signet.');
   requireTxId(observation.splitTxId, 'splitTxId');
@@ -325,8 +343,14 @@ export function assertOrgFanOutObservation(
   observation: OrgFanOutObservation,
 ): OrgFanOutEvidenceSummary {
   if (observation.planDigest !== plan.planDigest) throw new Error('Organization fan-out observation plan digest mismatch.');
-  parseUtcTimestamp(observation.observedAt, 'fan-out observedAt');
-  parseUtcTimestamp(observation.consolidation.observedAt, 'consolidation observedAt');
+  const fanOutObservedAt = parseUtcTimestamp(observation.observedAt, 'fan-out observedAt');
+  const consolidationObservedAt = parseUtcTimestamp(
+    observation.consolidation.observedAt,
+    'consolidation observedAt',
+  );
+  if (consolidationObservedAt < fanOutObservedAt) {
+    throw new Error('Treasury consolidation must be observed at or after the fan-out boundary.');
+  }
   if (observation.transactions.length !== plan.reservations.length) {
     throw new Error('Organization fan-out observation does not match every reservation.');
   }

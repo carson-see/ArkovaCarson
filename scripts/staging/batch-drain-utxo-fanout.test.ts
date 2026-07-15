@@ -99,6 +99,10 @@ describe('deterministic RIG-B1 treasury pre-split', () => {
 
   it('fails closed on unconfirmed, duplicate, unsafe, or dust-producing inputs', () => {
     expect(() => planTreasuryPresplit({
+      planId: 'mainnet-address', network: 'signet', treasuryAddress: `bc1q${'a'.repeat(38)}`,
+      inputs: INPUTS, outputCount: 32, feeSats: 3_200, minOutputSats: 1_000,
+    })).toThrow(/signet|treasury.*address/i);
+    expect(() => planTreasuryPresplit({
       planId: 'unconfirmed', network: 'signet', treasuryAddress: TREASURY_ADDRESS,
       inputs: [{ ...INPUTS[0], confirmations: 0 }], outputCount: 32, feeSats: 1,
       minOutputSats: 1_000,
@@ -177,5 +181,10 @@ describe('greater-than-25 organization fan-out and consolidation guard', () => {
     const consolidated = fanOutObservation(fanOut);
     consolidated.consolidation.spentOutpoints = [fanOut.reservations[0]!.input];
     expect(() => assertOrgFanOutObservation(fanOut, consolidated)).toThrow(/consolidation|reserved/i);
+
+    const preFanOutSnapshot = fanOutObservation(fanOut);
+    preFanOutSnapshot.consolidation.observedAt = '2026-07-16T12:09:59.999Z';
+    expect(() => assertOrgFanOutObservation(fanOut, preFanOutSnapshot))
+      .toThrow(/consolidation|after|fan-out|chronology/i);
   });
 });

@@ -573,11 +573,14 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
 
     expect(sha256(prefix)).toBe('22ef741ccf44982cd7fc6ad981927e565dde31dbab8ae03e293472ac9125918e');
-    expect(sha256(f61BatchDrain)).toBe('ff89f096f6131f34a54b58af3ecc120d2f7bddf69afcc49308e96d159556a8ba');
+    expect(sha256(f61BatchDrain)).toBe('744634a0a1945062dedaf5b3de9ca85434be92e6c1dc58661c1884cdc9e047a0');
     expect(provenanceOccurrences).toBe(1);
     expect(batchDrain).toContain('S3.3 R3 acceptance extensions are split deliberately');
     expect(batchDrain).toContain('Team 1 review hardening keeps every chronology field');
     expect(batchDrain).toContain('batch-drain-admission-adapter.ts` is the only Team1 bridge');
     expect(batchDrain).toContain('Wave 3 Lane 1 B adds three pure offline contracts');
+    expect(batchDrain).toContain('signer challenge and funded reachability both bound to the same branded split-plan digest/address');
+    expect(batchDrain).toContain('Scheduler state must be `paused_after_clean_mirror`');
+    expect(batchDrain).toContain('consolidation snapshot is at or after the fan-out boundary');
   });
 });

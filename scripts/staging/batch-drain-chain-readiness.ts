@@ -6,11 +6,17 @@
  * bound to the immutable admission identity.
  */
 
+import { createHash } from 'node:crypto';
+
 import {
-  requireAdmissionBoundRunDeclaration,
-  type AdmissionBoundRunDeclaration,
+  requirePreClockAdmissionIdentity,
+  type PreClockAdmissionBoundIdentity,
 } from './batch-drain-admission-adapter';
 import { parseUtcTimestamp } from './batch-drain-time';
+import {
+  requireTreasuryPresplitPlan,
+  type TreasuryPresplitPlan,
+} from './batch-drain-utxo-fanout';
 import {
   WAVE3_DRAIN_TRIGGER_SPECS,
   type Wave3DrainTriggerSpec,
@@ -49,6 +55,8 @@ export interface RigB1ReadinessPlan {
   readonly workerService: string;
   readonly cleanMirrorAttestationId: string;
   readonly treasurySplitPlanDigest: string;
+  readonly treasuryAddress: string;
+  readonly signerChallengeSha256: string;
   readonly secretReferences: readonly RigB1SecretReference[];
   readonly schedulerJobs: readonly RigB1SchedulerJob[];
   readonly drainTriggers: readonly Wave3DrainTriggerSpec[];
@@ -81,6 +89,7 @@ export interface RigB1PreClockObservation {
   };
   treasurySplit: {
     planDigest: string;
+    treasuryAddress: string;
     confirmedUtxos: number;
     minimumConfirmations: number;
     observedAt: string;
@@ -88,6 +97,7 @@ export interface RigB1PreClockObservation {
   fundedBroadcast: {
     network: string;
     txId: string;
+    spentFromTreasuryAddress: string;
     accepted: boolean;
     observedAt: string;
   };
@@ -130,37 +140,61 @@ function requireSafeInteger(value: number, label: string, minimum: number): void
   }
 }
 
+function requireSignetTreasuryAddress(value: string, label: string): void {
+  if (!/^tb1[a-z0-9]{20,87}$/.test(value)) {
+    throw new Error(`${label} must be a bounded lowercase tb1 signet treasury address.`);
+  }
+}
+
+function signerChallengeSha256(input: {
+  gitHeadSha: string;
+  treasurySplitPlanDigest: string;
+  treasuryAddress: string;
+}): string {
+  return createHash('sha256').update([
+    'ARKOVA_RIG_B1_SIGNER_READINESS_V1',
+    input.gitHeadSha,
+    input.treasurySplitPlanDigest,
+    input.treasuryAddress,
+  ].join('\u0000')).digest('hex');
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function buildRigB1ReadinessPlan(
-  admissionHandle: AdmissionBoundRunDeclaration,
-  input: { readonly treasurySplitPlanDigest: string },
+  admissionHandle: PreClockAdmissionBoundIdentity,
+  input: { readonly treasurySplitPlan: TreasuryPresplitPlan },
 ): RigB1ReadinessPlan {
-  const declaration = requireAdmissionBoundRunDeclaration(admissionHandle);
-  if (!SHA256.test(input.treasurySplitPlanDigest)) {
-    throw new Error('RIG-B1 treasury split plan digest must be sha256-prefixed lowercase hex.');
-  }
+  const admission = requirePreClockAdmissionIdentity(admissionHandle);
+  const treasurySplitPlan = requireTreasuryPresplitPlan(input.treasurySplitPlan);
+  requireSignetTreasuryAddress(treasurySplitPlan.treasuryAddress, 'RIG-B1 treasuryAddress');
   const secretReferences: RigB1SecretReference[] = [
     { env: 'BITCOIN_RPC_URL', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcUrl },
     { env: 'BITCOIN_RPC_AUTH', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcAuth },
     { env: 'BITCOIN_TREASURY_WIF', secretName: RIG_B1_SIGNET_SECRET_NAMES.treasuryWif },
   ];
   const schedulerJobs: RigB1SchedulerJob[] = JOB_SUFFIXES.map(([suffix, path]) => ({
-    name: `${declaration.workerService}-${suffix}`,
+    name: `${admission.workerService}-${suffix}`,
     path,
   }));
   const plan = deepFreeze<RigB1ReadinessPlan>({
     mode: 'OFFLINE_PLAN_ONLY',
     liveEvidenceStatus: 'DEFERRED_POST_WAVE3',
     admissionSha256: admissionHandle.admissionSha256,
-    gitHeadSha: declaration.gitHeadSha,
-    imageDigest: declaration.imageDigest,
-    gcpProjectId: declaration.gcpProjectId,
-    workerService: declaration.workerService,
-    cleanMirrorAttestationId: declaration.cleanMirrorAttestationId,
-    treasurySplitPlanDigest: input.treasurySplitPlanDigest,
+    gitHeadSha: admission.gitHeadSha,
+    imageDigest: admission.imageDigest,
+    gcpProjectId: admission.gcpProjectId,
+    workerService: admission.workerService,
+    cleanMirrorAttestationId: admission.cleanMirrorAttestationId,
+    treasurySplitPlanDigest: treasurySplitPlan.planDigest,
+    treasuryAddress: treasurySplitPlan.treasuryAddress,
+    signerChallengeSha256: signerChallengeSha256({
+      gitHeadSha: admission.gitHeadSha,
+      treasurySplitPlanDigest: treasurySplitPlan.planDigest,
+      treasuryAddress: treasurySplitPlan.treasuryAddress,
+    }),
     secretReferences,
     schedulerJobs,
     drainTriggers: WAVE3_DRAIN_TRIGGER_SPECS.map((trigger) => ({ ...trigger })),
@@ -228,8 +262,8 @@ export function assertRigB1PreClockReadiness(
   parseUtcTimestamp(observation.signerReadiness.observedAt, 'signer readiness observedAt');
   if (
     observation.signerReadiness.algorithm !== 'secp256k1'
-    || !observation.signerReadiness.treasuryAddress.startsWith('tb1')
-    || !SHA256_HEX.test(observation.signerReadiness.challengeSha256)
+    || observation.signerReadiness.treasuryAddress !== plan.treasuryAddress
+    || observation.signerReadiness.challengeSha256 !== plan.signerChallengeSha256
     || !SHA256_HEX.test(observation.signerReadiness.signatureSha256)
     || !observation.signerReadiness.verified
   ) throw new Error('RIG-B1 secp256k1 signer readiness challenge is not verified for signet.');
@@ -240,13 +274,17 @@ export function assertRigB1PreClockReadiness(
   if (observation.treasurySplit.planDigest !== plan.treasurySplitPlanDigest) {
     throw new Error('RIG-B1 confirmed treasury UTXOs do not match the split plan digest.');
   }
+  if (observation.treasurySplit.treasuryAddress !== plan.treasuryAddress) {
+    throw new Error('RIG-B1 confirmed treasury UTXOs do not match the planned treasury address.');
+  }
 
   parseUtcTimestamp(observation.fundedBroadcast.observedAt, 'funded broadcast observedAt');
   if (
     observation.fundedBroadcast.network !== 'signet'
     || !TX_ID.test(observation.fundedBroadcast.txId)
+    || observation.fundedBroadcast.spentFromTreasuryAddress !== plan.treasuryAddress
     || !observation.fundedBroadcast.accepted
-  ) throw new Error('RIG-B1 funded signet broadcast was not accepted.');
+  ) throw new Error('RIG-B1 funded signet broadcast was not accepted from the planned treasury address.');
 
   parseUtcTimestamp(observation.nodeCron.observedAt, 'node-cron observedAt');
   if (

@@ -3,7 +3,11 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { projectAdmissionV2ToRunDeclaration } from './batch-drain-admission-adapter';
+import {
+  projectAdmissionV2ToPreClockIdentity,
+  projectAdmissionV2ToRunDeclaration,
+} from './batch-drain-admission-adapter';
+import { planTreasuryPresplit, type TreasuryPresplitPlan } from './batch-drain-utxo-fanout';
 import {
   RIG_B1_SIGNET_SECRET_NAMES,
   assertRigB1PreClockReadiness,
@@ -15,38 +19,63 @@ const ADMISSION_RAW = readFileSync(
   join(process.cwd(), 'scripts/staging/fixtures/rig-b1-admission-v2.json'),
   'utf8',
 );
-const SPLIT_PLAN_DIGEST = `sha256:${'9'.repeat(64)}`;
+const TREASURY_ADDRESS = 'tb1qarkovas33rigb1treasuryfixture0000000000000';
+const OTHER_TREASURY_ADDRESS = 'tb1qdifferenttreasuryaddress0000000000000000000';
 
-function ceremonyRaw(): string {
+function preClockAdmissionRaw(): string {
+  const admission = JSON.parse(ADMISSION_RAW) as { scheduler: { state: string } };
+  admission.scheduler.state = 'paused_after_clean_mirror';
+  return JSON.stringify(admission);
+}
+
+function completedCeremonyRaw(): string {
   return JSON.stringify({
-    declarationId: 'decl-rig-b1-readiness',
+    declarationId: 'decl-rig-b1-completed-only',
     soakStartedAt: '2026-07-13T12:00:00.000Z',
     soakEndedAt: '2026-07-15T12:31:00.000Z',
     recoveries: [],
     windows: [{
-      scenarioId: 'readiness-fixture-window',
+      scenarioId: 'completed-only-window',
       kind: 'eligible-10000',
       armedTrigger: 'org-scheduler',
       expectedInitialPending: 1,
       expectedFinalPending: 0,
       passes: [{
-        batchId: 'batch-readiness-fixture',
+        batchId: 'batch-completed-only',
         armedTrigger: 'org-scheduler',
-        schedulerExecutionId: 'scheduler-readiness-fixture',
+        schedulerExecutionId: 'scheduler-completed-only',
         faultWindow: {
-          id: 'fault-readiness-fixture',
+          id: 'fault-completed-only',
           startsAt: '2026-07-13T12:00:00.000Z',
           endsAt: '2026-07-13T12:05:00.000Z',
         },
-        claims: [{ fingerprint: '1'.repeat(64), orgId: 'org-readiness-fixture' }],
+        claims: [{ fingerprint: '1'.repeat(64), orgId: 'org-completed-only' }],
       }],
     }],
   });
 }
 
+function admission() {
+  return projectAdmissionV2ToPreClockIdentity(preClockAdmissionRaw());
+}
+
+function splitPlan(): TreasuryPresplitPlan {
+  return planTreasuryPresplit({
+    planId: 's33-w3-b-rig-b1-readiness-split',
+    network: 'signet',
+    treasuryAddress: TREASURY_ADDRESS,
+    inputs: [{
+      txId: '7'.repeat(64), vout: 0, valueSats: 3_200_000,
+      confirmations: 6,
+    }],
+    outputCount: 32,
+    feeSats: 3_200,
+    minOutputSats: 1_000,
+  });
+}
+
 function plan() {
-  const admission = projectAdmissionV2ToRunDeclaration(ADMISSION_RAW, ceremonyRaw());
-  return buildRigB1ReadinessPlan(admission, { treasurySplitPlanDigest: SPLIT_PLAN_DIGEST });
+  return buildRigB1ReadinessPlan(admission(), { treasurySplitPlan: splitPlan() });
 }
 
 function observation(
@@ -72,14 +101,15 @@ function observation(
     },
     signerReadiness: {
       algorithm: 'secp256k1',
-      treasuryAddress: 'tb1qarkovas33rigb1treasuryfixture0000000000000',
-      challengeSha256: '4'.repeat(64),
+      treasuryAddress: TREASURY_ADDRESS,
+      challengeSha256: readiness.signerChallengeSha256,
       signatureSha256: '5'.repeat(64),
       verified: true,
       observedAt,
     },
     treasurySplit: {
       planDigest: readiness.treasurySplitPlanDigest,
+      treasuryAddress: TREASURY_ADDRESS,
       confirmedUtxos: 32,
       minimumConfirmations: 1,
       observedAt,
@@ -87,6 +117,7 @@ function observation(
     fundedBroadcast: {
       network: 'signet',
       txId: '6'.repeat(64),
+      spentFromTreasuryAddress: TREASURY_ADDRESS,
       accepted: true,
       observedAt,
     },
@@ -95,11 +126,35 @@ function observation(
 }
 
 describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
+  it('builds before any clock only from paused admission and rejects resumed/completed-soak input', () => {
+    expect(plan()).toMatchObject({ mode: 'OFFLINE_PLAN_ONLY' });
+    expect(() => projectAdmissionV2ToPreClockIdentity(ADMISSION_RAW))
+      .toThrow(/paused_after_clean_mirror|Pre-clock admission/i);
+
+    const completed = JSON.parse(preClockAdmissionRaw()) as Record<string, unknown>;
+    Object.assign(completed, {
+      soakStartedAt: '2026-07-13T12:00:00.000Z',
+      soakEndedAt: '2026-07-15T12:31:00.000Z',
+      windows: [],
+      recoveries: [],
+    });
+    expect(() => projectAdmissionV2ToPreClockIdentity(JSON.stringify(completed)))
+      .toThrow(/unrecognized|unknown|Pre-clock admission/i);
+
+    const completedRun = projectAdmissionV2ToRunDeclaration(ADMISSION_RAW, completedCeremonyRaw());
+    expect(() => buildRigB1ReadinessPlan(
+      completedRun as never,
+      { treasurySplitPlan: splitPlan() },
+    )).toThrow(/paused admission provenance|pre-clock readiness/i);
+  });
+
   it('freezes net-new signet secret names, all six paused jobs, and exact trigger paths', () => {
     const readiness = plan();
 
     expect(readiness.mode).toBe('OFFLINE_PLAN_ONLY');
     expect(readiness.liveEvidenceStatus).toBe('DEFERRED_POST_WAVE3');
+    expect(readiness.treasuryAddress).toBe(TREASURY_ADDRESS);
+    expect(readiness.signerChallengeSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(readiness.secretReferences).toEqual([
       { env: 'BITCOIN_RPC_URL', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcUrl },
       { env: 'BITCOIN_RPC_AUTH', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcAuth },
@@ -120,6 +175,16 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
       { trigger: 'global-flush', method: 'POST', path: '/jobs/batch-anchors?force=true', body: null },
       { trigger: 'org-scheduler', method: 'POST', path: '/jobs/org-queue-scheduler', body: null },
     ]);
+  });
+
+  it('rejects a caller-spliced digest/address pair without pre-split plan provenance', () => {
+    const split = splitPlan();
+    const spliced = {
+      ...split,
+      treasuryAddress: OTHER_TREASURY_ADDRESS,
+    } as TreasuryPresplitPlan;
+    expect(() => buildRigB1ReadinessPlan(admission(), { treasurySplitPlan: spliced }))
+      .toThrow(/validated|provenance|pre-split plan/i);
   });
 
   it('accepts only a clean-mirror-bound signet observation with resolved secrets and paused jobs', () => {
@@ -169,6 +234,16 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
     const signer = observation(readiness);
     signer.signerReadiness.verified = false;
     expect(() => assertRigB1PreClockReadiness(readiness, signer)).toThrow(/signer|verified/i);
+
+    const wrongSignerAddress = observation(readiness);
+    wrongSignerAddress.signerReadiness.treasuryAddress = OTHER_TREASURY_ADDRESS;
+    expect(() => assertRigB1PreClockReadiness(readiness, wrongSignerAddress))
+      .toThrow(/signer|treasury|address/i);
+
+    const wrongBroadcastAddress = observation(readiness);
+    wrongBroadcastAddress.fundedBroadcast.spentFromTreasuryAddress = OTHER_TREASURY_ADDRESS;
+    expect(() => assertRigB1PreClockReadiness(readiness, wrongBroadcastAddress))
+      .toThrow(/broadcast|treasury|address/i);
 
     const cron = observation(readiness);
     cron.nodeCron = { mode: 'unattributed', observedAt: '2026-07-16T12:00:00.000Z' };
