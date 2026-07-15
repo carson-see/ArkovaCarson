@@ -103,6 +103,12 @@ export interface OrgFanOutPlan {
   readonly planDigest: string;
 }
 
+interface OrgFanOutPlanSource {
+  readonly planId: string;
+  readonly confirmedSplit: ConfirmedTreasurySplit;
+  readonly orgs: readonly RankedOrganization[];
+}
+
 export interface OrgFanOutObservation {
   planDigest: string;
   observedAt: string;
@@ -129,6 +135,10 @@ export interface OrgFanOutEvidenceSummary {
 
 const CONFIRMED_SPLITS = new WeakSet<ConfirmedTreasurySplit>();
 const TREASURY_PRESPLIT_PLANS = new WeakSet<TreasuryPresplitPlan>();
+const ORG_FAN_OUT_PLAN_SOURCES = new WeakMap<
+  OrgFanOutPlan,
+  Readonly<OrgFanOutPlanSource>
+>();
 
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -335,13 +345,91 @@ export function planOrgFanOut(input: {
     sourceSplitPlanDigest: input.confirmedSplit.planDigest,
     reservations,
   };
-  return deepFreeze({ ...core, planDigest: digest(core) });
+  const plan = deepFreeze({ ...core, planDigest: digest(core) });
+  ORG_FAN_OUT_PLAN_SOURCES.set(plan, deepFreeze({
+    planId: input.planId,
+    confirmedSplit: input.confirmedSplit,
+    orgs: input.orgs.map((org) => ({ ...org })),
+  }));
+  return plan;
+}
+
+function requireOrgFanOutPlan(candidate: unknown): OrgFanOutPlan {
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error(
+      'Organization fan-out evidence requires a validated plan provenance handle.',
+    );
+  }
+  const plan = candidate as OrgFanOutPlan;
+  const source = ORG_FAN_OUT_PLAN_SOURCES.get(plan);
+  if (!source) {
+    throw new Error(
+      'Organization fan-out evidence requires a validated plan provenance handle.',
+    );
+  }
+  const rebuilt = planOrgFanOut(source);
+  if (stableJson(plan) !== stableJson(rebuilt)) {
+    throw new Error(
+      'Validated organization fan-out plan does not match its strict rebuilt source.',
+    );
+  }
+  if (plan.reservations.length <= 25) {
+    throw new Error(
+      'Organization fan-out evidence requires more than 25 reservations.',
+    );
+  }
+  const orgIds = new Set<string>();
+  const ranks = new Set<number>();
+  const reservedInputs = new Set<string>();
+  plan.reservations.forEach((reservation, index) => {
+    requireId(reservation.orgId, `reservations[${index}].orgId`);
+    requireSafeInteger(reservation.rank, `reservations[${index}].rank`, 1);
+    if (reservation.rank !== index + 1) {
+      throw new Error(
+        'Organization fan-out reservation ranks must be contiguous from one.',
+      );
+    }
+    requireTxId(reservation.input.txId, `reservations[${index}].input.txId`);
+    requireSafeInteger(
+      reservation.input.vout,
+      `reservations[${index}].input.vout`,
+      0,
+    );
+    requireSafeInteger(
+      reservation.input.valueSats,
+      `reservations[${index}].input.valueSats`,
+      1,
+    );
+    const inputKey = outpoint(reservation.input);
+    if (
+      orgIds.has(reservation.orgId)
+      || ranks.has(reservation.rank)
+      || reservedInputs.has(inputKey)
+    ) {
+      throw new Error(
+        'Organization fan-out requires unique org IDs, ranks, and one unique reserved UTXO per organization.',
+      );
+    }
+    orgIds.add(reservation.orgId);
+    ranks.add(reservation.rank);
+    reservedInputs.add(inputKey);
+  });
+  if (
+    orgIds.size !== plan.reservations.length
+    || reservedInputs.size !== plan.reservations.length
+  ) {
+    throw new Error(
+      'Organization fan-out requires more than 25 unique organizations with one unique UTXO each.',
+    );
+  }
+  return plan;
 }
 
 export function assertOrgFanOutObservation(
   plan: OrgFanOutPlan,
   observation: OrgFanOutObservation,
 ): OrgFanOutEvidenceSummary {
+  requireOrgFanOutPlan(plan);
   if (observation.planDigest !== plan.planDigest) throw new Error('Organization fan-out observation plan digest mismatch.');
   const fanOutObservedAt = parseUtcTimestamp(observation.observedAt, 'fan-out observedAt');
   const consolidationObservedAt = parseUtcTimestamp(

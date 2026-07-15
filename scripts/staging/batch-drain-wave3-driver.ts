@@ -152,6 +152,26 @@ export interface Wave3DrainDriverPlan {
   readonly triggerExecutionPlan: readonly Wave3TriggerExecutionExpectation[];
 }
 
+interface Wave3DrainDriverPlanSource {
+  readonly runId: string;
+  readonly gitHeadSha: string;
+  readonly imageDigest: string;
+  readonly orgs: number;
+}
+
+const WAVE3_DRAIN_DRIVER_PLAN_SOURCES = new WeakMap<
+  Wave3DrainDriverPlan,
+  Readonly<Wave3DrainDriverPlanSource>
+>();
+
+const CANONICAL_TRIGGER_EXECUTION_SIGNATURE = Object.freeze([
+  'trigger-a-size:1',
+  'trigger-a-size:2',
+  'trigger-b-age:1',
+  'trigger-d-force:1',
+  'org-scheduler:1',
+] as const);
+
 export interface TriggerIdentityEvidenceSummary {
   readonly capturedTriggers: readonly [
     'trigger-a-size',
@@ -446,7 +466,66 @@ export function buildWave3DrainDriverPlan(input: {
     imageDigest: input.imageDigest,
     planDigest,
   }));
-  return deepFreeze({ ...publicCore, planDigest, triggerExecutionPlan });
+  const plan = deepFreeze({ ...publicCore, planDigest, triggerExecutionPlan });
+  WAVE3_DRAIN_DRIVER_PLAN_SOURCES.set(plan, deepFreeze({
+    runId: input.runId,
+    gitHeadSha: input.gitHeadSha,
+    imageDigest: input.imageDigest,
+    orgs: input.orgs,
+  }));
+  return plan;
+}
+
+function triggerExecutionSignature(
+  executions: readonly Pick<
+    Wave3TriggerExecutionExpectation,
+    'trigger' | 'executionOrdinal'
+  >[],
+): string[] {
+  return executions.map(
+    ({ trigger, executionOrdinal }) => `${trigger}:${executionOrdinal}`,
+  );
+}
+
+function assertCanonicalTriggerExecutionMultiplicity(
+  executions: readonly Pick<
+    Wave3TriggerExecutionExpectation,
+    'trigger' | 'executionOrdinal'
+  >[],
+): void {
+  if (
+    stableJson(triggerExecutionSignature(executions))
+      !== stableJson(CANONICAL_TRIGGER_EXECUTION_SIGNATURE)
+  ) {
+    throw new Error(
+      'Wave-3 trigger plan requires the canonical exact five A/A/B/D/org-scheduler executions; a trigger cause/precondition is collapsed or multiplicity is invalid.',
+    );
+  }
+}
+
+function requireWave3DrainDriverPlan(
+  candidate: unknown,
+): Wave3DrainDriverPlan {
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error(
+      'Trigger identity capture requires a validated Wave-3 drain plan provenance handle.',
+    );
+  }
+  const plan = candidate as Wave3DrainDriverPlan;
+  const source = WAVE3_DRAIN_DRIVER_PLAN_SOURCES.get(plan);
+  if (!source) {
+    throw new Error(
+      'Trigger identity capture requires a validated Wave-3 drain plan provenance handle.',
+    );
+  }
+  const rebuilt = buildWave3DrainDriverPlan(source);
+  if (stableJson(plan) !== stableJson(rebuilt)) {
+    throw new Error(
+      'Validated Wave-3 drain plan does not match its strict rebuilt source.',
+    );
+  }
+  assertCanonicalTriggerExecutionMultiplicity(plan.triggerExecutionPlan);
+  return plan;
 }
 
 export function digestWave3TriggerObservation(
@@ -508,7 +587,9 @@ export function assertTriggerIdentityCaptures(
   plan: Wave3DrainDriverPlan,
   rawCaptures: unknown,
 ): TriggerIdentityEvidenceSummary {
+  requireWave3DrainDriverPlan(plan);
   const captures = z.array(triggerObservationSchema).parse(rawCaptures) as Wave3TriggerObservation[];
+  assertCanonicalTriggerExecutionMultiplicity(captures);
   if (captures.length !== plan.triggerExecutionPlan.length) {
     throw new Error('Trigger identity capture must contain the exact five A/A/B/D/org-scheduler executions.');
   }

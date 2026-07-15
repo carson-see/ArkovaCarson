@@ -5,6 +5,7 @@ import {
   assertTreasuryPresplitObservation,
   planOrgFanOut,
   planTreasuryPresplit,
+  type OrgFanOutPlan,
   type OrgFanOutObservation,
   type TreasuryPresplitObservation,
 } from './batch-drain-utxo-fanout';
@@ -186,5 +187,27 @@ describe('greater-than-25 organization fan-out and consolidation guard', () => {
     preFanOutSnapshot.consolidation.observedAt = '2026-07-16T12:09:59.999Z';
     expect(() => assertOrgFanOutObservation(fanOut, preFanOutSnapshot))
       .toThrow(/consolidation|after|fan-out|chronology/i);
+  });
+
+  it('rejects an unvalidated zero-reservation plan even when its empty observation matches', () => {
+    const forgedPlan: OrgFanOutPlan = {
+      planId: 'forged-zero-fanout',
+      network: 'signet',
+      sourceSplitPlanDigest: `sha256:${'a'.repeat(64)}`,
+      reservations: [],
+      planDigest: `sha256:${'b'.repeat(64)}`,
+    };
+    const emptyObservation: OrgFanOutObservation = {
+      planDigest: forgedPlan.planDigest,
+      observedAt: '2026-07-16T12:10:00.000Z',
+      transactions: [],
+      consolidation: {
+        observedAt: '2026-07-16T12:11:00.000Z',
+        spentOutpoints: [],
+      },
+    };
+
+    expect(() => assertOrgFanOutObservation(forgedPlan, emptyObservation))
+      .toThrow(/validated|provenance|more than 25|reservation/i);
   });
 });

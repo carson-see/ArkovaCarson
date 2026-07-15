@@ -235,6 +235,24 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
     });
   });
 
+  it('rejects secret material at the reference-only pre-clock ingress', () => {
+    const readiness = plan();
+    const withSecretValues = observation(readiness) as unknown as {
+      secretVersions: Array<Record<string, unknown>>;
+    };
+    const simulatedValues = [
+      'https://rpc-user:rpc-password@getblock.example',
+      'rpc-user:rpc-password',
+      'cSimulatedSignetWifMustNeverCrossThisBoundary',
+    ];
+    withSecretValues.secretVersions.forEach((secret, index) => {
+      secret.secretValue = simulatedValues[index];
+    });
+
+    expect(() => assertRigB1PreClockReadiness(readiness, withSecretValues))
+      .toThrow(/unrecognized|secretValue|strict|secret material/i);
+  });
+
   it('rejects a shared/missing signer secret, wrong chain, stale clean mirror, or an enabled Scheduler', () => {
     const readiness = plan();
 

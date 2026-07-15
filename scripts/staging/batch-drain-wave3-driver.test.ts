@@ -7,6 +7,7 @@ import {
   buildWave3DrainDriverPlan,
   digestWave3TriggerObservation,
   type PoisonIsolationRowObservation,
+  type Wave3DrainDriverPlan,
   type Wave3TriggerObservation,
 } from './batch-drain-wave3-driver';
 
@@ -164,6 +165,22 @@ describe('exact Trigger A/B/D cause and identity capture', () => {
       remainder: { ...mutableEvidence[0]!.remainder, pendingAfter: 2_499 },
     };
     expect(() => assertTriggerIdentityCaptures(plan, mutableEvidence)).toThrow(/digest|remainder|identity/i);
+  });
+
+  it('rejects an unvalidated caller clone that deletes the second Trigger A execution', () => {
+    const plan = buildPlan();
+    const forgedPlan = {
+      ...structuredClone(plan),
+      triggerExecutionPlan: structuredClone(plan.triggerExecutionPlan).filter(
+        (_execution, index) => index !== 1,
+      ),
+    } as Wave3DrainDriverPlan;
+    const forgedCaptures = triggerObservations().filter(
+      (_capture, index) => index !== 1,
+    );
+
+    expect(() => assertTriggerIdentityCaptures(forgedPlan, forgedCaptures))
+      .toThrow(/validated|provenance|canonical|five|A\/A\/B\/D/i);
   });
 
   it('rejects a dropped org-scheduler execution and unknown top-level or nested observation fields', () => {

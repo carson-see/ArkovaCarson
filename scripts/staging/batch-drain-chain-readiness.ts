@@ -8,6 +8,8 @@
 
 import { createHash } from 'node:crypto';
 
+import { z } from 'zod';
+
 import {
   requirePreClockAdmissionIdentity,
   type PreClockAdmissionBoundIdentity,
@@ -143,6 +145,80 @@ export interface RigB1PreClockReadinessSummary {
   readonly fundedBroadcastAccepted: true;
 }
 
+const rigB1SecretVersionObservationSchema = z.object({
+  env: z.enum(['BITCOIN_RPC_URL', 'BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF']),
+  secretName: z.string(),
+  resource: z.string(),
+}).strict();
+
+const rigB1SchedulerPolicyObservationSchema = z.object({
+  decision: z.literal('FORCE_ACCELERATED_RIG_ONLY'),
+  scope: z.literal('ISOLATED_NON_PRODUCTION_S33_ONLY'),
+  cadence: z.literal(RIG_B1_ACCELERATED_SCHEDULER_CADENCE),
+  requiredStateThroughCleanMirror: z.literal('PAUSED'),
+  enablePhase: z.literal('AUTHORIZED_POST_WAVE3_EVIDENCE_ONLY'),
+  productionCadenceMutation: z.literal('FORBIDDEN'),
+  productionTopologyMutation: z.literal('FORBIDDEN'),
+  productionCadenceMutationAttempted: z.boolean(),
+  productionTopologyMutationAttempted: z.boolean(),
+  cleanMirrorAdmissionComplete: z.boolean(),
+  evidencePhaseAuthorized: z.boolean(),
+  observedAt: z.string(),
+}).strict();
+
+const rigB1SchedulerJobObservationSchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  cadence: z.literal(RIG_B1_ACCELERATED_SCHEDULER_CADENCE),
+  state: z.enum(['PAUSED', 'ENABLED']),
+  createdPaused: z.boolean(),
+  pausedThroughCleanMirror: z.boolean(),
+  enabledAt: z.string().nullable(),
+}).strict();
+
+const rigB1PreClockObservationSchema = z.object({
+  admissionSha256: z.string(),
+  gitHeadSha: z.string(),
+  imageDigest: z.string(),
+  cleanMirrorAttestationId: z.string(),
+  secretVersions: z.array(rigB1SecretVersionObservationSchema),
+  schedulerPolicy: rigB1SchedulerPolicyObservationSchema,
+  schedulerJobs: z.array(rigB1SchedulerJobObservationSchema),
+  getBlockchainInfo: z.object({
+    provider: z.string(),
+    rpcMethod: z.string(),
+    chain: z.string(),
+    observedAt: z.string(),
+  }).strict(),
+  signerReadiness: z.object({
+    algorithm: z.string(),
+    treasuryAddress: z.string(),
+    challengeSha256: z.string(),
+    signatureSha256: z.string(),
+    verified: z.boolean(),
+    observedAt: z.string(),
+  }).strict(),
+  treasurySplit: z.object({
+    planDigest: z.string(),
+    treasuryAddress: z.string(),
+    confirmedUtxos: z.number(),
+    minimumConfirmations: z.number(),
+    observedAt: z.string(),
+  }).strict(),
+  fundedBroadcast: z.object({
+    network: z.string(),
+    txId: z.string(),
+    spentFromTreasuryAddress: z.string(),
+    accepted: z.boolean(),
+    observedAt: z.string(),
+  }).strict(),
+  nodeCron: z.object({
+    mode: z.enum(['disabled', 'attributed', 'unattributed']),
+    schedulerExecutionIds: z.array(z.string()).optional(),
+    observedAt: z.string(),
+  }).strict(),
+}).strict();
+
 const READINESS_PLANS = new WeakSet<RigB1ReadinessPlan>();
 
 const JOB_SUFFIXES = [
@@ -244,9 +320,12 @@ export function buildRigB1ReadinessPlan(
 
 export function assertRigB1PreClockReadiness(
   plan: RigB1ReadinessPlan,
-  observation: RigB1PreClockObservation,
+  rawObservation: unknown,
 ): RigB1PreClockReadinessSummary {
   if (!READINESS_PLANS.has(plan)) throw new Error('RIG-B1 readiness plan lacks admission provenance.');
+  const observation = rigB1PreClockObservationSchema.parse(
+    rawObservation,
+  ) as RigB1PreClockObservation;
   if (
     observation.admissionSha256 !== plan.admissionSha256
     || observation.gitHeadSha !== plan.gitHeadSha
