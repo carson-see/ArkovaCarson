@@ -66,7 +66,7 @@ Buckets, evaluated on BOTH A/B arms, **never summed** (they measure different po
 | 2. `keyed` | 429 + `X-RateLimit-Limit: 1000` (+ log key = keyId) | API-key surfaces only (tier-mix lane). |
 | 3. `aiRateLimiter` | 429 + `X-RateLimit-Limit: 30` (+ log key prefix `ai:`) | The only per-user AI limit that exists today. |
 | 4. `usageTracking-monthly` | 429 body with `limit: 10000` (`usageTracking.ts:171`) | API-key callers only; monthly window — a per-window count, not a rate. |
-| 5. `upstream-model` | Structured `event=ai_upstream_http_error` worker logs (`gemini.ts:240-260`) with status `429`; `fallback_reason=rate_limit` is corroborating classification, not the evidence source of truth | Tag by API surface: **Developer-API** (public `gemini-2.5-flash` key surface) vs **Vertex-regional** (tuned endpoint) — the two arms sit on different quota pools and R2 requires the distinction. Exact model, region, v6 prompt flag, response-schema state, MIME type, correlation ID, and `Retry-After` must match the arm declaration. |
+| 5. `upstream-model` | Structured `event=ai_upstream_http_error` worker logs (`gemini.ts:240-260`) with status `429`; `fallback_reason=rate_limit` is corroborating classification, not the evidence source of truth | Tag by API surface: **Developer-API** (public `gemini-2.5-flash` key surface) vs **Vertex-regional** (tuned endpoint) — the two arms sit on different quota pools and R2 requires the distinction. Exact model, region, v6 prompt flag, response-schema state, MIME type, correlation ID, and `Retry-After` must match the arm declaration. Retry logs that inherit one inbound correlation ID are one request-level event with ordered per-attempt timestamps and `Retry-After` values, so retries neither collide nor inflate the bucket count. |
 | — `perOrgRateLimit` | Reported as **`structurally_zero (unmounted)`** with the bug link, NOT as a measured zero | Drift-linted; if it gets mounted mid-sprint the lint fails and this spec must be revised. |
 
 Mechanism honesty (exit criterion 3c, R-7): the rc-manifest states that 429 mitigation comes from **rate-limiter architecture + traffic smoothing + surface choice + provisioned throughput**, NOT from tuning (a tuned model shares the base-model quota pool, cannot use the global endpoint, and is plausibly MORE exposed). "≥90% cut" language is **banned**.
@@ -91,7 +91,7 @@ rules:
   - tuned arm = Vertex-regional/exact tuned model/v6 prompt/schema unset
 ```
 
-`scripts/staging/s33-429-attribution.ts` enforces this packet fail-closed: strict metadata-only schemas, exact correlation joins with at most 60 seconds of skew, run-to-upstream provenance matching, the five separate buckets with no total field, and `perOrgRateLimit=structurally_zero (unmounted)`. Unknown fields are rejected so raw bodies, raw limiter keys, prompts, fingerprints, PII, JWTs, and API keys cannot enter the evidence record.
+`scripts/staging/s33-429-attribution.ts` enforces this packet fail-closed: strict metadata-only schemas, client request-target canonicalization to pathname only (query and fragment suffixes are stripped), exact correlation joins with at most 60 seconds of skew, request-level coalescing of same-correlation upstream retries with ordered bounded attempt evidence, run-to-upstream provenance matching, the five separate buckets with no total field, and `perOrgRateLimit=structurally_zero (unmounted)`. Unknown fields are rejected so raw bodies, raw limiter keys, prompts, fingerprints, PII, JWTs, and API keys cannot enter the evidence record.
 
 ## 5. Bugs surfaced by this map (tracker: Confluence 88768514)
 
@@ -142,5 +142,5 @@ Machine-readable; parsed by `scripts/ci/check-429-limiter-map.test.ts`. Each row
 | 33 | services/worker/src/utils/rateLimit.ts | 139 | res.status(429).json({ |
 | 34 | services/worker/src/ai/gemini.ts | 1172 | lastError = cloneSafeRetryError(err); |
 | 35 | scripts/staging/s33-429-attribution.ts | 12 | export const S33_429_BUCKETS = [ |
-| 36 | scripts/staging/s33-429-attribution.ts | 230 | export function buildS33429AttributionEvidence(input: unknown): S33429AttributionEvidence { |
+| 36 | scripts/staging/s33-429-attribution.ts | 258 | export function buildS33429AttributionEvidence(input: unknown): S33429AttributionEvidence { |
 <!-- claims:end -->

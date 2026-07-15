@@ -232,6 +232,64 @@ describe('S3.3 five-bucket 429 attribution evidence', () => {
     })).toThrow(/unmatched|unconsumed/i);
   });
 
+  it('coalesces exhausted upstream retries by inbound correlation ID while preserving each attempt', () => {
+    const attempts = [
+      { ...UPSTREAM_429, observedAt: '2026-07-15T14:00:01.000Z', retryAfterSec: 20 },
+      { ...UPSTREAM_429, observedAt: '2026-07-15T14:00:02.000Z', retryAfterSec: 10 },
+      { ...UPSTREAM_429, observedAt: '2026-07-15T14:00:04.000Z', retryAfterSec: 5 },
+    ] as const;
+
+    const evidence = buildS33429AttributionEvidence({
+      ...completeInput(),
+      client429s: [],
+      limiterLogs: [],
+      upstream429s: attempts,
+    });
+
+    expect(evidence.buckets['upstream-model'].count).toBe(1);
+    expect(evidence.buckets['upstream-model'].events[0]).toMatchObject({
+      correlationId: UPSTREAM_429.correlationId,
+      observedAt: attempts[0].observedAt,
+      retryAfterSec: attempts[2].retryAfterSec,
+      attemptCount: 3,
+      attempts: [
+        { attempt: 1, observedAt: attempts[0].observedAt, retryAfterSec: 20 },
+        { attempt: 2, observedAt: attempts[1].observedAt, retryAfterSec: 10 },
+        { attempt: 3, observedAt: attempts[2].observedAt, retryAfterSec: 5 },
+      ],
+    });
+  });
+
+  it('normalizes request targets to pathname-only evidence without query or fragment PII', () => {
+    const queryEvidence = buildS33429AttributionEvidence({
+      ...completeInput(),
+      client429s: [{
+        ...ANON_429,
+        path: '/api/v1/ai/extract?email=jane.doe%40example.com&token=secret-token',
+      }],
+      limiterLogs: [ANON_LOG],
+      upstream429s: [],
+    });
+    const fragmentEvidence = buildS33429AttributionEvidence({
+      ...completeInput(),
+      client429s: [{
+        ...ANON_429,
+        path: '/api/v1/ai/extract#fingerprint-aaaaaaaaaaaaaaaa',
+      }],
+      limiterLogs: [ANON_LOG],
+      upstream429s: [],
+    });
+
+    expect(queryEvidence.buckets['anon-IP'].events[0].path).toBe('/api/v1/ai/extract');
+    expect(fragmentEvidence.buckets['anon-IP'].events[0].path).toBe('/api/v1/ai/extract');
+    const serialized = JSON.stringify({ queryEvidence, fragmentEvidence });
+    expect(serialized).not.toContain('jane.doe');
+    expect(serialized).not.toContain('secret-token');
+    expect(serialized).not.toContain('fingerprint-aaaaaaaaaaaaaaaa');
+    expect(serialized).not.toContain('?');
+    expect(serialized).not.toContain('#');
+  });
+
   it('rejects arm provenance or fairness flags that do not match the upstream event', () => {
     expect(() => buildS33429AttributionEvidence({
       ...completeInput(),

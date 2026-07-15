@@ -1,10 +1,12 @@
 /**
  * S3.3 Wave 2 five-bucket 429 attribution contract.
  *
- * This module consumes only normalized, bounded metadata. Collectors must strip
- * response bodies, raw limiter keys, provider payloads, prompts, fingerprints,
- * JWTs, and API keys before calling it. Strict schemas reject those extra fields
- * instead of silently carrying them into release evidence.
+ * This module consumes only normalized, bounded metadata. It canonicalizes
+ * request targets to pathnames and coalesces provider retries per inbound
+ * correlation ID. Collectors must strip response bodies, raw limiter keys,
+ * provider payloads, prompts, fingerprints, JWTs, and API keys before calling
+ * it. Strict schemas reject those extra fields instead of silently carrying
+ * them into release evidence.
  */
 
 import { z } from 'zod';
@@ -21,8 +23,13 @@ export type S33429Bucket = typeof S33_429_BUCKETS[number];
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
 const SAFE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._/@:-]{1,255}$/;
-const SAFE_PATH = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]{0,511}$/;
+const SAFE_PATHNAME = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{0,511}$/;
 const MAX_JOIN_SKEW_MS = 60_000;
+
+const requestPathSchema = z.string().min(1).max(2_048).transform((requestTarget) => {
+  const suffixIndex = requestTarget.search(/[?#]/);
+  return suffixIndex === -1 ? requestTarget : requestTarget.slice(0, suffixIndex);
+}).pipe(z.string().regex(SAFE_PATHNAME));
 
 const runSchema = z.object({
   runId: z.string().regex(SAFE_ID),
@@ -67,7 +74,7 @@ const runSchema = z.object({
 const client429Schema = z.object({
   correlationId: z.string().regex(SAFE_ID),
   observedAt: z.string().datetime({ offset: true }),
-  path: z.string().regex(SAFE_PATH),
+  path: requestPathSchema,
   status: z.literal(429),
   xRateLimitLimit: z.union([
     z.literal(30),
@@ -134,6 +141,14 @@ export interface S33429AttributionEvent {
   v6PromptActive?: boolean;
   responseSchema?: 'unset';
   responseMimeType?: 'application/json';
+  attemptCount?: number;
+  attempts?: readonly Readonly<S33429UpstreamAttemptEvidence>[];
+}
+
+export interface S33429UpstreamAttemptEvidence {
+  attempt: number;
+  observedAt: string;
+  retryAfterSec: number;
 }
 
 export interface S33429BucketEvidence {
@@ -164,6 +179,19 @@ function assertUniqueCorrelationIds(
       throw new Error(`Duplicate ${label} correlation ID: ${entry.correlationId}`);
     }
     seen.add(entry.correlationId);
+  }
+}
+
+function assertUniqueUpstreamAttempts(entries: readonly ParsedUpstream429[]): void {
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const attemptKey = `${entry.correlationId}\u0000${entry.observedAt}`;
+    if (seen.has(attemptKey)) {
+      throw new Error(
+        `Duplicate upstream 429 attempt for ${entry.correlationId} at ${entry.observedAt}`,
+      );
+    }
+    seen.add(attemptKey);
   }
 }
 
@@ -231,7 +259,7 @@ export function buildS33429AttributionEvidence(input: unknown): S33429Attributio
   const parsed = inputSchema.parse(input);
   assertUniqueCorrelationIds(parsed.client429s, 'client 429');
   assertUniqueCorrelationIds(parsed.limiterLogs, 'limiter log');
-  assertUniqueCorrelationIds(parsed.upstream429s, 'upstream 429');
+  assertUniqueUpstreamAttempts(parsed.upstream429s);
 
   const limiterByCorrelation = new Map(
     parsed.limiterLogs.map((entry) => [entry.correlationId, entry] as const),
@@ -281,20 +309,43 @@ export function buildS33429AttributionEvidence(input: unknown): S33429Attributio
     throw new Error(`Unconsumed/unmatched limiter logs: ${unconsumed.join(', ')}`);
   }
 
+  const upstreamByCorrelation = new Map<string, ParsedUpstream429[]>();
   for (const upstream of parsed.upstream429s) {
     assertUpstreamMatchesRun(upstream, parsed.run);
+    const attempts = upstreamByCorrelation.get(upstream.correlationId) ?? [];
+    attempts.push(upstream);
+    upstreamByCorrelation.set(upstream.correlationId, attempts);
+  }
+
+  for (const [correlationId, unsortedAttempts] of upstreamByCorrelation) {
+    const sortedAttempts = [...unsortedAttempts].sort(
+      (left, right) => Date.parse(left.observedAt) - Date.parse(right.observedAt),
+    );
+    const firstAttempt = sortedAttempts[0]!;
+    const lastAttempt = sortedAttempts[sortedAttempts.length - 1]!;
+    const attempts = Object.freeze(sortedAttempts.map((attempt, index) => Object.freeze({
+      attempt: index + 1,
+      observedAt: attempt.observedAt,
+      retryAfterSec: attempt.retryAfterSec,
+    })));
+
+    // One evidence event represents one inbound request. Retried provider calls
+    // remain visible in the bounded attempts array instead of inflating the
+    // upstream bucket or colliding on the inherited correlation ID.
     events['upstream-model'].push({
-      correlationId: upstream.correlationId,
-      observedAt: upstream.observedAt,
+      correlationId,
+      observedAt: firstAttempt.observedAt,
       source: 'worker-structured-log',
       status: 429,
-      retryAfterSec: upstream.retryAfterSec,
-      apiSurface: upstream.apiSurface,
-      model: upstream.model,
-      region: upstream.region,
-      v6PromptActive: upstream.v6PromptActive,
-      responseSchema: upstream.responseSchema,
-      responseMimeType: upstream.responseMimeType,
+      retryAfterSec: lastAttempt.retryAfterSec,
+      apiSurface: firstAttempt.apiSurface,
+      model: firstAttempt.model,
+      region: firstAttempt.region,
+      v6PromptActive: firstAttempt.v6PromptActive,
+      responseSchema: firstAttempt.responseSchema,
+      responseMimeType: firstAttempt.responseMimeType,
+      attemptCount: attempts.length,
+      attempts,
     });
   }
 
