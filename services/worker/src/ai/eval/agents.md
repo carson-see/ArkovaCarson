@@ -115,7 +115,18 @@ _Last updated: 2026-07-15_
   ceiling; Wave 2 uses the new explicit-limit wrapper. The exported exact
   lexical scanner reuses the existing Wave-1 n-gram implementation without
   changing signed/historical Wave-1 callers. Additional leakage self-exclusions
-  are exact paths derived only from already accepted registry batches.
+  are exact paths derived from already accepted registry batches. The three
+  reserved `golden-dataset-s33-wave2-top15-{01-05,06-10,11-15}-heldout.ts`
+  tranche sources are also explicit prerequisite exclusions so shared Wave-1
+  report callers cannot self-match them; similarly named prompt/few-shot paths
+  remain scanned. Never replace these literals with a glob or prefix rule.
+- Candidate raw diffs force `--abbrev=40`; manifest source/datasheet bindings
+  are full SHA-1 object ids, so Git's default abbreviated raw ids are never
+  compared to them or admitted into a preflight snapshot.
+- The CTO top-15 registry schema requires `productionOrder` to name all 45
+  unique type ids exactly once in the ratified domain-interleaved tranches:
+  legal/financial/education 1-5, then 6-10, then 11-15. Unknown, duplicate, or
+  reordered ids fail closed.
 
 ## 2026-07-14 CTO correction topology — revision-12 provenance
 

@@ -1,0 +1,1285 @@
+{
+  "schemaVersion": 1,
+  "artifactType": "arkova-s33-wave2-batch-manifest",
+  "batchId": "S33-W2-TOP15-11-15",
+  "revision": 1,
+  "producerLane": "Lane 4",
+  "acceptanceAuthority": "Lane 3",
+  "status": "PRODUCER_CANDIDATE_PENDING_L3_ACCEPTANCE",
+  "intendedSplit": "held-out-candidate",
+  "acceptanceScope": "whole-batch-only",
+  "baseRegistryDigestSha256": "412a08227608a58172569a4fcbf3cd1025dc67fc1beeaddd6c163d22c4cb80d6",
+  "source": {
+    "path": "services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-11-15-heldout.ts",
+    "exportName": "S33_WAVE2_TOP15_11_15_HELDOUT",
+    "blobSha": "8684234456f270ce0f9119588b305427f2c43407"
+  },
+  "datasheet": {
+    "path": "docs/lane4/s33-wave2-batches/top15-11-15/datasheet.json",
+    "blobSha": "c2436827fed610ff010032bc72ac4b9b8948c373"
+  },
+  "testPath": "services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-11-15-heldout.test.ts",
+  "entryCount": 180,
+  "entries": [
+    {
+      "id": "GD-S33-W2-LGC-001",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "484d0ddc0151f04b4590a5907208d68e475024bbd2d4599c797a9fbdd30ca1a9"
+    },
+    {
+      "id": "GD-S33-W2-LGC-002",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "fd0801e4e297204b578cc428b4d5ab81e7922b48110d7a12188aa6edbb354740"
+    },
+    {
+      "id": "GD-S33-W2-LGC-003",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "73ce359970f26807644ea64d38261c939b7261384f6fb5eb84363b1f401aa9fd"
+    },
+    {
+      "id": "GD-S33-W2-LGC-004",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "3b8cf81f0f8d7796f974309d2246e3c5221b46853c5bf0a33f5d65bf31524e27"
+    },
+    {
+      "id": "GD-S33-W2-LGC-005",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "7fb381f226cd3cacafb7e26d94e15b8ea310594a2a7d4f55746a31e4aa461616"
+    },
+    {
+      "id": "GD-S33-W2-LGC-006",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "d8c6cbf681665ae0ccb276d11c1f13926473cfdf4dc7253ec8c0e95ccbf20adf"
+    },
+    {
+      "id": "GD-S33-W2-LGC-007",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "72d1612cb402c85604089ddd1631129d56b2ca4e77ea5b1fbc65062ee1831111"
+    },
+    {
+      "id": "GD-S33-W2-LGC-008",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "032fdf078d878f030c71ce8ae1a4319db800a79531ad0f476b1b2200de2717c0"
+    },
+    {
+      "id": "GD-S33-W2-LGC-009",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "95b1985293be6d7dce5d6fadf9c0a7e486c4415fd2b9da7154ba4dee5a67de9e"
+    },
+    {
+      "id": "GD-S33-W2-LGC-010",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "6d5b64f96188905e298b732c562e01e49f8e61ac0cd247781b64109869c68bd2"
+    },
+    {
+      "id": "GD-S33-W2-LGC-011",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "df52351e1b355cf11e26ae5500abd22c10f1155d46a610b010c20ba5ce2c6893"
+    },
+    {
+      "id": "GD-S33-W2-LGC-012",
+      "domain": "legal",
+      "registryTypeId": "legal-11-general-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "08ec7910b5ca40540d33a01868f3b78018544fece4ec1c5c27adfb9fb3886c2e"
+    },
+    {
+      "id": "GD-S33-W2-LEC-001",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "a31a6d62241c540e60818d6526a9ba1637057975abddc40352a08b50f54f15d4"
+    },
+    {
+      "id": "GD-S33-W2-LEC-002",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "2dbc025e8a735a689dc4eaaede53dfdd7d04734d3a0f43fb59319098b3805517"
+    },
+    {
+      "id": "GD-S33-W2-LEC-003",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "6763a2bcf99e4a69390ad8375fcb5cffe731181fac84914716668affbfdae40f"
+    },
+    {
+      "id": "GD-S33-W2-LEC-004",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "5debac1f9f32211bb8b6dbc814106fdaca3ac4628cc310a7871bbe8fca50e6a2"
+    },
+    {
+      "id": "GD-S33-W2-LEC-005",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "ab726a78c04389fd4a54dc1d8371940ae4e4d0bbc766aa57c3849290323ff2c0"
+    },
+    {
+      "id": "GD-S33-W2-LEC-006",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "d33f2d577861bd3d8007034d44eb3df86889d890a6703da5b42c3c47fe813f6c"
+    },
+    {
+      "id": "GD-S33-W2-LEC-007",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "9d5fa37bca625f4d13514abe554cba4435b43ab7926c804fffdefc957b826095"
+    },
+    {
+      "id": "GD-S33-W2-LEC-008",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "e1c3b827531c0cc41fa62bd53bb1ef4136f9b2186f381bffd6781e227c8876ed"
+    },
+    {
+      "id": "GD-S33-W2-LEC-009",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "f54f5373e14c16d65a8f1536bd259f7d91fb301b2178af7ee4929ca51164d827"
+    },
+    {
+      "id": "GD-S33-W2-LEC-010",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "1b453e794be8952a756c3e9d0d92ee8c0246c9873fdbfe12ef7ca7e8fad3377b"
+    },
+    {
+      "id": "GD-S33-W2-LEC-011",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "6629e7b6f7313cf9bbeafff79a7ee74bdc14d00b65976878e082d1b66263844b"
+    },
+    {
+      "id": "GD-S33-W2-LEC-012",
+      "domain": "legal",
+      "registryTypeId": "legal-12-ethics-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "80c182f570b69a0ea5c5b909f93933b64f2453cd23c16a2f3882bff981826e54"
+    },
+    {
+      "id": "GD-S33-W2-LSC-001",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "7ac8f43eabc1dc124f0b8fd08d595e1130b557ecd9521aefd9ffa9173505f3b2"
+    },
+    {
+      "id": "GD-S33-W2-LSC-002",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "63028b4b88815e01953235dfbdd9ccb5b58ef8e6b0d2f48c15836c6c6d463c60"
+    },
+    {
+      "id": "GD-S33-W2-LSC-003",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "54d42f462bc76dea7e80c49566ba8796507bd8d0b979e852dd7f249346155d26"
+    },
+    {
+      "id": "GD-S33-W2-LSC-004",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "96e9cfb486f5b5c0d0453a68d5664ed893de8024ed70382d6dc764aa235128c0"
+    },
+    {
+      "id": "GD-S33-W2-LSC-005",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "b38b2d534026231fcb69601a1cc2fa5d564b5a0290f29184b83c2ad4ae48f3cb"
+    },
+    {
+      "id": "GD-S33-W2-LSC-006",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "2f609dec7f0194493ae96d53b2e1c34122ac302b25f8581e917f4cf74fb9bd56"
+    },
+    {
+      "id": "GD-S33-W2-LSC-007",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "ec49a1ebbb21eb3bf3332f9786ce459b09671d0a8919096e4f826a5da94c0161"
+    },
+    {
+      "id": "GD-S33-W2-LSC-008",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "8792be6372ba060d7b58ff2be40a5559723e0a5e76e89cc89554a346ddad868b"
+    },
+    {
+      "id": "GD-S33-W2-LSC-009",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "3cf6c49d939aa02c5558db291a679f348367de298d6657db249be51c365b91a3"
+    },
+    {
+      "id": "GD-S33-W2-LSC-010",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "1c402a83bb2fcd98f69a10a3b474405bee974798ebd91631691305c8f82c2047"
+    },
+    {
+      "id": "GD-S33-W2-LSC-011",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "7d5d6e5dd6add458957558caea7a2ef3ea7824ddcde27b3760e43aab38d57194"
+    },
+    {
+      "id": "GD-S33-W2-LSC-012",
+      "domain": "legal",
+      "registryTypeId": "legal-13-specialized-cle",
+      "credentialType": "CLE",
+      "normalizedInputSha256": "bee6dac982a7ea8e4f9ac673f58cba2244b88360cc3aff7a77e0d580b9041103"
+    },
+    {
+      "id": "GD-S33-W2-LUP-001",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "79d095889b8656e6fe5a280d19c956137949db4fd58efa07793f2bea5c54ceab"
+    },
+    {
+      "id": "GD-S33-W2-LUP-002",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "9c3fa63f0622703257c10c1234ff9d6bd82d7f5c23111183c88da649f07b1c20"
+    },
+    {
+      "id": "GD-S33-W2-LUP-003",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "4b0bf34f1d01f5f3084c1bc7d1def6cc3a54c40d24c1ab10c2859e3a1618de2f"
+    },
+    {
+      "id": "GD-S33-W2-LUP-004",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "d38900c38a56bb9df9b2f0cd22b2e93f2e0e8c8a91639d8e62b6af5dc52b81fb"
+    },
+    {
+      "id": "GD-S33-W2-LUP-005",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "c72b336383707bef048c667cdc86df43b2f01aa67ad319bdd25d4dd396232367"
+    },
+    {
+      "id": "GD-S33-W2-LUP-006",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "02324875770d77c281bf19b032a56a89e2c7906d5035d3cb7c37e0ec7e3dda83"
+    },
+    {
+      "id": "GD-S33-W2-LUP-007",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "514bdeb6a6fc840c12a09e1a235f20b2135bc759239f49a590a3237ce625d566"
+    },
+    {
+      "id": "GD-S33-W2-LUP-008",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "acfdb253091f50a99157b2e9b746020b96c968307c6b1f5a16d5da13ef1b0f6d"
+    },
+    {
+      "id": "GD-S33-W2-LUP-009",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "a92def4767312079cc913ae2515db6293364510adc4ff697e122779fb6282d06"
+    },
+    {
+      "id": "GD-S33-W2-LUP-010",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "edd257afea170f848f587b7cc75524eb6ed4483a555fbfbb063f9caf410d0a49"
+    },
+    {
+      "id": "GD-S33-W2-LUP-011",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "229388328cdbb997f0235a7f7e148374acfeea6522bcbad0bf985c64276d8edf"
+    },
+    {
+      "id": "GD-S33-W2-LUP-012",
+      "domain": "legal",
+      "registryTypeId": "legal-14-utility-patent",
+      "credentialType": "PATENT",
+      "normalizedInputSha256": "32124cc97ca978687b457fb2827143efdfefa5f37181c11ebbd7ea8fb35662c9"
+    },
+    {
+      "id": "GD-S33-W2-LRI-001",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "b1e261eb9d3c19624055551bb48a0dac01e26110a27a11dcb4e87af27976ecb7"
+    },
+    {
+      "id": "GD-S33-W2-LRI-002",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "91974ec61159c1778e9f2ea01b5960edd6a979b30d76d6d707c1b3a5833db360"
+    },
+    {
+      "id": "GD-S33-W2-LRI-003",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "170076270091972f1760a9a305f9945e1844a4dd4d8cfd8ce1aa22288f076dcf"
+    },
+    {
+      "id": "GD-S33-W2-LRI-004",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "705bab8cc55d64a00a7e3a637b2cbeea9e0832494871bee587cd2e27a0faebf5"
+    },
+    {
+      "id": "GD-S33-W2-LRI-005",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "08026499ded2d679bbe801561f4ed9b16d6fa4d7bf99ee288977222a1088f312"
+    },
+    {
+      "id": "GD-S33-W2-LRI-006",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "78b67750e45179200cb60d91551151aee89320b928919149983be2ae4ecbe5c2"
+    },
+    {
+      "id": "GD-S33-W2-LRI-007",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "50719cc30e92a0e4d9670a59657008b38b99182f5da7575ad34c5de276bf9e88"
+    },
+    {
+      "id": "GD-S33-W2-LRI-008",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "86a4739110b8ee278f36676f987db0a23b248f1259b26ca5f1db2adcbf0cc8f1"
+    },
+    {
+      "id": "GD-S33-W2-LRI-009",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "e8b29ef202c2a05a0a73b62523d74826b9bc183e55a21bd0239175bc21dca246"
+    },
+    {
+      "id": "GD-S33-W2-LRI-010",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "486ae3ce27a5c5772d85487db4204057fa85ef4b15e0cc2ad0bb57e573e88d60"
+    },
+    {
+      "id": "GD-S33-W2-LRI-011",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "ce16916a62a8e74b7e723a858243079a2c7a8a6d8cecfc2aa83fa620aba5e4f5"
+    },
+    {
+      "id": "GD-S33-W2-LRI-012",
+      "domain": "legal",
+      "registryTypeId": "legal-15-regulatory-instrument",
+      "credentialType": "REGULATION",
+      "normalizedInputSha256": "de4d1adc3fbe93ad2c29c8361008a2e1af16802f5e4ee0b47b62efe94ea5298d"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-001",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "b03ce709fd963b5fc38efe78770612b647f7c4d053832ee28d4f472b56bc9db1"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-002",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "a2d6f8da7dc9017520b5e524c59ea1bb9ce8cdf62ffbebde6ce9b37d2b811362"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-003",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "de8d14b5effbb4a29d1a7b9eb16c4a25cd1402c461d3c77bfe05bcd7b40fa149"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-004",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "3f23b0a48838a0824fb560942b2e98e0642180cd0ff0172c22ce5e2949c17c95"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-005",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "6fc7d05ee0231414f466d71620d2b0bc8caae3d267c75d8a42c5454c17c42dd0"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-006",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "ecb2daaf353c004eddf01bbda9512c601a92502fd1de0d7b9951fdce718f6a60"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-007",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "54fd1ca0c1f7900561e095540f3d1159085d866140bd86effee75640da68d6b3"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-008",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "2d6ca83e8140098ad97b8eea5d83385acbf39a9338c0de2b1586cdf261b6ecb8"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-009",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "5233294506635caa758c51728cd2d2264c0773d84de49181d0a86cd2a357f73f"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-010",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "bdf519b15e9ea7df4bc4bdc11b94b49de86d33a92050fb900e36f816e35dbae4"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-011",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "1901248f9278cb5337643b94346081c4baa233ac03531f0dd19b9d82989a997f"
+    },
+    {
+      "id": "GD-S33-W2-FQ1-012",
+      "domain": "financial",
+      "registryTypeId": "financial-11-sec-10q",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "b41c5439ddecd40407e54dea2a17bc166ad44010e45234658ce1b4a96703c311"
+    },
+    {
+      "id": "GD-S33-W2-F8K-001",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "129bcb2106b8776661f513f8e811838fc5aa09df467e668ba5c821c2e72de3a1"
+    },
+    {
+      "id": "GD-S33-W2-F8K-002",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "e7b7a56ddefd62aaadfcaee6a686a22fb1cb17c84ca80232af995162dc01e577"
+    },
+    {
+      "id": "GD-S33-W2-F8K-003",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "16150adbf93971fa2dfaf26ae41f66ce39eb3d5bf64b3cfe8b20f942898a7949"
+    },
+    {
+      "id": "GD-S33-W2-F8K-004",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "665815d24e2f13988f16f3298d53142d06d720e05ebc9805bca7575ebcaca527"
+    },
+    {
+      "id": "GD-S33-W2-F8K-005",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "f440d08dd5bcdf694b7fcff627ad3ab7ea42b0f4cbf278f5e52fdfe95717551f"
+    },
+    {
+      "id": "GD-S33-W2-F8K-006",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "d116011a38418a8411567e0e1345cfb98d22c8245a493cc204b0783788050cb3"
+    },
+    {
+      "id": "GD-S33-W2-F8K-007",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "7f162518ec5086c27819d36ebd88e1d0b0b8b0ed92e44b862b2fde4d837c934b"
+    },
+    {
+      "id": "GD-S33-W2-F8K-008",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "0fd3d26507f18cdd0796465a7f314e4db6192748ec7bfa6ec037284dda989341"
+    },
+    {
+      "id": "GD-S33-W2-F8K-009",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "e41c8c368d0dea2d87c10c6a9390902754de2e6036d61cde9564ab2c74308452"
+    },
+    {
+      "id": "GD-S33-W2-F8K-010",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "5fa3f222f72cf1333e29b34999196fc8e1e3ae5f64c6d9b03c3325976c87901e"
+    },
+    {
+      "id": "GD-S33-W2-F8K-011",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "57b3060e19f22033b5f55bf32206939f85091d85dcdd4b7af835ebbb3ee5d1c3"
+    },
+    {
+      "id": "GD-S33-W2-F8K-012",
+      "domain": "financial",
+      "registryTypeId": "financial-12-sec-8k",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "717cb462977c08853cd12f7f41e6a1e1aab9678e34ff624df15e62a989ec12f9"
+    },
+    {
+      "id": "GD-S33-W2-FDA-001",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "f070dd3acc4704388c1f4db1df74be40fa287ad3b4ce174f574124a6224473d6"
+    },
+    {
+      "id": "GD-S33-W2-FDA-002",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "12c8528b6503b25cfa36e563a10f5f85aae847a4677a9db0678934204d7f902b"
+    },
+    {
+      "id": "GD-S33-W2-FDA-003",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "f1da8d274de2f0cafab26d755a968bb26ce099f763fbf6d080e71c82c35ceeb9"
+    },
+    {
+      "id": "GD-S33-W2-FDA-004",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "bcddb8cd2f4530320d72227ead005a712e560841a89acfb0392f04def7e4a693"
+    },
+    {
+      "id": "GD-S33-W2-FDA-005",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "935807521e8e27a56f7c1e052e15ecdb2104d06cc0317e39d9798dcb5f412b1c"
+    },
+    {
+      "id": "GD-S33-W2-FDA-006",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "e7f5529fa40d49489a9c56790e778013d0850979f56b1c5d48eda4e7ccfabb33"
+    },
+    {
+      "id": "GD-S33-W2-FDA-007",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "9305d22f9e60e3c328381e44b4c877aa34be8d6e31c6d79e0ba1c266d64d2f23"
+    },
+    {
+      "id": "GD-S33-W2-FDA-008",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "988e90aaab72af8b4134e271c72330b6c34900a75d0fdfd0e03a96aa4947255f"
+    },
+    {
+      "id": "GD-S33-W2-FDA-009",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "b667f726daba9c2d4018dddde8b385edaaff7f11ec639b99b292af7f4f2c012e"
+    },
+    {
+      "id": "GD-S33-W2-FDA-010",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "9f992b81ae14bfc4efee6fb6667ddbf4cfb8517b448ce58619fb4e48d03d460e"
+    },
+    {
+      "id": "GD-S33-W2-FDA-011",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "65d35477775b2383495c431379c42e4c300ba77dbecd521d6d7ea604f6d01baf"
+    },
+    {
+      "id": "GD-S33-W2-FDA-012",
+      "domain": "financial",
+      "registryTypeId": "financial-13-sec-def14a",
+      "credentialType": "SEC_FILING",
+      "normalizedInputSha256": "103b1092211bd60a232cfccc31b33560efa12ad6d002628cc9f3d8878105befc"
+    },
+    {
+      "id": "GD-S33-W2-FFB-001",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "dd4a461f129190db50a6494c201543edb9a56f645508b8a04c6d67b40f9d792c"
+    },
+    {
+      "id": "GD-S33-W2-FFB-002",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "598c65d1186d092134d5847d2e2b56cfdc13dcb841b8aee52f33c9ed6618a36f"
+    },
+    {
+      "id": "GD-S33-W2-FFB-003",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "0cf28059a3570930de6d8461f8ad39618d0c1a689ea8ce20fdf3ebb72f8044c1"
+    },
+    {
+      "id": "GD-S33-W2-FFB-004",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "48c25623239284eb01d5bb108d021d1de559a8f2d3733a9c8e968b2db5610e03"
+    },
+    {
+      "id": "GD-S33-W2-FFB-005",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "653bb8c905f8cc356d6a0cc1b7e957fc7618a60d7778a14e9766942868898f09"
+    },
+    {
+      "id": "GD-S33-W2-FFB-006",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "0eefa7695669b336331ccaf524dfa0a9e35dae63b38a70181c18ff050108131b"
+    },
+    {
+      "id": "GD-S33-W2-FFB-007",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "a5ad9d4178183a1e9a9dccff9cf2ac2a45a92c571ac65801f467b8d7a5bac4ef"
+    },
+    {
+      "id": "GD-S33-W2-FFB-008",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "b7eaf5233932e0026902a624ee2fc7be4d150ad0ea11acd6644f273270796f40"
+    },
+    {
+      "id": "GD-S33-W2-FFB-009",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "ede34b86128ca5f27d6fe922d67aeb8c4bdfff119eb7231e50ebf0aa3c118b87"
+    },
+    {
+      "id": "GD-S33-W2-FFB-010",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "2510fb28838271cf751544d03f325f8aa54bd51b2c48c4f7c9a37848f4ba2c7e"
+    },
+    {
+      "id": "GD-S33-W2-FFB-011",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "171cd979855e5fc394259077311906f785796dc71ebffdcb27427c533c096785"
+    },
+    {
+      "id": "GD-S33-W2-FFB-012",
+      "domain": "financial",
+      "registryTypeId": "financial-14-finra-broker",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "6767d5d74a2990d8817c1d00cb7e8d11e207b787cf313161e92e8cb57816e07e"
+    },
+    {
+      "id": "GD-S33-W2-FIA-001",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "075a34f3c1eb9d789969bdf023f5fb5d3efbc43ed464b92c67bb77747aca45c5"
+    },
+    {
+      "id": "GD-S33-W2-FIA-002",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "92e4b55925680b0059c553d273a000e952153c199350c4b170579d4978186e6d"
+    },
+    {
+      "id": "GD-S33-W2-FIA-003",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "eddb622877f2c842432676ffb9875ecde5ee6486f63c0bf56b40d818f6fb5281"
+    },
+    {
+      "id": "GD-S33-W2-FIA-004",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "7aa3f17ebaeb50de129a5a4957c329414f230b079182edb2fd7da6fd91099ea3"
+    },
+    {
+      "id": "GD-S33-W2-FIA-005",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "76e2fcd7f0313e1e77706073e37a24434bdf4865aa1522521023a930bcf0a4c8"
+    },
+    {
+      "id": "GD-S33-W2-FIA-006",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "195f07b82f6894798afb4086a12518fce59ba22c5ba9f06f0c16fe91d367ab34"
+    },
+    {
+      "id": "GD-S33-W2-FIA-007",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "822d5435f19075bcdb2e504b2447dc160edb31ab86142371003b36287234b84d"
+    },
+    {
+      "id": "GD-S33-W2-FIA-008",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "3b08b820af18f04818a5e5a7f30eea1c315d2249c6e33540920386c4cbe2aa17"
+    },
+    {
+      "id": "GD-S33-W2-FIA-009",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "28ce1ddbf81b6b8e6e59b2e0b8f0fbb5521c4d556fb26f95832088cdddcfe621"
+    },
+    {
+      "id": "GD-S33-W2-FIA-010",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "84445ca28fb2ca0e4f3501859572ed23d08924473cc0b0656a2e29ff7130845e"
+    },
+    {
+      "id": "GD-S33-W2-FIA-011",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "9d4727147a2becd6f6737675c3ec46376c46cf96a0749e81cf9912d0af136a23"
+    },
+    {
+      "id": "GD-S33-W2-FIA-012",
+      "domain": "financial",
+      "registryTypeId": "financial-15-investment-adviser",
+      "credentialType": "FINANCIAL_ADVISOR",
+      "normalizedInputSha256": "7a3058949dcca256343623ea2eacf9d747f30992b3704880d06cd85eff85734f"
+    },
+    {
+      "id": "GD-S33-W2-ETC-001",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "00f3f4b6853861745721c8164519663c35b19e66b54b14ff30cb134c902723a9"
+    },
+    {
+      "id": "GD-S33-W2-ETC-002",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "edc638e681be3ce24a490a1f8b38b05dd4e26fc92b591b864ed6f7d65b98f8da"
+    },
+    {
+      "id": "GD-S33-W2-ETC-003",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "112ac47dded9bcc817167bc6996cc41279980b2a03536ed1fea32b34c8f1ed96"
+    },
+    {
+      "id": "GD-S33-W2-ETC-004",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "d857a45904f0bbc0b6d0477489eddd481ce17e10663b029ced83e4d04a087885"
+    },
+    {
+      "id": "GD-S33-W2-ETC-005",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "4c177fef6a58aec5979d42675cf6b4ba5d829f9e3df88e8e89cef75cd1efcabb"
+    },
+    {
+      "id": "GD-S33-W2-ETC-006",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "d4f3212e0e6ea27b97750d574d5f056090de38a0502c910277a2f0ad16b693fd"
+    },
+    {
+      "id": "GD-S33-W2-ETC-007",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "3ad63a6d0c8573ba80f68f3891c5764c3f44cfa687c1d4a94eb433b1ff5064ba"
+    },
+    {
+      "id": "GD-S33-W2-ETC-008",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "5ce9c6ca62c0088fefa05e94d04430c97a46f34e70d2c6d26285b8fc496f95f7"
+    },
+    {
+      "id": "GD-S33-W2-ETC-009",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "536d63221b114f63646b567e16b98f24c0e707c4ac9634b4b22c89ca3969bbc7"
+    },
+    {
+      "id": "GD-S33-W2-ETC-010",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "f79c3edefdfcff68501d34bf4210f3111b328b879e188327e23fcf3b3234ee5d"
+    },
+    {
+      "id": "GD-S33-W2-ETC-011",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "deae494ab534445e5de7914b10f33f1958dbe90c8a945c01bb1360ef04a7870a"
+    },
+    {
+      "id": "GD-S33-W2-ETC-012",
+      "domain": "education",
+      "registryTypeId": "education-11-trade-certification",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "2dd8f9375bb8cd5fc02d774bc0d4eccf17063049c782b3eac5d0dbd370ce5fc2"
+    },
+    {
+      "id": "GD-S33-W2-ETR-001",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "db257abcc8594e7f2be7dcf4375a4c16dea42a9279fd11593893856bd4d9805a"
+    },
+    {
+      "id": "GD-S33-W2-ETR-002",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "691024e33523dcc6b403d85f76c2c4d762d75489b1a5da28f8553cd75a1b2535"
+    },
+    {
+      "id": "GD-S33-W2-ETR-003",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "1b598f9ca362633b31c3d8a2669d0b0dff8fa4c9be7f8a4a5f9bea551a3059c0"
+    },
+    {
+      "id": "GD-S33-W2-ETR-004",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "107397db939190680675faae05e5a772cb5c2a512960d2b2e301e02b4129667b"
+    },
+    {
+      "id": "GD-S33-W2-ETR-005",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "721d02f4bb0280e34ce171c0f680a87f5f2f438c0c5095c478bb849c96825ffa"
+    },
+    {
+      "id": "GD-S33-W2-ETR-006",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "2fadde2e66c9ab4e601abbe60831a8d41f6eb3df16fe9c669b3091e2c705cac0"
+    },
+    {
+      "id": "GD-S33-W2-ETR-007",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "ba686133c3cdef7428133c1b57f7ce0bbeceed05aeb490a9f296e346a6d1a2f5"
+    },
+    {
+      "id": "GD-S33-W2-ETR-008",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "d36331e0f357ce12a2059cb8a4517820a1d65cbef05cc0d9e9f425c592dc1257"
+    },
+    {
+      "id": "GD-S33-W2-ETR-009",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "bc6b27bd0015f9bcaf7ef43e8c3c6a78d0359a91c62e011cae7a433ab00cd412"
+    },
+    {
+      "id": "GD-S33-W2-ETR-010",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "16ceeffac701036431e63a96f6781aba0788bc9d18f95f7610bc9ef94736e9c8"
+    },
+    {
+      "id": "GD-S33-W2-ETR-011",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "e0dabaa5fbecd581ce7ee2de9938acc7763f015d8b7db92ca8d0425d621ea006"
+    },
+    {
+      "id": "GD-S33-W2-ETR-012",
+      "domain": "education",
+      "registryTypeId": "education-12-training-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "8561e106215b033105e2078c2c2c562b05c85e90763aea35cd83e53b874c6a04"
+    },
+    {
+      "id": "GD-S33-W2-ECC-001",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "30777de430b269b35abd68bd5eeca95b57f823678acf8e6b2d2b2ab7dc68c59f"
+    },
+    {
+      "id": "GD-S33-W2-ECC-002",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "dc9403ee9609cdaaba98259ac279375d4f5f6e021fafe02c3b61398cc043f3e8"
+    },
+    {
+      "id": "GD-S33-W2-ECC-003",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "167597d4fd5194522c1c10510a1a326a14936ef9d5b9fabf81245ae1f60fe323"
+    },
+    {
+      "id": "GD-S33-W2-ECC-004",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "3719c090995e92586b012a496d2fc8589fa1b84ddafa89de9e518f2ebf6f3ce0"
+    },
+    {
+      "id": "GD-S33-W2-ECC-005",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "b3e74d57c1e21e76636d85e7d2f2d8f00908a8d5b597964c77d2323ff1dec6b9"
+    },
+    {
+      "id": "GD-S33-W2-ECC-006",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "552b561391e4677a798954f483615767b3112ff045329f36e0519f4994eac224"
+    },
+    {
+      "id": "GD-S33-W2-ECC-007",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "c53867acaf5404c823719779102c35065b49d79a09a5dca8e5dd39bf7df4e4b3"
+    },
+    {
+      "id": "GD-S33-W2-ECC-008",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "91fac172674861c3a631784baa3ea280d76133194b904f649942b1b45c4e471f"
+    },
+    {
+      "id": "GD-S33-W2-ECC-009",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "96beae95e2c19d7241fdd40662108095f76f01bb170fa16733fbf9912fc4c47f"
+    },
+    {
+      "id": "GD-S33-W2-ECC-010",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "873d7c6451cac616537d9c169d7632dde751a7e6713968a986bc01d8badd3ab4"
+    },
+    {
+      "id": "GD-S33-W2-ECC-011",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "413bcc7bbdf8b3509ae669ae564df4cfda5e79fa4ebd82bff8cf3e2e56fecca0"
+    },
+    {
+      "id": "GD-S33-W2-ECC-012",
+      "domain": "education",
+      "registryTypeId": "education-13-completion-certificate",
+      "credentialType": "CERTIFICATE",
+      "normalizedInputSha256": "0bed002404dd3fdf37eac0962e3374188582bd1f03a12db34134effc8d04ffcd"
+    },
+    {
+      "id": "GD-S33-W2-EAC-001",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "df761d82db9878745c6332f2956a03c57fa473aea8ad1ca86460650e6ac8872a"
+    },
+    {
+      "id": "GD-S33-W2-EAC-002",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "b13636cc17f2bb20811e5d9c1b6ec9244d3b804f8a77ff99a095171285a6edfd"
+    },
+    {
+      "id": "GD-S33-W2-EAC-003",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "71129c4558386f4a8b119b25840d9c1029b76b69b99bf99b99677e14d93983e8"
+    },
+    {
+      "id": "GD-S33-W2-EAC-004",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "d4b68f33aac64679fabb9d21e3ae91574e8e93f852cca8f1d30e87181102c877"
+    },
+    {
+      "id": "GD-S33-W2-EAC-005",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "65c770dabc6ff64cda20dd2881500f4fa693ec891689ec15ac778cf2b83c966e"
+    },
+    {
+      "id": "GD-S33-W2-EAC-006",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "43501816037ed1e59549d07cd178c41c961fdc57bb9c65db4c939560e9065a88"
+    },
+    {
+      "id": "GD-S33-W2-EAC-007",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "fb9e396a6d95fe7db743287fa9528c7d4f5420cb63b6488d7fe57309b39e6285"
+    },
+    {
+      "id": "GD-S33-W2-EAC-008",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "46ad6987cead2f5c6f66ef255f7a7cd81fdd107e483d487d32e173516f7264e3"
+    },
+    {
+      "id": "GD-S33-W2-EAC-009",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "b38010f7ac3a51df05016c63ddc00e467f2a30609abafce25045e85ec8add316"
+    },
+    {
+      "id": "GD-S33-W2-EAC-010",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "d2fb1f90854e02f47f3bf4f9bac87279c5dcec5e46d630383bf4d1e46c5978a2"
+    },
+    {
+      "id": "GD-S33-W2-EAC-011",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "8bd0cb872554b255f40d94b7858462e4a56509c7a72b99823860e7791a60a613"
+    },
+    {
+      "id": "GD-S33-W2-EAC-012",
+      "domain": "education",
+      "registryTypeId": "education-14-accreditation",
+      "credentialType": "ACCREDITATION",
+      "normalizedInputSha256": "36a6efd4b513f2144541555a79b6f41248703ebd3c2e065097b6e5a475c2de3b"
+    },
+    {
+      "id": "GD-S33-W2-EMB-001",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "505828152f8e06715a9edb8433906c74c9078bfc5b93e85cbe02d8039f806918"
+    },
+    {
+      "id": "GD-S33-W2-EMB-002",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "40e989193228b2fcca5f933584db26f7b3e49f51aca2a31af8ebfb9bfeacd0f7"
+    },
+    {
+      "id": "GD-S33-W2-EMB-003",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "60f489070e90216e9fa761f62ff2ffbb327eb175216cb189d9b0301bdd2f2619"
+    },
+    {
+      "id": "GD-S33-W2-EMB-004",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "03658456a4bc1ca27e79a9456becdac4562c4b2f533442a538c1e644ad499fc0"
+    },
+    {
+      "id": "GD-S33-W2-EMB-005",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "18fe4a924f7b32de63e01cfa0c8aa9cf1d56b8c3bd7add005dfee884992b1845"
+    },
+    {
+      "id": "GD-S33-W2-EMB-006",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "67897b9f529c624dd6ffece9c31cd8f308a2d55a9aba517a0e6cba0c53e56115"
+    },
+    {
+      "id": "GD-S33-W2-EMB-007",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "4bd8fca3b507c61a4297509e09e1dc10469677acb78945bd9bec2e27e32a2472"
+    },
+    {
+      "id": "GD-S33-W2-EMB-008",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "a79a0d577d65f2266fcbfab649bf3e7d5ed6ec41e939854ad76715b881fb3339"
+    },
+    {
+      "id": "GD-S33-W2-EMB-009",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "32fbf7c8bf12ff9c5b32d5d59b4abaec14bf55fa94c9dcfa4a51a5a3fb3ab1e7"
+    },
+    {
+      "id": "GD-S33-W2-EMB-010",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "36150c06d9a6921e8187836bba2d18462f22228175a2733a0dbfff2975d4bef2"
+    },
+    {
+      "id": "GD-S33-W2-EMB-011",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "9ae15de442d9c32cd8817a3f92a83fbe36f0e496d288857b21034053f24116ac"
+    },
+    {
+      "id": "GD-S33-W2-EMB-012",
+      "domain": "education",
+      "registryTypeId": "education-15-microcredential",
+      "credentialType": "BADGE",
+      "normalizedInputSha256": "52786477bde9260c5c6222de4427e74f76969d752b7a772da3d91bded2fd6085"
+    }
+  ]
+}
