@@ -166,9 +166,15 @@ function record(value: unknown, label: string): JsonRecord {
   return value as JsonRecord;
 }
 
+function compareUtf16CodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function exactKeys(value: JsonRecord, expected: readonly string[], label: string): void {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
+  const actual = Object.keys(value).sort(compareUtf16CodeUnits);
+  const wanted = [...expected].sort(compareUtf16CodeUnits);
   if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
     throw new Error(`${label} keys are not the strict v2 schema`);
   }
