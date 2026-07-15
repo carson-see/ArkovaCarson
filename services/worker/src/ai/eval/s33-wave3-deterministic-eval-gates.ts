@@ -33,9 +33,18 @@ const GATE_REGISTRY_CANONICAL_SHA256 = 'dce7bbae2579db6199a768db44e456cb8c88e931
 const WAVE1_MERGE_COMMIT = '42530fd73f9bd0cb7e4e70fc1259324810780b2c';
 const WAVE1_BASE_REGISTRY_DIGEST_SHA256 = '412a08227608a58172569a4fcbf3cd1025dc67fc1beeaddd6c163d22c4cb80d6';
 const BOOTSTRAP_REPLICATES = 2000;
+const UINT32_RANGE = 2 ** 32;
 const REGRESSION_FLOOR = -0.05;
 const JURISDICTION_PUBLIC_BASELINE_F1 = 0.663;
 const SMALL_N_WORDING = 'measured, small-n — directional' as const;
+const CRITICAL_TYPE_FLOORS = Object.freeze({
+  RESUME: 0.75,
+  FINANCIAL: 0.8,
+  LEGAL: 0.8,
+  MEDICAL: 0.8,
+  CHARITY: 0.8,
+  BUSINESS_ENTITY: 0.75,
+} as const);
 const MAX_TRUSTED_GOLD_ROWS = 10_000;
 const TOP15_BATCH_CONTRACT = Object.freeze([
   'S33-W2-TOP15-01-05',
@@ -666,7 +675,7 @@ function nullableNonEmpty(value: unknown, label: string): string | null {
 
 function finite(value: unknown, label: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new Error(`${label} must be finite`);
+    throw new TypeError(`${label} must be finite`);
   }
   return value;
 }
@@ -712,6 +721,44 @@ function f1(tp: number, fp: number, fn: number): number {
   return denominator === 0 ? 0 : (2 * tp) / denominator;
 }
 
+interface S33Wave3FieldScoreCounts {
+  presentMatchCount: number;
+  missingBothCount: number;
+  falsePositive: number;
+  falseNegative: number;
+}
+
+function scoreS33FieldComparison(
+  comparison: S33Wave3FieldComparison,
+  index: number,
+  names: Set<string>,
+): S33Wave3FieldScoreCounts {
+  const candidate = record(comparison, `Field comparison ${index}`);
+  exactKeys(candidate, [
+    'field', 'expectedPresent', 'actualPresent', 'matched',
+  ], `Field comparison ${index}`);
+  const field = nonEmpty(candidate.field, `Field comparison ${index} field`);
+  if (names.has(field)) throw new Error(`Field comparison ${field} is duplicated`);
+  names.add(field);
+  const expectedPresent = boolean(candidate.expectedPresent, `${field} expectedPresent`);
+  const actualPresent = boolean(candidate.actualPresent, `${field} actualPresent`);
+  const matched = boolean(candidate.matched, `${field} matched`);
+
+  if (!expectedPresent && !actualPresent) {
+    if (!matched) throw new Error(`${field} missing-both comparison must be matched`);
+    return { presentMatchCount: 0, missingBothCount: 1, falsePositive: 0, falseNegative: 0 };
+  }
+  if (expectedPresent && actualPresent) {
+    return matched
+      ? { presentMatchCount: 1, missingBothCount: 0, falsePositive: 0, falseNegative: 0 }
+      : { presentMatchCount: 0, missingBothCount: 0, falsePositive: 1, falseNegative: 1 };
+  }
+  if (matched) throw new Error(`${field} one-sided comparison cannot be matched`);
+  return expectedPresent
+    ? { presentMatchCount: 0, missingBothCount: 0, falsePositive: 0, falseNegative: 1 }
+    : { presentMatchCount: 0, missingBothCount: 0, falsePositive: 1, falseNegative: 0 };
+}
+
 export function scoreS33FieldComparisons(
   comparisons: readonly S33Wave3FieldComparison[],
 ): S33Wave3FieldScore {
@@ -722,31 +769,11 @@ export function scoreS33FieldComparisons(
   let falsePositive = 0;
   let falseNegative = 0;
   for (const [index, comparison] of comparisons.entries()) {
-    const candidate = record(comparison, `Field comparison ${index}`);
-    exactKeys(candidate, [
-      'field', 'expectedPresent', 'actualPresent', 'matched',
-    ], `Field comparison ${index}`);
-    const field = nonEmpty(candidate.field, `Field comparison ${index} field`);
-    if (names.has(field)) throw new Error(`Field comparison ${field} is duplicated`);
-    names.add(field);
-    const expectedPresent = boolean(candidate.expectedPresent, `${field} expectedPresent`);
-    const actualPresent = boolean(candidate.actualPresent, `${field} actualPresent`);
-    const matched = boolean(candidate.matched, `${field} matched`);
-
-    if (!expectedPresent && !actualPresent) {
-      if (!matched) throw new Error(`${field} missing-both comparison must be matched`);
-      missingBothCount += 1;
-    } else if (expectedPresent && actualPresent) {
-      if (matched) presentMatchCount += 1;
-      else {
-        falsePositive += 1;
-        falseNegative += 1;
-      }
-    } else {
-      if (matched) throw new Error(`${field} one-sided comparison cannot be matched`);
-      if (expectedPresent) falseNegative += 1;
-      else falsePositive += 1;
-    }
+    const counts = scoreS33FieldComparison(comparison, index, names);
+    presentMatchCount += counts.presentMatchCount;
+    missingBothCount += counts.missingBothCount;
+    falsePositive += counts.falsePositive;
+    falseNegative += counts.falseNegative;
   }
 
   return {
@@ -793,7 +820,7 @@ function validateGateRegistry(content: string): { rawSha256: string; canonicalSh
   const bootstrap = record(registry.pairedBootstrap, 'Wave-3 paired bootstrap registry');
   if (bootstrap.replicates !== BOOTSTRAP_REPLICATES
     || bootstrap.seedPolicy !== 'sha256-frozen-corpus-and-arm-manifests'
-    || bootstrap.confidenceLevel !== 0.95
+    || canonicaliseJson(bootstrap.confidenceLevel) !== '0.95'
     || bootstrap.domainsPooled !== false) {
     throw new Error('Wave-3 paired bootstrap registry drifted');
   }
@@ -887,13 +914,17 @@ function validateFounderRegistry(content: string): string {
   return canonicalDigest(projected);
 }
 
-function validateCorpusRegistry(value: unknown): {
+interface ValidatedCorpusRegistry {
   digest: string;
   entries: AcceptedEntry[];
   batches: AcceptedBatch[];
   wave1PacketBlobs: Readonly<Record<string, string>>;
+}
+
+function validateCorpusRegistryIdentity(registry: JsonRecord): {
+  digest: string;
+  wave1Tuple: JsonRecord;
 } {
-  const registry = record(value, 'Accepted corpus registry');
   if (registry.schemaVersion !== 1
     || registry.artifactType !== 'arkova-s33-wave2-corpus-registry'
     || registry.algorithmVersion !== 's33-wave2-corpus-registry-v1'
@@ -913,81 +944,108 @@ function validateCorpusRegistry(value: unknown): {
   if (canonicaliseJson(wave1Tuple) !== canonicaliseJson(S33_WAVE3_FROZEN_WAVE1_TUPLE)) {
     throw new Error('Accepted corpus full Wave-1 immutable tuple/source-blob mismatch');
   }
-  const batchCandidates = array(registry.acceptedBatches, 'Accepted corpus batches');
+  return { digest, wave1Tuple };
+}
+
+function parseAcceptedBatch(candidate: unknown, index: number): AcceptedBatch {
+  const batch = record(candidate, `Accepted corpus batch ${index}`);
+  const batchId = nonEmpty(batch.batchId, `Accepted corpus batch ${index} id`);
+  const revision = finite(batch.revision, `Accepted corpus batch ${batchId} revision`);
+  const entryCount = finite(batch.entryCount, `Accepted corpus batch ${batchId} entryCount`);
+  const sourcePath = nonEmpty(batch.sourcePath, `Accepted corpus batch ${batchId} sourcePath`);
+  const sourceBlobSha = sha(batch.sourceBlobSha, SHA1, `Accepted corpus batch ${batchId} source blob`);
+  const manifestPath = nonEmpty(batch.manifestPath, `Accepted corpus batch ${batchId} manifestPath`);
+  const manifestRawSha256 = sha(
+    batch.manifestRawSha256,
+    SHA256,
+    `Accepted corpus batch ${batchId} manifest raw digest`,
+  );
+  const datasheetBlobSha = sha(
+    batch.datasheetBlobSha,
+    SHA1,
+    `Accepted corpus batch ${batchId} datasheet blob`,
+  );
+  if (!Number.isInteger(revision) || revision < 1 || !Number.isInteger(entryCount) || entryCount < 1) {
+    throw new Error(`Accepted corpus batch ${batchId} revision/count is invalid`);
+  }
+  if (batchId === 'S33-W1' && (index !== 0
+    || revision !== 12
+    || entryCount !== 81
+    || sourcePath !== 'immutable-pr-1544-wave1-packet'
+    || sourceBlobSha !== S33_WAVE3_FROZEN_WAVE1_TUPLE.producerTreeSha)) {
+    throw new Error('Accepted corpus Wave-1 batch tuple mismatch');
+  }
+  return {
+    batchId,
+    revision,
+    entryCount,
+    sourcePath,
+    sourceBlobSha,
+    manifestPath,
+    manifestRawSha256,
+    datasheetBlobSha,
+  };
+}
+
+function validateAcceptedBatches(value: unknown): {
+  batchKeys: Map<string, AcceptedBatch>;
+  batches: AcceptedBatch[];
+} {
+  const batchCandidates = array(value, 'Accepted corpus batches');
   if (batchCandidates.length === 0) throw new Error('Accepted corpus batches are missing');
   const batchKeys = new Map<string, AcceptedBatch>();
-  const batches: AcceptedBatch[] = [];
-  for (const [index, candidate] of batchCandidates.entries()) {
-    const batch = record(candidate, `Accepted corpus batch ${index}`);
-    const batchId = nonEmpty(batch.batchId, `Accepted corpus batch ${index} id`);
-    const revision = finite(batch.revision, `Accepted corpus batch ${batchId} revision`);
-    const entryCount = finite(batch.entryCount, `Accepted corpus batch ${batchId} entryCount`);
-    const sourcePath = nonEmpty(batch.sourcePath, `Accepted corpus batch ${batchId} sourcePath`);
-    const sourceBlobSha = sha(batch.sourceBlobSha, SHA1, `Accepted corpus batch ${batchId} source blob`);
-    const manifestPath = nonEmpty(batch.manifestPath, `Accepted corpus batch ${batchId} manifestPath`);
-    const manifestRawSha256 = sha(
-      batch.manifestRawSha256,
-      SHA256,
-      `Accepted corpus batch ${batchId} manifest raw digest`,
-    );
-    const datasheetBlobSha = sha(
-      batch.datasheetBlobSha,
-      SHA1,
-      `Accepted corpus batch ${batchId} datasheet blob`,
-    );
-    if (!Number.isInteger(revision) || revision < 1 || !Number.isInteger(entryCount) || entryCount < 1) {
-      throw new Error(`Accepted corpus batch ${batchId} revision/count is invalid`);
-    }
-    if (batchKeys.has(batchId)) throw new Error(`Accepted corpus batch ${batchId} is duplicated`);
-    const acceptedBatch = {
-      batchId,
-      revision,
-      entryCount,
-      sourcePath,
-      sourceBlobSha,
-      manifestPath,
-      manifestRawSha256,
-      datasheetBlobSha,
-    };
-    if (batchId === 'S33-W1' && (index !== 0
-      || revision !== 12
-      || entryCount !== 81
-      || sourcePath !== 'immutable-pr-1544-wave1-packet'
-      || sourceBlobSha !== S33_WAVE3_FROZEN_WAVE1_TUPLE.producerTreeSha)) {
-      throw new Error('Accepted corpus Wave-1 batch tuple mismatch');
-    }
-    batchKeys.set(batchId, acceptedBatch);
-    batches.push(acceptedBatch);
-  }
+  const batches = batchCandidates.map((candidate, index) => {
+    const batch = parseAcceptedBatch(candidate, index);
+    if (batchKeys.has(batch.batchId)) throw new Error(`Accepted corpus batch ${batch.batchId} is duplicated`);
+    batchKeys.set(batch.batchId, batch);
+    return batch;
+  });
+  return { batchKeys, batches };
+}
 
+function parseAcceptedEntry(
+  candidate: unknown,
+  index: number,
+  batchKeys: ReadonlyMap<string, AcceptedBatch>,
+): AcceptedEntry {
+  const entry = record(candidate, `Accepted corpus entry ${index}`);
+  const id = nonEmpty(entry.id, `Accepted corpus entry ${index} id`);
+  const domain = nonEmpty(entry.domain, `Accepted corpus entry ${id} domain`);
+  const credentialType = nonEmpty(entry.credentialType, `Accepted corpus entry ${id} credentialType`);
+  const normalizedInputSha256 = sha(
+    entry.normalizedInputSha256,
+    SHA256,
+    `Accepted corpus entry ${id} normalized input`,
+  );
+  const batchId = nonEmpty(entry.batchId, `Accepted corpus entry ${id} batchId`);
+  const revision = finite(entry.revision, `Accepted corpus entry ${id} revision`);
+  const sourcePath = nonEmpty(entry.sourcePath, `Accepted corpus entry ${id} sourcePath`);
+  const batch = batchKeys.get(batchId);
+  if (!FROZEN_TYPE_SET.has(credentialType) && !(batchId === 'S33-W1' && credentialType === 'CPE')) {
+    throw new Error(`Accepted corpus entry ${id} is outside the frozen 24 types/Wave-1 legacy quarantine`);
+  }
+  if (batch?.revision !== revision || batch?.sourcePath !== sourcePath) {
+    throw new Error(`Accepted corpus entry ${id} batch binding mismatch`);
+  }
+  return { id, domain, credentialType, normalizedInputSha256, batchId, revision, sourcePath };
+}
+
+function validateAcceptedEntries(
+  value: unknown,
+  batchKeys: ReadonlyMap<string, AcceptedBatch>,
+): AcceptedEntry[] {
   const ids = new Set<string>();
   const hashes = new Set<string>();
   const batchCounts = new Map<string, number>();
-  const entries = array(registry.entries, 'Accepted corpus entries').map((candidate, index): AcceptedEntry => {
-    const entry = record(candidate, `Accepted corpus entry ${index}`);
-    const id = nonEmpty(entry.id, `Accepted corpus entry ${index} id`);
-    const domain = nonEmpty(entry.domain, `Accepted corpus entry ${id} domain`);
-    const credentialType = nonEmpty(entry.credentialType, `Accepted corpus entry ${id} credentialType`);
-    const normalizedInputSha256 = sha(
-      entry.normalizedInputSha256,
-      SHA256,
-      `Accepted corpus entry ${id} normalized input`,
-    );
-    const batchId = nonEmpty(entry.batchId, `Accepted corpus entry ${id} batchId`);
-    const revision = finite(entry.revision, `Accepted corpus entry ${id} revision`);
-    const sourcePath = nonEmpty(entry.sourcePath, `Accepted corpus entry ${id} sourcePath`);
-    const batch = batchKeys.get(batchId);
-    if (!FROZEN_TYPE_SET.has(credentialType) && !(batchId === 'S33-W1' && credentialType === 'CPE')) {
-      throw new Error(`Accepted corpus entry ${id} is outside the frozen 24 types/Wave-1 legacy quarantine`);
+  const entries = array(value, 'Accepted corpus entries').map((candidate, index) => {
+    const entry = parseAcceptedEntry(candidate, index, batchKeys);
+    if (ids.has(entry.id) || hashes.has(entry.normalizedInputSha256)) {
+      throw new Error('Accepted corpus ids/normalized inputs are not unique');
     }
-    if (!batch || batch.revision !== revision || batch.sourcePath !== sourcePath) {
-      throw new Error(`Accepted corpus entry ${id} batch binding mismatch`);
-    }
-    if (ids.has(id) || hashes.has(normalizedInputSha256)) throw new Error('Accepted corpus ids/normalized inputs are not unique');
-    ids.add(id);
-    hashes.add(normalizedInputSha256);
-    batchCounts.set(batchId, (batchCounts.get(batchId) ?? 0) + 1);
-    return { id, domain, credentialType, normalizedInputSha256, batchId, revision, sourcePath };
+    ids.add(entry.id);
+    hashes.add(entry.normalizedInputSha256);
+    batchCounts.set(entry.batchId, (batchCounts.get(entry.batchId) ?? 0) + 1);
+    return entry;
   });
   if (entries.length === 0) throw new Error('Accepted corpus entries are missing');
   for (const [batchId, batch] of batchKeys) {
@@ -995,29 +1053,46 @@ function validateCorpusRegistry(value: unknown): {
       throw new Error(`Accepted corpus batch ${batchId} entry count mismatch`);
     }
   }
-  const wave1PacketBlobsCandidate = wave1Tuple.packetBlobs;
-  const wave1PacketBlobs = wave1PacketBlobsCandidate === undefined
-    ? {}
-    : Object.fromEntries(Object.entries(record(
-      wave1PacketBlobsCandidate,
-      'Accepted corpus Wave-1 packet blobs',
-    )).map(([path, blob]) => [path, sha(blob, SHA1, `Accepted corpus Wave-1 packet blob ${path}`)]));
-  return { digest, entries, batches, wave1PacketBlobs };
+  return entries;
+}
+
+function validateWave1PacketBlobs(wave1Tuple: JsonRecord): Readonly<Record<string, string>> {
+  if (wave1Tuple.packetBlobs === undefined) return {};
+  return Object.fromEntries(Object.entries(record(
+    wave1Tuple.packetBlobs,
+    'Accepted corpus Wave-1 packet blobs',
+  )).map(([path, blob]) => [path, sha(blob, SHA1, `Accepted corpus Wave-1 packet blob ${path}`)]));
+}
+
+function validateCorpusRegistry(value: unknown): ValidatedCorpusRegistry {
+  const registry = record(value, 'Accepted corpus registry');
+  const { digest, wave1Tuple } = validateCorpusRegistryIdentity(registry);
+  const { batchKeys, batches } = validateAcceptedBatches(registry.acceptedBatches);
+  const entries = validateAcceptedEntries(registry.entries, batchKeys);
+  return {
+    digest,
+    entries,
+    batches,
+    wave1PacketBlobs: validateWave1PacketBlobs(wave1Tuple),
+  };
 }
 
 function expectedProducerExportName(sourcePath: string): string {
   const wave1Export = (WAVE1_PACKET_SOURCE_EXPORTS as Readonly<Record<string, string>>)[sourcePath];
   if (wave1Export) return wave1Export;
-  const match = sourcePath.match(
-    /^services\/worker\/src\/ai\/eval\/golden-dataset-s33-wave2-([a-z0-9-]+)-heldout\.ts$/u,
-  );
+  const match = /^services\/worker\/src\/ai\/eval\/golden-dataset-s33-wave2-([a-z0-9-]+)-heldout\.ts$/u
+    .exec(sourcePath);
   if (!match) throw new Error(`Accepted gold source path has no frozen export contract: ${sourcePath}`);
   return `S33_WAVE2_${match[1].toUpperCase().replaceAll('-', '_')}_HELDOUT`;
 }
 
 function gitBlobSha1(sourceText: string): string {
   const bytes = Buffer.from(sourceText, 'utf8');
-  return createHash('sha1')
+  // Git's repository object format defines blob identity as SHA-1 over the
+  // length-prefixed bytes below. This is an immutable object-id check, not a
+  // password, signature, MAC, or collision-resistant security decision; the
+  // accepted object id is independently authenticated by the Ed25519 envelope.
+  return createHash('sha1') // NOSONAR -- exact Git SHA-1 object identity is required here.
     .update(`blob ${bytes.byteLength}\0`, 'utf8')
     .update(bytes)
     .digest('hex');
@@ -1090,10 +1165,24 @@ function deriveFounderTypeId(
   return null;
 }
 
-function validateTrustedGoldSources(
-  value: unknown,
-  corpus: ReturnType<typeof validateCorpusRegistry>,
-): { sources: S33Wave3TrustedGoldSource[]; entries: TrustedGoldEntry[] } {
+interface ExpectedTrustedGoldSource {
+  sourcePath: string;
+  sourceBlobSha: string;
+  exportName: string;
+}
+
+function addExpectedTrustedGoldSource(
+  expectedSources: ExpectedTrustedGoldSource[],
+  seenExpected: Set<string>,
+  source: ExpectedTrustedGoldSource,
+): void {
+  const key = `${source.sourcePath}\0${source.sourceBlobSha}`;
+  if (seenExpected.has(key)) return;
+  expectedSources.push(source);
+  seenExpected.add(key);
+}
+
+function expectedTrustedGoldSources(corpus: ValidatedCorpusRegistry): ExpectedTrustedGoldSource[] {
   const expectedSources: Array<{ sourcePath: string; sourceBlobSha: string; exportName: string }> = [];
   const seenExpected = new Set<string>();
   for (const batch of corpus.batches) {
@@ -1101,43 +1190,44 @@ function validateTrustedGoldSources(
       for (const [sourcePath, exportName] of Object.entries(WAVE1_PACKET_SOURCE_EXPORTS)) {
         const sourceBlobSha = corpus.wave1PacketBlobs[sourcePath];
         if (!sourceBlobSha) throw new Error(`Accepted corpus Wave-1 source blob is missing: ${sourcePath}`);
-        const key = `${sourcePath}\0${sourceBlobSha}`;
-        if (!seenExpected.has(key)) expectedSources.push({ sourcePath, sourceBlobSha, exportName });
-        seenExpected.add(key);
+        addExpectedTrustedGoldSource(expectedSources, seenExpected, { sourcePath, sourceBlobSha, exportName });
       }
     } else {
-      const exportName = expectedProducerExportName(batch.sourcePath);
-      const key = `${batch.sourcePath}\0${batch.sourceBlobSha}`;
-      if (!seenExpected.has(key)) {
-        expectedSources.push({ sourcePath: batch.sourcePath, sourceBlobSha: batch.sourceBlobSha, exportName });
-      }
-      seenExpected.add(key);
+      addExpectedTrustedGoldSource(expectedSources, seenExpected, {
+        sourcePath: batch.sourcePath,
+        sourceBlobSha: batch.sourceBlobSha,
+        exportName: expectedProducerExportName(batch.sourcePath),
+      });
     }
   }
+  return expectedSources;
+}
 
-  const sourceCandidates = array(value, 'Wave-3 trusted gold sources');
-  if (sourceCandidates.length !== expectedSources.length) {
-    throw new Error('Wave-3 trusted gold source binding count mismatch');
+function validateTrustedGoldSource(
+  candidate: unknown,
+  index: number,
+  expected: ExpectedTrustedGoldSource,
+): S33Wave3TrustedGoldSource {
+  const source = record(candidate, `Wave-3 trusted gold source ${index}`);
+  exactKeys(source, ['sourcePath', 'sourceBlobSha', 'exportName', 'sourceText'], `Wave-3 trusted gold source ${index}`);
+  const sourcePath = nonEmpty(source.sourcePath, `Wave-3 trusted gold source ${index} path`);
+  const sourceBlobSha = sha(source.sourceBlobSha, SHA1, `Wave-3 trusted gold source ${index} blob`);
+  const exportName = nonEmpty(source.exportName, `Wave-3 trusted gold source ${index} export`);
+  const sourceText = nonEmpty(source.sourceText, `Wave-3 trusted gold source ${index} text`);
+  if (sourcePath !== expected.sourcePath
+    || sourceBlobSha !== expected.sourceBlobSha
+    || exportName !== expected.exportName) {
+    throw new Error(`Wave-3 trusted gold source ${index} accepted-source binding mismatch`);
   }
-  const trustedSources = sourceCandidates.map((candidate, index): S33Wave3TrustedGoldSource => {
-    const source = record(candidate, `Wave-3 trusted gold source ${index}`);
-    exactKeys(source, ['sourcePath', 'sourceBlobSha', 'exportName', 'sourceText'], `Wave-3 trusted gold source ${index}`);
-    const expected = expectedSources[index];
-    const sourcePath = nonEmpty(source.sourcePath, `Wave-3 trusted gold source ${index} path`);
-    const sourceBlobSha = sha(source.sourceBlobSha, SHA1, `Wave-3 trusted gold source ${index} blob`);
-    const exportName = nonEmpty(source.exportName, `Wave-3 trusted gold source ${index} export`);
-    const sourceText = nonEmpty(source.sourceText, `Wave-3 trusted gold source ${index} text`);
-    if (sourcePath !== expected.sourcePath
-      || sourceBlobSha !== expected.sourceBlobSha
-      || exportName !== expected.exportName) {
-      throw new Error(`Wave-3 trusted gold source ${index} accepted-source binding mismatch`);
-    }
-    if (gitBlobSha1(sourceText) !== sourceBlobSha) {
-      throw new Error(`Wave-3 trusted gold source ${sourcePath} Git blob mismatch`);
-    }
-    return { sourcePath, sourceBlobSha, exportName, sourceText };
-  });
+  if (gitBlobSha1(sourceText) !== sourceBlobSha) {
+    throw new Error(`Wave-3 trusted gold source ${sourcePath} Git blob mismatch`);
+  }
+  return { sourcePath, sourceBlobSha, exportName, sourceText };
+}
 
+function parseTrustedGoldRows(
+  trustedSources: readonly S33Wave3TrustedGoldSource[],
+): Map<string, { row: JsonRecord; source: S33Wave3TrustedGoldSource }> {
   const parsedRows = new Map<string, { row: JsonRecord; source: S33Wave3TrustedGoldSource }>();
   for (const source of trustedSources) {
     const rows = parseS33ProducerModuleWithLimit(
@@ -1152,64 +1242,97 @@ function validateTrustedGoldSources(
       parsedRows.set(id, { row, source });
     }
   }
+  return parsedRows;
+}
+
+function goldSubtypeIsAllowed(entry: AcceptedEntry, credentialType: string, subType: string): boolean {
+  const wave1LegacyCpe = entry.batchId === 'S33-W1'
+    && credentialType === 'CPE'
+    && WAVE1_LEGACY_CPE_SUBTYPES.has(subType);
+  if (wave1LegacyCpe) return true;
+  const allowedSubtypes = S33_WAVE3_FROZEN_SUBTYPE_TAXONOMY[credentialType];
+  return allowedSubtypes?.includes(subType) ?? subType === 'other';
+}
+
+function isExactOodGold(
+  entry: AcceptedEntry,
+  groundTruth: JsonRecord,
+  credentialType: string,
+  subType: string,
+): boolean {
+  return /^GD-S33-OOD-\d{3}$/u.test(entry.id)
+    && credentialType === 'OTHER'
+    && subType === 'other'
+    && Array.isArray(groundTruth.fraudSignals)
+    && groundTruth.fraudSignals.length === 0
+    && Object.keys(groundTruth).sort(compareUtf16CodeUnits).join(',') === 'credentialType,fraudSignals,subType';
+}
+
+function validateTrustedGoldEntry(
+  entry: AcceptedEntry,
+  parsedRows: ReadonlyMap<string, { row: JsonRecord; source: S33Wave3TrustedGoldSource }>,
+): TrustedGoldEntry {
+  const parsed = parsedRows.get(entry.id);
+  if (!parsed) throw new Error(`Trusted gold row is missing for accepted id ${entry.id}`);
+  const { row, source: goldSource } = parsed;
+  const strippedText = nonEmpty(row.strippedText, `Trusted gold row ${entry.id} strippedText`);
+  if (normalizedInputSha256(strippedText) !== entry.normalizedInputSha256) {
+    throw new Error(`Trusted gold row ${entry.id} normalized input mismatch`);
+  }
+  if (entry.sourcePath !== 'immutable-pr-1544-wave1-packet' && goldSource.sourcePath !== entry.sourcePath) {
+    throw new Error(`Trusted gold row ${entry.id} accepted source path mismatch`);
+  }
+  const groundTruth = record(row.groundTruth, `Trusted gold row ${entry.id} groundTruth`);
+  assertFiniteLiteral(groundTruth, `Trusted gold row ${entry.id} groundTruth`);
+  const credentialType = nonEmpty(
+    groundTruth.credentialType,
+    `Trusted gold row ${entry.id} credentialType`,
+  );
+  const subType = nonEmpty(groundTruth.subType, `Trusted gold row ${entry.id} subType`);
+  if (credentialType !== entry.credentialType) {
+    throw new Error(`Trusted gold row ${entry.id} credentialType contradicts accepted registry`);
+  }
+  if (!goldSubtypeIsAllowed(entry, credentialType, subType)) {
+    throw new Error(`Trusted gold row ${entry.id} subtype is outside the frozen taxonomy`);
+  }
+  const { fields: scoringGroundTruth, substantiveDepth } = deriveS33Wave3ValidatedGoldFields(groundTruth);
+  if (!isExactOodGold(entry, groundTruth, credentialType, subType) && substantiveDepth < 5) {
+    throw new Error(`Trusted gold row ${entry.id} substantive field depth is below 5`);
+  }
+  const source = nonEmpty(row.source, `Trusted gold row ${entry.id} source`);
+  const edgeCase = boolean(row.edgeCase, `Trusted gold row ${entry.id} edgeCase`);
+  return {
+    id: entry.id,
+    strippedText,
+    source,
+    groundTruth,
+    scoringGroundTruth,
+    credentialType,
+    subType,
+    founderTypeId: deriveFounderTypeId(entry, source, credentialType, subType),
+    edgeCase,
+    sourcePath: goldSource.sourcePath,
+    sourceBlobSha: goldSource.sourceBlobSha,
+  };
+}
+
+function validateTrustedGoldSources(
+  value: unknown,
+  corpus: ValidatedCorpusRegistry,
+): { sources: S33Wave3TrustedGoldSource[]; entries: TrustedGoldEntry[] } {
+  const expectedSources = expectedTrustedGoldSources(corpus);
+  const sourceCandidates = array(value, 'Wave-3 trusted gold sources');
+  if (sourceCandidates.length !== expectedSources.length) {
+    throw new Error('Wave-3 trusted gold source binding count mismatch');
+  }
+  const trustedSources = sourceCandidates.map((candidate, index) => (
+    validateTrustedGoldSource(candidate, index, expectedSources[index])
+  ));
+  const parsedRows = parseTrustedGoldRows(trustedSources);
   if (parsedRows.size !== corpus.entries.length) {
     throw new Error('Trusted gold rows do not bijectively cover accepted corpus ids');
   }
-
-  const entries = corpus.entries.map((entry): TrustedGoldEntry => {
-    const parsed = parsedRows.get(entry.id);
-    if (!parsed) throw new Error(`Trusted gold row is missing for accepted id ${entry.id}`);
-    const { row, source: goldSource } = parsed;
-    const strippedText = nonEmpty(row.strippedText, `Trusted gold row ${entry.id} strippedText`);
-    if (normalizedInputSha256(strippedText) !== entry.normalizedInputSha256) {
-      throw new Error(`Trusted gold row ${entry.id} normalized input mismatch`);
-    }
-    if (entry.sourcePath !== 'immutable-pr-1544-wave1-packet' && goldSource.sourcePath !== entry.sourcePath) {
-      throw new Error(`Trusted gold row ${entry.id} accepted source path mismatch`);
-    }
-    const groundTruth = record(row.groundTruth, `Trusted gold row ${entry.id} groundTruth`);
-    assertFiniteLiteral(groundTruth, `Trusted gold row ${entry.id} groundTruth`);
-    const credentialType = nonEmpty(
-      groundTruth.credentialType,
-      `Trusted gold row ${entry.id} credentialType`,
-    );
-    const subType = nonEmpty(groundTruth.subType, `Trusted gold row ${entry.id} subType`);
-    if (credentialType !== entry.credentialType) {
-      throw new Error(`Trusted gold row ${entry.id} credentialType contradicts accepted registry`);
-    }
-    const allowedSubtypes = S33_WAVE3_FROZEN_SUBTYPE_TAXONOMY[credentialType];
-    const wave1LegacyCpe = entry.batchId === 'S33-W1'
-      && credentialType === 'CPE'
-      && WAVE1_LEGACY_CPE_SUBTYPES.has(subType);
-    if (!wave1LegacyCpe && (allowedSubtypes ? !allowedSubtypes.includes(subType) : subType !== 'other')) {
-      throw new Error(`Trusted gold row ${entry.id} subtype is outside the frozen taxonomy`);
-    }
-    const exactOod = /^GD-S33-OOD-\d{3}$/u.test(entry.id)
-      && credentialType === 'OTHER'
-      && subType === 'other'
-      && Array.isArray(groundTruth.fraudSignals)
-      && groundTruth.fraudSignals.length === 0
-      && Object.keys(groundTruth).sort(compareUtf16CodeUnits).join(',') === 'credentialType,fraudSignals,subType';
-    const { fields: scoringGroundTruth, substantiveDepth } = deriveS33Wave3ValidatedGoldFields(groundTruth);
-    if (!exactOod && substantiveDepth < 5) {
-      throw new Error(`Trusted gold row ${entry.id} substantive field depth is below 5`);
-    }
-    const source = nonEmpty(row.source, `Trusted gold row ${entry.id} source`);
-    const edgeCase = boolean(row.edgeCase, `Trusted gold row ${entry.id} edgeCase`);
-    return {
-      id: entry.id,
-      strippedText,
-      source,
-      groundTruth,
-      scoringGroundTruth,
-      credentialType,
-      subType,
-      founderTypeId: deriveFounderTypeId(entry, source, credentialType, subType),
-      edgeCase,
-      sourcePath: goldSource.sourcePath,
-      sourceBlobSha: goldSource.sourceBlobSha,
-    };
-  });
+  const entries = corpus.entries.map((entry) => validateTrustedGoldEntry(entry, parsedRows));
   return { sources: trustedSources, entries };
 }
 
@@ -1220,11 +1343,11 @@ function validateAuthenticatedAcceptanceChain(
   testOnlyTrustRoot?: S33Wave2AcceptanceTrustRoot,
 ): readonly S33Wave2AuthenticatedBatchAcceptance[] {
   const acceptances = array(value, 'Wave-3 authenticated batch acceptances');
-  const wave1Batch = corpus.batches.find(({ batchId }) => batchId === 'S33-W1');
-  if (!wave1Batch && testOnlyTrustRoot === undefined) {
+  const hasWave1Batch = corpus.batches.some(({ batchId }) => batchId === 'S33-W1');
+  if (!hasWave1Batch && testOnlyTrustRoot === undefined) {
     throw new Error('Accepted corpus omits the immutable Wave-1 baseline batch');
   }
-  if (wave1Batch) {
+  if (hasWave1Batch) {
     const wave1Entries = corpus.entries.filter(({ batchId }) => batchId === 'S33-W1');
     if (wave1Entries.length !== 81) throw new Error('Accepted corpus Wave-1 baseline entry count mismatch');
   }
@@ -1307,6 +1430,8 @@ function validateAuthenticatedAcceptanceChain(
         || signed.credentialType !== accepted.credentialType
         || signed.normalizedInputSha256 !== accepted.normalizedInputSha256
         || signed.sourceBlobSha !== batch.sourceBlobSha
+        || gold.sourcePath !== batch.sourcePath
+        || gold.sourceBlobSha !== batch.sourceBlobSha
         || signed.subType !== gold.subType
         || signed.groundTruthSha256 !== canonicalDigest(gold.groundTruth)) {
         throw new Error(`Wave-3 batch ${batch.batchId} signed entry ${accepted.id} truth/source binding mismatch`);
@@ -1526,17 +1651,22 @@ function valuesMatch(expected: unknown, actual: unknown): boolean {
   return canonicaliseJson(normalizedComparable(expected)) === canonicaliseJson(normalizedComparable(actual));
 }
 
+function observedFieldValue(
+  field: string,
+  arm: Pick<S33Wave3ArmObservation, 'predictedCredentialType' | 'subType' | 'extractedFields'>,
+): unknown {
+  if (field === 'credentialType') return arm.predictedCredentialType;
+  if (field === 'subType') return arm.subType;
+  return arm.extractedFields[field];
+}
+
 function deriveFieldComparisons(
   gold: TrustedGoldEntry,
   arm: Pick<S33Wave3ArmObservation, 'predictedCredentialType' | 'subType' | 'extractedFields'>,
 ): S33Wave3FieldComparison[] {
   return ['credentialType', 'subType', 'fraudSignals', ...S33_WAVE3_SUBSTANTIVE_FIELDS].map((field) => {
     const expected = gold.scoringGroundTruth[field];
-    const actual = field === 'credentialType'
-      ? arm.predictedCredentialType
-      : field === 'subType'
-        ? arm.subType
-        : arm.extractedFields[field];
+    const actual = observedFieldValue(field, arm);
     const expectedPresent = hasScoredValue(expected);
     const actualPresent = hasScoredValue(actual);
     return {
@@ -1700,16 +1830,11 @@ function pairedBootstrap(
     state ^= state >>> 17;
     state ^= state << 5;
     state >>>= 0;
-    return state / 0x1_0000_0000;
+    return state / UINT32_RANGE;
   };
-  const samples = new Array<number>(replicates);
-  for (let replicate = 0; replicate < replicates; replicate += 1) {
-    let sum = 0;
-    for (let index = 0; index < deltas.length; index += 1) {
-      sum += deltas[Math.floor(next() * deltas.length)];
-    }
-    samples[replicate] = sum / deltas.length;
-  }
+  const samples = Array.from({ length: replicates }, () => (
+    deltas.reduce((sum) => sum + deltas[Math.floor(next() * deltas.length)], 0) / deltas.length
+  ));
   samples.sort((left, right) => left - right);
   return {
     sampleSize: deltas.length,
@@ -1751,14 +1876,61 @@ function validateIntegrityEvidence(value: unknown): {
   };
 }
 
-function validateSurgeryEvidence(value: unknown): {
+interface ValidatedSurgeryEvidence {
   droppedTrainingIds: string[];
   goodStandingStatusTrainingType: string;
   concreteSubtypeRate: number;
   invalidTaxonomyRowIds: string[];
   fraudStream: string;
   exportLastCheckpointOnly: boolean;
-} {
+}
+
+interface SurgeryExportedRowFacts {
+  id: string;
+  taxonomyValid: boolean;
+  concreteSubtype: boolean;
+  hasGoodStandingStatus: boolean;
+  goodStandingStatusIsString: boolean;
+  fraudFieldCount: number;
+}
+
+function validateSurgeryExportedRow(
+  candidate: unknown,
+  index: number,
+  exportedIds: Set<string>,
+): SurgeryExportedRowFacts {
+  const row = record(candidate, `Surgery exported training row ${index}`);
+  const id = nonEmpty(row.id, `Surgery exported training row ${index} id`);
+  if (exportedIds.has(id)) throw new Error(`Surgery exported training row ${id} is duplicated`);
+  exportedIds.add(id);
+  const credentialType = nonEmpty(row.credentialType, `Surgery exported training row ${id} credentialType`);
+  const subType = nonEmpty(row.subType, `Surgery exported training row ${id} subType`);
+  const explicitSubtypes = S33_WAVE3_FROZEN_SUBTYPE_TAXONOMY[credentialType];
+  const concreteSubtype = explicitSubtypes?.includes(subType) === true;
+  const publicationFallback = credentialType === 'PUBLICATION' && subType === 'other';
+  const hasGoodStandingStatus = Object.hasOwn(row, 'goodStandingStatus');
+  return {
+    id,
+    taxonomyValid: FROZEN_TYPE_SET.has(credentialType) && (concreteSubtype || publicationFallback),
+    concreteSubtype,
+    hasGoodStandingStatus,
+    goodStandingStatusIsString: !hasGoodStandingStatus
+      || (typeof row.goodStandingStatus === 'string' && row.goodStandingStatus.trim().length > 0),
+    fraudFieldCount: Object.keys(row).filter((key) => /fraud/iu.test(key)).length,
+  };
+}
+
+function assertSurgeryRowsComeFromSource(
+  exportedIds: ReadonlySet<string>,
+  sourceIds: readonly string[],
+): void {
+  const sourceSet = new Set(sourceIds);
+  for (const id of exportedIds) {
+    if (!sourceSet.has(id)) throw new Error(`Surgery exported row ${id} is absent from source rows`);
+  }
+}
+
+function validateSurgeryEvidence(value: unknown): ValidatedSurgeryEvidence {
   const evidence = record(value, 'Wave-3 surgery evidence');
   exactKeys(evidence, [
     'sourceTrainingRowIds',
@@ -1770,48 +1942,27 @@ function validateSurgeryEvidence(value: unknown): {
   const exported = array(evidence.exportedTrainingRows, 'Surgery exported training rows');
   if (exported.length === 0) throw new Error('Surgery exported training rows are missing');
   const exportedIds = new Set<string>();
-  let concreteSubtypeCount = 0;
-  let goodStandingCount = 0;
-  let goodStandingStrings = true;
-  let exportedFraudFieldCount = 0;
-  const invalidTaxonomyRowIds: string[] = [];
-  for (const [index, candidate] of exported.entries()) {
-    const row = record(candidate, `Surgery exported training row ${index}`);
-    const id = nonEmpty(row.id, `Surgery exported training row ${index} id`);
-    if (exportedIds.has(id)) throw new Error(`Surgery exported training row ${id} is duplicated`);
-    exportedIds.add(id);
-    const credentialType = nonEmpty(row.credentialType, `Surgery exported training row ${id} credentialType`);
-    const subType = nonEmpty(row.subType, `Surgery exported training row ${id} subType`);
-    const explicitSubtypes = S33_WAVE3_FROZEN_SUBTYPE_TAXONOMY[credentialType];
-    const taxonomyValid = explicitSubtypes?.includes(subType) === true
-      || ((credentialType === 'OTHER' || credentialType === 'PUBLICATION') && subType === 'other');
-    if (!FROZEN_TYPE_SET.has(credentialType) || !taxonomyValid) invalidTaxonomyRowIds.push(id);
-    if (explicitSubtypes?.includes(subType) === true) concreteSubtypeCount += 1;
-    if (Object.hasOwn(row, 'goodStandingStatus')) {
-      goodStandingCount += 1;
-      goodStandingStrings = goodStandingStrings
-        && typeof row.goodStandingStatus === 'string'
-        && row.goodStandingStatus.trim().length > 0;
-    }
-    exportedFraudFieldCount += Object.keys(row).filter((key) => /fraud/iu.test(key)).length;
-  }
-  const sourceSet = new Set(sourceIds);
-  for (const id of exportedIds) {
-    if (!sourceSet.has(id)) throw new Error(`Surgery exported row ${id} is absent from source rows`);
-  }
+  const exportedRows = exported.map((candidate, index) => (
+    validateSurgeryExportedRow(candidate, index, exportedIds)
+  ));
+  assertSurgeryRowsComeFromSource(exportedIds, sourceIds);
   const droppedTrainingIds = sourceIds.filter((id) => !exportedIds.has(id)).sort(compareUtf16CodeUnits);
   const fraudStream = record(evidence.fraudStream, 'Surgery fraud stream');
   exactKeys(fraudStream, ['mode', 'rowIds'], 'Surgery fraud stream');
   const fraudRowIds = exactStringArray(fraudStream.rowIds, 'Surgery fraud stream row ids');
   if (fraudRowIds.length === 0) throw new Error('Surgery fraud stream rows are missing');
   const fraudSeparated = fraudStream.mode === 'split'
-    && exportedFraudFieldCount === 0
+    && exportedRows.every(({ fraudFieldCount }) => fraudFieldCount === 0)
     && fraudRowIds.every((id) => !exportedIds.has(id));
+  const goodStandingRows = exportedRows.filter(({ hasGoodStandingStatus }) => hasGoodStandingStatus);
   return {
     droppedTrainingIds,
-    goodStandingStatusTrainingType: goodStandingCount > 0 && goodStandingStrings ? 'string' : 'missing-or-non-string',
-    concreteSubtypeRate: concreteSubtypeCount / exported.length,
-    invalidTaxonomyRowIds,
+    goodStandingStatusTrainingType: goodStandingRows.length > 0
+      && goodStandingRows.every(({ goodStandingStatusIsString }) => goodStandingStatusIsString)
+      ? 'string'
+      : 'missing-or-non-string',
+    concreteSubtypeRate: exportedRows.filter(({ concreteSubtype }) => concreteSubtype).length / exported.length,
+    invalidTaxonomyRowIds: exportedRows.filter(({ taxonomyValid }) => !taxonomyValid).map(({ id }) => id),
     fraudStream: fraudSeparated ? 'split' : 'not-split',
     exportLastCheckpointOnly: boolean(evidence.exportLastCheckpointOnly, 'Surgery exportLastCheckpointOnly'),
   };
@@ -1889,9 +2040,14 @@ function calibration(observations: readonly ValidatedObservation[]): S33Wave3Eva
   return { meanGap, ece, bins };
 }
 
-function diagnostics(observations: readonly ValidatedObservation[]): S33Wave3EvaluationReport['diagnostics'] {
-  const confusionByDomain: S33Wave3EvaluationReport['diagnostics']['confusionByDomain'] = {};
-  const confused = new Map<string, number>();
+interface DiagnosticCounters {
+  crossDomainConfusions: number;
+  abstentionCount: number;
+  correctAbstentions: number;
+  malformedSuggestedTypeCount: number;
+}
+
+function buildFounderTypeDomains(): Map<string, Set<FounderDomain>> {
   const typeDomains = new Map<string, Set<FounderDomain>>();
   for (const contract of S33_WAVE3_FOUNDER_MAPPING_CONTRACT) {
     for (const { credentialType } of contract.mappings) {
@@ -1900,35 +2056,45 @@ function diagnostics(observations: readonly ValidatedObservation[]): S33Wave3Eva
       typeDomains.set(credentialType, domains);
     }
   }
-  let crossDomainConfusions = 0;
-  let abstentionCount = 0;
-  let correctAbstentions = 0;
-  let malformedSuggestedTypeCount = 0;
-  for (const observation of observations) {
-    const predicted = observation.arms.v71.predictedCredentialType ?? 'UNPARSED';
-    const domain = confusionByDomain[observation.domain] ?? { total: 0, matrix: {} };
-    domain.total += 1;
-    const row = domain.matrix[observation.actualCredentialType] ?? {};
-    row[predicted] = (row[predicted] ?? 0) + 1;
-    domain.matrix[observation.actualCredentialType] = row;
-    confusionByDomain[observation.domain] = domain;
-    if (predicted !== observation.actualCredentialType) {
-      const key = `${observation.actualCredentialType}\u0000${predicted}`;
-      confused.set(key, (confused.get(key) ?? 0) + 1);
-      if (FOUNDER_DOMAINS.includes(observation.domain as FounderDomain)) {
-        const predictedDomains = typeDomains.get(predicted);
-        if (predictedDomains?.size === 1 && !predictedDomains.has(observation.domain as FounderDomain)) {
-          crossDomainConfusions += 1;
-        }
-      }
-    }
-    if (predicted === 'OTHER') {
-      abstentionCount += 1;
-      if (observation.actualCredentialType === 'OTHER') correctAbstentions += 1;
-      if (observation.arms.v71.suggestedType === null) malformedSuggestedTypeCount += 1;
+  return typeDomains;
+}
+
+function recordDiagnosticObservation(
+  observation: ValidatedObservation,
+  confusionByDomain: S33Wave3EvaluationReport['diagnostics']['confusionByDomain'],
+  confused: Map<string, number>,
+  typeDomains: ReadonlyMap<string, ReadonlySet<FounderDomain>>,
+  counters: DiagnosticCounters,
+): void {
+  const predicted = observation.arms.v71.predictedCredentialType ?? 'UNPARSED';
+  const domain = confusionByDomain[observation.domain] ?? { total: 0, matrix: {} };
+  domain.total += 1;
+  const row = domain.matrix[observation.actualCredentialType] ?? {};
+  row[predicted] = (row[predicted] ?? 0) + 1;
+  domain.matrix[observation.actualCredentialType] = row;
+  confusionByDomain[observation.domain] = domain;
+
+  if (predicted !== observation.actualCredentialType) {
+    const key = `${observation.actualCredentialType}\u0000${predicted}`;
+    confused.set(key, (confused.get(key) ?? 0) + 1);
+    const predictedDomains = typeDomains.get(predicted);
+    if (FOUNDER_DOMAINS.includes(observation.domain as FounderDomain)
+      && predictedDomains?.size === 1
+      && !predictedDomains.has(observation.domain as FounderDomain)) {
+      counters.crossDomainConfusions += 1;
     }
   }
-  const top20ConfusedPairs = [...confused.entries()]
+
+  if (predicted !== 'OTHER') return;
+  counters.abstentionCount += 1;
+  if (observation.actualCredentialType === 'OTHER') counters.correctAbstentions += 1;
+  if (observation.arms.v71.suggestedType === null) counters.malformedSuggestedTypeCount += 1;
+}
+
+function topConfusedPairs(
+  confused: ReadonlyMap<string, number>,
+): S33Wave3EvaluationReport['diagnostics']['top20ConfusedPairs'] {
+  return [...confused.entries()]
     .map(([key, count]) => {
       const [actual, predicted] = key.split('\u0000');
       return { actual, predicted, count };
@@ -1937,12 +2103,17 @@ function diagnostics(observations: readonly ValidatedObservation[]): S33Wave3Eva
       || compareUtf16CodeUnits(left.actual, right.actual)
       || compareUtf16CodeUnits(left.predicted, right.predicted))
     .slice(0, 20);
+}
+
+function buildCoverageAccuracyCurve(
+  observations: readonly ValidatedObservation[],
+): S33Wave3EvaluationReport['diagnostics']['coverageAccuracyCurve'] {
   const ordered = [...observations].sort((left, right) => (
     right.arms.v71.calibratedConfidence - left.arms.v71.calibratedConfidence
       || compareUtf16CodeUnits(left.entryId, right.entryId)
   ));
   let correct = 0;
-  const coverageAccuracyCurve = ordered.map((observation, index) => {
+  return ordered.map((observation, index) => {
     if (observation.arms.v71.predictedCredentialType === observation.actualCredentialType) correct += 1;
     return {
       coverage: (index + 1) / ordered.length,
@@ -1950,18 +2121,35 @@ function diagnostics(observations: readonly ValidatedObservation[]): S33Wave3Eva
       threshold: observation.arms.v71.calibratedConfidence,
     };
   });
+}
+
+function diagnostics(observations: readonly ValidatedObservation[]): S33Wave3EvaluationReport['diagnostics'] {
+  const confusionByDomain: S33Wave3EvaluationReport['diagnostics']['confusionByDomain'] = {};
+  const confused = new Map<string, number>();
+  const typeDomains = buildFounderTypeDomains();
+  const counters: DiagnosticCounters = {
+    crossDomainConfusions: 0,
+    abstentionCount: 0,
+    correctAbstentions: 0,
+    malformedSuggestedTypeCount: 0,
+  };
+  for (const observation of observations) {
+    recordDiagnosticObservation(observation, confusionByDomain, confused, typeDomains, counters);
+  }
   return {
     confusionByDomain,
-    top20ConfusedPairs,
-    crossDomainConfusions,
+    top20ConfusedPairs: topConfusedPairs(confused),
+    crossDomainConfusions: counters.crossDomainConfusions,
     abstention: {
-      count: abstentionCount,
-      rate: abstentionCount / observations.length,
-      precisionAtAbstention: abstentionCount === 0 ? 0 : correctAbstentions / abstentionCount,
-      malformedSuggestedTypeCount,
-      contractPassed: malformedSuggestedTypeCount === 0,
+      count: counters.abstentionCount,
+      rate: counters.abstentionCount / observations.length,
+      precisionAtAbstention: counters.abstentionCount === 0
+        ? 0
+        : counters.correctAbstentions / counters.abstentionCount,
+      malformedSuggestedTypeCount: counters.malformedSuggestedTypeCount,
+      contractPassed: counters.malformedSuggestedTypeCount === 0,
     },
-    coverageAccuracyCurve,
+    coverageAccuracyCurve: buildCoverageAccuracyCurve(observations),
   };
 }
 
@@ -1973,7 +2161,27 @@ function gate(
   return { id, passed, metrics };
 }
 
-export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S33Wave3EvaluationReport {
+interface S33Wave3EvaluationContext {
+  candidate: S33Wave3EvaluationInput;
+  usesTestAuthority: boolean;
+  acceptanceTrustRootFingerprintSha256: string;
+  gateBinding: { rawSha256: string; canonicalSha256: string };
+  founderMappingCanonicalSha256: string;
+  corpus: ValidatedCorpusRegistry;
+  trustedGold: { sources: S33Wave3TrustedGoldSource[]; entries: TrustedGoldEntry[] };
+  authenticatedBatchAcceptances: readonly S33Wave2AuthenticatedBatchAcceptance[];
+  corpusFreeze: S33Wave3EvaluationReport['corpusFreeze'];
+  acceptedIds: string[];
+  manifests: Record<ArmName, S33Wave3ArmManifest>;
+  deterministicSeedSha256: string;
+  observations: ValidatedObservation[];
+  integrity: ReturnType<typeof validateIntegrityEvidence>;
+  surgery: ValidatedSurgeryEvidence;
+  jurisdictionManifests: { AU: readonly string[]; KE: readonly string[] };
+  inputPacketDigests: S33Wave3InputPacketDigests;
+}
+
+function validateS33Wave3EvaluationContext(input: S33Wave3EvaluationInput): S33Wave3EvaluationContext {
   const candidate = record(input, 'Wave-3 evaluation input') as unknown as S33Wave3EvaluationInput;
   const usesTestAuthority = candidate.testOnlyAcceptanceTrustRoot !== undefined;
   const acceptanceTrustRoot = usesTestAuthority
@@ -2035,7 +2243,71 @@ export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S3
     trustedGoldSources: candidate.trustedGoldSources,
     authenticatedBatchAcceptances: candidate.authenticatedBatchAcceptances,
   });
+  return {
+    candidate,
+    usesTestAuthority,
+    acceptanceTrustRootFingerprintSha256,
+    gateBinding,
+    founderMappingCanonicalSha256,
+    corpus,
+    trustedGold,
+    authenticatedBatchAcceptances,
+    corpusFreeze,
+    acceptedIds,
+    manifests,
+    deterministicSeedSha256,
+    observations,
+    integrity,
+    surgery,
+    jurisdictionManifests,
+    inputPacketDigests,
+  };
+}
 
+interface PerTypeArmScores {
+  v71: S33Wave3FieldScore;
+  v6: S33Wave3FieldScore;
+  publicBaseline: S33Wave3FieldScore;
+}
+
+interface PerTypeEvaluation {
+  scoreByArm: Record<ArmName, Map<string, S33Wave3FieldScore>>;
+  macroF1: number;
+  weightedF1: number;
+  coverageAdjustedF1: number;
+  perTypeF1: Record<string, number>;
+  perTypeCoverageAdjustedF1: Record<string, number>;
+  perTypeDeltaVsV6: Record<string, number>;
+  perTypeDeltaVsPublic: Record<string, number>;
+  perTypeCoverageAdjustedDeltaVsPublic: Record<string, number>;
+  minimumPerTypeDeltaVsV6: number;
+  minimumPerTypeDeltaVsPublic: number;
+  minimumCoverageAdjustedDeltaVsPublic: number;
+  publicBaselineGuardPassed: boolean;
+}
+
+const ZERO_FIELD_SCORE: S33Wave3FieldScore = Object.freeze({
+  standardF1: 0,
+  coverageAdjustedF1: 0,
+  truePositive: 0,
+  falsePositive: 0,
+  falseNegative: 0,
+  missingBothCount: 0,
+  presentMatchCount: 0,
+});
+
+function perTypeArmScores(rows: readonly ValidatedObservation[]): PerTypeArmScores {
+  if (rows.length === 0) {
+    return { v71: ZERO_FIELD_SCORE, v6: ZERO_FIELD_SCORE, publicBaseline: ZERO_FIELD_SCORE };
+  }
+  return {
+    v71: aggregateScores(rows.map((row) => row.arms.v71.fieldComparisons)),
+    v6: aggregateScores(rows.map((row) => row.arms.v6.fieldComparisons)),
+    publicBaseline: aggregateScores(rows.map((row) => row.arms.public.fieldComparisons)),
+  };
+}
+
+function evaluatePerTypeScores(observations: readonly ValidatedObservation[]): PerTypeEvaluation {
   const scoreByArm = Object.fromEntries((['public', 'v6', 'v71'] as const).map((armName) => [
     armName,
     new Map(observations.map((observation) => [
@@ -2043,7 +2315,6 @@ export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S3
       scoreS33FieldComparisons(observation.arms[armName].fieldComparisons),
     ])),
   ])) as Record<ArmName, Map<string, S33Wave3FieldScore>>;
-
   const perTypeF1: Record<string, number> = {};
   const perTypeCoverageAdjustedF1: Record<string, number> = {};
   const perTypeV6F1: Record<string, number> = {};
@@ -2052,23 +2323,13 @@ export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S3
   const support: Record<string, number> = {};
   for (const credentialType of S33_WAVE3_FROZEN_CREDENTIAL_TYPES) {
     const rows = observations.filter((observation) => observation.actualCredentialType === credentialType);
+    const scores = perTypeArmScores(rows);
     support[credentialType] = rows.length;
-    if (rows.length === 0) {
-      perTypeF1[credentialType] = 0;
-      perTypeCoverageAdjustedF1[credentialType] = 0;
-      perTypeV6F1[credentialType] = 0;
-      perTypePublicF1[credentialType] = 0;
-      perTypePublicCoverageF1[credentialType] = 0;
-      continue;
-    }
-    const v71 = aggregateScores(rows.map((row) => row.arms.v71.fieldComparisons));
-    const v6 = aggregateScores(rows.map((row) => row.arms.v6.fieldComparisons));
-    const publicBaseline = aggregateScores(rows.map((row) => row.arms.public.fieldComparisons));
-    perTypeF1[credentialType] = v71.standardF1;
-    perTypeCoverageAdjustedF1[credentialType] = v71.coverageAdjustedF1;
-    perTypeV6F1[credentialType] = v6.standardF1;
-    perTypePublicF1[credentialType] = publicBaseline.standardF1;
-    perTypePublicCoverageF1[credentialType] = publicBaseline.coverageAdjustedF1;
+    perTypeF1[credentialType] = scores.v71.standardF1;
+    perTypeCoverageAdjustedF1[credentialType] = scores.v71.coverageAdjustedF1;
+    perTypeV6F1[credentialType] = scores.v6.standardF1;
+    perTypePublicF1[credentialType] = scores.publicBaseline.standardF1;
+    perTypePublicCoverageF1[credentialType] = scores.publicBaseline.coverageAdjustedF1;
   }
   const supportedTypes = S33_WAVE3_FROZEN_CREDENTIAL_TYPES.filter((type) => support[type] > 0);
   const macroF1 = mean(supportedTypes.map((type) => perTypeF1[type]));
@@ -2101,19 +2362,43 @@ export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S3
   );
   const publicBaselineGuardPassed = minimumPerTypeDeltaVsPublic >= REGRESSION_FLOOR
     && minimumCoverageAdjustedDeltaVsPublic >= REGRESSION_FLOOR;
+  return {
+    scoreByArm,
+    macroF1,
+    weightedF1,
+    coverageAdjustedF1,
+    perTypeF1,
+    perTypeCoverageAdjustedF1,
+    perTypeDeltaVsV6,
+    perTypeDeltaVsPublic,
+    perTypeCoverageAdjustedDeltaVsPublic,
+    minimumPerTypeDeltaVsV6,
+    minimumPerTypeDeltaVsPublic,
+    minimumCoverageAdjustedDeltaVsPublic,
+    publicBaselineGuardPassed,
+  };
+}
 
-  const bootstrapByDomain = {} as Record<FounderDomain, S33Wave3BootstrapInterval>;
-  for (const domain of FOUNDER_DOMAINS) {
+interface BootstrapEvaluation {
+  byDomain: Record<FounderDomain, S33Wave3BootstrapInterval>;
+  positiveControl: S33Wave3BootstrapInterval;
+  negativeControl: S33Wave3BootstrapInterval;
+  controlPassed: boolean;
+}
+
+function evaluateBootstraps(
+  observations: readonly ValidatedObservation[],
+  scoreByArm: PerTypeEvaluation['scoreByArm'],
+  deterministicSeedSha256: string,
+): BootstrapEvaluation {
+  const byDomain = Object.fromEntries(FOUNDER_DOMAINS.map((domain) => {
     const rows = observations.filter((observation) => observation.domain === domain);
     if (rows.length < 10) throw new Error(`${domain} paired bootstrap has insufficient samples`);
     const deltas = rows.map((row) => (
       scoreByArm.v71.get(row.entryId)!.standardF1 - scoreByArm.v6.get(row.entryId)!.standardF1
     ));
-    bootstrapByDomain[domain] = pairedBootstrap(
-      deltas,
-      sha256(`${deterministicSeedSha256}:${domain}`),
-    );
-  }
+    return [domain, pairedBootstrap(deltas, sha256(`${deterministicSeedSha256}:${domain}`))];
+  })) as Record<FounderDomain, S33Wave3BootstrapInterval>;
   const positiveControl = pairedBootstrap(
     Array.from({ length: 32 }, () => 0.1),
     sha256(`${deterministicSeedSha256}:known-positive-control`),
@@ -2122,17 +2407,206 @@ export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S3
     Array.from({ length: 32 }, () => -0.1),
     sha256(`${deterministicSeedSha256}:known-negative-control`),
   );
-  const bootstrapControlPassed = positiveControl.ci95Lower > 0 && negativeControl.ci95Upper < 0;
+  return {
+    byDomain,
+    positiveControl,
+    negativeControl,
+    controlPassed: positiveControl.ci95Lower > 0 && negativeControl.ci95Upper < 0,
+  };
+}
+
+interface EvaluationEfficiency {
+  meanLatencyDeltaVsV6Ms: number;
+  p50LatencyMs: number;
+  p95LatencyMs: number;
+  meanTokensDeltaVsV6: number;
+}
+
+function upliftGatePassed(interval: S33Wave3BootstrapInterval): boolean {
+  return interval.meanPairedDelta >= 0.05
+    && interval.ci95Lower > 0
+    && interval.replicates >= BOOTSTRAP_REPLICATES;
+}
+
+function surgeryGatePassed(surgery: ValidatedSurgeryEvidence): boolean {
+  return canonicaliseJson(surgery.droppedTrainingIds)
+      === canonicaliseJson([...DROPPED_TRAINING_IDS].sort(compareUtf16CodeUnits))
+    && surgery.goodStandingStatusTrainingType === 'string'
+    && surgery.concreteSubtypeRate === 1
+    && surgery.invalidTaxonomyRowIds.length === 0
+    && surgery.fraudStream === 'split'
+    && surgery.exportLastCheckpointOnly;
+}
+
+function efficiencyGatePassed(efficiency: EvaluationEfficiency): boolean {
+  return efficiency.meanLatencyDeltaVsV6Ms <= 0
+    && efficiency.p50LatencyMs <= 3500
+    && efficiency.p95LatencyMs <= 5500
+    && efficiency.meanTokensDeltaVsV6 <= 0;
+}
+
+function buildS33Wave3Gates(input: Readonly<{
+  integrity: ReturnType<typeof validateIntegrityEvidence>;
+  surgery: ValidatedSurgeryEvidence;
+  jsonParseRate: number;
+  perType: PerTypeEvaluation;
+  bootstrap: BootstrapEvaluation;
+  concreteSubtypeEmissionRate: number;
+  descriptionEmissionRate: number;
+  efficiency: EvaluationEfficiency;
+  calibration: S33Wave3EvaluationReport['calibration'];
+}>): S33Wave3GateResult[] {
+  const minF1AcrossFrozen24TypeMap = Math.min(...Object.values(input.perType.perTypeF1));
+  const minCoverageAdjustedF1AcrossFrozen24TypeMap = Math.min(
+    ...Object.values(input.perType.perTypeCoverageAdjustedF1),
+  );
+  const gates: S33Wave3GateResult[] = [
+    gate('G01_CORPUS_INTEGRITY', Object.values(input.integrity).every((count) => count === 0), input.integrity),
+    gate('G02_SURGERY_CONFIG', surgeryGatePassed(input.surgery), { ...input.surgery }),
+    gate('G03_JSON_PARSE', input.jsonParseRate === 1, { jsonParseRate: input.jsonParseRate }),
+    gate('G04_MACRO_F1', input.perType.macroF1 >= 0.82, { macroF1: input.perType.macroF1 }),
+    gate('G05_WEIGHTED_F1', input.perType.weightedF1 >= 0.85, { weightedF1: input.perType.weightedF1 }),
+    gate('G06_ALL_TYPE_FLOOR', minF1AcrossFrozen24TypeMap >= 0.75
+      && minCoverageAdjustedF1AcrossFrozen24TypeMap >= 0.75, {
+      minF1AcrossFrozen24TypeMap,
+      minCoverageAdjustedF1AcrossFrozen24TypeMap,
+    }),
+    gate('G07_CRITICAL_TYPE_FLOORS', Object.entries(CRITICAL_TYPE_FLOORS).every(
+      ([type, threshold]) => input.perType.perTypeF1[type] >= threshold
+        && input.perType.perTypeCoverageAdjustedF1[type] >= threshold,
+    ), {
+      perTypeF1: Object.fromEntries(Object.keys(CRITICAL_TYPE_FLOORS).map((type) => [
+        type,
+        input.perType.perTypeF1[type],
+      ])),
+      perTypeCoverageAdjustedF1: Object.fromEntries(Object.keys(CRITICAL_TYPE_FLOORS).map((type) => [
+        type,
+        input.perType.perTypeCoverageAdjustedF1[type],
+      ])),
+    }),
+    gate('G08_TYPE_REGRESSION', input.perType.minimumPerTypeDeltaVsV6 >= REGRESSION_FLOOR, {
+      minPerTypeDeltaVsV6: input.perType.minimumPerTypeDeltaVsV6,
+    }),
+    gate('G09_LEGAL_UPLIFT', upliftGatePassed(input.bootstrap.byDomain.legal), {
+      ...input.bootstrap.byDomain.legal,
+    }),
+    gate('G10_FINANCIAL_UPLIFT', upliftGatePassed(input.bootstrap.byDomain.financial), {
+      ...input.bootstrap.byDomain.financial,
+    }),
+    gate('G11_EDUCATION_UPLIFT', upliftGatePassed(input.bootstrap.byDomain.education), {
+      ...input.bootstrap.byDomain.education,
+    }),
+    gate('G12_SUBTYPE_EMISSION', input.concreteSubtypeEmissionRate >= 0.9, {
+      concreteSubtypeEmissionRate: input.concreteSubtypeEmissionRate,
+    }),
+    gate('G13_DESCRIPTION_EMISSION', input.descriptionEmissionRate === 1, {
+      descriptionEmissionRate: input.descriptionEmissionRate,
+    }),
+    gate('G14_EFFICIENCY', efficiencyGatePassed(input.efficiency), { ...input.efficiency }),
+    gate('G15_CALIBRATION_GAP', input.calibration.meanGap <= 0.05, {
+      calibratedMeanGap: input.calibration.meanGap,
+    }),
+    gate('G16_CALIBRATION_ECE', input.calibration.ece <= 0.1, {
+      calibratedECE: input.calibration.ece,
+    }),
+  ];
+  assertSameOrderedStrings(gates.map(({ id }) => id), S33_WAVE3_GATE_IDS, 'Computed Wave-3 gate ids');
+  return gates;
+}
+
+function founderCoverageDisposition(
+  taxonomySupported: boolean,
+  sampleSize: number,
+  candidateF1: number,
+): S33Wave3EvaluationReport['founderCoverage']['results'][number]['disposition'] {
+  if (!taxonomySupported) return 'needs-taxonomy-extension';
+  if (sampleSize >= 12 && candidateF1 >= 0.75) return 'covered-by-prompt+base';
+  return 'needs-tuning-data';
+}
+
+function buildFounderCoverageResults(
+  observations: readonly ValidatedObservation[],
+): S33Wave3EvaluationReport['founderCoverage']['results'] {
+  return S33_WAVE3_FOUNDER_MAPPING_CONTRACT.map((contract) => {
+    const rows = observations.filter(({ founderTypeId }) => founderTypeId === contract.id);
+    const taxonomySupported = contract.mappings.every(({ credentialType, subType }) => (
+      FROZEN_TYPE_SET.has(credentialType)
+        && S33_WAVE3_FROZEN_SUBTYPE_TAXONOMY[credentialType]?.includes(subType) === true
+    ));
+    const candidateF1 = rows.length === 0
+      ? 0
+      : aggregateScores(rows.map((row) => row.arms.v71.fieldComparisons)).standardF1;
+    return {
+      domain: contract.domain,
+      founderTypeId: contract.id,
+      sampleSize: rows.length,
+      candidateF1,
+      disposition: founderCoverageDisposition(taxonomySupported, rows.length, candidateF1),
+    };
+  });
+}
+
+function buildJurisdictionReport(
+  observations: readonly ValidatedObservation[],
+  jurisdictionManifests: { AU: readonly string[]; KE: readonly string[] },
+): S33Wave3EvaluationReport['jurisdictions'] {
+  return Object.fromEntries((['AU', 'KE'] as const).map((jurisdiction) => {
+    const ids = new Set(jurisdictionManifests[jurisdiction]);
+    const rows = observations.filter(({ entryId }) => ids.has(entryId));
+    const candidateF1 = aggregateScores(rows.map((row) => row.arms.v71.fieldComparisons)).standardF1;
+    return [jurisdiction, {
+      sampleSize: rows.length,
+      candidateF1,
+      baselineF1: JURISDICTION_PUBLIC_BASELINE_F1,
+      deltaVsBaseline: candidateF1 - JURISDICTION_PUBLIC_BASELINE_F1,
+      wording: SMALL_N_WORDING,
+      marketingAllowed: false as const,
+    }];
+  })) as S33Wave3EvaluationReport['jurisdictions'];
+}
+
+export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S33Wave3EvaluationReport {
+  const {
+    usesTestAuthority,
+    acceptanceTrustRootFingerprintSha256,
+    gateBinding,
+    founderMappingCanonicalSha256,
+    corpus,
+    authenticatedBatchAcceptances,
+    corpusFreeze,
+    manifests,
+    deterministicSeedSha256,
+    observations,
+    integrity,
+    surgery,
+    jurisdictionManifests,
+    inputPacketDigests,
+  } = validateS33Wave3EvaluationContext(input);
+
+  const perType = evaluatePerTypeScores(observations);
+  const bootstrap = evaluateBootstraps(observations, perType.scoreByArm, deterministicSeedSha256);
+  const {
+    macroF1,
+    weightedF1,
+    coverageAdjustedF1,
+    perTypeF1,
+    perTypeCoverageAdjustedF1,
+    perTypeDeltaVsV6,
+    perTypeDeltaVsPublic,
+    perTypeCoverageAdjustedDeltaVsPublic,
+    minimumPerTypeDeltaVsV6,
+    minimumPerTypeDeltaVsPublic,
+    minimumCoverageAdjustedDeltaVsPublic,
+    publicBaselineGuardPassed,
+  } = perType;
+  const {
+    byDomain: bootstrapByDomain,
+    positiveControl,
+    negativeControl,
+    controlPassed: bootstrapControlPassed,
+  } = bootstrap;
 
   const jsonParseRate = observations.filter(({ arms }) => arms.v71.parsed).length / observations.length;
-  const criticalFloors = {
-    RESUME: 0.75,
-    FINANCIAL: 0.8,
-    LEGAL: 0.8,
-    MEDICAL: 0.8,
-    CHARITY: 0.8,
-    BUSINESS_ENTITY: 0.75,
-  } as const;
   const explicitSubtypeRows = observations.filter(({ actualCredentialType }) => (
     EXPLICIT_SUBTYPE_TYPE_SET.has(actualCredentialType)
   ));
@@ -2157,99 +2631,19 @@ export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S3
   const calibrationReport = calibration(observations);
   const diagnosticReport = diagnostics(observations);
 
-  const gates: S33Wave3GateResult[] = [
-    gate('G01_CORPUS_INTEGRITY', Object.values(integrity).every((count) => count === 0), integrity),
-    gate('G02_SURGERY_CONFIG',
-      canonicaliseJson(surgery.droppedTrainingIds) === canonicaliseJson([...DROPPED_TRAINING_IDS].sort(compareUtf16CodeUnits))
-        && surgery.goodStandingStatusTrainingType === 'string'
-        && surgery.concreteSubtypeRate === 1
-        && surgery.invalidTaxonomyRowIds.length === 0
-        && surgery.fraudStream === 'split'
-        && surgery.exportLastCheckpointOnly,
-      surgery),
-    gate('G03_JSON_PARSE', jsonParseRate === 1, { jsonParseRate }),
-    gate('G04_MACRO_F1', macroF1 >= 0.82, { macroF1 }),
-    gate('G05_WEIGHTED_F1', weightedF1 >= 0.85, { weightedF1 }),
-    gate('G06_ALL_TYPE_FLOOR', Math.min(...Object.values(perTypeF1)) >= 0.75
-      && Math.min(...Object.values(perTypeCoverageAdjustedF1)) >= 0.75, {
-      minF1AcrossFrozen24TypeMap: Math.min(...Object.values(perTypeF1)),
-      minCoverageAdjustedF1AcrossFrozen24TypeMap: Math.min(
-        ...Object.values(perTypeCoverageAdjustedF1),
-      ),
-    }),
-    gate('G07_CRITICAL_TYPE_FLOORS', Object.entries(criticalFloors).every(
-      ([type, threshold]) => perTypeF1[type] >= threshold
-        && perTypeCoverageAdjustedF1[type] >= threshold,
-    ), {
-      perTypeF1: Object.fromEntries(Object.keys(criticalFloors).map((type) => [type, perTypeF1[type]])),
-      perTypeCoverageAdjustedF1: Object.fromEntries(
-        Object.keys(criticalFloors).map((type) => [type, perTypeCoverageAdjustedF1[type]]),
-      ),
-    }),
-    gate('G08_TYPE_REGRESSION', minimumPerTypeDeltaVsV6 >= REGRESSION_FLOOR, {
-      minPerTypeDeltaVsV6: minimumPerTypeDeltaVsV6,
-    }),
-    gate('G09_LEGAL_UPLIFT', bootstrapByDomain.legal.meanPairedDelta >= 0.05
-      && bootstrapByDomain.legal.ci95Lower > 0
-      && bootstrapByDomain.legal.replicates >= BOOTSTRAP_REPLICATES, { ...bootstrapByDomain.legal }),
-    gate('G10_FINANCIAL_UPLIFT', bootstrapByDomain.financial.meanPairedDelta >= 0.05
-      && bootstrapByDomain.financial.ci95Lower > 0
-      && bootstrapByDomain.financial.replicates >= BOOTSTRAP_REPLICATES, { ...bootstrapByDomain.financial }),
-    gate('G11_EDUCATION_UPLIFT', bootstrapByDomain.education.meanPairedDelta >= 0.05
-      && bootstrapByDomain.education.ci95Lower > 0
-      && bootstrapByDomain.education.replicates >= BOOTSTRAP_REPLICATES, { ...bootstrapByDomain.education }),
-    gate('G12_SUBTYPE_EMISSION', concreteSubtypeEmissionRate >= 0.9, { concreteSubtypeEmissionRate }),
-    gate('G13_DESCRIPTION_EMISSION', descriptionEmissionRate === 1, { descriptionEmissionRate }),
-    gate('G14_EFFICIENCY', efficiency.meanLatencyDeltaVsV6Ms <= 0
-      && efficiency.p50LatencyMs <= 3500
-      && efficiency.p95LatencyMs <= 5500
-      && efficiency.meanTokensDeltaVsV6 <= 0, efficiency),
-    gate('G15_CALIBRATION_GAP', calibrationReport.meanGap <= 0.05, {
-      calibratedMeanGap: calibrationReport.meanGap,
-    }),
-    gate('G16_CALIBRATION_ECE', calibrationReport.ece <= 0.1, {
-      calibratedECE: calibrationReport.ece,
-    }),
-  ];
-  assertSameOrderedStrings(gates.map(({ id }) => id), S33_WAVE3_GATE_IDS, 'Computed Wave-3 gate ids');
-
-  const founderResults: S33Wave3EvaluationReport['founderCoverage']['results'] =
-    S33_WAVE3_FOUNDER_MAPPING_CONTRACT.map((contract) => {
-      const rows = observations.filter(({ founderTypeId }) => founderTypeId === contract.id);
-      const taxonomySupported = contract.mappings.every(({ credentialType, subType }) => (
-        FROZEN_TYPE_SET.has(credentialType)
-          && S33_WAVE3_FROZEN_SUBTYPE_TAXONOMY[credentialType]?.includes(subType) === true
-      ));
-      const candidateF1 = rows.length === 0
-        ? 0
-        : aggregateScores(rows.map((row) => row.arms.v71.fieldComparisons)).standardF1;
-      const disposition = !taxonomySupported
-        ? 'needs-taxonomy-extension' as const
-        : rows.length >= 12 && candidateF1 >= 0.75
-          ? 'covered-by-prompt+base' as const
-          : 'needs-tuning-data' as const;
-      return {
-        domain: contract.domain,
-        founderTypeId: contract.id,
-        sampleSize: rows.length,
-        candidateF1,
-        disposition,
-      };
-    });
-
-  const jurisdictionReport = Object.fromEntries((['AU', 'KE'] as const).map((jurisdiction) => {
-    const ids = new Set(jurisdictionManifests[jurisdiction]);
-    const rows = observations.filter(({ entryId }) => ids.has(entryId));
-    const candidateF1 = aggregateScores(rows.map((row) => row.arms.v71.fieldComparisons)).standardF1;
-    return [jurisdiction, {
-      sampleSize: rows.length,
-      candidateF1,
-      baselineF1: JURISDICTION_PUBLIC_BASELINE_F1,
-      deltaVsBaseline: candidateF1 - JURISDICTION_PUBLIC_BASELINE_F1,
-      wording: SMALL_N_WORDING,
-      marketingAllowed: false as const,
-    }];
-  })) as S33Wave3EvaluationReport['jurisdictions'];
+  const gates = buildS33Wave3Gates({
+    integrity,
+    surgery,
+    jsonParseRate,
+    perType,
+    bootstrap,
+    concreteSubtypeEmissionRate,
+    descriptionEmissionRate,
+    efficiency,
+    calibration: calibrationReport,
+  });
+  const founderResults = buildFounderCoverageResults(observations);
+  const jurisdictionReport = buildJurisdictionReport(observations, jurisdictionManifests);
 
   const allRegistryGatesPassed = gates.every(({ passed }) => passed);
   const releaseGuards = {

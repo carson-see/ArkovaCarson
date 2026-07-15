@@ -287,28 +287,46 @@ function arm(
   };
 }
 
-function corpusRegistry(entries: readonly FixtureEntry[], sourceBlobSha: string): S33Wave2CorpusRegistry {
+function extendFixtureCorpusRegistry(
+  baseRegistry: S33Wave2CorpusRegistry,
+  entries: readonly FixtureEntry[],
+  sourceBlobSha: string,
+  batchId: string,
+  manifestPath: string,
+  manifestRawSha256: string,
+): S33Wave2CorpusRegistry {
   const registryEntries: S33Wave2RegistryEntry[] = entries.map((entry) => ({
     id: entry.id,
     domain: entry.domain,
     credentialType: entry.credentialType,
     normalizedInputSha256: normalizedInputDigest(entry),
-    batchId: 'S33-W3-FIXTURE',
+    batchId,
     revision: 1,
     sourcePath: FIXTURE_SOURCE_PATH,
   }));
   const batch: S33Wave2RegistryBatch = {
-    batchId: 'S33-W3-FIXTURE',
+    batchId,
     revision: 1,
-    manifestPath: 'test/manifest.json',
-    manifestRawSha256: sha256('manifest'),
+    manifestPath,
+    manifestRawSha256,
     sourcePath: FIXTURE_SOURCE_PATH,
     sourceBlobSha,
     datasheetPath: 'test/datasheet.json',
     datasheetBlobSha: '4'.repeat(40),
     entryCount: registryEntries.length,
   };
-  return extendS33Wave2CorpusRegistry(WAVE1_BASE_REGISTRY, batch, registryEntries);
+  return extendS33Wave2CorpusRegistry(baseRegistry, batch, registryEntries);
+}
+
+function corpusRegistry(entries: readonly FixtureEntry[], sourceBlobSha: string): S33Wave2CorpusRegistry {
+  return extendFixtureCorpusRegistry(
+    WAVE1_BASE_REGISTRY,
+    entries,
+    sourceBlobSha,
+    'S33-W3-FIXTURE',
+    'test/manifest.json',
+    sha256('manifest'),
+  );
 }
 
 function authenticatedFixtureAcceptance(
@@ -560,6 +578,91 @@ function makeFixture(options: {
   };
 }
 
+function makeCrossBlobSourceFixture(): S33Wave3EvaluationInput {
+  const input = makeFixture();
+  const futureEntries = fixtureEntries().filter(({ founderTypeId }) => founderTypeId !== undefined);
+  const splitAt = Math.floor(futureEntries.length / 2);
+  const batchAEntries = futureEntries.slice(0, splitAt);
+  const batchBEntries = futureEntries.slice(splitAt);
+  const batchAId = 'S33-W3-FIXTURE-A';
+  const batchBId = 'S33-W3-FIXTURE-B';
+  const batchAManifestPath = 'test/fixture-a/manifest.json';
+  const batchBManifestPath = 'test/fixture-b/manifest.json';
+  const batchAManifestRawSha256 = sha256('manifest-a');
+  const batchBManifestRawSha256 = sha256('manifest-b');
+
+  // Deliberately cross the literal rows between two accepted blobs that reuse
+  // the same source path. Path-only binding would admit these swapped truths.
+  const batchASourceText = fixtureSource(batchBEntries);
+  const batchBSourceText = fixtureSource(batchAEntries);
+  const batchASourceBlobSha = gitBlobSha1(batchASourceText);
+  const batchBSourceBlobSha = gitBlobSha1(batchBSourceText);
+  const registryA = extendFixtureCorpusRegistry(
+    WAVE1_BASE_REGISTRY,
+    batchAEntries,
+    batchASourceBlobSha,
+    batchAId,
+    batchAManifestPath,
+    batchAManifestRawSha256,
+  );
+  const registryB = extendFixtureCorpusRegistry(
+    registryA,
+    batchBEntries,
+    batchBSourceBlobSha,
+    batchBId,
+    batchBManifestPath,
+    batchBManifestRawSha256,
+  );
+  const acceptances = [
+    authenticatedFixtureAcceptance(
+      batchAEntries,
+      batchASourceBlobSha,
+      String(registryA.registryDigestSha256),
+      {
+        batchId: batchAId,
+        manifestPath: batchAManifestPath,
+        manifestRawSha256: batchAManifestRawSha256,
+      },
+    ),
+    authenticatedFixtureAcceptance(
+      batchBEntries,
+      batchBSourceBlobSha,
+      String(registryB.registryDigestSha256),
+      {
+        batchId: batchBId,
+        baseRegistryDigestSha256: String(registryA.registryDigestSha256),
+        manifestPath: batchBManifestPath,
+        manifestRawSha256: batchBManifestRawSha256,
+      },
+    ),
+  ];
+  const entryIds = registryB.entries.map(({ id }) => id);
+  input.acceptedCorpusRegistry = registryB;
+  input.trustedGoldSources = [
+    ...WAVE1_TRUSTED_GOLD_SOURCES,
+    {
+      sourcePath: FIXTURE_SOURCE_PATH,
+      sourceBlobSha: batchASourceBlobSha,
+      exportName: FIXTURE_EXPORT_NAME,
+      sourceText: batchASourceText,
+    },
+    {
+      sourcePath: FIXTURE_SOURCE_PATH,
+      sourceBlobSha: batchBSourceBlobSha,
+      exportName: FIXTURE_EXPORT_NAME,
+      sourceText: batchBSourceText,
+    },
+  ];
+  input.authenticatedBatchAcceptances = acceptances;
+  input.armManifests = {
+    public: createS33Wave3ArmManifest('public', String(registryB.registryDigestSha256), entryIds),
+    v6: createS33Wave3ArmManifest('v6', String(registryB.registryDigestSha256), entryIds),
+    v71: createS33Wave3ArmManifest('v71', String(registryB.registryDigestSha256), entryIds),
+  };
+  rebindInputPackets(input);
+  return input;
+}
+
 function cloneFixture(): S33Wave3EvaluationInput {
   return structuredClone(makeFixture());
 }
@@ -794,6 +897,11 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
     expect(() => evaluateS33Wave3OfflineGates(input)).toThrow(/edgeCase binding mismatch/u);
   });
 
+  it('binds each signed batch row to the exact trusted-gold source blob, not only its reused path', () => {
+    const input = makeCrossBlobSourceFixture();
+    expect(() => evaluateS33Wave3OfflineGates(input)).toThrow(/truth\/source binding mismatch/u);
+  });
+
   it('scores exact AU>=10 and KE>=10 manifests separately with small-n/no-marketing wording', () => {
     const report = evaluateS33Wave3OfflineGates(makeFixture());
 
@@ -936,6 +1044,26 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
     const report = evaluateS33Wave3OfflineGates(input);
     expect(report.gates.find(({ id }) => id === 'G02_SURGERY_CONFIG')?.passed).toBe(false);
     expect(report.verdict).toBe('NO-GO');
+  });
+
+  it('treats PUBLICATION/other as the sole surgery fallback and rejects OTHER/other', () => {
+    const forbidden = cloneFixture();
+    forbidden.surgeryEvidence.exportedTrainingRows[0].credentialType = 'OTHER';
+    forbidden.surgeryEvidence.exportedTrainingRows[0].subType = 'other';
+    rebindInputPackets(forbidden);
+    const forbiddenGate = evaluateS33Wave3OfflineGates(forbidden).gates.find(
+      ({ id }) => id === 'G02_SURGERY_CONFIG',
+    );
+    expect(forbiddenGate?.metrics.invalidTaxonomyRowIds).toEqual(['GD-KEEP-0001']);
+
+    const publication = cloneFixture();
+    publication.surgeryEvidence.exportedTrainingRows[0].credentialType = 'PUBLICATION';
+    publication.surgeryEvidence.exportedTrainingRows[0].subType = 'other';
+    rebindInputPackets(publication);
+    const publicationGate = evaluateS33Wave3OfflineGates(publication).gates.find(
+      ({ id }) => id === 'G02_SURGERY_CONFIG',
+    );
+    expect(publicationGate?.metrics.invalidTaxonomyRowIds).toEqual([]);
   });
 
   it('fails the supplemental public-baseline guard when missing-both credit hides lost coverage', () => {
