@@ -21,10 +21,15 @@ const IMAGE_DIGEST = `sha256:${'b'.repeat(64)}`;
 const PROJECT_REF = 'abcdefghijklmnopqrst';
 const FP_DRAINED = '1'.repeat(64);
 const FP_POISON = '2'.repeat(64);
+const FP_DRAINED_SECOND_ORG = '3'.repeat(64);
 const TX_ID = 'c'.repeat(64);
+const TX_ID_SECOND_ORG = 'e'.repeat(64);
 const SIGNED_HASH = 'd'.repeat(64);
+const SIGNED_HASH_SECOND_ORG = 'f'.repeat(64);
 const ANCHOR_DRAINED_ID = '60000000-0000-4000-8000-000000000001';
+const ANCHOR_DRAINED_SECOND_ORG_ID = '60000000-0000-4000-8000-000000000002';
 const JOURNAL_ID = '70000000-0000-4000-8000-000000000001';
+const JOURNAL_SECOND_ORG_ID = '70000000-0000-4000-8000-000000000002';
 const TEST_KEYPAIR = generateKeyPairSync('ed25519');
 const TEST_PUBLIC_KEY_PEM = TEST_KEYPAIR.publicKey.export({ type: 'spki', format: 'pem' }).toString();
 const TEST_KEY_FINGERPRINT = createHash('sha256')
@@ -515,6 +520,89 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     chronologyDb.journalRows[0]!.createdAt = '2026-07-13T12:00:13.000Z';
     impossibleChronology.database = JSON.stringify(chronologyDb);
     expect(() => deriveTrusted(impossibleChronology)).toThrow(/journal chronology|signing before acceptance/i);
+  });
+
+  it('accepts distinct transaction journals sharing one org-scheduler pass batch ID', () => {
+    const value = declarationValue();
+    const window = (value.windows as Array<{
+      expectedInitialPending: number;
+      passes: Array<{ claims: Array<{ fingerprint: string; orgId: string }> }>;
+    }>)[0]!;
+    window.expectedInitialPending = 3;
+    window.passes[0]!.claims.push({ fingerprint: FP_DRAINED_SECOND_ORG, orgId: 'org-healthy-2' });
+
+    const initial = immutable(value);
+    const raw = rawCaptures(initial);
+    const workerLogs = JSON.parse(raw.workerLogs) as { records: Array<Record<string, unknown>> };
+    workerLogs.records.push({
+      recordId: 'log-gate-healthy-2', insertId: 'insert-gate-healthy-2', traceId: 'trace-live-1',
+      workerId: 'worker-live-1', event: 'credit-gate', schedulerExecutionId: 'scheduler-live-1',
+      batchId: 'batch-live-1', trigger: 'org-scheduler', fingerprint: FP_DRAINED_SECOND_ORG,
+      orgId: 'org-healthy-2', decision: 'not-required', reason: null, referenceId: null,
+      requiredAmount: 0, balanceBefore: null, balanceAfter: null,
+      occurredAt: '2026-07-13T12:00:07.500Z',
+    });
+    raw.workerLogs = JSON.stringify(workerLogs);
+
+    const database = JSON.parse(raw.database) as {
+      executions: Array<{ pendingBefore: number }>;
+      passRows: Array<Record<string, unknown>>;
+      transactions: Array<Record<string, unknown>>;
+      journalRows: Array<Record<string, unknown>>;
+      txLeaves: Array<Record<string, unknown>>;
+      proofs: Array<Record<string, unknown>>;
+      orgBalances: Array<Record<string, unknown>>;
+      ledgerDeltas: Array<Record<string, unknown>>;
+    };
+    database.executions[0]!.pendingBefore = 3;
+    database.passRows[1]!.claimOrder = 3;
+    database.passRows.push({
+      fingerprint: FP_DRAINED_SECOND_ORG, orgId: 'org-healthy-2', batchId: 'batch-live-1',
+      schedulerExecutionId: 'scheduler-live-1', claimOrder: 2, status: 'SUBMITTED',
+      chainTxId: TX_ID_SECOND_ORG, merkleRoot: FP_DRAINED_SECOND_ORG, creditDenialReason: null,
+      queueCreditChargedAt: null, queueCreditDeniedAt: null,
+    });
+    database.transactions.push({
+      txId: TX_ID_SECOND_ORG, batchId: 'batch-live-1', merkleRoot: FP_DRAINED_SECOND_ORG,
+      signedBytesSha256: SIGNED_HASH_SECOND_ORG,
+    });
+    database.journalRows.push({
+      journalId: JOURNAL_SECOND_ORG_ID, batchId: 'batch-live-1', txId: TX_ID_SECOND_ORG,
+      fingerprintRoot: FP_DRAINED_SECOND_ORG, anchorIds: [ANCHOR_DRAINED_SECOND_ORG_ID],
+      leafOrder: [{ anchorId: ANCHOR_DRAINED_SECOND_ORG_ID, fingerprint: FP_DRAINED_SECOND_ORG }],
+      signedAt: '2026-07-13T12:00:10.000Z', recoveryStatus: 'PERSISTED', holdReason: null,
+      heldAt: null, resolvedAt: '2026-07-13T12:00:16.000Z',
+      createdAt: '2026-07-13T12:00:10.000Z', updatedAt: '2026-07-13T12:00:16.000Z',
+    });
+    database.txLeaves.push({
+      txId: TX_ID_SECOND_ORG, batchId: 'batch-live-1', anchorId: ANCHOR_DRAINED_SECOND_ORG_ID,
+      fingerprint: FP_DRAINED_SECOND_ORG, orgId: 'org-healthy-2', merkleIndex: 0,
+    });
+    database.proofs.push({
+      txId: TX_ID_SECOND_ORG, batchId: 'batch-live-1', anchorId: ANCHOR_DRAINED_SECOND_ORG_ID,
+      fingerprint: FP_DRAINED_SECOND_ORG, orgId: 'org-healthy-2', merkleIndex: 0,
+      merkleRoot: FP_DRAINED_SECOND_ORG, leafCount: 1, proofPath: [],
+    });
+    database.orgBalances.push({
+      schedulerExecutionId: 'scheduler-live-1', orgId: 'org-healthy-2', before: 10, after: 10,
+    });
+    database.ledgerDeltas.push({
+      schedulerExecutionId: 'scheduler-live-1', orgId: 'org-healthy-2', delta: 0,
+    });
+    raw.database = JSON.stringify(database);
+
+    const signet = JSON.parse(raw.signet) as { records: Array<Record<string, unknown>> };
+    signet.records.push({
+      recordId: 'signet-record-2', rpcRequestId: 'rpc-request-2', rpcMethod: 'getrawtransaction',
+      schedulerExecutionId: 'scheduler-live-1', workerId: 'worker-live-1', txId: TX_ID_SECOND_ORG,
+      batchId: 'batch-live-1', merkleRoot: FP_DRAINED_SECOND_ORG,
+      rawTxSha256: SIGNED_HASH_SECOND_ORG, nodeId: 'signet-rig-b1', network: 'signet',
+      state: 'mempool', observedAt: '2026-07-13T12:00:13.000Z',
+    });
+    raw.signet = JSON.stringify(signet);
+
+    const declared = trust(value, raw);
+    expect(() => deriveAndAssertLiveEvidence(declared, parseRawCaptureSet(raw, declared))).not.toThrow();
   });
 
   it('rejects caller-controlled floor fields in the immutable declaration', () => {

@@ -13,6 +13,7 @@ import type { TxidJournalSnapshot } from './batch-drain-journal-crash';
 const HEAD_SHA = '1'.repeat(40);
 const IMAGE_DIGEST = `sha256:${'2'.repeat(64)}`;
 const TX_ID = '3'.repeat(64);
+const FOREIGN_TX_ID = '9'.repeat(64);
 const ROOT = '4'.repeat(64);
 const PRIOR_BLOCK = '5'.repeat(64);
 const REORG_BLOCK = '6'.repeat(64);
@@ -112,7 +113,7 @@ function duringFault(scenario: FaultScenario): FaultObservation {
   }
   return {
     ...common,
-    journal: journal('ADOPTED'),
+    journal: journal('PERSISTED'),
     anchors: anchors('SECURED', TX_ID),
     networkTxIds: [TX_ID],
     broadcastAttempts: 1,
@@ -152,7 +153,7 @@ function recovered(scenario: FaultScenario): FaultObservation {
       lookups: [{ source: 'getblock-rpc', outcome: 'found', txId: TX_ID, confirmations: 0, observedAt: '2026-07-15T13:00:07.000Z' }],
     };
   } else {
-    value.journal = journal('ADOPTED');
+    value.journal = journal('PERSISTED');
     value.anchors = anchors('SUBMITTED', TX_ID);
   }
   return value;
@@ -226,6 +227,16 @@ describe('orchestrateFaultCase — SCRUM-2693 fault contracts', () => {
     )).rejects.toThrow(/50 sat\/vB|configured.*ceiling/i);
   });
 
+  it('binds fee recovery network evidence to the exact persisted journal transaction', async () => {
+    const foreignNetworkTransaction = recovered('fee-ceiling');
+    foreignNetworkTransaction.networkTxIds = [FOREIGN_TX_ID];
+
+    await expect(orchestrateFaultCase(
+      input('fee-ceiling'),
+      port('fee-ceiling', { cleared: foreignNetworkTransaction }).port,
+    )).rejects.toThrow(/network.*journal|exact.*transaction|txid/i);
+  });
+
   it('accepts the aged-backlog dynamic ceiling only when its exact age-derived value is observed', async () => {
     const active = duringFault('fee-ceiling');
     active.fee = {
@@ -267,6 +278,35 @@ describe('orchestrateFaultCase — SCRUM-2693 fault contracts', () => {
       .rejects.toThrow(/false SECURED|SECURED/i);
   });
 
+  it('binds provider recovery to the same journal row and exact transaction across every lookup', async () => {
+    const differentJournal = recovered('provider-outage');
+    differentJournal.journal!.journalId = '30000000-0000-4000-8000-000000000002';
+    await expect(orchestrateFaultCase(
+      input('provider-outage'),
+      port('provider-outage', { cleared: differentJournal }).port,
+    )).rejects.toThrow(/same journal|journal.*row|journal.*identity/i);
+
+    const foreignActiveLookup = duringFault('provider-outage');
+    foreignActiveLookup.provider!.lookups[1]!.txId = FOREIGN_TX_ID;
+    await expect(orchestrateFaultCase(
+      input('provider-outage'),
+      port('provider-outage', { active: foreignActiveLookup }).port,
+    )).rejects.toThrow(/lookup.*exact.*tx|lookup.*declared.*tx|foreign.*lookup/i);
+
+    const foreignClearedLookup = recovered('provider-outage');
+    foreignClearedLookup.provider!.lookups.push({
+      source: 'mempool-space',
+      outcome: 'unavailable',
+      txId: FOREIGN_TX_ID,
+      confirmations: null,
+      observedAt: '2026-07-15T13:00:07.500Z',
+    });
+    await expect(orchestrateFaultCase(
+      input('provider-outage'),
+      port('provider-outage', { cleared: foreignClearedLookup }).port,
+    )).rejects.toThrow(/lookup.*exact.*tx|lookup.*declared.*tx|foreign.*lookup/i);
+  });
+
   it('reorg requires a pinned block conflict, stale proof, audit event, and SECURED to SUBMITTED retraction', async () => {
     const sameBlock = duringFault('reorg');
     sameBlock.reorg!.observedBlockHash = PRIOR_BLOCK;
@@ -284,6 +324,35 @@ describe('orchestrateFaultCase — SCRUM-2693 fault contracts', () => {
       .rejects.toThrow(/rebroadcast/i);
   });
 
+  it('represents the normal PERSISTED reorg path while preserving immutable ADOPTED recovery evidence', async () => {
+    await expect(orchestrateFaultCase(input('reorg'), port('reorg').port)).resolves.toMatchObject({
+      resolution: 'REORG_REVERTED_TO_SUBMITTED',
+    });
+
+    const adoptedActive = duringFault('reorg');
+    adoptedActive.journal = journal('ADOPTED');
+    const adoptedCleared = recovered('reorg');
+    adoptedCleared.journal = journal('ADOPTED');
+    await expect(orchestrateFaultCase(
+      input('reorg'),
+      port('reorg', { active: adoptedActive, cleared: adoptedCleared }).port,
+    )).resolves.toMatchObject({ resolution: 'REORG_REVERTED_TO_SUBMITTED' });
+
+    const mutatedResolution = recovered('reorg');
+    mutatedResolution.journal!.resolvedAt = '2026-07-15T13:00:04.000Z';
+    await expect(orchestrateFaultCase(
+      input('reorg'),
+      port('reorg', { cleared: mutatedResolution }).port,
+    )).rejects.toThrow(/journal.*mutat|same.*journal|immutable/i);
+
+    const contradictoryTerminalState = recovered('reorg');
+    contradictoryTerminalState.journal = journal('ADOPTED');
+    await expect(orchestrateFaultCase(
+      input('reorg'),
+      port('reorg', { cleared: contradictoryTerminalState }).port,
+    )).rejects.toThrow(/journal.*mutat|terminal.*state|same.*journal/i);
+  });
+
   it('rejects cross-run runtime/identity and impossible fault chronology', async () => {
     const wrongHead = duringFault('provider-outage');
     wrongHead.runtime.headSha = 'f'.repeat(40);
@@ -294,6 +363,18 @@ describe('orchestrateFaultCase — SCRUM-2693 fault contracts', () => {
     backwards.observedAt = '2026-07-15T12:59:59.000Z';
     await expect(orchestrateFaultCase(input('provider-outage'), port('provider-outage', { cleared: backwards }).port))
       .rejects.toThrow(/chronology|fault window/i);
+
+    const futureHold = duringFault('provider-outage');
+    futureHold.journal!.heldAt = '2026-07-15T13:00:07.000Z';
+    await expect(orchestrateFaultCase(input('provider-outage'), port('provider-outage', { active: futureHold }).port))
+      .rejects.toThrow(/journal.*chronology|heldAt/i);
+
+    const futureResolution = recovered('provider-outage');
+    futureResolution.journal!.resolvedAt = '2026-07-15T13:00:09.000Z';
+    await expect(orchestrateFaultCase(
+      input('provider-outage'),
+      port('provider-outage', { cleared: futureResolution }).port,
+    )).rejects.toThrow(/journal.*chronology|resolvedAt|resolution/i);
   });
 
   it('preserves both an action failure and a disarm failure', async () => {

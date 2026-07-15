@@ -1033,7 +1033,6 @@ function assertSuccessfulTransactionJournals(captures: ParsedRawCaptureSet): voi
   const journals = captures.database.journalRows;
   const transactions = captures.database.transactions;
   unique(journals.map((row) => row.journalId), 'DB journal IDs');
-  unique(journals.map((row) => row.batchId), 'DB journal batch IDs');
   unique(journals.map((row) => row.txId), 'DB journal txids');
   if (journals.length !== transactions.length) {
     throw new Error('DB journal rows must cover every accepted transaction exactly once.');

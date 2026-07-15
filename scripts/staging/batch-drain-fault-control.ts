@@ -150,6 +150,10 @@ function exactSet(expected: readonly string[], actual: readonly string[]): boole
     && expected.every((value) => actual.includes(value));
 }
 
+function sameOrderedStrings(expected: readonly string[], actual: readonly string[]): boolean {
+  return expected.length === actual.length && expected.every((value, index) => value === actual[index]);
+}
+
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
@@ -235,8 +239,16 @@ function validateJournal(input: FaultCaseInput, journal: TxidJournalSnapshot, la
   if (unresolved !== (journal.resolvedAt === null)) throw new Error(`${label} journal resolution shape is invalid.`);
   if (journal.recoveryStatus === 'HELD') {
     if (!journal.holdReason || journal.heldAt === null) throw new Error(`${label} HELD journal requires hold evidence.`);
+    const heldAt = time(journal.heldAt, `${label} journal heldAt`);
+    if (heldAt < createdAt || heldAt > observedAt) throw new Error(`${label} journal HELD chronology is invalid.`);
   } else if (journal.holdReason !== null || journal.heldAt !== null) {
     throw new Error(`${label} non-HELD journal cannot carry hold fields.`);
+  }
+  if (journal.resolvedAt !== null) {
+    const resolvedAt = time(journal.resolvedAt, `${label} journal resolvedAt`);
+    if (resolvedAt < createdAt || resolvedAt > observedAt) {
+      throw new Error(`${label} journal resolution chronology is invalid.`);
+    }
   }
 }
 
@@ -305,6 +317,46 @@ function expectedFeeCeiling(fee: FeeFaultObservation, observedAt: string): numbe
   return Math.min(expected, ABSOLUTE_FEE_CAP_SAT_VB);
 }
 
+function validateProviderLookups(
+  input: FaultCaseInput,
+  observation: FaultObservation,
+  phase: FaultObservation['phase'],
+): void {
+  const journal = observation.journal;
+  if (!journal || input.txId === null) throw new Error(`${phase} provider evidence requires the declared exact journal txid.`);
+  const journalCreatedAt = time(journal.createdAt, `${phase} provider journal createdAt`);
+  const observationAt = time(observation.observedAt, `${phase} provider observedAt`);
+  for (const lookup of observation.provider!.lookups) {
+    if (!SHA256_HEX.test(lookup.txId) || lookup.txId !== input.txId) {
+      throw new Error(`${phase} provider lookup must bind the declared exact txid.`);
+    }
+    const lookupAt = time(lookup.observedAt, `${phase} provider lookup observedAt`);
+    if (lookupAt < journalCreatedAt || lookupAt > observationAt) {
+      throw new Error(`${phase} provider lookup chronology is outside the journal observation.`);
+    }
+  }
+}
+
+function isReorgTerminalStatus(status: TxidJournalSnapshot['recoveryStatus']): status is 'ADOPTED' | 'PERSISTED' {
+  return status === 'ADOPTED' || status === 'PERSISTED';
+}
+
+function sameImmutableReorgJournal(
+  active: TxidJournalSnapshot,
+  cleared: TxidJournalSnapshot,
+): boolean {
+  return cleared.journalId === active.journalId
+    && cleared.batchId === active.batchId
+    && cleared.txId === active.txId
+    && cleared.fingerprintRoot === active.fingerprintRoot
+    && sameOrderedStrings(cleared.anchorIds, active.anchorIds)
+    && cleared.createdAt === active.createdAt
+    && cleared.recoveryStatus === active.recoveryStatus
+    && cleared.holdReason === active.holdReason
+    && cleared.heldAt === active.heldAt
+    && cleared.resolvedAt === active.resolvedAt;
+}
+
 function assertFeeCase(input: FaultCaseInput, active: FaultObservation, cleared: FaultObservation): FaultCaseSummary {
   const activeCohort = validateObservation(input, active, 'fault-active');
   const clearedCohort = validateObservation(input, cleared, 'fault-cleared');
@@ -330,10 +382,11 @@ function assertFeeCase(input: FaultCaseInput, active: FaultObservation, cleared:
     !cleared.journal
     || cleared.journal.recoveryStatus !== 'PERSISTED'
     || cleared.networkTxIds.length !== 1
+    || cleared.networkTxIds[0] !== cleared.journal.txId
     || cleared.broadcastAttempts !== 1
     || cleared.refundAnchorIds.length !== 0
     || [...clearedCohort.values()].some((row) => row.status !== 'SUBMITTED' || row.chainTxId !== cleared.journal!.txId)
-  ) throw new Error('Fee case recovery must produce one PERSISTED/SUBMITTED transaction without refund.');
+  ) throw new Error('Fee case recovery must produce one exact journal-bound network transaction with PERSISTED/SUBMITTED evidence and no refund.');
   return {
     verdict: 'pass', evidenceMode: 'offline-replay', runId: input.runId, scenario: input.scenario,
     resolution: 'FEE_DEFERRED_THEN_RECOVERED', exactHeadSha: input.runtime.headSha,
@@ -347,6 +400,7 @@ function assertProviderCase(input: FaultCaseInput, active: FaultObservation, cle
   if (!active.journal || active.journal.recoveryStatus !== 'HELD') {
     throw new Error('Provider outage/disagreement must leave the journal HELD.');
   }
+  validateProviderLookups(input, active, 'fault-active');
   const provider = active.provider!;
   if (!Number.isInteger(provider.retryAttempts) || provider.retryAttempts < 1 || provider.retryAttempts > input.retryLimit) {
     throw new Error('Provider outage exceeded the declared bounded retry limit.');
@@ -363,6 +417,8 @@ function assertProviderCase(input: FaultCaseInput, active: FaultObservation, cle
   if (
     !cleared.journal
     || cleared.journal.recoveryStatus !== 'ADOPTED'
+    || cleared.journal.journalId !== active.journal.journalId
+    || cleared.journal.createdAt !== active.journal.createdAt
     || cleared.provider!.retryAttempts !== provider.retryAttempts
     || !cleared.provider!.lookups.some((lookup) => lookup.outcome === 'found' && lookup.txId === input.txId)
     || cleared.networkTxIds.length !== 1
@@ -370,7 +426,8 @@ function assertProviderCase(input: FaultCaseInput, active: FaultObservation, cle
     || cleared.broadcastAttempts !== active.broadcastAttempts
     || cleared.refundAnchorIds.length !== 0
     || [...clearedCohort.values()].some((row) => row.status !== 'SUBMITTED' || row.chainTxId !== input.txId)
-  ) throw new Error('Provider recovery must exact-tx ADOPT without rebroadcast, refund, or false SECURED.');
+  ) throw new Error('Provider recovery must continue the same journal row and exact-tx ADOPT without rebroadcast, refund, or false SECURED.');
+  validateProviderLookups(input, cleared, 'fault-cleared');
   return {
     verdict: 'pass', evidenceMode: 'offline-replay', runId: input.runId, scenario: input.scenario,
     resolution: 'PROVIDER_HELD_THEN_ADOPTED', exactHeadSha: input.runtime.headSha,
@@ -391,23 +448,22 @@ function assertReorgCase(input: FaultCaseInput, active: FaultObservation, cleare
   ) throw new Error('Reorg evidence requires a pinned block-hash conflict, stale proof, and reorg audit event.');
   if (
     !active.journal
-    || active.journal.recoveryStatus !== 'ADOPTED'
+    || !isReorgTerminalStatus(active.journal.recoveryStatus)
     || active.networkTxIds.length !== 1
     || active.networkTxIds[0] !== input.txId
     || active.broadcastAttempts !== 1
     || active.refundAnchorIds.length !== 0
     || [...activeCohort.values()].some((row) => row.status !== 'SECURED' || row.chainTxId !== input.txId)
-  ) throw new Error('Reorg fault must begin from the exact ADOPTED/SECURED chain fact.');
+  ) throw new Error('Reorg fault must begin from the exact PERSISTED-or-ADOPTED/SECURED chain fact.');
   if (
     !cleared.journal
-    || cleared.journal.recoveryStatus !== 'ADOPTED'
-    || cleared.journal.journalId !== active.journal.journalId
+    || !sameImmutableReorgJournal(active.journal, cleared.journal)
     || cleared.networkTxIds.length !== 1
     || cleared.networkTxIds[0] !== input.txId
     || cleared.broadcastAttempts !== active.broadcastAttempts
     || cleared.refundAnchorIds.length !== 0
     || [...clearedCohort.values()].some((row) => row.status !== 'SUBMITTED' || row.chainTxId !== input.txId)
-  ) throw new Error('Reorg recovery must retract every anchor to SUBMITTED with no false SECURED, rebroadcast, or refund.');
+  ) throw new Error('Reorg recovery must preserve the same immutable terminal journal row and retract every anchor to SUBMITTED with no false SECURED, rebroadcast, or refund.');
   return {
     verdict: 'pass', evidenceMode: 'offline-replay', runId: input.runId, scenario: input.scenario,
     resolution: 'REORG_REVERTED_TO_SUBMITTED', exactHeadSha: input.runtime.headSha,
