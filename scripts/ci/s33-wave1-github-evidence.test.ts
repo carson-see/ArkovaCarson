@@ -147,7 +147,7 @@ function snapshot(): GitHubEvidenceSnapshot {
           nodes: [{
             id: 'PRR_primary',
             databaseId: 6001,
-            url: 'https://github.com/carson-see/ArkovaCarson/pull/1498#pullrequestreview-6001',
+            url: 'https://github.com/carson-see/ArkovaCarson/pull/1544#pullrequestreview-6001',
             state: 'APPROVED',
             submittedAt: '2026-07-14T12:02:00Z',
             body: crossReviewBody(),
@@ -363,7 +363,7 @@ describe('verifyGitHubTrustRoot', () => {
     expect(() => verify(value)).toThrow(/ambiguous latest duplicate/i);
   });
 
-  it('rejects stale local/head/review evidence and requires #1529 merged into the trusted main head', () => {
+  it('rejects stale local/head/review evidence and requires #1545 merged into the trusted main head', () => {
     const staleReview = snapshot();
     staleReview.repository.pullRequest.reviews.nodes[0].commit = { oid: '9'.repeat(40) };
     expect(() => verify(staleReview)).toThrow(/exact producer head/i);
@@ -372,7 +372,7 @@ describe('verifyGitHubTrustRoot', () => {
     openSupport.repository.supportPullRequest.merged = false;
     openSupport.repository.supportPullRequest.state = 'OPEN';
     openSupport.repository.supportPullRequest.mergeCommit = null;
-    expect(() => verify(openSupport)).toThrow(/#1529 must be merged/i);
+    expect(() => verify(openSupport)).toThrow(/#1545 must be merged/i);
 
     expect(() => verifyGitHubTrustRoot(snapshot(), {
       localMainHeadSha: MAIN,
@@ -388,7 +388,7 @@ describe('verifyGitHubTrustRoot', () => {
       supportMergeIsAncestorOfMain: false,
       manifestRawSha256: MANIFEST_SHA,
       manifestEntryIds: ENTRY_IDS,
-    }, mainBranchResponse())).toThrow(/#1529 merge commit.*ancestor/i);
+    }, mainBranchResponse())).toThrow(/#1545 merge commit.*ancestor/i);
   });
 
   it('rejects an author/committer as reviewer and checks fallback WRITE live', () => {
@@ -631,7 +631,7 @@ function premergeData(): Record<string, unknown> {
     repository: {
       defaultBranchRef: { name: 'main', target: { oid: MAIN } },
       supportPullRequest: {
-        number: 1529,
+        number: 1545,
         state: 'OPEN',
         headRefOid: HEAD,
         headRepository: { nameWithOwner: FIXED_REPOSITORY },
@@ -690,7 +690,7 @@ describe('runS33PremergeApiPreflight', () => {
       token: 'test-token-never-used-by-mocks',
       event: {
         repository: { full_name: FIXED_REPOSITORY },
-        pull_request: { number: 1529, head: { sha: HEAD } },
+        pull_request: { number: 1545, head: { sha: HEAD } },
       },
       graphql,
       rest,
@@ -714,7 +714,7 @@ describe('runS33PremergeApiPreflight', () => {
   it('fails closed on stale PR head, missing app identity, or no live writable fallback', async () => {
     const event = {
       repository: { full_name: FIXED_REPOSITORY },
-      pull_request: { number: 1529, head: { sha: HEAD } },
+      pull_request: { number: 1545, head: { sha: HEAD } },
     };
     const rest = async (path: string) => {
       if (path.endsWith('/branches/main')) return mainBranchResponse();
@@ -726,7 +726,7 @@ describe('runS33PremergeApiPreflight', () => {
     const stale = premergeData();
     (stale.repository as any).supportPullRequest.headRefOid = '9'.repeat(40);
     await expect(runS33PremergeApiPreflight({ token: 'x', event, graphql: async () => stale, rest }))
-      .rejects.toThrow(/exact #1529 event head/i);
+      .rejects.toThrow(/exact #1545 event head/i);
 
     const missingAppRest = async (path: string) => {
       if (path.endsWith('/branches/main')) {
@@ -768,7 +768,7 @@ describe('runS33PremergeApiPreflight', () => {
       token: 'denied-token',
       event: {
         repository: { full_name: FIXED_REPOSITORY },
-        pull_request: { number: 1529, head: { sha: HEAD } },
+        pull_request: { number: 1545, head: { sha: HEAD } },
       },
       graphql: async () => premergeData(),
     })).rejects.toThrow(/REST.*branches\/main.*HTTP 403/i);
@@ -1095,7 +1095,7 @@ function createTrustedMainRepository(root: string): {
   const supportMergeCommitSha = commitFixtureFile(
     mainRepositoryRoot,
     'support-merge.txt',
-    'Hermetic #1529 support merge.\n',
+    'Hermetic #1545 support merge.\n',
     'merge support prerequisite',
   );
   const mainHeadSha = commitFixtureFile(
@@ -1602,7 +1602,7 @@ function syntheticAcceptanceRecord(evidence: unknown): Readonly<Record<string, u
     dualDagEvidence: evidence.dualDagEvidence,
     trustedMain: {
       headSha: evidence.trustedMainHeadSha,
-      supportPullRequestNumber: 1529,
+      supportPullRequestNumber: 1545,
       supportMergeCommitSha: evidence.supportMergeCommitSha,
       supportMergeIsAncestorOfMain: true,
       branchProtection: { ...evidence.branchProtection },
@@ -1874,12 +1874,12 @@ describe('authenticated same-process two-repository integration', { timeout: 30_
 describe('s33-wave1-acceptance workflow contract', () => {
   it('keeps pre-merge API enumeration side-effect-free and dispatch acceptance upload-before-POST', () => {
     const workflow = readFileSync('.github/workflows/s33-wave1-acceptance.yml', 'utf8');
-    expect(workflow).toContain("if: github.event_name == 'pull_request' && github.event.pull_request.number == 1529");
+    expect(workflow).toContain("if: github.event_name == 'pull_request' && github.event.pull_request.number == 1545");
     expect(workflow).toContain('s33-wave1-github-evidence.ts preflight');
     expect(workflow).toContain("if: github.event_name == 'workflow_dispatch'");
-    expect(workflow).not.toContain('ref: refs/pull/1498/head');
+    expect(workflow).not.toContain('ref: refs/pull/1544/head');
     expect(workflow).toContain('git init --bare --quiet');
-    expect(workflow).toContain('refs/pull/1498/head:refs/heads/producer');
+    expect(workflow).toContain('refs/pull/1544/head:refs/heads/producer');
     expect(workflow).toContain('codex/s33-wave1-a12c-evidence-20260714');
     expect(workflow).toContain('codex/s33-wave1-f12c-freeze-20260714');
     expect(workflow).toContain('3508e5e9c7e100e9c55c0cba129d8d7b9d123bec');
@@ -1899,7 +1899,7 @@ describe('s33-wave1-acceptance workflow contract', () => {
     const trustedParse = workflow.indexOf('Parse producer bytes with trusted-main Team-3 verifier');
     expect(fetchPrerequisites).toBeGreaterThan(0);
     expect(trustedParse).toBeGreaterThan(fetchPrerequisites);
-    const producerFetch = workflow.indexOf('Fetch complete #1498 and fixed F12C/A12C histories as data');
+    const producerFetch = workflow.indexOf('Fetch complete #1544 and fixed F12C/A12C histories as data');
     const evidenceVerify = workflow.indexOf('Recompute fixed revision-12 dual-DAG proof before evidence consumption');
     expect(evidenceVerify).toBeGreaterThan(producerFetch);
     expect(evidenceVerify).toBeLessThan(fetchPrerequisites);
@@ -1909,12 +1909,12 @@ describe('s33-wave1-acceptance workflow contract', () => {
     expect(upload).toBeGreaterThan(0);
     expect(post).toBeGreaterThan(upload);
     expect(workflow).toContain('gh api --method POST');
-    expect(workflow).not.toMatch(/--method\s+(?:PATCH|PUT)|issues\/1498\/comments\//u);
+    expect(workflow).not.toMatch(/--method\s+(?:PATCH|PUT)|issues\/1544\/comments\//u);
     const preflightJob = workflow.slice(
       workflow.indexOf('premerge-api-preflight:'),
       workflow.indexOf('authenticate-wave1:'),
     );
-    expect(preflightJob).not.toMatch(/upload-artifact|issues\/1498\/comments|cross-review\.json|s33-wave1-reports/u);
+    expect(preflightJob).not.toMatch(/upload-artifact|issues\/1544\/comments|cross-review\.json|s33-wave1-reports/u);
   });
 
   it('requires explicit verify and rejects omitted, unknown, or duplicated commands', () => {
@@ -2049,15 +2049,15 @@ describe('s33-wave1-prerequisites workflow contract', () => {
     expect(workflow).toContain('test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"');
     expect(workflow).toContain('test "${GITHUB_RUN_ATTEMPT}" = "1"');
     expect(workflow).toContain('git init --bare --quiet');
-    expect(workflow).toContain('refs/pull/1498/head:refs/heads/producer');
-    expect(workflow).toContain('+refs/pull/1498/head:refs/heads/final');
+    expect(workflow).toContain('refs/pull/1544/head:refs/heads/producer');
+    expect(workflow).toContain('+refs/pull/1544/head:refs/heads/final');
     expect(workflow).toContain('codex/s33-wave1-a12c-evidence-20260714');
     expect(workflow).toContain('codex/s33-wave1-f12c-freeze-20260714');
     expect(workflow).toContain('3508e5e9c7e100e9c55c0cba129d8d7b9d123bec');
     expect(workflow).toContain('447326ddd2225524895f35cbafda58b15555ed30');
     expect(workflow).not.toContain('--depth=2');
-    expect(workflow).toContain('Revalidate frozen #1498 and F12C/A12C refs plus final bindings before upload');
-    expect(workflow.indexOf('Revalidate frozen #1498')).toBeLessThan(workflow.indexOf('Upload exact prod-model-diff final'));
+    expect(workflow).toContain('Revalidate frozen #1544 and F12C/A12C refs plus final bindings before upload');
+    expect(workflow.indexOf('Revalidate frozen #1544')).toBeLessThan(workflow.indexOf('Upload exact prod-model-diff final'));
     expect(workflow).toContain('google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093');
     expect(workflow).toContain('google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262');
     expect(workflow).toContain('gemini_api_key:arkova1/gemini-api-key');
@@ -2082,6 +2082,6 @@ describe('s33-wave1-prerequisites workflow contract', () => {
     expect(workflow).toContain('--raw-output-dir "${S33_RAW_OUTPUT_DIRECTORY}"');
     expect(workflow.match(/uses: actions\/upload-artifact@/gu)).toHaveLength(2);
     expect(workflow.match(/retention-days: 14/gu)).toHaveLength(2);
-    expect(workflow).not.toMatch(/GEMINI_(?:MODEL|TUNED|V5|V6)|checkout[^\n]*1498|ref:\s*refs\/pull\/1498/u);
+    expect(workflow).not.toMatch(/GEMINI_(?:MODEL|TUNED|V5|V6)|checkout[^\n]*1544|ref:\s*refs\/pull\/1544/u);
   });
 });

@@ -52,7 +52,7 @@ Soft targets (tracked per batch, trended; sustained misses escalate to the train
 
 ## 5. Held-out freeze (before the eval window)
 
-1. At corpus close, Lane 3 records the final held-out set at the exact #1498 single-parent head. Revision 12 uses two independent histories: the Lane-4 producer history (`r10 → r11′ → r12`) and the Lane-3 support history (`support baseline → S12`). The support tree is never treated as the producer's parent and `support..producer` is never accepted as provenance.
+1. At corpus close, Lane 3 records the final held-out set at the exact #1544 single-parent head. Revision 12 uses two independent histories: the Lane-4 producer history (`r10 → r11′ → r12`) and the Lane-3 support history (`support baseline → S12`). The support tree is never treated as the producer's parent and `support..producer` is never accepted as provenance.
 2. The code-owned revision-12 descriptor pins r10, the support baseline, S12, r11′, r12, their unique merge base, nonempty exact declared subsets of the six packet paths on both producer edges, all six packet blobs/digests, the historical r11′ failure set/digest, and all CTO adjudication objects. r11′ must be the exact direct single-parent child of r10: intermediate commits and tamper-then-revert history are forbidden. Each producer edge permits only `A`/`M` regular non-executable `100644` blobs inside the six packet paths; deletes, renames, copies, type changes, symlinks, gitlinks, executable bits, and outside paths fail closed.
 3. The lexical transition universe is exact: the code-owned **LEAKAGE32** set plus the sole separately authorized non-leakage transition `GD-S33-KE-006` under `CTO_R12_TAXONOMY_AND_DEPTH_ADJUDICATION`. Those sets must be disjoint; their 33-entry union must equal the raw `strippedText` changes, source-text-change list, normalized-input-change list, recomputed-fingerprint keys, and parent-to-r12 transition keys. LEAKAGE32 alone owns the leakage hit set/counters; every other r11′ raw `strippedText` byte sequence and normalized fingerprint must remain unchanged.
 4. r11′ is retained as `HISTORICAL_BLOCKED` and its final Lane-3 acceptance is rejected against its exact expected failure set. r12 must independently pass the full 81-row packet/manifest/datasheet/source bijection, digest pins, adjudications, and zero post-validation ground-truth failures.
@@ -64,13 +64,13 @@ Soft targets (tracked per batch, trended; sustained misses escalate to the train
 
 ### 5.1 Revision-12 correction topology (binding)
 
-- `S12` means immutable support/protocol commit `0323711347c32eb8a6adf899bdfe768a8c9181fb`; the later #1529 delivery tip is not `S12` and may not be substituted for it.
+- `S12` means immutable support/protocol commit `0323711347c32eb8a6adf899bdfe768a8c9181fb`; the later #1545 delivery tip is not `S12` and may not be substituted for it.
 - `F12C` is create-only ref `refs/heads/codex/s33-wave1-f12c-freeze-20260714` at commit `447326ddd2225524895f35cbafda58b15555ed30`, tree `52b6a2dd7201783f93325c24c999bc3e6bb8ee25`, with sole parent `S12`. Its edge from `S12` is exactly the six packet paths as added regular non-executable `100644` blobs; its packet blobs equal immutable r12.
 - `A12C` is create-only ref `refs/heads/codex/s33-wave1-a12c-evidence-20260714` at commit `3508e5e9c7e100e9c55c0cba129d8d7b9d123bec`, with sole parent `F12C`. Its only delta is an added regular `100644` blob at `docs/lane3/evidence/s33-wave1-r12-dual-dag-verification.json`. The evidence is deliberately `selfPinned: false`; compiled trusted-main code pins the A12C commit and evidence blob instead of asking the commit to authenticate itself.
 - The A12C evidence blob is `c74b9d6e001355d7701640b2d062473c8bcbed76`; its raw SHA-256 is `02d8026546b14c64af447e8e12544b9e40d6618d9d1020a7a21086b83e425cb7`, canonical SHA-256 is `8a98c148bce14678a94e5ac0b8bac97b76147ca93a8b0058169544d32d439b72`, and recomputed report digest is `049ac9c08f168fc335cd277796c52f5fcc53bfe32097f7510ea0c609b5279a5e`.
 - The four edge universes remain distinct: r11′→r12 is exactly five modified paths; merge-base→r12 is exactly six added packet paths; S12→F12C is exactly six added packet paths; F12C→A12C is exactly the one added evidence path. All six r12 packet blobs are authenticated regardless of the five-path immediate producer edge.
 - Both trusted-main workflows fetch the complete r12 and A12C histories into one data-only bare Git object database and run the same authoritative producer verifier. No producer/evidence checkout, import, install, or execution is permitted. The prerequisite workflow must fail before GCP credentials or model calls; acceptance independently recomputes the same fixed-Git proof before consuming it.
-- Historical F12/A12 refs are evidence of earlier rejected attempts only. They, the #1529 delivery tip, moved refs, shallow histories, replacement objects, or caller-supplied pins must fail closed.
+- Historical F12/A12 refs are evidence of earlier rejected attempts only. They, the #1545 delivery tip, moved refs, shallow histories, replacement objects, or caller-supplied pins must fail closed.
 
 ### 5.2 Executable reachability trace
 
@@ -87,7 +87,7 @@ An exported trust-boundary verifier with no non-test call site is an automatic r
 
 ## 6. Accountability
 
-- Every accepted batch gets a separate machine-readable Lane-3 acceptance artifact. It binds the #1498 PR number, producer head/tree, committed manifest digests, exact S12/F12C/A12C identities, A12C evidence blob/raw/canonical/report digests, zero r12 validation failures, GitHub exact-head approval, successful CI checks, cross-review evidence, offline prod-model-diff evidence, and zero-hit exact leakage evidence. It does not mutate the frozen producer packet.
+- Every accepted batch gets a separate machine-readable Lane-3 acceptance artifact. It binds the #1544 PR number, producer head/tree, committed manifest digests, exact S12/F12C/A12C identities, A12C evidence blob/raw/canonical/report digests, zero r12 validation failures, GitHub exact-head approval, successful CI checks, cross-review evidence, offline prod-model-diff evidence, and zero-hit exact leakage evidence. It does not mutate the frozen producer packet.
 - GitHub authentication and CI are the Wave-1 trust root. No external signing key, signer identity, monotonic registry, salt commitment/reveal, or separate ceremony is required.
 - Embedding evidence is recorded as `diagnostic-only` with `canOverrideExactScan: false`.
 - The rc-manifest AI section cites the machine-readable artifact digest. Without that exact-head artifact, the batch is not accepted and is not in the eval.

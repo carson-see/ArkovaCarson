@@ -444,7 +444,7 @@ describe('check-staging-evidence', () => {
       ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T2');
     });
 
-    it('classifies the real full #1529 candidate as T0 using the actual runtime graph', () => {
+    it('classifies the real full #1545 candidate as T0 using the actual runtime graph', () => {
       const candidate = [
         '.github/s33-wave1-acceptance-authorities.json',
         '.github/workflows/s33-wave1-acceptance.yml',

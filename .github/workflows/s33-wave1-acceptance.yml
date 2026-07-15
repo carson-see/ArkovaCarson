@@ -1,7 +1,7 @@
 name: S3.3 Wave-1 Acceptance
 
 # Binding CTO rulings 102596609 + 102629377: pull_request performs a
-# side-effect-free same-token API preflight for #1529; workflow_dispatch is the
+# side-effect-free same-token API preflight for #1545; workflow_dispatch is the
 # trusted-main post-merge acceptance ceremony. Neither mode accepts
 # caller-controlled trust facts.
 on:
@@ -23,7 +23,7 @@ concurrency:
 jobs:
   premerge-api-preflight:
     name: Pre-merge same-token API preflight
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 1529
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 1545
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -72,7 +72,7 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
 
-      - name: Refuse non-main or pre-#1529 dispatch
+      - name: Refuse non-main or pre-#1545 dispatch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -83,20 +83,20 @@ jobs:
           test "${GITHUB_RUN_ATTEMPT}" = "1"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-          SUPPORT_JSON=$(gh api /repos/carson-see/ArkovaCarson/pulls/1529)
+          SUPPORT_JSON=$(gh api /repos/carson-see/ArkovaCarson/pulls/1545)
           test "$(jq -r '.merged' <<<"${SUPPORT_JSON}")" = "true"
           SUPPORT_MERGE_SHA=$(jq -r '.merge_commit_sha' <<<"${SUPPORT_JSON}")
           test "${SUPPORT_MERGE_SHA}" != "null"
           git merge-base --is-ancestor "${SUPPORT_MERGE_SHA}" HEAD
 
-      - name: Fetch complete #1498 and fixed F12C/A12C histories as data (bare; never checkout)
+      - name: Fetch complete #1544 and fixed F12C/A12C histories as data (bare; never checkout)
         id: producer
         env:
           GH_TOKEN: ${{ github.token }}
           S33_PRODUCER_OBJECT_REPOSITORY: ${{ runner.temp }}/s33-producer.git
         run: |
           set -euo pipefail
-          PR_JSON=$(gh api /repos/carson-see/ArkovaCarson/pulls/1498)
+          PR_JSON=$(gh api /repos/carson-see/ArkovaCarson/pulls/1544)
           test "$(jq -r '.state' <<<"${PR_JSON}")" = "open"
           test "$(jq -r '.base.ref' <<<"${PR_JSON}")" = "main"
           test "$(jq -r '.head.repo.full_name' <<<"${PR_JSON}")" = "carson-see/ArkovaCarson"
@@ -108,7 +108,7 @@ jobs:
             -c http.extraHeader="AUTHORIZATION: basic ${BASIC_AUTH}" \
             fetch --atomic --quiet --no-tags \
             https://github.com/carson-see/ArkovaCarson.git \
-            refs/pull/1498/head:refs/heads/producer \
+            refs/pull/1544/head:refs/heads/producer \
             refs/heads/codex/s33-wave1-f12c-freeze-20260714:refs/heads/codex/s33-wave1-f12c-freeze-20260714 \
             refs/heads/codex/s33-wave1-a12c-evidence-20260714:refs/heads/codex/s33-wave1-a12c-evidence-20260714
           unset BASIC_AUTH
@@ -222,5 +222,5 @@ jobs:
           jq -n --rawfile body "${S33_OUTPUT_DIRECTORY}/github-comment.md" \
             '{body: $body}' > "${RUNNER_TEMP}/s33-wave1-comment-request.json"
           gh api --method POST \
-            /repos/carson-see/ArkovaCarson/issues/1498/comments \
+            /repos/carson-see/ArkovaCarson/issues/1544/comments \
             --input "${RUNNER_TEMP}/s33-wave1-comment-request.json"

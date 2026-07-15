@@ -198,7 +198,7 @@ describe('S3.3 Wave-1 trusted workflow reports', () => {
     );
     const prerequisiteStep = prerequisiteWorkflow.slice(
       prerequisiteWorkflow.indexOf('Normalize prerequisite reports once with trusted-main code'),
-      prerequisiteWorkflow.indexOf('Revalidate frozen #1498'),
+      prerequisiteWorkflow.indexOf('Revalidate frozen #1544'),
     );
     const acceptanceStep = acceptanceWorkflow.slice(
       acceptanceWorkflow.indexOf('Parse producer bytes with trusted-main Team-3 verifier'),

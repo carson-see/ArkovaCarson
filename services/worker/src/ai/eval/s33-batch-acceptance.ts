@@ -285,7 +285,7 @@ export interface AuthenticatedLexicalScanResult {
 export interface TestOnlyS33Wave1AcceptanceArtifactInput {
   repositoryRoot: string;
   repositoryIdentity: 'carson-see/ArkovaCarson';
-  pullRequestNumber: 1498;
+  pullRequestNumber: 1544;
   producerHeadSha: string;
   acceptedAtUtc: string;
   githubVerdict: {
@@ -337,7 +337,7 @@ export interface S33Wave1AcceptanceArtifact {
   acceptanceAuthority: 'Lane 3';
   trustRoot: 'github-authenticated-exact-head-ci';
   repositoryIdentity: 'carson-see/ArkovaCarson';
-  pullRequestNumber: 1498;
+  pullRequestNumber: 1544;
   producerHeadSha: string;
   producerTreeSha: string;
   manifestPath: typeof WAVE1_MANIFEST_PATH;
@@ -372,7 +372,7 @@ export interface S33Wave1AuthenticatedAcceptanceArtifact
   extends Omit<S33Wave1AcceptanceArtifact, 'artifactDigestSha256'> {
   trustedMain: Readonly<{
     headSha: string;
-    supportPullRequestNumber: 1529;
+    supportPullRequestNumber: 1545;
     supportMergeCommitSha: string;
     supportMergeIsAncestorOfMain: true;
     branchProtection: Readonly<{
@@ -3851,8 +3851,8 @@ function readAndValidateS33WorkflowReports(input: Readonly<{
   assertIsoUtc(authentication.submittedAt, 'Wave-1 cross-review submittedAt');
   const authenticationUrl = new URL(assertHttpsUrl(authentication.url, 'Wave-1 cross-review URL'));
   if (authenticationUrl.hostname !== 'github.com'
-    || authenticationUrl.pathname !== '/carson-see/ArkovaCarson/pull/1498') {
-    throw new Error('Wave-1 cross-review URL must belong to carson-see/ArkovaCarson PR #1498');
+    || authenticationUrl.pathname !== '/carson-see/ArkovaCarson/pull/1544') {
+    throw new Error('Wave-1 cross-review URL must belong to carson-see/ArkovaCarson PR #1544');
   }
   const reviewer = recordValue(authentication.reviewer, 'Wave-1 cross-review reviewer');
   assertExactKeys(reviewer, ['login', 'databaseId', 'id'], 'Wave-1 cross-review reviewer');
@@ -4281,16 +4281,16 @@ function buildS33Wave1AcceptanceArtifact(
   if (input.repositoryIdentity !== 'carson-see/ArkovaCarson') {
     throw new Error('Wave-1 acceptance repository identity must be carson-see/ArkovaCarson');
   }
-  if (input.pullRequestNumber !== 1498) {
-    throw new Error('Wave-1 acceptance must bind GitHub pull request #1498');
+  if (input.pullRequestNumber !== 1544) {
+    throw new Error('Wave-1 acceptance must bind GitHub pull request #1544');
   }
   assertGitObject(input.producerHeadSha, 'Wave-1 producer head SHA');
   assertIsoUtc(input.acceptedAtUtc, 'Wave-1 acceptedAtUtc');
   const verdictUrl = assertHttpsUrl(input.githubVerdict.url, 'GitHub exact-head verdict URL');
   const parsedVerdictUrl = new URL(verdictUrl);
   if (parsedVerdictUrl.hostname !== 'github.com'
-    || parsedVerdictUrl.pathname !== '/carson-see/ArkovaCarson/pull/1498') {
-    throw new Error('GitHub exact-head verdict URL must belong to carson-see/ArkovaCarson PR #1498');
+    || parsedVerdictUrl.pathname !== '/carson-see/ArkovaCarson/pull/1544') {
+    throw new Error('GitHub exact-head verdict URL must belong to carson-see/ArkovaCarson PR #1544');
   }
   if (input.githubVerdict.status !== 'APPROVED') {
     throw new Error('GitHub exact-head verdict must be APPROVED');
@@ -4506,13 +4506,13 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
     'dualDagEvidence', 'prodDiffAdjudication', 'prerequisiteInventory',
   ], 'Authenticated Wave-1 evidence bundle');
   if (evidence.repositoryIdentity !== 'carson-see/ArkovaCarson'
-    || evidence.pullRequestNumber !== 1498
+    || evidence.pullRequestNumber !== 1544
     || evidence.manifestPath !== WAVE1_MANIFEST_PATH
     || evidence.supportMergeIsAncestorOfMain !== true) {
     throw new Error('Authenticated Wave-1 bundle has invalid fixed repository/support facts');
   }
   assertGitObject(evidence.trustedMainHeadSha, 'Authenticated trusted-main SHA');
-  assertGitObject(evidence.supportMergeCommitSha, 'Authenticated #1529 support merge SHA');
+  assertGitObject(evidence.supportMergeCommitSha, 'Authenticated #1545 support merge SHA');
   assertGitObject(evidence.producerHeadSha, 'Authenticated producer SHA');
   assertGitObject(evidence.producerTreeSha, 'Authenticated producer tree SHA');
   assertSha256(evidence.manifestRawSha256, 'Authenticated manifest raw SHA-256');
@@ -4556,7 +4556,7 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
       evidence.supportMergeCommitSha, evidence.trustedMainHeadSha,
     ], { stdio: 'ignore', env: GIT_SUBPROCESS_ENV });
   } catch (error) {
-    throw new Error('Authenticated #1529 support merge is not an ancestor of trusted-main HEAD', { cause: error });
+    throw new Error('Authenticated #1545 support merge is not an ancestor of trusted-main HEAD', { cause: error });
   }
   const reports = {
     'cross-review.json': decodeAuthenticatedReport(evidence.reports.crossReview, 'cross-review.json'),
@@ -4665,7 +4665,7 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
       ...baseArtifact,
       trustedMain: {
         headSha: evidence.trustedMainHeadSha,
-        supportPullRequestNumber: 1529 as const,
+        supportPullRequestNumber: 1545 as const,
         supportMergeCommitSha: evidence.supportMergeCommitSha,
         supportMergeIsAncestorOfMain: true as const,
         branchProtection: {

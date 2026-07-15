@@ -1090,7 +1090,7 @@ function githubCiAcceptanceInput(
     githubAuthentication: {
       status: 'APPROVED',
       headSha: repo.freezeCommitSha,
-      url: 'https://github.com/carson-see/ArkovaCarson/pull/1498#pullrequestreview-1',
+      url: 'https://github.com/carson-see/ArkovaCarson/pull/1544#pullrequestreview-1',
       reviewId: 'PRR_kwDO-test',
       reviewDatabaseId: 1,
       submittedAt: '2026-07-14T12:57:00Z',
@@ -1213,13 +1213,13 @@ function githubCiAcceptanceInput(
   return {
     repositoryRoot: repo.root,
     repositoryIdentity: 'carson-see/ArkovaCarson',
-    pullRequestNumber: 1498,
+    pullRequestNumber: 1544,
     producerHeadSha: repo.freezeCommitSha,
     acceptedAtUtc: '2026-07-14T13:00:00.000Z',
     githubVerdict: {
       status: 'APPROVED',
       headSha: repo.freezeCommitSha,
-      url: 'https://github.com/carson-see/ArkovaCarson/pull/1498#issuecomment-1',
+      url: 'https://github.com/carson-see/ArkovaCarson/pull/1544#issuecomment-1',
       checks: [
         {
           name: 'Tests', conclusion: 'SUCCESS', headSha: repo.freezeCommitSha,
@@ -1396,7 +1396,7 @@ describe('S3.3 authenticated, durable sampling ceremony', { timeout: 30_000 }, (
       acceptanceAuthority: 'Lane 3',
       trustRoot: 'github-authenticated-exact-head-ci',
       repositoryIdentity: 'carson-see/ArkovaCarson',
-      pullRequestNumber: 1498,
+      pullRequestNumber: 1544,
       producerHeadSha: repo.freezeCommitSha,
       producerTreeSha: expectedTree,
       manifestPath: WAVE1_MANIFEST_PATH,

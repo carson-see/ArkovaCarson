@@ -2,7 +2,7 @@
  * Sprint 3.3 Wave-1 GitHub trust-root authenticator.
  *
  * Fixed authority boundary:
- * - repository `carson-see/ArkovaCarson`, PR #1498, support PR #1529;
+ * - repository `carson-see/ArkovaCarson`, PR #1544, support PR #1545;
  * - branch protection and exact-head status checks are queried live with the
  *   workflow GITHUB_TOKEN (never supplied by a caller);
  * - the APPROVED review must be from one statically pinned identity and bind a
@@ -42,8 +42,8 @@ function compareUtf16CodeUnits(left: string, right: string): number {
 }
 
 export const FIXED_REPOSITORY = 'carson-see/ArkovaCarson' as const;
-export const FIXED_PULL_REQUEST_NUMBER = 1498 as const;
-export const FIXED_SUPPORT_PULL_REQUEST_NUMBER = 1529 as const;
+export const FIXED_PULL_REQUEST_NUMBER = 1544 as const;
+export const FIXED_SUPPORT_PULL_REQUEST_NUMBER = 1545 as const;
 export const CROSS_REVIEW_MARKER = 'arkova-s33-wave1-cross-review-v1' as const;
 export const PROD_DIFF_ADJUDICATION_MARKER = 'S33-W1-PROD-DIFF-ADJUDICATION-V1' as const;
 export const FIXED_MANIFEST_PATH = 'docs/lane4/s33-wave1-batch-manifest.json' as const;
@@ -909,7 +909,7 @@ function authenticateRequiredCheck(
     throw new Error(`Required check ${required.context} must be completed successfully; got ${String(context.status)}/${String(context.conclusion)}`);
   }
   if (context.isRequired !== true) {
-    throw new Error(`Required check ${required.context} does not report isRequired=true for PR #1498`);
+    throw new Error(`Required check ${required.context} does not report isRequired=true for PR #1544`);
   }
   const actualApp = context.checkSuite?.app ?? null;
   if (actualApp === null || actualApp.databaseId !== required.appId) {
@@ -958,7 +958,7 @@ function selectApproval(
   kind: 'primary' | 'fallback';
 } {
   const pullRequest = repository.pullRequest;
-  if (!pullRequest) throw new Error('GitHub PR #1498 is missing');
+  if (!pullRequest) throw new Error('GitHub PR #1544 is missing');
   if (pullRequest.reviews.pageInfo.hasPreviousPage) {
     throw new Error('GitHub APPROVED review query was truncated; cannot select authority safely');
   }
@@ -1006,23 +1006,23 @@ export function verifyGitHubTrustRoot(
   }
   const support = repository.supportPullRequest;
   if (!support || support.state !== 'MERGED' || support.merged !== true || support.mergeCommit === null) {
-    throw new Error('Support PR #1529 must be merged before Wave-1 acceptance runs');
+    throw new Error('Support PR #1545 must be merged before Wave-1 acceptance runs');
   }
-  assertSha(support.mergeCommit.oid, SHA1_RE, 'Support PR #1529 merge commit SHA');
+  assertSha(support.mergeCommit.oid, SHA1_RE, 'Support PR #1545 merge commit SHA');
   if (!facts.supportMergeIsAncestorOfMain) {
-    throw new Error('Support PR #1529 merge commit must be an ancestor of the trusted main head');
+    throw new Error('Support PR #1545 merge commit must be an ancestor of the trusted main head');
   }
   const pullRequest = repository.pullRequest;
   if (!pullRequest || pullRequest.number !== FIXED_PULL_REQUEST_NUMBER) {
-    throw new Error('Fixed GitHub PR #1498 is missing');
+    throw new Error('Fixed GitHub PR #1544 is missing');
   }
   if (pullRequest.state !== 'OPEN'
     || pullRequest.baseRefName !== 'main'
     || pullRequest.headRepository?.nameWithOwner !== FIXED_REPOSITORY) {
-    throw new Error('PR #1498 must be an open in-repository pull request targeting main');
+    throw new Error('PR #1544 must be an open in-repository pull request targeting main');
   }
   if (pullRequest.headRefOid !== facts.localProducerHeadSha) {
-    throw new Error('Local producer checkout does not equal the exact GitHub head for PR #1498');
+    throw new Error('Local producer checkout does not equal the exact GitHub head for PR #1544');
   }
   if (pullRequest.headCommit.nodes.length !== 1
     || pullRequest.headCommit.nodes[0].commit.oid !== pullRequest.headRefOid) {
@@ -1040,7 +1040,7 @@ export function verifyGitHubTrustRoot(
     facts.localProducerHeadSha,
   ));
   if (pullRequest.allCommits.pageInfo.hasNextPage) {
-    throw new Error('PR #1498 commit identity query was truncated');
+    throw new Error('PR #1544 commit identity query was truncated');
   }
   const selected = selectApproval(repository, facts);
   const reviewer = selected.review.author;
@@ -1287,7 +1287,7 @@ export const S33_GITHUB_EVIDENCE_QUERY = `
 query S33Wave1GitHubEvidence {
   repository(owner: "carson-see", name: "ArkovaCarson") {
     defaultBranchRef { name target { ... on Commit { oid } } }
-    pullRequest(number: 1498) {
+    pullRequest(number: 1544) {
       number state baseRefName headRefOid headRepository { nameWithOwner }
       author { login ... on User { databaseId id } ... on Bot { databaseId id } }
       headCommit: commits(last: 1) {
@@ -1301,11 +1301,11 @@ query S33Wave1GitHubEvidence {
                   __typename
                   ... on CheckRun {
                     id databaseId name status conclusion startedAt completedAt detailsUrl
-                    isRequired(pullRequestNumber: 1498)
+                    isRequired(pullRequestNumber: 1544)
                     checkSuite { app { id databaseId slug } }
                   }
                   ... on StatusContext {
-                    id context state createdAt targetUrl isRequired(pullRequestNumber: 1498)
+                    id context state createdAt targetUrl isRequired(pullRequestNumber: 1544)
                     creator {
                       login
                       ... on User { databaseId id }
@@ -1338,7 +1338,7 @@ query S33Wave1GitHubEvidence {
         }
       }
     }
-    supportPullRequest: pullRequest(number: 1529) {
+    supportPullRequest: pullRequest(number: 1545) {
       state merged mergedAt mergeCommit { oid }
     }
     bestNessie: collaborators(first: 10, query: "BestNessie") {
@@ -1364,7 +1364,7 @@ export const S33_PREMERGE_API_QUERY = `
 query S33Wave1PremergeApiPreflight {
   repository(owner: "carson-see", name: "ArkovaCarson") {
     defaultBranchRef { name target { ... on Commit { oid } } }
-    supportPullRequest: pullRequest(number: 1529) {
+    supportPullRequest: pullRequest(number: 1545) {
       number state headRefOid headRepository { nameWithOwner }
       author { login ... on User { databaseId id } ... on Bot { databaseId id } }
       headCommit: commits(last: 1) {
@@ -1378,11 +1378,11 @@ query S33Wave1PremergeApiPreflight {
                   __typename
                   ... on CheckRun {
                     id databaseId name status conclusion startedAt completedAt detailsUrl
-                    isRequired(pullRequestNumber: 1529)
+                    isRequired(pullRequestNumber: 1545)
                     checkSuite { app { id databaseId slug } }
                   }
                   ... on StatusContext {
-                    id context state createdAt targetUrl isRequired(pullRequestNumber: 1529)
+                    id context state createdAt targetUrl isRequired(pullRequestNumber: 1545)
                     creator {
                       login
                       ... on User { databaseId id }
@@ -2184,7 +2184,7 @@ export async function runS33PremergeApiPreflight(options: {
 }): Promise<Readonly<{ requiredContextCount: number; checkContextCount: number; reviewCount: number; writableFallbacks: string[]; artifactCount: number; listedWorkflowCount: number; prerequisiteWorkflowRegistered: false }>> {
   if (options.event.repository.full_name !== FIXED_REPOSITORY
     || options.event.pull_request.number !== FIXED_SUPPORT_PULL_REQUEST_NUMBER) {
-    throw new Error('Pre-merge same-token API preflight is fixed to ArkovaCarson PR #1529');
+    throw new Error('Pre-merge same-token API preflight is fixed to ArkovaCarson PR #1545');
   }
   assertSha(options.event.pull_request.head.sha, SHA1_RE, 'Pre-merge event PR head SHA');
   const rest = options.rest ?? ((path: string) => liveGitHubRest(options.token, path));
@@ -2201,12 +2201,12 @@ export async function runS33PremergeApiPreflight(options: {
     mainHeadSha,
   );
   const requiredContextCount = branchProtection.requiredStatusChecks.length;
-  const pullRequest = record(repository.supportPullRequest, 'Pre-merge PR #1529');
+  const pullRequest = record(repository.supportPullRequest, 'Pre-merge PR #1545');
   if (pullRequest.number !== FIXED_SUPPORT_PULL_REQUEST_NUMBER
     || pullRequest.state !== 'OPEN'
     || pullRequest.headRefOid !== options.event.pull_request.head.sha
     || record(pullRequest.headRepository, 'Pre-merge PR headRepository').nameWithOwner !== FIXED_REPOSITORY) {
-    throw new Error('Pre-merge PR API enumeration does not bind the exact #1529 event head');
+    throw new Error('Pre-merge PR API enumeration does not bind the exact #1545 event head');
   }
   const headCommitConnection = record(pullRequest.headCommit, 'Pre-merge PR headCommit');
   if (!Array.isArray(headCommitConnection.nodes) || headCommitConnection.nodes.length !== 1) {
@@ -2497,7 +2497,7 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
   const dualDagEvidence = producerValidation.dualDagEvidence;
   const lineage = git(producerRepositoryRoot, ['rev-list', '--parents', '-n', '1', 'HEAD']).split(/\s+/u);
   if (lineage.length !== 2 || lineage[0] !== producerHeadSha) {
-    throw new Error('PR #1498 producer head must be one exact single-parent commit');
+    throw new Error('PR #1544 producer head must be one exact single-parent commit');
   }
   const manifest = deriveManifestFacts(producerRepositoryRoot);
   const graphql = options.graphql ?? ((query: string) => liveGitHubGraphql(options.token, query));
@@ -2905,7 +2905,7 @@ export async function runS33Wave1GitHubEvidenceCli(
   const token = nonEmptyString(environment.GITHUB_TOKEN, 'GITHUB_TOKEN');
   if (cli.command === 'preflight') {
     if (environment.GITHUB_EVENT_NAME !== 'pull_request') {
-      throw new Error('S3.3 same-token preflight may run only on the #1529 pull_request event');
+      throw new Error('S3.3 same-token preflight may run only on the #1545 pull_request event');
     }
     const eventPath = realpathSync(nonEmptyString(environment.GITHUB_EVENT_PATH, 'GITHUB_EVENT_PATH'));
     const event = parseJsonBytes(readFileSync(eventPath), 'GitHub pull_request event') as unknown as PremergePullRequestEvent;

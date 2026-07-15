@@ -30,7 +30,7 @@ _Last updated: 2026-07-14_
   create-only F12C/A12C refs, both producer-edge subsets, all packet blobs, the
   A12C evidence blob/raw/canonical digests, and the recomputed report digest.
   The four edge universes (5M, 6A, 6A, 1A) are never conflated. Historical
-  F12/A12 refs, the later #1529 delivery tip substituted for S12, moved refs,
+  F12/A12 refs, the later #1545 delivery tip substituted for S12, moved refs,
   missing history, or caller-supplied pins fail closed.
 
 ## 2026-07-14 CTO ruling 102498305 — active Wave-1 acceptance contract
@@ -45,7 +45,7 @@ _Last updated: 2026-07-14_
   against the manifest and checks the corpus Markdown producer revision,
   manifest SHA, 81-row bijection, support blob/commit, and physical-parent to
   logical-predecessor provenance sentence. The active machine-readable
-  acceptance artifact reads the exact #1498 producer head, tree, and manifest
+  acceptance artifact reads the exact #1544 producer head, tree, and manifest
   from Git and binds them to GitHub approval, successful CI checks, exact
   normalized 6–13-gram zero-match evidence, offline production-model replay,
   and diagnostic-only embeddings. No caller supplies Git digests.
