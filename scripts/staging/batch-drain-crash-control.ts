@@ -228,7 +228,7 @@ function validateInput(input: CrashCaseInput): void {
   if (input.expectation.armedTrigger === 'org-scheduler' && orgs.size !== 1) {
     throw new Error('A crash case represents one org-scheduler batch and therefore exactly one org.');
   }
-  if (input.expectation.armedTrigger === 'global-flush' && orgs.size < 2) {
+  if (input.expectation.armedTrigger !== 'org-scheduler' && orgs.size < 2) {
     throw new Error('A global crash case requires the mixed-org R3 invariant.');
   }
   if (input.expectation.claims.length > 10_000) throw new Error('A crash case transaction may contain at most 10000 leaves.');

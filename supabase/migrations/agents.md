@@ -113,6 +113,16 @@ Reserved by the Lane-1 S3 chain-primitives PR (`lane1/s3-chain-primitives-tests`
 
 | `0357` | `lane1/s3-chain-primitives-tests` / PR #1455 | SCRUM-2486 | `0357_scrum2486_secured_chain_integrity_trigger.sql` | RESERVED — pre-soak, file-only, NOT applied to prod/rig; does not close the ticket (defers to Sprint-4 with its own 48h T3 soak) |
 
+## Lane 1 migration reservation (2026-07-15) — S3.3 Wave 2 L1-A (SCRUM-2692)
+
+The Wave 2 final-alignment branch `agent/s33-w2-l1-t0-gate-audit` reserves the
+next free prefix above current main `0357`. The open-PR migration inventory was
+empty at reservation time; any later collision must be resolved before merge.
+
+| Prefix | Branch | Story | File | Status |
+|---|---|---|---|---|
+| `0358` | `agent/s33-w2-l1-t0-gate-audit` | SCRUM-2692 | `0358_scrum2692_anchor_txid_journal.sql` | RESERVED — additive durable txid journal + ADOPT/REVERT/HOLD RPC + HELD-cohort recovery exclusion; clean local reset/reapply + generated types passed, T3 isolated-mirror rehearsal still required |
+
 ## Recent migrations (PR #1455)
 
 - **0357_scrum2486_secured_chain_integrity_trigger.sql** (FILE-ONLY / PRE-SOAK / NOT APPLIED): SCRUM-2486 "SECURED ⇒ on-chain receipt present" integrity trigger. Adds `enforce_secured_anchor_chain_present()` (SECURITY DEFINER, `SET search_path = public`) + a `BEFORE INSERT OR UPDATE OF status` trigger on `public.anchors` that refuses any transition INTO `status='SECURED'` unless `chain_tx_id IS NOT NULL AND chain_timestamp IS NOT NULL`. GATED behind the GUC `arkova.secured_enforce_chain_present` (default OFF) with the same two-phase fail-safe rollout as 0340 (SCRUM-2335): Phase 1 (this file) is inert; Phase 2 flips the GUC on after a back-catalogue backfill audit + a clean 48h T3 staging soak, with no further migration. **Authored file-only this window per the 3.25 ART decision (net-new never-soaked T3 work); it is NOT applied to prod or any rig and does NOT close SCRUM-2486.** The remaining ACs — the hash-invariance backfill gate (AC-2), the frozen-fixture `evidence_package_hash` regression test (AC-3, lives in worker test-land, `evidence_package_hash` is derived, not an `anchors` column), and the importer-can't-set-SECURED guard (AC-4) — are Sprint-4 deliverables tracked on the ticket. Tier T3 (touches `supabase/migrations/`). Rollback in the file header.
