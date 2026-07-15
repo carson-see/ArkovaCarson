@@ -299,7 +299,10 @@ function validateEntryInput(
     throw new Error(`${label}.credentialType must be a canonical uppercase type`);
   }
   const subType = nonEmpty(entry.subType, `${label}.subType`);
-  if (subType.trim().toLowerCase() === 'other') throw new Error(`${label}.subType must be concrete`);
+  const frozenFallbackSubtype = subType === 'other' && credentialType === 'PUBLICATION';
+  if (subType.trim().toLowerCase() === 'other' && !frozenFallbackSubtype) {
+    throw new Error(`${label}.subType must be concrete unless the frozen v6 type uses its exact other fallback`);
+  }
   if (entry.batchId !== batchId || entry.revision !== revision) {
     throw new Error(`${label} batch/revision does not match its signed whole batch`);
   }
