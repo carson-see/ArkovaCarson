@@ -33,6 +33,12 @@ vi.mock('../../config.js', () => ({
 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
 
+// Handler contract tests isolate persistence/validation. Quota behavior and
+// route placement are covered by perOrgRateLimit + quota-wiring tests.
+vi.mock('../../middleware/perOrgRateLimit.js', () => ({
+  requireOrgQuota: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
 vi.mock('../../utils/jobQueue.js', () => ({
   submitJob: vi.fn().mockResolvedValue('job-1'),
 }));

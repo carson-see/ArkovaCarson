@@ -1,117 +1,161 @@
 /**
- * x402 Payer Address Rate Limiter (X402-IMPL-004)
+ * Bounded process-local rate limiter for verified x402 payer identities.
  *
- * In-memory rate limiter keyed by payer wallet address.
- * Prevents abuse from a single wallet flooding the API.
- *
- * Limit: 1000 requests per minute per address.
- * Returns 429 (not 402) when exceeded — the payment was valid,
- * the rate is the problem.
+ * The payment gate supplies an opaque HMAC key derived from the verified
+ * on-chain sender. Raw wallet addresses must never enter this store.
  */
+import type { NextFunction, Request, Response } from 'express';
 
-/** Rate limit entry for a single payer address */
 interface RateLimitEntry {
   count: number;
   resetAt: number;
 }
 
-/** Rate limiter configuration */
 export interface PayerRateLimitConfig {
-  /** Max requests per window (default: 1000) */
+  /** Maximum requests per payer/window. */
   maxRequests: number;
-  /** Window duration in ms (default: 60000 = 1 minute) */
+  /** Window duration in milliseconds. */
   windowMs: number;
+  /** Hard bound on concurrently tracked payer identities. */
+  maxEntries: number;
+}
+
+export interface PayerRateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  retryAfterMs: number;
+  resetAt: number;
+  limit: number;
+  /** True when safe tracking was impossible; callers must return 503. */
+  unavailable?: boolean;
 }
 
 const DEFAULT_CONFIG: PayerRateLimitConfig = {
   maxRequests: 1000,
   windowMs: 60_000,
+  maxEntries: 10_000,
 };
 
-/**
- * Create an in-memory rate limiter for payer addresses.
- *
- * Returns a check function that tracks requests and returns
- * whether the payer is within rate limits.
- */
 export function createPayerRateLimiter(config: Partial<PayerRateLimitConfig> = {}) {
-  const { maxRequests, windowMs } = { ...DEFAULT_CONFIG, ...config };
-  const store = new Map<string, RateLimitEntry>();
-
-  // Periodic cleanup of expired entries (every 5 minutes)
-  const cleanupInterval = setInterval(() => {
-    const now = Date.now();
-    for (const [key, entry] of store) {
-      if (entry.resetAt <= now) {
-        store.delete(key);
-      }
-    }
-  }, 5 * 60_000);
-
-  // Allow cleanup interval to not block process exit
-  if (cleanupInterval.unref) {
-    cleanupInterval.unref();
+  const { maxRequests, windowMs, maxEntries } = { ...DEFAULT_CONFIG, ...config };
+  if (
+    !Number.isSafeInteger(maxRequests)
+    || maxRequests < 1
+    || !Number.isSafeInteger(windowMs)
+    || windowMs < 1
+    || !Number.isSafeInteger(maxEntries)
+    || maxEntries < 1
+  ) {
+    throw new Error('Invalid x402 payer limiter configuration');
   }
 
+  const store = new Map<string, RateLimitEntry>();
+
+  function removeExpired(now: number): void {
+    for (const [key, entry] of store) {
+      if (entry.resetAt <= now) store.delete(key);
+    }
+  }
+
+  const cleanupInterval = setInterval(() => removeExpired(Date.now()), 5 * 60_000);
+  cleanupInterval.unref?.();
+
   return {
-    /**
-     * Check if a payer address is within rate limits.
-     *
-     * @param payerAddress - The wallet address to check
-     * @returns Result with allowed status, remaining count, and retry-after
-     */
-    check(payerAddress: string): {
-      allowed: boolean;
-      remaining: number;
-      retryAfterMs: number;
-      limit: number;
-    } {
+    check(payerKey: string): PayerRateLimitResult {
       const now = Date.now();
-      const normalizedAddress = payerAddress.toLowerCase();
+      let entry = store.get(payerKey);
+      if (entry?.resetAt != null && entry.resetAt <= now) {
+        store.delete(payerKey);
+        entry = undefined;
+      }
 
-      let entry = store.get(normalizedAddress);
-
-      // If no entry or window expired, start fresh
-      if (!entry || entry.resetAt <= now) {
+      if (!entry) {
+        removeExpired(now);
+        if (!payerKey || store.size >= maxEntries) {
+          return {
+            allowed: false,
+            remaining: 0,
+            retryAfterMs: windowMs,
+            resetAt: now + windowMs,
+            limit: maxRequests,
+            unavailable: true,
+          };
+        }
         entry = { count: 0, resetAt: now + windowMs };
-        store.set(normalizedAddress, entry);
+        store.set(payerKey, entry);
       }
 
-      entry.count++;
-
-      if (entry.count > maxRequests) {
-        return {
-          allowed: false,
-          remaining: 0,
-          retryAfterMs: entry.resetAt - now,
-          limit: maxRequests,
-        };
-      }
-
+      entry.count += 1;
+      const allowed = entry.count <= maxRequests;
       return {
-        allowed: true,
-        remaining: maxRequests - entry.count,
-        retryAfterMs: 0,
+        allowed,
+        remaining: allowed ? maxRequests - entry.count : 0,
+        retryAfterMs: allowed ? 0 : Math.max(1, entry.resetAt - now),
+        resetAt: entry.resetAt,
         limit: maxRequests,
       };
     },
 
-    /** Reset all rate limit entries (for testing) */
-    reset() {
+    reset(): void {
       store.clear();
     },
 
-    /** Get current store size (for monitoring) */
     size(): number {
       return store.size;
     },
 
-    /** Stop the cleanup interval */
-    destroy() {
+    destroy(): void {
       clearInterval(cleanupInterval);
     },
   };
 }
 
-/** Type of the rate limiter instance */
 export type PayerRateLimiter = ReturnType<typeof createPayerRateLimiter>;
+
+export function createPayerRateLimitMiddleware(limiter: PayerRateLimiter) {
+  return function x402VerifiedPayerRateLimit(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): void {
+    const context = req.x402PayerContext;
+    if (context?.kind === 'bypass') {
+      next();
+      return;
+    }
+    if (context?.kind !== 'verified' || !context.payerKey) {
+      res.status(503).json({
+        error: 'payer_identity_unavailable',
+        message: 'Verified payer identity is unavailable.',
+      });
+      return;
+    }
+
+    const result = limiter.check(context.payerKey);
+    if (result.unavailable) {
+      res.status(503).json({
+        error: 'payer_rate_limit_unavailable',
+        message: 'Payer rate limiting is temporarily unavailable.',
+      });
+      return;
+    }
+
+    res.setHeader('X-X402-RateLimit-Limit', String(result.limit));
+    res.setHeader('X-X402-RateLimit-Remaining', String(result.remaining));
+    res.setHeader('X-X402-RateLimit-Reset', String(Math.ceil(result.resetAt / 1000)));
+
+    if (!result.allowed) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(result.retryAfterMs / 1000))));
+      res.status(429).json({
+        error: 'x402_payer_rate_limit_exceeded',
+        message: 'Verified payer request limit exceeded.',
+      });
+      return;
+    }
+
+    next();
+  };
+}
+
+const payerRateLimiter = createPayerRateLimiter();
+export const x402PayerRateLimit = createPayerRateLimitMiddleware(payerRateLimiter);

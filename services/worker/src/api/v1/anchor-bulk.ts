@@ -25,6 +25,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit } from '../../utils/orgCredits.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
+import { requireOrgQuota } from '../../middleware/perOrgRateLimit.js';
 import { submitJob } from '../../utils/jobQueue.js';
 import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
 import {
@@ -108,7 +109,17 @@ interface BulkAnchorResponse {
   }>;
 }
 
-router.post('/', async (req: Request, res: Response) => {
+const bulkAnchorQuota = requireOrgQuota({
+  kind: 'anchors_created',
+  mode: 'daily',
+  getOrgId: (req) => req.apiKey?.orgId ?? null,
+  getDelta: (req) => {
+    const parsed = BulkAnchorRequestSchema.safeParse(req.body);
+    return parsed.success ? parsed.data.anchors.length : 0;
+  },
+});
+
+router.post('/', bulkAnchorQuota, async (req: Request, res: Response) => {
   if (!req.apiKey) {
     res.status(401).json({ error: 'API key required. Include X-API-Key header.' });
     return;
