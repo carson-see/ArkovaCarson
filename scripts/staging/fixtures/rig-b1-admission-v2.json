@@ -80,7 +80,8 @@
     ],
     "creation_guard": "non-firing hold schedule; create then immediate pause + PAUSED verification",
     "paused_through_clean_mirror": true,
-    "state": "resumed_after_clean_mirror"
+    "activation_mode": "PAUSED",
+    "state": "paused_after_clean_mirror"
   },
   "driver_path": "scripts/staging/batch-drain-harness.ts",
   "driver_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",

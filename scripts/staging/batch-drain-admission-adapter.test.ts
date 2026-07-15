@@ -139,6 +139,32 @@ describe('admission v2 to run-declaration identity adapter', () => {
     });
   });
 
+  it.each([
+    ['paused', 'PAUSED', 'paused_after_clean_mirror'],
+    ['explicit accelerated rig-only', 'FORCE_ACCELERATED_RIG_ONLY', 'accelerated_rig_only_enabled'],
+  ])('accepts the W3-C %s Scheduler activation/state pair', (_label, activationMode, state) => {
+    const raw = admissionWith((value) => {
+      const scheduler = value.scheduler as JsonRecord;
+      scheduler.activation_mode = activationMode;
+      scheduler.state = state;
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).not.toThrow();
+  });
+
+  it.each([
+    ['PAUSED', 'accelerated_rig_only_enabled'],
+    ['FORCE_ACCELERATED_RIG_ONLY', 'paused_after_clean_mirror'],
+  ])('rejects a contradictory Scheduler activation/state pair %s -> %s', (activationMode, state) => {
+    const raw = admissionWith((value) => {
+      const scheduler = value.scheduler as JsonRecord;
+      scheduler.activation_mode = activationMode;
+      scheduler.state = state;
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).toThrow(
+      /activation|state|scheduler|schema|rejected/i,
+    );
+  });
+
   it('requires the exact approved Team2 Supabase organization identity', () => {
     expect(() => projectAdmissionV2ToRunDeclaration(exactTeam2AdmissionWith((value) => {
       delete value.supabase_org_id;
@@ -285,6 +311,9 @@ describe('admission v2 to run-declaration identity adapter', () => {
     ['scheduler.paused_through_clean_mirror', (value: JsonRecord) => {
       delete (value.scheduler as JsonRecord).paused_through_clean_mirror;
     }],
+    ['scheduler.activation_mode', (value: JsonRecord) => {
+      delete (value.scheduler as JsonRecord).activation_mode;
+    }],
     ['clean_mirror.attestation_id', (value: JsonRecord) => {
       delete (value.clean_mirror as JsonRecord).attestation_id;
     }],
@@ -427,6 +456,10 @@ describe('admission v2 to run-declaration identity adapter', () => {
   it('fixture carries Team2 complete exact RIG-B1 scheduler and critical config contracts', () => {
     const admission = JSON.parse(ADMISSION_RAW) as JsonRecord;
     const service = admission.cloud_run_service as string;
+    expect(admission.scheduler).toMatchObject({
+      activation_mode: 'PAUSED',
+      state: 'paused_after_clean_mirror',
+    });
     expect((admission.scheduler as JsonRecord).jobs).toEqual(
       TEAM2_RIG_B1_SCHEDULER_SPECS.map(([suffix, path]) => ({ name: `${service}-${suffix}`, path })),
     );

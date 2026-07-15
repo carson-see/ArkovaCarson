@@ -34,7 +34,11 @@ const declaration = {
       cloudRunServiceNames: ['arkova-worker-rig-b1-staging'],
       schedulerJobNames: [
         'arkova-worker-rig-b1-staging-batch-anchors',
+        'arkova-worker-rig-b1-staging-check-confirmations',
+        'arkova-worker-rig-b1-staging-populate-confirmation-proofs',
+        'arkova-worker-rig-b1-staging-org-queue-scheduler',
         'arkova-worker-rig-b1-staging-batch-anchors-forced-flush',
+        'arkova-worker-rig-b1-staging-recover-broadcasts',
       ],
       perRigSecretNames: ['cron-rig-b1', 'supabase-service-role-key-rig-b1-staging'],
     },
@@ -170,6 +174,26 @@ describe('S3.3 teardown inventory dry-run verifier', () => {
     expect(result.verified).toBe(false);
     expect(result.zeroRecurringRigCost).toBe(false);
     expect(result.failures.join('\n')).toMatch(/scheduler.*straggler|target.*scheduler/i);
+  });
+
+  it('rejects an incomplete RIG-B1 Scheduler target declaration even when the omitted job is unchanged', () => {
+    const rigB1 = declaration.rigs.find((rig) => rig.rigId === 'RIG-B1')!;
+    const omittedName = rigB1.schedulerJobNames[rigB1.schedulerJobNames.length - 1];
+    const omittedJob = before.resources.schedulerJobs.find(({ name }) => name === omittedName)!;
+    const incompleteDeclaration = {
+      ...declaration,
+      rigs: declaration.rigs.map((rig) => rig.rigId === 'RIG-B1'
+        ? { ...rig, schedulerJobNames: rig.schedulerJobNames.slice(0, -1) }
+        : rig),
+    };
+
+    expect(() => verifyS33TeardownDryRun(incompleteDeclaration, before, {
+      ...after,
+      resources: {
+        ...after.resources,
+        schedulerJobs: [...after.resources.schedulerJobs, omittedJob],
+      },
+    })).toThrow(/RIG-B1|six|Scheduler|target|exact/i);
   });
 
   it('fails when a protected shared secret disappears or unrelated inventory drifts', () => {

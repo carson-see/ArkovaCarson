@@ -15,6 +15,14 @@ const gitSha = z.string().regex(/^[0-9a-f]{40}$/);
 const nonEmpty = z.string().min(1);
 const safeId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/);
 const capturedAt = z.string().datetime({ offset: true });
+const RIG_B1_SCHEDULER_SUFFIXES = [
+  'batch-anchors',
+  'check-confirmations',
+  'populate-confirmation-proofs',
+  'org-queue-scheduler',
+  'batch-anchors-forced-flush',
+  'recover-broadcasts',
+] as const;
 
 const scopeSchema = z.object({
   gcpProjectId: z.string().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/),
@@ -170,6 +178,18 @@ function validateDeclaration(declaration: Declaration): void {
   const rigIds = sorted(declaration.rigs.map(({ rigId }) => rigId));
   if (stable(rigIds) !== stable(['RIG-B1', 'RIG-G1', 'RIG-R'])) {
     throw new Error('Teardown declaration requires exactly RIG-G1, RIG-B1, and RIG-R.');
+  }
+
+  const rigB1 = declaration.rigs.find(({ rigId }) => rigId === 'RIG-B1');
+  if (!rigB1 || rigB1.cloudRunServiceNames.length !== 1) {
+    throw new Error('RIG-B1 teardown requires exactly one Cloud Run service identity.');
+  }
+  const [rigB1Service] = rigB1.cloudRunServiceNames;
+  const expectedRigB1SchedulerJobs = sorted(RIG_B1_SCHEDULER_SUFFIXES.map(
+    (suffix) => `${rigB1Service}-${suffix}`,
+  ));
+  if (stable(sorted(rigB1.schedulerJobNames)) !== stable(expectedRigB1SchedulerJobs)) {
+    throw new Error('RIG-B1 teardown requires the exact frozen six-job Scheduler target set.');
   }
 
   assertUnique('Teardown Supabase project refs', declaration.rigs.map((rig) => rig.supabaseProjectRef));

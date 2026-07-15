@@ -79,13 +79,25 @@ const schedulerJobSchema = z.object({
   path: z.string().regex(/^\/jobs\/[a-z0-9-]+(?:\?[A-Za-z0-9_=&%-]+)?$/),
 }).strict();
 
-const schedulerSchema = z.object({
+const schedulerSharedShape = {
   applicable: z.literal(true),
   jobs: z.array(schedulerJobSchema).min(3),
   creation_guard: z.literal(TEAM2_RIG_B1_CREATION_GUARD),
   paused_through_clean_mirror: z.literal(true),
-  state: z.literal('resumed_after_clean_mirror'),
-}).strict();
+} as const;
+
+const schedulerSchema = z.discriminatedUnion('activation_mode', [
+  z.object({
+    ...schedulerSharedShape,
+    activation_mode: z.literal('PAUSED'),
+    state: z.literal('paused_after_clean_mirror'),
+  }).strict(),
+  z.object({
+    ...schedulerSharedShape,
+    activation_mode: z.literal('FORCE_ACCELERATED_RIG_ONLY'),
+    state: z.literal('accelerated_rig_only_enabled'),
+  }).strict(),
+]);
 
 const cleanMirrorSchema = z.object({
   result: z.literal('environment_type=clean_mirror'),
