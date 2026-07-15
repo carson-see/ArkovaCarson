@@ -378,12 +378,25 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
   });
 
   it('rejects producer-fabricated Lane-3 labels instead of granting full coverage', () => {
-    const fabricated = {
-      id: 'FABRICATED-001',
-      registryTypeId: 'legal-01-contract',
-      acceptance: { lane: 'lane3', artifactSha256: '0'.repeat(64) },
-    };
-    expect(() => auditWithTestRoot([fabricated])).toThrow(/authenticated Lane-3 acceptance/iu);
+    const registry = parseS33Wave2Top15Registry(readRegistry());
+    const typeById = new Map(registry.domains.flatMap((domain) => (
+      domain.types.map((type) => [type.id, type] as const)
+    )));
+    const fabricated = registry.productionOrder.flatMap((registryTypeId) => {
+      const mapping = typeById.get(registryTypeId)!.mappings[0]!;
+      return Array.from({ length: 12 }, (_, index) => ({
+        id: `FABRICATED-${registryTypeId}-${String(index + 1).padStart(2, '0')}`,
+        registryTypeId,
+        batchId: 'FABRICATED-BATCH',
+        credentialType: mapping.credentialType,
+        subType: mapping.subType,
+        edgeCase: index < 4,
+        acceptance: { lane: 'lane3', artifactSha256: '0'.repeat(64) },
+      }));
+    });
+
+    expect(fabricated).toHaveLength(540);
+    expect(() => auditWithTestRoot(fabricated)).toThrow(/authenticated Lane-3 acceptance/iu);
   });
 
   it('fails closed for a valid envelope until the production CTO trust root is committed', () => {
