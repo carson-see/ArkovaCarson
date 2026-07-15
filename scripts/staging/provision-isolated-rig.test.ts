@@ -404,6 +404,17 @@ const STUB_IMAGE_DIGEST =
   'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 const STUB_IMAGE_REF =
   `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${STUB_IMAGE_DIGEST}`;
+const RIG_B1_ISOLATED_INPUTS = {
+  STAGING_GETBLOCK_RPC_URL_SECRET: 's33-rig-b1-bitcoin-rpc-url',
+  STAGING_GETBLOCK_RPC_AUTH_SECRET: 's33-rig-b1-bitcoin-rpc-auth',
+  STAGING_TREASURY_WIF_SECRET: 'rig-b1-wif-name',
+  STAGING_STRIPE_SECRET_KEY_SECRET: 's33-rig-b1-stripe-secret-key',
+  STAGING_STRIPE_WEBHOOK_SECRET_SECRET: 's33-rig-b1-stripe-webhook-secret',
+  STAGING_API_KEY_HMAC_SECRET_SECRET: 'rig-b1-hmac-name',
+  STAGING_CRON_SECRET_SECRET: 'rig-b1-cron-name',
+  STAGING_RUNTIME_SA_EMAIL: 's33-rig-b1-runtime@arkova1.iam.gserviceaccount.com',
+  STAGING_CRON_OIDC_SA: 's33-rig-b1-cron@arkova1.iam.gserviceaccount.com',
+} as const;
 
 interface ApplyRunResult extends SyncRunResult {
   gcloudCalls: string[];
@@ -1119,6 +1130,117 @@ describe('provision-isolated-rig.sh — RIG-B1 identity, trigger specs, and admi
     expect(admission.scheduler.jobs).toEqual(
       expect.arrayContaining(expectedSpecs.map((spec) => expect.objectContaining(spec))),
     );
+  });
+});
+
+describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () => {
+  const baseEnv = {
+    ...RIG_B1_ISOLATED_INPUTS,
+    STAGING_BITCOIN_NETWORK: 'signet',
+    STAGING_TIER: 'T3',
+    STAGING_DURATION_MIN: '2880',
+    STAGING_REQUIRED_WALL_MIN: '2910',
+  };
+  const paused = applyRunStubbed('w3c-rig-b1-paused', 'chain', {
+    rigId: 'RIG-B1',
+    env: baseEnv,
+  });
+  const accelerated = applyRunStubbed('w3c-rig-b1-accelerated', 'chain', {
+    rigId: 'RIG-B1',
+    env: {
+      ...baseEnv,
+      STAGING_SCHEDULER_ACTIVATION_MODE: 'FORCE_ACCELERATED_RIG_ONLY',
+      CONFIRM_SCHEDULER_ACTIVATION: 'FORCE_ACCELERATED_RIG_ONLY',
+    },
+  });
+
+  const exactTopology = [
+    ['batch-anchors', '/jobs/batch-anchors'],
+    ['check-confirmations', '/jobs/check-confirmations'],
+    ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs'],
+    ['org-queue-scheduler', '/jobs/org-queue-scheduler'],
+    ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true'],
+    ['recover-broadcasts', '/jobs/recover-broadcasts'],
+  ] as const;
+
+  it('freezes the exact six-job topology and uses only service-derived job identities', () => {
+    expect(paused.code, paused.out).toBe(0);
+    const creates = paused.gcloudCalls.filter((call) => call.startsWith('scheduler jobs create http '));
+    expect(creates).toHaveLength(6);
+    expect(creates.map((call) => {
+      const parts = call.split(' ');
+      const name = parts[4]!;
+      const uri = parts.find((part) => part.startsWith('--uri='))!;
+      return [name.replace('arkova-worker-w3c-rig-b1-paused-staging-', ''), uri
+        .replace(`--uri=${STUB_SERVICE_URL}`, '')];
+    })).toEqual(exactTopology);
+  });
+
+  it('defaults to PAUSED, records that state, and never silently resumes traffic', () => {
+    expect(paused.code, paused.out).toBe(0);
+    expect(paused.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '))).toEqual([]);
+    expect(Object.values(paused.schedulerStates)).toHaveLength(6);
+    expect(Object.values(paused.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
+    expect(paused.gcloudCalls.join('\n')).not.toContain('--schedule=*/5 * * * *');
+    const line = paused.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    expect(line).toBeTruthy();
+    expect(JSON.parse(line!.slice('ADMISSION_JSON='.length)).scheduler).toMatchObject({
+      activation_mode: 'PAUSED',
+      state: 'paused_after_clean_mirror',
+    });
+  });
+
+  it('uses explicit per-rig secret and runtime/OIDC identities instead of shared defaults', () => {
+    expect(paused.code, paused.out).toBe(0);
+    const deploy = paused.gcloudCalls.find((call) => call.startsWith('run deploy '));
+    expect(deploy).toContain(`--service-account=${RIG_B1_ISOLATED_INPUTS.STAGING_RUNTIME_SA_EMAIL}`);
+    for (const secretName of Object.values(RIG_B1_ISOLATED_INPUTS).filter(
+      (value) => !value.includes('@'),
+    )) expect(deploy).toContain(secretName);
+    const creates = paused.gcloudCalls.filter((call) => call.startsWith('scheduler jobs create http '));
+    expect(creates.every((call) => call.includes(
+      `--oidc-service-account-email=${RIG_B1_ISOLATED_INPUTS.STAGING_CRON_OIDC_SA}`,
+    ))).toBe(true);
+  });
+
+  it('uses the CTO five-minute cadence only under explicit FORCE_ACCELERATED_RIG_ONLY confirmation', () => {
+    expect(accelerated.code, accelerated.out).toBe(0);
+    const updates = accelerated.gcloudCalls.filter((call) =>
+      call.startsWith('scheduler jobs update http '),
+    );
+    const resumes = accelerated.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
+    expect(updates).toHaveLength(6);
+    expect(updates.every((call) => call.includes('--schedule=*/5 * * * *'))).toBe(true);
+    expect(resumes).toHaveLength(6);
+    expect(Object.values(accelerated.schedulerStates).every((state) => state === 'ENABLED')).toBe(true);
+  });
+
+  it('rejects accelerated activation without a second exact acknowledgement before mutation', () => {
+    const result = applyRunStubbed('w3c-rig-b1-unconfirmed', 'chain', {
+      rigId: 'RIG-B1',
+      env: {
+        ...baseEnv,
+        STAGING_SCHEDULER_ACTIVATION_MODE: 'FORCE_ACCELERATED_RIG_ONLY',
+      },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/FORCE_ACCELERATED_RIG_ONLY|activation.*confirm/i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('rejects RIG-B1 shared-default secret and identity fallbacks before mutation', () => {
+    const result = applyRunStubbed('w3c-rig-b1-shared-defaults', 'chain', {
+      rigId: 'RIG-B1',
+      env: {
+        STAGING_BITCOIN_NETWORK: 'signet',
+        STAGING_TIER: 'T3',
+        STAGING_DURATION_MIN: '2880',
+        STAGING_REQUIRED_WALL_MIN: '2910',
+      },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/per-rig|explicit.*secret|runtime.*identity|OIDC/i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
   });
 });
 
