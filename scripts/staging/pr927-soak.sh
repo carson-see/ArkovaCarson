@@ -9,10 +9,16 @@
 
 set -euo pipefail
 
-WORKER_URL="https://arkova-worker-pr840-staging-kvojbeutfa-uc.a.run.app"
-CRON_SECRET="arkova-cron-2026-prod"
-HMAC_KEY="soak-hmac-key-alpha-2026"
-ACCOUNT_ID="soak-test-acct-001"
+# Secrets/config come from the environment — never hardcode (gitleaks-gated in CI).
+# Export these before running, e.g. from a gitignored .env or Secret Manager:
+#   export WORKER_URL=https://<tagged-staging-worker>.a.run.app
+#   export CRON_SECRET=... HMAC_KEY=...
+# NOTE: the previously hardcoded CRON_SECRET/HMAC_KEY were committed to git history
+# and must be treated as compromised — rotate them, do not just relocate.
+WORKER_URL="${WORKER_URL:?set WORKER_URL to the target staging worker URL}"
+CRON_SECRET="${CRON_SECRET:?set CRON_SECRET (staging X-Cron-Secret) — do NOT hardcode}"
+HMAC_KEY="${HMAC_KEY:?set HMAC_KEY (staging DocuSign HMAC key) — do NOT hardcode}"
+ACCOUNT_ID="${ACCOUNT_ID:-soak-test-acct-001}"
 ITERATIONS="${1:-50}"
 DELAY="${2:-2}"
 
