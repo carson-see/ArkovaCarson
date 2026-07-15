@@ -566,17 +566,18 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     expect(STAGING_AGENTS_RAW).not.toContain('## Admission rollback and identity pins\n');
   });
 
-  it('preserves exact Team1 f61 rules plus the one admission provenance rule', () => {
+  it('preserves exact Team1 union rules plus the admission provenance and Wave-3 B rules', () => {
     const prefix = STAGING_AGENTS_RAW.slice(0, STAGING_AGENTS_RAW.indexOf(STEP4_HEADING));
     const batchDrain = markdownSection(STAGING_AGENTS_RAW, BATCH_DRAIN_HEADING);
     const provenanceOccurrences = occurrenceCount(batchDrain, TEAM1_ADMISSION_PROVENANCE_RULE);
     const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
 
     expect(sha256(prefix)).toBe('22ef741ccf44982cd7fc6ad981927e565dde31dbab8ae03e293472ac9125918e');
-    expect(sha256(f61BatchDrain)).toBe('0f1e26167de47d79ef79cc07c86a1c9b664e70d5a6633770c818cda35dd2bdf1');
+    expect(sha256(f61BatchDrain)).toBe('ff89f096f6131f34a54b58af3ecc120d2f7bddf69afcc49308e96d159556a8ba');
     expect(provenanceOccurrences).toBe(1);
     expect(batchDrain).toContain('S3.3 R3 acceptance extensions are split deliberately');
     expect(batchDrain).toContain('Team 1 review hardening keeps every chronology field');
     expect(batchDrain).toContain('batch-drain-admission-adapter.ts` is the only Team1 bridge');
+    expect(batchDrain).toContain('Wave 3 Lane 1 B adds three pure offline contracts');
   });
 });
