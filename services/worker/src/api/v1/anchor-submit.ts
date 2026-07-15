@@ -22,6 +22,7 @@ import { logger } from '../../utils/logger.js';
 import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
 import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
+import { requireOrgQuota } from '../../middleware/perOrgRateLimit.js';
 import { submitJob } from '../../utils/jobQueue.js';
 import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
 import {
@@ -36,7 +37,7 @@ const router = Router();
 // inserts predictable and PostgREST payload size bounded. Metadata key syntax
 // is bounded here; only recognized public evidence keys are persisted below.
 const SAFE_METADATA_KEY = /^[a-zA-Z0-9_.-]+$/;
-const AnchorSubmitSchema = z.object({
+export const AnchorSubmitSchema = z.object({
   fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash'),
   credential_type: z.enum(ANCHOR_CREDENTIAL_TYPES).optional(),
   description: z.string().max(1000).optional(),
@@ -253,8 +254,15 @@ async function handleAnchorSubmit(req: Request, res: Response) {
  * Submit a fingerprint for blockchain anchoring.
  * The fingerprint must be a 64-character hex SHA-256 hash.
  */
-router.post('/', handleAnchorSubmit);
-router.post('/submit', handleAnchorSubmit);
+const anchorCreateQuota = requireOrgQuota({
+  kind: 'anchors_created',
+  mode: 'daily',
+  getOrgId: (req) => req.apiKey?.orgId ?? null,
+  getDelta: (req) => AnchorSubmitSchema.safeParse(req.body).success ? 1 : 0,
+});
+
+router.post('/', anchorCreateQuota, handleAnchorSubmit);
+router.post('/submit', anchorCreateQuota, handleAnchorSubmit);
 
 /**
  * Handle Supabase insert errors for anchor creation.
