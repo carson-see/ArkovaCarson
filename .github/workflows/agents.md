@@ -78,8 +78,9 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
   issue comment or formal review, publishes an exact-head commit status only
   after preserving the verified artifact, then re-verifies and consumes the
   identical packet on the merged-main commit. GitHub state/login is transport
-  evidence, never acceptance authority. Status write permission exists only on
-  the two jobs that publish those exact success statuses.
+  evidence, never acceptance authority. The workflow-level token has no
+  permissions; each job declares its own read scope, and status write exists
+  only on the two jobs that publish those exact success statuses.
 - The evaluator is materialized from an exact base commit proven to be an
   ancestor of the live `main` tip, then its dependencies are installed in
   `trusted/` before candidate data is fetched. Privileged jobs do not invoke

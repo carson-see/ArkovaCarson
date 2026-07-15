@@ -12,11 +12,7 @@ on:
     branches: [main]
     types: [closed]
 
-permissions:
-  actions: read
-  contents: read
-  issues: read
-  pull-requests: read
+permissions: {}
 
 concurrency:
   group: s33-wave2-corpus-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
@@ -26,6 +22,9 @@ jobs:
   candidate-preflight:
     name: S3.3 Wave 2 Candidate Preflight
     if: github.event_name == 'pull_request_target'
+    permissions:
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

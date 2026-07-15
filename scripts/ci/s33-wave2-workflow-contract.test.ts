@@ -60,6 +60,8 @@ describe('S3.3 Wave-2 trusted-main workflow contract', () => {
 
   it('uses lifecycle-script suppression and immutable action pins', () => {
     expect(workflow).not.toContain('write-all');
+    expect(workflow).toContain('permissions: {}');
+    expect(workflow.match(/statuses: write/gu)).toHaveLength(2);
     expect(workflow.match(/npm (?:--prefix services\/worker )?ci --ignore-scripts/gu)?.length).toBeGreaterThanOrEqual(6);
     const actionUses = [...workflow.matchAll(/^\s*-?\s*uses:\s*([^\s#]+)/gmu)].map((match) => match[1]);
     expect(actionUses.length).toBeGreaterThan(0);
