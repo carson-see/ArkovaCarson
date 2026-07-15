@@ -447,6 +447,7 @@ const tempDirectories: string[] = [];
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.doUnmock('../../services/worker/src/ai/eval/s33-batch-acceptance.js');
+  vi.doUnmock('../../services/worker/src/ai/eval/s33-wave1-producer-verifier.js');
   vi.resetModules();
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -1377,11 +1378,18 @@ function integrationSnapshot(input: {
   return value;
 }
 
-async function createBrandedIntegrationHarness(): Promise<BrandedIntegrationHarness> {
+async function createBrandedIntegrationHarness(
+  producerRepositoryOverride?: string,
+): Promise<BrandedIntegrationHarness> {
   const root = mkdtempSync(join(tmpdir(), 's33-branded-two-repo-'));
   tempDirectories.push(root);
   const main = createTrustedMainRepository(root);
-  const producerRepository = createBareProducerRepository(root);
+  const producerRepository = producerRepositoryOverride === undefined
+    ? createBareProducerRepository(root)
+    : {
+        producerRepositoryRoot: realpathSync(producerRepositoryOverride),
+        producerHeadSha: gitText(producerRepositoryOverride, ['rev-parse', 'HEAD']),
+      };
   const { producerRepositoryRoot, producerHeadSha } = producerRepository;
   const producer = integrationProducerFacts(producerRepositoryRoot);
   expect(producer.entryIds).toHaveLength(81);
@@ -1503,6 +1511,36 @@ function brandedOptions(harness: BrandedIntegrationHarness, overrides: Partial<{
   };
 }
 
+function syntheticDualDagEvidence(producerHeadSha: string) {
+  return Object.freeze({
+    evidenceBlobSha: 'c74b9d6e001355d7701640b2d062473c8bcbed76',
+    evidenceCanonicalSha256: '8a98c148bce14678a94e5ac0b8bac97b76147ca93a8b0058169544d32d439b72',
+    evidenceCommitSha: '3508e5e9c7e100e9c55c0cba129d8d7b9d123bec',
+    evidencePath: 'docs/lane3/evidence/s33-wave1-r12-dual-dag-verification.json' as const,
+    evidenceRawSha256: '02d8026546b14c64af447e8e12544b9e40d6618d9d1020a7a21086b83e425cb7',
+    evidenceRef: 'codex/s33-wave1-a12c-evidence-20260714' as const,
+    evidenceTreeSha: 'ee92aba7d5bd06a55a727124582d09a5776b98b4',
+    finalCommitSha: '447326ddd2225524895f35cbafda58b15555ed30',
+    finalRef: 'codex/s33-wave1-f12c-freeze-20260714' as const,
+    finalTreeSha: '52b6a2dd7201783f93325c24c999bc3e6bb8ee25',
+    reportDigestSha256: '049ac9c08f168fc335cd277796c52f5fcc53bfe32097f7510ea0c609b5279a5e',
+    revision12FailureCount: 0 as const,
+    revision12HeadSha: producerHeadSha,
+    supportHeadSha: '0323711347c32eb8a6adf899bdfe768a8c9181fb',
+    supportTreeSha: 'b14b5402b63668a374ddfbef79124013997b6299',
+    supportTypesBlobSha: 'cb93acd8c536a75e2ef9bb4928877a6d46eb3ed7',
+  });
+}
+
+function mockSyntheticProducerVerifier(): void {
+  vi.doMock('../../services/worker/src/ai/eval/s33-wave1-producer-verifier.js', async (importOriginal) => ({
+    ...await importOriginal<Record<string, unknown>>(),
+    verifyS33Wave1ProducerHead: ({ producerHeadSha }: { producerHeadSha: string }) => ({
+      dualDagEvidence: syntheticDualDagEvidence(producerHeadSha),
+    }),
+  }));
+}
+
 function syntheticAcceptanceRecord(evidence: unknown): Readonly<Record<string, unknown>> {
   assertAuthenticatedS33Wave1EvidenceBundle(evidence);
   const withoutDigest = {
@@ -1520,6 +1558,7 @@ function syntheticAcceptanceRecord(evidence: unknown): Readonly<Record<string, u
     manifestPath: evidence.manifestPath,
     manifestRawSha256: evidence.manifestRawSha256,
     manifestCanonicalSha256: evidence.manifestCanonicalSha256,
+    dualDagEvidence: evidence.dualDagEvidence,
     trustedMain: {
       headSha: evidence.trustedMainHeadSha,
       supportPullRequestNumber: 1529,
@@ -1539,7 +1578,41 @@ function syntheticAcceptanceRecord(evidence: unknown): Readonly<Record<string, u
 }
 
 describe('authenticated same-process two-repository integration', { timeout: 30_000 }, () => {
+  const exactR12Repository = process.env.S33_EXACT_R12_REPOSITORY;
+  it.runIf(Boolean(exactR12Repository))(
+    'runs the real branded Lane-3 artifact path on the immutable r12/F12C/A12C object database',
+    async () => {
+      // Earlier mock tests reset Vitest's module registry. Import the production
+      // authenticator after that boundary so its private WeakSet brand and the
+      // late-loaded Lane-3 consumer share the same module instance.
+      const { authenticateS33Wave1GitHubEvidence: authenticateRealR12 } = await import(
+        '../../services/worker/src/ai/eval/s33-wave1-github-evidence.js'
+      );
+      const harness = await createBrandedIntegrationHarness(exactR12Repository);
+      await authenticateRealR12(brandedOptions(harness));
+      const acceptance = JSON.parse(readFileSync(
+        join(harness.outputDirectory, 's33-wave1-acceptance.json'),
+        'utf8',
+      )) as Record<string, unknown>;
+      expect(acceptance.revision).toBe(12);
+      expect(acceptance.producerHeadSha).toBe('618e08d5a11cb73cb61394bc0343d33f4353ef39');
+      expect((acceptance.dualDagEvidence as Record<string, unknown>).revision12FailureCount).toBe(0);
+    },
+    60_000,
+  );
+
+  it('rejects a legacy/null producer proof before constructing the private evidence brand', async () => {
+    const harness = await createBrandedIntegrationHarness();
+    vi.doMock('../../services/worker/src/ai/eval/s33-wave1-producer-verifier.js', async (importOriginal) => ({
+      ...await importOriginal<Record<string, unknown>>(),
+      verifyS33Wave1ProducerHead: () => ({ dualDagEvidence: null }),
+    }));
+    await expect(authenticateS33Wave1GitHubEvidence(brandedOptions(harness)))
+      .rejects.toThrow(/requires the compiled revision-12 dual-DAG proof/i);
+  });
+
   it('brands live facts, consumes a separate bare producer, and emits the Lane-3 acceptance artifact', async () => {
+    mockSyntheticProducerVerifier();
     const harness = await createBrandedIntegrationHarness();
     expect(harness.mainRepositoryRoot).not.toBe(harness.producerRepositoryRoot);
     expect(gitText(harness.producerRepositoryRoot, ['rev-parse', '--is-bare-repository'])).toBe('true');
@@ -1578,6 +1651,7 @@ describe('authenticated same-process two-repository integration', { timeout: 30_
       );
       expect(evidence.authenticatedReviewBody).toContain(`<!-- ${CROSS_REVIEW_MARKER} -->`);
       expect(evidence.authenticatedReviewBody).toContain(`<!-- ${PROD_DIFF_ADJUDICATION_MARKER} -->`);
+      expect(evidence.dualDagEvidence).toEqual(syntheticDualDagEvidence(harness.producerHeadSha));
       for (const report of Object.values(evidence.reports)) {
         const bytes = Buffer.from(report.bytesBase64, 'base64');
         expect(sha256(bytes)).toBe(report.rawSha256);
@@ -1585,7 +1659,8 @@ describe('authenticated same-process two-repository integration', { timeout: 30_
       }
       return syntheticAcceptanceRecord(evidence);
     });
-    vi.doMock('../../services/worker/src/ai/eval/s33-batch-acceptance.js', () => ({
+    vi.doMock('../../services/worker/src/ai/eval/s33-batch-acceptance.js', async (importOriginal) => ({
+      ...await importOriginal<Record<string, unknown>>(),
       createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence: consumer,
     }));
     try {
@@ -1609,10 +1684,14 @@ describe('authenticated same-process two-repository integration', { timeout: 30_
       url: MAIN_PROTECTION_URL,
       digestSha256: expectedMainBranchProtectionDigest(harness.mainHeadSha),
     });
+    expect(acceptance.dualDagEvidence).toEqual(syntheticDualDagEvidence(harness.producerHeadSha));
     const githubEvidence = JSON.parse(readFileSync(
       join(harness.outputDirectory, 'github-evidence.json'),
       'utf8',
     )) as Record<string, unknown>;
+    expect(githubEvidence.dualDagEvidence).toEqual(syntheticDualDagEvidence(harness.producerHeadSha));
+    expect(readFileSync(join(harness.outputDirectory, 'github-evidence-report.md'), 'utf8'))
+      .toContain('S12/F12C/A12C/r12');
     expect(githubEvidence.branchProtection).toEqual({
       url: MAIN_PROTECTION_URL,
       digestSha256: expectedMainBranchProtectionDigest(harness.mainHeadSha),
@@ -1645,13 +1724,15 @@ describe('authenticated same-process two-repository integration', { timeout: 30_
   });
 
   it('rejects post-verification source drift and output symlink collisions before packaging', async () => {
+    mockSyntheticProducerVerifier();
     let mutateAfterBrand = (): void => undefined;
     const consumer = vi.fn((evidence: unknown) => {
       assertAuthenticatedS33Wave1EvidenceBundle(evidence);
       mutateAfterBrand();
       return syntheticAcceptanceRecord(evidence);
     });
-    vi.doMock('../../services/worker/src/ai/eval/s33-batch-acceptance.js', () => ({
+    vi.doMock('../../services/worker/src/ai/eval/s33-batch-acceptance.js', async (importOriginal) => ({
+      ...await importOriginal<Record<string, unknown>>(),
       createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence: consumer,
     }));
 
@@ -1691,11 +1772,13 @@ describe('authenticated same-process two-repository integration', { timeout: 30_
   });
 
   it('fails the branded path when support ancestry, trusted-main root, or producer mirror changes', async () => {
+    mockSyntheticProducerVerifier();
     const harness = await createBrandedIntegrationHarness();
     const consumer = vi.fn(() => {
       throw new Error('late consumer must not run for rejected authentication evidence');
     });
-    vi.doMock('../../services/worker/src/ai/eval/s33-batch-acceptance.js', () => ({
+    vi.doMock('../../services/worker/src/ai/eval/s33-batch-acceptance.js', async (importOriginal) => ({
+      ...await importOriginal<Record<string, unknown>>(),
       createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence: consumer,
     }));
     const nonAncestorTree = gitText(harness.mainRepositoryRoot, ['rev-parse', 'HEAD^{tree}']);
@@ -1756,6 +1839,10 @@ describe('s33-wave1-acceptance workflow contract', () => {
     expect(workflow).not.toContain('ref: refs/pull/1498/head');
     expect(workflow).toContain('git init --bare --quiet');
     expect(workflow).toContain('refs/pull/1498/head:refs/heads/producer');
+    expect(workflow).toContain('codex/s33-wave1-a12c-evidence-20260714');
+    expect(workflow).toContain('codex/s33-wave1-f12c-freeze-20260714');
+    expect(workflow).toContain('3508e5e9c7e100e9c55c0cba129d8d7b9d123bec');
+    expect(workflow).toContain('447326ddd2225524895f35cbafda58b15555ed30');
     expect(workflow).not.toMatch(/working-directory:\s*\.s33-producer|npm\s+ci[^\n]*\.s33-producer|npx[^\n]*\.s33-producer\/services/u);
     expect(workflow).toContain('services/worker/src/ai/eval/s33-wave1-workflow-reports.ts');
     expect(workflow).toContain('--repository-root "${RUNNER_TEMP}/s33-producer.git"');
@@ -1771,6 +1858,10 @@ describe('s33-wave1-acceptance workflow contract', () => {
     const trustedParse = workflow.indexOf('Parse producer bytes with trusted-main Team-3 verifier');
     expect(fetchPrerequisites).toBeGreaterThan(0);
     expect(trustedParse).toBeGreaterThan(fetchPrerequisites);
+    const producerFetch = workflow.indexOf('Fetch complete #1498 and fixed F12C/A12C histories as data');
+    const evidenceVerify = workflow.indexOf('Recompute fixed revision-12 dual-DAG proof before evidence consumption');
+    expect(evidenceVerify).toBeGreaterThan(producerFetch);
+    expect(evidenceVerify).toBeLessThan(fetchPrerequisites);
     expect(workflow).not.toMatch(/workflow_dispatch:\s*\n\s+inputs:/u);
     const upload = workflow.indexOf('Upload canonical Wave-1 evidence');
     const post = workflow.indexOf('POST new github-actions bot comment');
@@ -1803,6 +1894,36 @@ describe('s33-wave1-acceptance workflow contract', () => {
       expect(() => parseS33Wave1GitHubEvidenceCliArgs(argv))
         .toThrow(/explicit recognized command|invalid|duplicated|mismatch/i);
     }
+  });
+});
+
+describe('revision-12 authoritative production callgraph', () => {
+  it('routes CLI, prerequisite, reports, reload, GitHub auth, and both workflows through one verifier', () => {
+    const producer = readFileSync('services/worker/src/ai/eval/s33-wave1-producer-verifier.ts', 'utf8');
+    const runner = readFileSync('services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts', 'utf8');
+    const reports = readFileSync('services/worker/src/ai/eval/s33-wave1-workflow-reports.ts', 'utf8');
+    const auth = readFileSync('services/worker/src/ai/eval/s33-wave1-github-evidence.ts', 'utf8');
+    const lane3 = readFileSync('services/worker/src/ai/eval/s33-batch-acceptance.ts', 'utf8');
+    const prerequisiteWorkflow = readFileSync('.github/workflows/s33-wave1-prerequisites.yml', 'utf8');
+    const acceptanceWorkflow = readFileSync('.github/workflows/s33-wave1-acceptance.yml', 'utf8');
+
+    expect(producer).toContain('export function verifyS33Wave1ProducerHead');
+    expect(producer).toMatch(/runS33Wave1ProducerVerifierCli[\s\S]*verifyS33Wave1ProducerHead\(input\)/u);
+    expect(producer).toMatch(/loadS33Wave1WorkflowReportEntries[\s\S]*verifyS33Wave1ProducerHead\(input\)/u);
+    expect(runner).toContain('verifyS33Wave1ProducerHead({');
+    expect(reports.match(/verifyS33Wave1ProducerHead\(\{/gu)).toHaveLength(2);
+    expect(auth).toContain("await import('./s33-wave1-producer-verifier.js')");
+    expect(auth).toContain('producerVerifier.verifyS33Wave1ProducerHead({');
+    expect(auth).not.toContain('testOnlyDualDagEvidenceProvider');
+    expect(lane3).toMatch(/authenticatedR12 === undefined[\s\S]*validateActiveS33Wave1PacketMirrors[\s\S]*parseAuthenticatedR12Manifest/u);
+    expect(lane3).toMatch(/buildS33Wave1AcceptanceArtifact\(\{[\s\S]*\}, \{[\s\S]*dualDagEvidence/u);
+    expect(lane3).toContain('return buildS33Wave1AcceptanceArtifact(input);');
+    expect(prerequisiteWorkflow.match(/s33-wave1-producer-verifier\.ts verify/gu)).toHaveLength(2);
+    expect(prerequisiteWorkflow).toContain('s33-wave1-prerequisite-runner.ts prerequisites');
+    expect(prerequisiteWorkflow).toContain('s33-wave1-workflow-reports.ts');
+    expect(acceptanceWorkflow).toContain('s33-wave1-producer-verifier.ts verify');
+    expect(acceptanceWorkflow).toContain('s33-wave1-workflow-reports.ts');
+    expect(acceptanceWorkflow).toContain('s33-wave1-github-evidence.ts');
   });
 });
 
@@ -1889,18 +2010,31 @@ describe('s33-wave1-prerequisites workflow contract', () => {
     expect(workflow).toContain('git init --bare --quiet');
     expect(workflow).toContain('refs/pull/1498/head:refs/heads/producer');
     expect(workflow).toContain('+refs/pull/1498/head:refs/heads/final');
-    expect(workflow).toContain('Revalidate frozen #1498 head tree manifest and final bindings before upload');
+    expect(workflow).toContain('codex/s33-wave1-a12c-evidence-20260714');
+    expect(workflow).toContain('codex/s33-wave1-f12c-freeze-20260714');
+    expect(workflow).toContain('3508e5e9c7e100e9c55c0cba129d8d7b9d123bec');
+    expect(workflow).toContain('447326ddd2225524895f35cbafda58b15555ed30');
+    expect(workflow).not.toContain('--depth=2');
+    expect(workflow).toContain('Revalidate frozen #1498 and F12C/A12C refs plus final bindings before upload');
     expect(workflow.indexOf('Revalidate frozen #1498')).toBeLessThan(workflow.indexOf('Upload exact prod-model-diff final'));
     expect(workflow).toContain('google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093');
     expect(workflow).toContain('google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262');
     expect(workflow).toContain('gemini_api_key:arkova1/gemini-api-key');
     const verifierInvocations = workflow.match(/s33-wave1-producer-verifier\.ts\s+verify/gu);
-    expect(verifierInvocations).toHaveLength(1);
+    expect(verifierInvocations).toHaveLength(2);
+    const freshFixedRefs = workflow.indexOf('refs/heads/f12c-final');
+    const finalVerifier = workflow.lastIndexOf('s33-wave1-producer-verifier.ts verify');
+    const firstUpload = workflow.indexOf('Upload exact prod-model-diff final');
+    expect(finalVerifier).toBeGreaterThan(freshFixedRefs);
+    expect(finalVerifier).toBeLessThan(firstUpload);
     const dependencyInstall = workflow.indexOf('Install trusted-main worker dependencies');
     const producerVerify = workflow.indexOf('s33-wave1-producer-verifier.ts verify');
+    const evidenceVerify = workflow.indexOf('Verify frozen producer packet before credentials or model calls');
     const gcpAuth = workflow.indexOf('Authenticate to GCP');
     const modelRunner = workflow.indexOf('s33-wave1-prerequisite-runner.ts prerequisites');
     expect(producerVerify).toBeGreaterThan(dependencyInstall);
+    expect(evidenceVerify).toBeGreaterThan(dependencyInstall);
+    expect(evidenceVerify).toBeLessThan(gcpAuth);
     expect(producerVerify).toBeLessThan(gcpAuth);
     expect(producerVerify).toBeLessThan(modelRunner);
     expect(workflow).toContain('s33-wave1-prerequisite-runner.ts prerequisites');

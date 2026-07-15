@@ -2,7 +2,7 @@
 
 _Last updated: 2026-07-14_
 
-## 2026-07-14 CTO dual-DAG ruling — revision-12 provenance
+## 2026-07-14 CTO correction topology — revision-12 provenance
 
 - `s33-wave1-dual-dag.ts` keeps the Lane-4 producer history and Lane-3 support
   history independent. The generic verifier pins r10 and the unique merge base,
@@ -20,14 +20,18 @@ _Last updated: 2026-07-14_
   `strippedText` byte sequences and normalized fingerprints stay unchanged.
 - Never use a two-tree `support..producer` diff as provenance. The composition
   proof is a conflict-free `git merge-tree --write-tree S12 r12`, followed by
-  an exact F12 single-parent child of S12 whose tree equals the virtual tree.
-  Both `merge-base -> r12` and `S12 -> F12` are exactly the six regular
-  non-executable `100644` packet additions; all F12 packet blobs equal r12 and
-  the support/types blob equals S12.
-- Exact r10/r11′/r12/S12/F12 SHAs, both producer-edge subsets, and production packet
-  pins are intentionally added only after Lane 4 freezes the candidate. The
-  generic architecture and malicious topology tests do not authorize a
-  candidate or make #1529 ready.
+  exact F12C `447326ddd` single-parent child of immutable S12 `032371134`
+  whose tree equals the virtual tree. Both `merge-base -> r12` and
+  `S12 -> F12C` are exactly the six regular non-executable `100644` packet
+  additions; all F12C packet blobs equal r12 and the support/types blob equals
+  S12. A12C `3508e5e9c` is the sole child of F12C and adds only the reviewed
+  `100644` dual-DAG evidence JSON. It is deliberately `selfPinned: false`.
+- Production code pins the exact r10/r11′/r12/S12/F12C/A12C SHAs, both named
+  create-only F12C/A12C refs, both producer-edge subsets, all packet blobs, the
+  A12C evidence blob/raw/canonical digests, and the recomputed report digest.
+  The four edge universes (5M, 6A, 6A, 1A) are never conflated. Historical
+  F12/A12 refs, the later #1529 delivery tip substituted for S12, moved refs,
+  missing history, or caller-supplied pins fail closed.
 
 ## 2026-07-14 CTO ruling 102498305 — active Wave-1 acceptance contract
 
@@ -50,14 +54,17 @@ _Last updated: 2026-07-14_
   The old signed sampling implementation remains only behind the explicitly
   test-only injected factory for security-regression coverage; its production
   factory always throws the CTO-retirement error.
-- `s33-wave1-producer-verifier.ts` is the trusted-main, no-execution producer
-  boundary. It parses only a directly exported `const` literal array graph,
-  caps expansion at 81 rows, fails if TypeScript diagnostics are unavailable,
-  derives the sole parent/tree/source/support blobs and exact six-path diff from
-  Git, then validates all 81 rows after production field stripping. Never
-  replace it with an import of producer code or accept caller-supplied Git
-  facts. The current remote #1498 r10 correctly fails this gate at KE-001
-  because its post-validation depth is four; do not weaken the floor.
+- `s33-wave1-producer-verifier.ts` is the sole authoritative trusted-main,
+  no-execution producer boundary used by its CLI, prerequisite runner, and
+  workflow-report raw/final/reload paths. It strictly dispatches the exact
+  manifest revision/status tuple: historical blocked packets retain the legacy
+  verifier, while r12 must authenticate the fixed F12C/A12C evidence and full
+  dual-DAG proof before it can report success. `s33-wave1-producer-parser.ts`
+  owns the neutral literal-only TypeScript parser so the producer verifier may
+  depend on the dual-DAG verifier without a circular import. It caps expansion
+  at 81 rows and fails if parser diagnostics are unavailable. Never import or
+  execute producer/evidence code, accept caller-supplied Git facts, or bypass
+  the shared verifier from a non-test call site.
 - `s33-wave1-prerequisite-runner.ts` is the no-retry trusted-main network
   runner. Its exact CLI is `prerequisites --producer-head <sha>
   --raw-output-dir <dir>`. It makes 81 ordered `gemini-2.5-flash` production

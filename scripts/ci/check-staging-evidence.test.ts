@@ -399,6 +399,7 @@ describe('check-staging-evidence', () => {
         'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
         'services/worker/src/ai/eval/s33-wave1-producer-verifier.test.ts',
         'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-parser.ts',
         'services/worker/src/ai/eval/s33-wave1-workflow-reports.test.ts',
         'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
       ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T0');
@@ -436,10 +437,11 @@ describe('check-staging-evidence', () => {
         'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
         'services/worker/src/ai/eval/s33-wave1-producer-verifier.test.ts',
         'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+        'services/worker/src/ai/eval/s33-wave1-producer-parser.ts',
         'services/worker/src/ai/eval/s33-wave1-workflow-reports.test.ts',
         'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
       ];
-      expect(candidate).toHaveLength(28);
+      expect(candidate).toHaveLength(29);
       const realRuntimeImporters = findS33RuntimeImporters();
       expect(realRuntimeImporters).toEqual([]);
       expect(requiredTierFor(candidate, {
@@ -517,6 +519,7 @@ describe('check-staging-evidence', () => {
       ['services/worker/src/ai/eval/heldout-leakage.ts', './ai/eval/heldout-leakage.js'],
       ['services/worker/src/ai/eval/s33-wave1-github-evidence.ts', './ai/eval/s33-wave1-github-evidence.js'],
       ['services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts', './ai/eval/s33-wave1-prerequisite-runner.js'],
+      ['services/worker/src/ai/eval/s33-wave1-producer-parser.ts', './ai/eval/s33-wave1-producer-parser.js'],
       ['scripts/ci/s33-wave1-github-evidence.ts', '../../../scripts/ci/s33-wave1-github-evidence.js'],
       ['.github/s33-wave1-acceptance-authorities.json', '../../../.github/s33-wave1-acceptance-authorities.json'],
     ])('forces T2 when runtime imports newly carved offline file %s', (offlinePath, specifier) => {

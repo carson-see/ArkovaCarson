@@ -22,11 +22,17 @@ import {
   WAVE1_TYPES_PATH,
 } from './s33-batch-acceptance.js';
 import {
+  S33_WAVE1_R12_EVIDENCE_PATH,
+  S33_WAVE1_R12_EVIDENCE_REF,
+  S33_WAVE1_R12_FREEZE_REF,
+  S33_WAVE1_R12_PRODUCTION_EVIDENCE,
+  S33_WAVE1_R12_IMMEDIATE_CHANGED_PATHS,
   S33_WAVE1_PACKET_PATHS,
   S33_WAVE1_DUAL_DAG_SUPPORT_BASELINE,
   S33_WAVE1_R12_CPE_DEPTH_BINDING,
   S33_WAVE1_R12_BINDING_ADJUDICATIONS,
   S33_WAVE1_R12_SOURCE_TRANSITION_BINDING,
+  createTestOnlyS33Wave1R12EvidenceVerifier,
   inspectS33Wave1PacketRevision,
   verifyS33Wave1DualDagContract,
   type S33Wave1DualDagPins,
@@ -84,7 +90,7 @@ afterEach(() => {
   while (roots.length > 0) rmSync(roots.pop()!, { force: true, recursive: true });
 });
 
-function sha256(value: string): string {
+function sha256(value: string | Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
@@ -638,6 +644,7 @@ function pinsForInspection(
 }
 
 interface FixtureOptions {
+  includeEvidence?: boolean;
   badCpeAdjudicationPolicy?: boolean;
   executablePacket?: boolean;
   finalWrongParent?: boolean;
@@ -647,6 +654,19 @@ interface FixtureOptions {
   historicalTamperRevert?: boolean;
   outsideChange?: boolean;
   residualFailure?: boolean;
+  evidenceAttack?:
+    | 'extra-path'
+    | 'duplicate-key'
+    | 'executable'
+    | 'gitlink'
+    | 'invalid-utf8'
+    | 'missing-binding'
+    | 'packet-mutation'
+    | 'report-tamper'
+    | 'self-pinned'
+    | 'symlink'
+    | 'unknown-key'
+    | 'wrong-parent';
   semanticMutation?:
     | 'badCpeDepthDigest'
     | 'badLeakage'
@@ -662,6 +682,16 @@ interface FixtureOptions {
 }
 
 function fixture(options: FixtureOptions = {}): {
+  evidenceAnchor?: {
+    blobSha: string;
+    canonicalSha256: string;
+    commitSha: string;
+    finalCommitSha: string;
+    finalTreeSha: string;
+    freezeRefName: typeof S33_WAVE1_R12_FREEZE_REF;
+    rawSha256: string;
+    refName: typeof S33_WAVE1_R12_EVIDENCE_REF;
+  };
   pins: S33Wave1DualDagPins;
   root: string;
 } {
@@ -812,9 +842,7 @@ function fixture(options: FixtureOptions = {}): {
     revision: 12 as const,
     declaredImmediateParentChangedPaths: changedPaths,
   };
-  return {
-    root,
-    pins: {
+  const pins: S33Wave1DualDagPins = {
       schemaVersion: 1,
       supportBaseline: {
         commitSha: mergeBaseSha,
@@ -832,11 +860,77 @@ function fixture(options: FixtureOptions = {}): {
       historical,
       revision12,
       final: { headSha: finalHeadSha },
+  };
+  if (!options.includeEvidence) return { root, pins };
+  const report = verifyS33Wave1DualDagContract({ repositoryRoot: root, pins });
+  const evidence: Record<string, unknown> = {
+    artifactType: 'arkova-s33-wave1-r12-dual-dag-verification',
+    schemaVersion: 1,
+    selfPinned: options.evidenceAttack === 'self-pinned',
+    bindingContext: {
+      supportBaselineTreeSha: git(root, ['rev-parse', `${mergeBaseSha}^{tree}`]),
+      evidenceCommitPolicy: 'A12C is a child of F12C and does not pin itself; it changes no packet path or verifier implementation path.',
+    },
+    pins,
+    report: structuredClone(report),
+  };
+  if (options.evidenceAttack === 'unknown-key') evidence.unreviewed = true;
+  if (options.evidenceAttack === 'missing-binding') delete evidence.bindingContext;
+  if (options.evidenceAttack === 'report-tamper') {
+    (evidence.report as Record<string, unknown>).reportDigestSha256 = '0'.repeat(64);
+  }
+  git(root, ['checkout', '--detach', options.evidenceAttack === 'wrong-parent' ? mergeBaseSha : finalHeadSha]);
+  if (options.evidenceAttack === 'invalid-utf8') {
+    const absolute = join(root, S33_WAVE1_R12_EVIDENCE_PATH);
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, Buffer.from([0xff, 0xfe, 0xfd]));
+  } else if (options.evidenceAttack === 'duplicate-key') {
+    write(root, S33_WAVE1_R12_EVIDENCE_PATH, `{"schemaVersion":1,"schemaVersion":1}\n`);
+  } else {
+    write(root, S33_WAVE1_R12_EVIDENCE_PATH, `${JSON.stringify(evidence, null, 2)}\n`);
+  }
+  if (options.evidenceAttack === 'executable') {
+    chmodSync(join(root, S33_WAVE1_R12_EVIDENCE_PATH), 0o755);
+  }
+  if (options.evidenceAttack === 'symlink') {
+    rmSync(join(root, S33_WAVE1_R12_EVIDENCE_PATH));
+    symlinkSync('untrusted-target', join(root, S33_WAVE1_R12_EVIDENCE_PATH));
+  }
+  if (options.evidenceAttack === 'extra-path') write(root, 'docs/lane3/evidence/extra.json', '{}\n');
+  if (options.evidenceAttack === 'packet-mutation') {
+    write(root, WAVE1_MANIFEST_PATH, '{"tampered":true}\n');
+  }
+  git(root, ['add', '.']);
+  if (options.evidenceAttack === 'gitlink') {
+    git(root, [
+      'update-index', '--add', '--cacheinfo',
+      `160000,${finalHeadSha},${S33_WAVE1_R12_EVIDENCE_PATH}`,
+    ]);
+  }
+  git(root, ['commit', '-qm', 'record Wave-1 dual-DAG evidence']);
+  const evidenceCommitSha = git(root, ['rev-parse', 'HEAD']);
+  git(root, ['update-ref', `refs/heads/${S33_WAVE1_R12_FREEZE_REF}`, finalHeadSha]);
+  git(root, ['update-ref', `refs/heads/${S33_WAVE1_R12_EVIDENCE_REF}`, evidenceCommitSha]);
+  const evidenceBytes = execFileSync('git', [
+    'show', `${evidenceCommitSha}:${S33_WAVE1_R12_EVIDENCE_PATH}`,
+  ], { cwd: root });
+  return {
+    root,
+    pins,
+    evidenceAnchor: {
+      blobSha: git(root, ['rev-parse', `${evidenceCommitSha}:${S33_WAVE1_R12_EVIDENCE_PATH}`]),
+      canonicalSha256: sha256(canonicaliseJson(evidence)),
+      commitSha: evidenceCommitSha,
+      finalCommitSha: finalHeadSha,
+      finalTreeSha: git(root, ['rev-parse', `${finalHeadSha}^{tree}`]),
+      freezeRefName: S33_WAVE1_R12_FREEZE_REF,
+      rawSha256: sha256(evidenceBytes),
+      refName: S33_WAVE1_R12_EVIDENCE_REF,
     },
   };
 }
 
-describe('S3.3 Wave-1 revision-12 dual-DAG contract', () => {
+describe('S3.3 Wave-1 revision-12 dual-DAG contract', { timeout: 30_000 }, () => {
   it('separately pins the exact reviewed e8 Lane-3 support baseline', () => {
     expect(S33_WAVE1_DUAL_DAG_SUPPORT_BASELINE).toEqual({
       commitSha: 'e8a9ba3d2ba8023fe59781b6a0499c8208cc59af',
@@ -877,11 +971,118 @@ describe('S3.3 Wave-1 revision-12 dual-DAG contract', () => {
       final: { headSha: pins.final.headSha },
     });
     expect(report.final.virtualMergeTreeSha).toBe(report.final.treeSha);
-    expect(report.revision12.immediateParentChangedPaths.length).toBeGreaterThan(0);
-    expect(report.revision12.immediateParentChangedPaths.every((path) => (
-      S33_WAVE1_PACKET_PATHS.includes(path)
-    ))).toBe(true);
+    expect(report.revision12.immediateParentChangedPaths).toEqual(
+      S33_WAVE1_R12_IMMEDIATE_CHANGED_PATHS,
+    );
+    expect(report.revision12.immediateParentChangedPaths).toHaveLength(5);
+    expect(report.revision12.packetBlobs).toEqual(
+      Object.fromEntries(S33_WAVE1_PACKET_PATHS.map((path) => [
+        path,
+        git(root, ['rev-parse', `${pins.revision12.headSha}:${path}`]),
+      ])),
+    );
     expect(Object.isFrozen(report)).toBe(true);
+  });
+
+  it('authenticates create-only A12C while keeping all four edge universes distinct', () => {
+    const { evidenceAnchor, pins, root } = fixture({ includeEvidence: true });
+    if (!evidenceAnchor) throw new Error('evidence fixture did not return its anchor');
+    const verifyEvidence = createTestOnlyS33Wave1R12EvidenceVerifier(evidenceAnchor);
+    const verified = verifyEvidence({
+      expectedProducerHeadSha: pins.revision12.headSha,
+      repositoryRoot: root,
+    });
+
+    expect(verified.report.reportDigestSha256).toBe(
+      verifyS33Wave1DualDagContract({ repositoryRoot: root, pins }).reportDigestSha256,
+    );
+    expect(git(root, [
+      'diff-tree', '--no-commit-id', '--name-status', '-r',
+      pins.historical.headSha, pins.revision12.headSha,
+    ]).split('\n')).toEqual(
+      S33_WAVE1_R12_IMMEDIATE_CHANGED_PATHS.map((path) => `M\t${path}`),
+    );
+    expect(git(root, [
+      'diff-tree', '--no-commit-id', '--name-status', '-r', pins.mergeBaseSha, pins.revision12.headSha,
+    ]).split('\n')).toEqual(S33_WAVE1_PACKET_PATHS.map((path) => `A\t${path}`));
+    expect(git(root, [
+      'diff-tree', '--no-commit-id', '--name-status', '-r', pins.support.headSha, pins.final.headSha,
+    ]).split('\n')).toEqual(S33_WAVE1_PACKET_PATHS.map((path) => `A\t${path}`));
+    expect(git(root, [
+      'diff-tree', '--no-commit-id', '--name-status', '-r', pins.final.headSha, evidenceAnchor.commitSha,
+    ])).toBe(`A\t${S33_WAVE1_R12_EVIDENCE_PATH}`);
+  }, 15_000);
+
+  it.each([
+    ['wrong A12C parent', 'wrong-parent'],
+    ['extra A12C path', 'extra-path'],
+    ['duplicate-key A12C', 'duplicate-key'],
+    ['executable A12C evidence', 'executable'],
+    ['gitlink A12C evidence', 'gitlink'],
+    ['invalid UTF-8 A12C evidence', 'invalid-utf8'],
+    ['missing A12C binding context', 'missing-binding'],
+    ['symlink A12C evidence', 'symlink'],
+    ['A12C packet mutation', 'packet-mutation'],
+    ['tampered stored A12C report', 'report-tamper'],
+    ['self-pinned A12C', 'self-pinned'],
+    ['unknown A12C schema key', 'unknown-key'],
+  ] as const)('rejects %s', (_label, evidenceAttack) => {
+    const { evidenceAnchor, pins, root } = fixture({ evidenceAttack, includeEvidence: true });
+    if (!evidenceAnchor) throw new Error('evidence fixture did not return its anchor');
+    const verifyEvidence = createTestOnlyS33Wave1R12EvidenceVerifier(evidenceAnchor);
+    expect(() => verifyEvidence({
+      expectedProducerHeadSha: pins.revision12.headSha,
+      repositoryRoot: root,
+    })).toThrow(/A12C|evidence|single-parent|exactly one|packet|schema|selfPinned/i);
+  });
+
+  it('rejects moved refs and false compiled blob or digest pins', () => {
+    const { evidenceAnchor, pins, root } = fixture({ includeEvidence: true });
+    if (!evidenceAnchor) throw new Error('evidence fixture did not return its anchor');
+    const verify = (anchor = evidenceAnchor) => createTestOnlyS33Wave1R12EvidenceVerifier(anchor)({
+      expectedProducerHeadSha: pins.revision12.headSha,
+      repositoryRoot: root,
+    });
+    git(root, ['update-ref', `refs/heads/${S33_WAVE1_R12_EVIDENCE_REF}`, pins.final.headSha]);
+    expect(() => verify()).toThrow(/A12C.*ref/i);
+    git(root, ['update-ref', `refs/heads/${S33_WAVE1_R12_EVIDENCE_REF}`, evidenceAnchor.commitSha]);
+    git(root, ['update-ref', `refs/heads/${S33_WAVE1_R12_FREEZE_REF}`, pins.support.headSha]);
+    expect(() => verify()).toThrow(/F12C.*ref/i);
+    git(root, ['update-ref', `refs/heads/${S33_WAVE1_R12_FREEZE_REF}`, evidenceAnchor.finalCommitSha]);
+    for (const mutation of [
+      { ...evidenceAnchor, commitSha: '0'.repeat(40) },
+      { ...evidenceAnchor, finalCommitSha: '0'.repeat(40) },
+      { ...evidenceAnchor, finalTreeSha: '0'.repeat(40) },
+      { ...evidenceAnchor, blobSha: '0'.repeat(40) },
+      { ...evidenceAnchor, rawSha256: '0'.repeat(64) },
+      { ...evidenceAnchor, canonicalSha256: '0'.repeat(64) },
+      { ...evidenceAnchor, reportDigestSha256: '0'.repeat(64) },
+    ]) {
+      expect(() => verify(mutation)).toThrow(/ref|commit|tree|blob|digest/i);
+    }
+  });
+
+  it('pins the exact production A12C/F12C authority and forbids synthetic anchors outside tests', () => {
+    expect(S33_WAVE1_R12_PRODUCTION_EVIDENCE).toEqual({
+      blobSha: 'c74b9d6e001355d7701640b2d062473c8bcbed76',
+      canonicalSha256: '8a98c148bce14678a94e5ac0b8bac97b76147ca93a8b0058169544d32d439b72',
+      commitSha: '3508e5e9c7e100e9c55c0cba129d8d7b9d123bec',
+      finalCommitSha: '447326ddd2225524895f35cbafda58b15555ed30',
+      finalTreeSha: '52b6a2dd7201783f93325c24c999bc3e6bb8ee25',
+      freezeRefName: S33_WAVE1_R12_FREEZE_REF,
+      rawSha256: '02d8026546b14c64af447e8e12544b9e40d6618d9d1020a7a21086b83e425cb7',
+      refName: S33_WAVE1_R12_EVIDENCE_REF,
+      reportDigestSha256: '049ac9c08f168fc335cd277796c52f5fcc53bfe32097f7510ea0c609b5279a5e',
+    });
+    const original = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      expect(() => createTestOnlyS33Wave1R12EvidenceVerifier(
+        S33_WAVE1_R12_PRODUCTION_EVIDENCE,
+      )).toThrow(/forbidden.*outside NODE_ENV=test/i);
+    } finally {
+      process.env.NODE_ENV = original;
+    }
   });
 
   it('rejects a historical failure-set digest that is not the exact blocked packet result', () => {
@@ -986,7 +1187,7 @@ describe('S3.3 Wave-1 revision-12 dual-DAG contract', () => {
     const mutated = structuredClone(pins);
     mutated.revision12.declaredImmediateParentChangedPaths = [WAVE1_MANIFEST_PATH];
     expect(() => verifyS33Wave1DualDagContract({ repositoryRoot: root, pins: mutated }))
-      .toThrow(/declared.*immediate-parent.*changed paths/i);
+      .toThrow(/immediate-parent edge.*exact.*five-path set/i);
   });
 
   it('pins all six producer blobs independently of the support tree', () => {

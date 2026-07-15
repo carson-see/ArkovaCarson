@@ -89,7 +89,7 @@ jobs:
           test "${SUPPORT_MERGE_SHA}" != "null"
           git merge-base --is-ancestor "${SUPPORT_MERGE_SHA}" HEAD
 
-      - name: Fetch exact #1498 Git objects as data (bare; never checkout)
+      - name: Fetch complete #1498 and fixed F12C/A12C histories as data (bare; never checkout)
         id: producer
         env:
           GH_TOKEN: ${{ github.token }}
@@ -106,12 +106,16 @@ jobs:
           BASIC_AUTH=$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)
           git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" \
             -c http.extraHeader="AUTHORIZATION: basic ${BASIC_AUTH}" \
-            fetch --quiet --no-tags --depth=2 \
+            fetch --atomic --quiet --no-tags \
             https://github.com/carson-see/ArkovaCarson.git \
-            refs/pull/1498/head:refs/heads/producer
+            refs/pull/1498/head:refs/heads/producer \
+            refs/heads/codex/s33-wave1-f12c-freeze-20260714:refs/heads/codex/s33-wave1-f12c-freeze-20260714 \
+            refs/heads/codex/s33-wave1-a12c-evidence-20260714:refs/heads/codex/s33-wave1-a12c-evidence-20260714
           unset BASIC_AUTH
           git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" symbolic-ref HEAD refs/heads/producer
           test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse HEAD)" = "${PRODUCER_HEAD_SHA}"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/codex/s33-wave1-a12c-evidence-20260714)" = "3508e5e9c7e100e9c55c0cba129d8d7b9d123bec"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/codex/s33-wave1-f12c-freeze-20260714)" = "447326ddd2225524895f35cbafda58b15555ed30"
           test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-list --parents -n 1 HEAD | wc -w | tr -d ' ')" = "2"
           echo "head_sha=${PRODUCER_HEAD_SHA}" >> "${GITHUB_OUTPUT}"
 
@@ -130,6 +134,17 @@ jobs:
       - name: Install trusted-main worker dependencies
         working-directory: services/worker
         run: npm ci --ignore-scripts
+
+      - name: Recompute fixed revision-12 dual-DAG proof before evidence consumption
+        env:
+          S33_PRODUCER_HEAD_SHA: ${{ steps.producer.outputs.head_sha }}
+          S33_PRODUCER_OBJECT_REPOSITORY: ${{ runner.temp }}/s33-producer.git
+        run: |
+          set -euo pipefail
+          npm --prefix services/worker exec -- tsx \
+            src/ai/eval/s33-wave1-producer-verifier.ts verify \
+            --repository-root "${S33_PRODUCER_OBJECT_REPOSITORY}" \
+            --producer-head "${S33_PRODUCER_HEAD_SHA}"
 
       - name: Fetch and authenticate fresh prerequisite artifacts
         env:

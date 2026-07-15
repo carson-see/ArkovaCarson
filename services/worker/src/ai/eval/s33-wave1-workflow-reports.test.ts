@@ -35,6 +35,7 @@ function producer(): S33Wave1ProducerValidationReport {
     algorithmVersion: 's33-wave1-producer-validation-v1',
     batchId: 'S33-W1', corpusSourceBlobs: {},
     counts: { byCorpusSlice: {}, byCredentialType: {}, byDomain: {}, covered: 72, ood: 9, total: 81 },
+    dualDagEvidence: null,
     entries: WAVE1_ENTRY_IDS.map((id, index) => ({
       id, kind: index < 72 ? 'covered' : 'ood-abstention', normalizedInputSha256: '7'.repeat(64),
       postValidationDepth: index < 72 ? 5 : null, sourcePath: 'fixture.ts', strippedFields: [],

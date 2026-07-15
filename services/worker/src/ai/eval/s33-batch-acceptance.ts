@@ -399,6 +399,7 @@ export interface S33Wave1AuthenticatedAcceptanceArtifact
     }>[];
   }>;
   prerequisiteInventory: Readonly<S33AuthenticatedEvidenceBundle['prerequisiteInventory']>;
+  dualDagEvidence: Readonly<S33AuthenticatedEvidenceBundle['dualDagEvidence']>;
   prodDiffAdjudication: Readonly<S33ProdDiffAdjudication>;
   artifactDigestSha256: string;
 }
@@ -4173,8 +4174,109 @@ function validateProdDiffAdjudication(
  * callers cannot supply their digests. No signer, external registry, or
  * commitment/reveal record is part of this acceptance path.
  */
+interface AuthenticatedR12ManifestBinding {
+  dualDagEvidence: Readonly<S33AuthenticatedEvidenceBundle['dualDagEvidence']>;
+  manifestCanonicalSha256: string;
+  manifestRawSha256: string;
+}
+
+function assertAuthenticatedR12Binding(
+  rawSha256: string,
+  canonicalSha256: string,
+  producerHeadSha: string,
+  binding: Readonly<AuthenticatedR12ManifestBinding>,
+): void {
+  if (rawSha256 !== binding.manifestRawSha256
+    || canonicalSha256 !== binding.manifestCanonicalSha256) {
+    throw new Error('Authenticated revision-12 manifest digests do not match the branded GitHub facts');
+  }
+  if (binding.dualDagEvidence.revision12HeadSha !== producerHeadSha
+    || binding.dualDagEvidence.revision12FailureCount !== 0) {
+    throw new Error('Authenticated revision-12 manifest is not bound to the zero-failure dual-DAG head');
+  }
+}
+
+function parseAuthenticatedR12Manifest(
+  manifestContent: Buffer,
+  producerHeadSha: string,
+  binding: Readonly<AuthenticatedR12ManifestBinding>,
+): ParsedBatchManifest {
+  const document = parseStrictJsonDocument(manifestContent, 'Authenticated revision-12 committed manifest');
+  const manifest = document.parsed;
+  assertExactKeys(manifest, [
+    'schemaVersion', 'batchId', 'revision', 'producerLane', 'acceptanceAuthority', 'status',
+    'corpusRevisionParentCommit', 'producerRevisionPredecessorCommit', 'lane3SupportBase',
+    'corpusSourceBlobs', 'intendedSplit', 'reviewOrder', 'acceptanceScope', 'entryCount',
+    'counts', 'kenyaEntryIds', 'selfChecks', 'entries',
+  ], 'Authenticated revision-12 committed manifest');
+  assertAuthenticatedR12Binding(
+    document.rawSha256,
+    document.canonicalSha256,
+    producerHeadSha,
+    binding,
+  );
+  if (manifest.schemaVersion !== 1
+    || manifest.batchId !== 'S33-W1'
+    || manifest.revision !== 12
+    || manifest.status !== 'PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE'
+    || manifest.intendedSplit !== 'held-out-candidate'
+    || manifest.reviewOrder !== 'kenya-first'
+    || manifest.acceptanceScope !== 'whole-batch-only'
+    || manifest.entryCount !== 81) {
+    throw new Error('Authenticated revision-12 manifest tuple/scope is not the exact accepted contract');
+  }
+  const selfChecks = recordValue(manifest.selfChecks, 'Authenticated revision-12 selfChecks');
+  const lane3 = recordValue(selfChecks.lane3Acceptance, 'Authenticated revision-12 lane3Acceptance');
+  if (lane3.status !== 'NOT_RUN_PRODUCER_BOUNDARY') {
+    throw new Error('Authenticated revision-12 producer boundary must remain NOT_RUN');
+  }
+  if (!Array.isArray(manifest.entries) || manifest.entries.length !== 81) {
+    throw new Error('Authenticated revision-12 manifest must contain exactly 81 entries');
+  }
+  const entries = manifest.entries.map((candidate, index) => {
+    const entry = recordValue(candidate, `Authenticated revision-12 entries[${index}]`);
+    assertExactKeys(
+      entry,
+      ['id', 'domain', 'credentialType', 'normalizedInputSha256'],
+      `Authenticated revision-12 entries[${index}]`,
+    );
+    assertSha256(
+      entry.normalizedInputSha256,
+      `Authenticated revision-12 entries[${index}].normalizedInputSha256`,
+    );
+    return {
+      id: nonEmptyString(entry.id, `Authenticated revision-12 entries[${index}].id`),
+      domain: nonEmptyString(entry.domain, `Authenticated revision-12 entries[${index}].domain`),
+      credentialType: nonEmptyString(
+        entry.credentialType,
+        `Authenticated revision-12 entries[${index}].credentialType`,
+      ),
+      normalizedInputSha256: nonEmptyString(
+        entry.normalizedInputSha256,
+        `Authenticated revision-12 entries[${index}].normalizedInputSha256`,
+      ),
+    };
+  });
+  assertUniqueIds(entries.map(({ id }) => id), 'Authenticated revision-12 manifest entry ids');
+  assertSameOrderedValues(
+    entries.map(({ id }) => id),
+    WAVE1_ENTRY_IDS,
+    'Authenticated revision-12 exact ordered entry ids',
+  );
+  return deepFreeze({
+    schemaVersion: 1,
+    batchId: 'S33-W1',
+    revision: 12,
+    entryCount: 81,
+    intendedSplit: 'held-out-candidate',
+    entries,
+    parsedJson: manifest as Record<string, unknown>,
+  });
+}
+
 function buildS33Wave1AcceptanceArtifact(
   input: TestOnlyS33Wave1AcceptanceArtifactInput,
+  authenticatedR12?: Readonly<AuthenticatedR12ManifestBinding>,
 ): Readonly<S33Wave1AcceptanceArtifact> {
   if (input.repositoryIdentity !== 'carson-see/ArkovaCarson') {
     throw new Error('Wave-1 acceptance repository identity must be carson-see/ArkovaCarson');
@@ -4239,11 +4341,9 @@ function buildS33Wave1AcceptanceArtifact(
     throw new Error('Unable to bind Wave-1 acceptance to the exact producer head/tree/manifest', { cause: error });
   }
   const manifestDocument = parseStrictJsonDocument(manifestContent, 'Wave-1 committed manifest');
-  const manifest = validateActiveS33Wave1PacketMirrors(
-    input.repositoryRoot,
-    input.producerHeadSha,
-    manifestContent,
-  );
+  const manifest = authenticatedR12 === undefined
+    ? validateActiveS33Wave1PacketMirrors(input.repositoryRoot, input.producerHeadSha, manifestContent)
+    : parseAuthenticatedR12Manifest(manifestContent, input.producerHeadSha, authenticatedR12);
   const reports = readAndValidateS33WorkflowReports({
     directory: input.evidenceReportDirectory,
     manifest,
@@ -4340,6 +4440,53 @@ export function validateS33AuthenticatedBranchProtection(value: unknown): Readon
   return deepFreeze({ url, digestSha256: branchProtection.digestSha256 as string });
 }
 
+function validateAuthenticatedDualDagEvidence(
+  value: unknown,
+  producerHeadSha: string,
+  producerRepositoryRoot: string,
+): Readonly<S33AuthenticatedEvidenceBundle['dualDagEvidence']> {
+  const dual = recordValue(value, 'Authenticated dual-DAG evidence');
+  assertExactKeys(dual, [
+    'evidenceBlobSha', 'evidenceCanonicalSha256', 'evidenceCommitSha',
+    'evidencePath', 'evidenceRawSha256', 'evidenceRef', 'evidenceTreeSha', 'finalCommitSha',
+    'finalRef', 'finalTreeSha', 'reportDigestSha256', 'revision12FailureCount',
+    'revision12HeadSha', 'supportHeadSha', 'supportTreeSha', 'supportTypesBlobSha',
+  ], 'Authenticated dual-DAG evidence');
+  const expected = {
+    evidenceBlobSha: 'c74b9d6e001355d7701640b2d062473c8bcbed76',
+    evidenceCanonicalSha256: '8a98c148bce14678a94e5ac0b8bac97b76147ca93a8b0058169544d32d439b72',
+    evidenceCommitSha: '3508e5e9c7e100e9c55c0cba129d8d7b9d123bec',
+    evidencePath: 'docs/lane3/evidence/s33-wave1-r12-dual-dag-verification.json',
+    evidenceRawSha256: '02d8026546b14c64af447e8e12544b9e40d6618d9d1020a7a21086b83e425cb7',
+    evidenceRef: 'codex/s33-wave1-a12c-evidence-20260714',
+    evidenceTreeSha: 'ee92aba7d5bd06a55a727124582d09a5776b98b4',
+    finalCommitSha: '447326ddd2225524895f35cbafda58b15555ed30',
+    finalRef: 'codex/s33-wave1-f12c-freeze-20260714',
+    finalTreeSha: '52b6a2dd7201783f93325c24c999bc3e6bb8ee25',
+    reportDigestSha256: '049ac9c08f168fc335cd277796c52f5fcc53bfe32097f7510ea0c609b5279a5e',
+    revision12FailureCount: 0,
+    revision12HeadSha: '618e08d5a11cb73cb61394bc0343d33f4353ef39',
+    supportHeadSha: '0323711347c32eb8a6adf899bdfe768a8c9181fb',
+    supportTreeSha: 'b14b5402b63668a374ddfbef79124013997b6299',
+    supportTypesBlobSha: 'cb93acd8c536a75e2ef9bb4928877a6d46eb3ed7',
+  };
+  if (producerHeadSha !== expected.revision12HeadSha) {
+    throw new Error('Authenticated producer head is not the immutable revision-12 commit');
+  }
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    if (dual[key] !== expectedValue) throw new Error(`Authenticated dual-DAG ${key} is not the compiled fact`);
+  }
+  const stored = execFileSync(GIT_EXECUTABLE, [
+    '-C', producerRepositoryRoot, 'show', `${expected.evidenceCommitSha}:${expected.evidencePath}`,
+  ], { env: GIT_SUBPROCESS_ENV });
+  const document = parseStrictJsonDocument(stored, 'Authenticated A12C Git evidence bytes');
+  if (document.rawSha256 !== expected.evidenceRawSha256
+    || document.canonicalSha256 !== expected.evidenceCanonicalSha256) {
+    throw new Error('Authenticated A12C Git object does not match the compiled raw/canonical digests');
+  }
+  return deepFreeze(dual as unknown as S33AuthenticatedEvidenceBundle['dualDagEvidence']);
+}
+
 /**
  * Production Wave-1 acceptance owner. Only Team 2's live GitHub verifier can
  * construct the WeakSet-branded bundle accepted here; JSON/plain-object callers
@@ -4356,7 +4503,7 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
     'producerHeadSha', 'producerTreeSha', 'manifestPath', 'manifestRawSha256',
     'manifestCanonicalSha256', 'manifestEntryIds', 'acceptedAtUtc', 'approval',
     'authenticatedReviewBody', 'branchProtection', 'requiredChecks', 'reports',
-    'prodDiffAdjudication', 'prerequisiteInventory',
+    'dualDagEvidence', 'prodDiffAdjudication', 'prerequisiteInventory',
   ], 'Authenticated Wave-1 evidence bundle');
   if (evidence.repositoryIdentity !== 'carson-see/ArkovaCarson'
     || evidence.pullRequestNumber !== 1498
@@ -4385,6 +4532,11 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
     throw new Error('Authenticated Lane-3 review body is missing its fixed acceptance/adjudication markers');
   }
   const branchProtection = validateS33AuthenticatedBranchProtection(evidence.branchProtection);
+  const dualDagEvidence = validateAuthenticatedDualDagEvidence(
+    evidence.dualDagEvidence,
+    evidence.producerHeadSha,
+    evidence.producerRepositoryRoot,
+  );
   try {
     const trustedMainRoot = realpathSync(evidence.trustedMainRepositoryRoot);
     if (trustedMainRoot !== evidence.trustedMainRepositoryRoot) {
@@ -4486,6 +4638,10 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
       },
       evidenceReportDirectory: evidenceDirectory,
       prodDiffAdjudication: evidence.prodDiffAdjudication,
+    }, {
+      dualDagEvidence,
+      manifestCanonicalSha256: evidence.manifestCanonicalSha256,
+      manifestRawSha256: evidence.manifestRawSha256,
     });
     const manifestBytes = execFileSync(GIT_EXECUTABLE, [
       '-C', evidence.producerRepositoryRoot, 'show', `${evidence.producerHeadSha}:${WAVE1_MANIFEST_PATH}`,
@@ -4536,6 +4692,7 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
         })),
       },
       prerequisiteInventory: evidence.prerequisiteInventory,
+      dualDagEvidence,
       prodDiffAdjudication: evidence.prodDiffAdjudication,
     };
     return deepFreeze({

@@ -315,6 +315,7 @@ const S33_OFFLINE_ACCEPTANCE_FILES = new Set([
   'services/worker/src/ai/eval/s33-wave1-github-evidence.ts',
   'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
   'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+  'services/worker/src/ai/eval/s33-wave1-producer-parser.ts',
   'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
 ]);
 const S33_RUNTIME_ENTRYPOINTS = ['services/worker/src/index.ts'] as const;

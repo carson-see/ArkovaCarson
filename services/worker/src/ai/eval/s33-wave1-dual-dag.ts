@@ -29,7 +29,7 @@ import {
   WAVE1_TYPES_PATH,
   parseStrictJsonDocument,
 } from './s33-batch-acceptance.js';
-import { parseS33ProducerModule } from './s33-wave1-producer-verifier.js';
+import { parseS33ProducerModule } from './s33-wave1-producer-parser.js';
 
 const GIT_EXECUTABLE = '/usr/bin/git';
 const GIT_ENV = Object.freeze({
@@ -128,6 +128,15 @@ export const S33_WAVE1_PACKET_PATHS = Object.freeze([
   WAVE1_MANIFEST_PATH,
   WAVE1_ENTRY_DATASHEET_PATH,
   ...WAVE1_SOURCE_BLOB_PATHS,
+].sort(compareCodeUnits));
+
+/** Exact r11-prime -> r12 mutation edge; the unchanged OOD source is excluded. */
+export const S33_WAVE1_R12_IMMEDIATE_CHANGED_PATHS = Object.freeze([
+  WAVE1_CORPUS_DATASHEET_PATH,
+  WAVE1_MANIFEST_PATH,
+  WAVE1_ENTRY_DATASHEET_PATH,
+  WAVE1_SOURCE_BLOB_PATHS[0],
+  WAVE1_SOURCE_BLOB_PATHS[1],
 ].sort(compareCodeUnits));
 
 const DUAL_DAG_SUPPORT_REVIEW_STATE = 'CTO_APPROVED_DUAL_DAG_R12_EVALUATOR_ROOT';
@@ -374,6 +383,49 @@ export interface S33Wave1DualDagReport {
   reportDigestSha256: string;
 }
 
+export const S33_WAVE1_R12_EVIDENCE_PATH =
+  'docs/lane3/evidence/s33-wave1-r12-dual-dag-verification.json' as const;
+export const S33_WAVE1_R12_EVIDENCE_REF =
+  'codex/s33-wave1-a12c-evidence-20260714' as const;
+export const S33_WAVE1_R12_FREEZE_REF =
+  'codex/s33-wave1-f12c-freeze-20260714' as const;
+
+export interface S33Wave1R12EvidenceAnchor {
+  blobSha: string;
+  canonicalSha256: string;
+  commitSha: string;
+  finalCommitSha: string;
+  finalTreeSha: string;
+  freezeRefName: typeof S33_WAVE1_R12_FREEZE_REF;
+  rawSha256: string;
+  refName: typeof S33_WAVE1_R12_EVIDENCE_REF;
+  reportDigestSha256?: string;
+}
+
+export interface S33Wave1R12VerifiedEvidence {
+  blobSha: string;
+  canonicalSha256: string;
+  commitSha: string;
+  evidenceBytes: Buffer;
+  pins: Readonly<S33Wave1DualDagPins>;
+  rawSha256: string;
+  report: Readonly<S33Wave1DualDagReport>;
+}
+
+const S33_WAVE1_R12_PRODUCTION_EVIDENCE_ANCHOR = deepFreeze({
+  blobSha: 'c74b9d6e001355d7701640b2d062473c8bcbed76',
+  canonicalSha256: '8a98c148bce14678a94e5ac0b8bac97b76147ca93a8b0058169544d32d439b72',
+  commitSha: '3508e5e9c7e100e9c55c0cba129d8d7b9d123bec',
+  finalCommitSha: '447326ddd2225524895f35cbafda58b15555ed30',
+  finalTreeSha: '52b6a2dd7201783f93325c24c999bc3e6bb8ee25',
+  freezeRefName: S33_WAVE1_R12_FREEZE_REF,
+  rawSha256: '02d8026546b14c64af447e8e12544b9e40d6618d9d1020a7a21086b83e425cb7',
+  refName: S33_WAVE1_R12_EVIDENCE_REF,
+  reportDigestSha256: '049ac9c08f168fc335cd277796c52f5fcc53bfe32097f7510ea0c609b5279a5e',
+} as const satisfies S33Wave1R12EvidenceAnchor);
+
+export const S33_WAVE1_R12_PRODUCTION_EVIDENCE = S33_WAVE1_R12_PRODUCTION_EVIDENCE_ANCHOR;
+
 interface ParsedEntry {
   category: string;
   groundTruth: GroundTruthFields;
@@ -389,6 +441,10 @@ interface DiffEntry {
 
 function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function sha256(value: string | Uint8Array): string {
@@ -1648,12 +1704,18 @@ export function verifyS33Wave1DualDagContract(input: Readonly<{
     pins.revision12.declaredImmediateParentChangedPaths,
     'Revision 12 declared immediate-parent changed paths',
   );
+  if (!sameStrings(
+    [...pins.revision12.declaredImmediateParentChangedPaths].sort(compareCodeUnits),
+    [...S33_WAVE1_R12_IMMEDIATE_CHANGED_PATHS],
+  )) {
+    throw new Error('Revision 12 immediate-parent edge must be the exact code-owned five-path set');
+  }
   const immediatePaths = assertDiff(
     repositoryRoot,
     pins.historical.headSha,
     pins.revision12.headSha,
     pins.revision12.declaredImmediateParentChangedPaths,
-    ['A', 'M'],
+    ['M'],
     'Revision 12 declared immediate-parent changed paths',
   );
 
@@ -1827,4 +1889,186 @@ export function verifyS33Wave1DualDagContract(input: Readonly<{
     ...withoutDigest,
     reportDigestSha256: sha256(canonicaliseJson(withoutDigest)),
   });
+}
+
+const EVIDENCE_TOP_LEVEL_KEYS = Object.freeze([
+  'artifactType', 'schemaVersion', 'selfPinned', 'bindingContext', 'pins', 'report',
+]);
+const EVIDENCE_BINDING_CONTEXT_KEYS = Object.freeze([
+  'supportBaselineTreeSha', 'evidenceCommitPolicy',
+]);
+const EVIDENCE_COMMIT_POLICY =
+  'A12C is a child of F12C and does not pin itself; it changes no packet path or verifier implementation path.';
+
+function verifyEvidenceAnchorTopology(
+  repositoryRoot: string,
+  anchor: Readonly<S33Wave1R12EvidenceAnchor>,
+): string {
+  assertGitObject(anchor.commitSha, 'A12C compiled commit');
+  assertGitObject(anchor.blobSha, 'A12C compiled evidence blob');
+  assertGitObject(anchor.finalCommitSha, 'F12C compiled commit');
+  assertGitObject(anchor.finalTreeSha, 'F12C compiled tree');
+  assertSha256(anchor.rawSha256, 'A12C compiled raw evidence digest');
+  assertSha256(anchor.canonicalSha256, 'A12C compiled canonical evidence digest');
+  if (anchor.reportDigestSha256 !== undefined) {
+    assertSha256(anchor.reportDigestSha256, 'A12C compiled report digest');
+  }
+  if (anchor.refName !== S33_WAVE1_R12_EVIDENCE_REF
+    || anchor.freezeRefName !== S33_WAVE1_R12_FREEZE_REF) {
+    throw new Error('A12C/F12C evidence refs do not match their code-owned fixed names');
+  }
+  const resolvedRef = gitText(
+    repositoryRoot,
+    ['rev-parse', '--verify', `refs/heads/${anchor.refName}`],
+    'A12C fixed ref',
+  );
+  if (resolvedRef !== anchor.commitSha) throw new Error('A12C fixed ref moved from its compiled commit');
+  assertCommit(repositoryRoot, anchor.commitSha, 'A12C evidence commit');
+  const finalHeadSha = singleParent(repositoryRoot, anchor.commitSha, 'A12C evidence commit');
+  const resolvedFreezeRef = gitText(
+    repositoryRoot,
+    ['rev-parse', '--verify', `refs/heads/${anchor.freezeRefName}`],
+    'F12C fixed ref',
+  );
+  if (resolvedFreezeRef !== anchor.finalCommitSha || finalHeadSha !== anchor.finalCommitSha) {
+    throw new Error('F12C fixed ref/A12C parent moved from the compiled materialized commit');
+  }
+  if (commitTree(repositoryRoot, finalHeadSha, 'F12C materialized head') !== anchor.finalTreeSha) {
+    throw new Error('F12C materialized tree moved from its compiled tree');
+  }
+  const evidencePaths = assertDiff(
+    repositoryRoot, finalHeadSha, anchor.commitSha, [S33_WAVE1_R12_EVIDENCE_PATH], ['A'],
+    'F12C to A12C exact evidence-only edge',
+  );
+  if (!sameStrings(evidencePaths, [S33_WAVE1_R12_EVIDENCE_PATH])) {
+    throw new Error('A12C must add exactly one evidence path');
+  }
+  const treeEntry = gitText(
+    repositoryRoot,
+    ['ls-tree', anchor.commitSha, '--', S33_WAVE1_R12_EVIDENCE_PATH],
+    'A12C evidence tree entry',
+  );
+  if (treeEntry !== `100644 blob ${anchor.blobSha}\t${S33_WAVE1_R12_EVIDENCE_PATH}`) {
+    throw new Error('A12C evidence must be one regular non-executable 100644 blob at the exact path');
+  }
+  return finalHeadSha;
+}
+
+function parseAnchoredEvidenceDocument(
+  repositoryRoot: string,
+  anchor: Readonly<S33Wave1R12EvidenceAnchor>,
+): Readonly<{
+  canonicalSha256: string;
+  evidence: JsonRecord;
+  evidenceBytes: Buffer;
+  rawSha256: string;
+}> {
+  const evidenceBytes = readGitPath(repositoryRoot, anchor.commitSha, S33_WAVE1_R12_EVIDENCE_PATH);
+  const document = parseStrictJsonDocument(evidenceBytes, 'A12C dual-DAG evidence');
+  if (document.rawSha256 !== anchor.rawSha256
+    || document.canonicalSha256 !== anchor.canonicalSha256) {
+    throw new Error('A12C evidence raw/canonical digest does not match the compiled anchor');
+  }
+  const evidence = document.parsed;
+  assertExactKeys(evidence, EVIDENCE_TOP_LEVEL_KEYS, 'A12C evidence');
+  if (evidence.artifactType !== 'arkova-s33-wave1-r12-dual-dag-verification'
+    || evidence.schemaVersion !== 1
+    || evidence.selfPinned !== false) {
+    throw new Error('A12C evidence identity/schema/selfPinned contract is invalid');
+  }
+  if (!isRecord(evidence.bindingContext)) throw new Error('A12C evidence bindingContext must be an object');
+  assertExactKeys(evidence.bindingContext, EVIDENCE_BINDING_CONTEXT_KEYS, 'A12C evidence bindingContext');
+  if (evidence.bindingContext.evidenceCommitPolicy !== EVIDENCE_COMMIT_POLICY) {
+    throw new Error('A12C evidence commit policy does not match the reviewed contract');
+  }
+  if (!isRecord(evidence.pins) || !isRecord(evidence.report)) {
+    throw new Error('A12C evidence pins/report must be objects');
+  }
+  return {
+    canonicalSha256: document.canonicalSha256,
+    evidence,
+    evidenceBytes,
+    rawSha256: document.rawSha256,
+  };
+}
+
+function recomputeAnchoredEvidenceReport(input: Readonly<{
+  anchor: Readonly<S33Wave1R12EvidenceAnchor>;
+  evidence: JsonRecord;
+  expectedProducerHeadSha: string;
+  finalHeadSha: string;
+  repositoryRoot: string;
+}>): Readonly<{ pins: S33Wave1DualDagPins; report: Readonly<S33Wave1DualDagReport> }> {
+  const { anchor, evidence, expectedProducerHeadSha, finalHeadSha, repositoryRoot } = input;
+  const pins = evidence.pins as unknown as S33Wave1DualDagPins;
+  if (pins.final?.headSha !== finalHeadSha) {
+    throw new Error('A12C must be the sole child of the exact materialized F12C head');
+  }
+  if (pins.revision12?.headSha !== expectedProducerHeadSha) {
+    throw new Error('A12C evidence revision-12 producer does not match the requested frozen head');
+  }
+  const supportBaselineTreeSha = commitTree(
+    repositoryRoot,
+    pins.supportBaseline?.commitSha,
+    'A12C support baseline',
+  );
+  const bindingContext = evidence.bindingContext as JsonRecord;
+  if (bindingContext.supportBaselineTreeSha !== supportBaselineTreeSha) {
+    throw new Error('A12C evidence support-baseline tree binding does not match Git');
+  }
+  const report = verifyS33Wave1DualDagContract({ repositoryRoot, pins });
+  assertCanonicalEqual(evidence.report, report, 'A12C stored/recomputed dual-DAG report');
+  if (anchor.reportDigestSha256 !== undefined
+    && report.reportDigestSha256 !== anchor.reportDigestSha256) {
+    throw new Error('A12C recomputed report digest does not match the compiled anchor');
+  }
+  return { pins, report };
+}
+
+function verifiedS33Wave1R12EvidenceWithAnchor(input: Readonly<{
+  anchor: Readonly<S33Wave1R12EvidenceAnchor>;
+  expectedProducerHeadSha: string;
+  repositoryRoot: string;
+}>): S33Wave1R12VerifiedEvidence {
+  const { anchor, expectedProducerHeadSha, repositoryRoot } = input;
+  assertGitObject(expectedProducerHeadSha, 'Expected revision-12 producer head');
+  const finalHeadSha = verifyEvidenceAnchorTopology(repositoryRoot, anchor);
+  const document = parseAnchoredEvidenceDocument(repositoryRoot, anchor);
+  const { pins, report } = recomputeAnchoredEvidenceReport({
+    anchor, evidence: document.evidence, expectedProducerHeadSha, finalHeadSha, repositoryRoot,
+  });
+  return {
+    blobSha: anchor.blobSha,
+    canonicalSha256: document.canonicalSha256,
+    commitSha: anchor.commitSha,
+    evidenceBytes: document.evidenceBytes,
+    pins: deepFreeze(structuredClone(pins)),
+    rawSha256: document.rawSha256,
+    report,
+  };
+}
+
+/** Production verifier: the evidence authority is compiled and cannot be caller supplied. */
+export function verifyS33Wave1R12Evidence(input: Readonly<{
+  expectedProducerHeadSha: string;
+  repositoryRoot: string;
+}>): S33Wave1R12VerifiedEvidence {
+  return verifiedS33Wave1R12EvidenceWithAnchor({
+    ...input,
+    anchor: S33_WAVE1_R12_PRODUCTION_EVIDENCE_ANCHOR,
+  });
+}
+
+/** Synthetic anchors exist only to exercise negative fixtures in the test process. */
+export function createTestOnlyS33Wave1R12EvidenceVerifier(
+  anchor: Readonly<S33Wave1R12EvidenceAnchor>,
+): (input: Readonly<{
+  expectedProducerHeadSha: string;
+  repositoryRoot: string;
+}>) => S33Wave1R12VerifiedEvidence {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Synthetic S33 Wave-1 evidence anchors are forbidden outside NODE_ENV=test');
+  }
+  const captured = deepFreeze(structuredClone(anchor));
+  return (input) => verifiedS33Wave1R12EvidenceWithAnchor({ ...input, anchor: captured });
 }

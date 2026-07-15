@@ -33,6 +33,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { S33Wave1DualDagEvidenceFacts } from './s33-wave1-producer-verifier.js';
 
 function compareUtf16CodeUnits(left: string, right: string): number {
   if (left < right) return -1;
@@ -1460,6 +1461,7 @@ export interface AuthenticatedS33Wave1EvidenceBundle {
     digestSha256: string;
   }>;
   requiredChecks: VerifiedGitHubTrustRoot['requiredChecks'];
+  dualDagEvidence: Readonly<S33Wave1DualDagEvidenceFacts>;
   reports: {
     crossReview: AuthenticatedReportBytes;
     prodModelDiff: AuthenticatedReportBytes;
@@ -2399,6 +2401,7 @@ function renderEvidenceReport(evidence: Record<string, unknown>): string {
   const reports = evidence.workflowReports as Record<string, { rawSha256: string; canonicalSha256: string }>;
   const lane3 = authenticatedLane3AcceptanceFacts(evidence);
   const branchProtection = authenticatedBranchProtectionFacts(evidence);
+  const dualDag = record(evidence.dualDagEvidence, 'Authenticated GitHub evidence dualDagEvidence');
   const lines = [
     '# S3.3 Wave-1 GitHub-authenticated evidence',
     '',
@@ -2408,6 +2411,8 @@ function renderEvidenceReport(evidence: Record<string, unknown>): string {
     `- Producer tree: ${String(evidence.producerTreeSha)}`,
     `- Manifest raw SHA-256: ${String(evidence.manifestRawSha256)}`,
     `- Manifest canonical SHA-256: ${String(evidence.manifestCanonicalSha256)}`,
+    `- S12/F12C/A12C/r12: ${String(dualDag.supportHeadSha)} / ${String(dualDag.finalCommitSha)} / ${String(dualDag.evidenceCommitSha)} / ${String(dualDag.revision12HeadSha)}`,
+    `- A12C blob SHA-1 / raw SHA-256 / canonical SHA-256 / report SHA-256: ${String(dualDag.evidenceBlobSha)} / ${String(dualDag.evidenceRawSha256)} / ${String(dualDag.evidenceCanonicalSha256)} / ${String(dualDag.reportDigestSha256)}`,
     `- Branch protection: ${branchProtection.url} (digest ${branchProtection.digestSha256})`,
     `- Reviewer: ${approval.reviewer.login} (databaseId ${approval.reviewer.databaseId}; nodeId ${approval.reviewer.id})`,
     `- Review: ${approval.reviewId}`,
@@ -2450,6 +2455,15 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
   assertSha(mainHeadSha, SHA1_RE, 'Local main head SHA');
   assertSha(producerHeadSha, SHA1_RE, 'Local producer head SHA');
   assertSha(producerTreeSha, SHA1_RE, 'Local producer tree SHA');
+  const producerVerifier = await import('./s33-wave1-producer-verifier.js');
+  const producerValidation = producerVerifier.verifyS33Wave1ProducerHead({
+    producerHeadSha,
+    repositoryRoot: producerRepositoryRoot,
+  });
+  if (producerValidation.dualDagEvidence === null) {
+    throw new Error('Authenticated Wave-1 GitHub evidence requires the compiled revision-12 dual-DAG proof');
+  }
+  const dualDagEvidence = producerValidation.dualDagEvidence;
   const lineage = git(producerRepositoryRoot, ['rev-list', '--parents', '-n', '1', 'HEAD']).split(/\s+/u);
   if (lineage.length !== 2 || lineage[0] !== producerHeadSha) {
     throw new Error('PR #1498 producer head must be one exact single-parent commit');
@@ -2574,6 +2588,7 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     authenticatedReviewBody: trust.authenticatedReviewBody,
     branchProtection: { ...trust.branchProtection },
     requiredChecks: trust.requiredChecks,
+    dualDagEvidence: { ...dualDagEvidence },
     reports: {
       crossReview: {
         filename: OUTPUT_FILENAMES.crossReview,
@@ -2607,7 +2622,8 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     || lane3AcceptanceRecord.producerHeadSha !== producerHeadSha
     || lane3AcceptanceRecord.producerTreeSha !== producerTreeSha
     || lane3AcceptanceRecord.manifestRawSha256 !== manifest.manifestRawSha256
-    || lane3AcceptanceRecord.manifestCanonicalSha256 !== manifest.manifestCanonicalSha256) {
+    || lane3AcceptanceRecord.manifestCanonicalSha256 !== manifest.manifestCanonicalSha256
+    || canonicaliseJson(lane3AcceptanceRecord.dualDagEvidence) !== canonicaliseJson(dualDagEvidence)) {
     throw new Error('Lane-3 acceptance artifact does not bind the authenticated Wave-1 facts');
   }
   const artifactDigestSha256 = nonEmptyString(
@@ -2681,6 +2697,7 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
         role: 'diagnostic-only',
         canOverrideExactScan: false,
       },
+      dualDagEvidence,
     },
   };
   const acceptanceInputCanonical = canonicaliseJson(acceptanceInput);
@@ -2705,6 +2722,7 @@ export async function authenticateS33Wave1GitHubEvidence(options: AuthenticateOp
     approval: trust.approval,
     prodDiffAdjudication,
     prerequisiteInventory: inventory,
+    dualDagEvidence,
     lane3Acceptance: {
       filename: OUTPUT_FILENAMES.lane3Acceptance,
       artifactDigestSha256,
@@ -2771,6 +2789,7 @@ function renderComment(
   const checks = evidence.requiredChecks as VerifiedGitHubTrustRoot['requiredChecks'];
   const workflowReports = evidence.workflowReports as Record<string, { rawSha256: string; canonicalSha256: string }>;
   const crossReview = evidence.crossReview as { rawSha256: string; canonicalSha256: string };
+  const dualDag = record(evidence.dualDagEvidence, 'Authenticated dual-DAG evidence');
   const lane3 = authenticatedLane3AcceptanceFacts(evidence);
   const branchProtection = authenticatedBranchProtectionFacts(evidence);
   const lines = [
@@ -2782,6 +2801,8 @@ function renderComment(
     `- GitHub evidence raw/canonical SHA-256: \`${sha256(evidenceBytes)}\``,
     `- Producer head/tree: \`${String(evidence.producerHeadSha)}\` / \`${String(evidence.producerTreeSha)}\``,
     `- Manifest raw/canonical SHA-256: \`${String(evidence.manifestRawSha256)}\` / \`${String(evidence.manifestCanonicalSha256)}\``,
+    `- S12/F12C/A12C/r12: \`${String(dualDag.supportHeadSha)}\` / \`${String(dualDag.finalCommitSha)}\` / \`${String(dualDag.evidenceCommitSha)}\` / \`${String(dualDag.revision12HeadSha)}\``,
+    `- A12C blob SHA-1 / raw SHA-256 / canonical SHA-256 / report SHA-256: \`${String(dualDag.evidenceBlobSha)}\` / \`${String(dualDag.evidenceRawSha256)}\` / \`${String(dualDag.evidenceCanonicalSha256)}\` / \`${String(dualDag.reportDigestSha256)}\``,
     `- Branch protection: [fixed main rule](${branchProtection.url}); digest \`${branchProtection.digestSha256}\``,
     `- APPROVED review: \`${approval.reviewId}\`; reviewer \`${approval.reviewer.login}\` (databaseId \`${approval.reviewer.databaseId}\`, nodeId \`${approval.reviewer.id}\`)`,
     `- Cross-review raw/canonical SHA-256: \`${crossReview.rawSha256}\` / \`${crossReview.canonicalSha256}\``,

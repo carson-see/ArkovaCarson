@@ -9,7 +9,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import ts from 'typescript';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
 import type { GroundTruthFields } from './types.js';
 import {
@@ -27,18 +26,29 @@ import {
   WAVE1_SOURCE_BLOB_PATHS,
   WAVE1_TYPES_PATH,
   canonicalManifestHash,
+  parseStrictJsonDocument,
   rawManifestHash,
   validateActiveS33Wave1PacketMirrors,
   type ParsedBatchManifest,
 } from './s33-batch-acceptance.js';
+import {
+  S33_WAVE1_R12_EVIDENCE_PATH,
+  S33_WAVE1_R12_EVIDENCE_REF,
+  S33_WAVE1_R12_FREEZE_REF,
+  verifyS33Wave1R12Evidence,
+  type S33Wave1R12VerifiedEvidence,
+} from './s33-wave1-dual-dag.js';
+import {
+  assertS33SourceParseDiagnostics,
+  parseS33ProducerModule,
+} from './s33-wave1-producer-parser.js';
+export { assertS33SourceParseDiagnostics, parseS33ProducerModule };
 
 function compareUtf16CodeUnits(left: string, right: string): number {
   if (left < right) return -1;
   if (left > right) return 1;
   return 0;
 }
-
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 interface ParsedProducerEntry {
   category: string;
@@ -47,6 +57,24 @@ interface ParsedProducerEntry {
   sourcePath: string;
   strippedText: string;
 }
+
+export type S33Wave1ProducerManifestKind = 'legacy-blocked' | 'revision-12-dual-dag';
+
+export const S33_WAVE1_R12_PRODUCER_TYPES_BLOB =
+  'dcc94b716f18240787640ba07dcdd4ad46a7cfe6' as const;
+export const S33_WAVE1_R12_CREDENTIAL_TYPE_COUNTS = Object.freeze({
+  ATTESTATION: 3,
+  BUSINESS_ENTITY: 2,
+  CERTIFICATE: 4,
+  CLE: 11,
+  CPE: 31,
+  DEGREE: 2,
+  FINANCIAL: 1,
+  IDENTITY: 1,
+  LICENSE: 16,
+  OTHER: 9,
+  TRANSCRIPT: 1,
+});
 
 export interface S33Wave1ProducerEntryResult {
   id: string;
@@ -75,6 +103,7 @@ export interface S33Wave1ProducerValidationReport {
     ood: 9;
     total: 81;
   }>;
+  dualDagEvidence: Readonly<S33Wave1DualDagEvidenceFacts> | null;
   entries: readonly S33Wave1ProducerEntryResult[];
   manifestCanonicalSha256: string;
   manifestRawSha256: string;
@@ -93,6 +122,25 @@ export interface S33Wave1ProducerValidationReport {
   }>;
 }
 
+export interface S33Wave1DualDagEvidenceFacts {
+  evidenceBlobSha: string;
+  evidenceCanonicalSha256: string;
+  evidenceCommitSha: string;
+  evidencePath: typeof S33_WAVE1_R12_EVIDENCE_PATH;
+  evidenceRawSha256: string;
+  evidenceRef: typeof S33_WAVE1_R12_EVIDENCE_REF;
+  evidenceTreeSha: string;
+  finalCommitSha: string;
+  finalRef: typeof S33_WAVE1_R12_FREEZE_REF;
+  finalTreeSha: string;
+  reportDigestSha256: string;
+  revision12FailureCount: 0;
+  revision12HeadSha: string;
+  supportHeadSha: string;
+  supportTreeSha: string;
+  supportTypesBlobSha: string;
+}
+
 const GIT_EXECUTABLE = '/usr/bin/git';
 const GIT_ENV = Object.freeze({
   HOME: '/nonexistent',
@@ -109,7 +157,6 @@ const GIT_ENV = Object.freeze({
   GIT_NO_REPLACE_OBJECTS: '1',
 });
 const GIT_OBJECT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
-const MAX_WAVE1_PRODUCER_ROWS = 81;
 const WAVE1_PACKET_PATHS = Object.freeze([
   WAVE1_CORPUS_DATASHEET_PATH,
   WAVE1_MANIFEST_PATH,
@@ -199,157 +246,6 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function unwrapExpression(expression: ts.Expression): ts.Expression {
-  let current = expression;
-  while (ts.isAsExpression(current)
-    || ts.isTypeAssertionExpression(current)
-    || ts.isSatisfiesExpression(current)
-    || ts.isParenthesizedExpression(current)
-    || ts.isNonNullExpression(current)) {
-    current = current.expression;
-  }
-  return current;
-}
-
-function propertyName(name: ts.PropertyName, label: string): string {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
-    return name.text;
-  }
-  throw new Error(`${label} uses a computed or unsupported property name`);
-}
-
-function parseLiteralExpression(expression: ts.Expression, label: string): JsonValue {
-  const value = unwrapExpression(expression);
-  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) return value.text;
-  if (ts.isNumericLiteral(value)) {
-    const number = Number(value.text);
-    if (!Number.isFinite(number)) throw new Error(`${label} contains a non-finite number`);
-    return number;
-  }
-  if (value.kind === ts.SyntaxKind.TrueKeyword) return true;
-  if (value.kind === ts.SyntaxKind.FalseKeyword) return false;
-  if (value.kind === ts.SyntaxKind.NullKeyword) return null;
-  if (ts.isPrefixUnaryExpression(value)
-    && (value.operator === ts.SyntaxKind.MinusToken || value.operator === ts.SyntaxKind.PlusToken)
-    && ts.isNumericLiteral(value.operand)) {
-    const number = Number(`${value.operator === ts.SyntaxKind.MinusToken ? '-' : ''}${value.operand.text}`);
-    if (!Number.isFinite(number)) throw new Error(`${label} contains a non-finite number`);
-    return number;
-  }
-  if (ts.isArrayLiteralExpression(value)) {
-    return value.elements.map((element, index) => {
-      if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) {
-        throw new Error(`${label}[${index}] may not be spread or omitted data`);
-      }
-      return parseLiteralExpression(element, `${label}[${index}]`);
-    });
-  }
-  if (ts.isObjectLiteralExpression(value)) {
-    const result: Record<string, JsonValue> = Object.create(null) as Record<string, JsonValue>;
-    for (const property of value.properties) {
-      if (!ts.isPropertyAssignment(property)) {
-        throw new Error(`${label} may contain only explicit property assignments`);
-      }
-      const key = propertyName(property.name, label);
-      if (Object.hasOwn(result, key)) throw new Error(`${label} contains duplicate property ${key}`);
-      result[key] = parseLiteralExpression(property.initializer, `${label}.${key}`);
-    }
-    return result;
-  }
-  throw new Error(`${label} must be literal producer data; executable/computed syntax is forbidden`);
-}
-
-function hasExportModifier(statement: ts.VariableStatement): boolean {
-  return statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false;
-}
-
-export function assertS33SourceParseDiagnostics(source: ts.SourceFile, sourcePath: string): void {
-  const parseDiagnostics = (source as ts.SourceFile & {
-    readonly parseDiagnostics?: readonly ts.Diagnostic[];
-  }).parseDiagnostics;
-  if (!Array.isArray(parseDiagnostics)) {
-    throw new Error(`${sourcePath} TypeScript parser diagnostics API is unavailable`);
-  }
-  if (parseDiagnostics.length > 0) {
-    throw new Error(`${sourcePath} contains TypeScript parse diagnostics`);
-  }
-}
-
-/** Parse only the named exported array graph; producer code is never evaluated. */
-export function parseS33ProducerModule(
-  sourceText: string,
-  sourcePath: string,
-  exportName: string,
-): Record<string, unknown>[] {
-  const source = ts.createSourceFile(sourcePath, sourceText, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
-  assertS33SourceParseDiagnostics(source, sourcePath);
-  const declarations = new Map<string, Readonly<{ initializer: ts.Expression; isConst: boolean }>>();
-  const exported = new Set<string>();
-  for (const statement of source.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
-      if (declarations.has(declaration.name.text)) {
-        throw new Error(`${sourcePath} contains duplicate declaration ${declaration.name.text}`);
-      }
-      declarations.set(declaration.name.text, {
-        initializer: declaration.initializer,
-        isConst: (statement.declarationList.flags & ts.NodeFlags.Const) !== 0,
-      });
-      if (hasExportModifier(statement)) exported.add(declaration.name.text);
-    }
-  }
-  if (!exported.has(exportName)) throw new Error(`${sourcePath} must directly export const ${exportName}`);
-
-  const evaluating = new Set<string>();
-  const evaluated = new Map<string, Record<string, unknown>[]>();
-  const appendRows = (
-    target: Record<string, unknown>[],
-    additions: readonly Record<string, unknown>[],
-    label: string,
-  ): void => {
-    if (target.length + additions.length > MAX_WAVE1_PRODUCER_ROWS) {
-      throw new Error(`${sourcePath} ${label} exceeds the maximum 81-row Wave-1 corpus`);
-    }
-    target.push(...additions);
-  };
-  const evaluateArray = (expression: ts.Expression, label: string): Record<string, unknown>[] => {
-    const value = unwrapExpression(expression);
-    if (ts.isIdentifier(value)) {
-      const declaration = declarations.get(value.text);
-      if (!declaration) throw new Error(`${sourcePath} references unknown array ${value.text}`);
-      if (!declaration.isConst) throw new Error(`${sourcePath} array ${value.text} must be declared const`);
-      const cached = evaluated.get(value.text);
-      if (cached) return cached;
-      if (evaluating.has(value.text)) throw new Error(`${sourcePath} contains cyclic array ${value.text}`);
-      evaluating.add(value.text);
-      const result = evaluateArray(declaration.initializer, value.text);
-      evaluating.delete(value.text);
-      evaluated.set(value.text, result);
-      return result;
-    }
-    if (!ts.isArrayLiteralExpression(value)) {
-      throw new Error(`${sourcePath} ${label} must resolve to a literal array graph`);
-    }
-    const result: Record<string, unknown>[] = [];
-    value.elements.forEach((element, index) => {
-      if (ts.isSpreadElement(element)) {
-        appendRows(result, evaluateArray(element.expression, `${label}[${index}] spread`), label);
-        return;
-      }
-      if (ts.isOmittedExpression(element)) throw new Error(`${sourcePath} ${label} contains an omitted row`);
-      const parsed = parseLiteralExpression(element, `${sourcePath} ${label}[${index}]`);
-      if (!isRecord(parsed)) throw new Error(`${sourcePath} ${label}[${index}] must be an object`);
-      appendRows(result, [parsed], label);
-    });
-    return result;
-  };
-
-  const exportedDeclaration = declarations.get(exportName)!;
-  if (!exportedDeclaration.isConst) throw new Error(`${sourcePath} must directly export const ${exportName}`);
-  return evaluateArray(exportedDeclaration.initializer, exportName);
-}
-
 function parsedEntry(value: Record<string, unknown>, sourcePath: string): ParsedProducerEntry {
   const id = requiredString(value.id, `${sourcePath} entry.id`);
   const groundTruth = value.groundTruth;
@@ -367,6 +263,12 @@ function countValues(values: readonly string[]): Record<string, number> {
   const counts: Record<string, number> = Object.create(null) as Record<string, number>;
   for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
   return Object.fromEntries(Object.entries(counts).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+}
+
+function expectedCredentialCounts(status: unknown): Readonly<Record<string, number>> {
+  return status === 'PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE'
+    ? S33_WAVE1_R12_CREDENTIAL_TYPE_COUNTS
+    : WAVE1_CREDENTIAL_TYPE_COUNTS;
 }
 
 function assertCountMap(
@@ -387,6 +289,178 @@ function assertExactUniverse(entries: readonly ParsedProducerEntry[]): void {
   if (actual.length !== expected.length || actual.some((id, index) => id !== expected[index])) {
     throw new Error('Producer corpus does not match the exact Wave-1 81-id universe');
   }
+}
+
+export function classifyS33Wave1ProducerManifest(
+  manifestContent: string | Uint8Array,
+): S33Wave1ProducerManifestKind {
+  const document = parseStrictJsonDocument(manifestContent, 'Wave-1 producer dispatch manifest');
+  const manifest = document.parsed;
+  if (manifest.schemaVersion !== 1 || manifest.batchId !== 'S33-W1') {
+    throw new Error('Wave-1 producer dispatch requires schemaVersion 1 and batchId S33-W1');
+  }
+  if (typeof manifest.revision !== 'number' || typeof manifest.status !== 'string') {
+    throw new Error('Wave-1 producer dispatch requires the exact supported revision/status tuple');
+  }
+  if (manifest.revision === 10 && manifest.status === 'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW') {
+    return 'legacy-blocked';
+  }
+  if (manifest.revision === 12
+    && manifest.status === 'PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE') {
+    return 'revision-12-dual-dag';
+  }
+  throw new Error('Wave-1 producer dispatch status is not an approved contract');
+}
+
+interface VerifiedProducerProvenance {
+  corpusSourceBlobs: Record<string, string>;
+  producerChangedPaths: string[];
+  producerParentSha: string;
+  producerTreeSha: string;
+  support: S33Wave1ProducerValidationReport['support'];
+}
+
+function r12ManifestFromVerifiedEvidence(
+  manifestContent: Buffer,
+  evidence: S33Wave1R12VerifiedEvidence,
+): ParsedBatchManifest {
+  const parsedJson = parseStrictJsonDocument(manifestContent, 'Verified revision-12 manifest').parsed;
+  const entries = parsedJson.entries;
+  if (!Array.isArray(entries) || entries.length !== 81) {
+    throw new Error('Verified revision-12 manifest must contain exactly 81 entries');
+  }
+  const normalizedEntries = entries.map((value, index) => {
+    if (!isRecord(value)) throw new Error(`Verified revision-12 manifest entry ${index} must be an object`);
+    return {
+      credentialType: requiredString(value.credentialType, `revision-12 manifest entry ${index}.credentialType`),
+      domain: requiredString(value.domain, `revision-12 manifest entry ${index}.domain`),
+      id: requiredString(value.id, `revision-12 manifest entry ${index}.id`),
+      normalizedInputSha256: requiredString(
+        value.normalizedInputSha256,
+        `revision-12 manifest entry ${index}.normalizedInputSha256`,
+      ),
+    };
+  });
+  if (parsedJson.revision !== 12
+    || parsedJson.batchId !== 'S33-W1'
+    || parsedJson.schemaVersion !== 1
+    || parsedJson.entryCount !== 81
+    || parsedJson.intendedSplit !== 'held-out-candidate'
+    || parsedJson.reviewOrder !== 'kenya-first'
+    || parsedJson.acceptanceScope !== 'whole-batch-only') {
+    throw new Error('Verified revision-12 manifest identity fields do not match the Wave-1 contract');
+  }
+  if (!isRecord(parsedJson.selfChecks)
+    || !isRecord(parsedJson.selfChecks.lane3Acceptance)
+    || parsedJson.selfChecks.lane3Acceptance.status !== 'NOT_RUN_PRODUCER_BOUNDARY') {
+    throw new Error('Verified revision-12 manifest must remain NOT_RUN at the producer boundary');
+  }
+  if (evidence.report.revision12.headSha !== evidence.pins.revision12.headSha) {
+    throw new Error('Verified revision-12 evidence report/pins disagree');
+  }
+  return {
+    batchId: 'S33-W1',
+    entries: normalizedEntries,
+    entryCount: 81,
+    intendedSplit: 'held-out-candidate',
+    parsedJson: parsedJson as Record<string, unknown>,
+    revision: 12,
+    schemaVersion: 1,
+  };
+}
+
+function r12Provenance(
+  repositoryRoot: string,
+  producerHeadSha: string,
+  evidence: S33Wave1R12VerifiedEvidence,
+): VerifiedProducerProvenance {
+  const producerTreeSha = gitText(repositoryRoot, ['rev-parse', `${producerHeadSha}^{tree}`], 'r12 producer tree');
+  assertGitObject(producerTreeSha, 'r12 producer tree');
+  const corpusSourceBlobs = Object.fromEntries(WAVE1_SOURCE_BLOB_PATHS.map((path) => [
+    path,
+    evidence.report.revision12.packetBlobs[path],
+  ]));
+  const parentRetainedTypesBlob = gitBlob(
+    repositoryRoot,
+    evidence.pins.historical.headSha,
+    WAVE1_TYPES_PATH,
+    'r12 parent producer-tree types blob',
+  );
+  const producerTypesBlob = gitBlob(repositoryRoot, producerHeadSha, WAVE1_TYPES_PATH, 'r12 producer-tree types blob');
+  if (parentRetainedTypesBlob !== S33_WAVE1_R12_PRODUCER_TYPES_BLOB
+    || producerTypesBlob !== S33_WAVE1_R12_PRODUCER_TYPES_BLOB) {
+    throw new Error('Revision-12 producer lineage must retain its exact independent dcc94b types blob');
+  }
+  return {
+    corpusSourceBlobs,
+    producerChangedPaths: [...evidence.report.revision12.immediateParentChangedPaths],
+    producerParentSha: evidence.pins.historical.headSha,
+    producerTreeSha,
+    support: {
+      commit: evidence.pins.supportBaseline.commitSha,
+      parentRetainedTypesBlob,
+      typesBlob: evidence.pins.supportBaseline.typesBlobSha,
+      typesPath: WAVE1_TYPES_PATH,
+    },
+  };
+}
+
+function r12EvidenceFacts(
+  repositoryRoot: string,
+  evidence: S33Wave1R12VerifiedEvidence,
+): Readonly<S33Wave1DualDagEvidenceFacts> {
+  const evidenceTreeSha = gitText(
+    repositoryRoot,
+    ['rev-parse', `${evidence.commitSha}^{tree}`],
+    'A12C evidence tree',
+  );
+  assertGitObject(evidenceTreeSha, 'A12C evidence tree');
+  return deepFreeze({
+    evidenceBlobSha: evidence.blobSha,
+    evidenceCanonicalSha256: evidence.canonicalSha256,
+    evidenceCommitSha: evidence.commitSha,
+    evidencePath: S33_WAVE1_R12_EVIDENCE_PATH,
+    evidenceRawSha256: evidence.rawSha256,
+    evidenceRef: S33_WAVE1_R12_EVIDENCE_REF,
+    evidenceTreeSha,
+    finalCommitSha: evidence.report.final.headSha,
+    finalRef: S33_WAVE1_R12_FREEZE_REF,
+    finalTreeSha: evidence.report.final.treeSha,
+    reportDigestSha256: evidence.report.reportDigestSha256,
+    revision12FailureCount: evidence.report.revision12.failureCount,
+    revision12HeadSha: evidence.report.revision12.headSha,
+    supportHeadSha: evidence.report.support.headSha,
+    supportTreeSha: evidence.report.support.treeSha,
+    supportTypesBlobSha: evidence.report.support.typesBlobSha,
+  });
+}
+
+function verifyProducerRevision(
+  repositoryRoot: string,
+  producerHeadSha: string,
+  manifestContent: Buffer,
+): Readonly<{
+  dualDagEvidence: Readonly<S33Wave1DualDagEvidenceFacts> | null;
+  manifest: ParsedBatchManifest;
+  provenance: VerifiedProducerProvenance;
+}> {
+  if (classifyS33Wave1ProducerManifest(manifestContent) === 'legacy-blocked') {
+    const manifest = validateActiveS33Wave1PacketMirrors(repositoryRoot, producerHeadSha, manifestContent);
+    return {
+      dualDagEvidence: null,
+      manifest,
+      provenance: verifyProvenance(repositoryRoot, producerHeadSha, manifest),
+    };
+  }
+  const evidence = verifyS33Wave1R12Evidence({
+    expectedProducerHeadSha: producerHeadSha,
+    repositoryRoot,
+  });
+  return {
+    dualDagEvidence: r12EvidenceFacts(repositoryRoot, evidence),
+    manifest: r12ManifestFromVerifiedEvidence(manifestContent, evidence),
+    provenance: r12Provenance(repositoryRoot, producerHeadSha, evidence),
+  };
 }
 
 function verifyProvenance(
@@ -506,12 +580,11 @@ export function verifyS33Wave1ProducerHead(input: Readonly<{
 }>): Readonly<S33Wave1ProducerValidationReport> {
   assertGitObject(input.producerHeadSha, 'Wave-1 producer head');
   const manifestContent = readGitPath(input.repositoryRoot, input.producerHeadSha, WAVE1_MANIFEST_PATH);
-  const manifest = validateActiveS33Wave1PacketMirrors(
+  const { dualDagEvidence, manifest, provenance } = verifyProducerRevision(
     input.repositoryRoot,
     input.producerHeadSha,
     manifestContent,
   );
-  const provenance = verifyProvenance(input.repositoryRoot, input.producerHeadSha, manifest);
 
   const entries: ParsedProducerEntry[] = [];
   for (const path of WAVE1_SOURCE_BLOB_PATHS) {
@@ -575,7 +648,8 @@ export function verifyS33Wave1ProducerHead(input: Readonly<{
   const byCredentialType = countValues(credentialTypes);
   const byCorpusSlice = countValues(corpusSlices);
   assertCountMap(byDomain, WAVE1_DOMAIN_COUNTS, 'Actual producer domain counts');
-  assertCountMap(byCredentialType, WAVE1_CREDENTIAL_TYPE_COUNTS, 'Actual producer credential-type counts');
+  const expectedCredentialTypeCounts = expectedCredentialCounts(manifest.parsedJson.status);
+  assertCountMap(byCredentialType, expectedCredentialTypeCounts, 'Actual producer credential-type counts');
   assertCountMap(byCorpusSlice, WAVE1_CORPUS_SLICE_COUNTS, 'Actual producer corpus-slice counts');
 
   const withoutDigest = {
@@ -590,6 +664,7 @@ export function verifyS33Wave1ProducerHead(input: Readonly<{
       ood: 9 as const,
       total: 81 as const,
     },
+    dualDagEvidence,
     entries: results,
     manifestCanonicalSha256: canonicalManifestHash(manifestContent),
     manifestRawSha256: rawManifestHash(manifestContent),

@@ -39,7 +39,7 @@ jobs:
           test "${GITHUB_RUN_ATTEMPT}" = "1"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
 
-      - name: Fetch exact #1498 Git objects as data (bare; never checkout)
+      - name: Fetch complete #1498 and fixed F12C/A12C histories as data (bare; never checkout)
         id: producer
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,12 +56,16 @@ jobs:
           BASIC_AUTH=$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)
           git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" \
             -c http.extraHeader="AUTHORIZATION: basic ${BASIC_AUTH}" \
-            fetch --quiet --no-tags --depth=2 \
+            fetch --atomic --quiet --no-tags \
             https://github.com/carson-see/ArkovaCarson.git \
-            refs/pull/1498/head:refs/heads/producer
+            refs/pull/1498/head:refs/heads/producer \
+            refs/heads/codex/s33-wave1-f12c-freeze-20260714:refs/heads/codex/s33-wave1-f12c-freeze-20260714 \
+            refs/heads/codex/s33-wave1-a12c-evidence-20260714:refs/heads/codex/s33-wave1-a12c-evidence-20260714
           unset BASIC_AUTH
           git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" symbolic-ref HEAD refs/heads/producer
           test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse HEAD)" = "${PRODUCER_HEAD_SHA}"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/codex/s33-wave1-a12c-evidence-20260714)" = "3508e5e9c7e100e9c55c0cba129d8d7b9d123bec"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/codex/s33-wave1-f12c-freeze-20260714)" = "447326ddd2225524895f35cbafda58b15555ed30"
           test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-list --parents -n 1 HEAD | wc -w | tr -d ' ')" = "2"
           PRODUCER_TREE_SHA=$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse 'HEAD^{tree}')
           git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" show \
@@ -141,7 +145,7 @@ jobs:
           test -f "${RUNNER_TEMP}/s33-wave1-prerequisite-finals/prod-model-diff.json"
           test -f "${RUNNER_TEMP}/s33-wave1-prerequisite-finals/embedding-diagnostic.json"
 
-      - name: Revalidate frozen #1498 head tree manifest and final bindings before upload
+      - name: Revalidate frozen #1498 and F12C/A12C refs plus final bindings before upload
         env:
           GH_TOKEN: ${{ github.token }}
           S33_PRODUCER_OBJECT_REPOSITORY: ${{ runner.temp }}/s33-producer.git
@@ -160,11 +164,17 @@ jobs:
           BASIC_AUTH=$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)
           git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" \
             -c http.extraHeader="AUTHORIZATION: basic ${BASIC_AUTH}" \
-            fetch --quiet --no-tags --depth=2 \
+            fetch --atomic --quiet --no-tags \
             https://github.com/carson-see/ArkovaCarson.git \
-            +refs/pull/1498/head:refs/heads/final
+            +refs/pull/1498/head:refs/heads/final \
+            +refs/heads/codex/s33-wave1-f12c-freeze-20260714:refs/heads/f12c-final \
+            +refs/heads/codex/s33-wave1-a12c-evidence-20260714:refs/heads/a12c-final
           unset BASIC_AUTH
           test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/final)" = "${S33_INITIAL_HEAD_SHA}"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/a12c-final)" = "3508e5e9c7e100e9c55c0cba129d8d7b9d123bec"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/f12c-final)" = "447326ddd2225524895f35cbafda58b15555ed30"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/f12c-final)" = "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/codex/s33-wave1-f12c-freeze-20260714)"
+          test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/a12c-final)" = "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse refs/heads/codex/s33-wave1-a12c-evidence-20260714)"
           test "$(git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" rev-parse 'refs/heads/final^{tree}')" = "${S33_INITIAL_TREE_SHA}"
           git --git-dir="${S33_PRODUCER_OBJECT_REPOSITORY}" show \
             "refs/heads/final:docs/lane4/s33-wave1-batch-manifest.json" > "${RUNNER_TEMP}/s33-wave1-manifest.final.json"
@@ -176,6 +186,10 @@ jobs:
             test "$(jq -r '.payload.producerTreeSha' "${S33_FINAL_OUTPUT_DIRECTORY}/${REPORT}")" = "${S33_INITIAL_TREE_SHA}"
             test "$(jq -r '.payload.manifestCanonicalSha256' "${S33_FINAL_OUTPUT_DIRECTORY}/${REPORT}")" = "${S33_INITIAL_MANIFEST_CANONICAL_SHA256}"
           done
+          npm --prefix services/worker exec -- tsx \
+            src/ai/eval/s33-wave1-producer-verifier.ts verify \
+            --repository-root "${S33_PRODUCER_OBJECT_REPOSITORY}" \
+            --producer-head "${S33_INITIAL_HEAD_SHA}"
 
       - name: Upload exact prod-model-diff final
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

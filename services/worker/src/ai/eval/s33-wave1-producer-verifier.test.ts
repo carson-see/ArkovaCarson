@@ -17,6 +17,8 @@ import {
 } from './s33-batch-acceptance.js';
 import {
   assertS33SourceParseDiagnostics,
+  S33_WAVE1_R12_CREDENTIAL_TYPE_COUNTS,
+  classifyS33Wave1ProducerManifest,
   parseS33Wave1ProducerVerifierCliArgs,
   parseS33ProducerModule,
   runS33Wave1ProducerVerifierCli,
@@ -223,7 +225,7 @@ function fixture(options: FixtureOptions = {}): { head: string; root: string } {
   const manifest: Record<string, unknown> = {
     schemaVersion: 1,
     batchId: 'S33-W1',
-    revision: 12,
+    revision: 10,
     producerLane: 'Lane 4',
     acceptanceAuthority: 'Lane 3',
     status: 'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
@@ -248,7 +250,7 @@ function fixture(options: FixtureOptions = {}): { head: string; root: string } {
       byCredentialType: { ...WAVE1_CREDENTIAL_TYPE_COUNTS },
       byCorpusSlice: { ...WAVE1_CORPUS_SLICE_COUNTS },
     },
-    selfChecks: selfChecks(12, support, declaredTypesBlob),
+    selfChecks: selfChecks(10, support, declaredTypesBlob),
     entries: manifestEntries,
   };
   options.mutateManifest?.(manifest);
@@ -279,7 +281,7 @@ function fixture(options: FixtureOptions = {}): { head: string; root: string } {
   const entryDatasheet = {
     schemaVersion: 1,
     batchId: 'S33-W1',
-    revision: 12,
+    revision: 10,
     manifestSha256: manifestDigest,
     producerLane: 'Lane 4',
     acceptanceAuthority: 'Lane 3',
@@ -291,15 +293,15 @@ function fixture(options: FixtureOptions = {}): { head: string; root: string } {
     rows: entryRows,
   };
   const markdown = [
-    '# S3.3 Golden Held-Out Corpus — Datasheet (Wave 1, Revision 12)',
+    '# S3.3 Golden Held-Out Corpus — Datasheet (Wave 1, Revision 10)',
     '',
-    '**Revision 12:** trusted verifier test packet',
+    '**Revision 10:** trusted verifier test packet',
     '',
-    `- Current producer revision: \`S33-W1\` revision 12; exact raw-file SHA-256 \`${manifestDigest}\`.`,
+    `- Current producer revision: \`S33-W1\` revision 10; exact raw-file SHA-256 \`${manifestDigest}\`.`,
     '- The manifest and datasheet each contain exactly 81 unique rows in exact bijection with the corpus.',
     `- Shared type definitions: blob \`${(manifest.lane3SupportBase as Record<string, unknown>).typesBlob}\` on commit \`${support}\`.`,
     '',
-    `Revision 12 has sole physical parent, direct base, and Lane-3 support commit \`${manifest.corpusRevisionParentCommit}\`; its logical producer predecessor is exact commit \`${initial}\`.`,
+    `Revision 10 has sole physical parent, direct base, and Lane-3 support commit \`${manifest.corpusRevisionParentCommit}\`; its logical producer predecessor is exact commit \`${initial}\`.`,
     '',
   ].join('\n');
   for (const [path, content] of [
@@ -323,6 +325,45 @@ function fixture(options: FixtureOptions = {}): { head: string; root: string } {
 }
 
 describe('trusted-main S3.3 Wave-1 producer verifier', { timeout: 30_000 }, () => {
+  it('dispatches only exact legacy and revision-12 status/schema tuples', () => {
+    expect(S33_WAVE1_R12_CREDENTIAL_TYPE_COUNTS).toEqual({
+      ATTESTATION: 3, BUSINESS_ENTITY: 2, CERTIFICATE: 4, CLE: 11, CPE: 31,
+      DEGREE: 2, FINANCIAL: 1, IDENTITY: 1, LICENSE: 16, OTHER: 9, TRANSCRIPT: 1,
+    });
+    const manifest = (revision: number, status: string, overrides: Record<string, unknown> = {}): Buffer => (
+      Buffer.from(JSON.stringify({
+        schemaVersion: 1,
+        batchId: 'S33-W1',
+        revision,
+        status,
+        ...overrides,
+      }))
+    );
+
+    expect(classifyS33Wave1ProducerManifest(manifest(
+      10,
+      'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW',
+    ))).toBe('legacy-blocked');
+    expect(classifyS33Wave1ProducerManifest(manifest(
+      12,
+      'PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE',
+    ))).toBe('revision-12-dual-dag');
+    for (const rejected of [
+      manifest(12, 'PRODUCER_RESUBMISSION_BLOCKED_L3_REVIEW'),
+      manifest(10, 'PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE'),
+      manifest(11, 'HISTORICAL_BLOCKED'),
+      manifest(11, 'PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE'),
+      manifest(12, 'PRODUCER_REVISION_12_CANDIDATE'),
+      manifest(12, 'PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE', { schemaVersion: 2 }),
+      manifest(12, 'PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE', { batchId: 'S33-W2' }),
+      Buffer.from('{"schemaVersion":1,"schemaVersion":1,"batchId":"S33-W1","revision":12,"status":"PRODUCER_R12_CANDIDATE_PENDING_L3_FORMAL_ACCEPTANCE"}'),
+    ]) {
+      expect(() => classifyS33Wave1ProducerManifest(rejected)).toThrow(
+        /schema|batch|revision|status|duplicate|dispatch/i,
+      );
+    }
+  });
+
   it('parses only a literal exported array graph and never executes producer code', () => {
     const source = [
       'globalThis.__producerExecuted = true;',
