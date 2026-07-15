@@ -23,6 +23,8 @@ const FP_DRAINED = '1'.repeat(64);
 const FP_POISON = '2'.repeat(64);
 const TX_ID = 'c'.repeat(64);
 const SIGNED_HASH = 'd'.repeat(64);
+const ANCHOR_DRAINED_ID = '60000000-0000-4000-8000-000000000001';
+const JOURNAL_ID = '70000000-0000-4000-8000-000000000001';
 const TEST_KEYPAIR = generateKeyPairSync('ed25519');
 const TEST_PUBLIC_KEY_PEM = TEST_KEYPAIR.publicKey.export({ type: 'spki', format: 'pem' }).toString();
 const TEST_KEY_FINGERPRINT = createHash('sha256')
@@ -201,12 +203,27 @@ function rawCapturesForDeclaration(declarationSha256: string): RawCaptureTextSet
       transactions: [{
         txId: TX_ID, batchId: 'batch-live-1', merkleRoot: FP_DRAINED, signedBytesSha256: SIGNED_HASH,
       }],
+      journalRows: [{
+        journalId: JOURNAL_ID,
+        batchId: 'batch-live-1',
+        txId: TX_ID,
+        fingerprintRoot: FP_DRAINED,
+        anchorIds: [ANCHOR_DRAINED_ID],
+        leafOrder: [{ anchorId: ANCHOR_DRAINED_ID, fingerprint: FP_DRAINED }],
+        signedAt: '2026-07-13T12:00:09.000Z',
+        recoveryStatus: 'PERSISTED',
+        holdReason: null,
+        heldAt: null,
+        resolvedAt: '2026-07-13T12:00:15.000Z',
+        createdAt: '2026-07-13T12:00:09.000Z',
+        updatedAt: '2026-07-13T12:00:15.000Z',
+      }],
       txLeaves: [{
-        txId: TX_ID, batchId: 'batch-live-1', fingerprint: FP_DRAINED,
+        txId: TX_ID, batchId: 'batch-live-1', anchorId: ANCHOR_DRAINED_ID, fingerprint: FP_DRAINED,
         orgId: 'org-healthy', merkleIndex: 0,
       }],
       proofs: [{
-        txId: TX_ID, batchId: 'batch-live-1', fingerprint: FP_DRAINED,
+        txId: TX_ID, batchId: 'batch-live-1', anchorId: ANCHOR_DRAINED_ID, fingerprint: FP_DRAINED,
         orgId: 'org-healthy', merkleIndex: 0, merkleRoot: FP_DRAINED,
         leafCount: 1, proofPath: [],
       }],
@@ -357,6 +374,8 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     expect(Object.isFrozen(parsed)).toBe(true);
     expect(Object.isFrozen(parsed.scheduler.records)).toBe(true);
     expect(Object.isFrozen(parsed.scheduler.records[0])).toBe(true);
+    expect(Object.isFrozen(parsed.database.journalRows[0]!.leafOrder)).toBe(true);
+    expect(Object.isFrozen(parsed.database.journalRows[0]!.leafOrder[0])).toBe(true);
     expect(Object.isFrozen(parsed.database.proofs[0]!.proofPath)).toBe(true);
     expect(Object.isFrozen(parsed.database.proofs[0]!.proofPath[0])).toBe(true);
     expect(Object.isFrozen(parsed.supervisor.cleanMirror)).toBe(true);
@@ -457,6 +476,45 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
       sourceDigests: actualDigests,
     });
     expect(result.sourceExportIds).toHaveLength(6);
+  });
+
+  it('requires one exact final journal row per accepted transaction in the signed DB export', () => {
+    const initial = immutable();
+
+    const missing = rawCaptures(initial);
+    const missingDb = JSON.parse(missing.database) as Record<string, unknown>;
+    delete missingDb.journalRows;
+    missing.database = JSON.stringify(missingDb);
+    expect(() => parseRawCaptureSet(missing, trust(declarationValue(), missing))).toThrow(/journalRows|required/i);
+
+    const unresolved = rawCaptures(initial);
+    const unresolvedDb = JSON.parse(unresolved.database) as {
+      journalRows: Array<Record<string, unknown>>;
+    };
+    Object.assign(unresolvedDb.journalRows[0]!, {
+      recoveryStatus: 'HELD', holdReason: 'provider outage', heldAt: '2026-07-13T12:00:13.000Z', resolvedAt: null,
+    });
+    unresolved.database = JSON.stringify(unresolvedDb);
+    expect(() => deriveTrusted(unresolved)).toThrow(/PERSISTED|hold state/i);
+
+    const wrongCohort = rawCaptures(initial);
+    const wrongCohortDb = JSON.parse(wrongCohort.database) as {
+      journalRows: Array<{ anchorIds: string[]; leafOrder: Array<{ anchorId: string }> }>;
+    };
+    const unrelatedAnchor = '60000000-0000-4000-8000-000000000099';
+    wrongCohortDb.journalRows[0]!.anchorIds = [unrelatedAnchor];
+    wrongCohortDb.journalRows[0]!.leafOrder[0]!.anchorId = unrelatedAnchor;
+    wrongCohort.database = JSON.stringify(wrongCohortDb);
+    expect(() => deriveTrusted(wrongCohort)).toThrow(/cohort.*ordered leaves|transaction leaves/i);
+
+    const impossibleChronology = rawCaptures(initial);
+    const chronologyDb = JSON.parse(impossibleChronology.database) as {
+      journalRows: Array<{ signedAt: string; createdAt: string }>;
+    };
+    chronologyDb.journalRows[0]!.signedAt = '2026-07-13T12:00:13.000Z';
+    chronologyDb.journalRows[0]!.createdAt = '2026-07-13T12:00:13.000Z';
+    impossibleChronology.database = JSON.stringify(chronologyDb);
+    expect(() => deriveTrusted(impossibleChronology)).toThrow(/journal chronology|signing before acceptance/i);
   });
 
   it('rejects caller-controlled floor fields in the immutable declaration', () => {

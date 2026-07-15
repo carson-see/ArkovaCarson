@@ -47,6 +47,7 @@ const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
 const headSha = z.string().regex(/^[0-9a-f]{40}$/);
 const imageDigest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const projectRef = z.string().regex(/^[a-z]{20}$/);
+const uuid = z.string().uuid();
 const nonEmpty = z.string().min(1);
 const isoTimestamp = strictUtcTimestampSchema;
 const nonNegativeInteger = z.number().int().nonnegative();
@@ -217,9 +218,29 @@ const dbTransactionSchema = z.object({
   merkleRoot: sha256Hex,
   signedBytesSha256: sha256Hex,
 }).strict();
+const dbJournalLeafSchema = z.object({
+  anchorId: uuid,
+  fingerprint: sha256Hex,
+}).strict();
+const dbJournalRowSchema = z.object({
+  journalId: uuid,
+  batchId: nonEmpty,
+  txId: sha256Hex,
+  fingerprintRoot: sha256Hex,
+  anchorIds: z.array(uuid).min(1).max(10_000),
+  leafOrder: z.array(dbJournalLeafSchema).min(1).max(10_000),
+  signedAt: isoTimestamp,
+  recoveryStatus: z.enum(['PENDING', 'HELD', 'ADOPTED', 'REVERTED', 'PERSISTED']),
+  holdReason: nonEmpty.nullable(),
+  heldAt: isoTimestamp.nullable(),
+  resolvedAt: isoTimestamp.nullable(),
+  createdAt: isoTimestamp,
+  updatedAt: isoTimestamp,
+}).strict();
 const dbLeafSchema = z.object({
   txId: sha256Hex,
   batchId: nonEmpty,
+  anchorId: uuid,
   fingerprint: sha256Hex,
   orgId: nonEmpty,
   merkleIndex: nonNegativeInteger,
@@ -260,6 +281,7 @@ const databaseCaptureSchema = z.object({
   executions: z.array(dbExecutionSchema).min(1),
   passRows: z.array(dbPassRowSchema).min(1),
   transactions: z.array(dbTransactionSchema).min(1),
+  journalRows: z.array(dbJournalRowSchema).min(1),
   txLeaves: z.array(dbLeafSchema).min(1),
   proofs: z.array(dbProofSchema).min(1),
   creditLedgerEvents: z.array(dbLedgerEventSchema),
@@ -1001,6 +1023,85 @@ export interface LiveEvidenceSummary {
   sourceExportIds: string[];
 }
 
+/**
+ * Bind each accepted transaction to the immutable pre-broadcast journal row
+ * from the same independently signed repeatable-read export. The successful
+ * drain evidence path is intentionally fail-closed: unresolved recovery rows
+ * belong in the crash/fault evidence contracts, never in a happy-path verdict.
+ */
+function assertSuccessfulTransactionJournals(captures: ParsedRawCaptureSet): void {
+  const journals = captures.database.journalRows;
+  const transactions = captures.database.transactions;
+  unique(journals.map((row) => row.journalId), 'DB journal IDs');
+  unique(journals.map((row) => row.batchId), 'DB journal batch IDs');
+  unique(journals.map((row) => row.txId), 'DB journal txids');
+  if (journals.length !== transactions.length) {
+    throw new Error('DB journal rows must cover every accepted transaction exactly once.');
+  }
+
+  const transactionIds = new Set(transactions.map((row) => row.txId));
+  if (journals.some((row) => !transactionIds.has(row.txId))) {
+    throw new Error('DB journal rows contain a transaction outside the exact accepted transaction set.');
+  }
+
+  for (const transaction of transactions) {
+    const matching = journals.filter((row) => row.txId === transaction.txId);
+    if (matching.length !== 1) {
+      throw new Error(`DB journal must identify accepted transaction ${transaction.txId} exactly once.`);
+    }
+    const journal = matching[0]!;
+    if (
+      journal.batchId !== transaction.batchId
+      || journal.fingerprintRoot !== transaction.merkleRoot
+      || journal.recoveryStatus !== 'PERSISTED'
+      || journal.holdReason !== null
+      || journal.heldAt !== null
+      || journal.resolvedAt === null
+    ) {
+      throw new Error('Successful transaction journal must be exact, PERSISTED, resolved, and free of hold state.');
+    }
+
+    const leaves = captures.database.txLeaves
+      .filter((row) => row.txId === transaction.txId)
+      .sort((left, right) => left.merkleIndex - right.merkleIndex);
+    unique(journal.anchorIds, `journal anchor IDs for ${transaction.txId}`);
+    if (
+      journal.anchorIds.length !== leaves.length
+      || journal.leafOrder.length !== leaves.length
+      || journal.anchorIds.some((anchorId, index) => anchorId !== journal.leafOrder[index]?.anchorId)
+      || journal.leafOrder.some((leaf, index) => (
+        leaf.anchorId !== leaves[index]?.anchorId || leaf.fingerprint !== leaves[index]?.fingerprint
+      ))
+    ) {
+      throw new Error('DB journal cohort and ordered leaves must exactly match the accepted transaction leaves.');
+    }
+
+    const signetRows = captures.signet.records.filter((row) => row.txId === transaction.txId);
+    const transactionPassRows = captures.database.passRows.filter((row) => row.chainTxId === transaction.txId);
+    const executionIds = [...new Set(transactionPassRows.map((row) => row.schedulerExecutionId))];
+    const executions = captures.database.executions.filter((row) => executionIds.includes(row.schedulerExecutionId));
+    if (signetRows.length !== 1 || executionIds.length !== 1 || executions.length !== 1) {
+      throw new Error('DB journal chronology requires one exact signet acceptance and Scheduler execution.');
+    }
+    const signetObservedMs = time(signetRows[0]!.observedAt, 'journal signet observedAt');
+    const executionCompletedMs = time(executions[0]!.completedAt, 'journal execution completedAt');
+    const signedMs = time(journal.signedAt, 'journal signedAt');
+    const createdMs = time(journal.createdAt, 'journal createdAt');
+    const resolvedMs = time(journal.resolvedAt, 'journal resolvedAt');
+    const updatedMs = time(journal.updatedAt, 'journal updatedAt');
+    if (
+      signedMs > createdMs
+      || createdMs > signetObservedMs
+      || resolvedMs < signetObservedMs
+      || resolvedMs > executionCompletedMs
+      || updatedMs < resolvedMs
+      || updatedMs > executionCompletedMs
+    ) {
+      throw new Error('DB journal acceptance chronology must prove signing before acceptance and PERSISTED resolution before execution completion.');
+    }
+  }
+}
+
 export function deriveAndAssertLiveEvidence(
   declaration: ImmutableRunDeclaration,
   captures: ParsedRawCaptureSet,
@@ -1138,6 +1239,7 @@ export function deriveAndAssertLiveEvidence(
     || captures.database.txLeaves.some((record) => !dbTxIds.has(record.txId))
     || captures.database.proofs.some((record) => !dbTxIds.has(record.txId))
   ) throw new Error('DB transaction, row, proof, leaf, and signet raw identities are not an exact closed set.');
+  assertSuccessfulTransactionJournals(captures);
 
   const windows = declaration.value.windows.map((window) => {
     const observations = window.passes.map((pass) => derivePassObservation(declaration.value, captures, pass));
