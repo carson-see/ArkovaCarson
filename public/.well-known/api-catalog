@@ -1,0 +1,52 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://api.arkova.ai/v2",
+      "service-desc": [
+        {
+          "href": "https://api.arkova.ai/v2/openapi.json",
+          "type": "application/openapi+json",
+          "title": "Arkova API v2 OpenAPI 3.1 document"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://app.arkova.ai/developers",
+          "type": "text/html",
+          "title": "Arkova developer documentation"
+        }
+      ],
+      "status": [
+        {
+          "href": "https://api.arkova.ai/health",
+          "type": "application/json",
+          "title": "Arkova API health"
+        }
+      ]
+    },
+    {
+      "anchor": "https://edge.arkova.ai/mcp",
+      "service-desc": [
+        {
+          "href": "https://app.arkova.ai/.well-known/mcp/server-card.json",
+          "type": "application/json",
+          "title": "Arkova MCP server card"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://app.arkova.ai/developers",
+          "type": "text/html",
+          "title": "Arkova developer documentation"
+        }
+      ],
+      "status": [
+        {
+          "href": "https://api.arkova.ai/health",
+          "type": "application/json",
+          "title": "Arkova service health"
+        }
+      ]
+    }
+  ]
+}
