@@ -506,7 +506,10 @@ describe('loadWorkflowReportBundle', () => {
           requestCount: 81,
           retryCount: 0,
           entryCount: 81,
-          results: ENTRY_IDS.map((id) => ({ id, classification: 'MATCH' })),
+          results: ENTRY_IDS.map((id, index) => ({
+            id,
+            classification: index === 1 ? 'MISMATCH' : 'MATCH',
+          })),
           rawReportSha256: '9'.repeat(64),
           rawReportCanonicalSha256: 'a'.repeat(64),
         },
@@ -545,6 +548,44 @@ describe('loadWorkflowReportBundle', () => {
     expect(bundle.crossReviewPlan.rawSha256).toBe(sha256(readFileSync(paths.crossReviewPlan, 'utf8')));
     expect(bundle.crossReviewPlan.canonicalSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(bundle.lexicalLeakage.parsed.payload.trainingManifestSha256).toBe(TRAINING_MANIFEST_SHA);
+    expect(bundle.prodModelDiff.parsed.payload.results).toEqual(
+      ENTRY_IDS.map((id, index) => ({
+        id,
+        classification: index === 1 ? 'MISMATCH' : 'MATCH',
+      })),
+    );
+
+    const reorderedIds = [...ENTRY_IDS];
+    [reorderedIds[0], reorderedIds[1]] = [reorderedIds[1], reorderedIds[0]];
+    const invalidProdResultCases: Array<[string, unknown[]]> = [
+      ['empty', []],
+      ['partial', ENTRY_IDS.slice(0, -1).map((id) => ({ id, classification: 'MATCH' }))],
+      ['duplicate', ENTRY_IDS.map((id, index) => ({
+        id: index === 1 ? ENTRY_IDS[0] : id,
+        classification: 'MATCH',
+      }))],
+      ['reordered', reorderedIds.map((id) => ({ id, classification: 'MATCH' }))],
+      ['unknown', ENTRY_IDS.map((id, index) => ({
+        id: index === 1 ? 'GD-S33-UNKNOWN-999' : id,
+        classification: 'MATCH',
+      }))],
+      ['unsupported classification', ENTRY_IDS.map((id, index) => ({
+        id,
+        classification: index === 1 ? 'UNKNOWN' : 'MATCH',
+      }))],
+    ];
+    for (const [caseName, results] of invalidProdResultCases) {
+      writeFileSync(paths.prodModelDiff, JSON.stringify({
+        ...reports.prodModelDiff,
+        payload: { ...reports.prodModelDiff.payload, results },
+      }));
+      expect(() => loadWorkflowReportBundle(paths, {
+        producerHeadSha: HEAD,
+        manifestRawSha256: MANIFEST_SHA,
+        manifestEntryIds: ENTRY_IDS,
+      }), caseName).toThrow(/prod-model-diff.*(?:classification|manifest|result)/i);
+    }
+    writeFileSync(paths.prodModelDiff, `${JSON.stringify(reports.prodModelDiff, null, 2)}\n`);
 
     writeFileSync(paths.crossReviewPlan, JSON.stringify({
       ...reports.crossReviewPlan,

@@ -82,6 +82,7 @@ const PREREQUISITE_FRESHNESS_MS = 24 * 60 * 60 * 1_000;
 const MAX_PREREQUISITE_ARCHIVE_BYTES = 10 * 1024 * 1024;
 const SAMPLE_ALGORITHM = 'sha256-manifest-entry-rank-v1' as const;
 const SAMPLE_RULE = 'ceil(10%),minimum-5,capped-at-entry-count' as const;
+const WAVE1_MANIFEST_ENTRY_COUNT = 81;
 const LANE3_ACCEPTANCE_MODULE: string = './s33-batch-acceptance.js';
 const AUTHORITY_CONFIG_PATH = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -1122,6 +1123,32 @@ function assertNoProducerHumanVerdict(value: unknown, path = '$'): void {
   }
 }
 
+function validateProdModelDiffResultUniverse(
+  results: unknown[],
+  manifestEntryIds: readonly string[],
+): void {
+  if (manifestEntryIds.length !== WAVE1_MANIFEST_ENTRY_COUNT
+    || results.length !== manifestEntryIds.length) {
+    throw new Error(
+      `Workflow prod-model-diff result universe must equal the exact ${WAVE1_MANIFEST_ENTRY_COUNT}-entry manifest`,
+    );
+  }
+  const resultIds = results.map((value, index) => {
+    const result = record(value, `Workflow prod-model-diff results[${index}]`);
+    const id = nonEmptyString(result.id, `Workflow prod-model-diff results[${index}].id`);
+    if (result.classification !== 'MATCH' && result.classification !== 'MISMATCH') {
+      throw new Error(
+        `Workflow prod-model-diff results[${index}].classification must be MATCH or MISMATCH`,
+      );
+    }
+    return id;
+  });
+  if (new Set(resultIds).size !== resultIds.length
+    || resultIds.some((id, index) => id !== manifestEntryIds[index])) {
+    throw new Error('Workflow prod-model-diff result ids must equal the exact ordered manifest universe');
+  }
+}
+
 function readWorkflowReport<T extends WorkflowReportEnvelope>(
   path: string,
   expectedFilename: string,
@@ -1221,12 +1248,16 @@ export function loadWorkflowReportBundle(
   if (prodModelDiff.parsed.payload.mode !== 'offline-prod-parity-replay'
     || prodModelDiff.parsed.payload.providerSurface !== 'google-generative-language-developer-api'
     || prodModelDiff.parsed.payload.model !== 'gemini-2.5-flash'
-    || prodModelDiff.parsed.payload.requestCount !== 81
+    || prodModelDiff.parsed.payload.requestCount !== facts.manifestEntryIds.length
     || prodModelDiff.parsed.payload.retryCount !== 0
-    || prodModelDiff.parsed.payload.entryCount !== 81
+    || prodModelDiff.parsed.payload.entryCount !== facts.manifestEntryIds.length
     || !Array.isArray(prodModelDiff.parsed.payload.results)) {
     throw new Error('Workflow prod-model-diff public production replay contract is invalid');
   }
+  validateProdModelDiffResultUniverse(
+    prodModelDiff.parsed.payload.results,
+    facts.manifestEntryIds,
+  );
   if (lexicalLeakage.parsed.payload.algorithm !== 'normalized-token-exact-ngram-v1') {
     throw new Error('Workflow lexical leakage algorithm is invalid');
   }
