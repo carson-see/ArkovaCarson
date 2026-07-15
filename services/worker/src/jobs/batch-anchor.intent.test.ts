@@ -24,6 +24,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildMerkleTree } from '../utils/merkle.js';
+import type { ChainClient } from '../chain/types.js';
 
 // ---- Shared call-order log (intent-before-broadcast assertions) ----
 
@@ -62,6 +63,12 @@ const {
     reconcileRows: [] as Array<Record<string, unknown>>,
     /** Rows returned by the anchor_proofs intent lookup (per receipt_id). */
     intentProofRows: [] as Array<Record<string, unknown>>,
+    /** Unresolved durable txid journal rows returned before legacy reconcile. */
+    journalRows: [] as Array<Record<string, unknown>>,
+    /** Anchors loaded by journal REVERT for idempotent credit refund. */
+    journalAnchorRows: [] as Array<Record<string, unknown>>,
+    /** Optional journal insert failure for the zero-broadcast barrier test. */
+    journalInsertError: null as { message: string } | null,
     /** Per-chunk responses for anchors.chain_tx_id intent-mark updates. */
     intentMarkResults: [] as Array<{ data?: Array<{ id: string }>; count?: number | null; error?: { message?: string } | null }>,
     /** Oldest-PENDING row for the trigger probe. */
@@ -133,6 +140,7 @@ vi.mock('../utils/db.js', () => {
     builder.eq = chain('eq');
     builder.is = chain('is');
     builder.not = chain('not');
+    builder.in = chain('in');
     builder.lt = chain('lt');
     builder.order = chain('order');
     builder.limit = chain('limit');
@@ -149,8 +157,15 @@ vi.mock('../utils/db.js', () => {
       if (table === 'anchors' && wantsIntentScan) {
         return Promise.resolve({ data: dbState.reconcileRows, error: null }).then(resolve, reject);
       }
+      const wantsJournalCohort = filters.some(([name, col]) => name === 'in' && col === 'id');
+      if (table === 'anchors' && wantsJournalCohort) {
+        return Promise.resolve({ data: dbState.journalAnchorRows, error: null }).then(resolve, reject);
+      }
       if (table === 'anchor_proofs') {
         return Promise.resolve({ data: dbState.intentProofRows, error: null }).then(resolve, reject);
+      }
+      if (table === 'anchor_txid_journal') {
+        return Promise.resolve({ data: dbState.journalRows, error: null }).then(resolve, reject);
       }
       return Promise.resolve({ data: [], error: null }).then(resolve, reject);
     };
@@ -212,11 +227,24 @@ vi.mock('../utils/db.js', () => {
     return builder;
   }
 
+  function makeInsertBuilder(table: string, payload: Record<string, unknown>) {
+    const builder: Record<string, unknown> = {};
+    builder.select = vi.fn(() => builder);
+    builder.single = vi.fn(async () => {
+      if (table !== 'anchor_txid_journal') return { data: null, error: { message: `unexpected insert ${table}` } };
+      callOrder.push('persistJournal');
+      if (dbState.journalInsertError) return { data: null, error: dbState.journalInsertError };
+      return { data: { id: 'journal-1', ...payload }, error: null };
+    });
+    return builder;
+  }
+
   return {
     db: {
       rpc: mockDbRpc,
       from: vi.fn((table: string) => ({
         select: vi.fn(() => makeSelectBuilder(table)),
+        insert: vi.fn((payload: Record<string, unknown>) => makeInsertBuilder(table, payload)),
         delete: vi.fn(() => makeDeleteBuilder(table)),
         update: vi.fn((payload: Record<string, unknown>, options?: Record<string, unknown>) =>
           makeUpdateBuilder(table, payload, options),
@@ -229,7 +257,7 @@ vi.mock('../utils/db.js', () => {
 
 // ---- System under test ----
 
-import { processBatchAnchors } from './batch-anchor.js';
+import { processBatchAnchors, reconcileTxidJournals } from './batch-anchor.js';
 // Real typed errors (utxo-provider is NOT mocked here) — the unwind gate must
 // discriminate a definitive broadcast reject from an auth/quota/transport blip.
 import { HttpError, RpcApplicationError, BroadcastRejectedError } from '../chain/utxo-provider.js';
@@ -283,6 +311,9 @@ beforeEach(() => {
   proofDeletes.length = 0;
   dbState.reconcileRows = [];
   dbState.intentProofRows = [];
+  dbState.journalRows = [];
+  dbState.journalAnchorRows = [];
+  dbState.journalInsertError = null;
   dbState.intentMarkResults = [];
   dbState.oldest = { data: { created_at: '2026-01-01T00:00:00Z' }, error: null };
 
@@ -376,6 +407,8 @@ describe('S3-P0 — pre-broadcast intent persistence (happy path)', () => {
 
     const broadcastIdx = callOrder.indexOf('broadcast');
     expect(broadcastIdx).toBeGreaterThan(-1);
+    expect(callOrder.indexOf('persistJournal')).toBeLessThan(callOrder.indexOf('persistProofs'));
+    expect(callOrder.indexOf('persistJournal')).toBeLessThan(broadcastIdx);
     expect(callOrder.indexOf('persistProofs')).toBeLessThan(broadcastIdx);
     expect(callOrder.indexOf('persistChainTxId')).toBeLessThan(broadcastIdx);
     expect(callOrder.indexOf('submitBatchAnchors')).toBeGreaterThan(broadcastIdx);
@@ -384,6 +417,9 @@ describe('S3-P0 — pre-broadcast intent persistence (happy path)', () => {
     expect(mockSubmitFingerprint).not.toHaveBeenCalled();
     // Broadcast sends the exact prepared bytes.
     expect(mockBroadcastSigned).toHaveBeenCalledWith(TX_HEX);
+    expect(mockDbRpc.mock.calls.some(
+      ([name, params]) => name === 'resolve_anchor_txid_journal' && params.p_action === 'PERSISTED',
+    )).toBe(true);
   });
 
   it('proof rows carry op_return_payload for every leaf and the signed-tx intent on the index-0 row only', async () => {
@@ -433,6 +469,113 @@ describe('S3-P0 — pre-broadcast intent persistence (happy path)', () => {
     expect(callOrder).not.toContain('broadcast');
     expect(proofDeletes.length).toBeGreaterThan(0);
     expect(callOrder).toContain('revertToPending');
+  });
+
+  it('aborts with zero network calls when the durable journal insert fails', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    dbState.journalInsertError = { message: 'journal unavailable' };
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: SORTED_ROOT, txId: null });
+    expect(mockBroadcastSigned).not.toHaveBeenCalled();
+    expect(mockUpsertAnchorProofs).not.toHaveBeenCalled();
+    expect(callOrder).toContain('persistJournal');
+    expect(callOrder).toContain('revertToPending');
+  });
+});
+
+// =============================================================================
+// SCRUM-2692 — durable journal recovery owns ADOPT / REVERT / HOLD
+// =============================================================================
+
+describe('SCRUM-2692 — durable journal integration', () => {
+  function stageJournal(overrides: Record<string, unknown> = {}) {
+    dbState.journalRows = [{
+      id: 'journal-recovery-1',
+      batch_id: 'batch_1721044800000_1',
+      txid: TX_ID,
+      fingerprint_root: FP_A,
+      anchor_ids: ['anchor-a'],
+      leaf_order: [{ anchor_id: 'anchor-a', fingerprint: FP_A }],
+      signed_at: new Date(Date.now() - 31 * 60_000).toISOString(),
+      recovery_status: 'PENDING',
+      ...overrides,
+    }];
+    dbState.journalAnchorRows = [{
+      id: 'anchor-a',
+      chain_tx_id: TX_ID,
+      org_id: null,
+      metadata: null,
+      credential_type: null,
+    }];
+  }
+
+  const client = () => ({ getReceipt: mockGetReceipt }) as unknown as ChainClient;
+
+  it('ADOPTs the exact txid idempotently without any rebroadcast', async () => {
+    stageJournal();
+    mockGetReceipt.mockResolvedValue({
+      receiptId: TX_ID,
+      blockHeight: 800101,
+      blockTimestamp: '2026-07-15T12:00:00.000Z',
+      confirmations: 0,
+    });
+
+    const result = await reconcileTxidJournals(client());
+
+    expect(result).toMatchObject({ scanned: 1, adopted: 1, reverted: 0, held: 0 });
+    expect(mockDbRpc.mock.calls.some(
+      ([name, params]) => name === 'resolve_anchor_txid_journal' && params.p_action === 'ADOPT',
+    )).toBe(true);
+    expect(mockBroadcastSigned).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['lookup outage', () => mockGetReceipt.mockRejectedValue(new HttpError('GetBlock unavailable', 503)), 'lookup_failed'],
+    ['txid mismatch', () => mockGetReceipt.mockResolvedValue({ receiptId: 'e2'.repeat(32), blockHeight: 0, blockTimestamp: '', confirmations: 0 }), 'found_txid_mismatch'],
+    ['negative confirmations', () => mockGetReceipt.mockResolvedValue({ receiptId: TX_ID, blockHeight: 0, blockTimestamp: '', confirmations: -1 }), 'negative_confirmations'],
+  ])('HOLDs on %s and never calls generic revert', async (_label, arrange, reason) => {
+    stageJournal();
+    arrange();
+
+    const result = await reconcileTxidJournals(client());
+
+    expect(result).toMatchObject({ scanned: 1, adopted: 0, reverted: 0, held: 1 });
+    const hold = mockDbRpc.mock.calls.find(
+      ([name, params]) => name === 'resolve_anchor_txid_journal' && params.p_action === 'HOLD',
+    );
+    expect(hold?.[1]).toMatchObject({ p_reason: reason });
+    expect(mockDbRpc.mock.calls.some(([name]) => name === 'recover_stuck_broadcasts')).toBe(false);
+  });
+
+  it('HOLDs affirmative absence inside the ambiguity window', async () => {
+    stageJournal({ signed_at: new Date().toISOString() });
+    mockGetReceipt.mockResolvedValue(null);
+
+    const result = await reconcileTxidJournals(client());
+
+    expect(result.held).toBe(1);
+    expect(mockDbRpc.mock.calls.some(
+      ([name, params]) => name === 'resolve_anchor_txid_journal'
+        && params.p_action === 'HOLD'
+        && params.p_reason === 'absence_inside_ambiguity_window',
+    )).toBe(true);
+  });
+
+  it('REVERTs only after affirmative bounded absence and cohort refund readiness', async () => {
+    stageJournal();
+    mockGetReceipt.mockResolvedValue(null);
+
+    const result = await reconcileTxidJournals(client());
+
+    expect(result).toMatchObject({ scanned: 1, adopted: 0, reverted: 1, held: 0 });
+    expect(mockDbRpc.mock.calls.some(
+      ([name, params]) => name === 'resolve_anchor_txid_journal'
+        && params.p_action === 'REVERT'
+        && params.p_reason === 'affirmative_absence_after_ambiguity_window',
+    )).toBe(true);
+    expect(mockBroadcastSigned).not.toHaveBeenCalled();
   });
 });
 
@@ -556,7 +699,7 @@ describe('S3-P0 — crash/unknown-outcome: never revert, never double-broadcast'
 // =============================================================================
 
 describe('S3-P0 — definitive broadcast reject unwinds the intent safely', () => {
-  it('non-retryable reject → deletes intent proofs, clears chain_tx_id, reverts to PENDING', async () => {
+  it('non-retryable reject → atomically deletes proofs, clears txid, and reverts the journal cohort', async () => {
     mockClaimReturns(CLAIMED_OUT_OF_ORDER);
     mockBroadcastSigned.mockRejectedValue(
       new Error('sendrawtransaction failed: dust (code -26)'),
@@ -565,13 +708,13 @@ describe('S3-P0 — definitive broadcast reject unwinds the intent safely', () =
     const result = await processBatchAnchors({ force: true });
 
     expect(result.processed).toBe(0);
-    // Intent proofs for this exact txid removed.
-    expect(proofDeletes.length).toBeGreaterThan(0);
-    expect(proofDeletes[0].filters).toContainEqual(['eq', 'receipt_id', TX_ID]);
-    // Rows reverted with the intent cleared.
-    const revert = anchorsUpdates.find((u) => u.payload.status === 'PENDING');
-    expect(revert).toBeDefined();
-    expect(revert!.payload.chain_tx_id).toBeNull();
+    const resolution = mockDbRpc.mock.calls.find(
+      ([name, params]) => name === 'resolve_anchor_txid_journal' && params.p_action === 'REVERT',
+    );
+    expect(resolution).toBeDefined();
+    expect(resolution![1]).toMatchObject({ p_journal_id: 'journal-1' });
+    // Cleanup is owned by the migration RPC, never split across client writes.
+    expect(proofDeletes).toHaveLength(0);
     expect(callOrder).not.toContain('submitBatchAnchors');
   });
 
@@ -664,10 +807,10 @@ describe('#1417-HIGH — Phase 3c: only a definitive reject unwinds; auth/quota/
     const result = await processBatchAnchors({ force: true });
 
     expect(result.processed).toBe(0);
-    expect(proofDeletes.length).toBeGreaterThan(0);
-    const revert = anchorsUpdates.find((u) => u.payload.status === 'PENDING');
-    expect(revert).toBeDefined();
-    expect(revert!.payload.chain_tx_id).toBeNull();
+    expect(mockDbRpc.mock.calls.some(
+      ([name, params]) => name === 'resolve_anchor_txid_journal' && params.p_action === 'REVERT',
+    )).toBe(true);
+    expect(proofDeletes).toHaveLength(0);
   });
 
   it('genuine reject surfaced as RpcApplicationError from sendrawtransaction → unwind DOES fire', async () => {
@@ -677,9 +820,10 @@ describe('#1417-HIGH — Phase 3c: only a definitive reject unwinds; auth/quota/
     const result = await processBatchAnchors({ force: true });
 
     expect(result.processed).toBe(0);
-    expect(proofDeletes.length).toBeGreaterThan(0);
-    const revert = anchorsUpdates.find((u) => u.payload.status === 'PENDING');
-    expect(revert).toBeDefined();
+    expect(mockDbRpc.mock.calls.some(
+      ([name, params]) => name === 'resolve_anchor_txid_journal' && params.p_action === 'REVERT',
+    )).toBe(true);
+    expect(proofDeletes).toHaveLength(0);
   });
 });
 

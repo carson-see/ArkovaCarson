@@ -905,6 +905,13 @@ export class BitcoinChainClient implements ChainClient {
     // need the persisted-intent guarantee call the two halves themselves.
     const prepared = await this.prepareFingerprintTx(data);
 
+    // SCRUM-2692: the txid is immutable now, but no network call has happened.
+    // A journal write failure must reject here so both the single-input and
+    // multi-input signing branches prove zero broadcast on persistence error.
+    if (data.preBroadcastHook) {
+      await data.preBroadcastHook(prepared);
+    }
+
     logger.info(
       { txId: prepared.txId, fee: prepared.feeSats },
       'Transaction built, broadcasting',

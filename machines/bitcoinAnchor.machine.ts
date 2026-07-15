@@ -28,6 +28,7 @@ const legalHold = variable("legalHold");
 const credentialTypeLocked = variable("credentialTypeLocked");
 const actor = variable("actor");
 const intentPersisted = variable("intentPersisted");
+const journalRecovery = variable("journalRecovery");
 
 export const bitcoinAnchorMachine = defineMachine({
   version: 2,
@@ -88,7 +89,17 @@ export const bitcoinAnchorMachine = defineMachine({
     // either finds the tx on-chain (finalize, no rebroadcast) or rebroadcasts
     // the SAME signed bytes (same txid). Conceptual/derived state like
     // `actor` — no dedicated DB column.
-    intentPersisted: mapVar("Anchors", boolType(), lit(false))
+    intentPersisted: mapVar("Anchors", boolType(), lit(false)),
+
+    // SCRUM-2692: durable txid journal state. PENDING and HELD both protect
+    // the cohort from generic stale-claim recovery. NONE means there is no
+    // unresolved journal row for this anchor. This is conceptual per-anchor
+    // state; one database journal row owns an entire batch cohort.
+    journalRecovery: mapVar(
+      "Anchors",
+      enumType("NONE", "PENDING", "HELD"),
+      lit("NONE")
+    )
   },
 
   actions: {
@@ -120,7 +131,8 @@ export const bitcoinAnchorMachine = defineMachine({
       guard: and(
         eq(index(status, param("a")), lit("BROADCASTING")),
         eq(index(actor, param("a")), lit("worker")),
-        not(index(intentPersisted, param("a")))
+        not(index(intentPersisted, param("a"))),
+        eq(index(journalRecovery, param("a")), lit("NONE"))
       ),
       updates: [
         setMap("status", param("a"), lit("SUBMITTED")),
@@ -128,8 +140,26 @@ export const bitcoinAnchorMachine = defineMachine({
       ]
     },
 
+    // SCRUM-2692: persist the immutable txid + exact cohort BEFORE the older
+    // proof/anchor intent markers and before any bytes reach the network.
+    // A crash at this boundary leaves chainTxId null, but the unresolved
+    // journal still protects the cohort from generic stale recovery.
+    persistTxidJournal: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("BROADCASTING")),
+        eq(index(actor, param("a")), lit("worker")),
+        eq(index(chainTxId, param("a")), lit(null)),
+        not(index(intentPersisted, param("a"))),
+        eq(index(journalRecovery, param("a")), lit("NONE"))
+      ),
+      updates: [
+        setMap("journalRecovery", param("a"), lit("PENDING"))
+      ]
+    },
+
     // S3-P0: Worker persists the signed pre-broadcast intent for a claimed
-    // batch BEFORE any bytes hit the network.
+    // batch only after the txid journal barrier exists.
     // Maps to: batch-anchor.ts Phase 3b — prepareFingerprintTx() (build+sign,
     // no broadcast), then durably write (i) anchor_proofs rows keyed by the
     // precomputed txid (receipt_id) with the signed tx hex on the intent row,
@@ -142,7 +172,8 @@ export const bitcoinAnchorMachine = defineMachine({
         eq(index(status, param("a")), lit("BROADCASTING")),
         eq(index(actor, param("a")), lit("worker")),
         eq(index(chainTxId, param("a")), lit(null)),
-        not(index(intentPersisted, param("a")))
+        not(index(intentPersisted, param("a"))),
+        isin(index(journalRecovery, param("a")), setOf(lit("PENDING"), lit("HELD")))
       ),
       updates: [
         setMap("chainTxId", param("a"), lit("has_tx")),
@@ -150,27 +181,108 @@ export const bitcoinAnchorMachine = defineMachine({
       ]
     },
 
-    // S3-P0: Finalize an intent-persisted batch anchor to SUBMITTED. This is
-    // BOTH the happy path (broadcast succeeded in-process, then
-    // submit_batch_anchors) AND the crash-resume path (worker died between
-    // intent persistence and submit_batch_anchors; the next run's
-    // reconcileBroadcastIntents() finds the txid already on-chain — or
-    // rebroadcasts the SAME signed bytes, yielding the SAME txid — and then
-    // finalizes). Identical DB write either way: submit_batch_anchors moves
-    // BROADCASTING → SUBMITTED. A batch that broadcast once can NEVER
-    // broadcast twice: resume either observes the tx or re-sends identical
-    // bytes (already-known == success at the provider layer).
+    // Happy path: broadcast succeeded in-process, then submit_batch_anchors
+    // moves BROADCASTING → SUBMITTED. Journal resolution is a separate atomic
+    // RPC, so the model deliberately permits a short SUBMITTED+journal state.
+    // Crash recovery never rebroadcasts: journalAdopt below requires an exact
+    // chain observation, while journalRevert requires affirmative absence.
     broadcastResumeFinalize: {
       params: { a: "Anchors" },
       guard: and(
         eq(index(status, param("a")), lit("BROADCASTING")),
         eq(index(actor, param("a")), lit("worker")),
         index(intentPersisted, param("a")),
-        eq(index(chainTxId, param("a")), lit("has_tx"))
+        eq(index(chainTxId, param("a")), lit("has_tx")),
+        isin(index(journalRecovery, param("a")), setOf(lit("PENDING"), lit("HELD")))
       ),
       updates: [
         setMap("status", param("a"), lit("SUBMITTED")),
         setMap("intentPersisted", param("a"), lit(false))
+      ]
+    },
+
+    // Ambiguous lookup/outcome: HELD remains protected. This action is valid
+    // both before finalization and during the short post-submit journal window.
+    journalHold: {
+      params: { a: "Anchors" },
+      guard: and(
+        isin(index(status, param("a")), setOf(lit("BROADCASTING"), lit("SUBMITTED"), lit("SECURED"))),
+        eq(index(actor, param("a")), lit("worker")),
+        isin(index(journalRecovery, param("a")), setOf(lit("PENDING"), lit("HELD")))
+      ),
+      updates: [
+        setMap("journalRecovery", param("a"), lit("HELD"))
+      ]
+    },
+
+    // Exact immutable txid found: atomically ADOPT the chain fact and resolve
+    // the journal. Idempotent whether anchors were still BROADCASTING or had
+    // already reached SUBMITTED before the journal-resolution call failed.
+    journalAdopt: {
+      params: { a: "Anchors" },
+      guard: and(
+        isin(index(status, param("a")), setOf(lit("BROADCASTING"), lit("SUBMITTED"))),
+        eq(index(actor, param("a")), lit("worker")),
+        isin(index(journalRecovery, param("a")), setOf(lit("PENDING"), lit("HELD")))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("SUBMITTED")),
+        setMap("chainTxId", param("a"), lit("has_tx")),
+        setMap("intentPersisted", param("a"), lit(false)),
+        setMap("journalRecovery", param("a"), lit("NONE"))
+      ]
+    },
+
+    // The confirmation cron may win the short post-submit journal-resolution
+    // race. Exact-tx ADOPT then resolves the journal without downgrading the
+    // already-SECURED anchor.
+    journalAdoptSecured: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("SECURED")),
+        eq(index(actor, param("a")), lit("worker")),
+        eq(index(chainTxId, param("a")), lit("has_tx")),
+        isin(index(journalRecovery, param("a")), setOf(lit("PENDING"), lit("HELD")))
+      ),
+      updates: [
+        setMap("intentPersisted", param("a"), lit(false)),
+        setMap("journalRecovery", param("a"), lit("NONE"))
+      ]
+    },
+
+    // Only an affirmative absence verdict after the bounded ambiguity window
+    // may REVERT a journaled BROADCASTING cohort. HELD is explicitly allowed;
+    // generic broadcastFail below is not.
+    journalRevert: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("BROADCASTING")),
+        eq(index(actor, param("a")), lit("worker")),
+        isin(index(journalRecovery, param("a")), setOf(lit("PENDING"), lit("HELD")))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("PENDING")),
+        setMap("chainTxId", param("a"), lit(null)),
+        setMap("intentPersisted", param("a"), lit(false)),
+        setMap("journalRecovery", param("a"), lit("NONE")),
+        setMap("actor", param("a"), lit("client")),
+        setMap("fingerprintLocked", param("a"), lit(false)),
+        setMap("credentialTypeLocked", param("a"), lit(false))
+      ]
+    },
+
+    // Happy-path journal completion after submit_batch_anchors succeeded.
+    journalPersisted: {
+      params: { a: "Anchors" },
+      guard: and(
+        isin(index(status, param("a")), setOf(lit("SUBMITTED"), lit("SECURED"))),
+        eq(index(actor, param("a")), lit("worker")),
+        eq(index(chainTxId, param("a")), lit("has_tx")),
+        not(index(intentPersisted, param("a"))),
+        isin(index(journalRecovery, param("a")), setOf(lit("PENDING"), lit("HELD")))
+      ),
+      updates: [
+        setMap("journalRecovery", param("a"), lit("NONE"))
       ]
     },
 
@@ -188,12 +300,14 @@ export const bitcoinAnchorMachine = defineMachine({
       guard: and(
         eq(index(status, param("a")), lit("BROADCASTING")),
         eq(index(actor, param("a")), lit("worker")),
-        index(intentPersisted, param("a"))
+        index(intentPersisted, param("a")),
+        isin(index(journalRecovery, param("a")), setOf(lit("PENDING"), lit("HELD")))
       ),
       updates: [
         setMap("status", param("a"), lit("PENDING")),
         setMap("chainTxId", param("a"), lit(null)),
         setMap("intentPersisted", param("a"), lit(false)),
+        setMap("journalRecovery", param("a"), lit("NONE")),
         setMap("actor", param("a"), lit("client")),
         setMap("fingerprintLocked", param("a"), lit(false)),
         setMap("credentialTypeLocked", param("a"), lit(false))
@@ -222,14 +336,15 @@ export const bitcoinAnchorMachine = defineMachine({
     // FIRST broadcast, not a double.
     // Maps to: processAnchor() error path when chain submit throws, the
     // batch pre-intent abort path, AND recover_stuck_broadcasts() (RACE-1) —
-    // whose `chain_tx_id IS NULL` filter is exactly the not(intentPersisted)
-    // guard here (S3-P0: intent-persisted rows are shielded from the sweep).
+    // whose journal exclusion is modeled by journalRecovery=NONE. A journal
+    // can protect even before chain_tx_id/intent markers are written.
     broadcastFail: {
       params: { a: "Anchors" },
       guard: and(
         eq(index(status, param("a")), lit("BROADCASTING")),
         eq(index(actor, param("a")), lit("worker")),
-        not(index(intentPersisted, param("a")))
+        not(index(intentPersisted, param("a"))),
+        eq(index(journalRecovery, param("a")), lit("NONE"))
       ),
       updates: [
         setMap("status", param("a"), lit("PENDING")),
@@ -250,7 +365,8 @@ export const bitcoinAnchorMachine = defineMachine({
       guard: and(
         eq(index(status, param("a")), lit("SUBMITTED")),
         eq(index(actor, param("a")), lit("worker")),
-        not(index(legalHold, param("a")))
+        not(index(legalHold, param("a"))),
+        eq(index(journalRecovery, param("a")), lit("NONE"))
       ),
       updates: [
         setMap("status", param("a"), lit("PENDING")),
@@ -279,7 +395,8 @@ export const bitcoinAnchorMachine = defineMachine({
       guard: and(
         eq(index(status, param("a")), lit("SUBMITTED")),
         eq(index(actor, param("a")), lit("worker")),
-        not(index(legalHold, param("a")))
+        not(index(legalHold, param("a"))),
+        eq(index(journalRecovery, param("a")), lit("NONE"))
       ),
       updates: [
         setMap("status", param("a"), lit("PENDING")),
@@ -295,7 +412,8 @@ export const bitcoinAnchorMachine = defineMachine({
       params: { a: "Anchors" },
       guard: and(
         eq(index(status, param("a")), lit("SECURED")),
-        not(index(legalHold, param("a")))
+        not(index(legalHold, param("a"))),
+        eq(index(journalRecovery, param("a")), lit("NONE"))
       ),
       updates: [
         setMap("status", param("a"), lit("REVOKED"))
@@ -350,7 +468,8 @@ export const bitcoinAnchorMachine = defineMachine({
         // (which scans BROADCASTING rows) no longer sees it. The already-
         // signed tx may still commit the fingerprint on-chain; that is
         // harmless surplus evidence for a SUPERSEDED row.
-        setMap("intentPersisted", param("a"), lit(false))
+        setMap("intentPersisted", param("a"), lit(false)),
+        setMap("journalRecovery", param("a"), lit("NONE"))
       ]
     },
 
@@ -483,6 +602,39 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
+    // SCRUM-2692: unresolved journals are live only during BROADCASTING or
+    // the short post-submit/pre-resolution window. Terminal lifecycle states
+    // never retain a PENDING/HELD journal.
+    journalOnlyWhileRecoverable: {
+      description: "An unresolved txid journal exists only while BROADCASTING or awaiting post-submit/confirmation resolution",
+      formula: forall("Anchors", "a",
+        or(
+          eq(index(journalRecovery, param("a")), lit("NONE")),
+          isin(index(status, param("a")), setOf(lit("BROADCASTING"), lit("SUBMITTED"), lit("SECURED")))
+        )
+      )
+    },
+
+    journalRequiresWorkerActor: {
+      description: "Only the worker can own an unresolved durable txid journal",
+      formula: forall("Anchors", "a",
+        or(
+          eq(index(journalRecovery, param("a")), lit("NONE")),
+          eq(index(actor, param("a")), lit("worker"))
+        )
+      )
+    },
+
+    intentRequiresJournalProtection: {
+      description: "Every persisted broadcast intent is protected by a PENDING or HELD txid journal",
+      formula: forall("Anchors", "a",
+        or(
+          not(index(intentPersisted, param("a"))),
+          isin(index(journalRecovery, param("a")), setOf(lit("PENDING"), lit("HELD")))
+        )
+      )
+    },
+
     // INV-2: Fingerprint is locked once anchor leaves PENDING
     fingerprintImmutableAfterPending: {
       description: "Fingerprint is immutable once status leaves initial PENDING",
@@ -569,15 +721,15 @@ export const bitcoinAnchorMachine = defineMachine({
         domains: {
           Anchors: ids({ prefix: "a", size: 2 })
         },
-        // S3-P0: intentPersisted adds a 6th per-anchor bool → raw per-anchor
-        // combos 6 statuses × 2^5 bools × 2 chainTxId × 2 actors = 768;
-        // size=2 → 768^2 = 589,824 raw states (reachable set is far smaller,
+        // SCRUM-2692 adds a 3-valued journal state to the prior 768 raw
+        // per-anchor combinations: 768 × 3 = 2,304; size=2 gives
+        // 2,304^2 = 5,308,416 raw states (reachable set is far smaller,
         // but the estimator budgets against the raw product). Budget raised
         // from 200k accordingly. graphEquivalence stays off (pre-existing:
         // the raw product exceeds the 100k equivalence cap).
         graphEquivalence: false,
         budgets: {
-          maxEstimatedStates: 1_000_000,
+          maxEstimatedStates: 6_000_000,
           maxEstimatedBranching: 10_000
         }
       },
@@ -587,9 +739,8 @@ export const bitcoinAnchorMachine = defineMachine({
         },
         graphEquivalence: false,
         budgets: {
-          // size=3 → 768^3 = 452,984,832 raw states with the S3-P0
-          // intentPersisted bool; bump from 50M to 500M for nightly.
-          maxEstimatedStates: 500_000_000,
+          // size=3 → 2,304^3 = 12,230,590,464 raw states.
+          maxEstimatedStates: 15_000_000_000,
           maxEstimatedBranching: 1_000_000
         }
       }

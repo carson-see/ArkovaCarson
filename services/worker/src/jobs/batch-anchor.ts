@@ -27,6 +27,12 @@ import { flagRegistry } from '../middleware/flagRegistry.js';
 import { isBroadcastRejectedError } from '../chain/utxo-provider.js';
 import type { ChainClient, ChainReceipt, PreparedChainTx } from '../chain/types.js';
 import type { Json } from '../types/database.types.js';
+import {
+  buildTxidJournalEntry,
+  decideTxidJournalRecovery,
+  type TxidJournalEntry,
+  type TxidJournalRecoveryDecision,
+} from './txid-journal.js';
 
 /**
  * Max anchors per batch transaction (BTC-001).
@@ -575,41 +581,39 @@ export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}):
 //   Phase 3a  prepareFingerprintTx — build + SIGN, no network. txid is now a
 //             pure function of the signed bytes.
 //   Phase 3b  persist the intent DURABLY, before any bytes leave the worker:
-//             (i)  anchor_proofs rows keyed by the precomputed txid
+//             (i)  anchor_txid_journal records the immutable txid, exact
+//                  cohort, deterministic leaf order, and signing timestamp;
+//             (ii) anchor_proofs rows keyed by the precomputed txid
 //                  (receipt_id): merkle branch + merkle_index +
 //                  op_return_payload per leaf, and the SIGNED TX HEX inside
 //                  raw_response.broadcast_intent on the merkle_index-0 row;
-//             (ii) anchors.chain_tx_id = txid on every claimed BROADCASTING
-//                  row. recover_stuck_broadcasts (RACE-1) only resets rows
-//                  with chain_tx_id IS NULL, so the crash sweep can never
-//                  revert an anchor whose tx may already be on the network.
+//             (iii) anchors.chain_tx_id = txid on every claimed BROADCASTING
+//                  row. Migration 0358 excludes every PENDING/HELD journal
+//                  cohort from recover_stuck_broadcasts, including the crash
+//                  window before all per-anchor intent markers exist.
 //   Phase 3c  broadcastSignedTx. Outcomes:
 //             - success            → Phase 4 (submit_batch_anchors).
-//             - RETRYABLE failure  → unknown outcome. LEAVE EVERYTHING —
-//               rows stay BROADCASTING+intent; reconcileBroadcastIntents
-//               finishes the job next tick (tx found ⇒ finalize; tx unknown
-//               ⇒ re-send the SAME bytes ⇒ SAME txid).
+//             - ambiguous failure  → HOLD. Recovery only ADOPTs an exact txid
+//               or REVERTs after affirmative bounded absence; it never
+//               rebroadcasts a journaled transaction.
 //             - NON-retryable reject → the node refused mempool admission;
-//               the tx provably never relayed. Only then unwind: refund,
-//               delete this txid's proof rows, revert to PENDING.
+//               the tx provably never relayed. Only then refund and atomically
+//               REVERT proof/anchor/journal state.
 //
 // CRASH MATRIX (worker dies at any point):
 //   before 3b  → nothing signed-and-recorded reached the network under a
 //                recorded txid; RACE-1 reverts to PENDING; the next batch is
 //                the FIRST broadcast. Safe.
-//   during 3b  → partial intent; the abort path clears marks + rows (nothing
-//                broadcast yet). If the worker dies mid-3b, rows WITH marks
-//                are reconciled (tx unknown ⇒ rebroadcast same bytes), rows
-//                WITHOUT marks are swept by RACE-1. Either way one txid.
-//   after 3b, before/через 3c → reconcile: getReceipt(txid) found ⇒ finalize
-//                (NO rebroadcast); not found ⇒ rebroadcast the SAME hex
-//                (already-known == success). A batch that broadcast once can
-//                NEVER broadcast twice.
-//   after 3c, before Phase 4 → reconcile finds the tx ⇒ finalize.
+//   during 3b  → the journal already protects the complete cohort. A live
+//                worker cleans up an unbroadcast partial write; after a hard
+//                crash, recovery HOLDs until exact ADOPT or bounded REVERT.
+//   after 3b, before/through 3c → exact tx found ⇒ ADOPT; ambiguity ⇒ HOLD;
+//                affirmative absence beyond the window ⇒ REVERT. No replay.
+//   after 3c, before Phase 4 → recovery finds the exact tx and ADOPTs it.
 //
-// Modeled in machines/bitcoinAnchor.machine.ts (persistBroadcastIntent /
-// broadcastResumeFinalize / broadcastIntentReject; INV
-// broadcastingIntentChainTxCoupling) — tla-precheck check green.
+// Modeled in machines/bitcoinAnchor.machine.ts (persistTxidJournal /
+// journalAdopt / journalRevert / journalHold / journalPersisted) —
+// tla-precheck check green.
 
 /** Rows younger than this are assumed to belong to an in-flight run. */
 const INTENT_STALE_MINUTES = 5;
@@ -629,7 +633,32 @@ export interface IntentReconcileResult {
   rebroadcast: number;
   rejected: number;
   deferred: number;
+  adopted: number;
+  reverted: number;
+  held: number;
 }
+
+interface TxidJournalDbRow {
+  id: string;
+  batch_id: string;
+  txid: string;
+  fingerprint_root: string;
+  anchor_ids: string[];
+  leaf_order: unknown;
+  signed_at: string;
+  recovery_status: 'PENDING' | 'HELD';
+}
+
+export interface TxidJournalReconcileResult {
+  scanned: number;
+  adopted: number;
+  reverted: number;
+  held: number;
+  protectedTxids: string[];
+  protectionLoaded: boolean;
+}
+
+type JournalResolutionAction = 'ADOPT' | 'REVERT' | 'HOLD' | 'PERSISTED';
 
 /** Deterministic batch leaf ordering: (fingerprint asc, anchor id asc). */
 function sortAnchorsForBatch(anchors: ClaimedAnchor[]): ClaimedAnchor[] {
@@ -683,6 +712,120 @@ async function persistBroadcastIntentProofs(
       : {}),
   }));
   await upsertAnchorProofs(db, rows);
+}
+
+/** Persist the immutable txid/cohort barrier before proof marks or network I/O. */
+async function persistTxidJournal(
+  orderedAnchors: ClaimedAnchor[],
+  tree: MerkleTreeResult,
+  prepared: PreparedChainTx,
+  batchId: string,
+): Promise<{ id: string; entry: TxidJournalEntry }> {
+  const entry = buildTxidJournalEntry({
+    batchId,
+    txid: prepared.txId,
+    fingerprintRoot: tree.root,
+    leafOrder: orderedAnchors.map((anchor) => ({
+      anchorId: anchor.id,
+      fingerprint: anchor.fingerprint,
+    })),
+    signedAt: new Date().toISOString(),
+  });
+
+  const leafOrder = entry.leafOrder.map((leaf) => ({
+    anchor_id: leaf.anchorId,
+    fingerprint: leaf.fingerprint,
+  })) as Json;
+  const { data, error } = await db
+    .from('anchor_txid_journal')
+    .insert({
+      batch_id: entry.batchId,
+      txid: entry.txid,
+      fingerprint_root: entry.fingerprintRoot,
+      anchor_ids: entry.anchorIds,
+      leaf_order: leafOrder,
+      signed_at: entry.signedAt,
+    })
+    .select('id')
+    .single();
+
+  if (error || !data?.id) {
+    throw new Error(`Txid journal persistence failed: ${error?.message ?? 'missing inserted id'}`);
+  }
+  return { id: data.id, entry };
+}
+
+async function deleteUnbroadcastTxidJournal(journalId: string): Promise<void> {
+  try {
+    const { error } = await db
+      .from('anchor_txid_journal')
+      .delete()
+      .eq('id', journalId)
+      .in('recovery_status', ['PENDING', 'HELD']);
+    if (error) {
+      logger.error({ error, journalId }, 'Failed to delete unbroadcast txid journal row');
+    }
+  } catch (error) {
+    logger.error({ error, journalId }, 'Unbroadcast txid journal delete threw');
+  }
+}
+
+/** Invoke the migration-owned atomic anchor/proof/journal transition. */
+async function resolveTxidJournal(
+  journalId: string,
+  action: JournalResolutionAction,
+  options: {
+    reason?: string;
+    blockHeight?: number | null;
+    blockTimestamp?: string | null;
+  } = {},
+): Promise<boolean> {
+  const args: {
+    p_journal_id: string;
+    p_action: string;
+    p_reason?: string;
+    p_block_height?: number;
+    p_block_timestamp?: string;
+  } = {
+    p_journal_id: journalId,
+    p_action: action,
+  };
+  if (options.reason !== undefined) args.p_reason = options.reason;
+  if (options.blockHeight != null) args.p_block_height = options.blockHeight;
+  if (options.blockTimestamp != null) args.p_block_timestamp = options.blockTimestamp;
+  const { error } = await db.rpc('resolve_anchor_txid_journal', args);
+  if (error) {
+    logger.error({ error, journalId, action }, 'Txid journal atomic resolution failed — cohort remains protected');
+    return false;
+  }
+  return true;
+}
+
+function parseTxidJournalRow(row: TxidJournalDbRow): TxidJournalEntry {
+  if (!Array.isArray(row.leaf_order)) {
+    throw new Error('leaf_order is not an array');
+  }
+  const leaves = row.leaf_order.map((leaf) => {
+    const candidate = leaf as { anchor_id?: unknown; fingerprint?: unknown };
+    return {
+      anchorId: String(candidate.anchor_id ?? ''),
+      fingerprint: String(candidate.fingerprint ?? ''),
+    };
+  });
+  const entry = buildTxidJournalEntry({
+    batchId: row.batch_id,
+    txid: row.txid,
+    fingerprintRoot: row.fingerprint_root,
+    leafOrder: leaves,
+    signedAt: row.signed_at,
+  });
+  if (
+    entry.anchorIds.length !== row.anchor_ids.length ||
+    entry.anchorIds.some((id, index) => id !== row.anchor_ids[index])
+  ) {
+    throw new Error('anchor_ids and leaf_order diverge');
+  }
+  return entry;
 }
 
 /** Phase 3b(ii): mark chain_tx_id on the claimed BROADCASTING rows. Throws on failure. */
@@ -849,8 +992,161 @@ async function refundChargedIntentAnchors(rows: IntentAnchorRow[]): Promise<stri
 }
 
 /**
- * S3-P0 crash-resume: finish (or safely unwind) batches whose pre-broadcast
- * intent was persisted but whose run died before submit_batch_anchors.
+ * Reconcile every unresolved durable journal before legacy intent recovery or
+ * the generic stale-claim sweep. The returned txids remain protected for the
+ * entire caller pass even if an atomic resolution attempt itself fails.
+ */
+export async function reconcileTxidJournals(
+  chainClient?: ChainClient,
+): Promise<TxidJournalReconcileResult> {
+  const result: TxidJournalReconcileResult = {
+    scanned: 0,
+    adopted: 0,
+    reverted: 0,
+    held: 0,
+    protectedTxids: [],
+    protectionLoaded: false,
+  };
+
+  let rows: TxidJournalDbRow[];
+  try {
+    const response = await db
+      .from('anchor_txid_journal')
+      .select('id, batch_id, txid, fingerprint_root, anchor_ids, leaf_order, signed_at, recovery_status')
+      .in('recovery_status', ['PENDING', 'HELD'])
+      // PENDING rows represent fresh broadcasts and must not queue behind a
+      // large HELD backlog. Re-HOLD updates updated_at, rotating ambiguous
+      // cohorts so every row is rechecked without starvation.
+      .order('recovery_status', { ascending: false })
+      .order('updated_at', { ascending: true })
+      .limit(100);
+    if (response.error) {
+      logger.warn({ error: response.error }, 'Txid journal scan failed — generic recovery remains fail-closed');
+      return result;
+    }
+    rows = (response.data ?? []) as TxidJournalDbRow[];
+    result.protectionLoaded = true;
+  } catch (error) {
+    logger.warn({ error }, 'Txid journal scan threw — generic recovery remains fail-closed');
+    return result;
+  }
+
+  if (rows.length === 0) return result;
+  result.scanned = rows.length;
+  result.protectedTxids = rows
+    .map((row) => row.txid)
+    .filter((txid): txid is string => typeof txid === 'string' && txid.length > 0);
+
+  let client = chainClient;
+  if (!client) {
+    try {
+      client = await getChainClientAsync();
+    } catch (error) {
+      logger.error({ error }, 'Txid journal chain client unavailable — holding every unresolved cohort');
+      for (const row of rows) {
+        await resolveTxidJournal(row.id, 'HOLD', { reason: 'chain_client_unavailable' });
+        result.held += 1;
+      }
+      return result;
+    }
+  }
+
+  for (const row of rows) {
+    let entry: TxidJournalEntry;
+    try {
+      entry = parseTxidJournalRow(row);
+    } catch (error) {
+      logger.error({ error, journalId: row.id }, 'Invalid durable txid journal row — HOLD');
+      await resolveTxidJournal(row.id, 'HOLD', { reason: 'invalid_journal_entry' });
+      result.held += 1;
+      continue;
+    }
+
+    let receipt: ChainReceipt | null = null;
+    let decision: TxidJournalRecoveryDecision;
+    try {
+      receipt = await client.getReceipt(entry.txid);
+      decision = decideTxidJournalRecovery(
+        entry,
+        receipt
+          ? {
+              status: 'found',
+              txid: receipt.receiptId,
+              confirmations: receipt.confirmations,
+            }
+          : { status: 'not_found' },
+      );
+    } catch (error) {
+      logger.warn({ error: errMessage(error), txId: entry.txid }, 'Txid journal lookup failed — HOLD');
+      decision = decideTxidJournalRecovery(entry, { status: 'lookup_failed' });
+    }
+
+    if (decision.action === 'HOLD') {
+      await resolveTxidJournal(row.id, 'HOLD', { reason: decision.reason });
+      result.held += 1;
+      continue;
+    }
+
+    if (decision.action === 'ADOPT') {
+      const adopted = await resolveTxidJournal(row.id, 'ADOPT', {
+        reason: decision.reason,
+        blockHeight: receipt?.blockHeight ?? null,
+        blockTimestamp: receipt?.blockTimestamp ?? null,
+      });
+      if (adopted) {
+        result.adopted += 1;
+        logger.info({ journalId: row.id, txId: entry.txid }, 'Txid journal ADOPTED exact chain tx');
+      } else {
+        result.held += 1;
+      }
+      continue;
+    }
+
+    // REVERT is reachable only after an affirmative not-found verdict beyond
+    // the ambiguity window. Refund the cohort first; the refund RPC is
+    // idempotent per anchor reference, so a partial failure safely retries.
+    let anchors: IntentAnchorRow[];
+    try {
+      const anchorResponse = await db
+        .from('anchors')
+        .select('id, chain_tx_id, org_id, metadata, credential_type')
+        .in('id', entry.anchorIds);
+      if (anchorResponse.error || !Array.isArray(anchorResponse.data)) {
+        throw new Error(anchorResponse.error?.message ?? 'anchor cohort unavailable');
+      }
+      anchors = anchorResponse.data as IntentAnchorRow[];
+      if (anchors.length !== entry.anchorIds.length) {
+        throw new Error(`journal cohort read ${anchors.length}/${entry.anchorIds.length} anchors`);
+      }
+    } catch (error) {
+      logger.error({ error, journalId: row.id }, 'Txid journal cohort read failed — HOLD');
+      await resolveTxidJournal(row.id, 'HOLD', { reason: 'cohort_read_failed' });
+      result.held += 1;
+      continue;
+    }
+
+    const refundFailed = await refundChargedIntentAnchors(anchors);
+    if (refundFailed.length > 0) {
+      await resolveTxidJournal(row.id, 'HOLD', { reason: 'credit_refund_failed' });
+      result.held += 1;
+      continue;
+    }
+
+    const reverted = await resolveTxidJournal(row.id, 'REVERT', { reason: decision.reason });
+    if (reverted) {
+      result.reverted += 1;
+      logger.info({ journalId: row.id, txId: entry.txid }, 'Txid journal REVERTED after affirmative absence');
+    } else {
+      result.held += 1;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Compatibility recovery for pre-0358 intent rows after durable journals have
+ * been reconciled first.
  *
  * Scans stale BROADCASTING rows WITH chain_tx_id (exactly the rows the RACE-1
  * sweep is forbidden to touch), grouped per txid:
@@ -862,10 +1158,24 @@ async function refundChargedIntentAnchors(rows: IntentAnchorRow[]): Promise<stri
  *   - anything uncertain (transient errors, missing hex, RPC failures) →
  *     LEAVE THE ROWS ALONE. Never revert an anchor whose tx might be live.
  *
- * Runs under the batch mutex at the start of every batch tick. Idempotent.
+ * Newly journaled txids are skipped unconditionally; this legacy same-bytes
+ * replay path exists only for rows created before migration 0358. Runs under
+ * the batch mutex at the start of every batch tick. Idempotent.
  */
 export async function reconcileBroadcastIntents(chainClient: ChainClient): Promise<IntentReconcileResult> {
-  const result: IntentReconcileResult = { scanned: 0, finalized: 0, rebroadcast: 0, rejected: 0, deferred: 0 };
+  const journal = await reconcileTxidJournals(chainClient);
+  const protectedTxids = new Set(journal.protectedTxids);
+  const result: IntentReconcileResult = {
+    scanned: journal.scanned,
+    finalized: journal.adopted,
+    rebroadcast: 0,
+    rejected: journal.reverted,
+    deferred: journal.held,
+    adopted: journal.adopted,
+    reverted: journal.reverted,
+    held: journal.held,
+  };
+  if (!journal.protectionLoaded) return result;
 
   let rows: IntentAnchorRow[];
   try {
@@ -891,7 +1201,7 @@ export async function reconcileBroadcastIntents(chainClient: ChainClient): Promi
   }
 
   if (rows.length === 0) return result;
-  result.scanned = rows.length;
+  result.scanned += rows.length;
 
   const groups = new Map<string, IntentAnchorRow[]>();
   for (const row of rows) {
@@ -906,6 +1216,9 @@ export async function reconcileBroadcastIntents(chainClient: ChainClient): Promi
   );
 
   for (const [txId, group] of groups) {
+    // New durable journals own ADOPT/REVERT/HOLD. Never let the compatibility
+    // path rebroadcast or unwind one of those exact txids in the same pass.
+    if (protectedTxids.has(txId)) continue;
     try {
       await reconcileOneIntent(chainClient, txId, group, result);
     } catch (err) {
@@ -1213,18 +1526,18 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
 
   // Phase 3: ONE OP_RETURN tx per batch committing the ROOT (ARKV marker).
   //
-  // Intent path (S3-P0, prepare-capable client — BitcoinChainClient AND
-  // MockChainClient): sign → persist intent → broadcast. See the pipeline
-  // comment above reconcileBroadcastIntents for the full crash matrix.
+  // Journal path (prepare-capable client — BitcoinChainClient AND
+  // MockChainClient): sign → persist txid/cohort → persist intent → broadcast.
   //
-  // Legacy path (clients without prepare support): single-call
-  // submitFingerprint, post-broadcast proof persistence — unchanged behavior.
+  // Compatibility path for non-Bitcoin legacy clients remains unchanged;
+  // production Bitcoin + Mock clients both implement the journal path.
   const intentCapable =
     typeof chainClient.prepareFingerprintTx === 'function' &&
     typeof chainClient.broadcastSignedTx === 'function';
 
   let receipt: ChainReceipt;
   let intentPersisted = false;
+  let journalId: string | null = null;
 
   if (intentCapable) {
     // ── Phase 3a: build + sign (no network) ──
@@ -1258,6 +1571,8 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
 
     // ── Phase 3b: persist the broadcast intent DURABLY, pre-network ──
     try {
+      const journal = await persistTxidJournal(orderedAnchors, tree, prepared, batchId);
+      journalId = journal.id;
       await persistBroadcastIntentProofs(orderedAnchors, tree, prepared, batchId);
       await markBroadcastIntent(anchorIds, prepared.txId);
       intentPersisted = true;
@@ -1272,6 +1587,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       await deleteIntentProofRows(anchorIds, prepared.txId);
       await refundQueueRunCredits(chargedAnchors, 'broadcast-intent persistence failed');
       await bulkRevertToPending(anchorIds);
+      if (journalId) await deleteUnbroadcastTxidJournal(journalId);
       return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
     }
 
@@ -1289,8 +1605,11 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         // SECOND, DIFFERENT tx while the first may be live.
         logger.warn(
           { error: errMessage(error), txId: prepared.txId, count: orderedAnchors.length },
-          'Batch broadcast outcome unknown (non-reject failure) — intent persisted; reconcile will finalize or rebroadcast the SAME bytes next tick',
+          'Batch broadcast outcome unknown (non-reject failure) — durable journal HOLD; recovery will never guess or rebroadcast',
         );
+        if (journalId) {
+          await resolveTxidJournal(journalId, 'HOLD', { reason: 'broadcast_outcome_unknown' });
+        }
         return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
       }
       // DEFINITIVE reject — the node examined the tx and refused mempool
@@ -1303,8 +1622,13 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       // BROADCASTING+intent so the reconcile retries the refund via metadata
       // instead of a revert double-charging on re-claim.
       await refundQueueRunCredits(chargedAnchors, 'batch broadcast definitively rejected');
-      await deleteIntentProofRows(anchorIds, prepared.txId);
-      await revertIntentAnchors(anchorIds);
+      if (!journalId || !await resolveTxidJournal(journalId, 'REVERT', { reason: 'definitive_broadcast_reject' })) {
+        logger.error(
+          { journalId, txId: prepared.txId },
+          'Definitive reject could not be resolved atomically — cohort remains BROADCASTING/protected',
+        );
+        return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
+      }
       return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
     }
 
@@ -1312,6 +1636,16 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     // to the precomputed txid of the signed bytes.
     if (!receipt || !receipt.receiptId) {
       receipt = { ...(receipt ?? { blockHeight: 0, blockTimestamp: new Date().toISOString(), confirmations: 0 }), receiptId: prepared.txId };
+    }
+    if (receipt.receiptId.toLowerCase() !== prepared.txId.toLowerCase()) {
+      logger.error(
+        { journalId, preparedTxId: prepared.txId, providerTxId: receipt.receiptId },
+        'Provider returned a different txid than the signed bytes — HOLDING cohort',
+      );
+      if (journalId) {
+        await resolveTxidJournal(journalId, 'HOLD', { reason: 'broadcast_txid_mismatch' });
+      }
+      return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
     }
   } else {
     // ── Legacy path: single-call broadcast (no intent persistence) ──
@@ -1392,6 +1726,14 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   }
 
   const processed = typeof updatedCount === 'number' ? updatedCount : broadcastAnchors.length;
+
+  if (journalId) {
+    await resolveTxidJournal(journalId, 'PERSISTED', {
+      reason: 'submit_batch_anchors_complete',
+      blockHeight: receipt.blockHeight ?? null,
+      blockTimestamp: receipt.blockTimestamp ?? null,
+    });
+  }
 
   // FIX-1 (SCRUM-2471): persist each leaf's Merkle branch + integer index.
   // S3-P0: on the intent path this ALREADY happened durably in Phase 3b
