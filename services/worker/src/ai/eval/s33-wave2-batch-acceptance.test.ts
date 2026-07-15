@@ -355,12 +355,19 @@ function mergedPacketFixture() {
 }
 
 describe('S3.3 Wave-2 whole-batch acceptance', () => {
-  it('keeps the immutable base registry when trusted main has no merged Wave-2 batches', () => {
-    expect(consumeMergedS33Wave2Batches({
+  it('consumes merged Wave-2 batches without mutating the immutable base registry', () => {
+    const baseDigest = registry.registryDigestSha256;
+    const baseEntryCount = registry.entries.length;
+    const consumed = consumeMergedS33Wave2Batches({
       trustedMainRepositoryRoot: repositoryRoot,
       registry,
-    })).toBe(registry);
-  });
+    });
+    expect(registry.registryDigestSha256).toBe(baseDigest);
+    expect(registry.entries).toHaveLength(baseEntryCount);
+    expect(consumed.entries.length).toBeGreaterThanOrEqual(baseEntryCount);
+    if (consumed.entries.length === baseEntryCount) expect(consumed).toBe(registry);
+    else expect(consumed).not.toBe(registry);
+  }, 30_000);
 
   it('accepts one complete, non-leaking, independently curated batch', () => {
     const value = fixture();
@@ -476,6 +483,39 @@ describe('S3.3 Wave-2 whole-batch acceptance', () => {
       ],
       leakageCorpusRootCounts: { ...lexical.snapshot.leakageCorpusRootCounts, 'src/ai': 2 },
     })).toThrow(/exact lexical leakage at n=6/iu);
+  });
+
+  it.each([
+    '[SEC_RECIPIENT]',
+    '[PUBLIC_APPLICABILITY]',
+    '[PUBLIC_FILING]',
+  ])('admits the exact CTO-approved non-PII semantic placeholder %s', (recipientIdentifier) => {
+    const value = fixture();
+    const parsedEntries = value.rows.map((row, index) => index === 0 ? {
+      ...row,
+      groundTruth: { ...row.groundTruth, recipientIdentifier },
+    } : row);
+    expect(() => preflightS33Wave2BatchCandidate(registry, {
+      ...value.snapshot,
+      parsedEntries,
+    })).not.toThrow();
+  });
+
+  it.each([
+    '[ARBITRARY]',
+    '[SEC_RECIPIENT_EXTRA]',
+    '[PUBLIC_APPLICATION]',
+    '[public_filing]',
+  ])('rejects every non-allowlisted arbitrary bracketed recipientIdentifier %s', (recipientIdentifier) => {
+    const value = fixture();
+    const parsedEntries = value.rows.map((row, index) => index === 0 ? {
+      ...row,
+      groundTruth: { ...row.groundTruth, recipientIdentifier },
+    } : row);
+    expect(() => preflightS33Wave2BatchCandidate(registry, {
+      ...value.snapshot,
+      parsedEntries,
+    })).toThrow(/unredacted recipientIdentifier/iu);
   });
 
   it('rejects unauthorized paths, empty roots, leakage, PII, shallow truth, and duplicate ids', () => {

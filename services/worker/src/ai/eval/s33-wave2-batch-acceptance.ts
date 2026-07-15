@@ -48,6 +48,11 @@ const SLUG = '[a-z0-9]+(?:-[a-z0-9]+)*';
 const MANIFEST_PATH = new RegExp(`^docs/lane4/s33-wave2-batches/(${SLUG})/manifest\\.json$`, 'u');
 const COVERAGE_REGISTRY_PATH = 'docs/lane4/s33-wave2-top15-registry.json' as const;
 const COVERAGE_DOMAIN_IDS = ['legal', 'financial', 'education'] as const;
+const ctoApprovedNonPiiSemanticPlaceholders: ReadonlySet<string> = new Set([
+  '[SEC_RECIPIENT]',
+  '[PUBLIC_APPLICABILITY]',
+  '[PUBLIC_FILING]',
+]);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -464,7 +469,8 @@ function validateCandidateRows(
     if (piiFindings.length > 0) throw new Error(`Wave-2 entry ${id} contains PII/secrets: ${piiFindings.join(', ')}`);
     if (typeof groundTruth.recipientIdentifier === 'string'
       && !/^\[[A-Z_]+_REDACTED\]$/u.test(groundTruth.recipientIdentifier)
-      && !/^sha256:[0-9a-f]{64}$/u.test(groundTruth.recipientIdentifier)) {
+      && !/^sha256:[0-9a-f]{64}$/u.test(groundTruth.recipientIdentifier)
+      && !ctoApprovedNonPiiSemanticPlaceholders.has(groundTruth.recipientIdentifier)) {
       throw new Error(`Wave-2 entry ${id} contains an unredacted recipientIdentifier`);
     }
     assertS33HeldoutGroundTruthContract([{ id, groundTruth }]);
