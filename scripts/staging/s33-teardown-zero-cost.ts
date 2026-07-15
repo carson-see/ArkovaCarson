@@ -7,9 +7,12 @@
  * query, or otherwise mutate a resource.
  */
 
-import { createHash } from 'node:crypto';
-
 import { z } from 'zod';
+
+import {
+  digestS33Evidence,
+  freezeS33Evidence,
+} from './s33-evidence-integrity';
 
 const GIT_SHA = /^[0-9a-f]{40}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -125,34 +128,6 @@ export interface S33TeardownZeroCostResult {
 
 const TEARDOWN_RESULTS = new WeakSet<S33TeardownZeroCostResult>();
 
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
-    for (const child of Object.values(value as Record<string, unknown>)) {
-      deepFreeze(child);
-    }
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries.map(([key, child]) => (
-      `${JSON.stringify(key)}:${stableJson(child)}`
-    )).join(',')}}`;
-  }
-  const encoded = JSON.stringify(value);
-  if (encoded === undefined) throw new Error('Cannot digest undefined teardown data.');
-  return encoded;
-}
-
-function digest(value: unknown): string {
-  return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`;
-}
-
 type ResourceIdentity = z.infer<typeof resourceIdentitySchema>;
 
 function resourceKey(resource: ResourceIdentity): string {
@@ -254,11 +229,11 @@ export function verifyS33TeardownZeroCost(
       'LANE2_TEARDOWN_INVENTORY_IDENTITY_UNAVAILABLE',
       'LANE3_GENERIC_SIGNATURE_AUTHORITY_UNAVAILABLE',
     ] as const,
-    inputDigestSha256: digest(input),
+    inputDigestSha256: digestS33Evidence(input, 'teardown data'),
   };
-  const result = deepFreeze<S33TeardownZeroCostResult>({
+  const result = freezeS33Evidence<S33TeardownZeroCostResult>({
     ...resultWithoutDigest,
-    resultDigestSha256: digest(resultWithoutDigest),
+    resultDigestSha256: digestS33Evidence(resultWithoutDigest, 'teardown data'),
   });
   TEARDOWN_RESULTS.add(result);
   return result;

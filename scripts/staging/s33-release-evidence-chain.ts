@@ -7,8 +7,6 @@
  * producer boundaries remain explicit in every result.
  */
 
-import { createHash } from 'node:crypto';
-
 import { z } from 'zod';
 
 import {
@@ -28,6 +26,10 @@ import {
   requireS33TeardownZeroCostResult,
   type S33TeardownZeroCostResult,
 } from './s33-teardown-zero-cost';
+import {
+  digestS33Evidence,
+  freezeS33Evidence,
+} from './s33-evidence-integrity';
 
 const GIT_SHA = /^[0-9a-f]{40}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -154,34 +156,6 @@ export interface S33ReleaseEvidenceChainResult {
 
 const CHAIN_RESULTS = new WeakSet<S33ReleaseEvidenceChainResult>();
 
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
-    for (const child of Object.values(value as Record<string, unknown>)) {
-      deepFreeze(child);
-    }
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries.map(([key, child]) => (
-      `${JSON.stringify(key)}:${stableJson(child)}`
-    )).join(',')}}`;
-  }
-  const encoded = JSON.stringify(value);
-  if (encoded === undefined) throw new Error('Cannot digest undefined release-chain data.');
-  return encoded;
-}
-
-function digest(value: unknown): string {
-  return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`;
-}
-
 function requireAllEqual(label: string, values: readonly string[]): void {
   if (new Set(values).size !== 1) {
     throw new Error(`${label} identity is stale or contradictory across release evidence.`);
@@ -202,13 +176,15 @@ export function composeS33ReleaseEvidenceChain(
 ): S33ReleaseEvidenceChainResult {
   const metadata = metadataSchema.parse(input.metadata);
   const admission = requirePreClockAdmissionIdentity(input.admissionHandle);
+  const captures = freezeS33Evidence(
+    structuredClone(input.triggerCaptures),
+  ) as readonly Wave3TriggerObservation[];
   const triggerSummary = assertTriggerIdentityCaptures(
     input.drainPlan,
-    input.triggerCaptures,
+    captures,
   );
   const runway = requireS33TreasuryRunwayResult(input.runwayResult);
   const teardown = requireS33TeardownZeroCostResult(input.teardownResult);
-  const captures = input.triggerCaptures as readonly Wave3TriggerObservation[];
 
   requireAllEqual('Exact head', [
     metadata.exactHeadSha,
@@ -232,13 +208,13 @@ export function composeS33ReleaseEvidenceChain(
     input.drainPlan.imageDigest,
   ]);
 
-  const boundWorker = teardown.inventoryDiff.find((resource) => (
+  const bindsWorker = teardown.inventoryDiff.some((resource) => (
     resource.provider === 'GCP'
     && resource.kind === 'cloud-run-service'
     && resource.scopeId === admission.gcpProjectId
     && resource.resourceId === admission.workerService
   ));
-  if (!boundWorker) {
+  if (!bindsWorker) {
     throw new Error(
       'Teardown evidence does not bind the admitted GCP project and worker service identity.',
     );
@@ -351,9 +327,12 @@ export function composeS33ReleaseEvidenceChain(
       mainnetMeasurement: 'not-claimed' as const,
     },
   };
-  const result = deepFreeze<S33ReleaseEvidenceChainResult>({
+  const result = freezeS33Evidence<S33ReleaseEvidenceChainResult>({
     ...resultWithoutDigest,
-    resultDigestSha256: digest(resultWithoutDigest),
+    resultDigestSha256: digestS33Evidence(
+      resultWithoutDigest,
+      'release-chain data',
+    ),
   });
   CHAIN_RESULTS.add(result);
   return result;

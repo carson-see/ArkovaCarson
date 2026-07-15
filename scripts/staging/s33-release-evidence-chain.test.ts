@@ -234,6 +234,50 @@ describe('S3.3 W3-C release evidence-chain consumer', () => {
     expect(result.resultDigestSha256).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
+  it('uses one immutable trigger snapshot when caller values change between reads', () => {
+    const input = fixture();
+    const firstCapture = input.triggerCaptures[0]!;
+    const canonicalTrigger = firstCapture.trigger;
+    const canonicalOrdinal = firstCapture.executionOrdinal;
+    let triggerReads = 0;
+    let ordinalReads = 0;
+
+    Object.defineProperty(firstCapture, 'trigger', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        triggerReads += 1;
+        return triggerReads === 1 ? canonicalTrigger : 'org-scheduler';
+      },
+    });
+    Object.defineProperty(firstCapture, 'executionOrdinal', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        ordinalReads += 1;
+        return ordinalReads === 1 ? canonicalOrdinal : 99;
+      },
+    });
+
+    const result = composeS33ReleaseEvidenceChain(input);
+
+    expect(triggerReads).toBe(1);
+    expect(ordinalReads).toBe(1);
+    expect(result.drain.exactIdentity).toBe(true);
+    expect(result.drain.executionSignature).toEqual([
+      'trigger-a-size:1',
+      'trigger-a-size:2',
+      'trigger-b-age:1',
+      'trigger-d-force:1',
+      'org-scheduler:1',
+    ]);
+    expect(result.drain.triggerEvidence[0]).toMatchObject({
+      trigger: 'trigger-a-size',
+      cause: 'SIZE_THRESHOLD',
+      executionOrdinal: 1,
+    });
+  });
+
   it('fails closed on stale head/tree/image bindings or incomplete trigger multiplicity', () => {
     const staleHead = fixture();
     staleHead.metadata.exactHeadSha = 'd'.repeat(40);

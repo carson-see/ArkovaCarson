@@ -7,9 +7,12 @@
  * dependency rather than a locally invented identity.
  */
 
-import { createHash } from 'node:crypto';
-
 import { z } from 'zod';
+
+import {
+  digestS33Evidence,
+  freezeS33Evidence,
+} from './s33-evidence-integrity';
 
 const GIT_SHA = /^[0-9a-f]{40}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
@@ -134,40 +137,12 @@ export interface S33TreasuryRunwayResult {
 
 const RUNWAY_RESULTS = new WeakSet<S33TreasuryRunwayResult>();
 
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
-    for (const child of Object.values(value as Record<string, unknown>)) {
-      deepFreeze(child);
-    }
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries.map(([key, child]) => (
-      `${JSON.stringify(key)}:${stableJson(child)}`
-    )).join(',')}}`;
-  }
-  const encoded = JSON.stringify(value);
-  if (encoded === undefined) throw new Error('Cannot digest undefined runway data.');
-  return encoded;
-}
-
-function digest(value: unknown): string {
-  return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`;
-}
-
 function safeProduct(label: string, ...values: number[]): number {
   let product = 1;
   for (const value of values) {
     product *= value;
     if (!Number.isSafeInteger(product)) {
-      throw new Error(`${label} must remain a safe integer.`);
+      throw new TypeError(`${label} must remain a safe integer.`);
     }
   }
   return product;
@@ -257,11 +232,11 @@ export function calculateS33TreasuryRunway(
       treasuryBalance: 'illustrative-not-a-treasury-read' as const,
       fanout: 'N-transactions-per-day-versus-one-asserted-baseline' as const,
     },
-    inputDigestSha256: digest(input),
+    inputDigestSha256: digestS33Evidence(input, 'runway data'),
   };
-  const result = deepFreeze<S33TreasuryRunwayResult>({
+  const result = freezeS33Evidence<S33TreasuryRunwayResult>({
     ...resultWithoutDigest,
-    resultDigestSha256: digest(resultWithoutDigest),
+    resultDigestSha256: digestS33Evidence(resultWithoutDigest, 'runway data'),
   });
   RUNWAY_RESULTS.add(result);
   return result;
