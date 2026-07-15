@@ -96,7 +96,7 @@ jobs:
         run: |
           set -euo pipefail
           npm --prefix services/worker exec -- tsx \
-            src/ai/eval/s33-wave1-producer-verifier.ts verify \
+            services/worker/src/ai/eval/s33-wave1-producer-verifier.ts verify \
             --repository-root "${S33_PRODUCER_OBJECT_REPOSITORY}" \
             --producer-head "${S33_PRODUCER_HEAD_SHA}"
 
@@ -125,7 +125,7 @@ jobs:
           set -euo pipefail
           test -n "${GEMINI_API_KEY}"
           npm --prefix services/worker exec -- tsx \
-            src/ai/eval/s33-wave1-prerequisite-runner.ts prerequisites \
+            services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts prerequisites \
             --producer-head "${S33_PRODUCER_HEAD_SHA}" \
             --raw-output-dir "${S33_RAW_OUTPUT_DIRECTORY}"
           test -f "${S33_RAW_OUTPUT_DIRECTORY}/prod-model-diff.raw.json"
@@ -135,7 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           npm --prefix services/worker exec -- tsx \
-            src/ai/eval/s33-wave1-workflow-reports.ts \
+            services/worker/src/ai/eval/s33-wave1-workflow-reports.ts \
             raw \
             --repository-root "${RUNNER_TEMP}/s33-producer.git" \
             --producer-head "${{ steps.producer.outputs.head_sha }}" \
@@ -187,7 +187,7 @@ jobs:
             test "$(jq -r '.payload.manifestCanonicalSha256' "${S33_FINAL_OUTPUT_DIRECTORY}/${REPORT}")" = "${S33_INITIAL_MANIFEST_CANONICAL_SHA256}"
           done
           npm --prefix services/worker exec -- tsx \
-            src/ai/eval/s33-wave1-producer-verifier.ts verify \
+            services/worker/src/ai/eval/s33-wave1-producer-verifier.ts verify \
             --repository-root "${S33_PRODUCER_OBJECT_REPOSITORY}" \
             --producer-head "${S33_INITIAL_HEAD_SHA}"
 

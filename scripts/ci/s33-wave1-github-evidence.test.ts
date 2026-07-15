@@ -1939,6 +1939,30 @@ describe('s33-wave1-acceptance workflow contract', () => {
 });
 
 describe('revision-12 authoritative production callgraph', () => {
+  it('runs all five trusted-main Worker TSX CLIs from paths valid at repo root', () => {
+    const workerTsxTargets = (workflowPath: string): string[] => {
+      const workflow = readFileSync(workflowPath, 'utf8');
+      return [...workflow.matchAll(
+        /npm --prefix services\/worker exec -- tsx\s+\\\n\s+(\S+)/gu,
+      )].map((match) => match[1]);
+    };
+
+    const prerequisiteTargets = workerTsxTargets('.github/workflows/s33-wave1-prerequisites.yml');
+    const acceptanceTargets = workerTsxTargets('.github/workflows/s33-wave1-acceptance.yml');
+    expect(prerequisiteTargets).toEqual([
+      'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+      'services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts',
+      'services/worker/src/ai/eval/s33-wave1-workflow-reports.ts',
+      'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+    ]);
+    expect(acceptanceTargets).toEqual([
+      'services/worker/src/ai/eval/s33-wave1-producer-verifier.ts',
+    ]);
+    for (const target of [...prerequisiteTargets, ...acceptanceTargets]) {
+      expect(() => readFileSync(target, 'utf8')).not.toThrow();
+    }
+  });
+
   it('routes CLI, prerequisite, reports, reload, GitHub auth, and both workflows through one verifier', () => {
     const producer = readFileSync('services/worker/src/ai/eval/s33-wave1-producer-verifier.ts', 'utf8');
     const runner = readFileSync('services/worker/src/ai/eval/s33-wave1-prerequisite-runner.ts', 'utf8');
