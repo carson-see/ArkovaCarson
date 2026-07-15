@@ -33,6 +33,7 @@ const REVOCATION_MODE = 'immediate-hold' as const;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SIGNATURE_BASE64URL = /^[A-Za-z0-9_-]{86}$/u;
 const KEY_ID = /^arkova-s33-cto-release-\d{4}q[1-4]-\d{2}$/u;
+const PUBLIC_SPKI_PEM = /^-----BEGIN PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END PUBLIC KEY-----$/u;
 const PLACEHOLDER = /^(?:n\/?a|none|null|pending|tbd|todo|unknown|placeholder)$/iu;
 
 type JsonRecord = Record<string, unknown>;
@@ -268,6 +269,9 @@ function configuredPublicKey(
   publicKeySpkiPem: string,
   publicKeyFingerprintSha256: string,
 ): KeyObject {
+  if (!PUBLIC_SPKI_PEM.test(publicKeySpkiPem.trim())) {
+    throw new Error('S3.3 detached trust-policy key must be public SPKI PEM');
+  }
   let publicKey: KeyObject;
   try {
     publicKey = createPublicKey(publicKeySpkiPem);

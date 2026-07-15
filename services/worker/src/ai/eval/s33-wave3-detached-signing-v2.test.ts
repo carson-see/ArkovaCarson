@@ -286,6 +286,14 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     expect(Object.isFrozen(activePolicy.fingerprintConfirmation)).toBe(true);
   });
 
+  it('rejects private PKCS#8 material before public-SPKI policy activation', () => {
+    const privateKeyPkcs8Pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    expect(() => validateS33DetachedSigningTrustPolicyV2({
+      ...activePolicy,
+      publicKeySpkiPem: privateKeyPkcs8Pem,
+    })).toThrow(/public SPKI PEM/i);
+  });
+
   it('disables test-policy injection outside NODE_ENV=test', () => {
     process.env.NODE_ENV = 'production';
     expect(() => createS33DetachedSigningTestHarnessV2(activePolicy)).toThrow(/test-only/i);
