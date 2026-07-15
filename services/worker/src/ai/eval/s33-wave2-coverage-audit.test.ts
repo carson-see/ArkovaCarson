@@ -8,18 +8,26 @@ import {
   parseS33Wave2Top15Registry,
   s33Wave2CoverageReportSha256,
   type S33AcceptedCoverageEntry,
+  type S33Wave2Top15Registry,
 } from './s33-wave2-coverage-audit.js';
 
-const TEST_DIR = dirname(fileURLToPath(import.meta.url));
-const REPOSITORY_ROOT = resolve(TEST_DIR, '../../../../..');
-const REGISTRY_PATH = resolve(REPOSITORY_ROOT, 'docs/lane4/s33-wave2-top15-registry.json');
-const BASELINE_EVIDENCE_PATH = resolve(
-  REPOSITORY_ROOT,
+const testDir = dirname(fileURLToPath(import.meta.url));
+const repositoryRoot = resolve(testDir, '../../../../..');
+const registryPath = resolve(repositoryRoot, 'docs/lane4/s33-wave2-top15-registry.json');
+const baselineEvidencePath = resolve(
+  repositoryRoot,
   'docs/lane4/evidence/s33-wave2-coverage-baseline.json',
 );
 
+interface BaselineEvidence {
+  registryRawSha256: string;
+  reportCanonicalSha256: string;
+  summary: Record<string, number>;
+  productionOrder: string[];
+}
+
 function readRegistry(): unknown {
-  return JSON.parse(readFileSync(REGISTRY_PATH, 'utf8'));
+  return JSON.parse(readFileSync(registryPath, 'utf8'));
 }
 
 function sha256File(path: string): string {
@@ -115,22 +123,22 @@ describe('S3.3 Wave 2 top-15 registry', () => {
     const registry = parseS33Wave2Top15Registry(readRegistry());
     const baseline = registry.acceptedBaseline;
 
-    expect(sha256File(resolve(REPOSITORY_ROOT, 'docs/lane4/s33-wave1-batch-manifest.json')))
+    expect(sha256File(resolve(repositoryRoot, 'docs/lane4/s33-wave1-batch-manifest.json')))
       .toBe(baseline.manifestRawSha256);
-    expect(sha256File(resolve(REPOSITORY_ROOT, 'docs/lane4/s33-wave1-entry-datasheet.json')))
+    expect(sha256File(resolve(repositoryRoot, 'docs/lane4/s33-wave1-entry-datasheet.json')))
       .toBe(baseline.entryDatasheetRawSha256);
-    expect(sha256File(resolve(REPOSITORY_ROOT, 'docs/lane4/s33-corpus-datasheet.md')))
+    expect(sha256File(resolve(repositoryRoot, 'docs/lane4/s33-corpus-datasheet.md')))
       .toBe(baseline.corpusDatasheetRawSha256);
-    expect(gitBlobSha1(resolve(REPOSITORY_ROOT, 'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts')))
+    expect(gitBlobSha1(resolve(repositoryRoot, 'services/worker/src/ai/eval/golden-dataset-s33-licensing-heldout.ts')))
       .toBe(baseline.sourceBlobs.licensing);
-    expect(gitBlobSha1(resolve(REPOSITORY_ROOT, 'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts')))
+    expect(gitBlobSha1(resolve(repositoryRoot, 'services/worker/src/ai/eval/golden-dataset-s33-au-ke-heldout.ts')))
       .toBe(baseline.sourceBlobs.auKe);
-    expect(gitBlobSha1(resolve(REPOSITORY_ROOT, 'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts')))
+    expect(gitBlobSha1(resolve(repositoryRoot, 'services/worker/src/ai/eval/golden-dataset-s33-ood-negatives.ts')))
       .toBe(baseline.sourceBlobs.ood);
   });
 
   it('rejects a production-order change', () => {
-    const registry = structuredClone(readRegistry()) as { productionOrder: string[] };
+    const registry = structuredClone(readRegistry()) as S33Wave2Top15Registry;
     [registry.productionOrder[0], registry.productionOrder[1]] = [
       registry.productionOrder[1]!,
       registry.productionOrder[0]!,
@@ -140,9 +148,7 @@ describe('S3.3 Wave 2 top-15 registry', () => {
   });
 
   it('rejects an unratified production taxonomy mapping', () => {
-    const registry = structuredClone(readRegistry()) as {
-      domains: Array<{ types: Array<{ mappings: Array<{ credentialType: string; subType: string }> }> }>;
-    };
+    const registry = structuredClone(readRegistry()) as S33Wave2Top15Registry;
     registry.domains[0]!.types[0]!.mappings[0]!.subType = 'invented_contract_type';
 
     expect(() => parseS33Wave2Top15Registry(registry)).toThrow(/unratified mapping/i);
@@ -167,15 +173,10 @@ describe('S3.3 Wave 2 accepted-held-out coverage audit', () => {
   });
 
   it('reproduces the committed pre-corpus evidence from exact registry bytes', () => {
-    const evidence = JSON.parse(readFileSync(BASELINE_EVIDENCE_PATH, 'utf8')) as {
-      registryRawSha256: string;
-      reportCanonicalSha256: string;
-      summary: Record<string, number>;
-      productionOrder: string[];
-    };
+    const evidence = JSON.parse(readFileSync(baselineEvidencePath, 'utf8')) as BaselineEvidence;
     const report = auditS33Wave2Coverage(readRegistry(), []);
 
-    expect(evidence.registryRawSha256).toBe(sha256File(REGISTRY_PATH));
+    expect(evidence.registryRawSha256).toBe(sha256File(registryPath));
     expect(evidence.reportCanonicalSha256).toBe(s33Wave2CoverageReportSha256(report));
     expect(evidence.summary).toEqual({
       registryTypeCount: report.registryTypeCount,
@@ -200,11 +201,29 @@ describe('S3.3 Wave 2 accepted-held-out coverage audit', () => {
       registryTypeId: 'legal-01-contract',
       qualifyingCount: 12,
       edgeCaseCount: 4,
+      minimumEdgeCaseRequired: 4,
       missingCount: 0,
       complete: true,
     });
     expect(report.completeTypeCount).toBe(1);
     expect(report.missingEntryCount).toBe(528);
+  });
+
+  it('keeps a type incomplete when its signed 30% edge-case threshold is short', () => {
+    const entries = Array.from({ length: 12 }, (_, index) => acceptedEntry(`GD-S33-W2-L-C-${index + 1}`, {
+      edgeCase: index < 3,
+    }));
+    const report = auditS33Wave2Coverage(readRegistry(), entries);
+
+    expect(report.types[0]).toMatchObject({
+      qualifyingCount: 12,
+      edgeCaseCount: 3,
+      minimumEdgeCaseRequired: 4,
+      missingCount: 1,
+      complete: false,
+    });
+    expect(report.completeTypeCount).toBe(0);
+    expect(report.missingEntryCount).toBe(529);
   });
 
   it('produces a deterministic canonical report digest', () => {

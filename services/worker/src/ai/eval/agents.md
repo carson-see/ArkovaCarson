@@ -13,7 +13,9 @@ _Last updated: 2026-07-15_
 - Coverage counts only strict Lane-3 acceptance records for real-source or
   independently-authored held-out entries. Generator-derived, training-exposed,
   shallow, duplicate, unknown-type, or taxonomy-mismatched inputs fail closed;
-  Lane 4 cannot accept its own producer records.
+  Lane 4 cannot accept its own producer records. A type is complete only at
+  12 accepted rows with at least `ceil(12 * 0.30) = 4` edge cases; both total
+  and edge-case deficits contribute to the fail-closed missing count.
 - `docs/lane4/evidence/s33-wave2-coverage-baseline.json` is the reproducible
   pre-corpus zero-state: 45 incomplete types and 540 minimum missing entries.
   Later corpus batches must preserve the fixed domain-interleaved production

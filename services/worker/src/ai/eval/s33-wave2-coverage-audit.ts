@@ -12,9 +12,9 @@ import { z } from 'zod';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
 import { V6_SUBTYPE_TAXONOMY } from './golden-dataset-s33-types.js';
 
-const SHA256 = /^[a-f0-9]{64}$/;
-const GIT_SHA = /^[a-f0-9]{40}$/;
-const DOMAIN_IDS = ['legal', 'financial', 'education'] as const;
+const sha256Pattern = /^[a-f0-9]{64}$/;
+const gitShaPattern = /^[a-f0-9]{40}$/;
+const domainIds = ['legal', 'financial', 'education'] as const;
 
 const mappingSchema = z.object({
   credentialType: z.string().min(1),
@@ -29,7 +29,7 @@ const registryTypeSchema = z.object({
 }).strict();
 
 const registryDomainSchema = z.object({
-  id: z.enum(DOMAIN_IDS),
+  id: z.enum(domainIds),
   order: z.number().int().min(1).max(3),
   types: z.array(registryTypeSchema).length(15),
 }).strict();
@@ -42,7 +42,7 @@ const registrySchema = z.object({
     confluencePageId: z.literal('104038401'),
     alignmentPageId: z.literal('104202241'),
     decidedAtUtc: z.string().datetime({ offset: true }),
-    planningBaseCommit: z.string().regex(GIT_SHA),
+    planningBaseCommit: z.string().regex(gitShaPattern),
   }).strict(),
   coveragePolicy: z.object({
     minimumHeldoutPerType: z.number().int().positive(),
@@ -92,38 +92,50 @@ const acceptedCoverageEntrySchema = z.object({
   edgeCase: z.boolean(),
   acceptance: z.object({
     lane: z.literal('lane3'),
-    artifactSha256: z.string().regex(SHA256),
-    acceptedHeadCommit: z.string().regex(GIT_SHA),
+    artifactSha256: z.string().regex(sha256Pattern),
+    acceptedHeadCommit: z.string().regex(gitShaPattern),
   }).strict(),
 }).strict();
 
 export type S33Wave2Top15Registry = z.infer<typeof registrySchema>;
 export type S33AcceptedCoverageEntry = z.infer<typeof acceptedCoverageEntrySchema>;
 export type S33RegistryType = S33Wave2Top15Registry['domains'][number]['types'][number];
+type S33RegistryDomainId = typeof domainIds[number];
 
+interface S33RegistryTypeLocation {
+  readonly domain: S33RegistryDomainId;
+  readonly type: S33RegistryType;
+}
+
+/** Immutable Wave 1 baseline carried into every Wave 2 coverage report. */
+export interface S33CoverageBaseline {
+  readonly batchId: 'S33-W1';
+  readonly revision: 12;
+  readonly entryCount: 81;
+  readonly top15CoverageDisposition: 'NOT_PROVIDED_IN_WAVE_1';
+}
+
+/** Per-type coverage and edge-case readiness under the CTO-signed policy. */
 export interface S33TypeCoverage {
   readonly registryTypeId: string;
-  readonly domain: typeof DOMAIN_IDS[number];
+  readonly domain: S33RegistryDomainId;
   readonly order: number;
   readonly documentType: string;
   readonly qualifyingEntryIds: readonly string[];
   readonly qualifyingCount: number;
   readonly edgeCaseCount: number;
   readonly minimumRequired: number;
+  readonly minimumEdgeCaseRequired: number;
   readonly missingCount: number;
   readonly complete: boolean;
 }
 
+/** Canonical aggregate report for all 45 signed Wave 2 registry types. */
 export interface S33Wave2CoverageReport {
   readonly schemaVersion: 1;
   readonly artifactType: 'arkova-s33-wave2-coverage-audit';
   readonly planningBaseCommit: string;
-  readonly baseline: Readonly<{
-    batchId: 'S33-W1';
-    revision: 12;
-    entryCount: 81;
-    top15CoverageDisposition: 'NOT_PROVIDED_IN_WAVE_1';
-  }>;
+  readonly baseline: Readonly<S33CoverageBaseline>;
   readonly registryTypeCount: 45;
   readonly acceptedEntryCount: number;
   readonly completeTypeCount: number;
@@ -139,7 +151,7 @@ function expectedProductionOrder(registry: S33Wave2Top15Registry): string[] {
   const ordered: string[] = [];
 
   for (const start of [1, 6, 11]) {
-    for (const domainId of DOMAIN_IDS) {
+    for (const domainId of domainIds) {
       const domain = domainMap.get(domainId);
       if (!domain) throw new Error(`S3.3 registry is missing domain ${domainId}.`);
       ordered.push(...domain.types
@@ -152,16 +164,32 @@ function expectedProductionOrder(registry: S33Wave2Top15Registry): string[] {
   return ordered;
 }
 
-function validateRegistrySemantics(registry: S33Wave2Top15Registry): void {
-  const domainIds = registry.domains.map((domain) => domain.id);
-  if (new Set(domainIds).size !== DOMAIN_IDS.length
-      || DOMAIN_IDS.some((domainId) => !domainIds.includes(domainId))) {
+function validateRegistryDomains(registry: S33Wave2Top15Registry): void {
+  const actualDomainIds = registry.domains.map((domain) => domain.id);
+  if (new Set(actualDomainIds).size !== domainIds.length
+      || domainIds.some((domainId) => !actualDomainIds.includes(domainId))) {
     throw new Error('S3.3 registry must contain legal, financial, and education exactly once.');
   }
+}
 
+function validateRegistryTypeMappings(type: S33RegistryType): void {
+  const mappingKeys = new Set<string>();
+  for (const mapping of type.mappings) {
+    const taxonomy = V6_SUBTYPE_TAXONOMY[mapping.credentialType];
+    if (!taxonomy?.includes(mapping.subType)) {
+      throw new Error(`S3.3 registry type ${type.id} uses unratified mapping ${mapping.credentialType}/${mapping.subType}.`);
+    }
+    const key = `${mapping.credentialType}/${mapping.subType}`;
+    if (mappingKeys.has(key)) throw new Error(`S3.3 registry type ${type.id} repeats mapping ${key}.`);
+    mappingKeys.add(key);
+  }
+}
+
+function validateRegistryTypes(registry: S33Wave2Top15Registry): Set<string> {
   const ids = new Set<string>();
+
   for (const domain of registry.domains) {
-    const expectedDomainOrder = DOMAIN_IDS.indexOf(domain.id) + 1;
+    const expectedDomainOrder = domainIds.indexOf(domain.id) + 1;
     if (domain.order !== expectedDomainOrder) {
       throw new Error(`S3.3 domain ${domain.id} has order ${domain.order}; expected ${expectedDomainOrder}.`);
     }
@@ -177,20 +205,14 @@ function validateRegistrySemantics(registry: S33Wave2Top15Registry): void {
       if (!type.id.startsWith(`${domain.id}-`)) {
         throw new Error(`S3.3 registry type ${type.id} is not namespaced to ${domain.id}.`);
       }
-
-      const mappingKeys = new Set<string>();
-      for (const mapping of type.mappings) {
-        const taxonomy = V6_SUBTYPE_TAXONOMY[mapping.credentialType];
-        if (!taxonomy?.includes(mapping.subType)) {
-          throw new Error(`S3.3 registry type ${type.id} uses unratified mapping ${mapping.credentialType}/${mapping.subType}.`);
-        }
-        const key = `${mapping.credentialType}/${mapping.subType}`;
-        if (mappingKeys.has(key)) throw new Error(`S3.3 registry type ${type.id} repeats mapping ${key}.`);
-        mappingKeys.add(key);
-      }
+      validateRegistryTypeMappings(type);
     }
   }
 
+  return ids;
+}
+
+function validateProductionOrder(registry: S33Wave2Top15Registry, ids: ReadonlySet<string>): void {
   const expected = expectedProductionOrder(registry);
   if (registry.productionOrder.some((id, index) => id !== expected[index])) {
     throw new Error('S3.3 production order must be domain-interleaved in fixed 1-5, 6-10, and 11-15 tranches.');
@@ -200,12 +222,19 @@ function validateRegistrySemantics(registry: S33Wave2Top15Registry): void {
   }
 }
 
+function validateRegistrySemantics(registry: S33Wave2Top15Registry): void {
+  validateRegistryDomains(registry);
+  validateProductionOrder(registry, validateRegistryTypes(registry));
+}
+
+/** Parse the signed top-15 registry and reject semantic drift beyond its JSON schema. */
 export function parseS33Wave2Top15Registry(input: unknown): S33Wave2Top15Registry {
   const registry = registrySchema.parse(input);
   validateRegistrySemantics(registry);
   return registry;
 }
 
+/** Audit only Lane-3-authenticated held-out entries against all signed thresholds. */
 export function auditS33Wave2Coverage(
   registryInput: unknown,
   acceptedEntryInputs: readonly unknown[],
@@ -213,7 +242,7 @@ export function auditS33Wave2Coverage(
   const registry = parseS33Wave2Top15Registry(registryInput);
   const entries = acceptedEntryInputs.map((entry) => acceptedCoverageEntrySchema.parse(entry));
   const ids = new Set<string>();
-  const typeById = new Map<string, { domain: typeof DOMAIN_IDS[number]; type: S33RegistryType }>();
+  const typeById = new Map<string, S33RegistryTypeLocation>();
 
   for (const domain of registry.domains) {
     for (const type of domain.types) typeById.set(type.id, { domain: domain.id, type });
@@ -240,17 +269,29 @@ export function auditS33Wave2Coverage(
     if (!registryType) throw new Error(`Validated registry lost type ${registryTypeId}.`);
     const qualifying = entries.filter((entry) => entry.registryTypeId === registryTypeId);
     const minimumRequired = registry.coveragePolicy.minimumHeldoutPerType;
+    const minimumEdgeCaseRequired = Math.ceil(
+      minimumRequired * registry.coveragePolicy.targetEdgeCaseRatio,
+    );
+    const edgeCaseCount = qualifying.filter((entry) => entry.edgeCase).length;
+    const missingCount = Math.max(
+      0,
+      minimumRequired - qualifying.length,
+      minimumEdgeCaseRequired - edgeCaseCount,
+    );
     return Object.freeze({
       registryTypeId,
       domain: registryType.domain,
       order: registryType.type.order,
       documentType: registryType.type.documentType,
-      qualifyingEntryIds: Object.freeze(qualifying.map((entry) => entry.id).sort()),
+      qualifyingEntryIds: Object.freeze(qualifying
+        .map((entry) => entry.id)
+        .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))),
       qualifyingCount: qualifying.length,
-      edgeCaseCount: qualifying.filter((entry) => entry.edgeCase).length,
+      edgeCaseCount,
       minimumRequired,
-      missingCount: Math.max(0, minimumRequired - qualifying.length),
-      complete: qualifying.length >= minimumRequired,
+      minimumEdgeCaseRequired,
+      missingCount,
+      complete: missingCount === 0,
     });
   });
 
@@ -279,6 +320,7 @@ export function auditS33Wave2Coverage(
   });
 }
 
+/** Hash a coverage report using repository-wide canonical JSON serialization. */
 export function s33Wave2CoverageReportSha256(report: S33Wave2CoverageReport): string {
   return createHash('sha256').update(canonicaliseJson(report)).digest('hex');
 }
