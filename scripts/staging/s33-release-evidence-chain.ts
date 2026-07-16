@@ -3,8 +3,9 @@
  *
  * This module composes already validated, provenance-branded offline inputs.
  * It does not deploy, query a rig, tear resources down, sign a packet, or
- * promote fixture evidence into release acceptance. The two unavailable
- * producer boundaries remain explicit in every result.
+ * promote descriptive signer metadata into release acceptance. Lane 2's
+ * capture producer is bound; the independent release-signature gate remains
+ * explicitly unavailable in every result.
  */
 
 import { z } from 'zod';
@@ -37,18 +38,20 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
 
 const metadataSchema = z.object({
-  schemaVersion: z.literal('arkova.s33.l1.release-evidence-chain-input/v1'),
-  evidenceMode: z.literal('OFFLINE_COMPOSITION_PRODUCER_BLOCKED'),
+  schemaVersion: z.literal('arkova.s33.l1.release-evidence-chain-input/v2'),
+  evidenceMode: z.literal('OFFLINE_COMPOSITION_SIGNATURE_BLOCKED'),
   runId: z.string().regex(SAFE_ID),
   composedAt: z.string().datetime({ offset: true }),
   exactHeadSha: z.string().regex(GIT_SHA),
   exactTreeSha: z.string().regex(GIT_SHA),
   producerBoundary: z.object({
-    lane2TeardownSchemaVersion: z.null(),
-    lane2TeardownIdentity: z.null(),
+    lane2TeardownSchemaVersion: z.literal(
+      'arkova.s33.l2.teardown-captured-verification/v1',
+    ),
+    lane2TeardownIdentity: z.string().regex(SHA256),
     lane3SignatureSchemaVersion: z.null(),
     lane3SignatureAuthority: z.literal('LANE3_GENERIC_SIGNATURE_AUTHORITY'),
-    status: z.literal('BLOCKED_UNAVAILABLE'),
+    status: z.literal('LANE2_VERIFIED_SIGNATURE_BLOCKED'),
   }).strict(),
   signature: z.object({
     authority: z.literal('LANE3_GENERIC_SIGNATURE_AUTHORITY'),
@@ -129,31 +132,59 @@ const teardownInventoryDiffSchema = z.object({
   scopeId: z.string().min(1),
   resourceId: z.string().min(1),
   billingClass: z.enum(['RECURRING_PAID', 'NO_RECURRING_CHARGE']),
-  terminalState: z.enum(['DELETED', 'DOWNGRADED_ZERO_RECURRING']),
+  targetProvenance: z.object({
+    authority: z.literal('CTO'),
+    origin: z.literal('S33_ISOLATED_RIG_RESOURCE'),
+    decisionArtifactSha256: z.string().regex(SHA256),
+    candidateGitHeadSha: z.string().regex(GIT_SHA),
+    candidateGitTreeSha: z.string().regex(GIT_SHA),
+    imageDigestSha256: z.string().regex(SHA256),
+    provisionArtifactSha256: z.string().regex(SHA256),
+    provisionConfigSha256: z.string().regex(SHA256),
+  }).strict(),
+  terminalState: z.enum(['DELETED', 'RELEASED_EXPIRED']),
   projectedMonthlyRecurringUsd: z.literal(0),
   evidenceArtifactSha256: z.string().regex(SHA256),
 }).strict();
 
 const teardownSnapshotSchema = z.object({
-  schemaVersion: z.literal('arkova.s33.l1.teardown-zero-cost-result/v1'),
-  status: z.literal('OFFLINE_DIFF_VERIFIED_PRODUCER_BLOCKED'),
+  schemaVersion: z.literal('arkova.s33.l1.teardown-zero-cost-result/v2'),
+  status: z.literal('CAPTURED_INVENTORY_VERIFIED_SIGNATURE_BLOCKED'),
   releaseAcceptance: z.literal(false),
   runId: z.string().regex(SAFE_ID),
   exactHeadSha: z.string().regex(GIT_SHA),
   exactTreeSha: z.string().regex(GIT_SHA),
+  producerIdentity: z.string().regex(SHA256),
+  resourceBoundarySha256: z.string().regex(SHA256),
+  releaseBoundaryComplete: z.literal(true),
+  boundaryStatus: z.literal('COMPLETE'),
   beforeCapturedAt: z.string().datetime({ offset: true }),
   afterCapturedAt: z.string().datetime({ offset: true }),
   beforeArtifactSha256: z.string().regex(SHA256),
   afterArtifactSha256: z.string().regex(SHA256),
   resourceCount: z.number().int().positive().safe(),
   deletedCount: z.number().int().nonnegative().safe(),
-  downgradedZeroRecurringCount: z.number().int().nonnegative().safe(),
+  releasedExpiredCount: z.number().int().nonnegative().safe(),
+  downgradedZeroRecurringCount: z.literal(0),
   projectedMonthlyRecurringUsd: z.literal(0),
+  recurring_cost_zero: z.literal(true),
   zeroRecurringProjected: z.literal(true),
   inventoryDiff: z.array(teardownInventoryDiffSchema).min(1),
+  operator: z.object({
+    operatorId: z.string().min(1),
+    role: z.enum(['RTE', 'LANE2_TEARDOWN_OPERATOR']),
+    organization: z.literal('ARKOVA'),
+  }).strict(),
+  signer: z.object({
+    keyId: z.string().min(1),
+    algorithm: z.literal('Ed25519'),
+    publicKeyFingerprintSha256: z.string().regex(SHA256),
+    verificationStatus: z.literal('UNVERIFIED_EXTERNAL_ARTIFACT'),
+    beforeDetachedSignatureArtifactSha256: z.string().regex(SHA256),
+    afterDetachedSignatureArtifactSha256: z.string().regex(SHA256),
+  }).strict(),
   signature: signatureUnavailableSchema,
   producerDependencies: z.tuple([
-    z.literal('LANE2_TEARDOWN_INVENTORY_IDENTITY_UNAVAILABLE'),
     z.literal('LANE3_GENERIC_SIGNATURE_AUTHORITY_UNAVAILABLE'),
   ]),
   inputDigestSha256: z.string().regex(SHA256),
@@ -195,8 +226,8 @@ export interface S33ReleaseTriggerEvidenceIdentity {
 }
 
 export interface S33ReleaseEvidenceChainResult {
-  readonly schemaVersion: 'arkova.s33.l1.release-evidence-chain-result/v1';
-  readonly status: 'OFFLINE_CHAIN_DRAFT_PRODUCER_BLOCKED';
+  readonly schemaVersion: 'arkova.s33.l1.release-evidence-chain-result/v2';
+  readonly status: 'OFFLINE_CHAIN_DRAFT_SIGNATURE_BLOCKED';
   readonly releaseAcceptance: false;
   readonly runId: string;
   readonly composedAt: string;
@@ -234,9 +265,12 @@ export interface S33ReleaseEvidenceChainResult {
     signetMechanismClaim: 'separate-and-deferred';
   }>;
   readonly teardown: Readonly<{
-    status: 'OFFLINE_DIFF_VERIFIED_PRODUCER_BLOCKED';
+    status: 'CAPTURED_INVENTORY_VERIFIED_SIGNATURE_BLOCKED';
     releaseAcceptance: false;
-    producerIdentity: null;
+    producerIdentity: string;
+    resourceBoundarySha256: string;
+    releaseBoundaryComplete: true;
+    boundaryStatus: 'COMPLETE';
     beforeCapturedAt: string;
     afterCapturedAt: string;
     beforeArtifactSha256: string;
@@ -245,6 +279,7 @@ export interface S33ReleaseEvidenceChainResult {
     resultDigestSha256: string;
     resourceCount: number;
     projectedMonthlyRecurringUsd: 0;
+    recurring_cost_zero: true;
     zeroRecurringProjected: true;
   }>;
   readonly signature: Readonly<{
@@ -253,13 +288,12 @@ export interface S33ReleaseEvidenceChainResult {
     envelope: null;
   }>;
   readonly producerDependencies: readonly [
-    'LANE2_TEARDOWN_INVENTORY_IDENTITY_UNAVAILABLE',
     'LANE3_GENERIC_SIGNATURE_AUTHORITY_UNAVAILABLE',
   ];
   readonly sourceArtifactDigests: readonly string[];
   readonly derivedManifestDigests: readonly string[];
   readonly claims: Readonly<{
-    producerAcceptance: 'blocked-not-claimed';
+    producerAcceptance: 'lane2-verified-signature-blocked';
     signature: 'unavailable-not-invented';
     teardownMutation: 'not-performed-by-this-composer';
     mainnetMeasurement: 'not-claimed';
@@ -399,6 +433,12 @@ export function composeS33ReleaseEvidenceChain(
     admission.imageDigest,
     drainPlan.imageDigest,
   ]);
+  if (
+    metadata.producerBoundary.lane2TeardownIdentity
+    !== teardown.producerIdentity
+  ) {
+    throw new Error('Lane 2 teardown producer identity is stale or contradictory.');
+  }
 
   const bindsWorker = teardown.inventoryDiff.some((resource) => (
     resource.provider === 'GCP'
@@ -452,6 +492,8 @@ export function composeS33ReleaseEvidenceChain(
     ...triggerEvidence.map(({ observationDigestSha256 }) => observationDigestSha256),
     runway.inputDigestSha256,
     runway.resultDigestSha256,
+    teardown.producerIdentity,
+    teardown.resourceBoundarySha256,
     teardown.inputDigestSha256,
     teardown.resultDigestSha256,
   ];
@@ -459,8 +501,8 @@ export function composeS33ReleaseEvidenceChain(
   requireUniqueDigests('Release derived manifest chain', derivedManifestDigests);
 
   const resultWithoutDigest = {
-    schemaVersion: 'arkova.s33.l1.release-evidence-chain-result/v1' as const,
-    status: 'OFFLINE_CHAIN_DRAFT_PRODUCER_BLOCKED' as const,
+    schemaVersion: 'arkova.s33.l1.release-evidence-chain-result/v2' as const,
+    status: 'OFFLINE_CHAIN_DRAFT_SIGNATURE_BLOCKED' as const,
     releaseAcceptance: false as const,
     runId: metadata.runId,
     composedAt: metadata.composedAt,
@@ -494,7 +536,10 @@ export function composeS33ReleaseEvidenceChain(
     teardown: {
       status: teardown.status,
       releaseAcceptance: teardown.releaseAcceptance,
-      producerIdentity: null,
+      producerIdentity: teardown.producerIdentity,
+      resourceBoundarySha256: teardown.resourceBoundarySha256,
+      releaseBoundaryComplete: teardown.releaseBoundaryComplete,
+      boundaryStatus: teardown.boundaryStatus,
       beforeCapturedAt: teardown.beforeCapturedAt,
       afterCapturedAt: teardown.afterCapturedAt,
       beforeArtifactSha256: teardown.beforeArtifactSha256,
@@ -503,17 +548,17 @@ export function composeS33ReleaseEvidenceChain(
       resultDigestSha256: teardown.resultDigestSha256,
       resourceCount: teardown.resourceCount,
       projectedMonthlyRecurringUsd: teardown.projectedMonthlyRecurringUsd,
+      recurring_cost_zero: teardown.recurring_cost_zero,
       zeroRecurringProjected: teardown.zeroRecurringProjected,
     },
     signature: { ...metadata.signature },
     producerDependencies: [
-      'LANE2_TEARDOWN_INVENTORY_IDENTITY_UNAVAILABLE',
       'LANE3_GENERIC_SIGNATURE_AUTHORITY_UNAVAILABLE',
     ] as const,
     sourceArtifactDigests,
     derivedManifestDigests,
     claims: {
-      producerAcceptance: 'blocked-not-claimed' as const,
+      producerAcceptance: 'lane2-verified-signature-blocked' as const,
       signature: 'unavailable-not-invented' as const,
       teardownMutation: 'not-performed-by-this-composer' as const,
       mainnetMeasurement: 'not-claimed' as const,
