@@ -1,6 +1,18 @@
 # agents.md — services/worker/src/ai/eval/
 
-_Last updated: 2026-07-15_
+_Last updated: 2026-07-16_
+
+## 2026-07-16 S3.3 held-out corpus authentication
+
+- `s33-wave3-corpus-authentication.ts` is offline-only public evidence tooling.
+  It re-derives the exact six-source, 621-row held-out identity set; binds the
+  admitted v7.1 head/tree and its 865/96 export identities; proves exact-id and
+  normalized-content zero overlap; emits deterministic domain-separated bytes;
+  and verifies only the already code-bound public Ed25519 release/corpus root.
+  It contains no signer, private-key input, cloud, spend, rig, or soak path.
+- The signed payload deliberately leaves the final RC head/tree as
+  `PENDING_COMPOSITION` and grants no RC, provisioning, soak, or spend
+  authority. Exact-RC authorization remains a later, separate gate.
 
 ## 2026-07-15 S3.3 Wave-3 deterministic offline gates
 
@@ -60,13 +72,14 @@ _Last updated: 2026-07-15_
   canonical `arkova:s33:detached-acceptance:v2` unsigned request, accepts only a
   64-byte detached Ed25519 signature for assembly, and verifies the strict
   request/envelope digests plus all caller-recomputed batch bindings.
-- The production key ring is deliberately `UNCONFIGURED`: it has no active key,
-  and the initial policy's public SPKI, DER SHA-256
-  fingerprint, authorized operator, CTO out-of-band fingerprint confirmation,
-  and activation time are all `null`. There
-  is no placeholder root, private-key API, signer, or environment override, so
-  production assembly and verification fail closed until a reviewed CTO input
-  commit activates the policy.
+- The production key ring is `ACTIVE` only for the founder/CTO-confirmed public
+  release/corpus Ed25519 root `arkova.s33.release-corpus.ed25519.v1`. Its SPKI,
+  DER fingerprint, operator, activation time, founder command receipt, and
+  canonical genesis-roster root are code-bound. The public genesis receipt at
+  `docs/lane3/evidence/s33-public-authority-genesis-receipt.json` is
+  `selfPinned:false`, records secret-version resource names only, and verifies
+  all three roster signatures. There remains no private-key API, signer,
+  secret value, or environment authority override.
 - The versioned trust-policy set permits at most one active key and retains old
   public roots. A normal A-to-B rotation is atomic: A becomes `RETIRED` at the
   exact instant B becomes `ACTIVE`, with no overlap; unsigned in-flight A
@@ -83,6 +96,30 @@ _Last updated: 2026-07-15_
   payload builder/parser for reuse. This does not activate the v1 or v2 signer
   and does not connect v2 to whole-batch acceptance; corpus acceptance remains
   impossible while the committed policies are unconfigured.
+## 2026-07-15 S3.3 Wave-2 top-15 coverage gate
+
+- `s33-wave2-coverage-audit.ts` is an offline Lane-4 registry/coverage gate;
+  it is not imported by the worker runtime and does not call a model. It parses
+  the CTO-signed 45-type Legal/Financial/Education registry, checks every
+  credential/subtype pair against `V6_SUBTYPE_TAXONOMY`, pins the merged Wave-1
+  revision-12 baseline without claiming unprovided top-15 coverage, and emits a
+  canonical deterministic report digest.
+- Coverage counts only whole-batch Lane-3 acceptance envelopes verified by the
+  shared Ed25519 CTO-release trust root. The audit recomputes the raw and
+  canonical coverage-registry digests, verifies the signed entry order, rejects
+  duplicate artifacts/batches/entry fingerprints, and requires one unbroken
+  base-to-result registry chain with no fork, cycle, or disconnected component.
+  A missing production trust root fails closed for nonempty acceptance input;
+  the pre-corpus empty baseline remains reproducible. Generator-derived,
+  training-exposed, shallow, duplicate, unknown-type, or taxonomy-mismatched
+  entries fail closed; a producer-supplied `lane3` label grants no authority and
+  Lane 4 cannot accept its own records. A type is complete only at
+  12 accepted rows with at least `ceil(12 * 0.30) = 4` edge cases; both total
+  and edge-case deficits contribute to the fail-closed missing count.
+- `docs/lane4/evidence/s33-wave2-coverage-baseline.json` is the reproducible
+  pre-corpus zero-state: 45 incomplete types and 540 minimum missing entries.
+  Later corpus batches must preserve the fixed domain-interleaved production
+  order and replace this zero-state only with exact Lane-3-accepted artifacts.
 
 ## 2026-07-15 S3.3 Wave-2 trusted-main corpus acceptance
 
@@ -115,7 +152,18 @@ _Last updated: 2026-07-15_
   ceiling; Wave 2 uses the new explicit-limit wrapper. The exported exact
   lexical scanner reuses the existing Wave-1 n-gram implementation without
   changing signed/historical Wave-1 callers. Additional leakage self-exclusions
-  are exact paths derived only from already accepted registry batches.
+  are exact paths derived from already accepted registry batches. The three
+  reserved `golden-dataset-s33-wave2-top15-{01-05,06-10,11-15}-heldout.ts`
+  tranche sources are also explicit prerequisite exclusions so shared Wave-1
+  report callers cannot self-match them; similarly named prompt/few-shot paths
+  remain scanned. Never replace these literals with a glob or prefix rule.
+- Candidate raw diffs force `--abbrev=40`; manifest source/datasheet bindings
+  are full SHA-1 object ids, so Git's default abbreviated raw ids are never
+  compared to them or admitted into a preflight snapshot.
+- The CTO top-15 registry schema requires `productionOrder` to name all 45
+  unique type ids exactly once in the ratified domain-interleaved tranches:
+  legal/financial/education 1-5, then 6-10, then 11-15. Unknown, duplicate, or
+  reordered ids fail closed.
 
 ## 2026-07-14 CTO correction topology — revision-12 provenance
 

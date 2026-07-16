@@ -37,13 +37,19 @@ const isoTimestamp = strictUtcTimestampSchema;
 const TEAM2_RIG_B1_CREATION_GUARD =
   'non-firing hold schedule; create then immediate pause + PAUSED verification';
 const TEAM2_RIG_B1_SCHEDULER_SPECS = [
-  ['batch-anchors', '/jobs/batch-anchors'],
-  ['check-confirmations', '/jobs/check-confirmations'],
-  ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs'],
-  ['org-queue-scheduler', '/jobs/org-queue-scheduler'],
-  ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true'],
-  ['recover-broadcasts', '/jobs/recover-broadcasts'],
+  ['batch-anchors', '/jobs/batch-anchors', '*/30 * * * *', 'Etc/UTC', '120s'],
+  ['check-confirmations', '/jobs/check-confirmations', '*/30 * * * *', 'Etc/UTC', '300s'],
+  ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs', '*/15 * * * *', 'Etc/UTC', '300s'],
+  ['org-queue-scheduler', '/jobs/org-queue-scheduler', '0 * * * *', 'Etc/UTC', '600s'],
+  ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true', '0 3 * * *', 'America/New_York', '600s'],
+  ['recover-broadcasts', '/jobs/recover-broadcasts', '*/15 * * * *', 'Etc/UTC', '120s'],
 ] as const;
+const TEAM2_RIG_B1_ACCELERATED_SCHEDULE = '*/5 * * * *';
+const TEAM2_RIG_B1_RETRY = {
+  min_backoff: '5s',
+  max_backoff: '3600s',
+  max_doublings: 5,
+} as const;
 const TEAM2_RIG_B1_LIVE_CHAIN_CRITICAL_CONFIG = {
   node_env: 'production',
   enable_ai_fraud: 'false',
@@ -77,15 +83,39 @@ const criticalConfigSchema = z.object({
 const schedulerJobSchema = z.object({
   name: nonEmpty,
   path: z.string().regex(/^\/jobs\/[a-z0-9-]+(?:\?[A-Za-z0-9_=&%-]+)?$/),
+  schedule: nonEmpty,
+  time_zone: z.enum(['Etc/UTC', 'America/New_York']),
+  attempt_deadline: z.string().regex(/^[1-9]\d*s$/),
+  retry: z.object({
+    min_backoff: z.string().regex(/^[1-9]\d*s$/),
+    max_backoff: z.string().regex(/^[1-9]\d*s$/),
+    max_doublings: z.number().int().nonnegative(),
+  }).strict(),
 }).strict();
 
-const schedulerSchema = z.object({
+const schedulerSharedShape = {
   applicable: z.literal(true),
   jobs: z.array(schedulerJobSchema).min(3),
   creation_guard: z.literal(TEAM2_RIG_B1_CREATION_GUARD),
   paused_through_clean_mirror: z.literal(true),
-  state: z.literal('resumed_after_clean_mirror'),
+} as const;
+
+const pausedSchedulerSchema = z.object({
+  ...schedulerSharedShape,
+  activation_mode: z.literal('PAUSED'),
+  state: z.literal('paused_after_clean_mirror'),
 }).strict();
+
+const schedulerSchema = z.discriminatedUnion('activation_mode', [
+  pausedSchedulerSchema,
+  z.object({
+    ...schedulerSharedShape,
+    activation_mode: z.literal('FORCE_ACCELERATED_RIG_ONLY'),
+    state: z.literal('accelerated_rig_only_enabled'),
+  }).strict(),
+]);
+
+const preClockSchedulerSchema = pausedSchedulerSchema;
 
 const cleanMirrorSchema = z.object({
   result: z.literal('environment_type=clean_mirror'),
@@ -138,6 +168,11 @@ const admissionV2Schema = z.object({
   stop_conditions: z.array(nonEmpty).min(3),
 }).strict();
 
+/** A separate pre-clock packet cannot claim that Scheduler already resumed. */
+const preClockAdmissionV2Schema = admissionV2Schema.extend({
+  scheduler: preClockSchedulerSchema,
+});
+
 const ceremonySchema = runDeclarationSchema.pick({
   declarationId: true,
   soakStartedAt: true,
@@ -147,13 +182,30 @@ const ceremonySchema = runDeclarationSchema.pick({
 }).strict();
 
 type AdmissionV2 = z.infer<typeof admissionV2Schema>;
+type PreClockAdmissionV2 = z.infer<typeof preClockAdmissionV2Schema>;
 type DeclarationCeremony = z.infer<typeof ceremonySchema>;
 
 export interface AdmissionBoundRunDeclaration {
   readonly admissionSha256: string;
 }
 
+export interface PreClockAdmissionBoundIdentity {
+  readonly admissionSha256: string;
+}
+
+export interface PreClockAdmissionIdentity {
+  readonly gitHeadSha: string;
+  readonly imageDigest: string;
+  readonly gcpProjectId: string;
+  readonly workerService: string;
+  readonly cleanMirrorAttestationId: string;
+}
+
 const DECLARATION_BY_ADMISSION_HANDLE = new WeakMap<AdmissionBoundRunDeclaration, RunDeclaration>();
+const IDENTITY_BY_PRE_CLOCK_HANDLE = new WeakMap<
+  PreClockAdmissionBoundIdentity,
+  PreClockAdmissionIdentity
+>();
 
 function parseStrict<T>(schema: z.ZodType<T>, raw: unknown, label: string): T {
   const result = schema.safeParse(parseJsonRejectingDuplicateKeys(raw, label));
@@ -169,7 +221,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function assertAdmissionInvariants(admission: AdmissionV2): void {
+function assertAdmissionInvariants(admission: AdmissionV2 | PreClockAdmissionV2): void {
   if (
     admission.sha !== admission.declared_source_head
     || admission.sha !== admission.deployed_source_head
@@ -203,14 +255,38 @@ function assertAdmissionInvariants(admission: AdmissionV2): void {
   if (new Set(names).size !== names.length || new Set(paths).size !== paths.length) {
     throw new Error('Admission v2 Scheduler specs contain duplicate names or paths.');
   }
-  const expectedSchedulerJobs = new Map<string, string>(TEAM2_RIG_B1_SCHEDULER_SPECS.map(([suffix, path]) => (
-    [`${admission.cloud_run_service}-${suffix}`, path] as const
+  const expectedSchedulerJobs: ReadonlyMap<string, Readonly<{
+    path: string;
+    schedule: string;
+    timeZone: string;
+    attemptDeadline: string;
+  }>> = new Map(TEAM2_RIG_B1_SCHEDULER_SPECS.map(([
+    suffix, path, schedule, timeZone, attemptDeadline,
+  ]) => (
+    [`${admission.cloud_run_service}-${suffix}`, {
+      path, schedule, timeZone, attemptDeadline,
+    }] as const
   )));
   if (
     admission.scheduler.jobs.length !== expectedSchedulerJobs.size
-    || admission.scheduler.jobs.some((job) => expectedSchedulerJobs.get(job.name) !== job.path)
+    || admission.scheduler.jobs.some((job) => {
+      const expected = expectedSchedulerJobs.get(job.name);
+      const expectedSchedule = admission.scheduler.activation_mode === 'FORCE_ACCELERATED_RIG_ONLY'
+        ? TEAM2_RIG_B1_ACCELERATED_SCHEDULE
+        : expected?.schedule;
+      return !expected
+        || job.path !== expected.path
+        || job.schedule !== expectedSchedule
+        || job.time_zone !== expected.timeZone
+        || job.attempt_deadline !== expected.attemptDeadline
+        || job.retry.min_backoff !== TEAM2_RIG_B1_RETRY.min_backoff
+        || job.retry.max_backoff !== TEAM2_RIG_B1_RETRY.max_backoff
+        || job.retry.max_doublings !== TEAM2_RIG_B1_RETRY.max_doublings;
+    })
   ) {
-    throw new Error('Admission v2 must match the complete exact Team2 RIG-B1 Scheduler service-derived contract.');
+    throw new Error(
+      'Admission v2 must match the complete exact Team2 RIG-B1 Scheduler service-derived binding contract.',
+    );
   }
 
   for (const [field, expected] of Object.entries(TEAM2_RIG_B1_LIVE_CHAIN_CRITICAL_CONFIG)) {
@@ -272,6 +348,33 @@ export function projectAdmissionV2ToRunDeclaration(
   return handle;
 }
 
+/**
+ * Project strict, clean-mirror-complete admission into a pre-clock identity.
+ * No soak ceremony is accepted here, and Scheduler must still be paused.
+ */
+export function projectAdmissionV2ToPreClockIdentity(
+  admissionRaw: unknown,
+): PreClockAdmissionBoundIdentity {
+  const admission = parseStrict(
+    preClockAdmissionV2Schema,
+    admissionRaw,
+    'Pre-clock admission v2',
+  );
+  assertAdmissionInvariants(admission);
+  const identity = deepFreeze<PreClockAdmissionIdentity>({
+    gitHeadSha: admission.sha,
+    imageDigest: admission.deployed_image_digest,
+    gcpProjectId: admission.gcp_project_id,
+    workerService: admission.cloud_run_service,
+    cleanMirrorAttestationId: admission.clean_mirror_attestation_id,
+  });
+  const handle = deepFreeze<PreClockAdmissionBoundIdentity>({
+    admissionSha256: createHash('sha256').update(admissionRaw as string).digest('hex'),
+  });
+  IDENTITY_BY_PRE_CLOCK_HANDLE.set(handle, identity);
+  return handle;
+}
+
 export function requireAdmissionBoundRunDeclaration(candidate: unknown): RunDeclaration {
   if (!candidate || typeof candidate !== 'object') {
     throw new Error('Run declaration requires an admission-adapter provenance handle.');
@@ -279,4 +382,13 @@ export function requireAdmissionBoundRunDeclaration(candidate: unknown): RunDecl
   const declaration = DECLARATION_BY_ADMISSION_HANDLE.get(candidate as AdmissionBoundRunDeclaration);
   if (!declaration) throw new Error('Run declaration requires an admission-adapter provenance handle.');
   return declaration;
+}
+
+export function requirePreClockAdmissionIdentity(candidate: unknown): PreClockAdmissionIdentity {
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error('Pre-clock readiness requires a paused admission provenance handle.');
+  }
+  const identity = IDENTITY_BY_PRE_CLOCK_HANDLE.get(candidate as PreClockAdmissionBoundIdentity);
+  if (!identity) throw new Error('Pre-clock readiness requires a paused admission provenance handle.');
+  return identity;
 }

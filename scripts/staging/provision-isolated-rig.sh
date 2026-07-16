@@ -79,7 +79,13 @@ if [[ -n "${STAGING_PINNED_IMAGE:-}" ]]; then
 else
   PINNED_IMAGE="<required-in-apply:--image-or-STAGING_PINNED_IMAGE@sha256>"
 fi
-RUNTIME_SA="${STAGING_RUNTIME_SA_EMAIL:-270018525501-compute@developer.gserviceaccount.com}"
+RUNTIME_SA_WAS_EXPLICIT=0
+if [[ ${STAGING_RUNTIME_SA_EMAIL+x} ]]; then
+  RUNTIME_SA="$STAGING_RUNTIME_SA_EMAIL"
+  RUNTIME_SA_WAS_EXPLICIT=1
+else
+  RUNTIME_SA="270018525501-compute@developer.gserviceaccount.com"
+fi
 
 # Profile selects the env/secret overlay for the worker deploy.
 #   mock   — safe default; USE_MOCKS=true, anchoring off, no Scheduler.
@@ -92,13 +98,55 @@ PROFILE="${STAGING_RIG_PROFILE:-mock}"
 # real-config secrets. Defaults are the shared staging real-config secrets; the
 # operator confirms these hold the intended (test-tier) credentials before an
 # --apply. NOTHING here is a credential literal — only Secret Manager references.
-GETBLOCK_RPC_URL_SECRET="${STAGING_GETBLOCK_RPC_URL_SECRET:-bitcoin-rpc-url-staging}"
-GETBLOCK_RPC_AUTH_SECRET="${STAGING_GETBLOCK_RPC_AUTH_SECRET:-bitcoin-rpc-auth-staging}"
-TREASURY_WIF_SECRET="${STAGING_TREASURY_WIF_SECRET:-bitcoin-treasury-wif-staging}"
-STRIPE_SECRET_KEY_SECRET="${STAGING_STRIPE_SECRET_KEY_SECRET:-stripe-secret-key-staging}"
-STRIPE_WEBHOOK_SECRET_SECRET="${STAGING_STRIPE_WEBHOOK_SECRET_SECRET:-stripe-webhook-secret-staging}"
-API_KEY_HMAC_SECRET_SECRET="${STAGING_API_KEY_HMAC_SECRET_SECRET:-api-key-hmac-secret-staging}"
-CRON_SECRET_SECRET="${STAGING_CRON_SECRET_SECRET:-cron-secret}"
+GETBLOCK_RPC_URL_SECRET_WAS_EXPLICIT=0
+GETBLOCK_RPC_AUTH_SECRET_WAS_EXPLICIT=0
+TREASURY_WIF_SECRET_WAS_EXPLICIT=0
+STRIPE_SECRET_KEY_SECRET_WAS_EXPLICIT=0
+STRIPE_WEBHOOK_SECRET_SECRET_WAS_EXPLICIT=0
+API_KEY_HMAC_SECRET_SECRET_WAS_EXPLICIT=0
+CRON_SECRET_SECRET_WAS_EXPLICIT=0
+if [[ ${STAGING_GETBLOCK_RPC_URL_SECRET+x} ]]; then
+  GETBLOCK_RPC_URL_SECRET="$STAGING_GETBLOCK_RPC_URL_SECRET"
+  GETBLOCK_RPC_URL_SECRET_WAS_EXPLICIT=1
+else
+  GETBLOCK_RPC_URL_SECRET="bitcoin-rpc-url-staging"
+fi
+if [[ ${STAGING_GETBLOCK_RPC_AUTH_SECRET+x} ]]; then
+  GETBLOCK_RPC_AUTH_SECRET="$STAGING_GETBLOCK_RPC_AUTH_SECRET"
+  GETBLOCK_RPC_AUTH_SECRET_WAS_EXPLICIT=1
+else
+  GETBLOCK_RPC_AUTH_SECRET="bitcoin-rpc-auth-staging"
+fi
+if [[ ${STAGING_TREASURY_WIF_SECRET+x} ]]; then
+  TREASURY_WIF_SECRET="$STAGING_TREASURY_WIF_SECRET"
+  TREASURY_WIF_SECRET_WAS_EXPLICIT=1
+else
+  TREASURY_WIF_SECRET="bitcoin-treasury-wif-staging"
+fi
+if [[ ${STAGING_STRIPE_SECRET_KEY_SECRET+x} ]]; then
+  STRIPE_SECRET_KEY_SECRET="$STAGING_STRIPE_SECRET_KEY_SECRET"
+  STRIPE_SECRET_KEY_SECRET_WAS_EXPLICIT=1
+else
+  STRIPE_SECRET_KEY_SECRET="stripe-secret-key-staging"
+fi
+if [[ ${STAGING_STRIPE_WEBHOOK_SECRET_SECRET+x} ]]; then
+  STRIPE_WEBHOOK_SECRET_SECRET="$STAGING_STRIPE_WEBHOOK_SECRET_SECRET"
+  STRIPE_WEBHOOK_SECRET_SECRET_WAS_EXPLICIT=1
+else
+  STRIPE_WEBHOOK_SECRET_SECRET="stripe-webhook-secret-staging"
+fi
+if [[ ${STAGING_API_KEY_HMAC_SECRET_SECRET+x} ]]; then
+  API_KEY_HMAC_SECRET_SECRET="$STAGING_API_KEY_HMAC_SECRET_SECRET"
+  API_KEY_HMAC_SECRET_SECRET_WAS_EXPLICIT=1
+else
+  API_KEY_HMAC_SECRET_SECRET="api-key-hmac-secret-staging"
+fi
+if [[ ${STAGING_CRON_SECRET_SECRET+x} ]]; then
+  CRON_SECRET_SECRET="$STAGING_CRON_SECRET_SECRET"
+  CRON_SECRET_SECRET_WAS_EXPLICIT=1
+else
+  CRON_SECRET_SECRET="cron-secret"
+fi
 GEMINI_API_KEY_SECRET="${STAGING_GEMINI_API_KEY_SECRET:-gemini-api-key-staging}"
 
 # Non-secret env values for the real profiles (safe to inline — model names,
@@ -109,7 +157,14 @@ BITCOIN_UTXO_PROVIDER_VALUE="${STAGING_BITCOIN_UTXO_PROVIDER:-getblock}"
 GEMINI_TUNED_MODEL_VALUE="${STAGING_GEMINI_TUNED_MODEL:-<required-in-gemini-apply:projects/<approved-project>/locations/us-central1/endpoints/<numeric-id>>}"
 GEMINI_V6_PROMPT_VALUE="${STAGING_GEMINI_V6_PROMPT:-true}"
 FRONTEND_URL_VALUE="${STAGING_FRONTEND_URL:-https://app.arkova.ai}"
-CRON_OIDC_SA="${STAGING_CRON_OIDC_SA:-$RUNTIME_SA}"
+CRON_OIDC_SA_WAS_EXPLICIT=0
+if [[ ${STAGING_CRON_OIDC_SA+x} ]]; then
+  CRON_OIDC_SA="$STAGING_CRON_OIDC_SA"
+  CRON_OIDC_SA_WAS_EXPLICIT=1
+else
+  CRON_OIDC_SA="$RUNTIME_SA"
+fi
+SCHEDULER_ACTIVATION_MODE="${STAGING_SCHEDULER_ACTIVATION_MODE:-PAUSED}"
 
 NAME=""
 APPLY=0
@@ -143,6 +198,8 @@ usage() {
   echo "          [--soak-id <exclusive-soak-id>] [--rig-id <rig-id>] [--lease-id <lease-id>]"
   echo "          [--required-uptime-min <minutes>] [--required-wall-min <minutes>]"
   echo "          [--org <supabase-org>] [--gcp-project arkova1]"
+  echo "          [--scheduler-activation PAUSED|FORCE_ACCELERATED_RIG_ONLY]"
+  echo "          [--runtime-sa <per-rig-service-account>] [--cron-oidc-sa <per-rig-service-account>]"
   echo "          [--artifact-dir docs/staging/<pr-or-rig>]"
   echo
   echo "  --profile mock   (default) safe: USE_MOCKS=true, anchoring off, no Scheduler."
@@ -169,6 +226,16 @@ while [[ $# -gt 0 ]]; do
     --required-wall-min) REQUIRED_WALL_MIN="${2:?}"; shift 2 ;;
     --org) SUPABASE_ORG="${2:?}"; shift 2 ;;
     --gcp-project) GCP_PROJECT="${2:?}"; shift 2 ;;
+    --scheduler-activation) SCHEDULER_ACTIVATION_MODE="${2:?}"; shift 2 ;;
+    --runtime-sa) RUNTIME_SA="${2:?}"; RUNTIME_SA_WAS_EXPLICIT=1; shift 2 ;;
+    --cron-oidc-sa) CRON_OIDC_SA="${2:?}"; CRON_OIDC_SA_WAS_EXPLICIT=1; shift 2 ;;
+    --getblock-rpc-url-secret) GETBLOCK_RPC_URL_SECRET="${2:?}"; GETBLOCK_RPC_URL_SECRET_WAS_EXPLICIT=1; shift 2 ;;
+    --getblock-rpc-auth-secret) GETBLOCK_RPC_AUTH_SECRET="${2:?}"; GETBLOCK_RPC_AUTH_SECRET_WAS_EXPLICIT=1; shift 2 ;;
+    --treasury-wif-secret) TREASURY_WIF_SECRET="${2:?}"; TREASURY_WIF_SECRET_WAS_EXPLICIT=1; shift 2 ;;
+    --stripe-secret-key-secret) STRIPE_SECRET_KEY_SECRET="${2:?}"; STRIPE_SECRET_KEY_SECRET_WAS_EXPLICIT=1; shift 2 ;;
+    --stripe-webhook-secret) STRIPE_WEBHOOK_SECRET_SECRET="${2:?}"; STRIPE_WEBHOOK_SECRET_SECRET_WAS_EXPLICIT=1; shift 2 ;;
+    --api-key-hmac-secret) API_KEY_HMAC_SECRET_SECRET="${2:?}"; API_KEY_HMAC_SECRET_SECRET_WAS_EXPLICIT=1; shift 2 ;;
+    --cron-secret) CRON_SECRET_SECRET="${2:?}"; CRON_SECRET_SECRET_WAS_EXPLICIT=1; shift 2 ;;
     --pg-major) SUPABASE_PG_MAJOR="${2:?}"; shift 2 ;;
     --artifact-dir) STAGING_ADMISSION_DIR="${2:?}"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -236,6 +303,18 @@ case "$PROFILE" in
     exit 2
     ;;
 esac
+
+case "$SCHEDULER_ACTIVATION_MODE" in
+  PAUSED|FORCE_ACCELERATED_RIG_ONLY) ;;
+  *)
+    echo "ERROR: Scheduler activation must be PAUSED or FORCE_ACCELERATED_RIG_ONLY; got '$SCHEDULER_ACTIVATION_MODE'." >&2
+    exit 2
+    ;;
+esac
+if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" && $IS_MOCK_PROFILE -eq 1 ]]; then
+  echo "ERROR: FORCE_ACCELERATED_RIG_ONLY is invalid for a mock profile with no Scheduler topology." >&2
+  exit 2
+fi
 
 # ---------------------------------------------------------------------------
 # Hard-deny prod / shared staging. Belt-and-suspenders: check both the derived
@@ -341,6 +420,17 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       CONFIRM_REAL_CONFIG=<profile> matching --profile (extra ack for real credentials)." >&2
     echo "       Expected CONFIRM_REAL_CONFIG='$PROFILE', got CONFIRM_REAL_CONFIG='${CONFIRM_REAL_CONFIG:-<unset>}'." >&2
     exit 2
+  fi
+  if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+    if [[ "$RIG_ID" != "RIG-B1" || "$PROFILE" != "chain" ]]; then
+      echo "ERROR: FORCE_ACCELERATED_RIG_ONLY is restricted to the isolated RIG-B1 chain topology." >&2
+      exit 2
+    fi
+    if [[ "${CONFIRM_SCHEDULER_ACTIVATION:-}" != "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+      echo "ERROR: accelerated Scheduler activation requires the second exact acknowledgement" >&2
+      echo "       CONFIRM_SCHEDULER_ACTIVATION=FORCE_ACCELERATED_RIG_ONLY." >&2
+      exit 2
+    fi
   fi
   if [[ -z "$SUPABASE_DB_PASSWORD" ]]; then
     echo "ERROR: live provision requires STAGING_NEW_SUPABASE_DB_PASSWORD to create the Supabase project." >&2
@@ -463,6 +553,53 @@ if [[ $APPLY -eq 1 ]]; then
   # RIG-B1 is the pre-declared signet broadcast/drain rig. Never let the
   # generic chain defaults silently turn it into a mainnet or under-floor run.
   if [[ "$RIG_ID" == "RIG-B1" ]]; then
+    if [[ $GETBLOCK_RPC_URL_SECRET_WAS_EXPLICIT -ne 1 \
+      || $GETBLOCK_RPC_AUTH_SECRET_WAS_EXPLICIT -ne 1 \
+      || $TREASURY_WIF_SECRET_WAS_EXPLICIT -ne 1 \
+      || $STRIPE_SECRET_KEY_SECRET_WAS_EXPLICIT -ne 1 \
+      || $STRIPE_WEBHOOK_SECRET_SECRET_WAS_EXPLICIT -ne 1 \
+      || $API_KEY_HMAC_SECRET_SECRET_WAS_EXPLICIT -ne 1 \
+      || $CRON_SECRET_SECRET_WAS_EXPLICIT -ne 1 \
+      || $RUNTIME_SA_WAS_EXPLICIT -ne 1 \
+      || $CRON_OIDC_SA_WAS_EXPLICIT -ne 1 ]]; then
+      echo "ERROR: RIG-B1 requires explicit per-rig secret names plus runtime and OIDC identities;" >&2
+      echo "       shared/default provisioner identities are not accepted." >&2
+      exit 2
+    fi
+    RIG_B1_SECRET_NAMES=(
+      "$GETBLOCK_RPC_URL_SECRET"
+      "$GETBLOCK_RPC_AUTH_SECRET"
+      "$TREASURY_WIF_SECRET"
+      "$STRIPE_SECRET_KEY_SECRET"
+      "$STRIPE_WEBHOOK_SECRET_SECRET"
+      "$API_KEY_HMAC_SECRET_SECRET"
+      "$CRON_SECRET_SECRET"
+    )
+    RIG_B1_SEEN_SECRETS="|"
+    for rig_secret_name in "${RIG_B1_SECRET_NAMES[@]}"; do
+      if [[ ! "$rig_secret_name" =~ ^[A-Za-z][A-Za-z0-9_-]{0,254}$ \
+        || "$rig_secret_name" != *rig-b1* ]]; then
+        echo "ERROR: RIG-B1 secret '$rig_secret_name' is not an explicit per-rig Secret Manager identity." >&2
+        exit 2
+      fi
+      case "$RIG_B1_SEEN_SECRETS" in
+        *"|$rig_secret_name|"*)
+          echo "ERROR: RIG-B1 per-rig Secret Manager identities must be unique." >&2
+          exit 2
+          ;;
+      esac
+      RIG_B1_SEEN_SECRETS="${RIG_B1_SEEN_SECRETS}${rig_secret_name}|"
+    done
+    if [[ ! "$RUNTIME_SA" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT}[.]iam[.]gserviceaccount[.]com$ \
+      || "$RUNTIME_SA" != *rig-b1* ]]; then
+      echo "ERROR: RIG-B1 runtime identity must be an explicit per-rig service account in '$GCP_PROJECT'." >&2
+      exit 2
+    fi
+    if [[ ! "$CRON_OIDC_SA" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT}[.]iam[.]gserviceaccount[.]com$ \
+      || "$CRON_OIDC_SA" != *rig-b1* ]]; then
+      echo "ERROR: RIG-B1 Scheduler OIDC identity must be an explicit per-rig service account in '$GCP_PROJECT'." >&2
+      exit 2
+    fi
     if [[ "$SUPABASE_ORG" != "$RIG_B1_SUPABASE_ORG" ]]; then
       echo "ERROR: RIG-B1 requires exact Supabase org '$RIG_B1_SUPABASE_ORG'; got '$SUPABASE_ORG'." >&2
       exit 2
@@ -697,14 +834,17 @@ SCHEDULER_FAILURE_CONTAINMENT_ARMED=0
 # guess. Bash 3.2 treats an expanded empty array as unset under `set -u`; retain
 # one empty sentinel for mock admission JSON, filtered out by the encoder.
 SCHEDULER_JOB_SPECS=("")
-SCHEDULER_CONFIGURED_SCHEDULE="*/5 * * * *"
+SCHEDULER_ACCELERATED_SCHEDULE="*/5 * * * *"
+SCHEDULER_RETRY_MIN_BACKOFF="5s"
+SCHEDULER_RETRY_MAX_BACKOFF="3600s"
+SCHEDULER_RETRY_MAX_DOUBLINGS="5"
 # create-http has no atomic --paused flag. Create against a syntactically valid
 # non-firing hold schedule, pause + verify, then restore the pre-existing cadence
 # while still paused after clean_mirror. This changes no job/matrix semantics.
 SCHEDULER_HOLD_SCHEDULE="0 0 31 2 *"
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
   SCHEDULER_APPLICABLE_JSON=true
-  SCHEDULER_STATE="planned_paused_until_clean_mirror_then_resume"
+  SCHEDULER_STATE="planned_paused_after_clean_mirror"
   SCHEDULER_CREATION_GUARD="non-firing hold schedule; create then immediate pause + PAUSED verification"
   case "$PROFILE" in
     chain)
@@ -730,6 +870,45 @@ fi
 scheduler_spec_suffix() { printf '%s\n' "${1%%$'\t'*}"; }
 scheduler_spec_path() { printf '%s\n' "${1#*$'\t'}"; }
 scheduler_job_name_for_spec() { printf '%s-%s\n' "$CLOUD_RUN_SERVICE" "$(scheduler_spec_suffix "$1")"; }
+scheduler_spec_production_schedule() {
+  case "$(scheduler_spec_suffix "$1")" in
+    batch-anchors|check-confirmations) printf '%s\n' '*/30 * * * *' ;;
+    populate-confirmation-proofs|recover-broadcasts|classify-proof-backcatalog)
+      printf '%s\n' '*/15 * * * *'
+      ;;
+    org-queue-scheduler) printf '%s\n' '0 * * * *' ;;
+    batch-anchors-forced-flush) printf '%s\n' '0 3 * * *' ;;
+    *)
+      echo "ERROR: Scheduler production cadence is undefined for spec '$1'." >&2
+      exit 2
+      ;;
+  esac
+}
+
+scheduler_spec_time_zone() {
+  case "$(scheduler_spec_suffix "$1")" in
+    batch-anchors-forced-flush) printf '%s\n' 'America/New_York' ;;
+    batch-anchors|check-confirmations|populate-confirmation-proofs|org-queue-scheduler|recover-broadcasts|classify-proof-backcatalog)
+      printf '%s\n' 'Etc/UTC'
+      ;;
+    *)
+      echo "ERROR: Scheduler timezone is undefined for spec '$1'." >&2
+      exit 2
+      ;;
+  esac
+}
+
+scheduler_spec_attempt_deadline() {
+  case "$(scheduler_spec_suffix "$1")" in
+    batch-anchors|recover-broadcasts) printf '%s\n' '120s' ;;
+    check-confirmations|populate-confirmation-proofs|classify-proof-backcatalog) printf '%s\n' '300s' ;;
+    org-queue-scheduler|batch-anchors-forced-flush) printf '%s\n' '600s' ;;
+    *)
+      echo "ERROR: Scheduler attempt deadline is undefined for spec '$1'." >&2
+      exit 2
+      ;;
+  esac
+}
 
 validate_scheduler_job_specs() {
   local spec suffix path seen_names="|" seen_paths="|"
@@ -755,20 +934,77 @@ validate_scheduler_job_specs() {
     case "$seen_paths" in
       *"|$path|"*) echo "ERROR: duplicate Scheduler request path '$path'." >&2; exit 2 ;;
     esac
+    scheduler_spec_production_schedule "$spec" >/dev/null
+    scheduler_spec_time_zone "$spec" >/dev/null
+    scheduler_spec_attempt_deadline "$spec" >/dev/null
     seen_names="${seen_names}${suffix}|"
     seen_paths="${seen_paths}${path}|"
   done
 }
 
+validate_rig_b1_scheduler_topology() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 0
+  local expected=(
+    $'batch-anchors\t/jobs/batch-anchors'
+    $'check-confirmations\t/jobs/check-confirmations'
+    $'populate-confirmation-proofs\t/jobs/populate-confirmation-proofs'
+    $'org-queue-scheduler\t/jobs/org-queue-scheduler'
+    $'batch-anchors-forced-flush\t/jobs/batch-anchors?force=true'
+    $'recover-broadcasts\t/jobs/recover-broadcasts'
+  )
+  if [[ ${#SCHEDULER_JOB_SPECS[@]} -ne ${#expected[@]} ]]; then
+    echo "ERROR: RIG-B1 requires the frozen exact six-job Scheduler topology." >&2
+    exit 2
+  fi
+  local index
+  for ((index = 0; index < ${#expected[@]}; index += 1)); do
+    if [[ "${SCHEDULER_JOB_SPECS[$index]}" != "${expected[$index]}" ]]; then
+      echo "ERROR: RIG-B1 Scheduler topology differs from its frozen exact six-job contract." >&2
+      exit 2
+    fi
+  done
+}
+
 scheduler_jobs_json() {
-  printf '%s\n' "${SCHEDULER_JOB_SPECS[@]}" | jq -Rsc --arg service "$CLOUD_RUN_SERVICE" '
-    split("\n")
-    | map(select(length > 0) | split("\t"))
-    | map(select(length == 2) | {name: ($service + "-" + .[0]), path: .[1]})
-  '
+  local jobs='[]' spec suffix path schedule time_zone attempt_deadline
+  for spec in "${SCHEDULER_JOB_SPECS[@]}"; do
+    [[ -z "$spec" ]] && continue
+    suffix="$(scheduler_spec_suffix "$spec")"
+    path="$(scheduler_spec_path "$spec")"
+    if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+      schedule="$SCHEDULER_ACCELERATED_SCHEDULE"
+    else
+      schedule="$(scheduler_spec_production_schedule "$spec")"
+    fi
+    time_zone="$(scheduler_spec_time_zone "$spec")"
+    attempt_deadline="$(scheduler_spec_attempt_deadline "$spec")"
+    jobs="$(jq -c \
+      --arg name "${CLOUD_RUN_SERVICE}-${suffix}" \
+      --arg path "$path" \
+      --arg schedule "$schedule" \
+      --arg time_zone "$time_zone" \
+      --arg attempt_deadline "$attempt_deadline" \
+      --arg min_backoff "$SCHEDULER_RETRY_MIN_BACKOFF" \
+      --arg max_backoff "$SCHEDULER_RETRY_MAX_BACKOFF" \
+      --argjson max_doublings "$SCHEDULER_RETRY_MAX_DOUBLINGS" \
+      '. + [{
+        name: $name,
+        path: $path,
+        schedule: $schedule,
+        time_zone: $time_zone,
+        attempt_deadline: $attempt_deadline,
+        retry: {
+          min_backoff: $min_backoff,
+          max_backoff: $max_backoff,
+          max_doublings: $max_doublings
+        }
+      }]' <<<"$jobs")"
+  done
+  printf '%s\n' "$jobs"
 }
 
 validate_scheduler_job_specs
+validate_rig_b1_scheduler_topology
 
 # ---------------------------------------------------------------------------
 # Command emitter — print always; execute only under --apply.
@@ -1242,6 +1478,39 @@ verify_scheduler_job_state() {
   fi
 }
 
+verify_scheduler_job_config() {
+  local scheduler_spec="$1"
+  local expected_schedule="$2"
+  local job_name expected_time_zone expected_attempt_deadline observed_json
+  job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
+  expected_time_zone="$(scheduler_spec_time_zone "$scheduler_spec")"
+  expected_attempt_deadline="$(scheduler_spec_attempt_deadline "$scheduler_spec")"
+  if ! observed_json="$(gcloud scheduler jobs describe "$job_name" \
+    --project="$GCP_PROJECT" \
+    --location="$CLOUD_RUN_REGION" \
+    --format="json(schedule,timeZone,attemptDeadline,retryConfig)")"; then
+    echo "ERROR: Scheduler job '$job_name' could not be described while verifying binding config." >&2
+    exit 1
+  fi
+  if ! jq -e \
+    --arg schedule "$expected_schedule" \
+    --arg time_zone "$expected_time_zone" \
+    --arg attempt_deadline "$expected_attempt_deadline" \
+    --arg min_backoff "$SCHEDULER_RETRY_MIN_BACKOFF" \
+    --arg max_backoff "$SCHEDULER_RETRY_MAX_BACKOFF" \
+    --arg max_doublings "$SCHEDULER_RETRY_MAX_DOUBLINGS" \
+    '.schedule == $schedule
+      and .timeZone == $time_zone
+      and .attemptDeadline == $attempt_deadline
+      and .retryConfig.minBackoffDuration == $min_backoff
+      and .retryConfig.maxBackoffDuration == $max_backoff
+      and (.retryConfig.maxDoublings | tostring) == $max_doublings' \
+    >/dev/null <<<"$observed_json"; then
+    echo "ERROR: Scheduler job '$job_name' binding config differs from its declared schedule/timezone/deadline/retry contract." >&2
+    exit 1
+  fi
+}
+
 sha256_file() {
   local path="$1"
   shasum -a 256 "$path" | awk '{print $1}'
@@ -1347,6 +1616,7 @@ emit_admission_json() {
     --arg gemini_tuned_response_schema "$ADMISSION_GEMINI_TUNED_RESPONSE_SCHEMA" \
     --argjson scheduler_applicable "$SCHEDULER_APPLICABLE_JSON" \
     --argjson scheduler_paused_through_clean_mirror "$SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON" \
+    --arg scheduler_activation_mode "$SCHEDULER_ACTIVATION_MODE" \
     --arg scheduler_state "$SCHEDULER_STATE" \
     --arg scheduler_creation_guard "$SCHEDULER_CREATION_GUARD" \
     --argjson scheduler_jobs "$(scheduler_jobs_json)" \
@@ -1413,6 +1683,7 @@ emit_admission_json() {
         jobs: $scheduler_jobs,
         creation_guard: $scheduler_creation_guard,
         paused_through_clean_mirror: $scheduler_paused_through_clean_mirror,
+        activation_mode: $scheduler_activation_mode,
         state: $scheduler_state
       },
       driver_path: $driver_path,
@@ -1656,10 +1927,17 @@ else
     [[ -z "$scheduler_spec" ]] && continue
     scheduler_job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
     scheduler_request_path="$(scheduler_spec_path "$scheduler_spec")"
+    scheduler_time_zone="$(scheduler_spec_time_zone "$scheduler_spec")"
+    scheduler_attempt_deadline="$(scheduler_spec_attempt_deadline "$scheduler_spec")"
     run_cmd_cron_redacted gcloud scheduler jobs create http "$scheduler_job_name" \
       --project="$GCP_PROJECT" \
       --location="$CLOUD_RUN_REGION" \
       --schedule="$SCHEDULER_HOLD_SCHEDULE" \
+      --time-zone="$scheduler_time_zone" \
+      --attempt-deadline="$scheduler_attempt_deadline" \
+      --min-backoff="$SCHEDULER_RETRY_MIN_BACKOFF" \
+      --max-backoff="$SCHEDULER_RETRY_MAX_BACKOFF" \
+      --max-doublings="$SCHEDULER_RETRY_MAX_DOUBLINGS" \
       --uri="${WORKER_URL}${scheduler_request_path}" \
       --http-method=POST \
       --headers="X-Cron-Secret=${CRON_SECRET_VALUE}" \
@@ -1819,34 +2097,75 @@ else
 fi
 echo
 
-# Restore the pre-existing job cadence and resume only after clean_mirror was
-# admitted, its allowlisted evidence artifact was written, and every declared
-# trigger was re-observed PAUSED. Any failure exits before cadence update/resume.
+# Restore each isolated job's production-equivalent cadence after clean_mirror,
+# but keep traffic PAUSED by default. Only the separately acknowledged
+# FORCE_ACCELERATED_RIG_ONLY mode may replace those cadences with the CTO's
+# five-minute rig cadence and resume. Shared production job identities are never
+# referenced or mutated here.
 if [[ $IS_MOCK_PROFILE -ne 1 ]]; then
-  echo "# Post-admission — restore Scheduler cadence, resume, verify ENABLED"
+  if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+    echo "# Post-admission — FORCE_ACCELERATED_RIG_ONLY: set five-minute rig cadence, resume, verify ENABLED"
+  else
+    echo "# Post-admission — restore production-equivalent cadence and retain PAUSED"
+  fi
   for scheduler_spec in "${SCHEDULER_JOB_SPECS[@]}"; do
     [[ -z "$scheduler_spec" ]] && continue
     scheduler_job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
+    if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+      scheduler_schedule="$SCHEDULER_ACCELERATED_SCHEDULE"
+    else
+      scheduler_schedule="$(scheduler_spec_production_schedule "$scheduler_spec")"
+    fi
+    scheduler_time_zone="$(scheduler_spec_time_zone "$scheduler_spec")"
+    scheduler_attempt_deadline="$(scheduler_spec_attempt_deadline "$scheduler_spec")"
     run_cmd gcloud scheduler jobs update http "$scheduler_job_name" \
       --project="$GCP_PROJECT" \
       --location="$CLOUD_RUN_REGION" \
-      --schedule="$SCHEDULER_CONFIGURED_SCHEDULE"
-    run_cmd gcloud scheduler jobs resume "$scheduler_job_name" \
-      --project="$GCP_PROJECT" \
-      --location="$CLOUD_RUN_REGION"
+      --schedule="$scheduler_schedule" \
+      --time-zone="$scheduler_time_zone" \
+      --attempt-deadline="$scheduler_attempt_deadline" \
+      --min-backoff="$SCHEDULER_RETRY_MIN_BACKOFF" \
+      --max-backoff="$SCHEDULER_RETRY_MAX_BACKOFF" \
+      --max-doublings="$SCHEDULER_RETRY_MAX_DOUBLINGS"
+    if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+      run_cmd gcloud scheduler jobs resume "$scheduler_job_name" \
+        --project="$GCP_PROJECT" \
+        --location="$CLOUD_RUN_REGION"
+      if [[ $APPLY -eq 1 ]]; then
+        verify_scheduler_job_state "$scheduler_job_name" "ENABLED"
+      else
+        print_cmd gcloud scheduler jobs describe "$scheduler_job_name" \
+          --project="$GCP_PROJECT" \
+          --location="$CLOUD_RUN_REGION" \
+          --format="value(state)"
+      fi
+    else
+      if [[ $APPLY -eq 1 ]]; then
+        verify_scheduler_job_state "$scheduler_job_name" "PAUSED"
+      else
+        print_cmd gcloud scheduler jobs describe "$scheduler_job_name" \
+          --project="$GCP_PROJECT" \
+          --location="$CLOUD_RUN_REGION" \
+          --format="value(state)"
+      fi
+    fi
     if [[ $APPLY -eq 1 ]]; then
-      verify_scheduler_job_state "$scheduler_job_name" "ENABLED"
+      verify_scheduler_job_config "$scheduler_spec" "$scheduler_schedule"
     else
       print_cmd gcloud scheduler jobs describe "$scheduler_job_name" \
         --project="$GCP_PROJECT" \
         --location="$CLOUD_RUN_REGION" \
-        --format="value(state)"
+        --format="json(schedule,timeZone,attemptDeadline,retryConfig)"
     fi
   done
-  if [[ $APPLY -eq 1 ]]; then
-    SCHEDULER_STATE="resumed_after_clean_mirror"
+  if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+    if [[ $APPLY -eq 1 ]]; then
+      SCHEDULER_STATE="accelerated_rig_only_enabled"
+    else
+      SCHEDULER_STATE="planned_accelerated_rig_only_enable"
+    fi
   else
-    SCHEDULER_STATE="planned_resume_after_clean_mirror"
+    SCHEDULER_STATE="paused_after_clean_mirror"
   fi
 fi
 
@@ -1892,7 +2211,11 @@ ADMISSION_JSON="$(emit_admission_json \
 if [[ $APPLY -eq 1 ]]; then
   persist_admission_artifact "$ADMISSION_JSON"
   if [[ $SCHEDULER_APPLICABLE_JSON == true ]]; then
-    write_provision_state "admission_persisted_scheduler_enabled" ""
+    if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+      write_provision_state "admission_persisted_scheduler_enabled" ""
+    else
+      write_provision_state "admission_persisted_scheduler_paused" ""
+    fi
   else
     write_provision_state "admission_persisted" ""
   fi

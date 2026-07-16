@@ -20,8 +20,8 @@ function usage(): never {
   throw new Error([
     'Usage:',
     '  s33-wave2-batch-acceptance.ts preflight --trusted-main-root ROOT --trusted-main-head SHA --candidate-repository ROOT --candidate-head SHA --output FILE',
-    '  s33-wave2-batch-acceptance.ts accept --trusted-main-root ROOT --trusted-main-head SHA --candidate-repository ROOT --candidate-head SHA --pull-request-number NUMBER --acceptance-envelope FILE --output FILE',
-    '  s33-wave2-batch-acceptance.ts consume-merged --trusted-main-root ROOT --trusted-main-head SHA --candidate-repository ROOT --candidate-head SHA --pull-request-number NUMBER --acceptance-envelope FILE --merged-main-root ROOT --merged-main-head SHA --output FILE',
+    '  s33-wave2-batch-acceptance.ts accept --trusted-main-root ROOT --trusted-main-head SHA --candidate-repository ROOT --candidate-head SHA --pull-request-number NUMBER --acceptance-envelope FILE --verified-at-utc UTC --output FILE',
+    '  s33-wave2-batch-acceptance.ts consume-merged --trusted-main-root ROOT --trusted-main-head SHA --candidate-repository ROOT --candidate-head SHA --pull-request-number NUMBER --acceptance-envelope FILE --verified-at-utc UTC --merged-main-root ROOT --merged-main-head SHA --output FILE',
   ].join('\n'));
 }
 
@@ -105,6 +105,7 @@ export function runS33Wave2AcceptanceCli(argv: readonly string[]): unknown {
     snapshot,
     pullRequestNumber,
     authenticatedAcceptance,
+    verifiedAtUtc: required(options, '--verified-at-utc'),
   });
   const result = command === 'accept'
     ? acceptance

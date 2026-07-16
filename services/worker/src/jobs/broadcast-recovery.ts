@@ -3,21 +3,18 @@
  *
  * Recovers anchors stuck in BROADCASTING state due to worker crashes.
  *
- * Two scenarios:
- * 1. Worker crashed BEFORE chain submission → chain_tx_id is NULL → reset to PENDING
- * 2. Worker crashed AFTER chain submission but BEFORE recording tx_id →
- *    chain_tx_id is NULL but tx may exist on-chain. The recover_stuck_broadcasts()
- *    RPC only resets anchors where chain_tx_id IS NULL, so this is safe.
- *    If the tx was actually broadcast, it will be orphaned (no harm — single OP_RETURN
- *    with no UTXO value). The anchor gets re-broadcast on next processing cycle.
+ * Durable journal recovery runs first. Only unjournaled stale claims may enter
+ * the generic reset; PENDING and HELD journal cohorts are excluded atomically
+ * by migration 0358 and by the manual compatibility fallback below.
  *
  * Constitution refs:
  *   - 1.4: Treasury keys never logged
- *   - 1.9: No chain calls in recovery — just DB state management
+ *   - 1.9: Chain lookup is read-only and tri-state; no recovery rebroadcast
  */
 
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { reconcileTxidJournals } from './batch-anchor.js';
 
 /** Default: anchors stuck in BROADCASTING for >5 minutes are considered stuck */
 const DEFAULT_STALE_MINUTES = 5;
@@ -38,8 +35,21 @@ export interface BroadcastRecoveryResult {
 export async function recoverStuckBroadcasts(
   staleMinutes = DEFAULT_STALE_MINUTES,
 ): Promise<BroadcastRecoveryResult> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (db.rpc as any)('recover_stuck_broadcasts', {
+  // SCRUM-2692: exact txid ADOPT/REVERT/HOLD always precedes the generic
+  // stale-claim RPC. The RPC itself repeats HELD protection transactionally.
+  const journal = await reconcileTxidJournals();
+  if (!journal.protectionLoaded) {
+    logger.error('Txid journal protection unavailable — refusing generic stale recovery');
+    return { recovered: 0, anchors: [] };
+  }
+  if (journal.scanned > 0) {
+    logger.info(
+      { scanned: journal.scanned, adopted: journal.adopted, reverted: journal.reverted, held: journal.held },
+      'Durable txid journal recovery pass complete',
+    );
+  }
+
+  const { data, error } = await db.rpc('recover_stuck_broadcasts', {
     p_stale_minutes: staleMinutes,
   });
 
@@ -78,6 +88,11 @@ export async function recoverStuckBroadcasts(
  */
 async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryResult> {
   const threshold = new Date(Date.now() - staleMinutes * 60 * 1000).toISOString();
+  const protectedAnchorIds = await loadProtectedJournalAnchorIds();
+  if (!protectedAnchorIds) {
+    logger.error('journal protection scan failed — refusing manual stale recovery');
+    return { recovered: 0, anchors: [] };
+  }
 
   const { data: stuck, error: fetchError } = await db
     .from('anchors')
@@ -93,7 +108,7 @@ async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryRe
   }
 
   const recoveredAt = new Date().toISOString();
-  const allAnchors = stuck.map((anchor) => {
+  const allAnchors = stuck.filter((anchor) => !protectedAnchorIds.has(anchor.id)).map((anchor) => {
     const meta = (anchor.metadata as Record<string, unknown>) ?? {};
     const claimedBy = (meta._claimed_by as string) ?? 'unknown';
     const cleanMeta = { ...meta };
@@ -150,4 +165,41 @@ async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryRe
   }
 
   return { recovered: recovered.length, anchors: recovered };
+}
+
+/**
+ * Manual fallback protection for the narrow window where the SQL RPC is
+ * unavailable. A missing journal table means a pre-0358 deployment and is
+ * compatible with the old fallback; every other read failure is ambiguous and
+ * therefore blocks recovery.
+ */
+async function loadProtectedJournalAnchorIds(): Promise<Set<string> | null> {
+  try {
+    const { data, error } = await db
+      .from('anchor_txid_journal')
+      .select('anchor_ids')
+      .in('recovery_status', ['PENDING', 'HELD'])
+      .limit(1000);
+    if (error) {
+      const code = (error as { code?: string }).code;
+      const message = String((error as { message?: string }).message ?? '').toLowerCase();
+      if (code === '42P01' || code === 'PGRST205' || message.includes('anchor_txid_journal') && message.includes('not found')) {
+        return new Set();
+      }
+      logger.error({ error }, 'Txid journal protection scan failed');
+      return null;
+    }
+    if ((data ?? []).length >= 1000) {
+      logger.error('Txid journal protection scan reached its result cap');
+      return null;
+    }
+    const ids = new Set<string>();
+    for (const row of data ?? []) {
+      for (const id of row.anchor_ids ?? []) ids.add(id);
+    }
+    return ids;
+  } catch (error) {
+    logger.error({ error }, 'Txid journal protection scan failed');
+    return null;
+  }
 }

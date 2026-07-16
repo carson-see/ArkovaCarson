@@ -11,6 +11,7 @@ import {
   KnownSourceCollectorsAdapter,
   collectLiveRawSources,
   createProductionEvidenceEnvelopeVerifier,
+  getS33B1EvidenceVerificationAuthority,
   parseRawCaptureSet,
   resolveCaptureFilePath,
   type KnownLiveSourceCollectors,
@@ -22,8 +23,12 @@ describe('immutable declaration and independent raw evidence sources', () => {
     expect(SOAK_REQUIRED_UPTIME_MINUTES).toBe(2_880);
   });
 
-  it('rejects live declaration verification until the CTO signing key is code-configured', () => {
-    expect(() => createProductionEvidenceEnvelopeVerifier()).toThrow(/CTO.*not configured/i);
+  it('constructs the production verifier from the code-bound public B1 authority', () => {
+    expect(() => createProductionEvidenceEnvelopeVerifier()).not.toThrow();
+    expect(getS33B1EvidenceVerificationAuthority()).toMatchObject({
+      keyId: 'arkova.s33.b1-evidence.ed25519.v1',
+      publicKeyFingerprintSha256: '8b7fbc51c74828dab2e1a3ca6f0c15069575bae8e4e190eaf3b165daea50d5c6',
+    });
   });
 
   it('refuses raw-source parsing before a signed declaration is verified', () => {
