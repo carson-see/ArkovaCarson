@@ -53,7 +53,7 @@ const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  '80149f0c4819c96fab7ae81d99598f5d5c13067993700d69306189049218967f';
+  '99b02e29bff8a6ad3db7e7a25fa0f915550f4d0d8b3a3fc6df813c6e4cf8ce28';
 
 // Apply-mode cases launch many short-lived git/gcloud/npx shell stubs. They
 // finish in ~1s focused but can exceed Vitest's 5s default when the full

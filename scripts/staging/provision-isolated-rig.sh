@@ -15,6 +15,8 @@
 #                 — for anchoring / chain-resilience / batch-anchor behavioral soaks.
 #        * gemini (REAL model): GEMINI_TUNED_MODEL + GEMINI_V6_PROMPT + GEMINI_API_KEY
 #                 — for classifier / proof-backcatalog census soaks. Chain stays mocked.
+#        * gemini-release (RIG-R only): exact temporary release endpoint with the
+#                 protected v6 model; chain mocked; zero Scheduler/OIDC/in-process jobs.
 #      EVERY profile also wires the boot-critical secrets (Stripe / API-key HMAC /
 #      cron / FRONTEND_URL) so config.ts's Zod superRefine does not crash-loop the
 #      worker (a rig missing these never boots → the soak is a no-op).
@@ -34,10 +36,12 @@
 #   * A real run requires BOTH:
 #       --apply
 #       CONFIRM_PROVISION=<project-name>   (must match --name exactly)
-#   * A real run of a NON-MOCK profile (chain/gemini) additionally requires
+#   * A real run of a NON-MOCK profile (chain/gemini/gemini-release) additionally requires
 #       CONFIRM_REAL_CONFIG=<profile>      (must match --profile exactly)
 #     so a rig with real credentials / real Bitcoin exposure is never provisioned
 #     by a bare CONFIRM_PROVISION alone. Dry-run (the default) needs neither.
+#   * RIG-R apply additionally requires a code-bound external CTO provision
+#     authority verifier. This candidate deliberately fails closed until one exists.
 #   * The prod Supabase ref (vzwyaatejekddvltxyye) and the shared staging
 #     services (arkova-worker, arkova-worker-staging) are HARD-DENIED — the
 #     script exits 1 rather than touch prod or shared staging.
@@ -71,6 +75,25 @@ RIG_G1_TRUSTED_NODE_SHA256=""
 RIG_G1_TRUSTED_NODE_VERSION=""
 RIG_G1_APPROVAL_LEDGER_BUCKET="arkova-training-data"
 RIG_G1_APPROVAL_LEDGER_PREFIX="s33/g1/approval-claims"
+RIG_R_LEASE_BUCKET="arkova-training-data"
+RIG_R_LEASE_PREFIX="s33/rig-leases"
+RIG_R_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
+RIG_R_NAME="s33-r"
+RIG_R_PROJECT_NAME="arkova-soak-s33-r"
+RIG_R_SERVICE="arkova-worker-s33-r-staging"
+RIG_R_RUNTIME_SA="s33-rig-r-runtime@arkova1.iam.gserviceaccount.com"
+RIG_R_PROTECTED_V6_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/6611494259700793344"
+RIG_R_PROTECTED_V6_MODEL="projects/arkova1/locations/us-central1/models/6611494259700793344"
+# No RIG-R authority verifier/schema exists on this candidate lineage. This is
+# code-owned rather than environment-overridable: caller acknowledgements and
+# digest-shaped strings never confer CTO authority. A reviewed descendant must
+# bind the real verifier before live RIG-R apply can mutate anything.
+RIG_R_CTO_PROVISION_AUTHORITY_STATUS="UNCONFIGURED"
+RIG_R_RUNTIME_ROLES=(
+  "roles/aiplatform.user"
+  "roles/logging.logWriter"
+  "roles/secretmanager.secretAccessor"
+)
 # Live admission is intentionally bound to the audited Git shipped on the
 # release operator host. An OS/toolchain update changes this tuple and fails
 # closed until the reviewed authority input is refreshed in code.
@@ -113,6 +136,7 @@ fi
 #   mock   — safe default; USE_MOCKS=true, anchoring off, no Scheduler.
 #   chain  — real anchoring (GetBlock RPC + WIF signer + KMS), Scheduler-driven.
 #   gemini — real tuned model + prompt; chain stays mocked, Scheduler-driven.
+#   gemini-release — exact RIG-R release model; no Scheduler/OIDC/background jobs.
 PROFILE="${STAGING_RIG_PROFILE:-mock}"
 
 # Secret Manager secret NAMES (not values — values never touch this script).
@@ -211,6 +235,15 @@ G1_COMPUTE_MODEL_CAP_USD_JSON="null"
 G1_SPEND_APPROVAL_JSON='{"status":"UNCONFIGURED","reason":"pinned founder/CTO authority root not code-bound"}'
 G1_APPROVAL_CLAIM_JSON='null'
 G1_TRUSTED_NODE_LAUNCHER=""
+RIG_R_VERTEX_ENDPOINT="${STAGING_RIG_R_VERTEX_ENDPOINT:-}"
+RIG_R_VERTEX_MODEL="${STAGING_RIG_R_VERTEX_MODEL:-}"
+RIG_R_DEPLOYED_MODEL_ID="${STAGING_RIG_R_DEPLOYED_MODEL_ID:-}"
+RIG_R_CANDIDATE_TREE_SHA="${STAGING_RIG_R_CANDIDATE_TREE_SHA:-}"
+RIG_R_PROVISION_ARTIFACT_SHA256="${STAGING_RIG_R_PROVISION_ARTIFACT_SHA256:-}"
+RIG_R_PROVISION_STARTED_AT="${STAGING_RIG_R_PROVISION_STARTED_AT:-}"
+RIG_R_EXPIRES_AT="${STAGING_RIG_R_EXPIRES_AT:-}"
+RIG_R_LEASE_URI=""
+RIG_R_LEASE_CLAIMED=0
 TRUSTED_GIT_VALIDATED=0
 TRUSTED_REPO_ROOT=""
 TRUSTED_LOCAL_HEAD_SHA=""
@@ -229,7 +262,13 @@ fi
 SOAK_ID="${STAGING_SOAK_ID:-<required-in-apply:--soak-id-or-STAGING_SOAK_ID>}"
 RIG_ID="${STAGING_RIG_ID:-<required-in-apply:--rig-id-or-STAGING_RIG_ID>}"
 LEASE_ID="${STAGING_LEASE_ID:-<required-in-apply:--lease-id-or-STAGING_LEASE_ID>}"
-DRIVER_PATH="${STAGING_DRIVER_PATH:-services/worker/scripts/pr1408-chain-resilience-driver.ts}"
+if [[ -n "${STAGING_DRIVER_PATH:-}" ]]; then
+  DRIVER_PATH="$STAGING_DRIVER_PATH"
+elif [[ "$RIG_ID" == "RIG-R" ]]; then
+  DRIVER_PATH="scripts/staging/s33-rig-r-release-driver.ts"
+else
+  DRIVER_PATH="services/worker/scripts/pr1408-chain-resilience-driver.ts"
+fi
 TIER="${STAGING_TIER:-T3}"
 REQUIRED_UPTIME_MIN="${STAGING_REQUIRED_UPTIME_MIN:-${STAGING_DURATION_MIN:-2880}}"
 REQUIRED_WALL_MIN="${STAGING_REQUIRED_WALL_MIN:-}"
@@ -242,7 +281,7 @@ SOURCE_HEAD_IMAGE_DIGEST="<verified-full-sha-image-digest-in-apply>"
 usage() {
   sed -n '2,38p' "$0"
   echo
-  echo "Usage: $0 --name <rig-name> [--profile mock|chain|gemini] [--apply]"
+  echo "Usage: $0 --name <rig-name> [--profile mock|chain|gemini|gemini-release] [--apply]"
   echo "          [--region us-east-2] [--gcp-region us-central1]"
   echo "          [--image <ref@sha256:digest>] [--source-head <40-char-sha>]"
   echo "          [--soak-id <exclusive-soak-id>] [--rig-id <rig-id>] [--lease-id <lease-id>]"
@@ -255,6 +294,7 @@ usage() {
   echo "  --profile mock   (default) safe: USE_MOCKS=true, anchoring off, no Scheduler."
   echo "  --profile chain  real anchoring: GetBlock RPC + WIF signer + KMS, Scheduler-driven."
   echo "  --profile gemini real tuned model + prompt; chain mocked, Scheduler-driven."
+  echo "  --profile gemini-release  RIG-R only; chain mocked, no Scheduler/OIDC/in-process cron."
   echo
   echo "Live run also requires: CONFIRM_PROVISION=<rig-name> matching --name."
   echo "Live run of a NON-MOCK profile ALSO requires: CONFIRM_REAL_CONFIG=<profile>."
@@ -335,6 +375,7 @@ esac
 PROJECT_NAME="arkova-soak-${NAME}"
 CLOUD_RUN_SERVICE="arkova-worker-${NAME}-staging"
 IS_G1_RIG=0
+IS_RIG_R=0
 G1_CONTROL_SERVICE=""
 G1_TUNED_SERVICE=""
 G1_ENDPOINT_ID=""
@@ -349,8 +390,13 @@ case "$RIG_ID" in
     CLOUD_RUN_SERVICE="$G1_CONTROL_SERVICE"
     ;;
   RIG-R)
-    echo "ERROR: RIG-R has no CTO-selected service/profile binding; refusing to guess one." >&2
-    exit 2
+    IS_RIG_R=1
+    if [[ "$NAME" != "$RIG_R_NAME" ]]; then
+      echo "ERROR: RIG-R requires exact rig name '$RIG_R_NAME'; got '$NAME'." >&2
+      exit 2
+    fi
+    PROJECT_NAME="$RIG_R_PROJECT_NAME"
+    CLOUD_RUN_SERVICE="$RIG_R_SERVICE"
     ;;
 esac
 
@@ -360,18 +406,27 @@ case "$SUPABASE_PG_MAJOR" in
 esac
 
 # ---------------------------------------------------------------------------
-# Validate the profile. Only mock/chain/gemini are supported; anything else is
+# Validate the profile. Only the declared profiles are supported; anything else is
 # a typo that would silently deploy the wrong overlay — refuse it.
 # ---------------------------------------------------------------------------
 IS_MOCK_PROFILE=0
 case "$PROFILE" in
   mock)          IS_MOCK_PROFILE=1 ;;
-  chain|gemini)  IS_MOCK_PROFILE=0 ;;
+  chain|gemini|gemini-release)  IS_MOCK_PROFILE=0 ;;
   *)
-    echo "ERROR: --profile must be one of: mock, chain, gemini; got '$PROFILE'." >&2
+    echo "ERROR: --profile must be one of: mock, chain, gemini, gemini-release; got '$PROFILE'." >&2
     exit 2
     ;;
 esac
+
+if [[ $IS_RIG_R -eq 1 && "$PROFILE" != "gemini-release" ]]; then
+  echo "ERROR: RIG-R CTO profile binding accepts only profile=gemini-release; got '$PROFILE'." >&2
+  exit 2
+fi
+if [[ $IS_RIG_R -ne 1 && "$PROFILE" == "gemini-release" ]]; then
+  echo "ERROR: profile=gemini-release is accepted only with exact RIG_ID=RIG-R." >&2
+  exit 2
+fi
 
 case "$SCHEDULER_ACTIVATION_MODE" in
   PAUSED|FORCE_ACCELERATED_RIG_ONLY) ;;
@@ -456,6 +511,85 @@ if [[ $IS_G1_RIG -eq 1 ]]; then
     echo "       >=2910 wall minutes, and STAGING_G1_PAIRED_CADENCE_MIN in 1..30." >&2
     exit 2
   fi
+fi
+
+# RIG-R is the single release/rollback soak. Its complete identity is fixed so
+# the generic provisioner cannot quietly turn it into a Scheduler-driven Gemini
+# rig, share an identity, or point teardown at the protected v6 rollback asset.
+if [[ $IS_RIG_R -eq 1 ]]; then
+  if [[ "$SUPABASE_ORG" != "$RIG_R_SUPABASE_ORG" \
+    || "$SUPABASE_REGION" != "us-east-2" || "$SUPABASE_PG_MAJOR" != "17" ]]; then
+    echo "ERROR: RIG-R requires one standalone '$RIG_R_PROJECT_NAME' Supabase us-east-2 / PG17 project." >&2
+    exit 2
+  fi
+  if [[ "$GCP_PROJECT" != "$APPROVED_GCP_PROJECT" || "$GCP_PROJECT" != "arkova1" \
+    || "$CLOUD_RUN_REGION" != "us-central1" ]]; then
+    echo "ERROR: RIG-R requires exact project arkova1 and region us-central1." >&2
+    exit 2
+  fi
+  if [[ $RUNTIME_SA_WAS_EXPLICIT -ne 1 || "$RUNTIME_SA" != "$RIG_R_RUNTIME_SA" ]]; then
+    echo "ERROR: RIG-R requires explicit runtime identity '$RIG_R_RUNTIME_SA'." >&2
+    exit 2
+  fi
+  if [[ $CRON_OIDC_SA_WAS_EXPLICIT -eq 1 ]]; then
+    echo "ERROR: RIG-R permits zero OIDC identities; --cron-oidc-sa is forbidden." >&2
+    exit 2
+  fi
+  if [[ "$SCHEDULER_ACTIVATION_MODE" != "PAUSED" ]]; then
+    echo "ERROR: RIG-R has no Scheduler topology; activation mode must remain PAUSED." >&2
+    exit 2
+  fi
+  if [[ ! "$RIG_R_VERTEX_ENDPOINT" =~ ^projects/arkova1/locations/us-central1/endpoints/([1-9][0-9]*)$ ]]; then
+    echo "ERROR: RIG-R requires STAGING_RIG_R_VERTEX_ENDPOINT as one exact arkova1/us-central1 endpoint." >&2
+    exit 2
+  fi
+  if [[ "$RIG_R_VERTEX_ENDPOINT" == "$RIG_R_PROTECTED_V6_ENDPOINT" ]]; then
+    echo "ERROR: RIG-R cannot target the protected v6 rollback endpoint." >&2
+    exit 2
+  fi
+  if [[ "$RIG_R_VERTEX_MODEL" != "$RIG_R_PROTECTED_V6_MODEL" ]]; then
+    echo "ERROR: RIG-R temporary endpoint must deploy the exact protected v6 rollback model; the model itself is never a delete target." >&2
+    exit 2
+  fi
+  if [[ ! "$RIG_R_DEPLOYED_MODEL_ID" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: RIG-R requires exact numeric STAGING_RIG_R_DEPLOYED_MODEL_ID." >&2
+    exit 2
+  fi
+  if [[ ! "$DECLARED_SOURCE_HEAD" =~ ^[0-9a-f]{40}$ \
+    || ! "$RIG_R_CANDIDATE_TREE_SHA" =~ ^[0-9a-f]{40}$ \
+    || ! "$RIG_R_PROVISION_ARTIFACT_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: RIG-R requires exact candidate HEAD/tree and CTO provision-artifact SHA-256 bindings." >&2
+    exit 2
+  fi
+  if [[ ! "$LEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]]; then
+    echo "ERROR: RIG-R requires one exact exclusive lease identity." >&2
+    exit 2
+  fi
+  if [[ "$TIER" != "T3" || "$REQUIRED_UPTIME_MIN" != "2880" \
+    || ! "$REQUIRED_WALL_MIN" =~ ^[1-9][0-9]*$ || 10#$REQUIRED_WALL_MIN -lt 2910 ]]; then
+    echo "ERROR: RIG-R requires Tier T3, exactly 2880 worker-up minutes, and wall >=2910 minutes." >&2
+    exit 2
+  fi
+  RIG_R_START_EPOCH="$(jq -nr --arg value "$RIG_R_PROVISION_STARTED_AT" \
+    '$value | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' 2>/dev/null || true)"
+  RIG_R_EXPIRY_EPOCH="$(jq -nr --arg value "$RIG_R_EXPIRES_AT" \
+    '$value | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' 2>/dev/null || true)"
+  if [[ ! "$RIG_R_START_EPOCH" =~ ^[0-9]+$ || ! "$RIG_R_EXPIRY_EPOCH" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: RIG-R requires canonical UTC provision-start and hard-stop expiry timestamps." >&2
+    exit 2
+  fi
+  RIG_R_MIN_EXPIRY_EPOCH=$((RIG_R_START_EPOCH + (10#$REQUIRED_WALL_MIN + 360) * 60))
+  RIG_R_MAX_EXPIRY_EPOCH=$((RIG_R_START_EPOCH + 72 * 60 * 60))
+  if (( RIG_R_EXPIRY_EPOCH < RIG_R_MIN_EXPIRY_EPOCH )); then
+    echo "ERROR: RIG-R hard-stop expiry must cover required wall plus 360 minutes." >&2
+    exit 2
+  fi
+  if (( RIG_R_EXPIRY_EPOCH > RIG_R_MAX_EXPIRY_EPOCH )); then
+    echo "ERROR: RIG-R hard-stop expiry cannot exceed 72 hours from provision start." >&2
+    exit 2
+  fi
+  RIG_R_LEASE_URI="gs://${RIG_R_LEASE_BUCKET}/${RIG_R_LEASE_PREFIX}/${LEASE_ID}.json"
+  GEMINI_TUNED_MODEL_VALUE="$RIG_R_VERTEX_ENDPOINT"
 fi
 
 # ---------------------------------------------------------------------------
@@ -699,6 +833,33 @@ verify_g1_candidate_endpoint_binding() {
       and (.trafficSplit[$deployed_model_id] == 100))
   ' >/dev/null 2>&1 <<<"$endpoint_json"; then
     echo "ERROR: RIG-G1 tuned endpoint is not ready as the sole exact v6 deployment with 100% traffic." >&2
+    exit 2
+  fi
+}
+
+verify_rig_r_candidate_endpoint_binding() {
+  [[ $IS_RIG_R -eq 1 ]] || return 0
+  local endpoint_id endpoint_json
+  endpoint_id="${RIG_R_VERTEX_ENDPOINT##*/}"
+  if ! endpoint_json="$(gcloud ai endpoints describe "$endpoint_id" \
+    --project="arkova1" \
+    --region="us-central1" \
+    --format=json)"; then
+    echo "ERROR: RIG-R could not observe temporary endpoint '$RIG_R_VERTEX_ENDPOINT'." >&2
+    exit 2
+  fi
+  if ! jq -e \
+    --arg expected_model "$RIG_R_VERTEX_MODEL" \
+    --arg expected_deployed_id "$RIG_R_DEPLOYED_MODEL_ID" '
+      type == "object"
+      and (.deployedModels | type == "array" and length == 1)
+      and (.deployedModels[0].model == $expected_model)
+      and (.deployedModels[0].id == $expected_deployed_id)
+      and (.trafficSplit | type == "object")
+      and ((.trafficSplit | keys) == [$expected_deployed_id])
+      and (.trafficSplit[$expected_deployed_id] == 100)
+    ' >/dev/null 2>&1 <<<"$endpoint_json"; then
+    echo "ERROR: RIG-R endpoint is not the sole exact deployed-model binding at 100% traffic." >&2
     exit 2
   fi
 }
@@ -960,6 +1121,79 @@ claim_g1_spend_approval_once() {
     ')"
 }
 
+claim_rig_r_lease_once() {
+  [[ $IS_RIG_R -eq 1 ]] || return 0
+  local lease_payload lease_temp lease_name observed_json
+  lease_name="${RIG_R_LEASE_PREFIX}/${LEASE_ID}.json"
+  lease_payload="$(jq -nc \
+    --arg lease_id "$LEASE_ID" \
+    --arg rig_id "$RIG_ID" \
+    --arg rig_name "$NAME" \
+    --arg profile "$PROFILE" \
+    --arg candidate_head "$DECLARED_SOURCE_HEAD" \
+    --arg candidate_tree "$RIG_R_CANDIDATE_TREE_SHA" \
+    --arg image_digest "$(image_digest_from_ref "$PINNED_IMAGE")" \
+    --arg endpoint "$RIG_R_VERTEX_ENDPOINT" \
+    --arg vertex_model "$RIG_R_VERTEX_MODEL" \
+    --arg deployed_model_id "$RIG_R_DEPLOYED_MODEL_ID" \
+    --arg provision_artifact_sha256 "$RIG_R_PROVISION_ARTIFACT_SHA256" \
+    --arg provision_started_at "$RIG_R_PROVISION_STARTED_AT" \
+    --arg expires_at "$RIG_R_EXPIRES_AT" '
+      {
+        schemaVersion: "arkova.s33.rig-r.exclusive-lease/v1",
+        leaseId: $lease_id,
+        rigId: $rig_id,
+        rigName: $rig_name,
+        profile: $profile,
+        candidateHeadSha: $candidate_head,
+        candidateTreeSha: $candidate_tree,
+        imageDigest: $image_digest,
+        vertexEndpoint: $endpoint,
+        vertexModel: $vertex_model,
+        deployedModelId: $deployed_model_id,
+        provisionArtifactSha256: $provision_artifact_sha256,
+        provisionStartedAt: $provision_started_at,
+        expiresAt: $expires_at
+      }
+    ')" || {
+      echo "ERROR: RIG-R could not construct its exclusive lease claim." >&2
+      exit 2
+    }
+  if [[ ! -x /usr/bin/mktemp ]]; then
+    echo "ERROR: RIG-R lease claim requires trusted /usr/bin/mktemp." >&2
+    exit 2
+  fi
+  umask 077
+  lease_temp="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/arkova-rig-r-lease.XXXXXX")"
+  if ! printf '%s\n' "$lease_payload" >"$lease_temp"; then
+    rm -f -- "$lease_temp"
+    echo "ERROR: RIG-R could not stage its exclusive lease claim." >&2
+    exit 2
+  fi
+  if ! gcloud storage cp "$lease_temp" "$RIG_R_LEASE_URI" \
+    --project="$GCP_PROJECT" \
+    --if-generation-match=0 \
+    --content-type=application/json \
+    --quiet; then
+    rm -f -- "$lease_temp"
+    echo "ERROR: RIG-R exclusive lease '$LEASE_ID' is already held or its ledger is unavailable." >&2
+    exit 2
+  fi
+  rm -f -- "$lease_temp"
+  if ! observed_json="$(gcloud storage objects describe "$RIG_R_LEASE_URI" \
+    --project="$GCP_PROJECT" --raw --format=json)" \
+    || ! jq -e --arg bucket "$RIG_R_LEASE_BUCKET" --arg name "$lease_name" '
+      type == "object"
+      and .bucket == $bucket
+      and .name == $name
+      and (.generation | tostring | test("^[1-9][0-9]*$"))
+    ' >/dev/null 2>&1 <<<"$observed_json"; then
+    echo "ERROR: RIG-R exclusive lease could not be re-observed exactly." >&2
+    exit 2
+  fi
+  RIG_R_LEASE_CLAIMED=1
+}
+
 for denied in "${DENIED_CLOUD_RUN_SERVICES[@]}"; do
   if [[ "$CLOUD_RUN_SERVICE" == "$denied" ]]; then
     deny "derived Cloud Run service '$CLOUD_RUN_SERVICE' is a shared/prod service."
@@ -1019,6 +1253,15 @@ if [[ $APPLY -eq 1 ]]; then
       exit 2
     fi
   fi
+  if [[ $IS_RIG_R -eq 1 && "${CONFIRM_POST_W3_PROVISION:-}" != "RIG-R" ]]; then
+    echo "ERROR: live RIG-R provision requires CONFIRM_POST_W3_PROVISION=RIG-R." >&2
+    exit 2
+  fi
+  if [[ $IS_RIG_R -eq 1 && "$RIG_R_CTO_PROVISION_AUTHORITY_STATUS" != "VERIFIED" ]]; then
+    echo "ERROR: live RIG-R provision is fail-closed: the CTO-bound provision-artifact verifier is UNCONFIGURED on this candidate." >&2
+    echo "       Confirmation strings and caller-supplied digests cannot substitute for external Ed25519 authority." >&2
+    exit 2
+  fi
   if [[ -z "$SUPABASE_DB_PASSWORD" ]]; then
     echo "ERROR: live provision requires STAGING_NEW_SUPABASE_DB_PASSWORD to create the Supabase project." >&2
     echo "       Generate/provide it through the operator secret path; it is never printed by this script." >&2
@@ -1075,7 +1318,7 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       (3-128 characters: letters, digits, dot, underscore, colon, or hyphen)." >&2
     exit 2
   fi
-  if [[ "$PROFILE" == "gemini" || "$RIG_ID" == "RIG-B1" ]]; then
+  if [[ "$PROFILE" == "gemini" || "$PROFILE" == "gemini-release" || "$RIG_ID" == "RIG-B1" ]]; then
     if [[ ! "$APPROVED_GCP_PROJECT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
       echo "ERROR: live admission requires a valid approved GCP project identity; got '$APPROVED_GCP_PROJECT'." >&2
       exit 2
@@ -1086,7 +1329,7 @@ if [[ $APPLY -eq 1 ]]; then
       exit 2
     fi
   fi
-  if [[ "$PROFILE" == "gemini" ]]; then
+  if [[ "$PROFILE" == "gemini" || "$PROFILE" == "gemini-release" ]]; then
     if [[ ! "$GEMINI_TUNED_MODEL_VALUE" =~ ^projects/([^/]+)/locations/us-central1/endpoints/([1-9][0-9]*)$ ]]; then
       echo "ERROR: live gemini provision requires STAGING_GEMINI_TUNED_MODEL as the exact canonical resource" >&2
       echo "       projects/<approved-project>/locations/us-central1/endpoints/<numeric-id>." >&2
@@ -1099,7 +1342,7 @@ if [[ $APPLY -eq 1 ]]; then
       exit 2
     fi
   fi
-  if [[ "$PROFILE" == "gemini" && "$GEMINI_V6_PROMPT_VALUE" != "true" ]]; then
+  if [[ ( "$PROFILE" == "gemini" || "$PROFILE" == "gemini-release" ) && "$GEMINI_V6_PROMPT_VALUE" != "true" ]]; then
     echo "ERROR: live gemini provision requires GEMINI_V6_PROMPT to be the exact activation value 'true'." >&2
     exit 2
   fi
@@ -1257,8 +1500,17 @@ if [[ $APPLY -eq 1 ]]; then
     exit 2
   fi
   VALIDATED_BASE_SHA="$EXPECTED_BASE_SHA"
+  if [[ $IS_RIG_R -eq 1 ]]; then
+    OBSERVED_RIG_R_TREE_SHA="$(trusted_git -C "$TRUSTED_REPO_ROOT" rev-parse \
+      "${DECLARED_SOURCE_HEAD}^{tree}" 2>/dev/null || true)"
+    if [[ "$OBSERVED_RIG_R_TREE_SHA" != "$RIG_R_CANDIDATE_TREE_SHA" ]]; then
+      echo "ERROR: RIG-R candidate tree binding differs from the exact declared source tree." >&2
+      exit 2
+    fi
+  fi
   verify_source_head_image_digest
   verify_g1_candidate_endpoint_binding
+  verify_rig_r_candidate_endpoint_binding
   verify_g1_spend_approval_binding
 fi
 
@@ -1385,6 +1637,28 @@ case "$PROFILE" in
     fi
     SECRETS+=("GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:latest")
     ;;
+  gemini-release)
+    # RIG-R invokes the release driver directly. It has no Cloud Scheduler,
+    # managed queue, OIDC identity, or in-process cron execution. The two
+    # logical evidence queues are rows contained by the isolated Supabase
+    # project and disappear with that project at teardown.
+    USE_MOCKS_VALUE="true"
+    ENABLE_PROD_NETWORK_ANCHORING_VALUE="false"
+    ADMISSION_GEMINI_TUNED_MODEL="$RIG_R_VERTEX_ENDPOINT"
+    ADMISSION_GEMINI_V6_PROMPT="true"
+    ENV_VARS+=(
+      "USE_MOCKS=true"
+      "ENABLE_PROD_NETWORK_ANCHORING=false"
+      "GEMINI_TUNED_MODEL=${RIG_R_VERTEX_ENDPOINT}"
+      "GEMINI_V6_PROMPT=true"
+      "DISABLE_ALL_IN_PROCESS_CRON=true"
+      "DISABLE_IN_PROCESS_ANCHOR_CRON=true"
+      "ENABLE_QUEUE_REMINDERS=false"
+      "ENABLE_RULES_ENGINE=false"
+      "ENABLE_RULE_ACTION_DISPATCHER=false"
+    )
+    SECRETS+=("GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:latest")
+    ;;
 esac
 
 # Join arrays into the comma-delimited forms gcloud expects.
@@ -1440,6 +1714,7 @@ ADMISSION_FINALIZED=0
 CREATED_PROJECT_REF=""
 CREATED_CLOUD_RUN_SERVICE=0
 CREATED_SUPABASE_SECRETS=0
+CREATED_RUNTIME_SA=0
 PREFLIGHT_JSON=""
 PREFLIGHT_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/clean-mirror-preflight-${NAME}.json"
 PREFLIGHT_VERIFIED_AT="<captured-after-clean_mirror>"
@@ -1480,6 +1755,8 @@ teardown_command_for_project_ref() {
   local project_ref="$1"
   if [[ $IS_G1_RIG -eq 1 ]]; then
     printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME} --service ${G1_CONTROL_SERVICE} --service ${G1_TUNED_SERVICE}"
+  elif [[ $IS_RIG_R -eq 1 ]]; then
+    printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME} --rig-id RIG-R --service ${CLOUD_RUN_SERVICE} --vertex-endpoint ${RIG_R_VERTEX_ENDPOINT} --vertex-model ${RIG_R_VERTEX_MODEL} --deployed-model-id ${RIG_R_DEPLOYED_MODEL_ID} --runtime-sa ${RUNTIME_SA} --lease-id ${LEASE_ID}"
   else
     printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME} --service ${CLOUD_RUN_SERVICE}"
   fi
@@ -1503,7 +1780,7 @@ SCHEDULER_RETRY_MAX_DOUBLINGS="5"
 # non-firing hold schedule, pause + verify, then restore the pre-existing cadence
 # while still paused after clean_mirror. This changes no job/matrix semantics.
 SCHEDULER_HOLD_SCHEDULE="0 0 31 2 *"
-if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 ]]; then
+if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then
   SCHEDULER_APPLICABLE_JSON=true
   SCHEDULER_STATE="planned_paused_after_clean_mirror"
   SCHEDULER_CREATION_GUARD="non-firing hold schedule; create then immediate pause + PAUSED verification"
@@ -1730,7 +2007,7 @@ if [[ $APPLY -eq 1 ]]; then
       require_gcloud_secret "$GETBLOCK_RPC_AUTH_SECRET"
       require_gcloud_secret "$TREASURY_WIF_SECRET"
       ;;
-    gemini)
+    gemini|gemini-release)
       require_gcloud_secret "$GEMINI_API_KEY_SECRET"
       ;;
   esac
@@ -1872,10 +2149,57 @@ pause_scheduler_jobs_fail_closed() {
   return 0
 }
 
+cleanup_rig_r_pre_project_bootstrap() {
+  local failures=0 runtime_role runtime_roles
+  if [[ $IS_RIG_R -ne 1 || -n "${CREATED_PROJECT_REF:-}" ]]; then
+    return 0
+  fi
+
+  # RIG-R claims its lease and creates its temporary identity before the paid
+  # Supabase create. If that create never returns an owned project ref, reclaim
+  # only those resources this invocation positively created. Once a project ref
+  # exists, the persisted exact teardown command remains the ownership boundary.
+  if [[ $CREATED_RUNTIME_SA -eq 1 ]]; then
+    if runtime_roles="$(gcloud projects get-iam-policy "$GCP_PROJECT" \
+      --flatten="bindings[].members" \
+      --filter="bindings.members:serviceAccount:${RUNTIME_SA}" \
+      --format="value(bindings.role)" 2>/dev/null)"; then
+      while IFS= read -r runtime_role; do
+        [[ -n "$runtime_role" ]] || continue
+        if ! gcloud projects remove-iam-policy-binding "$GCP_PROJECT" \
+          --member="serviceAccount:${RUNTIME_SA}" \
+          --role="$runtime_role" \
+          --condition=None \
+          --quiet >/dev/null 2>&1; then
+          failures=$((failures + 1))
+        fi
+      done <<<"$runtime_roles"
+    else
+      failures=$((failures + 1))
+    fi
+    if gcloud iam service-accounts delete "$RUNTIME_SA" \
+      --project="$GCP_PROJECT" --quiet >/dev/null 2>&1; then
+      CREATED_RUNTIME_SA=0
+    else
+      failures=$((failures + 1))
+    fi
+  fi
+  if [[ $RIG_R_LEASE_CLAIMED -eq 1 ]]; then
+    if gcloud storage rm "$RIG_R_LEASE_URI" \
+      --project="$GCP_PROJECT" >/dev/null 2>&1; then
+      RIG_R_LEASE_CLAIMED=0
+    else
+      failures=$((failures + 1))
+    fi
+  fi
+  [[ $failures -eq 0 ]]
+}
+
 on_apply_exit() {
   local rc=$?
   local pause_result="not-required"
   local artifact_result="not-persisted"
+  local bootstrap_result="not-required"
   local blocked_reason state_rc
 
   # Cleanup must never recursively re-enter the EXIT trap or replace the
@@ -1909,9 +2233,23 @@ on_apply_exit() {
     fi
   fi
 
-  blocked_reason="original_rc=${rc}; scheduler_pause=${pause_result}; admission_artifact=${artifact_result}"
-  if [[ $APPLY -eq 1 && -n "${CREATED_PROJECT_REF:-}" ]]; then
-    write_provision_state "blocked_after_project_create" "$blocked_reason"
+  if [[ $IS_RIG_R -eq 1 && -z "${CREATED_PROJECT_REF:-}" \
+    && ( $CREATED_RUNTIME_SA -eq 1 || $RIG_R_LEASE_CLAIMED -eq 1 ) ]]; then
+    if cleanup_rig_r_pre_project_bootstrap; then
+      bootstrap_result="reclaimed"
+    else
+      bootstrap_result="incomplete"
+      echo "ERROR: failure containment could not fully reclaim the pre-project RIG-R bootstrap." >&2
+    fi
+  fi
+
+  blocked_reason="original_rc=${rc}; scheduler_pause=${pause_result}; admission_artifact=${artifact_result}; rig_r_pre_project_bootstrap=${bootstrap_result}"
+  if [[ $APPLY -eq 1 && ( -n "${CREATED_PROJECT_REF:-}" || $IS_RIG_R -eq 1 ) ]]; then
+    if [[ -n "${CREATED_PROJECT_REF:-}" ]]; then
+      write_provision_state "blocked_after_project_create" "$blocked_reason"
+    else
+      write_provision_state "blocked_before_project_create" "$blocked_reason"
+    fi
     state_rc=$?
     if [[ $state_rc -ne 0 ]]; then
       echo "ERROR: failure containment could not persist blocked provision state (cleanup_rc=$state_rc)." >&2
@@ -2135,7 +2473,7 @@ verify_deployed_revision_env() {
     ADMISSION_KMS_PROVIDER="$(observed_revision_env_value "$revision_json" "KMS_PROVIDER")"
     ADMISSION_BITCOIN_NETWORK="$(observed_revision_env_value "$revision_json" "BITCOIN_NETWORK")"
     ADMISSION_BITCOIN_UTXO_PROVIDER="$(observed_revision_env_value "$revision_json" "BITCOIN_UTXO_PROVIDER")"
-  elif [[ "$PROFILE" == "gemini" ]]; then
+  elif [[ "$PROFILE" == "gemini" || "$PROFILE" == "gemini-release" ]]; then
     ADMISSION_GEMINI_TUNED_MODEL="$(observed_revision_env_value "$revision_json" "GEMINI_TUNED_MODEL")"
     ADMISSION_GEMINI_V6_PROMPT="$(observed_revision_env_value "$revision_json" "GEMINI_V6_PROMPT")"
   fi
@@ -2347,6 +2685,67 @@ g1_topology_json() {
     }'
 }
 
+rig_r_topology_json() {
+  local supabase_project_ref="$1"
+  if [[ $IS_RIG_R -ne 1 ]]; then
+    printf 'null\n'
+    return 0
+  fi
+  jq -nc \
+    --arg candidate_head "$DECLARED_SOURCE_HEAD" \
+    --arg candidate_tree "$RIG_R_CANDIDATE_TREE_SHA" \
+    --arg provision_artifact_sha256 "$RIG_R_PROVISION_ARTIFACT_SHA256" \
+    --arg provision_started_at "$RIG_R_PROVISION_STARTED_AT" \
+    --arg expires_at "$RIG_R_EXPIRES_AT" \
+    --arg endpoint "$RIG_R_VERTEX_ENDPOINT" \
+    --arg vertex_model "$RIG_R_VERTEX_MODEL" \
+    --arg deployed_model_id "$RIG_R_DEPLOYED_MODEL_ID" \
+    --arg runtime_service_account "$RUNTIME_SA" \
+    --arg supabase_project_ref "$supabase_project_ref" \
+    --arg lease_id "$LEASE_ID" \
+    --arg lease_uri "$RIG_R_LEASE_URI" \
+    --arg teardown_command "$(teardown_command_for_project_ref "$supabase_project_ref")" \
+    --argjson required_worker_uptime_min "$REQUIRED_UPTIME_MIN" \
+    --argjson required_wall_min "$REQUIRED_WALL_MIN" '
+      {
+        candidate_head_sha: $candidate_head,
+        candidate_tree_sha: $candidate_tree,
+        provision_artifact_sha256: $provision_artifact_sha256,
+        tier: "T3",
+        required_worker_uptime_min: $required_worker_uptime_min,
+        required_wall_min: $required_wall_min,
+        provision_started_at: $provision_started_at,
+        hard_stop_expires_at: $expires_at,
+        cto_provision_authority_status: "UNCONFIGURED",
+        project: "arkova1",
+        region: "us-central1",
+        supabase_project_name: "arkova-soak-s33-r",
+        supabase_project_ref: $supabase_project_ref,
+        cloud_run_service: "arkova-worker-s33-r-staging",
+        runtime_service_account: $runtime_service_account,
+        vertex_endpoint: $endpoint,
+        vertex_model: $vertex_model,
+        deployed_model_id: $deployed_model_id,
+        chain_mode: "mocked",
+        contained_database_queues: ["ai-rollback", "chain-fault"],
+        scheduler_jobs: [],
+        managed_queues: [],
+        oidc_identities: [],
+        lease: {
+          cardinality: 1,
+          lease_id: $lease_id,
+          object_uri: $lease_uri,
+          acquisition: "gcs-if-generation-match-0"
+        },
+        teardown: {
+          command: $teardown_command,
+          hard_stop_triggers_teardown: true,
+          projected_monthly_recurring_usd: 0
+        }
+      }
+    '
+}
+
 emit_admission_json() {
   local schema_version="$1"
   local rig_name="$2"
@@ -2428,6 +2827,7 @@ emit_admission_json() {
     --arg tool_version "scripts/staging/provision-isolated-rig.sh@$(short_sha "$head_sha")" \
     --arg owner "$owner" \
     --argjson g1_topology "$(g1_topology_json "$supabase_project_ref")" \
+    --argjson rig_r_topology "$(rig_r_topology_json "$supabase_project_ref")" \
     '{
       schema_version: $schema_version,
       kind: $kind,
@@ -2510,7 +2910,8 @@ emit_admission_json() {
         "soak harness exits non-zero or fails required duration"
       ]
     }
-    + (if $g1_topology == null then {} else {g1: $g1_topology} end)'
+    + (if $g1_topology == null then {} else {g1: $g1_topology} end)
+    + (if $rig_r_topology == null then {} else {rig_r: $rig_r_topology} end)'
 }
 
 persist_admission_artifact() {
@@ -2558,6 +2959,15 @@ echo "Pinned image:      $PINNED_IMAGE"
 echo "Declared source:   $DECLARED_SOURCE_HEAD"
 echo "Soak id:           $SOAK_ID"
 echo "Runtime SA:        $RUNTIME_SA"
+if [[ $IS_RIG_R -eq 1 ]]; then
+  echo "Vertex endpoint:   $RIG_R_VERTEX_ENDPOINT"
+  echo "Vertex model:      $RIG_R_VERTEX_MODEL"
+  echo "Deployed model id: $RIG_R_DEPLOYED_MODEL_ID"
+  echo "DB queues:         ai-rollback, chain-fault (contained by isolated project)"
+  echo "managed topology:  Scheduler=0, managed-queue=0, OIDC=0"
+  echo "authority hard stop: $RIG_R_EXPIRES_AT"
+  echo "exclusive lease:   $RIG_R_LEASE_URI"
+fi
 echo "mode:              $MODE_LABEL"
 echo "artifact dir:      $STAGING_ADMISSION_DIR"
 echo "prod ref (denied): $PROD_SUPABASE_REF"
@@ -2590,6 +3000,38 @@ if [[ $APPLY -eq 1 ]]; then
   # the first paid/cloud mutation. Every later state rewrite carries the same
   # cleanup block, including failures during either G1 deploy or verification.
   write_provision_state "pre_mutation_cleanup_plan_persisted" ""
+  if [[ $IS_RIG_R -eq 1 ]]; then
+    if gcloud iam service-accounts describe "$RUNTIME_SA" \
+      --project="$GCP_PROJECT" >/dev/null 2>&1; then
+      echo "ERROR: RIG-R runtime service account already exists; refusing ownership ambiguity." >&2
+      exit 2
+    fi
+    claim_rig_r_lease_once
+    run_cmd gcloud iam service-accounts create "${RUNTIME_SA%@*}" \
+      --project="$GCP_PROJECT" \
+      --display-name="S3.3 RIG-R temporary runtime"
+    CREATED_RUNTIME_SA=1
+    for runtime_role in "${RIG_R_RUNTIME_ROLES[@]}"; do
+      run_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+        --member="serviceAccount:${RUNTIME_SA}" \
+        --role="$runtime_role" \
+        --condition=None \
+        --quiet
+    done
+    write_provision_state "rig_r_lease_and_runtime_identity_created" ""
+  fi
+else
+  if [[ $IS_RIG_R -eq 1 ]]; then
+    echo "# Step 0/6 — atomically claim one exclusive RIG-R lease and create one temporary runtime identity"
+    print_cmd gcloud storage cp '<canonical-rig-r-lease-payload>' "$RIG_R_LEASE_URI" \
+      --project="$GCP_PROJECT" --if-generation-match=0 --content-type=application/json --quiet
+    print_cmd gcloud iam service-accounts create "${RUNTIME_SA%@*}" \
+      --project="$GCP_PROJECT" --display-name="S3.3 RIG-R temporary runtime"
+    for runtime_role in "${RIG_R_RUNTIME_ROLES[@]}"; do
+      print_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+        --member="serviceAccount:${RUNTIME_SA}" --role="$runtime_role" --condition=None --quiet
+    done
+  fi
 fi
 print_cmd "${CREATE_CMD[@]}" --db-password '<redacted:STAGING_NEW_SUPABASE_DB_PASSWORD>'
 if [[ $APPLY -eq 1 ]]; then
@@ -2721,11 +3163,15 @@ if [[ $IS_G1_RIG -eq 1 ]]; then
 else
   echo "# Step 3/6 — deploy isolated worker '$CLOUD_RUN_SERVICE' on pinned image (profile=$PROFILE)"
   echo "#   env-vars: $WORKER_ENV_VARS"
+  RUNTIME_LABELS="arkova-source-head=${DECLARED_SOURCE_HEAD}"
+  if [[ $IS_RIG_R -eq 1 ]]; then
+    RUNTIME_LABELS="${RUNTIME_LABELS},arkova-source-tree=${RIG_R_CANDIDATE_TREE_SHA},arkova-rig-id=rig-r"
+  fi
   run_cmd gcloud run deploy "$CLOUD_RUN_SERVICE" \
     --project="$GCP_PROJECT" \
     --region="$CLOUD_RUN_REGION" \
     --image="$PINNED_IMAGE" \
-    --labels="arkova-source-head=${DECLARED_SOURCE_HEAD}" \
+    --labels="$RUNTIME_LABELS" \
     --service-account="$RUNTIME_SA" \
     --no-allow-unauthenticated \
     --min-instances=0 \
@@ -2741,7 +3187,7 @@ else
     write_provision_state "cloud_run_provenance_verified" ""
   fi
 fi
-if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 ]]; then
+if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then
   echo "#   NOTE (profile=$PROFILE): the real-config secrets referenced above must already"
   echo "#         exist in Secret Manager (project $GCP_PROJECT) and hold the intended"
   echo "#         test-tier credentials — the operator verifies this before --apply."
@@ -2760,9 +3206,11 @@ echo
 # mock rigs skip this entirely (no behavioral cron to drive).
 # ---------------------------------------------------------------------------
 echo "# Step 4/6 — Cloud Scheduler -> /jobs/* wiring (node-cron does not fire on throttled Cloud Run)"
-if [[ $IS_MOCK_PROFILE -eq 1 || $IS_G1_RIG -eq 1 ]]; then
+if [[ $IS_MOCK_PROFILE -eq 1 || $IS_G1_RIG -eq 1 || $IS_RIG_R -eq 1 ]]; then
   if [[ $IS_G1_RIG -eq 1 ]]; then
     echo "#   RIG-G1 — external A/B harness only; Scheduler and in-process background execution remain disabled."
+  elif [[ $IS_RIG_R -eq 1 ]]; then
+    echo "#   RIG-R — release driver only; zero Scheduler jobs and zero OIDC identities."
   else
   echo "#   profile=mock — no behavioral cron to drive; skipping Scheduler job creation."
   fi
@@ -2974,7 +3422,7 @@ echo
 # FORCE_ACCELERATED_RIG_ONLY mode may replace those cadences with the CTO's
 # five-minute rig cadence and resume. Shared production job identities are never
 # referenced or mutated here.
-if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 ]]; then
+if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then
   if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
     echo "# Post-admission — FORCE_ACCELERATED_RIG_ONLY: set five-minute rig cadence, resume, verify ENABLED"
   else
