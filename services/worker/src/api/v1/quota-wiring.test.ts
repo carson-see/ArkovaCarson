@@ -7,22 +7,24 @@ function source(relative: string): string {
 }
 
 describe('per-org quota route wiring', () => {
-  it('meters only schema-valid single anchor writes after the API-key scope guard', () => {
+  it('meters only executable single anchor writes after idempotent deduplication', () => {
     const router = source('./router.ts');
     const submit = source('./anchor-submit.ts');
 
     expect(router).toContain("router.use('/anchor', requireScope('anchor:write'), anchorSubmitRouter)");
     expect(submit).toMatch(/export const AnchorSubmitSchema/);
-    expect(submit).toMatch(/const anchorCreateQuota = requireOrgQuota\(\{[\s\S]*kind: ['"]anchors_created['"][\s\S]*getOrgId: \(req\) => req\.apiKey\?\.orgId \?\? null[\s\S]*getDelta:/);
-    expect(submit).toMatch(/router\.post\(['"]\/['"], anchorCreateQuota, handleAnchorSubmit\)/);
-    expect(submit).toMatch(/router\.post\(['"]\/submit['"], anchorCreateQuota, handleAnchorSubmit\)/);
+    expect(submit).toMatch(/async function consumeAnchorCreateQuota\([\s\S]*kind: ['"]anchors_created['"][\s\S]*getOrgId: \(quotaReq\) => quotaReq\.apiKey\?\.orgId \?\? null[\s\S]*getDelta: \(\) => delta/);
+    expect(submit).toMatch(/if \(existing\) \{[\s\S]*return;[\s\S]*await consumeAnchorCreateQuota\(req, res, 1\)/);
+    expect(submit).toMatch(/router\.post\(['"]\/['"], handleAnchorSubmit\)/);
+    expect(submit).toMatch(/router\.post\(['"]\/submit['"], handleAnchorSubmit\)/);
   });
 
-  it('meters bulk cardinality from the validated anchors array', () => {
+  it('meters bulk cardinality from the deduplicated executable set after dry-run exits', () => {
     const bulk = source('./anchor-bulk.ts');
 
-    expect(bulk).toMatch(/const bulkAnchorQuota = requireOrgQuota\(\{[\s\S]*kind: ['"]anchors_created['"][\s\S]*getDelta:[\s\S]*parsed\.data\.anchors\.length/);
-    expect(bulk).toMatch(/router\.post\(['"]\/['"], bulkAnchorQuota,/);
+    expect(bulk).toMatch(/async function consumeAnchorCreateQuota\([\s\S]*kind: ['"]anchors_created['"][\s\S]*getDelta: \(\) => delta/);
+    expect(bulk).toMatch(/const queueable = body\.anchors[\s\S]*if \(body\.dry_run\) \{[\s\S]*return;[\s\S]*await consumeAnchorCreateQuota\(req, res, queueable\.length\)/);
+    expect(bulk).toMatch(/router\.post\(['"]\/['"], async/);
   });
 
   it('checks connector capacity after API-key and org-admin guards on registration only', () => {

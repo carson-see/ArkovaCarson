@@ -54,6 +54,24 @@ interface AnchorReceipt {
   record_uri: string;
 }
 
+async function consumeAnchorCreateQuota(
+  req: Request,
+  res: Response,
+  delta: number,
+): Promise<boolean> {
+  const quota = requireOrgQuota({
+    kind: 'anchors_created',
+    mode: 'daily',
+    getOrgId: (quotaReq) => quotaReq.apiKey?.orgId ?? null,
+    getDelta: () => delta,
+  });
+  let allowed = false;
+  await quota(req, res, () => {
+    allowed = true;
+  });
+  return allowed;
+}
+
 async function handleAnchorSubmit(req: Request, res: Response) {
   // Require API key
   if (!req.apiKey) {
@@ -132,6 +150,10 @@ async function handleAnchorSubmit(req: Request, res: Response) {
         record_uri: buildVerifyUrl(existingPublicId),
       };
       res.status(200).json(receipt);
+      return;
+    }
+
+    if (!(await consumeAnchorCreateQuota(req, res, 1))) {
       return;
     }
 
@@ -233,15 +255,8 @@ async function handleAnchorSubmit(req: Request, res: Response) {
  * Submit a fingerprint for blockchain anchoring.
  * The fingerprint must be a 64-character hex SHA-256 hash.
  */
-const anchorCreateQuota = requireOrgQuota({
-  kind: 'anchors_created',
-  mode: 'daily',
-  getOrgId: (req) => req.apiKey?.orgId ?? null,
-  getDelta: (req) => AnchorSubmitSchema.safeParse(req.body).success ? 1 : 0,
-});
-
-router.post('/', anchorCreateQuota, handleAnchorSubmit);
-router.post('/submit', anchorCreateQuota, handleAnchorSubmit);
+router.post('/', handleAnchorSubmit);
+router.post('/submit', handleAnchorSubmit);
 
 /**
  * Handle Supabase insert errors for anchor creation.
