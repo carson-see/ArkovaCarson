@@ -109,17 +109,25 @@ interface BulkAnchorResponse {
   }>;
 }
 
-const bulkAnchorQuota = requireOrgQuota({
-  kind: 'anchors_created',
-  mode: 'daily',
-  getOrgId: (req) => req.apiKey?.orgId ?? null,
-  getDelta: (req) => {
-    const parsed = BulkAnchorRequestSchema.safeParse(req.body);
-    return parsed.success ? parsed.data.anchors.length : 0;
-  },
-});
+async function consumeAnchorCreateQuota(
+  req: Request,
+  res: Response,
+  delta: number,
+): Promise<boolean> {
+  const quota = requireOrgQuota({
+    kind: 'anchors_created',
+    mode: 'daily',
+    getOrgId: (quotaReq) => quotaReq.apiKey?.orgId ?? null,
+    getDelta: () => delta,
+  });
+  let allowed = false;
+  await quota(req, res, () => {
+    allowed = true;
+  });
+  return allowed;
+}
 
-router.post('/', bulkAnchorQuota, async (req: Request, res: Response) => {
+router.post('/', async (req: Request, res: Response) => {
   if (!req.apiKey) {
     res.status(401).json({ error: 'API key required. Include X-API-Key header.' });
     return;
@@ -241,6 +249,10 @@ router.post('/', bulkAnchorQuota, async (req: Request, res: Response) => {
       errors: [],
       dry_run: true,
     } satisfies BulkAnchorResponse);
+    return;
+  }
+
+  if (!(await consumeAnchorCreateQuota(req, res, queueable.length))) {
     return;
   }
 

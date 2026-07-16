@@ -14,6 +14,7 @@ const mockConfig = vi.hoisted(() => ({
   enableProfessionalEducationSchemaReady: true,
 }));
 const mockSubmitJob = vi.hoisted(() => vi.fn().mockResolvedValue('job-1'));
+const mockQuotaDeltas = vi.hoisted((): number[] => []);
 const mockLogger = vi.hoisted(() => ({
   info: vi.fn(),
   warn: vi.fn(),
@@ -28,7 +29,11 @@ vi.mock('../../utils/logger.js', () => ({
   logger: mockLogger,
 }));
 vi.mock('../../middleware/perOrgRateLimit.js', () => ({
-  requireOrgQuota: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireOrgQuota: (options: { getDelta?: (req: unknown) => number | Promise<number> }) =>
+    async (req: unknown, _res: unknown, next: () => void) => {
+      mockQuotaDeltas.push(options.getDelta ? await options.getDelta(req) : 1);
+      next();
+    },
 }));
 vi.mock('../../utils/orgCredits.js', () => ({
   deductOrgCredit: vi.fn(),
@@ -83,6 +88,7 @@ function makeBuilder(state: {
 describe('POST /api/v1/anchor/bulk (SCRUM-1171)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuotaDeltas.length = 0;
     mockConfig.enableProfessionalEducationSchemaReady = true;
     vi.mocked(deductOrgCredit).mockResolvedValue({ allowed: true });
   });
@@ -111,6 +117,7 @@ describe('POST /api/v1/anchor/bulk (SCRUM-1171)', () => {
     expect(res.body.validated).toBe(2);
     expect(res.body.queued).toBe(2);
     expect(deductOrgCredit).not.toHaveBeenCalled();
+    expect(mockQuotaDeltas).toEqual([]);
   });
 
   it('detects intra-batch duplicates and surfaces them in the response', async () => {
@@ -144,6 +151,38 @@ describe('POST /api/v1/anchor/bulk (SCRUM-1171)', () => {
       .expect(409);
     expect(res.body.error).toBe('duplicate_fingerprints');
     expect(res.body.duplicates[0].scope).toBe('in_db');
+  });
+
+  it('meters only the deduplicated executable rows', async () => {
+    vi.mocked(db.from).mockImplementation(() => makeBuilder({
+      selectData: [{ fingerprint: FP(1) }],
+      insertedRow: {
+        public_id: 'ARK-002',
+        fingerprint: FP(2),
+        created_at: '2026-04-28T13:00:00Z',
+      },
+    }) as never);
+
+    const res = await request(buildApp())
+      .post('/api/v1/anchor/bulk')
+      .send({
+        duplicate_strategy: 'skip',
+        anchors: [
+          { fingerprint: FP(1) },
+          { fingerprint: FP(2) },
+        ],
+      })
+      .expect(201);
+
+    expect(res.body.queued).toBe(1);
+    expect(mockQuotaDeltas).toEqual([1]);
+    expect(deductOrgCredit).toHaveBeenCalledWith(
+      expect.anything(),
+      'org-1',
+      1,
+      'anchor.bulk',
+      undefined,
+    );
   });
 
   it('preserves retroactive metadata distinctly from anchored_at (AC2)', async () => {
