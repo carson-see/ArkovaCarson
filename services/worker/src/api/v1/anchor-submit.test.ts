@@ -10,11 +10,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig } = vi.hoisted(() => {
+const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mockQuotaDeltas } = vi.hoisted(() => {
   const mockSelectChain = { single: vi.fn(), maybeSingle: vi.fn() };
   const mockInsertChain = { single: vi.fn() };
   const mockInsert = vi.fn((_value?: unknown) => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
   const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  const mockQuotaDeltas: number[] = [];
   // Mock the worker config so transitive import (anchor-submit → orgCredits →
   // config.js) doesn't try to load required env vars in the test env and
   // throw "Invalid worker configuration" before any test runs.
@@ -22,7 +23,7 @@ const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig } =
     enableOrgCreditEnforcement: false,
     enableProfessionalEducationSchemaReady: true,
   };
-  return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig };
+  return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mockQuotaDeltas };
 });
 
 vi.mock('../../config.js', () => ({
@@ -33,10 +34,12 @@ vi.mock('../../config.js', () => ({
 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
 
-// Handler contract tests isolate persistence/validation. Quota behavior and
-// route placement are covered by perOrgRateLimit + quota-wiring tests.
 vi.mock('../../middleware/perOrgRateLimit.js', () => ({
-  requireOrgQuota: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireOrgQuota: (options: { getDelta?: (req: unknown) => number | Promise<number> }) =>
+    async (req: unknown, _res: unknown, next: () => void) => {
+      mockQuotaDeltas.push(options.getDelta ? await options.getDelta(req) : 1);
+      next();
+    },
 }));
 
 vi.mock('../../utils/jobQueue.js', () => ({
@@ -114,6 +117,7 @@ function expectPrivateSourceUrlRejection(res: request.Response) {
 describe('POST /api/v1/anchor — Zod validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuotaDeltas.length = 0;
     mockConfig.enableProfessionalEducationSchemaReady = true;
     mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
     mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
@@ -184,6 +188,27 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.body.record_uri).toContain('/verify/');
     expect(mockInsert.mock.calls[0]?.[0]).not.toHaveProperty('metadata');
     expect(submitJob).not.toHaveBeenCalled();
+  });
+
+  it('returns an existing idempotent receipt without consuming anchor quota', async () => {
+    mockSelectChain.maybeSingle.mockResolvedValueOnce({
+      data: {
+        public_id: 'ARK-2026-EXISTING',
+        fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING',
+        created_at: '2026-04-26T00:00:00Z',
+      },
+      error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.public_id).toBe('ARK-2026-EXISTING');
+    expect(mockQuotaDeltas).toEqual([]);
+    expect(mockInsert).not.toHaveBeenCalled();
   });
 
   it('accepts the compatibility submit path with the canonical write:anchors scope', async () => {
