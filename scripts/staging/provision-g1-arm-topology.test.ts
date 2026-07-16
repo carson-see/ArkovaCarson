@@ -19,13 +19,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const provisioner = resolve(here, 'provision-isolated-rig.sh');
 const teardown = resolve(here, 'teardown-isolated-rig.sh');
 const provisionerSource = readFileSync(provisioner, 'utf8');
-const repoRoot = resolve(here, '../..');
-const repoHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
-const repoBase = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], {
-  cwd: repoRoot,
-  encoding: 'utf8',
-}).trim();
 const trustedNodeSha256 = createHash('sha256').update(readFileSync(process.execPath)).digest('hex');
+const trustedGitPath = '/usr/bin/git';
+const trustedGitSha256 = createHash('sha256')
+  .update(readFileSync(trustedGitPath))
+  .digest('hex');
+const trustedGitVersion = execFileSync(trustedGitPath, ['--version'], { encoding: 'utf8' }).trim();
 const stubRoots: string[] = [];
 
 afterAll(() => {
@@ -89,6 +88,7 @@ interface G1FaultRun {
   out: string;
   gcloudCalls: string[];
   npxCalls: string[];
+  pathGitCalls: string[];
   state: Record<string, unknown> | null;
 }
 
@@ -100,11 +100,13 @@ function runG1ApplyFault(options: {
   leaseId?: string;
   fakeNode?: boolean;
   dirtyInput?: 'provisioner' | 'driver' | 'verifier';
+  hiddenByIndexFlag?: 'assume-unchanged' | 'skip-worktree';
   sharedLedgerDir?: string;
 } = {}): G1FaultRun {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'g1-provision-fault-')));
   stubRoots.push(root);
   const fakeRepo = join(root, 'repo');
+  const origin = join(root, 'origin.git');
   const fixtureVerifier = 'scripts/staging/test-g1-spend-approval-verifier.mjs';
   const fixtureDriver = 'services/worker/scripts/pr1408-chain-resilience-driver.ts';
   const rigName = options.name ?? 's33-g1';
@@ -115,11 +117,13 @@ function runG1ApplyFault(options: {
   mkdirSync(ledgerDir, { recursive: true });
   const gcloudLog = join(root, 'gcloud.log');
   const npxLog = join(root, 'npx.log');
+  const pathGitLog = join(root, 'path-git.log');
   const deployCount = join(root, 'deploy-count');
   const artifactDir = join(root, 'artifacts');
   const statePath = join(artifactDir, `isolated-rig-provision-${rigName}.json`);
   writeFileSync(gcloudLog, '');
   writeFileSync(npxLog, '');
+  writeFileSync(pathGitLog, '');
 
   const baseEnv = {
     NODE_ENV: 'production',
@@ -145,8 +149,64 @@ function runG1ApplyFault(options: {
     'CRON_SECRET',
     'GEMINI_API_KEY',
   ];
+  const fixtureProvisionerSource = provisionerSource
+    .replace(
+      'RIG_G1_SPEND_APPROVAL_VERIFIER="scripts/staging/s33-g1-spend-approval.mjs"',
+      `RIG_G1_SPEND_APPROVAL_VERIFIER="${fixtureVerifier}"`,
+    )
+    .replace('RIG_G1_TRUSTED_NODE_SHA256=""', `RIG_G1_TRUSTED_NODE_SHA256="${trustedNodeSha256}"`)
+    .replace('RIG_G1_TRUSTED_NODE_VERSION=""', `RIG_G1_TRUSTED_NODE_VERSION="${process.version}"`)
+    .replace(/TRUSTED_GIT_PATH="[^"]+"/, `TRUSTED_GIT_PATH="${trustedGitPath}"`)
+    .replace(/TRUSTED_GIT_SHA256="[0-9a-f]+"/, `TRUSTED_GIT_SHA256="${trustedGitSha256}"`)
+    .replace(/TRUSTED_GIT_VERSION="[^"]+"/, `TRUSTED_GIT_VERSION="${trustedGitVersion}"`)
+    .replace(/TRUSTED_GIT_ORIGIN_URL="[^"]+"/, `TRUSTED_GIT_ORIGIN_URL="${origin}"`)
+    .replace('GIT_ALLOW_PROTOCOL=https', 'GIT_ALLOW_PROTOCOL=file');
+  const fixtureProvisioner = join(fakeRepo, 'scripts/staging/provision-isolated-rig.sh');
+  writeFileSync(fixtureProvisioner, fixtureProvisionerSource);
+  chmodSync(fixtureProvisioner, 0o755);
+  writeFileSync(join(fakeRepo, fixtureVerifier), `
+import { readFileSync } from 'node:fs';
+const readArg = (name) => {
+  const index = process.argv.indexOf(name);
+  if (index < 0 || !process.argv[index + 1]) throw new Error(\`missing \${name}\`);
+  return process.argv[index + 1];
+};
+process.stdout.write(readFileSync(readArg('--artifact'), 'utf8'));
+`);
+  writeFileSync(join(fakeRepo, fixtureDriver), 'export const g1FixtureDriver = true;\n');
+
+  execFileSync('/usr/bin/git', ['init', '--quiet', '--initial-branch=main', fakeRepo]);
+  execFileSync('/usr/bin/git', ['-C', fakeRepo, 'config', 'user.name', 'G1 Integrity Test']);
+  execFileSync('/usr/bin/git', ['-C', fakeRepo, 'config', 'user.email', 'g1-integrity@arkova.invalid']);
+  execFileSync('/usr/bin/git', ['-C', fakeRepo, 'add', '--', fixtureProvisioner, fixtureDriver, fixtureVerifier]);
+  execFileSync('/usr/bin/git', ['-C', fakeRepo, 'commit', '--quiet', '-m', 'fixture']);
+  const fixtureHead = execFileSync('/usr/bin/git', ['-C', fakeRepo, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+  execFileSync('/usr/bin/git', ['init', '--quiet', '--bare', origin]);
+  execFileSync('/usr/bin/git', ['-C', fakeRepo, 'remote', 'add', 'origin', origin]);
+  execFileSync('/usr/bin/git', ['-C', fakeRepo, 'push', '--quiet', '-u', 'origin', 'main']);
+
+  if (options.dirtyInput) {
+    const dirtyPath = options.dirtyInput === 'provisioner'
+      ? 'scripts/staging/provision-isolated-rig.sh'
+      : options.dirtyInput === 'driver'
+        ? fixtureDriver
+        : fixtureVerifier;
+    const absoluteDirtyPath = join(fakeRepo, dirtyPath);
+    writeFileSync(
+      absoluteDirtyPath,
+      `${readFileSync(absoluteDirtyPath, 'utf8')}\n// uncommitted integrity regression\n`,
+    );
+    if (options.hiddenByIndexFlag) {
+      execFileSync('/usr/bin/git', [
+        '-C', fakeRepo, 'update-index', `--${options.hiddenByIndexFlag}`, '--', dirtyPath,
+      ]);
+    }
+  }
+
   const revision = (env: Record<string, string>) => JSON.stringify({
-    metadata: { labels: { 'arkova-source-head': repoHead } },
+    metadata: { labels: { 'arkova-source-head': fixtureHead } },
     spec: {
       containers: [{
         image: pinnedImage,
@@ -180,16 +240,11 @@ function runG1ApplyFault(options: {
     approverIdentity: 'approved-founder',
     approverRole: 'founder',
     authorityRosterRootSha256: `sha256:${'2'.repeat(64)}`,
-    candidateSourceHeadSha: repoHead,
+    candidateSourceHeadSha: fixtureHead,
     candidateImageDigest: pinnedImageDigest,
     scope: {
-      rigClass: 'RIG-G1',
-      rigName: 's33-g1',
-      rigProfile: 'gemini',
-      soakId: 'soak-s33-g1',
-      rigId: 'RIG-G1',
-      leaseId: 'lease-s33-g1',
-      corpusDigest: g1Env.STAGING_G1_CORPUS_DIGEST,
+      rigClass: 'RIG-G1', rigName: 's33-g1', rigProfile: 'gemini', soakId: 'soak-s33-g1',
+      rigId: 'RIG-G1', leaseId: 'lease-s33-g1', corpusDigest: g1Env.STAGING_G1_CORPUS_DIGEST,
       endpointResource: g1Env.STAGING_GEMINI_TUNED_MODEL,
     },
     isolatedSupabaseProjectCount: 3,
@@ -200,10 +255,8 @@ function runG1ApplyFault(options: {
     ownerIdentity: 'lane-4-sm',
     expiresAt: '2026-07-20T00:00:00Z',
     raci: {
-      responsibleIdentity: 'lane-4-sm',
-      accountableIdentity: 'approved-founder',
-      consultedIdentities: ['cto'],
-      informedIdentities: ['rte'],
+      responsibleIdentity: 'lane-4-sm', accountableIdentity: 'approved-founder',
+      consultedIdentities: ['cto'], informedIdentities: ['rte'],
     },
     approvalVerifiedAt: '2026-07-15T20:00:00Z',
     verifierIdentity: 'release-verifier',
@@ -211,35 +264,17 @@ function runG1ApplyFault(options: {
     runtimeVerifiedAt: '2026-07-15T20:01:00.000Z',
     trustRootKeyFingerprint: '3'.repeat(64),
   });
-
-  const fixtureProvisionerSource = provisionerSource
-    .replace(
-      'RIG_G1_SPEND_APPROVAL_VERIFIER="scripts/staging/s33-g1-spend-approval.mjs"',
-      `RIG_G1_SPEND_APPROVAL_VERIFIER="${fixtureVerifier}"`,
-    )
-    .replace('RIG_G1_TRUSTED_NODE_SHA256=""', `RIG_G1_TRUSTED_NODE_SHA256="${trustedNodeSha256}"`)
-    .replace('RIG_G1_TRUSTED_NODE_VERSION=""', `RIG_G1_TRUSTED_NODE_VERSION="${process.version}"`);
-  const fixtureProvisioner = join(fakeRepo, 'scripts/staging/provision-isolated-rig.sh');
-  writeFileSync(fixtureProvisioner, fixtureProvisionerSource);
-  chmodSync(fixtureProvisioner, 0o755);
-  writeFileSync(join(fakeRepo, fixtureVerifier), `process.stdout.write(${JSON.stringify(`${verifiedApproval}\n`)});\n`);
-  writeFileSync(join(fakeRepo, fixtureDriver), 'export const g1FixtureDriver = true;\n');
-  writeFileSync(join(root, 'approval-envelope.json'), '{"fixture":true}\n');
+  writeFileSync(join(root, 'approval-envelope.json'), `${verifiedApproval}\n`);
 
   writeFileSync(join(root, 'git'), `#!/usr/bin/env bash
 set -euo pipefail
+printf '%s\\n' "$*" >> '${pathGitLog}'
 if [[ "$1" == "rev-parse" && "\${2:-}" == "--show-toplevel" ]]; then printf '%s\\n' '${fakeRepo}'; exit 0; fi
-if [[ "$1" == "rev-parse" && "\${2:-}" == "HEAD" ]]; then printf '%s\\n' '${repoHead}'; exit 0; fi
+if [[ "$1" == "rev-parse" && "\${2:-}" == "HEAD" ]]; then printf '%s\\n' '${fixtureHead}'; exit 0; fi
 if [[ "$1" == "fetch" || "$1" == "ls-files" || "$1" == "cat-file" ]]; then exit 0; fi
-if [[ "$1" == "diff" ]]; then
-  dirty='${options.dirtyInput ?? ''}'
-  if [[ "$dirty" == 'provisioner' && "$*" == *'scripts/staging/provision-isolated-rig.sh'* ]]; then exit 1; fi
-  if [[ "$dirty" == 'driver' && "$*" == *'${fixtureDriver}'* ]]; then exit 1; fi
-  if [[ "$dirty" == 'verifier' && "$*" == *'${fixtureVerifier}'* ]]; then exit 1; fi
-  exit 0
-fi
+if [[ "$1" == "diff" ]]; then exit 0; fi
 if [[ "$1" == "merge-base" && "\${2:-}" == "--is-ancestor" ]]; then exit 0; fi
-if [[ "$1" == "merge-base" ]]; then printf '%s\\n' '${repoBase}'; exit 0; fi
+if [[ "$1" == "merge-base" ]]; then printf '%s\\n' '${fixtureHead}'; exit 0; fi
 if [[ "$1" == "show" ]]; then printf '%s' 'export const g1FixtureDriver = true;'; exit 0; fi
 echo "unexpected git call: $*" >&2
 exit 64
@@ -335,9 +370,9 @@ exit 0
     CONFIRM_PROVISION: rigName,
     CONFIRM_REAL_CONFIG: 'gemini',
     CONFIRM_POST_W3_PROVISION: 'RIG-G1',
-    GITHUB_SHA: repoHead,
-    BASE_SHA: repoBase,
-    STAGING_SOURCE_HEAD_SHA: repoHead,
+    GITHUB_SHA: fixtureHead,
+    BASE_SHA: fixtureHead,
+    STAGING_SOURCE_HEAD_SHA: fixtureHead,
     STAGING_PINNED_IMAGE: pinnedImage,
     STAGING_SOAK_ID: 'soak-s33-g1',
     STAGING_LEASE_ID: leaseId,
@@ -366,6 +401,7 @@ exit 0
     out,
     gcloudCalls: readFileSync(gcloudLog, 'utf8').trim().split('\n').filter(Boolean),
     npxCalls: readFileSync(npxLog, 'utf8').trim().split('\n').filter(Boolean),
+    pathGitCalls: readFileSync(pathGitLog, 'utf8').trim().split('\n').filter(Boolean),
     state: existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : null,
   };
 }
@@ -582,6 +618,18 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     expect(provisionerSource).not.toContain('npx tsx "$RIG_G1_SPEND_APPROVAL_VERIFIER"');
   });
 
+  it('code-binds and sanitizes the sole Git/blob reader used by live admission', () => {
+    expect(provisionerSource).toContain('TRUSTED_GIT_PATH="/usr/bin/git"');
+    expect(provisionerSource).toMatch(/TRUSTED_GIT_SHA256="[0-9a-f]{64}"/);
+    expect(provisionerSource).toContain('TRUSTED_GIT_VERSION="git version 2.50.1 (Apple Git-155)"');
+    expect(provisionerSource).toContain('/usr/bin/env -i');
+    expect(provisionerSource).toContain('GIT_CONFIG_NOSYSTEM=1');
+    expect(provisionerSource).toContain('GIT_CONFIG_GLOBAL=/dev/null');
+    expect(provisionerSource).toContain('GIT_CONFIG_COUNT=0');
+    expect(provisionerSource).toContain('GIT_NO_REPLACE_OBJECTS=1');
+    expect(provisionerSource).not.toContain('git diff --quiet');
+  });
+
   it('binds the signed approval to the complete G1 execution scope and atomically claims it', () => {
     for (const expectedArg of [
       '--expected-rig-name', '--expected-rig-profile', '--expected-soak-id',
@@ -603,14 +651,22 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
   });
 
-  it.each(['provisioner', 'driver', 'verifier'] as const)(
-    'rejects a dirty/replaced %s input before every paid mutation',
-    (dirtyInput) => {
-      const result = runG1ApplyFault({ dirtyInput });
+  it.each([
+    ['provisioner', 'assume-unchanged'],
+    ['provisioner', 'skip-worktree'],
+    ['driver', 'assume-unchanged'],
+    ['driver', 'skip-worktree'],
+    ['verifier', 'assume-unchanged'],
+    ['verifier', 'skip-worktree'],
+  ] as const)(
+    'rejects %s bytes hidden by %s before every resource call',
+    (dirtyInput, hiddenByIndexFlag) => {
+      const result = runG1ApplyFault({ dirtyInput, hiddenByIndexFlag });
       expect(result.code).not.toBe(0);
-      expect(result.out).toMatch(/working-tree bytes differ|commit or restore/i);
-      expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
-      expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+      expect(result.out).toMatch(/working-tree bytes differ|byte-for-byte|commit or restore/i);
+      expect(result.pathGitCalls).toEqual([]);
+      expect(result.gcloudCalls).toEqual([]);
+      expect(result.npxCalls).toEqual([]);
     },
   );
 

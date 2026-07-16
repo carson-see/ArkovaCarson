@@ -71,6 +71,13 @@ RIG_G1_TRUSTED_NODE_SHA256=""
 RIG_G1_TRUSTED_NODE_VERSION=""
 RIG_G1_APPROVAL_LEDGER_BUCKET="arkova-training-data"
 RIG_G1_APPROVAL_LEDGER_PREFIX="s33/g1/approval-claims"
+# Live admission is intentionally bound to the audited Git shipped on the
+# release operator host. An OS/toolchain update changes this tuple and fails
+# closed until the reviewed authority input is refreshed in code.
+TRUSTED_GIT_PATH="/usr/bin/git"
+TRUSTED_GIT_SHA256="a961f78075d8e7621ef4f5d764c64ef8a41bf66c0a98ab5cb6ca39b85ce31c93"
+TRUSTED_GIT_VERSION="git version 2.50.1 (Apple Git-155)"
+TRUSTED_GIT_ORIGIN_URL="https://github.com/carson-see/ArkovaCarson.git"
 S33_ISOLATED_SUPABASE_PROJECT_COUNT=3
 S33_ISOLATED_SUPABASE_PROJECT_MONTHLY_EACH_USD=10
 S33_ISOLATED_SUPABASE_PROJECTS_MONTHLY_TOTAL_USD=30
@@ -204,6 +211,10 @@ G1_COMPUTE_MODEL_CAP_USD_JSON="null"
 G1_SPEND_APPROVAL_JSON='{"status":"UNCONFIGURED","reason":"pinned founder/CTO authority root not code-bound"}'
 G1_APPROVAL_CLAIM_JSON='null'
 G1_TRUSTED_NODE_LAUNCHER=""
+TRUSTED_GIT_VALIDATED=0
+TRUSTED_REPO_ROOT=""
+TRUSTED_LOCAL_HEAD_SHA=""
+DECLARED_DRIVER_SHA256=""
 
 NAME=""
 APPLY=0
@@ -462,13 +473,104 @@ image_digest_from_ref() {
   esac
 }
 
+trusted_sha256_file() {
+  local path="$1" digest remainder
+  if [[ -x /usr/bin/shasum ]]; then
+    read -r digest remainder < <(/usr/bin/shasum -a 256 -- "$path")
+  elif [[ -x /usr/bin/sha256sum ]]; then
+    read -r digest remainder < <(/usr/bin/sha256sum -- "$path")
+  else
+    echo "ERROR: no trusted absolute SHA-256 utility is available for binary binding." >&2
+    return 1
+  fi
+  if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: trusted SHA-256 utility returned a malformed binary digest." >&2
+    return 1
+  fi
+  printf '%s\n' "$digest"
+}
+
+validate_trusted_git_binding() {
+  [[ $TRUSTED_GIT_VALIDATED -eq 0 ]] || return 0
+  local observed_digest observed_version
+  if [[ "$TRUSTED_GIT_PATH" != /* || ! -f "$TRUSTED_GIT_PATH" \
+    || -L "$TRUSTED_GIT_PATH" || ! -x "$TRUSTED_GIT_PATH" ]]; then
+    echo "ERROR: live admission requires the code-bound Git path to be a regular absolute executable." >&2
+    return 1
+  fi
+  if [[ ! "$TRUSTED_GIT_SHA256" =~ ^[0-9a-f]{64}$ \
+    || ! "$TRUSTED_GIT_VERSION" =~ ^git[[:space:]]version[[:space:]].+ ]]; then
+    echo "ERROR: trusted Git digest/version binding is UNCONFIGURED." >&2
+    return 1
+  fi
+  observed_digest="$(trusted_sha256_file "$TRUSTED_GIT_PATH")" || return 1
+  if [[ "$observed_digest" != "$TRUSTED_GIT_SHA256" ]]; then
+    echo "ERROR: trusted Git binary digest differs from the code-bound release tuple." >&2
+    return 1
+  fi
+  observed_version="$(/usr/bin/env -i TZ=UTC LC_ALL=C LANG=C \
+    "$TRUSTED_GIT_PATH" --version 2>/dev/null || true)"
+  if [[ "$observed_version" != "$TRUSTED_GIT_VERSION" ]]; then
+    echo "ERROR: trusted Git version differs from the code-bound release tuple." >&2
+    return 1
+  fi
+  TRUSTED_GIT_VALIDATED=1
+}
+
+trusted_git() {
+  validate_trusted_git_binding || return 1
+  /usr/bin/env -i \
+    TZ=UTC LC_ALL=C LANG=C HOME=/dev/null \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_SYSTEM=/dev/null \
+    GIT_CONFIG_COUNT=0 \
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_OPTIONAL_LOCKS=0 \
+    GIT_NO_REPLACE_OBJECTS=1 \
+    GIT_ATTR_NOSYSTEM=1 \
+    GIT_PROTOCOL_FROM_USER=0 \
+    GIT_ALLOW_PROTOCOL=https \
+    "$TRUSTED_GIT_PATH" --no-replace-objects \
+      -c core.hooksPath=/dev/null \
+      -c core.fsmonitor=false \
+      -c core.attributesFile=/dev/null \
+      "$@"
+}
+
 verify_checkout_inputs_match_declared_head() {
-  local repo_root script_absolute script_relative path
+  local script_input_dir script_name script_dir script_absolute script_relative path
+  local repo_root object_type blob_temp worktree_path
   local tracked_inputs=()
-  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-  script_absolute="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
+  case "$0" in
+    */*) script_input_dir="${0%/*}"; script_name="${0##*/}" ;;
+    *) script_input_dir="."; script_name="$0" ;;
+  esac
+  script_dir="$(cd -P -- "$script_input_dir" 2>/dev/null && pwd -P)" || script_dir=""
+  script_absolute="${script_dir:+${script_dir}/}${script_name}"
+  if ! validate_trusted_git_binding; then
+    echo "ERROR: live provision cannot establish its trusted Git/blob reader." >&2
+    exit 2
+  fi
+  repo_root="$(trusted_git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null || true)"
   if [[ -z "$repo_root" || "$script_absolute" != "$repo_root"/* ]]; then
     echo "ERROR: live provision must run from a Git checkout containing this provisioner." >&2
+    exit 2
+  fi
+  if [[ ! -f "$script_absolute" || -L "$script_absolute" ]]; then
+    echo "ERROR: live provision requires this provisioner to be a regular non-symlink checkout file." >&2
+    exit 2
+  fi
+  TRUSTED_REPO_ROOT="$repo_root"
+  TRUSTED_LOCAL_HEAD_SHA="$(trusted_git -C "$repo_root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
+  if [[ ! "$TRUSTED_LOCAL_HEAD_SHA" =~ ^[0-9a-f]{40}$ \
+    || "$TRUSTED_LOCAL_HEAD_SHA" != "$DECLARED_SOURCE_HEAD" ]]; then
+    echo "ERROR: declared source HEAD mismatch: declared=$DECLARED_SOURCE_HEAD git_HEAD=${TRUSTED_LOCAL_HEAD_SHA:-<unresolved>}." >&2
+    exit 2
+  fi
+  object_type="$(trusted_git -C "$repo_root" cat-file -t "${DECLARED_SOURCE_HEAD}^{commit}" 2>/dev/null || true)"
+  if [[ "$object_type" != "commit" ]]; then
+    echo "ERROR: declared source HEAD is not an existing commit in the trusted checkout." >&2
     exit 2
   fi
   script_relative="${script_absolute#"$repo_root"/}"
@@ -484,15 +586,45 @@ verify_checkout_inputs_match_declared_head() {
     tracked_inputs+=("$RIG_G1_SPEND_APPROVAL_VERIFIER")
   fi
   for path in "${tracked_inputs[@]}"; do
-    if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1 \
-      || ! git cat-file -e "${DECLARED_SOURCE_HEAD}:${path}" 2>/dev/null; then
-      echo "ERROR: live provision input '$path' is not tracked at declared source HEAD." >&2
+    if [[ "$path" == /* || "$path" == "." || "$path" == ".." || "$path" == ../* \
+      || "$path" == */../* || "$path" == */.. ]]; then
+      echo "ERROR: live provision input '$path' is not a canonical repo-relative path." >&2
       exit 2
     fi
+    worktree_path="$repo_root/$path"
+    if [[ ! -f "$worktree_path" || -L "$worktree_path" ]]; then
+      echo "ERROR: live provision input '$path' must be a regular non-symlink checkout file." >&2
+      exit 2
+    fi
+    object_type="$(trusted_git -C "$repo_root" cat-file -t "${DECLARED_SOURCE_HEAD}:${path}" 2>/dev/null || true)"
+    if [[ "$object_type" != "blob" ]]; then
+      echo "ERROR: live provision input '$path' is not a blob at declared source HEAD." >&2
+      exit 2
+    fi
+    blob_temp="$(/usr/bin/mktemp /tmp/arkova-declared-blob.XXXXXX)" || {
+      echo "ERROR: live provision could not allocate trusted blob-comparison storage." >&2
+      exit 2
+    }
+    if ! trusted_git -C "$repo_root" cat-file blob "${DECLARED_SOURCE_HEAD}:${path}" >"$blob_temp"; then
+      /bin/rm -f -- "$blob_temp"
+      echo "ERROR: live provision could not read declared blob bytes for '$path'." >&2
+      exit 2
+    fi
+    if [[ "$path" == "$DRIVER_PATH" ]]; then
+      DECLARED_DRIVER_SHA256="$(trusted_sha256_file "$blob_temp")" || {
+        /bin/rm -f -- "$blob_temp"
+        exit 2
+      }
+    fi
+    if ! /usr/bin/cmp -s -- "$worktree_path" "$blob_temp"; then
+      /bin/rm -f -- "$blob_temp"
+      echo "ERROR: provisioner/driver/verifier working-tree bytes differ byte-for-byte from declared source HEAD; commit or restore them first." >&2
+      exit 2
+    fi
+    /bin/rm -f -- "$blob_temp"
   done
-
-  if ! git diff --quiet "$DECLARED_SOURCE_HEAD" -- "${tracked_inputs[@]}"; then
-    echo "ERROR: provisioner/driver working-tree bytes differ from declared source HEAD; commit or restore them first." >&2
+  if [[ ! "$DECLARED_DRIVER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: live provision could not bind the declared driver blob digest." >&2
     exit 2
   fi
 }
@@ -542,23 +674,6 @@ verify_g1_candidate_endpoint_binding() {
     echo "ERROR: RIG-G1 tuned endpoint is not ready as the sole exact v6 deployment with 100% traffic." >&2
     exit 2
   fi
-}
-
-trusted_sha256_file() {
-  local path="$1" digest remainder
-  if [[ -x /usr/bin/shasum ]]; then
-    read -r digest remainder < <(/usr/bin/shasum -a 256 -- "$path")
-  elif [[ -x /usr/bin/sha256sum ]]; then
-    read -r digest remainder < <(/usr/bin/sha256sum -- "$path")
-  else
-    echo "ERROR: no trusted absolute SHA-256 utility is available for launcher binding." >&2
-    return 1
-  fi
-  if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-    echo "ERROR: trusted SHA-256 utility returned a malformed launcher digest." >&2
-    return 1
-  fi
-  printf '%s\n' "$digest"
 }
 
 resolve_g1_trusted_node_launcher() {
@@ -909,16 +1024,11 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       --source-head or STAGING_SOURCE_HEAD_SHA." >&2
     exit 2
   fi
-  LOCAL_HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
-  if [[ "$DECLARED_SOURCE_HEAD" != "$LOCAL_HEAD_SHA" ]]; then
-    echo "ERROR: declared source HEAD mismatch: declared=$DECLARED_SOURCE_HEAD git_HEAD=${LOCAL_HEAD_SHA:-<unresolved>}." >&2
-    exit 2
-  fi
+  verify_checkout_inputs_match_declared_head
   if [[ -n "${GITHUB_SHA:-}" && "$DECLARED_SOURCE_HEAD" != "$GITHUB_SHA" ]]; then
     echo "ERROR: declared source HEAD mismatch: declared=$DECLARED_SOURCE_HEAD GITHUB_SHA=$GITHUB_SHA." >&2
     exit 2
   fi
-  verify_checkout_inputs_match_declared_head
   if [[ "$SOAK_ID" == \<required-in-apply:* || ! "$SOAK_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]]; then
     echo "ERROR: live provision requires an explicit soak_id via --soak-id or STAGING_SOAK_ID" >&2
     echo "       (3-128 characters: letters, digits, dot, underscore, colon, or hyphen)." >&2
@@ -1086,19 +1196,28 @@ if [[ $APPLY -eq 1 ]]; then
   # Admission base provenance is derived from this exact checkout. Caller
   # metadata may repeat it, but cannot replace it with an arbitrary 40-hex
   # string or a different ancestor.
-  if ! git fetch --quiet origin main; then
-    echo "ERROR: could not refresh origin/main; refusing to attest a potentially stale base SHA." >&2
+  REMOTE_MAIN_LINE="$(trusted_git -C / ls-remote --exit-code \
+    "$TRUSTED_GIT_ORIGIN_URL" refs/heads/main 2>/dev/null || true)"
+  read -r REMOTE_MAIN_SHA REMOTE_MAIN_REF <<<"$REMOTE_MAIN_LINE"
+  if [[ ! "$REMOTE_MAIN_SHA" =~ ^[0-9a-f]{40}$ || "$REMOTE_MAIN_REF" != "refs/heads/main" ]]; then
+    echo "ERROR: could not observe the code-bound remote main ref; refusing a potentially stale base SHA." >&2
     exit 2
   fi
-  EXPECTED_BASE_SHA="$(git merge-base "$DECLARED_SOURCE_HEAD" origin/main 2>/dev/null || true)"
+  if [[ "$(trusted_git -C "$TRUSTED_REPO_ROOT" cat-file -t "${REMOTE_MAIN_SHA}^{commit}" 2>/dev/null || true)" != "commit" ]]; then
+    echo "ERROR: code-bound remote main is not present in the local object store; refresh the checkout first." >&2
+    exit 2
+  fi
+  EXPECTED_BASE_SHA="$(trusted_git -C "$TRUSTED_REPO_ROOT" merge-base \
+    "$DECLARED_SOURCE_HEAD" "$REMOTE_MAIN_SHA" 2>/dev/null || true)"
   CANDIDATE_BASE_SHA="${BASE_SHA:-${GITHUB_BASE_SHA:-$EXPECTED_BASE_SHA}}"
   if [[ ! "$EXPECTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "ERROR: could not resolve the HEAD/origin-main merge-base for live admission." >&2
+    echo "ERROR: could not resolve the HEAD/remote-main merge-base for live admission." >&2
     exit 2
   fi
   if [[ ! "$CANDIDATE_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-    || ! git cat-file -e "${CANDIDATE_BASE_SHA}^{commit}" 2>/dev/null \
-    || ! git merge-base --is-ancestor "$CANDIDATE_BASE_SHA" "$DECLARED_SOURCE_HEAD" 2>/dev/null; then
+    || [[ "$(trusted_git -C "$TRUSTED_REPO_ROOT" cat-file -t "${CANDIDATE_BASE_SHA}^{commit}" 2>/dev/null || true)" != "commit" ]] \
+    || ! trusted_git -C "$TRUSTED_REPO_ROOT" merge-base --is-ancestor \
+      "$CANDIDATE_BASE_SHA" "$DECLARED_SOURCE_HEAD" 2>/dev/null; then
     echo "ERROR: live admission BASE_SHA must be an existing 40-hex commit that is an ancestor of declared HEAD." >&2
     exit 2
   fi
@@ -1844,7 +1963,11 @@ resolve_head_sha() {
   elif [[ -n "${GITHUB_SHA:-}" ]]; then
     printf '%s\n' "$GITHUB_SHA"
   else
-    git rev-parse HEAD 2>/dev/null || printf 'unknown\n'
+    local script_input_dir script_dir
+    case "$0" in */*) script_input_dir="${0%/*}" ;; *) script_input_dir="." ;; esac
+    script_dir="$(cd -P -- "$script_input_dir" 2>/dev/null && pwd -P)" || script_dir=""
+    trusted_git -C "$script_dir" rev-parse --verify 'HEAD^{commit}' 2>/dev/null \
+      || printf 'unknown\n'
   fi
 }
 
@@ -1856,7 +1979,12 @@ resolve_base_sha() {
   elif [[ -n "${GITHUB_BASE_SHA:-}" ]]; then
     printf '%s\n' "$GITHUB_BASE_SHA"
   else
-    git merge-base HEAD origin/main 2>/dev/null || printf 'unknown\n'
+    if [[ -n "$TRUSTED_REPO_ROOT" && -n "${REMOTE_MAIN_SHA:-}" ]]; then
+      trusted_git -C "$TRUSTED_REPO_ROOT" merge-base HEAD "$REMOTE_MAIN_SHA" 2>/dev/null \
+        || printf 'unknown\n'
+    else
+      printf 'unknown\n'
+    fi
   fi
 }
 
@@ -2044,7 +2172,11 @@ resolve_driver_sha256() {
     exit 1
   fi
   if [[ $APPLY -eq 1 ]]; then
-    git show "${DECLARED_SOURCE_HEAD}:${DRIVER_PATH}" | shasum -a 256 | awk '{print $1}'
+    if [[ ! "$DECLARED_DRIVER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "ERROR: declared driver blob digest was not established by trusted Git admission." >&2
+      exit 1
+    fi
+    printf '%s\n' "$DECLARED_DRIVER_SHA256"
     return 0
   fi
   sha256_file "$DRIVER_PATH"

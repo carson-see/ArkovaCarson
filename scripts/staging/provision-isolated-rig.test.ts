@@ -8,6 +8,8 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -45,18 +47,6 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(here, 'provision-isolated-rig.sh');
 const REPO_ROOT = resolve(here, '../..');
-const REPO_HEAD = execFileSync('git', ['rev-parse', 'HEAD'], {
-  cwd: REPO_ROOT,
-  encoding: 'utf8',
-}).trim();
-const REPO_BASE = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], {
-  cwd: REPO_ROOT,
-  encoding: 'utf8',
-}).trim();
-const REPO_NON_BASE_ANCESTOR = execFileSync('git', ['rev-parse', `${REPO_BASE}^`], {
-  cwd: REPO_ROOT,
-  encoding: 'utf8',
-}).trim();
 const REAL_GIT = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
 const script = readFileSync(SCRIPT, 'utf8');
 const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
@@ -467,6 +457,72 @@ interface ApplyRunOptions {
 
 const stubDirs: string[] = [];
 
+interface ApplyGitFixture {
+  parent: string;
+  repo: string;
+  script: string;
+  origin: string;
+  head: string;
+  base: string;
+  nonBaseAncestor: string;
+}
+
+function createApplyGitFixture(): ApplyGitFixture {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), 'provision-git-fixture-')));
+  const repo = join(parent, 'repo');
+  const origin = join(parent, 'origin.git');
+  const fixtureScript = join(repo, 'scripts/staging/provision-isolated-rig.sh');
+  const fixtureDriver = join(repo, 'services/worker/scripts/pr1408-chain-resilience-driver.ts');
+  const trustedGitPath = '/usr/bin/git';
+  const trustedGitSha256 = createHash('sha256')
+    .update(readFileSync(trustedGitPath))
+    .digest('hex');
+  const trustedGitVersion = execFileSync(trustedGitPath, ['--version'], {
+    encoding: 'utf8',
+  }).trim();
+  const fixtureSource = script
+    .replace(/TRUSTED_GIT_PATH="[^"]+"/, `TRUSTED_GIT_PATH="${trustedGitPath}"`)
+    .replace(/TRUSTED_GIT_SHA256="[0-9a-f]+"/, `TRUSTED_GIT_SHA256="${trustedGitSha256}"`)
+    .replace(/TRUSTED_GIT_VERSION="[^"]+"/, `TRUSTED_GIT_VERSION="${trustedGitVersion}"`)
+    .replace(/TRUSTED_GIT_ORIGIN_URL="[^"]+"/, `TRUSTED_GIT_ORIGIN_URL="${origin}"`)
+    .replace('GIT_ALLOW_PROTOCOL=https', 'GIT_ALLOW_PROTOCOL=file');
+
+  mkdirSync(dirname(fixtureScript), { recursive: true });
+  mkdirSync(dirname(fixtureDriver), { recursive: true });
+  execFileSync(trustedGitPath, ['init', '--quiet', '--initial-branch=main', repo]);
+  execFileSync(trustedGitPath, ['-C', repo, 'config', 'user.name', 'Provision Fixture']);
+  execFileSync(trustedGitPath, ['-C', repo, 'config', 'user.email', 'fixture@arkova.invalid']);
+  writeFileSync(join(repo, 'FIXTURE.md'), 'initial fixture history\n');
+  execFileSync(trustedGitPath, ['-C', repo, 'add', '--', 'FIXTURE.md']);
+  execFileSync(trustedGitPath, ['-C', repo, 'commit', '--quiet', '-m', 'fixture root']);
+  const nonBaseAncestor = execFileSync(trustedGitPath, ['-C', repo, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+
+  writeFileSync(fixtureDriver, readFileSync(resolve(REPO_ROOT,
+    'services/worker/scripts/pr1408-chain-resilience-driver.ts')));
+  execFileSync(trustedGitPath, ['-C', repo, 'add', '--', fixtureDriver]);
+  execFileSync(trustedGitPath, ['-C', repo, 'commit', '--quiet', '-m', 'fixture base']);
+  const base = execFileSync(trustedGitPath, ['-C', repo, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+  execFileSync(trustedGitPath, ['init', '--quiet', '--bare', origin]);
+  execFileSync(trustedGitPath, ['-C', repo, 'remote', 'add', 'origin', origin]);
+  execFileSync(trustedGitPath, ['-C', repo, 'push', '--quiet', '-u', 'origin', 'main']);
+
+  writeFileSync(fixtureScript, fixtureSource);
+  chmodSync(fixtureScript, 0o755);
+  execFileSync(trustedGitPath, ['-C', repo, 'add', '--', fixtureScript]);
+  execFileSync(trustedGitPath, ['-C', repo, 'commit', '--quiet', '-m', 'fixture candidate']);
+  const head = execFileSync(trustedGitPath, ['-C', repo, 'rev-parse', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+  return { parent, repo, script: fixtureScript, origin, head, base, nonBaseAncestor };
+}
+
+const APPLY_FIXTURE = createApplyGitFixture();
+stubDirs.push(APPLY_FIXTURE.parent);
+
 /** Run the provisioner with --apply against a stubbed gcloud/npx PATH. */
 function applyRunStubbed(
   name: string,
@@ -539,7 +595,7 @@ function applyRunStubbed(
     ...(profile === 'gemini' ? ['GEMINI_API_KEY'] : []),
   ];
   const revisionPayload = JSON.stringify({
-    metadata: { labels: { 'arkova-source-head': options.sourceHead ?? REPO_HEAD } },
+    metadata: { labels: { 'arkova-source-head': options.sourceHead ?? APPLY_FIXTURE.head } },
     spec: {
       containers: [
         {
@@ -708,8 +764,8 @@ exit 64
     PATH: `${stubDir}:${process.env.PATH ?? ''}`,
     CONFIRM_PROVISION: name,
     CONFIRM_REAL_CONFIG: profile,
-    GITHUB_SHA: options.githubSha ?? REPO_HEAD,
-    BASE_SHA: REPO_BASE,
+    GITHUB_SHA: options.githubSha ?? APPLY_FIXTURE.head,
+    BASE_SHA: APPLY_FIXTURE.base,
     STAGING_ADMISSION_DIR: artifactDir,
     USER: 'rig-owner',
     // Apply-mode preconditions carried in by the concurrent main pipeline
@@ -730,7 +786,9 @@ exit 64
     env.STAGING_DRIVER_PATH = untrackedDriver;
   }
   if (options.imageRef !== null) env.STAGING_PINNED_IMAGE = options.imageRef ?? STUB_IMAGE_REF;
-  if (options.sourceHead !== null) env.STAGING_SOURCE_HEAD_SHA = options.sourceHead ?? REPO_HEAD;
+  if (options.sourceHead !== null) {
+    env.STAGING_SOURCE_HEAD_SHA = options.sourceHead ?? APPLY_FIXTURE.head;
+  }
   if (options.soakId !== null) env.STAGING_SOAK_ID = options.soakId ?? `soak-${name}`;
   if (profile === 'gemini') {
     env.STAGING_GEMINI_TUNED_MODEL = tunedModel;
@@ -745,7 +803,9 @@ exit 64
     options.childTimeoutMs ?? PROVISION_CHILD_TIMEOUT_MS,
   );
   try {
-    out = execFileSync('bash', [SCRIPT, '--name', name, '--profile', profile, '--apply'], {
+    if (options.gitFetchFails) renameSync(APPLY_FIXTURE.origin, `${APPLY_FIXTURE.origin}.unavailable`);
+    out = execFileSync('bash', [APPLY_FIXTURE.script, '--name', name, '--profile', profile, '--apply'], {
+      cwd: APPLY_FIXTURE.repo,
       env: { ...process.env, ...env },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -758,6 +818,10 @@ exit 64
     code = failure.code;
     timedOut = failure.timedOut;
     errorCode = failure.errorCode;
+  } finally {
+    if (options.gitFetchFails && existsSync(`${APPLY_FIXTURE.origin}.unavailable`)) {
+      renameSync(`${APPLY_FIXTURE.origin}.unavailable`, APPLY_FIXTURE.origin);
+    }
   }
 
   const gcloudCalls = readFileSync(logFile, 'utf8')
@@ -932,7 +996,7 @@ describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under 
   it('deploys only the declared digest ref and stamps the declared source HEAD on the revision', () => {
     const deploy = result.gcloudCalls.find((call) => call.startsWith('run deploy '));
     expect(deploy).toContain(`--image=${STUB_IMAGE_REF}`);
-    expect(deploy).toContain(`--labels=arkova-source-head=${REPO_HEAD}`);
+    expect(deploy).toContain(`--labels=arkova-source-head=${APPLY_FIXTURE.head}`);
   });
 
   it('re-reads the deployed revision and verifies its image digest and source-HEAD label', () => {
@@ -1018,10 +1082,10 @@ describe('provision-isolated-rig.sh — Step-4 Scheduler command validity under 
       schema_version: 2,
       profile: 'chain',
       soak_id: 'soak-s2afix-chain',
-      declared_source_head: REPO_HEAD,
+      declared_source_head: APPLY_FIXTURE.head,
       deployed_revision: STUB_REVISION,
       deployed_image_digest: STUB_IMAGE_DIGEST,
-      deployed_source_head: REPO_HEAD,
+      deployed_source_head: APPLY_FIXTURE.head,
       clean_mirror: {
         result: 'environment_type=clean_mirror',
         artifact: `${result.artifactDir}/clean-mirror-preflight-s2afix-chain.json`,
@@ -1611,14 +1675,14 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
   });
 
   it.each([
-    ['T0', '2880', REPO_BASE, /tier|T0/i],
-    ['T1', '119', REPO_BASE, /duration|120|minimum/i],
-    ['T2', '719', REPO_BASE, /duration|720|minimum/i],
-    ['T3', '0', REPO_BASE, /duration|2880|positive/i],
-    ['T3', '2879', REPO_BASE, /duration|2880|minimum/i],
-    ['T3', '02880', REPO_BASE, /duration|integer|canonical/i],
+    ['T0', '2880', APPLY_FIXTURE.base, /tier|T0/i],
+    ['T1', '119', APPLY_FIXTURE.base, /duration|120|minimum/i],
+    ['T2', '719', APPLY_FIXTURE.base, /duration|720|minimum/i],
+    ['T3', '0', APPLY_FIXTURE.base, /duration|2880|positive/i],
+    ['T3', '2879', APPLY_FIXTURE.base, /duration|2880|minimum/i],
+    ['T3', '02880', APPLY_FIXTURE.base, /duration|integer|canonical/i],
     ['T3', '2880', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', /base|commit|merge-base/i],
-    ['T3', '2880', REPO_NON_BASE_ANCESTOR, /base|merge-base|ancestor/i],
+    ['T3', '2880', APPLY_FIXTURE.nonBaseAncestor, /base|merge-base|ancestor/i],
   ])(
     'rejects untruthful apply metadata tier=%s duration=%s base=%s before mutation',
     (tier, duration, baseSha, message) => {
@@ -1633,7 +1697,7 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
 
   it('accepts the exact constitutional T1 two-hour floor', () => {
     const result = applyRunStubbed('guard-tier-t1-floor', 'mock', {
-      env: { STAGING_TIER: 'T1', STAGING_DURATION_MIN: '120', BASE_SHA: REPO_BASE },
+      env: { STAGING_TIER: 'T1', STAGING_DURATION_MIN: '120', BASE_SHA: APPLY_FIXTURE.base },
     });
     expect(result.code, result.out).toBe(0);
     const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
@@ -1814,12 +1878,12 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
       result.gcloudCalls.some(
         (call) =>
           call.startsWith('artifacts docker images describe ') &&
-          call.includes(`arkova-worker:${REPO_HEAD}`),
+          call.includes(`arkova-worker:${APPLY_FIXTURE.head}`),
       ),
     ).toBe(true);
     const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
     const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
-    expect(admission.source_head_image_ref).toContain(`arkova-worker:${REPO_HEAD}`);
+    expect(admission.source_head_image_ref).toContain(`arkova-worker:${APPLY_FIXTURE.head}`);
     expect(admission.source_head_image_digest).toBe(STUB_IMAGE_DIGEST);
   });
 
