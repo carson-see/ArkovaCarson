@@ -45,7 +45,7 @@ export interface S33TeardownInventoryDiffRow {
   readonly resourceId: string;
   readonly billingClass: 'RECURRING_PAID' | 'NO_RECURRING_CHARGE';
   readonly targetProvenance: S33TeardownCapturedVerification['targetOutcomes'][number]['targetProvenance'];
-  readonly terminalState: 'DELETED' | 'DOWNGRADED_ZERO_RECURRING';
+  readonly terminalState: 'DELETED' | 'RELEASED_EXPIRED';
   readonly projectedMonthlyRecurringUsd: 0;
   readonly evidenceArtifactSha256: string;
 }
@@ -164,7 +164,10 @@ export function consumeS33TeardownInventoryVerification(
   const evidenceArtifacts = new Set<string>();
   const inventoryDiff = verification.targetOutcomes.map(
     (outcome): S33TeardownInventoryDiffRow => {
-      if (outcome.state !== 'REMOVED' || outcome.projectedMonthlyRecurringUsd !== 0) {
+      if (
+        (outcome.state !== 'REMOVED' && outcome.state !== 'RELEASED_EXPIRED')
+        || outcome.projectedMonthlyRecurringUsd !== 0
+      ) {
         throw new Error('Captured teardown target outcome is not deleted at zero recurring cost.');
       }
       const identity = [
@@ -188,7 +191,9 @@ export function consumeS33TeardownInventoryVerification(
         resourceId: outcome.resourceId,
         billingClass: outcome.billingClass,
         targetProvenance: { ...outcome.targetProvenance },
-        terminalState: 'DELETED',
+        terminalState: outcome.state === 'RELEASED_EXPIRED'
+          ? 'RELEASED_EXPIRED'
+          : 'DELETED',
         projectedMonthlyRecurringUsd: 0,
         evidenceArtifactSha256: outcome.evidenceArtifactSha256,
       };

@@ -46,12 +46,17 @@ describe('S3.3 captured teardown provenance adapter', () => {
         envelope: null,
       },
     });
-    expect(result.inventoryDiff).toHaveLength(21);
+    expect(result.inventoryDiff).toHaveLength(24);
     expect(result.inventoryDiff.every(
       ({ terminalState, projectedMonthlyRecurringUsd }) => (
-        terminalState === 'DELETED' && projectedMonthlyRecurringUsd === 0
+        (terminalState === 'DELETED' || terminalState === 'RELEASED_EXPIRED')
+        && projectedMonthlyRecurringUsd === 0
       ),
     )).toBe(true);
+    expect(result.inventoryDiff).toContainEqual(expect.objectContaining({
+      kind: 'logical-lease',
+      terminalState: 'RELEASED_EXPIRED',
+    }));
     expect(result.producerDependencies).toEqual([
       'LANE3_GENERIC_SIGNATURE_AUTHORITY_UNAVAILABLE',
     ]);

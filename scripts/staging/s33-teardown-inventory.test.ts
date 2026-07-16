@@ -27,9 +27,6 @@ const targetSupabaseProjects = declaration.rigs.map((rig) => ({
   ref: rig.supabaseProjectRef,
   name: rig.supabaseProjectName,
 }));
-const targetCloudRunServices = declaration.rigs.flatMap((rig) =>
-  rig.cloudRunServiceNames.map((name) => ({ name, projectId: scope.gcpProjectId, region: scope.gcpRegion })),
-);
 const targetSchedulerJobs = declaration.rigs.flatMap((rig) =>
   rig.schedulerJobNames.map((name) => ({
     name,
@@ -38,83 +35,15 @@ const targetSchedulerJobs = declaration.rigs.flatMap((rig) =>
     targetService: rig.cloudRunServiceNames[0],
   })),
 );
-const targetSecretNames = declaration.rigs.flatMap((rig) => [...rig.perRigSecretNames]);
+const targetSecretNames = declaration.rigs.flatMap(
+  (rig) => rig.perRigSecrets.map(({ name }) => name),
+);
 
-const before = {
-  schemaVersion: 1,
-  kind: 's33-teardown-inventory',
-  closeoutId: declaration.closeoutId,
-  gitHeadSha: headSha,
-  phase: 'before',
-  capturedAt: '2026-07-15T16:00:00.000Z',
-  scope,
-  resources: {
-    supabaseProjects: [
-      ...targetSupabaseProjects,
-      { ref: 'zabcdefghijklmnopqrs', name: 'unrelated-project' },
-    ],
-    cloudRunServices: [
-      ...targetCloudRunServices,
-      { name: 'unrelated-service', projectId: scope.gcpProjectId, region: scope.gcpRegion },
-    ],
-    schedulerJobs: [
-      ...targetSchedulerJobs,
-      {
-        name: 'unrelated-job',
-        projectId: scope.gcpProjectId,
-        location: scope.gcpRegion,
-        targetService: 'unrelated-service',
-      },
-    ],
-    vertexEndpoints: [
-      {
-        resourceName: TEST_ONLY_RIG_R_TARGET_ENDPOINT,
-        displayName: 'test-only-rig-r-endpoint',
-        location: scope.gcpRegion,
-        deployedModelIds: ['test-only-rig-r-model'],
-      },
-      {
-        resourceName: TEST_PROTECTED_G1_V6_ENDPOINT,
-        displayName: 'g1-v6-existing',
-        location: scope.gcpRegion,
-        deployedModelIds: ['model-g1-v6'],
-      },
-      {
-        resourceName: 'projects/arkova1/locations/us-central1/endpoints/1000000000000000001',
-        displayName: 'unrelated-endpoint',
-        location: scope.gcpRegion,
-        deployedModelIds: [],
-      },
-    ],
-    secretNames: [
-      ...targetSecretNames,
-      ...declaration.protectedSharedSecretNames,
-      'unrelated-secret',
-    ],
-  },
-} as const;
-
-const after = {
-  ...before,
-  phase: 'after',
-  capturedAt: '2026-07-15T17:00:00.000Z',
-  resources: {
-    supabaseProjects: [{ ref: 'zabcdefghijklmnopqrs', name: 'unrelated-project' }],
-    cloudRunServices: [{
-      name: 'unrelated-service', projectId: scope.gcpProjectId, region: scope.gcpRegion,
-    }],
-    schedulerJobs: [
-      {
-        name: 'unrelated-job',
-        projectId: scope.gcpProjectId,
-        location: scope.gcpRegion,
-        targetService: 'unrelated-service',
-      },
-    ],
-    vertexEndpoints: before.resources.vertexEndpoints.slice(1),
-    secretNames: [...declaration.protectedSharedSecretNames, 'unrelated-secret'],
-  },
-} as const;
+const before = testTeardownBeforeInventory('2026-07-15T16:00:00.000Z');
+const after = testTeardownAfterInventory(
+  '2026-07-15T17:00:00.000Z',
+  '2026-07-15T16:00:00.000Z',
+);
 
 describe('S3.3 teardown inventory dry-run verifier', () => {
   it('strictly verifies the complete named close-out diff without mutation capability', () => {
@@ -205,6 +134,7 @@ describe('S3.3 teardown inventory dry-run verifier', () => {
       projectId: scope.gcpProjectId,
       location: scope.gcpRegion,
       targetService,
+      ownerRigId: 'RIG-B1' as const,
     };
     const result = verifyS33TeardownDryRun(declaration, {
       ...before,
@@ -231,7 +161,8 @@ describe('S3.3 teardown inventory dry-run verifier', () => {
       resources: {
         ...after.resources,
         secretNames: after.resources.secretNames.filter(
-          (name) => name !== 'stripe-secret-key-staging' && name !== 'unrelated-secret',
+          ({ name }) => name !== 'stripe-secret-key-staging'
+            && name !== 'protected-unrelated-secret',
         ),
       },
     });
@@ -271,6 +202,153 @@ describe('S3.3 teardown inventory dry-run verifier', () => {
       after,
     )).toThrow(/RIG-G1|RIG-B1|RIG-R|three|rig/i);
   });
+
+  it('enforces the CTO-bound RIG-R cardinality without guessed managed resources', () => {
+    const rigR = declaration.rigs.find(({ rigId }) => rigId === 'RIG-R')!;
+    const variants = [
+      { ...rigR, supabaseProjectName: 'wrong-rig-r-project' },
+      { ...rigR, cloudRunServiceNames: ['wrong-rig-r-service'] },
+      { ...rigR, schedulerJobNames: ['forbidden-rig-r-scheduler'] },
+      {
+        ...rigR,
+        queueTargets: [{ provider: 'GCP' as const, scopeId: 'arkova1', resourceId: 'queue-1' }],
+      },
+      {
+        ...rigR,
+        serviceAccountIdentities: [{
+          email: 's33-rig-r-oidc@arkova1.iam.gserviceaccount.com',
+          role: 'OIDC' as const,
+        }],
+      },
+      { ...rigR, leaseTargets: [] },
+      { ...rigR, perRigSecrets: rigR.perRigSecrets.slice(0, 1) },
+    ];
+    for (const invalidRigR of variants) {
+      expect(() => verifyS33TeardownDryRun({
+        ...declaration,
+        rigs: declaration.rigs.map((rig) => rig.rigId === 'RIG-R' ? invalidRigR : rig),
+      }, before, after)).toThrow(/RIG-R|queue|lease|runtime|OIDC|secret|project|service|Scheduler/i);
+    }
+  });
+
+  it('requires exactly one RIG-R-owned provision-bound temporary Vertex endpoint', () => {
+    const [target] = declaration.vertexEndpointTargets;
+    expect(() => verifyS33TeardownDryRun({
+      ...declaration,
+      vertexEndpointTargets: [],
+    }, before, after)).toThrow(/RIG-R|exactly one|Vertex|endpoint/i);
+    expect(() => verifyS33TeardownDryRun({
+      ...declaration,
+      vertexEndpointTargets: [target, {
+        ...target,
+        resourceName: 'projects/arkova1/locations/us-central1/endpoints/9000000000000000002',
+      }],
+    }, before, after)).toThrow(/RIG-R|exactly one|Vertex|endpoint/i);
+    expect(() => verifyS33TeardownDryRun({
+      ...declaration,
+      vertexEndpointTargets: [{
+        ...target,
+        provenance: {
+          ...target.provenance,
+          provisionConfigSha256: `sha256:${'0'.repeat(64)}`,
+        },
+      }],
+    }, before, after)).toThrow(/provenance|binding|contradict/i);
+  });
+
+  it('binds every rig to one exact candidate head/tree/image identity', () => {
+    const rigR = declaration.rigs.find(({ rigId }) => rigId === 'RIG-R')!;
+    expect(() => verifyS33TeardownDryRun({
+      ...declaration,
+      rigs: declaration.rigs.map((rig) => rig.rigId === 'RIG-R'
+        ? {
+            ...rigR,
+            targetBinding: {
+              ...rigR.targetBinding,
+              candidateGitHeadSha: 'f'.repeat(40),
+            },
+          }
+        : rig),
+    }, before, after)).toThrow(/candidate|head|SHA|exact/i);
+    expect(() => verifyS33TeardownDryRun({
+      ...declaration,
+      rigs: declaration.rigs.map((rig) => rig.rigId === 'RIG-R'
+        ? {
+            ...rigR,
+            targetBinding: {
+              ...rigR.targetBinding,
+              imageDigestSha256: `sha256:${'0'.repeat(64)}`,
+            },
+          }
+        : rig),
+    }, before, after)).toThrow(/candidate|image|digest|exact/i);
+  });
+
+  it('blocks closure until the exclusive lease is both released and expired', () => {
+    const notExpired = {
+      ...after,
+      resources: {
+        ...after.resources,
+        leases: after.resources.leases.map((lease) => ({
+          ...lease,
+          expiresAt: new Date(Date.parse(after.capturedAt) + 60_000).toISOString(),
+        })),
+      },
+    };
+    const result = verifyS33TeardownDryRun(declaration, before, notExpired);
+    expect(result.verified).toBe(false);
+    expect(result.zeroRecurringRigCost).toBe(false);
+    expect(result.failures.join('\n')).toMatch(/lease|release|expiry|expired/i);
+  });
+
+  it('rejects undeclared owner-bound and unowned rig-labeled discoveries', () => {
+    const extra = {
+      name: 'arkova-worker-s33-r-extra',
+      projectId: scope.gcpProjectId,
+      region: scope.gcpRegion,
+      ownerRigId: 'RIG-R' as const,
+    };
+    const result = verifyS33TeardownDryRun(declaration, {
+      ...before,
+      resources: {
+        ...before.resources,
+        cloudRunServices: [...before.resources.cloudRunServices, extra],
+      },
+    }, {
+      ...after,
+      resources: {
+        ...after.resources,
+        cloudRunServices: [...after.resources.cloudRunServices, extra],
+      },
+    });
+    expect(result.verified).toBe(false);
+    expect(result.failures.join('\n')).toMatch(/undeclared|owner-bound|target set/i);
+
+    expect(() => verifyS33TeardownDryRun(declaration, {
+      ...before,
+      resources: {
+        ...before.resources,
+        cloudRunServices: [...before.resources.cloudRunServices, {
+          ...extra,
+          ownerRigId: null,
+        }],
+      },
+    }, after)).toThrow(/rig-labeled|owner|exhaustive|discovery/i);
+
+    const rigR = declaration.rigs.find(({ rigId }) => rigId === 'RIG-R')!;
+    expect(() => verifyS33TeardownDryRun(declaration, {
+      ...before,
+      resources: {
+        ...before.resources,
+        queues: [{
+          provider: 'SUPABASE',
+          scopeId: rigR.supabaseProjectRef!,
+          resourceId: 'innocuous-name',
+          ownerRigId: null,
+        }],
+      },
+    }, after)).toThrow(/managed queue|isolated rig|owner|hides/i);
+  });
 });
 
 describe('S3.3 immutable teardown capture and recurring-cost verdict', () => {
@@ -295,7 +373,7 @@ describe('S3.3 immutable teardown capture and recurring-cost verdict', () => {
     const g1 = TEST_PRE_SOAK_TEARDOWN_DECLARATION.rigs.find(({ rigId }) => rigId === 'RIG-G1')!;
     const rigRServices = new Set<string>(rigR.cloudRunServiceNames);
     const rigRSchedulers = new Set<string>(rigR.schedulerJobNames);
-    const rigRSecrets = new Set<string>(rigR.perRigSecretNames);
+    const rigRSecrets = new Set<string>(rigR.perRigSecrets.map(({ name }) => name));
     const partialInventory = {
       ...fullInventory,
       resources: {
@@ -312,8 +390,13 @@ describe('S3.3 immutable teardown capture and recurring-cost verdict', () => {
         vertexEndpoints: fullInventory.resources.vertexEndpoints.filter(
           ({ resourceName }) => resourceName !== TEST_ONLY_RIG_R_TARGET_ENDPOINT,
         ),
+        containedLogicalQueues: [],
+        leases: [],
+        serviceAccounts: fullInventory.resources.serviceAccounts.filter(
+          ({ ownerRigId }) => ownerRigId !== 'RIG-R',
+        ),
         secretNames: fullInventory.resources.secretNames.filter(
-          (name) => !rigRSecrets.has(name),
+          ({ name }) => !rigRSecrets.has(name),
         ),
       },
     };
@@ -355,9 +438,13 @@ describe('S3.3 immutable teardown capture and recurring-cost verdict', () => {
       }),
     );
 
+    const fullAfter = testTeardownAfterInventory();
     const partialAfterCapture = captureS33TeardownInventory(
       TEST_PRE_SOAK_TEARDOWN_DECLARATION,
-      testTeardownAfterInventory(),
+      {
+        ...fullAfter,
+        resources: { ...fullAfter.resources, leases: [] },
+      },
       testTeardownCaptureMetadata('after'),
     );
     const partialVerification = verifyS33TeardownCapturedInventories(
@@ -384,7 +471,11 @@ describe('S3.3 immutable teardown capture and recurring-cost verdict', () => {
           authority: 'CTO',
           origin: 'S33_ISOLATED_RIG_RESOURCE',
           decisionArtifactSha256: g1.targetBinding!.decisionArtifactSha256,
+          candidateGitHeadSha: g1.targetBinding!.candidateGitHeadSha,
+          candidateGitTreeSha: g1.targetBinding!.candidateGitTreeSha,
+          imageDigestSha256: g1.targetBinding!.imageDigestSha256,
           provisionArtifactSha256: g1.targetBinding!.provisionArtifactSha256,
+          provisionConfigSha256: g1.targetBinding!.provisionConfigSha256,
         },
       }],
     }, partialInventory, testTeardownCaptureMetadata('before'))).toThrow(
@@ -407,7 +498,7 @@ describe('S3.3 immutable teardown capture and recurring-cost verdict', () => {
       gitTreeSha: TEST_TEARDOWN_TREE_SHA,
       phase: 'before',
     });
-    expect(beforeCapture.resourceBoundary.targetResources).toHaveLength(21);
+    expect(beforeCapture.resourceBoundary.targetResources).toHaveLength(24);
     expect(beforeCapture.resourceBoundary.rigIds).toEqual(['RIG-B1', 'RIG-G1', 'RIG-R']);
     expect(beforeCapture.resourceBoundary.protectedResources).toHaveLength(8);
     expect(beforeCapture.resourceBoundary.releaseBoundaryComplete).toBe(true);
@@ -434,8 +525,12 @@ describe('S3.3 immutable teardown capture and recurring-cost verdict', () => {
       mutationsAttempted: 0,
       failures: [],
     });
-    expect(result.targetOutcomes).toHaveLength(21);
-    expect(result.targetOutcomes.every(({ state }) => state === 'REMOVED')).toBe(true);
+    expect(result.targetOutcomes).toHaveLength(24);
+    expect(result.targetOutcomes.filter(({ state }) => state === 'REMOVED')).toHaveLength(23);
+    expect(result.targetOutcomes).toContainEqual(expect.objectContaining({
+      kind: 'logical-lease',
+      state: 'RELEASED_EXPIRED',
+    }));
     expect(result.verificationDigestSha256).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(requireS33TeardownCapturedVerification(result)).toBe(result);
     expect(() => requireS33TeardownCapturedVerification(structuredClone(result)))
@@ -493,6 +588,80 @@ describe('S3.3 immutable teardown capture and recurring-cost verdict', () => {
     expect(result.recurring_cost_zero).toBe(false);
     expect(result.projectedMonthlyRecurringUsd).toBeNull();
     expect(result.failures.join('\n')).toMatch(/protected|boundary|non-target|drift/i);
+  });
+
+  it('records a partial teardown outcome but cannot promote it to $0 or closure', () => {
+    const beforeInventory = testTeardownBeforeInventory();
+    const afterInventory = testTeardownAfterInventory();
+    const straggler = beforeInventory.resources.cloudRunServices.find(
+      ({ ownerRigId }) => ownerRigId === 'RIG-R',
+    )!;
+    const beforeCapture = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      beforeInventory,
+      testTeardownCaptureMetadata('before'),
+    );
+    const afterCapture = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      {
+        ...afterInventory,
+        resources: {
+          ...afterInventory.resources,
+          cloudRunServices: [...afterInventory.resources.cloudRunServices, straggler],
+        },
+      },
+      testTeardownCaptureMetadata('after'),
+    );
+    const result = verifyS33TeardownCapturedInventories(
+      TEST_TEARDOWN_DECLARATION,
+      beforeCapture,
+      afterCapture,
+    );
+
+    expect(result.targetOutcomes).toContainEqual(expect.objectContaining({
+      kind: 'cloud-run-service',
+      ownerRigId: 'RIG-R',
+      state: 'REMAINS',
+      projectedMonthlyRecurringUsd: null,
+    }));
+    expect(result.verified).toBe(false);
+    expect(result.recurring_cost_zero).toBe(false);
+    expect(result.projectedMonthlyRecurringUsd).toBeNull();
+  });
+
+  it('binds protected v6/shared-secret/operator IAM and configuration digests before/after', () => {
+    const beforeCapture = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      testTeardownBeforeInventory(),
+      testTeardownCaptureMetadata('before'),
+    );
+    const afterInventory = testTeardownAfterInventory();
+    const drifted = {
+      ...afterInventory,
+      resources: {
+        ...afterInventory.resources,
+        vertexEndpoints: afterInventory.resources.vertexEndpoints.map((endpoint) => (
+          endpoint.resourceName === TEST_PROTECTED_G1_V6_ENDPOINT
+            ? { ...endpoint, iamPolicyDigestSha256: `sha256:${'0'.repeat(64)}` }
+            : endpoint
+        )),
+      },
+    };
+    const afterCapture = captureS33TeardownInventory(
+      TEST_TEARDOWN_DECLARATION,
+      drifted,
+      testTeardownCaptureMetadata('after'),
+    );
+    const result = verifyS33TeardownCapturedInventories(
+      TEST_TEARDOWN_DECLARATION,
+      beforeCapture,
+      afterCapture,
+    );
+
+    expect(result.verified).toBe(false);
+    expect(result.protectedResourcesUntouched).toBe(false);
+    expect(result.recurring_cost_zero).toBe(false);
+    expect(result.failures.join('\n')).toMatch(/protected|boundary|drift/i);
   });
 
   it('binds operator/signer metadata but never promotes unverified metadata to release authority', () => {
