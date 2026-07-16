@@ -21,7 +21,12 @@ import { parseArgs, types as utilTypes } from 'node:util';
 import { z } from 'zod';
 
 import {
+  DRAIN_WINDOW_KINDS,
+  assertDrainPassObservation,
+  assertDrainWindowSemantic,
   assertDrainWindowObservation,
+  isPoisonDrainWindowKind,
+  type DrainPassEvidenceSummary,
   type DrainPassObservation,
   type DrainWindowEvidenceSummary,
   type DrainWindowExpectation,
@@ -85,16 +90,53 @@ const rawCaptureDigestsSchema = z.object({
 
 const claimSchema = z.object({ fingerprint: sha256Hex, orgId: nonEmpty }).strict();
 const faultWindowSchema = z.object({ id: nonEmpty, startsAt: isoTimestamp, endsAt: isoTimestamp }).strict();
-const passExpectationSchema = z.object({
-  batchId: nonEmpty,
+const passBaseShape = {
   armedTrigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   schedulerExecutionId: nonEmpty,
   faultWindow: faultWindowSchema,
   claims: z.array(claimSchema).min(1),
+} as const;
+const broadcastPassExpectationSchema = z.object({
+  outcome: z.literal('broadcast'),
+  batchId: nonEmpty,
+  ...passBaseShape,
 }).strict();
+const noBroadcastPassExpectationSchema = z.object({
+  outcome: z.literal('no-broadcast'),
+  outcomeId: nonEmpty,
+  armedTrigger: z.literal('org-scheduler'),
+  schedulerExecutionId: nonEmpty,
+  faultWindow: faultWindowSchema,
+  claims: z.array(claimSchema).length(1),
+  deniedGate: z.object({
+    fingerprint: sha256Hex,
+    orgId: nonEmpty,
+    decision: z.literal('denied'),
+    reason: nonEmpty,
+    referenceId: nonEmpty,
+    requiredAmount: positiveInteger,
+    balanceBefore: nonNegativeInteger,
+    balanceAfter: nonNegativeInteger,
+  }).strict(),
+}).strict().superRefine((pass, context) => {
+  const claim = pass.claims[0];
+  if (claim?.fingerprint !== pass.deniedGate.fingerprint
+    || claim.orgId !== pass.deniedGate.orgId
+    || pass.deniedGate.balanceAfter !== pass.deniedGate.balanceBefore) {
+    context.addIssue({
+      code: 'custom',
+      path: ['deniedGate'],
+      message: 'No-broadcast denial gate must bind the sole claim and preserve its balance.',
+    });
+  }
+});
+const passExpectationSchema = z.discriminatedUnion('outcome', [
+  broadcastPassExpectationSchema,
+  noBroadcastPassExpectationSchema,
+]);
 const windowExpectationSchema = z.object({
   scenarioId: nonEmpty,
-  kind: z.enum(['eligible-10000', 'eligible-12500', 'poison-isolation']),
+  kind: z.enum(DRAIN_WINDOW_KINDS),
   armedTrigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   expectedInitialPending: nonNegativeInteger,
   expectedFinalPending: nonNegativeInteger,
@@ -119,12 +161,84 @@ const numericSecretVersion = z.string().regex(/^[1-9][0-9]*$/);
 const secretResource = z.string().regex(
   /^projects\/arkova1\/secrets\/[A-Za-z][A-Za-z0-9_-]{0,254}\/versions\/[1-9][0-9]*$/,
 );
-const rigB1SecretReferenceSchema = z.object({
-  env: z.enum(['BITCOIN_RPC_URL', 'BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF']),
-  secretName: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,254}$/),
-  version: numericSecretVersion,
-  resource: secretResource,
-}).strict();
+export const RIG_B1_SECRET_REFERENCE_BINDINGS = [
+  ['SUPABASE_URL', 'supabase-url-s33-rig-b1-staging'],
+  ['SUPABASE_SERVICE_ROLE_KEY', 'supabase-service-role-key-s33-rig-b1-staging'],
+  ['STRIPE_SECRET_KEY', 'arkova-s33-rig-b1-stripe-secret-key'],
+  ['STRIPE_WEBHOOK_SECRET', 'arkova-s33-rig-b1-stripe-webhook-secret'],
+  ['API_KEY_HMAC_SECRET', 'arkova-s33-rig-b1-api-key-hmac'],
+  ['CRON_SECRET', 'arkova-s33-rig-b1-cron-secret'],
+  ['BITCOIN_RPC_URL', 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-url'],
+  ['BITCOIN_RPC_AUTH', 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth'],
+  ['BITCOIN_TREASURY_WIF', 'arkova-s33-rig-b1-treasury-wif-signet'],
+] as const;
+
+function exactRigB1SecretReferenceSchema<
+  Env extends typeof RIG_B1_SECRET_REFERENCE_BINDINGS[number][0],
+  Name extends typeof RIG_B1_SECRET_REFERENCE_BINDINGS[number][1],
+>(env: Env, secretName: Name) {
+  return z.object({
+    env: z.literal(env),
+    secretName: z.literal(secretName),
+    version: numericSecretVersion,
+    resource: secretResource,
+  }).strict().superRefine((reference, context) => {
+    if (reference.resource
+      !== `projects/arkova1/secrets/${secretName}/versions/${reference.version}`) {
+      context.addIssue({
+        code: 'custom',
+        path: ['resource'],
+        message: 'RIG-B1 secret resource must bind its exact name and numeric version.',
+      });
+    }
+  });
+}
+
+export const rigB1SecretReferencesSchema = z.tuple([
+  exactRigB1SecretReferenceSchema(...RIG_B1_SECRET_REFERENCE_BINDINGS[0]),
+  exactRigB1SecretReferenceSchema(...RIG_B1_SECRET_REFERENCE_BINDINGS[1]),
+  exactRigB1SecretReferenceSchema(...RIG_B1_SECRET_REFERENCE_BINDINGS[2]),
+  exactRigB1SecretReferenceSchema(...RIG_B1_SECRET_REFERENCE_BINDINGS[3]),
+  exactRigB1SecretReferenceSchema(...RIG_B1_SECRET_REFERENCE_BINDINGS[4]),
+  exactRigB1SecretReferenceSchema(...RIG_B1_SECRET_REFERENCE_BINDINGS[5]),
+  exactRigB1SecretReferenceSchema(...RIG_B1_SECRET_REFERENCE_BINDINGS[6]),
+  exactRigB1SecretReferenceSchema(...RIG_B1_SECRET_REFERENCE_BINDINGS[7]),
+  exactRigB1SecretReferenceSchema(...RIG_B1_SECRET_REFERENCE_BINDINGS[8]),
+]);
+
+const rigB1NodeReadinessSchema = z.object({
+  schemaVersion: z.literal('arkova.s33.rig-b1.node-readiness/v1'),
+  bitcoinCoreVersion: z.literal(RIG_B1_BITCOIN_CORE_VERSION),
+  bitcoinCoreImage: z.literal(
+    'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:cdc306adc6ef6017326681ff09c4d3247ce77026bed17feccdc163a96519c8f8',
+  ),
+  sourceTarballSha256: z.literal(RIG_B1_BITCOIN_CORE_SOURCE_SHA256),
+  chain: z.literal('signet'),
+  initialBlockDownload: z.literal(false),
+  blocks: z.number().int().nonnegative().safe(),
+  headers: z.number().int().nonnegative().safe(),
+  genesisHash: z.literal(RIG_B1_SIGNET_GENESIS_HASH),
+  txindexSynced: z.literal(true),
+  txindexBestBlockHeight: z.number().int().nonnegative().safe(),
+  treasurySplitPlanDigest: imageDigest,
+  splitTransactionId: z.literal(
+    '1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941',
+  ),
+  confirmedOutputCount: z.literal(32),
+  confirmedTotalSats: z.literal(169_639),
+  splitBlockHash: sha256Hex,
+  splitBlockHeader: z.string().regex(/^[0-9a-f]{160}$/),
+  txOutProof: z.string().regex(/^(?:[0-9a-f]{2})+$/),
+}).strict().superRefine((value, context) => {
+  if (value.headers !== value.blocks
+    || value.txindexBestBlockHeight !== value.blocks) {
+    context.addIssue({
+      code: 'custom',
+      path: ['txindexBestBlockHeight'],
+      message: 'RIG-B1 readiness heights must agree exactly.',
+    });
+  }
+});
 
 export const rigB1InfrastructureSchema = z.object({
   provider: z.object({
@@ -135,9 +249,13 @@ export const rigB1InfrastructureSchema = z.object({
   }).strict(),
   bitcoinCore: z.object({
     version: z.literal(RIG_B1_BITCOIN_CORE_VERSION),
+    recipeCommit: z.literal('b9a54856c9bee87d958cc4b070776828b5c17b32'),
     sourceTarballUrl: z.literal(RIG_B1_BITCOIN_CORE_SOURCE_URL),
     sourceTarballSha256: z.literal(RIG_B1_BITCOIN_CORE_SOURCE_SHA256),
     containerImage: z.string().regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/),
+    amd64RuntimeDigest: z.literal(
+      'sha256:684e80900f124890c45ad9b691d7f76456c1042385bce4ab92725b1979b55888',
+    ),
     startupScriptPath: z.literal('scripts/staging/start-rig-b1-bitcoin-core.sh'),
     startupScriptSha256: sha256Hex,
   }).strict(),
@@ -184,18 +302,22 @@ export const rigB1InfrastructureSchema = z.object({
     signetP2pPort: z.literal(38_333),
     publicRpc: z.literal(false),
   }).strict(),
-  secretReferences: z.array(rigB1SecretReferenceSchema).length(3),
+  secretReferences: rigB1SecretReferencesSchema,
   nodeSecretEnvs: z.tuple([z.literal('BITCOIN_RPC_AUTH')]),
   forbiddenNodeSecretEnvs: z.tuple([z.literal('BITCOIN_TREASURY_WIF')]),
   treasuryWatchOnly: z.object({
     address: z.string().regex(/^tb1[a-z0-9]{20,87}$/),
     descriptor: z.string().regex(/^addr\(tb1[a-z0-9]{20,87}\)#[a-z0-9]{8}$/),
+    splitTransactionId: z.literal(
+      '1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941',
+    ),
     preSplitPlanDigest: imageDigest,
     expectedConfirmedOutputCount: z.literal(32),
     expectedTotalSats: z.number().int().positive().safe(),
     descriptorPolicy: z.literal('addr-checksummed-importdescriptors'),
     wifOnNode: z.literal(false),
   }).strict(),
+  nodeReadiness: rigB1NodeReadinessSchema,
   authority: z.object({
     binding: z.literal('ed25519-signed-node-approval'),
     approvalId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$/),
@@ -260,6 +382,8 @@ export const runDeclarationSchema = z.object({
 }).strict();
 
 export type RunDeclaration = z.infer<typeof runDeclarationSchema>;
+type BroadcastPassExpectation = z.infer<typeof broadcastPassExpectationSchema>;
+type NoBroadcastPassExpectation = z.infer<typeof noBroadcastPassExpectationSchema>;
 
 export interface ImmutableRunDeclaration {
   readonly value: RunDeclaration;
@@ -326,7 +450,7 @@ const workerLogRecordSchema = z.object({
   workerId: nonEmpty,
   event: z.enum(['trigger-fired', 'credit-gate']),
   schedulerExecutionId: nonEmpty,
-  batchId: nonEmpty,
+  batchId: nonEmpty.nullable(),
   trigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   fingerprint: sha256Hex.nullable(),
   orgId: nonEmpty.nullable(),
@@ -345,6 +469,7 @@ const workerLogsCaptureSchema = z.object({
 }).strict();
 
 const dbExecutionSchema = z.object({
+  batchId: nonEmpty,
   schedulerExecutionId: nonEmpty,
   armedTrigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   faultWindowId: nonEmpty,
@@ -353,6 +478,25 @@ const dbExecutionSchema = z.object({
   completedAt: isoTimestamp,
   pendingBefore: nonNegativeInteger,
   pendingAfter: nonNegativeInteger,
+}).strict();
+const dbDeniedOutcomeSchema = z.object({
+  outcomeId: nonEmpty,
+  schedulerExecutionId: nonEmpty,
+  faultWindowId: nonEmpty,
+  workerId: nonEmpty,
+  fingerprint: sha256Hex,
+  orgId: nonEmpty,
+  batchId: z.null(),
+  status: z.literal('PENDING'),
+  chainTxId: z.null(),
+  merkleRoot: z.null(),
+  creditDenialReason: nonEmpty,
+  queueCreditChargedAt: z.null(),
+  queueCreditDeniedAt: isoTimestamp,
+  pendingBefore: nonNegativeInteger,
+  pendingAfter: nonNegativeInteger,
+  startedAt: isoTimestamp,
+  completedAt: isoTimestamp,
 }).strict();
 const dbPassRowSchema = z.object({
   fingerprint: sha256Hex,
@@ -434,6 +578,7 @@ const databaseCaptureSchema = z.object({
   queryId: nonEmpty,
   isolation: z.literal('repeatable-read'),
   executions: z.array(dbExecutionSchema).min(1),
+  deniedOutcomes: z.array(dbDeniedOutcomeSchema),
   passRows: z.array(dbPassRowSchema).min(1),
   transactions: z.array(dbTransactionSchema).min(1),
   journalRows: z.array(dbJournalRowSchema).min(1),
@@ -665,11 +810,7 @@ function unique<T>(values: T[], label: string): void {
 
 export function assertRunDeclarationInvariants(value: RunDeclaration): void {
   if (value.gitBaseSha === value.gitHeadSha) throw new Error('Declaration git base and tested head must be distinct named commits.');
-  const expectedSecrets = [
-    ['BITCOIN_RPC_URL', 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-url'],
-    ['BITCOIN_RPC_AUTH', 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth'],
-    ['BITCOIN_TREASURY_WIF', 'arkova-s33-rig-b1-treasury-wif-signet'],
-  ] as const;
+  const expectedSecrets = RIG_B1_SECRET_REFERENCE_BINDINGS;
   value.infrastructure.secretReferences.forEach((reference, index) => {
     const expected = expectedSecrets[index];
     if (
@@ -703,13 +844,38 @@ export function assertRunDeclarationInvariants(value: RunDeclaration): void {
   }
   unique(value.windows.map((window) => window.scenarioId), 'declaration windows');
   const passes = value.windows.flatMap((window) => window.passes);
-  unique(passes.map((pass) => pass.schedulerExecutionId), 'declaration passes');
-  unique(passes.map((pass) => pass.batchId), 'declaration batch IDs');
-  unique(passes.map((pass) => pass.faultWindow.id), 'declaration fault-window IDs');
+  const broadcastPasses = passes.filter((pass) => pass.outcome === 'broadcast');
+  const noBroadcastPasses = passes.filter((pass) => pass.outcome === 'no-broadcast');
+  unique(broadcastPasses.map((pass) => pass.batchId), 'declaration broadcast batch IDs');
+  unique(noBroadcastPasses.map((pass) => pass.outcomeId), 'declaration no-broadcast outcome IDs');
   unique(passes.flatMap((pass) => pass.claims.map((claim) => claim.fingerprint)), 'declaration claim fingerprints');
+  for (const window of value.windows) {
+    const executionIds = new Set(window.passes.map((pass) => pass.schedulerExecutionId));
+    const faultWindowIds = new Set(window.passes.map((pass) => pass.faultWindow.id));
+    const hasNoBroadcastPass = window.passes.some((pass) => pass.outcome === 'no-broadcast');
+    if (isPoisonDrainWindowKind(window.kind) !== hasNoBroadcastPass) {
+      throw new Error('Exactly poison-isolation semantic windows must declare a distinct no-broadcast denial pass.');
+    }
+    if (window.armedTrigger === 'org-scheduler') {
+      if (executionIds.size !== 1 || faultWindowIds.size !== 1) {
+        throw new Error('An org-scheduler window must preserve ordered per-org passes under one execution and fault window.');
+      }
+    } else if (executionIds.size !== window.passes.length
+      || faultWindowIds.size !== window.passes.length
+      || window.passes.some((pass) => pass.outcome !== 'broadcast')) {
+      throw new Error('A global window requires distinct broadcast Scheduler executions and fault windows.');
+    }
+  }
   unique(value.recoveries.map((recovery) => recovery.schedulerExecutionId), 'declaration recovery executions');
   const drainExecutionIds = new Set(passes.map((pass) => pass.schedulerExecutionId));
-  const faultWindowByDrainExecution = new Map(passes.map((pass) => [pass.schedulerExecutionId, pass.faultWindow.id]));
+  const faultWindowByDrainExecution = new Map<string, string>();
+  for (const pass of passes) {
+    const existing = faultWindowByDrainExecution.get(pass.schedulerExecutionId);
+    if (existing !== undefined && existing !== pass.faultWindow.id) {
+      throw new Error('One Scheduler execution cannot span multiple declared fault windows.');
+    }
+    faultWindowByDrainExecution.set(pass.schedulerExecutionId, pass.faultWindow.id);
+  }
   if (value.recoveries.some((recovery) => (
     !drainExecutionIds.has(recovery.correlatedDrainExecutionId)
     || faultWindowByDrainExecution.get(recovery.correlatedDrainExecutionId) !== recovery.faultWindowId
@@ -963,6 +1129,54 @@ function assertCommonBindings(declaration: ImmutableRunDeclaration, captures: Pa
   }
 }
 
+export interface UnsignedLiveEvidenceValidation {
+  readonly declaration: RunDeclaration;
+  readonly declarationSha256: string;
+  readonly rawCaptureDigests: RawCaptureDigests;
+}
+
+/**
+ * Producer-side pre-signing gate. This validates exact raw schemas and common
+ * run bindings but deliberately does not create verified declaration/capture
+ * provenance; only the independently signed evidence envelope can do that.
+ */
+export function validateUnsignedLiveEvidenceForSigning(
+  declarationInput: unknown,
+  rawInput: RawCaptureTextSet,
+): UnsignedLiveEvidenceValidation {
+  const declaration = runDeclarationSchema.parse(declarationInput);
+  assertRunDeclarationInvariants(declaration);
+  const raw = snapshotRawCaptureTextSet(rawInput);
+  const rawCaptureDigests = Object.freeze({
+    scheduler: digest(raw.scheduler),
+    workerLogs: digest(raw.workerLogs),
+    database: digest(raw.database),
+    signet: digest(raw.signet),
+    cloudRun: digest(raw.cloudRun),
+    supervisor: digest(raw.supervisor),
+  });
+  const captures: ParsedRawCaptureSet = {
+    scheduler: parseStrict(schedulerCaptureSchema, raw.scheduler, 'cloud-scheduler unsigned raw export'),
+    workerLogs: parseStrict(workerLogsCaptureSchema, raw.workerLogs, 'cloud-logging unsigned raw export'),
+    database: parseStrict(databaseCaptureSchema, raw.database, 'database unsigned raw export'),
+    signet: parseStrict(signetCaptureSchema, raw.signet, 'signet RPC unsigned raw export'),
+    cloudRun: parseStrict(cloudRunCaptureSchema, raw.cloudRun, 'Cloud Run lifecycle unsigned raw export'),
+    supervisor: parseStrict(supervisorCaptureSchema, raw.supervisor, 'supervisor unsigned raw export'),
+    contentDigests: rawCaptureDigests,
+  };
+  const declarationSha256 = digest(JSON.stringify(declaration));
+  const unsignedDeclaration: ImmutableRunDeclaration = {
+    value: declaration,
+    contentSha256: declarationSha256,
+    trustRootId: 'UNSIGNED-PRE-SIGNING-VALIDATION-ONLY',
+    trustRootSha256: '',
+    rawCaptureDigests,
+  };
+  assertCommonBindings(unsignedDeclaration, captures);
+  deriveSemanticLiveEvidence(unsignedDeclaration, captures);
+  return deepFreeze({ declaration, declarationSha256, rawCaptureDigests });
+}
+
 function assertPreflightAndSupervisor(declaration: RunDeclaration, capture: SupervisorCapture): void {
   const startMs = time(declaration.soakStartedAt, 'soakStartedAt');
   const endMs = time(declaration.soakEndedAt, 'soakEndedAt');
@@ -1095,15 +1309,18 @@ function expectedDrainPath(trigger: 'org-scheduler' | 'global-policy' | 'global-
 }
 
 function derivePassObservation(
-  declaration: RunDeclaration,
   captures: ParsedRawCaptureSet,
-  pass: DrainWindowExpectation['passes'][number],
+  pass: BroadcastPassExpectation,
 ): DrainPassObservation {
-  const executionRows = captures.database.executions.filter((row) => row.schedulerExecutionId === pass.schedulerExecutionId);
+  const executionRows = captures.database.executions.filter((row) => (
+    row.schedulerExecutionId === pass.schedulerExecutionId && row.batchId === pass.batchId
+  ));
   if (executionRows.length !== 1) throw new Error(`DB export must contain exactly one execution ${pass.schedulerExecutionId}.`);
   const execution = executionRows[0]!;
   const triggerLogs = captures.workerLogs.records.filter((record) => (
-    record.event === 'trigger-fired' && record.schedulerExecutionId === pass.schedulerExecutionId
+    record.event === 'trigger-fired'
+    && record.schedulerExecutionId === pass.schedulerExecutionId
+    && record.batchId === pass.batchId
   ));
   if (triggerLogs.length !== 1) throw new Error(`Worker logs must contain one trigger firing ${pass.schedulerExecutionId}.`);
   const triggerLog = triggerLogs[0]!;
@@ -1121,7 +1338,9 @@ function derivePassObservation(
     || triggerLog.balanceAfter !== null
   ) throw new Error('Trigger-fired raw log carries contradictory gate fields or wrong batch/trigger.');
 
-  const passRows = captures.database.passRows.filter((row) => row.schedulerExecutionId === pass.schedulerExecutionId);
+  const passRows = captures.database.passRows.filter((row) => (
+    row.schedulerExecutionId === pass.schedulerExecutionId && row.batchId === pass.batchId
+  ));
   const transactionIds = new Set(passRows.map((row) => row.chainTxId).filter((value): value is string => value !== null));
   const transactions = captures.database.transactions.filter((row) => transactionIds.has(row.txId)).map((row) => {
     const chain = captures.signet.records.filter((record) => record.txId === row.txId);
@@ -1144,8 +1363,12 @@ function derivePassObservation(
     };
   });
   const gateLogs = captures.workerLogs.records.filter((record) => (
-    record.event === 'credit-gate' && record.schedulerExecutionId === pass.schedulerExecutionId
+    record.event === 'credit-gate'
+    && record.schedulerExecutionId === pass.schedulerExecutionId
+    && record.batchId === pass.batchId
   ));
+  const claimFingerprints = new Set(pass.claims.map((claim) => claim.fingerprint));
+  const claimOrgIds = new Set(pass.claims.map((claim) => claim.orgId));
   const creditGateEvents = gateLogs.map((record) => {
     if (
       record.fingerprint === null
@@ -1182,7 +1405,7 @@ function derivePassObservation(
     triggerFirings: [{
       trigger: triggerLog.trigger,
       schedulerExecutionId: triggerLog.schedulerExecutionId,
-      batchId: triggerLog.batchId,
+      batchId: pass.batchId,
       firedAt: triggerLog.occurredAt,
     }],
     pendingBefore: execution.pendingBefore,
@@ -1192,9 +1415,167 @@ function derivePassObservation(
     txLeaves: captures.database.txLeaves.filter((row) => transactionIds.has(row.txId)),
     proofs: captures.database.proofs.filter((row) => transactionIds.has(row.txId)),
     creditGateEvents,
-    creditLedgerEvents: captures.database.creditLedgerEvents.filter((row) => row.schedulerExecutionId === pass.schedulerExecutionId),
-    orgBalances: captures.database.orgBalances.filter((row) => row.schedulerExecutionId === pass.schedulerExecutionId),
-    ledgerDeltas: captures.database.ledgerDeltas.filter((row) => row.schedulerExecutionId === pass.schedulerExecutionId),
+    creditLedgerEvents: captures.database.creditLedgerEvents.filter((row) => (
+      row.schedulerExecutionId === pass.schedulerExecutionId
+      && claimFingerprints.has(row.fingerprint)
+    )),
+    orgBalances: captures.database.orgBalances.filter((row) => (
+      row.schedulerExecutionId === pass.schedulerExecutionId && claimOrgIds.has(row.orgId)
+    )),
+    ledgerDeltas: captures.database.ledgerDeltas.filter((row) => (
+      row.schedulerExecutionId === pass.schedulerExecutionId && claimOrgIds.has(row.orgId)
+    )),
+  };
+}
+
+interface OrderedWindowPassSummary {
+  readonly schedulerExecutionId: string;
+  readonly pendingBefore: number;
+  readonly pendingAfter: number;
+  readonly drainedLeaves: number;
+  readonly poisonLeaves: number;
+  readonly transactionIds: readonly string[];
+  readonly startedAt: string;
+  readonly completedAt: string;
+}
+
+function assertNoBroadcastPass(
+  captures: ParsedRawCaptureSet,
+  pass: NoBroadcastPassExpectation,
+): OrderedWindowPassSummary {
+  const outcomes = captures.database.deniedOutcomes.filter((row) => row.outcomeId === pass.outcomeId);
+  if (outcomes.length !== 1) {
+    throw new Error(`DB export must contain one durable no-broadcast outcome ${pass.outcomeId}.`);
+  }
+  const outcome = outcomes[0]!;
+  const gateLogs = captures.workerLogs.records.filter((record) => (
+    record.event === 'credit-gate'
+    && record.schedulerExecutionId === pass.schedulerExecutionId
+    && record.batchId === null
+    && record.fingerprint === pass.deniedGate.fingerprint
+  ));
+  if (gateLogs.length !== 1) {
+    throw new Error('No-broadcast denial requires one exact batchless worker credit-gate record.');
+  }
+  const gate = gateLogs[0]!;
+  const claim = pass.claims[0]!;
+  if (outcome.schedulerExecutionId !== pass.schedulerExecutionId
+    || outcome.faultWindowId !== pass.faultWindow.id
+    || outcome.fingerprint !== claim.fingerprint
+    || outcome.orgId !== claim.orgId
+    || outcome.workerId !== gate.workerId
+    || outcome.creditDenialReason !== pass.deniedGate.reason
+    || outcome.pendingAfter !== outcome.pendingBefore
+    || gate.orgId !== pass.deniedGate.orgId
+    || gate.decision !== pass.deniedGate.decision
+    || gate.reason !== pass.deniedGate.reason
+    || gate.referenceId !== pass.deniedGate.referenceId
+    || gate.requiredAmount !== pass.deniedGate.requiredAmount
+    || gate.balanceBefore !== pass.deniedGate.balanceBefore
+    || gate.balanceAfter !== pass.deniedGate.balanceAfter) {
+    throw new Error('No-broadcast DB denial and worker gate differ from the declared exact denied facts.');
+  }
+  const start = time(outcome.startedAt, 'no-broadcast outcome start');
+  const end = time(outcome.completedAt, 'no-broadcast outcome completion');
+  const deniedAt = time(outcome.queueCreditDeniedAt, 'no-broadcast denial time');
+  const gateAt = time(gate.occurredAt, 'no-broadcast gate time');
+  const windowStart = time(pass.faultWindow.startsAt, 'no-broadcast fault start');
+  const windowEnd = time(pass.faultWindow.endsAt, 'no-broadcast fault end');
+  if (start < windowStart || end > windowEnd || end < start
+    || gateAt < start || deniedAt < gateAt || deniedAt > end) {
+    throw new Error('No-broadcast denial chronology is outside its exact execution/fault window.');
+  }
+  const matchingPassRows = captures.database.passRows.filter((row) => row.fingerprint === claim.fingerprint);
+  const matchingLeaves = captures.database.txLeaves.filter((row) => row.fingerprint === claim.fingerprint);
+  const matchingProofs = captures.database.proofs.filter((row) => row.fingerprint === claim.fingerprint);
+  const matchingLedger = captures.database.creditLedgerEvents.filter((row) => row.fingerprint === claim.fingerprint);
+  const fabricatedTrigger = captures.workerLogs.records.some((record) => (
+    record.event === 'trigger-fired'
+    && record.schedulerExecutionId === pass.schedulerExecutionId
+    && record.batchId === null
+  ));
+  if (matchingPassRows.length !== 0
+    || matchingLeaves.length !== 0
+    || matchingProofs.length !== 0
+    || matchingLedger.length !== 0
+    || fabricatedTrigger) {
+    throw new Error('No-broadcast denial cannot carry a fabricated batch, tx, proof, ledger, or trigger result.');
+  }
+  const balances = captures.database.orgBalances.filter((row) => (
+    row.schedulerExecutionId === pass.schedulerExecutionId && row.orgId === claim.orgId
+  ));
+  const deltas = captures.database.ledgerDeltas.filter((row) => (
+    row.schedulerExecutionId === pass.schedulerExecutionId && row.orgId === claim.orgId
+  ));
+  if (balances.length !== 1 || deltas.length !== 1
+    || balances[0]!.before !== pass.deniedGate.balanceBefore
+    || balances[0]!.after !== pass.deniedGate.balanceAfter
+    || deltas[0]!.delta !== 0) {
+    throw new Error('No-broadcast denial must prove one unchanged org balance and zero ledger delta.');
+  }
+  return {
+    schedulerExecutionId: pass.schedulerExecutionId,
+    pendingBefore: outcome.pendingBefore,
+    pendingAfter: outcome.pendingAfter,
+    drainedLeaves: 0,
+    poisonLeaves: 1,
+    transactionIds: [],
+    startedAt: outcome.startedAt,
+    completedAt: outcome.completedAt,
+  };
+}
+
+function summarizeWindowWithNoBroadcast(
+  window: RunDeclaration['windows'][number],
+  captures: ParsedRawCaptureSet,
+): DrainWindowEvidenceSummary {
+  if (!isPoisonDrainWindowKind(window.kind) || window.armedTrigger !== 'org-scheduler') {
+    throw new Error('No-broadcast denial is permitted only in an org-scheduler poison-isolation window.');
+  }
+  const summaries: OrderedWindowPassSummary[] = window.passes.map((pass) => {
+    if (pass.outcome === 'no-broadcast') return assertNoBroadcastPass(captures, pass);
+    const summary: DrainPassEvidenceSummary = assertDrainPassObservation(
+      pass,
+      derivePassObservation(captures, pass),
+    );
+    if (summary.poisonLeaves !== 0) {
+      throw new Error('Poison-isolation broadcast neighbors cannot include the distinct denied poison claim.');
+    }
+    return summary;
+  });
+  const executionIds = [...new Set(summaries.map((summary) => summary.schedulerExecutionId))];
+  const transactionIds = summaries.flatMap((summary) => [...summary.transactionIds]);
+  if (executionIds.length !== 1
+    || new Set(transactionIds).size !== transactionIds.length
+    || summaries[0]?.pendingBefore !== window.expectedInitialPending
+    || summaries.at(-1)?.pendingAfter !== window.expectedFinalPending) {
+    throw new Error('Ordered no-broadcast window does not preserve one execution and exact pending boundaries.');
+  }
+  for (let index = 1; index < summaries.length; index += 1) {
+    const previous = summaries[index - 1]!;
+    const current = summaries[index]!;
+    if (current.pendingBefore !== previous.pendingAfter
+      || time(current.startedAt, 'ordered pass start') <= time(previous.completedAt, 'ordered pass completion')) {
+      throw new Error('Ordered per-org passes do not preserve durable pending/chronology order.');
+    }
+  }
+  const drainedLeaves = summaries.reduce((sum, summary) => sum + summary.drainedLeaves, 0);
+  const poisonLeaves = summaries.reduce((sum, summary) => sum + summary.poisonLeaves, 0);
+  if (drainedLeaves === 0 || poisonLeaves === 0 || window.expectedFinalPending === 0) {
+    throw new Error('Poison-isolation requires real broadcast neighbors and a distinct pending no-broadcast denial.');
+  }
+  assertDrainWindowSemantic(window, summaries);
+  return {
+    scenarioId: window.scenarioId,
+    kind: window.kind,
+    armedTrigger: window.armedTrigger,
+    schedulerTicks: 1,
+    drainedLeaves,
+    poisonLeaves,
+    initialPending: window.expectedInitialPending,
+    finalPending: window.expectedFinalPending,
+    schedulerExecutionIds: executionIds,
+    transactionIds,
   };
 }
 
@@ -1270,7 +1651,9 @@ function assertSuccessfulTransactionJournals(captures: ParsedRawCaptureSet): voi
     const signetRows = captures.signet.records.filter((row) => row.txId === transaction.txId);
     const transactionPassRows = captures.database.passRows.filter((row) => row.chainTxId === transaction.txId);
     const executionIds = [...new Set(transactionPassRows.map((row) => row.schedulerExecutionId))];
-    const executions = captures.database.executions.filter((row) => executionIds.includes(row.schedulerExecutionId));
+    const executions = captures.database.executions.filter((row) => (
+      executionIds.includes(row.schedulerExecutionId) && row.batchId === transaction.batchId
+    ));
     if (signetRows.length !== 1 || executionIds.length !== 1 || executions.length !== 1) {
       throw new Error('DB journal chronology requires one exact signet acceptance and Scheduler execution.');
     }
@@ -1293,16 +1676,10 @@ function assertSuccessfulTransactionJournals(captures: ParsedRawCaptureSet): voi
   }
 }
 
-export function deriveAndAssertLiveEvidence(
+function deriveSemanticLiveEvidence(
   declaration: ImmutableRunDeclaration,
   captures: ParsedRawCaptureSet,
 ): LiveEvidenceSummary {
-  if (!VERIFIED_DECLARATIONS.has(declaration)) {
-    throw new Error('Live evidence derivation requires a declaration from the verified signed evidence envelope.');
-  }
-  if (VERIFIED_CAPTURE_PROVENANCE.get(captures) !== declaration) {
-    throw new Error('Live evidence derivation requires a verified capture set bound to this declaration provenance.');
-  }
   assertCommonBindings(declaration, captures);
   assertPreflightAndSupervisor(declaration.value, captures.supervisor);
   const workerClock = deriveWorkerUptime(declaration.value, captures.cloudRun);
@@ -1327,11 +1704,23 @@ export function deriveAndAssertLiveEvidence(
   );
 
   const passDeclarations = declaration.value.windows.flatMap((window) => window.passes);
+  const broadcastDeclarations = passDeclarations.filter((pass) => pass.outcome === 'broadcast');
+  const noBroadcastDeclarations = passDeclarations.filter((pass) => pass.outcome === 'no-broadcast');
   const declaredExecutionIds = new Set(passDeclarations.map((pass) => pass.schedulerExecutionId));
+  const declaredBroadcasts = new Set(broadcastDeclarations.map((pass) => (
+    `${pass.schedulerExecutionId}\0${pass.batchId}`
+  )));
+  const declaredDenials = new Set(noBroadcastDeclarations.map((pass) => pass.outcomeId));
   if (
-    captures.database.executions.length !== passDeclarations.length
-    || captures.database.executions.some((record) => !declaredExecutionIds.has(record.schedulerExecutionId))
-    || captures.database.passRows.some((record) => !declaredExecutionIds.has(record.schedulerExecutionId))
+    captures.database.executions.length !== broadcastDeclarations.length
+    || captures.database.deniedOutcomes.length !== noBroadcastDeclarations.length
+    || captures.database.executions.some((record) => !declaredBroadcasts.has(
+      `${record.schedulerExecutionId}\0${record.batchId}`,
+    ))
+    || captures.database.deniedOutcomes.some((record) => !declaredDenials.has(record.outcomeId))
+    || captures.database.passRows.some((record) => !declaredBroadcasts.has(
+      `${record.schedulerExecutionId}\0${record.batchId}`,
+    ))
     || captures.database.creditLedgerEvents.some((record) => !declaredExecutionIds.has(record.schedulerExecutionId))
     || captures.database.orgBalances.some((record) => !declaredExecutionIds.has(record.schedulerExecutionId))
     || captures.database.ledgerDeltas.some((record) => !declaredExecutionIds.has(record.schedulerExecutionId))
@@ -1339,7 +1728,7 @@ export function deriveAndAssertLiveEvidence(
   ) throw new Error('Raw worker/DB records contain an undeclared or missing drain execution.');
   const drainSchedulerRows = captures.scheduler.records.filter((record) => record.purpose === 'drain');
   if (
-    drainSchedulerRows.length !== passDeclarations.length
+    drainSchedulerRows.length !== declaredExecutionIds.size
     || drainSchedulerRows.some((record) => !declaredExecutionIds.has(record.schedulerExecutionId))
   ) throw new Error('Scheduler raw export must cover exactly every declared drain execution.');
   const declaredRecoveryIds = new Set(declaration.value.recoveries.map((recovery) => recovery.schedulerExecutionId));
@@ -1353,30 +1742,40 @@ export function deriveAndAssertLiveEvidence(
     || record.workerRevision !== declaration.value.workerRevision
     || time(record.completedAt, 'Scheduler completedAt') < time(record.firedAt, 'Scheduler firedAt')
   ))) throw new Error('Scheduler raw record mismatches project/revision or has invalid chronology.');
-  for (const pass of passDeclarations) {
-    const records = drainSchedulerRows.filter((record) => record.schedulerExecutionId === pass.schedulerExecutionId);
-    const dbExecutions = captures.database.executions.filter((record) => record.schedulerExecutionId === pass.schedulerExecutionId);
-    if (records.length !== 1 || dbExecutions.length !== 1) throw new Error('Scheduler and DB execution IDs must join one-to-one.');
+  for (const schedulerExecutionId of declaredExecutionIds) {
+    const declaredPasses = passDeclarations.filter((pass) => pass.schedulerExecutionId === schedulerExecutionId);
+    const pass = declaredPasses[0]!;
+    const records = drainSchedulerRows.filter((record) => record.schedulerExecutionId === schedulerExecutionId);
+    const dbExecutions = [
+      ...captures.database.executions.filter((record) => record.schedulerExecutionId === schedulerExecutionId),
+      ...captures.database.deniedOutcomes.filter((record) => record.schedulerExecutionId === schedulerExecutionId),
+    ];
+    if (records.length !== 1 || dbExecutions.length !== declaredPasses.length) {
+      throw new Error('One Scheduler execution must join every exact ordered DB pass/outcome.');
+    }
     const record = records[0]!;
-    const dbExecution = dbExecutions[0]!;
+    const workerIds = new Set(dbExecutions.map((execution) => execution.workerId));
+    const startedAt = Math.min(...dbExecutions.map((execution) => time(execution.startedAt, 'DB pass start')));
+    const completedAt = Math.max(...dbExecutions.map((execution) => time(execution.completedAt, 'DB pass completion')));
     if (
-      record.gcpProjectId !== declaration.value.gcpProjectId
+      workerIds.size !== 1
+      || record.gcpProjectId !== declaration.value.gcpProjectId
       || record.workerRevision !== declaration.value.workerRevision
       || record.statusCode !== 200
       || record.trigger !== pass.armedTrigger
       || record.path !== expectedDrainPath(pass.armedTrigger)
       || record.correlatedDrainExecutionId !== null
       || record.faultWindowId !== pass.faultWindow.id
-      || record.workerId !== dbExecution.workerId
-      || time(record.firedAt, 'Scheduler firedAt') > time(dbExecution.startedAt, 'DB execution start')
-      || time(record.completedAt, 'Scheduler completedAt') < time(dbExecution.completedAt, 'DB execution completion')
+      || record.workerId !== [...workerIds][0]
+      || time(record.firedAt, 'Scheduler firedAt') > startedAt
+      || time(record.completedAt, 'Scheduler completedAt') < completedAt
     ) throw new Error('Scheduler raw record mismatches project/revision/path/trigger/200 or DB chronology.');
     assertWorkerCovers(
       workerClock.intervals,
       record.workerId,
       record.firedAt,
       record.completedAt,
-      `drain Scheduler execution ${pass.schedulerExecutionId}`,
+      `drain Scheduler execution ${schedulerExecutionId}`,
     );
   }
   for (const recovery of declaration.value.recoveries) {
@@ -1433,7 +1832,11 @@ export function deriveAndAssertLiveEvidence(
   assertSuccessfulTransactionJournals(captures);
 
   const windows = declaration.value.windows.map((window) => {
-    const observations = window.passes.map((pass) => derivePassObservation(declaration.value, captures, pass));
+    if (window.passes.some((pass) => pass.outcome === 'no-broadcast')) {
+      return summarizeWindowWithNoBroadcast(window, captures);
+    }
+    const broadcastPasses = window.passes as BroadcastPassExpectation[];
+    const observations = broadcastPasses.map((pass) => derivePassObservation(captures, pass));
     return assertDrainWindowObservation(window as DrainWindowExpectation, observations);
   });
   const transactionIds = windows.flatMap((window) => window.transactionIds);
@@ -1463,6 +1866,19 @@ export function deriveAndAssertLiveEvidence(
       captures.supervisor.exportId,
     ],
   };
+}
+
+export function deriveAndAssertLiveEvidence(
+  declaration: ImmutableRunDeclaration,
+  captures: ParsedRawCaptureSet,
+): LiveEvidenceSummary {
+  if (!VERIFIED_DECLARATIONS.has(declaration)) {
+    throw new Error('Live evidence derivation requires a declaration from the verified signed evidence envelope.');
+  }
+  if (VERIFIED_CAPTURE_PROVENANCE.get(captures) !== declaration) {
+    throw new Error('Live evidence derivation requires a verified capture set bound to this declaration provenance.');
+  }
+  return deriveSemanticLiveEvidence(declaration, captures);
 }
 
 async function main(): Promise<void> {

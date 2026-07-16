@@ -12,7 +12,7 @@
  * ARCH-2: Each job handler uses pg_advisory_lock where applicable.
  */
 
-import { Router, Request } from 'express';
+import { Router, Request, type NextFunction, type Response } from 'express';
 import crypto from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
@@ -109,6 +109,11 @@ import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
 import { getBuildSha, isValidBuildSha } from '../utils/buildInfo.js';
+import {
+  gateS33RigB1ScenarioRequest,
+  type S33RigB1CronAuthContext,
+  type S33RigB1ScenarioExecutionContext,
+} from '../jobs/s33-rig-b1-scenario.js';
 
 export const cronRouter = Router();
 
@@ -167,9 +172,30 @@ function getGoogleJwks(): JWTVerifyGetKey {
  *
  * Non-production: open for local development.
  */
-async function verifyCronAuth(req: Request): Promise<boolean> {
+function exactPrimitiveHeader(req: Request, name: string): string | null {
+  const raw = req.headers[name.toLowerCase()];
+  if (raw === undefined) return null;
+  if (Array.isArray(raw)
+    || typeof raw !== 'string'
+    || raw.length === 0
+    || raw !== raw.trim()
+    || raw.includes(',')) return null;
+  return raw;
+}
+
+/** Detailed auth is retained for the active RIG-B1 dual-auth boundary. */
+export async function verifyCronAuth(req: Request): Promise<S33RigB1CronAuthContext> {
   // SEC-028: Only bypass auth in local development, not staging/preview
-  if (config.nodeEnv === 'development' || config.nodeEnv === 'test') return true;
+  if (config.nodeEnv === 'development' || config.nodeEnv === 'test') {
+    return Object.freeze({
+      accepted: true,
+      method: 'development',
+      cronSecretValid: false,
+      oidcPrincipal: null,
+      oidcEmailVerified: false,
+      oidcAudience: null,
+    });
+  }
 
   // SCRUM-640: Fail secure only if NEITHER auth method is configured.
   // Either CRON_SECRET or CRON_OIDC_AUDIENCE alone is sufficient.
@@ -177,7 +203,14 @@ async function verifyCronAuth(req: Request): Promise<boolean> {
     logger.error(
       'Neither CRON_SECRET nor CRON_OIDC_AUDIENCE configured in production — rejecting all cron requests',
     );
-    return false;
+    return Object.freeze({
+      accepted: false,
+      method: 'cron-secret',
+      cronSecretValid: false,
+      oidcPrincipal: null,
+      oidcEmailVerified: false,
+      oidcAudience: null,
+    });
   }
 
   // Method 1: Shared secret header (SEC-030: use crypto.timingSafeEqual).
@@ -185,62 +218,159 @@ async function verifyCronAuth(req: Request): Promise<boolean> {
   // If a stale X-Cron-Secret header reaches an OIDC-only deployment (e.g. from
   // a legacy scheduler config or proxy), fall through to the Bearer/OIDC path
   // instead of 401-ing. Otherwise we'd reintroduce the very bug this story fixes.
-  const cronSecretHeader = req.headers['x-cron-secret'] as string | undefined;
+  const cronSecretHeader = exactPrimitiveHeader(req, 'x-cron-secret');
+  let cronSecretValid = false;
   if (cronSecretHeader && config.cronSecret) {
     const expected = Buffer.from(config.cronSecret);
     const actual = Buffer.from(cronSecretHeader);
     if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) {
-      return true;
+      cronSecretValid = true;
+    } else {
+      logger.warn('Invalid X-Cron-Secret header');
     }
-    logger.warn('Invalid X-Cron-Secret header');
-    return false;
   }
 
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) return false;
-  const token = authHeader.slice(7).trim();
-  if (!token) return false;
+  const authHeader = exactPrimitiveHeader(req, 'authorization');
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  let platformAdminValid = false;
+  let oidcPrincipal: string | null = null;
+  let oidcEmailVerified = false;
+  let oidcAudience: string | null = null;
 
   // Method 2: Platform admin Bearer token (for dashboard pipeline triggers)
-  try {
-    const userId = await verifyAuthToken(token, config, logger);
-    if (userId) {
-      const isAdmin = await isPlatformAdmin(userId);
-      if (isAdmin) return true;
+  if (token) {
+    try {
+      const userId = await verifyAuthToken(token, config, logger);
+      if (userId) platformAdminValid = await isPlatformAdmin(userId);
+    } catch {
+      // Independently continue to the Google OIDC check.
     }
-  } catch {
-    // Fall through to OIDC check
   }
 
   // Method 3: OIDC Bearer token from Cloud Scheduler
-  if (!config.cronOidcAudience) {
+  if (token && !config.cronOidcAudience) {
     logger.warn('OIDC audience not configured — rejecting Bearer token');
-    return false;
+  } else if (token && config.cronOidcAudience) {
+    try {
+      const { payload } = await jwtVerify(token, getGoogleJwks(), {
+        issuer: 'https://accounts.google.com',
+        audience: config.cronOidcAudience,
+      });
+      if (typeof payload.email === 'string'
+        && payload.email.length > 0
+        && typeof payload.aud === 'string'
+        && payload.aud === config.cronOidcAudience
+        && payload.iss
+        && payload.exp) {
+        oidcPrincipal = payload.email;
+        oidcEmailVerified = payload.email_verified === true;
+        oidcAudience = payload.aud;
+      } else {
+        logger.warn('OIDC token lacks one exact verified email/audience identity');
+      }
+    } catch (err) {
+      logger.warn({ error: err }, 'OIDC token verification failed');
+    }
   }
-  try {
-    const { payload } = await jwtVerify(token, getGoogleJwks(), {
-      issuer: 'https://accounts.google.com',
-      audience: config.cronOidcAudience,
-    });
-    return Boolean(payload?.iss && payload?.exp);
-  } catch (err) {
-    logger.warn({ error: err }, 'OIDC token verification failed');
-    return false;
-  }
+
+  const accepted = cronSecretValid || platformAdminValid || oidcPrincipal !== null;
+  const method: S33RigB1CronAuthContext['method'] = cronSecretValid && oidcPrincipal !== null
+    ? 'combined'
+    : oidcPrincipal !== null
+      ? 'google-oidc'
+      : platformAdminValid
+        ? 'platform-admin'
+        : 'cron-secret';
+  return Object.freeze({
+    accepted, method, cronSecretValid, oidcPrincipal, oidcEmailVerified, oidcAudience,
+  });
 }
 
 /** Middleware that enforces cron authentication */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function cronAuth(req: Request, res: any, next: any): Promise<void> {
-  if (!(await verifyCronAuth(req))) {
+async function cronAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const auth = await verifyCronAuth(req);
+  if (!auth.accepted) {
     res.status(401).json({ error: 'Authentication required' });
     return;
   }
+  res.locals.s33RigB1CronAuth = auth;
   next();
 }
 
 // Apply cron auth to all routes in this router
 cronRouter.use(cronAuth);
+
+const S33_RIG_B1_GUARDED_PATHS = new Set([
+  '/batch-anchors',
+  '/check-confirmations',
+  '/org-queue-scheduler',
+  '/populate-confirmation-proofs',
+  '/recover-broadcasts',
+]);
+
+function hasSchedulerIdentity(req: Request): boolean {
+  return req.headers['x-cloudscheduler'] !== undefined
+    || req.headers['x-cloudscheduler-jobname'] !== undefined
+    || req.headers['x-cloudscheduler-scheduletime'] !== undefined;
+}
+
+function canonicalS33RigB1Route(req: Request): string {
+  const scheduler = hasSchedulerIdentity(req);
+  const queryKeys = Object.keys(req.query);
+  if (req.path !== '/batch-anchors') {
+    if (scheduler && queryKeys.length > 0) {
+      throw new Error('RIG-B1 Scheduler routes reject undeclared query parameters.');
+    }
+    return `/jobs${req.path}`;
+  }
+  if (scheduler && queryKeys.some((key) => key !== 'force')) {
+    throw new Error('RIG-B1 batch Scheduler route accepts only the exact force selector.');
+  }
+  const force = req.query.force;
+  if (force === undefined) return '/jobs/batch-anchors';
+  if (typeof force !== 'string' || force !== 'true') {
+    if (scheduler) throw new Error('RIG-B1 forced Scheduler route requires primitive force=true.');
+    return '/jobs/batch-anchors';
+  }
+  return '/jobs/batch-anchors?force=true';
+}
+
+async function s33RigB1ScenarioGate(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  if (!S33_RIG_B1_GUARDED_PATHS.has(req.path)) {
+    next();
+    return;
+  }
+  try {
+    const auth = res.locals.s33RigB1CronAuth as S33RigB1CronAuthContext;
+    const gate = await gateS33RigB1ScenarioRequest({
+      routePath: canonicalS33RigB1Route(req),
+      headers: req.headers,
+      auth,
+      serviceName: config.kService,
+      serviceRevision: config.kRevision,
+      serviceAudience: config.cronOidcAudience ?? '',
+    }, db);
+    if (gate.mode === 'CONTROLLED_SKIP') {
+      res.status(gate.statusCode).json(gate.body);
+      return;
+    }
+    res.locals.s33RigB1Scenario = gate.mode === 'TARGET_EXECUTE' ? gate.context : null;
+    next();
+  } catch (error) {
+    logger.error({ error, path: req.path }, 'RIG-B1 durable scenario gate failed closed');
+    res.status(503).json({ error: 'RIG-B1 scenario gate failed' });
+  }
+}
+
+cronRouter.use(s33RigB1ScenarioGate);
+
+function s33RigB1ScenarioContext(res: Response): S33RigB1ScenarioExecutionContext | undefined {
+  return (res.locals.s33RigB1Scenario as S33RigB1ScenarioExecutionContext | null) ?? undefined;
+}
 
 // ─── Core Anchoring Jobs ───
 
@@ -273,7 +403,12 @@ cronRouter.post('/batch-anchors', async (req, res) => {
       }
       orgId = parsedOrgId.data;
     }
-    const result = await processBatchAnchors({ force, orgId });
+    const scenario = s33RigB1ScenarioContext(res);
+    const result = await processBatchAnchors({
+      force,
+      orgId,
+      ...(scenario ? { scenario } : {}),
+    });
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Batch anchor processing failed');
@@ -559,8 +694,10 @@ cronRouter.post('/org-queue-scheduler', async (req, res) => {
   try {
     const rawLimit = req.query.limit ?? req.body?.limit;
     const parsedLimit = rawLimit === undefined ? undefined : Number.parseInt(String(rawLimit), 10);
+    const scenario = s33RigB1ScenarioContext(res);
     const result = await runOrgQueueScheduler({
       limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+      ...(scenario ? { scenario } : {}),
     });
     res.json(result);
   } catch (error) {
@@ -891,7 +1028,7 @@ cronRouter.post('/anchor-attestations', async (_req, res) => {
 
 cronRouter.post('/recover-broadcasts', async (_req, res) => {
   try {
-    const result = await recoverStuckBroadcasts();
+    const result = await recoverStuckBroadcasts(5, s33RigB1ScenarioContext(res));
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Broadcast recovery failed');

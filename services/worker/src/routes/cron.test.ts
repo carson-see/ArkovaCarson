@@ -13,11 +13,19 @@ import request from 'supertest';
 
 // ─── Mocks (must be before imports) ───
 
+const { mockJwtVerify } = vi.hoisted(() => ({ mockJwtVerify: vi.fn() }));
+vi.mock('jose', () => ({
+  createRemoteJWKSet: vi.fn(() => vi.fn()),
+  jwtVerify: (...args: unknown[]) => mockJwtVerify(...args),
+}));
+
 vi.mock('../config.js', () => ({
   config: {
     nodeEnv: 'development', // non-production → auth bypassed by default
     cronSecret: 'test-cron-secret-1234',
     cronOidcAudience: 'https://arkova-worker.run.app',
+    kService: 'arkova-worker',
+    kRevision: 'arkova-worker-00001-test',
     frontendUrl: 'http://localhost:5173',
     corsAllowedOrigins: '',
     // SCRUM-1235: smoke-test config-sanity check inspects these
@@ -55,6 +63,11 @@ vi.mock('../utils/platformAdmin.js', () => ({
 
 vi.mock('../utils/rpc.js', () => ({
   callRpc: vi.fn(),
+}));
+
+const mockS33RigB1ScenarioGate = vi.fn().mockResolvedValue({ mode: 'NORMAL' });
+vi.mock('../jobs/s33-rig-b1-scenario.js', () => ({
+  gateS33RigB1ScenarioRequest: (...args: unknown[]) => mockS33RigB1ScenarioGate(...args),
 }));
 
 // Mock CORS middleware
@@ -445,18 +458,26 @@ function createApp() {
 describe('cron routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (verifyAuthToken as ReturnType<typeof vi.fn>).mockReset();
+    (isPlatformAdmin as ReturnType<typeof vi.fn>).mockReset();
     // Reset all mutated config fields back to defaults so each test starts clean.
     // If a test fails mid-run, the next test still gets a known-good config.
     const mutableConfig = config as {
       nodeEnv: string;
       cronSecret?: string;
       cronOidcAudience?: string;
+      kService?: string;
+      kRevision?: string;
       enableProfessionalEducationSchemaReady?: boolean;
     };
     mutableConfig.nodeEnv = 'development';
     mutableConfig.cronSecret = 'test-cron-secret-1234';
     mutableConfig.cronOidcAudience = 'https://arkova-worker.run.app';
+    mutableConfig.kService = 'arkova-worker';
+    mutableConfig.kRevision = 'arkova-worker-00001-test';
     mutableConfig.enableProfessionalEducationSchemaReady = true;
+    mockS33RigB1ScenarioGate.mockResolvedValue({ mode: 'NORMAL' });
+    mockJwtVerify.mockRejectedValue(new Error('not a Google token'));
   });
 
   // ═══════════════════════════════════════
@@ -605,6 +626,165 @@ describe('cron routes', () => {
         .post('/cron/process-anchors')
         .set('Authorization', 'Bearer some-token');
       expect(res.status).toBe(401);
+    });
+
+    it('extracts the actual verified Google email and exact audience', async () => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      mockJwtVerify.mockResolvedValue({
+        payload: {
+          iss: 'https://accounts.google.com',
+          exp: 2_000_000_000,
+          email: 's33-rig-b1-cron@arkova1.iam.gserviceaccount.com',
+          email_verified: true,
+          aud: 'https://arkova-worker.run.app',
+        },
+      });
+      const app = createApp();
+      const res = await request(app)
+        .post('/cron/batch-anchors')
+        .set('Authorization', 'Bearer google-token')
+        .set('X-Cron-Secret', 'test-cron-secret-1234');
+      expect(res.status).toBe(200);
+      expect(mockS33RigB1ScenarioGate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          auth: {
+            accepted: true,
+            method: 'combined',
+            cronSecretValid: true,
+            oidcPrincipal: 's33-rig-b1-cron@arkova1.iam.gserviceaccount.com',
+            oidcEmailVerified: true,
+            oidcAudience: 'https://arkova-worker.run.app',
+          },
+        }),
+        db,
+      );
+    });
+
+    it.each([
+      ['explicitly false', false],
+      ['missing', undefined],
+    ])('marks an OIDC email_verified claim %s as ineligible for active B1', async (_label, verified) => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      mockJwtVerify.mockResolvedValue({
+        payload: {
+          iss: 'https://accounts.google.com', exp: 2_000_000_000,
+          email: 's33-rig-b1-cron@arkova1.iam.gserviceaccount.com',
+          ...(verified === undefined ? {} : { email_verified: verified }),
+          aud: 'https://arkova-worker.run.app',
+        },
+      });
+      const res = await request(createApp())
+        .post('/cron/batch-anchors')
+        .set('Authorization', 'Bearer google-token');
+      // Ordinary OIDC compatibility remains accepted; the active gate receives
+      // the exact false bit and therefore fails closed if a lease is active.
+      expect(res.status).toBe(200);
+      expect(mockS33RigB1ScenarioGate).toHaveBeenCalledWith(
+        expect.objectContaining({ auth: expect.objectContaining({ oidcEmailVerified: false }) }),
+        db,
+      );
+    });
+  });
+
+  describe('RIG-B1 all-six Scheduler scenario boundary', () => {
+    const schedulerHeaders = {
+      'X-CloudScheduler': 'true',
+      'X-CloudScheduler-JobName':
+        'projects/arkova1/locations/us-central1/jobs/arkova-worker-s33-rig-b1-staging-batch-anchors',
+      'X-CloudScheduler-ScheduleTime': '2026-07-16T18:25:00Z',
+    };
+    const scenarioContext = {
+      generation: 8,
+      scenarioLeaseId: '10000000-0000-4000-8000-000000000001',
+      scenarioId: 'forced-d1',
+      targetJobResource: schedulerHeaders['X-CloudScheduler-JobName'],
+      namespaceId: 's33-b1-forced-d1',
+      expectedPending: 2,
+      faultWindowId: 'fault-forced-d1',
+      soakId: 'soak-b1',
+      runLeaseId: 'lease-b1',
+      workerRevision: 'arkova-worker-s33-rig-b1-staging-00001-abc',
+      schedulerExecutionId: `sha256:${'d'.repeat(64)}`,
+      schedulerJobResource: schedulerHeaders['X-CloudScheduler-JobName'],
+      schedulerScheduleTime: '2026-07-16T18:25:00.000Z',
+      expiresAt: '2026-07-16T18:29:00.000Z',
+    } as const;
+
+    it('guards the exact six jobs and canonicalizes forced flush without pausing any job', async () => {
+      const app = createApp();
+      for (const path of [
+        '/cron/batch-anchors',
+        '/cron/batch-anchors?force=true',
+        '/cron/check-confirmations',
+        '/cron/org-queue-scheduler',
+        '/cron/populate-confirmation-proofs',
+        '/cron/recover-broadcasts',
+      ]) {
+        const result = await request(app).post(path);
+        expect(result.status).toBe(200);
+      }
+      expect(mockS33RigB1ScenarioGate.mock.calls.map(([value]) => value.routePath)).toEqual([
+        '/jobs/batch-anchors',
+        '/jobs/batch-anchors?force=true',
+        '/jobs/check-confirmations',
+        '/jobs/org-queue-scheduler',
+        '/jobs/populate-confirmation-proofs',
+        '/jobs/recover-broadcasts',
+      ]);
+    });
+
+    it('returns truthful 200 controlled-skip before the target handler runs', async () => {
+      mockS33RigB1ScenarioGate.mockResolvedValueOnce({
+        mode: 'CONTROLLED_SKIP',
+        statusCode: 200,
+        body: {
+          controlledSkip: true,
+          reason: 's33_rig_b1_preparing',
+          scenarioId: 'a1',
+          schedulerExecutionId: 'sha256:abc',
+          targetJobResource: schedulerHeaders['X-CloudScheduler-JobName'],
+        },
+      });
+      const before = mockProcessBatchAnchors.mock.calls.length;
+      const response = await request(createApp())
+        .post('/cron/batch-anchors')
+        .set(schedulerHeaders);
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ controlledSkip: true, reason: 's33_rig_b1_preparing' });
+      expect(mockProcessBatchAnchors.mock.calls).toHaveLength(before);
+    });
+
+    it('rejects duplicate/ambiguous Scheduler query selectors before work', async () => {
+      const before = mockProcessBatchAnchors.mock.calls.length;
+      const response = await request(createApp())
+        .post('/cron/batch-anchors?force=true&force=true')
+        .set(schedulerHeaders);
+      expect(response.status).toBe(503);
+      expect(mockProcessBatchAnchors.mock.calls).toHaveLength(before);
+    });
+
+    it('passes only configured service identity to the durable gate', async () => {
+      await request(createApp()).post('/cron/batch-anchors');
+      expect(mockS33RigB1ScenarioGate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serviceName: 'arkova-worker',
+          serviceRevision: 'arkova-worker-00001-test',
+          serviceAudience: 'https://arkova-worker.run.app',
+        }),
+        db,
+      );
+    });
+
+    it('passes the database-issued target context into the batch job', async () => {
+      mockS33RigB1ScenarioGate.mockResolvedValueOnce({
+        mode: 'TARGET_EXECUTE', context: scenarioContext,
+      });
+      await request(createApp()).post('/cron/batch-anchors?force=true');
+      expect(mockProcessBatchAnchors).toHaveBeenCalledWith({
+        force: true,
+        orgId: undefined,
+        scenario: scenarioContext,
+      });
     });
   });
 

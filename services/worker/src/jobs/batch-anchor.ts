@@ -33,6 +33,7 @@ import {
   type TxidJournalEntry,
   type TxidJournalRecoveryDecision,
 } from './txid-journal.js';
+import type { S33RigB1ScenarioExecutionContext } from './s33-rig-b1-scenario.js';
 
 /**
  * Max anchors per batch transaction (BTC-001).
@@ -105,6 +106,32 @@ interface ChargedQueueAnchor {
   id: string;
   orgId: string;
 }
+
+interface QueueCreditGateDecision {
+  anchor: ClaimedAnchor;
+  decision: 'not-required' | 'allowed' | 'denied';
+  reason: string | null;
+  referenceId: string | null;
+  requiredAmount: number | null;
+  balanceBefore: number | null;
+  balanceAfter: number | null;
+}
+
+const S33RigB1DenialPassResponseSchema = z.object({
+  outcomes: z.array(z.object({
+    outcomeId: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+    anchorId: z.string().uuid(),
+    fingerprint: z.string().regex(/^[0-9a-f]{64}$/u),
+    orgId: z.string().uuid(),
+    reason: z.literal('insufficient_credits'),
+    referenceId: z.string().min(1),
+    requiredAmount: z.number().int().positive(),
+    balanceBefore: z.number().int().nonnegative(),
+    balanceAfter: z.number().int().nonnegative(),
+    deniedAt: z.string().datetime({ offset: true }),
+    completedAt: z.string().datetime({ offset: true }),
+  }).strict()).min(1),
+}).strict();
 
 interface FailedQueueCreditRefund extends ChargedQueueAnchor {
   error: unknown;
@@ -325,19 +352,32 @@ async function releaseQueueCreditDeniedAnchor(
 async function applyQueueRunCreditGate(
   claimedAnchors: ClaimedAnchor[],
   expectedStatus: 'BROADCASTING' | 'PENDING' = 'BROADCASTING',
-): Promise<{ eligibleAnchors: ClaimedAnchor[]; chargedAnchors: ChargedQueueAnchor[] }> {
+): Promise<{
+  eligibleAnchors: ClaimedAnchor[];
+  chargedAnchors: ChargedQueueAnchor[];
+  decisions: QueueCreditGateDecision[];
+}> {
   const eligibleAnchors: ClaimedAnchor[] = [];
   const chargedAnchors: ChargedQueueAnchor[] = [];
+  const decisions: QueueCreditGateDecision[] = [];
 
   for (const anchor of claimedAnchors) {
     const reason = queueRunCreditReason(anchor);
     if (!reason) {
       eligibleAnchors.push(anchor);
+      decisions.push({
+        anchor, decision: 'not-required', reason: null, referenceId: null,
+        requiredAmount: null, balanceBefore: null, balanceAfter: null,
+      });
       continue;
     }
 
     if (!anchor.org_id) {
       await releaseQueueCreditDeniedAnchor(anchor, 'missing_org_id', undefined, expectedStatus);
+      decisions.push({
+        anchor, decision: 'denied', reason: 'missing_org_id', referenceId: anchor.id,
+        requiredAmount: 1, balanceBefore: null, balanceAfter: null,
+      });
       continue;
     }
 
@@ -350,6 +390,10 @@ async function applyQueueRunCreditGate(
         'Queue-run credit deduction threw',
       );
       await releaseQueueCreditDeniedAnchor(anchor, 'credit_rpc_failure', undefined, expectedStatus);
+      decisions.push({
+        anchor, decision: 'denied', reason: 'credit_rpc_failure', referenceId: anchor.id,
+        requiredAmount: 1, balanceBefore: null, balanceAfter: null,
+      });
       continue;
     }
 
@@ -362,6 +406,15 @@ async function applyQueueRunCreditGate(
         deduction,
         expectedStatus,
       );
+      const denialReason = deduction.error === 'insufficient_credits'
+        ? 'insufficient_credits'
+        : deduction.error ?? 'credit_denied';
+      decisions.push({
+        anchor, decision: 'denied', reason: denialReason, referenceId: anchor.id,
+        requiredAmount: deduction.required ?? 1,
+        balanceBefore: deduction.balance ?? null,
+        balanceAfter: deduction.balance ?? null,
+      });
       continue;
     }
 
@@ -370,15 +423,30 @@ async function applyQueueRunCreditGate(
       if (!marked) {
         await refundQueueRunCredits([{ id: anchor.id, orgId: anchor.org_id }], 'queue credit metadata update failed');
         await releaseQueueCreditDeniedAnchor(anchor, 'credit_metadata_update_failed', undefined, expectedStatus);
+        decisions.push({
+          anchor, decision: 'denied', reason: 'credit_metadata_update_failed',
+          referenceId: anchor.id, requiredAmount: 1,
+          balanceBefore: null, balanceAfter: null,
+        });
         continue;
       }
       chargedAnchors.push({ id: anchor.id, orgId: anchor.org_id });
     }
 
     eligibleAnchors.push(anchor);
+    const after = deduction.balance ?? null;
+    decisions.push({
+      anchor,
+      decision: 'allowed',
+      reason: deduction.reason ?? reason,
+      referenceId: anchor.id,
+      requiredAmount: deduction.required ?? 1,
+      balanceBefore: after === null || deduction.reason === 'feature_disabled' ? null : after + 1,
+      balanceAfter: after,
+    });
   }
 
-  return { eligibleAnchors, chargedAnchors };
+  return { eligibleAnchors, chargedAnchors, decisions };
 }
 
 // =============================================================================
@@ -537,6 +605,8 @@ export interface ProcessBatchAnchorOptions {
   force?: boolean;
   /** Restrict pending-anchor discovery and claims to a single organization. */
   orgId?: string;
+  /** Database-issued, authenticated RIG-B1 execution context. Never caller-authored. */
+  scenario?: S33RigB1ScenarioExecutionContext;
 }
 
 /**
@@ -1433,9 +1503,42 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+const S33RigB1PendingObservationSchema = z.object({
+  pending: z.number().int().nonnegative().safe(),
+  oldestPendingAt: z.string().datetime({ offset: true }).nullable(),
+}).strict();
+
+async function observeS33RigB1ScenarioPending(
+  scenario: S33RigB1ScenarioExecutionContext,
+  orgId: string | null,
+): Promise<z.infer<typeof S33RigB1PendingObservationSchema>> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (db.rpc as any)('observe_s33_rig_b1_scenario_pending', {
+    p_scenario_lease_id: scenario.scenarioLeaseId,
+    p_generation: scenario.generation,
+    p_scheduler_execution_id: scenario.schedulerExecutionId,
+    p_namespace_id: scenario.namespaceId,
+    p_worker_id: scenario.workerRevision,
+    p_org_id: orgId,
+  });
+  if (error) {
+    throw new Error(`RIG-B1 exact pending observation failed: ${claimErrorSummary(error) || 'unknown error'}`);
+  }
+  return S33RigB1PendingObservationSchema.parse(data);
+}
+
+function s33RigB1ArmedTrigger(
+  scenario: S33RigB1ScenarioExecutionContext,
+): 'org-scheduler' | 'global-policy' | 'global-flush' {
+  if (scenario.targetJobResource.endsWith('-org-queue-scheduler')) return 'org-scheduler';
+  if (scenario.targetJobResource.endsWith('-batch-anchors-forced-flush')) return 'global-flush';
+  return 'global-policy';
+}
+
 async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
   const orgId = typeof opts.orgId === 'string' ? opts.orgId.trim() : null;
+  const scenario = opts.scenario;
   if (opts.orgId !== undefined && !orgId) {
     logger.error({ orgId: opts.orgId }, 'Invalid empty orgId for org-scoped batch processing');
     return EMPTY;
@@ -1447,13 +1550,15 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   // S3-P0 Phase -1: finish (or safely unwind) any interrupted batch whose
   // pre-broadcast intent survived a crash, BEFORE claiming new work. Runs
   // under the same mutex; never throws (defers on any uncertainty).
-  try {
-    const reconcile = await reconcileBroadcastIntents(chainClient);
-    if (reconcile.scanned > 0) {
-      logger.info({ ...reconcile }, 'Broadcast-intent reconcile pass complete');
+  if (!scenario) {
+    try {
+      const reconcile = await reconcileBroadcastIntents(chainClient);
+      if (reconcile.scanned > 0) {
+        logger.info({ ...reconcile }, 'Broadcast-intent reconcile pass complete');
+      }
+    } catch (err) {
+      logger.warn({ error: err }, 'Broadcast-intent reconcile pass threw — continuing batch run');
     }
-  } catch (err) {
-    logger.warn({ error: err }, 'Broadcast-intent reconcile pass threw — continuing batch run');
   }
 
   try {
@@ -1470,42 +1575,43 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
 
   // Phase 0b: SCALE-1 — Smart batch skip + backlog age check
   let oldestPendingAgeMs = 0;
+  let scenarioPendingBefore: number | null = null;
   try {
-    // These reads are independent; keep them bounded to indexed threshold
-    // probes rather than exact counts on the hot anchors table.
-    let oldestQuery = db
-      .from('anchors')
-      .select('created_at')
-      .eq('status', 'PENDING')
-      .is('deleted_at', null);
-    if (orgId) oldestQuery = oldestQuery.eq('org_id', orgId);
-
-    const [oldestRes, countsRes] = await Promise.all([
-      oldestQuery
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle(),
-      getPendingTriggerProbe(orgId ?? undefined),
-    ]);
-
-    const stats = oldestRes.data;
-    if (!stats) {
-      logger.debug('No pending anchors — skipping batch');
-      return EMPTY;
+    let pendingProbe: PendingTriggerProbe;
+    if (scenario) {
+      const observation = await observeS33RigB1ScenarioPending(scenario, orgId);
+      scenarioPendingBefore = observation.pending;
+      if (observation.pending === 0 || observation.oldestPendingAt === null) return EMPTY;
+      oldestPendingAgeMs = Date.now() - Date.parse(observation.oldestPendingAt);
+      pendingProbe = {
+        pendingCountSentinel: observation.pending,
+        pendingThreshold: MIN_BATCH_THRESHOLD,
+        batchSize: BATCH_SIZE,
+        thresholdCrossed: observation.pending >= MIN_BATCH_THRESHOLD,
+        batchSizeCrossed: observation.pending >= BATCH_SIZE,
+      };
+    } else {
+      // These reads are independent; keep them bounded to indexed threshold
+      // probes rather than exact counts on the hot anchors table.
+      let oldestQuery = db.from('anchors').select('created_at')
+        .eq('status', 'PENDING').is('deleted_at', null);
+      if (orgId) oldestQuery = oldestQuery.eq('org_id', orgId);
+      const [oldestRes, countsRes] = await Promise.all([
+        oldestQuery.order('created_at', { ascending: true }).limit(1).maybeSingle(),
+        getPendingTriggerProbe(orgId ?? undefined),
+      ]);
+      const stats = oldestRes.data;
+      if (!stats) {
+        logger.debug('No pending anchors — skipping batch');
+        return EMPTY;
+      }
+      oldestPendingAgeMs = Date.now() - new Date(stats.created_at).getTime();
+      if (countsRes.error) logger.warn({ error: countsRes.error }, 'Pending threshold probe failed');
+      pendingProbe = countsRes.data ?? {
+        pendingCountSentinel: 1, pendingThreshold: MIN_BATCH_THRESHOLD,
+        batchSize: BATCH_SIZE, thresholdCrossed: false, batchSizeCrossed: false,
+      };
     }
-
-    oldestPendingAgeMs = Date.now() - new Date(stats.created_at).getTime();
-
-    if (countsRes.error) {
-      logger.warn({ error: countsRes.error }, 'Pending threshold probe failed');
-    }
-    const pendingProbe = countsRes.data ?? {
-      pendingCountSentinel: 1,
-      pendingThreshold: MIN_BATCH_THRESHOLD,
-      batchSize: BATCH_SIZE,
-      thresholdCrossed: false,
-      batchSizeCrossed: false,
-    };
     const pendingCount = pendingProbe.pendingCountSentinel;
     const pendingCountLogContext = {
       pendingCountSentinel: pendingCount,
@@ -1537,6 +1643,10 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       return EMPTY;
     }
   } catch (err) {
+    if (scenario) {
+      logger.error({ error: err, scenarioId: scenario.scenarioId }, 'RIG-B1 exact precondition failed closed');
+      return EMPTY;
+    }
     logger.warn({ error: err }, 'Smart batch skip check failed — proceeding with batch');
   }
 
@@ -1564,23 +1674,41 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   // Phase 1: Claim anchors in chunks (PostgREST caps RPC responses at 1000 rows)
   const allClaimed: ClaimedAnchor[] = [];
   let remaining = BATCH_SIZE;
+  const claimRpc = db.rpc as unknown as (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ data: unknown; error: unknown }>;
 
   while (remaining > 0) {
     const chunkSize = Math.min(remaining, POSTGREST_ROW_LIMIT);
     // Wrapped in 30s timeout to prevent batch job from hanging
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let chunkResult: { data: any; error: any };
+    let chunkResult: { data: unknown; error: unknown };
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      chunkResult = await withDbTimeout(() => (db.rpc as any)('claim_pending_anchors', {
-        p_worker_id: `batch-${process.pid}`,
-        p_limit: chunkSize,
-        p_exclude_pipeline: false,
-        p_org_id: orgId,
-      }), 30_000);
+      chunkResult = await withDbTimeout(() => scenario
+        ? claimRpc('claim_s33_rig_b1_scenario_anchors', {
+          p_scenario_lease_id: scenario.scenarioLeaseId,
+          p_generation: scenario.generation,
+          p_scheduler_execution_id: scenario.schedulerExecutionId,
+          p_namespace_id: scenario.namespaceId,
+          p_worker_id: scenario.workerRevision,
+          p_limit: chunkSize,
+          p_org_id: orgId,
+        })
+        : claimRpc('claim_pending_anchors', {
+          p_worker_id: `batch-${process.pid}`,
+          p_limit: chunkSize,
+          p_exclude_pipeline: false,
+          p_org_id: orgId,
+        }), 30_000);
     } catch (timeoutErr) {
-      logger.error({ error: timeoutErr, claimedSoFar: allClaimed.length }, 'claim_pending_anchors timed out in batch');
-      if (allClaimed.length === 0) {
+      logger.error(
+        { error: timeoutErr, claimedSoFar: allClaimed.length, scenarioId: scenario?.scenarioId },
+        'Batch claim RPC timed out',
+      );
+      if (scenario || allClaimed.length === 0) {
+        if (scenario && allClaimed.length > 0) {
+          await bulkRevertToPending(allClaimed.map((anchor) => anchor.id));
+        }
         return { processed: 0, batchId: null, merkleRoot: null, txId: null };
       }
       break; // Proceed with what we have
@@ -1588,6 +1716,16 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     const { data: chunk, error: claimError } = chunkResult;
 
     if (claimError) {
+      if (scenario) {
+        logger.error(
+          { error: claimError, scenarioId: scenario.scenarioId },
+          'RIG-B1 scenario claim failed closed without ordinary or legacy fallback',
+        );
+        if (allClaimed.length > 0) {
+          await bulkRevertToPending(allClaimed.map((anchor) => anchor.id));
+        }
+        return EMPTY;
+      }
       if (allClaimed.length === 0) {
         const migrationCompatMatch = claimPendingAnchorsMigrationCompatMatch(claimError);
         if (migrationCompatMatch) {
@@ -1614,12 +1752,72 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   }
 
   const claimedAnchors = allClaimed;
-  const { eligibleAnchors: broadcastAnchors, chargedAnchors } = await applyQueueRunCreditGate(claimedAnchors);
+  const {
+    eligibleAnchors: broadcastAnchors,
+    chargedAnchors,
+    decisions: creditDecisions,
+  } = await applyQueueRunCreditGate(claimedAnchors);
 
   if (broadcastAnchors.length < MIN_BATCH_SIZE) {
     if (broadcastAnchors.length > 0) {
       await refundQueueRunCredits(chargedAnchors, 'below minimum batch size after queue credit gate');
       await bulkRevertToPending(broadcastAnchors.map(a => a.id));
+    }
+    if (scenario && claimedAnchors.length > 0) {
+      if (!orgId || scenarioPendingBefore === null) {
+        throw new Error('RIG-B1 no-broadcast denial requires one exact org-scoped pending capture');
+      }
+      const completedAt = new Date().toISOString();
+      const after = await observeS33RigB1ScenarioPending(scenario, orgId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recorded = await (db.rpc as any)('record_s33_rig_b1_scenario_denial_pass', {
+        p_scenario_lease_id: scenario.scenarioLeaseId,
+        p_generation: scenario.generation,
+        p_scheduler_execution_id: scenario.schedulerExecutionId,
+        p_namespace_id: scenario.namespaceId,
+        p_fault_window_id: scenario.faultWindowId,
+        p_org_id: orgId,
+        p_pending_before: scenarioPendingBefore,
+        p_pending_after: after.pending,
+        p_decisions: creditDecisions.map((decision) => ({
+          anchorId: decision.anchor.id,
+          fingerprint: decision.anchor.fingerprint,
+          reason: decision.reason,
+          referenceId: decision.referenceId,
+          requiredAmount: decision.requiredAmount,
+          balanceBefore: decision.balanceBefore,
+          balanceAfter: decision.balanceAfter,
+        })),
+        p_completed_at: completedAt,
+        p_worker_id: scenario.workerRevision,
+      });
+      if (recorded.error) {
+        throw new Error(`RIG-B1 durable denial evidence failed: ${claimErrorSummary(recorded.error) || 'unknown error'}`);
+      }
+      const denialPass = S33RigB1DenialPassResponseSchema.parse(recorded.data);
+      const trigger = s33RigB1ArmedTrigger(scenario);
+      for (const outcome of denialPass.outcomes) {
+        logger.info({
+          event: 'credit-gate',
+          outcome: 'no-broadcast',
+          outcomeId: outcome.outcomeId,
+          schedulerExecutionId: scenario.schedulerExecutionId,
+          batchId: null,
+          trigger,
+          fingerprint: outcome.fingerprint,
+          orgId: outcome.orgId,
+          decision: 'denied',
+          reason: outcome.reason,
+          referenceId: outcome.referenceId,
+          requiredAmount: outcome.requiredAmount,
+          balanceBefore: outcome.balanceBefore,
+          balanceAfter: outcome.balanceAfter,
+          faultWindowId: scenario.faultWindowId,
+          scenarioId: scenario.scenarioId,
+          deniedAt: outcome.deniedAt,
+          completedAt: outcome.completedAt,
+        }, 'RIG-B1 queue credit denial completed without a broadcast');
+      }
     }
     return { processed: 0, batchId: null, merkleRoot: null, txId: null };
   }
@@ -1931,6 +2129,61 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     logger.warn({ error: complianceErr }, 'Non-fatal: failed to set compliance_controls on batch anchors');
   }
 
+  if (scenario) {
+    const after = await observeS33RigB1ScenarioPending(scenario, orgId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const record = await (db.rpc as any)('record_s33_rig_b1_scenario_batch', {
+      p_scenario_lease_id: scenario.scenarioLeaseId,
+      p_generation: scenario.generation,
+      p_scheduler_execution_id: scenario.schedulerExecutionId,
+      p_batch_id: batchId,
+      p_merkle_root: tree.root,
+      p_tx_id: receipt.receiptId,
+      p_pending_before: scenarioPendingBefore,
+      p_pending_after: after.pending,
+      p_completed_at: new Date().toISOString(),
+      p_worker_id: scenario.workerRevision,
+    });
+    if (record.error) {
+      throw new Error(`RIG-B1 durable batch evidence failed: ${claimErrorSummary(record.error) || 'unknown error'}`);
+    }
+    const trigger = s33RigB1ArmedTrigger(scenario);
+    logger.info({
+      event: 'trigger-fired',
+      schedulerExecutionId: scenario.schedulerExecutionId,
+      batchId,
+      trigger,
+      fingerprint: null,
+      orgId,
+      decision: null,
+      reason: null,
+      referenceId: null,
+      requiredAmount: null,
+      balanceBefore: null,
+      balanceAfter: null,
+      faultWindowId: scenario.faultWindowId,
+      scenarioId: scenario.scenarioId,
+    }, 'RIG-B1 authenticated Scheduler trigger completed');
+    for (const decision of creditDecisions) {
+      logger.info({
+        event: 'credit-gate',
+        schedulerExecutionId: scenario.schedulerExecutionId,
+        batchId,
+        trigger,
+        fingerprint: decision.anchor.fingerprint,
+        orgId: decision.anchor.org_id ?? null,
+        decision: decision.decision,
+        reason: decision.reason,
+        referenceId: decision.referenceId,
+        requiredAmount: decision.requiredAmount,
+        balanceBefore: decision.balanceBefore,
+        balanceAfter: decision.balanceAfter,
+        faultWindowId: scenario.faultWindowId,
+        scenarioId: scenario.scenarioId,
+      }, 'RIG-B1 queue credit gate observation');
+    }
+  }
+
   logger.info(
     {
       batchId,
@@ -2129,12 +2382,16 @@ async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorRes
     return { processed: 0, batchId: null, merkleRoot: null, txId: null };
   }
 
-  if (!pendingAnchors || pendingAnchors.length < MIN_BATCH_SIZE) {
+  const ordinaryPendingAnchors = (pendingAnchors ?? []).filter((anchor) => {
+    const metadata = readMetadata((anchor as { metadata?: unknown }).metadata);
+    return !Object.hasOwn(metadata, 's33_rig_b1');
+  });
+  if (ordinaryPendingAnchors.length < MIN_BATCH_SIZE) {
     return { processed: 0, batchId: null, merkleRoot: null, txId: null };
   }
 
   const { eligibleAnchors, chargedAnchors } = await applyQueueRunCreditGate(
-    pendingAnchors as ClaimedAnchor[],
+    ordinaryPendingAnchors as ClaimedAnchor[],
     'PENDING',
   );
 

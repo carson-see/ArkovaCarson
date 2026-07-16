@@ -85,6 +85,7 @@ function declarationValue(): Record<string, unknown> {
       expectedInitialPending: 2,
       expectedFinalPending: 1,
       passes: [{
+        outcome: 'broadcast',
         batchId: 'batch-live-1',
         armedTrigger: 'org-scheduler',
         schedulerExecutionId: 'scheduler-live-1',
@@ -95,8 +96,28 @@ function declarationValue(): Record<string, unknown> {
         },
         claims: [
           { fingerprint: FP_DRAINED, orgId: 'org-healthy' },
-          { fingerprint: FP_POISON, orgId: 'org-poison' },
         ],
+      }, {
+        outcome: 'no-broadcast',
+        outcomeId: 'denial-live-1',
+        armedTrigger: 'org-scheduler',
+        schedulerExecutionId: 'scheduler-live-1',
+        faultWindow: {
+          id: 'window-live-1',
+          startsAt: '2026-07-13T12:00:00.000Z',
+          endsAt: '2026-07-13T12:01:00.000Z',
+        },
+        claims: [{ fingerprint: FP_POISON, orgId: 'org-poison' }],
+        deniedGate: {
+          fingerprint: FP_POISON,
+          orgId: 'org-poison',
+          decision: 'denied',
+          reason: 'insufficient_credits',
+          referenceId: 'anchor-poison',
+          requiredAmount: 1,
+          balanceBefore: 0,
+          balanceAfter: 0,
+        },
       }],
     }],
   };
@@ -189,10 +210,10 @@ function rawCapturesForDeclaration(declarationSha256: string): RawCaptureTextSet
         {
           recordId: 'log-gate-poison', insertId: 'insert-gate-poison', traceId: 'trace-live-1',
           workerId: 'worker-live-1',
-          event: 'credit-gate', schedulerExecutionId: 'scheduler-live-1', batchId: 'batch-live-1',
+          event: 'credit-gate', schedulerExecutionId: 'scheduler-live-1', batchId: null,
           trigger: 'org-scheduler', fingerprint: FP_POISON, orgId: 'org-poison',
           decision: 'denied', reason: 'insufficient_credits', referenceId: 'anchor-poison',
-          requiredAmount: 1, balanceBefore: 0, balanceAfter: 0, occurredAt: '2026-07-13T12:00:08.000Z',
+          requiredAmount: 1, balanceBefore: 0, balanceAfter: 0, occurredAt: '2026-07-13T12:00:18.000Z',
         },
       ],
     }),
@@ -202,10 +223,21 @@ function rawCapturesForDeclaration(declarationSha256: string): RawCaptureTextSet
       queryId: 'repeatable-read-query-live-1',
       isolation: 'repeatable-read',
       executions: [{
+        batchId: 'batch-live-1',
         schedulerExecutionId: 'scheduler-live-1', armedTrigger: 'org-scheduler',
         workerId: 'worker-live-1',
         faultWindowId: 'window-live-1', startedAt: '2026-07-13T12:00:05.000Z',
-        completedAt: '2026-07-13T12:00:20.000Z', pendingBefore: 2, pendingAfter: 1,
+        completedAt: '2026-07-13T12:00:16.000Z', pendingBefore: 2, pendingAfter: 1,
+      }],
+      deniedOutcomes: [{
+        outcomeId: 'denial-live-1', schedulerExecutionId: 'scheduler-live-1',
+        faultWindowId: 'window-live-1', workerId: 'worker-live-1',
+        fingerprint: FP_POISON, orgId: 'org-poison', batchId: null,
+        status: 'PENDING', chainTxId: null, merkleRoot: null,
+        creditDenialReason: 'insufficient_credits', queueCreditChargedAt: null,
+        queueCreditDeniedAt: '2026-07-13T12:00:18.000Z',
+        pendingBefore: 1, pendingAfter: 1,
+        startedAt: '2026-07-13T12:00:17.000Z', completedAt: '2026-07-13T12:00:19.000Z',
       }],
       passRows: [
         {
@@ -213,12 +245,6 @@ function rawCapturesForDeclaration(declarationSha256: string): RawCaptureTextSet
           schedulerExecutionId: 'scheduler-live-1', claimOrder: 1, status: 'SUBMITTED',
           chainTxId: TX_ID, merkleRoot: FP_DRAINED, creditDenialReason: null,
           queueCreditChargedAt: null, queueCreditDeniedAt: null,
-        },
-        {
-          fingerprint: FP_POISON, orgId: 'org-poison', batchId: 'batch-live-1',
-          schedulerExecutionId: 'scheduler-live-1', claimOrder: 2, status: 'PENDING',
-          chainTxId: null, merkleRoot: null, creditDenialReason: 'insufficient_credits',
-          queueCreditChargedAt: null, queueCreditDeniedAt: '2026-07-13T12:00:08.000Z',
         },
       ],
       transactions: [{
@@ -569,30 +595,49 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     expect(() => deriveTrusted(impossibleChronology)).toThrow(/journal chronology|signing before acceptance/i);
   });
 
-  it('accepts distinct transaction journals sharing one org-scheduler pass batch ID', () => {
+  it('accepts ordered per-org batches sharing one truthful org-scheduler execution', () => {
     const value = declarationValue();
     const window = (value.windows as Array<{
       expectedInitialPending: number;
-      passes: Array<{ claims: Array<{ fingerprint: string; orgId: string }> }>;
+      passes: Array<Record<string, unknown>>;
     }>)[0]!;
     window.expectedInitialPending = 3;
-    window.passes[0]!.claims.push({ fingerprint: FP_DRAINED_SECOND_ORG, orgId: 'org-healthy-2' });
+    window.passes.splice(1, 0, {
+      outcome: 'broadcast', batchId: 'batch-live-2', armedTrigger: 'org-scheduler',
+      schedulerExecutionId: 'scheduler-live-1',
+      faultWindow: {
+        id: 'window-live-1', startsAt: '2026-07-13T12:00:00.000Z', endsAt: '2026-07-13T12:01:00.000Z',
+      },
+      claims: [{ fingerprint: FP_DRAINED_SECOND_ORG, orgId: 'org-healthy-2' }],
+    });
 
     const initial = immutable(value);
     const raw = rawCaptures(initial);
     const workerLogs = JSON.parse(raw.workerLogs) as { records: Array<Record<string, unknown>> };
-    workerLogs.records.push({
-      recordId: 'log-gate-healthy-2', insertId: 'insert-gate-healthy-2', traceId: 'trace-live-1',
+    workerLogs.records.splice(-1, 0, {
+      recordId: 'log-trigger-2', insertId: 'insert-trigger-2', traceId: 'trace-live-2',
+      workerId: 'worker-live-1', event: 'trigger-fired', schedulerExecutionId: 'scheduler-live-1',
+      batchId: 'batch-live-2', trigger: 'org-scheduler', fingerprint: null, orgId: null,
+      decision: null, reason: null, referenceId: null, requiredAmount: null,
+      balanceBefore: null, balanceAfter: null, occurredAt: '2026-07-13T12:00:18.000Z',
+    }, {
+      recordId: 'log-gate-healthy-2', insertId: 'insert-gate-healthy-2', traceId: 'trace-live-2',
       workerId: 'worker-live-1', event: 'credit-gate', schedulerExecutionId: 'scheduler-live-1',
-      batchId: 'batch-live-1', trigger: 'org-scheduler', fingerprint: FP_DRAINED_SECOND_ORG,
+      batchId: 'batch-live-2', trigger: 'org-scheduler', fingerprint: FP_DRAINED_SECOND_ORG,
       orgId: 'org-healthy-2', decision: 'not-required', reason: null, referenceId: null,
       requiredAmount: 0, balanceBefore: null, balanceAfter: null,
-      occurredAt: '2026-07-13T12:00:07.500Z',
+      occurredAt: '2026-07-13T12:00:19.000Z',
     });
+    Object.assign(workerLogs.records.at(-1)!, { occurredAt: '2026-07-13T12:00:30.000Z' });
     raw.workerLogs = JSON.stringify(workerLogs);
 
+    const scheduler = JSON.parse(raw.scheduler) as { records: Array<{ purpose: string; completedAt: string }> };
+    scheduler.records.find(({ purpose }) => purpose === 'drain')!.completedAt = '2026-07-13T12:00:40.000Z';
+    raw.scheduler = JSON.stringify(scheduler);
+
     const database = JSON.parse(raw.database) as {
-      executions: Array<{ pendingBefore: number }>;
+      executions: Array<Record<string, unknown>>;
+      deniedOutcomes: Array<Record<string, unknown>>;
       passRows: Array<Record<string, unknown>>;
       transactions: Array<Record<string, unknown>>;
       journalRows: Array<Record<string, unknown>>;
@@ -602,31 +647,42 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
       ledgerDeltas: Array<Record<string, unknown>>;
     };
     database.executions[0]!.pendingBefore = 3;
-    database.passRows[1]!.claimOrder = 3;
+    database.executions[0]!.pendingAfter = 2;
+    database.executions.push({
+      batchId: 'batch-live-2', schedulerExecutionId: 'scheduler-live-1', armedTrigger: 'org-scheduler',
+      workerId: 'worker-live-1', faultWindowId: 'window-live-1',
+      startedAt: '2026-07-13T12:00:17.000Z', completedAt: '2026-07-13T12:00:28.000Z',
+      pendingBefore: 2, pendingAfter: 1,
+    });
+    Object.assign(database.deniedOutcomes[0]!, {
+      pendingBefore: 1, pendingAfter: 1,
+      startedAt: '2026-07-13T12:00:29.000Z', completedAt: '2026-07-13T12:00:35.000Z',
+      queueCreditDeniedAt: '2026-07-13T12:00:30.000Z',
+    });
     database.passRows.push({
-      fingerprint: FP_DRAINED_SECOND_ORG, orgId: 'org-healthy-2', batchId: 'batch-live-1',
-      schedulerExecutionId: 'scheduler-live-1', claimOrder: 2, status: 'SUBMITTED',
+      fingerprint: FP_DRAINED_SECOND_ORG, orgId: 'org-healthy-2', batchId: 'batch-live-2',
+      schedulerExecutionId: 'scheduler-live-1', claimOrder: 1, status: 'SUBMITTED',
       chainTxId: TX_ID_SECOND_ORG, merkleRoot: FP_DRAINED_SECOND_ORG, creditDenialReason: null,
       queueCreditChargedAt: null, queueCreditDeniedAt: null,
     });
     database.transactions.push({
-      txId: TX_ID_SECOND_ORG, batchId: 'batch-live-1', merkleRoot: FP_DRAINED_SECOND_ORG,
+      txId: TX_ID_SECOND_ORG, batchId: 'batch-live-2', merkleRoot: FP_DRAINED_SECOND_ORG,
       signedBytesSha256: SIGNED_HASH_SECOND_ORG,
     });
     database.journalRows.push({
-      journalId: JOURNAL_SECOND_ORG_ID, batchId: 'batch-live-1', txId: TX_ID_SECOND_ORG,
+      journalId: JOURNAL_SECOND_ORG_ID, batchId: 'batch-live-2', txId: TX_ID_SECOND_ORG,
       fingerprintRoot: FP_DRAINED_SECOND_ORG, anchorIds: [ANCHOR_DRAINED_SECOND_ORG_ID],
       leafOrder: [{ anchorId: ANCHOR_DRAINED_SECOND_ORG_ID, fingerprint: FP_DRAINED_SECOND_ORG }],
-      signedAt: '2026-07-13T12:00:10.000Z', recoveryStatus: 'PERSISTED', holdReason: null,
-      heldAt: null, resolvedAt: '2026-07-13T12:00:16.000Z',
-      createdAt: '2026-07-13T12:00:10.000Z', updatedAt: '2026-07-13T12:00:16.000Z',
+      signedAt: '2026-07-13T12:00:20.000Z', recoveryStatus: 'PERSISTED', holdReason: null,
+      heldAt: null, resolvedAt: '2026-07-13T12:00:26.000Z',
+      createdAt: '2026-07-13T12:00:20.000Z', updatedAt: '2026-07-13T12:00:26.000Z',
     });
     database.txLeaves.push({
-      txId: TX_ID_SECOND_ORG, batchId: 'batch-live-1', anchorId: ANCHOR_DRAINED_SECOND_ORG_ID,
+      txId: TX_ID_SECOND_ORG, batchId: 'batch-live-2', anchorId: ANCHOR_DRAINED_SECOND_ORG_ID,
       fingerprint: FP_DRAINED_SECOND_ORG, orgId: 'org-healthy-2', merkleIndex: 0,
     });
     database.proofs.push({
-      txId: TX_ID_SECOND_ORG, batchId: 'batch-live-1', anchorId: ANCHOR_DRAINED_SECOND_ORG_ID,
+      txId: TX_ID_SECOND_ORG, batchId: 'batch-live-2', anchorId: ANCHOR_DRAINED_SECOND_ORG_ID,
       fingerprint: FP_DRAINED_SECOND_ORG, orgId: 'org-healthy-2', merkleIndex: 0,
       merkleRoot: FP_DRAINED_SECOND_ORG, leafCount: 1, proofPath: [],
     });
@@ -642,9 +698,9 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     signet.records.push({
       recordId: 'signet-record-2', rpcRequestId: 'rpc-request-2', rpcMethod: 'getrawtransaction',
       schedulerExecutionId: 'scheduler-live-1', workerId: 'worker-live-1', txId: TX_ID_SECOND_ORG,
-      batchId: 'batch-live-1', merkleRoot: FP_DRAINED_SECOND_ORG,
+      batchId: 'batch-live-2', merkleRoot: FP_DRAINED_SECOND_ORG,
       rawTxSha256: SIGNED_HASH_SECOND_ORG, nodeId: 'signet-rig-b1', network: 'signet',
-      state: 'mempool', observedAt: '2026-07-13T12:00:13.000Z',
+      state: 'mempool', observedAt: '2026-07-13T12:00:24.000Z',
     });
     raw.signet = JSON.stringify(signet);
 
@@ -776,6 +832,7 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     windows.push({
       ...windows[0],
       scenarioId: 'second-window',
+      kind: 'eligible-10000',
       passes: [{
         ...firstPass,
         batchId: 'batch-live-2',
@@ -838,12 +895,12 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
   it('rejects credit DB metadata outside its exact Scheduler execution', () => {
     const initial = immutable();
     const raw = rawCaptures(initial);
-    const database = JSON.parse(raw.database) as { passRows: Array<{ queueCreditDeniedAt: string | null }> };
-    database.passRows[1]!.queueCreditDeniedAt = '2026-07-15T12:00:00.000Z';
+    const database = JSON.parse(raw.database) as { deniedOutcomes: Array<{ queueCreditDeniedAt: string }> };
+    database.deniedOutcomes[0]!.queueCreditDeniedAt = '2026-07-15T12:00:00.000Z';
     raw.database = JSON.stringify(database);
     const declared = trust(declarationValue(), raw);
     expect(() => deriveAndAssertLiveEvidence(declared, parseRawCaptureSet(raw, declared))).toThrow(
-      /credit.*outside.*Scheduler execution|queueCreditDeniedAt/i,
+      /credit.*outside.*Scheduler execution|queueCreditDeniedAt|denial chronology/i,
     );
   });
 

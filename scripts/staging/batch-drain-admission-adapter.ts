@@ -39,14 +39,13 @@ const isoTimestamp = strictUtcTimestampSchema;
 const TEAM2_RIG_B1_CREATION_GUARD =
   'non-firing hold schedule; create then immediate pause + PAUSED verification';
 const TEAM2_RIG_B1_SCHEDULER_SPECS = [
-  ['batch-anchors', '/jobs/batch-anchors', '*/30 * * * *', 'Etc/UTC', '120s'],
-  ['check-confirmations', '/jobs/check-confirmations', '*/30 * * * *', 'Etc/UTC', '300s'],
-  ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs', '*/15 * * * *', 'Etc/UTC', '300s'],
-  ['org-queue-scheduler', '/jobs/org-queue-scheduler', '0 * * * *', 'Etc/UTC', '600s'],
-  ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true', '0 3 * * *', 'America/New_York', '600s'],
-  ['recover-broadcasts', '/jobs/recover-broadcasts', '*/15 * * * *', 'Etc/UTC', '120s'],
+  ['batch-anchors', '/jobs/batch-anchors', '*/5 * * * *', 'Etc/UTC', '120s'],
+  ['check-confirmations', '/jobs/check-confirmations', '*/5 * * * *', 'Etc/UTC', '300s'],
+  ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs', '*/5 * * * *', 'Etc/UTC', '300s'],
+  ['org-queue-scheduler', '/jobs/org-queue-scheduler', '*/5 * * * *', 'Etc/UTC', '600s'],
+  ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true', '*/5 * * * *', 'America/New_York', '600s'],
+  ['recover-broadcasts', '/jobs/recover-broadcasts', '*/5 * * * *', 'Etc/UTC', '120s'],
 ] as const;
-const TEAM2_RIG_B1_ACCELERATED_SCHEDULE = '*/5 * * * *';
 const TEAM2_RIG_B1_RETRY = {
   min_backoff: '5s',
   max_backoff: '3600s',
@@ -275,12 +274,9 @@ function assertAdmissionInvariants(admission: AdmissionV2 | PreClockAdmissionV2)
     admission.scheduler.jobs.length !== expectedSchedulerJobs.size
     || admission.scheduler.jobs.some((job) => {
       const expected = expectedSchedulerJobs.get(job.name);
-      const expectedSchedule = admission.scheduler.activation_mode === 'FORCE_ACCELERATED_RIG_ONLY'
-        ? TEAM2_RIG_B1_ACCELERATED_SCHEDULE
-        : expected?.schedule;
       return !expected
         || job.path !== expected.path
-        || job.schedule !== expectedSchedule
+        || job.schedule !== expected.schedule
         || job.time_zone !== expected.timeZone
         || job.attempt_deadline !== expected.attemptDeadline
         || job.retry.min_backoff !== TEAM2_RIG_B1_RETRY.min_backoff

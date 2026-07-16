@@ -169,7 +169,22 @@ export interface DrainPassEvidenceSummary {
   completedAt: string;
 }
 
-export type DrainWindowKind = 'eligible-10000' | 'eligible-12500' | 'poison-isolation';
+export const DRAIN_WINDOW_KINDS = [
+  'eligible-10000',
+  'eligible-12500',
+  'poison-isolation',
+  'trigger-a-size:1',
+  'trigger-a-size:2',
+  'trigger-b-age:1',
+  'trigger-d-force:1',
+  'org-scheduler:1',
+] as const;
+
+export type DrainWindowKind = typeof DRAIN_WINDOW_KINDS[number];
+
+export function isPoisonDrainWindowKind(kind: DrainWindowKind): boolean {
+  return kind === 'poison-isolation' || kind === 'org-scheduler:1';
+}
 
 export interface DrainWindowExpectation {
   scenarioId: string;
@@ -1055,7 +1070,9 @@ function assertUniqueDrainWindowInputs(expectation: DrainWindowExpectation): voi
   const claimFingerprints = expectation.passes.flatMap((pass) => pass.claims.map((claim) => claim.fingerprint));
   if (
     new Set(batchIds).size !== batchIds.length
-    || new Set(faultWindowIds).size !== faultWindowIds.length
+    || (expectation.armedTrigger === 'org-scheduler'
+      ? new Set(faultWindowIds).size !== 1
+      : new Set(faultWindowIds).size !== faultWindowIds.length)
     || new Set(claimFingerprints).size !== claimFingerprints.length
   ) {
     throw new Error('Claim, batch, or fault-window identity was reused across Scheduler passes.');
@@ -1067,8 +1084,11 @@ function assertJoinedSchedulerSummaries(
   summaries: DrainPassEvidenceSummary[],
 ): Pick<DrainWindowFacts, 'executionIds' | 'transactionIds'> {
   const executionIds = summaries.map((summary) => summary.schedulerExecutionId);
-  if (new Set(executionIds).size !== executionIds.length) {
-    throw new Error('Every Scheduler tick requires a distinct execution id.');
+  const uniqueExecutionIds = [...new Set(executionIds)];
+  if (expectation.armedTrigger === 'org-scheduler'
+    ? uniqueExecutionIds.length !== 1
+    : uniqueExecutionIds.length !== executionIds.length) {
+    throw new Error('Scheduler pass execution multiplicity differs from the declared trigger topology.');
   }
   const transactionIds = summaries.flatMap((summary) => summary.transactionIds);
   if (new Set(transactionIds).size !== transactionIds.length) {
@@ -1090,11 +1110,16 @@ function assertJoinedSchedulerSummaries(
       throw new Error('Observed Scheduler ticks are not chronological and non-overlapping.');
     }
   }
-  return { executionIds, transactionIds };
+  return { executionIds: uniqueExecutionIds, transactionIds };
 }
 
+type DrainWindowSemanticExpectation = Pick<
+  DrainWindowExpectation,
+  'scenarioId' | 'kind' | 'armedTrigger' | 'expectedInitialPending' | 'expectedFinalPending'
+>;
+
 function assertEligible10000Window(
-  expectation: DrainWindowExpectation,
+  expectation: DrainWindowSemanticExpectation,
   summaries: DrainPassEvidenceSummary[],
   poisonLeaves: number,
 ): void {
@@ -1111,7 +1136,7 @@ function assertEligible10000Window(
 }
 
 function assertEligible12500Window(
-  expectation: DrainWindowExpectation,
+  expectation: DrainWindowSemanticExpectation,
   summaries: DrainPassEvidenceSummary[],
   poisonLeaves: number,
 ): void {
@@ -1129,22 +1154,70 @@ function assertEligible12500Window(
   }
 }
 
-function assertDrainWindowKind(
-  expectation: DrainWindowExpectation,
-  summaries: DrainPassEvidenceSummary[],
-  facts: Pick<DrainWindowFacts, 'drainedLeaves' | 'poisonLeaves'>,
+interface DrainWindowSemanticPassSummary {
+  readonly pendingAfter: number;
+  readonly drainedLeaves: number;
+  readonly poisonLeaves: number;
+}
+
+/** Validate the exact named legacy or Wave-3 outcome from derived pass facts. */
+export function assertDrainWindowSemantic(
+  expectation: DrainWindowSemanticExpectation,
+  summaries: readonly DrainWindowSemanticPassSummary[],
 ): void {
+  const drainedLeaves = summaries.reduce((sum, summary) => sum + summary.drainedLeaves, 0);
+  const poisonLeaves = summaries.reduce((sum, summary) => sum + summary.poisonLeaves, 0);
   if (expectation.kind === 'eligible-10000') {
-    assertEligible10000Window(expectation, summaries, facts.poisonLeaves);
+    assertEligible10000Window(expectation, summaries as DrainPassEvidenceSummary[], poisonLeaves);
     return;
   }
   if (expectation.kind === 'eligible-12500') {
-    assertEligible12500Window(expectation, summaries, facts.poisonLeaves);
+    assertEligible12500Window(expectation, summaries as DrainPassEvidenceSummary[], poisonLeaves);
     return;
   }
   if (expectation.kind === 'poison-isolation') {
-    if (facts.poisonLeaves === 0 || facts.drainedLeaves === 0 || expectation.expectedFinalPending === 0) {
+    if (poisonLeaves === 0 || drainedLeaves === 0 || expectation.expectedFinalPending === 0) {
       throw new Error('poison-isolation requires observed poison rows, healthy drained neighbors, and a pending remainder.');
+    }
+    return;
+  }
+  const exactWave3 = {
+    'trigger-a-size:1': {
+      trigger: 'global-policy', initial: 12_500, final: 2_500, drained: 10_000,
+    },
+    'trigger-a-size:2': {
+      trigger: 'global-policy', initial: 15_000, final: 5_000, drained: 10_000,
+    },
+    'trigger-b-age:1': {
+      trigger: 'global-policy', initial: 5_000, final: 0, drained: 5_000,
+    },
+    'trigger-d-force:1': {
+      trigger: 'global-flush', initial: 2_500, final: 0, drained: 2_500,
+    },
+  } as const;
+  if (expectation.kind in exactWave3) {
+    const named = exactWave3[expectation.kind as keyof typeof exactWave3];
+    if (expectation.armedTrigger !== named.trigger
+      || summaries.length !== 1
+      || expectation.expectedInitialPending !== named.initial
+      || expectation.expectedFinalPending !== named.final
+      || summaries[0]!.pendingAfter !== named.final
+      || drainedLeaves !== named.drained
+      || poisonLeaves !== 0) {
+      throw new Error(`${expectation.kind} differs from its exact single-pass Wave-3 outcome.`);
+    }
+    return;
+  }
+  if (expectation.kind === 'org-scheduler:1') {
+    const poisonPasses = summaries.filter((summary) => summary.poisonLeaves !== 0);
+    if (expectation.armedTrigger !== 'org-scheduler'
+      || expectation.expectedInitialPending !== 12_500
+      || expectation.expectedFinalPending !== 197
+      || drainedLeaves !== 12_303
+      || poisonLeaves !== 197
+      || poisonPasses.length !== 197
+      || poisonPasses.some((summary) => summary.poisonLeaves !== 1)) {
+      throw new Error('org-scheduler:1 differs from the exact healthy-broadcast plus 197 no-broadcast Wave-3 outcome.');
     }
     return;
   }
@@ -1162,13 +1235,13 @@ export function assertDrainWindowObservation(
   const identities = assertJoinedSchedulerSummaries(expectation, summaries);
   const drainedLeaves = summaries.reduce((sum, summary) => sum + summary.drainedLeaves, 0);
   const poisonLeaves = summaries.reduce((sum, summary) => sum + summary.poisonLeaves, 0);
-  assertDrainWindowKind(expectation, summaries, { drainedLeaves, poisonLeaves });
+  assertDrainWindowSemantic(expectation, summaries);
 
   return {
     scenarioId: expectation.scenarioId,
     kind: expectation.kind,
     armedTrigger: expectation.armedTrigger,
-    schedulerTicks: summaries.length,
+    schedulerTicks: identities.executionIds.length,
     drainedLeaves,
     poisonLeaves,
     initialPending: summaries[0]!.pendingBefore,

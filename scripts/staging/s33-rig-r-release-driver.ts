@@ -11,7 +11,7 @@
 
 import { z } from 'zod';
 
-import { requireS33ReleaseEvidenceChainResult } from './s33-release-evidence-chain';
+import { requireS33RigRReleaseEvidence } from './s33-rig-r-release-evidence';
 
 export const RIG_R_RELEASE_TOPOLOGY = Object.freeze({
   rigId: 'RIG-R',
@@ -22,11 +22,13 @@ export const RIG_R_RELEASE_TOPOLOGY = Object.freeze({
   cloudRunService: 'arkova-worker-s33-r-staging',
   runtimeServiceAccount: 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
   region: 'us-central1',
+  releaseEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733002',
+  releaseDeployedModelId: '7330021',
   containedDatabaseQueues: Object.freeze(['ai-rollback', 'chain-fault'] as const),
   protectedV6RollbackEndpoint:
     'projects/arkova1/locations/us-central1/endpoints/6611494259700793344',
   protectedV6RollbackModel:
-    'projects/arkova1/locations/us-central1/models/6611494259700793344',
+    'projects/270018525501/locations/us-central1/models/6611494259700793344',
   smokeCommand: Object.freeze([
     'npx',
     'tsx',
@@ -41,9 +43,6 @@ export const RIG_R_RELEASE_TOPOLOGY = Object.freeze({
 
 const gitSha = z.string().regex(/^[0-9a-f]{40}$/u);
 const sha256 = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
-const vertexEndpoint = z.string().regex(
-  /^projects\/arkova1\/locations\/us-central1\/endpoints\/[1-9][0-9]*$/u,
-);
 const provisionBindingSchema = z.object({
   schemaVersion: z.literal('arkova.s33.rig-r.provision-binding/v1'),
   rigId: z.literal(RIG_R_RELEASE_TOPOLOGY.rigId),
@@ -58,9 +57,9 @@ const provisionBindingSchema = z.object({
   supabaseProjectName: z.literal(RIG_R_RELEASE_TOPOLOGY.supabaseProjectName),
   cloudRunService: z.literal(RIG_R_RELEASE_TOPOLOGY.cloudRunService),
   runtimeServiceAccount: z.literal(RIG_R_RELEASE_TOPOLOGY.runtimeServiceAccount),
-  vertexEndpoint,
+  vertexEndpoint: z.literal(RIG_R_RELEASE_TOPOLOGY.releaseEndpoint),
   vertexModel: z.literal(RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackModel),
-  deployedModelId: z.string().regex(/^[1-9][0-9]*$/u),
+  deployedModelId: z.literal(RIG_R_RELEASE_TOPOLOGY.releaseDeployedModelId),
   containedDatabaseQueues: z.tuple([
     z.literal('ai-rollback'),
     z.literal('chain-fault'),
@@ -74,13 +73,6 @@ const provisionBindingSchema = z.object({
   provisionStartedAt: z.string().datetime({ offset: true }),
   expiresAt: z.string().datetime({ offset: true }),
 }).strict().superRefine((value, context) => {
-  if (value.vertexEndpoint === RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackEndpoint) {
-    context.addIssue({
-      code: 'custom',
-      path: ['vertexEndpoint'],
-      message: 'RIG-R cannot target the protected v6 rollback endpoint.',
-    });
-  }
   const startedAt = Date.parse(value.provisionStartedAt);
   const expiresAt = Date.parse(value.expiresAt);
   const minimumExpiry = startedAt + (value.requiredWallMin + 360) * 60_000;
@@ -137,7 +129,7 @@ export interface S33RigRReleaseDriverPort {
   runV6Eval(binding: S33RigRProvisionBinding): Promise<void>;
   /** Loads the exact already-composed release evidence for this run. */
   loadReleaseEvidence(binding: S33RigRProvisionBinding): Promise<unknown>;
-  /** Normally requireS33ReleaseEvidenceChainResult; injectable only for tests/adapters. */
+  /** Normally requireS33RigRReleaseEvidence; injectable only for tests/adapters. */
   requireReleaseEvidence?(value: unknown): unknown;
   /** Executes the canonical isolated-rig teardown contract. */
   teardown(
@@ -189,7 +181,7 @@ export async function runS33RigRReleaseDriver(
     await port.runV6Eval(binding);
     const candidate = await port.loadReleaseEvidence(binding);
     const releaseEvidence = (port.requireReleaseEvidence
-      ?? requireS33ReleaseEvidenceChainResult)(candidate);
+      ?? requireS33RigRReleaseEvidence)(candidate);
     const releaseIdentity = releaseEvidenceIdentitySchema.safeParse(releaseEvidence);
     if (!releaseIdentity.success) {
       throw new Error(

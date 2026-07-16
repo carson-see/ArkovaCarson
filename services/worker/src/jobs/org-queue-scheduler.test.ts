@@ -31,6 +31,24 @@ const { runOrgQueueScheduler, recordOrgQueueRunResult } = await import('./org-qu
 
 const ORG_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ORG_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const SCENARIO = {
+  generation: 8,
+  scenarioLeaseId: '10000000-0000-4000-8000-000000000001',
+  scenarioId: 'org-30',
+  targetJobResource:
+    'projects/arkova1/locations/us-central1/jobs/arkova-worker-s33-rig-b1-staging-org-queue-scheduler',
+  namespaceId: 's33-b1-org-30',
+  expectedPending: 30,
+  faultWindowId: 'fault-org-30',
+  soakId: 'soak-b1',
+  runLeaseId: 'lease-b1',
+  workerRevision: 'arkova-worker-s33-rig-b1-staging-00001-abc',
+  schedulerExecutionId: `sha256:${'a'.repeat(64)}`,
+  schedulerJobResource:
+    'projects/arkova1/locations/us-central1/jobs/arkova-worker-s33-rig-b1-staging-org-queue-scheduler',
+  schedulerScheduleTime: '2026-07-16T18:25:00.000Z',
+  expiresAt: '2026-07-16T18:29:00.000Z',
+} as const;
 
 function setupWriteTables() {
   const insert = vi.fn().mockResolvedValue({ error: null });
@@ -160,6 +178,32 @@ describe('runOrgQueueScheduler', () => {
 
     await expect(runOrgQueueScheduler()).rejects.toThrow(/invalid rows/i);
     expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+  });
+
+  it('enumerates only the exact scenario namespace and propagates its authenticated context', async () => {
+    mockDbRpc.mockResolvedValue({ data: [ORG_A, ORG_B], error: null });
+    mockProcessBatchAnchors.mockResolvedValue({
+      processed: 1, batchId: 'batch-rig', merkleRoot: 'd'.repeat(64), txId: 'e'.repeat(64),
+    });
+
+    const result = await runOrgQueueScheduler({ scenario: SCENARIO });
+
+    expect(mockDbRpc).toHaveBeenCalledWith('list_s33_rig_b1_scenario_orgs', {
+      p_scenario_lease_id: SCENARIO.scenarioLeaseId,
+      p_generation: SCENARIO.generation,
+      p_scheduler_execution_id: SCENARIO.schedulerExecutionId,
+      p_namespace_id: SCENARIO.namespaceId,
+      p_worker_id: SCENARIO.workerRevision,
+    });
+    expect(mockDbRpc).not.toHaveBeenCalledWith('claim_due_org_queue_runs', expect.anything());
+    expect(mockProcessBatchAnchors).toHaveBeenNthCalledWith(1, {
+      force: true, orgId: ORG_A, scenario: SCENARIO,
+    });
+    expect(mockProcessBatchAnchors).toHaveBeenNthCalledWith(2, {
+      force: true, orgId: ORG_B, scenario: SCENARIO,
+    });
+    expect(mockEmitOrgAdminNotifications).not.toHaveBeenCalled();
+    expect(result).toEqual({ claimed: 2, succeeded: 2, failed: 0, processed: 2 });
   });
 });
 

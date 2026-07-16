@@ -382,8 +382,16 @@ export function buildRigB1ReadinessPlan(
   ) {
     throw new Error('RIG-B1 signed treasury inventory differs from the exact pre-split plan.');
   }
-  const secretReferences: RigB1SecretReference[] = admission.infrastructure.secretReferences
-    .map((reference) => ({ ...reference }));
+  const readinessSecretEnvs: readonly RigB1SecretEnv[] = [
+    'BITCOIN_RPC_URL', 'BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF',
+  ];
+  const secretReferences: RigB1SecretReference[] = readinessSecretEnvs.map((env) => {
+    const matches = admission.infrastructure.secretReferences.filter((reference) => reference.env === env);
+    if (matches.length !== 1) {
+      throw new Error(`RIG-B1 admission lacks one exact ${env} readiness reference.`);
+    }
+    return { ...matches[0], env };
+  });
   const schedulerJobs: RigB1SchedulerJob[] = JOB_SUFFIXES.map(([suffix, path]) => ({
     name: `${admission.workerService}-${suffix}`,
     path,

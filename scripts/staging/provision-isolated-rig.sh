@@ -384,7 +384,7 @@ usage() {
   echo "          [--soak-id <exclusive-soak-id>] [--rig-id <rig-id>] [--lease-id <lease-id>]"
   echo "          [--required-uptime-min <minutes>] [--required-wall-min <minutes>]"
   echo "          [--org <supabase-org>] [--gcp-project arkova1]"
-  echo "          [--scheduler-activation PAUSED|FORCE_ACCELERATED_RIG_ONLY]"
+  echo "          [--scheduler-activation PAUSED]"
   echo "          [--runtime-sa <per-rig-service-account>] [--cron-oidc-sa <per-rig-service-account>]"
   echo "          [--artifact-dir docs/staging/<pr-or-rig>]"
   echo
@@ -555,8 +555,9 @@ case "$SCHEDULER_ACTIVATION_MODE" in
     exit 2
     ;;
 esac
-if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" && $IS_MOCK_PROFILE -eq 1 ]]; then
-  echo "ERROR: FORCE_ACCELERATED_RIG_ONLY is invalid for a mock profile with no Scheduler topology." >&2
+if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+  echo "ERROR: provisioning never activates Scheduler traffic; FORCE_ACCELERATED_RIG_ONLY is forbidden here." >&2
+  echo "       Provision RIG-B1 with PAUSED, then use scripts/staging/s33-b1-scheduler-start.ts." >&2
   exit 2
 fi
 
@@ -2363,17 +2364,6 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       Expected CONFIRM_REAL_CONFIG='$PROFILE', got CONFIRM_REAL_CONFIG='${CONFIRM_REAL_CONFIG:-<unset>}'." >&2
     exit 2
   fi
-  if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
-    if [[ "$RIG_ID" != "RIG-B1" || "$PROFILE" != "chain" ]]; then
-      echo "ERROR: FORCE_ACCELERATED_RIG_ONLY is restricted to the isolated RIG-B1 chain topology." >&2
-      exit 2
-    fi
-    if [[ "${CONFIRM_SCHEDULER_ACTIVATION:-}" != "FORCE_ACCELERATED_RIG_ONLY" ]]; then
-      echo "ERROR: accelerated Scheduler activation requires the second exact acknowledgement" >&2
-      echo "       CONFIRM_SCHEDULER_ACTIVATION=FORCE_ACCELERATED_RIG_ONLY." >&2
-      exit 2
-    fi
-  fi
   if [[ $IS_G1_RIG -eq 1 ]]; then
     # Wave 3 itself authorizes no rig or spend. This acknowledgement selects the
     # post-Wave-3 workflow only; spend authority is verified cryptographically
@@ -2721,6 +2711,11 @@ BASE_ENV_VARS=(
   "CORS_ALLOWED_ORIGINS=https://app.arkova.ai"
   "FRONTEND_URL=${FRONTEND_URL_VALUE}"
 )
+if [[ "$RIG_ID" == "RIG-B1" ]]; then
+  # B1 execution is driven only by the six authenticated Cloud Scheduler jobs.
+  # The collector re-observes this exact revision flag before counted start.
+  BASE_ENV_VARS+=("DISABLE_ALL_IN_PROCESS_CRON=true")
+fi
 
 # Base secrets every rig gets: the NEW project's own Supabase creds PLUS the
 # boot-critical Stripe / HMAC / cron secrets (config.ts fails closed without them
@@ -3172,7 +3167,7 @@ scheduler_jobs_json() {
     [[ -z "$spec" ]] && continue
     suffix="$(scheduler_spec_suffix "$spec")"
     path="$(scheduler_spec_path "$spec")"
-    if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+    if [[ "$RIG_ID" == "RIG-B1" ]]; then
       schedule="$SCHEDULER_ACCELERATED_SCHEDULE"
     else
       schedule="$(scheduler_spec_production_schedule "$spec")"
@@ -5170,13 +5165,13 @@ publish_rig_b1_topology_ownership() {
         corpusDigest: $corpus,
         releaseCandidateId: $rc_id,
         rigId: "RIG-B1",
-        rigName: "s33-b1",
+        rigName: "s33-rig-b1",
         soakId: $soak_id,
         leaseId: $lease_id,
         gcpProjectId: "arkova1",
         gcpRegion: "us-central1",
         supabaseProjectRef: $project_ref,
-        supabaseProjectName: "arkova-soak-s33-b1",
+        supabaseProjectName: "arkova-soak-s33-rig-b1",
         workerService: $service,
         workerRuntimeServiceAccount: $runtime_sa,
         schedulerOidcServiceAccount: $scheduler_sa,
@@ -5781,17 +5776,17 @@ else
     write_provision_state "cloud_run_provenance_verified" ""
   fi
 fi
-if [[ "$RIG_ID" == "RIG-B1" ]]; then
-  echo "#   grant the explicit RIG-B1 Scheduler OIDC principal service-scoped invoker"
+if [[ $IS_RIG_R -eq 1 ]]; then
+  echo "#   grant the exact RIG-R runtime principal service-scoped invoker"
   run_cmd gcloud run services add-iam-policy-binding "$CLOUD_RUN_SERVICE" \
-    --member="serviceAccount:${CRON_OIDC_SA}" \
+    --member="serviceAccount:${RUNTIME_SA}" \
     --role="roles/run.invoker" \
     --region="$CLOUD_RUN_REGION" \
     --project="$GCP_PROJECT" \
     --condition=None \
     --quiet
   if [[ $APPLY -eq 1 ]]; then
-    write_provision_state "b1_service_invoker_bound" ""
+    write_provision_state "rig_r_service_invoker_bound" ""
   fi
 fi
 if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then
@@ -5828,10 +5823,10 @@ else
   # resolve_cloud_run_url() — no hand-built URL, no stale placeholder.
   WORKER_URL="$(resolve_cloud_run_url)"
   if [[ $APPLY -eq 1 ]]; then
-    # Fetch the cron secret VALUE from Secret Manager at apply time so the
+    # Fetch the exact runtime-bound cron secret VERSION from Secret Manager so the
     # Scheduler POST passes the worker's cronAuth. The value stays in memory:
     # every printed/logged command form is redacted (run_cmd_cron_redacted).
-    CRON_SECRET_VALUE="$(gcloud secrets versions access latest \
+    CRON_SECRET_VALUE="$(gcloud secrets versions access "$CRON_SECRET_VERSION" \
       --secret="$CRON_SECRET_SECRET" \
       --project="$GCP_PROJECT")"
     if [[ -z "$CRON_SECRET_VALUE" ]]; then
@@ -6098,21 +6093,22 @@ else
 fi
 echo
 
-# Restore each isolated job's production-equivalent cadence after clean_mirror,
-# but keep traffic PAUSED by default. Only the separately acknowledged
-# FORCE_ACCELERATED_RIG_ONLY mode may replace those cadences with the CTO's
-# five-minute rig cadence and resume. Shared production job identities are never
-# referenced or mutated here.
+# Prepare each isolated job's final cadence after clean_mirror while retaining
+# PAUSED. RIG-B1 is always prepared at the CTO's exact five-minute isolated-rig
+# cadence; every other profile restores its production-equivalent cadence. This
+# provisioner never resumes Scheduler traffic. The separate B1 start controller
+# must re-observe the immutable admission/pre-clock packet and all six PAUSED
+# bindings before activation. Shared production identities are never referenced.
 if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then
-  if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
-    echo "# Post-admission — FORCE_ACCELERATED_RIG_ONLY: set five-minute rig cadence, resume, verify ENABLED"
+  if [[ "$RIG_ID" == "RIG-B1" ]]; then
+    echo "# Post-admission — prepare exact five-minute RIG-B1 cadence and retain PAUSED"
   else
     echo "# Post-admission — restore production-equivalent cadence and retain PAUSED"
   fi
   for scheduler_spec in "${SCHEDULER_JOB_SPECS[@]}"; do
     [[ -z "$scheduler_spec" ]] && continue
     scheduler_job_name="$(scheduler_job_name_for_spec "$scheduler_spec")"
-    if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
+    if [[ "$RIG_ID" == "RIG-B1" ]]; then
       scheduler_schedule="$SCHEDULER_ACCELERATED_SCHEDULE"
     else
       scheduler_schedule="$(scheduler_spec_production_schedule "$scheduler_spec")"
@@ -6128,27 +6124,13 @@ if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then
       --min-backoff="$SCHEDULER_RETRY_MIN_BACKOFF" \
       --max-backoff="$SCHEDULER_RETRY_MAX_BACKOFF" \
       --max-doublings="$SCHEDULER_RETRY_MAX_DOUBLINGS"
-    if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
-      run_cmd gcloud scheduler jobs resume "$scheduler_job_name" \
-        --project="$GCP_PROJECT" \
-        --location="$CLOUD_RUN_REGION"
-      if [[ $APPLY -eq 1 ]]; then
-        verify_scheduler_job_state "$scheduler_job_name" "ENABLED"
-      else
-        print_cmd gcloud scheduler jobs describe "$scheduler_job_name" \
-          --project="$GCP_PROJECT" \
-          --location="$CLOUD_RUN_REGION" \
-          --format="value(state)"
-      fi
+    if [[ $APPLY -eq 1 ]]; then
+      verify_scheduler_job_state "$scheduler_job_name" "PAUSED"
     else
-      if [[ $APPLY -eq 1 ]]; then
-        verify_scheduler_job_state "$scheduler_job_name" "PAUSED"
-      else
-        print_cmd gcloud scheduler jobs describe "$scheduler_job_name" \
-          --project="$GCP_PROJECT" \
-          --location="$CLOUD_RUN_REGION" \
-          --format="value(state)"
-      fi
+      print_cmd gcloud scheduler jobs describe "$scheduler_job_name" \
+        --project="$GCP_PROJECT" \
+        --location="$CLOUD_RUN_REGION" \
+        --format="value(state)"
     fi
     if [[ $APPLY -eq 1 ]]; then
       verify_scheduler_job_config "$scheduler_spec" "$scheduler_schedule"
@@ -6159,15 +6141,7 @@ if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then
         --format="json(schedule,timeZone,attemptDeadline,retryConfig)"
     fi
   done
-  if [[ "$SCHEDULER_ACTIVATION_MODE" == "FORCE_ACCELERATED_RIG_ONLY" ]]; then
-    if [[ $APPLY -eq 1 ]]; then
-      SCHEDULER_STATE="accelerated_rig_only_enabled"
-    else
-      SCHEDULER_STATE="planned_accelerated_rig_only_enable"
-    fi
-  else
-    SCHEDULER_STATE="paused_after_clean_mirror"
-  fi
+  SCHEDULER_STATE="paused_after_clean_mirror"
 fi
 
 echo "# Provision plan complete."

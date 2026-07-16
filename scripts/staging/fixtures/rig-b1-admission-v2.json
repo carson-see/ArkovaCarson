@@ -59,9 +59,11 @@
     },
     "bitcoinCore": {
       "version": "31.1",
+      "recipeCommit": "b9a54856c9bee87d958cc4b070776828b5c17b32",
       "sourceTarballUrl": "https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz",
       "sourceTarballSha256": "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
-      "containerImage": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "containerImage": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:cdc306adc6ef6017326681ff09c4d3247ce77026bed17feccdc163a96519c8f8",
+      "amd64RuntimeDigest": "sha256:684e80900f124890c45ad9b691d7f76456c1042385bce4ab92725b1979b55888",
       "startupScriptPath": "scripts/staging/start-rig-b1-bitcoin-core.sh",
       "startupScriptSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     },
@@ -109,6 +111,42 @@
     },
     "secretReferences": [
       {
+        "env": "SUPABASE_URL",
+        "secretName": "supabase-url-s33-rig-b1-staging",
+        "version": "1",
+        "resource": "projects/arkova1/secrets/supabase-url-s33-rig-b1-staging/versions/1"
+      },
+      {
+        "env": "SUPABASE_SERVICE_ROLE_KEY",
+        "secretName": "supabase-service-role-key-s33-rig-b1-staging",
+        "version": "1",
+        "resource": "projects/arkova1/secrets/supabase-service-role-key-s33-rig-b1-staging/versions/1"
+      },
+      {
+        "env": "STRIPE_SECRET_KEY",
+        "secretName": "arkova-s33-rig-b1-stripe-secret-key",
+        "version": "1",
+        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-stripe-secret-key/versions/1"
+      },
+      {
+        "env": "STRIPE_WEBHOOK_SECRET",
+        "secretName": "arkova-s33-rig-b1-stripe-webhook-secret",
+        "version": "1",
+        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-stripe-webhook-secret/versions/1"
+      },
+      {
+        "env": "API_KEY_HMAC_SECRET",
+        "secretName": "arkova-s33-rig-b1-api-key-hmac",
+        "version": "1",
+        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-api-key-hmac/versions/1"
+      },
+      {
+        "env": "CRON_SECRET",
+        "secretName": "arkova-s33-rig-b1-cron-secret",
+        "version": "1",
+        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-cron-secret/versions/1"
+      },
+      {
         "env": "BITCOIN_RPC_URL",
         "secretName": "arkova-s33-rig-b1-bitcoin-core-signet-rpc-url",
         "version": "1",
@@ -117,26 +155,47 @@
       {
         "env": "BITCOIN_RPC_AUTH",
         "secretName": "arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth",
-        "version": "2",
-        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth/versions/2"
+        "version": "1",
+        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth/versions/1"
       },
       {
         "env": "BITCOIN_TREASURY_WIF",
         "secretName": "arkova-s33-rig-b1-treasury-wif-signet",
-        "version": "3",
-        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-treasury-wif-signet/versions/3"
+        "version": "1",
+        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-treasury-wif-signet/versions/1"
       }
     ],
     "nodeSecretEnvs": ["BITCOIN_RPC_AUTH"],
     "forbiddenNodeSecretEnvs": ["BITCOIN_TREASURY_WIF"],
     "treasuryWatchOnly": {
-      "address": "tb1qarkovas33rigb1treasuryfixture0000000000000",
-      "descriptor": "addr(tb1qarkovas33rigb1treasuryfixture0000000000000)#deadbeef",
+      "address": "tb1qxca7ke7hgguarqxkwwydrfenn8ymnspxq765eq",
+      "descriptor": "addr(tb1qxca7ke7hgguarqxkwwydrfenn8ymnspxq765eq)#vsa4zar3",
+      "splitTransactionId": "1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941",
       "preSplitPlanDigest": "sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8",
       "expectedConfirmedOutputCount": 32,
-      "expectedTotalSats": 3200000,
+      "expectedTotalSats": 169639,
       "descriptorPolicy": "addr-checksummed-importdescriptors",
       "wifOnNode": false
+    },
+    "nodeReadiness": {
+      "schemaVersion": "arkova.s33.rig-b1.node-readiness/v1",
+      "bitcoinCoreVersion": "31.1",
+      "bitcoinCoreImage": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:cdc306adc6ef6017326681ff09c4d3247ce77026bed17feccdc163a96519c8f8",
+      "sourceTarballSha256": "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+      "chain": "signet",
+      "initialBlockDownload": false,
+      "blocks": 100,
+      "headers": 100,
+      "genesisHash": "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6",
+      "txindexSynced": true,
+      "txindexBestBlockHeight": 100,
+      "treasurySplitPlanDigest": "sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8",
+      "splitTransactionId": "1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941",
+      "confirmedOutputCount": 32,
+      "confirmedTotalSats": 169639,
+      "splitBlockHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "splitBlockHeader": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "txOutProof": "aa"
     },
     "authority": {
       "binding": "ed25519-signed-node-approval",
@@ -180,7 +239,7 @@
       {
         "name": "arkova-worker-s33-rig-b1-staging-batch-anchors",
         "path": "/jobs/batch-anchors",
-        "schedule": "*/30 * * * *",
+        "schedule": "*/5 * * * *",
         "time_zone": "Etc/UTC",
         "attempt_deadline": "120s",
         "retry": { "min_backoff": "5s", "max_backoff": "3600s", "max_doublings": 5 }
@@ -188,7 +247,7 @@
       {
         "name": "arkova-worker-s33-rig-b1-staging-check-confirmations",
         "path": "/jobs/check-confirmations",
-        "schedule": "*/30 * * * *",
+        "schedule": "*/5 * * * *",
         "time_zone": "Etc/UTC",
         "attempt_deadline": "300s",
         "retry": { "min_backoff": "5s", "max_backoff": "3600s", "max_doublings": 5 }
@@ -196,7 +255,7 @@
       {
         "name": "arkova-worker-s33-rig-b1-staging-populate-confirmation-proofs",
         "path": "/jobs/populate-confirmation-proofs",
-        "schedule": "*/15 * * * *",
+        "schedule": "*/5 * * * *",
         "time_zone": "Etc/UTC",
         "attempt_deadline": "300s",
         "retry": { "min_backoff": "5s", "max_backoff": "3600s", "max_doublings": 5 }
@@ -204,7 +263,7 @@
       {
         "name": "arkova-worker-s33-rig-b1-staging-org-queue-scheduler",
         "path": "/jobs/org-queue-scheduler",
-        "schedule": "0 * * * *",
+        "schedule": "*/5 * * * *",
         "time_zone": "Etc/UTC",
         "attempt_deadline": "600s",
         "retry": { "min_backoff": "5s", "max_backoff": "3600s", "max_doublings": 5 }
@@ -212,7 +271,7 @@
       {
         "name": "arkova-worker-s33-rig-b1-staging-batch-anchors-forced-flush",
         "path": "/jobs/batch-anchors?force=true",
-        "schedule": "0 3 * * *",
+        "schedule": "*/5 * * * *",
         "time_zone": "America/New_York",
         "attempt_deadline": "600s",
         "retry": { "min_backoff": "5s", "max_backoff": "3600s", "max_doublings": 5 }
@@ -220,7 +279,7 @@
       {
         "name": "arkova-worker-s33-rig-b1-staging-recover-broadcasts",
         "path": "/jobs/recover-broadcasts",
-        "schedule": "*/15 * * * *",
+        "schedule": "*/5 * * * *",
         "time_zone": "Etc/UTC",
         "attempt_deadline": "120s",
         "retry": { "min_backoff": "5s", "max_backoff": "3600s", "max_doublings": 5 }

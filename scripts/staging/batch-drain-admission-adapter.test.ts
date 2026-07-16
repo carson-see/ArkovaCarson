@@ -54,12 +54,12 @@ function occurrenceCount(raw: string, exact: string): number {
 type JsonRecord = Record<string, unknown>;
 
 const TEAM2_RIG_B1_SCHEDULER_SPECS = [
-  ['batch-anchors', '/jobs/batch-anchors', '*/30 * * * *', 'Etc/UTC', '120s'],
-  ['check-confirmations', '/jobs/check-confirmations', '*/30 * * * *', 'Etc/UTC', '300s'],
-  ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs', '*/15 * * * *', 'Etc/UTC', '300s'],
-  ['org-queue-scheduler', '/jobs/org-queue-scheduler', '0 * * * *', 'Etc/UTC', '600s'],
-  ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true', '0 3 * * *', 'America/New_York', '600s'],
-  ['recover-broadcasts', '/jobs/recover-broadcasts', '*/15 * * * *', 'Etc/UTC', '120s'],
+  ['batch-anchors', '/jobs/batch-anchors', '*/5 * * * *', 'Etc/UTC', '120s'],
+  ['check-confirmations', '/jobs/check-confirmations', '*/5 * * * *', 'Etc/UTC', '300s'],
+  ['populate-confirmation-proofs', '/jobs/populate-confirmation-proofs', '*/5 * * * *', 'Etc/UTC', '300s'],
+  ['org-queue-scheduler', '/jobs/org-queue-scheduler', '*/5 * * * *', 'Etc/UTC', '600s'],
+  ['batch-anchors-forced-flush', '/jobs/batch-anchors?force=true', '*/5 * * * *', 'America/New_York', '600s'],
+  ['recover-broadcasts', '/jobs/recover-broadcasts', '*/5 * * * *', 'Etc/UTC', '120s'],
 ] as const;
 const TEAM2_RIG_B1_RETRY = {
   min_backoff: '5s',
@@ -110,6 +110,7 @@ function ceremonyValue(): JsonRecord {
       expectedInitialPending: 1,
       expectedFinalPending: 0,
       passes: [{
+        outcome: 'broadcast',
         batchId: 'batch-admission-v2',
         armedTrigger: 'org-scheduler',
         schedulerExecutionId: 'scheduler-admission-v2',
@@ -142,6 +143,26 @@ describe('admission v2 to run-declaration identity adapter', () => {
       deployed_image_digest: SOURCE_HEAD_IMAGE_DIGEST,
       supabase_org_id: APPROVED_SUPABASE_ORG_ID,
     });
+  });
+
+  it('rejects reordered or resource-mismatched exact-nine secret references', () => {
+    const reordered = admissionWith((value) => {
+      const infrastructure = value.infrastructure as JsonRecord;
+      const references = infrastructure.secretReferences as JsonRecord[];
+      [references[0], references[1]] = [references[1]!, references[0]!];
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(reordered, ceremonyRaw())).toThrow(
+      /admission v2.*schema|rejected|secret|reference/i,
+    );
+
+    const mismatchedResource = admissionWith((value) => {
+      const infrastructure = value.infrastructure as JsonRecord;
+      const references = infrastructure.secretReferences as JsonRecord[];
+      references[0]!.resource = 'projects/arkova1/secrets/supabase-url-s33-rig-b1-staging/versions/2';
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(mismatchedResource, ceremonyRaw())).toThrow(
+      /admission v2.*schema|rejected|secret|reference|resource/i,
+    );
   });
 
   it.each([

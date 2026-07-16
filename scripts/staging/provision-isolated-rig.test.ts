@@ -199,6 +199,58 @@ describe('provision-isolated-rig.sh — profile flag + safe default', () => {
   });
 });
 
+describe('provision-isolated-rig.sh — RIG-R authenticated ingress', () => {
+  it('dry-runs the exact service-scoped runtime invoker grant after deploy', () => {
+    const sourceHead = execFileSync(REAL_GIT, ['-C', REPO_ROOT, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8',
+    }).trim();
+    const sourceTree = execFileSync(REAL_GIT, ['-C', REPO_ROOT, 'rev-parse', 'HEAD^{tree}'], {
+      encoding: 'utf8',
+    }).trim();
+    const provisionStartedAt = new Date(Date.now() - 60_000);
+    const expiresAt = new Date(provisionStartedAt.getTime() + 60 * 60 * 60 * 1000);
+    const runtimeServiceAccount = 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com';
+    const service = 'arkova-worker-s33-r-staging';
+    const { out, code } = dryRun(['--name', 's33-r', '--profile', 'gemini-release'], {
+      STAGING_RIG_ID: 'RIG-R',
+      STAGING_SOAK_ID: 'soak-r-invoker-fixture',
+      STAGING_LEASE_ID: 'lease-r-invoker-fixture',
+      STAGING_RUNTIME_SA_EMAIL: runtimeServiceAccount,
+      STAGING_TIER: 'T3',
+      STAGING_DURATION_MIN: '2880',
+      STAGING_REQUIRED_WALL_MIN: '2910',
+      STAGING_GCP_PROJECT: 'arkova1',
+      STAGING_CLOUD_RUN_REGION: 'us-central1',
+      STAGING_NEW_SUPABASE_PROJECT_NAME: 'arkova-soak-s33-r',
+      STAGING_GEMINI_TUNED_MODEL:
+        'projects/270018525501/locations/us-central1/models/6611494259700793344@1',
+      STAGING_GEMINI_V6_PROMPT: 'true',
+      STAGING_PINNED_IMAGE:
+        `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:${sourceHead}@sha256:${'c'.repeat(64)}`,
+      STAGING_SOURCE_HEAD_SHA: sourceHead,
+      STAGING_RIG_R_CANDIDATE_TREE_SHA: sourceTree,
+      STAGING_RIG_R_PROVISION_ARTIFACT_SHA256: `sha256:${'d'.repeat(64)}`,
+      STAGING_RIG_R_PROVISION_STARTED_AT: provisionStartedAt.toISOString(),
+      STAGING_RIG_R_EXPIRES_AT: expiresAt.toISOString(),
+    });
+    expect(code, out).toBe(0);
+    const lines = out.split('\n');
+    const deployIndex = lines.findIndex((line) => line.startsWith(`+ gcloud run deploy ${service} `));
+    const grantIndex = lines.findIndex((line) => line.startsWith(
+      `+ gcloud run services add-iam-policy-binding ${service} `,
+    ));
+    expect(deployIndex).toBeGreaterThan(-1);
+    expect(grantIndex).toBeGreaterThan(deployIndex);
+    expect(lines[grantIndex]).toContain(`--member=serviceAccount:${runtimeServiceAccount}`);
+    expect(lines[grantIndex]).toContain('--role=roles/run.invoker');
+    expect(lines[grantIndex]).toContain('--region=us-central1');
+    expect(lines[grantIndex]).toContain('--project=arkova1');
+    expect(lines[grantIndex]).toContain('--condition=None');
+    expect(out).not.toMatch(/projects add-iam-policy-binding .*roles\/run\.invoker/u);
+    expect(script).toContain('write_provision_state "rig_r_service_invoker_bound" ""');
+  });
+});
+
 describe('provision-isolated-rig.sh — chain profile real anchoring overrides', () => {
   it('flips USE_MOCKS off and enables prod-network anchoring for the chain profile', () => {
     const { out, code } = dryRun(['--name', 's0-s2a-chain', '--profile', 'chain']);
@@ -881,6 +933,7 @@ function applyRunStubbed(
     FRONTEND_URL: options.env?.STAGING_FRONTEND_URL ?? 'https://app.arkova.ai',
     USE_MOCKS: profile === 'chain' ? 'false' : 'true',
     ENABLE_PROD_NETWORK_ANCHORING: profile === 'chain' ? 'true' : 'false',
+    ...(options.rigId === 'RIG-B1' ? { DISABLE_ALL_IN_PROCESS_CRON: 'true' } : {}),
     ...(profile === 'chain'
       ? {
           KMS_PROVIDER: options.env?.STAGING_KMS_PROVIDER ?? 'gcp',
@@ -1734,11 +1787,6 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
     rigId: 'RIG-B1',
     env: RIG_B1_APPLY_ENV,
   });
-  const accelerated = applyRunStubbed('w3c-rig-b1-accelerated', 'chain', {
-    rigId: 'RIG-B1',
-    env: FORCE_ACCELERATED_RIG_B1_ENV,
-  });
-
   const exactTopology = [
     ['batch-anchors', '/jobs/batch-anchors'],
     ['check-confirmations', '/jobs/check-confirmations'],
@@ -1748,12 +1796,12 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
     ['recover-broadcasts', '/jobs/recover-broadcasts'],
   ] as const;
   const bindingTopology = [
-    ['batch-anchors', '*/30 * * * *', 'Etc/UTC', '120s'],
-    ['check-confirmations', '*/30 * * * *', 'Etc/UTC', '300s'],
-    ['populate-confirmation-proofs', '*/15 * * * *', 'Etc/UTC', '300s'],
-    ['org-queue-scheduler', '0 * * * *', 'Etc/UTC', '600s'],
-    ['batch-anchors-forced-flush', '0 3 * * *', 'America/New_York', '600s'],
-    ['recover-broadcasts', '*/15 * * * *', 'Etc/UTC', '120s'],
+    ['batch-anchors', '*/5 * * * *', 'Etc/UTC', '120s'],
+    ['check-confirmations', '*/5 * * * *', 'Etc/UTC', '300s'],
+    ['populate-confirmation-proofs', '*/5 * * * *', 'Etc/UTC', '300s'],
+    ['org-queue-scheduler', '*/5 * * * *', 'Etc/UTC', '600s'],
+    ['batch-anchors-forced-flush', '*/5 * * * *', 'America/New_York', '600s'],
+    ['recover-broadcasts', '*/5 * * * *', 'Etc/UTC', '120s'],
   ] as const;
 
   it('freezes the exact six-job topology and uses only service-derived job identities', () => {
@@ -1778,15 +1826,7 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
       call.startsWith('scheduler jobs update http '),
     );
     expect(cadenceUpdates).toHaveLength(6);
-    expect(cadenceUpdates.map((call) => call.split('--schedule=')[1]!.split(' --time-zone=')[0])).toEqual([
-      '*/30 * * * *',
-      '*/30 * * * *',
-      '*/15 * * * *',
-      '0 * * * *',
-      '0 3 * * *',
-      '*/15 * * * *',
-    ]);
-    expect(cadenceUpdates.join('\n')).not.toContain('--schedule=*/5 * * * *');
+    expect(cadenceUpdates.every((call) => call.includes('--schedule=*/5 * * * *'))).toBe(true);
     const line = paused.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
     expect(line).toBeTruthy();
     expect(JSON.parse(line!.slice('ADMISSION_JSON='.length)).scheduler).toMatchObject({
@@ -1822,15 +1862,15 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
     }
   });
 
-  it('re-observes binding config and lets acceleration change cadence only', () => {
+  it('re-observes the exact five-minute binding config while every job remains PAUSED', () => {
     const configDescribes = paused.gcloudCalls.filter((call) =>
       call.startsWith('scheduler jobs describe ') &&
       call.includes('--format=json(schedule,timeZone,attemptDeadline,retryConfig)'),
     );
     expect(configDescribes).toHaveLength(6);
     for (const [suffix, , timeZone, attemptDeadline] of bindingTopology) {
-      const jobName = `arkova-worker-w3c-rig-b1-accelerated-staging-${suffix}`;
-      const update = accelerated.gcloudCalls.find((call) => call.startsWith(`scheduler jobs update http ${jobName} `));
+      const jobName = `arkova-worker-w3c-rig-b1-paused-staging-${suffix}`;
+      const update = paused.gcloudCalls.find((call) => call.startsWith(`scheduler jobs update http ${jobName} `));
       expect(update).toContain('--schedule=*/5 * * * *');
       expect(update).toContain(`--time-zone=${timeZone}`);
       expect(update).toContain(`--attempt-deadline=${attemptDeadline}`);
@@ -1851,60 +1891,43 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
     expect(creates.every((call) => call.includes(
       `--oidc-service-account-email=${RIG_B1_ISOLATED_INPUTS.STAGING_CRON_OIDC_SA}`,
     ))).toBe(true);
+    const cronAccesses = paused.gcloudCalls.filter((call) =>
+      call.startsWith('secrets versions access ') && call.includes('--secret=arkova-s33-rig-b1-cron-secret'),
+    );
+    expect(cronAccesses).toHaveLength(1);
+    expect(cronAccesses[0]).toContain(
+      `secrets versions access ${RIG_B1_APPLY_ENV.STAGING_B1_CRON_SECRET_VERSION}`,
+    );
+    expect(cronAccesses[0]).not.toContain(' access latest ');
   });
 
-  it('grants only the explicit B1 OIDC principal service-scoped invoker before Scheduler creation', () => {
+  it('keeps B1 Scheduler ingress unauthorized while provisioning all six jobs PAUSED', () => {
     expect(paused.code, paused.out).toBe(0);
-    const exactGrant = [
-      'run services add-iam-policy-binding arkova-worker-w3c-rig-b1-paused-staging',
-      `--member=serviceAccount:${RIG_B1_ISOLATED_INPUTS.STAGING_CRON_OIDC_SA}`,
-      '--role=roles/run.invoker',
-      '--region=us-central1',
-      '--project=arkova1',
-      '--condition=None',
-      '--quiet',
-    ];
     const grantCalls = paused.gcloudCalls.filter((call) =>
       call.startsWith('run services add-iam-policy-binding '),
     );
-    expect(grantCalls).toHaveLength(1);
-    for (const fragment of exactGrant) expect(grantCalls[0]).toContain(fragment);
+    expect(grantCalls).toHaveLength(0);
     expect(paused.gcloudCalls.some((call) =>
       call.startsWith('projects add-iam-policy-binding ') && call.includes('roles/run.invoker'),
     )).toBe(false);
     const deployIndex = paused.callOrder.findIndex((entry) => entry.startsWith('gcloud run deploy '));
-    const grantIndex = paused.callOrder.findIndex((entry) =>
-      entry.startsWith('gcloud run services add-iam-policy-binding '),
-    );
     const firstCreateIndex = paused.callOrder.findIndex((entry) =>
       entry.startsWith('gcloud scheduler jobs create http '),
     );
-    expect(grantIndex).toBeGreaterThan(deployIndex);
-    expect(grantIndex).toBeLessThan(firstCreateIndex);
+    expect(firstCreateIndex).toBeGreaterThan(deployIndex);
+    expect(Object.values(paused.schedulerStates)).toEqual(Array(6).fill('PAUSED'));
+    expect(script).not.toContain('write_provision_state "b1_service_invoker_bound" ""');
   });
 
-  it('fails closed before every Scheduler create when the B1 invoker grant fails', () => {
-    const result = applyRunStubbed('w3c-rig-b1-invoker-denied', 'chain', {
+  it('rejects the former FORCE activation even with its exact acknowledgement before mutation', () => {
+    const result = applyRunStubbed('w3c-rig-b1-force-forbidden', 'chain', {
       rigId: 'RIG-B1',
-      env: RIG_B1_APPLY_ENV,
-      b1InvokerGrantFails: true,
+      env: FORCE_ACCELERATED_RIG_B1_ENV,
     });
     expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/invoker|IAM|grant|failure/i);
-    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(true);
-    expect(result.gcloudCalls.some((call) => call.startsWith('scheduler jobs create '))).toBe(false);
-  });
-
-  it('uses the CTO five-minute cadence only under explicit FORCE_ACCELERATED_RIG_ONLY confirmation', () => {
-    expect(accelerated.code, accelerated.out).toBe(0);
-    const updates = accelerated.gcloudCalls.filter((call) =>
-      call.startsWith('scheduler jobs update http '),
-    );
-    const resumes = accelerated.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
-    expect(updates).toHaveLength(6);
-    expect(updates.every((call) => call.includes('--schedule=*/5 * * * *'))).toBe(true);
-    expect(resumes).toHaveLength(6);
-    expect(Object.values(accelerated.schedulerStates).every((state) => state === 'ENABLED')).toBe(true);
+    expect(result.out).toMatch(/provisioning never activates|forbidden/i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('scheduler jobs '))).toBe(false);
   });
 
   it('rejects accelerated activation without a second exact acknowledgement before mutation', () => {
@@ -2321,53 +2344,10 @@ describe('provision-isolated-rig.sh — apply failure containment after Schedule
     expect(result.out).not.toContain('ADMISSION_JSON=');
   }, 20_000);
 
-  it('re-pauses every declared job and preserves the original rc after a partial resume', () => {
-    const result = applyRunStubbed('partial-resume-failure', 'chain', {
-      rigId: 'RIG-B1',
-      env: FORCE_ACCELERATED_RIG_B1_ENV,
-      schedulerResumeFailsAt: 2,
-    });
-    const creates = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs create http '));
-    const pauses = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs pause '));
-    const resumes = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
-
-    expect(result.code, result.out).toBe(42);
-    expect(result.out).toMatch(/injected Scheduler resume failure rc=42/);
-    expect(creates.length).toBeGreaterThan(1);
-    expect(resumes).toHaveLength(2);
-    expect(pauses).toHaveLength(creates.length * 2);
-    expect(Object.keys(result.schedulerStates)).toHaveLength(creates.length);
-    expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
-    expect(result.out).not.toContain('ADMISSION_JSON=');
-    expect(existsSync(result.admissionArtifactPath)).toBe(false);
-    const resumeIndexes = result.callOrder
-      .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
-      .filter((index) => index >= 0);
-    expectEveryDeclaredSchedulerJobContainedAfter(result, resumeIndexes[1]);
-  }, 20_000);
-
-  it('re-pauses every job when a later post-resume ENABLED verification fails', () => {
-    const result = applyRunStubbed('enabled-verify-failure', 'chain', {
-      rigId: 'RIG-B1',
-      env: FORCE_ACCELERATED_RIG_B1_ENV,
-      schedulerEnabledVerificationFailsAt: 2,
-    });
-    const resumeIndexes = result.callOrder
-      .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
-      .filter((index) => index >= 0);
-
-    expect(result.code, result.out).toBe(1);
-    expect(result.out).toMatch(/ENABLED|state mismatch/i);
-    expect(resumeIndexes).toHaveLength(2);
-    expectEveryDeclaredSchedulerJobContainedAfter(result, resumeIndexes[1] + 1);
-    expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
-    expect(result.out).not.toContain('ADMISSION_JSON=');
-  }, 20_000);
-
-  it('re-pauses every job when final admission artifact persistence cannot start', () => {
+  it('re-pauses every PAUSED job when final admission artifact persistence cannot start', () => {
     const result = applyRunStubbed('blocked-admission-path', 'chain', {
       rigId: 'RIG-B1',
-      env: FORCE_ACCELERATED_RIG_B1_ENV,
+      env: RIG_B1_APPLY_ENV,
       blockAdmissionArtifactPath: true,
     });
     const creates = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs create http '));
@@ -2375,38 +2355,13 @@ describe('provision-isolated-rig.sh — apply failure containment after Schedule
     const resumes = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
 
     expect(result.code).not.toBe(0);
-    expect(resumes).toHaveLength(creates.length);
+    expect(resumes).toHaveLength(0);
     expect(pauses).toHaveLength(creates.length * 2);
     expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
     expect(result.out).not.toContain('ADMISSION_JSON=');
     expect(existsSync(result.admissionArtifactPath) && statSync(result.admissionArtifactPath).isDirectory()).toBe(true);
-    const resumeIndexes = result.callOrder
-      .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
-      .filter((index) => index >= 0);
-    expectEveryDeclaredSchedulerJobContainedAfter(result, Math.max(...resumeIndexes) + 1);
   }, 20_000);
 
-  it('withdraws the artifact and re-pauses every job when final state persistence fails afterward', () => {
-    const result = applyRunStubbed('final-state-failure', 'chain', {
-      rigId: 'RIG-B1',
-      env: FORCE_ACCELERATED_RIG_B1_ENV,
-      failFinalStatePersistence: true,
-    });
-    const creates = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs create http '));
-    const pauses = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs pause '));
-    const resumes = result.gcloudCalls.filter((call) => call.startsWith('scheduler jobs resume '));
-
-    expect(result.code, result.out).toBe(1);
-    expect(resumes).toHaveLength(creates.length);
-    expect(pauses).toHaveLength(creates.length * 2);
-    expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
-    expect(result.out).not.toContain('ADMISSION_JSON=');
-    expect(existsSync(result.admissionArtifactPath)).toBe(false);
-    const resumeIndexes = result.callOrder
-      .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
-      .filter((index) => index >= 0);
-    expectEveryDeclaredSchedulerJobContainedAfter(result, Math.max(...resumeIndexes) + 1);
-  }, 20_000);
 });
 
 describe('provision-isolated-rig.sh — truthful observed provenance and config', () => {

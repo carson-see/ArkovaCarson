@@ -173,6 +173,24 @@ const MOCK_RECEIPT: ChainReceipt = {
 const ANCHOR_A = { id: 'anchor-a', fingerprint: 'aa'.repeat(32), metadata: null };
 const ANCHOR_B = { id: 'anchor-b', fingerprint: 'bb'.repeat(32), metadata: null };
 const ANCHOR_C = { id: 'anchor-c', fingerprint: 'cc'.repeat(32), metadata: null };
+const SCENARIO = {
+  generation: 8,
+  scenarioLeaseId: '10000000-0000-4000-8000-000000000001',
+  scenarioId: 'forced-d1',
+  targetJobResource:
+    'projects/arkova1/locations/us-central1/jobs/arkova-worker-s33-rig-b1-staging-batch-anchors-forced-flush',
+  namespaceId: 's33-b1-forced-d1',
+  expectedPending: 2,
+  faultWindowId: 'fault-forced-d1',
+  soakId: 'soak-b1',
+  runLeaseId: 'lease-b1',
+  workerRevision: 'arkova-worker-s33-rig-b1-staging-00001-abc',
+  schedulerExecutionId: `sha256:${'d'.repeat(64)}`,
+  schedulerJobResource:
+    'projects/arkova1/locations/us-central1/jobs/arkova-worker-s33-rig-b1-staging-batch-anchors-forced-flush',
+  schedulerScheduleTime: '2026-07-16T18:25:00.000Z',
+  expiresAt: '2026-07-16T18:29:00.000Z',
+} as const;
 const DOCUSIGN_QUEUE_ANCHOR = {
   id: 'anchor-docusign-queue',
   org_id: '11111111-1111-4111-8111-111111111111',
@@ -199,6 +217,22 @@ const DOCUSIGN_CREDIT_DENIED_ANCHOR = {
     _claimed_at: '2026-05-14T12:00:00.000Z',
   },
 };
+const SCENARIO_DENIED_ANCHOR = {
+  ...DOCUSIGN_CREDIT_DENIED_ANCHOR,
+  id: '33333333-3333-4333-8333-333333333333',
+  org_id: '11111111-1111-4111-8111-111111111111',
+};
+const ORG_SCENARIO = {
+  ...SCENARIO,
+  scenarioId: 'org-poison-1',
+  targetJobResource:
+    'projects/arkova1/locations/us-central1/jobs/arkova-worker-s33-rig-b1-staging-org-queue-scheduler',
+  schedulerJobResource:
+    'projects/arkova1/locations/us-central1/jobs/arkova-worker-s33-rig-b1-staging-org-queue-scheduler',
+  namespaceId: 's33-b1-org-poison',
+  expectedPending: 1,
+  faultWindowId: 'fault-org-poison-1',
+} as const;
 const DOCUSIGN_PAID_FAST_TRACK_ANCHOR = {
   ...DOCUSIGN_QUEUE_ANCHOR,
   id: 'anchor-docusign-paid-fast-track',
@@ -511,6 +545,165 @@ describe('processBatchAnchors', () => {
     );
   });
 
+  it('uses only the exact scenario RPCs and emits durable source-correlated records', async () => {
+    let observation = 0;
+    mockDbRpc.mockImplementation((name: string) => {
+      if (name === 'observe_s33_rig_b1_scenario_pending') {
+        observation += 1;
+        return Promise.resolve({
+          data: observation === 1
+            ? { pending: 2, oldestPendingAt: '2026-07-16T15:00:00.000Z' }
+            : { pending: 0, oldestPendingAt: null },
+          error: null,
+        });
+      }
+      if (name === 'claim_s33_rig_b1_scenario_anchors') {
+        return Promise.resolve({ data: [ANCHOR_A, ANCHOR_B], error: null });
+      }
+      if (name === 'submit_batch_anchors') return Promise.resolve({ data: 2, error: null });
+      if (name === 'record_s33_rig_b1_scenario_batch') return Promise.resolve({ data: null, error: null });
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    const result = await processBatchAnchors({ force: true, scenario: SCENARIO });
+
+    expect(result.processed).toBe(2);
+    expect(mockDbRpc).toHaveBeenCalledWith('claim_s33_rig_b1_scenario_anchors', {
+      p_scenario_lease_id: SCENARIO.scenarioLeaseId,
+      p_generation: SCENARIO.generation,
+      p_scheduler_execution_id: SCENARIO.schedulerExecutionId,
+      p_namespace_id: SCENARIO.namespaceId,
+      p_worker_id: SCENARIO.workerRevision,
+      p_limit: 1000,
+      p_org_id: null,
+    });
+    expect(mockDbRpc).not.toHaveBeenCalledWith('claim_pending_anchors', expect.anything());
+    expect(mockDbRpc).toHaveBeenCalledWith(
+      'record_s33_rig_b1_scenario_batch',
+      expect.objectContaining({
+        p_scheduler_execution_id: SCENARIO.schedulerExecutionId,
+        p_pending_before: 2,
+        p_pending_after: 0,
+        p_worker_id: SCENARIO.workerRevision,
+      }),
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'trigger-fired',
+        schedulerExecutionId: SCENARIO.schedulerExecutionId,
+        trigger: 'global-flush',
+        faultWindowId: SCENARIO.faultWindowId,
+      }),
+      'RIG-B1 authenticated Scheduler trigger completed',
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'credit-gate', decision: 'not-required' }),
+      'RIG-B1 queue credit gate observation',
+    );
+  });
+
+  it('fails closed when the scenario claim RPC is missing and never uses ordinary or legacy claims', async () => {
+    mockDbRpc.mockImplementation((name: string) => {
+      if (name === 'observe_s33_rig_b1_scenario_pending') {
+        return Promise.resolve({
+          data: { pending: 2, oldestPendingAt: '2026-07-16T15:00:00.000Z' }, error: null,
+        });
+      }
+      if (name === 'claim_s33_rig_b1_scenario_anchors') {
+        return Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'missing RPC' } });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    const result = await processBatchAnchors({ force: true, scenario: SCENARIO });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockDbRpc).not.toHaveBeenCalledWith('claim_pending_anchors', expect.anything());
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+  });
+
+  it('persists and logs an exact scenario no-broadcast denial before returning', async () => {
+    let observation = 0;
+    mockDbRpc.mockImplementation((name: string) => {
+      if (name === 'observe_s33_rig_b1_scenario_pending') {
+        observation += 1;
+        return Promise.resolve({
+          data: { pending: 1, oldestPendingAt: '2026-07-16T15:00:00.000Z' },
+          error: null,
+        });
+      }
+      if (name === 'claim_s33_rig_b1_scenario_anchors') {
+        return Promise.resolve({ data: [SCENARIO_DENIED_ANCHOR], error: null });
+      }
+      if (name === 'deduct_org_credit') {
+        return Promise.resolve({
+          data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
+          error: null,
+        });
+      }
+      if (name === 'record_s33_rig_b1_scenario_denial_pass') {
+        return Promise.resolve({
+          data: {
+            outcomes: [{
+              outcomeId: `sha256:${'9'.repeat(64)}`,
+              anchorId: SCENARIO_DENIED_ANCHOR.id,
+              fingerprint: SCENARIO_DENIED_ANCHOR.fingerprint,
+              orgId: SCENARIO_DENIED_ANCHOR.org_id,
+              reason: 'insufficient_credits',
+              referenceId: SCENARIO_DENIED_ANCHOR.id,
+              requiredAmount: 1,
+              balanceBefore: 0,
+              balanceAfter: 0,
+              deniedAt: '2026-07-16T18:25:01.000Z',
+              completedAt: '2026-07-16T18:25:02.000Z',
+            }],
+          },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    const result = await processBatchAnchors({
+      force: true,
+      orgId: SCENARIO_DENIED_ANCHOR.org_id,
+      scenario: ORG_SCENARIO,
+    });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    expect(mockDbRpc).toHaveBeenCalledWith(
+      'record_s33_rig_b1_scenario_denial_pass',
+      expect.objectContaining({
+        p_scenario_lease_id: ORG_SCENARIO.scenarioLeaseId,
+        p_scheduler_execution_id: ORG_SCENARIO.schedulerExecutionId,
+        p_org_id: SCENARIO_DENIED_ANCHOR.org_id,
+        p_pending_before: 1,
+        p_pending_after: 1,
+        p_decisions: [{
+          anchorId: SCENARIO_DENIED_ANCHOR.id,
+          fingerprint: SCENARIO_DENIED_ANCHOR.fingerprint,
+          reason: 'insufficient_credits',
+          referenceId: SCENARIO_DENIED_ANCHOR.id,
+          requiredAmount: 1,
+          balanceBefore: 0,
+          balanceAfter: 0,
+        }],
+      }),
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'credit-gate',
+        outcome: 'no-broadcast',
+        outcomeId: `sha256:${'9'.repeat(64)}`,
+        batchId: null,
+        decision: 'denied',
+      }),
+      'RIG-B1 queue credit denial completed without a broadcast',
+    );
+    expect(observation).toBe(2);
+  });
+
   it('deducts org credits for DocuSign AUTO_ANCHOR queue items during manual org queue runs', async () => {
     mockPendingBacklogReady();
     mockDbRpc
@@ -650,6 +843,30 @@ describe('processBatchAnchors', () => {
     expect(mockDbRpc).toHaveBeenCalledWith('submit_batch_anchors', expect.objectContaining({
       p_anchor_ids: [DOCUSIGN_QUEUE_ANCHOR.id],
     }));
+  });
+
+  it('permanently excludes scenario-tagged rows from the legacy fallback', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc.mockResolvedValueOnce({
+      data: null,
+      error: {
+        code: 'PGRST202',
+        message: 'Could not find the function public.claim_pending_anchors in the schema cache',
+      },
+    });
+    setSelectResult({
+      data: [{
+        ...ANCHOR_A,
+        metadata: { s33_rig_b1: { namespaceId: SCENARIO.namespaceId } },
+      }],
+      error: null,
+    });
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    expect(mockDbRpc).not.toHaveBeenCalledWith('submit_batch_anchors', expect.anything());
   });
 
   it('still enforces the fee ceiling for forced manual org queue runs', async () => {

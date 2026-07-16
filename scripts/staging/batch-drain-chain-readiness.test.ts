@@ -21,7 +21,7 @@ const ADMISSION_RAW = readFileSync(
   join(process.cwd(), 'scripts/staging/fixtures/rig-b1-admission-v2.json'),
   'utf8',
 );
-const TREASURY_ADDRESS = 'tb1qarkovas33rigb1treasuryfixture0000000000000';
+const TREASURY_ADDRESS = 'tb1qxca7ke7hgguarqxkwwydrfenn8ymnspxq765eq';
 const OTHER_TREASURY_ADDRESS = 'tb1qdifferenttreasuryaddress0000000000000000000';
 
 function preClockAdmissionRaw(): string {
@@ -59,6 +59,7 @@ function completedCeremonyRaw(): string {
       expectedInitialPending: 1,
       expectedFinalPending: 0,
       passes: [{
+        outcome: 'broadcast',
         batchId: 'batch-completed-only',
         armedTrigger: 'org-scheduler',
         schedulerExecutionId: 'scheduler-completed-only',
@@ -231,8 +232,8 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
     expect(readiness.signerChallengeSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(readiness.secretReferences).toEqual([
       expect.objectContaining({ env: 'BITCOIN_RPC_URL', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcUrl, version: '1' }),
-      expect.objectContaining({ env: 'BITCOIN_RPC_AUTH', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcAuth, version: '2' }),
-      expect.objectContaining({ env: 'BITCOIN_TREASURY_WIF', secretName: RIG_B1_SIGNET_SECRET_NAMES.treasuryWif, version: '3' }),
+      expect.objectContaining({ env: 'BITCOIN_RPC_AUTH', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcAuth, version: '1' }),
+      expect.objectContaining({ env: 'BITCOIN_TREASURY_WIF', secretName: RIG_B1_SIGNET_SECRET_NAMES.treasuryWif, version: '1' }),
     ]);
     expect(readiness.secretReferences.every(({ secretName }) => secretName.includes('signet'))).toBe(true);
     expect(readiness.secretReferences.map(({ secretName }) => secretName)).not.toContain('bitcoin-rpc-url-staging');

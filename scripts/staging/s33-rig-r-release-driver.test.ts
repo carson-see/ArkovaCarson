@@ -42,9 +42,9 @@ const headSha = 'a'.repeat(40);
 const treeSha = 'b'.repeat(40);
 const imageDigest = `sha256:${'c'.repeat(64)}`;
 const provisionDigest = `sha256:${'d'.repeat(64)}`;
-const endpoint = 'projects/arkova1/locations/us-central1/endpoints/9000000000000000001';
+const endpoint = RIG_R_RELEASE_TOPOLOGY.releaseEndpoint;
 const model = RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackModel;
-const deployedModelId = '9000000000000000003';
+const deployedModelId = RIG_R_RELEASE_TOPOLOGY.releaseDeployedModelId;
 const leaseId = 'lease-s33-r-release';
 
 const binding = () => ({
@@ -117,7 +117,7 @@ describe('RIG-R exact provision and teardown topology', () => {
       'stripe-webhook-secret-staging',
       'api-key-hmac-secret-staging',
       'cron-secret',
-      'gemini-api-key-staging',
+      'gemini-api-key',
     ]) {
       expect(result.out).toContain(
         `secrets add-iam-policy-binding ${secretName}`,
@@ -177,7 +177,7 @@ describe('RIG-R exact provision and teardown topology', () => {
       'supabase projects delete abcdefghijklmnopqrst',
       'projects remove-iam-policy-binding arkova1',
       'iam service-accounts delete s33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
-      `storage rm gs://arkova1-s33-immutable-authority-ledger/s33/rig-leases/${leaseId}.json`,
+      'storage rm gs://arkova1-s33-immutable-authority-ledger/s33/rig-leases/RIG-R.singleton.json',
     ];
     let cursor = -1;
     for (const fragment of ordered) {
@@ -192,21 +192,11 @@ describe('RIG-R exact provision and teardown topology', () => {
     expect(result.out).toContain('zero_residual_oidc');
   });
 
-  it('refuses the protected v6 rollback endpoint before any teardown command', () => {
-    const result = run(teardown, [
-      '--project-ref', 'abcdefghijklmnopqrst',
-      '--rig-name', 's33-r',
-      '--rig-id', 'RIG-R',
-      '--service', 'arkova-worker-s33-r-staging',
-      '--vertex-endpoint', RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackEndpoint,
-      '--vertex-model', model,
-      '--deployed-model-id', deployedModelId,
-      '--runtime-sa', 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
-      '--lease-id', leaseId,
-    ]);
-    expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/protected.*v6|rollback.*endpoint/i);
-    expect(result.out).not.toContain('run services delete');
+  it('refuses the protected v6 rollback endpoint before any release operation', () => {
+    expect(() => validateS33RigRProvisionBinding({
+      ...binding(),
+      vertexEndpoint: RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackEndpoint,
+    })).toThrow(/vertexEndpoint|733002|protected.*rollback/i);
   });
 });
 
@@ -228,7 +218,7 @@ describe('RIG-R release driver', () => {
     expect(() => validateS33RigRProvisionBinding({
       ...binding(),
       vertexEndpoint: RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackEndpoint,
-    })).toThrow(/protected.*rollback/i);
+    })).toThrow(/vertexEndpoint|733002|protected.*rollback/i);
     expect(() => validateS33RigRProvisionBinding({
       ...binding(),
       vertexModel: 'projects/arkova1/locations/us-central1/models/9000000000000000002',

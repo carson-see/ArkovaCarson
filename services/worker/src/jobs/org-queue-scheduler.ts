@@ -11,6 +11,7 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { processBatchAnchors, type BatchAnchorResult } from './batch-anchor.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
+import type { S33RigB1ScenarioExecutionContext } from './s33-rig-b1-scenario.js';
 
 const CLAIM_LIMIT_DEFAULT = 25;
 
@@ -48,7 +49,11 @@ interface SchedulerDeps {
   now?: () => Date;
   workerId?: string;
   env?: NodeJS.ProcessEnv;
-  processBatchAnchors?: (opts: { force: true; orgId: string }) => Promise<BatchAnchorResult>;
+  processBatchAnchors?: (opts: {
+    force: true;
+    orgId: string;
+    scenario?: S33RigB1ScenarioExecutionContext;
+  }) => Promise<BatchAnchorResult>;
   emitOrgAdminNotifications?: typeof emitOrgAdminNotifications;
 }
 
@@ -181,11 +186,33 @@ async function claimDueOrganizations(
   }));
 }
 
+async function listScenarioOrganizations(
+  deps: ReturnType<typeof getDeps>,
+  scenario: S33RigB1ScenarioExecutionContext,
+): Promise<Array<{ org_id: string; last_run_at: null }>> {
+  const { data, error } = await deps.db.rpc('list_s33_rig_b1_scenario_orgs', {
+    p_scenario_lease_id: scenario.scenarioLeaseId,
+    p_generation: scenario.generation,
+    p_scheduler_execution_id: scenario.schedulerExecutionId,
+    p_namespace_id: scenario.namespaceId,
+    p_worker_id: scenario.workerRevision,
+  });
+  if (error) {
+    throw new Error(`list_s33_rig_b1_scenario_orgs failed: ${(error as { message?: string }).message ?? 'unknown error'}`);
+  }
+  const parsed = z.array(z.string().uuid()).safeParse(data ?? []);
+  if (!parsed.success) {
+    throw new Error(`list_s33_rig_b1_scenario_orgs returned invalid rows: ${parsed.error.message}`);
+  }
+  return parsed.data.map((org_id) => ({ org_id, last_run_at: null }));
+}
+
 export async function runOrgQueueScheduler(
-  opts: { limit?: number } = {},
+  opts: { limit?: number; scenario?: S33RigB1ScenarioExecutionContext } = {},
   injected: SchedulerDeps = {},
 ): Promise<OrgQueueSchedulerResult> {
   const deps = getDeps(injected);
+  const executionWorkerId = opts.scenario?.workerRevision ?? deps.workerId;
   const result: OrgQueueSchedulerResult = {
     claimed: 0,
     succeeded: 0,
@@ -199,14 +226,20 @@ export async function runOrgQueueScheduler(
   }
 
   const limit = Math.max(1, Math.min(opts.limit ?? CLAIM_LIMIT_DEFAULT, 100));
-  const claimed = await claimDueOrganizations(deps, limit);
+  const claimed = opts.scenario
+    ? await listScenarioOrganizations(deps, opts.scenario)
+    : await claimDueOrganizations(deps, limit);
   result.claimed = claimed.length;
   if (claimed.length === 0) return result;
 
   for (const row of claimed) {
     const startedAt = deps.now();
     try {
-      const batch = await deps.processBatchAnchors({ force: true, orgId: row.org_id });
+      const batch = await deps.processBatchAnchors({
+        force: true,
+        orgId: row.org_id,
+        ...(opts.scenario ? { scenario: opts.scenario } : {}),
+      });
       const finishedAt = deps.now();
       result.succeeded += 1;
       result.processed += batch.processed;
@@ -221,12 +254,13 @@ export async function runOrgQueueScheduler(
           batchId: batch.batchId,
           merkleRoot: batch.merkleRoot,
           txId: batch.txId,
-          workerId: deps.workerId,
+          workerId: executionWorkerId,
+          triggeredBy: opts.scenario?.schedulerExecutionId,
         },
         deps,
       );
 
-      if (batch.processed > 0) {
+      if (batch.processed > 0 && !opts.scenario) {
         await deps.emitOrgAdminNotifications({
           type: 'queue_run_completed',
           organizationId: row.org_id,
@@ -254,7 +288,8 @@ export async function runOrgQueueScheduler(
           batchId: null,
           merkleRoot: null,
           txId: null,
-          workerId: deps.workerId,
+          workerId: executionWorkerId,
+          triggeredBy: opts.scenario?.schedulerExecutionId,
           error,
         },
         deps,

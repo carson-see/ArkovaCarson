@@ -15,6 +15,7 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { reconcileTxidJournals } from './batch-anchor.js';
+import type { S33RigB1ScenarioExecutionContext } from './s33-rig-b1-scenario.js';
 
 /** Default: anchors stuck in BROADCASTING for >5 minutes are considered stuck */
 const DEFAULT_STALE_MINUTES = 5;
@@ -34,7 +35,48 @@ export interface BroadcastRecoveryResult {
  */
 export async function recoverStuckBroadcasts(
   staleMinutes = DEFAULT_STALE_MINUTES,
+  scenario?: S33RigB1ScenarioExecutionContext,
 ): Promise<BroadcastRecoveryResult> {
+  if (scenario) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db.rpc as any)('recover_s33_rig_b1_scenario_broadcasts', {
+      p_scenario_lease_id: scenario.scenarioLeaseId,
+      p_generation: scenario.generation,
+      p_scheduler_execution_id: scenario.schedulerExecutionId,
+      p_namespace_id: scenario.namespaceId,
+      p_worker_id: scenario.workerRevision,
+      p_stale_minutes: staleMinutes,
+    });
+    if (error || !Array.isArray(data)) {
+      throw new Error(`RIG-B1 exact recovery failed: ${(error as { message?: string } | null)?.message ?? 'invalid rows'}`);
+    }
+    const recovered = data.map((row: {
+      anchor_id: string;
+      anchor_fingerprint: string;
+      claimed_by: string;
+      correlated_drain_execution_id: string;
+      fault_window_id: string;
+    }) => ({
+      id: row.anchor_id,
+      fingerprint: row.anchor_fingerprint,
+      claimedBy: row.claimed_by ?? 'unknown',
+      correlatedDrainExecutionId: row.correlated_drain_execution_id,
+      faultWindowId: row.fault_window_id,
+    }));
+    logger.info({
+      event: 'rig-b1-recovery',
+      schedulerExecutionId: scenario.schedulerExecutionId,
+      scenarioId: scenario.scenarioId,
+      faultWindowId: scenario.faultWindowId,
+      recovered: recovered.length,
+      correlations: recovered.map((row) => ({
+        anchorId: row.id,
+        correlatedDrainExecutionId: row.correlatedDrainExecutionId,
+        faultWindowId: row.faultWindowId,
+      })),
+    }, 'RIG-B1 exact namespace recovery completed');
+    return { recovered: recovered.length, anchors: recovered };
+  }
   // SCRUM-2692: exact txid ADOPT/REVERT/HOLD always precedes the generic
   // stale-claim RPC. The RPC itself repeats HELD protection transactionally.
   const journal = await reconcileTxidJournals();

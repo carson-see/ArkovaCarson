@@ -70,8 +70,8 @@ RIG_G1_B_DEPLOYED_MODEL_ID="7330011"
 RIG_R_LEASE_BUCKET="arkova1-s33-immutable-authority-ledger"
 RIG_R_LEASE_PREFIX="s33/rig-leases"
 RIG_R_LEASE_OBJECT_NAME="${RIG_R_LEASE_PREFIX}/RIG-R.singleton.json"
-RIG_B1_NAME="s33-b1"
-RIG_B1_SERVICE="arkova-worker-s33-b1-staging"
+RIG_B1_NAME="s33-rig-b1"
+RIG_B1_SERVICE="arkova-worker-s33-rig-b1-staging"
 RIG_B1_GCP_PROJECT="arkova1"
 RIG_B1_GCP_REGION="us-central1"
 RIG_B1_LEDGER_BUCKET="arkova1-s33-immutable-authority-ledger"
@@ -490,8 +490,8 @@ verify_b1_teardown_authority() {
   done < <(jq -r '.payload.topology.secretReferences[].secretName' <<<"$B1_VERIFIED_APPROVAL_JSON")
   if [[ ${#B1_WORKER_SECRET_NAMES[@]} -ne 9 \
     || -z "$B1_NODE_RPC_AUTH_SECRET" || -z "$B1_RPC_URL_SECRET" \
-    || "$B1_SUPABASE_URL_SECRET" != "supabase-url-s33-b1-staging" \
-    || "$B1_SUPABASE_ROLE_SECRET" != "supabase-service-role-key-s33-b1-staging" ]]; then
+    || "$B1_SUPABASE_URL_SECRET" != "supabase-url-s33-rig-b1-staging" \
+    || "$B1_SUPABASE_ROLE_SECRET" != "supabase-service-role-key-s33-rig-b1-staging" ]]; then
     echo "ERROR: RIG-B1 signed secret inventory is incomplete or outside the exact rig boundary." >&2
     exit 2
   fi
@@ -617,6 +617,16 @@ load_b1_locked_ownership() {
     --arg supabase_role_secret "$B1_SUPABASE_ROLE_SECRET" \
     --arg rpc_url_secret "$B1_RPC_URL_SECRET" \
     --arg rpc_auth_secret "$B1_NODE_RPC_AUTH_SECRET" \
+    --arg bitcoin_core_image "$B1_BITCOIN_CORE_IMAGE" \
+    --arg treasury_split_plan_digest "$(jq -r \
+      '.payload.topology.treasuryWatchOnly.preSplitPlanDigest' \
+      <<<"$B1_VERIFIED_APPROVAL_JSON")" \
+    --arg treasury_split_txid "$(jq -r \
+      '.payload.topology.treasuryWatchOnly.splitTransactionId' \
+      <<<"$B1_VERIFIED_APPROVAL_JSON")" \
+    --argjson treasury_total_sats "$(jq -c \
+      '.payload.topology.treasuryWatchOnly.expectedTotalSats' \
+      <<<"$B1_VERIFIED_APPROVAL_JSON")" \
     --argjson resources "$B1_SIGNED_RESOURCES_JSON" \
     --argjson secrets "$B1_SIGNED_SECRETS_JSON" \
     --argjson scheduler_names "$B1_EXPECTED_SCHEDULER_NAMES_JSON" '
@@ -629,7 +639,7 @@ load_b1_locked_ownership() {
           "supabaseProjectRef", "supabaseProjectName", "workerService",
           "workerRuntimeServiceAccount", "schedulerOidcServiceAccount",
           "cloudRunServiceUrl", "resources", "secretReferences", "schedulerJobNames",
-          "generatedSecretNames", "resourceIdentities", "approvalClaim",
+          "generatedSecretNames", "nodeReadiness", "resourceIdentities", "approvalClaim",
           "projectedMonthlyRecurringUsd"
         ] | sort))
         and .schemaVersion == "arkova.s33.rig-b1.topology-ownership/v1"
@@ -647,7 +657,7 @@ load_b1_locked_ownership() {
         and .gcpProjectId == "arkova1"
         and .gcpRegion == "us-central1"
         and .supabaseProjectRef == $project_ref
-        and .supabaseProjectName == "arkova-soak-s33-b1"
+        and .supabaseProjectName == "arkova-soak-s33-rig-b1"
         and .workerService == $service
         and .workerRuntimeServiceAccount == $runtime_sa
         and .schedulerOidcServiceAccount == $scheduler_sa
@@ -662,6 +672,35 @@ load_b1_locked_ownership() {
         and all(.generatedSecretNames[];
           . == $supabase_url_secret or . == $supabase_role_secret
           or . == $rpc_url_secret or . == $rpc_auth_secret)
+        and (.nodeReadiness | type == "object")
+        and ((.nodeReadiness | keys | sort) == ([
+          "schemaVersion", "bitcoinCoreVersion", "bitcoinCoreImage",
+          "sourceTarballSha256", "chain", "initialBlockDownload", "blocks",
+          "headers", "genesisHash", "txindexSynced", "txindexBestBlockHeight",
+          "treasurySplitPlanDigest", "splitTransactionId", "confirmedOutputCount",
+          "confirmedTotalSats", "splitBlockHash", "splitBlockHeader", "txOutProof"
+        ] | sort))
+        and .nodeReadiness.schemaVersion == "arkova.s33.rig-b1.node-readiness/v1"
+        and .nodeReadiness.bitcoinCoreVersion == "31.1"
+        and .nodeReadiness.bitcoinCoreImage == $bitcoin_core_image
+        and .nodeReadiness.sourceTarballSha256 ==
+          "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e"
+        and .nodeReadiness.chain == "signet"
+        and .nodeReadiness.initialBlockDownload == false
+        and (.nodeReadiness.blocks | type == "number" and floor == . and . >= 0)
+        and (.nodeReadiness.headers | type == "number" and floor == . and . >= 0)
+        and (.nodeReadiness.headers >= .nodeReadiness.blocks)
+        and .nodeReadiness.genesisHash ==
+          "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"
+        and .nodeReadiness.txindexSynced == true
+        and .nodeReadiness.txindexBestBlockHeight == .nodeReadiness.blocks
+        and .nodeReadiness.treasurySplitPlanDigest == $treasury_split_plan_digest
+        and .nodeReadiness.splitTransactionId == $treasury_split_txid
+        and .nodeReadiness.confirmedOutputCount == 32
+        and .nodeReadiness.confirmedTotalSats == $treasury_total_sats
+        and (.nodeReadiness.splitBlockHash | type == "string" and test("^[0-9a-f]{64}$"))
+        and (.nodeReadiness.splitBlockHeader | type == "string" and test("^[0-9a-f]{160}$"))
+        and (.nodeReadiness.txOutProof | type == "string" and test("^([0-9a-f]{2})+$"))
         and (.resourceIdentities | type == "object")
         and ((.resourceIdentities | keys | sort) == ([
           "cloudRunServiceUid", "vmId", "bootDiskName", "bootDiskId", "dataDiskId",
@@ -957,7 +996,7 @@ preflight_b1_owned_resources() {
     exit 1
   }
   if ! jq -e --arg ref "$PROJECT_REF" '
-    [ .[] | select((.id // .ref) == $ref and .name == "arkova-soak-s33-b1") ] | length == 1
+    [ .[] | select((.id // .ref) == $ref and .name == "arkova-soak-s33-rig-b1") ] | length == 1
   ' >/dev/null 2>&1 <<<"$projects_json"; then
     echo "ERROR: Supabase ref is not the sole exact immutable RIG-B1 project target." >&2
     exit 1

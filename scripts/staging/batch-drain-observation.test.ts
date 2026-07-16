@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertDrainPassObservation,
+  assertDrainWindowSemantic,
   assertDrainWindowObservation,
   validateDrainPassExpectation,
   type DrainTrigger,
@@ -478,6 +479,40 @@ describe('assertDrainPassObservation — event-derived fail-closed R3 evidence',
       poisonLeaves: 1,
       finalPending: 1,
     });
+  });
+
+  it.each([
+    ['trigger-a-size:1', 'global-policy', 12_500, 2_500, 10_000],
+    ['trigger-a-size:2', 'global-policy', 15_000, 5_000, 10_000],
+    ['trigger-b-age:1', 'global-policy', 5_000, 0, 5_000],
+    ['trigger-d-force:1', 'global-flush', 2_500, 0, 2_500],
+  ] as const)('accepts exact Wave-3 semantic outcome %s', (kind, trigger, initial, final, drained) => {
+    expect(() => assertDrainWindowSemantic({
+      scenarioId: `wave3-${kind}`,
+      kind,
+      armedTrigger: trigger,
+      expectedInitialPending: initial,
+      expectedFinalPending: final,
+    }, [{ pendingAfter: final, drainedLeaves: drained, poisonLeaves: 0 }])).not.toThrow();
+  });
+
+  it('requires the exact 12,303 healthy plus 197 no-broadcast org-scheduler outcome', () => {
+    const summaries = [
+      { pendingAfter: 197, drainedLeaves: 12_303, poisonLeaves: 0 },
+      ...Array.from({ length: 197 }, () => ({
+        pendingAfter: 197, drainedLeaves: 0, poisonLeaves: 1,
+      })),
+    ];
+    const declaration = {
+      scenarioId: 'wave3-org-scheduler',
+      kind: 'org-scheduler:1' as const,
+      armedTrigger: 'org-scheduler' as const,
+      expectedInitialPending: 12_500,
+      expectedFinalPending: 197,
+    };
+    expect(() => assertDrainWindowSemantic(declaration, summaries)).not.toThrow();
+    summaries.pop();
+    expect(() => assertDrainWindowSemantic(declaration, summaries)).toThrow(/197 no-broadcast/i);
   });
 
   it('rejects one transaction and claimed identity set reused across passes', () => {
