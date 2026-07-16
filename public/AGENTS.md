@@ -6,7 +6,7 @@
 
 Arkova exposes a Model Context Protocol (MCP) server for AI agent access to credential verification and semantic search.
 
-**Endpoint:** `https://arkova-edge.<account>.workers.dev/mcp`
+**Endpoint:** `https://edge.arkova.ai/mcp`
 
 ### Connection
 
@@ -16,7 +16,7 @@ Connect using any MCP-compatible client (Claude, Cursor, custom agents):
 {
   "mcpServers": {
     "arkova": {
-      "url": "https://arkova-edge.<account>.workers.dev/mcp",
+      "url": "https://edge.arkova.ai/mcp",
       "transport": "streamable-http"
     }
   }
@@ -25,11 +25,26 @@ Connect using any MCP-compatible client (Claude, Cursor, custom agents):
 
 ### Authentication
 
-Enterprise access uses OAuth 2.0:
+Agent access uses a scoped API key or an approved user-delegated bearer token:
 
-1. Register your application at `https://app.arkova.io/settings/api-keys`
+1. Provision a scoped key at `https://app.arkova.ai/settings/api-keys`
 2. Obtain an API key
 3. Pass the key via `X-API-Key` header or OAuth bearer token
+
+## Discovery Documents
+
+The application publishes machine-readable discovery resources at:
+
+- `/.well-known/api-catalog` — RFC 9727 linkset for API and MCP surfaces
+- `/.well-known/openid-configuration` — redirect to the canonical production OIDC issuer
+- `/.well-known/oauth-protected-resource` — RFC 9728 protected-resource metadata
+- `/.well-known/mcp/server-card.json` — remote MCP server card
+- `/.well-known/agent-skills/index.json` — Agent Skills Discovery v0.2.0 index
+- `/auth.md` — administrator-mediated API-key provisioning and OIDC instructions
+
+Requests to `/` with `Accept: text/markdown` receive `/index.md`; browser requests
+continue to receive the React application. `vercel.json` owns the response Link
+headers, media types, conditional rewrite, caching, and CORS for these files.
 
 ## Available Tools
 

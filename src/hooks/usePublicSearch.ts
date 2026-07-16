@@ -7,7 +7,7 @@
  * @see UF-02
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { SEARCH_LABELS } from '@/lib/copy';
 
@@ -52,10 +52,13 @@ export function usePublicSearch(): UsePublicSearchReturn {
   const [issuerResults, setIssuerResults] = useState<IssuerResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchGenerationRef = useRef(0);
 
   const searchIssuers = useCallback(async (query: string) => {
+    const generation = ++searchGenerationRef.current;
     if (!query.trim()) {
       setIssuerResults([]);
+      setSearching(false);
       return;
     }
 
@@ -70,6 +73,7 @@ export function usePublicSearch(): UsePublicSearchReturn {
       );
 
       if (rpcError) {
+        if (generation !== searchGenerationRef.current) return;
         // PGRST203 (schema cache stale after migration) — show empty, not error
         if (rpcError.code === 'PGRST203') {
           console.warn('search_public_issuers RPC stale cache:', rpcError.message);
@@ -89,19 +93,23 @@ export function usePublicSearch(): UsePublicSearchReturn {
         org_domain: null,
         credential_count: (row.credential_count as number) ?? 0,
       }));
+      if (generation !== searchGenerationRef.current) return;
       setIssuerResults(mapped);
     } catch (err) {
+      if (generation !== searchGenerationRef.current) return;
       // BUG-UAT5-01: silent catch masked a TypeError from the generated
       // RPC type bindings. Log so prod triage doesn't have to reproduce.
       console.error('[usePublicSearch] issuer search threw:', err);
       setError(SEARCH_LABELS.SEARCH_ERROR);
     } finally {
-      setSearching(false);
+      if (generation === searchGenerationRef.current) setSearching(false);
     }
   }, []);
 
   const clearResults = useCallback(() => {
+    searchGenerationRef.current += 1;
     setIssuerResults([]);
+    setSearching(false);
     setError(null);
   }, []);
 
