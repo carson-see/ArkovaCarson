@@ -1958,12 +1958,23 @@ claim_b1_node_approval_once() {
     --project="$GCP_PROJECT" --raw --format=json)" \
     || ! jq -e --arg bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
       --arg name "$object_name" --arg expires_at "$RIG_B1_APPROVAL_EXPIRES_AT" '
+        def utc_epoch:
+          if type != "string"
+            or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|\\+00:00)$") | not)
+          then error("timestamp is not canonical UTC")
+          else
+            sub("\\+00:00$"; "Z")
+            | sub("\\.[0-9]{1,9}Z$"; "Z")
+            | fromdateiso8601
+          end;
         type == "object"
         and .bucket == $bucket
         and .name == $name
         and (.generation | tostring | test("^[1-9][0-9]*$"))
+        and (.retention | type == "object")
         and .retention.mode == "Locked"
-        and .retention.retainUntilTime >= $expires_at
+        and (.retention.retainUntilTime | type == "string")
+        and ((.retention.retainUntilTime | utc_epoch) >= ($expires_at | utc_epoch))
       ' >/dev/null 2>&1 <<<"$observed_json"; then
     echo "ERROR: RIG-B1 immutable approval claim could not be re-observed exactly." >&2
     exit 2
@@ -2004,7 +2015,7 @@ claim_g1_spend_approval_once() {
   claim_object_name="${RIG_G1_APPROVAL_LEDGER_PREFIX}/${approval_id}.json"
   claim_uri="gs://${RIG_G1_APPROVAL_LEDGER_BUCKET}/${claim_object_name}"
   requested_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  if ! claim_payload="$(jq -c \
+  if ! claim_payload="$(jq -nc \
     --arg approval_id "$approval_id" \
     --arg canonical_sha256 "$canonical_sha" \
     --arg requested_at "$requested_at" \
@@ -2068,7 +2079,14 @@ claim_g1_spend_approval_once() {
     --arg name "$claim_object_name" \
     --arg expires_at "$G1_EXPIRES_AT" '
       def utc_epoch:
-        sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+        if type != "string"
+          or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|\\+00:00)$") | not)
+        then error("timestamp is not canonical UTC")
+        else
+          sub("\\+00:00$"; "Z")
+          | sub("\\.[0-9]{1,9}Z$"; "Z")
+          | fromdateiso8601
+        end;
       select(
         type == "object"
         and .bucket == $bucket
@@ -2176,7 +2194,14 @@ claim_rig_r_provision_approval_once() {
     --arg name "$claim_object_name" \
     --arg expires_at "$RIG_R_EXPIRES_AT" '
       def utc_epoch:
-        sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+        if type != "string"
+          or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|\\+00:00)$") | not)
+        then error("timestamp is not canonical UTC")
+        else
+          sub("\\+00:00$"; "Z")
+          | sub("\\.[0-9]{1,9}Z$"; "Z")
+          | fromdateiso8601
+        end;
       select(
         type == "object"
         and .bucket == $bucket
@@ -5231,10 +5256,21 @@ publish_rig_b1_topology_ownership() {
     --project="$GCP_PROJECT" --raw --format=json)" \
     || ! jq -e --arg bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
       --arg name "$object_name" --arg expires_at "$RIG_B1_APPROVAL_EXPIRES_AT" '
+        def utc_epoch:
+          if type != "string"
+            or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|\\+00:00)$") | not)
+          then error("timestamp is not canonical UTC")
+          else
+            sub("\\+00:00$"; "Z")
+            | sub("\\.[0-9]{1,9}Z$"; "Z")
+            | fromdateiso8601
+          end;
         .bucket == $bucket and .name == $name
         and (.generation | tostring | test("^[1-9][0-9]*$"))
+        and (.retention | type == "object")
         and .retention.mode == "Locked"
-        and .retention.retainUntilTime >= $expires_at
+        and (.retention.retainUntilTime | type == "string")
+        and ((.retention.retainUntilTime | utc_epoch) >= ($expires_at | utc_epoch))
       ' >/dev/null 2>&1 <<<"$metadata"; then
     echo "ERROR: RIG-B1 immutable topology ownership metadata did not re-observe exactly." >&2
     return 1

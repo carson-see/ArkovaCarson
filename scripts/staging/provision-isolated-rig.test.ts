@@ -565,6 +565,8 @@ interface ApplyRunOptions {
   secretVersionResourceProject?: string;
   secretVersionResourceSecret?: string;
   secretVersionResourceVersion?: string;
+  ledgerRetentionUntil?: string;
+  topologyLedgerRetentionUntil?: string;
   childTimeoutMs?: number;
   env?: Record<string, string>;
 }
@@ -1183,7 +1185,11 @@ fi
 if [[ "$1" == "storage" && "$2" == "objects" && "$3" == "describe" ]]; then
   object_uri="$4"
   object_name="\${object_uri#gs://arkova1-s33-immutable-authority-ledger/}"
-  printf '{"bucket":"arkova1-s33-immutable-authority-ledger","name":"%s","generation":"1","retention":{"mode":"Locked","retainUntilTime":"2099-01-01T00:00:00Z"}}\\n' "$object_name"
+  retention_until='${options.ledgerRetentionUntil ?? '2099-01-01T00:00:00+00:00'}'
+  if [[ "$object_name" == s33/rig-b1/topology-ownership/* ]]; then
+    retention_until='${options.topologyLedgerRetentionUntil ?? options.ledgerRetentionUntil ?? '2099-01-01T00:00:00+00:00'}'
+  fi
+  printf '{"bucket":"arkova1-s33-immutable-authority-ledger","name":"%s","generation":"1","retention":{"mode":"Locked","retainUntilTime":"%s"}}\\n' "$object_name" "$retention_until"
   exit 0
 fi
 if [[ "$1" == "storage" && "$2" == "cat" ]]; then
@@ -1846,6 +1852,32 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
       call.startsWith('secrets versions describe 1 ') &&
       call.includes('--secret=arkova-s33-rig-b1-bitcoin-core-signet-rpc-url'),
     )).toBe(true);
+  });
+
+  it.each([
+    '2099-01-01T01:00:00+01:00',
+    '2099-01-01T00:00:00',
+    '2099-99-01T00:00:00Z',
+  ])('rejects non-canonical immutable claim retention %s before paid mutation', (ledgerRetentionUntil) => {
+    const result = applyRunStubbed('w3c-rig-b1-invalid-retention', 'chain', {
+      rigId: 'RIG-B1',
+      env: RIG_B1_APPLY_ENV,
+      ledgerRetentionUntil,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/immutable approval claim/i);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('rejects non-UTC B1 topology-ownership retention metadata', () => {
+    const result = applyRunStubbed('w3c-b1-bad-topology', 'chain', {
+      rigId: 'RIG-B1',
+      env: RIG_B1_APPLY_ENV,
+      topologyLedgerRetentionUntil: '2099-01-01T01:00:00+01:00',
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/topology ownership metadata/i);
   });
 
   it.each([

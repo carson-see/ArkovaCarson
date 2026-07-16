@@ -105,6 +105,7 @@ interface G1FaultRun {
   ambientChecksumDigest?: string;
   forgedChecksumDigest?: string;
   state: Record<string, unknown> | null;
+  approvalClaimRaw: string | null;
 }
 
 function runG1ApplyFault(options: {
@@ -119,6 +120,7 @@ function runG1ApplyFault(options: {
   checksumLoaderTarget?: 'git' | 'node';
   sharedLedgerDir?: string;
   bucketObjectRetention?: boolean;
+  claimRetentionUntil?: string;
   env?: Record<string, string>;
 } = {}): G1FaultRun {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'g1-provision-fault-')));
@@ -130,6 +132,7 @@ function runG1ApplyFault(options: {
   const rigName = options.name ?? 's33-g1';
   const leaseId = options.leaseId ?? 'lease-s33-g1';
   const ledgerDir = options.sharedLedgerDir ?? join(root, 'approval-ledger');
+  const approvalClaimPath = join(ledgerDir, 'approval-s33-g1-001', 'claim.json');
   mkdirSync(join(fakeRepo, 'scripts/staging'), { recursive: true });
   mkdirSync(join(fakeRepo, 'services/worker/scripts'), { recursive: true });
   mkdirSync(ledgerDir, { recursive: true });
@@ -514,6 +517,7 @@ if [[ "$1" == "storage" && "$2" == "cp" ]]; then
     echo 'Precondition Failed: object generation is no longer zero' >&2
     exit 45
   fi
+  cp -- "$3" '${approvalClaimPath}'
   exit 0
 fi
 if [[ "$1" == "storage" && "$2" == "buckets" && "$3" == "describe" ]]; then
@@ -521,7 +525,7 @@ if [[ "$1" == "storage" && "$2" == "buckets" && "$3" == "describe" ]]; then
   exit 0
 fi
 if [[ "$1" == "storage" && "$2" == "objects" && "$3" == "describe" ]]; then
-  printf '%s\\n' '{"bucket":"${immutableLedgerBucket}","name":"s33/g1/approval-claims/approval-s33-g1-001.json","generation":"1","timeCreated":"2026-07-15T20:02:00Z","retention":{"mode":"Locked","retainUntilTime":"2026-07-20T00:00:00Z"}}'
+  printf '%s\\n' '{"bucket":"${immutableLedgerBucket}","name":"s33/g1/approval-claims/approval-s33-g1-001.json","generation":"1","timeCreated":"2026-07-15T20:02:00Z","retention":{"mode":"Locked","retainUntilTime":${JSON.stringify(options.claimRetentionUntil ?? '2026-07-20T00:00:00+00:00')}}}'
   exit 0
 fi
 if [[ "$1" == "artifacts" && "$2" == "docker" ]]; then
@@ -663,6 +667,9 @@ exit 0
     ambientChecksumDigest,
     forgedChecksumDigest,
     state: existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : null,
+    approvalClaimRaw: existsSync(approvalClaimPath)
+      ? readFileSync(approvalClaimPath, 'utf8')
+      : null,
   };
 }
 
@@ -1074,6 +1081,23 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     expect(result.code).not.toBe(0);
     expect(result.npxCalls.some((call) => call.includes('s33-g1-spend-approval'))).toBe(false);
     expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(true);
+    expect(JSON.parse(result.approvalClaimRaw!)).toMatchObject({
+      schemaVersion: 1,
+      approvalId: 'approval-s33-g1-001',
+      canonicalSha256: `sha256:${'1'.repeat(64)}`,
+    });
+  });
+
+  it.each([
+    '2026-07-20T01:00:00+01:00',
+    '2026-07-20T00:00:00',
+    '2026-99-20T00:00:00Z',
+  ])('rejects non-canonical claim retention %s before paid mutation', (claimRetentionUntil) => {
+    const result = runG1ApplyFault({ claimRetentionUntil });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/claim metadata/i);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
   });
 
   it('allows exactly one duplicate/concurrent claimant through the generation-zero ledger', () => {
@@ -1118,7 +1142,7 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
         approval_id: 'approval-s33-g1-001',
         canonical_sha256: `sha256:${'1'.repeat(64)}`,
         generation: '1',
-        retention_until: '2026-07-20T00:00:00Z',
+        retention_until: '2026-07-20T00:00:00+00:00',
       },
     });
     const cleanup = result.state!.cleanup as {
