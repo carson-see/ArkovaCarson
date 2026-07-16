@@ -562,6 +562,9 @@ interface ApplyRunOptions {
   blockAdmissionArtifactPath?: boolean;
   failFinalStatePersistence?: boolean;
   b1InvokerGrantFails?: boolean;
+  secretVersionResourceProject?: string;
+  secretVersionResourceSecret?: string;
+  secretVersionResourceVersion?: string;
   childTimeoutMs?: number;
   env?: Record<string, string>;
 }
@@ -1119,6 +1122,10 @@ if [[ "$1" == "iam" && "$2" == "service-accounts" && "$3" == "create" ]]; then
   : > '${iamStateDir}/'"$4"
   exit 0
 fi
+if [[ "$1" == "projects" && "$2" == "describe" ]]; then
+  printf '{"projectId":"%s","projectNumber":"270018525501"}\\n' "$3"
+  exit 0
+fi
 if [[ "$1" == "compute" && "$2" == "instances" && "$3" == "get-serial-port-output" ]]; then
   printf '%s\\n' 'ARKOVA_RIG_B1_READY_V1 {"schemaVersion":"arkova.s33.rig-b1.node-readiness/v1","bitcoinCoreVersion":"31.1","bitcoinCoreImage":"us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:cdc306adc6ef6017326681ff09c4d3247ce77026bed17feccdc163a96519c8f8","sourceTarballSha256":"b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e","chain":"signet","initialBlockDownload":false,"blocks":100,"headers":100,"genesisHash":"00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6","txindexSynced":true,"txindexBestBlockHeight":100,"treasurySplitPlanDigest":"sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8","splitTransactionId":"1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941","confirmedOutputCount":32,"confirmedTotalSats":169639,"splitBlockHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","splitBlockHeader":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","txOutProof":"aa"}'
   exit 0
@@ -1220,7 +1227,13 @@ fi
 	  for arg in "$@"; do
 	    case "$arg" in --secret=*) secret="\${arg#--secret=}" ;; esac
 	  done
-	  printf '{"state":"ENABLED"}\n'
+	  resource_project='${options.secretVersionResourceProject ?? '270018525501'}'
+	  resource_secret='${options.secretVersionResourceSecret ?? ''}'
+	  resource_version='${options.secretVersionResourceVersion ?? ''}'
+	  [[ -n "$resource_secret" ]] || resource_secret="$secret"
+	  [[ -n "$resource_version" ]] || resource_version="$version"
+	  printf '{"name":"projects/%s/secrets/%s/versions/%s","state":"ENABLED"}\n' \
+	    "$resource_project" "$resource_secret" "$resource_version"
 	  exit 0
 	fi
 	if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
@@ -1825,6 +1838,30 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
     ['batch-anchors-forced-flush', '*/5 * * * *', 'America/New_York', '600s'],
     ['recover-broadcasts', '*/5 * * * *', 'Etc/UTC', '120s'],
   ] as const;
+
+  it('accepts canonical Secret Manager version names using the resolved project number', () => {
+    expect(paused.code, paused.out).toBe(0);
+    expect(paused.gcloudCalls).toContain('projects describe arkova1 --format=json');
+    expect(paused.gcloudCalls.some((call) =>
+      call.startsWith('secrets versions describe 1 ') &&
+      call.includes('--secret=arkova-s33-rig-b1-bitcoin-core-signet-rpc-url'),
+    )).toBe(true);
+  });
+
+  it.each([
+    ['project', { secretVersionResourceProject: '999999999999' }],
+    ['secret', { secretVersionResourceSecret: 'arkova-s33-rig-b1-unrelated' }],
+    ['version', { secretVersionResourceVersion: '999' }],
+  ] as const)('rejects a Secret Manager version name with an unrelated %s', (_field, override) => {
+    const result = applyRunStubbed(`w3c-rig-b1-secret-${_field}`, 'chain', {
+      rigId: 'RIG-B1',
+      env: RIG_B1_APPLY_ENV,
+      ...override,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/Secret Manager version .* missing, disabled, or not exact/iu);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+  });
 
   it('freezes the exact six-job topology and uses only service-derived job identities', () => {
     expect(paused.code, paused.out).toBe(0);

@@ -535,7 +535,17 @@ if [[ "$1" == "secrets" && "$2" == "describe" ]]; then
   exit 0
 fi
 if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "describe" ]]; then
-  printf '%s\\n' '{"state":"ENABLED"}'
+  version="$4"
+  secret=''
+  for arg in "$@"; do
+    case "$arg" in --secret=*) secret="\${arg#--secret=}" ;; esac
+  done
+  printf '{"name":"projects/270018525501/secrets/%s/versions/%s","state":"ENABLED"}\\n' \
+    "$secret" "$version"
+  exit 0
+fi
+if [[ "$1" == "projects" && "$2" == "describe" ]]; then
+  printf '%s\\n' '{"projectId":"arkova1","projectNumber":"270018525501"}'
   exit 0
 fi
 if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then

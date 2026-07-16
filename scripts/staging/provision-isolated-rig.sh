@@ -3299,12 +3299,27 @@ require_gcloud_secret() {
 require_gcloud_secret_version() {
   local secret_name="$1"
   local secret_version="$2"
-  local version_json expected_name
-  expected_name="projects/${GCP_PROJECT}/secrets/${secret_name}/versions/${secret_version}"
+  local project_json project_number version_json expected_id_name expected_number_name
+  if ! project_json="$(gcloud projects describe "$GCP_PROJECT" --format=json)" \
+    || ! project_number="$(jq -er --arg expected_project "$GCP_PROJECT" '
+      (.projectNumber | tostring) as $project_number
+      | select(
+          type == "object"
+          and .projectId == $expected_project
+          and ($project_number | test("^[1-9][0-9]{5,29}$"))
+        )
+      | $project_number
+    ' <<<"$project_json" 2>/dev/null)"; then
+    echo "ERROR: required Secret Manager project '$GCP_PROJECT' cannot be resolved to its exact numeric identity." >&2
+    exit 1
+  fi
+  expected_id_name="projects/${GCP_PROJECT}/secrets/${secret_name}/versions/${secret_version}"
+  expected_number_name="projects/${project_number}/secrets/${secret_name}/versions/${secret_version}"
   if ! version_json="$(gcloud secrets versions describe "$secret_version" \
     --secret="$secret_name" --project="$GCP_PROJECT" --format=json)" \
-    || ! jq -e --arg expected "$expected_name" \
-      '.state == "ENABLED" and ((.name // $expected) == $expected)' \
+    || ! jq -e --arg expected_id "$expected_id_name" \
+      --arg expected_number "$expected_number_name" \
+      '.state == "ENABLED" and (.name == $expected_id or .name == $expected_number)' \
       >/dev/null 2>&1 <<<"$version_json"; then
     echo "ERROR: required numeric Secret Manager version '$secret_name/$secret_version' is missing, disabled, or not exact." >&2
     exit 1
