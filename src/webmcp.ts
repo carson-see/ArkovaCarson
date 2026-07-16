@@ -46,7 +46,16 @@ export function registerArkovaWebMcpTools(
   const controller = new AbortController();
   const options = { signal: controller.signal };
 
-  modelContext.registerTool({
+  const registerProgressively = (tool: WebMcpTool): void => {
+    try {
+      void Promise.resolve(modelContext.registerTool(tool, options)).catch(() => undefined);
+    } catch {
+      // WebMCP is progressive enhancement. One unsupported or faulty tool
+      // registration must not abort registration of the remaining tools.
+    }
+  };
+
+  registerProgressively({
     name: 'search_arkova',
     description: 'Open Arkova search with a bounded natural-language query.',
     inputSchema: {
@@ -63,9 +72,9 @@ export function registerArkovaWebMcpTools(
       navigate(`/search?${new URLSearchParams({ q: query }).toString()}`);
       return { content: [{ type: 'text', text: 'Opened Arkova search.' }] };
     },
-  }, options);
+  });
 
-  modelContext.registerTool({
+  registerProgressively({
     name: 'verify_arkova_record',
     description: 'Open the public Arkova verification page for a public record ID.',
     inputSchema: {
@@ -87,7 +96,7 @@ export function registerArkovaWebMcpTools(
       navigate(`/verify/${encodeURIComponent(publicId)}`);
       return { content: [{ type: 'text', text: 'Opened Arkova public verification.' }] };
     },
-  }, options);
+  });
 
   return controller;
 }

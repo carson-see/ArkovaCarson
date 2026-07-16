@@ -9,9 +9,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
 import { SearchPage } from './SearchPage';
 
 // Mock hooks
@@ -181,6 +181,61 @@ describe('SearchPage', () => {
     expect(publicSearchMock.searchIssuers).not.toHaveBeenCalled();
     expect(supabaseMock.rpc).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('keeps the newest URL-triggered credential results when an older query resolves last', async () => {
+    let resolveOlder!: (value: unknown) => void;
+    let resolveNewer!: (value: unknown) => void;
+    const older = new Promise(resolve => { resolveOlder = resolve; });
+    const newer = new Promise(resolve => { resolveNewer = resolve; });
+
+    supabaseMock.rpc.mockImplementation((_: string, args: { p_query: string }) => (
+      args.p_query === 'older query' ? older : newer
+    ));
+
+    const router = createMemoryRouter(
+      [{ path: '/search', element: <SearchPage /> }],
+      { initialEntries: ['/search?q=older+query'] },
+    );
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => {
+      expect(supabaseMock.rpc).toHaveBeenCalledWith(
+        'search_public_credentials',
+        { p_query: 'older query', p_limit: 20 },
+      );
+    });
+
+    await act(async () => {
+      await router.navigate('/search?q=newer+query');
+    });
+    await waitFor(() => {
+      expect(supabaseMock.rpc).toHaveBeenCalledWith(
+        'search_public_credentials',
+        { p_query: 'newer query', p_limit: 20 },
+      );
+    });
+
+    await act(async () => {
+      resolveNewer({
+        data: [{ public_id: 'ARK-NEW', title: 'New Credential', status: 'SECURED' }],
+        error: null,
+      });
+      await newer;
+    });
+    expect(await screen.findByText('New Credential')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveOlder({
+        data: [{ public_id: 'ARK-OLD', title: 'Old Credential', status: 'SECURED' }],
+        error: null,
+      });
+      await older;
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('Old Credential')).not.toBeInTheDocument();
+      expect(screen.getByText('New Credential')).toBeInTheDocument();
+    });
   });
 
   it('renders results instead of a lingering search spinner when results are already available', async () => {

@@ -49,4 +49,17 @@ describe('Arkova WebMCP registration', () => {
     expect(controller).toBeInstanceOf(AbortController);
     expect(modelContext.registerTool).toHaveBeenCalledTimes(2);
   });
+
+  it('isolates synchronous throws and asynchronous rejections per registration', async () => {
+    const registerTool = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('unsupported first tool'); })
+      .mockRejectedValueOnce(new Error('rejected second tool'));
+    const modelContext: ModelContext = { registerTool };
+
+    expect(() => registerArkovaWebMcpTools(modelContext, vi.fn())).not.toThrow();
+    expect(registerTool).toHaveBeenCalledTimes(2);
+
+    // Allow the rejection handler attached by progressive registration to run.
+    await Promise.resolve();
+  });
 });

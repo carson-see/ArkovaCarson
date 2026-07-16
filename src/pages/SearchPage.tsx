@@ -105,6 +105,7 @@ export function SearchPage() {
   const [fpResult, setFpResult] = useState<FingerprintResult | null>(null);
   const [fpSearching, setFpSearching] = useState(false);
   const [fpError, setFpError] = useState<string | null>(null);
+  const fingerprintSearchGenerationRef = useRef(0);
 
   // Person search state
   interface PersonResult {
@@ -122,6 +123,7 @@ export function SearchPage() {
   const [personResults, setPersonResults] = useState<PersonResult[]>([]);
   const [personSearching, setPersonSearching] = useState(false);
   const [personError, setPersonError] = useState<string | null>(null);
+  const personSearchGenerationRef = useRef(0);
 
   // Drag-to-verify state
   const [dragActive, setDragActive] = useState(false);
@@ -137,6 +139,7 @@ export function SearchPage() {
   };
 
   const searchFingerprint = useCallback(async (fp: string) => {
+    const generation = ++fingerprintSearchGenerationRef.current;
     const isValid = /^[a-f0-9]{64}$/i.test(fp);
     if (!isValid) {
       setFpError(SEARCH_LABELS.FINGERPRINT_INVALID);
@@ -157,6 +160,7 @@ export function SearchPage() {
         .limit(1);
 
       if (queryError) {
+        if (generation !== fingerprintSearchGenerationRef.current) return;
         // BUG-UAT5-01 root cause was silent catch-blocks hiding RPC
         // failures. Surface the real error to the console so prod triage
         // can see why a search failed without needing to reproduce.
@@ -167,6 +171,7 @@ export function SearchPage() {
 
       if (anchors && anchors.length > 0) {
         const anchor = anchors[0];
+        if (generation !== fingerprintSearchGenerationRef.current) return;
         setFpResult({
           verified: anchor.status === 'SECURED',
           status: anchor.status as FingerprintResult['status'],
@@ -176,17 +181,20 @@ export function SearchPage() {
           publicId: anchor.public_id ?? undefined,
         });
       } else {
+        if (generation !== fingerprintSearchGenerationRef.current) return;
         setFpResult({ verified: false, fingerprint: fp.toLowerCase() });
       }
     } catch (err) {
+      if (generation !== fingerprintSearchGenerationRef.current) return;
       console.error('[search] fingerprint search threw:', err);
       setFpError(SEARCH_LABELS.SEARCH_ERROR);
     } finally {
-      setFpSearching(false);
+      if (generation === fingerprintSearchGenerationRef.current) setFpSearching(false);
     }
   }, []);
 
   const searchPerson = useCallback(async (name: string) => {
+    const generation = ++personSearchGenerationRef.current;
     setPersonSearching(true);
     setPersonError(null);
     setPersonResults([]);
@@ -233,6 +241,7 @@ export function SearchPage() {
       if (rpcError) {
         console.error('[search] search_public_credentials RPC failed:', rpcError);
         const fallbackRows = await searchViaRlsFallback();
+        if (generation !== personSearchGenerationRef.current) return;
         setPersonResults(fallbackRows);
         if (fallbackRows.length === 0) setPersonError(null);
         return;
@@ -240,20 +249,24 @@ export function SearchPage() {
 
       // RPC returns rows with anchored_at (not created_at) — normalize field names
       const rows = (data as Record<string, unknown>[]) ?? [];
+      if (generation !== personSearchGenerationRef.current) return;
       setPersonResults(normalizeRows(rows));
     } catch (err) {
+      if (generation !== personSearchGenerationRef.current) return;
       // BUG-UAT5-01 surfaced this silently-caught TypeError — log it.
       console.error('[search] search_public_credentials threw:', err);
       try {
         const fallbackRows = await searchViaRlsFallback();
+        if (generation !== personSearchGenerationRef.current) return;
         setPersonResults(fallbackRows);
         setPersonError(null);
       } catch (fallbackErr) {
+        if (generation !== personSearchGenerationRef.current) return;
         console.error('[search] fallback public credentials search failed:', fallbackErr);
         setPersonError(SEARCH_LABELS.SEARCH_ERROR);
       }
     } finally {
-      setPersonSearching(false);
+      if (generation === personSearchGenerationRef.current) setPersonSearching(false);
     }
   }, []);
 
@@ -267,11 +280,15 @@ export function SearchPage() {
   // are local. Keeping this in one place means `displayError` only ever
   // reflects the search currently in flight.
   const resetSearchState = useCallback(() => {
+    fingerprintSearchGenerationRef.current += 1;
+    personSearchGenerationRef.current += 1;
     clearResults();
     setFpError(null);
     setFpResult(null);
+    setFpSearching(false);
     setPersonError(null);
     setPersonResults([]);
+    setPersonSearching(false);
   }, [clearResults]);
 
   const executeSearch = useCallback(async (candidate: string) => {
