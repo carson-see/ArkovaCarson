@@ -177,8 +177,9 @@ function runG1ApplyFault(options: {
       'RIG_G1_SPEND_APPROVAL_VERIFIER="scripts/staging/s33-g1-spend-approval.mjs"',
       `RIG_G1_SPEND_APPROVAL_VERIFIER="${fixtureVerifier}"`,
     )
-    .replace('RIG_G1_TRUSTED_NODE_SHA256=""', `RIG_G1_TRUSTED_NODE_SHA256="${expectedNodeSha256}"`)
-    .replace('RIG_G1_TRUSTED_NODE_VERSION=""', `RIG_G1_TRUSTED_NODE_VERSION="${process.version}"`)
+    .replace(/RIG_G1_TRUSTED_NODE_PATH="[^"]+"/, `RIG_G1_TRUSTED_NODE_PATH="${process.execPath}"`)
+    .replace(/RIG_G1_TRUSTED_NODE_SHA256="[0-9a-f]+"/, `RIG_G1_TRUSTED_NODE_SHA256="${expectedNodeSha256}"`)
+    .replace(/RIG_G1_TRUSTED_NODE_VERSION="[^"]+"/, `RIG_G1_TRUSTED_NODE_VERSION="${process.version}"`)
     .replace(/TRUSTED_GIT_PATH="[^"]+"/, `TRUSTED_GIT_PATH="${trustedGitPath}"`)
     .replace(/TRUSTED_GIT_SHA256="[0-9a-f]+"/, `TRUSTED_GIT_SHA256="${expectedGitSha256}"`)
     .replace(/TRUSTED_GIT_VERSION="[^"]+"/, `TRUSTED_GIT_VERSION="${trustedGitVersion}"`)
@@ -268,9 +269,11 @@ process.stdout.write(readFileSync(readArg('--artifact'), 'utf8'));
     sourceReference: 'ari:cloud:confluence:tenant:page/123456',
     immutableRevisionId: 'revision-42',
     canonicalSha256: `sha256:${'1'.repeat(64)}`,
-    approverIdentity: 'approved-founder',
+    approverIdentity: 'arkova.s33.approver.founder-cto.v1',
     approverRole: 'founder',
-    authorityRosterRootSha256: `sha256:${'2'.repeat(64)}`,
+    authorityActivatedAtUtc: '2026-07-16T13:52:06Z',
+    authorityRosterRootSha256:
+      'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
     candidateSourceHeadSha: fixtureHead,
     candidateImageDigest: pinnedImageDigest,
     scope: {
@@ -286,14 +289,17 @@ process.stdout.write(readFileSync(readArg('--artifact'), 'utf8'));
     ownerIdentity: 'lane-4-sm',
     expiresAt: '2026-07-20T00:00:00Z',
     raci: {
-      responsibleIdentity: 'lane-4-sm', accountableIdentity: 'approved-founder',
+      responsibleIdentity: 'lane-4-sm',
+      accountableIdentity: 'arkova.s33.approver.founder-cto.v1',
       consultedIdentities: ['cto'], informedIdentities: ['rte'],
     },
     approvalVerifiedAt: '2026-07-15T20:00:00Z',
-    verifierIdentity: 'release-verifier',
+    verifierIdentity: 'arkova.s33.verifier.public-ed25519.v1',
     verificationMethod: 'ed25519-pinned-authority-roster',
     runtimeVerifiedAt: '2026-07-15T20:01:00.000Z',
-    trustRootKeyFingerprint: '3'.repeat(64),
+    trustRootKeyId: 'arkova.s33.g1-spend.ed25519.v1',
+    trustRootKeyFingerprint:
+      '6ece5cea2d35423aab35a23f6292fd769c6d839ac03ba7860a973d4febd5d987',
   });
   writeFileSync(join(root, 'approval-envelope.json'), `${verifiedApproval}\n`);
 
@@ -555,7 +561,7 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
         isolated_supabase_projects_monthly_total_usd: 30,
       },
       spend_approval: {
-        status: 'UNCONFIGURED',
+        status: 'UNVERIFIED',
       },
       approval_claim: null,
     });
@@ -751,12 +757,12 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
       .toBeLessThan(stepOneApply.indexOf('NEW_PROJECT_REF="$('));
   });
 
-  it('rejects a PATH-substituted Node launcher before every paid mutation', () => {
+  it('ignores a PATH-substituted Node and uses the exact code-bound launcher', () => {
     const result = runG1ApplyFault({ fakeNode: true });
     expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/Node launcher digest|launcher is not trusted|UNCONFIGURED/i);
-    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
-    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    expect(result.out).not.toMatch(/Node launcher digest|launcher is not trusted|UNCONFIGURED/i);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(true);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(true);
   });
 
   it.each([

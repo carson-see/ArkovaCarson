@@ -124,7 +124,7 @@ describe('RIG-R exact provision and teardown topology', () => {
     expect(result.out).not.toContain('supabase projects create');
   });
 
-  it('keeps live RIG-R apply fail-closed until the CTO provision authority verifier is bound', () => {
+  it('keeps live RIG-R apply fail-closed without an immutable CTO approval envelope', () => {
     const result = run(provisioner, [
       '--name', 's33-r', '--profile', 'gemini-release', '--apply',
     ], {
@@ -134,7 +134,7 @@ describe('RIG-R exact provision and teardown topology', () => {
       CONFIRM_POST_W3_PROVISION: 'RIG-R',
     });
     expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/CTO-bound.*UNCONFIGURED|external Ed25519 authority/i);
+    expect(result.out).toMatch(/STAGING_RIG_R_PROVISION_APPROVAL_ARTIFACT|Ed25519 approval envelope/i);
     expect(result.out).not.toContain('supabase projects create');
     expect(result.out).not.toContain('executing:');
   });

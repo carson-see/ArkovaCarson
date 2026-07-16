@@ -76,15 +76,29 @@ export interface VerifiedG1SpendApproval {
   readonly verifierIdentity: string;
   readonly verificationMethod: 'ed25519-pinned-authority-roster';
   readonly runtimeVerifiedAt: string;
+  readonly trustRootKeyId: string;
   readonly trustRootKeyFingerprint: string;
+  readonly authorityActivatedAtUtc: string;
 }
 
 export interface VerifierConfig {
   readonly publicKeyPem: string;
+  readonly keyId: string;
   readonly keyFingerprint: string;
   readonly authorityRosterRootSha256: string;
   readonly authorizedApproverIdentities: readonly string[];
   readonly verifierIdentity: string;
+  readonly activatedAtUtc: string;
+}
+
+export interface G1SpendApprovalAuthority {
+  readonly keyId: 'arkova.s33.g1-spend.ed25519.v1';
+  readonly purpose: 'G1_SPEND';
+  readonly publicKeyFingerprintSha256: string;
+  readonly authorizedApproverIdentities: readonly string[];
+  readonly verifierIdentity: string;
+  readonly activatedAtUtc: string;
+  readonly genesisRosterRootSha256: string;
 }
 
 export interface G1SpendApprovalVerifier {
@@ -96,4 +110,5 @@ export const g1SpendApprovalRecordSchema: {
 };
 export function canonicalApprovalRecordSha256(record: G1SpendApprovalRecord): string;
 export function createProductionG1SpendApprovalVerifier(): G1SpendApprovalVerifier;
+export function getG1SpendApprovalAuthority(): G1SpendApprovalAuthority;
 export function createG1SpendApprovalVerifierForTest(config: VerifierConfig): G1SpendApprovalVerifier;

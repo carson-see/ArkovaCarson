@@ -6,6 +6,7 @@ import {
   canonicalApprovalRecordSha256,
   createG1SpendApprovalVerifierForTest,
   createProductionG1SpendApprovalVerifier,
+  getG1SpendApprovalAuthority,
   g1SpendApprovalRecordSchema,
 } from './s33-g1-spend-approval.mjs';
 
@@ -29,10 +30,12 @@ const expectedScope = {
 };
 const verifier = createG1SpendApprovalVerifierForTest({
   publicKeyPem,
+  keyId: 'arkova.s33.g1-spend.ed25519.v1',
   keyFingerprint,
   authorityRosterRootSha256: rosterRoot,
   authorizedApproverIdentities: ['approved-founder'],
   verifierIdentity: 'release-verifier',
+  activatedAtUtc: '2026-07-15T19:00:00Z',
 });
 
 function record(overrides: Record<string, unknown> = {}) {
@@ -97,8 +100,19 @@ function envelopeFromRaw(signedPayloadRaw: string): string {
 }
 
 describe('RIG-G1 immutable spend approval', () => {
-  it('keeps production blocked until the approved trust root and identity roster are code-bound', () => {
-    expect(() => createProductionG1SpendApprovalVerifier()).toThrow(/UNCONFIGURED|trust root|roster/i);
+  it('activates only the founder/CTO-confirmed public production authority', () => {
+    expect(getG1SpendApprovalAuthority()).toEqual({
+      keyId: 'arkova.s33.g1-spend.ed25519.v1',
+      purpose: 'G1_SPEND',
+      publicKeyFingerprintSha256:
+        '6ece5cea2d35423aab35a23f6292fd769c6d839ac03ba7860a973d4febd5d987',
+      authorizedApproverIdentities: ['arkova.s33.approver.founder-cto.v1'],
+      verifierIdentity: 'arkova.s33.verifier.public-ed25519.v1',
+      activatedAtUtc: '2026-07-16T13:52:06Z',
+      genesisRosterRootSha256:
+        'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
+    });
+    expect(createProductionG1SpendApprovalVerifier()).toBeDefined();
   });
 
   it('verifies the immutable source, candidate, three-project budget, TTL, RACI, and verifier', () => {
@@ -124,6 +138,8 @@ describe('RIG-G1 immutable spend approval', () => {
       s33TotalCapUsd: 200,
       ownerIdentity: 'lane-4-sm',
       verifierIdentity: 'release-verifier',
+      trustRootKeyId: 'arkova.s33.g1-spend.ed25519.v1',
+      authorityActivatedAtUtc: '2026-07-15T19:00:00Z',
     });
   });
 
@@ -200,6 +216,20 @@ describe('RIG-G1 immutable spend approval', () => {
       ...record(),
       callerConfirmation: 'I approve myself',
     })).toThrow();
+    expect(() => verifier.verify(
+      envelope(record({
+        budget: { ...record().budget, s33TotalCapUsd: 201 },
+      })),
+      { sourceHeadSha, imageDigest, ...expectedScope },
+      new Date('2026-07-15T21:00:00Z'),
+    )).toThrow(/200|cap/i);
+    expect(() => verifier.verify(
+      envelope(record({
+        budget: { ...record().budget, g1VariableComputeModelCapUsd: 171 },
+      })),
+      { sourceHeadSha, imageDigest, ...expectedScope },
+      new Date('2026-07-15T21:00:00Z'),
+    )).toThrow(/170|cap/i);
   });
 
   it('rejects duplicate JSON keys even when the ambiguous bytes have a valid signature', () => {
@@ -229,5 +259,13 @@ describe('RIG-G1 immutable spend approval', () => {
       ...record(),
       approvalId: 'approval/s33-g1/replay',
     })).toThrow(/approvalId|schema/i);
+  });
+
+  it('production verifier rejects an envelope signed by an untrusted ephemeral key', () => {
+    expect(() => createProductionG1SpendApprovalVerifier().verify(
+      envelope(),
+      { sourceHeadSha, imageDigest, ...expectedScope },
+      new Date('2026-07-16T14:00:00Z'),
+    )).toThrow(/fingerprint|key|signature/i);
   });
 });

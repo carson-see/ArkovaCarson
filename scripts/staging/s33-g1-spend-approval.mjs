@@ -5,8 +5,8 @@
  * This executable intentionally imports Node built-ins only. Live authority is
  * accepted only from a strict, duplicate-key-free Ed25519 envelope whose key,
  * roster, identities, candidate, and complete execution scope are code-bound.
- * The production trust bindings remain unconfigured until a reviewed founder
- * or CTO input commit activates them.
+ * Production verification is bound to the founder/CTO-confirmed public key,
+ * roster root, identities, and activation timestamp below.
  */
 
 import { Buffer } from 'node:buffer';
@@ -17,11 +17,21 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
-const PRODUCTION_APPROVAL_PUBLIC_KEY_PEM = null;
-const PRODUCTION_APPROVAL_KEY_FINGERPRINT = null;
-const PRODUCTION_AUTHORITY_ROSTER_ROOT_SHA256 = null;
-const PRODUCTION_AUTHORIZED_APPROVER_IDENTITIES = Object.freeze([]);
-const PRODUCTION_VERIFIER_IDENTITY = null;
+const PRODUCTION_APPROVAL_PUBLIC_KEY_PEM =
+  '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAkxCdUepaMpp7HVHNhpjGNQ733HS72nnZTNfpKe0P/iU=\n-----END PUBLIC KEY-----\n';
+const PRODUCTION_AUTHORITY = Object.freeze({
+  keyId: 'arkova.s33.g1-spend.ed25519.v1',
+  purpose: 'G1_SPEND',
+  publicKeyFingerprintSha256:
+    '6ece5cea2d35423aab35a23f6292fd769c6d839ac03ba7860a973d4febd5d987',
+  authorizedApproverIdentities: Object.freeze([
+    'arkova.s33.approver.founder-cto.v1',
+  ]),
+  verifierIdentity: 'arkova.s33.verifier.public-ed25519.v1',
+  activatedAtUtc: '2026-07-16T13:52:06Z',
+  genesisRosterRootSha256:
+    'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
+});
 
 const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
@@ -349,8 +359,8 @@ class Ed25519G1SpendApprovalVerifier {
   constructor(config) {
     const parsedConfig = object(config, 'G1 verifier config');
     exactKeys(parsedConfig, [
-      'publicKeyPem', 'keyFingerprint', 'authorityRosterRootSha256',
-      'authorizedApproverIdentities', 'verifierIdentity',
+      'publicKeyPem', 'keyId', 'keyFingerprint', 'authorityRosterRootSha256',
+      'authorizedApproverIdentities', 'verifierIdentity', 'activatedAtUtc',
     ], 'G1 verifier config');
     this.publicKey = createPublicKey(parsedConfig.publicKeyPem);
     if (this.publicKey.asymmetricKeyType !== 'ed25519') {
@@ -363,6 +373,7 @@ class Ed25519G1SpendApprovalVerifier {
       throw new Error('G1 approval trust-root fingerprint mismatch.');
     }
     this.keyFingerprint = string(parsedConfig.keyFingerprint, SHA256_HEX, 'G1 key fingerprint', 64);
+    this.keyId = string(parsedConfig.keyId, SAFE_IDENTITY, 'G1 key ID', 256);
     this.authorityRosterRootSha256 = string(
       parsedConfig.authorityRosterRootSha256,
       SHA256_DIGEST,
@@ -372,6 +383,13 @@ class Ed25519G1SpendApprovalVerifier {
     const identities = identityArray(parsedConfig.authorizedApproverIdentities, 'Authorized G1 approver identities');
     this.authorizedApproverIdentities = new Set(identities);
     this.verifierIdentity = string(parsedConfig.verifierIdentity, SAFE_IDENTITY, 'G1 verifier identity', 256);
+    this.activatedAtUtc = string(
+      parsedConfig.activatedAtUtc,
+      UTC_TIMESTAMP,
+      'G1 authority activation',
+      40,
+    );
+    this.activatedAtMs = parseTimestamp(this.activatedAtUtc, 'G1 authority activation');
   }
 
   verify(rawEnvelope, expectedCandidateRaw, now = new Date()) {
@@ -404,10 +422,13 @@ class Ed25519G1SpendApprovalVerifier {
     if (canonicalize(record.scope) !== canonicalize(expected.scope)) {
       throw new Error('G1 approval scope does not match the exact rig execution scope.');
     }
-    if (record.budget.s33TotalCapUsd
-      < record.budget.g1VariableComputeModelCapUsd
-        + record.budget.isolatedSupabaseProjectsMonthlyTotalUsd) {
-      throw new Error('G1 variable compute/model plus three-project aggregate exceeds the S3.3 total cap.');
+    if (record.budget.s33TotalCapUsd !== 200) {
+      throw new Error('G1 approval must bind the exact S3.3 total cap of $200.');
+    }
+    if (record.budget.g1VariableComputeModelCapUsd > 170
+      || record.budget.g1VariableComputeModelCapUsd
+        + record.budget.isolatedSupabaseProjectsMonthlyTotalUsd > 200) {
+      throw new Error('G1 variable compute/model cap cannot exceed $170 within the S3.3 cap.');
     }
     if (record.raci.responsibleIdentity !== record.execution.ownerIdentity
       || record.raci.accountableIdentity !== record.authority.approverIdentity) {
@@ -416,6 +437,9 @@ class Ed25519G1SpendApprovalVerifier {
     const nowMs = now.getTime();
     const approvalVerifiedAtMs = parseTimestamp(record.verification.verifiedAt, 'approval verifiedAt');
     const expiresAtMs = parseTimestamp(record.execution.expiresAt, 'approval expiresAt');
+    if (approvalVerifiedAtMs < this.activatedAtMs) {
+      throw new Error('G1 approval predates the code-bound authority activation.');
+    }
     if (!Number.isFinite(nowMs) || approvalVerifiedAtMs > nowMs || expiresAtMs <= nowMs) {
       throw new Error('G1 approval verification time/UTC TTL is not currently valid.');
     }
@@ -448,26 +472,27 @@ class Ed25519G1SpendApprovalVerifier {
       verifierIdentity: record.verification.verifierIdentity,
       verificationMethod: record.verification.method,
       runtimeVerifiedAt: now.toISOString(),
+      trustRootKeyId: this.keyId,
       trustRootKeyFingerprint: this.keyFingerprint,
+      authorityActivatedAtUtc: this.activatedAtUtc,
     });
   }
 }
 
 export function createProductionG1SpendApprovalVerifier() {
-  if (PRODUCTION_APPROVAL_PUBLIC_KEY_PEM === null
-    || PRODUCTION_APPROVAL_KEY_FINGERPRINT === null
-    || PRODUCTION_AUTHORITY_ROSTER_ROOT_SHA256 === null
-    || PRODUCTION_VERIFIER_IDENTITY === null
-    || PRODUCTION_AUTHORIZED_APPROVER_IDENTITIES.length === 0) {
-    throw new Error('G1 spend approval trust root/authorized roster is UNCONFIGURED; live provisioning is blocked.');
-  }
   return new Ed25519G1SpendApprovalVerifier({
     publicKeyPem: PRODUCTION_APPROVAL_PUBLIC_KEY_PEM,
-    keyFingerprint: PRODUCTION_APPROVAL_KEY_FINGERPRINT,
-    authorityRosterRootSha256: PRODUCTION_AUTHORITY_ROSTER_ROOT_SHA256,
-    authorizedApproverIdentities: PRODUCTION_AUTHORIZED_APPROVER_IDENTITIES,
-    verifierIdentity: PRODUCTION_VERIFIER_IDENTITY,
+    keyId: PRODUCTION_AUTHORITY.keyId,
+    keyFingerprint: PRODUCTION_AUTHORITY.publicKeyFingerprintSha256,
+    authorityRosterRootSha256: PRODUCTION_AUTHORITY.genesisRosterRootSha256,
+    authorizedApproverIdentities: PRODUCTION_AUTHORITY.authorizedApproverIdentities,
+    verifierIdentity: PRODUCTION_AUTHORITY.verifierIdentity,
+    activatedAtUtc: PRODUCTION_AUTHORITY.activatedAtUtc,
   });
+}
+
+export function getG1SpendApprovalAuthority() {
+  return PRODUCTION_AUTHORITY;
 }
 
 export function createG1SpendApprovalVerifierForTest(config) {
