@@ -55,6 +55,36 @@ describe('app.arkova.ai agent discovery', () => {
     expect(robots).toContain('Sitemap: https://app.arkova.ai/sitemap.xml');
   });
 
+  it('keeps private routes disallowed for every explicitly named AI crawler', () => {
+    const groups = read('public/robots.txt')
+      .split(/\n\s*\n/)
+      .map(block => block
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith('#')))
+      .filter(lines => lines.some(line => line.toLowerCase().startsWith('user-agent:')));
+    const namedAiCrawlers = [
+      'GPTBot',
+      'ChatGPT-User',
+      'OAI-SearchBot',
+      'ClaudeBot',
+      'anthropic-ai',
+      'PerplexityBot',
+      'Google-Extended',
+      'Bytespider',
+      'Amazonbot',
+      'meta-externalagent',
+    ];
+    const wildcardGroup = groups.find(lines => lines.includes('User-agent: *')) ?? [];
+    const privateDisallows = wildcardGroup.filter(line => line.startsWith('Disallow:'));
+
+    expect(privateDisallows).not.toHaveLength(0);
+    for (const crawler of namedAiCrawlers) {
+      const crawlerGroup = groups.find(lines => lines.includes(`User-agent: ${crawler}`)) ?? [];
+      expect(crawlerGroup.filter(line => line.startsWith('Disallow:')), crawler).toEqual(privateDisallows);
+    }
+  });
+
   it('publishes an RFC 9727 API catalog with working Arkova targets', () => {
     const catalog = readJson<{
       linkset: Array<{ anchor: string; 'service-desc': Array<{ href: string }>; 'service-doc': Array<{ href: string }>; status: Array<{ href: string }> }>;
