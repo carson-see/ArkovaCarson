@@ -12,7 +12,9 @@ import { z } from 'zod';
 
 import {
   assertRunDeclarationInvariants,
+  rigB1InfrastructureSchema,
   runDeclarationSchema,
+  type RigB1Infrastructure,
   type RunDeclaration,
 } from './batch-drain-live-evidence';
 import { parseJsonRejectingDuplicateKeys } from './batch-drain-strict-json';
@@ -58,7 +60,7 @@ const TEAM2_RIG_B1_LIVE_CHAIN_CRITICAL_CONFIG = {
   use_mocks: 'false',
   enable_prod_network_anchoring: 'true',
   bitcoin_network: 'signet',
-  bitcoin_utxo_provider: 'getblock',
+  bitcoin_utxo_provider: 'rpc',
   kms_provider: 'gcp',
   gemini_tuned_model: '',
   gemini_v6_prompt: '',
@@ -159,6 +161,7 @@ const admissionV2Schema = z.object({
   clean_mirror: cleanMirrorSchema,
   critical_config: criticalConfigSchema,
   scheduler: schedulerSchema,
+  infrastructure: rigB1InfrastructureSchema,
   driver_path: nonEmpty,
   driver_sha256: sha256Hex,
   changed_behavior: nonEmpty,
@@ -199,6 +202,7 @@ export interface PreClockAdmissionIdentity {
   readonly gcpProjectId: string;
   readonly workerService: string;
   readonly cleanMirrorAttestationId: string;
+  readonly infrastructure: RigB1Infrastructure;
 }
 
 const DECLARATION_BY_ADMISSION_HANDLE = new WeakMap<AdmissionBoundRunDeclaration, RunDeclaration>();
@@ -315,6 +319,7 @@ function buildRunDeclaration(admission: AdmissionV2, ceremony: DeclarationCeremo
     workerService: admission.cloud_run_service,
     workerRevision: admission.deployed_revision,
     region: admission.region,
+    infrastructure: admission.infrastructure,
     soakStartedAt: ceremony.soakStartedAt,
     soakEndedAt: ceremony.soakEndedAt,
     recoveries: ceremony.recoveries,
@@ -367,6 +372,7 @@ export function projectAdmissionV2ToPreClockIdentity(
     gcpProjectId: admission.gcp_project_id,
     workerService: admission.cloud_run_service,
     cleanMirrorAttestationId: admission.clean_mirror_attestation_id,
+    infrastructure: admission.infrastructure,
   });
   const handle = deepFreeze<PreClockAdmissionBoundIdentity>({
     admissionSha256: createHash('sha256').update(admissionRaw as string).digest('hex'),

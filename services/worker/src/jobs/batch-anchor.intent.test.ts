@@ -708,7 +708,11 @@ describe('SCRUM-2692 — durable journal integration', () => {
   });
 
   it.each([
-    ['lookup outage', () => mockGetReceipt.mockRejectedValue(new HttpError('GetBlock unavailable', 503)), 'lookup_failed'],
+    ['lookup auth outage', () => mockGetReceipt.mockRejectedValue(new HttpError('Bitcoin Core unauthorized', 401)), 'lookup_failed'],
+    ['lookup quota outage', () => mockGetReceipt.mockRejectedValue(new HttpError('Bitcoin Core rate limited', 429)), 'lookup_failed'],
+    ['lookup server outage', () => mockGetReceipt.mockRejectedValue(new HttpError('Bitcoin Core unavailable', 503)), 'lookup_failed'],
+    ['lookup timeout', () => mockGetReceipt.mockRejectedValue(Object.assign(new Error('timed out'), { name: 'AbortError' })), 'lookup_failed'],
+    ['lookup network outage', () => mockGetReceipt.mockRejectedValue(new TypeError('fetch failed')), 'lookup_failed'],
     ['txid mismatch', () => mockGetReceipt.mockResolvedValue({ receiptId: 'e2'.repeat(32), blockHeight: 0, blockTimestamp: '', confirmations: 0 }), 'found_txid_mismatch'],
     ['negative confirmations', () => mockGetReceipt.mockResolvedValue({ receiptId: TX_ID, blockHeight: 0, blockTimestamp: '', confirmations: -1 }), 'negative_confirmations'],
   ])('HOLDs on %s and never calls generic revert', async (_label, arrange, reason) => {

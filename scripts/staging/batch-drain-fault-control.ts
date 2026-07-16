@@ -7,10 +7,14 @@
  */
 
 import { parseUtcTimestamp } from './batch-drain-time';
-import type {
-  JournalChainLookupObservation,
-  JournalRuntimeBinding,
-  TxidJournalSnapshot,
+import {
+  PRIMARY_SIGNET_LOOKUP_SOURCE,
+  REQUIRED_SIGNET_LOOKUP_SOURCES,
+  SECONDARY_SIGNET_LOOKUP_SOURCE,
+  type ChainLookupSource,
+  type JournalChainLookupObservation,
+  type JournalRuntimeBinding,
+  type TxidJournalSnapshot,
 } from './batch-drain-journal-crash';
 
 export const FAULT_SCENARIOS = ['fee-ceiling', 'provider-outage', 'reorg'] as const;
@@ -327,6 +331,9 @@ function validateProviderLookups(
   const journalCreatedAt = time(journal.createdAt, `${phase} provider journal createdAt`);
   const observationAt = time(observation.observedAt, `${phase} provider observedAt`);
   for (const lookup of observation.provider!.lookups) {
+    if (!(REQUIRED_SIGNET_LOOKUP_SOURCES as readonly string[]).includes(lookup.source)) {
+      throw new Error(`${phase} provider lookup source is not an approved independent Signet observer.`);
+    }
     if (!SHA256_HEX.test(lookup.txId) || lookup.txId !== input.txId) {
       throw new Error(`${phase} provider lookup must bind the declared exact txid.`);
     }
@@ -335,6 +342,19 @@ function validateProviderLookups(
       throw new Error(`${phase} provider lookup chronology is outside the journal observation.`);
     }
   }
+}
+
+function exactSignetLookupPair(
+  lookups: readonly JournalChainLookupObservation[],
+): Map<ChainLookupSource, JournalChainLookupObservation> | null {
+  if (lookups.length !== REQUIRED_SIGNET_LOOKUP_SOURCES.length) return null;
+  const bySource = new Map(lookups.map((lookup) => [lookup.source, lookup]));
+  if (
+    bySource.size !== REQUIRED_SIGNET_LOOKUP_SOURCES.length
+    || !bySource.has(PRIMARY_SIGNET_LOOKUP_SOURCE)
+    || !bySource.has(SECONDARY_SIGNET_LOOKUP_SOURCE)
+  ) return null;
+  return bySource;
 }
 
 function assertProviderRecoveryChronology(
@@ -428,8 +448,13 @@ function assertProviderCase(input: FaultCaseInput, active: FaultObservation, cle
   if (!Number.isInteger(provider.retryAttempts) || provider.retryAttempts < 1 || provider.retryAttempts > input.retryLimit) {
     throw new Error('Provider outage exceeded the declared bounded retry limit.');
   }
-  if (provider.lookups.length < 1 || !provider.lookups.some((lookup) => lookup.outcome === 'unavailable')) {
-    throw new Error('Provider outage evidence requires an unavailable source and cannot assert absence.');
+  const activeSources = exactSignetLookupPair(provider.lookups);
+  if (
+    activeSources === null
+    || !provider.lookups.some((lookup) => lookup.outcome === 'unavailable')
+    || provider.lookups.some((lookup) => lookup.outcome === 'found')
+  ) {
+    throw new Error('Provider outage evidence requires both distinct Signet observers, at least one unavailable result, and cannot assert absence.');
   }
   if (
     active.refundAnchorIds.length !== 0

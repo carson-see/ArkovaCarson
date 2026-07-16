@@ -65,13 +65,12 @@ const g1Env = {
   STAGING_G1_PAIRED_CADENCE_MIN: '30',
   STAGING_G1_STOP_AUTHORITY: 'founders-cto-rte',
   STAGING_G1_TEARDOWN_OWNER: 'lane-4-sm',
-  STAGING_RUNTIME_SA_EMAIL: 's33-g1-runtime@arkova1.iam.gserviceaccount.com',
   STAGING_GEMINI_TUNED_MODEL:
-    'projects/arkova1/locations/us-central1/endpoints/123456789',
+    'projects/arkova1/locations/us-central1/endpoints/733001',
   STAGING_RIG_ID: 'RIG-G1',
   STAGING_TIER: 'T2',
-  STAGING_REQUIRED_UPTIME_MIN: '2880',
-  STAGING_REQUIRED_WALL_MIN: '2910',
+  STAGING_REQUIRED_UPTIME_MIN: '720',
+  STAGING_REQUIRED_WALL_MIN: '750',
 };
 
 function g1DryRun(env: Record<string, string> = {}): RunResult {
@@ -83,7 +82,9 @@ function g1DryRun(env: Record<string, string> = {}): RunResult {
 
 const pinnedImageDigest = `sha256:${'d'.repeat(64)}`;
 const pinnedImage = `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${pinnedImageDigest}`;
-const endpointModel = 'projects/arkova1/locations/us-central1/models/6611494259700793344';
+const controlProjectRef = 'abcdefghijklmnopqrst';
+const tunedProjectRef = 'bcdefghijklmnopqrstu';
+const endpointModel = 'projects/270018525501/locations/us-central1/models/6611494259700793344';
 const immutableLedgerBucket = 'arkova1-s33-immutable-authority-ledger';
 const immutableLedger = {
   backend: 'gcs-if-generation-match-0-locked-retention',
@@ -136,6 +137,9 @@ function runG1ApplyFault(options: {
   const npxLog = join(root, 'npx.log');
   const pathGitLog = join(root, 'path-git.log');
   const deployCount = join(root, 'deploy-count');
+  const supabaseCreateCount = join(root, 'supabase-create-count');
+  const endpointPolicyState = join(root, 'endpoint-policy-state');
+  const endpointDeletedState = join(root, 'endpoint-deleted-state');
   const artifactDir = join(root, 'artifacts');
   const statePath = join(artifactDir, `isolated-rig-provision-${rigName}.json`);
   writeFileSync(gcloudLog, '');
@@ -194,7 +198,8 @@ function runG1ApplyFault(options: {
     .replace(/TRUSTED_GIT_SHA256="[0-9a-f]+"/, `TRUSTED_GIT_SHA256="${expectedGitSha256}"`)
     .replace(/TRUSTED_GIT_VERSION="[^"]+"/, `TRUSTED_GIT_VERSION="${trustedGitVersion}"`)
     .replace(/TRUSTED_GIT_ORIGIN_URL="[^"]+"/, `TRUSTED_GIT_ORIGIN_URL="${origin}"`)
-    .replace('GIT_ALLOW_PROTOCOL=https', 'GIT_ALLOW_PROTOCOL=file');
+    .replace('GIT_ALLOW_PROTOCOL=https', 'GIT_ALLOW_PROTOCOL=file')
+    .replaceAll('/usr/bin/curl', join(root, 'curl'));
   const checksumHelperSlice = (source: string): string => {
     const boundaryStart = source.indexOf('execute_sha256_checksum() {');
     const start = boundaryStart >= 0 ? boundaryStart : source.indexOf('trusted_sha256_file() {');
@@ -247,31 +252,58 @@ process.stdout.write(readFileSync(readArg('--artifact'), 'utf8'));
     }
   }
 
-  const revision = (env: Record<string, string>) => JSON.stringify({
+  const revision = (env: Record<string, string>, runtimeServiceAccount: string) => JSON.stringify({
     metadata: { labels: { 'arkova-source-head': fixtureHead } },
     spec: {
+      serviceAccountName: runtimeServiceAccount,
       containers: [{
         image: pinnedImage,
         env: [
           ...Object.entries(env).map(([name, value]) => ({ name, value })),
           ...secretNames.map((name) => ({
             name,
-            valueSource: { secretKeyRef: { secret: `stub-${name.toLowerCase()}`, version: 'latest' } },
+            valueSource: { secretKeyRef: {
+              secret: name === 'SUPABASE_URL'
+                ? (runtimeServiceAccount.includes('g1-a')
+                    ? 'supabase-url-s33-g1-a-staging'
+                    : 'supabase-url-s33-g1-b-staging')
+                : name === 'SUPABASE_SERVICE_ROLE_KEY'
+                  ? (runtimeServiceAccount.includes('g1-a')
+                      ? 'supabase-service-role-key-s33-g1-a-staging'
+                      : 'supabase-service-role-key-s33-g1-b-staging')
+                  : name === 'STRIPE_SECRET_KEY' ? 'stripe-secret-key-staging'
+                    : name === 'STRIPE_WEBHOOK_SECRET' ? 'stripe-webhook-secret-staging'
+                      : name === 'API_KEY_HMAC_SECRET' ? 'api-key-hmac-secret-staging'
+                        : name === 'CRON_SECRET' ? 'cron-secret' : 'gemini-api-key',
+              version: name === 'GEMINI_API_KEY' ? '2' : '1',
+            } },
           })),
         ],
       }],
     },
     status: { imageDigest: pinnedImageDigest },
   });
-  const publicRevision = revision(baseEnv);
+  const publicRevision = revision(
+    baseEnv,
+    's33-rig-g1-a-runtime@arkova1.iam.gserviceaccount.com',
+  );
   const tunedRevision = revision({
     ...baseEnv,
     GEMINI_TUNED_MODEL: g1Env.STAGING_GEMINI_TUNED_MODEL,
     GEMINI_V6_PROMPT: 'true',
-  });
+  }, 's33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com');
   const endpoint = JSON.stringify(options.endpoint ?? {
-    deployedModels: [{ id: 'v6-deployment', model: endpointModel }],
-    trafficSplit: { 'v6-deployment': 100 },
+    name: 'projects/270018525501/locations/us-central1/endpoints/733001',
+    displayName: 'arkova-s33-rig-g1-b-tuned-v6',
+    deployedModels: [{
+      id: '7330011',
+      displayName: 'arkova-s33-rig-g1-b-tuned-v6',
+      model: endpointModel,
+      modelVersionId: '1',
+      checkpointId: '6',
+      automaticResources: { minReplicaCount: 1, maxReplicaCount: 1 },
+    }],
+    trafficSplit: { '7330011': 100 },
   });
   const verifiedApproval = JSON.stringify({
     status: 'VERIFIED',
@@ -289,29 +321,43 @@ process.stdout.write(readFileSync(readArg('--artifact'), 'utf8'));
     scope: {
       rigClass: 'RIG-G1', rigName: 's33-g1', rigProfile: 'gemini', soakId: 'soak-s33-g1',
       rigId: 'RIG-G1', leaseId: 'lease-s33-g1', corpusDigest: g1Env.STAGING_G1_CORPUS_DIGEST,
+      endpointId: '733001',
       endpointResource: g1Env.STAGING_GEMINI_TUNED_MODEL,
-      runtimeServiceAccount: g1Env.STAGING_RUNTIME_SA_EMAIL,
-      controlService: 'arkova-worker-s33-g1-public-staging',
-      tunedService: 'arkova-worker-s33-g1-tuned-staging',
+      endpointDisplayName: 'arkova-s33-rig-g1-b-tuned-v6',
+      vertexModelResource: `${endpointModel}@1`,
+      checkpointId: '6',
+      deployedModelId: '7330011',
+      deployedModelDisplayName: 'arkova-s33-rig-g1-b-tuned-v6',
+      deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
+      minReplicaCount: 1,
+      maxReplicaCount: 1,
+      controlRuntimeServiceAccount: 's33-rig-g1-a-runtime@arkova1.iam.gserviceaccount.com',
+      tunedRuntimeServiceAccount: 's33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com',
+      controlService: 'arkova-worker-s33-g1-a-staging',
+      tunedService: 'arkova-worker-s33-g1-b-staging',
+      controlProjectName: 'arkova-soak-s33-g1-a',
+      tunedProjectName: 'arkova-soak-s33-g1-b',
+      controlSupabaseUrlSecret: 'supabase-url-s33-g1-a-staging@1',
+      controlSupabaseServiceRoleSecret: 'supabase-service-role-key-s33-g1-a-staging@1',
+      tunedSupabaseUrlSecret: 'supabase-url-s33-g1-b-staging@1',
+      tunedSupabaseServiceRoleSecret: 'supabase-service-role-key-s33-g1-b-staging@1',
       controlRunId: g1Env.STAGING_G1_CONTROL_RUN_ID,
       tunedRunId: g1Env.STAGING_G1_TUNED_RUN_ID,
       controlQueue: g1Env.STAGING_G1_CONTROL_QUEUE,
       tunedQueue: g1Env.STAGING_G1_TUNED_QUEUE,
       pairedCadenceMaxMin: 30,
       secretReferences: {
-        supabaseUrl: 'supabase-url-s33-g1-staging',
-        supabaseServiceRoleKey: 'supabase-service-role-key-s33-g1-staging',
-        stripeSecretKey: 'stripe-secret-key-staging',
-        stripeWebhookSecret: 'stripe-webhook-secret-staging',
-        apiKeyHmacSecret: 'api-key-hmac-secret-staging',
-        cronSecret: 'cron-secret',
-        geminiApiKey: 'gemini-api-key-staging',
+        stripeSecretKey: 'stripe-secret-key-staging@1',
+        stripeWebhookSecret: 'stripe-webhook-secret-staging@1',
+        apiKeyHmacSecret: 'api-key-hmac-secret-staging@1',
+        cronSecret: 'cron-secret@1',
+        geminiApiKey: 'gemini-api-key@2',
       },
       immutableLedger,
     },
-    isolatedSupabaseProjectCount: 3,
+    isolatedSupabaseProjectCount: 4,
     isolatedSupabaseProjectMonthlyEachUsd: 10,
-    isolatedSupabaseProjectsMonthlyTotalUsd: 30,
+    isolatedSupabaseProjectsMonthlyTotalUsd: 40,
     g1VariableComputeModelCapUsd: 120,
     s33TotalCapUsd: 200,
     ownerIdentity: 'lane-4-sm',
@@ -391,8 +437,24 @@ if [[ "$1" == "tsx" && "$2" == "scripts/staging/s33-g1-spend-approval.ts" ]]; th
   printf '%s\\n' '${verifiedApproval}'
   exit 0
 fi
+if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "list" ]]; then
+  printf '%s\\n' '[]'
+  exit 0
+fi
 if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
-  printf '%s\\n' '{"id":"abcdefghijklmnopqrst"}'
+  count=0
+  [[ ! -f '${supabaseCreateCount}' ]] || count="$(cat '${supabaseCreateCount}')"
+  count=$((count + 1))
+  printf '%s' "$count" > '${supabaseCreateCount}'
+  if [[ "$count" == "1" ]]; then
+    printf '%s\\n' '{"id":"${controlProjectRef}","name":"arkova-soak-s33-g1-a"}'
+  else
+    printf '%s\\n' '{"id":"${tunedProjectRef}","name":"arkova-soak-s33-g1-b"}'
+  fi
+  exit 0
+fi
+if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "api-keys" ]]; then
+  printf '%s\\n' '[{"name":"service_role","type":"legacy","api_key":"fixture-project-specific-service-role"}]'
   exit 0
 fi
 if [[ "$1" == "supabase" ]]; then exit 0; fi
@@ -400,6 +462,42 @@ echo "unexpected npx call: $*" >&2
 exit 64
 `);
   chmodSync(join(root, 'npx'), 0o755);
+
+  writeFileSync(join(root, 'curl'), `#!/usr/bin/env bash
+set -euo pipefail
+url=''
+for arg in "$@"; do
+  if [[ "$arg" == https://* ]]; then url="$arg"; fi
+done
+if [[ "$url" == *':deployModel' ]]; then
+  printf '%s\\n' '{"name":"projects/270018525501/locations/us-central1/operations/123456"}'
+  exit 0
+fi
+if [[ "$url" == *'/operations/123456' ]]; then
+  printf '%s\\n' '{"done":true}'
+  exit 0
+fi
+if [[ "$url" == *':getIamPolicy' ]]; then
+  if [[ -f '${endpointPolicyState}' ]]; then
+    printf '%s\\n' '{"version":1,"etag":"fixture-etag","bindings":[{"role":"roles/aiplatform.endpointUser","members":["serviceAccount:s33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com"]}]}'
+  else
+    printf '%s\\n' '{"version":1,"etag":"fixture-etag","bindings":[]}'
+  fi
+  exit 0
+fi
+if [[ "$url" == *':setIamPolicy' ]]; then
+  : > '${endpointPolicyState}'
+  printf '%s\\n' '{"version":1,"etag":"fixture-etag"}'
+  exit 0
+fi
+if [[ "$url" == *':generateContent' ]]; then
+  printf '%s\\n' '{"candidates":[{"content":{"parts":[{"text":"{}"}]}}]}'
+  exit 0
+fi
+echo 'unexpected fixture curl request' >&2
+exit 64
+`);
+  chmodSync(join(root, 'curl'), 0o755);
 
   if (options.fakeNode) {
     writeFileSync(join(root, 'node'), `#!/usr/bin/env bash\nprintf '%s\\n' '${verifiedApproval}'\n`);
@@ -430,7 +528,42 @@ if [[ "$1" == "artifacts" && "$2" == "docker" ]]; then
   printf '%s\\n' '${pinnedImage}'
   exit 0
 fi
+if [[ "$1" == "secrets" && "$2" == "describe" ]]; then
+  if [[ "$3" == supabase-url-s33-g1-* || "$3" == supabase-service-role-key-s33-g1-* ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "describe" ]]; then
+  printf '%s\\n' '{"state":"ENABLED"}'
+  exit 0
+fi
+if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
+  printf '%s\\n' 'stub-secret-value'
+  exit 0
+fi
+if [[ "$1" == "iam" && "$2" == "service-accounts" && "$3" == "describe" ]]; then
+  if [[ "$4" == s33-rig-g1-a-runtime@* ]]; then
+    printf '%s\\n' '{"email":"s33-rig-g1-a-runtime@arkova1.iam.gserviceaccount.com","uniqueId":"111111111111111111111"}'
+  else
+    printf '%s\\n' '{"email":"s33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com","uniqueId":"222222222222222222222"}'
+  fi
+  exit 0
+fi
+if [[ "$1" == "auth" && "$2" == "print-access-token" ]]; then
+  printf '%s\\n' 'fixture-access-token'
+  exit 0
+fi
+if [[ "$1" == "ai" && "$2" == "endpoints" && "$3" == "create" ]]; then
+  rm -f '${endpointDeletedState}'
+  exit 0
+fi
+if [[ "$1" == "ai" && "$2" == "endpoints" && "$3" == "delete" ]]; then
+  : > '${endpointDeletedState}'
+  exit 0
+fi
 if [[ "$1" == "ai" && "$2" == "endpoints" && "$3" == "describe" ]]; then
+  [[ ! -f '${endpointDeletedState}' ]] || exit 1
   printf '%s\\n' '${endpoint}'
   exit 0
 fi
@@ -455,7 +588,7 @@ if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
   exit 0
 fi
 if [[ "$1" == "run" && "$2" == "revisions" && "$3" == "describe" ]]; then
-  if [[ "$4" == *'-tuned-staging-revision' ]]; then
+  if [[ "$4" == *'-b-staging-revision' ]]; then
     if [[ '${options.failTunedRevisionDescribe ? 'true' : 'false'}' == 'true' ]]; then
       echo 'injected tuned revision verification failure' >&2
       exit 44
@@ -483,7 +616,8 @@ exit 0
     STAGING_PINNED_IMAGE: pinnedImage,
     STAGING_SOAK_ID: 'soak-s33-g1',
     STAGING_LEASE_ID: leaseId,
-    STAGING_NEW_SUPABASE_DB_PASSWORD: 'stub-password-not-real',
+    STAGING_G1_A_SUPABASE_DB_PASSWORD: 'stub-a-password-not-real',
+    STAGING_G1_B_SUPABASE_DB_PASSWORD: 'stub-b-password-not-real',
     STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY: 'stub-service-role-not-real',
     STAGING_CHANGED_BEHAVIOR: 'RIG-G1 paired public/v6 external experiment',
     STAGING_G1_SPEND_APPROVAL_ARTIFACT: join(root, 'approval-envelope.json'),
@@ -531,11 +665,12 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
       .split('\n')
       .filter((line) => line.startsWith('+ gcloud run deploy '));
     expect(deploys).toHaveLength(2);
-    expect(deploys[0]).toContain('arkova-worker-s33-g1-public-staging');
-    expect(deploys[1]).toContain('arkova-worker-s33-g1-tuned-staging');
+    expect(deploys[0]).toContain('arkova-worker-s33-g1-a-staging');
+    expect(deploys[1]).toContain('arkova-worker-s33-g1-b-staging');
     expect(deploys.every((line) => line.includes('--min-instances=0'))).toBe(true);
     expect(deploys.every((line) => line.includes('--max-instances=2'))).toBe(true);
-    expect(deploys.every((line) => line.includes('--no-allow-unauthenticated'))).toBe(true);
+    expect(deploys.every((line) => line.includes('--allow-unauthenticated'))).toBe(true);
+    expect(deploys.every((line) => !line.includes('--no-allow-unauthenticated'))).toBe(true);
   });
 
   it('keeps the public arm on the production prompt and pins only the tuned arm to v6', () => {
@@ -549,7 +684,7 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     expect(deploys[0]).not.toContain('GEMINI_TUNED_MODEL');
     expect(deploys[0]).not.toContain('GEMINI_V6_PROMPT');
     expect(deploys[1]).toContain(
-      'GEMINI_TUNED_MODEL=projects/arkova1/locations/us-central1/endpoints/123456789',
+      'GEMINI_TUNED_MODEL=projects/arkova1/locations/us-central1/endpoints/733001',
     );
     expect(deploys[1]).toContain('GEMINI_V6_PROMPT=true');
     expect(deploys.join('\n')).not.toContain('GEMINI_TUNED_RESPONSE_SCHEMA=');
@@ -572,13 +707,15 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
 
     expect(admission.g1).toMatchObject({
-      candidate_model: 'models/6611494259700793344',
       candidate_model_resource:
-        'projects/arkova1/locations/us-central1/models/6611494259700793344',
+        'projects/270018525501/locations/us-central1/models/6611494259700793344',
+      candidate_model_version_resource:
+        'projects/270018525501/locations/us-central1/models/6611494259700793344@1',
+      checkpoint_id: '6',
       corpus_digest: g1Env.STAGING_G1_CORPUS_DIGEST,
-      tier: 'T2_CUSTOM',
-      required_worker_uptime_min: 2880,
-      required_wall_min: 2910,
+      tier: 'T2',
+      required_worker_uptime_min: 720,
+      required_wall_min: 750,
       paired_cadence_max_min: 30,
       execution_state: 'PAUSED',
       background_execution: 'disabled',
@@ -589,9 +726,9 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
       budget: {
         s33_total_cap_usd: null,
         g1_variable_compute_model_cap_usd: null,
-        isolated_supabase_project_count: 3,
+        isolated_supabase_project_count: 4,
         isolated_supabase_project_monthly_each_usd: 10,
-        isolated_supabase_projects_monthly_total_usd: 30,
+        isolated_supabase_projects_monthly_total_usd: 40,
       },
       spend_approval: {
         status: 'UNVERIFIED',
@@ -603,7 +740,10 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
         arm: 'public_control',
         run_id: 's33-g1-control-v6',
         queue: 's33-g1-control-queue',
-        service: 'arkova-worker-s33-g1-public-staging',
+        rig_id: 'RIG-G1-A',
+        service: 'arkova-worker-s33-g1-a-staging',
+        supabase_project_name: 'arkova-soak-s33-g1-a',
+        runtime_service_account: 's33-rig-g1-a-runtime@arkova1.iam.gserviceaccount.com',
         gemini_model: 'gemini-2.5-flash',
         gemini_tuned_model: '<unset>',
         gemini_v6_prompt: '<unset>',
@@ -612,19 +752,21 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
         arm: 'tuned_v6',
         run_id: 's33-g1-tuned-v6',
         queue: 's33-g1-tuned-queue',
-        service: 'arkova-worker-s33-g1-tuned-staging',
+        rig_id: 'RIG-G1-B',
+        service: 'arkova-worker-s33-g1-b-staging',
+        supabase_project_name: 'arkova-soak-s33-g1-b',
+        runtime_service_account: 's33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com',
         gemini_tuned_model: g1Env.STAGING_GEMINI_TUNED_MODEL,
         gemini_v6_prompt: 'true',
       }),
     ]);
-    expect(admission.g1.teardown.command).toContain('--rig-name s33-g1');
-    expect(admission.g1.teardown.command).toContain(
-      '--service arkova-worker-s33-g1-public-staging',
-    );
-    expect(admission.g1.teardown.command).toContain(
-      '--service arkova-worker-s33-g1-tuned-staging',
-    );
-    expect(admission.g1.shared_inputs.supabase_project_ref).toBe('<captured-from-step-1>');
+    expect(admission.g1.teardown.physical_arm_commands).toHaveLength(2);
+    expect(admission.g1.teardown.physical_arm_commands[0]).toContain('--rig-id RIG-G1-A');
+    expect(admission.g1.teardown.physical_arm_commands[1]).toContain('--rig-id RIG-G1-B');
+    expect(admission.g1.shared_inputs).toEqual({
+      image: '<required-in-apply:--image-or-STAGING_PINNED_IMAGE@sha256>',
+      corpus_digest: g1Env.STAGING_G1_CORPUS_DIGEST,
+    });
   });
 
   it('never promotes caller environment values into stop or teardown authority', () => {
@@ -647,9 +789,9 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     expect(provisionerSource).toContain('gcloud ai endpoints describe "$G1_ENDPOINT_ID"');
     expect(provisionerSource).toContain('(.deployedModels | type == "array" and length == 1)');
     expect(provisionerSource).toContain('.deployedModels[0].model == $expected');
-    expect(provisionerSource).toContain('(.deployedModels[0].id as $deployed_model_id');
-    expect(provisionerSource).toContain('(.trafficSplit | keys) == [$deployed_model_id]');
-    expect(provisionerSource).toContain('.trafficSplit[$deployed_model_id] == 100');
+    expect(provisionerSource).toContain('.deployedModels[0].id == $deployed_id');
+    expect(provisionerSource).toContain('((.trafficSplit | keys) == [$deployed_id])');
+    expect(provisionerSource).toContain('.trafficSplit[$deployed_id] == 100');
     expect(provisionerSource).toContain('verify_g1_candidate_endpoint_binding');
   });
 
@@ -675,13 +817,13 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
         trafficSplit: { 'v6-deployment': 99, extra: 1 },
       },
     ],
-  ])('rejects endpoint readiness with %s before mutation', (_label, endpoint) => {
+  ])('rejects endpoint readiness with %s before either worker deploy', (_label, endpoint) => {
     const result = runG1ApplyFault({ endpoint });
     expect(result.code).not.toBe(0);
     expect(result.out).toMatch(/endpoint|sole|traffic|ready/i);
     expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
-    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
-  });
+    expect(result.npxCalls.filter((call) => call.startsWith('supabase projects create '))).toHaveLength(2);
+  }, 20_000);
 
   it.each([
     ['corpus digest', 'STAGING_G1_CORPUS_DIGEST'],
@@ -697,13 +839,13 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
 
   it.each([
     ['T3 masquerade', { STAGING_TIER: 'T3' }],
-    ['short worker clock', { STAGING_REQUIRED_UPTIME_MIN: '2879' }],
-    ['short wall clock', { STAGING_REQUIRED_WALL_MIN: '2909' }],
+    ['short worker clock', { STAGING_REQUIRED_UPTIME_MIN: '719' }],
+    ['short wall clock', { STAGING_REQUIRED_WALL_MIN: '749' }],
     ['slow pairing cadence', { STAGING_G1_PAIRED_CADENCE_MIN: '31' }],
   ])('rejects an invalid custom-T2 contract: %s', (_label, env) => {
     const result = g1DryRun(env);
     expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/RIG-G1|T2|2880|2910|cadence/i);
+    expect(result.out).toMatch(/RIG-G1|T2|720|750|cadence/i);
     expect(result.out).not.toContain('gcloud run deploy');
   });
 
@@ -727,6 +869,9 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
       CONFIRM_PROVISION: 's33-g1',
       CONFIRM_REAL_CONFIG: 'gemini',
       CONFIRM_POST_W3_PROVISION: 'RIG-G1',
+      STAGING_G1_A_SUPABASE_DB_PASSWORD: 'stub-a-password-not-real',
+      STAGING_G1_B_SUPABASE_DB_PASSWORD: 'stub-b-password-not-real',
+      STAGING_CHANGED_BEHAVIOR: 'RIG-G1 paired public/v6 external experiment',
       STAGING_G1_SPEND_APPROVAL_ARTIFACT: '/tmp/caller-authored-approval.json',
       STAGING_G1_SPEND_AUTHORITY_ID: 'caller-self-attestation',
       CONFIRM_G1_SPEND_AUTHORITY: 'caller-self-attestation',
@@ -797,13 +942,22 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     for (const expectedArg of [
       '--expected-rig-name', '--expected-rig-profile', '--expected-soak-id',
       '--expected-rig-id', '--expected-lease-id', '--expected-corpus-digest',
-      '--expected-endpoint-resource', '--expected-runtime-service-account',
+      '--expected-endpoint-id', '--expected-endpoint-resource', '--expected-endpoint-display-name',
+      '--expected-vertex-model-resource', '--expected-checkpoint-id', '--expected-deployed-model-id',
+      '--expected-deployed-model-display-name', '--expected-deployment-resources-mode',
+      '--expected-min-replica-count', '--expected-max-replica-count',
+      '--expected-control-runtime-service-account', '--expected-tuned-runtime-service-account',
       '--expected-control-service', '--expected-tuned-service', '--expected-control-run-id',
+      '--expected-control-project-name', '--expected-tuned-project-name',
       '--expected-tuned-run-id', '--expected-control-queue', '--expected-tuned-queue',
-      '--expected-paired-cadence-max-min', '--expected-supabase-url-secret',
-      '--expected-supabase-service-role-secret', '--expected-stripe-secret-key-secret',
-      '--expected-stripe-webhook-secret', '--expected-api-key-hmac-secret',
-      '--expected-cron-secret', '--expected-gemini-api-key-secret',
+      '--expected-paired-cadence-max-min',
+      '--expected-control-supabase-url-secret-reference',
+      '--expected-control-supabase-service-role-secret-reference',
+      '--expected-tuned-supabase-url-secret-reference',
+      '--expected-tuned-supabase-service-role-secret-reference',
+      '--expected-stripe-secret-key-reference', '--expected-stripe-webhook-secret-reference',
+      '--expected-api-key-hmac-secret-reference', '--expected-cron-secret-reference',
+      '--expected-gemini-api-key-secret-reference',
       '--expected-immutable-ledger-bucket',
     ]) expect(provisionerSource).toContain(expectedArg);
     expect(provisionerSource).toContain('--if-generation-match=0');
@@ -841,7 +995,7 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
   ])('rejects caller substitution of signed %s before approval claim or paid mutation', (_label, env) => {
     const result = runG1ApplyFault({ env });
     expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/approval|scope|binding|verifier/i);
+    expect(result.out).toMatch(/approval|approved|scope|binding|verifier/i);
     expect(result.gcloudCalls.some((call) => call.startsWith('storage cp '))).toBe(false);
     expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
     expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
@@ -872,7 +1026,7 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     expect(result.out).not.toMatch(/Node launcher digest|launcher is not trusted|UNCONFIGURED/i);
     expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(true);
     expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(true);
-  });
+  }, 20_000);
 
   it.each([
     ['provisioner', 'assume-unchanged'],
@@ -916,7 +1070,7 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     const ledger = realpathSync(mkdtempSync(join(tmpdir(), 'g1-shared-approval-ledger-')));
     stubRoots.push(ledger);
     const winner = runG1ApplyFault({ failDeployAt: 1, sharedLedgerDir: ledger });
-    expect(winner.npxCalls.filter((call) => call.startsWith('supabase projects create '))).toHaveLength(1);
+    expect(winner.npxCalls.filter((call) => call.startsWith('supabase projects create '))).toHaveLength(2);
     expect(winner.gcloudCalls.filter((call) => call.startsWith('storage cp '))).toHaveLength(1);
 
     const loser = runG1ApplyFault({ sharedLedgerDir: ledger });
@@ -947,7 +1101,7 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     ).toHaveLength(2);
     expect(result.state).not.toBeNull();
     expect(result.state).toMatchObject({
-      status: 'blocked_after_project_create',
+      status: 'REQUIRES_IMMEDIATE_TEARDOWN',
       approval_claim: {
         status: 'CLAIMED',
         backend: 'gcs-if-generation-match-0-locked-retention',
@@ -964,16 +1118,15 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
       teardown_command: string;
     };
     expect(cleanup.cloud_run_service_candidates).toEqual([
-      'arkova-worker-s33-g1-public-staging',
-      'arkova-worker-s33-g1-tuned-staging',
+      'arkova-worker-s33-g1-a-staging',
+      'arkova-worker-s33-g1-b-staging',
     ]);
     expect(cleanup.cloud_run_delete_commands).toHaveLength(2);
-    expect(cleanup.cloud_run_delete_commands[0]).toContain('arkova-worker-s33-g1-public-staging');
-    expect(cleanup.cloud_run_delete_commands[1]).toContain('arkova-worker-s33-g1-tuned-staging');
+    expect(cleanup.cloud_run_delete_commands[0]).toContain('arkova-worker-s33-g1-a-staging');
+    expect(cleanup.cloud_run_delete_commands[1]).toContain('arkova-worker-s33-g1-b-staging');
     expect(cleanup.approval_claim.approval_id).toBe('approval-s33-g1-001');
     expect(cleanup.teardown_command).toContain('--project-ref abcdefghijklmnopqrst');
-    expect(cleanup.teardown_command).toContain('--service arkova-worker-s33-g1-public-staging');
-    expect(cleanup.teardown_command).toContain('--service arkova-worker-s33-g1-tuned-staging');
+    expect(cleanup.teardown_command).toContain('--service arkova-worker-s33-g1-a-staging');
   });
 });
 
@@ -989,21 +1142,34 @@ describe('unbound RIG-R profile', () => {
 });
 
 describe('multi-service G1 teardown', () => {
-  it('deletes both arm services but reclaims the shared project and secrets once', () => {
-    const result = run(teardown, [
-      '--project-ref',
-      'abcdefghijklmnopqrst',
-      '--rig-name',
-      's33-g1',
-      '--service',
-      'arkova-worker-s33-g1-public-staging',
-      '--service',
-      'arkova-worker-s33-g1-tuned-staging',
+  it('reclaims each physical arm independently and only G1-B owns the temporary endpoint', () => {
+    const control = run(teardown, [
+      '--project-ref', 'abcdefghijklmnopqrst',
+      '--rig-name', 's33-g1-a',
+      '--rig-id', 'RIG-G1-A',
+      '--service', 'arkova-worker-s33-g1-a-staging',
+      '--runtime-sa', 's33-rig-g1-a-runtime@arkova1.iam.gserviceaccount.com',
     ]);
-    expect(result.code, result.out).toBe(0);
-    expect(result.out.match(/gcloud run services delete/g)).toHaveLength(2);
-    expect(result.out.match(/supabase-url-s33-g1-staging/g)).toHaveLength(1);
-    expect(result.out.match(/supabase-service-role-key-s33-g1-staging/g)).toHaveLength(1);
-    expect(result.out.match(/supabase projects delete/g)).toHaveLength(1);
+    const tuned = run(teardown, [
+      '--project-ref', 'bcdefghijklmnopqrstu',
+      '--rig-name', 's33-g1-b',
+      '--rig-id', 'RIG-G1-B',
+      '--service', 'arkova-worker-s33-g1-b-staging',
+      '--runtime-sa', 's33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com',
+      '--vertex-endpoint', 'projects/arkova1/locations/us-central1/endpoints/733001',
+      '--vertex-model', endpointModel,
+      '--deployed-model-id', '7330011',
+    ]);
+    expect(control.code, control.out).toBe(0);
+    expect(tuned.code, tuned.out).toBe(0);
+    expect(control.out.match(/gcloud run services delete/g)).toHaveLength(1);
+    expect(tuned.out.match(/gcloud run services delete/g)).toHaveLength(1);
+    expect(control.out).toContain('supabase-url-s33-g1-a-staging');
+    expect(tuned.out).toContain('supabase-url-s33-g1-b-staging');
+    expect(control.out.match(/supabase projects delete/g)).toHaveLength(1);
+    expect(tuned.out.match(/supabase projects delete/g)).toHaveLength(1);
+    expect(control.out).not.toContain('undeploy-model');
+    expect(tuned.out).toContain('undeploy-model');
+    expect(tuned.out).toContain('endpoints/733001');
   });
 });

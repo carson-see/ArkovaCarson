@@ -39,18 +39,27 @@ const sourceHeadImageRef =
   `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:${sourceHeadSha}@${imageDigest}`;
 const teardownSha256 = `sha256:${'d'.repeat(64)}`;
 const placeholderProvisionArtifactSha256 = `sha256:${'e'.repeat(64)}`;
-const vertexEndpoint = 'projects/arkova1/locations/us-central1/endpoints/9000000000000000001';
-const protectedV6Endpoint = 'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
-const protectedV6Model = 'projects/arkova1/locations/us-central1/models/6611494259700793344';
-const deployedModelId = '9000000000000000003';
+const vertexEndpointId = '733002';
+const vertexEndpoint = `projects/arkova1/locations/us-central1/endpoints/${vertexEndpointId}`;
+const vertexEndpointDisplayName = 'arkova-s33-rig-r-release-v6';
+const protectedV6Model =
+  'projects/270018525501/locations/us-central1/models/6611494259700793344';
+const protectedV6ModelVersion = `${protectedV6Model}@1`;
+const checkpointId = '6';
+const deployedModelId = '7330021';
+const deployedModelDisplayName = vertexEndpointDisplayName;
+const deploymentResourcesMode = 'TUNED_GEMINI_AUTOMATIC_RESOURCES';
+const endpointIamRole = 'roles/aiplatform.endpointUser';
+const endpointIamMember =
+  'serviceAccount:s33-rig-r-runtime@arkova1.iam.gserviceaccount.com';
 const rigRSecretReferences = {
-  supabaseUrl: 'supabase-url-s33-r-staging',
-  supabaseServiceRoleKey: 'supabase-service-role-key-s33-r-staging',
-  stripeSecretKey: 'stripe-secret-key-staging',
-  stripeWebhookSecret: 'stripe-webhook-secret-staging',
-  apiKeyHmacSecret: 'api-key-hmac-secret-staging',
-  cronSecret: 'cron-secret',
-  geminiApiKey: 'gemini-api-key-staging',
+  supabaseUrl: 'supabase-url-s33-r-staging@1',
+  supabaseServiceRoleKey: 'supabase-service-role-key-s33-r-staging@1',
+  stripeSecretKey: 'stripe-secret-key-staging@1',
+  stripeWebhookSecret: 'stripe-webhook-secret-staging@1',
+  apiKeyHmacSecret: 'api-key-hmac-secret-staging@1',
+  cronSecret: 'cron-secret@1',
+  geminiApiKey: 'gemini-api-key@2',
 };
 const immutableLedger = {
   backend: 'gcs-if-generation-match-0-locked-retention',
@@ -70,9 +79,19 @@ const expectedBinding = () => ({
   soakId: 'soak-s33-r-release',
   leaseId: 'lease-s33-r-release',
   requiredWallMin: 2910,
+  vertexEndpointId,
   vertexEndpoint,
+  vertexEndpointDisplayName,
   vertexModel: protectedV6Model,
+  vertexModelVersion: protectedV6ModelVersion,
+  checkpointId,
   deployedModelId,
+  deployedModelDisplayName,
+  deploymentResourcesMode,
+  minReplicaCount: 1,
+  maxReplicaCount: 1,
+  endpointIamRole,
+  endpointIamMember,
   provisionStartedAt: '2026-07-16T14:00:00Z',
   expiresAt: '2026-07-19T00:00:00Z',
   teardownScriptSha256: teardownSha256,
@@ -118,9 +137,19 @@ function record(overrides: Record<string, unknown> = {}) {
       ],
       secretReferences: rigRSecretReferences,
       immutableLedger,
+      vertexEndpointId,
       vertexEndpoint,
+      vertexEndpointDisplayName,
       vertexModel: protectedV6Model,
+      vertexModelVersion: protectedV6ModelVersion,
+      checkpointId,
       deployedModelId,
+      deployedModelDisplayName,
+      deploymentResourcesMode,
+      minReplicaCount: 1,
+      maxReplicaCount: 1,
+      endpointIamRole,
+      endpointIamMember,
       temporaryVertexEndpoint: true,
       chainMode: 'mocked',
       inProcessJobs: 'disabled',
@@ -152,9 +181,7 @@ function record(overrides: Record<string, unknown> = {}) {
         'runtime-iam-service-account',
         'exclusive-lease',
       ],
-      protectedV6Endpoint,
       protectedV6Model,
-      deleteProtectedV6Endpoint: false,
       deleteProtectedV6Model: false,
       projectedMonthlyRecurringUsd: 0,
     },
@@ -234,7 +261,6 @@ describe('RIG-R immutable provision approval verifier', () => {
       teardown: {
         scriptSha256: teardownSha256,
         projectedMonthlyRecurringUsd: 0,
-        deleteProtectedV6Endpoint: false,
         deleteProtectedV6Model: false,
       },
     });
@@ -352,11 +378,11 @@ describe('RIG-R immutable provision approval verifier', () => {
     })).toThrow(/200|cap/i);
   });
 
-  it('requires the protected v6 model, a temporary non-rollback endpoint, and empty managed topology', () => {
+  it('requires the exact temporary endpoint, protected v6 model@1/checkpoint 6, automatic 1x1, endpoint IAM, and empty managed topology', () => {
     expect(() => rigRProvisionApprovalRecordSchema.parse({
       ...record(),
-      topology: { ...record().topology, vertexEndpoint: protectedV6Endpoint },
-    })).toThrow(/protected|endpoint/i);
+      topology: { ...record().topology, vertexEndpoint: `${vertexEndpoint}9` },
+    })).toThrow(/endpoint/i);
     expect(() => rigRProvisionApprovalRecordSchema.parse({
       ...record(),
       topology: {
@@ -364,6 +390,18 @@ describe('RIG-R immutable provision approval verifier', () => {
         vertexModel: 'projects/arkova1/locations/us-central1/models/999',
       },
     })).toThrow(/protected|model|6611494259700793344/i);
+    expect(() => rigRProvisionApprovalRecordSchema.parse({
+      ...record(),
+      topology: { ...record().topology, checkpointId: '5' },
+    })).toThrow(/checkpoint/i);
+    expect(() => rigRProvisionApprovalRecordSchema.parse({
+      ...record(),
+      topology: { ...record().topology, deploymentResourcesMode: 'DEDICATED_MACHINE_SPEC' },
+    })).toThrow(/resources|mode/i);
+    expect(() => rigRProvisionApprovalRecordSchema.parse({
+      ...record(),
+      topology: { ...record().topology, endpointIamRole: 'roles/aiplatform.user' },
+    })).toThrow(/IAM|role/i);
     expect(() => rigRProvisionApprovalRecordSchema.parse({
       ...record(),
       topology: { ...record().topology, managedSchedulerJobs: ['shadow-job'] },
@@ -395,9 +433,10 @@ describe('RIG-R immutable provision approval verifier', () => {
       provisionerSource.indexOf('claim_rig_r_lease_once()'),
       provisionerSource.indexOf('for denied in "${DENIED_CLOUD_RUN_SERVICES[@]}"'),
     );
-    expect(leaseClaimBlock).toContain('--retain-until="$RIG_R_EXPIRES_AT"');
-    expect(leaseClaimBlock).toContain('--retention-mode=Locked');
-    expect(leaseClaimBlock).toContain('.retention.mode == "Locked"');
+    expect(leaseClaimBlock).not.toContain('--retention-mode=Locked');
+    expect(leaseClaimBlock).not.toContain('.retention.mode == "Locked"');
+    expect(leaseClaimBlock).toContain('RIG_R_LEASE_GENERATION');
+    expect(leaseClaimBlock).toContain('--if-generation-match="$RIG_R_LEASE_GENERATION"');
     expect(provisionerSource.lastIndexOf('  verify_immutable_authority_ledger_capability'))
       .toBeLessThan(provisionerSource.indexOf('CREATE_CMD=('));
     expect(provisionerSource).not.toContain('RIG_R_LEASE_BUCKET="arkova-training-data"');

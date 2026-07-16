@@ -16,6 +16,8 @@ import {
   RpcUtxoProvider, MempoolUtxoProvider, GetBlockHybridProvider, createUtxoProvider,
   HttpError, RpcApplicationError, retryWithBackoff, isRetryableError, isDuplicateTxError,
   BroadcastRejectedError, isBroadcastRejectedError, isBroadcastRejectText,
+  TransactionAbsenceQuorumError, TRANSACTION_ABSENCE_QUORUM_SOURCES,
+  classifyTransactionLookupFailure, isDefinitiveTransactionAbsence,
 } from './utxo-provider.js';
 import { logger } from '../utils/logger.js';
 
@@ -428,7 +430,7 @@ describe('GetBlockHybridProvider listUnspent fallback observability', () => {
   });
 });
 
-describe('SCRUM-2692 GetBlock hybrid receipt absence quorum', () => {
+describe('SCRUM-2692 Bitcoin Core Signet receipt absence quorum', () => {
   const TXID = 'ab'.repeat(32);
   const MEMPOOL_TX = {
     txid: TXID,
@@ -448,7 +450,7 @@ describe('SCRUM-2692 GetBlock hybrid receipt absence quorum', () => {
     });
   }
 
-  it('returns the transaction when GetBlock misses but independent mempool.space finds it', async () => {
+  it('returns the transaction when Bitcoin Core misses but independent mempool.space Signet finds it', async () => {
     mockFetch.mockResolvedValueOnce(rpcErr('No such mempool or blockchain transaction', -5));
     mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(MEMPOOL_TX) });
 
@@ -459,12 +461,37 @@ describe('SCRUM-2692 GetBlock hybrid receipt absence quorum', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
-  it('reports definitive absence only when GetBlock and mempool.space both return not-found', async () => {
+  it('reports definitive absence only when Bitcoin Core Signet and mempool.space Signet both return not-found', async () => {
     mockFetch.mockResolvedValueOnce(rpcErr('No such mempool or blockchain transaction', -5));
     mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
 
-    await expect(provider().getRawTransaction(TXID)).rejects.toMatchObject({ code: -5 });
+    const error = await provider().getRawTransaction(TXID).catch((caught) => caught);
+    expect(error).toBeInstanceOf(TransactionAbsenceQuorumError);
+    expect(error).toMatchObject({
+      txid: TXID,
+      sources: TRANSACTION_ABSENCE_QUORUM_SOURCES,
+    });
+    expect(isDefinitiveTransactionAbsence(error)).toBe(true);
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the production mainnet GetBlock quorum explicitly mainnet and never labels it Signet', async () => {
+    const mainnetProvider = new GetBlockHybridProvider({
+      rpcUrl: 'https://go.getblock.io/fake-token',
+      mempoolBaseUrl: 'https://mempool.space/api',
+      network: 'mainnet',
+    });
+    mockFetch.mockResolvedValueOnce(rpcErr('No such mempool or blockchain transaction', -5));
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    const error = await mainnetProvider.getRawTransaction(TXID).catch((caught) => caught);
+    expect(error).toBeInstanceOf(TransactionAbsenceQuorumError);
+    expect(error).toMatchObject({
+      txid: TXID,
+      network: 'mainnet',
+      sources: ['getblock-mainnet-rpc', 'mempool-space-mainnet'],
+    });
+    expect(error.sources).not.toContain('bitcoin-core-signet-rpc');
   });
 
   it('propagates a secondary-source outage instead of converting the GetBlock miss to absence', async () => {
@@ -489,6 +516,49 @@ describe('SCRUM-2692 GetBlock hybrid receipt absence quorum', () => {
 
     await expect(provider().getRawTransaction(TXID)).rejects.toMatchObject({ status: 401 });
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('factory-wired rpc provider uses the Signet observer and never treats one native miss as absence', async () => {
+    const runtimeProvider = createUtxoProvider({
+      type: 'rpc',
+      rpcUrl: 'http://bitcoin-core-signet:38332',
+      network: 'signet',
+    });
+    mockFetch.mockResolvedValueOnce(rpcErr('No such mempool or blockchain transaction', -5));
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    await expect(runtimeProvider.getRawTransaction(TXID)).rejects.toBeInstanceOf(TransactionAbsenceQuorumError);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      `https://mempool.space/signet/api/tx/${TXID}`,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it.each([
+    ['auth', new HttpError('unauthorized', 401)],
+    ['quota/rate-limit', new HttpError('too many requests', 429)],
+    ['server 5xx', new HttpError('bad gateway', 502)],
+    ['timeout', Object.assign(new Error('request timed out'), { name: 'AbortError' })],
+    ['network', new TypeError('fetch failed')],
+  ])('classifies %s as unavailable/ambiguous and never definitive absence', (_label, error) => {
+    expect(classifyTransactionLookupFailure(error)).toBe('unavailable');
+    expect(isDefinitiveTransactionAbsence(error)).toBe(false);
+  });
+
+  it('keeps a primary auth outage ambiguous when the secondary reports not-found', async () => {
+    const runtimeProvider = createUtxoProvider({
+      type: 'rpc',
+      rpcUrl: 'http://bitcoin-core-signet:38332',
+      network: 'signet',
+    });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 401 });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    const error = await runtimeProvider.getRawTransaction(TXID).catch((caught) => caught);
+    expect(error).toBeInstanceOf(HttpError);
+    expect(error).toMatchObject({ status: 401 });
+    expect(isDefinitiveTransactionAbsence(error)).toBe(false);
   });
 });
 

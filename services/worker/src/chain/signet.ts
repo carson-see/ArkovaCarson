@@ -665,6 +665,9 @@ export class BitcoinChainClient implements ChainClient {
       this.provider = new RpcUtxoProvider({
         rpcUrl: clientConfig.rpcUrl,
         rpcAuth: clientConfig.rpcAuth,
+        // Legacy constructor is Signet-only. Keep journal absence fail-closed
+        // with the same independent observer as the factory-backed path.
+        mempoolBaseUrl: 'https://mempool.space/signet/api',
       });
       this.feeEstimator = new StaticFeeEstimator(1);
       this.network = SIGNET_NETWORK;
@@ -1050,8 +1053,8 @@ export class BitcoinChainClient implements ChainClient {
   /**
    * #1417-HIGH (fix c): TRI-STATE receipt lookup.
    *   found                → ChainReceipt
-   *   definitively-absent  → null  (RPC code -5 "No such … transaction", or
-   *                          mempool REST HTTP 404)
+   *   definitively-absent  → null  (typed independent Bitcoin Core Signet +
+   *                          mempool.space Signet native not-found quorum)
    *   lookup-failed         → THROW (provider outage: 401/402/5xx/timeout)
    *
    * The reconcile crash-resume reads null as "tx unknown → rebroadcast the same

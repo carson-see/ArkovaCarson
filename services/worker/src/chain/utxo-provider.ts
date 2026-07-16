@@ -60,15 +60,71 @@ export class RpcApplicationError extends Error {
   }
 }
 
+/** The two independently operated Signet observations required for absence. */
+export const TRANSACTION_ABSENCE_QUORUM_SOURCES = Object.freeze([
+  'bitcoin-core-signet-rpc',
+  'mempool-space',
+] as const);
+
+export type TransactionAbsenceNetwork = 'signet' | 'testnet' | 'testnet4' | 'mainnet';
+export type TransactionAbsenceSources = readonly [string, string];
+
+function normalizedAbsenceNetwork(network: string | undefined, mempoolBaseUrl: string): TransactionAbsenceNetwork {
+  if (network === 'signet' || mempoolBaseUrl.includes('/signet/')) return 'signet';
+  if (network === 'testnet4' || mempoolBaseUrl.includes('/testnet4/')) return 'testnet4';
+  if (network === 'testnet' || mempoolBaseUrl.includes('/testnet/')) return 'testnet';
+  return 'mainnet';
+}
+
+function absenceSources(
+  primary: 'bitcoin-core' | 'getblock',
+  network: TransactionAbsenceNetwork,
+): TransactionAbsenceSources {
+  if (network === 'signet') {
+    return TRANSACTION_ABSENCE_QUORUM_SOURCES;
+  }
+  return Object.freeze([
+    `${primary}-${network}-rpc`,
+    `mempool-space-${network}`,
+  ] as const);
+}
+
+export type TransactionLookupFailureClassification = 'not-found' | 'unavailable';
+
 /**
- * A transaction lookup is affirmative absence only when the provider returned
- * its native not-found verdict. Authentication, quota, transport, timeout,
- * malformed-response, and every other failure remain ambiguous.
+ * Classify one provider's native response. A single `not-found` is only an
+ * observation; it is not yet definitive transaction absence. Authentication,
+ * quota/rate-limit, transport, timeout, 5xx, malformed-response, and unknown
+ * errors are all unavailable/ambiguous.
  */
+export function classifyTransactionLookupFailure(
+  error: unknown,
+): TransactionLookupFailureClassification {
+  if (error instanceof RpcApplicationError) {
+    return error.code === -5 ? 'not-found' : 'unavailable';
+  }
+  if (error instanceof HttpError) return error.status === 404 ? 'not-found' : 'unavailable';
+  return 'unavailable';
+}
+
+/**
+ * Typed proof that the exact transaction received independent native
+ * not-found verdicts from Bitcoin Core Signet RPC and mempool.space Signet.
+ */
+export class TransactionAbsenceQuorumError extends Error {
+  constructor(
+    public readonly txid: string,
+    public readonly sources: TransactionAbsenceSources = TRANSACTION_ABSENCE_QUORUM_SOURCES,
+    public readonly network: TransactionAbsenceNetwork = 'signet',
+  ) {
+    super(`Transaction ${txid} absent from both required ${network} lookup sources`);
+    this.name = 'TransactionAbsenceQuorumError';
+  }
+}
+
+/** Only a completed two-source quorum may authorize a journal absence. */
 export function isDefinitiveTransactionAbsence(error: unknown): boolean {
-  if (error instanceof RpcApplicationError) return error.code === -5;
-  if (error instanceof HttpError) return error.status === 404;
-  return false;
+  return error instanceof TransactionAbsenceQuorumError;
 }
 
 // ─── BroadcastRejectedError ─────────────────────────────────────────────
@@ -483,11 +539,92 @@ export interface ConfirmationProofProvider {
   getTxOutProof?(txids: string[], blockhash?: string): Promise<string>;
 }
 
+const MEMPOOL_URLS: Record<string, string> = {
+  signet: 'https://mempool.space/signet/api',
+  testnet4: 'https://mempool.space/testnet4/api',
+  testnet: 'https://mempool.space/testnet/api',
+  mainnet: 'https://mempool.space/api',
+};
+
+async function fetchMempoolRawTransaction(
+  baseUrl: string,
+  txid: string,
+): Promise<RawTransaction> {
+  const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+  return retryWithBackoff(async () => {
+    const url = `${normalizedBaseUrl}/tx/${txid}`;
+    const response = await fetch(url, { signal: createTimeoutSignal() });
+    if (!response.ok) {
+      throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
+    }
+    const mempoolTx = (await response.json()) as {
+      txid: string;
+      status: {
+        confirmed: boolean;
+        block_height?: number;
+        block_hash?: string;
+        block_time?: number;
+      };
+      vout: Array<{ scriptpubkey: string; scriptpubkey_asm: string; value: number }>;
+    };
+    return {
+      txid: mempoolTx.txid,
+      confirmations: mempoolTx.status.confirmed ? 1 : 0,
+      blocktime: mempoolTx.status.block_time,
+      blockhash: mempoolTx.status.block_hash,
+      vout: mempoolTx.vout.map((v) => ({
+        scriptPubKey: { hex: v.scriptpubkey, asm: v.scriptpubkey_asm },
+      })),
+    };
+  }, { name: 'MempoolUtxoProvider.getRawTransaction' });
+}
+
+/**
+ * Query the primary Bitcoin Core node, then the independent mempool.space
+ * observer when primary does not find a transaction. A hit from either source
+ * is authoritative. Absence is emitted only for two native not-found verdicts;
+ * every auth/quota/timeout/5xx/network/disagreement path throws an unavailable
+ * error so journal recovery HOLDs.
+ */
+async function getRawTransactionWithAbsenceQuorum(input: {
+  txid: string;
+  network: TransactionAbsenceNetwork;
+  sources: TransactionAbsenceSources;
+  primary: () => Promise<RawTransaction>;
+  secondary: () => Promise<RawTransaction>;
+  onPrimaryFailure?: (error: unknown) => void;
+}): Promise<RawTransaction> {
+  let primaryError: unknown;
+  try {
+    return await input.primary();
+  } catch (error) {
+    primaryError = error;
+    input.onPrimaryFailure?.(error);
+  }
+
+  try {
+    return await input.secondary();
+  } catch (secondaryError) {
+    const primaryClassification = classifyTransactionLookupFailure(primaryError);
+    const secondaryClassification = classifyTransactionLookupFailure(secondaryError);
+    if (primaryClassification === 'not-found' && secondaryClassification === 'not-found') {
+      throw new TransactionAbsenceQuorumError(input.txid, input.sources, input.network);
+    }
+    // Preserve the unavailable observation. A native miss from the other
+    // source must never turn an outage or disagreement into absence.
+    if (primaryClassification === 'unavailable') throw primaryError;
+    throw secondaryError;
+  }
+}
+
 // ─── Bitcoin Core RPC Implementation ────────────────────────────────────
 
 export interface RpcProviderConfig {
   rpcUrl: string;
   rpcAuth?: string;
+  /** Independent read-only observer; factory binds this to the same network. */
+  mempoolBaseUrl?: string;
+  network?: string;
 }
 
 /**
@@ -601,9 +738,30 @@ export class RpcUtxoProvider implements UtxoProvider {
   }
 
   async getRawTransaction(txid: string): Promise<RawTransaction> {
-    return retryWithBackoff(async () => {
+    const primary = () => retryWithBackoff(async () => {
       return (await rpcCall(this.config.rpcUrl, 'getrawtransaction', [txid, true], this.config.rpcAuth)) as RawTransaction;
     }, { name: 'RpcUtxoProvider.getRawTransaction' });
+    // A bare provider may still serve non-recovery consumers, but its native
+    // -5 is deliberately not a definitive absence. Runtime factory paths bind
+    // the independent observer below, producing the only typed quorum error.
+    if (!this.config.mempoolBaseUrl) return primary();
+    const network = normalizedAbsenceNetwork(this.config.network, this.config.mempoolBaseUrl);
+    const sources = absenceSources('bitcoin-core', network);
+    return getRawTransactionWithAbsenceQuorum({
+      txid,
+      network,
+      sources,
+      primary,
+      secondary: () => fetchMempoolRawTransaction(this.config.mempoolBaseUrl!, txid),
+      onPrimaryFailure: (error) => emitRpcFallback({
+        provider: sources[0],
+        method: 'getrawtransaction',
+        error,
+        fallbackTo: sources[1],
+        logger,
+        origin: 'RpcUtxoProvider.getRawTransaction',
+      }),
+    });
   }
 
   async getBlockHeader(blockhash: string): Promise<BlockHeader> {
@@ -633,13 +791,6 @@ export class RpcUtxoProvider implements UtxoProvider {
 export interface MempoolProviderConfig {
   baseUrl?: string;
 }
-
-const MEMPOOL_URLS: Record<string, string> = {
-  signet: 'https://mempool.space/signet/api',
-  testnet4: 'https://mempool.space/testnet4/api',
-  testnet: 'https://mempool.space/testnet/api',
-  mainnet: 'https://mempool.space/api',
-};
 
 export class MempoolUtxoProvider implements UtxoProvider {
   readonly name = 'Mempool.space REST API';
@@ -708,19 +859,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
   }
 
   async getRawTransaction(txid: string): Promise<RawTransaction> {
-    return retryWithBackoff(async () => {
-      const url = `${this.baseUrl}/tx/${txid}`;
-      const response = await fetch(url, { signal: createTimeoutSignal() });
-      if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
-      const mempoolTx = (await response.json()) as { txid: string; status: { confirmed: boolean; block_height?: number; block_hash?: string; block_time?: number }; vout: Array<{ scriptpubkey: string; scriptpubkey_asm: string; value: number }> };
-      return {
-        txid: mempoolTx.txid,
-        confirmations: mempoolTx.status.confirmed ? 1 : 0,
-        blocktime: mempoolTx.status.block_time,
-        blockhash: mempoolTx.status.block_hash,
-        vout: mempoolTx.vout.map((v) => ({ scriptPubKey: { hex: v.scriptpubkey, asm: v.scriptpubkey_asm } })),
-      };
-    }, { name: 'MempoolUtxoProvider.getRawTransaction' });
+    return fetchMempoolRawTransaction(this.baseUrl, txid);
   }
 
   async getBlockHeader(blockhash: string): Promise<BlockHeader> {
@@ -821,11 +960,14 @@ export class GetBlockHybridProvider implements UtxoProvider {
   private readonly mempool: MempoolUtxoProvider;
   private readonly rpcUrl: string;
   private readonly rpcAuth?: string;
+  private readonly network: TransactionAbsenceNetwork;
 
-  constructor(config: { rpcUrl: string; rpcAuth?: string; mempoolBaseUrl?: string }) {
+  constructor(config: { rpcUrl: string; rpcAuth?: string; mempoolBaseUrl?: string; network?: string }) {
     this.rpcUrl = config.rpcUrl;
     this.rpcAuth = config.rpcAuth;
-    this.mempool = new MempoolUtxoProvider({ baseUrl: config.mempoolBaseUrl ?? MEMPOOL_URLS.mainnet });
+    const mempoolBaseUrl = config.mempoolBaseUrl ?? MEMPOOL_URLS.mainnet;
+    this.network = normalizedAbsenceNetwork(config.network, mempoolBaseUrl);
+    this.mempool = new MempoolUtxoProvider({ baseUrl: mempoolBaseUrl });
   }
 
   /** Try RPC node for UTXO listing first, fall back to mempool.space */
@@ -890,43 +1032,30 @@ export class GetBlockHybridProvider implements UtxoProvider {
 
   /**
    * Receipt recovery uses a two-source absence quorum. A hit from either the
-   * dedicated GetBlock node or independent mempool.space is authoritative.
-   * Absence is surfaced only when BOTH sources return their native not-found
-   * verdict; any outage/disagreement throws so the journal recovery HOLDs.
+   * primary Bitcoin Core RPC node or independent mempool.space observer is
+   * authoritative. Absence is surfaced only when BOTH sources return their
+   * native not-found verdict; any outage/disagreement throws so journal
+   * recovery HOLDs.
    */
   async getRawTransaction(txid: string): Promise<RawTransaction> {
-    let rpcError: unknown;
-    try {
-      return await retryWithBackoff(async () => {
+    const sources = absenceSources('getblock', this.network);
+    return getRawTransactionWithAbsenceQuorum({
+      txid,
+      network: this.network,
+      sources,
+      primary: () => retryWithBackoff(async () => {
         return (await rpcCall(this.rpcUrl, 'getrawtransaction', [txid, true], this.rpcAuth)) as RawTransaction;
-      }, { name: 'GetBlockHybridProvider.getRawTransaction.rpc' });
-    } catch (error) {
-      rpcError = error;
-      emitRpcFallback({
-        provider: 'getblock',
+      }, { name: 'GetBlockHybridProvider.getRawTransaction.rpc' }),
+      secondary: () => this.mempool.getRawTransaction(txid),
+      onPrimaryFailure: (error) => emitRpcFallback({
+        provider: sources[0],
         method: 'getrawtransaction',
         error,
-        fallbackTo: 'mempool.space',
+        fallbackTo: sources[1],
         logger,
         origin: 'GetBlockHybridProvider.getRawTransaction',
-      });
-    }
-
-    try {
-      return await this.mempool.getRawTransaction(txid);
-    } catch (mempoolError) {
-      const rpcAbsent = isDefinitiveTransactionAbsence(rpcError);
-      const mempoolAbsent = isDefinitiveTransactionAbsence(mempoolError);
-      if (rpcAbsent && mempoolAbsent) {
-        // Preserve the RPC -5 type so BitcoinChainClient can map the unanimous
-        // verdict to null. No single-source miss reaches that branch.
-        throw rpcError;
-      }
-      // One source was unavailable/ambiguous. Preserve that error rather than
-      // allowing the other source's not-found response to authorize REVERT.
-      if (!rpcAbsent) throw rpcError;
-      throw mempoolError;
-    }
+      }),
+    });
   }
 
   /** Use RPC for block header lookup */
@@ -987,14 +1116,31 @@ export interface UtxoProviderFactoryConfig {
 export function createUtxoProvider(factoryConfig: UtxoProviderFactoryConfig): UtxoProvider {
   if (factoryConfig.type === 'rpc') {
     if (!factoryConfig.rpcUrl) throw new Error('BITCOIN_RPC_URL is required for RPC UTXO provider');
-    logger.info({ provider: 'rpc', rpcUrl: factoryConfig.rpcUrl }, 'Creating RPC UTXO provider');
-    return new RpcUtxoProvider({ rpcUrl: factoryConfig.rpcUrl, rpcAuth: factoryConfig.rpcAuth });
+    const network = factoryConfig.network ?? 'signet';
+    const mempoolBaseUrl = factoryConfig.mempoolApiUrl
+      ?? MEMPOOL_URLS[network]
+      ?? MEMPOOL_URLS.signet;
+    logger.info(
+      { provider: 'rpc', rpcUrl: factoryConfig.rpcUrl, mempoolBaseUrl },
+      'Creating RPC UTXO provider with independent transaction-observation quorum',
+    );
+    return new RpcUtxoProvider({
+      rpcUrl: factoryConfig.rpcUrl,
+      rpcAuth: factoryConfig.rpcAuth,
+      mempoolBaseUrl,
+      network,
+    });
   }
   if (factoryConfig.type === 'getblock') {
     if (!factoryConfig.rpcUrl) throw new Error('BITCOIN_RPC_URL is required for GetBlock hybrid provider');
     const mempoolBaseUrl = factoryConfig.mempoolApiUrl ?? MEMPOOL_URLS[factoryConfig.network ?? 'mainnet'] ?? MEMPOOL_URLS.mainnet;
     logger.info({ provider: 'getblock', rpcUrl: factoryConfig.rpcUrl, mempoolBaseUrl }, 'Creating GetBlock hybrid UTXO provider');
-    return new GetBlockHybridProvider({ rpcUrl: factoryConfig.rpcUrl, rpcAuth: factoryConfig.rpcAuth, mempoolBaseUrl });
+    return new GetBlockHybridProvider({
+      rpcUrl: factoryConfig.rpcUrl,
+      rpcAuth: factoryConfig.rpcAuth,
+      mempoolBaseUrl,
+      network: factoryConfig.network ?? 'mainnet',
+    });
   }
   if (factoryConfig.type === 'mempool') {
     const baseUrl = factoryConfig.mempoolApiUrl ?? MEMPOOL_URLS[factoryConfig.network ?? 'testnet4'] ?? MEMPOOL_URLS.testnet4;

@@ -69,11 +69,11 @@ function evidence(crashCase: JournalCrashCase): JournalCrashEvidence {
       journal: finalStatus ? journal(finalStatus) : null,
       lookups: crashCase === 'B2'
         ? [
-            { source: 'getblock-rpc', outcome: 'not-found', txId: TX_ID, confirmations: null, observedAt: '2026-07-15T12:31:01.000Z' },
+            { source: 'bitcoin-core-signet-rpc', outcome: 'not-found', txId: TX_ID, confirmations: null, observedAt: '2026-07-15T12:31:01.000Z' },
             { source: 'mempool-space', outcome: 'not-found', txId: TX_ID, confirmations: null, observedAt: '2026-07-15T12:31:01.500Z' },
           ]
         : crashCase === 'B3'
-          ? [{ source: 'getblock-rpc', outcome: 'found', txId: TX_ID, confirmations: 0, observedAt: '2026-07-15T12:00:04.000Z' }]
+          ? [{ source: 'bitcoin-core-signet-rpc', outcome: 'found', txId: TX_ID, confirmations: 0, observedAt: '2026-07-15T12:00:04.000Z' }]
           : [],
       anchors: ANCHOR_IDS.map((anchorId) => ({
         anchorId,
@@ -116,7 +116,11 @@ describe('assertJournalCrashEvidence — SCRUM-2692 B1-B4', () => {
   it('B2 requires two-source affirmative absence after the fixed ambiguity window', () => {
     const oneSource = evidence('B2');
     oneSource.recovery.lookups.pop();
-    expect(() => assertJournalCrashEvidence(oneSource)).toThrow(/two-source.*absence/i);
+    expect(() => assertJournalCrashEvidence(oneSource)).toThrow(/exactly one distinct.*not-found/i);
+
+    const duplicatePrimary = evidence('B2');
+    duplicatePrimary.recovery.lookups[1]!.source = 'bitcoin-core-signet-rpc';
+    expect(() => assertJournalCrashEvidence(duplicatePrimary)).toThrow(/exactly one distinct.*not-found/i);
 
     const tooEarly = evidence('B2');
     tooEarly.recovery.lookups.forEach((lookup) => { lookup.observedAt = '2026-07-15T12:29:59.999Z'; });
@@ -125,7 +129,11 @@ describe('assertJournalCrashEvidence — SCRUM-2692 B1-B4', () => {
 
     const outage = evidence('B2');
     outage.recovery.lookups[1]!.outcome = 'unavailable';
-    expect(() => assertJournalCrashEvidence(outage)).toThrow(/affirmative.*absence|not-found/i);
+    expect(() => assertJournalCrashEvidence(outage)).toThrow(/distinct.*not-found|absence/i);
+
+    const observedAfterResolution = evidence('B2');
+    observedAfterResolution.recovery.lookups[1]!.observedAt = '2026-07-15T12:31:02.500Z';
+    expect(() => assertJournalCrashEvidence(observedAfterResolution)).toThrow(/before REVERT resolution/i);
   });
 
   it('B2 requires one atomic cohort REVERT with PENDING anchors and compensated credits', () => {

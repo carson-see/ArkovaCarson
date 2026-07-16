@@ -19,14 +19,12 @@ const rosterRoot = `sha256:${'a'.repeat(64)}`;
 const sourceHeadSha = 'b'.repeat(40);
 const imageDigest = `sha256:${'c'.repeat(64)}`;
 const g1SecretReferences = {
-  supabaseUrl: 'supabase-url-s33-g1-staging',
-  supabaseServiceRoleKey: 'supabase-service-role-key-s33-g1-staging',
-  stripeSecretKey: 'stripe-secret-key-staging',
-  stripeWebhookSecret: 'stripe-webhook-secret-staging',
-  apiKeyHmacSecret: 'api-key-hmac-secret-staging',
-  cronSecret: 'cron-secret',
-  geminiApiKey: 'gemini-api-key-staging',
-};
+  stripeSecretKey: 'stripe-secret-key-staging@1',
+  stripeWebhookSecret: 'stripe-webhook-secret-staging@1',
+  apiKeyHmacSecret: 'api-key-hmac-secret-staging@1',
+  cronSecret: 'cron-secret@1',
+  geminiApiKey: 'gemini-api-key@2',
+} as const;
 const immutableLedger = {
   backend: 'gcs-if-generation-match-0-locked-retention',
   bucket: 'arkova1-s33-immutable-authority-ledger',
@@ -41,10 +39,29 @@ const expectedScope = {
   rigId: 'RIG-G1' as const,
   leaseId: 'lease-s33-g1',
   corpusDigest: `sha256:${'d'.repeat(64)}`,
-  endpointResource: 'projects/arkova1/locations/us-central1/endpoints/123456789',
-  runtimeServiceAccount: 's33-g1-runtime@arkova1.iam.gserviceaccount.com',
-  controlService: 'arkova-worker-s33-g1-public-staging',
-  tunedService: 'arkova-worker-s33-g1-tuned-staging',
+  endpointId: '733001' as const,
+  endpointResource: 'projects/arkova1/locations/us-central1/endpoints/733001' as const,
+  endpointDisplayName: 'arkova-s33-rig-g1-b-tuned-v6' as const,
+  vertexModelResource:
+    'projects/270018525501/locations/us-central1/models/6611494259700793344@1' as const,
+  checkpointId: '6' as const,
+  deployedModelId: '7330011' as const,
+  deployedModelDisplayName: 'arkova-s33-rig-g1-b-tuned-v6' as const,
+  deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES' as const,
+  minReplicaCount: 1 as const,
+  maxReplicaCount: 1 as const,
+  controlRuntimeServiceAccount:
+    's33-rig-g1-a-runtime@arkova1.iam.gserviceaccount.com' as const,
+  tunedRuntimeServiceAccount:
+    's33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com' as const,
+  controlService: 'arkova-worker-s33-g1-a-staging',
+  tunedService: 'arkova-worker-s33-g1-b-staging',
+  controlProjectName: 'arkova-soak-s33-g1-a',
+  tunedProjectName: 'arkova-soak-s33-g1-b',
+  controlSupabaseUrlSecret: 'supabase-url-s33-g1-a-staging@1' as const,
+  controlSupabaseServiceRoleSecret: 'supabase-service-role-key-s33-g1-a-staging@1' as const,
+  tunedSupabaseUrlSecret: 'supabase-url-s33-g1-b-staging@1' as const,
+  tunedSupabaseServiceRoleSecret: 'supabase-service-role-key-s33-g1-b-staging@1' as const,
   controlRunId: 's33-g1-control-v6',
   tunedRunId: 's33-g1-tuned-v6',
   controlQueue: 's33-g1-control-queue',
@@ -77,9 +94,9 @@ function record(overrides: Record<string, unknown> = {}) {
     candidate: { sourceHeadSha, imageDigest },
     scope: expectedScope,
     budget: {
-      isolatedSupabaseProjectCount: 3,
+      isolatedSupabaseProjectCount: 4,
       isolatedSupabaseProjectMonthlyEachUsd: 10,
-      isolatedSupabaseProjectsMonthlyTotalUsd: 30,
+      isolatedSupabaseProjectsMonthlyTotalUsd: 40,
       g1VariableComputeModelCapUsd: 120,
       s33TotalCapUsd: 200,
     },
@@ -140,7 +157,7 @@ describe('RIG-G1 immutable spend approval', () => {
     expect(createProductionG1SpendApprovalVerifier()).toBeDefined();
   });
 
-  it('verifies the immutable source, candidate, three-project budget, TTL, RACI, and verifier', () => {
+  it('verifies the immutable source, four-project budget, TTL, RACI, and verifier', () => {
     const result = verifier.verify(
       envelope(),
       { sourceHeadSha, imageDigest, ...expectedScope },
@@ -157,8 +174,8 @@ describe('RIG-G1 immutable spend approval', () => {
       candidateSourceHeadSha: sourceHeadSha,
       candidateImageDigest: imageDigest,
       scope: expectedScope,
-      isolatedSupabaseProjectCount: 3,
-      isolatedSupabaseProjectsMonthlyTotalUsd: 30,
+      isolatedSupabaseProjectCount: 4,
+      isolatedSupabaseProjectsMonthlyTotalUsd: 40,
       g1VariableComputeModelCapUsd: 120,
       s33TotalCapUsd: 200,
       ownerIdentity: 'lane-4-sm',
@@ -195,14 +212,26 @@ describe('RIG-G1 immutable spend approval', () => {
   });
 
   it.each([
-    ['runtime identity', { runtimeServiceAccount: 'shadow@arkova1.iam.gserviceaccount.com' }],
+    ['control runtime identity', { controlRuntimeServiceAccount: 'shadow@arkova1.iam.gserviceaccount.com' }],
+    ['endpoint ID', { endpointId: '733002' }],
+    ['endpoint resource', { endpointResource: 'projects/arkova1/locations/us-central1/endpoints/733002' }],
+    ['endpoint display name', { endpointDisplayName: 'arkova-s33-rig-g1-shadow' }],
+    ['deployed model ID', { deployedModelId: '7330012' }],
+    ['deployed model display name', { deployedModelDisplayName: 'arkova-s33-rig-g1-shadow' }],
+    ['model resource', { vertexModelResource: 'projects/270018525501/locations/us-central1/models/6611494259700793344' }],
+    ['checkpoint', { checkpointId: '5' }],
+    ['deployment resources mode', { deploymentResourcesMode: 'DEDICATED_MACHINE_SPEC' }],
+    ['minimum replicas', { minReplicaCount: 2 }],
+    ['maximum replicas', { maxReplicaCount: 2 }],
     ['control service', { controlService: 'arkova-worker-shadow-staging' }],
+    ['control project', { controlProjectName: 'arkova-soak-shadow-a' }],
+    ['tuned project secret', { tunedSupabaseUrlSecret: 'supabase-url-shadow-b-staging' }],
     ['control run', { controlRunId: 'shadow-control-run' }],
     ['tuned queue', { tunedQueue: 'shadow-tuned-queue' }],
     ['paired cadence', { pairedCadenceMaxMin: 29 }],
     [
       'secret reference',
-      { secretReferences: { ...g1SecretReferences, geminiApiKey: 'shadow-gemini-key' } },
+      { secretReferences: { ...g1SecretReferences, geminiApiKey: 'gemini-api-key@1' } },
     ],
     [
       'immutable ledger',
@@ -211,9 +240,68 @@ describe('RIG-G1 immutable spend approval', () => {
   ])('rejects replay under substituted %s', (_label, scopeOverride) => {
     expect(() => verifier.verify(
       envelope(),
-      { sourceHeadSha, imageDigest, ...expectedScope, ...scopeOverride },
+      { sourceHeadSha, imageDigest, ...expectedScope, ...scopeOverride } as never,
       new Date('2026-07-15T21:00:00Z'),
-    )).toThrow(/scope|runtime|service|run|queue|cadence|secret|ledger|bucket/i);
+    )).toThrow(/scope|runtime|endpoint|model|deployment|resource|service|run|queue|cadence|secret|ledger|bucket/i);
+  });
+
+  it('rejects swapped or shared control/tuned runtime service accounts', () => {
+    expect(() => g1SpendApprovalRecordSchema.parse({
+      ...record(),
+      scope: {
+        ...expectedScope,
+        controlRuntimeServiceAccount: expectedScope.tunedRuntimeServiceAccount,
+        tunedRuntimeServiceAccount: expectedScope.controlRuntimeServiceAccount,
+      },
+    })).toThrow(/controlRuntimeServiceAccount|schema/i);
+
+    expect(() => g1SpendApprovalRecordSchema.parse({
+      ...record(),
+      scope: {
+        ...expectedScope,
+        tunedRuntimeServiceAccount: expectedScope.controlRuntimeServiceAccount,
+      },
+    })).toThrow(/tunedRuntimeServiceAccount|distinct|schema/i);
+
+    expect(() => g1SpendApprovalRecordSchema.parse({
+      ...record(),
+      scope: {
+        ...expectedScope,
+        tunedProjectName: expectedScope.controlProjectName,
+      },
+    })).toThrow(/distinct|project/i);
+  });
+
+  it('rejects stale or mutable-latest secret references and swapped generated arm secrets', () => {
+    expect(() => g1SpendApprovalRecordSchema.parse({
+      ...record(),
+      scope: {
+        ...expectedScope,
+        secretReferences: { ...g1SecretReferences, geminiApiKey: 'gemini-api-key@1' },
+      },
+    })).toThrow(/geminiApiKey|schema/i);
+    expect(() => g1SpendApprovalRecordSchema.parse({
+      ...record(),
+      scope: {
+        ...expectedScope,
+        secretReferences: { ...g1SecretReferences, geminiApiKey: 'gemini-api-key-staging@2' },
+      },
+    })).toThrow(/geminiApiKey|schema/i);
+    expect(() => g1SpendApprovalRecordSchema.parse({
+      ...record(),
+      scope: {
+        ...expectedScope,
+        secretReferences: { ...g1SecretReferences, geminiApiKey: 'gemini-api-key@latest' },
+      },
+    })).toThrow(/geminiApiKey|schema/i);
+    expect(() => g1SpendApprovalRecordSchema.parse({
+      ...record(),
+      scope: {
+        ...expectedScope,
+        controlSupabaseUrlSecret: expectedScope.tunedSupabaseUrlSecret,
+        tunedSupabaseUrlSecret: expectedScope.controlSupabaseUrlSecret,
+      },
+    })).toThrow(/controlSupabaseUrlSecret|schema/i);
   });
 
   it('rejects self-attested identities, roster drift, invalid RACI, and expired TTLs', () => {
@@ -254,10 +342,14 @@ describe('RIG-G1 immutable spend approval', () => {
     )).toThrow(/TTL|time/i);
   });
 
-  it('rejects malformed three-project accounting and unknown free-form fields', () => {
+  it('rejects malformed four-project accounting and unknown free-form fields', () => {
     expect(() => g1SpendApprovalRecordSchema.parse({
       ...record(),
-      budget: { ...record().budget, isolatedSupabaseProjectCount: 1 },
+      budget: { ...record().budget, isolatedSupabaseProjectCount: 3 },
+    })).toThrow();
+    expect(() => g1SpendApprovalRecordSchema.parse({
+      ...record(),
+      budget: { ...record().budget, isolatedSupabaseProjectsMonthlyTotalUsd: 30 },
     })).toThrow();
     expect(() => g1SpendApprovalRecordSchema.parse({
       ...record(),

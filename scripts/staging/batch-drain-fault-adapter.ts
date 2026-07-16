@@ -43,7 +43,7 @@ const journalSchema = z.object({
 }).strict();
 
 const lookupSchema = z.object({
-  source: z.enum(['getblock-rpc', 'mempool-space']),
+  source: z.enum(['bitcoin-core-signet-rpc', 'mempool-space']),
   outcome: z.enum(['found', 'not-found', 'unavailable', 'negative-confirmations']),
   txId: sha256,
   confirmations: z.number().int().nullable(),

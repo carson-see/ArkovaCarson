@@ -112,7 +112,7 @@ function duringFault(scenario: FaultScenario): FaultObservation {
       provider: {
         retryAttempts: 3,
         lookups: [
-          { source: 'getblock-rpc', outcome: 'not-found', txId: TX_ID, confirmations: null, observedAt: '2026-07-15T13:00:02.000Z' },
+          { source: 'bitcoin-core-signet-rpc', outcome: 'not-found', txId: TX_ID, confirmations: null, observedAt: '2026-07-15T13:00:02.000Z' },
           { source: 'mempool-space', outcome: 'unavailable', txId: TX_ID, confirmations: null, observedAt: '2026-07-15T13:00:03.000Z' },
         ],
       },
@@ -158,7 +158,7 @@ function recovered(scenario: FaultScenario): FaultObservation {
     value.networkTxIds = [TX_ID];
     value.provider = {
       retryAttempts: 3,
-      lookups: [{ source: 'getblock-rpc', outcome: 'found', txId: TX_ID, confirmations: 0, observedAt: '2026-07-15T13:00:07.000Z' }],
+      lookups: [{ source: 'bitcoin-core-signet-rpc', outcome: 'found', txId: TX_ID, confirmations: 0, observedAt: '2026-07-15T13:00:07.000Z' }],
     };
   } else {
     value.journal = journal('PERSISTED');
@@ -284,6 +284,13 @@ describe('orchestrateFaultCase — SCRUM-2693 fault contracts', () => {
     falseSecured.anchors[0]!.status = 'SECURED';
     await expect(orchestrateFaultCase(input('provider-outage'), port('provider-outage', { active: falseSecured }).port))
       .rejects.toThrow(/false SECURED|SECURED/i);
+
+    const duplicateObserver = duringFault('provider-outage');
+    duplicateObserver.provider!.lookups[1]!.source = 'bitcoin-core-signet-rpc';
+    await expect(orchestrateFaultCase(
+      input('provider-outage'),
+      port('provider-outage', { active: duplicateObserver }).port,
+    )).rejects.toThrow(/both distinct Signet observers/i);
   });
 
   it('binds provider recovery to the same journal row and exact transaction across every lookup', async () => {

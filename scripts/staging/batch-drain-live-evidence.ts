@@ -106,6 +106,137 @@ const recoveryExpectationSchema = z.object({
   faultWindowId: nonEmpty,
 }).strict();
 
+export const RIG_B1_BITCOIN_CORE_VERSION = '31.1' as const;
+export const RIG_B1_BITCOIN_CORE_SOURCE_URL =
+  'https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz' as const;
+export const RIG_B1_BITCOIN_CORE_SOURCE_SHA256 =
+  'b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e' as const;
+export const RIG_B1_MEMPOOL_SIGNET_API_URL = 'https://mempool.space/signet/api' as const;
+export const RIG_B1_SIGNET_GENESIS_HASH =
+  '00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6' as const;
+
+const numericSecretVersion = z.string().regex(/^[1-9][0-9]*$/);
+const secretResource = z.string().regex(
+  /^projects\/arkova1\/secrets\/[A-Za-z][A-Za-z0-9_-]{0,254}\/versions\/[1-9][0-9]*$/,
+);
+const rigB1SecretReferenceSchema = z.object({
+  env: z.enum(['BITCOIN_RPC_URL', 'BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF']),
+  secretName: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,254}$/),
+  version: numericSecretVersion,
+  resource: secretResource,
+}).strict();
+
+export const rigB1InfrastructureSchema = z.object({
+  provider: z.object({
+    workerProvider: z.literal('rpc'),
+    primary: z.literal('bitcoin-core-signet-rpc'),
+    secondary: z.literal('mempool-space-signet'),
+    secondaryApiUrl: z.literal(RIG_B1_MEMPOOL_SIGNET_API_URL),
+  }).strict(),
+  bitcoinCore: z.object({
+    version: z.literal(RIG_B1_BITCOIN_CORE_VERSION),
+    sourceTarballUrl: z.literal(RIG_B1_BITCOIN_CORE_SOURCE_URL),
+    sourceTarballSha256: z.literal(RIG_B1_BITCOIN_CORE_SOURCE_SHA256),
+    containerImage: z.string().regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/),
+    startupScriptPath: z.literal('scripts/staging/start-rig-b1-bitcoin-core.sh'),
+    startupScriptSha256: sha256Hex,
+  }).strict(),
+  resources: z.object({
+    zone: z.literal('us-central1-a'),
+    vm: z.literal('arkova-s33-rig-b1-bitcoin-core-signet'),
+    bootDisk: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-boot'),
+    dataDisk: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-data'),
+    internalAddress: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-rpc-ip'),
+    externalAddress: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-p2p-ip'),
+    network: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-vpc'),
+    subnet: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-subnet'),
+    rpcFirewall: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-rpc'),
+    vpcConnector: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-connector'),
+    nodeServiceAccount: z.literal(
+      's33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
+    ),
+  }).strict(),
+  schedulerJobs: z.array(z.string().regex(
+    /^arkova-worker-[a-z0-9-]+-staging-(batch-anchors|batch-anchors-forced-flush|check-confirmations|org-queue-scheduler|populate-confirmation-proofs|recover-broadcasts)$/,
+  )).length(6),
+  iam: z.object({
+    artifactRegistryReader: z.object({
+      repository: z.literal('projects/arkova1/locations/us-central1/repositories/arkova-worker-images'),
+      member: z.literal(
+        'serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
+      ),
+      role: z.literal('roles/artifactregistry.reader'),
+    }).strict(),
+    rpcAuthSecretAccessor: z.object({
+      secretName: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth'),
+      member: z.literal(
+        'serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
+      ),
+      role: z.literal('roles/secretmanager.secretAccessor'),
+    }).strict(),
+  }).strict(),
+  network: z.object({
+    rpcEndpoint: z.literal('http://10.33.10.10:38332'),
+    rpcBind: z.literal('10.33.10.10'),
+    rpcAllowCidr: z.literal('10.33.11.0/28'),
+    subnetCidr: z.literal('10.33.10.0/28'),
+    rpcPort: z.literal(38_332),
+    signetP2pPort: z.literal(38_333),
+    publicRpc: z.literal(false),
+  }).strict(),
+  secretReferences: z.array(rigB1SecretReferenceSchema).length(3),
+  nodeSecretEnvs: z.tuple([z.literal('BITCOIN_RPC_AUTH')]),
+  forbiddenNodeSecretEnvs: z.tuple([z.literal('BITCOIN_TREASURY_WIF')]),
+  treasuryWatchOnly: z.object({
+    address: z.string().regex(/^tb1[a-z0-9]{20,87}$/),
+    descriptor: z.string().regex(/^addr\(tb1[a-z0-9]{20,87}\)#[a-z0-9]{8}$/),
+    preSplitPlanDigest: imageDigest,
+    expectedConfirmedOutputCount: z.literal(32),
+    expectedTotalSats: z.number().int().positive().safe(),
+    descriptorPolicy: z.literal('addr-checksummed-importdescriptors'),
+    wifOnNode: z.literal(false),
+  }).strict(),
+  authority: z.object({
+    binding: z.literal('ed25519-signed-node-approval'),
+    approvalId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$/),
+    approvalEnvelopeSha256: imageDigest,
+    signedPayloadSha256: imageDigest,
+    spendCapUsd: z.number().int().min(1).max(200),
+    claim: z.object({
+      backend: z.literal('gcs-if-generation-match-0-locked-retention'),
+      objectUri: z.string().regex(
+        /^gs:\/\/arkova1-s33-immutable-authority-ledger\/s33\/rig-b1\/node-approval-claims\/[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}\.json$/,
+      ),
+      generation: numericSecretVersion,
+    }).strict(),
+  }).strict(),
+  teardown: z.object({
+    orderedResources: z.tuple([
+      z.literal('scheduler-jobs'),
+      z.literal('cloud-run-service'),
+      z.literal('bitcoin-core-vm'),
+      z.literal('boot-disk'),
+      z.literal('data-disk'),
+      z.literal('external-address'),
+      z.literal('internal-address'),
+      z.literal('rpc-firewall'),
+      z.literal('vpc-connector'),
+      z.literal('subnet'),
+      z.literal('vpc-network'),
+      z.literal('artifact-registry-iam'),
+      z.literal('node-secret-iam'),
+      z.literal('node-service-account'),
+      z.literal('worker-secret-iam'),
+      z.literal('worker-runtime-service-account'),
+      z.literal('scheduler-oidc-service-account'),
+      z.literal('supabase-project'),
+    ]),
+    projectedMonthlyRecurringUsd: z.literal(0),
+  }).strict(),
+}).strict();
+
+export type RigB1Infrastructure = z.infer<typeof rigB1InfrastructureSchema>;
+
 export const runDeclarationSchema = z.object({
   schemaVersion: z.literal(1),
   declarationId: nonEmpty,
@@ -121,6 +252,7 @@ export const runDeclarationSchema = z.object({
   workerService: nonEmpty,
   workerRevision: nonEmpty,
   region: nonEmpty,
+  infrastructure: rigB1InfrastructureSchema,
   soakStartedAt: isoTimestamp,
   soakEndedAt: isoTimestamp,
   recoveries: z.array(recoveryExpectationSchema),
@@ -533,6 +665,39 @@ function unique<T>(values: T[], label: string): void {
 
 export function assertRunDeclarationInvariants(value: RunDeclaration): void {
   if (value.gitBaseSha === value.gitHeadSha) throw new Error('Declaration git base and tested head must be distinct named commits.');
+  const expectedSecrets = [
+    ['BITCOIN_RPC_URL', 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-url'],
+    ['BITCOIN_RPC_AUTH', 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth'],
+    ['BITCOIN_TREASURY_WIF', 'arkova-s33-rig-b1-treasury-wif-signet'],
+  ] as const;
+  value.infrastructure.secretReferences.forEach((reference, index) => {
+    const expected = expectedSecrets[index];
+    if (
+      !expected
+      || reference.env !== expected[0]
+      || reference.secretName !== expected[1]
+      || reference.resource
+        !== `projects/arkova1/secrets/${reference.secretName}/versions/${reference.version}`
+    ) throw new Error('Signed RIG-B1 infrastructure secret references are not exact numeric-version bindings.');
+  });
+  const schedulerSuffixes = [
+    'batch-anchors',
+    'batch-anchors-forced-flush',
+    'check-confirmations',
+    'org-queue-scheduler',
+    'populate-confirmation-proofs',
+    'recover-broadcasts',
+  ];
+  const expectedSchedulerJobs = schedulerSuffixes.map((suffix) => `${value.workerService}-${suffix}`);
+  if (
+    value.infrastructure.schedulerJobs.length !== expectedSchedulerJobs.length
+    || value.infrastructure.schedulerJobs.some((job, index) => job !== expectedSchedulerJobs[index])
+  ) throw new Error('Signed RIG-B1 infrastructure must enumerate the exact six worker Scheduler identities.');
+  if (
+    !value.infrastructure.treasuryWatchOnly.descriptor.startsWith(
+      `addr(${value.infrastructure.treasuryWatchOnly.address})#`,
+    )
+  ) throw new Error('Signed RIG-B1 watch-only descriptor does not bind the exact treasury address.');
   if (time(value.soakEndedAt, 'soakEndedAt') - time(value.soakStartedAt, 'soakStartedAt') < SOAK_WALL_FLOOR_MINUTES * 60_000) {
     throw new Error('Declared soak wall window cannot contain the fixed 48h floor plus 30-minute overshoot.');
   }

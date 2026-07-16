@@ -45,7 +45,35 @@ const UTC_TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:
 const ENDPOINT_RESOURCE = /^projects\/[a-z][a-z0-9-]{4,28}[a-z0-9]\/locations\/us-central1\/endpoints\/[1-9][0-9]*$/;
 const CLOUD_RUN_SERVICE = /^[a-z][a-z0-9-]{1,61}[a-z0-9]$/;
 const SERVICE_ACCOUNT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$/;
-const SECRET_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,254}$/;
+const SECRET_REFERENCE = /^[A-Za-z][A-Za-z0-9_-]{0,254}@[1-9][0-9]*$/;
+const EXACT_G1_RESOURCES = Object.freeze({
+  endpointId: '733001',
+  endpointResource: 'projects/arkova1/locations/us-central1/endpoints/733001',
+  endpointDisplayName: 'arkova-s33-rig-g1-b-tuned-v6',
+  vertexModelResource:
+    'projects/270018525501/locations/us-central1/models/6611494259700793344@1',
+  checkpointId: '6',
+  deployedModelId: '7330011',
+  deployedModelDisplayName: 'arkova-s33-rig-g1-b-tuned-v6',
+  deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
+  minReplicaCount: 1,
+  maxReplicaCount: 1,
+  controlRuntimeServiceAccount: 's33-rig-g1-a-runtime@arkova1.iam.gserviceaccount.com',
+  tunedRuntimeServiceAccount: 's33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com',
+});
+const EXACT_G1_SECRET_REFERENCES = Object.freeze({
+  stripeSecretKey: 'stripe-secret-key-staging@1',
+  stripeWebhookSecret: 'stripe-webhook-secret-staging@1',
+  apiKeyHmacSecret: 'api-key-hmac-secret-staging@1',
+  cronSecret: 'cron-secret@1',
+  geminiApiKey: 'gemini-api-key@2',
+});
+const EXACT_G1_ARM_SECRET_REFERENCES = Object.freeze({
+  controlSupabaseUrlSecret: 'supabase-url-s33-g1-a-staging@1',
+  controlSupabaseServiceRoleSecret: 'supabase-service-role-key-s33-g1-a-staging@1',
+  tunedSupabaseUrlSecret: 'supabase-url-s33-g1-b-staging@1',
+  tunedSupabaseServiceRoleSecret: 'supabase-service-role-key-s33-g1-b-staging@1',
+});
 const IMMUTABLE_LEDGER = Object.freeze({
   backend: 'gcs-if-generation-match-0-locked-retention',
   bucket: 'arkova1-s33-immutable-authority-ledger',
@@ -190,12 +218,16 @@ function identityArray(value, label) {
 function parseSecretReferences(value, label) {
   const references = object(value, label);
   exactKeys(references, [
-    'supabaseUrl', 'supabaseServiceRoleKey', 'stripeSecretKey',
-    'stripeWebhookSecret', 'apiKeyHmacSecret', 'cronSecret', 'geminiApiKey',
+    'stripeSecretKey', 'stripeWebhookSecret', 'apiKeyHmacSecret',
+    'cronSecret', 'geminiApiKey',
   ], label);
   return Object.fromEntries(Object.entries(references).map(([key, reference]) => [
     key,
-    string(reference, SECRET_NAME, `${label}.${key}`, 255),
+    literal(
+      string(reference, SECRET_REFERENCE, `${label}.${key}`, 288),
+      EXACT_G1_SECRET_REFERENCES[key],
+      `${label}.${key}`,
+    ),
   ]));
 }
 
@@ -220,9 +252,15 @@ function parseScope(value, label = 'G1 approval scope') {
   const scope = object(value, label);
   exactKeys(scope, [
     'rigClass', 'rigName', 'rigProfile', 'soakId', 'rigId', 'leaseId',
-    'corpusDigest', 'endpointResource', 'runtimeServiceAccount',
+    'corpusDigest', 'endpointId', 'endpointResource', 'endpointDisplayName',
+    'vertexModelResource', 'deployedModelId', 'deployedModelDisplayName',
+    'checkpointId', 'deploymentResourcesMode', 'minReplicaCount', 'maxReplicaCount',
+    'controlRuntimeServiceAccount', 'tunedRuntimeServiceAccount',
     'controlService', 'tunedService', 'controlRunId', 'tunedRunId',
     'controlQueue', 'tunedQueue', 'pairedCadenceMaxMin', 'secretReferences',
+    'controlProjectName', 'tunedProjectName',
+    'controlSupabaseUrlSecret', 'controlSupabaseServiceRoleSecret',
+    'tunedSupabaseUrlSecret', 'tunedSupabaseServiceRoleSecret',
     'immutableLedger',
   ], label);
   const pairedCadenceMaxMin = positiveInteger(
@@ -240,15 +278,96 @@ function parseScope(value, label = 'G1 approval scope') {
     rigId: literal(scope.rigId, 'RIG-G1', `${label}.rigId`),
     leaseId: string(scope.leaseId, EXECUTION_ID, `${label}.leaseId`, 128),
     corpusDigest: string(scope.corpusDigest, SHA256_DIGEST, `${label}.corpusDigest`, 71),
-    endpointResource: string(scope.endpointResource, ENDPOINT_RESOURCE, `${label}.endpointResource`, 256),
-    runtimeServiceAccount: string(
-      scope.runtimeServiceAccount,
-      SERVICE_ACCOUNT,
-      `${label}.runtimeServiceAccount`,
-      128,
+    endpointId: literal(scope.endpointId, EXACT_G1_RESOURCES.endpointId, `${label}.endpointId`),
+    endpointResource: literal(
+      string(scope.endpointResource, ENDPOINT_RESOURCE, `${label}.endpointResource`, 256),
+      EXACT_G1_RESOURCES.endpointResource,
+      `${label}.endpointResource`,
+    ),
+    endpointDisplayName: literal(
+      scope.endpointDisplayName,
+      EXACT_G1_RESOURCES.endpointDisplayName,
+      `${label}.endpointDisplayName`,
+    ),
+    vertexModelResource: literal(
+      scope.vertexModelResource,
+      EXACT_G1_RESOURCES.vertexModelResource,
+      `${label}.vertexModelResource`,
+    ),
+    checkpointId: literal(
+      scope.checkpointId,
+      EXACT_G1_RESOURCES.checkpointId,
+      `${label}.checkpointId`,
+    ),
+    deployedModelId: literal(
+      scope.deployedModelId,
+      EXACT_G1_RESOURCES.deployedModelId,
+      `${label}.deployedModelId`,
+    ),
+    deployedModelDisplayName: literal(
+      scope.deployedModelDisplayName,
+      EXACT_G1_RESOURCES.deployedModelDisplayName,
+      `${label}.deployedModelDisplayName`,
+    ),
+    deploymentResourcesMode: literal(
+      scope.deploymentResourcesMode,
+      EXACT_G1_RESOURCES.deploymentResourcesMode,
+      `${label}.deploymentResourcesMode`,
+    ),
+    minReplicaCount: literal(
+      scope.minReplicaCount,
+      EXACT_G1_RESOURCES.minReplicaCount,
+      `${label}.minReplicaCount`,
+    ),
+    maxReplicaCount: literal(
+      scope.maxReplicaCount,
+      EXACT_G1_RESOURCES.maxReplicaCount,
+      `${label}.maxReplicaCount`,
+    ),
+    controlRuntimeServiceAccount: literal(
+      string(
+        scope.controlRuntimeServiceAccount,
+        SERVICE_ACCOUNT,
+        `${label}.controlRuntimeServiceAccount`,
+        128,
+      ),
+      EXACT_G1_RESOURCES.controlRuntimeServiceAccount,
+      `${label}.controlRuntimeServiceAccount`,
+    ),
+    tunedRuntimeServiceAccount: literal(
+      string(
+        scope.tunedRuntimeServiceAccount,
+        SERVICE_ACCOUNT,
+        `${label}.tunedRuntimeServiceAccount`,
+        128,
+      ),
+      EXACT_G1_RESOURCES.tunedRuntimeServiceAccount,
+      `${label}.tunedRuntimeServiceAccount`,
     ),
     controlService: string(scope.controlService, CLOUD_RUN_SERVICE, `${label}.controlService`, 63),
     tunedService: string(scope.tunedService, CLOUD_RUN_SERVICE, `${label}.tunedService`, 63),
+    controlProjectName: string(scope.controlProjectName, RIG_NAME, `${label}.controlProjectName`, 63),
+    tunedProjectName: string(scope.tunedProjectName, RIG_NAME, `${label}.tunedProjectName`, 63),
+    controlSupabaseUrlSecret: literal(
+      string(scope.controlSupabaseUrlSecret, SECRET_REFERENCE, `${label}.controlSupabaseUrlSecret`, 288),
+      EXACT_G1_ARM_SECRET_REFERENCES.controlSupabaseUrlSecret,
+      `${label}.controlSupabaseUrlSecret`,
+    ),
+    controlSupabaseServiceRoleSecret: literal(
+      string(scope.controlSupabaseServiceRoleSecret, SECRET_REFERENCE, `${label}.controlSupabaseServiceRoleSecret`, 288),
+      EXACT_G1_ARM_SECRET_REFERENCES.controlSupabaseServiceRoleSecret,
+      `${label}.controlSupabaseServiceRoleSecret`,
+    ),
+    tunedSupabaseUrlSecret: literal(
+      string(scope.tunedSupabaseUrlSecret, SECRET_REFERENCE, `${label}.tunedSupabaseUrlSecret`, 288),
+      EXACT_G1_ARM_SECRET_REFERENCES.tunedSupabaseUrlSecret,
+      `${label}.tunedSupabaseUrlSecret`,
+    ),
+    tunedSupabaseServiceRoleSecret: literal(
+      string(scope.tunedSupabaseServiceRoleSecret, SECRET_REFERENCE, `${label}.tunedSupabaseServiceRoleSecret`, 288),
+      EXACT_G1_ARM_SECRET_REFERENCES.tunedSupabaseServiceRoleSecret,
+      `${label}.tunedSupabaseServiceRoleSecret`,
+    ),
     controlRunId: string(scope.controlRunId, EXECUTION_ID, `${label}.controlRunId`, 128),
     tunedRunId: string(scope.tunedRunId, EXECUTION_ID, `${label}.tunedRunId`, 128),
     controlQueue: string(scope.controlQueue, EXECUTION_ID, `${label}.controlQueue`, 128),
@@ -258,9 +377,13 @@ function parseScope(value, label = 'G1 approval scope') {
     immutableLedger: parseImmutableLedger(scope.immutableLedger, `${label}.immutableLedger`),
   };
   if (parsed.controlService === parsed.tunedService
+    || parsed.controlRuntimeServiceAccount === parsed.tunedRuntimeServiceAccount
+    || parsed.controlProjectName === parsed.tunedProjectName
+    || parsed.controlSupabaseUrlSecret === parsed.tunedSupabaseUrlSecret
+    || parsed.controlSupabaseServiceRoleSecret === parsed.tunedSupabaseServiceRoleSecret
     || parsed.controlRunId === parsed.tunedRunId
     || parsed.controlQueue === parsed.tunedQueue) {
-    throw new Error(`${label} must bind distinct control/tuned service, run, and queue identities.`);
+    throw new Error(`${label} must bind distinct control/tuned runtime, service, project, secret, run, and queue identities.`);
   }
   return parsed;
 }
@@ -325,9 +448,9 @@ function parseApprovalRecord(value) {
     },
     scope: parseScope(record.scope),
     budget: {
-      isolatedSupabaseProjectCount: literal(budget.isolatedSupabaseProjectCount, 3, 'G1 project count'),
+      isolatedSupabaseProjectCount: literal(budget.isolatedSupabaseProjectCount, 4, 'G1 project count'),
       isolatedSupabaseProjectMonthlyEachUsd: literal(budget.isolatedSupabaseProjectMonthlyEachUsd, 10, 'G1 each-project cost'),
-      isolatedSupabaseProjectsMonthlyTotalUsd: literal(budget.isolatedSupabaseProjectsMonthlyTotalUsd, 30, 'G1 aggregate project cost'),
+      isolatedSupabaseProjectsMonthlyTotalUsd: literal(budget.isolatedSupabaseProjectsMonthlyTotalUsd, 40, 'G1 aggregate project cost'),
       g1VariableComputeModelCapUsd: positiveInteger(budget.g1VariableComputeModelCapUsd, 'G1 variable compute/model cap'),
       s33TotalCapUsd: positiveInteger(budget.s33TotalCapUsd, 'S3.3 total cap'),
     },
@@ -380,9 +503,16 @@ function parseExpectedCandidate(value) {
   const candidate = object(value, 'Expected G1 candidate and scope');
   exactKeys(candidate, [
     'sourceHeadSha', 'imageDigest', 'rigClass', 'rigName', 'rigProfile', 'soakId',
-    'rigId', 'leaseId', 'corpusDigest', 'endpointResource', 'runtimeServiceAccount',
+    'rigId', 'leaseId', 'corpusDigest', 'endpointId', 'endpointResource',
+    'endpointDisplayName', 'vertexModelResource', 'deployedModelId',
+    'deployedModelDisplayName', 'checkpointId', 'deploymentResourcesMode',
+    'minReplicaCount', 'maxReplicaCount',
+    'controlRuntimeServiceAccount', 'tunedRuntimeServiceAccount',
     'controlService', 'tunedService', 'controlRunId', 'tunedRunId',
     'controlQueue', 'tunedQueue', 'pairedCadenceMaxMin', 'secretReferences',
+    'controlProjectName', 'tunedProjectName',
+    'controlSupabaseUrlSecret', 'controlSupabaseServiceRoleSecret',
+    'tunedSupabaseUrlSecret', 'tunedSupabaseServiceRoleSecret',
     'immutableLedger',
   ], 'Expected G1 candidate and scope');
   return {
@@ -396,10 +526,26 @@ function parseExpectedCandidate(value) {
       rigId: candidate.rigId,
       leaseId: candidate.leaseId,
       corpusDigest: candidate.corpusDigest,
+      endpointId: candidate.endpointId,
       endpointResource: candidate.endpointResource,
-      runtimeServiceAccount: candidate.runtimeServiceAccount,
+      endpointDisplayName: candidate.endpointDisplayName,
+      vertexModelResource: candidate.vertexModelResource,
+      checkpointId: candidate.checkpointId,
+      deployedModelId: candidate.deployedModelId,
+      deployedModelDisplayName: candidate.deployedModelDisplayName,
+      deploymentResourcesMode: candidate.deploymentResourcesMode,
+      minReplicaCount: candidate.minReplicaCount,
+      maxReplicaCount: candidate.maxReplicaCount,
+      controlRuntimeServiceAccount: candidate.controlRuntimeServiceAccount,
+      tunedRuntimeServiceAccount: candidate.tunedRuntimeServiceAccount,
       controlService: candidate.controlService,
       tunedService: candidate.tunedService,
+      controlProjectName: candidate.controlProjectName,
+      tunedProjectName: candidate.tunedProjectName,
+      controlSupabaseUrlSecret: candidate.controlSupabaseUrlSecret,
+      controlSupabaseServiceRoleSecret: candidate.controlSupabaseServiceRoleSecret,
+      tunedSupabaseUrlSecret: candidate.tunedSupabaseUrlSecret,
+      tunedSupabaseServiceRoleSecret: candidate.tunedSupabaseServiceRoleSecret,
       controlRunId: candidate.controlRunId,
       tunedRunId: candidate.tunedRunId,
       controlQueue: candidate.controlQueue,
@@ -607,22 +753,36 @@ async function main() {
       'expected-rig-id': { type: 'string' },
       'expected-lease-id': { type: 'string' },
       'expected-corpus-digest': { type: 'string' },
+      'expected-endpoint-id': { type: 'string' },
       'expected-endpoint-resource': { type: 'string' },
-      'expected-runtime-service-account': { type: 'string' },
+      'expected-endpoint-display-name': { type: 'string' },
+      'expected-vertex-model-resource': { type: 'string' },
+      'expected-checkpoint-id': { type: 'string' },
+      'expected-deployed-model-id': { type: 'string' },
+      'expected-deployed-model-display-name': { type: 'string' },
+      'expected-deployment-resources-mode': { type: 'string' },
+      'expected-min-replica-count': { type: 'string' },
+      'expected-max-replica-count': { type: 'string' },
+      'expected-control-runtime-service-account': { type: 'string' },
+      'expected-tuned-runtime-service-account': { type: 'string' },
       'expected-control-service': { type: 'string' },
       'expected-tuned-service': { type: 'string' },
+      'expected-control-project-name': { type: 'string' },
+      'expected-tuned-project-name': { type: 'string' },
+      'expected-control-supabase-url-secret-reference': { type: 'string' },
+      'expected-control-supabase-service-role-secret-reference': { type: 'string' },
+      'expected-tuned-supabase-url-secret-reference': { type: 'string' },
+      'expected-tuned-supabase-service-role-secret-reference': { type: 'string' },
       'expected-control-run-id': { type: 'string' },
       'expected-tuned-run-id': { type: 'string' },
       'expected-control-queue': { type: 'string' },
       'expected-tuned-queue': { type: 'string' },
       'expected-paired-cadence-max-min': { type: 'string' },
-      'expected-supabase-url-secret': { type: 'string' },
-      'expected-supabase-service-role-secret': { type: 'string' },
-      'expected-stripe-secret-key-secret': { type: 'string' },
-      'expected-stripe-webhook-secret': { type: 'string' },
-      'expected-api-key-hmac-secret': { type: 'string' },
-      'expected-cron-secret': { type: 'string' },
-      'expected-gemini-api-key-secret': { type: 'string' },
+      'expected-stripe-secret-key-reference': { type: 'string' },
+      'expected-stripe-webhook-secret-reference': { type: 'string' },
+      'expected-api-key-hmac-secret-reference': { type: 'string' },
+      'expected-cron-secret-reference': { type: 'string' },
+      'expected-gemini-api-key-secret-reference': { type: 'string' },
       'expected-immutable-ledger-bucket': { type: 'string' },
     },
     strict: true,
@@ -632,6 +792,16 @@ async function main() {
   const pairedCadenceMaxMin = typeof pairedCadenceText === 'string'
     && /^[1-9][0-9]*$/.test(pairedCadenceText)
     ? Number(pairedCadenceText)
+    : Number.NaN;
+  const minimumReplicaText = args.values['expected-min-replica-count'];
+  const minReplicaCount = typeof minimumReplicaText === 'string'
+    && /^[1-9][0-9]*$/.test(minimumReplicaText)
+    ? Number(minimumReplicaText)
+    : Number.NaN;
+  const maximumReplicaText = args.values['expected-max-replica-count'];
+  const maxReplicaCount = typeof maximumReplicaText === 'string'
+    && /^[1-9][0-9]*$/.test(maximumReplicaText)
+    ? Number(maximumReplicaText)
     : Number.NaN;
   const expectedCandidate = {
     sourceHeadSha: args.values['expected-source-head'],
@@ -643,23 +813,37 @@ async function main() {
     rigId: args.values['expected-rig-id'],
     leaseId: args.values['expected-lease-id'],
     corpusDigest: args.values['expected-corpus-digest'],
+    endpointId: args.values['expected-endpoint-id'],
     endpointResource: args.values['expected-endpoint-resource'],
-    runtimeServiceAccount: args.values['expected-runtime-service-account'],
+    endpointDisplayName: args.values['expected-endpoint-display-name'],
+    vertexModelResource: args.values['expected-vertex-model-resource'],
+    checkpointId: args.values['expected-checkpoint-id'],
+    deployedModelId: args.values['expected-deployed-model-id'],
+    deployedModelDisplayName: args.values['expected-deployed-model-display-name'],
+    deploymentResourcesMode: args.values['expected-deployment-resources-mode'],
+    minReplicaCount,
+    maxReplicaCount,
+    controlRuntimeServiceAccount: args.values['expected-control-runtime-service-account'],
+    tunedRuntimeServiceAccount: args.values['expected-tuned-runtime-service-account'],
     controlService: args.values['expected-control-service'],
     tunedService: args.values['expected-tuned-service'],
+    controlProjectName: args.values['expected-control-project-name'],
+    tunedProjectName: args.values['expected-tuned-project-name'],
+    controlSupabaseUrlSecret: args.values['expected-control-supabase-url-secret-reference'],
+    controlSupabaseServiceRoleSecret: args.values['expected-control-supabase-service-role-secret-reference'],
+    tunedSupabaseUrlSecret: args.values['expected-tuned-supabase-url-secret-reference'],
+    tunedSupabaseServiceRoleSecret: args.values['expected-tuned-supabase-service-role-secret-reference'],
     controlRunId: args.values['expected-control-run-id'],
     tunedRunId: args.values['expected-tuned-run-id'],
     controlQueue: args.values['expected-control-queue'],
     tunedQueue: args.values['expected-tuned-queue'],
     pairedCadenceMaxMin,
     secretReferences: {
-      supabaseUrl: args.values['expected-supabase-url-secret'],
-      supabaseServiceRoleKey: args.values['expected-supabase-service-role-secret'],
-      stripeSecretKey: args.values['expected-stripe-secret-key-secret'],
-      stripeWebhookSecret: args.values['expected-stripe-webhook-secret'],
-      apiKeyHmacSecret: args.values['expected-api-key-hmac-secret'],
-      cronSecret: args.values['expected-cron-secret'],
-      geminiApiKey: args.values['expected-gemini-api-key-secret'],
+      stripeSecretKey: args.values['expected-stripe-secret-key-reference'],
+      stripeWebhookSecret: args.values['expected-stripe-webhook-secret-reference'],
+      apiKeyHmacSecret: args.values['expected-api-key-hmac-secret-reference'],
+      cronSecret: args.values['expected-cron-secret-reference'],
+      geminiApiKey: args.values['expected-gemini-api-key-secret-reference'],
     },
     immutableLedger: {
       ...IMMUTABLE_LEDGER,

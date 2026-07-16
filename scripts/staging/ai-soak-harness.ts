@@ -38,6 +38,7 @@
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { resolveStagingApiBase } from './load-harness-env.js';
@@ -69,25 +70,27 @@ import {
   type CorpusItem,
 } from './ai-eval/corpus.js';
 
-const { values: args } = parseArgs({
-  options: {
-    duration: { type: 'string', default: '15' },
-    rate: { type: 'string', default: '5000' },
-    endpoints: { type: 'string', default: 'extract,template,tags' },
-    'doc-variants': { type: 'string' },
-    'timeout-ms': { type: 'string', default: '10000' },
-    'no-rotate-ip': { type: 'boolean', default: false },
-    'evidence-out': { type: 'string' },
-    'dry-run': { type: 'boolean', default: false },
-    'allow-undersized-pool': { type: 'boolean', default: false },
-  },
-});
+export interface AiSoakHarnessRunOptions {
+  readonly apiBase: string;
+  readonly identities: WorkerIdentity[];
+  readonly durationMin: number;
+  readonly ratePerHour: number;
+  readonly endpoints: AiEndpoint[];
+  readonly variants: ReturnType<typeof parseDocVariants>;
+  readonly timeoutMs: number;
+  readonly rotateIp: boolean;
+  readonly evidencePath?: string;
+  readonly dryRun?: boolean;
+  readonly allowUndersizedPool?: boolean;
+  readonly signal?: AbortSignal;
+  readonly fetchImpl?: FetchLike;
+  readonly onReady?: () => void;
+}
 
 function parsePositiveInt(raw: string | undefined, fallback: number, name: string): number {
   const n = Number.parseInt(raw ?? String(fallback), 10);
   if (!Number.isFinite(n) || n <= 0) {
-    console.error(`::error::--${name}=${raw} must be a positive integer.`);
-    process.exit(2);
+    throw new Error(`--${name}=${raw} must be a positive integer.`);
   }
   return n;
 }
@@ -97,8 +100,7 @@ function parseEndpoints(raw: string): AiEndpoint[] {
   const requested = raw.split(',').map((s) => s.trim()).filter(Boolean);
   const selected = requested.filter((r): r is AiEndpoint => (known as string[]).includes(r));
   if (selected.length === 0) {
-    console.error(`::error::--endpoints must be a comma-list of extract|template|tags; got \`${raw}\``);
-    process.exit(2);
+    throw new Error(`--endpoints must be a comma-list of extract|template|tags; got \`${raw}\``);
   }
   return known.filter((k) => selected.includes(k));
 }
@@ -127,13 +129,25 @@ function payloadFor(endpoint: AiEndpoint, item: CorpusItem): unknown {
   }
 }
 
-function boundedSleep(ms: number, endAt: number): Promise<void> {
+function boundedSleep(ms: number, endAt: number, signal?: AbortSignal): Promise<void> {
   const remaining = endAt - Date.now();
-  if (remaining <= 0) return Promise.resolve();
-  return new Promise((r) => setTimeout(r, Math.min(ms, remaining)));
+  if (remaining <= 0 || signal?.aborted === true) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, Math.min(ms, remaining));
+    function done(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    }
+    signal?.addEventListener('abort', done, { once: true });
+  });
 }
 
 const realFetch: FetchLike = fetch as unknown as FetchLike;
+
+function isAborted(signal?: AbortSignal): boolean {
+  return signal?.aborted === true;
+}
 
 function trackPendingRequest(pending: Set<Promise<void>>, request: Promise<void>): void {
   pending.add(request);
@@ -150,17 +164,21 @@ function recordHarnessFailure(stats: ReturnType<typeof newAiStats>, endpoint: Ai
   }, variant);
 }
 
-async function main(): Promise<void> {
-  const durationMin = parsePositiveInt(args.duration, 15, 'duration');
-  const ratePerHour = parsePositiveInt(args.rate, 5000, 'rate');
-  const endpoints = parseEndpoints(args.endpoints ?? 'extract,template,tags');
-  const variants = parseDocVariants(args['doc-variants']);
-  const timeoutMs = parsePositiveInt(args['timeout-ms'], 10_000, 'timeout-ms');
-  const rotateIp = !args['no-rotate-ip'];
-  const evidencePath = args['evidence-out'] ? resolveEvidenceOutputPath(args['evidence-out']) : undefined;
-
-  const apiBase = resolveStagingApiBase(process.env);
-  const identities: WorkerIdentity[] = parseIdentities(process.env.STAGING_AI_JWTS);
+export async function runAiSoakHarness(
+  options: AiSoakHarnessRunOptions,
+): Promise<ReturnType<typeof summarizeAiRun> | null> {
+  const {
+    apiBase,
+    identities,
+    durationMin,
+    ratePerHour,
+    endpoints,
+    variants,
+    timeoutMs,
+    rotateIp,
+    evidencePath,
+    signal,
+  } = options;
   const corpus = buildVariantCorpus(allGoldenEntries(), variants);
 
   const plan = planRate(ratePerHour, identities);
@@ -175,24 +193,23 @@ async function main(): Promise<void> {
   if (plan.warning) console.warn(`  WARN ${plan.warning}`);
 
   if (identities.length === 0) {
-    console.error('::error::STAGING_AI_JWTS is required — /api/v1/ai/* rejects unauthenticated calls (401).');
-    process.exit(1);
+    throw new Error('STAGING_AI_JWTS is required — /api/v1/ai/* rejects unauthenticated calls (401).');
   }
-  if (!plan.sufficient && !args['allow-undersized-pool']) {
-    console.error(`::error::${plan.warning}`);
-    console.error('::error::Aborting — an undersized JWT pool would self-inflict 429s that masquerade as ' +
+  if (!plan.sufficient && !options.allowUndersizedPool) {
+    throw new Error(`${plan.warning} Aborting — an undersized JWT pool would self-inflict 429s that masquerade as ` +
       'Gemini reliability failures in the soak evidence. Add JWTs, lower --rate, or pass ' +
       '--allow-undersized-pool to force a run (not merge-grade for reliability evidence).');
-    process.exit(1);
   }
-  if (args['dry-run']) {
+  if (options.dryRun) {
     console.log('  --dry-run: plan validated; exiting without firing.');
-    return;
+    return null;
   }
+  if (isAborted(signal)) throw new Error('AI soak start was aborted before the clock began.');
 
   const stats = newAiStats();
   const endAt = stats.startedAt + durationMin * 60_000;
   const intervalMs = intervalMsForRatePerHour(ratePerHour);
+  options.onReady?.();
 
   const summaryTimer = setInterval(() => {
     if (Date.now() >= endAt) return;
@@ -207,8 +224,9 @@ async function main(): Promise<void> {
 
   let seq = 0;
   const pendingRequests = new Set<Promise<void>>();
+  const fetchImpl = options.fetchImpl ?? realFetch;
   try {
-    while (Date.now() < endAt) {
+    while (Date.now() < endAt && !isAborted(signal)) {
       const endpoint = selectEndpointForSequence(seq, endpoints);
       const item = corpus[seq % corpus.length];
       const effectiveEndpoint = isLoadOnlyVariant(item.variant) ? 'extract' : endpoint;
@@ -219,14 +237,14 @@ async function main(): Promise<void> {
         effectiveEndpoint,
         payloadFor(effectiveEndpoint, item),
         identity,
-        realFetch,
+        fetchImpl,
         { timeoutMs, forwardedFor },
       )
         .then((outcome) => recordAiOutcome(stats, outcome, item.variant))
         .catch((err: unknown) => recordHarnessFailure(stats, effectiveEndpoint, err, item.variant));
       trackPendingRequest(pendingRequests, request);
       seq++;
-      await boundedSleep(intervalMs, endAt);
+      await boundedSleep(intervalMs, endAt, signal);
     }
   } finally {
     clearInterval(summaryTimer);
@@ -250,10 +268,42 @@ async function main(): Promise<void> {
     writeFileSync(evidencePath, JSON.stringify(summary, null, 2) + '\n'); // NOSONAR S8707 — resolveEvidenceOutputPath confines writes to docs/staging.
     console.log(`\nEvidence written: ${evidencePath}`);
   }
+  return summary;
 }
 
-main().catch((err) => {
-  console.error(`::error::AI soak harness failed: ${err instanceof Error ? err.message : err}`);
-  if (err instanceof Error && err.stack) console.error(err.stack);
-  process.exit(1);
-});
+export async function runAiSoakHarnessCli(): Promise<void> {
+  const { values: args } = parseArgs({
+    options: {
+      duration: { type: 'string', default: '15' },
+      rate: { type: 'string', default: '5000' },
+      endpoints: { type: 'string', default: 'extract,template,tags' },
+      'doc-variants': { type: 'string' },
+      'timeout-ms': { type: 'string', default: '10000' },
+      'no-rotate-ip': { type: 'boolean', default: false },
+      'evidence-out': { type: 'string' },
+      'dry-run': { type: 'boolean', default: false },
+      'allow-undersized-pool': { type: 'boolean', default: false },
+    },
+  });
+  await runAiSoakHarness({
+    apiBase: resolveStagingApiBase(process.env),
+    identities: parseIdentities(process.env.STAGING_AI_JWTS),
+    durationMin: parsePositiveInt(args.duration, 15, 'duration'),
+    ratePerHour: parsePositiveInt(args.rate, 5000, 'rate'),
+    endpoints: parseEndpoints(args.endpoints ?? 'extract,template,tags'),
+    variants: parseDocVariants(args['doc-variants']),
+    timeoutMs: parsePositiveInt(args['timeout-ms'], 10_000, 'timeout-ms'),
+    rotateIp: !args['no-rotate-ip'],
+    evidencePath: args['evidence-out'] ? resolveEvidenceOutputPath(args['evidence-out']) : undefined,
+    dryRun: args['dry-run'],
+    allowUndersizedPool: args['allow-undersized-pool'],
+  });
+}
+
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runAiSoakHarnessCli().catch((err) => {
+    console.error(`::error::AI soak harness failed: ${err instanceof Error ? err.message : err}`);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    process.exitCode = 1;
+  });
+}

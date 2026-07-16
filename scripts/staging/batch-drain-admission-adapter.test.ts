@@ -75,7 +75,7 @@ const TEAM2_RIG_B1_CRITICAL_CONFIG = {
   use_mocks: 'false',
   enable_prod_network_anchoring: 'true',
   bitcoin_network: 'signet',
-  bitcoin_utxo_provider: 'getblock',
+  bitcoin_utxo_provider: 'rpc',
   kms_provider: 'gcp',
   gemini_tuned_model: '',
   gemini_v6_prompt: '',
@@ -239,6 +239,15 @@ describe('admission v2 to run-declaration identity adapter', () => {
       workerService: 'arkova-worker-s33-rig-b1-staging',
       workerRevision: 'arkova-worker-s33-rig-b1-staging-00001',
       region: 'us-central1',
+      infrastructure: expect.objectContaining({
+        provider: {
+          workerProvider: 'rpc',
+          primary: 'bitcoin-core-signet-rpc',
+          secondary: 'mempool-space-signet',
+          secondaryApiUrl: 'https://mempool.space/signet/api',
+        },
+        teardown: expect.objectContaining({ projectedMonthlyRecurringUsd: 0 }),
+      }),
     });
     const admission = JSON.parse(ADMISSION_RAW) as JsonRecord;
     expect(admission.source_head_image_ref).toBe(
@@ -588,10 +597,11 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
       '## What this folder does NOT do',
       '## Provision Step-4 Scheduler repair (PR #1492, L2-S2a-FIX, 2026-07-10)',
       '## Isolated-rig admission v2 hardening (Lane 2 S3.3 readiness, 2026-07-13)',
+      '## RIG-G1 paired-arm admission (S3.3 post-Wave-3 tooling, 2026-07-15)',
       '## Admission rollback and identity pins (Team 2 review remediation, 2026-07-13)',
       '## Real batch-drain behavioral harness (#1417, 2026-07-07, Lane-1 chain)',
     ]);
-    expect(new Set(headings).size).toBe(13);
+    expect(new Set(headings).size).toBe(14);
   });
 
   it('preserves each authoritative Team2 section body exactly once', () => {
@@ -600,7 +610,7 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     const admissionRollback = markdownSection(STAGING_AGENTS_RAW, ADMISSION_ROLLBACK_HEADING);
 
     expect(sha256(step4)).toBe('f59687e0347c18d812aab0d5c34710b1b62579e4d4ad4f7f9168144ac37e7b73');
-    expect(sha256(admissionV2)).toBe('c776963e19cad6a958dfa48e38e9fb537480ddf0d30f419b11b7363fc43556f1');
+    expect(sha256(admissionV2)).toBe('fb9775f56fbfa4bae18dac25ee0f4624b24f2cc4e0735e1ea0820642a9c2d867');
     expect(sha256(admissionRollback)).toBe('7b833be979de8b493535800df5393e57ece6541523ed9e5eeaaeadd8766dc5c3');
     for (const [heading, section] of [
       [STEP4_HEADING, step4],
@@ -627,8 +637,8 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     const provenanceOccurrences = occurrenceCount(batchDrain, TEAM1_ADMISSION_PROVENANCE_RULE);
     const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
 
-    expect(sha256(prefix)).toBe('95c488f2003fb7b16cf2fd517924b39a4e6ae5f1cc5ad487ca2a72e547e31fd7');
-    expect(sha256(f61BatchDrain)).toBe('fad2fec21d636a5736b4844f9b1bf90cfd74e1a0138916dbb1b8215dbc27d14d');
+    expect(sha256(prefix)).toBe('24f2f5df24f13436e0e9600bbd587bc4534d77cd2a1465162cac94938134628c');
+    expect(sha256(f61BatchDrain)).toBe('c9b720959ce69081aca2c6f33c45f5a8109121968e24902644b7d41b50f04a05');
     expect(provenanceOccurrences).toBe(1);
     expect(batchDrain).toContain('S3.3 R3 acceptance extensions are split deliberately');
     expect(batchDrain).toContain('Team 1 review hardening keeps every chronology field');

@@ -9,10 +9,16 @@
 import { parseUtcTimestamp } from './batch-drain-time';
 
 export const DEFAULT_JOURNAL_AMBIGUITY_WINDOW_MS = 30 * 60 * 1000;
+export const PRIMARY_SIGNET_LOOKUP_SOURCE = 'bitcoin-core-signet-rpc' as const;
+export const SECONDARY_SIGNET_LOOKUP_SOURCE = 'mempool-space' as const;
+export const REQUIRED_SIGNET_LOOKUP_SOURCES = Object.freeze([
+  PRIMARY_SIGNET_LOOKUP_SOURCE,
+  SECONDARY_SIGNET_LOOKUP_SOURCE,
+] as const);
 
 export type JournalCrashCase = 'B1' | 'B2' | 'B3' | 'B4';
 export type JournalRecoveryStatus = 'PENDING' | 'HELD' | 'ADOPTED' | 'REVERTED' | 'PERSISTED';
-export type ChainLookupSource = 'getblock-rpc' | 'mempool-space';
+export type ChainLookupSource = typeof REQUIRED_SIGNET_LOOKUP_SOURCES[number];
 export type ChainLookupOutcome = 'found' | 'not-found' | 'unavailable' | 'negative-confirmations';
 
 export interface JournalRuntimeBinding {
@@ -120,6 +126,18 @@ function requireUnique(values: readonly string[], label: string): void {
 
 function sameOrderedStrings(expected: readonly string[], actual: readonly string[]): boolean {
   return expected.length === actual.length && expected.every((value, index) => value === actual[index]);
+}
+
+function exactSignetLookupPair(
+  lookups: readonly JournalChainLookupObservation[],
+): Map<ChainLookupSource, JournalChainLookupObservation> | null {
+  if (lookups.length !== REQUIRED_SIGNET_LOOKUP_SOURCES.length) return null;
+  const bySource = new Map(lookups.map((lookup) => [lookup.source, lookup]));
+  if (
+    bySource.size !== REQUIRED_SIGNET_LOOKUP_SOURCES.length
+    || REQUIRED_SIGNET_LOOKUP_SOURCES.some((source) => !bySource.has(source))
+  ) return null;
+  return bySource;
 }
 
 function validateJournalShape(snapshot: TxidJournalSnapshot, label: string): void {
@@ -252,6 +270,9 @@ function assertBaseEvidence(evidence: JournalCrashEvidence): Map<string, Journal
     }
   }
   for (const lookup of evidence.recovery.lookups) {
+    if (!(REQUIRED_SIGNET_LOOKUP_SOURCES as readonly string[]).includes(lookup.source)) {
+      throw new Error('Lookup source is not an approved independent Signet observer.');
+    }
     if (!SHA256_HEX.test(lookup.txId) || lookup.txId !== evidence.txId) {
       throw new Error('Lookup does not prove the exact journaled txid.');
     }
@@ -294,20 +315,26 @@ export function assertJournalCrashEvidence(evidence: JournalCrashEvidence): Jour
     if (!evidence.barrier.journal || !evidence.recovery.journal) {
       throw new Error(`${evidence.crashCase} requires barrier and recovery journal snapshots.`);
     }
+    if (
+      evidence.barrier.journal.journalId !== evidence.recovery.journal.journalId
+      || evidence.barrier.journal.createdAt !== evidence.recovery.journal.createdAt
+    ) throw new Error(`${evidence.crashCase} recovery must preserve the same journal row and creation time.`);
 
     if (evidence.crashCase === 'B2') {
       if (evidence.barrier.journal.recoveryStatus !== 'PENDING') throw new Error('B2 barrier journal must be PENDING.');
       if (evidence.recovery.journal.recoveryStatus !== 'REVERTED') throw new Error('B2 recovery journal must be REVERTED.');
-      const sources = new Map(evidence.recovery.lookups.map((lookup) => [lookup.source, lookup]));
+      const sources = exactSignetLookupPair(evidence.recovery.lookups);
       if (
-        sources.size !== 2
-        || sources.get('getblock-rpc')?.outcome !== 'not-found'
-        || sources.get('mempool-space')?.outcome !== 'not-found'
-      ) throw new Error('B2 REVERT requires a two-source affirmative absence quorum with both sources not-found.');
+        sources === null
+        || sources.get(PRIMARY_SIGNET_LOOKUP_SOURCE)?.outcome !== 'not-found'
+        || sources.get(SECONDARY_SIGNET_LOOKUP_SOURCE)?.outcome !== 'not-found'
+      ) throw new Error('B2 REVERT requires exactly one distinct not-found from Bitcoin Core Signet RPC and mempool.space Signet.');
       const createdAt = time(evidence.barrier.journal.createdAt, 'B2 journal createdAt');
+      const resolvedAt = time(evidence.recovery.journal.resolvedAt!, 'B2 journal resolvedAt');
       if ([...sources.values()].some((lookup) => (
         time(lookup.observedAt, 'B2 absence observedAt') - createdAt < DEFAULT_JOURNAL_AMBIGUITY_WINDOW_MS
-      ))) throw new Error('B2 affirmative absence was observed inside the ambiguity window.');
+        || time(lookup.observedAt, 'B2 absence observedAt') > resolvedAt
+      ))) throw new Error('B2 affirmative absence must be observed after the ambiguity window and before REVERT resolution.');
       assertAttemptSet(evidence, 0);
       assertPendingCompensated(cohort);
       resolution = 'AFFIRMATIVE_ABSENCE_REVERT';

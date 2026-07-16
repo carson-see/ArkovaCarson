@@ -44,11 +44,135 @@
     "use_mocks": "false",
     "enable_prod_network_anchoring": "true",
     "bitcoin_network": "signet",
-    "bitcoin_utxo_provider": "getblock",
+    "bitcoin_utxo_provider": "rpc",
     "kms_provider": "gcp",
     "gemini_tuned_model": "",
     "gemini_v6_prompt": "",
     "gemini_tuned_response_schema": "<unset>"
+  },
+  "infrastructure": {
+    "provider": {
+      "workerProvider": "rpc",
+      "primary": "bitcoin-core-signet-rpc",
+      "secondary": "mempool-space-signet",
+      "secondaryApiUrl": "https://mempool.space/signet/api"
+    },
+    "bitcoinCore": {
+      "version": "31.1",
+      "sourceTarballUrl": "https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz",
+      "sourceTarballSha256": "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+      "containerImage": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "startupScriptPath": "scripts/staging/start-rig-b1-bitcoin-core.sh",
+      "startupScriptSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "resources": {
+      "zone": "us-central1-a",
+      "vm": "arkova-s33-rig-b1-bitcoin-core-signet",
+      "bootDisk": "arkova-s33-rig-b1-bitcoin-core-signet-boot",
+      "dataDisk": "arkova-s33-rig-b1-bitcoin-core-signet-data",
+      "internalAddress": "arkova-s33-rig-b1-bitcoin-core-signet-rpc-ip",
+      "externalAddress": "arkova-s33-rig-b1-bitcoin-core-signet-p2p-ip",
+      "network": "arkova-s33-rig-b1-bitcoin-core-signet-vpc",
+      "subnet": "arkova-s33-rig-b1-bitcoin-core-signet-subnet",
+      "rpcFirewall": "arkova-s33-rig-b1-bitcoin-core-signet-rpc",
+      "vpcConnector": "arkova-s33-rig-b1-bitcoin-core-signet-connector",
+      "nodeServiceAccount": "s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com"
+    },
+    "schedulerJobs": [
+      "arkova-worker-s33-rig-b1-staging-batch-anchors",
+      "arkova-worker-s33-rig-b1-staging-batch-anchors-forced-flush",
+      "arkova-worker-s33-rig-b1-staging-check-confirmations",
+      "arkova-worker-s33-rig-b1-staging-org-queue-scheduler",
+      "arkova-worker-s33-rig-b1-staging-populate-confirmation-proofs",
+      "arkova-worker-s33-rig-b1-staging-recover-broadcasts"
+    ],
+    "iam": {
+      "artifactRegistryReader": {
+        "repository": "projects/arkova1/locations/us-central1/repositories/arkova-worker-images",
+        "member": "serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com",
+        "role": "roles/artifactregistry.reader"
+      },
+      "rpcAuthSecretAccessor": {
+        "secretName": "arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth",
+        "member": "serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com",
+        "role": "roles/secretmanager.secretAccessor"
+      }
+    },
+    "network": {
+      "rpcEndpoint": "http://10.33.10.10:38332",
+      "rpcBind": "10.33.10.10",
+      "rpcAllowCidr": "10.33.11.0/28",
+      "subnetCidr": "10.33.10.0/28",
+      "rpcPort": 38332,
+      "signetP2pPort": 38333,
+      "publicRpc": false
+    },
+    "secretReferences": [
+      {
+        "env": "BITCOIN_RPC_URL",
+        "secretName": "arkova-s33-rig-b1-bitcoin-core-signet-rpc-url",
+        "version": "1",
+        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-bitcoin-core-signet-rpc-url/versions/1"
+      },
+      {
+        "env": "BITCOIN_RPC_AUTH",
+        "secretName": "arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth",
+        "version": "2",
+        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth/versions/2"
+      },
+      {
+        "env": "BITCOIN_TREASURY_WIF",
+        "secretName": "arkova-s33-rig-b1-treasury-wif-signet",
+        "version": "3",
+        "resource": "projects/arkova1/secrets/arkova-s33-rig-b1-treasury-wif-signet/versions/3"
+      }
+    ],
+    "nodeSecretEnvs": ["BITCOIN_RPC_AUTH"],
+    "forbiddenNodeSecretEnvs": ["BITCOIN_TREASURY_WIF"],
+    "treasuryWatchOnly": {
+      "address": "tb1qarkovas33rigb1treasuryfixture0000000000000",
+      "descriptor": "addr(tb1qarkovas33rigb1treasuryfixture0000000000000)#deadbeef",
+      "preSplitPlanDigest": "sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8",
+      "expectedConfirmedOutputCount": 32,
+      "expectedTotalSats": 3200000,
+      "descriptorPolicy": "addr-checksummed-importdescriptors",
+      "wifOnNode": false
+    },
+    "authority": {
+      "binding": "ed25519-signed-node-approval",
+      "approvalId": "b1-fixture-approval-v1",
+      "approvalEnvelopeSha256": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signedPayloadSha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "spendCapUsd": 200,
+      "claim": {
+        "backend": "gcs-if-generation-match-0-locked-retention",
+        "objectUri": "gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/node-approval-claims/b1-fixture-approval-v1.json",
+        "generation": "1"
+      }
+    },
+    "teardown": {
+      "orderedResources": [
+        "scheduler-jobs",
+        "cloud-run-service",
+        "bitcoin-core-vm",
+        "boot-disk",
+        "data-disk",
+        "external-address",
+        "internal-address",
+        "rpc-firewall",
+        "vpc-connector",
+        "subnet",
+        "vpc-network",
+        "artifact-registry-iam",
+        "node-secret-iam",
+        "node-service-account",
+        "worker-secret-iam",
+        "worker-runtime-service-account",
+        "scheduler-oidc-service-account",
+        "supabase-project"
+      ],
+      "projectedMonthlyRecurringUsd": 0
+    }
   },
   "scheduler": {
     "applicable": true,

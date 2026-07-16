@@ -10,6 +10,7 @@ import {
 import { planTreasuryPresplit, type TreasuryPresplitPlan } from './batch-drain-utxo-fanout';
 import {
   RIG_B1_ACCELERATED_SCHEDULER_CADENCE,
+  RIG_B1_REQUIRED_RPC_CAPABILITIES,
   RIG_B1_SIGNET_SECRET_NAMES,
   assertRigB1PreClockReadiness,
   buildRigB1ReadinessPlan,
@@ -73,7 +74,14 @@ function completedCeremonyRaw(): string {
 }
 
 function admission() {
-  return projectAdmissionV2ToPreClockIdentity(preClockAdmissionRaw());
+  const raw = JSON.parse(preClockAdmissionRaw()) as {
+    infrastructure: { treasuryWatchOnly: { preSplitPlanDigest: string; expectedTotalSats: number } };
+  };
+  const split = splitPlan();
+  raw.infrastructure.treasuryWatchOnly.preSplitPlanDigest = split.planDigest;
+  raw.infrastructure.treasuryWatchOnly.expectedTotalSats = split.outputs
+    .reduce((sum, output) => sum + output.valueSats, 0);
+  return projectAdmissionV2ToPreClockIdentity(JSON.stringify(raw));
 }
 
 function splitPlan(): TreasuryPresplitPlan {
@@ -104,11 +112,7 @@ function observation(
     gitHeadSha: readiness.gitHeadSha,
     imageDigest: readiness.imageDigest,
     cleanMirrorAttestationId: readiness.cleanMirrorAttestationId,
-    secretVersions: readiness.secretReferences.map((reference, index) => ({
-      env: reference.env,
-      secretName: reference.secretName,
-      resource: `projects/${readiness.gcpProjectId}/secrets/${reference.secretName}/versions/${index + 1}`,
-    })),
+    secretVersions: readiness.secretReferences.map((reference) => ({ ...reference })),
     schedulerPolicy: {
       ...readiness.schedulerPolicy,
       productionCadenceMutationAttempted: false,
@@ -125,11 +129,41 @@ function observation(
       enabledAt: null,
     })),
     getBlockchainInfo: {
-      provider: 'getblock',
+      provider: 'bitcoin-core-signet-rpc',
       rpcMethod: 'getblockchaininfo',
       chain: 'signet',
+      initialBlockDownload: false,
+      headers: 200_000,
+      blocks: 200_000,
+      bestBlockHash: 'a'.repeat(64),
+      genesisHash: '00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6',
       observedAt,
     },
+    txindex: {
+      rpcMethod: 'getindexinfo',
+      synced: true,
+      bestBlockHeight: 200_000,
+      observedAt,
+    },
+    watchOnlyWallet: {
+      walletName: 'arkova-watch-only',
+      privateKeysEnabled: false,
+      descriptors: true,
+      treasuryAddress: TREASURY_ADDRESS,
+      treasuryDescriptor: readiness.infrastructure.treasuryWatchOnly.descriptor,
+      descriptorImported: true,
+      rescanComplete: true,
+      confirmedUtxos: 32,
+      confirmedTotalSats: 3_196_800,
+      minimumConfirmations: 1,
+      observedAt,
+    },
+    capabilityProbes: RIG_B1_REQUIRED_RPC_CAPABILITIES.map((rpcMethod) => ({
+      rpcMethod,
+      available: true,
+      nonBroadcastProbe: true,
+      observedAt,
+    })),
     signerReadiness: {
       algorithm: 'secp256k1',
       treasuryAddress: TREASURY_ADDRESS,
@@ -150,6 +184,15 @@ function observation(
       txId: '6'.repeat(64),
       spentFromTreasuryAddress: TREASURY_ADDRESS,
       accepted: true,
+      observedAt,
+    },
+    mempoolCorroboration: {
+      provider: 'mempool-space-signet',
+      baseUrl: 'https://mempool.space/signet/api',
+      tipHeight: 200_000,
+      tipHash: 'a'.repeat(64),
+      txId: '6'.repeat(64),
+      txOutcome: 'found',
       observedAt,
     },
     nodeCron: { mode: 'disabled', observedAt },
@@ -187,9 +230,9 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
     expect(readiness.treasuryAddress).toBe(TREASURY_ADDRESS);
     expect(readiness.signerChallengeSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(readiness.secretReferences).toEqual([
-      { env: 'BITCOIN_RPC_URL', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcUrl },
-      { env: 'BITCOIN_RPC_AUTH', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcAuth },
-      { env: 'BITCOIN_TREASURY_WIF', secretName: RIG_B1_SIGNET_SECRET_NAMES.treasuryWif },
+      expect.objectContaining({ env: 'BITCOIN_RPC_URL', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcUrl, version: '1' }),
+      expect.objectContaining({ env: 'BITCOIN_RPC_AUTH', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcAuth, version: '2' }),
+      expect.objectContaining({ env: 'BITCOIN_TREASURY_WIF', secretName: RIG_B1_SIGNET_SECRET_NAMES.treasuryWif, version: '3' }),
     ]);
     expect(readiness.secretReferences.every(({ secretName }) => secretName.includes('signet'))).toBe(true);
     expect(readiness.secretReferences.map(({ secretName }) => secretName)).not.toContain('bitcoin-rpc-url-staging');
@@ -257,7 +300,7 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
       secretVersions: Array<Record<string, unknown>>;
     };
     const simulatedValues = [
-      'https://rpc-user:rpc-password@getblock.example',
+      'http://10.33.10.10:38332',
       'rpc-user:rpc-password',
       'cSimulatedSignetWifMustNeverCrossThisBoundary',
     ];
@@ -276,6 +319,7 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
     shared.secretVersions[0] = {
       ...shared.secretVersions[0]!,
       secretName: 'bitcoin-rpc-url-staging',
+      version: '1',
       resource: `projects/${readiness.gcpProjectId}/secrets/bitcoin-rpc-url-staging/versions/1`,
     };
     expect(() => assertRigB1PreClockReadiness(readiness, shared)).toThrow(/secret|signet|reference/i);
@@ -285,7 +329,7 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
     expect(() => assertRigB1PreClockReadiness(readiness, missingSigner)).toThrow(/secret|signer|WIF/i);
 
     const mainnet = observation(readiness);
-    mainnet.getBlockchainInfo.chain = 'mainnet';
+    (mainnet.getBlockchainInfo as { chain: string }).chain = 'mainnet';
     expect(() => assertRigB1PreClockReadiness(readiness, mainnet)).toThrow(/signet|chain/i);
 
     const staleMirror = observation(readiness);
@@ -336,5 +380,65 @@ describe('RIG-B1 signet admission and pre-clock readiness contract', () => {
     const cron = observation(readiness);
     cron.nodeCron = { mode: 'unattributed', observedAt: '2026-07-16T12:00:00.000Z' };
     expect(() => assertRigB1PreClockReadiness(readiness, cron)).toThrow(/node.cron|attributed|disabled/i);
+  });
+
+  it('fails closed on IBD/header drift, wrong genesis, txindex/watch-only gaps, or missing RPC capability', () => {
+    const readiness = plan();
+
+    const ibd = observation(readiness);
+    ibd.getBlockchainInfo.initialBlockDownload = true;
+    expect(() => assertRigB1PreClockReadiness(readiness, ibd)).toThrow(/IBD|synced|headers|genesis/i);
+
+    const headerDrift = observation(readiness);
+    headerDrift.getBlockchainInfo.headers += 1;
+    expect(() => assertRigB1PreClockReadiness(readiness, headerDrift)).toThrow(/synced|headers|blocks/i);
+
+    const wrongGenesis = observation(readiness);
+    wrongGenesis.getBlockchainInfo.genesisHash = '0'.repeat(64);
+    expect(() => assertRigB1PreClockReadiness(readiness, wrongGenesis)).toThrow(/genesis/i);
+
+    const txindex = observation(readiness);
+    txindex.txindex.synced = false;
+    expect(() => assertRigB1PreClockReadiness(readiness, txindex)).toThrow(/txindex/i);
+
+    const keysOnNode = observation(readiness);
+    keysOnNode.watchOnlyWallet.privateKeysEnabled = true;
+    expect(() => assertRigB1PreClockReadiness(readiness, keysOnNode)).toThrow(/watch-only|private keys/i);
+
+    const emptyWallet = observation(readiness);
+    emptyWallet.watchOnlyWallet.descriptorImported = false;
+    expect(() => assertRigB1PreClockReadiness(readiness, emptyWallet)).toThrow(/watch-only|descriptor/i);
+
+    const incompleteRescan = observation(readiness);
+    incompleteRescan.watchOnlyWallet.rescanComplete = false;
+    expect(() => assertRigB1PreClockReadiness(readiness, incompleteRescan)).toThrow(/watch-only|rescan|descriptor/i);
+
+    const wrongInventory = observation(readiness);
+    wrongInventory.watchOnlyWallet.confirmedUtxos = 31;
+    expect(() => assertRigB1PreClockReadiness(readiness, wrongInventory)).toThrow(/watch-only|inventory|descriptor/i);
+
+    const unrelatedWallet = observation(readiness);
+    unrelatedWallet.watchOnlyWallet.treasuryAddress = OTHER_TREASURY_ADDRESS;
+    unrelatedWallet.watchOnlyWallet.treasuryDescriptor = `addr(${OTHER_TREASURY_ADDRESS})#abcdefgh`;
+    expect(() => assertRigB1PreClockReadiness(readiness, unrelatedWallet)).toThrow(/watch-only|treasury/i);
+
+    const missingCapability = observation(readiness);
+    missingCapability.capabilityProbes.pop();
+    expect(() => assertRigB1PreClockReadiness(readiness, missingCapability)).toThrow(/capability/i);
+  });
+
+  it('requires exact mempool.space Signet tip and same-tx corroboration after broadcast', () => {
+    const readiness = plan();
+    const wrongTip = observation(readiness);
+    wrongTip.mempoolCorroboration.tipHash = 'b'.repeat(64);
+    expect(() => assertRigB1PreClockReadiness(readiness, wrongTip)).toThrow(/mempool.*corroborate|tip/i);
+
+    const wrongTx = observation(readiness);
+    wrongTx.mempoolCorroboration.txId = '9'.repeat(64);
+    expect(() => assertRigB1PreClockReadiness(readiness, wrongTx)).toThrow(/mempool.*transaction|corroborate/i);
+
+    const wrongUrl = observation(readiness);
+    (wrongUrl.mempoolCorroboration as { baseUrl: string }).baseUrl = 'https://example.invalid/signet';
+    expect(() => assertRigB1PreClockReadiness(readiness, wrongUrl)).toThrow(/schema|mempool|baseUrl/i);
   });
 });

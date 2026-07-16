@@ -16,6 +16,11 @@ import {
 } from './batch-drain-admission-adapter';
 import { parseUtcTimestamp } from './batch-drain-time';
 import {
+  RIG_B1_MEMPOOL_SIGNET_API_URL,
+  RIG_B1_SIGNET_GENESIS_HASH,
+  type RigB1Infrastructure,
+} from './batch-drain-live-evidence';
+import {
   requireTreasuryPresplitPlan,
   type TreasuryPresplitPlan,
 } from './batch-drain-utxo-fanout';
@@ -30,10 +35,18 @@ const HEAD_SHA = /^[0-9a-f]{40}$/;
 const TX_ID = /^[0-9a-f]{64}$/;
 
 export const RIG_B1_SIGNET_SECRET_NAMES = Object.freeze({
-  bitcoinRpcUrl: 'arkova-s33-rig-b1-getblock-rpc-url-signet',
-  bitcoinRpcAuth: 'arkova-s33-rig-b1-getblock-rpc-auth-signet',
+  bitcoinRpcUrl: 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-url',
+  bitcoinRpcAuth: 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth',
   treasuryWif: 'arkova-s33-rig-b1-treasury-wif-signet',
 });
+
+export const RIG_B1_REQUIRED_RPC_CAPABILITIES = Object.freeze([
+  'sendrawtransaction',
+  'getrawtransaction',
+  'getmempoolentry',
+  'getblockheader',
+  'gettxoutproof',
+] as const);
 
 export const RIG_B1_ACCELERATED_SCHEDULER_CADENCE = '*/5 * * * *' as const;
 
@@ -42,6 +55,8 @@ export type RigB1SecretEnv = 'BITCOIN_RPC_URL' | 'BITCOIN_RPC_AUTH' | 'BITCOIN_T
 export interface RigB1SecretReference {
   readonly env: RigB1SecretEnv;
   readonly secretName: string;
+  readonly version: string;
+  readonly resource: string;
 }
 
 export interface RigB1SchedulerJob {
@@ -72,6 +87,7 @@ export interface RigB1ReadinessPlan {
   readonly treasurySplitPlanDigest: string;
   readonly treasuryAddress: string;
   readonly signerChallengeSha256: string;
+  readonly infrastructure: Readonly<RigB1Infrastructure>;
   readonly secretReferences: readonly RigB1SecretReference[];
   readonly schedulerPolicy: Readonly<RigB1SchedulerPolicy>;
   readonly schedulerJobs: readonly RigB1SchedulerJob[];
@@ -86,6 +102,7 @@ export interface RigB1PreClockObservation {
   secretVersions: Array<{
     env: RigB1SecretEnv;
     secretName: string;
+    version: string;
     resource: string;
   }>;
   schedulerPolicy: RigB1SchedulerPolicy & {
@@ -102,11 +119,41 @@ export interface RigB1PreClockObservation {
     enabledAt: string | null;
   }>;
   getBlockchainInfo: {
-    provider: string;
-    rpcMethod: string;
-    chain: string;
+    provider: 'bitcoin-core-signet-rpc';
+    rpcMethod: 'getblockchaininfo';
+    chain: 'signet';
+    initialBlockDownload: boolean;
+    headers: number;
+    blocks: number;
+    bestBlockHash: string;
+    genesisHash: string;
     observedAt: string;
   };
+  txindex: {
+    rpcMethod: 'getindexinfo';
+    synced: boolean;
+    bestBlockHeight: number;
+    observedAt: string;
+  };
+  watchOnlyWallet: {
+    walletName: 'arkova-watch-only';
+    privateKeysEnabled: boolean;
+    descriptors: boolean;
+    treasuryAddress: string;
+    treasuryDescriptor: string;
+    descriptorImported: boolean;
+    rescanComplete: boolean;
+    confirmedUtxos: number;
+    confirmedTotalSats: number;
+    minimumConfirmations: number;
+    observedAt: string;
+  };
+  capabilityProbes: Array<{
+    rpcMethod: typeof RIG_B1_REQUIRED_RPC_CAPABILITIES[number];
+    available: boolean;
+    nonBroadcastProbe: boolean;
+    observedAt: string;
+  }>;
   signerReadiness: {
     algorithm: string;
     treasuryAddress: string;
@@ -129,6 +176,15 @@ export interface RigB1PreClockObservation {
     accepted: boolean;
     observedAt: string;
   };
+  mempoolCorroboration: {
+    provider: 'mempool-space-signet';
+    baseUrl: typeof RIG_B1_MEMPOOL_SIGNET_API_URL;
+    tipHeight: number;
+    tipHash: string;
+    txId: string;
+    txOutcome: 'found';
+    observedAt: string;
+  };
   nodeCron: {
     mode: 'disabled' | 'attributed' | 'unattributed';
     schedulerExecutionIds?: string[];
@@ -148,6 +204,7 @@ export interface RigB1PreClockReadinessSummary {
 const rigB1SecretVersionObservationSchema = z.object({
   env: z.enum(['BITCOIN_RPC_URL', 'BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF']),
   secretName: z.string(),
+  version: z.string().regex(/^[1-9][0-9]*$/),
   resource: z.string(),
 }).strict();
 
@@ -185,11 +242,41 @@ const rigB1PreClockObservationSchema = z.object({
   schedulerPolicy: rigB1SchedulerPolicyObservationSchema,
   schedulerJobs: z.array(rigB1SchedulerJobObservationSchema),
   getBlockchainInfo: z.object({
-    provider: z.string(),
-    rpcMethod: z.string(),
-    chain: z.string(),
+    provider: z.literal('bitcoin-core-signet-rpc'),
+    rpcMethod: z.literal('getblockchaininfo'),
+    chain: z.literal('signet'),
+    initialBlockDownload: z.boolean(),
+    headers: z.number().int().nonnegative(),
+    blocks: z.number().int().nonnegative(),
+    bestBlockHash: z.string(),
+    genesisHash: z.string(),
     observedAt: z.string(),
   }).strict(),
+  txindex: z.object({
+    rpcMethod: z.literal('getindexinfo'),
+    synced: z.boolean(),
+    bestBlockHeight: z.number().int().nonnegative(),
+    observedAt: z.string(),
+  }).strict(),
+  watchOnlyWallet: z.object({
+    walletName: z.literal('arkova-watch-only'),
+    privateKeysEnabled: z.boolean(),
+    descriptors: z.boolean(),
+    treasuryAddress: z.string(),
+    treasuryDescriptor: z.string(),
+    descriptorImported: z.boolean(),
+    rescanComplete: z.boolean(),
+    confirmedUtxos: z.number().int().nonnegative(),
+    confirmedTotalSats: z.number().int().nonnegative().safe(),
+    minimumConfirmations: z.number().int().nonnegative(),
+    observedAt: z.string(),
+  }).strict(),
+  capabilityProbes: z.array(z.object({
+    rpcMethod: z.enum(RIG_B1_REQUIRED_RPC_CAPABILITIES),
+    available: z.boolean(),
+    nonBroadcastProbe: z.boolean(),
+    observedAt: z.string(),
+  }).strict()),
   signerReadiness: z.object({
     algorithm: z.string(),
     treasuryAddress: z.string(),
@@ -210,6 +297,15 @@ const rigB1PreClockObservationSchema = z.object({
     txId: z.string(),
     spentFromTreasuryAddress: z.string(),
     accepted: z.boolean(),
+    observedAt: z.string(),
+  }).strict(),
+  mempoolCorroboration: z.object({
+    provider: z.literal('mempool-space-signet'),
+    baseUrl: z.literal(RIG_B1_MEMPOOL_SIGNET_API_URL),
+    tipHeight: z.number().int().nonnegative(),
+    tipHash: z.string(),
+    txId: z.string(),
+    txOutcome: z.literal('found'),
     observedAt: z.string(),
   }).strict(),
   nodeCron: z.object({
@@ -274,11 +370,20 @@ export function buildRigB1ReadinessPlan(
   const admission = requirePreClockAdmissionIdentity(admissionHandle);
   const treasurySplitPlan = requireTreasuryPresplitPlan(input.treasurySplitPlan);
   requireSignetTreasuryAddress(treasurySplitPlan.treasuryAddress, 'RIG-B1 treasuryAddress');
-  const secretReferences: RigB1SecretReference[] = [
-    { env: 'BITCOIN_RPC_URL', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcUrl },
-    { env: 'BITCOIN_RPC_AUTH', secretName: RIG_B1_SIGNET_SECRET_NAMES.bitcoinRpcAuth },
-    { env: 'BITCOIN_TREASURY_WIF', secretName: RIG_B1_SIGNET_SECRET_NAMES.treasuryWif },
-  ];
+  if (admission.infrastructure.treasuryWatchOnly.address !== treasurySplitPlan.treasuryAddress) {
+    throw new Error('RIG-B1 signed watch-only treasury address differs from the pre-split plan.');
+  }
+  const signedTreasury = admission.infrastructure.treasuryWatchOnly;
+  const plannedTotalSats = treasurySplitPlan.outputs.reduce((sum, output) => sum + output.valueSats, 0);
+  if (
+    signedTreasury.preSplitPlanDigest !== treasurySplitPlan.planDigest
+    || signedTreasury.expectedConfirmedOutputCount !== treasurySplitPlan.outputCount
+    || signedTreasury.expectedTotalSats !== plannedTotalSats
+  ) {
+    throw new Error('RIG-B1 signed treasury inventory differs from the exact pre-split plan.');
+  }
+  const secretReferences: RigB1SecretReference[] = admission.infrastructure.secretReferences
+    .map((reference) => ({ ...reference }));
   const schedulerJobs: RigB1SchedulerJob[] = JOB_SUFFIXES.map(([suffix, path]) => ({
     name: `${admission.workerService}-${suffix}`,
     path,
@@ -309,6 +414,7 @@ export function buildRigB1ReadinessPlan(
       treasurySplitPlanDigest: treasurySplitPlan.planDigest,
       treasuryAddress: treasurySplitPlan.treasuryAddress,
     }),
+    infrastructure: structuredClone(admission.infrastructure),
     secretReferences,
     schedulerPolicy,
     schedulerJobs,
@@ -343,14 +449,20 @@ export function assertRigB1PreClockReadiness(
   }
   plan.secretReferences.forEach((expected, index) => {
     const actual = observation.secretVersions[index];
-    if (!actual || actual.env !== expected.env || actual.secretName !== expected.secretName) {
+    if (
+      !actual
+      || actual.env !== expected.env
+      || actual.secretName !== expected.secretName
+      || actual.version !== expected.version
+      || actual.resource !== expected.resource
+    ) {
       throw new Error(`RIG-B1 signet secret reference ${expected.env} does not match the plan.`);
     }
     if (!actual.secretName.includes('signet') || actual.secretName.includes('bitcoin-rpc-url-staging')) {
       throw new Error(`RIG-B1 ${expected.env} must use its net-new signet secret.`);
     }
     const resourcePattern = new RegExp(
-      `^projects/${escapeRegExp(plan.gcpProjectId)}/secrets/${escapeRegExp(expected.secretName)}/versions/[1-9][0-9]*$`,
+      `^projects/${escapeRegExp(plan.gcpProjectId)}/secrets/${escapeRegExp(expected.secretName)}/versions/${escapeRegExp(expected.version)}$`,
     );
     if (!resourcePattern.test(actual.resource)) {
       throw new Error(`RIG-B1 ${expected.env} secret reference must resolve an exact numeric version.`);
@@ -400,10 +512,50 @@ export function assertRigB1PreClockReadiness(
 
   parseUtcTimestamp(observation.getBlockchainInfo.observedAt, 'getblockchaininfo observedAt');
   if (
-    observation.getBlockchainInfo.provider !== 'getblock'
+    observation.getBlockchainInfo.provider !== 'bitcoin-core-signet-rpc'
     || observation.getBlockchainInfo.rpcMethod !== 'getblockchaininfo'
     || observation.getBlockchainInfo.chain !== 'signet'
-  ) throw new Error('GetBlock getblockchaininfo chain must report signet.');
+    || observation.getBlockchainInfo.initialBlockDownload
+    || observation.getBlockchainInfo.headers !== observation.getBlockchainInfo.blocks
+    || !TX_ID.test(observation.getBlockchainInfo.bestBlockHash)
+    || observation.getBlockchainInfo.genesisHash !== RIG_B1_SIGNET_GENESIS_HASH
+  ) throw new Error('Bitcoin Core readiness requires synced Signet headers/blocks and the exact genesis hash.');
+
+  parseUtcTimestamp(observation.txindex.observedAt, 'txindex observedAt');
+  if (
+    observation.txindex.rpcMethod !== 'getindexinfo'
+    || !observation.txindex.synced
+    || observation.txindex.bestBlockHeight !== observation.getBlockchainInfo.blocks
+  ) throw new Error('Bitcoin Core txindex must be synced to the exact ready Signet tip.');
+
+  parseUtcTimestamp(observation.watchOnlyWallet.observedAt, 'watch-only wallet observedAt');
+  if (
+    observation.watchOnlyWallet.walletName !== 'arkova-watch-only'
+    || observation.watchOnlyWallet.privateKeysEnabled
+    || !observation.watchOnlyWallet.descriptors
+    || observation.watchOnlyWallet.treasuryAddress !== plan.treasuryAddress
+    || !observation.watchOnlyWallet.descriptorImported
+    || !observation.watchOnlyWallet.rescanComplete
+    || observation.watchOnlyWallet.treasuryDescriptor
+      !== plan.infrastructure.treasuryWatchOnly.descriptor
+    || observation.watchOnlyWallet.confirmedUtxos
+      !== plan.infrastructure.treasuryWatchOnly.expectedConfirmedOutputCount
+    || observation.watchOnlyWallet.confirmedTotalSats
+      !== plan.infrastructure.treasuryWatchOnly.expectedTotalSats
+    || observation.watchOnlyWallet.minimumConfirmations < 1
+  ) throw new Error('Bitcoin Core readiness requires the descriptor watch-only wallet with private keys disabled.');
+
+  if (
+    observation.capabilityProbes.length !== RIG_B1_REQUIRED_RPC_CAPABILITIES.length
+    || observation.capabilityProbes.some((probe, index) => (
+      probe.rpcMethod !== RIG_B1_REQUIRED_RPC_CAPABILITIES[index]
+      || !probe.available
+      || !probe.nonBroadcastProbe
+    ))
+  ) throw new Error('Bitcoin Core readiness requires every exact non-broadcast RPC capability probe.');
+  observation.capabilityProbes.forEach((probe) => {
+    parseUtcTimestamp(probe.observedAt, `${probe.rpcMethod} capability observedAt`);
+  });
 
   parseUtcTimestamp(observation.signerReadiness.observedAt, 'signer readiness observedAt');
   if (
@@ -423,6 +575,12 @@ export function assertRigB1PreClockReadiness(
   if (observation.treasurySplit.treasuryAddress !== plan.treasuryAddress) {
     throw new Error('RIG-B1 confirmed treasury UTXOs do not match the planned treasury address.');
   }
+  if (
+    observation.treasurySplit.confirmedUtxos
+      !== plan.infrastructure.treasuryWatchOnly.expectedConfirmedOutputCount
+    || observation.treasurySplit.confirmedUtxos !== observation.watchOnlyWallet.confirmedUtxos
+    || observation.treasurySplit.minimumConfirmations !== observation.watchOnlyWallet.minimumConfirmations
+  ) throw new Error('RIG-B1 treasury split observation differs from the signed watch-only inventory.');
 
   parseUtcTimestamp(observation.fundedBroadcast.observedAt, 'funded broadcast observedAt');
   if (
@@ -431,6 +589,18 @@ export function assertRigB1PreClockReadiness(
     || observation.fundedBroadcast.spentFromTreasuryAddress !== plan.treasuryAddress
     || !observation.fundedBroadcast.accepted
   ) throw new Error('RIG-B1 funded signet broadcast was not accepted from the planned treasury address.');
+
+  parseUtcTimestamp(observation.mempoolCorroboration.observedAt, 'mempool.space corroboration observedAt');
+  if (
+    observation.mempoolCorroboration.provider !== 'mempool-space-signet'
+    || observation.mempoolCorroboration.baseUrl !== RIG_B1_MEMPOOL_SIGNET_API_URL
+    || observation.mempoolCorroboration.tipHeight !== observation.getBlockchainInfo.blocks
+    || observation.mempoolCorroboration.tipHash !== observation.getBlockchainInfo.bestBlockHash
+    || observation.mempoolCorroboration.txId !== observation.fundedBroadcast.txId
+    || observation.mempoolCorroboration.txOutcome !== 'found'
+    || parseUtcTimestamp(observation.mempoolCorroboration.observedAt, 'mempool.space corroboration observedAt')
+      < parseUtcTimestamp(observation.fundedBroadcast.observedAt, 'funded broadcast observedAt')
+  ) throw new Error('mempool.space Signet must exactly corroborate the Bitcoin Core tip and funded transaction.');
 
   parseUtcTimestamp(observation.nodeCron.observedAt, 'node-cron observedAt');
   if (

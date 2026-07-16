@@ -23,7 +23,7 @@ function journal() {
       { anchorId: '11111111-1111-4111-8111-111111111111', fingerprint: '01'.repeat(32) },
       { anchorId: '22222222-2222-4222-8222-222222222222', fingerprint: '02'.repeat(32) },
     ],
-    signedAt: SIGNED_AT,
+    createdAt: SIGNED_AT,
   });
 }
 
@@ -54,7 +54,7 @@ describe('SCRUM-2692 txid journal entry', () => {
         { anchorId: '11111111-1111-4111-8111-111111111111', fingerprint: '02'.repeat(32) },
       ],
     }],
-    ['unparseable signed_at', { signedAt: 'not-a-date' }],
+    ['unparseable created_at', { createdAt: 'not-a-date' }],
   ])('rejects %s before any broadcast', (_label, override) => {
     expect(() => buildTxidJournalEntry({
       batchId: 'batch_1721044800000_2',
@@ -63,7 +63,7 @@ describe('SCRUM-2692 txid journal entry', () => {
       leafOrder: [
         { anchorId: '11111111-1111-4111-8111-111111111111', fingerprint: '01'.repeat(32) },
       ],
-      signedAt: SIGNED_AT,
+      createdAt: SIGNED_AT,
       ...override,
     })).toThrow();
   });
@@ -116,20 +116,28 @@ describe('SCRUM-2692 ADOPT / REVERT / HOLD decision', () => {
     });
   });
 
-  it('HOLDs when signed_at is in the future rather than trusting a bad clock', () => {
+  it('HOLDs when database created_at is in the future rather than trusting a bad clock', () => {
     expect(decideTxidJournalRecovery(journal(), { status: 'not_found' }, {
       nowMs: Date.parse(SIGNED_AT) - 1,
     })).toEqual({
       action: 'HOLD',
-      reason: 'untrusted_signed_at',
+      reason: 'untrusted_created_at',
     });
   });
 
-  it('supports a shorter injected ambiguity window for the isolated crash rig', () => {
-    expect(decideTxidJournalRecovery(journal(), { status: 'not_found' }, {
+  it('does not expose a caller override that can shorten the fixed 30-minute window', () => {
+    const adversarialOptions = {
       nowMs: Date.parse(SIGNED_AT) + 5_000,
       ambiguityWindowMs: 5_000,
-    }).action).toBe('REVERT');
+    } as unknown as { nowMs?: number };
+    expect(decideTxidJournalRecovery(
+      journal(),
+      { status: 'not_found' },
+      adversarialOptions,
+    )).toEqual({
+      action: 'HOLD',
+      reason: 'absence_inside_ambiguity_window',
+    });
   });
 });
 
@@ -170,14 +178,16 @@ describe('SCRUM-2692 migration contract', () => {
     expect(sql).not.toMatch(/GRANT[^;]*\b(?:INSERT|UPDATE)\b[^;]*anchor_txid_journal[^;]*service_role/i);
   });
 
-  it('uses the database clock for the ambiguity window and never accepts worker-supplied recovery age', () => {
+  it('anchors the fixed ambiguity window to database-authored created_at, never worker signing time', () => {
     const sql = readFileSync(migrationUrl, 'utf8');
     const batchSource = readFileSync(new URL('./batch-anchor.ts', import.meta.url), 'utf8');
 
     expect(sql).toMatch(/signed_at\s+timestamptz\s+NOT NULL\s+DEFAULT\s+now\(\)/i);
     expect(sql).not.toMatch(/persist_anchor_txid_journal\([\s\S]*?p_signed_at\s+timestamptz/i);
     expect(sql).toMatch(/INSERT INTO public\.anchor_txid_journal\s*\([\s\S]*?leaf_order\s*\)\s*VALUES/i);
-    expect(batchSource).not.toContain('p_signed_at: entry.signedAt');
+    expect(batchSource).not.toContain('p_created_at: entry.createdAt');
+    expect(batchSource).toContain('createdAt: row.created_at');
+    expect(batchSource).not.toContain('createdAt: row.signed_at');
   });
 
   it('serializes journal persistence with lifecycle transitions and permits exact retries after REVERT', () => {

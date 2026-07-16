@@ -11,7 +11,7 @@
 #        * mock   (DEFAULT, safe): USE_MOCKS=true, ENABLE_PROD_NETWORK_ANCHORING=false
 #                 — zero real Bitcoin exposure. Health/synthetic soaks only.
 #        * chain  (REAL anchoring): USE_MOCKS=false, ENABLE_PROD_NETWORK_ANCHORING=true,
-#                 real GetBlock RPC + WIF signer + KMS_PROVIDER (from Secret Manager)
+#                 real RPC + WIF signer + KMS_PROVIDER (from Secret Manager)
 #                 — for anchoring / chain-resilience / batch-anchor behavioral soaks.
 #        * gemini (REAL model): GEMINI_TUNED_MODEL + GEMINI_V6_PROMPT + GEMINI_API_KEY
 #                 — for classifier / proof-backcatalog census soaks. Chain stays mocked.
@@ -63,9 +63,46 @@ set -euo pipefail
 PROD_SUPABASE_REF="vzwyaatejekddvltxyye"
 SHARED_STAGING_SUPABASE_REF="ujtlwnoqfhtitcmsnrpq"
 RIG_B1_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
+RIG_B1_BITCOIN_CORE_VERSION="31.1"
+RIG_B1_BITCOIN_CORE_SOURCE_URL="https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz"
+RIG_B1_BITCOIN_CORE_SOURCE_SHA256="b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e"
+RIG_B1_MEMPOOL_SIGNET_API_URL="https://mempool.space/signet/api"
+RIG_B1_NODE_ZONE="us-central1-a"
+RIG_B1_NODE_VM="arkova-s33-rig-b1-bitcoin-core-signet"
+RIG_B1_NODE_BOOT_DISK="arkova-s33-rig-b1-bitcoin-core-signet-boot"
+RIG_B1_NODE_DATA_DISK="arkova-s33-rig-b1-bitcoin-core-signet-data"
+RIG_B1_NODE_INTERNAL_ADDRESS="arkova-s33-rig-b1-bitcoin-core-signet-rpc-ip"
+RIG_B1_NODE_EXTERNAL_ADDRESS="arkova-s33-rig-b1-bitcoin-core-signet-p2p-ip"
+RIG_B1_NODE_NETWORK="arkova-s33-rig-b1-bitcoin-core-signet-vpc"
+RIG_B1_NODE_SUBNET="arkova-s33-rig-b1-bitcoin-core-signet-subnet"
+RIG_B1_NODE_RPC_FIREWALL="arkova-s33-rig-b1-bitcoin-core-signet-rpc"
+RIG_B1_NODE_VPC_CONNECTOR="arkova-s33-rig-b1-bitcoin-core-signet-connector"
+RIG_B1_NODE_SERVICE_ACCOUNT="s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com"
+RIG_B1_ARTIFACT_REPOSITORY="arkova-worker-images"
+RIG_B1_EXPECTED_BITCOIN_CORE_IMAGE="us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:cdc306adc6ef6017326681ff09c4d3247ce77026bed17feccdc163a96519c8f8"
+RIG_B1_BITCOIN_CORE_RECIPE_COMMIT="b9a54856c9bee87d958cc4b070776828b5c17b32"
+RIG_B1_BITCOIN_CORE_AMD64_RUNTIME_DIGEST="sha256:684e80900f124890c45ad9b691d7f76456c1042385bce4ab92725b1979b55888"
+RIG_B1_TREASURY_SPLIT_TXID="1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941"
+RIG_B1_TREASURY_TOTAL_SATS="169639"
+RIG_B1_NODE_RPC_ENDPOINT="http://10.33.10.10:38332"
+RIG_B1_NODE_RPC_BIND="10.33.10.10"
+RIG_B1_NODE_SUBNET_CIDR="10.33.10.0/28"
+RIG_B1_NODE_CONNECTOR_CIDR="10.33.11.0/28"
+RIG_B1_NODE_STARTUP_SCRIPT="scripts/staging/start-rig-b1-bitcoin-core.sh"
+RIG_B1_NODE_APPROVAL_VERIFIER="scripts/staging/s33-b1-node-approval.mjs"
+RIG_B1_APPROVAL_LEDGER_PREFIX="s33/rig-b1/node-approval-claims"
 RIG_G1_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
 RIG_G1_PUBLIC_MODEL="gemini-2.5-flash"
-RIG_G1_CANDIDATE_MODEL="models/6611494259700793344"
+RIG_G1_CANDIDATE_MODEL_RESOURCE="projects/270018525501/locations/us-central1/models/6611494259700793344"
+RIG_G1_CANDIDATE_MODEL_VERSION_RESOURCE="${RIG_G1_CANDIDATE_MODEL_RESOURCE}@1"
+RIG_G1_CHECKPOINT_ID="6"
+RIG_G1_ENDPOINT_ID="733001"
+RIG_G1_DEPLOYED_MODEL_ID="7330011"
+RIG_G1_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-g1-b-tuned-v6"
+RIG_G1_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-g1-b-tuned-v6"
+RIG_G1_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
+RIG_G1_MIN_REPLICA_COUNT="1"
+RIG_G1_MAX_REPLICA_COUNT="1"
 RIG_G1_SPEND_APPROVAL_VERIFIER="scripts/staging/s33-g1-spend-approval.mjs"
 # The built-ins-only verifier is launched only through this exact audited Node
 # binary tuple; PATH substitution cannot forge its stdout.
@@ -77,6 +114,7 @@ IMMUTABLE_AUTHORITY_LEDGER_BACKEND="gcs-if-generation-match-0-locked-retention"
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER="270018525501"
 RIG_G1_APPROVAL_LEDGER_BUCKET="$IMMUTABLE_AUTHORITY_LEDGER_BUCKET"
 RIG_G1_APPROVAL_LEDGER_PREFIX="s33/g1/approval-claims"
+RIG_B1_TOPOLOGY_LEDGER_PREFIX="s33/rig-b1/topology-ownership"
 RIG_R_PROVISION_APPROVAL_VERIFIER="scripts/staging/s33-rig-r-provision-approval.mjs"
 RIG_R_TRUSTED_NODE_PATH="/opt/homebrew/bin/node"
 RIG_R_TRUSTED_NODE_SHA256="8b6a6d43e16ddc3cddaf1217fb75dbe7151e342e36317491bf3ef4a1ec5d4202"
@@ -85,16 +123,25 @@ RIG_R_APPROVAL_LEDGER_BUCKET="$IMMUTABLE_AUTHORITY_LEDGER_BUCKET"
 RIG_R_APPROVAL_LEDGER_PREFIX="s33/rig-r/provision-approval-claims"
 RIG_R_LEASE_BUCKET="$IMMUTABLE_AUTHORITY_LEDGER_BUCKET"
 RIG_R_LEASE_PREFIX="s33/rig-leases"
+RIG_R_LEASE_OBJECT_NAME="${RIG_R_LEASE_PREFIX}/RIG-R.singleton.json"
 RIG_R_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
 RIG_R_NAME="s33-r"
 RIG_R_PROJECT_NAME="arkova-soak-s33-r"
 RIG_R_SERVICE="arkova-worker-s33-r-staging"
 RIG_R_RUNTIME_SA="s33-rig-r-runtime@arkova1.iam.gserviceaccount.com"
-RIG_R_PROTECTED_V6_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/6611494259700793344"
-RIG_R_PROTECTED_V6_MODEL="projects/arkova1/locations/us-central1/models/6611494259700793344"
+RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
+RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
+RIG_R_CHECKPOINT_ID="6"
+RIG_R_ENDPOINT_ID="733002"
+RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330021"
+RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
+RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
+RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
+RIG_R_MIN_REPLICA_COUNT="1"
+RIG_R_MAX_REPLICA_COUNT="1"
 RIG_R_TEARDOWN_PATH="scripts/staging/teardown-isolated-rig.sh"
 RIG_R_RUNTIME_ROLES=(
-  "roles/aiplatform.user"
   "roles/logging.logWriter"
 )
 # Live admission is intentionally bound to the audited Git shipped on the
@@ -104,9 +151,9 @@ TRUSTED_GIT_PATH="/usr/bin/git"
 TRUSTED_GIT_SHA256="a961f78075d8e7621ef4f5d764c64ef8a41bf66c0a98ab5cb6ca39b85ce31c93"
 TRUSTED_GIT_VERSION="git version 2.50.1 (Apple Git-155)"
 TRUSTED_GIT_ORIGIN_URL="https://github.com/carson-see/ArkovaCarson.git"
-S33_ISOLATED_SUPABASE_PROJECT_COUNT=3
+S33_ISOLATED_SUPABASE_PROJECT_COUNT=4
 S33_ISOLATED_SUPABASE_PROJECT_MONTHLY_EACH_USD=10
-S33_ISOLATED_SUPABASE_PROJECTS_MONTHLY_TOTAL_USD=30
+S33_ISOLATED_SUPABASE_PROJECTS_MONTHLY_TOTAL_USD=40
 APPROVED_SOURCE_IMAGE_REPOSITORY="us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker"
 DENIED_CLOUD_RUN_SERVICES=("arkova-worker" "arkova-worker-staging")
 
@@ -120,6 +167,8 @@ SUPABASE_REGION="${STAGING_SUPABASE_REGION:-us-east-2}"
 SUPABASE_PG_MAJOR="${STAGING_SUPABASE_PG_MAJOR:-17}"
 SUPABASE_ORG="${STAGING_SUPABASE_ORG:-byhkazrpmivhcsuqjtva}"
 SUPABASE_DB_PASSWORD="${STAGING_NEW_SUPABASE_DB_PASSWORD:-}"
+G1_CONTROL_DB_PASSWORD="${STAGING_G1_A_SUPABASE_DB_PASSWORD:-}"
+G1_TUNED_DB_PASSWORD="${STAGING_G1_B_SUPABASE_DB_PASSWORD:-}"
 IMAGE_WAS_EXPLICIT=0
 if [[ -n "${STAGING_PINNED_IMAGE:-}" ]]; then
   PINNED_IMAGE="$STAGING_PINNED_IMAGE"
@@ -137,7 +186,7 @@ fi
 
 # Profile selects the env/secret overlay for the worker deploy.
 #   mock   — safe default; USE_MOCKS=true, anchoring off, no Scheduler.
-#   chain  — real anchoring (GetBlock RPC + WIF signer + KMS), Scheduler-driven.
+#   chain  — real anchoring (RPC + WIF signer + KMS), Scheduler-driven.
 #   gemini — real tuned model + prompt; chain stays mocked, Scheduler-driven.
 #   gemini-release — exact RIG-R release model; no Scheduler/OIDC/background jobs.
 PROFILE="${STAGING_RIG_PROFILE:-mock}"
@@ -147,24 +196,24 @@ PROFILE="${STAGING_RIG_PROFILE:-mock}"
 # real-config secrets. Defaults are the shared staging real-config secrets; the
 # operator confirms these hold the intended (test-tier) credentials before an
 # --apply. NOTHING here is a credential literal — only Secret Manager references.
-GETBLOCK_RPC_URL_SECRET_WAS_EXPLICIT=0
-GETBLOCK_RPC_AUTH_SECRET_WAS_EXPLICIT=0
+BITCOIN_CORE_RPC_URL_SECRET_WAS_EXPLICIT=0
+BITCOIN_CORE_RPC_AUTH_SECRET_WAS_EXPLICIT=0
 TREASURY_WIF_SECRET_WAS_EXPLICIT=0
 STRIPE_SECRET_KEY_SECRET_WAS_EXPLICIT=0
 STRIPE_WEBHOOK_SECRET_SECRET_WAS_EXPLICIT=0
 API_KEY_HMAC_SECRET_SECRET_WAS_EXPLICIT=0
 CRON_SECRET_SECRET_WAS_EXPLICIT=0
-if [[ ${STAGING_GETBLOCK_RPC_URL_SECRET+x} ]]; then
-  GETBLOCK_RPC_URL_SECRET="$STAGING_GETBLOCK_RPC_URL_SECRET"
-  GETBLOCK_RPC_URL_SECRET_WAS_EXPLICIT=1
+if [[ ${STAGING_BITCOIN_CORE_SIGNET_RPC_URL_SECRET+x} ]]; then
+  BITCOIN_CORE_RPC_URL_SECRET="$STAGING_BITCOIN_CORE_SIGNET_RPC_URL_SECRET"
+  BITCOIN_CORE_RPC_URL_SECRET_WAS_EXPLICIT=1
 else
-  GETBLOCK_RPC_URL_SECRET="bitcoin-rpc-url-staging"
+  BITCOIN_CORE_RPC_URL_SECRET="bitcoin-rpc-url-staging"
 fi
-if [[ ${STAGING_GETBLOCK_RPC_AUTH_SECRET+x} ]]; then
-  GETBLOCK_RPC_AUTH_SECRET="$STAGING_GETBLOCK_RPC_AUTH_SECRET"
-  GETBLOCK_RPC_AUTH_SECRET_WAS_EXPLICIT=1
+if [[ ${STAGING_BITCOIN_CORE_SIGNET_RPC_AUTH_SECRET+x} ]]; then
+  BITCOIN_CORE_RPC_AUTH_SECRET="$STAGING_BITCOIN_CORE_SIGNET_RPC_AUTH_SECRET"
+  BITCOIN_CORE_RPC_AUTH_SECRET_WAS_EXPLICIT=1
 else
-  GETBLOCK_RPC_AUTH_SECRET="bitcoin-rpc-auth-staging"
+  BITCOIN_CORE_RPC_AUTH_SECRET="bitcoin-rpc-auth-staging"
 fi
 if [[ ${STAGING_TREASURY_WIF_SECRET+x} ]]; then
   TREASURY_WIF_SECRET="$STAGING_TREASURY_WIF_SECRET"
@@ -196,14 +245,49 @@ if [[ ${STAGING_CRON_SECRET_SECRET+x} ]]; then
 else
   CRON_SECRET_SECRET="cron-secret"
 fi
-GEMINI_API_KEY_SECRET="${STAGING_GEMINI_API_KEY_SECRET:-gemini-api-key-staging}"
+GEMINI_API_KEY_SECRET="${STAGING_GEMINI_API_KEY_SECRET:-gemini-api-key}"
+GEMINI_API_KEY_SECRET_VERSION="${STAGING_GEMINI_API_KEY_SECRET_VERSION:-2}"
+SHARED_STRIPE_SECRET_VERSION="${STAGING_STRIPE_SECRET_KEY_VERSION:-1}"
+SHARED_STRIPE_WEBHOOK_VERSION="${STAGING_STRIPE_WEBHOOK_SECRET_VERSION:-1}"
+SHARED_API_KEY_HMAC_VERSION="${STAGING_API_KEY_HMAC_SECRET_VERSION:-1}"
+SHARED_CRON_SECRET_VERSION="${STAGING_CRON_SECRET_VERSION:-1}"
 
 # Non-secret env values for the real profiles (safe to inline — model names,
 # flags, a public frontend URL). These are NOT credentials.
 KMS_PROVIDER_VALUE="${STAGING_KMS_PROVIDER:-gcp}"
 BITCOIN_NETWORK_VALUE="${STAGING_BITCOIN_NETWORK:-mainnet}"
 BITCOIN_UTXO_PROVIDER_VALUE="${STAGING_BITCOIN_UTXO_PROVIDER:-getblock}"
-GEMINI_TUNED_MODEL_VALUE="${STAGING_GEMINI_TUNED_MODEL:-<required-in-gemini-apply:projects/<approved-project>/locations/us-central1/endpoints/<numeric-id>>}"
+RIG_B1_BITCOIN_CORE_IMAGE="${STAGING_B1_BITCOIN_CORE_IMAGE:-$RIG_B1_EXPECTED_BITCOIN_CORE_IMAGE}"
+RIG_B1_NODE_APPROVAL_ARTIFACT="${STAGING_B1_NODE_APPROVAL_ARTIFACT:-}"
+RIG_B1_CORPUS_DIGEST="${STAGING_B1_CORPUS_DIGEST:-}"
+RIG_B1_RELEASE_CANDIDATE_ID="${STAGING_B1_RELEASE_CANDIDATE_ID:-}"
+RIG_B1_TREASURY_ADDRESS="${STAGING_B1_TREASURY_ADDRESS:-}"
+RIG_B1_TREASURY_DESCRIPTOR="${STAGING_B1_TREASURY_DESCRIPTOR:-}"
+RIG_B1_TREASURY_SPLIT_PLAN_DIGEST="${STAGING_B1_TREASURY_SPLIT_PLAN_DIGEST:-}"
+RIG_B1_TREASURY_EXPECTED_TOTAL_SATS="${STAGING_B1_TREASURY_EXPECTED_TOTAL_SATS:-}"
+RIG_B1_APPROVAL_ENVELOPE_SHA256="<from-verified-b1-approval>"
+RIG_B1_APPROVAL_PAYLOAD_SHA256="<from-verified-b1-approval>"
+RIG_B1_APPROVAL_ID="<from-verified-b1-approval>"
+RIG_B1_APPROVAL_EXPIRES_AT="<from-verified-b1-approval>"
+RIG_B1_SPEND_CAP_USD="0"
+RIG_B1_NODE_APPROVAL_JSON='{"status":"UNVERIFIED"}'
+RIG_B1_APPROVAL_CLAIM_JSON='null'
+RIG_B1_APPROVAL_CLAIMED=0
+RIG_B1_TOPOLOGY_OWNERSHIP_JSON='null'
+RIG_B1_TOPOLOGY_OWNERSHIP_URI=""
+RIG_B1_TOPOLOGY_OWNERSHIP_GENERATION=""
+RIG_B1_NODE_READINESS_JSON='null'
+RIG_B1_TRUSTED_NODE_LAUNCHER=""
+RIG_B1_CANDIDATE_TREE_SHA=""
+DECLARED_RIG_B1_TEARDOWN_SHA256=""
+RIG_B1_RPC_URL_SECRET_VERSION="${STAGING_B1_RPC_URL_SECRET_VERSION:-}"
+RIG_B1_RPC_AUTH_SECRET_VERSION="${STAGING_B1_RPC_AUTH_SECRET_VERSION:-}"
+RIG_B1_TREASURY_WIF_SECRET_VERSION="${STAGING_B1_TREASURY_WIF_SECRET_VERSION:-}"
+RIG_B1_STRIPE_SECRET_KEY_VERSION="${STAGING_B1_STRIPE_SECRET_KEY_VERSION:-}"
+RIG_B1_STRIPE_WEBHOOK_SECRET_VERSION="${STAGING_B1_STRIPE_WEBHOOK_SECRET_VERSION:-}"
+RIG_B1_API_KEY_HMAC_SECRET_VERSION="${STAGING_B1_API_KEY_HMAC_SECRET_VERSION:-}"
+RIG_B1_CRON_SECRET_VERSION="${STAGING_B1_CRON_SECRET_VERSION:-}"
+GEMINI_TUNED_MODEL_VALUE="${STAGING_GEMINI_TUNED_MODEL:-projects/arkova1/locations/us-central1/endpoints/${RIG_G1_ENDPOINT_ID}}"
 GEMINI_V6_PROMPT_VALUE="${STAGING_GEMINI_V6_PROMPT:-true}"
 FRONTEND_URL_VALUE="${STAGING_FRONTEND_URL:-https://app.arkova.ai}"
 CRON_OIDC_SA_WAS_EXPLICIT=0
@@ -239,9 +323,9 @@ G1_SPEND_APPROVAL_JSON='{"status":"UNVERIFIED","reason":"immutable approval arti
 G1_APPROVAL_CLAIM_JSON='null'
 G1_AUTHORITY_JSON='null'
 G1_TRUSTED_NODE_LAUNCHER=""
-RIG_R_VERTEX_ENDPOINT="${STAGING_RIG_R_VERTEX_ENDPOINT:-}"
-RIG_R_VERTEX_MODEL="${STAGING_RIG_R_VERTEX_MODEL:-}"
-RIG_R_DEPLOYED_MODEL_ID="${STAGING_RIG_R_DEPLOYED_MODEL_ID:-}"
+RIG_R_VERTEX_ENDPOINT="${STAGING_RIG_R_VERTEX_ENDPOINT:-$RIG_R_EXPECTED_ENDPOINT}"
+RIG_R_VERTEX_MODEL="${STAGING_RIG_R_VERTEX_MODEL:-$RIG_R_PROTECTED_V6_MODEL}"
+RIG_R_DEPLOYED_MODEL_ID="${STAGING_RIG_R_DEPLOYED_MODEL_ID:-$RIG_R_EXPECTED_DEPLOYED_MODEL_ID}"
 RIG_R_CANDIDATE_TREE_SHA="${STAGING_RIG_R_CANDIDATE_TREE_SHA:-}"
 RIG_R_PROVISION_APPROVAL_ARTIFACT="${STAGING_RIG_R_PROVISION_APPROVAL_ARTIFACT:-}"
 RIG_R_PROVISION_ARTIFACT_SHA256="${STAGING_RIG_R_PROVISION_ARTIFACT_SHA256:-}"
@@ -249,10 +333,12 @@ RIG_R_PROVISION_STARTED_AT="${STAGING_RIG_R_PROVISION_STARTED_AT:-}"
 RIG_R_EXPIRES_AT="${STAGING_RIG_R_EXPIRES_AT:-}"
 RIG_R_LEASE_URI=""
 RIG_R_LEASE_CLAIMED=0
+RIG_R_LEASE_GENERATION=""
 RIG_R_PROVISION_APPROVAL_JSON='{"status":"UNVERIFIED"}'
 RIG_R_PROVISION_APPROVAL_CLAIM_JSON='null'
 RIG_R_PROVISION_APPROVAL_CLAIMED=0
 RIG_R_TRUSTED_NODE_LAUNCHER=""
+RIG_B1_NODE_STARTUP_SCRIPT_SHA256=""
 TRUSTED_GIT_VALIDATED=0
 TRUSTED_REPO_ROOT=""
 TRUSTED_LOCAL_HEAD_SHA=""
@@ -303,7 +389,7 @@ usage() {
   echo "          [--artifact-dir docs/staging/<pr-or-rig>]"
   echo
   echo "  --profile mock   (default) safe: USE_MOCKS=true, anchoring off, no Scheduler."
-  echo "  --profile chain  real anchoring: GetBlock RPC + WIF signer + KMS, Scheduler-driven."
+  echo "  --profile chain  real anchoring: RPC + WIF signer + KMS, Scheduler-driven."
   echo "  --profile gemini real tuned model + prompt; chain mocked, Scheduler-driven."
   echo "  --profile gemini-release  RIG-R only; chain mocked, no Scheduler/OIDC/in-process cron."
   echo
@@ -330,8 +416,8 @@ while [[ $# -gt 0 ]]; do
     --scheduler-activation) SCHEDULER_ACTIVATION_MODE="${2:?}"; shift 2 ;;
     --runtime-sa) RUNTIME_SA="${2:?}"; RUNTIME_SA_WAS_EXPLICIT=1; shift 2 ;;
     --cron-oidc-sa) CRON_OIDC_SA="${2:?}"; CRON_OIDC_SA_WAS_EXPLICIT=1; shift 2 ;;
-    --getblock-rpc-url-secret) GETBLOCK_RPC_URL_SECRET="${2:?}"; GETBLOCK_RPC_URL_SECRET_WAS_EXPLICIT=1; shift 2 ;;
-    --getblock-rpc-auth-secret) GETBLOCK_RPC_AUTH_SECRET="${2:?}"; GETBLOCK_RPC_AUTH_SECRET_WAS_EXPLICIT=1; shift 2 ;;
+    --bitcoin-core-signet-rpc-url-secret) BITCOIN_CORE_RPC_URL_SECRET="${2:?}"; BITCOIN_CORE_RPC_URL_SECRET_WAS_EXPLICIT=1; shift 2 ;;
+    --bitcoin-core-signet-rpc-auth-secret) BITCOIN_CORE_RPC_AUTH_SECRET="${2:?}"; BITCOIN_CORE_RPC_AUTH_SECRET_WAS_EXPLICIT=1; shift 2 ;;
     --treasury-wif-secret) TREASURY_WIF_SECRET="${2:?}"; TREASURY_WIF_SECRET_WAS_EXPLICIT=1; shift 2 ;;
     --stripe-secret-key-secret) STRIPE_SECRET_KEY_SECRET="${2:?}"; STRIPE_SECRET_KEY_SECRET_WAS_EXPLICIT=1; shift 2 ;;
     --stripe-webhook-secret) STRIPE_WEBHOOK_SECRET_SECRET="${2:?}"; STRIPE_WEBHOOK_SECRET_SECRET_WAS_EXPLICIT=1; shift 2 ;;
@@ -391,13 +477,34 @@ IS_G1_RIG=0
 IS_RIG_R=0
 G1_CONTROL_SERVICE=""
 G1_TUNED_SERVICE=""
+G1_CONTROL_PROJECT_NAME=""
+G1_TUNED_PROJECT_NAME=""
+G1_CONTROL_PROJECT_REF="<captured-rig-g1-a-project-ref>"
+G1_TUNED_PROJECT_REF="<captured-rig-g1-b-project-ref>"
+G1_CONTROL_SUPABASE_URL_SECRET=""
+G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET=""
+G1_TUNED_SUPABASE_URL_SECRET=""
+G1_TUNED_SUPABASE_SERVICE_ROLE_SECRET=""
+G1_CONTROL_RUNTIME_SA=""
+G1_TUNED_RUNTIME_SA=""
 G1_ENDPOINT_ID=""
 
 case "$RIG_ID" in
   RIG-G1)
     IS_G1_RIG=1
-    G1_CONTROL_SERVICE="arkova-worker-${NAME}-public-staging"
-    G1_TUNED_SERVICE="arkova-worker-${NAME}-tuned-staging"
+    G1_CONTROL_SERVICE="arkova-worker-${NAME}-a-staging"
+    G1_TUNED_SERVICE="arkova-worker-${NAME}-b-staging"
+    G1_CONTROL_PROJECT_NAME="arkova-soak-${NAME}-a"
+    G1_TUNED_PROJECT_NAME="arkova-soak-${NAME}-b"
+    G1_CONTROL_SUPABASE_URL_SECRET="supabase-url-${NAME}-a-staging"
+    G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET="supabase-service-role-key-${NAME}-a-staging"
+    G1_TUNED_SUPABASE_URL_SECRET="supabase-url-${NAME}-b-staging"
+    G1_TUNED_SUPABASE_SERVICE_ROLE_SECRET="supabase-service-role-key-${NAME}-b-staging"
+    G1_CONTROL_RUNTIME_SA="s33-rig-g1-a-runtime@${GCP_PROJECT}.iam.gserviceaccount.com"
+    G1_TUNED_RUNTIME_SA="s33-rig-g1-b-runtime@${GCP_PROJECT}.iam.gserviceaccount.com"
+    PROJECT_NAME="$G1_CONTROL_PROJECT_NAME"
+    SUPABASE_URL_SECRET_NAME="$G1_CONTROL_SUPABASE_URL_SECRET"
+    SUPABASE_SERVICE_ROLE_SECRET_NAME="$G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET"
     # Keep the legacy top-level admission identity pointed at the public/control
     # arm; the complete two-arm binding is emitted under admission.g1.
     CLOUD_RUN_SERVICE="$G1_CONTROL_SERVICE"
@@ -473,6 +580,10 @@ if [[ $IS_G1_RIG -eq 1 ]]; then
     echo "ERROR: RIG-G1 requires approved GCP project '$APPROVED_GCP_PROJECT' in us-central1." >&2
     exit 2
   fi
+  if [[ $RUNTIME_SA_WAS_EXPLICIT -eq 1 ]]; then
+    echo "ERROR: RIG-G1 forbids the generic runtime identity override; its A/B runtime service accounts are code-fixed and approval-bound." >&2
+    exit 2
+  fi
   if [[ ! "$G1_CORPUS_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     echo "ERROR: RIG-G1 requires STAGING_G1_CORPUS_DIGEST=sha256:<64-hex>." >&2
     exit 2
@@ -505,20 +616,37 @@ if [[ $IS_G1_RIG -eq 1 ]]; then
   fi
   G1_ENDPOINT_PROJECT="${BASH_REMATCH[1]}"
   G1_ENDPOINT_ID="${BASH_REMATCH[2]}"
-  if [[ "$G1_ENDPOINT_PROJECT" != "$APPROVED_GCP_PROJECT" ]]; then
-    echo "ERROR: RIG-G1 tuned endpoint project must equal approved GCP project '$APPROVED_GCP_PROJECT'." >&2
+  if [[ "$G1_ENDPOINT_PROJECT" != "$APPROVED_GCP_PROJECT" \
+    || "$G1_ENDPOINT_ID" != "$RIG_G1_ENDPOINT_ID" ]]; then
+    echo "ERROR: RIG-G1 tuned endpoint must equal its signed deterministic arkova1/us-central1 endpoint '${RIG_G1_ENDPOINT_ID}'." >&2
     exit 2
   fi
   if [[ "$GEMINI_V6_PROMPT_VALUE" != "true" ]]; then
     echo "ERROR: RIG-G1 tuned arm requires STAGING_GEMINI_V6_PROMPT=true." >&2
     exit 2
   fi
-  if [[ "$TIER" != "T2" || "$REQUIRED_UPTIME_MIN" != "2880" \
-    || ! "$REQUIRED_WALL_MIN" =~ ^[1-9][0-9]*$ || 10#$REQUIRED_WALL_MIN -lt 2910 \
+  if [[ "$TIER" != "T2" || "$REQUIRED_UPTIME_MIN" != "720" \
+    || ! "$REQUIRED_WALL_MIN" =~ ^[1-9][0-9]*$ || 10#$REQUIRED_WALL_MIN -lt 750 \
     || ! "$G1_PAIRED_CADENCE_MIN" =~ ^[1-9][0-9]*$ \
     || 10#$G1_PAIRED_CADENCE_MIN -gt 30 ]]; then
-    echo "ERROR: RIG-G1 requires custom Tier T2, exactly 2880 worker-uptime minutes," >&2
-    echo "       >=2910 wall minutes, and STAGING_G1_PAIRED_CADENCE_MIN in 1..30." >&2
+    echo "ERROR: RIG-G1 requires Tier T2, exactly 720 worker-uptime minutes," >&2
+    echo "       >=750 wall minutes, and STAGING_G1_PAIRED_CADENCE_MIN in 1..30." >&2
+    exit 2
+  fi
+fi
+
+if [[ $IS_G1_RIG -eq 1 || $IS_RIG_R -eq 1 ]]; then
+  if [[ "$STRIPE_SECRET_KEY_SECRET" != "stripe-secret-key-staging" \
+    || "$STRIPE_WEBHOOK_SECRET_SECRET" != "stripe-webhook-secret-staging" \
+    || "$API_KEY_HMAC_SECRET_SECRET" != "api-key-hmac-secret-staging" \
+    || "$CRON_SECRET_SECRET" != "cron-secret" \
+    || "$GEMINI_API_KEY_SECRET" != "gemini-api-key" \
+    || "$SHARED_STRIPE_SECRET_VERSION" != "1" \
+    || "$SHARED_STRIPE_WEBHOOK_VERSION" != "1" \
+    || "$SHARED_API_KEY_HMAC_VERSION" != "1" \
+    || "$SHARED_CRON_SECRET_VERSION" != "1" \
+    || "$GEMINI_API_KEY_SECRET_VERSION" != "2" ]]; then
+    echo "ERROR: G1/R require the CTO-approved exact numeric shared-secret references (Stripe/HMAC/cron @1, gemini-api-key @2)." >&2
     exit 2
   fi
 fi
@@ -549,20 +677,16 @@ if [[ $IS_RIG_R -eq 1 ]]; then
     echo "ERROR: RIG-R has no Scheduler topology; activation mode must remain PAUSED." >&2
     exit 2
   fi
-  if [[ ! "$RIG_R_VERTEX_ENDPOINT" =~ ^projects/arkova1/locations/us-central1/endpoints/([1-9][0-9]*)$ ]]; then
-    echo "ERROR: RIG-R requires STAGING_RIG_R_VERTEX_ENDPOINT as one exact arkova1/us-central1 endpoint." >&2
-    exit 2
-  fi
-  if [[ "$RIG_R_VERTEX_ENDPOINT" == "$RIG_R_PROTECTED_V6_ENDPOINT" ]]; then
-    echo "ERROR: RIG-R cannot target the protected v6 rollback endpoint." >&2
+  if [[ "$RIG_R_VERTEX_ENDPOINT" != "$RIG_R_EXPECTED_ENDPOINT" ]]; then
+    echo "ERROR: RIG-R requires exact signed deterministic endpoint '$RIG_R_EXPECTED_ENDPOINT'." >&2
     exit 2
   fi
   if [[ "$RIG_R_VERTEX_MODEL" != "$RIG_R_PROTECTED_V6_MODEL" ]]; then
     echo "ERROR: RIG-R temporary endpoint must deploy the exact protected v6 rollback model; the model itself is never a delete target." >&2
     exit 2
   fi
-  if [[ ! "$RIG_R_DEPLOYED_MODEL_ID" =~ ^[1-9][0-9]*$ ]]; then
-    echo "ERROR: RIG-R requires exact numeric STAGING_RIG_R_DEPLOYED_MODEL_ID." >&2
+  if [[ "$RIG_R_DEPLOYED_MODEL_ID" != "$RIG_R_EXPECTED_DEPLOYED_MODEL_ID" ]]; then
+    echo "ERROR: RIG-R requires exact signed deployed-model id '$RIG_R_EXPECTED_DEPLOYED_MODEL_ID'." >&2
     exit 2
   fi
   if [[ ! "$DECLARED_SOURCE_HEAD" =~ ^[0-9a-f]{40}$ \
@@ -598,7 +722,9 @@ if [[ $IS_RIG_R -eq 1 ]]; then
     echo "ERROR: RIG-R hard-stop expiry cannot exceed 72 hours from provision start." >&2
     exit 2
   fi
-  RIG_R_LEASE_URI="gs://${RIG_R_LEASE_BUCKET}/${RIG_R_LEASE_PREFIX}/${LEASE_ID}.json"
+  # The object name is code-fixed. The signed leaseId is payload identity, not
+  # namespace: every contender races on this one generation-zero mutex.
+  RIG_R_LEASE_URI="gs://${RIG_R_LEASE_BUCKET}/${RIG_R_LEASE_OBJECT_NAME}"
   GEMINI_TUNED_MODEL_VALUE="$RIG_R_VERTEX_ENDPOINT"
 fi
 
@@ -759,6 +885,9 @@ verify_checkout_inputs_match_declared_head() {
   if [[ $IS_RIG_R -eq 1 ]]; then
     tracked_inputs+=("$RIG_R_PROVISION_APPROVAL_VERIFIER" "$RIG_R_TEARDOWN_PATH")
   fi
+  if [[ "$RIG_ID" == "RIG-B1" ]]; then
+    tracked_inputs+=("$RIG_B1_NODE_STARTUP_SCRIPT" "$RIG_B1_NODE_APPROVAL_VERIFIER" "$RIG_R_TEARDOWN_PATH")
+  fi
   for path in "${tracked_inputs[@]}"; do
     if [[ "$path" == /* || "$path" == "." || "$path" == ".." || "$path" == ../* \
       || "$path" == */../* || "$path" == */.. ]]; then
@@ -796,6 +925,18 @@ verify_checkout_inputs_match_declared_head() {
         exit 2
       }
     fi
+    if [[ "$RIG_ID" == "RIG-B1" && "$path" == "$RIG_R_TEARDOWN_PATH" ]]; then
+      DECLARED_RIG_B1_TEARDOWN_SHA256="sha256:$(trusted_sha256_file "$blob_temp")" || {
+        /bin/rm -f -- "$blob_temp"
+        exit 2
+      }
+    fi
+    if [[ "$RIG_ID" == "RIG-B1" && "$path" == "$RIG_B1_NODE_STARTUP_SCRIPT" ]]; then
+      RIG_B1_NODE_STARTUP_SCRIPT_SHA256="$(trusted_sha256_file "$blob_temp")" || {
+        /bin/rm -f -- "$blob_temp"
+        exit 2
+      }
+    fi
     if ! /usr/bin/cmp -s -- "$worktree_path" "$blob_temp"; then
       /bin/rm -f -- "$blob_temp"
       echo "ERROR: provisioner/driver/verifier working-tree bytes differ byte-for-byte from declared source HEAD; commit or restore them first." >&2
@@ -810,6 +951,16 @@ verify_checkout_inputs_match_declared_head() {
   if [[ $IS_RIG_R -eq 1 \
     && ! "$DECLARED_RIG_R_TEARDOWN_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     echo "ERROR: live RIG-R provision could not bind the declared teardown blob digest." >&2
+    exit 2
+  fi
+  if [[ "$RIG_ID" == "RIG-B1" \
+    && ! "$RIG_B1_NODE_STARTUP_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: live RIG-B1 provision could not bind the declared Bitcoin Core startup-script digest." >&2
+    exit 2
+  fi
+  if [[ "$RIG_ID" == "RIG-B1" \
+    && ! "$DECLARED_RIG_B1_TEARDOWN_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: live RIG-B1 provision could not bind the declared teardown digest." >&2
     exit 2
   fi
 }
@@ -838,7 +989,7 @@ verify_source_head_image_digest() {
 verify_g1_candidate_endpoint_binding() {
   [[ $IS_G1_RIG -eq 1 ]] || return 0
   local endpoint_json expected_model_resource
-  expected_model_resource="projects/${APPROVED_GCP_PROJECT}/locations/us-central1/${RIG_G1_CANDIDATE_MODEL}"
+  expected_model_resource="$RIG_G1_CANDIDATE_MODEL_RESOURCE"
   if ! endpoint_json="$(gcloud ai endpoints describe "$G1_ENDPOINT_ID" \
     --project="$APPROVED_GCP_PROJECT" \
     --region="us-central1" \
@@ -846,17 +997,35 @@ verify_g1_candidate_endpoint_binding() {
     echo "ERROR: RIG-G1 could not observe tuned endpoint '$GEMINI_TUNED_MODEL_VALUE'." >&2
     exit 2
   fi
-  if ! jq -e --arg expected "$expected_model_resource" '
+  if ! jq -e \
+    --arg endpoint_id "$RIG_G1_ENDPOINT_ID" \
+    --arg endpoint_display "$RIG_G1_ENDPOINT_DISPLAY_NAME" \
+    --arg expected_model "$expected_model_resource" \
+    --arg expected_model_version "1" \
+    --arg checkpoint_id "$RIG_G1_CHECKPOINT_ID" \
+    --arg deployed_id "$RIG_G1_DEPLOYED_MODEL_ID" \
+    --arg deployed_display "$RIG_G1_DEPLOYED_MODEL_DISPLAY_NAME" \
+    --arg deployment_mode "$RIG_G1_DEPLOYMENT_RESOURCES_MODE" \
+    --argjson min_replicas "$RIG_G1_MIN_REPLICA_COUNT" \
+    --argjson max_replicas "$RIG_G1_MAX_REPLICA_COUNT" '
     type == "object"
+    and (.name | type == "string" and endswith("/endpoints/\($endpoint_id)"))
+    and .displayName == $endpoint_display
     and (.deployedModels | type == "array" and length == 1)
-    and (.deployedModels[0].model == $expected)
-    and (.deployedModels[0].id as $deployed_model_id
-      | ($deployed_model_id | type == "string" and length > 0)
-      and (.trafficSplit | type == "object")
-      and ((.trafficSplit | keys) == [$deployed_model_id])
-      and (.trafficSplit[$deployed_model_id] == 100))
+    and .deployedModels[0].model == $expected_model
+    and (.deployedModels[0].modelVersionId | tostring) == $expected_model_version
+    and (.deployedModels[0].checkpointId | tostring) == $checkpoint_id
+    and .deployedModels[0].id == $deployed_id
+    and .deployedModels[0].displayName == $deployed_display
+    and $deployment_mode == "TUNED_GEMINI_AUTOMATIC_RESOURCES"
+    and (.deployedModels[0].dedicatedResources // null) == null
+    and .deployedModels[0].automaticResources.minReplicaCount == $min_replicas
+    and .deployedModels[0].automaticResources.maxReplicaCount == $max_replicas
+    and (.trafficSplit | type == "object")
+    and ((.trafficSplit | keys) == [$deployed_id])
+    and (.trafficSplit[$deployed_id] == 100)
   ' >/dev/null 2>&1 <<<"$endpoint_json"; then
-    echo "ERROR: RIG-G1 tuned endpoint is not ready as the sole exact v6 deployment with 100% traffic." >&2
+    echo "ERROR: RIG-G1 tuned endpoint differs from the signed model@1/checkpoint-6/automatic-1x1/traffic contract." >&2
     exit 2
   fi
 }
@@ -873,18 +1042,113 @@ verify_rig_r_candidate_endpoint_binding() {
     exit 2
   fi
   if ! jq -e \
+    --arg endpoint_id "$RIG_R_ENDPOINT_ID" \
+    --arg endpoint_display "$RIG_R_ENDPOINT_DISPLAY_NAME" \
     --arg expected_model "$RIG_R_VERTEX_MODEL" \
-    --arg expected_deployed_id "$RIG_R_DEPLOYED_MODEL_ID" '
+    --arg expected_model_version "1" \
+    --arg checkpoint_id "$RIG_R_CHECKPOINT_ID" \
+    --arg expected_deployed_id "$RIG_R_DEPLOYED_MODEL_ID" \
+    --arg deployed_display "$RIG_R_DEPLOYED_MODEL_DISPLAY_NAME" \
+    --arg deployment_mode "$RIG_R_DEPLOYMENT_RESOURCES_MODE" \
+    --argjson min_replicas "$RIG_R_MIN_REPLICA_COUNT" \
+    --argjson max_replicas "$RIG_R_MAX_REPLICA_COUNT" '
       type == "object"
+      and (.name | type == "string" and endswith("/endpoints/\($endpoint_id)"))
+      and .displayName == $endpoint_display
       and (.deployedModels | type == "array" and length == 1)
       and (.deployedModels[0].model == $expected_model)
+      and (.deployedModels[0].modelVersionId | tostring) == $expected_model_version
+      and (.deployedModels[0].checkpointId | tostring) == $checkpoint_id
       and (.deployedModels[0].id == $expected_deployed_id)
+      and .deployedModels[0].displayName == $deployed_display
+      and $deployment_mode == "TUNED_GEMINI_AUTOMATIC_RESOURCES"
+      and (.deployedModels[0].dedicatedResources // null) == null
+      and .deployedModels[0].automaticResources.minReplicaCount == $min_replicas
+      and .deployedModels[0].automaticResources.maxReplicaCount == $max_replicas
       and (.trafficSplit | type == "object")
       and ((.trafficSplit | keys) == [$expected_deployed_id])
       and (.trafficSplit[$expected_deployed_id] == 100)
     ' >/dev/null 2>&1 <<<"$endpoint_json"; then
     echo "ERROR: RIG-R endpoint is not the sole exact deployed-model binding at 100% traffic." >&2
     exit 2
+  fi
+}
+
+verify_temporary_rig_targets_absent() {
+  local observed projects_json target
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    observed="$(gcloud ai endpoints list --project="$GCP_PROJECT" \
+      --region="$CLOUD_RUN_REGION" --filter="name:${GEMINI_TUNED_MODEL_VALUE}" \
+      --format='value(name)')" || {
+      echo "ERROR: RIG-G1 cannot prove the deterministic temporary endpoint is absent." >&2
+      exit 2
+    }
+    if [[ -n "$observed" ]]; then
+      echo "ERROR: RIG-G1 deterministic endpoint already exists; refusing ownership ambiguity." >&2
+      exit 2
+    fi
+    for target in "$G1_CONTROL_RUNTIME_SA" "$G1_TUNED_RUNTIME_SA"; do
+      observed="$(gcloud iam service-accounts list --project="$GCP_PROJECT" \
+        --filter="email:${target}" --format='value(email)')" || exit 2
+      if [[ -n "$observed" ]]; then
+        echo "ERROR: RIG-G1 temporary runtime identity '$target' already exists." >&2
+        exit 2
+      fi
+    done
+    for target in "$G1_CONTROL_SERVICE" "$G1_TUNED_SERVICE"; do
+      observed="$(gcloud run services list --project="$GCP_PROJECT" \
+        --region="$CLOUD_RUN_REGION" --filter="metadata.name:${target}" \
+        --format='value(metadata.name)')" || exit 2
+      if [[ -n "$observed" ]]; then
+        echo "ERROR: RIG-G1 temporary Cloud Run service '$target' already exists." >&2
+        exit 2
+      fi
+    done
+    projects_json="$(npx supabase projects list --output json)" || {
+      echo "ERROR: RIG-G1 cannot prove its two physical Supabase names are absent." >&2
+      exit 2
+    }
+    if ! jq -e --arg a "$G1_CONTROL_PROJECT_NAME" --arg b "$G1_TUNED_PROJECT_NAME" '
+      type == "array"
+      and ([.[] | select(.name == $a or .name == $b)] | length == 0)
+    ' >/dev/null 2>&1 <<<"$projects_json"; then
+      echo "ERROR: RIG-G1 Supabase inventory is malformed or an arm project already exists." >&2
+      exit 2
+    fi
+  elif [[ $IS_RIG_R -eq 1 ]]; then
+    observed="$(gcloud ai endpoints list --project="$GCP_PROJECT" \
+      --region="$CLOUD_RUN_REGION" --filter="name:${RIG_R_VERTEX_ENDPOINT}" \
+      --format='value(name)')" || {
+      echo "ERROR: RIG-R cannot prove the deterministic temporary endpoint is absent." >&2
+      exit 2
+    }
+    if [[ -n "$observed" ]]; then
+      echo "ERROR: RIG-R deterministic endpoint already exists; refusing ownership ambiguity." >&2
+      exit 2
+    fi
+    observed="$(gcloud iam service-accounts list --project="$GCP_PROJECT" \
+      --filter="email:${RUNTIME_SA}" --format='value(email)')" || exit 2
+    if [[ -n "$observed" ]]; then
+      echo "ERROR: RIG-R temporary runtime identity already exists." >&2
+      exit 2
+    fi
+    observed="$(gcloud run services list --project="$GCP_PROJECT" \
+      --region="$CLOUD_RUN_REGION" --filter="metadata.name:${CLOUD_RUN_SERVICE}" \
+      --format='value(metadata.name)')" || exit 2
+    if [[ -n "$observed" ]]; then
+      echo "ERROR: RIG-R temporary Cloud Run service already exists." >&2
+      exit 2
+    fi
+    projects_json="$(npx supabase projects list --output json)" || {
+      echo "ERROR: RIG-R cannot prove its physical Supabase name is absent." >&2
+      exit 2
+    }
+    if ! jq -e --arg name "$PROJECT_NAME" '
+      type == "array" and ([.[] | select(.name == $name)] | length == 0)
+    ' >/dev/null 2>&1 <<<"$projects_json"; then
+      echo "ERROR: RIG-R Supabase inventory is malformed or its project already exists." >&2
+      exit 2
+    fi
   fi
 }
 
@@ -939,11 +1203,192 @@ resolve_rig_r_trusted_node_launcher() {
   RIG_R_TRUSTED_NODE_LAUNCHER="$RIG_R_TRUSTED_NODE_PATH"
 }
 
+resolve_b1_trusted_node_launcher() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 0
+  local observed_digest observed_version
+  if [[ "$RIG_G1_TRUSTED_NODE_PATH" != /* \
+    || ! -f "$RIG_G1_TRUSTED_NODE_PATH" || -L "$RIG_G1_TRUSTED_NODE_PATH" \
+    || ! -x "$RIG_G1_TRUSTED_NODE_PATH" ]]; then
+    echo "ERROR: RIG-B1 approval verification requires the code-bound Node launcher." >&2
+    return 1
+  fi
+  observed_digest="$(trusted_sha256_file "$RIG_G1_TRUSTED_NODE_PATH")" || return 1
+  observed_version="$(/usr/bin/env -i TZ=UTC "$RIG_G1_TRUSTED_NODE_PATH" --version 2>/dev/null || true)"
+  if [[ "$observed_digest" != "$RIG_G1_TRUSTED_NODE_SHA256" \
+    || "$observed_version" != "$RIG_G1_TRUSTED_NODE_VERSION" ]]; then
+    echo "ERROR: RIG-B1 Node launcher differs from the code-bound trust tuple." >&2
+    return 1
+  fi
+  RIG_B1_TRUSTED_NODE_LAUNCHER="$RIG_G1_TRUSTED_NODE_PATH"
+}
+
+verify_b1_node_approval_binding() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 0
+  local verified_json expected_worker_digest expected_secrets
+  expected_worker_digest="$(image_digest_from_ref "$PINNED_IMAGE")"
+  expected_secrets="$(jq -nc \
+    --arg rig_name "$NAME" \
+    --arg stripe "$STRIPE_SECRET_KEY_SECRET" --arg stripe_v "$RIG_B1_STRIPE_SECRET_KEY_VERSION" \
+    --arg webhook "$STRIPE_WEBHOOK_SECRET_SECRET" --arg webhook_v "$RIG_B1_STRIPE_WEBHOOK_SECRET_VERSION" \
+    --arg hmac "$API_KEY_HMAC_SECRET_SECRET" --arg hmac_v "$RIG_B1_API_KEY_HMAC_SECRET_VERSION" \
+    --arg cron "$CRON_SECRET_SECRET" --arg cron_v "$RIG_B1_CRON_SECRET_VERSION" \
+    --arg rpc_url "$BITCOIN_CORE_RPC_URL_SECRET" --arg rpc_url_v "$RIG_B1_RPC_URL_SECRET_VERSION" \
+    --arg rpc_auth "$BITCOIN_CORE_RPC_AUTH_SECRET" --arg rpc_auth_v "$RIG_B1_RPC_AUTH_SECRET_VERSION" \
+    --arg wif "$TREASURY_WIF_SECRET" --arg wif_v "$RIG_B1_TREASURY_WIF_SECRET_VERSION" '
+      def ref($env; $name; $version): {
+        env: $env, secretName: $name, version: $version,
+        resource: "projects/arkova1/secrets/\($name)/versions/\($version)"
+      };
+      [
+        ref("SUPABASE_URL"; "supabase-url-\($rig_name)-staging"; "1"),
+        ref("SUPABASE_SERVICE_ROLE_KEY"; "supabase-service-role-key-\($rig_name)-staging"; "1"),
+        ref("STRIPE_SECRET_KEY"; $stripe; $stripe_v),
+        ref("STRIPE_WEBHOOK_SECRET"; $webhook; $webhook_v),
+        ref("API_KEY_HMAC_SECRET"; $hmac; $hmac_v),
+        ref("CRON_SECRET"; $cron; $cron_v),
+        ref("BITCOIN_RPC_URL"; $rpc_url; $rpc_url_v),
+        ref("BITCOIN_RPC_AUTH"; $rpc_auth; $rpc_auth_v),
+        ref("BITCOIN_TREASURY_WIF"; $wif; $wif_v)
+      ]
+    ')" || exit 2
+  if [[ -z "$RIG_B1_TRUSTED_NODE_LAUNCHER" ]] && ! resolve_b1_trusted_node_launcher; then
+    echo "ERROR: RIG-B1 approval verifier launcher is not trusted." >&2
+    exit 2
+  fi
+  if ! verified_json="$(/usr/bin/env -i TZ=UTC \
+    "$RIG_B1_TRUSTED_NODE_LAUNCHER" --no-addons --no-global-search-paths \
+    "$TRUSTED_REPO_ROOT/$RIG_B1_NODE_APPROVAL_VERIFIER" \
+    --artifact "$RIG_B1_NODE_APPROVAL_ARTIFACT")"; then
+    echo "ERROR: RIG-B1 signed node/spend approval verification failed." >&2
+    exit 2
+  fi
+  if ! verified_json="$(jq -ce \
+    --arg source_head "$DECLARED_SOURCE_HEAD" \
+    --arg source_tree "$RIG_B1_CANDIDATE_TREE_SHA" \
+    --arg worker_image "$PINNED_IMAGE" \
+    --arg worker_digest "$expected_worker_digest" \
+    --arg bitcoin_recipe_commit "$RIG_B1_BITCOIN_CORE_RECIPE_COMMIT" \
+    --arg bitcoin_image "$RIG_B1_BITCOIN_CORE_IMAGE" \
+    --arg bitcoin_amd64_runtime_digest "$RIG_B1_BITCOIN_CORE_AMD64_RUNTIME_DIGEST" \
+    --arg startup_sha "sha256:${RIG_B1_NODE_STARTUP_SCRIPT_SHA256}" \
+    --arg teardown_sha "$DECLARED_RIG_B1_TEARDOWN_SHA256" \
+    --arg corpus_digest "$RIG_B1_CORPUS_DIGEST" \
+    --arg rc_id "$RIG_B1_RELEASE_CANDIDATE_ID" \
+    --arg rig_name "$NAME" --arg soak_id "$SOAK_ID" --arg lease_id "$LEASE_ID" \
+    --arg service "$CLOUD_RUN_SERVICE" --arg runtime_sa "$RUNTIME_SA" --arg cron_sa "$CRON_OIDC_SA" \
+    --arg treasury_address "$RIG_B1_TREASURY_ADDRESS" \
+    --arg treasury_descriptor "$RIG_B1_TREASURY_DESCRIPTOR" \
+    --arg split_txid "$RIG_B1_TREASURY_SPLIT_TXID" \
+    --arg split_plan_digest "$RIG_B1_TREASURY_SPLIT_PLAN_DIGEST" \
+    --argjson expected_total_sats "$RIG_B1_TREASURY_EXPECTED_TOTAL_SATS" \
+    --argjson expected_secrets "$expected_secrets" '
+      select(
+        type == "object"
+        and ((keys | sort) == (["envelopeId", "envelopeSha256", "keyId", "payload", "signedPayloadSha256", "status", "verifierIdentity"] | sort))
+        and .status == "VERIFIED"
+        and .keyId == "arkova.s33.b1-evidence.ed25519.v1"
+        and .verifierIdentity == "arkova.s33.verifier.public-ed25519.v1"
+        and (.envelopeSha256 | test("^sha256:[0-9a-f]{64}$"))
+        and (.signedPayloadSha256 | test("^sha256:[0-9a-f]{64}$"))
+        and .payload.authority.approverIdentity == "arkova.s33.approver.founder-cto.v1"
+        and .payload.authority.purpose == "RIG_B1_BITCOIN_CORE_PROVISION"
+        and .payload.candidate.sourceHeadSha == $source_head
+        and .payload.candidate.sourceTreeSha == $source_tree
+        and .payload.candidate.workerImage == $worker_image
+        and .payload.candidate.workerImageDigest == $worker_digest
+        and .payload.candidate.bitcoinCoreRecipeCommit == $bitcoin_recipe_commit
+        and .payload.candidate.bitcoinCoreImage == $bitcoin_image
+        and .payload.candidate.bitcoinCoreAmd64RuntimeDigest == $bitcoin_amd64_runtime_digest
+        and .payload.topology.bitcoinCore.recipeCommit == $bitcoin_recipe_commit
+        and .payload.topology.bitcoinCore.containerImage == $bitcoin_image
+        and .payload.topology.bitcoinCore.amd64RuntimeDigest == $bitcoin_amd64_runtime_digest
+        and .payload.topology.bitcoinCore.sourceTarballSha256 == "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e"
+        and .payload.candidate.startupScriptSha256 == $startup_sha
+        and .payload.candidate.teardownScriptSha256 == $teardown_sha
+        and .payload.candidate.corpusDigest == $corpus_digest
+        and .payload.candidate.releaseCandidateId == $rc_id
+        and .payload.run.rigId == "RIG-B1"
+        and .payload.run.rigName == $rig_name
+        and .payload.run.soakId == $soak_id
+        and .payload.run.leaseId == $lease_id
+        and .payload.run.workerService == $service
+        and .payload.run.workerRuntimeServiceAccount == $runtime_sa
+        and .payload.run.schedulerOidcServiceAccount == $cron_sa
+        and .payload.topology.secretReferences == $expected_secrets
+        and .payload.topology.treasuryWatchOnly == {
+          address: $treasury_address,
+          descriptor: $treasury_descriptor,
+          splitTransactionId: $split_txid,
+          preSplitPlanDigest: $split_plan_digest,
+          expectedConfirmedOutputCount: 32,
+          expectedTotalSats: $expected_total_sats,
+          descriptorPolicy: "addr-checksummed-importdescriptors",
+          wifOnNode: false
+        }
+        and (.payload.budget.spendCapUsd | type == "number" and floor == . and . >= 1 and . <= 200)
+        and .payload.teardown.projectedMonthlyRecurringUsd == 0
+      )
+    ' <<<"$verified_json" 2>/dev/null)"; then
+    echo "ERROR: RIG-B1 verified approval does not bind the exact RC/corpus/run/topology/spend/teardown contract." >&2
+    exit 2
+  fi
+  RIG_B1_NODE_APPROVAL_JSON="$verified_json"
+  RIG_B1_APPROVAL_ID="$(jq -r '.payload.approvalId' <<<"$verified_json")"
+  RIG_B1_APPROVAL_ENVELOPE_SHA256="$(jq -r '.envelopeSha256' <<<"$verified_json")"
+  RIG_B1_APPROVAL_PAYLOAD_SHA256="$(jq -r '.signedPayloadSha256' <<<"$verified_json")"
+  RIG_B1_APPROVAL_EXPIRES_AT="$(jq -r '.payload.expiresAt' <<<"$verified_json")"
+  RIG_B1_SPEND_CAP_USD="$(jq -r '.payload.budget.spendCapUsd' <<<"$verified_json")"
+  if ! jq -ne \
+    --arg expires_at "$RIG_B1_APPROVAL_EXPIRES_AT" \
+    --argjson required_wall_min "$REQUIRED_WALL_MIN" '
+      ($expires_at | fromdateiso8601) >= (now + ($required_wall_min * 60))
+    ' >/dev/null 2>&1; then
+    echo "ERROR: RIG-B1 signed authority expires before the complete required soak wall; refusing paid mutation." >&2
+    exit 2
+  fi
+}
+
+verify_b1_required_apis() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 0
+  local enabled api
+  local required=(
+    artifactregistry.googleapis.com
+    cloudscheduler.googleapis.com
+    compute.googleapis.com
+    iam.googleapis.com
+    run.googleapis.com
+    secretmanager.googleapis.com
+    serviceusage.googleapis.com
+    vpcaccess.googleapis.com
+  )
+  if ! enabled="$(gcloud services list --enabled --project="$GCP_PROJECT" \
+    --format='value(config.name)')"; then
+    echo "ERROR: RIG-B1 could not observe required GCP API enablement." >&2
+    exit 2
+  fi
+  for api in "${required[@]}"; do
+    if ! grep -Fx -- "$api" <<<"$enabled" >/dev/null; then
+      echo "ERROR: RIG-B1 required API '$api' is disabled; refusing partial topology creation." >&2
+      exit 2
+    fi
+  done
+}
+
 verify_rig_r_provision_approval_binding() {
   [[ $IS_RIG_R -eq 1 ]] || return 0
   local expected_image_digest expected_full_image_ref verified_json
+  local supabase_url_ref supabase_role_ref stripe_ref webhook_ref hmac_ref cron_ref gemini_ref
+  local endpoint_iam_member
   expected_image_digest="$(image_digest_from_ref "$PINNED_IMAGE")"
   expected_full_image_ref="${APPROVED_SOURCE_IMAGE_REPOSITORY}:${DECLARED_SOURCE_HEAD}@${expected_image_digest}"
+  supabase_url_ref="${SUPABASE_URL_SECRET_NAME}@1"
+  supabase_role_ref="${SUPABASE_SERVICE_ROLE_SECRET_NAME}@1"
+  stripe_ref="${STRIPE_SECRET_KEY_SECRET}@${SHARED_STRIPE_SECRET_VERSION}"
+  webhook_ref="${STRIPE_WEBHOOK_SECRET_SECRET}@${SHARED_STRIPE_WEBHOOK_VERSION}"
+  hmac_ref="${API_KEY_HMAC_SECRET_SECRET}@${SHARED_API_KEY_HMAC_VERSION}"
+  cron_ref="${CRON_SECRET_SECRET}@${SHARED_CRON_SECRET_VERSION}"
+  gemini_ref="${GEMINI_API_KEY_SECRET}@${GEMINI_API_KEY_SECRET_VERSION}"
+  endpoint_iam_member="serviceAccount:${RUNTIME_SA}"
   if [[ -z "$RIG_R_PROVISION_APPROVAL_ARTIFACT" ]]; then
     echo "ERROR: RIG-R immutable provision approval artifact is required." >&2
     exit 2
@@ -971,19 +1416,29 @@ verify_rig_r_provision_approval_binding() {
     --expected-soak-id "$SOAK_ID" \
     --expected-lease-id "$LEASE_ID" \
     --expected-required-wall-min "$REQUIRED_WALL_MIN" \
+    --expected-vertex-endpoint-id "$RIG_R_ENDPOINT_ID" \
     --expected-vertex-endpoint "$RIG_R_VERTEX_ENDPOINT" \
+    --expected-vertex-endpoint-display-name "$RIG_R_ENDPOINT_DISPLAY_NAME" \
     --expected-vertex-model "$RIG_R_VERTEX_MODEL" \
+    --expected-vertex-model-version "$RIG_R_PROTECTED_V6_MODEL_VERSION" \
+    --expected-checkpoint-id "$RIG_R_CHECKPOINT_ID" \
     --expected-deployed-model-id "$RIG_R_DEPLOYED_MODEL_ID" \
+    --expected-deployed-model-display-name "$RIG_R_DEPLOYED_MODEL_DISPLAY_NAME" \
+    --expected-deployment-resources-mode "$RIG_R_DEPLOYMENT_RESOURCES_MODE" \
+    --expected-min-replica-count "$RIG_R_MIN_REPLICA_COUNT" \
+    --expected-max-replica-count "$RIG_R_MAX_REPLICA_COUNT" \
+    --expected-endpoint-iam-role "roles/aiplatform.endpointUser" \
+    --expected-endpoint-iam-member "$endpoint_iam_member" \
     --expected-provision-started-at "$RIG_R_PROVISION_STARTED_AT" \
     --expected-expires-at "$RIG_R_EXPIRES_AT" \
     --expected-teardown-script-sha256 "$DECLARED_RIG_R_TEARDOWN_SHA256" \
-    --expected-supabase-url-secret "$SUPABASE_URL_SECRET_NAME" \
-    --expected-supabase-service-role-secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
-    --expected-stripe-secret-key-secret "$STRIPE_SECRET_KEY_SECRET" \
-    --expected-stripe-webhook-secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
-    --expected-api-key-hmac-secret "$API_KEY_HMAC_SECRET_SECRET" \
-    --expected-cron-secret "$CRON_SECRET_SECRET" \
-    --expected-gemini-api-key-secret "$GEMINI_API_KEY_SECRET" \
+    --expected-supabase-url-secret "$supabase_url_ref" \
+    --expected-supabase-service-role-secret "$supabase_role_ref" \
+    --expected-stripe-secret-key-secret "$stripe_ref" \
+    --expected-stripe-webhook-secret "$webhook_ref" \
+    --expected-api-key-hmac-secret "$hmac_ref" \
+    --expected-cron-secret "$cron_ref" \
+    --expected-gemini-api-key-secret "$gemini_ref" \
     --expected-immutable-ledger-bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET")"; then
     echo "ERROR: RIG-R immutable provision approval verification failed." >&2
     exit 2
@@ -998,21 +1453,30 @@ verify_rig_r_provision_approval_binding() {
     --arg rig_profile "$PROFILE" \
     --arg soak_id "$SOAK_ID" \
     --arg lease_id "$LEASE_ID" \
+    --arg endpoint_id "$RIG_R_ENDPOINT_ID" \
     --arg endpoint "$RIG_R_VERTEX_ENDPOINT" \
+    --arg endpoint_display "$RIG_R_ENDPOINT_DISPLAY_NAME" \
     --arg vertex_model "$RIG_R_VERTEX_MODEL" \
+    --arg vertex_model_version "$RIG_R_PROTECTED_V6_MODEL_VERSION" \
+    --arg checkpoint_id "$RIG_R_CHECKPOINT_ID" \
     --arg deployed_model_id "$RIG_R_DEPLOYED_MODEL_ID" \
+    --arg deployed_model_display "$RIG_R_DEPLOYED_MODEL_DISPLAY_NAME" \
+    --arg deployment_resources_mode "$RIG_R_DEPLOYMENT_RESOURCES_MODE" \
+    --arg endpoint_iam_member "$endpoint_iam_member" \
     --arg provision_started_at "$RIG_R_PROVISION_STARTED_AT" \
     --arg expires_at "$RIG_R_EXPIRES_AT" \
     --arg teardown_sha "$DECLARED_RIG_R_TEARDOWN_SHA256" \
-    --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
-    --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
-    --arg stripe_secret_key_secret "$STRIPE_SECRET_KEY_SECRET" \
-    --arg stripe_webhook_secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
-    --arg api_key_hmac_secret "$API_KEY_HMAC_SECRET_SECRET" \
-    --arg cron_secret "$CRON_SECRET_SECRET" \
-    --arg gemini_api_key_secret "$GEMINI_API_KEY_SECRET" \
+    --arg supabase_url_secret "$supabase_url_ref" \
+    --arg supabase_service_role_secret "$supabase_role_ref" \
+    --arg stripe_secret_key_secret "$stripe_ref" \
+    --arg stripe_webhook_secret "$webhook_ref" \
+    --arg api_key_hmac_secret "$hmac_ref" \
+    --arg cron_secret "$cron_ref" \
+    --arg gemini_api_key_secret "$gemini_ref" \
     --arg immutable_ledger_bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
-    --argjson required_wall_min "$REQUIRED_WALL_MIN" '
+    --argjson required_wall_min "$REQUIRED_WALL_MIN" \
+    --argjson min_replica_count "$RIG_R_MIN_REPLICA_COUNT" \
+    --argjson max_replica_count "$RIG_R_MAX_REPLICA_COUNT" '
       . as $approval
       | (type == "object"
       and ((keys | sort) == ([
@@ -1038,10 +1502,13 @@ verify_rig_r_provision_approval_binding() {
       and (.approvalVerifiedAt | type == "string")
       and (.runtimeVerifiedAt | type == "string")
       and ((.candidate | keys | sort) == ([
-        "deployedModelId", "expiresAt", "imageDigest", "leaseId",
+        "checkpointId", "deployedModelDisplayName", "deployedModelId",
+        "deploymentResourcesMode", "endpointIamMember", "endpointIamRole",
+        "expiresAt", "imageDigest", "leaseId", "maxReplicaCount", "minReplicaCount",
         "immutableLedger", "provisionArtifactSha256", "provisionStartedAt", "requiredWallMin",
         "rigName", "rigProfile", "soakId", "sourceHeadImageRef", "sourceHeadSha",
-        "sourceTreeSha", "teardownScriptSha256", "vertexEndpoint", "vertexModel",
+        "sourceTreeSha", "teardownScriptSha256", "vertexEndpoint", "vertexEndpointDisplayName",
+        "vertexEndpointId", "vertexModel", "vertexModelVersion",
         "secretReferences"
       ] | sort))
       and .candidate.sourceHeadSha == $source_head
@@ -1054,9 +1521,19 @@ verify_rig_r_provision_approval_binding() {
       and .candidate.soakId == $soak_id
       and .candidate.leaseId == $lease_id
       and .candidate.requiredWallMin == $required_wall_min
+      and .candidate.vertexEndpointId == $endpoint_id
       and .candidate.vertexEndpoint == $endpoint
+      and .candidate.vertexEndpointDisplayName == $endpoint_display
       and .candidate.vertexModel == $vertex_model
+      and .candidate.vertexModelVersion == $vertex_model_version
+      and .candidate.checkpointId == $checkpoint_id
       and .candidate.deployedModelId == $deployed_model_id
+      and .candidate.deployedModelDisplayName == $deployed_model_display
+      and .candidate.deploymentResourcesMode == $deployment_resources_mode
+      and .candidate.minReplicaCount == $min_replica_count
+      and .candidate.maxReplicaCount == $max_replica_count
+      and .candidate.endpointIamRole == "roles/aiplatform.endpointUser"
+      and .candidate.endpointIamMember == $endpoint_iam_member
       and .candidate.provisionStartedAt == $provision_started_at
       and .candidate.expiresAt == $expires_at
       and .candidate.teardownScriptSha256 == $teardown_sha
@@ -1092,9 +1569,19 @@ verify_rig_r_provision_approval_binding() {
       and .topology.generatedSecretNames == ["supabase-url-s33-r-staging", "supabase-service-role-key-s33-r-staging"]
       and .topology.secretReferences == .candidate.secretReferences
       and .topology.immutableLedger == .candidate.immutableLedger
+      and .topology.vertexEndpointId == $endpoint_id
       and .topology.vertexEndpoint == $endpoint
+      and .topology.vertexEndpointDisplayName == $endpoint_display
       and .topology.vertexModel == $vertex_model
+      and .topology.vertexModelVersion == $vertex_model_version
+      and .topology.checkpointId == $checkpoint_id
       and .topology.deployedModelId == $deployed_model_id
+      and .topology.deployedModelDisplayName == $deployed_model_display
+      and .topology.deploymentResourcesMode == $deployment_resources_mode
+      and .topology.minReplicaCount == $min_replica_count
+      and .topology.maxReplicaCount == $max_replica_count
+      and .topology.endpointIamRole == "roles/aiplatform.endpointUser"
+      and .topology.endpointIamMember == $endpoint_iam_member
       and .topology.temporaryVertexEndpoint == true
       and .topology.chainMode == "mocked"
       and .topology.inProcessJobs == "disabled"
@@ -1118,9 +1605,7 @@ verify_rig_r_provision_approval_binding() {
         "supabase-secret-pair", "supabase-project", "runtime-iam-service-account",
         "exclusive-lease"
       ]
-      and .teardown.protectedV6Endpoint == "projects/arkova1/locations/us-central1/endpoints/6611494259700793344"
-      and .teardown.protectedV6Model == "projects/arkova1/locations/us-central1/models/6611494259700793344"
-      and .teardown.deleteProtectedV6Endpoint == false
+      and .teardown.protectedV6Model == "projects/270018525501/locations/us-central1/models/6611494259700793344"
       and .teardown.deleteProtectedV6Model == false
       and .teardown.projectedMonthlyRecurringUsd == 0)
       | select(.)
@@ -1136,7 +1621,18 @@ verify_rig_r_provision_approval_binding() {
 verify_g1_spend_approval_binding() {
   [[ $IS_G1_RIG -eq 1 ]] || return 0
   local expected_image_digest verified_json
+  local control_url_ref control_role_ref tuned_url_ref tuned_role_ref
+  local stripe_ref webhook_ref hmac_ref cron_ref gemini_ref
   expected_image_digest="$(image_digest_from_ref "$PINNED_IMAGE")"
+  control_url_ref="${G1_CONTROL_SUPABASE_URL_SECRET}@1"
+  control_role_ref="${G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET}@1"
+  tuned_url_ref="${G1_TUNED_SUPABASE_URL_SECRET}@1"
+  tuned_role_ref="${G1_TUNED_SUPABASE_SERVICE_ROLE_SECRET}@1"
+  stripe_ref="${STRIPE_SECRET_KEY_SECRET}@${SHARED_STRIPE_SECRET_VERSION}"
+  webhook_ref="${STRIPE_WEBHOOK_SECRET_SECRET}@${SHARED_STRIPE_WEBHOOK_VERSION}"
+  hmac_ref="${API_KEY_HMAC_SECRET_SECRET}@${SHARED_API_KEY_HMAC_VERSION}"
+  cron_ref="${CRON_SECRET_SECRET}@${SHARED_CRON_SECRET_VERSION}"
+  gemini_ref="${GEMINI_API_KEY_SECRET}@${GEMINI_API_KEY_SECRET_VERSION}"
   if [[ -z "$G1_SPEND_APPROVAL_ARTIFACT" ]]; then
     echo "ERROR: live RIG-G1 provision requires STAGING_G1_SPEND_APPROVAL_ARTIFACT" >&2
     echo "       pointing to a verified immutable founder/CTO approval envelope." >&2
@@ -1158,22 +1654,36 @@ verify_g1_spend_approval_binding() {
     --expected-rig-id "$RIG_ID" \
     --expected-lease-id "$LEASE_ID" \
     --expected-corpus-digest "$G1_CORPUS_DIGEST" \
+    --expected-endpoint-id "$RIG_G1_ENDPOINT_ID" \
     --expected-endpoint-resource "$GEMINI_TUNED_MODEL_VALUE" \
-    --expected-runtime-service-account "$RUNTIME_SA" \
+    --expected-endpoint-display-name "$RIG_G1_ENDPOINT_DISPLAY_NAME" \
+    --expected-vertex-model-resource "$RIG_G1_CANDIDATE_MODEL_VERSION_RESOURCE" \
+    --expected-checkpoint-id "$RIG_G1_CHECKPOINT_ID" \
+    --expected-deployed-model-id "$RIG_G1_DEPLOYED_MODEL_ID" \
+    --expected-deployed-model-display-name "$RIG_G1_DEPLOYED_MODEL_DISPLAY_NAME" \
+    --expected-deployment-resources-mode "$RIG_G1_DEPLOYMENT_RESOURCES_MODE" \
+    --expected-min-replica-count "$RIG_G1_MIN_REPLICA_COUNT" \
+    --expected-max-replica-count "$RIG_G1_MAX_REPLICA_COUNT" \
+    --expected-control-runtime-service-account "$G1_CONTROL_RUNTIME_SA" \
+    --expected-tuned-runtime-service-account "$G1_TUNED_RUNTIME_SA" \
     --expected-control-service "$G1_CONTROL_SERVICE" \
     --expected-tuned-service "$G1_TUNED_SERVICE" \
+    --expected-control-project-name "$G1_CONTROL_PROJECT_NAME" \
+    --expected-tuned-project-name "$G1_TUNED_PROJECT_NAME" \
+    --expected-control-supabase-url-secret-reference "$control_url_ref" \
+    --expected-control-supabase-service-role-secret-reference "$control_role_ref" \
+    --expected-tuned-supabase-url-secret-reference "$tuned_url_ref" \
+    --expected-tuned-supabase-service-role-secret-reference "$tuned_role_ref" \
     --expected-control-run-id "$G1_CONTROL_RUN_ID" \
     --expected-tuned-run-id "$G1_TUNED_RUN_ID" \
     --expected-control-queue "$G1_CONTROL_QUEUE" \
     --expected-tuned-queue "$G1_TUNED_QUEUE" \
     --expected-paired-cadence-max-min "$G1_PAIRED_CADENCE_MIN" \
-    --expected-supabase-url-secret "$SUPABASE_URL_SECRET_NAME" \
-    --expected-supabase-service-role-secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
-    --expected-stripe-secret-key-secret "$STRIPE_SECRET_KEY_SECRET" \
-    --expected-stripe-webhook-secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
-    --expected-api-key-hmac-secret "$API_KEY_HMAC_SECRET_SECRET" \
-    --expected-cron-secret "$CRON_SECRET_SECRET" \
-    --expected-gemini-api-key-secret "$GEMINI_API_KEY_SECRET" \
+    --expected-stripe-secret-key-reference "$stripe_ref" \
+    --expected-stripe-webhook-secret-reference "$webhook_ref" \
+    --expected-api-key-hmac-secret-reference "$hmac_ref" \
+    --expected-cron-secret-reference "$cron_ref" \
+    --expected-gemini-api-key-secret-reference "$gemini_ref" \
     --expected-immutable-ledger-bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET")"; then
     echo "ERROR: RIG-G1 immutable spend approval verification failed; approval remains unverified." >&2
     exit 2
@@ -1187,23 +1697,37 @@ verify_g1_spend_approval_binding() {
     --arg rig_id "$RIG_ID" \
     --arg lease_id "$LEASE_ID" \
     --arg corpus_digest "$G1_CORPUS_DIGEST" \
+    --arg endpoint_id "$RIG_G1_ENDPOINT_ID" \
     --arg endpoint_resource "$GEMINI_TUNED_MODEL_VALUE" \
-    --arg runtime_service_account "$RUNTIME_SA" \
+    --arg endpoint_display_name "$RIG_G1_ENDPOINT_DISPLAY_NAME" \
+    --arg vertex_model_resource "$RIG_G1_CANDIDATE_MODEL_VERSION_RESOURCE" \
+    --arg checkpoint_id "$RIG_G1_CHECKPOINT_ID" \
+    --arg deployed_model_id "$RIG_G1_DEPLOYED_MODEL_ID" \
+    --arg deployed_model_display_name "$RIG_G1_DEPLOYED_MODEL_DISPLAY_NAME" \
+    --arg deployment_resources_mode "$RIG_G1_DEPLOYMENT_RESOURCES_MODE" \
+    --arg control_runtime_service_account "$G1_CONTROL_RUNTIME_SA" \
+    --arg tuned_runtime_service_account "$G1_TUNED_RUNTIME_SA" \
     --arg control_service "$G1_CONTROL_SERVICE" \
     --arg tuned_service "$G1_TUNED_SERVICE" \
+    --arg control_project_name "$G1_CONTROL_PROJECT_NAME" \
+    --arg tuned_project_name "$G1_TUNED_PROJECT_NAME" \
+    --arg control_supabase_url_secret "$control_url_ref" \
+    --arg control_supabase_service_role_secret "$control_role_ref" \
+    --arg tuned_supabase_url_secret "$tuned_url_ref" \
+    --arg tuned_supabase_service_role_secret "$tuned_role_ref" \
     --arg control_run_id "$G1_CONTROL_RUN_ID" \
     --arg tuned_run_id "$G1_TUNED_RUN_ID" \
     --arg control_queue "$G1_CONTROL_QUEUE" \
     --arg tuned_queue "$G1_TUNED_QUEUE" \
-    --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
-    --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
-    --arg stripe_secret_key_secret "$STRIPE_SECRET_KEY_SECRET" \
-    --arg stripe_webhook_secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
-    --arg api_key_hmac_secret "$API_KEY_HMAC_SECRET_SECRET" \
-    --arg cron_secret "$CRON_SECRET_SECRET" \
-    --arg gemini_api_key_secret "$GEMINI_API_KEY_SECRET" \
+    --arg stripe_secret_key_secret "$stripe_ref" \
+    --arg stripe_webhook_secret "$webhook_ref" \
+    --arg api_key_hmac_secret "$hmac_ref" \
+    --arg cron_secret "$cron_ref" \
+    --arg gemini_api_key_secret "$gemini_ref" \
     --arg immutable_ledger_bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
-    --argjson paired_cadence_max_min "$G1_PAIRED_CADENCE_MIN" '
+    --argjson paired_cadence_max_min "$G1_PAIRED_CADENCE_MIN" \
+    --argjson min_replica_count "$RIG_G1_MIN_REPLICA_COUNT" \
+    --argjson max_replica_count "$RIG_G1_MAX_REPLICA_COUNT" '
       . as $approval
       | (type == "object"
       and ((keys | sort) == ([
@@ -1231,10 +1755,14 @@ verify_g1_spend_approval_binding() {
       and .candidateImageDigest == $image_digest
       and (.scope | type == "object")
       and ((.scope | keys | sort) == ([
-        "controlQueue", "controlRunId", "controlService", "corpusDigest",
-        "endpointResource", "immutableLedger", "leaseId", "pairedCadenceMaxMin",
-        "rigClass", "rigId", "rigName", "rigProfile", "runtimeServiceAccount",
-        "secretReferences", "soakId", "tunedQueue", "tunedRunId", "tunedService"
+        "controlQueue", "controlRunId", "controlRuntimeServiceAccount", "controlService", "corpusDigest",
+        "controlProjectName", "controlSupabaseServiceRoleSecret", "controlSupabaseUrlSecret",
+        "checkpointId", "deployedModelDisplayName", "deployedModelId", "deploymentResourcesMode", "endpointDisplayName", "endpointId", "endpointResource",
+        "immutableLedger", "leaseId", "maxReplicaCount", "minReplicaCount", "pairedCadenceMaxMin",
+        "rigClass", "rigId", "rigName", "rigProfile",
+        "secretReferences", "soakId", "tunedProjectName", "tunedQueue", "tunedRunId",
+        "tunedRuntimeServiceAccount", "tunedService", "tunedSupabaseServiceRoleSecret", "tunedSupabaseUrlSecret",
+        "vertexModelResource"
       ] | sort))
       and .scope.rigClass == "RIG-G1"
       and .scope.rigName == $rig_name
@@ -1243,18 +1771,32 @@ verify_g1_spend_approval_binding() {
       and .scope.rigId == $rig_id
       and .scope.leaseId == $lease_id
       and .scope.corpusDigest == $corpus_digest
+      and .scope.endpointId == $endpoint_id
       and .scope.endpointResource == $endpoint_resource
-      and .scope.runtimeServiceAccount == $runtime_service_account
+      and .scope.endpointDisplayName == $endpoint_display_name
+      and .scope.vertexModelResource == $vertex_model_resource
+      and .scope.checkpointId == $checkpoint_id
+      and .scope.deployedModelId == $deployed_model_id
+      and .scope.deployedModelDisplayName == $deployed_model_display_name
+      and .scope.deploymentResourcesMode == $deployment_resources_mode
+      and .scope.minReplicaCount == $min_replica_count
+      and .scope.maxReplicaCount == $max_replica_count
+      and .scope.controlRuntimeServiceAccount == $control_runtime_service_account
+      and .scope.tunedRuntimeServiceAccount == $tuned_runtime_service_account
       and .scope.controlService == $control_service
       and .scope.tunedService == $tuned_service
+      and .scope.controlProjectName == $control_project_name
+      and .scope.tunedProjectName == $tuned_project_name
+      and .scope.controlSupabaseUrlSecret == $control_supabase_url_secret
+      and .scope.controlSupabaseServiceRoleSecret == $control_supabase_service_role_secret
+      and .scope.tunedSupabaseUrlSecret == $tuned_supabase_url_secret
+      and .scope.tunedSupabaseServiceRoleSecret == $tuned_supabase_service_role_secret
       and .scope.controlRunId == $control_run_id
       and .scope.tunedRunId == $tuned_run_id
       and .scope.controlQueue == $control_queue
       and .scope.tunedQueue == $tuned_queue
       and .scope.pairedCadenceMaxMin == $paired_cadence_max_min
       and .scope.secretReferences == {
-        supabaseUrl: $supabase_url_secret,
-        supabaseServiceRoleKey: $supabase_service_role_secret,
         stripeSecretKey: $stripe_secret_key_secret,
         stripeWebhookSecret: $stripe_webhook_secret,
         apiKeyHmacSecret: $api_key_hmac_secret,
@@ -1267,9 +1809,9 @@ verify_g1_spend_approval_binding() {
         projectId: "arkova1",
         requiresPerObjectRetention: true
       }
-      and .isolatedSupabaseProjectCount == 3
+      and .isolatedSupabaseProjectCount == 4
       and .isolatedSupabaseProjectMonthlyEachUsd == 10
-      and .isolatedSupabaseProjectsMonthlyTotalUsd == 30
+      and .isolatedSupabaseProjectsMonthlyTotalUsd == 40
       and (.g1VariableComputeModelCapUsd | type == "number" and floor == . and . > 0 and . <= 170)
       and .s33TotalCapUsd == 200
       and (.ownerIdentity | type == "string" and length > 0)
@@ -1317,7 +1859,7 @@ verify_g1_spend_approval_binding() {
 }
 
 verify_immutable_authority_ledger_capability() {
-  if [[ $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then
+  if [[ $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 && "$RIG_ID" != "RIG-B1" ]]; then
     return 0
   fi
   local bucket_uri bucket_metadata
@@ -1359,6 +1901,89 @@ verify_immutable_authority_ledger_capability() {
         per_object_retention_verified: true
       }
     ')"
+}
+
+claim_b1_node_approval_once() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 0
+  local object_name object_uri claim_payload claim_temp observed_json
+  object_name="${RIG_B1_APPROVAL_LEDGER_PREFIX}/${RIG_B1_APPROVAL_ID}.json"
+  object_uri="gs://${IMMUTABLE_AUTHORITY_LEDGER_BUCKET}/${object_name}"
+  claim_payload="$(jq -nc \
+    --arg approval_id "$RIG_B1_APPROVAL_ID" \
+    --arg envelope_sha "$RIG_B1_APPROVAL_ENVELOPE_SHA256" \
+    --arg payload_sha "$RIG_B1_APPROVAL_PAYLOAD_SHA256" \
+    --arg source_head "$DECLARED_SOURCE_HEAD" \
+    --arg source_tree "$RIG_B1_CANDIDATE_TREE_SHA" \
+    --arg corpus_digest "$RIG_B1_CORPUS_DIGEST" \
+    --arg rc_id "$RIG_B1_RELEASE_CANDIDATE_ID" \
+    --arg soak_id "$SOAK_ID" --arg lease_id "$LEASE_ID" \
+    --arg claimed_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+    --argjson spend_cap_usd "$RIG_B1_SPEND_CAP_USD" '
+      {
+        schemaVersion: "arkova.s33.rig-b1.node-approval-claim/v1",
+        approvalId: $approval_id,
+        envelopeSha256: $envelope_sha,
+        signedPayloadSha256: $payload_sha,
+        sourceHeadSha: $source_head,
+        sourceTreeSha: $source_tree,
+        corpusDigest: $corpus_digest,
+        releaseCandidateId: $rc_id,
+        soakId: $soak_id,
+        leaseId: $lease_id,
+        spendCapUsd: $spend_cap_usd,
+        claimedAt: $claimed_at
+      }
+    ')" || {
+      echo "ERROR: RIG-B1 could not construct its immutable approval claim." >&2
+      exit 2
+    }
+  umask 077
+  claim_temp="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/arkova-b1-approval-claim.XXXXXX")"
+  if ! printf '%s\n' "$claim_payload" >"$claim_temp"; then
+    rm -f -- "$claim_temp"
+    echo "ERROR: RIG-B1 could not stage its immutable approval claim." >&2
+    exit 2
+  fi
+  if ! gcloud storage cp "$claim_temp" "$object_uri" \
+    --project="$GCP_PROJECT" --if-generation-match=0 \
+    --content-type=application/json \
+    --retain-until="$RIG_B1_APPROVAL_EXPIRES_AT" --retention-mode=Locked --quiet; then
+    rm -f -- "$claim_temp"
+    echo "ERROR: RIG-B1 approval is already claimed; replay and concurrent spend are forbidden." >&2
+    exit 2
+  fi
+  rm -f -- "$claim_temp"
+  if ! observed_json="$(gcloud storage objects describe "$object_uri" \
+    --project="$GCP_PROJECT" --raw --format=json)" \
+    || ! jq -e --arg bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
+      --arg name "$object_name" --arg expires_at "$RIG_B1_APPROVAL_EXPIRES_AT" '
+        type == "object"
+        and .bucket == $bucket
+        and .name == $name
+        and (.generation | tostring | test("^[1-9][0-9]*$"))
+        and .retention.mode == "Locked"
+        and .retention.retainUntilTime >= $expires_at
+      ' >/dev/null 2>&1 <<<"$observed_json"; then
+    echo "ERROR: RIG-B1 immutable approval claim could not be re-observed exactly." >&2
+    exit 2
+  fi
+  RIG_B1_APPROVAL_CLAIM_JSON="$(jq -nc \
+    --arg object_uri "$object_uri" \
+    --arg generation "$(jq -r '.generation | tostring' <<<"$observed_json")" \
+    --arg approval_id "$RIG_B1_APPROVAL_ID" \
+    --arg envelope_sha "$RIG_B1_APPROVAL_ENVELOPE_SHA256" \
+    --arg payload_sha "$RIG_B1_APPROVAL_PAYLOAD_SHA256" '
+      {
+        status: "CLAIMED",
+        backend: "gcs-if-generation-match-0-locked-retention",
+        object_uri: $object_uri,
+        generation: $generation,
+        approval_id: $approval_id,
+        envelope_sha256: $envelope_sha,
+        signed_payload_sha256: $payload_sha
+      }
+    ')"
+  RIG_B1_APPROVAL_CLAIMED=1
 }
 
 claim_g1_spend_approval_once() {
@@ -1592,8 +2217,7 @@ claim_rig_r_provision_approval_once() {
 
 claim_rig_r_lease_once() {
   [[ $IS_RIG_R -eq 1 ]] || return 0
-  local lease_payload lease_temp lease_name observed_json
-  lease_name="${RIG_R_LEASE_PREFIX}/${LEASE_ID}.json"
+  local lease_payload lease_temp observed_json
   lease_payload="$(jq -nc \
     --arg lease_id "$LEASE_ID" \
     --arg rig_id "$RIG_ID" \
@@ -1643,8 +2267,6 @@ claim_rig_r_lease_once() {
     --project="$GCP_PROJECT" \
     --if-generation-match=0 \
     --content-type=application/json \
-    --retain-until="$RIG_R_EXPIRES_AT" \
-    --retention-mode=Locked \
     --quiet; then
     rm -f -- "$lease_temp"
     echo "ERROR: RIG-R exclusive lease '$LEASE_ID' is already held or its ledger is unavailable." >&2
@@ -1653,23 +2275,53 @@ claim_rig_r_lease_once() {
   rm -f -- "$lease_temp"
   if ! observed_json="$(gcloud storage objects describe "$RIG_R_LEASE_URI" \
     --project="$GCP_PROJECT" --raw --format=json)" \
-    || ! jq -e --arg bucket "$RIG_R_LEASE_BUCKET" --arg name "$lease_name" \
-      --arg expires_at "$RIG_R_EXPIRES_AT" '
-      def utc_epoch:
-        sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+    || ! jq -e --arg bucket "$RIG_R_LEASE_BUCKET" --arg name "$RIG_R_LEASE_OBJECT_NAME" '
       type == "object"
       and .bucket == $bucket
       and .name == $name
       and (.generation | tostring | test("^[1-9][0-9]*$"))
-      and (.retention | type == "object")
-      and .retention.mode == "Locked"
-      and (.retention.retainUntilTime | type == "string")
-      and ((.retention.retainUntilTime | utc_epoch) >= ($expires_at | utc_epoch))
     ' >/dev/null 2>&1 <<<"$observed_json"; then
     echo "ERROR: RIG-R exclusive lease could not be re-observed exactly." >&2
     exit 2
   fi
+  RIG_R_LEASE_GENERATION="$(jq -r '.generation | tostring' <<<"$observed_json")"
   RIG_R_LEASE_CLAIMED=1
+}
+
+release_owned_rig_r_lease() {
+  [[ $RIG_R_LEASE_CLAIMED -eq 1 ]] || return 0
+  local lease_payload
+  if [[ ! "$RIG_R_LEASE_GENERATION" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: refusing to release RIG-R mutex without its observed generation." >&2
+    return 1
+  fi
+  if ! lease_payload="$(gcloud storage cat "${RIG_R_LEASE_URI}#${RIG_R_LEASE_GENERATION}" \
+    --project="$GCP_PROJECT" 2>/dev/null)" \
+    || ! jq -e \
+      --arg lease_id "$LEASE_ID" \
+      --arg candidate_head "$DECLARED_SOURCE_HEAD" \
+      --arg candidate_tree "$RIG_R_CANDIDATE_TREE_SHA" \
+      --arg endpoint "$RIG_R_VERTEX_ENDPOINT" '
+        type == "object"
+        and .schemaVersion == "arkova.s33.rig-r.exclusive-lease/v1"
+        and .leaseId == $lease_id
+        and .rigId == "RIG-R"
+        and .rigName == "s33-r"
+        and .candidateHeadSha == $candidate_head
+        and .candidateTreeSha == $candidate_tree
+        and .vertexEndpoint == $endpoint
+      ' >/dev/null 2>&1 <<<"$lease_payload"; then
+    echo "ERROR: refusing to release a RIG-R mutex not owned by this exact invocation." >&2
+    return 1
+  fi
+  if ! gcloud storage rm "${RIG_R_LEASE_URI}#${RIG_R_LEASE_GENERATION}" \
+    --project="$GCP_PROJECT" \
+    --if-generation-match="$RIG_R_LEASE_GENERATION"; then
+    echo "ERROR: generation-bound RIG-R mutex release failed." >&2
+    return 1
+  fi
+  RIG_R_LEASE_CLAIMED=0
+  RIG_R_LEASE_GENERATION=""
 }
 
 for denied in "${DENIED_CLOUD_RUN_SERVICES[@]}"; do
@@ -1740,7 +2392,14 @@ if [[ $APPLY -eq 1 ]]; then
     echo "       pointing to the immutable founder/CTO Ed25519 approval envelope." >&2
     exit 2
   fi
-  if [[ -z "$SUPABASE_DB_PASSWORD" ]]; then
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    if [[ ${#G1_CONTROL_DB_PASSWORD} -lt 16 || ${#G1_TUNED_DB_PASSWORD} -lt 16 \
+      || "$G1_CONTROL_DB_PASSWORD" == "$G1_TUNED_DB_PASSWORD" ]]; then
+      echo "ERROR: live RIG-G1 requires distinct bounded STAGING_G1_A_SUPABASE_DB_PASSWORD and STAGING_G1_B_SUPABASE_DB_PASSWORD values." >&2
+      echo "       The two physical project credentials remain in memory only and are never logged or persisted." >&2
+      exit 2
+    fi
+  elif [[ -z "$SUPABASE_DB_PASSWORD" ]]; then
     echo "ERROR: live provision requires STAGING_NEW_SUPABASE_DB_PASSWORD to create the Supabase project." >&2
     echo "       Generate/provide it through the operator secret path; it is never printed by this script." >&2
     exit 2
@@ -1864,8 +2523,8 @@ if [[ $APPLY -eq 1 ]]; then
   # RIG-B1 is the pre-declared signet broadcast/drain rig. Never let the
   # generic chain defaults silently turn it into a mainnet or under-floor run.
   if [[ "$RIG_ID" == "RIG-B1" ]]; then
-    if [[ $GETBLOCK_RPC_URL_SECRET_WAS_EXPLICIT -ne 1 \
-      || $GETBLOCK_RPC_AUTH_SECRET_WAS_EXPLICIT -ne 1 \
+    if [[ $BITCOIN_CORE_RPC_URL_SECRET_WAS_EXPLICIT -ne 1 \
+      || $BITCOIN_CORE_RPC_AUTH_SECRET_WAS_EXPLICIT -ne 1 \
       || $TREASURY_WIF_SECRET_WAS_EXPLICIT -ne 1 \
       || $STRIPE_SECRET_KEY_SECRET_WAS_EXPLICIT -ne 1 \
       || $STRIPE_WEBHOOK_SECRET_SECRET_WAS_EXPLICIT -ne 1 \
@@ -1878,8 +2537,8 @@ if [[ $APPLY -eq 1 ]]; then
       exit 2
     fi
     RIG_B1_SECRET_NAMES=(
-      "$GETBLOCK_RPC_URL_SECRET"
-      "$GETBLOCK_RPC_AUTH_SECRET"
+      "$BITCOIN_CORE_RPC_URL_SECRET"
+      "$BITCOIN_CORE_RPC_AUTH_SECRET"
       "$TREASURY_WIF_SECRET"
       "$STRIPE_SECRET_KEY_SECRET"
       "$STRIPE_WEBHOOK_SECRET_SECRET"
@@ -1907,7 +2566,7 @@ if [[ $APPLY -eq 1 ]]; then
       exit 2
     fi
     if [[ ! "$CRON_OIDC_SA" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT}[.]iam[.]gserviceaccount[.]com$ \
-      || "$CRON_OIDC_SA" != *rig-b1* ]]; then
+      || "$CRON_OIDC_SA" != *rig-b1* || "$CRON_OIDC_SA" == "$RUNTIME_SA" ]]; then
       echo "ERROR: RIG-B1 Scheduler OIDC identity must be an explicit per-rig service account in '$GCP_PROJECT'." >&2
       exit 2
     fi
@@ -1927,10 +2586,43 @@ if [[ $APPLY -eq 1 ]]; then
       echo "ERROR: RIG-B1 requires exact STAGING_KMS_PROVIDER=gcp; got '$KMS_PROVIDER_VALUE'." >&2
       exit 2
     fi
-    if [[ "$BITCOIN_UTXO_PROVIDER_VALUE" != "getblock" ]]; then
-      echo "ERROR: RIG-B1 requires exact STAGING_BITCOIN_UTXO_PROVIDER=getblock; got '$BITCOIN_UTXO_PROVIDER_VALUE'." >&2
+    if [[ "$BITCOIN_UTXO_PROVIDER_VALUE" != "rpc" ]]; then
+      echo "ERROR: RIG-B1 requires exact STAGING_BITCOIN_UTXO_PROVIDER=rpc; got '$BITCOIN_UTXO_PROVIDER_VALUE'." >&2
       exit 2
     fi
+    if [[ "$BITCOIN_CORE_RPC_URL_SECRET" != "arkova-s33-rig-b1-bitcoin-core-signet-rpc-url" \
+      || "$BITCOIN_CORE_RPC_AUTH_SECRET" != "arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth" \
+      || "$TREASURY_WIF_SECRET" != "arkova-s33-rig-b1-treasury-wif-signet" ]]; then
+      echo "ERROR: RIG-B1 requires the exact Bitcoin-Core-signet URL/auth and worker-only WIF secret identities." >&2
+      exit 2
+    fi
+    if [[ "$RIG_B1_BITCOIN_CORE_IMAGE" != "$RIG_B1_EXPECTED_BITCOIN_CORE_IMAGE" ]]; then
+      echo "ERROR: RIG-B1 requires the exact reviewed Bitcoin Core image digest '$RIG_B1_EXPECTED_BITCOIN_CORE_IMAGE'; substitutions are forbidden." >&2
+      exit 2
+    fi
+    if [[ -z "$RIG_B1_NODE_APPROVAL_ARTIFACT" \
+      || ! "$RIG_B1_CORPUS_DIGEST" =~ ^sha256:[0-9a-f]{64}$ \
+      || ! "$RIG_B1_RELEASE_CANDIDATE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$ \
+      || ! "$RIG_B1_TREASURY_ADDRESS" =~ ^tb1[a-z0-9]{20,87}$ \
+      || ! "$RIG_B1_TREASURY_DESCRIPTOR" =~ ^addr\(${RIG_B1_TREASURY_ADDRESS}\)#[a-z0-9]{8}$ \
+      || "$RIG_B1_TREASURY_SPLIT_PLAN_DIGEST" != "sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8" \
+      || "$RIG_B1_TREASURY_EXPECTED_TOTAL_SATS" != "$RIG_B1_TREASURY_TOTAL_SATS" ]]; then
+      echo "ERROR: RIG-B1 requires its signed approval plus exact corpus, RC, public descriptor, pre-split digest, and 169639-sat treasury total." >&2
+      exit 2
+    fi
+    for rig_b1_secret_version in \
+      "$RIG_B1_RPC_URL_SECRET_VERSION" \
+      "$RIG_B1_RPC_AUTH_SECRET_VERSION" \
+      "$RIG_B1_TREASURY_WIF_SECRET_VERSION" \
+      "$RIG_B1_STRIPE_SECRET_KEY_VERSION" \
+      "$RIG_B1_STRIPE_WEBHOOK_SECRET_VERSION" \
+      "$RIG_B1_API_KEY_HMAC_SECRET_VERSION" \
+      "$RIG_B1_CRON_SECRET_VERSION"; do
+      if [[ ! "$rig_b1_secret_version" =~ ^[1-9][0-9]*$ ]]; then
+        echo "ERROR: RIG-B1 requires exact numeric Secret Manager versions for every worker/node secret." >&2
+        exit 2
+      fi
+    done
     if [[ "$FRONTEND_URL_VALUE" != "https://app.arkova.ai" ]]; then
       echo "ERROR: RIG-B1 requires exact STAGING_FRONTEND_URL=https://app.arkova.ai; got '$FRONTEND_URL_VALUE'." >&2
       exit 2
@@ -1982,6 +2674,14 @@ if [[ $APPLY -eq 1 ]]; then
     exit 2
   fi
   VALIDATED_BASE_SHA="$EXPECTED_BASE_SHA"
+  if [[ "$RIG_ID" == "RIG-B1" ]]; then
+    RIG_B1_CANDIDATE_TREE_SHA="$(trusted_git -C "$TRUSTED_REPO_ROOT" rev-parse \
+      "${DECLARED_SOURCE_HEAD}^{tree}" 2>/dev/null || true)"
+    if [[ ! "$RIG_B1_CANDIDATE_TREE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+      echo "ERROR: RIG-B1 could not bind the exact candidate source tree." >&2
+      exit 2
+    fi
+  fi
   if [[ $IS_RIG_R -eq 1 ]]; then
     OBSERVED_RIG_R_TREE_SHA="$(trusted_git -C "$TRUSTED_REPO_ROOT" rev-parse \
       "${DECLARED_SOURCE_HEAD}^{tree}" 2>/dev/null || true)"
@@ -1992,10 +2692,11 @@ if [[ $APPLY -eq 1 ]]; then
     verify_rig_r_provision_approval_binding
   fi
   verify_source_head_image_digest
-  verify_g1_candidate_endpoint_binding
-  verify_rig_r_candidate_endpoint_binding
+  verify_b1_node_approval_binding
+  verify_b1_required_apis
   verify_g1_spend_approval_binding
   verify_immutable_authority_ledger_capability
+  verify_temporary_rig_targets_absent
 fi
 
 # ---------------------------------------------------------------------------
@@ -2003,7 +2704,7 @@ fi
 #
 # WORKER_ENV_VARS — comma-joined KEY=VALUE for --set-env-vars (non-secrets only:
 #                   flags, model names, a public URL — never credentials).
-# WORKER_SECRETS  — comma-joined KEY=secret-name:latest for --set-secrets.
+# WORKER_SECRETS  — comma-joined KEY=secret-name:version for --set-secrets.
 #
 # EVERY profile wires the boot-critical secrets so config.ts's Zod superRefine
 # (STRIPE_*, API_KEY_HMAC_SECRET, CRON_SECRET, FRONTEND_URL) does not crash-loop
@@ -2024,17 +2725,42 @@ BASE_ENV_VARS=(
 # Base secrets every rig gets: the NEW project's own Supabase creds PLUS the
 # boot-critical Stripe / HMAC / cron secrets (config.ts fails closed without them
 # in production, regardless of USE_MOCKS).
+SUPABASE_SECRET_VERSION="latest"
+STRIPE_SECRET_VERSION="latest"
+STRIPE_WEBHOOK_VERSION="latest"
+API_KEY_HMAC_VERSION="latest"
+CRON_SECRET_VERSION="latest"
+if [[ "$RIG_ID" == "RIG-B1" ]]; then
+  SUPABASE_SECRET_VERSION="1"
+  STRIPE_SECRET_VERSION="$RIG_B1_STRIPE_SECRET_KEY_VERSION"
+  STRIPE_WEBHOOK_VERSION="$RIG_B1_STRIPE_WEBHOOK_SECRET_VERSION"
+  API_KEY_HMAC_VERSION="$RIG_B1_API_KEY_HMAC_SECRET_VERSION"
+  CRON_SECRET_VERSION="$RIG_B1_CRON_SECRET_VERSION"
+elif [[ $IS_G1_RIG -eq 1 || $IS_RIG_R -eq 1 ]]; then
+  SUPABASE_SECRET_VERSION="1"
+  STRIPE_SECRET_VERSION="$SHARED_STRIPE_SECRET_VERSION"
+  STRIPE_WEBHOOK_VERSION="$SHARED_STRIPE_WEBHOOK_VERSION"
+  API_KEY_HMAC_VERSION="$SHARED_API_KEY_HMAC_VERSION"
+  CRON_SECRET_VERSION="$SHARED_CRON_SECRET_VERSION"
+fi
 BASE_SECRETS=(
-  "SUPABASE_URL=supabase-url-${NAME}-staging:latest"
-  "SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key-${NAME}-staging:latest"
-  "STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY_SECRET}:latest"
-  "STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET_SECRET}:latest"
-  "API_KEY_HMAC_SECRET=${API_KEY_HMAC_SECRET_SECRET}:latest"
-  "CRON_SECRET=${CRON_SECRET_SECRET}:latest"
+  "SUPABASE_URL=${SUPABASE_URL_SECRET_NAME}:${SUPABASE_SECRET_VERSION}"
+  "SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_SECRET_NAME}:${SUPABASE_SECRET_VERSION}"
+  "STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY_SECRET}:${STRIPE_SECRET_VERSION}"
+  "STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET_SECRET}:${STRIPE_WEBHOOK_VERSION}"
+  "API_KEY_HMAC_SECRET=${API_KEY_HMAC_SECRET_SECRET}:${API_KEY_HMAC_VERSION}"
+  "CRON_SECRET=${CRON_SECRET_SECRET}:${CRON_SECRET_VERSION}"
 )
 
 ENV_VARS=("${BASE_ENV_VARS[@]}")
 SECRETS=("${BASE_SECRETS[@]}")
+CLOUD_RUN_NETWORK_ARGS=()
+if [[ "$RIG_ID" == "RIG-B1" ]]; then
+  CLOUD_RUN_NETWORK_ARGS=(
+    "--vpc-connector=${RIG_B1_NODE_VPC_CONNECTOR}"
+    "--vpc-egress=private-ranges-only"
+  )
+fi
 G1_CONTROL_ENV_VARS=()
 G1_TUNED_ENV_VARS=()
 USE_MOCKS_VALUE=""
@@ -2059,7 +2785,7 @@ case "$PROFILE" in
     ;;
   chain)
     # Real anchoring. USE_MOCKS off + prod-network on + KMS_PROVIDER + signer +
-    # GetBlock RPC. config.ts superRefine requires KMS_PROVIDER + a signer when
+    # Bitcoin Core Signet RPC. config.ts superRefine requires KMS_PROVIDER + a signer when
     # mainnet anchoring is on, or the worker fails closed at boot (by design).
     USE_MOCKS_VALUE="false"
     ENABLE_PROD_NETWORK_ANCHORING_VALUE="true"
@@ -2073,10 +2799,13 @@ case "$PROFILE" in
       "BITCOIN_NETWORK=${BITCOIN_NETWORK_VALUE}"
       "BITCOIN_UTXO_PROVIDER=${BITCOIN_UTXO_PROVIDER_VALUE}"
     )
+    if [[ "$RIG_ID" == "RIG-B1" ]]; then
+      ENV_VARS+=("MEMPOOL_API_URL=${RIG_B1_MEMPOOL_SIGNET_API_URL}")
+    fi
     SECRETS+=(
-      "BITCOIN_RPC_URL=${GETBLOCK_RPC_URL_SECRET}:latest"
-      "BITCOIN_RPC_AUTH=${GETBLOCK_RPC_AUTH_SECRET}:latest"
-      "BITCOIN_TREASURY_WIF=${TREASURY_WIF_SECRET}:latest"
+      "BITCOIN_RPC_URL=${BITCOIN_CORE_RPC_URL_SECRET}:${RIG_B1_RPC_URL_SECRET_VERSION:-latest}"
+      "BITCOIN_RPC_AUTH=${BITCOIN_CORE_RPC_AUTH_SECRET}:${RIG_B1_RPC_AUTH_SECRET_VERSION:-latest}"
+      "BITCOIN_TREASURY_WIF=${TREASURY_WIF_SECRET}:${RIG_B1_TREASURY_WIF_SECRET_VERSION:-latest}"
     )
     ;;
   gemini)
@@ -2119,7 +2848,7 @@ case "$PROFILE" in
         "GEMINI_V6_PROMPT=${GEMINI_V6_PROMPT_VALUE}"
       )
     fi
-    SECRETS+=("GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:latest")
+    SECRETS+=("GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:${GEMINI_API_KEY_SECRET_VERSION}")
     ;;
   gemini-release)
     # RIG-R invokes the release driver directly. It has no Cloud Scheduler,
@@ -2141,9 +2870,11 @@ case "$PROFILE" in
       "ENABLE_RULES_ENGINE=false"
       "ENABLE_RULE_ACTION_DISPATCHER=false"
     )
-    SECRETS+=("GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:latest")
+    SECRETS+=("GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:${GEMINI_API_KEY_SECRET_VERSION}")
     ;;
 esac
+
+EXPECTED_REVISION_SECRETS=("${SECRETS[@]}")
 
 # Join arrays into the comma-delimited forms gcloud expects.
 join_by_comma() {
@@ -2153,8 +2884,30 @@ join_by_comma() {
 WORKER_ENV_VARS="$(join_by_comma "${ENV_VARS[@]}")"
 WORKER_SECRETS="$(join_by_comma "${SECRETS[@]}")"
 G1_TUNED_WORKER_ENV_VARS=""
+G1_CONTROL_WORKER_SECRETS=""
+G1_TUNED_WORKER_SECRETS=""
 if [[ $IS_G1_RIG -eq 1 ]]; then
   G1_TUNED_WORKER_ENV_VARS="$(join_by_comma "${G1_TUNED_ENV_VARS[@]}")"
+  G1_CONTROL_SECRET_ENTRIES=()
+  G1_TUNED_SECRET_ENTRIES=()
+  for g1_secret_entry in "${SECRETS[@]}"; do
+    case "$g1_secret_entry" in
+      SUPABASE_URL=*)
+        G1_CONTROL_SECRET_ENTRIES+=("SUPABASE_URL=${G1_CONTROL_SUPABASE_URL_SECRET}:${SUPABASE_SECRET_VERSION}")
+        G1_TUNED_SECRET_ENTRIES+=("SUPABASE_URL=${G1_TUNED_SUPABASE_URL_SECRET}:${SUPABASE_SECRET_VERSION}")
+        ;;
+      SUPABASE_SERVICE_ROLE_KEY=*)
+        G1_CONTROL_SECRET_ENTRIES+=("SUPABASE_SERVICE_ROLE_KEY=${G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET}:${SUPABASE_SECRET_VERSION}")
+        G1_TUNED_SECRET_ENTRIES+=("SUPABASE_SERVICE_ROLE_KEY=${G1_TUNED_SUPABASE_SERVICE_ROLE_SECRET}:${SUPABASE_SECRET_VERSION}")
+        ;;
+      *)
+        G1_CONTROL_SECRET_ENTRIES+=("$g1_secret_entry")
+        G1_TUNED_SECRET_ENTRIES+=("$g1_secret_entry")
+        ;;
+    esac
+  done
+  G1_CONTROL_WORKER_SECRETS="$(join_by_comma "${G1_CONTROL_SECRET_ENTRIES[@]}")"
+  G1_TUNED_WORKER_SECRETS="$(join_by_comma "${G1_TUNED_SECRET_ENTRIES[@]}")"
 fi
 
 # gcloud's mapping flags use comma as their default entry delimiter. Reject
@@ -2183,6 +2936,8 @@ if [[ $APPLY -eq 1 ]]; then
   validate_gcloud_mapping_entries "environment" "${ENV_VARS[@]}"
   if [[ $IS_G1_RIG -eq 1 ]]; then
     validate_gcloud_mapping_entries "tuned-arm environment" "${G1_TUNED_ENV_VARS[@]}"
+    validate_gcloud_mapping_entries "control-arm secret" "${G1_CONTROL_SECRET_ENTRIES[@]}"
+    validate_gcloud_mapping_entries "tuned-arm secret" "${G1_TUNED_SECRET_ENTRIES[@]}"
   fi
   validate_gcloud_mapping_entries "secret" "${SECRETS[@]}"
 fi
@@ -2197,8 +2952,25 @@ CREATED_PROJECT_REF=""
 CREATED_CLOUD_RUN_SERVICE=0
 CREATED_SUPABASE_SECRETS=0
 CREATED_RUNTIME_SA=0
+CREATED_G1_CONTROL_RUNTIME_SA=0
+CREATED_G1_TUNED_RUNTIME_SA=0
+CREATED_G1_VERTEX_ENDPOINT=0
+CREATED_RIG_R_VERTEX_ENDPOINT=0
+G1_CONTROL_RUNTIME_SA_UNIQUE_ID="<captured-rig-g1-a-runtime-unique-id>"
+G1_TUNED_RUNTIME_SA_UNIQUE_ID="<captured-rig-g1-b-runtime-unique-id>"
+G1_ENDPOINT_RESOURCE="$GEMINI_TUNED_MODEL_VALUE"
+G1_OBSERVED_DEPLOYED_MODEL_ID=""
+G1_PREDICT_PROBE_AT="<captured-preclock-authenticated-generateContent-probe>"
+RIG_R_PREDICT_PROBE_AT="<captured-preclock-authenticated-generateContent-probe>"
+EXPECTED_RUNTIME_SA_FOR_REVISION="$RUNTIME_SA"
 PREFLIGHT_JSON=""
 PREFLIGHT_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/clean-mirror-preflight-${NAME}.json"
+G1_CONTROL_PREFLIGHT_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/clean-mirror-preflight-${NAME}-a.json"
+G1_TUNED_PREFLIGHT_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/clean-mirror-preflight-${NAME}-b.json"
+G1_CONTROL_CLEAN_MIRROR_ATTESTATION_ID="<captured-rig-g1-a-clean-mirror>"
+G1_TUNED_CLEAN_MIRROR_ATTESTATION_ID="<captured-rig-g1-b-clean-mirror>"
+G1_CONTROL_PREFLIGHT_VERIFIED_AT="<captured-rig-g1-a-clean-mirror-time>"
+G1_TUNED_PREFLIGHT_VERIFIED_AT="<captured-rig-g1-b-clean-mirror-time>"
 PREFLIGHT_VERIFIED_AT="<captured-after-clean_mirror>"
 CLEAN_MIRROR_ATTESTATION_ID="<sha256-of-sanitized-clean_mirror-artifact>"
 DEPLOYED_REVISION="<captured-after-deploy>"
@@ -2212,6 +2984,9 @@ G1_CONTROL_DEPLOYED_REVISION="<captured-after-public-control-deploy>"
 G1_TUNED_DEPLOYED_REVISION="<captured-after-tuned-deploy>"
 G1_CONTROL_TAG_URL="<captured-cloud-run-url-for-${G1_CONTROL_SERVICE:-public-control-arm}>"
 G1_TUNED_TAG_URL="<captured-cloud-run-url-for-${G1_TUNED_SERVICE:-tuned-arm}>"
+G1_CONTROL_DEPLOYED_AT="<captured-after-rig-g1-a-deploy>"
+G1_TUNED_DEPLOYED_AT="<captured-after-rig-g1-b-deploy>"
+G1_PAIRED_DEPLOY_DELTA_SECONDS="<verified-at-most-1800>"
 if [[ $IS_G1_RIG -eq 1 ]]; then
   CLOUD_RUN_SERVICE_CANDIDATES_JSON="$(jq -nc \
     --arg control "$G1_CONTROL_SERVICE" \
@@ -2236,9 +3011,15 @@ SCHEDULER_FAILURE_CONTAINMENT_ARMED=0
 teardown_command_for_project_ref() {
   local project_ref="$1"
   if [[ $IS_G1_RIG -eq 1 ]]; then
-    printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME} --service ${G1_CONTROL_SERVICE} --service ${G1_TUNED_SERVICE}"
+    if [[ "$project_ref" == "$G1_TUNED_PROJECT_REF" ]]; then
+      printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME}-b --rig-id RIG-G1-B --service ${G1_TUNED_SERVICE} --vertex-endpoint projects/arkova1/locations/us-central1/endpoints/${RIG_G1_ENDPOINT_ID} --vertex-model ${RIG_G1_CANDIDATE_MODEL_RESOURCE} --deployed-model-id ${RIG_G1_DEPLOYED_MODEL_ID} --runtime-sa ${G1_TUNED_RUNTIME_SA}"
+    else
+      printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME}-a --rig-id RIG-G1-A --service ${G1_CONTROL_SERVICE} --runtime-sa ${G1_CONTROL_RUNTIME_SA}"
+    fi
   elif [[ $IS_RIG_R -eq 1 ]]; then
     printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME} --rig-id RIG-R --service ${CLOUD_RUN_SERVICE} --vertex-endpoint ${RIG_R_VERTEX_ENDPOINT} --vertex-model ${RIG_R_VERTEX_MODEL} --deployed-model-id ${RIG_R_DEPLOYED_MODEL_ID} --runtime-sa ${RUNTIME_SA} --lease-id ${LEASE_ID}"
+  elif [[ "$RIG_ID" == "RIG-B1" ]]; then
+    printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME} --rig-id RIG-B1 --service ${CLOUD_RUN_SERVICE} --b1-approval-artifact ${RIG_B1_NODE_APPROVAL_ARTIFACT}"
   else
     printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME} --service ${CLOUD_RUN_SERVICE}"
   fi
@@ -2448,6 +3229,51 @@ run_cmd() {
   fi
 }
 
+# Supabase 2.109 requires the exact newly-created database password on every
+# link/push. Keep the value out of both the printable command and the execution
+# log; only the child process receives it.
+run_cmd_with_db_password() {
+  local password_label="$1"
+  local db_password="$2"
+  shift 2
+  print_cmd "$@" --password "<redacted:${password_label}>"
+  if [[ $APPLY -eq 1 ]]; then
+    if [[ -z "$db_password" ]]; then
+      echo "ERROR: ${password_label} is empty; refusing an interactive/stale Supabase credential fallback." >&2
+      exit 1
+    fi
+    echo "executing: $* --password <redacted:${password_label}>" >&2
+    "$@" --password "$db_password"
+  fi
+}
+
+# The pinned CLI's legacy `--output json` mode emits the raw created-project
+# object. Return only its exact ref; never echo the response (it may grow
+# secret-bearing fields).
+create_supabase_project_ref() {
+  local password_label="$1"
+  local db_password="$2"
+  local expected_name="$3"
+  local response
+  shift 3
+  echo "executing: $* --db-password <redacted:${password_label}> --output json" >&2
+  if ! response="$("$@" --db-password "$db_password" --output json 2>/dev/null)"; then
+    echo "ERROR: Supabase project creation failed for ${expected_name}." >&2
+    return 1
+  fi
+  jq -er --arg expected_name "$expected_name" '
+    select(
+      type == "object"
+      and .name == $expected_name
+      and (.id | type == "string" and test("^[a-z]{20}$"))
+    )
+    | .id
+  ' <<<"$response" 2>/dev/null || {
+    echo "ERROR: Supabase 2.109 legacy JSON create response did not match the strict project contract." >&2
+    return 1
+  }
+}
+
 # Like run_cmd, but redacts the X-Cron-Secret header value in everything it
 # prints/logs. The real value (fetched from Secret Manager in apply mode) is
 # passed only to the executed command — never to stdout/stderr.
@@ -2475,6 +3301,57 @@ require_gcloud_secret() {
   fi
 }
 
+require_gcloud_secret_version() {
+  local secret_name="$1"
+  local secret_version="$2"
+  local version_json expected_name
+  expected_name="projects/${GCP_PROJECT}/secrets/${secret_name}/versions/${secret_version}"
+  if ! version_json="$(gcloud secrets versions describe "$secret_version" \
+    --secret="$secret_name" --project="$GCP_PROJECT" --format=json)" \
+    || ! jq -e --arg expected "$expected_name" \
+      '.state == "ENABLED" and ((.name // $expected) == $expected)' \
+      >/dev/null 2>&1 <<<"$version_json"; then
+    echo "ERROR: required numeric Secret Manager version '$secret_name/$secret_version' is missing, disabled, or not exact." >&2
+    exit 1
+  fi
+}
+
+verify_rig_b1_rpc_url_secret() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 0
+  local rpc_url
+  if ! rpc_url="$(gcloud secrets versions access "$RIG_B1_RPC_URL_SECRET_VERSION" \
+    --secret="$BITCOIN_CORE_RPC_URL_SECRET" --project="$GCP_PROJECT")" \
+    || [[ "$rpc_url" != "$RIG_B1_NODE_RPC_ENDPOINT" ]]; then
+    unset rpc_url
+    echo "ERROR: RIG-B1 numeric RPC URL secret must equal the exact private Bitcoin Core endpoint." >&2
+    exit 1
+  fi
+  unset rpc_url
+}
+
+verify_rig_b1_rpc_auth_secret() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 0
+  local rpc_auth rpc_user rpc_password
+  if ! rpc_auth="$(gcloud secrets versions access "$RIG_B1_RPC_AUTH_SECRET_VERSION" \
+    --secret="$BITCOIN_CORE_RPC_AUTH_SECRET" --project="$GCP_PROJECT")" \
+    || [[ "$rpc_auth" != *:* || "${rpc_auth#*:}" == *:* ]]; then
+    unset rpc_auth rpc_user rpc_password
+    echo "ERROR: RIG-B1 numeric RPC auth secret must be one bounded username:password value." >&2
+    exit 1
+  fi
+  rpc_user="${rpc_auth%%:*}"
+  rpc_password="${rpc_auth#*:}"
+  unset rpc_auth
+  if [[ ! "$rpc_user" =~ ^[A-Za-z0-9._-]{1,64}$ \
+    || ${#rpc_password} -lt 32 || ${#rpc_password} -gt 256 ]] \
+    || printf '%s' "$rpc_password" | LC_ALL=C grep -q '[[:cntrl:][:space:]]'; then
+    unset rpc_user rpc_password
+    echo "ERROR: RIG-B1 numeric RPC auth secret failed the bounded credential shape." >&2
+    exit 1
+  fi
+  unset rpc_user rpc_password
+}
+
 if [[ $APPLY -eq 1 ]]; then
   # Fail closed before creating infra if any pre-existing Secret Manager
   # dependency is absent. The NEW project's Supabase URL/service-role secrets
@@ -2485,12 +3362,28 @@ if [[ $APPLY -eq 1 ]]; then
   require_gcloud_secret "$CRON_SECRET_SECRET"
   case "$PROFILE" in
     chain)
-      require_gcloud_secret "$GETBLOCK_RPC_URL_SECRET"
-      require_gcloud_secret "$GETBLOCK_RPC_AUTH_SECRET"
+      require_gcloud_secret "$BITCOIN_CORE_RPC_URL_SECRET"
+      require_gcloud_secret "$BITCOIN_CORE_RPC_AUTH_SECRET"
       require_gcloud_secret "$TREASURY_WIF_SECRET"
+      if [[ "$RIG_ID" == "RIG-B1" ]]; then
+        require_gcloud_secret_version "$BITCOIN_CORE_RPC_URL_SECRET" "$RIG_B1_RPC_URL_SECRET_VERSION"
+        require_gcloud_secret_version "$BITCOIN_CORE_RPC_AUTH_SECRET" "$RIG_B1_RPC_AUTH_SECRET_VERSION"
+        require_gcloud_secret_version "$TREASURY_WIF_SECRET" "$RIG_B1_TREASURY_WIF_SECRET_VERSION"
+        require_gcloud_secret_version "$STRIPE_SECRET_KEY_SECRET" "$RIG_B1_STRIPE_SECRET_KEY_VERSION"
+        require_gcloud_secret_version "$STRIPE_WEBHOOK_SECRET_SECRET" "$RIG_B1_STRIPE_WEBHOOK_SECRET_VERSION"
+        require_gcloud_secret_version "$API_KEY_HMAC_SECRET_SECRET" "$RIG_B1_API_KEY_HMAC_SECRET_VERSION"
+        require_gcloud_secret_version "$CRON_SECRET_SECRET" "$RIG_B1_CRON_SECRET_VERSION"
+        verify_rig_b1_rpc_url_secret
+        verify_rig_b1_rpc_auth_secret
+      fi
       ;;
     gemini|gemini-release)
       require_gcloud_secret "$GEMINI_API_KEY_SECRET"
+      require_gcloud_secret_version "$STRIPE_SECRET_KEY_SECRET" "$SHARED_STRIPE_SECRET_VERSION"
+      require_gcloud_secret_version "$STRIPE_WEBHOOK_SECRET_SECRET" "$SHARED_STRIPE_WEBHOOK_VERSION"
+      require_gcloud_secret_version "$API_KEY_HMAC_SECRET_SECRET" "$SHARED_API_KEY_HMAC_VERSION"
+      require_gcloud_secret_version "$CRON_SECRET_SECRET" "$SHARED_CRON_SECRET_VERSION"
+      require_gcloud_secret_version "$GEMINI_API_KEY_SECRET" "$GEMINI_API_KEY_SECRET_VERSION"
       ;;
   esac
 fi
@@ -2519,6 +3412,27 @@ write_provision_state() {
     --arg supabase_project_ref "${CREATED_PROJECT_REF:-$NEW_PROJECT_REF}" \
     --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
     --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
+    --arg g1_control_project_name "$G1_CONTROL_PROJECT_NAME" \
+    --arg g1_tuned_project_name "$G1_TUNED_PROJECT_NAME" \
+    --arg g1_control_project_ref "$G1_CONTROL_PROJECT_REF" \
+    --arg g1_tuned_project_ref "$G1_TUNED_PROJECT_REF" \
+    --arg g1_control_service "$G1_CONTROL_SERVICE" \
+    --arg g1_tuned_service "$G1_TUNED_SERVICE" \
+    --arg g1_control_url_secret "$G1_CONTROL_SUPABASE_URL_SECRET" \
+    --arg g1_control_role_secret "$G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET" \
+    --arg g1_tuned_url_secret "$G1_TUNED_SUPABASE_URL_SECRET" \
+    --arg g1_tuned_role_secret "$G1_TUNED_SUPABASE_SERVICE_ROLE_SECRET" \
+    --arg g1_control_runtime_sa "$G1_CONTROL_RUNTIME_SA" \
+    --arg g1_tuned_runtime_sa "$G1_TUNED_RUNTIME_SA" \
+    --arg g1_control_runtime_unique_id "$G1_CONTROL_RUNTIME_SA_UNIQUE_ID" \
+    --arg g1_tuned_runtime_unique_id "$G1_TUNED_RUNTIME_SA_UNIQUE_ID" \
+    --arg g1_endpoint "projects/arkova1/locations/us-central1/endpoints/${RIG_G1_ENDPOINT_ID}" \
+    --arg g1_model "$RIG_G1_CANDIDATE_MODEL_RESOURCE" \
+    --arg g1_model_version "$RIG_G1_CANDIDATE_MODEL_VERSION_RESOURCE" \
+    --arg g1_checkpoint_id "$RIG_G1_CHECKPOINT_ID" \
+    --arg g1_deployed_model_id "$RIG_G1_DEPLOYED_MODEL_ID" \
+    --arg g1_control_teardown "$(teardown_command_for_project_ref "$G1_CONTROL_PROJECT_REF")" \
+    --arg g1_tuned_teardown "$(teardown_command_for_project_ref "$G1_TUNED_PROJECT_REF")" \
     --arg image "$PINNED_IMAGE" \
     --arg declared_source_head "$DECLARED_SOURCE_HEAD" \
     --arg source_head_image_ref "$SOURCE_HEAD_IMAGE_REF" \
@@ -2544,6 +3458,11 @@ write_provision_state() {
     --argjson approval_claim "$approval_claim_json" \
     --argjson g1_authority "$G1_AUTHORITY_JSON" \
     --argjson rig_r_provision_approval "$RIG_R_PROVISION_APPROVAL_JSON" \
+    --argjson rig_b1_node_approval "$RIG_B1_NODE_APPROVAL_JSON" \
+    --argjson rig_b1_approval_claim "$RIG_B1_APPROVAL_CLAIM_JSON" \
+    --argjson rig_b1_topology_ownership "$RIG_B1_TOPOLOGY_OWNERSHIP_JSON" \
+    --arg rig_b1_topology_uri "$RIG_B1_TOPOLOGY_OWNERSHIP_URI" \
+    --arg rig_b1_topology_generation "$RIG_B1_TOPOLOGY_OWNERSHIP_GENERATION" \
     --argjson immutable_ledger "$IMMUTABLE_LEDGER_CAPABILITY_JSON" \
     --arg teardown_command "$(teardown_command_for_project_ref "${CREATED_PROJECT_REF:-$NEW_PROJECT_REF}")" \
     '{
@@ -2562,6 +3481,36 @@ write_provision_state() {
         supabase_url: $supabase_url_secret,
         supabase_service_role_key: $supabase_service_role_secret
       },
+      g1_physical_projects: (if $rig_id == "RIG-G1" then [
+        {
+          rig_id: "RIG-G1-A",
+          project_name: $g1_control_project_name,
+          project_ref: $g1_control_project_ref,
+          service: $g1_control_service,
+          runtime_service_account: $g1_control_runtime_sa,
+          runtime_service_account_unique_id: $g1_control_runtime_unique_id,
+          supabase_url_secret: $g1_control_url_secret,
+          supabase_service_role_secret: $g1_control_role_secret,
+          teardown_command: $g1_control_teardown
+        },
+        {
+          rig_id: "RIG-G1-B",
+          project_name: $g1_tuned_project_name,
+          project_ref: $g1_tuned_project_ref,
+          service: $g1_tuned_service,
+          runtime_service_account: $g1_tuned_runtime_sa,
+          runtime_service_account_unique_id: $g1_tuned_runtime_unique_id,
+          supabase_url_secret: $g1_tuned_url_secret,
+          supabase_service_role_secret: $g1_tuned_role_secret,
+          vertex_endpoint: $g1_endpoint,
+          protected_model: $g1_model,
+          model_version: $g1_model_version,
+          checkpoint_id: $g1_checkpoint_id,
+          deployed_model_id: $g1_deployed_model_id,
+          endpoint_iam_role: "roles/aiplatform.endpointUser",
+          teardown_command: $g1_tuned_teardown
+        }
+      ] else [] end),
       image: $image,
       declared_source_head: $declared_source_head,
       source_head_image_ref: $source_head_image_ref,
@@ -2586,12 +3535,21 @@ write_provision_state() {
       approval_claim: $approval_claim,
       g1_authority: $g1_authority,
       rig_r_provision_approval: $rig_r_provision_approval,
+      rig_b1_node_approval: $rig_b1_node_approval,
+      rig_b1_approval_claim: $rig_b1_approval_claim,
+      rig_b1_topology_ownership: (if $rig_b1_topology_ownership == null then null else {
+        object_uri: $rig_b1_topology_uri,
+        generation: $rig_b1_topology_generation,
+        payload: $rig_b1_topology_ownership
+      } end),
       immutable_authority_ledger: $immutable_ledger,
       cleanup: {
         cloud_run_service_candidates: $cloud_run_service_candidates,
         cloud_run_delete_commands: $cloud_run_delete_commands,
         approval_claim: $approval_claim,
-        teardown_command: $teardown_command
+        rig_b1_approval_claim: $rig_b1_approval_claim,
+        teardown_command: $teardown_command,
+        g1_teardown_commands: (if $rig_id == "RIG-G1" then [$g1_control_teardown, $g1_tuned_teardown] else [] end)
       },
       state_path: $state_path,
       cleanup_hint: "If status is blocked_after_project_create, either resume with the same rig name/ref and verify these secrets, or run scripts/staging/teardown-isolated-rig.sh against the recorded service/ref."
@@ -2677,14 +3635,51 @@ cleanup_rig_r_pre_project_bootstrap() {
     fi
   fi
   if [[ $RIG_R_LEASE_CLAIMED -eq 1 ]]; then
-    if gcloud storage rm "$RIG_R_LEASE_URI" \
-      --project="$GCP_PROJECT" >/dev/null 2>&1; then
-      RIG_R_LEASE_CLAIMED=0
-    else
+    if ! release_owned_rig_r_lease >/dev/null 2>&1; then
       failures=$((failures + 1))
     fi
   fi
   [[ $failures -eq 0 ]]
+}
+
+cleanup_created_temporary_endpoint() {
+  local endpoint_id deployed_model_id created_kind
+  if [[ $CREATED_G1_VERTEX_ENDPOINT -eq 1 ]]; then
+    endpoint_id="$RIG_G1_ENDPOINT_ID"
+    deployed_model_id="$RIG_G1_DEPLOYED_MODEL_ID"
+    created_kind="RIG-G1-B"
+  elif [[ $CREATED_RIG_R_VERTEX_ENDPOINT -eq 1 ]]; then
+    endpoint_id="$RIG_R_ENDPOINT_ID"
+    deployed_model_id="$RIG_R_DEPLOYED_MODEL_ID"
+    created_kind="RIG-R"
+  else
+    return 0
+  fi
+
+  echo "# failure containment: reclaiming positively-created ${created_kind} Vertex endpoint ${endpoint_id}" >&2
+  # The deploy request may have failed before creating a deployment. An
+  # undeploy miss is therefore non-fatal; endpoint deletion is the ownership-
+  # scoped proof that no paid endpoint/deployment remains.
+  gcloud ai endpoints undeploy-model "$endpoint_id" \
+    --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" \
+    --deployed-model-id="$deployed_model_id" --quiet >/dev/null 2>&1 || true
+  if ! gcloud ai endpoints delete "$endpoint_id" \
+    --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" \
+    --quiet >/dev/null 2>&1; then
+    echo "ERROR: failure containment could not delete positively-created ${created_kind} endpoint ${endpoint_id}." >&2
+    return 1
+  fi
+  if gcloud ai endpoints describe "$endpoint_id" \
+    --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" >/dev/null 2>&1; then
+    echo "ERROR: positively-created ${created_kind} endpoint ${endpoint_id} remains after cleanup." >&2
+    return 1
+  fi
+  if [[ "$created_kind" == "RIG-G1-B" ]]; then
+    CREATED_G1_VERTEX_ENDPOINT=0
+  else
+    CREATED_RIG_R_VERTEX_ENDPOINT=0
+  fi
+  return 0
 }
 
 on_apply_exit() {
@@ -2692,6 +3687,7 @@ on_apply_exit() {
   local pause_result="not-required"
   local artifact_result="not-persisted"
   local bootstrap_result="not-required"
+  local endpoint_result="not-required"
   local blocked_reason state_rc
 
   # Cleanup must never recursively re-enter the EXIT trap or replace the
@@ -2735,10 +3731,18 @@ on_apply_exit() {
     fi
   fi
 
-  blocked_reason="original_rc=${rc}; scheduler_pause=${pause_result}; admission_artifact=${artifact_result}; rig_r_pre_project_bootstrap=${bootstrap_result}"
+  if [[ $CREATED_G1_VERTEX_ENDPOINT -eq 1 || $CREATED_RIG_R_VERTEX_ENDPOINT -eq 1 ]]; then
+    if cleanup_created_temporary_endpoint; then
+      endpoint_result="reclaimed-and-absent"
+    else
+      endpoint_result="incomplete-requires-manual-teardown"
+    fi
+  fi
+
+  blocked_reason="original_rc=${rc}; scheduler_pause=${pause_result}; admission_artifact=${artifact_result}; temporary_endpoint=${endpoint_result}; rig_r_pre_project_bootstrap=${bootstrap_result}; execute exact persisted teardown commands immediately"
   if [[ $APPLY -eq 1 && ( -n "${CREATED_PROJECT_REF:-}" || $IS_RIG_R -eq 1 ) ]]; then
     if [[ -n "${CREATED_PROJECT_REF:-}" ]]; then
-      write_provision_state "blocked_after_project_create" "$blocked_reason"
+      write_provision_state "REQUIRES_IMMEDIATE_TEARDOWN" "$blocked_reason"
     else
       write_provision_state "blocked_before_project_create" "$blocked_reason"
     fi
@@ -2780,13 +3784,17 @@ ensure_secret_with_value() {
 
 extract_service_role_key() {
   local api_keys_json="$1"
-  jq -r '
-    if type == "array" then
-      (.[] | select((.name // .type // .key_type // .role // "" | ascii_downcase) | test("service")) | .api_key // .key // .value // empty) // empty
-    else
-      (.service_role_key // .service_role // .serviceRoleKey // .service_role_api_key // empty)
-    end
-  ' <<<"$api_keys_json" | head -n 1
+  jq -er '
+    select(type == "array")
+    | [
+        .[]
+        | select(.name == "service_role" and .type == "legacy")
+        | .api_key
+        | select(type == "string" and length > 0)
+      ]
+    | select(length == 1)
+    | .[0]
+  ' <<<"$api_keys_json" 2>/dev/null
 }
 
 create_supabase_runtime_secrets() {
@@ -2794,9 +3802,22 @@ create_supabase_runtime_secrets() {
   local supabase_url
   local service_role_key
   local api_keys_json
+  local temporary_secret
   supabase_url="https://${project_ref}.supabase.co"
 
-  if [[ -n "${STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY:-}" ]]; then
+  # Signed release rigs claim these exact temporary secret names in their
+  # teardown topology. Reusing a pre-existing secret would make ownership and
+  # deletion ambiguous, so prove absence before creating either member.
+  if [[ "$RIG_ID" == "RIG-B1" || $IS_G1_RIG -eq 1 || $IS_RIG_R -eq 1 ]]; then
+    for temporary_secret in "$SUPABASE_URL_SECRET_NAME" "$SUPABASE_SERVICE_ROLE_SECRET_NAME"; do
+      if gcloud secrets describe "$temporary_secret" --project="$GCP_PROJECT" >/dev/null 2>&1; then
+        echo "ERROR: temporary Supabase secret '$temporary_secret' already exists; refusing ownership ambiguity." >&2
+        exit 2
+      fi
+    done
+  fi
+
+  if [[ $IS_G1_RIG -ne 1 && -n "${STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY:-}" ]]; then
     service_role_key="$STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY"
   else
     api_keys_json="$(npx supabase projects api-keys --project-ref "$project_ref" --output json)"
@@ -2815,6 +3836,7 @@ create_supabase_runtime_secrets() {
   ensure_secret_with_value "$SUPABASE_URL_SECRET_NAME" "$supabase_url"
   ensure_secret_with_value "$SUPABASE_SERVICE_ROLE_SECRET_NAME" "$service_role_key"
   CREATED_SUPABASE_SECRETS=1
+  unset service_role_key
   write_provision_state "supabase_secrets_recorded" ""
 }
 
@@ -2836,6 +3858,442 @@ grant_rig_r_runtime_secret_access() {
       --condition=None \
       --quiet
   done
+}
+
+provision_g1_runtime_identities() {
+  [[ $IS_G1_RIG -eq 1 ]] || return 0
+  local identity_json
+  echo "# RIG-G1 — create two physically distinct temporary runtime identities"
+  run_cmd gcloud iam service-accounts create "${G1_CONTROL_RUNTIME_SA%@*}" \
+    --project="$GCP_PROJECT" --display-name="S3.3 RIG-G1-A temporary runtime"
+  if [[ $APPLY -eq 1 ]]; then
+    CREATED_G1_CONTROL_RUNTIME_SA=1
+    identity_json="$(gcloud iam service-accounts describe "$G1_CONTROL_RUNTIME_SA" \
+      --project="$GCP_PROJECT" --format=json)"
+    G1_CONTROL_RUNTIME_SA_UNIQUE_ID="$(jq -er \
+      --arg email "$G1_CONTROL_RUNTIME_SA" \
+      'select(.email == $email and ((.uniqueId | tostring) | test("^[1-9][0-9]*$"))) | (.uniqueId | tostring)' \
+      <<<"$identity_json")" || exit 2
+    write_provision_state "g1_a_runtime_identity_created" ""
+  fi
+  run_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+    --member="serviceAccount:${G1_CONTROL_RUNTIME_SA}" \
+    --role="roles/logging.logWriter" --condition=None --quiet
+
+  run_cmd gcloud iam service-accounts create "${G1_TUNED_RUNTIME_SA%@*}" \
+    --project="$GCP_PROJECT" --display-name="S3.3 RIG-G1-B temporary runtime"
+  if [[ $APPLY -eq 1 ]]; then
+    CREATED_G1_TUNED_RUNTIME_SA=1
+    identity_json="$(gcloud iam service-accounts describe "$G1_TUNED_RUNTIME_SA" \
+      --project="$GCP_PROJECT" --format=json)"
+    G1_TUNED_RUNTIME_SA_UNIQUE_ID="$(jq -er \
+      --arg email "$G1_TUNED_RUNTIME_SA" \
+      'select(.email == $email and ((.uniqueId | tostring) | test("^[1-9][0-9]*$"))) | (.uniqueId | tostring)' \
+      <<<"$identity_json")" || exit 2
+    write_provision_state "g1_distinct_runtime_identities_created" ""
+  fi
+  run_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+    --member="serviceAccount:${G1_TUNED_RUNTIME_SA}" \
+    --role="roles/logging.logWriter" --condition=None --quiet
+}
+
+grant_g1_runtime_secret_access() {
+  [[ $IS_G1_RIG -eq 1 ]] || return 0
+  local secret_name runtime_sa
+  local shared_secrets=(
+    "$STRIPE_SECRET_KEY_SECRET"
+    "$STRIPE_WEBHOOK_SECRET_SECRET"
+    "$API_KEY_HMAC_SECRET_SECRET"
+    "$CRON_SECRET_SECRET"
+    "$GEMINI_API_KEY_SECRET"
+  )
+  for secret_name in "$G1_CONTROL_SUPABASE_URL_SECRET" "$G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET"; do
+    run_cmd gcloud secrets add-iam-policy-binding "$secret_name" \
+      --project="$GCP_PROJECT" --member="serviceAccount:${G1_CONTROL_RUNTIME_SA}" \
+      --role="roles/secretmanager.secretAccessor" --condition=None --quiet
+  done
+  for secret_name in "$G1_TUNED_SUPABASE_URL_SECRET" "$G1_TUNED_SUPABASE_SERVICE_ROLE_SECRET"; do
+    run_cmd gcloud secrets add-iam-policy-binding "$secret_name" \
+      --project="$GCP_PROJECT" --member="serviceAccount:${G1_TUNED_RUNTIME_SA}" \
+      --role="roles/secretmanager.secretAccessor" --condition=None --quiet
+  done
+  for runtime_sa in "$G1_CONTROL_RUNTIME_SA" "$G1_TUNED_RUNTIME_SA"; do
+    for secret_name in "${shared_secrets[@]}"; do
+      run_cmd gcloud secrets add-iam-policy-binding "$secret_name" \
+        --project="$GCP_PROJECT" --member="serviceAccount:${runtime_sa}" \
+        --role="roles/secretmanager.secretAccessor" --condition=None --quiet
+    done
+  done
+  if [[ $APPLY -eq 1 ]]; then
+    write_provision_state "g1_runtime_secret_scopes_bound" ""
+  fi
+}
+
+provision_temporary_vertex_endpoint() {
+  local endpoint_id endpoint_resource endpoint_display model_resource model_version_resource
+  local checkpoint_id deployed_id deployed_display runtime_sa denied_runtime_sa created_flag_label
+  local vertex_endpoint_url vertex_endpoint_iam_url deploy_payload operation_json operation_name operation_url
+  local operator_access_token attempt endpoint_policy set_policy_payload set_policy_response
+  local access_token probe_json probe_payload probe_url
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    endpoint_id="$RIG_G1_ENDPOINT_ID"
+    endpoint_resource="$G1_ENDPOINT_RESOURCE"
+    endpoint_display="$RIG_G1_ENDPOINT_DISPLAY_NAME"
+    model_resource="$RIG_G1_CANDIDATE_MODEL_RESOURCE"
+    model_version_resource="$RIG_G1_CANDIDATE_MODEL_VERSION_RESOURCE"
+    checkpoint_id="$RIG_G1_CHECKPOINT_ID"
+    deployed_id="$RIG_G1_DEPLOYED_MODEL_ID"
+    deployed_display="$RIG_G1_DEPLOYED_MODEL_DISPLAY_NAME"
+    runtime_sa="$G1_TUNED_RUNTIME_SA"
+    denied_runtime_sa="$G1_CONTROL_RUNTIME_SA"
+    created_flag_label="G1"
+  elif [[ $IS_RIG_R -eq 1 ]]; then
+    endpoint_id="$RIG_R_ENDPOINT_ID"
+    endpoint_resource="$RIG_R_VERTEX_ENDPOINT"
+    endpoint_display="$RIG_R_ENDPOINT_DISPLAY_NAME"
+    model_resource="$RIG_R_VERTEX_MODEL"
+    model_version_resource="$RIG_R_PROTECTED_V6_MODEL_VERSION"
+    checkpoint_id="$RIG_R_CHECKPOINT_ID"
+    deployed_id="$RIG_R_DEPLOYED_MODEL_ID"
+    deployed_display="$RIG_R_DEPLOYED_MODEL_DISPLAY_NAME"
+    runtime_sa="$RUNTIME_SA"
+    denied_runtime_sa=""
+    created_flag_label="R"
+  else
+    return 0
+  fi
+
+  echo "# temporary Vertex endpoint — deterministic signed ID, GENIE model@1 checkpoint 6, automatic 1x1"
+  run_cmd gcloud ai endpoints create \
+    --endpoint-id="$endpoint_id" \
+    --display-name="$endpoint_display" \
+    --project="$GCP_PROJECT" \
+    --region="$CLOUD_RUN_REGION"
+  if [[ $APPLY -eq 1 ]]; then
+    if [[ "$created_flag_label" == "G1" ]]; then
+      CREATED_G1_VERTEX_ENDPOINT=1
+    else
+      CREATED_RIG_R_VERTEX_ENDPOINT=1
+    fi
+    write_provision_state "temporary_vertex_endpoint_created" ""
+  fi
+
+  # The installed stable gcloud deploy client cannot handle GENIE models that
+  # omit supportedDeploymentResourcesTypes. Use the exact previously-successful
+  # v1 DeployModel REST shape and poll its regional long-running operation.
+  vertex_endpoint_url="https://${CLOUD_RUN_REGION}-aiplatform.googleapis.com/v1/projects/${IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER}/locations/${CLOUD_RUN_REGION}/endpoints/${endpoint_id}"
+  vertex_endpoint_iam_url="https://${CLOUD_RUN_REGION}-aiplatform.googleapis.com/v1beta1/projects/${IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER}/locations/${CLOUD_RUN_REGION}/endpoints/${endpoint_id}"
+  deploy_payload="$(jq -nc \
+    --arg id "$deployed_id" \
+    --arg model "$model_version_resource" \
+    --arg display "$deployed_display" \
+    --arg checkpoint "$checkpoint_id" '
+      {
+        deployedModel: {
+          id: $id,
+          model: $model,
+          displayName: $display,
+          checkpointId: $checkpoint,
+          automaticResources: {minReplicaCount: 1, maxReplicaCount: 1}
+        },
+        trafficSplit: {"0": 100}
+      }
+    ')"
+  if [[ $APPLY -eq 1 ]]; then
+    operator_access_token="$(gcloud auth print-access-token)" || exit 2
+    if [[ -z "$operator_access_token" ]]; then
+      echo "ERROR: could not obtain an operator access token for GENIE deployment." >&2
+      exit 2
+    fi
+    if ! operation_json="$(/usr/bin/curl --silent --show-error --fail-with-body \
+      --request POST "${vertex_endpoint_url}:deployModel" \
+      --header "Authorization: Bearer ${operator_access_token}" \
+      --header 'Content-Type: application/json' \
+      --data-binary "$deploy_payload" 2>/dev/null)"; then
+      unset operator_access_token operation_json
+      echo "ERROR: GENIE DeployModel REST request failed." >&2
+      exit 2
+    fi
+    operation_name="$(jq -er \
+      'select(type == "object" and (.name | type == "string" and test("^projects/[0-9]+/locations/us-central1/operations/[0-9]+$"))) | .name' \
+      <<<"$operation_json" 2>/dev/null)" || {
+      unset operator_access_token operation_json
+      echo "ERROR: GENIE DeployModel did not return one canonical regional operation." >&2
+      exit 2
+    }
+    operation_url="https://${CLOUD_RUN_REGION}-aiplatform.googleapis.com/v1/${operation_name}"
+    attempt=0
+    while (( attempt < 120 )); do
+      attempt=$((attempt + 1))
+      operation_json="$(/usr/bin/curl --silent --show-error --fail-with-body \
+        --header "Authorization: Bearer ${operator_access_token}" \
+        "$operation_url" 2>/dev/null)" || {
+        unset operator_access_token operation_json
+        echo "ERROR: could not poll GENIE deployment operation." >&2
+        exit 2
+      }
+      if jq -e '.done == true and has("error")' >/dev/null 2>&1 <<<"$operation_json"; then
+        unset operator_access_token operation_json
+        echo "ERROR: GENIE deployment operation completed with an error." >&2
+        exit 2
+      fi
+      if jq -e '.done == true and (has("error") | not)' >/dev/null 2>&1 <<<"$operation_json"; then
+        break
+      fi
+      /bin/sleep 15
+    done
+    if (( attempt >= 120 )) && ! jq -e '.done == true and (has("error") | not)' \
+      >/dev/null 2>&1 <<<"$operation_json"; then
+      unset operator_access_token operation_json
+      echo "ERROR: GENIE deployment did not complete within the 30-minute hard timeout." >&2
+      exit 2
+    fi
+    unset operation_json
+
+    if [[ "$created_flag_label" == "G1" ]]; then
+      verify_g1_candidate_endpoint_binding
+      G1_OBSERVED_DEPLOYED_MODEL_ID="$deployed_id"
+    else
+      verify_rig_r_candidate_endpoint_binding
+    fi
+
+    # Installed gcloud has no endpoint IAM subcommands. Preserve the endpoint's
+    # etag and use resource-scoped Vertex getIamPolicy/setIamPolicy REST calls.
+    endpoint_policy="$(/usr/bin/curl --silent --show-error --fail-with-body \
+      --request POST "${vertex_endpoint_iam_url}:getIamPolicy" \
+      --header "Authorization: Bearer ${operator_access_token}" \
+      --header 'Content-Type: application/json' --data-binary '{}' 2>/dev/null)" || exit 2
+    if jq -e 'any(.bindings[]?; .role == "roles/aiplatform.endpointUser")' \
+      >/dev/null 2>&1 <<<"$endpoint_policy"; then
+      unset operator_access_token endpoint_policy
+      echo "ERROR: new temporary endpoint unexpectedly had a pre-existing predictor binding." >&2
+      exit 2
+    fi
+    endpoint_policy="$(jq -ce --arg member "serviceAccount:${runtime_sa}" '
+      select(type == "object")
+      | .version = (.version // 1)
+      | .bindings = ((.bindings // []) + [{role: "roles/aiplatform.endpointUser", members: [$member]}])
+    ' <<<"$endpoint_policy")" || exit 2
+    set_policy_payload="$(jq -nc --argjson policy "$endpoint_policy" \
+      '{policy: $policy}')"
+    set_policy_response="$(/usr/bin/curl --silent --show-error --fail-with-body \
+      --request POST "${vertex_endpoint_iam_url}:setIamPolicy" \
+      --header "Authorization: Bearer ${operator_access_token}" \
+      --header 'Content-Type: application/json' \
+      --data-binary "$set_policy_payload" 2>/dev/null)" || exit 2
+    unset set_policy_payload set_policy_response
+    endpoint_policy="$(/usr/bin/curl --silent --show-error --fail-with-body \
+      --request POST "${vertex_endpoint_iam_url}:getIamPolicy" \
+      --header "Authorization: Bearer ${operator_access_token}" \
+      --header 'Content-Type: application/json' --data-binary '{}' 2>/dev/null)" || exit 2
+    unset operator_access_token
+    if ! jq -e --arg expected "serviceAccount:${runtime_sa}" --arg denied "serviceAccount:${denied_runtime_sa}" '
+      [
+        .bindings[]?
+        | select(.role == "roles/aiplatform.endpointUser")
+        | .members[]?
+      ] as $predictors
+      | ($predictors | sort | unique) == [$expected]
+      and ($denied == "serviceAccount:" or ($predictors | index($denied) == null))
+    ' >/dev/null 2>&1 <<<"$endpoint_policy"; then
+      echo "ERROR: temporary endpoint predictor IAM is not bound only to its exact tuned/release runtime identity." >&2
+      exit 2
+    fi
+
+    # Pre-clock synthetic capability probe. The bearer token and raw response
+    # remain memory-only and are never printed or persisted.
+    access_token="$(gcloud auth print-access-token \
+      --impersonate-service-account="$runtime_sa")" || exit 2
+    if [[ -z "$access_token" ]]; then
+      echo "ERROR: could not obtain the temporary runtime identity's access token for the capability probe." >&2
+      exit 2
+    fi
+    probe_payload='{"contents":[{"role":"user","parts":[{"text":"Synthetic Arkova S3.3 capability probe; no customer data. Return one short JSON object."}]}],"generationConfig":{"responseMimeType":"application/json","temperature":0,"maxOutputTokens":64}}'
+    probe_url="https://${CLOUD_RUN_REGION}-aiplatform.googleapis.com/v1beta1/projects/${IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER}/locations/${CLOUD_RUN_REGION}/endpoints/${endpoint_id}:generateContent"
+    if ! probe_json="$(/usr/bin/curl --silent --show-error --fail-with-body \
+      --request POST "$probe_url" \
+      --header "Authorization: Bearer ${access_token}" \
+      --header 'Content-Type: application/json' \
+      --data-binary "$probe_payload" 2>/dev/null)"; then
+      unset access_token probe_json
+      echo "ERROR: authenticated tuned-Gemini generateContent capability probe failed." >&2
+      exit 2
+    fi
+    unset access_token
+    if ! jq -e 'type == "object" and (.candidates | type == "array" and length > 0)' \
+      >/dev/null 2>&1 <<<"$probe_json"; then
+      unset probe_json
+      echo "ERROR: tuned-Gemini capability probe returned no candidate." >&2
+      exit 2
+    fi
+    unset probe_json
+    if [[ "$created_flag_label" == "G1" ]]; then
+      G1_PREDICT_PROBE_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    else
+      RIG_R_PREDICT_PROBE_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    fi
+    write_provision_state "temporary_vertex_endpoint_verified_and_probed_preclock" ""
+  else
+    print_cmd /usr/bin/curl --request POST "${vertex_endpoint_url}:deployModel" \
+      --header 'Authorization: Bearer <memory-only-operator-token>' \
+      --header 'Content-Type: application/json' --data-binary "$deploy_payload"
+    echo "# apply only: poll the exact regional LRO, then v1beta1 REST-set endpoint-scoped roles/aiplatform.endpointUser for ${runtime_sa} with etag preservation"
+    echo "# apply only: impersonate ${runtime_sa} and run one synthetic, non-customer-data :generateContent capability probe"
+  fi
+}
+
+provision_rig_b1_bitcoin_core_node() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 0
+  local worker_secret
+  local worker_secrets=(
+    "$SUPABASE_URL_SECRET_NAME"
+    "$SUPABASE_SERVICE_ROLE_SECRET_NAME"
+    "$STRIPE_SECRET_KEY_SECRET"
+    "$STRIPE_WEBHOOK_SECRET_SECRET"
+    "$API_KEY_HMAC_SECRET_SECRET"
+    "$CRON_SECRET_SECRET"
+    "$BITCOIN_CORE_RPC_URL_SECRET"
+    "$BITCOIN_CORE_RPC_AUTH_SECRET"
+    "$TREASURY_WIF_SECRET"
+  )
+
+  echo "# Step 2c/6 — provision the temporary isolated Bitcoin Core Signet node topology"
+  for b1_service_account in "$RUNTIME_SA" "$CRON_OIDC_SA" "$RIG_B1_NODE_SERVICE_ACCOUNT"; do
+    if gcloud iam service-accounts describe "$b1_service_account" \
+      --project="$GCP_PROJECT" >/dev/null 2>&1; then
+      echo "ERROR: RIG-B1 dedicated service account '$b1_service_account' already exists; refusing ownership ambiguity." >&2
+      exit 2
+    fi
+  done
+  run_cmd gcloud iam service-accounts create "${RUNTIME_SA%@*}" \
+    --project="$GCP_PROJECT" --display-name="S3.3 RIG-B1 temporary worker runtime"
+  run_cmd gcloud iam service-accounts create "${CRON_OIDC_SA%@*}" \
+    --project="$GCP_PROJECT" --display-name="S3.3 RIG-B1 temporary Scheduler OIDC"
+  run_cmd gcloud iam service-accounts create "${RIG_B1_NODE_SERVICE_ACCOUNT%@*}" \
+    --project="$GCP_PROJECT" \
+    --display-name="S3.3 RIG-B1 temporary Bitcoin Core Signet node"
+  run_cmd gcloud secrets add-iam-policy-binding "$BITCOIN_CORE_RPC_AUTH_SECRET" \
+    --project="$GCP_PROJECT" \
+    --member="serviceAccount:${RIG_B1_NODE_SERVICE_ACCOUNT}" \
+    --role="roles/secretmanager.secretAccessor" \
+    --condition=None --quiet
+  run_cmd gcloud artifacts repositories add-iam-policy-binding "$RIG_B1_ARTIFACT_REPOSITORY" \
+    --project="$GCP_PROJECT" --location="$CLOUD_RUN_REGION" \
+    --member="serviceAccount:${RIG_B1_NODE_SERVICE_ACCOUNT}" \
+    --role="roles/artifactregistry.reader" \
+    --condition=None --quiet
+  for worker_secret in "${worker_secrets[@]}"; do
+    run_cmd gcloud secrets add-iam-policy-binding "$worker_secret" \
+      --project="$GCP_PROJECT" \
+      --member="serviceAccount:${RUNTIME_SA}" \
+      --role="roles/secretmanager.secretAccessor" \
+      --condition=None --quiet
+  done
+  run_cmd gcloud compute networks create "$RIG_B1_NODE_NETWORK" \
+    --project="$GCP_PROJECT" --subnet-mode=custom
+  run_cmd gcloud compute networks subnets create "$RIG_B1_NODE_SUBNET" \
+    --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" \
+    --network="$RIG_B1_NODE_NETWORK" --range="$RIG_B1_NODE_SUBNET_CIDR" \
+    --enable-private-ip-google-access
+  run_cmd gcloud compute addresses create "$RIG_B1_NODE_INTERNAL_ADDRESS" \
+    --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" \
+    --subnet="$RIG_B1_NODE_SUBNET" --addresses="$RIG_B1_NODE_RPC_BIND" --purpose=GCE_ENDPOINT
+  run_cmd gcloud compute addresses create "$RIG_B1_NODE_EXTERNAL_ADDRESS" \
+    --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION"
+  run_cmd gcloud compute firewall-rules create "$RIG_B1_NODE_RPC_FIREWALL" \
+    --project="$GCP_PROJECT" --network="$RIG_B1_NODE_NETWORK" \
+    --direction=INGRESS --action=ALLOW --rules=tcp:38332 \
+    --source-ranges="$RIG_B1_NODE_CONNECTOR_CIDR" \
+    --target-service-accounts="$RIG_B1_NODE_SERVICE_ACCOUNT"
+  run_cmd gcloud compute networks vpc-access connectors create "$RIG_B1_NODE_VPC_CONNECTOR" \
+    --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" \
+    --network="$RIG_B1_NODE_NETWORK" --range="$RIG_B1_NODE_CONNECTOR_CIDR" \
+    --min-instances=2 --max-instances=3 --machine-type=e2-micro
+  run_cmd gcloud compute disks create "$RIG_B1_NODE_BOOT_DISK" \
+    --project="$GCP_PROJECT" --zone="$RIG_B1_NODE_ZONE" \
+    --image-family=cos-stable --image-project=cos-cloud \
+    --type=pd-balanced --size=20GB
+  run_cmd gcloud compute disks create "$RIG_B1_NODE_DATA_DISK" \
+    --project="$GCP_PROJECT" --zone="$RIG_B1_NODE_ZONE" \
+    --type=pd-balanced --size=100GB
+  run_cmd gcloud compute instances create "$RIG_B1_NODE_VM" \
+    --project="$GCP_PROJECT" --zone="$RIG_B1_NODE_ZONE" \
+    --machine-type=e2-standard-2 \
+    --subnet="$RIG_B1_NODE_SUBNET" \
+    --private-network-ip="$RIG_B1_NODE_RPC_BIND" \
+    --address="$RIG_B1_NODE_EXTERNAL_ADDRESS" \
+    --service-account="$RIG_B1_NODE_SERVICE_ACCOUNT" \
+    --scopes=https://www.googleapis.com/auth/cloud-platform \
+    --disk="name=${RIG_B1_NODE_BOOT_DISK},device-name=${RIG_B1_NODE_BOOT_DISK},mode=rw,boot=yes,auto-delete=no" \
+    --disk="name=${RIG_B1_NODE_DATA_DISK},device-name=${RIG_B1_NODE_DATA_DISK},mode=rw,boot=no,auto-delete=no" \
+    --metadata="gcp-project-id=${GCP_PROJECT},bitcoin-core-image=${RIG_B1_BITCOIN_CORE_IMAGE},rpc-auth-secret=${BITCOIN_CORE_RPC_AUTH_SECRET},rpc-auth-secret-version=${RIG_B1_RPC_AUTH_SECRET_VERSION},rpc-bind=${RIG_B1_NODE_RPC_BIND},rpc-allow-cidr=${RIG_B1_NODE_CONNECTOR_CIDR},data-disk-name=${RIG_B1_NODE_DATA_DISK},treasury-address=${RIG_B1_TREASURY_ADDRESS},treasury-descriptor=${RIG_B1_TREASURY_DESCRIPTOR},treasury-split-plan-digest=${RIG_B1_TREASURY_SPLIT_PLAN_DIGEST},treasury-split-txid=${RIG_B1_TREASURY_SPLIT_TXID},treasury-expected-output-count=32,treasury-expected-total-sats=${RIG_B1_TREASURY_EXPECTED_TOTAL_SATS},bitcoin-core-version=${RIG_B1_BITCOIN_CORE_VERSION},bitcoin-core-source-sha256=${RIG_B1_BITCOIN_CORE_SOURCE_SHA256}" \
+    --metadata-from-file="startup-script=${RIG_B1_NODE_STARTUP_SCRIPT}"
+  echo
+}
+
+wait_for_rig_b1_node_readiness() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 0
+  local attempt serial_output marker verified
+  local max_attempts=240
+  local interval_seconds=20
+  if [[ $APPLY -ne 1 ]]; then
+    print_cmd gcloud compute instances get-serial-port-output "$RIG_B1_NODE_VM" \
+      --project="$GCP_PROJECT" --zone="$RIG_B1_NODE_ZONE" --port=1 --start=0
+    echo "#   apply polls for at most $((max_attempts * interval_seconds)) seconds and requires"
+    echo "#   one exact ARKOVA_RIG_B1_READY_V1 marker before any Cloud Run deploy."
+    return 0
+  fi
+
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    serial_output="$(gcloud compute instances get-serial-port-output "$RIG_B1_NODE_VM" \
+      --project="$GCP_PROJECT" --zone="$RIG_B1_NODE_ZONE" --port=1 --start=0 2>/dev/null || true)"
+    marker="$(printf '%s\n' "$serial_output" \
+      | sed -n 's/^.*ARKOVA_RIG_B1_READY_V1 \({.*}\)$/\1/p' \
+      | tail -n 1)"
+    if [[ -n "$marker" && "$marker" != *[[:space:]]* ]] \
+      && verified="$(jq -ce \
+        --arg image "$RIG_B1_EXPECTED_BITCOIN_CORE_IMAGE" \
+        --arg split_plan "$RIG_B1_TREASURY_SPLIT_PLAN_DIGEST" \
+        --arg split_txid "$RIG_B1_TREASURY_SPLIT_TXID" \
+        --argjson total_sats "$RIG_B1_TREASURY_TOTAL_SATS" '
+          select(
+            type == "object"
+            and ((keys | sort) == ([
+              "schemaVersion", "bitcoinCoreVersion", "bitcoinCoreImage",
+              "sourceTarballSha256", "chain", "initialBlockDownload", "blocks",
+              "headers", "genesisHash", "txindexSynced", "txindexBestBlockHeight",
+              "treasurySplitPlanDigest", "splitTransactionId", "confirmedOutputCount",
+              "confirmedTotalSats", "splitBlockHash", "splitBlockHeader", "txOutProof"
+            ] | sort))
+            and .schemaVersion == "arkova.s33.rig-b1.node-readiness/v1"
+            and .bitcoinCoreVersion == "31.1"
+            and .bitcoinCoreImage == $image
+            and .sourceTarballSha256 == "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e"
+            and .chain == "signet"
+            and .initialBlockDownload == false
+            and (.blocks | type == "number" and floor == . and . >= 0)
+            and (.headers | type == "number" and floor == . and . >= 0)
+            and (.headers >= .blocks)
+            and .genesisHash == "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"
+            and .txindexSynced == true
+            and .txindexBestBlockHeight == .blocks
+            and .treasurySplitPlanDigest == $split_plan
+            and .splitTransactionId == $split_txid
+            and .confirmedOutputCount == 32
+            and .confirmedTotalSats == $total_sats
+            and (.splitBlockHash | type == "string" and test("^[0-9a-f]{64}$"))
+            and (.splitBlockHeader | type == "string" and test("^[0-9a-f]{160}$"))
+            and (.txOutProof | type == "string" and test("^([0-9a-f]{2})+$"))
+          )
+        ' <<<"$marker" 2>/dev/null)"; then
+      RIG_B1_NODE_READINESS_JSON="$verified"
+      write_provision_state "b1_node_readiness_verified_before_worker_deploy" ""
+      return 0
+    fi
+    sleep "$interval_seconds"
+  done
+  echo "ERROR: RIG-B1 node did not emit the exact nonsecret readiness marker within $((max_attempts * interval_seconds)) seconds; refusing Cloud Run deploy." >&2
+  return 1
 }
 
 resolve_head_sha() {
@@ -2899,7 +4357,7 @@ verify_deployed_revision_provenance() {
     exit 1
   fi
 
-  local revision_json expected_digest resolved_digest
+  local revision_json expected_digest resolved_digest observed_runtime_sa
   revision_json="$(gcloud run revisions describe "$DEPLOYED_REVISION" \
     --region="$CLOUD_RUN_REGION" \
     --project="$GCP_PROJECT" \
@@ -2912,6 +4370,7 @@ verify_deployed_revision_provenance() {
   DEPLOYED_IMAGE_REF="$(jq -r '.spec.containers[0].image // empty' <<<"$revision_json")"
   resolved_digest="$(jq -r '.status.imageDigest // empty' <<<"$revision_json")"
   DEPLOYED_SOURCE_HEAD="$(jq -r '.metadata.labels["arkova-source-head"] // empty' <<<"$revision_json")"
+  observed_runtime_sa="$(jq -r '.spec.serviceAccountName // empty' <<<"$revision_json")"
 
   expected_digest="$(image_digest_from_ref "$PINNED_IMAGE")"
   # Cloud Run RevisionStatus.imageDigest is controller-observed and is populated
@@ -2923,6 +4382,11 @@ verify_deployed_revision_provenance() {
   fi
   if [[ "$DEPLOYED_SOURCE_HEAD" != "$DECLARED_SOURCE_HEAD" ]]; then
     echo "ERROR: deployed revision source HEAD mismatch: expected=$DECLARED_SOURCE_HEAD got=${DEPLOYED_SOURCE_HEAD:-<missing>}." >&2
+    exit 1
+  fi
+  if [[ -z "$EXPECTED_RUNTIME_SA_FOR_REVISION" \
+    || "$observed_runtime_sa" != "$EXPECTED_RUNTIME_SA_FOR_REVISION" ]]; then
+    echo "ERROR: deployed revision runtime identity mismatch: expected=${EXPECTED_RUNTIME_SA_FOR_REVISION:-<unset>} got=${observed_runtime_sa:-<missing>}." >&2
     exit 1
   fi
 
@@ -2940,7 +4404,7 @@ observed_revision_env_value() {
 
 verify_deployed_revision_env() {
   local revision_json="$1"
-  local entry key expected observed count expected_names_json observed_names_json
+  local entry key expected observed count expected_names_json observed_names_json secret_binding expected_secret expected_version
   local expected_names=()
   for entry in "${ENV_VARS[@]}"; do
     key="${entry%%=*}"
@@ -2953,8 +4417,24 @@ verify_deployed_revision_env() {
       exit 1
     fi
   done
-  for entry in "${SECRETS[@]}"; do
-    expected_names+=("${entry%%=*}")
+  for entry in "${EXPECTED_REVISION_SECRETS[@]}"; do
+    key="${entry%%=*}"
+    secret_binding="${entry#*=}"
+    expected_secret="${secret_binding%:*}"
+    expected_version="${secret_binding##*:}"
+    expected_names+=("$key")
+    if ! jq -e --arg name "$key" --arg secret "$expected_secret" --arg version "$expected_version" '
+      [.spec.containers[0].env[]? | select(.name == $name)] as $matches
+      | ($matches | length) == 1
+      and (($matches[0] | keys | sort) == (["name", "valueSource"] | sort))
+      and (($matches[0].valueSource | keys) == ["secretKeyRef"])
+      and (($matches[0].valueSource.secretKeyRef | keys | sort) == (["secret", "version"] | sort))
+      and $matches[0].valueSource.secretKeyRef.secret == $secret
+      and $matches[0].valueSource.secretKeyRef.version == $version
+    ' >/dev/null 2>&1 <<<"$revision_json"; then
+      echo "ERROR: deployed revision secret '$key' does not bind its exact declared Secret Manager name/version." >&2
+      exit 1
+    fi
   done
 
   expected_names_json="$(printf '%s\n' "${expected_names[@]}" \
@@ -3090,27 +4570,37 @@ resolve_cloud_run_url() {
 }
 
 g1_topology_json() {
-  local supabase_project_ref="$1"
+  local _compatibility_project_ref="$1"
   if [[ $IS_G1_RIG -ne 1 ]]; then
     printf 'null\n'
     return 0
   fi
 
-  local teardown_command
-  teardown_command="$(teardown_command_for_project_ref "$supabase_project_ref")"
+  local control_teardown tuned_teardown
+  control_teardown="$(teardown_command_for_project_ref "$G1_CONTROL_PROJECT_REF")"
+  tuned_teardown="$(teardown_command_for_project_ref "$G1_TUNED_PROJECT_REF")"
   jq -nc \
-    --arg candidate_model "$RIG_G1_CANDIDATE_MODEL" \
-    --arg candidate_model_resource "projects/${APPROVED_GCP_PROJECT}/locations/us-central1/${RIG_G1_CANDIDATE_MODEL}" \
+    --arg candidate_model_resource "$RIG_G1_CANDIDATE_MODEL_RESOURCE" \
+    --arg candidate_model_version_resource "$RIG_G1_CANDIDATE_MODEL_VERSION_RESOURCE" \
+    --arg checkpoint_id "$RIG_G1_CHECKPOINT_ID" \
     --arg corpus_digest "$G1_CORPUS_DIGEST" \
-    --arg supabase_project_ref "$supabase_project_ref" \
-    --arg runtime_service_account "$RUNTIME_SA" \
-    --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
-    --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
-    --arg stripe_secret_key_secret "$STRIPE_SECRET_KEY_SECRET" \
-    --arg stripe_webhook_secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
-    --arg api_key_hmac_secret "$API_KEY_HMAC_SECRET_SECRET" \
-    --arg cron_secret "$CRON_SECRET_SECRET" \
-    --arg gemini_api_key_secret "$GEMINI_API_KEY_SECRET" \
+    --arg control_project_name "$G1_CONTROL_PROJECT_NAME" \
+    --arg control_project_ref "$G1_CONTROL_PROJECT_REF" \
+    --arg tuned_project_name "$G1_TUNED_PROJECT_NAME" \
+    --arg tuned_project_ref "$G1_TUNED_PROJECT_REF" \
+    --arg control_runtime_service_account "$G1_CONTROL_RUNTIME_SA" \
+    --arg tuned_runtime_service_account "$G1_TUNED_RUNTIME_SA" \
+    --arg control_runtime_unique_id "$G1_CONTROL_RUNTIME_SA_UNIQUE_ID" \
+    --arg tuned_runtime_unique_id "$G1_TUNED_RUNTIME_SA_UNIQUE_ID" \
+    --arg control_supabase_url_secret "${G1_CONTROL_SUPABASE_URL_SECRET}@1" \
+    --arg control_supabase_role_secret "${G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET}@1" \
+    --arg tuned_supabase_url_secret "${G1_TUNED_SUPABASE_URL_SECRET}@1" \
+    --arg tuned_supabase_role_secret "${G1_TUNED_SUPABASE_SERVICE_ROLE_SECRET}@1" \
+    --arg stripe_secret_key_secret "${STRIPE_SECRET_KEY_SECRET}@${SHARED_STRIPE_SECRET_VERSION}" \
+    --arg stripe_webhook_secret "${STRIPE_WEBHOOK_SECRET_SECRET}@${SHARED_STRIPE_WEBHOOK_VERSION}" \
+    --arg api_key_hmac_secret "${API_KEY_HMAC_SECRET_SECRET}@${SHARED_API_KEY_HMAC_VERSION}" \
+    --arg cron_secret "${CRON_SECRET_SECRET}@${SHARED_CRON_SECRET_VERSION}" \
+    --arg gemini_api_key_secret "${GEMINI_API_KEY_SECRET}@${GEMINI_API_KEY_SECRET_VERSION}" \
     --arg immutable_ledger_bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
     --arg owner "$G1_OWNER" \
     --arg expires_at "$G1_EXPIRES_AT" \
@@ -3138,21 +4628,50 @@ g1_topology_json() {
     --arg tuned_run_id "$G1_TUNED_RUN_ID" \
     --arg control_queue "$G1_CONTROL_QUEUE" \
     --arg tuned_queue "$G1_TUNED_QUEUE" \
+    --arg control_deployed_at "$G1_CONTROL_DEPLOYED_AT" \
+    --arg tuned_deployed_at "$G1_TUNED_DEPLOYED_AT" \
+    --arg control_clean_mirror_id "$G1_CONTROL_CLEAN_MIRROR_ATTESTATION_ID" \
+    --arg tuned_clean_mirror_id "$G1_TUNED_CLEAN_MIRROR_ATTESTATION_ID" \
+    --arg control_clean_mirror_at "$G1_CONTROL_PREFLIGHT_VERIFIED_AT" \
+    --arg tuned_clean_mirror_at "$G1_TUNED_PREFLIGHT_VERIFIED_AT" \
+    --arg control_clean_mirror_artifact "$G1_CONTROL_PREFLIGHT_ARTIFACT_PATH" \
+    --arg tuned_clean_mirror_artifact "$G1_TUNED_PREFLIGHT_ARTIFACT_PATH" \
     --arg public_model "$RIG_G1_PUBLIC_MODEL" \
-    --arg tuned_model "$GEMINI_TUNED_MODEL_VALUE" \
+    --arg endpoint_id "$RIG_G1_ENDPOINT_ID" \
+    --arg endpoint_resource "projects/arkova1/locations/us-central1/endpoints/${RIG_G1_ENDPOINT_ID}" \
+    --arg endpoint_display_name "$RIG_G1_ENDPOINT_DISPLAY_NAME" \
+    --arg deployed_model_id "$RIG_G1_DEPLOYED_MODEL_ID" \
+    --arg deployed_model_display_name "$RIG_G1_DEPLOYED_MODEL_DISPLAY_NAME" \
+    --arg deployment_resources_mode "$RIG_G1_DEPLOYMENT_RESOURCES_MODE" \
+    --arg endpoint_iam_role "roles/aiplatform.endpointUser" \
+    --arg endpoint_iam_member "serviceAccount:${G1_TUNED_RUNTIME_SA}" \
+    --arg predict_probe_at "$G1_PREDICT_PROBE_AT" \
     --arg v6_prompt "$GEMINI_V6_PROMPT_VALUE" \
     --arg image "$PINNED_IMAGE" \
-    --arg teardown_command "$teardown_command" \
+    --arg control_teardown "$control_teardown" \
+    --arg tuned_teardown "$tuned_teardown" \
+    --arg paired_deploy_delta_seconds "$G1_PAIRED_DEPLOY_DELTA_SECONDS" \
+    --argjson min_replica_count "$RIG_G1_MIN_REPLICA_COUNT" \
+    --argjson max_replica_count "$RIG_G1_MAX_REPLICA_COUNT" \
     '{
-      candidate_model: $candidate_model,
       candidate_model_resource: $candidate_model_resource,
+      candidate_model_version_resource: $candidate_model_version_resource,
+      checkpoint_id: $checkpoint_id,
       corpus_digest: $corpus_digest,
-      tier: "T2_CUSTOM",
+      tier: "T2",
       required_worker_uptime_min: $required_worker_uptime_min,
       required_wall_min: $required_wall_min,
       paired_cadence_max_min: $paired_cadence_max_min,
       execution_state: "PAUSED",
       background_execution: "disabled",
+      actual_soak_clock: {
+        status: "DEFERRED_CTO_AUTHORITY",
+        control_started_at: null,
+        tuned_started_at: null,
+        deployment_timestamps_are_soak_clocks: false,
+        prerequisite: "both physical clean-mirror attestations plus explicit CTO start authority",
+        maximum_signed_start_delta_min: $paired_cadence_max_min
+      },
       owner: $owner,
       expires_at: $expires_at,
       stop_authority: $stop_authority,
@@ -3167,10 +4686,7 @@ g1_topology_json() {
       },
       spend_approval: $spend_approval,
       approval_claim: $approval_claim,
-      runtime_service_account: $runtime_service_account,
-      secret_references: {
-        supabase_url: $supabase_url_secret,
-        supabase_service_role_key: $supabase_service_role_secret,
+      shared_secret_references: {
         stripe_secret_key: $stripe_secret_key_secret,
         stripe_webhook_secret: $stripe_webhook_secret,
         api_key_hmac_secret: $api_key_hmac_secret,
@@ -3186,40 +4702,107 @@ g1_topology_json() {
       },
       shared_inputs: {
         image: $image,
-        corpus_digest: $corpus_digest,
-        supabase_project_ref: $supabase_project_ref
+        corpus_digest: $corpus_digest
       },
       arms: [
         {
+          rig_id: "RIG-G1-A",
           arm: "public_control",
+          supabase_project_name: $control_project_name,
+          supabase_project_ref: $control_project_ref,
           service: $control_service,
+          runtime_service_account: $control_runtime_service_account,
+          runtime_service_account_unique_id: $control_runtime_unique_id,
+          generated_secret_references: {
+            supabase_url: $control_supabase_url_secret,
+            supabase_service_role_key: $control_supabase_role_secret
+          },
           revision: $control_revision,
           url: $control_url,
+          deployed_at: $control_deployed_at,
           run_id: $control_run_id,
           queue: $control_queue,
           queue_binding: "external_harness",
           gemini_model: $public_model,
           gemini_tuned_model: "<unset>",
           gemini_v6_prompt: "<unset>",
-          gemini_tuned_response_schema: "<unset>"
+          gemini_tuned_response_schema: "<unset>",
+          vertex_endpoint: null,
+          authenticated_capability_probe: {status: "NOT_APPLICABLE"},
+          clean_mirror: {
+            artifact: $control_clean_mirror_artifact,
+            attestation_id: $control_clean_mirror_id,
+            verified_at: $control_clean_mirror_at
+          },
+          teardown: {
+            command: $control_teardown,
+            default_mode: "dry-run",
+            live_confirmation: ("CONFIRM_TEARDOWN=" + $control_project_ref)
+          }
         },
         {
+          rig_id: "RIG-G1-B",
           arm: "tuned_v6",
+          supabase_project_name: $tuned_project_name,
+          supabase_project_ref: $tuned_project_ref,
           service: $tuned_service,
+          runtime_service_account: $tuned_runtime_service_account,
+          runtime_service_account_unique_id: $tuned_runtime_unique_id,
+          generated_secret_references: {
+            supabase_url: $tuned_supabase_url_secret,
+            supabase_service_role_key: $tuned_supabase_role_secret
+          },
           revision: $tuned_revision,
           url: $tuned_url,
+          deployed_at: $tuned_deployed_at,
           run_id: $tuned_run_id,
           queue: $tuned_queue,
           queue_binding: "external_harness",
           gemini_model: $public_model,
-          gemini_tuned_model: $tuned_model,
+          gemini_tuned_model: $endpoint_resource,
           gemini_v6_prompt: $v6_prompt,
-          gemini_tuned_response_schema: "<unset>"
+          gemini_tuned_response_schema: "<unset>",
+          vertex_endpoint: {
+            id: $endpoint_id,
+            resource: $endpoint_resource,
+            display_name: $endpoint_display_name,
+            model_resource: $candidate_model_resource,
+            model_version_resource: $candidate_model_version_resource,
+            checkpoint_id: $checkpoint_id,
+            deployed_model_id: $deployed_model_id,
+            deployed_model_display_name: $deployed_model_display_name,
+            deployment_resources_mode: $deployment_resources_mode,
+            min_replica_count: $min_replica_count,
+            max_replica_count: $max_replica_count,
+            endpoint_iam_role: $endpoint_iam_role,
+            endpoint_iam_member: $endpoint_iam_member
+          },
+          authenticated_capability_probe: {
+            status: "PASSED_PRECLOCK_NO_CUSTOMER_DATA",
+            verified_at: $predict_probe_at
+          },
+          clean_mirror: {
+            artifact: $tuned_clean_mirror_artifact,
+            attestation_id: $tuned_clean_mirror_id,
+            verified_at: $tuned_clean_mirror_at
+          },
+          teardown: {
+            command: $tuned_teardown,
+            default_mode: "dry-run",
+            live_confirmation: ("CONFIRM_TEARDOWN=" + $tuned_project_ref)
+          }
         }
       ],
+      paired_deploy_observation: {
+        control_deployed_at: $control_deployed_at,
+        tuned_deployed_at: $tuned_deployed_at,
+        delta_seconds: ($paired_deploy_delta_seconds
+          | if test("^[0-9]+$") then tonumber else . end),
+        deploy_guard_only: true
+      },
       teardown: {
         owner: $teardown_owner,
-        command: $teardown_command,
+        physical_arm_commands: [$control_teardown, $tuned_teardown],
         default_mode: "dry-run",
         live_confirmation: "CONFIRM_TEARDOWN=<exact-project-ref>"
       }
@@ -3305,7 +4888,9 @@ rig_r_topology_json() {
           cardinality: 1,
           lease_id: $lease_id,
           object_uri: $lease_uri,
-          acquisition: "gcs-if-generation-match-0"
+          object_name_is_code_fixed: true,
+          acquisition: "gcs-singleton-if-generation-match-0",
+          release: "ownership-verified-generation-bound-delete"
         },
         teardown: {
           command: $teardown_command,
@@ -3314,6 +4899,346 @@ rig_r_topology_json() {
         }
       }
     '
+}
+
+rig_b1_infrastructure_json() {
+  if [[ "$RIG_ID" != "RIG-B1" ]]; then
+    printf 'null\n'
+    return 0
+  fi
+  local startup_sha="$RIG_B1_NODE_STARTUP_SCRIPT_SHA256"
+  if [[ -z "$startup_sha" ]]; then
+    startup_sha="$(execute_sha256_checksum "$RIG_B1_NODE_STARTUP_SCRIPT" 2>/dev/null || printf '%064d' 0)"
+  fi
+  jq -nc \
+    --arg recipe_commit "$RIG_B1_BITCOIN_CORE_RECIPE_COMMIT" \
+    --arg container_image "$RIG_B1_BITCOIN_CORE_IMAGE" \
+    --arg amd64_runtime_digest "$RIG_B1_BITCOIN_CORE_AMD64_RUNTIME_DIGEST" \
+    --arg startup_sha "$startup_sha" \
+    --arg rpc_url_secret "$BITCOIN_CORE_RPC_URL_SECRET" \
+    --arg rpc_url_version "$RIG_B1_RPC_URL_SECRET_VERSION" \
+    --arg rpc_auth_secret "$BITCOIN_CORE_RPC_AUTH_SECRET" \
+    --arg rpc_auth_version "$RIG_B1_RPC_AUTH_SECRET_VERSION" \
+    --arg treasury_wif_secret "$TREASURY_WIF_SECRET" \
+    --arg treasury_wif_version "$RIG_B1_TREASURY_WIF_SECRET_VERSION" \
+    --arg treasury_address "$RIG_B1_TREASURY_ADDRESS" \
+    --arg treasury_descriptor "$RIG_B1_TREASURY_DESCRIPTOR" \
+    --arg split_txid "$RIG_B1_TREASURY_SPLIT_TXID" \
+    --arg split_plan_digest "$RIG_B1_TREASURY_SPLIT_PLAN_DIGEST" \
+    --arg service "$CLOUD_RUN_SERVICE" \
+    --arg approval_id "$RIG_B1_APPROVAL_ID" \
+    --arg approval_envelope_sha256 "$RIG_B1_APPROVAL_ENVELOPE_SHA256" \
+    --arg approval_payload_sha256 "$RIG_B1_APPROVAL_PAYLOAD_SHA256" \
+    --arg claim_backend "$(jq -r '.backend // empty' <<<"$RIG_B1_APPROVAL_CLAIM_JSON")" \
+    --arg claim_object_uri "$(jq -r '.object_uri // empty' <<<"$RIG_B1_APPROVAL_CLAIM_JSON")" \
+    --arg claim_generation "$(jq -r '.generation // empty' <<<"$RIG_B1_APPROVAL_CLAIM_JSON")" \
+    --argjson node_readiness "$RIG_B1_NODE_READINESS_JSON" \
+    --argjson expected_total_sats "${RIG_B1_TREASURY_EXPECTED_TOTAL_SATS:-0}" \
+    --argjson spend_cap_usd "${RIG_B1_SPEND_CAP_USD:-0}" '
+      {
+        provider: {
+          workerProvider: "rpc",
+          primary: "bitcoin-core-signet-rpc",
+          secondary: "mempool-space-signet",
+          secondaryApiUrl: "https://mempool.space/signet/api"
+        },
+        bitcoinCore: {
+          version: "31.1",
+          recipeCommit: $recipe_commit,
+          sourceTarballUrl: "https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz",
+          sourceTarballSha256: "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e",
+          containerImage: $container_image,
+          amd64RuntimeDigest: $amd64_runtime_digest,
+          startupScriptPath: "scripts/staging/start-rig-b1-bitcoin-core.sh",
+          startupScriptSha256: $startup_sha
+        },
+        resources: {
+          zone: "us-central1-a",
+          vm: "arkova-s33-rig-b1-bitcoin-core-signet",
+          bootDisk: "arkova-s33-rig-b1-bitcoin-core-signet-boot",
+          dataDisk: "arkova-s33-rig-b1-bitcoin-core-signet-data",
+          internalAddress: "arkova-s33-rig-b1-bitcoin-core-signet-rpc-ip",
+          externalAddress: "arkova-s33-rig-b1-bitcoin-core-signet-p2p-ip",
+          network: "arkova-s33-rig-b1-bitcoin-core-signet-vpc",
+          subnet: "arkova-s33-rig-b1-bitcoin-core-signet-subnet",
+          rpcFirewall: "arkova-s33-rig-b1-bitcoin-core-signet-rpc",
+          vpcConnector: "arkova-s33-rig-b1-bitcoin-core-signet-connector",
+          nodeServiceAccount: "s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com"
+        },
+        schedulerJobs: [
+          "\($service)-batch-anchors",
+          "\($service)-batch-anchors-forced-flush",
+          "\($service)-check-confirmations",
+          "\($service)-org-queue-scheduler",
+          "\($service)-populate-confirmation-proofs",
+          "\($service)-recover-broadcasts"
+        ],
+        iam: {
+          artifactRegistryReader: {
+            repository: "projects/arkova1/locations/us-central1/repositories/arkova-worker-images",
+            member: "serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com",
+            role: "roles/artifactregistry.reader"
+          },
+          rpcAuthSecretAccessor: {
+            secretName: "arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth",
+            member: "serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com",
+            role: "roles/secretmanager.secretAccessor"
+          }
+        },
+        network: {
+          rpcEndpoint: "http://10.33.10.10:38332",
+          rpcBind: "10.33.10.10",
+          rpcAllowCidr: "10.33.11.0/28",
+          subnetCidr: "10.33.10.0/28",
+          rpcPort: 38332,
+          signetP2pPort: 38333,
+          publicRpc: false
+        },
+        secretReferences: [
+          {
+            env: "BITCOIN_RPC_URL",
+            secretName: $rpc_url_secret,
+            version: $rpc_url_version,
+            resource: "projects/arkova1/secrets/\($rpc_url_secret)/versions/\($rpc_url_version)"
+          },
+          {
+            env: "BITCOIN_RPC_AUTH",
+            secretName: $rpc_auth_secret,
+            version: $rpc_auth_version,
+            resource: "projects/arkova1/secrets/\($rpc_auth_secret)/versions/\($rpc_auth_version)"
+          },
+          {
+            env: "BITCOIN_TREASURY_WIF",
+            secretName: $treasury_wif_secret,
+            version: $treasury_wif_version,
+            resource: "projects/arkova1/secrets/\($treasury_wif_secret)/versions/\($treasury_wif_version)"
+          }
+        ],
+        nodeSecretEnvs: ["BITCOIN_RPC_AUTH"],
+        forbiddenNodeSecretEnvs: ["BITCOIN_TREASURY_WIF"],
+        treasuryWatchOnly: {
+          address: $treasury_address,
+          descriptor: $treasury_descriptor,
+          splitTransactionId: $split_txid,
+          preSplitPlanDigest: $split_plan_digest,
+          expectedConfirmedOutputCount: 32,
+          expectedTotalSats: $expected_total_sats,
+          descriptorPolicy: "addr-checksummed-importdescriptors",
+          wifOnNode: false
+        },
+        nodeReadiness: $node_readiness,
+        authority: {
+          binding: "ed25519-signed-node-approval",
+          approvalId: $approval_id,
+          approvalEnvelopeSha256: $approval_envelope_sha256,
+          signedPayloadSha256: $approval_payload_sha256,
+          spendCapUsd: $spend_cap_usd,
+          claim: {
+            backend: $claim_backend,
+            objectUri: $claim_object_uri,
+            generation: $claim_generation
+          }
+        },
+        teardown: {
+          orderedResources: [
+            "scheduler-jobs", "cloud-run-service", "bitcoin-core-vm", "boot-disk", "data-disk",
+            "external-address", "internal-address", "rpc-firewall", "vpc-connector",
+            "subnet", "vpc-network", "artifact-registry-iam", "node-secret-iam", "node-service-account",
+            "worker-secret-iam", "worker-runtime-service-account",
+            "scheduler-oidc-service-account", "supabase-project"
+          ],
+          projectedMonthlyRecurringUsd: 0
+        }
+      }
+    '
+}
+
+b1_observed_identity() {
+  local label="$1"
+  local jq_filter="$2"
+  shift 2
+  local observed identity
+  if ! observed="$("$@")" \
+    || ! identity="$(jq -er "$jq_filter" <<<"$observed")" \
+    || [[ -z "$identity" ]]; then
+    echo "ERROR: RIG-B1 could not observe exact $label identity for immutable ownership." >&2
+    return 1
+  fi
+  printf '%s\n' "$identity"
+}
+
+publish_rig_b1_topology_ownership() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 0
+  local resources secrets scheduler_names generated_secrets service_url node_readiness
+  local cloud_run_uid vm_id boot_disk_id data_disk_id internal_address_id external_address_id
+  local firewall_id connector_name subnet_id network_id node_sa_uid worker_sa_uid scheduler_sa_uid
+  local object_name payload payload_temp metadata generation observed_payload
+
+  resources="$(jq -c '.payload.topology.resources' <<<"$RIG_B1_NODE_APPROVAL_JSON")"
+  secrets="$(jq -c '.payload.topology.secretReferences' <<<"$RIG_B1_NODE_APPROVAL_JSON")"
+  scheduler_names="$(jq -c '.payload.topology.schedulerJobs' <<<"$RIG_B1_NODE_APPROVAL_JSON")"
+  generated_secrets="$(jq -nc \
+      --arg url "$SUPABASE_URL_SECRET_NAME" \
+      --arg role "$SUPABASE_SERVICE_ROLE_SECRET_NAME" '[$url, $role]')"
+  if ! node_readiness="$(jq -ce \
+    'select(.schemaVersion == "arkova.s33.rig-b1.node-readiness/v1")' \
+    <<<"$RIG_B1_NODE_READINESS_JSON" 2>/dev/null)"; then
+    echo "ERROR: RIG-B1 immutable topology publication requires the verified pre-worker node readiness marker." >&2
+    return 1
+  fi
+  service_url="$(resolve_cloud_run_url_for_service "$CLOUD_RUN_SERVICE")"
+
+  cloud_run_uid="$(b1_observed_identity "Cloud Run service UID" \
+    '.metadata.uid | select(type == "string" and test("^[A-Za-z0-9-]{8,}$"))' \
+    gcloud run services describe "$CLOUD_RUN_SERVICE" --project="$GCP_PROJECT" \
+    --region="$CLOUD_RUN_REGION" --format=json)" || return 1
+  vm_id="$(b1_observed_identity "VM ID" '(.id | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud compute instances describe "$RIG_B1_NODE_VM" --project="$GCP_PROJECT" \
+    --zone="$RIG_B1_NODE_ZONE" --format=json)" || return 1
+  boot_disk_id="$(b1_observed_identity "boot disk ID" '(.id | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud compute disks describe "$RIG_B1_NODE_BOOT_DISK" --project="$GCP_PROJECT" \
+    --zone="$RIG_B1_NODE_ZONE" --format=json)" || return 1
+  data_disk_id="$(b1_observed_identity "data disk ID" '(.id | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud compute disks describe "$RIG_B1_NODE_DATA_DISK" --project="$GCP_PROJECT" \
+    --zone="$RIG_B1_NODE_ZONE" --format=json)" || return 1
+  internal_address_id="$(b1_observed_identity "internal address ID" '(.id | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud compute addresses describe "$RIG_B1_NODE_INTERNAL_ADDRESS" --project="$GCP_PROJECT" \
+    --region="$CLOUD_RUN_REGION" --format=json)" || return 1
+  external_address_id="$(b1_observed_identity "external address ID" '(.id | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud compute addresses describe "$RIG_B1_NODE_EXTERNAL_ADDRESS" --project="$GCP_PROJECT" \
+    --region="$CLOUD_RUN_REGION" --format=json)" || return 1
+  firewall_id="$(b1_observed_identity "RPC firewall ID" '(.id | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud compute firewall-rules describe "$RIG_B1_NODE_RPC_FIREWALL" --project="$GCP_PROJECT" \
+    --format=json)" || return 1
+  connector_name="$(b1_observed_identity "VPC connector name" \
+    '.name | select(type == "string" and test("^projects/arkova1/locations/us-central1/connectors/arkova-s33-rig-b1-bitcoin-core-signet-connector$"))' \
+    gcloud compute networks vpc-access connectors describe "$RIG_B1_NODE_VPC_CONNECTOR" \
+    --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" --format=json)" || return 1
+  subnet_id="$(b1_observed_identity "subnet ID" '(.id | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud compute networks subnets describe "$RIG_B1_NODE_SUBNET" --project="$GCP_PROJECT" \
+    --region="$CLOUD_RUN_REGION" --format=json)" || return 1
+  network_id="$(b1_observed_identity "network ID" '(.id | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud compute networks describe "$RIG_B1_NODE_NETWORK" --project="$GCP_PROJECT" \
+    --format=json)" || return 1
+  node_sa_uid="$(b1_observed_identity "node service-account unique ID" \
+    '(.uniqueId | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud iam service-accounts describe "$RIG_B1_NODE_SERVICE_ACCOUNT" \
+    --project="$GCP_PROJECT" --format=json)" || return 1
+  worker_sa_uid="$(b1_observed_identity "worker service-account unique ID" \
+    '(.uniqueId | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud iam service-accounts describe "$RUNTIME_SA" \
+    --project="$GCP_PROJECT" --format=json)" || return 1
+  scheduler_sa_uid="$(b1_observed_identity "Scheduler service-account unique ID" \
+    '(.uniqueId | tostring) | select(test("^[1-9][0-9]*$"))' \
+    gcloud iam service-accounts describe "$CRON_OIDC_SA" \
+    --project="$GCP_PROJECT" --format=json)" || return 1
+
+  object_name="${RIG_B1_TOPOLOGY_LEDGER_PREFIX}/${RIG_B1_APPROVAL_ID}.json"
+  RIG_B1_TOPOLOGY_OWNERSHIP_URI="gs://${IMMUTABLE_AUTHORITY_LEDGER_BUCKET}/${object_name}"
+  payload="$(jq -nc \
+    --arg approval_id "$RIG_B1_APPROVAL_ID" \
+    --arg envelope_sha "$RIG_B1_APPROVAL_ENVELOPE_SHA256" \
+    --arg payload_sha "$RIG_B1_APPROVAL_PAYLOAD_SHA256" \
+    --arg source_head "$DECLARED_SOURCE_HEAD" \
+    --arg source_tree "$RIG_B1_CANDIDATE_TREE_SHA" \
+    --arg corpus "$RIG_B1_CORPUS_DIGEST" \
+    --arg rc_id "$RIG_B1_RELEASE_CANDIDATE_ID" \
+    --arg soak_id "$SOAK_ID" --arg lease_id "$LEASE_ID" \
+    --arg project_ref "$NEW_PROJECT_REF" \
+    --arg service "$CLOUD_RUN_SERVICE" \
+    --arg runtime_sa "$RUNTIME_SA" --arg scheduler_sa "$CRON_OIDC_SA" \
+    --arg service_url "$service_url" \
+    --arg cloud_run_uid "$cloud_run_uid" --arg vm_id "$vm_id" \
+    --arg boot_disk_name "$RIG_B1_NODE_BOOT_DISK" --arg boot_disk_id "$boot_disk_id" \
+    --arg data_disk_id "$data_disk_id" --arg internal_address_id "$internal_address_id" \
+    --arg external_address_id "$external_address_id" --arg firewall_id "$firewall_id" \
+    --arg connector_name "$connector_name" --arg subnet_id "$subnet_id" --arg network_id "$network_id" \
+    --arg node_sa_uid "$node_sa_uid" --arg worker_sa_uid "$worker_sa_uid" \
+    --arg scheduler_sa_uid "$scheduler_sa_uid" \
+    --arg claim_uri "$(jq -r '.object_uri' <<<"$RIG_B1_APPROVAL_CLAIM_JSON")" \
+    --arg claim_generation "$(jq -r '.generation' <<<"$RIG_B1_APPROVAL_CLAIM_JSON")" \
+    --argjson resources "$resources" --argjson secrets "$secrets" \
+    --argjson scheduler_names "$scheduler_names" --argjson generated_secrets "$generated_secrets" \
+    --argjson node_readiness "$node_readiness" '
+      {
+        schemaVersion: "arkova.s33.rig-b1.topology-ownership/v1",
+        approvalId: $approval_id,
+        envelopeSha256: $envelope_sha,
+        signedPayloadSha256: $payload_sha,
+        sourceHeadSha: $source_head,
+        sourceTreeSha: $source_tree,
+        corpusDigest: $corpus,
+        releaseCandidateId: $rc_id,
+        rigId: "RIG-B1",
+        rigName: "s33-b1",
+        soakId: $soak_id,
+        leaseId: $lease_id,
+        gcpProjectId: "arkova1",
+        gcpRegion: "us-central1",
+        supabaseProjectRef: $project_ref,
+        supabaseProjectName: "arkova-soak-s33-b1",
+        workerService: $service,
+        workerRuntimeServiceAccount: $runtime_sa,
+        schedulerOidcServiceAccount: $scheduler_sa,
+        cloudRunServiceUrl: $service_url,
+        resources: $resources,
+        secretReferences: $secrets,
+        schedulerJobNames: $scheduler_names,
+        generatedSecretNames: $generated_secrets,
+        nodeReadiness: $node_readiness,
+        resourceIdentities: {
+          cloudRunServiceUid: $cloud_run_uid,
+          vmId: $vm_id,
+          bootDiskName: $boot_disk_name,
+          bootDiskId: $boot_disk_id,
+          dataDiskId: $data_disk_id,
+          internalAddressId: $internal_address_id,
+          externalAddressId: $external_address_id,
+          rpcFirewallId: $firewall_id,
+          vpcConnectorName: $connector_name,
+          subnetId: $subnet_id,
+          networkId: $network_id,
+          nodeServiceAccountUniqueId: $node_sa_uid,
+          workerRuntimeServiceAccountUniqueId: $worker_sa_uid,
+          schedulerOidcServiceAccountUniqueId: $scheduler_sa_uid
+        },
+        approvalClaim: {objectUri: $claim_uri, generation: $claim_generation},
+        projectedMonthlyRecurringUsd: 0
+      }
+    ')" || return 1
+  umask 077
+  payload_temp="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/arkova-b1-topology.XXXXXX")" || return 1
+  if ! printf '%s\n' "$payload" >"$payload_temp" \
+    || ! gcloud storage cp "$payload_temp" "$RIG_B1_TOPOLOGY_OWNERSHIP_URI" \
+      --project="$GCP_PROJECT" --if-generation-match=0 --content-type=application/json \
+      --retain-until="$RIG_B1_APPROVAL_EXPIRES_AT" --retention-mode=Locked --quiet; then
+    rm -f -- "$payload_temp"
+    echo "ERROR: RIG-B1 immutable topology ownership could not be created exactly once." >&2
+    return 1
+  fi
+  rm -f -- "$payload_temp"
+  if ! metadata="$(gcloud storage objects describe "$RIG_B1_TOPOLOGY_OWNERSHIP_URI" \
+    --project="$GCP_PROJECT" --raw --format=json)" \
+    || ! jq -e --arg bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
+      --arg name "$object_name" --arg expires_at "$RIG_B1_APPROVAL_EXPIRES_AT" '
+        .bucket == $bucket and .name == $name
+        and (.generation | tostring | test("^[1-9][0-9]*$"))
+        and .retention.mode == "Locked"
+        and .retention.retainUntilTime >= $expires_at
+      ' >/dev/null 2>&1 <<<"$metadata"; then
+    echo "ERROR: RIG-B1 immutable topology ownership metadata did not re-observe exactly." >&2
+    return 1
+  fi
+  generation="$(jq -r '.generation | tostring' <<<"$metadata")"
+  if ! observed_payload="$(gcloud storage cat "${RIG_B1_TOPOLOGY_OWNERSHIP_URI}#${generation}" \
+    --project="$GCP_PROJECT")" \
+    || [[ "$(jq -cS . <<<"$observed_payload" 2>/dev/null)" != "$(jq -cS . <<<"$payload")" ]]; then
+    echo "ERROR: RIG-B1 immutable topology ownership content did not re-bind exactly." >&2
+    return 1
+  fi
+  RIG_B1_TOPOLOGY_OWNERSHIP_GENERATION="$generation"
+  RIG_B1_TOPOLOGY_OWNERSHIP_JSON="$payload"
+  write_provision_state "b1_immutable_topology_ownership_published" ""
 }
 
 emit_admission_json() {
@@ -3398,6 +5323,7 @@ emit_admission_json() {
     --arg owner "$owner" \
     --argjson g1_topology "$(g1_topology_json "$supabase_project_ref")" \
     --argjson rig_r_topology "$(rig_r_topology_json "$supabase_project_ref")" \
+    --argjson rig_b1_infrastructure "$(rig_b1_infrastructure_json)" \
     '{
       schema_version: $schema_version,
       kind: $kind,
@@ -3481,7 +5407,8 @@ emit_admission_json() {
       ]
     }
     + (if $g1_topology == null then {} else {g1: $g1_topology} end)
-    + (if $rig_r_topology == null then {} else {rig_r: $rig_r_topology} end)'
+    + (if $rig_r_topology == null then {} else {rig_r: $rig_r_topology} end)
+    + (if $rig_b1_infrastructure == null then {} else {infrastructure: $rig_b1_infrastructure} end)'
 }
 
 persist_admission_artifact() {
@@ -3564,7 +5491,10 @@ echo "#   region=$SUPABASE_REGION, postgres major=$SUPABASE_PG_MAJOR, org=$SUPAB
 # Define the create command once (no triple copy-paste, no drift). The apply
 # path appends --output json so the new ref can be captured + re-validated.
 CREATE_CMD=(npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION")
+G1_CONTROL_CREATE_CMD=(npx supabase projects create "$G1_CONTROL_PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION")
+G1_TUNED_CREATE_CMD=(npx supabase projects create "$G1_TUNED_PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION")
 if [[ $APPLY -eq 1 ]]; then
+  claim_b1_node_approval_once
   claim_g1_spend_approval_once
   claim_rig_r_provision_approval_once
   # Persist every deterministic cleanup target and exact delete command before
@@ -3604,35 +5534,61 @@ else
     done
   fi
 fi
-print_cmd "${CREATE_CMD[@]}" --db-password '<redacted:STAGING_NEW_SUPABASE_DB_PASSWORD>'
-if [[ $APPLY -eq 1 ]]; then
-  echo "executing: ${CREATE_CMD[*]} --db-password <redacted> --output json" >&2
-  # Capture the new ref so links/pushes/preflight target the validated project,
-  # never whatever happens to be linked on disk (review #1). Fail loudly if the
-  # ref can't be captured — better to abort than orphan + push blind (review #2).
-  NEW_PROJECT_REF="$("${CREATE_CMD[@]}" --db-password "$SUPABASE_DB_PASSWORD" --output json 2>/dev/null | jq -r '.id // .ref // empty')"
-  if [[ -z "$NEW_PROJECT_REF" ]]; then
-    echo "ERROR: could not capture the new project ref from 'supabase projects create'." >&2
-    echo "       Capture it manually, verify it is NOT prod/shared, then run the remaining steps." >&2
-    exit 1
-  fi
-  if [[ ! "$NEW_PROJECT_REF" =~ ^[a-z]{20}$ ]]; then
-    echo "ERROR: created Supabase project ref must be exactly 20 lowercase letters; got '$NEW_PROJECT_REF'." >&2
-    echo "       Refusing every post-create link, schema, secret, deploy, and Scheduler mutation." >&2
-    exit 1
-  fi
-  # Re-validate the freshly created ref against the deny list BEFORE any schema push.
-  if [[ "$NEW_PROJECT_REF" == "$PROD_SUPABASE_REF" || "$NEW_PROJECT_REF" == "$SHARED_STAGING_SUPABASE_REF" ]]; then
-    deny "created/resolved ref '$NEW_PROJECT_REF' is prod/shared — aborting before any schema push."
-  fi
-  CREATED_PROJECT_REF="$NEW_PROJECT_REF"
-  echo "captured NEW_PROJECT_REF=$NEW_PROJECT_REF" >&2
-  write_provision_state "project_created" ""
+if [[ $IS_G1_RIG -eq 1 ]]; then
+  print_cmd "${G1_CONTROL_CREATE_CMD[@]}" --db-password '<redacted:STAGING_G1_A_SUPABASE_DB_PASSWORD>' --output json
+  print_cmd "${G1_TUNED_CREATE_CMD[@]}" --db-password '<redacted:STAGING_G1_B_SUPABASE_DB_PASSWORD>' --output json
 else
-  echo "#   -> (apply mode captures the returned ref into NEW_PROJECT_REF and re-validates it"
-  echo "#       against $PROD_SUPABASE_REF / $SHARED_STAGING_SUPABASE_REF before any push)."
-  echo "#   -> (apply mode creates $SUPABASE_URL_SECRET_NAME and"
-  echo "#       $SUPABASE_SERVICE_ROLE_SECRET_NAME from the NEW project's API keys in Step 2b)."
+  print_cmd "${CREATE_CMD[@]}" --db-password '<redacted:STAGING_NEW_SUPABASE_DB_PASSWORD>' --output json
+fi
+if [[ $APPLY -eq 1 ]]; then
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    G1_CONTROL_PROJECT_REF="$(create_supabase_project_ref \
+      STAGING_G1_A_SUPABASE_DB_PASSWORD "$G1_CONTROL_DB_PASSWORD" \
+      "$G1_CONTROL_PROJECT_NAME" "${G1_CONTROL_CREATE_CMD[@]}")"
+    if [[ ! "$G1_CONTROL_PROJECT_REF" =~ ^[a-z]{20}$ \
+      || "$G1_CONTROL_PROJECT_REF" == "$PROD_SUPABASE_REF" \
+      || "$G1_CONTROL_PROJECT_REF" == "$SHARED_STAGING_SUPABASE_REF" ]]; then
+      echo "ERROR: RIG-G1-A project creation did not return one safe isolated 20-letter ref." >&2
+      exit 1
+    fi
+    CREATED_PROJECT_REF="$G1_CONTROL_PROJECT_REF"
+    NEW_PROJECT_REF="$G1_CONTROL_PROJECT_REF"
+    write_provision_state "g1_a_project_created" ""
+
+    G1_TUNED_PROJECT_REF="$(create_supabase_project_ref \
+      STAGING_G1_B_SUPABASE_DB_PASSWORD "$G1_TUNED_DB_PASSWORD" \
+      "$G1_TUNED_PROJECT_NAME" "${G1_TUNED_CREATE_CMD[@]}")"
+    if [[ ! "$G1_TUNED_PROJECT_REF" =~ ^[a-z]{20}$ \
+      || "$G1_TUNED_PROJECT_REF" == "$PROD_SUPABASE_REF" \
+      || "$G1_TUNED_PROJECT_REF" == "$SHARED_STAGING_SUPABASE_REF" \
+      || "$G1_TUNED_PROJECT_REF" == "$G1_CONTROL_PROJECT_REF" ]]; then
+      echo "ERROR: RIG-G1-B project creation did not return a distinct safe isolated 20-letter ref." >&2
+      echo "       RIG-G1-A remains recorded in $PROVISION_STATE_PATH for immediate teardown." >&2
+      exit 1
+    fi
+    write_provision_state "g1_a_and_g1_b_projects_created" ""
+    echo "captured distinct RIG-G1 refs A=$G1_CONTROL_PROJECT_REF B=$G1_TUNED_PROJECT_REF" >&2
+  else
+    # Capture the new ref so links/pushes/preflight target the validated project.
+    NEW_PROJECT_REF="$(create_supabase_project_ref \
+      STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
+      "$PROJECT_NAME" "${CREATE_CMD[@]}")"
+    if [[ ! "$NEW_PROJECT_REF" =~ ^[a-z]{20}$ ]]; then
+      echo "ERROR: created Supabase project ref must be exactly 20 lowercase letters; got '$NEW_PROJECT_REF'." >&2
+      exit 1
+    fi
+    if [[ "$NEW_PROJECT_REF" == "$PROD_SUPABASE_REF" || "$NEW_PROJECT_REF" == "$SHARED_STAGING_SUPABASE_REF" ]]; then
+      deny "created/resolved ref '$NEW_PROJECT_REF' is prod/shared — aborting before any schema push."
+    fi
+    CREATED_PROJECT_REF="$NEW_PROJECT_REF"
+    echo "captured NEW_PROJECT_REF=$NEW_PROJECT_REF" >&2
+    write_provision_state "project_created" ""
+  fi
+else
+  echo "#   -> apply captures and deny-validates every physical project ref before schema work."
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    echo "#   -> RIG-G1-A and RIG-G1-B are two distinct projects; one signed orchestrator claim binds both."
+  fi
 fi
 echo
 
@@ -3645,26 +5601,70 @@ echo
 # docs/reference/STAGING_RIG.md "How to populate".
 # ---------------------------------------------------------------------------
 echo "# Step 2/6 — link to the captured ref + replay repo schema (CLI parser, lettered-suffix safe)"
-run_cmd npx supabase link --project-ref "$NEW_PROJECT_REF"
-echo "#   bootstrap extensions + enum pre-adds (see STAGING_RIG.md) via MCP execute_sql / Mgmt API"
-echo "#   db push --linked now targets the just-linked $NEW_PROJECT_REF (validated above)."
-run_cmd npx supabase db push --linked
+if [[ $IS_G1_RIG -eq 1 ]]; then
+  run_cmd_with_db_password STAGING_G1_A_SUPABASE_DB_PASSWORD "$G1_CONTROL_DB_PASSWORD" \
+    npx supabase link --project-ref "$G1_CONTROL_PROJECT_REF"
+  run_cmd_with_db_password STAGING_G1_A_SUPABASE_DB_PASSWORD "$G1_CONTROL_DB_PASSWORD" \
+    npx supabase db push --linked
+  run_cmd_with_db_password STAGING_G1_B_SUPABASE_DB_PASSWORD "$G1_TUNED_DB_PASSWORD" \
+    npx supabase link --project-ref "$G1_TUNED_PROJECT_REF"
+  run_cmd_with_db_password STAGING_G1_B_SUPABASE_DB_PASSWORD "$G1_TUNED_DB_PASSWORD" \
+    npx supabase db push --linked
+  # Restore the control project as the compatibility link; arm operations below
+  # always pass their exact refs and never infer ownership from this link.
+  run_cmd_with_db_password STAGING_G1_A_SUPABASE_DB_PASSWORD "$G1_CONTROL_DB_PASSWORD" \
+    npx supabase link --project-ref "$G1_CONTROL_PROJECT_REF"
+else
+  run_cmd_with_db_password STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
+    npx supabase link --project-ref "$NEW_PROJECT_REF"
+  run_cmd_with_db_password STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
+    npx supabase db push --linked
+fi
 echo
 
 echo "# Step 2b/6 — create/record per-rig Supabase Secret Manager secrets"
+provision_g1_runtime_identities
 if [[ $APPLY -eq 1 ]]; then
-  create_supabase_runtime_secrets "$NEW_PROJECT_REF"
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    SUPABASE_URL_SECRET_NAME="$G1_CONTROL_SUPABASE_URL_SECRET"
+    SUPABASE_SERVICE_ROLE_SECRET_NAME="$G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET"
+    create_supabase_runtime_secrets "$G1_CONTROL_PROJECT_REF"
+    SUPABASE_URL_SECRET_NAME="$G1_TUNED_SUPABASE_URL_SECRET"
+    SUPABASE_SERVICE_ROLE_SECRET_NAME="$G1_TUNED_SUPABASE_SERVICE_ROLE_SECRET"
+    create_supabase_runtime_secrets "$G1_TUNED_PROJECT_REF"
+    SUPABASE_URL_SECRET_NAME="$G1_CONTROL_SUPABASE_URL_SECRET"
+    SUPABASE_SERVICE_ROLE_SECRET_NAME="$G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET"
+    write_provision_state "g1_distinct_project_secrets_created" ""
+  else
+    create_supabase_runtime_secrets "$NEW_PROJECT_REF"
+  fi
+  grant_g1_runtime_secret_access
   grant_rig_r_runtime_secret_access
 else
-  print_cmd npx supabase projects api-keys --project-ref "$NEW_PROJECT_REF" --output json
-  print_cmd gcloud secrets create "$SUPABASE_URL_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
-  print_cmd gcloud secrets create "$SUPABASE_SERVICE_ROLE_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    print_cmd npx supabase projects api-keys --project-ref "$G1_CONTROL_PROJECT_REF" --output json
+    print_cmd gcloud secrets create "$G1_CONTROL_SUPABASE_URL_SECRET" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+    print_cmd gcloud secrets create "$G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+    print_cmd npx supabase projects api-keys --project-ref "$G1_TUNED_PROJECT_REF" --output json
+    print_cmd gcloud secrets create "$G1_TUNED_SUPABASE_URL_SECRET" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+    print_cmd gcloud secrets create "$G1_TUNED_SUPABASE_SERVICE_ROLE_SECRET" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+  else
+    print_cmd npx supabase projects api-keys --project-ref "$NEW_PROJECT_REF" --output json
+    print_cmd gcloud secrets create "$SUPABASE_URL_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+    print_cmd gcloud secrets create "$SUPABASE_SERVICE_ROLE_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+  fi
+  grant_g1_runtime_secret_access
   grant_rig_r_runtime_secret_access
   echo "#   apply mode derives https://<captured-ref>.supabase.co, fetches the service-role key,"
   echo "#   writes both per-rig secrets, verifies latest versions are readable, and records"
   echo "#   the secret names in $PROVISION_STATE_PATH before Cloud Run deploy."
 fi
 echo
+
+provision_temporary_vertex_endpoint
+
+provision_rig_b1_bitcoin_core_node
+wait_for_rig_b1_node_readiness
 
 # ---------------------------------------------------------------------------
 # Step 3 — deploy the wired isolated Cloud Run worker on the pinned image.
@@ -3677,60 +5677,79 @@ echo
 # / cron secrets so config.ts's production superRefine does not crash-loop.
 # ---------------------------------------------------------------------------
 if [[ $IS_G1_RIG -eq 1 ]]; then
-  echo "# Step 3/6 — deploy RIG-G1 public/control + tuned workers on one pinned image (PAUSED)"
+  echo "# Step 3/6 — deploy physical RIG-G1-A + RIG-G1-B on one pinned image/corpus (PAUSED)"
   echo "#   public/control env-vars: $WORKER_ENV_VARS"
+  EXPECTED_RUNTIME_SA_FOR_REVISION="$G1_CONTROL_RUNTIME_SA"
   run_cmd gcloud run deploy "$G1_CONTROL_SERVICE" \
     --project="$GCP_PROJECT" \
     --region="$CLOUD_RUN_REGION" \
     --image="$PINNED_IMAGE" \
     --labels="arkova-source-head=${DECLARED_SOURCE_HEAD},arkova-rig-id=rig-g1,arkova-g1-arm=public-control" \
-    --service-account="$RUNTIME_SA" \
-    --no-allow-unauthenticated \
+    --service-account="$G1_CONTROL_RUNTIME_SA" \
+    --allow-unauthenticated \
     --min-instances=0 \
     --max-instances=2 \
     --memory=1Gi \
     --cpu=1 \
     --timeout=300 \
     --set-env-vars="$WORKER_ENV_VARS" \
-    --set-secrets="$WORKER_SECRETS"
+    --set-secrets="$G1_CONTROL_WORKER_SECRETS"
   if [[ $APPLY -eq 1 ]]; then
     CREATED_CLOUD_RUN_SERVICE=1
     CLOUD_RUN_SERVICE="$G1_CONTROL_SERVICE"
     ENV_VARS=("${G1_CONTROL_ENV_VARS[@]}")
+    EXPECTED_REVISION_SECRETS=("${G1_CONTROL_SECRET_ENTRIES[@]}")
     verify_deployed_revision_provenance
     G1_CONTROL_DEPLOYED_REVISION="$DEPLOYED_REVISION"
     G1_CONTROL_TAG_URL="$(resolve_cloud_run_url_for_service "$G1_CONTROL_SERVICE")"
+    G1_CONTROL_START_EPOCH="$(date -u +%s)"
+    G1_CONTROL_DEPLOYED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    write_provision_state "g1_a_deployed_provenance_verified" ""
   fi
 
   echo "#   tuned-v6 env-vars: $G1_TUNED_WORKER_ENV_VARS"
+  EXPECTED_RUNTIME_SA_FOR_REVISION="$G1_TUNED_RUNTIME_SA"
   run_cmd gcloud run deploy "$G1_TUNED_SERVICE" \
     --project="$GCP_PROJECT" \
     --region="$CLOUD_RUN_REGION" \
     --image="$PINNED_IMAGE" \
     --labels="arkova-source-head=${DECLARED_SOURCE_HEAD},arkova-rig-id=rig-g1,arkova-g1-arm=tuned-v6" \
-    --service-account="$RUNTIME_SA" \
-    --no-allow-unauthenticated \
+    --service-account="$G1_TUNED_RUNTIME_SA" \
+    --allow-unauthenticated \
     --min-instances=0 \
     --max-instances=2 \
     --memory=1Gi \
     --cpu=1 \
     --timeout=300 \
     --set-env-vars="$G1_TUNED_WORKER_ENV_VARS" \
-    --set-secrets="$WORKER_SECRETS"
+    --set-secrets="$G1_TUNED_WORKER_SECRETS"
   if [[ $APPLY -eq 1 ]]; then
     CLOUD_RUN_SERVICE="$G1_TUNED_SERVICE"
     ENV_VARS=("${G1_TUNED_ENV_VARS[@]}")
+    EXPECTED_REVISION_SECRETS=("${G1_TUNED_SECRET_ENTRIES[@]}")
     verify_deployed_revision_provenance
     G1_TUNED_DEPLOYED_REVISION="$DEPLOYED_REVISION"
     G1_TUNED_TAG_URL="$(resolve_cloud_run_url_for_service "$G1_TUNED_SERVICE")"
+    G1_TUNED_START_EPOCH="$(date -u +%s)"
+    G1_TUNED_DEPLOYED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    G1_PAIRED_DEPLOY_DELTA_SECONDS="$((10#$G1_TUNED_START_EPOCH - 10#$G1_CONTROL_START_EPOCH))"
+    if (( G1_PAIRED_DEPLOY_DELTA_SECONDS < 0 \
+      || G1_PAIRED_DEPLOY_DELTA_SECONDS > 10#$G1_PAIRED_CADENCE_MIN * 60 )); then
+      echo "ERROR: RIG-G1 physical service deploys exceeded the signed <=${G1_PAIRED_CADENCE_MIN} minute pairing window." >&2
+      echo "       This is only a deploy guard; actual soak clocks remain CTO-gated after both clean mirrors." >&2
+      write_provision_state "g1_paired_deploy_window_failed" "paired physical deploy delta exceeded"
+      exit 1
+    fi
 
     # Restore the top-level compatibility fields to the public/control arm.
     CLOUD_RUN_SERVICE="$G1_CONTROL_SERVICE"
     ENV_VARS=("${G1_CONTROL_ENV_VARS[@]}")
+    EXPECTED_REVISION_SECRETS=("${G1_CONTROL_SECRET_ENTRIES[@]}")
     WORKER_ENV_VARS="$(join_by_comma "${ENV_VARS[@]}")"
     DEPLOYED_REVISION="$G1_CONTROL_DEPLOYED_REVISION"
     ADMISSION_GEMINI_TUNED_MODEL=""
     ADMISSION_GEMINI_V6_PROMPT=""
+    EXPECTED_RUNTIME_SA_FOR_REVISION="$G1_CONTROL_RUNTIME_SA"
     write_provision_state "g1_arm_provenance_verified_paused" ""
   fi
 else
@@ -3740,6 +5759,7 @@ else
   if [[ $IS_RIG_R -eq 1 ]]; then
     RUNTIME_LABELS="${RUNTIME_LABELS},arkova-source-tree=${RIG_R_CANDIDATE_TREE_SHA},arkova-rig-id=rig-r"
   fi
+  EXPECTED_RUNTIME_SA_FOR_REVISION="$RUNTIME_SA"
   run_cmd gcloud run deploy "$CLOUD_RUN_SERVICE" \
     --project="$GCP_PROJECT" \
     --region="$CLOUD_RUN_REGION" \
@@ -3752,6 +5772,7 @@ else
     --memory=1Gi \
     --cpu=1 \
     --timeout=300 \
+    ${CLOUD_RUN_NETWORK_ARGS[@]+"${CLOUD_RUN_NETWORK_ARGS[@]}"} \
     --set-env-vars="$WORKER_ENV_VARS" \
     --set-secrets="$WORKER_SECRETS"
   if [[ $APPLY -eq 1 ]]; then
@@ -3866,6 +5887,16 @@ else
   done
   SCHEDULER_STATE="paused_before_seed"
 fi
+if [[ "$RIG_ID" == "RIG-B1" ]]; then
+  if [[ $APPLY -eq 1 ]]; then
+    publish_rig_b1_topology_ownership
+  else
+    print_cmd gcloud storage cp '<exact-observed-rig-b1-topology-ownership>' \
+      "gs://${IMMUTABLE_AUTHORITY_LEDGER_BUCKET}/${RIG_B1_TOPOLOGY_LEDGER_PREFIX}/<approval-id>.json" \
+      --project="$GCP_PROJECT" --if-generation-match=0 \
+      --content-type=application/json --retain-until='<signed-expiry>' --retention-mode=Locked --quiet
+  fi
+fi
 echo
 
 # ---------------------------------------------------------------------------
@@ -3885,7 +5916,20 @@ echo
 # (error 1010) blocks for automated clients) — the CLI reaches the DB directly.
 # ---------------------------------------------------------------------------
 echo "# Step 5/6 — seed baseline fixture (>=1 SUBMITTED anchor; data-only, §1.11A)"
-run_cmd npx supabase db query --linked --file scripts/staging/seed-baseline-fixture.sql
+if [[ $IS_G1_RIG -eq 1 ]]; then
+  run_cmd_with_db_password STAGING_G1_A_SUPABASE_DB_PASSWORD "$G1_CONTROL_DB_PASSWORD" \
+    npx supabase link --project-ref "$G1_CONTROL_PROJECT_REF"
+  run_cmd npx supabase db query --linked --file scripts/staging/seed-baseline-fixture.sql
+  run_cmd_with_db_password STAGING_G1_B_SUPABASE_DB_PASSWORD "$G1_TUNED_DB_PASSWORD" \
+    npx supabase link --project-ref "$G1_TUNED_PROJECT_REF"
+  run_cmd npx supabase db query --linked --file scripts/staging/seed-baseline-fixture.sql
+  run_cmd_with_db_password STAGING_G1_A_SUPABASE_DB_PASSWORD "$G1_CONTROL_DB_PASSWORD" \
+    npx supabase link --project-ref "$G1_CONTROL_PROJECT_REF"
+else
+  run_cmd_with_db_password STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
+    npx supabase link --project-ref "$NEW_PROJECT_REF"
+  run_cmd npx supabase db query --linked --file scripts/staging/seed-baseline-fixture.sql
+fi
 
 # ---------------------------------------------------------------------------
 # Step 6 — clean_mirror preflight against the NEW project.
@@ -3897,6 +5941,25 @@ run_cmd npx supabase db query --linked --file scripts/staging/seed-baseline-fixt
 echo "# Step 6/6 — clean_mirror preflight (CLAUDE.md §1.11A)"
 PREFLIGHT_RESULT="${STAGING_PREFLIGHT_RESULT:-environment_type=<from-step-6>}"
 if [[ $APPLY -eq 1 ]]; then
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    PREFLIGHT_TARGETS=("$G1_CONTROL_PROJECT_REF" "$G1_TUNED_PROJECT_REF")
+  else
+    PREFLIGHT_TARGETS=("$NEW_PROJECT_REF")
+  fi
+  for PREFLIGHT_TARGET_REF in "${PREFLIGHT_TARGETS[@]}"; do
+    NEW_PROJECT_REF="$PREFLIGHT_TARGET_REF"
+    if [[ $IS_G1_RIG -eq 1 && "$PREFLIGHT_TARGET_REF" == "$G1_CONTROL_PROJECT_REF" ]]; then
+      PREFLIGHT_ARTIFACT_PATH="$G1_CONTROL_PREFLIGHT_ARTIFACT_PATH"
+      run_cmd_with_db_password STAGING_G1_A_SUPABASE_DB_PASSWORD "$G1_CONTROL_DB_PASSWORD" \
+        npx supabase link --project-ref "$PREFLIGHT_TARGET_REF"
+    elif [[ $IS_G1_RIG -eq 1 ]]; then
+      PREFLIGHT_ARTIFACT_PATH="$G1_TUNED_PREFLIGHT_ARTIFACT_PATH"
+      run_cmd_with_db_password STAGING_G1_B_SUPABASE_DB_PASSWORD "$G1_TUNED_DB_PASSWORD" \
+        npx supabase link --project-ref "$PREFLIGHT_TARGET_REF"
+    else
+      run_cmd_with_db_password STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
+        npx supabase link --project-ref "$PREFLIGHT_TARGET_REF"
+    fi
   print_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
     --project-ref "$NEW_PROJECT_REF" \
     --format json
@@ -3977,6 +6040,13 @@ if [[ $APPLY -eq 1 ]]; then
     echo "ERROR: could not derive clean_mirror attestation identity from sanitized artifact bytes." >&2
     exit 1
   fi
+  if [[ $IS_G1_RIG -eq 1 && "$PREFLIGHT_TARGET_REF" == "$G1_CONTROL_PROJECT_REF" ]]; then
+    G1_CONTROL_CLEAN_MIRROR_ATTESTATION_ID="$CLEAN_MIRROR_ATTESTATION_ID"
+    G1_CONTROL_PREFLIGHT_VERIFIED_AT="$PREFLIGHT_VERIFIED_AT"
+  elif [[ $IS_G1_RIG -eq 1 ]]; then
+    G1_TUNED_CLEAN_MIRROR_ATTESTATION_ID="$CLEAN_MIRROR_ATTESTATION_ID"
+    G1_TUNED_PREFLIGHT_VERIFIED_AT="$PREFLIGHT_VERIFIED_AT"
+  fi
 
   # Re-observe every declared trigger after both seed and clean_mirror. The
   # initial pause check cannot prove this interval; an enabled, missing, or
@@ -3996,10 +6066,35 @@ if [[ $APPLY -eq 1 ]]; then
   else
     write_provision_state "clean_mirror_admitted" ""
   fi
+  done
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    NEW_PROJECT_REF="$G1_CONTROL_PROJECT_REF"
+    PREFLIGHT_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/clean-mirror-preflight-${NAME}.json"
+    jq -nc \
+      --arg a_ref "$G1_CONTROL_PROJECT_REF" --arg a_id "$G1_CONTROL_CLEAN_MIRROR_ATTESTATION_ID" \
+      --arg a_path "$G1_CONTROL_PREFLIGHT_ARTIFACT_PATH" --arg a_at "$G1_CONTROL_PREFLIGHT_VERIFIED_AT" \
+      --arg b_ref "$G1_TUNED_PROJECT_REF" --arg b_id "$G1_TUNED_CLEAN_MIRROR_ATTESTATION_ID" \
+      --arg b_path "$G1_TUNED_PREFLIGHT_ARTIFACT_PATH" --arg b_at "$G1_TUNED_PREFLIGHT_VERIFIED_AT" '
+        {
+          environment_type: "clean_mirror_pair",
+          physical_projects: [
+            {rig: "RIG-G1-A", project_ref: $a_ref, artifact: $a_path, attestation_id: $a_id, verified_at: $a_at},
+            {rig: "RIG-G1-B", project_ref: $b_ref, artifact: $b_path, attestation_id: $b_id, verified_at: $b_at}
+          ]
+        }
+      ' | jq . >"$PREFLIGHT_ARTIFACT_PATH"
+    CLEAN_MIRROR_ATTESTATION_ID="sha256:$(sha256_file "$PREFLIGHT_ARTIFACT_PATH")"
+    PREFLIGHT_VERIFIED_AT="$G1_TUNED_PREFLIGHT_VERIFIED_AT"
+    PREFLIGHT_RESULT="environment_type=clean_mirror_pair"
+    write_provision_state "g1_both_physical_clean_mirrors_admitted" ""
+  fi
 else
-  run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
-    --project-ref "$NEW_PROJECT_REF" \
-    --format json
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts --project-ref "$G1_CONTROL_PROJECT_REF" --format json
+    run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts --project-ref "$G1_TUNED_PROJECT_REF" --format json
+  else
+    run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts --project-ref "$NEW_PROJECT_REF" --format json
+  fi
 fi
 echo
 
@@ -4096,7 +6191,7 @@ fi
 OWNER="$(resolve_owner)"
 DRIVER_SHA256="$(resolve_driver_sha256)"
 if [[ -z "$CHANGED_BEHAVIOR" ]]; then
-  CHANGED_BEHAVIOR="PR #1408 chain resilience: bounded retry/backoff, RPC/GetBlock/Mempool duplicate and retry classification, and confirmation-proof transient-to-pending vs definitive-to-stale behavior"
+  CHANGED_BEHAVIOR="PR #1408 chain resilience: bounded retry/backoff, Bitcoin Core RPC/mempool.space duplicate and retry classification, and confirmation-proof transient-to-pending vs definitive-to-stale behavior"
 fi
 
 ADMISSION_JSON="$(emit_admission_json \

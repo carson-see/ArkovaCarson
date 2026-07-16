@@ -36,23 +36,37 @@ const PRODUCTION_AUTHORITY = Object.freeze({
 
 const APPROVED_IMAGE_REPOSITORY =
   'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker';
-const PROTECTED_V6_ENDPOINT =
-  'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
 const PROTECTED_V6_MODEL =
-  'projects/arkova1/locations/us-central1/models/6611494259700793344';
+  'projects/270018525501/locations/us-central1/models/6611494259700793344';
+const PROTECTED_V6_MODEL_VERSION = `${PROTECTED_V6_MODEL}@1`;
+const TEMPORARY_ENDPOINT = Object.freeze({
+  id: '733002',
+  resource: 'projects/arkova1/locations/us-central1/endpoints/733002',
+  displayName: 'arkova-s33-rig-r-release-v6',
+  modelVersionResource: PROTECTED_V6_MODEL_VERSION,
+  checkpointId: '6',
+  deployedModelId: '7330021',
+  deployedModelDisplayName: 'arkova-s33-rig-r-release-v6',
+  deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
+  minReplicaCount: 1,
+  maxReplicaCount: 1,
+  endpointIamRole: 'roles/aiplatform.endpointUser',
+  endpointIamMember:
+    'serviceAccount:s33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
+});
 const TEARDOWN_PATH = 'scripts/staging/teardown-isolated-rig.sh';
 const GENERATED_SECRET_NAMES = Object.freeze([
   'supabase-url-s33-r-staging',
   'supabase-service-role-key-s33-r-staging',
 ]);
 const SECRET_REFERENCES = Object.freeze({
-  supabaseUrl: 'supabase-url-s33-r-staging',
-  supabaseServiceRoleKey: 'supabase-service-role-key-s33-r-staging',
-  stripeSecretKey: 'stripe-secret-key-staging',
-  stripeWebhookSecret: 'stripe-webhook-secret-staging',
-  apiKeyHmacSecret: 'api-key-hmac-secret-staging',
-  cronSecret: 'cron-secret',
-  geminiApiKey: 'gemini-api-key-staging',
+  supabaseUrl: 'supabase-url-s33-r-staging@1',
+  supabaseServiceRoleKey: 'supabase-service-role-key-s33-r-staging@1',
+  stripeSecretKey: 'stripe-secret-key-staging@1',
+  stripeWebhookSecret: 'stripe-webhook-secret-staging@1',
+  apiKeyHmacSecret: 'api-key-hmac-secret-staging@1',
+  cronSecret: 'cron-secret@1',
+  geminiApiKey: 'gemini-api-key@2',
 });
 const IMMUTABLE_LEDGER = Object.freeze({
   backend: 'gcs-if-generation-match-0-locked-retention',
@@ -78,9 +92,6 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$/u;
 const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,1023}$/u;
 const UTC_TIMESTAMP =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z$/u;
-const ENDPOINT_RESOURCE =
-  /^projects\/arkova1\/locations\/us-central1\/endpoints\/([1-9][0-9]*)$/u;
-const DEPLOYED_MODEL_ID = /^[1-9][0-9]*$/u;
 const SOURCE_HEAD_IMAGE_REF = new RegExp(
   `^${APPROVED_IMAGE_REPOSITORY.replaceAll('.', '[.]')}:([0-9a-f]{40})@sha256:([0-9a-f]{64})$`,
   'u',
@@ -271,15 +282,15 @@ function parseTopology(value, label = 'RIG-R approval topology') {
     'supabaseProjectName', 'supabaseRegion', 'supabasePostgresMajor',
     'cloudRunService', 'runtimeServiceAccount', 'generatedSecretNames',
     'secretReferences', 'immutableLedger',
-    'vertexEndpoint', 'vertexModel', 'deployedModelId', 'temporaryVertexEndpoint',
+    'vertexEndpointId', 'vertexEndpoint', 'vertexEndpointDisplayName',
+    'vertexModel', 'vertexModelVersion', 'checkpointId', 'deployedModelId',
+    'deployedModelDisplayName', 'deploymentResourcesMode', 'minReplicaCount',
+    'maxReplicaCount', 'endpointIamRole', 'endpointIamMember',
+    'temporaryVertexEndpoint',
     'chainMode', 'inProcessJobs', 'containedDatabaseQueues',
     'managedSchedulerJobs', 'managedQueues', 'oidcIdentities',
   ], label);
   const requiredWallMin = safeInteger(topology.requiredWallMin, `${label}.requiredWallMin`, 2910);
-  const vertexEndpoint = string(topology.vertexEndpoint, ENDPOINT_RESOURCE, `${label}.vertexEndpoint`, 256);
-  if (vertexEndpoint === PROTECTED_V6_ENDPOINT) {
-    throw new Error(`${label} cannot use the protected v6 rollback endpoint as its temporary endpoint.`);
-  }
   return {
     rigId: literal(topology.rigId, 'RIG-R', `${label}.rigId`),
     rigName: literal(topology.rigName, 's33-r', `${label}.rigName`),
@@ -334,13 +345,66 @@ function parseTopology(value, label = 'RIG-R approval topology') {
       IMMUTABLE_LEDGER,
       `${label}.immutableLedger`,
     ),
-    vertexEndpoint,
+    vertexEndpointId: literal(
+      topology.vertexEndpointId,
+      TEMPORARY_ENDPOINT.id,
+      `${label}.vertexEndpointId`,
+    ),
+    vertexEndpoint: literal(
+      topology.vertexEndpoint,
+      TEMPORARY_ENDPOINT.resource,
+      `${label}.vertexEndpoint`,
+    ),
+    vertexEndpointDisplayName: literal(
+      topology.vertexEndpointDisplayName,
+      TEMPORARY_ENDPOINT.displayName,
+      `${label}.vertexEndpointDisplayName`,
+    ),
     vertexModel: literal(topology.vertexModel, PROTECTED_V6_MODEL, `${label}.vertexModel`),
-    deployedModelId: string(
+    vertexModelVersion: literal(
+      topology.vertexModelVersion,
+      TEMPORARY_ENDPOINT.modelVersionResource,
+      `${label}.vertexModelVersion`,
+    ),
+    checkpointId: literal(
+      topology.checkpointId,
+      TEMPORARY_ENDPOINT.checkpointId,
+      `${label}.checkpointId`,
+    ),
+    deployedModelId: literal(
       topology.deployedModelId,
-      DEPLOYED_MODEL_ID,
+      TEMPORARY_ENDPOINT.deployedModelId,
       `${label}.deployedModelId`,
-      32,
+    ),
+    deployedModelDisplayName: literal(
+      topology.deployedModelDisplayName,
+      TEMPORARY_ENDPOINT.deployedModelDisplayName,
+      `${label}.deployedModelDisplayName`,
+    ),
+    deploymentResourcesMode: literal(
+      topology.deploymentResourcesMode,
+      TEMPORARY_ENDPOINT.deploymentResourcesMode,
+      `${label}.deploymentResourcesMode`,
+    ),
+    minReplicaCount: literal(
+      topology.minReplicaCount,
+      TEMPORARY_ENDPOINT.minReplicaCount,
+      `${label}.minReplicaCount`,
+    ),
+    maxReplicaCount: literal(
+      topology.maxReplicaCount,
+      TEMPORARY_ENDPOINT.maxReplicaCount,
+      `${label}.maxReplicaCount`,
+    ),
+    endpointIamRole: literal(
+      topology.endpointIamRole,
+      TEMPORARY_ENDPOINT.endpointIamRole,
+      `${label}.endpointIamRole`,
+    ),
+    endpointIamMember: literal(
+      topology.endpointIamMember,
+      TEMPORARY_ENDPOINT.endpointIamMember,
+      `${label}.endpointIamMember`,
     ),
     temporaryVertexEndpoint: literal(
       topology.temporaryVertexEndpoint,
@@ -410,8 +474,8 @@ function parseExecution(value, requiredWallMin, label = 'RIG-R approval executio
 function parseTeardown(value, label = 'RIG-R approval teardown') {
   const teardown = object(value, label);
   exactKeys(teardown, [
-    'scriptPath', 'scriptSha256', 'orderedBoundaries', 'protectedV6Endpoint',
-    'protectedV6Model', 'deleteProtectedV6Endpoint', 'deleteProtectedV6Model',
+    'scriptPath', 'scriptSha256', 'orderedBoundaries', 'protectedV6Model',
+    'deleteProtectedV6Model',
     'projectedMonthlyRecurringUsd',
   ], label);
   return {
@@ -422,20 +486,10 @@ function parseTeardown(value, label = 'RIG-R approval teardown') {
       TEARDOWN_BOUNDARIES,
       `${label}.orderedBoundaries`,
     ),
-    protectedV6Endpoint: literal(
-      teardown.protectedV6Endpoint,
-      PROTECTED_V6_ENDPOINT,
-      `${label}.protectedV6Endpoint`,
-    ),
     protectedV6Model: literal(
       teardown.protectedV6Model,
       PROTECTED_V6_MODEL,
       `${label}.protectedV6Model`,
-    ),
-    deleteProtectedV6Endpoint: literal(
-      teardown.deleteProtectedV6Endpoint,
-      false,
-      `${label}.deleteProtectedV6Endpoint`,
     ),
     deleteProtectedV6Model: literal(
       teardown.deleteProtectedV6Model,
@@ -575,7 +629,11 @@ function parseExpectedBinding(value) {
   exactKeys(binding, [
     'sourceHeadSha', 'sourceTreeSha', 'sourceHeadImageRef', 'imageDigest',
     'provisionArtifactSha256', 'rigName', 'rigProfile', 'soakId', 'leaseId',
-    'requiredWallMin', 'vertexEndpoint', 'vertexModel', 'deployedModelId',
+    'requiredWallMin', 'vertexEndpointId', 'vertexEndpoint',
+    'vertexEndpointDisplayName', 'vertexModel', 'vertexModelVersion',
+    'checkpointId', 'deployedModelId', 'deployedModelDisplayName',
+    'deploymentResourcesMode', 'minReplicaCount', 'maxReplicaCount',
+    'endpointIamRole', 'endpointIamMember',
     'provisionStartedAt', 'expiresAt', 'teardownScriptSha256',
     'secretReferences', 'immutableLedger',
   ], 'Expected RIG-R provision binding');
@@ -585,15 +643,6 @@ function parseExpectedBinding(value) {
     sourceHeadImageRef: binding.sourceHeadImageRef,
     imageDigest: binding.imageDigest,
   }, 'Expected RIG-R candidate');
-  const vertexEndpoint = string(
-    binding.vertexEndpoint,
-    ENDPOINT_RESOURCE,
-    'Expected RIG-R vertexEndpoint',
-    256,
-  );
-  if (vertexEndpoint === PROTECTED_V6_ENDPOINT) {
-    throw new Error('Expected RIG-R temporary endpoint cannot be the protected rollback endpoint.');
-  }
   return {
     ...candidate,
     provisionArtifactSha256: string(
@@ -607,17 +656,70 @@ function parseExpectedBinding(value) {
     soakId: string(binding.soakId, SAFE_ID, 'Expected RIG-R soakId', 128),
     leaseId: string(binding.leaseId, SAFE_ID, 'Expected RIG-R leaseId', 128),
     requiredWallMin: safeInteger(binding.requiredWallMin, 'Expected RIG-R requiredWallMin', 2910),
-    vertexEndpoint,
+    vertexEndpointId: literal(
+      binding.vertexEndpointId,
+      TEMPORARY_ENDPOINT.id,
+      'Expected RIG-R vertexEndpointId',
+    ),
+    vertexEndpoint: literal(
+      binding.vertexEndpoint,
+      TEMPORARY_ENDPOINT.resource,
+      'Expected RIG-R vertexEndpoint',
+    ),
+    vertexEndpointDisplayName: literal(
+      binding.vertexEndpointDisplayName,
+      TEMPORARY_ENDPOINT.displayName,
+      'Expected RIG-R vertexEndpointDisplayName',
+    ),
     vertexModel: literal(
       binding.vertexModel,
       PROTECTED_V6_MODEL,
       'Expected RIG-R vertexModel',
     ),
-    deployedModelId: string(
+    vertexModelVersion: literal(
+      binding.vertexModelVersion,
+      TEMPORARY_ENDPOINT.modelVersionResource,
+      'Expected RIG-R vertexModelVersion',
+    ),
+    checkpointId: literal(
+      binding.checkpointId,
+      TEMPORARY_ENDPOINT.checkpointId,
+      'Expected RIG-R checkpointId',
+    ),
+    deployedModelId: literal(
       binding.deployedModelId,
-      DEPLOYED_MODEL_ID,
+      TEMPORARY_ENDPOINT.deployedModelId,
       'Expected RIG-R deployedModelId',
-      32,
+    ),
+    deployedModelDisplayName: literal(
+      binding.deployedModelDisplayName,
+      TEMPORARY_ENDPOINT.deployedModelDisplayName,
+      'Expected RIG-R deployedModelDisplayName',
+    ),
+    deploymentResourcesMode: literal(
+      binding.deploymentResourcesMode,
+      TEMPORARY_ENDPOINT.deploymentResourcesMode,
+      'Expected RIG-R deploymentResourcesMode',
+    ),
+    minReplicaCount: literal(
+      binding.minReplicaCount,
+      TEMPORARY_ENDPOINT.minReplicaCount,
+      'Expected RIG-R minReplicaCount',
+    ),
+    maxReplicaCount: literal(
+      binding.maxReplicaCount,
+      TEMPORARY_ENDPOINT.maxReplicaCount,
+      'Expected RIG-R maxReplicaCount',
+    ),
+    endpointIamRole: literal(
+      binding.endpointIamRole,
+      TEMPORARY_ENDPOINT.endpointIamRole,
+      'Expected RIG-R endpointIamRole',
+    ),
+    endpointIamMember: literal(
+      binding.endpointIamMember,
+      TEMPORARY_ENDPOINT.endpointIamMember,
+      'Expected RIG-R endpointIamMember',
     ),
     provisionStartedAt: parseTimestamp(
       binding.provisionStartedAt,
@@ -760,9 +862,19 @@ class Ed25519RigRProvisionApprovalVerifier {
     if (record.topology.rigName !== expected.rigName
       || record.topology.rigProfile !== expected.rigProfile
       || record.topology.requiredWallMin !== expected.requiredWallMin
+      || record.topology.vertexEndpointId !== expected.vertexEndpointId
       || record.topology.vertexEndpoint !== expected.vertexEndpoint
+      || record.topology.vertexEndpointDisplayName !== expected.vertexEndpointDisplayName
       || record.topology.vertexModel !== expected.vertexModel
+      || record.topology.vertexModelVersion !== expected.vertexModelVersion
+      || record.topology.checkpointId !== expected.checkpointId
       || record.topology.deployedModelId !== expected.deployedModelId
+      || record.topology.deployedModelDisplayName !== expected.deployedModelDisplayName
+      || record.topology.deploymentResourcesMode !== expected.deploymentResourcesMode
+      || record.topology.minReplicaCount !== expected.minReplicaCount
+      || record.topology.maxReplicaCount !== expected.maxReplicaCount
+      || record.topology.endpointIamRole !== expected.endpointIamRole
+      || record.topology.endpointIamMember !== expected.endpointIamMember
       || canonicalize(record.topology.secretReferences) !== canonicalize(expected.secretReferences)
       || canonicalize(record.topology.immutableLedger) !== canonicalize(expected.immutableLedger)) {
       throw new Error('RIG-R approval topology does not match the exact runtime binding.');
@@ -862,9 +974,19 @@ async function main() {
       'expected-soak-id': { type: 'string' },
       'expected-lease-id': { type: 'string' },
       'expected-required-wall-min': { type: 'string' },
+      'expected-vertex-endpoint-id': { type: 'string' },
       'expected-vertex-endpoint': { type: 'string' },
+      'expected-vertex-endpoint-display-name': { type: 'string' },
       'expected-vertex-model': { type: 'string' },
+      'expected-vertex-model-version': { type: 'string' },
+      'expected-checkpoint-id': { type: 'string' },
       'expected-deployed-model-id': { type: 'string' },
+      'expected-deployed-model-display-name': { type: 'string' },
+      'expected-deployment-resources-mode': { type: 'string' },
+      'expected-min-replica-count': { type: 'string' },
+      'expected-max-replica-count': { type: 'string' },
+      'expected-endpoint-iam-role': { type: 'string' },
+      'expected-endpoint-iam-member': { type: 'string' },
       'expected-provision-started-at': { type: 'string' },
       'expected-expires-at': { type: 'string' },
       'expected-teardown-script-sha256': { type: 'string' },
@@ -885,6 +1007,16 @@ async function main() {
     && /^[1-9][0-9]*$/u.test(requiredWallMinText)
     ? Number(requiredWallMinText)
     : Number.NaN;
+  const minReplicaCountText = args.values['expected-min-replica-count'];
+  const minReplicaCount = typeof minReplicaCountText === 'string'
+    && /^[1-9][0-9]*$/u.test(minReplicaCountText)
+    ? Number(minReplicaCountText)
+    : Number.NaN;
+  const maxReplicaCountText = args.values['expected-max-replica-count'];
+  const maxReplicaCount = typeof maxReplicaCountText === 'string'
+    && /^[1-9][0-9]*$/u.test(maxReplicaCountText)
+    ? Number(maxReplicaCountText)
+    : Number.NaN;
   const expectedBinding = {
     sourceHeadSha: args.values['expected-source-head'],
     sourceTreeSha: args.values['expected-source-tree'],
@@ -896,9 +1028,19 @@ async function main() {
     soakId: args.values['expected-soak-id'],
     leaseId: args.values['expected-lease-id'],
     requiredWallMin,
+    vertexEndpointId: args.values['expected-vertex-endpoint-id'],
     vertexEndpoint: args.values['expected-vertex-endpoint'],
+    vertexEndpointDisplayName: args.values['expected-vertex-endpoint-display-name'],
     vertexModel: args.values['expected-vertex-model'],
+    vertexModelVersion: args.values['expected-vertex-model-version'],
+    checkpointId: args.values['expected-checkpoint-id'],
     deployedModelId: args.values['expected-deployed-model-id'],
+    deployedModelDisplayName: args.values['expected-deployed-model-display-name'],
+    deploymentResourcesMode: args.values['expected-deployment-resources-mode'],
+    minReplicaCount,
+    maxReplicaCount,
+    endpointIamRole: args.values['expected-endpoint-iam-role'],
+    endpointIamMember: args.values['expected-endpoint-iam-member'],
     provisionStartedAt: args.values['expected-provision-started-at'],
     expiresAt: args.values['expected-expires-at'],
     teardownScriptSha256: args.values['expected-teardown-script-sha256'],

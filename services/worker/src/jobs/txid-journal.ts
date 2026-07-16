@@ -38,7 +38,8 @@ export interface TxidJournalEntry {
   fingerprintRoot: string;
   anchorIds: string[];
   leafOrder: TxidJournalLeaf[];
-  signedAt: string;
+  /** Database-authored journal creation time used by the absence window. */
+  createdAt: string;
 }
 
 export type TxidJournalLookupResult =
@@ -61,7 +62,7 @@ export type TxidJournalRecoveryDecision =
         | 'lookup_failed'
         | 'missing_lookup_result'
         | 'absence_inside_ambiguity_window'
-        | 'untrusted_signed_at';
+        | 'untrusted_created_at';
     };
 
 const hex64 = z.string().regex(/^[0-9a-fA-F]{64}$/).transform((value) => value.toLowerCase());
@@ -79,7 +80,7 @@ const entrySchema = z.object({
   txid: hex64,
   fingerprintRoot: hex64,
   leafOrder: z.array(leafSchema).min(1).max(10_000),
-  signedAt: z.string().datetime({ offset: true }),
+  createdAt: z.string().datetime({ offset: true }),
 }).superRefine((entry, ctx) => {
   const ids = new Set<string>();
   entry.leafOrder.forEach((leaf, index) => {
@@ -100,7 +101,7 @@ export function buildTxidJournalEntry(input: {
   txid: string;
   fingerprintRoot: string;
   leafOrder: TxidJournalLeaf[];
-  signedAt: string;
+  createdAt: string;
 }): TxidJournalEntry {
   const parsed = entrySchema.parse(input);
   return {
@@ -117,7 +118,7 @@ export function buildTxidJournalEntry(input: {
 export function decideTxidJournalRecovery(
   entry: TxidJournalEntry | null,
   lookup: TxidJournalLookupResult | null,
-  options: { nowMs?: number; ambiguityWindowMs?: number } = {},
+  options: { nowMs?: number } = {},
 ): TxidJournalRecoveryDecision {
   if (!entry) {
     return { action: 'REVERT', reason: 'no_journal_entry' };
@@ -142,19 +143,16 @@ export function decideTxidJournalRecovery(
   }
 
   const nowMs = options.nowMs ?? Date.now();
-  const signedAtMs = Date.parse(entry.signedAt);
-  const ambiguityWindowMs = options.ambiguityWindowMs ?? DEFAULT_TXID_AMBIGUITY_WINDOW_MS;
+  const createdAtMs = Date.parse(entry.createdAt);
   if (
     !Number.isFinite(nowMs) ||
-    !Number.isFinite(signedAtMs) ||
-    signedAtMs > nowMs ||
-    !Number.isFinite(ambiguityWindowMs) ||
-    ambiguityWindowMs < 0
+    !Number.isFinite(createdAtMs) ||
+    createdAtMs > nowMs
   ) {
-    return { action: 'HOLD', reason: 'untrusted_signed_at' };
+    return { action: 'HOLD', reason: 'untrusted_created_at' };
   }
 
-  if (nowMs - signedAtMs < ambiguityWindowMs) {
+  if (nowMs - createdAtMs < DEFAULT_TXID_AMBIGUITY_WINDOW_MS) {
     return { action: 'HOLD', reason: 'absence_inside_ambiguity_window' };
   }
 

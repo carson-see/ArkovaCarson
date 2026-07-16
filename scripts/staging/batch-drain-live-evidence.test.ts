@@ -15,6 +15,7 @@ import {
   type RawCaptureDigests,
   type RawCaptureTextSet,
 } from './batch-drain-live-evidence';
+import rigB1AdmissionFixture from './fixtures/rig-b1-admission-v2.json';
 
 const BASE_SHA = '0'.repeat(40);
 const HEAD_SHA = 'a'.repeat(40);
@@ -48,6 +49,16 @@ function sha256(raw: string): string {
 }
 
 function declarationValue(): Record<string, unknown> {
+  const workerService = 'arkova-worker-rig-b1-staging';
+  const infrastructure = structuredClone(rigB1AdmissionFixture.infrastructure);
+  infrastructure.schedulerJobs = [
+    'batch-anchors',
+    'batch-anchors-forced-flush',
+    'check-confirmations',
+    'org-queue-scheduler',
+    'populate-confirmation-proofs',
+    'recover-broadcasts',
+  ].map((suffix) => `${workerService}-${suffix}`);
   return {
     schemaVersion: 1,
     declarationId: 'decl-rig-b1-r3',
@@ -60,9 +71,10 @@ function declarationValue(): Record<string, unknown> {
     soakId: 'soak-rig-b1-r3',
     leaseId: 'lease-rig-b1',
     cleanMirrorAttestationId: 'clean-mirror-rig-b1',
-    workerService: 'arkova-worker-rig-b1',
-    workerRevision: 'arkova-worker-rig-b1-00001',
+    workerService,
+    workerRevision: 'arkova-worker-rig-b1-staging-00001',
     region: 'us-central1',
+    infrastructure,
     soakStartedAt: '2026-07-13T12:00:00.000Z',
     soakEndedAt: '2026-07-15T12:30:00.000Z',
     recoveries: [],
@@ -139,7 +151,7 @@ function rawCapturesForDeclaration(declarationSha256: string): RawCaptureTextSet
           recordId: 'scheduler-preclock-record', purpose: 'preclock',
           schedulerExecutionId: 'scheduler-preclock', gcpProjectId: 'arkova-rig-b1',
           correlatedDrainExecutionId: null, faultWindowId: null,
-          workerRevision: 'arkova-worker-rig-b1-00001', path: '/jobs/check-confirmations',
+          workerRevision: 'arkova-worker-rig-b1-staging-00001', path: '/jobs/check-confirmations',
           workerId: 'worker-live-1',
           trigger: 'global-flush', statusCode: 200,
           firedAt: '2026-07-13T11:59:00.000Z', completedAt: '2026-07-13T11:59:01.000Z',
@@ -148,7 +160,7 @@ function rawCapturesForDeclaration(declarationSha256: string): RawCaptureTextSet
           recordId: 'scheduler-drain-record', purpose: 'drain',
           schedulerExecutionId: 'scheduler-live-1', gcpProjectId: 'arkova-rig-b1',
           correlatedDrainExecutionId: null, faultWindowId: 'window-live-1',
-          workerRevision: 'arkova-worker-rig-b1-00001', path: '/jobs/org-queue-scheduler',
+          workerRevision: 'arkova-worker-rig-b1-staging-00001', path: '/jobs/org-queue-scheduler',
           workerId: 'worker-live-1',
           trigger: 'org-scheduler', statusCode: 200,
           firedAt: '2026-07-13T12:00:05.000Z', completedAt: '2026-07-13T12:00:20.000Z',
@@ -258,8 +270,8 @@ function rawCapturesForDeclaration(declarationSha256: string): RawCaptureTextSet
     }),
     cloudRun: JSON.stringify({
       ...common('cloud-run-lifecycle', 'export-cloud-run'),
-      gcpProjectId: 'arkova-rig-b1', workerService: 'arkova-worker-rig-b1',
-      workerRevision: 'arkova-worker-rig-b1-00001', region: 'us-central1',
+      gcpProjectId: 'arkova-rig-b1', workerService: 'arkova-worker-rig-b1-staging',
+      workerRevision: 'arkova-worker-rig-b1-staging-00001', region: 'us-central1',
       records: [
         { recordId: 'cloud-run-start', workerId: 'worker-live-1', event: 'started', occurredAt: '2026-07-13T11:58:00.000Z' },
         ...Array.from({ length: 583 }, (_, index) => ({
@@ -746,7 +758,7 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     scheduler.records.push({
       recordId: 'unconsumed-recovery', purpose: 'recovery', schedulerExecutionId: 'unconsumed-recovery-execution',
       correlatedDrainExecutionId: 'scheduler-live-1', faultWindowId: 'window-live-1',
-      gcpProjectId: 'arkova-rig-b1', workerRevision: 'arkova-worker-rig-b1-00001', workerId: 'worker-live-1',
+      gcpProjectId: 'arkova-rig-b1', workerRevision: 'arkova-worker-rig-b1-staging-00001', workerId: 'worker-live-1',
       path: '/jobs/recover-broadcasts', trigger: 'global-flush', statusCode: 500,
       firedAt: '2026-07-13T12:02:00.000Z', completedAt: '2026-07-13T12:02:01.000Z',
     });
@@ -799,7 +811,7 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
         recordId: 'scheduler-recovery-record', purpose: 'recovery',
         schedulerExecutionId: 'scheduler-recovery-live-1', correlatedDrainExecutionId: 'scheduler-live-1',
         faultWindowId: 'window-live-1', gcpProjectId: 'arkova-rig-b1',
-        workerRevision: 'arkova-worker-rig-b1-00001', workerId: 'worker-live-1',
+        workerRevision: 'arkova-worker-rig-b1-staging-00001', workerId: 'worker-live-1',
         path: '/jobs/recover-broadcasts', trigger, statusCode: 200, firedAt, completedAt,
       });
       raw.scheduler = JSON.stringify(scheduler);

@@ -51,7 +51,11 @@ import {
   type BitcoinClientConfig,
 } from './signet.js';
 import type { UtxoProvider, Utxo } from './utxo-provider.js';
-import { HttpError, RpcApplicationError } from './utxo-provider.js';
+import {
+  HttpError,
+  RpcApplicationError,
+  TransactionAbsenceQuorumError,
+} from './utxo-provider.js';
 import { WifSigningProvider } from './signing-provider.js';
 import { StaticFeeEstimator } from './fee-estimator.js';
 import type { FeeEstimator } from './fee-estimator.js';
@@ -796,25 +800,34 @@ describe('BitcoinChainClient.getReceipt', () => {
 
   // S3-P0 #1417-HIGH — getReceipt tri-state:
   //   found                 → receipt
-  //   definitively-absent   → null  (RPC code -5, or mempool HTTP 404)
+  //   definitively-absent   → null  (typed two-source Signet absence quorum)
   //   lookup-failed          → THROW (provider outage; caller must DEFER, not
   //                            treat the tx as unknown → rebroadcast → 4xx → unwind)
-  it('returns null when the RPC node definitively reports the tx absent (code -5)', async () => {
+  it('THROWS on a single Bitcoin Core not-found because one source cannot declare absence', async () => {
     const provider = createMockProvider({
       getRawTransaction: vi.fn().mockRejectedValue(
         new RpcApplicationError('No such mempool or blockchain transaction (code -5)', -5, 500),
       ),
     });
     const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
-    expect(await client.getReceipt('nonexistent')).toBeNull();
+    await expect(client.getReceipt('nonexistent')).rejects.toBeInstanceOf(RpcApplicationError);
   });
 
-  it('returns null when the mempool API definitively reports the tx absent (HTTP 404)', async () => {
+  it('THROWS on a single mempool.space not-found because one source cannot declare absence', async () => {
     const provider = createMockProvider({
       getRawTransaction: vi.fn().mockRejectedValue(new HttpError('GET /tx/x failed: HTTP 404', 404)),
     });
     const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
-    expect(await client.getReceipt('nonexistent')).toBeNull();
+    await expect(client.getReceipt('nonexistent')).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('returns null only for the typed Bitcoin Core + mempool.space Signet not-found quorum', async () => {
+    const txid = 'd'.repeat(64);
+    const provider = createMockProvider({
+      getRawTransaction: vi.fn().mockRejectedValue(new TransactionAbsenceQuorumError(txid)),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    expect(await client.getReceipt(txid)).toBeNull();
   });
 
   it('THROWS on a provider quota outage (HTTP 402) — a lookup failure must NOT masquerade as tx-absent', async () => {

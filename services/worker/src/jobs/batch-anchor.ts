@@ -757,7 +757,9 @@ async function persistTxidJournal(
       anchorId: anchor.id,
       fingerprint: anchor.fingerprint,
     })),
-    signedAt: new Date().toISOString(),
+    // This pre-persistence value is never trusted for recovery age. Recovery
+    // rebuilds the entry from the database-authored `created_at` below.
+    createdAt: new Date().toISOString(),
   });
 
   const leafOrder = entry.leafOrder.map((leaf) => ({
@@ -948,9 +950,10 @@ function parseTxidJournalRow(row: TxidJournalDbRow): TxidJournalEntry {
     txid: row.txid,
     fingerprintRoot: row.fingerprint_root,
     leafOrder: leaves,
-    // Recovery age is anchored to a database-authored timestamp. The worker's
-    // signing clock is deliberately not part of this decision boundary.
-    signedAt: row.created_at,
+    // Recovery age is anchored to the database-authored journal creation
+    // timestamp. The worker's signing clock is deliberately not part of this
+    // decision boundary.
+    createdAt: row.created_at,
   });
   if (
     entry.anchorIds.length !== row.anchor_ids.length ||

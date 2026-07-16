@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -53,7 +53,7 @@ const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  'cf8d4a9757b8f000290fe9807d9ba688f959817b2678bb7df2122bda7ec92acd';
+  '384d15932f5f78e047e15a0623cfee5daac623355366eb10622d88585ea498c9';
 const INTEGRATED_B1_PUBLIC_AUTHORITY_BINDING =
   'Production verification is code-bound to public key `arkova.s33.b1-evidence.ed25519.v1`, its SPKI fingerprint, operator, activation, and canonical genesis-roster root; envelopes must name that exact key id.';
 
@@ -318,8 +318,8 @@ describe('provision-isolated-rig.sh — admission JSON contract', () => {
   });
 
   it('apply path has fail-closed secret checks, Supabase secret creation, clean preflight, and driver requirements', () => {
-    expect(script).toMatch(/require_gcloud_secret "\$GETBLOCK_RPC_URL_SECRET"/);
-    expect(script).toMatch(/require_gcloud_secret "\$GETBLOCK_RPC_AUTH_SECRET"/);
+    expect(script).toMatch(/require_gcloud_secret "\$BITCOIN_CORE_RPC_URL_SECRET"/);
+    expect(script).toMatch(/require_gcloud_secret "\$BITCOIN_CORE_RPC_AUTH_SECRET"/);
     expect(script).toMatch(/require_gcloud_secret "\$TREASURY_WIF_SECRET"/);
     expect(script).toMatch(/ensure_secret_with_value "\$SUPABASE_URL_SECRET_NAME"/);
     expect(script).toMatch(/supabase projects api-keys/);
@@ -403,23 +403,50 @@ const STUB_IMAGE_DIGEST =
   'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 const STUB_IMAGE_REF =
   `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${STUB_IMAGE_DIGEST}`;
+const B1_FIXTURE_KEYS = generateKeyPairSync('ed25519');
+const B1_FIXTURE_PUBLIC_KEY_PEM = B1_FIXTURE_KEYS.publicKey
+  .export({ type: 'spki', format: 'pem' })
+  .toString();
+const B1_FIXTURE_PUBLIC_KEY_FINGERPRINT = createHash('sha256')
+  .update(B1_FIXTURE_KEYS.publicKey.export({ type: 'spki', format: 'der' }))
+  .digest('hex');
 const RIG_B1_ISOLATED_INPUTS = {
-  STAGING_GETBLOCK_RPC_URL_SECRET: 's33-rig-b1-bitcoin-rpc-url',
-  STAGING_GETBLOCK_RPC_AUTH_SECRET: 's33-rig-b1-bitcoin-rpc-auth',
-  STAGING_TREASURY_WIF_SECRET: 'rig-b1-wif-name',
-  STAGING_STRIPE_SECRET_KEY_SECRET: 's33-rig-b1-stripe-secret-key',
-  STAGING_STRIPE_WEBHOOK_SECRET_SECRET: 's33-rig-b1-stripe-webhook-secret',
-  STAGING_API_KEY_HMAC_SECRET_SECRET: 'rig-b1-hmac-name',
-  STAGING_CRON_SECRET_SECRET: 'rig-b1-cron-name',
+  STAGING_BITCOIN_CORE_SIGNET_RPC_URL_SECRET:
+    'arkova-s33-rig-b1-bitcoin-core-signet-rpc-url',
+  STAGING_BITCOIN_CORE_SIGNET_RPC_AUTH_SECRET:
+    'arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth',
+  STAGING_TREASURY_WIF_SECRET: 'arkova-s33-rig-b1-treasury-wif-signet', // gitleaks:allow — resource name only
+  STAGING_STRIPE_SECRET_KEY_SECRET: 'arkova-s33-rig-b1-stripe-secret-key',
+  STAGING_STRIPE_WEBHOOK_SECRET_SECRET: 'arkova-s33-rig-b1-stripe-webhook-secret',
+  STAGING_API_KEY_HMAC_SECRET_SECRET: 'arkova-s33-rig-b1-api-key-hmac', // gitleaks:allow — resource name only
+  STAGING_CRON_SECRET_SECRET: 'arkova-s33-rig-b1-cron-secret', // gitleaks:allow — resource name only
   STAGING_RUNTIME_SA_EMAIL: 's33-rig-b1-runtime@arkova1.iam.gserviceaccount.com',
   STAGING_CRON_OIDC_SA: 's33-rig-b1-cron@arkova1.iam.gserviceaccount.com',
 } as const;
 const RIG_B1_APPLY_ENV = {
   ...RIG_B1_ISOLATED_INPUTS,
   STAGING_BITCOIN_NETWORK: 'signet',
+  STAGING_KMS_PROVIDER: 'gcp',
+  STAGING_BITCOIN_UTXO_PROVIDER: 'rpc',
+  STAGING_FRONTEND_URL: 'https://app.arkova.ai',
   STAGING_TIER: 'T3',
   STAGING_DURATION_MIN: '2880',
   STAGING_REQUIRED_WALL_MIN: '2910',
+  STAGING_B1_CORPUS_DIGEST: `sha256:${'5'.repeat(64)}`,
+  STAGING_B1_RELEASE_CANDIDATE_ID: 's33-w3-final-rc-fixture',
+  STAGING_B1_TREASURY_ADDRESS: 'tb1qarkovas33rigb1treasuryfixture0000000000000',
+  STAGING_B1_TREASURY_DESCRIPTOR:
+    'addr(tb1qarkovas33rigb1treasuryfixture0000000000000)#deadbeef',
+  STAGING_B1_TREASURY_SPLIT_PLAN_DIGEST:
+    'sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8',
+  STAGING_B1_TREASURY_EXPECTED_TOTAL_SATS: '169639',
+  STAGING_B1_RPC_URL_SECRET_VERSION: '1',
+  STAGING_B1_RPC_AUTH_SECRET_VERSION: '2',
+  STAGING_B1_TREASURY_WIF_SECRET_VERSION: '3',
+  STAGING_B1_STRIPE_SECRET_KEY_VERSION: '4',
+  STAGING_B1_STRIPE_WEBHOOK_SECRET_VERSION: '5',
+  STAGING_B1_API_KEY_HMAC_SECRET_VERSION: '6',
+  STAGING_B1_CRON_SECRET_VERSION: '7',
 } as const;
 const FORCE_ACCELERATED_RIG_B1_ENV = {
   ...RIG_B1_APPLY_ENV,
@@ -473,6 +500,9 @@ interface ApplyGitFixture {
   script: string;
   origin: string;
   head: string;
+  tree: string;
+  startupSha256: string;
+  teardownSha256: string;
   base: string;
   nonBaseAncestor: string;
 }
@@ -483,6 +513,9 @@ function createApplyGitFixture(): ApplyGitFixture {
   const origin = join(parent, 'origin.git');
   const fixtureScript = join(repo, 'scripts/staging/provision-isolated-rig.sh');
   const fixtureDriver = join(repo, 'services/worker/scripts/pr1408-chain-resilience-driver.ts');
+  const fixtureStartup = join(repo, 'scripts/staging/start-rig-b1-bitcoin-core.sh');
+  const fixtureB1Verifier = join(repo, 'scripts/staging/s33-b1-node-approval.mjs');
+  const fixtureTeardown = join(repo, 'scripts/staging/teardown-isolated-rig.sh');
   const trustedGitPath = '/usr/bin/git';
   const trustedGitSha256 = createHash('sha256')
     .update(readFileSync(trustedGitPath))
@@ -495,7 +528,20 @@ function createApplyGitFixture(): ApplyGitFixture {
     .replace(/TRUSTED_GIT_SHA256="[0-9a-f]+"/, `TRUSTED_GIT_SHA256="${trustedGitSha256}"`)
     .replace(/TRUSTED_GIT_VERSION="[^"]+"/, `TRUSTED_GIT_VERSION="${trustedGitVersion}"`)
     .replace(/TRUSTED_GIT_ORIGIN_URL="[^"]+"/, `TRUSTED_GIT_ORIGIN_URL="${origin}"`)
+    .replace(/RIG_G1_TRUSTED_NODE_PATH="[^"]+"/, `RIG_G1_TRUSTED_NODE_PATH="${process.execPath}"`)
     .replace('GIT_ALLOW_PROTOCOL=https', 'GIT_ALLOW_PROTOCOL=file');
+  const fixtureB1VerifierSource = readFileSync(
+    resolve(REPO_ROOT, 'scripts/staging/s33-b1-node-approval.mjs'),
+    'utf8',
+  )
+    .replace(
+      /const PUBLIC_KEY_PEM =\n {2}'[^']+';/,
+      `const PUBLIC_KEY_PEM =\n  ${JSON.stringify(B1_FIXTURE_PUBLIC_KEY_PEM)};`,
+    )
+    .replace(
+      /fingerprint: '[0-9a-f]{64}'/,
+      `fingerprint: '${B1_FIXTURE_PUBLIC_KEY_FINGERPRINT}'`,
+    );
 
   mkdirSync(dirname(fixtureScript), { recursive: true });
   mkdirSync(dirname(fixtureDriver), { recursive: true });
@@ -521,17 +567,270 @@ function createApplyGitFixture(): ApplyGitFixture {
   execFileSync(trustedGitPath, ['-C', repo, 'push', '--quiet', '-u', 'origin', 'main']);
 
   writeFileSync(fixtureScript, fixtureSource);
+  writeFileSync(
+    fixtureStartup,
+    readFileSync(resolve(REPO_ROOT, 'scripts/staging/start-rig-b1-bitcoin-core.sh')),
+  );
+  writeFileSync(fixtureB1Verifier, fixtureB1VerifierSource);
+  writeFileSync(
+    fixtureTeardown,
+    readFileSync(resolve(REPO_ROOT, 'scripts/staging/teardown-isolated-rig.sh')),
+  );
   chmodSync(fixtureScript, 0o755);
-  execFileSync(trustedGitPath, ['-C', repo, 'add', '--', fixtureScript]);
+  chmodSync(fixtureStartup, 0o755);
+  chmodSync(fixtureB1Verifier, 0o755);
+  chmodSync(fixtureTeardown, 0o755);
+  execFileSync(trustedGitPath, [
+    '-C', repo, 'add', '--', fixtureScript, fixtureStartup, fixtureB1Verifier, fixtureTeardown,
+  ]);
   execFileSync(trustedGitPath, ['-C', repo, 'commit', '--quiet', '-m', 'fixture candidate']);
   const head = execFileSync(trustedGitPath, ['-C', repo, 'rev-parse', 'HEAD'], {
     encoding: 'utf8',
   }).trim();
-  return { parent, repo, script: fixtureScript, origin, head, base, nonBaseAncestor };
+  const tree = execFileSync(trustedGitPath, ['-C', repo, 'rev-parse', 'HEAD^{tree}'], {
+    encoding: 'utf8',
+  }).trim();
+  const startupSha256 = createHash('sha256').update(readFileSync(fixtureStartup)).digest('hex');
+  const teardownSha256 = createHash('sha256').update(readFileSync(fixtureTeardown)).digest('hex');
+  return {
+    parent,
+    repo,
+    script: fixtureScript,
+    origin,
+    head,
+    tree,
+    startupSha256,
+    teardownSha256,
+    base,
+    nonBaseAncestor,
+  };
 }
 
 const APPLY_FIXTURE = createApplyGitFixture();
 stubDirs.push(APPLY_FIXTURE.parent);
+
+function b1SecretReference(env: string, secretName: string, version: string) {
+  return {
+    env,
+    secretName,
+    version,
+    resource: `projects/arkova1/secrets/${secretName}/versions/${version}`,
+  };
+}
+
+function writeB1ApprovalFixture(
+  artifactPath: string,
+  name: string,
+  options: ApplyRunOptions,
+): void {
+  const fixtureEnv = { ...RIG_B1_APPLY_ENV, ...(options.env ?? {}) };
+  const service = `arkova-worker-${name}-staging`;
+  const soakId = options.soakId ?? `soak-${name}`;
+  const leaseId = options.leaseId ?? `lease-${name}`;
+  const treasuryAddress = fixtureEnv.STAGING_B1_TREASURY_ADDRESS;
+  const treasuryDescriptor = fixtureEnv.STAGING_B1_TREASURY_DESCRIPTOR;
+  const bitcoinCoreImage =
+    'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:cdc306adc6ef6017326681ff09c4d3247ce77026bed17feccdc163a96519c8f8';
+  const bitcoinCoreRecipeCommit = 'b9a54856c9bee87d958cc4b070776828b5c17b32';
+  const bitcoinCoreAmd64RuntimeDigest =
+    'sha256:684e80900f124890c45ad9b691d7f76456c1042385bce4ab92725b1979b55888';
+  const issuedAt = new Date(Date.now() - 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const expiresAt = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .replace(/\.\d{3}Z$/, 'Z');
+  const signedPayload = {
+    schemaVersion: 1,
+    approvalId: `b1-node-approval-${name}`,
+    authority: {
+      keyId: 'arkova.s33.b1-evidence.ed25519.v1',
+      approverIdentity: 'arkova.s33.approver.founder-cto.v1',
+      purpose: 'RIG_B1_BITCOIN_CORE_PROVISION',
+    },
+    candidate: {
+      sourceHeadSha: options.sourceHead ?? APPLY_FIXTURE.head,
+      sourceTreeSha: APPLY_FIXTURE.tree,
+      workerImage: options.imageRef ?? STUB_IMAGE_REF,
+      workerImageDigest: STUB_IMAGE_DIGEST,
+      bitcoinCoreRecipeCommit,
+      bitcoinCoreImage,
+      bitcoinCoreAmd64RuntimeDigest,
+      startupScriptSha256: `sha256:${APPLY_FIXTURE.startupSha256}`,
+      teardownScriptSha256: `sha256:${APPLY_FIXTURE.teardownSha256}`,
+      corpusDigest: fixtureEnv.STAGING_B1_CORPUS_DIGEST,
+      releaseCandidateId: fixtureEnv.STAGING_B1_RELEASE_CANDIDATE_ID,
+    },
+    run: {
+      rigId: 'RIG-B1',
+      rigName: name,
+      soakId,
+      leaseId,
+      workerService: service,
+      workerRuntimeServiceAccount: fixtureEnv.STAGING_RUNTIME_SA_EMAIL,
+      schedulerOidcServiceAccount: fixtureEnv.STAGING_CRON_OIDC_SA,
+    },
+    topology: {
+      provider: {
+        workerProvider: 'rpc',
+        primary: 'bitcoin-core-signet-rpc',
+        secondary: 'mempool-space-signet',
+        secondaryApiUrl: 'https://mempool.space/signet/api',
+      },
+      bitcoinCore: {
+        version: '31.1',
+        recipeCommit: bitcoinCoreRecipeCommit,
+        sourceTarballUrl:
+          'https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz',
+        sourceTarballSha256:
+          'b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e',
+        containerImage: bitcoinCoreImage,
+        amd64RuntimeDigest: bitcoinCoreAmd64RuntimeDigest,
+        startupScriptPath: 'scripts/staging/start-rig-b1-bitcoin-core.sh',
+        startupScriptSha256: `sha256:${APPLY_FIXTURE.startupSha256}`,
+      },
+      resources: {
+        zone: 'us-central1-a',
+        vm: 'arkova-s33-rig-b1-bitcoin-core-signet',
+        bootDisk: 'arkova-s33-rig-b1-bitcoin-core-signet-boot',
+        dataDisk: 'arkova-s33-rig-b1-bitcoin-core-signet-data',
+        internalAddress: 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-ip',
+        externalAddress: 'arkova-s33-rig-b1-bitcoin-core-signet-p2p-ip',
+        network: 'arkova-s33-rig-b1-bitcoin-core-signet-vpc',
+        subnet: 'arkova-s33-rig-b1-bitcoin-core-signet-subnet',
+        rpcFirewall: 'arkova-s33-rig-b1-bitcoin-core-signet-rpc',
+        vpcConnector: 'arkova-s33-rig-b1-bitcoin-core-signet-connector',
+        nodeServiceAccount: 's33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
+      },
+      schedulerJobs: [
+        `${service}-batch-anchors`,
+        `${service}-batch-anchors-forced-flush`,
+        `${service}-check-confirmations`,
+        `${service}-org-queue-scheduler`,
+        `${service}-populate-confirmation-proofs`,
+        `${service}-recover-broadcasts`,
+      ],
+      iam: {
+        artifactRegistryReader: {
+          repository:
+            'projects/arkova1/locations/us-central1/repositories/arkova-worker-images',
+          member:
+            'serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
+          role: 'roles/artifactregistry.reader',
+        },
+        rpcAuthSecretAccessor: {
+          secretName: 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth',
+          member:
+            'serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
+          role: 'roles/secretmanager.secretAccessor',
+        },
+      },
+      network: {
+        rpcEndpoint: 'http://10.33.10.10:38332',
+        rpcBind: '10.33.10.10',
+        rpcAllowCidr: '10.33.11.0/28',
+        subnetCidr: '10.33.10.0/28',
+        rpcPort: 38332,
+        signetP2pPort: 38333,
+        publicRpc: false,
+      },
+      secretReferences: [
+        b1SecretReference('SUPABASE_URL', `supabase-url-${name}-staging`, '1'),
+        b1SecretReference(
+          'SUPABASE_SERVICE_ROLE_KEY',
+          `supabase-service-role-key-${name}-staging`,
+          '1',
+        ),
+        b1SecretReference(
+          'STRIPE_SECRET_KEY',
+          fixtureEnv.STAGING_STRIPE_SECRET_KEY_SECRET,
+          fixtureEnv.STAGING_B1_STRIPE_SECRET_KEY_VERSION,
+        ),
+        b1SecretReference(
+          'STRIPE_WEBHOOK_SECRET',
+          fixtureEnv.STAGING_STRIPE_WEBHOOK_SECRET_SECRET,
+          fixtureEnv.STAGING_B1_STRIPE_WEBHOOK_SECRET_VERSION,
+        ),
+        b1SecretReference(
+          'API_KEY_HMAC_SECRET',
+          fixtureEnv.STAGING_API_KEY_HMAC_SECRET_SECRET,
+          fixtureEnv.STAGING_B1_API_KEY_HMAC_SECRET_VERSION,
+        ),
+        b1SecretReference(
+          'CRON_SECRET',
+          fixtureEnv.STAGING_CRON_SECRET_SECRET,
+          fixtureEnv.STAGING_B1_CRON_SECRET_VERSION,
+        ),
+        b1SecretReference(
+          'BITCOIN_RPC_URL',
+          fixtureEnv.STAGING_BITCOIN_CORE_SIGNET_RPC_URL_SECRET,
+          fixtureEnv.STAGING_B1_RPC_URL_SECRET_VERSION,
+        ),
+        b1SecretReference(
+          'BITCOIN_RPC_AUTH',
+          fixtureEnv.STAGING_BITCOIN_CORE_SIGNET_RPC_AUTH_SECRET,
+          fixtureEnv.STAGING_B1_RPC_AUTH_SECRET_VERSION,
+        ),
+        b1SecretReference(
+          'BITCOIN_TREASURY_WIF',
+          fixtureEnv.STAGING_TREASURY_WIF_SECRET,
+          fixtureEnv.STAGING_B1_TREASURY_WIF_SECRET_VERSION,
+        ),
+      ],
+      nodeSecretEnvs: ['BITCOIN_RPC_AUTH'],
+      forbiddenNodeSecretEnvs: ['BITCOIN_TREASURY_WIF'],
+      treasuryWatchOnly: {
+        address: treasuryAddress,
+        descriptor: treasuryDescriptor,
+        splitTransactionId:
+          '1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941',
+        preSplitPlanDigest: fixtureEnv.STAGING_B1_TREASURY_SPLIT_PLAN_DIGEST,
+        expectedConfirmedOutputCount: 32,
+        expectedTotalSats: 169_639,
+        descriptorPolicy: 'addr-checksummed-importdescriptors',
+        wifOnNode: false,
+      },
+    },
+    budget: { spendCapUsd: 200 },
+    teardown: {
+      orderedResources: [
+        'scheduler-jobs',
+        'cloud-run-service',
+        'bitcoin-core-vm',
+        'boot-disk',
+        'data-disk',
+        'external-address',
+        'internal-address',
+        'rpc-firewall',
+        'vpc-connector',
+        'subnet',
+        'vpc-network',
+        'artifact-registry-iam',
+        'node-secret-iam',
+        'node-service-account',
+        'worker-secret-iam',
+        'worker-runtime-service-account',
+        'scheduler-oidc-service-account',
+        'supabase-project',
+      ],
+      projectedMonthlyRecurringUsd: 0,
+    },
+    issuedAt,
+    expiresAt,
+  };
+  const signedPayloadRaw = JSON.stringify(signedPayload);
+  const envelope = {
+    schemaVersion: 1,
+    envelopeId: `b1-node-envelope-${name}`,
+    keyId: 'arkova.s33.b1-evidence.ed25519.v1',
+    keyFingerprint: B1_FIXTURE_PUBLIC_KEY_FINGERPRINT,
+    signedPayloadRaw,
+    signatureBase64: sign(
+      null,
+      Buffer.from(signedPayloadRaw),
+      B1_FIXTURE_KEYS.privateKey,
+    ).toString('base64'),
+  };
+  writeFileSync(artifactPath, JSON.stringify(envelope));
+}
 
 /** Run the provisioner with --apply against a stubbed gcloud/npx PATH. */
 function applyRunStubbed(
@@ -547,12 +846,15 @@ function applyRunStubbed(
   const gitLogFile = join(stubDir, 'git-calls.log');
   const schedulerStateDir = join(stubDir, 'scheduler-state');
   const schedulerConfigDir = join(stubDir, 'scheduler-config');
+  const iamStateDir = join(stubDir, 'iam-state');
   const artifactDir = join(stubDir, 'artifacts');
   const admissionArtifactPath = join(artifactDir, `isolated-rig-admission-${name}.json`);
   const provisionStatePath = join(artifactDir, `isolated-rig-provision-${name}.json`);
   const updateCountFile = join(stubDir, 'scheduler-update-count');
   const resumeCountFile = join(stubDir, 'scheduler-resume-count');
   const enabledDescribeCountFile = join(stubDir, 'scheduler-enabled-describe-count');
+  const b1ApprovalArtifactPath = join(stubDir, 'b1-node-approval.json');
+  const gcsLastObjectFile = join(stubDir, 'gcs-last-object.json');
   const finalSchedulerJobSuffix = profile === 'gemini'
     ? 'classify-proof-backcatalog'
     : options.rigId === 'RIG-B1'
@@ -562,6 +864,9 @@ function applyRunStubbed(
   writeFileSync(npxLogFile, '');
   writeFileSync(orderLogFile, '');
   writeFileSync(gitLogFile, '');
+  if (options.rigId === 'RIG-B1') {
+    writeB1ApprovalFixture(b1ApprovalArtifactPath, name, options);
+  }
   if (options.blockAdmissionArtifactPath) {
     mkdirSync(admissionArtifactPath, { recursive: true });
   }
@@ -581,6 +886,9 @@ function applyRunStubbed(
           KMS_PROVIDER: options.env?.STAGING_KMS_PROVIDER ?? 'gcp',
           BITCOIN_NETWORK: options.env?.STAGING_BITCOIN_NETWORK ?? 'mainnet',
           BITCOIN_UTXO_PROVIDER: options.env?.STAGING_BITCOIN_UTXO_PROVIDER ?? 'getblock',
+          ...(options.rigId === 'RIG-B1'
+            ? { MEMPOOL_API_URL: 'https://mempool.space/signet/api' }
+            : {}),
         }
       : {}),
     ...(profile === 'gemini'
@@ -592,29 +900,92 @@ function applyRunStubbed(
     ...options.deployedEnvOverrides,
     ...options.deployedEnvAdditions,
   };
-  const deployedSecretNames = [
-    'SUPABASE_URL',
-    'SUPABASE_SERVICE_ROLE_KEY',
-    'STRIPE_SECRET_KEY',
-    'STRIPE_WEBHOOK_SECRET',
-    'API_KEY_HMAC_SECRET',
-    'CRON_SECRET',
+  const isRigB1 = options.rigId === 'RIG-B1';
+  const baseSecretVersion = isRigB1 ? '1' : 'latest';
+  const deployedSecrets = [
+    {
+      name: 'SUPABASE_URL',
+      secret: `supabase-url-${name}-staging`,
+      version: baseSecretVersion,
+    },
+    {
+      name: 'SUPABASE_SERVICE_ROLE_KEY',
+      secret: `supabase-service-role-key-${name}-staging`,
+      version: baseSecretVersion,
+    },
+    {
+      name: 'STRIPE_SECRET_KEY',
+      secret: options.env?.STAGING_STRIPE_SECRET_KEY_SECRET ?? 'stripe-secret-key-staging',
+      version: isRigB1 ? (options.env?.STAGING_B1_STRIPE_SECRET_KEY_VERSION ?? '1') : 'latest',
+    },
+    {
+      name: 'STRIPE_WEBHOOK_SECRET',
+      secret:
+        options.env?.STAGING_STRIPE_WEBHOOK_SECRET_SECRET ??
+        'stripe-webhook-secret-staging',
+      version: isRigB1
+        ? (options.env?.STAGING_B1_STRIPE_WEBHOOK_SECRET_VERSION ?? '1')
+        : 'latest',
+    },
+    {
+      name: 'API_KEY_HMAC_SECRET',
+      secret: options.env?.STAGING_API_KEY_HMAC_SECRET_SECRET ?? 'api-key-hmac-secret-staging',
+      version: isRigB1 ? (options.env?.STAGING_B1_API_KEY_HMAC_SECRET_VERSION ?? '1') : 'latest',
+    },
+    {
+      name: 'CRON_SECRET',
+      secret: options.env?.STAGING_CRON_SECRET_SECRET ?? 'cron-secret',
+      version: isRigB1 ? (options.env?.STAGING_B1_CRON_SECRET_VERSION ?? '1') : 'latest',
+    },
     ...(profile === 'chain'
-      ? ['BITCOIN_RPC_URL', 'BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF']
+      ? [
+          {
+            name: 'BITCOIN_RPC_URL',
+            secret:
+              options.env?.STAGING_BITCOIN_CORE_SIGNET_RPC_URL_SECRET ??
+              'bitcoin-rpc-url-staging',
+            version: isRigB1 ? (options.env?.STAGING_B1_RPC_URL_SECRET_VERSION ?? '1') : 'latest',
+          },
+          {
+            name: 'BITCOIN_RPC_AUTH',
+            secret:
+              options.env?.STAGING_BITCOIN_CORE_SIGNET_RPC_AUTH_SECRET ??
+              'bitcoin-rpc-auth-staging',
+            version: isRigB1 ? (options.env?.STAGING_B1_RPC_AUTH_SECRET_VERSION ?? '1') : 'latest',
+          },
+          {
+            name: 'BITCOIN_TREASURY_WIF',
+            secret: options.env?.STAGING_TREASURY_WIF_SECRET ?? 'bitcoin-treasury-wif-staging',
+            version: isRigB1
+              ? (options.env?.STAGING_B1_TREASURY_WIF_SECRET_VERSION ?? '1')
+              : 'latest',
+          },
+        ]
       : []),
-    ...(profile === 'gemini' ? ['GEMINI_API_KEY'] : []),
+    ...(profile === 'gemini'
+      ? [
+          {
+            name: 'GEMINI_API_KEY',
+            secret: options.env?.STAGING_GEMINI_API_KEY_SECRET ?? 'gemini-api-key',
+            version: options.env?.STAGING_GEMINI_API_KEY_SECRET_VERSION ?? '2',
+          },
+        ]
+      : []),
   ];
   const revisionPayload = JSON.stringify({
     metadata: { labels: { 'arkova-source-head': options.sourceHead ?? APPLY_FIXTURE.head } },
     spec: {
+      serviceAccountName:
+        options.env?.STAGING_RUNTIME_SA_EMAIL ??
+        '270018525501-compute@developer.gserviceaccount.com',
       containers: [
         {
           image: options.deployedImageRef ?? STUB_IMAGE_REF,
           env: [
             ...Object.entries(deployedEnv).map(([name, value]) => ({ name, value })),
-            ...deployedSecretNames.map((name) => ({
-              name,
-              valueSource: { secretKeyRef: { secret: `stub-${name.toLowerCase()}`, version: 'latest' } },
+            ...deployedSecrets.map(({ name: secretEnvName, secret, version }) => ({
+              name: secretEnvName,
+              valueSource: { secretKeyRef: { secret, version } },
             })),
           ],
         },
@@ -660,11 +1031,88 @@ exec "${REAL_GIT}" "$@"
 	    "$schedule" "$time_zone" "$attempt_deadline" "$min_backoff" "$max_backoff" "$max_doublings" \
 	    > '${schedulerConfigDir}/'"$job_name"
 	}
-	printf '%s\\n' "$*" >> "${logFile}"
+printf '%s\\n' "$*" >> "${logFile}"
 printf 'gcloud %s\\n' "$*" >> "${orderLogFile}"
+if [[ "$1" == "iam" && "$2" == "service-accounts" && "$3" == "describe" ]]; then
+  account_local="\${4%@*}"
+  if [[ ! -f '${iamStateDir}/'"$account_local" ]]; then exit 1; fi
+  printf '%s\\n' '{"uniqueId":"270018525501000000001"}'
+  exit 0
+fi
+if [[ "$1" == "iam" && "$2" == "service-accounts" && "$3" == "create" ]]; then
+  mkdir -p '${iamStateDir}'
+  : > '${iamStateDir}/'"$4"
+  exit 0
+fi
+if [[ "$1" == "compute" && "$2" == "instances" && "$3" == "get-serial-port-output" ]]; then
+  printf '%s\\n' 'ARKOVA_RIG_B1_READY_V1 {"schemaVersion":"arkova.s33.rig-b1.node-readiness/v1","bitcoinCoreVersion":"31.1","bitcoinCoreImage":"us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:cdc306adc6ef6017326681ff09c4d3247ce77026bed17feccdc163a96519c8f8","sourceTarballSha256":"b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e","chain":"signet","initialBlockDownload":false,"blocks":100,"headers":100,"genesisHash":"00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6","txindexSynced":true,"txindexBestBlockHeight":100,"treasurySplitPlanDigest":"sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8","splitTransactionId":"1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941","confirmedOutputCount":32,"confirmedTotalSats":169639,"splitBlockHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","splitBlockHeader":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","txOutProof":"aa"}'
+  exit 0
+fi
+if [[ "$1" == "compute" && "$2" == "instances" && "$3" == "describe" ]]; then
+  printf '%s\\n' '{"id":"1000000000000000001"}'
+  exit 0
+fi
+if [[ "$1" == "compute" && "$2" == "disks" && "$3" == "describe" ]]; then
+  printf '%s\\n' '{"id":"1000000000000000002"}'
+  exit 0
+fi
+if [[ "$1" == "compute" && "$2" == "addresses" && "$3" == "describe" ]]; then
+  printf '%s\\n' '{"id":"1000000000000000003"}'
+  exit 0
+fi
+if [[ "$1" == "compute" && "$2" == "firewall-rules" && "$3" == "describe" ]]; then
+  printf '%s\\n' '{"id":"1000000000000000004"}'
+  exit 0
+fi
+if [[ "$1" == "compute" && "$2" == "networks" && "$3" == "vpc-access" \
+  && "$4" == "connectors" && "$5" == "describe" ]]; then
+  printf '%s\\n' '{"name":"projects/arkova1/locations/us-central1/connectors/arkova-s33-rig-b1-bitcoin-core-signet-connector"}'
+  exit 0
+fi
+if [[ "$1" == "compute" && "$2" == "networks" && "$3" == "subnets" \
+  && "$4" == "describe" ]]; then
+  printf '%s\\n' '{"id":"1000000000000000005"}'
+  exit 0
+fi
+if [[ "$1" == "compute" && "$2" == "networks" && "$3" == "describe" ]]; then
+  printf '%s\\n' '{"id":"1000000000000000006"}'
+  exit 0
+fi
+if [[ "$1" == "services" && "$2" == "list" && "$3" == "--enabled" ]]; then
+  printf '%s\\n' \
+    artifactregistry.googleapis.com \
+    cloudscheduler.googleapis.com \
+    compute.googleapis.com \
+    iam.googleapis.com \
+    run.googleapis.com \
+    secretmanager.googleapis.com \
+    serviceusage.googleapis.com \
+    vpcaccess.googleapis.com
+  exit 0
+fi
+if [[ "$1" == "storage" && "$2" == "buckets" && "$3" == "describe" ]]; then
+  printf '%s\\n' '{"name":"arkova1-s33-immutable-authority-ledger","projectNumber":"270018525501","objectRetention":{"mode":"Enabled"}}'
+  exit 0
+fi
+if [[ "$1" == "storage" && "$2" == "cp" ]]; then
+  cp -- "$3" '${gcsLastObjectFile}'
+  exit 0
+fi
+if [[ "$1" == "storage" && "$2" == "objects" && "$3" == "describe" ]]; then
+  object_uri="$4"
+  object_name="\${object_uri#gs://arkova1-s33-immutable-authority-ledger/}"
+  printf '{"bucket":"arkova1-s33-immutable-authority-ledger","name":"%s","generation":"1","retention":{"mode":"Locked","retainUntilTime":"2099-01-01T00:00:00Z"}}\\n' "$object_name"
+  exit 0
+fi
+if [[ "$1" == "storage" && "$2" == "cat" ]]; then
+  cat '${gcsLastObjectFile}'
+  exit 0
+fi
 if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
   if [[ "$*" == *"status.latestReadyRevisionName"* ]]; then
     echo '${STUB_REVISION}'
+  elif [[ "$*" == *"--format=json"* ]]; then
+    printf '%s\\n' '{"metadata":{"uid":"cloudrunuid123"}}'
   else
     echo '${STUB_SERVICE_URL}'
   fi
@@ -685,8 +1133,37 @@ if [[ "$1" == "artifacts" && "$2" == "docker" && "$3" == "images" && "$4" == "de
   echo 'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${options.sourceImageDigest ?? STUB_IMAGE_DIGEST}'
   exit 0
 fi
+	if [[ "$1" == "secrets" && "$2" == "describe" ]]; then
+	  case "$3" in
+	    supabase-url-*-staging|supabase-service-role-key-*-staging) exit 1 ;;
+	    *) exit 0 ;;
+	  esac
+	fi
+	if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "describe" ]]; then
+	  version="$4"
+	  secret=''
+	  for arg in "$@"; do
+	    case "$arg" in --secret=*) secret="\${arg#--secret=}" ;; esac
+	  done
+	  printf '{"state":"ENABLED"}\n'
+	  exit 0
+	fi
 	if [[ "$1" == "secrets" && "$2" == "versions" && "$3" == "access" ]]; then
-  echo '${STUB_CRON_SECRET}'
+	  secret=''
+	  for arg in "$@"; do
+	    case "$arg" in --secret=*) secret="\${arg#--secret=}" ;; esac
+	  done
+	  case "$secret" in
+	    arkova-s33-rig-b1-bitcoin-core-signet-rpc-url)
+	      printf '%s\\n' 'http://10.33.10.10:38332'
+	      ;;
+	    arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth)
+	      printf '%s\\n' 'fixture-user:0123456789abcdef0123456789abcdef'
+	      ;;
+	    *)
+	      printf '%s\\n' '${STUB_CRON_SECRET}'
+	      ;;
+	  esac
 	  exit 0
 	fi
 	if [[ "$1" == "scheduler" && "$2" == "jobs" && "$3" == "create" ]]; then
@@ -759,7 +1236,7 @@ set -euo pipefail
 printf '%s\\n' "$*" >> "${npxLogFile}"
 printf 'npx %s\\n' "$*" >> "${orderLogFile}"
 if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
-  echo '{"id":"${options.projectRef ?? 'abcdefghijklmnopqrst'}"}'
+  echo '{"id":"${options.projectRef ?? 'abcdefghijklmnopqrst'}","name":"arkova-soak-${name}"}'
   exit 0
 fi
 if [[ "$1" == "supabase" ]]; then
@@ -797,6 +1274,9 @@ exit 64
     STAGING_RIG_ID: options.rigId === null ? '' : (options.rigId ?? `rig-${name}`),
     STAGING_LEASE_ID: options.leaseId === null ? '' : (options.leaseId ?? `lease-${name}`),
   };
+  if (options.rigId === 'RIG-B1') {
+    env.STAGING_B1_NODE_APPROVAL_ARTIFACT = b1ApprovalArtifactPath;
+  }
   if (options.useUntrackedDriver) {
     const untrackedDriver = join(stubDir, 'untracked-driver.ts');
     writeFileSync(untrackedDriver, 'export const untracked = true;\n');
@@ -1237,7 +1717,7 @@ describe('provision-isolated-rig.sh — RIG-B1 identity, trigger specs, and admi
       use_mocks: 'false',
       enable_prod_network_anchoring: 'true',
       bitcoin_network: 'signet',
-      bitcoin_utxo_provider: 'getblock',
+      bitcoin_utxo_provider: 'rpc',
       kms_provider: 'gcp',
       gemini_tuned_model: '',
       gemini_v6_prompt: '',
@@ -1594,7 +2074,7 @@ describe('provision-isolated-rig.sh — admission pre-mutation guards', () => {
     [
       'utxo-provider',
       { STAGING_BITCOIN_UTXO_PROVIDER: 'mempool' },
-      /STAGING_BITCOIN_UTXO_PROVIDER.+getblock/i,
+      /STAGING_BITCOIN_UTXO_PROVIDER.+rpc/i,
     ],
     [
       'frontend-url',
@@ -2008,7 +2488,7 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
       projectRef: 'abcdefghijklmnopqrs1',
     });
     expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/project ref|lowercase|20/i);
+    expect(result.out).toMatch(/legacy JSON create response|strict project contract/i);
     expect(
       result.npxCalls.filter((call) => call.startsWith('supabase projects create ')),
     ).toHaveLength(1);
