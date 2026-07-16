@@ -65,7 +65,7 @@ const resources = {
   network: 'arkova-s33-rig-b1-bitcoin-core-signet-vpc',
   subnet: 'arkova-s33-rig-b1-bitcoin-core-signet-subnet',
   rpcFirewall: 'arkova-s33-rig-b1-bitcoin-core-signet-rpc',
-  vpcConnector: 'arkova-s33-rig-b1-bitcoin-core-signet-connector',
+  vpcConnector: 'arkova-s33-b1-signet-vpc',
   nodeServiceAccount: 's33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
 };
 
@@ -276,7 +276,7 @@ process.stdout.write(JSON.stringify(approval));
       externalAddressId: '1000000000000000005',
       rpcFirewallId: '1000000000000000006',
       vpcConnectorName:
-        'projects/arkova1/locations/us-central1/connectors/arkova-s33-rig-b1-bitcoin-core-signet-connector',
+        'projects/arkova1/locations/us-central1/connectors/arkova-s33-b1-signet-vpc',
       subnetId: '1000000000000000007',
       networkId: '1000000000000000008',
       nodeServiceAccountUniqueId: '1000000000000000009',

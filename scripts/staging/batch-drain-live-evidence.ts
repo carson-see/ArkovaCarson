@@ -269,7 +269,7 @@ export const rigB1InfrastructureSchema = z.object({
     network: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-vpc'),
     subnet: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-subnet'),
     rpcFirewall: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-rpc'),
-    vpcConnector: z.literal('arkova-s33-rig-b1-bitcoin-core-signet-connector'),
+    vpcConnector: z.literal('arkova-s33-b1-signet-vpc'),
     nodeServiceAccount: z.literal(
       's33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
     ),

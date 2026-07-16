@@ -780,7 +780,7 @@ function writeB1ApprovalFixture(
         network: 'arkova-s33-rig-b1-bitcoin-core-signet-vpc',
         subnet: 'arkova-s33-rig-b1-bitcoin-core-signet-subnet',
         rpcFirewall: 'arkova-s33-rig-b1-bitcoin-core-signet-rpc',
-        vpcConnector: 'arkova-s33-rig-b1-bitcoin-core-signet-connector',
+        vpcConnector: 'arkova-s33-b1-signet-vpc',
         nodeServiceAccount: 's33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
       },
       schedulerJobs: [
@@ -1155,7 +1155,7 @@ if [[ "$1" == "compute" && "$2" == "firewall-rules" && "$3" == "describe" ]]; th
 fi
 if [[ "$1" == "compute" && "$2" == "networks" && "$3" == "vpc-access" \
   && "$4" == "connectors" && "$5" == "describe" ]]; then
-  printf '%s\\n' '{"name":"projects/arkova1/locations/us-central1/connectors/arkova-s33-rig-b1-bitcoin-core-signet-connector"}'
+  printf '%s\\n' '{"name":"projects/arkova1/locations/us-central1/connectors/arkova-s33-b1-signet-vpc"}'
   exit 0
 fi
 if [[ "$1" == "compute" && "$2" == "networks" && "$3" == "subnets" \
@@ -1885,6 +1885,14 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
     expect(paused.gcloudCalls.some((call) =>
       call.startsWith('secrets versions describe 1 ') &&
       call.includes('--secret=arkova-s33-rig-b1-bitcoin-core-signet-rpc-url'),
+    )).toBe(true);
+  });
+
+  it('uses the exact GCP-compatible B1 VPC connector identity', () => {
+    const connector = 'arkova-s33-b1-signet-vpc';
+    expect(connector).toMatch(/^[a-z][-a-z0-9]{0,23}[a-z0-9]$/);
+    expect(paused.gcloudCalls.some((call) =>
+      call.startsWith(`compute networks vpc-access connectors create ${connector} `),
     )).toBe(true);
   });
 

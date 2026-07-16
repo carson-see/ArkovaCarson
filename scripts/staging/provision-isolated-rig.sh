@@ -76,7 +76,7 @@ RIG_B1_NODE_EXTERNAL_ADDRESS="arkova-s33-rig-b1-bitcoin-core-signet-p2p-ip"
 RIG_B1_NODE_NETWORK="arkova-s33-rig-b1-bitcoin-core-signet-vpc"
 RIG_B1_NODE_SUBNET="arkova-s33-rig-b1-bitcoin-core-signet-subnet"
 RIG_B1_NODE_RPC_FIREWALL="arkova-s33-rig-b1-bitcoin-core-signet-rpc"
-RIG_B1_NODE_VPC_CONNECTOR="arkova-s33-rig-b1-bitcoin-core-signet-connector"
+RIG_B1_NODE_VPC_CONNECTOR="arkova-s33-b1-signet-vpc"
 RIG_B1_NODE_SERVICE_ACCOUNT="s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com"
 RIG_B1_ARTIFACT_REPOSITORY="arkova-worker-images"
 RIG_B1_EXPECTED_BITCOIN_CORE_IMAGE="us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:cdc306adc6ef6017326681ff09c4d3247ce77026bed17feccdc163a96519c8f8"
@@ -156,6 +156,11 @@ S33_ISOLATED_SUPABASE_PROJECT_MONTHLY_EACH_USD=10
 S33_ISOLATED_SUPABASE_PROJECTS_MONTHLY_TOTAL_USD=40
 APPROVED_SOURCE_IMAGE_REPOSITORY="us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker"
 DENIED_CLOUD_RUN_SERVICES=("arkova-worker" "arkova-worker-staging")
+
+if [[ ! "$RIG_B1_NODE_VPC_CONNECTOR" =~ ^[a-z][-a-z0-9]{0,23}[a-z0-9]$ ]]; then
+  echo "ERROR: RIG-B1 VPC connector name exceeds the GCP 25-character contract." >&2
+  exit 2
+fi
 
 # ---------------------------------------------------------------------------
 # Defaults (overridable via flags / env).
@@ -5075,7 +5080,7 @@ rig_b1_infrastructure_json() {
           network: "arkova-s33-rig-b1-bitcoin-core-signet-vpc",
           subnet: "arkova-s33-rig-b1-bitcoin-core-signet-subnet",
           rpcFirewall: "arkova-s33-rig-b1-bitcoin-core-signet-rpc",
-          vpcConnector: "arkova-s33-rig-b1-bitcoin-core-signet-connector",
+          vpcConnector: "arkova-s33-b1-signet-vpc",
           nodeServiceAccount: "s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com"
         },
         schedulerJobs: [
@@ -5224,7 +5229,7 @@ publish_rig_b1_topology_ownership() {
     gcloud compute firewall-rules describe "$RIG_B1_NODE_RPC_FIREWALL" --project="$GCP_PROJECT" \
     --format=json)" || return 1
   connector_name="$(b1_observed_identity "VPC connector name" \
-    '.name | select(type == "string" and test("^projects/arkova1/locations/us-central1/connectors/arkova-s33-rig-b1-bitcoin-core-signet-connector$"))' \
+    '.name | select(type == "string" and test("^projects/arkova1/locations/us-central1/connectors/arkova-s33-b1-signet-vpc$"))' \
     gcloud compute networks vpc-access connectors describe "$RIG_B1_NODE_VPC_CONNECTOR" \
     --project="$GCP_PROJECT" --region="$CLOUD_RUN_REGION" --format=json)" || return 1
   subnet_id="$(b1_observed_identity "subnet ID" '(.id | tostring) | select(test("^[1-9][0-9]*$"))' \

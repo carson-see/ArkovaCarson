@@ -50,7 +50,7 @@ const EXACT_RESOURCES = Object.freeze({
   network: 'arkova-s33-rig-b1-bitcoin-core-signet-vpc',
   subnet: 'arkova-s33-rig-b1-bitcoin-core-signet-subnet',
   rpcFirewall: 'arkova-s33-rig-b1-bitcoin-core-signet-rpc',
-  vpcConnector: 'arkova-s33-rig-b1-bitcoin-core-signet-connector',
+  vpcConnector: 'arkova-s33-b1-signet-vpc',
   nodeServiceAccount: 's33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
 });
 const EXACT_NETWORK = Object.freeze({
