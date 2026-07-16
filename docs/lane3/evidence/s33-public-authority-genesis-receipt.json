@@ -1,0 +1,79 @@
+{
+  "artifactType": "arkova-s33-public-authority-genesis-receipt",
+  "schemaVersion": 1,
+  "selfPinned": false,
+  "bindingContext": {
+    "evidenceCommitPolicy": "This receipt is added by a descendant commit, does not pin its own Git commit or tree, and grants only the one-time public-authority bootstrap described by the roster.",
+    "founderCommandReceipt": "codex-thread:019f65ca-fdfc-7652-bd86-7be6c7463d34:founder-provision-and-soak-command",
+    "genesisRosterCanonicalization": "UTF-8 sorted-key compact JSON with one terminal LF",
+    "genesisRosterRootSha256": "sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f"
+  },
+  "pins": {
+    "genesisRoster": {
+      "activatedAtUtc": "2026-07-16T13:52:06Z",
+      "artifactType": "arkova-s33-authority-genesis-roster",
+      "authorityReceipt": "codex-thread:019f65ca-fdfc-7652-bd86-7be6c7463d34:founder-provision-and-soak-command",
+      "genesisException": {
+        "laterChangesRequireSeparateOperatorAndApprover": true,
+        "oneTime": true,
+        "scope": "INITIAL_S33_PUBLIC_AUTHORITY_BOOTSTRAP"
+      },
+      "identities": {
+        "approver": "arkova.s33.approver.founder-cto.v1",
+        "operator": "arkova.s33.operator.key-custodian.v1",
+        "verifier": "arkova.s33.verifier.public-ed25519.v1"
+      },
+      "keys": [
+        {
+          "keyId": "arkova.s33.release-corpus.ed25519.v1",
+          "publicKeyFingerprintSha256": "b5f6445ae954ac1f29b504fdc890dedefda23beb6300f35d99cd2c9d2eeb9e59",
+          "publicKeySpkiPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAf7Oe/mYJSU3rBUsLb9ni3zIZgS7K0FWbM1E9xovU/R8=\n-----END PUBLIC KEY-----\n",
+          "purpose": "RELEASE_CORPUS",
+          "secretVersionResource": "projects/270018525501/secrets/arkova-s33-release-corpus-ed25519-pkcs8-v1/versions/2"
+        },
+        {
+          "keyId": "arkova.s33.b1-evidence.ed25519.v1",
+          "publicKeyFingerprintSha256": "8b7fbc51c74828dab2e1a3ca6f0c15069575bae8e4e190eaf3b165daea50d5c6",
+          "publicKeySpkiPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAE+Ir2My5+bBwU73QkL73F7fiRteZ0V5yIAe41fD6MdU=\n-----END PUBLIC KEY-----\n",
+          "purpose": "B1_EVIDENCE",
+          "secretVersionResource": "projects/270018525501/secrets/arkova-s33-b1-evidence-ed25519-pkcs8-v1/versions/1"
+        },
+        {
+          "keyId": "arkova.s33.g1-spend.ed25519.v1",
+          "publicKeyFingerprintSha256": "6ece5cea2d35423aab35a23f6292fd769c6d839ac03ba7860a973d4febd5d987",
+          "publicKeySpkiPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAkxCdUepaMpp7HVHNhpjGNQ733HS72nnZTNfpKe0P/iU=\n-----END PUBLIC KEY-----\n",
+          "purpose": "G1_SPEND",
+          "secretVersionResource": "projects/270018525501/secrets/arkova-s33-g1-spend-ed25519-pkcs8-v1/versions/1"
+        }
+      ],
+      "schemaVersion": 1
+    },
+    "signatures": [
+      {
+        "keyId": "arkova.s33.release-corpus.ed25519.v1",
+        "purpose": "RELEASE_CORPUS",
+        "signatureBase64": "wgEf1Gf2iVGm+k1vdOisLjFAyrpONzmJ9841winu+5zhsoPc3QBlRxf1CJ9WV4/IRM6ncowSEvqB9qCwqKNeAw=="
+      },
+      {
+        "keyId": "arkova.s33.b1-evidence.ed25519.v1",
+        "purpose": "B1_EVIDENCE",
+        "signatureBase64": "xIm+IxjKGK/qP/1hx8xS1nF7hVoKtFh8j32AsfiRoLcj3OQuAqEnl6VFehisrWvlxoHKoE9rCOcU2MTYoRARDQ=="
+      },
+      {
+        "keyId": "arkova.s33.g1-spend.ed25519.v1",
+        "purpose": "G1_SPEND",
+        "signatureBase64": "sAsqnyhtmIHgmZTPTzv5QL/V87i2Tt9a7iiKLWImv5DLIa64/mWSmQXQ9lnIGtCD0m4MoXEfqQZ9l6mkkHHmDA=="
+      }
+    ]
+  },
+  "report": {
+    "bootstrapOnly": true,
+    "laterChangesRequireSeparateOperatorAndApprover": true,
+    "liveExecutionAuthorized": false,
+    "oneTimeGenesisException": true,
+    "privateKeyMaterialPresent": false,
+    "publicMaterialOnly": true,
+    "secretValuesPresent": false,
+    "spendAuthorized": false
+  }
+}

@@ -37,6 +37,15 @@ export function setCorsHeaders(req: Request, res: Response): boolean {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Cron-Secret');
+    res.setHeader(
+      'Access-Control-Expose-Headers',
+      [
+        'X-Org-Quota-Rules-Limit',
+        'X-Org-Quota-Rules-Remaining',
+        'X-Org-Quota-Rules-Reset',
+        'Retry-After',
+      ].join(', '),
+    );
     res.setHeader('Access-Control-Max-Age', '86400');
   }
   if (req.method === 'OPTIONS') {

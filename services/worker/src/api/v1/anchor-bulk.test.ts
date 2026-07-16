@@ -27,6 +27,9 @@ vi.mock('../../utils/db.js', () => ({
 vi.mock('../../utils/logger.js', () => ({
   logger: mockLogger,
 }));
+vi.mock('../../middleware/perOrgRateLimit.js', () => ({
+  requireOrgQuota: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
 vi.mock('../../utils/orgCredits.js', () => ({
   deductOrgCredit: vi.fn(),
 }));

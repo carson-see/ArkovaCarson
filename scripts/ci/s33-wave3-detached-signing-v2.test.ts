@@ -108,18 +108,22 @@ describe('S3.3 Wave-3 detached-signing CLI', () => {
     ])).toThrow(/Usage/i);
   });
 
-  it('keeps signature assembly fail-closed while production policy is UNCONFIGURED', () => {
+  it('keeps signature assembly fail-closed when the signature is invalid', () => {
     const root = mkdtempSync(join(tmpdir(), 's33-v2-cli-'));
     const input = join(root, 'payload-input.json');
     const request = join(root, 'request.json');
     const signature = join(root, 'signature.json');
-    writeFileSync(input, JSON.stringify(payloadInput()));
+    writeFileSync(input, JSON.stringify({
+      ...payloadInput(),
+      signedAtUtc: '2026-07-16T13:53:00.000Z',
+    }));
     runS33DetachedSigningCli(['emit-request', '--payload-input', input, '--output', request]);
     writeFileSync(signature, JSON.stringify({ signatureBase64Url: 'A'.repeat(86) }));
     expect(() => runS33DetachedSigningCli([
       'assemble', '--signing-request', request, '--signature', signature,
+      '--verified-at-utc', '2026-07-16T13:54:00.000Z',
       '--output', join(root, 'envelope.json'),
-    ])).toThrow(/UNCONFIGURED/i);
+    ])).toThrow(/signature verification failed/i);
   });
 
   it('regenerates an in-flight request for the sole active post-cutover key', () => {
@@ -143,6 +147,9 @@ describe('S3.3 Wave-3 detached-signing CLI', () => {
         method: 'cto-out-of-band',
         confirmedBy: 'cto',
         confirmedAtUtc: '2026-07-15T16:59:00.000Z',
+        genesisRosterRootSha256:
+          'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
+        authorityReceipt: 'cli-fixture-founder-authority-receipt-a',
       },
       activatedAtUtc: '2026-07-15T17:00:00.000Z',
     });
@@ -153,7 +160,7 @@ describe('S3.3 Wave-3 detached-signing CLI', () => {
     });
     const pairB = generateKeyPairSync('ed25519');
     const publicKeyB = pairB.publicKey.export({ type: 'spki', format: 'pem' }).toString();
-    const keyIdB = 'arkova-s33-cto-release-2026q3-02';
+    const keyIdB = 'arkova.s33.release-corpus.ed25519.v2';
     const cutoverAtUtc = '2026-07-15T19:00:00.000Z';
     const activeB = validateS33DetachedSigningTrustPolicyV2({
       ...S33_DETACHED_SIGNING_TRUST_POLICY_V2,
@@ -166,6 +173,9 @@ describe('S3.3 Wave-3 detached-signing CLI', () => {
         method: 'cto-out-of-band',
         confirmedBy: 'cto',
         confirmedAtUtc: '2026-07-15T18:59:00.000Z',
+        genesisRosterRootSha256:
+          'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
+        authorityReceipt: 'cli-fixture-founder-authority-receipt-b',
       },
       activatedAtUtc: cutoverAtUtc,
     });

@@ -5,6 +5,7 @@
  * RISK-4 (replay prevention), ECON-2 (dynamic pricing), and RECON-2 (request ID linking).
  */
 
+import { createHmac } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---- Hoisted mocks ----
@@ -23,6 +24,7 @@ const { mockRpc, mockInsert, mockSelect, mockLogger, mockConfig } = vi.hoisted((
     arkovaUsdcAddress: '0x00000000000000000000000000000000deadbeef' as string | undefined,
     x402Network: 'eip155:84532',
     baseRpcUrl: undefined as string | undefined,
+    apiKeyHmacSecret: 'payer-hmac-test-secret' as string | undefined,
     nodeEnv: 'test',
   };
   return { mockRpc, mockInsert, mockSelect, mockLogger, mockConfig };
@@ -63,6 +65,7 @@ beforeEach(() => {
   mockConfig.arkovaUsdcAddress = '0x00000000000000000000000000000000deadbeef';
   mockConfig.x402Network = 'eip155:84532';
   mockConfig.baseRpcUrl = undefined;
+  mockConfig.apiKeyHmacSecret = 'payer-hmac-test-secret';
   mockConfig.nodeEnv = 'test';
   mockInsert.mockResolvedValue({ error: null });
   mockSelect.mockResolvedValue({ data: null }); // No existing payment
@@ -81,10 +84,12 @@ async function verifyGate() {
   return x402PaymentGate('/api/v1/verify');
 }
 
+const DEFAULT_TX_HASH = `0x${'a'.repeat(64)}`;
+
 function encodePayment(overrides: Record<string, unknown> = {}): string {
   return Buffer.from(
     JSON.stringify({
-      txHash: '0xvalid_tx_hash_1234567890',
+      txHash: DEFAULT_TX_HASH,
       network: 'eip155:84532',
       payerAddress: '0xPayer',
       ...overrides,
@@ -114,6 +119,7 @@ describe('x402PaymentGate', () => {
 
     await middleware(req, res, next);
     expect(next).toHaveBeenCalled();
+    expect(req.x402PayerContext).toEqual({ kind: 'bypass', reason: 'payments-disabled' });
     expect(res.status).not.toHaveBeenCalled();
   });
 
@@ -128,6 +134,31 @@ describe('x402PaymentGate', () => {
 
     await middleware(req, res, next);
     expect(next).toHaveBeenCalled();
+    expect(req.x402PayerContext).toEqual({ kind: 'bypass', reason: 'api-key' });
+  });
+
+  it('fails closed on switchboard lookup failure for unauthenticated callers', async () => {
+    mockRpc.mockResolvedValue({ data: null, error: { message: 'flag lookup failed' } });
+    const middleware = await verifyGate();
+    const res = resWith();
+    const next = vi.fn();
+
+    await middleware(reqWith({ headers: {}, apiKey: undefined }), res, next);
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('safely bypasses payer limiting for an authenticated API key when switchboard lookup fails', async () => {
+    mockRpc.mockResolvedValue({ data: null, error: { message: 'flag lookup failed' } });
+    const middleware = await verifyGate();
+    const req = reqWith({ headers: {}, apiKey: { keyId: 'trusted-key' } });
+    const next = vi.fn();
+
+    await middleware(req, resWith(), next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(req.x402PayerContext).toEqual({ kind: 'bypass', reason: 'api-key' });
   });
 
   it('returns 402 when no payment header and no API key', async () => {
@@ -196,6 +227,11 @@ describe('x402PaymentGate', () => {
         reason: 'validation_error',
       }),
     );
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      { errorName: 'Error' },
+      'On-chain validation failed — rejecting payment',
+    );
+    expect(JSON.stringify(mockLogger.warn.mock.calls)).not.toContain(mockConfig.baseRpcUrl);
     expect(mockInsert).not.toHaveBeenCalled();
   });
 
@@ -211,7 +247,7 @@ describe('x402PaymentGate', () => {
             address: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
             topics: [
               '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
-              '0x0000000000000000000000000000000000000000000000000000000000000000',
+              '0x0000000000000000000000001111111111111111111111111111111111111111',
               '0x00000000000000000000000000000000000000000000000000000000deadbeef',
             ],
             data: `0x${(2_000).toString(16).padStart(64, '0')}`,
@@ -228,6 +264,11 @@ describe('x402PaymentGate', () => {
 
     await middleware(req, res, next);
     expect(next).toHaveBeenCalled();
+    const verifiedPayer = '0x1111111111111111111111111111111111111111';
+    const expectedPayerKey = createHmac('sha256', 'payer-hmac-test-secret')
+      .update(verifiedPayer)
+      .digest('hex');
+    expect(req.x402PayerContext).toEqual({ kind: 'verified', payerKey: expectedPayerKey });
 
     // RISK-3: Payment NOT recorded yet (post-execution)
     // Call res.json to trigger recording
@@ -236,15 +277,66 @@ describe('x402PaymentGate', () => {
     await vi.advanceTimersByTimeAsync(10);
     expect(mockInsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        tx_hash: '0xvalid_tx_hash_1234567890',
+        tx_hash: DEFAULT_TX_HASH,
         network: 'eip155:84532',
         amount_usd: 0.002,
-        payer_address: '0xPayer',
+        payer_address: verifiedPayer,
         payee_address: '0x00000000000000000000000000000000deadbeef',
         token: 'USDC',
         verification_request_id: 'req-123',
       }),
     );
+  });
+
+  it('ignores a spoofed payer in X-PAYMENT and derives limiter identity from the verified transfer sender', async () => {
+    mockRpc.mockResolvedValue({ data: true, error: null });
+    mockConfig.baseRpcUrl = 'https://base-rpc.test';
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        result: {
+          status: '0x1',
+          logs: [{
+            address: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+            topics: [
+              '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+              '0x0000000000000000000000002222222222222222222222222222222222222222',
+              '0x00000000000000000000000000000000000000000000000000000000deadbeef',
+            ],
+            data: `0x${(2_000).toString(16).padStart(64, '0')}`,
+          }],
+        },
+      }),
+    });
+    const middleware = await verifyGate();
+    const req = reqWith({
+      headers: { 'x-payment': encodePayment({ payerAddress: '0xattacker-controlled' }) },
+      apiKey: undefined,
+    });
+
+    await middleware(req, resWith(), vi.fn());
+
+    const expected = createHmac('sha256', 'payer-hmac-test-secret')
+      .update('0x2222222222222222222222222222222222222222')
+      .digest('hex');
+    expect(req.x402PayerContext).toEqual({ kind: 'verified', payerKey: expected });
+    expect(JSON.stringify(req.x402PayerContext)).not.toContain('attacker-controlled');
+  });
+
+  it('fails closed after payment validation when payer HMAC configuration is absent', async () => {
+    mockRpc.mockResolvedValue({ data: true, error: null });
+    mockConfig.apiKeyHmacSecret = undefined;
+    const middleware = await verifyGate();
+    const res = resWith();
+
+    await middleware(
+      reqWith({ headers: { 'x-payment': encodePayment() }, apiKey: undefined }),
+      res,
+      vi.fn(),
+    );
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('returns 401 instead of 402 when an invalid API key reaches the payment gate', async () => {
@@ -291,7 +383,7 @@ describe('x402PaymentGate', () => {
     const middleware = await verifyGate();
 
     const req = reqWith({
-      headers: { 'x-payment': encodePayment({ txHash: '0xreplayed_tx_hash_existing' }) },
+      headers: { 'x-payment': encodePayment({ txHash: `0x${'b'.repeat(64)}` }) },
       apiKey: undefined,
     });
     const res = resWith();
@@ -311,7 +403,7 @@ describe('x402PaymentGate', () => {
     const middleware = await verifyGate();
 
     const req = reqWith({
-      headers: { 'x-payment': encodePayment({ txHash: '0xexpired_tx_hash_12345678', timestamp: Date.now() - 6 * 60 * 1000 }) },
+      headers: { 'x-payment': encodePayment({ txHash: `0x${'c'.repeat(64)}`, timestamp: Date.now() - 6 * 60 * 1000 }) },
       apiKey: undefined,
     });
     const res = resWith();

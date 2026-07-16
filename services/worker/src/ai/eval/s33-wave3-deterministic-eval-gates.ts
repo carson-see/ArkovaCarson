@@ -8,19 +8,20 @@
  * rejected; measured threshold misses return an honest NO-GO report.
  */
 
-import { createHash, createPublicKey } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
 import { validateFieldsForType } from '../crossFieldFraudChecks.js';
 import type { ExtractedFields } from '../types.js';
 import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
 import {
-  computeS33Wave2AcceptedEntryOrderSha256,
-  S33_WAVE2_ACCEPTANCE_CONSTANTS,
-  S33_WAVE2_CTO_RELEASE_TRUST_ROOT,
-  verifyS33Wave2AuthenticatedBatchAcceptance,
-  type S33Wave2AcceptanceTrustRoot,
-  type S33Wave2AuthenticatedBatchAcceptance,
-} from './s33-wave2-acceptance-envelope.js';
+  computeS33DetachedAcceptedEntryOrderSha256V2,
+  getS33DetachedSigningAuthorityV2,
+  verifyS33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedAcceptanceBindingsV2,
+  type S33DetachedAcceptanceEnvelopeV2,
+  type S33DetachedSigningAuthorityV2,
+  type S33DetachedSigningTestHarnessV2,
+} from './s33-wave3-detached-signing-v2.js';
 
 type JsonRecord = Record<string, unknown>;
 type ArmName = 'public' | 'v6' | 'v71';
@@ -377,7 +378,7 @@ export interface S33Wave3EvaluationInput {
   acceptedCorpusRegistry: unknown;
   trustedGoldSources: S33Wave3TrustedGoldSource[];
   authenticatedBatchAcceptances: unknown[];
-  testOnlyAcceptanceTrustRoot?: S33Wave2AcceptanceTrustRoot;
+  acceptanceVerifiedAtUtc: string;
   armManifests: Record<ArmName, S33Wave3ArmManifest>;
   observations: S33Wave3Observation[];
   integrityEvidence: S33Wave3IntegrityEvidence;
@@ -407,7 +408,7 @@ export interface S33Wave3VerifiedCorpusFreezeSnapshot {
   suppliedCorpusRegistryDigestSha256: string;
   acceptedCorpusEntries: readonly { batchId: string }[];
   acceptedCorpusBatches: readonly { batchId: string; entryCount: number }[];
-  authenticatedBatchAcceptances: readonly S33Wave2AuthenticatedBatchAcceptance[];
+  authenticatedBatchAcceptances: readonly S33DetachedAcceptanceEnvelopeV2[];
 }
 
 export type S33Wave3RawInputPackets = Pick<
@@ -1336,15 +1337,21 @@ function validateTrustedGoldSources(
   return { sources: trustedSources, entries };
 }
 
+type S33DetachedAcceptanceVerifierV2 = (
+  value: unknown,
+  bindings: S33DetachedAcceptanceBindingsV2,
+) => S33DetachedAcceptanceEnvelopeV2;
+
 function validateAuthenticatedAcceptanceChain(
   value: unknown,
   corpus: ReturnType<typeof validateCorpusRegistry>,
   goldEntries: readonly TrustedGoldEntry[],
-  testOnlyTrustRoot?: S33Wave2AcceptanceTrustRoot,
-): readonly S33Wave2AuthenticatedBatchAcceptance[] {
+  verifyAcceptance: S33DetachedAcceptanceVerifierV2,
+  usesTestAuthority: boolean,
+): readonly S33DetachedAcceptanceEnvelopeV2[] {
   const acceptances = array(value, 'Wave-3 authenticated batch acceptances');
   const hasWave1Batch = corpus.batches.some(({ batchId }) => batchId === 'S33-W1');
-  if (!hasWave1Batch && testOnlyTrustRoot === undefined) {
+  if (!hasWave1Batch && !usesTestAuthority) {
     throw new Error('Accepted corpus omits the immutable Wave-1 baseline batch');
   }
   if (hasWave1Batch) {
@@ -1364,7 +1371,12 @@ function validateAuthenticatedAcceptanceChain(
   let previousRegistryDigest = WAVE1_BASE_REGISTRY_DIGEST_SHA256;
   return authenticatedBatches.map((batch, index) => {
     const envelopeCandidate = record(acceptances[index], `Wave-3 batch acceptance ${index}`);
-    const payload = record(envelopeCandidate.payload, `Wave-3 batch acceptance ${index} payload`);
+    if (envelopeCandidate.schemaVersion !== 2
+      || envelopeCandidate.artifactType !== 'arkova-s33-detached-acceptance-envelope') {
+      throw new Error(`Wave-3 batch ${batch.batchId} acceptance must use the detached v2 envelope`);
+    }
+    const request = record(envelopeCandidate.request, `Wave-3 batch acceptance ${index} request`);
+    const payload = record(request.payload, `Wave-3 batch acceptance ${index} payload`);
     if (payload.baseRegistryDigestSha256 !== previousRegistryDigest) {
       throw new Error(`Wave-3 batch ${batch.batchId} acceptance registry chain is broken`);
     }
@@ -1377,10 +1389,10 @@ function validateAuthenticatedAcceptanceChain(
       throw new Error('Wave-3 final authenticated registry digest does not bind the supplied corpus');
     }
     const batchEntries = corpus.entries.filter(({ batchId }) => batchId === batch.batchId);
-    const acceptedEntryOrderSha256 = computeS33Wave2AcceptedEntryOrderSha256(
+    const acceptedEntryOrderSha256 = computeS33DetachedAcceptedEntryOrderSha256V2(
       batchEntries.map(({ id }) => id),
     );
-    const verified = verifyS33Wave2AuthenticatedBatchAcceptance(
+    const verified = verifyAcceptance(
       envelopeCandidate,
       {
         repositoryIdentity: 'carson-see/ArkovaCarson',
@@ -1415,12 +1427,11 @@ function validateAuthenticatedAcceptanceChain(
         ),
         acceptedEntryOrderSha256,
       },
-      testOnlyTrustRoot ? { testOnlyTrustRoot } : undefined,
     );
-    if (verified.payload.acceptedEntries.length !== batchEntries.length) {
+    if (verified.request.payload.acceptedEntries.length !== batchEntries.length) {
       throw new Error(`Wave-3 batch ${batch.batchId} signed entry count mismatch`);
     }
-    verified.payload.acceptedEntries.forEach((signed, entryIndex) => {
+    verified.request.payload.acceptedEntries.forEach((signed, entryIndex) => {
       const accepted = batchEntries[entryIndex];
       const gold = goldById.get(accepted.id);
       if (!gold
@@ -1455,35 +1466,6 @@ function validateAuthenticatedAcceptanceChain(
   });
 }
 
-function validateAcceptanceTrustRootFingerprint(value: unknown): string {
-  const root = record(value, 'Wave-3 acceptance trust root');
-  exactKeys(root, [
-    'signerIdentity', 'signingKeyId', 'publicKeySpkiPem', 'publicKeyFingerprintSha256',
-  ], 'Wave-3 acceptance trust root');
-  if (root.signerIdentity !== S33_WAVE2_ACCEPTANCE_CONSTANTS.signerIdentity
-    || root.signingKeyId !== S33_WAVE2_ACCEPTANCE_CONSTANTS.signingKeyId) {
-    throw new Error('Wave-3 acceptance trust root uses the wrong signing authority');
-  }
-  const fingerprint = sha(
-    root.publicKeyFingerprintSha256,
-    SHA256,
-    'Wave-3 acceptance trust-root fingerprint',
-  );
-  let publicKey: ReturnType<typeof createPublicKey>;
-  try {
-    publicKey = createPublicKey(nonEmpty(root.publicKeySpkiPem, 'Wave-3 acceptance trust-root SPKI PEM'));
-  } catch (error) {
-    throw new Error('Wave-3 acceptance trust-root SPKI PEM is invalid', { cause: error });
-  }
-  if (publicKey.asymmetricKeyType !== 'ed25519') {
-    throw new Error('Wave-3 acceptance trust-root key must be Ed25519');
-  }
-  if (sha256(publicKey.export({ type: 'spki', format: 'der' })) !== fingerprint) {
-    throw new Error('Wave-3 acceptance trust-root fingerprint does not match its public SPKI');
-  }
-  return fingerprint;
-}
-
 function expectedFounderIdsForBatch(batchIndex: number): string[] {
   const rangeStart = batchIndex * 5;
   return FOUNDER_DOMAINS.flatMap((domain) => (
@@ -1512,7 +1494,7 @@ export function assessS33Wave3ReleaseCorpusFreeze(
   acceptances.forEach((acceptance, batchIndex) => {
     const expectedFounderIds = new Set(expectedFounderIdsForBatch(batchIndex));
     const batchFounderCounts = new Map<string, number>();
-    for (const signed of acceptance.payload.acceptedEntries) {
+    for (const signed of acceptance.request.payload.acceptedEntries) {
       if (!(signed.registryTypeId in founderTypeCounts) || !expectedFounderIds.has(signed.registryTypeId)) {
         batchPartitionPassed = false;
         continue;
@@ -1521,7 +1503,7 @@ export function assessS33Wave3ReleaseCorpusFreeze(
       if (signed.edgeCase) founderTypeEdgeCaseCounts[signed.registryTypeId] += 1;
       batchFounderCounts.set(signed.registryTypeId, (batchFounderCounts.get(signed.registryTypeId) ?? 0) + 1);
     }
-    if (acceptance.payload.acceptedEntries.length !== 180
+    if (acceptance.request.payload.acceptedEntries.length !== 180
       || expectedFounderIds.size !== 15
       || [...expectedFounderIds].some((id) => batchFounderCounts.get(id) !== 12)) {
       batchPartitionPassed = false;
@@ -1538,13 +1520,16 @@ export function assessS33Wave3ReleaseCorpusFreeze(
     === canonicaliseJson(TOP15_BATCH_CONTRACT)
     && postWave1Batches.every(({ entryCount }) => entryCount === 180)
     && acceptances.length === TOP15_BATCH_CONTRACT.length
-    && acceptances.every(({ payload }, index) => payload.batchId === TOP15_BATCH_CONTRACT[index])
+    && acceptances.every(({ request }, index) => (
+      request.payload.batchId === TOP15_BATCH_CONTRACT[index]
+    ))
     && batchPartitionPassed;
   const founderCounts = Object.values(founderTypeCounts);
   const founderEdgeCaseCounts = Object.values(founderTypeEdgeCaseCounts);
   const founderCountContractPassed = founderCounts.every((count) => count === 12);
   const edgeCaseContractPassed = founderEdgeCaseCounts.every((count) => count >= 4);
-  const finalAuthenticatedRegistryDigestSha256 = acceptances.at(-1)?.payload.resultingRegistryDigestSha256 ?? null;
+  const finalAuthenticatedRegistryDigestSha256 = acceptances.at(-1)?.request.payload.resultingRegistryDigestSha256
+    ?? null;
   const finalRegistryDigestMatches = finalAuthenticatedRegistryDigestSha256 === corpusDigest;
   const passed = immutableWave1EntryCount === 81
     && corpusEntries.length === 621
@@ -2169,7 +2154,7 @@ interface S33Wave3EvaluationContext {
   founderMappingCanonicalSha256: string;
   corpus: ValidatedCorpusRegistry;
   trustedGold: { sources: S33Wave3TrustedGoldSource[]; entries: TrustedGoldEntry[] };
-  authenticatedBatchAcceptances: readonly S33Wave2AuthenticatedBatchAcceptance[];
+  authenticatedBatchAcceptances: readonly S33DetachedAcceptanceEnvelopeV2[];
   corpusFreeze: S33Wave3EvaluationReport['corpusFreeze'];
   acceptedIds: string[];
   manifests: Record<ArmName, S33Wave3ArmManifest>;
@@ -2181,18 +2166,19 @@ interface S33Wave3EvaluationContext {
   inputPacketDigests: S33Wave3InputPacketDigests;
 }
 
-function validateS33Wave3EvaluationContext(input: S33Wave3EvaluationInput): S33Wave3EvaluationContext {
+interface S33Wave3AcceptanceAuthorityContextV2 {
+  readonly usesTestAuthority: boolean;
+  readonly authority: S33DetachedSigningAuthorityV2;
+  readonly verify: S33DetachedAcceptanceVerifierV2;
+}
+
+function validateS33Wave3EvaluationContext(
+  input: S33Wave3EvaluationInput,
+  acceptanceAuthority: S33Wave3AcceptanceAuthorityContextV2,
+): S33Wave3EvaluationContext {
   const candidate = record(input, 'Wave-3 evaluation input') as unknown as S33Wave3EvaluationInput;
-  const usesTestAuthority = candidate.testOnlyAcceptanceTrustRoot !== undefined;
-  const acceptanceTrustRoot = usesTestAuthority
-    ? candidate.testOnlyAcceptanceTrustRoot
-    : S33_WAVE2_CTO_RELEASE_TRUST_ROOT;
-  if (acceptanceTrustRoot === null || acceptanceTrustRoot === undefined) {
-    throw new Error('Wave-3 CTO release trust root is not configured; evaluation fails closed');
-  }
-  const acceptanceTrustRootFingerprintSha256 = validateAcceptanceTrustRootFingerprint(
-    acceptanceTrustRoot,
-  );
+  const { usesTestAuthority, authority, verify } = acceptanceAuthority;
+  const acceptanceTrustRootFingerprintSha256 = authority.publicKeyFingerprintSha256;
   const gateBinding = validateGateRegistry(candidate.gateRegistryJson);
   const founderMappingCanonicalSha256 = validateFounderRegistry(candidate.founderCoverageRegistryJson);
   const corpus = validateCorpusRegistry(candidate.acceptedCorpusRegistry);
@@ -2201,7 +2187,8 @@ function validateS33Wave3EvaluationContext(input: S33Wave3EvaluationInput): S33W
     candidate.authenticatedBatchAcceptances,
     corpus,
     trustedGold.entries,
-    candidate.testOnlyAcceptanceTrustRoot,
+    verify,
+    usesTestAuthority,
   );
   if (authenticatedBatchAcceptances.some(
     ({ publicKeyFingerprintSha256 }) => publicKeyFingerprintSha256 !== acceptanceTrustRootFingerprintSha256,
@@ -2565,7 +2552,10 @@ function buildJurisdictionReport(
   })) as S33Wave3EvaluationReport['jurisdictions'];
 }
 
-export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S33Wave3EvaluationReport {
+function evaluateS33Wave3OfflineGatesWithAuthority(
+  input: S33Wave3EvaluationInput,
+  acceptanceAuthority: S33Wave3AcceptanceAuthorityContextV2,
+): S33Wave3EvaluationReport {
   const {
     usesTestAuthority,
     acceptanceTrustRootFingerprintSha256,
@@ -2581,7 +2571,7 @@ export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S3
     surgery,
     jurisdictionManifests,
     inputPacketDigests,
-  } = validateS33Wave3EvaluationContext(input);
+  } = validateS33Wave3EvaluationContext(input, acceptanceAuthority);
 
   const perType = evaluatePerTypeScores(observations);
   const bootstrap = evaluateBootstraps(observations, perType.scoreByArm, deterministicSeedSha256);
@@ -2729,5 +2719,40 @@ export function evaluateS33Wave3OfflineGates(input: S33Wave3EvaluationInput): S3
   return deepFreeze({
     ...withoutDigest,
     artifactDigestSha256: canonicalDigest(withoutDigest),
+  });
+}
+
+/** Production evaluation resolves only the committed detached-v2 policy set. */
+export function evaluateS33Wave3OfflineGates(
+  input: S33Wave3EvaluationInput,
+): S33Wave3EvaluationReport {
+  return evaluateS33Wave3OfflineGatesWithAuthority(input, {
+    usesTestAuthority: false,
+    authority: getS33DetachedSigningAuthorityV2(),
+    verify: (value, bindings) => verifyS33DetachedAcceptanceEnvelopeV2(
+      value,
+      bindings,
+      { verifiedAtUtc: input.acceptanceVerifiedAtUtc },
+    ),
+  });
+}
+
+/** Isolated fixture seam; production evaluation exposes no policy/root injection. */
+export function createS33Wave3EvaluationTestHarnessV2(
+  detachedSigningHarness: S33DetachedSigningTestHarnessV2,
+): Readonly<{ evaluate(input: S33Wave3EvaluationInput): S33Wave3EvaluationReport }> {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Wave-3 evaluation test harness is disabled');
+  }
+  return Object.freeze({
+    evaluate: (input: S33Wave3EvaluationInput) => evaluateS33Wave3OfflineGatesWithAuthority(input, {
+      usesTestAuthority: true,
+      authority: detachedSigningHarness.authority,
+      verify: (value, bindings) => detachedSigningHarness.verify(
+        value,
+        bindings,
+        { verifiedAtUtc: input.acceptanceVerifiedAtUtc },
+      ),
+    }),
   });
 }

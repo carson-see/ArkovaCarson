@@ -9,20 +9,27 @@ function envelope(transport: 'github-issue-comment' | 'github-formal-review' = '
   const id = transport === 'github-issue-comment' ? 123 : 456;
   const anchor = transport === 'github-issue-comment' ? `issuecomment-${id}` : `pullrequestreview-${id}`;
   return {
-    schemaVersion: 1,
-    artifactType: 'arkova-s33-wave2-authenticated-batch-acceptance',
-    payload: {
-      repositoryIdentity: 'carson-see/ArkovaCarson',
-      pullRequestNumber: 1601,
-      reviewer: {
-        lane: 'Lane 3',
-        transport,
-        evidence: {
-          id,
-          nodeId: 'TRANSPORT_NODE',
-          url: `https://github.com/carson-see/ArkovaCarson/pull/1601#${anchor}`,
-          submittedAtUtc: '2026-07-15T14:00:00.000Z',
-          actor: { login: 'carson-see', databaseId: 99, nodeId: 'ACTOR_NODE' },
+    schemaVersion: 2,
+    artifactType: 'arkova-s33-detached-acceptance-envelope',
+    signatureAlgorithm: 'Ed25519',
+    signerIdentity: 'arkova-s33-cto-release',
+    request: {
+      schemaVersion: 2,
+      artifactType: 'arkova-s33-detached-signing-request',
+      domainSeparator: 'arkova:s33:detached-acceptance:v2\n',
+      payload: {
+        repositoryIdentity: 'carson-see/ArkovaCarson',
+        pullRequestNumber: 1601,
+        reviewer: {
+          lane: 'Lane 3',
+          transport,
+          evidence: {
+            id,
+            nodeId: 'TRANSPORT_NODE',
+            url: `https://github.com/carson-see/ArkovaCarson/pull/1601#${anchor}`,
+            submittedAtUtc: '2026-07-15T14:00:00.000Z',
+            actor: { login: 'carson-see', databaseId: 99, nodeId: 'ACTOR_NODE' },
+          },
         },
       },
     },
@@ -41,6 +48,9 @@ describe('S3.3 Wave-2 GitHub transport', () => {
     expect(() => extractS33Wave2AcceptanceEnvelopeFromBody(
       `${S33_WAVE2_ACCEPTANCE_COMMENT_MARKER}\n\`\`\`json\n{"x":1,"x":2}\n\`\`\``,
     )).toThrow(/duplicate/i);
+    expect(() => extractS33Wave2AcceptanceEnvelopeFromBody(
+      `<!-- arkova-s33-wave2-authenticated-acceptance:v1 -->\n\n\`\`\`json\n${JSON.stringify(envelope())}\n\`\`\``,
+    )).toThrow(/versioned marker/i);
   });
 
   it('verifies issue-comment transport against live stable GitHub identity', () => {

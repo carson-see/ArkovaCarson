@@ -132,3 +132,17 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 
 ## Open work
 - SCRUM-1740 (PR #738) — quota gate awaits Carson merge + Mon deploy.
+
+## 2026-07-15 SCRUM-2703/2705 Wave 3 wiring
+
+- `POST /api/v1/anchor`, `/anchor/submit`, and `/anchor/bulk` meter validated
+  anchor cardinality against trusted `req.apiKey.orgId`; invalid schemas keep
+  their existing 400 behavior and do not consume the new quota.
+- `POST /api/v1/webhooks` runs API-key and explicit org-admin guards before the
+  `connectors_total` capacity check. Registered endpoints, active or inactive,
+  count toward capacity.
+- Nessie middleware order is payment validation/context, verified-payer
+  limiter, AI limiter, then handler. API-key and payments-disabled contexts
+  bypass payer storage; missing verified identity fails closed.
+- `/api/rules/draft` is not mounted. Do not invent or meter a providerless
+  endpoint; the CTO selected persisted-rule capacity on real `POST /api/rules`.

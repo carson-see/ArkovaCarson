@@ -1,7 +1,7 @@
 # S3.3 — 429 Limiter Map (five-bucket attribution)
 
-**Story:** L2-S0 (Sprint 3.3, Lane 2) · **Binding source:** CTO memo R2 (2026-07-10) — exit criterion 3 STRUCK, replaced by 3a/3b/3c. · **Verified against:** `origin/main` @ `ad1d2487` on 2026-07-10 — every `file:line` below was re-verified in-tree by the author (not inherited from the plan; the plan's "four 429 sources" claim was falsified in both directions).
-**Drift lint:** `scripts/ci/check-429-limiter-map.test.ts` re-asserts every row of the [Claims ledger](#claims-ledger-drift-linted) and both dead-code claims on every CI run. If that test fails, the tree moved — update this map, then re-check the attribution spec.
+**Story:** Sprint 3.3 Lane 2; SCRUM-2703 / SCRUM-2705 / SCRUM-2707 / SCRUM-2793 · **Binding source:** CTO memo R2 (2026-07-10), [Wave 2 final alignment](https://arkova.atlassian.net/wiki/spaces/A/pages/104202241) (2026-07-15), and the Wave 3 CTO repository-truth ruling. · **Verified against:** Wave 3 branch based on frozen PR #1550 head `f424ce77912659f137d5256bbb08d97aa5d76cc7` on 2026-07-15.
+**Drift lint:** `scripts/ci/check-429-limiter-map.test.ts` re-asserts every row of the [Claims ledger](#claims-ledger-drift-linted) and the exact mounted/excluded consumers on every CI run. If that test fails, the tree moved — update this map, then re-check the attribution spec.
 
 > Internal engineering note (CLAUDE.md §0-4): the audited spec lives on the SCRUM-2670 Confluence pages; this file exists so CI can lint the claims against the tree.
 
@@ -29,21 +29,22 @@ Every path in `services/worker/` that can return HTTP 429, with what it limits, 
 | Rules manual-run slot | `services/worker/src/api/rules-crud.ts:394` | per-org manual-run slot (`takeManualRunSlot(orgId)`) | No. |
 | Account data export | `services/worker/src/api/account-export.ts:86` | one export per user per 24h (RPC-enforced; fixed 24h `Retry-After`) | No. |
 
-### 1c. Dead code (bugs filed — see §5)
+### 1c. Mounted quota limiters excluded from the five headline buckets
 
 | Emitter | Evidence | Status |
 |---|---|---|
-| `perOrgRateLimit.ts` / `requireOrgQuota()` | `services/worker/src/middleware/perOrgRateLimit.ts:106` (middleware), `TIER_QUOTAS` `:32`, 429 at `:161` | **NEVER MOUNTED.** Zero non-test consumers in the tree (drift-linted). `organizations.tier` FREE/PAID/ENTERPRISE quotas are enforced nowhere. SCALE-01 / SCRUM-1023 half-landed. Any attribution bucket for it reads zero because it is **unreachable, not because load is well-behaved** — report as `structurally_zero (unmounted)`. |
-| x402 payer rate limiter | `services/worker/src/middleware/x402PayerRateLimit.ts:37` (`createPayerRateLimiter`) | **ORPHAN.** Zero non-test consumers (drift-linted). The x402 payment path (`/nessie/query`, `router.ts:438`) runs with `aiRateLimiter` only — no payer-scoped limit. |
+| `perOrgRateLimit.ts` / `requireOrgQuota()` | Mounted after trusted identity on schema-valid `POST /api/v1/anchor`, `/anchor/submit`, `/anchor/bulk`, persisted-rule `POST /api/rules`, and connector registration `POST /api/v1/webhooks` | **LIVE, but outside the five-bucket A/B headline soak.** Daily anchor cardinality uses the atomic usage RPC; rule and connector creation use authoritative current row counts. Canonical headers are `X-Org-Quota-{Anchors,Rule-Drafts,Rules,Connectors}-*`; the Anchors-Created and Connector-Webhooks aliases remain for one compatibility cycle. The providerless rule-draft module remains unmounted, so `rule_drafts` is explicitly not claimed as enforced. Report `mounted_excluded (write-surfaces-outside-headline-soak)`, never a sixth bucket. |
+| x402 verified-payer limiter | `x402PaymentGate` derives an opaque HMAC key from the verified USDC Transfer sender; `/nessie/query` order is payment gate → payer limiter → AI limiter → handler | **LIVE only on paid Nessie.** API-key and disabled-payment paths carry explicit bypass context; missing verified identity fails closed. The bounded process-local store never receives raw wallet addresses. Report `mounted_excluded (nessie-only-outside-headline-soak)`, never a sixth bucket. |
 
-### 1d. Upstream model 429s (received, not emitted — and misclassified)
+### 1d. Upstream model 429s (received, preserved, and safely classified)
 
 | Path | Where | Behavior |
 |---|---|---|
-| Tuned model (Vertex endpoint) | `services/worker/src/ai/gemini.ts:777-783` | On non-OK response: structured log `gemini.ts:779-782` (`'Vertex AI tuned model error'` with `{ status, errBody, tunedModel }`), then `gemini.ts:783` throws `new Error(\`Vertex AI tuned model error (${response.status})\`)` — **an Error with NO `.status` property**. |
-| Embeddings (single / batch) | `gemini.ts:548` / `gemini.ts:615` | Same pattern: status only inside the message string. |
-| Retry wrapper | `gemini.ts:827-859`, `MAX_RETRIES = 3` at `:52` | `withRetry` copies only `message` + `name` onto a fresh Error (LEAK-4 memory guard) — any status property is stripped even if one existed. |
-| **Misclassification (real worker bug — filed)** | `services/worker/src/ai/fallback-chain.ts:57` and `:79` check `error.status` → sees `undefined`; message fallbacks `:68` / `:83` match only `'rate limit'` / `'quota exceeded'` — `"Vertex AI tuned model error (429)"` matches neither | **An upstream 429 is classified `provider_error`, NOT `rate_limit`.** Per CTO R2: the fix rides the next worker train; S3.3 does NOT patch the classifier mid-sprint — the soak measures the upstream bucket **from structured worker logs only** (`gemini.ts:779-782` and the embedding equivalents), never from `fallback_reason`. |
+| Developer API generation | `services/worker/src/ai/gemini.ts:294-349` | SDK failures are normalized before tracing. Numeric HTTP status and `Retry-After` are retained in `AIProviderHttpError`; the current attempt and per-invocation server UUID are supplied by `withRetry()`. Raw SDK messages, bodies, request context, headers, and credentials are not retained. |
+| Developer API embeddings (single / batch) | `gemini.ts:895-903` / `:964-972` | Non-OK responses become `AIProviderHttpError` through `upstreamResponseError()`. The provider body is drained and discarded; the structured event records only bounded attribution metadata, request-instance UUID, and retry-loop attempt. |
+| Tuned model (Vertex regional endpoint) | `gemini.ts:1136-1151` | Non-OK responses preserve status, parsed `Retry-After`, exact model resource, region, v6 prompt flag, schema state, MIME type, API surface, request-instance UUID, and retry-loop attempt. The body is never logged, thrown, or traced. |
+| Retry wrapper | `gemini.ts:1195-1237`, `MAX_RETRIES = 3` near `:54` | `withRetry()` generates one server-side UUID per provider invocation and supplies that same ID plus attempt identity (`1..3`) to every upstream HTTP-error logging path. `cloneSafeRetryError()` preserves only allowlisted status/attribution fields. Auth/validation statuses 400/401/403/422 do not retry; 429 and transient availability failures remain eligible for retry/fallback. |
+| Fallback classification | `services/worker/src/ai/fallback-chain.ts:51-98` | Validated status `429` classifies as `rate_limit`; 502/503/504 classify as `provider_unavailable`. Fallback metrics retain only the bounded classification, never a raw provider error string. |
 
 ## 2. Why the response body cannot attribute (client-blind)
 
@@ -64,9 +65,10 @@ Buckets, evaluated on BOTH A/B arms, **never summed** (they measure different po
 | 1. `anon-IP` | 429 + `X-RateLimit-Limit: 100` (+ log key = IP) | Must be **ZERO self-inflicted** (exit criterion 3b) — nonzero means the harness polluted its own arms; pace per-source <100/min/IP or go multi-IP. |
 | 2. `keyed` | 429 + `X-RateLimit-Limit: 1000` (+ log key = keyId) | API-key surfaces only (tier-mix lane). |
 | 3. `aiRateLimiter` | 429 + `X-RateLimit-Limit: 30` (+ log key prefix `ai:`) | The only per-user AI limit that exists today. |
-| 4. `usageTracking-monthly` | 429 body with `limit: 10000` (`usageTracking.ts:171`) | API-key callers only; monthly window — a per-window count, not a rate. |
-| 5. `upstream-model` | **Structured worker logs ONLY** (`gemini.ts:779-782`, `:548`, `:615` blocks with `status: 429`) — never `fallback_reason` (misclassified, §1d) | Tag by API surface: **Developer-API** (public `gemini-2.5-flash` key surface) vs **Vertex-regional** (tuned endpoint) — the two arms sit on different quota pools and R2 requires the distinction. |
-| — `perOrgRateLimit` | Reported as **`structurally_zero (unmounted)`** with the bug link, NOT as a measured zero | Drift-linted; if it gets mounted mid-sprint the lint fails and this spec must be revised. |
+| 4. `usageTracking-monthly` | 429 body with `limit: 10000` (`usageTracking.ts:171`) plus `X-RateLimit-Limit: 1000` | API-key callers only and downstream of `keyedRateLimiter`; missing or contradictory keyed-header metadata rejects the artifact. Monthly window — a per-window count, not a rate. |
+| 5. `upstream-model` | Structured `event=ai_upstream_http_error` worker logs (`gemini.ts:242-264`) with status `429`; `fallback_reason=rate_limit` is corroborating classification, not the evidence source of truth | Tag by API surface: **Developer-API** (public `gemini-2.5-flash` key surface) vs **Vertex-regional** (tuned endpoint) — the two arms sit on different quota pools and R2 requires the distinction. Exact model, region, v6 prompt flag, response-schema state, MIME type, server-generated request-instance UUID, client correlation ID, retry-loop attempt, and `Retry-After` must match the arm declaration. Logs coalesce only by request-instance UUID; attempts are unique, strictly increasing, and bounded at 3. Sparse 429 attempts are valid because intervening non-429 attempts are intentionally absent. Client correlation reuse cannot collapse distinct invocations, and timestamps never create identity. |
+| — `perOrgRateLimit` | Reported as **`mounted_excluded (write-surfaces-outside-headline-soak)`**, NOT as a sixth bucket | Covers the ratified write surfaces. `rule_drafts` remains non-applicable until a real provider-backed route exists. |
+| — `x402PayerRateLimit` | Reported as **`mounted_excluded (nessie-only-outside-headline-soak)`**, NOT as a sixth bucket | Applies only after verified x402 payment on Nessie; API-key/disabled paths bypass explicitly. |
 
 Mechanism honesty (exit criterion 3c, R-7): the rc-manifest states that 429 mitigation comes from **rate-limiter architecture + traffic smoothing + surface choice + provisioned throughput**, NOT from tuning (a tuned model shares the base-model quota pool, cannot use the global endpoint, and is plausibly MORE exposed). "≥90% cut" language is **banned**.
 
@@ -77,22 +79,30 @@ buckets:
   - anon-IP              # X-RateLimit-Limit=100 header + IP log key; must be 0 self-inflicted
   - keyed                # X-RateLimit-Limit=1000 + keyId log key
   - aiRateLimiter        # X-RateLimit-Limit=30 + "ai:" log key prefix
-  - usageTracking-monthly # body limit:10000; API-key surfaces only
+  - usageTracking-monthly # body limit:10000 + keyed X-RateLimit-Limit=1000
   - upstream-model       # worker structured logs only; tagged Developer-API vs Vertex-regional
 reported_not_measured:
-  - perOrgRateLimit: structurally_zero (unmounted; SCALE-01/SCRUM-1023 half-landed — bug filed)
+  - perOrgRateLimit: mounted_excluded (write-surfaces-outside-headline-soak)
+  - x402PayerRateLimit: mounted_excluded (nessie-only-outside-headline-soak)
 rules:
   - buckets are never summed
   - attribution = X-RateLimit-Limit header + server-log key-prefix join
-  - upstream bucket never sourced from fallback_reason (misclassified provider_error — bug filed)
+  - upstream bucket comes from event=ai_upstream_http_error; fallback_reason is corroborating only
+  - upstream request identity comes only from worker requestInstanceId UUID; never client correlation/timestamps
+  - upstream 429 attempts are unique, strictly increasing, and bounded to 1..3 per requestInstanceId; sparse sets are valid
+  - every observed 429 carries a valid Retry-After value
+  - public arm = Developer-API/global/production prompt/no tuned model/schema unset
+  - tuned arm = Vertex-regional/exact tuned model/v6 prompt/schema unset
 ```
 
-## 5. Bugs surfaced by this map (tracker: Confluence 88768514)
+`scripts/staging/s33-429-attribution.ts` enforces this packet fail-closed: strict metadata-only schemas, client request-target canonicalization to pathname only (query and fragment suffixes are stripped), exact generic-limiter correlation joins with at most 60 seconds of skew, keyed-header `1000` on monthly quota rows, request-level coalescing only by a required worker-generated UUID, unique/strictly-increasing/bounded attempts per UUID, run-to-upstream provenance matching, the five separate buckets with no total field, and both newly live limiters marked `mounted_excluded`. Sparse 429 attempt sets are accepted because non-429 attempts are not inputs; duplicate/out-of-sequence/out-of-range attempts or one server UUID spanning client correlations reject the artifact. Client correlation IDs and timestamps are context fields, never grouping identity. Unknown fields are rejected so raw bodies, raw limiter keys, prompts, fingerprints, PII, JWTs, and API keys cannot enter the evidence record.
 
-1. **perOrgRateLimit never mounted** — SCALE-01/SCRUM-1023 half-landed; tier quotas (`TIER_QUOTAS`, `perOrgRateLimit.ts:32`) enforced nowhere.
-2. **x402 payer rate limiter orphaned** — `createPayerRateLimiter` (`x402PayerRateLimit.ts:37`) has zero non-test consumers; the paid `/nessie/query` surface has no payer-scoped limit.
-3. **Upstream Vertex/Gemini 429 misclassified as `provider_error`** — `gemini.ts:783` throws without `.status`; `withRetry` strips to message; `fallback-chain.ts:57/:79/:68/:83` cannot see the 429. Breaks fallback telemetry AND retriability classification.
-4. (Context, already tracked as provision Step-4 defects — L2-S2a-FIX / PR #1492.)
+## 5. Remediation state and explicit gap
+
+1. **Per-org quotas mounted by SCRUM-2703.** Anchors use validated request cardinality; persisted rules and registered connectors use authoritative capacity. Trusted org context is mandatory and lookup failures fail closed.
+2. **Verified-payer limiter mounted by SCRUM-2705.** Paid Nessie derives its key from the verified on-chain transfer sender, HMACs it, and enforces the payer window before `aiRateLimiter`.
+3. **Explicit non-applicable gap:** `rules-draft.ts` has no production provider or route. Per the CTO ruling, this change does not invent one and does not double-meter persisted disabled rules as draft-generation requests.
+4. **Upstream Vertex/Gemini 429 misclassification remains fixed by L2-A.** `AIProviderHttpError` preserves bounded status/`Retry-After`/arm metadata through retry cloning.
 
 ## Claims ledger (drift-linted)
 
@@ -113,7 +123,7 @@ Machine-readable; parsed by `scripts/ci/check-429-limiter-map.test.ts`. Each row
 | 10 | services/worker/src/api/v1/router.ts | 263 | const aiRateLimiter = rateLimit({ |
 | 11 | services/worker/src/api/v1/router.ts | 266 | keyGenerator: (req) => `ai:${req.authUserId ?? req.ip ?? 'unknown'}`, |
 | 12 | services/worker/src/api/v1/router.ts | 371 | router.use('/webhooks', batchRateLimiter, webhooksRouter); |
-| 13 | services/worker/src/api/v1/router.ts | 438 | router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), aiRateLimiter, nessieQueryRouter); |
+| 13 | services/worker/src/api/v1/router.ts | 488 | router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), x402PayerRateLimit, aiRateLimiter, nessieQueryRouter); |
 | 14 | services/worker/src/middleware/usageTracking.ts | 18 | const FREE_TIER_MONTHLY_QUOTA = 10_000; |
 | 15 | services/worker/src/middleware/usageTracking.ts | 171 | res.status(429).json({ |
 | 16 | services/worker/src/api/rules-crud.ts | 394 | res.status(429).json({ |
@@ -122,16 +132,24 @@ Machine-readable; parsed by `scripts/ci/check-429-limiter-map.test.ts`. Each row
 | 19 | services/worker/src/middleware/perOrgRateLimit.ts | 106 | export function requireOrgQuota |
 | 20 | services/worker/src/middleware/perOrgRateLimit.ts | 161 | res.status(429).json({ |
 | 21 | services/worker/src/middleware/x402PayerRateLimit.ts | 37 | export function createPayerRateLimiter |
-| 22 | services/worker/src/ai/gemini.ts | 52 | const MAX_RETRIES = 3; |
-| 23 | services/worker/src/ai/gemini.ts | 781 | 'Vertex AI tuned model error', |
-| 24 | services/worker/src/ai/gemini.ts | 783 | throw new Error(`Vertex AI tuned model error (${response.status})`); |
-| 25 | services/worker/src/ai/gemini.ts | 548 | throw new Error(`Embedding generation failed (status ${response.status})`); |
-| 26 | services/worker/src/ai/gemini.ts | 615 | throw new Error(`Batch embedding generation failed (status ${response.status})`); |
-| 27 | services/worker/src/ai/fallback-chain.ts | 57 | if (status === 429 \|\| status === 503 \|\| status === 502 \|\| status === 504) { |
-| 28 | services/worker/src/ai/fallback-chain.ts | 68 | if (msg.includes('rate limit') \|\| msg.includes('quota exceeded')) { |
-| 29 | services/worker/src/ai/fallback-chain.ts | 79 | if (status === 429) return 'rate_limit'; |
-| 30 | services/worker/src/ai/fallback-chain.ts | 83 | if (msg.includes('rate limit') \|\| msg.includes('quota exceeded')) return 'rate_limit'; |
+| 22 | services/worker/src/ai/gemini.ts | 53 | const MAX_RETRIES = 3; |
+| 23 | services/worker/src/ai/gemini.ts | 118 | export class AIProviderHttpError extends Error implements AIProviderHttpErrorMetadata { |
+| 24 | services/worker/src/ai/gemini.ts | 249 | event: 'ai_upstream_http_error', |
+| 25 | services/worker/src/ai/gemini.ts | 879 | `Embedding generation failed (status ${response.status})`, |
+| 26 | services/worker/src/ai/gemini.ts | 947 | `Batch embedding generation failed (status ${response.status})`, |
+| 27 | services/worker/src/ai/fallback-chain.ts | 67 | if (status === 429 \|\| status === 503 \|\| status === 502 \|\| status === 504) { |
+| 28 | services/worker/src/ai/fallback-chain.ts | 78 | if (msg.includes('rate limit') \|\| msg.includes('quota exceeded')) { |
+| 29 | services/worker/src/ai/fallback-chain.ts | 89 | if (status === 429) return 'rate_limit'; |
+| 30 | services/worker/src/ai/fallback-chain.ts | 90 | if (status === 502 \|\| status === 503 \|\| status === 504) return 'provider_unavailable'; |
 | 31 | services/worker/src/utils/rateLimit.ts | 129 | logger.warn( |
 | 32 | services/worker/src/utils/rateLimit.ts | 135 | res.setHeader('X-RateLimit-Limit', maxRequests.toString()); |
 | 33 | services/worker/src/utils/rateLimit.ts | 139 | res.status(429).json({ |
+| 34 | services/worker/src/ai/gemini.ts | 1191 | lastError = cloneSafeRetryError(err); |
+| 35 | scripts/staging/s33-429-attribution.ts | 15 | export const S33_429_BUCKETS = [ |
+| 36 | scripts/staging/s33-429-attribution.ts | 260 | export function buildS33429AttributionEvidence(input: unknown): S33429AttributionEvidence { |
+| 37 | services/worker/src/ai/gemini.ts | 1196 | fn: (attempt: AIProviderRetryAttempt, requestInstanceId: string) => Promise<T>, |
+| 38 | services/worker/src/api/v1/anchor-submit.ts | 246 | const anchorCreateQuota = requireOrgQuota({ |
+| 39 | services/worker/src/api/v1/anchor-bulk.ts | 106 | const bulkAnchorQuota = requireOrgQuota({ |
+| 40 | services/worker/src/api/v1/webhooks.ts | 229 | const connectorCapacityQuota = requireOrgQuota({ |
+| 41 | services/worker/src/routes/admin.ts | 427 | const ruleCapacityQuota = requireOrgQuota({ |
 <!-- claims:end -->

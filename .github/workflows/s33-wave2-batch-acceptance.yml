@@ -111,9 +111,9 @@ jobs:
     name: S3.3 Wave 2 Exact-Head Acceptance
     if: >-
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-       contains(github.event.comment.body, '<!-- arkova-s33-wave2-authenticated-acceptance:v1 -->')) ||
+       contains(github.event.comment.body, '<!-- arkova-s33-detached-acceptance:v2 -->')) ||
       (github.event_name == 'pull_request_review' &&
-       contains(github.event.review.body, '<!-- arkova-s33-wave2-authenticated-acceptance:v1 -->'))
+       contains(github.event.review.body, '<!-- arkova-s33-detached-acceptance:v2 -->'))
     permissions:
       actions: read
       contents: read
@@ -148,10 +148,17 @@ jobs:
             | grep -Eq '^(docs/lane4/s33-wave2-batches/|services/worker/src/ai/eval/golden-dataset-s33-wave2-[a-z0-9-]+-heldout\.(ts|test\.ts)$)'; then
             exit 1
           fi
+          RUN_STARTED_AT=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq '.run_started_at')
+          case "$RUN_STARTED_AT" in
+            ????-??-??T??:??:??Z) VERIFIED_AT_UTC="${RUN_STARTED_AT%Z}.000Z" ;;
+            ????-??-??T??:??:??.???Z) VERIFIED_AT_UTC="$RUN_STARTED_AT" ;;
+            *) exit 1 ;;
+          esac
           echo "number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "base_sha=${BASE_SHA}" >> "$GITHUB_OUTPUT"
           echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
           echo "head_repository=${HEAD_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          echo "verified_at_utc=${VERIFIED_AT_UTC}" >> "$GITHUB_OUTPUT"
       - name: Materialize the ancestry-verified trusted base evaluator
         env:
           BASE_SHA: ${{ steps.pr.outputs.base_sha }}
@@ -189,8 +196,8 @@ jobs:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         working-directory: trusted
         run: |
-          TRANSPORT=$(jq -r '.payload.reviewer.transport' "$RUNNER_TEMP/s33-wave2-acceptance-envelope.json")
-          TRANSPORT_ID=$(jq -r '.payload.reviewer.evidence.id' "$RUNNER_TEMP/s33-wave2-acceptance-envelope.json")
+          TRANSPORT=$(jq -r '.request.payload.reviewer.transport' "$RUNNER_TEMP/s33-wave2-acceptance-envelope.json")
+          TRANSPORT_ID=$(jq -r '.request.payload.reviewer.evidence.id' "$RUNNER_TEMP/s33-wave2-acceptance-envelope.json")
           case "$TRANSPORT_ID" in ''|*[!0-9]*) exit 1 ;; esac
           case "$TRANSPORT" in
             github-issue-comment)
@@ -225,6 +232,7 @@ jobs:
           --candidate-head "${{ steps.pr.outputs.head_sha }}"
           --pull-request-number "${{ steps.pr.outputs.number }}"
           --acceptance-envelope "$RUNNER_TEMP/s33-wave2-acceptance-envelope.json"
+          --verified-at-utc "${{ steps.pr.outputs.verified_at_utc }}"
           --output "$RUNNER_TEMP/s33-wave2-authenticated-acceptance.json"
       - name: Preserve authenticated acceptance before publishing status
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -329,8 +337,15 @@ jobs:
           ARTIFACT_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
             --jq ".artifacts[] | select(.name == \"${ARTIFACT_NAME}\" and .expired == false) | .id" | head -n 1)
           case "$ARTIFACT_ID" in ''|*[!0-9]*) exit 1 ;; esac
+          RUN_STARTED_AT=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq '.run_started_at')
+          case "$RUN_STARTED_AT" in
+            ????-??-??T??:??:??Z) VERIFIED_AT_UTC="${RUN_STARTED_AT%Z}.000Z" ;;
+            ????-??-??T??:??:??.???Z) VERIFIED_AT_UTC="$RUN_STARTED_AT" ;;
+            *) exit 1 ;;
+          esac
           echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
           echo "artifact_id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
+          echo "verified_at_utc=${VERIFIED_AT_UTC}" >> "$GITHUB_OUTPUT"
       - name: Download the immutable acceptance artifact
         if: steps.scope.outputs.relevant == 'true'
         env:
@@ -349,8 +364,8 @@ jobs:
         working-directory: trusted
         run: |
           ACCEPTANCE="$RUNNER_TEMP/prior-acceptance/s33-wave2-authenticated-acceptance.json"
-          TRANSPORT=$(jq -r '.payload.reviewer.transport' "$ACCEPTANCE")
-          TRANSPORT_ID=$(jq -r '.payload.reviewer.evidence.id' "$ACCEPTANCE")
+          TRANSPORT=$(jq -r '.request.payload.reviewer.transport' "$ACCEPTANCE")
+          TRANSPORT_ID=$(jq -r '.request.payload.reviewer.evidence.id' "$ACCEPTANCE")
           case "$TRANSPORT_ID" in ''|*[!0-9]*) exit 1 ;; esac
           case "$TRANSPORT" in
             github-issue-comment)
@@ -388,6 +403,7 @@ jobs:
           --candidate-head "${{ github.event.pull_request.head.sha }}"
           --pull-request-number "${{ github.event.pull_request.number }}"
           --acceptance-envelope "$RUNNER_TEMP/prior-acceptance/s33-wave2-authenticated-acceptance.json"
+          --verified-at-utc "${{ steps.prior.outputs.verified_at_utc }}"
           --merged-main-root "$GITHUB_WORKSPACE/merged"
           --merged-main-head "${{ github.event.pull_request.merge_commit_sha }}"
           --output "$RUNNER_TEMP/s33-wave2-trusted-main-consumption.json"

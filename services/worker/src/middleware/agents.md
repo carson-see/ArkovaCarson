@@ -51,7 +51,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - **idempotency.ts** — Idempotency-Key header middleware (Stripe pattern). In-memory or Upstash Redis store.
 - **upstashIdempotency.ts** — Upstash Redis-backed idempotency store for horizontal scaling.
 - **webhookIdempotency.ts** — Webhook-specific idempotency middleware.
-- **perOrgRateLimit.ts** — Per-org-per-day tier-based quota enforcement. Atomic check-then-increment via `increment_org_usage` RPC.
+- **perOrgRateLimit.ts** — Tier-based per-org daily usage and capacity enforcement. Daily counters use atomic `increment_org_usage`; capacity reads authoritative scoped counts but are not an atomic cross-instance reservation.
 - **webhookHmac.ts** — Inbound connector webhook HMAC verification with 5-minute replay window.
 - **paymentTierRouter.ts** — Routes requests based on payment tier.
 - **requirePaymentCurrent.ts** — Rejects requests from orgs with lapsed payments.
@@ -63,7 +63,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - **integrationKillSwitch.ts** — Emergency kill switch for third-party integrations.
 - **ruleEventBackpressure.ts** — Backpressure middleware for rule event processing.
 - **x402PaymentGate.ts** — Returns 402 with x402 payment requirements; validates on-chain payments.
-- **x402PayerRateLimit.ts** — Rate limiting for x402 payers.
+- **x402PayerRateLimit.ts** — Bounded process-local rate limiting keyed only by HMAC-derived verified x402 payer identity.
 - **x402PaymentLogger.ts** — Logs x402 payment settlements.
 
 ## Rules
@@ -72,3 +72,14 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - Feature gates fail closed by default — if the DB read fails, kill-switchable gates return 503. Exception: `ENABLE_AI_EXTRACTION` is launch-required (§1.6) and keeps its launch default; last-known-good DB value wins over the fail default on a transient blip (SCRUM-2247).
 - `errorSanitizer` must be registered BEFORE the global error handler.
 - No raw API keys in logs or DB — HMAC-SHA256 only.
+
+## 2026-07-15 SCRUM-2703/2705 quota invariants
+
+- `perOrgRateLimit.ts` accepts organization ids only from authenticated caller
+  context. Daily cardinality is atomically incremented; capacity counts query
+  only code-owned table mappings and fail closed on lookup uncertainty.
+- `x402PaymentGate.ts` derives payer identity only from the verified on-chain
+  USDC Transfer sender and places only its HMAC in `req.x402PayerContext`.
+- `x402PayerRateLimit.ts` is bounded process-local memory. Full-store or missing
+  identity conditions return 503; do not evict or silently bypass.
+- Canonical org/payer quota 429s must emit an integer `Retry-After`.
