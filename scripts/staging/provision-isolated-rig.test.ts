@@ -536,6 +536,7 @@ interface ApplyRunResult extends SyncRunResult {
   artifactDir: string;
   admissionArtifactPath: string;
   schedulerStates: Record<string, string>;
+  provisionState: Record<string, unknown> | null;
 }
 
 interface ApplyRunOptions {
@@ -567,6 +568,8 @@ interface ApplyRunOptions {
   secretVersionResourceVersion?: string;
   ledgerRetentionUntil?: string;
   topologyLedgerRetentionUntil?: string;
+  supabaseProjectStatuses?: string[];
+  supabaseDbResolves?: boolean;
   childTimeoutMs?: number;
   env?: Record<string, string>;
 }
@@ -932,6 +935,7 @@ function applyRunStubbed(
   const updateCountFile = join(stubDir, 'scheduler-update-count');
   const resumeCountFile = join(stubDir, 'scheduler-resume-count');
   const enabledDescribeCountFile = join(stubDir, 'scheduler-enabled-describe-count');
+  const supabaseStatusCountFile = join(stubDir, 'supabase-status-count');
   const b1ApprovalArtifactPath = join(stubDir, 'b1-node-approval.json');
   const gcsLastObjectFile = join(stubDir, 'gcs-last-object.json');
   const finalSchedulerJobSuffix = profile === 'gemini'
@@ -1333,6 +1337,20 @@ if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
   echo '{"id":"${options.projectRef ?? 'abcdefghijklmnopqrst'}","name":"arkova-soak-${name}"}'
   exit 0
 fi
+if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "list" ]]; then
+  count=0
+  [[ ! -f '${supabaseStatusCountFile}' ]] || count="$(cat '${supabaseStatusCountFile}')"
+  count=$((count + 1))
+  printf '%s' "$count" > '${supabaseStatusCountFile}'
+  case "$count" in
+${(options.supabaseProjectStatuses ?? ['ACTIVE_HEALTHY'])
+    .map((status, index) => `    ${index + 1}) status='${status}' ;;`)
+    .join('\n')}
+    *) status='${(options.supabaseProjectStatuses ?? ['ACTIVE_HEALTHY']).at(-1)}' ;;
+  esac
+  printf '[{"id":"${options.projectRef ?? 'abcdefghijklmnopqrst'}","name":"arkova-soak-${name}","status":"%s"}]\\n' "$status"
+  exit 0
+fi
 if [[ "$1" == "supabase" ]]; then
   exit 0
 fi
@@ -1347,6 +1365,12 @@ exit 64
 `,
   );
   chmodSync(join(stubDir, 'npx'), 0o755);
+
+  writeFileSync(join(stubDir, 'getent'), `#!/usr/bin/env bash
+if [[ '${options.supabaseDbResolves === false ? 'false' : 'true'}' != 'true' ]]; then exit 2; fi
+printf '%s\\n' '203.0.113.10 STREAM db fixture'
+`);
+  chmodSync(join(stubDir, 'getent'), 0o755);
 
   const env: Record<string, string> = {
     PATH: `${stubDir}:${process.env.PATH ?? ''}`,
@@ -1445,6 +1469,9 @@ exit 64
     artifactDir,
     admissionArtifactPath,
     schedulerStates,
+    provisionState: existsSync(provisionStatePath)
+      ? JSON.parse(readFileSync(provisionStatePath, 'utf8'))
+      : null,
   };
 }
 
@@ -2528,6 +2555,41 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
     const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
     expect(admission.supabase_project_ref).toBe('abcdefghijklmnopqrst');
   }, 15_000);
+
+  it('waits through COMING_UP and pushes schema only after ACTIVE_HEALTHY plus DNS', () => {
+    const result = applyRunStubbed('ready-after-coming-up', 'mock', {
+      supabaseProjectStatuses: ['COMING_UP', 'ACTIVE_HEALTHY'],
+      env: {
+        STAGING_SUPABASE_PROJECT_READY_TIMEOUT_SECONDS: '2',
+        STAGING_SUPABASE_PROJECT_READY_POLL_SECONDS: '1',
+      },
+    });
+    expect(result.code, result.out).toBe(0);
+    expect(result.npxCalls.filter((call) =>
+      call.startsWith('supabase projects list '))).toHaveLength(2);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase link '))).toBe(true);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase db push '))).toBe(true);
+  }, 15_000);
+
+  it('persists teardown state and performs no link, schema push, or deploy on readiness timeout', () => {
+    const result = applyRunStubbed('readiness-timeout', 'mock', {
+      supabaseProjectStatuses: ['ACTIVE_HEALTHY'],
+      supabaseDbResolves: false,
+      env: {
+        STAGING_SUPABASE_PROJECT_READY_TIMEOUT_SECONDS: '1',
+        STAGING_SUPABASE_PROJECT_READY_POLL_SECONDS: '1',
+      },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/readiness timed out|resolvable database DNS/i);
+    expect(result.provisionState).toMatchObject({
+      status: 'REQUIRES_IMMEDIATE_TEARDOWN',
+      supabase_project_ref: 'abcdefghijklmnopqrst',
+    });
+    expect(result.npxCalls.some((call) =>
+      call.startsWith('supabase link ') || call.startsWith('supabase db push '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+  });
 
   it('rejects a malformed created project ref before any downstream mutation', () => {
     const result = applyRunStubbed('bad-created-project-ref', 'mock', {

@@ -121,6 +121,8 @@ function runG1ApplyFault(options: {
   sharedLedgerDir?: string;
   bucketObjectRetention?: boolean;
   claimRetentionUntil?: string;
+  supabaseComingUpPolls?: number;
+  supabaseDbResolves?: boolean;
   env?: Record<string, string>;
 } = {}): G1FaultRun {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'g1-provision-fault-')));
@@ -141,6 +143,8 @@ function runG1ApplyFault(options: {
   const pathGitLog = join(root, 'path-git.log');
   const deployCount = join(root, 'deploy-count');
   const supabaseCreateCount = join(root, 'supabase-create-count');
+  const supabaseControlStatusCount = join(root, 'supabase-control-status-count');
+  const supabaseTunedStatusCount = join(root, 'supabase-tuned-status-count');
   const endpointPolicyState = join(root, 'endpoint-policy-state');
   const endpointDeletedState = join(root, 'endpoint-deleted-state');
   const artifactDir = join(root, 'artifacts');
@@ -441,7 +445,28 @@ if [[ "$1" == "tsx" && "$2" == "scripts/staging/s33-g1-spend-approval.ts" ]]; th
   exit 0
 fi
 if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "list" ]]; then
-  printf '%s\\n' '[]'
+  if [[ ! -f '${supabaseCreateCount}' ]]; then
+    printf '%s\\n' '[]'
+    exit 0
+  fi
+  created="$(cat '${supabaseCreateCount}')"
+  if [[ "$created" == "1" ]]; then
+    count=0
+    [[ ! -f '${supabaseControlStatusCount}' ]] || count="$(cat '${supabaseControlStatusCount}')"
+    count=$((count + 1))
+    printf '%s' "$count" > '${supabaseControlStatusCount}'
+    status='ACTIVE_HEALTHY'
+    if [[ "$count" -le '${options.supabaseComingUpPolls ?? 0}' ]]; then status='COMING_UP'; fi
+    printf '[{"id":"${controlProjectRef}","name":"arkova-soak-s33-g1-a","status":"%s"}]\\n' "$status"
+    exit 0
+  fi
+  count=0
+  [[ ! -f '${supabaseTunedStatusCount}' ]] || count="$(cat '${supabaseTunedStatusCount}')"
+  count=$((count + 1))
+  printf '%s' "$count" > '${supabaseTunedStatusCount}'
+  status='ACTIVE_HEALTHY'
+  if [[ "$count" -le '${options.supabaseComingUpPolls ?? 0}' ]]; then status='COMING_UP'; fi
+  printf '[{"id":"${controlProjectRef}","name":"arkova-soak-s33-g1-a","status":"ACTIVE_HEALTHY"},{"id":"${tunedProjectRef}","name":"arkova-soak-s33-g1-b","status":"%s"}]\\n' "$status"
   exit 0
 fi
 if [[ "$1" == "supabase" && "$2" == "projects" && "$3" == "create" ]]; then
@@ -465,6 +490,12 @@ echo "unexpected npx call: $*" >&2
 exit 64
 `);
   chmodSync(join(root, 'npx'), 0o755);
+
+  writeFileSync(join(root, 'getent'), `#!/usr/bin/env bash
+if [[ '${options.supabaseDbResolves === false ? 'false' : 'true'}' != 'true' ]]; then exit 2; fi
+printf '%s\\n' '203.0.113.10 STREAM db fixture'
+`);
+  chmodSync(join(root, 'getent'), 0o755);
 
   writeFileSync(join(root, 'curl'), `#!/usr/bin/env bash
 set -euo pipefail
@@ -1087,6 +1118,22 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
       canonicalSha256: `sha256:${'1'.repeat(64)}`,
     });
   });
+
+  it('waits for both physical projects to leave COMING_UP before either schema push', () => {
+    const result = runG1ApplyFault({
+      failDeployAt: 1,
+      supabaseComingUpPolls: 1,
+      env: {
+        STAGING_SUPABASE_PROJECT_READY_TIMEOUT_SECONDS: '2',
+        STAGING_SUPABASE_PROJECT_READY_POLL_SECONDS: '1',
+      },
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.npxCalls.filter((call) =>
+      call.startsWith('supabase projects list '))).toHaveLength(5);
+    expect(result.npxCalls.filter((call) =>
+      call.startsWith('supabase db push '))).toHaveLength(2);
+  }, 15_000);
 
   it.each([
     '2026-07-20T01:00:00+01:00',

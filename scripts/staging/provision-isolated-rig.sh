@@ -169,6 +169,8 @@ SUPABASE_ORG="${STAGING_SUPABASE_ORG:-byhkazrpmivhcsuqjtva}"
 SUPABASE_DB_PASSWORD="${STAGING_NEW_SUPABASE_DB_PASSWORD:-}"
 G1_CONTROL_DB_PASSWORD="${STAGING_G1_A_SUPABASE_DB_PASSWORD:-}"
 G1_TUNED_DB_PASSWORD="${STAGING_G1_B_SUPABASE_DB_PASSWORD:-}"
+SUPABASE_PROJECT_READY_TIMEOUT_SECONDS="${STAGING_SUPABASE_PROJECT_READY_TIMEOUT_SECONDS:-900}"
+SUPABASE_PROJECT_READY_POLL_SECONDS="${STAGING_SUPABASE_PROJECT_READY_POLL_SECONDS:-10}"
 IMAGE_WAS_EXPLICIT=0
 if [[ -n "${STAGING_PINNED_IMAGE:-}" ]]; then
   PINNED_IMAGE="$STAGING_PINNED_IMAGE"
@@ -3294,6 +3296,71 @@ create_supabase_project_ref() {
   }
 }
 
+supabase_db_hostname_resolves() {
+  local project_ref="$1"
+  local hostname="db.${project_ref}.supabase.co"
+  local observed
+  if command -v getent >/dev/null 2>&1; then
+    getent ahosts "$hostname" >/dev/null 2>&1
+    return
+  fi
+  if command -v dscacheutil >/dev/null 2>&1; then
+    dscacheutil -q host -a name "$hostname" 2>/dev/null \
+      | grep -Eq '^(ip_address|ipv6_address):'
+    return
+  fi
+  if command -v dig >/dev/null 2>&1; then
+    observed="$({ dig +time=2 +tries=1 +short A "$hostname"; \
+      dig +time=2 +tries=1 +short AAAA "$hostname"; } 2>/dev/null || true)"
+    [[ -n "$observed" ]]
+    return
+  fi
+  return 1
+}
+
+wait_for_supabase_project_ready() {
+  local project_ref="$1"
+  local expected_name="$2"
+  local timeout_seconds="$SUPABASE_PROJECT_READY_TIMEOUT_SECONDS"
+  local poll_seconds="$SUPABASE_PROJECT_READY_POLL_SECONDS"
+  local max_attempts attempt projects_json status="UNOBSERVED"
+  if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]{0,3}$ \
+    || ! "$poll_seconds" =~ ^[1-9][0-9]{0,2}$ \
+    || $timeout_seconds -gt 900 \
+    || $poll_seconds -gt 60 \
+    || $poll_seconds -gt $timeout_seconds ]]; then
+    echo "ERROR: Supabase readiness timeout/poll must be bounded positive seconds." >&2
+    return 1
+  fi
+  max_attempts=$(((timeout_seconds + poll_seconds - 1) / poll_seconds))
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    status="UNOBSERVED"
+    if projects_json="$(npx supabase projects list --output json 2>/dev/null)"; then
+      status="$(jq -er --arg ref "$project_ref" --arg name "$expected_name" '
+        select(type == "array")
+        | [.[] | select(.id == $ref and .name == $name)] as $matches
+        | select($matches | length == 1)
+        | $matches[0].status
+        | select(type == "string")
+      ' <<<"$projects_json" 2>/dev/null || printf 'UNOBSERVED')"
+    fi
+    if [[ "$status" == "ACTIVE" || "$status" == "ACTIVE_HEALTHY" ]]; then
+      if supabase_db_hostname_resolves "$project_ref"; then
+        echo "Supabase project '$expected_name' is ${status} and db.${project_ref}.supabase.co resolves." >&2
+        return 0
+      fi
+      status="${status}_DNS_PENDING"
+    fi
+    if [[ $attempt -lt $max_attempts ]]; then
+      /bin/sleep "$poll_seconds"
+    fi
+  done
+  write_provision_state "REQUIRES_IMMEDIATE_TEARDOWN" \
+    "Supabase readiness timed out after ${timeout_seconds}s for ${expected_name}/${project_ref}; last_status=${status}; no schema or deploy attempted" || true
+  echo "ERROR: Supabase project '$expected_name' did not become ACTIVE with resolvable database DNS within ${timeout_seconds}s (last_status=${status}); refusing link, schema push, and deploy." >&2
+  return 1
+}
+
 # Like run_cmd, but redacts the X-Cron-Secret header value in everything it
 # prints/logs. The real value (fetched from Secret Manager in apply mode) is
 # passed only to the executed command — never to stdout/stderr.
@@ -5599,7 +5666,9 @@ if [[ $APPLY -eq 1 ]]; then
     fi
     CREATED_PROJECT_REF="$G1_CONTROL_PROJECT_REF"
     NEW_PROJECT_REF="$G1_CONTROL_PROJECT_REF"
-    write_provision_state "g1_a_project_created" ""
+    write_provision_state "g1_a_project_created_pending_readiness" ""
+    wait_for_supabase_project_ready "$G1_CONTROL_PROJECT_REF" "$G1_CONTROL_PROJECT_NAME"
+    write_provision_state "g1_a_project_ready_for_schema" ""
 
     G1_TUNED_PROJECT_REF="$(create_supabase_project_ref \
       STAGING_G1_B_SUPABASE_DB_PASSWORD "$G1_TUNED_DB_PASSWORD" \
@@ -5612,7 +5681,9 @@ if [[ $APPLY -eq 1 ]]; then
       echo "       RIG-G1-A remains recorded in $PROVISION_STATE_PATH for immediate teardown." >&2
       exit 1
     fi
-    write_provision_state "g1_a_and_g1_b_projects_created" ""
+    write_provision_state "g1_a_and_g1_b_projects_created_pending_readiness" ""
+    wait_for_supabase_project_ready "$G1_TUNED_PROJECT_REF" "$G1_TUNED_PROJECT_NAME"
+    write_provision_state "g1_a_and_g1_b_projects_ready_for_schema" ""
     echo "captured distinct RIG-G1 refs A=$G1_CONTROL_PROJECT_REF B=$G1_TUNED_PROJECT_REF" >&2
   else
     # Capture the new ref so links/pushes/preflight target the validated project.
@@ -5628,7 +5699,9 @@ if [[ $APPLY -eq 1 ]]; then
     fi
     CREATED_PROJECT_REF="$NEW_PROJECT_REF"
     echo "captured NEW_PROJECT_REF=$NEW_PROJECT_REF" >&2
-    write_provision_state "project_created" ""
+    write_provision_state "project_created_pending_readiness" ""
+    wait_for_supabase_project_ready "$NEW_PROJECT_REF" "$PROJECT_NAME"
+    write_provision_state "project_ready_for_schema" ""
   fi
 else
   echo "#   -> apply captures and deny-validates every physical project ref before schema work."
