@@ -567,6 +567,15 @@ describe('SCRUM-1258 batch 2 — feature flags + observability + treasury', () =
     });
   });
 
+  it('keeps the all-cron experiment kill switch off by default and parses an explicit true', async () => {
+    await withConfig({}, (mod) => {
+      expect(mod.config.disableAllInProcessCron).toBe(false);
+    });
+    await withConfig({ DISABLE_ALL_IN_PROCESS_CRON: 'true' }, (mod) => {
+      expect(mod.config.disableAllInProcessCron).toBe(true);
+    });
+  });
+
   it('coerces ENABLE_* env strings to booleans', async () => {
     await withConfig(
       {
