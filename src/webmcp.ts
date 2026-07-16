@@ -10,7 +10,7 @@ export interface ModelContext {
   registerTool: (
     tool: WebMcpTool,
     options?: { signal?: AbortSignal },
-  ) => Promise<unknown> | unknown;
+  ) => Promise<void> | void;
 }
 
 type Navigate = (path: string) => void;
@@ -46,7 +46,7 @@ export function registerArkovaWebMcpTools(
   const controller = new AbortController();
   const options = { signal: controller.signal };
 
-  void modelContext.registerTool({
+  modelContext.registerTool({
     name: 'search_arkova',
     description: 'Open Arkova search with a bounded natural-language query.',
     inputSchema: {
@@ -65,7 +65,7 @@ export function registerArkovaWebMcpTools(
     },
   }, options);
 
-  void modelContext.registerTool({
+  modelContext.registerTool({
     name: 'verify_arkova_record',
     description: 'Open the public Arkova verification page for a public record ID.',
     inputSchema: {

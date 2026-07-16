@@ -13,7 +13,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { Search, Loader2, Building2, CheckCircle, XCircle, ArrowLeft, Upload } from 'lucide-react';
 import { isSearchSubdomain } from '@/App';
 import { ArkovaLogo, ArkovaIcon } from '@/components/layout/ArkovaLogo';
@@ -30,6 +30,13 @@ import { generateFingerprint } from '@/lib/fileHasher';
 
 type SearchMode = 'issuers' | 'credentials' | 'verify';
 type SearchType = 'issuer' | 'id' | 'fingerprint' | 'person';
+const MAX_SEARCH_QUERY_LENGTH = 200;
+
+function boundedSearchQuery(value: string | null): string | null {
+  if (value === null || value.length > MAX_SEARCH_QUERY_LENGTH) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
 
 /** Auto-detect what the user is searching for based on input pattern */
 function detectSearchType(query: string): SearchType {
@@ -80,13 +87,15 @@ function publicStatusLabel(status: string): string {
 
 export function SearchPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const standalone = isSearchSubdomain();
+  const urlQuery = boundedSearchQuery(searchParams.get('q'));
 
   // BUG-014 + SCRUM-365: Set page title for SEO
   useEffect(() => {
     document.title = 'Arkova Search — Verify Credentials';
   }, []);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(urlQuery ?? '');
   const [searchType, setSearchType] = useState<SearchType>('issuer');
   const [, setSearchMode] = useState<SearchMode>('issuers');
   const [hasSearched, setHasSearched] = useState(false);
@@ -265,8 +274,8 @@ export function SearchPage() {
     setPersonResults([]);
   }, [clearResults]);
 
-  const handleSearch = useCallback(async () => {
-    const trimmed = query.trim();
+  const executeSearch = useCallback(async (candidate: string) => {
+    const trimmed = boundedSearchQuery(candidate);
     if (!trimmed) return;
 
     const detected = detectSearchType(trimmed);
@@ -293,7 +302,29 @@ export function SearchPage() {
       searchIssuers(trimmed),
       searchPerson(trimmed),
     ]);
-  }, [query, navigate, searchIssuers, searchFingerprint, searchPerson, resetSearchState]);
+  }, [navigate, searchIssuers, searchFingerprint, searchPerson, resetSearchState]);
+
+  const handleSearch = useCallback(() => {
+    executeSearch(query);
+  }, [executeSearch, query]);
+
+  // WebMCP and ordinary same-origin deep links enter through `/search?q=...`.
+  // Consume only the same bounded value accepted by the tool, and remember the
+  // last consumed query so React Strict Mode cannot execute the read-only search
+  // twice. Resetting the marker when `q` disappears lets a later navigation to
+  // the same query execute as a new request.
+  const consumedUrlQueryRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!urlQuery) {
+      consumedUrlQueryRef.current = null;
+      return;
+    }
+    if (consumedUrlQueryRef.current === urlQuery) return;
+
+    consumedUrlQueryRef.current = urlQuery;
+    setQuery(urlQuery);
+    executeSearch(urlQuery);
+  }, [executeSearch, urlQuery]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -417,6 +448,7 @@ export function SearchPage() {
               <Input
                 placeholder="Search issuers, credentials, or paste a verification ID..."
                 value={query}
+                maxLength={MAX_SEARCH_QUERY_LENGTH}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
                 autoFocus

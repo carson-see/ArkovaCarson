@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { SearchPage } from './SearchPage';
 
@@ -100,9 +101,9 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-function renderSearchPage() {
+function renderSearchPage(initialEntry = '/search') {
   return render(
-    <MemoryRouter initialEntries={['/search']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <SearchPage />
     </MemoryRouter>,
   );
@@ -145,6 +146,41 @@ describe('SearchPage', () => {
   it('renders back to dashboard link', () => {
     renderSearchPage();
     expect(screen.getByText(/back to dashboard/i)).toBeInTheDocument();
+  });
+
+  it('consumes an encoded bounded URL query and executes the public search once', async () => {
+    const query = 'licensed nurses & EMT/paramedic?';
+
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/search?q=licensed+nurses+%26+EMT%2Fparamedic%3F']}>
+          <SearchPage />
+        </MemoryRouter>
+      </StrictMode>,
+    );
+
+    expect(screen.getByPlaceholderText(/search issuers/i)).toHaveValue(query);
+    await waitFor(() => {
+      expect(publicSearchMock.searchIssuers).toHaveBeenCalledWith(query);
+      expect(supabaseMock.rpc).toHaveBeenCalledWith(
+        'search_public_credentials',
+        { p_query: query, p_limit: 20 },
+      );
+    });
+    expect(publicSearchMock.searchIssuers).toHaveBeenCalledTimes(1);
+    expect(supabaseMock.rpc).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('ignores an overlong URL query without populating or executing it', () => {
+    const query = 'a'.repeat(201);
+
+    renderSearchPage(`/search?q=${encodeURIComponent(query)}`);
+
+    expect(screen.getByPlaceholderText(/search issuers/i)).toHaveValue('');
+    expect(publicSearchMock.searchIssuers).not.toHaveBeenCalled();
+    expect(supabaseMock.rpc).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it('renders results instead of a lingering search spinner when results are already available', async () => {
