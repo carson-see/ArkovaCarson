@@ -60,6 +60,17 @@ const EXPECTED_ARTIFACT_DIGESTS = Object.freeze({
   unresolvedCanonicalSha256: '08ca3400685cb99b514eadbc21d837e3e65ae094c777e5071f22a9c5b1a281c0',
   manifestCanonicalSha256: '0b7f5dd2c504e9fb0cdd342d575d53f271c90e56d529b87d9b665b70c9fd3b0b',
 } as const);
+const EXPECTED_ARTIFACT_DIGEST_NAMES: ReadonlyArray<
+  keyof typeof EXPECTED_ARTIFACT_DIGESTS
+> = [
+  'dispositionsCanonicalSha256',
+  'retainedTargetsCanonicalSha256',
+  'trainJsonlSha256',
+  'validationJsonlSha256',
+  'fraudSplitJsonlSha256',
+  'unresolvedCanonicalSha256',
+  'manifestCanonicalSha256',
+];
 const SPLIT_SEED = 4216;
 const MAX_BUDGET_USD = 40;
 
@@ -102,6 +113,11 @@ export const S33_V71_HISTORICAL_SOURCE: readonly GoldenDatasetEntry[] = Object.f
 
 type SubtypeSource = 'ground_truth' | 'backfill' | 'deduced' | 'adjudicated';
 type Disposition = 'toxic_dropped' | 'fraud_split' | 'train' | 'validation' | 'unresolved';
+const UNRESOLVED_CANDIDATE_SOURCES: ReadonlySet<string> = new Set([
+  'ground_truth',
+  'backfill',
+  'deduced',
+]);
 
 export interface S33V71RetainedRow {
   readonly id: string;
@@ -209,12 +225,65 @@ export interface S33V71OfflineArtifactIndex {
   }>>>;
 }
 
+export interface S33V71TuningRequestTemplate {
+  readonly schemaVersion: 'arkova.s33.v71.tuning-request-template/v1';
+  readonly project: 'arkova1';
+  readonly location: 'us-central1';
+  readonly maxBudgetUsd: 40;
+  readonly submissionAuthorized: false;
+  readonly admission: 'HOLD';
+  readonly holdReasons: readonly string[];
+  readonly exportManifestCanonicalSha256: string;
+  readonly request: {
+    readonly baseModel: 'gemini-2.5-flash';
+    readonly tunedModelDisplayName: 'arkova-gemini-golden-v7-1';
+    readonly supervisedTuningSpec: {
+      readonly trainingDatasetUri: string;
+      readonly validationDatasetUri: string;
+      readonly exportLastCheckpointOnly: true;
+      readonly hyperParameters: {
+        readonly epochCount: 6;
+        readonly adapterSize: 'ADAPTER_SIZE_FOUR';
+        readonly learningRateMultiplier: 1;
+      };
+    };
+  };
+}
+
+type S33V71ManifestBaseDigests = Omit<
+  S33V71SurgeryManifest['digests'],
+  'manifestCanonicalSha256'
+>;
+type S33V71ManifestWithoutSelf = Omit<S33V71SurgeryManifest, 'digests'> & Readonly<{
+  digests: S33V71ManifestBaseDigests;
+}>;
+
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
 function canonicalDigest(value: unknown): string {
   return sha256(canonicaliseJson(value));
+}
+
+function assertCanonicalEqual(label: string, actual: unknown, expected: unknown): void {
+  if (canonicaliseJson(actual) !== canonicaliseJson(expected)) {
+    throw new Error(`S3.3 v7.1 ${label} drifted`);
+  }
+}
+
+function deepFreezeOwned<T extends object>(value: T): T {
+  for (const property of Reflect.ownKeys(value)) {
+    const nested = Reflect.get(value, property);
+    if (nested !== null && (typeof nested === 'object' || typeof nested === 'function')) {
+      deepFreezeOwned(nested);
+    }
+  }
+  return Object.freeze(value);
+}
+
+function detachAndFreezeResult(result: S33V71SurgeryResult): S33V71SurgeryResult {
+  return deepFreezeOwned(structuredClone(result));
 }
 
 function assertHistoricalSource(source: readonly GoldenDatasetEntry[]): void {
@@ -526,6 +595,287 @@ function toJsonl(values: readonly unknown[]): string {
   return `${values.map((value) => JSON.stringify(value)).join('\n')}\n`;
 }
 
+function buildS33V71SurgeryEvidence(
+  retainedRows: readonly S33V71RetainedRow[],
+  fraudSplitRows: readonly S33V71FraudSplitRow[],
+): S33Wave3SurgeryEvidence {
+  const exportedTrainingRows: S33Wave3SurgeryEvidence['exportedTrainingRows'] = retainedRows.map(({
+    id,
+    credentialType,
+    subType,
+    target,
+  }) => ({
+    ...target,
+    id,
+    credentialType,
+    subType,
+  }));
+  return {
+    sourceTrainingRowIds: [
+      ...S33_V71_TOXIC_FINANCIAL_IDS,
+      ...retainedRows.map(({ id }) => id),
+    ],
+    exportedTrainingRows,
+    fraudStream: { mode: 'split', rowIds: fraudSplitRows.map(({ id }) => id) },
+    exportLastCheckpointOnly: true,
+  };
+}
+
+function buildS33V71Manifest(input: Readonly<{
+  source: readonly GoldenDatasetEntry[];
+  dispositions: readonly S33V71Disposition[];
+  toxicDroppedRows: readonly GoldenDatasetEntry[];
+  fraudSplitRows: readonly S33V71FraudSplitRow[];
+  unresolvedRows: readonly S33V71UnresolvedRow[];
+  retainedRows: readonly S33V71RetainedRow[];
+  trainRows: readonly S33V71RetainedRow[];
+  validationRows: readonly S33V71RetainedRow[];
+  trainJsonl: string;
+  validationJsonl: string;
+  fraudSplitJsonl: string;
+}>): S33V71SurgeryManifest {
+  const subtypeSources = input.retainedRows.reduce<Record<SubtypeSource, number>>((counts, row) => {
+    counts[row.subtypeSource] += 1;
+    return counts;
+  }, { ground_truth: 0, backfill: 0, deduced: 0, adjudicated: 0 });
+  const sourceOrderedIdsSha256 = canonicalDigest(input.source.map(({ id }) => id));
+  const sourceContentCanonicalSha256 = canonicalDigest(input.source);
+  const baseDigests: S33V71ManifestBaseDigests = {
+    sourceOrderedIdsSha256,
+    sourceContentCanonicalSha256,
+    dispositionsCanonicalSha256: canonicalDigest(input.dispositions),
+    retainedTargetsCanonicalSha256: canonicalDigest(input.retainedRows.map(
+      ({ id, target }) => ({ id, target }),
+    )),
+    trainJsonlSha256: sha256(input.trainJsonl),
+    validationJsonlSha256: sha256(input.validationJsonl),
+    fraudSplitJsonlSha256: sha256(input.fraudSplitJsonl),
+    unresolvedCanonicalSha256: canonicalDigest(input.unresolvedRows),
+  };
+  const manifestWithoutSelf: S33V71ManifestWithoutSelf = {
+    schemaVersion: 'arkova.s33.v71.surgery-manifest/v1',
+    artifactType: 'arkova-s33-v71-dataset-surgery',
+    algorithmVersion: 's33-v71-unique-candidate-adjudication-v1',
+    source: {
+      count: EXPECTED_SOURCE_COUNT,
+      orderedModuleCounts: S33_V71_SOURCE_MODULES.map(({ name, count }) => ({ name, count })),
+      orderedIdsSha256: sourceOrderedIdsSha256,
+      contentCanonicalSha256: sourceContentCanonicalSha256,
+    },
+    counts: {
+      source: input.source.length,
+      toxicDropped: input.toxicDroppedRows.length,
+      fraudSplit: input.fraudSplitRows.length,
+      retained: input.retainedRows.length,
+      unresolved: input.unresolvedRows.length,
+      train: input.trainRows.length,
+      validation: input.validationRows.length,
+    },
+    subtypeSources,
+    split: {
+      algorithm: 'lcg-fisher-yates',
+      seed: SPLIT_SEED,
+      validationRatio: 0.1,
+    },
+    adjudications: S33_V71_FROZEN_ADJUDICATIONS,
+    toxicDroppedIds: [...S33_V71_TOXIC_FINANCIAL_IDS],
+    fraudArtifactSubmissionEligible: false,
+    additiveOrGeneratedRows: 0,
+    heldoutIdNamespaceRows: 0,
+    heldoutLeakageScanStatus: 'NOT_RUN_AUTHENTICATION_HOLD',
+    digests: baseDigests,
+  };
+  return {
+    ...manifestWithoutSelf,
+    digests: {
+      ...baseDigests,
+      manifestCanonicalSha256: canonicalDigest(manifestWithoutSelf),
+    },
+  };
+}
+
+function assertFrozenArtifactDigests(manifest: S33V71SurgeryManifest): void {
+  if (manifest.digests.sourceOrderedIdsSha256 !== EXPECTED_SOURCE_ORDERED_IDS_SHA256
+    || manifest.digests.sourceContentCanonicalSha256 !== EXPECTED_SOURCE_CONTENT_SHA256) {
+    throw new Error('S3.3 v7.1 frozen source digest drifted');
+  }
+  for (const name of EXPECTED_ARTIFACT_DIGEST_NAMES) {
+    if (manifest.digests[name] !== EXPECTED_ARTIFACT_DIGESTS[name]) {
+      throw new Error(`S3.3 v7.1 frozen artifact digest drifted: ${name}`);
+    }
+  }
+}
+
+function assertSourceEntryMatches(
+  sourceById: ReadonlyMap<string, GoldenDatasetEntry>,
+  label: string,
+  id: string,
+  entry: GoldenDatasetEntry,
+): void {
+  const expected = sourceById.get(id);
+  if (!expected || entry.id !== id || canonicaliseJson(entry) !== canonicaliseJson(expected)) {
+    throw new Error(`S3.3 v7.1 ${label} ${id} source content drifted`);
+  }
+}
+
+function assertRetainedRowSequence(
+  label: string,
+  actual: readonly S33V71RetainedRow[],
+  expected: readonly S33V71RetainedRow[],
+): void {
+  if (actual.length !== expected.length) {
+    throw new Error(`S3.3 v7.1 ${label} length drifted`);
+  }
+  for (let index = 0; index < expected.length; index += 1) {
+    if (canonicaliseJson(actual[index]) !== canonicaliseJson(expected[index])) {
+      throw new Error(`S3.3 v7.1 ${label} row ${index} drifted`);
+    }
+  }
+}
+
+/**
+ * Produces an owned, validated snapshot without resolving a path or touching
+ * the filesystem. Every derived value is rebuilt before the writer proceeds.
+ */
+function snapshotS33V71SurgeryForWrite(
+  supplied: S33V71SurgeryResult,
+): S33V71SurgeryResult {
+  const snapshot = structuredClone(supplied);
+  assertHistoricalSource(S33_V71_HISTORICAL_SOURCE);
+
+  const expectedCounts: S33V71SurgeryManifest['counts'] = {
+    source: EXPECTED_SOURCE_COUNT,
+    toxicDropped: snapshot.toxicDroppedRows.length,
+    fraudSplit: snapshot.fraudSplitRows.length,
+    retained: snapshot.retainedRows.length,
+    unresolved: snapshot.unresolvedRows.length,
+    train: snapshot.trainRows.length,
+    validation: snapshot.validationRows.length,
+  };
+  assertCanonicalEqual('manifest counts', snapshot.manifest.counts, expectedCounts);
+
+  const expectedSubtypeSources = snapshot.retainedRows.reduce<Record<SubtypeSource, number>>(
+    (counts, row) => {
+      counts[row.subtypeSource] += 1;
+      return counts;
+    },
+    { ground_truth: 0, backfill: 0, deduced: 0, adjudicated: 0 },
+  );
+  assertCanonicalEqual(
+    'manifest subtype-source counts',
+    snapshot.manifest.subtypeSources,
+    expectedSubtypeSources,
+  );
+  assertFrozenArtifactDigests(snapshot.manifest);
+
+  const sourceById = new Map(S33_V71_HISTORICAL_SOURCE.map((entry) => [entry.id, entry]));
+  const sourceIds = S33_V71_HISTORICAL_SOURCE.map(({ id }) => id);
+  const partitionIds = [
+    ...snapshot.toxicDroppedRows.map(({ id }) => id),
+    ...snapshot.fraudSplitRows.map(({ id }) => id),
+    ...snapshot.unresolvedRows.map(({ id }) => id),
+    ...snapshot.retainedRows.map(({ id }) => id),
+  ];
+  if (partitionIds.length !== sourceIds.length
+    || new Set(partitionIds).size !== sourceIds.length
+    || partitionIds.some((id) => !sourceById.has(id))) {
+    throw new Error('S3.3 v7.1 source partitions are not disjoint and exhaustive');
+  }
+  if (snapshot.toxicDroppedRows.map(({ id }) => id).join('\n')
+    !== S33_V71_TOXIC_FINANCIAL_IDS.join('\n')) {
+    throw new Error('S3.3 v7.1 toxic FINANCIAL partition drifted');
+  }
+
+  for (const entry of snapshot.toxicDroppedRows) {
+    assertSourceEntryMatches(sourceById, 'toxic row', entry.id, entry);
+  }
+  for (const row of snapshot.fraudSplitRows) {
+    assertSourceEntryMatches(sourceById, 'fraud row', row.id, row.entry);
+    if ((row.entry.groundTruth.fraudSignals?.length ?? 0) === 0) {
+      throw new Error(`S3.3 v7.1 fraud row ${row.id} has no source fraud signal`);
+    }
+  }
+  for (const row of snapshot.unresolvedRows) {
+    if (row.candidateSource !== undefined
+      && !UNRESOLVED_CANDIDATE_SOURCES.has(row.candidateSource)) {
+      throw new Error(`S3.3 v7.1 unresolved row ${row.id} candidate source is not permitted`);
+    }
+  }
+  for (const row of snapshot.retainedRows) {
+    assertSourceEntryMatches(sourceById, 'retained row', row.id, row.sourceEntry);
+    if (row.id !== row.sourceEntry.id
+      || row.target.credentialType !== row.credentialType
+      || row.target.subType !== row.subType
+      || !taxonomyValid(row.credentialType, row.subType)) {
+      throw new Error(`S3.3 v7.1 retained row ${row.id} binding drifted`);
+    }
+  }
+
+  const dispositionIds = snapshot.dispositions.map(({ id }) => id);
+  if (dispositionIds.length !== sourceIds.length
+    || dispositionIds.some((id, index) => id !== sourceIds[index])) {
+    throw new Error('S3.3 v7.1 disposition source order drifted');
+  }
+
+  const expectedSplit = deterministicSplit(snapshot.retainedRows);
+  assertRetainedRowSequence('train split', snapshot.trainRows, expectedSplit.trainRows);
+  assertRetainedRowSequence(
+    'validation split',
+    snapshot.validationRows,
+    expectedSplit.validationRows,
+  );
+  const regeneratedTrainJsonl = toJsonl(snapshot.trainRows.map(({ vertex }) => vertex));
+  const regeneratedValidationJsonl = toJsonl(
+    snapshot.validationRows.map(({ vertex }) => vertex),
+  );
+  const regeneratedFraudSplitJsonl = toJsonl(snapshot.fraudSplitRows.map(({ id, entry }) => ({
+    schemaVersion: 'arkova.s33.v71.fraud-split-row/v1',
+    submissionEligible: false,
+    id,
+    sourceEntry: entry,
+  })));
+  if (snapshot.trainJsonl !== regeneratedTrainJsonl
+    || snapshot.validationJsonl !== regeneratedValidationJsonl
+    || snapshot.fraudSplitJsonl !== regeneratedFraudSplitJsonl) {
+    throw new Error('S3.3 v7.1 regenerated JSONL source, order, or content drifted');
+  }
+
+  const regeneratedManifest = buildS33V71Manifest({
+    source: S33_V71_HISTORICAL_SOURCE,
+    dispositions: snapshot.dispositions,
+    toxicDroppedRows: snapshot.toxicDroppedRows,
+    fraudSplitRows: snapshot.fraudSplitRows,
+    unresolvedRows: snapshot.unresolvedRows,
+    retainedRows: snapshot.retainedRows,
+    trainRows: snapshot.trainRows,
+    validationRows: snapshot.validationRows,
+    trainJsonl: regeneratedTrainJsonl,
+    validationJsonl: regeneratedValidationJsonl,
+    fraudSplitJsonl: regeneratedFraudSplitJsonl,
+  });
+  assertFrozenArtifactDigests(regeneratedManifest);
+  assertCanonicalEqual('manifest', snapshot.manifest, regeneratedManifest);
+
+  const regeneratedSurgeryEvidence = buildS33V71SurgeryEvidence(
+    snapshot.retainedRows,
+    snapshot.fraudSplitRows,
+  );
+  assertCanonicalEqual(
+    'surgery evidence',
+    snapshot.surgeryEvidence,
+    regeneratedSurgeryEvidence,
+  );
+
+  return deepFreezeOwned({
+    ...snapshot,
+    manifest: regeneratedManifest,
+    trainJsonl: regeneratedTrainJsonl,
+    validationJsonl: regeneratedValidationJsonl,
+    fraudSplitJsonl: regeneratedFraudSplitJsonl,
+    surgeryEvidence: regeneratedSurgeryEvidence,
+  });
+}
+
 export function buildS33V71Surgery(
   source: readonly GoldenDatasetEntry[] = S33_V71_HISTORICAL_SOURCE,
 ): S33V71SurgeryResult {
@@ -567,6 +917,11 @@ export function buildS33V71Surgery(
 
     const resolved = resolveSubtype(entry);
     if (resolved.reason || !resolved.subType || !resolved.subtypeSource) {
+      if (resolved.subtypeSource === 'adjudicated') {
+        throw new Error(
+          `S3.3 v7.1 unresolved row ${entry.id} cannot carry an adjudicated candidate source`,
+        );
+      }
       const unresolved = {
         id: entry.id,
         credentialType: resolved.credentialType,
@@ -635,81 +990,23 @@ export function buildS33V71Surgery(
     id,
     sourceEntry: entry,
   })));
-  const subtypeSources = retainedRows.reduce<Record<SubtypeSource, number>>((counts, row) => {
-    counts[row.subtypeSource] += 1;
-    return counts;
-  }, { ground_truth: 0, backfill: 0, deduced: 0, adjudicated: 0 });
+  const manifest = buildS33V71Manifest({
+    source,
+    dispositions,
+    toxicDroppedRows,
+    fraudSplitRows,
+    unresolvedRows,
+    retainedRows,
+    trainRows,
+    validationRows,
+    trainJsonl,
+    validationJsonl,
+    fraudSplitJsonl,
+  });
+  assertFrozenArtifactDigests(manifest);
+  const surgeryEvidence = buildS33V71SurgeryEvidence(retainedRows, fraudSplitRows);
 
-  const sourceOrderedIdsSha256 = canonicalDigest(source.map(({ id }) => id));
-  const sourceContentCanonicalSha256 = canonicalDigest(source);
-  const baseDigests = {
-    sourceOrderedIdsSha256,
-    sourceContentCanonicalSha256,
-    dispositionsCanonicalSha256: canonicalDigest(dispositions),
-    retainedTargetsCanonicalSha256: canonicalDigest(retainedRows.map(({ id, target }) => ({ id, target }))),
-    trainJsonlSha256: sha256(trainJsonl),
-    validationJsonlSha256: sha256(validationJsonl),
-    fraudSplitJsonlSha256: sha256(fraudSplitJsonl),
-    unresolvedCanonicalSha256: canonicalDigest(unresolvedRows),
-  };
-  const manifestWithoutSelf = {
-    schemaVersion: 'arkova.s33.v71.surgery-manifest/v1' as const,
-    artifactType: 'arkova-s33-v71-dataset-surgery' as const,
-    algorithmVersion: 's33-v71-unique-candidate-adjudication-v1' as const,
-    source: {
-      count: EXPECTED_SOURCE_COUNT as 2656,
-      orderedModuleCounts: S33_V71_SOURCE_MODULES.map(({ name, count }) => ({ name, count })),
-      orderedIdsSha256: sourceOrderedIdsSha256,
-      contentCanonicalSha256: sourceContentCanonicalSha256,
-    },
-    counts: {
-      source: source.length,
-      toxicDropped: toxicDroppedRows.length,
-      fraudSplit: fraudSplitRows.length,
-      retained: retainedRows.length,
-      unresolved: unresolvedRows.length,
-      train: trainRows.length,
-      validation: validationRows.length,
-    },
-    subtypeSources,
-    split: {
-      algorithm: 'lcg-fisher-yates' as const,
-      seed: SPLIT_SEED as 4216,
-      validationRatio: 0.1 as const,
-    },
-    adjudications: S33_V71_FROZEN_ADJUDICATIONS,
-    toxicDroppedIds: [...S33_V71_TOXIC_FINANCIAL_IDS],
-    fraudArtifactSubmissionEligible: false as const,
-    additiveOrGeneratedRows: 0 as const,
-    heldoutIdNamespaceRows: 0 as const,
-    heldoutLeakageScanStatus: 'NOT_RUN_AUTHENTICATION_HOLD' as const,
-    digests: baseDigests,
-  };
-  const manifest: S33V71SurgeryManifest = {
-    ...manifestWithoutSelf,
-    digests: {
-      ...baseDigests,
-      manifestCanonicalSha256: canonicalDigest(manifestWithoutSelf),
-    },
-  };
-  for (const [name, expected] of Object.entries(EXPECTED_ARTIFACT_DIGESTS)) {
-    const actual = manifest.digests[name as keyof typeof EXPECTED_ARTIFACT_DIGESTS];
-    if (actual !== expected) {
-      throw new Error(`S3.3 v7.1 frozen artifact digest drifted: ${name}`);
-    }
-  }
-
-  const surgeryEvidence: S33Wave3SurgeryEvidence = {
-    sourceTrainingRowIds: [
-      ...S33_V71_TOXIC_FINANCIAL_IDS,
-      ...retainedRows.map(({ id }) => id),
-    ],
-    exportedTrainingRows: retainedRows.map(({ id, target }) => ({ id, ...target })),
-    fraudStream: { mode: 'split', rowIds: fraudSplitRows.map(({ id }) => id) },
-    exportLastCheckpointOnly: true,
-  };
-
-  return {
+  return detachAndFreezeResult({
     manifest,
     dispositions,
     toxicDroppedRows,
@@ -722,7 +1019,7 @@ export function buildS33V71Surgery(
     validationJsonl,
     fraudSplitJsonl,
     surgeryEvidence,
-  };
+  });
 }
 
 function writeAtomicFile(directory: string, name: string, content: string): void {
@@ -740,20 +1037,21 @@ export function writeS33V71OfflineArtifacts(input: Readonly<{
   surgery: S33V71SurgeryResult;
   outputDirectory: string;
 }>): S33V71OfflineArtifactIndex {
+  const surgery = snapshotS33V71SurgeryForWrite(input.surgery);
   const outputDirectory = resolve(input.outputDirectory);
   mkdirSync(outputDirectory, { recursive: false, mode: 0o700 });
 
   const artifacts = {
-    'manifest.json': `${canonicaliseJson(input.surgery.manifest)}\n`,
-    'dispositions.json': `${canonicaliseJson(input.surgery.dispositions)}\n`,
-    'unresolved.json': `${canonicaliseJson(input.surgery.unresolvedRows)}\n`,
-    'retained-targets.json': `${canonicaliseJson(input.surgery.retainedRows.map(
+    'manifest.json': `${canonicaliseJson(surgery.manifest)}\n`,
+    'dispositions.json': `${canonicaliseJson(surgery.dispositions)}\n`,
+    'unresolved.json': `${canonicaliseJson(surgery.unresolvedRows)}\n`,
+    'retained-targets.json': `${canonicaliseJson(surgery.retainedRows.map(
       ({ id, target }) => ({ id, target }),
     ))}\n`,
-    'train.jsonl': input.surgery.trainJsonl,
-    'validation.jsonl': input.surgery.validationJsonl,
-    'fraud-split.jsonl': input.surgery.fraudSplitJsonl,
-    'surgery-evidence.json': `${canonicaliseJson(input.surgery.surgeryEvidence)}\n`,
+    'train.jsonl': surgery.trainJsonl,
+    'validation.jsonl': surgery.validationJsonl,
+    'fraud-split.jsonl': surgery.fraudSplitJsonl,
+    'surgery-evidence.json': `${canonicaliseJson(surgery.surgeryEvidence)}\n`,
   } as const;
 
   try {
@@ -764,8 +1062,8 @@ export function writeS33V71OfflineArtifacts(input: Readonly<{
       schemaVersion: 'arkova.s33.v71.offline-artifact-index/v1',
       submissionEligible: false,
       sourceManifestCanonicalSha256:
-        input.surgery.manifest.digests.manifestCanonicalSha256,
-      counts: input.surgery.manifest.counts,
+        surgery.manifest.digests.manifestCanonicalSha256,
+      counts: surgery.manifest.counts,
       files: Object.fromEntries(Object.entries(artifacts).map(([name, content]) => [
         name,
         { sha256: sha256(content), bytes: Buffer.byteLength(content, 'utf8') },
@@ -789,41 +1087,18 @@ export function buildS33V71TuningRequestTemplate(input: Readonly<{
   surgery: S33V71SurgeryResult;
   trainingDatasetUri: string;
   validationDatasetUri: string;
-}>): Readonly<{
-  schemaVersion: 'arkova.s33.v71.tuning-request-template/v1';
-  project: 'arkova1';
-  location: 'us-central1';
-  maxBudgetUsd: 40;
-  submissionAuthorized: false;
-  admission: 'HOLD';
-  holdReasons: readonly string[];
-  exportManifestCanonicalSha256: string;
-  request: {
-    baseModel: 'gemini-2.5-flash';
-    tunedModelDisplayName: 'arkova-gemini-golden-v7-1';
-    supervisedTuningSpec: {
-      trainingDatasetUri: string;
-      validationDatasetUri: string;
-      exportLastCheckpointOnly: true;
-      hyperParameters: {
-        epochCount: 6;
-        adapterSize: 'ADAPTER_SIZE_FOUR';
-        learningRateMultiplier: 1;
-      };
-    };
-  };
-}> {
+}>): Readonly<S33V71TuningRequestTemplate> {
   assertGcsJsonlUri(input.trainingDatasetUri, 'training dataset URI');
   assertGcsJsonlUri(input.validationDatasetUri, 'validation dataset URI');
   if (input.surgery.manifest.digests.sourceOrderedIdsSha256 !== EXPECTED_SOURCE_ORDERED_IDS_SHA256
     || input.surgery.manifest.digests.sourceContentCanonicalSha256 !== EXPECTED_SOURCE_CONTENT_SHA256) {
     throw new Error('S3.3 v7.1 tuning request source binding drifted');
   }
-  return Object.freeze({
+  const template: S33V71TuningRequestTemplate = {
     schemaVersion: 'arkova.s33.v71.tuning-request-template/v1',
     project: 'arkova1',
     location: 'us-central1',
-    maxBudgetUsd: MAX_BUDGET_USD as 40,
+    maxBudgetUsd: MAX_BUDGET_USD,
     submissionAuthorized: false,
     admission: 'HOLD',
     holdReasons: Object.freeze([
@@ -846,5 +1121,6 @@ export function buildS33V71TuningRequestTemplate(input: Readonly<{
         },
       },
     },
-  });
+  };
+  return Object.freeze(template);
 }

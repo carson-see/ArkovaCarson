@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,6 +14,158 @@ import {
 import { S33_WAVE3_FROZEN_SUBTYPE_TAXONOMY } from '../src/ai/eval/s33-wave3-deterministic-eval-gates.js';
 
 const SHA256 = /^[0-9a-f]{64}$/u;
+type Surgery = ReturnType<typeof buildS33V71Surgery>;
+
+interface TamperCase {
+  readonly name: string;
+  readonly mutate: (surgery: Surgery) => void;
+}
+
+function replaceProperty(target: object, property: PropertyKey, value: unknown): void {
+  if (!Reflect.set(target, property, value)) {
+    throw new TypeError(`test could not replace ${String(property)}`);
+  }
+}
+
+const COUNT_FIELDS: ReadonlyArray<keyof Surgery['manifest']['counts']> = [
+  'source',
+  'toxicDropped',
+  'fraudSplit',
+  'retained',
+  'unresolved',
+  'train',
+  'validation',
+];
+const SUBTYPE_SOURCE_FIELDS: ReadonlyArray<
+  keyof Surgery['manifest']['subtypeSources']
+> = [
+  'ground_truth',
+  'backfill',
+  'deduced',
+  'adjudicated',
+];
+const DIGEST_FIELDS: ReadonlyArray<keyof Surgery['manifest']['digests']> = [
+  'sourceOrderedIdsSha256',
+  'sourceContentCanonicalSha256',
+  'dispositionsCanonicalSha256',
+  'retainedTargetsCanonicalSha256',
+  'trainJsonlSha256',
+  'validationJsonlSha256',
+  'fraudSplitJsonlSha256',
+  'unresolvedCanonicalSha256',
+  'manifestCanonicalSha256',
+];
+
+const PREWRITE_TAMPER_CASES: readonly TamperCase[] = [
+  ...COUNT_FIELDS.map((field): TamperCase => ({
+    name: `manifest count ${field}`,
+    mutate: (surgery) => replaceProperty(
+      surgery.manifest.counts,
+      field,
+      surgery.manifest.counts[field] + 1,
+    ),
+  })),
+  ...SUBTYPE_SOURCE_FIELDS.map((field): TamperCase => ({
+    name: `subtype count ${field}`,
+    mutate: (surgery) => replaceProperty(
+      surgery.manifest.subtypeSources,
+      field,
+      surgery.manifest.subtypeSources[field] + 1,
+    ),
+  })),
+  ...DIGEST_FIELDS.map((field): TamperCase => ({
+    name: `manifest digest ${field}`,
+    mutate: (surgery) => replaceProperty(surgery.manifest.digests, field, '0'.repeat(64)),
+  })),
+  {
+    name: 'train JSONL',
+    mutate: (surgery) => replaceProperty(surgery, 'trainJsonl', `${surgery.trainJsonl} `),
+  },
+  {
+    name: 'validation JSONL',
+    mutate: (surgery) => replaceProperty(
+      surgery,
+      'validationJsonl',
+      `${surgery.validationJsonl} `,
+    ),
+  },
+  {
+    name: 'fraud-split JSONL',
+    mutate: (surgery) => replaceProperty(
+      surgery,
+      'fraudSplitJsonl',
+      `${surgery.fraudSplitJsonl} `,
+    ),
+  },
+  {
+    name: 'surgeryEvidence sourceTrainingRowIds',
+    mutate: (surgery) => replaceProperty(
+      surgery.surgeryEvidence,
+      'sourceTrainingRowIds',
+      surgery.surgeryEvidence.sourceTrainingRowIds.slice(1),
+    ),
+  },
+  {
+    name: 'surgeryEvidence exportedTrainingRows',
+    mutate: (surgery) => {
+      const rows = structuredClone(surgery.surgeryEvidence.exportedTrainingRows);
+      replaceProperty(rows[0], 'subType', 'spoofed');
+      replaceProperty(surgery.surgeryEvidence, 'exportedTrainingRows', rows);
+    },
+  },
+  {
+    name: 'surgeryEvidence fraudStream mode',
+    mutate: (surgery) => replaceProperty(surgery.surgeryEvidence.fraudStream, 'mode', 'joined'),
+  },
+  {
+    name: 'surgeryEvidence fraudStream rowIds',
+    mutate: (surgery) => replaceProperty(
+      surgery.surgeryEvidence.fraudStream,
+      'rowIds',
+      surgery.surgeryEvidence.fraudStream.rowIds.slice(1),
+    ),
+  },
+  {
+    name: 'surgeryEvidence exportLastCheckpointOnly',
+    mutate: (surgery) => replaceProperty(
+      surgery.surgeryEvidence,
+      'exportLastCheckpointOnly',
+      false,
+    ),
+  },
+  {
+    name: 'disposition identity reconciliation',
+    mutate: (surgery) => replaceProperty(
+      surgery,
+      'dispositions',
+      surgery.dispositions.slice(1),
+    ),
+  },
+  {
+    name: 'unresolved adjudicated candidate source',
+    mutate: (surgery) => replaceProperty(
+      surgery.unresolvedRows[0],
+      'candidateSource',
+      'adjudicated',
+    ),
+  },
+  {
+    name: 'retained target content',
+    mutate: (surgery) => replaceProperty(surgery.retainedRows[0].target, 'subType', 'spoofed'),
+  },
+  {
+    name: 'train/validation bijection',
+    mutate: (surgery) => replaceProperty(
+      surgery,
+      'validationRows',
+      [surgery.trainRows[0], ...surgery.validationRows.slice(1)],
+    ),
+  },
+  {
+    name: 'fraud source content',
+    mutate: (surgery) => replaceProperty(surgery.fraudSplitRows[0].entry, 'description', 'spoofed'),
+  },
+];
 
 describe('S3.3 v7.1 deterministic dataset surgery', () => {
   it('pins the ordered April v7 source instead of current FULL_GOLDEN_DATASET', () => {
@@ -162,6 +314,29 @@ describe('S3.3 v7.1 deterministic dataset surgery', () => {
     });
   });
 
+  it('returns a recursively frozen, source-detached result graph', () => {
+    const sharedSourceEntry = S33_V71_HISTORICAL_SOURCE.find(({ id }) => id === 'GD-001');
+    expect(sharedSourceEntry).toBeDefined();
+    const sharedSourceWasFrozen = Object.isFrozen(sharedSourceEntry);
+
+    const result = buildS33V71Surgery();
+    const retained = result.retainedRows.find(({ id }) => id === sharedSourceEntry?.id);
+    expect(retained).toBeDefined();
+    expect(retained?.sourceEntry).not.toBe(sharedSourceEntry);
+    expect(Object.isFrozen(sharedSourceEntry)).toBe(sharedSourceWasFrozen);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.manifest.counts)).toBe(true);
+    expect(Object.isFrozen(result.retainedRows)).toBe(true);
+    expect(Object.isFrozen(result.retainedRows[0].target)).toBe(true);
+    expect(Object.isFrozen(result.retainedRows[0].sourceEntry.groundTruth)).toBe(true);
+    expect(Object.isFrozen(result.retainedRows[0].vertex.contents[0].parts)).toBe(true);
+    expect(() => Object.defineProperty(
+      result.retainedRows[0].target,
+      'credentialType',
+      { value: 'LEGAL' },
+    )).toThrow(TypeError);
+  });
+
   it('fails closed on source membership or order drift', () => {
     expect(() => buildS33V71Surgery(S33_V71_HISTORICAL_SOURCE.slice(1)))
       .toThrow(/historical source/u);
@@ -240,4 +415,48 @@ describe('S3.3 v7.1 deterministic dataset surgery', () => {
       rmSync(parent, { recursive: true, force: true });
     }
   });
+
+  it.each(PREWRITE_TAMPER_CASES)(
+    'rejects spoofed $name before creating the output directory',
+    ({ mutate }) => {
+      const parent = mkdtempSync(join(tmpdir(), 'arkova-s33-v71-prewrite-'));
+      const outputDirectory = join(parent, 'export');
+      try {
+        const surgery = structuredClone(buildS33V71Surgery());
+        mutate(surgery);
+
+        expect(existsSync(outputDirectory)).toBe(false);
+        expect(() => writeS33V71OfflineArtifacts({ surgery, outputDirectory }))
+          .toThrow(/S3\.3 v7\.1/iu);
+        expect(existsSync(outputDirectory)).toBe(false);
+      } finally {
+        rmSync(parent, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('writes byte-identical artifacts from independently built valid snapshots', () => {
+    const parent = mkdtempSync(join(tmpdir(), 'arkova-s33-v71-byte-stable-'));
+    const firstDirectory = join(parent, 'first');
+    const secondDirectory = join(parent, 'second');
+    try {
+      writeS33V71OfflineArtifacts({
+        surgery: buildS33V71Surgery(),
+        outputDirectory: firstDirectory,
+      });
+      writeS33V71OfflineArtifacts({
+        surgery: buildS33V71Surgery(),
+        outputDirectory: secondDirectory,
+      });
+
+      const firstNames = readdirSync(firstDirectory).sort();
+      expect(readdirSync(secondDirectory).sort()).toEqual(firstNames);
+      for (const name of firstNames) {
+        expect(readFileSync(join(secondDirectory, name)))
+          .toEqual(readFileSync(join(firstDirectory, name)));
+      }
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
