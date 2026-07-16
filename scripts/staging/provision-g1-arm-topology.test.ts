@@ -123,6 +123,7 @@ function runG1ApplyFault(options: {
   claimRetentionUntil?: string;
   supabaseComingUpPolls?: number;
   supabaseDbResolves?: boolean;
+  supabaseDbTcpAccepts?: boolean;
   env?: Record<string, string>;
 } = {}): G1FaultRun {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'g1-provision-fault-')));
@@ -496,6 +497,13 @@ if [[ '${options.supabaseDbResolves === false ? 'false' : 'true'}' != 'true' ]];
 printf '%s\\n' '203.0.113.10 STREAM db fixture'
 `);
   chmodSync(join(root, 'getent'), 0o755);
+
+  writeFileSync(join(root, 'nc'), `#!/usr/bin/env bash
+[[ "$1" == '-z' && "$2" == '-w' && "$3" == '5' && "$5" == '5432' ]] || exit 64
+[[ "$4" == 'db.${controlProjectRef}.supabase.co' || "$4" == 'db.${tunedProjectRef}.supabase.co' ]] || exit 65
+[[ '${options.supabaseDbTcpAccepts === false ? 'false' : 'true'}' == 'true' ]]
+`);
+  chmodSync(join(root, 'nc'), 0o755);
 
   writeFileSync(join(root, 'curl'), `#!/usr/bin/env bash
 set -euo pipefail

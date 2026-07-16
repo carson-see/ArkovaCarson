@@ -3318,6 +3318,13 @@ supabase_db_hostname_resolves() {
   return 1
 }
 
+supabase_db_tcp_accepts() {
+  local project_ref="$1"
+  local hostname="db.${project_ref}.supabase.co"
+  command -v nc >/dev/null 2>&1 \
+    && nc -z -w 5 "$hostname" 5432 >/dev/null 2>&1
+}
+
 wait_for_supabase_project_ready() {
   local project_ref="$1"
   local expected_name="$2"
@@ -3346,10 +3353,14 @@ wait_for_supabase_project_ready() {
     fi
     if [[ "$status" == "ACTIVE" || "$status" == "ACTIVE_HEALTHY" ]]; then
       if supabase_db_hostname_resolves "$project_ref"; then
-        echo "Supabase project '$expected_name' is ${status} and db.${project_ref}.supabase.co resolves." >&2
-        return 0
+        if supabase_db_tcp_accepts "$project_ref"; then
+          echo "Supabase project '$expected_name' is ${status}; database DNS resolves and TCP 5432 accepts connections." >&2
+          return 0
+        fi
+        status="${status}_TCP_5432_PENDING"
+      else
+        status="${status}_DNS_PENDING"
       fi
-      status="${status}_DNS_PENDING"
     fi
     if [[ $attempt -lt $max_attempts ]]; then
       /bin/sleep "$poll_seconds"
@@ -3357,7 +3368,7 @@ wait_for_supabase_project_ready() {
   done
   write_provision_state "REQUIRES_IMMEDIATE_TEARDOWN" \
     "Supabase readiness timed out after ${timeout_seconds}s for ${expected_name}/${project_ref}; last_status=${status}; no schema or deploy attempted" || true
-  echo "ERROR: Supabase project '$expected_name' did not become ACTIVE with resolvable database DNS within ${timeout_seconds}s (last_status=${status}); refusing link, schema push, and deploy." >&2
+  echo "ERROR: Supabase project '$expected_name' did not become ACTIVE with resolvable database DNS and accepting TCP 5432 within ${timeout_seconds}s (last_status=${status}); refusing link, schema push, and deploy." >&2
   return 1
 }
 

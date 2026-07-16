@@ -570,6 +570,7 @@ interface ApplyRunOptions {
   topologyLedgerRetentionUntil?: string;
   supabaseProjectStatuses?: string[];
   supabaseDbResolves?: boolean;
+  supabaseDbTcpAccepts?: boolean;
   childTimeoutMs?: number;
   env?: Record<string, string>;
 }
@@ -1371,6 +1372,12 @@ if [[ '${options.supabaseDbResolves === false ? 'false' : 'true'}' != 'true' ]];
 printf '%s\\n' '203.0.113.10 STREAM db fixture'
 `);
   chmodSync(join(stubDir, 'getent'), 0o755);
+
+  writeFileSync(join(stubDir, 'nc'), `#!/usr/bin/env bash
+[[ "$*" == '-z -w 5 db.${options.projectRef ?? 'abcdefghijklmnopqrst'}.supabase.co 5432' ]] || exit 64
+[[ '${options.supabaseDbTcpAccepts === false ? 'false' : 'true'}' == 'true' ]]
+`);
+  chmodSync(join(stubDir, 'nc'), 0o755);
 
   const env: Record<string, string> = {
     PATH: `${stubDir}:${process.env.PATH ?? ''}`,
@@ -2574,14 +2581,14 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
   it('persists teardown state and performs no link, schema push, or deploy on readiness timeout', () => {
     const result = applyRunStubbed('readiness-timeout', 'mock', {
       supabaseProjectStatuses: ['ACTIVE_HEALTHY'],
-      supabaseDbResolves: false,
+      supabaseDbTcpAccepts: false,
       env: {
         STAGING_SUPABASE_PROJECT_READY_TIMEOUT_SECONDS: '1',
         STAGING_SUPABASE_PROJECT_READY_POLL_SECONDS: '1',
       },
     });
     expect(result.code).not.toBe(0);
-    expect(result.out).toMatch(/readiness timed out|resolvable database DNS/i);
+    expect(result.out).toMatch(/TCP 5432/i);
     expect(result.provisionState).toMatchObject({
       status: 'REQUIRES_IMMEDIATE_TEARDOWN',
       supabase_project_ref: 'abcdefghijklmnopqrst',
