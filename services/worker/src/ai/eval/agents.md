@@ -1,6 +1,18 @@
 # agents.md — services/worker/src/ai/eval/
 
-_Last updated: 2026-07-15_
+_Last updated: 2026-07-16_
+
+## 2026-07-16 S3.3 held-out corpus authentication
+
+- `s33-wave3-corpus-authentication.ts` is offline-only public evidence tooling.
+  It re-derives the exact six-source, 621-row held-out identity set; binds the
+  admitted v7.1 head/tree and its 865/96 export identities; proves exact-id and
+  normalized-content zero overlap; emits deterministic domain-separated bytes;
+  and verifies only the already code-bound public Ed25519 release/corpus root.
+  It contains no signer, private-key input, cloud, spend, rig, or soak path.
+- The signed payload deliberately leaves the final RC head/tree as
+  `PENDING_COMPOSITION` and grants no RC, provisioning, soak, or spend
+  authority. Exact-RC authorization remains a later, separate gate.
 
 ## 2026-07-15 S3.3 Wave-3 deterministic offline gates
 
