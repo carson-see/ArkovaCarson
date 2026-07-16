@@ -53,8 +53,10 @@ import type { GoldenDatasetEntry, GroundTruthFields } from '../src/ai/eval/types
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const IS_DIRECT_EXECUTION = process.argv[1] !== undefined
+  && resolve(process.argv[1]) === __filename;
 
-dotenvConfig({ path: resolve(__dirname, '../.env') });
+if (IS_DIRECT_EXECUTION) dotenvConfig({ path: resolve(__dirname, '../.env') });
 
 // --- CLI args ---
 const args = process.argv.slice(2);
@@ -173,7 +175,7 @@ const TYPE_ALIASES: Record<string, string> = {
   employment_authorization: 'ATTESTATION',
 };
 
-function canonicalizeCredentialType(raw: string | undefined): string {
+export function canonicalizeCredentialType(raw: string | undefined): string {
   if (!raw) return 'OTHER';
   const trimmed = raw.trim();
   if (CANONICAL_TYPES.has(trimmed)) return trimmed;
@@ -397,7 +399,7 @@ function deduceSubType(entry: GoldenDatasetEntry): string | null {
 // DESCRIPTION TEMPLATE
 // ============================================================
 
-function buildDescription(
+export function buildDescription(
   entry: GoldenDatasetEntry,
   subType: string,
 ): string {
@@ -669,7 +671,7 @@ function buildUserPrompt(entry: GoldenDatasetEntry): string {
   return prompt;
 }
 
-function buildTargetOutput(
+export function buildTargetOutput(
   entry: GoldenDatasetEntry,
   subType: string,
   description: string,
@@ -991,8 +993,10 @@ function buildReport(ctx: {
   return lines.join('\n');
 }
 
-main().catch((err) => {
-  console.error('\n✗ Enrichment failed:', err instanceof Error ? err.message : err);
-  if (err instanceof Error && err.stack) console.error(err.stack);
-  process.exit(1);
-});
+if (IS_DIRECT_EXECUTION) {
+  main().catch((err) => {
+    console.error('\n✗ Enrichment failed:', err instanceof Error ? err.message : err);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    process.exit(1);
+  });
+}

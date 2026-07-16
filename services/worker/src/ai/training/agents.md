@@ -1,6 +1,18 @@
 # agents.md — services/worker/src/ai/training/
 
-_Last updated: 2026-05-16_
+_Last updated: 2026-07-15_
+
+## S3.3 v7.1 release-candidate boundary
+
+The binding v7.1 surgery/export implementation lives in the offline
+`services/worker/scripts/s33-v71-surgery.ts`, not in a runtime orchestrator.
+Its frozen result is 961 retained source-backed rows (865 train / 96
+validation), with 201 fraud rows separated and 1,479 unresolved. The 621-row
+S3.3 corpus is heldout evaluation evidence and must never enter training.
+Until an authenticated heldout leakage scan, reviewed trust-root activation,
+and explicit founder/CTO spend admission exist, only the local offline artifact
+writer and inert HOLD request template may be used; no tuning submission or
+endpoint deployment is authorized.
 
 ## What This Folder Contains
 

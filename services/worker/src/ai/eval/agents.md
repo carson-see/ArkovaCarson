@@ -4,6 +4,15 @@ _Last updated: 2026-07-15_
 
 ## 2026-07-15 S3.3 Wave-3 deterministic offline gates
 
+- v7.1 surgery evidence must come from the frozen offline surgery in
+  `scripts/s33-v71-surgery.ts`: 2,656 source = 15 toxic removals + 201 fraud
+  split + 961 retained + 1,479 unresolved; subtype sources are 37 ground truth,
+  186 backfill, 737 unique-candidate deductions, and the sole explicit
+  `GD-1920 -> BUSINESS_ENTITY/corporation` adjudication. The LCG Fisher-Yates
+  split seed is 4216 (865 train / 96 validation). `goodStandingStatus` is
+  source-native string only. Do not treat the separate 621 heldout rows as a
+  training target or claim leakage-clean while authentication remains on HOLD.
+
 - `s33-wave3-deterministic-eval-gates.ts` is the inert SCRUM-2681/2686/2687
   scorer. It is not reachable from production runtime, reads no
   files/env/endpoints, and cannot run a model, accept a corpus, activate a
