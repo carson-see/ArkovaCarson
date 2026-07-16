@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -89,6 +90,11 @@ interface G1FaultRun {
   gcloudCalls: string[];
   npxCalls: string[];
   pathGitCalls: string[];
+  artifactEntries: string[];
+  checksumHelperUnchanged: boolean;
+  cleanChecksumDigest?: string;
+  ambientChecksumDigest?: string;
+  forgedChecksumDigest?: string;
   state: Record<string, unknown> | null;
 }
 
@@ -101,6 +107,7 @@ function runG1ApplyFault(options: {
   fakeNode?: boolean;
   dirtyInput?: 'provisioner' | 'driver' | 'verifier';
   hiddenByIndexFlag?: 'assume-unchanged' | 'skip-worktree';
+  checksumLoaderTarget?: 'git' | 'node';
   sharedLedgerDir?: string;
 } = {}): G1FaultRun {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'g1-provision-fault-')));
@@ -149,18 +156,42 @@ function runG1ApplyFault(options: {
     'CRON_SECRET',
     'GEMINI_API_KEY',
   ];
+  const checksumTargetPath = options.checksumLoaderTarget === 'git'
+    ? trustedGitPath
+    : options.checksumLoaderTarget === 'node'
+      ? process.execPath
+      : undefined;
+  const forgedChecksumDigest = options.checksumLoaderTarget === 'git'
+    ? '4'.repeat(64)
+    : options.checksumLoaderTarget === 'node'
+      ? '5'.repeat(64)
+      : undefined;
+  const expectedGitSha256 = options.checksumLoaderTarget === 'git'
+    ? forgedChecksumDigest!
+    : trustedGitSha256;
+  const expectedNodeSha256 = options.checksumLoaderTarget === 'node'
+    ? forgedChecksumDigest!
+    : trustedNodeSha256;
   const fixtureProvisionerSource = provisionerSource
     .replace(
       'RIG_G1_SPEND_APPROVAL_VERIFIER="scripts/staging/s33-g1-spend-approval.mjs"',
       `RIG_G1_SPEND_APPROVAL_VERIFIER="${fixtureVerifier}"`,
     )
-    .replace('RIG_G1_TRUSTED_NODE_SHA256=""', `RIG_G1_TRUSTED_NODE_SHA256="${trustedNodeSha256}"`)
+    .replace('RIG_G1_TRUSTED_NODE_SHA256=""', `RIG_G1_TRUSTED_NODE_SHA256="${expectedNodeSha256}"`)
     .replace('RIG_G1_TRUSTED_NODE_VERSION=""', `RIG_G1_TRUSTED_NODE_VERSION="${process.version}"`)
     .replace(/TRUSTED_GIT_PATH="[^"]+"/, `TRUSTED_GIT_PATH="${trustedGitPath}"`)
-    .replace(/TRUSTED_GIT_SHA256="[0-9a-f]+"/, `TRUSTED_GIT_SHA256="${trustedGitSha256}"`)
+    .replace(/TRUSTED_GIT_SHA256="[0-9a-f]+"/, `TRUSTED_GIT_SHA256="${expectedGitSha256}"`)
     .replace(/TRUSTED_GIT_VERSION="[^"]+"/, `TRUSTED_GIT_VERSION="${trustedGitVersion}"`)
     .replace(/TRUSTED_GIT_ORIGIN_URL="[^"]+"/, `TRUSTED_GIT_ORIGIN_URL="${origin}"`)
     .replace('GIT_ALLOW_PROTOCOL=https', 'GIT_ALLOW_PROTOCOL=file');
+  const checksumHelperSlice = (source: string): string => {
+    const boundaryStart = source.indexOf('execute_sha256_checksum() {');
+    const start = boundaryStart >= 0 ? boundaryStart : source.indexOf('trusted_sha256_file() {');
+    const end = source.indexOf('validate_trusted_git_binding() {');
+    return start >= 0 && end > start ? source.slice(start, end) : '';
+  };
+  const checksumHelperUnchanged = checksumHelperSlice(fixtureProvisionerSource) !== ''
+    && checksumHelperSlice(fixtureProvisionerSource) === checksumHelperSlice(provisionerSource);
   const fixtureProvisioner = join(fakeRepo, 'scripts/staging/provision-isolated-rig.sh');
   writeFileSync(fixtureProvisioner, fixtureProvisionerSource);
   chmodSync(fixtureProvisioner, 0o755);
@@ -265,6 +296,44 @@ process.stdout.write(readFileSync(readArg('--artifact'), 'utf8'));
     trustRootKeyFingerprint: '3'.repeat(64),
   });
   writeFileSync(join(root, 'approval-envelope.json'), `${verifiedApproval}\n`);
+
+  let cleanChecksumDigest: string | undefined;
+  let ambientChecksumDigest: string | undefined;
+  if (checksumTargetPath && forgedChecksumDigest) {
+    const escapePerlSingleQuoted = (value: string) => value
+      .replaceAll('\\', '\\\\')
+      .replaceAll("'", "\\'");
+    writeFileSync(join(root, 'ArkovaChecksumOverride.pm'), `
+package ArkovaChecksumOverride;
+use strict;
+use warnings;
+use Digest::SHA ();
+my $original = \\&Digest::SHA::hexdigest;
+my $target = '${escapePerlSingleQuoted(checksumTargetPath)}';
+my $forged = '${forgedChecksumDigest}';
+{
+  no warnings qw(redefine prototype);
+  *Digest::SHA::hexdigest = sub {
+    return $forged if @ARGV && $ARGV[-1] eq $target;
+    return $original->(@_);
+  };
+}
+1;
+`);
+    cleanChecksumDigest = createHash('sha256')
+      .update(readFileSync(checksumTargetPath))
+      .digest('hex');
+    ambientChecksumDigest = execFileSync('/usr/bin/shasum', [
+      '-a', '256', '--', checksumTargetPath,
+    ], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PERL5LIB: root,
+        PERL5OPT: '-MArkovaChecksumOverride',
+      },
+    }).trim().split(/\s+/u)[0];
+  }
 
   writeFileSync(join(root, 'git'), `#!/usr/bin/env bash
 set -euo pipefail
@@ -381,6 +450,9 @@ exit 0
     STAGING_CHANGED_BEHAVIOR: 'RIG-G1 paired public/v6 external experiment',
     STAGING_G1_SPEND_APPROVAL_ARTIFACT: join(root, 'approval-envelope.json'),
     STAGING_ADMISSION_DIR: artifactDir,
+    ...(checksumTargetPath
+      ? { PERL5LIB: root, PERL5OPT: '-MArkovaChecksumOverride' }
+      : {}),
   };
   let code = 0;
   let out = '';
@@ -402,6 +474,11 @@ exit 0
     gcloudCalls: readFileSync(gcloudLog, 'utf8').trim().split('\n').filter(Boolean),
     npxCalls: readFileSync(npxLog, 'utf8').trim().split('\n').filter(Boolean),
     pathGitCalls: readFileSync(pathGitLog, 'utf8').trim().split('\n').filter(Boolean),
+    artifactEntries: existsSync(artifactDir) ? readdirSync(artifactDir) : [],
+    checksumHelperUnchanged,
+    cleanChecksumDigest,
+    ambientChecksumDigest,
+    forgedChecksumDigest,
     state: existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : null,
   };
 }
@@ -628,6 +705,37 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     expect(provisionerSource).toContain('GIT_CONFIG_COUNT=0');
     expect(provisionerSource).toContain('GIT_NO_REPLACE_OBJECTS=1');
     expect(provisionerSource).not.toContain('git diff --quiet');
+  });
+
+  it.each([
+    ['git', /trusted Git binary digest/i],
+    ['node', /Node launcher digest|launcher is not trusted/i],
+  ] as const)(
+    'rejects an ambient checksum-loader forgery of the %s binding before every marker',
+    (checksumLoaderTarget, expectedFailure) => {
+      const result = runG1ApplyFault({ checksumLoaderTarget });
+      expect(result.checksumHelperUnchanged).toBe(true);
+      expect(result.cleanChecksumDigest).not.toBe(result.forgedChecksumDigest);
+      expect(result.ambientChecksumDigest).toBe(result.forgedChecksumDigest);
+      expect(result.code).not.toBe(0);
+      expect(result.out).toMatch(expectedFailure);
+      expect(result.pathGitCalls).toEqual([]);
+      expect(result.gcloudCalls).toEqual([]);
+      expect(result.npxCalls).toEqual([]);
+      expect(result.state).toBeNull();
+      expect(result.artifactEntries).toEqual([]);
+    },
+  );
+
+  it('routes shasum and the sha256sum fallback through one fixed empty-environment boundary', () => {
+    expect(provisionerSource).toContain('execute_sha256_checksum() {');
+    expect(provisionerSource).toContain('utility="/usr/bin/shasum"');
+    expect(provisionerSource).toContain('utility="/usr/bin/sha256sum"');
+    expect(provisionerSource).toMatch(/\/usr\/bin\/env -i[\s\\]+TZ=UTC LC_ALL=C LANG=C/);
+    expect(provisionerSource).toContain('trusted_sha256_file()');
+    expect(provisionerSource).toContain('sha256_file()');
+    expect(provisionerSource).not.toContain('\n  shasum -a 256 "$path"');
+    expect(provisionerSource).not.toMatch(/(^|[^/])\bsha256sum\s+--/m);
   });
 
   it('binds the signed approval to the complete G1 execution scope and atomically claims it', () => {

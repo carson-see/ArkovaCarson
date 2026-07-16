@@ -473,21 +473,48 @@ image_digest_from_ref() {
   esac
 }
 
-trusted_sha256_file() {
-  local path="$1" digest remainder
-  if [[ -x /usr/bin/shasum ]]; then
-    read -r digest remainder < <(/usr/bin/shasum -a 256 -- "$path")
-  elif [[ -x /usr/bin/sha256sum ]]; then
-    read -r digest remainder < <(/usr/bin/sha256sum -- "$path")
-  else
-    echo "ERROR: no trusted absolute SHA-256 utility is available for binary binding." >&2
+execute_sha256_checksum() {
+  local path="$1" utility output digest
+  if [[ ! -f "$path" || -L "$path" ]]; then
+    echo "ERROR: checksum authority requires a regular non-symlink file." >&2
     return 1
   fi
+  if [[ -f /usr/bin/shasum && ! -L /usr/bin/shasum && -x /usr/bin/shasum ]]; then
+    utility="/usr/bin/shasum"
+    if ! output="$(/usr/bin/env -i TZ=UTC LC_ALL=C LANG=C \
+      "$utility" -a 256 -- "$path" 2>/dev/null)"; then
+      echo "ERROR: absolute SHA-256 utility failed while reading '$path'." >&2
+      return 1
+    fi
+  elif [[ -f /usr/bin/sha256sum && ! -L /usr/bin/sha256sum && -x /usr/bin/sha256sum ]]; then
+    utility="/usr/bin/sha256sum"
+    if ! output="$(/usr/bin/env -i TZ=UTC LC_ALL=C LANG=C \
+      "$utility" -- "$path" 2>/dev/null)"; then
+      echo "ERROR: absolute SHA-256 utility failed while reading '$path'." >&2
+      return 1
+    fi
+  else
+    echo "ERROR: no supported absolute SHA-256 utility is available." >&2
+    return 1
+  fi
+  if [[ "$output" == *$'\n'* ]]; then
+    echo "ERROR: absolute SHA-256 utility returned more than one result." >&2
+    return 1
+  fi
+  digest="${output%% *}"
   if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-    echo "ERROR: trusted SHA-256 utility returned a malformed binary digest." >&2
+    echo "ERROR: absolute SHA-256 utility returned a malformed digest." >&2
+    return 1
+  fi
+  if [[ "$output" != "$digest  $path" && "$output" != "$digest *$path" ]]; then
+    echo "ERROR: absolute SHA-256 utility returned a malformed or unbound result." >&2
     return 1
   fi
   printf '%s\n' "$digest"
+}
+
+trusted_sha256_file() {
+  execute_sha256_checksum "$1"
 }
 
 validate_trusted_git_binding() {
@@ -711,7 +738,7 @@ verify_g1_spend_approval_binding() {
     echo "       pointing to a verified immutable founder/CTO approval envelope." >&2
     exit 2
   fi
-  if ! resolve_g1_trusted_node_launcher; then
+  if [[ -z "$G1_TRUSTED_NODE_LAUNCHER" ]] && ! resolve_g1_trusted_node_launcher; then
     echo "ERROR: RIG-G1 approval verifier launcher is not trusted; authority remains UNCONFIGURED." >&2
     exit 2
   fi
@@ -1027,6 +1054,10 @@ if [[ $APPLY -eq 1 ]]; then
   verify_checkout_inputs_match_declared_head
   if [[ -n "${GITHUB_SHA:-}" && "$DECLARED_SOURCE_HEAD" != "$GITHUB_SHA" ]]; then
     echo "ERROR: declared source HEAD mismatch: declared=$DECLARED_SOURCE_HEAD GITHUB_SHA=$GITHUB_SHA." >&2
+    exit 2
+  fi
+  if [[ $IS_G1_RIG -eq 1 ]] && ! resolve_g1_trusted_node_launcher; then
+    echo "ERROR: RIG-G1 approval verifier launcher is not trusted; authority remains UNCONFIGURED." >&2
     exit 2
   fi
   if [[ "$SOAK_ID" == \<required-in-apply:* || ! "$SOAK_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$ ]]; then
@@ -2162,8 +2193,7 @@ verify_scheduler_job_config() {
 }
 
 sha256_file() {
-  local path="$1"
-  shasum -a 256 "$path" | awk '{print $1}'
+  execute_sha256_checksum "$1"
 }
 
 resolve_driver_sha256() {
