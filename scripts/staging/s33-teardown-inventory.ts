@@ -752,12 +752,14 @@ function namedResources(resources: ResourceCollection): Record<keyof ResourceCol
       ownerRigId: account.ownerRigId,
     })),
     secretNames: resources.secretNames.map((secret) => ({
-      identity: stable({
-        name: secret.name,
-        role: secret.role,
-        projectId: secret.projectId,
-        ownerRigId: secret.ownerRigId,
-      }),
+      identity: secret.ownerRigId === null
+        ? stable(secret)
+        : stable({
+            name: secret.name,
+            role: secret.role,
+            projectId: secret.projectId,
+            ownerRigId: secret.ownerRigId,
+          }),
       display: secret.name,
       ownerRigId: secret.ownerRigId,
     })),
@@ -1127,6 +1129,8 @@ function targetPresenceFailures(
         || afterLease.state !== 'RELEASED'
         || afterLease.releasedAt === null
         || Date.parse(afterLease.releasedAt) < Date.parse(beforeLease?.acquiredAt ?? after.capturedAt)
+        || Date.parse(afterLease.releasedAt) <= Date.parse(before.capturedAt)
+        || Date.parse(afterLease.releasedAt) > Date.parse(afterLease.expiresAt)
         || Date.parse(afterLease.releasedAt) > Date.parse(after.capturedAt)
         || Date.parse(afterLease.expiresAt) > Date.parse(after.capturedAt)
         || afterLease.acquiredAt !== beforeLease?.acquiredAt
@@ -1173,13 +1177,21 @@ export function verifyS33TeardownDryRun(
   const targets = targetIdentities(declaration, before);
   const presence = targetPresenceFailures(declaration, before, after, targets);
   const protectedShared = new Set(declaration.protectedSharedSecretNames);
-  const beforeSecrets = new Set(before.resources.secretNames.map(({ name }) => name));
-  const afterSecrets = new Set(after.resources.secretNames.map(({ name }) => name));
+  const beforeSecrets = new Map(before.resources.secretNames.map((secret) => [
+    secret.name,
+    stable(secret),
+  ]));
+  const afterSecrets = new Map(after.resources.secretNames.map((secret) => [
+    secret.name,
+    stable(secret),
+  ]));
   const sharedSecretsUntouched = [...protectedShared].every(
-    (name) => beforeSecrets.has(name) && afterSecrets.has(name),
+    (name) => beforeSecrets.has(name) && beforeSecrets.get(name) === afterSecrets.get(name),
   );
   const failures = [...presence.failures];
-  if (!sharedSecretsUntouched) failures.push('A protected shared secret is missing before or after teardown.');
+  if (!sharedSecretsUntouched) {
+    failures.push('A protected shared secret is missing or its configuration/IAM digest drifted.');
+  }
 
   const beforeNamed = namedResources(before.resources);
   const afterNamed = namedResources(after.resources);

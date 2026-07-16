@@ -71,6 +71,7 @@ export interface S33TeardownZeroCostResult {
   readonly afterArtifactSha256: string;
   readonly resourceCount: number;
   readonly deletedCount: number;
+  readonly releasedExpiredCount: number;
   readonly downgradedZeroRecurringCount: 0;
   readonly projectedMonthlyRecurringUsd: 0;
   readonly recurring_cost_zero: true;
@@ -202,6 +203,12 @@ export function consumeS33TeardownInventoryVerification(
   if (inventoryDiff.length === 0) {
     throw new Error('Captured teardown inventory must include at least one target resource.');
   }
+  const deletedCount = inventoryDiff.filter(
+    ({ terminalState }) => terminalState === 'DELETED',
+  ).length;
+  const releasedExpiredCount = inventoryDiff.filter(
+    ({ terminalState }) => terminalState === 'RELEASED_EXPIRED',
+  ).length;
 
   const inputDigestSha256 = digestS33Evidence({
     metadata,
@@ -223,7 +230,8 @@ export function consumeS33TeardownInventoryVerification(
     beforeArtifactSha256: verification.beforeCaptureArtifactSha256,
     afterArtifactSha256: verification.afterCaptureArtifactSha256,
     resourceCount: inventoryDiff.length,
-    deletedCount: inventoryDiff.length,
+    deletedCount,
+    releasedExpiredCount,
     downgradedZeroRecurringCount: 0 as const,
     projectedMonthlyRecurringUsd: 0 as const,
     recurring_cost_zero: true as const,

@@ -7,10 +7,18 @@ import {
   type S33TeardownZeroCostInput,
 } from './s33-teardown-zero-cost';
 import {
+  captureS33TeardownInventory,
+  verifyS33TeardownCapturedInventories,
+} from './s33-teardown-inventory';
+import {
+  TEST_TEARDOWN_DECLARATION,
   TEST_TEARDOWN_HEAD_SHA,
   TEST_TEARDOWN_TREE_SHA,
   buildTestPreSoakCapturedVerification,
   buildTestTeardownCapturedVerification,
+  testTeardownAfterInventory,
+  testTeardownBeforeInventory,
+  testTeardownCaptureMetadata,
 } from './s33-teardown-inventory.test-fixture';
 
 describe('S3.3 captured teardown provenance adapter', () => {
@@ -27,6 +35,32 @@ describe('S3.3 captured teardown provenance adapter', () => {
     },
   } as const);
 
+  function verificationWithLeaseReleasedAt(releasedAt: string) {
+    const afterInventory = testTeardownAfterInventory();
+    return verifyS33TeardownCapturedInventories(
+      TEST_TEARDOWN_DECLARATION,
+      captureS33TeardownInventory(
+        TEST_TEARDOWN_DECLARATION,
+        testTeardownBeforeInventory(),
+        testTeardownCaptureMetadata('before'),
+      ),
+      captureS33TeardownInventory(
+        TEST_TEARDOWN_DECLARATION,
+        {
+          ...afterInventory,
+          resources: {
+            ...afterInventory.resources,
+            leases: afterInventory.resources.leases.map((lease) => ({
+              ...lease,
+              releasedAt,
+            })),
+          },
+        },
+        testTeardownCaptureMetadata('after'),
+      ),
+    );
+  }
+
   it('consumes only the branded Lane2 capture verification and closes its producer gap', () => {
     const verification = buildTestTeardownCapturedVerification();
     const result = consumeS33TeardownInventoryVerification(metadata(), verification);
@@ -40,6 +74,9 @@ describe('S3.3 captured teardown provenance adapter', () => {
       recurring_cost_zero: true,
       zeroRecurringProjected: true,
       projectedMonthlyRecurringUsd: 0,
+      resourceCount: 24,
+      deletedCount: 23,
+      releasedExpiredCount: 1,
       signature: {
         authority: 'LANE3_GENERIC_SIGNATURE_AUTHORITY',
         status: 'BLOCKED_UNAVAILABLE',
@@ -117,5 +154,42 @@ describe('S3.3 captured teardown provenance adapter', () => {
     expect(result.signer.verificationStatus).toBe('UNVERIFIED_EXTERNAL_ARTIFACT');
     expect(result.signature.status).toBe('BLOCKED_UNAVAILABLE');
     expect(result.releaseAcceptance).toBe(false);
+  });
+
+  it('blocks captured verification and its $0 consumer when lease release is not after before capture', () => {
+    const verification = verificationWithLeaseReleasedAt(
+      testTeardownBeforeInventory().capturedAt,
+    );
+
+    expect(verification).toMatchObject({
+      verified: false,
+      recurringCostVerdict: 'blocked',
+      recurring_cost_zero: false,
+      projectedMonthlyRecurringUsd: null,
+    });
+    expect(verification.failures.join('\n')).toMatch(/lease|release|expiry|chronolog/i);
+    expect(() => consumeS33TeardownInventoryVerification(
+      metadata(),
+      verification,
+    )).toThrow(/blocked|complete|lease|recurring_cost_zero/i);
+  });
+
+  it('blocks captured verification and its $0 consumer when lease release follows expiry', () => {
+    const expiresAt = testTeardownAfterInventory().resources.leases[0].expiresAt;
+    const verification = verificationWithLeaseReleasedAt(
+      new Date(Date.parse(expiresAt) + 60_000).toISOString(),
+    );
+
+    expect(verification).toMatchObject({
+      verified: false,
+      recurringCostVerdict: 'blocked',
+      recurring_cost_zero: false,
+      projectedMonthlyRecurringUsd: null,
+    });
+    expect(verification.failures.join('\n')).toMatch(/lease|release|expiry|chronolog/i);
+    expect(() => consumeS33TeardownInventoryVerification(
+      metadata(),
+      verification,
+    )).toThrow(/blocked|complete|lease|recurring_cost_zero/i);
   });
 });

@@ -172,6 +172,28 @@ describe('S3.3 teardown inventory dry-run verifier', () => {
     expect(result.failures.join('\n')).toMatch(/protected shared secret|non-target.*secret/i);
   });
 
+  it('fails standalone dry-run verification when a protected shared secret digest drifts', () => {
+    const result = verifyS33TeardownDryRun(declaration, before, {
+      ...after,
+      resources: {
+        ...after.resources,
+        secretNames: after.resources.secretNames.map((secret) => (
+          secret.name === 'stripe-secret-key-staging'
+            ? {
+                ...secret,
+                configurationDigestSha256: `sha256:${'0'.repeat(64)}`,
+              }
+            : secret
+        )),
+      },
+    });
+
+    expect(result.verified).toBe(false);
+    expect(result.zeroRecurringRigCost).toBe(false);
+    expect(result.sharedSecretsUntouched).toBe(false);
+    expect(result.failures.join('\n')).toMatch(/protected|non-target.*secret|digest|drift/i);
+  });
+
   it('rejects cross-closeout capture identity and non-monotonic capture time', () => {
     expect(() => verifyS33TeardownDryRun(declaration, before, {
       ...after,

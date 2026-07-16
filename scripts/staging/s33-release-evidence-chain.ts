@@ -164,6 +164,7 @@ const teardownSnapshotSchema = z.object({
   afterArtifactSha256: z.string().regex(SHA256),
   resourceCount: z.number().int().positive().safe(),
   deletedCount: z.number().int().nonnegative().safe(),
+  releasedExpiredCount: z.number().int().nonnegative().safe(),
   downgradedZeroRecurringCount: z.literal(0),
   projectedMonthlyRecurringUsd: z.literal(0),
   recurring_cost_zero: z.literal(true),
