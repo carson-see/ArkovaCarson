@@ -1,9 +1,9 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { canonicaliseJson } from '../../utils/canonical-json.js';
-import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
 import {
   S33_HELDOUT_CORPUS_AUTHENTICATION_CONSTANTS,
   buildS33HeldoutCorpusAuthentication,
@@ -28,6 +28,22 @@ interface MutableIdentityIndex {
   };
 }
 
+interface MutableAuthenticationRequest {
+  domainSeparator: string;
+  payload: {
+    corpus: Record<string, unknown>;
+    v71: Record<string, unknown>;
+    zeroOverlap: Record<string, unknown>;
+    executionState: Record<string, unknown>;
+  };
+  payloadCanonicalJson: string;
+  payloadCanonicalSha256: string;
+  signingBytesBase64Url: string;
+  signingBytesSha256: string;
+  requestDigestSha256: string;
+  [key: string]: unknown;
+}
+
 const parseJson = (name: string): unknown => JSON.parse(
   readFileSync(resolve(evidenceRoot, name), 'utf8'),
 );
@@ -38,14 +54,28 @@ function sourceInputs() {
     return {
       ...source,
       sourceText,
-      rows: parseS33ProducerModuleWithLimit(
-        sourceText,
-        source.path,
-        source.exportName,
-        source.expectedCount,
-      ),
     };
   });
+}
+
+function sha256(value: string | Buffer): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function refreshUnsignedRequestDigests(
+  request: MutableAuthenticationRequest,
+): MutableAuthenticationRequest {
+  request.payloadCanonicalJson = canonicaliseJson(request.payload);
+  request.payloadCanonicalSha256 = sha256(request.payloadCanonicalJson);
+  const signingBytes = Buffer.from(
+    `${request.domainSeparator}${request.payloadCanonicalJson}`,
+    'utf8',
+  );
+  request.signingBytesBase64Url = signingBytes.toString('base64url');
+  request.signingBytesSha256 = sha256(signingBytes);
+  const { requestDigestSha256: _ignored, ...withoutDigest } = request;
+  request.requestDigestSha256 = sha256(canonicaliseJson(withoutDigest));
+  return request;
 }
 
 describe('S3.3 held-out corpus authentication', () => {
@@ -107,6 +137,53 @@ describe('S3.3 held-out corpus authentication', () => {
     );
 
     expect(verifyS33HeldoutCorpusSignature(request, signature)).toEqual(signature);
+  });
+
+  it('rejects caller-selected rows even when the pinned source bytes remain exact', () => {
+    const committedIndex = validateS33HeldoutCorpusIdentityIndex(
+      parseJson('s33-heldout-corpus-zero-overlap-index.json'),
+    );
+    const [firstSource, ...remainingSources] = sourceInputs();
+    if (firstSource === undefined) throw new Error('expected a held-out source');
+    const sources = [{
+      ...firstSource,
+      rows: [{
+        id: 'GD-S33-FORGED-UNBOUND-001',
+        strippedText: 'FABRICATED ROW NOT PRESENT IN THE PINNED SOURCE BYTES',
+      }],
+    }, ...remainingSources];
+
+    expect(() => buildS33HeldoutCorpusAuthentication({
+      sources,
+      v71: committedIndex.v71 as S33V71ExportIdentityInput,
+    })).toThrow(/source|row|binding|schema/iu);
+  });
+
+  it.each([
+    ['identity algorithm', (request: MutableAuthenticationRequest) => {
+      request.payload.zeroOverlap.identityAlgorithm = 'caller-selected-identity-proof-v0';
+    }],
+    ['content algorithm', (request: MutableAuthenticationRequest) => {
+      request.payload.zeroOverlap.contentAlgorithm = 'caller-selected-content-proof-v0';
+    }],
+    ['corpus-authentication state type', (request: MutableAuthenticationRequest) => {
+      request.payload.executionState.corpusAuthentication = { caller: 'controlled' };
+    }],
+    ['v7.1 frozen digest', (request: MutableAuthenticationRequest) => {
+      request.payload.v71.trainJsonlSha256 = '0'.repeat(64);
+    }],
+    ['held-out frozen digest', (request: MutableAuthenticationRequest) => {
+      request.payload.corpus.entryOrderSha256 = '0'.repeat(64);
+    }],
+  ])('rejects a self-consistent unsigned request with substituted %s', (_name, mutate) => {
+    const request = structuredClone(
+      parseJson('s33-heldout-corpus-authentication-v1.request.json'),
+    ) as MutableAuthenticationRequest;
+    mutate(request);
+
+    expect(() => validateS33HeldoutCorpusAuthenticationRequest(
+      refreshUnsignedRequestDigests(request),
+    )).toThrow(/binding|digest|state|algorithm/iu);
   });
 
   it.each([

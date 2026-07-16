@@ -5,10 +5,13 @@ _Last updated: 2026-07-16_
 ## 2026-07-16 S3.3 held-out corpus authentication
 
 - `s33-wave3-corpus-authentication.ts` is offline-only public evidence tooling.
-  It re-derives the exact six-source, 621-row held-out identity set; binds the
-  admitted v7.1 head/tree and its 865/96 export identities; proves exact-id and
-  normalized-content zero overlap; emits deterministic domain-separated bytes;
-  and verifies only the already code-bound public Ed25519 release/corpus root.
+  It parses the six exact pinned source-byte blobs internally to re-derive the
+  621-row held-out identity set; caller-supplied rows cannot select corpus
+  identity. It binds the admitted v7.1 head/tree and its 865/96 export
+  identities; proves exact-id and normalized-content zero overlap; exact-checks
+  every frozen payload literal/digest before request creation or verification;
+  emits deterministic domain-separated bytes; and verifies only the already
+  code-bound public Ed25519 release/corpus root.
   It contains no signer, private-key input, cloud, spend, rig, or soak path.
 - The signed payload deliberately leaves the final RC head/tree as
   `PENDING_COMPOSITION` and grants no RC, provisioning, soak, or spend
@@ -94,8 +97,8 @@ _Last updated: 2026-07-16_
   assemble/verify/audit entry points accept no caller-supplied policy.
 - `s33-wave2-acceptance-envelope.ts` now exports its already-strict unsigned
   payload builder/parser for reuse. This does not activate the v1 or v2 signer
-  and does not connect v2 to whole-batch acceptance; corpus acceptance remains
-  impossible while the committed policies are unconfigured.
+  and does not connect v2 to whole-batch acceptance; it neither signs nor grants
+  live execution, and acceptance still requires a matching detached signature.
 ## 2026-07-15 S3.3 Wave-2 top-15 coverage gate
 
 - `s33-wave2-coverage-audit.ts` is an offline Lane-4 registry/coverage gate;

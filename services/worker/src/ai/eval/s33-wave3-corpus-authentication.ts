@@ -17,6 +17,7 @@ import {
   S33_DETACHED_SIGNING_TRUST_POLICY_V2,
   getS33DetachedSigningAuthorityV2,
 } from './s33-wave3-detached-signing-v2.js';
+import { parseS33ProducerModuleWithLimit } from './s33-wave1-producer-parser.js';
 
 const REPOSITORY_IDENTITY = 'carson-see/ArkovaCarson' as const;
 const HELDOUT_SOURCE_HEAD_SHA = 'c9a230195ed30149252c819d37e9a48b16a4d4e9' as const;
@@ -37,6 +38,18 @@ const V71_FROZEN_DIGESTS = Object.freeze({
   combinedIdentitySetCanonicalSha256: 'c9e91fcd88d8c56dd0e8196c9a92d9f8f30302f4a01a67e2915a67a9edb756cb',
   normalizedContentSetCanonicalSha256: '4aeff5549357195fb99af6c64704331187ea6ba8ae626210da8afee09addd1e5',
 });
+const HELDOUT_FROZEN_DIGESTS = Object.freeze({
+  entryOrderSha256: '1eb594538477821690a63a461aae953f3fb2234d9763640bdff5082080038bd3',
+  entrySetCanonicalSha256: '08f2f762d331b89c2ab112415ca7c6dc23e11affbe9af366dac14c5ace3cba14',
+  normalizedContentOrderSha256: 'a239a59529eb23176fe6bdf141e2d442da8a41560730325c2fd7947cef7f8023',
+  normalizedContentSetCanonicalSha256: '8940309cb09204ae27e43bb055b96ddce804f6822ab842c7060f2afd05f36c62',
+  canonicalRowsOrderSha256: 'caa5e66d747bb19e68bde37a63987487912a176f1a9215efe6a96f8c16422b3c',
+  sourceOrderSha256: 'f68e7bc25fbb7c80ba80cf20e5d35611d1827b5a06b5d91a0155cd06f4e201f0',
+  identityIndexCanonicalSha256: '39d974603c666e9aecf48b8079ac42884d5ed1135452ce10ce9010239aa44ee0',
+});
+const ZERO_OVERLAP_IDENTITY_ALGORITHM = 'exact-entry-id-set-v1' as const;
+const ZERO_OVERLAP_CONTENT_ALGORITHM = 'lowercase-collapse-whitespace-sha256-v1' as const;
+const CORPUS_AUTHENTICATION_STATE = 'VALID_ONLY_WITH_MATCHING_DETACHED_SIGNATURE' as const;
 const DOMAIN_SEPARATOR = 'arkova:s33:heldout-corpus-authentication:v1\n' as const;
 const SIGNATURE_ALGORITHM = 'Ed25519' as const;
 const SIGNER_IDENTITY = 'arkova-s33-cto-release' as const;
@@ -120,7 +133,6 @@ export interface S33HeldoutSourceInput {
   readonly blobSha: string;
   readonly rawSha256: string;
   readonly sourceText: string;
-  readonly rows: readonly JsonRecord[];
 }
 
 export interface S33CorpusIdentityRow {
@@ -482,25 +494,44 @@ function validateV71(value: unknown): S33V71ExportIdentityInput {
 function deriveHeldout(sourcesValue: readonly S33HeldoutSourceInput[]): S33HeldoutIdentitySet {
   if (sourcesValue.length !== SOURCES.length) throw new Error('S3.3 held-out source set is incomplete');
   const rows: S33CorpusIdentityRow[] = [];
-  const sources = sourcesValue.map((source, sourceIndex) => {
+  const sources = sourcesValue.map((sourceValue, sourceIndex) => {
     const expected = SOURCES[sourceIndex];
-    if (source.path !== expected.path || source.exportName !== expected.exportName
-      || source.expectedCount !== expected.expectedCount || source.blobSha !== expected.blobSha
-      || source.rawSha256 !== expected.rawSha256 || sha256(source.sourceText) !== expected.rawSha256
-      || gitBlobSha1(source.sourceText) !== expected.blobSha
-      || source.rows.length !== expected.expectedCount) {
+    const label = `S3.3 held-out source input[${sourceIndex}]`;
+    const source = record(sourceValue, label);
+    exactKeys(source, [
+      'path', 'exportName', 'expectedCount', 'blobSha', 'rawSha256', 'sourceText',
+    ], label);
+    const path = text(source.path, `${label}.path`);
+    const exportName = text(source.exportName, `${label}.exportName`);
+    const expectedCount = safeCount(source.expectedCount, `${label}.expectedCount`);
+    const blobSha = gitObject(source.blobSha, `${label}.blobSha`);
+    const rawSha256 = digest(source.rawSha256, `${label}.rawSha256`);
+    const sourceText = text(source.sourceText, `${label}.sourceText`);
+    if (path !== expected.path || exportName !== expected.exportName
+      || expectedCount !== expected.expectedCount || blobSha !== expected.blobSha
+      || rawSha256 !== expected.rawSha256 || sha256(sourceText) !== expected.rawSha256
+      || gitBlobSha1(sourceText) !== expected.blobSha) {
       throw new Error(`S3.3 held-out source binding drifted: ${expected.path}`);
     }
-    const sourceRows = source.rows.map((candidate, rowIndex): S33CorpusIdentityRow => {
-      const row = record(candidate, `S3.3 held-out ${source.path}[${rowIndex}]`);
-      const id = text(row.id, `S3.3 held-out ${source.path}[${rowIndex}].id`);
+    const parsedRows = parseS33ProducerModuleWithLimit(
+      sourceText,
+      path,
+      exportName,
+      expectedCount,
+    );
+    if (parsedRows.length !== expectedCount) {
+      throw new Error(`S3.3 held-out parsed row count drifted: ${path}`);
+    }
+    const sourceRows = parsedRows.map((candidate, rowIndex): S33CorpusIdentityRow => {
+      const row = record(candidate, `S3.3 held-out ${path}[${rowIndex}]`);
+      const id = text(row.id, `S3.3 held-out ${path}[${rowIndex}].id`);
       const strippedText = text(
         row.strippedText,
-        `S3.3 held-out ${source.path}[${rowIndex}].strippedText`,
+        `S3.3 held-out ${path}[${rowIndex}].strippedText`,
       );
       return {
         id,
-        sourcePath: source.path,
+        sourcePath: path,
         sourceIndex: rowIndex,
         corpusIndex: rows.length + rowIndex,
         normalizedInputSha256: sha256(normalizeInput(strippedText)),
@@ -509,13 +540,13 @@ function deriveHeldout(sourcesValue: readonly S33HeldoutSourceInput[]): S33Heldo
     });
     rows.push(...sourceRows);
     return {
-      path: source.path,
-      exportName: source.exportName,
-      blobSha: source.blobSha,
-      rawSha256: source.rawSha256,
+      path,
+      exportName,
+      blobSha,
+      rawSha256,
       rowCount: sourceRows.length,
       rowOrderSha256: canonicalDigest(sourceRows.map(({ id }) => id)),
-      canonicalRowsSha256: canonicalDigest(source.rows),
+      canonicalRowsSha256: canonicalDigest(parsedRows),
     };
   });
   const ids = rows.map(({ id }) => id);
@@ -648,7 +679,10 @@ function validateHeldout(value: unknown): S33HeldoutIdentitySet {
     || digest(heldout.canonicalRowsOrderSha256, 'S3.3 held-out canonical-row digest')
       !== canonicalDigest(rows.map(({ canonicalRowSha256 }) => canonicalRowSha256))
     || digest(heldout.sourceOrderSha256, 'S3.3 held-out source-order digest')
-      !== canonicalDigest(sources)) {
+      !== canonicalDigest(sources)
+    || (Object.keys(HELDOUT_FROZEN_DIGESTS) as Array<keyof typeof HELDOUT_FROZEN_DIGESTS>)
+      .filter((key) => key !== 'identityIndexCanonicalSha256')
+      .some((key) => heldout[key] !== HELDOUT_FROZEN_DIGESTS[key])) {
     throw new Error('S3.3 held-out count/order/set/content/source digest binding drifted');
   }
   let offset = 0;
@@ -702,7 +736,7 @@ export function validateS33HeldoutCorpusIdentityIndex(
   if (canonicaliseJson(overlap) !== canonicaliseJson(expectedOverlap)) {
     throw new Error('S3.3 held-out/v7.1 overlap proof binding drifted');
   }
-  return deepFreeze({
+  const normalized: S33HeldoutCorpusIdentityIndex = deepFreeze({
     schemaVersion: 1,
     artifactType: 'arkova-s33-heldout-corpus-zero-overlap-index',
     repositoryIdentity: REPOSITORY_IDENTITY,
@@ -713,6 +747,10 @@ export function validateS33HeldoutCorpusIdentityIndex(
     v71,
     overlap: expectedOverlap,
   });
+  if (canonicalDigest(normalized) !== HELDOUT_FROZEN_DIGESTS.identityIndexCanonicalSha256) {
+    throw new Error('S3.3 held-out corpus identity index frozen digest drifted');
+  }
+  return normalized;
 }
 
 function buildPayload(index: S33HeldoutCorpusIdentityIndex): S33HeldoutCorpusAuthenticationPayload {
@@ -758,13 +796,13 @@ function buildPayload(index: S33HeldoutCorpusIdentityIndex): S33HeldoutCorpusAut
       surgeryManifestCanonicalSha256: index.v71.surgeryManifestCanonicalSha256,
     },
     zeroOverlap: {
-      identityAlgorithm: 'exact-entry-id-set-v1',
-      contentAlgorithm: 'lowercase-collapse-whitespace-sha256-v1',
+      identityAlgorithm: ZERO_OVERLAP_IDENTITY_ALGORITHM,
+      contentAlgorithm: ZERO_OVERLAP_CONTENT_ALGORITHM,
       heldoutToV71IdCount: 0,
       heldoutToV71NormalizedContentCount: 0,
     },
     executionState: {
-      corpusAuthentication: 'VALID_ONLY_WITH_MATCHING_DETACHED_SIGNATURE',
+      corpusAuthentication: CORPUS_AUTHENTICATION_STATE,
       evaluation: 'NOT_RUN_AUTHENTICATION_HOLD',
       v71Tuning: 'HOLD',
       finalReleaseCandidate: 'PENDING_COMPOSITION',
@@ -792,16 +830,17 @@ function requestWithoutDigest(
 function buildRequest(
   payload: S33HeldoutCorpusAuthenticationPayload,
 ): S33HeldoutCorpusAuthenticationRequest {
-  const payloadCanonicalJson = canonicaliseJson(payload);
+  const validatedPayload = validatePayload(payload);
+  const payloadCanonicalJson = canonicaliseJson(validatedPayload);
   const signingBytes = Buffer.from(`${DOMAIN_SEPARATOR}${payloadCanonicalJson}`, 'utf8');
   const withoutDigest = requestWithoutDigest({
     schemaVersion: 1,
     artifactType: 'arkova-s33-heldout-corpus-authentication-request',
     signatureAlgorithm: SIGNATURE_ALGORITHM,
     signerIdentity: SIGNER_IDENTITY,
-    signingKeyId: payload.signingPolicy.signingKeyId,
+    signingKeyId: validatedPayload.signingPolicy.signingKeyId,
     domainSeparator: DOMAIN_SEPARATOR,
-    payload,
+    payload: validatedPayload,
     payloadCanonicalJson,
     payloadCanonicalSha256: sha256(payloadCanonicalJson),
     signingBytesBase64Url: signingBytes.toString('base64url'),
@@ -911,6 +950,9 @@ function validatePayload(value: unknown): S33HeldoutCorpusAuthenticationPayload 
     || v71.trainCount !== 865 || v71.validationCount !== 96 || v71.uniqueIdCount !== 961
     || zeroOverlap.heldoutToV71IdCount !== 0
     || zeroOverlap.heldoutToV71NormalizedContentCount !== 0
+    || zeroOverlap.identityAlgorithm !== ZERO_OVERLAP_IDENTITY_ALGORITHM
+    || zeroOverlap.contentAlgorithm !== ZERO_OVERLAP_CONTENT_ALGORITHM
+    || execution.corpusAuthentication !== CORPUS_AUTHENTICATION_STATE
     || execution.evaluation !== 'NOT_RUN_AUTHENTICATION_HOLD'
     || execution.v71Tuning !== 'HOLD'
     || execution.finalReleaseCandidate !== 'PENDING_COMPOSITION'
@@ -919,18 +961,30 @@ function validatePayload(value: unknown): S33HeldoutCorpusAuthenticationPayload 
     || execution.spend !== 'NOT_AUTHORIZED_BY_THIS_PAYLOAD') {
     throw new Error('S3.3 corpus payload count/overlap/HOLD binding drifted');
   }
-  for (const [label, value] of [
-    ['identity index', corpus.identityIndexCanonicalSha256],
-    ['entry order', corpus.entryOrderSha256],
-    ['entry set', corpus.entrySetCanonicalSha256],
-    ['canonical rows', corpus.canonicalRowsOrderSha256],
-    ['v7.1 source ids', v71.sourceOrderedIdsSha256],
-    ['v7.1 source content', v71.sourceContentCanonicalSha256],
-    ['v7.1 retained targets', v71.retainedTargetsCanonicalSha256],
-    ['v7.1 train JSONL', v71.trainJsonlSha256],
-    ['v7.1 validation JSONL', v71.validationJsonlSha256],
-    ['v7.1 surgery manifest', v71.surgeryManifestCanonicalSha256],
-  ] as const) digest(value, `S3.3 corpus payload ${label} digest`);
+  const frozenDigests = [
+    ['identity index', corpus.identityIndexCanonicalSha256,
+      HELDOUT_FROZEN_DIGESTS.identityIndexCanonicalSha256],
+    ['entry order', corpus.entryOrderSha256, HELDOUT_FROZEN_DIGESTS.entryOrderSha256],
+    ['entry set', corpus.entrySetCanonicalSha256,
+      HELDOUT_FROZEN_DIGESTS.entrySetCanonicalSha256],
+    ['canonical rows', corpus.canonicalRowsOrderSha256,
+      HELDOUT_FROZEN_DIGESTS.canonicalRowsOrderSha256],
+    ['v7.1 source ids', v71.sourceOrderedIdsSha256, V71_FROZEN_DIGESTS.sourceOrderedIdsSha256],
+    ['v7.1 source content', v71.sourceContentCanonicalSha256,
+      V71_FROZEN_DIGESTS.sourceContentCanonicalSha256],
+    ['v7.1 retained targets', v71.retainedTargetsCanonicalSha256,
+      V71_FROZEN_DIGESTS.retainedTargetsCanonicalSha256],
+    ['v7.1 train JSONL', v71.trainJsonlSha256, V71_FROZEN_DIGESTS.trainJsonlSha256],
+    ['v7.1 validation JSONL', v71.validationJsonlSha256,
+      V71_FROZEN_DIGESTS.validationJsonlSha256],
+    ['v7.1 surgery manifest', v71.surgeryManifestCanonicalSha256,
+      V71_FROZEN_DIGESTS.surgeryManifestCanonicalSha256],
+  ] as const;
+  for (const [label, value, expected] of frozenDigests) {
+    if (digest(value, `S3.3 corpus payload ${label} digest`) !== expected) {
+      throw new Error(`S3.3 corpus payload ${label} frozen digest binding drifted`);
+    }
+  }
   return deepFreeze(payload as unknown as S33HeldoutCorpusAuthenticationPayload);
 }
 
