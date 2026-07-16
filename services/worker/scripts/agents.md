@@ -2,6 +2,31 @@
 
 Offline tooling for Nessie model training, evaluation, dataset building, benchmarks, operational helpers, and CI scripts. These scripts run outside the worker runtime — they are never imported by `services/worker/src/`.
 
+## S3.3 v7.1 deterministic surgery (2026-07-15)
+
+- `s33-v71-surgery.ts` binds the historical April v7 source at 2,656 unique
+  rows and fails closed on source count/order/content drift. It removes exactly
+  `GD-3030..GD-3044`, splits all 201 fraud-signal rows into a non-submittable
+  artifact, accepts only valid explicit subtypes or one unambiguous frozen-
+  taxonomy deduction, and keeps all other rows unresolved.
+- The only manual adjudication is immutable source row `GD-1920`, mapped to
+  `BUSINESS_ENTITY/corporation` from its literal `entityType=Corporation` and
+  recorded as `adjudicated`; do not mutate the raw row, expand the taxonomy, or
+  generalize that exception. Exact retained composition is 37 ground-truth +
+  186 backfill + 737 deduced + 1 adjudicated = 961.
+- Split is source-order input followed by LCG Fisher-Yates seed `4216`: first
+  floor(961 x 0.10) = 96 validation, remaining 865 training. Source,
+  disposition, targets, split JSONL, fraud, unresolved, and manifest digests
+  are frozen in code and tests. The separate 621-row accepted corpus is
+  heldout-only and is never a training-count target.
+- `goodStandingStatus` must already be a non-empty source string; boolean
+  coercion is forbidden. G02 remains non-vacuous through adjudicated GD-1920.
+- `writeS33V71OfflineArtifacts()` writes a new local directory once using
+  atomic file replacement. It has no GCS upload, Vertex submit, endpoint,
+  deployment, or spend path. `buildS33V71TuningRequestTemplate()` is an inert
+  HOLD artifact with Gemini 2.5 Flash, six epochs, adapter size four, learning
+  rate 1, `exportLastCheckpointOnly=true`, and a $40 ceiling; it never submits.
+
 ## Key subdirectories
 
 - `bench/` — Regional latency benchmarks (Kenya, etc.).

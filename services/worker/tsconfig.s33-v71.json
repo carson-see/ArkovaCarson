@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": [
+    "scripts/s33-v71-surgery.ts",
+    "scripts/s33-v71-surgery.test.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}
