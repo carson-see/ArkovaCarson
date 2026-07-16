@@ -149,6 +149,13 @@ const ConfigSchema = z.object({
    */
   disableInProcessAnchorCron: boolFlag(false),
   /**
+   * DISABLE_ALL_IN_PROCESS_CRON — isolated-experiment kill switch. Default
+   * false; when true setupScheduledJobs returns before registering any
+   * node-cron task. This is stronger than the anchor-only maintenance switch
+   * and is required on every RIG-G1 arm to prevent cross-arm background work.
+   */
+  disableAllInProcessCron: boolFlag(false),
+  /**
    * SCRUM-1799 (SCRUM-1743 Phase 2b) — gate the credential.verified webhook
    * emit on the verify hot path. Default false: emit code is wired but dark
    * in prod. Carson flips per-tenant via switchboard or globally by setting
@@ -711,6 +718,7 @@ function loadConfig(): Config {
     enableQueueDigest: process.env.ENABLE_QUEUE_DIGEST,
     enableOrgCreditEnforcement: process.env.ENABLE_ORG_CREDIT_ENFORCEMENT,
     disableInProcessAnchorCron: process.env.DISABLE_IN_PROCESS_ANCHOR_CRON,
+    disableAllInProcessCron: process.env.DISABLE_ALL_IN_PROCESS_CRON,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
     recipientIdentifierPepper: process.env.RECIPIENT_IDENTIFIER_PEPPER,
     geminiApiKey: process.env.GEMINI_API_KEY,

@@ -62,6 +62,10 @@ RIG_B1_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
 RIG_G1_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
 RIG_G1_PUBLIC_MODEL="gemini-2.5-flash"
 RIG_G1_CANDIDATE_MODEL="models/6611494259700793344"
+RIG_G1_SPEND_APPROVAL_VERIFIER="scripts/staging/s33-g1-spend-approval.ts"
+S33_ISOLATED_SUPABASE_PROJECT_COUNT=3
+S33_ISOLATED_SUPABASE_PROJECT_MONTHLY_EACH_USD=10
+S33_ISOLATED_SUPABASE_PROJECTS_MONTHLY_TOTAL_USD=30
 APPROVED_SOURCE_IMAGE_REPOSITORY="us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker"
 DENIED_CLOUD_RUN_SERVICES=("arkova-worker" "arkova-worker-staging")
 
@@ -178,14 +182,18 @@ G1_CONTROL_RUN_ID="${STAGING_G1_CONTROL_RUN_ID:-}"
 G1_TUNED_RUN_ID="${STAGING_G1_TUNED_RUN_ID:-}"
 G1_CONTROL_QUEUE="${STAGING_G1_CONTROL_QUEUE:-}"
 G1_TUNED_QUEUE="${STAGING_G1_TUNED_QUEUE:-}"
-G1_OWNER="${STAGING_G1_OWNER:-}"
-G1_EXPIRES_AT="${STAGING_G1_EXPIRES_AT:-}"
+G1_PAIRED_CADENCE_MIN="${STAGING_G1_PAIRED_CADENCE_MIN:-}"
 G1_STOP_AUTHORITY="${STAGING_G1_STOP_AUTHORITY:-}"
 G1_TEARDOWN_OWNER="${STAGING_G1_TEARDOWN_OWNER:-}"
-G1_SPEND_AUTHORITY_ID="${STAGING_G1_SPEND_AUTHORITY_ID:-}"
-S33_COST_CAP_USD="${STAGING_S33_COST_CAP_USD:-}"
-G1_COMPUTE_MODEL_CAP_USD="${STAGING_G1_COMPUTE_MODEL_CAP_USD:-}"
-RIG_PROJECT_MONTHLY_USD="${STAGING_RIG_PROJECT_MONTHLY_USD:-}"
+G1_SPEND_APPROVAL_ARTIFACT="${STAGING_G1_SPEND_APPROVAL_ARTIFACT:-}"
+# These admission values are populated only from the authenticated approval
+# verifier in apply mode. Caller-supplied owner/TTL/cap/authority strings are
+# deliberately ignored and cannot authorize spend.
+G1_OWNER="<from-verified-approval-record>"
+G1_EXPIRES_AT="<from-verified-approval-record>"
+S33_COST_CAP_USD_JSON="null"
+G1_COMPUTE_MODEL_CAP_USD_JSON="null"
+G1_SPEND_APPROVAL_JSON='{"status":"UNCONFIGURED","reason":"pinned founder/CTO authority root not code-bound"}'
 
 NAME=""
 APPLY=0
@@ -383,17 +391,14 @@ if [[ $IS_G1_RIG -eq 1 ]]; then
   for g1_identity_var in \
     STAGING_G1_CONTROL_RUN_ID STAGING_G1_TUNED_RUN_ID \
     STAGING_G1_CONTROL_QUEUE STAGING_G1_TUNED_QUEUE \
-    STAGING_G1_OWNER STAGING_G1_STOP_AUTHORITY STAGING_G1_TEARDOWN_OWNER \
-    STAGING_G1_SPEND_AUTHORITY_ID; do
+    STAGING_G1_STOP_AUTHORITY STAGING_G1_TEARDOWN_OWNER; do
     case "$g1_identity_var" in
       STAGING_G1_CONTROL_RUN_ID) g1_identity_value="$G1_CONTROL_RUN_ID" ;;
       STAGING_G1_TUNED_RUN_ID) g1_identity_value="$G1_TUNED_RUN_ID" ;;
       STAGING_G1_CONTROL_QUEUE) g1_identity_value="$G1_CONTROL_QUEUE" ;;
       STAGING_G1_TUNED_QUEUE) g1_identity_value="$G1_TUNED_QUEUE" ;;
-      STAGING_G1_OWNER) g1_identity_value="$G1_OWNER" ;;
       STAGING_G1_STOP_AUTHORITY) g1_identity_value="$G1_STOP_AUTHORITY" ;;
       STAGING_G1_TEARDOWN_OWNER) g1_identity_value="$G1_TEARDOWN_OWNER" ;;
-      STAGING_G1_SPEND_AUTHORITY_ID) g1_identity_value="$G1_SPEND_AUTHORITY_ID" ;;
     esac
     if [[ ! "$g1_identity_value" =~ ^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$ ]]; then
       echo "ERROR: RIG-G1 requires canonical $g1_identity_var (3-128 safe identity characters)." >&2
@@ -406,33 +411,6 @@ if [[ $IS_G1_RIG -eq 1 ]]; then
   fi
   if [[ "$G1_CONTROL_QUEUE" == "$G1_TUNED_QUEUE" ]]; then
     echo "ERROR: RIG-G1 control and tuned queue identities must be distinct." >&2
-    exit 2
-  fi
-  if [[ ! "$G1_EXPIRES_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
-    echo "ERROR: RIG-G1 requires STAGING_G1_EXPIRES_AT as exact UTC YYYY-MM-DDTHH:MM:SSZ." >&2
-    exit 2
-  fi
-  for g1_budget_var in STAGING_S33_COST_CAP_USD STAGING_G1_COMPUTE_MODEL_CAP_USD STAGING_RIG_PROJECT_MONTHLY_USD; do
-    case "$g1_budget_var" in
-      STAGING_S33_COST_CAP_USD) g1_budget_value="$S33_COST_CAP_USD" ;;
-      STAGING_G1_COMPUTE_MODEL_CAP_USD) g1_budget_value="$G1_COMPUTE_MODEL_CAP_USD" ;;
-      STAGING_RIG_PROJECT_MONTHLY_USD) g1_budget_value="$RIG_PROJECT_MONTHLY_USD" ;;
-    esac
-    if [[ ! "$g1_budget_value" =~ ^[1-9][0-9]{0,3}$ ]]; then
-      echo "ERROR: RIG-G1 requires $g1_budget_var as a canonical positive whole-USD cap." >&2
-      exit 2
-    fi
-  done
-  if (( 10#$S33_COST_CAP_USD > 200 )); then
-    echo "ERROR: RIG-G1 S3.3 all-in cost cap cannot exceed USD 200." >&2
-    exit 2
-  fi
-  if (( 10#$RIG_PROJECT_MONTHLY_USD != 10 )); then
-    echo "ERROR: RIG-G1 standalone Supabase project estimate must remain USD 10/month." >&2
-    exit 2
-  fi
-  if (( 10#$G1_COMPUTE_MODEL_CAP_USD + 10#$RIG_PROJECT_MONTHLY_USD > 10#$S33_COST_CAP_USD )); then
-    echo "ERROR: RIG-G1 compute/model cap plus project estimate exceeds the S3.3 all-in cap." >&2
     exit 2
   fi
   if [[ ! "$GEMINI_TUNED_MODEL_VALUE" =~ ^projects/([^/]+)/locations/us-central1/endpoints/([1-9][0-9]*)$ ]]; then
@@ -449,9 +427,12 @@ if [[ $IS_G1_RIG -eq 1 ]]; then
     echo "ERROR: RIG-G1 tuned arm requires STAGING_GEMINI_V6_PROMPT=true." >&2
     exit 2
   fi
-  if [[ "$TIER" != "T3" || "$REQUIRED_UPTIME_MIN" != "2880" \
-    || ! "$REQUIRED_WALL_MIN" =~ ^[1-9][0-9]*$ || 10#$REQUIRED_WALL_MIN -lt 2910 ]]; then
-    echo "ERROR: RIG-G1 requires Tier T3, exactly 2880 worker-uptime minutes, and >=2910 wall minutes." >&2
+  if [[ "$TIER" != "T2" || "$REQUIRED_UPTIME_MIN" != "2880" \
+    || ! "$REQUIRED_WALL_MIN" =~ ^[1-9][0-9]*$ || 10#$REQUIRED_WALL_MIN -lt 2910 \
+    || ! "$G1_PAIRED_CADENCE_MIN" =~ ^[1-9][0-9]*$ \
+    || 10#$G1_PAIRED_CADENCE_MIN -gt 30 ]]; then
+    echo "ERROR: RIG-G1 requires custom Tier T2, exactly 2880 worker-uptime minutes," >&2
+    echo "       >=2910 wall minutes, and STAGING_G1_PAIRED_CADENCE_MIN in 1..30." >&2
     exit 2
   fi
 fi
@@ -473,6 +454,7 @@ image_digest_from_ref() {
 
 verify_checkout_inputs_match_declared_head() {
   local repo_root script_absolute script_relative path
+  local tracked_inputs=()
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   script_absolute="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
   if [[ -z "$repo_root" || "$script_absolute" != "$repo_root"/* ]]; then
@@ -487,7 +469,11 @@ verify_checkout_inputs_match_declared_head() {
     exit 2
   fi
 
-  for path in "$script_relative" "$DRIVER_PATH"; do
+  tracked_inputs=("$script_relative" "$DRIVER_PATH")
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    tracked_inputs+=("$RIG_G1_SPEND_APPROVAL_VERIFIER")
+  fi
+  for path in "${tracked_inputs[@]}"; do
     if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1 \
       || ! git cat-file -e "${DECLARED_SOURCE_HEAD}:${path}" 2>/dev/null; then
       echo "ERROR: live provision input '$path' is not tracked at declared source HEAD." >&2
@@ -495,7 +481,7 @@ verify_checkout_inputs_match_declared_head() {
     fi
   done
 
-  if ! git diff --quiet "$DECLARED_SOURCE_HEAD" -- "$script_relative" "$DRIVER_PATH"; then
+  if ! git diff --quiet "$DECLARED_SOURCE_HEAD" -- "${tracked_inputs[@]}"; then
     echo "ERROR: provisioner/driver working-tree bytes differ from declared source HEAD; commit or restore them first." >&2
     exit 2
   fi
@@ -535,11 +521,92 @@ verify_g1_candidate_endpoint_binding() {
   fi
   if ! jq -e --arg expected "$expected_model_resource" '
     type == "object"
-    and ([.deployedModels[]? | select(.model == $expected)] | length == 1)
+    and (.deployedModels | type == "array" and length == 1)
+    and (.deployedModels[0].model == $expected)
+    and (.deployedModels[0].id as $deployed_model_id
+      | ($deployed_model_id | type == "string" and length > 0)
+      and (.trafficSplit | type == "object")
+      and ((.trafficSplit | keys) == [$deployed_model_id])
+      and (.trafficSplit[$deployed_model_id] == 100))
   ' >/dev/null 2>&1 <<<"$endpoint_json"; then
-    echo "ERROR: RIG-G1 tuned endpoint does not contain exactly one deployment of candidate '$RIG_G1_CANDIDATE_MODEL'." >&2
+    echo "ERROR: RIG-G1 tuned endpoint is not ready as the sole exact v6 deployment with 100% traffic." >&2
     exit 2
   fi
+}
+
+verify_g1_spend_approval_binding() {
+  [[ $IS_G1_RIG -eq 1 ]] || return 0
+  local expected_image_digest verified_json
+  expected_image_digest="$(image_digest_from_ref "$PINNED_IMAGE")"
+  if [[ -z "$G1_SPEND_APPROVAL_ARTIFACT" ]]; then
+    echo "ERROR: live RIG-G1 provision requires STAGING_G1_SPEND_APPROVAL_ARTIFACT" >&2
+    echo "       pointing to a verified immutable founder/CTO approval envelope." >&2
+    exit 2
+  fi
+  if ! verified_json="$(npx tsx "$RIG_G1_SPEND_APPROVAL_VERIFIER" \
+    --artifact "$G1_SPEND_APPROVAL_ARTIFACT" \
+    --expected-source-head "$DECLARED_SOURCE_HEAD" \
+    --expected-image-digest "$expected_image_digest")"; then
+    echo "ERROR: RIG-G1 immutable spend approval verification failed; authority remains UNCONFIGURED." >&2
+    exit 2
+  fi
+  if ! verified_json="$(jq -ce \
+    --arg source_head "$DECLARED_SOURCE_HEAD" \
+    --arg image_digest "$expected_image_digest" '
+      . as $approval
+      | (type == "object"
+      and ((keys | sort) == ([
+        "approvalVerifiedAt", "approverIdentity", "approverRole",
+        "authorityRosterRootSha256", "candidateImageDigest", "candidateSourceHeadSha",
+        "canonicalSha256", "expiresAt", "g1VariableComputeModelCapUsd",
+        "immutableRevisionId", "isolatedSupabaseProjectCount",
+        "isolatedSupabaseProjectMonthlyEachUsd", "isolatedSupabaseProjectsMonthlyTotalUsd",
+        "ownerIdentity", "raci", "runtimeVerifiedAt", "s33TotalCapUsd",
+        "sourceReference", "status", "trustRootKeyFingerprint",
+        "verificationMethod", "verifierIdentity"
+      ] | sort))
+      and .status == "VERIFIED"
+      and (.sourceReference | type == "string" and length > 0)
+      and (.immutableRevisionId | type == "string" and length > 0)
+      and (.canonicalSha256 | test("^sha256:[0-9a-f]{64}$"))
+      and (.approverIdentity | type == "string" and length > 0)
+      and (.approverRole == "founder" or .approverRole == "cto")
+      and (.authorityRosterRootSha256 | test("^sha256:[0-9a-f]{64}$"))
+      and .candidateSourceHeadSha == $source_head
+      and .candidateImageDigest == $image_digest
+      and .isolatedSupabaseProjectCount == 3
+      and .isolatedSupabaseProjectMonthlyEachUsd == 10
+      and .isolatedSupabaseProjectsMonthlyTotalUsd == 30
+      and (.g1VariableComputeModelCapUsd | type == "number" and floor == . and . > 0)
+      and (.s33TotalCapUsd | type == "number" and floor == . and . > 0)
+      and (.g1VariableComputeModelCapUsd + 30 <= .s33TotalCapUsd)
+      and (.ownerIdentity | type == "string" and length > 0)
+      and (.expiresAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
+      and (.raci | type == "object")
+      and ((.raci | keys | sort) == ([
+        "accountableIdentity", "consultedIdentities", "informedIdentities", "responsibleIdentity"
+      ] | sort))
+      and .raci.responsibleIdentity == .ownerIdentity
+      and .raci.accountableIdentity == .approverIdentity
+      and (.raci.consultedIdentities | type == "array" and length > 0)
+      and (.raci.informedIdentities | type == "array" and length > 0)
+      and (.approvalVerifiedAt | type == "string")
+      and (.runtimeVerifiedAt | type == "string")
+      and (.verifierIdentity | type == "string" and length > 0)
+      and .verificationMethod == "ed25519-pinned-authority-roster"
+      and (.trustRootKeyFingerprint | test("^[0-9a-f]{64}$")))
+      | select(.)
+      | $approval
+    ' <<<"$verified_json" 2>/dev/null)"; then
+    echo "ERROR: RIG-G1 approval verifier output failed the provisioner's exact binding schema." >&2
+    exit 2
+  fi
+
+  G1_SPEND_APPROVAL_JSON="$verified_json"
+  G1_OWNER="$(jq -r '.ownerIdentity' <<<"$verified_json")"
+  G1_EXPIRES_AT="$(jq -r '.expiresAt' <<<"$verified_json")"
+  G1_COMPUTE_MODEL_CAP_USD_JSON="$(jq -r '.g1VariableComputeModelCapUsd' <<<"$verified_json")"
+  S33_COST_CAP_USD_JSON="$(jq -r '.s33TotalCapUsd' <<<"$verified_json")"
 }
 
 for denied in "${DENIED_CLOUD_RUN_SERVICES[@]}"; do
@@ -593,24 +660,11 @@ if [[ $APPLY -eq 1 ]]; then
     fi
   fi
   if [[ $IS_G1_RIG -eq 1 ]]; then
-    # Wave 3 itself authorizes no rig or spend. A live G1 provision is therefore
-    # possible only after the post-Wave-3 gate and the named spend authority are
-    # acknowledged separately from the generic provision/config confirmations.
+    # Wave 3 itself authorizes no rig or spend. This acknowledgement selects the
+    # post-Wave-3 workflow only; spend authority is verified cryptographically
+    # from the immutable approval record later in this pre-mutation section.
     if [[ "${CONFIRM_POST_W3_PROVISION:-}" != "RIG-G1" ]]; then
       echo "ERROR: live RIG-G1 provision requires CONFIRM_POST_W3_PROVISION=RIG-G1." >&2
-      exit 2
-    fi
-    if [[ "$G1_SPEND_AUTHORITY_ID" == *pending* \
-      || "${CONFIRM_G1_SPEND_AUTHORITY:-}" != "$G1_SPEND_AUTHORITY_ID" ]]; then
-      echo "ERROR: live RIG-G1 provision requires a final (non-pending) spend authority ID and" >&2
-      echo "       matching CONFIRM_G1_SPEND_AUTHORITY=<STAGING_G1_SPEND_AUTHORITY_ID>." >&2
-      exit 2
-    fi
-    if ! node -e '
-      const expiresAt = Date.parse(process.argv[1]);
-      process.exit(Number.isFinite(expiresAt) && expiresAt > Date.now() ? 0 : 1);
-    ' "$G1_EXPIRES_AT"; then
-      echo "ERROR: live RIG-G1 provision requires STAGING_G1_EXPIRES_AT to be a future UTC instant." >&2
       exit 2
     fi
   fi
@@ -846,6 +900,7 @@ if [[ $APPLY -eq 1 ]]; then
   VALIDATED_BASE_SHA="$EXPECTED_BASE_SHA"
   verify_source_head_image_digest
   verify_g1_candidate_endpoint_binding
+  verify_g1_spend_approval_binding
 fi
 
 # ---------------------------------------------------------------------------
@@ -943,6 +998,7 @@ case "$PROFILE" in
         "USE_MOCKS=true"
         "ENABLE_PROD_NETWORK_ANCHORING=false"
         "GEMINI_MODEL=${RIG_G1_PUBLIC_MODEL}"
+        "DISABLE_ALL_IN_PROCESS_CRON=true"
         "DISABLE_IN_PROCESS_ANCHOR_CRON=true"
         "ENABLE_QUEUE_REMINDERS=false"
         "ENABLE_RULES_ENGINE=false"
@@ -1019,6 +1075,7 @@ STAGING_ADMISSION_DIR="${STAGING_ADMISSION_DIR:-docs/staging/${NAME}}"
 PROVISION_STATE_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-provision-${NAME}.json"
 ADMISSION_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-admission-${NAME}.json"
 ADMISSION_TEMP_PATH="${ADMISSION_ARTIFACT_PATH}.tmp.$$"
+NEW_PROJECT_REF="<captured-from-step-1>"
 ADMISSION_ARTIFACT_PERSISTED=0
 ADMISSION_FINALIZED=0
 CREATED_PROJECT_REF=""
@@ -1039,11 +1096,35 @@ G1_CONTROL_DEPLOYED_REVISION="<captured-after-public-control-deploy>"
 G1_TUNED_DEPLOYED_REVISION="<captured-after-tuned-deploy>"
 G1_CONTROL_TAG_URL="<captured-cloud-run-url-for-${G1_CONTROL_SERVICE:-public-control-arm}>"
 G1_TUNED_TAG_URL="<captured-cloud-run-url-for-${G1_TUNED_SERVICE:-tuned-arm}>"
+if [[ $IS_G1_RIG -eq 1 ]]; then
+  CLOUD_RUN_SERVICE_CANDIDATES_JSON="$(jq -nc \
+    --arg control "$G1_CONTROL_SERVICE" \
+    --arg tuned "$G1_TUNED_SERVICE" \
+    '[$control, $tuned]')"
+  CLOUD_RUN_DELETE_COMMANDS_JSON="$(jq -nc \
+    --arg control "gcloud run services delete ${G1_CONTROL_SERVICE} --project=${GCP_PROJECT} --region=${CLOUD_RUN_REGION} --quiet" \
+    --arg tuned "gcloud run services delete ${G1_TUNED_SERVICE} --project=${GCP_PROJECT} --region=${CLOUD_RUN_REGION} --quiet" \
+    '[$control, $tuned]')"
+else
+  CLOUD_RUN_SERVICE_CANDIDATES_JSON="$(jq -nc --arg service "$CLOUD_RUN_SERVICE" '[$service]')"
+  CLOUD_RUN_DELETE_COMMANDS_JSON="$(jq -nc \
+    --arg command "gcloud run services delete ${CLOUD_RUN_SERVICE} --project=${GCP_PROJECT} --region=${CLOUD_RUN_REGION} --quiet" \
+    '[$command]')"
+fi
 SCHEDULER_APPLICABLE_JSON=false
 SCHEDULER_PAUSED_THROUGH_CLEAN_MIRROR_JSON=false
 SCHEDULER_STATE="not_applicable"
 SCHEDULER_CREATION_GUARD="not_applicable"
 SCHEDULER_FAILURE_CONTAINMENT_ARMED=0
+
+teardown_command_for_project_ref() {
+  local project_ref="$1"
+  if [[ $IS_G1_RIG -eq 1 ]]; then
+    printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME} --service ${G1_CONTROL_SERVICE} --service ${G1_TUNED_SERVICE}"
+  else
+    printf '%s\n' "scripts/staging/teardown-isolated-rig.sh --project-ref ${project_ref} --rig-name ${NAME} --service ${CLOUD_RUN_SERVICE}"
+  fi
+}
 
 # Cloud Scheduler is required for non-mock profiles: node-cron does NOT fire on a
 # throttled (min-instances=0) Cloud Run service, so the behavioral cron paths
@@ -1336,6 +1417,9 @@ write_provision_state() {
     --arg state_path "$PROVISION_STATE_PATH" \
     --argjson created_cloud_run_service "$CREATED_CLOUD_RUN_SERVICE" \
     --argjson created_supabase_secrets "$CREATED_SUPABASE_SECRETS" \
+    --argjson cloud_run_service_candidates "$CLOUD_RUN_SERVICE_CANDIDATES_JSON" \
+    --argjson cloud_run_delete_commands "$CLOUD_RUN_DELETE_COMMANDS_JSON" \
+    --arg teardown_command "$(teardown_command_for_project_ref "${CREATED_PROJECT_REF:-$NEW_PROJECT_REF}")" \
     '{
       status: $status,
       reason: $reason,
@@ -1373,6 +1457,11 @@ write_provision_state() {
       },
       created_cloud_run_service: $created_cloud_run_service,
       created_supabase_secrets: $created_supabase_secrets,
+      cleanup: {
+        cloud_run_service_candidates: $cloud_run_service_candidates,
+        cloud_run_delete_commands: $cloud_run_delete_commands,
+        teardown_command: $teardown_command
+      },
       state_path: $state_path,
       cleanup_hint: "If status is blocked_after_project_create, either resume with the same rig name/ref and verify these secrets, or run scripts/staging/teardown-isolated-rig.sh against the recorded service/ref."
     }' >"$PROVISION_STATE_PATH" || return 1
@@ -1784,7 +1873,7 @@ g1_topology_json() {
   fi
 
   local teardown_command
-  teardown_command="scripts/staging/teardown-isolated-rig.sh --project-ref ${supabase_project_ref} --rig-name ${NAME} --service ${G1_CONTROL_SERVICE} --service ${G1_TUNED_SERVICE}"
+  teardown_command="$(teardown_command_for_project_ref "$supabase_project_ref")"
   jq -nc \
     --arg candidate_model "$RIG_G1_CANDIDATE_MODEL" \
     --arg candidate_model_resource "projects/${APPROVED_GCP_PROJECT}/locations/us-central1/${RIG_G1_CANDIDATE_MODEL}" \
@@ -1794,10 +1883,15 @@ g1_topology_json() {
     --arg expires_at "$G1_EXPIRES_AT" \
     --arg stop_authority "$G1_STOP_AUTHORITY" \
     --arg teardown_owner "$G1_TEARDOWN_OWNER" \
-    --arg spend_authority_id "$G1_SPEND_AUTHORITY_ID" \
-    --argjson s33_cost_cap_usd "$S33_COST_CAP_USD" \
-    --argjson compute_model_cap_usd "$G1_COMPUTE_MODEL_CAP_USD" \
-    --argjson project_monthly_usd "$RIG_PROJECT_MONTHLY_USD" \
+    --argjson paired_cadence_max_min "$G1_PAIRED_CADENCE_MIN" \
+    --argjson required_worker_uptime_min "$REQUIRED_UPTIME_MIN" \
+    --argjson required_wall_min "$REQUIRED_WALL_MIN" \
+    --argjson s33_total_cap_usd "$S33_COST_CAP_USD_JSON" \
+    --argjson g1_variable_compute_model_cap_usd "$G1_COMPUTE_MODEL_CAP_USD_JSON" \
+    --argjson isolated_project_count "$S33_ISOLATED_SUPABASE_PROJECT_COUNT" \
+    --argjson isolated_project_monthly_each_usd "$S33_ISOLATED_SUPABASE_PROJECT_MONTHLY_EACH_USD" \
+    --argjson isolated_projects_monthly_total_usd "$S33_ISOLATED_SUPABASE_PROJECTS_MONTHLY_TOTAL_USD" \
+    --argjson spend_approval "$G1_SPEND_APPROVAL_JSON" \
     --arg control_service "$G1_CONTROL_SERVICE" \
     --arg tuned_service "$G1_TUNED_SERVICE" \
     --arg control_revision "$G1_CONTROL_DEPLOYED_REVISION" \
@@ -1817,6 +1911,10 @@ g1_topology_json() {
       candidate_model: $candidate_model,
       candidate_model_resource: $candidate_model_resource,
       corpus_digest: $corpus_digest,
+      tier: "T2_CUSTOM",
+      required_worker_uptime_min: $required_worker_uptime_min,
+      required_wall_min: $required_wall_min,
+      paired_cadence_max_min: $paired_cadence_max_min,
       execution_state: "PAUSED",
       background_execution: "disabled",
       owner: $owner,
@@ -1824,11 +1922,13 @@ g1_topology_json() {
       stop_authority: $stop_authority,
       teardown_owner: $teardown_owner,
       budget: {
-        s33_cost_cap_usd: $s33_cost_cap_usd,
-        compute_model_cap_usd: $compute_model_cap_usd,
-        project_monthly_usd: $project_monthly_usd,
-        spend_authority_id: $spend_authority_id
+        s33_total_cap_usd: $s33_total_cap_usd,
+        g1_variable_compute_model_cap_usd: $g1_variable_compute_model_cap_usd,
+        isolated_supabase_project_count: $isolated_project_count,
+        isolated_supabase_project_monthly_each_usd: $isolated_project_monthly_each_usd,
+        isolated_supabase_projects_monthly_total_usd: $isolated_projects_monthly_total_usd
       },
+      spend_approval: $spend_approval,
       shared_inputs: {
         image: $image,
         corpus_digest: $corpus_digest,
@@ -2108,7 +2208,12 @@ echo "#   region=$SUPABASE_REGION, postgres major=$SUPABASE_PG_MAJOR, org=$SUPAB
 # Define the create command once (no triple copy-paste, no drift). The apply
 # path appends --output json so the new ref can be captured + re-validated.
 CREATE_CMD=(npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION")
-NEW_PROJECT_REF='<captured-from-step-1>'
+if [[ $APPLY -eq 1 ]]; then
+  # Persist every deterministic cleanup target and exact delete command before
+  # the first paid/cloud mutation. Every later state rewrite carries the same
+  # cleanup block, including failures during either G1 deploy or verification.
+  write_provision_state "pre_mutation_cleanup_plan_persisted" ""
+fi
 print_cmd "${CREATE_CMD[@]}" --db-password '<redacted:STAGING_NEW_SUPABASE_DB_PASSWORD>'
 if [[ $APPLY -eq 1 ]]; then
   echo "executing: ${CREATE_CMD[*]} --db-password <redacted> --output json" >&2
