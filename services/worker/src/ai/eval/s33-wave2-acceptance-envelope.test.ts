@@ -276,6 +276,13 @@ describe('S3.3 Wave-2 authenticated whole-batch acceptance', () => {
     expect(() => signed(value)).toThrow(/sourceBlobSha.*signed source blob/i);
   });
 
+  it('keeps Wave-2 OTHER/other out of the covered-batch acceptance path', () => {
+    const value = input();
+    value.acceptedEntries[0].credentialType = 'OTHER';
+    value.acceptedEntries[0].subType = 'other';
+    expect(() => signed(value)).toThrow(/subType must be concrete/i);
+  });
+
   it('rejects unknown envelope, payload, and entry keys', () => {
     const artifact = signed();
     expect(() => verify({ ...artifact, unexpected: true })).toThrow(/envelope keys must be exactly/i);

@@ -46,6 +46,46 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - Fail messages must tell the operator (a) what failed, (b) why it matters, (c) how to fix or override.
 
 ## Recent Changes
+- 2026-07-15 Deploy Worker full-history preflight parity: added
+  `deploy-worker-history-contract.test.ts` to require `fetch-depth: 0` before
+  the deploy workflow runs history-bound worker tests. The narrow
+  `deploy-worker.yml` classifier exemption now also accepts only an additive
+  full-history checkout; deletion, `fetch-depth: 1`, mixed runtime edits, and
+  unavailable diffs remain T2. Live GitHub Actions consumers that do not inject
+  a diff provider (notably Merge Authority) resolve the existing
+  `BASE_REF_SHA` and reuse the same per-file diff, preventing a staging-T0 /
+  merge-authority-T2 split; tests and non-Actions callers remain fail-closed.
+- 2026-07-15 S3.3 Wave-3 deterministic evaluator (SCRUM-2681/2686/2687):
+  `check-staging-evidence.ts` classifies only the exact inert
+  `services/worker/src/ai/eval/s33-wave3-deterministic-eval-gates.ts` path as
+  T0. The exception is conditional on a readable runtime graph with zero
+  production importers. Its adjacent test remains test-class T0; sibling names
+  remain T2, and any production-runtime reachability immediately restores T2.
+- 2026-07-15 S3.3 Wave-3 detached release signing (SCRUM-2777):
+  `s33-wave3-detached-signing-v2.ts` exposes `emit-request`,
+  `regenerate-request`, `assemble`, and `verify`. `regenerate-request` accepts a
+  reviewed versioned public trust-policy set only to replace a retired-key
+  unsigned request with the sole active post-cutover key; it does not accept a
+  signature or private material. Input is strict JSON, output uses the existing owner-only
+  `O_EXCL|O_NOFOLLOW` evidence writer, and no private-key or environment-root
+  flag exists. `assemble`/`verify` fail closed while the committed production
+  trust policy is `UNCONFIGURED`. The staging classifier grants T0 only to the
+  exact CLI/shared-module pair while the production runtime import graph is
+  readable and cannot reach them; sibling names and runtime reachability remain
+  T2.
+- 2026-07-15 S3.3 Wave-2 corpus acceptance (SCRUM-2777/2781/2782):
+  `s33-wave2-batch-acceptance.ts` exposes offline `preflight`, authenticated
+  `accept`, and exact-tree `consume-merged` commands. It uses trusted-main
+  evaluator code, reads candidate content as inert Git objects, and creates one
+  owner-only evidence file with `O_EXCL|O_NOFOLLOW`.
+  `s33-wave2-github-transport.ts` strictly extracts one marked envelope and
+  reconciles its issue-comment/formal-review ids, node ids, URL, timestamp, and
+  actor tuple against live GitHub; review state and distinct login are ignored.
+  `check-staging-evidence.ts` grants T0 only to the exact new
+  registry/acceptor/envelope/transport files and the strict
+  `golden-dataset-s33-wave2-<slug>-heldout.ts` producer shape while the worker
+  runtime import graph remains readable and cannot reach them; sibling files
+  and runtime imports remain T2.
 - 2026-07-15 S3.3 trusted-main Worker TSX cwd regression: `s33-wave1-github-evidence.test.ts` now enumerates the exact four Worker CLI targets in `s33-wave1-prerequisites.yml` and the one target in `s33-wave1-acceptance.yml`, requires repository-root-valid `services/worker/src/...` paths, and reads every target from disk. This closes the run-29416344643 class where filename/count assertions passed but `npm --prefix` did not change the shell cwd and `tsx src/...` resolved outside `services/worker`.
 - 2026-07-14 S3.3 offline-acceptance T0 classifier (CTO 102498305):
   `check-staging-evidence.ts` grants T0 only to the exact three Wave-1 corpus

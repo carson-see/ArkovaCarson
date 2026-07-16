@@ -14,6 +14,22 @@
 
 ## Now
 
+### 2026-07-15 (RTE) - S3.3 Wave 3 release rail re-baselined after #1554 merge; deploy preflight fix in review
+
+[PR #1554](https://github.com/carson-see/ArkovaCarson/pull/1554) was merged by Carson at exact merge commit `49ce6fe7d2e26e1a47b9a68c38360e353e67f2dd`. The push-to-main [CI run 29450641252](https://github.com/carson-see/ArkovaCarson/actions/runs/29450641252) passed its worker Tests job, but the automatic [Deploy Worker run 29450641054](https://github.com/carson-see/ArkovaCarson/actions/runs/29450641054) stopped before build/deploy because its shallow checkout could not resolve the immutable S3.3 evidence commits required by the worker acceptance tests. Production was not changed by that failed run.
+
+The scoped T0 remediation makes the pre-deploy checkout use `fetch-depth: 0`, matching main CI, and disables checkout credential persistence before repository tests execute. It adds a regression contract plus a fail-closed tier-classifier carve-out: additive full history and credential isolation on the checkout step are CI-only T0, while applying those inputs to another action, removing them, enabling persistence, or selecting a shallow depth remains T2. No rig, soak, deployment, secret, migration, or production mutation was performed by this remediation.
+
+_Last refreshed: 2026-07-15 by RTE — claims verified against GitHub Actions runs 29450641054 and 29450641252._
+
+### 2026-07-15 (Lane 3) - S3.3 Wave 3 detached signing v2 implemented; #1554 open for Lane 4 cross-review
+
+[PR #1554](https://github.com/carson-see/ArkovaCarson/pull/1554) is the single canonical L3-W3-1 delivery. It adds the canonical/domain-separated unsigned-request emitter, detached-signature-only Ed25519 assembler, strict verifier, and reviewed trust-policy state machine, plus the exact 16-gate machine-readable v7.1 offline registry. It is T0/offline-only, Ready (not Draft), labeled `do-not-merge`, and assigned by the ART packet to Lane 4 for independent cross-review; Lane 3 must not self-approve.
+
+The committed production policy remains `UNCONFIGURED`: public SPKI, DER fingerprint, operator, CTO out-of-band fingerprint confirmation, and activation time are all `null`. There is no private-key API, signer, environment trust-root override, bypass, corpus-acceptance connection, endpoint, rig, deployment, model run, or spend. Activation is deferred to a later CTO-reviewed public-key input commit; this PR claims no corpus/model acceptance.
+
+_Verified locally from exact base `164c5f312266f1bb6be7ab8de23627467b7e244b`: root typecheck/lint + 4,429 tests + copy lint; worker typecheck/lint + 8,163 tests + build; fixture S3 gate 48/48 PASS; targeted v2 11/11; CLI/classifier 253/253; runtime importers `[]`; computed T0; diff check and staged gitleaks green. No staging or production action was performed._
+
 ### 2026-07-13 (Claude) - Partner-platform + trust hygiene: api/docs hostnames LIVE, signup email-verification ON, securing-flow decision, infra clean
 
 **New prod infra — `api.arkova.ai` + `docs.arkova.ai` are LIVE** (were referenced across code/SDKs but never existed). Served by a new Cloudflare Worker `arkova-api-gateway` (`services/api-gateway/`, PR [#1505](https://github.com/carson-see/ArkovaCarson/pull/1505)): allowlist path-map to the Cloud Run worker (`/v1|/v2 -> /api/v1|/api/v2`, `/api/docs/spec.json`, `/health`; internal `/api/admin|/api/treasury|/api/billing|/api/audit|/api/anchor-revoke` return 404, regression-tested). `docs.arkova.ai/keys.json` = proof-signing verifier-contract key distribution (empty until `PROOF_SIGNING_*` set; prod has none). Custom domains attached via account-scoped `PUT /accounts/{id}/workers/domains` (both Secret Manager CF tokens lack zone Workers-Routes perms — wrangler errors after upload). #1505 is T1, review fixes at head `09ff2bb2`, soak floor 14:52Z passed, gate green — **awaiting Carson merge**.
@@ -174,3 +190,5 @@ _Last refreshed: 2026-07-12 by Claude (RTE) — claims verified against gcloud/M
 _Last refreshed: 2026-07-13 by Claude (RTE) - S3 release close-out; verified against gh merge states, Supabase MCP prod ledger head 0357, gcloud run teardown._
 
 _Last refreshed: 2026-07-13 by Claude (partner-platform + trust hygiene session) — claims verified against: live curl of `https://api.arkova.ai/health`=200, `/api/admin/x`=404, `/v1/verify/...` returns worker v1 shape, `https://docs.arkova.ai/keys.json` verifier-contract shape; Supabase Management API `GET .../config/auth` showing `mailer_autoconfirm=false` + `site_url=https://app.arkova.ai`; signup round-trip (no session + `confirmation_sent_at`); `gcloud ai endpoints list`=0 (us-central1/us-east4/europe-west4); `gcloud run services list`=arkova-worker + arkova-worker-staging only; Supabase `list_projects`=staging+prod only; `gh pr checks 1505` staging gate=pass post-14:52Z; Confluence 100433923 + SCRUM-2894 create responses._
+
+_Last refreshed: 2026-07-15 by Codex-Lane-3 — claims verified against gcloud/MCP/CI output (GitHub `gh pr view 1554`; local root/worker typecheck, lint, Vitest, build, fixture eval, runtime-import classifier, diff-check, and staged-gitleaks outputs; no gcloud or MCP mutation performed)._
