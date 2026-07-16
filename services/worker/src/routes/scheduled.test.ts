@@ -4,6 +4,7 @@ const { mockConfig, mockCronSchedule, mockLogger } = vi.hoisted(() => ({
   mockConfig: {
     nodeEnv: 'test',
     batchAnchorIntervalMinutes: 10,
+    disableAllInProcessCron: false,
     disableInProcessAnchorCron: false,
     enableConfirmationProofBackfill: false,
     enableConnectorArtifactDrain: false,
@@ -70,6 +71,7 @@ vi.mock('../utils/sentry.js', () => ({ withCronMonitoring: vi.fn((_name, _schedu
 describe('setupScheduledJobs', () => {
   beforeEach(() => {
     mockConfig.nodeEnv = 'test';
+    mockConfig.disableAllInProcessCron = false;
     mockConfig.disableInProcessAnchorCron = false;
     mockConfig.enableConfirmationProofBackfill = false;
     mockConfig.enableConnectorArtifactDrain = false;
@@ -107,6 +109,21 @@ describe('setupScheduledJobs', () => {
 
     expect(mockCronSchedule).toHaveBeenCalledTimes(15);
     expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it('registers zero cron schedules when the isolated-arm runtime kill switch is enabled', async () => {
+    mockConfig.nodeEnv = 'production';
+    mockConfig.disableAllInProcessCron = true;
+    mockConfig.enableConfirmationProofBackfill = true;
+    mockConfig.enableConnectorArtifactDrain = true;
+    const { setupScheduledJobs } = await import('./scheduled.js');
+
+    setupScheduledJobs(true);
+
+    expect(mockCronSchedule).toHaveBeenCalledTimes(0);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'All in-process cron disabled because DISABLE_ALL_IN_PROCESS_CRON=true',
+    );
   });
 
   it('skips anchor-table in-process cron in production when maintenance flag is enabled', async () => {

@@ -74,6 +74,11 @@ function scheduleInProcess(jobName: string, expression: string, task: CronTask):
 }
 
 export function setupScheduledJobs(chainInitialized: boolean): void {
+  if (config.disableAllInProcessCron) {
+    logger.warn('All in-process cron disabled because DISABLE_ALL_IN_PROCESS_CRON=true');
+    return;
+  }
+
   // Sentry cron monitoring wrappers (Phase 4, Item 18)
   const monitoredConfirmationCheck = withCronMonitoring(
     'check-confirmations', '*/2 * * * *', checkSubmittedConfirmations,
