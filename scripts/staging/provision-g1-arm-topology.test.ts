@@ -65,6 +65,7 @@ const g1Env = {
   STAGING_G1_PAIRED_CADENCE_MIN: '30',
   STAGING_G1_STOP_AUTHORITY: 'founders-cto-rte',
   STAGING_G1_TEARDOWN_OWNER: 'lane-4-sm',
+  STAGING_RUNTIME_SA_EMAIL: 's33-g1-runtime@arkova1.iam.gserviceaccount.com',
   STAGING_GEMINI_TUNED_MODEL:
     'projects/arkova1/locations/us-central1/endpoints/123456789',
   STAGING_RIG_ID: 'RIG-G1',
@@ -83,6 +84,13 @@ function g1DryRun(env: Record<string, string> = {}): RunResult {
 const pinnedImageDigest = `sha256:${'d'.repeat(64)}`;
 const pinnedImage = `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${pinnedImageDigest}`;
 const endpointModel = 'projects/arkova1/locations/us-central1/models/6611494259700793344';
+const immutableLedgerBucket = 'arkova1-s33-immutable-authority-ledger';
+const immutableLedger = {
+  backend: 'gcs-if-generation-match-0-locked-retention',
+  bucket: immutableLedgerBucket,
+  projectId: 'arkova1',
+  requiresPerObjectRetention: true,
+};
 
 interface G1FaultRun {
   code: number;
@@ -109,6 +117,8 @@ function runG1ApplyFault(options: {
   hiddenByIndexFlag?: 'assume-unchanged' | 'skip-worktree';
   checksumLoaderTarget?: 'git' | 'node';
   sharedLedgerDir?: string;
+  bucketObjectRetention?: boolean;
+  env?: Record<string, string>;
 } = {}): G1FaultRun {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'g1-provision-fault-')));
   stubRoots.push(root);
@@ -280,6 +290,24 @@ process.stdout.write(readFileSync(readArg('--artifact'), 'utf8'));
       rigClass: 'RIG-G1', rigName: 's33-g1', rigProfile: 'gemini', soakId: 'soak-s33-g1',
       rigId: 'RIG-G1', leaseId: 'lease-s33-g1', corpusDigest: g1Env.STAGING_G1_CORPUS_DIGEST,
       endpointResource: g1Env.STAGING_GEMINI_TUNED_MODEL,
+      runtimeServiceAccount: g1Env.STAGING_RUNTIME_SA_EMAIL,
+      controlService: 'arkova-worker-s33-g1-public-staging',
+      tunedService: 'arkova-worker-s33-g1-tuned-staging',
+      controlRunId: g1Env.STAGING_G1_CONTROL_RUN_ID,
+      tunedRunId: g1Env.STAGING_G1_TUNED_RUN_ID,
+      controlQueue: g1Env.STAGING_G1_CONTROL_QUEUE,
+      tunedQueue: g1Env.STAGING_G1_TUNED_QUEUE,
+      pairedCadenceMaxMin: 30,
+      secretReferences: {
+        supabaseUrl: 'supabase-url-s33-g1-staging',
+        supabaseServiceRoleKey: 'supabase-service-role-key-s33-g1-staging',
+        stripeSecretKey: 'stripe-secret-key-staging',
+        stripeWebhookSecret: 'stripe-webhook-secret-staging',
+        apiKeyHmacSecret: 'api-key-hmac-secret-staging',
+        cronSecret: 'cron-secret',
+        geminiApiKey: 'gemini-api-key-staging',
+      },
+      immutableLedger,
     },
     isolatedSupabaseProjectCount: 3,
     isolatedSupabaseProjectMonthlyEachUsd: 10,
@@ -390,8 +418,12 @@ if [[ "$1" == "storage" && "$2" == "cp" ]]; then
   fi
   exit 0
 fi
+if [[ "$1" == "storage" && "$2" == "buckets" && "$3" == "describe" ]]; then
+  printf '%s\\n' '{"name":"${immutableLedgerBucket}","projectNumber":"270018525501","objectRetention":${options.bucketObjectRetention === false ? 'null' : '{"mode":"Enabled"}'}}'
+  exit 0
+fi
 if [[ "$1" == "storage" && "$2" == "objects" && "$3" == "describe" ]]; then
-  printf '%s\\n' '{"bucket":"arkova-training-data","name":"s33/g1/approval-claims/approval-s33-g1-001.json","generation":"1","timeCreated":"2026-07-15T20:02:00Z","retention":{"mode":"Locked","retainUntilTime":"2026-07-20T00:00:00Z"}}'
+  printf '%s\\n' '{"bucket":"${immutableLedgerBucket}","name":"s33/g1/approval-claims/approval-s33-g1-001.json","generation":"1","timeCreated":"2026-07-15T20:02:00Z","retention":{"mode":"Locked","retainUntilTime":"2026-07-20T00:00:00Z"}}'
   exit 0
 fi
 if [[ "$1" == "artifacts" && "$2" == "docker" ]]; then
@@ -456,6 +488,7 @@ exit 0
     STAGING_CHANGED_BEHAVIOR: 'RIG-G1 paired public/v6 external experiment',
     STAGING_G1_SPEND_APPROVAL_ARTIFACT: join(root, 'approval-envelope.json'),
     STAGING_ADMISSION_DIR: artifactDir,
+    ...options.env,
     ...(checksumTargetPath
       ? { PERL5LIB: root, PERL5OPT: '-MArkovaChecksumOverride' }
       : {}),
@@ -551,8 +584,8 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
       background_execution: 'disabled',
       owner: '<from-verified-approval-record>',
       expires_at: '<from-verified-approval-record>',
-      stop_authority: 'founders-cto-rte',
-      teardown_owner: 'lane-4-sm',
+      stop_authority: '<from-verified-approval-approver>',
+      teardown_owner: '<from-verified-approval-owner>',
       budget: {
         s33_total_cap_usd: null,
         g1_variable_compute_model_cap_usd: null,
@@ -592,6 +625,22 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
       '--service arkova-worker-s33-g1-tuned-staging',
     );
     expect(admission.g1.shared_inputs.supabase_project_ref).toBe('<captured-from-step-1>');
+  });
+
+  it('never promotes caller environment values into stop or teardown authority', () => {
+    const callerStop = 'caller-appointed-stop-authority';
+    const callerTeardown = 'caller-appointed-teardown-owner';
+    const result = g1DryRun({
+      STAGING_G1_STOP_AUTHORITY: callerStop,
+      STAGING_G1_TEARDOWN_OWNER: callerTeardown,
+    });
+    expect(result.code, result.out).toBe(0);
+    const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
+    const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
+    expect(admission.g1.stop_authority).toBe('<from-verified-approval-approver>');
+    expect(admission.g1.teardown_owner).toBe('<from-verified-approval-owner>');
+    expect(JSON.stringify(admission.g1)).not.toContain(callerStop);
+    expect(JSON.stringify(admission.g1)).not.toContain(callerTeardown);
   });
 
   it('re-observes the Vertex endpoint and proves the exact candidate deployment before mutation', () => {
@@ -748,13 +797,73 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     for (const expectedArg of [
       '--expected-rig-name', '--expected-rig-profile', '--expected-soak-id',
       '--expected-rig-id', '--expected-lease-id', '--expected-corpus-digest',
-      '--expected-endpoint-resource',
+      '--expected-endpoint-resource', '--expected-runtime-service-account',
+      '--expected-control-service', '--expected-tuned-service', '--expected-control-run-id',
+      '--expected-tuned-run-id', '--expected-control-queue', '--expected-tuned-queue',
+      '--expected-paired-cadence-max-min', '--expected-supabase-url-secret',
+      '--expected-supabase-service-role-secret', '--expected-stripe-secret-key-secret',
+      '--expected-stripe-webhook-secret', '--expected-api-key-hmac-secret',
+      '--expected-cron-secret', '--expected-gemini-api-key-secret',
+      '--expected-immutable-ledger-bucket',
     ]) expect(provisionerSource).toContain(expectedArg);
     expect(provisionerSource).toContain('--if-generation-match=0');
     expect(provisionerSource).toContain('approval_claim');
     const stepOneApply = provisionerSource.slice(provisionerSource.indexOf('CREATE_CMD=('));
     expect(stepOneApply.indexOf('claim_g1_spend_approval_once'))
       .toBeLessThan(stepOneApply.indexOf('NEW_PROJECT_REF="$('));
+  });
+
+  it('fails before claim or paid mutation when the approved ledger lacks per-object retention', () => {
+    const result = runG1ApplyFault({ bucketObjectRetention: false });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/per-object retention|immutable.*ledger|bucket capability/i);
+    expect(result.gcloudCalls.some((call) => call.startsWith('storage buckets describe '))).toBe(true);
+    expect(result.gcloudCalls.some((call) => call.startsWith('storage cp '))).toBe(false);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+  });
+
+  it('code-binds every immutable claim to the dedicated approved retention ledger', () => {
+    expect(provisionerSource).toContain(`IMMUTABLE_AUTHORITY_LEDGER_BUCKET="${immutableLedgerBucket}"`);
+    expect(provisionerSource).not.toContain('RIG_G1_APPROVAL_LEDGER_BUCKET="arkova-training-data"');
+    expect(provisionerSource).not.toContain('RIG_R_APPROVAL_LEDGER_BUCKET="arkova-training-data"');
+    expect(provisionerSource).not.toContain('RIG_R_LEASE_BUCKET="arkova-training-data"');
+    expect(provisionerSource.indexOf('verify_immutable_authority_ledger_capability'))
+      .toBeLessThan(provisionerSource.indexOf('claim_g1_spend_approval_once'));
+  });
+
+  it.each([
+    ['runtime service account', { STAGING_RUNTIME_SA_EMAIL: 'shadow@arkova1.iam.gserviceaccount.com' }],
+    ['control run id', { STAGING_G1_CONTROL_RUN_ID: 'shadow-control-run' }],
+    ['tuned queue', { STAGING_G1_TUNED_QUEUE: 'shadow-tuned-queue' }],
+    ['paired cadence', { STAGING_G1_PAIRED_CADENCE_MIN: '29' }],
+    ['Gemini secret', { STAGING_GEMINI_API_KEY_SECRET: 'shadow-gemini-secret' }],
+  ])('rejects caller substitution of signed %s before approval claim or paid mutation', (_label, env) => {
+    const result = runG1ApplyFault({ env });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/approval|scope|binding|verifier/i);
+    expect(result.gcloudCalls.some((call) => call.startsWith('storage cp '))).toBe(false);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+  });
+
+  it('persists only authenticated approval authority despite arbitrary caller authority env', () => {
+    const result = runG1ApplyFault({
+      failDeployAt: 1,
+      env: {
+        STAGING_G1_STOP_AUTHORITY: 'caller-appointed-stop-authority',
+        STAGING_G1_TEARDOWN_OWNER: 'caller-appointed-teardown-owner',
+      },
+    });
+    expect(result.state).not.toBeNull();
+    expect(result.state).toMatchObject({
+      g1_authority: {
+        approval_id: 'approval-s33-g1-001',
+        stop_authority: 'arkova.s33.approver.founder-cto.v1',
+        teardown_owner: 'lane-4-sm',
+      },
+    });
+    expect(JSON.stringify(result.state)).not.toContain('caller-appointed');
   });
 
   it('ignores a PATH-substituted Node and uses the exact code-bound launcher', () => {

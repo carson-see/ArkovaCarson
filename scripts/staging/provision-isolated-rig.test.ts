@@ -53,7 +53,9 @@ const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  '99b02e29bff8a6ad3db7e7a25fa0f915550f4d0d8b3a3fc6df813c6e4cf8ce28';
+  'cf8d4a9757b8f000290fe9807d9ba688f959817b2678bb7df2122bda7ec92acd';
+const INTEGRATED_B1_PUBLIC_AUTHORITY_BINDING =
+  'Production verification is code-bound to public key `arkova.s33.b1-evidence.ed25519.v1`, its SPKI fingerprint, operator, activation, and canonical genesis-roster root; envelopes must name that exact key id.';
 
 // Apply-mode cases launch many short-lived git/gcloud/npx shell stubs. They
 // finish in ~1s focused but can exceed Vitest's 5s default when the full
@@ -80,6 +82,13 @@ describe('scripts/staging/agents.md — exact cross-lane semantic union', () => 
 
   it('retains Team 1 admission provenance exactly once, beyond heading-count coverage', () => {
     expect(stagingAgents.split(TEAM1_ADMISSION_PROVENANCE_RULE)).toHaveLength(2);
+  });
+
+  it('retains the integrated B1 public-authority activation instead of the pre-activation null root', () => {
+    expect(stagingAgents.split(INTEGRATED_B1_PUBLIC_AUTHORITY_BINDING)).toHaveLength(2);
+    expect(stagingAgents).not.toContain(
+      'The production verification key and SPKI fingerprint are code-owned and deliberately null',
+    );
   });
 });
 
@@ -451,6 +460,7 @@ interface ApplyRunOptions {
   schedulerEnabledVerificationFailsAt?: number;
   blockAdmissionArtifactPath?: boolean;
   failFinalStatePersistence?: boolean;
+  b1InvokerGrantFails?: boolean;
   childTimeoutMs?: number;
   env?: Record<string, string>;
 }
@@ -657,6 +667,13 @@ if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
     echo '${STUB_REVISION}'
   else
     echo '${STUB_SERVICE_URL}'
+  fi
+  exit 0
+fi
+if [[ "$1" == "run" && "$2" == "services" && "$3" == "add-iam-policy-binding" ]]; then
+  if [[ '${options.b1InvokerGrantFails ? 'true' : 'false'}' == 'true' ]]; then
+    echo 'injected B1 service invoker grant failure' >&2
+    exit 48
   fi
   exit 0
 fi
@@ -1354,6 +1371,48 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
     expect(creates.every((call) => call.includes(
       `--oidc-service-account-email=${RIG_B1_ISOLATED_INPUTS.STAGING_CRON_OIDC_SA}`,
     ))).toBe(true);
+  });
+
+  it('grants only the explicit B1 OIDC principal service-scoped invoker before Scheduler creation', () => {
+    expect(paused.code, paused.out).toBe(0);
+    const exactGrant = [
+      'run services add-iam-policy-binding arkova-worker-w3c-rig-b1-paused-staging',
+      `--member=serviceAccount:${RIG_B1_ISOLATED_INPUTS.STAGING_CRON_OIDC_SA}`,
+      '--role=roles/run.invoker',
+      '--region=us-central1',
+      '--project=arkova1',
+      '--condition=None',
+      '--quiet',
+    ];
+    const grantCalls = paused.gcloudCalls.filter((call) =>
+      call.startsWith('run services add-iam-policy-binding '),
+    );
+    expect(grantCalls).toHaveLength(1);
+    for (const fragment of exactGrant) expect(grantCalls[0]).toContain(fragment);
+    expect(paused.gcloudCalls.some((call) =>
+      call.startsWith('projects add-iam-policy-binding ') && call.includes('roles/run.invoker'),
+    )).toBe(false);
+    const deployIndex = paused.callOrder.findIndex((entry) => entry.startsWith('gcloud run deploy '));
+    const grantIndex = paused.callOrder.findIndex((entry) =>
+      entry.startsWith('gcloud run services add-iam-policy-binding '),
+    );
+    const firstCreateIndex = paused.callOrder.findIndex((entry) =>
+      entry.startsWith('gcloud scheduler jobs create http '),
+    );
+    expect(grantIndex).toBeGreaterThan(deployIndex);
+    expect(grantIndex).toBeLessThan(firstCreateIndex);
+  });
+
+  it('fails closed before every Scheduler create when the B1 invoker grant fails', () => {
+    const result = applyRunStubbed('w3c-rig-b1-invoker-denied', 'chain', {
+      rigId: 'RIG-B1',
+      env: RIG_B1_APPLY_ENV,
+      b1InvokerGrantFails: true,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/invoker|IAM|grant|failure/i);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(true);
+    expect(result.gcloudCalls.some((call) => call.startsWith('scheduler jobs create '))).toBe(false);
   });
 
   it('uses the CTO five-minute cadence only under explicit FORCE_ACCELERATED_RIG_ONLY confirmation', () => {

@@ -43,6 +43,15 @@ const RIG_NAME = /^[a-z0-9][a-z0-9-]{2,62}$/;
 const IMMUTABLE_REVISION_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,255}$/;
 const UTC_TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z$/;
 const ENDPOINT_RESOURCE = /^projects\/[a-z][a-z0-9-]{4,28}[a-z0-9]\/locations\/us-central1\/endpoints\/[1-9][0-9]*$/;
+const CLOUD_RUN_SERVICE = /^[a-z][a-z0-9-]{1,61}[a-z0-9]$/;
+const SERVICE_ACCOUNT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$/;
+const SECRET_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,254}$/;
+const IMMUTABLE_LEDGER = Object.freeze({
+  backend: 'gcs-if-generation-match-0-locked-retention',
+  bucket: 'arkova1-s33-immutable-authority-ledger',
+  projectId: 'arkova1',
+  requiresPerObjectRetention: true,
+});
 
 function decodeJsonKey(raw, start, end, label) {
   let decoded = '';
@@ -178,13 +187,52 @@ function identityArray(value, label) {
   return parsed;
 }
 
+function parseSecretReferences(value, label) {
+  const references = object(value, label);
+  exactKeys(references, [
+    'supabaseUrl', 'supabaseServiceRoleKey', 'stripeSecretKey',
+    'stripeWebhookSecret', 'apiKeyHmacSecret', 'cronSecret', 'geminiApiKey',
+  ], label);
+  return Object.fromEntries(Object.entries(references).map(([key, reference]) => [
+    key,
+    string(reference, SECRET_NAME, `${label}.${key}`, 255),
+  ]));
+}
+
+function parseImmutableLedger(value, label) {
+  const ledger = object(value, label);
+  exactKeys(ledger, [
+    'backend', 'bucket', 'projectId', 'requiresPerObjectRetention',
+  ], label);
+  return {
+    backend: literal(ledger.backend, IMMUTABLE_LEDGER.backend, `${label}.backend`),
+    bucket: literal(ledger.bucket, IMMUTABLE_LEDGER.bucket, `${label}.bucket`),
+    projectId: literal(ledger.projectId, IMMUTABLE_LEDGER.projectId, `${label}.projectId`),
+    requiresPerObjectRetention: literal(
+      ledger.requiresPerObjectRetention,
+      true,
+      `${label}.requiresPerObjectRetention`,
+    ),
+  };
+}
+
 function parseScope(value, label = 'G1 approval scope') {
   const scope = object(value, label);
   exactKeys(scope, [
     'rigClass', 'rigName', 'rigProfile', 'soakId', 'rigId', 'leaseId',
-    'corpusDigest', 'endpointResource',
+    'corpusDigest', 'endpointResource', 'runtimeServiceAccount',
+    'controlService', 'tunedService', 'controlRunId', 'tunedRunId',
+    'controlQueue', 'tunedQueue', 'pairedCadenceMaxMin', 'secretReferences',
+    'immutableLedger',
   ], label);
-  return {
+  const pairedCadenceMaxMin = positiveInteger(
+    scope.pairedCadenceMaxMin,
+    `${label}.pairedCadenceMaxMin`,
+  );
+  if (pairedCadenceMaxMin > 30) {
+    throw new Error(`${label}.pairedCadenceMaxMin cannot exceed 30 minutes.`);
+  }
+  const parsed = {
     rigClass: literal(scope.rigClass, 'RIG-G1', `${label}.rigClass`),
     rigName: string(scope.rigName, RIG_NAME, `${label}.rigName`, 63),
     rigProfile: literal(scope.rigProfile, 'gemini', `${label}.rigProfile`),
@@ -193,7 +241,28 @@ function parseScope(value, label = 'G1 approval scope') {
     leaseId: string(scope.leaseId, EXECUTION_ID, `${label}.leaseId`, 128),
     corpusDigest: string(scope.corpusDigest, SHA256_DIGEST, `${label}.corpusDigest`, 71),
     endpointResource: string(scope.endpointResource, ENDPOINT_RESOURCE, `${label}.endpointResource`, 256),
+    runtimeServiceAccount: string(
+      scope.runtimeServiceAccount,
+      SERVICE_ACCOUNT,
+      `${label}.runtimeServiceAccount`,
+      128,
+    ),
+    controlService: string(scope.controlService, CLOUD_RUN_SERVICE, `${label}.controlService`, 63),
+    tunedService: string(scope.tunedService, CLOUD_RUN_SERVICE, `${label}.tunedService`, 63),
+    controlRunId: string(scope.controlRunId, EXECUTION_ID, `${label}.controlRunId`, 128),
+    tunedRunId: string(scope.tunedRunId, EXECUTION_ID, `${label}.tunedRunId`, 128),
+    controlQueue: string(scope.controlQueue, EXECUTION_ID, `${label}.controlQueue`, 128),
+    tunedQueue: string(scope.tunedQueue, EXECUTION_ID, `${label}.tunedQueue`, 128),
+    pairedCadenceMaxMin,
+    secretReferences: parseSecretReferences(scope.secretReferences, `${label}.secretReferences`),
+    immutableLedger: parseImmutableLedger(scope.immutableLedger, `${label}.immutableLedger`),
   };
+  if (parsed.controlService === parsed.tunedService
+    || parsed.controlRunId === parsed.tunedRunId
+    || parsed.controlQueue === parsed.tunedQueue) {
+    throw new Error(`${label} must bind distinct control/tuned service, run, and queue identities.`);
+  }
+  return parsed;
 }
 
 function parseApprovalRecord(value) {
@@ -311,7 +380,10 @@ function parseExpectedCandidate(value) {
   const candidate = object(value, 'Expected G1 candidate and scope');
   exactKeys(candidate, [
     'sourceHeadSha', 'imageDigest', 'rigClass', 'rigName', 'rigProfile', 'soakId',
-    'rigId', 'leaseId', 'corpusDigest', 'endpointResource',
+    'rigId', 'leaseId', 'corpusDigest', 'endpointResource', 'runtimeServiceAccount',
+    'controlService', 'tunedService', 'controlRunId', 'tunedRunId',
+    'controlQueue', 'tunedQueue', 'pairedCadenceMaxMin', 'secretReferences',
+    'immutableLedger',
   ], 'Expected G1 candidate and scope');
   return {
     sourceHeadSha: string(candidate.sourceHeadSha, GIT_SHA, 'Expected source HEAD', 40),
@@ -325,6 +397,16 @@ function parseExpectedCandidate(value) {
       leaseId: candidate.leaseId,
       corpusDigest: candidate.corpusDigest,
       endpointResource: candidate.endpointResource,
+      runtimeServiceAccount: candidate.runtimeServiceAccount,
+      controlService: candidate.controlService,
+      tunedService: candidate.tunedService,
+      controlRunId: candidate.controlRunId,
+      tunedRunId: candidate.tunedRunId,
+      controlQueue: candidate.controlQueue,
+      tunedQueue: candidate.tunedQueue,
+      pairedCadenceMaxMin: candidate.pairedCadenceMaxMin,
+      secretReferences: candidate.secretReferences,
+      immutableLedger: candidate.immutableLedger,
     }, 'Expected G1 scope'),
   };
 }
@@ -526,10 +608,31 @@ async function main() {
       'expected-lease-id': { type: 'string' },
       'expected-corpus-digest': { type: 'string' },
       'expected-endpoint-resource': { type: 'string' },
+      'expected-runtime-service-account': { type: 'string' },
+      'expected-control-service': { type: 'string' },
+      'expected-tuned-service': { type: 'string' },
+      'expected-control-run-id': { type: 'string' },
+      'expected-tuned-run-id': { type: 'string' },
+      'expected-control-queue': { type: 'string' },
+      'expected-tuned-queue': { type: 'string' },
+      'expected-paired-cadence-max-min': { type: 'string' },
+      'expected-supabase-url-secret': { type: 'string' },
+      'expected-supabase-service-role-secret': { type: 'string' },
+      'expected-stripe-secret-key-secret': { type: 'string' },
+      'expected-stripe-webhook-secret': { type: 'string' },
+      'expected-api-key-hmac-secret': { type: 'string' },
+      'expected-cron-secret': { type: 'string' },
+      'expected-gemini-api-key-secret': { type: 'string' },
+      'expected-immutable-ledger-bucket': { type: 'string' },
     },
     strict: true,
   });
   if (!args.values.artifact) throw new Error('--artifact is required.');
+  const pairedCadenceText = args.values['expected-paired-cadence-max-min'];
+  const pairedCadenceMaxMin = typeof pairedCadenceText === 'string'
+    && /^[1-9][0-9]*$/.test(pairedCadenceText)
+    ? Number(pairedCadenceText)
+    : Number.NaN;
   const expectedCandidate = {
     sourceHeadSha: args.values['expected-source-head'],
     imageDigest: args.values['expected-image-digest'],
@@ -541,6 +644,27 @@ async function main() {
     leaseId: args.values['expected-lease-id'],
     corpusDigest: args.values['expected-corpus-digest'],
     endpointResource: args.values['expected-endpoint-resource'],
+    runtimeServiceAccount: args.values['expected-runtime-service-account'],
+    controlService: args.values['expected-control-service'],
+    tunedService: args.values['expected-tuned-service'],
+    controlRunId: args.values['expected-control-run-id'],
+    tunedRunId: args.values['expected-tuned-run-id'],
+    controlQueue: args.values['expected-control-queue'],
+    tunedQueue: args.values['expected-tuned-queue'],
+    pairedCadenceMaxMin,
+    secretReferences: {
+      supabaseUrl: args.values['expected-supabase-url-secret'],
+      supabaseServiceRoleKey: args.values['expected-supabase-service-role-secret'],
+      stripeSecretKey: args.values['expected-stripe-secret-key-secret'],
+      stripeWebhookSecret: args.values['expected-stripe-webhook-secret'],
+      apiKeyHmacSecret: args.values['expected-api-key-hmac-secret'],
+      cronSecret: args.values['expected-cron-secret'],
+      geminiApiKey: args.values['expected-gemini-api-key-secret'],
+    },
+    immutableLedger: {
+      ...IMMUTABLE_LEDGER,
+      bucket: args.values['expected-immutable-ledger-bucket'],
+    },
   };
   const verifier = createProductionG1SpendApprovalVerifier();
   const raw = await readRegularFileNoFollow(args.values.artifact);

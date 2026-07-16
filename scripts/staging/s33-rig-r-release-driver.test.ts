@@ -107,6 +107,22 @@ describe('RIG-R exact provision and teardown topology', () => {
     expect(result.out).not.toContain('scheduler jobs create');
     expect(result.out).not.toContain('--oidc-service-account-email');
     expect(result.out).not.toContain('tasks queues create');
+    expect(result.out).not.toMatch(
+      /projects add-iam-policy-binding arkova1 .*roles\/secretmanager\.secretAccessor/,
+    );
+    for (const secretName of [
+      'supabase-url-s33-r-staging',
+      'supabase-service-role-key-s33-r-staging',
+      'stripe-secret-key-staging',
+      'stripe-webhook-secret-staging',
+      'api-key-hmac-secret-staging',
+      'cron-secret',
+      'gemini-api-key-staging',
+    ]) {
+      expect(result.out).toContain(
+        `secrets add-iam-policy-binding ${secretName}`,
+      );
+    }
   });
 
   it.each([
@@ -161,7 +177,7 @@ describe('RIG-R exact provision and teardown topology', () => {
       'supabase projects delete abcdefghijklmnopqrst',
       'projects remove-iam-policy-binding arkova1',
       'iam service-accounts delete s33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
-      `storage rm gs://arkova-training-data/s33/rig-leases/${leaseId}.json`,
+      `storage rm gs://arkova1-s33-immutable-authority-ledger/s33/rig-leases/${leaseId}.json`,
     ];
     let cursor = -1;
     for (const fragment of ordered) {

@@ -7,6 +7,29 @@ export interface G1Scope {
   readonly leaseId: string;
   readonly corpusDigest: string;
   readonly endpointResource: string;
+  readonly runtimeServiceAccount: string;
+  readonly controlService: string;
+  readonly tunedService: string;
+  readonly controlRunId: string;
+  readonly tunedRunId: string;
+  readonly controlQueue: string;
+  readonly tunedQueue: string;
+  readonly pairedCadenceMaxMin: number;
+  readonly secretReferences: {
+    readonly supabaseUrl: string;
+    readonly supabaseServiceRoleKey: string;
+    readonly stripeSecretKey: string;
+    readonly stripeWebhookSecret: string;
+    readonly apiKeyHmacSecret: string;
+    readonly cronSecret: string;
+    readonly geminiApiKey: string;
+  };
+  readonly immutableLedger: {
+    readonly backend: string;
+    readonly bucket: string;
+    readonly projectId: string;
+    readonly requiresPerObjectRetention: boolean;
+  };
 }
 
 export interface G1SpendApprovalRecord {

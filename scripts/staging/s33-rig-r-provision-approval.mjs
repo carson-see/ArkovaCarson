@@ -45,6 +45,21 @@ const GENERATED_SECRET_NAMES = Object.freeze([
   'supabase-url-s33-r-staging',
   'supabase-service-role-key-s33-r-staging',
 ]);
+const SECRET_REFERENCES = Object.freeze({
+  supabaseUrl: 'supabase-url-s33-r-staging',
+  supabaseServiceRoleKey: 'supabase-service-role-key-s33-r-staging',
+  stripeSecretKey: 'stripe-secret-key-staging',
+  stripeWebhookSecret: 'stripe-webhook-secret-staging',
+  apiKeyHmacSecret: 'api-key-hmac-secret-staging',
+  cronSecret: 'cron-secret',
+  geminiApiKey: 'gemini-api-key-staging',
+});
+const IMMUTABLE_LEDGER = Object.freeze({
+  backend: 'gcs-if-generation-match-0-locked-retention',
+  bucket: 'arkova1-s33-immutable-authority-ledger',
+  projectId: 'arkova1',
+  requiresPerObjectRetention: true,
+});
 const CONTAINED_DATABASE_QUEUES = Object.freeze(['ai-rollback', 'chain-fault']);
 const TEARDOWN_BOUNDARIES = Object.freeze([
   'deployed-model',
@@ -212,6 +227,15 @@ function emptyArray(value, label) {
   return [];
 }
 
+function parseExactObject(value, expected, label) {
+  const candidate = object(value, label);
+  exactKeys(candidate, Object.keys(expected), label);
+  return Object.fromEntries(Object.entries(expected).map(([key, expectedValue]) => [
+    key,
+    literal(candidate[key], expectedValue, `${label}.${key}`),
+  ]));
+}
+
 function parseTimestamp(value, label) {
   const parsed = string(value, UTC_TIMESTAMP, label, 40);
   const epoch = Date.parse(parsed);
@@ -246,6 +270,7 @@ function parseTopology(value, label = 'RIG-R approval topology') {
     'requiredWallMin', 'gcpProjectId', 'gcpRegion', 'supabaseOrgId',
     'supabaseProjectName', 'supabaseRegion', 'supabasePostgresMajor',
     'cloudRunService', 'runtimeServiceAccount', 'generatedSecretNames',
+    'secretReferences', 'immutableLedger',
     'vertexEndpoint', 'vertexModel', 'deployedModelId', 'temporaryVertexEndpoint',
     'chainMode', 'inProcessJobs', 'containedDatabaseQueues',
     'managedSchedulerJobs', 'managedQueues', 'oidcIdentities',
@@ -298,6 +323,16 @@ function parseTopology(value, label = 'RIG-R approval topology') {
       topology.generatedSecretNames,
       GENERATED_SECRET_NAMES,
       `${label}.generatedSecretNames`,
+    ),
+    secretReferences: parseExactObject(
+      topology.secretReferences,
+      SECRET_REFERENCES,
+      `${label}.secretReferences`,
+    ),
+    immutableLedger: parseExactObject(
+      topology.immutableLedger,
+      IMMUTABLE_LEDGER,
+      `${label}.immutableLedger`,
     ),
     vertexEndpoint,
     vertexModel: literal(topology.vertexModel, PROTECTED_V6_MODEL, `${label}.vertexModel`),
@@ -542,6 +577,7 @@ function parseExpectedBinding(value) {
     'provisionArtifactSha256', 'rigName', 'rigProfile', 'soakId', 'leaseId',
     'requiredWallMin', 'vertexEndpoint', 'vertexModel', 'deployedModelId',
     'provisionStartedAt', 'expiresAt', 'teardownScriptSha256',
+    'secretReferences', 'immutableLedger',
   ], 'Expected RIG-R provision binding');
   const candidate = parseCandidate({
     sourceHeadSha: binding.sourceHeadSha,
@@ -593,6 +629,16 @@ function parseExpectedBinding(value) {
       SHA256_DIGEST,
       'Expected RIG-R teardown SHA-256',
       71,
+    ),
+    secretReferences: parseExactObject(
+      binding.secretReferences,
+      SECRET_REFERENCES,
+      'Expected RIG-R secretReferences',
+    ),
+    immutableLedger: parseExactObject(
+      binding.immutableLedger,
+      IMMUTABLE_LEDGER,
+      'Expected RIG-R immutableLedger',
     ),
   };
 }
@@ -716,7 +762,9 @@ class Ed25519RigRProvisionApprovalVerifier {
       || record.topology.requiredWallMin !== expected.requiredWallMin
       || record.topology.vertexEndpoint !== expected.vertexEndpoint
       || record.topology.vertexModel !== expected.vertexModel
-      || record.topology.deployedModelId !== expected.deployedModelId) {
+      || record.topology.deployedModelId !== expected.deployedModelId
+      || canonicalize(record.topology.secretReferences) !== canonicalize(expected.secretReferences)
+      || canonicalize(record.topology.immutableLedger) !== canonicalize(expected.immutableLedger)) {
       throw new Error('RIG-R approval topology does not match the exact runtime binding.');
     }
     if (record.execution.soakId !== expected.soakId
@@ -736,7 +784,7 @@ class Ed25519RigRProvisionApprovalVerifier {
     if (verifiedAtMs < this.activatedAt.epoch) {
       throw new Error('RIG-R approval predates the code-bound authority activation.');
     }
-    if (verifiedAtMs > nowMs || verifiedAtMs > startedAtMs || expiresAtMs <= nowMs) {
+    if (nowMs < startedAtMs || verifiedAtMs > nowMs || verifiedAtMs > startedAtMs || expiresAtMs <= nowMs) {
       throw new Error('RIG-R approval verification time/UTC TTL is not currently valid or has expired.');
     }
     return deepFreeze({
@@ -820,6 +868,14 @@ async function main() {
       'expected-provision-started-at': { type: 'string' },
       'expected-expires-at': { type: 'string' },
       'expected-teardown-script-sha256': { type: 'string' },
+      'expected-supabase-url-secret': { type: 'string' },
+      'expected-supabase-service-role-secret': { type: 'string' },
+      'expected-stripe-secret-key-secret': { type: 'string' },
+      'expected-stripe-webhook-secret': { type: 'string' },
+      'expected-api-key-hmac-secret': { type: 'string' },
+      'expected-cron-secret': { type: 'string' },
+      'expected-gemini-api-key-secret': { type: 'string' },
+      'expected-immutable-ledger-bucket': { type: 'string' },
     },
     strict: true,
   });
@@ -846,6 +902,19 @@ async function main() {
     provisionStartedAt: args.values['expected-provision-started-at'],
     expiresAt: args.values['expected-expires-at'],
     teardownScriptSha256: args.values['expected-teardown-script-sha256'],
+    secretReferences: {
+      supabaseUrl: args.values['expected-supabase-url-secret'],
+      supabaseServiceRoleKey: args.values['expected-supabase-service-role-secret'],
+      stripeSecretKey: args.values['expected-stripe-secret-key-secret'],
+      stripeWebhookSecret: args.values['expected-stripe-webhook-secret'],
+      apiKeyHmacSecret: args.values['expected-api-key-hmac-secret'],
+      cronSecret: args.values['expected-cron-secret'],
+      geminiApiKey: args.values['expected-gemini-api-key-secret'],
+    },
+    immutableLedger: {
+      ...IMMUTABLE_LEDGER,
+      bucket: args.values['expected-immutable-ledger-bucket'],
+    },
   };
   const raw = await readRegularFileNoFollow(args.values.artifact);
   const verifier = createProductionRigRProvisionApprovalVerifier();

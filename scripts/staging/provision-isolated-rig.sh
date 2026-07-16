@@ -72,15 +72,18 @@ RIG_G1_SPEND_APPROVAL_VERIFIER="scripts/staging/s33-g1-spend-approval.mjs"
 RIG_G1_TRUSTED_NODE_PATH="/opt/homebrew/bin/node"
 RIG_G1_TRUSTED_NODE_SHA256="8b6a6d43e16ddc3cddaf1217fb75dbe7151e342e36317491bf3ef4a1ec5d4202"
 RIG_G1_TRUSTED_NODE_VERSION="v25.6.1"
-RIG_G1_APPROVAL_LEDGER_BUCKET="arkova-training-data"
+IMMUTABLE_AUTHORITY_LEDGER_BUCKET="arkova1-s33-immutable-authority-ledger"
+IMMUTABLE_AUTHORITY_LEDGER_BACKEND="gcs-if-generation-match-0-locked-retention"
+IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER="270018525501"
+RIG_G1_APPROVAL_LEDGER_BUCKET="$IMMUTABLE_AUTHORITY_LEDGER_BUCKET"
 RIG_G1_APPROVAL_LEDGER_PREFIX="s33/g1/approval-claims"
 RIG_R_PROVISION_APPROVAL_VERIFIER="scripts/staging/s33-rig-r-provision-approval.mjs"
 RIG_R_TRUSTED_NODE_PATH="/opt/homebrew/bin/node"
 RIG_R_TRUSTED_NODE_SHA256="8b6a6d43e16ddc3cddaf1217fb75dbe7151e342e36317491bf3ef4a1ec5d4202"
 RIG_R_TRUSTED_NODE_VERSION="v25.6.1"
-RIG_R_APPROVAL_LEDGER_BUCKET="arkova-training-data"
+RIG_R_APPROVAL_LEDGER_BUCKET="$IMMUTABLE_AUTHORITY_LEDGER_BUCKET"
 RIG_R_APPROVAL_LEDGER_PREFIX="s33/rig-r/provision-approval-claims"
-RIG_R_LEASE_BUCKET="arkova-training-data"
+RIG_R_LEASE_BUCKET="$IMMUTABLE_AUTHORITY_LEDGER_BUCKET"
 RIG_R_LEASE_PREFIX="s33/rig-leases"
 RIG_R_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
 RIG_R_NAME="s33-r"
@@ -93,7 +96,6 @@ RIG_R_TEARDOWN_PATH="scripts/staging/teardown-isolated-rig.sh"
 RIG_R_RUNTIME_ROLES=(
   "roles/aiplatform.user"
   "roles/logging.logWriter"
-  "roles/secretmanager.secretAccessor"
 )
 # Live admission is intentionally bound to the audited Git shipped on the
 # release operator host. An OS/toolchain update changes this tuple and fails
@@ -223,8 +225,8 @@ G1_TUNED_RUN_ID="${STAGING_G1_TUNED_RUN_ID:-}"
 G1_CONTROL_QUEUE="${STAGING_G1_CONTROL_QUEUE:-}"
 G1_TUNED_QUEUE="${STAGING_G1_TUNED_QUEUE:-}"
 G1_PAIRED_CADENCE_MIN="${STAGING_G1_PAIRED_CADENCE_MIN:-}"
-G1_STOP_AUTHORITY="${STAGING_G1_STOP_AUTHORITY:-}"
-G1_TEARDOWN_OWNER="${STAGING_G1_TEARDOWN_OWNER:-}"
+G1_STOP_AUTHORITY="<from-verified-approval-approver>"
+G1_TEARDOWN_OWNER="<from-verified-approval-owner>"
 G1_SPEND_APPROVAL_ARTIFACT="${STAGING_G1_SPEND_APPROVAL_ARTIFACT:-}"
 # These admission values are populated only from the authenticated approval
 # verifier in apply mode. Caller-supplied owner/TTL/cap/authority strings are
@@ -235,6 +237,7 @@ S33_COST_CAP_USD_JSON="null"
 G1_COMPUTE_MODEL_CAP_USD_JSON="null"
 G1_SPEND_APPROVAL_JSON='{"status":"UNVERIFIED","reason":"immutable approval artifact not verified"}'
 G1_APPROVAL_CLAIM_JSON='null'
+G1_AUTHORITY_JSON='null'
 G1_TRUSTED_NODE_LAUNCHER=""
 RIG_R_VERTEX_ENDPOINT="${STAGING_RIG_R_VERTEX_ENDPOINT:-}"
 RIG_R_VERTEX_MODEL="${STAGING_RIG_R_VERTEX_MODEL:-}"
@@ -255,6 +258,7 @@ TRUSTED_REPO_ROOT=""
 TRUSTED_LOCAL_HEAD_SHA=""
 DECLARED_DRIVER_SHA256=""
 DECLARED_RIG_R_TEARDOWN_SHA256=""
+IMMUTABLE_LEDGER_CAPABILITY_JSON='null'
 
 NAME=""
 APPLY=0
@@ -381,6 +385,8 @@ esac
 
 PROJECT_NAME="arkova-soak-${NAME}"
 CLOUD_RUN_SERVICE="arkova-worker-${NAME}-staging"
+SUPABASE_URL_SECRET_NAME="supabase-url-${NAME}-staging"
+SUPABASE_SERVICE_ROLE_SECRET_NAME="supabase-service-role-key-${NAME}-staging"
 IS_G1_RIG=0
 IS_RIG_R=0
 G1_CONTROL_SERVICE=""
@@ -473,15 +479,12 @@ if [[ $IS_G1_RIG -eq 1 ]]; then
   fi
   for g1_identity_var in \
     STAGING_G1_CONTROL_RUN_ID STAGING_G1_TUNED_RUN_ID \
-    STAGING_G1_CONTROL_QUEUE STAGING_G1_TUNED_QUEUE \
-    STAGING_G1_STOP_AUTHORITY STAGING_G1_TEARDOWN_OWNER; do
+    STAGING_G1_CONTROL_QUEUE STAGING_G1_TUNED_QUEUE; do
     case "$g1_identity_var" in
       STAGING_G1_CONTROL_RUN_ID) g1_identity_value="$G1_CONTROL_RUN_ID" ;;
       STAGING_G1_TUNED_RUN_ID) g1_identity_value="$G1_TUNED_RUN_ID" ;;
       STAGING_G1_CONTROL_QUEUE) g1_identity_value="$G1_CONTROL_QUEUE" ;;
       STAGING_G1_TUNED_QUEUE) g1_identity_value="$G1_TUNED_QUEUE" ;;
-      STAGING_G1_STOP_AUTHORITY) g1_identity_value="$G1_STOP_AUTHORITY" ;;
-      STAGING_G1_TEARDOWN_OWNER) g1_identity_value="$G1_TEARDOWN_OWNER" ;;
     esac
     if [[ ! "$g1_identity_value" =~ ^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$ ]]; then
       echo "ERROR: RIG-G1 requires canonical $g1_identity_var (3-128 safe identity characters)." >&2
@@ -973,7 +976,15 @@ verify_rig_r_provision_approval_binding() {
     --expected-deployed-model-id "$RIG_R_DEPLOYED_MODEL_ID" \
     --expected-provision-started-at "$RIG_R_PROVISION_STARTED_AT" \
     --expected-expires-at "$RIG_R_EXPIRES_AT" \
-    --expected-teardown-script-sha256 "$DECLARED_RIG_R_TEARDOWN_SHA256")"; then
+    --expected-teardown-script-sha256 "$DECLARED_RIG_R_TEARDOWN_SHA256" \
+    --expected-supabase-url-secret "$SUPABASE_URL_SECRET_NAME" \
+    --expected-supabase-service-role-secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
+    --expected-stripe-secret-key-secret "$STRIPE_SECRET_KEY_SECRET" \
+    --expected-stripe-webhook-secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
+    --expected-api-key-hmac-secret "$API_KEY_HMAC_SECRET_SECRET" \
+    --expected-cron-secret "$CRON_SECRET_SECRET" \
+    --expected-gemini-api-key-secret "$GEMINI_API_KEY_SECRET" \
+    --expected-immutable-ledger-bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET")"; then
     echo "ERROR: RIG-R immutable provision approval verification failed." >&2
     exit 2
   fi
@@ -993,6 +1004,14 @@ verify_rig_r_provision_approval_binding() {
     --arg provision_started_at "$RIG_R_PROVISION_STARTED_AT" \
     --arg expires_at "$RIG_R_EXPIRES_AT" \
     --arg teardown_sha "$DECLARED_RIG_R_TEARDOWN_SHA256" \
+    --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
+    --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
+    --arg stripe_secret_key_secret "$STRIPE_SECRET_KEY_SECRET" \
+    --arg stripe_webhook_secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
+    --arg api_key_hmac_secret "$API_KEY_HMAC_SECRET_SECRET" \
+    --arg cron_secret "$CRON_SECRET_SECRET" \
+    --arg gemini_api_key_secret "$GEMINI_API_KEY_SECRET" \
+    --arg immutable_ledger_bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
     --argjson required_wall_min "$REQUIRED_WALL_MIN" '
       . as $approval
       | (type == "object"
@@ -1020,9 +1039,10 @@ verify_rig_r_provision_approval_binding() {
       and (.runtimeVerifiedAt | type == "string")
       and ((.candidate | keys | sort) == ([
         "deployedModelId", "expiresAt", "imageDigest", "leaseId",
-        "provisionArtifactSha256", "provisionStartedAt", "requiredWallMin",
+        "immutableLedger", "provisionArtifactSha256", "provisionStartedAt", "requiredWallMin",
         "rigName", "rigProfile", "soakId", "sourceHeadImageRef", "sourceHeadSha",
-        "sourceTreeSha", "teardownScriptSha256", "vertexEndpoint", "vertexModel"
+        "sourceTreeSha", "teardownScriptSha256", "vertexEndpoint", "vertexModel",
+        "secretReferences"
       ] | sort))
       and .candidate.sourceHeadSha == $source_head
       and .candidate.sourceTreeSha == $source_tree
@@ -1040,6 +1060,21 @@ verify_rig_r_provision_approval_binding() {
       and .candidate.provisionStartedAt == $provision_started_at
       and .candidate.expiresAt == $expires_at
       and .candidate.teardownScriptSha256 == $teardown_sha
+      and .candidate.secretReferences == {
+        supabaseUrl: $supabase_url_secret,
+        supabaseServiceRoleKey: $supabase_service_role_secret,
+        stripeSecretKey: $stripe_secret_key_secret,
+        stripeWebhookSecret: $stripe_webhook_secret,
+        apiKeyHmacSecret: $api_key_hmac_secret,
+        cronSecret: $cron_secret,
+        geminiApiKey: $gemini_api_key_secret
+      }
+      and .candidate.immutableLedger == {
+        backend: "gcs-if-generation-match-0-locked-retention",
+        bucket: $immutable_ledger_bucket,
+        projectId: "arkova1",
+        requiresPerObjectRetention: true
+      }
       and .topology.rigId == "RIG-R"
       and .topology.rigName == $rig_name
       and .topology.rigProfile == $rig_profile
@@ -1055,6 +1090,8 @@ verify_rig_r_provision_approval_binding() {
       and .topology.cloudRunService == "arkova-worker-s33-r-staging"
       and .topology.runtimeServiceAccount == "s33-rig-r-runtime@arkova1.iam.gserviceaccount.com"
       and .topology.generatedSecretNames == ["supabase-url-s33-r-staging", "supabase-service-role-key-s33-r-staging"]
+      and .topology.secretReferences == .candidate.secretReferences
+      and .topology.immutableLedger == .candidate.immutableLedger
       and .topology.vertexEndpoint == $endpoint
       and .topology.vertexModel == $vertex_model
       and .topology.deployedModelId == $deployed_model_id
@@ -1121,7 +1158,23 @@ verify_g1_spend_approval_binding() {
     --expected-rig-id "$RIG_ID" \
     --expected-lease-id "$LEASE_ID" \
     --expected-corpus-digest "$G1_CORPUS_DIGEST" \
-    --expected-endpoint-resource "$GEMINI_TUNED_MODEL_VALUE")"; then
+    --expected-endpoint-resource "$GEMINI_TUNED_MODEL_VALUE" \
+    --expected-runtime-service-account "$RUNTIME_SA" \
+    --expected-control-service "$G1_CONTROL_SERVICE" \
+    --expected-tuned-service "$G1_TUNED_SERVICE" \
+    --expected-control-run-id "$G1_CONTROL_RUN_ID" \
+    --expected-tuned-run-id "$G1_TUNED_RUN_ID" \
+    --expected-control-queue "$G1_CONTROL_QUEUE" \
+    --expected-tuned-queue "$G1_TUNED_QUEUE" \
+    --expected-paired-cadence-max-min "$G1_PAIRED_CADENCE_MIN" \
+    --expected-supabase-url-secret "$SUPABASE_URL_SECRET_NAME" \
+    --expected-supabase-service-role-secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
+    --expected-stripe-secret-key-secret "$STRIPE_SECRET_KEY_SECRET" \
+    --expected-stripe-webhook-secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
+    --expected-api-key-hmac-secret "$API_KEY_HMAC_SECRET_SECRET" \
+    --expected-cron-secret "$CRON_SECRET_SECRET" \
+    --expected-gemini-api-key-secret "$GEMINI_API_KEY_SECRET" \
+    --expected-immutable-ledger-bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET")"; then
     echo "ERROR: RIG-G1 immutable spend approval verification failed; approval remains unverified." >&2
     exit 2
   fi
@@ -1134,7 +1187,23 @@ verify_g1_spend_approval_binding() {
     --arg rig_id "$RIG_ID" \
     --arg lease_id "$LEASE_ID" \
     --arg corpus_digest "$G1_CORPUS_DIGEST" \
-    --arg endpoint_resource "$GEMINI_TUNED_MODEL_VALUE" '
+    --arg endpoint_resource "$GEMINI_TUNED_MODEL_VALUE" \
+    --arg runtime_service_account "$RUNTIME_SA" \
+    --arg control_service "$G1_CONTROL_SERVICE" \
+    --arg tuned_service "$G1_TUNED_SERVICE" \
+    --arg control_run_id "$G1_CONTROL_RUN_ID" \
+    --arg tuned_run_id "$G1_TUNED_RUN_ID" \
+    --arg control_queue "$G1_CONTROL_QUEUE" \
+    --arg tuned_queue "$G1_TUNED_QUEUE" \
+    --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
+    --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
+    --arg stripe_secret_key_secret "$STRIPE_SECRET_KEY_SECRET" \
+    --arg stripe_webhook_secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
+    --arg api_key_hmac_secret "$API_KEY_HMAC_SECRET_SECRET" \
+    --arg cron_secret "$CRON_SECRET_SECRET" \
+    --arg gemini_api_key_secret "$GEMINI_API_KEY_SECRET" \
+    --arg immutable_ledger_bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
+    --argjson paired_cadence_max_min "$G1_PAIRED_CADENCE_MIN" '
       . as $approval
       | (type == "object"
       and ((keys | sort) == ([
@@ -1162,8 +1231,10 @@ verify_g1_spend_approval_binding() {
       and .candidateImageDigest == $image_digest
       and (.scope | type == "object")
       and ((.scope | keys | sort) == ([
-        "corpusDigest", "endpointResource", "leaseId", "rigClass",
-        "rigId", "rigName", "rigProfile", "soakId"
+        "controlQueue", "controlRunId", "controlService", "corpusDigest",
+        "endpointResource", "immutableLedger", "leaseId", "pairedCadenceMaxMin",
+        "rigClass", "rigId", "rigName", "rigProfile", "runtimeServiceAccount",
+        "secretReferences", "soakId", "tunedQueue", "tunedRunId", "tunedService"
       ] | sort))
       and .scope.rigClass == "RIG-G1"
       and .scope.rigName == $rig_name
@@ -1173,6 +1244,29 @@ verify_g1_spend_approval_binding() {
       and .scope.leaseId == $lease_id
       and .scope.corpusDigest == $corpus_digest
       and .scope.endpointResource == $endpoint_resource
+      and .scope.runtimeServiceAccount == $runtime_service_account
+      and .scope.controlService == $control_service
+      and .scope.tunedService == $tuned_service
+      and .scope.controlRunId == $control_run_id
+      and .scope.tunedRunId == $tuned_run_id
+      and .scope.controlQueue == $control_queue
+      and .scope.tunedQueue == $tuned_queue
+      and .scope.pairedCadenceMaxMin == $paired_cadence_max_min
+      and .scope.secretReferences == {
+        supabaseUrl: $supabase_url_secret,
+        supabaseServiceRoleKey: $supabase_service_role_secret,
+        stripeSecretKey: $stripe_secret_key_secret,
+        stripeWebhookSecret: $stripe_webhook_secret,
+        apiKeyHmacSecret: $api_key_hmac_secret,
+        cronSecret: $cron_secret,
+        geminiApiKey: $gemini_api_key_secret
+      }
+      and .scope.immutableLedger == {
+        backend: "gcs-if-generation-match-0-locked-retention",
+        bucket: $immutable_ledger_bucket,
+        projectId: "arkova1",
+        requiresPerObjectRetention: true
+      }
       and .isolatedSupabaseProjectCount == 3
       and .isolatedSupabaseProjectMonthlyEachUsd == 10
       and .isolatedSupabaseProjectsMonthlyTotalUsd == 30
@@ -1204,8 +1298,67 @@ verify_g1_spend_approval_binding() {
   G1_SPEND_APPROVAL_JSON="$verified_json"
   G1_OWNER="$(jq -r '.ownerIdentity' <<<"$verified_json")"
   G1_EXPIRES_AT="$(jq -r '.expiresAt' <<<"$verified_json")"
+  G1_STOP_AUTHORITY="$(jq -r '.approverIdentity' <<<"$verified_json")"
+  G1_TEARDOWN_OWNER="$(jq -r '.ownerIdentity' <<<"$verified_json")"
+  G1_AUTHORITY_JSON="$(jq -nc \
+    --arg approval_id "$(jq -r '.approvalId' <<<"$verified_json")" \
+    --arg canonical_sha256 "$(jq -r '.canonicalSha256' <<<"$verified_json")" \
+    --arg stop_authority "$G1_STOP_AUTHORITY" \
+    --arg teardown_owner "$G1_TEARDOWN_OWNER" '
+      {
+        approval_id: $approval_id,
+        canonical_sha256: $canonical_sha256,
+        stop_authority: $stop_authority,
+        teardown_owner: $teardown_owner
+      }
+    ')"
   G1_COMPUTE_MODEL_CAP_USD_JSON="$(jq -r '.g1VariableComputeModelCapUsd' <<<"$verified_json")"
   S33_COST_CAP_USD_JSON="$(jq -r '.s33TotalCapUsd' <<<"$verified_json")"
+}
+
+verify_immutable_authority_ledger_capability() {
+  if [[ $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then
+    return 0
+  fi
+  local bucket_uri bucket_metadata
+  bucket_uri="gs://${IMMUTABLE_AUTHORITY_LEDGER_BUCKET}"
+  if ! bucket_metadata="$(gcloud storage buckets describe "$bucket_uri" \
+    --project="$APPROVED_GCP_PROJECT" \
+    --raw \
+    --format=json)"; then
+    echo "ERROR: immutable authority ledger bucket is absent or cannot be observed." >&2
+    echo "       Required exact bucket contract: $bucket_uri in project $APPROVED_GCP_PROJECT with per-object retention enabled at creation." >&2
+    exit 2
+  fi
+  if ! bucket_metadata="$(jq -ce \
+    --arg bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
+    --arg project_number "$IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER" '
+      select(
+        type == "object"
+        and .name == $bucket
+        and (.projectNumber | tostring) == $project_number
+        and (.objectRetention | type == "object")
+        and .objectRetention.mode == "Enabled"
+      )
+    ' <<<"$bucket_metadata" 2>/dev/null)"; then
+    echo "ERROR: immutable authority ledger bucket capability is invalid." >&2
+    echo "       Required exact contract: gs://${IMMUTABLE_AUTHORITY_LEDGER_BUCKET} must belong to project number ${IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER} and report objectRetention.mode=Enabled." >&2
+    echo "       No bucket creation or irreversible per-object-retention mutation is attempted by this provisioner." >&2
+    exit 2
+  fi
+  IMMUTABLE_LEDGER_CAPABILITY_JSON="$(jq -nc \
+    --arg backend "$IMMUTABLE_AUTHORITY_LEDGER_BACKEND" \
+    --arg bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
+    --arg project_id "$APPROVED_GCP_PROJECT" \
+    --arg project_number "$IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER" '
+      {
+        backend: $backend,
+        bucket: $bucket,
+        project_id: $project_id,
+        project_number: $project_number,
+        per_object_retention_verified: true
+      }
+    ')"
 }
 
 claim_g1_spend_approval_once() {
@@ -1490,6 +1643,8 @@ claim_rig_r_lease_once() {
     --project="$GCP_PROJECT" \
     --if-generation-match=0 \
     --content-type=application/json \
+    --retain-until="$RIG_R_EXPIRES_AT" \
+    --retention-mode=Locked \
     --quiet; then
     rm -f -- "$lease_temp"
     echo "ERROR: RIG-R exclusive lease '$LEASE_ID' is already held or its ledger is unavailable." >&2
@@ -1498,11 +1653,18 @@ claim_rig_r_lease_once() {
   rm -f -- "$lease_temp"
   if ! observed_json="$(gcloud storage objects describe "$RIG_R_LEASE_URI" \
     --project="$GCP_PROJECT" --raw --format=json)" \
-    || ! jq -e --arg bucket "$RIG_R_LEASE_BUCKET" --arg name "$lease_name" '
+    || ! jq -e --arg bucket "$RIG_R_LEASE_BUCKET" --arg name "$lease_name" \
+      --arg expires_at "$RIG_R_EXPIRES_AT" '
+      def utc_epoch:
+        sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
       type == "object"
       and .bucket == $bucket
       and .name == $name
       and (.generation | tostring | test("^[1-9][0-9]*$"))
+      and (.retention | type == "object")
+      and .retention.mode == "Locked"
+      and (.retention.retainUntilTime | type == "string")
+      and ((.retention.retainUntilTime | utc_epoch) >= ($expires_at | utc_epoch))
     ' >/dev/null 2>&1 <<<"$observed_json"; then
     echo "ERROR: RIG-R exclusive lease could not be re-observed exactly." >&2
     exit 2
@@ -1833,6 +1995,7 @@ if [[ $APPLY -eq 1 ]]; then
   verify_g1_candidate_endpoint_binding
   verify_rig_r_candidate_endpoint_binding
   verify_g1_spend_approval_binding
+  verify_immutable_authority_ledger_capability
 fi
 
 # ---------------------------------------------------------------------------
@@ -2023,8 +2186,6 @@ if [[ $APPLY -eq 1 ]]; then
   fi
   validate_gcloud_mapping_entries "secret" "${SECRETS[@]}"
 fi
-SUPABASE_URL_SECRET_NAME="supabase-url-${NAME}-staging"
-SUPABASE_SERVICE_ROLE_SECRET_NAME="supabase-service-role-key-${NAME}-staging"
 STAGING_ADMISSION_DIR="${STAGING_ADMISSION_DIR:-docs/staging/${NAME}}"
 PROVISION_STATE_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-provision-${NAME}.json"
 ADMISSION_ARTIFACT_PATH="${STAGING_ADMISSION_DIR%/}/isolated-rig-admission-${NAME}.json"
@@ -2381,7 +2542,9 @@ write_provision_state() {
     --argjson cloud_run_service_candidates "$CLOUD_RUN_SERVICE_CANDIDATES_JSON" \
     --argjson cloud_run_delete_commands "$CLOUD_RUN_DELETE_COMMANDS_JSON" \
     --argjson approval_claim "$approval_claim_json" \
+    --argjson g1_authority "$G1_AUTHORITY_JSON" \
     --argjson rig_r_provision_approval "$RIG_R_PROVISION_APPROVAL_JSON" \
+    --argjson immutable_ledger "$IMMUTABLE_LEDGER_CAPABILITY_JSON" \
     --arg teardown_command "$(teardown_command_for_project_ref "${CREATED_PROJECT_REF:-$NEW_PROJECT_REF}")" \
     '{
       status: $status,
@@ -2421,7 +2584,9 @@ write_provision_state() {
       created_cloud_run_service: $created_cloud_run_service,
       created_supabase_secrets: $created_supabase_secrets,
       approval_claim: $approval_claim,
+      g1_authority: $g1_authority,
       rig_r_provision_approval: $rig_r_provision_approval,
+      immutable_authority_ledger: $immutable_ledger,
       cleanup: {
         cloud_run_service_candidates: $cloud_run_service_candidates,
         cloud_run_delete_commands: $cloud_run_delete_commands,
@@ -2651,6 +2816,26 @@ create_supabase_runtime_secrets() {
   ensure_secret_with_value "$SUPABASE_SERVICE_ROLE_SECRET_NAME" "$service_role_key"
   CREATED_SUPABASE_SECRETS=1
   write_provision_state "supabase_secrets_recorded" ""
+}
+
+grant_rig_r_runtime_secret_access() {
+  [[ $IS_RIG_R -eq 1 ]] || return 0
+  local secret_name
+  for secret_name in \
+    "$SUPABASE_URL_SECRET_NAME" \
+    "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
+    "$STRIPE_SECRET_KEY_SECRET" \
+    "$STRIPE_WEBHOOK_SECRET_SECRET" \
+    "$API_KEY_HMAC_SECRET_SECRET" \
+    "$CRON_SECRET_SECRET" \
+    "$GEMINI_API_KEY_SECRET"; do
+    run_cmd gcloud secrets add-iam-policy-binding "$secret_name" \
+      --project="$GCP_PROJECT" \
+      --member="serviceAccount:${RUNTIME_SA}" \
+      --role="roles/secretmanager.secretAccessor" \
+      --condition=None \
+      --quiet
+  done
 }
 
 resolve_head_sha() {
@@ -2918,6 +3103,15 @@ g1_topology_json() {
     --arg candidate_model_resource "projects/${APPROVED_GCP_PROJECT}/locations/us-central1/${RIG_G1_CANDIDATE_MODEL}" \
     --arg corpus_digest "$G1_CORPUS_DIGEST" \
     --arg supabase_project_ref "$supabase_project_ref" \
+    --arg runtime_service_account "$RUNTIME_SA" \
+    --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
+    --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
+    --arg stripe_secret_key_secret "$STRIPE_SECRET_KEY_SECRET" \
+    --arg stripe_webhook_secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
+    --arg api_key_hmac_secret "$API_KEY_HMAC_SECRET_SECRET" \
+    --arg cron_secret "$CRON_SECRET_SECRET" \
+    --arg gemini_api_key_secret "$GEMINI_API_KEY_SECRET" \
+    --arg immutable_ledger_bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
     --arg owner "$G1_OWNER" \
     --arg expires_at "$G1_EXPIRES_AT" \
     --arg stop_authority "$G1_STOP_AUTHORITY" \
@@ -2932,6 +3126,8 @@ g1_topology_json() {
     --argjson isolated_projects_monthly_total_usd "$S33_ISOLATED_SUPABASE_PROJECTS_MONTHLY_TOTAL_USD" \
     --argjson spend_approval "$G1_SPEND_APPROVAL_JSON" \
     --argjson approval_claim "$G1_APPROVAL_CLAIM_JSON" \
+    --argjson authority "$G1_AUTHORITY_JSON" \
+    --argjson immutable_ledger_capability "$IMMUTABLE_LEDGER_CAPABILITY_JSON" \
     --arg control_service "$G1_CONTROL_SERVICE" \
     --arg tuned_service "$G1_TUNED_SERVICE" \
     --arg control_revision "$G1_CONTROL_DEPLOYED_REVISION" \
@@ -2961,6 +3157,7 @@ g1_topology_json() {
       expires_at: $expires_at,
       stop_authority: $stop_authority,
       teardown_owner: $teardown_owner,
+      authority: $authority,
       budget: {
         s33_total_cap_usd: $s33_total_cap_usd,
         g1_variable_compute_model_cap_usd: $g1_variable_compute_model_cap_usd,
@@ -2970,6 +3167,23 @@ g1_topology_json() {
       },
       spend_approval: $spend_approval,
       approval_claim: $approval_claim,
+      runtime_service_account: $runtime_service_account,
+      secret_references: {
+        supabase_url: $supabase_url_secret,
+        supabase_service_role_key: $supabase_service_role_secret,
+        stripe_secret_key: $stripe_secret_key_secret,
+        stripe_webhook_secret: $stripe_webhook_secret,
+        api_key_hmac_secret: $api_key_hmac_secret,
+        cron_secret: $cron_secret,
+        gemini_api_key: $gemini_api_key_secret
+      },
+      immutable_authority_ledger: {
+        backend: "gcs-if-generation-match-0-locked-retention",
+        bucket: $immutable_ledger_bucket,
+        project_id: "arkova1",
+        requires_per_object_retention: true,
+        capability: $immutable_ledger_capability
+      },
       shared_inputs: {
         image: $image,
         corpus_digest: $corpus_digest,
@@ -3031,11 +3245,20 @@ rig_r_topology_json() {
     --arg supabase_project_ref "$supabase_project_ref" \
     --arg lease_id "$LEASE_ID" \
     --arg lease_uri "$RIG_R_LEASE_URI" \
+    --arg supabase_url_secret "$SUPABASE_URL_SECRET_NAME" \
+    --arg supabase_service_role_secret "$SUPABASE_SERVICE_ROLE_SECRET_NAME" \
+    --arg stripe_secret_key_secret "$STRIPE_SECRET_KEY_SECRET" \
+    --arg stripe_webhook_secret "$STRIPE_WEBHOOK_SECRET_SECRET" \
+    --arg api_key_hmac_secret "$API_KEY_HMAC_SECRET_SECRET" \
+    --arg cron_secret "$CRON_SECRET_SECRET" \
+    --arg gemini_api_key_secret "$GEMINI_API_KEY_SECRET" \
+    --arg immutable_ledger_bucket "$IMMUTABLE_AUTHORITY_LEDGER_BUCKET" \
     --arg teardown_command "$(teardown_command_for_project_ref "$supabase_project_ref")" \
     --argjson required_worker_uptime_min "$REQUIRED_UPTIME_MIN" \
     --argjson required_wall_min "$REQUIRED_WALL_MIN" \
     --argjson provision_approval "$RIG_R_PROVISION_APPROVAL_JSON" \
-    --argjson approval_claim "$RIG_R_PROVISION_APPROVAL_CLAIM_JSON" '
+    --argjson approval_claim "$RIG_R_PROVISION_APPROVAL_CLAIM_JSON" \
+    --argjson immutable_ledger_capability "$IMMUTABLE_LEDGER_CAPABILITY_JSON" '
       {
         candidate_head_sha: $candidate_head,
         candidate_tree_sha: $candidate_tree,
@@ -3054,6 +3277,22 @@ rig_r_topology_json() {
         supabase_project_ref: $supabase_project_ref,
         cloud_run_service: "arkova-worker-s33-r-staging",
         runtime_service_account: $runtime_service_account,
+        secret_references: {
+          supabase_url: $supabase_url_secret,
+          supabase_service_role_key: $supabase_service_role_secret,
+          stripe_secret_key: $stripe_secret_key_secret,
+          stripe_webhook_secret: $stripe_webhook_secret,
+          api_key_hmac_secret: $api_key_hmac_secret,
+          cron_secret: $cron_secret,
+          gemini_api_key: $gemini_api_key_secret
+        },
+        immutable_authority_ledger: {
+          backend: "gcs-if-generation-match-0-locked-retention",
+          bucket: $immutable_ledger_bucket,
+          project_id: "arkova1",
+          requires_per_object_retention: true,
+          capability: $immutable_ledger_capability
+        },
         vertex_endpoint: $endpoint,
         vertex_model: $vertex_model,
         deployed_model_id: $deployed_model_id,
@@ -3415,10 +3654,12 @@ echo
 echo "# Step 2b/6 — create/record per-rig Supabase Secret Manager secrets"
 if [[ $APPLY -eq 1 ]]; then
   create_supabase_runtime_secrets "$NEW_PROJECT_REF"
+  grant_rig_r_runtime_secret_access
 else
   print_cmd npx supabase projects api-keys --project-ref "$NEW_PROJECT_REF" --output json
   print_cmd gcloud secrets create "$SUPABASE_URL_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
   print_cmd gcloud secrets create "$SUPABASE_SERVICE_ROLE_SECRET_NAME" --project="$GCP_PROJECT" --replication-policy=automatic --data-file=-
+  grant_rig_r_runtime_secret_access
   echo "#   apply mode derives https://<captured-ref>.supabase.co, fetches the service-role key,"
   echo "#   writes both per-rig secrets, verifies latest versions are readable, and records"
   echo "#   the secret names in $PROVISION_STATE_PATH before Cloud Run deploy."
@@ -3517,6 +3758,19 @@ else
     CREATED_CLOUD_RUN_SERVICE=1
     verify_deployed_revision_provenance
     write_provision_state "cloud_run_provenance_verified" ""
+  fi
+fi
+if [[ "$RIG_ID" == "RIG-B1" ]]; then
+  echo "#   grant the explicit RIG-B1 Scheduler OIDC principal service-scoped invoker"
+  run_cmd gcloud run services add-iam-policy-binding "$CLOUD_RUN_SERVICE" \
+    --member="serviceAccount:${CRON_OIDC_SA}" \
+    --role="roles/run.invoker" \
+    --region="$CLOUD_RUN_REGION" \
+    --project="$GCP_PROJECT" \
+    --condition=None \
+    --quiet
+  if [[ $APPLY -eq 1 ]]; then
+    write_provision_state "b1_service_invoker_bound" ""
   fi
 fi
 if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then

@@ -29,6 +29,21 @@ export interface RigRProvisionExpectedBinding {
   readonly provisionStartedAt: string;
   readonly expiresAt: string;
   readonly teardownScriptSha256: string;
+  readonly secretReferences: {
+    readonly supabaseUrl: string;
+    readonly supabaseServiceRoleKey: string;
+    readonly stripeSecretKey: string;
+    readonly stripeWebhookSecret: string;
+    readonly apiKeyHmacSecret: string;
+    readonly cronSecret: string;
+    readonly geminiApiKey: string;
+  };
+  readonly immutableLedger: {
+    readonly backend: string;
+    readonly bucket: string;
+    readonly projectId: string;
+    readonly requiresPerObjectRetention: boolean;
+  };
 }
 
 export interface RigRProvisionApprovalVerifierConfig {

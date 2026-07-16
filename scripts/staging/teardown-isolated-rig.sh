@@ -54,7 +54,7 @@ RIG_R_SERVICE="arkova-worker-s33-r-staging"
 RIG_R_RUNTIME_SA="s33-rig-r-runtime@arkova1.iam.gserviceaccount.com"
 RIG_R_PROTECTED_V6_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL="projects/arkova1/locations/us-central1/models/6611494259700793344"
-RIG_R_LEASE_BUCKET="arkova-training-data"
+RIG_R_LEASE_BUCKET="arkova1-s33-immutable-authority-ledger"
 RIG_R_LEASE_PREFIX="s33/rig-leases"
 
 # ---------------------------------------------------------------------------
@@ -279,7 +279,15 @@ if [[ $IS_RIG_R -eq 1 ]]; then
   RIG_R_RUNTIME_ROLES=(
     "roles/aiplatform.user"
     "roles/logging.logWriter"
-    "roles/secretmanager.secretAccessor"
+  )
+  RIG_R_SECRET_REFERENCES=(
+    "supabase-url-s33-r-staging"
+    "supabase-service-role-key-s33-r-staging"
+    "stripe-secret-key-staging"
+    "stripe-webhook-secret-staging"
+    "api-key-hmac-secret-staging"
+    "cron-secret"
+    "gemini-api-key-staging"
   )
   echo "Vertex endpoint:   $VERTEX_ENDPOINT"
   echo "Vertex model:      $VERTEX_MODEL (preserved; never a delete target)"
@@ -392,7 +400,15 @@ if [[ $IS_RIG_R -eq 1 ]]; then
     --quiet
   echo
 
-  echo "# RIG-R 4/8 — delete the exact generated Supabase secret pair"
+  echo "# RIG-R 4/8 — remove exact per-secret runtime grants, then delete the generated pair"
+  for secret in "${RIG_R_SECRET_REFERENCES[@]}"; do
+    run_cmd gcloud secrets remove-iam-policy-binding "$secret" \
+      --project="$GCP_PROJECT" \
+      --member="serviceAccount:${RUNTIME_SA}" \
+      --role="roles/secretmanager.secretAccessor" \
+      --condition=None \
+      --quiet
+  done
   for secret in "supabase-url-s33-r-staging" "supabase-service-role-key-s33-r-staging"; do
     run_cmd gcloud secrets delete "$secret" --project="$GCP_PROJECT" --quiet
   done

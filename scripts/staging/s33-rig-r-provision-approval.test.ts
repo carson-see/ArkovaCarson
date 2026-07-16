@@ -43,6 +43,21 @@ const vertexEndpoint = 'projects/arkova1/locations/us-central1/endpoints/9000000
 const protectedV6Endpoint = 'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
 const protectedV6Model = 'projects/arkova1/locations/us-central1/models/6611494259700793344';
 const deployedModelId = '9000000000000000003';
+const rigRSecretReferences = {
+  supabaseUrl: 'supabase-url-s33-r-staging',
+  supabaseServiceRoleKey: 'supabase-service-role-key-s33-r-staging',
+  stripeSecretKey: 'stripe-secret-key-staging',
+  stripeWebhookSecret: 'stripe-webhook-secret-staging',
+  apiKeyHmacSecret: 'api-key-hmac-secret-staging',
+  cronSecret: 'cron-secret',
+  geminiApiKey: 'gemini-api-key-staging',
+};
+const immutableLedger = {
+  backend: 'gcs-if-generation-match-0-locked-retention',
+  bucket: 'arkova1-s33-immutable-authority-ledger',
+  projectId: 'arkova1',
+  requiresPerObjectRetention: true,
+};
 
 const expectedBinding = () => ({
   sourceHeadSha,
@@ -61,6 +76,8 @@ const expectedBinding = () => ({
   provisionStartedAt: '2026-07-16T14:00:00Z',
   expiresAt: '2026-07-19T00:00:00Z',
   teardownScriptSha256: teardownSha256,
+  secretReferences: rigRSecretReferences,
+  immutableLedger,
 });
 
 function record(overrides: Record<string, unknown> = {}) {
@@ -99,6 +116,8 @@ function record(overrides: Record<string, unknown> = {}) {
         'supabase-url-s33-r-staging',
         'supabase-service-role-key-s33-r-staging',
       ],
+      secretReferences: rigRSecretReferences,
+      immutableLedger,
       vertexEndpoint,
       vertexModel: protectedV6Model,
       deployedModelId,
@@ -247,6 +266,22 @@ describe('RIG-R immutable provision approval verifier', () => {
       { ...expectedBinding(), leaseId: 'another-lease' },
       new Date('2026-07-16T14:05:00Z'),
     )).toThrow(/execution|lease/i);
+    expect(() => verifier.verify(
+      envelope(),
+      {
+        ...expectedBinding(),
+        secretReferences: { ...rigRSecretReferences, geminiApiKey: 'shadow-gemini-key' },
+      },
+      new Date('2026-07-16T14:05:00Z'),
+    )).toThrow(/topology|secret/i);
+    expect(() => verifier.verify(
+      envelope(),
+      {
+        ...expectedBinding(),
+        immutableLedger: { ...immutableLedger, bucket: 'arkova-training-data' },
+      },
+      new Date('2026-07-16T14:05:00Z'),
+    )).toThrow(/topology|ledger|bucket/i);
   });
 
   it('rejects duplicate JSON keys and unknown fields before semantic acceptance', () => {
@@ -306,6 +341,11 @@ describe('RIG-R immutable provision approval verifier', () => {
       expectedBinding(),
       new Date('2026-07-19T00:00:00Z'),
     )).toThrow(/expired|TTL|time/i);
+    expect(() => verifier.verify(
+      envelope(),
+      expectedBinding(),
+      new Date('2026-07-16T13:59:59Z'),
+    )).toThrow(/provision|start|time/i);
     expect(() => rigRProvisionApprovalRecordSchema.parse({
       ...record(),
       budget: { s33TotalCapUsd: 201 },
@@ -341,6 +381,26 @@ describe('RIG-R immutable provision approval verifier', () => {
       .toBeLessThan(provisionerSource.lastIndexOf('verify_source_head_image_digest'));
     expect(provisionerSource.indexOf('claim_rig_r_provision_approval_once'))
       .toBeLessThan(provisionerSource.lastIndexOf('claim_rig_r_lease_once'));
+    const runtimeRoleBlock = provisionerSource.slice(
+      provisionerSource.indexOf('RIG_R_RUNTIME_ROLES=('),
+      provisionerSource.indexOf('TRUSTED_GIT_PATH='),
+    );
+    expect(runtimeRoleBlock).not.toContain('roles/secretmanager.secretAccessor');
+    expect(provisionerSource).toContain('gcloud secrets add-iam-policy-binding');
+    expect(provisionerSource.indexOf('verify_rig_r_provision_approval_binding'))
+      .toBeLessThan(provisionerSource.indexOf('grant_rig_r_runtime_secret_access'));
+    expect(provisionerSource).toContain('--expected-immutable-ledger-bucket');
+    expect(provisionerSource).toContain('verify_immutable_authority_ledger_capability');
+    const leaseClaimBlock = provisionerSource.slice(
+      provisionerSource.indexOf('claim_rig_r_lease_once()'),
+      provisionerSource.indexOf('for denied in "${DENIED_CLOUD_RUN_SERVICES[@]}"'),
+    );
+    expect(leaseClaimBlock).toContain('--retain-until="$RIG_R_EXPIRES_AT"');
+    expect(leaseClaimBlock).toContain('--retention-mode=Locked');
+    expect(leaseClaimBlock).toContain('.retention.mode == "Locked"');
+    expect(provisionerSource.lastIndexOf('  verify_immutable_authority_ledger_capability'))
+      .toBeLessThan(provisionerSource.indexOf('CREATE_CMD=('));
+    expect(provisionerSource).not.toContain('RIG_R_LEASE_BUCKET="arkova-training-data"');
   });
 
   it('production verifier rejects unsigned public-key-only fixtures', () => {

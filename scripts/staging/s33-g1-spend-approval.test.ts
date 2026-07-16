@@ -18,6 +18,21 @@ const keyFingerprint = createHash('sha256')
 const rosterRoot = `sha256:${'a'.repeat(64)}`;
 const sourceHeadSha = 'b'.repeat(40);
 const imageDigest = `sha256:${'c'.repeat(64)}`;
+const g1SecretReferences = {
+  supabaseUrl: 'supabase-url-s33-g1-staging',
+  supabaseServiceRoleKey: 'supabase-service-role-key-s33-g1-staging',
+  stripeSecretKey: 'stripe-secret-key-staging',
+  stripeWebhookSecret: 'stripe-webhook-secret-staging',
+  apiKeyHmacSecret: 'api-key-hmac-secret-staging',
+  cronSecret: 'cron-secret',
+  geminiApiKey: 'gemini-api-key-staging',
+};
+const immutableLedger = {
+  backend: 'gcs-if-generation-match-0-locked-retention',
+  bucket: 'arkova1-s33-immutable-authority-ledger',
+  projectId: 'arkova1',
+  requiresPerObjectRetention: true,
+};
 const expectedScope = {
   rigClass: 'RIG-G1' as const,
   rigName: 's33-g1',
@@ -27,6 +42,16 @@ const expectedScope = {
   leaseId: 'lease-s33-g1',
   corpusDigest: `sha256:${'d'.repeat(64)}`,
   endpointResource: 'projects/arkova1/locations/us-central1/endpoints/123456789',
+  runtimeServiceAccount: 's33-g1-runtime@arkova1.iam.gserviceaccount.com',
+  controlService: 'arkova-worker-s33-g1-public-staging',
+  tunedService: 'arkova-worker-s33-g1-tuned-staging',
+  controlRunId: 's33-g1-control-v6',
+  tunedRunId: 's33-g1-tuned-v6',
+  controlQueue: 's33-g1-control-queue',
+  tunedQueue: 's33-g1-tuned-queue',
+  pairedCadenceMaxMin: 30,
+  secretReferences: g1SecretReferences,
+  immutableLedger,
 };
 const verifier = createG1SpendApprovalVerifierForTest({
   publicKeyPem,
@@ -167,6 +192,28 @@ describe('RIG-G1 immutable spend approval', () => {
       { ...expectedScope, sourceHeadSha, imageDigest, leaseId: 'lease-s33-g1-replay' },
       new Date('2026-07-15T21:00:00Z'),
     )).toThrow(/scope|lease/i);
+  });
+
+  it.each([
+    ['runtime identity', { runtimeServiceAccount: 'shadow@arkova1.iam.gserviceaccount.com' }],
+    ['control service', { controlService: 'arkova-worker-shadow-staging' }],
+    ['control run', { controlRunId: 'shadow-control-run' }],
+    ['tuned queue', { tunedQueue: 'shadow-tuned-queue' }],
+    ['paired cadence', { pairedCadenceMaxMin: 29 }],
+    [
+      'secret reference',
+      { secretReferences: { ...g1SecretReferences, geminiApiKey: 'shadow-gemini-key' } },
+    ],
+    [
+      'immutable ledger',
+      { immutableLedger: { ...immutableLedger, bucket: 'arkova-training-data' } },
+    ],
+  ])('rejects replay under substituted %s', (_label, scopeOverride) => {
+    expect(() => verifier.verify(
+      envelope(),
+      { sourceHeadSha, imageDigest, ...expectedScope, ...scopeOverride },
+      new Date('2026-07-15T21:00:00Z'),
+    )).toThrow(/scope|runtime|service|run|queue|cadence|secret|ledger|bucket/i);
   });
 
   it('rejects self-attested identities, roster drift, invalid RACI, and expired TTLs', () => {
