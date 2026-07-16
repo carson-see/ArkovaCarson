@@ -1,9 +1,12 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -22,7 +25,7 @@ const repoBase = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], {
   cwd: repoRoot,
   encoding: 'utf8',
 }).trim();
-const realGit = execFileSync('/usr/bin/which', ['git'], { encoding: 'utf8' }).trim();
+const trustedNodeSha256 = createHash('sha256').update(readFileSync(process.execPath)).digest('hex');
 const stubRoots: string[] = [];
 
 afterAll(() => {
@@ -93,14 +96,28 @@ function runG1ApplyFault(options: {
   endpoint?: Record<string, unknown>;
   failDeployAt?: number;
   failTunedRevisionDescribe?: boolean;
+  name?: string;
+  leaseId?: string;
+  fakeNode?: boolean;
+  dirtyInput?: 'provisioner' | 'driver' | 'verifier';
+  sharedLedgerDir?: string;
 } = {}): G1FaultRun {
-  const root = mkdtempSync(join(tmpdir(), 'g1-provision-fault-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'g1-provision-fault-')));
   stubRoots.push(root);
+  const fakeRepo = join(root, 'repo');
+  const fixtureVerifier = 'scripts/staging/test-g1-spend-approval-verifier.mjs';
+  const fixtureDriver = 'services/worker/scripts/pr1408-chain-resilience-driver.ts';
+  const rigName = options.name ?? 's33-g1';
+  const leaseId = options.leaseId ?? 'lease-s33-g1';
+  const ledgerDir = options.sharedLedgerDir ?? join(root, 'approval-ledger');
+  mkdirSync(join(fakeRepo, 'scripts/staging'), { recursive: true });
+  mkdirSync(join(fakeRepo, 'services/worker/scripts'), { recursive: true });
+  mkdirSync(ledgerDir, { recursive: true });
   const gcloudLog = join(root, 'gcloud.log');
   const npxLog = join(root, 'npx.log');
   const deployCount = join(root, 'deploy-count');
   const artifactDir = join(root, 'artifacts');
-  const statePath = join(artifactDir, 'isolated-rig-provision-s33-g1.json');
+  const statePath = join(artifactDir, `isolated-rig-provision-${rigName}.json`);
   writeFileSync(gcloudLog, '');
   writeFileSync(npxLog, '');
 
@@ -156,6 +173,7 @@ function runG1ApplyFault(options: {
   });
   const verifiedApproval = JSON.stringify({
     status: 'VERIFIED',
+    approvalId: 'approval-s33-g1-001',
     sourceReference: 'ari:cloud:confluence:tenant:page/123456',
     immutableRevisionId: 'revision-42',
     canonicalSha256: `sha256:${'1'.repeat(64)}`,
@@ -164,6 +182,16 @@ function runG1ApplyFault(options: {
     authorityRosterRootSha256: `sha256:${'2'.repeat(64)}`,
     candidateSourceHeadSha: repoHead,
     candidateImageDigest: pinnedImageDigest,
+    scope: {
+      rigClass: 'RIG-G1',
+      rigName: 's33-g1',
+      rigProfile: 'gemini',
+      soakId: 'soak-s33-g1',
+      rigId: 'RIG-G1',
+      leaseId: 'lease-s33-g1',
+      corpusDigest: g1Env.STAGING_G1_CORPUS_DIGEST,
+      endpointResource: g1Env.STAGING_GEMINI_TUNED_MODEL,
+    },
     isolatedSupabaseProjectCount: 3,
     isolatedSupabaseProjectMonthlyEachUsd: 10,
     isolatedSupabaseProjectsMonthlyTotalUsd: 30,
@@ -184,12 +212,37 @@ function runG1ApplyFault(options: {
     trustRootKeyFingerprint: '3'.repeat(64),
   });
 
+  const fixtureProvisionerSource = provisionerSource
+    .replace(
+      'RIG_G1_SPEND_APPROVAL_VERIFIER="scripts/staging/s33-g1-spend-approval.mjs"',
+      `RIG_G1_SPEND_APPROVAL_VERIFIER="${fixtureVerifier}"`,
+    )
+    .replace('RIG_G1_TRUSTED_NODE_SHA256=""', `RIG_G1_TRUSTED_NODE_SHA256="${trustedNodeSha256}"`)
+    .replace('RIG_G1_TRUSTED_NODE_VERSION=""', `RIG_G1_TRUSTED_NODE_VERSION="${process.version}"`);
+  const fixtureProvisioner = join(fakeRepo, 'scripts/staging/provision-isolated-rig.sh');
+  writeFileSync(fixtureProvisioner, fixtureProvisionerSource);
+  chmodSync(fixtureProvisioner, 0o755);
+  writeFileSync(join(fakeRepo, fixtureVerifier), `process.stdout.write(${JSON.stringify(`${verifiedApproval}\n`)});\n`);
+  writeFileSync(join(fakeRepo, fixtureDriver), 'export const g1FixtureDriver = true;\n');
+  writeFileSync(join(root, 'approval-envelope.json'), '{"fixture":true}\n');
+
   writeFileSync(join(root, 'git'), `#!/usr/bin/env bash
 set -euo pipefail
-if [[ "$1" == "fetch" || "$1" == "ls-files" || "$1" == "cat-file" || "$1" == "diff" ]]; then exit 0; fi
+if [[ "$1" == "rev-parse" && "\${2:-}" == "--show-toplevel" ]]; then printf '%s\\n' '${fakeRepo}'; exit 0; fi
+if [[ "$1" == "rev-parse" && "\${2:-}" == "HEAD" ]]; then printf '%s\\n' '${repoHead}'; exit 0; fi
+if [[ "$1" == "fetch" || "$1" == "ls-files" || "$1" == "cat-file" ]]; then exit 0; fi
+if [[ "$1" == "diff" ]]; then
+  dirty='${options.dirtyInput ?? ''}'
+  if [[ "$dirty" == 'provisioner' && "$*" == *'scripts/staging/provision-isolated-rig.sh'* ]]; then exit 1; fi
+  if [[ "$dirty" == 'driver' && "$*" == *'${fixtureDriver}'* ]]; then exit 1; fi
+  if [[ "$dirty" == 'verifier' && "$*" == *'${fixtureVerifier}'* ]]; then exit 1; fi
+  exit 0
+fi
 if [[ "$1" == "merge-base" && "\${2:-}" == "--is-ancestor" ]]; then exit 0; fi
 if [[ "$1" == "merge-base" ]]; then printf '%s\\n' '${repoBase}'; exit 0; fi
-exec '${realGit}' "$@"
+if [[ "$1" == "show" ]]; then printf '%s' 'export const g1FixtureDriver = true;'; exit 0; fi
+echo "unexpected git call: $*" >&2
+exit 64
 `);
   chmodSync(join(root, 'git'), 0o755);
 
@@ -210,9 +263,27 @@ exit 64
 `);
   chmodSync(join(root, 'npx'), 0o755);
 
+  if (options.fakeNode) {
+    writeFileSync(join(root, 'node'), `#!/usr/bin/env bash\nprintf '%s\\n' '${verifiedApproval}'\n`);
+    chmodSync(join(root, 'node'), 0o755);
+  }
+
   writeFileSync(join(root, 'gcloud'), `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> '${gcloudLog}'
+if [[ "$1" == "storage" && "$2" == "cp" ]]; then
+  [[ "$*" == *'--if-generation-match=0'* ]] || { echo 'missing atomic create precondition' >&2; exit 46; }
+  [[ "$*" == *'--retention-mode=Locked'* ]] || { echo 'missing locked retention' >&2; exit 47; }
+  if ! mkdir '${ledgerDir}/approval-s33-g1-001' 2>/dev/null; then
+    echo 'Precondition Failed: object generation is no longer zero' >&2
+    exit 45
+  fi
+  exit 0
+fi
+if [[ "$1" == "storage" && "$2" == "objects" && "$3" == "describe" ]]; then
+  printf '%s\\n' '{"bucket":"arkova-training-data","name":"s33/g1/approval-claims/approval-s33-g1-001.json","generation":"1","timeCreated":"2026-07-15T20:02:00Z","retention":{"mode":"Locked","retainUntilTime":"2026-07-20T00:00:00Z"}}'
+  exit 0
+fi
 if [[ "$1" == "artifacts" && "$2" == "docker" ]]; then
   printf '%s\\n' '${pinnedImage}'
   exit 0
@@ -260,8 +331,8 @@ exit 0
   const env = {
     ...process.env,
     ...g1Env,
-    PATH: `${root}:${process.env.PATH ?? ''}`,
-    CONFIRM_PROVISION: 's33-g1',
+    PATH: `${root}:${dirname(process.execPath)}:/usr/bin:/bin`,
+    CONFIRM_PROVISION: rigName,
     CONFIRM_REAL_CONFIG: 'gemini',
     CONFIRM_POST_W3_PROVISION: 'RIG-G1',
     GITHUB_SHA: repoHead,
@@ -269,7 +340,7 @@ exit 0
     STAGING_SOURCE_HEAD_SHA: repoHead,
     STAGING_PINNED_IMAGE: pinnedImage,
     STAGING_SOAK_ID: 'soak-s33-g1',
-    STAGING_LEASE_ID: 'lease-s33-g1',
+    STAGING_LEASE_ID: leaseId,
     STAGING_NEW_SUPABASE_DB_PASSWORD: 'stub-password-not-real',
     STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY: 'stub-service-role-not-real',
     STAGING_CHANGED_BEHAVIOR: 'RIG-G1 paired public/v6 external experiment',
@@ -279,8 +350,8 @@ exit 0
   let code = 0;
   let out = '';
   try {
-    out = execFileSync('bash', [provisioner, '--name', 's33-g1', '--profile', 'gemini', '--apply'], {
-      cwd: repoRoot,
+    out = execFileSync('bash', [fixtureProvisioner, '--name', rigName, '--profile', 'gemini', '--apply'], {
+      cwd: fakeRepo,
       encoding: 'utf8',
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -373,6 +444,7 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
       spend_approval: {
         status: 'UNCONFIGURED',
       },
+      approval_claim: null,
     });
     expect(admission.g1.arms).toEqual([
       expect.objectContaining({
@@ -497,6 +569,85 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     expect(result.out).not.toContain('gcloud run deploy');
   });
 
+  it('uses one tracked built-in-only verifier and a code-bound launcher instead of PATH npx/tsx', () => {
+    const verifierPath = resolve(here, 's33-g1-spend-approval.mjs');
+    expect(existsSync(verifierPath)).toBe(true);
+    if (!existsSync(verifierPath)) return;
+    const verifierSource = readFileSync(verifierPath, 'utf8');
+    const imports = [...verifierSource.matchAll(/from\s+['"]([^'"]+)['"]/g)]
+      .map((match) => match[1]);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.every((specifier) => specifier.startsWith('node:'))).toBe(true);
+    expect(provisionerSource).toContain('RIG_G1_TRUSTED_NODE_SHA256');
+    expect(provisionerSource).not.toContain('npx tsx "$RIG_G1_SPEND_APPROVAL_VERIFIER"');
+  });
+
+  it('binds the signed approval to the complete G1 execution scope and atomically claims it', () => {
+    for (const expectedArg of [
+      '--expected-rig-name', '--expected-rig-profile', '--expected-soak-id',
+      '--expected-rig-id', '--expected-lease-id', '--expected-corpus-digest',
+      '--expected-endpoint-resource',
+    ]) expect(provisionerSource).toContain(expectedArg);
+    expect(provisionerSource).toContain('--if-generation-match=0');
+    expect(provisionerSource).toContain('approval_claim');
+    const stepOneApply = provisionerSource.slice(provisionerSource.indexOf('CREATE_CMD=('));
+    expect(stepOneApply.indexOf('claim_g1_spend_approval_once'))
+      .toBeLessThan(stepOneApply.indexOf('NEW_PROJECT_REF="$('));
+  });
+
+  it('rejects a PATH-substituted Node launcher before every paid mutation', () => {
+    const result = runG1ApplyFault({ fakeNode: true });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/Node launcher digest|launcher is not trusted|UNCONFIGURED/i);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it.each(['provisioner', 'driver', 'verifier'] as const)(
+    'rejects a dirty/replaced %s input before every paid mutation',
+    (dirtyInput) => {
+      const result = runG1ApplyFault({ dirtyInput });
+      expect(result.code).not.toBe(0);
+      expect(result.out).toMatch(/working-tree bytes differ|commit or restore/i);
+      expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+      expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    },
+  );
+
+  it.each([
+    ['another rig name', { name: 's33-g1-other' }],
+    ['another lease', { leaseId: 'lease-s33-g1-other' }],
+  ])('rejects replay of the same envelope under %s with zero creates/deploys', (_label, scope) => {
+    const result = runG1ApplyFault(scope);
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/approval verifier output|scope|binding/i);
+    expect(result.gcloudCalls.some((call) => call.startsWith('storage cp '))).toBe(false);
+    expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+  });
+
+  it('ignores a PATH npx/tsx approval spoof and invokes only the trusted Node verifier', () => {
+    const result = runG1ApplyFault({ failDeployAt: 1 });
+    expect(result.code).not.toBe(0);
+    expect(result.npxCalls.some((call) => call.includes('s33-g1-spend-approval'))).toBe(false);
+    expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(true);
+  });
+
+  it('allows exactly one duplicate/concurrent claimant through the generation-zero ledger', () => {
+    const ledger = realpathSync(mkdtempSync(join(tmpdir(), 'g1-shared-approval-ledger-')));
+    stubRoots.push(ledger);
+    const winner = runG1ApplyFault({ failDeployAt: 1, sharedLedgerDir: ledger });
+    expect(winner.npxCalls.filter((call) => call.startsWith('supabase projects create '))).toHaveLength(1);
+    expect(winner.gcloudCalls.filter((call) => call.startsWith('storage cp '))).toHaveLength(1);
+
+    const loser = runG1ApplyFault({ sharedLedgerDir: ledger });
+    expect(loser.code).not.toBe(0);
+    expect(loser.out).toMatch(/already claimed|claim ledger/i);
+    expect(loser.gcloudCalls.filter((call) => call.startsWith('storage cp '))).toHaveLength(1);
+    expect(loser.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
+    expect(loser.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+  });
+
   it('declares both deterministic service cleanup candidates before cloud mutation', () => {
     expect(provisionerSource).toContain('pre_mutation_cleanup_plan_persisted');
     expect(provisionerSource).toContain('cloud_run_service_candidates');
@@ -516,10 +667,21 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
       result.out,
     ).toHaveLength(2);
     expect(result.state).not.toBeNull();
-    expect(result.state).toMatchObject({ status: 'blocked_after_project_create' });
+    expect(result.state).toMatchObject({
+      status: 'blocked_after_project_create',
+      approval_claim: {
+        status: 'CLAIMED',
+        backend: 'gcs-if-generation-match-0-locked-retention',
+        approval_id: 'approval-s33-g1-001',
+        canonical_sha256: `sha256:${'1'.repeat(64)}`,
+        generation: '1',
+        retention_until: '2026-07-20T00:00:00Z',
+      },
+    });
     const cleanup = result.state!.cleanup as {
       cloud_run_service_candidates: string[];
       cloud_run_delete_commands: string[];
+      approval_claim: { approval_id: string };
       teardown_command: string;
     };
     expect(cleanup.cloud_run_service_candidates).toEqual([
@@ -529,6 +691,7 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     expect(cleanup.cloud_run_delete_commands).toHaveLength(2);
     expect(cleanup.cloud_run_delete_commands[0]).toContain('arkova-worker-s33-g1-public-staging');
     expect(cleanup.cloud_run_delete_commands[1]).toContain('arkova-worker-s33-g1-tuned-staging');
+    expect(cleanup.approval_claim.approval_id).toBe('approval-s33-g1-001');
     expect(cleanup.teardown_command).toContain('--project-ref abcdefghijklmnopqrst');
     expect(cleanup.teardown_command).toContain('--service arkova-worker-s33-g1-public-staging');
     expect(cleanup.teardown_command).toContain('--service arkova-worker-s33-g1-tuned-staging');

@@ -62,7 +62,15 @@ RIG_B1_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
 RIG_G1_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
 RIG_G1_PUBLIC_MODEL="gemini-2.5-flash"
 RIG_G1_CANDIDATE_MODEL="models/6611494259700793344"
-RIG_G1_SPEND_APPROVAL_VERIFIER="scripts/staging/s33-g1-spend-approval.ts"
+RIG_G1_SPEND_APPROVAL_VERIFIER="scripts/staging/s33-g1-spend-approval.mjs"
+# The approval executable is built-in-only, but a substituted Node launcher
+# could still forge its stdout. These two values must be activated in the same
+# reviewed input commit as the production approval trust root. Until then G1
+# apply is deliberately UNCONFIGURED and fail-closed.
+RIG_G1_TRUSTED_NODE_SHA256=""
+RIG_G1_TRUSTED_NODE_VERSION=""
+RIG_G1_APPROVAL_LEDGER_BUCKET="arkova-training-data"
+RIG_G1_APPROVAL_LEDGER_PREFIX="s33/g1/approval-claims"
 S33_ISOLATED_SUPABASE_PROJECT_COUNT=3
 S33_ISOLATED_SUPABASE_PROJECT_MONTHLY_EACH_USD=10
 S33_ISOLATED_SUPABASE_PROJECTS_MONTHLY_TOTAL_USD=30
@@ -194,6 +202,8 @@ G1_EXPIRES_AT="<from-verified-approval-record>"
 S33_COST_CAP_USD_JSON="null"
 G1_COMPUTE_MODEL_CAP_USD_JSON="null"
 G1_SPEND_APPROVAL_JSON='{"status":"UNCONFIGURED","reason":"pinned founder/CTO authority root not code-bound"}'
+G1_APPROVAL_CLAIM_JSON='null'
+G1_TRUSTED_NODE_LAUNCHER=""
 
 NAME=""
 APPLY=0
@@ -534,6 +544,49 @@ verify_g1_candidate_endpoint_binding() {
   fi
 }
 
+trusted_sha256_file() {
+  local path="$1" digest remainder
+  if [[ -x /usr/bin/shasum ]]; then
+    read -r digest remainder < <(/usr/bin/shasum -a 256 -- "$path")
+  elif [[ -x /usr/bin/sha256sum ]]; then
+    read -r digest remainder < <(/usr/bin/sha256sum -- "$path")
+  else
+    echo "ERROR: no trusted absolute SHA-256 utility is available for launcher binding." >&2
+    return 1
+  fi
+  if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "ERROR: trusted SHA-256 utility returned a malformed launcher digest." >&2
+    return 1
+  fi
+  printf '%s\n' "$digest"
+}
+
+resolve_g1_trusted_node_launcher() {
+  [[ $IS_G1_RIG -eq 1 ]] || return 0
+  local candidate observed_digest observed_version
+  if [[ ! "$RIG_G1_TRUSTED_NODE_SHA256" =~ ^[0-9a-f]{64}$ \
+    || ! "$RIG_G1_TRUSTED_NODE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "ERROR: RIG-G1 trusted Node launcher binding is UNCONFIGURED." >&2
+    return 1
+  fi
+  candidate="$(command -v node 2>/dev/null || true)"
+  if [[ "$candidate" != /* || ! -f "$candidate" || ! -x "$candidate" ]]; then
+    echo "ERROR: RIG-G1 approval verification requires an absolute regular executable Node launcher." >&2
+    return 1
+  fi
+  observed_digest="$(trusted_sha256_file "$candidate")" || return 1
+  if [[ "$observed_digest" != "$RIG_G1_TRUSTED_NODE_SHA256" ]]; then
+    echo "ERROR: RIG-G1 Node launcher digest differs from the code-bound trust input." >&2
+    return 1
+  fi
+  observed_version="$(/usr/bin/env -i TZ=UTC "$candidate" --version 2>/dev/null || true)"
+  if [[ "$observed_version" != "$RIG_G1_TRUSTED_NODE_VERSION" ]]; then
+    echo "ERROR: RIG-G1 Node launcher version differs from the code-bound trust input." >&2
+    return 1
+  fi
+  G1_TRUSTED_NODE_LAUNCHER="$candidate"
+}
+
 verify_g1_spend_approval_binding() {
   [[ $IS_G1_RIG -eq 1 ]] || return 0
   local expected_image_digest verified_json
@@ -543,29 +596,50 @@ verify_g1_spend_approval_binding() {
     echo "       pointing to a verified immutable founder/CTO approval envelope." >&2
     exit 2
   fi
-  if ! verified_json="$(npx tsx "$RIG_G1_SPEND_APPROVAL_VERIFIER" \
+  if ! resolve_g1_trusted_node_launcher; then
+    echo "ERROR: RIG-G1 approval verifier launcher is not trusted; authority remains UNCONFIGURED." >&2
+    exit 2
+  fi
+  if ! verified_json="$(/usr/bin/env -i TZ=UTC \
+    "$G1_TRUSTED_NODE_LAUNCHER" --no-addons --no-global-search-paths \
+    "$RIG_G1_SPEND_APPROVAL_VERIFIER" \
     --artifact "$G1_SPEND_APPROVAL_ARTIFACT" \
     --expected-source-head "$DECLARED_SOURCE_HEAD" \
-    --expected-image-digest "$expected_image_digest")"; then
+    --expected-image-digest "$expected_image_digest" \
+    --expected-rig-name "$NAME" \
+    --expected-rig-profile "$PROFILE" \
+    --expected-soak-id "$SOAK_ID" \
+    --expected-rig-id "$RIG_ID" \
+    --expected-lease-id "$LEASE_ID" \
+    --expected-corpus-digest "$G1_CORPUS_DIGEST" \
+    --expected-endpoint-resource "$GEMINI_TUNED_MODEL_VALUE")"; then
     echo "ERROR: RIG-G1 immutable spend approval verification failed; authority remains UNCONFIGURED." >&2
     exit 2
   fi
   if ! verified_json="$(jq -ce \
     --arg source_head "$DECLARED_SOURCE_HEAD" \
-    --arg image_digest "$expected_image_digest" '
+    --arg image_digest "$expected_image_digest" \
+    --arg rig_name "$NAME" \
+    --arg rig_profile "$PROFILE" \
+    --arg soak_id "$SOAK_ID" \
+    --arg rig_id "$RIG_ID" \
+    --arg lease_id "$LEASE_ID" \
+    --arg corpus_digest "$G1_CORPUS_DIGEST" \
+    --arg endpoint_resource "$GEMINI_TUNED_MODEL_VALUE" '
       . as $approval
       | (type == "object"
       and ((keys | sort) == ([
-        "approvalVerifiedAt", "approverIdentity", "approverRole",
+        "approvalId", "approvalVerifiedAt", "approverIdentity", "approverRole",
         "authorityRosterRootSha256", "candidateImageDigest", "candidateSourceHeadSha",
         "canonicalSha256", "expiresAt", "g1VariableComputeModelCapUsd",
         "immutableRevisionId", "isolatedSupabaseProjectCount",
         "isolatedSupabaseProjectMonthlyEachUsd", "isolatedSupabaseProjectsMonthlyTotalUsd",
-        "ownerIdentity", "raci", "runtimeVerifiedAt", "s33TotalCapUsd",
+        "ownerIdentity", "raci", "runtimeVerifiedAt", "s33TotalCapUsd", "scope",
         "sourceReference", "status", "trustRootKeyFingerprint",
         "verificationMethod", "verifierIdentity"
       ] | sort))
       and .status == "VERIFIED"
+      and (.approvalId | test("^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$"))
       and (.sourceReference | type == "string" and length > 0)
       and (.immutableRevisionId | type == "string" and length > 0)
       and (.canonicalSha256 | test("^sha256:[0-9a-f]{64}$"))
@@ -574,6 +648,19 @@ verify_g1_spend_approval_binding() {
       and (.authorityRosterRootSha256 | test("^sha256:[0-9a-f]{64}$"))
       and .candidateSourceHeadSha == $source_head
       and .candidateImageDigest == $image_digest
+      and (.scope | type == "object")
+      and ((.scope | keys | sort) == ([
+        "corpusDigest", "endpointResource", "leaseId", "rigClass",
+        "rigId", "rigName", "rigProfile", "soakId"
+      ] | sort))
+      and .scope.rigClass == "RIG-G1"
+      and .scope.rigName == $rig_name
+      and .scope.rigProfile == $rig_profile
+      and .scope.soakId == $soak_id
+      and .scope.rigId == $rig_id
+      and .scope.leaseId == $lease_id
+      and .scope.corpusDigest == $corpus_digest
+      and .scope.endpointResource == $endpoint_resource
       and .isolatedSupabaseProjectCount == 3
       and .isolatedSupabaseProjectMonthlyEachUsd == 10
       and .isolatedSupabaseProjectsMonthlyTotalUsd == 30
@@ -607,6 +694,128 @@ verify_g1_spend_approval_binding() {
   G1_EXPIRES_AT="$(jq -r '.expiresAt' <<<"$verified_json")"
   G1_COMPUTE_MODEL_CAP_USD_JSON="$(jq -r '.g1VariableComputeModelCapUsd' <<<"$verified_json")"
   S33_COST_CAP_USD_JSON="$(jq -r '.s33TotalCapUsd' <<<"$verified_json")"
+}
+
+claim_g1_spend_approval_once() {
+  [[ $IS_G1_RIG -eq 1 ]] || return 0
+  local approval_id canonical_sha claim_object_name claim_uri requested_at
+  local claim_payload claim_temp observed_json observed_generation observed_created_at
+  local observed_retention_until
+
+  approval_id="$(jq -r '.approvalId' <<<"$G1_SPEND_APPROVAL_JSON")"
+  canonical_sha="$(jq -r '.canonicalSha256' <<<"$G1_SPEND_APPROVAL_JSON")"
+  if [[ ! "$approval_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$ \
+    || ! "$canonical_sha" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: RIG-G1 verified approval is missing its claim-safe identity." >&2
+    exit 2
+  fi
+
+  claim_object_name="${RIG_G1_APPROVAL_LEDGER_PREFIX}/${approval_id}.json"
+  claim_uri="gs://${RIG_G1_APPROVAL_LEDGER_BUCKET}/${claim_object_name}"
+  requested_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  if ! claim_payload="$(jq -c \
+    --arg approval_id "$approval_id" \
+    --arg canonical_sha256 "$canonical_sha" \
+    --arg requested_at "$requested_at" \
+    --arg source_head "$DECLARED_SOURCE_HEAD" \
+    --arg image_digest "$(image_digest_from_ref "$PINNED_IMAGE")" \
+    --argjson scope "$(jq -c '.scope' <<<"$G1_SPEND_APPROVAL_JSON")" '
+      {
+        schemaVersion: 1,
+        approvalId: $approval_id,
+        canonicalSha256: $canonical_sha256,
+        requestedAt: $requested_at,
+        candidate: {
+          sourceHeadSha: $source_head,
+          imageDigest: $image_digest
+        },
+        scope: $scope
+      }
+    ')"; then
+    echo "ERROR: RIG-G1 could not construct its immutable approval claim." >&2
+    exit 2
+  fi
+
+  if [[ ! -x /usr/bin/mktemp ]]; then
+    echo "ERROR: RIG-G1 approval claim requires trusted /usr/bin/mktemp." >&2
+    exit 2
+  fi
+  umask 077
+  claim_temp="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/arkova-g1-approval-claim.XXXXXX")"
+  if ! printf '%s\n' "$claim_payload" >"$claim_temp"; then
+    rm -f -- "$claim_temp"
+    echo "ERROR: RIG-G1 could not stage its immutable approval claim." >&2
+    exit 2
+  fi
+
+  # Object generation zero is a server-side compare-and-create: exactly one
+  # concurrent claimant can win. Locked retention preserves that winner until
+  # the signed approval TTL, after which the signature is no longer valid.
+  if ! gcloud storage cp "$claim_temp" "$claim_uri" \
+    --project="$APPROVED_GCP_PROJECT" \
+    --if-generation-match=0 \
+    --content-type=application/json \
+    --retain-until="$G1_EXPIRES_AT" \
+    --retention-mode=Locked \
+    --quiet; then
+    rm -f -- "$claim_temp"
+    echo "ERROR: RIG-G1 approval '$approval_id' is already claimed, or the durable claim ledger is unavailable." >&2
+    echo "       Refusing every paid Supabase create and Cloud Run deploy." >&2
+    exit 2
+  fi
+  rm -f -- "$claim_temp"
+
+  if ! observed_json="$(gcloud storage objects describe "$claim_uri" \
+    --project="$APPROVED_GCP_PROJECT" \
+    --raw \
+    --format=json)"; then
+    echo "ERROR: RIG-G1 approval claim was submitted but cannot be re-observed; spend remains blocked." >&2
+    exit 2
+  fi
+  if ! observed_json="$(jq -ce \
+    --arg bucket "$RIG_G1_APPROVAL_LEDGER_BUCKET" \
+    --arg name "$claim_object_name" \
+    --arg expires_at "$G1_EXPIRES_AT" '
+      def utc_epoch:
+        sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+      select(
+        type == "object"
+        and .bucket == $bucket
+        and .name == $name
+        and (.generation | tostring | test("^[1-9][0-9]*$"))
+        and (.timeCreated | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))
+        and (.retention | type == "object")
+        and .retention.mode == "Locked"
+        and (.retention.retainUntilTime | type == "string")
+        and ((.retention.retainUntilTime | utc_epoch) >= ($expires_at | utc_epoch))
+      )
+    ' <<<"$observed_json" 2>/dev/null)"; then
+    echo "ERROR: RIG-G1 approval claim metadata did not re-bind to the exact immutable ledger object." >&2
+    exit 2
+  fi
+  observed_generation="$(jq -r '.generation | tostring' <<<"$observed_json")"
+  observed_created_at="$(jq -r '.timeCreated' <<<"$observed_json")"
+  observed_retention_until="$(jq -r '.retention.retainUntilTime' <<<"$observed_json")"
+  G1_APPROVAL_CLAIM_JSON="$(jq -nc \
+    --arg approval_id "$approval_id" \
+    --arg canonical_sha256 "$canonical_sha" \
+    --arg object_uri "$claim_uri" \
+    --arg generation "$observed_generation" \
+    --arg claimed_at "$observed_created_at" \
+    --arg retention_until "$observed_retention_until" \
+    --argjson scope "$(jq -c '.scope' <<<"$G1_SPEND_APPROVAL_JSON")" '
+      {
+        status: "CLAIMED",
+        backend: "gcs-if-generation-match-0-locked-retention",
+        approval_id: $approval_id,
+        canonical_sha256: $canonical_sha256,
+        object_uri: $object_uri,
+        generation: $generation,
+        claimed_at: $claimed_at,
+        retention_until: $retention_until,
+        scope: $scope
+      }
+    ')"
 }
 
 for denied in "${DENIED_CLOUD_RUN_SERVICES[@]}"; do
@@ -1419,6 +1628,7 @@ write_provision_state() {
     --argjson created_supabase_secrets "$CREATED_SUPABASE_SECRETS" \
     --argjson cloud_run_service_candidates "$CLOUD_RUN_SERVICE_CANDIDATES_JSON" \
     --argjson cloud_run_delete_commands "$CLOUD_RUN_DELETE_COMMANDS_JSON" \
+    --argjson approval_claim "$G1_APPROVAL_CLAIM_JSON" \
     --arg teardown_command "$(teardown_command_for_project_ref "${CREATED_PROJECT_REF:-$NEW_PROJECT_REF}")" \
     '{
       status: $status,
@@ -1457,9 +1667,11 @@ write_provision_state() {
       },
       created_cloud_run_service: $created_cloud_run_service,
       created_supabase_secrets: $created_supabase_secrets,
+      approval_claim: $approval_claim,
       cleanup: {
         cloud_run_service_candidates: $cloud_run_service_candidates,
         cloud_run_delete_commands: $cloud_run_delete_commands,
+        approval_claim: $approval_claim,
         teardown_command: $teardown_command
       },
       state_path: $state_path,
@@ -1892,6 +2104,7 @@ g1_topology_json() {
     --argjson isolated_project_monthly_each_usd "$S33_ISOLATED_SUPABASE_PROJECT_MONTHLY_EACH_USD" \
     --argjson isolated_projects_monthly_total_usd "$S33_ISOLATED_SUPABASE_PROJECTS_MONTHLY_TOTAL_USD" \
     --argjson spend_approval "$G1_SPEND_APPROVAL_JSON" \
+    --argjson approval_claim "$G1_APPROVAL_CLAIM_JSON" \
     --arg control_service "$G1_CONTROL_SERVICE" \
     --arg tuned_service "$G1_TUNED_SERVICE" \
     --arg control_revision "$G1_CONTROL_DEPLOYED_REVISION" \
@@ -1929,6 +2142,7 @@ g1_topology_json() {
         isolated_supabase_projects_monthly_total_usd: $isolated_projects_monthly_total_usd
       },
       spend_approval: $spend_approval,
+      approval_claim: $approval_claim,
       shared_inputs: {
         image: $image,
         corpus_digest: $corpus_digest,
@@ -2209,6 +2423,7 @@ echo "#   region=$SUPABASE_REGION, postgres major=$SUPABASE_PG_MAJOR, org=$SUPAB
 # path appends --output json so the new ref can be captured + re-validated.
 CREATE_CMD=(npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION")
 if [[ $APPLY -eq 1 ]]; then
+  claim_g1_spend_approval_once
   # Persist every deterministic cleanup target and exact delete command before
   # the first paid/cloud mutation. Every later state rewrite carries the same
   # cleanup block, including failures during either G1 deploy or verification.
