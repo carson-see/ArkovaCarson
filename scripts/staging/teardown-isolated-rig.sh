@@ -81,7 +81,7 @@ RIG_B1_APPROVAL_VERIFIER="scripts/staging/s33-b1-node-approval.mjs"
 # This is the bootstrap trust for the verifier that authenticates the signed
 # source HEAD/tree (and this teardown script's own digest). Update only in the
 # same reviewed candidate that changes the verifier.
-RIG_B1_APPROVAL_VERIFIER_SHA256="f0a9f28ea3b9d8fb2b357d83ee941270ce2f0ed109f8f7da3709dabfaeb913a2"
+RIG_B1_APPROVAL_VERIFIER_SHA256="3b019febc8fcc3ef60f09fb52afa0ab599d4297e467ee1827050a05047844920"
 RIG_B1_TRUSTED_NODE_PATH="/opt/homebrew/Cellar/node/25.6.1/bin/node"
 RIG_B1_TRUSTED_NODE_SHA256="8b6a6d43e16ddc3cddaf1217fb75dbe7151e342e36317491bf3ef4a1ec5d4202"
 RIG_B1_TRUSTED_NODE_VERSION="v25.6.1"

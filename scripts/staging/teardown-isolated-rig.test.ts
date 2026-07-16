@@ -17,6 +17,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const teardownSource = readFileSync(resolve(here, 'teardown-isolated-rig.sh'), 'utf8');
 const roots: string[] = [];
 
+describe('teardown-isolated-rig.sh — RIG-B1 verifier bootstrap trust', () => {
+  it('pins the exact production verifier bytes so verifier drift fails closed', () => {
+    const verifierSha = createHash('sha256')
+      .update(readFileSync(resolve(here, 's33-b1-node-approval.mjs')))
+      .digest('hex');
+    const pinnedSha = teardownSource.match(
+      /^RIG_B1_APPROVAL_VERIFIER_SHA256="([0-9a-f]{64})"$/mu,
+    )?.[1];
+
+    expect(pinnedSha).toBe(verifierSha);
+  });
+});
+
 afterAll(() => {
   for (const root of roots) rmSync(root, { force: true, recursive: true });
 });
