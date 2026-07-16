@@ -386,6 +386,28 @@ describe('provision-isolated-rig.sh — admission JSON contract', () => {
 });
 
 describe('provision-isolated-rig.sh — safety model preserved under the new overrides', () => {
+  it('pins the trusted Node launchers to the exact regular host binary tuple', () => {
+    const trustedNode = '/opt/homebrew/Cellar/node/25.6.1/bin/node';
+    expect(script.match(/RIG_(?:G1|R)_TRUSTED_NODE_PATH="[^"]+"/g)).toEqual([
+      `RIG_G1_TRUSTED_NODE_PATH="${trustedNode}"`,
+      `RIG_R_TRUSTED_NODE_PATH="${trustedNode}"`,
+    ]);
+    expect(script).toContain('! -f "$candidate" || -L "$candidate" || ! -x "$candidate"');
+    expect(script).toContain(
+      '! -f "$RIG_G1_TRUSTED_NODE_PATH" || -L "$RIG_G1_TRUSTED_NODE_PATH"',
+    );
+    expect(script).toContain(
+      '! -f "$RIG_R_TRUSTED_NODE_PATH" || -L "$RIG_R_TRUSTED_NODE_PATH"',
+    );
+    if (process.platform !== 'darwin' || process.arch !== 'arm64') return;
+    expect(realpathSync(trustedNode)).toBe(trustedNode);
+    expect(statSync(trustedNode).isFile()).toBe(true);
+    expect(execFileSync(trustedNode, ['--version'], { encoding: 'utf8' }).trim()).toBe('v25.6.1');
+    expect(createHash('sha256').update(readFileSync(trustedNode)).digest('hex')).toBe(
+      '8b6a6d43e16ddc3cddaf1217fb75dbe7151e342e36317491bf3ef4a1ec5d4202',
+    );
+  });
+
   it('still hard-denies the prod + shared-staging refs', () => {
     expect(script).toMatch(/vzwyaatejekddvltxyye/);
     expect(script).toMatch(/ujtlwnoqfhtitcmsnrpq/);
