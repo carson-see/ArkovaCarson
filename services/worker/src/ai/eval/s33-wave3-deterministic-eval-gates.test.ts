@@ -114,6 +114,9 @@ const fixturePolicy = validateS33DetachedSigningTrustPolicyV2({
     method: 'cto-out-of-band',
     confirmedBy: 'lane3-evaluation-cto',
     confirmedAtUtc: '2026-07-15T13:58:00.000Z',
+    genesisRosterRootSha256:
+      'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
+    authorityReceipt: 'lane3-evaluation-founder-authority-receipt',
   },
   activatedAtUtc: '2026-07-15T13:59:00.000Z',
 });
@@ -795,7 +798,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
     expect(report.verdict).toBe('NO-GO');
 
     expect(() => evaluateS33Wave3OfflineGatesProduction(makeFixture())).toThrow(
-      /UNCONFIGURED|no configured ACTIVE key/u,
+      /predates the selected trust-policy key activation|signature verification failed/u,
     );
   });
 
@@ -840,7 +843,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
     expect(evaluateS33Wave3OfflineGates(input).bindings.acceptanceAuthority.verificationMode)
       .toBe('test-injected');
     expect(() => evaluateS33Wave3OfflineGatesProduction(input)).toThrow(
-      /UNCONFIGURED|no configured ACTIVE key/u,
+      /predates the selected trust-policy key activation|signature verification failed/u,
     );
   });
 

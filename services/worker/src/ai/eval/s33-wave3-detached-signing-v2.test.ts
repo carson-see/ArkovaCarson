@@ -19,6 +19,7 @@ import {
   computeS33DetachedAcceptedEntryOrderSha256V2,
   createS33DetachedSigningTestHarnessV2,
   emitS33DetachedSigningRequestV2,
+  getS33DetachedSigningAuthorityV2,
   regenerateS33DetachedSigningRequestForActiveKeyV2,
   transitionS33DetachedSigningTrustPolicySetV2,
   transitionS33DetachedSigningTrustPolicyV2,
@@ -53,6 +54,14 @@ const SHA256_F = 'f'.repeat(64);
 const TRUSTED_VERIFICATION_CONTEXT = Object.freeze({
   verifiedAtUtc: '2026-07-15T21:00:00.000Z',
 });
+const GENESIS_ROSTER_ROOT_SHA256 = 'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f';
+const PRODUCTION_RELEASE_KEY_ID = 'arkova.s33.release-corpus.ed25519.v1';
+const PRODUCTION_RELEASE_FINGERPRINT = 'b5f6445ae954ac1f29b504fdc890dedefda23beb6300f35d99cd2c9d2eeb9e59';
+const PRODUCTION_OPERATOR = 'arkova.s33.operator.key-custodian.v1';
+const PRODUCTION_APPROVER = 'arkova.s33.approver.founder-cto.v1';
+const PRODUCTION_ACTIVATED_AT = '2026-07-16T13:52:06Z';
+const FOUNDER_COMMAND_RECEIPT =
+  'codex-thread:019f65ca-fdfc-7652-bd86-7be6c7463d34:founder-provision-and-soak-command';
 
 function payloadInput(): S33DetachedAcceptancePayloadInputV2 {
   return {
@@ -172,6 +181,8 @@ describe('S3.3 Wave-3 detached signing v2', () => {
         method: 'cto-out-of-band',
         confirmedBy: 'cto',
         confirmedAtUtc: '2026-07-15T16:59:00.000Z',
+        genesisRosterRootSha256: GENESIS_ROSTER_ROOT_SHA256,
+        authorityReceipt: FOUNDER_COMMAND_RECEIPT,
       },
       activatedAtUtc: '2026-07-15T17:00:00.000Z',
     });
@@ -225,6 +236,16 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     });
   }
 
+  function orderPoliciesByVersion(
+    policies: S33DetachedSigningTrustPolicyV2[],
+  ): S33DetachedSigningTrustPolicyV2[] {
+    return [...policies].sort((left, right) => {
+      const leftVersion = Number(left.signingKeyId.match(/\.v(\d+)$/u)?.[1]);
+      const rightVersion = Number(right.signingKeyId.match(/\.v(\d+)$/u)?.[1]);
+      return leftVersion - rightVersion;
+    });
+  }
+
   function hardCutover(
     current: S33DetachedSigningTrustPolicySetV2,
     nextSigningKeyId: string,
@@ -234,11 +255,11 @@ describe('S3.3 Wave-3 detached signing v2', () => {
       ({ signingKeyId }) => signingKeyId === current.activeSigningKeyId,
     )!;
     const nextActive = activePolicyForKey(nextSigningKeyId, cutoverAtUtc);
-    const keys = [{
+    const keys = orderPoliciesByVersion([{
       ...currentActive,
       state: 'RETIRED' as const,
       retiredAtUtc: cutoverAtUtc,
-    }, nextActive].sort((left, right) => left.signingKeyId.localeCompare(right.signingKeyId));
+    }, nextActive]);
     return transitionS33DetachedSigningTrustPolicySetV2(current, {
       ...current,
       activeSigningKeyId: nextSigningKeyId,
@@ -246,8 +267,9 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     });
   }
 
-  it('keeps production unconfigured with no fabricated public material', () => {
-    expect(S33_DETACHED_SIGNING_TRUST_POLICY_V2).toMatchObject({
+  function unconfiguredPolicy(): S33DetachedSigningTrustPolicyV2 {
+    return validateS33DetachedSigningTrustPolicyV2({
+      ...S33_DETACHED_SIGNING_TRUST_POLICY_V2,
       state: 'UNCONFIGURED',
       publicKeySpkiPem: null,
       publicKeyFingerprintSha256: null,
@@ -255,10 +277,44 @@ describe('S3.3 Wave-3 detached signing v2', () => {
       fingerprintConfirmation: null,
       activatedAtUtc: null,
     });
+  }
+
+  function unconfiguredPolicySet(): S33DetachedSigningTrustPolicySetV2 {
+    const policy = unconfiguredPolicy();
+    return validateS33DetachedSigningTrustPolicySetV2({
+      ...S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+      activeSigningKeyId: null,
+      keys: [policy],
+    });
+  }
+
+  it('activates the founder/CTO-confirmed production release-corpus public authority', () => {
+    expect(S33_DETACHED_SIGNING_TRUST_POLICY_V2).toMatchObject({
+      signingKeyId: PRODUCTION_RELEASE_KEY_ID,
+      state: 'ACTIVE',
+      publicKeyFingerprintSha256: PRODUCTION_RELEASE_FINGERPRINT,
+      authorizedOperator: PRODUCTION_OPERATOR,
+      fingerprintConfirmation: {
+        method: 'cto-out-of-band',
+        confirmedBy: PRODUCTION_APPROVER,
+        confirmedAtUtc: PRODUCTION_ACTIVATED_AT,
+        genesisRosterRootSha256: GENESIS_ROSTER_ROOT_SHA256,
+        authorityReceipt: FOUNDER_COMMAND_RECEIPT,
+      },
+      activatedAtUtc: PRODUCTION_ACTIVATED_AT,
+    });
+    expect(S33_DETACHED_SIGNING_TRUST_POLICY_V2.publicKeySpkiPem).toContain('BEGIN PUBLIC KEY');
     expect(Object.isFrozen(S33_DETACHED_SIGNING_TRUST_POLICY_V2)).toBe(true);
     expect(S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2).toMatchObject({
-      activeSigningKeyId: null,
+      activeSigningKeyId: PRODUCTION_RELEASE_KEY_ID,
       keys: [S33_DETACHED_SIGNING_TRUST_POLICY_V2],
+    });
+    expect(getS33DetachedSigningAuthorityV2()).toEqual({
+      signerIdentity: 'arkova-s33-cto-release',
+      signingKeyId: PRODUCTION_RELEASE_KEY_ID,
+      publicKeyFingerprintSha256: PRODUCTION_RELEASE_FINGERPRINT,
+      authorizedOperator: PRODUCTION_OPERATOR,
+      activatedAtUtc: PRODUCTION_ACTIVATED_AT,
     });
   });
 
@@ -466,25 +522,35 @@ describe('S3.3 Wave-3 detached signing v2', () => {
     )).toThrow(new RegExp(`binding mismatch: ${key}`, 'iu'));
   });
 
-  it('fails closed under the production UNCONFIGURED policy', () => {
-    const request = emitS33DetachedSigningRequestV2(payloadInput());
+  it('rejects signatures and envelopes that do not match the active production public root', () => {
+    const productionInput = payloadInput();
+    productionInput.signedAtUtc = '2026-07-16T13:53:00Z';
+    const request = emitS33DetachedSigningRequestV2(productionInput);
     const signature = sign(null, Buffer.from(request.signingBytesBase64Url, 'base64url'), privateKey)
       .toString('base64url');
     expect(() => assembleS33DetachedAcceptanceEnvelopeV2(
       request,
       signature,
-      TRUSTED_VERIFICATION_CONTEXT,
-    )).toThrow(/UNCONFIGURED/i);
+      { verifiedAtUtc: '2026-07-16T14:00:00Z' },
+    )).toThrow(/signature/i);
+    const wrongRootInput = payloadInput();
+    wrongRootInput.signedAtUtc = '2026-07-16T13:53:00Z';
+    const wrongRootRequest = emitS33DetachedSigningRequestV2(wrongRootInput);
+    const wrongRootEnvelope = testHarness.assemble(
+      wrongRootRequest,
+      signRequest(wrongRootRequest, privateKey),
+      { verifiedAtUtc: '2026-07-16T14:00:00Z' },
+    );
     expect(() => verifyS33DetachedAcceptanceEnvelopeV2(
-      signedEnvelope(),
-      bindings(),
-      TRUSTED_VERIFICATION_CONTEXT,
-    )).toThrow(/UNCONFIGURED/i);
-    expect(() => auditS33DetachedAcceptanceEnvelopeV2(signedEnvelope(), bindings(), {
+      wrongRootEnvelope,
+      bindings(wrongRootInput),
+      { verifiedAtUtc: '2026-07-16T14:00:00Z' },
+    )).toThrow(/fingerprint|signature/i);
+    expect(() => auditS33DetachedAcceptanceEnvelopeV2(wrongRootEnvelope, bindings(wrongRootInput), {
       evidenceState: 'MERGED',
-      mergedAtUtc: '2026-07-15T18:30:00.000Z',
-      auditedAtUtc: '2026-07-15T18:31:00.000Z',
-    })).toThrow(/configured public root/i);
+      mergedAtUtc: '2026-07-16T13:54:00Z',
+      auditedAtUtc: '2026-07-16T14:00:00Z',
+    })).toThrow(/fingerprint|signature/i);
   });
 
   it('rejects tampering, a wrong signature, and stale caller bindings', () => {
@@ -566,12 +632,14 @@ describe('S3.3 Wave-3 detached signing v2', () => {
   });
 
   it('enforces activation, retirement, and revocation transitions', () => {
+    const initialPolicy = unconfiguredPolicy();
+    const initialPolicySet = unconfiguredPolicySet();
     expect(transitionS33DetachedSigningTrustPolicyV2(
-      S33_DETACHED_SIGNING_TRUST_POLICY_V2,
+      initialPolicy,
       activePolicy,
     ).state).toBe('ACTIVE');
     expect(transitionS33DetachedSigningTrustPolicySetV2(
-      S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2,
+      initialPolicySet,
       activePolicySet,
     ).activeSigningKeyId).toBe(activePolicy.signingKeyId);
     const retired = transitionS33DetachedSigningTrustPolicyV2(activePolicy, {
@@ -603,7 +671,7 @@ describe('S3.3 Wave-3 detached signing v2', () => {
   it('performs a real A-to-B hard cutover and regenerates in-flight requests', () => {
     const pairB = generateKeyPairSync('ed25519');
     const publicKeySpkiPemB = pairB.publicKey.export({ type: 'spki', format: 'pem' }).toString();
-    const signingKeyIdB = 'arkova-s33-cto-release-2026q3-02';
+    const signingKeyIdB = 'arkova.s33.release-corpus.ed25519.v2';
     const cutoverAtUtc = '2026-07-15T19:00:00.000Z';
     const policyB = validateS33DetachedSigningTrustPolicyV2({
       ...S33_DETACHED_SIGNING_TRUST_POLICY_V2,
@@ -616,6 +684,8 @@ describe('S3.3 Wave-3 detached signing v2', () => {
         method: 'cto-out-of-band',
         confirmedBy: 'cto',
         confirmedAtUtc: '2026-07-15T18:59:00.000Z',
+        genesisRosterRootSha256: GENESIS_ROSTER_ROOT_SHA256,
+        authorityReceipt: FOUNDER_COMMAND_RECEIPT,
       },
       activatedAtUtc: cutoverAtUtc,
     });
@@ -705,28 +775,28 @@ describe('S3.3 Wave-3 detached signing v2', () => {
   it('requires strictly forward key versions for cutover and post-revocation recovery', () => {
     expect(() => validateS33DetachedSigningTrustPolicyV2({
       ...activePolicy,
-      signingKeyId: 'arkova-s33-cto-release-2026q3-00',
+      signingKeyId: 'arkova.s33.release-corpus.ed25519.v0',
     })).toThrow(/not versioned/i);
 
     expect(() => hardCutover(
-      activePolicySetForKey('arkova-s33-cto-release-2026q3-02'),
-      'arkova-s33-cto-release-2026q3-01',
+      activePolicySetForKey('arkova.s33.release-corpus.ed25519.v2'),
+      'arkova.s33.release-corpus.ed25519.v1',
     )).toThrow(/strictly forward/i);
     expect(() => hardCutover(
-      activePolicySetForKey('arkova-s33-cto-release-2026q4-02'),
-      'arkova-s33-cto-release-2026q3-99',
+      activePolicySetForKey('arkova.s33.release-corpus.ed25519.v10'),
+      'arkova.s33.release-corpus.ed25519.v9',
     )).toThrow(/strictly forward/i);
 
     expect(hardCutover(
-      activePolicySetForKey('arkova-s33-cto-release-2026q3-01'),
-      'arkova-s33-cto-release-2026q3-02',
-    ).activeSigningKeyId).toBe('arkova-s33-cto-release-2026q3-02');
+      activePolicySetForKey('arkova.s33.release-corpus.ed25519.v1'),
+      'arkova.s33.release-corpus.ed25519.v2',
+    ).activeSigningKeyId).toBe('arkova.s33.release-corpus.ed25519.v2');
     expect(hardCutover(
-      activePolicySetForKey('arkova-s33-cto-release-2026q3-99'),
-      'arkova-s33-cto-release-2026q4-01',
-    ).activeSigningKeyId).toBe('arkova-s33-cto-release-2026q4-01');
+      activePolicySetForKey('arkova.s33.release-corpus.ed25519.v99'),
+      'arkova.s33.release-corpus.ed25519.v100',
+    ).activeSigningKeyId).toBe('arkova.s33.release-corpus.ed25519.v100');
 
-    const revokedKeyId = 'arkova-s33-cto-release-2026q4-02';
+    const revokedKeyId = 'arkova.s33.release-corpus.ed25519.v102';
     const current = activePolicySetForKey(revokedKeyId);
     const revoked = transitionS33DetachedSigningTrustPolicySetV2(current, {
       ...current,
@@ -739,7 +809,7 @@ describe('S3.3 Wave-3 detached signing v2', () => {
       }],
     });
     const backwardRecovery = activePolicyForKey(
-      'arkova-s33-cto-release-2026q3-99',
+      'arkova.s33.release-corpus.ed25519.v101',
       '2026-07-15T19:00:00.000Z',
     );
     expect(() => transitionS33DetachedSigningTrustPolicySetV2(revoked, {
@@ -756,8 +826,8 @@ describe('S3.3 Wave-3 detached signing v2', () => {
 
   it('compares recovery against the maximum key version ever used in the ring', () => {
     const rotated = hardCutover(
-      activePolicySetForKey('arkova-s33-cto-release-2026q3-01'),
-      'arkova-s33-cto-release-2026q4-99',
+      activePolicySetForKey('arkova.s33.release-corpus.ed25519.v1'),
+      'arkova.s33.release-corpus.ed25519.v499',
     );
     const revokedB = transitionS33DetachedSigningTrustPolicySetV2(rotated, {
       ...rotated,
@@ -783,23 +853,22 @@ describe('S3.3 Wave-3 detached signing v2', () => {
       return transitionS33DetachedSigningTrustPolicySetV2(laterRevokedA, {
         ...laterRevokedA,
         activeSigningKeyId: signingKeyId,
-        keys: [...laterRevokedA.keys, recovery]
-          .sort((left, right) => left.signingKeyId.localeCompare(right.signingKeyId)),
+        keys: orderPoliciesByVersion([...laterRevokedA.keys, recovery]),
       });
     };
 
     expect(() => recover(
-      'arkova-s33-cto-release-2026q4-01',
+      'arkova.s33.release-corpus.ed25519.v401',
       '2026-07-15T22:00:00.000Z',
     )).toThrow(/strictly forward/i);
     expect(() => recover(
-      'arkova-s33-cto-release-2027q1-01',
+      'arkova.s33.release-corpus.ed25519.v500',
       '2026-07-15T20:30:00.000Z',
     )).toThrow(/latest revocation/i);
     expect(recover(
-      'arkova-s33-cto-release-2027q1-01',
+      'arkova.s33.release-corpus.ed25519.v500',
       '2026-07-15T22:00:00.000Z',
-    ).activeSigningKeyId).toBe('arkova-s33-cto-release-2027q1-01');
+    ).activeSigningKeyId).toBe('arkova.s33.release-corpus.ed25519.v500');
   });
 
   it('separates historical audit, in-flight HOLD, and revoked merged-evidence HOLD', () => {

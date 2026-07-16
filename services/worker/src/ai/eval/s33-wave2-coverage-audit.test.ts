@@ -129,6 +129,9 @@ beforeAll(() => {
       method: 'cto-out-of-band',
       confirmedBy: 'lane3-coverage-cto',
       confirmedAtUtc: '2026-07-15T13:58:00.000Z',
+      genesisRosterRootSha256:
+        'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
+      authorityReceipt: 'lane3-coverage-founder-authority-receipt',
     },
     activatedAtUtc: '2026-07-15T13:59:00.000Z',
   });
@@ -492,14 +495,14 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
     expect(() => auditWithTestRoot(fabricated)).toThrow(/authenticated Lane-3 acceptance/iu);
   });
 
-  it('fails closed for a valid envelope until the production v2 policy is activated', () => {
+  it('rejects a test-root envelope at the production authority boundary', () => {
     const envelope = buildAcceptance();
     expect(() => auditS33Wave2Coverage(
       readRegistryBytes(),
       [envelope],
       '2026-07-15T14:01:00.000Z',
     ))
-      .toThrow(/UNCONFIGURED|no configured ACTIVE key/iu);
+      .toThrow(/predates the selected trust-policy key activation|signature verification failed/iu);
   });
 
   it('binds acceptance to the exact raw and canonical coverage-registry bytes', () => {
@@ -543,6 +546,9 @@ describe('S3.3 Wave 2 authenticated held-out coverage audit', () => {
         method: 'cto-out-of-band',
         confirmedBy: 'foreign-fixture-cto',
         confirmedAtUtc: '2026-07-15T13:58:00.000Z',
+        genesisRosterRootSha256:
+          'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
+        authorityReceipt: 'foreign-fixture-founder-authority-receipt',
       },
       activatedAtUtc: '2026-07-15T13:59:00.000Z',
     });

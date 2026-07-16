@@ -2,9 +2,9 @@
  * Sprint 3.3 Wave-3 detached release signing.
  *
  * This module can emit canonical unsigned requests, but it cannot sign. The
- * production trust-policy set is intentionally UNCONFIGURED until the CTO supplies
- * and independently confirms the public SPKI, fingerprint, and operator. Only
- * an ACTIVE reviewed policy may assemble or verify a signed acceptance.
+ * production trust-policy set contains only the founder/CTO-confirmed public
+ * Ed25519 root. Private material remains external to the repository. Only an
+ * ACTIVE reviewed policy may assemble or verify a signed acceptance.
  */
 
 import {
@@ -18,7 +18,18 @@ import { canonicaliseJson } from '../../utils/canonical-json.js';
 const SCHEMA_VERSION = 2 as const;
 const SIGNATURE_ALGORITHM = 'Ed25519' as const;
 const SIGNER_IDENTITY = 'arkova-s33-cto-release' as const;
-const INITIAL_SIGNING_KEY_ID = 'arkova-s33-cto-release-2026q3-01' as const;
+const INITIAL_SIGNING_KEY_ID = 'arkova.s33.release-corpus.ed25519.v1' as const;
+const RELEASE_CORPUS_PUBLIC_KEY_SPKI_PEM =
+  '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAf7Oe/mYJSU3rBUsLb9ni3zIZgS7K0FWbM1E9xovU/R8=\n-----END PUBLIC KEY-----\n' as const;
+const RELEASE_CORPUS_PUBLIC_KEY_FINGERPRINT_SHA256 =
+  'b5f6445ae954ac1f29b504fdc890dedefda23beb6300f35d99cd2c9d2eeb9e59' as const;
+const S33_PUBLIC_AUTHORITY_OPERATOR = 'arkova.s33.operator.key-custodian.v1' as const;
+const S33_PUBLIC_AUTHORITY_APPROVER = 'arkova.s33.approver.founder-cto.v1' as const;
+const S33_PUBLIC_AUTHORITY_ACTIVATED_AT_UTC = '2026-07-16T13:52:06Z' as const;
+const S33_PUBLIC_AUTHORITY_GENESIS_ROSTER_ROOT_SHA256 =
+  'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f' as const;
+const S33_PUBLIC_AUTHORITY_FOUNDER_COMMAND_RECEIPT =
+  'codex-thread:019f65ca-fdfc-7652-bd86-7be6c7463d34:founder-provision-and-soak-command' as const;
 const DOMAIN_SEPARATOR = 'arkova:s33:detached-acceptance:v2\n' as const;
 const ACTIVATION_MODE = 'reviewed-commit-and-cto-out-of-band-confirmation' as const;
 const ROTATION_MODE = 'reviewed-hard-cutover-no-overlap' as const;
@@ -27,8 +38,9 @@ const REPOSITORY_IDENTITY = 'carson-see/ArkovaCarson' as const;
 const COVERAGE_REGISTRY_PATH = 'docs/lane4/s33-wave2-top15-registry.json' as const;
 const SHA1 = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
+const SHA256_URI = /^sha256:[0-9a-f]{64}$/u;
 const SIGNATURE_BASE64URL = /^[A-Za-z0-9_-]{86}$/u;
-const KEY_ID = /^arkova-s33-cto-release-(\d{4})q([1-4])-(0[1-9]|[1-9]\d)$/u;
+const KEY_ID = /^arkova\.s33\.release-corpus\.ed25519\.v([1-9]\d*)$/u;
 const PUBLIC_SPKI_PEM = /^-----BEGIN PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END PUBLIC KEY-----$/u;
 const PLACEHOLDER = /^(?:n\/?a|none|null|pending|tbd|todo|unknown|placeholder)$/iu;
 
@@ -40,6 +52,8 @@ export interface S33DetachedSigningFingerprintConfirmationV2 {
   method: 'cto-out-of-band';
   confirmedBy: string;
   confirmedAtUtc: string;
+  genesisRosterRootSha256: string;
+  authorityReceipt: string;
 }
 
 export interface S33DetachedSigningTrustPolicyV2 {
@@ -305,8 +319,8 @@ export const S33_DETACHED_ACCEPTANCE_PAYLOAD_V2_CONSTANTS = Object.freeze({
 });
 
 /**
- * No placeholder SPKI is permitted. This exact committed state cannot verify
- * or assemble a nonempty acceptance and reads no environment configuration.
+ * Founder/CTO-confirmed production public root. This repository contains no
+ * private key, signer, secret value, or environment-based authority override.
  */
 export const S33_DETACHED_SIGNING_TRUST_POLICY_V2: S33DetachedSigningTrustPolicyV2 = deepFreeze({
   schemaVersion: SCHEMA_VERSION,
@@ -314,28 +328,34 @@ export const S33_DETACHED_SIGNING_TRUST_POLICY_V2: S33DetachedSigningTrustPolicy
   signatureAlgorithm: SIGNATURE_ALGORITHM,
   signerIdentity: SIGNER_IDENTITY,
   signingKeyId: INITIAL_SIGNING_KEY_ID,
-  state: 'UNCONFIGURED',
+  state: 'ACTIVE',
   activationMode: ACTIVATION_MODE,
   rotationMode: ROTATION_MODE,
   revocationMode: REVOCATION_MODE,
-  publicKeySpkiPem: null,
-  publicKeyFingerprintSha256: null,
-  authorizedOperator: null,
-  fingerprintConfirmation: null,
-  activatedAtUtc: null,
+  publicKeySpkiPem: RELEASE_CORPUS_PUBLIC_KEY_SPKI_PEM,
+  publicKeyFingerprintSha256: RELEASE_CORPUS_PUBLIC_KEY_FINGERPRINT_SHA256,
+  authorizedOperator: S33_PUBLIC_AUTHORITY_OPERATOR,
+  fingerprintConfirmation: {
+    method: 'cto-out-of-band',
+    confirmedBy: S33_PUBLIC_AUTHORITY_APPROVER,
+    confirmedAtUtc: S33_PUBLIC_AUTHORITY_ACTIVATED_AT_UTC,
+    genesisRosterRootSha256: S33_PUBLIC_AUTHORITY_GENESIS_ROSTER_ROOT_SHA256,
+    authorityReceipt: S33_PUBLIC_AUTHORITY_FOUNDER_COMMAND_RECEIPT,
+  },
+  activatedAtUtc: S33_PUBLIC_AUTHORITY_ACTIVATED_AT_UTC,
   retiredAtUtc: null,
   revokedAtUtc: null,
   revocationReason: null,
 });
 
-/** Production key ring: no active key and no configured public material. */
+/** Production key ring: one active, code-bound public root and no private material. */
 export const S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2: S33DetachedSigningTrustPolicySetV2 = deepFreeze({
   schemaVersion: SCHEMA_VERSION,
   artifactType: 'arkova-s33-detached-signing-trust-policy-set',
   signatureAlgorithm: SIGNATURE_ALGORITHM,
   signerIdentity: SIGNER_IDENTITY,
   rotationMode: ROTATION_MODE,
-  activeSigningKeyId: null,
+  activeSigningKeyId: INITIAL_SIGNING_KEY_ID,
   keys: [S33_DETACHED_SIGNING_TRUST_POLICY_V2],
 });
 
@@ -393,18 +413,20 @@ function versionedSigningKeyId(value: unknown, label = 'S3.3 detached signing ke
   return parsed;
 }
 
-function signingKeyVersion(signingKeyId: string): readonly [number, number, number] {
+function signingKeyVersion(signingKeyId: string): number {
   const match = KEY_ID.exec(signingKeyId);
   if (!match) throw new Error('S3.3 detached signing key id is not versioned');
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
+  const version = Number(match[1]);
+  if (!Number.isSafeInteger(version)) {
+    throw new Error('S3.3 detached signing key id version exceeds the safe integer range');
+  }
+  return version;
 }
 
 function compareSigningKeyIds(leftSigningKeyId: string, rightSigningKeyId: string): number {
-  const [leftYear, leftQuarter, leftSequence] = signingKeyVersion(leftSigningKeyId);
-  const [rightYear, rightQuarter, rightSequence] = signingKeyVersion(rightSigningKeyId);
-  if (leftYear !== rightYear) return leftYear < rightYear ? -1 : 1;
-  if (leftQuarter !== rightQuarter) return leftQuarter < rightQuarter ? -1 : 1;
-  if (leftSequence !== rightSequence) return leftSequence < rightSequence ? -1 : 1;
+  const leftVersion = signingKeyVersion(leftSigningKeyId);
+  const rightVersion = signingKeyVersion(rightSigningKeyId);
+  if (leftVersion !== rightVersion) return leftVersion < rightVersion ? -1 : 1;
   return 0;
 }
 
@@ -442,6 +464,13 @@ function digest(value: unknown, label: string): string {
   return value;
 }
 
+function sha256Uri(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !SHA256_URI.test(value)) {
+    throw new Error(`${label} must be a lowercase sha256: URI`);
+  }
+  return value;
+}
+
 function nullableDigest(value: unknown, label: string): string | null {
   if (value === null) return null;
   return digest(value, label);
@@ -449,8 +478,13 @@ function nullableDigest(value: unknown, label: string): string | null {
 
 function isoUtc(value: unknown, label: string): string {
   const parsed = nonEmpty(value, label);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(parsed)) {
+    throw new Error(`${label} must be canonical UTC ISO-8601`);
+  }
   const epoch = Date.parse(parsed);
-  if (!Number.isFinite(epoch) || new Date(epoch).toISOString() !== parsed) {
+  const normalized = Number.isFinite(epoch) ? new Date(epoch).toISOString() : '';
+  const expected = parsed.includes('.') ? normalized : normalized.replace('.000Z', 'Z');
+  if (!Number.isFinite(epoch) || expected !== parsed) {
     throw new Error(`${label} must be canonical UTC ISO-8601`);
   }
   return parsed;
@@ -472,7 +506,10 @@ function parseFingerprintConfirmation(
   const confirmation = record(value, 'S3.3 detached fingerprint confirmation');
   exactKeys(
     confirmation,
-    ['method', 'confirmedBy', 'confirmedAtUtc'],
+    [
+      'method', 'confirmedBy', 'confirmedAtUtc', 'genesisRosterRootSha256',
+      'authorityReceipt',
+    ],
     'S3.3 detached fingerprint confirmation',
   );
   if (confirmation.method !== 'cto-out-of-band') {
@@ -482,6 +519,14 @@ function parseFingerprintConfirmation(
     method: 'cto-out-of-band',
     confirmedBy: nonPlaceholder(confirmation.confirmedBy, 'S3.3 detached fingerprint confirmer'),
     confirmedAtUtc: isoUtc(confirmation.confirmedAtUtc, 'S3.3 detached fingerprint confirmation time'),
+    genesisRosterRootSha256: sha256Uri(
+      confirmation.genesisRosterRootSha256,
+      'S3.3 detached genesis roster root',
+    ),
+    authorityReceipt: nonPlaceholder(
+      confirmation.authorityReceipt,
+      'S3.3 detached founder authority receipt',
+    ),
   });
 }
 
@@ -779,9 +824,9 @@ function parseTrustPolicySet(value: unknown): S33ResolvedTrustPolicySetV2 {
   if (new Set(keyIds).size !== keyIds.length) {
     throw new Error('S3.3 detached trust-policy set contains a duplicate signing key id');
   }
-  const sortedKeyIds = [...keyIds].sort(compareUtf16CodeUnits);
+  const sortedKeyIds = [...keyIds].sort(compareSigningKeyIds);
   if (keyIds.some((keyId, index) => keyId !== sortedKeyIds[index])) {
-    throw new Error('S3.3 detached trust-policy set keys must be ordered by versioned key id');
+    throw new Error('S3.3 detached trust-policy set keys must be ordered by numeric versioned key id');
   }
   const activeSigningKeyId = candidate.activeSigningKeyId === null
     ? null
@@ -1558,7 +1603,7 @@ function signingAuthority(
   });
 }
 
-/** Resolve the sole committed production authority; UNCONFIGURED fails closed. */
+/** Resolve the sole committed production public authority; invalid state fails closed. */
 export function getS33DetachedSigningAuthorityV2(): S33DetachedSigningAuthorityV2 {
   return signingAuthority(
     requireActiveTrustPolicySet(parseTrustPolicySet(S33_DETACHED_SIGNING_TRUST_POLICY_SET_V2)),

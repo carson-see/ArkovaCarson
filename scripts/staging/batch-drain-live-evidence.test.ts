@@ -8,6 +8,7 @@ import {
   createEvidenceEnvelopeVerifierForTest,
   createProductionEvidenceEnvelopeVerifier,
   deriveAndAssertLiveEvidence,
+  getS33B1EvidenceVerificationAuthority,
   parseRawCaptureSet,
   type ImmutableRunDeclaration,
   type ParsedRawCaptureSet,
@@ -35,7 +36,9 @@ const TEST_PUBLIC_KEY_PEM = TEST_KEYPAIR.publicKey.export({ type: 'spki', format
 const TEST_KEY_FINGERPRINT = createHash('sha256')
   .update(TEST_KEYPAIR.publicKey.export({ type: 'spki', format: 'der' }))
   .digest('hex');
+const TEST_KEY_ID = 'arkova.test.s33.b1-evidence.ed25519.v1';
 const TEST_VERIFIER = createEvidenceEnvelopeVerifierForTest({
+  keyId: TEST_KEY_ID,
   publicKeyPem: TEST_PUBLIC_KEY_PEM,
   keyFingerprint: TEST_KEY_FINGERPRINT,
 });
@@ -104,6 +107,7 @@ function trust(value: Record<string, unknown>, captures: RawCaptureTextSet): Imm
   const envelopeRaw = JSON.stringify({
     schemaVersion: 1,
     envelopeId: 'trust-root-rig-b1-r3',
+    keyId: TEST_KEY_ID,
     keyFingerprint: TEST_KEY_FINGERPRINT,
     signedPayloadRaw,
     signatureBase64: sign(null, Buffer.from(signedPayloadRaw), TEST_KEYPAIR.privateKey).toString('base64'),
@@ -304,8 +308,32 @@ function deriveTrusted(raw: RawCaptureTextSet) {
 }
 
 describe('deriveAndAssertLiveEvidence — independent strict raw-source replay', () => {
-  it('fails production verification closed until the CTO key and fingerprint are code-configured', () => {
-    expect(() => createProductionEvidenceEnvelopeVerifier()).toThrow(/CTO.*key|not configured/i);
+  it('activates only the code-bound B1 public authority while live execution remains separately gated', () => {
+    expect(getS33B1EvidenceVerificationAuthority()).toEqual({
+      keyId: 'arkova.s33.b1-evidence.ed25519.v1',
+      purpose: 'B1_EVIDENCE',
+      publicKeyFingerprintSha256: '8b7fbc51c74828dab2e1a3ca6f0c15069575bae8e4e190eaf3b165daea50d5c6',
+      authorizedOperator: 'arkova.s33.operator.key-custodian.v1',
+      activatedAtUtc: '2026-07-16T13:52:06Z',
+      genesisRosterRootSha256: 'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
+    });
+    expect(() => createProductionEvidenceEnvelopeVerifier()).not.toThrow();
+    const signedPayloadRaw = JSON.stringify({
+      schemaVersion: 1,
+      envelopeId: 'trust-root-rig-b1-r3',
+      declaration: declarationValue(),
+      rawCaptureDigests: digests(rawCapturesForDeclaration(sha256(JSON.stringify(declarationValue())))),
+    });
+    const wrongAuthorityEnvelope = JSON.stringify({
+      schemaVersion: 1,
+      envelopeId: 'trust-root-rig-b1-r3',
+      keyId: TEST_KEY_ID,
+      keyFingerprint: TEST_KEY_FINGERPRINT,
+      signedPayloadRaw,
+      signatureBase64: sign(null, Buffer.from(signedPayloadRaw), TEST_KEYPAIR.privateKey).toString('base64'),
+    });
+    expect(() => createProductionEvidenceEnvelopeVerifier().verify(wrongAuthorityEnvelope))
+      .toThrow(/untrusted key id|untrusted key fingerprint/i);
   });
 
   it('authenticates the six digests with Ed25519 and deeply freezes the parsed payload', () => {
@@ -336,6 +364,7 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
   it('accepts exact verifier and capture key sets independent of insertion order', () => {
     expect(() => createEvidenceEnvelopeVerifierForTest({
       keyFingerprint: TEST_KEY_FINGERPRINT,
+      keyId: TEST_KEY_ID,
       publicKeyPem: TEST_PUBLIC_KEY_PEM,
     })).not.toThrow();
     const declared = immutable();
@@ -414,6 +443,7 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     const forgedEnvelope = JSON.stringify({
       schemaVersion: 1,
       envelopeId: 'trust-root-rig-b1-r3',
+      keyId: TEST_KEY_ID,
       keyFingerprint: TEST_KEY_FINGERPRINT,
       signedPayloadRaw,
       signatureBase64: Buffer.alloc(64).toString('base64'),
@@ -423,14 +453,17 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
 
   it('rejects unknown/duplicate JSON ambiguity and non-primitive proxy input', () => {
     const duplicateOuter = '{"schemaVersion":1,"envelopeId":"one","envelopeId":"two",' +
-      `"keyFingerprint":"${TEST_KEY_FINGERPRINT}","signedPayloadRaw":"{}","signatureBase64":"${Buffer.alloc(64).toString('base64')}"}`;
+      `"keyId":"${TEST_KEY_ID}","keyFingerprint":"${TEST_KEY_FINGERPRINT}",` +
+      `"signedPayloadRaw":"{}","signatureBase64":"${Buffer.alloc(64).toString('base64')}"}`;
     expect(() => TEST_VERIFIER.verify(duplicateOuter)).toThrow(/duplicate/i);
     expect(() => TEST_VERIFIER.verify(new Proxy(new String('{}'), {}) as unknown as string)).toThrow(/primitive string/i);
     expect(() => createEvidenceEnvelopeVerifierForTest(new Proxy({
       publicKeyPem: TEST_PUBLIC_KEY_PEM,
+      keyId: TEST_KEY_ID,
       keyFingerprint: TEST_KEY_FINGERPRINT,
     }, {}))).toThrow(/proxy/i);
     expect(() => createEvidenceEnvelopeVerifierForTest(Object.defineProperty({
+      keyId: TEST_KEY_ID,
       keyFingerprint: TEST_KEY_FINGERPRINT,
     }, 'publicKeyPem', { enumerable: true, get: () => TEST_PUBLIC_KEY_PEM }))).toThrow(/getters/i);
 
@@ -445,6 +478,7 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     const envelope = JSON.stringify({
       schemaVersion: 1,
       envelopeId: 'trust-root-rig-b1-r3',
+      keyId: TEST_KEY_ID,
       keyFingerprint: TEST_KEY_FINGERPRINT,
       signedPayloadRaw: payloadWithUnknown,
       signatureBase64: sign(null, Buffer.from(payloadWithUnknown), TEST_KEYPAIR.privateKey).toString('base64'),
@@ -458,6 +492,7 @@ describe('deriveAndAssertLiveEvidence — independent strict raw-source replay',
     const duplicatePayloadEnvelope = JSON.stringify({
       schemaVersion: 1,
       envelopeId: 'trust-root-rig-b1-r3',
+      keyId: TEST_KEY_ID,
       keyFingerprint: TEST_KEY_FINGERPRINT,
       signedPayloadRaw: duplicatePayload,
       signatureBase64: sign(null, Buffer.from(duplicatePayload), TEST_KEYPAIR.privateKey).toString('base64'),

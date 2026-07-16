@@ -60,6 +60,9 @@ const testPolicy = validateS33DetachedSigningTrustPolicyV2({
     method: 'cto-out-of-band',
     confirmedBy: 'lane3-fixture-cto',
     confirmedAtUtc: '2026-07-15T13:58:00.000Z',
+    genesisRosterRootSha256:
+      'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
+    authorityReceipt: 'lane3-fixture-founder-authority-receipt',
   },
   activatedAtUtc: '2026-07-15T13:59:00.000Z',
 });
@@ -410,7 +413,7 @@ describe('S3.3 Wave-2 whole-batch acceptance', () => {
     expect(accepted.request.payload.acceptedEntryCount).toBe(4);
   });
 
-  it('keeps the production acceptor fail-closed while the v2 policy is unconfigured', () => {
+  it('keeps the production acceptor closed to a test-root acceptance', () => {
     const value = fixture();
     expect(() => acceptS33Wave2BatchCandidate({
       registry,
@@ -418,7 +421,7 @@ describe('S3.3 Wave-2 whole-batch acceptance', () => {
       pullRequestNumber: 1600,
       verifiedAtUtc: '2026-07-15T14:01:00.000Z',
       authenticatedAcceptance: authenticatedAcceptance(value),
-    })).toThrow(/UNCONFIGURED|no configured ACTIVE key/iu);
+    })).toThrow(/predates the selected trust-policy key activation|signature verification failed/iu);
   });
 
   it('loads default-abbreviated Git raw diffs as full object ids and preflights the real registry shape', () => {

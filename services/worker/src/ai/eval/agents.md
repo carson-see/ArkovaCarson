@@ -60,13 +60,14 @@ _Last updated: 2026-07-15_
   canonical `arkova:s33:detached-acceptance:v2` unsigned request, accepts only a
   64-byte detached Ed25519 signature for assembly, and verifies the strict
   request/envelope digests plus all caller-recomputed batch bindings.
-- The production key ring is deliberately `UNCONFIGURED`: it has no active key,
-  and the initial policy's public SPKI, DER SHA-256
-  fingerprint, authorized operator, CTO out-of-band fingerprint confirmation,
-  and activation time are all `null`. There
-  is no placeholder root, private-key API, signer, or environment override, so
-  production assembly and verification fail closed until a reviewed CTO input
-  commit activates the policy.
+- The production key ring is `ACTIVE` only for the founder/CTO-confirmed public
+  release/corpus Ed25519 root `arkova.s33.release-corpus.ed25519.v1`. Its SPKI,
+  DER fingerprint, operator, activation time, founder command receipt, and
+  canonical genesis-roster root are code-bound. The public genesis receipt at
+  `docs/lane3/evidence/s33-public-authority-genesis-receipt.json` is
+  `selfPinned:false`, records secret-version resource names only, and verifies
+  all three roster signatures. There remains no private-key API, signer,
+  secret value, or environment authority override.
 - The versioned trust-policy set permits at most one active key and retains old
   public roots. A normal A-to-B rotation is atomic: A becomes `RETIRED` at the
   exact instant B becomes `ACTIVE`, with no overlap; unsigned in-flight A

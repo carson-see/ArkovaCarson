@@ -37,11 +37,33 @@ export const MAX_HEARTBEAT_GAP_MINUTES = 5;
 export const DEFAULT_EVIDENCE_TRUST_ROOT = '/var/lib/arkova/s33-evidence/trust-roots';
 export const DEFAULT_EVIDENCE_CAPTURE_ROOT = '/var/lib/arkova/s33-evidence/captures';
 
-// CTO-owned launch configuration. These are deliberately null until the CTO
-// approves and commits the production Ed25519 public key + SPKI fingerprint.
-// CLI flags and environment variables are intentionally not consulted.
-const CTO_EVIDENCE_PUBLIC_KEY_PEM: string | null = null;
-const CTO_EVIDENCE_KEY_FINGERPRINT: string | null = null;
+// Founder/CTO-confirmed public verification authority. Private material stays
+// in external custody; CLI flags and environment variables are never consulted.
+const B1_EVIDENCE_PUBLIC_KEY_PEM =
+  '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAE+Ir2My5+bBwU73QkL73F7fiRteZ0V5yIAe41fD6MdU=\n-----END PUBLIC KEY-----\n';
+
+export interface S33B1EvidenceVerificationAuthority {
+  readonly keyId: 'arkova.s33.b1-evidence.ed25519.v1';
+  readonly purpose: 'B1_EVIDENCE';
+  readonly publicKeyFingerprintSha256: string;
+  readonly authorizedOperator: 'arkova.s33.operator.key-custodian.v1';
+  readonly activatedAtUtc: '2026-07-16T13:52:06Z';
+  readonly genesisRosterRootSha256: string;
+}
+
+const B1_EVIDENCE_VERIFICATION_AUTHORITY: S33B1EvidenceVerificationAuthority = Object.freeze({
+  keyId: 'arkova.s33.b1-evidence.ed25519.v1',
+  purpose: 'B1_EVIDENCE',
+  publicKeyFingerprintSha256: '8b7fbc51c74828dab2e1a3ca6f0c15069575bae8e4e190eaf3b165daea50d5c6',
+  authorizedOperator: 'arkova.s33.operator.key-custodian.v1',
+  activatedAtUtc: '2026-07-16T13:52:06Z',
+  genesisRosterRootSha256:
+    'sha256:bb4d0bb56523b6cdb9701cf786d7f2828a571bd6c7fc32a247d93a2041efc51f',
+});
+
+export function getS33B1EvidenceVerificationAuthority(): S33B1EvidenceVerificationAuthority {
+  return B1_EVIDENCE_VERIFICATION_AUTHORITY;
+}
 
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
 const headSha = z.string().regex(/^[0-9a-f]{40}$/);
@@ -120,6 +142,7 @@ const VERIFIED_DECLARATIONS = new WeakSet<ImmutableRunDeclaration>();
 const evidenceTrustRootSchema = z.object({
   schemaVersion: z.literal(1),
   envelopeId: z.string().regex(/^[a-z0-9][a-z0-9-]{2,79}$/),
+  keyId: z.string().regex(/^[a-z0-9][a-z0-9.-]{2,127}$/),
   keyFingerprint: sha256Hex,
   signedPayloadRaw: nonEmpty,
   signatureBase64: z.string().regex(/^[A-Za-z0-9+/]{86}==$/),
@@ -560,6 +583,7 @@ export interface EvidenceEnvelopeVerifier {
 }
 
 interface EvidenceVerifierConfig {
+  keyId: string;
   publicKeyPem: string;
   keyFingerprint: string;
 }
@@ -571,15 +595,17 @@ function assertPlainVerifierConfig(config: unknown): asserts config is EvidenceV
   const descriptors = Object.getOwnPropertyDescriptors(config);
   if (
     Reflect.ownKeys(config).some((key) => typeof key !== 'string')
-    || Object.keys(descriptors).sort(compareCodeUnits).join(',') !== 'keyFingerprint,publicKeyPem'
+    || Object.keys(descriptors).sort(compareCodeUnits).join(',') !== 'keyFingerprint,keyId,publicKeyPem'
     || Object.values(descriptors).some((descriptor) => !('value' in descriptor) || descriptor.get || descriptor.set)
     || typeof descriptors.publicKeyPem?.value !== 'string'
     || typeof descriptors.keyFingerprint?.value !== 'string'
+    || typeof descriptors.keyId?.value !== 'string'
   ) throw new Error('Evidence verifier configuration rejects getters, unknown keys, and ambiguous values.');
 }
 
 class Ed25519EvidenceEnvelopeVerifier implements EvidenceEnvelopeVerifier {
   private readonly publicKey;
+  private readonly keyId: string;
   private readonly keyFingerprint: string;
 
   constructor(config: EvidenceVerifierConfig) {
@@ -589,12 +615,14 @@ class Ed25519EvidenceEnvelopeVerifier implements EvidenceEnvelopeVerifier {
       .update(this.publicKey.export({ type: 'spki', format: 'der' }))
       .digest('hex');
     if (actualFingerprint !== config.keyFingerprint) throw new Error('Evidence verification key fingerprint mismatch.');
+    this.keyId = config.keyId;
     this.keyFingerprint = config.keyFingerprint;
   }
 
   verify(raw: unknown): ImmutableRunDeclaration {
     if (typeof raw !== 'string') throw new Error('Signed evidence envelope must be a primitive string.');
     const envelope = parseStrict(evidenceTrustRootSchema, raw, 'signed evidence envelope');
+    if (envelope.keyId !== this.keyId) throw new Error('Signed evidence envelope names an untrusted key id.');
     if (envelope.keyFingerprint !== this.keyFingerprint) throw new Error('Signed evidence envelope names an untrusted key fingerprint.');
     const signature = Buffer.from(envelope.signatureBase64, 'base64');
     if (!verifySignature(null, Buffer.from(envelope.signedPayloadRaw), this.publicKey, signature)) {
@@ -619,12 +647,10 @@ class Ed25519EvidenceEnvelopeVerifier implements EvidenceEnvelopeVerifier {
 }
 
 export function createProductionEvidenceEnvelopeVerifier(): EvidenceEnvelopeVerifier {
-  if (CTO_EVIDENCE_PUBLIC_KEY_PEM === null || CTO_EVIDENCE_KEY_FINGERPRINT === null) {
-    throw new Error('CTO evidence verification key and fingerprint are not configured; live evidence verification is blocked.');
-  }
   return new Ed25519EvidenceEnvelopeVerifier({
-    publicKeyPem: CTO_EVIDENCE_PUBLIC_KEY_PEM,
-    keyFingerprint: CTO_EVIDENCE_KEY_FINGERPRINT,
+    keyId: B1_EVIDENCE_VERIFICATION_AUTHORITY.keyId,
+    publicKeyPem: B1_EVIDENCE_PUBLIC_KEY_PEM,
+    keyFingerprint: B1_EVIDENCE_VERIFICATION_AUTHORITY.publicKeyFingerprintSha256,
   });
 }
 
