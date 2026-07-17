@@ -26,6 +26,15 @@ import {
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 1000;
 
+// Connection-level DB error signatures that warrant a single delivery-layer
+// retry (no HTTP response received). Deliberately narrower than db.ts's
+// transport-layer `isTransientConnectionError` (which already retries the full
+// transient set once at the socket): this is the belt-and-suspenders retry for
+// the webhook write/lookup path, kept to the "definitely re-sendable, no
+// response" subset. Shared by the idempotency-lookup (WH-3) and delivery-log
+// insert retries so the two stay in lockstep.
+const TRANSIENT_DB_ERROR_RE = /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i;
+
 // ─── WH-5: bounded dispatch fan-out ──────────────────────────────────────
 // The dispatch fan-out previously used an UNBOUNDED `Promise.all(endpoints.map)`.
 // A single event with many active endpoints (or a batch of events dispatched
@@ -402,9 +411,7 @@ async function deliverToEndpoint(
   if (
     lookupError &&
     !isNoRowError(lookupError) &&
-    /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(
-      (lookupError as { message?: string })?.message ?? '',
-    )
+    TRANSIENT_DB_ERROR_RE.test((lookupError as { message?: string })?.message ?? '')
   ) {
     logger.warn(
       { error: lookupError, endpointId: endpoint.id },
@@ -478,7 +485,7 @@ async function deliverToEndpoint(
 
   // Single retry on transient network errors (e.g. "TypeError: fetch failed")
   // before giving up. Fixes ARKOVA-WORKER-C.
-  if (logError && /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(logError.message ?? '')) {
+  if (logError && TRANSIENT_DB_ERROR_RE.test(logError.message ?? '')) {
     logger.warn({ error: logError, endpointId: endpoint.id }, 'Transient delivery_log write failure — retrying once');
     await new Promise((r) => setTimeout(r, INITIAL_RETRY_DELAY_MS));
     ({ data: logEntry, error: logError } = await performLogWrite());
