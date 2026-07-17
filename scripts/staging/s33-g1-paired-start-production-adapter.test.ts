@@ -230,6 +230,9 @@ describe('S3.3 G1 production paired-start adapter', () => {
         if (args[0] === 'rev-parse' && args[1] === 'HEAD^{tree}') {
           return { status: 'ok', stdout: `${treeSha}\n` };
         }
+        if (args[0] === 'diff' && args[1] === '--quiet') {
+          return { status: 'ok', stdout: '' };
+        }
         if (args[0] === 'storage' && args[1] === 'cat') {
           return { status: 'ok', stdout: rawParent };
         }
@@ -250,6 +253,27 @@ describe('S3.3 G1 production paired-start adapter', () => {
       'storage', 'cat', `${uri}#${generation}`, '--project', 'arkova1',
     ]);
     await expect(adapter.loadStartReceiptArtifact!(receiptId, '0')).rejects.toThrow(/generation/i);
+  });
+
+  it('rejects controller provenance when tracked checkout bytes differ from HEAD', async () => {
+    const command: S33G1CommandRunner = {
+      async run(_binary, args) {
+        if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
+          return { status: 'ok', stdout: headSha };
+        }
+        if (args[0] === 'rev-parse' && args[1] === 'HEAD^{tree}') {
+          return { status: 'ok', stdout: treeSha };
+        }
+        if (args[0] === 'diff' && args[1] === '--quiet') {
+          return { status: 'error', stdout: '' };
+        }
+        return { status: 'error', stdout: '' };
+      },
+    };
+    const adapter = createS33G1ProductionPairedStartAdapterForTest(
+      dependencies(new AuthFetchFixture(), command).value,
+    );
+    await expect(adapter.observeControllerProvenance!()).rejects.toThrow(/tracked-checkout/i);
   });
 
   it('re-observes the exact Supabase project, Cloud Run revision provenance, runtime unique ID, and clean-mirror bytes', async () => {

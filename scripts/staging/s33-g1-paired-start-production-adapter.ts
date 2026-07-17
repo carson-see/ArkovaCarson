@@ -286,15 +286,17 @@ class S33G1ProductionPairedStartAdapter implements S33G1PairedStartPort {
   }
 
   async observeControllerProvenance(): Promise<S33G1ControllerProvenance> {
-    const [head, tree] = await Promise.all([
+    const [head, tree, trackedCheckout] = await Promise.all([
       this.dependencies.command.run(GIT_BINARY, ['rev-parse', 'HEAD']),
       this.dependencies.command.run(GIT_BINARY, ['rev-parse', 'HEAD^{tree}']),
+      this.dependencies.command.run(GIT_BINARY, ['diff', '--quiet', 'HEAD', '--']),
     ]);
     const headSha = requireOk(head, 'Continuation controller HEAD observation').trim();
     const treeSha = requireOk(tree, 'Continuation controller tree observation').trim();
     if (!gitSha.safeParse(headSha).success || !gitSha.safeParse(treeSha).success) {
       throw new Error('Continuation controller provenance did not resolve to exact Git SHAs.');
     }
+    requireOk(trackedCheckout, 'Continuation controller tracked-checkout observation');
     return { headSha, treeSha };
   }
 
