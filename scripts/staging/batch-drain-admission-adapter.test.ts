@@ -148,6 +148,7 @@ describe('admission v2 to run-declaration identity adapter', () => {
   it.each([
     ['legacy treasury', 169_639],
     ['current post-probe treasury', 169_482],
+    ['retained zero-new-spend treasury', 169_168],
   ])('accepts the exact matched %s total %s', (_label, totalSats) => {
     const raw = admissionWith((value) => {
       const infrastructure = value.infrastructure as JsonRecord;

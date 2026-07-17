@@ -225,7 +225,11 @@ const rigB1NodeReadinessSchema = z.object({
     '1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941',
   ),
   confirmedOutputCount: z.literal(32),
-  confirmedTotalSats: z.union([z.literal(169_639), z.literal(169_482)]),
+  confirmedTotalSats: z.union([
+    z.literal(169_639),
+    z.literal(169_482),
+    z.literal(169_168),
+  ]),
   splitBlockHash: sha256Hex,
   splitBlockHeader: z.string().regex(/^[0-9a-f]{160}$/),
   txOutProof: z.string().regex(/^(?:[0-9a-f]{2})+$/),
