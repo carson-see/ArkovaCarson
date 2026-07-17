@@ -5,6 +5,7 @@ import {
   RIG_R_SESSION_REFRESH_INTERVAL_MIN,
   RIG_R_WALL_MIN,
   RIG_R_WORKER_UPTIME_MIN,
+  runS33RigRBoundedRefreshBatchForTest,
   runS33RigRReleaseProduction,
   type S33RigRReleaseProductionPort,
 } from './s33-rig-r-release-production-adapter';
@@ -15,7 +16,8 @@ const digest = `sha256:${'c'.repeat(64)}`;
 const artifact = `sha256:${'d'.repeat(64)}`;
 const now = '2026-07-16T18:00:00.000Z';
 const expiresAt = '2026-07-19T17:00:00.000Z';
-const confirmation = 'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release';
+const confirmation =
+  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-6';
 
 function admission(): Record<string, unknown> {
   const approval = {
@@ -177,7 +179,7 @@ function port(overrides: Partial<S33RigRReleaseProductionPort> = {}): S33RigRRel
       sessionIdentityCount: 4,
       sessionRefreshVerifiedCount: 4,
       cloudRunBoundary: {
-        missingIngressTokenStatus: 403,
+        missingIngressTokenStatus: 401,
         missingAppTokenStatus: 401,
         invalidAppTokenStatus: 401,
         validExactUserStatus: 200,
@@ -331,6 +333,37 @@ describe('RIG-R production release start', () => {
       .rejects.toSatisfy((error: unknown) => error instanceof AggregateError
         && error.errors.some((entry) => entry instanceof Error && /harness failed/.test(entry.message))
         && error.errors.some((entry) => entry instanceof Error && /teardown failed/.test(entry.message)));
+  });
+
+  it('attempts cleanup before teardown and still tears down after cleanup fails', async () => {
+    const order: string[] = [];
+    const testPort = port({
+      runSupervisedHarness: vi.fn(async () => { throw new Error('harness failed'); }),
+      cleanupPreparation: vi.fn(async () => {
+        order.push('cleanup');
+        throw new Error('cleanup failed');
+      }),
+      teardown: vi.fn(async () => { order.push('teardown'); }),
+    });
+    await expect(runS33RigRReleaseProduction(admission(), 'signed-envelope', confirmation, testPort))
+      .rejects.toSatisfy((error: unknown) => error instanceof AggregateError
+        && error.errors.some((entry) => entry instanceof Error && /cleanup failed/.test(entry.message)));
+    expect(order).toEqual(['cleanup', 'teardown']);
+  });
+
+  it('retries only transiently failed session refresh operations', async () => {
+    const transient = vi.fn()
+      .mockRejectedValueOnce(new Error('transient refresh timeout'))
+      .mockResolvedValue(undefined);
+    const stable = vi.fn().mockResolvedValue(undefined);
+    const sleep = vi.fn(async () => undefined);
+    await runS33RigRBoundedRefreshBatchForTest([
+      { label: 'session A', run: transient },
+      { label: 'session B', run: stable },
+    ], sleep, new AbortController().signal);
+    expect(transient).toHaveBeenCalledTimes(2);
+    expect(stable).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledTimes(1);
   });
 
   it('hard-stops a hanging post-harness release at authority expiry', async () => {

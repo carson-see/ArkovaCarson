@@ -79,6 +79,11 @@ export interface AiSoakHarnessRunOptions {
   readonly variants: ReturnType<typeof parseDocVariants>;
   readonly timeoutMs: number;
   readonly rotateIp: boolean;
+  /**
+   * Immutable run identity used with the monotonic dispatch sequence so a
+   * release soak exercises real inference instead of the extraction cache.
+   */
+  readonly fingerprintNamespace?: string;
   readonly evidencePath?: string;
   readonly dryRun?: boolean;
   readonly allowUndersizedPool?: boolean;
@@ -111,13 +116,22 @@ function parseEndpoints(raw: string): AiEndpoint[] {
  * metadata FIELDS only (no text/bytes) — variant doesn't apply, so they always
  * use the entry's clean ground-truth metadata.
  */
-function payloadFor(endpoint: AiEndpoint, item: CorpusItem): unknown {
+function payloadFor(
+  endpoint: AiEndpoint,
+  item: CorpusItem,
+  fingerprintNamespace?: string,
+  sequence?: number,
+): unknown {
   switch (endpoint) {
     case 'extract': {
       const payload: ExtractRequestBody = {
         strippedText: item.strippedText,
         credentialType: item.entry.credentialTypeHint,
-        fingerprint: fingerprintForEntry(`${item.entry.id}:${item.variant}`),
+        fingerprint: fingerprintForEntry(
+          fingerprintNamespace === undefined || sequence === undefined
+            ? `${item.entry.id}:${item.variant}`
+            : `${item.entry.id}:${item.variant}:${fingerprintNamespace}:${sequence}`,
+        ),
       };
       if (item.entry.issuerHint) payload.issuerHint = item.entry.issuerHint;
       return payload;
@@ -235,7 +249,7 @@ export async function runAiSoakHarness(
       const request = callAiEndpoint(
         apiBase,
         effectiveEndpoint,
-        payloadFor(effectiveEndpoint, item),
+        payloadFor(effectiveEndpoint, item, options.fingerprintNamespace, seq),
         identity,
         fetchImpl,
         { timeoutMs, forwardedFor },

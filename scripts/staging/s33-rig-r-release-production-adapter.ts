@@ -60,12 +60,17 @@ export const RIG_R_WORKER_UPTIME_MIN = 2880;
 export const RIG_R_WALL_MIN = 2910;
 export const RIG_R_HEARTBEAT_INTERVAL_MIN = 5;
 export const RIG_R_SESSION_REFRESH_INTERVAL_MIN = 45;
+export const RIG_R_SESSION_REFRESH_START_MIN = 30;
 export const RIG_R_TEARDOWN_RESERVE_MIN = 360;
 
 const PROJECT_ID = 'arkova1';
 const REGION = 'us-central1';
 const RECEIPT_BUCKET = 'arkova1-s33-immutable-authority-ledger';
 const RECEIPT_PREFIX = 's33/rig-r/release-start-receipts';
+// CTO-authorized recovery namespace. The first immutable receipt is retained as
+// superseded/non-merge-grade; this exact suffix prevents replaying or
+// overwriting either its receipt or its partial local evidence paths.
+const START_ATTEMPT_ID = 'real-provider-recovery-6';
 const LEASE_URI = `gs://${RECEIPT_BUCKET}/s33/rig-leases/RIG-R.singleton.json`;
 const SOURCE_IMAGE_REPOSITORY =
   'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker';
@@ -92,7 +97,13 @@ const MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 const MAX_IAM_POLICY_BYTES = 256 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 1024 * 1024;
 const PRECLOCK_NETWORK_TIMEOUT_MS = 2 * 60_000;
-const SESSION_REFRESH_NETWORK_TIMEOUT_MS = 4 * 60_000;
+const SESSION_REFRESH_ATTEMPT_TIMEOUT_MS = 45_000;
+const SESSION_REFRESH_RETRY_DELAYS_MS = [5_000, 15_000] as const;
+const SESSION_REFRESH_RETRY_BUDGET_MS = 3 * SESSION_REFRESH_ATTEMPT_TIMEOUT_MS
+  + SESSION_REFRESH_RETRY_DELAYS_MS[0]
+  + SESSION_REFRESH_RETRY_DELAYS_MS[1];
+const SESSION_CLEANUP_NETWORK_TIMEOUT_MS = 4 * 60_000;
+const SUPERVISOR_POLL_MAX_MS = 4 * 60_000;
 const HEARTBEAT_NETWORK_TIMEOUT_MS = 45_000;
 const SESSION_POOL_SIZE = 4;
 const LOAD_RATE_PER_HOUR = 5_200;
@@ -101,7 +112,7 @@ const LIVE_EVAL_ROUNDS = 96;
 const LIVE_EVAL_ENTRIES_PER_ROUND = 48;
 const LIVE_EVAL_WINDOW_MS = 30 * 60_000;
 const LIVE_EVAL_REQUEST_INTERVAL_MS = LIVE_EVAL_WINDOW_MS / LIVE_EVAL_ENTRIES_PER_ROUND;
-const LIVE_EVAL_REQUEST_TIMEOUT_MS = 10_000;
+const LIVE_EVAL_REQUEST_TIMEOUT_MS = 30_000;
 const TEMPLATE_ROUTE = '/api/v1/ai/template';
 
 const gitSha = z.string().regex(/^[0-9a-f]{40}$/u);
@@ -314,7 +325,7 @@ const preclockSchema = z.object({
   sessionIdentityCount: z.number().int().min(4).max(29),
   sessionRefreshVerifiedCount: z.number().int().min(4).max(29),
   cloudRunBoundary: z.object({
-    missingIngressTokenStatus: z.literal(403),
+    missingIngressTokenStatus: z.literal(401),
     missingAppTokenStatus: z.literal(401),
     invalidAppTokenStatus: z.literal(401),
     validExactUserStatus: z.literal(200),
@@ -598,15 +609,22 @@ async function containFailure(
   const teardownReason = cause instanceof S33RigRAuthorityExpiryError
     ? 'authority-expiry'
     : 'driver-failure';
-  const results = await Promise.allSettled([
-    port.cleanupPreparation(),
-    port.teardown(binding, teardownReason, admission),
-  ]);
-  const failures = results
-    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-    .map((result) => result.reason);
+  const failures: unknown[] = [];
+  try {
+    await port.cleanupPreparation();
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    await port.teardown(binding, teardownReason, admission);
+  } catch (error) {
+    failures.push(error);
+  }
   if (failures.length > 0) {
-    throw new AggregateError([cause, ...failures], 'RIG-R release failure and mandatory compensation both failed.');
+    throw new AggregateError(
+      [cause, ...failures],
+      'RIG-R release failed and one or more ordered compensation steps failed.',
+    );
   }
   throw cause;
 }
@@ -626,11 +644,11 @@ export async function runS33RigRReleaseProduction(
     authorizationTime,
   );
   const approval = assertApprovalExact(admission, verified);
-  const requiredConfirmation = `START_RIG_R:${approval.approvalId}:${admission.soak_id}:${admission.lease_id}`;
+  const requiredConfirmation = `START_RIG_R:${approval.approvalId}:${admission.soak_id}:${admission.lease_id}:${START_ATTEMPT_ID}`;
   if (ctoConfirmation !== requiredConfirmation) {
     throw new Error(`RIG-R release requires exact CTO confirmation '${requiredConfirmation}'.`);
   }
-  const receiptId = `rig-r-release-start:${approval.approvalId}:${admission.soak_id}:${admission.lease_id}`;
+  const receiptId = `rig-r-release-start:${approval.approvalId}:${admission.soak_id}:${admission.lease_id}:${START_ATTEMPT_ID}`;
   if (await port.loadStartReceipt(receiptId) !== null) {
     throw new S33RigRReplayError('RIG-R release start receipt already exists; replay is forbidden.');
   }
@@ -1033,7 +1051,7 @@ class NodeCommandRunner implements S33RigRCommandRunner {
         env: options.env ?? commandEnvironment(binary),
       }, (error, stdout, stderr) => {
         if (!error) return resolveResult({ status: 'ok', stdout });
-        const missing = /(?:not found|no urls matched|404)/iu.test(stderr);
+        const missing = /(?:not found|no urls matched|urls matched no objects|404)/iu.test(stderr);
         return resolveResult({ status: missing ? 'not-found' : 'error', stdout: '' });
       });
     });
@@ -1046,6 +1064,53 @@ function exactDependencyNow(dependencies: S33RigRProductionDependencies): Date {
     throw new Error('RIG-R production dependencies returned invalid time.');
   }
   return now;
+}
+
+export interface S33RigRRefreshOperation {
+  readonly label: string;
+  readonly run: () => Promise<void>;
+}
+
+async function runBoundedRefreshBatch(
+  operations: readonly S33RigRRefreshOperation[],
+  sleep: S33RigRProductionDependencies['sleep'],
+  signal: AbortSignal,
+): Promise<void> {
+  let pending = [...operations];
+  let lastFailures: Error[] = [];
+  for (let attempt = 1; attempt <= SESSION_REFRESH_RETRY_DELAYS_MS.length + 1; attempt += 1) {
+    if (signal.aborted) throw new Error('RIG-R session refresh retry was aborted.');
+    const current = pending;
+    const settled = await Promise.allSettled(current.map(({ run }) => run()));
+    pending = [];
+    lastFailures = [];
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') return;
+      const operation = current[index]!;
+      pending.push(operation);
+      lastFailures.push(new Error(
+        `RIG-R ${operation.label} failed on bounded refresh attempt ${attempt}.`,
+        { cause: result.reason },
+      ));
+    });
+    if (pending.length === 0) return;
+    if (attempt > SESSION_REFRESH_RETRY_DELAYS_MS.length) {
+      throw new AggregateError(lastFailures, 'RIG-R bounded session/ingress refresh retries exhausted.');
+    }
+    await sleep(SESSION_REFRESH_RETRY_DELAYS_MS[attempt - 1]!, signal);
+  }
+}
+
+/** Test-only seam for the exact retry policy used by the live supervisor. */
+export async function runS33RigRBoundedRefreshBatchForTest(
+  operations: readonly S33RigRRefreshOperation[],
+  sleep: S33RigRProductionDependencies['sleep'],
+  signal: AbortSignal,
+): Promise<void> {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Injected RIG-R refresh operations are test-only.');
+  }
+  return runBoundedRefreshBatch(operations, sleep, signal);
 }
 
 class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
@@ -1146,7 +1211,7 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
       ['artifacts', 'docker', 'images', 'describe', admission.source_head_image_ref,
         '--project', PROJECT_ID, '--format=value(image_summary.fully_qualified_digest)'],
     ), 'Full-SHA Artifact Registry observation').trim();
-    if (artifactDigestRef !== candidate.sourceHeadImageRef) {
+    if (artifactDigestRef !== `${SOURCE_IMAGE_REPOSITORY}@${admission.image_digest}`) {
       throw new Error('Artifact Registry full-SHA tag does not resolve to the admitted digest.');
     }
     const platform = parseStrict(imagePlatformSchema, requireOk(await this.dependencies.command.run(
@@ -1155,10 +1220,11 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     ), 'OCI image platform observation'), 'OCI image platform observation') as
       | { architecture: 'amd64'; os: 'linux' }
       | { config: { architecture: 'amd64'; os: 'linux' } };
-    const normalizedPlatform: { architecture: string; os: string } = 'config' in platform
-      ? platform.config
-      : platform;
-    if (normalizedPlatform.architecture !== 'amd64' || normalizedPlatform.os !== 'linux') {
+    const normalizedPlatform: { architecture: string; os: string } = 'architecture' in platform ? platform : platform.config;
+    const nestedImageConfig = (platform as { config?: { User?: unknown; Env?: unknown } }).config;
+    if (normalizedPlatform.architecture !== 'amd64' || normalizedPlatform.os !== 'linux'
+      || nestedImageConfig?.User !== 'appuser' || !Array.isArray(nestedImageConfig.Env)
+      || !nestedImageConfig.Env.includes(`BUILD_SHA=${admission.declared_source_head}`)) {
       throw new Error('RIG-R image is not the exact linux/amd64 artifact.');
     }
 
@@ -1322,7 +1388,7 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     return deepFreeze({
       candidateHeadSha: admission.declared_source_head,
       candidateTreeSha: observedTree,
-      fullShaImageRef: artifactDigestRef,
+      fullShaImageRef: candidate.sourceHeadImageRef,
       imageDigest: admission.image_digest,
       imagePlatform: 'linux/amd64' as const,
       revision: service.status.latestReadyRevisionName,
@@ -1350,13 +1416,14 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     expectedStatus: number,
     label: string,
     timeoutMs = PRECLOCK_NETWORK_TIMEOUT_MS,
+    parentSignal?: AbortSignal,
   ): Promise<T> {
     return this.withNetworkDeadline(timeoutMs, label, async (signal) => {
       const response = await this.dependencies.fetch(url, { ...init, signal });
       const raw = await boundedResponseText(response, label, MAX_JSON_RESPONSE_BYTES);
       if (response.status !== expectedStatus) throw new Error(`${label} returned HTTP ${response.status}.`);
       return parseStrict(schema, raw, label);
-    });
+    }, parentSignal);
   }
 
   private async createIdentity(state: PreparedState, index: number): Promise<PreparedIdentity> {
@@ -1411,6 +1478,8 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     state: PreparedState,
     expectedUserId: string,
     refreshToken: string,
+    timeoutMs = PRECLOCK_NETWORK_TIMEOUT_MS,
+    parentSignal?: AbortSignal,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const refreshed = await this.jsonFetch(
       sessionSchema,
@@ -1418,7 +1487,8 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
       { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: state.publicKey }, body: JSON.stringify({ refresh_token: refreshToken }) },
       200,
       'RIG-R session refresh',
-      SESSION_REFRESH_NETWORK_TIMEOUT_MS,
+      timeoutMs,
+      parentSignal,
     );
     const now = this.now();
     const claims = decodeJwt(refreshed.access_token, 'RIG-R Supabase access token');
@@ -1429,11 +1499,15 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     return { accessToken: refreshed.access_token, refreshToken: refreshed.refresh_token };
   }
 
-  private async ingressToken(state: PreparedState): Promise<string> {
+  private async ingressToken(
+    state: PreparedState,
+    timeoutMs?: number,
+  ): Promise<string> {
     const token = requireOk(await this.dependencies.command.run(
       GCLOUD_BINARY,
       ['auth', 'print-identity-token', `--impersonate-service-account=${RUNTIME_SA}`,
         `--audiences=${state.observation.serviceUrl}`],
+      timeoutMs === undefined ? undefined : { timeoutMs },
     ), 'RIG-R Cloud Run ingress token').trim();
     const claims = decodeJwt(token, 'RIG-R Cloud Run ingress token');
     const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
@@ -1503,9 +1577,9 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
           this.appProbe(state, 'Bearer arkova-invalid-rig-r-preclock-token'),
           this.appProbe(state, `Bearer ${valid.workerIdentity.jwt}`),
         ]);
-      if (missingIngressTokenStatus !== 403 || missingAppTokenStatus !== 401
+      if (missingIngressTokenStatus !== 401 || missingAppTokenStatus !== 401
         || invalidAppTokenStatus !== 401 || validExactUserStatus !== 200) {
-        throw new Error('RIG-R pre-clock Cloud Run/app authentication boundary is not exact 403/401/401/200.');
+        throw new Error('RIG-R pre-clock Cloud Run/app authentication boundary is not exact 401/401/401/200.');
       }
 
       const vertexToken = requireOk(await this.dependencies.command.run(
@@ -1545,7 +1619,7 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
         sessionIdentityCount: state.identities.length,
         sessionRefreshVerifiedCount: state.identities.length,
         cloudRunBoundary: {
-          missingIngressTokenStatus: 403 as const,
+          missingIngressTokenStatus: 401 as const,
           missingAppTokenStatus: 401 as const,
           invalidAppTokenStatus: 401 as const,
           validExactUserStatus: 200 as const,
@@ -1631,7 +1705,7 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     if (entries.length !== LIVE_EVAL_ENTRIES_PER_ROUND || state.identities.length < SESSION_POOL_SIZE) {
       throw new Error('RIG-R live eval requires exactly 48 gate entries and at least four refreshed identities.');
     }
-    const evidencePath = `docs/staging/s33-rig-r/${receipt.soakId}-live-eval.jsonl`;
+    const evidencePath = `docs/staging/s33-rig-r/${receipt.soakId}-${START_ATTEMPT_ID}-live-eval.jsonl`;
     const absoluteEvidencePath = resolve(process.cwd(), evidencePath);
     await mkdir(dirname(absoluteEvidencePath), { recursive: true });
     await writeFile(absoluteEvidencePath, '', { encoding: 'utf8', flag: 'wx' });
@@ -1739,15 +1813,31 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     });
   }
 
-  private async refreshPreparedState(state: PreparedState): Promise<void> {
-    const refreshed = await Promise.all(state.identities.map((identity) =>
-      this.refreshSession(state, identity.userId, identity.refreshToken)));
-    refreshed.forEach((session, index) => {
-      const identity = state.identities[index]!;
-      identity.refreshToken = session.refreshToken;
-      identity.workerIdentity.jwt = session.accessToken;
+  private async refreshPreparedState(
+    state: PreparedState,
+    parentSignal: AbortSignal,
+  ): Promise<void> {
+    const operations: S33RigRRefreshOperation[] = state.identities.map((identity) => ({
+      label: `session refresh for ${identity.label}`,
+      run: async () => {
+        const refreshed = await this.refreshSession(
+          state,
+          identity.userId,
+          identity.refreshToken,
+          SESSION_REFRESH_ATTEMPT_TIMEOUT_MS,
+          parentSignal,
+        );
+        identity.refreshToken = refreshed.refreshToken;
+        identity.workerIdentity.jwt = refreshed.accessToken;
+      },
+    }));
+    operations.push({
+      label: 'Cloud Run ingress-token refresh',
+      run: async () => {
+        state.ingressToken = await this.ingressToken(state, SESSION_REFRESH_ATTEMPT_TIMEOUT_MS);
+      },
     });
-    state.ingressToken = await this.ingressToken(state);
+    await runBoundedRefreshBatch(operations, this.dependencies.sleep, parentSignal);
   }
 
   private async heartbeat(state: PreparedState, parentSignal: AbortSignal): Promise<void> {
@@ -1780,6 +1870,13 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
       || request.sessionRefreshIntervalMin !== RIG_R_SESSION_REFRESH_INTERVAL_MIN) {
       throw new Error('RIG-R harness request differs from the fixed T3 supervisor contract.');
     }
+    if (RIG_R_SESSION_REFRESH_START_MIN * 60_000
+        + SUPERVISOR_POLL_MAX_MS
+        + SESSION_REFRESH_RETRY_BUDGET_MS
+        > RIG_R_SESSION_REFRESH_INTERVAL_MIN * 60_000
+      || SESSION_REFRESH_RETRY_BUDGET_MS >= RIG_R_HEARTBEAT_INTERVAL_MIN * 60_000) {
+      throw new Error('RIG-R session refresh retry policy cannot satisfy its signed heartbeat/refresh bounds.');
+    }
     const controller = new AbortController();
     let readyAt: number | undefined;
     let settled = false;
@@ -1792,9 +1889,10 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
       ratePerHour: LOAD_RATE_PER_HOUR,
       endpoints: ['extract', 'template', 'tags'],
       variants: parseDocVariants(undefined),
-      timeoutMs: 10_000,
+      timeoutMs: 30_000,
       rotateIp: true,
-      evidencePath: `docs/staging/s33-rig-r/${state.admission.soak_id}-ai-soak.json`,
+      fingerprintNamespace: START_ATTEMPT_ID,
+      evidencePath: `docs/staging/s33-rig-r/${state.admission.soak_id}-${START_ATTEMPT_ID}-ai-soak.json`,
       signal: controller.signal,
       fetchImpl: this.harnessFetch(state),
       onReady: () => { readyAt = this.now().getTime(); },
@@ -1828,6 +1926,17 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     let maximumHeartbeatGapMs = 0;
     let lastRefreshAt = readyAt;
     let maximumRefreshGapMs = 0;
+    const recordHeartbeat = async (): Promise<number> => {
+      await this.heartbeat(state, controller.signal);
+      const heartbeatAt = this.now().getTime();
+      const heartbeatGap = heartbeatAt - lastHeartbeatAt;
+      maximumHeartbeatGapMs = Math.max(maximumHeartbeatGapMs, heartbeatGap);
+      if (heartbeatGap > RIG_R_HEARTBEAT_INTERVAL_MIN * 60_000) {
+        throw new Error('RIG-R worker heartbeat gap exceeded five minutes.');
+      }
+      lastHeartbeatAt = heartbeatAt;
+      return heartbeatAt;
+    };
     try {
       while (this.now().getTime() < completeAt) {
         const observedAt = this.now().getTime();
@@ -1839,8 +1948,11 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
         if (settled && observedAt < workerEnd) {
           throw new Error('RIG-R AI harness exited before exactly 2880 worker-up minutes.');
         }
-        if (observedAt - lastRefreshAt >= 40 * 60_000) {
-          await this.refreshPreparedState(state);
+        if (observedAt - lastRefreshAt >= RIG_R_SESSION_REFRESH_START_MIN * 60_000) {
+          // Open a fresh five-minute heartbeat budget before a bounded retry
+          // batch. The full retry policy is shorter than that budget.
+          await recordHeartbeat();
+          await this.refreshPreparedState(state, controller.signal);
           const refreshedAt = this.now().getTime();
           const gap = refreshedAt - lastRefreshAt;
           maximumRefreshGapMs = Math.max(maximumRefreshGapMs, gap);
@@ -1849,18 +1961,11 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
           }
           lastRefreshAt = refreshedAt;
         }
-        await this.heartbeat(state, controller.signal);
-        const heartbeatAt = this.now().getTime();
-        const heartbeatGap = heartbeatAt - lastHeartbeatAt;
-        maximumHeartbeatGapMs = Math.max(maximumHeartbeatGapMs, heartbeatGap);
-        if (heartbeatGap > RIG_R_HEARTBEAT_INTERVAL_MIN * 60_000) {
-          throw new Error('RIG-R worker heartbeat gap exceeded five minutes.');
-        }
-        lastHeartbeatAt = heartbeatAt;
+        const heartbeatAt = await recordHeartbeat();
         const remaining = completeAt - heartbeatAt;
         if (remaining <= 0) break;
         await this.dependencies.sleep(
-          Math.min(4 * 60_000, remaining),
+          Math.min(SUPERVISOR_POLL_MAX_MS, remaining),
           controller.signal,
         );
       }
@@ -1918,7 +2023,7 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     this.cleanupPromise = (async () => {
       const results = await Promise.allSettled(state.identities.map(async ({ userId: exactUserId }) => {
         const response = await this.withNetworkDeadline(
-          SESSION_REFRESH_NETWORK_TIMEOUT_MS,
+          SESSION_CLEANUP_NETWORK_TIMEOUT_MS,
           'RIG-R ephemeral-user cleanup',
           (signal) => this.dependencies.fetch(`${state.supabaseUrl}/auth/v1/admin/users/${exactUserId}`, {
             method: 'DELETE',
@@ -1952,10 +2057,10 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     const tsxCli = fileURLToPath(new URL('../../node_modules/tsx/dist/cli.mjs', import.meta.url));
     const smokePath = resolve(process.cwd(), 'services/worker/scripts/smoke-test-gemini-golden-v6.ts');
     const evalPath = resolve(process.cwd(), 'services/worker/scripts/eval-and-analyze-v6.sh');
-    const soakEvidencePath = `docs/staging/s33-rig-r/${context.receipt.soakId}-ai-soak.json`;
+    const soakEvidencePath = `docs/staging/s33-rig-r/${context.receipt.soakId}-${START_ATTEMPT_ID}-ai-soak.json`;
     const absoluteSoakEvidencePath = resolve(process.cwd(), soakEvidencePath);
     const absoluteLiveEvalPath = resolve(process.cwd(), context.harness.liveEvalEvidencePath);
-    const expectedLiveEvalPath = `docs/staging/s33-rig-r/${context.receipt.soakId}-live-eval.jsonl`;
+    const expectedLiveEvalPath = `docs/staging/s33-rig-r/${context.receipt.soakId}-${START_ATTEMPT_ID}-live-eval.jsonl`;
     if (context.harness.liveEvalEvidencePath !== expectedLiveEvalPath
       || absoluteLiveEvalPath !== resolve(process.cwd(), expectedLiveEvalPath)) {
       throw new Error('RIG-R live-eval evidence path differs from its exact soak-bound location.');

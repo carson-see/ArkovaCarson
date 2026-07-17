@@ -17,6 +17,30 @@ function required(value: string | undefined, flag: string): string {
   return value;
 }
 
+export function formatS33RigRError(error: unknown): string {
+  const seen = new Set<object>();
+  const lines: string[] = [];
+  const visit = (value: unknown, path: string, depth: number): void => {
+    const prefix = `${'  '.repeat(depth)}${path}: `;
+    if (!(value instanceof Error)) {
+      lines.push(`${prefix}${String(value)}`);
+      return;
+    }
+    if (seen.has(value)) {
+      lines.push(`${prefix}[circular ${value.name}]`);
+      return;
+    }
+    seen.add(value);
+    lines.push(`${prefix}${value.name}: ${value.message}`);
+    if (value instanceof AggregateError) {
+      value.errors.forEach((nested, index) => visit(nested, `errors[${index}]`, depth + 1));
+    }
+    if (value.cause !== undefined) visit(value.cause, 'cause', depth + 1);
+  };
+  visit(error, 'root', 0);
+  return lines.join('\n');
+}
+
 export async function runS33RigRReleaseCli(
   argv: readonly string[] = process.argv.slice(2),
   env: NodeJS.ProcessEnv = process.env,
@@ -68,7 +92,7 @@ export async function runS33RigRReleaseCli(
 if (process.argv[1] !== undefined
   && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runS33RigRReleaseCli().catch((error: unknown) => {
-    console.error(`::error::RIG-R release failed: ${error instanceof Error ? error.message : 'unknown failure'}`);
+    console.error(`::error::RIG-R release failed:\n${formatS33RigRError(error)}`);
     process.exitCode = 1;
   });
 }
