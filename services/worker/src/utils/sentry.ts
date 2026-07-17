@@ -363,6 +363,10 @@ export const PIPELINE_THROUGHPUT_FINGERPRINT = ['pipeline-throughput-monitor'] a
  * ids. The beforeSend scrubber still runs, but the context is aggregate-only
  * by construction.
  *
+ * Always error-level: both fire conditions (total securing death, linker
+ * stall) are page-worthy — there is no warning-tier caller, so no severity
+ * parameter (review nit, 2026-07-17).
+ *
  * @param message - Human-readable summary (e.g. "812 new unlinked records,
  *                  0 anchors secured in 24h").
  * @param extra   - Optional aggregate-only structured context (counts).
@@ -370,10 +374,9 @@ export const PIPELINE_THROUGHPUT_FINGERPRINT = ['pipeline-throughput-monitor'] a
 export function capturePipelineThroughputAlert(
   message: string,
   extra?: Record<string, unknown>,
-  level: 'warning' | 'error' = 'error',
 ): void {
   Sentry.captureMessage(message, {
-    level,
+    level: 'error',
     fingerprint: [...PIPELINE_THROUGHPUT_FINGERPRINT],
     ...(extra ? { extra } : {}),
   });

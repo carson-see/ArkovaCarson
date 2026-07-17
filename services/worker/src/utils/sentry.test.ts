@@ -474,7 +474,7 @@ describe('capturePipelineThroughputAlert (SCRUM-2901)', () => {
     vi.clearAllMocks();
   });
 
-  it('captures at error level by default with the stable fingerprint', () => {
+  it('always captures at error level with the stable fingerprint (both fire conditions are page-worthy)', () => {
     capturePipelineThroughputAlert(
       '812 new unlinked records, 0 anchors secured in 24h',
       { new_unlinked_in_window: 812, anchors_secured_in_window: 0 },
@@ -489,20 +489,6 @@ describe('capturePipelineThroughputAlert (SCRUM-2901)', () => {
         level: 'error',
         fingerprint: PIPELINE_THROUGHPUT_FINGERPRINT,
         extra: { new_unlinked_in_window: 812, anchors_secured_in_window: 0 },
-      }),
-    );
-  });
-
-  it('preserves caller severity when provided', () => {
-    capturePipelineThroughputAlert('throughput anomaly', undefined, 'warning');
-
-    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
-    const [, scope] = (Sentry.captureMessage as unknown as { mock: { calls: unknown[][] } })
-      .mock.calls[0];
-    expect(scope).toEqual(
-      expect.objectContaining({
-        level: 'warning',
-        fingerprint: PIPELINE_THROUGHPUT_FINGERPRINT,
       }),
     );
   });

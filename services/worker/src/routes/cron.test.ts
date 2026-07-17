@@ -342,10 +342,12 @@ const mockRunPipelineThroughputMonitor = vi.fn().mockResolvedValue({
   healthy: true,
   alertFired: false,
   windowHours: 24,
+  linkerStallThresholdHours: 48,
   newUnlinkedInWindow: 0,
   recordsCreatedInWindow: 0,
   anchorsCreatedInWindow: 0,
   anchorsSecuredInWindow: 0,
+  oldestUnlinkedAgeHours: null,
   unlinkedTotal: 0,
   batchProgress: null,
   reason: 'No new unlinked public records in the last 24h',
@@ -353,6 +355,7 @@ const mockRunPipelineThroughputMonitor = vi.fn().mockResolvedValue({
 });
 vi.mock('../jobs/pipelineThroughputMonitor.js', () => ({
   DEFAULT_THROUGHPUT_WINDOW_HOURS: 24,
+  DEFAULT_LINKER_STALL_THRESHOLD_HOURS: 48,
   runPipelineThroughputMonitor: (...args: unknown[]) => mockRunPipelineThroughputMonitor(...args),
 }));
 
@@ -2494,7 +2497,7 @@ describe('cron routes', () => {
   // ═══════════════════════════════════════
 
   describe('POST /pipeline-throughput-monitor', () => {
-    it('returns the monitor result on success (defaults window_hours)', async () => {
+    it('returns the monitor result on success (defaults window_hours + linker threshold)', async () => {
       const app = createApp();
       const res = await request(app).post('/cron/pipeline-throughput-monitor');
       expect(res.status).toBe(200);
@@ -2502,17 +2505,19 @@ describe('cron routes', () => {
       expect(res.body.alertFired).toBe(false);
       expect(mockRunPipelineThroughputMonitor).toHaveBeenCalledWith(
         expect.anything(),
-        { windowHours: 24 },
+        { windowHours: 24, linkerStallThresholdHours: 48 },
       );
     });
 
-    it('passes a validated window_hours override through to the monitor', async () => {
+    it('passes validated window_hours + linker_stall_threshold_hours overrides through to the monitor', async () => {
       const app = createApp();
-      const res = await request(app).post('/cron/pipeline-throughput-monitor?window_hours=48');
+      const res = await request(app).post(
+        '/cron/pipeline-throughput-monitor?window_hours=48&linker_stall_threshold_hours=72',
+      );
       expect(res.status).toBe(200);
       expect(mockRunPipelineThroughputMonitor).toHaveBeenCalledWith(
         expect.anything(),
-        { windowHours: 48 },
+        { windowHours: 48, linkerStallThresholdHours: 72 },
       );
     });
 
@@ -2525,18 +2530,31 @@ describe('cron routes', () => {
       expect(mockRunPipelineThroughputMonitor).not.toHaveBeenCalled();
     });
 
+    it('rejects an out-of-range linker_stall_threshold_hours with 400', async () => {
+      mockRunPipelineThroughputMonitor.mockClear();
+      const app = createApp();
+      const res = await request(app).post(
+        '/cron/pipeline-throughput-monitor?linker_stall_threshold_hours=200',
+      );
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid linker_stall_threshold_hours');
+      expect(mockRunPipelineThroughputMonitor).not.toHaveBeenCalled();
+    });
+
     it('returns 200 with healthy:false when a stall is DETECTED (no Scheduler retry of a correct finding)', async () => {
       mockRunPipelineThroughputMonitor.mockResolvedValueOnce({
         healthy: false,
         alertFired: true,
         windowHours: 24,
+        linkerStallThresholdHours: 48,
         newUnlinkedInWindow: 812,
         recordsCreatedInWindow: 900,
         anchorsCreatedInWindow: 0,
         anchorsSecuredInWindow: 0,
+        oldestUnlinkedAgeHours: 700,
         unlinkedTotal: 259812,
         batchProgress: null,
-        reason: 'Pipeline throughput dead-man: 812 new unlinked public record(s) …',
+        reason: 'Pipeline linker stall: oldest unlinked public record is 700h old …',
         checkedAt: '2026-07-17T12:00:00.000Z',
       });
       const app = createApp();
