@@ -14,6 +14,7 @@ import { planTreasuryPresplit, type TreasuryPresplitPlanInput } from './batch-dr
 import {
   collectB1SchedulerPreclockArtifact,
   authorizeB1PreclockMutationForTest,
+  b1FundedProbeTempPrefix,
   b1ConfirmedOutpointValueExportSha256,
   b1PreparationFundedProbeRunId,
   proveB1WifChallenge,
@@ -612,6 +613,7 @@ interface TestCollectorState {
   schedulerObservations: number;
   coreObservations: number;
   healthWarms: number;
+  readonly fundedTempPrefixes: string[];
   readonly leaseInputs: Array<Readonly<{
     preparationId: string;
     expiresAt: string;
@@ -664,6 +666,7 @@ function liveCollectorPort(
     schedulerObservations: 0,
     coreObservations: 0,
     healthWarms: 0,
+    fundedTempPrefixes: [],
     leaseInputs: [],
     operations: [],
     locked,
@@ -685,6 +688,10 @@ function liveCollectorPort(
   return {
     testState,
     now: () => new Date(testState.now),
+    resolveFundedProbeTempDirectoryPrefix: () => {
+      testState.operations.push('resolve-funded-temp-prefix');
+      return b1FundedProbeTempPrefix(process.platform);
+    },
     verifyControllerIdentity: async () => {
       testState.operations.push('verify-controller');
     },
@@ -834,8 +841,9 @@ function liveCollectorPort(
       testState.healthWarms += 1;
       testState.operations.push('warm-tagged-health');
     },
-    runFundedProbe: async () => {
+    runFundedProbe: async ({ tempDirectoryPrefix }) => {
       testState.funded += 1;
+      testState.fundedTempPrefixes.push(tempDirectoryPrefix);
       testState.operations.push('funded-probe');
       return {
         txId: '6'.repeat(64),
@@ -876,6 +884,9 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
     expect(port.testState.funded).toBe(1);
     expect(port.testState.installed).toBe(1);
     expect(port.testState.healthWarms).toBe(1);
+    expect(port.testState.fundedTempPrefixes).toEqual([
+      b1FundedProbeTempPrefix(process.platform),
+    ]);
     expect(port.testState.removed).toBe(1);
     expect(port.testState.leaseInputs).toEqual([{
       preparationId: 'test-only-preclock',
@@ -886,6 +897,8 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
       .toBeLessThan(port.testState.operations.indexOf('funded-probe'));
     const intentPersist = port.testState.operations.findIndex((operation) =>
       operation.includes('/preparation-intents/'));
+    expect(port.testState.operations.indexOf('resolve-funded-temp-prefix'))
+      .toBeLessThan(intentPersist);
     expect(port.testState.operations.indexOf('warm-tagged-health')).toBeLessThan(intentPersist);
     expect(port.testState.operations.indexOf('funded-probe'))
       .toBeLessThan(port.testState.operations.indexOf('remove-lease'));
@@ -1268,5 +1281,14 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
     expect(diagnostic).toContain('[REDACTED]');
     expect(diagnostic).not.toContain('private-value');
     expect(diagnostic.length).toBeLessThanOrEqual(2_048);
+  });
+
+  it('selects only harness-allowlisted absolute funded-probe temp parents', () => {
+    expect(b1FundedProbeTempPrefix('darwin'))
+      .toBe('/private/tmp/arkova-b1-preclock-');
+    expect(b1FundedProbeTempPrefix('linux'))
+      .toBe('/tmp/arkova-b1-preclock-');
+    expect(b1FundedProbeTempPrefix('win32'))
+      .toBe('/tmp/arkova-b1-preclock-');
   });
 });

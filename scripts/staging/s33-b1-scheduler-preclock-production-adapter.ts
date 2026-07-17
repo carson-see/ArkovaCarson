@@ -20,7 +20,6 @@ import {
   verify as verifyDigest,
 } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { z } from 'zod';
@@ -85,11 +84,19 @@ const COMMAND_TIMEOUT_MS = 15 * 60_000;
 const FETCH_TIMEOUT_MS = 15_000;
 const TSX_CLI = join(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
 const HARNESS = join(process.cwd(), 'scripts/staging/batch-drain-harness.ts');
+const FUNDED_PROBE_TEMP_STEM = 'arkova-b1-preclock-';
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const BECH32_ALPHABET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 
 export interface B1PreclockMutationAuthorization {
   readonly preparationId: string;
+}
+
+/** Exact harness-allowlisted parent; macOS os.tmpdir() is outside this contract. */
+export function b1FundedProbeTempPrefix(
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return join(platform === 'darwin' ? '/private/tmp' : '/tmp', FUNDED_PROBE_TEMP_STEM);
 }
 
 const PRECLOCK_AUTHORIZATIONS = new WeakMap<B1PreclockMutationAuthorization, Readonly<{
@@ -249,6 +256,7 @@ export interface B1MempoolObservation {
 
 export interface B1PreclockCollectorPort {
   now(): Date;
+  resolveFundedProbeTempDirectoryPrefix(): string;
   verifyControllerIdentity?(
     verified: VerifiedB1TreasuryContinuityComposition,
   ): Promise<unknown>;
@@ -301,6 +309,7 @@ export interface B1PreclockCollectorPort {
     preparationId: string;
     idempotencyKey: string;
     maxFundedBroadcasts: 1;
+    tempDirectoryPrefix: string;
   }>): Promise<B1FundedProbeObservation>;
   observeMempool(input: Readonly<{
     txId: string;
@@ -1210,6 +1219,9 @@ export async function collectB1SchedulerPreclockArtifact(
   if (authorized.confirmation.provided !== authorized.confirmation.expected) {
     throw new Error('RIG-B1 exact CTO PREPARE confirmation changed before mutation.');
   }
+  // Resolve the harness-safe absolute parent before consuming authority with
+  // an immutable intent. The funded POST later receives this exact prefix.
+  const fundedProbeTempDirectoryPrefix = port.resolveFundedProbeTempDirectoryPrefix();
   const intentRaw = JSON.stringify(preparationIntentSchema.parse({
     schemaVersion: 'arkova.s33.rig-b1.preparation-intent/v1',
     status: 'PREPARE_INTENT_LOCKED',
@@ -1272,6 +1284,7 @@ export async function collectB1SchedulerPreclockArtifact(
       preparationId,
       idempotencyKey,
       maxFundedBroadcasts: 1,
+      tempDirectoryPrefix: fundedProbeTempDirectoryPrefix,
     });
   } catch (error) {
     probeFailure = error;
@@ -1522,6 +1535,8 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
   private readonly controller = createB1SchedulerStartProductionAdapter();
 
   now(): Date { return new Date(); }
+
+  resolveFundedProbeTempDirectoryPrefix(): string { return b1FundedProbeTempPrefix(); }
 
   hasLockedObject(uri: string): Promise<boolean> {
     return this.controller.hasStartReceipt(uri);
@@ -1783,6 +1798,7 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
     preparationId: string;
     idempotencyKey: string;
     maxFundedBroadcasts: 1;
+    tempDirectoryPrefix: string;
   }>): Promise<B1FundedProbeObservation> {
     const routing = projectB1FundedProbeRouting(input.revision);
     const [supabaseUrl, serviceRole, cron, identityToken] = await Promise.all([
@@ -1795,7 +1811,11 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
         `--audiences=${routing.identityAudience}`, '--include-email',
       ]).then((result) => requireProcess(result, 'RIG-B1 Scheduler OIDC token').trim()),
     ]);
-    const directory = await mkdtemp(join(tmpdir(), 'arkova-b1-preclock-'));
+    const expectedTempPrefix = b1FundedProbeTempPrefix();
+    if (input.tempDirectoryPrefix !== expectedTempPrefix) {
+      throw new Error('RIG-B1 funded probe temp prefix differs from the harness-safe contract.');
+    }
+    const directory = await mkdtemp(expectedTempPrefix);
     const evidencePath = join(directory, 'funded-probe.json');
     if (input.maxFundedBroadcasts !== 1) {
       throw new Error('RIG-B1 PREPARE funded probe cap must be exactly one.');
