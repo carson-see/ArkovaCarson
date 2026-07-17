@@ -7,9 +7,12 @@
  * convert to secured anchors, and nobody gets alerted.
  *
  * Two fire conditions (independent dead-man switches, one stable Sentry
- * fingerprint):
- *   A — total securing death: new unlinked records arrived in the window
- *       while ZERO anchors secured network-wide (chain_timestamp-based).
+ * fingerprint), all driven by LIMIT-1 timestamp probes — NO count queries
+ * (R0-8 / SCRUM-1254 forbids new `count: 'exact'` callsites; zero-vs-nonzero
+ * decisions come from row existence, magnitudes from the dashboard cache):
+ *   A — total securing death: a new unlinked record arrived inside the window
+ *       while NO anchor secured network-wide inside it (last-secured
+ *       chain_timestamp older than the window).
  *   B — linker stall: the OLDEST unlinked public record's age exceeds the
  *       stall threshold. This is the exact 2026-07 incident shape: the 255k+
  *       backlog sits unlinked for weeks while OTHER paths keep securing, so
@@ -50,11 +53,9 @@ function hoursAgo(h: number): string {
 
 function input(overrides: Partial<ThroughputAlertInput> = {}): ThroughputAlertInput {
   return {
-    new_unlinked_in_window: 0,
-    anchors_secured_in_window: 0,
-    records_created_in_window: 0,
-    anchors_created_in_window: 0,
+    latest_unlinked_age_hours: null,
     oldest_unlinked_age_hours: null,
+    last_secured_age_hours: null,
     unlinked_total: null,
     window_hours: 24,
     linker_stall_threshold_hours: 48,
@@ -65,7 +66,7 @@ function input(overrides: Partial<ThroughputAlertInput> = {}): ThroughputAlertIn
 describe('decidePipelineThroughputAlert', () => {
   it('does not fire when feeders are idle and no unlinked backlog exists', () => {
     const decision = decidePipelineThroughputAlert(
-      input({ new_unlinked_in_window: 0, anchors_secured_in_window: 0, oldest_unlinked_age_hours: null }),
+      input({ latest_unlinked_age_hours: null, oldest_unlinked_age_hours: null }),
     );
     expect(decision.should_fire).toBe(false);
     expect(decision.severity).toBe('info');
@@ -74,9 +75,9 @@ describe('decidePipelineThroughputAlert', () => {
   it('does not fire on a healthy pipeline (young backlog, securing active)', () => {
     const decision = decidePipelineThroughputAlert(
       input({
-        new_unlinked_in_window: 500,
-        anchors_secured_in_window: 120,
+        latest_unlinked_age_hours: 1,
         oldest_unlinked_age_hours: 2,
+        last_secured_age_hours: 3,
       }),
     );
     expect(decision.should_fire).toBe(false);
@@ -85,13 +86,13 @@ describe('decidePipelineThroughputAlert', () => {
 
   it('INCIDENT SHAPE (condition B): fires linker-stall when the backlog is old even though OTHER anchors still secure', () => {
     // The exact motivating incident: 255k+ unlinked records aging for weeks,
-    // while unrelated anchor paths keep securing (secured > 0). Condition A
-    // alone would stay silent forever here.
+    // while unrelated anchor paths keep securing (recent last_secured).
+    // Condition A alone would stay silent forever here.
     const decision = decidePipelineThroughputAlert(
       input({
-        new_unlinked_in_window: 400,
-        anchors_secured_in_window: 250,
+        latest_unlinked_age_hours: 1,
         oldest_unlinked_age_hours: 700,
+        last_secured_age_hours: 2,
         unlinked_total: 259_000,
       }),
     );
@@ -102,12 +103,12 @@ describe('decidePipelineThroughputAlert', () => {
     expect(decision.reason).toContain('48');
   });
 
-  it('TOTAL DEATH (condition A): fires when new unlinked records arrive and ZERO anchors secure network-wide', () => {
+  it('TOTAL DEATH (condition A): fires when a new unlinked record arrived and NO anchor secured network-wide in the window', () => {
     const decision = decidePipelineThroughputAlert(
       input({
-        new_unlinked_in_window: 812,
-        anchors_secured_in_window: 0,
+        latest_unlinked_age_hours: 2,
         oldest_unlinked_age_hours: 3,
+        last_secured_age_hours: 90,
         unlinked_total: 259_000,
         window_hours: 24,
       }),
@@ -116,16 +117,27 @@ describe('decidePipelineThroughputAlert', () => {
     expect(decision.severity).toBe('error');
     expect(decision.reason).not.toMatch(/linker stall/i);
     expect(decision.reason).toMatch(/network-wide/i);
-    expect(decision.reason).toContain('812');
     expect(decision.reason).toContain('24');
+  });
+
+  it('condition A also fires when NOTHING has ever secured (last_secured unavailable)', () => {
+    const decision = decidePipelineThroughputAlert(
+      input({
+        latest_unlinked_age_hours: 2,
+        oldest_unlinked_age_hours: 3,
+        last_secured_age_hours: null,
+      }),
+    );
+    expect(decision.should_fire).toBe(true);
+    expect(decision.reason).toMatch(/network-wide/i);
   });
 
   it('condition A takes precedence when both conditions hold (total death is the more severe finding)', () => {
     const decision = decidePipelineThroughputAlert(
       input({
-        new_unlinked_in_window: 100,
-        anchors_secured_in_window: 0,
+        latest_unlinked_age_hours: 2,
         oldest_unlinked_age_hours: 700,
+        last_secured_age_hours: 90,
       }),
     );
     expect(decision.should_fire).toBe(true);
@@ -134,12 +146,12 @@ describe('decidePipelineThroughputAlert', () => {
 
   it('does not fire condition B exactly at the threshold boundary (strictly greater)', () => {
     const at = decidePipelineThroughputAlert(
-      input({ anchors_secured_in_window: 10, oldest_unlinked_age_hours: 48 }),
+      input({ oldest_unlinked_age_hours: 48, last_secured_age_hours: 1 }),
     );
     expect(at.should_fire).toBe(false);
 
     const over = decidePipelineThroughputAlert(
-      input({ anchors_secured_in_window: 10, oldest_unlinked_age_hours: 49 }),
+      input({ oldest_unlinked_age_hours: 49, last_secured_age_hours: 1 }),
     );
     expect(over.should_fire).toBe(true);
     expect(over.reason).toMatch(/linker stall/i);
@@ -147,14 +159,34 @@ describe('decidePipelineThroughputAlert', () => {
 
   it('still fires when the unlinked-total cache context is unavailable (probes are the signal)', () => {
     const decision = decidePipelineThroughputAlert(
-      input({ new_unlinked_in_window: 10, anchors_secured_in_window: 0, unlinked_total: null }),
+      input({
+        latest_unlinked_age_hours: 2,
+        oldest_unlinked_age_hours: 3,
+        last_secured_age_hours: 90,
+        unlinked_total: null,
+      }),
     );
     expect(decision.should_fire).toBe(true);
   });
 
-  it('does not fire condition A when even a single secured anchor proves the securing path alive', () => {
+  it('does not fire condition A when securing happened inside the window (path alive)', () => {
     const decision = decidePipelineThroughputAlert(
-      input({ new_unlinked_in_window: 10_000, anchors_secured_in_window: 1, oldest_unlinked_age_hours: 5 }),
+      input({
+        latest_unlinked_age_hours: 2,
+        oldest_unlinked_age_hours: 5,
+        last_secured_age_hours: 23,
+      }),
+    );
+    expect(decision.should_fire).toBe(false);
+  });
+
+  it('does not fire condition A when no NEW unlinked record arrived in the window (feeders idle — SCRUM-2900 surface)', () => {
+    const decision = decidePipelineThroughputAlert(
+      input({
+        latest_unlinked_age_hours: 30, // newest unlinked record predates the 24h window
+        oldest_unlinked_age_hours: 40, // below the 48h stall threshold
+        last_secured_age_hours: 90,
+      }),
     );
     expect(decision.should_fire).toBe(false);
   });
@@ -162,13 +194,8 @@ describe('decidePipelineThroughputAlert', () => {
 
 // ─── Cron entry point ───
 
-interface CountResult {
-  count: number | null;
-  error: unknown;
-}
-
-interface OldestResult {
-  data: Array<{ created_at: string | null }> | null;
+interface TimestampRowResult {
+  data: Array<{ created_at?: string | null; chain_timestamp?: string | null }> | null;
   error: unknown;
 }
 
@@ -178,27 +205,24 @@ interface CacheResult {
 }
 
 /**
- * Minimal chainable Supabase stub covering the monitor's probes:
- *   public_records count:  .select(count/head).gte('created_at', …)[.is('anchor_id', null)]
- *   public_records oldest: .select('created_at').is('anchor_id', null).order(…).limit(1)
- *   anchors created:       .select(count/head).is('deleted_at', null).gte('created_at', …)
- *   anchors secured:       .select(count/head).eq('status','SECURED').is('deleted_at', null).gte('chain_timestamp', …)
+ * Minimal chainable Supabase stub covering the monitor's three LIMIT-1
+ * timestamp probes plus the two best-effort pipeline_dashboard_cache reads:
+ *   public_records oldest: .select('created_at').is('anchor_id', null).order('created_at', {ascending:true}).limit(1)
+ *   public_records newest: same with {ascending:false}
+ *   anchors last secured:  .select('chain_timestamp').eq('status','SECURED').is('deleted_at', null)
+ *                          .not('chain_timestamp','is',null).order('chain_timestamp', {ascending:false, …}).limit(1)
  *   cache:                 .select('cache_value').eq('cache_key', key).single()
  */
 function mockDb(opts: {
-  newUnlinked?: CountResult;
-  recordsCreated?: CountResult;
-  oldestUnlinked?: OldestResult;
-  anchorsCreated?: CountResult;
-  anchorsSecured?: CountResult;
+  oldestUnlinked?: TimestampRowResult;
+  newestUnlinked?: TimestampRowResult;
+  lastSecured?: TimestampRowResult;
   pipelineStats?: CacheResult;
   statusCounts?: CacheResult;
 } = {}) {
-  const newUnlinked = opts.newUnlinked ?? { count: 0, error: null };
-  const recordsCreated = opts.recordsCreated ?? { count: 0, error: null };
   const oldestUnlinked = opts.oldestUnlinked ?? { data: [], error: null };
-  const anchorsCreated = opts.anchorsCreated ?? { count: 0, error: null };
-  const anchorsSecured = opts.anchorsSecured ?? { count: 0, error: null };
+  const newestUnlinked = opts.newestUnlinked ?? { data: [], error: null };
+  const lastSecured = opts.lastSecured ?? { data: [], error: null };
   const caches: Record<string, CacheResult> = {
     pipeline_stats:
       opts.pipelineStats ??
@@ -209,39 +233,28 @@ function mockDb(opts: {
   };
 
   function recordsChain() {
-    const state = { unlinkedFilter: false };
+    let ascending = true;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const chain: any = {};
     chain.select = vi.fn(() => chain);
-    chain.gte = vi.fn(() => chain);
-    chain.is = vi.fn((column: string) => {
-      if (column === 'anchor_id') state.unlinkedFilter = true;
+    chain.is = vi.fn(() => chain);
+    chain.order = vi.fn((_column: string, options?: { ascending?: boolean }) => {
+      ascending = options?.ascending !== false;
       return chain;
     });
-    chain.order = vi.fn(() => chain);
-    chain.limit = vi.fn(() => Promise.resolve(oldestUnlinked));
-    chain.then = (onFulfilled: (v: CountResult) => unknown, onRejected: (e: unknown) => unknown) =>
-      Promise.resolve()
-        .then(() => (state.unlinkedFilter ? newUnlinked : recordsCreated))
-        .then(onFulfilled, onRejected);
+    chain.limit = vi.fn(() => Promise.resolve(ascending ? oldestUnlinked : newestUnlinked));
     return chain;
   }
 
   function anchorsChain() {
-    const state = { securedFilter: false };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const chain: any = {};
     chain.select = vi.fn(() => chain);
-    chain.gte = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
     chain.is = vi.fn(() => chain);
-    chain.eq = vi.fn((column: string, value: unknown) => {
-      if (column === 'status' && value === 'SECURED') state.securedFilter = true;
-      return chain;
-    });
-    chain.then = (onFulfilled: (v: CountResult) => unknown, onRejected: (e: unknown) => unknown) =>
-      Promise.resolve()
-        .then(() => (state.securedFilter ? anchorsSecured : anchorsCreated))
-        .then(onFulfilled, onRejected);
+    chain.not = vi.fn(() => chain);
+    chain.order = vi.fn(() => chain);
+    chain.limit = vi.fn(() => Promise.resolve(lastSecured));
     return chain;
   }
 
@@ -269,14 +282,12 @@ function mockDb(opts: {
 }
 
 describe('runPipelineThroughputMonitor', () => {
-  it('(a) healthy pipeline — records arrive, backlog young, anchors secure → no alert', async () => {
+  it('(a) healthy pipeline — fresh records, young backlog, recent securing → no alert', async () => {
     mockCapturePipelineThroughputAlert.mockClear();
     const db = mockDb({
-      newUnlinked: { count: 400, error: null },
-      recordsCreated: { count: 450, error: null },
       oldestUnlinked: { data: [{ created_at: hoursAgo(3) }], error: null },
-      anchorsCreated: { count: 300, error: null },
-      anchorsSecured: { count: 250, error: null },
+      newestUnlinked: { data: [{ created_at: hoursAgo(1) }], error: null },
+      lastSecured: { data: [{ chain_timestamp: hoursAgo(2) }], error: null },
       pipelineStats: { data: { cache_value: { pending_record_links: 1200 } }, error: null },
       statusCounts: { data: { cache_value: { PENDING: 1000, SECURED: 2_972_264 } }, error: null },
     });
@@ -285,9 +296,9 @@ describe('runPipelineThroughputMonitor', () => {
 
     expect(result.healthy).toBe(true);
     expect(result.alertFired).toBe(false);
-    expect(result.newUnlinkedInWindow).toBe(400);
-    expect(result.anchorsSecuredInWindow).toBe(250);
+    expect(result.latestUnlinkedAgeHours).toBe(1);
     expect(result.oldestUnlinkedAgeHours).toBe(3);
+    expect(result.lastSecuredAgeHours).toBe(2);
     expect(result.unlinkedTotal).toBe(1200);
     expect(result.batchProgress).toEqual({ PENDING: 1000, SECURED: 2_972_264 });
     expect(result.checkedAt).toBe(NOW.toISOString());
@@ -296,15 +307,13 @@ describe('runPipelineThroughputMonitor', () => {
 
   it('INCIDENT STATE — old growing backlog while other anchors still secure → FIRES with linker-stall reason', async () => {
     // Flipped from the original "healthy" assertion after independent review:
-    // secured>0 with a weeks-old 259k unlinked backlog IS the incident, not
-    // health. Condition B must page here.
+    // recent securing with a weeks-old 259k unlinked backlog IS the incident,
+    // not health. Condition B must page here.
     mockCapturePipelineThroughputAlert.mockClear();
     const db = mockDb({
-      newUnlinked: { count: 400, error: null },
-      recordsCreated: { count: 450, error: null },
       oldestUnlinked: { data: [{ created_at: hoursAgo(700) }], error: null },
-      anchorsCreated: { count: 300, error: null },
-      anchorsSecured: { count: 250, error: null },
+      newestUnlinked: { data: [{ created_at: hoursAgo(1) }], error: null },
+      lastSecured: { data: [{ chain_timestamp: hoursAgo(2) }], error: null },
       pipelineStats: { data: { cache_value: { pending_record_links: 259_000 } }, error: null },
     });
 
@@ -318,14 +327,12 @@ describe('runPipelineThroughputMonitor', () => {
     expect(message).toMatch(/linker stall/i);
   });
 
-  it('(b) new records + zero secured network-wide → alert fired ONCE via the stable-fingerprint helper', async () => {
+  it('(b) fresh unlinked records + no securing in the window → alert fired ONCE via the stable-fingerprint helper', async () => {
     mockCapturePipelineThroughputAlert.mockClear();
     const db = mockDb({
-      newUnlinked: { count: 812, error: null },
-      recordsCreated: { count: 900, error: null },
       oldestUnlinked: { data: [{ created_at: hoursAgo(4) }], error: null },
-      anchorsCreated: { count: 0, error: null },
-      anchorsSecured: { count: 0, error: null },
+      newestUnlinked: { data: [{ created_at: hoursAgo(1) }], error: null },
+      lastSecured: { data: [{ chain_timestamp: hoursAgo(90) }], error: null },
       pipelineStats: { data: { cache_value: { pending_record_links: 259_812 } }, error: null },
     });
 
@@ -342,9 +349,9 @@ describe('runPipelineThroughputMonitor', () => {
     expect(message).toMatch(/network-wide/i);
     expect(extra.source).toBe('pipeline-throughput-monitor');
     expect(extra.story).toBe('SCRUM-2901');
-    expect(extra.new_unlinked_in_window).toBe(812);
-    expect(extra.anchors_secured_in_window).toBe(0);
+    expect(extra.latest_unlinked_age_hours).toBe(1);
     expect(extra.oldest_unlinked_age_hours).toBe(4);
+    expect(extra.last_secured_age_hours).toBe(90);
     expect(extra.unlinked_total).toBe(259_812);
     expect(extra.window_hours).toBe(24);
     expect(extra.linker_stall_threshold_hours).toBe(DEFAULT_LINKER_STALL_THRESHOLD_HOURS);
@@ -355,15 +362,15 @@ describe('runPipelineThroughputMonitor', () => {
 
     // And an error-level structured log.
     expect(logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({ newUnlinkedInWindow: 812, anchorsSecuredInWindow: 0 }),
+      expect.objectContaining({ latestUnlinkedAgeHours: 1, lastSecuredAgeHours: 90 }),
       expect.stringMatching(/throughput|stall|dead/i),
     );
   });
 
-  it('(c) DB error on a count probe → rejects (route returns 500-safe body, Scheduler retries)', async () => {
+  it('(c) DB error on the newest-unlinked probe → rejects (route returns 500-safe body, Scheduler retries)', async () => {
     mockCapturePipelineThroughputAlert.mockClear();
     const db = mockDb({
-      newUnlinked: { count: null, error: { message: 'statement timeout' } },
+      newestUnlinked: { data: null, error: { message: 'statement timeout' } },
     });
 
     await expect(
@@ -381,23 +388,25 @@ describe('runPipelineThroughputMonitor', () => {
     ).rejects.toThrow(/throughput probe/i);
   });
 
-  it('rejects when a probe returns neither count nor error (never silently reads 0)', async () => {
+  it('(c3) DB error on the last-secured probe → rejects (condition A must not silently degrade)', async () => {
     const db = mockDb({
-      anchorsSecured: { count: null, error: null },
+      lastSecured: { data: null, error: { message: 'connection reset' } },
     });
     await expect(
       runPipelineThroughputMonitor(db, { now: NOW, windowHours: 24 }),
     ).rejects.toThrow(/throughput probe/i);
   });
 
-  it('treats an unparseable oldest-unlinked timestamp as unavailable (no spurious page, loud warn)', async () => {
+  it('treats an unparseable timestamp as unavailable (no spurious page, loud warn)', async () => {
     mockCapturePipelineThroughputAlert.mockClear();
     const db = mockDb({
       oldestUnlinked: { data: [{ created_at: 'not-a-date' }], error: null },
-      anchorsSecured: { count: 5, error: null },
+      newestUnlinked: { data: [{ created_at: 'not-a-date' }], error: null },
+      lastSecured: { data: [{ chain_timestamp: hoursAgo(2) }], error: null },
     });
     const result = await runPipelineThroughputMonitor(db, { now: NOW, windowHours: 24 });
     expect(result.oldestUnlinkedAgeHours).toBeNull();
+    expect(result.latestUnlinkedAgeHours).toBeNull();
     expect(result.alertFired).toBe(false);
     expect(logger.warn).toHaveBeenCalled();
   });
@@ -405,9 +414,9 @@ describe('runPipelineThroughputMonitor', () => {
   it('cache reads are best-effort: a cache miss neither blocks the run nor the alert', async () => {
     mockCapturePipelineThroughputAlert.mockClear();
     const db = mockDb({
-      newUnlinked: { count: 55, error: null },
       oldestUnlinked: { data: [{ created_at: hoursAgo(2) }], error: null },
-      anchorsSecured: { count: 0, error: null },
+      newestUnlinked: { data: [{ created_at: hoursAgo(1) }], error: null },
+      lastSecured: { data: [], error: null }, // nothing ever secured
       pipelineStats: { data: null, error: { message: 'cache miss' } },
       statusCounts: { data: null, error: { message: 'cache miss' } },
     });

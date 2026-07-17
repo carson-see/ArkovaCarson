@@ -13,18 +13,16 @@
  *
  * Two independent fire conditions (one stable Sentry fingerprint):
  *
- *   A — TOTAL SECURING DEATH: new unlinked records arrived in the window
- *       while ZERO anchors secured network-wide. Catches a fully-stalled
- *       securing path while feeders are demonstrably active.
+ *   A — TOTAL SECURING DEATH: a new unlinked record arrived inside the
+ *       window while NO anchor secured network-wide inside it. Catches a
+ *       fully-stalled securing path while feeders are demonstrably active.
  *
  *   B — LINKER STALL: the OLDEST unlinked public record's age exceeds the
  *       stall threshold (default 48h). This is the exact motivating incident
  *       shape: a 255k+ backlog sits unlinked for weeks while OTHER anchor
  *       paths keep securing — condition A alone would never fire because
  *       prod's secured count always advances (independent-review CRITICAL,
- *       2026-07-17). Probe: `created_at` of the oldest `anchor_id IS NULL`
- *       row — an Index Scan + LIMIT 1 on the existing partial index
- *       `idx_public_records_unanchored (created_at) WHERE anchor_id IS NULL`.
+ *       2026-07-17).
  *
  * Scope boundary: FEEDER death (Cloud Scheduler drift / paused feeder crons —
  * no new records arriving at all) is owned by SCRUM-2900, not this monitor.
@@ -39,23 +37,26 @@
  * `pipeline-health.ts` keys off `updated_at` with a 30-min threshold and
  * emails. Neither answers "are records currently converting to SECURED?".
  *
- * How it measures without a snapshot table (NO migration)
- * -------------------------------------------------------
- * There is deliberately no persisted previous-run snapshot. All signals come
- * from timestamps already in existing tables, each probe bounded by an index:
- *   - new_unlinked_in_window:  public_records created in the window and STILL
- *     unlinked (`anchor_id IS NULL`) — exact partial-index match on
- *     `idx_public_records_unanchored`.
- *   - oldest_unlinked_age_hours: Index Scan + LIMIT 1 on the same partial
- *     index (ascending `created_at`).
- *   - records_created_in_window / anchors_created_in_window: bounded on
- *     `idx_public_records_created_at` / `idx_anchors_active_created`.
- *   - anchors_secured_in_window: `status='SECURED' AND deleted_at IS NULL AND
- *     chain_timestamp >= since` — exact predicate match on the partial index
- *     `idx_anchors_secured_chain_ts (chain_timestamp DESC) WHERE
- *     status='SECURED' AND deleted_at IS NULL` (migration 0310). This counts
- *     securing EVENTS in the window regardless of when the anchor was created
- *     (a `created_at`-bounded probe would miss old-anchor securing during a
+ * How it measures — LIMIT-1 timestamp probes ONLY, no counts, no snapshots
+ * ------------------------------------------------------------------------
+ * NO migration, no snapshot table, and — deliberately — NO `count` queries:
+ * R0-8 / SCRUM-1254 caps exact-count callsites (they caused the 60s
+ * PostgREST timeouts on `anchors`), and estimated counts are unreliable at
+ * the zero-vs-nonzero granularity a dead-man needs. Every decision input is
+ * an index-backed `LIMIT 1` timestamp probe; magnitudes come from the
+ * dashboard cache:
+ *   - latest_unlinked_age_hours / oldest_unlinked_age_hours: newest/oldest
+ *     `created_at` of `anchor_id IS NULL` rows — Index Scan + LIMIT 1 (desc /
+ *     asc) on the partial index `idx_public_records_unanchored (created_at)
+ *     WHERE anchor_id IS NULL`. "New unlinked record arrived in the window"
+ *     ⟺ latest age ≤ window.
+ *   - last_secured_age_hours: newest `chain_timestamp` of
+ *     `status='SECURED' AND deleted_at IS NULL` rows — the exact query the
+ *     partial index `idx_anchors_secured_chain_ts (chain_timestamp DESC
+ *     NULLS LAST) WHERE status='SECURED' AND deleted_at IS NULL` (migration
+ *     0310) was built for. "Securing alive in the window" ⟺ last-secured age
+ *     ≤ window; this observes securing EVENTS regardless of anchor age (a
+ *     `created_at`-bounded cohort would miss old-anchor securing during a
  *     backlog drain and false-page — independent-review MAJOR).
  *   - unlinked_total + batch_progress come from `pipeline_dashboard_cache`
  *     (`pipeline_stats.pending_record_links`, `anchor_status_counts`) —
@@ -74,7 +75,7 @@
  * On fire: error-level structured log + Sentry capture through
  * `capturePipelineThroughputAlert` (stable fingerprint — scheduled re-fires
  * collapse into ONE Sentry issue, mirroring captureStuckAnchorAlert /
- * SCRUM-2255). Context is aggregate counts only — never emails, document
+ * SCRUM-2255). Context is aggregate metrics only — never emails, document
  * fingerprints, ids, or keys (§1.4).
  *
  * HTTP semantics (route: POST /jobs/pipeline-throughput-monitor) mirror
@@ -93,7 +94,7 @@ import { capturePipelineThroughputAlert } from '../utils/sentry.js';
 /**
  * Default lookback window for condition A. Must stay ≥ 24h: small org queues
  * route to the nightly 3am batch flush, so a shorter window would report
- * "zero secured" for most of a perfectly healthy day.
+ * "nothing secured" for most of a perfectly healthy day.
  */
 export const DEFAULT_THROUGHPUT_WINDOW_HOURS = 24;
 
@@ -109,16 +110,12 @@ const MS_PER_HOUR = 60 * 60 * 1000;
 export type AlertSeverity = 'info' | 'error';
 
 export interface ThroughputAlertInput {
-  /** public_records created inside the window that are still unlinked. */
-  new_unlinked_in_window: number;
-  /** Anchors that SECURED inside the window (chain_timestamp-based, any age). */
-  anchors_secured_in_window: number;
-  /** All public_records created inside the window (feeder-activity context). */
-  records_created_in_window: number;
-  /** All anchors created inside the window (linker-activity context). */
-  anchors_created_in_window: number;
+  /** Age in hours of the NEWEST unlinked public record; null when none/unparseable. */
+  latest_unlinked_age_hours: number | null;
   /** Age in hours of the OLDEST unlinked public record; null when none/unparseable. */
   oldest_unlinked_age_hours: number | null;
+  /** Age in hours of the most recent SECURED chain_timestamp; null when none/unparseable. */
+  last_secured_age_hours: number | null;
   /** Total unlinked backlog from pipeline_dashboard_cache; null when unavailable. */
   unlinked_total: number | null;
   window_hours: number;
@@ -133,8 +130,8 @@ export interface ThroughputAlertDecision {
 
 /**
  * Pure decision function — no I/O. Condition A (total securing death) takes
- * precedence over condition B (linker stall) when both hold. Counts-only
- * reason strings (PII-safe by construction).
+ * precedence over condition B (linker stall) when both hold. Counts-free,
+ * aggregate-age reason strings (PII-safe by construction).
  */
 export function decidePipelineThroughputAlert(
   input: ThroughputAlertInput,
@@ -144,17 +141,28 @@ export function decidePipelineThroughputAlert(
       ? ` (total unlinked backlog ${input.unlinked_total})`
       : '';
 
-  // Condition A — total securing death: feeders demonstrably produced
-  // unconverted records while ZERO anchors secured anywhere in the window.
-  if (input.new_unlinked_in_window > 0 && input.anchors_secured_in_window <= 0) {
+  const newUnlinkedInWindow =
+    input.latest_unlinked_age_hours !== null &&
+    input.latest_unlinked_age_hours <= input.window_hours;
+  const securedInWindow =
+    input.last_secured_age_hours !== null &&
+    input.last_secured_age_hours <= input.window_hours;
+
+  // Condition A — total securing death: feeders demonstrably produced an
+  // unconverted record inside the window while NOTHING secured anywhere in it.
+  if (newUnlinkedInWindow && !securedInWindow) {
+    const lastSecuredClause =
+      input.last_secured_age_hours !== null
+        ? `last securing was ${input.last_secured_age_hours}h ago`
+        : 'no securing observed at all';
     return {
       should_fire: true,
       severity: 'error',
       reason:
-        `Pipeline throughput dead-man: ${input.new_unlinked_in_window} new unlinked public ` +
-        `record(s) arrived while 0 anchors secured network-wide in the last ` +
-        `${input.window_hours}h${totalSuffix} — the securing path is not converting although ` +
-        'feeders are active',
+        `Pipeline throughput dead-man: new unlinked public record(s) arrived (latest ` +
+        `${input.latest_unlinked_age_hours}h ago) while 0 anchors secured network-wide in the ` +
+        `last ${input.window_hours}h — ${lastSecuredClause}${totalSuffix}; the securing path ` +
+        'is not converting although feeders are active',
     };
   }
 
@@ -176,13 +184,13 @@ export function decidePipelineThroughputAlert(
     };
   }
 
-  if (input.new_unlinked_in_window <= 0 && input.oldest_unlinked_age_hours === null) {
+  if (input.oldest_unlinked_age_hours === null && input.latest_unlinked_age_hours === null) {
     return {
       should_fire: false,
       severity: 'info',
       reason:
-        `No new unlinked public records in the last ${input.window_hours}h and no unlinked ` +
-        'backlog — nothing to convert (feeder-death monitoring is SCRUM-2900)',
+        'No unlinked public records — nothing to convert (feeder-death monitoring is ' +
+        'SCRUM-2900, not this monitor)',
     };
   }
 
@@ -190,9 +198,9 @@ export function decidePipelineThroughputAlert(
     should_fire: false,
     severity: 'info',
     reason:
-      `Pipeline converting: ${input.anchors_secured_in_window} anchor(s) secured in the last ` +
-      `${input.window_hours}h; oldest unlinked record ` +
-      `${input.oldest_unlinked_age_hours ?? 0}h old, within ` +
+      `Pipeline converting: last securing ` +
+      `${input.last_secured_age_hours !== null ? `${input.last_secured_age_hours}h ago` : 'not observed'}; ` +
+      `oldest unlinked record ${input.oldest_unlinked_age_hours ?? 0}h old, within ` +
       `${input.linker_stall_threshold_hours}h threshold`,
   };
 }
@@ -204,12 +212,12 @@ export interface PipelineThroughputResult {
   alertFired: boolean;
   windowHours: number;
   linkerStallThresholdHours: number;
-  newUnlinkedInWindow: number;
-  recordsCreatedInWindow: number;
-  anchorsCreatedInWindow: number;
-  anchorsSecuredInWindow: number;
+  /** Age in hours of the newest unlinked public record; null when none. */
+  latestUnlinkedAgeHours: number | null;
   /** Age in hours of the oldest unlinked public record; null when none. */
   oldestUnlinkedAgeHours: number | null;
+  /** Age in hours of the most recent SECURED chain_timestamp; null when none. */
+  lastSecuredAgeHours: number | null;
   /** Cache-backed total unlinked backlog (pipeline_stats.pending_record_links); null when unavailable. */
   unlinkedTotal: number | null;
   /** Cache-backed anchors-by-status counts (anchor_status_counts); null when unavailable. */
@@ -223,94 +231,58 @@ export interface PipelineThroughputResult {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseDb = { from(table: string): any };
 
-interface CountResponse {
-  count: number | null;
-  error: { message?: string } | null;
-}
-
 /**
- * Resolve a head/count query to a definite number. A probe error OR an absent
- * count throws — a broken probe must 500 (Cloud Scheduler retries) rather
- * than silently reading 0 and masquerading as "healthy but idle".
+ * Newest/oldest `created_at` of unlinked public_records — Index Scan +
+ * LIMIT 1 on the partial index `idx_public_records_unanchored (created_at)
+ * WHERE anchor_id IS NULL`. Both directions drive fire conditions, so a
+ * probe failure throws (500 → Scheduler retry) instead of silently degrading
+ * the dead-man.
  */
-function requireCount(label: string, response: CountResponse): number {
-  if (response.error || typeof response.count !== 'number') {
-    logger.error(
-      { probe: label, error: response.error ?? null },
-      'Pipeline throughput monitor: probe failed',
-    );
-    throw new Error(`Pipeline throughput probe failed: ${label}`);
-  }
-  return response.count;
-}
-
-/** public_records created in the window, still unlinked (idx_public_records_unanchored). */
-async function fetchNewUnlinkedInWindow(db: SupabaseDb, sinceIso: string): Promise<number> {
-  const response = (await db
-    .from('public_records')
-    .select('id', { count: 'exact', head: true })
-    .is('anchor_id', null)
-    .gte('created_at', sinceIso)) as CountResponse;
-  return requireCount('new_unlinked_in_window', response);
-}
-
-/** All public_records created in the window (idx_public_records_created_at). */
-async function fetchRecordsCreatedInWindow(db: SupabaseDb, sinceIso: string): Promise<number> {
-  const response = (await db
-    .from('public_records')
-    .select('id', { count: 'exact', head: true })
-    .gte('created_at', sinceIso)) as CountResponse;
-  return requireCount('records_created_in_window', response);
-}
-
-/**
- * `created_at` of the OLDEST unlinked public record — Index Scan + LIMIT 1 on
- * the partial index `idx_public_records_unanchored (created_at) WHERE
- * anchor_id IS NULL`. Drives condition B, so a probe failure throws (500 →
- * Scheduler retry) instead of silently degrading the stall detector.
- */
-async function fetchOldestUnlinkedCreatedAt(db: SupabaseDb): Promise<string | null> {
+async function fetchUnlinkedBoundaryCreatedAt(
+  db: SupabaseDb,
+  direction: 'oldest' | 'newest',
+): Promise<string | null> {
   const { data, error } = await db
     .from('public_records')
     .select('created_at')
     .is('anchor_id', null)
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: direction === 'oldest' })
     .limit(1);
 
   if (error) {
-    logger.error({ error }, 'Pipeline throughput monitor: probe failed (oldest unlinked record)');
-    throw new Error('Pipeline throughput probe failed: oldest_unlinked_record');
+    logger.error(
+      { direction, error },
+      'Pipeline throughput monitor: probe failed (unlinked-record boundary)',
+    );
+    throw new Error(`Pipeline throughput probe failed: ${direction}_unlinked_record`);
   }
   const rows = (data ?? []) as Array<{ created_at: string | null }>;
   return rows.length > 0 ? rows[0].created_at : null;
 }
 
-/** Non-deleted anchors created in the window (idx_anchors_active_created). */
-async function fetchAnchorsCreatedInWindow(db: SupabaseDb, sinceIso: string): Promise<number> {
-  const response = (await db
-    .from('anchors')
-    .select('id', { count: 'exact', head: true })
-    .is('deleted_at', null)
-    .gte('created_at', sinceIso)) as CountResponse;
-  return requireCount('anchors_created_in_window', response);
-}
-
 /**
- * Anchors that SECURED inside the window, regardless of when they were
- * created — `status='SECURED' AND deleted_at IS NULL AND chain_timestamp >=
- * since`, an exact predicate match on the partial index
- * `idx_anchors_secured_chain_ts` (migration 0310). A `created_at`-bounded
- * variant would miss old-anchor securing during a backlog drain and
- * false-page when secure latency exceeds the window.
+ * Most recent SECURED `chain_timestamp` — the exact query the partial index
+ * `idx_anchors_secured_chain_ts` (migration 0310) exists for. Observes
+ * securing EVENTS network-wide regardless of anchor age. `nullsFirst: false`
+ * + the not-null filter guard against legacy SECURED rows with a null
+ * chain_timestamp sorting first under Postgres DESC-implies-NULLS-FIRST.
  */
-async function fetchAnchorsSecuredInWindow(db: SupabaseDb, sinceIso: string): Promise<number> {
-  const response = (await db
+async function fetchLastSecuredChainTimestamp(db: SupabaseDb): Promise<string | null> {
+  const { data, error } = await db
     .from('anchors')
-    .select('id', { count: 'exact', head: true })
+    .select('chain_timestamp')
     .eq('status', 'SECURED')
     .is('deleted_at', null)
-    .gte('chain_timestamp', sinceIso)) as CountResponse;
-  return requireCount('anchors_secured_in_window', response);
+    .not('chain_timestamp', 'is', null)
+    .order('chain_timestamp', { ascending: false, nullsFirst: false })
+    .limit(1);
+
+  if (error) {
+    logger.error({ error }, 'Pipeline throughput monitor: probe failed (last secured)');
+    throw new Error('Pipeline throughput probe failed: last_secured_anchor');
+  }
+  const rows = (data ?? []) as Array<{ chain_timestamp: string | null }>;
+  return rows.length > 0 ? rows[0].chain_timestamp : null;
 }
 
 /** Best-effort cache_value read from pipeline_dashboard_cache. Null on any miss. */
@@ -365,21 +337,21 @@ function parseBatchProgress(
 }
 
 /**
- * Convert the oldest-unlinked timestamp into an age in whole hours. An
- * unparseable timestamp maps to null with a loud warn — fail safe, no
- * spurious page on a bad row (mirrors stuck-anchor-monitor).
+ * Convert a probe timestamp into an age in whole hours. An unparseable
+ * timestamp maps to null with a loud warn — fail safe, no spurious page on a
+ * bad row (mirrors stuck-anchor-monitor).
  */
-function computeOldestUnlinkedAgeHours(createdAt: string | null, now: Date): number | null {
-  if (!createdAt) return null;
-  const createdMs = new Date(createdAt).getTime();
-  if (Number.isNaN(createdMs)) {
+function computeAgeHours(probe: string, timestamp: string | null, now: Date): number | null {
+  if (!timestamp) return null;
+  const parsedMs = new Date(timestamp).getTime();
+  if (Number.isNaN(parsedMs)) {
     logger.warn(
-      { probe: 'oldest_unlinked_record' },
-      'Pipeline throughput monitor: oldest unlinked timestamp unparseable — treating as unavailable',
+      { probe },
+      'Pipeline throughput monitor: probe timestamp unparseable — treating as unavailable',
     );
     return null;
   }
-  return Math.round((now.getTime() - createdMs) / MS_PER_HOUR);
+  return Math.round((now.getTime() - parsedMs) / MS_PER_HOUR);
 }
 
 function emitThroughputAlert(
@@ -391,11 +363,9 @@ function emitThroughputAlert(
     capturePipelineThroughputAlert(decision.reason, {
       source: 'pipeline-throughput-monitor',
       story: 'SCRUM-2901',
-      new_unlinked_in_window: input.new_unlinked_in_window,
-      records_created_in_window: input.records_created_in_window,
-      anchors_created_in_window: input.anchors_created_in_window,
-      anchors_secured_in_window: input.anchors_secured_in_window,
+      latest_unlinked_age_hours: input.latest_unlinked_age_hours,
       oldest_unlinked_age_hours: input.oldest_unlinked_age_hours,
+      last_secured_age_hours: input.last_secured_age_hours,
       unlinked_total: input.unlinked_total,
       window_hours: input.window_hours,
       linker_stall_threshold_hours: input.linker_stall_threshold_hours,
@@ -406,11 +376,10 @@ function emitThroughputAlert(
 }
 
 /**
- * End-to-end cron entry point. Runs the bounded window probes + the
- * oldest-unlinked age probe plus best-effort cache context, evaluates both
- * dead-man conditions, and on a stall logs at error level + fires the
- * stable-fingerprint Sentry alert. Throws on a broken core probe (route →
- * 500 → Scheduler retry).
+ * End-to-end cron entry point. Runs the three LIMIT-1 timestamp probes plus
+ * best-effort cache context, evaluates both dead-man conditions, and on a
+ * stall logs at error level + fires the stable-fingerprint Sentry alert.
+ * Throws on a broken core probe (route → 500 → Scheduler retry).
  */
 export async function runPipelineThroughputMonitor(
   db: SupabaseDb,
@@ -420,37 +389,32 @@ export async function runPipelineThroughputMonitor(
   const windowHours = overrides.windowHours ?? DEFAULT_THROUGHPUT_WINDOW_HOURS;
   const linkerStallThresholdHours =
     overrides.linkerStallThresholdHours ?? DEFAULT_LINKER_STALL_THRESHOLD_HOURS;
-  const sinceIso = new Date(now.getTime() - windowHours * MS_PER_HOUR).toISOString();
 
   // Core probes: fail loud (throw → 500). Cache context: best-effort (null).
   const [
-    newUnlinkedInWindow,
-    recordsCreatedInWindow,
     oldestUnlinkedCreatedAt,
-    anchorsCreatedInWindow,
-    anchorsSecuredInWindow,
+    newestUnlinkedCreatedAt,
+    lastSecuredChainTimestamp,
     pipelineStatsCache,
     statusCountsCache,
   ] = await Promise.all([
-    fetchNewUnlinkedInWindow(db, sinceIso),
-    fetchRecordsCreatedInWindow(db, sinceIso),
-    fetchOldestUnlinkedCreatedAt(db),
-    fetchAnchorsCreatedInWindow(db, sinceIso),
-    fetchAnchorsSecuredInWindow(db, sinceIso),
+    fetchUnlinkedBoundaryCreatedAt(db, 'oldest'),
+    fetchUnlinkedBoundaryCreatedAt(db, 'newest'),
+    fetchLastSecuredChainTimestamp(db),
     fetchCacheValue(db, 'pipeline_stats'),
     fetchCacheValue(db, 'anchor_status_counts'),
   ]);
 
-  const oldestUnlinkedAgeHours = computeOldestUnlinkedAgeHours(oldestUnlinkedCreatedAt, now);
+  const oldestUnlinkedAgeHours = computeAgeHours('oldest_unlinked_record', oldestUnlinkedCreatedAt, now);
+  const latestUnlinkedAgeHours = computeAgeHours('newest_unlinked_record', newestUnlinkedCreatedAt, now);
+  const lastSecuredAgeHours = computeAgeHours('last_secured_anchor', lastSecuredChainTimestamp, now);
   const unlinkedTotal = parseUnlinkedTotal(pipelineStatsCache);
   const batchProgress = parseBatchProgress(statusCountsCache);
 
   const input: ThroughputAlertInput = {
-    new_unlinked_in_window: newUnlinkedInWindow,
-    anchors_secured_in_window: anchorsSecuredInWindow,
-    records_created_in_window: recordsCreatedInWindow,
-    anchors_created_in_window: anchorsCreatedInWindow,
+    latest_unlinked_age_hours: latestUnlinkedAgeHours,
     oldest_unlinked_age_hours: oldestUnlinkedAgeHours,
+    last_secured_age_hours: lastSecuredAgeHours,
     unlinked_total: unlinkedTotal,
     window_hours: windowHours,
     linker_stall_threshold_hours: linkerStallThresholdHours,
@@ -462,44 +426,30 @@ export async function runPipelineThroughputMonitor(
     alertFired: false,
     windowHours,
     linkerStallThresholdHours,
-    newUnlinkedInWindow,
-    recordsCreatedInWindow,
-    anchorsCreatedInWindow,
-    anchorsSecuredInWindow,
+    latestUnlinkedAgeHours,
     oldestUnlinkedAgeHours,
+    lastSecuredAgeHours,
     unlinkedTotal,
     batchProgress,
     reason: decision.reason,
     checkedAt: now.toISOString(),
   };
 
+  const logContext = {
+    latestUnlinkedAgeHours,
+    oldestUnlinkedAgeHours,
+    lastSecuredAgeHours,
+    unlinkedTotal,
+    windowHours,
+    linkerStallThresholdHours,
+  };
+
   if (decision.should_fire) {
-    logger.error(
-      {
-        newUnlinkedInWindow,
-        recordsCreatedInWindow,
-        anchorsCreatedInWindow,
-        anchorsSecuredInWindow,
-        oldestUnlinkedAgeHours,
-        unlinkedTotal,
-        windowHours,
-        linkerStallThresholdHours,
-      },
-      `Pipeline throughput monitor: ${decision.reason}`,
-    );
+    logger.error(logContext, `Pipeline throughput monitor: ${decision.reason}`);
     emitThroughputAlert(decision, input);
     result.alertFired = true;
   } else {
-    logger.info(
-      {
-        newUnlinkedInWindow,
-        anchorsSecuredInWindow,
-        oldestUnlinkedAgeHours,
-        unlinkedTotal,
-        windowHours,
-      },
-      `Pipeline throughput monitor: ${decision.reason}`,
-    );
+    logger.info(logContext, `Pipeline throughput monitor: ${decision.reason}`);
   }
 
   return result;
