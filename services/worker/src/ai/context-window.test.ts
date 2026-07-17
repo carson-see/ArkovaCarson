@@ -25,6 +25,12 @@ describe('GME-15: Context Window Optimization', () => {
     expect(g3.maxInputTokens).toBeGreaterThanOrEqual(g25.maxInputTokens);
   });
 
+  it('uses the stable Gemini 3.1 Flash-Lite limits', () => {
+    const config = getContextWindowConfig('gemini-3.1-flash-lite');
+    expect(config.maxInputTokens).toBe(1_048_576);
+    expect(config.maxOutputTokens).toBe(65_536);
+  });
+
   it('estimateTokenCount provides rough token count', () => {
     const short = estimateTokenCount('Hello world');
     const long = estimateTokenCount('a'.repeat(4000));

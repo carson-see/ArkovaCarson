@@ -15,7 +15,7 @@ export interface ContextWindowConfig {
 /** Known context window sizes by model family */
 const MODEL_CONTEXT_WINDOWS: Record<string, { input: number; output: number }> = {
   'gemini-3-flash-preview': { input: 1_000_000, output: 65_536 },
-  'gemini-3-flash-lite-preview': { input: 500_000, output: 32_768 },
+  'gemini-3.1-flash-lite': { input: 1_048_576, output: 65_536 },
   'gemini-2.5-flash': { input: 1_000_000, output: 8_192 },
   'gemini-2.5-pro': { input: 2_000_000, output: 8_192 },
   'gemini-2.0-flash': { input: 1_000_000, output: 8_192 },

@@ -35,8 +35,9 @@ const DEFAULT_EMBEDDING_MODEL = 'gemini-embedding-001';
 const DEFAULT_VISION_MODEL = 'gemini-2.5-flash';
 // Distillation also migrated to Gemini 3 (was gemini-2.0-flash, shut down June 1):
 const DEFAULT_DISTILLATION_MODEL = 'gemini-3-flash-preview';
-// GME-18: Lighter model for low-stakes tasks (tags, classification)
-const DEFAULT_LITE_MODEL = 'gemini-3-flash-lite-preview';
+// GME-18: Lighter model for low-stakes tasks (tags, classification).
+// The prior preview SKU is unavailable; keep this on the supported stable ID.
+const DEFAULT_LITE_MODEL = 'gemini-3.1-flash-lite';
 // GEMB2-01 (SCRUM-1050): Vertex AI Gemini Embedding 2 — the next-gen embedding
 // model. NOT wired into the production hot path yet — lives only in
 // `services/worker/src/ai/embeddings/gemini2.ts` as a reference client.
@@ -118,9 +119,9 @@ export const MODEL_VERSION_PINS: Record<string, ModelVersionPin> = {
   },
   lite: {
     modelId: DEFAULT_LITE_MODEL,
-    pinnedAt: '2026-04-12',
-    verifiedAt: '2026-04-12',
-    notes: 'GME-18: cheaper/faster model for tags, classification',
+    pinnedAt: '2026-07-17',
+    verifiedAt: '2026-07-17',
+    notes: 'GME-18: supported stable model for tags and classification; replaces the unavailable preview SKU.',
   },
   embedding_v2: {
     modelId: DEFAULT_EMBEDDING_V2_MODEL,

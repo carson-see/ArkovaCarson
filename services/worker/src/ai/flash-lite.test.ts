@@ -26,7 +26,7 @@ describe('GME-18: Flash Lite Model Configuration', () => {
     const { getGeminiConfig } = await import('./gemini-config.js');
     const config = getGeminiConfig();
     expect(config).toHaveProperty('liteModel');
-    expect(config.liteModel).toMatch(/lite|flash/i);
+    expect(config.liteModel).toBe('gemini-3.1-flash-lite');
   });
 
   it('GEMINI_LITE_MODEL respects env var override', async () => {

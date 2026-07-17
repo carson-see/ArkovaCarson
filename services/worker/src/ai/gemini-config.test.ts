@@ -16,6 +16,7 @@ describe('gemini-config', () => {
     delete process.env.GEMINI_EMBEDDING_MODEL;
     delete process.env.GEMINI_TUNED_MODEL;
     delete process.env.GEMINI_VISION_MODEL;
+    delete process.env.GEMINI_LITE_MODEL;
     // Force re-import to pick up env changes
   });
 
@@ -52,7 +53,7 @@ describe('gemini-config', () => {
       embeddingModel: 'gemini-embedding-001',
       visionModel: 'gemini-2.5-flash',
       tunedModel: null,
-      liteModel: 'gemini-3-flash-lite-preview',
+      liteModel: 'gemini-3.1-flash-lite',
     });
   });
 
