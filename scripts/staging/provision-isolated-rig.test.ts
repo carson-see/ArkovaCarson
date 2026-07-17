@@ -49,6 +49,18 @@ const SCRIPT = resolve(here, 'provision-isolated-rig.sh');
 const REPO_ROOT = resolve(here, '../..');
 const REAL_GIT = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
 const script = readFileSync(SCRIPT, 'utf8');
+const b1StartupScript = readFileSync(
+  resolve(here, 'start-rig-b1-bitcoin-core.sh'),
+  'utf8',
+);
+const b1PostProbePlanRaw = readFileSync(
+  resolve(here, '../fixtures/s33-b1-post-probe-treasury-plan.fixture.txt'),
+  'utf8',
+).trimEnd();
+const b1PostProbePlan = JSON.parse(b1PostProbePlanRaw) as {
+  inputs: Array<{ txId: string; vout: number; valueSats: number }>;
+  outputCount: number;
+};
 const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
@@ -56,6 +68,57 @@ const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
   '384d15932f5f78e047e15a0623cfee5daac623355366eb10622d88585ea498c9';
 const INTEGRATED_B1_PUBLIC_AUTHORITY_BINDING =
   'Production verification is code-bound to public key `arkova.s33.b1-evidence.ed25519.v1`, its SPKI fingerprint, operator, activation, and canonical genesis-roster root; envelopes must name that exact key id.';
+
+describe('RIG-B1 current post-probe treasury compatibility', () => {
+  const originalTxid =
+    '1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941';
+  const probeTxid =
+    '4f56c2bd94b4205a83b3625d52fc35db3ef2a8937d178cd519145f3055ffe8f6';
+
+  it('pins the exact immutable 31+1 outpoint inventory and arithmetic', () => {
+    expect(createHash('sha256').update(b1PostProbePlanRaw).digest('hex')).toBe(
+      '1c952e7e6ee5d668f663eaec4fd62d5df83ee9f30778d57c07b3d03b1a8e4485',
+    );
+    expect(b1PostProbePlan.outputCount).toBe(32);
+    expect(b1PostProbePlan.inputs).toHaveLength(32);
+    expect(b1PostProbePlan.inputs.reduce((total, input) => total + input.valueSats, 0))
+      .toBe(169_482);
+
+    const original = b1PostProbePlan.inputs.filter((input) => input.txId === originalTxid);
+    const probe = b1PostProbePlan.inputs.filter((input) => input.txId === probeTxid);
+    expect(original).toHaveLength(31);
+    expect(original.map(({ vout }) => vout)).toEqual([
+      0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+      17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+    ]);
+    expect(original.slice(0, 6).every(({ valueSats }) => valueSats === 5_302)).toBe(true);
+    expect(original.slice(6).every(({ valueSats }) => valueSats === 5_301)).toBe(true);
+    expect(probe).toHaveLength(1);
+    expect(probe[0]).toMatchObject({ txId: probeTxid, vout: 1, valueSats: 5_145 });
+    expect(b1PostProbePlan.inputs.every(({ txId }) =>
+      txId === originalTxid || txId === probeTxid)).toBe(true);
+  });
+
+  it('binds provision metadata and node readiness to the same exact set', () => {
+    expect(script).toContain(
+      'RIG_B1_CURRENT_TREASURY_PLAN_DIGEST="sha256:9808e07f3b2329488e5dc5f2658a2224937f3c950fd7322b9a5a227ff34fc034"',
+    );
+    expect(script).toContain('RIG_B1_TREASURY_TOTAL_SATS="169482"');
+    expect(script).toContain(`RIG_B1_TREASURY_FUNDED_PROBE_TXID="${probeTxid}"`);
+    expect(script).toContain('treasury-original-split-unspent-output-count=');
+    expect(script).toContain('treasury-funded-probe-change-value-sats=');
+
+    expect(b1StartupScript).toContain(
+      'sha256:9808e07f3b2329488e5dc5f2658a2224937f3c950fd7322b9a5a227ff34fc034',
+    );
+    expect(b1StartupScript).toContain(`TREASURY_FUNDED_PROBE_TXID" != "${probeTxid}"`);
+    expect(b1StartupScript).toContain('OBSERVED_EXACT_ORIGINAL_COUNT');
+    expect(b1StartupScript).toContain('OBSERVED_EXACT_PROBE_COUNT');
+    expect(b1StartupScript).toContain('OBSERVED_OTHER_COUNT" != "0"');
+    expect(b1StartupScript).toContain('OBSERVED_DUPLICATE_COUNT" != "0"');
+    expect(b1StartupScript).toContain('OBSERVED_MISSING_COUNT" != "0"');
+  });
+});
 
 // Apply-mode cases launch many short-lived git/gcloud/npx shell stubs. They
 // finish in ~1s focused but can exceed Vitest's 5s default when the full
@@ -512,8 +575,8 @@ const RIG_B1_APPLY_ENV = {
   STAGING_B1_TREASURY_DESCRIPTOR:
     'addr(tb1qarkovas33rigb1treasuryfixture0000000000000)#deadbeef',
   STAGING_B1_TREASURY_SPLIT_PLAN_DIGEST:
-    'sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8',
-  STAGING_B1_TREASURY_EXPECTED_TOTAL_SATS: '169639',
+    'sha256:9808e07f3b2329488e5dc5f2658a2224937f3c950fd7322b9a5a227ff34fc034',
+  STAGING_B1_TREASURY_EXPECTED_TOTAL_SATS: '169482',
   STAGING_B1_RPC_URL_SECRET_VERSION: '1',
   STAGING_B1_RPC_AUTH_SECRET_VERSION: '2',
   STAGING_B1_TREASURY_WIF_SECRET_VERSION: '3',
@@ -884,7 +947,15 @@ function writeB1ApprovalFixture(
           '1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941',
         preSplitPlanDigest: fixtureEnv.STAGING_B1_TREASURY_SPLIT_PLAN_DIGEST,
         expectedConfirmedOutputCount: 32,
-        expectedTotalSats: 169_639,
+        expectedTotalSats: 169_482,
+        originalSplitUnspentOutputCount: 31,
+        fundedProbeChange: {
+          transactionId:
+            '4f56c2bd94b4205a83b3625d52fc35db3ef2a8937d178cd519145f3055ffe8f6',
+          vout: 1,
+          valueSats: 5_145,
+          confirmed: true,
+        },
         descriptorPolicy: 'addr-checksummed-importdescriptors',
         wifOnNode: false,
       },
@@ -1151,7 +1222,7 @@ if [[ "$1" == "projects" && "$2" == "describe" ]]; then
   exit 0
 fi
 if [[ "$1" == "compute" && "$2" == "instances" && "$3" == "get-serial-port-output" ]]; then
-  printf '%s\\n' 'ARKOVA_RIG_B1_READY_V1 {"schemaVersion":"arkova.s33.rig-b1.node-readiness/v1","bitcoinCoreVersion":"31.1","bitcoinCoreImage":"us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:cdc306adc6ef6017326681ff09c4d3247ce77026bed17feccdc163a96519c8f8","sourceTarballSha256":"b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e","chain":"signet","initialBlockDownload":false,"blocks":100,"headers":100,"genesisHash":"00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6","txindexSynced":true,"txindexBestBlockHeight":100,"treasurySplitPlanDigest":"sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8","splitTransactionId":"1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941","confirmedOutputCount":32,"confirmedTotalSats":169639,"splitBlockHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","splitBlockHeader":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","txOutProof":"aa"}'
+  printf '%s\\n' 'ARKOVA_RIG_B1_READY_V1 {"schemaVersion":"arkova.s33.rig-b1.node-readiness/v1","bitcoinCoreVersion":"31.1","bitcoinCoreImage":"us-central1-docker.pkg.dev/arkova1/arkova-worker-images/bitcoin-core-signet@sha256:cdc306adc6ef6017326681ff09c4d3247ce77026bed17feccdc163a96519c8f8","sourceTarballSha256":"b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e","chain":"signet","initialBlockDownload":false,"blocks":100,"headers":100,"genesisHash":"00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6","txindexSynced":true,"txindexBestBlockHeight":100,"treasurySplitPlanDigest":"sha256:9808e07f3b2329488e5dc5f2658a2224937f3c950fd7322b9a5a227ff34fc034","splitTransactionId":"1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941","confirmedOutputCount":32,"confirmedTotalSats":169482,"splitBlockHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","splitBlockHeader":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","txOutProof":"aa"}'
   exit 0
 fi
 if [[ "$1" == "compute" && "$2" == "instances" && "$3" == "describe" ]]; then

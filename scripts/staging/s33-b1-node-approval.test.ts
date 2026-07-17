@@ -20,6 +20,10 @@ const bitcoinCoreAmd64RuntimeDigest =
 const treasury = 'tb1qarkovas33rigb1treasuryfixture0000000000000';
 const treasurySplitTxid =
   '1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941';
+const treasuryPlanDigest =
+  'sha256:9808e07f3b2329488e5dc5f2658a2224937f3c950fd7322b9a5a227ff34fc034';
+const fundedProbeTxid =
+  '4f56c2bd94b4205a83b3625d52fc35db3ef2a8937d178cd519145f3055ffe8f6';
 
 function secret(env: string, secretName: string, version: string) {
   return {
@@ -137,9 +141,16 @@ function payload() {
         address: treasury,
         descriptor: `addr(${treasury})#deadbeef`,
         splitTransactionId: treasurySplitTxid,
-        preSplitPlanDigest: `sha256:${'8'.repeat(64)}`,
+        preSplitPlanDigest: treasuryPlanDigest,
         expectedConfirmedOutputCount: 32,
-        expectedTotalSats: 169_639,
+        expectedTotalSats: 169_482,
+        originalSplitUnspentOutputCount: 31,
+        fundedProbeChange: {
+          transactionId: fundedProbeTxid,
+          vout: 1,
+          valueSats: 5_145,
+          confirmed: true,
+        },
         descriptorPolicy: 'addr-checksummed-importdescriptors',
         wifOnNode: false,
       },
@@ -187,7 +198,19 @@ describe('RIG-B1 signed Bitcoin Core node/spend approval', () => {
         },
         topology: {
           provider: { workerProvider: 'rpc', primary: 'bitcoin-core-signet-rpc' },
-          treasuryWatchOnly: { address: treasury, wifOnNode: false },
+          treasuryWatchOnly: {
+            address: treasury,
+            preSplitPlanDigest: treasuryPlanDigest,
+            expectedTotalSats: 169_482,
+            originalSplitUnspentOutputCount: 31,
+            fundedProbeChange: {
+              transactionId: fundedProbeTxid,
+              vout: 1,
+              valueSats: 5_145,
+              confirmed: true,
+            },
+            wifOnNode: false,
+          },
         },
         budget: { spendCapUsd: 200 },
         teardown: { projectedMonthlyRecurringUsd: 0 },
@@ -217,7 +240,12 @@ describe('RIG-B1 signed Bitcoin Core node/spend approval', () => {
     ['WIF granted to node', (value: ReturnType<typeof payload>) => { value.topology.nodeSecretEnvs = ['BITCOIN_RPC_AUTH', 'BITCOIN_TREASURY_WIF']; }],
     ['empty treasury watch', (value: ReturnType<typeof payload>) => { value.topology.treasuryWatchOnly.address = ''; }],
     ['substituted split transaction', (value: ReturnType<typeof payload>) => { value.topology.treasuryWatchOnly.splitTransactionId = 'f'.repeat(64); }],
-    ['substituted treasury total', (value: ReturnType<typeof payload>) => { value.topology.treasuryWatchOnly.expectedTotalSats = 169_638; }],
+    ['substituted treasury plan', (value: ReturnType<typeof payload>) => { value.topology.treasuryWatchOnly.preSplitPlanDigest = `sha256:${'8'.repeat(64)}`; }],
+    ['substituted treasury total', (value: ReturnType<typeof payload>) => { value.topology.treasuryWatchOnly.expectedTotalSats = 169_481; }],
+    ['substituted original split count', (value: ReturnType<typeof payload>) => { value.topology.treasuryWatchOnly.originalSplitUnspentOutputCount = 32; }],
+    ['substituted probe transaction', (value: ReturnType<typeof payload>) => { value.topology.treasuryWatchOnly.fundedProbeChange.transactionId = 'f'.repeat(64); }],
+    ['substituted probe vout', (value: ReturnType<typeof payload>) => { value.topology.treasuryWatchOnly.fundedProbeChange.vout = 0; }],
+    ['substituted probe value', (value: ReturnType<typeof payload>) => { value.topology.treasuryWatchOnly.fundedProbeChange.valueSats = 5_146; }],
     ['nonzero teardown', (value: ReturnType<typeof payload>) => { value.teardown.projectedMonthlyRecurringUsd = 1; }],
     ['overspend', (value: ReturnType<typeof payload>) => { value.budget.spendCapUsd = 201; }],
   ] as const)('rejects signed but unauthorized %s', (_label, mutate) => {

@@ -27,6 +27,10 @@ TREASURY_SPLIT_PLAN_DIGEST="$(metadata treasury-split-plan-digest)"
 TREASURY_SPLIT_TXID="$(metadata treasury-split-txid)"
 TREASURY_EXPECTED_OUTPUT_COUNT="$(metadata treasury-expected-output-count)"
 TREASURY_EXPECTED_TOTAL_SATS="$(metadata treasury-expected-total-sats)"
+TREASURY_ORIGINAL_SPLIT_UNSPENT_OUTPUT_COUNT="$(metadata treasury-original-split-unspent-output-count)"
+TREASURY_FUNDED_PROBE_TXID="$(metadata treasury-funded-probe-txid)"
+TREASURY_FUNDED_PROBE_CHANGE_VOUT="$(metadata treasury-funded-probe-change-vout)"
+TREASURY_FUNDED_PROBE_CHANGE_VALUE_SATS="$(metadata treasury-funded-probe-change-value-sats)"
 BITCOIN_CORE_VERSION="$(metadata bitcoin-core-version)"
 BITCOIN_CORE_SOURCE_SHA256="$(metadata bitcoin-core-source-sha256)"
 REGISTRY_HOST="${BITCOIN_CORE_IMAGE%%/*}"
@@ -41,10 +45,14 @@ if [[ ! "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ \
   || ! "$DATA_DISK_NAME" =~ ^[a-z][a-z0-9-]{2,62}$ \
   || ! "$TREASURY_ADDRESS" =~ ^tb1[a-z0-9]{20,87}$ \
   || ! "$TREASURY_DESCRIPTOR" =~ ^addr\(${TREASURY_ADDRESS}\)#[a-z0-9]{8}$ \
-  || "$TREASURY_SPLIT_PLAN_DIGEST" != "sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8" \
+  || "$TREASURY_SPLIT_PLAN_DIGEST" != "sha256:9808e07f3b2329488e5dc5f2658a2224937f3c950fd7322b9a5a227ff34fc034" \
   || "$TREASURY_SPLIT_TXID" != "1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941" \
   || "$TREASURY_EXPECTED_OUTPUT_COUNT" != "32" \
-  || "$TREASURY_EXPECTED_TOTAL_SATS" != "169639" \
+  || "$TREASURY_EXPECTED_TOTAL_SATS" != "169482" \
+  || "$TREASURY_ORIGINAL_SPLIT_UNSPENT_OUTPUT_COUNT" != "31" \
+  || "$TREASURY_FUNDED_PROBE_TXID" != "4f56c2bd94b4205a83b3625d52fc35db3ef2a8937d178cd519145f3055ffe8f6" \
+  || "$TREASURY_FUNDED_PROBE_CHANGE_VOUT" != "1" \
+  || "$TREASURY_FUNDED_PROBE_CHANGE_VALUE_SATS" != "5145" \
   || "$BITCOIN_CORE_VERSION" != "31.1" \
   || "$BITCOIN_CORE_SOURCE_SHA256" != "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e" ]]; then
   echo "RIG-B1 node metadata failed the immutable allowlist." >&2
@@ -219,24 +227,71 @@ unset WALLET_INFO
 CONFIRMED_UTXOS="$(/usr/bin/docker exec arkova-rig-b1-bitcoin-core \
   bitcoin-cli -signet -rpcwallet=arkova-watch-only listunspent \
   1 9999999 "[\"${TREASURY_ADDRESS}\"]" true)"
-OBSERVED_OUTPUT_COUNT="$(printf '%s\n' "$CONFIRMED_UTXOS" \
-  | /usr/bin/awk '/"amount"[[:space:]]*:/ { count += 1 } END { print count + 0 }')"
-OBSERVED_TOTAL_SATS="$(printf '%s\n' "$CONFIRMED_UTXOS" \
-  | /usr/bin/awk '/"amount"[[:space:]]*:/ { value=$2; gsub(/,/, "", value); total += value } END { printf "%.0f", total * 100000000 }')"
-read -r OBSERVED_TXID_COUNT OBSERVED_MATCHING_TXID_COUNT <<<"$(printf '%s\n' "$CONFIRMED_UTXOS" \
-  | /usr/bin/awk -v expected="$TREASURY_SPLIT_TXID" '
-      /"txid"[[:space:]]*:/ {
-        count += 1
-        if (index($0, "\"" expected "\"") > 0) matching += 1
-      }
-      END { print count + 0, matching + 0 }
-    ')"
+read -r OBSERVED_OUTPUT_COUNT OBSERVED_TOTAL_SATS \
+  OBSERVED_ORIGINAL_COUNT OBSERVED_EXACT_ORIGINAL_COUNT \
+  OBSERVED_PROBE_COUNT OBSERVED_EXACT_PROBE_COUNT \
+  OBSERVED_OTHER_COUNT OBSERVED_DUPLICATE_COUNT OBSERVED_MISSING_COUNT \
+  <<<"$(printf '%s\n' "$CONFIRMED_UTXOS" \
+    | /usr/bin/awk \
+      -v original="$TREASURY_SPLIT_TXID" \
+      -v probe="$TREASURY_FUNDED_PROBE_TXID" \
+      -v probe_vout="$TREASURY_FUNDED_PROBE_CHANGE_VOUT" \
+      -v probe_sats="$TREASURY_FUNDED_PROBE_CHANGE_VALUE_SATS" '
+        /"txid"[[:space:]]*:/ {
+          txid=$0
+          sub(/^.*"txid"[[:space:]]*:[[:space:]]*"/, "", txid)
+          sub(/".*$/, "", txid)
+        }
+        /"vout"[[:space:]]*:/ {
+          vout=$0
+          sub(/^.*"vout"[[:space:]]*:[[:space:]]*/, "", vout)
+          sub(/,.*/, "", vout)
+        }
+        /"amount"[[:space:]]*:/ {
+          amount=$0
+          sub(/^.*"amount"[[:space:]]*:[[:space:]]*/, "", amount)
+          sub(/,.*/, "", amount)
+          sats=sprintf("%.0f", amount * 100000000)
+          vout_num=vout + 0
+          key=txid ":" vout_num
+          if (seen[key]++ > 0) duplicate_count += 1
+          count += 1
+          total += sats
+          if (txid == original) {
+            original_count += 1
+            expected_sats=-1
+            if ((vout_num >= 0 && vout_num <= 4) || vout_num == 6) expected_sats=5302
+            else if (vout_num >= 7 && vout_num <= 31) expected_sats=5301
+            if (sats == expected_sats) exact_original_count += 1
+          } else if (txid == probe) {
+            probe_count += 1
+            if (vout_num == probe_vout && sats == probe_sats) exact_probe_count += 1
+          } else {
+            other_count += 1
+          }
+        }
+        END {
+          for (vout=0; vout<=31; vout+=1) {
+            if (vout == 5) continue
+            if (seen[original ":" vout] != 1) missing_count += 1
+          }
+          if (seen[probe ":" probe_vout] != 1) missing_count += 1
+          printf "%.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f", \
+            count, total, original_count, exact_original_count, probe_count, \
+            exact_probe_count, other_count, duplicate_count, missing_count
+        }
+      ')"
 unset CONFIRMED_UTXOS
 if [[ "$OBSERVED_OUTPUT_COUNT" != "$TREASURY_EXPECTED_OUTPUT_COUNT" \
-  || "$OBSERVED_TXID_COUNT" != "$TREASURY_EXPECTED_OUTPUT_COUNT" \
-  || "$OBSERVED_MATCHING_TXID_COUNT" != "$TREASURY_EXPECTED_OUTPUT_COUNT" \
-  || "$OBSERVED_TOTAL_SATS" != "$TREASURY_EXPECTED_TOTAL_SATS" ]]; then
-  echo "RIG-B1 confirmed watch-only inventory does not match the signed split plan." >&2
+  || "$OBSERVED_TOTAL_SATS" != "$TREASURY_EXPECTED_TOTAL_SATS" \
+  || "$OBSERVED_ORIGINAL_COUNT" != "$TREASURY_ORIGINAL_SPLIT_UNSPENT_OUTPUT_COUNT" \
+  || "$OBSERVED_EXACT_ORIGINAL_COUNT" != "$TREASURY_ORIGINAL_SPLIT_UNSPENT_OUTPUT_COUNT" \
+  || "$OBSERVED_PROBE_COUNT" != "1" \
+  || "$OBSERVED_EXACT_PROBE_COUNT" != "1" \
+  || "$OBSERVED_OTHER_COUNT" != "0" \
+  || "$OBSERVED_DUPLICATE_COUNT" != "0" \
+  || "$OBSERVED_MISSING_COUNT" != "0" ]]; then
+  echo "RIG-B1 confirmed watch-only inventory does not match the signed current 31+1 treasury plan." >&2
   exit 1
 fi
 

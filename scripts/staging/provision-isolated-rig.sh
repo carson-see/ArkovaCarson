@@ -83,7 +83,12 @@ RIG_B1_EXPECTED_BITCOIN_CORE_IMAGE="us-central1-docker.pkg.dev/arkova1/arkova-wo
 RIG_B1_BITCOIN_CORE_RECIPE_COMMIT="b9a54856c9bee87d958cc4b070776828b5c17b32"
 RIG_B1_BITCOIN_CORE_AMD64_RUNTIME_DIGEST="sha256:684e80900f124890c45ad9b691d7f76456c1042385bce4ab92725b1979b55888"
 RIG_B1_TREASURY_SPLIT_TXID="1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941"
-RIG_B1_TREASURY_TOTAL_SATS="169639"
+RIG_B1_CURRENT_TREASURY_PLAN_DIGEST="sha256:9808e07f3b2329488e5dc5f2658a2224937f3c950fd7322b9a5a227ff34fc034"
+RIG_B1_TREASURY_TOTAL_SATS="169482"
+RIG_B1_TREASURY_ORIGINAL_SPLIT_UNSPENT_OUTPUT_COUNT="31"
+RIG_B1_TREASURY_FUNDED_PROBE_TXID="4f56c2bd94b4205a83b3625d52fc35db3ef2a8937d178cd519145f3055ffe8f6"
+RIG_B1_TREASURY_FUNDED_PROBE_CHANGE_VOUT="1"
+RIG_B1_TREASURY_FUNDED_PROBE_CHANGE_VALUE_SATS="5145"
 RIG_B1_NODE_RPC_ENDPOINT="http://10.33.10.10:38332"
 RIG_B1_NODE_RPC_BIND="10.33.10.10"
 RIG_B1_NODE_SUBNET_CIDR="10.33.10.0/28"
@@ -1297,6 +1302,10 @@ verify_b1_node_approval_binding() {
     --arg split_txid "$RIG_B1_TREASURY_SPLIT_TXID" \
     --arg split_plan_digest "$RIG_B1_TREASURY_SPLIT_PLAN_DIGEST" \
     --argjson expected_total_sats "$RIG_B1_TREASURY_EXPECTED_TOTAL_SATS" \
+    --argjson original_split_unspent_count "$RIG_B1_TREASURY_ORIGINAL_SPLIT_UNSPENT_OUTPUT_COUNT" \
+    --arg funded_probe_txid "$RIG_B1_TREASURY_FUNDED_PROBE_TXID" \
+    --argjson funded_probe_vout "$RIG_B1_TREASURY_FUNDED_PROBE_CHANGE_VOUT" \
+    --argjson funded_probe_value_sats "$RIG_B1_TREASURY_FUNDED_PROBE_CHANGE_VALUE_SATS" \
     --argjson expected_secrets "$expected_secrets" '
       select(
         type == "object"
@@ -1338,6 +1347,13 @@ verify_b1_node_approval_binding() {
           preSplitPlanDigest: $split_plan_digest,
           expectedConfirmedOutputCount: 32,
           expectedTotalSats: $expected_total_sats,
+          originalSplitUnspentOutputCount: $original_split_unspent_count,
+          fundedProbeChange: {
+            transactionId: $funded_probe_txid,
+            vout: $funded_probe_vout,
+            valueSats: $funded_probe_value_sats,
+            confirmed: true
+          },
           descriptorPolicy: "addr-checksummed-importdescriptors",
           wifOnNode: false
         }
@@ -2635,9 +2651,9 @@ if [[ $APPLY -eq 1 ]]; then
       || ! "$RIG_B1_RELEASE_CANDIDATE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$ \
       || ! "$RIG_B1_TREASURY_ADDRESS" =~ ^tb1[a-z0-9]{20,87}$ \
       || ! "$RIG_B1_TREASURY_DESCRIPTOR" =~ ^addr\(${RIG_B1_TREASURY_ADDRESS}\)#[a-z0-9]{8}$ \
-      || "$RIG_B1_TREASURY_SPLIT_PLAN_DIGEST" != "sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8" \
+      || "$RIG_B1_TREASURY_SPLIT_PLAN_DIGEST" != "$RIG_B1_CURRENT_TREASURY_PLAN_DIGEST" \
       || "$RIG_B1_TREASURY_EXPECTED_TOTAL_SATS" != "$RIG_B1_TREASURY_TOTAL_SATS" ]]; then
-      echo "ERROR: RIG-B1 requires its signed approval plus exact corpus, RC, public descriptor, pre-split digest, and 169639-sat treasury total." >&2
+      echo "ERROR: RIG-B1 requires its signed approval plus exact corpus, RC, public descriptor, current post-probe plan, and 169482-sat treasury total." >&2
       exit 2
     fi
     for rig_b1_secret_version in \
@@ -4352,7 +4368,7 @@ provision_rig_b1_bitcoin_core_node() {
     --scopes=https://www.googleapis.com/auth/cloud-platform \
     --disk="name=${RIG_B1_NODE_BOOT_DISK},device-name=${RIG_B1_NODE_BOOT_DISK},mode=rw,boot=yes,auto-delete=no" \
     --disk="name=${RIG_B1_NODE_DATA_DISK},device-name=${RIG_B1_NODE_DATA_DISK},mode=rw,boot=no,auto-delete=no" \
-    --metadata="gcp-project-id=${GCP_PROJECT},bitcoin-core-image=${RIG_B1_BITCOIN_CORE_IMAGE},rpc-auth-secret=${BITCOIN_CORE_RPC_AUTH_SECRET},rpc-auth-secret-version=${RIG_B1_RPC_AUTH_SECRET_VERSION},rpc-bind=${RIG_B1_NODE_RPC_BIND},rpc-allow-cidr=${RIG_B1_NODE_CONNECTOR_CIDR},data-disk-name=${RIG_B1_NODE_DATA_DISK},treasury-address=${RIG_B1_TREASURY_ADDRESS},treasury-descriptor=${RIG_B1_TREASURY_DESCRIPTOR},treasury-split-plan-digest=${RIG_B1_TREASURY_SPLIT_PLAN_DIGEST},treasury-split-txid=${RIG_B1_TREASURY_SPLIT_TXID},treasury-expected-output-count=32,treasury-expected-total-sats=${RIG_B1_TREASURY_EXPECTED_TOTAL_SATS},bitcoin-core-version=${RIG_B1_BITCOIN_CORE_VERSION},bitcoin-core-source-sha256=${RIG_B1_BITCOIN_CORE_SOURCE_SHA256}" \
+    --metadata="gcp-project-id=${GCP_PROJECT},bitcoin-core-image=${RIG_B1_BITCOIN_CORE_IMAGE},rpc-auth-secret=${BITCOIN_CORE_RPC_AUTH_SECRET},rpc-auth-secret-version=${RIG_B1_RPC_AUTH_SECRET_VERSION},rpc-bind=${RIG_B1_NODE_RPC_BIND},rpc-allow-cidr=${RIG_B1_NODE_CONNECTOR_CIDR},data-disk-name=${RIG_B1_NODE_DATA_DISK},treasury-address=${RIG_B1_TREASURY_ADDRESS},treasury-descriptor=${RIG_B1_TREASURY_DESCRIPTOR},treasury-split-plan-digest=${RIG_B1_TREASURY_SPLIT_PLAN_DIGEST},treasury-split-txid=${RIG_B1_TREASURY_SPLIT_TXID},treasury-expected-output-count=32,treasury-expected-total-sats=${RIG_B1_TREASURY_EXPECTED_TOTAL_SATS},treasury-original-split-unspent-output-count=${RIG_B1_TREASURY_ORIGINAL_SPLIT_UNSPENT_OUTPUT_COUNT},treasury-funded-probe-txid=${RIG_B1_TREASURY_FUNDED_PROBE_TXID},treasury-funded-probe-change-vout=${RIG_B1_TREASURY_FUNDED_PROBE_CHANGE_VOUT},treasury-funded-probe-change-value-sats=${RIG_B1_TREASURY_FUNDED_PROBE_CHANGE_VALUE_SATS},bitcoin-core-version=${RIG_B1_BITCOIN_CORE_VERSION},bitcoin-core-source-sha256=${RIG_B1_BITCOIN_CORE_SOURCE_SHA256}" \
     --metadata-from-file="startup-script=${RIG_B1_NODE_STARTUP_SCRIPT}"
   echo
 }
@@ -5149,6 +5165,13 @@ rig_b1_infrastructure_json() {
           preSplitPlanDigest: $split_plan_digest,
           expectedConfirmedOutputCount: 32,
           expectedTotalSats: $expected_total_sats,
+          originalSplitUnspentOutputCount: 31,
+          fundedProbeChange: {
+            transactionId: "4f56c2bd94b4205a83b3625d52fc35db3ef2a8937d178cd519145f3055ffe8f6",
+            vout: 1,
+            valueSats: 5145,
+            confirmed: true
+          },
           descriptorPolicy: "addr-checksummed-importdescriptors",
           wifOnNode: false
         },

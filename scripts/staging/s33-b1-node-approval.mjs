@@ -82,7 +82,16 @@ const EXACT_PROVIDER = Object.freeze({
 });
 const EXACT_TREASURY_SPLIT_TXID =
   '1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941';
-const EXACT_TREASURY_TOTAL_SATS = 169_639;
+const EXACT_TREASURY_PLAN_DIGEST =
+  'sha256:9808e07f3b2329488e5dc5f2658a2224937f3c950fd7322b9a5a227ff34fc034';
+const EXACT_TREASURY_TOTAL_SATS = 169_482;
+const EXACT_ORIGINAL_SPLIT_UNSPENT_OUTPUT_COUNT = 31;
+const EXACT_FUNDED_PROBE_CHANGE = Object.freeze({
+  transactionId: '4f56c2bd94b4205a83b3625d52fc35db3ef2a8937d178cd519145f3055ffe8f6',
+  vout: 1,
+  valueSats: 5_145,
+  confirmed: true,
+});
 const EXACT_TEARDOWN_ORDER = Object.freeze([
   'scheduler-jobs', 'cloud-run-service', 'bitcoin-core-vm', 'boot-disk', 'data-disk',
   'external-address', 'internal-address', 'rpc-firewall', 'vpc-connector',
@@ -324,7 +333,9 @@ function parsePayload(raw, now, options = {}) {
   const treasuryWatchOnly = object(topology.treasuryWatchOnly, 'B1 approval treasuryWatchOnly');
   exactKeys(treasuryWatchOnly, [
     'address', 'descriptor', 'splitTransactionId', 'preSplitPlanDigest',
-    'expectedConfirmedOutputCount', 'expectedTotalSats', 'descriptorPolicy', 'wifOnNode',
+    'expectedConfirmedOutputCount', 'expectedTotalSats',
+    'originalSplitUnspentOutputCount', 'fundedProbeChange',
+    'descriptorPolicy', 'wifOnNode',
   ], 'B1 approval treasuryWatchOnly');
   const treasuryAddress = string(
     treasuryWatchOnly.address,
@@ -354,6 +365,11 @@ function parsePayload(raw, now, options = {}) {
     71,
   );
   literal(
+    preSplitPlanDigest,
+    EXACT_TREASURY_PLAN_DIGEST,
+    'B1 approval current treasury plan digest',
+  );
+  literal(
     treasuryWatchOnly.splitTransactionId,
     EXACT_TREASURY_SPLIT_TXID,
     'B1 treasury split transaction ID',
@@ -363,6 +379,16 @@ function parsePayload(raw, now, options = {}) {
     treasuryWatchOnly.expectedTotalSats,
     EXACT_TREASURY_TOTAL_SATS,
     'B1 expected treasury total sats',
+  );
+  literal(
+    treasuryWatchOnly.originalSplitUnspentOutputCount,
+    EXACT_ORIGINAL_SPLIT_UNSPENT_OUTPUT_COUNT,
+    'B1 original split unspent output count',
+  );
+  const fundedProbeChange = exactObject(
+    treasuryWatchOnly.fundedProbeChange,
+    EXACT_FUNDED_PROBE_CHANGE,
+    'B1 funded probe change',
   );
 
   const budget = object(payload.budget, 'B1 approval budget');
@@ -450,6 +476,8 @@ function parsePayload(raw, now, options = {}) {
         preSplitPlanDigest,
         expectedConfirmedOutputCount: 32,
         expectedTotalSats: EXACT_TREASURY_TOTAL_SATS,
+        originalSplitUnspentOutputCount: EXACT_ORIGINAL_SPLIT_UNSPENT_OUTPUT_COUNT,
+        fundedProbeChange,
         descriptorPolicy: 'addr-checksummed-importdescriptors',
         wifOnNode: false,
       },
