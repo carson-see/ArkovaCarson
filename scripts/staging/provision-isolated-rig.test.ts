@@ -485,7 +485,7 @@ printf '%s\n%s' "$(jq -c '.body' <<<"$line")" "$(jq -r '.httpStatus' <<<"$line")
 CLOUD_RUN_REGION='us-central1'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 ${source}
-probe_tuned_gemini_preclock '${accessToken}' '733006' 2>&1
+probe_tuned_gemini_preclock '${accessToken}' '733007' 2>&1
 code=$?
 printf '\nPROBE_EXIT=%s\n' "$code"
 exit 0
@@ -562,7 +562,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733006'
+parse_genie_deploy_operation_name "$raw" '733007'
 `;
     expect(execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }).trim()).toBe(
       'projects/270018525501/locations/us-central1/operations/123456',
@@ -583,7 +583,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733006'
+parse_genie_deploy_operation_name "$raw" '733007'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -600,8 +600,8 @@ parse_genie_deploy_operation_name "$raw" '733006'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733006/operations/123456"}'
-parse_genie_deploy_operation_name "$raw" '733006'
+raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733007/operations/123456"}'
+parse_genie_deploy_operation_name "$raw" '733007'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -618,8 +618,8 @@ parse_genie_deploy_operation_name "$raw" '733006'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733006/operations/not-numeric"}'
-parse_genie_deploy_operation_name "$raw" '733006'
+raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733007/operations/not-numeric"}'
+parse_genie_deploy_operation_name "$raw" '733007'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -931,6 +931,8 @@ interface ApplyRunOptions {
   schedulerStateAfterPreflight?: 'PAUSED' | 'ENABLED' | 'MISSING';
   deployedEnvOverrides?: Record<string, string>;
   deployedEnvAdditions?: Record<string, string>;
+  deployedSecretReferenceSchema?: 'legacy' | 'current' | 'hybrid' | 'malformed';
+  duplicateDeployedSecretEnv?: boolean;
   sourceImageDigest?: string;
   gitFetchFails?: boolean;
   useUntrackedDriver?: boolean;
@@ -1434,6 +1436,28 @@ function applyRunStubbed(
         ]
       : []),
   ];
+  const deployedSecretEnvs = deployedSecrets.map(({ name, secret, version }) => {
+    switch (options.deployedSecretReferenceSchema ?? 'legacy') {
+      case 'current':
+        return { name, valueFrom: { secretKeyRef: { name: secret, key: version } } };
+      case 'hybrid':
+        return {
+          name,
+          valueSource: { secretKeyRef: { secret, version } },
+          valueFrom: { secretKeyRef: { name: secret, key: version } },
+        };
+      case 'malformed':
+        return {
+          name,
+          valueFrom: { secretKeyRef: { name: secret, key: version, unexpected: true } },
+        };
+      case 'legacy':
+        return { name, valueSource: { secretKeyRef: { secret, version } } };
+    }
+  });
+  if (options.duplicateDeployedSecretEnv) {
+    deployedSecretEnvs.push(deployedSecretEnvs[0]);
+  }
   const revisionPayload = JSON.stringify({
     metadata: { labels: { 'arkova-source-head': options.sourceHead ?? APPLY_FIXTURE.head } },
     spec: {
@@ -1445,10 +1469,7 @@ function applyRunStubbed(
           image: options.deployedImageRef ?? STUB_IMAGE_REF,
           env: [
             ...Object.entries(deployedEnv).map(([name, value]) => ({ name, value })),
-            ...deployedSecrets.map(({ name: secretEnvName, secret, version }) => ({
-              name: secretEnvName,
-              valueSource: { secretKeyRef: { secret, version } },
-            })),
+            ...deployedSecretEnvs,
           ],
         },
       ],
@@ -2915,6 +2936,39 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
     });
     expect(result.code).not.toBe(0);
     expect(result.out).toMatch(/image digest mismatch/i);
+  });
+
+  it.each(['legacy', 'current'] as const)(
+    'accepts the exact seven Gemini secret bindings in the %s gcloud schema',
+    (deployedSecretReferenceSchema) => {
+      const result = applyRunStubbed(`secret-schema-${deployedSecretReferenceSchema}`, 'gemini', {
+        deployedSecretReferenceSchema,
+      });
+      expect(result.code, result.out).toBe(0);
+      expect(result.out).toContain('ADMISSION_JSON=');
+    },
+  );
+
+  it.each(['hybrid', 'malformed'] as const)(
+    'rejects %s Cloud Run secret-reference objects',
+    (deployedSecretReferenceSchema) => {
+      const result = applyRunStubbed(`secret-schema-${deployedSecretReferenceSchema}`, 'gemini', {
+        deployedSecretReferenceSchema,
+      });
+      expect(result.code).not.toBe(0);
+      expect(result.out).toMatch(/deployed revision secret/i);
+      expect(result.out).not.toContain('ADMISSION_JSON=');
+    },
+  );
+
+  it('rejects duplicate secret environment bindings', () => {
+    const result = applyRunStubbed('secret-schema-duplicate', 'gemini', {
+      deployedSecretReferenceSchema: 'current',
+      duplicateDeployedSecretEnv: true,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/deployed revision secret/i);
+    expect(result.out).not.toContain('ADMISSION_JSON=');
   });
 
   it.each([

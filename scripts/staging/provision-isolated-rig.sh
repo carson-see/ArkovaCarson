@@ -135,9 +135,9 @@ RIG_R_RUNTIME_IMPERSONATION_MEMBER="serviceAccount:${RIG_R_OPERATOR_SA}"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
 RIG_R_CHECKPOINT_ID="6"
-RIG_R_ENDPOINT_ID="733006"
+RIG_R_ENDPOINT_ID="733007"
 RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
-RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330061"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330071"
 RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
@@ -4750,6 +4750,34 @@ observed_revision_env_value() {
   ' <<<"$revision_json"
 }
 
+deployed_revision_secret_binding_is_exact() {
+  local revision_json="$1"
+  local env_name="$2"
+  local expected_secret="$3"
+  local expected_version="$4"
+  jq -e --arg name "$env_name" --arg secret "$expected_secret" --arg version "$expected_version" '
+    [.spec.containers[0].env[]? | select(.name == $name)] as $matches
+    | ($matches | length) == 1
+    and (
+      (
+        (($matches[0] | keys | sort) == (["name", "valueSource"] | sort))
+        and (($matches[0].valueSource | keys) == ["secretKeyRef"])
+        and (($matches[0].valueSource.secretKeyRef | keys | sort) == (["secret", "version"] | sort))
+        and $matches[0].valueSource.secretKeyRef.secret == $secret
+        and $matches[0].valueSource.secretKeyRef.version == $version
+      )
+      or
+      (
+        (($matches[0] | keys | sort) == (["name", "valueFrom"] | sort))
+        and (($matches[0].valueFrom | keys) == ["secretKeyRef"])
+        and (($matches[0].valueFrom.secretKeyRef | keys | sort) == (["key", "name"] | sort))
+        and $matches[0].valueFrom.secretKeyRef.name == $secret
+        and $matches[0].valueFrom.secretKeyRef.key == $version
+      )
+    )
+  ' >/dev/null 2>&1 <<<"$revision_json"
+}
+
 verify_deployed_revision_env() {
   local revision_json="$1"
   local entry key expected observed count expected_names_json observed_names_json secret_binding expected_secret expected_version
@@ -4771,15 +4799,8 @@ verify_deployed_revision_env() {
     expected_secret="${secret_binding%:*}"
     expected_version="${secret_binding##*:}"
     expected_names+=("$key")
-    if ! jq -e --arg name "$key" --arg secret "$expected_secret" --arg version "$expected_version" '
-      [.spec.containers[0].env[]? | select(.name == $name)] as $matches
-      | ($matches | length) == 1
-      and (($matches[0] | keys | sort) == (["name", "valueSource"] | sort))
-      and (($matches[0].valueSource | keys) == ["secretKeyRef"])
-      and (($matches[0].valueSource.secretKeyRef | keys | sort) == (["secret", "version"] | sort))
-      and $matches[0].valueSource.secretKeyRef.secret == $secret
-      and $matches[0].valueSource.secretKeyRef.version == $version
-    ' >/dev/null 2>&1 <<<"$revision_json"; then
+    if ! deployed_revision_secret_binding_is_exact \
+      "$revision_json" "$key" "$expected_secret" "$expected_version"; then
       echo "ERROR: deployed revision secret '$key' does not bind its exact declared Secret Manager name/version." >&2
       exit 1
     fi
