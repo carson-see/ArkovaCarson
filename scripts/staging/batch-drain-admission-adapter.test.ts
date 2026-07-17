@@ -145,6 +145,56 @@ describe('admission v2 to run-declaration identity adapter', () => {
     });
   });
 
+  it.each([
+    ['legacy treasury', 169_639],
+    ['current post-probe treasury', 169_482],
+  ])('accepts the exact matched %s total %s', (_label, totalSats) => {
+    const raw = admissionWith((value) => {
+      const infrastructure = value.infrastructure as JsonRecord;
+      const treasury = infrastructure.treasuryWatchOnly as JsonRecord;
+      const readiness = infrastructure.nodeReadiness as JsonRecord;
+      treasury.expectedTotalSats = totalSats;
+      readiness.confirmedTotalSats = totalSats;
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).not.toThrow();
+  });
+
+  it.each([
+    ['plan digest', (treasury: JsonRecord, readiness: JsonRecord) => {
+      readiness.treasurySplitPlanDigest = `sha256:${'9'.repeat(64)}`;
+      expect(readiness.treasurySplitPlanDigest).not.toBe(treasury.preSplitPlanDigest);
+    }],
+    ['output count', (_treasury: JsonRecord, readiness: JsonRecord) => {
+      readiness.confirmedOutputCount = 31;
+    }],
+    ['legacy/current total cross-pair', (treasury: JsonRecord, readiness: JsonRecord) => {
+      treasury.expectedTotalSats = 169_639;
+      readiness.confirmedTotalSats = 169_482;
+    }],
+  ] as const)('rejects mismatched treasury %s', (_label, mutate) => {
+    const raw = admissionWith((value) => {
+      const infrastructure = value.infrastructure as JsonRecord;
+      mutate(
+        infrastructure.treasuryWatchOnly as JsonRecord,
+        infrastructure.nodeReadiness as JsonRecord,
+      );
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).toThrow(
+      /treasury|node readiness|schema|rejected|output count/i,
+    );
+  });
+
+  it('rejects an unsupported matched treasury total outside the two exact inventories', () => {
+    const raw = admissionWith((value) => {
+      const infrastructure = value.infrastructure as JsonRecord;
+      (infrastructure.treasuryWatchOnly as JsonRecord).expectedTotalSats = 169_483;
+      (infrastructure.nodeReadiness as JsonRecord).confirmedTotalSats = 169_483;
+    });
+    expect(() => projectAdmissionV2ToRunDeclaration(raw, ceremonyRaw())).toThrow(
+      /schema|rejected|confirmedTotalSats/i,
+    );
+  });
+
   it('rejects reordered or resource-mismatched exact-nine secret references', () => {
     const reordered = admissionWith((value) => {
       const infrastructure = value.infrastructure as JsonRecord;

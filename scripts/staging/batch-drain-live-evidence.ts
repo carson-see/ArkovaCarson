@@ -225,7 +225,7 @@ const rigB1NodeReadinessSchema = z.object({
     '1f7a9f92e15fd43c853cd4fe042e6400fac35f0df01569e421913dc2d9a67941',
   ),
   confirmedOutputCount: z.literal(32),
-  confirmedTotalSats: z.literal(169_639),
+  confirmedTotalSats: z.union([z.literal(169_639), z.literal(169_482)]),
   splitBlockHash: sha256Hex,
   splitBlockHeader: z.string().regex(/^[0-9a-f]{160}$/),
   txOutProof: z.string().regex(/^(?:[0-9a-f]{2})+$/),
@@ -355,7 +355,22 @@ export const rigB1InfrastructureSchema = z.object({
     ]),
     projectedMonthlyRecurringUsd: z.literal(0),
   }).strict(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (
+    value.nodeReadiness.treasurySplitPlanDigest
+      !== value.treasuryWatchOnly.preSplitPlanDigest
+    || value.nodeReadiness.confirmedOutputCount
+      !== value.treasuryWatchOnly.expectedConfirmedOutputCount
+    || value.nodeReadiness.confirmedTotalSats
+      !== value.treasuryWatchOnly.expectedTotalSats
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['nodeReadiness'],
+      message: 'RIG-B1 node readiness treasury plan, output count, and total must exactly match treasuryWatchOnly.',
+    });
+  }
+});
 
 export type RigB1Infrastructure = z.infer<typeof rigB1InfrastructureSchema>;
 
