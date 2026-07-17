@@ -39,8 +39,12 @@ const PROJECT_ID = G1_PAIRED_START_CONTRACT.gcpProjectId;
 const RECEIPT_BUCKET = 'arkova1-s33-immutable-authority-ledger';
 const SESSION_POOL_SIZE = 4;
 const SESSION_REFRESH_INTERVAL_MS = 45 * 60_000;
-export const G1_WORKER_UPTIME_MIN = 720;
-export const G1_WALL_MIN = 750;
+// Binding S3.3 continuation segment. The original exact-candidate pair supplies
+// the first 720 worker minutes; this segment deliberately overlaps that pair
+// and runs long enough for the combined window to exceed 2,880 worker-up and
+// 2,910 wall minutes without resetting the original counted start.
+export const G1_WORKER_UPTIME_MIN = 2_195;
+export const G1_WALL_MIN = 2_225;
 const COMMAND_TIMEOUT_MS = 120_000;
 const COMMAND_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 const TEMPLATE_ROUTE = '/api/v1/ai/template';
@@ -588,7 +592,7 @@ class S33G1ProductionPairedStartAdapter implements S33G1PairedStartPort {
       onReady: () => { harnessReady = true; },
     }).then((summary) => {
       if (!controller.signal.aborted && !harnessSummarySchema.safeParse(summary).success) {
-        throw new Error(`${request.arm.rig_id} harness ended before 720 worker-up minutes.`);
+        throw new Error(`${request.arm.rig_id} harness ended before ${G1_WORKER_UPTIME_MIN} worker-up minutes.`);
       }
     }).catch((error) => {
       controller.abort();

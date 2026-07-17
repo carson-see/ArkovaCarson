@@ -272,7 +272,9 @@ describe('S3.3 G1 production paired-start adapter', () => {
     });
   });
 
-  it('proves four refresh-rotated users and keeps the controller alive for the 750-minute wall after 720 worker minutes', async () => {
+  it('proves four refresh-rotated users and enforces the binding continuation worker/wall floors', async () => {
+    expect(G1_WORKER_UPTIME_MIN).toBe(2_195);
+    expect(G1_WALL_MIN).toBe(2_225);
     const auth = new AuthFetchFixture();
     const runHarness = vi.fn(async (options: AiSoakHarnessRunOptions) => {
       expect(options.durationMin).toBe(G1_WORKER_UPTIME_MIN);
