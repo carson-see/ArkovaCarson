@@ -14,6 +14,10 @@ import {
   b1NoBroadcastSuccessorRecoverySchema,
   type B1NoBroadcastSuccessorRecovery,
 } from './s33-b1-no-broadcast-successor-containment';
+import {
+  b1NoBroadcastThirdRecoverySchema,
+  type B1NoBroadcastThirdRecovery,
+} from './s33-b1-no-broadcast-third-containment';
 
 const PUBLIC_KEY_PEM =
   '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAE+Ir2My5+bBwU73QkL73F7fiRteZ0V5yIAe41fD6MdU=\n-----END PUBLIC KEY-----\n';
@@ -63,6 +67,7 @@ const payloadSchema = z.object({
   }).strict().optional(),
   noBroadcastPrepareRecovery: b1NoBroadcastPrepareRecoverySchema.optional(),
   noBroadcastPrepareSuccessorRecovery: b1NoBroadcastSuccessorRecoverySchema.optional(),
+  noBroadcastPrepareThirdRecovery: b1NoBroadcastThirdRecoverySchema.optional(),
   run: z.object({
     rigName: z.literal(B1_SCHEDULER_START_CONTRACT.rigName),
     soakId: boundedId,
@@ -94,7 +99,8 @@ const payloadSchema = z.object({
       message: 'RIG-B1 PREPARE id differs from its one-successor containment authority.',
     });
   }
-  if (payload.noBroadcastPrepareSuccessorRecovery !== undefined
+  if (payload.noBroadcastPrepareThirdRecovery === undefined
+    && payload.noBroadcastPrepareSuccessorRecovery !== undefined
     && (payload.noBroadcastPrepareRecovery === undefined
       || JSON.stringify(payload.noBroadcastPrepareSuccessorRecovery.priorRecovery)
         !== JSON.stringify(payload.noBroadcastPrepareRecovery)
@@ -104,6 +110,18 @@ const payloadSchema = z.object({
       code: 'custom',
       path: ['noBroadcastPrepareSuccessorRecovery'],
       message: 'RIG-B1 PREPARE id or prior recovery differs from its second containment chain.',
+    });
+  }
+  if (payload.noBroadcastPrepareThirdRecovery !== undefined
+    && (payload.noBroadcastPrepareSuccessorRecovery === undefined
+      || JSON.stringify(payload.noBroadcastPrepareThirdRecovery.priorRecovery)
+        !== JSON.stringify(payload.noBroadcastPrepareSuccessorRecovery)
+      || payload.noBroadcastPrepareThirdRecovery.successorPreparationId
+        !== payload.preparationId)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['noBroadcastPrepareThirdRecovery'],
+      message: 'RIG-B1 PREPARE id or prior recovery differs from its third containment chain.',
     });
   }
 });
@@ -139,6 +157,7 @@ export interface VerifiedB1PreparationAuthority {
   readonly controllerRelevantFilesSha256?: string;
   readonly noBroadcastPrepareRecovery?: B1NoBroadcastPrepareRecovery;
   readonly noBroadcastPrepareSuccessorRecovery?: B1NoBroadcastSuccessorRecovery;
+  readonly noBroadcastPrepareThirdRecovery?: B1NoBroadcastThirdRecovery;
   readonly rigName: string;
   readonly soakId: string;
   readonly leaseId: string;
@@ -258,6 +277,9 @@ class Ed25519B1PreparationAuthorityVerifier implements B1PreparationAuthorityVer
           noBroadcastPrepareSuccessorRecovery:
             payload.noBroadcastPrepareSuccessorRecovery,
         }),
+      ...(payload.noBroadcastPrepareThirdRecovery === undefined
+        ? {}
+        : { noBroadcastPrepareThirdRecovery: payload.noBroadcastPrepareThirdRecovery }),
       rigName: payload.run.rigName,
       soakId: payload.run.soakId,
       leaseId: payload.run.leaseId,
