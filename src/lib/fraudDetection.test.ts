@@ -4,6 +4,7 @@ import {
   FRAUD_DETECTION_SAMPLE_BYTES,
   FRAUD_DETECTION_WORKER_TIMEOUT_MS,
   detectFraudForDocument,
+  isFraudMetadataKey,
   unknownFraudDetectionResult,
   type FraudDetectionResult,
 } from './fraudDetection';
@@ -245,4 +246,29 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
     });
     expect(result.fraud_signals[0]).not.toHaveProperty('reason');
   });
+});
+
+describe('isFraudMetadataKey (BUG-2026-07-17-010, SCRUM-2910)', () => {
+  it.each([
+    'fraud_score',
+    'fraud_risk_level',
+    'fraud_signals',
+    'fraud_analysis_method',
+    'fraud_processing_time_ms',
+    'fraudSignals',
+    'Fraud_Score',
+    'FRAUD_SCORE',
+    ' fraud_score ',
+    'fraud-score',
+    'fraud score',
+  ])('treats %j as a fraud metadata key', (key) => {
+    expect(isFraudMetadataKey(key)).toBe(true);
+  });
+
+  it.each(['issuer', 'field_of_study', 'confidence', 'defrauded_notes', 'antifraud'])(
+    'does not flag unrelated key %j',
+    (key) => {
+      expect(isFraudMetadataKey(key)).toBe(false);
+    },
+  );
 });
