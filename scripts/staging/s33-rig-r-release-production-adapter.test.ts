@@ -19,7 +19,7 @@ const artifact = `sha256:${'d'.repeat(64)}`;
 const now = '2026-07-16T18:00:00.000Z';
 const expiresAt = '2026-07-19T17:00:00.000Z';
 const confirmation =
-  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-15';
+  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-16';
 
 function admission(): Record<string, unknown> {
   const approval = {
@@ -38,13 +38,13 @@ function admission(): Record<string, unknown> {
       soakId: 's33-r-release-v6',
       leaseId: 'lease-s33-r-release',
       requiredWallMin: 2910,
-      vertexEndpointId: '733009',
-      vertexEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733009',
+      vertexEndpointId: '733010',
+      vertexEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733010',
       vertexEndpointDisplayName: 'arkova-s33-rig-r-release-v6',
       vertexModel: 'projects/270018525501/locations/us-central1/models/6611494259700793344',
       vertexModelVersion: 'projects/270018525501/locations/us-central1/models/6611494259700793344@1',
       checkpointId: '6',
-      deployedModelId: '7330091',
+      deployedModelId: '7330101',
       deployedModelDisplayName: 'arkova-s33-rig-r-release-v6',
       deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
       minReplicaCount: 1,
@@ -109,7 +109,7 @@ function admission(): Record<string, unknown> {
     critical_config: {
       enable_ai_extraction: 'true',
       enable_vertex_ai: 'true',
-      gemini_tuned_model: 'projects/arkova1/locations/us-central1/endpoints/733009',
+      gemini_tuned_model: 'projects/arkova1/locations/us-central1/endpoints/733010',
       gemini_v6_prompt: 'true',
       gemini_tuned_response_schema: '<unset>',
     },
@@ -136,9 +136,9 @@ function admission(): Record<string, unknown> {
       runtime_impersonation_role: 'roles/iam.serviceAccountTokenCreator',
       runtime_impersonation_member:
         'serviceAccount:270018525501-compute@developer.gserviceaccount.com',
-      vertex_endpoint: 'projects/arkova1/locations/us-central1/endpoints/733009',
+      vertex_endpoint: 'projects/arkova1/locations/us-central1/endpoints/733010',
       vertex_model: 'projects/270018525501/locations/us-central1/models/6611494259700793344',
-      deployed_model_id: '7330091',
+      deployed_model_id: '7330101',
       chain_mode: 'mocked',
       contained_database_queues: ['ai-rollback', 'chain-fault'],
       scheduler_jobs: [],

@@ -431,6 +431,87 @@ grant_rig_r_runtime_impersonation
     expect(script).toContain('write_provision_state "rig_r_service_invoker_bound" ""');
   });
 
+  it('waits for the exact runtime principal to reach the exact candidate app before admission', () => {
+    const functionSource = script.match(
+      /^wait_for_rig_r_runtime_ingress_readiness\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const root = mkdtempSync(join(tmpdir(), 'rig-r-ingress-readiness-'));
+    stubDirs.push(root);
+    const calls = join(root, 'curl-count');
+    const curlStub = join(root, 'curl');
+    const sleepStub = join(root, 'sleep');
+    const expectedSha = 'a'.repeat(40);
+    const ingressToken = 'runtime-identity-token-that-must-not-appear';
+    writeFileSync(curlStub, `#!/usr/bin/env bash
+set -euo pipefail
+count=0
+[[ ! -f '${calls}' ]] || count="$(/bin/cat '${calls}')"
+count=$((count + 1))
+printf '%s' "$count" > '${calls}'
+if (( count == 1 )); then
+  printf '%s\n%s' '{"error":"IAM propagation"}' '403'
+else
+  printf '%s\n%s' '{"status":"healthy","checks":{"database":"ok"},"git_sha":"${expectedSha}"}' '200'
+fi
+`);
+    writeFileSync(sleepStub, '#!/usr/bin/env bash\nexit 0\n');
+    chmodSync(curlStub, 0o755);
+    chmodSync(sleepStub, 0o755);
+    const source = functionSource!
+      .replace('/usr/bin/curl', `'${curlStub}'`)
+      .replace('/bin/sleep', `'${sleepStub}'`);
+    const testScript = `set -euo pipefail
+IS_RIG_R=1
+CLOUD_RUN_SERVICE='arkova-worker-s33-r-staging'
+RUNTIME_SA='s33-rig-r-runtime@arkova1.iam.gserviceaccount.com'
+DECLARED_SOURCE_HEAD='${expectedSha}'
+resolve_cloud_run_url_for_service() { printf '%s\n' 'https://exact-rig-r.run.app'; }
+gcloud() {
+  [[ "$1 $2" == 'auth print-identity-token' ]] || return 64
+  [[ "$*" == *'--impersonate-service-account=s33-rig-r-runtime@arkova1.iam.gserviceaccount.com'* ]] || return 65
+  [[ "$*" == *'--audiences=https://exact-rig-r.run.app'* ]] || return 66
+  printf '%s\n' '${ingressToken}'
+}
+${source}
+wait_for_rig_r_runtime_ingress_readiness
+`;
+    const out = execFileSync('bash', ['-c', testScript], { encoding: 'utf8' });
+    expect(out).toContain('exact principal reached exact candidate app after 2 attempt(s)');
+    expect(readFileSync(calls, 'utf8')).toBe('2');
+    expect(out).not.toContain(ingressToken);
+    expect(script).toContain('write_provision_state "rig_r_runtime_ingress_ready" ""');
+  });
+
+  it('fails the ingress readiness gate on a 200 from the wrong app identity', () => {
+    const functionSource = script.match(
+      /^wait_for_rig_r_runtime_ingress_readiness\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const root = mkdtempSync(join(tmpdir(), 'rig-r-ingress-wrong-app-'));
+    stubDirs.push(root);
+    const curlStub = join(root, 'curl');
+    writeFileSync(
+      curlStub,
+      `#!/usr/bin/env bash\nprintf '%s\\n%s' '{"status":"healthy","checks":{"database":"ok"},"git_sha":"${'b'.repeat(40)}"}' '200'\n`,
+    );
+    chmodSync(curlStub, 0o755);
+    const source = functionSource!.replace('/usr/bin/curl', `'${curlStub}'`);
+    const testScript = `set -euo pipefail
+IS_RIG_R=1
+CLOUD_RUN_SERVICE='arkova-worker-s33-r-staging'
+RUNTIME_SA='s33-rig-r-runtime@arkova1.iam.gserviceaccount.com'
+DECLARED_SOURCE_HEAD='${'a'.repeat(40)}'
+resolve_cloud_run_url_for_service() { printf '%s\n' 'https://exact-rig-r.run.app'; }
+gcloud() { printf '%s\n' 'memory-only-token'; }
+${source}
+wait_for_rig_r_runtime_ingress_readiness
+`;
+    expect(() => execFileSync('bash', ['-c', testScript], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrow();
+  });
+
   it('reads both release AI flags from the deployed revision and rejects either flag when not true', () => {
     const observedValueSource = script.match(
       /^observed_revision_env_value\(\) \{[\s\S]*?^\}/mu,
@@ -531,7 +612,7 @@ printf '%s\n%s' "$(jq -c '.body' <<<"$line")" "$(jq -r '.httpStatus' <<<"$line")
 CLOUD_RUN_REGION='us-central1'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 ${source}
-probe_tuned_gemini_preclock '${accessToken}' '733009' 2>&1
+probe_tuned_gemini_preclock '${accessToken}' '733010' 2>&1
 code=$?
 printf '\nPROBE_EXIT=%s\n' "$code"
 exit 0
@@ -608,7 +689,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733009'
+parse_genie_deploy_operation_name "$raw" '733010'
 `;
     expect(execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }).trim()).toBe(
       'projects/270018525501/locations/us-central1/operations/123456',
@@ -629,7 +710,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733009'
+parse_genie_deploy_operation_name "$raw" '733010'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -646,8 +727,8 @@ parse_genie_deploy_operation_name "$raw" '733009'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733009/operations/123456"}'
-parse_genie_deploy_operation_name "$raw" '733009'
+raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733010/operations/123456"}'
+parse_genie_deploy_operation_name "$raw" '733010'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -664,8 +745,8 @@ parse_genie_deploy_operation_name "$raw" '733009'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733009/operations/not-numeric"}'
-parse_genie_deploy_operation_name "$raw" '733009'
+raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733010/operations/not-numeric"}'
+parse_genie_deploy_operation_name "$raw" '733010'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',

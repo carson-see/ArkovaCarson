@@ -135,9 +135,9 @@ RIG_R_RUNTIME_IMPERSONATION_MEMBER="serviceAccount:${RIG_R_OPERATOR_SA}"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
 RIG_R_CHECKPOINT_ID="6"
-RIG_R_ENDPOINT_ID="733009"
+RIG_R_ENDPOINT_ID="733010"
 RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
-RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330091"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330101"
 RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
@@ -4978,6 +4978,81 @@ resolve_cloud_run_url() {
   resolve_cloud_run_url_for_service "$CLOUD_RUN_SERVICE"
 }
 
+wait_for_rig_r_runtime_ingress_readiness() {
+  [[ $IS_RIG_R -eq 1 ]] || return 0
+  local timeout_seconds=300 interval_seconds=10
+  local deadline_seconds=$((SECONDS + timeout_seconds))
+  local attempt=0 remaining_seconds request_timeout_seconds
+  local service_url identity_token probe_result probe_body http_status
+
+  service_url="$(resolve_cloud_run_url_for_service "$CLOUD_RUN_SERVICE")"
+  identity_token="$(gcloud auth print-identity-token \
+    --impersonate-service-account="$RUNTIME_SA" \
+    --audiences="$service_url")" || {
+      echo "ERROR: could not obtain the exact RIG-R runtime ingress token." >&2
+      return 1
+    }
+  if [[ -z "$identity_token" ]]; then
+    echo "ERROR: exact RIG-R runtime ingress token was empty." >&2
+    return 1
+  fi
+
+  while (( SECONDS < deadline_seconds )); do
+    attempt=$((attempt + 1))
+    remaining_seconds=$((deadline_seconds - SECONDS))
+    request_timeout_seconds=$remaining_seconds
+    (( request_timeout_seconds <= 20 )) || request_timeout_seconds=20
+    if ! probe_result="$(/usr/bin/curl --silent --show-error \
+      --connect-timeout 10 --max-time "$request_timeout_seconds" \
+      --request GET "${service_url}/health" \
+      --header "X-Serverless-Authorization: Bearer ${identity_token}" \
+      --write-out $'\n%{http_code}' 2>/dev/null)"; then
+      http_status="transport"
+      probe_body=""
+    else
+      http_status="${probe_result##*$'\n'}"
+      probe_body="${probe_result%$'\n'*}"
+    fi
+
+    if [[ "$http_status" == "200" ]]; then
+      if jq -e --arg expected_sha "$DECLARED_SOURCE_HEAD" '
+        type == "object"
+        and .status == "healthy"
+        and .checks.database == "ok"
+        and .git_sha == $expected_sha
+      ' >/dev/null 2>&1 <<<"$probe_body"; then
+        unset identity_token probe_result probe_body
+        echo "# RIG-R runtime ingress ready: exact principal reached exact candidate app after ${attempt} attempt(s)."
+        return 0
+      fi
+      unset identity_token probe_result probe_body
+      echo "ERROR: RIG-R runtime ingress reached an unexpected app identity or unhealthy response." >&2
+      return 1
+    fi
+
+    case "$http_status" in
+      transport|401|403|429|500|502|503|504)
+        ;;
+      *)
+        unset identity_token probe_result probe_body
+        echo "ERROR: RIG-R runtime ingress readiness returned terminal HTTP ${http_status}." >&2
+        return 1
+        ;;
+    esac
+    remaining_seconds=$((deadline_seconds - SECONDS))
+    if (( remaining_seconds <= 0 )); then
+      break
+    fi
+    echo "# RIG-R runtime ingress readiness waiting: attempt=${attempt} status=${http_status}" >&2
+    (( remaining_seconds >= interval_seconds )) || interval_seconds=$remaining_seconds
+    /bin/sleep "$interval_seconds"
+  done
+
+  unset identity_token probe_result probe_body
+  echo "ERROR: RIG-R runtime ingress readiness exhausted its ${timeout_seconds}s deadline." >&2
+  return 1
+}
+
 g1_topology_json() {
   local _compatibility_project_ref="$1"
   if [[ $IS_G1_RIG -ne 1 ]]; then
@@ -6235,6 +6310,10 @@ if [[ $IS_RIG_R -eq 1 ]]; then
     --quiet
   if [[ $APPLY -eq 1 ]]; then
     write_provision_state "rig_r_service_invoker_bound" ""
+    wait_for_rig_r_runtime_ingress_readiness
+    write_provision_state "rig_r_runtime_ingress_ready" ""
+  else
+    echo "#   apply only: poll /health with the exact runtime principal until Cloud Run IAM reaches the exact candidate app"
   fi
 fi
 if [[ $IS_MOCK_PROFILE -ne 1 && $IS_G1_RIG -ne 1 && $IS_RIG_R -ne 1 ]]; then
