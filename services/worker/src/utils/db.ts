@@ -13,6 +13,7 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { Agent, fetch as undiciFetch } from 'undici';
 import ws from 'ws';
 import { config } from '../config.js';
 import { logger } from './logger.js';
@@ -22,6 +23,83 @@ let client: SupabaseClient<TypeSafeDatabase> | null = null;
 
 /** QA-PERF-3: Track whether PgBouncer pooler is active */
 let poolerActive = false;
+
+// ─── WH-1 (ARKOVA-WORKER-C): resilient outbound transport ─────────────────
+// Root cause of the "TypeError: fetch failed" webhook drops: supabase-js was
+// created with NO custom fetch/dispatcher, so every PostgREST + RPC call used
+// Node's global undici agent. On CPU-throttled Cloud Run, idle keep-alive
+// sockets to `*.supabase.co` are closed by the far side between request bursts;
+// the next call reuses the dead socket and undici throws `TypeError: fetch
+// failed` (cause ECONNRESET / UND_ERR_SOCKET / "other side closed"). supabase-js
+// surfaces that as a hard error with no retry, so the webhook idempotency lookup
+// + delivery-log write (and every other worker DB call) fail. We install a
+// dedicated dispatcher with a short keep-alive TTL so sockets are recycled well
+// before they rot, and wrap fetch so a *connection-level* failure (no response
+// received) retries ONCE on a fresh socket. Response-level HTTP errors are NOT
+// retried — that is the caller's concern; only transport failures are.
+
+/** Dedicated dispatcher for the Supabase REST/RPC client. Bounded pool + short
+ * keep-alive so a throttled instance recycles idle sockets before they rot. */
+const SUPABASE_FETCH_AGENT = new Agent({
+  connections: 64,
+  keepAliveTimeout: 4_000, // recycle idle sockets after 4s (well under far-side close)
+  keepAliveMaxTimeout: 10_000,
+});
+
+/** Connection-level (transport) failure signatures — no HTTP response arrived. */
+const CONNECTION_ERROR_RE =
+  /fetch failed|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|EPIPE|socket hang up|UND_ERR|other side closed|terminated/i;
+
+/**
+ * True when `err` (or any nested `cause`) looks like a transport-level failure
+ * where no HTTP response was received — safe to retry on a fresh socket.
+ * Exported for unit testing (db.test.ts).
+ */
+export function isTransientConnectionError(err: unknown): boolean {
+  const parts: string[] = [];
+  const collect = (e: unknown, depth: number): void => {
+    if (e == null || depth > 4) return;
+    if (typeof e === 'string') {
+      parts.push(e);
+      return;
+    }
+    if (e instanceof Error) {
+      parts.push(e.message);
+      const code = (e as { code?: string }).code;
+      if (typeof code === 'string') parts.push(code);
+      collect((e as { cause?: unknown }).cause, depth + 1);
+    }
+  };
+  collect(err, 0);
+  return parts.length > 0 && CONNECTION_ERROR_RE.test(parts.join(' '));
+}
+
+/**
+ * Wrap a base fetch so a connection-level failure is retried ONCE on a fresh
+ * socket (via the bounded dispatcher). Exported so db.test.ts can drive the
+ * retry semantics without opening a real socket.
+ */
+export function createResilientFetch(
+  baseFetch: typeof undiciFetch,
+  dispatcher: Agent,
+): typeof undiciFetch {
+  const resilient: typeof undiciFetch = async (input, init) => {
+    const opts = { ...(init ?? {}), dispatcher };
+    try {
+      return await baseFetch(input, opts);
+    } catch (err) {
+      if (isTransientConnectionError(err)) {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          'Supabase fetch transport failure — retrying once on a fresh socket (WH-1 / ARKOVA-WORKER-C)',
+        );
+        return await baseFetch(input, opts);
+      }
+      throw err;
+    }
+  };
+  return resilient;
+}
 
 /**
  * QA-PERF-3: Configure Supabase client with PgBouncer-compatible settings.
@@ -33,23 +111,40 @@ let poolerActive = false;
 export function getDb(): SupabaseClient<TypeSafeDatabase> {
   if (!client) {
     const poolerUrl = process.env.SUPABASE_POOLER_URL;
-    const dbUrl = poolerUrl || config.supabaseUrl;
 
+    // WH-2: SUPABASE_POOLER_URL becomes the PostgREST REST base URL (first arg to
+    // createClient). It is ONLY valid as a REST base when it is an http(s) origin.
+    // A Postgres connection string (`postgres://…:6543` / `postgresql://…`) passes
+    // the old port-6543 check and silently becomes the REST base — every PostgREST
+    // call then POSTs to a `postgres://` URL and throws `fetch failed`. Guard the
+    // scheme: only http(s) pooler URLs are accepted as the REST base; anything
+    // else is logged and ignored, falling back to the canonical config.supabaseUrl.
+    // (Not set on prod today — this is a preventive footgun guard.)
+    let dbUrl = config.supabaseUrl;
     if (poolerUrl) {
-      // Validate pooler URL uses port 6543 (transaction mode)
       try {
         const url = new URL(poolerUrl);
-        if (url.port && url.port !== '6543') {
-          logger.warn(
-            { port: url.port },
-            'SUPABASE_POOLER_URL does not use port 6543 — expected transaction mode pooling'
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+          logger.error(
+            { scheme: url.protocol },
+            'SUPABASE_POOLER_URL is not an http(s) URL (looks like a Postgres connection string) — ' +
+              'it cannot be a PostgREST REST base; ignoring it and using the direct REST URL',
           );
+        } else {
+          dbUrl = poolerUrl;
+          poolerActive = true;
+          // Validate pooler URL uses port 6543 (transaction mode)
+          if (url.port && url.port !== '6543') {
+            logger.warn(
+              { port: url.port },
+              'SUPABASE_POOLER_URL does not use port 6543 — expected transaction mode pooling',
+            );
+          }
+          logger.info('Using PgBouncer pooler connection (QA-PERF-3)');
         }
       } catch {
         logger.error('SUPABASE_POOLER_URL is not a valid URL — falling back to direct connection');
       }
-      poolerActive = true;
-      logger.info('Using PgBouncer pooler connection (QA-PERF-3)');
     }
 
     client = createClient<TypeSafeDatabase>(dbUrl, config.supabaseServiceKey, {
@@ -59,6 +154,15 @@ export function getDb(): SupabaseClient<TypeSafeDatabase> {
       },
       db: {
         schema: 'public',
+      },
+      global: {
+        // WH-1 (ARKOVA-WORKER-C): resilient transport for every PostgREST + RPC
+        // call — retries once on a rotten keep-alive socket. This is the fix that
+        // ends the "TypeError: fetch failed" webhook idempotency-lookup +
+        // delivery-log write failures; the existing delivery.ts retries inherit
+        // fresh-socket semantics for free.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        fetch: createResilientFetch(undiciFetch, SUPABASE_FETCH_AGENT) as any,
       },
       // Node 20 lacks native WebSocket; supabase-js 2.105.4+ requires
       // an explicit ws transport on Node < 22 for @supabase/realtime-js.

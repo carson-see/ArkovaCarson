@@ -110,6 +110,7 @@ import {
   signPayload,
   isCircuitOpen,
   resetCircuitBreakers,
+  __resetWebhookFlagCacheForTest,
 } from '../webhooks/delivery.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -175,6 +176,7 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', mockFetch);
     resetCircuitBreakers();
+    __resetWebhookFlagCacheForTest(); // WH-4: clear the 30s flag cache between cases
   });
 
   afterEach(() => {
