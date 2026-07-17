@@ -238,6 +238,83 @@ printf 'captured=%s calls=%s\n' "$RIG_R_RUNTIME_SA_UNIQUE_ID" "$(cat '${callCoun
     expect(functionSource).toContain('refusing project IAM binding');
   });
 
+  it('retries only the exact project-IAM propagation transient, proves membership, and fails other errors fast', () => {
+    const functionSource = script.match(
+      /^grant_rig_r_runtime_project_role_with_propagation_retry\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const runtimeSa = 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com';
+    const role = 'roles/logging.logWriter';
+
+    const successDir = mkdtempSync(join(tmpdir(), 'rig-r-project-iam-propagation-'));
+    stubDirs.push(successDir);
+    const successCount = join(successDir, 'grant-count');
+    writeFileSync(join(successDir, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
+    writeFileSync(join(successDir, 'gcloud'), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1 $2" == 'projects add-iam-policy-binding' ]]; then
+  count=0
+  [[ ! -f '${successCount}' ]] || count="$(cat '${successCount}')"
+  count=$((count + 1))
+  printf '%s' "$count" > '${successCount}'
+  if (( count < 3 )); then
+    printf '%s\n' 'ERROR: (gcloud.projects.add-iam-policy-binding) INVALID_ARGUMENT: Service account ${runtimeSa} does not exist.' >&2
+    exit 1
+  fi
+  exit 0
+fi
+if [[ "$1 $2" == 'projects get-iam-policy' ]]; then
+  printf '%s\n' '{"bindings":[{"role":"${role}","members":["serviceAccount:${runtimeSa}"]}]}'
+  exit 0
+fi
+exit 64
+`);
+    chmodSync(join(successDir, 'sleep'), 0o755);
+    chmodSync(join(successDir, 'gcloud'), 0o755);
+    const successScript = `set -euo pipefail
+export PATH='${successDir}':"$PATH"
+RUNTIME_SA='${runtimeSa}'
+GCP_PROJECT='arkova1'
+${functionSource}
+grant_rig_r_runtime_project_role_with_propagation_retry '${role}'
+printf 'calls=%s\n' "$(cat '${successCount}')"
+`;
+    const successOut = execFileSync('bash', ['-c', successScript], { encoding: 'utf8' });
+    expect(successOut).toContain(
+      `role=${role} member=serviceAccount:${runtimeSa} grant_attempts=3`,
+    );
+    expect(successOut).toContain('calls=3');
+
+    const failureDir = mkdtempSync(join(tmpdir(), 'rig-r-project-iam-fail-fast-'));
+    stubDirs.push(failureDir);
+    const failureCount = join(failureDir, 'grant-count');
+    writeFileSync(join(failureDir, 'sleep'), '#!/usr/bin/env bash\nexit 99\n');
+    writeFileSync(join(failureDir, 'gcloud'), `#!/usr/bin/env bash
+set -euo pipefail
+count=0
+[[ ! -f '${failureCount}' ]] || count="$(cat '${failureCount}')"
+count=$((count + 1))
+printf '%s' "$count" > '${failureCount}'
+printf '%s\n' 'ERROR: (gcloud.projects.add-iam-policy-binding) INVALID_ARGUMENT: Service account ${runtimeSa} does not exist.' >&2
+printf '%s\n' 'ERROR: (gcloud.projects.add-iam-policy-binding) PERMISSION_DENIED: mixed unexpected error' >&2
+exit 1
+`);
+    chmodSync(join(failureDir, 'sleep'), 0o755);
+    chmodSync(join(failureDir, 'gcloud'), 0o755);
+    const failureScript = `set -euo pipefail
+export PATH='${failureDir}':"$PATH"
+RUNTIME_SA='${runtimeSa}'
+GCP_PROJECT='arkova1'
+${functionSource}
+grant_rig_r_runtime_project_role_with_propagation_retry '${role}'
+`;
+    expect(() => execFileSync('bash', ['-c', failureScript], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrow();
+    expect(readFileSync(failureCount, 'utf8')).toBe('1');
+  });
+
   it('dry-runs the exact service-scoped runtime invoker grant after deploy', () => {
     const sourceHead = execFileSync(REAL_GIT, ['-C', REPO_ROOT, 'rev-parse', 'HEAD'], {
       encoding: 'utf8',

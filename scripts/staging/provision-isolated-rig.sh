@@ -2340,6 +2340,74 @@ wait_for_rig_r_runtime_identity_visibility() {
   return 1
 }
 
+grant_rig_r_runtime_project_role_with_propagation_retry() {
+  local runtime_role="$1"
+  local member="serviceAccount:${RUNTIME_SA}"
+  local grant_output normalized_output policy_json member_count attempt=0
+  local remaining_seconds sleep_seconds
+  local propagation_hint='ERROR: Policy modification failed. For a binding with condition, run "gcloud alpha iam policies lint-condition" to identify issues in condition.'
+  local propagation_error="ERROR: (gcloud.projects.add-iam-policy-binding) INVALID_ARGUMENT: Service account ${RUNTIME_SA} does not exist."
+  local deadline_seconds=$((SECONDS + 300))
+  while (( SECONDS < deadline_seconds )); do
+    attempt=$((attempt + 1))
+    if grant_output="$(gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+      --member="$member" \
+      --role="$runtime_role" \
+      --condition=None \
+      --quiet 2>&1)"; then
+      while (( SECONDS < deadline_seconds )); do
+        if ! policy_json="$(gcloud projects get-iam-policy "$GCP_PROJECT" --format=json 2>&1)"; then
+          echo "ERROR: RIG-R could not read project IAM after a successful runtime-role grant." >&2
+          printf '%s\n' "$policy_json" >&2
+          return 1
+        fi
+        if ! jq -e 'type == "object" and ((.bindings // []) | type == "array")' \
+          <<<"$policy_json" >/dev/null 2>&1; then
+          echo "ERROR: RIG-R project IAM readback was not a valid policy object." >&2
+          return 1
+        fi
+        member_count="$(jq -r \
+          --arg role "$runtime_role" \
+          --arg member "$member" '
+            [.bindings[]? | select(.role == $role) | .members[]? | select(. == $member)]
+            | length
+          ' <<<"$policy_json")"
+        if [[ "$member_count" == "1" ]]; then
+          echo "# RIG-R project IAM visible: role=$runtime_role member=$member grant_attempts=$attempt"
+          return 0
+        fi
+        if [[ "$member_count" != "0" ]]; then
+          echo "ERROR: RIG-R project IAM readback contained non-unique runtime-role membership." >&2
+          return 1
+        fi
+        echo "# RIG-R project IAM grant succeeded; waiting for exact membership readback." >&2
+        remaining_seconds=$((deadline_seconds - SECONDS))
+        (( remaining_seconds > 0 )) || break
+        sleep_seconds=$remaining_seconds
+        (( sleep_seconds <= 5 )) || sleep_seconds=5
+        sleep "$sleep_seconds"
+      done
+      break
+    else
+      normalized_output="${grant_output//$'\r'/}"
+      if [[ "$normalized_output" != "$propagation_error" \
+        && "$normalized_output" != "$propagation_hint"$'\n'"$propagation_error" ]]; then
+        echo "ERROR: RIG-R runtime project-IAM grant failed with a non-propagation error; refusing retry." >&2
+        printf '%s\n' "$grant_output" >&2
+        return 1
+      fi
+      echo "# RIG-R project IAM is waiting for service-account propagation (attempt $attempt)." >&2
+    fi
+    remaining_seconds=$((deadline_seconds - SECONDS))
+    (( remaining_seconds > 0 )) || break
+    sleep_seconds=$remaining_seconds
+    (( sleep_seconds <= 5 )) || sleep_seconds=5
+    sleep "$sleep_seconds"
+  done
+  echo "ERROR: RIG-R runtime project-IAM grant/readback did not become exact within 300 seconds; refusing further provisioning." >&2
+  return 1
+}
+
 release_owned_rig_r_lease() {
   [[ $RIG_R_LEASE_CLAIMED -eq 1 ]] || return 0
   local lease_payload
@@ -5669,11 +5737,7 @@ if [[ $APPLY -eq 1 ]]; then
     wait_for_rig_r_runtime_identity_visibility
     write_provision_state "rig_r_runtime_identity_visible" ""
     for runtime_role in "${RIG_R_RUNTIME_ROLES[@]}"; do
-      run_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
-        --member="serviceAccount:${RUNTIME_SA}" \
-        --role="$runtime_role" \
-        --condition=None \
-        --quiet
+      grant_rig_r_runtime_project_role_with_propagation_retry "$runtime_role"
     done
     write_provision_state "rig_r_lease_and_runtime_identity_created" ""
   fi
