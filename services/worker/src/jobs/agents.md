@@ -2,6 +2,15 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-07-17 — Lane 3 PI-0.5: pipeline-throughput dead-man monitor (SCRUM-2901, `pipelineThroughputMonitor.ts`)
+
+Prod `/health` reports anchoring:"ok" while the unlinked `public_records` backlog grows (~259k) — liveness, not throughput. `pipelineThroughputMonitor.ts` is the dead-man on record→anchor CONVERSION, exposed at `POST /jobs/pipeline-throughput-monitor` (cron.ts, router-wide `cronAuth`; **Cloud Scheduler binding is a separate gated ops step — not wired by this change**).
+
+- **No snapshot table / NO migration:** all deltas come from timestamps in existing tables inside one bounded window (default 24h, `window_hours` 1–72): `new_unlinked_in_window` (public_records created-in-window with `anchor_id IS NULL` — exact match on partial index `idx_public_records_unanchored`), `records_created_in_window`, `anchors_created_in_window` and `anchors_secured_in_window` (window-created anchors with `chain_timestamp IS NOT NULL`; the `created_at` bound keeps probes off a 2.9M-row scan). Totals context (`unlinked_total`, `batch_progress`) reads `pipeline_dashboard_cache` (`pipeline_stats.pending_record_links` — `-1` refresh-timeout sentinel → null; `anchor_status_counts`) — best-effort, never blocks the run.
+- **Alert semantics:** fire ⟺ `new_unlinked_in_window > 0 AND anchors_secured_in_window == 0` — feeders demonstrably producing while NOTHING converts (the "Scheduler fires 200 but records don't convert" failure). Feeders idle → no page (no throughput to assert). Any securing ≥1 → alive. Default window ≥24h so the nightly-3am-flush-only cadence never false-pages. On fire: error log + `capturePipelineThroughputAlert` (`utils/sentry.ts`, stable fingerprint `['pipeline-throughput-monitor']` — re-fires collapse to ONE Sentry issue; aggregate counts only, §1.4).
+- **Failure semantics:** core window probes fail LOUD — probe error or absent count throws → route 500 → Scheduler retries the broken probe; a DETECTED stall returns 200 `healthy:false` (mirror of `/jobs/check-stuck-anchors`). Distinct from `stuck-anchor-monitor.ts` (ages the oldest PENDING *anchor* — blind to records that never become anchors) and `pipeline-health.ts` (30-min `updated_at` + email).
+- Tests: `pipelineThroughputMonitor.test.ts` (13 — pure decision matrix, healthy/dead-man/cache-miss/sentinel runs, fail-loud probes) + 3 fingerprint tests in `utils/sentry.test.ts` + 6 route tests in `routes/cron.test.ts`. T2 (worker behavior, no migration/chain/queue-semantics change).
+
 ## 2026-07-06 — Lane 1 S3-P0: batch producer — persisted pre-broadcast intent + no-double-broadcast crash-resume (`batch-anchor.ts`)
 
 The batch pipeline (PENDING → claim → BROADCASTING → ONE OP_RETURN tx committing the batch Merkle ROOT → SUBMITTED) now closes the documented crash window where a worker dying between broadcast and `submit_batch_anchors` caused the RACE-1 sweep to revert rows to PENDING and re-broadcast a SECOND, DIFFERENT tx (broadcast-recovery.ts "scenario 2").

@@ -338,6 +338,24 @@ vi.mock('../jobs/stuck-anchor-monitor.js', () => ({
   runStuckAnchorCheck: (...args: unknown[]) => mockRunStuckAnchorCheck(...args),
 }));
 
+const mockRunPipelineThroughputMonitor = vi.fn().mockResolvedValue({
+  healthy: true,
+  alertFired: false,
+  windowHours: 24,
+  newUnlinkedInWindow: 0,
+  recordsCreatedInWindow: 0,
+  anchorsCreatedInWindow: 0,
+  anchorsSecuredInWindow: 0,
+  unlinkedTotal: 0,
+  batchProgress: null,
+  reason: 'No new unlinked public records in the last 24h',
+  checkedAt: '2026-07-17T12:00:00.000Z',
+});
+vi.mock('../jobs/pipelineThroughputMonitor.js', () => ({
+  DEFAULT_THROUGHPUT_WINDOW_HOURS: 24,
+  runPipelineThroughputMonitor: (...args: unknown[]) => mockRunPipelineThroughputMonitor(...args),
+}));
+
 const mockRunCreditConservationReconciler = vi.fn().mockResolvedValue({
   healthy: true,
   alertFired: false,
@@ -2468,6 +2486,81 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/check-stuck-anchors');
       expect(res.status).toBe(401);
       expect(mockRunStuckAnchorCheck).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════
+  // Pipeline Throughput Monitor (SCRUM-2901)
+  // ═══════════════════════════════════════
+
+  describe('POST /pipeline-throughput-monitor', () => {
+    it('returns the monitor result on success (defaults window_hours)', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor');
+      expect(res.status).toBe(200);
+      expect(res.body.healthy).toBe(true);
+      expect(res.body.alertFired).toBe(false);
+      expect(mockRunPipelineThroughputMonitor).toHaveBeenCalledWith(
+        expect.anything(),
+        { windowHours: 24 },
+      );
+    });
+
+    it('passes a validated window_hours override through to the monitor', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor?window_hours=48');
+      expect(res.status).toBe(200);
+      expect(mockRunPipelineThroughputMonitor).toHaveBeenCalledWith(
+        expect.anything(),
+        { windowHours: 48 },
+      );
+    });
+
+    it('rejects an out-of-range window_hours with 400 (never runs the probes)', async () => {
+      mockRunPipelineThroughputMonitor.mockClear();
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor?window_hours=0');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid window_hours');
+      expect(mockRunPipelineThroughputMonitor).not.toHaveBeenCalled();
+    });
+
+    it('returns 200 with healthy:false when a stall is DETECTED (no Scheduler retry of a correct finding)', async () => {
+      mockRunPipelineThroughputMonitor.mockResolvedValueOnce({
+        healthy: false,
+        alertFired: true,
+        windowHours: 24,
+        newUnlinkedInWindow: 812,
+        recordsCreatedInWindow: 900,
+        anchorsCreatedInWindow: 0,
+        anchorsSecuredInWindow: 0,
+        unlinkedTotal: 259812,
+        batchProgress: null,
+        reason: 'Pipeline throughput dead-man: 812 new unlinked public record(s) …',
+        checkedAt: '2026-07-17T12:00:00.000Z',
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor');
+      expect(res.status).toBe(200);
+      expect(res.body.healthy).toBe(false);
+      expect(res.body.alertFired).toBe(true);
+    });
+
+    it('returns 500 when a core probe throws (Scheduler retries the broken probe)', async () => {
+      mockRunPipelineThroughputMonitor.mockRejectedValueOnce(new Error('statement timeout'));
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+
+    it('is protected by cronAuth — 401 unauthenticated in production', async () => {
+      mockRunPipelineThroughputMonitor.mockClear();
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor');
+      expect(res.status).toBe(401);
+      expect(mockRunPipelineThroughputMonitor).not.toHaveBeenCalled();
     });
   });
 
