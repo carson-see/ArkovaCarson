@@ -70,18 +70,18 @@ const RECEIPT_PREFIX = 's33/rig-r/release-start-receipts';
 // CTO-authorized recovery namespace. The first immutable receipt is retained as
 // superseded/non-merge-grade; this exact suffix prevents replaying or
 // overwriting either its receipt or its partial local evidence paths.
-const START_ATTEMPT_ID = 'real-provider-recovery-14';
+const START_ATTEMPT_ID = 'real-provider-recovery-15';
 const LEASE_URI = `gs://${RECEIPT_BUCKET}/s33/rig-leases/RIG-R.singleton.json`;
 const SOURCE_IMAGE_REPOSITORY =
   'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker';
-const ENDPOINT_ID = '733008';
+const ENDPOINT_ID = '733009';
 const ENDPOINT = `projects/${PROJECT_ID}/locations/${REGION}/endpoints/${ENDPOINT_ID}`;
 const CANONICAL_ENDPOINT = `projects/270018525501/locations/${REGION}/endpoints/${ENDPOINT_ID}`;
 const ENDPOINT_DISPLAY_NAME = 'arkova-s33-rig-r-release-v6';
 const MODEL = 'projects/270018525501/locations/us-central1/models/6611494259700793344';
 const MODEL_VERSION = `${MODEL}@1`;
 const CHECKPOINT_ID = '6';
-const DEPLOYED_MODEL_ID = '7330081';
+const DEPLOYED_MODEL_ID = '7330091';
 const RUNTIME_SA = 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com';
 const RUNTIME_IMPERSONATOR_SA = '270018525501-compute@developer.gserviceaccount.com';
 const RUNTIME_IMPERSONATION_ROLE = 'roles/iam.serviceAccountTokenCreator';
@@ -215,6 +215,8 @@ const admissionSchema = z.object({
   preflight_result: z.literal('environment_type=clean_mirror'),
   clean_mirror_attestation_id: sha256,
   critical_config: z.object({
+    enable_ai_extraction: z.literal('true'),
+    enable_vertex_ai: z.literal('true'),
     gemini_tuned_model: z.literal(ENDPOINT),
     gemini_v6_prompt: z.literal('true'),
     gemini_tuned_response_schema: z.literal('<unset>'),
@@ -1025,6 +1027,19 @@ function envValue(revision: z.infer<typeof revisionSchema>, name: string): strin
   return matches[0]?.value;
 }
 
+function hasExactReleaseAiFlags(revision: z.infer<typeof revisionSchema>): boolean {
+  return envValue(revision, 'ENABLE_AI_EXTRACTION') === 'true'
+    && envValue(revision, 'ENABLE_VERTEX_AI') === 'true';
+}
+
+/** Test-only seam for the independently observed release-flag binding. */
+export function hasExactReleaseAiFlagsForTest(rawRevision: unknown): boolean {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('Injected RIG-R revision flag observations are test-only.');
+  }
+  return hasExactReleaseAiFlags(revisionSchema.parse(rawRevision));
+}
+
 function decodeJwt(token: string, label: string): z.infer<typeof jwtSchema> {
   const parts = token.split('.');
   if (parts.length !== 3 || parts[1] === undefined) throw new Error(`${label} is not a JWT.`);
@@ -1291,6 +1306,7 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
       || revision.spec.containers[0].image !== admission.deployed_image_ref
       || digestFromImageReference(revision.status.imageDigest) !== admission.image_digest
       || envValue(revision, 'DISABLE_ALL_IN_PROCESS_CRON') !== 'true'
+      || !hasExactReleaseAiFlags(revision)
       || envValue(revision, 'GEMINI_TUNED_MODEL') !== ENDPOINT
       || envValue(revision, 'GEMINI_V6_PROMPT') !== 'true'
       || envValue(revision, 'GEMINI_TUNED_RESPONSE_SCHEMA') !== undefined) {

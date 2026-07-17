@@ -135,9 +135,9 @@ RIG_R_RUNTIME_IMPERSONATION_MEMBER="serviceAccount:${RIG_R_OPERATOR_SA}"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
 RIG_R_CHECKPOINT_ID="6"
-RIG_R_ENDPOINT_ID="733008"
+RIG_R_ENDPOINT_ID="733009"
 RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
-RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330081"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330091"
 RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
@@ -2946,6 +2946,8 @@ ADMISSION_GEMINI_TUNED_MODEL=""
 ADMISSION_GEMINI_V6_PROMPT=""
 ADMISSION_GEMINI_TUNED_RESPONSE_SCHEMA="<unset>"
 ADMISSION_NODE_ENV="production"
+ADMISSION_ENABLE_AI_EXTRACTION=""
+ADMISSION_ENABLE_VERTEX_AI=""
 ADMISSION_ENABLE_AI_FRAUD="false"
 ADMISSION_ENABLE_AI_REPORTS="false"
 ADMISSION_FRONTEND_URL="$FRONTEND_URL_VALUE"
@@ -3036,6 +3038,8 @@ case "$PROFILE" in
     ENV_VARS+=(
       "USE_MOCKS=true"
       "ENABLE_PROD_NETWORK_ANCHORING=false"
+      "ENABLE_AI_EXTRACTION=true"
+      "ENABLE_VERTEX_AI=true"
       "GEMINI_TUNED_MODEL=${RIG_R_VERTEX_ENDPOINT}"
       "GEMINI_V6_PROMPT=true"
       "DISABLE_ALL_IN_PROCESS_CRON=true"
@@ -4859,6 +4863,8 @@ verify_deployed_revision_env() {
   # requested overlay. --set-env-vars replaces the old set, and this observation
   # proves the schema selector was actively absent from the resulting revision.
   ADMISSION_NODE_ENV="$(observed_revision_env_value "$revision_json" "NODE_ENV")"
+  ADMISSION_ENABLE_AI_EXTRACTION="$(observed_revision_env_value "$revision_json" "ENABLE_AI_EXTRACTION")"
+  ADMISSION_ENABLE_VERTEX_AI="$(observed_revision_env_value "$revision_json" "ENABLE_VERTEX_AI")"
   ADMISSION_ENABLE_AI_FRAUD="$(observed_revision_env_value "$revision_json" "ENABLE_AI_FRAUD")"
   ADMISSION_ENABLE_AI_REPORTS="$(observed_revision_env_value "$revision_json" "ENABLE_AI_REPORTS")"
   ADMISSION_FRONTEND_URL="$(observed_revision_env_value "$revision_json" "FRONTEND_URL")"
@@ -5718,6 +5724,8 @@ emit_admission_json() {
     --arg preflight_verified_at "$PREFLIGHT_VERIFIED_AT" \
     --arg clean_mirror_attestation_id "$CLEAN_MIRROR_ATTESTATION_ID" \
     --arg node_env "$ADMISSION_NODE_ENV" \
+    --arg enable_ai_extraction "$ADMISSION_ENABLE_AI_EXTRACTION" \
+    --arg enable_vertex_ai "$ADMISSION_ENABLE_VERTEX_AI" \
     --arg enable_ai_fraud "$ADMISSION_ENABLE_AI_FRAUD" \
     --arg enable_ai_reports "$ADMISSION_ENABLE_AI_REPORTS" \
     --arg frontend_url "$ADMISSION_FRONTEND_URL" \
@@ -5782,7 +5790,7 @@ emit_admission_json() {
         verified_at: $preflight_verified_at,
         attestation_id: $clean_mirror_attestation_id
       },
-      critical_config: {
+      critical_config: ({
         node_env: $node_env,
         enable_ai_fraud: $enable_ai_fraud,
         enable_ai_reports: $enable_ai_reports,
@@ -5795,7 +5803,10 @@ emit_admission_json() {
         gemini_tuned_model: $gemini_tuned_model,
         gemini_v6_prompt: $gemini_v6_prompt,
         gemini_tuned_response_schema: $gemini_tuned_response_schema
-      },
+      } + (if $rig_id == "RIG-R" then {
+        enable_ai_extraction: $enable_ai_extraction,
+        enable_vertex_ai: $enable_vertex_ai
+      } else {} end)),
       scheduler: {
         applicable: $scheduler_applicable,
         jobs: $scheduler_jobs,

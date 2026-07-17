@@ -420,6 +420,8 @@ grant_rig_r_runtime_impersonation
     ));
     expect(deployIndex).toBeGreaterThan(-1);
     expect(grantIndex).toBeGreaterThan(deployIndex);
+    expect(lines[deployIndex]).toContain('ENABLE_AI_EXTRACTION=true');
+    expect(lines[deployIndex]).toContain('ENABLE_VERTEX_AI=true');
     expect(lines[grantIndex]).toContain(`--member=serviceAccount:${runtimeServiceAccount}`);
     expect(lines[grantIndex]).toContain('--role=roles/run.invoker');
     expect(lines[grantIndex]).toContain('--region=us-central1');
@@ -427,6 +429,50 @@ grant_rig_r_runtime_impersonation
     expect(lines[grantIndex]).toContain('--condition=None');
     expect(out).not.toMatch(/projects add-iam-policy-binding .*roles\/run\.invoker/u);
     expect(script).toContain('write_provision_state "rig_r_service_invoker_bound" ""');
+  });
+
+  it('reads both release AI flags from the deployed revision and rejects either flag when not true', () => {
+    const observedValueSource = script.match(
+      /^observed_revision_env_value\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    const verifySource = script.match(
+      /^verify_deployed_revision_env\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(observedValueSource).toBeDefined();
+    expect(verifySource).toBeDefined();
+
+    const runReadback = (extraction: string, vertex: string): string => {
+      const revision = JSON.stringify({
+        spec: {
+          containers: [{
+            env: [
+              { name: 'ENABLE_AI_EXTRACTION', value: extraction },
+              { name: 'ENABLE_VERTEX_AI', value: vertex },
+            ],
+          }],
+        },
+      });
+      const testScript = `set -eo pipefail
+ENV_VARS=('ENABLE_AI_EXTRACTION=true' 'ENABLE_VERTEX_AI=true')
+EXPECTED_REVISION_SECRETS=()
+PROFILE='gemini-release'
+${observedValueSource}
+${verifySource}
+verify_deployed_revision_env '${revision}'
+printf 'extraction=%s vertex=%s\n' "$ADMISSION_ENABLE_AI_EXTRACTION" "$ADMISSION_ENABLE_VERTEX_AI"
+`;
+      return execFileSync('bash', ['-c', testScript], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    };
+
+    expect(runReadback('true', 'true')).toContain('extraction=true vertex=true');
+    expect(() => runReadback('false', 'true')).toThrow();
+    expect(() => runReadback('true', 'false')).toThrow();
+    expect(script).toContain('if $rig_id == "RIG-R"');
+    expect(script).toContain('enable_ai_extraction: $enable_ai_extraction');
+    expect(script).toContain('enable_vertex_ai: $enable_vertex_ai');
   });
 
   it('retries only frozen transient capability statuses and fails terminal responses without leaking payloads', () => {
@@ -485,7 +531,7 @@ printf '%s\n%s' "$(jq -c '.body' <<<"$line")" "$(jq -r '.httpStatus' <<<"$line")
 CLOUD_RUN_REGION='us-central1'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 ${source}
-probe_tuned_gemini_preclock '${accessToken}' '733008' 2>&1
+probe_tuned_gemini_preclock '${accessToken}' '733009' 2>&1
 code=$?
 printf '\nPROBE_EXIT=%s\n' "$code"
 exit 0
@@ -562,7 +608,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733008'
+parse_genie_deploy_operation_name "$raw" '733009'
 `;
     expect(execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }).trim()).toBe(
       'projects/270018525501/locations/us-central1/operations/123456',
@@ -583,7 +629,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733008'
+parse_genie_deploy_operation_name "$raw" '733009'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -600,8 +646,8 @@ parse_genie_deploy_operation_name "$raw" '733008'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733008/operations/123456"}'
-parse_genie_deploy_operation_name "$raw" '733008'
+raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733009/operations/123456"}'
+parse_genie_deploy_operation_name "$raw" '733009'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -618,8 +664,8 @@ parse_genie_deploy_operation_name "$raw" '733008'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733008/operations/not-numeric"}'
-parse_genie_deploy_operation_name "$raw" '733008'
+raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733009/operations/not-numeric"}'
+parse_genie_deploy_operation_name "$raw" '733009'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -3221,6 +3267,8 @@ describe('provision-isolated-rig.sh — strict clean_mirror evidence schema', ()
     const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
     expect(admission.supabase_project_ref).toBe('abcdefghijklmnopqrst');
     expect(admission.clean_mirror.verified_at).toBe('2026-07-13T12:00:00.000Z');
+    expect(admission.critical_config).not.toHaveProperty('enable_ai_extraction');
+    expect(admission.critical_config).not.toHaveProperty('enable_vertex_ai');
   });
 });
 

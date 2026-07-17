@@ -5,8 +5,10 @@ import {
   RIG_R_SESSION_REFRESH_INTERVAL_MIN,
   RIG_R_WALL_MIN,
   RIG_R_WORKER_UPTIME_MIN,
+  hasExactReleaseAiFlagsForTest,
   runS33RigRBoundedRefreshBatchForTest,
   runS33RigRReleaseProduction,
+  validateS33RigRReleaseAdmission,
   type S33RigRReleaseProductionPort,
 } from './s33-rig-r-release-production-adapter';
 
@@ -17,7 +19,7 @@ const artifact = `sha256:${'d'.repeat(64)}`;
 const now = '2026-07-16T18:00:00.000Z';
 const expiresAt = '2026-07-19T17:00:00.000Z';
 const confirmation =
-  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-14';
+  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-15';
 
 function admission(): Record<string, unknown> {
   const approval = {
@@ -36,13 +38,13 @@ function admission(): Record<string, unknown> {
       soakId: 's33-r-release-v6',
       leaseId: 'lease-s33-r-release',
       requiredWallMin: 2910,
-      vertexEndpointId: '733008',
-      vertexEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733008',
+      vertexEndpointId: '733009',
+      vertexEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733009',
       vertexEndpointDisplayName: 'arkova-s33-rig-r-release-v6',
       vertexModel: 'projects/270018525501/locations/us-central1/models/6611494259700793344',
       vertexModelVersion: 'projects/270018525501/locations/us-central1/models/6611494259700793344@1',
       checkpointId: '6',
-      deployedModelId: '7330081',
+      deployedModelId: '7330091',
       deployedModelDisplayName: 'arkova-s33-rig-r-release-v6',
       deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
       minReplicaCount: 1,
@@ -105,7 +107,9 @@ function admission(): Record<string, unknown> {
     preflight_result: 'environment_type=clean_mirror',
     clean_mirror_attestation_id: `sha256:${'f'.repeat(64)}`,
     critical_config: {
-      gemini_tuned_model: 'projects/arkova1/locations/us-central1/endpoints/733008',
+      enable_ai_extraction: 'true',
+      enable_vertex_ai: 'true',
+      gemini_tuned_model: 'projects/arkova1/locations/us-central1/endpoints/733009',
       gemini_v6_prompt: 'true',
       gemini_tuned_response_schema: '<unset>',
     },
@@ -132,9 +136,9 @@ function admission(): Record<string, unknown> {
       runtime_impersonation_role: 'roles/iam.serviceAccountTokenCreator',
       runtime_impersonation_member:
         'serviceAccount:270018525501-compute@developer.gserviceaccount.com',
-      vertex_endpoint: 'projects/arkova1/locations/us-central1/endpoints/733008',
+      vertex_endpoint: 'projects/arkova1/locations/us-central1/endpoints/733009',
       vertex_model: 'projects/270018525501/locations/us-central1/models/6611494259700793344',
-      deployed_model_id: '7330081',
+      deployed_model_id: '7330091',
       chain_mode: 'mocked',
       contained_database_queues: ['ai-rollback', 'chain-fault'],
       scheduler_jobs: [],
@@ -256,6 +260,38 @@ describe('RIG-R production release start', () => {
     )).rejects.toThrow(/impersonation|literal|binding/i);
     expect(testPort.observeExactIdentity).not.toHaveBeenCalled();
     expect(testPort.persistStartReceipt).not.toHaveBeenCalled();
+  });
+
+  it('requires both release AI flags to be exact true in immutable admission', () => {
+    for (const flag of ['enable_ai_extraction', 'enable_vertex_ai'] as const) {
+      const altered = admission();
+      const criticalConfig = altered.critical_config as Record<string, unknown>;
+      criticalConfig[flag] = 'false';
+      expect(() => validateS33RigRReleaseAdmission(altered)).toThrow();
+    }
+  });
+
+  it('requires both release AI flags independently on the observed revision', () => {
+    const revision = (extraction: string, vertex: string) => ({
+      metadata: { name: 'arkova-worker-s33-r-staging-00001-abc', labels: {} },
+      spec: {
+        serviceAccountName: 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
+        containers: [{
+          image: `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${digest}`,
+          env: [
+            { name: 'ENABLE_AI_EXTRACTION', value: extraction },
+            { name: 'ENABLE_VERTEX_AI', value: vertex },
+          ],
+        }],
+      },
+      status: { imageDigest: digest },
+    });
+    expect(hasExactReleaseAiFlagsForTest(revision('true', 'true'))).toBe(true);
+    expect(hasExactReleaseAiFlagsForTest(revision('false', 'true'))).toBe(false);
+    expect(hasExactReleaseAiFlagsForTest(revision('true', 'false'))).toBe(false);
+    const duplicate = revision('true', 'true');
+    duplicate.spec.containers[0].env.push({ name: 'ENABLE_VERTEX_AI', value: 'true' });
+    expect(() => hasExactReleaseAiFlagsForTest(duplicate)).toThrow(/duplicate ENABLE_VERTEX_AI/i);
   });
 
   it('writes and reloads the immutable start receipt before the exact 2880/2910 run', async () => {
