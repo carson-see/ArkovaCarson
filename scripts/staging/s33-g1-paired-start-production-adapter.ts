@@ -39,10 +39,10 @@ const PROJECT_ID = G1_PAIRED_START_CONTRACT.gcpProjectId;
 const RECEIPT_BUCKET = 'arkova1-s33-immutable-authority-ledger';
 const SESSION_POOL_SIZE = 4;
 const SESSION_REFRESH_INTERVAL_MS = 45 * 60_000;
-// Binding S3.3 continuation segment. The original exact-candidate pair supplies
-// the first 720 worker minutes; this segment deliberately overlaps that pair
-// and runs long enough for the combined window to exceed 2,880 worker-up and
-// 2,910 wall minutes without resetting the original counted start.
+// Binding S3.3 continuation segment. The original exact-candidate pair opens
+// the counted window; this segment deliberately overlaps it and runs long
+// enough for the combined window to exceed 2,880 worker-up and 2,910 wall
+// minutes without resetting that original counted start.
 export const G1_WORKER_UPTIME_MIN = 2_195;
 export const G1_WALL_MIN = 2_225;
 const COMMAND_TIMEOUT_MS = 120_000;

@@ -314,6 +314,19 @@ describe('S3.3 G1 production paired-start adapter', () => {
     expect(wall.signal.aborted).toBe(true);
   });
 
+  it('overlaps the exact parent pair and clears the combined 2880/2910 binding floors', () => {
+    const continuationStart = Date.parse('2026-07-17T13:45:00.000Z');
+    for (const parentStart of [
+      '2026-07-17T02:15:27.158Z',
+      '2026-07-17T02:15:27.166Z',
+    ]) {
+      const elapsedBeforeContinuationMin = (continuationStart - Date.parse(parentStart)) / 60_000;
+      expect(elapsedBeforeContinuationMin).toBeLessThan(720);
+      expect(elapsedBeforeContinuationMin + G1_WORKER_UPTIME_MIN).toBeGreaterThanOrEqual(2_880);
+      expect(elapsedBeforeContinuationMin + G1_WALL_MIN).toBeGreaterThanOrEqual(2_910);
+    }
+  });
+
   it('compensates the exact just-created user when initial session establishment fails before pool registration', async () => {
     const auth = new AuthFetchFixture();
     auth.failFirstPassword = true;
