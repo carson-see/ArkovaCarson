@@ -30,6 +30,12 @@ import {
   createProductionB1StartAuthorityVerifier,
   type VerifiedB1StartAuthority,
 } from './s33-b1-start-approval';
+import {
+  projectB1TreasuryContinuity,
+  verifyB1TreasuryContinuityComposition,
+  verifyLocalB1TreasuryContinuityController,
+  type VerifiedB1TreasuryContinuityComposition,
+} from './s33-b1-treasury-continuity';
 
 const JOBS = [
   { suffix: 'batch-anchors', path: '/jobs/batch-anchors', timeZone: 'Etc/UTC', attemptDeadline: '120s' },
@@ -101,6 +107,10 @@ export interface B1SchedulerStartAdmission {
   readonly cronSecretName: string;
   readonly cronSecretVersion: string;
   readonly cronSecretResource: string;
+  readonly continuityCompositeIdentitySha256?: string;
+  readonly controllerSourceHeadSha?: string;
+  readonly controllerSourceTreeSha?: string;
+  readonly controllerRelevantFilesSha256?: string;
 }
 
 export interface B1SchedulerStartPreclock {
@@ -114,6 +124,8 @@ export interface B1SchedulerStartPreclock {
   readonly observedAt: string;
   readonly schedulerJobsPaused: 6;
   readonly schedulerCadence: string;
+  readonly continuityCompositeIdentitySha256?: string;
+  readonly continuityTreasuryPlanInputRaw?: string;
 }
 
 export interface VerifiedB1StartApproval {
@@ -149,6 +161,11 @@ export interface VerifiedB1StartApproval {
   readonly preparationIntent: Readonly<{ objectUri: string; generation: string; sha256: string }>;
   readonly preparationOutcome: Readonly<{ objectUri: string; generation: string; sha256: string }>;
   readonly preclockArtifactSha256: string;
+  readonly continuityCompositeIdentitySha256?: string;
+  readonly continuityAmendment?: Readonly<{ objectUri: string; generation: string; sha256: string }>;
+  readonly controllerSourceHeadSha?: string;
+  readonly controllerSourceTreeSha?: string;
+  readonly controllerRelevantFilesSha256?: string;
   readonly actionExpiresAt: string;
   readonly runHardStopAt: string;
 }
@@ -205,6 +222,9 @@ export interface B1SchedulerStartReceipt {
 
 export interface B1SchedulerStartPort {
   now(): Date;
+  verifyControllerIdentity?(
+    verified: VerifiedB1TreasuryContinuityComposition,
+  ): Promise<unknown>;
   projectAdmission?(raw: string): B1SchedulerStartAdmission;
   verifyPreclock?(raw: string, admission: B1SchedulerStartAdmission): B1SchedulerStartPreclock;
   verifySignedApproval?(raw: string, now: Date): VerifiedB1StartApproval;
@@ -274,6 +294,7 @@ const preclockIdentityShape = {
   observedAt: timestamp,
   schedulerJobsPaused: z.literal(6),
   schedulerCadence: z.literal(B1_SCHEDULER_START_CONTRACT.cadence),
+  continuityCompositeIdentitySha256: sha256.optional(),
 } as const;
 
 const treasuryPlanInputSchema = z.object({
@@ -361,6 +382,10 @@ const preparationIntentStartSchema = z.object({
   maxFundedBroadcasts: z.literal(1),
   invocationLeaseMaxSeconds: z.literal(600),
   authorityExpiresAt: timestamp,
+  continuityCompositeIdentitySha256: sha256.optional(),
+  controllerSourceHeadSha: gitSha.optional(),
+  controllerSourceTreeSha: gitSha.optional(),
+  controllerRelevantFilesSha256: sha256.optional(),
 }).passthrough();
 
 const preparationOutcomeStartSchema = z.object({
@@ -372,6 +397,7 @@ const preparationOutcomeStartSchema = z.object({
   preclockArtifactSha256: sha256,
   preclockArtifactRaw: z.string().min(1),
   completedAt: timestamp,
+  continuityCompositeIdentitySha256: sha256.optional(),
 }).passthrough();
 
 function digestRaw(raw: string): string {
@@ -390,6 +416,7 @@ export function projectB1SchedulerStartAdmission(raw: string): B1SchedulerStartA
   const handle = projectAdmissionV2ToPreClockIdentity(raw);
   const identity = requirePreClockAdmissionIdentity(handle);
   const value = admissionExtractSchema.parse(parseStrict(raw, 'RIG-B1 admission'));
+  const continuity = projectB1TreasuryContinuity(raw);
   if (identity.gitHeadSha !== value.sha || identity.imageDigest !== value.image_digest) {
     throw new Error('RIG-B1 admission projection identity is contradictory.');
   }
@@ -426,6 +453,12 @@ export function projectB1SchedulerStartAdmission(raw: string): B1SchedulerStartA
     cronSecretName: cron.secretName,
     cronSecretVersion: cron.version,
     cronSecretResource: cron.resource,
+    ...(continuity === undefined ? {} : {
+      continuityCompositeIdentitySha256: continuity.compositeIdentitySha256,
+      controllerSourceHeadSha: continuity.controllerCandidate.sourceHeadSha,
+      controllerSourceTreeSha: continuity.controllerCandidate.sourceTreeSha,
+      controllerRelevantFilesSha256: continuity.controllerCandidate.relevantFilesSha256,
+    }),
   };
 }
 
@@ -454,6 +487,9 @@ function computePreclockIdentity(
     observedAt: schedulerPolicy.observedAt,
     schedulerJobsPaused: summary.schedulerJobsPaused,
     schedulerCadence: summary.schedulerCadence,
+    ...(admission.continuityCompositeIdentitySha256 === undefined
+      ? {}
+      : { continuityCompositeIdentitySha256: admission.continuityCompositeIdentitySha256 }),
   };
 }
 
@@ -511,11 +547,20 @@ function defaultVerifyPreclock(
     observedAt: artifact.observedAt,
     schedulerJobsPaused: artifact.schedulerJobsPaused,
     schedulerCadence: artifact.schedulerCadence,
+    ...(artifact.continuityCompositeIdentitySha256 === undefined
+      ? {}
+      : { continuityCompositeIdentitySha256: artifact.continuityCompositeIdentitySha256 }),
   };
   if (!isDeepStrictEqual(advertised, computed)) {
     throw new Error('RIG-B1 augmented pre-clock artifact differs from its full source evidence.');
   }
-  return { ...computed, preclockSha256: digestRaw(raw) };
+  return {
+    ...computed,
+    preclockSha256: digestRaw(raw),
+    ...(computed.continuityCompositeIdentitySha256 === undefined ? {} : {
+      continuityTreasuryPlanInputRaw: JSON.stringify(artifact.sourceEvidence.treasuryPlanInput),
+    }),
+  };
 }
 
 export function verifyB1SchedulerStartApproval(raw: string, now: Date): VerifiedB1StartApproval {
@@ -553,6 +598,13 @@ export function verifyB1SchedulerStartApproval(raw: string, now: Date): Verified
     preparationIntent: verified.prerequisites.preparation.intent,
     preparationOutcome: verified.prerequisites.preparation.outcome,
     preclockArtifactSha256: verified.prerequisites.preparation.preclockArtifactSha256,
+    ...(verified.prerequisites.continuity === undefined ? {} : {
+      continuityCompositeIdentitySha256: verified.prerequisites.continuity.compositeIdentitySha256,
+      continuityAmendment: verified.prerequisites.continuity.amendment,
+      controllerSourceHeadSha: verified.controller!.sourceHeadSha,
+      controllerSourceTreeSha: verified.controller!.sourceTreeSha,
+      controllerRelevantFilesSha256: verified.controller!.relevantFilesSha256,
+    }),
     actionExpiresAt: verified.expiresAt,
     runHardStopAt: verified.run.runHardStopAt,
   };
@@ -587,7 +639,9 @@ function assertCommonBindings(
     || admission.sourceHeadSha !== preclock.sourceHeadSha
     || admission.workerImageDigest !== preclock.workerImageDigest
     || admission.cleanMirrorAttestationId !== preclock.cleanMirrorAttestationId
-    || admission.nodeReadinessSha256 !== preclock.nodeReadinessSha256) {
+    || admission.nodeReadinessSha256 !== preclock.nodeReadinessSha256
+    || admission.continuityCompositeIdentitySha256
+      !== preclock.continuityCompositeIdentitySha256) {
     throw new Error('RIG-B1 admission/pre-clock bindings differ.');
   }
   if (admission.rigName !== contract.rigName
@@ -617,7 +671,12 @@ function assertCommonBindings(
     || approval.workerService !== contract.workerService
     || approval.workerRuntimeServiceAccount !== contract.workerRuntimeServiceAccount
     || approval.schedulerOidcServiceAccount !== contract.schedulerOidcServiceAccount
-    || !isDeepStrictEqual(approval.schedulerJobNames, exactJobNames())) {
+    || !isDeepStrictEqual(approval.schedulerJobNames, exactJobNames())
+    || approval.continuityCompositeIdentitySha256
+      !== admission.continuityCompositeIdentitySha256
+    || approval.controllerSourceHeadSha !== admission.controllerSourceHeadSha
+    || approval.controllerSourceTreeSha !== admission.controllerSourceTreeSha
+    || approval.controllerRelevantFilesSha256 !== admission.controllerRelevantFilesSha256) {
     throw new Error('RIG-B1 signed START authority differs from the exact candidate/admission/PREPARE topology.');
   }
   if (preclock.status !== 'PRE_CLOCK_READY'
@@ -721,11 +780,18 @@ function assertPreparationOwnership(
     || intent.releaseCandidateId !== approval.releaseCandidateId
     || intent.soakId !== approval.soakId
     || intent.leaseId !== approval.leaseId
+    || intent.continuityCompositeIdentitySha256
+      !== approval.continuityCompositeIdentitySha256
+    || intent.controllerSourceHeadSha !== approval.controllerSourceHeadSha
+    || intent.controllerSourceTreeSha !== approval.controllerSourceTreeSha
+    || intent.controllerRelevantFilesSha256 !== approval.controllerRelevantFilesSha256
     || outcome.preparationId !== approval.preparationId
     || outcome.intentSha256 !== digestRaw(intentObject.raw)
     || outcome.admissionSha256 !== admission.admissionSha256
     || outcome.preclockArtifactSha256 !== preclock.preclockSha256
-    || outcome.preclockArtifactRaw !== preclockRaw) {
+    || outcome.preclockArtifactRaw !== preclockRaw
+    || outcome.continuityCompositeIdentitySha256
+      !== approval.continuityCompositeIdentitySha256) {
     throw new Error('RIG-B1 START preparation intent/outcome differs from signed prerequisites.');
   }
 }
@@ -886,6 +952,40 @@ export async function runS33B1SchedulerStartDriver(
     approval.topologyOwnership.objectUri,
     approval.topologyOwnership.generation,
   );
+  const continuity = projectB1TreasuryContinuity(admissionRaw);
+  let continuityAmendmentObject: B1LockedObject | undefined;
+  if (continuity !== undefined) {
+    if (approval.continuityAmendment === undefined
+      || preclock.continuityTreasuryPlanInputRaw === undefined) {
+      throw new Error('RIG-B1 START lacks the signed continuity amendment or exact PREPARE plan.');
+    }
+    const amendmentObject = await port.readLockedObject(
+      approval.continuityAmendment.objectUri,
+      approval.continuityAmendment.generation,
+    );
+    continuityAmendmentObject = amendmentObject;
+    const verifiedContinuity = verifyB1TreasuryContinuityComposition({
+      refreshedAdmissionRaw: admissionRaw,
+      currentTreasuryPlanInputRaw: preclock.continuityTreasuryPlanInputRaw,
+      originalClaim: claimObject,
+      originalTopology: topologyObject,
+      amendment: amendmentObject,
+    });
+    if (verifiedContinuity.compositeIdentitySha256
+        !== approval.continuityCompositeIdentitySha256
+      || verifiedContinuity.controllerSourceHeadSha !== approval.controllerSourceHeadSha
+      || verifiedContinuity.controllerSourceTreeSha !== approval.controllerSourceTreeSha
+      || verifiedContinuity.controllerRelevantFilesSha256
+        !== approval.controllerRelevantFilesSha256
+      || Date.parse(approval.runHardStopAt) > Date.parse(verifiedContinuity.amendmentExpiresAt)) {
+      throw new Error('RIG-B1 START continuity/controller identity or authority window differs.');
+    }
+    if (port.verifyControllerIdentity === undefined) {
+      await verifyLocalB1TreasuryContinuityController(verifiedContinuity);
+    } else {
+      await port.verifyControllerIdentity(verifiedContinuity);
+    }
+  }
   const serviceUrl = assertOwnership(claimObject, topologyObject, admission, approval);
   const preparationIntentObject = await port.readLockedObject(
     approval.preparationIntent.objectUri,
@@ -969,6 +1069,14 @@ export async function runS33B1SchedulerStartDriver(
       actionExpiresAt: approval.actionExpiresAt,
       runHardStopAt: approval.runHardStopAt,
       recordedAt: activationAt.toISOString(),
+      ...(approval.continuityCompositeIdentitySha256 === undefined ? {} : {
+        continuityCompositeIdentitySha256: approval.continuityCompositeIdentitySha256,
+        controller: {
+          sourceHeadSha: approval.controllerSourceHeadSha,
+          sourceTreeSha: approval.controllerSourceTreeSha,
+          relevantFilesSha256: approval.controllerRelevantFilesSha256,
+        },
+      }),
     };
     const activationRaw = JSON.stringify(activationIntent);
     await port.persistStartReceipt(activationUri, activationRaw, approval.runHardStopAt);
@@ -1039,6 +1147,20 @@ export async function runS33B1SchedulerStartDriver(
         corpusDigest: approval.corpusDigest,
         releaseCandidateId: approval.releaseCandidateId,
       },
+      runtimeCandidate: {
+        sourceHeadSha: approval.sourceHeadSha,
+        sourceTreeSha: approval.sourceTreeSha,
+        workerImage: approval.workerImage,
+        workerImageDigest: approval.workerImageDigest,
+        workerRevision: admission.workerRevision,
+      },
+      ...(approval.continuityCompositeIdentitySha256 === undefined ? {} : {
+        controller: {
+          sourceHeadSha: approval.controllerSourceHeadSha,
+          sourceTreeSha: approval.controllerSourceTreeSha,
+          relevantFilesSha256: approval.controllerRelevantFilesSha256,
+        },
+      }),
       run: {
         rigId: B1_SCHEDULER_START_CONTRACT.rigId,
         rigName: approval.rigName,
@@ -1053,6 +1175,16 @@ export async function runS33B1SchedulerStartDriver(
         preclockSha256: preclock.preclockSha256,
         cleanMirrorAttestationId: admission.cleanMirrorAttestationId,
         nodeReadinessSha256: admission.nodeReadinessSha256,
+        ...(continuityAmendmentObject === undefined ? {} : {
+          continuity: {
+            compositeIdentitySha256: approval.continuityCompositeIdentitySha256,
+            amendment: {
+              objectUri: continuityAmendmentObject.uri,
+              generation: continuityAmendmentObject.generation,
+              sha256: digestRaw(continuityAmendmentObject.raw),
+            },
+          },
+        }),
         provision: {
           approvalId: approval.provisionApprovalId,
           approvalEnvelopeSha256: approval.provisionApprovalEnvelopeSha256,

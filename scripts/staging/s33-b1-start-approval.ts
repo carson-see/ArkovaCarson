@@ -104,7 +104,16 @@ const payloadSchema = z.object({
       outcome: lockedReferenceSchema,
       preclockArtifactSha256: sha256,
     }).strict(),
+    continuity: z.object({
+      compositeIdentitySha256: sha256,
+      amendment: lockedReferenceSchema,
+    }).strict().optional(),
   }).strict(),
+  controller: z.object({
+    sourceHeadSha: gitSha,
+    sourceTreeSha: gitSha,
+    relevantFilesSha256: sha256,
+  }).strict().optional(),
   run: z.object({
     rigName: z.literal(B1_START_AUTHORITY_CONTRACT.rigName),
     soakId: boundedId,
@@ -141,6 +150,13 @@ const payloadSchema = z.object({
       code: 'custom',
       path: ['candidate', 'workerImageDigest'],
       message: 'START_B1 worker image does not bind its exact digest.',
+    });
+  }
+  if ((payload.prerequisites.continuity === undefined) !== (payload.controller === undefined)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['controller'],
+      message: 'START_B1 continuity and controller bindings must be present together.',
     });
   }
   const claimUri = `${LEDGER_BASE_URI}/node-approval-claims/${payload.prerequisites.provision.approvalId}.json`;

@@ -138,6 +138,57 @@ describe('distinct signed START_B1 authority', () => {
     });
   });
 
+  it('cryptographically binds continuity amendment and distinct controller identity', () => {
+    const request = payload();
+    request.prerequisites.continuity = {
+      compositeIdentitySha256: D('a'),
+      amendment: {
+        objectUri: `${BASE}/recovery-amendments/b1-treasury-continuity.json`,
+        generation: '5',
+        sha256: D('b'),
+      },
+    };
+    request.controller = {
+      sourceHeadSha: 'c'.repeat(40),
+      sourceTreeSha: 'd'.repeat(40),
+      relevantFilesSha256: D('e'),
+    };
+    const signedPayloadRaw = buildB1StartAuthoritySignedPayload(request);
+    expect(verifier.verify(
+      envelope(signedPayloadRaw),
+      new Date('2026-07-16T20:05:00.000Z'),
+    )).toMatchObject({
+      prerequisites: { continuity: request.prerequisites.continuity },
+      controller: request.controller,
+    });
+
+    const tampered = signedPayloadRaw.replace(`"relevantFilesSha256":"${D('e')}"`,
+      `"relevantFilesSha256":"${D('f')}"`);
+    const tamperedEnvelope = JSON.parse(envelope(signedPayloadRaw)) as { signedPayloadRaw: string };
+    tamperedEnvelope.signedPayloadRaw = tampered;
+    expect(() => verifier.verify(
+      JSON.stringify(tamperedEnvelope),
+      new Date('2026-07-16T20:05:00.000Z'),
+    )).toThrow(/signature/i);
+  });
+
+  it('rejects continuity and controller bindings unless both are present', () => {
+    const missingController = payload();
+    missingController.prerequisites.continuity = {
+      compositeIdentitySha256: D('a'),
+      amendment: { objectUri: `${BASE}/recovery-amendments/a.json`, generation: '5', sha256: D('b') },
+    };
+    expect(() => buildB1StartAuthoritySignedPayload(missingController)).toThrow(/controller|custom/i);
+
+    const missingContinuity = payload();
+    missingContinuity.controller = {
+      sourceHeadSha: 'c'.repeat(40),
+      sourceTreeSha: 'd'.repeat(40),
+      relevantFilesSha256: D('e'),
+    };
+    expect(() => buildB1StartAuthoritySignedPayload(missingContinuity)).toThrow(/continuity|custom/i);
+  });
+
   it('requires the START_B1 signature domain', () => {
     const raw = buildB1StartAuthoritySignedPayload(payload());
     expect(() => verifier.verify(

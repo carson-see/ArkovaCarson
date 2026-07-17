@@ -87,12 +87,35 @@ export interface RigB1ReadinessPlan {
   readonly treasurySplitPlanDigest: string;
   readonly treasuryAddress: string;
   readonly signerChallengeSha256: string;
-  readonly infrastructure: Readonly<RigB1Infrastructure>;
+  readonly infrastructure: Readonly<RigB1EffectiveInfrastructure>;
+  readonly continuityCompositeIdentitySha256?: string;
   readonly secretReferences: readonly RigB1SecretReference[];
   readonly schedulerPolicy: Readonly<RigB1SchedulerPolicy>;
   readonly schedulerJobs: readonly RigB1SchedulerJob[];
   readonly drainTriggers: readonly Wave3DrainTriggerSpec[];
 }
+
+type RigB1EffectiveInfrastructure = Omit<
+  RigB1Infrastructure,
+  'treasuryWatchOnly' | 'nodeReadiness'
+> & {
+  readonly treasuryWatchOnly: Omit<
+    RigB1Infrastructure['treasuryWatchOnly'],
+    'preSplitPlanDigest' | 'expectedConfirmedOutputCount' | 'expectedTotalSats'
+  > & {
+    readonly preSplitPlanDigest: string;
+    readonly expectedConfirmedOutputCount: number;
+    readonly expectedTotalSats: number;
+  };
+  readonly nodeReadiness: Omit<
+    RigB1Infrastructure['nodeReadiness'],
+    'treasurySplitPlanDigest' | 'confirmedOutputCount' | 'confirmedTotalSats'
+  > & {
+    readonly treasurySplitPlanDigest: string;
+    readonly confirmedOutputCount: number;
+    readonly confirmedTotalSats: number;
+  };
+};
 
 export interface RigB1PreClockObservation {
   admissionSha256: string;
@@ -369,11 +392,29 @@ export function buildRigB1ReadinessPlan(
 ): RigB1ReadinessPlan {
   const admission = requirePreClockAdmissionIdentity(admissionHandle);
   const treasurySplitPlan = requireTreasuryPresplitPlan(input.treasurySplitPlan);
+  const continuity = admission.treasuryContinuity;
+  const infrastructure: RigB1EffectiveInfrastructure = continuity === undefined
+    ? structuredClone(admission.infrastructure)
+    : {
+      ...structuredClone(admission.infrastructure),
+      treasuryWatchOnly: {
+        ...structuredClone(admission.infrastructure.treasuryWatchOnly),
+        preSplitPlanDigest: continuity.currentTreasury.planDigest,
+        expectedConfirmedOutputCount: continuity.currentTreasury.confirmedOutputCount,
+        expectedTotalSats: continuity.currentTreasury.confirmedTotalSats,
+      },
+      nodeReadiness: {
+        ...structuredClone(admission.infrastructure.nodeReadiness),
+        treasurySplitPlanDigest: continuity.currentTreasury.planDigest,
+        confirmedOutputCount: continuity.currentTreasury.confirmedOutputCount,
+        confirmedTotalSats: continuity.currentTreasury.confirmedTotalSats,
+      },
+    };
   requireSignetTreasuryAddress(treasurySplitPlan.treasuryAddress, 'RIG-B1 treasuryAddress');
-  if (admission.infrastructure.treasuryWatchOnly.address !== treasurySplitPlan.treasuryAddress) {
+  if (infrastructure.treasuryWatchOnly.address !== treasurySplitPlan.treasuryAddress) {
     throw new Error('RIG-B1 signed watch-only treasury address differs from the pre-split plan.');
   }
-  const signedTreasury = admission.infrastructure.treasuryWatchOnly;
+  const signedTreasury = infrastructure.treasuryWatchOnly;
   const plannedTotalSats = treasurySplitPlan.outputs.reduce((sum, output) => sum + output.valueSats, 0);
   if (
     signedTreasury.preSplitPlanDigest !== treasurySplitPlan.planDigest
@@ -422,7 +463,10 @@ export function buildRigB1ReadinessPlan(
       treasurySplitPlanDigest: treasurySplitPlan.planDigest,
       treasuryAddress: treasurySplitPlan.treasuryAddress,
     }),
-    infrastructure: structuredClone(admission.infrastructure),
+    infrastructure,
+    ...(continuity === undefined
+      ? {}
+      : { continuityCompositeIdentitySha256: continuity.compositeIdentitySha256 }),
     secretReferences,
     schedulerPolicy,
     schedulerJobs,

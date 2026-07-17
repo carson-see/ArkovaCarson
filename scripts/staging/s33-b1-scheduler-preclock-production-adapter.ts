@@ -53,6 +53,13 @@ import {
   projectAdmissionV2ToPreClockIdentity,
   requirePreClockAdmissionIdentity,
 } from './batch-drain-admission-adapter';
+import {
+  b1TreasuryContinuitySchema,
+  projectB1TreasuryContinuity,
+  verifyLocalB1TreasuryContinuityController,
+  verifyB1TreasuryContinuityComposition,
+  type VerifiedB1TreasuryContinuityComposition,
+} from './s33-b1-treasury-continuity';
 
 const VM = 'arkova-s33-rig-b1-bitcoin-core-signet';
 const ZONE = 'us-central1-a';
@@ -110,6 +117,7 @@ const admissionSchema = z.object({
   tag_url: z.string().url(),
   supabase_project_ref: projectRef,
   cloud_run_service: z.literal(B1_SCHEDULER_START_CONTRACT.workerService),
+  treasury_continuity: b1TreasuryContinuitySchema.optional(),
   infrastructure: z.object({
     authority: z.object({
       approvalId: z.string().min(1),
@@ -213,6 +221,9 @@ export interface B1MempoolObservation {
 
 export interface B1PreclockCollectorPort {
   now(): Date;
+  verifyControllerIdentity?(
+    verified: VerifiedB1TreasuryContinuityComposition,
+  ): Promise<unknown>;
   hasLockedObject(uri: string): Promise<boolean>;
   readLockedObject(uri: string, generation?: string): Promise<B1LockedObject>;
   persistLockedObject(uri: string, raw: string, retainUntilTime: string): Promise<void>;
@@ -302,6 +313,10 @@ const preparationIntentSchema = z.object({
   invocationLeaseMaxSeconds: z.literal(600),
   createdAt: z.string().datetime({ offset: true }),
   authorityExpiresAt: z.string().datetime({ offset: true }),
+  continuityCompositeIdentitySha256: sha256.optional(),
+  controllerSourceHeadSha: gitSha.optional(),
+  controllerSourceTreeSha: gitSha.optional(),
+  controllerRelevantFilesSha256: sha256.optional(),
 }).strict();
 
 const preparationOutcomeSchema = z.object({
@@ -320,6 +335,7 @@ const preparationOutcomeSchema = z.object({
   preclockArtifactSha256: sha256,
   preclockArtifactRaw: z.string().min(1).max(4 * 1024 * 1024),
   completedAt: z.string().datetime({ offset: true }),
+  continuityCompositeIdentitySha256: sha256.optional(),
 }).strict();
 
 const replayedPreclockSchema = z.object({
@@ -330,6 +346,7 @@ const replayedPreclockSchema = z.object({
   workerImageDigest: sha256,
   schedulerJobsPaused: z.literal(6),
   schedulerCadence: z.literal(B1_SCHEDULER_START_CONTRACT.cadence),
+  continuityCompositeIdentitySha256: sha256.optional(),
 }).passthrough();
 
 const PREPARATION_AUDIT_RETENTION_MS = 30 * 24 * 60 * 60_000;
@@ -397,7 +414,12 @@ function assertPreparationIntentBindings(
     || intent.idempotencyKey !== expectedIdempotencyKey
     || intent.maxFundedBroadcasts !== authority.maxFundedBroadcasts
     || intent.invocationLeaseMaxSeconds !== authority.invocationLeaseMaxSeconds
-    || intent.authorityExpiresAt !== authority.expiresAt) {
+    || intent.authorityExpiresAt !== authority.expiresAt
+    || intent.continuityCompositeIdentitySha256
+      !== authority.continuityCompositeIdentitySha256
+    || intent.controllerSourceHeadSha !== authority.controllerSourceHeadSha
+    || intent.controllerSourceTreeSha !== authority.controllerSourceTreeSha
+    || intent.controllerRelevantFilesSha256 !== authority.controllerRelevantFilesSha256) {
     throw new Error('RIG-B1 immutable PREPARE intent differs from the complete signed authority bindings.');
   }
 }
@@ -420,6 +442,7 @@ function authorizeFromVerifiedPreparation(
   reverify: (now: Date) => VerifiedB1PreparationAuthority,
 ): B1PreclockMutationAuthorization {
   const admission = projectB1SchedulerStartAdmission(admissionRaw);
+  const continuity = projectB1TreasuryContinuity(admissionRaw);
   const admissionSha256 = rawDigest(admissionRaw);
   const treasuryPlanSha256 = rawDigest(treasuryPlanInputRaw);
   const expected = expectedB1PreclockPreparationConfirmation({
@@ -442,7 +465,17 @@ function authorizeFromVerifiedPreparation(
     || verified.workerService !== B1_SCHEDULER_START_CONTRACT.workerService
     || verified.schedulerOidcServiceAccount !== B1_SCHEDULER_START_CONTRACT.schedulerOidcServiceAccount
     || verified.provisionApprovalEnvelopeSha256 !== admission.approvalEnvelopeSha256
-    || verified.provisionSignedPayloadSha256 !== admission.signedPayloadSha256) {
+    || verified.provisionSignedPayloadSha256 !== admission.signedPayloadSha256
+    || (continuity === undefined
+      ? verified.continuityCompositeIdentitySha256 !== undefined
+        || verified.controllerSourceHeadSha !== undefined
+        || verified.controllerSourceTreeSha !== undefined
+        || verified.controllerRelevantFilesSha256 !== undefined
+      : verified.continuityCompositeIdentitySha256 !== continuity.compositeIdentitySha256
+        || verified.controllerSourceHeadSha !== continuity.controllerCandidate.sourceHeadSha
+        || verified.controllerSourceTreeSha !== continuity.controllerCandidate.sourceTreeSha
+        || verified.controllerRelevantFilesSha256
+          !== continuity.controllerCandidate.relevantFilesSha256)) {
     throw new Error('RIG-B1 signed PREPARE authority does not bind the exact admission/plan/provision authority.');
   }
   const handle = Object.freeze<B1PreclockMutationAuthorization>({ preparationId: verified.preparationId });
@@ -500,6 +533,7 @@ export function authorizeB1PreclockMutationForTest(
 ): B1PreclockMutationAuthorization {
   if (process.env.NODE_ENV !== 'test') throw new Error('Injected B1 pre-clock authorization is test-only.');
   const admission = projectB1SchedulerStartAdmission(admissionRaw);
+  const continuity = projectB1TreasuryContinuity(admissionRaw);
   const authority = Object.freeze<VerifiedB1PreparationAuthority>({
     status: 'VERIFIED',
     verifierIdentity: B1_SCHEDULER_START_CONTRACT.verifierIdentity,
@@ -525,6 +559,12 @@ export function authorizeB1PreclockMutationForTest(
     invocationLeaseMaxSeconds: 600,
     issuedAt: '2026-07-16T19:50:00.000Z',
     expiresAt: '2026-07-16T20:00:00.000Z',
+    ...(continuity === undefined ? {} : {
+      continuityCompositeIdentitySha256: continuity.compositeIdentitySha256,
+      controllerSourceHeadSha: continuity.controllerCandidate.sourceHeadSha,
+      controllerSourceTreeSha: continuity.controllerCandidate.sourceTreeSha,
+      controllerRelevantFilesSha256: continuity.controllerCandidate.relevantFilesSha256,
+    }),
     ...overrides,
   });
   const handle = Object.freeze<B1PreclockMutationAuthorization>({
@@ -655,6 +695,12 @@ function assertCollectorBindings(
 ): void {
   const treasury = admission.infrastructure.treasuryWatchOnly;
   const readiness = admission.infrastructure.nodeReadiness;
+  const continuity = admission.treasury_continuity;
+  const effectivePlanDigest = continuity?.currentTreasury.planDigest ?? treasury.preSplitPlanDigest;
+  const effectiveTotalSats = continuity?.currentTreasury.confirmedTotalSats
+    ?? treasury.expectedTotalSats;
+  const effectiveOutputCount = continuity?.currentTreasury.confirmedOutputCount
+    ?? treasury.expectedConfirmedOutputCount;
   const wif = admission.infrastructure.secretReferences.find(({ env }) => env === 'BITCOIN_TREASURY_WIF');
   if (revision.sourceHeadSha !== admission.sha
     || revision.imageDigest !== admission.image_digest
@@ -667,11 +713,13 @@ function assertCollectorBindings(
     throw new Error('RIG-B1 live worker WIF binding differs from signed admission.');
   }
   const plan = planTreasuryPresplit(input);
-  if (plan.planDigest !== treasury.preSplitPlanDigest
-    || plan.planDigest !== readiness.treasurySplitPlanDigest
+  if (plan.planDigest !== effectivePlanDigest
     || input.treasuryAddress !== treasury.address
-    || totalPlanSats(input) !== treasury.expectedTotalSats
-    || readiness.confirmedTotalSats !== treasury.expectedTotalSats
+    || totalPlanSats(input) !== effectiveTotalSats
+    || input.outputCount !== effectiveOutputCount
+    || (continuity === undefined
+      && (plan.planDigest !== readiness.treasurySplitPlanDigest
+        || readiness.confirmedTotalSats !== treasury.expectedTotalSats))
     || readiness.splitTransactionId !== treasury.splitTransactionId) {
     throw new Error('RIG-B1 treasury plan differs from immutable node/admission bindings.');
   }
@@ -727,6 +775,45 @@ export async function collectB1SchedulerPreclockArtifact(
   const readinessPlan = buildRigB1ReadinessPlan(handle, { treasurySplitPlan: treasuryPlan });
   const preparationId = authorized.authority.preparationId;
   const uris = preparationObjectUris(preparationId);
+  let verifiedContinuity: VerifiedB1TreasuryContinuityComposition | undefined;
+  let continuityClaimObject: B1LockedObject | undefined;
+  if (admission.treasury_continuity !== undefined) {
+    const continuity = admission.treasury_continuity;
+    const [claimObject, topologyObject, amendmentObject] = await Promise.all([
+      port.readLockedObject(
+        continuity.originalProvision.claim.objectUri,
+        continuity.originalProvision.claim.generation,
+      ),
+      port.readLockedObject(
+        continuity.originalProvision.topology.objectUri,
+        continuity.originalProvision.topology.generation,
+      ),
+      port.readLockedObject(continuity.amendment.objectUri, continuity.amendment.generation),
+    ]);
+    verifiedContinuity = verifyB1TreasuryContinuityComposition({
+      refreshedAdmissionRaw: admissionRaw,
+      currentTreasuryPlanInputRaw: treasuryPlanInputRaw,
+      originalClaim: claimObject,
+      originalTopology: topologyObject,
+      amendment: amendmentObject,
+    });
+    continuityClaimObject = claimObject;
+    if (verifiedContinuity.compositeIdentitySha256
+        !== authorized.authority.continuityCompositeIdentitySha256
+      || verifiedContinuity.controllerSourceHeadSha
+        !== authorized.authority.controllerSourceHeadSha
+      || verifiedContinuity.controllerSourceTreeSha
+        !== authorized.authority.controllerSourceTreeSha
+      || verifiedContinuity.controllerRelevantFilesSha256
+        !== authorized.authority.controllerRelevantFilesSha256) {
+      throw new Error('RIG-B1 verified treasury continuity differs from signed PREPARE controller bindings.');
+    }
+    if (port.verifyControllerIdentity === undefined) {
+      await verifyLocalB1TreasuryContinuityController(verifiedContinuity);
+    } else {
+      await port.verifyControllerIdentity(verifiedContinuity);
+    }
+  }
 
   if (await port.hasLockedObject(uris.outcome)) {
     if (!await port.hasLockedObject(uris.intent)) {
@@ -765,7 +852,11 @@ export async function collectB1SchedulerPreclockArtifact(
       || outcome.preclockArtifactSha256 !== rawDigest(outcome.preclockArtifactRaw)
       || replayedPreclock.admissionSha256 !== authorized.admissionSha256
       || replayedPreclock.sourceHeadSha !== authorized.authority.sourceHeadSha
-      || replayedPreclock.workerImageDigest !== authorized.authority.workerImageDigest) {
+      || replayedPreclock.workerImageDigest !== authorized.authority.workerImageDigest
+      || replayedPreclock.continuityCompositeIdentitySha256
+        !== verifiedContinuity?.compositeIdentitySha256
+      || outcome.continuityCompositeIdentitySha256
+        !== verifiedContinuity?.compositeIdentitySha256) {
       throw new Error('RIG-B1 immutable PREPARE replay outcome differs from the authorized identity.');
     }
     await containPreparation(port, preparationId, readinessPlan.schedulerJobs);
@@ -796,17 +887,21 @@ export async function collectB1SchedulerPreclockArtifact(
     splitTransactionId: treasury.splitTransactionId,
   });
   const node = admission.infrastructure.nodeReadiness;
+  const expectedConfirmedOutputCount = admission.treasury_continuity
+    ?.currentTreasury.confirmedOutputCount ?? treasury.expectedConfirmedOutputCount;
+  const expectedConfirmedTotalSats = admission.treasury_continuity
+    ?.currentTreasury.confirmedTotalSats ?? treasury.expectedTotalSats;
   if (core.blocks < node.blocks || core.headers < core.blocks
     || core.genesisHash !== node.genesisHash
     || core.txindexBestBlockHeight !== core.blocks
     || core.splitTransactionObserved !== treasury.splitTransactionId
-    || core.confirmedUtxos !== treasury.expectedConfirmedOutputCount
-    || core.confirmedTotalSats !== treasury.expectedTotalSats
+    || core.confirmedUtxos !== expectedConfirmedOutputCount
+    || core.confirmedTotalSats !== expectedConfirmedTotalSats
     || RIG_B1_REQUIRED_RPC_CAPABILITIES.some((method) => core.capabilities[method] !== true)) {
     throw new Error('RIG-B1 live Core/txindex/watch-only/capability observation differs from admission.');
   }
 
-  const claimObject = await port.readLockedObject(
+  const claimObject = continuityClaimObject ?? await port.readLockedObject(
     admission.infrastructure.authority.claim.objectUri,
     admission.infrastructure.authority.claim.generation,
   );
@@ -881,6 +976,12 @@ export async function collectB1SchedulerPreclockArtifact(
     invocationLeaseMaxSeconds: authority.invocationLeaseMaxSeconds,
     createdAt: mutationNow.toISOString(),
     authorityExpiresAt: authority.expiresAt,
+    ...(verifiedContinuity === undefined ? {} : {
+      continuityCompositeIdentitySha256: verifiedContinuity.compositeIdentitySha256,
+      controllerSourceHeadSha: verifiedContinuity.controllerSourceHeadSha,
+      controllerSourceTreeSha: verifiedContinuity.controllerSourceTreeSha,
+      controllerRelevantFilesSha256: verifiedContinuity.controllerRelevantFilesSha256,
+    }),
   }));
   const retainUntilTime = new Date(
     Date.parse(authority.issuedAt) + PREPARATION_AUDIT_RETENTION_MS,
@@ -1024,6 +1125,9 @@ export async function collectB1SchedulerPreclockArtifact(
     preclockArtifactSha256: rawDigest(preclockArtifactRaw),
     preclockArtifactRaw,
     completedAt: port.now().toISOString(),
+    ...(verifiedContinuity === undefined ? {} : {
+      continuityCompositeIdentitySha256: verifiedContinuity.compositeIdentitySha256,
+    }),
   }));
   await port.persistLockedObject(uris.outcome, outcomeRaw, retainUntilTime);
   assertLockedReadback(

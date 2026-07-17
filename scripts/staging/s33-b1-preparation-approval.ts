@@ -46,7 +46,13 @@ const payloadSchema = z.object({
     releaseCandidateId: boundedId,
     provisionApprovalEnvelopeSha256: sha256,
     provisionSignedPayloadSha256: sha256,
+    continuityCompositeIdentitySha256: sha256.optional(),
   }).strict(),
+  controller: z.object({
+    sourceHeadSha: gitSha,
+    sourceTreeSha: gitSha,
+    relevantFilesSha256: sha256,
+  }).strict().optional(),
   run: z.object({
     rigName: z.literal(B1_SCHEDULER_START_CONTRACT.rigName),
     soakId: boundedId,
@@ -60,7 +66,16 @@ const payloadSchema = z.object({
   }).strict(),
   issuedAt: timestamp,
   expiresAt: timestamp,
-}).strict();
+}).strict().superRefine((payload, context) => {
+  if ((payload.candidate.continuityCompositeIdentitySha256 === undefined)
+    !== (payload.controller === undefined)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['controller'],
+      message: 'RIG-B1 PREPARE continuity and controller bindings must be present together.',
+    });
+  }
+});
 
 const envelopeSchema = z.object({
   schemaVersion: z.literal(B1_PREPARATION_CONTRACT.schemaVersion),
@@ -87,6 +102,10 @@ export interface VerifiedB1PreparationAuthority {
   readonly releaseCandidateId: string;
   readonly provisionApprovalEnvelopeSha256: string;
   readonly provisionSignedPayloadSha256: string;
+  readonly continuityCompositeIdentitySha256?: string;
+  readonly controllerSourceHeadSha?: string;
+  readonly controllerSourceTreeSha?: string;
+  readonly controllerRelevantFilesSha256?: string;
   readonly rigName: string;
   readonly soakId: string;
   readonly leaseId: string;
@@ -189,6 +208,14 @@ class Ed25519B1PreparationAuthorityVerifier implements B1PreparationAuthorityVer
       releaseCandidateId: payload.candidate.releaseCandidateId,
       provisionApprovalEnvelopeSha256: payload.candidate.provisionApprovalEnvelopeSha256,
       provisionSignedPayloadSha256: payload.candidate.provisionSignedPayloadSha256,
+      ...(payload.candidate.continuityCompositeIdentitySha256 === undefined
+        ? {}
+        : {
+          continuityCompositeIdentitySha256: payload.candidate.continuityCompositeIdentitySha256,
+          controllerSourceHeadSha: payload.controller!.sourceHeadSha,
+          controllerSourceTreeSha: payload.controller!.sourceTreeSha,
+          controllerRelevantFilesSha256: payload.controller!.relevantFilesSha256,
+        }),
       rigName: payload.run.rigName,
       soakId: payload.run.soakId,
       leaseId: payload.run.leaseId,

@@ -19,6 +19,10 @@ import {
 } from './batch-drain-live-evidence';
 import { parseJsonRejectingDuplicateKeys } from './batch-drain-strict-json';
 import { parseUtcTimestamp, strictUtcTimestampSchema } from './batch-drain-time';
+import {
+  b1TreasuryContinuitySchema,
+  type B1TreasuryContinuity,
+} from './s33-b1-treasury-continuity';
 
 const nonEmpty = z.string().min(1);
 const sha256 = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -161,6 +165,7 @@ const admissionV2Schema = z.object({
   critical_config: criticalConfigSchema,
   scheduler: schedulerSchema,
   infrastructure: rigB1InfrastructureSchema,
+  treasury_continuity: b1TreasuryContinuitySchema.optional(),
   driver_path: nonEmpty,
   driver_sha256: sha256Hex,
   changed_behavior: nonEmpty,
@@ -202,6 +207,7 @@ export interface PreClockAdmissionIdentity {
   readonly workerService: string;
   readonly cleanMirrorAttestationId: string;
   readonly infrastructure: RigB1Infrastructure;
+  readonly treasuryContinuity?: B1TreasuryContinuity;
 }
 
 const DECLARATION_BY_ADMISSION_HANDLE = new WeakMap<AdmissionBoundRunDeclaration, RunDeclaration>();
@@ -297,6 +303,29 @@ function assertAdmissionInvariants(admission: AdmissionV2 | PreClockAdmissionV2)
       );
     }
   }
+  const continuity = admission.treasury_continuity;
+  if (continuity !== undefined && (
+    continuity.originalProvision.sourceHeadSha !== admission.sha
+    || continuity.originalProvision.soakId !== admission.soak_id
+    || continuity.originalProvision.leaseId !== admission.lease_id
+    || continuity.originalProvision.approvalId !== admission.infrastructure.authority.approvalId
+    || continuity.originalProvision.approvalEnvelopeSha256
+      !== admission.infrastructure.authority.approvalEnvelopeSha256
+    || continuity.originalProvision.signedPayloadSha256
+      !== admission.infrastructure.authority.signedPayloadSha256
+    || continuity.originalProvision.claim.objectUri
+      !== admission.infrastructure.authority.claim.objectUri
+    || continuity.originalProvision.claim.generation
+      !== admission.infrastructure.authority.claim.generation
+    || continuity.originalTreasury.planDigest
+      !== admission.infrastructure.treasuryWatchOnly.preSplitPlanDigest
+    || continuity.originalTreasury.confirmedOutputCount
+      !== admission.infrastructure.treasuryWatchOnly.expectedConfirmedOutputCount
+    || continuity.originalTreasury.confirmedTotalSats
+      !== admission.infrastructure.treasuryWatchOnly.expectedTotalSats
+  )) {
+    throw new Error('Admission v2 treasury-continuity projection differs from the original immutable infrastructure.');
+  }
 }
 
 function buildRunDeclaration(admission: AdmissionV2, ceremony: DeclarationCeremony): RunDeclaration {
@@ -369,6 +398,9 @@ export function projectAdmissionV2ToPreClockIdentity(
     workerService: admission.cloud_run_service,
     cleanMirrorAttestationId: admission.clean_mirror_attestation_id,
     infrastructure: admission.infrastructure,
+    ...(admission.treasury_continuity === undefined
+      ? {}
+      : { treasuryContinuity: admission.treasury_continuity }),
   });
   const handle = deepFreeze<PreClockAdmissionBoundIdentity>({
     admissionSha256: createHash('sha256').update(admissionRaw as string).digest('hex'),

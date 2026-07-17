@@ -27,6 +27,7 @@ import {
   createB1PreparationAuthorityVerifierForTest,
   parseB1PreparationAuthoritySignedPayload,
 } from './s33-b1-preparation-approval';
+import { calculateB1TreasuryContinuityCompositeIdentity } from './s33-b1-treasury-continuity';
 
 const TREASURY = 'tb1qxca7ke7hgguarqxkwwydrfenn8ymnspxq765eq';
 const OBSERVED_AT = '2026-07-16T19:55:00.000Z';
@@ -81,8 +82,169 @@ function admissionRaw(): string {
   return JSON.stringify(value);
 }
 
-function observation(rawAdmission = admissionRaw()): RigB1PreClockObservation {
-  const split = planTreasuryPresplit(inputs());
+function textFixture(name: string): string {
+  return readFileSync(join(process.cwd(), 'scripts/fixtures', name), 'utf8').trimEnd();
+}
+
+function continuityPlanRaw(): string {
+  return textFixture('s33-b1-post-probe-treasury-plan.fixture.txt');
+}
+
+function continuityPlanInput(): TreasuryPresplitPlanInput {
+  return JSON.parse(continuityPlanRaw()) as TreasuryPresplitPlanInput;
+}
+
+function continuityAdmissionRaw(): string {
+  const base = JSON.parse(readFileSync(
+    join(process.cwd(), 'scripts/staging/fixtures/rig-b1-admission-v2.json'),
+    'utf8',
+  )) as Record<string, unknown> & {
+    infrastructure: {
+      authority: Record<string, unknown>;
+      nodeReadiness: Record<string, unknown>;
+      treasuryWatchOnly: Record<string, unknown>;
+      secretReferences: unknown;
+    };
+  };
+  const claimRaw = textFixture('s33-b1-c56c-provision-claim.fixture.txt');
+  const topologyRaw = textFixture('s33-b1-c56c-topology-ownership.fixture.txt');
+  const amendmentRaw = textFixture('s33-b1-c56c-treasury-continuity-amendment.fixture.txt');
+  const claim = JSON.parse(claimRaw) as Record<string, string>;
+  const topology = JSON.parse(topologyRaw) as Record<string, unknown> & {
+    nodeReadiness: Record<string, unknown>;
+    secretReferences: unknown;
+    supabaseProjectRef: string;
+    cloudRunServiceUrl: string;
+  };
+  const runtimeHead = 'c56c7729687602b980e2b03454588683a8c20d9b';
+  const runtimeImageDigest =
+    'sha256:0162f4b840b12cd062eb43a2c05d4684bf5997e5f70297186c96a5aafc5ee105';
+  const runtimeImage =
+    `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${runtimeImageDigest}`;
+  Object.assign(base, {
+    sha: runtimeHead,
+    declared_source_head: runtimeHead,
+    deployed_source_head: runtimeHead,
+    image: runtimeImage,
+    image_digest: runtimeImageDigest,
+    deployed_image_ref: runtimeImage,
+    deployed_image_digest: runtimeImageDigest,
+    source_head_image_ref:
+      `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:${runtimeHead}`,
+    source_head_image_digest: runtimeImageDigest,
+    soak_id: claim.soakId,
+    lease_id: claim.leaseId,
+    deployed_revision: 'arkova-worker-s33-rig-b1-staging-b1hdr2-021254',
+    tag_url: topology.cloudRunServiceUrl,
+    supabase_project_ref: topology.supabaseProjectRef,
+  });
+  base.infrastructure.authority = {
+    binding: 'ed25519-signed-node-approval',
+    approvalId: claim.approvalId,
+    approvalEnvelopeSha256: claim.envelopeSha256,
+    signedPayloadSha256: claim.signedPayloadSha256,
+    spendCapUsd: 50,
+    claim: {
+      backend: 'gcs-if-generation-match-0-locked-retention',
+      objectUri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/node-approval-claims/b1-provision-c56c7729-20260717t021606z.json',
+      generation: '1784254587600385',
+    },
+  };
+  base.infrastructure.nodeReadiness = topology.nodeReadiness;
+  base.infrastructure.secretReferences = topology.secretReferences;
+  Object.assign(base.infrastructure.treasuryWatchOnly, {
+    preSplitPlanDigest: 'sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8',
+    expectedConfirmedOutputCount: 32,
+    expectedTotalSats: 169_639,
+  });
+  const continuity = {
+    schemaVersion: 'arkova.s33.rig-b1.treasury-continuity-composition/v1',
+    compositeIdentitySha256: `sha256:${'0'.repeat(64)}`,
+    originalProvision: {
+      approvalId: claim.approvalId,
+      approvalEnvelopeSha256: claim.envelopeSha256,
+      signedPayloadSha256: claim.signedPayloadSha256,
+      sourceHeadSha: claim.sourceHeadSha,
+      sourceTreeSha: claim.sourceTreeSha,
+      corpusDigest: claim.corpusDigest,
+      releaseCandidateId: claim.releaseCandidateId,
+      soakId: claim.soakId,
+      leaseId: claim.leaseId,
+      claim: {
+        objectUri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/node-approval-claims/b1-provision-c56c7729-20260717t021606z.json',
+        generation: '1784254587600385',
+        sha256: 'sha256:2b24c08b9e924d2e649242c5c36ca27ec56c1aa742080e3ff1eee7ab1056875d',
+      },
+      topology: {
+        objectUri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/topology-ownership/b1-provision-c56c7729-20260717t021606z.json',
+        generation: '1784254616684049',
+        sha256: 'sha256:d408b454bc0b5382d64c7e7de38bb0a21ede88b3b14487e84616d24955c456f7',
+      },
+    },
+    amendment: {
+      objectUri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/recovery-amendments/b1-treasury-continuity-c56c7729-20260717t022339z.json',
+      generation: '1784255027455134',
+      envelopeSha256: 'sha256:d046785a0157d7017d59f7a9cd3005644c2d5e3006b95a810fe4d6748240cca0',
+      signedPayloadSha256: 'sha256:2a2f2cb4dd647044fbdcc80a1a87283257f769fdeac50a62ec6b9de095173e02',
+    },
+    originalTreasury: {
+      confirmedOutputCount: 32,
+      confirmedTotalSats: 169_639,
+      planDigest: 'sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8',
+    },
+    currentTreasury: {
+      confirmedOutputCount: 32,
+      confirmedTotalSats: 169_482,
+      planDigest: 'sha256:9808e07f3b2329488e5dc5f2658a2224937f3c950fd7322b9a5a227ff34fc034',
+      planInputSha256: 'sha256:1c952e7e6ee5d668f663eaec4fd62d5df83ee9f30778d57c07b3d03b1a8e4485',
+      deltaSats: -157,
+      fundedProbeFeeSats: 157,
+    },
+    controllerCandidate: {
+      sourceHeadSha: 'd'.repeat(40),
+      sourceTreeSha: 'e'.repeat(40),
+      relevantFilesSha256: `sha256:${'f'.repeat(64)}`,
+    },
+  };
+  base.treasury_continuity = continuity;
+  let raw = JSON.stringify(base);
+  continuity.compositeIdentitySha256 = calculateB1TreasuryContinuityCompositeIdentity({
+    refreshedAdmissionRaw: raw,
+    currentTreasuryPlanInputRaw: continuityPlanRaw(),
+    originalClaim: {
+      uri: continuity.originalProvision.claim.objectUri,
+      generation: continuity.originalProvision.claim.generation,
+      raw: claimRaw,
+      retainUntilTime: '2026-07-22T22:39:24Z',
+    },
+    originalTopology: {
+      uri: continuity.originalProvision.topology.objectUri,
+      generation: continuity.originalProvision.topology.generation,
+      raw: topologyRaw,
+      retainUntilTime: '2026-07-22T22:39:24Z',
+    },
+    amendment: {
+      uri: continuity.amendment.objectUri,
+      generation: continuity.amendment.generation,
+      raw: amendmentRaw,
+      retainUntilTime: '2026-07-22T22:39:24Z',
+    },
+  });
+  raw = JSON.stringify(base);
+  return raw;
+}
+
+function observation(
+  rawAdmission = admissionRaw(),
+  treasuryPlanInput: TreasuryPresplitPlanInput = inputs(),
+): RigB1PreClockObservation {
+  const admission = JSON.parse(rawAdmission) as {
+    infrastructure: {
+      nodeReadiness: { blocks: number; headers: number; txindexBestBlockHeight: number };
+    };
+  };
+  const node = admission.infrastructure.nodeReadiness;
+  const split = planTreasuryPresplit(treasuryPlanInput);
   const readiness = buildRigB1ReadinessPlan(
     projectAdmissionV2ToPreClockIdentity(rawAdmission),
     { treasurySplitPlan: split },
@@ -115,13 +277,18 @@ function observation(rawAdmission = admissionRaw()): RigB1PreClockObservation {
       rpcMethod: 'getblockchaininfo',
       chain: 'signet',
       initialBlockDownload: false,
-      headers: 100,
-      blocks: 100,
+      headers: node.headers,
+      blocks: node.blocks,
       bestBlockHash,
       genesisHash: '00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6',
       observedAt: OBSERVED_AT,
     },
-    txindex: { rpcMethod: 'getindexinfo', synced: true, bestBlockHeight: 100, observedAt: OBSERVED_AT },
+    txindex: {
+      rpcMethod: 'getindexinfo',
+      synced: true,
+      bestBlockHeight: node.txindexBestBlockHeight,
+      observedAt: OBSERVED_AT,
+    },
     watchOnlyWallet: {
       walletName: 'arkova-watch-only',
       privateKeysEnabled: false,
@@ -131,7 +298,8 @@ function observation(rawAdmission = admissionRaw()): RigB1PreClockObservation {
       descriptorImported: true,
       rescanComplete: true,
       confirmedUtxos: 32,
-      confirmedTotalSats: 169_639,
+      confirmedTotalSats: treasuryPlanInput.inputs
+        .reduce((total, candidate) => total + candidate.valueSats, 0) - treasuryPlanInput.feeSats,
       minimumConfirmations: 1,
       observedAt: OBSERVED_AT,
     },
@@ -159,7 +327,7 @@ function observation(rawAdmission = admissionRaw()): RigB1PreClockObservation {
     },
     mempoolCorroboration: {
       provider: 'mempool-space-signet', baseUrl: 'https://mempool.space/signet/api',
-      tipHeight: 100, tipHash: bestBlockHash, txId: broadcastTxId, txOutcome: 'found',
+      tipHeight: node.blocks, tipHash: bestBlockHash, txId: broadcastTxId, txOutcome: 'found',
       observedAt: OBSERVED_AT,
     },
     nodeCron: { mode: 'disabled', observedAt: OBSERVED_AT },
@@ -167,6 +335,17 @@ function observation(rawAdmission = admissionRaw()): RigB1PreClockObservation {
 }
 
 describe('RIG-B1 augmented Scheduler-start pre-clock generator', () => {
+  it('accepts top-level continuity while rejecting mutation of original c56 infrastructure', () => {
+    const raw = continuityAdmissionRaw();
+    expect(() => projectAdmissionV2ToPreClockIdentity(raw)).not.toThrow();
+    const mutated = JSON.parse(raw) as {
+      infrastructure: { nodeReadiness: { confirmedTotalSats: number } };
+    };
+    mutated.infrastructure.nodeReadiness.confirmedTotalSats = 169_482;
+    expect(() => projectAdmissionV2ToPreClockIdentity(JSON.stringify(mutated)))
+      .toThrow(/continuity|infrastructure|original|treasury/i);
+  });
+
   it('emits admission/head/image/readiness hashes only after full readiness validation', () => {
     const admission = admissionRaw();
     const artifact = JSON.parse(buildB1SchedulerStartPreclockArtifact(
@@ -318,6 +497,28 @@ describe('distinct signed PREPARE_B1 action authority', () => {
     });
   });
 
+  it('binds the continuity composite and distinct controller into PREPARE authority', () => {
+    const request = preparationRequest();
+    request.candidate.continuityCompositeIdentitySha256 = `sha256:${'e'.repeat(64)}`;
+    request.controller = {
+      sourceHeadSha: 'f'.repeat(40),
+      sourceTreeSha: '1'.repeat(40),
+      relevantFilesSha256: `sha256:${'2'.repeat(64)}`,
+    };
+    const raw = buildB1PreparationAuthoritySignedPayload(request);
+    expect(verifier.verify(preparationEnvelope(raw), new Date(OBSERVED_AT))).toMatchObject({
+      continuityCompositeIdentitySha256: request.candidate.continuityCompositeIdentitySha256,
+      controllerSourceHeadSha: request.controller.sourceHeadSha,
+      controllerSourceTreeSha: request.controller.sourceTreeSha,
+      controllerRelevantFilesSha256: request.controller.relevantFilesSha256,
+    });
+
+    const missingController = preparationRequest();
+    missingController.candidate.continuityCompositeIdentitySha256 = `sha256:${'e'.repeat(64)}`;
+    expect(() => buildB1PreparationAuthoritySignedPayload(missingController))
+      .toThrow(/continuity|controller|custom/i);
+  });
+
   it('rejects an unsigned envelope identity even when the payload signature is valid', () => {
     const raw = buildB1PreparationAuthoritySignedPayload(preparationRequest());
     expect(() => verifier.verify(
@@ -362,8 +563,11 @@ interface TestCollectorPort extends B1PreclockCollectorPort {
   readonly testState: TestCollectorState;
 }
 
-function liveCollectorPort(rawAdmission: string): TestCollectorPort {
-  const live = observation(rawAdmission);
+function liveCollectorPort(
+  rawAdmission: string,
+  treasuryPlanInput: TreasuryPresplitPlanInput = inputs(),
+): TestCollectorPort {
+  const live = observation(rawAdmission, treasuryPlanInput);
   const admission = JSON.parse(rawAdmission) as {
     sha: string;
     image_digest: string;
@@ -379,6 +583,13 @@ function liveCollectorPort(rawAdmission: string): TestCollectorPort {
         signedPayloadSha256: string;
         claim: { objectUri: string; generation: string };
       };
+    };
+    treasury_continuity?: {
+      originalProvision: {
+        claim: { objectUri: string; generation: string };
+        topology: { objectUri: string; generation: string };
+      };
+      amendment: { objectUri: string; generation: string };
     };
   };
   const wif = admission.infrastructure.secretReferences.find(({ env }) => env === 'BITCOIN_TREASURY_WIF')!;
@@ -410,8 +621,34 @@ function liveCollectorPort(rawAdmission: string): TestCollectorPort {
   return {
     testState,
     now: () => new Date(testState.now),
+    verifyControllerIdentity: async () => {
+      testState.operations.push('verify-controller');
+    },
     hasLockedObject: async (uri) => locked.has(uri),
     readLockedObject: async (uri, generation) => {
+      const continuity = admission.treasury_continuity;
+      const continuityObject = continuity === undefined ? undefined : [
+        {
+          reference: continuity.originalProvision.claim,
+          raw: textFixture('s33-b1-c56c-provision-claim.fixture.txt'),
+        },
+        {
+          reference: continuity.originalProvision.topology,
+          raw: textFixture('s33-b1-c56c-topology-ownership.fixture.txt'),
+        },
+        {
+          reference: continuity.amendment,
+          raw: textFixture('s33-b1-c56c-treasury-continuity-amendment.fixture.txt'),
+        },
+      ].find(({ reference }) => reference.objectUri === uri);
+      if (continuityObject !== undefined) {
+        return {
+          uri,
+          generation: generation ?? continuityObject.reference.generation,
+          retainUntilTime: '2026-07-22T22:39:24Z',
+          raw: continuityObject.raw,
+        };
+      }
       if (uri === admission.infrastructure.authority.claim.objectUri) {
         return {
           uri,
@@ -502,7 +739,7 @@ function liveCollectorPort(rawAdmission: string): TestCollectorPort {
     },
     observeMempool: async ({ txId, coreTipHash }) => ({
       txId,
-      tipHeight: 100,
+      tipHeight: live.getBlockchainInfo.blocks,
       tipHash: coreTipHash,
       spentOutpoints: [{
         txId: admission.infrastructure.treasuryWatchOnly.splitTransactionId,
@@ -546,6 +783,75 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
       .toHaveLength(1);
     expect([...port.testState.locked.keys()].filter((uri) => uri.includes('/preparation-outcomes/')))
       .toHaveLength(1);
+  });
+
+  it('uses original c56 infrastructure plus effective continuity and persists controller bindings', async () => {
+    const admission = continuityAdmissionRaw();
+    const plan = continuityPlanRaw();
+    const port = liveCollectorPort(admission, continuityPlanInput());
+    const artifact = JSON.parse(await collectB1SchedulerPreclockArtifact(
+      admission,
+      plan,
+      authorizeB1PreclockMutationForTest(admission, plan, {
+        sourceTreeSha: '09f7d40d6b59b6afbe4979346e1d0d46f35ccd28',
+        corpusDigest: 'sha256:7d6ffd131230d13483d3f1bacdb170b3cfcc53a4383d59f6689e415c99e6089e',
+        releaseCandidateId: 's33-w3-b1-recovery-rc-c56c7729',
+      }),
+      port,
+    )) as Record<string, unknown>;
+    const parsedAdmission = JSON.parse(admission) as {
+      treasury_continuity: {
+        compositeIdentitySha256: string;
+        controllerCandidate: {
+          sourceHeadSha: string;
+          sourceTreeSha: string;
+          relevantFilesSha256: string;
+        };
+      };
+    };
+    expect(artifact.continuityCompositeIdentitySha256)
+      .toBe(parsedAdmission.treasury_continuity.compositeIdentitySha256);
+    const intent = JSON.parse([...port.testState.locked.entries()]
+      .find(([uri]) => uri.includes('/preparation-intents/'))![1].raw) as Record<string, unknown>;
+    expect(intent).toMatchObject({
+      continuityCompositeIdentitySha256:
+        parsedAdmission.treasury_continuity.compositeIdentitySha256,
+      controllerSourceHeadSha:
+        parsedAdmission.treasury_continuity.controllerCandidate.sourceHeadSha,
+      controllerSourceTreeSha:
+        parsedAdmission.treasury_continuity.controllerCandidate.sourceTreeSha,
+      controllerRelevantFilesSha256:
+        parsedAdmission.treasury_continuity.controllerCandidate.relevantFilesSha256,
+    });
+    expect(port.testState.operations.indexOf('verify-controller'))
+      .toBeLessThan(port.testState.operations.findIndex((operation) => operation.startsWith('persist:')));
+    expect(port.testState.funded).toBe(1);
+  });
+
+  it('performs zero mutation when the locked continuity amendment differs', async () => {
+    const admission = continuityAdmissionRaw();
+    const plan = continuityPlanRaw();
+    const port = liveCollectorPort(admission, continuityPlanInput());
+    const readLockedObject = port.readLockedObject.bind(port);
+    port.readLockedObject = async (uri, generation) => {
+      const object = await readLockedObject(uri, generation);
+      return uri.includes('/recovery-amendments/')
+        ? { ...object, raw: object.raw.replace('169482', '169483') }
+        : object;
+    };
+    await expect(collectB1SchedulerPreclockArtifact(
+      admission,
+      plan,
+      authorizeB1PreclockMutationForTest(admission, plan, {
+        sourceTreeSha: '09f7d40d6b59b6afbe4979346e1d0d46f35ccd28',
+        corpusDigest: 'sha256:7d6ffd131230d13483d3f1bacdb170b3cfcc53a4383d59f6689e415c99e6089e',
+        releaseCandidateId: 's33-w3-b1-recovery-rc-c56c7729',
+      }),
+      port,
+    )).rejects.toThrow(/amendment|digest|signature/i);
+    expect(port.testState.funded).toBe(0);
+    expect(port.testState.installed).toBe(0);
+    expect(port.testState.locked.size).toBe(0);
   });
 
   it('returns the immutable completed outcome on replay without a second funded broadcast', async () => {
