@@ -207,8 +207,13 @@ async function handleAnchorSubmit(req: Request, res: Response) {
     if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res, anchor.id))) {
       const { error: compensationError } = await db.from('anchors').delete().eq('id', anchor.id);
       if (compensationError) {
-        // The row exists but was never paid for — surface loudly; it is
-        // PENDING and will not progress, but must be reconciled.
+        // The row exists but was never paid for — surface loudly. NOTE:
+        // this unpaid PENDING row CAN still be batch-anchored on-chain
+        // (batch-anchor.ts queueRunCreditReason() returns null for non-rule
+        // anchors, so the drain does not re-check credits) — Arkova eats
+        // the fee. Bounded operational risk (requires a compensation-delete
+        // failure or a crash in the insert→deduct window); reconciliation
+        // sweep tracked as SCRUM-2973.
         logger.error(
           { anchorId: anchor.id, orgId },
           'anchor_credit_compensation_delete_failed',
