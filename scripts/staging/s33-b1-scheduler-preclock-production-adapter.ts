@@ -33,6 +33,7 @@ import {
 import { parseJsonRejectingDuplicateKeys } from './batch-drain-strict-json';
 import { rigB1SecretReferencesSchema } from './batch-drain-live-evidence';
 import { planTreasuryPresplit, type TreasuryPresplitPlanInput } from './batch-drain-utxo-fanout';
+import { resolveStagingApiBase } from './load-harness-env';
 import {
   B1_SCHEDULER_START_CONTRACT,
   buildB1SchedulerStartPreclockArtifact,
@@ -61,6 +62,13 @@ import {
   verifyB1TreasuryContinuityComposition,
   type VerifiedB1TreasuryContinuityComposition,
 } from './s33-b1-treasury-continuity';
+import {
+  B1_NO_BROADCAST_PREPARE_CONTAINMENT_CONTRACT,
+  b1NoBroadcastPrepareRecoverySchema,
+  createProductionB1NoBroadcastPrepareContainmentVerifier,
+  type B1NoBroadcastPrepareRecovery,
+  type VerifiedB1NoBroadcastPrepareContainment,
+} from './s33-b1-no-broadcast-prepare-containment';
 
 const VM = 'arkova-s33-rig-b1-bitcoin-core-signet';
 const ZONE = 'us-central1-a';
@@ -119,6 +127,7 @@ const admissionSchema = z.object({
   supabase_project_ref: projectRef,
   cloud_run_service: z.literal(B1_SCHEDULER_START_CONTRACT.workerService),
   treasury_continuity: b1TreasuryContinuitySchema.optional(),
+  no_broadcast_prepare_recovery: b1NoBroadcastPrepareRecoverySchema.optional(),
   infrastructure: z.object({
     authority: z.object({
       approvalId: z.string().min(1),
@@ -169,6 +178,7 @@ const revisionSchema = z.object({
   imageDigest: sha256,
   runtimeServiceAccount: z.literal(B1_SCHEDULER_START_CONTRACT.workerRuntimeServiceAccount),
   serviceUrl: z.string().url(),
+  fundedProbeUrl: z.string().url(),
   inProcessCronDisabled: z.literal(true),
   secrets: z.object({
     supabaseUrl: secretBindingSchema,
@@ -199,6 +209,9 @@ export interface B1CoreLiveObservation {
     valueSats: number;
     confirmations: number;
   }>[];
+  readonly unconfirmedUtxos: number;
+  readonly minconfZeroMatchesMinconfOne: boolean;
+  readonly confirmedOutpointValueExportSha256: string;
   readonly minimumConfirmations: number;
   readonly splitTransactionObserved: string;
   readonly capabilities: Readonly<Record<typeof RIG_B1_REQUIRED_RPC_CAPABILITIES[number], boolean>>;
@@ -231,6 +244,13 @@ export interface B1PreclockCollectorPort {
   verifyControllerIdentity?(
     verified: VerifiedB1TreasuryContinuityComposition,
   ): Promise<unknown>;
+  verifyNoBroadcastPrepareContainment?(input: Readonly<{
+    recovery: B1NoBroadcastPrepareRecovery;
+    containment: B1LockedObject;
+    intent: B1LockedObject;
+    verificationTime: Date;
+  }>): VerifiedB1NoBroadcastPrepareContainment;
+  observeInvocationLeaseAbsent?(preparationId: string): Promise<boolean>;
   hasLockedObject(uri: string): Promise<boolean>;
   readLockedObject(uri: string, generation?: string): Promise<B1LockedObject>;
   persistLockedObject(uri: string, raw: string, retainUntilTime: string): Promise<void>;
@@ -286,6 +306,16 @@ function rawDigest(raw: string): string {
   return `sha256:${createHash('sha256').update(raw).digest('hex')}`;
 }
 
+export function b1ConfirmedOutpointValueExportSha256(outputs: readonly Readonly<{
+  txId: string;
+  vout: number;
+  valueSats: number;
+}>[]): string {
+  const sorted = outputs.map(({ txId, vout, valueSats }) => ({ txId, vout, valueSats }))
+    .sort((left, right) => left.txId.localeCompare(right.txId) || left.vout - right.vout);
+  return rawDigest(`${JSON.stringify(sorted)}\n`);
+}
+
 export function b1PreparationFundedProbeRunId(input: Readonly<{
   preparationId: string;
   idempotencyKey: string;
@@ -296,6 +326,18 @@ export function b1PreparationFundedProbeRunId(input: Readonly<{
   return `b1-preclock-${createHash('sha256')
     .update(`${preparationId}:${idempotencyKey}`)
     .digest('hex').slice(0, 32)}`;
+}
+
+export function projectB1FundedProbeRouting(input: Readonly<{
+  serviceUrl: string;
+  fundedProbeUrl: string;
+}>): Readonly<{ identityAudience: string; apiBase: string }> {
+  const identityAudience = z.string().url().parse(input.serviceUrl);
+  const apiBase = resolveStagingApiBase({ STAGING_API_BASE: input.fundedProbeUrl });
+  if (identityAudience === apiBase) {
+    throw new Error('RIG-B1 funded probe must separate canonical OIDC audience from tagged API routing.');
+  }
+  return Object.freeze({ identityAudience, apiBase });
 }
 
 const preparationIntentSchema = z.object({
@@ -449,6 +491,7 @@ function authorizeFromVerifiedPreparation(
   reverify: (now: Date) => VerifiedB1PreparationAuthority,
 ): B1PreclockMutationAuthorization {
   const admission = projectB1SchedulerStartAdmission(admissionRaw);
+  const collectorAdmission = strict(admissionSchema, admissionRaw, 'RIG-B1 PREPARE admission');
   const continuity = projectB1TreasuryContinuity(admissionRaw);
   const admissionSha256 = rawDigest(admissionRaw);
   const treasuryPlanSha256 = rawDigest(treasuryPlanInputRaw);
@@ -482,7 +525,9 @@ function authorizeFromVerifiedPreparation(
         || verified.controllerSourceHeadSha !== continuity.controllerCandidate.sourceHeadSha
         || verified.controllerSourceTreeSha !== continuity.controllerCandidate.sourceTreeSha
         || verified.controllerRelevantFilesSha256
-          !== continuity.controllerCandidate.relevantFilesSha256)) {
+          !== continuity.controllerCandidate.relevantFilesSha256)
+    || JSON.stringify(verified.noBroadcastPrepareRecovery)
+      !== JSON.stringify(collectorAdmission.no_broadcast_prepare_recovery)) {
     throw new Error('RIG-B1 signed PREPARE authority does not bind the exact admission/plan/provision authority.');
   }
   const handle = Object.freeze<B1PreclockMutationAuthorization>({ preparationId: verified.preparationId });
@@ -540,6 +585,7 @@ export function authorizeB1PreclockMutationForTest(
 ): B1PreclockMutationAuthorization {
   if (process.env.NODE_ENV !== 'test') throw new Error('Injected B1 pre-clock authorization is test-only.');
   const admission = projectB1SchedulerStartAdmission(admissionRaw);
+  const collectorAdmission = strict(admissionSchema, admissionRaw, 'RIG-B1 test PREPARE admission');
   const continuity = projectB1TreasuryContinuity(admissionRaw);
   const authority = Object.freeze<VerifiedB1PreparationAuthority>({
     status: 'VERIFIED',
@@ -571,6 +617,9 @@ export function authorizeB1PreclockMutationForTest(
       controllerSourceHeadSha: continuity.controllerCandidate.sourceHeadSha,
       controllerSourceTreeSha: continuity.controllerCandidate.sourceTreeSha,
       controllerRelevantFilesSha256: continuity.controllerCandidate.relevantFilesSha256,
+    }),
+    ...(collectorAdmission.no_broadcast_prepare_recovery === undefined ? {} : {
+      noBroadcastPrepareRecovery: collectorAdmission.no_broadcast_prepare_recovery,
     }),
     ...overrides,
   });
@@ -712,6 +761,9 @@ function assertCollectorBindings(
   if (revision.sourceHeadSha !== admission.sha
     || revision.imageDigest !== admission.image_digest
     || revision.serviceUrl !== admission.tag_url
+    || (admission.no_broadcast_prepare_recovery !== undefined
+      && revision.fundedProbeUrl
+        !== B1_NO_BROADCAST_PREPARE_CONTAINMENT_CONTRACT.taggedServiceUrl)
     || !revision.inProcessCronDisabled) {
     throw new Error('RIG-B1 live Cloud Run revision differs from admission or leaves in-process cron enabled.');
   }
@@ -779,6 +831,13 @@ function assertCollectorCoreBindings(
     || core.splitTransactionObserved !== treasury.splitTransactionId
     || core.confirmedUtxos !== expectedConfirmedOutputCount
     || core.confirmedTotalSats !== expectedConfirmedTotalSats
+    || (admission.no_broadcast_prepare_recovery !== undefined
+      && (core.unconfirmedUtxos !== 0
+        || !core.minconfZeroMatchesMinconfOne
+        || core.confirmedOutpointValueExportSha256
+          !== B1_NO_BROADCAST_PREPARE_CONTAINMENT_CONTRACT.confirmedOutpointValueExportSha256
+        || core.minimumConfirmations
+          < B1_NO_BROADCAST_PREPARE_CONTAINMENT_CONTRACT.minimumConfirmationsFloor))
     || RIG_B1_REQUIRED_RPC_CAPABILITIES.some((method) => core.capabilities[method] !== true)) {
     throw new Error('RIG-B1 live Core/txindex/watch-only/capability observation differs from admission.');
   }
@@ -896,6 +955,55 @@ export async function collectB1SchedulerPreclockArtifact(
     } else {
       await port.verifyControllerIdentity(verifiedContinuity);
     }
+  }
+
+  const priorIntentPresent = await port.hasLockedObject(
+    B1_NO_BROADCAST_PREPARE_CONTAINMENT_CONTRACT.failedPreparationIntentUri,
+  );
+  if (priorIntentPresent) {
+    const recovery = admission.no_broadcast_prepare_recovery;
+    if (recovery === undefined
+      || authorized.authority.noBroadcastPrepareRecovery === undefined
+      || JSON.stringify(recovery)
+        !== JSON.stringify(authorized.authority.noBroadcastPrepareRecovery)
+      || recovery.successorPreparationId !== preparationId
+      || verifiedContinuity === undefined) {
+      throw new Error(
+        'RIG-B1 successor PREPARE lacks the exact signed no-broadcast containment binding.',
+      );
+    }
+    if (await port.hasLockedObject(recovery.failedPreparation.outcomeObjectUri)) {
+      throw new Error('RIG-B1 contained PREPARE outcome now exists; no-broadcast authority is invalid.');
+    }
+    if (port.observeInvocationLeaseAbsent === undefined
+      || !await port.observeInvocationLeaseAbsent(recovery.failedPreparation.preparationId)) {
+      throw new Error('RIG-B1 contained PREPARE invocation lease is not observably absent.');
+    }
+    const [containedIntent, containmentObject] = await Promise.all([
+      port.readLockedObject(
+        recovery.failedPreparation.intent.objectUri,
+        recovery.failedPreparation.intent.generation,
+      ),
+      port.readLockedObject(recovery.containment.objectUri, recovery.containment.generation),
+    ]);
+    if (port.verifyNoBroadcastPrepareContainment === undefined) {
+      createProductionB1NoBroadcastPrepareContainmentVerifier().verify({
+        recovery,
+        containment: containmentObject,
+        intent: containedIntent,
+        verificationTime: port.now(),
+      });
+    } else {
+      port.verifyNoBroadcastPrepareContainment({
+        recovery,
+        containment: containmentObject,
+        intent: containedIntent,
+        verificationTime: port.now(),
+      });
+    }
+  } else if (admission.no_broadcast_prepare_recovery !== undefined
+    || authorized.authority.noBroadcastPrepareRecovery !== undefined) {
+    throw new Error('RIG-B1 no-broadcast recovery names a missing immutable PREPARE intent.');
   }
 
   if (await port.hasLockedObject(uris.outcome)) {
@@ -1281,6 +1389,8 @@ const serviceRoutingSchema = z.object({
     traffic: z.array(z.object({
       revisionName: z.string().min(1),
       percent: z.number().int().min(0).max(100),
+      tag: z.string().regex(/^train-[a-z0-9-]*[a-z0-9]$/u),
+      url: z.string().url(),
     }).passthrough()).length(1),
   }).passthrough(),
 }).passthrough();
@@ -1288,19 +1398,30 @@ const serviceRoutingSchema = z.object({
 /** Pure routing projection used by production and regression tests. */
 export function requireExactB1ServiceRouting(
   raw: string,
-  expected: Readonly<{ revision: string; serviceUrl: string }>,
+  expected: Readonly<{
+    revision: string;
+    serviceUrl: string;
+    fundedProbeUrl: string;
+    trafficTag: string;
+  }>,
 ): string {
   const service = serviceRoutingSchema.parse(
     parseJsonRejectingDuplicateKeys(raw, 'RIG-B1 Cloud Run service routing'),
   );
   const traffic = service.status.traffic[0]!;
+  const admittedTaggedUrl = resolveStagingApiBase({ STAGING_API_BASE: expected.fundedProbeUrl });
+  const canonical = new URL(service.status.url);
+  const tagged = new URL(traffic.url);
   if (service.status.latestReadyRevisionName !== expected.revision
     || service.status.url !== expected.serviceUrl
     || traffic.revisionName !== expected.revision
-    || traffic.percent !== 100) {
+    || traffic.percent !== 100
+    || traffic.tag !== expected.trafficTag
+    || traffic.url !== admittedTaggedUrl
+    || tagged.hostname !== `${traffic.tag}---${canonical.hostname}`) {
     throw new Error('RIG-B1 Cloud Run service is not routing 100% to the exact admitted revision.');
   }
-  return service.status.url;
+  return traffic.url;
 }
 
 class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
@@ -1336,6 +1457,13 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
     return this.controller.removeInvocationLease(preparationId);
   }
 
+  observeInvocationLeaseAbsent(preparationId: string): Promise<boolean> {
+    if (this.controller.observeInvocationLeaseAbsent === undefined) {
+      throw new Error('RIG-B1 production controller lacks read-only invocation-lease observation.');
+    }
+    return this.controller.observeInvocationLeaseAbsent(preparationId);
+  }
+
   async observeRevision(admission: z.infer<typeof admissionSchema>): Promise<z.infer<typeof revisionSchema>> {
     const [raw, serviceRaw] = await Promise.all([
       runProcess(B1_GCLOUD_BINARY, [
@@ -1364,9 +1492,12 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
       sourceHeadSha: parsed.metadata.labels['arkova-source-head'],
       imageDigest: digest,
       runtimeServiceAccount: parsed.spec.serviceAccountName,
-      serviceUrl: requireExactB1ServiceRouting(serviceRaw, {
+      serviceUrl: admission.tag_url,
+      fundedProbeUrl: requireExactB1ServiceRouting(serviceRaw, {
         revision: admission.deployed_revision,
         serviceUrl: admission.tag_url,
+        fundedProbeUrl: B1_NO_BROADCAST_PREPARE_CONTAINMENT_CONTRACT.taggedServiceUrl,
+        trafficTag: B1_NO_BROADCAST_PREPARE_CONTAINMENT_CONTRACT.trafficTag,
       }),
       inProcessCronDisabled: true,
       secrets: secretMapFromRevision(raw),
@@ -1420,6 +1551,10 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
       '-rpcwallet=arkova-watch-only', 'listunspent', '1', '9999999',
       JSON.stringify([input.treasuryAddress]), 'true',
     ]);
+    const unspentZeroRaw = await this.bitcoinCli([
+      '-rpcwallet=arkova-watch-only', 'listunspent', '0', '9999999',
+      JSON.stringify([input.treasuryAddress]), 'true',
+    ]);
     const splitRaw = await this.bitcoinCli(['getrawtransaction', input.splitTransactionId, 'true']);
     const capabilities = {} as Record<typeof RIG_B1_REQUIRED_RPC_CAPABILITIES[number], boolean>;
     for (const method of RIG_B1_REQUIRED_RPC_CAPABILITIES) {
@@ -1445,11 +1580,29 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
       address: z.string(), amount: z.number().nonnegative(),
       confirmations: z.number().int().positive(),
     }).passthrough()).parse(JSON.parse(unspentRaw));
+    const unspentZero = z.array(z.object({
+      txid: sha256Hex, vout: z.number().int().nonnegative(),
+      address: z.string(), amount: z.number().nonnegative(),
+      confirmations: z.number().int().nonnegative(),
+    }).passthrough()).parse(JSON.parse(unspentZeroRaw));
     const split = z.object({ txid: sha256Hex }).passthrough().parse(JSON.parse(splitRaw));
     if (!descriptors.descriptors.some(({ desc }) => desc === input.treasuryDescriptor)) {
       throw new Error('RIG-B1 watch-only wallet lacks the admitted descriptor.');
     }
     if (unspent.length === 0) throw new Error('RIG-B1 watch-only wallet has no confirmed admitted UTXOs.');
+    const confirmedOutputs = unspent.map((item) => ({
+      txId: item.txid,
+      vout: item.vout,
+      valueSats: Math.round(item.amount * 100_000_000),
+      confirmations: item.confirmations,
+    }));
+    const zeroOutputs = unspentZero.map((item) => ({
+      txId: item.txid,
+      vout: item.vout,
+      valueSats: Math.round(item.amount * 100_000_000),
+    }));
+    const minconfZeroMatchesMinconfOne = b1ConfirmedOutpointValueExportSha256(zeroOutputs)
+      === b1ConfirmedOutpointValueExportSha256(confirmedOutputs);
     return {
       chain: chain.chain, initialBlockDownload: chain.initialblockdownload,
       headers: chain.headers, blocks: chain.blocks, bestBlockHash: chain.bestblockhash,
@@ -1461,12 +1614,11 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
       rescanComplete: true,
       confirmedUtxos: unspent.length,
       confirmedTotalSats: unspent.reduce((sum, item) => sum + Math.round(item.amount * 100_000_000), 0),
-      confirmedOutputs: unspent.map((item) => ({
-        txId: item.txid,
-        vout: item.vout,
-        valueSats: Math.round(item.amount * 100_000_000),
-        confirmations: item.confirmations,
-      })),
+      confirmedOutputs,
+      unconfirmedUtxos: unspentZero.length - unspent.length,
+      minconfZeroMatchesMinconfOne,
+      confirmedOutpointValueExportSha256:
+        b1ConfirmedOutpointValueExportSha256(confirmedOutputs),
       minimumConfirmations: Math.min(...unspent.map(({ confirmations }) => confirmations)),
       splitTransactionObserved: split.txid,
       capabilities,
@@ -1501,6 +1653,7 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
     idempotencyKey: string;
     maxFundedBroadcasts: 1;
   }>): Promise<B1FundedProbeObservation> {
+    const routing = projectB1FundedProbeRouting(input.revision);
     const [supabaseUrl, serviceRole, cron, identityToken] = await Promise.all([
       this.accessSecret({ secretName: input.revision.secrets.supabaseUrl.secret, version: input.revision.secrets.supabaseUrl.version }),
       this.accessSecret({ secretName: input.revision.secrets.supabaseServiceRole.secret, version: input.revision.secrets.supabaseServiceRole.version }),
@@ -1508,7 +1661,7 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
       runProcess(B1_GCLOUD_BINARY, [
         'auth', 'print-identity-token',
         `--impersonate-service-account=${B1_SCHEDULER_START_CONTRACT.schedulerOidcServiceAccount}`,
-        `--audiences=${input.revision.serviceUrl}`, '--include-email',
+        `--audiences=${routing.identityAudience}`, '--include-email',
       ]).then((result) => requireProcess(result, 'RIG-B1 Scheduler OIDC token').trim()),
     ]);
     const directory = await mkdtemp(join(tmpdir(), 'arkova-b1-preclock-'));
@@ -1519,7 +1672,7 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
     const runId = b1PreparationFundedProbeRunId(input);
     const env = {
       ...process.env,
-      STAGING_API_BASE: input.revision.serviceUrl,
+      STAGING_API_BASE: routing.apiBase,
       STAGING_CRON_SECRET: cron,
       STAGING_SUPABASE_URL: supabaseUrl,
       STAGING_SUPABASE_SERVICE_ROLE_KEY: serviceRole,

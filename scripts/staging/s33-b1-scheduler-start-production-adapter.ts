@@ -439,6 +439,15 @@ class ProductionB1SchedulerStartAdapter implements B1SchedulerStartPort {
     ))) throw new Error('RIG-B1 Scheduler principal retains Run Invoker after removal.');
   }
 
+  async observeInvocationLeaseAbsent(approvalId: string): Promise<boolean> {
+    this.assertApprovalId(approvalId);
+    const policy = await this.readIamPolicy();
+    const member = `serviceAccount:${B1_SCHEDULER_START_CONTRACT.schedulerOidcServiceAccount}`;
+    return !policy.bindings.some((binding) => (
+      binding.role === 'roles/run.invoker' && binding.members.includes(member)
+    ));
+  }
+
   private async schedulerStateCommand(action: 'pause' | 'resume', name: string): Promise<void> {
     requireOk(await this.dependencies.command.run(B1_GCLOUD_BINARY, [
       'scheduler', 'jobs', action, name,

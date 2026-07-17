@@ -246,6 +246,7 @@ export interface B1SchedulerStartPort {
     authorityExpiresAt: string;
   }>): Promise<void>;
   removeInvocationLease(approvalId: string): Promise<void>;
+  observeInvocationLeaseAbsent?(approvalId: string): Promise<boolean>;
   resumeJob(name: string): Promise<void>;
   pauseJob(name: string): Promise<void>;
   persistStartReceipt(uri: string, raw: string, retainUntilTime: string): Promise<void>;

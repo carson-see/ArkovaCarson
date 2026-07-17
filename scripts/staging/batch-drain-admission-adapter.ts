@@ -23,6 +23,10 @@ import {
   b1TreasuryContinuitySchema,
   type B1TreasuryContinuity,
 } from './s33-b1-treasury-continuity';
+import {
+  b1NoBroadcastPrepareRecoverySchema,
+  type B1NoBroadcastPrepareRecovery,
+} from './s33-b1-no-broadcast-prepare-containment';
 
 const nonEmpty = z.string().min(1);
 const sha256 = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -166,6 +170,7 @@ const admissionV2Schema = z.object({
   scheduler: schedulerSchema,
   infrastructure: rigB1InfrastructureSchema,
   treasury_continuity: b1TreasuryContinuitySchema.optional(),
+  no_broadcast_prepare_recovery: b1NoBroadcastPrepareRecoverySchema.optional(),
   driver_path: nonEmpty,
   driver_sha256: sha256Hex,
   changed_behavior: nonEmpty,
@@ -208,6 +213,7 @@ export interface PreClockAdmissionIdentity {
   readonly cleanMirrorAttestationId: string;
   readonly infrastructure: RigB1Infrastructure;
   readonly treasuryContinuity?: B1TreasuryContinuity;
+  readonly noBroadcastPrepareRecovery?: B1NoBroadcastPrepareRecovery;
 }
 
 const DECLARATION_BY_ADMISSION_HANDLE = new WeakMap<AdmissionBoundRunDeclaration, RunDeclaration>();
@@ -304,6 +310,9 @@ function assertAdmissionInvariants(admission: AdmissionV2 | PreClockAdmissionV2)
     }
   }
   const continuity = admission.treasury_continuity;
+  if (admission.no_broadcast_prepare_recovery !== undefined && continuity === undefined) {
+    throw new Error('Admission v2 no-broadcast PREPARE recovery requires treasury continuity.');
+  }
   if (continuity !== undefined && (
     continuity.originalProvision.sourceHeadSha !== admission.sha
     || continuity.originalProvision.soakId !== admission.soak_id
@@ -401,6 +410,9 @@ export function projectAdmissionV2ToPreClockIdentity(
     ...(admission.treasury_continuity === undefined
       ? {}
       : { treasuryContinuity: admission.treasury_continuity }),
+    ...(admission.no_broadcast_prepare_recovery === undefined
+      ? {}
+      : { noBroadcastPrepareRecovery: admission.no_broadcast_prepare_recovery }),
   });
   const handle = deepFreeze<PreClockAdmissionBoundIdentity>({
     admissionSha256: createHash('sha256').update(admissionRaw as string).digest('hex'),

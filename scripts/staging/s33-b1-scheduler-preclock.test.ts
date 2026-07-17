@@ -14,8 +14,10 @@ import { planTreasuryPresplit, type TreasuryPresplitPlanInput } from './batch-dr
 import {
   collectB1SchedulerPreclockArtifact,
   authorizeB1PreclockMutationForTest,
+  b1ConfirmedOutpointValueExportSha256,
   b1PreparationFundedProbeRunId,
   proveB1WifChallenge,
+  projectB1FundedProbeRouting,
   requireExactB1ServiceRouting,
   type B1PreclockCollectorPort,
 } from './s33-b1-scheduler-preclock-production-adapter';
@@ -31,6 +33,9 @@ import {
   B1_TREASURY_CONTINUITY_CONTRACT,
   calculateB1TreasuryContinuityCompositeIdentity,
 } from './s33-b1-treasury-continuity';
+import {
+  B1_NO_BROADCAST_PREPARE_CONTAINMENT_CONTRACT as NO_BROADCAST,
+} from './s33-b1-no-broadcast-prepare-containment';
 
 const TREASURY = 'tb1qxca7ke7hgguarqxkwwydrfenn8ymnspxq765eq';
 const OBSERVED_AT = '2026-07-16T19:55:00.000Z';
@@ -544,6 +549,43 @@ describe('distinct signed PREPARE_B1 action authority', () => {
     )).toThrow(/envelope id|preparation id/i);
   });
 
+  it('binds no-broadcast recovery to exactly one named successor PREPARE id', () => {
+    const request = preparationRequest();
+    request.noBroadcastPrepareRecovery = {
+      schemaVersion: NO_BROADCAST.recoverySchemaVersion,
+      containment: {
+        objectUri: 'gs://test/no-broadcast-containment.json',
+        generation: '1',
+        envelopeSha256: `sha256:${'3'.repeat(64)}`,
+        signedPayloadSha256: `sha256:${'4'.repeat(64)}`,
+      },
+      failedPreparation: {
+        preparationId: NO_BROADCAST.failedPreparationId,
+        intent: {
+          objectUri: NO_BROADCAST.failedPreparationIntentUri,
+          generation: NO_BROADCAST.failedPreparationIntentGeneration,
+          sha256: NO_BROADCAST.failedPreparationIntentSha256,
+        },
+        outcomeObjectUri: NO_BROADCAST.failedPreparationOutcomeUri,
+        fundedProbeRunId: NO_BROADCAST.fundedProbeRunId,
+      },
+      successorPreparationId: request.preparationId,
+      successorPrepareCount: 1,
+    };
+    const raw = buildB1PreparationAuthoritySignedPayload(request);
+    expect(verifier.verify(preparationEnvelope(raw), new Date(OBSERVED_AT)))
+      .toMatchObject({
+        preparationId: request.preparationId,
+        noBroadcastPrepareRecovery: {
+          successorPreparationId: request.preparationId,
+          successorPrepareCount: 1,
+        },
+      });
+    request.noBroadcastPrepareRecovery.successorPreparationId = 'different-successor';
+    expect(() => buildB1PreparationAuthoritySignedPayload(request))
+      .toThrow(/successor|PREPARE id|custom/i);
+  });
+
   it('rejects a signed authority whose action TTL exceeds ten minutes', () => {
     const request = preparationRequest();
     const raw = JSON.stringify({ ...request, expiresAt: '2026-07-16T20:00:01.000Z' });
@@ -720,6 +762,7 @@ function liveCollectorPort(
       imageDigest: admission.image_digest,
       runtimeServiceAccount: 's33-rig-b1-runtime@arkova1.iam.gserviceaccount.com',
       serviceUrl: admission.tag_url,
+      fundedProbeUrl: admission.tag_url,
       inProcessCronDisabled: true,
       secrets: {
         supabaseUrl: { secret: 'rig-b1-supabase-url', version: '1' },
@@ -763,6 +806,10 @@ function liveCollectorPort(
         valueSats: candidate.valueSats,
         confirmations: candidate.confirmations,
       })),
+      unconfirmedUtxos: 0,
+      minconfZeroMatchesMinconfOne: true,
+      confirmedOutpointValueExportSha256:
+        b1ConfirmedOutpointValueExportSha256(treasuryPlanInput.inputs),
       minimumConfirmations: live.watchOnlyWallet.minimumConfirmations,
       splitTransactionObserved: admission.infrastructure.treasuryWatchOnly.splitTransactionId,
       capabilities: Object.fromEntries(RIG_B1_REQUIRED_RPC_CAPABILITIES.map((method) => [method, true])) as Record<typeof RIG_B1_REQUIRED_RPC_CAPABILITIES[number], boolean>,
@@ -1125,20 +1172,54 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
   it('accepts only a service routing 100% to the exact admitted revision and URL', () => {
     const service = {
       status: {
-        url: 'https://rig-b1.example.run.app',
+        url: 'https://arkova-worker-rig-b1-abc-uc.a.run.app',
         latestReadyRevisionName: 'rig-b1-00001',
-        traffic: [{ revisionName: 'rig-b1-00001', percent: 100 }],
+        traffic: [{
+          revisionName: 'rig-b1-00001',
+          percent: 100,
+          tag: 'train-rig-b1',
+          url: 'https://train-rig-b1---arkova-worker-rig-b1-abc-uc.a.run.app',
+        }],
       },
     };
     expect(requireExactB1ServiceRouting(JSON.stringify(service), {
       revision: 'rig-b1-00001',
-      serviceUrl: 'https://rig-b1.example.run.app',
-    })).toBe('https://rig-b1.example.run.app');
-    service.status.traffic = [{ revisionName: 'rig-b1-00002', percent: 100 }];
+      serviceUrl: 'https://arkova-worker-rig-b1-abc-uc.a.run.app',
+      fundedProbeUrl: 'https://train-rig-b1---arkova-worker-rig-b1-abc-uc.a.run.app',
+      trafficTag: 'train-rig-b1',
+    })).toBe('https://train-rig-b1---arkova-worker-rig-b1-abc-uc.a.run.app');
     expect(() => requireExactB1ServiceRouting(JSON.stringify(service), {
       revision: 'rig-b1-00001',
-      serviceUrl: 'https://rig-b1.example.run.app',
+      serviceUrl: 'https://arkova-worker-rig-b1-abc-uc.a.run.app',
+      fundedProbeUrl: 'https://arkova-worker-rig-b1-abc-uc.a.run.app',
+      trafficTag: 'train-rig-b1',
+    })).toThrow(/tag-routed|tag URL|STAGING_API_BASE/i);
+    service.status.traffic = [{
+      revisionName: 'rig-b1-00002',
+      percent: 100,
+      tag: 'train-rig-b1',
+      url: 'https://train-rig-b1---arkova-worker-rig-b1-abc-uc.a.run.app',
+    }];
+    expect(() => requireExactB1ServiceRouting(JSON.stringify(service), {
+      revision: 'rig-b1-00001',
+      serviceUrl: 'https://arkova-worker-rig-b1-abc-uc.a.run.app',
+      fundedProbeUrl: 'https://train-rig-b1---arkova-worker-rig-b1-abc-uc.a.run.app',
+      trafficTag: 'train-rig-b1',
     })).toThrow(/100%|revision|routing/i);
+  });
+
+  it('routes the funded probe through the tag while keeping the canonical OIDC audience', () => {
+    expect(projectB1FundedProbeRouting({
+      serviceUrl: 'https://arkova-worker-rig-b1-abc-uc.a.run.app',
+      fundedProbeUrl: 'https://train-rig-b1---arkova-worker-rig-b1-abc-uc.a.run.app',
+    })).toEqual({
+      identityAudience: 'https://arkova-worker-rig-b1-abc-uc.a.run.app',
+      apiBase: 'https://train-rig-b1---arkova-worker-rig-b1-abc-uc.a.run.app',
+    });
+    expect(() => projectB1FundedProbeRouting({
+      serviceUrl: 'https://arkova-worker-rig-b1-abc-uc.a.run.app',
+      fundedProbeUrl: 'https://arkova-worker-rig-b1-abc-uc.a.run.app',
+    })).toThrow(/tag-routed|separate|STAGING_API_BASE/i);
   });
 
   it('proves a compressed Signet WIF using only the root Node runtime', () => {

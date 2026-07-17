@@ -6,6 +6,10 @@ import { z } from 'zod';
 
 import { parseJsonRejectingDuplicateKeys } from './batch-drain-strict-json';
 import { B1_SCHEDULER_START_CONTRACT } from './s33-b1-scheduler-start-driver';
+import {
+  b1NoBroadcastPrepareRecoverySchema,
+  type B1NoBroadcastPrepareRecovery,
+} from './s33-b1-no-broadcast-prepare-containment';
 
 const PUBLIC_KEY_PEM =
   '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAE+Ir2My5+bBwU73QkL73F7fiRteZ0V5yIAe41fD6MdU=\n-----END PUBLIC KEY-----\n';
@@ -53,6 +57,7 @@ const payloadSchema = z.object({
     sourceTreeSha: gitSha,
     relevantFilesSha256: sha256,
   }).strict().optional(),
+  noBroadcastPrepareRecovery: b1NoBroadcastPrepareRecoverySchema.optional(),
   run: z.object({
     rigName: z.literal(B1_SCHEDULER_START_CONTRACT.rigName),
     soakId: boundedId,
@@ -73,6 +78,14 @@ const payloadSchema = z.object({
       code: 'custom',
       path: ['controller'],
       message: 'RIG-B1 PREPARE continuity and controller bindings must be present together.',
+    });
+  }
+  if (payload.noBroadcastPrepareRecovery !== undefined
+    && payload.noBroadcastPrepareRecovery.successorPreparationId !== payload.preparationId) {
+    context.addIssue({
+      code: 'custom',
+      path: ['noBroadcastPrepareRecovery', 'successorPreparationId'],
+      message: 'RIG-B1 PREPARE id differs from its one-successor containment authority.',
     });
   }
 });
@@ -106,6 +119,7 @@ export interface VerifiedB1PreparationAuthority {
   readonly controllerSourceHeadSha?: string;
   readonly controllerSourceTreeSha?: string;
   readonly controllerRelevantFilesSha256?: string;
+  readonly noBroadcastPrepareRecovery?: B1NoBroadcastPrepareRecovery;
   readonly rigName: string;
   readonly soakId: string;
   readonly leaseId: string;
@@ -216,6 +230,9 @@ class Ed25519B1PreparationAuthorityVerifier implements B1PreparationAuthorityVer
           controllerSourceTreeSha: payload.controller!.sourceTreeSha,
           controllerRelevantFilesSha256: payload.controller!.relevantFilesSha256,
         }),
+      ...(payload.noBroadcastPrepareRecovery === undefined
+        ? {}
+        : { noBroadcastPrepareRecovery: payload.noBroadcastPrepareRecovery }),
       rigName: payload.run.rigName,
       soakId: payload.run.soakId,
       leaseId: payload.run.leaseId,
