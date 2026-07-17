@@ -2,6 +2,10 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-07-17 Anchor credit-gate idempotency (SCRUM-2970, BUG-2026-07-17-012)
+
+- `anchor-submit.ts` now passes a stable `reference_id` to `ensureAnchorCreditAvailable`, derived via `deriveAnchorCreditReferenceId('anchor_submit', orgId, fingerprint)` — previously the gate called `deduct_org_credit` with `p_reference_id=null`, bypassing the 0326 idempotency ledger so a retry double-deducted. No response-shape change (402/503 bodies frozen and pinned by tests).
+
 ## 2026-07-06 S3-P0 producer-contract pin (no route changes)
 
 - `verify-proof.bundle-producer.test.ts` pins that a row written EXACTLY the way the S3-P0 batch producer writes it (app-tree branch + `merkle_index` + `batch_id` + `op_return_payload` = "ARKV"‖root with NO version byte, bytea `\x` wire shape) plus the PROOF-03 confirmation columns yields a COMPLETE non-null `proof_bundle` from `buildProofResponse` — the "/proof stops being empty" contract. `verify-proof.ts` itself is UNCHANGED (frozen §1.8 surface; `proof_bundle.signature` remains the reserved always-null inline placeholder — the signed envelope stays at the outer `?format=signed` level).

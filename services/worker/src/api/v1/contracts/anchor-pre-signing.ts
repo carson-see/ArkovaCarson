@@ -58,7 +58,10 @@ import { buildVerifyUrl } from '../../../lib/urls.js';
 import { ANCHOR_CREDENTIAL_TYPES } from '../../../lib/credential-evidence.js';
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
-import { ensureAnchorCreditAvailable } from '../../../utils/anchorCreditGate.js';
+import {
+  ensureAnchorCreditAvailable,
+  deriveAnchorCreditReferenceId,
+} from '../../../utils/anchorCreditGate.js';
 import { ensureOrgNotSuspended } from '../../../utils/orgSuspensionGuard.js';
 
 const router = Router();
@@ -365,7 +368,20 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
     // existing API-key paths without per-org credit setup are unaffected.
     // Same shared helper used by /api/v1/anchor (SCRUM-1631 PR #680
     // extracted it to anchorCreditGate.ts to satisfy SonarCloud).
-    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res))) {
+    // SCRUM-2970 — pass a reference id derived from (org, fingerprint) so
+    // the 0326 idempotency ledger dedupes retries of the same logical
+    // request instead of double-deducting. Scope 'contract_presigning'
+    // keeps this deduction distinct from an /api/v1/anchor submission of
+    // the same fingerprint (the two endpoints dedup independently).
+    if (
+      orgId &&
+      !(await ensureAnchorCreditAvailable(
+        db,
+        orgId,
+        res,
+        deriveAnchorCreditReferenceId('contract_presigning', orgId, fingerprint),
+      ))
+    ) {
       return;
     }
 

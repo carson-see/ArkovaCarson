@@ -19,7 +19,10 @@ import {
 } from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
+import {
+  ensureAnchorCreditAvailable,
+  deriveAnchorCreditReferenceId,
+} from '../../utils/anchorCreditGate.js';
 import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 import { submitJob } from '../../utils/jobQueue.js';
@@ -173,7 +176,19 @@ async function handleAnchorSubmit(req: Request, res: Response) {
     // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
     // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
     // existing API-key paths without per-org credit setup are unaffected.
-    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res))) {
+    // SCRUM-2970 — pass a reference id derived from (org, fingerprint) so
+    // the 0326 idempotency ledger dedupes retries of the same logical
+    // request instead of double-deducting. `publicId` is NOT usable here:
+    // it is regenerated per attempt, and no anchor row exists yet.
+    if (
+      orgId &&
+      !(await ensureAnchorCreditAvailable(
+        db,
+        orgId,
+        res,
+        deriveAnchorCreditReferenceId('anchor_submit', orgId, fingerprint),
+      ))
+    ) {
       return;
     }
 

@@ -6,15 +6,17 @@
  * and only accepts the frozen schema (CLAUDE.md §1.8).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig } = vi.hoisted(() => {
+const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc } = vi.hoisted(() => {
   const mockSelectChain = { single: vi.fn(), maybeSingle: vi.fn() };
   const mockInsertChain = { single: vi.fn() };
   const mockInsert = vi.fn((_value?: unknown) => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
   const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  // SCRUM-2970 — deduct_org_credit RPC surface for the credit-gate tests.
+  const mockRpc = vi.fn();
   // Mock the worker config so transitive import (anchor-submit → orgCredits →
   // config.js) doesn't try to load required env vars in the test env and
   // throw "Invalid worker configuration" before any test runs.
@@ -22,7 +24,7 @@ const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig } =
     enableOrgCreditEnforcement: false,
     enableProfessionalEducationSchemaReady: true,
   };
-  return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig };
+  return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc };
 });
 
 vi.mock('../../config.js', () => ({
@@ -49,6 +51,7 @@ vi.mock('../../utils/db.js', () => {
         select: vi.fn(() => eqChain),
         insert: mockInsert,
       })),
+      rpc: mockRpc,
     },
   };
 });
@@ -519,5 +522,110 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       expect(nnLogPayload).not.toHaveProperty('error');
       expect(nnLogPayload).not.toHaveProperty('pgConstraint');
     });
+  });
+});
+
+describe('POST /api/v1/anchor — credit-gate reference_id (SCRUM-2970)', () => {
+  // BUG-2026-07-17-012: the gate previously called deduct_org_credit with
+  // p_reference_id=null, so migration 0326's idempotency ledger never engaged
+  // on the primary anchor path and a retry/redelivery double-deducted. These
+  // tests pin that the endpoint now sends a NON-NULL reference_id that is
+  // stable across a retry of the same logical request (same org+fingerprint)
+  // and distinct across distinct requests.
+  const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  interface DeductRpcArgs {
+    p_org_id: string;
+    p_amount: number;
+    p_reason: string;
+    p_reference_id: string | null;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockConfig.enableOrgCreditEnforcement = true;
+    mockConfig.enableProfessionalEducationSchemaReady = true;
+    mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
+    // No pre-existing anchor row → the request reaches the credit gate.
+    // (This is exactly the double-deduct scenario: a retry after the credit
+    // deducted but before/without the anchor insert landing.)
+    mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
+    mockInsertChain.single.mockResolvedValue({
+      data: {
+        public_id: 'ARK-2026-ABCD1234',
+        fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING',
+        created_at: '2026-04-27T00:00:00Z',
+      },
+      error: null,
+    });
+    mockRpc.mockResolvedValue({ data: { success: true, balance: 9 }, error: null });
+  });
+
+  afterEach(() => {
+    mockConfig.enableOrgCreditEnforcement = false;
+  });
+
+  function deductCalls(): DeductRpcArgs[] {
+    return mockRpc.mock.calls
+      .filter(([fn]) => fn === 'deduct_org_credit')
+      .map(([, args]) => args as DeductRpcArgs);
+  }
+
+  it('sends a non-null uuid reference_id, stable across a retry of the same request', async () => {
+    const first = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+    const retry = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+    expect(first.status).toBe(201);
+    expect(retry.status).toBe(201);
+
+    const calls = deductCalls();
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.p_org_id).toBe('org-1');
+      expect(call.p_amount).toBe(1);
+      expect(call.p_reason).toBe('anchor.create');
+      expect(call.p_reference_id).toMatch(UUID_SHAPE);
+    }
+    // Same logical request → same reference_id → 0326 ledger dedupes.
+    expect(calls[1].p_reference_id).toBe(calls[0].p_reference_id);
+  });
+
+  it('sends DISTINCT reference_ids for distinct fingerprints', async () => {
+    await request(makeApp()).post('/v1/anchor').send({ fingerprint: 'a'.repeat(64) });
+    await request(makeApp()).post('/v1/anchor').send({ fingerprint: 'b'.repeat(64) });
+
+    const calls = deductCalls();
+    expect(calls).toHaveLength(2);
+    expect(calls[0].p_reference_id).toMatch(UUID_SHAPE);
+    expect(calls[1].p_reference_id).toMatch(UUID_SHAPE);
+    expect(calls[1].p_reference_id).not.toBe(calls[0].p_reference_id);
+  });
+
+  it('still returns 402 insufficient_credits with the frozen body shape', async () => {
+    mockRpc.mockResolvedValue({
+      data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
+      error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(402);
+    expect(res.body).toEqual({
+      error: 'insufficient_credits',
+      message: 'Organization has insufficient anchor credits for this cycle.',
+      balance: 0,
+      required: 1,
+    });
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('still returns 503 credit_check_unavailable on RPC failure', async () => {
+    mockRpc.mockResolvedValue({ data: null, error: { message: 'connection refused' } });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'credit_check_unavailable' });
+    expect(mockInsert).not.toHaveBeenCalled();
   });
 });
