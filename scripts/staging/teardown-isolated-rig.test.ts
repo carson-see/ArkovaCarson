@@ -296,7 +296,7 @@ printf '%s\\n' "$*" >> '${gcloudLog}'
 if [[ "$1 $2 $3" == 'storage objects describe' ]]; then
   object_uri="$4"
   object_name="\${object_uri#gs://arkova1-s33-immutable-authority-ledger/}"
-  printf '{"bucket":"arkova1-s33-immutable-authority-ledger","name":"%s","generation":"1","retention":{"mode":"Locked","retainUntilTime":"2099-01-02T00:00:00Z"}}\\n' "$object_name"
+  printf '{"bucket":"arkova1-s33-immutable-authority-ledger","name":"%s","generation":"1","retention":{"mode":"Locked","retainUntilTime":"2099-01-01T00:00:00+00:00"}}\\n' "$object_name"
   exit 0
 fi
 if [[ "$1 $2" == 'storage cat' ]]; then
@@ -346,7 +346,7 @@ exit 64
 }
 
 describe('teardown-isolated-rig.sh — immutable RIG-B1 node readiness', () => {
-  it('accepts the exact non-secret readiness object through the next ownership preflight gate', () => {
+  it('accepts equal +00:00/Z retention instants and exact readiness through ownership preflight', () => {
     const result = runFixture();
     expect(result.code).not.toBe(0);
     expect(result.out).toContain('cannot observe RIG-B1 Cloud Run service before teardown');

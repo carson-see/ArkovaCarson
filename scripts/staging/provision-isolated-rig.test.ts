@@ -631,6 +631,8 @@ interface ApplyRunOptions {
   secretVersionResourceVersion?: string;
   ledgerRetentionUntil?: string;
   topologyLedgerRetentionUntil?: string;
+  b1SecretIamPropagationFailures?: number;
+  b1SecretIamNonPropagationFailure?: boolean;
   supabaseProjectStatuses?: string[];
   supabaseDbResolves?: boolean;
   supabaseDbTcpAccepts?: boolean;
@@ -1027,6 +1029,7 @@ function applyRunStubbed(
   const supabaseStatusCountFile = join(stubDir, 'supabase-status-count');
   const b1ApprovalArtifactPath = join(stubDir, 'b1-node-approval.json');
   const gcsLastObjectFile = join(stubDir, 'gcs-last-object.json');
+  const b1SecretIamGrantCountFile = join(stubDir, 'b1-secret-iam-grant-count');
   const finalSchedulerJobSuffix = profile === 'gemini'
     ? 'classify-proof-backcatalog'
     : options.rigId === 'RIG-B1'
@@ -1314,6 +1317,34 @@ if [[ "$1" == "artifacts" && "$2" == "docker" && "$3" == "images" && "$4" == "de
   echo 'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@${options.sourceImageDigest ?? STUB_IMAGE_DIGEST}'
   exit 0
 fi
+	if [[ "$1" == "secrets" && "$2" == "add-iam-policy-binding" ]]; then
+	  if [[ "$3" == 'arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth' ]]; then
+	    grant_count=0
+	    [[ ! -f '${b1SecretIamGrantCountFile}' ]] || grant_count="$(cat '${b1SecretIamGrantCountFile}')"
+	    grant_count=$((grant_count + 1))
+	    printf '%s' "$grant_count" > '${b1SecretIamGrantCountFile}'
+	    if [[ '${options.b1SecretIamNonPropagationFailure ? 'true' : 'false'}' == 'true' ]]; then
+	      echo 'ERROR: (gcloud.secrets.add-iam-policy-binding) PERMISSION_DENIED: injected permanent denial.' >&2
+	      exit 1
+	    fi
+	    if (( grant_count <= ${options.b1SecretIamPropagationFailures ?? 0} )); then
+	      echo 'ERROR: (gcloud.secrets.add-iam-policy-binding) Status code: 400. Service account s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com does not exist..' >&2
+	      exit 1
+	    fi
+	  fi
+	  exit 0
+	fi
+	if [[ "$1" == "secrets" && "$2" == "get-iam-policy" ]]; then
+	  printf '%s\n' '{"bindings":[{"role":"roles/secretmanager.secretAccessor","members":["serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com","serviceAccount:s33-rig-b1-runtime@arkova1.iam.gserviceaccount.com"]}]}'
+	  exit 0
+	fi
+	if [[ "$1" == "artifacts" && "$2" == "repositories" && "$3" == "add-iam-policy-binding" ]]; then
+	  exit 0
+	fi
+	if [[ "$1" == "artifacts" && "$2" == "repositories" && "$3" == "get-iam-policy" ]]; then
+	  printf '%s\n' '{"bindings":[{"role":"roles/artifactregistry.reader","members":["serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com"]}]}'
+	  exit 0
+	fi
 	if [[ "$1" == "secrets" && "$2" == "describe" ]]; then
 	  case "$3" in
 	    supabase-url-*-staging|supabase-service-role-key-*-staging) exit 1 ;;
@@ -1415,6 +1446,11 @@ exit 0
 `,
   );
   chmodSync(join(stubDir, 'gcloud'), 0o755);
+
+  if ((options.b1SecretIamPropagationFailures ?? 0) > 0) {
+    writeFileSync(join(stubDir, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
+    chmodSync(join(stubDir, 'sleep'), 0o755);
+  }
 
   writeFileSync(
     join(stubDir, 'npx'),
@@ -2004,6 +2040,48 @@ describe('provision-isolated-rig.sh — W3-C fail-closed RIG-B1 activation', () 
     expect(paused.gcloudCalls.some((call) =>
       call.startsWith(`compute networks vpc-access connectors create ${connector} `),
     )).toBe(true);
+  });
+
+  it('retries the exact new-service-account Secret Manager transient and requires policy readback', () => {
+    const result = applyRunStubbed('w3c-b1-iam-propagation', 'chain', {
+      rigId: 'RIG-B1',
+      env: RIG_B1_APPLY_ENV,
+      b1SecretIamPropagationFailures: 1,
+    });
+    const targetGrants = result.gcloudCalls.filter((call) =>
+      call.startsWith(
+        'secrets add-iam-policy-binding arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth ',
+      ) && call.includes(
+        '--member=serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
+      ),
+    );
+    expect(result.code, result.out).toBe(0);
+    expect(targetGrants).toHaveLength(2);
+    expect(result.gcloudCalls.some((call) => call.startsWith(
+      'secrets get-iam-policy arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth ',
+    ))).toBe(true);
+    expect(result.out).toContain('grant_attempts=2');
+  });
+
+  it('fails a non-propagation Secret Manager IAM error after one actual grant attempt', () => {
+    const result = applyRunStubbed('w3c-b1-iam-permanent', 'chain', {
+      rigId: 'RIG-B1',
+      env: RIG_B1_APPLY_ENV,
+      b1SecretIamNonPropagationFailure: true,
+    });
+    const targetGrants = result.gcloudCalls.filter((call) =>
+      call.startsWith(
+        'secrets add-iam-policy-binding arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth ',
+      ) && call.includes(
+        '--member=serviceAccount:s33-rig-b1-bitcoin-core@arkova1.iam.gserviceaccount.com',
+      ),
+    );
+    expect(result.code).not.toBe(0);
+    expect(targetGrants).toHaveLength(1);
+    expect(result.out).toContain('non-propagation error; refusing retry');
+    expect(result.gcloudCalls.some((call) =>
+      call.startsWith('compute networks create arkova-s33-rig-b1-bitcoin-core-signet-vpc '),
+    )).toBe(false);
   });
 
   it.each([

@@ -522,12 +522,18 @@ load_b1_locked_ownership() {
     --arg bucket "$RIG_B1_LEDGER_BUCKET" \
     --arg name "$B1_APPROVAL_CLAIM_OBJECT_NAME" \
     --arg expires_at "$B1_APPROVAL_EXPIRES_AT" '
+      def utc_epoch:
+        select(type == "string")
+        | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") then .
+          elif test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+]00:00$") then sub("[+]00:00$"; "Z")
+          else error("timestamp is not exact whole-second UTC") end
+        | fromdateiso8601;
       type == "object"
       and .bucket == $bucket
       and .name == $name
       and (.generation | tostring | test("^[1-9][0-9]*$"))
       and .retention.mode == "Locked"
-      and .retention.retainUntilTime >= $expires_at
+      and ((.retention.retainUntilTime | utc_epoch) >= ($expires_at | utc_epoch))
     ' >/dev/null 2>&1 <<<"$claim_metadata"; then
     echo "ERROR: RIG-B1 approval claim is not the exact generation-bound Locked audit object." >&2
     exit 1
@@ -581,12 +587,18 @@ load_b1_locked_ownership() {
     --arg bucket "$RIG_B1_LEDGER_BUCKET" \
     --arg name "$B1_TOPOLOGY_OBJECT_NAME" \
     --arg expires_at "$B1_APPROVAL_EXPIRES_AT" '
+      def utc_epoch:
+        select(type == "string")
+        | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") then .
+          elif test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+]00:00$") then sub("[+]00:00$"; "Z")
+          else error("timestamp is not exact whole-second UTC") end
+        | fromdateiso8601;
       type == "object"
       and .bucket == $bucket
       and .name == $name
       and (.generation | tostring | test("^[1-9][0-9]*$"))
       and .retention.mode == "Locked"
-      and .retention.retainUntilTime >= $expires_at
+      and ((.retention.retainUntilTime | utc_epoch) >= ($expires_at | utc_epoch))
     ' >/dev/null 2>&1 <<<"$topology_metadata"; then
     echo "ERROR: RIG-B1 topology ownership is not the exact generation-bound Locked audit object." >&2
     exit 1

@@ -4284,6 +4284,124 @@ provision_temporary_vertex_endpoint() {
   fi
 }
 
+is_exact_b1_service_account_propagation_error() {
+  local surface="$1"
+  local service_account="$2"
+  local output="${3//$'\r'/}"
+  local command_name propagation_error status_code_error
+  local propagation_hint='ERROR: Policy modification failed. For a binding with condition, run "gcloud alpha iam policies lint-condition" to identify issues in condition.'
+  case "$surface" in
+    secret) command_name="secrets" ;;
+    artifact-repository) command_name="artifacts.repositories" ;;
+    project) command_name="projects" ;;
+    *) return 1 ;;
+  esac
+  propagation_error="ERROR: (gcloud.${command_name}.add-iam-policy-binding) INVALID_ARGUMENT: Service account ${service_account} does not exist."
+  status_code_error="ERROR: (gcloud.${command_name}.add-iam-policy-binding) Status code: 400. Service account ${service_account} does not exist.."
+  [[ "$output" == "$propagation_error" \
+    || "$output" == "$status_code_error" \
+    || "$output" == "$propagation_hint"$'\n'"$propagation_error" \
+    || "$output" == "$propagation_hint"$'\n'"$status_code_error" ]]
+}
+
+grant_b1_iam_role_with_propagation_retry() {
+  [[ "$RIG_ID" == "RIG-B1" ]] || return 2
+  local surface="$1"
+  local resource="$2"
+  local service_account="$3"
+  local role="$4"
+  local member="serviceAccount:${service_account}"
+  local grant_output policy_json member_count attempt=0
+  local remaining_seconds sleep_seconds
+  local -a grant_command policy_command
+  case "$surface" in
+    secret)
+      grant_command=(gcloud secrets add-iam-policy-binding "$resource"
+        --project="$GCP_PROJECT" --member="$member" --role="$role"
+        --condition=None --quiet)
+      policy_command=(gcloud secrets get-iam-policy "$resource"
+        --project="$GCP_PROJECT" --format=json)
+      ;;
+    artifact-repository)
+      grant_command=(gcloud artifacts repositories add-iam-policy-binding "$resource"
+        --project="$GCP_PROJECT" --location="$CLOUD_RUN_REGION"
+        --member="$member" --role="$role" --condition=None --quiet)
+      policy_command=(gcloud artifacts repositories get-iam-policy "$resource"
+        --project="$GCP_PROJECT" --location="$CLOUD_RUN_REGION" --format=json)
+      ;;
+    project)
+      if [[ "$resource" != "$GCP_PROJECT" ]]; then
+        echo "ERROR: RIG-B1 project-IAM retry target differs from the approved GCP project." >&2
+        return 2
+      fi
+      grant_command=(gcloud projects add-iam-policy-binding "$resource"
+        --member="$member" --role="$role" --condition=None --quiet)
+      policy_command=(gcloud projects get-iam-policy "$resource" --format=json)
+      ;;
+    *)
+      echo "ERROR: unsupported RIG-B1 IAM retry surface '$surface'." >&2
+      return 2
+      ;;
+  esac
+
+  print_cmd "${grant_command[@]}"
+  [[ $APPLY -eq 1 ]] || return 0
+
+  local deadline_seconds=$((SECONDS + 300))
+  while (( SECONDS < deadline_seconds )); do
+    attempt=$((attempt + 1))
+    if grant_output="$("${grant_command[@]}" 2>&1)"; then
+      while (( SECONDS < deadline_seconds )); do
+        if ! policy_json="$("${policy_command[@]}" 2>&1)"; then
+          echo "ERROR: RIG-B1 could not read $surface IAM after a successful grant." >&2
+          printf '%s\n' "$policy_json" >&2
+          return 1
+        fi
+        if ! jq -e 'type == "object" and ((.bindings // []) | type == "array")' \
+          <<<"$policy_json" >/dev/null 2>&1; then
+          echo "ERROR: RIG-B1 $surface IAM readback was not a valid policy object." >&2
+          return 1
+        fi
+        member_count="$(jq -r \
+          --arg role "$role" \
+          --arg member "$member" '
+            [.bindings[]? | select(.role == $role) | .members[]? | select(. == $member)]
+            | length
+          ' <<<"$policy_json")"
+        if [[ "$member_count" == "1" ]]; then
+          echo "# RIG-B1 IAM visible: surface=$surface resource=$resource role=$role member=$member grant_attempts=$attempt"
+          return 0
+        fi
+        if [[ "$member_count" != "0" ]]; then
+          echo "ERROR: RIG-B1 $surface IAM readback contained non-unique exact membership." >&2
+          return 1
+        fi
+        echo "# RIG-B1 $surface IAM grant succeeded; waiting for exact membership readback." >&2
+        remaining_seconds=$((deadline_seconds - SECONDS))
+        (( remaining_seconds > 0 )) || break
+        sleep_seconds=$remaining_seconds
+        (( sleep_seconds <= 5 )) || sleep_seconds=5
+        sleep "$sleep_seconds"
+      done
+      break
+    fi
+    if ! is_exact_b1_service_account_propagation_error \
+      "$surface" "$service_account" "$grant_output"; then
+      echo "ERROR: RIG-B1 $surface IAM grant failed with a non-propagation error; refusing retry." >&2
+      printf '%s\n' "$grant_output" >&2
+      return 1
+    fi
+    echo "# RIG-B1 $surface IAM is waiting for service-account propagation (attempt $attempt)." >&2
+    remaining_seconds=$((deadline_seconds - SECONDS))
+    (( remaining_seconds > 0 )) || break
+    sleep_seconds=$remaining_seconds
+    (( sleep_seconds <= 5 )) || sleep_seconds=5
+    sleep "$sleep_seconds"
+  done
+  echo "ERROR: RIG-B1 $surface IAM grant/readback did not become exact within 300 seconds; refusing further provisioning." >&2
+  return 1
+}
+
 provision_rig_b1_bitcoin_core_node() {
   [[ "$RIG_ID" == "RIG-B1" ]] || return 0
   local worker_secret
@@ -4314,22 +4432,15 @@ provision_rig_b1_bitcoin_core_node() {
   run_cmd gcloud iam service-accounts create "${RIG_B1_NODE_SERVICE_ACCOUNT%@*}" \
     --project="$GCP_PROJECT" \
     --display-name="S3.3 RIG-B1 temporary Bitcoin Core Signet node"
-  run_cmd gcloud secrets add-iam-policy-binding "$BITCOIN_CORE_RPC_AUTH_SECRET" \
-    --project="$GCP_PROJECT" \
-    --member="serviceAccount:${RIG_B1_NODE_SERVICE_ACCOUNT}" \
-    --role="roles/secretmanager.secretAccessor" \
-    --condition=None --quiet
-  run_cmd gcloud artifacts repositories add-iam-policy-binding "$RIG_B1_ARTIFACT_REPOSITORY" \
-    --project="$GCP_PROJECT" --location="$CLOUD_RUN_REGION" \
-    --member="serviceAccount:${RIG_B1_NODE_SERVICE_ACCOUNT}" \
-    --role="roles/artifactregistry.reader" \
-    --condition=None --quiet
+  grant_b1_iam_role_with_propagation_retry secret \
+    "$BITCOIN_CORE_RPC_AUTH_SECRET" "$RIG_B1_NODE_SERVICE_ACCOUNT" \
+    roles/secretmanager.secretAccessor
+  grant_b1_iam_role_with_propagation_retry artifact-repository \
+    "$RIG_B1_ARTIFACT_REPOSITORY" "$RIG_B1_NODE_SERVICE_ACCOUNT" \
+    roles/artifactregistry.reader
   for worker_secret in "${worker_secrets[@]}"; do
-    run_cmd gcloud secrets add-iam-policy-binding "$worker_secret" \
-      --project="$GCP_PROJECT" \
-      --member="serviceAccount:${RUNTIME_SA}" \
-      --role="roles/secretmanager.secretAccessor" \
-      --condition=None --quiet
+    grant_b1_iam_role_with_propagation_retry secret \
+      "$worker_secret" "$RUNTIME_SA" roles/secretmanager.secretAccessor
   done
   run_cmd gcloud compute networks create "$RIG_B1_NODE_NETWORK" \
     --project="$GCP_PROJECT" --subnet-mode=custom
