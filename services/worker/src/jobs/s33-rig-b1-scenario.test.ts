@@ -11,6 +11,8 @@ import {
 const JOB =
   'projects/arkova1/locations/us-central1/jobs/arkova-worker-s33-rig-b1-staging-batch-anchors';
 const FORCED_JOB = `${JOB}-forced-flush`;
+const BARE_JOB = 'arkova-worker-s33-rig-b1-staging-batch-anchors';
+const BARE_FORCED_JOB = `${BARE_JOB}-forced-flush`;
 const SCHEDULE_TIME = '2026-07-16T18:25:00Z';
 const SERVICE_URL =
   'https://rig-b1---arkova-worker-s33-rig-b1-staging-abc-uc.a.run.app';
@@ -120,7 +122,7 @@ describe('RIG-B1 durable Scheduler scenario gate', () => {
       routePath: '/jobs/batch-anchors',
       headers: {
         'x-cloudscheduler': 'true',
-        'x-cloudscheduler-jobname': JOB,
+        'x-cloudscheduler-jobname': BARE_JOB,
         'x-cloudscheduler-scheduletime': SCHEDULE_TIME,
       },
       auth: exactAuth,
@@ -160,7 +162,7 @@ describe('RIG-B1 durable Scheduler scenario gate', () => {
       routePath: '/jobs/batch-anchors?force=true',
       headers: {
         'x-cloudscheduler': 'true',
-        'x-cloudscheduler-jobname': FORCED_JOB,
+        'x-cloudscheduler-jobname': BARE_FORCED_JOB,
         'x-cloudscheduler-scheduletime': SCHEDULE_TIME,
       },
       auth: exactAuth,
@@ -187,7 +189,7 @@ describe('RIG-B1 durable Scheduler scenario gate', () => {
       routePath: '/jobs/batch-anchors',
       headers: {
         'x-cloudscheduler': 'true',
-        'x-cloudscheduler-jobname': JOB,
+        'x-cloudscheduler-jobname': BARE_JOB,
         'x-cloudscheduler-scheduletime': SCHEDULE_TIME,
       },
       auth,
@@ -200,7 +202,7 @@ describe('RIG-B1 durable Scheduler scenario gate', () => {
       routePath: '/jobs/batch-anchors',
       headers: {
         'x-cloudscheduler': 'true',
-        'x-cloudscheduler-jobname': JOB,
+        'x-cloudscheduler-jobname': BARE_JOB,
         'x-cloudscheduler-scheduletime': SCHEDULE_TIME,
       },
       auth: exactAuth,
@@ -214,7 +216,7 @@ describe('RIG-B1 durable Scheduler scenario gate', () => {
       routePath: '/jobs/batch-anchors',
       headers: {
         'x-cloudscheduler': 'true',
-        'x-cloudscheduler-jobname': JOB,
+        'x-cloudscheduler-jobname': BARE_JOB,
         'x-cloudscheduler-scheduletime': SCHEDULE_TIME,
       },
       auth: exactAuth,
@@ -233,7 +235,7 @@ describe('RIG-B1 durable Scheduler scenario gate', () => {
       routePath: '/jobs/batch-anchors',
       headers: {
         'x-cloudscheduler': 'true',
-        'x-cloudscheduler-jobname': JOB,
+        'x-cloudscheduler-jobname': BARE_JOB,
         'x-cloudscheduler-scheduletime': SCHEDULE_TIME,
       },
       auth: exactAuth,
@@ -252,7 +254,7 @@ describe('RIG-B1 durable Scheduler scenario gate', () => {
       routePath: '/jobs/batch-anchors',
       headers: {
         'x-cloudscheduler': 'true',
-        'x-cloudscheduler-jobname': JOB,
+        'x-cloudscheduler-jobname': BARE_JOB,
         'x-cloudscheduler-scheduletime': SCHEDULE_TIME,
       },
       auth: exactAuth,
@@ -262,5 +264,29 @@ describe('RIG-B1 durable Scheduler scenario gate', () => {
       mode: 'CONTROLLED_SKIP',
       body: { reason: 's33_rig_b1_preparing' },
     });
+  });
+
+  it('rejects full-resource and lookalike Scheduler job headers before the database gate', async () => {
+    const store = db('TARGET_EXECUTE');
+    const request = {
+      routePath: '/jobs/batch-anchors',
+      headers: {
+        'x-cloudscheduler': 'true',
+        'x-cloudscheduler-jobname': JOB,
+        'x-cloudscheduler-scheduletime': SCHEDULE_TIME,
+      },
+      auth: exactAuth,
+      ...exactService,
+    } as const;
+
+    await expect(gateS33RigB1ScenarioRequest(request, store)).rejects.toThrow(/bare.*six-job set/i);
+    await expect(gateS33RigB1ScenarioRequest({
+      ...request,
+      headers: {
+        ...request.headers,
+        'x-cloudscheduler-jobname': `${BARE_JOB}-lookalike`,
+      },
+    }, store)).rejects.toThrow(/bare.*six-job set/i);
+    expect(store.rpc).not.toHaveBeenCalled();
   });
 });

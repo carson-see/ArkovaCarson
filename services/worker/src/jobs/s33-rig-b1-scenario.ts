@@ -21,6 +21,7 @@ export const S33_RIG_B1_SCENARIO_EXECUTION_VERSION =
 
 const JOB_PREFIX =
   `projects/arkova1/locations/us-central1/jobs/${S33_RIG_B1_WORKER_SERVICE}-`;
+const BARE_JOB_PREFIX = `${S33_RIG_B1_WORKER_SERVICE}-`;
 const SHA256 = /^sha256:[0-9a-f]{64}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
@@ -40,6 +41,12 @@ const exactJobResourceSchema = z.string().refine((value) => {
   const suffix = value.slice(JOB_PREFIX.length);
   return Object.hasOwn(S33_RIG_B1_SCENARIO_JOB_ROUTES, suffix);
 }, 'Cloud Scheduler job resource is outside the exact RIG-B1 six-job set.');
+
+const exactBareJobIdSchema = z.string().refine((value) => {
+  if (!value.startsWith(BARE_JOB_PREFIX)) return false;
+  const suffix = value.slice(BARE_JOB_PREFIX.length);
+  return Object.hasOwn(S33_RIG_B1_SCENARIO_JOB_ROUTES, suffix);
+}, 'Cloud Scheduler bare job ID is outside the exact RIG-B1 six-job set.');
 
 const timestampSchema = z.string().datetime({ offset: true });
 const boundedIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$/u);
@@ -199,6 +206,13 @@ export function deriveS33RigB1SchedulerExecutionIdentity(
   return Object.freeze({ jobResource, scheduleTime, executionId });
 }
 
+function canonicalJobResourceForSchedulerHeader(jobIdRaw: string): string {
+  const jobId = exactBareJobIdSchema.parse(jobIdRaw);
+  return exactJobResourceSchema.parse(
+    `projects/arkova1/locations/us-central1/jobs/${jobId}`,
+  );
+}
+
 function contextFromGate(
   gate: z.infer<typeof activeGateSchema>,
   identity: S33RigB1SchedulerExecutionIdentity,
@@ -255,7 +269,10 @@ export async function gateS33RigB1ScenarioRequest(
   }
   const identity = jobHeader === null || scheduleHeader === null
     ? null
-    : deriveS33RigB1SchedulerExecutionIdentity(jobHeader, scheduleHeader);
+    : deriveS33RigB1SchedulerExecutionIdentity(
+      canonicalJobResourceForSchedulerHeader(jobHeader),
+      scheduleHeader,
+    );
   if (identity !== null) {
     const suffix = suffixForJobResource(identity.jobResource);
     if (S33_RIG_B1_SCENARIO_JOB_ROUTES[suffix] !== request.routePath) {
