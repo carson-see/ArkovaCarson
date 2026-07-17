@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -11,12 +12,17 @@ import {
 import { checkHeldoutLeakage, loadLeakageCorpus } from './heldout-leakage.js';
 import { S33_WAVE2_TOP15_01_05_HELDOUT } from './golden-dataset-s33-wave2-top15-01-05-heldout.js';
 import { S33_WAVE2_TOP15_06_10_HELDOUT } from './golden-dataset-s33-wave2-top15-06-10-heldout.js';
+import {
+  buildS33Wave2BaseCorpusRegistry,
+  extendS33Wave2CorpusRegistry,
+} from './s33-wave2-corpus-registry.js';
 
 const BATCH_ID = 'S33-W2-TOP15-06-10';
-const REGISTRY_DIGEST_SHA256 = '412a08227608a58172569a4fcbf3cd1025dc67fc1beeaddd6c163d22c4cb80d6';
+const REGISTRY_DIGEST_SHA256 = '2ef6e6d3a5974aecf4a39339ee6bc4a328f2cb1395dff83f87385db130e9f154';
 const SOURCE_PATH = 'services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-06-10-heldout.ts';
 const MANIFEST_PATH = 'docs/lane4/s33-wave2-batches/top15-06-10/manifest.json';
 const DATASHEET_PATH = 'docs/lane4/s33-wave2-batches/top15-06-10/datasheet.json';
+const PRIOR_MANIFEST_PATH = 'docs/lane4/s33-wave2-batches/top15-01-05/manifest.json';
 const workerRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
 
@@ -111,6 +117,14 @@ function sha256(value: string): string {
 
 function gitBlobSha1(value: string): string {
   return createHash('sha1').update(`blob ${Buffer.byteLength(value)}\0`).update(value).digest('hex');
+}
+
+function git(root: string, args: readonly string[]): string {
+  return execFileSync('/usr/bin/git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
+}
+
+function gitContent(root: string, args: readonly string[]): string {
+  return execFileSync('/usr/bin/git', ['-C', root, ...args], { encoding: 'utf8' });
 }
 
 function leakageTokens(value: string): string[] {
@@ -212,6 +226,47 @@ describe('S3.3 Wave 3 top-15 tranche 06-10', () => {
     expect(manifest.entries.slice(0, 60).every(({ domain }) => domain === 'legal')).toBe(true);
     expect(manifest.entries.slice(60, 120).every(({ domain }) => domain === 'financial')).toBe(true);
     expect(manifest.entries.slice(120).every(({ domain }) => domain === 'education')).toBe(true);
+  });
+
+  it('starts from the exact registry produced by accepting the 01-05 tranche', () => {
+    const priorCandidateHead = git(repositoryRoot, [
+      'log', '--diff-filter=A', '--format=%H', '-n', '1', '--', PRIOR_MANIFEST_PATH,
+    ]);
+    expect(priorCandidateHead).toMatch(/^[0-9a-f]{40}$/u);
+    const priorManifestContent = gitContent(repositoryRoot, [
+      'show', `${priorCandidateHead}:${PRIOR_MANIFEST_PATH}`,
+    ]);
+    const priorManifest = JSON.parse(priorManifestContent) as Manifest;
+    const baseRegistry = buildS33Wave2BaseCorpusRegistry({
+      repositoryRoot,
+      verificationHeadSha: priorCandidateHead,
+    });
+    const postPriorRegistry = extendS33Wave2CorpusRegistry(
+      baseRegistry,
+      {
+        batchId: priorManifest.batchId,
+        revision: priorManifest.revision,
+        manifestPath: PRIOR_MANIFEST_PATH,
+        manifestRawSha256: sha256(priorManifestContent),
+        sourcePath: priorManifest.source.path,
+        sourceBlobSha: priorManifest.source.blobSha,
+        datasheetPath: priorManifest.datasheet.path,
+        datasheetBlobSha: priorManifest.datasheet.blobSha,
+        entryCount: priorManifest.entryCount,
+      },
+      priorManifest.entries.map((entry) => ({
+        ...entry,
+        batchId: priorManifest.batchId,
+        revision: priorManifest.revision,
+        sourcePath: priorManifest.source.path,
+      })),
+    );
+
+    expect(postPriorRegistry.acceptedBatches.map(({ batchId }) => batchId)).toEqual([
+      'S33-W1',
+      'S33-W2-TOP15-01-05',
+    ]);
+    expect(manifest.baseRegistryDigestSha256).toBe(postPriorRegistry.registryDigestSha256);
   });
 
   it('keeps source, manifest, and datasheet in an exact ordered bijection disjoint from 01-05', () => {
