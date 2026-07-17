@@ -4,7 +4,7 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 
 ## 2026-07-17 Anchor credit-gate idempotency (SCRUM-2970, BUG-2026-07-17-012)
 
-- `anchor-submit.ts` now passes a stable `reference_id` to `ensureAnchorCreditAvailable`, derived via `deriveAnchorCreditReferenceId('anchor_submit', orgId, fingerprint)` — previously the gate called `deduct_org_credit` with `p_reference_id=null`, bypassing the 0326 idempotency ledger so a retry double-deducted. No response-shape change (402/503 bodies frozen and pinned by tests).
+- `anchor-submit.ts` restructured to insert-then-deduct: the PENDING anchor row is inserted first, then `ensureAnchorCreditAvailable` runs with `reference_id` = the new row's id (repo pattern per `credential-sources.ts`). Previously the gate called `deduct_org_credit` with `p_reference_id=null`, bypassing the 0326 idempotency ledger so a retry double-deducted. A fingerprint-derived reference was rejected in review (free re-anchor after soft-delete). On deduct failure the never-paid row is hard-deleted (compensation) and the frozen 402/503 bodies are returned unchanged; an HTTP retry of the same request is absorbed by the dedup lookup before the gate.
 
 ## 2026-07-06 S3-P0 producer-contract pin (no route changes)
 

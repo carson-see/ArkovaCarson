@@ -19,10 +19,7 @@ vi.mock('./logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import {
-  ensureAnchorCreditAvailable,
-  deriveAnchorCreditReferenceId,
-} from './anchorCreditGate.js';
+import { ensureAnchorCreditAvailable } from './anchorCreditGate.js';
 
 function makeRes(): Response {
   // Minimal Express Response mock — only needs status() + json() + chainability.
@@ -40,7 +37,8 @@ function makeRes(): Response {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const fakeDb = {} as any;
 
-// SCRUM-2970 — a stable uuid the caller derives from the request identity.
+// SCRUM-2970 — the inserted anchor row's id (callers insert-then-deduct and
+// pass the fresh row id as the deduction reference).
 const REF = '11111111-2222-4333-8444-555555555555';
 
 describe('ensureAnchorCreditAvailable', () => {
@@ -62,7 +60,8 @@ describe('ensureAnchorCreditAvailable', () => {
     // Root cause of BUG-2026-07-17-012: the gate called deductOrgCredit with
     // NO referenceId, so migration 0326's idempotency ledger never engaged on
     // the primary anchor path — every retry double-deducted. The gate must
-    // forward a non-null referenceId on every call.
+    // forward a non-null referenceId (the inserted anchor row's id) on every
+    // call.
     mockDeductOrgCredit.mockResolvedValue({ allowed: true });
     const res = makeRes();
 
@@ -140,50 +139,5 @@ describe('ensureAnchorCreditAvailable', () => {
         'This organization is not provisioned for credit-based billing. ' +
         'An operator must seed org_credits before this API key can submit.',
     });
-  });
-});
-
-describe('deriveAnchorCreditReferenceId (SCRUM-2970)', () => {
-  // migration 0326: org_credit_deductions.reference_id is `uuid NOT NULL`,
-  // so the derived id must be a syntactically valid uuid.
-  const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-  const ORG = '10000000-1000-4000-8000-000000000001';
-  const FP_A = 'a'.repeat(64);
-  const FP_B = 'b'.repeat(64);
-
-  it('produces a uuid-shaped id', () => {
-    expect(deriveAnchorCreditReferenceId('anchor_submit', ORG, FP_A)).toMatch(UUID_SHAPE);
-  });
-
-  it('is STABLE: same scope + org + fingerprint always derives the same id', () => {
-    // This is the idempotency property — a client retry of the same logical
-    // request must map to the same ledger row so the retry dedupes.
-    const first = deriveAnchorCreditReferenceId('anchor_submit', ORG, FP_A);
-    const second = deriveAnchorCreditReferenceId('anchor_submit', ORG, FP_A);
-    expect(second).toBe(first);
-  });
-
-  it('is UNIQUE across distinct fingerprints', () => {
-    expect(deriveAnchorCreditReferenceId('anchor_submit', ORG, FP_A)).not.toBe(
-      deriveAnchorCreditReferenceId('anchor_submit', ORG, FP_B),
-    );
-  });
-
-  it('is UNIQUE across distinct orgs for the same fingerprint', () => {
-    const OTHER_ORG = '20000000-2000-4000-8000-000000000002';
-    expect(deriveAnchorCreditReferenceId('anchor_submit', ORG, FP_A)).not.toBe(
-      deriveAnchorCreditReferenceId('anchor_submit', OTHER_ORG, FP_A),
-    );
-  });
-
-  it('is UNIQUE across scopes (anchor-submit vs contract pre-signing)', () => {
-    // Same fingerprint can be legitimately anchored via BOTH endpoints
-    // (pre-signing dedup is scoped to credential_type=CONTRACT_PRESIGNING;
-    // anchor-submit dedup is global) — those are distinct logical requests
-    // and must each get their own deduction.
-    expect(deriveAnchorCreditReferenceId('anchor_submit', ORG, FP_A)).not.toBe(
-      deriveAnchorCreditReferenceId('contract_presigning', ORG, FP_A),
-    );
   });
 });

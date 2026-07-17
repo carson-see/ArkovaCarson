@@ -19,10 +19,7 @@ import {
 } from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import {
-  ensureAnchorCreditAvailable,
-  deriveAnchorCreditReferenceId,
-} from '../../utils/anchorCreditGate.js';
+import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
 import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 import { submitJob } from '../../utils/jobQueue.js';
@@ -173,25 +170,6 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       return;
     }
 
-    // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
-    // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
-    // existing API-key paths without per-org credit setup are unaffected.
-    // SCRUM-2970 — pass a reference id derived from (org, fingerprint) so
-    // the 0326 idempotency ledger dedupes retries of the same logical
-    // request instead of double-deducting. `publicId` is NOT usable here:
-    // it is regenerated per attempt, and no anchor row exists yet.
-    if (
-      orgId &&
-      !(await ensureAnchorCreditAvailable(
-        db,
-        orgId,
-        res,
-        deriveAnchorCreditReferenceId('anchor_submit', orgId, fingerprint),
-      ))
-    ) {
-      return;
-    }
-
     // credential_type already validated by Zod enum; defaults to 'OTHER'.
     const credentialType = body.credential_type ?? 'OTHER';
     const insertPayload = {
@@ -213,6 +191,29 @@ async function handleAnchorSubmit(req: Request, res: Response) {
 
     if (insertError) {
       handleInsertError(insertError, orgId, res);
+      return;
+    }
+
+    // SCRUM-1170-B / SCRUM-2970 — org-credit deduction, insert-then-deduct.
+    // The helper short-circuits to allowed=true when
+    // ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so existing API-key
+    // paths without per-org credit setup are unaffected. The reference_id is
+    // the just-inserted anchor row's id (repo pattern per
+    // credential-sources.ts): a fresh uuid per anchoring event, so a
+    // soft-delete + re-anchor is a NEW billable event, while an HTTP retry
+    // of the same logical request is absorbed by the dedup lookup above
+    // before ever reaching this gate. On deduct failure (402/503 already
+    // written by the gate), compensate by hard-deleting the never-paid row.
+    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res, anchor.id))) {
+      const { error: compensationError } = await db.from('anchors').delete().eq('id', anchor.id);
+      if (compensationError) {
+        // The row exists but was never paid for — surface loudly; it is
+        // PENDING and will not progress, but must be reconciled.
+        logger.error(
+          { anchorId: anchor.id, orgId },
+          'anchor_credit_compensation_delete_failed',
+        );
+      }
       return;
     }
 
