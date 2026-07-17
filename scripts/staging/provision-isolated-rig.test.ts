@@ -849,6 +849,8 @@ describe('provision-isolated-rig.sh — safety model preserved under the new ove
 
 const STUB_CRON_SECRET = 'stub-cron-secret-value-8f3a17';
 const STUB_PREFLIGHT_SERVICE_ROLE_KEY = 'stub-preflight-service-role-key-c0f4a2';
+const STUB_PREFLIGHT_CHILD_STDERR =
+  `preflight-child-stderr-must-not-leak:${STUB_PREFLIGHT_SERVICE_ROLE_KEY}`;
 const STUB_SERVICE_URL = 'https://arkova-worker-stub.example.run.app';
 const STUB_REVISION = 'arkova-worker-stub-00001-abc';
 const STUB_IMAGE_DIGEST =
@@ -936,6 +938,7 @@ interface ApplyRunOptions {
   duplicateDeployedSecretEnv?: boolean;
   preflightServiceRoleReadFails?: boolean;
   preflightServiceRoleEmpty?: boolean;
+  preflightChildStderrFails?: boolean;
   sourceImageDigest?: string;
   gitFetchFails?: boolean;
   useUntrackedDriver?: boolean;
@@ -1769,6 +1772,10 @@ if [[ "$1" == "tsx" && "$2" == "scripts/ci/staging-honesty-preflight.ts" ]]; the
   if [[ "${'$'}{SUPABASE_SERVICE_ROLE_KEY:-}" != '${STUB_PREFLIGHT_SERVICE_ROLE_KEY}' ]]; then
     echo 'missing exact generated service-role key in preflight child environment' >&2
     exit 46
+  fi
+  if [[ '${options.preflightChildStderrFails ? 'true' : 'false'}' == 'true' ]]; then
+    echo '${STUB_PREFLIGHT_CHILD_STDERR}' >&2
+    exit 45
   fi
   ${options.schedulerStateAfterPreflight === 'ENABLED' ? `for state in '${schedulerStateDir}'/*; do printf 'ENABLED' > "$state"; done` : ':'}
   ${options.schedulerStateAfterPreflight === 'MISSING' ? `rm -f '${schedulerStateDir}'/*` : ':'}
@@ -3120,6 +3127,24 @@ describe('provision-isolated-rig.sh — strict clean_mirror evidence schema', ()
     expect(result.out).not.toContain(STUB_PREFLIGHT_SERVICE_ROLE_KEY);
     expect(result.out).not.toContain('injected generated service-role secret read failure');
     expect(result.out).not.toContain('ADMISSION_JSON=');
+  });
+
+  it('suppresses credential-bearing preflight child stderr and emits only a fixed parent error', () => {
+    const result = applyRunStubbed('preflight-child-stderr', 'mock', {
+      preflightChildStderrFails: true,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain(
+      'ERROR: clean-mirror preflight child failed with rc=45; child diagnostics suppressed.',
+    );
+    expect(result.out).not.toContain(STUB_PREFLIGHT_CHILD_STDERR);
+    expect(result.out).not.toContain(STUB_PREFLIGHT_SERVICE_ROLE_KEY);
+    const persistedArtifacts = readdirSync(result.artifactDir)
+      .filter((entry) => statSync(join(result.artifactDir, entry)).isFile())
+      .map((entry) => readFileSync(join(result.artifactDir, entry), 'utf8'))
+      .join('\n');
+    expect(persistedArtifacts).not.toContain(STUB_PREFLIGHT_CHILD_STDERR);
+    expect(persistedArtifacts).not.toContain(STUB_PREFLIGHT_SERVICE_ROLE_KEY);
   });
 
   it.each([

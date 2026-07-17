@@ -4130,7 +4130,7 @@ run_staging_honesty_preflight_with_generated_service_role() {
   if preflight_output="$(SUPABASE_SERVICE_ROLE_KEY="$service_role_key" \
     npx tsx scripts/ci/staging-honesty-preflight.ts \
       --project-ref "$project_ref" \
-      --format json)"; then
+      --format json 2>/dev/null)"; then
     rc=0
   else
     rc=$?
@@ -4138,6 +4138,7 @@ run_staging_honesty_preflight_with_generated_service_role() {
   unset service_role_key
   if [[ $rc -ne 0 ]]; then
     unset preflight_output
+    echo "ERROR: clean-mirror preflight child failed with rc=$rc; child diagnostics suppressed." >&2
     return "$rc"
   fi
   printf '%s\n' "$preflight_output"
