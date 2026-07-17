@@ -70,7 +70,7 @@ const RECEIPT_PREFIX = 's33/rig-r/release-start-receipts';
 // CTO-authorized recovery namespace. The first immutable receipt is retained as
 // superseded/non-merge-grade; this exact suffix prevents replaying or
 // overwriting either its receipt or its partial local evidence paths.
-const START_ATTEMPT_ID = 'real-provider-recovery-6';
+const START_ATTEMPT_ID = 'real-provider-recovery-7';
 const LEASE_URI = `gs://${RECEIPT_BUCKET}/s33/rig-leases/RIG-R.singleton.json`;
 const SOURCE_IMAGE_REPOSITORY =
   'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker';

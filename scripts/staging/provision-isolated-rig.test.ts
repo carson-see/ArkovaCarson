@@ -200,6 +200,44 @@ describe('provision-isolated-rig.sh — profile flag + safe default', () => {
 });
 
 describe('provision-isolated-rig.sh — RIG-R authenticated ingress', () => {
+  it('waits through deterministic runtime-SA propagation lag and binds the exact uniqueId', () => {
+    const functionSource = script.match(
+      /^wait_for_rig_r_runtime_identity_visibility\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const stubDir = mkdtempSync(join(tmpdir(), 'rig-r-sa-visibility-'));
+    stubDirs.push(stubDir);
+    const callCount = join(stubDir, 'describe-count');
+    writeFileSync(join(stubDir, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
+    writeFileSync(join(stubDir, 'gcloud'), `#!/usr/bin/env bash
+set -euo pipefail
+count=0
+[[ ! -f '${callCount}' ]] || count="$(cat '${callCount}')"
+count=$((count + 1))
+printf '%s' "$count" > '${callCount}'
+if (( count < 3 )); then exit 1; fi
+printf '%s\n' '{"email":"s33-rig-r-runtime@arkova1.iam.gserviceaccount.com","uniqueId":"270018525501000000777"}'
+`);
+    chmodSync(join(stubDir, 'sleep'), 0o755);
+    chmodSync(join(stubDir, 'gcloud'), 0o755);
+    const testScript = `set -euo pipefail
+export PATH='${stubDir}':"$PATH"
+IS_RIG_R=1
+RUNTIME_SA='s33-rig-r-runtime@arkova1.iam.gserviceaccount.com'
+GCP_PROJECT='arkova1'
+RIG_R_RUNTIME_SA_UNIQUE_ID='<uncaptured>'
+${functionSource}
+wait_for_rig_r_runtime_identity_visibility
+printf 'captured=%s calls=%s\n' "$RIG_R_RUNTIME_SA_UNIQUE_ID" "$(cat '${callCount}')"
+`;
+    const out = execFileSync('bash', ['-c', testScript], { encoding: 'utf8' });
+    expect(out).toContain(
+      'email=s33-rig-r-runtime@arkova1.iam.gserviceaccount.com unique_id=270018525501000000777',
+    );
+    expect(out).toContain('captured=270018525501000000777 calls=3');
+    expect(functionSource).toContain('refusing project IAM binding');
+  });
+
   it('dry-runs the exact service-scoped runtime invoker grant after deploy', () => {
     const sourceHead = execFileSync(REAL_GIT, ['-C', REPO_ROOT, 'rev-parse', 'HEAD'], {
       encoding: 'utf8',

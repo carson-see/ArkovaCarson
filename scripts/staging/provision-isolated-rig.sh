@@ -339,6 +339,7 @@ RIG_R_LEASE_GENERATION=""
 RIG_R_PROVISION_APPROVAL_JSON='{"status":"UNVERIFIED"}'
 RIG_R_PROVISION_APPROVAL_CLAIM_JSON='null'
 RIG_R_PROVISION_APPROVAL_CLAIMED=0
+RIG_R_RUNTIME_SA_UNIQUE_ID="<captured-rig-r-runtime-unique-id>"
 RIG_R_TRUSTED_NODE_LAUNCHER=""
 RIG_B1_NODE_STARTUP_SCRIPT_SHA256=""
 TRUSTED_GIT_VALIDATED=0
@@ -2316,6 +2317,29 @@ claim_rig_r_lease_once() {
   RIG_R_LEASE_CLAIMED=1
 }
 
+wait_for_rig_r_runtime_identity_visibility() {
+  [[ $IS_RIG_R -eq 1 ]] || return 0
+  local identity_json observed_unique_id
+  local max_attempts=30 interval_seconds=2 attempt
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    if identity_json="$(gcloud iam service-accounts describe "$RUNTIME_SA" \
+      --project="$GCP_PROJECT" --format=json 2>/dev/null)" \
+      && observed_unique_id="$(jq -er \
+        --arg email "$RUNTIME_SA" \
+        'select(.email == $email and ((.uniqueId | tostring) | test("^[1-9][0-9]*$"))) | (.uniqueId | tostring)' \
+        <<<"$identity_json" 2>/dev/null)"; then
+      RIG_R_RUNTIME_SA_UNIQUE_ID="$observed_unique_id"
+      echo "# RIG-R runtime identity visible: email=$RUNTIME_SA unique_id=$RIG_R_RUNTIME_SA_UNIQUE_ID"
+      return 0
+    fi
+    if [[ $attempt -lt $max_attempts ]]; then
+      sleep "$interval_seconds"
+    fi
+  done
+  echo "ERROR: RIG-R runtime service account did not become exactly visible within $((max_attempts * interval_seconds)) seconds; refusing project IAM binding." >&2
+  return 1
+}
+
 release_owned_rig_r_lease() {
   [[ $RIG_R_LEASE_CLAIMED -eq 1 ]] || return 0
   local lease_payload
@@ -3539,6 +3563,8 @@ write_provision_state() {
     --arg g1_tuned_runtime_sa "$G1_TUNED_RUNTIME_SA" \
     --arg g1_control_runtime_unique_id "$G1_CONTROL_RUNTIME_SA_UNIQUE_ID" \
     --arg g1_tuned_runtime_unique_id "$G1_TUNED_RUNTIME_SA_UNIQUE_ID" \
+    --arg rig_r_runtime_sa "$RUNTIME_SA" \
+    --arg rig_r_runtime_unique_id "$RIG_R_RUNTIME_SA_UNIQUE_ID" \
     --arg g1_endpoint "projects/arkova1/locations/us-central1/endpoints/${RIG_G1_ENDPOINT_ID}" \
     --arg g1_model "$RIG_G1_CANDIDATE_MODEL_RESOURCE" \
     --arg g1_model_version "$RIG_G1_CANDIDATE_MODEL_VERSION_RESOURCE" \
@@ -3624,6 +3650,10 @@ write_provision_state() {
           teardown_command: $g1_tuned_teardown
         }
       ] else [] end),
+      rig_r_runtime_identity: (if $rig_id == "RIG-R" then {
+        email: $rig_r_runtime_sa,
+        unique_id: $rig_r_runtime_unique_id
+      } else null end),
       image: $image,
       declared_source_head: $declared_source_head,
       source_head_image_ref: $source_head_image_ref,
@@ -5636,6 +5666,8 @@ if [[ $APPLY -eq 1 ]]; then
       --project="$GCP_PROJECT" \
       --display-name="S3.3 RIG-R temporary runtime"
     CREATED_RUNTIME_SA=1
+    wait_for_rig_r_runtime_identity_visibility
+    write_provision_state "rig_r_runtime_identity_visible" ""
     for runtime_role in "${RIG_R_RUNTIME_ROLES[@]}"; do
       run_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
         --member="serviceAccount:${RUNTIME_SA}" \

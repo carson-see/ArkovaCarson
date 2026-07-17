@@ -17,7 +17,7 @@ const artifact = `sha256:${'d'.repeat(64)}`;
 const now = '2026-07-16T18:00:00.000Z';
 const expiresAt = '2026-07-19T17:00:00.000Z';
 const confirmation =
-  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-6';
+  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-7';
 
 function admission(): Record<string, unknown> {
   const approval = {
