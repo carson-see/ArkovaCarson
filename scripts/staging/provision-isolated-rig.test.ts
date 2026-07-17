@@ -598,6 +598,14 @@ function createApplyGitFixture(): ApplyGitFixture {
   const fixtureDriver = join(repo, 'services/worker/scripts/pr1408-chain-resilience-driver.ts');
   const fixtureStartup = join(repo, 'scripts/staging/start-rig-b1-bitcoin-core.sh');
   const fixtureB1Verifier = join(repo, 'scripts/staging/s33-b1-node-approval.mjs');
+  const fixtureB1ScenarioIndex = join(
+    repo,
+    'scripts/staging/s33-b1-scenario-anchor-index.sql',
+  );
+  const fixtureB1ScenarioIndexVerify = join(
+    repo,
+    'scripts/staging/s33-b1-scenario-anchor-index-verify.sql',
+  );
   const fixtureTeardown = join(repo, 'scripts/staging/teardown-isolated-rig.sh');
   const trustedGitPath = '/usr/bin/git';
   const trustedGitSha256 = createHash('sha256')
@@ -656,6 +664,14 @@ function createApplyGitFixture(): ApplyGitFixture {
   );
   writeFileSync(fixtureB1Verifier, fixtureB1VerifierSource);
   writeFileSync(
+    fixtureB1ScenarioIndex,
+    readFileSync(resolve(REPO_ROOT, 'scripts/staging/s33-b1-scenario-anchor-index.sql')),
+  );
+  writeFileSync(
+    fixtureB1ScenarioIndexVerify,
+    readFileSync(resolve(REPO_ROOT, 'scripts/staging/s33-b1-scenario-anchor-index-verify.sql')),
+  );
+  writeFileSync(
     fixtureTeardown,
     readFileSync(resolve(REPO_ROOT, 'scripts/staging/teardown-isolated-rig.sh')),
   );
@@ -664,7 +680,8 @@ function createApplyGitFixture(): ApplyGitFixture {
   chmodSync(fixtureB1Verifier, 0o755);
   chmodSync(fixtureTeardown, 0o755);
   execFileSync(trustedGitPath, [
-    '-C', repo, 'add', '--', fixtureScript, fixtureStartup, fixtureB1Verifier, fixtureTeardown,
+    '-C', repo, 'add', '--', fixtureScript, fixtureStartup, fixtureB1Verifier,
+    fixtureB1ScenarioIndex, fixtureB1ScenarioIndexVerify, fixtureTeardown,
   ]);
   execFileSync(trustedGitPath, ['-C', repo, 'commit', '--quiet', '-m', 'fixture candidate']);
   const head = execFileSync(trustedGitPath, ['-C', repo, 'rev-parse', 'HEAD'], {
@@ -1768,6 +1785,28 @@ describe('provision-isolated-rig.sh — RIG-B1 identity, trigger specs, and admi
 
   it('admits the explicit signet/T3 RIG-B1 declaration', () => {
     expect(result.code, result.out).toBe(0);
+  });
+
+  it('installs the verified B1-only scenario index after schema replay and before seed', () => {
+    const schemaPushIndex = result.callOrder.findIndex((entry) =>
+      entry.startsWith('npx supabase db push --linked'),
+    );
+    const indexInstall = result.callOrder.findIndex((entry) =>
+      entry ===
+        'npx supabase db query --linked --file scripts/staging/s33-b1-scenario-anchor-index.sql',
+    );
+    const indexVerify = result.callOrder.findIndex((entry) =>
+      entry ===
+        'npx supabase db query --linked --file scripts/staging/s33-b1-scenario-anchor-index-verify.sql',
+    );
+    const seedIndex = result.callOrder.findIndex((entry) =>
+      entry === 'npx supabase db query --linked --file scripts/staging/seed-baseline-fixture.sql',
+    );
+
+    expect(schemaPushIndex).toBeGreaterThanOrEqual(0);
+    expect(indexInstall).toBeGreaterThan(schemaPushIndex);
+    expect(indexVerify).toBeGreaterThan(indexInstall);
+    expect(seedIndex).toBeGreaterThan(indexVerify);
   });
 
   it.each(expectedSpecs)('creates distinct Scheduler job $name targeting exact $path', (spec) => {

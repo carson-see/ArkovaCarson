@@ -10,6 +10,18 @@ const baselineUrl = new URL(
   '../../../../supabase/migrations/00000000000000_baseline_at_main_HEAD.sql',
   import.meta.url,
 );
+const scenarioIndexUrl = new URL(
+  '../../../../scripts/staging/s33-b1-scenario-anchor-index.sql',
+  import.meta.url,
+);
+const scenarioIndexVerifyUrl = new URL(
+  '../../../../scripts/staging/s33-b1-scenario-anchor-index-verify.sql',
+  import.meta.url,
+);
+const provisionerUrl = new URL(
+  '../../../../scripts/staging/provision-isolated-rig.sh',
+  import.meta.url,
+);
 
 function migration(): string {
   return readFileSync(migrationUrl, 'utf8');
@@ -21,6 +33,15 @@ function claimBody(sql: string): string {
   const bodyStart = sql.indexOf('AS $$', start);
   const bodyEnd = sql.indexOf('$$;', bodyStart);
   if (bodyStart < 0 || bodyEnd < 0) throw new Error('claim_pending_anchors body missing');
+  return sql.slice(bodyStart + 5, bodyEnd);
+}
+
+function functionBody(sql: string, functionName: string): string {
+  const start = sql.indexOf(`CREATE OR REPLACE FUNCTION public.${functionName}`);
+  if (start < 0) throw new Error(`${functionName} definition missing`);
+  const bodyStart = sql.indexOf('AS $$', start);
+  const bodyEnd = sql.indexOf('$$;', bodyStart);
+  if (bodyStart < 0 || bodyEnd < 0) throw new Error(`${functionName} body missing`);
   return sql.slice(bodyStart + 5, bodyEnd);
 }
 
@@ -46,12 +67,77 @@ describe('RIG-B1 durable scenario migration contract', () => {
     expect(sql).toMatch(/v_mode := 'TARGET_REPLAY'/i);
   });
 
-  it('caps every active lease below the five-minute cadence and binds release authority', () => {
+  it('keeps every active lease cadence-safe at the signed invocation ceiling and binds release authority', () => {
     const sql = migration();
-    expect(sql).toMatch(/p_ttl_seconds[^;]*< 1 OR p_ttl_seconds > 240/i);
-    expect(sql).toMatch(/expires_at <= updated_at \+ interval '4 minutes'/i);
+    expect(sql).toMatch(/p_ttl_seconds[^;]*< 1 OR p_ttl_seconds > 600/i);
+    expect(sql).toMatch(/expires_at <= updated_at \+ interval '10 minutes'/i);
     expect(sql).toMatch(/expires_at <= authority_expires_at/i);
+    expect(sql).toMatch(
+      /observer_cleanup_expires_at <= started_at \+ interval '15 minutes'/i,
+    );
+    expect(sql).toMatch(/observer_cleanup_expires_at <= authority_expires_at/i);
     expect(sql).toMatch(/authority_expires_at <= v_now \+ make_interval\(secs => p_ttl_seconds\)/i);
+
+    const gate = functionBody(sql, 'gate_s33_rig_b1_scenario_execution');
+    expect(gate).toMatch(/v_attempt_deadline CONSTANT interval := interval '10 minutes'/i);
+    expect(gate).toMatch(/v_observer_cleanup_grace CONSTANT interval := interval '5 minutes'/i);
+    expect(gate).toMatch(
+      /v_expires_at := LEAST\(v_now \+ v_attempt_deadline, v_lease\.authority_expires_at\)/i,
+    );
+    expect(gate).toMatch(
+      /v_observer_cleanup_expires_at := LEAST\(\s*v_now \+ v_attempt_deadline \+ v_observer_cleanup_grace,\s*v_lease\.authority_expires_at\s*\)/i,
+    );
+    expect(gate).toMatch(/SET phase = 'RUNNING',[\s\S]*expires_at = v_expires_at/i);
+    expect(gate).toMatch(/observer_cleanup_expires_at = v_observer_cleanup_expires_at/i);
+    expect(gate).toMatch(/'expiresAt', to_char\(v_expires_at AT TIME ZONE 'UTC'/i);
+  });
+
+  it('installs and verifies the B1-only anchor index concurrently before seed', () => {
+    const sql = migration();
+    const operatorSql = readFileSync(scenarioIndexUrl, 'utf8');
+    const verifySql = readFileSync(scenarioIndexVerifyUrl, 'utf8');
+    const provisioner = readFileSync(provisionerUrl, 'utf8');
+
+    expect(sql).not.toMatch(/CREATE INDEX[\s\S]*s33_rig_b1_anchors_scenario_namespace_status_idx/i);
+    expect(operatorSql).toMatch(
+      /CREATE INDEX CONCURRENTLY IF NOT EXISTS s33_rig_b1_anchors_scenario_namespace_status_idx/i,
+    );
+    expect(operatorSql).toMatch(/ON public\.anchors \(\s*\(\(metadata->'s33_rig_b1'\)->>'scenarioLeaseId'\),\s*\(\(metadata->'s33_rig_b1'\)->>'namespaceId'\),\s*status\s*\)/i);
+    expect(operatorSql).toMatch(/WHERE deleted_at IS NULL AND metadata \? 's33_rig_b1'/i);
+    expect(operatorSql.match(/;/g)).toHaveLength(1);
+    expect(verifySql).toMatch(/^--[^]*\nDO \$verify_s33_b1_anchor_index\$/i);
+    expect(verifySql).toMatch(/indisvalid[\s\S]*indisready[\s\S]*indislive/i);
+    expect(verifySql).toMatch(/RAISE EXCEPTION[\s\S]*index/i);
+    expect(provisioner).toMatch(
+      /if \[\[ "\$RIG_ID" == "RIG-B1" \]\]; then[\s\S]*supabase db query --linked --file "\$RIG_B1_SCENARIO_ANCHOR_INDEX_SQL"[\s\S]*supabase db query --linked --file "\$RIG_B1_SCENARIO_ANCHOR_INDEX_VERIFY_SQL"/i,
+    );
+  });
+
+  it('makes every scenario-scoped live-anchor consumer eligible for the partial index', () => {
+    const sql = migration();
+    const consumers: Record<string, number> = {
+      prepare_s33_rig_b1_scenario_seed: 3,
+      arm_s33_rig_b1_scenario_lease: 1,
+      observe_s33_rig_b1_scenario_pending: 1,
+      claim_s33_rig_b1_scenario_anchors: 1,
+      recover_s33_rig_b1_scenario_broadcasts: 1,
+      list_s33_rig_b1_scenario_orgs: 1,
+      record_s33_rig_b1_scenario_denial_pass: 1,
+      observe_s33_rig_b1_scenario_outcome: 2,
+      cleanup_s33_rig_b1_scenario_run: 2,
+    };
+
+    for (const [functionName, expectedScans] of Object.entries(consumers)) {
+      const body = functionBody(sql, functionName);
+      const leasePredicates = body.match(
+        /\b(?:a|a2)\.metadata->'s33_rig_b1'->>'scenarioLeaseId'/gi,
+      ) ?? [];
+      const livePredicates = body.match(/\b(?:a|a2)\.deleted_at IS NULL/gi) ?? [];
+      const partialIndexGuards = body.match(/\b(?:a|a2)\.metadata \? 's33_rig_b1'/gi) ?? [];
+      expect(leasePredicates, `${functionName} scenario scans`).toHaveLength(expectedScans);
+      expect(livePredicates, `${functionName} live-row predicates`).toHaveLength(expectedScans);
+      expect(partialIndexGuards, `${functionName} partial-index guards`).toHaveLength(expectedScans);
+    }
   });
 
   it('authenticates exact service, revision, audience, secret and OIDC before audit mutation', () => {

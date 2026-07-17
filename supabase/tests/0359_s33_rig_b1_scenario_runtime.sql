@@ -74,7 +74,7 @@ BEGIN
     'soak-runtime', 'lease-runtime', v_capture_1,
     'scenario-runtime-a1', 'namespace-runtime-a', 'fault-runtime-a1',
     v_normal_job, v_audience, v_revision,
-    clock_timestamp() + interval '20 minutes', 240
+    clock_timestamp() + interval '20 minutes', 600
   );
   v_lease := (v_acquired->>'scenarioLeaseId')::uuid;
   v_generation := (v_acquired->>'generation')::bigint;
@@ -94,9 +94,14 @@ BEGIN
   END IF;
   v_armed := public.arm_s33_rig_b1_scenario_lease(
     v_lease, v_generation, v_capture_1,
-    v_seed->>'seedManifestSha256', 12500, 240
+    v_seed->>'seedManifestSha256', 12500, 600
   );
   v_generation := (v_armed->>'generation')::bigint;
+  -- Simulate a target arriving late in its ARMED cadence window. The execution
+  -- lease must begin at admission, not inherit the nearly-spent wait window.
+  UPDATE public.s33_rig_b1_scenario_leases
+  SET expires_at = clock_timestamp() + interval '1 minute'
+  WHERE id = v_lease;
   v_gate := public.gate_s33_rig_b1_scenario_execution(
     v_normal_job, v_schedule, '/jobs/batch-anchors', v_revision,
     'combined', true, true,
@@ -105,6 +110,19 @@ BEGIN
   );
   IF v_gate->>'mode' <> 'TARGET_EXECUTE' THEN
     RAISE EXCEPTION 'A1 target was not admitted: %', v_gate;
+  END IF;
+  IF (v_gate->>'expiresAt')::timestamptz
+      < clock_timestamp() + interval '9 minutes 55 seconds' THEN
+    RAISE EXCEPTION 'A1 RUNNING lease did not receive a fresh invocation window: %', v_gate;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.s33_rig_b1_scenario_leases
+    WHERE id = v_lease
+      AND observer_cleanup_expires_at
+        >= clock_timestamp() + interval '14 minutes 55 seconds'
+      AND observer_cleanup_expires_at <= authority_expires_at
+  ) THEN
+    RAISE EXCEPTION 'A1 observer/cleanup grace was not separately bounded';
   END IF;
   v_execution := v_gate->>'executionId';
   PERFORM c.id FROM public.claim_s33_rig_b1_scenario_anchors(
@@ -174,7 +192,7 @@ BEGIN
     'soak-runtime', 'lease-runtime', v_capture_2,
     'scenario-runtime-poison', 'namespace-runtime-poison', 'fault-runtime-poison',
     v_org_job, v_audience, v_revision,
-    clock_timestamp() + interval '20 minutes', 240
+    clock_timestamp() + interval '20 minutes', 600
   );
   v_lease := (v_acquired->>'scenarioLeaseId')::uuid;
   v_generation := (v_acquired->>'generation')::bigint;
@@ -185,7 +203,7 @@ BEGIN
   );
   v_armed := public.arm_s33_rig_b1_scenario_lease(
     v_lease, v_generation, v_capture_2,
-    v_seed->>'seedManifestSha256', 12500, 240
+    v_seed->>'seedManifestSha256', 12500, 600
   );
   v_generation := (v_armed->>'generation')::bigint;
   v_gate := public.gate_s33_rig_b1_scenario_execution(

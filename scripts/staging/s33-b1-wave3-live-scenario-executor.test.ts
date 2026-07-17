@@ -305,6 +305,20 @@ describe('S3.3 RIG-B1 Wave-3 live scenario executor', () => {
     })).toThrow(/must equal the signed START run hard stop/u);
   });
 
+  it('keeps an arm just after a Scheduler tick live through the next target admission', () => {
+    const exactPlan = buildS33B1Wave3LiveScenarioPlan(planInput());
+    const armedJustAfterTick = Date.parse('2026-07-16T20:00:00.001Z');
+    const nextFiveMinuteTick = Date.parse('2026-07-16T20:05:00.000Z');
+    const minimumAdmissionMarginMs = 5 * 60_000;
+
+    for (const scenario of exactPlan.scenarios) {
+      const expiresAt = armedJustAfterTick + scenario.ttlSeconds * 1_000;
+      expect(scenario.ttlSeconds).toBe(600);
+      expect(expiresAt).toBeGreaterThan(nextFiveMinuteTick);
+      expect(expiresAt - nextFiveMinuteTick).toBeGreaterThanOrEqual(minimumAdmissionMarginMs);
+    }
+  });
+
   it('executes exact ordered server-derived captures and returns only genuine branded handles', async () => {
     const plan = buildS33B1Wave3LiveScenarioPlan(planInput());
     const port = new FakePort();

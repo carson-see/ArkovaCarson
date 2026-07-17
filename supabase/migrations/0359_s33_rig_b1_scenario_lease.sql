@@ -40,6 +40,7 @@ CREATE TABLE public.s33_rig_b1_scenario_leases (
   ),
   authority_expires_at timestamptz NOT NULL,
   expires_at timestamptz NOT NULL,
+  observer_cleanup_expires_at timestamptz NULL,
   current_execution_id text NULL CHECK (
     current_execution_id IS NULL OR current_execution_id ~ '^sha256:[0-9a-f]{64}$'
   ),
@@ -54,8 +55,13 @@ CREATE TABLE public.s33_rig_b1_scenario_leases (
   completed_at timestamptz NULL,
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (phase NOT IN ('PREPARING', 'ARMED', 'RUNNING') OR expires_at > updated_at),
-  CHECK (phase NOT IN ('PREPARING', 'ARMED', 'RUNNING') OR expires_at <= updated_at + interval '4 minutes'),
-  CHECK (expires_at <= authority_expires_at)
+  CHECK (phase NOT IN ('PREPARING', 'ARMED', 'RUNNING') OR expires_at <= updated_at + interval '10 minutes'),
+  CHECK (expires_at <= authority_expires_at),
+  CHECK (phase <> 'RUNNING' OR observer_cleanup_expires_at IS NOT NULL),
+  CHECK (observer_cleanup_expires_at IS NULL OR started_at IS NOT NULL),
+  CHECK (observer_cleanup_expires_at IS NULL OR observer_cleanup_expires_at >= expires_at),
+  CHECK (observer_cleanup_expires_at IS NULL OR observer_cleanup_expires_at <= started_at + interval '15 minutes'),
+  CHECK (observer_cleanup_expires_at IS NULL OR observer_cleanup_expires_at <= authority_expires_at)
 );
 
 CREATE TABLE public.s33_rig_b1_scenario_control (
@@ -293,8 +299,8 @@ BEGIN
   IF p_capture_id IS NULL OR p_capture_id !~ '^sha256:[0-9a-f]{64}$' THEN
     RAISE check_violation USING MESSAGE = 'RIG-B1 capture id is invalid';
   END IF;
-  IF p_ttl_seconds IS NULL OR p_ttl_seconds < 1 OR p_ttl_seconds > 240 THEN
-    RAISE check_violation USING MESSAGE = 'RIG-B1 scenario lease TTL must be 1..240 seconds';
+  IF p_ttl_seconds IS NULL OR p_ttl_seconds < 1 OR p_ttl_seconds > 600 THEN
+    RAISE check_violation USING MESSAGE = 'RIG-B1 scenario lease TTL must be 1..600 seconds';
   END IF;
   IF p_authority_expires_at <= v_now + make_interval(secs => p_ttl_seconds) THEN
     RAISE check_violation USING MESSAGE = 'RIG-B1 scenario authority must outlive the requested lease';
@@ -309,8 +315,9 @@ BEGIN
     SELECT * INTO STRICT v_active
     FROM public.s33_rig_b1_scenario_leases
     WHERE id = v_control.active_lease_id FOR UPDATE;
-    IF v_active.expires_at > v_now
-      AND v_active.phase IN ('PREPARING', 'ARMED', 'RUNNING') THEN
+    IF (v_active.phase IN ('PREPARING', 'ARMED') AND v_active.expires_at > v_now)
+      OR (v_active.phase = 'RUNNING'
+        AND COALESCE(v_active.observer_cleanup_expires_at, v_active.expires_at) > v_now) THEN
       RAISE lock_not_available USING MESSAGE = 'A live RIG-B1 scenario lease already owns all six jobs';
     END IF;
     UPDATE public.s33_rig_b1_scenario_leases
@@ -467,6 +474,7 @@ BEGIN
   INTO v_existing_any, v_existing_pending
   FROM public.anchors a
   WHERE a.deleted_at IS NULL
+    AND a.metadata ? 's33_rig_b1'
     AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
     AND a.metadata->'s33_rig_b1'->>'namespaceId' = p_namespace_id;
 
@@ -595,6 +603,7 @@ BEGIN
       v_now - make_interval(secs => p_minimum_oldest_age_seconds)
     ), updated_at = v_now
     WHERE a.status = 'PENDING' AND a.deleted_at IS NULL
+      AND a.metadata ? 's33_rig_b1'
       AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
       AND a.metadata->'s33_rig_b1'->>'namespaceId' = p_namespace_id;
   END IF;
@@ -603,6 +612,7 @@ BEGIN
   INTO v_pending, v_oldest
   FROM public.anchors a
   WHERE a.status = 'PENDING' AND a.deleted_at IS NULL
+    AND a.metadata ? 's33_rig_b1'
     AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
     AND a.metadata->'s33_rig_b1'->>'namespaceId' = p_namespace_id;
   IF v_pending <> p_expected_pending THEN
@@ -679,7 +689,7 @@ BEGIN
   IF p_seed_manifest_sha256 IS NULL
     OR p_seed_manifest_sha256 !~ '^sha256:[0-9a-f]{64}$'
     OR p_expected_pending IS NULL OR p_expected_pending < 0
-    OR p_ttl_seconds IS NULL OR p_ttl_seconds < 1 OR p_ttl_seconds > 240 THEN
+    OR p_ttl_seconds IS NULL OR p_ttl_seconds < 1 OR p_ttl_seconds > 600 THEN
     RAISE check_violation USING MESSAGE = 'Invalid RIG-B1 arm precondition';
   END IF;
   SELECT * INTO STRICT v_control
@@ -707,6 +717,7 @@ BEGIN
   SELECT count(*)::integer INTO v_pending
   FROM public.anchors a
   WHERE a.status = 'PENDING' AND a.deleted_at IS NULL
+    AND a.metadata ? 's33_rig_b1'
     AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
     AND a.metadata->'s33_rig_b1'->>'namespaceId' = v_lease.namespace_id;
   IF v_pending <> p_expected_pending THEN
@@ -722,6 +733,7 @@ BEGIN
       seed_manifest_sha256 = p_seed_manifest_sha256,
       expected_pending = p_expected_pending,
       expires_at = v_now + make_interval(secs => p_ttl_seconds),
+      observer_cleanup_expires_at = NULL,
       armed_at = v_now, updated_at = v_now
   WHERE id = v_lease.id;
   UPDATE public.s33_rig_b1_scenario_control
@@ -761,6 +773,10 @@ DECLARE
   v_control public.s33_rig_b1_scenario_control%ROWTYPE;
   v_lease public.s33_rig_b1_scenario_leases%ROWTYPE;
   v_now timestamptz := clock_timestamp();
+  v_attempt_deadline CONSTANT interval := interval '10 minutes';
+  v_observer_cleanup_grace CONSTANT interval := interval '5 minutes';
+  v_expires_at timestamptz;
+  v_observer_cleanup_expires_at timestamptz;
   v_expected_route text;
   v_execution_id text;
   v_mode text;
@@ -773,7 +789,12 @@ BEGIN
   END IF;
   SELECT * INTO STRICT v_lease FROM public.s33_rig_b1_scenario_leases
   WHERE id = v_control.active_lease_id FOR UPDATE;
-  IF v_lease.expires_at <= v_now OR v_lease.authority_expires_at <= v_now THEN
+  v_expires_at := v_lease.expires_at;
+  v_observer_cleanup_expires_at := v_lease.observer_cleanup_expires_at;
+  IF v_lease.authority_expires_at <= v_now
+    OR (v_lease.phase = 'RUNNING'
+      AND COALESCE(v_lease.observer_cleanup_expires_at, v_lease.expires_at) <= v_now)
+    OR (v_lease.phase <> 'RUNNING' AND v_lease.expires_at <= v_now) THEN
     UPDATE public.s33_rig_b1_scenario_leases
     SET phase = 'EXPIRED', completed_at = COALESCE(completed_at, v_now), updated_at = v_now
     WHERE id = v_lease.id;
@@ -835,8 +856,15 @@ BEGIN
     v_mode := 'CONTROLLED_SKIP'; v_event := 'CONTROLLED_SKIP_NON_TARGET';
   ELSIF v_lease.phase = 'ARMED' THEN
     v_mode := 'TARGET_EXECUTE'; v_event := 'TARGET_STARTED';
+    v_expires_at := LEAST(v_now + v_attempt_deadline, v_lease.authority_expires_at);
+    v_observer_cleanup_expires_at := LEAST(
+      v_now + v_attempt_deadline + v_observer_cleanup_grace,
+      v_lease.authority_expires_at
+    );
     UPDATE public.s33_rig_b1_scenario_leases
     SET phase = 'RUNNING', current_execution_id = v_execution_id,
+        expires_at = v_expires_at,
+        observer_cleanup_expires_at = v_observer_cleanup_expires_at,
         started_at = v_now, updated_at = v_now
     WHERE id = v_lease.id;
   ELSE
@@ -867,7 +895,7 @@ BEGIN
     'workerRevision', v_lease.worker_revision,
     'executionId', v_execution_id,
     'scheduleTime', to_char(p_schedule_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-    'expiresAt', to_char(v_lease.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    'expiresAt', to_char(v_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
   );
 END;
 $$;
@@ -909,6 +937,7 @@ BEGIN
   SELECT count(*)::integer, min(a.created_at) INTO v_pending, v_oldest
   FROM public.anchors a
   WHERE a.status = 'PENDING' AND a.deleted_at IS NULL
+    AND a.metadata ? 's33_rig_b1'
     AND (p_org_id IS NULL OR a.org_id = p_org_id)
     AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
     AND a.metadata->'s33_rig_b1'->>'namespaceId' = p_namespace_id;
@@ -970,6 +999,7 @@ BEGIN
     SELECT a.id, a.created_at, a.fingerprint::text AS fingerprint
     FROM public.anchors a
     WHERE a.status = 'PENDING' AND a.deleted_at IS NULL
+      AND a.metadata ? 's33_rig_b1'
       AND (p_org_id IS NULL OR a.org_id = p_org_id)
       AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
       AND a.metadata->'s33_rig_b1'->>'namespaceId' = p_namespace_id
@@ -1065,6 +1095,7 @@ BEGIN
     WHERE a.id IN (
       SELECT a2.id FROM public.anchors a2
       WHERE a2.status = 'BROADCASTING' AND a2.deleted_at IS NULL
+        AND a2.metadata ? 's33_rig_b1'
         AND a2.chain_tx_id IS NULL
         AND a2.updated_at < now() - make_interval(mins => p_stale_minutes)
         AND a2.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
@@ -1121,6 +1152,7 @@ BEGIN
   END IF;
   RETURN QUERY SELECT a.org_id FROM public.anchors a
   WHERE a.status = 'PENDING' AND a.deleted_at IS NULL AND a.org_id IS NOT NULL
+    AND a.metadata ? 's33_rig_b1'
     AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
     AND a.metadata->'s33_rig_b1'->>'namespaceId' = p_namespace_id
   GROUP BY a.org_id ORDER BY min(a.created_at), a.org_id;
@@ -1284,6 +1316,7 @@ BEGIN
    AND c.batch_id IS NULL
   JOIN public.anchors a ON a.id = c.anchor_id
    AND a.status = 'PENDING' AND a.deleted_at IS NULL
+   AND a.metadata ? 's33_rig_b1'
    AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
    AND a.metadata->'s33_rig_b1'->>'namespaceId' = p_namespace_id
    AND a.metadata->>'credit_denial_reason' = 'insufficient_credits'
@@ -1389,7 +1422,7 @@ BEGIN
     OR v_capture.running_generation <> p_expected_generation
     OR v_capture.scenario_id IS DISTINCT FROM p_scenario_id
     OR v_capture.namespace_id IS DISTINCT FROM p_namespace_id
-    OR v_lease.expires_at <= clock_timestamp()
+    OR COALESCE(v_lease.observer_cleanup_expires_at, v_lease.expires_at) <= clock_timestamp()
     OR v_lease.authority_expires_at <= clock_timestamp() THEN
     RAISE serialization_failure USING MESSAGE = 'RIG-B1 outcome lost exact running capture authority';
   END IF;
@@ -1417,6 +1450,7 @@ BEGIN
   INTO v_pending, v_poison, v_broadcasting
   FROM public.anchors a
   WHERE a.deleted_at IS NULL AND a.status IN ('PENDING', 'BROADCASTING')
+    AND a.metadata ? 's33_rig_b1'
     AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
     AND a.metadata->'s33_rig_b1'->>'namespaceId' = p_namespace_id;
   -- v_pending above included BROADCASTING; split it back to exact PENDING.
@@ -1424,6 +1458,7 @@ BEGIN
   v_poison := (
     SELECT count(*)::integer FROM public.anchors a
     WHERE a.status = 'PENDING' AND a.deleted_at IS NULL
+      AND a.metadata ? 's33_rig_b1'
       AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
       AND a.metadata->'s33_rig_b1'->>'namespaceId' = p_namespace_id
       AND a.metadata->'s33_rig_b1'->>'cohort' = 'credit-starved'
@@ -1668,7 +1703,9 @@ BEGIN
     OR v_lease.capture_id IS DISTINCT FROM p_capture_id
     OR v_capture.scenario_lease_id IS DISTINCT FROM v_lease.id
     OR v_capture.running_generation <> p_expected_generation
-    OR v_capture.outcome_artifact_raw IS NULL THEN
+    OR v_capture.outcome_artifact_raw IS NULL
+    OR COALESCE(v_lease.observer_cleanup_expires_at, v_lease.expires_at) <= v_now
+    OR v_lease.authority_expires_at <= v_now THEN
     RAISE serialization_failure USING MESSAGE = 'RIG-B1 completion lost the running generation';
   END IF;
 
@@ -1706,7 +1743,7 @@ BEGIN
     OR p_next_scenario->>'scenarioId' !~ '^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$'
     OR p_next_scenario->>'namespaceId' !~ '^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$'
     OR p_next_scenario->>'faultWindowId' !~ '^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$'
-    OR v_ttl < 1 OR v_ttl > 240
+    OR v_ttl < 1 OR v_ttl > 600
     OR v_now + make_interval(secs => v_ttl) > v_lease.authority_expires_at THEN
     RAISE check_violation USING MESSAGE = 'RIG-B1 next PREPARING TTL is invalid';
   END IF;
@@ -1718,6 +1755,7 @@ BEGIN
       fault_window_id = p_next_scenario->>'faultWindowId',
       target_job_resource = p_next_scenario->>'targetJobResource',
       expires_at = v_now + make_interval(secs => v_ttl), current_execution_id = NULL,
+      observer_cleanup_expires_at = NULL,
       seed_manifest_sha256 = NULL, expected_pending = NULL,
       result_digest = p_result_digest, armed_at = NULL, started_at = NULL,
       completed_at = NULL, updated_at = v_now
@@ -1774,7 +1812,11 @@ BEGIN
     OR v_lease.capture_id IS DISTINCT FROM p_capture_id
     OR v_capture.scenario_lease_id IS DISTINCT FROM v_lease.id
     OR COALESCE(v_capture.running_generation, v_capture.preparing_generation)
-      <> p_expected_generation THEN
+      <> p_expected_generation
+    OR v_lease.authority_expires_at <= v_now
+    OR (v_lease.phase = 'RUNNING'
+      AND COALESCE(v_lease.observer_cleanup_expires_at, v_lease.expires_at) <= v_now)
+    OR (v_lease.phase IN ('PREPARING', 'ARMED') AND v_lease.expires_at <= v_now) THEN
     RAISE serialization_failure USING MESSAGE = 'RIG-B1 abort lost exact active capture authority';
   END IF;
 
@@ -1851,12 +1893,15 @@ BEGIN
   IF v_control.active_lease_id IS NOT DISTINCT FROM v_lease.id
     OR v_lease.phase NOT IN ('COMPLETED', 'FAILED', 'EXPIRED')
     OR v_lease.plan_id IS DISTINCT FROM p_plan_id
-    OR v_lease.run_id IS DISTINCT FROM p_run_id THEN
+    OR v_lease.run_id IS DISTINCT FROM p_run_id
+    OR COALESCE(v_lease.observer_cleanup_expires_at, v_lease.expires_at) <= clock_timestamp()
+    OR v_lease.authority_expires_at <= clock_timestamp() THEN
     RAISE serialization_failure USING MESSAGE = 'RIG-B1 cleanup requires the exact inactive terminal run';
   END IF;
   IF EXISTS (
     SELECT 1 FROM public.anchors a
     WHERE a.status = 'BROADCASTING' AND a.deleted_at IS NULL
+      AND a.metadata ? 's33_rig_b1'
       AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
   ) THEN
     RAISE lock_not_available USING MESSAGE = 'RIG-B1 cleanup refuses while a scenario row is BROADCASTING';
@@ -1879,6 +1924,7 @@ BEGIN
 
   DELETE FROM public.anchors a
   WHERE a.status = 'PENDING' AND a.deleted_at IS NULL AND a.chain_tx_id IS NULL
+    AND a.metadata ? 's33_rig_b1'
     AND a.metadata->'s33_rig_b1'->>'scenarioLeaseId' = v_lease.id::text
     AND a.metadata->'s33_rig_b1'->>'synthetic' = 'true'
     AND NOT EXISTS (

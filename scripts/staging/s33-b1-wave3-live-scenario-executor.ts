@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import { parseJsonRejectingDuplicateKeys } from './batch-drain-strict-json';
+import { B1_START_AUTHORITY_CONTRACT } from './s33-b1-start-approval';
 import {
   deriveS33RigB1SchedulerExecutionIdentity,
   S33_RIG_B1_SCENARIO_JOB_ROUTES,
@@ -23,7 +24,7 @@ const JOB_PREFIX = `projects/${PROJECT}/locations/${REGION}/jobs/${S33_RIG_B1_WO
 const NORMAL_JOB = `${JOB_PREFIX}batch-anchors`;
 const FORCED_JOB = `${JOB_PREFIX}batch-anchors-forced-flush`;
 const ORG_JOB = `${JOB_PREFIX}org-queue-scheduler`;
-const ACTIVE_TTL_SECONDS = 240;
+const ACTIVE_TTL_SECONDS = B1_START_AUTHORITY_CONTRACT.invocationLeaseMaxSeconds;
 const CLEANUP_TIMEOUT_MS = 5 * 60_000;
 
 export const S33_B1_WAVE3_EXECUTION_SLOTS = Object.freeze([

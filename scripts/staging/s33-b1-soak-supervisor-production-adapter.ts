@@ -474,8 +474,6 @@ class ProductionB1SoakSupervisorAdapter implements B1SoakSupervisorPort {
         '--service', B1_SCHEDULER_START_CONTRACT.workerService,
         '--rig-name', B1_SCHEDULER_START_CONTRACT.rigName,
         '--rig-id', B1_SCHEDULER_START_CONTRACT.rigId,
-        '--runtime-sa', B1_SCHEDULER_START_CONTRACT.workerRuntimeServiceAccount,
-        '--lease-id', this.admission.lease_id,
         '--b1-approval-artifact', context.provisionApprovalArtifactPath,
         '--gcp-project', B1_SCHEDULER_START_CONTRACT.gcpProjectId,
         '--gcp-region', B1_SCHEDULER_START_CONTRACT.gcpRegion,

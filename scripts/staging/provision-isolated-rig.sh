@@ -90,6 +90,8 @@ RIG_B1_NODE_SUBNET_CIDR="10.33.10.0/28"
 RIG_B1_NODE_CONNECTOR_CIDR="10.33.11.0/28"
 RIG_B1_NODE_STARTUP_SCRIPT="scripts/staging/start-rig-b1-bitcoin-core.sh"
 RIG_B1_NODE_APPROVAL_VERIFIER="scripts/staging/s33-b1-node-approval.mjs"
+RIG_B1_SCENARIO_ANCHOR_INDEX_SQL="scripts/staging/s33-b1-scenario-anchor-index.sql"
+RIG_B1_SCENARIO_ANCHOR_INDEX_VERIFY_SQL="scripts/staging/s33-b1-scenario-anchor-index-verify.sql"
 RIG_B1_APPROVAL_LEDGER_PREFIX="s33/rig-b1/node-approval-claims"
 RIG_G1_SUPABASE_ORG="byhkazrpmivhcsuqjtva"
 RIG_G1_PUBLIC_MODEL="gemini-2.5-flash"
@@ -894,7 +896,13 @@ verify_checkout_inputs_match_declared_head() {
     tracked_inputs+=("$RIG_R_PROVISION_APPROVAL_VERIFIER" "$RIG_R_TEARDOWN_PATH")
   fi
   if [[ "$RIG_ID" == "RIG-B1" ]]; then
-    tracked_inputs+=("$RIG_B1_NODE_STARTUP_SCRIPT" "$RIG_B1_NODE_APPROVAL_VERIFIER" "$RIG_R_TEARDOWN_PATH")
+    tracked_inputs+=(
+      "$RIG_B1_NODE_STARTUP_SCRIPT"
+      "$RIG_B1_NODE_APPROVAL_VERIFIER"
+      "$RIG_B1_SCENARIO_ANCHOR_INDEX_SQL"
+      "$RIG_B1_SCENARIO_ANCHOR_INDEX_VERIFY_SQL"
+      "$RIG_R_TEARDOWN_PATH"
+    )
   fi
   for path in "${tracked_inputs[@]}"; do
     if [[ "$path" == /* || "$path" == "." || "$path" == ".." || "$path" == ../* \
@@ -5754,6 +5762,11 @@ else
     npx supabase link --project-ref "$NEW_PROJECT_REF"
   run_cmd_with_db_password STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
     npx supabase db push --linked
+fi
+if [[ "$RIG_ID" == "RIG-B1" ]]; then
+  echo "# Step 2a/6 — install + verify B1-only concurrent scenario anchor index"
+  run_cmd npx supabase db query --linked --file "$RIG_B1_SCENARIO_ANCHOR_INDEX_SQL"
+  run_cmd npx supabase db query --linked --file "$RIG_B1_SCENARIO_ANCHOR_INDEX_VERIFY_SQL"
 fi
 echo
 
