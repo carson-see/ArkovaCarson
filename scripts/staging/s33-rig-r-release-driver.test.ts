@@ -196,7 +196,7 @@ describe('RIG-R exact provision and teardown topology', () => {
     expect(() => validateS33RigRProvisionBinding({
       ...binding(),
       vertexEndpoint: RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackEndpoint,
-    })).toThrow(/vertexEndpoint|733003|protected.*rollback/i);
+    })).toThrow(/vertexEndpoint|733004|protected.*rollback/i);
   });
 });
 
@@ -218,7 +218,7 @@ describe('RIG-R release driver', () => {
     expect(() => validateS33RigRProvisionBinding({
       ...binding(),
       vertexEndpoint: RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackEndpoint,
-    })).toThrow(/vertexEndpoint|733003|protected.*rollback/i);
+    })).toThrow(/vertexEndpoint|733004|protected.*rollback/i);
     expect(() => validateS33RigRProvisionBinding({
       ...binding(),
       vertexModel: 'projects/arkova1/locations/us-central1/models/9000000000000000002',

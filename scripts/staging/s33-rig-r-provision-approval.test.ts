@@ -39,14 +39,14 @@ const sourceHeadImageRef =
   `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:${sourceHeadSha}@${imageDigest}`;
 const teardownSha256 = `sha256:${'d'.repeat(64)}`;
 const placeholderProvisionArtifactSha256 = `sha256:${'e'.repeat(64)}`;
-const vertexEndpointId = '733003';
+const vertexEndpointId = '733004';
 const vertexEndpoint = `projects/arkova1/locations/us-central1/endpoints/${vertexEndpointId}`;
 const vertexEndpointDisplayName = 'arkova-s33-rig-r-release-v6';
 const protectedV6Model =
   'projects/270018525501/locations/us-central1/models/6611494259700793344';
 const protectedV6ModelVersion = `${protectedV6Model}@1`;
 const checkpointId = '6';
-const deployedModelId = '7330031';
+const deployedModelId = '7330041';
 const deployedModelDisplayName = vertexEndpointDisplayName;
 const deploymentResourcesMode = 'TUNED_GEMINI_AUTOMATIC_RESOURCES';
 const endpointIamRole = 'roles/aiplatform.endpointUser';

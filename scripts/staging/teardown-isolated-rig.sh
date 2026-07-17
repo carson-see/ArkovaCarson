@@ -356,6 +356,43 @@ run_cmd() {
   fi
 }
 
+delete_cloud_run_service_if_present() {
+  local service="$1"
+  local inventory service_count
+
+  if [[ $APPLY -ne 1 ]]; then
+    print_cmd gcloud run services delete "$service" \
+      --project="$GCP_PROJECT" \
+      --region="$CLOUD_RUN_REGION" \
+      --quiet
+    return 0
+  fi
+  inventory="$(gcloud run services list \
+    --project="$GCP_PROJECT" \
+    --region="$CLOUD_RUN_REGION" \
+    --format=json)" || {
+    echo "ERROR: cannot enumerate Cloud Run services before exact teardown." >&2
+    return 1
+  }
+  service_count="$(jq -r --arg service "$service" \
+    '[.[] | select(.metadata.name == $service)] | length' <<<"$inventory")" || return 1
+  case "$service_count" in
+    0)
+      echo "# Cloud Run service '$service' is already absent; continuing exact partial teardown."
+      ;;
+    1)
+      run_cmd gcloud run services delete "$service" \
+        --project="$GCP_PROJECT" \
+        --region="$CLOUD_RUN_REGION" \
+        --quiet
+      ;;
+    *)
+      echo "ERROR: Cloud Run inventory returned non-unique service '$service'." >&2
+      return 1
+      ;;
+  esac
+}
+
 trusted_b1_sha256_file() {
   local path="$1" output digest
   if [[ "$path" != /* || ! -f "$path" || -L "$path" ]]; then
@@ -1803,10 +1840,7 @@ if [[ $IS_RIG_R -eq 1 ]]; then
   echo
 
   echo "# RIG-R 3/8 — delete the sole isolated Cloud Run service"
-  run_cmd gcloud run services delete "$RIG_R_SERVICE" \
-    --project="$GCP_PROJECT" \
-    --region="$CLOUD_RUN_REGION" \
-    --quiet
+  delete_cloud_run_service_if_present "$RIG_R_SERVICE"
   echo
 
   echo "# RIG-R 4/8 — remove exact per-secret runtime grants, then delete the generated pair"

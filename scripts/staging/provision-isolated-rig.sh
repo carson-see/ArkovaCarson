@@ -132,9 +132,9 @@ RIG_R_RUNTIME_SA="s33-rig-r-runtime@arkova1.iam.gserviceaccount.com"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
 RIG_R_CHECKPOINT_ID="6"
-RIG_R_ENDPOINT_ID="733003"
+RIG_R_ENDPOINT_ID="733004"
 RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
-RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330031"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330041"
 RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
@@ -4140,6 +4140,29 @@ grant_g1_runtime_secret_access() {
   fi
 }
 
+parse_genie_deploy_operation_name() {
+  local operation_json="$1"
+  local endpoint_id="$2"
+  local operation_name location_prefix endpoint_prefix operation_id
+
+  operation_name="$(jq -er '
+    select(type == "object")
+    | .name
+    | select(type == "string")
+  ' <<<"$operation_json" 2>/dev/null)" || return 1
+  location_prefix="projects/${IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER}/locations/${CLOUD_RUN_REGION}/operations/"
+  endpoint_prefix="projects/${IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER}/locations/${CLOUD_RUN_REGION}/endpoints/${endpoint_id}/operations/"
+  if [[ "$operation_name" == "$location_prefix"* ]]; then
+    operation_id="${operation_name#"$location_prefix"}"
+  elif [[ "$operation_name" == "$endpoint_prefix"* ]]; then
+    operation_id="${operation_name#"$endpoint_prefix"}"
+  else
+    return 1
+  fi
+  [[ "$operation_id" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "$operation_name"
+}
+
 provision_temporary_vertex_endpoint() {
   local endpoint_id endpoint_resource endpoint_display model_resource model_version_resource
   local checkpoint_id deployed_id deployed_display runtime_sa denied_runtime_sa created_flag_label
@@ -4225,11 +4248,9 @@ provision_temporary_vertex_endpoint() {
       echo "ERROR: GENIE DeployModel REST request failed." >&2
       exit 2
     fi
-    operation_name="$(jq -er \
-      'select(type == "object" and (.name | type == "string" and test("^projects/[0-9]+/locations/us-central1/operations/[0-9]+$"))) | .name' \
-      <<<"$operation_json" 2>/dev/null)" || {
+    operation_name="$(parse_genie_deploy_operation_name "$operation_json" "$endpoint_id")" || {
       unset operator_access_token operation_json
-      echo "ERROR: GENIE DeployModel did not return one canonical regional operation." >&2
+      echo "ERROR: GENIE DeployModel did not return one of the two exact canonical operation shapes." >&2
       exit 2
     }
     operation_url="https://${CLOUD_RUN_REGION}-aiplatform.googleapis.com/v1/${operation_name}"

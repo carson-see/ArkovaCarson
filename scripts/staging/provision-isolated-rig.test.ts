@@ -364,6 +364,106 @@ grant_rig_r_runtime_project_role_with_propagation_retry '${role}'
     expect(out).not.toMatch(/projects add-iam-policy-binding .*roles\/run\.invoker/u);
     expect(script).toContain('write_provision_state "rig_r_service_invoker_bound" ""');
   });
+
+  it('accepts the preserved endpoint-scoped DeployModel operation response', () => {
+    const functionSource = script.match(
+      /^parse_genie_deploy_operation_name\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const fixture = resolve(
+      here,
+      'fixtures/s33-rig-r-recovery9-deploy-model-operation.json',
+    );
+    const testScript = `set -euo pipefail
+IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
+CLOUD_RUN_REGION='us-central1'
+${functionSource}
+raw="$(/bin/cat '${fixture}')"
+parse_genie_deploy_operation_name "$raw" '733003'
+`;
+    expect(execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }).trim()).toBe(
+      'projects/270018525501/locations/us-central1/endpoints/733003/operations/2290366906311376896',
+    );
+  });
+
+  it('retains the canonical location-scoped DeployModel operation response', () => {
+    const functionSource = script.match(
+      /^parse_genie_deploy_operation_name\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const fixture = resolve(
+      here,
+      'fixtures/s33-genie-location-scoped-deploy-model-operation.json',
+    );
+    const testScript = `set -euo pipefail
+IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
+CLOUD_RUN_REGION='us-central1'
+${functionSource}
+raw="$(/bin/cat '${fixture}')"
+parse_genie_deploy_operation_name "$raw" '733004'
+`;
+    expect(execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }).trim()).toBe(
+      'projects/270018525501/locations/us-central1/operations/123456',
+    );
+  });
+
+  it('rejects the preserved DeployModel response under a different endpoint identity', () => {
+    const functionSource = script.match(
+      /^parse_genie_deploy_operation_name\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const fixture = resolve(
+      here,
+      'fixtures/s33-rig-r-recovery9-deploy-model-operation.json',
+    );
+    const testScript = `set -euo pipefail
+IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
+CLOUD_RUN_REGION='us-central1'
+${functionSource}
+raw="$(/bin/cat '${fixture}')"
+parse_genie_deploy_operation_name "$raw" '733004'
+`;
+    expect(() => execFileSync('bash', ['-c', testScript], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrow();
+  });
+
+  it('rejects DeployModel operation names from the wrong project', () => {
+    const functionSource = script.match(
+      /^parse_genie_deploy_operation_name\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const testScript = `set -euo pipefail
+IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
+CLOUD_RUN_REGION='us-central1'
+${functionSource}
+raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733004/operations/123456"}'
+parse_genie_deploy_operation_name "$raw" '733004'
+`;
+    expect(() => execFileSync('bash', ['-c', testScript], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrow();
+  });
+
+  it('rejects non-numeric DeployModel operation identities', () => {
+    const functionSource = script.match(
+      /^parse_genie_deploy_operation_name\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const testScript = `set -euo pipefail
+IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
+CLOUD_RUN_REGION='us-central1'
+${functionSource}
+raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733004/operations/not-numeric"}'
+parse_genie_deploy_operation_name "$raw" '733004'
+`;
+    expect(() => execFileSync('bash', ['-c', testScript], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrow();
+  });
 });
 
 describe('provision-isolated-rig.sh — chain profile real anchoring overrides', () => {

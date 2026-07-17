@@ -34,6 +34,44 @@ afterAll(() => {
   for (const root of roots) rmSync(root, { force: true, recursive: true });
 });
 
+describe('teardown-isolated-rig.sh — partial RIG-R Cloud Run cleanup', () => {
+  it('treats an exact inventory-proven absent service as an idempotent success', () => {
+    const functionSource = teardownSource.match(
+      /^delete_cloud_run_service_if_present\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const root = mkdtempSync(join(tmpdir(), 'rig-r-cloud-run-absent-'));
+    roots.push(root);
+    const gcloudLog = join(root, 'gcloud.log');
+    const gcloud = join(root, 'gcloud');
+    writeFileSync(gcloud, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> '${gcloudLog}'
+if [[ "$1 $2 $3" == 'run services list' ]]; then
+  printf '%s\n' '[]'
+  exit 0
+fi
+exit 99
+`);
+    chmodSync(gcloud, 0o755);
+    const testScript = `set -euo pipefail
+export PATH='${root}':"$PATH"
+APPLY=1
+GCP_PROJECT='arkova1'
+CLOUD_RUN_REGION='us-central1'
+print_cmd() { :; }
+run_cmd() { "$@"; }
+${functionSource}
+delete_cloud_run_service_if_present 'arkova-worker-s33-r-staging'
+`;
+    const out = execFileSync('bash', ['-c', testScript], { encoding: 'utf8' });
+    expect(out).toContain("already absent; continuing exact partial teardown");
+    expect(readFileSync(gcloudLog, 'utf8').trim().split('\n')).toEqual([
+      'run services list --project=arkova1 --region=us-central1 --format=json',
+    ]);
+  });
+});
+
 const approvalId = 'b1-node-approval-teardown-fixture';
 const projectRef = 'abcdefghijklmnopqrst';
 const service = 'arkova-worker-s33-rig-b1-staging';
