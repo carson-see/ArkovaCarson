@@ -13,6 +13,7 @@ import {
   type Wave3TriggerObservation,
 } from './batch-drain-wave3-driver';
 import {
+  captureS33ReleaseAdmissionIdentity,
   composeS33ReleaseEvidenceChain,
   requireS33ReleaseEvidenceChainResult,
   type S33ReleaseEvidenceChainMetadata,
@@ -158,6 +159,36 @@ function fixture(options: {
 }
 
 describe('S3.3 W3-C release evidence-chain consumer', () => {
+  it('strictly captures the complete canonical pre-clock infrastructure identity', () => {
+    const identity = structuredClone(requirePreClockAdmissionIdentity(admission()));
+    const captured = captureS33ReleaseAdmissionIdentity(identity);
+
+    expect(captured).toEqual(identity);
+    expect(captured.infrastructure.treasuryWatchOnly.expectedTotalSats).toBe(169_639);
+    expect(Object.isFrozen(captured)).toBe(true);
+    expect(Object.isFrozen(captured.infrastructure)).toBe(true);
+
+    const missing = structuredClone(identity) as unknown as Record<string, unknown>;
+    delete missing.infrastructure;
+    expect(() => captureS33ReleaseAdmissionIdentity(missing)).toThrow(
+      /infrastructure|release admission identity|strict/i,
+    );
+
+    const extra = structuredClone(identity) as unknown as {
+      infrastructure: Record<string, unknown>;
+    };
+    extra.infrastructure.unrecognizedTopology = 'must-not-survive';
+    expect(() => captureS33ReleaseAdmissionIdentity(extra)).toThrow(
+      /unrecognizedTopology|unrecognized|strict/i,
+    );
+
+    const drifted = structuredClone(identity);
+    drifted.infrastructure.treasuryWatchOnly.preSplitPlanDigest = SHA('f');
+    expect(() => captureS33ReleaseAdmissionIdentity(drifted)).toThrow(
+      /treasury plan|node readiness|preSplitPlanDigest|strict/i,
+    );
+  });
+
   it('binds admission, exact A/A/B/D/org evidence, runway, and teardown as a blocked draft', () => {
     const input = fixture();
     const result = composeS33ReleaseEvidenceChain(input);

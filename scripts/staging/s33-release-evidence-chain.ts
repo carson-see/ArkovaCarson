@@ -13,12 +13,18 @@ import { z } from 'zod';
 import {
   requirePreClockAdmissionIdentity,
   type PreClockAdmissionBoundIdentity,
+  type PreClockAdmissionIdentity,
 } from './batch-drain-admission-adapter';
+import { rigB1InfrastructureSchema } from './batch-drain-live-evidence';
 import {
   assertTriggerIdentityCaptures,
   type Wave3DrainDriverPlan,
   type Wave3TriggerObservation,
 } from './batch-drain-wave3-driver';
+import { b1NoBroadcastPrepareRecoverySchema } from './s33-b1-no-broadcast-prepare-containment';
+import { b1NoBroadcastSuccessorRecoverySchema } from './s33-b1-no-broadcast-successor-containment';
+import { b1NoBroadcastThirdRecoverySchema } from './s33-b1-no-broadcast-third-containment';
+import { b1TreasuryContinuitySchema } from './s33-b1-treasury-continuity';
 import {
   requireS33TreasuryRunwayResult,
   type S33TreasuryRunwayResult,
@@ -70,6 +76,12 @@ const admissionIdentitySchema = z.object({
   gcpProjectId: z.string().min(1),
   workerService: z.string().min(1),
   cleanMirrorAttestationId: z.string().min(1),
+  infrastructure: rigB1InfrastructureSchema,
+  treasuryContinuity: b1TreasuryContinuitySchema.optional(),
+  noBroadcastPrepareRecovery: b1NoBroadcastPrepareRecoverySchema.optional(),
+  noBroadcastPrepareSuccessorRecovery:
+    b1NoBroadcastSuccessorRecoverySchema.optional(),
+  noBroadcastPrepareThirdRecovery: b1NoBroadcastThirdRecoverySchema.optional(),
 }).strict();
 
 const drainPlanSnapshotSchema = z.object({
@@ -357,6 +369,17 @@ function strictFrozenSnapshot<T>(
   return freezeS33Evidence(parsed.data);
 }
 
+/** Strictly capture the complete canonical pre-clock identity at this consumer boundary. */
+export function captureS33ReleaseAdmissionIdentity(
+  candidate: unknown,
+): PreClockAdmissionIdentity {
+  return strictFrozenSnapshot(
+    admissionIdentitySchema,
+    candidate,
+    'Release admission identity',
+  );
+}
+
 function requireAllEqual(label: string, values: readonly string[]): void {
   if (new Set(values).size !== 1) {
     throw new Error(`${label} identity is stale or contradictory across release evidence.`);
@@ -386,9 +409,9 @@ export function composeS33ReleaseEvidenceChain(
     captured.admissionHandle,
     'Admission handle',
   );
-  const admission = freezeS33Evidence(admissionIdentitySchema.parse(
+  const admission = captureS33ReleaseAdmissionIdentity(
     requirePreClockAdmissionIdentity(captured.admissionHandle),
-  ));
+  );
   const drainPlan = strictFrozenSnapshot(
     drainPlanSnapshotSchema,
     captured.drainPlan,
