@@ -54,6 +54,7 @@ import {
   requirePreClockAdmissionIdentity,
 } from './batch-drain-admission-adapter';
 import {
+  B1_TREASURY_CONTINUITY_CONTRACT,
   b1TreasuryContinuitySchema,
   projectB1TreasuryContinuity,
   verifyLocalB1TreasuryContinuityController,
@@ -192,6 +193,12 @@ export interface B1CoreLiveObservation {
   readonly rescanComplete: true;
   readonly confirmedUtxos: number;
   readonly confirmedTotalSats: number;
+  readonly confirmedOutputs: readonly Readonly<{
+    txId: string;
+    vout: number;
+    valueSats: number;
+    confirmations: number;
+  }>[];
   readonly minimumConfirmations: number;
   readonly splitTransactionObserved: string;
   readonly capabilities: Readonly<Record<typeof RIG_B1_REQUIRED_RPC_CAPABILITIES[number], boolean>>;
@@ -725,6 +732,59 @@ function assertCollectorBindings(
   }
 }
 
+function assertExactLiveTreasuryPlan(
+  input: TreasuryPresplitPlanInput,
+  core: B1CoreLiveObservation,
+): void {
+  const compareOutpoint = (
+    left: Readonly<{ txId: string; vout: number }>,
+    right: Readonly<{ txId: string; vout: number }>,
+  ): number => left.txId.localeCompare(right.txId) || left.vout - right.vout;
+  const planned = input.inputs.map((candidate) => ({
+    txId: candidate.txId,
+    vout: candidate.vout,
+    valueSats: candidate.valueSats,
+    minimumConfirmations: candidate.confirmations,
+  })).sort(compareOutpoint);
+  const observed = core.confirmedOutputs.map((candidate) => ({ ...candidate }))
+    .sort(compareOutpoint);
+  if (observed.length !== planned.length || observed.some((candidate, index) => {
+    const expected = planned[index];
+    return expected === undefined
+      || candidate.txId !== expected.txId
+      || candidate.vout !== expected.vout
+      || candidate.valueSats !== expected.valueSats
+      || candidate.confirmations < expected.minimumConfirmations;
+  })) {
+    throw new Error(
+      'RIG-B1 live confirmed treasury outpoint/value set or confirmation floor differs from the signed plan.',
+    );
+  }
+}
+
+function assertCollectorCoreBindings(
+  admission: z.infer<typeof admissionSchema>,
+  planInput: TreasuryPresplitPlanInput,
+  core: B1CoreLiveObservation,
+): void {
+  const treasury = admission.infrastructure.treasuryWatchOnly;
+  const node = admission.infrastructure.nodeReadiness;
+  const expectedConfirmedOutputCount = admission.treasury_continuity
+    ?.currentTreasury.confirmedOutputCount ?? treasury.expectedConfirmedOutputCount;
+  const expectedConfirmedTotalSats = admission.treasury_continuity
+    ?.currentTreasury.confirmedTotalSats ?? treasury.expectedTotalSats;
+  if (core.blocks < node.blocks || core.headers < core.blocks
+    || core.genesisHash !== node.genesisHash
+    || core.txindexBestBlockHeight !== core.blocks
+    || core.splitTransactionObserved !== treasury.splitTransactionId
+    || core.confirmedUtxos !== expectedConfirmedOutputCount
+    || core.confirmedTotalSats !== expectedConfirmedTotalSats
+    || RIG_B1_REQUIRED_RPC_CAPABILITIES.some((method) => core.capabilities[method] !== true)) {
+    throw new Error('RIG-B1 live Core/txindex/watch-only/capability observation differs from admission.');
+  }
+  assertExactLiveTreasuryPlan(planInput, core);
+}
+
 async function observeExactPausedScheduler(
   port: B1PreclockCollectorPort,
   expectedJobs: ReturnType<typeof buildRigB1ReadinessPlan>['schedulerJobs'],
@@ -779,7 +839,14 @@ export async function collectB1SchedulerPreclockArtifact(
   let continuityClaimObject: B1LockedObject | undefined;
   if (admission.treasury_continuity !== undefined) {
     const continuity = admission.treasury_continuity;
-    const [claimObject, topologyObject, amendmentObject] = await Promise.all([
+    const [
+      claimObject,
+      topologyObject,
+      amendmentObject,
+      historicalIntentObject,
+      historicalOutcomeObject,
+      failedStartContainmentObject,
+    ] = await Promise.all([
       port.readLockedObject(
         continuity.originalProvision.claim.objectUri,
         continuity.originalProvision.claim.generation,
@@ -789,13 +856,29 @@ export async function collectB1SchedulerPreclockArtifact(
         continuity.originalProvision.topology.generation,
       ),
       port.readLockedObject(continuity.amendment.objectUri, continuity.amendment.generation),
+      port.readLockedObject(
+        B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentUri,
+        B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentGeneration,
+      ),
+      port.readLockedObject(
+        B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeUri,
+        B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeGeneration,
+      ),
+      port.readLockedObject(
+        B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentUri,
+        B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentGeneration,
+      ),
     ]);
     verifiedContinuity = verifyB1TreasuryContinuityComposition({
+      verificationTime: port.now(),
       refreshedAdmissionRaw: admissionRaw,
       currentTreasuryPlanInputRaw: treasuryPlanInputRaw,
       originalClaim: claimObject,
       originalTopology: topologyObject,
       amendment: amendmentObject,
+      historicalPreparationIntent: historicalIntentObject,
+      historicalPreparationOutcome: historicalOutcomeObject,
+      failedStartContainment: failedStartContainmentObject,
     });
     continuityClaimObject = claimObject;
     if (verifiedContinuity.compositeIdentitySha256
@@ -881,25 +964,12 @@ export async function collectB1SchedulerPreclockArtifact(
   await observeExactPausedScheduler(port, readinessPlan.schedulerJobs);
 
   const treasury = admission.infrastructure.treasuryWatchOnly;
-  const core = await port.observeCore({
+  let core = await port.observeCore({
     treasuryAddress: treasury.address,
     treasuryDescriptor: treasury.descriptor,
     splitTransactionId: treasury.splitTransactionId,
   });
-  const node = admission.infrastructure.nodeReadiness;
-  const expectedConfirmedOutputCount = admission.treasury_continuity
-    ?.currentTreasury.confirmedOutputCount ?? treasury.expectedConfirmedOutputCount;
-  const expectedConfirmedTotalSats = admission.treasury_continuity
-    ?.currentTreasury.confirmedTotalSats ?? treasury.expectedTotalSats;
-  if (core.blocks < node.blocks || core.headers < core.blocks
-    || core.genesisHash !== node.genesisHash
-    || core.txindexBestBlockHeight !== core.blocks
-    || core.splitTransactionObserved !== treasury.splitTransactionId
-    || core.confirmedUtxos !== expectedConfirmedOutputCount
-    || core.confirmedTotalSats !== expectedConfirmedTotalSats
-    || RIG_B1_REQUIRED_RPC_CAPABILITIES.some((method) => core.capabilities[method] !== true)) {
-    throw new Error('RIG-B1 live Core/txindex/watch-only/capability observation differs from admission.');
-  }
+  assertCollectorCoreBindings(admission, planInput, core);
 
   const claimObject = continuityClaimObject ?? await port.readLockedObject(
     admission.infrastructure.authority.claim.objectUri,
@@ -949,6 +1019,12 @@ export async function collectB1SchedulerPreclockArtifact(
     throw new Error('RIG-B1 Cloud Run revision/routing changed during pre-clock collection.');
   }
   await observeExactPausedScheduler(port, readinessPlan.schedulerJobs);
+  core = await port.observeCore({
+    treasuryAddress: treasury.address,
+    treasuryDescriptor: treasury.descriptor,
+    splitTransactionId: treasury.splitTransactionId,
+  });
+  assertCollectorCoreBindings(admission, planInput, core);
   const mutationNow = port.now();
   assertSamePreparationAuthority(authority, authorized.reverify(mutationNow));
   if (authorized.confirmation.provided !== authorized.confirmation.expected) {
@@ -1365,7 +1441,8 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
       descriptors: z.array(z.object({ desc: z.string() }).passthrough()),
     }).passthrough().parse(JSON.parse(descriptorsRaw));
     const unspent = z.array(z.object({
-      txid: sha256Hex, address: z.string(), amount: z.number().nonnegative(),
+      txid: sha256Hex, vout: z.number().int().nonnegative(),
+      address: z.string(), amount: z.number().nonnegative(),
       confirmations: z.number().int().positive(),
     }).passthrough()).parse(JSON.parse(unspentRaw));
     const split = z.object({ txid: sha256Hex }).passthrough().parse(JSON.parse(splitRaw));
@@ -1384,6 +1461,12 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
       rescanComplete: true,
       confirmedUtxos: unspent.length,
       confirmedTotalSats: unspent.reduce((sum, item) => sum + Math.round(item.amount * 100_000_000), 0),
+      confirmedOutputs: unspent.map((item) => ({
+        txId: item.txid,
+        vout: item.vout,
+        valueSats: Math.round(item.amount * 100_000_000),
+        confirmations: item.confirmations,
+      })),
       minimumConfirmations: Math.min(...unspent.map(({ confirmations }) => confirmations)),
       splitTransactionObserved: split.txid,
       capabilities,

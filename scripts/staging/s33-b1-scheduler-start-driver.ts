@@ -31,6 +31,7 @@ import {
   type VerifiedB1StartAuthority,
 } from './s33-b1-start-approval';
 import {
+  B1_TREASURY_CONTINUITY_CONTRACT,
   projectB1TreasuryContinuity,
   verifyB1TreasuryContinuityComposition,
   verifyLocalB1TreasuryContinuityController,
@@ -954,22 +955,46 @@ export async function runS33B1SchedulerStartDriver(
   );
   const continuity = projectB1TreasuryContinuity(admissionRaw);
   let continuityAmendmentObject: B1LockedObject | undefined;
+  let continuityConsumptionRetainUntilTime: string | undefined;
   if (continuity !== undefined) {
     if (approval.continuityAmendment === undefined
       || preclock.continuityTreasuryPlanInputRaw === undefined) {
       throw new Error('RIG-B1 START lacks the signed continuity amendment or exact PREPARE plan.');
     }
-    const amendmentObject = await port.readLockedObject(
-      approval.continuityAmendment.objectUri,
-      approval.continuityAmendment.generation,
-    );
+    const [
+      amendmentObject,
+      historicalIntentObject,
+      historicalOutcomeObject,
+      failedStartContainmentObject,
+    ] = await Promise.all([
+      port.readLockedObject(
+        approval.continuityAmendment.objectUri,
+        approval.continuityAmendment.generation,
+      ),
+      port.readLockedObject(
+        B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentUri,
+        B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentGeneration,
+      ),
+      port.readLockedObject(
+        B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeUri,
+        B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeGeneration,
+      ),
+      port.readLockedObject(
+        B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentUri,
+        B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentGeneration,
+      ),
+    ]);
     continuityAmendmentObject = amendmentObject;
     const verifiedContinuity = verifyB1TreasuryContinuityComposition({
+      verificationTime: port.now(),
       refreshedAdmissionRaw: admissionRaw,
       currentTreasuryPlanInputRaw: preclock.continuityTreasuryPlanInputRaw,
       originalClaim: claimObject,
       originalTopology: topologyObject,
       amendment: amendmentObject,
+      historicalPreparationIntent: historicalIntentObject,
+      historicalPreparationOutcome: historicalOutcomeObject,
+      failedStartContainment: failedStartContainmentObject,
     });
     if (verifiedContinuity.compositeIdentitySha256
         !== approval.continuityCompositeIdentitySha256
@@ -980,6 +1005,7 @@ export async function runS33B1SchedulerStartDriver(
       || Date.parse(approval.runHardStopAt) > Date.parse(verifiedContinuity.amendmentExpiresAt)) {
       throw new Error('RIG-B1 START continuity/controller identity or authority window differs.');
     }
+    continuityConsumptionRetainUntilTime = verifiedContinuity.amendmentExpiresAt;
     if (port.verifyControllerIdentity === undefined) {
       await verifyLocalB1TreasuryContinuityController(verifiedContinuity);
     } else {
@@ -1017,7 +1043,30 @@ export async function runS33B1SchedulerStartDriver(
       await containStart(port, serviceUrl, cronHeaderSha256, approval.startId),
     );
   }
+  const continuityConsumptionIdentity = approval.continuityCompositeIdentitySha256 === undefined
+    ? undefined
+    : {
+      schemaVersion: 'arkova.s33.rig-b1.continuity-start-consumption-key/v1',
+      compositeIdentitySha256: approval.continuityCompositeIdentitySha256,
+      amendment: approval.continuityAmendment!,
+      preparationOutcome: approval.preparationOutcome,
+    };
+  const continuityConsumptionKeySha256 = continuityConsumptionIdentity === undefined
+    ? undefined
+    : digestRaw(JSON.stringify(continuityConsumptionIdentity));
+  const continuityConsumptionUri = continuityConsumptionKeySha256 === undefined
+    ? undefined
+    : `${B1_SCHEDULER_START_CONTRACT.ledgerBaseUri}/continuity-start-consumptions/${continuityConsumptionKeySha256.slice('sha256:'.length)}.json`;
+  if (continuityConsumptionUri !== undefined && await port.hasStartReceipt(continuityConsumptionUri)) {
+    rethrowWithContainment(
+      new Error(
+        'RIG-B1 continuity/PREPARE outcome already has an immutable START attempt; new amendment and PREPARE are required.',
+      ),
+      await containStart(port, serviceUrl, cronHeaderSha256, approval.startId),
+    );
+  }
 
+  let continuityConsumptionObject: B1LockedObject | undefined;
   try {
     const paused: B1SchedulerJobObservation[] = [];
     for (const spec of B1_SCHEDULER_START_CONTRACT.jobs) {
@@ -1025,9 +1074,32 @@ export async function runS33B1SchedulerStartDriver(
       assertJobBinding(observed, spec, 'PAUSED', serviceUrl, cronHeaderSha256);
       paused.push(observed);
     }
+    const activationObservation = await port.observeActivation({
+      workerRevision: admission.workerRevision,
+      sourceHeadSha: approval.sourceHeadSha,
+      imageDigest: approval.workerImageDigest,
+      runtimeServiceAccount: approval.workerRuntimeServiceAccount,
+      serviceUrl,
+    });
+    assertActivationObservation(activationObservation, {
+      workerRevision: admission.workerRevision,
+      sourceHeadSha: approval.sourceHeadSha,
+      imageDigest: approval.workerImageDigest,
+      runtimeServiceAccount: approval.workerRuntimeServiceAccount,
+      serviceUrl,
+    });
+    for (const spec of B1_SCHEDULER_START_CONTRACT.jobs) {
+      assertJobBinding(
+        await port.observeJob(spec),
+        spec,
+        'PAUSED',
+        serviceUrl,
+        cronHeaderSha256,
+      );
+    }
     // Recheck both independent signed clocks immediately before recording the
-    // one-shot activation intent. The short action authorizes activation; the
-    // hard stop authorizes the complete foreground soak.
+    // continuity consumption claim and one-shot activation intent. The short
+    // action authorizes activation; the hard stop authorizes the complete run.
     const activationAt = port.now();
     assertStartActionCurrent(activationAt, approval.actionExpiresAt);
     assertRunHardStopCapacity(activationAt, approval.runHardStopAt, admission.requiredWallMin);
@@ -1035,6 +1107,48 @@ export async function runS33B1SchedulerStartDriver(
       activationAt.getTime() + 10 * 60_000,
       Date.parse(approval.actionExpiresAt),
     )).toISOString();
+    if (continuityConsumptionIdentity !== undefined
+      && continuityConsumptionKeySha256 !== undefined
+      && continuityConsumptionUri !== undefined
+      && continuityConsumptionRetainUntilTime !== undefined) {
+      const consumptionRaw = JSON.stringify({
+        schemaVersion: 'arkova.s33.rig-b1.continuity-start-consumption/v1',
+        status: 'CONTINUITY_START_ATTEMPT_CLAIMED',
+        consumptionKeySha256: continuityConsumptionKeySha256,
+        identity: continuityConsumptionIdentity,
+        startId: approval.startId,
+        startAuthorityEnvelopeSha256: approval.envelopeSha256,
+        startAuthoritySignedPayloadSha256: approval.signedPayloadSha256,
+        admissionSha256: admission.admissionSha256,
+        preclockSha256: preclock.preclockSha256,
+        runtimeCandidate: {
+          sourceHeadSha: approval.sourceHeadSha,
+          sourceTreeSha: approval.sourceTreeSha,
+          workerImageDigest: approval.workerImageDigest,
+          workerRevision: admission.workerRevision,
+        },
+        controller: {
+          sourceHeadSha: approval.controllerSourceHeadSha,
+          sourceTreeSha: approval.controllerSourceTreeSha,
+          relevantFilesSha256: approval.controllerRelevantFilesSha256,
+        },
+        claimedAt: activationAt.toISOString(),
+      });
+      await port.persistStartReceipt(
+        continuityConsumptionUri,
+        consumptionRaw,
+        continuityConsumptionRetainUntilTime,
+      );
+      continuityConsumptionObject = await port.readLockedObject(continuityConsumptionUri);
+      assertRetention(
+        continuityConsumptionObject,
+        continuityConsumptionUri,
+        continuityConsumptionRetainUntilTime,
+      );
+      if (continuityConsumptionObject.raw !== consumptionRaw) {
+        throw new Error('RIG-B1 continuity START consumption readback differs before activation.');
+      }
+    }
     const activationIntent = {
       schemaVersion: 'arkova.s33.rig-b1.scheduler-activation-intent/v1',
       status: 'PAUSED_ACTIVATION_INTENT',
@@ -1069,6 +1183,13 @@ export async function runS33B1SchedulerStartDriver(
       actionExpiresAt: approval.actionExpiresAt,
       runHardStopAt: approval.runHardStopAt,
       recordedAt: activationAt.toISOString(),
+      ...(continuityConsumptionObject === undefined ? {} : {
+        continuityConsumption: {
+          objectUri: continuityConsumptionObject.uri,
+          generation: continuityConsumptionObject.generation,
+          sha256: digestRaw(continuityConsumptionObject.raw),
+        },
+      }),
       ...(approval.continuityCompositeIdentitySha256 === undefined ? {} : {
         continuityCompositeIdentitySha256: approval.continuityCompositeIdentitySha256,
         controller: {
@@ -1090,29 +1211,6 @@ export async function runS33B1SchedulerStartDriver(
       expiresAt: invocationLeaseExpiresAt,
       authorityExpiresAt: approval.actionExpiresAt,
     });
-    const activationObservation = await port.observeActivation({
-      workerRevision: admission.workerRevision,
-      sourceHeadSha: approval.sourceHeadSha,
-      imageDigest: approval.workerImageDigest,
-      runtimeServiceAccount: approval.workerRuntimeServiceAccount,
-      serviceUrl,
-    });
-    assertActivationObservation(activationObservation, {
-      workerRevision: admission.workerRevision,
-      sourceHeadSha: approval.sourceHeadSha,
-      imageDigest: approval.workerImageDigest,
-      runtimeServiceAccount: approval.workerRuntimeServiceAccount,
-      serviceUrl,
-    });
-    for (const spec of B1_SCHEDULER_START_CONTRACT.jobs) {
-      assertJobBinding(
-        await port.observeJob(spec),
-        spec,
-        'PAUSED',
-        serviceUrl,
-        cronHeaderSha256,
-      );
-    }
     assertStartActionCurrent(port.now(), approval.actionExpiresAt);
     assertRunHardStopCapacity(port.now(), approval.runHardStopAt, admission.requiredWallMin);
     for (const spec of B1_SCHEDULER_START_CONTRACT.jobs) await port.resumeJob(jobName(spec));
@@ -1183,6 +1281,13 @@ export async function runS33B1SchedulerStartDriver(
               generation: continuityAmendmentObject.generation,
               sha256: digestRaw(continuityAmendmentObject.raw),
             },
+            ...(continuityConsumptionObject === undefined ? {} : {
+              consumptionAttempt: {
+                objectUri: continuityConsumptionObject.uri,
+                generation: continuityConsumptionObject.generation,
+                sha256: digestRaw(continuityConsumptionObject.raw),
+              },
+            }),
           },
         }),
         provision: {

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  B1_TREASURY_CONTINUITY_CONTRACT,
   B1_TREASURY_CONTINUITY_CONTROLLER_FILES,
   calculateB1TreasuryContinuityCompositeIdentity,
   calculateB1TreasuryContinuityRelevantFilesSha256,
@@ -83,29 +84,14 @@ function makeInput(): B1TreasuryContinuityCompositionInput {
     schema_version: 2,
     sha: ORIGINAL_HEAD,
     image_digest: ORIGINAL_IMAGE,
+    deployed_revision: B1_TREASURY_CONTINUITY_CONTRACT.originalRevision,
     soak_id: continuity.originalProvision.soakId,
     lease_id: continuity.originalProvision.leaseId,
     treasury_continuity: continuity,
-    infrastructure: {
-      authority: {
-        approvalId: continuity.originalProvision.approvalId,
-        approvalEnvelopeSha256: continuity.originalProvision.approvalEnvelopeSha256,
-        signedPayloadSha256: continuity.originalProvision.signedPayloadSha256,
-        claim: continuity.originalProvision.claim,
-      },
-      nodeReadiness: {
-        treasurySplitPlanDigest: continuity.originalTreasury.planDigest,
-        confirmedOutputCount: continuity.originalTreasury.confirmedOutputCount,
-        confirmedTotalSats: continuity.originalTreasury.confirmedTotalSats,
-      },
-      treasuryWatchOnly: {
-        preSplitPlanDigest: continuity.originalTreasury.planDigest,
-        expectedConfirmedOutputCount: continuity.originalTreasury.confirmedOutputCount,
-        expectedTotalSats: continuity.originalTreasury.confirmedTotalSats,
-      },
-    },
+    infrastructure: JSON.parse(fixture('s33-b1-c56c-infrastructure.fixture.txt')),
   });
   return {
+    verificationTime: new Date('2026-07-17T02:30:00.000Z'),
     refreshedAdmissionRaw: admissionRaw,
     currentTreasuryPlanInputRaw: fixture('s33-b1-post-probe-treasury-plan.fixture.txt'),
     originalClaim: {
@@ -124,6 +110,24 @@ function makeInput(): B1TreasuryContinuityCompositionInput {
       uri: continuity.amendment.objectUri,
       generation: continuity.amendment.generation,
       raw: fixture('s33-b1-c56c-treasury-continuity-amendment.fixture.txt'),
+      retainUntilTime: RETAIN_UNTIL,
+    },
+    historicalPreparationIntent: {
+      uri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/preparation-intents/b1-prepare-5dacccc8-20260717t014328z.json',
+      generation: '1784252663697634',
+      raw: fixture('s33-b1-historical-preparation-intent.fixture.txt'),
+      retainUntilTime: RETAIN_UNTIL,
+    },
+    historicalPreparationOutcome: {
+      uri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/preparation-outcomes/b1-prepare-5dacccc8-20260717t014328z.json',
+      generation: '1784252687265846',
+      raw: fixture('s33-b1-historical-preparation-outcome.fixture.txt'),
+      retainUntilTime: RETAIN_UNTIL,
+    },
+    failedStartContainment: {
+      uri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/failed-start-containments/b1-start-5dacccc8-20260717t014842z.json',
+      generation: '1784254293955696',
+      raw: fixture('s33-b1-failed-start-containment.fixture.txt'),
       retainUntilTime: RETAIN_UNTIL,
     },
   };
@@ -157,6 +161,22 @@ describe('B1 treasury-continuity composition', () => {
       .toThrow(/amendment/i);
   });
 
+  it('rejects a signed amendment before its issuance instant', () => {
+    const input = finalize(makeInput());
+    expect(() => verifyB1TreasuryContinuityComposition({
+      ...input,
+      verificationTime: new Date('2026-07-17T02:23:39.258Z'),
+    })).toThrow(/not yet valid|chronology/i);
+  });
+
+  it('rejects a signed amendment at or after expiry', () => {
+    const input = finalize(makeInput());
+    expect(() => verifyB1TreasuryContinuityComposition({
+      ...input,
+      verificationTime: new Date('2026-07-22T22:39:24.000Z'),
+    })).toThrow(/expired|chronology/i);
+  });
+
   it('rejects tampered signed amendment bytes', () => {
     const input = finalize(makeInput());
     expect(() => verifyB1TreasuryContinuityComposition({
@@ -171,6 +191,70 @@ describe('B1 treasury-continuity composition', () => {
       ...input,
       originalTopology: { ...input.originalTopology, generation: '1784254616684050' },
     })).toThrow(/topology|generation/i);
+  });
+
+  it('rejects coherent alternate claim/topology reference self-declarations', () => {
+    const input = makeInput();
+    const admission = JSON.parse(input.refreshedAdmissionRaw) as {
+      treasury_continuity: {
+        originalProvision: {
+          claim: { objectUri: string; generation: string };
+          topology: { objectUri: string; generation: string };
+        };
+      };
+      infrastructure: { authority: { claim: { objectUri: string; generation: string } } };
+    };
+    const alternateClaim = 'gs://alternate.example/claim.json';
+    const alternateTopology = 'gs://alternate.example/topology.json';
+    admission.treasury_continuity.originalProvision.claim.objectUri = alternateClaim;
+    admission.treasury_continuity.originalProvision.claim.generation = '999';
+    admission.treasury_continuity.originalProvision.topology.objectUri = alternateTopology;
+    admission.treasury_continuity.originalProvision.topology.generation = '998';
+    admission.infrastructure.authority.claim.objectUri = alternateClaim;
+    admission.infrastructure.authority.claim.generation = '999';
+    expect(() => calculateB1TreasuryContinuityCompositeIdentity({
+      ...input,
+      refreshedAdmissionRaw: JSON.stringify(admission),
+      originalClaim: { ...input.originalClaim, uri: alternateClaim, generation: '999' },
+      originalTopology: { ...input.originalTopology, uri: alternateTopology, generation: '998' },
+    })).toThrow(/claim|topology|literal|invalid/i);
+  });
+
+  it('rejects non-treasury infrastructure drift', () => {
+    const input = makeInput();
+    const admission = JSON.parse(input.refreshedAdmissionRaw) as {
+      infrastructure: { resources: { zone: string } };
+    };
+    admission.infrastructure.resources.zone = 'us-central1-b';
+    expect(() => calculateB1TreasuryContinuityCompositeIdentity({
+      ...input,
+      refreshedAdmissionRaw: JSON.stringify(admission),
+    })).toThrow(/infrastructure digest/i);
+  });
+
+  it('rejects deployed revision drift', () => {
+    const input = makeInput();
+    const admission = JSON.parse(input.refreshedAdmissionRaw) as { deployed_revision: string };
+    admission.deployed_revision = 'arkova-worker-s33-rig-b1-staging-drift';
+    expect(() => calculateB1TreasuryContinuityCompositeIdentity({
+      ...input,
+      refreshedAdmissionRaw: JSON.stringify(admission),
+    })).toThrow(/deployed_revision|invalid/i);
+  });
+
+  it('rejects missing or tampered historical PREPARE evidence', () => {
+    const input = finalize(makeInput());
+    expect(() => verifyB1TreasuryContinuityComposition({
+      ...input,
+      historicalPreparationOutcome: undefined as never,
+    })).toThrow(/historical PREPARE outcome|locked reference/i);
+    expect(() => verifyB1TreasuryContinuityComposition({
+      ...input,
+      historicalPreparationIntent: {
+        ...input.historicalPreparationIntent,
+        raw: input.historicalPreparationIntent.raw.replace('PREPARE_INTENT_LOCKED', 'PREPARE_INTENT_BROKEN'),
+      },
+    })).toThrow(/historical PREPARE intent|digest/i);
   });
 
   it('rejects any delta other than the exact funded-probe fee', () => {

@@ -27,10 +27,14 @@ import {
   createB1PreparationAuthorityVerifierForTest,
   parseB1PreparationAuthoritySignedPayload,
 } from './s33-b1-preparation-approval';
-import { calculateB1TreasuryContinuityCompositeIdentity } from './s33-b1-treasury-continuity';
+import {
+  B1_TREASURY_CONTINUITY_CONTRACT,
+  calculateB1TreasuryContinuityCompositeIdentity,
+} from './s33-b1-treasury-continuity';
 
 const TREASURY = 'tb1qxca7ke7hgguarqxkwwydrfenn8ymnspxq765eq';
 const OBSERVED_AT = '2026-07-16T19:55:00.000Z';
+const CONTINUITY_NOW = '2026-07-17T02:30:00.000Z';
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 function compressedSignetWif(privateKey: Buffer): string {
@@ -94,6 +98,16 @@ function continuityPlanInput(): TreasuryPresplitPlanInput {
   return JSON.parse(continuityPlanRaw()) as TreasuryPresplitPlanInput;
 }
 
+function continuityPreparationOverrides() {
+  return {
+    sourceTreeSha: '09f7d40d6b59b6afbe4979346e1d0d46f35ccd28',
+    corpusDigest: 'sha256:7d6ffd131230d13483d3f1bacdb170b3cfcc53a4383d59f6689e415c99e6089e',
+    releaseCandidateId: 's33-w3-b1-recovery-rc-c56c7729',
+    issuedAt: '2026-07-17T02:25:00.000Z',
+    expiresAt: '2026-07-17T02:35:00.000Z',
+  };
+}
+
 function continuityAdmissionRaw(): string {
   const base = JSON.parse(readFileSync(
     join(process.cwd(), 'scripts/staging/fixtures/rig-b1-admission-v2.json'),
@@ -106,6 +120,9 @@ function continuityAdmissionRaw(): string {
       secretReferences: unknown;
     };
   };
+  base.infrastructure = JSON.parse(
+    textFixture('s33-b1-c56c-infrastructure.fixture.txt'),
+  ) as typeof base.infrastructure;
   const claimRaw = textFixture('s33-b1-c56c-provision-claim.fixture.txt');
   const topologyRaw = textFixture('s33-b1-c56c-topology-ownership.fixture.txt');
   const amendmentRaw = textFixture('s33-b1-c56c-treasury-continuity-amendment.fixture.txt');
@@ -137,25 +154,6 @@ function continuityAdmissionRaw(): string {
     deployed_revision: 'arkova-worker-s33-rig-b1-staging-b1hdr2-021254',
     tag_url: topology.cloudRunServiceUrl,
     supabase_project_ref: topology.supabaseProjectRef,
-  });
-  base.infrastructure.authority = {
-    binding: 'ed25519-signed-node-approval',
-    approvalId: claim.approvalId,
-    approvalEnvelopeSha256: claim.envelopeSha256,
-    signedPayloadSha256: claim.signedPayloadSha256,
-    spendCapUsd: 50,
-    claim: {
-      backend: 'gcs-if-generation-match-0-locked-retention',
-      objectUri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/node-approval-claims/b1-provision-c56c7729-20260717t021606z.json',
-      generation: '1784254587600385',
-    },
-  };
-  base.infrastructure.nodeReadiness = topology.nodeReadiness;
-  base.infrastructure.secretReferences = topology.secretReferences;
-  Object.assign(base.infrastructure.treasuryWatchOnly, {
-    preSplitPlanDigest: 'sha256:ab70ac7cf0ef1b371258c86ee4d967fec199b156156fe214238440429df794d8',
-    expectedConfirmedOutputCount: 32,
-    expectedTotalSats: 169_639,
   });
   const continuity = {
     schemaVersion: 'arkova.s33.rig-b1.treasury-continuity-composition/v1',
@@ -209,6 +207,7 @@ function continuityAdmissionRaw(): string {
   base.treasury_continuity = continuity;
   let raw = JSON.stringify(base);
   continuity.compositeIdentitySha256 = calculateB1TreasuryContinuityCompositeIdentity({
+    verificationTime: new Date('2026-07-17T02:30:00.000Z'),
     refreshedAdmissionRaw: raw,
     currentTreasuryPlanInputRaw: continuityPlanRaw(),
     originalClaim: {
@@ -227,6 +226,24 @@ function continuityAdmissionRaw(): string {
       uri: continuity.amendment.objectUri,
       generation: continuity.amendment.generation,
       raw: amendmentRaw,
+      retainUntilTime: '2026-07-22T22:39:24Z',
+    },
+    historicalPreparationIntent: {
+      uri: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentUri,
+      generation: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentGeneration,
+      raw: textFixture('s33-b1-historical-preparation-intent.fixture.txt'),
+      retainUntilTime: '2026-07-22T22:39:24Z',
+    },
+    historicalPreparationOutcome: {
+      uri: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeUri,
+      generation: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeGeneration,
+      raw: textFixture('s33-b1-historical-preparation-outcome.fixture.txt'),
+      retainUntilTime: '2026-07-22T22:39:24Z',
+    },
+    failedStartContainment: {
+      uri: B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentUri,
+      generation: B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentGeneration,
+      raw: textFixture('s33-b1-failed-start-containment.fixture.txt'),
       retainUntilTime: '2026-07-22T22:39:24Z',
     },
   });
@@ -550,6 +567,7 @@ interface TestCollectorState {
   removed: number;
   funded: number;
   schedulerObservations: number;
+  coreObservations: number;
   readonly leaseInputs: Array<Readonly<{
     preparationId: string;
     expiresAt: string;
@@ -600,6 +618,7 @@ function liveCollectorPort(
     removed: 0,
     funded: 0,
     schedulerObservations: 0,
+    coreObservations: 0,
     leaseInputs: [],
     operations: [],
     locked,
@@ -639,6 +658,27 @@ function liveCollectorPort(
         {
           reference: continuity.amendment,
           raw: textFixture('s33-b1-c56c-treasury-continuity-amendment.fixture.txt'),
+        },
+        {
+          reference: {
+            objectUri: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentUri,
+            generation: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentGeneration,
+          },
+          raw: textFixture('s33-b1-historical-preparation-intent.fixture.txt'),
+        },
+        {
+          reference: {
+            objectUri: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeUri,
+            generation: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeGeneration,
+          },
+          raw: textFixture('s33-b1-historical-preparation-outcome.fixture.txt'),
+        },
+        {
+          reference: {
+            objectUri: B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentUri,
+            generation: B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentGeneration,
+          },
+          raw: textFixture('s33-b1-failed-start-containment.fixture.txt'),
         },
       ].find(({ reference }) => reference.objectUri === uri);
       if (continuityObject !== undefined) {
@@ -699,7 +739,10 @@ function liveCollectorPort(
         observedAt: OBSERVED_AT,
       }));
     },
-    observeCore: async () => ({
+    observeCore: async () => {
+      testState.coreObservations += 1;
+      testState.operations.push('observe-core');
+      return {
       chain: 'signet',
       initialBlockDownload: false,
       headers: live.getBlockchainInfo.headers,
@@ -714,11 +757,18 @@ function liveCollectorPort(
       rescanComplete: true,
       confirmedUtxos: live.watchOnlyWallet.confirmedUtxos,
       confirmedTotalSats: live.watchOnlyWallet.confirmedTotalSats,
+      confirmedOutputs: treasuryPlanInput.inputs.map((candidate) => ({
+        txId: candidate.txId,
+        vout: candidate.vout,
+        valueSats: candidate.valueSats,
+        confirmations: candidate.confirmations,
+      })),
       minimumConfirmations: live.watchOnlyWallet.minimumConfirmations,
       splitTransactionObserved: admission.infrastructure.treasuryWatchOnly.splitTransactionId,
       capabilities: Object.fromEntries(RIG_B1_REQUIRED_RPC_CAPABILITIES.map((method) => [method, true])) as Record<typeof RIG_B1_REQUIRED_RPC_CAPABILITIES[number], boolean>,
       observedAt: OBSERVED_AT,
-    }),
+      };
+    },
     proveSigner: async () => {
       testState.operations.push('prove-signer');
       return {
@@ -789,14 +839,11 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
     const admission = continuityAdmissionRaw();
     const plan = continuityPlanRaw();
     const port = liveCollectorPort(admission, continuityPlanInput());
+    port.testState.now = CONTINUITY_NOW;
     const artifact = JSON.parse(await collectB1SchedulerPreclockArtifact(
       admission,
       plan,
-      authorizeB1PreclockMutationForTest(admission, plan, {
-        sourceTreeSha: '09f7d40d6b59b6afbe4979346e1d0d46f35ccd28',
-        corpusDigest: 'sha256:7d6ffd131230d13483d3f1bacdb170b3cfcc53a4383d59f6689e415c99e6089e',
-        releaseCandidateId: 's33-w3-b1-recovery-rc-c56c7729',
-      }),
+      authorizeB1PreclockMutationForTest(admission, plan, continuityPreparationOverrides()),
       port,
     )) as Record<string, unknown>;
     const parsedAdmission = JSON.parse(admission) as {
@@ -832,6 +879,7 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
     const admission = continuityAdmissionRaw();
     const plan = continuityPlanRaw();
     const port = liveCollectorPort(admission, continuityPlanInput());
+    port.testState.now = CONTINUITY_NOW;
     const readLockedObject = port.readLockedObject.bind(port);
     port.readLockedObject = async (uri, generation) => {
       const object = await readLockedObject(uri, generation);
@@ -842,13 +890,66 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
     await expect(collectB1SchedulerPreclockArtifact(
       admission,
       plan,
-      authorizeB1PreclockMutationForTest(admission, plan, {
-        sourceTreeSha: '09f7d40d6b59b6afbe4979346e1d0d46f35ccd28',
-        corpusDigest: 'sha256:7d6ffd131230d13483d3f1bacdb170b3cfcc53a4383d59f6689e415c99e6089e',
-        releaseCandidateId: 's33-w3-b1-recovery-rc-c56c7729',
-      }),
+      authorizeB1PreclockMutationForTest(admission, plan, continuityPreparationOverrides()),
       port,
     )).rejects.toThrow(/amendment|digest|signature/i);
+    expect(port.testState.funded).toBe(0);
+    expect(port.testState.installed).toBe(0);
+    expect(port.testState.locked.size).toBe(0);
+  });
+
+  it('performs zero mutation for a same-count/same-total live outpoint substitution', async () => {
+    const admission = continuityAdmissionRaw();
+    const plan = continuityPlanRaw();
+    const port = liveCollectorPort(admission, continuityPlanInput());
+    port.testState.now = CONTINUITY_NOW;
+    const observeCore = port.observeCore.bind(port);
+    port.observeCore = async (input) => {
+      const observed = await observeCore(input);
+      return {
+        ...observed,
+        confirmedOutputs: observed.confirmedOutputs.map((candidate, index) => index === 0
+          ? { ...candidate, txId: '8'.repeat(64) }
+          : candidate),
+      };
+    };
+    await expect(collectB1SchedulerPreclockArtifact(
+      admission,
+      plan,
+      authorizeB1PreclockMutationForTest(admission, plan, continuityPreparationOverrides()),
+      port,
+    )).rejects.toThrow(/outpoint|signed plan|confirmation floor/i);
+    expect(port.testState.funded).toBe(0);
+    expect(port.testState.installed).toBe(0);
+    expect(port.testState.locked.size).toBe(0);
+  });
+
+  it('performs zero mutation when the exact UTXO set drifts only at the final pre-intent read', async () => {
+    const admission = continuityAdmissionRaw();
+    const plan = continuityPlanRaw();
+    const port = liveCollectorPort(admission, continuityPlanInput());
+    port.testState.now = CONTINUITY_NOW;
+    const observeCore = port.observeCore.bind(port);
+    let calls = 0;
+    port.observeCore = async (input) => {
+      const observed = await observeCore(input);
+      calls += 1;
+      return calls === 2
+        ? {
+          ...observed,
+          confirmedOutputs: observed.confirmedOutputs.map((candidate, index) => index === 0
+            ? { ...candidate, txId: '9'.repeat(64) }
+            : candidate),
+        }
+        : observed;
+    };
+    await expect(collectB1SchedulerPreclockArtifact(
+      admission,
+      plan,
+      authorizeB1PreclockMutationForTest(admission, plan, continuityPreparationOverrides()),
+      port,
+    )).rejects.toThrow(/outpoint|signed plan|confirmation floor/i);
+    expect(port.testState.coreObservations).toBe(2);
     expect(port.testState.funded).toBe(0);
     expect(port.testState.installed).toBe(0);
     expect(port.testState.locked.size).toBe(0);

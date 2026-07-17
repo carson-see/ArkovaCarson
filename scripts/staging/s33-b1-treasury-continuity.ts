@@ -17,6 +17,7 @@ import { planTreasuryPresplit } from './batch-drain-utxo-fanout';
 const PUBLIC_KEY_PEM =
   '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAE+Ir2My5+bBwU73QkL73F7fiRteZ0V5yIAe41fD6MdU=\n-----END PUBLIC KEY-----\n';
 const DOMAIN = 'arkova:s33:rig-b1-treasury-continuity-amendment:v1\n';
+const FAILED_START_CONTAINMENT_DOMAIN = 'arkova:s33:rig-b1-failed-start-containment:v1\n';
 const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`;
 
 export const B1_TREASURY_CONTINUITY_CONTROLLER_FILES = Object.freeze([
@@ -42,6 +43,8 @@ export const B1_TREASURY_CONTINUITY_CONTRACT = Object.freeze({
   originalHeadSha: 'c56c7729687602b980e2b03454588683a8c20d9b',
   originalTreeSha: '09f7d40d6b59b6afbe4979346e1d0d46f35ccd28',
   originalImageDigest: 'sha256:0162f4b840b12cd062eb43a2c05d4684bf5997e5f70297186c96a5aafc5ee105',
+  originalRevision: 'arkova-worker-s33-rig-b1-staging-b1hdr2-021254',
+  originalInfrastructureSha256: 'sha256:2faa6a3b5239404d0f80623a3aee0bf64ac3943ca7415650edbf1b89dcd7a67e',
   originalApprovalId: 'b1-provision-c56c7729-20260717t021606z',
   originalApprovalEnvelopeSha256: 'sha256:95810a191bf7fdcd976aeaaa3d17241a8fc3cdc1bc1f235fd2dc806c98430805',
   originalSignedPayloadSha256: 'sha256:06ef0449e975315ffbe3a6e8ba506150365c4784bf758ea6ecd12616a78185b6',
@@ -60,6 +63,19 @@ export const B1_TREASURY_CONTINUITY_CONTRACT = Object.freeze({
   fundedProbeFeeSats: 157,
   deltaSats: -157,
   outputCount: 32,
+  historicalCandidateHeadSha: '5dacccc888f97e8bb40f40e851547892f3d744ac',
+  historicalPreparationId: 'b1-prepare-5dacccc8-20260717t014328z',
+  historicalPreparationIntentUri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/preparation-intents/b1-prepare-5dacccc8-20260717t014328z.json',
+  historicalPreparationIntentGeneration: '1784252663697634',
+  historicalPreparationIntentSha256: 'sha256:6ca02ce15b86af0e125cd3923b4d94cd2817d45916e4b01a4db490a36828f9a7',
+  historicalPreparationOutcomeUri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/preparation-outcomes/b1-prepare-5dacccc8-20260717t014328z.json',
+  historicalPreparationOutcomeGeneration: '1784252687265846',
+  historicalPreparationOutcomeSha256: 'sha256:8a91457edae6c3ee06d3d93d4f88a99833c2e8e6afb4e6e4d791550f6d1190ae',
+  historicalPreclockArtifactSha256: 'sha256:0a8448679ccf900bb75823eb87c6aa6c284bc97e703921d83754cc5e6f923342',
+  historicalFundedTransactionId: '4f56c2bd94b4205a83b3625d52fc35db3ef2a8937d178cd519145f3055ffe8f6',
+  failedStartContainmentUri: 'gs://arkova1-s33-immutable-authority-ledger/s33/rig-b1/failed-start-containments/b1-start-5dacccc8-20260717t014842z.json',
+  failedStartContainmentGeneration: '1784254293955696',
+  failedStartContainmentSha256: 'sha256:4db25dcfaec89f739774ba93616aa179cd5c09b3df5e3c51c85016b44d73af37',
 } as const);
 
 const sha256 = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
@@ -85,8 +101,16 @@ export const b1TreasuryContinuitySchema = z.object({
     releaseCandidateId: boundedId,
     soakId: boundedId,
     leaseId: boundedId,
-    claim: lockedReferenceSchema,
-    topology: lockedReferenceSchema,
+    claim: z.object({
+      objectUri: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.originalClaimUri),
+      generation: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.originalClaimGeneration),
+      sha256: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.originalClaimSha256),
+    }).strict(),
+    topology: z.object({
+      objectUri: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.originalTopologyUri),
+      generation: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.originalTopologyGeneration),
+      sha256: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.originalTopologySha256),
+    }).strict(),
   }).strict(),
   amendment: z.object({
     objectUri: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.amendmentUri),
@@ -124,11 +148,15 @@ export interface B1LockedContinuityObject {
 }
 
 export interface B1TreasuryContinuityCompositionInput {
+  readonly verificationTime: Date;
   readonly refreshedAdmissionRaw: string;
   readonly currentTreasuryPlanInputRaw: string;
   readonly originalClaim: B1LockedContinuityObject;
   readonly originalTopology: B1LockedContinuityObject;
   readonly amendment: B1LockedContinuityObject;
+  readonly historicalPreparationIntent: B1LockedContinuityObject;
+  readonly historicalPreparationOutcome: B1LockedContinuityObject;
+  readonly failedStartContainment: B1LockedContinuityObject;
 }
 
 export interface VerifiedB1TreasuryContinuityComposition {
@@ -169,6 +197,7 @@ const admissionProjectionSchema = z.object({
   schema_version: z.literal(2),
   sha: gitSha,
   image_digest: sha256,
+  deployed_revision: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.originalRevision),
   soak_id: boundedId,
   lease_id: boundedId,
   treasury_continuity: b1TreasuryContinuitySchema,
@@ -245,9 +274,23 @@ const amendmentPayloadSchema = z.object({
     signatureDomain: z.literal(DOMAIN),
   }).strict(),
   historicalProbe: z.object({
+    candidateHeadSha: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.historicalCandidateHeadSha),
+    preparationId: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationId),
+    preparationIntent: lockedReferenceSchema,
+    preparationOutcome: lockedReferenceSchema,
+    preclockArtifactSha256: z.literal(
+      B1_TREASURY_CONTINUITY_CONTRACT.historicalPreclockArtifactSha256,
+    ),
     fundedTransaction: z.object({
+      txId: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.historicalFundedTransactionId),
+      acceptedAt: timestamp,
       feeSats: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.fundedProbeFeeSats),
       confirmed: z.literal(true),
+      changeOutput: z.object({
+        vout: z.number().int().nonnegative(),
+        address: z.string().min(1),
+        valueSats: z.number().int().positive(),
+      }).strict(),
     }).passthrough(),
     failedStartContainment: lockedReferenceSchema,
   }).passthrough(),
@@ -287,6 +330,124 @@ const amendmentPayloadSchema = z.object({
   issuedAt: timestamp,
   expiresAt: timestamp,
   verdict: z.literal('AUTHORIZED_POST_PROBE_TREASURY_CONTINUITY'),
+}).passthrough();
+
+const historicalPreparationIntentSchema = z.object({
+  schemaVersion: z.literal('arkova.s33.rig-b1.preparation-intent/v1'),
+  status: z.literal('PREPARE_INTENT_LOCKED'),
+  preparationId: boundedId,
+  authorityEnvelopeSha256: sha256,
+  authoritySignedPayloadSha256: sha256,
+  provisionApprovalEnvelopeSha256: sha256,
+  provisionSignedPayloadSha256: sha256,
+  admissionSha256: sha256,
+  treasuryPlanSha256: sha256,
+  sourceHeadSha: gitSha,
+  sourceTreeSha: gitSha,
+  workerImageDigest: sha256,
+  corpusDigest: sha256,
+  releaseCandidateId: boundedId,
+  soakId: boundedId,
+  leaseId: boundedId,
+  idempotencyKey: sha256,
+  maxFundedBroadcasts: z.literal(1),
+  invocationLeaseMaxSeconds: z.literal(600),
+  createdAt: timestamp,
+  authorityExpiresAt: timestamp,
+}).strict();
+
+const historicalPreparationOutcomeSchema = z.object({
+  schemaVersion: z.literal('arkova.s33.rig-b1.preparation-outcome/v1'),
+  status: z.literal('PRE_CLOCK_READY'),
+  preparationId: boundedId,
+  intentSha256: sha256,
+  admissionSha256: sha256,
+  treasuryPlanSha256: sha256,
+  idempotencyKey: sha256,
+  fundedProbe: z.object({
+    txId: z.string().regex(/^[0-9a-f]{64}$/u),
+    evidenceSha256: sha256,
+    observedAt: timestamp,
+  }).strict(),
+  preclockArtifactSha256: sha256,
+  preclockArtifactRaw: z.string().min(1).max(4 * 1024 * 1024),
+  completedAt: timestamp,
+}).strict();
+
+const historicalPreclockSchema = z.object({
+  schemaVersion: z.literal('arkova.s33.rig-b1.scheduler-start-preclock/v1'),
+  status: z.literal('PRE_CLOCK_READY'),
+  admissionSha256: sha256,
+  sourceHeadSha: gitSha,
+  workerImageDigest: sha256,
+  sourceEvidence: z.object({
+    readinessObservation: z.object({
+      fundedBroadcast: z.object({
+        network: z.literal('signet'),
+        txId: z.string().regex(/^[0-9a-f]{64}$/u),
+        accepted: z.literal(true),
+        observedAt: timestamp,
+      }).passthrough(),
+      mempoolCorroboration: z.object({
+        txId: z.string().regex(/^[0-9a-f]{64}$/u),
+        txOutcome: z.literal('found'),
+        observedAt: timestamp,
+      }).passthrough(),
+    }).passthrough(),
+  }).passthrough(),
+}).passthrough();
+
+const failedStartContainmentPayloadSchema = z.object({
+  schemaVersion: z.literal('arkova.s33.rig-b1.failed-start-containment/v1'),
+  containmentId: boundedId,
+  authority: z.object({
+    keyId: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.keyId),
+    keyFingerprint: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.keyFingerprint),
+    approverIdentity: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.approverIdentity),
+    purpose: z.literal('CONTAIN_FAILED_B1_START'),
+    signatureDomain: z.literal(FAILED_START_CONTAINMENT_DOMAIN),
+  }).strict(),
+  failedStart: z.object({
+    activationId: boundedId,
+    countedReceiptStartedAt: timestamp,
+    candidate: z.object({
+      sourceHeadSha: z.literal(B1_TREASURY_CONTINUITY_CONTRACT.historicalCandidateHeadSha),
+      sourceTreeSha: gitSha,
+      workerImageDigest: sha256,
+      revision: z.string().min(1),
+      serviceUrl: z.string().url(),
+    }).strict(),
+    firstSchedulerFireWindow: z.object({
+      allSixHttp503: z.literal(true),
+      requests: z.array(z.object({ status: z.literal(503) }).passthrough()).length(6),
+    }).passthrough(),
+    supervisor: z.object({
+      processRunning: z.literal(false),
+      firstHeartbeatPresent: z.literal(false),
+      firstJournalPresent: z.literal(false),
+    }).passthrough(),
+  }).passthrough(),
+  containment: z.object({
+    observedAt: timestamp,
+    schedulerJobs: z.array(z.object({
+      state: z.literal('PAUSED'),
+      schedule: z.literal('*/5 * * * *'),
+    }).passthrough()).length(6),
+    exactJobCount: z.literal(6),
+    allSixPaused: z.literal(true),
+    schedulerInvocationLeaseRemoved: z.literal(true),
+    productionAndOtherRigMutationAuthorized: z.literal(false),
+  }).passthrough(),
+  assertions: z.object({
+    invalidReceiptPreserved: z.literal(true),
+    noHealthyClockClaimed: z.literal(true),
+    noSupervisorProcessRunning: z.literal(true),
+    noHeartbeatOrJournalClaimed: z.literal(true),
+    allSixJobsPaused: z.literal(true),
+    invocationLeaseRemoved: z.literal(true),
+    noSecretValuesIncluded: z.literal(true),
+  }).strict(),
+  verdict: z.literal('INVALID_START_CONTAINED_NO_HEALTHY_CLOCK'),
 }).passthrough();
 
 function digest(raw: string | Uint8Array): string {
@@ -345,12 +506,19 @@ function inspectComposition(input: B1TreasuryContinuityCompositionInput): Readon
   normalizedAdmissionSha256: string;
   compositeIdentitySha256: string;
 }> {
-  const admission = parse(
-    admissionProjectionSchema,
+  const rawAdmission = parseJsonRejectingDuplicateKeys(
     input.refreshedAdmissionRaw,
     'RIG-B1 refreshed continuity admission',
-  );
+  ) as Record<string, unknown>;
+  const admission = admissionProjectionSchema.parse(rawAdmission);
   const continuity = admission.treasury_continuity;
+  if (rawAdmission.infrastructure === null
+    || typeof rawAdmission.infrastructure !== 'object'
+    || Array.isArray(rawAdmission.infrastructure)
+    || digest(JSON.stringify(rawAdmission.infrastructure))
+      !== B1_TREASURY_CONTINUITY_CONTRACT.originalInfrastructureSha256) {
+    throw new Error('RIG-B1 refreshed admission full original infrastructure digest differs.');
+  }
 
   const envelope = parse(envelopeSchema, input.amendment?.raw ?? '', 'RIG-B1 treasury-continuity amendment');
   if (digest(input.amendment.raw) !== B1_TREASURY_CONTINUITY_CONTRACT.amendmentEnvelopeSha256
@@ -377,8 +545,19 @@ function inspectComposition(input: B1TreasuryContinuityCompositionInput): Readon
     envelope.signedPayloadRaw,
     'RIG-B1 treasury-continuity signed payload',
   );
-  if (Date.parse(payload.issuedAt) >= Date.parse(payload.expiresAt)) {
-    throw new Error('RIG-B1 treasury-continuity amendment chronology is invalid.');
+  const issuedAt = Date.parse(payload.issuedAt);
+  const expiresAt = Date.parse(payload.expiresAt);
+  if (!(input.verificationTime instanceof Date)) {
+    throw new Error('RIG-B1 treasury-continuity verification time is invalid.');
+  }
+  const verificationTime = input.verificationTime.getTime();
+  if (!Number.isFinite(verificationTime)
+    || issuedAt >= expiresAt
+    || verificationTime < issuedAt
+    || verificationTime >= expiresAt) {
+    throw new Error(
+      'RIG-B1 treasury-continuity amendment chronology is invalid, not yet valid, or expired.',
+    );
   }
 
   assertLocked(input.amendment, {
@@ -387,15 +566,96 @@ function inspectComposition(input: B1TreasuryContinuityCompositionInput): Readon
     sha256: continuity.amendment.envelopeSha256,
   }, payload.expiresAt, 'treasury-continuity amendment');
   assertLocked(input.originalClaim, {
-    uri: continuity.originalProvision.claim.objectUri,
-    generation: continuity.originalProvision.claim.generation,
-    sha256: continuity.originalProvision.claim.sha256,
+    uri: B1_TREASURY_CONTINUITY_CONTRACT.originalClaimUri,
+    generation: B1_TREASURY_CONTINUITY_CONTRACT.originalClaimGeneration,
+    sha256: B1_TREASURY_CONTINUITY_CONTRACT.originalClaimSha256,
   }, payload.expiresAt, 'original provision claim');
   assertLocked(input.originalTopology, {
-    uri: continuity.originalProvision.topology.objectUri,
-    generation: continuity.originalProvision.topology.generation,
-    sha256: continuity.originalProvision.topology.sha256,
+    uri: B1_TREASURY_CONTINUITY_CONTRACT.originalTopologyUri,
+    generation: B1_TREASURY_CONTINUITY_CONTRACT.originalTopologyGeneration,
+    sha256: B1_TREASURY_CONTINUITY_CONTRACT.originalTopologySha256,
   }, payload.expiresAt, 'original topology');
+
+  const historical = payload.historicalProbe;
+  assertLocked(input.historicalPreparationIntent, {
+    uri: historical.preparationIntent.objectUri,
+    generation: historical.preparationIntent.generation,
+    sha256: historical.preparationIntent.sha256,
+  }, payload.expiresAt, 'historical PREPARE intent');
+  assertLocked(input.historicalPreparationOutcome, {
+    uri: historical.preparationOutcome.objectUri,
+    generation: historical.preparationOutcome.generation,
+    sha256: historical.preparationOutcome.sha256,
+  }, payload.expiresAt, 'historical PREPARE outcome');
+  assertLocked(input.failedStartContainment, {
+    uri: historical.failedStartContainment.objectUri,
+    generation: historical.failedStartContainment.generation,
+    sha256: historical.failedStartContainment.sha256,
+  }, payload.expiresAt, 'failed START containment');
+
+  const historicalIntent = parse(
+    historicalPreparationIntentSchema,
+    input.historicalPreparationIntent.raw,
+    'RIG-B1 historical PREPARE intent',
+  );
+  const historicalOutcome = parse(
+    historicalPreparationOutcomeSchema,
+    input.historicalPreparationOutcome.raw,
+    'RIG-B1 historical PREPARE outcome',
+  );
+  const historicalPreclock = parse(
+    historicalPreclockSchema,
+    historicalOutcome.preclockArtifactRaw,
+    'RIG-B1 historical pre-clock artifact',
+  );
+  const containmentEnvelope = parse(
+    envelopeSchema,
+    input.failedStartContainment.raw,
+    'RIG-B1 failed START containment',
+  );
+  if (!verifySignature(
+    null,
+    Buffer.from(`${FAILED_START_CONTAINMENT_DOMAIN}${containmentEnvelope.signedPayloadRaw}`),
+    publicKey,
+    Buffer.from(containmentEnvelope.signature, 'base64'),
+  )) {
+    throw new Error('RIG-B1 failed START containment signature is invalid.');
+  }
+  const containment = parse(
+    failedStartContainmentPayloadSchema,
+    containmentEnvelope.signedPayloadRaw,
+    'RIG-B1 failed START containment signed payload',
+  );
+  if (containmentEnvelope.envelopeId !== containment.containmentId
+    || historicalIntent.preparationId !== historical.preparationId
+    || historicalIntent.sourceHeadSha !== historical.candidateHeadSha
+    || historicalOutcome.preparationId !== historical.preparationId
+    || historicalOutcome.intentSha256 !== digest(input.historicalPreparationIntent.raw)
+    || historicalOutcome.admissionSha256 !== historicalIntent.admissionSha256
+    || historicalOutcome.treasuryPlanSha256 !== historicalIntent.treasuryPlanSha256
+    || historicalOutcome.idempotencyKey !== historicalIntent.idempotencyKey
+    || historicalOutcome.fundedProbe.txId !== historical.fundedTransaction.txId
+    || historicalOutcome.fundedProbe.observedAt !== historical.fundedTransaction.acceptedAt
+    || historicalOutcome.preclockArtifactSha256 !== historical.preclockArtifactSha256
+    || digest(historicalOutcome.preclockArtifactRaw) !== historical.preclockArtifactSha256
+    || historicalPreclock.admissionSha256 !== historicalIntent.admissionSha256
+    || historicalPreclock.sourceHeadSha !== historical.candidateHeadSha
+    || historicalPreclock.sourceEvidence.readinessObservation.fundedBroadcast.txId
+      !== historical.fundedTransaction.txId
+    || historicalPreclock.sourceEvidence.readinessObservation.fundedBroadcast.observedAt
+      !== historical.fundedTransaction.acceptedAt
+    || historicalPreclock.sourceEvidence.readinessObservation.mempoolCorroboration.txId
+      !== historical.fundedTransaction.txId
+    || containment.failedStart.candidate.sourceHeadSha !== historical.candidateHeadSha
+    || Date.parse(historicalIntent.createdAt) > Date.parse(historical.fundedTransaction.acceptedAt)
+    || Date.parse(historical.fundedTransaction.acceptedAt) > Date.parse(historicalOutcome.completedAt)
+    || Date.parse(historicalOutcome.completedAt) > Date.parse(containment.failedStart.countedReceiptStartedAt)
+    || Date.parse(containment.failedStart.countedReceiptStartedAt)
+      > Date.parse(containment.containment.observedAt)) {
+    throw new Error(
+      'RIG-B1 historical PREPARE/outcome/pre-clock/funded transaction/containment chain differs.',
+    );
+  }
 
   const claim = parse(claimSchema, input.originalClaim.raw, 'RIG-B1 original provision claim');
   const topology = parse(topologySchema, input.originalTopology.raw, 'RIG-B1 original topology');
@@ -416,8 +676,8 @@ function inspectComposition(input: B1TreasuryContinuityCompositionInput): Readon
       throw new Error(`RIG-B1 original claim/topology ${field} binding differs.`);
     }
   }
-  if (topology.approvalClaim.objectUri !== continuity.originalProvision.claim.objectUri
-    || topology.approvalClaim.generation !== continuity.originalProvision.claim.generation
+  if (topology.approvalClaim.objectUri !== B1_TREASURY_CONTINUITY_CONTRACT.originalClaimUri
+    || topology.approvalClaim.generation !== B1_TREASURY_CONTINUITY_CONTRACT.originalClaimGeneration
     || topology.nodeReadinessSha256 !== B1_TREASURY_CONTINUITY_CONTRACT.originalNodeReadinessSha256
     || topology.nodeReadiness.treasurySplitPlanDigest !== continuity.originalTreasury.planDigest
     || topology.nodeReadiness.confirmedOutputCount !== continuity.originalTreasury.confirmedOutputCount
@@ -442,6 +702,7 @@ function inspectComposition(input: B1TreasuryContinuityCompositionInput): Readon
 
   if (admission.sha !== continuity.originalProvision.sourceHeadSha
     || admission.image_digest !== B1_TREASURY_CONTINUITY_CONTRACT.originalImageDigest
+    || admission.deployed_revision !== B1_TREASURY_CONTINUITY_CONTRACT.originalRevision
     || admission.soak_id !== continuity.originalProvision.soakId
     || admission.lease_id !== continuity.originalProvision.leaseId
     || admission.infrastructure.authority.approvalId !== continuity.originalProvision.approvalId
@@ -476,6 +737,7 @@ function inspectComposition(input: B1TreasuryContinuityCompositionInput): Readon
       sourceHeadSha: B1_TREASURY_CONTINUITY_CONTRACT.originalHeadSha,
       sourceTreeSha: B1_TREASURY_CONTINUITY_CONTRACT.originalTreeSha,
       workerImageDigest: B1_TREASURY_CONTINUITY_CONTRACT.originalImageDigest,
+      workerRevision: B1_TREASURY_CONTINUITY_CONTRACT.originalRevision,
     },
     controllerCandidate: continuity.controllerCandidate,
     amendmentSignedPayloadSha256: digest(envelope.signedPayloadRaw),

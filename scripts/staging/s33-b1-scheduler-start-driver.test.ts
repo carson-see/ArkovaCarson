@@ -15,7 +15,10 @@ import {
   type B1SchedulerStartPreclock,
   type VerifiedB1StartApproval,
 } from './s33-b1-scheduler-start-driver';
-import { calculateB1TreasuryContinuityCompositeIdentity } from './s33-b1-treasury-continuity';
+import {
+  B1_TREASURY_CONTINUITY_CONTRACT,
+  calculateB1TreasuryContinuityCompositeIdentity,
+} from './s33-b1-treasury-continuity';
 
 const NOW = '2026-07-16T20:00:00.000Z';
 const ACTION_EXPIRES = '2026-07-16T20:10:00.000Z';
@@ -45,6 +48,8 @@ const CONTROLLER_HEAD = 'd'.repeat(40);
 const CONTROLLER_TREE = 'e'.repeat(40);
 const CONTROLLER_FILES = `sha256:${'f'.repeat(64)}`;
 const CONTINUITY_PRECLOCK_RAW = '{"preclock":"c56-continuity-fixture"}';
+const CONTINUITY_NOW = '2026-07-17T02:30:00.000Z';
+const CONTINUITY_ACTION_EXPIRES = '2026-07-17T02:40:00.000Z';
 
 function digest(raw: string): string {
   return `sha256:${createHash('sha256').update(raw).digest('hex')}`;
@@ -137,25 +142,14 @@ function continuityFixture(): ContinuityFixture {
     schema_version: 2,
     sha: C56_HEAD,
     image_digest: C56_IMAGE_DIGEST,
+    deployed_revision: B1_TREASURY_CONTINUITY_CONTRACT.originalRevision,
     soak_id: C56_SOAK,
     lease_id: C56_LEASE,
     treasury_continuity: continuity,
-    infrastructure: {
-      authority: {
-        approvalId: C56_APPROVAL,
-        approvalEnvelopeSha256: continuity.originalProvision.approvalEnvelopeSha256,
-        signedPayloadSha256: continuity.originalProvision.signedPayloadSha256,
-        claim: { objectUri: claimUri, generation: '1784254587600385' },
-      },
-      nodeReadiness: topology.nodeReadiness,
-      treasuryWatchOnly: {
-        preSplitPlanDigest: continuity.originalTreasury.planDigest,
-        expectedConfirmedOutputCount: 32,
-        expectedTotalSats: 169_639,
-      },
-    },
+    infrastructure: JSON.parse(fixtureText('s33-b1-c56c-infrastructure.fixture.txt')),
   };
   continuity.compositeIdentitySha256 = calculateB1TreasuryContinuityCompositeIdentity({
+    verificationTime: new Date('2026-07-17T02:30:00.000Z'),
     refreshedAdmissionRaw: JSON.stringify(admission),
     currentTreasuryPlanInputRaw: treasuryPlanRaw,
     originalClaim: {
@@ -174,6 +168,24 @@ function continuityFixture(): ContinuityFixture {
       uri: amendmentUri,
       generation: continuity.amendment.generation,
       raw: amendmentRaw,
+      retainUntilTime: '2026-07-22T22:39:24Z',
+    },
+    historicalPreparationIntent: {
+      uri: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentUri,
+      generation: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentGeneration,
+      raw: fixtureText('s33-b1-historical-preparation-intent.fixture.txt'),
+      retainUntilTime: '2026-07-22T22:39:24Z',
+    },
+    historicalPreparationOutcome: {
+      uri: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeUri,
+      generation: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeGeneration,
+      raw: fixtureText('s33-b1-historical-preparation-outcome.fixture.txt'),
+      retainUntilTime: '2026-07-22T22:39:24Z',
+    },
+    failedStartContainment: {
+      uri: B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentUri,
+      generation: B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentGeneration,
+      raw: fixtureText('s33-b1-failed-start-containment.fixture.txt'),
       retainUntilTime: '2026-07-22T22:39:24Z',
     },
   });
@@ -511,7 +523,10 @@ function continuityPreparationOutcomeRaw(value: ContinuityFixture): string {
   });
 }
 
-function continuityApproval(value: ContinuityFixture): VerifiedB1StartApproval {
+function continuityApproval(
+  value: ContinuityFixture,
+  startId = CONTINUITY_START_ID,
+): VerifiedB1StartApproval {
   const admitted = continuityAdmission(value);
   const intentRaw = continuityPreparationIntentRaw(value);
   const outcomeRaw = continuityPreparationOutcomeRaw(value);
@@ -521,7 +536,7 @@ function continuityApproval(value: ContinuityFixture): VerifiedB1StartApproval {
     verifierIdentity: B1_SCHEDULER_START_CONTRACT.verifierIdentity,
     envelopeSha256: `sha256:${'8'.repeat(64)}`,
     signedPayloadSha256: `sha256:${'9'.repeat(64)}`,
-    startId: CONTINUITY_START_ID,
+    startId,
     purpose: B1_SCHEDULER_START_CONTRACT.authorityPurpose,
     sourceHeadSha: C56_HEAD,
     sourceTreeSha: C56_TREE,
@@ -575,7 +590,7 @@ function continuityApproval(value: ContinuityFixture): VerifiedB1StartApproval {
     controllerSourceHeadSha: CONTROLLER_HEAD,
     controllerSourceTreeSha: CONTROLLER_TREE,
     controllerRelevantFilesSha256: CONTROLLER_FILES,
-    actionExpiresAt: ACTION_EXPIRES,
+    actionExpiresAt: CONTINUITY_ACTION_EXPIRES,
     runHardStopAt: RUN_HARD_STOP,
   };
 }
@@ -600,9 +615,9 @@ class FakePort implements B1SchedulerStartPort {
   verifySignedApproval(): VerifiedB1StartApproval { return approval(); }
 
   async hasStartReceipt(uri: string): Promise<boolean> {
-    if (uri.includes('/scheduler-start-receipts/')) return this.receiptExists;
-    if (uri.includes('/scheduler-activation-intents/')) return this.activationExists;
-    return false;
+    if (uri.includes('/scheduler-start-receipts/') && this.receiptExists) return true;
+    if (uri.includes('/scheduler-activation-intents/') && this.activationExists) return true;
+    return this.persisted.has(uri);
   }
 
   async readLockedObject(uri: string): Promise<B1LockedObject> {
@@ -612,7 +627,12 @@ class FakePort implements B1SchedulerStartPort {
     if (uri.includes('/preparation-outcomes/')) return locked(uri, preparationOutcomeRaw(), '6');
     const persisted = this.persisted.get(uri);
     if (persisted !== undefined) {
-      return locked(uri, persisted.raw, uri.includes('/activation-intents/') ? '3' : '4');
+      return {
+        uri,
+        generation: uri.includes('/activation-intents/') ? '3' : '4',
+        retainUntilTime: persisted.retainUntilTime,
+        raw: persisted.raw,
+      };
     }
     throw new Error(`missing locked object ${uri}`);
   }
@@ -664,6 +684,7 @@ class FakePort implements B1SchedulerStartPort {
 
   async persistStartReceipt(uri: string, raw: string, retainUntilTime: string): Promise<void> {
     this.operations.push(`persist:${uri}`);
+    if (this.persisted.has(uri)) throw new Error('injected generation-zero write collision');
     if (this.receiptFailure && uri.includes('/scheduler-start-receipts/')) {
       throw new Error('injected receipt failure');
     }
@@ -678,6 +699,11 @@ class FakePort implements B1SchedulerStartPort {
 class ContinuityPort extends FakePort {
   readonly fixture = continuityFixture();
   controllerIdentityFailure = false;
+  startId = CONTINUITY_START_ID;
+
+  override now(): Date {
+    return new Date(this.nowSequence.shift() ?? CONTINUITY_NOW);
+  }
 
   override projectAdmission = (): B1SchedulerStartAdmission => {
     return continuityAdmission(this.fixture);
@@ -688,7 +714,7 @@ class ContinuityPort extends FakePort {
   };
 
   override verifySignedApproval = (): VerifiedB1StartApproval => {
-    return continuityApproval(this.fixture);
+    return continuityApproval(this.fixture, this.startId);
   };
 
   async verifyControllerIdentity(): Promise<void> {
@@ -706,6 +732,30 @@ class ContinuityPort extends FakePort {
     }
     if (uri === this.fixture.amendmentUri) {
       return { uri, generation: '1784255027455134', retainUntilTime, raw: this.fixture.amendmentRaw };
+    }
+    if (uri === B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentUri) {
+      return {
+        uri,
+        generation: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationIntentGeneration,
+        retainUntilTime,
+        raw: fixtureText('s33-b1-historical-preparation-intent.fixture.txt'),
+      };
+    }
+    if (uri === B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeUri) {
+      return {
+        uri,
+        generation: B1_TREASURY_CONTINUITY_CONTRACT.historicalPreparationOutcomeGeneration,
+        retainUntilTime,
+        raw: fixtureText('s33-b1-historical-preparation-outcome.fixture.txt'),
+      };
+    }
+    if (uri === B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentUri) {
+      return {
+        uri,
+        generation: B1_TREASURY_CONTINUITY_CONTRACT.failedStartContainmentGeneration,
+        retainUntilTime,
+        raw: fixtureText('s33-b1-failed-start-containment.fixture.txt'),
+      };
     }
     if (uri.includes(`/preparation-intents/${CONTINUITY_PREPARATION_ID}.json`)) {
       return locked(uri, continuityPreparationIntentRaw(this.fixture), '5');
@@ -765,7 +815,7 @@ async function start(port: FakePort, ctoConfirmation = confirmation()) {
 
 function continuityConfirmation(port: ContinuityPort): string {
   return expectedB1SchedulerStartConfirmation({
-    startId: CONTINUITY_START_ID,
+    startId: port.startId,
     soakId: C56_SOAK,
     leaseId: C56_LEASE,
     admissionSha256: digest(port.fixture.admissionRaw),
@@ -824,12 +874,45 @@ describe('S3.3 RIG-B1 fail-closed Scheduler start', () => {
             generation: '1784255027455134',
             sha256: digest(port.fixture.amendmentRaw),
           },
+          consumptionAttempt: {
+            objectUri: expect.stringContaining('/continuity-start-consumptions/'),
+            generation: '4',
+            sha256: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+          },
         },
       },
     });
     expect(port.operations.indexOf('verify-controller'))
       .toBeLessThan(port.operations.findIndex((operation) => operation.startsWith('resume:')));
     expect(port.operations.filter((operation) => operation.startsWith('resume:'))).toHaveLength(6);
+    const consumption = [...port.persisted.values()]
+      .find(({ uri }) => uri.includes('/continuity-start-consumptions/'));
+    expect(consumption?.retainUntilTime).toBe('2026-07-22T22:39:24Z');
+    expect(JSON.parse(consumption!.raw)).toMatchObject({
+      status: 'CONTINUITY_START_ATTEMPT_CLAIMED',
+      startId: CONTINUITY_START_ID,
+    });
+  });
+
+  it('preserves the continuity consumption claim and forbids cross-startId reuse after failure', async () => {
+    const port = new ContinuityPort();
+    port.resumeFailureAt = 1;
+    await expect(continuityStart(port)).rejects.toThrow(/resume failure/i);
+    const consumptionUris = [...port.persisted.keys()]
+      .filter((uri) => uri.includes('/continuity-start-consumptions/'));
+    expect(consumptionUris).toHaveLength(1);
+    expect([...port.states.values()].every((state) => state === 'PAUSED')).toBe(true);
+    const resumeCountAfterFirstAttempt = port.operations
+      .filter((operation) => operation.startsWith('resume:')).length;
+
+    port.startId = 'b1-start-c56-continuity-retry';
+    port.resumeFailureAt = 0;
+    await expect(continuityStart(port)).rejects.toThrow(/new amendment and PREPARE|required/i);
+    expect(port.operations.filter((operation) => operation.startsWith('resume:')))
+      .toHaveLength(resumeCountAfterFirstAttempt);
+    expect([...port.persisted.keys()]
+      .filter((uri) => uri.includes('/continuity-start-consumptions/'))).toEqual(consumptionUris);
+    expect([...port.states.values()].every((state) => state === 'PAUSED')).toBe(true);
   });
 
   it('fails a continuity controller mismatch before any Scheduler resume', async () => {
