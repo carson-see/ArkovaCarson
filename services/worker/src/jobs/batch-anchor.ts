@@ -1674,7 +1674,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   // Phase 1: Claim anchors in chunks (PostgREST caps RPC responses at 1000 rows)
   const allClaimed: ClaimedAnchor[] = [];
   let remaining = BATCH_SIZE;
-  const claimRpc = db.rpc as unknown as (
+  const claimRpc = db.rpc.bind(db) as unknown as (
     name: string,
     args: Record<string, unknown>,
   ) => Promise<{ data: unknown; error: unknown }>;

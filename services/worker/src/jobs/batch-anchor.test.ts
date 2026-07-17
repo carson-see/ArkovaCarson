@@ -139,19 +139,24 @@ vi.mock('../utils/db.js', () => {
     Promise.resolve(getSelectResult()).then(resolve, reject)
   );
 
-  return {
-    db: {
-      rpc: mockDbRpc,
-      from: vi.fn((table: string) => {
-        if (table === 'anchors') {
-          return {
-            select: vi.fn(() => selectChain),
-            update: mockAnchorsUpdate,
-          };
-        }
-        return {};
-      }),
+  const db = {
+    rpc(this: unknown, ...args: Parameters<typeof mockDbRpc>) {
+      if (this !== db) throw new Error('db.rpc receiver was not preserved');
+      return mockDbRpc(...args);
     },
+    from: vi.fn((table: string) => {
+      if (table === 'anchors') {
+        return {
+          select: vi.fn(() => selectChain),
+          update: mockAnchorsUpdate,
+        };
+      }
+      return {};
+    }),
+  };
+
+  return {
+    db,
     // Pass-through in tests — no actual timeout
     withDbTimeout: vi.fn((fn: () => Promise<unknown>) => fn()),
   };
@@ -542,6 +547,21 @@ describe('processBatchAnchors', () => {
         orgId: 'org-1',
       }),
       'Forced org batch flush',
+    );
+  });
+
+  it('preserves the Supabase client receiver for claim RPC calls', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc.mockResolvedValueOnce({ data: [], error: null });
+
+    await processBatchAnchors({ force: true, orgId: 'org-receiver-proof' });
+
+    expect(mockDbRpc).toHaveBeenCalledWith('claim_pending_anchors', expect.objectContaining({
+      p_org_id: 'org-receiver-proof',
+    }));
+    expect(mockLogger.error).not.toHaveBeenCalledWith(
+      expect.any(Object),
+      'Batch claim RPC timed out',
     );
   });
 
