@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-07-17 (CTO/DBA) — 255k drain LIVE (founder-approved BTC spend); scheduler "random pause" root-caused; early-start work order issued
+
+**Drain LIVE ~17:07Z:** feeder jobs `process-anchors` (*/30) + `anchor-public-records` (*/10) resumed with founder treasury approval; forced first run returned **HTTP 200** on /jobs/process-anchors (Cloud Run log 17:07:35Z). 255,491 unlinked public_records now flow into the batch pipeline (~26 Bitcoin txs at 10k/batch via Trigger A/B/3am flush). Kill-switch = re-pause. Watch: Pipeline Monitoring (refresh-stats live, 5-min cache). Note: Supabase MCP connector was unresponsive during the first burst (~17:10Z) while worker /health reported db=ok — re-verify counts when it settles.
+
+**Scheduler "random pause" ROOT-CAUSED (founder-flagged):** audit logs show every pause was internal + untracked, not Google: prod `process-anchors`/`anchor-public-records`/`anchor-attestations` paused **2026-05-03/05 under the carson@arkova.ai identity** (unrecorded agent session or sweep) — the origin of the 10-week public-records freeze; S3.3 rig jobs paused 2026-07-17 12:03Z by the default compute SA (rig automation; re-enabled, soak unaffected). Mitigation added to SCRUM-2900 AC: **scheduler-state dead-man** (alert on unexpected PAUSED with actor attribution) + mandatory HANDOFF logging of every pause/resume. Bug BUG-2026-07-17-005 on tracker 88768514.
+
+**ART early-start work order** (safe now, fresh branches, zero soak contact — [addendum doc](https://docs.google.com/document/d/1sfoK_uQHctrhWQkcqz6QMop6kv1iS9wCxe6Q9Yy1FT8/edit) updates Plan v2.1 §0): 2899 webhook-fix build (critical path — founder wants a webhook demo; realistic merged+flag-ON+demo-able ~Jul 19–21 if code starts now; T2 12h soak; drift-manifest pin rides the PR), 2900 codification+dead-man, 2911 format corpus+matrix, 2913 CTDL parse, 2910 relabel remainder, 2915/2914/2938 frontend T1 trio, 2901 monitor code, 2916 investigation, KPI-3 rehearsal script, CE application drafts. NOT safe: anything touching the S3.3 rig (matures ~Jul 19), prod migrations, connector flips, R1 standup.
+
 ### 2026-07-17 (CTO/DBA) — Prod switches executed: fraud scoring OFF, refresh-stats resumed; Plan of Record v2.1 canonical
 
 **Executed (founder-approved, DBA-led, CTO signoff; zero PRs, zero soak contact):** (1) prod `switchboard_flags.ENABLE_FRAUD_DETECTION` flipped **false** at 16:55:00Z (UPDATE ... RETURNING verified; frontend cache TTL 30s; flag is unpinned in the R-5 drift manifest so turning it OFF removes a latent unexpected-enablement finding). (2) Cloud Scheduler `refresh-stats` **resumed** ~16:56Z after pre-checks (route `/jobs/refresh-stats` verified mounted on main; RPCs `refresh_pipeline_dashboard_cache` + `refresh_stats_materialized_views` verified present in prod pg_proc); forced run returned **HTTP 200** (Cloud Run log 16:56:19Z) — dashboard/stats cache now refreshing every 5 min. Rollbacks: single-row UPDATE / re-pause. **NOT executed (sequenced):** feeder jobs `process-anchors` + `anchor-public-records` resume (the 255,491-record drain) awaits founder treasury nod + SCRUM-2901 remainder; `ENABLE_OUTBOUND_WEBHOOKS` flips post-SCRUM-2899 soak with a drift-manifest pin in that PR.
@@ -212,3 +220,5 @@ _Last refreshed: 2026-07-15 by Codex-Lane-3 — claims verified against gcloud/M
 _Last refreshed: 2026-07-17 by Claude (CTO/ART planning session) — claims verified against Supabase MCP prod queries, gcloud scheduler listing, gh release/pr output; artifacts cited in this commit body._
 
 _Last refreshed: 2026-07-17 by Claude (CTO/DBA switch-execution session) — claims verified against Supabase MCP UPDATE/SELECT output, gcloud scheduler describe/resume output, and Cloud Run request log 200 at 16:56:19Z; artifacts cited in this commit body._
+
+_Last refreshed: 2026-07-17 by Claude (CTO/DBA drain-execution session) — claims verified against gcloud scheduler resume output + Cloud Run request log 200 (17:07:35Z) + 90d Cloud Scheduler audit-log reads; artifacts cited in this commit body._
