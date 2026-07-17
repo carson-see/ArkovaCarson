@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AiSoakHarnessRunOptions } from './ai-soak-harness';
 import {
+  G1_LOAD_TARGET_PER_HOUR,
+  G1_MIN_ACHIEVED_REQUESTS_PER_HOUR,
   G1_WALL_MIN,
   G1_WORKER_UPTIME_MIN,
   G1_GCLOUD_PYTHON,
@@ -177,7 +179,11 @@ function dependencies(
   command: S33G1CommandRunner = new KeyCommandRunner(),
   runHarness: S33G1ProductionAdapterDependencies['runHarness'] = async (options) => {
     options.onReady?.();
-    return { durationSec: G1_WORKER_UPTIME_MIN * 60 };
+    return {
+      durationSec: G1_WORKER_UPTIME_MIN * 60,
+      totalRequests: Math.ceil(G1_WORKER_UPTIME_MIN * G1_MIN_ACHIEVED_REQUESTS_PER_HOUR / 60),
+      achievedRequestsPerHour: G1_MIN_ACHIEVED_REQUESTS_PER_HOUR,
+    };
   },
 ): { value: S33G1ProductionAdapterDependencies; sleeps: ControlledSleep[] } {
   const sleeps: ControlledSleep[] = [];
@@ -342,9 +348,14 @@ describe('S3.3 G1 production paired-start adapter', () => {
     const auth = new AuthFetchFixture();
     const runHarness = vi.fn(async (options: AiSoakHarnessRunOptions) => {
       expect(options.durationMin).toBe(G1_WORKER_UPTIME_MIN);
+      expect(options.ratePerHour).toBe(G1_LOAD_TARGET_PER_HOUR);
       expect(options.identities).toHaveLength(4);
       options.onReady?.();
-      return { durationSec: G1_WORKER_UPTIME_MIN * 60 };
+      return {
+        durationSec: G1_WORKER_UPTIME_MIN * 60,
+        totalRequests: Math.ceil(G1_WORKER_UPTIME_MIN * G1_MIN_ACHIEVED_REQUESTS_PER_HOUR / 60),
+        achievedRequestsPerHour: G1_MIN_ACHIEVED_REQUESTS_PER_HOUR,
+      };
     });
     const fixture = dependencies(auth, undefined, runHarness);
     const adapter = createS33G1ProductionPairedStartAdapterForTest(fixture.value);

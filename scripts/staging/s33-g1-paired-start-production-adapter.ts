@@ -47,6 +47,14 @@ const SESSION_REFRESH_INTERVAL_MS = 45 * 60_000;
 // minutes without resetting that original counted start.
 export const G1_WORKER_UPTIME_MIN = G1_PAIRED_START_CONTRACT.bindingContinuation.workerUptimeMin;
 export const G1_WALL_MIN = G1_PAIRED_START_CONTRACT.bindingContinuation.wallMin;
+// The original nominal 5,000/hr driver measures ~4,984/hr after timer overhead.
+// Continuation headroom makes the documented achieved >=5,000/hr evidence gate
+// explicit without changing or resetting the already-counted parent clock.
+export const G1_LOAD_TARGET_PER_HOUR = 5_100;
+export const G1_MIN_ACHIEVED_REQUESTS_PER_HOUR = 5_000;
+const G1_MIN_TOTAL_REQUESTS = Math.ceil(
+  G1_WORKER_UPTIME_MIN * G1_MIN_ACHIEVED_REQUESTS_PER_HOUR / 60,
+);
 const COMMAND_TIMEOUT_MS = 120_000;
 const COMMAND_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 const TEMPLATE_ROUTE = '/api/v1/ai/template';
@@ -122,6 +130,8 @@ const receiptMetadataSchema = z.object({
 
 const harnessSummarySchema = z.object({
   durationSec: z.number().finite().min(G1_WORKER_UPTIME_MIN * 60),
+  totalRequests: z.number().int().min(G1_MIN_TOTAL_REQUESTS),
+  achievedRequestsPerHour: z.number().finite().min(G1_MIN_ACHIEVED_REQUESTS_PER_HOUR),
 }).passthrough();
 
 export interface S33G1CommandResult {
@@ -599,7 +609,7 @@ class S33G1ProductionPairedStartAdapter implements S33G1PairedStartPort {
       apiBase: request.arm.url,
       identities: state.identities.map(({ workerIdentity }) => workerIdentity),
       durationMin: G1_WORKER_UPTIME_MIN,
-      ratePerHour: 5_000,
+      ratePerHour: G1_LOAD_TARGET_PER_HOUR,
       endpoints: ['extract', 'template', 'tags'],
       variants: parseDocVariants(undefined),
       timeoutMs: 10_000,
