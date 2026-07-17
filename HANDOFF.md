@@ -14,6 +14,12 @@
 
 ## Now
 
+### 2026-07-17 (CTO/DBA) — Prod switches executed: fraud scoring OFF, refresh-stats resumed; Plan of Record v2.1 canonical
+
+**Executed (founder-approved, DBA-led, CTO signoff; zero PRs, zero soak contact):** (1) prod `switchboard_flags.ENABLE_FRAUD_DETECTION` flipped **false** at 16:55:00Z (UPDATE ... RETURNING verified; frontend cache TTL 30s; flag is unpinned in the R-5 drift manifest so turning it OFF removes a latent unexpected-enablement finding). (2) Cloud Scheduler `refresh-stats` **resumed** ~16:56Z after pre-checks (route `/jobs/refresh-stats` verified mounted on main; RPCs `refresh_pipeline_dashboard_cache` + `refresh_stats_materialized_views` verified present in prod pg_proc); forced run returned **HTTP 200** (Cloud Run log 16:56:19Z) — dashboard/stats cache now refreshing every 5 min. Rollbacks: single-row UPDATE / re-pause. **NOT executed (sequenced):** feeder jobs `process-anchors` + `anchor-public-records` resume (the 255,491-record drain) awaits founder treasury nod + SCRUM-2901 remainder; `ENABLE_OUTBOUND_WEBHOOKS` flips post-SCRUM-2899 soak with a drift-manifest pin in that PR.
+
+**Plan of record is now v2.1:** [ARKOVA PI-0.5 — Plan of Record v2.1](https://docs.google.com/document/d/1_wn8EXiaNhGNssPxJpjcc1BToLRBXXzh1oIWOzwmvyo/edit) (full-ART: lane assignments, per-story AC/DoD/testing plans, §0 execution log, 72h E2E prod-test runbook Aug 5-8, KPI #3 = independent-Bitcoin-explorer verification, full LOI format list). v2.0 and earlier are in the Drive ARCHIVE subfolder. GitHub release re-cut as `pi-0.5-plan-v2.1`. Standing: **S3.3 B1 soak rig scheduler jobs (arkova-worker-s33-rig-b1-staging-*) remain DO-NOT-TOUCH until the soak closes (~Jul 19).**
+
 ### 2026-07-17 (CTO/ART) — PI-0.5 replanned session: Plan of Record v1.1, founder rulings, Jira 2910–2948, prod truths verified
 
 **Plan of record:** [ARKOVA PI-0.5 — Plan of Record v1.1 (2026-07-17)](https://docs.google.com/document/d/1xXNYN1cH279426wBOG44537iAwyBniwxxCAmUDWhgko/edit) in Drive `Sprints › ARKOVA PI-.5` is canonical; the six 07-13 drafts + v1.0 were moved to its `ARCHIVE` subfolder (Drive-API-verified). Pinned as GitHub release [`pi-0.5-plan-v1.1`](https://github.com/carson-see/ArkovaCarson/releases/tag/pi-0.5-plan-v1.1) at main `ec95ae6a` — tag matches no workflow trigger (only `sdk-v*`/`arkova-py-v*` fire on tags), so **zero CI/deploy runs fired**. Supermemory record `uvJKhe34jCbGKWJFRHAGCf`.
@@ -204,3 +210,5 @@ _Last refreshed: 2026-07-13 by Claude (partner-platform + trust hygiene session)
 _Last refreshed: 2026-07-15 by Codex-Lane-3 — claims verified against gcloud/MCP/CI output (GitHub `gh pr view 1554`; local root/worker typecheck, lint, Vitest, build, fixture eval, runtime-import classifier, diff-check, and staged-gitleaks outputs; no gcloud or MCP mutation performed)._
 
 _Last refreshed: 2026-07-17 by Claude (CTO/ART planning session) — claims verified against Supabase MCP prod queries, gcloud scheduler listing, gh release/pr output; artifacts cited in this commit body._
+
+_Last refreshed: 2026-07-17 by Claude (CTO/DBA switch-execution session) — claims verified against Supabase MCP UPDATE/SELECT output, gcloud scheduler describe/resume output, and Cloud Run request log 200 at 16:56:19Z; artifacts cited in this commit body._
