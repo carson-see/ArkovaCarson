@@ -6,6 +6,7 @@ import {
   validateS33G1PairedStartAdmission,
   type S33G1AdmissionArm,
   type S33G1ArmStartObservation,
+  type S33G1ContinuationScope,
   type S33G1ObservedArm,
   type S33G1PairedStartPort,
   type S33G1PairedStartReceipt,
@@ -24,6 +25,17 @@ const approvalDigest = `sha256:${'e'.repeat(64)}`;
 const controlRef = 'abcdefghijklmnopqrst';
 const tunedRef = 'bcdefghijklmnopqrstu';
 const authorizationTime = '2026-07-16T18:00:00.000Z';
+const continuationAuthorizationTime = '2026-07-17T13:44:30.000Z';
+const continuationApprovalExpiresAt = '2026-07-20T04:00:00.000Z';
+const controllerHeadSha = '4'.repeat(40);
+const controllerTreeSha = '5'.repeat(40);
+const parentReceiptId = 'g1-paired-start:parent-authority:parent-soak:parent-lease';
+const parentReceiptGeneration = '1784254529424380';
+const parentReceiptSha256 = `sha256:${'2'.repeat(64)}`;
+const parentReceiptUri =
+  `gs://arkova1-s33-immutable-authority-ledger/s33/g1/paired-start-receipts/${'1'.repeat(64)}.json`;
+const parentControlStartedAt = '2026-07-17T02:15:27.158Z';
+const parentTunedStartedAt = '2026-07-17T02:15:27.166Z';
 
 const scope = {
   rigClass: 'RIG-G1' as const,
@@ -73,6 +85,30 @@ const scope = {
   },
 } satisfies G1Scope;
 
+const continuationScope = {
+  schemaVersion: G1_PAIRED_START_CONTRACT.bindingContinuation.schemaVersion,
+  parentReceiptId,
+  parentReceiptUri,
+  parentReceiptGeneration,
+  parentReceiptSha256,
+  parentControlStartedAt,
+  parentTunedStartedAt,
+  parentEarliestStartedAt: parentControlStartedAt,
+  parentLatestStartedAt: parentTunedStartedAt,
+  candidateTreeSha: treeSha,
+  controllerHeadSha,
+  controllerTreeSha,
+  launchNotBefore: '2026-07-17T13:44:00.000Z',
+  launchNotAfter: '2026-07-17T14:00:00.000Z',
+  parentWorkerUptimeMin: G1_PAIRED_START_CONTRACT.bindingContinuation.parentWorkerUptimeMin,
+  continuationWorkerUptimeMin: G1_PAIRED_START_CONTRACT.bindingContinuation.workerUptimeMin,
+  continuationWallMin: G1_PAIRED_START_CONTRACT.bindingContinuation.wallMin,
+  combinedRequiredWorkerUptimeMin:
+    G1_PAIRED_START_CONTRACT.bindingContinuation.combinedRequiredWorkerUptimeMin,
+  combinedRequiredWallMin:
+    G1_PAIRED_START_CONTRACT.bindingContinuation.combinedRequiredWallMin,
+} satisfies S33G1ContinuationScope;
+
 function arm(rigId: 'RIG-G1-A' | 'RIG-G1-B') {
   const control = rigId === 'RIG-G1-A';
   return {
@@ -121,6 +157,15 @@ function embeddedApproval(role: 'founder' | 'cto' = 'cto') {
   };
 }
 
+function embeddedContinuationApproval(expiresAt = continuationApprovalExpiresAt) {
+  return {
+    ...embeddedApproval(),
+    approvalId: 'approval-s33-g1-cont-001',
+    expiresAt,
+    scope: { ...scope, continuation: continuationScope },
+  };
+}
+
 function admission() {
   return {
     schema_version: 2 as const,
@@ -159,6 +204,18 @@ function admission() {
   };
 }
 
+function continuationAdmission(expiresAt = continuationApprovalExpiresAt) {
+  const value = admission();
+  return {
+    ...value,
+    generated_at: continuationAuthorizationTime,
+    g1: {
+      ...value.g1,
+      spend_approval: embeddedContinuationApproval(expiresAt),
+    },
+  };
+}
+
 function verifiedApproval(role: 'founder' | 'cto' = 'cto'): VerifiedG1SpendApproval {
   return {
     ...embeddedApproval(role),
@@ -184,6 +241,34 @@ function verifiedApproval(role: 'founder' | 'cto' = 'cto'): VerifiedG1SpendAppro
     trustRootKeyId: 'arkova.s33.g1-spend.ed25519.v1',
     trustRootKeyFingerprint: 'f'.repeat(64),
     authorityActivatedAtUtc: '2026-07-16T13:52:06Z',
+  };
+}
+
+function continuationVerifiedApproval(
+  expiresAt = continuationApprovalExpiresAt,
+): VerifiedG1SpendApproval {
+  return {
+    ...verifiedApproval(),
+    ...embeddedContinuationApproval(expiresAt),
+    approvalVerifiedAt: continuationAuthorizationTime,
+    runtimeVerifiedAt: continuationAuthorizationTime,
+  };
+}
+
+function parentReceipt() {
+  return {
+    schemaVersion: G1_PAIRED_START_CONTRACT.schemaVersion,
+    receiptId: parentReceiptId,
+    candidateHeadSha: headSha,
+    candidateTreeSha: treeSha,
+    imageDigest,
+    corpusDigest,
+    earliestStartedAt: parentControlStartedAt,
+    latestStartedAt: parentTunedStartedAt,
+    arms: [
+      { rigId: 'RIG-G1-A' as const, startedAt: parentControlStartedAt },
+      { rigId: 'RIG-G1-B' as const, startedAt: parentTunedStartedAt },
+    ],
   };
 }
 
@@ -217,13 +302,16 @@ function started(input: S33G1AdmissionArm, at: string): S33G1ArmStartObservation
   };
 }
 
-function preclockReady(input: S33G1AdmissionArm): S33G1PreclockReadiness {
+function preclockReady(
+  input: S33G1AdmissionArm,
+  at: string = authorizationTime,
+): S33G1PreclockReadiness {
   const control = input.rig_id === 'RIG-G1-A';
   const identities = Array.from({ length: 4 }, (_, index) => ({
     userId: `${control ? '11111111-1111-4111-8111-11111111111' : '22222222-2222-4222-8222-22222222222'}${index + 1}`,
     label: `${control ? 'g1-a' : 'g1-b'}-user-${index + 1}`,
-    initialSessionEstablishedAt: authorizationTime,
-    refreshRotationVerifiedAt: authorizationTime,
+    initialSessionEstablishedAt: at,
+    refreshRotationVerifiedAt: at,
   }));
   return {
     status: 'PRECLOCK_AUTH_READY',
@@ -249,7 +337,7 @@ function preclockReady(input: S33G1AdmissionArm): S33G1PreclockReadiness {
       refreshRotationCount: identities.length,
       identities,
     },
-    verifiedAt: authorizationTime,
+    verifiedAt: at,
   };
 }
 
@@ -276,7 +364,31 @@ function port(overrides: Partial<S33G1PairedStartPort> = {}) {
   return base;
 }
 
+function continuationPort(overrides: Partial<S33G1PairedStartPort> = {}) {
+  return port({
+    now: () => new Date(continuationAuthorizationTime),
+    verifySignedApproval: () => continuationVerifiedApproval(),
+    prepareArm: async ({ arm: input }) => preclockReady(input, continuationAuthorizationTime),
+    startArm: async ({ arm: input }) => started(
+      input,
+      input.rig_id === 'RIG-G1-A'
+        ? '2026-07-17T13:45:00.000Z'
+        : '2026-07-17T13:45:00.008Z',
+    ),
+    observeControllerProvenance: async () => ({ headSha: controllerHeadSha, treeSha: controllerTreeSha }),
+    loadStartReceiptArtifact: async () => ({
+      uri: parentReceiptUri,
+      generation: parentReceiptGeneration,
+      sha256: parentReceiptSha256,
+      receipt: parentReceipt(),
+    }),
+    ...overrides,
+  });
+}
+
 const confirmation = 'START_G1:approval-s33-g1-001:soak-s33-g1:lease-s33-g1';
+const continuationConfirmation =
+  'START_G1:approval-s33-g1-cont-001:soak-s33-g1:lease-s33-g1';
 
 describe('RIG-G1 paired-start admission', () => {
   it('binds the exact SHA/image/corpus and two distinct physical/run identities', () => {
@@ -325,6 +437,129 @@ describe('RIG-G1 paired-start driver', () => {
     ]);
     expect(JSON.stringify(result.receipt)).not.toMatch(/"(?:accessToken|refreshToken|password|serviceRoleKey)"/u);
     expect(Object.isFrozen(result.receipt)).toBe(true);
+  });
+
+  it('reloads the exact immutable parent and persists a gap-free continuation receipt', async () => {
+    const loadStartReceiptArtifact = vi.fn(async () => ({
+      uri: parentReceiptUri,
+      generation: parentReceiptGeneration,
+      sha256: parentReceiptSha256,
+      receipt: parentReceipt(),
+    }));
+    const result = await runS33G1PairedStartDriver(
+      continuationAdmission(),
+      '<signed-continuation-envelope>',
+      continuationConfirmation,
+      continuationPort({ loadStartReceiptArtifact }),
+    );
+    expect(loadStartReceiptArtifact).toHaveBeenCalledWith(parentReceiptId, parentReceiptGeneration);
+    expect(result.receipt.continuation).toMatchObject({
+      schemaVersion: G1_PAIRED_START_CONTRACT.bindingContinuation.schemaVersion,
+      parentReceiptId,
+      parentReceiptUri,
+      parentReceiptGeneration,
+      parentReceiptSha256,
+      controllerHeadSha,
+      controllerTreeSha,
+      continuationWorkerUptimeMin: 2_195,
+      continuationWallMin: 2_225,
+    });
+    for (const evidence of result.receipt.continuation!.arms) {
+      expect(evidence.overlapMs).toBeGreaterThan(0);
+      expect(evidence.combinedWorkerUptimeMin).toBeGreaterThanOrEqual(2_880);
+      expect(evidence.combinedWallMin).toBeGreaterThanOrEqual(2_910);
+    }
+    expect(Object.isFrozen(result.receipt.continuation)).toBe(true);
+  });
+
+  it('rejects immutable-parent or controller substitution before either arm starts', async () => {
+    const parentStart = vi.fn();
+    await expect(runS33G1PairedStartDriver(
+      continuationAdmission(),
+      'signed',
+      continuationConfirmation,
+      continuationPort({
+        loadStartReceiptArtifact: async () => ({
+          uri: parentReceiptUri,
+          generation: parentReceiptGeneration,
+          sha256: `sha256:${'9'.repeat(64)}`,
+          receipt: parentReceipt(),
+        }),
+        startArm: parentStart,
+      }),
+    )).rejects.toThrow(/immutable parent artifact/i);
+    expect(parentStart).not.toHaveBeenCalled();
+
+    const controllerStart = vi.fn();
+    await expect(runS33G1PairedStartDriver(
+      continuationAdmission(),
+      'signed',
+      continuationConfirmation,
+      continuationPort({
+        observeControllerProvenance: async () => ({
+          headSha: '9'.repeat(40),
+          treeSha: controllerTreeSha,
+        }),
+        startArm: controllerStart,
+      }),
+    )).rejects.toThrow(/controller provenance/i);
+    expect(controllerStart).not.toHaveBeenCalled();
+  });
+
+  it('rejects parent receipt content substitution before either arm starts', async () => {
+    const startArm = vi.fn();
+    await expect(runS33G1PairedStartDriver(
+      continuationAdmission(),
+      'signed',
+      continuationConfirmation,
+      continuationPort({
+        loadStartReceiptArtifact: async () => ({
+          uri: parentReceiptUri,
+          generation: parentReceiptGeneration,
+          sha256: parentReceiptSha256,
+          receipt: { ...parentReceipt(), candidateTreeSha: '9'.repeat(40) },
+        }),
+        startArm,
+      }),
+    )).rejects.toThrow(/parent receipt content/i);
+    expect(startArm).not.toHaveBeenCalled();
+  });
+
+  it('contains both arms if actual continuation starts miss the signed overlap window', async () => {
+    const stopArm = vi.fn(async () => undefined);
+    const cleanupArmPreparation = vi.fn(async () => undefined);
+    await expect(runS33G1PairedStartDriver(
+      continuationAdmission(),
+      'signed',
+      continuationConfirmation,
+      continuationPort({
+        startArm: async ({ arm: input }) => started(
+          input,
+          input.rig_id === 'RIG-G1-A'
+            ? '2026-07-17T14:00:00.001Z'
+            : '2026-07-17T14:00:00.009Z',
+        ),
+        stopArm,
+        cleanupArmPreparation,
+      }),
+    )).rejects.toThrow(/gap-free overlap window/i);
+    expect(stopArm).toHaveBeenCalledTimes(2);
+    expect(cleanupArmPreparation).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects insufficient continuation authority TTL before either arm starts', async () => {
+    const expiresAt = '2026-07-19T03:00:00.000Z';
+    const startArm = vi.fn();
+    await expect(runS33G1PairedStartDriver(
+      continuationAdmission(expiresAt),
+      'signed',
+      continuationConfirmation,
+      continuationPort({
+        verifySignedApproval: () => continuationVerifiedApproval(expiresAt),
+        startArm,
+      }),
+    )).rejects.toThrow(/expires.*wall time/i);
+    expect(startArm).not.toHaveBeenCalled();
   });
 
   it('cleans both arm preparations and starts neither arm when one preparation fails', async () => {

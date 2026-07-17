@@ -31,6 +31,28 @@ const immutableLedger = {
   projectId: 'arkova1',
   requiresPerObjectRetention: true,
 };
+const continuationScope = {
+  schemaVersion: 'arkova.s33.g1.binding-continuation/v1' as const,
+  parentReceiptId: 'g1-paired-start:parent-authority:parent-soak:parent-lease',
+  parentReceiptUri:
+    `gs://arkova1-s33-immutable-authority-ledger/s33/g1/paired-start-receipts/${'1'.repeat(64)}.json`,
+  parentReceiptGeneration: '1784254529424380',
+  parentReceiptSha256: `sha256:${'2'.repeat(64)}`,
+  parentControlStartedAt: '2026-07-17T02:15:27.158Z',
+  parentTunedStartedAt: '2026-07-17T02:15:27.166Z',
+  parentEarliestStartedAt: '2026-07-17T02:15:27.158Z',
+  parentLatestStartedAt: '2026-07-17T02:15:27.166Z',
+  candidateTreeSha: '3'.repeat(40),
+  controllerHeadSha: '4'.repeat(40),
+  controllerTreeSha: '5'.repeat(40),
+  launchNotBefore: '2026-07-17T13:44:00.000Z',
+  launchNotAfter: '2026-07-17T14:00:00.000Z',
+  parentWorkerUptimeMin: 720 as const,
+  continuationWorkerUptimeMin: 2_195 as const,
+  continuationWallMin: 2_225 as const,
+  combinedRequiredWorkerUptimeMin: 2_880 as const,
+  combinedRequiredWallMin: 2_910 as const,
+};
 const expectedScope = {
   rigClass: 'RIG-G1' as const,
   rigName: 's33-g1',
@@ -183,6 +205,64 @@ describe('RIG-G1 immutable spend approval', () => {
       trustRootKeyId: 'arkova.s33.g1-spend.ed25519.v1',
       authorityActivatedAtUtc: '2026-07-15T19:00:00Z',
     });
+  });
+
+  it('cryptographically binds and round-trips the strict gap-free continuation contract', () => {
+    const scope = { ...expectedScope, continuation: continuationScope };
+    const continuationRecord = record({ scope });
+    const result = verifier.verify(
+      envelope(continuationRecord),
+      { sourceHeadSha, imageDigest, ...scope },
+      new Date('2026-07-15T21:00:00Z'),
+    );
+    expect(result.scope.continuation).toEqual(continuationScope);
+    expect(() => verifier.verify(
+      envelope(continuationRecord),
+      {
+        sourceHeadSha,
+        imageDigest,
+        ...scope,
+        continuation: { ...continuationScope, parentReceiptGeneration: '1784254529424381' },
+      },
+      new Date('2026-07-15T21:00:00Z'),
+    )).toThrow(/scope does not match/i);
+  });
+
+  it('rejects continuation authority that cannot preserve overlap and combined floors', () => {
+    expect(() => record({
+      scope: {
+        ...expectedScope,
+        continuation: { ...continuationScope, launchNotBefore: '2026-07-17T14:16:00.000Z' },
+      },
+    })).toThrow(/overlap/i);
+    expect(() => record({
+      scope: {
+        ...expectedScope,
+        continuation: { ...continuationScope, unexpected: true },
+      },
+    })).toThrow(/strict schema/i);
+    expect(() => record({
+      scope: {
+        ...expectedScope,
+        continuation: { ...continuationScope, launchNotAfter: '2026-07-17T14:15:27.158Z' },
+      },
+    })).toThrow(/overlap/i);
+  });
+
+  it('rejects a signed continuation whose approval expires before the full launch window', () => {
+    const scope = { ...expectedScope, continuation: continuationScope };
+    const expiringRecord = record({
+      scope,
+      execution: {
+        ownerIdentity: 'lane-4-sm',
+        expiresAt: '2026-07-19T03:04:59.999Z',
+      },
+    });
+    expect(() => verifier.verify(
+      envelope(expiringRecord),
+      { sourceHeadSha, imageDigest, ...scope },
+      new Date('2026-07-15T21:00:00Z'),
+    )).toThrow(/expires.*wall time/i);
   });
 
   it('rejects forged signatures and candidate substitution', () => {

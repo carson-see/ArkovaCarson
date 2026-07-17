@@ -46,6 +46,8 @@ const ENDPOINT_RESOURCE = /^projects\/[a-z][a-z0-9-]{4,28}[a-z0-9]\/locations\/u
 const CLOUD_RUN_SERVICE = /^[a-z][a-z0-9-]{1,61}[a-z0-9]$/;
 const SERVICE_ACCOUNT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$/;
 const SECRET_REFERENCE = /^[A-Za-z][A-Za-z0-9_-]{0,254}@[1-9][0-9]*$/;
+const G1_RECEIPT_URI = /^gs:\/\/arkova1-s33-immutable-authority-ledger\/s33\/g1\/paired-start-receipts\/[0-9a-f]{64}\.json$/;
+const GENERATION = /^[1-9][0-9]*$/;
 const EXACT_G1_RESOURCES = Object.freeze({
   endpointId: '733001',
   endpointResource: 'projects/arkova1/locations/us-central1/endpoints/733001',
@@ -248,9 +250,120 @@ function parseImmutableLedger(value, label) {
   };
 }
 
+function parseContinuation(value, label) {
+  const continuation = object(value, label);
+  exactKeys(continuation, [
+    'schemaVersion', 'parentReceiptId', 'parentReceiptUri', 'parentReceiptGeneration',
+    'parentReceiptSha256', 'parentControlStartedAt', 'parentTunedStartedAt',
+    'parentEarliestStartedAt', 'parentLatestStartedAt', 'candidateTreeSha',
+    'controllerHeadSha', 'controllerTreeSha', 'launchNotBefore', 'launchNotAfter',
+    'parentWorkerUptimeMin', 'continuationWorkerUptimeMin', 'continuationWallMin',
+    'combinedRequiredWorkerUptimeMin', 'combinedRequiredWallMin',
+  ], label);
+  const parsed = {
+    schemaVersion: literal(
+      continuation.schemaVersion,
+      'arkova.s33.g1.binding-continuation/v1',
+      `${label}.schemaVersion`,
+    ),
+    parentReceiptId: string(continuation.parentReceiptId, SAFE_IDENTITY, `${label}.parentReceiptId`, 256),
+    parentReceiptUri: string(continuation.parentReceiptUri, G1_RECEIPT_URI, `${label}.parentReceiptUri`, 256),
+    parentReceiptGeneration: string(
+      continuation.parentReceiptGeneration,
+      GENERATION,
+      `${label}.parentReceiptGeneration`,
+      32,
+    ),
+    parentReceiptSha256: string(
+      continuation.parentReceiptSha256,
+      SHA256_DIGEST,
+      `${label}.parentReceiptSha256`,
+      71,
+    ),
+    parentControlStartedAt: string(
+      continuation.parentControlStartedAt,
+      UTC_TIMESTAMP,
+      `${label}.parentControlStartedAt`,
+      40,
+    ),
+    parentTunedStartedAt: string(
+      continuation.parentTunedStartedAt,
+      UTC_TIMESTAMP,
+      `${label}.parentTunedStartedAt`,
+      40,
+    ),
+    parentEarliestStartedAt: string(
+      continuation.parentEarliestStartedAt,
+      UTC_TIMESTAMP,
+      `${label}.parentEarliestStartedAt`,
+      40,
+    ),
+    parentLatestStartedAt: string(
+      continuation.parentLatestStartedAt,
+      UTC_TIMESTAMP,
+      `${label}.parentLatestStartedAt`,
+      40,
+    ),
+    candidateTreeSha: string(continuation.candidateTreeSha, GIT_SHA, `${label}.candidateTreeSha`, 40),
+    controllerHeadSha: string(continuation.controllerHeadSha, GIT_SHA, `${label}.controllerHeadSha`, 40),
+    controllerTreeSha: string(continuation.controllerTreeSha, GIT_SHA, `${label}.controllerTreeSha`, 40),
+    launchNotBefore: string(continuation.launchNotBefore, UTC_TIMESTAMP, `${label}.launchNotBefore`, 40),
+    launchNotAfter: string(continuation.launchNotAfter, UTC_TIMESTAMP, `${label}.launchNotAfter`, 40),
+    parentWorkerUptimeMin: literal(
+      continuation.parentWorkerUptimeMin,
+      720,
+      `${label}.parentWorkerUptimeMin`,
+    ),
+    continuationWorkerUptimeMin: literal(
+      continuation.continuationWorkerUptimeMin,
+      2_195,
+      `${label}.continuationWorkerUptimeMin`,
+    ),
+    continuationWallMin: literal(
+      continuation.continuationWallMin,
+      2_225,
+      `${label}.continuationWallMin`,
+    ),
+    combinedRequiredWorkerUptimeMin: literal(
+      continuation.combinedRequiredWorkerUptimeMin,
+      2_880,
+      `${label}.combinedRequiredWorkerUptimeMin`,
+    ),
+    combinedRequiredWallMin: literal(
+      continuation.combinedRequiredWallMin,
+      2_910,
+      `${label}.combinedRequiredWallMin`,
+    ),
+  };
+  const controlStart = parseTimestamp(parsed.parentControlStartedAt, `${label}.parentControlStartedAt`);
+  const tunedStart = parseTimestamp(parsed.parentTunedStartedAt, `${label}.parentTunedStartedAt`);
+  const earliest = Math.min(controlStart, tunedStart);
+  const latest = Math.max(controlStart, tunedStart);
+  const notBefore = parseTimestamp(parsed.launchNotBefore, `${label}.launchNotBefore`);
+  const notAfter = parseTimestamp(parsed.launchNotAfter, `${label}.launchNotAfter`);
+  if (parseTimestamp(parsed.parentEarliestStartedAt, `${label}.parentEarliestStartedAt`) !== earliest
+    || parseTimestamp(parsed.parentLatestStartedAt, `${label}.parentLatestStartedAt`) !== latest) {
+    throw new Error(`${label} parent earliest/latest timestamps do not match its exact arm starts.`);
+  }
+  if (notBefore <= latest || notAfter <= notBefore
+    || notAfter >= earliest + parsed.parentWorkerUptimeMin * 60_000) {
+    throw new Error(`${label} launch window does not preserve a positive parent overlap.`);
+  }
+  for (const parentStart of [controlStart, tunedStart]) {
+    const elapsedAtEarliestLaunchMin = (notBefore - parentStart) / 60_000;
+    if (elapsedAtEarliestLaunchMin + parsed.continuationWorkerUptimeMin
+        < parsed.combinedRequiredWorkerUptimeMin
+      || elapsedAtEarliestLaunchMin + parsed.continuationWallMin
+        < parsed.combinedRequiredWallMin) {
+      throw new Error(`${label} earliest permitted launch cannot satisfy the combined binding floors.`);
+    }
+  }
+  return parsed;
+}
+
 function parseScope(value, label = 'G1 approval scope') {
   const scope = object(value, label);
-  exactKeys(scope, [
+  const expectedKeys = [
     'rigClass', 'rigName', 'rigProfile', 'soakId', 'rigId', 'leaseId',
     'corpusDigest', 'endpointId', 'endpointResource', 'endpointDisplayName',
     'vertexModelResource', 'deployedModelId', 'deployedModelDisplayName',
@@ -262,7 +375,9 @@ function parseScope(value, label = 'G1 approval scope') {
     'controlSupabaseUrlSecret', 'controlSupabaseServiceRoleSecret',
     'tunedSupabaseUrlSecret', 'tunedSupabaseServiceRoleSecret',
     'immutableLedger',
-  ], label);
+  ];
+  if (scope.continuation !== undefined) expectedKeys.push('continuation');
+  exactKeys(scope, expectedKeys, label);
   const pairedCadenceMaxMin = positiveInteger(
     scope.pairedCadenceMaxMin,
     `${label}.pairedCadenceMaxMin`,
@@ -375,6 +490,9 @@ function parseScope(value, label = 'G1 approval scope') {
     pairedCadenceMaxMin,
     secretReferences: parseSecretReferences(scope.secretReferences, `${label}.secretReferences`),
     immutableLedger: parseImmutableLedger(scope.immutableLedger, `${label}.immutableLedger`),
+    ...(scope.continuation === undefined
+      ? {}
+      : { continuation: parseContinuation(scope.continuation, `${label}.continuation`) }),
   };
   if (parsed.controlService === parsed.tunedService
     || parsed.controlRuntimeServiceAccount === parsed.tunedRuntimeServiceAccount
@@ -501,7 +619,7 @@ function parseEnvelope(raw) {
 
 function parseExpectedCandidate(value) {
   const candidate = object(value, 'Expected G1 candidate and scope');
-  exactKeys(candidate, [
+  const expectedKeys = [
     'sourceHeadSha', 'imageDigest', 'rigClass', 'rigName', 'rigProfile', 'soakId',
     'rigId', 'leaseId', 'corpusDigest', 'endpointId', 'endpointResource',
     'endpointDisplayName', 'vertexModelResource', 'deployedModelId',
@@ -514,7 +632,9 @@ function parseExpectedCandidate(value) {
     'controlSupabaseUrlSecret', 'controlSupabaseServiceRoleSecret',
     'tunedSupabaseUrlSecret', 'tunedSupabaseServiceRoleSecret',
     'immutableLedger',
-  ], 'Expected G1 candidate and scope');
+  ];
+  if (candidate.continuation !== undefined) expectedKeys.push('continuation');
+  exactKeys(candidate, expectedKeys, 'Expected G1 candidate and scope');
   return {
     sourceHeadSha: string(candidate.sourceHeadSha, GIT_SHA, 'Expected source HEAD', 40),
     imageDigest: string(candidate.imageDigest, SHA256_DIGEST, 'Expected image digest', 71),
@@ -553,6 +673,7 @@ function parseExpectedCandidate(value) {
       pairedCadenceMaxMin: candidate.pairedCadenceMaxMin,
       secretReferences: candidate.secretReferences,
       immutableLedger: candidate.immutableLedger,
+      ...(candidate.continuation === undefined ? {} : { continuation: candidate.continuation }),
     }, 'Expected G1 scope'),
   };
 }
@@ -665,6 +786,12 @@ class Ed25519G1SpendApprovalVerifier {
     const nowMs = now.getTime();
     const approvalVerifiedAtMs = parseTimestamp(record.verification.verifiedAt, 'approval verifiedAt');
     const expiresAtMs = parseTimestamp(record.execution.expiresAt, 'approval expiresAt');
+    const continuation = record.scope.continuation;
+    if (continuation !== undefined
+      && parseTimestamp(continuation.launchNotAfter, 'continuation launchNotAfter')
+        + continuation.continuationWallMin * 60_000 > expiresAtMs) {
+      throw new Error('G1 continuation approval expires before its full signed launch window can satisfy wall time.');
+    }
     if (approvalVerifiedAtMs < this.activatedAtMs) {
       throw new Error('G1 approval predates the code-bound authority activation.');
     }

@@ -212,6 +212,46 @@ describe('S3.3 G1 production paired-start adapter', () => {
     expect(g1CommandEnvironment('/usr/bin/git', ambient)).toBe(ambient);
   });
 
+  it('re-observes the exact controller HEAD/tree and immutable parent receipt generation', async () => {
+    const receiptId = 'g1-paired-start:parent-authority:parent-soak:parent-lease';
+    const generation = '1784254529424380';
+    const parent = { receiptId, exact: true };
+    const rawParent = `${JSON.stringify(parent)}\n`;
+    const receiptDigest = createHash('sha256').update(receiptId, 'utf8').digest('hex');
+    const uri =
+      `gs://arkova1-s33-immutable-authority-ledger/s33/g1/paired-start-receipts/${receiptDigest}.json`;
+    const calls: Array<{ binary: string; args: readonly string[] }> = [];
+    const command: S33G1CommandRunner = {
+      async run(binary, args) {
+        calls.push({ binary, args });
+        if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
+          return { status: 'ok', stdout: `${headSha}\n` };
+        }
+        if (args[0] === 'rev-parse' && args[1] === 'HEAD^{tree}') {
+          return { status: 'ok', stdout: `${treeSha}\n` };
+        }
+        if (args[0] === 'storage' && args[1] === 'cat') {
+          return { status: 'ok', stdout: rawParent };
+        }
+        return { status: 'error', stdout: '' };
+      },
+    };
+    const adapter = createS33G1ProductionPairedStartAdapterForTest(
+      dependencies(new AuthFetchFixture(), command).value,
+    );
+    await expect(adapter.observeControllerProvenance!()).resolves.toEqual({ headSha, treeSha });
+    await expect(adapter.loadStartReceiptArtifact!(receiptId, generation)).resolves.toEqual({
+      uri,
+      generation,
+      sha256: `sha256:${createHash('sha256').update(rawParent, 'utf8').digest('hex')}`,
+      receipt: parent,
+    });
+    expect(calls.find(({ args }) => args[0] === 'storage')!.args).toEqual([
+      'storage', 'cat', `${uri}#${generation}`, '--project', 'arkova1',
+    ]);
+    await expect(adapter.loadStartReceiptArtifact!(receiptId, '0')).rejects.toThrow(/generation/i);
+  });
+
   it('re-observes the exact Supabase project, Cloud Run revision provenance, runtime unique ID, and clean-mirror bytes', async () => {
     const input = arm();
     const cleanMirror = Buffer.from('fixture-clean-mirror');

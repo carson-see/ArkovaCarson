@@ -21,6 +21,8 @@ import {
   type S33G1ArmPreparationRequest,
   type S33G1ArmStartObservation,
   type S33G1ArmStartRequest,
+  type S33G1ControllerProvenance,
+  type S33G1ImmutableReceiptArtifact,
   type S33G1ObservedArm,
   type S33G1PairedStartPort,
   type S33G1PairedStartReceipt,
@@ -43,8 +45,8 @@ const SESSION_REFRESH_INTERVAL_MS = 45 * 60_000;
 // the counted window; this segment deliberately overlaps it and runs long
 // enough for the combined window to exceed 2,880 worker-up and 2,910 wall
 // minutes without resetting that original counted start.
-export const G1_WORKER_UPTIME_MIN = 2_195;
-export const G1_WALL_MIN = 2_225;
+export const G1_WORKER_UPTIME_MIN = G1_PAIRED_START_CONTRACT.bindingContinuation.workerUptimeMin;
+export const G1_WALL_MIN = G1_PAIRED_START_CONTRACT.bindingContinuation.wallMin;
 const COMMAND_TIMEOUT_MS = 120_000;
 const COMMAND_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 const TEMPLATE_ROUTE = '/api/v1/ai/template';
@@ -281,6 +283,19 @@ class S33G1ProductionPairedStartAdapter implements S33G1PairedStartPort {
     ), 'Exact candidate tree resolution').trim();
     if (!gitSha.safeParse(raw).success) throw new Error('Exact candidate tree resolution returned no tree SHA.');
     return raw;
+  }
+
+  async observeControllerProvenance(): Promise<S33G1ControllerProvenance> {
+    const [head, tree] = await Promise.all([
+      this.dependencies.command.run(GIT_BINARY, ['rev-parse', 'HEAD']),
+      this.dependencies.command.run(GIT_BINARY, ['rev-parse', 'HEAD^{tree}']),
+    ]);
+    const headSha = requireOk(head, 'Continuation controller HEAD observation').trim();
+    const treeSha = requireOk(tree, 'Continuation controller tree observation').trim();
+    if (!gitSha.safeParse(headSha).success || !gitSha.safeParse(treeSha).success) {
+      throw new Error('Continuation controller provenance did not resolve to exact Git SHAs.');
+    }
+    return { headSha, treeSha };
   }
 
   async observeArm(arm: S33G1AdmissionArm): Promise<S33G1ObservedArm> {
@@ -664,6 +679,26 @@ class S33G1ProductionPairedStartAdapter implements S33G1PairedStartPort {
     );
     if (result.status === 'not-found') return null;
     return parseJsonRejectingDuplicateKeys(requireOk(result, 'Immutable paired-start receipt load'), 'Immutable paired-start receipt');
+  }
+
+  async loadStartReceiptArtifact(
+    receiptId: string,
+    generation: string,
+  ): Promise<S33G1ImmutableReceiptArtifact> {
+    if (!/^[1-9][0-9]*$/u.test(generation)) {
+      throw new Error('Immutable parent receipt generation is invalid.');
+    }
+    const { uri } = receiptObject(receiptId);
+    const raw = requireOk(await this.dependencies.command.run(
+      GCLOUD_BINARY,
+      ['storage', 'cat', `${uri}#${generation}`, '--project', PROJECT_ID],
+    ), 'Immutable parent receipt exact-generation load');
+    return {
+      uri,
+      generation,
+      sha256: `sha256:${createHash('sha256').update(raw, 'utf8').digest('hex')}`,
+      receipt: parseJsonRejectingDuplicateKeys(raw, 'Immutable parent receipt'),
+    };
   }
 
   async persistStartReceipt(receipt: S33G1PairedStartReceipt): Promise<void> {

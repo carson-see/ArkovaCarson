@@ -24,6 +24,14 @@ export const G1_PAIRED_START_CONTRACT = Object.freeze({
   rigName: 's33-g1',
   soakTier: 'T2',
   maxStartSkewMin: 30,
+  bindingContinuation: Object.freeze({
+    schemaVersion: 'arkova.s33.g1.binding-continuation/v1',
+    parentWorkerUptimeMin: 720,
+    workerUptimeMin: 2_195,
+    wallMin: 2_225,
+    combinedRequiredWorkerUptimeMin: 2_880,
+    combinedRequiredWallMin: 2_910,
+  }),
   ctoIdentity: 'arkova.s33.approver.founder-cto.v1',
   gcpProjectId: 'arkova1',
   control: Object.freeze({
@@ -53,6 +61,36 @@ const httpsUrl = z.string().url().refine((value) => value.startsWith('https://')
   message: 'G1 arm URL must use HTTPS.',
 });
 const timestamp = z.string().datetime({ offset: true });
+const generation = z.string().regex(/^[1-9][0-9]*$/u);
+const receiptUri = z.string().regex(
+  /^gs:\/\/arkova1-s33-immutable-authority-ledger\/s33\/g1\/paired-start-receipts\/[0-9a-f]{64}\.json$/u,
+);
+
+const continuationScopeSchema = z.object({
+  schemaVersion: z.literal(G1_PAIRED_START_CONTRACT.bindingContinuation.schemaVersion),
+  parentReceiptId: z.string().min(3).max(256),
+  parentReceiptUri: receiptUri,
+  parentReceiptGeneration: generation,
+  parentReceiptSha256: sha256,
+  parentControlStartedAt: timestamp,
+  parentTunedStartedAt: timestamp,
+  parentEarliestStartedAt: timestamp,
+  parentLatestStartedAt: timestamp,
+  candidateTreeSha: gitSha,
+  controllerHeadSha: gitSha,
+  controllerTreeSha: gitSha,
+  launchNotBefore: timestamp,
+  launchNotAfter: timestamp,
+  parentWorkerUptimeMin: z.literal(G1_PAIRED_START_CONTRACT.bindingContinuation.parentWorkerUptimeMin),
+  continuationWorkerUptimeMin: z.literal(G1_PAIRED_START_CONTRACT.bindingContinuation.workerUptimeMin),
+  continuationWallMin: z.literal(G1_PAIRED_START_CONTRACT.bindingContinuation.wallMin),
+  combinedRequiredWorkerUptimeMin: z.literal(
+    G1_PAIRED_START_CONTRACT.bindingContinuation.combinedRequiredWorkerUptimeMin,
+  ),
+  combinedRequiredWallMin: z.literal(
+    G1_PAIRED_START_CONTRACT.bindingContinuation.combinedRequiredWallMin,
+  ),
+}).strict();
 
 const signedScopeSchema = z.object({
   rigClass: z.literal('RIG-G1'),
@@ -100,6 +138,7 @@ const signedScopeSchema = z.object({
     projectId: z.literal('arkova1'),
     requiresPerObjectRetention: z.literal(true),
   }).strict(),
+  continuation: continuationScopeSchema.optional(),
 }).strict();
 
 const embeddedApprovalSchema = z.object({
@@ -153,6 +192,21 @@ const preclockReadinessSchema = z.object({
   }).strict(),
   verifiedAt: timestamp,
 }).strict();
+
+const parentReceiptSchema = z.object({
+  schemaVersion: z.literal(G1_PAIRED_START_CONTRACT.schemaVersion),
+  receiptId: z.string().min(3).max(256),
+  candidateHeadSha: gitSha,
+  candidateTreeSha: gitSha,
+  imageDigest: sha256,
+  corpusDigest: sha256,
+  earliestStartedAt: timestamp,
+  latestStartedAt: timestamp,
+  arms: z.array(z.object({
+    rigId: z.enum(['RIG-G1-A', 'RIG-G1-B']),
+    startedAt: timestamp,
+  }).passthrough()).length(2),
+}).passthrough();
 
 const armSchema = z.object({
   rig_id: z.enum(['RIG-G1-A', 'RIG-G1-B']),
@@ -283,6 +337,7 @@ const admissionSchema = z.object({
 export type S33G1PairedStartAdmission = z.infer<typeof admissionSchema>;
 export type S33G1AdmissionArm = S33G1PairedStartAdmission['g1']['arms'][number];
 export type S33G1PreclockReadiness = z.infer<typeof preclockReadinessSchema>;
+export type S33G1ContinuationScope = z.infer<typeof continuationScopeSchema>;
 
 export interface S33G1ObservedArm {
   readonly rigId: 'RIG-G1-A' | 'RIG-G1-B';
@@ -339,6 +394,54 @@ export interface S33G1PairedStartReceipt {
   readonly maxStartSkewMs: number;
   readonly preclockReadiness: readonly [S33G1PreclockReadiness, S33G1PreclockReadiness];
   readonly arms: readonly [S33G1ArmStartObservation, S33G1ArmStartObservation];
+  readonly continuation?: S33G1ContinuationReceipt;
+}
+
+export interface S33G1ImmutableReceiptArtifact {
+  readonly uri: string;
+  readonly generation: string;
+  readonly sha256: string;
+  readonly receipt: unknown;
+}
+
+export interface S33G1ControllerProvenance {
+  readonly headSha: string;
+  readonly treeSha: string;
+}
+
+export interface S33G1ContinuationReceipt {
+  readonly schemaVersion: typeof G1_PAIRED_START_CONTRACT.bindingContinuation.schemaVersion;
+  readonly parentReceiptId: string;
+  readonly parentReceiptUri: string;
+  readonly parentReceiptGeneration: string;
+  readonly parentReceiptSha256: string;
+  readonly controllerHeadSha: string;
+  readonly controllerTreeSha: string;
+  readonly launchNotBefore: string;
+  readonly launchNotAfter: string;
+  readonly continuationWorkerUptimeMin: number;
+  readonly continuationWallMin: number;
+  readonly combinedRequiredWorkerUptimeMin: number;
+  readonly combinedRequiredWallMin: number;
+  readonly arms: readonly [{
+    readonly rigId: 'RIG-G1-A';
+    readonly parentStartedAt: string;
+    readonly continuationStartedAt: string;
+    readonly overlapMs: number;
+    readonly projectedWorkerEndAt: string;
+    readonly projectedWallEndAt: string;
+    readonly combinedWorkerUptimeMin: number;
+    readonly combinedWallMin: number;
+  }, {
+    readonly rigId: 'RIG-G1-B';
+    readonly parentStartedAt: string;
+    readonly continuationStartedAt: string;
+    readonly overlapMs: number;
+    readonly projectedWorkerEndAt: string;
+    readonly projectedWallEndAt: string;
+    readonly combinedWorkerUptimeMin: number;
+    readonly combinedWallMin: number;
+  }];
 }
 
 export interface S33G1PairedStartPort {
@@ -349,12 +452,17 @@ export interface S33G1PairedStartPort {
     now: Date,
   ): VerifiedG1SpendApproval;
   resolveCandidateTreeSha(headSha: string): Promise<string>;
+  observeControllerProvenance?(): Promise<S33G1ControllerProvenance>;
   observeArm(arm: S33G1AdmissionArm): Promise<S33G1ObservedArm>;
   prepareArm(request: S33G1ArmPreparationRequest): Promise<S33G1PreclockReadiness>;
   startArm(request: S33G1ArmStartRequest): Promise<S33G1ArmStartObservation>;
   stopArm(observation: S33G1ArmStartObservation, reason: 'paired-start-failure'): Promise<void>;
   cleanupArmPreparation(arm: S33G1AdmissionArm, reason: 'paired-start-failure'): Promise<void>;
   loadStartReceipt(receiptId: string): Promise<unknown | null>;
+  loadStartReceiptArtifact?(
+    receiptId: string,
+    generation: string,
+  ): Promise<S33G1ImmutableReceiptArtifact>;
   persistStartReceipt(receipt: S33G1PairedStartReceipt): Promise<void>;
 }
 
@@ -528,6 +636,147 @@ export function validateS33G1PairedStartAdmission(value: unknown): S33G1PairedSt
   return deepFreeze(parsed.data);
 }
 
+interface ValidatedContinuationParent {
+  readonly scope: S33G1ContinuationScope;
+  readonly receipt: z.infer<typeof parentReceiptSchema>;
+}
+
+async function validateContinuationParent(
+  admission: S33G1PairedStartAdmission,
+  candidateTreeSha: string,
+  port: S33G1PairedStartPort,
+): Promise<ValidatedContinuationParent | undefined> {
+  const scope = admission.g1.spend_approval.scope.continuation;
+  if (scope === undefined) return undefined;
+  if (port.loadStartReceiptArtifact === undefined || port.observeControllerProvenance === undefined) {
+    throw new Error('RIG-G1 continuation requires exact immutable-parent and controller-provenance adapters.');
+  }
+  if (candidateTreeSha !== scope.candidateTreeSha) {
+    throw new Error('RIG-G1 continuation candidate tree differs from signed continuation authority.');
+  }
+  const parentControlStartMs = Date.parse(scope.parentControlStartedAt);
+  const parentTunedStartMs = Date.parse(scope.parentTunedStartedAt);
+  const parentEarliestStartMs = Math.min(parentControlStartMs, parentTunedStartMs);
+  const parentLatestStartMs = Math.max(parentControlStartMs, parentTunedStartMs);
+  const launchNotBeforeMs = Date.parse(scope.launchNotBefore);
+  const launchNotAfterMs = Date.parse(scope.launchNotAfter);
+  if (Date.parse(scope.parentEarliestStartedAt) !== parentEarliestStartMs
+    || Date.parse(scope.parentLatestStartedAt) !== parentLatestStartMs
+    || launchNotBeforeMs <= parentLatestStartMs
+    || launchNotAfterMs <= launchNotBeforeMs
+    || launchNotAfterMs >= parentEarliestStartMs + scope.parentWorkerUptimeMin * 60_000) {
+    throw new Error('RIG-G1 continuation signed launch window does not preserve exact positive parent overlap.');
+  }
+  for (const parentStartMs of [parentControlStartMs, parentTunedStartMs]) {
+    const elapsedAtEarliestLaunchMin = (launchNotBeforeMs - parentStartMs) / 60_000;
+    if (elapsedAtEarliestLaunchMin + scope.continuationWorkerUptimeMin
+        < scope.combinedRequiredWorkerUptimeMin
+      || elapsedAtEarliestLaunchMin + scope.continuationWallMin
+        < scope.combinedRequiredWallMin) {
+      throw new Error('RIG-G1 continuation signed launch window cannot satisfy the combined worker/wall floors.');
+    }
+  }
+  if (launchNotAfterMs + scope.continuationWallMin * 60_000
+    > Date.parse(admission.g1.spend_approval.expiresAt)) {
+    throw new Error('RIG-G1 continuation signed approval expires before the full launch window can satisfy wall time.');
+  }
+  const [artifact, controller] = await Promise.all([
+    port.loadStartReceiptArtifact(scope.parentReceiptId, scope.parentReceiptGeneration),
+    port.observeControllerProvenance(),
+  ]);
+  if (artifact.uri !== scope.parentReceiptUri
+    || artifact.generation !== scope.parentReceiptGeneration
+    || artifact.sha256 !== scope.parentReceiptSha256) {
+    throw new Error('RIG-G1 continuation immutable parent artifact differs from signed authority.');
+  }
+  if (controller.headSha !== scope.controllerHeadSha || controller.treeSha !== scope.controllerTreeSha) {
+    throw new Error('RIG-G1 continuation controller provenance differs from signed authority.');
+  }
+  const parent = parentReceiptSchema.parse(artifact.receipt);
+  const parentControl = parent.arms.find(({ rigId }) => rigId === 'RIG-G1-A');
+  const parentTuned = parent.arms.find(({ rigId }) => rigId === 'RIG-G1-B');
+  if (parentControl === undefined || parentTuned === undefined
+    || new Set(parent.arms.map(({ rigId }) => rigId)).size !== 2
+    || parent.receiptId !== scope.parentReceiptId
+    || parent.candidateHeadSha !== admission.declared_source_head
+    || parent.candidateTreeSha !== candidateTreeSha
+    || parent.imageDigest !== admission.image_digest
+    || parent.corpusDigest !== admission.g1.corpus_digest
+    || parentControl.startedAt !== scope.parentControlStartedAt
+    || parentTuned.startedAt !== scope.parentTunedStartedAt
+    || parent.earliestStartedAt !== scope.parentEarliestStartedAt
+    || parent.latestStartedAt !== scope.parentLatestStartedAt) {
+    throw new Error('RIG-G1 continuation parent receipt content differs from signed exact bindings.');
+  }
+  return deepFreeze({ scope, receipt: parent });
+}
+
+function buildContinuationReceipt(
+  parent: ValidatedContinuationParent,
+  starts: readonly [S33G1ArmStartObservation, S33G1ArmStartObservation],
+  approvalExpiresAt: string,
+): S33G1ContinuationReceipt {
+  const { scope, receipt } = parent;
+  const launchNotBeforeMs = Date.parse(scope.launchNotBefore);
+  const launchNotAfterMs = Date.parse(scope.launchNotAfter);
+  const approvalExpiresAtMs = Date.parse(approvalExpiresAt);
+  const evidenceFor = <TRigId extends 'RIG-G1-A' | 'RIG-G1-B'>(rigId: TRigId) => {
+    const parentArm = receipt.arms.find((arm) => arm.rigId === rigId);
+    const continuationArm = starts.find((arm) => arm.rigId === rigId);
+    if (parentArm === undefined || continuationArm === undefined) {
+      throw new Error(`RIG-G1 continuation is missing exact ${rigId} parent/start evidence.`);
+    }
+    const parentStartMs = Date.parse(parentArm.startedAt);
+    const continuationStartMs = Date.parse(continuationArm.startedAt);
+    const parentWorkerEndMs = parentStartMs + scope.parentWorkerUptimeMin * 60_000;
+    const projectedWorkerEndMs = continuationStartMs + scope.continuationWorkerUptimeMin * 60_000;
+    const projectedWallEndMs = continuationStartMs + scope.continuationWallMin * 60_000;
+    const combinedWorkerUptimeMin = (projectedWorkerEndMs - parentStartMs) / 60_000;
+    const combinedWallMin = (projectedWallEndMs - parentStartMs) / 60_000;
+    if (continuationStartMs < launchNotBeforeMs || continuationStartMs > launchNotAfterMs
+      || continuationStartMs <= parentStartMs || continuationStartMs >= parentWorkerEndMs) {
+      throw new Error(`${rigId} continuation start does not preserve the signed gap-free overlap window.`);
+    }
+    if (combinedWorkerUptimeMin < scope.combinedRequiredWorkerUptimeMin
+      || combinedWallMin < scope.combinedRequiredWallMin) {
+      throw new Error(`${rigId} continuation cannot satisfy the signed combined worker/wall floors.`);
+    }
+    if (projectedWallEndMs > approvalExpiresAtMs) {
+      throw new Error(`${rigId} continuation wall window exceeds signed approval expiry.`);
+    }
+    return {
+      rigId,
+      parentStartedAt: parentArm.startedAt,
+      continuationStartedAt: continuationArm.startedAt,
+      overlapMs: parentWorkerEndMs - continuationStartMs,
+      projectedWorkerEndAt: new Date(projectedWorkerEndMs).toISOString(),
+      projectedWallEndAt: new Date(projectedWallEndMs).toISOString(),
+      combinedWorkerUptimeMin,
+      combinedWallMin,
+    };
+  };
+  const armEvidence: S33G1ContinuationReceipt['arms'] = [
+    evidenceFor('RIG-G1-A'),
+    evidenceFor('RIG-G1-B'),
+  ];
+  return deepFreeze({
+    schemaVersion: scope.schemaVersion,
+    parentReceiptId: scope.parentReceiptId,
+    parentReceiptUri: scope.parentReceiptUri,
+    parentReceiptGeneration: scope.parentReceiptGeneration,
+    parentReceiptSha256: scope.parentReceiptSha256,
+    controllerHeadSha: scope.controllerHeadSha,
+    controllerTreeSha: scope.controllerTreeSha,
+    launchNotBefore: scope.launchNotBefore,
+    launchNotAfter: scope.launchNotAfter,
+    continuationWorkerUptimeMin: scope.continuationWorkerUptimeMin,
+    continuationWallMin: scope.continuationWallMin,
+    combinedRequiredWorkerUptimeMin: scope.combinedRequiredWorkerUptimeMin,
+    combinedRequiredWallMin: scope.combinedRequiredWallMin,
+    arms: armEvidence,
+  });
+}
+
 /**
  * Start both physical G1 arms and establish the counted clock atomically from
  * the release controller's perspective. Any post-start mismatch stops every
@@ -562,6 +811,7 @@ export async function runS33G1PairedStartDriver(
   if (!gitSha.safeParse(candidateTreeSha).success) {
     throw new Error('RIG-G1 exact candidate tree could not be resolved from the admitted HEAD.');
   }
+  const continuationParent = await validateContinuationParent(admission, candidateTreeSha, port);
 
   const receiptId = `g1-paired-start:${approval.approvalId}:${admission.soak_id}:${admission.lease_id}`;
   if (await port.loadStartReceipt(receiptId) !== null) {
@@ -656,6 +906,10 @@ export async function runS33G1PairedStartDriver(
       throw new Error('RIG-G1 start timestamps fall outside the active CTO authority window.');
     }
 
+    const continuation = continuationParent === undefined
+      ? undefined
+      : buildContinuationReceipt(continuationParent, starts, approval.expiresAt);
+
     const receipt = deepFreeze<S33G1PairedStartReceipt>({
       schemaVersion: G1_PAIRED_START_CONTRACT.schemaVersion,
       receiptId,
@@ -675,6 +929,7 @@ export async function runS33G1PairedStartDriver(
       maxStartSkewMs: maxSkewMs,
       preclockReadiness,
       arms: starts,
+      ...(continuation === undefined ? {} : { continuation }),
     });
     await port.persistStartReceipt(receipt);
     const reloaded = await port.loadStartReceipt(receiptId);

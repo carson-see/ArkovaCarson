@@ -1,3 +1,25 @@
+export interface G1ContinuationScope {
+  readonly schemaVersion: 'arkova.s33.g1.binding-continuation/v1';
+  readonly parentReceiptId: string;
+  readonly parentReceiptUri: string;
+  readonly parentReceiptGeneration: string;
+  readonly parentReceiptSha256: string;
+  readonly parentControlStartedAt: string;
+  readonly parentTunedStartedAt: string;
+  readonly parentEarliestStartedAt: string;
+  readonly parentLatestStartedAt: string;
+  readonly candidateTreeSha: string;
+  readonly controllerHeadSha: string;
+  readonly controllerTreeSha: string;
+  readonly launchNotBefore: string;
+  readonly launchNotAfter: string;
+  readonly parentWorkerUptimeMin: 720;
+  readonly continuationWorkerUptimeMin: 2195;
+  readonly continuationWallMin: 2225;
+  readonly combinedRequiredWorkerUptimeMin: 2880;
+  readonly combinedRequiredWallMin: 2910;
+}
+
 export interface G1Scope {
   readonly rigClass: 'RIG-G1';
   readonly rigName: string;
@@ -44,6 +66,7 @@ export interface G1Scope {
     readonly projectId: string;
     readonly requiresPerObjectRetention: boolean;
   };
+  readonly continuation?: G1ContinuationScope;
 }
 
 export interface G1SpendApprovalRecord {
