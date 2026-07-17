@@ -778,6 +778,7 @@ export async function runS33RigRReleaseProduction(
 export interface S33RigRCommandResult {
   readonly status: 'ok' | 'not-found' | 'error';
   readonly stdout: string;
+  readonly transient?: boolean;
 }
 
 export interface S33RigRCommandOptions {
@@ -966,6 +967,29 @@ function requireOk(result: S33RigRCommandResult, label: string): string {
   return result.stdout;
 }
 
+// CTO D3 ruling 2026-07-17: bounded transient-only retry for the release
+// smoke/eval commands. At most 3 total attempts with backoff; every retry is
+// logged into the runner log (soak evidence). Deterministic failures and
+// non-transient errors propagate on the first attempt.
+const RELEASE_COMMAND_RETRY_DELAYS_MS = [30_000, 60_000] as const;
+
+async function runReleaseCommandWithTransientRetry(
+  label: string,
+  sleep: S33RigRProductionDependencies['sleep'],
+  execute: () => Promise<S33RigRCommandResult>,
+): Promise<S33RigRCommandResult> {
+  let result = await execute();
+  for (const [index, delayMs] of RELEASE_COMMAND_RETRY_DELAYS_MS.entries()) {
+    if (result.status !== 'error' || result.transient !== true) return result;
+    console.warn(
+      `# RIG-R transient-retry: ${label} retry=${index + 1}/${RELEASE_COMMAND_RETRY_DELAYS_MS.length} backoffMs=${delayMs}`,
+    );
+    await sleep(delayMs, new AbortController().signal);
+    result = await execute();
+  }
+  return result;
+}
+
 async function boundedResponseText(
   response: Response,
   label: string,
@@ -1085,7 +1109,15 @@ class NodeCommandRunner implements S33RigRCommandRunner {
       }, (error, stdout, stderr) => {
         if (!error) return resolveResult({ status: 'ok', stdout });
         const missing = /(?:not found|no urls matched|urls matched no objects|404)/iu.test(stderr);
-        return resolveResult({ status: missing ? 'not-found' : 'error', stdout: '' });
+        if (missing) return resolveResult({ status: 'not-found', stdout: '' });
+        // CTO D3 ruling 2026-07-17: only transient upstream conditions may be
+        // retried; deterministic rejections (auth, schema, missing model) must
+        // hard-fail so a real regression can never ride a retry to green.
+        const haystack = `${stderr}\n${stdout}`;
+        const deterministic = /(?:\b401\b|\b403\b|PERMISSION_DENIED|UNAUTHENTICATED|INVALID_ARGUMENT|FAILED_PRECONDITION|NOT_FOUND)/u.test(haystack);
+        const transient = !deterministic
+          && /(?:\b429\b|\b502\b|\b503\b|RESOURCE_EXHAUSTED|UNAVAILABLE|rate.?limit|ECONNRESET|ETIMEDOUT|socket hang up)/iu.test(haystack);
+        return resolveResult({ status: 'error', stdout: '', transient });
       });
     });
   }
@@ -2123,17 +2155,25 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     return runS33RigRReleaseDriver(binding, {
       now: () => this.now(),
       runV6Smoke: async () => {
-        smokeStdout = requireOk(await this.dependencies.command.run(
-          process.execPath,
-          [tsxCli, smokePath],
-          { env: releaseEnvironment, timeoutMs: this.authorityBoundCommandTimeout(binding) },
+        smokeStdout = requireOk(await runReleaseCommandWithTransientRetry(
+          'RIG-R v6 smoke',
+          this.dependencies.sleep,
+          () => this.dependencies.command.run(
+            process.execPath,
+            [tsxCli, smokePath],
+            { env: releaseEnvironment, timeoutMs: this.authorityBoundCommandTimeout(binding) },
+          ),
         ), 'RIG-R v6 smoke');
       },
       runV6Eval: async () => {
-        evalStdout = requireOk(await this.dependencies.command.run(
-          BASH_BINARY,
-          [evalPath, binding.vertexEndpoint],
-          { env: releaseEnvironment, timeoutMs: this.authorityBoundCommandTimeout(binding) },
+        evalStdout = requireOk(await runReleaseCommandWithTransientRetry(
+          'RIG-R v6 eval',
+          this.dependencies.sleep,
+          () => this.dependencies.command.run(
+            BASH_BINARY,
+            [evalPath, binding.vertexEndpoint],
+            { env: releaseEnvironment, timeoutMs: this.authorityBoundCommandTimeout(binding) },
+          ),
         ), 'RIG-R v6 eval');
       },
       loadReleaseEvidence: async () => {
