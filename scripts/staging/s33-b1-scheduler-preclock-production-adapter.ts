@@ -76,6 +76,13 @@ import {
   type B1NoBroadcastSuccessorRecovery,
   type VerifiedB1NoBroadcastSuccessorContainment,
 } from './s33-b1-no-broadcast-successor-containment';
+import {
+  assertB1NoBroadcastSuccessorRecoveryChain,
+  b1NoBroadcastThirdRecoverySchema,
+  createProductionB1NoBroadcastThirdContainmentVerifier,
+  type B1NoBroadcastThirdRecovery,
+  type VerifiedB1NoBroadcastThirdContainment,
+} from './s33-b1-no-broadcast-third-containment';
 
 const VM = 'arkova-s33-rig-b1-bitcoin-core-signet';
 const ZONE = 'us-central1-a';
@@ -136,6 +143,7 @@ const admissionSchema = z.object({
   treasury_continuity: b1TreasuryContinuitySchema.optional(),
   no_broadcast_prepare_recovery: b1NoBroadcastPrepareRecoverySchema.optional(),
   no_broadcast_prepare_successor_recovery: b1NoBroadcastSuccessorRecoverySchema.optional(),
+  no_broadcast_prepare_third_recovery: b1NoBroadcastThirdRecoverySchema.optional(),
   infrastructure: z.object({
     authority: z.object({
       approvalId: z.string().min(1),
@@ -264,6 +272,12 @@ export interface B1PreclockCollectorPort {
     intent: B1LockedObject;
     verificationTime: Date;
   }>): VerifiedB1NoBroadcastSuccessorContainment;
+  verifyNoBroadcastThirdContainment?(input: Readonly<{
+    recovery: B1NoBroadcastThirdRecovery;
+    containment: B1LockedObject;
+    intent: B1LockedObject;
+    verificationTime: Date;
+  }>): VerifiedB1NoBroadcastThirdContainment;
   observeInvocationLeaseAbsent?(preparationId: string): Promise<boolean>;
   hasLockedObject(uri: string): Promise<boolean>;
   readLockedObject(uri: string, generation?: string): Promise<B1LockedObject>;
@@ -547,7 +561,9 @@ function authorizeFromVerifiedPreparation(
     || JSON.stringify(verified.noBroadcastPrepareRecovery)
       !== JSON.stringify(collectorAdmission.no_broadcast_prepare_recovery)
     || JSON.stringify(verified.noBroadcastPrepareSuccessorRecovery)
-      !== JSON.stringify(collectorAdmission.no_broadcast_prepare_successor_recovery)) {
+      !== JSON.stringify(collectorAdmission.no_broadcast_prepare_successor_recovery)
+    || JSON.stringify(verified.noBroadcastPrepareThirdRecovery)
+      !== JSON.stringify(collectorAdmission.no_broadcast_prepare_third_recovery)) {
     throw new Error('RIG-B1 signed PREPARE authority does not bind the exact admission/plan/provision authority.');
   }
   const handle = Object.freeze<B1PreclockMutationAuthorization>({ preparationId: verified.preparationId });
@@ -644,6 +660,10 @@ export function authorizeB1PreclockMutationForTest(
     ...(collectorAdmission.no_broadcast_prepare_successor_recovery === undefined ? {} : {
       noBroadcastPrepareSuccessorRecovery:
         collectorAdmission.no_broadcast_prepare_successor_recovery,
+    }),
+    ...(collectorAdmission.no_broadcast_prepare_third_recovery === undefined ? {} : {
+      noBroadcastPrepareThirdRecovery:
+        collectorAdmission.no_broadcast_prepare_third_recovery,
     }),
     ...overrides,
   });
@@ -987,13 +1007,19 @@ export async function collectB1SchedulerPreclockArtifact(
   if (priorIntentPresent) {
     const recovery = admission.no_broadcast_prepare_recovery;
     const successorRecovery = admission.no_broadcast_prepare_successor_recovery;
+    const thirdRecovery = admission.no_broadcast_prepare_third_recovery;
     if (recovery === undefined
       || authorized.authority.noBroadcastPrepareRecovery === undefined
       || JSON.stringify(recovery)
         !== JSON.stringify(authorized.authority.noBroadcastPrepareRecovery)
       || JSON.stringify(successorRecovery)
         !== JSON.stringify(authorized.authority.noBroadcastPrepareSuccessorRecovery)
-      || (successorRecovery === undefined
+      || JSON.stringify(thirdRecovery)
+        !== JSON.stringify(authorized.authority.noBroadcastPrepareThirdRecovery)
+      || (thirdRecovery !== undefined && successorRecovery === undefined)
+      || (thirdRecovery !== undefined
+        ? thirdRecovery.successorPreparationId !== preparationId
+        : successorRecovery === undefined
         ? recovery.successorPreparationId !== preparationId
         : successorRecovery.successorPreparationId !== preparationId)
       || verifiedContinuity === undefined) {
@@ -1063,11 +1089,47 @@ export async function collectB1SchedulerPreclockArtifact(
       } else {
         port.verifyNoBroadcastSuccessorContainment(verifyInput);
       }
+      if (thirdRecovery !== undefined) {
+        assertB1NoBroadcastSuccessorRecoveryChain(successorRecovery, thirdRecovery);
+        if (!await port.hasLockedObject(thirdRecovery.failedPreparation.intent.objectUri)
+          || await port.hasLockedObject(thirdRecovery.failedPreparation.outcomeObjectUri)) {
+          throw new Error('RIG-B1 third contained PREPARE is not an immutable no-outcome intent.');
+        }
+        if (port.observeInvocationLeaseAbsent === undefined
+          || !await port.observeInvocationLeaseAbsent(
+            thirdRecovery.failedPreparation.preparationId,
+          )) {
+          throw new Error('RIG-B1 third contained PREPARE invocation lease is not observably absent.');
+        }
+        const [thirdIntent, thirdContainment] = await Promise.all([
+          port.readLockedObject(
+            thirdRecovery.failedPreparation.intent.objectUri,
+            thirdRecovery.failedPreparation.intent.generation,
+          ),
+          port.readLockedObject(
+            thirdRecovery.containment.objectUri,
+            thirdRecovery.containment.generation,
+          ),
+        ]);
+        const thirdVerifyInput = {
+          recovery: thirdRecovery,
+          containment: thirdContainment,
+          intent: thirdIntent,
+          verificationTime: port.now(),
+        };
+        if (port.verifyNoBroadcastThirdContainment === undefined) {
+          createProductionB1NoBroadcastThirdContainmentVerifier().verify(thirdVerifyInput);
+        } else {
+          port.verifyNoBroadcastThirdContainment(thirdVerifyInput);
+        }
+      }
     }
   } else if (admission.no_broadcast_prepare_recovery !== undefined
     || authorized.authority.noBroadcastPrepareRecovery !== undefined
     || admission.no_broadcast_prepare_successor_recovery !== undefined
-    || authorized.authority.noBroadcastPrepareSuccessorRecovery !== undefined) {
+    || authorized.authority.noBroadcastPrepareSuccessorRecovery !== undefined
+    || admission.no_broadcast_prepare_third_recovery !== undefined
+    || authorized.authority.noBroadcastPrepareThirdRecovery !== undefined) {
     throw new Error('RIG-B1 no-broadcast recovery names a missing immutable PREPARE intent.');
   }
 

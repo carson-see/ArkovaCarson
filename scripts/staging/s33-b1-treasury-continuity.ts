@@ -25,6 +25,7 @@ export const B1_TREASURY_CONTINUITY_CONTROLLER_FILES = Object.freeze([
   'scripts/staging/batch-drain-chain-readiness.ts',
   'scripts/staging/s33-b1-no-broadcast-prepare-containment.ts',
   'scripts/staging/s33-b1-no-broadcast-successor-containment.ts',
+  'scripts/staging/s33-b1-no-broadcast-third-containment.ts',
   'scripts/staging/s33-b1-preparation-approval.ts',
   'scripts/staging/s33-b1-scheduler-preclock-production-adapter.ts',
   'scripts/staging/s33-b1-scheduler-start-driver.ts',
