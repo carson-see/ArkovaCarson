@@ -485,7 +485,7 @@ printf '%s\n%s' "$(jq -c '.body' <<<"$line")" "$(jq -r '.httpStatus' <<<"$line")
 CLOUD_RUN_REGION='us-central1'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 ${source}
-probe_tuned_gemini_preclock '${accessToken}' '733007' 2>&1
+probe_tuned_gemini_preclock '${accessToken}' '733008' 2>&1
 code=$?
 printf '\nPROBE_EXIT=%s\n' "$code"
 exit 0
@@ -562,7 +562,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733007'
+parse_genie_deploy_operation_name "$raw" '733008'
 `;
     expect(execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }).trim()).toBe(
       'projects/270018525501/locations/us-central1/operations/123456',
@@ -583,7 +583,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733007'
+parse_genie_deploy_operation_name "$raw" '733008'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -600,8 +600,8 @@ parse_genie_deploy_operation_name "$raw" '733007'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733007/operations/123456"}'
-parse_genie_deploy_operation_name "$raw" '733007'
+raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733008/operations/123456"}'
+parse_genie_deploy_operation_name "$raw" '733008'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -618,8 +618,8 @@ parse_genie_deploy_operation_name "$raw" '733007'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733007/operations/not-numeric"}'
-parse_genie_deploy_operation_name "$raw" '733007'
+raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733008/operations/not-numeric"}'
+parse_genie_deploy_operation_name "$raw" '733008'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -848,6 +848,7 @@ describe('provision-isolated-rig.sh — safety model preserved under the new ove
  */
 
 const STUB_CRON_SECRET = 'stub-cron-secret-value-8f3a17';
+const STUB_PREFLIGHT_SERVICE_ROLE_KEY = 'stub-preflight-service-role-key-c0f4a2';
 const STUB_SERVICE_URL = 'https://arkova-worker-stub.example.run.app';
 const STUB_REVISION = 'arkova-worker-stub-00001-abc';
 const STUB_IMAGE_DIGEST =
@@ -933,6 +934,8 @@ interface ApplyRunOptions {
   deployedEnvAdditions?: Record<string, string>;
   deployedSecretReferenceSchema?: 'legacy' | 'current' | 'hybrid' | 'malformed';
   duplicateDeployedSecretEnv?: boolean;
+  preflightServiceRoleReadFails?: boolean;
+  preflightServiceRoleEmpty?: boolean;
   sourceImageDigest?: string;
   gitFetchFails?: boolean;
   useUntrackedDriver?: boolean;
@@ -1651,6 +1654,15 @@ fi
 	    case "$arg" in --secret=*) secret="\${arg#--secret=}" ;; esac
 	  done
 	  case "$secret" in
+	    supabase-service-role-key-*-staging)
+	      if [[ "$4" == '1' && '${options.preflightServiceRoleReadFails ? 'true' : 'false'}' == 'true' ]]; then
+	        echo 'injected generated service-role secret read failure' >&2
+	        exit 47
+	      fi
+	      if [[ "$4" != '1' || '${options.preflightServiceRoleEmpty ? 'true' : 'false'}' != 'true' ]]; then
+	        printf '%s\n' '${STUB_PREFLIGHT_SERVICE_ROLE_KEY}'
+	      fi
+	      ;;
 	    arkova-s33-rig-b1-bitcoin-core-signet-rpc-url)
 	      printf '%s\\n' 'http://10.33.10.10:38332'
 	      ;;
@@ -1754,6 +1766,10 @@ if [[ "$1" == "supabase" ]]; then
   exit 0
 fi
 if [[ "$1" == "tsx" && "$2" == "scripts/ci/staging-honesty-preflight.ts" ]]; then
+  if [[ "${'$'}{SUPABASE_SERVICE_ROLE_KEY:-}" != '${STUB_PREFLIGHT_SERVICE_ROLE_KEY}' ]]; then
+    echo 'missing exact generated service-role key in preflight child environment' >&2
+    exit 46
+  fi
   ${options.schedulerStateAfterPreflight === 'ENABLED' ? `for state in '${schedulerStateDir}'/*; do printf 'ENABLED' > "$state"; done` : ':'}
   ${options.schedulerStateAfterPreflight === 'MISSING' ? `rm -f '${schedulerStateDir}'/*` : ':'}
   echo '${options.preflightPayload ?? JSON.stringify(VALID_PREFLIGHT_REPORT)}'
@@ -3068,6 +3084,43 @@ describe('provision-isolated-rig.sh — mock state vocabulary', () => {
 
 describe('provision-isolated-rig.sh — strict clean_mirror evidence schema', () => {
   const validReport = VALID_PREFLIGHT_REPORT;
+
+  it('passes the exact generated service-role secret only through the preflight child environment', () => {
+    const result = applyRunStubbed('preflight-service-role-env', 'mock');
+    expect(result.code, result.out).toBe(0);
+    expect(result.gcloudCalls.filter((call) =>
+      call.startsWith('secrets versions access 1 ') &&
+      call.includes('--secret=supabase-service-role-key-preflight-service-role-env-staging'),
+    )).toHaveLength(1);
+    expect(result.out).not.toContain(STUB_PREFLIGHT_SERVICE_ROLE_KEY);
+    expect(result.npxCalls.join('\n')).not.toContain(STUB_PREFLIGHT_SERVICE_ROLE_KEY);
+    const persistedArtifacts = readdirSync(result.artifactDir)
+      .filter((entry) => statSync(join(result.artifactDir, entry)).isFile())
+      .map((entry) => readFileSync(join(result.artifactDir, entry), 'utf8'))
+      .join('\n');
+    expect(persistedArtifacts).not.toContain(STUB_PREFLIGHT_SERVICE_ROLE_KEY);
+  });
+
+  it('fails closed when the generated preflight service-role secret is empty', () => {
+    const result = applyRunStubbed('preflight-service-role-empty', 'mock', {
+      preflightServiceRoleEmpty: true,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/service-role secret was empty/i);
+    expect(result.out).not.toContain(STUB_PREFLIGHT_SERVICE_ROLE_KEY);
+    expect(result.out).not.toContain('ADMISSION_JSON=');
+  });
+
+  it('fails closed without leaking when the generated service-role secret cannot be read', () => {
+    const result = applyRunStubbed('preflight-role-read-fail', 'mock', {
+      preflightServiceRoleReadFails: true,
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/could not read the generated Supabase service-role secret/i);
+    expect(result.out).not.toContain(STUB_PREFLIGHT_SERVICE_ROLE_KEY);
+    expect(result.out).not.toContain('injected generated service-role secret read failure');
+    expect(result.out).not.toContain('ADMISSION_JSON=');
+  });
 
   it.each([
     ['wrong project', { ...validReport, staging_project_ref: 'vzwyaatejekddvltxyye' }],

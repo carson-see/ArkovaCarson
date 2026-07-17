@@ -70,18 +70,18 @@ const RECEIPT_PREFIX = 's33/rig-r/release-start-receipts';
 // CTO-authorized recovery namespace. The first immutable receipt is retained as
 // superseded/non-merge-grade; this exact suffix prevents replaying or
 // overwriting either its receipt or its partial local evidence paths.
-const START_ATTEMPT_ID = 'real-provider-recovery-13';
+const START_ATTEMPT_ID = 'real-provider-recovery-14';
 const LEASE_URI = `gs://${RECEIPT_BUCKET}/s33/rig-leases/RIG-R.singleton.json`;
 const SOURCE_IMAGE_REPOSITORY =
   'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker';
-const ENDPOINT_ID = '733007';
+const ENDPOINT_ID = '733008';
 const ENDPOINT = `projects/${PROJECT_ID}/locations/${REGION}/endpoints/${ENDPOINT_ID}`;
 const CANONICAL_ENDPOINT = `projects/270018525501/locations/${REGION}/endpoints/${ENDPOINT_ID}`;
 const ENDPOINT_DISPLAY_NAME = 'arkova-s33-rig-r-release-v6';
 const MODEL = 'projects/270018525501/locations/us-central1/models/6611494259700793344';
 const MODEL_VERSION = `${MODEL}@1`;
 const CHECKPOINT_ID = '6';
-const DEPLOYED_MODEL_ID = '7330071';
+const DEPLOYED_MODEL_ID = '7330081';
 const RUNTIME_SA = 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com';
 const RUNTIME_IMPERSONATOR_SA = '270018525501-compute@developer.gserviceaccount.com';
 const RUNTIME_IMPERSONATION_ROLE = 'roles/iam.serviceAccountTokenCreator';

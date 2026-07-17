@@ -135,9 +135,9 @@ RIG_R_RUNTIME_IMPERSONATION_MEMBER="serviceAccount:${RIG_R_OPERATOR_SA}"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
 RIG_R_CHECKPOINT_ID="6"
-RIG_R_ENDPOINT_ID="733007"
+RIG_R_ENDPOINT_ID="733008"
 RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
-RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330071"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330081"
 RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
@@ -4111,6 +4111,39 @@ create_supabase_runtime_secrets() {
   write_provision_state "supabase_secrets_recorded" ""
 }
 
+run_staging_honesty_preflight_with_generated_service_role() {
+  local project_ref="$1"
+  local service_role_secret_name="$2"
+  local service_role_key preflight_output rc
+  if ! service_role_key="$(gcloud secrets versions access 1 \
+    --secret="$service_role_secret_name" \
+    --project="$GCP_PROJECT" 2>/dev/null)"; then
+    unset service_role_key
+    echo "ERROR: could not read the generated Supabase service-role secret for clean-mirror preflight." >&2
+    return 1
+  fi
+  if [[ -z "$service_role_key" ]]; then
+    unset service_role_key
+    echo "ERROR: generated Supabase service-role secret was empty for clean-mirror preflight." >&2
+    return 1
+  fi
+  if preflight_output="$(SUPABASE_SERVICE_ROLE_KEY="$service_role_key" \
+    npx tsx scripts/ci/staging-honesty-preflight.ts \
+      --project-ref "$project_ref" \
+      --format json)"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  unset service_role_key
+  if [[ $rc -ne 0 ]]; then
+    unset preflight_output
+    return "$rc"
+  fi
+  printf '%s\n' "$preflight_output"
+  unset preflight_output
+}
+
 grant_rig_r_runtime_secret_access() {
   [[ $IS_RIG_R -eq 1 ]] || return 0
   local secret_name
@@ -6348,13 +6381,16 @@ if [[ $APPLY -eq 1 ]]; then
     NEW_PROJECT_REF="$PREFLIGHT_TARGET_REF"
     if [[ $IS_G1_RIG -eq 1 && "$PREFLIGHT_TARGET_REF" == "$G1_CONTROL_PROJECT_REF" ]]; then
       PREFLIGHT_ARTIFACT_PATH="$G1_CONTROL_PREFLIGHT_ARTIFACT_PATH"
+      PREFLIGHT_SERVICE_ROLE_SECRET_NAME="$G1_CONTROL_SUPABASE_SERVICE_ROLE_SECRET"
       run_cmd_with_db_password STAGING_G1_A_SUPABASE_DB_PASSWORD "$G1_CONTROL_DB_PASSWORD" \
         npx supabase link --project-ref "$PREFLIGHT_TARGET_REF"
     elif [[ $IS_G1_RIG -eq 1 ]]; then
       PREFLIGHT_ARTIFACT_PATH="$G1_TUNED_PREFLIGHT_ARTIFACT_PATH"
+      PREFLIGHT_SERVICE_ROLE_SECRET_NAME="$G1_TUNED_SUPABASE_SERVICE_ROLE_SECRET"
       run_cmd_with_db_password STAGING_G1_B_SUPABASE_DB_PASSWORD "$G1_TUNED_DB_PASSWORD" \
         npx supabase link --project-ref "$PREFLIGHT_TARGET_REF"
     else
+      PREFLIGHT_SERVICE_ROLE_SECRET_NAME="$SUPABASE_SERVICE_ROLE_SECRET_NAME"
       run_cmd_with_db_password STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
         npx supabase link --project-ref "$PREFLIGHT_TARGET_REF"
     fi
@@ -6362,9 +6398,8 @@ if [[ $APPLY -eq 1 ]]; then
     --project-ref "$NEW_PROJECT_REF" \
     --format json
   echo "executing: npx tsx scripts/ci/staging-honesty-preflight.ts --project-ref $NEW_PROJECT_REF --format json" >&2
-  PREFLIGHT_JSON="$(npx tsx scripts/ci/staging-honesty-preflight.ts \
-    --project-ref "$NEW_PROJECT_REF" \
-    --format json)"
+  PREFLIGHT_JSON="$(run_staging_honesty_preflight_with_generated_service_role \
+    "$NEW_PROJECT_REF" "$PREFLIGHT_SERVICE_ROLE_SECRET_NAME")"
   # Accept only the report contract emitted by staging-honesty-preflight.ts.
   # Unknown keys (including secret-bearing additions), mismatched refs, malformed
   # timestamps, failed checks, and malformed nested rows all fail closed. Raw
