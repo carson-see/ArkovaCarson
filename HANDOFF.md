@@ -14,6 +14,16 @@
 
 ## Now
 
+### 2026-07-17 (CTO) — PI-0.5 replanned to v3.0 (future work only); build backlog separated; canonical docs consolidated
+
+Founder close-out: rewrote the PI-0.5 plan to **future work only** (executed items excluded) and split the not-started work into its own itemized doc. Canonical set in Drive PI-.5 + Confluence:
+- **[Plan of Record v3.0 (Future Work Only)](https://docs.google.com/document/d/1u2Yv2Fm-KswR02rGP62_8cyi1OVOpdtXibfwPLylX-A/edit)** — Drive; mirror at Confluence [PI-0.5 — Plan of Record v3.0](https://arkova.atlassian.net/wiki/x/AgB1Bg) (linked on epic SCRUM-2895).
+- **[Planned But Not Started — Build Backlog](https://docs.google.com/document/d/1ml_I95aL8L2IX3KPm8R4hlLveGSigBpVeduVD1vRdf8/edit)** — every specced-but-zero-code item with lane/tier/estimate/status.
+- Review record: ART-Reviewed Lane Plans + CTO Rulings (1d2eoYD…). Evidence: CE + HakiChain Findings. History: Execution Log addendum + this HANDOFF.
+Superseded plans (v1.0/v1.1/v2.0/v2.1 + all 07-13 drafts) are in the Drive ARCHIVE subfolder (v2.1 moved this session, API-verified). No GitHub release re-cut for v3.0 (planning-doc-only; the pi-0.5-plan-v2.1 release remains the pinned tag — future work reference, not code).
+
+**Clear status line for the session:** executed runtime fixes = fraud flag OFF, refresh-stats resumed, ENABLE_BATCH_ANCHORING row inserted (was missing → all batch anchoring incl. 3am flush was halted), db-health-monitor URI fixed (/cron→/jobs, now 200), populate-confirmation-proofs job created, 255k feeder drain resumed. **Zero feature/build code written this session** — the 10 workstreams + all PI-0.5 stories are specced (tasks/AC/tests/pre-mortems), NOT STARTED. Bugs -006..-011 on tracker 88768514. Jira: epic 2895; stories 2896-2906/2910-2918/2937-2940 with subtasks 2919-2967. Standing: manual daily scheduler-state check until the 2900 dead-man merges; S3.3 rig untouchable until ~Jul 19.
+
 ### 2026-07-17 (CTO/ART evening) — ART lane review complete: 2 new Aug-10 P0s found (fraud surfaces alive despite flag), db-health-monitor FIXED, materializer discovery
 
 **ART ceremony:** 3 parallel lane teams refined the 10 PI-0.5 workstreams against origin/main (read-only; soaks untouched); ART reconvened + CTO ruled. Packet: [ART-Reviewed Lane Plans + CTO Rulings](https://docs.google.com/document/d/1d2eoYDwyROWijQVQprONqr03X1ec6P8cUYB75Q5IOI4/edit) (Drive PI-.5). Headlines: (1) **BUG-009 P0:** the "Fraud signal detected" banner is fed by the Gemini extraction fraudSignals field, NOT ENABLE_FRAUD_DETECTION — the flag flip did not remove it; client-side filter is an Aug-10 gate. (2) **BUG-010 P0:** historical fraud_* metadata renders on owner AND PUBLIC verification pages (no hidden-key filter covers the prefix) — public links can show fraud_score today; startsWith('fraud_') filter both sets, T1. (3) .heic/.tiff uploads hit the §1.6 fail-closed privacy screen for being undecodable (soft-fail fix in 2911 Phase A); CSV/XLSX cannot be single-doc anchored (bulk hijack — LOI conflict); scanned PDFs "No text found" is the top real-Kenya gap. (4) **Back-catalogue proofs need a NEW insert-capable materializer** — every existing job is UPDATE-only; ~2.97M direct anchors have no proof row; census dry-run startable now; header-fill (~2.97M unique-tx RPCs) explicitly NOT Aug-10. (5) KPI-3 pre-req: verify the 15 Haki anchors have complete proof bundles by Jul 18; PROOF_SIGNING_* keys don't exist — signature line must not be promised (founder decision).
@@ -232,3 +242,5 @@ _Last refreshed: 2026-07-17 by Claude (CTO/DBA switch-execution session) — cla
 _Last refreshed: 2026-07-17 by Claude (CTO/DBA drain-execution session) — claims verified against gcloud scheduler resume output + Cloud Run request log 200 (17:07:35Z) + 90d Cloud Scheduler audit-log reads; artifacts cited in this commit body._
 
 _Last refreshed: 2026-07-17 by Claude (CTO/ART evening review) — claims verified against gcloud scheduler describe/update + Cloud Run log 200 (17:42:11Z), Supabase MCP treasury_cache/switchboard reads, gateway/worker curls, and three lane packets grounded in origin/main 27b90ef8; artifacts cited in this commit body._
+
+_Last refreshed: 2026-07-17 by Claude (CTO close-out) — plan docs + Confluence mirror created and cross-linked; superseded plans archived (Drive API-verified); no code changed._
