@@ -135,9 +135,9 @@ RIG_R_RUNTIME_IMPERSONATION_MEMBER="serviceAccount:${RIG_R_OPERATOR_SA}"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
 RIG_R_CHECKPOINT_ID="6"
-RIG_R_ENDPOINT_ID="733011"
+RIG_R_ENDPOINT_ID="733012"
 RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
-RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330111"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330121"
 RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
@@ -147,6 +147,7 @@ RIG_R_TEARDOWN_PATH="scripts/staging/teardown-isolated-rig.sh"
 RIG_R_RUNTIME_ROLES=(
   "roles/logging.logWriter"
 )
+RIG_R_SCHEMA_QUIET_SECONDS="20"
 # Live admission is intentionally bound to the audited Git shipped on the
 # release operator host. An OS/toolchain update changes this tuple and fails
 # closed until the reviewed authority input is refreshed in code.
@@ -3530,6 +3531,44 @@ wait_for_supabase_project_ready() {
   return 1
 }
 
+# A newly ACTIVE_HEALTHY Supabase project can still be finishing its internal
+# bootstrap. RIG-R gives that work one quiet barrier before the baseline push,
+# then permits exactly one retry only when PostgreSQL selects our transaction
+# as the SQLSTATE 40P01 deadlock victim. Every other failure remains terminal.
+run_rig_r_schema_push_with_deadlock_retry() {
+  [[ $IS_RIG_R -eq 1 ]] || {
+    echo "ERROR: the bounded RIG-R schema-push recovery was called for another rig." >&2
+    return 1
+  }
+  print_cmd /bin/sleep "$RIG_R_SCHEMA_QUIET_SECONDS"
+  print_cmd npx supabase db push --linked --password '<redacted:STAGING_NEW_SUPABASE_DB_PASSWORD>'
+  if [[ $APPLY -ne 1 ]]; then
+    return 0
+  fi
+  echo "# RIG-R schema quiet barrier: ${RIG_R_SCHEMA_QUIET_SECONDS}s after ACTIVE_HEALTHY." >&2
+  /bin/sleep "$RIG_R_SCHEMA_QUIET_SECONDS"
+
+  local attempt output rc
+  for attempt in 1 2; do
+    echo "executing: npx supabase db push --linked --password <redacted:STAGING_NEW_SUPABASE_DB_PASSWORD> (attempt ${attempt}/2)" >&2
+    if output="$(npx supabase db push --linked --password "$SUPABASE_DB_PASSWORD" 2>&1)"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    printf '%s\n' "$output"
+    if [[ $rc -eq 0 ]]; then
+      return 0
+    fi
+    if [[ $attempt -eq 1 && "$output" == *"SQLSTATE 40P01"* ]]; then
+      echo "# RIG-R baseline push was the exact SQLSTATE 40P01 deadlock victim; consuming the sole retry." >&2
+      continue
+    fi
+    return "$rc"
+  done
+  return 1
+}
+
 # Like run_cmd, but redacts the X-Cron-Secret header value in everything it
 # prints/logs. The real value (fetched from Secret Manager in apply mode) is
 # passed only to the executed command — never to stdout/stderr.
@@ -6184,8 +6223,12 @@ if [[ $IS_G1_RIG -eq 1 ]]; then
 else
   run_cmd_with_db_password STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
     npx supabase link --project-ref "$NEW_PROJECT_REF"
-  run_cmd_with_db_password STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
-    npx supabase db push --linked
+  if [[ $IS_RIG_R -eq 1 ]]; then
+    run_rig_r_schema_push_with_deadlock_retry
+  else
+    run_cmd_with_db_password STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
+      npx supabase db push --linked
+  fi
 fi
 echo
 

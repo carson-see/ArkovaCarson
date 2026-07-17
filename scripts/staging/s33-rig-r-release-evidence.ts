@@ -210,7 +210,7 @@ export function composeS33RigRReleaseEvidence(
   }
   parseLines(input.liveEvalEvidenceRaw, input);
   if (!input.smokeStdout.includes('SMOKE PASS')
-    || !input.smokeStdout.includes('projects/arkova1/locations/us-central1/endpoints/733011')) {
+    || !input.smokeStdout.includes('projects/arkova1/locations/us-central1/endpoints/733012')) {
     throw new Error('RIG-R smoke output does not prove the exact endpoint PASS.');
   }
   const evalSummary = evalSummarySchema.parse(parseJsonRejectingDuplicateKeys(

@@ -604,6 +604,76 @@ verify_rig_r_app_auth_boundary_pre_admission
     expect(readFileSync(calls, 'utf8')).toBe('1');
   });
 
+  it('uses one quiet barrier and consumes one retry only for exact SQLSTATE 40P01', () => {
+    const functionSource = script.match(
+      /^run_rig_r_schema_push_with_deadlock_retry\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    expect(functionSource).toContain('RIG_R_SCHEMA_QUIET_SECONDS');
+    expect(functionSource).toContain('for attempt in 1 2');
+    expect(functionSource).toContain('"$output" == *"SQLSTATE 40P01"*');
+
+    const runCase = (firstOutput: string, firstExit: number): { out: string; calls: string } => {
+      const root = mkdtempSync(join(tmpdir(), 'rig-r-schema-deadlock-'));
+      stubDirs.push(root);
+      const callFile = join(root, 'npx-count');
+      const source = functionSource!.replaceAll(
+        '/bin/sleep "$RIG_R_SCHEMA_QUIET_SECONDS"',
+        ':',
+      );
+      const testScript = `set -euo pipefail
+IS_RIG_R=1
+APPLY=1
+RIG_R_SCHEMA_QUIET_SECONDS=20
+SUPABASE_DB_PASSWORD='db-password-that-must-not-appear'
+print_cmd() { :; }
+npx() {
+  count=0
+  [[ ! -f '${callFile}' ]] || count="$(/bin/cat '${callFile}')"
+  count=$((count + 1))
+  printf '%s' "$count" > '${callFile}'
+  if [[ $count -eq 1 ]]; then
+    printf '%s\n' '${firstOutput}'
+    return ${firstExit}
+  fi
+  printf '%s\n' 'Finished supabase db push'
+}
+${source}
+run_rig_r_schema_push_with_deadlock_retry 2>&1
+`;
+      const out = execFileSync('bash', ['-c', testScript], { encoding: 'utf8' });
+      return { out, calls: readFileSync(callFile, 'utf8') };
+    };
+
+    const recovered = runCase('ERROR: deadlock detected (SQLSTATE 40P01)', 1);
+    expect(recovered.calls).toBe('2');
+    expect(recovered.out).toContain('consuming the sole retry');
+    expect(recovered.out).toContain('Finished supabase db push');
+    expect(recovered.out).not.toContain('db-password-that-must-not-appear');
+
+    const root = mkdtempSync(join(tmpdir(), 'rig-r-schema-terminal-'));
+    stubDirs.push(root);
+    const callFile = join(root, 'npx-count');
+    const source = functionSource!.replaceAll(
+      '/bin/sleep "$RIG_R_SCHEMA_QUIET_SECONDS"',
+      ':',
+    );
+    const terminalScript = `set -euo pipefail
+IS_RIG_R=1
+APPLY=1
+RIG_R_SCHEMA_QUIET_SECONDS=20
+SUPABASE_DB_PASSWORD='memory-only-password'
+print_cmd() { :; }
+npx() { printf '1' > '${callFile}'; printf '%s\n' 'ERROR: syntax error (SQLSTATE 42601)'; return 1; }
+${source}
+run_rig_r_schema_push_with_deadlock_retry
+`;
+    expect(() => execFileSync('bash', ['-c', terminalScript], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrow();
+    expect(readFileSync(callFile, 'utf8')).toBe('1');
+  });
+
   it('reads both release AI flags from the deployed revision and rejects either flag when not true', () => {
     const observedValueSource = script.match(
       /^observed_revision_env_value\(\) \{[\s\S]*?^\}/mu,
@@ -704,7 +774,7 @@ printf '%s\n%s' "$(jq -c '.body' <<<"$line")" "$(jq -r '.httpStatus' <<<"$line")
 CLOUD_RUN_REGION='us-central1'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 ${source}
-probe_tuned_gemini_preclock '${accessToken}' '733011' 2>&1
+probe_tuned_gemini_preclock '${accessToken}' '733012' 2>&1
 code=$?
 printf '\nPROBE_EXIT=%s\n' "$code"
 exit 0
@@ -781,7 +851,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733011'
+parse_genie_deploy_operation_name "$raw" '733012'
 `;
     expect(execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }).trim()).toBe(
       'projects/270018525501/locations/us-central1/operations/123456',
@@ -802,7 +872,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733011'
+parse_genie_deploy_operation_name "$raw" '733012'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -819,8 +889,8 @@ parse_genie_deploy_operation_name "$raw" '733011'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733011/operations/123456"}'
-parse_genie_deploy_operation_name "$raw" '733011'
+raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733012/operations/123456"}'
+parse_genie_deploy_operation_name "$raw" '733012'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -837,8 +907,8 @@ parse_genie_deploy_operation_name "$raw" '733011'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733011/operations/not-numeric"}'
-parse_genie_deploy_operation_name "$raw" '733011'
+raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733012/operations/not-numeric"}'
+parse_genie_deploy_operation_name "$raw" '733012'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
