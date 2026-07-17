@@ -52,16 +52,28 @@ describe('db', () => {
       expect(info.mode).toBe('direct');
     });
 
-    it('returns pooler mode when SUPABASE_POOLER_URL is set', async () => {
-      process.env.SUPABASE_POOLER_URL = 'postgresql://user:pass@db.supabase.co:6543/postgres';
-      const { getConnectionInfo } = await import('./db.js');
+    it('returns pooler mode when an http(s) SUPABASE_POOLER_URL is set', async () => {
+      // WH-2: only http(s) pooler URLs are accepted; getConnectionInfo now
+      // reflects the actual applied state (poolerActive), not env presence.
+      process.env.SUPABASE_POOLER_URL = 'https://pooler.supabase.co:6543/rest/v1';
+      const { getConnectionInfo, getDb } = await import('./db.js');
+      getDb(); // apply the pooler URL
       const info = getConnectionInfo();
       expect(info.mode).toBe('pooler');
     });
 
+    it('reports direct mode when a postgres:// pooler URL is rejected (WH-2)', async () => {
+      process.env.SUPABASE_POOLER_URL = 'postgres://user:pass@db.supabase.co:6543/postgres';
+      const { getConnectionInfo, getDb } = await import('./db.js');
+      getDb();
+      // Rejected as a REST base → falls back to direct; must NOT claim 'pooler'.
+      expect(getConnectionInfo().mode).toBe('direct');
+    });
+
     it('masks credentials in URL', async () => {
-      process.env.SUPABASE_POOLER_URL = 'postgresql://user:secretpass@db.supabase.co:6543/postgres';
-      const { getConnectionInfo } = await import('./db.js');
+      process.env.SUPABASE_POOLER_URL = 'https://user:secretpass@pooler.supabase.co:6543/rest/v1';
+      const { getConnectionInfo, getDb } = await import('./db.js');
+      getDb();
       const info = getConnectionInfo();
       expect(info.url).not.toContain('secretpass');
       expect(info.url).toContain('***');
@@ -180,6 +192,31 @@ describe('db', () => {
       const res = await resilient('https://x.supabase.co/rest/v1/foo' as never, {} as never);
       expect(res).toBe(sentinel);
       expect(baseFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('does NOT retry a non-idempotent write (POST) even on a transient error — treasury double-apply guard', async () => {
+      const { createResilientFetch } = await import('./db.js');
+      const baseFetch = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+      const resilient = createResilientFetch(baseFetch as never, {} as never);
+      await expect(
+        resilient('https://x.supabase.co/rest/v1/anchors' as never, { method: 'POST' } as never),
+      ).rejects.toThrow('fetch failed');
+      // A retried POST could double-apply a credit deduction / billing row.
+      expect(baseFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT retry a PATCH/RPC write on a transient error', async () => {
+      const { createResilientFetch } = await import('./db.js');
+      const baseFetch = vi.fn().mockRejectedValue(
+        Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+      );
+      const resilient = createResilientFetch(baseFetch as never, {} as never);
+      await expect(
+        resilient('https://x.supabase.co/rest/v1/rpc/deduct_org_credit' as never, {
+          method: 'POST',
+        } as never),
+      ).rejects.toThrow('other side closed');
+      expect(baseFetch).toHaveBeenCalledTimes(1);
     });
 
     it('does NOT retry a non-transient error and rethrows it', async () => {

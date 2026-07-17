@@ -34,9 +34,14 @@ let poolerActive = false;
 // surfaces that as a hard error with no retry, so the webhook idempotency lookup
 // + delivery-log write (and every other worker DB call) fail. We install a
 // dedicated dispatcher with a short keep-alive TTL so sockets are recycled well
-// before they rot, and wrap fetch so a *connection-level* failure (no response
-// received) retries ONCE on a fresh socket. Response-level HTTP errors are NOT
-// retried — that is the caller's concern; only transport failures are.
+// before they rot, and wrap fetch so a *connection-level* failure on an
+// IDEMPOTENT (read) request retries ONCE on a fresh socket. Response-level HTTP
+// errors are NOT retried — that is the caller's concern; and non-idempotent
+// writes (POST/PATCH/DELETE) are NEVER auto-retried, because a transport error
+// can also fire AFTER the server committed (independent chain/treasury + DBA
+// review, SCRUM-2899 — a retried write could double-apply a credit deduction or
+// billing row). See RETRYABLE_METHODS. Writes are protected by the short
+// keep-alive recycling plus their own call-site idempotency guards.
 
 /** Dedicated dispatcher for the Supabase REST/RPC client. Bounded pool + short
  * keep-alive so a throttled instance recycles idle sockets before they rot. */
@@ -46,9 +51,26 @@ const SUPABASE_FETCH_AGENT = new Agent({
   keepAliveMaxTimeout: 10_000,
 });
 
-/** Connection-level (transport) failure signatures — no HTTP response arrived. */
+/** Connection-level (transport) failure signatures — no HTTP response arrived.
+ * `UND_ERR_SOCKET` (undici "other side closed") is included; bare `UND_ERR` is
+ * NOT, so an intentional caller abort (`UND_ERR_ABORTED`) is never treated as
+ * transient (independent DBA review, SCRUM-2899). */
 const CONNECTION_ERROR_RE =
-  /fetch failed|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|EPIPE|socket hang up|UND_ERR|other side closed|terminated/i;
+  /fetch failed|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|EPIPE|socket hang up|UND_ERR_SOCKET|other side closed|terminated/i;
+
+/**
+ * Only idempotent HTTP methods may be auto-retried. A retried POST/PATCH/DELETE
+ * (RPC, INSERT, UPDATE) could DOUBLE-APPLY if the socket died AFTER PostgREST
+ * committed but before the response was read — undici cannot distinguish that
+ * from a never-sent request. Independent chain/treasury review (SCRUM-2899)
+ * found this would turn a latent double-credit-deduction + duplicate-billing
+ * hazard live. Reads (GET/HEAD) are idempotent, so the rotten-socket auto-heal —
+ * the actual "TypeError: fetch failed" fix, which hits the webhook idempotency
+ * SELECT — applies to them safely. Writes instead rely on the short keep-alive
+ * recycling to avoid rot, and on their own idempotency guards (unique keys /
+ * reference_ids / compare-and-swap) at the call site.
+ */
+const RETRYABLE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
  * True when `err` (or any nested `cause`) looks like a transport-level failure
@@ -85,13 +107,16 @@ export function createResilientFetch(
 ): typeof undiciFetch {
   const resilient: typeof undiciFetch = async (input, init) => {
     const opts = { ...(init ?? {}), dispatcher };
+    // Default to GET (supabase-js omits `method` for SELECTs); only idempotent
+    // methods are eligible for the auto-retry (see RETRYABLE_METHODS).
+    const method = String((opts as { method?: unknown }).method ?? 'GET').toUpperCase();
     try {
       return await baseFetch(input, opts);
     } catch (err) {
-      if (isTransientConnectionError(err)) {
+      if (RETRYABLE_METHODS.has(method) && isTransientConnectionError(err)) {
         logger.warn(
-          { err: err instanceof Error ? err.message : String(err) },
-          'Supabase fetch transport failure — retrying once on a fresh socket (WH-1 / ARKOVA-WORKER-C)',
+          { err: err instanceof Error ? err.message : String(err), method },
+          'Supabase read transport failure — retrying once on a fresh socket (WH-1 / ARKOVA-WORKER-C)',
         );
         return await baseFetch(input, opts);
       }
@@ -182,13 +207,13 @@ export function isPoolerActive(): boolean {
 
 /** QA-PERF-3: Get connection mode info for /health and diagnostics */
 export function getConnectionInfo(): { mode: 'pooler' | 'direct'; url: string } {
+  // WH-2: report the ACTUAL applied state (poolerActive), not mere env presence.
+  // A rejected postgres:// pooler URL falls back to the direct REST base, so
+  // reporting 'pooler' off env alone would contradict isPoolerActive().
   const poolerUrl = process.env.SUPABASE_POOLER_URL;
-  return {
-    mode: poolerUrl ? 'pooler' : 'direct',
-    url: poolerUrl
-      ? poolerUrl.replace(/\/\/[^@]+@/, '//***@') // mask credentials
-      : config.supabaseUrl.replace(/\/\/[^@]+@/, '//***@'),
-  };
+  return poolerActive && poolerUrl
+    ? { mode: 'pooler', url: poolerUrl.replace(/\/\/[^@]+@/, '//***@') } // mask credentials
+    : { mode: 'direct', url: config.supabaseUrl.replace(/\/\/[^@]+@/, '//***@') };
 }
 
 // ─── ERR-1: Database Circuit Breaker ─────────────────────────────────
