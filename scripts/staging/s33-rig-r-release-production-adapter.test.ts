@@ -19,7 +19,7 @@ const artifact = `sha256:${'d'.repeat(64)}`;
 const now = '2026-07-16T18:00:00.000Z';
 const expiresAt = '2026-07-19T17:00:00.000Z';
 const confirmation =
-  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-16';
+  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-17';
 
 function admission(): Record<string, unknown> {
   const approval = {
@@ -38,13 +38,13 @@ function admission(): Record<string, unknown> {
       soakId: 's33-r-release-v6',
       leaseId: 'lease-s33-r-release',
       requiredWallMin: 2910,
-      vertexEndpointId: '733010',
-      vertexEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733010',
+      vertexEndpointId: '733011',
+      vertexEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733011',
       vertexEndpointDisplayName: 'arkova-s33-rig-r-release-v6',
       vertexModel: 'projects/270018525501/locations/us-central1/models/6611494259700793344',
       vertexModelVersion: 'projects/270018525501/locations/us-central1/models/6611494259700793344@1',
       checkpointId: '6',
-      deployedModelId: '7330101',
+      deployedModelId: '7330111',
       deployedModelDisplayName: 'arkova-s33-rig-r-release-v6',
       deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
       minReplicaCount: 1,
@@ -109,7 +109,9 @@ function admission(): Record<string, unknown> {
     critical_config: {
       enable_ai_extraction: 'true',
       enable_vertex_ai: 'true',
-      gemini_tuned_model: 'projects/arkova1/locations/us-central1/endpoints/733010',
+      db_enable_verification_api: 'true',
+      db_enable_ai_extraction: 'true',
+      gemini_tuned_model: 'projects/arkova1/locations/us-central1/endpoints/733011',
       gemini_v6_prompt: 'true',
       gemini_tuned_response_schema: '<unset>',
     },
@@ -136,9 +138,9 @@ function admission(): Record<string, unknown> {
       runtime_impersonation_role: 'roles/iam.serviceAccountTokenCreator',
       runtime_impersonation_member:
         'serviceAccount:270018525501-compute@developer.gserviceaccount.com',
-      vertex_endpoint: 'projects/arkova1/locations/us-central1/endpoints/733010',
+      vertex_endpoint: 'projects/arkova1/locations/us-central1/endpoints/733011',
       vertex_model: 'projects/270018525501/locations/us-central1/models/6611494259700793344',
-      deployed_model_id: '7330101',
+      deployed_model_id: '7330111',
       chain_mode: 'mocked',
       contained_database_queues: ['ai-rollback', 'chain-fault'],
       scheduler_jobs: [],
@@ -262,8 +264,13 @@ describe('RIG-R production release start', () => {
     expect(testPort.persistStartReceipt).not.toHaveBeenCalled();
   });
 
-  it('requires both release AI flags to be exact true in immutable admission', () => {
-    for (const flag of ['enable_ai_extraction', 'enable_vertex_ai'] as const) {
+  it('requires both revision flags and both DB gates to be exact true in immutable admission', () => {
+    for (const flag of [
+      'enable_ai_extraction',
+      'enable_vertex_ai',
+      'db_enable_verification_api',
+      'db_enable_ai_extraction',
+    ] as const) {
       const altered = admission();
       const criticalConfig = altered.critical_config as Record<string, unknown>;
       criticalConfig[flag] = 'false';

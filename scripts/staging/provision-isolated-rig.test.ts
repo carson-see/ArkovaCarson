@@ -512,6 +512,98 @@ wait_for_rig_r_runtime_ingress_readiness
     })).toThrow();
   });
 
+  it('enables and independently reads back only the two isolated RIG-R DB gates', () => {
+    const seedPath = resolve(here, 'seed-rig-r-release-switchboard.sql');
+    const seed = readFileSync(seedPath, 'utf8');
+    expect(seed).toMatch(/\('ENABLE_VERIFICATION_API', true,/u);
+    expect(seed).toMatch(/\('ENABLE_AI_EXTRACTION', true,/u);
+    expect(seed).toContain('ON CONFLICT (flag_key) DO UPDATE');
+    expect(seed.indexOf('COMMIT;')).toBeLessThan(seed.indexOf('DO $$'));
+    expect(seed).toContain('IF exact_enabled_count <> 2 THEN');
+    expect(seed).toContain('enabled IS TRUE');
+
+    expect(script).toContain(
+      'npx supabase db query --linked --file scripts/staging/seed-rig-r-release-switchboard.sql',
+    );
+    expect(script).toContain('ADMISSION_DB_ENABLE_VERIFICATION_API="true"');
+    expect(script).toContain('ADMISSION_DB_ENABLE_AI_EXTRACTION="true"');
+    expect(script).toContain('db_enable_verification_api: $db_enable_verification_api');
+    expect(script).toContain('db_enable_ai_extraction: $db_enable_ai_extraction');
+  });
+
+  it('proves both DB gates passed at the app boundary with one exact runtime-principal 401', () => {
+    const functionSource = script.match(
+      /^verify_rig_r_app_auth_boundary_pre_admission\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const root = mkdtempSync(join(tmpdir(), 'rig-r-app-auth-boundary-'));
+    stubDirs.push(root);
+    const calls = join(root, 'curl-count');
+    const curlStub = join(root, 'curl');
+    const runtimeToken = 'runtime-app-boundary-token-that-must-not-appear';
+    writeFileSync(curlStub, `#!/usr/bin/env bash
+set -euo pipefail
+count=0
+[[ ! -f '${calls}' ]] || count="$(/bin/cat '${calls}')"
+printf '%s' "$((count + 1))" > '${calls}'
+printf '%s\n%s' '{"error":"Supabase JWT authentication required for this endpoint"}' '401'
+`);
+    chmodSync(curlStub, 0o755);
+    const source = functionSource!.replace('/usr/bin/curl', `'${curlStub}'`);
+    const testScript = `set -euo pipefail
+IS_RIG_R=1
+CLOUD_RUN_SERVICE='arkova-worker-s33-r-staging'
+RUNTIME_SA='s33-rig-r-runtime@arkova1.iam.gserviceaccount.com'
+resolve_cloud_run_url_for_service() { printf '%s\n' 'https://exact-rig-r.run.app'; }
+gcloud() {
+  [[ "$1 $2" == 'auth print-identity-token' ]] || return 64
+  [[ "$*" == *'--impersonate-service-account=s33-rig-r-runtime@arkova1.iam.gserviceaccount.com'* ]] || return 65
+  [[ "$*" == *'--audiences=https://exact-rig-r.run.app'* ]] || return 66
+  printf '%s\n' '${runtimeToken}'
+}
+${source}
+verify_rig_r_app_auth_boundary_pre_admission
+`;
+    const out = execFileSync('bash', ['-c', testScript], { encoding: 'utf8' });
+    expect(out).toContain('missing app JWT returned exact app-level 401');
+    expect(readFileSync(calls, 'utf8')).toBe('1');
+    expect(out).not.toContain(runtimeToken);
+    expect(script).toContain('write_provision_state "rig_r_app_auth_boundary_ready" ""');
+  });
+
+  it('fails the one-shot app-boundary gate on the pre-fix global-gate 503', () => {
+    const functionSource = script.match(
+      /^verify_rig_r_app_auth_boundary_pre_admission\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const root = mkdtempSync(join(tmpdir(), 'rig-r-app-auth-boundary-503-'));
+    stubDirs.push(root);
+    const calls = join(root, 'curl-count');
+    const curlStub = join(root, 'curl');
+    writeFileSync(curlStub, `#!/usr/bin/env bash
+set -euo pipefail
+count=0
+[[ ! -f '${calls}' ]] || count="$(/bin/cat '${calls}')"
+printf '%s' "$((count + 1))" > '${calls}'
+printf '%s\n%s' '{"error":"Verification API is disabled"}' '503'
+`);
+    chmodSync(curlStub, 0o755);
+    const source = functionSource!.replace('/usr/bin/curl', `'${curlStub}'`);
+    const testScript = `set -euo pipefail
+IS_RIG_R=1
+CLOUD_RUN_SERVICE='arkova-worker-s33-r-staging'
+RUNTIME_SA='s33-rig-r-runtime@arkova1.iam.gserviceaccount.com'
+resolve_cloud_run_url_for_service() { printf '%s\n' 'https://exact-rig-r.run.app'; }
+gcloud() { printf '%s\n' 'memory-only-token'; }
+${source}
+verify_rig_r_app_auth_boundary_pre_admission
+`;
+    expect(() => execFileSync('bash', ['-c', testScript], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrow();
+    expect(readFileSync(calls, 'utf8')).toBe('1');
+  });
+
   it('reads both release AI flags from the deployed revision and rejects either flag when not true', () => {
     const observedValueSource = script.match(
       /^observed_revision_env_value\(\) \{[\s\S]*?^\}/mu,
@@ -612,7 +704,7 @@ printf '%s\n%s' "$(jq -c '.body' <<<"$line")" "$(jq -r '.httpStatus' <<<"$line")
 CLOUD_RUN_REGION='us-central1'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 ${source}
-probe_tuned_gemini_preclock '${accessToken}' '733010' 2>&1
+probe_tuned_gemini_preclock '${accessToken}' '733011' 2>&1
 code=$?
 printf '\nPROBE_EXIT=%s\n' "$code"
 exit 0
@@ -689,7 +781,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733010'
+parse_genie_deploy_operation_name "$raw" '733011'
 `;
     expect(execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }).trim()).toBe(
       'projects/270018525501/locations/us-central1/operations/123456',
@@ -710,7 +802,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733010'
+parse_genie_deploy_operation_name "$raw" '733011'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -727,8 +819,8 @@ parse_genie_deploy_operation_name "$raw" '733010'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733010/operations/123456"}'
-parse_genie_deploy_operation_name "$raw" '733010'
+raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733011/operations/123456"}'
+parse_genie_deploy_operation_name "$raw" '733011'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -745,8 +837,8 @@ parse_genie_deploy_operation_name "$raw" '733010'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733010/operations/not-numeric"}'
-parse_genie_deploy_operation_name "$raw" '733010'
+raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733011/operations/not-numeric"}'
+parse_genie_deploy_operation_name "$raw" '733011'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',

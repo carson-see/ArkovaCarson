@@ -135,9 +135,9 @@ RIG_R_RUNTIME_IMPERSONATION_MEMBER="serviceAccount:${RIG_R_OPERATOR_SA}"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
 RIG_R_CHECKPOINT_ID="6"
-RIG_R_ENDPOINT_ID="733010"
+RIG_R_ENDPOINT_ID="733011"
 RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
-RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330101"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330111"
 RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
@@ -2948,6 +2948,8 @@ ADMISSION_GEMINI_TUNED_RESPONSE_SCHEMA="<unset>"
 ADMISSION_NODE_ENV="production"
 ADMISSION_ENABLE_AI_EXTRACTION=""
 ADMISSION_ENABLE_VERTEX_AI=""
+ADMISSION_DB_ENABLE_VERIFICATION_API=""
+ADMISSION_DB_ENABLE_AI_EXTRACTION=""
 ADMISSION_ENABLE_AI_FRAUD="false"
 ADMISSION_ENABLE_AI_REPORTS="false"
 ADMISSION_FRONTEND_URL="$FRONTEND_URL_VALUE"
@@ -5053,6 +5055,49 @@ wait_for_rig_r_runtime_ingress_readiness() {
   return 1
 }
 
+verify_rig_r_app_auth_boundary_pre_admission() {
+  [[ $IS_RIG_R -eq 1 ]] || return 0
+  local service_url identity_token probe_result probe_body http_status
+
+  service_url="$(resolve_cloud_run_url_for_service "$CLOUD_RUN_SERVICE")"
+  identity_token="$(gcloud auth print-identity-token \
+    --impersonate-service-account="$RUNTIME_SA" \
+    --audiences="$service_url")" || {
+      echo "ERROR: could not obtain the exact RIG-R runtime token for app-boundary readiness." >&2
+      return 1
+    }
+  if [[ -z "$identity_token" ]]; then
+    echo "ERROR: exact RIG-R runtime app-boundary token was empty." >&2
+    return 1
+  fi
+
+  if ! probe_result="$(/usr/bin/curl --silent --show-error \
+    --connect-timeout 10 --max-time 20 \
+    --request POST "${service_url}/api/v1/ai/template" \
+    --header "X-Serverless-Authorization: Bearer ${identity_token}" \
+    --header 'Content-Type: application/json' \
+    --data-binary '{"fields":{},"confidence":1}' \
+    --write-out $'\n%{http_code}' 2>/dev/null)"; then
+    unset identity_token probe_result
+    echo "ERROR: RIG-R pre-admission app-auth readiness transport failed." >&2
+    return 1
+  fi
+  http_status="${probe_result##*$'\n'}"
+  probe_body="${probe_result%$'\n'*}"
+  if [[ "$http_status" != "401" ]] || ! jq -e '
+    type == "object"
+    and keys == ["error"]
+    and .error == "Supabase JWT authentication required for this endpoint"
+  ' >/dev/null 2>&1 <<<"$probe_body"; then
+    unset identity_token probe_result probe_body
+    echo "ERROR: RIG-R pre-admission app-auth boundary did not return the exact app-level 401." >&2
+    return 1
+  fi
+
+  unset identity_token probe_result probe_body
+  echo "# RIG-R pre-admission app-auth ready: DB gates passed and missing app JWT returned exact app-level 401."
+}
+
 g1_topology_json() {
   local _compatibility_project_ref="$1"
   if [[ $IS_G1_RIG -ne 1 ]]; then
@@ -5801,6 +5846,8 @@ emit_admission_json() {
     --arg node_env "$ADMISSION_NODE_ENV" \
     --arg enable_ai_extraction "$ADMISSION_ENABLE_AI_EXTRACTION" \
     --arg enable_vertex_ai "$ADMISSION_ENABLE_VERTEX_AI" \
+    --arg db_enable_verification_api "$ADMISSION_DB_ENABLE_VERIFICATION_API" \
+    --arg db_enable_ai_extraction "$ADMISSION_DB_ENABLE_AI_EXTRACTION" \
     --arg enable_ai_fraud "$ADMISSION_ENABLE_AI_FRAUD" \
     --arg enable_ai_reports "$ADMISSION_ENABLE_AI_REPORTS" \
     --arg frontend_url "$ADMISSION_FRONTEND_URL" \
@@ -5880,7 +5927,9 @@ emit_admission_json() {
         gemini_tuned_response_schema: $gemini_tuned_response_schema
       } + (if $rig_id == "RIG-R" then {
         enable_ai_extraction: $enable_ai_extraction,
-        enable_vertex_ai: $enable_vertex_ai
+        enable_vertex_ai: $enable_vertex_ai,
+        db_enable_verification_api: $db_enable_verification_api,
+        db_enable_ai_extraction: $db_enable_ai_extraction
       } else {} end)),
       scheduler: {
         applicable: $scheduler_applicable,
@@ -6451,6 +6500,19 @@ else
   run_cmd_with_db_password STAGING_NEW_SUPABASE_DB_PASSWORD "$SUPABASE_DB_PASSWORD" \
     npx supabase link --project-ref "$NEW_PROJECT_REF"
   run_cmd npx supabase db query --linked --file scripts/staging/seed-baseline-fixture.sql
+  if [[ $IS_RIG_R -eq 1 ]]; then
+    echo "#   RIG-R — enable and independently read back both DB gates required before JWT auth"
+    run_cmd npx supabase db query --linked --file scripts/staging/seed-rig-r-release-switchboard.sql
+    ADMISSION_DB_ENABLE_VERIFICATION_API="true"
+    ADMISSION_DB_ENABLE_AI_EXTRACTION="true"
+    if [[ $APPLY -eq 1 ]]; then
+      write_provision_state "rig_r_release_switchboard_verified" ""
+      verify_rig_r_app_auth_boundary_pre_admission
+      write_provision_state "rig_r_app_auth_boundary_ready" ""
+    else
+      echo "#   apply only: exact runtime principal POST /api/v1/ai/template without app JWT must return the exact app-level 401"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------
