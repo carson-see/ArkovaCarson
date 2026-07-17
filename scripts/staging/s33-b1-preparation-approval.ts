@@ -10,6 +10,10 @@ import {
   b1NoBroadcastPrepareRecoverySchema,
   type B1NoBroadcastPrepareRecovery,
 } from './s33-b1-no-broadcast-prepare-containment';
+import {
+  b1NoBroadcastSuccessorRecoverySchema,
+  type B1NoBroadcastSuccessorRecovery,
+} from './s33-b1-no-broadcast-successor-containment';
 
 const PUBLIC_KEY_PEM =
   '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAE+Ir2My5+bBwU73QkL73F7fiRteZ0V5yIAe41fD6MdU=\n-----END PUBLIC KEY-----\n';
@@ -58,6 +62,7 @@ const payloadSchema = z.object({
     relevantFilesSha256: sha256,
   }).strict().optional(),
   noBroadcastPrepareRecovery: b1NoBroadcastPrepareRecoverySchema.optional(),
+  noBroadcastPrepareSuccessorRecovery: b1NoBroadcastSuccessorRecoverySchema.optional(),
   run: z.object({
     rigName: z.literal(B1_SCHEDULER_START_CONTRACT.rigName),
     soakId: boundedId,
@@ -80,12 +85,25 @@ const payloadSchema = z.object({
       message: 'RIG-B1 PREPARE continuity and controller bindings must be present together.',
     });
   }
-  if (payload.noBroadcastPrepareRecovery !== undefined
+  if (payload.noBroadcastPrepareSuccessorRecovery === undefined
+    && payload.noBroadcastPrepareRecovery !== undefined
     && payload.noBroadcastPrepareRecovery.successorPreparationId !== payload.preparationId) {
     context.addIssue({
       code: 'custom',
       path: ['noBroadcastPrepareRecovery', 'successorPreparationId'],
       message: 'RIG-B1 PREPARE id differs from its one-successor containment authority.',
+    });
+  }
+  if (payload.noBroadcastPrepareSuccessorRecovery !== undefined
+    && (payload.noBroadcastPrepareRecovery === undefined
+      || JSON.stringify(payload.noBroadcastPrepareSuccessorRecovery.priorRecovery)
+        !== JSON.stringify(payload.noBroadcastPrepareRecovery)
+      || payload.noBroadcastPrepareSuccessorRecovery.successorPreparationId
+        !== payload.preparationId)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['noBroadcastPrepareSuccessorRecovery'],
+      message: 'RIG-B1 PREPARE id or prior recovery differs from its second containment chain.',
     });
   }
 });
@@ -120,6 +138,7 @@ export interface VerifiedB1PreparationAuthority {
   readonly controllerSourceTreeSha?: string;
   readonly controllerRelevantFilesSha256?: string;
   readonly noBroadcastPrepareRecovery?: B1NoBroadcastPrepareRecovery;
+  readonly noBroadcastPrepareSuccessorRecovery?: B1NoBroadcastSuccessorRecovery;
   readonly rigName: string;
   readonly soakId: string;
   readonly leaseId: string;
@@ -233,6 +252,12 @@ class Ed25519B1PreparationAuthorityVerifier implements B1PreparationAuthorityVer
       ...(payload.noBroadcastPrepareRecovery === undefined
         ? {}
         : { noBroadcastPrepareRecovery: payload.noBroadcastPrepareRecovery }),
+      ...(payload.noBroadcastPrepareSuccessorRecovery === undefined
+        ? {}
+        : {
+          noBroadcastPrepareSuccessorRecovery:
+            payload.noBroadcastPrepareSuccessorRecovery,
+        }),
       rigName: payload.run.rigName,
       soakId: payload.run.soakId,
       leaseId: payload.run.leaseId,

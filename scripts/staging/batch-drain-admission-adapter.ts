@@ -27,6 +27,11 @@ import {
   b1NoBroadcastPrepareRecoverySchema,
   type B1NoBroadcastPrepareRecovery,
 } from './s33-b1-no-broadcast-prepare-containment';
+import {
+  assertB1NoBroadcastRecoveryChain,
+  b1NoBroadcastSuccessorRecoverySchema,
+  type B1NoBroadcastSuccessorRecovery,
+} from './s33-b1-no-broadcast-successor-containment';
 
 const nonEmpty = z.string().min(1);
 const sha256 = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -171,6 +176,7 @@ const admissionV2Schema = z.object({
   infrastructure: rigB1InfrastructureSchema,
   treasury_continuity: b1TreasuryContinuitySchema.optional(),
   no_broadcast_prepare_recovery: b1NoBroadcastPrepareRecoverySchema.optional(),
+  no_broadcast_prepare_successor_recovery: b1NoBroadcastSuccessorRecoverySchema.optional(),
   driver_path: nonEmpty,
   driver_sha256: sha256Hex,
   changed_behavior: nonEmpty,
@@ -214,6 +220,7 @@ export interface PreClockAdmissionIdentity {
   readonly infrastructure: RigB1Infrastructure;
   readonly treasuryContinuity?: B1TreasuryContinuity;
   readonly noBroadcastPrepareRecovery?: B1NoBroadcastPrepareRecovery;
+  readonly noBroadcastPrepareSuccessorRecovery?: B1NoBroadcastSuccessorRecovery;
 }
 
 const DECLARATION_BY_ADMISSION_HANDLE = new WeakMap<AdmissionBoundRunDeclaration, RunDeclaration>();
@@ -312,6 +319,15 @@ function assertAdmissionInvariants(admission: AdmissionV2 | PreClockAdmissionV2)
   const continuity = admission.treasury_continuity;
   if (admission.no_broadcast_prepare_recovery !== undefined && continuity === undefined) {
     throw new Error('Admission v2 no-broadcast PREPARE recovery requires treasury continuity.');
+  }
+  if (admission.no_broadcast_prepare_successor_recovery !== undefined) {
+    if (admission.no_broadcast_prepare_recovery === undefined || continuity === undefined) {
+      throw new Error('Admission v2 second no-broadcast recovery requires its prior chain and continuity.');
+    }
+    assertB1NoBroadcastRecoveryChain(
+      admission.no_broadcast_prepare_recovery,
+      admission.no_broadcast_prepare_successor_recovery,
+    );
   }
   if (continuity !== undefined && (
     continuity.originalProvision.sourceHeadSha !== admission.sha
@@ -413,6 +429,12 @@ export function projectAdmissionV2ToPreClockIdentity(
     ...(admission.no_broadcast_prepare_recovery === undefined
       ? {}
       : { noBroadcastPrepareRecovery: admission.no_broadcast_prepare_recovery }),
+    ...(admission.no_broadcast_prepare_successor_recovery === undefined
+      ? {}
+      : {
+        noBroadcastPrepareSuccessorRecovery:
+          admission.no_broadcast_prepare_successor_recovery,
+      }),
   });
   const handle = deepFreeze<PreClockAdmissionBoundIdentity>({
     admissionSha256: createHash('sha256').update(admissionRaw as string).digest('hex'),

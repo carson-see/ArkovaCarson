@@ -19,6 +19,7 @@ import {
   proveB1WifChallenge,
   projectB1FundedProbeRouting,
   requireExactB1ServiceRouting,
+  sanitizeB1ChildStderr,
   type B1PreclockCollectorPort,
 } from './s33-b1-scheduler-preclock-production-adapter';
 import { buildB1SchedulerStartPreclockArtifact } from './s33-b1-scheduler-start-driver';
@@ -610,6 +611,7 @@ interface TestCollectorState {
   funded: number;
   schedulerObservations: number;
   coreObservations: number;
+  healthWarms: number;
   readonly leaseInputs: Array<Readonly<{
     preparationId: string;
     expiresAt: string;
@@ -661,6 +663,7 @@ function liveCollectorPort(
     funded: 0,
     schedulerObservations: 0,
     coreObservations: 0,
+    healthWarms: 0,
     leaseInputs: [],
     operations: [],
     locked,
@@ -825,6 +828,12 @@ function liveCollectorPort(
         observedAt: OBSERVED_AT,
       };
     },
+    warmTaggedHealth: async ({ canonicalAudience, taggedBaseUrl }) => {
+      expect(canonicalAudience).toBe(admission.tag_url);
+      expect(taggedBaseUrl).toBe(admission.tag_url);
+      testState.healthWarms += 1;
+      testState.operations.push('warm-tagged-health');
+    },
     runFundedProbe: async () => {
       testState.funded += 1;
       testState.operations.push('funded-probe');
@@ -866,6 +875,7 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
     });
     expect(port.testState.funded).toBe(1);
     expect(port.testState.installed).toBe(1);
+    expect(port.testState.healthWarms).toBe(1);
     expect(port.testState.removed).toBe(1);
     expect(port.testState.leaseInputs).toEqual([{
       preparationId: 'test-only-preclock',
@@ -874,6 +884,9 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
     }]);
     expect(port.testState.operations.indexOf('install-lease'))
       .toBeLessThan(port.testState.operations.indexOf('funded-probe'));
+    const intentPersist = port.testState.operations.findIndex((operation) =>
+      operation.includes('/preparation-intents/'));
+    expect(port.testState.operations.indexOf('warm-tagged-health')).toBeLessThan(intentPersist);
     expect(port.testState.operations.indexOf('funded-probe'))
       .toBeLessThan(port.testState.operations.indexOf('remove-lease'));
     expect([...port.testState.locked.keys()].filter((uri) => uri.includes('/preparation-intents/')))
@@ -1245,5 +1258,15 @@ describe('RIG-B1 production pre-clock collector boundary', () => {
       ...input,
       idempotencyKey: `sha256:${'8'.repeat(64)}`,
     })).not.toBe(first);
+  });
+
+  it('surfaces bounded child stderr while redacting credential-shaped values', () => {
+    const diagnostic = sanitizeB1ChildStderr(
+      `route unavailable\nAuthorization: Bearer abc.def.ghi\nWIF=private-value\n${'x'.repeat(3_000)}`,
+    );
+    expect(diagnostic).toContain('route unavailable');
+    expect(diagnostic).toContain('[REDACTED]');
+    expect(diagnostic).not.toContain('private-value');
+    expect(diagnostic.length).toBeLessThanOrEqual(2_048);
   });
 });

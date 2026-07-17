@@ -69,6 +69,13 @@ import {
   type B1NoBroadcastPrepareRecovery,
   type VerifiedB1NoBroadcastPrepareContainment,
 } from './s33-b1-no-broadcast-prepare-containment';
+import {
+  assertB1NoBroadcastRecoveryChain,
+  b1NoBroadcastSuccessorRecoverySchema,
+  createProductionB1NoBroadcastSuccessorContainmentVerifier,
+  type B1NoBroadcastSuccessorRecovery,
+  type VerifiedB1NoBroadcastSuccessorContainment,
+} from './s33-b1-no-broadcast-successor-containment';
 
 const VM = 'arkova-s33-rig-b1-bitcoin-core-signet';
 const ZONE = 'us-central1-a';
@@ -128,6 +135,7 @@ const admissionSchema = z.object({
   cloud_run_service: z.literal(B1_SCHEDULER_START_CONTRACT.workerService),
   treasury_continuity: b1TreasuryContinuitySchema.optional(),
   no_broadcast_prepare_recovery: b1NoBroadcastPrepareRecoverySchema.optional(),
+  no_broadcast_prepare_successor_recovery: b1NoBroadcastSuccessorRecoverySchema.optional(),
   infrastructure: z.object({
     authority: z.object({
       approvalId: z.string().min(1),
@@ -250,6 +258,12 @@ export interface B1PreclockCollectorPort {
     intent: B1LockedObject;
     verificationTime: Date;
   }>): VerifiedB1NoBroadcastPrepareContainment;
+  verifyNoBroadcastSuccessorContainment?(input: Readonly<{
+    recovery: B1NoBroadcastSuccessorRecovery;
+    containment: B1LockedObject;
+    intent: B1LockedObject;
+    verificationTime: Date;
+  }>): VerifiedB1NoBroadcastSuccessorContainment;
   observeInvocationLeaseAbsent?(preparationId: string): Promise<boolean>;
   hasLockedObject(uri: string): Promise<boolean>;
   readLockedObject(uri: string, generation?: string): Promise<B1LockedObject>;
@@ -277,6 +291,10 @@ export interface B1PreclockCollectorPort {
     secret: { secretName: string; version: string };
     challengeSha256: string;
   }>): Promise<B1SignerChallengeObservation>;
+  warmTaggedHealth(input: Readonly<{
+    canonicalAudience: string;
+    taggedBaseUrl: string;
+  }>): Promise<void>;
   runFundedProbe(input: Readonly<{
     admission: z.infer<typeof admissionSchema>;
     revision: z.infer<typeof revisionSchema>;
@@ -527,7 +545,9 @@ function authorizeFromVerifiedPreparation(
         || verified.controllerRelevantFilesSha256
           !== continuity.controllerCandidate.relevantFilesSha256)
     || JSON.stringify(verified.noBroadcastPrepareRecovery)
-      !== JSON.stringify(collectorAdmission.no_broadcast_prepare_recovery)) {
+      !== JSON.stringify(collectorAdmission.no_broadcast_prepare_recovery)
+    || JSON.stringify(verified.noBroadcastPrepareSuccessorRecovery)
+      !== JSON.stringify(collectorAdmission.no_broadcast_prepare_successor_recovery)) {
     throw new Error('RIG-B1 signed PREPARE authority does not bind the exact admission/plan/provision authority.');
   }
   const handle = Object.freeze<B1PreclockMutationAuthorization>({ preparationId: verified.preparationId });
@@ -620,6 +640,10 @@ export function authorizeB1PreclockMutationForTest(
     }),
     ...(collectorAdmission.no_broadcast_prepare_recovery === undefined ? {} : {
       noBroadcastPrepareRecovery: collectorAdmission.no_broadcast_prepare_recovery,
+    }),
+    ...(collectorAdmission.no_broadcast_prepare_successor_recovery === undefined ? {} : {
+      noBroadcastPrepareSuccessorRecovery:
+        collectorAdmission.no_broadcast_prepare_successor_recovery,
     }),
     ...overrides,
   });
@@ -962,11 +986,16 @@ export async function collectB1SchedulerPreclockArtifact(
   );
   if (priorIntentPresent) {
     const recovery = admission.no_broadcast_prepare_recovery;
+    const successorRecovery = admission.no_broadcast_prepare_successor_recovery;
     if (recovery === undefined
       || authorized.authority.noBroadcastPrepareRecovery === undefined
       || JSON.stringify(recovery)
         !== JSON.stringify(authorized.authority.noBroadcastPrepareRecovery)
-      || recovery.successorPreparationId !== preparationId
+      || JSON.stringify(successorRecovery)
+        !== JSON.stringify(authorized.authority.noBroadcastPrepareSuccessorRecovery)
+      || (successorRecovery === undefined
+        ? recovery.successorPreparationId !== preparationId
+        : successorRecovery.successorPreparationId !== preparationId)
       || verifiedContinuity === undefined) {
       throw new Error(
         'RIG-B1 successor PREPARE lacks the exact signed no-broadcast containment binding.',
@@ -1001,8 +1030,44 @@ export async function collectB1SchedulerPreclockArtifact(
         verificationTime: port.now(),
       });
     }
+    if (successorRecovery !== undefined) {
+      assertB1NoBroadcastRecoveryChain(recovery, successorRecovery);
+      if (!await port.hasLockedObject(successorRecovery.failedPreparation.intent.objectUri)
+        || await port.hasLockedObject(successorRecovery.failedPreparation.outcomeObjectUri)) {
+        throw new Error('RIG-B1 second contained PREPARE is not an immutable no-outcome intent.');
+      }
+      if (port.observeInvocationLeaseAbsent === undefined
+        || !await port.observeInvocationLeaseAbsent(
+          successorRecovery.failedPreparation.preparationId,
+        )) {
+        throw new Error('RIG-B1 second contained PREPARE invocation lease is not observably absent.');
+      }
+      const [successorIntent, successorContainment] = await Promise.all([
+        port.readLockedObject(
+          successorRecovery.failedPreparation.intent.objectUri,
+          successorRecovery.failedPreparation.intent.generation,
+        ),
+        port.readLockedObject(
+          successorRecovery.containment.objectUri,
+          successorRecovery.containment.generation,
+        ),
+      ]);
+      const verifyInput = {
+        recovery: successorRecovery,
+        containment: successorContainment,
+        intent: successorIntent,
+        verificationTime: port.now(),
+      };
+      if (port.verifyNoBroadcastSuccessorContainment === undefined) {
+        createProductionB1NoBroadcastSuccessorContainmentVerifier().verify(verifyInput);
+      } else {
+        port.verifyNoBroadcastSuccessorContainment(verifyInput);
+      }
+    }
   } else if (admission.no_broadcast_prepare_recovery !== undefined
-    || authorized.authority.noBroadcastPrepareRecovery !== undefined) {
+    || authorized.authority.noBroadcastPrepareRecovery !== undefined
+    || admission.no_broadcast_prepare_successor_recovery !== undefined
+    || authorized.authority.noBroadcastPrepareSuccessorRecovery !== undefined) {
     throw new Error('RIG-B1 no-broadcast recovery names a missing immutable PREPARE intent.');
   }
 
@@ -1133,6 +1198,13 @@ export async function collectB1SchedulerPreclockArtifact(
     splitTransactionId: treasury.splitTransactionId,
   });
   assertCollectorCoreBindings(admission, planInput, core);
+  // Warm only the non-mutating health route before consuming the one-shot
+  // authority by persisting an intent. The OIDC audience remains canonical;
+  // only HTTP routing uses the admitted traffic tag.
+  await port.warmTaggedHealth({
+    canonicalAudience: preProbeRevision.serviceUrl,
+    taggedBaseUrl: preProbeRevision.fundedProbeUrl,
+  });
   const mutationNow = port.now();
   assertSamePreparationAuthority(authority, authorized.reverify(mutationNow));
   if (authorized.confirmation.provided !== authorized.confirmation.expected) {
@@ -1351,8 +1423,30 @@ async function runProcess(
 }
 
 function requireProcess(result: ProcessResult, label: string): string {
-  if (!result.ok) throw new Error(`${label} failed.`);
+  if (!result.ok) {
+    const diagnostic = sanitizeB1ChildStderr(result.stderr);
+    throw new Error(`${label} failed${diagnostic.length === 0 ? '.' : `: ${diagnostic}`}`);
+  }
   return result.stdout;
+}
+
+/** Bounded phase diagnostics without stdout or credential-shaped values. */
+export function sanitizeB1ChildStderr(raw: string): string {
+  const printable = Array.from(raw, (character) => {
+    const code = character.charCodeAt(0);
+    return (code < 32 && character !== '\n' && character !== '\r' && character !== '\t')
+      || code === 127 ? ' ' : character;
+  }).join('');
+  return printable
+    .replace(/\bBearer\s+\S+/giu, 'Bearer [REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, '[REDACTED_JWT]')
+    .replace(/\b(?:password|secret|token|wif|api[_-]?key|service[_-]?role)\s*[=:]\s*\S+/giu,
+      (match) => `${match.slice(0, Math.max(match.search(/[=:]/u), 0) + 1)}[REDACTED]`)
+    .replace(/\b[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{48,64}\b/gu,
+      '[REDACTED_KEY_MATERIAL]')
+    .replace(/\b[A-Za-z0-9_+/=-]{65,}\b/gu, '[REDACTED_LONG_VALUE]')
+    .trim()
+    .slice(0, 2_048);
 }
 
 function secretMapFromRevision(raw: string): z.infer<typeof revisionSchema>['secrets'] {
@@ -1644,6 +1738,43 @@ class ProductionB1PreclockCollector implements B1PreclockCollectorPort {
       ...proof,
       observedAt: this.now().toISOString(),
     };
+  }
+
+  async warmTaggedHealth(input: Readonly<{
+    canonicalAudience: string;
+    taggedBaseUrl: string;
+  }>): Promise<void> {
+    const routing = projectB1FundedProbeRouting({
+      serviceUrl: input.canonicalAudience,
+      fundedProbeUrl: input.taggedBaseUrl,
+    });
+    const identityToken = requireProcess(await runProcess(B1_GCLOUD_BINARY, [
+      'auth', 'print-identity-token',
+      `--impersonate-service-account=${B1_SCHEDULER_START_CONTRACT.schedulerOidcServiceAccount}`,
+      `--audiences=${routing.identityAudience}`, '--include-email',
+    ]), 'RIG-B1 warm-up OIDC token').trim();
+    const healthUrl = new URL('/health', routing.apiBase).toString();
+    let lastStatus: number | undefined;
+    let lastFailure: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const response = await fetch(healthUrl, {
+          method: 'GET',
+          headers: { authorization: `Bearer ${identityToken}` },
+          redirect: 'error',
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
+        lastStatus = response.status;
+        if (response.ok) return;
+      } catch (error) {
+        lastFailure = error;
+      }
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    const suffix = lastStatus === undefined
+      ? sanitizeB1ChildStderr(lastFailure instanceof Error ? lastFailure.message : 'transport failure')
+      : `HTTP ${lastStatus}`;
+    throw new Error(`RIG-B1 tagged GET /health warm-up failed after three bounded attempts: ${suffix}`);
   }
 
   async runFundedProbe(input: Readonly<{
