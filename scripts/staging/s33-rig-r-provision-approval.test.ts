@@ -39,19 +39,23 @@ const sourceHeadImageRef =
   `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:${sourceHeadSha}@${imageDigest}`;
 const teardownSha256 = `sha256:${'d'.repeat(64)}`;
 const placeholderProvisionArtifactSha256 = `sha256:${'e'.repeat(64)}`;
-const vertexEndpointId = '733004';
+const vertexEndpointId = '733005';
 const vertexEndpoint = `projects/arkova1/locations/us-central1/endpoints/${vertexEndpointId}`;
 const vertexEndpointDisplayName = 'arkova-s33-rig-r-release-v6';
 const protectedV6Model =
   'projects/270018525501/locations/us-central1/models/6611494259700793344';
 const protectedV6ModelVersion = `${protectedV6Model}@1`;
 const checkpointId = '6';
-const deployedModelId = '7330041';
+const deployedModelId = '7330051';
 const deployedModelDisplayName = vertexEndpointDisplayName;
 const deploymentResourcesMode = 'TUNED_GEMINI_AUTOMATIC_RESOURCES';
 const endpointIamRole = 'roles/aiplatform.endpointUser';
 const endpointIamMember =
   'serviceAccount:s33-rig-r-runtime@arkova1.iam.gserviceaccount.com';
+const runtimeImpersonatorServiceAccount =
+  '270018525501-compute@developer.gserviceaccount.com';
+const runtimeImpersonationRole = 'roles/iam.serviceAccountTokenCreator';
+const runtimeImpersonationMember = `serviceAccount:${runtimeImpersonatorServiceAccount}`;
 const rigRSecretReferences = {
   supabaseUrl: 'supabase-url-s33-r-staging@1',
   supabaseServiceRoleKey: 'supabase-service-role-key-s33-r-staging@1',
@@ -92,6 +96,9 @@ const expectedBinding = () => ({
   maxReplicaCount: 1,
   endpointIamRole,
   endpointIamMember,
+  runtimeImpersonatorServiceAccount,
+  runtimeImpersonationRole,
+  runtimeImpersonationMember,
   provisionStartedAt: '2026-07-16T14:00:00Z',
   expiresAt: '2026-07-19T00:00:00Z',
   teardownScriptSha256: teardownSha256,
@@ -131,6 +138,9 @@ function record(overrides: Record<string, unknown> = {}) {
       supabasePostgresMajor: 17,
       cloudRunService: 'arkova-worker-s33-r-staging',
       runtimeServiceAccount: 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
+      runtimeImpersonatorServiceAccount,
+      runtimeImpersonationRole,
+      runtimeImpersonationMember,
       generatedSecretNames: [
         'supabase-url-s33-r-staging',
         'supabase-service-role-key-s33-r-staging',
@@ -292,6 +302,14 @@ describe('RIG-R immutable provision approval verifier', () => {
       { ...expectedBinding(), leaseId: 'another-lease' },
       new Date('2026-07-16T14:05:00Z'),
     )).toThrow(/execution|lease/i);
+    expect(() => verifier.verify(
+      envelope(),
+      {
+        ...expectedBinding(),
+        runtimeImpersonationMember: 'serviceAccount:shadow@arkova1.iam.gserviceaccount.com',
+      },
+      new Date('2026-07-16T14:05:00Z'),
+    )).toThrow(/topology|impersonation|operator/i);
     expect(() => verifier.verify(
       envelope(),
       {

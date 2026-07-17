@@ -40,12 +40,12 @@ const PROTECTED_V6_MODEL =
   'projects/270018525501/locations/us-central1/models/6611494259700793344';
 const PROTECTED_V6_MODEL_VERSION = `${PROTECTED_V6_MODEL}@1`;
 const TEMPORARY_ENDPOINT = Object.freeze({
-  id: '733004',
-  resource: 'projects/arkova1/locations/us-central1/endpoints/733004',
+  id: '733005',
+  resource: 'projects/arkova1/locations/us-central1/endpoints/733005',
   displayName: 'arkova-s33-rig-r-release-v6',
   modelVersionResource: PROTECTED_V6_MODEL_VERSION,
   checkpointId: '6',
-  deployedModelId: '7330041',
+  deployedModelId: '7330051',
   deployedModelDisplayName: 'arkova-s33-rig-r-release-v6',
   deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
   minReplicaCount: 1,
@@ -53,6 +53,11 @@ const TEMPORARY_ENDPOINT = Object.freeze({
   endpointIamRole: 'roles/aiplatform.endpointUser',
   endpointIamMember:
     'serviceAccount:s33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
+});
+const RUNTIME_IMPERSONATION = Object.freeze({
+  operatorServiceAccount: '270018525501-compute@developer.gserviceaccount.com',
+  role: 'roles/iam.serviceAccountTokenCreator',
+  member: 'serviceAccount:270018525501-compute@developer.gserviceaccount.com',
 });
 const TEARDOWN_PATH = 'scripts/staging/teardown-isolated-rig.sh';
 const GENERATED_SECRET_NAMES = Object.freeze([
@@ -280,7 +285,8 @@ function parseTopology(value, label = 'RIG-R approval topology') {
     'rigId', 'rigName', 'rigProfile', 'tier', 'requiredWorkerUptimeMin',
     'requiredWallMin', 'gcpProjectId', 'gcpRegion', 'supabaseOrgId',
     'supabaseProjectName', 'supabaseRegion', 'supabasePostgresMajor',
-    'cloudRunService', 'runtimeServiceAccount', 'generatedSecretNames',
+    'cloudRunService', 'runtimeServiceAccount', 'runtimeImpersonatorServiceAccount',
+    'runtimeImpersonationRole', 'runtimeImpersonationMember', 'generatedSecretNames',
     'secretReferences', 'immutableLedger',
     'vertexEndpointId', 'vertexEndpoint', 'vertexEndpointDisplayName',
     'vertexModel', 'vertexModelVersion', 'checkpointId', 'deployedModelId',
@@ -329,6 +335,21 @@ function parseTopology(value, label = 'RIG-R approval topology') {
       topology.runtimeServiceAccount,
       's33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
       `${label}.runtimeServiceAccount`,
+    ),
+    runtimeImpersonatorServiceAccount: literal(
+      topology.runtimeImpersonatorServiceAccount,
+      RUNTIME_IMPERSONATION.operatorServiceAccount,
+      `${label}.runtimeImpersonatorServiceAccount`,
+    ),
+    runtimeImpersonationRole: literal(
+      topology.runtimeImpersonationRole,
+      RUNTIME_IMPERSONATION.role,
+      `${label}.runtimeImpersonationRole`,
+    ),
+    runtimeImpersonationMember: literal(
+      topology.runtimeImpersonationMember,
+      RUNTIME_IMPERSONATION.member,
+      `${label}.runtimeImpersonationMember`,
     ),
     generatedSecretNames: exactStringArray(
       topology.generatedSecretNames,
@@ -633,7 +654,8 @@ function parseExpectedBinding(value) {
     'vertexEndpointDisplayName', 'vertexModel', 'vertexModelVersion',
     'checkpointId', 'deployedModelId', 'deployedModelDisplayName',
     'deploymentResourcesMode', 'minReplicaCount', 'maxReplicaCount',
-    'endpointIamRole', 'endpointIamMember',
+    'endpointIamRole', 'endpointIamMember', 'runtimeImpersonatorServiceAccount',
+    'runtimeImpersonationRole', 'runtimeImpersonationMember',
     'provisionStartedAt', 'expiresAt', 'teardownScriptSha256',
     'secretReferences', 'immutableLedger',
   ], 'Expected RIG-R provision binding');
@@ -720,6 +742,21 @@ function parseExpectedBinding(value) {
       binding.endpointIamMember,
       TEMPORARY_ENDPOINT.endpointIamMember,
       'Expected RIG-R endpointIamMember',
+    ),
+    runtimeImpersonatorServiceAccount: literal(
+      binding.runtimeImpersonatorServiceAccount,
+      RUNTIME_IMPERSONATION.operatorServiceAccount,
+      'Expected RIG-R runtimeImpersonatorServiceAccount',
+    ),
+    runtimeImpersonationRole: literal(
+      binding.runtimeImpersonationRole,
+      RUNTIME_IMPERSONATION.role,
+      'Expected RIG-R runtimeImpersonationRole',
+    ),
+    runtimeImpersonationMember: literal(
+      binding.runtimeImpersonationMember,
+      RUNTIME_IMPERSONATION.member,
+      'Expected RIG-R runtimeImpersonationMember',
     ),
     provisionStartedAt: parseTimestamp(
       binding.provisionStartedAt,
@@ -875,6 +912,9 @@ class Ed25519RigRProvisionApprovalVerifier {
       || record.topology.maxReplicaCount !== expected.maxReplicaCount
       || record.topology.endpointIamRole !== expected.endpointIamRole
       || record.topology.endpointIamMember !== expected.endpointIamMember
+      || record.topology.runtimeImpersonatorServiceAccount !== expected.runtimeImpersonatorServiceAccount
+      || record.topology.runtimeImpersonationRole !== expected.runtimeImpersonationRole
+      || record.topology.runtimeImpersonationMember !== expected.runtimeImpersonationMember
       || canonicalize(record.topology.secretReferences) !== canonicalize(expected.secretReferences)
       || canonicalize(record.topology.immutableLedger) !== canonicalize(expected.immutableLedger)) {
       throw new Error('RIG-R approval topology does not match the exact runtime binding.');
@@ -987,6 +1027,9 @@ async function main() {
       'expected-max-replica-count': { type: 'string' },
       'expected-endpoint-iam-role': { type: 'string' },
       'expected-endpoint-iam-member': { type: 'string' },
+      'expected-runtime-impersonator-service-account': { type: 'string' },
+      'expected-runtime-impersonation-role': { type: 'string' },
+      'expected-runtime-impersonation-member': { type: 'string' },
       'expected-provision-started-at': { type: 'string' },
       'expected-expires-at': { type: 'string' },
       'expected-teardown-script-sha256': { type: 'string' },
@@ -1041,6 +1084,10 @@ async function main() {
     maxReplicaCount,
     endpointIamRole: args.values['expected-endpoint-iam-role'],
     endpointIamMember: args.values['expected-endpoint-iam-member'],
+    runtimeImpersonatorServiceAccount:
+      args.values['expected-runtime-impersonator-service-account'],
+    runtimeImpersonationRole: args.values['expected-runtime-impersonation-role'],
+    runtimeImpersonationMember: args.values['expected-runtime-impersonation-member'],
     provisionStartedAt: args.values['expected-provision-started-at'],
     expiresAt: args.values['expected-expires-at'],
     teardownScriptSha256: args.values['expected-teardown-script-sha256'],

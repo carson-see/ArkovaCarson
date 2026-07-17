@@ -315,6 +315,70 @@ grant_rig_r_runtime_project_role_with_propagation_retry '${role}'
     expect(readFileSync(failureCount, 'utf8')).toBe('1');
   });
 
+  it('binds only the frozen operator as Token Creator and rejects operator or membership drift', () => {
+    const assertSource = script.match(
+      /^assert_rig_r_frozen_operator_identity\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    const grantSource = script.match(
+      /^grant_rig_r_runtime_impersonation\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(assertSource).toBeDefined();
+    expect(grantSource).toBeDefined();
+    const operator = '270018525501-compute@developer.gserviceaccount.com';
+    const member = `serviceAccount:${operator}`;
+    const role = 'roles/iam.serviceAccountTokenCreator';
+    const runtimeSa = 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com';
+
+    const runCase = (active: string, members: string[]) => {
+      const root = mkdtempSync(join(tmpdir(), 'rig-r-token-creator-'));
+      stubDirs.push(root);
+      const log = join(root, 'gcloud.log');
+      writeFileSync(join(root, 'gcloud'), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> '${log}'
+if [[ "$1 $2" == 'auth list' ]]; then printf '%s\n' '${active}'; exit 0; fi
+if [[ "$1 $2 $3" == 'iam service-accounts add-iam-policy-binding' ]]; then exit 0; fi
+if [[ "$1 $2 $3" == 'iam service-accounts get-iam-policy' ]]; then
+  printf '%s\n' '${JSON.stringify({ bindings: [{ role, members }] })}'
+  exit 0
+fi
+exit 64
+`);
+      chmodSync(join(root, 'gcloud'), 0o755);
+      const testScript = `set -euo pipefail
+export PATH='${root}':"$PATH"
+IS_RIG_R=1
+RUNTIME_SA='${runtimeSa}'
+GCP_PROJECT='arkova1'
+RIG_R_OPERATOR_SA='${operator}'
+RIG_R_RUNTIME_IMPERSONATION_ROLE='${role}'
+RIG_R_RUNTIME_IMPERSONATION_MEMBER='${member}'
+${assertSource}
+${grantSource}
+grant_rig_r_runtime_impersonation
+`;
+      return { root, log, testScript };
+    };
+
+    const allowed = runCase(operator, [member]);
+    const out = execFileSync('bash', ['-c', allowed.testScript], { encoding: 'utf8' });
+    expect(out).toContain(`role=${role} member=${member}`);
+    expect(readFileSync(allowed.log, 'utf8')).toContain(
+      `iam service-accounts add-iam-policy-binding ${runtimeSa}`,
+    );
+
+    const wrongOperator = runCase('someone-else@arkova1.iam.gserviceaccount.com', [member]);
+    expect(() => execFileSync('bash', ['-c', wrongOperator.testScript], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrow();
+    expect(readFileSync(wrongOperator.log, 'utf8').trim().split('\n')).toHaveLength(1);
+
+    const extraMember = runCase(operator, [member, 'serviceAccount:shadow@arkova1.iam.gserviceaccount.com']);
+    expect(() => execFileSync('bash', ['-c', extraMember.testScript], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrow();
+  });
+
   it('dry-runs the exact service-scoped runtime invoker grant after deploy', () => {
     const sourceHead = execFileSync(REAL_GIT, ['-C', REPO_ROOT, 'rev-parse', 'HEAD'], {
       encoding: 'utf8',
@@ -400,7 +464,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733004'
+parse_genie_deploy_operation_name "$raw" '733005'
 `;
     expect(execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }).trim()).toBe(
       'projects/270018525501/locations/us-central1/operations/123456',
@@ -421,7 +485,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733004'
+parse_genie_deploy_operation_name "$raw" '733005'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -438,8 +502,8 @@ parse_genie_deploy_operation_name "$raw" '733004'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733004/operations/123456"}'
-parse_genie_deploy_operation_name "$raw" '733004'
+raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733005/operations/123456"}'
+parse_genie_deploy_operation_name "$raw" '733005'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -456,8 +520,8 @@ parse_genie_deploy_operation_name "$raw" '733004'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733004/operations/not-numeric"}'
-parse_genie_deploy_operation_name "$raw" '733004'
+raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733005/operations/not-numeric"}'
+parse_genie_deploy_operation_name "$raw" '733005'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',

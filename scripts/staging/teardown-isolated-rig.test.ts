@@ -70,6 +70,56 @@ delete_cloud_run_service_if_present 'arkova-worker-s33-r-staging'
       'run services list --project=arkova1 --region=us-central1 --format=json',
     ]);
   });
+
+  it('removes and proves the exact runtime impersonation grant absent before deleting the SA', () => {
+    const readSource = teardownSource.match(
+      /^rig_r_runtime_impersonation_members\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    const removeSource = teardownSource.match(
+      /^remove_rig_r_runtime_impersonation\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(readSource).toBeDefined();
+    expect(removeSource).toBeDefined();
+    const root = mkdtempSync(join(tmpdir(), 'rig-r-token-cleanup-'));
+    roots.push(root);
+    const gcloudLog = join(root, 'gcloud.log');
+    const gcloud = join(root, 'gcloud');
+    writeFileSync(gcloud, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> '${gcloudLog}'
+if [[ "$1 $2 $3" == 'iam service-accounts remove-iam-policy-binding' ]]; then exit 0; fi
+if [[ "$1 $2 $3" == 'iam service-accounts get-iam-policy' ]]; then
+  printf '%s\n' '{"bindings":[]}'
+  exit 0
+fi
+exit 99
+`);
+    chmodSync(gcloud, 0o755);
+    const testScript = `set -euo pipefail
+export PATH='${root}':"$PATH"
+APPLY=1
+RUNTIME_SA='s33-rig-r-runtime@arkova1.iam.gserviceaccount.com'
+GCP_PROJECT='arkova1'
+RIG_R_RUNTIME_IMPERSONATION_ROLE='roles/iam.serviceAccountTokenCreator'
+RIG_R_RUNTIME_IMPERSONATION_MEMBER='serviceAccount:270018525501-compute@developer.gserviceaccount.com'
+print_cmd() { :; }
+run_cmd() { "$@"; }
+${readSource}
+${removeSource}
+remove_rig_r_runtime_impersonation
+`;
+    const out = execFileSync('bash', ['-c', testScript], { encoding: 'utf8' });
+    expect(out).toContain('removed and proved absent');
+    const calls = readFileSync(gcloudLog, 'utf8').trim().split('\n');
+    expect(calls[0]).toContain('remove-iam-policy-binding');
+    expect(calls[0]).toContain('--role=roles/iam.serviceAccountTokenCreator');
+    expect(calls[0]).toContain(
+      '--member=serviceAccount:270018525501-compute@developer.gserviceaccount.com',
+    );
+    expect(calls[1]).toContain('get-iam-policy');
+    expect(teardownSource.lastIndexOf('remove_rig_r_runtime_impersonation\n'))
+      .toBeLessThan(teardownSource.lastIndexOf('gcloud iam service-accounts delete "$RUNTIME_SA"'));
+  });
 });
 
 const approvalId = 'b1-node-approval-teardown-fixture';

@@ -61,6 +61,11 @@ const binding = () => ({
   supabaseProjectName: 'arkova-soak-s33-r' as const,
   cloudRunService: 'arkova-worker-s33-r-staging' as const,
   runtimeServiceAccount: 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com' as const,
+  runtimeImpersonatorServiceAccount:
+    '270018525501-compute@developer.gserviceaccount.com' as const,
+  runtimeImpersonationRole: 'roles/iam.serviceAccountTokenCreator' as const,
+  runtimeImpersonationMember:
+    'serviceAccount:270018525501-compute@developer.gserviceaccount.com' as const,
   vertexEndpoint: endpoint,
   vertexModel: model,
   deployedModelId,
@@ -196,7 +201,7 @@ describe('RIG-R exact provision and teardown topology', () => {
     expect(() => validateS33RigRProvisionBinding({
       ...binding(),
       vertexEndpoint: RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackEndpoint,
-    })).toThrow(/vertexEndpoint|733004|protected.*rollback/i);
+    })).toThrow(/vertexEndpoint|733005|protected.*rollback/i);
   });
 });
 
@@ -218,7 +223,7 @@ describe('RIG-R release driver', () => {
     expect(() => validateS33RigRProvisionBinding({
       ...binding(),
       vertexEndpoint: RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackEndpoint,
-    })).toThrow(/vertexEndpoint|733004|protected.*rollback/i);
+    })).toThrow(/vertexEndpoint|733005|protected.*rollback/i);
     expect(() => validateS33RigRProvisionBinding({
       ...binding(),
       vertexModel: 'projects/arkova1/locations/us-central1/models/9000000000000000002',

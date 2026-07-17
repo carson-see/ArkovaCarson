@@ -129,12 +129,15 @@ RIG_R_NAME="s33-r"
 RIG_R_PROJECT_NAME="arkova-soak-s33-r"
 RIG_R_SERVICE="arkova-worker-s33-r-staging"
 RIG_R_RUNTIME_SA="s33-rig-r-runtime@arkova1.iam.gserviceaccount.com"
+RIG_R_OPERATOR_SA="270018525501-compute@developer.gserviceaccount.com"
+RIG_R_RUNTIME_IMPERSONATION_ROLE="roles/iam.serviceAccountTokenCreator"
+RIG_R_RUNTIME_IMPERSONATION_MEMBER="serviceAccount:${RIG_R_OPERATOR_SA}"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
 RIG_R_CHECKPOINT_ID="6"
-RIG_R_ENDPOINT_ID="733004"
+RIG_R_ENDPOINT_ID="733005"
 RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
-RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330041"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330051"
 RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
@@ -1433,6 +1436,9 @@ verify_rig_r_provision_approval_binding() {
     --expected-max-replica-count "$RIG_R_MAX_REPLICA_COUNT" \
     --expected-endpoint-iam-role "roles/aiplatform.endpointUser" \
     --expected-endpoint-iam-member "$endpoint_iam_member" \
+    --expected-runtime-impersonator-service-account "$RIG_R_OPERATOR_SA" \
+    --expected-runtime-impersonation-role "$RIG_R_RUNTIME_IMPERSONATION_ROLE" \
+    --expected-runtime-impersonation-member "$RIG_R_RUNTIME_IMPERSONATION_MEMBER" \
     --expected-provision-started-at "$RIG_R_PROVISION_STARTED_AT" \
     --expected-expires-at "$RIG_R_EXPIRES_AT" \
     --expected-teardown-script-sha256 "$DECLARED_RIG_R_TEARDOWN_SHA256" \
@@ -1467,6 +1473,9 @@ verify_rig_r_provision_approval_binding() {
     --arg deployed_model_display "$RIG_R_DEPLOYED_MODEL_DISPLAY_NAME" \
     --arg deployment_resources_mode "$RIG_R_DEPLOYMENT_RESOURCES_MODE" \
     --arg endpoint_iam_member "$endpoint_iam_member" \
+    --arg runtime_impersonator_sa "$RIG_R_OPERATOR_SA" \
+    --arg runtime_impersonation_role "$RIG_R_RUNTIME_IMPERSONATION_ROLE" \
+    --arg runtime_impersonation_member "$RIG_R_RUNTIME_IMPERSONATION_MEMBER" \
     --arg provision_started_at "$RIG_R_PROVISION_STARTED_AT" \
     --arg expires_at "$RIG_R_EXPIRES_AT" \
     --arg teardown_sha "$DECLARED_RIG_R_TEARDOWN_SHA256" \
@@ -1508,6 +1517,8 @@ verify_rig_r_provision_approval_binding() {
       and ((.candidate | keys | sort) == ([
         "checkpointId", "deployedModelDisplayName", "deployedModelId",
         "deploymentResourcesMode", "endpointIamMember", "endpointIamRole",
+        "runtimeImpersonatorServiceAccount", "runtimeImpersonationRole",
+        "runtimeImpersonationMember",
         "expiresAt", "imageDigest", "leaseId", "maxReplicaCount", "minReplicaCount",
         "immutableLedger", "provisionArtifactSha256", "provisionStartedAt", "requiredWallMin",
         "rigName", "rigProfile", "soakId", "sourceHeadImageRef", "sourceHeadSha",
@@ -1538,6 +1549,9 @@ verify_rig_r_provision_approval_binding() {
       and .candidate.maxReplicaCount == $max_replica_count
       and .candidate.endpointIamRole == "roles/aiplatform.endpointUser"
       and .candidate.endpointIamMember == $endpoint_iam_member
+      and .candidate.runtimeImpersonatorServiceAccount == $runtime_impersonator_sa
+      and .candidate.runtimeImpersonationRole == $runtime_impersonation_role
+      and .candidate.runtimeImpersonationMember == $runtime_impersonation_member
       and .candidate.provisionStartedAt == $provision_started_at
       and .candidate.expiresAt == $expires_at
       and .candidate.teardownScriptSha256 == $teardown_sha
@@ -1570,6 +1584,9 @@ verify_rig_r_provision_approval_binding() {
       and .topology.supabasePostgresMajor == 17
       and .topology.cloudRunService == "arkova-worker-s33-r-staging"
       and .topology.runtimeServiceAccount == "s33-rig-r-runtime@arkova1.iam.gserviceaccount.com"
+      and .topology.runtimeImpersonatorServiceAccount == $runtime_impersonator_sa
+      and .topology.runtimeImpersonationRole == $runtime_impersonation_role
+      and .topology.runtimeImpersonationMember == $runtime_impersonation_member
       and .topology.generatedSecretNames == ["supabase-url-s33-r-staging", "supabase-service-role-key-s33-r-staging"]
       and .topology.secretReferences == .candidate.secretReferences
       and .topology.immutableLedger == .candidate.immutableLedger
@@ -2338,6 +2355,49 @@ wait_for_rig_r_runtime_identity_visibility() {
   done
   echo "ERROR: RIG-R runtime service account did not become exactly visible within $((max_attempts * interval_seconds)) seconds; refusing project IAM binding." >&2
   return 1
+}
+
+assert_rig_r_frozen_operator_identity() {
+  [[ $IS_RIG_R -eq 1 ]] || return 0
+  local observed_active
+  if ! observed_active="$(gcloud auth list --filter='status:ACTIVE' --format='value(account)')"; then
+    echo "ERROR: RIG-R could not observe the active provisioning operator." >&2
+    return 1
+  fi
+  if [[ "$observed_active" != "$RIG_R_OPERATOR_SA" ]]; then
+    echo "ERROR: RIG-R active operator must be exactly '$RIG_R_OPERATOR_SA'; got '${observed_active:-<none-or-ambiguous>}'." >&2
+    return 1
+  fi
+  echo "# RIG-R frozen operator visible: $observed_active"
+}
+
+grant_rig_r_runtime_impersonation() {
+  [[ $IS_RIG_R -eq 1 ]] || return 0
+  local policy_json members_json
+  assert_rig_r_frozen_operator_identity
+  if ! gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" \
+    --project="$GCP_PROJECT" \
+    --member="$RIG_R_RUNTIME_IMPERSONATION_MEMBER" \
+    --role="$RIG_R_RUNTIME_IMPERSONATION_ROLE" \
+    --condition=None \
+    --quiet; then
+    echo "ERROR: RIG-R could not bind the exact operator to the temporary runtime identity." >&2
+    return 1
+  fi
+  if ! policy_json="$(gcloud iam service-accounts get-iam-policy "$RUNTIME_SA" \
+    --project="$GCP_PROJECT" --format=json)"; then
+    echo "ERROR: RIG-R could not read back temporary runtime impersonation IAM." >&2
+    return 1
+  fi
+  if ! members_json="$(jq -cer \
+    --arg role "$RIG_R_RUNTIME_IMPERSONATION_ROLE" \
+    '[.bindings[]? | select(.role == $role) | .members[]?] | sort | unique' \
+    <<<"$policy_json")" \
+    || [[ "$members_json" != "[\"${RIG_R_RUNTIME_IMPERSONATION_MEMBER}\"]" ]]; then
+    echo "ERROR: RIG-R runtime impersonation IAM is not the one exact authority-bound operator." >&2
+    return 1
+  fi
+  echo "# RIG-R runtime impersonation visible: role=$RIG_R_RUNTIME_IMPERSONATION_ROLE member=$RIG_R_RUNTIME_IMPERSONATION_MEMBER"
 }
 
 grant_rig_r_runtime_project_role_with_propagation_retry() {
@@ -5057,6 +5117,9 @@ rig_r_topology_json() {
     --arg vertex_model "$RIG_R_VERTEX_MODEL" \
     --arg deployed_model_id "$RIG_R_DEPLOYED_MODEL_ID" \
     --arg runtime_service_account "$RUNTIME_SA" \
+    --arg runtime_impersonator_service_account "$RIG_R_OPERATOR_SA" \
+    --arg runtime_impersonation_role "$RIG_R_RUNTIME_IMPERSONATION_ROLE" \
+    --arg runtime_impersonation_member "$RIG_R_RUNTIME_IMPERSONATION_MEMBER" \
     --arg supabase_project_ref "$supabase_project_ref" \
     --arg lease_id "$LEASE_ID" \
     --arg lease_uri "$RIG_R_LEASE_URI" \
@@ -5092,6 +5155,9 @@ rig_r_topology_json() {
         supabase_project_ref: $supabase_project_ref,
         cloud_run_service: "arkova-worker-s33-r-staging",
         runtime_service_account: $runtime_service_account,
+        runtime_impersonator_service_account: $runtime_impersonator_service_account,
+        runtime_impersonation_role: $runtime_impersonation_role,
+        runtime_impersonation_member: $runtime_impersonation_member,
         secret_references: {
           supabase_url: $supabase_url_secret,
           supabase_service_role_key: $supabase_service_role_secret,
@@ -5745,6 +5811,7 @@ if [[ $APPLY -eq 1 ]]; then
   # cleanup block, including failures during either G1 deploy or verification.
   write_provision_state "pre_mutation_cleanup_plan_persisted" ""
   if [[ $IS_RIG_R -eq 1 ]]; then
+    assert_rig_r_frozen_operator_identity
     if gcloud iam service-accounts describe "$RUNTIME_SA" \
       --project="$GCP_PROJECT" >/dev/null 2>&1; then
       echo "ERROR: RIG-R runtime service account already exists; refusing ownership ambiguity." >&2
@@ -5757,6 +5824,8 @@ if [[ $APPLY -eq 1 ]]; then
     CREATED_RUNTIME_SA=1
     wait_for_rig_r_runtime_identity_visibility
     write_provision_state "rig_r_runtime_identity_visible" ""
+    grant_rig_r_runtime_impersonation
+    write_provision_state "rig_r_runtime_impersonation_bound" ""
     for runtime_role in "${RIG_R_RUNTIME_ROLES[@]}"; do
       grant_rig_r_runtime_project_role_with_propagation_retry "$runtime_role"
     done
@@ -5769,6 +5838,11 @@ else
       --project="$GCP_PROJECT" --if-generation-match=0 --content-type=application/json --quiet
     print_cmd gcloud iam service-accounts create "${RUNTIME_SA%@*}" \
       --project="$GCP_PROJECT" --display-name="S3.3 RIG-R temporary runtime"
+    print_cmd gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" \
+      --project="$GCP_PROJECT" --member="$RIG_R_RUNTIME_IMPERSONATION_MEMBER" \
+      --role="$RIG_R_RUNTIME_IMPERSONATION_ROLE" --condition=None --quiet
+    print_cmd gcloud iam service-accounts get-iam-policy "$RUNTIME_SA" \
+      --project="$GCP_PROJECT" --format=json
     for runtime_role in "${RIG_R_RUNTIME_ROLES[@]}"; do
       print_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
         --member="serviceAccount:${RUNTIME_SA}" --role="$runtime_role" --condition=None --quiet

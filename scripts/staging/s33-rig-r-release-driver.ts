@@ -21,9 +21,13 @@ export const RIG_R_RELEASE_TOPOLOGY = Object.freeze({
   supabaseProjectName: 'arkova-soak-s33-r',
   cloudRunService: 'arkova-worker-s33-r-staging',
   runtimeServiceAccount: 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
+  runtimeImpersonatorServiceAccount: '270018525501-compute@developer.gserviceaccount.com',
+  runtimeImpersonationRole: 'roles/iam.serviceAccountTokenCreator',
+  runtimeImpersonationMember:
+    'serviceAccount:270018525501-compute@developer.gserviceaccount.com',
   region: 'us-central1',
-  releaseEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733004',
-  releaseDeployedModelId: '7330041',
+  releaseEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733005',
+  releaseDeployedModelId: '7330051',
   containedDatabaseQueues: Object.freeze(['ai-rollback', 'chain-fault'] as const),
   protectedV6RollbackEndpoint:
     'projects/arkova1/locations/us-central1/endpoints/6611494259700793344',
@@ -57,6 +61,11 @@ const provisionBindingSchema = z.object({
   supabaseProjectName: z.literal(RIG_R_RELEASE_TOPOLOGY.supabaseProjectName),
   cloudRunService: z.literal(RIG_R_RELEASE_TOPOLOGY.cloudRunService),
   runtimeServiceAccount: z.literal(RIG_R_RELEASE_TOPOLOGY.runtimeServiceAccount),
+  runtimeImpersonatorServiceAccount: z.literal(
+    RIG_R_RELEASE_TOPOLOGY.runtimeImpersonatorServiceAccount,
+  ),
+  runtimeImpersonationRole: z.literal(RIG_R_RELEASE_TOPOLOGY.runtimeImpersonationRole),
+  runtimeImpersonationMember: z.literal(RIG_R_RELEASE_TOPOLOGY.runtimeImpersonationMember),
   vertexEndpoint: z.literal(RIG_R_RELEASE_TOPOLOGY.releaseEndpoint),
   vertexModel: z.literal(RIG_R_RELEASE_TOPOLOGY.protectedV6RollbackModel),
   deployedModelId: z.literal(RIG_R_RELEASE_TOPOLOGY.releaseDeployedModelId),

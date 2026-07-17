@@ -26,6 +26,9 @@ export interface RigRProvisionExpectedBinding {
   readonly vertexEndpoint: string;
   readonly vertexModel: string;
   readonly deployedModelId: string;
+  readonly runtimeImpersonatorServiceAccount: string;
+  readonly runtimeImpersonationRole: string;
+  readonly runtimeImpersonationMember: string;
   readonly provisionStartedAt: string;
   readonly expiresAt: string;
   readonly teardownScriptSha256: string;

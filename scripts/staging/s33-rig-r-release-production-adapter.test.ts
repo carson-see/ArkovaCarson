@@ -17,7 +17,7 @@ const artifact = `sha256:${'d'.repeat(64)}`;
 const now = '2026-07-16T18:00:00.000Z';
 const expiresAt = '2026-07-19T17:00:00.000Z';
 const confirmation =
-  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-10';
+  'START_RIG_R:rig-r-approval-1:s33-r-release-v6:lease-s33-r-release:real-provider-recovery-11';
 
 function admission(): Record<string, unknown> {
   const approval = {
@@ -36,19 +36,24 @@ function admission(): Record<string, unknown> {
       soakId: 's33-r-release-v6',
       leaseId: 'lease-s33-r-release',
       requiredWallMin: 2910,
-      vertexEndpointId: '733004',
-      vertexEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733004',
+      vertexEndpointId: '733005',
+      vertexEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733005',
       vertexEndpointDisplayName: 'arkova-s33-rig-r-release-v6',
       vertexModel: 'projects/270018525501/locations/us-central1/models/6611494259700793344',
       vertexModelVersion: 'projects/270018525501/locations/us-central1/models/6611494259700793344@1',
       checkpointId: '6',
-      deployedModelId: '7330041',
+      deployedModelId: '7330051',
       deployedModelDisplayName: 'arkova-s33-rig-r-release-v6',
       deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
       minReplicaCount: 1,
       maxReplicaCount: 1,
       endpointIamRole: 'roles/aiplatform.endpointUser',
       endpointIamMember: 'serviceAccount:s33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
+      runtimeImpersonatorServiceAccount:
+        '270018525501-compute@developer.gserviceaccount.com',
+      runtimeImpersonationRole: 'roles/iam.serviceAccountTokenCreator',
+      runtimeImpersonationMember:
+        'serviceAccount:270018525501-compute@developer.gserviceaccount.com',
       provisionStartedAt: '2026-07-16T17:00:00.000Z',
       expiresAt,
       teardownScriptSha256: `sha256:${'e'.repeat(64)}`,
@@ -100,7 +105,7 @@ function admission(): Record<string, unknown> {
     preflight_result: 'environment_type=clean_mirror',
     clean_mirror_attestation_id: `sha256:${'f'.repeat(64)}`,
     critical_config: {
-      gemini_tuned_model: 'projects/arkova1/locations/us-central1/endpoints/733004',
+      gemini_tuned_model: 'projects/arkova1/locations/us-central1/endpoints/733005',
       gemini_v6_prompt: 'true',
       gemini_tuned_response_schema: '<unset>',
     },
@@ -122,9 +127,14 @@ function admission(): Record<string, unknown> {
       supabase_project_ref: 'abcdefghijklmnopqrst',
       cloud_run_service: 'arkova-worker-s33-r-staging',
       runtime_service_account: 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com',
-      vertex_endpoint: 'projects/arkova1/locations/us-central1/endpoints/733004',
+      runtime_impersonator_service_account:
+        '270018525501-compute@developer.gserviceaccount.com',
+      runtime_impersonation_role: 'roles/iam.serviceAccountTokenCreator',
+      runtime_impersonation_member:
+        'serviceAccount:270018525501-compute@developer.gserviceaccount.com',
+      vertex_endpoint: 'projects/arkova1/locations/us-central1/endpoints/733005',
       vertex_model: 'projects/270018525501/locations/us-central1/models/6611494259700793344',
-      deployed_model_id: '7330041',
+      deployed_model_id: '7330051',
       chain_mode: 'mocked',
       contained_database_queues: ['ai-rollback', 'chain-fault'],
       scheduler_jobs: [],
@@ -234,6 +244,18 @@ describe('RIG-R production release start', () => {
     expect(testPort.observeExactIdentity).not.toHaveBeenCalled();
     expect(testPort.persistStartReceipt).not.toHaveBeenCalled();
     expect(testPort.teardown).not.toHaveBeenCalled();
+  });
+
+  it('rejects runtime impersonator drift before observing or starting the clock', async () => {
+    const altered = admission();
+    (altered.rig_r as Record<string, unknown>).runtime_impersonation_member =
+      'serviceAccount:shadow@arkova1.iam.gserviceaccount.com';
+    const testPort = port();
+    await expect(runS33RigRReleaseProduction(
+      altered, 'signed-envelope', confirmation, testPort,
+    )).rejects.toThrow(/impersonation|literal|binding/i);
+    expect(testPort.observeExactIdentity).not.toHaveBeenCalled();
+    expect(testPort.persistStartReceipt).not.toHaveBeenCalled();
   });
 
   it('writes and reloads the immutable start receipt before the exact 2880/2910 run', async () => {

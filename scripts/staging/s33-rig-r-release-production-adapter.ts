@@ -70,19 +70,22 @@ const RECEIPT_PREFIX = 's33/rig-r/release-start-receipts';
 // CTO-authorized recovery namespace. The first immutable receipt is retained as
 // superseded/non-merge-grade; this exact suffix prevents replaying or
 // overwriting either its receipt or its partial local evidence paths.
-const START_ATTEMPT_ID = 'real-provider-recovery-10';
+const START_ATTEMPT_ID = 'real-provider-recovery-11';
 const LEASE_URI = `gs://${RECEIPT_BUCKET}/s33/rig-leases/RIG-R.singleton.json`;
 const SOURCE_IMAGE_REPOSITORY =
   'us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker';
-const ENDPOINT_ID = '733004';
+const ENDPOINT_ID = '733005';
 const ENDPOINT = `projects/${PROJECT_ID}/locations/${REGION}/endpoints/${ENDPOINT_ID}`;
 const CANONICAL_ENDPOINT = `projects/270018525501/locations/${REGION}/endpoints/${ENDPOINT_ID}`;
 const ENDPOINT_DISPLAY_NAME = 'arkova-s33-rig-r-release-v6';
 const MODEL = 'projects/270018525501/locations/us-central1/models/6611494259700793344';
 const MODEL_VERSION = `${MODEL}@1`;
 const CHECKPOINT_ID = '6';
-const DEPLOYED_MODEL_ID = '7330041';
+const DEPLOYED_MODEL_ID = '7330051';
 const RUNTIME_SA = 's33-rig-r-runtime@arkova1.iam.gserviceaccount.com';
+const RUNTIME_IMPERSONATOR_SA = '270018525501-compute@developer.gserviceaccount.com';
+const RUNTIME_IMPERSONATION_ROLE = 'roles/iam.serviceAccountTokenCreator';
+const RUNTIME_IMPERSONATION_MEMBER = `serviceAccount:${RUNTIME_IMPERSONATOR_SA}`;
 const SERVICE = 'arkova-worker-s33-r-staging';
 const SUPABASE_PROJECT_NAME = 'arkova-soak-s33-r';
 const SUPABASE_ORG_ID = 'byhkazrpmivhcsuqjtva';
@@ -163,6 +166,9 @@ const approvalCandidateSchema = z.object({
   maxReplicaCount: z.literal(1),
   endpointIamRole: z.literal('roles/aiplatform.endpointUser'),
   endpointIamMember: z.literal(`serviceAccount:${RUNTIME_SA}`),
+  runtimeImpersonatorServiceAccount: z.literal(RUNTIME_IMPERSONATOR_SA),
+  runtimeImpersonationRole: z.literal(RUNTIME_IMPERSONATION_ROLE),
+  runtimeImpersonationMember: z.literal(RUNTIME_IMPERSONATION_MEMBER),
   provisionStartedAt: timestamp,
   expiresAt: timestamp,
   teardownScriptSha256: sha256,
@@ -235,6 +241,9 @@ const admissionSchema = z.object({
     supabase_project_ref: projectRef,
     cloud_run_service: z.literal(SERVICE),
     runtime_service_account: z.literal(RUNTIME_SA),
+    runtime_impersonator_service_account: z.literal(RUNTIME_IMPERSONATOR_SA),
+    runtime_impersonation_role: z.literal(RUNTIME_IMPERSONATION_ROLE),
+    runtime_impersonation_member: z.literal(RUNTIME_IMPERSONATION_MEMBER),
     vertex_endpoint: z.literal(ENDPOINT),
     vertex_model: z.literal(MODEL),
     deployed_model_id: z.literal(DEPLOYED_MODEL_ID),
@@ -287,6 +296,10 @@ const admissionSchema = z.object({
     || value.required_wall_min !== candidate.requiredWallMin
     || value.rig_r.provision_started_at !== candidate.provisionStartedAt
     || value.rig_r.hard_stop_expires_at !== candidate.expiresAt
+    || value.rig_r.runtime_impersonator_service_account
+      !== candidate.runtimeImpersonatorServiceAccount
+    || value.rig_r.runtime_impersonation_role !== candidate.runtimeImpersonationRole
+    || value.rig_r.runtime_impersonation_member !== candidate.runtimeImpersonationMember
     || value.supabase_project_ref !== value.rig_r.supabase_project_ref) {
     context.addIssue({ code: 'custom', path: ['rig_r'], message: 'RIG-R exact provision/admission binding differs.' });
   }
@@ -502,6 +515,9 @@ function provisionBinding(admission: S33RigRReleaseAdmission): S33RigRProvisionB
     supabaseProjectName: admission.rig_r.supabase_project_name,
     cloudRunService: admission.cloud_run_service,
     runtimeServiceAccount: admission.rig_r.runtime_service_account,
+    runtimeImpersonatorServiceAccount: admission.rig_r.runtime_impersonator_service_account,
+    runtimeImpersonationRole: admission.rig_r.runtime_impersonation_role,
+    runtimeImpersonationMember: admission.rig_r.runtime_impersonation_member,
     vertexEndpoint: admission.rig_r.vertex_endpoint,
     vertexModel: admission.rig_r.vertex_model,
     deployedModelId: admission.rig_r.deployed_model_id,
@@ -1287,6 +1303,20 @@ class S33RigRProductionAdapter implements S33RigRReleaseProductionPort {
     ), 'Runtime service-account observation'), 'Runtime service-account observation');
     if (runtime.email !== RUNTIME_SA || runtime.disabled === true) {
       throw new Error('RIG-R runtime service account is missing, replaced, or disabled.');
+    }
+    const runtimeIamPolicy = parseStrict(iamPolicySchema, requireOk(
+      await this.dependencies.command.run(
+        GCLOUD_BINARY,
+        ['iam', 'service-accounts', 'get-iam-policy', RUNTIME_SA,
+          '--project', PROJECT_ID, '--format=json'],
+      ),
+      'Runtime service-account impersonation IAM observation',
+    ), 'Runtime service-account impersonation IAM observation');
+    const runtimeImpersonators = runtimeIamPolicy.bindings
+      .filter(({ role }) => role === RUNTIME_IMPERSONATION_ROLE)
+      .flatMap(({ members }) => members).sort();
+    if (!isDeepStrictEqual(runtimeImpersonators, [RUNTIME_IMPERSONATION_MEMBER])) {
+      throw new Error('RIG-R runtime impersonation IAM differs from its exact authority-bound operator.');
     }
 
     const endpoint = parseStrict(endpointSchema, requireOk(await this.dependencies.command.run(

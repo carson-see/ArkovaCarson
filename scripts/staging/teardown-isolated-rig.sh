@@ -57,6 +57,9 @@ DENIED_CLOUD_RUN_SERVICES=("arkova-worker" "arkova-worker-staging")
 RIG_R_NAME="s33-r"
 RIG_R_SERVICE="arkova-worker-s33-r-staging"
 RIG_R_RUNTIME_SA="s33-rig-r-runtime@arkova1.iam.gserviceaccount.com"
+RIG_R_OPERATOR_SA="270018525501-compute@developer.gserviceaccount.com"
+RIG_R_RUNTIME_IMPERSONATION_ROLE="roles/iam.serviceAccountTokenCreator"
+RIG_R_RUNTIME_IMPERSONATION_MEMBER="serviceAccount:${RIG_R_OPERATOR_SA}"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_G1_A_NAME="s33-g1-a"
 RIG_G1_A_SERVICE="arkova-worker-s33-g1-a-staging"
@@ -391,6 +394,51 @@ delete_cloud_run_service_if_present() {
       return 1
       ;;
   esac
+}
+
+rig_r_runtime_impersonation_members() {
+  local policy_json
+  policy_json="$(gcloud iam service-accounts get-iam-policy "$RUNTIME_SA" \
+    --project="$GCP_PROJECT" --format=json)" || return 1
+  jq -cer --arg role "$RIG_R_RUNTIME_IMPERSONATION_ROLE" \
+    '[.bindings[]? | select(.role == $role) | .members[]?] | sort | unique' \
+    <<<"$policy_json"
+}
+
+assert_rig_r_runtime_impersonation_exact() {
+  local observed
+  observed="$(rig_r_runtime_impersonation_members)" || {
+    echo "ERROR: cannot observe RIG-R temporary runtime impersonation IAM." >&2
+    return 1
+  }
+  if [[ "$observed" != "[\"${RIG_R_RUNTIME_IMPERSONATION_MEMBER}\"]" ]]; then
+    echo "ERROR: RIG-R temporary runtime impersonation IAM differs from the one authority-bound operator." >&2
+    return 1
+  fi
+}
+
+remove_rig_r_runtime_impersonation() {
+  if [[ $APPLY -ne 1 ]]; then
+    print_cmd gcloud iam service-accounts remove-iam-policy-binding "$RUNTIME_SA" \
+      --project="$GCP_PROJECT" --member="$RIG_R_RUNTIME_IMPERSONATION_MEMBER" \
+      --role="$RIG_R_RUNTIME_IMPERSONATION_ROLE" --condition=None --quiet
+    print_cmd gcloud iam service-accounts get-iam-policy "$RUNTIME_SA" \
+      --project="$GCP_PROJECT" --format=json
+    return 0
+  fi
+  run_cmd gcloud iam service-accounts remove-iam-policy-binding "$RUNTIME_SA" \
+    --project="$GCP_PROJECT" --member="$RIG_R_RUNTIME_IMPERSONATION_MEMBER" \
+    --role="$RIG_R_RUNTIME_IMPERSONATION_ROLE" --condition=None --quiet
+  local observed
+  observed="$(rig_r_runtime_impersonation_members)" || {
+    echo "ERROR: cannot verify RIG-R runtime impersonation removal." >&2
+    return 1
+  }
+  if [[ "$observed" != "[]" ]]; then
+    echo "ERROR: RIG-R runtime impersonation IAM remains after exact removal." >&2
+    return 1
+  fi
+  echo "# RIG-R runtime impersonation removed and proved absent before service-account deletion."
 }
 
 trusted_b1_sha256_file() {
@@ -1795,6 +1843,7 @@ if [[ $IS_RIG_R -eq 1 ]]; then
       echo "ERROR: RIG-R lease content does not bind the exact teardown target." >&2
       exit 1
     fi
+    assert_rig_r_runtime_impersonation_exact
     RIG_R_SCHEDULER_BEFORE="$(gcloud scheduler jobs list \
       --project="$GCP_PROJECT" --location="$CLOUD_RUN_REGION" \
       --filter="name:${RIG_R_SERVICE}" --format="value(name)")" || {
@@ -1817,6 +1866,8 @@ if [[ $IS_RIG_R -eq 1 ]]; then
     print_cmd npx supabase projects list --output json
     print_cmd gcloud storage objects describe "$RIG_R_LEASE_URI" --project="$GCP_PROJECT" --raw --format=json
     print_cmd gcloud storage cat "${RIG_R_LEASE_URI}#<observed-generation>" --project="$GCP_PROJECT"
+    print_cmd gcloud iam service-accounts get-iam-policy "$RUNTIME_SA" \
+      --project="$GCP_PROJECT" --format=json
     print_cmd gcloud scheduler jobs list --project="$GCP_PROJECT" \
       --location="$CLOUD_RUN_REGION" --filter="name:${RIG_R_SERVICE}" --format="value(name)"
     print_cmd gcloud tasks queues list --project="$GCP_PROJECT" \
@@ -1862,6 +1913,7 @@ if [[ $IS_RIG_R -eq 1 ]]; then
   echo
 
   echo "# RIG-R 6/8 — remove runtime IAM bindings and delete the temporary service account"
+  remove_rig_r_runtime_impersonation
   if [[ $APPLY -eq 1 ]]; then
     RIG_R_RUNTIME_ROLE_LIST="$(gcloud projects get-iam-policy "$GCP_PROJECT" \
       --flatten="bindings[].members" \
