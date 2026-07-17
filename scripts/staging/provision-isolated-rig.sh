@@ -135,9 +135,9 @@ RIG_R_RUNTIME_IMPERSONATION_MEMBER="serviceAccount:${RIG_R_OPERATOR_SA}"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
 RIG_R_CHECKPOINT_ID="6"
-RIG_R_ENDPOINT_ID="733005"
+RIG_R_ENDPOINT_ID="733006"
 RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
-RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330051"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330061"
 RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
@@ -4223,12 +4223,82 @@ parse_genie_deploy_operation_name() {
   printf '%s\n' "$operation_name"
 }
 
+probe_tuned_gemini_preclock() {
+  local access_token="$1"
+  local endpoint_id="$2"
+  local timeout_seconds=300 interval_seconds=10
+  local deadline_seconds=$((SECONDS + timeout_seconds))
+  local attempt=0 remaining_seconds request_timeout_seconds
+  local probe_payload probe_url probe_result probe_json http_status normalized_status
+  probe_payload='{"contents":[{"role":"user","parts":[{"text":"Synthetic Arkova S3.3 capability probe; no customer data. Return one short JSON object."}]}],"generationConfig":{"responseMimeType":"application/json","temperature":0,"maxOutputTokens":64}}'
+  probe_url="https://${CLOUD_RUN_REGION}-aiplatform.googleapis.com/v1beta1/projects/${IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER}/locations/${CLOUD_RUN_REGION}/endpoints/${endpoint_id}:generateContent"
+
+  while (( SECONDS < deadline_seconds )); do
+    attempt=$((attempt + 1))
+    remaining_seconds=$((deadline_seconds - SECONDS))
+    request_timeout_seconds=$remaining_seconds
+    (( request_timeout_seconds <= 60 )) || request_timeout_seconds=60
+    if ! probe_result="$(/usr/bin/curl --silent --show-error \
+      --connect-timeout 10 --max-time "$request_timeout_seconds" \
+      --request POST "$probe_url" \
+      --header "Authorization: Bearer ${access_token}" \
+      --header 'Content-Type: application/json' \
+      --data-binary "$probe_payload" \
+      --write-out $'\n%{http_code}' 2>/dev/null)"; then
+      echo "ERROR: tuned-Gemini capability probe terminal category: transport failure." >&2
+      return 1
+    fi
+    http_status="${probe_result##*$'\n'}"
+    probe_json="${probe_result%$'\n'*}"
+    if [[ ! "$http_status" =~ ^[1-5][0-9][0-9]$ ]]; then
+      echo "ERROR: tuned-Gemini capability probe terminal category: malformed HTTP status." >&2
+      return 1
+    fi
+    if [[ "$http_status" == "200" ]]; then
+      if jq -e 'type == "object" and (.candidates | type == "array" and length > 0)' \
+        >/dev/null 2>&1 <<<"$probe_json"; then
+        return 0
+      fi
+      echo "ERROR: tuned-Gemini capability probe terminal category: http=200 reason=NO_CANDIDATE." >&2
+      return 1
+    fi
+    if [[ "$http_status" =~ ^2 ]]; then
+      echo "ERROR: tuned-Gemini capability probe terminal category: http=$http_status reason=UNEXPECTED_2XX." >&2
+      return 1
+    fi
+    normalized_status="$(jq -er --argjson code "$http_status" '
+      select(type == "object")
+      | .error
+      | select(type == "object" and .code == $code)
+      | .status
+      | select(type == "string")
+    ' <<<"$probe_json" 2>/dev/null || true)"
+    case "${http_status}:${normalized_status}" in
+      403:PERMISSION_DENIED|404:NOT_FOUND|429:RESOURCE_EXHAUSTED|500:INTERNAL|503:UNAVAILABLE|504:DEADLINE_EXCEEDED)
+        ;;
+      *)
+        echo "ERROR: tuned-Gemini capability probe terminal category: http=$http_status reason=${normalized_status:-MALFORMED_ERROR}." >&2
+        return 1
+        ;;
+    esac
+    remaining_seconds=$((deadline_seconds - SECONDS))
+    if (( remaining_seconds <= 0 )); then
+      break
+    fi
+    echo "# tuned-Gemini preclock probe waiting: attempt=$attempt http=$http_status reason=$normalized_status" >&2
+    (( remaining_seconds >= interval_seconds )) || interval_seconds=$remaining_seconds
+    /bin/sleep "$interval_seconds"
+  done
+  echo "ERROR: tuned-Gemini capability probe exhausted its ${timeout_seconds}s deadline on a retryable status." >&2
+  return 1
+}
+
 provision_temporary_vertex_endpoint() {
   local endpoint_id endpoint_resource endpoint_display model_resource model_version_resource
   local checkpoint_id deployed_id deployed_display runtime_sa denied_runtime_sa created_flag_label
   local vertex_endpoint_url vertex_endpoint_iam_url deploy_payload operation_json operation_name operation_url
   local operator_access_token attempt endpoint_policy set_policy_payload set_policy_response
-  local access_token probe_json probe_payload probe_url
+  local access_token
   if [[ $IS_G1_RIG -eq 1 ]]; then
     endpoint_id="$RIG_G1_ENDPOINT_ID"
     endpoint_resource="$G1_ENDPOINT_RESOURCE"
@@ -4400,25 +4470,11 @@ provision_temporary_vertex_endpoint() {
       echo "ERROR: could not obtain the temporary runtime identity's access token for the capability probe." >&2
       exit 2
     fi
-    probe_payload='{"contents":[{"role":"user","parts":[{"text":"Synthetic Arkova S3.3 capability probe; no customer data. Return one short JSON object."}]}],"generationConfig":{"responseMimeType":"application/json","temperature":0,"maxOutputTokens":64}}'
-    probe_url="https://${CLOUD_RUN_REGION}-aiplatform.googleapis.com/v1beta1/projects/${IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER}/locations/${CLOUD_RUN_REGION}/endpoints/${endpoint_id}:generateContent"
-    if ! probe_json="$(/usr/bin/curl --silent --show-error --fail-with-body \
-      --request POST "$probe_url" \
-      --header "Authorization: Bearer ${access_token}" \
-      --header 'Content-Type: application/json' \
-      --data-binary "$probe_payload" 2>/dev/null)"; then
-      unset access_token probe_json
-      echo "ERROR: authenticated tuned-Gemini generateContent capability probe failed." >&2
+    if ! probe_tuned_gemini_preclock "$access_token" "$endpoint_id"; then
+      unset access_token
       exit 2
     fi
     unset access_token
-    if ! jq -e 'type == "object" and (.candidates | type == "array" and length > 0)' \
-      >/dev/null 2>&1 <<<"$probe_json"; then
-      unset probe_json
-      echo "ERROR: tuned-Gemini capability probe returned no candidate." >&2
-      exit 2
-    fi
-    unset probe_json
     if [[ "$created_flag_label" == "G1" ]]; then
       G1_PREDICT_PROBE_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     else

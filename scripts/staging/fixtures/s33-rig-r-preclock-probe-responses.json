@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "arkova.s33.rig-r.preclock-probe-test-fixture/v1",
+  "retryable": {
+    "permissionDenied": {
+      "httpStatus": 403,
+      "body": { "error": { "code": 403, "status": "PERMISSION_DENIED" } }
+    },
+    "notFound": {
+      "httpStatus": 404,
+      "body": { "error": { "code": 404, "status": "NOT_FOUND" } }
+    },
+    "unavailable": {
+      "httpStatus": 503,
+      "body": { "error": { "code": 503, "status": "UNAVAILABLE" } }
+    }
+  },
+  "terminal": {
+    "invalidArgument": {
+      "httpStatus": 400,
+      "body": { "error": { "code": 400, "status": "INVALID_ARGUMENT" } }
+    },
+    "mismatchedPermissionDenied": {
+      "httpStatus": 403,
+      "body": { "error": { "code": 403, "status": "UNAVAILABLE" } }
+    },
+    "noCandidate": {
+      "httpStatus": 200,
+      "body": { "candidates": [] }
+    }
+  },
+  "success": {
+    "httpStatus": 200,
+    "body": { "candidates": [{ "content": { "parts": [{ "text": "{}" }] } }] }
+  }
+}

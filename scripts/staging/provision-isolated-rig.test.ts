@@ -429,6 +429,104 @@ grant_rig_r_runtime_impersonation
     expect(script).toContain('write_provision_state "rig_r_service_invoker_bound" ""');
   });
 
+  it('retries only frozen transient capability statuses and fails terminal responses without leaking payloads', () => {
+    const functionSource = script.match(
+      /^probe_tuned_gemini_preclock\(\) \{[\s\S]*?^\}/mu,
+    )?.[0];
+    expect(functionSource).toBeDefined();
+    const fixture = JSON.parse(readFileSync(
+      resolve(here, 'fixtures/s33-rig-r-preclock-probe-responses.json'),
+      'utf8',
+    )) as {
+      retryable: Record<string, { httpStatus: number; body: unknown }>;
+      terminal: Record<string, { httpStatus: number; body: unknown }>;
+      success: { httpStatus: number; body: unknown };
+    };
+    const accessToken = 'test-access-token-that-must-not-appear';
+
+    const runProbe = (
+      name: string,
+      responses: Array<{ httpStatus: number; body: unknown }>,
+      deadlineSeconds?: number,
+    ) => {
+      const root = mkdtempSync(join(tmpdir(), `rig-r-preclock-${name}-`));
+      stubDirs.push(root);
+      const calls = join(root, 'curl-count');
+      const responseFile = join(root, 'responses.ndjson');
+      const curlStub = join(root, 'curl');
+      const sleepStub = join(root, 'sleep');
+      writeFileSync(
+        responseFile,
+        `${responses.map((response) => JSON.stringify(response)).join('\n')}\n`,
+      );
+      writeFileSync(curlStub, `#!/usr/bin/env bash
+set -euo pipefail
+count=0
+[[ ! -f '${calls}' ]] || count="$(/bin/cat '${calls}')"
+count=$((count + 1))
+printf '%s' "$count" > '${calls}'
+line="$(/usr/bin/sed -n "${'$'}{count}p" '${responseFile}')"
+[[ -n "$line" ]] || line="$(/usr/bin/tail -n 1 '${responseFile}')"
+printf '%s\n%s' "$(jq -c '.body' <<<"$line")" "$(jq -r '.httpStatus' <<<"$line")"
+`);
+      writeFileSync(sleepStub, '#!/usr/bin/env bash\nexit 0\n');
+      chmodSync(curlStub, 0o755);
+      chmodSync(sleepStub, 0o755);
+      let source = functionSource!
+        .replace('/usr/bin/curl', `'${curlStub}'`)
+        .replace('/bin/sleep', deadlineSeconds == null ? `'${sleepStub}'` : '/bin/sleep');
+      if (deadlineSeconds != null) {
+        source = source.replace(
+          'local timeout_seconds=300 interval_seconds=10',
+          `local timeout_seconds=${deadlineSeconds} interval_seconds=1`,
+        );
+      }
+      const testScript = `set -uo pipefail
+CLOUD_RUN_REGION='us-central1'
+IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
+${source}
+probe_tuned_gemini_preclock '${accessToken}' '733006' 2>&1
+code=$?
+printf '\nPROBE_EXIT=%s\n' "$code"
+exit 0
+`;
+      return {
+        calls,
+        out: execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }),
+      };
+    };
+
+    for (const [name, transient] of Object.entries(fixture.retryable)) {
+      const { calls, out } = runProbe(name, [transient, fixture.success]);
+      expect(out, name).toContain('PROBE_EXIT=0');
+      expect(readFileSync(calls, 'utf8'), name).toBe('2');
+      expect(out, name).toContain(
+        `http=${transient.httpStatus} reason=${(transient.body as { error: { status: string } }).error.status}`,
+      );
+      expect(out, name).not.toContain(accessToken);
+      expect(out, name).not.toContain(JSON.stringify(transient.body));
+    }
+
+    for (const [name, terminal] of Object.entries(fixture.terminal)) {
+      const { calls, out } = runProbe(name, [terminal, fixture.success]);
+      expect(out, name).toContain('PROBE_EXIT=1');
+      expect(readFileSync(calls, 'utf8'), name).toBe('1');
+      expect(out, name).not.toContain(accessToken);
+      expect(out, name).not.toContain(JSON.stringify(terminal.body));
+    }
+
+    const { calls, out } = runProbe(
+      'deadline',
+      [fixture.retryable.permissionDenied],
+      1,
+    );
+    expect(out).toContain('exhausted its 1s deadline');
+    expect(out).toContain('PROBE_EXIT=1');
+    expect(Number(readFileSync(calls, 'utf8'))).toBeGreaterThanOrEqual(1);
+    expect(out).not.toContain(accessToken);
+    expect(out).not.toContain(JSON.stringify(fixture.retryable.permissionDenied.body));
+  });
+
   it('accepts the preserved endpoint-scoped DeployModel operation response', () => {
     const functionSource = script.match(
       /^parse_genie_deploy_operation_name\(\) \{[\s\S]*?^\}/mu,
@@ -464,7 +562,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733005'
+parse_genie_deploy_operation_name "$raw" '733006'
 `;
     expect(execFileSync('bash', ['-c', testScript], { encoding: 'utf8' }).trim()).toBe(
       'projects/270018525501/locations/us-central1/operations/123456',
@@ -485,7 +583,7 @@ IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
 raw="$(/bin/cat '${fixture}')"
-parse_genie_deploy_operation_name "$raw" '733005'
+parse_genie_deploy_operation_name "$raw" '733006'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -502,8 +600,8 @@ parse_genie_deploy_operation_name "$raw" '733005'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733005/operations/123456"}'
-parse_genie_deploy_operation_name "$raw" '733005'
+raw='{"name":"projects/999999999999/locations/us-central1/endpoints/733006/operations/123456"}'
+parse_genie_deploy_operation_name "$raw" '733006'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
@@ -520,8 +618,8 @@ parse_genie_deploy_operation_name "$raw" '733005'
 IMMUTABLE_AUTHORITY_LEDGER_PROJECT_NUMBER='270018525501'
 CLOUD_RUN_REGION='us-central1'
 ${functionSource}
-raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733005/operations/not-numeric"}'
-parse_genie_deploy_operation_name "$raw" '733005'
+raw='{"name":"projects/270018525501/locations/us-central1/endpoints/733006/operations/not-numeric"}'
+parse_genie_deploy_operation_name "$raw" '733006'
 `;
     expect(() => execFileSync('bash', ['-c', testScript], {
       encoding: 'utf8',
