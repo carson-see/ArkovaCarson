@@ -14,6 +14,18 @@
 
 ## Now
 
+### 2026-07-17 (RTE evening) — 4 reviewed draft PRs (webhook fix + P0s), independent review gate catches 4 defects, treasury bugs filed
+
+- **[PR #1568](https://github.com/carson-see/ArkovaCarson/pull/1568)** (SCRUM-2899 webhook fix, head `e18b4656`, Draft): WH-1..7 built + cross-reviewed; CTO ruling T2 12h + 7-point soak spec recorded in the PR body. Independent panel caught the global write-retry at-least-once hazard; remediated (retry now GET/HEAD/OPTIONS only). Awaiting Carson soak trigger; flag flip + WH-6 drift-pin activation post-soak. Demo path: soak → merge → `ENABLE_OUTBOUND_WEBHOOKS` ON → HakiChain demo.
+- **[PR #1569](https://github.com/carson-see/ArkovaCarson/pull/1569)** (SCRUM-2910 fraud P0s BUG-009/010, head `e7a62dfc`, Draft T1): banner + fraud_* filtered on all surfaces; review APPROVE-WITH-NITS, nit applied; reviewer verified live-prod `get_public_anchor` 0355 allow-list excludes fraud keys. UAT screenshots owed.
+- **[PR #1570](https://github.com/carson-see/ArkovaCarson/pull/1570)** (SCRUM-2970 credit-gate P1, head `2a61720c`, Draft T2): review caught free-re-anchor-after-soft-delete in fix v1 → reworked to insert-then-deduct (anchor-row id as reference); APPROVE-WITH-NITS. Follow-up SCRUM-2973 reconciliation sweep filed.
+- **[PR #1571](https://github.com/carson-see/ArkovaCarson/pull/1571)** (SCRUM-2901 throughput monitor, head `eb7ccb1b`, Draft T2): review caught that v1 was silent on the live 255k-backlog incident → reworked with linker-stall dead-man (48h); APPROVE. Will page immediately once Scheduler-wired (intended); wiring is a separate gated RTE op.
+- **Treasury bugs filed from #1568 cross-review:** SCRUM-2970 (P1, fixed by #1570), SCRUM-2971 (P2 `billing_events` idempotency — needs migration, T3 next train); also SCRUM-2972 (historical fraud_* keep/purge — CPO/CTO decision). Tracker: comment on 88768514 (rows -012/-013); **DISCREPANCY noted:** the -006..-011 rows HANDOFF's earlier entry claims were logged on 88768514 are absent from that page's tables (page last modified Jul 13) — reconcile on next tracker edit.
+- **Ops:** host gcloud repaired (Python 3.9 crash → `CLOUDSDK_PYTHON`=Homebrew python3.14 in `~/.zshrc`). Feeder Scheduler jobs verified ENABLED+firing (`gcloud scheduler jobs list` 19:00-19:20Z attempts) while the unlinked backlog persists → conversion problem is DOWNSTREAM of the triggers; root-cause dig owed (Bitcoin dev + SRE, prod read-only queries). S3.3 rig untouched. No prod writes; no flags flipped.
+- Release/soak planning + session report + Build Backlog v2.0 + Plan of Record v3.1 docs created in Drive PI-.5 (by parallel agents this session; titles as per session report).
+
+_Last refreshed: 2026-07-17 by RTE — claims verified against gcloud/MCP/CI output._
+
 ### 2026-07-17 (CTO) — PI-0.5 replanned to v3.0 (future work only); build backlog separated; canonical docs consolidated
 
 Founder close-out: rewrote the PI-0.5 plan to **future work only** (executed items excluded) and split the not-started work into its own itemized doc. Canonical set in Drive PI-.5 + Confluence:
