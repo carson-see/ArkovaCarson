@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "2026-04-01",
+  "serverInfo": {
+    "name": "arkova",
+    "title": "Arkova Verification MCP Server",
+    "version": "1.0.0",
+    "description": "Read Arkova verification records and search public-safe credential metadata through MCP.",
+    "vendor": "Arkova Technologies, Inc.",
+    "homepage": "https://app.arkova.ai",
+    "documentation": "https://app.arkova.ai/developers"
+  },
+  "transport": {
+    "type": "streamable-http",
+    "endpoint": "https://edge.arkova.ai/mcp",
+    "url": "https://edge.arkova.ai/mcp"
+  },
+  "transports": [
+    {
+      "type": "streamable-http",
+      "endpoint": "https://edge.arkova.ai/mcp",
+      "url": "https://edge.arkova.ai/mcp"
+    }
+  ],
+  "auth": {
+    "schemes": ["api_key", "oauth2_bearer"],
+    "apiKey": {
+      "header": "X-API-Key",
+      "provisioning": "https://app.arkova.ai/settings/api-keys"
+    },
+    "oauth2": {
+      "protectedResourceMetadata": "https://app.arkova.ai/.well-known/oauth-protected-resource",
+      "authorizationServers": [
+        "https://vzwyaatejekddvltxyye.supabase.co/auth/v1"
+      ]
+    }
+  },
+  "capabilities": {
+    "tools": {
+      "listChanged": false
+    },
+    "resources": {
+      "listChanged": false,
+      "subscribe": false
+    },
+    "prompts": {
+      "listChanged": false
+    }
+  },
+  "tools": [
+    {
+      "name": "search",
+      "description": "Search public-safe Arkova organization, record, fingerprint, and document metadata.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "type": { "type": "string", "enum": ["all", "org", "record", "fingerprint", "document"], "default": "all" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 50 }
+        },
+        "required": ["q"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_anchor",
+      "description": "Fetch public-safe Arkova verification metadata by public ID.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "public_id": { "type": "string", "minLength": 1, "maxLength": 128 }
+        },
+        "required": ["public_id"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "links": [
+    { "rel": "api-catalog", "href": "https://app.arkova.ai/.well-known/api-catalog" },
+    { "rel": "service-desc", "href": "https://api.arkova.ai/v2/openapi.json", "type": "application/openapi+json" },
+    { "rel": "describedby", "href": "https://app.arkova.ai/auth.md", "type": "text/markdown" }
+  ]
+}

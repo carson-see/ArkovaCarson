@@ -4,6 +4,7 @@
 
 User-agent: *
 Allow: /
+Content-Signal: ai-train=no, search=yes, ai-input=yes
 Disallow: /admin/
 Disallow: /settings/
 Disallow: /organization/
@@ -14,34 +15,24 @@ Disallow: /billing
 
 # AI crawlers — explicitly allowed for GEO visibility
 User-agent: GPTBot
-Allow: /
-
 User-agent: ChatGPT-User
-Allow: /
-
 User-agent: OAI-SearchBot
-Allow: /
-
 User-agent: ClaudeBot
-Allow: /
-
 User-agent: anthropic-ai
-Allow: /
-
 User-agent: PerplexityBot
-Allow: /
-
 User-agent: Google-Extended
-Allow: /
-
 User-agent: Bytespider
-Allow: /
-
 User-agent: Amazonbot
-Allow: /
-
 User-agent: meta-externalagent
 Allow: /
+Content-Signal: ai-train=no, search=yes, ai-input=yes
+Disallow: /admin/
+Disallow: /settings/
+Disallow: /organization/
+Disallow: /my-credentials
+Disallow: /my-records/
+Disallow: /documents
+Disallow: /billing
 
 # Sitemap
 Sitemap: https://app.arkova.ai/sitemap.xml

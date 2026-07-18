@@ -1,0 +1,20 @@
+{
+  "resource": "https://app.arkova.ai",
+  "authorization_servers": [
+    "https://vzwyaatejekddvltxyye.supabase.co/auth/v1"
+  ],
+  "scopes_supported": [
+    "read:records",
+    "read:orgs",
+    "read:search",
+    "write:anchors",
+    "admin:rules"
+  ],
+  "bearer_methods_supported": [
+    "header"
+  ],
+  "resource_documentation": "https://api.arkova.ai/v2/openapi.json",
+  "resource_name": "Arkova application and verification API",
+  "resource_policy_uri": "https://app.arkova.ai/privacy",
+  "resource_tos_uri": "https://app.arkova.ai/terms"
+}
