@@ -8,6 +8,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
+import { registerArkovaWebMcpOnPage } from './webmcp';
 import './index.css';
 
 // Render React FIRST for fastest possible first paint.
@@ -18,6 +19,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>
 );
+
+// WebMCP is progressive enhancement; unsupported browsers continue normally.
+const webMcpController = registerArkovaWebMcpOnPage();
+if (webMcpController) {
+  window.addEventListener('pagehide', () => webMcpController.abort(), { once: true });
+}
 
 // Defer Sentry init — PII scrubbing enabled, sendDefaultPii=false
 // Uses requestIdleCallback (with 2s fallback) so it never blocks rendering.

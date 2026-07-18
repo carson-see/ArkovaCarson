@@ -1,5 +1,5 @@
 # agents.md — src/
-_Last updated: 2026-05-12 (React 19 / Tailwind CSS 4 + routine dependency consolidation)._
+_Last updated: 2026-07-15 (WebMCP discovery tools)._
 
 ## What This Folder Contains
 
@@ -35,6 +35,11 @@ React 19 frontend application — TypeScript + Tailwind CSS 4 + shadcn/ui + Vite
 
 ## Recent Changes
 
+- **Agent discovery / WebMCP** (2026-07-15): `webmcp.ts` progressively registers
+  the read-only `search_arkova` and `verify_arkova_record` browser tools through
+  `navigator.modelContext.registerTool()` with a `document.modelContext`
+  compatibility fallback. Tool inputs are bounded and validated
+  before same-origin navigation; unsupported browsers continue normally.
 - **SCRUM-2246 — Stale-chunk retry for lazy routes (HARDEN-1-C)** (2026-06-05): All ~70 `React.lazy(() => import(...))` route declarations in `App.tsx` migrated to `lazyWithRetry(...)` from `src/lib/lazyWithRetry.ts`. After a deploy, Vite emits new content-hashed chunk names; a client on a stale `index.html` would 404 the old chunk and crash Suspense (Sentry FRONTEND-3/8). The wrapper retries the import, then force-reloads once (sessionStorage-gated, no loop) to fetch a fresh index; a persistent failure renders a "new version available / Refresh" affordance via `RouteErrorBoundary`. No banned §1.3 terms in the new copy.
 - **SCRUM-694 / SCRUM-915 — React 19 + Tailwind CSS 4 dependency consolidation** (2026-05-12): Consolidates Dependabot PRs #767, #768, and #769 into one migration branch. React/React DOM and types are on 19.x; Tailwind now uses the CSS-first v4 entrypoint in `src/index.css`, `@tailwindcss/postcss`, and `@theme` tokens instead of `tailwind.config.ts`. Deprecated v3 focus/shrink utilities were migrated and the Nordic Vault token regression test now validates CSS theme tokens directly.
 - **Routine dependency consolidation** (2026-05-12): Root dependency batch from PRs #770/#771 updated Sentry React, React Query, Tailwind Merge, Playwright, Sentry Vite plugin, Workers types, TypeScript-ESLint, Vite, Vitest, Wrangler, and Node/V8 coverage types. `src/types/database.types.ts` now includes `org_credits`, matching the committed schema used by billing/quota code. `src/tests/drop-search-overload.test.ts` ignores generated `dist/` output so the root test suite stays green after worker builds.

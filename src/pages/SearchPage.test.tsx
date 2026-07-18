@@ -9,8 +9,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
 import { SearchPage } from './SearchPage';
 
 // Mock hooks
@@ -100,9 +101,9 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-function renderSearchPage() {
+function renderSearchPage(initialEntry = '/search') {
   return render(
-    <MemoryRouter initialEntries={['/search']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <SearchPage />
     </MemoryRouter>,
   );
@@ -145,6 +146,96 @@ describe('SearchPage', () => {
   it('renders back to dashboard link', () => {
     renderSearchPage();
     expect(screen.getByText(/back to dashboard/i)).toBeInTheDocument();
+  });
+
+  it('consumes an encoded bounded URL query and executes the public search once', async () => {
+    const query = 'licensed nurses & EMT/paramedic?';
+
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/search?q=licensed+nurses+%26+EMT%2Fparamedic%3F']}>
+          <SearchPage />
+        </MemoryRouter>
+      </StrictMode>,
+    );
+
+    expect(screen.getByPlaceholderText(/search issuers/i)).toHaveValue(query);
+    await waitFor(() => {
+      expect(publicSearchMock.searchIssuers).toHaveBeenCalledWith(query);
+      expect(supabaseMock.rpc).toHaveBeenCalledWith(
+        'search_public_credentials',
+        { p_query: query, p_limit: 20 },
+      );
+    });
+    expect(publicSearchMock.searchIssuers).toHaveBeenCalledTimes(1);
+    expect(supabaseMock.rpc).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('ignores an overlong URL query without populating or executing it', () => {
+    const query = 'a'.repeat(201);
+
+    renderSearchPage(`/search?q=${encodeURIComponent(query)}`);
+
+    expect(screen.getByPlaceholderText(/search issuers/i)).toHaveValue('');
+    expect(publicSearchMock.searchIssuers).not.toHaveBeenCalled();
+    expect(supabaseMock.rpc).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('keeps the newest URL-triggered credential results when an older query resolves last', async () => {
+    let resolveOlder!: (value: unknown) => void;
+    let resolveNewer!: (value: unknown) => void;
+    const older = new Promise(resolve => { resolveOlder = resolve; });
+    const newer = new Promise(resolve => { resolveNewer = resolve; });
+
+    supabaseMock.rpc.mockImplementation((_: string, args: { p_query: string }) => (
+      args.p_query === 'older query' ? older : newer
+    ));
+
+    const router = createMemoryRouter(
+      [{ path: '/search', element: <SearchPage /> }],
+      { initialEntries: ['/search?q=older+query'] },
+    );
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => {
+      expect(supabaseMock.rpc).toHaveBeenCalledWith(
+        'search_public_credentials',
+        { p_query: 'older query', p_limit: 20 },
+      );
+    });
+
+    await act(async () => {
+      await router.navigate('/search?q=newer+query');
+    });
+    await waitFor(() => {
+      expect(supabaseMock.rpc).toHaveBeenCalledWith(
+        'search_public_credentials',
+        { p_query: 'newer query', p_limit: 20 },
+      );
+    });
+
+    await act(async () => {
+      resolveNewer({
+        data: [{ public_id: 'ARK-NEW', title: 'New Credential', status: 'SECURED' }],
+        error: null,
+      });
+      await newer;
+    });
+    expect(await screen.findByText('New Credential')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveOlder({
+        data: [{ public_id: 'ARK-OLD', title: 'Old Credential', status: 'SECURED' }],
+        error: null,
+      });
+      await older;
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('Old Credential')).not.toBeInTheDocument();
+      expect(screen.getByText('New Credential')).toBeInTheDocument();
+    });
   });
 
   it('renders results instead of a lingering search spinner when results are already available', async () => {

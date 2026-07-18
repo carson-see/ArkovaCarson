@@ -1,5 +1,15 @@
 # agents.md — pages
-_Last updated: 2026-05-30_
+_Last updated: 2026-07-16_
+
+## PR #1561 — WebMCP search URL consumption
+
+`SearchPage.tsx` consumes a bounded `q` query parameter from same-origin
+`/search?q=...` navigation, pre-fills the search input, and executes the existing
+read-only public search path once. Keep the URL bound aligned with
+`src/webmcp.ts` (`200` decoded characters before trimming). The consumed-query
+ref is required because the app mounts under React Strict Mode; without it the
+URL-triggered RPCs run twice in development. Blank or overlong URL values are
+ignored, and the input itself carries the same maximum length.
 
 ## SCRUM-1980 — Search spinner persists below results (loading-state reset)
 
