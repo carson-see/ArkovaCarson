@@ -183,31 +183,45 @@ class ProductionPostgrestTransport implements S33B1ScenarioRpcTransport {
     args: Readonly<Record<string, unknown>>,
     signal: AbortSignal,
   ): Promise<unknown> {
-    const response = await this.fetchImpl(`${this.baseUrl}/rest/v1/rpc/${name}`, {
-      method: 'POST',
-      headers: {
-        apikey: this.serviceRoleKey,
-        authorization: `Bearer ${this.serviceRoleKey}`,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify(args),
-      redirect: 'error',
-      signal,
-    });
-    const declaredLength = Number(response.headers.get('content-length'));
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_RPC_BYTES) {
-      throw new Error(`RIG-B1 ${name} response exceeds the bounded capture size.`);
-    }
-    const raw = await response.text();
-    if (Buffer.byteLength(raw, 'utf8') > MAX_RPC_BYTES) {
-      throw new Error(`RIG-B1 ${name} response exceeds the bounded capture size.`);
-    }
-    if (!response.ok) {
+    // These two RPCs take row locks that can legitimately queue behind the
+    // target Scheduler transaction. Their callers already bound the operation
+    // with an AbortSignal deadline, so retry only transient gateway responses
+    // until that deadline rather than converting brief lock contention into a
+    // destructive soak failure.
+    const lockBoundRpc = name === 'observe_s33_rig_b1_scenario_outcome'
+      || name === 'abort_s33_rig_b1_scenario_lease';
+    for (let attempt = 0; ; attempt += 1) {
+      const response = await this.fetchImpl(`${this.baseUrl}/rest/v1/rpc/${name}`, {
+        method: 'POST',
+        headers: {
+          apikey: this.serviceRoleKey,
+          authorization: `Bearer ${this.serviceRoleKey}`,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify(args),
+        redirect: 'error',
+        signal,
+      });
+      const declaredLength = Number(response.headers.get('content-length'));
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_RPC_BYTES) {
+        throw new Error(`RIG-B1 ${name} response exceeds the bounded capture size.`);
+      }
+      const raw = await response.text();
+      if (Buffer.byteLength(raw, 'utf8') > MAX_RPC_BYTES) {
+        throw new Error(`RIG-B1 ${name} response exceeds the bounded capture size.`);
+      }
+      if (response.ok) {
+        if (raw.length === 0) return null;
+        return parseJsonRejectingDuplicateKeys(raw, `RIG-B1 ${name} response`);
+      }
+      const retryableGateway = [502, 503, 504].includes(response.status);
+      if (retryableGateway && (lockBoundRpc || attempt < 3)) {
+        await nodeWait(1_000, signal);
+        continue;
+      }
       throw new Error(`RIG-B1 ${name} failed with HTTP ${response.status}.`);
     }
-    if (raw.length === 0) return null;
-    return parseJsonRejectingDuplicateKeys(raw, `RIG-B1 ${name} response`);
   }
 }
 
