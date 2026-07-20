@@ -37,10 +37,10 @@ export const G1_PAIRED_START_CONTRACT = Object.freeze({
     projectName: 'arkova-soak-s33-g1-b',
     service: 'arkova-worker-s33-g1-b-staging',
     runtimeServiceAccount: 's33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com',
-    endpoint: 'projects/arkova1/locations/us-central1/endpoints/733001',
+    endpoint: 'projects/arkova1/locations/us-central1/endpoints/733002',
     modelVersion: 'projects/270018525501/locations/us-central1/models/6611494259700793344@1',
     checkpointId: '6',
-    deployedModelId: '7330011',
+    deployedModelId: '7330021',
   }),
 } as const);
 
@@ -62,7 +62,7 @@ const signedScopeSchema = z.object({
   rigId: z.literal('RIG-G1'),
   leaseId: boundedId,
   corpusDigest: sha256,
-  endpointId: z.literal('733001'),
+  endpointId: z.literal('733002'),
   endpointResource: z.literal(G1_PAIRED_START_CONTRACT.tuned.endpoint),
   endpointDisplayName: z.literal('arkova-s33-rig-g1-b-tuned-v6'),
   vertexModelResource: z.literal(G1_PAIRED_START_CONTRACT.tuned.modelVersion),

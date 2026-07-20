@@ -47,13 +47,13 @@ const CLOUD_RUN_SERVICE = /^[a-z][a-z0-9-]{1,61}[a-z0-9]$/;
 const SERVICE_ACCOUNT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$/;
 const SECRET_REFERENCE = /^[A-Za-z][A-Za-z0-9_-]{0,254}@[1-9][0-9]*$/;
 const EXACT_G1_RESOURCES = Object.freeze({
-  endpointId: '733001',
-  endpointResource: 'projects/arkova1/locations/us-central1/endpoints/733001',
+  endpointId: '733002',
+  endpointResource: 'projects/arkova1/locations/us-central1/endpoints/733002',
   endpointDisplayName: 'arkova-s33-rig-g1-b-tuned-v6',
   vertexModelResource:
     'projects/270018525501/locations/us-central1/models/6611494259700793344@1',
   checkpointId: '6',
-  deployedModelId: '7330011',
+  deployedModelId: '7330021',
   deployedModelDisplayName: 'arkova-s33-rig-g1-b-tuned-v6',
   deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
   minReplicaCount: 1,
