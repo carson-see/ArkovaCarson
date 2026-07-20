@@ -14,14 +14,16 @@
     "b03de813f42cde5710b38275f5c6d1af219ef0c9",
     "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
     "ec95ae6acab861e853976b4e31faab093ef28d10",
-    "9d513e85fceb58e9b4794ed29c2741902a017faf"
+    "9d513e85fceb58e9b4794ed29c2741902a017faf",
+    "72ca4883eed34e45e8a5457bf5d8df658c520451"
   ],
   "covered_main_shas": [
     "7bda2a08489e42ccab383e39b1f0f54c75e24225",
     "b03de813f42cde5710b38275f5c6d1af219ef0c9",
     "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
     "ec95ae6acab861e853976b4e31faab093ef28d10",
-    "9d513e85fceb58e9b4794ed29c2741902a017faf"
+    "9d513e85fceb58e9b4794ed29c2741902a017faf",
+    "72ca4883eed34e45e8a5457bf5d8df658c520451"
   ],
   "included_prs": [
     {
@@ -54,8 +56,8 @@
     },
     {
       "number": 1571,
-      "head_sha": "45f89ab72efb0ee232d8660125b1085f090f1b5c",
-      "base_sha": "9d513e85fceb58e9b4794ed29c2741902a017faf",
+      "head_sha": "95b4394378262e8922666e331ce1cc2e10c0e1da",
+      "base_sha": "72ca4883eed34e45e8a5457bf5d8df658c520451",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "Union-merge drift resolved 2026-07-20: main merged into branch to clear a docs-only agents.md conflict from siblings #1568/#1569; RUNTIME DIFF VERIFIED IDENTICAL to soaked head 53dc3a23 (services/worker/src non-md files byte-identical), dropped union lines restored. Monitor decision code exercised live on rig rca20260719 (200 + decision log). All required checks green on frozen head 53dc3a23; only Staging Soak Evidence Gate red pending this manifest. Pipeline-throughput monitor exercised live on rig rca20260719: POST /jobs/pipeline-throughput-monitor (X-Cron-Secret + IAM OIDC) returned 200 {healthy:true} and emitted the 'Pipeline throughput monitor: No unlinked public records' decision log line on the serving revision \u2014 monitor decisio",
@@ -64,9 +66,10 @@
       "allowed_base_shas": [
         "b03de813f42cde5710b38275f5c6d1af219ef0c9",
         "7bda2a08489e42ccab383e39b1f0f54c75e24225",
-        "9d513e85fceb58e9b4794ed29c2741902a017faf"
+        "9d513e85fceb58e9b4794ed29c2741902a017faf",
+        "72ca4883eed34e45e8a5457bf5d8df658c520451"
       ],
-      "soak_head_note": "Soaked head 53dc3a23; current head 45f89ab7 = 53dc3a23 + a docs-only main-merge (agents.md union), no runtime delta."
+      "soak_head_note": "Soaked head 53dc3a23; current head 95b43943 = soaked runtime + two docs-only main-merges (agents.md union resolution). Verified: diff(origin/main..head) = only pipelineThroughputMonitor/cron/sentry (+tests) + 2 agents.md lines; zero runtime delta vs soak."
     },
     {
       "number": 1573,
