@@ -119,11 +119,14 @@ export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
 
   const fp = String(proof.fingerprint || '').toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(fp)) return done(false, 'bad_fingerprint_format');
+  // Validate txid before it is interpolated into any explorer URL path.
+  const txid = String(proof.txid || '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(txid)) return done(false, 'bad_txid_format');
 
   // 1. Fetch tx.
   let tx;
   try {
-    tx = await fetchPath(`tx/${proof.txid}`);
+    tx = await fetchPath(`tx/${txid}`);
   } catch (e) {
     if (e && e.status === 404) return done(false, 'tx_not_found');
     return done(false, `explorer_error:${e && e.message ? e.message : 'unknown'}`);
@@ -163,19 +166,22 @@ export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
 
   // 4. INCLUDE + 5. HEADER — SPV: recompute the merkle root, bind it to the PoW header.
   let mp;
-  try { mp = await fetchPath(`tx/${proof.txid}/merkle-proof`); } catch { mp = null; }
+  try { mp = await fetchPath(`tx/${txid}/merkle-proof`); } catch { mp = null; }
   if (!mp || !Array.isArray(mp.merkle) || typeof mp.pos !== 'number') {
     checks.merkleIncluded = false;
     return done(false, 'merkle_proof_unavailable');
   }
-  const computedRoot = computeMerkleRoot(proof.txid, mp.merkle, mp.pos);
+  const computedRoot = computeMerkleRoot(txid, mp.merkle, mp.pos);
 
+  // block_hash comes from the (untrusted) explorer — validate before interpolating.
+  const blockHash = String(status.block_hash || '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(blockHash)) { checks.headerBinds = false; return done(false, 'bad_block_hash'); }
   let headerHex;
-  try { headerHex = String(await fetchPath(`block/${status.block_hash}/header`)).trim(); } catch { headerHex = null; }
+  try { headerHex = String(await fetchPath(`block/${blockHash}/header`)).trim(); } catch { headerHex = null; }
   const header = headerHex ? parseBlockHeader(headerHex) : null;
   if (!header) { checks.headerBinds = false; return done(false, 'block_header_unavailable'); }
 
-  checks.headerBinds = header.blockHash === String(status.block_hash).toLowerCase();
+  checks.headerBinds = header.blockHash === blockHash;
   if (!checks.headerBinds) return done(false, 'header_hash_mismatch');
 
   checks.merkleIncluded = header.merkleRoot === computedRoot;

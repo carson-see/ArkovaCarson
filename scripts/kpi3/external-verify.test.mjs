@@ -107,6 +107,22 @@ test('REJECT: tx not found', async () => {
   assert.equal(r.reason, 'tx_not_found');
 });
 
+test('REJECT: malformed txid is rejected before any explorer request', async () => {
+  let called = false;
+  const spy = async () => { called = true; throw Object.assign(new Error('x'), { status: 404 }); };
+  const r = await verifyAnchorProof({ ...VALID_PROOF, txid: '../../evil' }, spy);
+  assert.equal(r.reason, 'bad_txid_format');
+  assert.equal(called, false, 'must not hit the explorer with a malformed txid');
+});
+
+test('REJECT: malformed block_hash from the explorer is rejected before header fetch', async () => {
+  const paths = clone(FAKE_EXPLORER_PATHS);
+  paths[`tx/${TX}`] = clone(FAKE_EXPLORER_PATHS[`tx/${TX}`]);
+  paths[`tx/${TX}`].status = { ...paths[`tx/${TX}`].status, block_hash: 'not-a-hash' };
+  const r = await verifyAnchorProof(VALID_PROOF, fakeExplorer(paths));
+  assert.equal(r.reason, 'bad_block_hash');
+});
+
 test('REJECT: tx unconfirmed', async () => {
   const paths = clone(FAKE_EXPLORER_PATHS);
   paths[`tx/${TX}`] = clone(FAKE_EXPLORER_PATHS[`tx/${TX}`]);
