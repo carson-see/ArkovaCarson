@@ -52,10 +52,11 @@
         "evidence": "SCRUM-2913 CTDL importer (PR #1603, 26 tests): @graph walk, language-map name, ownedBy→issuer, ctid→sourceId, dateEffective→issuedAt, expirationDate-vs-status override (SCRUM-2599). Draft, not merged."
       },
       "registry_read_consume": {
-        "status": "endpoint_reachable_unauthenticated",
+        "status": "endpoint_reachable_and_invite_active",
         "claim_status": "measured",
-        "evidence": "SCRUM-2993: sandbox.credentialengineregistry.org GET-by-CTID returns valid JSON (200 root; 404 {errors:[Resource not found]} for unknown CTID). No real sandbox CTID consumed — needs Jeff Grann published resource / invite.",
-        "not_asserted": ["consuming a real published sandbox envelope end-to-end", "registry publish access"]
+        "evidence": "SCRUM-2993: sandbox.credentialengineregistry.org GET-by-CTID returns valid JSON (200 root; 404 {errors:[Resource not found]} for unknown CTID). CE side is ready: Jeff Grann (jgrann@credentialengine.org, confirmed CE dev contact) copied Arkova's account to a sandbox environment (Jun-24 email) and endorsed the consuming approach as 'a direct GET to retrieve the record' by CTID; evaluation agreement completed 2026-06-09, trial closes ~Sept (INVITE ACTIVE, not expired); Arkova has an org CTID + temporary API keys provisioned (Jeanne Kitchens, Jun-10).",
+        "remaining_step": "One real end-to-end consume (GET Arkova's org CTID -> parse with the SCRUM-2913 importer). Blocked only on retrieving the org CTID value from the CE account dashboard (not extracted from email this window) — a ~2-minute step, NOT a CE-side gate and NOT a founder email to Jeff (access already granted).",
+        "not_asserted": ["a real published sandbox envelope parsed end-to-end this window", "registry publish access (kept sandbox-gated by CE per agreed roles)"]
       },
       "natively_ctdl_compliant": {
         "status": "not_verified",
