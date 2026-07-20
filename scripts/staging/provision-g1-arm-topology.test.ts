@@ -66,7 +66,7 @@ const g1Env = {
   STAGING_G1_STOP_AUTHORITY: 'founders-cto-rte',
   STAGING_G1_TEARDOWN_OWNER: 'lane-4-sm',
   STAGING_GEMINI_TUNED_MODEL:
-    'projects/arkova1/locations/us-central1/endpoints/733002',
+    'projects/arkova1/locations/us-central1/endpoints/202607202346550001',
   STAGING_RIG_ID: 'RIG-G1',
   STAGING_TIER: 'T2',
   STAGING_REQUIRED_UPTIME_MIN: '720',
@@ -301,17 +301,17 @@ process.stdout.write(readFileSync(readArg('--artifact'), 'utf8'));
     GEMINI_V6_PROMPT: 'true',
   }, 's33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com');
   const endpoint = JSON.stringify(options.endpoint ?? {
-    name: 'projects/270018525501/locations/us-central1/endpoints/733002',
+    name: 'projects/270018525501/locations/us-central1/endpoints/202607202346550001',
     displayName: 'arkova-s33-rig-g1-b-tuned-v6',
     deployedModels: [{
-      id: '7330021',
+      id: '202607202346551001',
       displayName: 'arkova-s33-rig-g1-b-tuned-v6',
       model: endpointModel,
       modelVersionId: '1',
       checkpointId: '6',
       automaticResources: { minReplicaCount: 1, maxReplicaCount: 1 },
     }],
-    trafficSplit: { '7330021': 100 },
+    trafficSplit: { '202607202346551001': 100 },
   });
   const verifiedApproval = JSON.stringify({
     status: 'VERIFIED',
@@ -329,12 +329,12 @@ process.stdout.write(readFileSync(readArg('--artifact'), 'utf8'));
     scope: {
       rigClass: 'RIG-G1', rigName: 's33-g1', rigProfile: 'gemini', soakId: 'soak-s33-g1',
       rigId: 'RIG-G1', leaseId: 'lease-s33-g1', corpusDigest: g1Env.STAGING_G1_CORPUS_DIGEST,
-      endpointId: '733002',
+      endpointId: '202607202346550001',
       endpointResource: g1Env.STAGING_GEMINI_TUNED_MODEL,
       endpointDisplayName: 'arkova-s33-rig-g1-b-tuned-v6',
       vertexModelResource: `${endpointModel}@1`,
       checkpointId: '6',
-      deployedModelId: '7330021',
+      deployedModelId: '202607202346551001',
       deployedModelDisplayName: 'arkova-s33-rig-g1-b-tuned-v6',
       deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
       minReplicaCount: 1,
@@ -744,7 +744,7 @@ describe('RIG-G1 public/control and tuned arm topology', () => {
     expect(deploys[0]).not.toContain('GEMINI_TUNED_MODEL');
     expect(deploys[0]).not.toContain('GEMINI_V6_PROMPT');
     expect(deploys[1]).toContain(
-      'GEMINI_TUNED_MODEL=projects/arkova1/locations/us-central1/endpoints/733002',
+      'GEMINI_TUNED_MODEL=projects/arkova1/locations/us-central1/endpoints/202607202346550001',
     );
     expect(deploys[1]).toContain('GEMINI_V6_PROMPT=true');
     expect(deploys.join('\n')).not.toContain('GEMINI_TUNED_RESPONSE_SCHEMA=');
@@ -1249,9 +1249,9 @@ describe('multi-service G1 teardown', () => {
       '--rig-id', 'RIG-G1-B',
       '--service', 'arkova-worker-s33-g1-b-staging',
       '--runtime-sa', 's33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com',
-      '--vertex-endpoint', 'projects/arkova1/locations/us-central1/endpoints/733002',
+      '--vertex-endpoint', 'projects/arkova1/locations/us-central1/endpoints/202607202346550001',
       '--vertex-model', endpointModel,
-      '--deployed-model-id', '7330021',
+      '--deployed-model-id', '202607202346551001',
     ]);
     expect(control.code, control.out).toBe(0);
     expect(tuned.code, tuned.out).toBe(0);
@@ -1263,6 +1263,6 @@ describe('multi-service G1 teardown', () => {
     expect(tuned.out.match(/supabase projects delete/g)).toHaveLength(1);
     expect(control.out).not.toContain('undeploy-model');
     expect(tuned.out).toContain('undeploy-model');
-    expect(tuned.out).toContain('endpoints/733002');
+    expect(tuned.out).toContain('endpoints/202607202346550001');
   });
 });
