@@ -278,6 +278,12 @@ export function resolveSentryEnvironment(inputs: SentryEnvironmentInputs): strin
   if (explicit) return explicit;
 
   if (inputs.kService) {
+    // NOTE (Architect review): the prod canary revision deploys onto the SAME
+    // service (`--tag canary --no-traffic`), so K_SERVICE is still
+    // 'arkova-worker' and canary events tag 'production'. K_SERVICE structurally
+    // can't distinguish canary from live (only K_REVISION carries the tag). This
+    // is acceptable today; if canary isolation is ever wanted, derive from the
+    // revision tag here.
     return inputs.kService === PROD_SERVICE_NAME ? 'production' : inputs.kService;
   }
 
