@@ -170,13 +170,6 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       return;
     }
 
-    // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
-    // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
-    // existing API-key paths without per-org credit setup are unaffected.
-    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res))) {
-      return;
-    }
-
     // credential_type already validated by Zod enum; defaults to 'OTHER'.
     const credentialType = body.credential_type ?? 'OTHER';
     const insertPayload = {
@@ -198,6 +191,34 @@ async function handleAnchorSubmit(req: Request, res: Response) {
 
     if (insertError) {
       handleInsertError(insertError, orgId, res);
+      return;
+    }
+
+    // SCRUM-1170-B / SCRUM-2970 — org-credit deduction, insert-then-deduct.
+    // The helper short-circuits to allowed=true when
+    // ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so existing API-key
+    // paths without per-org credit setup are unaffected. The reference_id is
+    // the just-inserted anchor row's id (repo pattern per
+    // credential-sources.ts): a fresh uuid per anchoring event, so a
+    // soft-delete + re-anchor is a NEW billable event, while an HTTP retry
+    // of the same logical request is absorbed by the dedup lookup above
+    // before ever reaching this gate. On deduct failure (402/503 already
+    // written by the gate), compensate by hard-deleting the never-paid row.
+    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res, anchor.id))) {
+      const { error: compensationError } = await db.from('anchors').delete().eq('id', anchor.id);
+      if (compensationError) {
+        // The row exists but was never paid for — surface loudly. NOTE:
+        // this unpaid PENDING row CAN still be batch-anchored on-chain
+        // (batch-anchor.ts queueRunCreditReason() returns null for non-rule
+        // anchors, so the drain does not re-check credits) — Arkova eats
+        // the fee. Bounded operational risk (requires a compensation-delete
+        // failure or a crash in the insert→deduct window); reconciliation
+        // sweep tracked as SCRUM-2973.
+        logger.error(
+          { anchorId: anchor.id, orgId },
+          'anchor_credit_compensation_delete_failed',
+        );
+      }
       return;
     }
 
