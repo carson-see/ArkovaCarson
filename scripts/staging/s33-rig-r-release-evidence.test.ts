@@ -88,7 +88,7 @@ function fixture(): S33RigRReleaseEvidenceInput {
       },
     }),
     liveEvalEvidenceRaw,
-    smokeStdout: 'Endpoint: projects/arkova1/locations/us-central1/endpoints/733019\nSMOKE PASS',
+    smokeStdout: 'Endpoint: projects/arkova1/locations/us-central1/endpoints/202607202346550002\nSMOKE PASS',
     evalStdout: '=== VERDICT: DoD met — cleared for production cutover ===',
     evalJsonPath: 'services/worker/docs/eval/eval-gemini-2026-07-18T18-31-00.json',
     evalJsonRaw: JSON.stringify({

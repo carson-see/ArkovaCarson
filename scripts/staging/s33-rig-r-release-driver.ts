@@ -26,8 +26,8 @@ export const RIG_R_RELEASE_TOPOLOGY = Object.freeze({
   runtimeImpersonationMember:
     'serviceAccount:270018525501-compute@developer.gserviceaccount.com',
   region: 'us-central1',
-  releaseEndpoint: 'projects/arkova1/locations/us-central1/endpoints/733019',
-  releaseDeployedModelId: '7330191',
+  releaseEndpoint: 'projects/arkova1/locations/us-central1/endpoints/202607202346550002',
+  releaseDeployedModelId: '202607202346552001',
   containedDatabaseQueues: Object.freeze(['ai-rollback', 'chain-fault'] as const),
   protectedV6RollbackEndpoint:
     'projects/arkova1/locations/us-central1/endpoints/6611494259700793344',
