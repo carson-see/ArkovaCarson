@@ -212,7 +212,12 @@ export class CtdlImportError extends Error {
 // A CE CTID is `ce-` + a v4-shaped UUID (mirrors REAL_CTID_PATTERN in the
 // serializer's ctid-guard, but used here only for extraction from a URI).
 const CTID_PATTERN = /ce-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+// Date-only shape, PADDING-TOLERANT: a 4-digit year with 1-or-2-digit month/day.
+// CTDL/JSON-LD data is not always zero-padded, and requiring `\d{2}` let
+// non-padded impossible dates (e.g. "2026-2-31") bypass the strict guard and
+// reach new Date() (which silently normalizes). All matches are strict-validated
+// by canonicalizeBareDate.
+const DATE_ONLY_SHAPE = /^\d{4}-\d{1,2}-\d{1,2}$/;
 
 // -----------------------------------------------------------------------------
 // Zod schema — every parsed record is validated before it leaves the module.
@@ -357,38 +362,54 @@ function unwrapScalar(value: unknown): unknown {
  * `2026-13-01`, `2026-00-10`, `2026-05-00`, and a non-leap-year `2026-02-29`;
  * accepts a real leap day `2024-02-29`.
  */
-function isRealCalendarDate(bareDate: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(bareDate);
-  if (!match) return false;
+/**
+ * Strict, padding-tolerant bare-date validator + canonicalizer. Accepts a
+ * 4-digit year with 1-OR-2-digit month/day (JSON-LD/CTDL data is not always
+ * zero-padded), round-trips the Y-M-D through `Date.UTC`, and returns the
+ * CANONICAL zero-padded `YYYY-MM-DD` only if every component survives unchanged.
+ * Returns null for any impossible calendar day (`2026-02-31`, `2026-2-31`,
+ * `2026-13-01`, `2026-00-10`, `2026-05-00`, non-leap `2026-02-29`) or non-date
+ * shape. Padding normalization (`2026-2-3` → `2026-02-03`) is lossless (same
+ * day) — NOT the silently-WRONG normalization `new Date()` would do for an
+ * impossible day.
+ */
+function canonicalizeBareDate(bareDate: string): string | null {
+  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(bareDate);
+  if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
   const dt = new Date(Date.UTC(year, month - 1, day));
-  return (
-    dt.getUTCFullYear() === year && dt.getUTCMonth() === month - 1 && dt.getUTCDate() === day
-  );
+  if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) {
+    return null;
+  }
+  return `${match[1]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 /**
- * Normalize a CTDL date to an ISO string. A bare calendar date (`YYYY-MM-DD`)
- * is preserved as-is (already ISO-8601 and free of a fabricated time-of-day); a
- * full datetime is canonicalized via `toISOString()`. Impossible calendar dates
- * (e.g. `2026-02-31`) and anything unparseable resolve to null (honest omission
- * — never a throw, and never a silently-normalized wrong date).
+ * Normalize a CTDL date to an ISO string. A date-only value (any padding) is
+ * strict-validated and returned canonical (`YYYY-MM-DD`); a full datetime is
+ * canonicalized via `toISOString()` after its leading date portion passes the
+ * same strict check. Impossible calendar dates (e.g. `2026-02-31`, `2026-2-31`)
+ * and anything unparseable resolve to null (honest omission — never a throw, and
+ * never a silently-normalized WRONG date, regardless of zero-padding).
  */
 export function normalizeCtdlDate(value: unknown): string | null {
   const scalar = unwrapScalar(value);
   const raw = cleanString(scalar);
   if (!raw) return null;
 
-  if (BARE_DATE.test(raw)) {
-    return isRealCalendarDate(raw) ? raw : null;
+  // Date-only shape (padding-tolerant): must be a real calendar day.
+  if (DATE_ONLY_SHAPE.test(raw)) {
+    return canonicalizeBareDate(raw);
   }
 
-  // Datetime: the leading YYYY-MM-DD must itself be a real calendar day, so a
-  // datetime like "2026-02-31T12:00:00Z" cannot be normalized into a valid one.
-  const datePart = raw.slice(0, 10);
-  if (BARE_DATE.test(datePart) && !isRealCalendarDate(datePart)) return null;
+  // Datetime: the leading date portion (before the 'T'/space separator) must
+  // itself be a real calendar day — regardless of padding — so a datetime like
+  // "2026-2-31T12:00:00Z" or "2026-02-31T12:00:00Z" cannot slip through and be
+  // silently normalized by new Date().
+  const datePart = raw.split(/[T ]/, 1)[0] ?? '';
+  if (DATE_ONLY_SHAPE.test(datePart) && canonicalizeBareDate(datePart) === null) return null;
 
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
@@ -523,17 +544,28 @@ export function resolveIssuer(ownedBy: unknown): ImportedCtdlIssuer | null {
  * (`applyResourceExpiry`). When off, the source's lifecycle claim stands and
  * `resourceAvailableUntil` remains available purely as data. See
  * {@link ImportedCtdlRecord.status}.
+ *
+ * SEVERITY GUARD: the override only ever *raises* severity from a
+ * not-yet-terminal state. It fires only when `sourceStatus ∈ {active, unknown,
+ * null}` — a terminal `inactive` (e.g. revoked) or `expired` is NEVER
+ * downgraded. `expired` is less severe than `inactive`/revoked, so relabeling a
+ * revoked credential "expired" would silently discard the revocation.
  */
+const OVERRIDABLE_SOURCE_STATUSES = new Set<ImportedCredentialStatus>(['active', 'unknown']);
+
 export function reconcileStatus(
   sourceStatus: ImportedCredentialStatus | null,
   resourceAvailableUntil: string | null,
   now: Date,
   applyResourceExpiry: boolean,
 ): ImportedCredentialStatus {
-  if (applyResourceExpiry && resourceAvailableUntil) {
+  const overridable = sourceStatus === null || OVERRIDABLE_SOURCE_STATUSES.has(sourceStatus);
+  if (applyResourceExpiry && overridable && resourceAvailableUntil) {
     const expiry = new Date(resourceAvailableUntil).getTime();
     if (!Number.isNaN(expiry) && expiry <= now.getTime()) {
-      // Opt-in only: a past availability date overrides an "active" claim.
+      // Opt-in only, and only from a non-terminal source claim: a past
+      // availability date overrides an "active"/"unknown" status. A terminal
+      // inactive/expired is left untouched (never downgraded).
       return 'expired';
     }
   }
@@ -592,17 +624,35 @@ export function parseCtdlNode(node: unknown, options: ParseCtdlOptions): Importe
 }
 
 /**
+ * DoS bound on how many `@graph` (or bare-array) nodes a single untrusted CTDL
+ * document may contain. A hostile document with millions of nodes would
+ * otherwise pin CPU/memory in the parse loop. On overflow we THROW (see
+ * {@link nodesOf}) rather than truncate — silently truncating would present a
+ * partial import as complete, which is worse for a parse boundary.
+ */
+export const MAX_GRAPH_NODES = 10_000;
+
+/**
  * Extract the credential nodes from a CTDL document. Handles all three shapes
  * CTDL documents arrive in: a `{ "@graph": [...] }` envelope, a bare array of
  * nodes, or a single top-level node. A null/primitive document yields `[]`.
+ * Throws `CtdlImportError` when the node count exceeds {@link MAX_GRAPH_NODES}
+ * (matches the module's structural-impossibility-throws contract; never a
+ * silent truncation). The cap message is value-free (no document content).
  */
 function nodesOf(doc: unknown): unknown[] {
+  let nodes: unknown[];
   if (isRecord(doc)) {
-    if (Array.isArray(doc['@graph'])) return doc['@graph'];
-    return [doc];
+    nodes = Array.isArray(doc['@graph']) ? doc['@graph'] : [doc];
+  } else if (Array.isArray(doc)) {
+    nodes = doc;
+  } else {
+    return [];
   }
-  if (Array.isArray(doc)) return doc;
-  return [];
+  if (nodes.length > MAX_GRAPH_NODES) {
+    throw new CtdlImportError(`CTDL @graph exceeds the ${MAX_GRAPH_NODES}-node limit`);
+  }
+  return nodes;
 }
 
 /**

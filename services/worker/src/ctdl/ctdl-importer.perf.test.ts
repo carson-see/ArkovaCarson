@@ -11,7 +11,13 @@
  * Math.random) so runs are reproducible and diffable.
  */
 import { describe, expect, it } from 'vitest';
-import { parseCtdlDocument, parseCtdlNode, type ImportedCtdlRecord } from './ctdl-importer.js';
+import {
+  CtdlImportError,
+  MAX_GRAPH_NODES,
+  parseCtdlDocument,
+  parseCtdlNode,
+  type ImportedCtdlRecord,
+} from './ctdl-importer.js';
 
 const NOW = new Date('2026-07-20T00:00:00Z');
 
@@ -151,5 +157,22 @@ describe('CTDL importer — parse performance', () => {
     expect(rec.issuer?.name).toBe('The English Org');
     // A single node — even adversarial — must resolve in well under 100ms.
     expect(ms).toBeLessThan(100);
+  });
+
+  it('DoS guard: throws on an @graph over MAX_GRAPH_NODES; parses right up to the cap', () => {
+    expect(MAX_GRAPH_NODES).toBe(10_000);
+
+    // At the cap: parses fine.
+    const atCap = syntheticGraph(MAX_GRAPH_NODES);
+    expect(parseCtdlDocument(atCap, PARSE_OPTS)).toHaveLength(MAX_GRAPH_NODES);
+
+    // One past the cap: throws (does NOT silently truncate — a partial import
+    // presented as complete is worse for a parse boundary).
+    const overCap = syntheticGraph(MAX_GRAPH_NODES + 1);
+    expect(() => parseCtdlDocument(overCap, PARSE_OPTS)).toThrow(CtdlImportError);
+
+    // The same cap applies to a bare top-level array, not just an @graph envelope.
+    const bareOver = (overCap as { '@graph': unknown[] })['@graph'];
+    expect(() => parseCtdlDocument(bareOver, PARSE_OPTS)).toThrow(CtdlImportError);
   });
 });

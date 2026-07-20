@@ -167,6 +167,41 @@ describe('SCRUM-2599 — expirationDate-vs-status reconciliation (OPT-IN, defaul
     expect(rec.sourceStatus).toBe('inactive');
     expect(rec.status).toBe('inactive');
   });
+
+  it('OPT-IN: never downgrades a terminal inactive (revoked) to the less-severe expired', () => {
+    // A revoked credential is definitively inactive. A past offering-availability
+    // date must NOT silently discard the revocation by relabeling it "expired".
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Revoked License',
+      'ceterms:lifecycleStatusType': 'lifecycle:Revoked',
+      'ceterms:expirationDate': '2021-01-01',
+    };
+    const rec = parseCtdlNode(node, OPT_IN);
+    expect(rec.sourceStatus).toBe('inactive');
+    expect(rec.status).toBe('inactive');
+  });
+
+  it('OPT-IN: a source-claimed expired stays expired (no change) with a past availability date', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Already Expired',
+      'ceterms:lifecycleStatusType': 'lifecycle:Expired',
+      'ceterms:expirationDate': '2021-01-01',
+    };
+    expect(parseCtdlNode(node, OPT_IN).status).toBe('expired');
+  });
+
+  it('OPT-IN: overrides an unknown/absent source status to expired on a past availability date', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'No Source Status',
+      'ceterms:expirationDate': '2021-01-01',
+    };
+    const rec = parseCtdlNode(node, OPT_IN);
+    expect(rec.sourceStatus).toBeNull();
+    expect(rec.status).toBe('expired');
+  });
 });
 
 describe('ceterms:name resolution', () => {
@@ -567,6 +602,19 @@ describe('strict calendar-date validation (rejects impossible dates)', () => {
 
   it('rejects a datetime whose date portion is an impossible calendar day', () => {
     expect(parseCtdlNode(dateNode('2026-02-31T12:00:00Z'), { now: NOW }).issuedAt).toBeNull();
+  });
+
+  it('rejects a non-zero-padded impossible date (2026-2-31) instead of letting it bypass to new Date()', () => {
+    // `\d{2}` padding-requirement previously let 2026-2-31 skip the strict guard
+    // and reach new Date(), which silently normalizes it to 2026-03-03.
+    expect(parseCtdlNode(dateNode('2026-2-31'), { now: NOW }).issuedAt).toBeNull();
+    expect(parseCtdlNode(dateNode('2026-2-31T00:00:00Z'), { now: NOW }).issuedAt).toBeNull();
+  });
+
+  it('canonicalizes a valid non-zero-padded bare date (2026-2-3 -> 2026-02-03)', () => {
+    // Padding normalization is lossless (same calendar day) — not a silently
+    // WRONG normalization — so a valid non-padded date is accepted, canonicalized.
+    expect(parseCtdlNode(dateNode('2026-2-3'), { now: NOW }).issuedAt).toBe('2026-02-03');
   });
 
   it('an impossible expirationDate does not drive the opt-in reconciliation (it is dropped)', () => {
