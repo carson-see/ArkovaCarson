@@ -4280,6 +4280,62 @@ wait_for_g1_runtime_identity_visibility() {
   return 1
 }
 
+grant_g1_runtime_project_role_with_propagation_retry() {
+  local runtime_sa="$1" arm_label="$2" runtime_role="roles/logging.logWriter"
+  local member="serviceAccount:${runtime_sa}"
+  local grant_output normalized_output policy_json member_count attempt=0
+  local remaining_seconds sleep_seconds
+  local propagation_hint='ERROR: Policy modification failed. For a binding with condition, run "gcloud alpha iam policies lint-condition" to identify issues in condition.'
+  local propagation_error="ERROR: (gcloud.projects.add-iam-policy-binding) INVALID_ARGUMENT: Service account ${runtime_sa} does not exist."
+  local deadline_seconds=$((SECONDS + 300))
+  while (( SECONDS < deadline_seconds )); do
+    attempt=$((attempt + 1))
+    if grant_output="$(gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+      --member="$member" --role="$runtime_role" --condition=None --quiet 2>&1)"; then
+      while (( SECONDS < deadline_seconds )); do
+        if ! policy_json="$(gcloud projects get-iam-policy "$GCP_PROJECT" --format=json 2>&1)" \
+          || ! jq -e 'type == "object" and ((.bindings // []) | type == "array")' \
+            <<<"$policy_json" >/dev/null 2>&1; then
+          echo "ERROR: $arm_label could not read back a valid project IAM policy after its runtime-role grant." >&2
+          return 1
+        fi
+        member_count="$(jq -r --arg role "$runtime_role" --arg member "$member" '
+          [.bindings[]? | select(.role == $role) | .members[]? | select(. == $member)] | length
+        ' <<<"$policy_json")"
+        if [[ "$member_count" == "1" ]]; then
+          echo "# $arm_label project IAM visible: role=$runtime_role member=$member grant_attempts=$attempt"
+          return 0
+        fi
+        [[ "$member_count" == "0" ]] || {
+          echo "ERROR: $arm_label project IAM readback contained non-unique runtime-role membership." >&2
+          return 1
+        }
+        remaining_seconds=$((deadline_seconds - SECONDS))
+        (( remaining_seconds > 0 )) || break
+        sleep_seconds=$remaining_seconds
+        (( sleep_seconds <= 5 )) || sleep_seconds=5
+        sleep "$sleep_seconds"
+      done
+      break
+    fi
+    normalized_output="${grant_output//$'\r'/}"
+    if [[ "$normalized_output" != "$propagation_error" \
+      && "$normalized_output" != "$propagation_hint"$'\n'"$propagation_error" ]]; then
+      echo "ERROR: $arm_label runtime project-IAM grant failed with a non-propagation error; refusing retry." >&2
+      printf '%s\n' "$grant_output" >&2
+      return 1
+    fi
+    echo "# $arm_label project IAM is waiting for service-account propagation (attempt $attempt)." >&2
+    remaining_seconds=$((deadline_seconds - SECONDS))
+    (( remaining_seconds > 0 )) || break
+    sleep_seconds=$remaining_seconds
+    (( sleep_seconds <= 5 )) || sleep_seconds=5
+    sleep "$sleep_seconds"
+  done
+  echo "ERROR: $arm_label runtime project-IAM grant/readback did not become exact within 300 seconds." >&2
+  return 1
+}
+
 provision_g1_runtime_identities() {
   [[ $IS_G1_RIG -eq 1 ]] || return 0
   local identity_json
@@ -4293,9 +4349,14 @@ provision_g1_runtime_identities() {
     echo "# RIG-G1-A runtime identity visible: email=$G1_CONTROL_RUNTIME_SA unique_id=$G1_CONTROL_RUNTIME_SA_UNIQUE_ID"
     write_provision_state "g1_a_runtime_identity_created" ""
   fi
-  run_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
-    --member="serviceAccount:${G1_CONTROL_RUNTIME_SA}" \
-    --role="roles/logging.logWriter" --condition=None --quiet
+  if [[ $APPLY -eq 1 ]]; then
+    grant_g1_runtime_project_role_with_propagation_retry \
+      "$G1_CONTROL_RUNTIME_SA" "RIG-G1-A" || exit 2
+  else
+    print_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+      --member="serviceAccount:${G1_CONTROL_RUNTIME_SA}" \
+      --role="roles/logging.logWriter" --condition=None --quiet
+  fi
 
   run_cmd gcloud iam service-accounts create "${G1_TUNED_RUNTIME_SA%@*}" \
     --project="$GCP_PROJECT" --display-name="S3.3 RIG-G1-B temporary runtime"
@@ -4306,9 +4367,14 @@ provision_g1_runtime_identities() {
     echo "# RIG-G1-B runtime identity visible: email=$G1_TUNED_RUNTIME_SA unique_id=$G1_TUNED_RUNTIME_SA_UNIQUE_ID"
     write_provision_state "g1_distinct_runtime_identities_created" ""
   fi
-  run_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
-    --member="serviceAccount:${G1_TUNED_RUNTIME_SA}" \
-    --role="roles/logging.logWriter" --condition=None --quiet
+  if [[ $APPLY -eq 1 ]]; then
+    grant_g1_runtime_project_role_with_propagation_retry \
+      "$G1_TUNED_RUNTIME_SA" "RIG-G1-B" || exit 2
+  else
+    print_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+      --member="serviceAccount:${G1_TUNED_RUNTIME_SA}" \
+      --role="roles/logging.logWriter" --condition=None --quiet
+  fi
 }
 
 grant_g1_runtime_secret_access() {
