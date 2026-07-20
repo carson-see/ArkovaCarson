@@ -53,7 +53,7 @@ const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  '384d15932f5f78e047e15a0623cfee5daac623355366eb10622d88585ea498c9';
+  'b3d48dc66d412728f702f381411a0a7748adb79be5a9231886e3f1fd2b665268';
 const INTEGRATED_B1_PUBLIC_AUTHORITY_BINDING =
   'Production verification is code-bound to public key `arkova.s33.b1-evidence.ed25519.v1`, its SPKI fingerprint, operator, activation, and canonical genesis-roster root; envelopes must name that exact key id.';
 
@@ -69,6 +69,23 @@ vi.setConfig({ testTimeout: 20_000 });
 // deadline without weakening those cases.
 const PROVISION_CHILD_TIMEOUT_MS = 15_000;
 const CHILD_TIMEOUT_EXIT_CODE = 124;
+
+describe('provision-isolated-rig.sh — authenticated private-repo provenance', () => {
+  it('falls back from anonymous Git to a code-bound authenticated GitHub main lookup', () => {
+    expect(script).toContain('TRUSTED_GH_PATH="/opt/homebrew/bin/gh"');
+    expect(script).toMatch(/TRUSTED_GH_SHA256="[0-9a-f]{64}"/u);
+    expect(script).toContain('TRUSTED_GH_VERSION="gh version 2.96.0 (2026-07-02)"');
+    expect(script).toContain('TRUSTED_GH_REPOSITORY="carson-see/ArkovaCarson"');
+    expect(script).toMatch(
+      /if \[\[ ! "\$REMOTE_MAIN_SHA" =~ \^\[0-9a-f\]\{40\}\$ \]\]; then[\s\S]+trusted_gh api "repos\/\$\{TRUSTED_GH_REPOSITORY\}\/commits\/main" --jq '\.sha'/u,
+    );
+  });
+
+  it('uses the existing gh credential store without accepting a token override', () => {
+    expect(script).toContain('GH_CONFIG_DIR="$TRUSTED_GH_CONFIG_DIR"');
+    expect(script).not.toMatch(/GH_TOKEN|GITHUB_TOKEN/u);
+  });
+});
 
 describe('scripts/staging/agents.md — exact cross-lane semantic union', () => {
   it('retains the complete 14-section body shared by both current lane heads', () => {

@@ -155,6 +155,11 @@ TRUSTED_GIT_PATH="/usr/bin/git"
 TRUSTED_GIT_SHA256="a961f78075d8e7621ef4f5d764c64ef8a41bf66c0a98ab5cb6ca39b85ce31c93"
 TRUSTED_GIT_VERSION="git version 2.50.1 (Apple Git-155)"
 TRUSTED_GIT_ORIGIN_URL="https://github.com/carson-see/ArkovaCarson.git"
+TRUSTED_GH_PATH="/opt/homebrew/bin/gh"
+TRUSTED_GH_SHA256="02d2d4a85241c6a8c0b77ebb1ec76fc723caf7fb128e00915b306b968847cba1"
+TRUSTED_GH_VERSION="gh version 2.96.0 (2026-07-02)"
+TRUSTED_GH_CONFIG_DIR="/Users/carson/.config/gh"
+TRUSTED_GH_REPOSITORY="carson-see/ArkovaCarson"
 S33_ISOLATED_SUPABASE_PROJECT_COUNT=4
 S33_ISOLATED_SUPABASE_PROJECT_MONTHLY_EACH_USD=10
 S33_ISOLATED_SUPABASE_PROJECTS_MONTHLY_TOTAL_USD=40
@@ -841,6 +846,43 @@ trusted_git() {
       -c core.fsmonitor=false \
       -c core.attributesFile=/dev/null \
       "$@"
+}
+
+validate_trusted_gh_binding() {
+  local observed_digest observed_version
+  if [[ "$TRUSTED_GH_PATH" != /* || ! -f "$TRUSTED_GH_PATH" \
+    || -L "$TRUSTED_GH_PATH" || ! -x "$TRUSTED_GH_PATH" ]]; then
+    echo "ERROR: authenticated remote-main fallback requires the code-bound gh path." >&2
+    return 1
+  fi
+  if [[ ! "$TRUSTED_GH_SHA256" =~ ^[0-9a-f]{64}$ \
+    || ! "$TRUSTED_GH_VERSION" =~ ^gh[[:space:]]version[[:space:]].+ \
+    || "$TRUSTED_GH_CONFIG_DIR" != /* || ! -d "$TRUSTED_GH_CONFIG_DIR" \
+    || -L "$TRUSTED_GH_CONFIG_DIR" ]]; then
+    echo "ERROR: trusted gh binary/config binding is UNCONFIGURED." >&2
+    return 1
+  fi
+  observed_digest="$(trusted_sha256_file "$TRUSTED_GH_PATH")" || return 1
+  if [[ "$observed_digest" != "$TRUSTED_GH_SHA256" ]]; then
+    echo "ERROR: trusted gh binary digest differs from the code-bound release tuple." >&2
+    return 1
+  fi
+  observed_version="$(/usr/bin/env -i TZ=UTC LC_ALL=C LANG=C \
+    HOME=/Users/carson GH_CONFIG_DIR="$TRUSTED_GH_CONFIG_DIR" \
+    "$TRUSTED_GH_PATH" --version 2>/dev/null | /usr/bin/head -n 1 || true)"
+  if [[ "$observed_version" != "$TRUSTED_GH_VERSION" ]]; then
+    echo "ERROR: trusted gh version differs from the code-bound release tuple." >&2
+    return 1
+  fi
+}
+
+trusted_gh() {
+  validate_trusted_gh_binding || return 1
+  /usr/bin/env -i \
+    TZ=UTC LC_ALL=C LANG=C HOME=/Users/carson \
+    GH_CONFIG_DIR="$TRUSTED_GH_CONFIG_DIR" \
+    PATH=/opt/homebrew/bin:/usr/bin:/bin \
+    "$TRUSTED_GH_PATH" "$@"
 }
 
 verify_checkout_inputs_match_declared_head() {
@@ -2817,6 +2859,11 @@ if [[ $APPLY -eq 1 ]]; then
   REMOTE_MAIN_LINE="$(trusted_git -C / ls-remote --exit-code \
     "$TRUSTED_GIT_ORIGIN_URL" refs/heads/main 2>/dev/null || true)"
   read -r REMOTE_MAIN_SHA REMOTE_MAIN_REF <<<"$REMOTE_MAIN_LINE"
+  if [[ ! "$REMOTE_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    REMOTE_MAIN_SHA="$(trusted_gh api "repos/${TRUSTED_GH_REPOSITORY}/commits/main" --jq '.sha' \
+      2>/dev/null || true)"
+    REMOTE_MAIN_REF="refs/heads/main"
+  fi
   if [[ ! "$REMOTE_MAIN_SHA" =~ ^[0-9a-f]{40}$ || "$REMOTE_MAIN_REF" != "refs/heads/main" ]]; then
     echo "ERROR: could not observe the code-bound remote main ref; refusing a potentially stale base SHA." >&2
     exit 2
