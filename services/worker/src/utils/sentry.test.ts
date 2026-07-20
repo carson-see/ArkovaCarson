@@ -27,7 +27,7 @@ vi.mock('@sentry/profiling-node', () => ({
   nodeProfilingIntegration: vi.fn(() => ({})),
 }));
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, Sentry } from './sentry.js';
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -463,5 +463,37 @@ describe('captureStuckAnchorAlert (SCRUM-2255)', () => {
 
   it('exposes a single fixed fingerprint key', () => {
     expect(STUCK_ANCHOR_FINGERPRINT).toEqual(['stuck-anchor-monitor']);
+  });
+});
+
+// SCRUM-2901 (PI-0.5): pipeline-throughput-monitor fingerprinting. The
+// dead-man alert re-fires on every scheduled run during a persistent stall;
+// the stable fingerprint collapses those into one Sentry issue.
+describe('capturePipelineThroughputAlert (SCRUM-2901)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('always captures at error level with the stable fingerprint (both fire conditions are page-worthy)', () => {
+    capturePipelineThroughputAlert(
+      '812 new unlinked records, 0 anchors secured in 24h',
+      { new_unlinked_in_window: 812, anchors_secured_in_window: 0 },
+    );
+
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    const [message, scope] = (Sentry.captureMessage as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(message).toBe('812 new unlinked records, 0 anchors secured in 24h');
+    expect(scope).toEqual(
+      expect.objectContaining({
+        level: 'error',
+        fingerprint: PIPELINE_THROUGHPUT_FINGERPRINT,
+        extra: { new_unlinked_in_window: 812, anchors_secured_in_window: 0 },
+      }),
+    );
+  });
+
+  it('exposes a single fixed fingerprint key', () => {
+    expect(PIPELINE_THROUGHPUT_FINGERPRINT).toEqual(['pipeline-throughput-monitor']);
   });
 });
