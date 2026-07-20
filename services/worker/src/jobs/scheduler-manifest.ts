@@ -124,21 +124,32 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
     enabled: true,
     maxSilenceMs: 30 * HOURS,
   },
-  // ── Public-record FEEDERS — codified PAUSED (D12 / PI-0.5 feeder freeze) ───
-  // The feeders write into pending-anchoring; they are frozen while the drain
-  // backlog is worked down. Each carries actor attribution so a silent feeder
-  // is EXPECTED silence, attributed to the pause, not a page.
+  // ── Public-record FEEDERS ─────────────────────────────────────────────────
+  // §1.5 / assert-prod-state-directly: VERIFIED ACTIVE in prod via Cloud Run
+  // request logs on 2026-07-20 (fetch-courtlistener every ~15m — and 504-ing at
+  // the 3600s timeout, SCRUM-2975; fetch-edgar every 6h; anchor-public-records
+  // every ~10-50m). They are therefore recorded ENABLED — the manifest states
+  // what IS, not the D12 intent.
+  //
+  // D12 (PI-0.5 feeder freeze) is a PENDING ruling — decision due 2026-07-25,
+  // default codify-as-paused. It is NOT yet applied in prod. When Carson rules
+  // paused, flip enabled:false and add actor attribution here; the dead-man
+  // (scheduler-deadman.ts) will then treat their silence as EXPECTED+attributed
+  // instead of an unattributed stall. Encoding them as paused TODAY would
+  // assert a false prod state (they are running) and pre-empt an undecided
+  // ruling — so we do not. The paused-attribution machinery is exercised by the
+  // synthetic fixtures in the unit tests, not by a fabricated prod claim.
   {
     id: 'fetch-courtlistener',
     category: 'feeder',
-    schedule: '0 * * * *',
+    schedule: '*/15 * * * *',
     targetPath: '/jobs/fetch-courtlistener',
     method: 'POST',
     owner: 'lane-3',
-    enabled: false,
-    pausedBy: 'carson',
-    pausedReason: 'PI-0.5 feeder freeze (D12): feeders paused while the pending-anchoring backlog is drained',
-    pausedAt: '2026-07-05',
+    enabled: true,
+    // Wide budget: verified successful runs take 12-51 min; the 504s (SCRUM-2975)
+    // are a synchronous-long-run problem, not a silence problem.
+    maxSilenceMs: 6 * HOURS,
   },
   {
     id: 'anchor-public-records',
@@ -147,10 +158,8 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
     targetPath: '/jobs/anchor-public-records',
     method: 'POST',
     owner: 'lane-3',
-    enabled: false,
-    pausedBy: 'carson',
-    pausedReason: 'PI-0.5 feeder freeze (D12): public-record anchoring paused pending drain-safety pack (SCRUM-2991)',
-    pausedAt: '2026-07-05',
+    enabled: true,
+    maxSilenceMs: 3 * HOURS,
   },
   {
     id: 'fetch-edgar',
@@ -159,10 +168,8 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
     targetPath: '/jobs/fetch-edgar',
     method: 'POST',
     owner: 'lane-3',
-    enabled: false,
-    pausedBy: 'carson',
-    pausedReason: 'PI-0.5 feeder freeze (D12): EDGAR feeder paused during backlog drain',
-    pausedAt: '2026-07-05',
+    enabled: true,
+    maxSilenceMs: 12 * HOURS,
   },
 ];
 

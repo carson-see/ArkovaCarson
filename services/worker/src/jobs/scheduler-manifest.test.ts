@@ -43,10 +43,11 @@ describe('scheduler manifest (SCRUM-2900 config-as-code)', () => {
     }
   });
 
-  it('every PAUSED job carries full actor attribution (D12 codification)', () => {
-    const paused = pausedScheduledJobs();
-    expect(paused.length).toBeGreaterThan(0); // the feeders are paused
-    for (const job of paused) {
+  it('any PAUSED job in the shipped manifest carries full actor attribution', () => {
+    // The shipped manifest may legitimately have zero paused jobs (D12 pending).
+    // Whatever IS paused must be fully attributed — the paused-machinery itself
+    // is exercised by synthetic fixtures in the deadman/validator tests.
+    for (const job of pausedScheduledJobs()) {
       expect(job.enabled).toBe(false);
       expect(job.pausedBy, `${job.id} pausedBy`).toBeTruthy();
       expect(job.pausedReason, `${job.id} pausedReason`).toBeTruthy();
@@ -61,10 +62,14 @@ describe('scheduler manifest (SCRUM-2900 config-as-code)', () => {
     expect(drain?.category).toBe('anchor-pipeline');
   });
 
-  it('codifies the public-record feeders as paused (D12)', () => {
+  it('records the public-record feeders as VERIFIED-active (not a false D12 pause)', () => {
+    // Prod (Cloud Run logs 2026-07-20) shows these feeders ACTIVE. §1.5: the
+    // manifest states what IS. D12 (codify-as-paused) is a pending ruling; when
+    // applied it flips these to paused + attribution.
     const feeders = SCHEDULER_MANIFEST.filter((j) => j.category === 'feeder');
     expect(feeders.length).toBeGreaterThan(0);
-    expect(feeders.every((j) => !j.enabled)).toBe(true);
+    expect(feeders.every((j) => j.enabled)).toBe(true);
+    expect(getScheduledJob('fetch-courtlistener')?.enabled).toBe(true);
   });
 
   it('validateSchedulerManifest catches a paused job missing attribution', () => {
