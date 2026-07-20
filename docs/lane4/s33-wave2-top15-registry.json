@@ -1,0 +1,393 @@
+{
+  "schemaVersion": 1,
+  "artifactType": "arkova-s33-wave2-top15-registry",
+  "status": "CTO_SIGNED_SCOPE",
+  "decisionRecord": {
+    "confluencePageId": "104038401",
+    "alignmentPageId": "104202241",
+    "decidedAtUtc": "2026-07-15T13:37:27Z",
+    "planningBaseCommit": "42530fd73f9bd0cb7e4e70fc1259324810780b2c"
+  },
+  "coveragePolicy": {
+    "minimumHeldoutPerType": 12,
+    "targetEdgeCaseRatio": 0.3,
+    "minimumProductionValidSubstantiveFields": 5,
+    "acceptedAuthorshipMethods": [
+      "real-source",
+      "independently-authored"
+    ],
+    "generatorDerivedAllowed": false,
+    "trainingExposedAllowed": false,
+    "acceptanceLane": "lane3"
+  },
+  "acceptedBaseline": {
+    "batchId": "S33-W1",
+    "revision": 12,
+    "pullRequest": 1544,
+    "producerHeadCommit": "618e08d5a11cb73cb61394bc0343d33f4353ef39",
+    "mergeCommit": "42530fd73f9bd0cb7e4e70fc1259324810780b2c",
+    "entryCount": 81,
+    "manifestRawSha256": "eeb7c1b4bbd71642b4a7429864c0e04e9a5e3daf74b2cd78dd26442592f56e20",
+    "entryDatasheetRawSha256": "da27f796454edf975b2adcb1a21a37fbbb9daecbe79b8c693a9963f4a83bdd64",
+    "corpusDatasheetRawSha256": "00b9d846dac8edea61b142670ada03279147128950220d4435c09c6877b272fc",
+    "sourceBlobs": {
+      "licensing": "78090443bad793d248fdd1e3d22f7e468d618777",
+      "auKe": "7826dc6a34b475bdf2c73f9059026b8d19ec1b1f",
+      "ood": "a261cf690c930040f7dee0361ed29d73d1d23426"
+    },
+    "top15CoverageDisposition": "NOT_PROVIDED_IN_WAVE_1",
+    "countedTop15EntryIds": []
+  },
+  "domains": [
+    {
+      "id": "legal",
+      "order": 1,
+      "types": [
+        {
+          "id": "legal-01-contract",
+          "order": 1,
+          "documentType": "Contract",
+          "mappings": [{ "credentialType": "LEGAL", "subType": "contract" }]
+        },
+        {
+          "id": "legal-02-service-agreement",
+          "order": 2,
+          "documentType": "Service agreement",
+          "mappings": [{ "credentialType": "LEGAL", "subType": "contract" }]
+        },
+        {
+          "id": "legal-03-nondisclosure-agreement",
+          "order": 3,
+          "documentType": "Non-disclosure agreement",
+          "mappings": [{ "credentialType": "LEGAL", "subType": "contract" }]
+        },
+        {
+          "id": "legal-04-settlement-agreement",
+          "order": 4,
+          "documentType": "Settlement agreement",
+          "mappings": [{ "credentialType": "LEGAL", "subType": "contract" }]
+        },
+        {
+          "id": "legal-05-court-opinion",
+          "order": 5,
+          "documentType": "Court opinion",
+          "mappings": [{ "credentialType": "LEGAL", "subType": "court_opinion" }]
+        },
+        {
+          "id": "legal-06-court-order",
+          "order": 6,
+          "documentType": "Court order",
+          "mappings": [{ "credentialType": "LEGAL", "subType": "court_order" }]
+        },
+        {
+          "id": "legal-07-custody-divorce-decree",
+          "order": 7,
+          "documentType": "Custody or divorce decree",
+          "mappings": [{ "credentialType": "LEGAL", "subType": "court_order" }]
+        },
+        {
+          "id": "legal-08-affidavit-declaration",
+          "order": 8,
+          "documentType": "Affidavit or declaration",
+          "mappings": [{ "credentialType": "LEGAL", "subType": "affidavit" }]
+        },
+        {
+          "id": "legal-09-power-of-attorney",
+          "order": 9,
+          "documentType": "Power of attorney",
+          "mappings": [{ "credentialType": "LEGAL", "subType": "affidavit" }]
+        },
+        {
+          "id": "legal-10-bar-admission",
+          "order": 10,
+          "documentType": "Bar admission or practising certificate",
+          "mappings": [{ "credentialType": "LICENSE", "subType": "law_bar_admission" }]
+        },
+        {
+          "id": "legal-11-general-cle",
+          "order": 11,
+          "documentType": "General CLE completion",
+          "mappings": [{ "credentialType": "CLE", "subType": "general_cle" }]
+        },
+        {
+          "id": "legal-12-ethics-cle",
+          "order": 12,
+          "documentType": "Ethics CLE completion",
+          "mappings": [{ "credentialType": "CLE", "subType": "ethics_cle" }]
+        },
+        {
+          "id": "legal-13-specialized-cle",
+          "order": 13,
+          "documentType": "Specialized CLE completion",
+          "mappings": [{ "credentialType": "CLE", "subType": "specialized_cle" }]
+        },
+        {
+          "id": "legal-14-utility-patent",
+          "order": 14,
+          "documentType": "Utility patent or grant",
+          "mappings": [{ "credentialType": "PATENT", "subType": "utility" }]
+        },
+        {
+          "id": "legal-15-regulatory-instrument",
+          "order": 15,
+          "documentType": "Federal or state regulatory instrument",
+          "mappings": [
+            { "credentialType": "REGULATION", "subType": "federal" },
+            { "credentialType": "REGULATION", "subType": "state" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "financial",
+      "order": 2,
+      "types": [
+        {
+          "id": "financial-01-pay-stub",
+          "order": 1,
+          "documentType": "Pay stub or income statement",
+          "mappings": [{ "credentialType": "FINANCIAL", "subType": "financial_statement" }]
+        },
+        {
+          "id": "financial-02-w2",
+          "order": 2,
+          "documentType": "W-2",
+          "mappings": [{ "credentialType": "FINANCIAL", "subType": "tax_return" }]
+        },
+        {
+          "id": "financial-03-1099",
+          "order": 3,
+          "documentType": "1099",
+          "mappings": [{ "credentialType": "FINANCIAL", "subType": "tax_return" }]
+        },
+        {
+          "id": "financial-04-bank-statement",
+          "order": 4,
+          "documentType": "Bank statement",
+          "mappings": [{ "credentialType": "FINANCIAL", "subType": "financial_statement" }]
+        },
+        {
+          "id": "financial-05-income-verification",
+          "order": 5,
+          "documentType": "Income verification letter",
+          "mappings": [{ "credentialType": "ATTESTATION", "subType": "employment_verification" }]
+        },
+        {
+          "id": "financial-06-financial-aid-award",
+          "order": 6,
+          "documentType": "Financial-aid award",
+          "mappings": [{ "credentialType": "FINANCIAL", "subType": "financial_statement" }]
+        },
+        {
+          "id": "financial-07-tax-return-assessment",
+          "order": 7,
+          "documentType": "Tax return or assessment",
+          "mappings": [{ "credentialType": "FINANCIAL", "subType": "tax_return" }]
+        },
+        {
+          "id": "financial-08-audit-report",
+          "order": 8,
+          "documentType": "Independent audit report",
+          "mappings": [{ "credentialType": "FINANCIAL", "subType": "audit_report" }]
+        },
+        {
+          "id": "financial-09-financial-statements",
+          "order": 9,
+          "documentType": "Financial statements",
+          "mappings": [{ "credentialType": "FINANCIAL", "subType": "financial_statement" }]
+        },
+        {
+          "id": "financial-10-sec-10k",
+          "order": 10,
+          "documentType": "SEC Form 10-K",
+          "mappings": [{ "credentialType": "SEC_FILING", "subType": "form_10k" }]
+        },
+        {
+          "id": "financial-11-sec-10q",
+          "order": 11,
+          "documentType": "SEC Form 10-Q",
+          "mappings": [{ "credentialType": "SEC_FILING", "subType": "form_10q" }]
+        },
+        {
+          "id": "financial-12-sec-8k",
+          "order": 12,
+          "documentType": "SEC Form 8-K",
+          "mappings": [{ "credentialType": "SEC_FILING", "subType": "form_8k" }]
+        },
+        {
+          "id": "financial-13-sec-def14a",
+          "order": 13,
+          "documentType": "SEC proxy or DEF 14A",
+          "mappings": [{ "credentialType": "SEC_FILING", "subType": "form_def14a" }]
+        },
+        {
+          "id": "financial-14-finra-broker",
+          "order": 14,
+          "documentType": "FINRA broker record",
+          "mappings": [{ "credentialType": "FINANCIAL_ADVISOR", "subType": "finra_registered" }]
+        },
+        {
+          "id": "financial-15-investment-adviser",
+          "order": 15,
+          "documentType": "SEC or state investment-adviser record",
+          "mappings": [
+            { "credentialType": "FINANCIAL_ADVISOR", "subType": "sec_registered" },
+            { "credentialType": "FINANCIAL_ADVISOR", "subType": "state_registered" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "order": 3,
+      "types": [
+        {
+          "id": "education-01-associate",
+          "order": 1,
+          "documentType": "Associate degree",
+          "mappings": [{ "credentialType": "DEGREE", "subType": "associate" }]
+        },
+        {
+          "id": "education-02-bachelor",
+          "order": 2,
+          "documentType": "Bachelor's degree",
+          "mappings": [{ "credentialType": "DEGREE", "subType": "bachelor" }]
+        },
+        {
+          "id": "education-03-master",
+          "order": 3,
+          "documentType": "Master's degree",
+          "mappings": [{ "credentialType": "DEGREE", "subType": "master" }]
+        },
+        {
+          "id": "education-04-doctorate",
+          "order": 4,
+          "documentType": "Doctorate",
+          "mappings": [{ "credentialType": "DEGREE", "subType": "doctorate" }]
+        },
+        {
+          "id": "education-05-professional-degree",
+          "order": 5,
+          "documentType": "Professional degree (JD, MD, EdD, DDS, or DNP)",
+          "mappings": [
+            { "credentialType": "DEGREE", "subType": "professional_jd" },
+            { "credentialType": "DEGREE", "subType": "professional_md" },
+            { "credentialType": "DEGREE", "subType": "professional_edd" },
+            { "credentialType": "DEGREE", "subType": "professional_dds" },
+            { "credentialType": "DEGREE", "subType": "professional_dnp" }
+          ]
+        },
+        {
+          "id": "education-06-official-undergraduate-transcript",
+          "order": 6,
+          "documentType": "Official undergraduate transcript",
+          "mappings": [{ "credentialType": "TRANSCRIPT", "subType": "official_undergraduate" }]
+        },
+        {
+          "id": "education-07-official-graduate-transcript",
+          "order": 7,
+          "documentType": "Official graduate transcript",
+          "mappings": [{ "credentialType": "TRANSCRIPT", "subType": "official_graduate" }]
+        },
+        {
+          "id": "education-08-unofficial-transcript",
+          "order": 8,
+          "documentType": "Unofficial transcript",
+          "mappings": [{ "credentialType": "TRANSCRIPT", "subType": "unofficial" }]
+        },
+        {
+          "id": "education-09-high-school-diploma",
+          "order": 9,
+          "documentType": "High-school diploma or equivalency",
+          "mappings": [{ "credentialType": "CERTIFICATE", "subType": "completion_certificate" }]
+        },
+        {
+          "id": "education-10-professional-certification",
+          "order": 10,
+          "documentType": "Professional certification",
+          "mappings": [{ "credentialType": "CERTIFICATE", "subType": "professional_certification" }]
+        },
+        {
+          "id": "education-11-trade-certification",
+          "order": 11,
+          "documentType": "Trade certification",
+          "mappings": [{ "credentialType": "CERTIFICATE", "subType": "trade_certification" }]
+        },
+        {
+          "id": "education-12-training-certificate",
+          "order": 12,
+          "documentType": "Training certificate",
+          "mappings": [{ "credentialType": "CERTIFICATE", "subType": "training_certificate" }]
+        },
+        {
+          "id": "education-13-completion-certificate",
+          "order": 13,
+          "documentType": "Course completion certificate",
+          "mappings": [{ "credentialType": "CERTIFICATE", "subType": "completion_certificate" }]
+        },
+        {
+          "id": "education-14-accreditation",
+          "order": 14,
+          "documentType": "Institutional or program accreditation",
+          "mappings": [
+            { "credentialType": "ACCREDITATION", "subType": "institutional" },
+            { "credentialType": "ACCREDITATION", "subType": "programmatic" }
+          ]
+        },
+        {
+          "id": "education-15-microcredential",
+          "order": 15,
+          "documentType": "Educational microcredential",
+          "mappings": [{ "credentialType": "BADGE", "subType": "educational_microcredential" }]
+        }
+      ]
+    }
+  ],
+  "productionOrder": [
+    "legal-01-contract",
+    "legal-02-service-agreement",
+    "legal-03-nondisclosure-agreement",
+    "legal-04-settlement-agreement",
+    "legal-05-court-opinion",
+    "financial-01-pay-stub",
+    "financial-02-w2",
+    "financial-03-1099",
+    "financial-04-bank-statement",
+    "financial-05-income-verification",
+    "education-01-associate",
+    "education-02-bachelor",
+    "education-03-master",
+    "education-04-doctorate",
+    "education-05-professional-degree",
+    "legal-06-court-order",
+    "legal-07-custody-divorce-decree",
+    "legal-08-affidavit-declaration",
+    "legal-09-power-of-attorney",
+    "legal-10-bar-admission",
+    "financial-06-financial-aid-award",
+    "financial-07-tax-return-assessment",
+    "financial-08-audit-report",
+    "financial-09-financial-statements",
+    "financial-10-sec-10k",
+    "education-06-official-undergraduate-transcript",
+    "education-07-official-graduate-transcript",
+    "education-08-unofficial-transcript",
+    "education-09-high-school-diploma",
+    "education-10-professional-certification",
+    "legal-11-general-cle",
+    "legal-12-ethics-cle",
+    "legal-13-specialized-cle",
+    "legal-14-utility-patent",
+    "legal-15-regulatory-instrument",
+    "financial-11-sec-10q",
+    "financial-12-sec-8k",
+    "financial-13-sec-def14a",
+    "financial-14-finra-broker",
+    "financial-15-investment-adviser",
+    "education-11-trade-certification",
+    "education-12-training-certificate",
+    "education-13-completion-certificate",
+    "education-14-accreditation",
+    "education-15-microcredential"
+  ]
+}
