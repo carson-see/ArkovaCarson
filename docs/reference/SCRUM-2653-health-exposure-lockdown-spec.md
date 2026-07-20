@@ -1,6 +1,8 @@
 # SCRUM-2653 — Public health-exposure lockdown (SPEC)
 
-**Lane 2 · 2026-07-20 · SPEC ONLY (implementation post-train). Engineering note, not Confluence doc.**
+**Lane 2 · 2026-07-20 · SPEC ONLY (implementation post-train).**
+
+> **Not the authoritative doc.** Per CLAUDE §0-rule-4, the controlling documentation is Confluence — this Markdown is an engineering note only. The implementation PR MUST author/link the Confluence page and [SCRUM-2653](https://arkova.atlassian.net/browse/SCRUM-2653). Do not treat this file alone as the implementation contract.
 
 Exit target (Lane 2 plan row 5): **public probes 401/404, internal checks green.**
 

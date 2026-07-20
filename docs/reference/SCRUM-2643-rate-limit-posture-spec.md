@@ -1,6 +1,8 @@
 # SCRUM-2643 — Rate-limit posture (SPEC)
 
-**Lane 2 · 2026-07-20 · SPEC ONLY (implementation post-train). Engineering note, not Confluence doc.**
+**Lane 2 · 2026-07-20 · SPEC ONLY (implementation post-train).**
+
+> **Not the authoritative doc.** Per CLAUDE §0-rule-4, the controlling documentation is Confluence — this Markdown is an engineering note only. The implementation PR MUST author/link the Confluence page and the tickets ([SCRUM-2643](https://arkova.atlassian.net/browse/SCRUM-2643); the limiter-scaling + auth-brute-force defects should also be filed as their own bugs). Do not treat this file alone as the implementation contract.
 
 Exit target (Lane 2 plan row 14): **limits live; verifier paths load-tested at KPI-2/3 patterns, NOT throttled.**
 
@@ -43,19 +45,24 @@ Reality diverges:
 | API key (read scopes) | key + scope | 500–1,000 / min | v2 per-scope |
 | API key (write anchors) | key | 100 / min | v2 per-scope |
 | Batch endpoints | IP/key | 10 / min | |
-| Auth | IP | 5 / min (skip failed) | brute-force guard |
+| Auth | IP | 5 / min | **see security defect below — NOT currently a brute-force guard** |
 | Webhooks (inbound) | global/provider | 100 / min | Stripe/DocuSign/Adobe |
 
-### CRITICAL — the limiter is PER-INSTANCE unless Upstash is configured (Performance review)
+### CRITICAL — rate limiting is NOT globally enforced, even WITH Upstash (Performance + CTO review)
 
-The default store is a **per-instance in-memory `Map`** (`rateLimit.ts`). `initUpstashRateLimiting()` swaps to a shared Redis store **only if** `UPSTASH_REDIS_REST_URL`/`_TOKEN` are set; otherwise it logs "using in-memory rate limiting" and every limit is enforced per Cloud Run instance. Under autoscaling with a load balancer that spreads one client's requests across instances:
+The default store is a **per-instance in-memory `Map`** (`rateLimit.ts`), so under Cloud Run autoscaling the **effective per-IP limit = N_instances × maxRequests**, applied independently per instance (a client can be throttled on instance A while B/C are wide open). Higher than stated and non-deterministic (floats with autoscale count + LB stickiness).
 
-> **effective per-IP limit = N_instances × maxRequests**, applied independently per instance — so a client can be throttled on instance A while B/C are wide open. The enforced ceiling is both **higher than stated** and **non-deterministic** (floats with autoscale count + LB stickiness).
+**Correction (CTO review — do not repeat the earlier "Upstash makes it shared/correct" claim):** configuring Upstash does **NOT** fix this. `UpstashRateLimitStore` (`utils/upstashRateLimit.ts`) is **local-cache-first with fire-and-forget writes**, not a shared atomic counter:
+- `get()` reads only `this.cache` (a per-process `Map`) — it never reads the shared Redis value on the request path (Redis is read once at startup via `syncFromRedis`).
+- `set()` writes the local cache and **fire-and-forgets** a non-atomic REST `SET /key/value/ex/ttl` — no `INCR`, no read-modify-write, no atomicity.
 
-Consequences the spec must carry:
-- **This partly explains the §1.10 discrepancy for the wrong reason:** with in-memory + N instances, the real ceiling is N×60, not 60 or 100. Any nominal number in §1.10 or below is only enforced if a **shared (Redis) store** is configured.
-- **Verify prod Upstash config in-session** before trusting any limit value: if `UPSTASH_REDIS_REST_URL/_TOKEN` are unset in prod, the limits are nominal, not enforced.
-- Add a row to the §1.10 reconciliation: *"stated limits assume a shared store; in-memory deployment multiplies every limit by the instance count."*
+So with Upstash configured the limiter is still effectively **per-instance** (reads are local), and concurrent instances race on non-atomic SETs. The shared store is not authoritative for enforcement.
+
+Consequences the spec carries:
+- The §1.10 nominal numbers are **not enforced** as stated in either deployment mode. In-memory: N×max. "With Upstash": still local-read per-instance + racy writes.
+- **Implementation acceptance requirement:** replace the read-path with an **atomic shared counter** — Redis `INCR` + `EXPIRE` (or a Lua/`SET NX`+`INCR` script / a sliding-window library) read on **every** request — so the limit is one authoritative cross-instance value. Until then, treat every documented limit as per-instance-multiplied.
+- Add a row to the §1.10 reconciliation: *"stated limits are per-instance and not globally enforced; global enforcement requires an atomic shared counter (not the current local-cache + fire-and-forget SET)."*
+- **Verify prod Upstash config in-session** before trusting any limit value — but note that even "configured" does not currently mean "enforced."
 
 ### Verifier-path carve-out (the row-14 requirement)
 
@@ -70,7 +77,17 @@ Public verification endpoints (`/api/v1/verify*`, public-anchor reads, the verif
 - Every rate-limited response carries `Retry-After` (on 429) + `X-RateLimit-*` headers (regression-test).
 - Verifier paths load-tested at KPI-2/3 patterns: **0 throttled** at target QPS (evidence in PR).
 - §1.10 and the code agree (one is corrected to match the other; recommend correcting §1.10 to the per-scope reality).
-- No limiter regressions on auth (5/min) / webhooks (100/min) / batch (10/min).
+- Webhooks (100/min) / batch (10/min) limiters unregressed.
+- **Auth brute-force defect FIXED (not preserved as a no-regression item)** — see below; add a repeated-invalid-login test proving failed attempts count.
+
+### SECURITY DEFECT — the `auth` limiter does NOT defend against brute force (CTO review)
+
+The `auth` limiter sets `skipFailedRequests: true`. In `rateLimit.ts` that option **decrements the bucket when `res.statusCode >= 400`** — i.e. **failed** login attempts are exactly what is NOT counted, while successful requests consume the limit. This is the **inverse** of a brute-force defense: an attacker spraying wrong passwords (all 401s) is never throttled.
+
+This must be **fixed** in the implementation, not carried as a no-regression item:
+- Count failed attempts for the auth path — either drop `skipFailedRequests` on the auth limiter, or add a dedicated **failed-attempt limiter** keyed on IP (and ideally IP+username) that increments on 401/403.
+- Keep `skipFailedRequests` only where it is correct (e.g. not penalizing a user for a server-side 5xx on a non-auth path).
+- **Acceptance test:** N consecutive invalid logins from one IP get 429 after the threshold (a repeated-invalid-login test); a successful login is not blocked by prior failures beyond policy.
 
 ## Tier / rollout
 
