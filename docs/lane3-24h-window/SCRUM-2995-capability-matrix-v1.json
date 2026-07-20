@@ -33,9 +33,10 @@
         "image_heic_heif": "unsupported_soft_fail", "image_tiff": "unsupported_soft_fail",
         "audio_mp3_wav_m4a_flac": "unsupported_no_path", "video": "unsupported_no_path"
       },
-      "claim_status": "measured",
+      "claim_status": "asserted",
+      "claim_status_detail": "The dispatch BRANCHES (pdf|docx|image/* supported; else unsupported) are measured from code this window. Successful DECODE/OCR of each format was NOT runtime-verified (no live browser OCR run this window) — so per this document's definition (measured = verified this window), the extraction-succeeds claim is ASSERTED until runtime evidence exists.",
       "evidence": "src/lib/ocrWorker.ts extractText(): pdf|docx|image/* branches; else UNSUPPORTED_FILE_TYPE. HEIC/TIFF browser-undecodable (SCRUM-2911). No audio/video extraction path exists.",
-      "not_asserted": ["audio content transcription", "audio content extraction", "video content extraction", "HEIC/TIFF OCR"]
+      "not_asserted": ["runtime-verified successful OCR of any format this window", "audio content transcription", "audio content extraction", "video content extraction", "HEIC/TIFF OCR"]
     },
     "ai_template_reconstruction": {
       "description": "Gemini-based reconstruction of a structured template from extracted fields.",
@@ -54,8 +55,8 @@
       "registry_read_consume": {
         "status": "endpoint_reachable_and_invite_active",
         "claim_status": "measured",
-        "evidence": "SCRUM-2993: sandbox.credentialengineregistry.org GET-by-CTID returns valid JSON (200 root; 404 {errors:[Resource not found]} for unknown CTID). CE side is ready: Jeff Grann (jgrann@credentialengine.org, confirmed CE dev contact) copied Arkova's account to a sandbox environment (Jun-24 email) and endorsed the consuming approach as 'a direct GET to retrieve the record' by CTID; evaluation agreement completed 2026-06-09, trial closes ~Sept (INVITE ACTIVE, not expired); Arkova has an org CTID + temporary API keys provisioned (Jeanne Kitchens, Jun-10).",
-        "remaining_step": "One real end-to-end consume (GET Arkova's org CTID -> parse with the SCRUM-2913 importer). Blocked only on retrieving the org CTID value from the CE account dashboard (not extracted from email this window) — a ~2-minute step, NOT a CE-side gate and NOT a founder email to Jeff (access already granted).",
+        "evidence": "SCRUM-2993: sandbox.credentialengineregistry.org GET-by-CTID returns valid JSON (200 root; 404 {errors:[Resource not found]} for unknown CTID). CE-side sandbox access is provisioned and the evaluation window is active (not expired); the CE dev contact endorsed GET-by-CTID as the consuming approach. Partner-contact identities, account/access credentials, and trial-window dates are recorded in the controlled internal evidence (CE correspondence thread + SCRUM-2993 / Confluence), NOT in this artifact.",
+        "remaining_step": "One real end-to-end consume (GET Arkova's org CTID -> parse with the SCRUM-2913 importer). Blocked only on retrieving the org CTID value from the CE account dashboard — a ~2-minute operational step, not a CE-side gate and not a partner outreach (access already granted).",
         "not_asserted": ["a real published sandbox envelope parsed end-to-end this window", "registry publish access (kept sandbox-gated by CE per agreed roles)"]
       },
       "natively_ctdl_compliant": {

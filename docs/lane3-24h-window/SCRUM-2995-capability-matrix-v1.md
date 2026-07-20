@@ -6,8 +6,8 @@
 |---|---|---|---|
 | **Anchoring** (network-observed timestamp + SHA-256 integrity) | Working, format-agnostic at chain layer | measured (PDF/DOCX/image) · asserted (audio/video/binary) | "Anchors files of any format (byte-level fingerprint, no MIME gating). Very large media may hit a client-side hashing limit." Nothing was anchored at runtime this window. |
 | — What an anchor proves | — | measured | Proves these exact bytes existed at the network-observed time. Does **NOT** assert content authenticity, legal validity, or that a re-encoded copy will match (byte-for-byte only, not perceptual). |
-| **Content extraction** (on-device OCR/text) | PDF, DOCX, common web images | measured | "Extracts content from PDF, DOCX, and PNG/JPG/WEBP/GIF images." |
-| — HEIC/TIFF extraction | Unsupported (soft-fail) | measured | Anchors, but not OCR-read. Do **not** claim. |
+| **Content extraction** (on-device OCR/text) | PDF, DOCX, common web images | asserted (static code-path; no live OCR run this window) | "Extracts content from PDF, DOCX, and PNG/JPG/WEBP/GIF images." |
+| — HEIC/TIFF extraction | Unsupported (soft-fail) | asserted | Anchors, but not OCR-read. Do **not** claim. |
 | — Audio/video extraction | **No path** | not_asserted | **Never claim audio/video *content* extraction.** Audio anchors; content is not read. |
 | **AI template reconstruction** | Degraded (SCRUM-2999) | asserted | Do not claim current richness parity with early-2026 records until the model-SKU fix lands. |
 | **CTDL import/parse** | Built (Draft PR #1603) | measured | "CTDL JSON-LD import implemented and unit-tested." Not yet merged/prod. |

@@ -24,7 +24,7 @@
 | CTDL import/parse | measured | "CTDL JSON-LD import implemented and unit-tested." | "in production" (Draft, unmerged) |
 | CE registry consume | measured | "Validated read access against the CE sandbox registry." | "fully integrated with CE registry" |
 | Natively CTDL-compliant | **not_asserted** | *(omit)* | "natively CTDL-compliant" (pending SCRUM-2998) |
-| Audio/image support | measured | "Anchors audio and image files; extracts content from PDF/DOCX/common images." | "understands/reads audio", "reads all image formats" |
+| Audio/image support | anchor: measured (PDF/DOCX/image) / asserted (audio); extraction: asserted (static code-path, no live OCR run) | "Anchors audio and image files; extracts content from PDF/DOCX/common images." | "understands/reads audio", "reads all image formats" |
 | Template intelligence | asserted/degraded | *(omit or)* "structured extraction for supported document types." | any richness/accuracy metric |
 
 **Signature/commitment guard:** these drafts contain **no** signature blocks, no dated commitments, no membership-fee acceptance, no LOI language. Carson decides SIGN-01 and files.
