@@ -166,6 +166,25 @@ test('REJECT: merkle proof does not reconstruct the block root (not in block)', 
   assert.equal(r.reason, 'tx_not_in_block');
 });
 
+test('REJECT: merkle proof reports a different block than the tx status', async () => {
+  const paths = clone(FAKE_EXPLORER_PATHS);
+  const mp = clone(FAKE_EXPLORER_PATHS[`tx/${TX}/merkle-proof`]);
+  mp.block_height = CONSTANTS.REAL_BLOCK + 1; // disagree with status.block_height
+  paths[`tx/${TX}/merkle-proof`] = mp;
+  const r = await verifyAnchorProof(VALID_PROOF, fakeExplorer(paths));
+  assert.equal(r.reason, 'merkle_proof_block_mismatch');
+});
+
+test('REJECT: malformed merkle sibling hex fails closed', async () => {
+  const paths = clone(FAKE_EXPLORER_PATHS);
+  const mp = clone(FAKE_EXPLORER_PATHS[`tx/${TX}/merkle-proof`]);
+  mp.merkle = [...mp.merkle];
+  mp.merkle[0] = 'zz' + mp.merkle[0].slice(2); // non-hex
+  paths[`tx/${TX}/merkle-proof`] = mp;
+  const r = await verifyAnchorProof(VALID_PROOF, fakeExplorer(paths));
+  assert.equal(r.reason, 'malformed_merkle_proof');
+});
+
 test('REJECT: block header does not hash to the stated block hash', async () => {
   const paths = clone(FAKE_EXPLORER_PATHS);
   // Flip the final nibble of the header nonce (keep length 160) -> different hash.

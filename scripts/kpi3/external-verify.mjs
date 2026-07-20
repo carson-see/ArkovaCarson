@@ -38,13 +38,25 @@ import { createHash } from 'node:crypto';
 export const ARKOVA_MAGIC_HEX = '41524b56'; // "ARKV"
 export const DEFAULT_MIN_CONFIRMATIONS = 6;
 
+// Hex-length constants for the OP_RETURN commitment (1 byte = 2 hex chars).
+const MAGIC_HEX_LEN = ARKOVA_MAGIC_HEX.length;       // 8  (4 bytes: ARKV)
+const FINGERPRINT_HEX_LEN = 64;                       // 32 bytes: SHA-256
+const COMMIT_MIN_HEX = MAGIC_HEX_LEN + FINGERPRINT_HEX_LEN; // 72: magic + fingerprint
+/** A 64-hex (32-byte) lowercase SHA-256 string — fingerprint, txid, block hash. */
+const HEX64 = /^[0-9a-f]{64}$/;
+const isHex64 = (s) => HEX64.test(String(s || '').toLowerCase());
+
 // ── crypto / merkle helpers ──────────────────────────────────────────────────
 const sha256 = (buf) => createHash('sha256').update(buf).digest();
 const dsha256 = (buf) => sha256(sha256(buf));
 const revHex = (hex) => Buffer.from(hex, 'hex').reverse();
 
-/** Recompute a Bitcoin merkle root from a tx's Esplora merkle-proof (siblings + pos). */
+/**
+ * Recompute a Bitcoin merkle root from a tx's Esplora merkle-proof (siblings + pos).
+ * Returns null if any sibling is not valid 32-byte hex (fail closed).
+ */
 export function computeMerkleRoot(txidHex, siblingsHex, pos) {
+  if (!isHex64(txidHex) || !siblingsHex.every(isHex64)) return null;
   let h = revHex(txidHex); // internal (little-endian) byte order
   let idx = pos;
   for (const sib of siblingsHex) {
@@ -92,10 +104,10 @@ export function extractCanonicalFingerprint(scriptHex) {
   } else {
     return null; // OP_0, PUSHDATA2/4, or non-canonical
   }
-  // Need prefix (4B=8hex) + fingerprint (32B=64hex) = 72 hex chars minimum.
-  if (payload.length < 72) return null;
-  if (payload.slice(0, 8) !== ARKOVA_MAGIC_HEX) return null; // magic at offset 0
-  return payload.slice(8, 72); // fingerprint at canonical offset [4:36]
+  // Need magic (4B) + fingerprint (32B) of committed data at minimum.
+  if (payload.length < COMMIT_MIN_HEX) return null;
+  if (payload.slice(0, MAGIC_HEX_LEN) !== ARKOVA_MAGIC_HEX) return null; // magic at offset 0
+  return payload.slice(MAGIC_HEX_LEN, COMMIT_MIN_HEX); // fingerprint at canonical offset [4:36]
 }
 
 /**
@@ -114,14 +126,15 @@ export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
     headerBinds: null,
     blockMatch: null,
     issuerMatch: null,
+    committed: null,
   };
-  const done = (verified, reason) => ({ verified, reason: reason ?? null, checks, committed: checks.committed ?? null });
+  const done = (verified, reason) => ({ verified, reason: reason ?? null, checks, committed: checks.committed });
 
   const fp = String(proof.fingerprint || '').toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(fp)) return done(false, 'bad_fingerprint_format');
+  if (!isHex64(fp)) return done(false, 'bad_fingerprint_format');
   // Validate txid before it is interpolated into any explorer URL path.
   const txid = String(proof.txid || '').toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(txid)) return done(false, 'bad_txid_format');
+  if (!isHex64(txid)) return done(false, 'bad_txid_format');
 
   // 1. Fetch tx.
   let tx;
@@ -171,11 +184,17 @@ export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
     checks.merkleIncluded = false;
     return done(false, 'merkle_proof_unavailable');
   }
+  // The merkle proof and the tx status must agree on the containing block.
+  if (typeof mp.block_height === 'number' && mp.block_height !== status.block_height) {
+    checks.merkleIncluded = false;
+    return done(false, 'merkle_proof_block_mismatch');
+  }
   const computedRoot = computeMerkleRoot(txid, mp.merkle, mp.pos);
+  if (computedRoot === null) { checks.merkleIncluded = false; return done(false, 'malformed_merkle_proof'); }
 
   // block_hash comes from the (untrusted) explorer — validate before interpolating.
   const blockHash = String(status.block_hash || '').toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(blockHash)) { checks.headerBinds = false; return done(false, 'bad_block_hash'); }
+  if (!isHex64(blockHash)) { checks.headerBinds = false; return done(false, 'bad_block_hash'); }
   let headerHex;
   try { headerHex = String(await fetchPath(`block/${blockHash}/header`)).trim(); } catch { headerHex = null; }
   const header = headerHex ? parseBlockHeader(headerHex) : null;
