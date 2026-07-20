@@ -2,6 +2,30 @@
 
 _Last updated: 2026-07-15_
 
+## 2026-07-15 S3.3 Wave-2 top-15 coverage gate
+
+- `s33-wave2-coverage-audit.ts` is an offline Lane-4 registry/coverage gate;
+  it is not imported by the worker runtime and does not call a model. It parses
+  the CTO-signed 45-type Legal/Financial/Education registry, checks every
+  credential/subtype pair against `V6_SUBTYPE_TAXONOMY`, pins the merged Wave-1
+  revision-12 baseline without claiming unprovided top-15 coverage, and emits a
+  canonical deterministic report digest.
+- Coverage counts only whole-batch Lane-3 acceptance envelopes verified by the
+  shared Ed25519 CTO-release trust root. The audit recomputes the raw and
+  canonical coverage-registry digests, verifies the signed entry order, rejects
+  duplicate artifacts/batches/entry fingerprints, and requires one unbroken
+  base-to-result registry chain with no fork, cycle, or disconnected component.
+  A missing production trust root fails closed for nonempty acceptance input;
+  the pre-corpus empty baseline remains reproducible. Generator-derived,
+  training-exposed, shallow, duplicate, unknown-type, or taxonomy-mismatched
+  entries fail closed; a producer-supplied `lane3` label grants no authority and
+  Lane 4 cannot accept its own records. A type is complete only at
+  12 accepted rows with at least `ceil(12 * 0.30) = 4` edge cases; both total
+  and edge-case deficits contribute to the fail-closed missing count.
+- `docs/lane4/evidence/s33-wave2-coverage-baseline.json` is the reproducible
+  pre-corpus zero-state: 45 incomplete types and 540 minimum missing entries.
+  Later corpus batches must preserve the fixed domain-interleaved production
+  order and replace this zero-state only with exact Lane-3-accepted artifacts.
 ## 2026-07-15 S3.3 Wave-3 deterministic offline gates
 
 - `s33-wave3-deterministic-eval-gates.ts` is the inert SCRUM-2681/2686/2687
