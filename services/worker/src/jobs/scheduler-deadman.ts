@@ -24,6 +24,14 @@ import type { ScheduledJobSpec } from './scheduler-manifest.js';
 /** Conservative default overdue window when a job omits maxSilenceMs. */
 export const DEFAULT_MAX_SILENCE_MS = 3 * 60 * 60 * 1000; // 3h
 
+/**
+ * Tolerance for a last-run timestamp that is slightly in the future (benign NTP
+ * skew between the worker that stamped it and the evaluator). Beyond this, a
+ * future timestamp is invalid telemetry — the dead-man must fail loud rather
+ * than treat a negative "silence" as healthy forever (review P1).
+ */
+export const CLOCK_SKEW_TOLERANCE_MS = 60 * 1000; // 1 min
+
 export interface JobRunSignal {
   id: string;
   /** ISO timestamp of the last SUCCESSFUL run, or null if never run. */
@@ -106,7 +114,8 @@ export function evaluateSchedulerDeadman(
       continue;
     }
 
-    // Enabled, never ran, and past the window → unattributed stall.
+    // Enabled, never ran / unparseable timestamp, and past the window →
+    // unattributed stall.
     if (silenceMs === null) {
       findings.push({
         jobId: job.id,
@@ -114,7 +123,23 @@ export function evaluateSchedulerDeadman(
         actor: null,
         firing: true,
         silenceMs: null,
-        message: `${job.id} is ENABLED but has never run — unattributed stall; page a human.`,
+        message: `${job.id} is ENABLED but has never run (or its last-run timestamp is unparseable) — unattributed stall; page a human.`,
+      });
+      continue;
+    }
+
+    // Future timestamp beyond benign clock skew → invalid telemetry. A negative
+    // "silence" must NOT be classified healthy indefinitely (review P1): fail loud.
+    if (silenceMs < -CLOCK_SKEW_TOLERANCE_MS) {
+      findings.push({
+        jobId: job.id,
+        attribution: 'unattributed',
+        actor: null,
+        firing: true,
+        silenceMs,
+        message:
+          `${job.id} is ENABLED but its last-run timestamp is ${Math.round(-silenceMs / 60000)}m ` +
+          `in the FUTURE (> ${Math.round(CLOCK_SKEW_TOLERANCE_MS / 1000)}s skew tolerance) — invalid telemetry; page a human.`,
       });
       continue;
     }

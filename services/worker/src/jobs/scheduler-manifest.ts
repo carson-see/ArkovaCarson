@@ -11,8 +11,11 @@
  * This manifest is the repo source of truth for the CRITICAL scheduled jobs.
  * Every PAUSED job MUST carry actor attribution (pausedBy / pausedReason /
  * pausedAt) so the dead-man (scheduler-deadman.ts) can name who or what
- * stopped it — the non-negotiable slice. D12: the public-record FEEDER jobs
- * are codified here as paused (the PI-0.5 feeder freeze).
+ * stopped it — the non-negotiable slice. NOTE on the feeders: they are recorded
+ * ENABLED here because they are VERIFIED active in prod (§1.5); the D12
+ * PI-0.5 feeder-freeze is an undecided ruling (due 2026-07-25), so this manifest
+ * does not pre-emptively encode a pause that prod has not applied. When D12 is
+ * ruled paused, flip those entries to enabled:false + attribution.
  *
  * NOTE: this is the critical-set source of truth, not an exhaustive mirror of
  * every /jobs/* endpoint. Adding a job here opts it into dead-man monitoring.

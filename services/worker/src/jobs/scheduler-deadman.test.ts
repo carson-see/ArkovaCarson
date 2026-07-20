@@ -102,4 +102,29 @@ describe('evaluateSchedulerDeadman (SCRUM-2900 actor attribution)', () => {
     expect(report.findings[0].attribution).toBe('unattributed');
     expect(report.findings[0].message).toMatch(/no run signal|never/i);
   });
+
+  it('a FUTURE last-run timestamp fires (invalid telemetry, not healthy) — review P1', () => {
+    const signals: JobRunSignal[] = [
+      { id: 'batch-anchors', lastRunAt: '2026-07-20T18:00:00Z' }, // 6h in the future of NOW
+    ];
+    const report = evaluateSchedulerDeadman([enabledDrain], signals, NOW);
+    expect(report.firing).toBe(true);
+    expect(report.findings[0].attribution).toBe('unattributed');
+    expect(report.findings[0].message).toMatch(/future|invalid telemetry/i);
+  });
+
+  it('a last-run within benign clock skew (few seconds ahead) is NOT treated as a stall', () => {
+    const signals: JobRunSignal[] = [
+      { id: 'batch-anchors', lastRunAt: '2026-07-20T12:00:30Z' }, // 30s ahead of NOW
+    ];
+    const report = evaluateSchedulerDeadman([enabledDrain], signals, NOW);
+    expect(report.firing).toBe(false);
+  });
+
+  it('an unparseable last-run timestamp fires unattributed, not healthy', () => {
+    const signals: JobRunSignal[] = [{ id: 'batch-anchors', lastRunAt: 'not-a-date' }];
+    const report = evaluateSchedulerDeadman([enabledDrain], signals, NOW);
+    expect(report.firing).toBe(true);
+    expect(report.findings[0].attribution).toBe('unattributed');
+  });
 });
