@@ -67,6 +67,19 @@ export function unknownFraudDetectionResult(): FraudDetectionResult {
   };
 }
 
+/**
+ * BUG-2026-07-17-009 / BUG-2026-07-17-010 (SCRUM-2910, P0): fraud-derived
+ * metadata must never render on any display surface (owner document view,
+ * records list, credential card, PUBLIC verification page). Historical anchors
+ * carry `fraud_*` keys (fraud_score, fraud_risk_level, fraud_signals, ...) and
+ * Gemini extraction emits a camelCase `fraudSignals` field — this predicate
+ * matches all of them. Conservative by design: any key whose normalized form
+ * starts with "fraud" is hidden everywhere.
+ */
+export function isFraudMetadataKey(key: string): boolean {
+  return key.trim().toLowerCase().replace(/[\s-]+/g, '_').startsWith('fraud');
+}
+
 export function fraudResultToMetadata(
   result: FraudDetectionResult | null,
 ): Record<string, unknown> {

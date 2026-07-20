@@ -242,9 +242,17 @@ import {
   processWebhookRetries,
   deriveResourceKey,
   __resetSequenceForTest,
+  __resetWebhookFlagCacheForTest,
   resetCircuitBreakers,
   resolveDlqEntry,
 } from './delivery.js';
+
+// WH-4: the ENABLE_OUTBOUND_WEBHOOKS flag read is now cached in-process for 30s.
+// Reset it before every test so a cached value from a prior case (tests run with
+// frozen fake timers, so the TTL never elapses) cannot leak across tests.
+beforeEach(() => {
+  __resetWebhookFlagCacheForTest();
+});
 
 // We also need direct access for HMAC verification — import crypto
 import crypto from 'node:crypto';
@@ -1182,6 +1190,158 @@ describe('deliverToEndpoint', () => {
     expect(key).toBe('ep-001-anchor.secured-evt-001');
     // Confirm there is no embedded attempt number suffix
     expect(key).not.toMatch(/-1$/);
+  });
+});
+
+// ================================================================
+// WH-3 (SCRUM-2899): idempotency-lookup retry + DLQ (ends silent drops)
+// ================================================================
+
+describe('WH-3: idempotency-lookup failure handling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    setupDbRouting();
+  });
+
+  it('preserves the event in the DLQ (log_write) when the idempotency lookup fails persistently — no silent drop', async () => {
+    // Both the first lookup AND the single transient retry fail with a
+    // connection-level error. Pre-WH-3: Sentry + `return false`, event silently
+    // dropped (this was the ~13/wk drop class). Post-WH-3: durably preserved.
+    deliveryLogSelect.single
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } })
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } });
+    dlqUpsert.mockClear();
+    dlqUpsert.mockReturnValue(Promise.resolve({ data: { id: 'dlq-lw' }, error: null }));
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-lookup-001', MOCK_PAYLOAD_DATA);
+
+    // Retried once (two lookup attempts), then gave up.
+    expect(deliveryLogSelect.single).toHaveBeenCalledTimes(2);
+    // No HTTP delivery — we never confirmed idempotency state.
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    // AUDIT-INTEGRITY: the event is preserved in the DLQ, keyed by the same
+    // idempotency_key, with the 'log_write' failure_kind (migration-free reuse).
+    expect(dlqUpsert).toHaveBeenCalledTimes(1);
+    const row = dlqUpsert.mock.calls[0][0] as unknown as {
+      failure_kind: string;
+      event_id: string;
+      error_message: string;
+    };
+    expect(row.failure_kind).toBe('log_write');
+    expect(row.event_id).toBe('evt-lookup-001');
+    expect(row.error_message).toMatch(/idempotency lookup failed/i);
+    expect(row.error_message).toContain('ep-001-anchor.secured-evt-lookup-001');
+
+    // Still surfaced to Sentry with the idempotency_lookup stage.
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({ stage: 'idempotency_lookup' }),
+      }),
+    );
+  }, 10_000);
+
+  it('retries the lookup once and PROCEEDS to deliver when the retry recovers (no DLQ)', async () => {
+    // First lookup: transient failure. Retry: PGRST116 (no row) → happy path.
+    deliveryLogSelect.single
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } })
+      .mockResolvedValueOnce({ data: null, error: { code: 'PGRST116' } });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-ok' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    dlqUpsert.mockClear();
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-lookup-ok', MOCK_PAYLOAD_DATA);
+
+    expect(deliveryLogSelect.single).toHaveBeenCalledTimes(2);
+    // Recovered → delivered exactly once, and NOT dead-lettered.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(dlqUpsert).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it('does NOT retry a non-transient lookup error but still preserves it in the DLQ', async () => {
+    // A non-connection-level error (e.g. an RLS regression) is not retried, but
+    // it must still be preserved rather than dropped.
+    deliveryLogSelect.single.mockResolvedValue({
+      data: null,
+      error: { code: '42501', message: 'permission denied for table webhook_delivery_logs' },
+    });
+    dlqUpsert.mockClear();
+    dlqUpsert.mockReturnValue(Promise.resolve({ data: { id: 'dlq-rls' }, error: null }));
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-lookup-rls', MOCK_PAYLOAD_DATA);
+
+    // Not retried (single lookup attempt).
+    expect(deliveryLogSelect.single).toHaveBeenCalledTimes(1);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(dlqUpsert).toHaveBeenCalledTimes(1);
+    expect((dlqUpsert.mock.calls[0][0] as { failure_kind: string }).failure_kind).toBe('log_write');
+  });
+});
+
+// ================================================================
+// WH-4 (SCRUM-2899): ENABLE_OUTBOUND_WEBHOOKS flag cache
+// ================================================================
+
+describe('WH-4: outbound-webhook flag cache', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-10T12:00:00Z'));
+    __resetWebhookFlagCacheForTest();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reads get_flag once across multiple dispatches within the TTL', async () => {
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [], error: null });
+    setupDbRouting();
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-c1', MOCK_PAYLOAD_DATA);
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-c2', MOCK_PAYLOAD_DATA);
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-c3', MOCK_PAYLOAD_DATA);
+
+    const getFlagCalls = (mockRpc.mock.calls as unknown[][]).filter((c) => c[0] === 'get_flag');
+    expect(getFlagCalls).toHaveLength(1);
+  });
+
+  it('re-reads get_flag after the 30s TTL expires', async () => {
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [], error: null });
+    setupDbRouting();
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-t1', MOCK_PAYLOAD_DATA);
+    vi.setSystemTime(new Date('2026-03-10T12:00:31Z')); // +31s > 30s TTL
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-t2', MOCK_PAYLOAD_DATA);
+
+    const getFlagCalls = (mockRpc.mock.calls as unknown[][]).filter((c) => c[0] === 'get_flag');
+    expect(getFlagCalls).toHaveLength(2);
+  });
+
+  it('fails closed and does not cache when the flag read errors', async () => {
+    // rpcState.flag carries an error → helper returns false (fail closed) and
+    // does NOT cache, so the next dispatch re-reads. Cast because the legacy
+    // mockResolvedValue bridge is typed `{ data: unknown }` (no `error` slot).
+    mockRpc.mockResolvedValue({ data: null, error: { message: 'rpc unavailable' } } as {
+      data: unknown;
+    });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    setupDbRouting();
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-e1', MOCK_PAYLOAD_DATA);
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-e2', MOCK_PAYLOAD_DATA);
+
+    // Never dispatched (fail closed).
+    expect(mockFetch).not.toHaveBeenCalled();
+    // Read on BOTH dispatches (error not cached).
+    const getFlagCalls = (mockRpc.mock.calls as unknown[][]).filter((c) => c[0] === 'get_flag');
+    expect(getFlagCalls).toHaveLength(2);
   });
 });
 

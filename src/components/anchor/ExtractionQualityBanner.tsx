@@ -1,30 +1,31 @@
 /**
  * GME-26: Extraction Quality Banner
  *
- * Shows confidence-based warning banners and fraud signals prominently
- * during the extraction review step. Helps users understand when
- * extraction results may need manual verification.
+ * Shows confidence-based warning banners during the extraction review step.
+ * Helps users understand when extraction results may need manual verification.
+ *
+ * BUG-2026-07-17-009 (SCRUM-2910, P0): the fraud-signal section was removed.
+ * It rendered the Gemini extraction `fraudSignals` field directly and was NOT
+ * gated by ENABLE_FRAUD_DETECTION, so flipping that flag off in prod did not
+ * remove the banner. Fraud data must never render in the UI.
  */
 
 import { AlertTriangle, ShieldAlert, Info } from 'lucide-react';
 
 interface ExtractionQualityBannerProps {
   confidence: number;
-  fraudSignals: string[];
   strippedFields?: string[];
 }
 
 export function ExtractionQualityBanner({
   confidence,
-  fraudSignals,
   strippedFields,
 }: ExtractionQualityBannerProps) {
   const showConfidenceWarning = confidence < 0.5;
-  const showFraudSignals = fraudSignals.length > 0;
   const showStrippedFields = strippedFields && strippedFields.length > 0;
 
   // Nothing to show
-  if (!showConfidenceWarning && !showFraudSignals && !showStrippedFields) {
+  if (!showConfidenceWarning && !showStrippedFields) {
     return null;
   }
 
@@ -55,26 +56,6 @@ export function ExtractionQualityBanner({
             <p className="text-xs text-amber-600/80 dark:text-amber-400/80">
               Confidence is {Math.round(confidence * 100)}%. Please verify the extracted fields are accurate.
             </p>
-          </div>
-        </div>
-      )}
-
-      {/* Fraud signals */}
-      {showFraudSignals && (
-        <div className="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3">
-          <ShieldAlert className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
-          <div className="space-y-1 min-w-0">
-            <p className="text-sm font-medium text-red-700 dark:text-red-300">
-              Fraud signal{fraudSignals.length > 1 ? 's' : ''} detected
-            </p>
-            <ul className="text-xs text-red-600/80 dark:text-red-400/80 space-y-0.5">
-              {fraudSignals.map((signal) => (
-                <li key={signal} className="flex items-start gap-1.5">
-                  <span className="shrink-0 mt-1">&#x2022;</span>
-                  <span>{signal}</span>
-                </li>
-              ))}
-            </ul>
           </div>
         </div>
       )}

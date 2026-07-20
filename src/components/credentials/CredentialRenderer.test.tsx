@@ -164,6 +164,29 @@ describe('CredentialRenderer', () => {
       expect(screen.queryByText('skip')).not.toBeInTheDocument();
     });
 
+    // BUG-2026-07-17-010 (SCRUM-2910, P0): fraud_* metadata keys must never
+    // render in the credential card (owner detail AND public verification both
+    // render through this component).
+    it('skips fraud_* metadata fields (BUG-2026-07-17-010)', () => {
+      const { container } = render(
+        <CredentialRenderer
+          metadata={{
+            field_of_study: 'Computer Science',
+            fraud_score: 0.87,
+            fraud_risk_level: 'high',
+            fraud_signals: [{ signal_type: 'future_date', score: 0.35 }],
+            fraud_analysis_method: 'client_side_worker_v2',
+            fraudSignals: '["Font inconsistency detected"]',
+          }}
+          status="SECURED"
+        />
+      );
+      expect(screen.getByText('Computer Science')).toBeInTheDocument();
+      expect(screen.queryByText(/fraud/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/0\.87/)).not.toBeInTheDocument();
+      expect(container.textContent?.toLowerCase()).not.toContain('fraud');
+    });
+
     it('skips pipeline metadata fields (merkle_proof, batch_id, etc.)', () => {
       render(
         <CredentialRenderer

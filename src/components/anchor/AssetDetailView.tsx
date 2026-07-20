@@ -30,6 +30,7 @@ import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
 import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
 import { sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
+import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import {
   Tooltip,
   TooltipContent,
@@ -174,7 +175,13 @@ function buildAnchorCredentialMetadata(metadata: Record<string, unknown> | null 
 }
 
 function isAnchorMetadataVisible(key: string): boolean {
-  return !ANCHOR_CREDENTIAL_METADATA_HIDDEN_KEYS.has(key.toLowerCase()) && !key.startsWith('_');
+  // BUG-2026-07-17-010 (SCRUM-2910, P0): fraud_* keys must never render on
+  // the owner document detail view.
+  return (
+    !ANCHOR_CREDENTIAL_METADATA_HIDDEN_KEYS.has(key.toLowerCase()) &&
+    !key.startsWith('_') &&
+    !isFraudMetadataKey(key)
+  );
 }
 
 const statusConfig = {

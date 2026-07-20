@@ -25,6 +25,7 @@ import { RevocationDetails } from '@/components/verification/RevocationDetails';
 import { VerifierProofDownload } from '@/components/verification/VerifierProofDownload';
 import { DoesNotAssertDisclaimer } from '@/components/verification/DoesNotAssertDisclaimer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
+import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import {
   Card,
   CardContent,
@@ -717,7 +718,13 @@ function sanitizeCredentialMetadata(metadata: Record<string, unknown> | undefine
 
   const safeEntries = Object.entries(metadata).filter(([key]) => {
     const normalizedKey = normalizeMetadataKey(key);
-    return !PUBLIC_METADATA_HIDDEN_KEYS.has(normalizedKey) && !normalizedKey.startsWith('source_');
+    // BUG-2026-07-17-010 (SCRUM-2910, P0): fraud_* keys must never reach the
+    // PUBLIC verification page.
+    return (
+      !PUBLIC_METADATA_HIDDEN_KEYS.has(normalizedKey) &&
+      !normalizedKey.startsWith('source_') &&
+      !isFraudMetadataKey(key)
+    );
   });
 
   return Object.fromEntries(safeEntries);

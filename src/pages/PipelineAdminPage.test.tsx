@@ -861,3 +861,61 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
     });
   });
 });
+
+// BUG-2026-07-17-010 (SCRUM-2910, P0 follow-up from PR #1569 cross-review):
+// the admin record-detail metadata panel used an ad-hoc denylist that did not
+// cover fraud_* keys — fraud metadata must never render on any display surface.
+describe('PipelineAdminPage — fraud metadata never renders in record detail (BUG-2026-07-17-010)', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockSupabaseRpc({
+      recordPage: {
+        total: 1,
+        data: [{
+          id: 'record-fraud-meta',
+          source: 'edgar',
+          source_id: 'SRC-9',
+          source_url: null,
+          record_type: 'filing',
+          title: 'Filing with legacy risk metadata',
+          content_hash: 'a'.repeat(64),
+          anchor_id: null,
+          metadata: {
+            field_of_study: 'Computer Science',
+            fraud_score: 0.87,
+            fraud_risk_level: 'high',
+            fraud_signals: [{ signal_type: 'future_date', score: 0.35 }],
+            fraudSignals: '["Font inconsistency detected"]',
+          },
+          created_at: '2026-05-12T10:00:00Z',
+          updated_at: '2026-05-12T10:00:00Z',
+          anchor_status: null,
+          chain_tx_id: null,
+        }],
+      },
+    });
+    const { useAuth } = await import('@/hooks/useAuth');
+    vi.mocked(useAuth).mockReturnValue(mockAuthState('carson@arkova.ai', 'user-1'));
+  });
+
+  it('filters fraud_* keys from the selected-record metadata panel', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    // Open the record detail panel.
+    fireEvent.click(await screen.findByText('Filing with legacy risk metadata'));
+    await waitFor(() => {
+      expect(document.getElementById('pipeline-record-detail')).not.toBeNull();
+    });
+
+    // Legitimate metadata renders; fraud-derived keys/values never do.
+    expect(screen.getByText(/field of study/i)).toBeInTheDocument();
+    expect(screen.getByText('Computer Science')).toBeInTheDocument();
+    expect(screen.queryByText(/fraud/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/0\.87/)).not.toBeInTheDocument();
+    expect(document.body.textContent?.toLowerCase()).not.toContain('fraud');
+  });
+});

@@ -280,4 +280,30 @@ describe('AssetDetailView', () => {
     expect(queryByText('Network Observed Time')).not.toBeInTheDocument();
     expect(queryByText('Record Created')).toBeInTheDocument();
   });
+
+  // BUG-2026-07-17-010 (SCRUM-2910, P0): historical fraud_* metadata keys must
+  // never render on the OWNER document detail view.
+  it('never renders fraud_* metadata keys on the owner detail view (BUG-2026-07-17-010)', () => {
+    const anchorWithFraudMeta = {
+      ...mockAnchor,
+      metadata: {
+        field_of_study: 'Computer Science',
+        fraud_score: 0.87,
+        fraud_risk_level: 'high',
+        fraud_signals: [{ signal_type: 'future_date', score: 0.35, field_affected: 'issuedDate' }],
+        fraud_analysis_method: 'client_side_worker_v2',
+        fraud_processing_time_ms: 12,
+        fraudSignals: '["Font inconsistency detected"]',
+      },
+    };
+    const { queryByText, getAllByText } = render(<AssetDetailView anchor={anchorWithFraudMeta} />);
+
+    // Legitimate metadata still renders (may appear in more than one section).
+    expect(getAllByText('Computer Science').length).toBeGreaterThan(0);
+    // No fraud-derived key, label, or value may appear anywhere in the view.
+    expect(queryByText(/fraud/i)).not.toBeInTheDocument();
+    expect(queryByText(/0\.87/)).not.toBeInTheDocument();
+    expect(queryByText(/client_side_worker_v2/)).not.toBeInTheDocument();
+    expect(document.body.textContent?.toLowerCase()).not.toContain('fraud');
+  });
 });
