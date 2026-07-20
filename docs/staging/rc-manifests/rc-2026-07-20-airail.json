@@ -13,12 +13,14 @@
     "164c5f312266f1bb6be7ab8de23627467b7e244b",
     "f424ce77912659f137d5256bbb08d97aa5d76cc7",
     "7bda2a08489e42ccab383e39b1f0f54c75e24225",
-    "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 "
+    "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 ",
+    "9e8019b6ceec5cef4f05974df685e09bc240ce79"
   ],
   "covered_main_shas": [
     "7bda2a08489e42ccab383e39b1f0f54c75e24225",
     "164c5f312266f1bb6be7ab8de23627467b7e244b",
-    "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 "
+    "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 ",
+    "9e8019b6ceec5cef4f05974df685e09bc240ce79"
   ],
   "included_prs": [
     {
@@ -39,16 +41,18 @@
     {
       "number": 1555,
       "head_sha": "6f519016187d886a1bc94c37da0eaffd15ef7be2",
-      "base_sha": "f424ce77912659f137d5256bbb08d97aa5d76cc7",
+      "base_sha": "9e8019b6ceec5cef4f05974df685e09bc240ce79",
       "allowed_base_shas": [
         "f424ce77912659f137d5256bbb08d97aa5d76cc7",
-        "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+        "9e8019b6ceec5cef4f05974df685e09bc240ce79"
       ],
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "Limited CI while stacked on #1550's branch (base agent/s33-wave2-l2-429-map): SonarCloud Code Analysis and Mergify Summary pass; the full required-check suite and the staging-evidence gate have never run for this PR because its base is not main \u2014 they will run at the frozen soaked head 6f519016 after retarget to main post-#1550 merge.",
       "rollback_note": "Code-only, no migrations; revert PR #1555 on main (org-quota metering middleware + x-org-quota-* headers); org_daily_usage rows written by the middleware are additive counters and are safe to leave in place after a revert.",
-      "migration_files": []
+      "migration_files": [],
+      "soak_head_note": "Retargeted base #1550-branch -> main after #1550 merged (c7d455df). Net merge = 39 files of quota/payer-limit worker code (SCRUM-2703/2705), 0 conflicts, no drag-in; verified via merge-result tree diff. Head 6f519016 unchanged = soaked head."
     }
   ],
   "excluded_prs": [],
