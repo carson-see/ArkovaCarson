@@ -123,10 +123,20 @@ export class UnsupportedImageFormatError extends Error {
 
 /**
  * Guard for {@link UnsupportedImageFormatError}. Matches by prototype OR by the
- * `unsupportedFormat` discriminator / `name` (cross-bundle safe). Returns false
- * for every fail-closed error, so the two paths never overlap.
+ * `unsupportedFormat` discriminator / `name` (cross-bundle safe).
+ *
+ * PRIVACY BOUNDARY (fail-closed dominates): if the SAME error object also
+ * carries a fail-closed marker (a real {@link PiiStripFailClosedError} or a
+ * duck-typed `failClosed === true` / `NERModelLoadError`), this returns FALSE.
+ * A benign "unsupported format" downgrade must never win over a §1.6 privacy
+ * fail-closed signal — when in doubt, egress stays hard-blocked and the user
+ * sees the loud privacy screen. Callers should still check
+ * {@link isPiiStripFailClosedError} first as belt-and-suspenders.
  */
 export function isUnsupportedImageFormatError(err: unknown): boolean {
+  // Fail-closed always dominates: an error that is also a privacy fail-closed
+  // signal is NOT a benign unsupported-format case.
+  if (isPiiStripFailClosedError(err)) return false;
   if (err instanceof UnsupportedImageFormatError) return true;
   if (typeof err === 'object' && err !== null) {
     if ((err as { unsupportedFormat?: unknown }).unsupportedFormat === true) return true;

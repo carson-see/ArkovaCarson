@@ -39,6 +39,34 @@ const UNSUPPORTED_IMAGE_TYPES = new Set([
 ]);
 const UNSUPPORTED_IMAGE_EXTENSIONS = new Set(['.heic', '.heif', '.tiff', '.tif']);
 
+/** Lower-cased file extension including the leading dot (e.g. `.heic`). */
+function fileExtension(name: string): string {
+  return '.' + (name.split('.').pop()?.toLowerCase() ?? '');
+}
+
+/**
+ * SCRUM-2911: is this a browser-undecodable image the pipeline must SOFT-FAIL?
+ * Detects by BOTH MIME type and extension so real browser file metadata is
+ * handled consistently — a `.heic`/`.tiff` dragged in with an empty or generic
+ * MIME (e.g. `application/octet-stream`) is still recognized, rather than
+ * falling through to the generic "unsupported file type" error.
+ */
+function isUnsupportedImageFile(file: File): boolean {
+  return (
+    UNSUPPORTED_IMAGE_TYPES.has(file.type.toLowerCase()) ||
+    UNSUPPORTED_IMAGE_EXTENSIONS.has(fileExtension(file.name))
+  );
+}
+
+/** Build the typed benign error for an unsupported image file (SCRUM-2911). */
+function unsupportedImageError(file: File): UnsupportedImageFormatError {
+  const formatLabel = file.type || fileExtension(file.name);
+  return new UnsupportedImageFormatError(
+    OCR_LABELS.UNSUPPORTED_IMAGE_FORMAT(formatLabel),
+    formatLabel,
+  );
+}
+
 /**
  * WEBEXT-02: vendored, same-origin Tesseract asset roots (served from
  * `public/vendor/tesseract/` → site root `/vendor/tesseract/` in dev + prod).
@@ -144,16 +172,8 @@ export async function extractTextFromImage(
   // a §1.6 privacy fail-closed error — so it must not reach the recognition
   // catch below (which would wrap it as OcrEngineLoadError and trigger the FALSE
   // privacy-failure screen). Nothing loads and nothing leaves the device.
-  const imageExt = '.' + (file.name.split('.').pop()?.toLowerCase() ?? '');
-  if (
-    UNSUPPORTED_IMAGE_TYPES.has(file.type.toLowerCase()) ||
-    UNSUPPORTED_IMAGE_EXTENSIONS.has(imageExt)
-  ) {
-    const formatLabel = file.type || imageExt;
-    throw new UnsupportedImageFormatError(
-      OCR_LABELS.UNSUPPORTED_IMAGE_FORMAT(formatLabel),
-      formatLabel,
-    );
+  if (isUnsupportedImageFile(file)) {
+    throw unsupportedImageError(file);
   }
 
   onProgress?.({ stage: 'loading', progress: 0 });
@@ -295,6 +315,15 @@ export async function extractText(
   const ext = '.' + file.name.split('.').pop()?.toLowerCase();
   if (DOCX_TYPES.has(file.type) || DOCX_EXTENSIONS.has(ext)) {
     return extractTextFromDocx(file, onProgress);
+  }
+
+  // SCRUM-2911: browser-undecodable image formats (HEIC/TIFF) must SOFT-FAIL
+  // with the typed benign error — checked by MIME OR extension, BEFORE the
+  // `image/*` MIME branch, so a `.heic`/`.tiff` carrying an empty or generic
+  // browser MIME (e.g. `application/octet-stream`) is still routed here instead
+  // of falling through to the generic UNSUPPORTED_FILE_TYPE error.
+  if (isUnsupportedImageFile(file)) {
+    throw unsupportedImageError(file);
   }
 
   if (file.type.startsWith('image/')) {

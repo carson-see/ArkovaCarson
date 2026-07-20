@@ -592,6 +592,31 @@ describe('aiExtraction orchestrator', () => {
       );
     });
 
+    it('ADVERSARIAL OVERLAP: an error with BOTH fail-closed AND unsupported markers stays on the privacy path', async () => {
+      // Privacy boundary: if a fail-closed signal is present, egress must stay
+      // hard-blocked and the LOUD screen must show — even if the same error also
+      // looks like a benign unsupported-format case. Fail-closed dominates.
+      const overlap = Object.assign(new OcrEngineLoadError('engine down'), {
+        name: 'UnsupportedImageFormatError',
+        unsupportedFormat: true,
+      });
+      (extractText as ReturnType<typeof vi.fn>).mockRejectedValue(overlap);
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['bytes'], 'weird.heic', { type: 'image/heic' });
+      const result = await runExtraction(file, 'd'.repeat(64), 'OTHER', progressCb);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toBeNull();
+      // MUST land on the fail-closed (privacy-blocked) path, NOT the soft path.
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error', failClosed: true }),
+      );
+    });
+
     it('keeps a GENUINE OCR engine failure LOUD (privacy screen) — no regression', async () => {
       // Regression guard: distinguishing unsupported-format must not weaken the
       // genuine §1.6 fail-closed path for a real engine load failure.

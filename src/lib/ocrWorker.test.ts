@@ -354,4 +354,27 @@ describe('unsupported image formats soft-fail (SCRUM-2911)', () => {
     expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
     expect(isPiiStripFailClosedError(caught)).toBe(false);
   });
+
+  // P2 — dispatch consistency for real browser file metadata: `.heic`/`.tiff`
+  // often arrive with an empty or generic MIME (not `image/*`). Those must still
+  // hit the typed benign error, NOT the generic "unsupported file type" path.
+  it('extractText: .heic with EMPTY MIME → typed UnsupportedImageFormatError (not generic)', async () => {
+    const file = fakeFile('IMG_0042.HEIC', '', 'binary-image-bytes');
+    const caught = await extractText(file).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
+    // Not the generic OCR_LABELS.UNSUPPORTED_FILE_TYPE error.
+    expect((caught as Error).message).not.toMatch(/Unsupported file type/);
+    // No handler should have been invoked.
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+    expect(mockExtractRawText).not.toHaveBeenCalled();
+    expect(mockGetDocument).not.toHaveBeenCalled();
+  });
+
+  it('extractText: .tiff with GENERIC MIME (application/octet-stream) → typed UnsupportedImageFormatError', async () => {
+    const file = fakeFile('scan.tiff', 'application/octet-stream', 'binary-image-bytes');
+    const caught = await extractText(file).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
+    expect((caught as Error).message).not.toMatch(/Unsupported file type/);
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
 });

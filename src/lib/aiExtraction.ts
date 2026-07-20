@@ -207,28 +207,33 @@ export async function runExtraction(
     // We deliberately do NOT interpolate `err.message` for the fail-closed case:
     // the OCR-stage error may wrap document-derived text in its `cause`, so we
     // surface only the fixed §1.6 copy string (defense-in-depth per §1.6).
-    // SCRUM-2911: an unsupported image format (.heic / .tiff) is a BENIGN
-    // "we can't read this format" case — the document was never at risk and
-    // nothing left the device (the format is rejected before OCR/strip/network).
-    // It must NOT set `failClosed` (which would surface the FALSE privacy-failure
-    // screen); route it to the ordinary soft-fail recovery path instead. Checked
-    // BEFORE the fail-closed guard so a benign format is never misclassified.
-    // The message carries only the file format (never document-derived text).
-    if (isUnsupportedImageFormatError(err)) {
-      onProgress?.({
-        stage: 'error',
-        progress: 0,
-        message: err instanceof Error ? err.message : 'This document format could not be read on your device.',
-      });
-      return null;
-    }
-
+    // PRIVACY BOUNDARY (fail-closed DOMINATES): the §1.6 fail-closed check runs
+    // FIRST. If an on-device privacy stage failed we hard-block egress and show
+    // the LOUD privacy screen — even if the same error also happens to carry an
+    // unsupported-format marker. A benign downgrade must never win over a
+    // privacy signal. `isUnsupportedImageFormatError` also yields to fail-closed
+    // internally, so this is belt-and-suspenders.
     if (isPiiStripFailClosedError(err)) {
       onProgress?.({
         stage: 'error',
         progress: 0,
         failClosed: true,
         message: AI_EXTRACTION_LABELS.PRIVACY_GUARANTEE_FAILED,
+      });
+      return null;
+    }
+
+    // SCRUM-2911: an unsupported image format (.heic / .tiff) is a BENIGN
+    // "we can't read this format" case — the document was never at risk and
+    // nothing left the device (the format is rejected before OCR/strip/network).
+    // It must NOT set `failClosed` (which would surface the FALSE privacy-failure
+    // screen); route it to the ordinary soft-fail recovery path instead.
+    // The message carries only the file format (never document-derived text).
+    if (isUnsupportedImageFormatError(err)) {
+      onProgress?.({
+        stage: 'error',
+        progress: 0,
+        message: err instanceof Error ? err.message : 'This document format could not be read on your device.',
       });
       return null;
     }

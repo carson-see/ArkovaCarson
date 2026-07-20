@@ -156,5 +156,30 @@ describe('ocrFailClosed contract', () => {
       expect(isUnsupportedImageFormatError(null)).toBe(false);
       expect(isUnsupportedImageFormatError('UnsupportedImageFormatError')).toBe(false);
     });
+
+    // ADVERSARIAL OVERLAP (P1 — privacy boundary): an error that carries BOTH a
+    // fail-closed marker AND the unsupported-format marker/name must be treated
+    // as FAIL-CLOSED. The benign downgrade must never win over a §1.6 privacy
+    // signal, or egress could open on a document that should have been blocked.
+    it('fail-closed DOMINATES: an error with both markers is NOT benign-unsupported', () => {
+      // A real fail-closed error masquerading with the unsupported name/marker.
+      const overlap = Object.assign(new OcrEngineLoadError('engine down'), {
+        name: 'UnsupportedImageFormatError',
+        unsupportedFormat: true,
+      });
+      expect(isPiiStripFailClosedError(overlap)).toBe(true);
+      // Must NOT be downgraded to the benign path.
+      expect(isUnsupportedImageFormatError(overlap)).toBe(false);
+    });
+
+    it('fail-closed DOMINATES: a duck-typed object with both discriminators stays fail-closed', () => {
+      const overlap = Object.assign(new Error('x'), {
+        name: 'UnsupportedImageFormatError',
+        unsupportedFormat: true,
+        failClosed: true,
+      });
+      expect(isPiiStripFailClosedError(overlap)).toBe(true);
+      expect(isUnsupportedImageFormatError(overlap)).toBe(false);
+    });
   });
 });
