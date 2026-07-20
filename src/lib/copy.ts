@@ -1331,11 +1331,16 @@ export const ATTESTATION_LABELS = {
 // =============================================================================
 
 export const MY_CREDENTIALS_LABELS = {
-  PAGE_TITLE: 'My Credentials',
-  PAGE_SUBTITLE: 'Credentials issued to you or imported from public sources.',
-  NAV_LABEL: 'My Credentials',
-  EMPTY_TITLE: 'No credentials yet',
-  EMPTY_DESC: 'When organizations issue credentials to your email address, they will appear here.',
+  // SCRUM-2938 S1: this surface is the generic "Imported Records" inbox — the
+  // securable/imported documents it lists are labelled "documents", not the
+  // restricted "credentials" term (§1.3 generic-action wording). The SCRUM-1672
+  // "Issue Credential" restricted issuance flow is untouched (see
+  // ISSUE_CREDENTIAL_LABELS / CREDENTIAL_ISSUE_FAILED).
+  PAGE_TITLE: 'Imported Records',
+  PAGE_SUBTITLE: 'Documents issued to you or imported from public sources.',
+  NAV_LABEL: 'Imported Records',
+  EMPTY_TITLE: 'No documents yet',
+  EMPTY_DESC: 'When organizations issue documents to your email address, they will appear here.',
   ISSUED_BY: 'Issued by',
   RECEIVED_ON: 'Received',
   VIEW_CREDENTIAL: 'View',
@@ -1343,7 +1348,7 @@ export const MY_CREDENTIALS_LABELS = {
   ADD_SOURCE: 'Add Source',
   CLAIMED: 'Claimed',
   UNCLAIMED: 'Pending',
-  CREDENTIAL_COUNT: '{count} credentials',
+  CREDENTIAL_COUNT: '{count} documents',
 } as const;
 
 export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
@@ -1792,7 +1797,8 @@ export const REVIEW_QUEUE_LABELS = {
 // =============================================================================
 
 export const COMPLIANCE_LABELS = {
-  PAGE_TITLE: 'Compliance Intelligence',
+  // SCRUM-2938 S1: "Compliance Intelligence" retired from user-facing copy.
+  PAGE_TITLE: 'Compliance Dashboard',
   PAGE_SUBTITLE: 'Monitor credential health, expiring credentials, and review activity across your organization.',
   CARD_ACTIVE: 'Active Credentials',
   CARD_ACTIVE_SUBTITLE: 'Issued attestations',
@@ -2123,14 +2129,17 @@ export const RULE_SIMULATOR_COPY = {
 // =============================================================================
 
 export const NESSIE_LABELS = {
-  PANEL_TITLE: 'Nessie Intelligence',
+  // SCRUM-2938 S1: internal codename "Nessie" and the "compliance intelligence"
+  // phrasing removed from user-facing copy (the NESSIE_LABELS identifier is
+  // internal-only and unchanged per §1.3 "internal code may use technical names").
+  PANEL_TITLE: 'Document Intelligence',
   PANEL_SUBTITLE: 'Ask compliance questions. Answers cite verified, anchored documents.',
   INPUT_PLACEHOLDER: 'Ask a compliance question...',
   CONFIDENCE: 'confidence',
   CITATIONS_HEADING: 'Verified Citations',
   VIEW_ON_CHAIN: 'On-chain proof',
   VERIFY: 'Verify',
-  EMPTY_STATE: 'Ask a question to get compliance intelligence backed by verified evidence.',
+  EMPTY_STATE: 'Ask a question to get answers backed by verified evidence.',
   CACHED: 'cached',
   RISKS_HEADING: 'Identified Risks',
   RECOMMENDATIONS_HEADING: 'Recommendations',
@@ -2143,7 +2152,7 @@ export const NESSIE_LABELS = {
   TASK_DOCUMENT_SUMMARY: 'Document Summary',
   TASK_RECOMMENDATION: 'Recommendations',
   TASK_CROSS_REFERENCE: 'Cross-Reference',
-  INSIGHTS_TITLE: 'Nessie Insights',
+  INSIGHTS_TITLE: 'Document Insights',
   INSIGHTS_SUBTITLE: 'AI-powered compliance analysis for this record.',
   INSIGHTS_LOADING: 'Analyzing...',
   INSIGHTS_EMPTY: 'No insights available for this record.',
@@ -3122,8 +3131,9 @@ export const AUDIT_MY_ORG_LABELS = {
   ERROR_NETWORK: 'Network error — please check your connection and retry.',
   ERROR_FETCH_UNAVAILABLE: 'Your browser cannot reach the audit service. Please refresh and retry.',
   IN_PROGRESS_TOOLTIP: 'Audit is already in progress for this organization.',
-  SCORECARD_TITLE: 'Compliance scorecard',
-  SCORECARD_EMPTY: 'Run your first audit to see your compliance score.',
+  // SCRUM-2938 S1: "compliance score" phrasing retired from user-facing copy.
+  SCORECARD_TITLE: 'Audit scorecard',
+  SCORECARD_EMPTY: 'Run your first audit to see your results.',
   SCORECARD_GAPS_HEADING: 'Open gaps',
   SCORECARD_RECOMMENDATIONS_HEADING: 'Recommended actions',
   SCORECARD_QUICK_WINS: 'Quick wins',

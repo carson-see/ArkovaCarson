@@ -619,8 +619,8 @@ function CredentialsList({
   if (credentials.length === 0) {
     return (
       <EmptyState
-        title={allEmpty ? 'No credentials yet' : DOCUMENTS_PAGE_LABELS.NO_MATCHING}
-        description={allEmpty ? 'When organizations issue credentials to your email address, they will appear here.' : DOCUMENTS_PAGE_LABELS.NO_MATCHING_DESC}
+        title={allEmpty ? 'No documents yet' : DOCUMENTS_PAGE_LABELS.NO_MATCHING}
+        description={allEmpty ? 'When organizations issue documents to your email address, they will appear here.' : DOCUMENTS_PAGE_LABELS.NO_MATCHING_DESC}
       />
     );
   }
