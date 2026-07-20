@@ -17,6 +17,17 @@
  * NOTE: this is the critical-set source of truth, not an exhaustive mirror of
  * every /jobs/* endpoint. Adding a job here opts it into dead-man monitoring.
  *
+ * DRIFT WARNING (Architect review): this manifest is hand-maintained and has NO
+ * automated reconciliation against the actual Cloud Scheduler jobs. A new
+ * critical scheduler job that is never added here is simply never monitored, and
+ * a schedule/enabled value that diverges from Cloud Scheduler is never caught —
+ * the same untracked-state failure mode this module exists to prevent, moved up
+ * a layer. MITIGATION until a reconciler lands: this manifest MUST be updated in
+ * the SAME PR as any Cloud Scheduler change. FOLLOW-UP (post-train, needs a CI
+ * wiring change — ci.yml is frozen this window): a periodic/CI reconciler that
+ * lists Cloud Scheduler jobs via the API and diffs id/schedule/enabled here,
+ * flagging jobs-in-scheduler-not-in-manifest and schedule mismatches.
+ *
  * Constitution §1.5: the manifest records what IS (enabled/paused + attribution),
  * never an asserted-but-unverified prod state.
  */
@@ -147,8 +158,11 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
     method: 'POST',
     owner: 'lane-3',
     enabled: true,
-    // Wide budget: verified successful runs take 12-51 min; the 504s (SCRUM-2975)
-    // are a synchronous-long-run problem, not a silence problem.
+    // Wide budget: verified SUCCESSFUL runs take 12-51 min. Signal semantics are
+    // last-SUCCESSFUL-run, so if every invocation 504s (SCRUM-2975, ~91% today)
+    // lastRunAt never advances and this WILL fire as an unattributed stall after
+    // 6h — which is correct: a feeder that never completes is genuinely stalled,
+    // even though its root cause is a sync-long-run timeout, not silence.
     maxSilenceMs: 6 * HOURS,
   },
   {
