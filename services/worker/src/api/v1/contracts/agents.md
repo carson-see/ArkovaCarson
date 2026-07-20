@@ -1,6 +1,10 @@
 # agents.md — services/worker/src/api/v1/contracts/
 
-_Last updated: 2026-05-16_
+_Last updated: 2026-07-17_
+
+## 2026-07-17 Credit-gate reference_id (SCRUM-2970)
+
+- `anchor-pre-signing.ts` restructured to insert-then-deduct: the anchor row is inserted first (select now includes `id`), then `ensureAnchorCreditAvailable` runs with `reference_id` = the new row's id; on deduct failure the never-paid row is hard-deleted (compensation) and the frozen 402/503 bodies are unchanged. A fingerprint-derived reference was rejected in review — permanent 0326 ledger row + `deleted_at`-filtered dedup = free re-anchor after soft-delete. HTTP retries are absorbed by the org-scoped dedup lookup before the gate.
 
 ## What This Folder Contains
 
