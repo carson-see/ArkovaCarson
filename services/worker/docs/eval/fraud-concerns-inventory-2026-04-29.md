@@ -1,5 +1,13 @@
 # SCRUM-1557: Fraud Concerns Surface Inventory (2026-04-29)
 
+> **SUPERSEDED (2026-07-20, SCRUM-2910, PR #1602):** the fraud UI surface described
+> below no longer exists. The fraud *display* surfaces were removed in PR #1569
+> (BUG-2026-07-17-009 / BUG-2026-07-17-010) and the dead `RiskAssessmentReport.tsx`
+> component + `FRAUD_DETECTION_LABELS` copy constant were deleted in PR #1602. Any
+> row or step below that references `src/components/credentials/RiskAssessmentReport.tsx`
+> is historical only — do **not** treat it as a live instruction to rebuild that
+> surface. Fraud-derived metadata must never render on any user-facing view.
+
 Repo grep against SCRUM-744 AC items. Source: feature branch `claude/dreamy-banzai-cbcad4`, base commit `02594dbc`.
 
 ## SCRUM-744 AC vs reality
@@ -11,8 +19,8 @@ Repo grep against SCRUM-744 AC items. Source: feature branch `claude/dreamy-banz
 | concern_type enum (formatting / issuer_mismatch / date_anomaly / template_deviation / missing_element) | **MISSING** | Zero references to `concern_type` / `concernType` | Need to lift `signals: string[]` into a structured enum; existing signal codes (`EXPIRED_ISSUER`, `JURISDICTION_MISMATCH`, `FORMAT_ANOMALY`, `MISSING_ACCREDITATION`, `SUSPICIOUS_DATES`) align loosely with the AC enum |
 | severity (high / medium / low) per concern | **PARTIAL** | One reference in `services/worker/src/ai/gemini.test.ts:112` — `{signal: 'font_mismatch', severity: 'low'}` shape, but production `FraudAssessment.signals: string[]` doesn't carry severity | Per-signal severity is required; current code aggregates severity into the top-level `riskLevel` only |
 | specific_evidence field per concern | **MISSING** | Zero references to `specific_evidence` / `specificEvidence` | `FraudAssessment.reasoning` is a single human-readable string covering all concerns; needs to split into per-concern evidence quotes |
-| UI "Potential Concerns" section with severity badges | **PARTIAL** | [src/components/credentials/RiskAssessmentReport.tsx](src/components/credentials/RiskAssessmentReport.tsx) renders `riskLevel` + `RISK_COLORS` + concerns list | Component renders flat `concerns` strings, not severity-badged entries; section title is "Risk Assessment" not "Potential Concerns" (likely fine — confirm with copy |
-| "No concerns identified" empty state | **NEEDS VERIFY** | RiskAssessmentReport.tsx renders something for empty `concerns[]`; need to check the exact string | UAT screenshot needed |
+| UI "Potential Concerns" section with severity badges | **~~PARTIAL~~ SUPERSEDED (removed, SCRUM-2910 / PR #1602)** | ~~[src/components/credentials/RiskAssessmentReport.tsx] renders `riskLevel` + `RISK_COLORS` + concerns list~~ — component + `FRAUD_DETECTION_LABELS` deleted; fraud metadata is now filtered off all display surfaces | No longer applicable: fraud display surface intentionally does not exist |
+| "No concerns identified" empty state | **~~NEEDS VERIFY~~ SUPERSEDED (removed, SCRUM-2910 / PR #1602)** | ~~RiskAssessmentReport.tsx renders something for empty `concerns[]`~~ — component deleted | No longer applicable |
 | Dismiss-with-reason flow | **MISSING** | Zero references to `dismiss.*concern` / `concern.*dismiss` / `fraud.*dismiss` in code or migrations | Not built. Needs a dismiss button + a `fraud_concern_dismissals` table or similar with admin user_id + reason |
 | Persistence (fraud_signal_version + dismissal records) | **MISSING** | No migration matches `fraud` / `concern` in `supabase/migrations/` | Needs migration for tracking-improvements column or table |
 | Latency budget +1s | **NEEDS BENCHMARK** | No latency test for the fraudReasoning post-extraction step | Add benchmark in eval suite |
@@ -26,7 +34,7 @@ Repo grep against SCRUM-744 AC items. Source: feature branch `claude/dreamy-banz
 
 1. Extend `FraudAssessment.concerns` from `string[]` to `ConcernEntry[]` with `{concern_type, severity, specific_evidence}` — keep backwards-compat by including a top-level `concerns_text: string[]` for older clients during a deprecation window.
 2. Wire structured `fraud_concerns` field into `/verify` + `/ai/extract` API responses (additive nullable).
-3. Update `RiskAssessmentReport.tsx` to render severity badges per concern.
+3. ~~Update `RiskAssessmentReport.tsx` to render severity badges per concern.~~ **SUPERSEDED (SCRUM-2910 / PR #1602):** the fraud UI surface was removed, not extended — `RiskAssessmentReport.tsx` was deleted. Do not rebuild it; fraud-derived metadata must not render on any user-facing view.
 4. Add migration for `fraud_concern_dismissals` table (admin user_id, concern hash, reason, dismissed_at, fraud_signal_version).
 5. Add dismiss button + API endpoint.
 6. Run latency benchmark in `services/worker/scripts/nessie-eval-regression.ts`.
