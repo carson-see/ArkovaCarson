@@ -10,6 +10,15 @@
 > - **CLAUDE.md** = operating directive / rules
 > - **git log** = what changed, by whom, when
 
+
+### 2026-07-20 (RM) — Soak fleet close-out: wave3 + AI rail evidence banked; deps clock running; merges via Mergify per founder directive
+
+**RC manifests landed (this commit):** `docs/staging/rc-manifests/rc-2026-07-20-wave3.json` (#1568 #1569 #1571 #1573 #1549 #1570 — rig rca20260719, 12h window 2026-07-19T16:45→07-20T05:15Z, 749/749 runner 200s, deploy_log 226) and `rc-2026-07-20-airail.json` (#1550 #1555 stacked — rig rcd20260719, window 17:12→05:42Z, 720/720 runner 200s, deploy_log 227; harness-load gap disclosed in manifest exceptions, supplementary authed burst being captured post-window). Deps rail (rcb20260719, 6 dependabot PRs; #1525/#1528 dropped — TS 7.0.2 breaks the build; #1572 to be closed as superseded by #1524) clock anchored 2026-07-20T13:06:26Z, matures 07-21T01:36Z. Chain rail (railb220260719, #1552) matures 07-21T17:13Z; 0358 prod-apply precedes its merge.
+
+**#1549 disposition (previously unrecorded):** soaked in the wave3 train at frozen head a8d77727; all required checks green at head; Lane-3 cross-review noted outstanding in the PR body — riding the wave3 RC per this manifest with that status disclosed; do-not-merge lifts at its queue turn.
+
+**Merge path (founder directive 2026-07-20):** all rails via the Mergify queue (corrected 2026-06-24 tiered-merge policy) — staged gate-greening controls order; no manual merge clicks. Post-merge activations gated on serving-revision proof, not merge events.
+
 ---
 
 ## Now
