@@ -35,6 +35,7 @@ import {
   formatCredentialSubType,
 } from '@/lib/copy';
 import type { TemplateDisplayData } from '@/hooks/useCredentialTemplate';
+import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import { CpeMetadataSection, type CpeMetadataView } from './CpeMetadataSection';
 import { CleMetadataSection, type CleMetadataView } from './CleMetadataSection';
 
@@ -235,7 +236,9 @@ const METADATA_DISPLAY_HIDDEN_KEYS = new Set([
 ]);
 
 function isMetadataDisplayHiddenKey(key: string): boolean {
-  return key.startsWith('_') || METADATA_DISPLAY_HIDDEN_KEYS.has(key.toLowerCase());
+  // BUG-2026-07-17-010 (SCRUM-2910, P0): fraud_* keys must never render in
+  // the credential card (owner detail AND public verification).
+  return key.startsWith('_') || METADATA_DISPLAY_HIDDEN_KEYS.has(key.toLowerCase()) || isFraudMetadataKey(key);
 }
 
 export function CredentialRenderer({
