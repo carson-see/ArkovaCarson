@@ -19,7 +19,7 @@
 
 **Also observed, triaged separately:** `/jobs/fetch-courtlistener` 504s at exactly 3599.7s = Cloud Run request-timeout ceiling — upstream fetch hang, unrelated mechanism, needs its own diagnosis. Brief JWT `ERR_JOSE_ALG_NOT_ALLOWED` noise in worker logs during the window — not the refresh failure cause.
 
-**Tracker/Jira: pending Atlassian access** (MCP unauthorized in this non-interactive session — standing limitation): bug rows for refresh-stats + courtlistener belong on [tracker 88768514](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514).
+**Tracker/Jira: FILED** (Atlassian MCP became available mid-session): Bug issues [SCRUM-2974](https://arkova.atlassian.net/browse/SCRUM-2974) (refresh-stats) + [SCRUM-2975](https://arkova.atlassian.net/browse/SCRUM-2975) (courtlistener) created; tracker rows BUG-2026-07-20-001/-002 added to [88768514](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514) (page v12) with an escalation cross-ref on BUG-2026-06-05-009/SCRUM-2265 (same statement_timeout-inert mechanism, now prod-live).
 
 _Last refreshed: 2026-07-20 by CTO/DBA session — claims verified against Cloud Run request logs (gcloud logging read, service arkova-worker, e.g. insertId 6a5e3ad900034d62810bb2d3), live authed reproduction output, prod PostgREST timings, and vitest/tsc/eslint runs on PR #1584 head 804053b8._
 
