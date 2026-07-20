@@ -90,6 +90,52 @@ export class NerPiiFailClosedError extends PiiStripFailClosedError {
 }
 
 /**
+ * A BENIGN, recoverable failure: the OCR engine is available, but the browser
+ * cannot decode this particular image format (e.g. `.heic` / `.tiff`), so no
+ * text can be extracted (SCRUM-2911).
+ *
+ * This is deliberately NOT a subclass of {@link PiiStripFailClosedError}: the
+ * on-device privacy guarantee was never in play — nothing was read and nothing
+ * left the device, because we detect the format BEFORE loading the OCR engine
+ * or making any network call. Routing it through the §1.6 fail-closed path
+ * would surface the FALSE "privacy failure" screen for a document that was
+ * never at risk. Callers must map it to the ordinary "unsupported format"
+ * soft-fail (skip AI extraction / anchor without extracted metadata), never to
+ * the loud privacy-breach UI.
+ *
+ * Carries a stable `unsupportedFormat` discriminator + `name` so cross-bundle
+ * checks work even when `instanceof` is unreliable, mirroring the fail-closed
+ * error design above.
+ */
+export class UnsupportedImageFormatError extends Error {
+  /** Stable discriminator that survives bundling/transpilation. */
+  readonly unsupportedFormat = true as const;
+  /** The MIME type or extension that could not be decoded (NOT document content). */
+  readonly formatLabel: string;
+
+  constructor(message: string, formatLabel: string) {
+    super(message);
+    this.name = 'UnsupportedImageFormatError';
+    this.formatLabel = formatLabel;
+    Object.setPrototypeOf(this, UnsupportedImageFormatError.prototype);
+  }
+}
+
+/**
+ * Guard for {@link UnsupportedImageFormatError}. Matches by prototype OR by the
+ * `unsupportedFormat` discriminator / `name` (cross-bundle safe). Returns false
+ * for every fail-closed error, so the two paths never overlap.
+ */
+export function isUnsupportedImageFormatError(err: unknown): boolean {
+  if (err instanceof UnsupportedImageFormatError) return true;
+  if (typeof err === 'object' && err !== null) {
+    if ((err as { unsupportedFormat?: unknown }).unsupportedFormat === true) return true;
+    if ((err as { name?: unknown }).name === 'UnsupportedImageFormatError') return true;
+  }
+  return false;
+}
+
+/**
  * Structural guard for Lane 1's `NERModelLoadError` (DEPENDS ON #1253).
  *
  * Matches by `name === 'NERModelLoadError'` (set in Lane 1's constructor) so it

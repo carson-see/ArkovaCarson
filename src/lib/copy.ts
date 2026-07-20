@@ -2488,6 +2488,16 @@ export const OCR_LABELS = {
    */
   OCR_ENGINE_UNAVAILABLE:
     'The on-device document reader couldn’t start, so this document was not read and nothing was sent. Your file never left your device.',
+  /**
+   * SCRUM-2911 — BENIGN unsupported-image-format soft-fail. Shown when the
+   * browser cannot decode an image format (e.g. HEIC/TIFF) for on-device text
+   * extraction. This is NOT a privacy failure — the document was never at risk
+   * and never left the device. Interpolates only the file's format/extension
+   * (not document-derived content).
+   */
+  UNSUPPORTED_IMAGE_FORMAT: (typeOrExt: string) =>
+    `This image format (${typeOrExt}) can’t be read on your device for text extraction. ` +
+    'You can still secure the document without AI metadata — your file never left your device.',
 } as const;
 
 export const CONFIRMATION_PROGRESS_LABELS = {

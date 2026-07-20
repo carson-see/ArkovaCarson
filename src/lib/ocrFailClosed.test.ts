@@ -12,8 +12,10 @@ import {
   PiiStripFailClosedError,
   OcrEngineLoadError,
   NerPiiFailClosedError,
+  UnsupportedImageFormatError,
   isNerModelLoadError,
   isPiiStripFailClosedError,
+  isUnsupportedImageFormatError,
 } from './ocrFailClosed';
 
 describe('ocrFailClosed contract', () => {
@@ -110,6 +112,49 @@ describe('ocrFailClosed contract', () => {
       expect(isPiiStripFailClosedError(new TypeError('Failed to fetch'))).toBe(false);
       expect(isPiiStripFailClosedError({ message: 'whatever' })).toBe(false);
       expect(isPiiStripFailClosedError(null)).toBe(false);
+    });
+
+    // SCRUM-2911 sub-item 1: an unsupported image format (.heic / .tiff) is a
+    // BENIGN "we can't read this format" case — the document was never at risk.
+    // It must NOT be treated as a §1.6 privacy fail-closed error, or the UI
+    // shows the FALSE privacy-failure screen.
+    it('returns false for an UnsupportedImageFormatError (benign, not a privacy breach)', () => {
+      expect(
+        isPiiStripFailClosedError(new UnsupportedImageFormatError('cannot read heic', 'image/heic')),
+      ).toBe(false);
+    });
+  });
+
+  // SCRUM-2911 sub-item 1: the benign unsupported-format contract.
+  describe('UnsupportedImageFormatError (SCRUM-2911 — benign soft-fail)', () => {
+    it('is a plain Error, NOT a fail-closed error', () => {
+      const e = new UnsupportedImageFormatError('cannot read tiff', 'image/tiff');
+      expect(e).toBeInstanceOf(Error);
+      expect(e).toBeInstanceOf(UnsupportedImageFormatError);
+      expect(e).not.toBeInstanceOf(PiiStripFailClosedError);
+      expect(e.name).toBe('UnsupportedImageFormatError');
+      expect(e.formatLabel).toBe('image/tiff');
+      // Must not carry the fail-closed discriminator.
+      expect((e as { failClosed?: unknown }).failClosed).toBeUndefined();
+    });
+
+    it('isUnsupportedImageFormatError matches the class and duck-typed copies', () => {
+      expect(
+        isUnsupportedImageFormatError(new UnsupportedImageFormatError('x', 'image/heic')),
+      ).toBe(true);
+      // Cross-bundle instanceof miss — match by name/discriminator.
+      const crossBundle = Object.assign(new Error('x'), {
+        name: 'UnsupportedImageFormatError',
+        unsupportedFormat: true,
+      });
+      expect(isUnsupportedImageFormatError(crossBundle)).toBe(true);
+    });
+
+    it('isUnsupportedImageFormatError does not match fail-closed or ordinary errors', () => {
+      expect(isUnsupportedImageFormatError(new OcrEngineLoadError('engine down'))).toBe(false);
+      expect(isUnsupportedImageFormatError(new Error('generic'))).toBe(false);
+      expect(isUnsupportedImageFormatError(null)).toBe(false);
+      expect(isUnsupportedImageFormatError('UnsupportedImageFormatError')).toBe(false);
     });
   });
 });

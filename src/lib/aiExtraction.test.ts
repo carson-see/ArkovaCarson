@@ -35,7 +35,7 @@ import { extractText } from './ocrWorker';
 import { stripPII } from './piiStripper';
 import { stripPIIEnhanced } from './enhancedPiiStripper';
 import { supabase } from './supabase';
-import { NerPiiFailClosedError, OcrEngineLoadError } from './ocrFailClosed';
+import { NerPiiFailClosedError, OcrEngineLoadError, UnsupportedImageFormatError } from './ocrFailClosed';
 
 describe('aiExtraction orchestrator', () => {
   beforeEach(() => {
@@ -554,6 +554,63 @@ describe('aiExtraction orchestrator', () => {
         (c: unknown[]) => (c[0] as { failClosed?: boolean }).failClosed === true,
       );
       expect(failClosedCalls).toHaveLength(0);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // SCRUM-2911 sub-item 1 — unsupported image formats (.heic / .tiff)
+  //
+  // An unsupported image format is a BENIGN "we can't read this format" case:
+  // the document was never at risk. It must NOT set progress.failClosed (which
+  // routes the dialog to the FALSE privacy-failure screen). It must soft-fail
+  // like any other recoverable extraction failure, and — because we detect the
+  // format BEFORE the OCR/strip/network stages — nothing may leave the device.
+  // ───────────────────────────────────────────────────────────────────────
+  describe('SCRUM-2911 unsupported image format soft-fail', () => {
+    it('does NOT mark an UnsupportedImageFormatError as fail-closed (benign, no privacy screen)', async () => {
+      (extractText as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new UnsupportedImageFormatError('This image format can’t be read on your device.', 'image/heic'),
+      );
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['heic-bytes'], 'photo.heic', { type: 'image/heic' });
+      const result = await runExtraction(file, 'a'.repeat(64), 'OTHER', progressCb);
+
+      expect(result).toBeNull();
+      // The document never left the device — no network call at all.
+      expect(mockFetch).not.toHaveBeenCalled();
+      // Benign soft-fail: an error stage WITHOUT the fail-closed flag.
+      const failClosedCalls = progressCb.mock.calls.filter(
+        (c: unknown[]) => (c[0] as { failClosed?: boolean }).failClosed === true,
+      );
+      expect(failClosedCalls).toHaveLength(0);
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error' }),
+      );
+    });
+
+    it('keeps a GENUINE OCR engine failure LOUD (privacy screen) — no regression', async () => {
+      // Regression guard: distinguishing unsupported-format must not weaken the
+      // genuine §1.6 fail-closed path for a real engine load failure.
+      (extractText as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new OcrEngineLoadError('On-device document reader could not start.'),
+      );
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['scan-bytes'], 'scan.png', { type: 'image/png' });
+      const result = await runExtraction(file, 'b'.repeat(64), 'OTHER', progressCb);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toBeNull();
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error', failClosed: true }),
+      );
     });
   });
 });

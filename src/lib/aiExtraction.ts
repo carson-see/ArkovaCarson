@@ -15,7 +15,7 @@ import { stripPII, type StrippingReport } from './piiStripper';
 import { stripPIIEnhanced, type EnhancedStrippingReport } from './enhancedPiiStripper';
 import { supabase } from './supabase';
 import { WORKER_URL } from './workerClient';
-import { isPiiStripFailClosedError } from './ocrFailClosed';
+import { isPiiStripFailClosedError, isUnsupportedImageFormatError } from './ocrFailClosed';
 import { AI_EXTRACTION_LABELS } from './copy';
 
 export const AI_EXTRACTION_REQUEST_TIMEOUT_MS = 15_000;
@@ -207,6 +207,22 @@ export async function runExtraction(
     // We deliberately do NOT interpolate `err.message` for the fail-closed case:
     // the OCR-stage error may wrap document-derived text in its `cause`, so we
     // surface only the fixed §1.6 copy string (defense-in-depth per §1.6).
+    // SCRUM-2911: an unsupported image format (.heic / .tiff) is a BENIGN
+    // "we can't read this format" case — the document was never at risk and
+    // nothing left the device (the format is rejected before OCR/strip/network).
+    // It must NOT set `failClosed` (which would surface the FALSE privacy-failure
+    // screen); route it to the ordinary soft-fail recovery path instead. Checked
+    // BEFORE the fail-closed guard so a benign format is never misclassified.
+    // The message carries only the file format (never document-derived text).
+    if (isUnsupportedImageFormatError(err)) {
+      onProgress?.({
+        stage: 'error',
+        progress: 0,
+        message: err instanceof Error ? err.message : 'This document format could not be read on your device.',
+      });
+      return null;
+    }
+
     if (isPiiStripFailClosedError(err)) {
       onProgress?.({
         stage: 'error',
