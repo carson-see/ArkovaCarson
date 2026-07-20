@@ -19,8 +19,12 @@
  * Constitution §1.4 (RBAC), §1.5 (audit states what happened, not asserted).
  */
 
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { AuditEventBody } from './audit-event.js';
+
+/** auditEventBodySchema caps details at 10_000 chars; mirror it at the boundary. */
+const MAX_DETAILS_LEN = 10_000;
 
 /** Roles recognised for provisioning authorization (org-scoped). */
 export type ProvisioningRole = 'platform_admin' | 'owner' | 'org_admin' | 'member';
@@ -39,6 +43,13 @@ export type PartnerProvisioningStatus =
   | 'rejected';
 
 export interface PartnerAccountRecord {
+  /**
+   * Stable UUID minted at request time. Used as the audit `target_id` for the
+   * WHOLE lifecycle so one account is traceable through audit_events by a single
+   * key (partnerName is mutable/non-unique; partnerOrgId only exists post-
+   * provision). Mirrors the future `partner_accounts.id` (gen_random_uuid()).
+   */
+  id: string;
   status: PartnerProvisioningStatus;
   partnerName: string;
   partnerContactEmail: string;
@@ -85,7 +96,11 @@ export interface TransitionResult {
 const requestInputSchema = z.object({
   partnerName: z.string().trim().min(1).max(200),
   partnerContactEmail: z.string().trim().email().max(320),
-  sponsorOrgId: z.string().trim().min(1),
+  // MUST be a UUID: it becomes the audit `org_id`, which auditEventBodySchema
+  // enforces as a UUID on write, and the future `partner_accounts.sponsor_org_id`
+  // FK -> organizations(id). A non-UUID here would pass this module but fail at
+  // the audit insert / FK. (DBA review, SCRUM-2990.)
+  sponsorOrgId: z.string().trim().uuid(),
 });
 
 /** An actor who may approve/reject/provision for a given sponsor org. */
@@ -101,21 +116,27 @@ function assertApprovalAuthority(actor: ProvisioningActor, sponsorOrgId: string)
   }
 }
 
+/** Bound a details string to the audit schema cap (never throw — truncate). */
+function boundDetails(details?: string): string | null {
+  if (details == null) return null;
+  return details.length > MAX_DETAILS_LEN ? details.slice(0, MAX_DETAILS_LEN) : details;
+}
+
 function audit(
   event_type: string,
   record: PartnerAccountRecord,
-  targetId?: string | null,
   details?: string,
 ): AuditEventBody {
   return {
     event_type,
     event_category: 'ORG',
     target_type: 'partner_account',
-    target_id: targetId ?? record.partnerName,
-    // The event belongs to the sponsoring org. In real usage sponsorOrgId is a
-    // UUID; the API-layer auditEventBodySchema enforces the UUID shape on write.
+    // Stable UUID for the whole lifecycle (≤120-char audit cap; traceable key).
+    target_id: record.id,
+    // sponsorOrgId is UUID-validated at request time, so this satisfies the
+    // audit schema's UUID org_id constraint.
     org_id: record.sponsorOrgId,
-    details: details ?? null,
+    details: boundDetails(details),
   };
 }
 
@@ -131,7 +152,18 @@ export function requestPartnerAccount(
       'invalid_input',
     );
   }
+  // Request-time RBAC: only a platform admin or a member acting within the
+  // sponsor org may file a request naming that org — otherwise any user could
+  // spam cross-org requests attributed to an arbitrary sponsor. (Architect review.)
+  if (actor.role !== 'platform_admin' && actor.orgId !== parsed.data.sponsorOrgId) {
+    throw new PartnerProvisioningError(
+      'actor not authorized to request a partner account for this sponsor org (RBAC: needs platform_admin or membership of the sponsor org)',
+      'rbac_denied',
+    );
+  }
+
   const record: PartnerAccountRecord = {
+    id: randomUUID(),
     status: 'requested',
     partnerName: parsed.data.partnerName,
     partnerContactEmail: parsed.data.partnerContactEmail,
@@ -139,7 +171,7 @@ export function requestPartnerAccount(
     requestedBy: actor.userId,
     requestedAt: at,
   };
-  return { record, audit: audit('partner.account.requested', record, record.partnerName) };
+  return { record, audit: audit('partner.account.requested', record) };
 }
 
 export function approvePartnerRequest(
@@ -167,7 +199,7 @@ export function approvePartnerRequest(
     approvedBy: actor.userId,
     approvedAt: at,
   };
-  return { record: next, audit: audit('partner.account.approved', next, next.partnerName) };
+  return { record: next, audit: audit('partner.account.approved', next) };
 }
 
 export function rejectPartnerRequest(
@@ -195,11 +227,46 @@ export function rejectPartnerRequest(
     status: 'rejected',
     rejectedBy: actor.userId,
     rejectedAt: at,
-    rejectionReason: reason,
+    rejectionReason: boundDetails(reason) ?? undefined,
   };
   return {
     record: next,
-    audit: audit('partner.account.rejected', next, next.partnerName, reason),
+    audit: audit('partner.account.rejected', next, reason),
+  };
+}
+
+/**
+ * Cancel an already-APPROVED request that never got provisioned (partner backed
+ * out, or provisioning failed). Without this the record is stuck in 'approved'
+ * with no exit. Stays within the 4-state enum by moving approved -> rejected.
+ * (Architect review — missing lifecycle leg.) Requires approval authority; the
+ * approver may cancel their own approval (unblocking a stuck record is not a
+ * separation-of-duties concern).
+ */
+export function cancelApprovedRequest(
+  record: PartnerAccountRecord,
+  actor: ProvisioningActor,
+  reason: string,
+  at: string,
+): TransitionResult {
+  if (record.status !== 'approved') {
+    throw new PartnerProvisioningError(
+      `illegal transition: cancelApproved requires status 'approved' (got '${record.status}')`,
+      'illegal_transition',
+    );
+  }
+  assertApprovalAuthority(actor, record.sponsorOrgId);
+
+  const next: PartnerAccountRecord = {
+    ...record,
+    status: 'rejected',
+    rejectedBy: actor.userId,
+    rejectedAt: at,
+    rejectionReason: boundDetails(`cancelled after approval: ${reason}`) ?? undefined,
+  };
+  return {
+    record: next,
+    audit: audit('partner.account.cancelled', next, reason),
   };
 }
 
@@ -235,7 +302,9 @@ export function provisionPartnerAccount(
     provisionedAt: at,
   };
   return {
+    // target_id stays the stable record id; the minted partner org id is
+    // captured in details (traceable lifecycle key, per DBA/Architect review).
     record: next,
-    audit: audit('partner.account.provisioned', next, partnerOrgId),
+    audit: audit('partner.account.provisioned', next, `partnerOrgId=${partnerOrgId}`),
   };
 }
