@@ -135,9 +135,9 @@ RIG_R_RUNTIME_IMPERSONATION_MEMBER="serviceAccount:${RIG_R_OPERATOR_SA}"
 RIG_R_PROTECTED_V6_MODEL="projects/270018525501/locations/us-central1/models/6611494259700793344"
 RIG_R_PROTECTED_V6_MODEL_VERSION="${RIG_R_PROTECTED_V6_MODEL}@1"
 RIG_R_CHECKPOINT_ID="6"
-RIG_R_ENDPOINT_ID="733017"
+RIG_R_ENDPOINT_ID="733018"
 RIG_R_EXPECTED_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/${RIG_R_ENDPOINT_ID}"
-RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330171"
+RIG_R_EXPECTED_DEPLOYED_MODEL_ID="7330181"
 RIG_R_ENDPOINT_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYED_MODEL_DISPLAY_NAME="arkova-s33-rig-r-release-v6"
 RIG_R_DEPLOYMENT_RESOURCES_MODE="TUNED_GEMINI_AUTOMATIC_RESOURCES"
@@ -4258,6 +4258,28 @@ grant_rig_r_runtime_secret_access() {
   done
 }
 
+wait_for_g1_runtime_identity_visibility() {
+  local runtime_sa="$1" arm_label="$2" identity_json observed_unique_id
+  local max_attempts=30 interval_seconds=2 attempt
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    if identity_json="$(gcloud iam service-accounts describe "$runtime_sa" \
+      --project="$GCP_PROJECT" --format=json 2>/dev/null)" \
+      && observed_unique_id="$(jq -er \
+        --arg email "$runtime_sa" \
+        'select(.email == $email and ((.uniqueId | tostring) | test("^[1-9][0-9]*$"))) | (.uniqueId | tostring)' \
+        <<<"$identity_json" 2>/dev/null)"; then
+      printf '%s\n' "$observed_unique_id"
+      return 0
+    fi
+    if [[ $attempt -lt $max_attempts ]]; then
+      echo "# $arm_label runtime identity is waiting for IAM propagation (attempt $attempt)." >&2
+      sleep "$interval_seconds"
+    fi
+  done
+  echo "ERROR: $arm_label runtime service account did not become exactly visible within $((max_attempts * interval_seconds)) seconds." >&2
+  return 1
+}
+
 provision_g1_runtime_identities() {
   [[ $IS_G1_RIG -eq 1 ]] || return 0
   local identity_json
@@ -4266,12 +4288,9 @@ provision_g1_runtime_identities() {
     --project="$GCP_PROJECT" --display-name="S3.3 RIG-G1-A temporary runtime"
   if [[ $APPLY -eq 1 ]]; then
     CREATED_G1_CONTROL_RUNTIME_SA=1
-    identity_json="$(gcloud iam service-accounts describe "$G1_CONTROL_RUNTIME_SA" \
-      --project="$GCP_PROJECT" --format=json)"
-    G1_CONTROL_RUNTIME_SA_UNIQUE_ID="$(jq -er \
-      --arg email "$G1_CONTROL_RUNTIME_SA" \
-      'select(.email == $email and ((.uniqueId | tostring) | test("^[1-9][0-9]*$"))) | (.uniqueId | tostring)' \
-      <<<"$identity_json")" || exit 2
+    G1_CONTROL_RUNTIME_SA_UNIQUE_ID="$(wait_for_g1_runtime_identity_visibility \
+      "$G1_CONTROL_RUNTIME_SA" "RIG-G1-A")" || exit 2
+    echo "# RIG-G1-A runtime identity visible: email=$G1_CONTROL_RUNTIME_SA unique_id=$G1_CONTROL_RUNTIME_SA_UNIQUE_ID"
     write_provision_state "g1_a_runtime_identity_created" ""
   fi
   run_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
@@ -4282,12 +4301,9 @@ provision_g1_runtime_identities() {
     --project="$GCP_PROJECT" --display-name="S3.3 RIG-G1-B temporary runtime"
   if [[ $APPLY -eq 1 ]]; then
     CREATED_G1_TUNED_RUNTIME_SA=1
-    identity_json="$(gcloud iam service-accounts describe "$G1_TUNED_RUNTIME_SA" \
-      --project="$GCP_PROJECT" --format=json)"
-    G1_TUNED_RUNTIME_SA_UNIQUE_ID="$(jq -er \
-      --arg email "$G1_TUNED_RUNTIME_SA" \
-      'select(.email == $email and ((.uniqueId | tostring) | test("^[1-9][0-9]*$"))) | (.uniqueId | tostring)' \
-      <<<"$identity_json")" || exit 2
+    G1_TUNED_RUNTIME_SA_UNIQUE_ID="$(wait_for_g1_runtime_identity_visibility \
+      "$G1_TUNED_RUNTIME_SA" "RIG-G1-B")" || exit 2
+    echo "# RIG-G1-B runtime identity visible: email=$G1_TUNED_RUNTIME_SA unique_id=$G1_TUNED_RUNTIME_SA_UNIQUE_ID"
     write_provision_state "g1_distinct_runtime_identities_created" ""
   fi
   run_cmd gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
