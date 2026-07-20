@@ -32,6 +32,8 @@ Reality diverges:
 
 **Action:** the implementation must EITHER bring the limiters in line with §1.10 OR update §1.10 to describe the actual (finer-grained) posture. Recommend the latter — the per-scope model is better than the flat one — and correct §1.10 to match, so the constitution stops asserting a posture prod doesn't have.
 
+> **Process note (Architect review):** editing §1.10 is a **`CLAUDE.md` rule change** → per §0-rule-8 it goes through PR review and **rides the implementation PR**, NOT the docs direct-commit carve-out. Also note: the config-drift gate (R-5) does **not** cover rate-limit values, so after this reconciliation there is no automated guard keeping §1.10 and `rateLimit.ts` in sync — the header/limit regression-test in Acceptance is the only guard; keep it.
+
 ## Target posture
 
 | Caller class | Identity | Limit | Notes |
@@ -44,11 +46,23 @@ Reality diverges:
 | Auth | IP | 5 / min (skip failed) | brute-force guard |
 | Webhooks (inbound) | global/provider | 100 / min | Stripe/DocuSign/Adobe |
 
+### CRITICAL — the limiter is PER-INSTANCE unless Upstash is configured (Performance review)
+
+The default store is a **per-instance in-memory `Map`** (`rateLimit.ts`). `initUpstashRateLimiting()` swaps to a shared Redis store **only if** `UPSTASH_REDIS_REST_URL`/`_TOKEN` are set; otherwise it logs "using in-memory rate limiting" and every limit is enforced per Cloud Run instance. Under autoscaling with a load balancer that spreads one client's requests across instances:
+
+> **effective per-IP limit = N_instances × maxRequests**, applied independently per instance — so a client can be throttled on instance A while B/C are wide open. The enforced ceiling is both **higher than stated** and **non-deterministic** (floats with autoscale count + LB stickiness).
+
+Consequences the spec must carry:
+- **This partly explains the §1.10 discrepancy for the wrong reason:** with in-memory + N instances, the real ceiling is N×60, not 60 or 100. Any nominal number in §1.10 or below is only enforced if a **shared (Redis) store** is configured.
+- **Verify prod Upstash config in-session** before trusting any limit value: if `UPSTASH_REDIS_REST_URL/_TOKEN` are unset in prod, the limits are nominal, not enforced.
+- Add a row to the §1.10 reconciliation: *"stated limits assume a shared store; in-memory deployment multiplies every limit by the instance count."*
+
 ### Verifier-path carve-out (the row-14 requirement)
 
 Public verification endpoints (`/api/v1/verify*`, public-anchor reads, the verification API surface used by KPI-2 "verify" and KPI-3 patterns) MUST NOT be throttled at expected KPI load. Spec:
 - Load-test the verifier paths at KPI-2/3 request patterns (sustained + burst) and confirm **zero 429s** at target QPS.
 - If the general `api` 60/min/IP limiter covers a verifier path, the verifier path needs a **higher dedicated limit** (or exemption) sized to KPI-3 peak — a shared verifier IP (e.g. a partner gateway) must not hit the anon limit.
+- **The load test MUST run with the same store backend and instance topology as prod.** Testing verifier paths against a single staging instance (in-memory) measures a *different* limiter than an autoscaled multi-instance prod fleet — "0 throttled" on one instance is not merge-grade evidence for N-instance prod behavior (and vice-versa). State prod's Upstash config and test *that* config. Whatever dedicated verifier limit is chosen, size it against **per-instance** semantics (it is silently multiplied by the instance count under in-memory).
 - 429 responses (when they do fire elsewhere) MUST carry `Retry-After` + `X-RateLimit-Limit`/`-Remaining` (already implemented in `rateLimit.ts` — keep).
 
 ## Acceptance (implementation PR)

@@ -39,14 +39,14 @@ Three exposure classes. "Public" = no auth. "Internal" = requires the internal p
 ### Rules
 
 1. **Minimal public liveness.** Public `GET /health` returns only `{ status: 'healthy'|'degraded', uptime }`. Strip `git_sha`, `version`, `network`, signing/KMS, `prodAnchoring`, `connection`, and subsystem `checks` from any unauthenticated response.
-2. **`detailed=true` requires internal auth.** Gate the detailed branch behind the internal probe credential; unauthenticated `?detailed=true` returns **401** (preferred) or **404** (if we choose not to advertise the parameter). Pick one and make it consistent — recommend **404** for the detailed surface (no hint it exists) and **401** for genuinely-authenticated admin surfaces.
+2. **`detailed=true` requires internal auth → return 401 (LOCKED, Architect review).** Gate the detailed branch behind the internal probe credential; unauthenticated `?detailed=true` returns **401**. This value is now fixed (not left to the implementation PR): a 404 on a query-param variant of an otherwise-200 route is semantically odd and can confuse LB/monitoring, and the obscurity gain is marginal since the base route is public. Use **401** for the detailed branch and for all genuinely-authenticated admin surfaces; reserve **404** only for surfaces that must not appear to exist at all (`/metrics`, `/debug/*`).
 3. **Degraded still signals via status code.** Load balancers rely on the 200/503 split; keep that on the public liveness (503 when a core subsystem is down) WITHOUT the detailed body.
 4. **No new public introspection.** `/metrics`, `/debug`, any profiler or heap endpoint must be internal-only or absent. A 404 for these on prod is the acceptance check.
 
 ## Acceptance (implementation PR)
 
 - `curl https://<prod>/health` → 200, body contains only `status` + `uptime` (assert absence of `git_sha`, `network`, `kms`, `connection`).
-- `curl https://<prod>/health?detailed=true` (no auth) → **401/404** (per rule 2 choice).
+- `curl https://<prod>/health?detailed=true` (no auth) → **401** (locked, rule 2).
 - `curl -H '<internal cred>' .../health?detailed=true` → 200 with full detail (internal checks green).
 - `/metrics`, `/debug/*` unauth → 404.
 - Existing LB health probe unaffected (still 200/503 on the minimal body).
