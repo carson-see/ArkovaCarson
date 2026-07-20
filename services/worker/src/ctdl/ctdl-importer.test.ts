@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
   parseCtdlDocument,
+  parseCtdlEnvelope,
   parseCtdlNode,
   CtdlImportError,
   type ImportedCtdlRecord,
@@ -42,7 +44,8 @@ describe('parseCtdlDocument — @graph walking', () => {
     expect(rec.name).toBe('Registered Nurse');
     expect(rec.sourceId).toBe('ce-11111111-1111-4111-8111-111111111111');
     expect(rec.issuedAt).toBe('2020-05-01');
-    expect(rec.expiresAt).toBe('2030-05-01');
+    // TAXONOMY (SCRUM-2374): ceterms:expirationDate -> resourceAvailableUntil.
+    expect(rec.resourceAvailableUntil).toBe('2030-05-01');
     // expiration is in the FUTURE relative to NOW -> active stays active.
     expect(rec.sourceStatus).toBe('active');
     expect(rec.status).toBe('active');
@@ -70,7 +73,7 @@ describe('parseCtdlDocument — @graph walking', () => {
     expect(rec.sourceId).toBeNull();
     expect(rec.issuer).toBeNull();
     expect(rec.issuedAt).toBeNull();
-    expect(rec.expiresAt).toBeNull();
+    expect(rec.resourceAvailableUntil).toBeNull();
     expect(rec.sourceStatus).toBeNull();
     // No status claim and no expiry -> unknown (not a throw).
     expect(rec.status).toBe('unknown');
@@ -109,7 +112,7 @@ describe('SCRUM-2599 — expirationDate-vs-status reconciliation', () => {
     expect(rec.sourceStatus).toBe('active');
     // ...but the past expiration date wins: precedence is explicit.
     expect(rec.status).toBe('expired');
-    expect(rec.expiresAt).toBe('2021-01-01');
+    expect(rec.resourceAvailableUntil).toBe('2021-01-01');
   });
 
   it('a future expiration date does not override an active source status', () => {
@@ -310,6 +313,209 @@ describe('ceterms:ctid -> sourceId and dates', () => {
       'ceterms:dateEffective': 'not-a-date',
     };
     expect(parseCtdlNode(node, { now: NOW }).issuedAt).toBeNull();
+  });
+});
+
+describe('provenance dual-link (registryUrl + sourceUrl)', () => {
+  it('derives BOTH the registry URL (from ctid) and the source URL (from subjectWebpage)', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Dual Provenance',
+      'ceterms:ctid': 'ce-66666666-6666-4666-8666-666666666666',
+      'ceterms:subjectWebpage': 'https://issuer.example.org/credentials/rn',
+    };
+    const rec = parseCtdlNode(node, { now: NOW });
+    // Default registry base is prod.
+    expect(rec.registryUrl).toBe(
+      'https://credentialengineregistry.org/resources/ce-66666666-6666-4666-8666-666666666666',
+    );
+    // Source link is the credential's OWN origin, kept separate from registryUrl.
+    expect(rec.sourceUrl).toBe('https://issuer.example.org/credentials/rn');
+    // sourceId stays the raw ctid — never collapsed into a URL.
+    expect(rec.sourceId).toBe('ce-66666666-6666-4666-8666-666666666666');
+  });
+
+  it('uses an INJECTED registry base (sandbox) for the registry URL', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Sandbox Cred',
+      'ceterms:ctid': 'ce-77777777-7777-4777-8777-777777777777',
+    };
+    const rec = parseCtdlNode(node, {
+      now: NOW,
+      registryBaseUrl: 'https://sandbox.credentialengineregistry.org',
+    });
+    expect(rec.registryUrl).toBe(
+      'https://sandbox.credentialengineregistry.org/resources/ce-77777777-7777-4777-8777-777777777777',
+    );
+  });
+
+  it('tolerates a trailing slash on the injected registry base (no double slash)', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Trailing Slash',
+      'ceterms:ctid': 'ce-88888888-8888-4888-8888-888888888888',
+    };
+    const rec = parseCtdlNode(node, {
+      now: NOW,
+      registryBaseUrl: 'https://sandbox.credentialengineregistry.org/',
+    });
+    expect(rec.registryUrl).toBe(
+      'https://sandbox.credentialengineregistry.org/resources/ce-88888888-8888-4888-8888-888888888888',
+    );
+  });
+
+  it('leaves registryUrl null when the ctid is absent', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'No CTID',
+      'ceterms:subjectWebpage': 'https://issuer.example.org/x',
+    };
+    const rec = parseCtdlNode(node, { now: NOW });
+    expect(rec.registryUrl).toBeNull();
+    expect(rec.sourceUrl).toBe('https://issuer.example.org/x');
+  });
+
+  it('falls back to ceterms:source for sourceUrl when subjectWebpage is absent', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Source Fallback',
+      'ceterms:source': 'https://origin.example.org/doc.pdf',
+    };
+    const rec = parseCtdlNode(node, { now: NOW });
+    expect(rec.sourceUrl).toBe('https://origin.example.org/doc.pdf');
+  });
+
+  it('prefers subjectWebpage over source when both are present', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Both Sources',
+      'ceterms:subjectWebpage': 'https://preferred.example.org/page',
+      'ceterms:source': 'https://fallback.example.org/doc',
+    };
+    expect(parseCtdlNode(node, { now: NOW }).sourceUrl).toBe('https://preferred.example.org/page');
+  });
+
+  it('resolves subjectWebpage given as an @id object or an array', () => {
+    const objNode = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Obj Webpage',
+      'ceterms:subjectWebpage': { '@id': 'https://obj.example.org/p' },
+    };
+    expect(parseCtdlNode(objNode, { now: NOW }).sourceUrl).toBe('https://obj.example.org/p');
+
+    const arrNode = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Arr Webpage',
+      'ceterms:subjectWebpage': ['https://arr.example.org/first', 'https://arr.example.org/second'],
+    };
+    expect(parseCtdlNode(arrNode, { now: NOW }).sourceUrl).toBe('https://arr.example.org/first');
+  });
+
+  it('leaves both provenance links null when neither ctid nor a source is present', () => {
+    const rec = parseCtdlNode({ '@type': 'ceterms:License', 'ceterms:name': 'Bare' }, { now: NOW });
+    expect(rec.registryUrl).toBeNull();
+    expect(rec.sourceUrl).toBeNull();
+  });
+
+  it('drops a non-http(s) source value to null (honest omission)', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Bad Source',
+      'ceterms:subjectWebpage': 'javascript:alert(1)',
+      'ceterms:source': 'not a url',
+    };
+    expect(parseCtdlNode(node, { now: NOW }).sourceUrl).toBeNull();
+  });
+});
+
+describe('provenance — retrievedAt + envelope fingerprint (tamper scope)', () => {
+  const node = { '@type': 'ceterms:License', 'ceterms:name': 'Cred', 'ceterms:ctid': 'ce-99999999-9999-4999-8999-999999999999' };
+
+  it('stamps retrievedAt from the injected now by default', () => {
+    expect(parseCtdlNode(node, { now: NOW }).retrievedAt).toBe('2026-07-20T00:00:00.000Z');
+  });
+
+  it('uses an explicit retrievedAt option when provided', () => {
+    const rec = parseCtdlNode(node, { now: NOW, retrievedAt: new Date('2026-01-02T03:04:05Z') });
+    expect(rec.retrievedAt).toBe('2026-01-02T03:04:05.000Z');
+  });
+
+  it('threads a valid registry envelope SHA-256 (lowercased) and drops invalid ones', () => {
+    const sha = 'A'.repeat(64);
+    expect(parseCtdlNode(node, { now: NOW, ceEnvelopeSha256: sha }).ceEnvelopeSha256).toBe(
+      'a'.repeat(64),
+    );
+    expect(parseCtdlNode(node, { now: NOW, ceEnvelopeSha256: 'too-short' }).ceEnvelopeSha256)
+      .toBeNull();
+    expect(parseCtdlNode(node, { now: NOW }).ceEnvelopeSha256).toBeNull();
+  });
+
+  it('threads ceEnvelopeSignatureVerified only as a real boolean (else null)', () => {
+    expect(parseCtdlNode(node, { now: NOW, ceEnvelopeSignatureVerified: true })
+      .ceEnvelopeSignatureVerified).toBe(true);
+    expect(parseCtdlNode(node, { now: NOW, ceEnvelopeSignatureVerified: false })
+      .ceEnvelopeSignatureVerified).toBe(false);
+    expect(parseCtdlNode(node, { now: NOW }).ceEnvelopeSignatureVerified).toBeNull();
+  });
+});
+
+describe('parseCtdlEnvelope — SHA-256 of the exact consumed bytes', () => {
+  it('computes the envelope fingerprint from the raw bytes and stamps every record', () => {
+    const raw = JSON.stringify({
+      '@graph': [
+        { '@type': 'ceterms:License', 'ceterms:name': 'A', 'ceterms:ctid': 'ce-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+        { '@type': 'ceterms:Certificate', 'ceterms:name': 'B' },
+      ],
+    });
+    const expectedSha = createHash('sha256').update(raw, 'utf8').digest('hex');
+
+    const records = parseCtdlEnvelope(raw, { now: NOW });
+    expect(records).toHaveLength(2);
+    for (const rec of records) {
+      expect(rec.ceEnvelopeSha256).toBe(expectedSha);
+    }
+    expect(records[0]!.name).toBe('A');
+  });
+
+  it('a computed hash overrides any ceEnvelopeSha256 passed in options', () => {
+    const raw = JSON.stringify({ '@type': 'ceterms:License', 'ceterms:name': 'X' });
+    const records = parseCtdlEnvelope(raw, { now: NOW, ceEnvelopeSha256: 'b'.repeat(64) });
+    expect(records[0]!.ceEnvelopeSha256).toBe(
+      createHash('sha256').update(raw, 'utf8').digest('hex'),
+    );
+  });
+
+  it('throws CtdlImportError on non-JSON bytes', () => {
+    expect(() => parseCtdlEnvelope('{not json', { now: NOW })).toThrow(CtdlImportError);
+  });
+});
+
+describe('taxonomy round-trip alignment (SCRUM-2374)', () => {
+  it('reads ceterms:expirationDate into resourceAvailableUntil — the field the serializer re-emits', () => {
+    // Type-only import (erased at runtime, so this does NOT pull the serializer's
+    // express dependency into the test bundle). The compile-time check proves the
+    // importer's output field name is exactly the serializer's input field name,
+    // so an import -> re-serialize round-trip is lossless. The serializer's own
+    // suite (ctdl-serializer.test.ts) proves resourceAvailableUntil ->
+    // ceterms:expirationDate emission.
+    type SerializerAnchor = import('./ctdl-serializer.js').CtdlAnchor;
+
+    const rec = parseCtdlNode(
+      {
+        '@type': 'ceterms:License',
+        'ceterms:name': 'Round Trip',
+        'ceterms:expirationDate': '2030-01-01',
+      },
+      { now: NOW },
+    );
+
+    // The imported offering-availability date populates the serializer's
+    // resourceAvailableUntil (NOT expiresAt) — the round-trip anchor.
+    const roundTripAnchor: Pick<SerializerAnchor, 'resourceAvailableUntil'> = {
+      resourceAvailableUntil: rec.resourceAvailableUntil,
+    };
+    expect(roundTripAnchor.resourceAvailableUntil).toBe('2030-01-01');
   });
 });
 
