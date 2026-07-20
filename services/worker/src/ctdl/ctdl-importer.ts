@@ -144,19 +144,20 @@ export interface ImportedCtdlRecord {
    */
   sourceStatus: ImportedCredentialStatus | null;
   /**
-   * The RECONCILED status (SCRUM-2599). Precedence, in order:
-   *   1. A past `resourceAvailableUntil` (`ceterms:expirationDate`, relative to
-   *      the injected `now`) drives `expired` even if the source claims `active`.
-   *   2. Otherwise the normalized `sourceStatus` is used.
-   *   3. With neither an expiry nor a status claim, the result is `unknown`.
+   * The RECONCILED status (SCRUM-2599). By DEFAULT this is just the normalized
+   * `sourceStatus` (or `unknown` when the source made no claim) — the importer
+   * does NOT force `expired` from the offering-availability date by default.
    *
    * ⚠ TAXONOMY DECISION PENDING RATIFICATION (SCRUM-2374 / Jeanne Kitchens):
    * `ceterms:expirationDate` is OFFERING/resource-availability expiry, not a
-   * PERSON's credential validity. SCRUM-2599 deliberately lets a past
-   * offering-availability date drive a person-credential `expired` status — a
-   * useful default, but a taxonomy coupling the SCRUM-2374/Jeanne-guidance owner
-   * MUST ratify before it is treated as authoritative. `sourceStatus` is kept
-   * distinct so the override is always observable (and reversible) downstream.
+   * PERSON's credential validity. Coupling a past offering-availability date to a
+   * person-credential `expired` status is therefore OPT-IN and OFF by default,
+   * gated behind `treatResourceExpiryAsCredentialExpired`. Only when that flag is
+   * explicitly enabled does a past `resourceAvailableUntil` (relative to `now`)
+   * override an `active` claim. `sourceStatus` is kept distinct so the override
+   * (when enabled) is always observable and reversible downstream. The
+   * SCRUM-2374/Jeanne-guidance owner must ratify the coupling before it becomes
+   * the default.
    */
   status: ImportedCredentialStatus;
 }
@@ -187,6 +188,14 @@ export interface ParseCtdlOptions {
    * signature verify? Threaded onto each record. Never an endorsement signal.
    */
   ceEnvelopeSignatureVerified?: boolean | null;
+  /**
+   * SCRUM-2599 opt-in. When `true`, a past `ceterms:expirationDate`
+   * (offering/resource availability) forces `status='expired'` over the source's
+   * lifecycle claim. **Default `false`** because that offering→person coupling is
+   * an unratified taxonomy decision (SCRUM-2374). With it off, `sourceStatus`
+   * stands and `resourceAvailableUntil` is preserved purely as data.
+   */
+  treatResourceExpiryAsCredentialExpired?: boolean;
 }
 
 /** Prod CE Registry base — the default when no `registryBaseUrl` is injected. */
@@ -243,6 +252,33 @@ function cleanString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.replace(/\s+/g, ' ').trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+// Bound on how many entries of an @type array we scan — a defensive cap so a
+// hostile document cannot make @type resolution unbounded work.
+const MAX_TYPE_ENTRIES = 64;
+
+/**
+ * Resolve a JSON-LD `@type`, which may be a single string OR an array (JSON-LD
+ * permits both). For an array we prefer the first `ceterms:` term (our vocab),
+ * else the first non-empty string; non-string entries are ignored and an empty
+ * array resolves to null. Scanning is bounded by {@link MAX_TYPE_ENTRIES}.
+ */
+export function resolvePrimaryType(value: unknown): string | null {
+  if (typeof value === 'string') return cleanString(value);
+  if (!Array.isArray(value)) return null;
+
+  const entries = value.slice(0, MAX_TYPE_ENTRIES);
+  const cetermsType = entries.find(
+    (entry): entry is string => typeof entry === 'string' && entry.trim().startsWith('ceterms:'),
+  );
+  if (cetermsType) return cleanString(cetermsType);
+
+  for (const entry of entries) {
+    const clean = cleanString(entry);
+    if (clean) return clean;
+  }
+  return null;
 }
 
 /** True for an `en`/`en-US`/`en-GB`… language tag. */
@@ -313,10 +349,32 @@ function unwrapScalar(value: unknown): unknown {
 }
 
 /**
+ * STRICT calendar-day check. `new Date("2026-02-31")` silently NORMALIZES to
+ * 2026-03-03 (and `2026-13-01` → 2027, `2026-00-10` → 2025-12), so a raw
+ * `Date` parse lets impossible third-party dates through. This parses the
+ * Y-M-D components and round-trips them through `Date.UTC` — the value is real
+ * only if every component survives unchanged. Rejects `2026-02-31`,
+ * `2026-13-01`, `2026-00-10`, `2026-05-00`, and a non-leap-year `2026-02-29`;
+ * accepts a real leap day `2024-02-29`.
+ */
+function isRealCalendarDate(bareDate: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(bareDate);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return (
+    dt.getUTCFullYear() === year && dt.getUTCMonth() === month - 1 && dt.getUTCDate() === day
+  );
+}
+
+/**
  * Normalize a CTDL date to an ISO string. A bare calendar date (`YYYY-MM-DD`)
  * is preserved as-is (already ISO-8601 and free of a fabricated time-of-day); a
- * full datetime is canonicalized via `toISOString()`. Anything unparseable
- * resolves to null (honest omission — never a throw).
+ * full datetime is canonicalized via `toISOString()`. Impossible calendar dates
+ * (e.g. `2026-02-31`) and anything unparseable resolve to null (honest omission
+ * — never a throw, and never a silently-normalized wrong date).
  */
 export function normalizeCtdlDate(value: unknown): string | null {
   const scalar = unwrapScalar(value);
@@ -324,9 +382,13 @@ export function normalizeCtdlDate(value: unknown): string | null {
   if (!raw) return null;
 
   if (BARE_DATE.test(raw)) {
-    // Validate it is a real calendar day before trusting it.
-    return Number.isNaN(new Date(`${raw}T00:00:00Z`).getTime()) ? null : raw;
+    return isRealCalendarDate(raw) ? raw : null;
   }
+
+  // Datetime: the leading YYYY-MM-DD must itself be a real calendar day, so a
+  // datetime like "2026-02-31T12:00:00Z" cannot be normalized into a valid one.
+  const datePart = raw.slice(0, 10);
+  if (BARE_DATE.test(datePart) && !isRealCalendarDate(datePart)) return null;
 
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
@@ -453,22 +515,25 @@ export function resolveIssuer(ownedBy: unknown): ImportedCtdlIssuer | null {
 
 /**
  * SCRUM-2599 — reconcile the source-claimed status against the expiration date.
- * A past `resourceAvailableUntil` (`ceterms:expirationDate`, relative to the
- * injected `now`) drives `expired` over the source's lifecycle claim.
  *
- * ⚠ TAXONOMY caveat (SCRUM-2374 / Jeanne): the date is offering/resource
- * availability, not person-credential validity — this coupling is a default the
- * SCRUM-2374 owner must ratify. See {@link ImportedCtdlRecord.status}.
+ * ⚠ TAXONOMY caveat (SCRUM-2374 / Jeanne): `ceterms:expirationDate` is
+ * offering/resource availability, NOT person-credential validity. Coupling a
+ * past offering-availability date to a person-credential `expired` status is an
+ * UNRATIFIED taxonomy decision, so it is **OPT-IN and OFF by default**
+ * (`applyResourceExpiry`). When off, the source's lifecycle claim stands and
+ * `resourceAvailableUntil` remains available purely as data. See
+ * {@link ImportedCtdlRecord.status}.
  */
 export function reconcileStatus(
   sourceStatus: ImportedCredentialStatus | null,
   resourceAvailableUntil: string | null,
   now: Date,
+  applyResourceExpiry: boolean,
 ): ImportedCredentialStatus {
-  if (resourceAvailableUntil) {
+  if (applyResourceExpiry && resourceAvailableUntil) {
     const expiry = new Date(resourceAvailableUntil).getTime();
     if (!Number.isNaN(expiry) && expiry <= now.getTime()) {
-      // Past availability date is ground truth — overrides an "active" claim.
+      // Opt-in only: a past availability date overrides an "active" claim.
       return 'expired';
     }
   }
@@ -481,7 +546,7 @@ export function parseCtdlNode(node: unknown, options: ParseCtdlOptions): Importe
     throw new CtdlImportError('CTDL node must be a JSON object');
   }
 
-  const type = cleanString(node['@type']);
+  const type = resolvePrimaryType(node['@type']);
   const name = resolveCtdlLangString(node['ceterms:name']);
   const sourceId = extractCtid(node['ceterms:ctid']);
   const registryUrl = buildRegistryUrl(
@@ -502,7 +567,12 @@ export function parseCtdlNode(node: unknown, options: ParseCtdlOptions): Importe
   // lossless — NOT a person's expiresAt.
   const resourceAvailableUntil = normalizeCtdlDate(node['ceterms:expirationDate']);
   const sourceStatus = normalizeLifecycleStatus(node['ceterms:lifecycleStatusType']);
-  const status = reconcileStatus(sourceStatus, resourceAvailableUntil, options.now);
+  const status = reconcileStatus(
+    sourceStatus,
+    resourceAvailableUntil,
+    options.now,
+    options.treatResourceExpiryAsCredentialExpired === true,
+  );
 
   return ImportedCtdlRecordSchema.parse({
     type,

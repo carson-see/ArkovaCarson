@@ -99,41 +99,61 @@ describe('parseCtdlDocument — @graph walking', () => {
   });
 });
 
-describe('SCRUM-2599 — expirationDate-vs-status reconciliation', () => {
-  it('(c) an expired credential (expirationDate in the past) resolves to expired even when source status claims active', () => {
+describe('SCRUM-2599 — expirationDate-vs-status reconciliation (OPT-IN, default OFF)', () => {
+  // The offering-availability -> person-credential-expired coupling is an
+  // unratified taxonomy decision (SCRUM-2374), so it is OPT-IN and OFF by
+  // default. These tests exercise it via the explicit flag.
+  const OPT_IN = { now: NOW, treatResourceExpiryAsCredentialExpired: true } as const;
+
+  it('DEFAULT (flag off): a past expirationDate does NOT force expired — sourceStatus is preserved as data', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Lapsed Offering',
+      'ceterms:lifecycleStatusType': 'lifecycle:Active',
+      'ceterms:expirationDate': '2021-01-01',
+    };
+    const rec = parseCtdlNode(node, { now: NOW });
+    // Source claim preserved unchanged...
+    expect(rec.sourceStatus).toBe('active');
+    expect(rec.status).toBe('active');
+    // ...and the offering-availability date is still captured as data.
+    expect(rec.resourceAvailableUntil).toBe('2021-01-01');
+  });
+
+  it('(c) OPT-IN: an expired credential (expirationDate in the past) resolves to expired even when source status claims active', () => {
     const node = {
       '@type': 'ceterms:License',
       'ceterms:name': 'Lapsed License',
       'ceterms:lifecycleStatusType': 'lifecycle:Active',
       'ceterms:expirationDate': '2021-01-01',
     };
-    const rec = parseCtdlNode(node, { now: NOW });
+    const rec = parseCtdlNode(node, OPT_IN);
     // The SOURCE claimed active...
     expect(rec.sourceStatus).toBe('active');
-    // ...but the past expiration date wins: precedence is explicit.
+    // ...but with the opt-in enabled, the past expiration date wins.
     expect(rec.status).toBe('expired');
     expect(rec.resourceAvailableUntil).toBe('2021-01-01');
   });
 
-  it('a future expiration date does not override an active source status', () => {
+  it('OPT-IN: a future expiration date does not override an active source status', () => {
     const node = {
       '@type': 'ceterms:License',
       'ceterms:name': 'Current License',
       'ceterms:lifecycleStatusType': 'lifecycle:Active',
       'ceterms:expirationDate': '2099-01-01',
     };
-    const rec = parseCtdlNode(node, { now: NOW });
+    const rec = parseCtdlNode(node, OPT_IN);
     expect(rec.status).toBe('active');
   });
 
-  it('a datetime expiration exactly in the past is treated as expired', () => {
+  it('OPT-IN: a datetime expiration exactly in the past is treated as expired', () => {
     const node = {
       '@type': 'ceterms:Certificate',
       'ceterms:name': 'Edge Case',
       'ceterms:lifecycleStatusType': 'lifecycle:Active',
       'ceterms:expirationDate': '2026-07-19T23:59:59Z',
     };
-    const rec = parseCtdlNode(node, { now: NOW });
+    const rec = parseCtdlNode(node, OPT_IN);
     expect(rec.status).toBe('expired');
   });
 
@@ -516,6 +536,85 @@ describe('taxonomy round-trip alignment (SCRUM-2374)', () => {
       resourceAvailableUntil: rec.resourceAvailableUntil,
     };
     expect(roundTripAnchor.resourceAvailableUntil).toBe('2030-01-01');
+  });
+});
+
+describe('strict calendar-date validation (rejects impossible dates)', () => {
+  const dateNode = (value: string) => ({
+    '@type': 'ceterms:Certificate',
+    'ceterms:name': 'Date Check',
+    'ceterms:dateEffective': value,
+  });
+
+  it('rejects an impossible day-of-month (2026-02-31) instead of normalizing it', () => {
+    // new Date("2026-02-31") silently rolls to 2026-03-03 — must be rejected.
+    expect(parseCtdlNode(dateNode('2026-02-31'), { now: NOW }).issuedAt).toBeNull();
+  });
+
+  it('rejects an out-of-range month (2026-13-01)', () => {
+    expect(parseCtdlNode(dateNode('2026-13-01'), { now: NOW }).issuedAt).toBeNull();
+  });
+
+  it('rejects a zero month (2026-00-10) and zero day (2026-05-00)', () => {
+    expect(parseCtdlNode(dateNode('2026-00-10'), { now: NOW }).issuedAt).toBeNull();
+    expect(parseCtdlNode(dateNode('2026-05-00'), { now: NOW }).issuedAt).toBeNull();
+  });
+
+  it('accepts a real leap day (2024-02-29) and rejects a non-leap-year Feb 29 (2026-02-29)', () => {
+    expect(parseCtdlNode(dateNode('2024-02-29'), { now: NOW }).issuedAt).toBe('2024-02-29');
+    expect(parseCtdlNode(dateNode('2026-02-29'), { now: NOW }).issuedAt).toBeNull();
+  });
+
+  it('rejects a datetime whose date portion is an impossible calendar day', () => {
+    expect(parseCtdlNode(dateNode('2026-02-31T12:00:00Z'), { now: NOW }).issuedAt).toBeNull();
+  });
+
+  it('an impossible expirationDate does not drive the opt-in reconciliation (it is dropped)', () => {
+    const node = {
+      '@type': 'ceterms:License',
+      'ceterms:name': 'Bad Expiry',
+      'ceterms:lifecycleStatusType': 'lifecycle:Active',
+      'ceterms:expirationDate': '2026-02-31',
+    };
+    const rec = parseCtdlNode(node, { now: NOW, treatResourceExpiryAsCredentialExpired: true });
+    // The malformed date is dropped, so it cannot force an expired status.
+    expect(rec.resourceAvailableUntil).toBeNull();
+    expect(rec.status).toBe('active');
+  });
+
+  it('still accepts ordinary valid dates and datetimes', () => {
+    expect(parseCtdlNode(dateNode('2026-07-20'), { now: NOW }).issuedAt).toBe('2026-07-20');
+    expect(parseCtdlNode(dateNode('2026-07-20T08:30:00Z'), { now: NOW }).issuedAt).toBe(
+      '2026-07-20T08:30:00.000Z',
+    );
+  });
+});
+
+describe('JSON-LD @type arrays', () => {
+  it('resolves an @type array to the first ceterms: term', () => {
+    const node = {
+      '@type': ['ceterms:Certificate', 'ceterms:Credential'],
+      'ceterms:name': 'Multi Type',
+    };
+    expect(parseCtdlNode(node, { now: NOW }).type).toBe('ceterms:Certificate');
+  });
+
+  it('prefers a ceterms: term even when it is not first in the array', () => {
+    const node = {
+      '@type': ['schema:EducationalOccupationalCredential', 'ceterms:License'],
+      'ceterms:name': 'Mixed Vocab',
+    };
+    expect(parseCtdlNode(node, { now: NOW }).type).toBe('ceterms:License');
+  });
+
+  it('falls back to the first non-empty string when no ceterms: term is present', () => {
+    const node = { '@type': ['schema:Thing', 'ex:Other'], 'ceterms:name': 'No CE Type' };
+    expect(parseCtdlNode(node, { now: NOW }).type).toBe('schema:Thing');
+  });
+
+  it('resolves to null for an empty @type array or non-string entries', () => {
+    expect(parseCtdlNode({ '@type': [], 'ceterms:name': 'X' }, { now: NOW }).type).toBeNull();
+    expect(parseCtdlNode({ '@type': [123, null], 'ceterms:name': 'X' }, { now: NOW }).type).toBeNull();
   });
 });
 

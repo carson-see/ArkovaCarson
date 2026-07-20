@@ -60,15 +60,19 @@ function syntheticGraph(count: number): { '@graph': Record<string, unknown>[] } 
 // Best-of-N wall-clock (min is the stablest estimator for CPU-bound work — it
 // filters GC / scheduler jitter). The doc is built ONCE outside the timing loop
 // so we measure parsing, not fixture construction.
+// Exercise the FULL parse path including the opt-in SCRUM-2599 reconciliation
+// (the heaviest branch), so the perf numbers cover the worst case.
+const PARSE_OPTS = { now: NOW, treatResourceExpiryAsCredentialExpired: true } as const;
+
 function timeParse(count: number, runs = 3): { ms: number; records: ImportedCtdlRecord[] } {
   const doc = syntheticGraph(count);
   // Warm-up (JIT + first-run allocation) — not timed.
-  parseCtdlDocument(doc, { now: NOW });
+  parseCtdlDocument(doc, PARSE_OPTS);
   let best = Number.POSITIVE_INFINITY;
   let records: ImportedCtdlRecord[] = [];
   for (let r = 0; r < runs; r += 1) {
     const start = performance.now();
-    records = parseCtdlDocument(doc, { now: NOW });
+    records = parseCtdlDocument(doc, PARSE_OPTS);
     best = Math.min(best, performance.now() - start);
   }
   return { ms: best, records };
