@@ -44,6 +44,24 @@ import { GeminiProvider } from './gemini.js';
 import type { ExtractionRequest } from './types.js';
 import { logger } from '../utils/logger.js';
 
+function upstreamLogAttempts(): unknown[] {
+  return vi.mocked(logger.error).mock.calls
+    .filter(([details]) => (
+      (details as { event?: unknown } | undefined)?.event === 'ai_upstream_http_error'
+    ))
+    .map(([details]) => (details as { attempt?: unknown }).attempt);
+}
+
+function upstreamLogRequestInstanceIds(): unknown[] {
+  return vi.mocked(logger.error).mock.calls
+    .filter(([details]) => (
+      (details as { event?: unknown } | undefined)?.event === 'ai_upstream_http_error'
+    ))
+    .map(([details]) => (
+      (details as { requestInstanceId?: unknown }).requestInstanceId
+    ));
+}
+
 describe('GeminiProvider', () => {
   // §1.6: ENABLE_AI_EXTRACTION defaults TRUE in production. Mirror that here so the
   // standard extraction tests exercise the production-default state; tests that
@@ -338,6 +356,73 @@ describe('GeminiProvider', () => {
       expect(result.confidence).toBeGreaterThan(0.5);
       expect(result.confidence).toBeLessThanOrEqual(0.85);
       expect(mockGenerateContent).toHaveBeenCalledTimes(2);
+    });
+
+    it('emits bounded retry-loop attempt identity on every Developer API 429', async () => {
+      vi.useFakeTimers();
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      mockGenerateContent.mockRejectedValue({
+        status: 429,
+        message: 'Jane Doe jane.doe@example.com secret-provider-body',
+        headers: { get: (name: string) => (name === 'retry-after' ? '11' : null) },
+      });
+
+      try {
+        const provider = new GeminiProvider('test-key');
+        const outcome = provider.extractMetadata(request).catch((error: unknown) => error);
+        await vi.runAllTimersAsync();
+        const error = await outcome;
+
+        expect(error).toMatchObject({
+          name: 'AIProviderHttpError',
+          status: 429,
+          retryAfterSec: 11,
+          apiSurface: 'Developer-API',
+        });
+        expect(mockGenerateContent).toHaveBeenCalledTimes(3);
+        expect(upstreamLogAttempts()).toEqual([1, 2, 3]);
+        expect(upstreamLogRequestInstanceIds()).toHaveLength(3);
+        expect(new Set(upstreamLogRequestInstanceIds()).size).toBe(1);
+        expect(upstreamLogRequestInstanceIds()[0]).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        );
+        const serializedLogs = JSON.stringify(vi.mocked(logger.error).mock.calls);
+        expect(serializedLogs).not.toContain('Jane Doe');
+        expect(serializedLogs).not.toContain('jane.doe@example.com');
+        expect(serializedLogs).not.toContain('secret-provider-body');
+      } finally {
+        randomSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('generates a distinct server request-instance ID for each withRetry invocation', async () => {
+      vi.useFakeTimers();
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      mockGenerateContent.mockRejectedValue({ status: 429, message: 'rate limited' });
+
+      try {
+        const provider = new GeminiProvider('test-key');
+        const firstOutcome = provider.extractMetadata(request).catch((error: unknown) => error);
+        await vi.runAllTimersAsync();
+        await firstOutcome;
+        const firstIds = upstreamLogRequestInstanceIds();
+
+        vi.mocked(logger.error).mockClear();
+        const secondOutcome = provider.extractMetadata(request).catch((error: unknown) => error);
+        await vi.runAllTimersAsync();
+        await secondOutcome;
+        const secondIds = upstreamLogRequestInstanceIds();
+
+        expect(firstIds).toHaveLength(3);
+        expect(secondIds).toHaveLength(3);
+        expect(new Set(firstIds).size).toBe(1);
+        expect(new Set(secondIds).size).toBe(1);
+        expect(firstIds[0]).not.toBe(secondIds[0]);
+      } finally {
+        randomSpy.mockRestore();
+        vi.useRealTimers();
+      }
     });
 
     it('does not retry on auth errors', async () => {
@@ -656,6 +741,164 @@ describe('GeminiProvider', () => {
         'Gemini batch embedding API returned malformed embedding data',
       );
       fetchSpy.mockRestore();
+    });
+
+    it('preserves a Developer API 429 and Retry-After through every safe retry clone', async () => {
+      vi.useFakeTimers();
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      const providerErrorBody = JSON.stringify({
+        error: {
+          message: 'Quota hit for Jane Doe jane.doe@example.com',
+          apiKey: 'secret-provider-key',
+        },
+      });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+        new Response(providerErrorBody, {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': String(providerErrorBody.length),
+            'Retry-After': '17',
+          },
+        })
+      ));
+
+      try {
+        const provider = new GeminiProvider('test-key');
+        const outcome = provider.generateEmbedding('PII-stripped input').then(
+          () => null,
+          (error: unknown) => error,
+        );
+        await vi.runAllTimersAsync();
+        const error = await outcome;
+
+        expect(error).toMatchObject({
+          name: 'AIProviderHttpError',
+          status: 429,
+          retryAfterSec: 17,
+          apiSurface: 'Developer-API',
+          model: 'gemini-embedding-001',
+          region: 'global',
+          v6PromptActive: false,
+          responseSchema: 'unset',
+          responseMimeType: 'application/json',
+        });
+        expect(fetchSpy).toHaveBeenCalledTimes(3);
+        expect(upstreamLogAttempts()).toEqual([1, 2, 3]);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({
+            event: 'ai_upstream_http_error',
+            bucket: 'upstream-model',
+            status: 429,
+            retryAfterSec: 17,
+            apiSurface: 'Developer-API',
+          }),
+          'Gemini embedding API error',
+        );
+        const serializedLogs = JSON.stringify(vi.mocked(logger.error).mock.calls);
+        expect(serializedLogs).not.toContain('Jane Doe');
+        expect(serializedLogs).not.toContain('jane.doe@example.com');
+        expect(serializedLogs).not.toContain('secret-provider-key');
+        expect(serializedLogs).not.toContain(providerErrorBody);
+      } finally {
+        fetchSpy.mockRestore();
+        randomSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('tuned Vertex upstream errors', () => {
+    it('preserves 429 provenance and Retry-After without retaining or logging the provider body', async () => {
+      vi.useFakeTimers();
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      const originalTunedModel = process.env.GEMINI_TUNED_MODEL;
+      const originalV6Prompt = process.env.GEMINI_V6_PROMPT;
+      const originalResponseSchema = process.env.GEMINI_TUNED_RESPONSE_SCHEMA;
+      const tunedModel = 'projects/arkova1/locations/us-central1/endpoints/6611494259700793344';
+      process.env.GEMINI_TUNED_MODEL = tunedModel;
+      process.env.GEMINI_V6_PROMPT = 'true';
+      delete process.env.GEMINI_TUNED_RESPONSE_SCHEMA;
+
+      const providerErrorBody = JSON.stringify({
+        error: {
+          message: 'Quota hit while processing Jane Doe jane.doe@example.com',
+          authorization: 'Bearer secret-token',
+        },
+      });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        if (String(input).includes('metadata.google.internal')) {
+          return new Response(JSON.stringify({ access_token: 'metadata-token' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(providerErrorBody, {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': String(providerErrorBody.length),
+            'Retry-After': '23',
+          },
+        });
+      });
+
+      try {
+        const provider = new GeminiProvider('test-key');
+        const outcome = provider.extractMetadata({
+          strippedText: 'PII-stripped credential text',
+          credentialType: 'DEGREE',
+          fingerprint: 'a'.repeat(64),
+        }).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        await vi.runAllTimersAsync();
+        const error = await outcome;
+
+        expect(error).toMatchObject({
+          name: 'AIProviderHttpError',
+          status: 429,
+          retryAfterSec: 23,
+          apiSurface: 'Vertex-regional',
+          model: tunedModel,
+          region: 'us-central1',
+          v6PromptActive: true,
+          responseSchema: 'unset',
+          responseMimeType: 'application/json',
+        });
+        expect(fetchSpy).toHaveBeenCalledTimes(6);
+        expect(upstreamLogAttempts()).toEqual([1, 2, 3]);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({
+            event: 'ai_upstream_http_error',
+            bucket: 'upstream-model',
+            status: 429,
+            retryAfterSec: 23,
+            apiSurface: 'Vertex-regional',
+            model: tunedModel,
+            region: 'us-central1',
+            v6PromptActive: true,
+            responseSchema: 'unset',
+          }),
+          'Vertex AI tuned model error',
+        );
+        const serializedLogs = JSON.stringify(vi.mocked(logger.error).mock.calls);
+        expect(serializedLogs).not.toContain('Jane Doe');
+        expect(serializedLogs).not.toContain('jane.doe@example.com');
+        expect(serializedLogs).not.toContain('secret-token');
+        expect(serializedLogs).not.toContain(providerErrorBody);
+      } finally {
+        fetchSpy.mockRestore();
+        randomSpy.mockRestore();
+        vi.useRealTimers();
+        if (originalTunedModel === undefined) delete process.env.GEMINI_TUNED_MODEL;
+        else process.env.GEMINI_TUNED_MODEL = originalTunedModel;
+        if (originalV6Prompt === undefined) delete process.env.GEMINI_V6_PROMPT;
+        else process.env.GEMINI_V6_PROMPT = originalV6Prompt;
+        if (originalResponseSchema === undefined) delete process.env.GEMINI_TUNED_RESPONSE_SCHEMA;
+        else process.env.GEMINI_TUNED_RESPONSE_SCHEMA = originalResponseSchema;
+      }
     });
   });
 

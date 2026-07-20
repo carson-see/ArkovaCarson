@@ -48,12 +48,22 @@ export interface FallbackChainOptions {
   onFallback?: (event: ProviderFallbackEvent) => void;
 }
 
+function providerHttpStatus(error: Error): number | undefined {
+  const status = (error as Error & { status?: unknown }).status;
+  return typeof status === 'number'
+    && Number.isSafeInteger(status)
+    && status >= 100
+    && status <= 599
+    ? status
+    : undefined;
+}
+
 /** Errors that should trigger fallback to next provider */
 function isRetriableError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
 
   // HTTP status-based retriable errors
-  const status = (error as Error & { status?: number }).status;
+  const status = providerHttpStatus(error);
   if (status === 429 || status === 503 || status === 502 || status === 504) {
     return true;
   }
@@ -75,7 +85,7 @@ function isRetriableError(error: unknown): boolean {
 function fallbackReason(error: unknown): FallbackReason {
   if (!(error instanceof Error)) return 'provider_error';
 
-  const status = (error as Error & { status?: number }).status;
+  const status = providerHttpStatus(error);
   if (status === 429) return 'rate_limit';
   if (status === 502 || status === 503 || status === 504) return 'provider_unavailable';
 
@@ -121,8 +131,9 @@ export class FallbackChainProvider implements IAIProvider {
         return result;
       } catch (error) {
         this.metrics[provider.name].failures++;
-        this.metrics[provider.name].lastError =
-          error instanceof Error ? error.message : String(error);
+        // Metrics retain only the bounded classification. Provider messages can
+        // include response bodies, prompt fragments, identifiers, or secrets.
+        this.metrics[provider.name].lastError = fallbackReason(error);
 
         if (!isRetriableError(error)) {
           // Non-retriable: don't fall back, throw immediately
