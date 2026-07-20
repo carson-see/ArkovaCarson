@@ -66,6 +66,20 @@ function validateActor(actor: ProvisioningActor): void {
   }
 }
 
+/** Separation of duties: the requester may not review (approve/reject) their own request. */
+function assertNotSelfReview(
+  actor: ProvisioningActor,
+  record: PartnerAccountRecord,
+  verb: 'approve' | 'reject',
+): void {
+  if (actor.userId === record.requestedBy) {
+    throw new PartnerProvisioningError(
+      `separation of duties: the requester may not ${verb} their own request`,
+      'separation_of_duties',
+    );
+  }
+}
+
 export type PartnerProvisioningStatus =
   | 'requested'
   | 'approved'
@@ -217,12 +231,7 @@ export function approvePartnerRequest(
       'illegal_transition',
     );
   }
-  if (actor.userId === record.requestedBy) {
-    throw new PartnerProvisioningError(
-      'separation of duties: the requester may not approve their own request',
-      'separation_of_duties',
-    );
-  }
+  assertNotSelfReview(actor, record, 'approve');
   assertApprovalAuthority(actor, record.sponsorOrgId);
 
   const next: PartnerAccountRecord = {
@@ -246,12 +255,7 @@ export function rejectPartnerRequest(
       'illegal_transition',
     );
   }
-  if (actor.userId === record.requestedBy) {
-    throw new PartnerProvisioningError(
-      'separation of duties: the requester may not reject their own request',
-      'separation_of_duties',
-    );
-  }
+  assertNotSelfReview(actor, record, 'reject');
   assertApprovalAuthority(actor, record.sponsorOrgId);
 
   const next: PartnerAccountRecord = {
