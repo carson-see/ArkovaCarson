@@ -26,6 +26,83 @@ import {
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 1000;
 
+// Connection-level DB error signatures that warrant a single delivery-layer
+// retry (no HTTP response received). Deliberately narrower than db.ts's
+// transport-layer `isTransientConnectionError` (which already retries the full
+// transient set once at the socket): this is the belt-and-suspenders retry for
+// the webhook write/lookup path, kept to the "definitely re-sendable, no
+// response" subset. Shared by the idempotency-lookup (WH-3) and delivery-log
+// insert retries so the two stay in lockstep.
+const TRANSIENT_DB_ERROR_RE = /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i;
+
+// ─── WH-5: bounded dispatch fan-out ──────────────────────────────────────
+// The dispatch fan-out previously used an UNBOUNDED `Promise.all(endpoints.map)`.
+// A single event with many active endpoints (or a batch of events dispatched
+// concurrently) could open one Supabase socket + one outbound webhook socket per
+// endpoint simultaneously — the exact burst that rots the keep-alive pool on a
+// throttled instance. Cap concurrency so bursts drain in bounded waves.
+const DISPATCH_CONCURRENCY = 12;
+
+/**
+ * Run `worker` over `items` with at most `limit` in flight. Preserves the
+ * non-aborting semantics of the previous `Promise.all` (deliverToEndpoint never
+ * throws — it records failures internally and returns a boolean). Small lists
+ * (≤ limit) take the plain-parallel fast path.
+ */
+async function mapWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<unknown>,
+): Promise<void> {
+  if (items.length <= limit) {
+    await Promise.all(items.map(worker));
+    return;
+  }
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      await worker(items[idx]);
+    }
+  });
+  await Promise.all(runners);
+}
+
+// ─── WH-4: in-process cache for the ENABLE_OUTBOUND_WEBHOOKS kill switch ───
+// `get_flag('ENABLE_OUTBOUND_WEBHOOKS')` was an RPC round-trip on every dispatch
+// (once per event). Cache the resolved value for 30s so a burst of events costs
+// at most one flag read. Fail-closed: an RPC error returns `false` (do not
+// dispatch) and is NOT cached, so the next dispatch re-reads. 30s is well within
+// tolerance for a kill switch — when Carson flips the flag ON post-soak the
+// worker begins delivering within one TTL.
+const FLAG_CACHE_TTL_MS = 30_000;
+let outboundWebhookFlagCache: { value: boolean; expiresAt: number } | null = null;
+
+/** Test hook — clear the WH-4 flag cache between cases. */
+export function __resetWebhookFlagCacheForTest(): void {
+  outboundWebhookFlagCache = null;
+}
+
+async function isOutboundWebhooksEnabled(): Promise<boolean> {
+  const now = Date.now();
+  if (outboundWebhookFlagCache && outboundWebhookFlagCache.expiresAt > now) {
+    return outboundWebhookFlagCache.value;
+  }
+  const { data: flag, error: flagError } = await db.rpc('get_flag', {
+    p_flag_key: 'ENABLE_OUTBOUND_WEBHOOKS',
+  });
+  if (flagError) {
+    logger.error(
+      { error: flagError, flagId: 'ENABLE_OUTBOUND_WEBHOOKS' },
+      'Failed to read outbound webhook feature flag',
+    );
+    return false; // fail closed — do not cache the failure
+  }
+  const value = Boolean(flag);
+  outboundWebhookFlagCache = { value, expiresAt: now + FLAG_CACHE_TTL_MS };
+  return value;
+}
+
 /**
  * Check if a webhook URL targets a private/internal network address.
  * Blocks RFC 1918 ranges, loopback, link-local, cloud metadata endpoints.
@@ -306,11 +383,14 @@ async function deliverToEndpoint(
   // place with the new attempt_number and proceed to re-fire the HTTP call.
   // Also propagate the SELECT error: PGRST116 = no row (happy path), anything
   // else (RLS regression, transient DB) should fail loud, not be swallowed.
-  const { data: existing, error: lookupError } = await db
-    .from('webhook_delivery_logs')
-    .select('id, status, attempt_number')
-    .eq('idempotency_key', idempotencyKey)
-    .single();
+  const performLookup = () =>
+    db
+      .from('webhook_delivery_logs')
+      .select('id, status, attempt_number')
+      .eq('idempotency_key', idempotencyKey)
+      .single();
+
+  let { data: existing, error: lookupError } = await performLookup();
 
   // PGRST116 = "JSON object requested, multiple (or no) rows returned" — for
   // .single() this means zero rows matched (the happy path for first attempt).
@@ -319,6 +399,28 @@ async function deliverToEndpoint(
     const code = (err as { code?: string })?.code;
     return code === 'PGRST116';
   };
+
+  // WH-3 (SCRUM-2899): the idempotency lookup was the LAST unprotected DB read on
+  // the delivery path — a transient failure here did Sentry + `return false` with
+  // NO retry and NO durable record, which is exactly the ~13/wk SILENT event
+  // drops (the delivery-log INSERT path already retried + DLQ'd; this SELECT did
+  // not). Mirror that path: retry ONCE on a connection-level error (fresh socket
+  // via the WH-1 resilient db fetch), then, if it still fails on anything other
+  // than PGRST116, preserve the event in the dead-letter queue before giving up
+  // instead of dropping it.
+  if (
+    lookupError &&
+    !isNoRowError(lookupError) &&
+    TRANSIENT_DB_ERROR_RE.test((lookupError as { message?: string })?.message ?? '')
+  ) {
+    logger.warn(
+      { error: lookupError, endpointId: endpoint.id },
+      'Transient idempotency-lookup failure — retrying once',
+    );
+    await new Promise((r) => setTimeout(r, INITIAL_RETRY_DELAY_MS));
+    ({ data: existing, error: lookupError } = await performLookup());
+  }
+
   if (lookupError && !isNoRowError(lookupError)) {
     logger.error({ error: lookupError, endpointId: endpoint.id }, 'Idempotency lookup failed');
     Sentry.captureException(
@@ -327,6 +429,17 @@ async function deliverToEndpoint(
         tags: { subsystem: 'webhooks', stage: 'idempotency_lookup', event_type: payload.event_type },
         extra: { idempotency_key: idempotencyKey, endpoint_id: endpoint.id },
       },
+    );
+    // WH-3: durably preserve the event instead of silently dropping it. Reuse the
+    // existing 'log_write' failure_kind (same audit-integrity class as a failed
+    // delivery-log write) so no new migration/enum value is needed — this keeps
+    // the change T2, not T3. Deduped via the 0338 partial unique index.
+    await moveToDeadLetterQueue(
+      endpoint,
+      payload,
+      `idempotency lookup failed (audit-integrity): ${(lookupError as { message?: string })?.message ?? 'unknown'} [idempotency_key=${idempotencyKey}]`,
+      attempt,
+      'log_write',
     );
     return false;
   }
@@ -372,7 +485,7 @@ async function deliverToEndpoint(
 
   // Single retry on transient network errors (e.g. "TypeError: fetch failed")
   // before giving up. Fixes ARKOVA-WORKER-C.
-  if (logError && /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(logError.message ?? '')) {
+  if (logError && TRANSIENT_DB_ERROR_RE.test(logError.message ?? '')) {
     logger.warn({ error: logError, endpointId: endpoint.id }, 'Transient delivery_log write failure — retrying once');
     await new Promise((r) => setTimeout(r, INITIAL_RETRY_DELAY_MS));
     ({ data: logEntry, error: logError } = await performLogWrite());
@@ -681,18 +794,8 @@ export async function dispatchWebhookEvent(
     );
   }
 
-  // Check if webhooks are enabled
-  const { data: flag, error: flagError } = await db.rpc('get_flag', {
-    p_flag_key: 'ENABLE_OUTBOUND_WEBHOOKS',
-  });
-  if (flagError) {
-    logger.error(
-      { error: flagError, flagId: 'ENABLE_OUTBOUND_WEBHOOKS', eventType },
-      'Failed to read outbound webhook feature flag',
-    );
-    return;
-  }
-  if (!flag) {
+  // Check if webhooks are enabled (WH-4: 30s cached, fail-closed).
+  if (!(await isOutboundWebhooksEnabled())) {
     logger.debug({ eventType }, 'Outbound webhooks disabled');
     return;
   }
@@ -730,11 +833,14 @@ export async function dispatchWebhookEvent(
     sequence: await nextSequence(),
   };
 
-  // Deliver to all endpoints (in parallel). Different resources, and multiple
-  // endpoints for the same event, still fan out concurrently — the ordering
-  // guarantee is enforced per-resource in the retry sweep, not by serializing
-  // the happy-path dispatch.
-  await Promise.all(endpoints.map((endpoint) => deliverToEndpoint(endpoint, payload)));
+  // Deliver to all endpoints. Different resources, and multiple endpoints for
+  // the same event, still fan out concurrently — the ordering guarantee is
+  // enforced per-resource in the retry sweep, not by serializing the happy-path
+  // dispatch. WH-5: concurrency is bounded (DISPATCH_CONCURRENCY) so a
+  // many-endpoint burst cannot exhaust the socket pool.
+  await mapWithConcurrency(endpoints, DISPATCH_CONCURRENCY, (endpoint) =>
+    deliverToEndpoint(endpoint, payload),
+  );
 }
 
 // ─── Dead Letter Queue (DH-12) ─────────────────────────────────────────
