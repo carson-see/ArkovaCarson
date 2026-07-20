@@ -174,6 +174,14 @@ describe('provisionPartnerAccount', () => {
     ).toThrow(/illegal transition|not approved/i);
   });
 
+  it('rejects a non-UUID partnerOrgId at provision (review P1)', () => {
+    const { record } = makeRequest();
+    const { record: approved } = approvePartnerRequest(record, approver, AT);
+    expect(() =>
+      provisionPartnerAccount(approved, platformAdmin, { partnerOrgId: 'org-haki-new' }, AT),
+    ).toThrow(/must be a UUID/i);
+  });
+
   it('a rejected request cannot be approved or provisioned', () => {
     const { record } = makeRequest();
     const { record: rejected, audit } = rejectPartnerRequest(record, approver, 'incomplete KYB', AT);
@@ -206,6 +214,20 @@ describe('cancelApprovedRequest (missing-lifecycle leg)', () => {
     const { record } = makeRequest();
     const { record: approved } = approvePartnerRequest(record, approver, AT);
     expect(() => cancelApprovedRequest(approved, outsider, 'x', AT)).toThrow(/not authorized|RBAC/i);
+  });
+});
+
+describe('actor shape validation (review P1 backstop)', () => {
+  it('rejects a malformed actor (non-UUID orgId) at a transition', () => {
+    const { record } = makeRequest();
+    const badActor = { userId: 'x', orgId: 'not-a-uuid', role: 'owner' } as ProvisioningActor;
+    expect(() => approvePartnerRequest(record, badActor, AT)).toThrow(/invalid actor/i);
+  });
+
+  it('rejects an actor with an unrecognized role', () => {
+    const { record } = makeRequest();
+    const badActor = { userId: 'x', orgId: SPONSOR_ORG, role: 'superuser' } as unknown as ProvisioningActor;
+    expect(() => approvePartnerRequest(record, badActor, AT)).toThrow(/invalid actor/i);
   });
 });
 

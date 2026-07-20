@@ -29,11 +29,41 @@ const MAX_DETAILS_LEN = 10_000;
 /** Roles recognised for provisioning authorization (org-scoped). */
 export type ProvisioningRole = 'platform_admin' | 'owner' | 'org_admin' | 'member';
 
+/**
+ * The actor performing a transition.
+ *
+ * SECURITY CONTRACT (review P1): this MUST be constructed from a SERVER-VERIFIED
+ * principal — `userId` from the authenticated JWT `sub`, `orgId`/`role` from an
+ * AUTHORITATIVE server-side lookup (org membership + role). It must NEVER be
+ * built from request-body/query data. In particular `role: 'platform_admin'`
+ * must be derived from an authoritative platform-admin check (e.g.
+ * `isPlatformAdmin(verifiedEmail)`), not trusted from a client-supplied string —
+ * otherwise a caller could spoof platform_admin and bypass every org gate. The
+ * route/adapter that builds this object owns that guarantee; `validateActor`
+ * below only checks SHAPE (a defense-in-depth backstop, not the trust boundary).
+ */
 export interface ProvisioningActor {
   userId: string;
-  /** The org the actor is acting within. */
+  /** The org the actor is acting within (server-derived). */
   orgId: string;
   role: ProvisioningRole;
+}
+
+const provisioningActorSchema = z.object({
+  userId: z.string().trim().min(1),
+  orgId: z.string().trim().uuid(),
+  role: z.enum(['platform_admin', 'owner', 'org_admin', 'member']),
+});
+
+/** Shape backstop — the real trust guarantee is the server-derived construction (see contract above). */
+function validateActor(actor: ProvisioningActor): void {
+  const r = provisioningActorSchema.safeParse(actor);
+  if (!r.success) {
+    throw new PartnerProvisioningError(
+      `invalid actor: ${r.error.issues.map((i) => i.message).join('; ')}`,
+      'invalid_input',
+    );
+  }
 }
 
 export type PartnerProvisioningStatus =
@@ -105,6 +135,7 @@ const requestInputSchema = z.object({
 
 /** An actor who may approve/reject/provision for a given sponsor org. */
 function assertApprovalAuthority(actor: ProvisioningActor, sponsorOrgId: string): void {
+  validateActor(actor);
   if (actor.role === 'platform_admin') return;
   const scoped = actor.orgId === sponsorOrgId;
   const privileged = actor.role === 'owner' || actor.role === 'org_admin';
@@ -152,6 +183,7 @@ export function requestPartnerAccount(
       'invalid_input',
     );
   }
+  validateActor(actor);
   // Request-time RBAC: only a platform admin or a member acting within the
   // sponsor org may file a request naming that org — otherwise any user could
   // spam cross-org requests attributed to an arbitrary sponsor. (Architect review.)
@@ -289,9 +321,17 @@ export function provisionPartnerAccount(
   }
   assertApprovalAuthority(actor, record.sponsorOrgId);
 
+  // partnerOrgId is the minted organization id → must be a UUID (same boundary
+  // as sponsorOrgId; future partner_org_id FK -> organizations(id)). Validating
+  // it here stops an invalid id from being accepted by the state machine and
+  // only failing later at persistence, after the transition was logically
+  // accepted. (Review P1.)
   const partnerOrgId = input.partnerOrgId?.trim();
-  if (!partnerOrgId) {
-    throw new PartnerProvisioningError('partnerOrgId is required to provision', 'invalid_input');
+  if (!partnerOrgId || !z.string().uuid().safeParse(partnerOrgId).success) {
+    throw new PartnerProvisioningError(
+      'partnerOrgId is required and must be a UUID to provision',
+      'invalid_input',
+    );
   }
 
   const next: PartnerAccountRecord = {
