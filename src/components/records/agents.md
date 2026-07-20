@@ -23,6 +23,7 @@ Document records list component with virtualized rendering and status-based acti
   with the local creation time — never the local time under the network label.
 
 ## Recent Changes
+- 2026-07-17 SCRUM-2910 (BUG-2026-07-17-010, P0): `RecordsList.tsx` row metadata filter also hides any `fraud*` key via `isFraudMetadataKey` from `@/lib/fraudDetection`.
 - 2026-06-24 BUG-2026-06-24-008: `RecordsList.tsx` "Network Observed Time" field
   now renders the network label only when `securedAt` is set; otherwise it shows
   an honest "Record Created" label. Regression test: `RecordsList.test.tsx`.

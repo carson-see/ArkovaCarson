@@ -10,9 +10,54 @@
 > - **CLAUDE.md** = operating directive / rules
 > - **git log** = what changed, by whom, when
 
+
+### 2026-07-20 (RM) — Soak fleet close-out: wave3 + AI rail evidence banked; deps clock running; merges via Mergify per founder directive
+
+**RC manifests landed (this commit):** `docs/staging/rc-manifests/rc-2026-07-20-wave3.json` (#1568 #1569 #1571 #1573 #1549 #1570 — rig rca20260719, 12h window 2026-07-19T16:45→07-20T05:15Z, 749/749 runner 200s, deploy_log 226) and `rc-2026-07-20-airail.json` (#1550 #1555 stacked — rig rcd20260719, window 17:12→05:42Z, 720/720 runner 200s, deploy_log 227; harness-load gap disclosed in manifest exceptions, supplementary authed burst being captured post-window). Deps rail (rcb20260719, 6 dependabot PRs; #1525/#1528 dropped — TS 7.0.2 breaks the build; #1572 to be closed as superseded by #1524) clock anchored 2026-07-20T13:06:26Z, matures 07-21T01:36Z. Chain rail (railb220260719, #1552) matures 07-21T17:13Z; 0358 prod-apply precedes its merge.
+
+**#1549 disposition (previously unrecorded):** soaked in the wave3 train at frozen head a8d77727; all required checks green at head; Lane-3 cross-review noted outstanding in the PR body — riding the wave3 RC per this manifest with that status disclosed; do-not-merge lifts at its queue turn.
+
+**Merge path (founder directive 2026-07-20):** all rails via the Mergify queue (corrected 2026-06-24 tiered-merge policy) — staged gate-greening controls order; no manual merge clicks. Post-merge activations gated on serving-revision proof, not merge events.
+
 ---
 
 ## Now
+
+### 2026-07-19 (RM close-out) — S3.3 W3 merge triage: NOTHING SHIPPED to main; full session record (team dismissed by founder)
+
+**Session mandate → outcome:** RM session to get remaining S3.3 Wave-3 PRs soaking + merge what could honestly merge. Net result: **zero PRs merged to main this session.** Every open candidate is blocked by the Staging Soak Evidence Gate on real (not paperwork) soak gaps. Founder dismissed the AI team at session end; this entry is the complete handoff so any successor can pick up cold. Full narrative in Supermemory (`[SAVE:carson:2026-07-19]` entries, IDs incl. 4rMVFXPNMzRJ5T37v9fTCT + this close-out).
+
+**PR dispositions (verified via `gh pr view/checks` 2026-07-19):**
+| PR | What | State | Blocker / next step |
+|---|---|---|---|
+| [#1573](https://github.com/carson-see/ArkovaCarson/pull/1573) | 1-line prod pin `GEMINI_LITE_MODEL=gemini-2.5-flash` (SCRUM-2909) | Ready, code-green, gate RED | Gate demands full T2 block ([run 29691890036](https://github.com/carson-see/ArkovaCarson/actions/runs/29691890036)): missing 16 T2 fields; pin's *value* was exercised in the G1 12h soak (tags 9,668×200, 0 5xx — `docs/staging/s33-g1/s33-g1-5964ebaaf67d-recovery3-{control,tuned}-v1-ai-soak.json`) but never as its own head-matching soak. Either 12h soak at head, or founder admin-override as residual-risk (CTO 07-18 ruling had blessed it for the train). |
+| [#1569](https://github.com/carson-see/ArkovaCarson/pull/1569) | Fraud-display removal P0s BUG-009/010 (SCRUM-2910) | Ready, code-green (4,457 tests), gate RED | Detector **forces T2, not T1** — touches `src/components/anchor/AssetDetailView.tsx` (sensitive user-facing contract surface; [run 29691862096](https://github.com/carson-see/ArkovaCarson/actions/runs/29691862096)). Needs 12h soak. |
+| [#1568](https://github.com/carson-see/ArkovaCarson/pull/1568) | Webhook silent-drop fix + DLQ (SCRUM-2899) | Ready, code-green, gate RED | T2 12h soak per CTO 7-point spec in PR body. |
+| [#1571](https://github.com/carson-see/ArkovaCarson/pull/1571) | Pipeline-throughput monitor + dead-man (SCRUM-2901) | Ready, code-green, gate RED | T2 12h soak; Scheduler wiring is a separate gated op post-merge. |
+| [#1570](https://github.com/carson-see/ArkovaCarson/pull/1570) | Credit-gate stable reference_id (SCRUM-2970) | **Still Draft** | Client hook blocks Ready (no evidence block); billing/treasury path — do NOT ship without soak. |
+| [#1565](https://github.com/carson-see/ArkovaCarson/pull/1565) / [#1556](https://github.com/carson-see/ArkovaCarson/pull/1556) / [#1566](https://github.com/carson-see/ArkovaCarson/pull/1566) | Fired-team W3 stacked PRs | Open | **DO NOT MERGE / DO NOT mark ready.** Bases are other `codex/agent` branches, NOT main (#1556 sits on `agent/s33-wave2-lane4-v71` = CTO-killed v7.1). Merging advances nothing on main and re-entangles fired-team work. |
+| [#1552](https://github.com/carson-see/ArkovaCarson/pull/1552)→#1553→#1558 | B1 chain rail stack (migration 0358 `anchor_txid_journal`) | Open, do-not-merge | Deferred with B1 (below). Stacked-merge protocol if revived: merge #1552 → delete branch → #1553 → delete → #1558. |
+| #1557, #1563 | Fired-team W3 (T0 gate-compat; L4 tranche 06-10 on stacked base) | Open | #1557 targets main (candidate for normal T0 path); #1563 stacked — same DO-NOT-MERGE as above. |
+
+**The 48h B1 soak is INVALID (hollow) — root cause, verified in rig logs/config:** the fired team's 48h T3 soak on `arkova-worker-s33-rig-b1-staging` ran with (1) `ENABLE_BATCH_ANCHORING` flag OFF → `processBatchAnchors` returned EMPTY every cycle, (2) Cloud Scheduler OIDC audience missing → forced-flush never authenticated, (3) treasury unfunded → `hasFunds()` skip. Caught during RM verification (floor-capture), not before the clock ran — i.e. the 48h was already burned when discovered. Neither fired-team rig ever wrote `public.staging_deploy_log` provenance (0/222 rows theirs), so their evidence can't pass the gate without fabrication. **Process fix owed (file on tracker 88768514 + CI):** soak preflight must require a non-skip changed-path drain log line before the soak clock may start; base-branch==main check before any mark-ready; deploy.sh provenance mandatory for rig deploys. Bugs already filed: SCRUM-2909/2949/2968/2969.
+
+**Infra / cost state (verified via gcloud this session):** G1 rigs (a/b) + R infra TORN DOWN. Only Vertex endpoint **733001** remains. B1 rig `arkova-worker-s33-rig-b1-staging` (rev 00003) parked: forced-flush Scheduler PAUSED, treasury-empty = harmless no-op loop, ~$10/mo idle — needs founder call: teardown vs re-soak properly. No codex/provision processes running (runaway loop killed earlier in session). ChatGPT/codex stays closed. Prod untouched this session: no merges, no migrations, no flag flips, no deploys.
+
+**Monday path (if work resumes):** (1) stand up ONE clean rig per `docs/reference/STAGING_RIG.md` + isolated-soak procedure (Supermemory `project_isolated_soak_standup_procedure`), deploy.sh only; (2) soak #1568+#1569+#1571 (+#1570 after its evidence block) as a batched RC at exact heads, 12h, with the new non-skip preflight; (3) #1573 rides the same RC or founder admin-overrides solo; (4) B1/0358 chain rail is next-week scope per CTO ruling; (5) file the hollow-soak incident on 88768514 (Atlassian MCP was unauthorized in this non-interactive session — needs an interactive session).
+
+_Last refreshed: 2026-07-19 by Claude (RM close-out) — claims verified against gcloud/MCP/CI output (GH Actions runs 29691890036 / 29691862096, `gh pr view` JSON, `gcloud ai endpoints list`, `gcloud run services list`, rig Cloud Logging); artifacts cited inline._
+
+### 2026-07-17 (RTE evening) — 4 reviewed draft PRs (webhook fix + P0s), independent review gate catches 4 defects, treasury bugs filed
+
+- **[PR #1568](https://github.com/carson-see/ArkovaCarson/pull/1568)** (SCRUM-2899 webhook fix, head `e18b4656`, Draft): WH-1..7 built + cross-reviewed; CTO ruling T2 12h + 7-point soak spec recorded in the PR body. Independent panel caught the global write-retry at-least-once hazard; remediated (retry now GET/HEAD/OPTIONS only). Awaiting Carson soak trigger; flag flip + WH-6 drift-pin activation post-soak. Demo path: soak → merge → `ENABLE_OUTBOUND_WEBHOOKS` ON → HakiChain demo.
+- **[PR #1569](https://github.com/carson-see/ArkovaCarson/pull/1569)** (SCRUM-2910 fraud P0s BUG-009/010, head `e7a62dfc`, Draft T1): banner + fraud_* filtered on all surfaces; review APPROVE-WITH-NITS, nit applied; reviewer verified live-prod `get_public_anchor` 0355 allow-list excludes fraud keys. UAT screenshots owed.
+- **[PR #1570](https://github.com/carson-see/ArkovaCarson/pull/1570)** (SCRUM-2970 credit-gate P1, head `2a61720c`, Draft T2): review caught free-re-anchor-after-soft-delete in fix v1 → reworked to insert-then-deduct (anchor-row id as reference); APPROVE-WITH-NITS. Follow-up SCRUM-2973 reconciliation sweep filed.
+- **[PR #1571](https://github.com/carson-see/ArkovaCarson/pull/1571)** (SCRUM-2901 throughput monitor, head `eb7ccb1b`, Draft T2): review caught that v1 was silent on the live 255k-backlog incident → reworked with linker-stall dead-man (48h); APPROVE. Will page immediately once Scheduler-wired (intended); wiring is a separate gated RTE op.
+- **Treasury bugs filed from #1568 cross-review:** SCRUM-2970 (P1, fixed by #1570), SCRUM-2971 (P2 `billing_events` idempotency — needs migration, T3 next train); also SCRUM-2972 (historical fraud_* keep/purge — CPO/CTO decision). Tracker: comment on 88768514 (rows -012/-013); **DISCREPANCY noted:** the -006..-011 rows HANDOFF's earlier entry claims were logged on 88768514 are absent from that page's tables (page last modified Jul 13) — reconcile on next tracker edit.
+- **Ops:** host gcloud repaired (Python 3.9 crash → `CLOUDSDK_PYTHON`=Homebrew python3.14 in `~/.zshrc`). Feeder Scheduler jobs verified ENABLED+firing (`gcloud scheduler jobs list` 19:00-19:20Z attempts) while the unlinked backlog persists → conversion problem is DOWNSTREAM of the triggers; root-cause dig owed (Bitcoin dev + SRE, prod read-only queries). S3.3 rig untouched. No prod writes; no flags flipped.
+- Release/soak planning + session report + Build Backlog v2.0 + Plan of Record v3.1 docs created in Drive PI-.5 (by parallel agents this session; titles as per session report).
+
+_Last refreshed: 2026-07-17 by RTE — claims verified against gcloud/MCP/CI output._
 
 ### 2026-07-17 (CTO) — PI-0.5 replanned to v3.0 (future work only); build backlog separated; canonical docs consolidated
 

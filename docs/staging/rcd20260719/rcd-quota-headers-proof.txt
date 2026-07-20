@@ -1,0 +1,10 @@
+HTTP/2 500 
+x-ratelimit-limit: 1000
+x-ratelimit-remaining: 999
+x-ratelimit-reset: 1784483330
+x-org-quota-anchors-limit: 100
+x-org-quota-anchors-remaining: 69
+x-org-quota-anchors-reset: 2026-07-20T00:00:00.000Z
+x-org-quota-anchors-created-limit: 100
+x-org-quota-anchors-created-remaining: 69
+x-org-quota-anchors-created-reset: 2026-07-20T00:00:00.000Z

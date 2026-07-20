@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-07-20-AIRAIL",
+  "created_at": "2026-07-20T13:08:25Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "approval_status": "approved",
+  "approval_actor": "carson (founder) via release-team session 2026-07-19/20",
+  "approval_time": "2026-07-20T13:08:25Z",
+  "train_launch_sha": "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+  "target_main_sha": "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+  "allowed_base_shas": [
+    "164c5f312266f1bb6be7ab8de23627467b7e244b",
+    "f424ce77912659f137d5256bbb08d97aa5d76cc7",
+    "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+  ],
+  "covered_main_shas": [
+    "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+    "164c5f312266f1bb6be7ab8de23627467b7e244b"
+  ],
+  "included_prs": [
+    {
+      "number": 1550,
+      "head_sha": "f424ce77912659f137d5256bbb08d97aa5d76cc7",
+      "base_sha": "164c5f312266f1bb6be7ab8de23627467b7e244b",
+      "allowed_base_shas": [
+        "164c5f312266f1bb6be7ab8de23627467b7e244b",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+      ],
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "All required checks green at the frozen soaked head f424ce77 (Tests 10m42s, E2E 13m3s, TypeCheck & Lint, SonarCloud quality gate, Worker Build deploy-parity, Migration Safety, Secret Scanning all pass); the only red is Staging Soak Evidence Gate, which is pending this manifest landing on main plus a fresh body-edit event.",
+      "rollback_note": "Code-only, no migrations; revert PR #1550 on main and redeploy the previous worker image — rig rollback path exists (prior revision 00001-hjd held 100% default-URL traffic throughout the soak while clock revision 00002-wul served via the pr-1550 tag and was never redeployed).",
+      "migration_files": []
+    },
+    {
+      "number": 1555,
+      "head_sha": "6f519016187d886a1bc94c37da0eaffd15ef7be2",
+      "base_sha": "f424ce77912659f137d5256bbb08d97aa5d76cc7",
+      "allowed_base_shas": [
+        "f424ce77912659f137d5256bbb08d97aa5d76cc7",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+      ],
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Limited CI while stacked on #1550's branch (base agent/s33-wave2-l2-429-map): SonarCloud Code Analysis and Mergify Summary pass; the full required-check suite and the staging-evidence gate have never run for this PR because its base is not main — they will run at the frozen soaked head 6f519016 after retarget to main post-#1550 merge.",
+      "rollback_note": "Code-only, no migrations; revert PR #1555 on main (org-quota metering middleware + x-org-quota-* headers); org_daily_usage rows written by the middleware are additive counters and are safe to leave in place after a revert.",
+      "migration_files": []
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "evidence_scope_note": "Dedicated per-rig Supabase project (arkova-soak-rcd20260719, ref icworykrfztdhmhidtim) + dedicated Cloud Run service arkova-worker-rcd20260719-staging in arkova1/us-central1; no shared staging or sibling rig touched.",
+    "staging_api_base": "https://pr-1550---arkova-worker-rcd20260719-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://pr-1550---arkova-worker-rcd20260719-staging-kvojbeutfa-uc.a.run.app",
+    "cloud_run_service": "arkova-worker-rcd20260719-staging",
+    "revision": "arkova-worker-rcd20260719-staging-00002-wul",
+    "deploy_tag": "pr-1550",
+    "image_digest": "sha256:a04c57ff52e877c7f7b0620e87759ffa15ef36c5b2132cbff9f01445444caa9a",
+    "image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:41f41aac68d775bc1323d1e58089445221c6b410",
+    "supabase_project_ref": "icworykrfztdhmhidtim",
+    "deploy_log_id": "227",
+    "preflight_result": "environment_type=clean_mirror (all checks passed)",
+    "preflight_note": "clean-mirror preflight artifact docs/staging/rcd20260719/clean-mirror-preflight-rcd20260719.json, attestation sha256:97f72ecc9c97eaa51ecfd2d35257096e53a9bfbdef137d957bc8e88053a0623e; all checks passed on the pristine rig before clock start (2026-07-19)."
+  },
+  "soak": {
+    "start": "2026-07-19T17:12:26Z",
+    "end": "2026-07-20T05:42:26Z",
+    "duration_hours": 12.5,
+    "harness_version": "scripts/staging/ai-soak-harness.ts (driver sha256 prefix 7c9201b2, run against train tip 41f41aac68d775bc1323d1e58089445221c6b410)",
+    "result": "pass — healthy across window: 12.5h from the clock-anchor revision creation (arkova-worker-rcd20260719-staging-00002-wul, creationTimestamp 2026-07-19T17:12:26.714837Z, verified never redeployed and still latestReadyRevision at close-out 2026-07-20T13:08Z) through the T2 wall floor 2026-07-20T05:42:26Z; Google-side runner continuity 720/720 minutely Cloud Scheduler firings all HTTP 200 against the pr-1550 tag URL, every one served by revision 00002-wul (17:43:00Z–05:42:03Z, largest inter-firing gap 83s); close-out /health 200 with git_sha=41f41aac (train tip), database ok, anchoring ok; zero 5xx observed Google-side. Harness auth caveat disclosed in exceptions[0].",
+    "evidence_links": [
+      "docs/staging/rcd20260719/clean-mirror-preflight-rcd20260719.json",
+      "docs/staging/rcd20260719/isolated-rig-provision-rcd20260719.json",
+      "docs/staging/rcd20260719/ai-soak-rcd.json (full-window harness telemetry — see exceptions[0]: requests were 401-rejected)",
+      "~/Arkova/soak-evidence-20260719/rcd-realprovider-proof.json (live /ai/extract provider=gemini round-trip on the rig — the real-provider public-API path #1550 changes)",
+      "~/Arkova/soak-evidence-20260719/rcd-429-attribution-proof.json (concurrent 40-burst -> 17x429 with retry_after; #1550 requestInstanceId retry-cohort threading on the path of every call)",
+      "~/Arkova/soak-evidence-20260719/rcd-quota-headers-proof.txt (#1555 x-org-quota-anchors-limit/remaining/reset headers + org_daily_usage counter row quota_kind=anchors_created count=31)",
+      "~/Arkova/soak-evidence-20260719/rcd-harness.log (harness stdout, full 720-minute run)",
+      "Cloud Logging, project arkova1: resource.labels.service_name=arkova-worker-rcd20260719-staging AND httpRequest.userAgent:Google-Cloud-Scheduler, 2026-07-19T17:12:26Z..2026-07-20T05:43:00Z -> 720 entries, all httpRequest.status=200, all revision_name=arkova-worker-rcd20260719-staging-00002-wul"
+    ],
+    "expires_at": "2026-07-22T05:42:26Z"
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": [
+    "HONEST CAVEAT (host-side harness auth defect, discovered at close-out): the ai-soak-harness completed its full 720-minute run at ~1200 req/hr (14,387 requests; telemetry docs/staging/rcd20260719/ai-soak-rcd.json) but 14,381 of those requests were rejected 401 by app-level auth (ok=0 on every endpoint), so the sustained load exercised the rig's ingress/auth/rate-limit/routing surface (zero 5xx, p95 under 400ms) and did NOT continuously exercise the AI extraction pipeline. The changed surfaces of #1550 and #1555 WERE exercised for real at clock start with valid user JWTs: real-provider gemini extract round-trip, 17x429 per-user burst through #1550's retry-cohort path, and #1555 org-quota headers plus a live org_daily_usage counter. Soak-window validity rests on the never-redeployed clock revision, 720/720 Google-side runner 200s on that revision, and close-out /health at the train-tip SHA. Likely cause is the 17:46Z harness relaunch (after its --evidence-out path-guard crash) losing the minted JWT environment; not diagnosed to root cause from host-side artifacts. Founder must weigh this residual risk explicitly before merging.",
+    "Serving-instance recycle: the container instance serving /health at close-out reported uptime 27510s (instance started ~2026-07-20T05:30Z, inside the window) — normal Cloud Run instance lifecycle, not a redeploy; the revision itself was never recreated and the minutely runner 200s show no serving gap across the recycle (largest gap 83s).",
+    "#1555 is stacked: base = agent/s33-wave2-l2-429-map (#1550's branch); its live recorded base_sha f424ce77 equals #1550's frozen head, per the rc-csi04 stacked-train precedent, and its head 6f519016 is a literal commit of the soaked train (tip 41f41aac, ancestry verified). Sequence: merge #1550, retarget #1555 to main BEFORE any branch deletion (#1417 auto-close precedent), then mint a fresh body-edit event so the gate runs with this manifest visible from the base side.",
+    "Do NOT merge until human review (Carson's click). Neither PR branch has been pushed to since the freeze; both entry head_shas are the exact commits baked into the soaked image (digest sha256:a04c57ff...), and this manifest must land on main via the docs-only path — never be pushed to a covered PR branch."
+  ]
+}

@@ -97,6 +97,45 @@ describe('usePublicSearch', () => {
     expect(result.current.issuerResults).toEqual([]);
     expect(result.current.error).toBeNull();
   });
+
+  it('ignores an older issuer response that resolves after a newer search', async () => {
+    let resolveOlder!: (value: unknown) => void;
+    let resolveNewer!: (value: unknown) => void;
+    const older = new Promise(resolve => { resolveOlder = resolve; });
+    const newer = new Promise(resolve => { resolveNewer = resolve; });
+
+    mockRpc.mockImplementation((_: string, args: { p_query: string }) => (
+      args.p_query === 'older' ? older : newer
+    ));
+
+    const { result } = renderHook(() => usePublicSearch());
+    let olderSearch!: Promise<void>;
+    let newerSearch!: Promise<void>;
+
+    act(() => {
+      olderSearch = result.current.searchIssuers('older');
+      newerSearch = result.current.searchIssuers('newer');
+    });
+
+    await act(async () => {
+      resolveNewer({
+        data: [{ id: 'new', display_name: 'New Result', credential_count: 1 }],
+        error: null,
+      });
+      await newerSearch;
+    });
+    expect(result.current.issuerResults.map(row => row.org_name)).toEqual(['New Result']);
+
+    await act(async () => {
+      resolveOlder({
+        data: [{ id: 'old', display_name: 'Old Result', credential_count: 1 }],
+        error: null,
+      });
+      await olderSearch;
+    });
+    expect(result.current.issuerResults.map(row => row.org_name)).toEqual(['New Result']);
+    expect(result.current.searching).toBe(false);
+  });
 });
 
 describe('useIssuerRegistry', () => {
