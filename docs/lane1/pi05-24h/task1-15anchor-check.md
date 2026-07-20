@@ -34,6 +34,9 @@ None of the 4 anchors has a row in `anchor_proofs` (queried by `anchor_id in (..
 ## Method note (reproducible)
 1. Resolve HakiChain org by `display_name/legal_name ilike '*haki*'`.
 2. Resolve members via `org_members`; query anchors by indexed `user_id` (org_id filter seq-scans the 2.97M table → statement timeout).
-3. For each: `GET https://blockstream.info/api/tx/<chain_tx_id>`; assert `status.confirmed`, `status.block_height == DB.chain_block_height`, and `DB.fingerprint` substring of the OP_RETURN vout `scriptpubkey`.
+3. For each: `GET https://blockstream.info/api/tx/<chain_tx_id>`; assert `status.confirmed`, `status.block_height == DB.chain_block_height`, and the fingerprint is committed at the **canonical byte offset** of the OP_RETURN (ARKV magic at offset 0, fingerprint at bytes [4:36]) — a fixed-offset match mirroring the worker's `signet.ts:extractAnchorFingerprint`, **not** a substring scan.
+
+## Verifier hardening (Bitcoin specialist review, applied)
+The initial verifier used a loose `body.includes(fingerprint)` substring match — the exact pattern the worker's decoder explicitly rejects (BUG-2026-06-24-004). The KPI-3 tool ([`scripts/kpi3/external-verify.mjs`](../../../scripts/kpi3/external-verify.mjs)) was rebuilt to fixed-offset canonical matching **plus** full SPV (merkle-inclusion + block-header binding + confirmation-depth + optional treasury-issuer check), so it *verifies* against Bitcoin rather than *trusting* the explorer. The 4 anchors here re-pass under the hardened verifier (18/18 tests green; live rehearsal confirmed).
 
 _Lane 1 (Trust & Chain), 2026-07-20 evening. Read-only; zero prod writes._

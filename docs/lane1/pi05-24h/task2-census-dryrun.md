@@ -15,11 +15,11 @@ Relevant assertions proven:
 
 | Class (per `classifyAnchor`) | Count | Method | Confidence |
 |---|---|---|---|
-| **Total SECURED** (deleted_at null) | **≈ 2,992,652** | `count=estimated` (pg_class reltuples) | approx (matches known ~2.97M) |
+| **Total SECURED** (deleted_at null) | **≈ 3.0M** | `count=estimated` (pg_class reltuples) | ESTIMATE ONLY — drifts ±~20k between reads (2.97M/2.99M/3.00M seen); do NOT cite a precise number, and do NOT build a run loop on this bare estimate (perf review F1: 13s→22s→timeout) |
 | **already_complete** (root + path present) | **6,110** | `count=exact` on `anchor_proofs` | EXACT |
 | — of which also carry `batch_id` | 6,110 (all) | `count=exact` | EXACT |
 | **batch_provable** (root + batch_id, path null) | **0** | derived: every proof row already has path → already_complete | EXACT |
-| **direct_anchored** (no proof row, tx-cardinality 1) | **≈ 2,986,542** (remainder) | total − already_complete − ambiguous | inferred bulk |
+| **direct_anchored** (no proof row, tx-cardinality 1) | **≈2.98M — UPPER BOUND** | total − already_complete − ambiguous (ambiguous UNcomputed) | inferred bulk; NOT a classifyAnchor-faithful count. Absorbs any secured_without_tx + shared-tx members. The materializer's insert authority is per-anchor classifyAnchor-WITH-cardinality, insert only on `direct_anchored` (see Task 3 HIGH-1) |
 | **ambiguous — secured_without_tx** | **not computed** | seq-scan on `chain_tx_id IS NULL` (no index) → statement timeout | UNRESOLVED |
 | **ambiguous — shared-tx / cardinality** | **not computed** | needs per-tx cardinality probe | UNRESOLVED |
 

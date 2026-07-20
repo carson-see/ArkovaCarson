@@ -1,47 +1,42 @@
 # Task 5 — Drain downstream root-cause dig (SCRUM-2620) — initial findings toward the Jul-25 D1 packet
 
 **Mode:** read-only logs/queries + code read. No prod writes. No scheduler/feeder mutation (W6).
+**Revised after the architect specialist review** — the original mechanism (throw-after-commit) was refuted by the code; corrected below. Conclusion (money-safe, reporting-only defect, SCRUM-2620 latent) survives.
 
-## 1. Backlog state (read-only, prod `vzwyaatejekddvltxyye`)
-- **anchors:** 2,972,268 SECURED + 1 REVOKED, **0 PENDING / 0 stuck** (HANDOFF, CTO-signed read-only). Nothing is mid-drain.
-- **Backlog = 255,491 `public_records` with `anchor_id IS NULL`** — ingested, never enqueued, because feeder Scheduler jobs `process-anchors` + `anchor-public-records` are **PAUSED** (SCRUM-2900, P1). The dashboard "259k Pending Anchoring" is this, not stuck anchors.
-- **`job_queue`:** 4 rows, all `pending`, 0 failed / 0 dead. **0 classifier checkpoint rows** (the back-catalog classifier has never run against prod — corroborates Task 2).
+## 1. Backlog state (read-only, prod `vzwyaatejekddvltxyye`) — live-verified
+- **anchors:** most-recent = `ARK-DOC-GHZG6V`, **SUBMITTED**, `2026-07-20T18:12:24Z`; `SUBMITTED` count = 1, `BROADCASTING` = 0. So one anchor **is** mid-flight (not "nothing mid-drain"). SECURED total is a `reltuples` **estimate** (~2.99M; see note); `anchor_proofs` = **6,110 exact**.
+- **`0 PENDING` is UNVERIFIED this window** — the exact count seq-scans ~3M rows and times out (no index for that predicate). The earlier "0 PENDING / feeders paused / nothing mid-drain" came from a stale HANDOFF snapshot, not a live query; **do not state it as fact in the D1 packet.** Live feeders are ENABLED (Task 9).
+- **Backlog** (last CTO-signed figure, HANDOFF): 255,491 `public_records` with `anchor_id IS NULL`. Given feeders are now enabled, this figure is **stale-risk** — recommend a psql/MCP recount.
+- **`job_queue`:** 4 rows, all `pending`, 0 failed / 0 dead. **0 classifier checkpoint rows.**
 
-## 2. Root cause of the "load mislabels finished work" bug (SCRUM-2620)
-**Location:** `services/worker/src/jobs/org-queue-scheduler.ts:242–263` (the per-org `catch`).
+## 2. Root cause of the run-accounting defect (SCRUM-2620) — CORRECTED
+**Location:** `services/worker/src/jobs/org-queue-scheduler.ts:206–264`.
 
-```
-} catch (err) {
-  result.failed += 1;
-  ...
-  status: 'failed',
-  processed: 0,          // <-- HARDCODED; discards real progress
-  ...
-}
-```
+The catch block **does** hardcode `status:'failed', processed:0` (lines 242–263) with no `last_success_at` and no partial state — that quote is accurate. **But the original claim that `processBatchAnchors` throws *after committing on-chain work* is WRONG for the prod path.** The prod drain is deliberately commit-safe (verified against the code):
+- `broadcastSignedTx` is **infallible-after-wire** (`signet.ts:868–884`): the only post-send work is a try/caught block-height read that degrades to 0. It does not throw once the tx is broadcast.
+- **Phase 3c converts every post-broadcast uncertainty into a graceful `return {processed:0, txId}`**, not a throw (`batch-anchor.ts:1281–1294`) — which the scheduler records as **SUCCEEDED** (lines 209–212).
+- **Phase 4 submit errors never throw** — retry then `bulkMarkSubmittedFallback` returns a number (`batch-anchor.ts:1357–1392`, `1525–1569`).
+- The one un-try/caught post-broadcast throw (`persistBatchAnchorProofs`) runs **only on the LEGACY path** (`if (!intentPersisted)`); the prod client is intent-capable so it is **skipped**.
+- The definitive-reject refund throw (`1305`) is **pre-commit** (tx provably never relayed) → correctly `failed`.
 
-**The defect:** the scheduler treats `processBatchAnchors({force,orgId})` as **atomic all-or-nothing**, but it is a **staged, partial-commit pipeline** (`batch-anchor.ts`): it claims `PENDING→BROADCASTING`, broadcasts a real tx (sets `chain_tx_id`), then `submit_batch_anchors` flips rows `→SUBMITTED`, with proof-persist / credit-refund / chunked-submit / reconcile steps that **can throw AFTER on-chain work is already committed** (the file's own reconcile comments at lines ~580–608 describe rows deliberately left `SUBMITTED` or `BROADCASTING+intent` on error, to be finished by the next reconcile pass). When any late phase throws, the scheduler records the whole run **`status:'failed'`, `processed_count:0`**, does **not** set `last_success_at`, and sets `last_error` — even though anchors were actually secured on-chain.
+**The actual defect is two-fold:**
+1. **`failed/0` mislabel (narrow):** the scheduler's `try` is **too broad** — it wraps `processBatchAnchors` **plus its own `recordOrgQueueRunResult({status:'succeeded'})` (line 213) and `emitOrgAdminNotifications` (line 230)**. If either of *those* throws after a committed batch, the catch writes `failed/0` (and can leave a duplicate row after an already-written succeeded row).
+2. **`SUCCEEDED/0` undercount (dominant under load):** Phase 3c's graceful deferred-broadcast `return {processed:0}` is recorded as **succeeded with 0 processed**, while the anchors are actually finalized **later, by the reconcile path, outside run-accounting**. So the common load outcome is not `failed/0` at all — it's a run booked `succeeded/0` whose work lands off-ledger. Both corrupt burndown metrics; neither loses data.
 
-**Why "under load":** late-phase throws are load-correlated — PostgREST 1000-row chunk boundaries, credit-refund contention, proof-persist failures, and reconcile races all get more likely as batch size / concurrency rise. At 10k-anchor drain scale the probability of a post-broadcast throw is materially higher than in a single small manual run.
+## 3. Severity — DOWNGRADED from the original
+"Guaranteed to mislabel finished work as failed the moment the drain opens" is **not supported**. The `failed/0` path requires a throw in the scheduler's own record/emit calls; the routine load failure is the `SUCCEEDED/0` undercount. Prod `organization_queue_runs` = **3 rows, all manual/succeeded/processed:0**, and there is **no prod (non-rig) org-queue-scheduler job** (Task 9) — so this path has **never run under load in prod** and is **latent**. Self-healing further bounds it: `reconcileBroadcastIntents` + `recover_stuck_broadcasts` finalize BROADCASTING rows next tick, and the RACE-1 guard blocks double-broadcast (verified in `batch-drain-reconcile.test.ts`).
 
-**Corroboration, not assumption:**
-- The status vocabulary is binary `succeeded|failed` (`QueueRunStatus`) with **no partial/deferred state** to represent "work done but an error occurred."
-- `batch-drain-reconcile.test.ts` (the CRASH test) proves partial-commit is real: a crash after broadcast leaves `chain_tx_id` set and rows `BROADCASTING`; the design *relies* on a later reconcile — i.e., a throw mid-run with real committed work is an expected, handled state at the anchor layer, but the **scheduler layer erases it** to failed/0.
-
-## 3. Why prod shows no mislabel yet (latency = the trap)
-`organization_queue_runs` in prod = **exactly 3 rows, all `trigger=manual`, `status=succeeded`, `processed_count=0`** (2026-05-20, 06-29, 07-06). The org-queue **scheduler has never run under load in prod** (no prod org-queue-scheduler job; feeders paused). So SCRUM-2620 is **latent** — unobservable today, guaranteed to fire the moment the drain is activated under load. This is precisely the founder's F6 "drain trap": **activate before SCRUM-2620 is fixed → load mislabels finished work.**
-
-## 4. Downstream consequences (feeds the D1 decision)
-1. **Burndown metric corruption:** `organization_queue_run_state.last_success_at` stays stale and `last_error` is set for runs that actually secured anchors → any dashboard/monitor keyed on run status **over-counts failures and under-counts finished work**. A D1 "how fast is the backlog draining" chart built on this will be wrong.
-2. **Re-drive risk:** a `failed` run whose work completed may be re-claimed/re-run; the anchor-layer reconcile prevents double-broadcast (RACE-1 guard, verified in test), so this is **not a double-spend risk** — but it wastes a drain cycle and further muddies the metrics.
-3. **No data loss / no false-SECURED:** the on-chain work is correct; the bug is purely in the **run-accounting label**, not the anchor state. (Important for the founder: the money/chain side is safe; the reporting side lies.)
+## 4. Consequences (feeds the D1 decision)
+1. **Burndown-metric corruption** (the real risk): `organization_queue_runs`/`_state` will under-count processed work — `SUCCEEDED/0` runs whose anchors reconcile off-ledger, plus occasional `failed/0` runs — so any dashboard keyed on run status/processed_count **misreports drain progress**. A D1 "how fast is the backlog draining" chart built on this is wrong.
+2. **No data loss / no false-SECURED / no double-spend** — the on-chain layer is correct (broadcast infallible-after-wire, reconcile finalizes, RACE-1 guards). **The money/chain side is safe; the reporting side lies.** (Important framing for the founder.)
+3. **Occasional duplicate run rows** when the over-broad `try` catches a post-succeeded record/emit throw.
 
 ## 5. Recommendation for the D1 packet (Jul-25)
-- **Do NOT activate the drain until SCRUM-2620 is fixed and green under RIG-A load** (lane item 13). Fix direction: have `processBatchAnchors` return partial progress and record run status from **actual committed count** — add a `partial`/`succeeded_with_deferrals` state (or at minimum record `processed_count = batch.processed` and set `last_success_at` when >0) instead of hardcoding `failed/0` on any throw.
-- **Safe activation window: Jul 26–29** (D1), gated on: (a) SCRUM-2620 fix soaked under load, (b) SCRUM-2900 scheduler reconciliation, (c) SCRUM-2981 alert-dedupe so mislabeled/duplicate signals don't drown a real alarm.
-- **Demo fallback holds either way:** the Aug-9 demo uses pre-secured records (Task 1/Task 4), so it does not depend on the drain being open.
+- **Do NOT open the org-queue drain until run-accounting is fixed and soaked under load** (lane item 13). Fix direction: (a) **narrow the scheduler `try`** so `recordOrgQueueRunResult`/`emitOrgAdminNotifications` failures don't turn a committed batch into `failed/0`; (b) record run status from the **actual committed/finalized count**, not the immediate `processed` return — i.e. add a `partial`/`deferred` state and reconcile the deferred-broadcast `return {processed:0}` back into the run once its anchors secure; (c) make burndown metrics derive from anchor state, not run-row status.
+- **Safe activation window: Jul 26–29** (D1), gated on: the run-accounting fix soaked under RIG-A load, SCRUM-2900 scheduler reconciliation, and SCRUM-2981 alert-dedupe.
+- **Demo fallback holds either way** — the Aug-9 demo uses pre-secured records (Task 1/Task 4), independent of the drain.
 
 ## 6. Not asserted (§1.5)
-No prod row *exhibiting* the mislabel exists to show (the scheduler never ran under load in prod) — the finding is a code-level latent defect corroborated by the partial-commit design + empty prod run history, not an observed prod failure. The exact `secured_without_tx` figure (Task 2 A1) remains unconfirmed read-only.
+No prod row *exhibiting* the mislabel exists (the scheduler never ran under load in prod). `0 PENDING` and the backlog delta are **unverified this window** (seq-scan timeout). SECURED total is an estimate that drifts ±~20k between reads (Task 2/9/live show 2.99M–3.00M); the exact, stable figure is `anchor_proofs = 6,110`. The corrected mechanism above is from code trace (`org-queue-scheduler.ts`, `batch-anchor.ts`, `signet.ts`), not an observed prod failure.
 
-_Lane 1 (Trust & Chain), 2026-07-20 evening. Initial findings; full D1 packet is the Jul 22–25 workstream (lane item 12)._
+_Lane 1 (Trust & Chain), 2026-07-20 evening. Revised post architect-review. Full D1 packet is the Jul 22–25 workstream (lane item 12)._

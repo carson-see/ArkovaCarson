@@ -20,18 +20,19 @@ Prod ledger head **0357**, numerically contiguous 0341→0357 (HANDOFF, §0 rule
    --   SET version='0358'
    --   WHERE name='0358_scrum2692_anchor_txid_journal' AND version !~ '^[0-9]{4}$';
    ```
-2. **Numeric head + contiguity/integrity query** (matches `scripts/ci/check-ledger-numeric-integrity.ts` semantics):
+2. **Numeric head + integrity query.** **⚠ (DBA review HIGH-3) the `num` cast MUST be guarded** — a timestamp-style version (`'20260615123456'`, exactly what MCP `apply_migration` writes, including 0358's own row *before* the step-1 reconcile) overflows `::int` and aborts the whole query, so the audit would crash on the very drift it exists to report. Use a `CASE` that casts ONLY 4-digit versions (mirrors the TS gate, which regex-*tests* strings and never casts):
    ```sql
    WITH rows AS (
      SELECT version, name,
             (version ~ '^[0-9]{4}$') AS is_numeric,
-            NULLIF(regexp_replace(version, '\D', '', 'g'), '')::int AS num
+            CASE WHEN version ~ '^[0-9]{4}$' THEN version::int END AS num   -- guarded: no overflow on timestamp versions
      FROM supabase_migrations.schema_migrations
-   )
+   ),
+   exempt AS (SELECT unnest(ARRAY['0350','0351','0352','0353']) AS pfx)   -- keep in sync with ledger-numeric-exemptions.json; drive from it, don't hardcode long-term
    SELECT
-     (SELECT max(num) FROM rows WHERE is_numeric)                                   AS numeric_head,
-     (SELECT count(*) FROM rows WHERE NOT is_numeric
-        AND version NOT IN ('0350','0351','0352','0353'))                           AS nonnumeric_nonexempt,   -- expect 0
+     (SELECT max(num) FROM rows)                                                    AS numeric_head,
+     (SELECT count(*) FROM rows r WHERE NOT r.is_numeric
+        AND left(r.version,4) NOT IN (SELECT pfx FROM exempt))                      AS nonnumeric_nonexempt,   -- expect 0
      (SELECT count(*) FROM (SELECT version FROM rows GROUP BY version HAVING count(*)>1) d) AS duplicate_versions, -- expect 0
      (SELECT count(*) FROM (SELECT name FROM rows GROUP BY name HAVING count(*)>1) d)       AS duplicate_names,    -- expect 0
      EXISTS (SELECT 1 FROM rows WHERE version='0358' AND name='0358_scrum2692_anchor_txid_journal') AS has_0358_numeric; -- expect true

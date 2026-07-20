@@ -3,113 +3,208 @@
  * KPI-3 external verifier (SCRUM-2912 / SCRUM-2986) — the "stranger's tool".
  *
  * Independently verifies an Arkova DIRECT-anchor proof with ZERO help from
- * Arkova infrastructure: given a document fingerprint + txid, it queries a
- * PUBLIC Bitcoin explorer (blockstream.info by default) and proves
- *   hash  ->  the fingerprint is committed in the tx's OP_RETURN
- *   tx    ->  the tx is confirmed
- *   block ->  (optionally) it sits in the asserted block height.
+ * Arkova infrastructure. Given a document fingerprint + txid it queries a
+ * PUBLIC Bitcoin explorer (blockstream.info by default) and proves, in order:
+ *   1. COMMIT   — the fingerprint is committed at the CANONICAL byte offset of
+ *                 an OP_RETURN in the tx (ARKV magic at offset 0, fingerprint at
+ *                 bytes [4:36]). Mirrors the worker's own decoder
+ *                 services/worker/src/chain/signet.ts:extractAnchorFingerprint
+ *                 (BUG-2026-06-24-004): a fixed-offset match, NOT a substring scan.
+ *   2. DEPTH    — the tx is confirmed to a minimum depth (reorg floor).
+ *   3. INCLUDE  — the tx is in the block: its merkle proof recomputes the block
+ *                 header's merkle_root (SPV inclusion, double-SHA256).
+ *   4. HEADER   — that header double-SHA256-hashes to the stated block hash, so
+ *                 the merkle_root is bound to a specific proof-of-work block.
+ *   5. ISSUER   — (optional) the tx was funded by Arkova's expected treasury
+ *                 address. Without this the tool proves "a fingerprint is on
+ *                 Bitcoin", NOT "Arkova put it there" — see verdict notes.
  *
- * This is the artifact recorded for the KPI-3 dress rehearsal, run twice:
- *   - against each demo record (verified), and
- *   - against a TAMPERED proof (rejected) — the negative control.
+ * This upgrades the check from explorer-TRUST (status.confirmed says so) to
+ * explorer-VERIFY (the header + merkle proof are recomputed locally; the
+ * explorer can only lie by producing a valid PoW header, which it cannot forge).
+ * Residual trust: that the returned block hash is on the most-work chain — depth
+ * mitigates; a full header-chain check is out of scope for a single-record demo.
  *
  * No Arkova dependencies by design: a stranger could run this file verbatim.
+ * The explorer is a single injected async `fetchPath(path)` so tests run offline.
  *
  * Library:  import { verifyAnchorProof } from './external-verify.mjs'
  * CLI:      node scripts/kpi3/external-verify.mjs --live \
- *             --fingerprint <hex> --txid <hex> [--block <height>]
- *           node scripts/kpi3/external-verify.mjs --rehearse   (fixtures demo)
+ *             --fingerprint <hex> --txid <hex> [--block <h>] [--issuer <addr>] [--min-conf N]
+ *           node scripts/kpi3/external-verify.mjs --rehearse
  */
+import { createHash } from 'node:crypto';
 
 export const ARKOVA_MAGIC_HEX = '41524b56'; // "ARKV"
+export const DEFAULT_MIN_CONFIRMATIONS = 6;
+
+// ── crypto / merkle helpers ──────────────────────────────────────────────────
+const sha256 = (buf) => createHash('sha256').update(buf).digest();
+const dsha256 = (buf) => sha256(sha256(buf));
+const revHex = (hex) => Buffer.from(hex, 'hex').reverse();
+
+/** Recompute a Bitcoin merkle root from a tx's Esplora merkle-proof (siblings + pos). */
+export function computeMerkleRoot(txidHex, siblingsHex, pos) {
+  let h = revHex(txidHex); // internal (little-endian) byte order
+  let idx = pos;
+  for (const sib of siblingsHex) {
+    const s = revHex(sib);
+    h = (idx & 1) ? dsha256(Buffer.concat([s, h])) : dsha256(Buffer.concat([h, s]));
+    idx = Math.floor(idx / 2);
+  }
+  return Buffer.from(h).reverse().toString('hex'); // back to display order
+}
+
+/** Parse an 80-byte block header hex → {blockHash, merkleRoot} (display order). */
+export function parseBlockHeader(headerHex) {
+  if (!/^[0-9a-f]{160}$/i.test(headerHex)) return null;
+  const bytes = Buffer.from(headerHex, 'hex');
+  const blockHash = Buffer.from(dsha256(bytes)).reverse().toString('hex');
+  const merkleRoot = Buffer.from(bytes.subarray(36, 68)).reverse().toString('hex');
+  return { blockHash, merkleRoot };
+}
 
 /**
- * @param {{fingerprint:string, txid:string, expectedBlockHeight?:number, publicId?:string}} proof
- * @param {(txid:string)=>Promise<any>} explorerFetch  returns blockstream /tx JSON, throws {status:404} when absent
- * @returns {Promise<{verified:boolean, reason:(string|null), checks:object, committed:(string|null)}>}
+ * Canonically decode an OP_RETURN scriptPubKey and return the Arkova-committed
+ * fingerprint, or null. Mirrors extractAnchorFingerprint: the script must be
+ * exactly `OP_RETURN <single push>`, the push must begin with ARKV at offset 0,
+ * and the fingerprint is bytes [4:36]. A trailing metadata hash is allowed; junk
+ * bytes, extra pushes, or a magic that isn't at offset 0 are rejected.
  */
-export async function verifyAnchorProof(proof, explorerFetch) {
+export function extractCanonicalFingerprint(scriptHex) {
+  const s = String(scriptHex || '').toLowerCase();
+  if (!/^[0-9a-f]*$/.test(s) || !s.startsWith('6a')) return null; // must be OP_RETURN
+  let rest = s.slice(2);
+  if (rest.length < 2) return null;
+  const opcode = parseInt(rest.slice(0, 2), 16);
+  rest = rest.slice(2);
+  let payload;
+  if (opcode >= 1 && opcode <= 75) {
+    const need = opcode * 2;
+    if (rest.length !== need) return null; // exactly one push consuming the whole script
+    payload = rest;
+  } else if (opcode === 0x4c) {
+    if (rest.length < 2) return null;
+    const len = parseInt(rest.slice(0, 2), 16) * 2;
+    rest = rest.slice(2);
+    if (rest.length !== len) return null;
+    payload = rest;
+  } else {
+    return null; // OP_0, PUSHDATA2/4, or non-canonical
+  }
+  // Need prefix (4B=8hex) + fingerprint (32B=64hex) = 72 hex chars minimum.
+  if (payload.length < 72) return null;
+  if (payload.slice(0, 8) !== ARKOVA_MAGIC_HEX) return null; // magic at offset 0
+  return payload.slice(8, 72); // fingerprint at canonical offset [4:36]
+}
+
+/**
+ * @param {{fingerprint,txid,expectedBlockHeight?,expectedIssuerAddress?,publicId?}} proof
+ * @param {(path:string)=>Promise<any>} fetchPath  Esplora-style client; throws {status:404} on absent
+ * @param {{minConfirmations?:number}} [opts]
+ */
+export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
+  const minConf = opts.minConfirmations ?? DEFAULT_MIN_CONFIRMATIONS;
   const checks = {
     confirmed: false,
-    magicOk: false,
     fingerprintCommitted: false,
-    blockMatch: null, // null = not asserted
+    confirmations: null,
+    depthOk: null,
+    merkleIncluded: null,
+    headerBinds: null,
+    blockMatch: null,
+    issuerMatch: null,
   };
-  const fail = (reason) => ({ verified: false, reason, checks, committed: null });
+  const done = (verified, reason) => ({ verified, reason: reason ?? null, checks, committed: checks.committed ?? null });
 
   const fp = String(proof.fingerprint || '').toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(fp)) return fail('bad_fingerprint_format');
+  if (!/^[0-9a-f]{64}$/.test(fp)) return done(false, 'bad_fingerprint_format');
 
+  // 1. Fetch tx.
   let tx;
   try {
-    tx = await explorerFetch(proof.txid);
+    tx = await fetchPath(`tx/${proof.txid}`);
   } catch (e) {
-    if (e && e.status === 404) return fail('tx_not_found');
-    return fail(`explorer_error:${e && e.message ? e.message : 'unknown'}`);
+    if (e && e.status === 404) return done(false, 'tx_not_found');
+    return done(false, `explorer_error:${e && e.message ? e.message : 'unknown'}`);
   }
-  if (!tx || typeof tx !== 'object') return fail('tx_not_found');
+  if (!tx || typeof tx !== 'object') return done(false, 'tx_not_found');
 
   const status = tx.status || {};
   checks.confirmed = status.confirmed === true;
-  if (!checks.confirmed) return fail('tx_unconfirmed');
+  if (!checks.confirmed) return done(false, 'tx_unconfirmed');
 
-  const opret = (tx.vout || []).find((v) => v && v.scriptpubkey_type === 'op_return');
-  if (!opret || !opret.scriptpubkey) return fail('no_op_return');
-
-  // Decode the pushed payload: 6a (OP_RETURN) + pushbyte len + payload.
-  const payload = decodeOpReturnPayload(String(opret.scriptpubkey).toLowerCase());
-  if (payload == null) return fail('op_return_undecodable');
-
-  checks.magicOk = payload.startsWith(ARKOVA_MAGIC_HEX);
-  if (!checks.magicOk) return fail('bad_magic');
-
-  const body = payload.slice(ARKOVA_MAGIC_HEX.length); // fingerprint(32B) + suffix
-  const committed = body.slice(0, 64);
-  checks.fingerprintCommitted = body.includes(fp);
+  // 2. COMMIT — canonical fixed-offset match across ALL OP_RETURN outputs.
+  const opReturns = (tx.vout || []).filter((v) => v && v.scriptpubkey_type === 'op_return');
+  if (opReturns.length === 0) return done(false, 'no_op_return');
+  let committed = null;
+  let sawArkv = false;
+  for (const v of opReturns) {
+    const c = extractCanonicalFingerprint(v.scriptpubkey);
+    if (c) { sawArkv = true; if (c === fp) { committed = c; break; } }
+  }
+  checks.committed = committed;
+  checks.fingerprintCommitted = committed !== null;
   if (!checks.fingerprintCommitted) {
-    return { verified: false, reason: 'fingerprint_not_committed_in_op_return', checks, committed };
+    return done(false, sawArkv ? 'fingerprint_not_committed_in_op_return' : 'no_canonical_arkv_op_return');
   }
 
+  // 3. DEPTH — confirmation floor against the chain tip.
+  let tip;
+  try { tip = Number(await fetchPath('blocks/tip/height')); } catch { tip = NaN; }
+  if (Number.isInteger(tip) && Number.isInteger(status.block_height)) {
+    checks.confirmations = tip - status.block_height + 1;
+    checks.depthOk = checks.confirmations >= minConf;
+    if (!checks.depthOk) return done(false, 'insufficient_confirmations');
+  } else {
+    checks.depthOk = false;
+    return done(false, 'tip_height_unavailable');
+  }
+
+  // 4. INCLUDE + 5. HEADER — SPV: recompute the merkle root, bind it to the PoW header.
+  let mp;
+  try { mp = await fetchPath(`tx/${proof.txid}/merkle-proof`); } catch { mp = null; }
+  if (!mp || !Array.isArray(mp.merkle) || typeof mp.pos !== 'number') {
+    checks.merkleIncluded = false;
+    return done(false, 'merkle_proof_unavailable');
+  }
+  const computedRoot = computeMerkleRoot(proof.txid, mp.merkle, mp.pos);
+
+  let headerHex;
+  try { headerHex = String(await fetchPath(`block/${status.block_hash}/header`)).trim(); } catch { headerHex = null; }
+  const header = headerHex ? parseBlockHeader(headerHex) : null;
+  if (!header) { checks.headerBinds = false; return done(false, 'block_header_unavailable'); }
+
+  checks.headerBinds = header.blockHash === String(status.block_hash).toLowerCase();
+  if (!checks.headerBinds) return done(false, 'header_hash_mismatch');
+
+  checks.merkleIncluded = header.merkleRoot === computedRoot;
+  if (!checks.merkleIncluded) return done(false, 'tx_not_in_block');
+
+  // 6. Optional expected block height.
   if (typeof proof.expectedBlockHeight === 'number') {
     checks.blockMatch = status.block_height === proof.expectedBlockHeight;
-    if (!checks.blockMatch) {
-      return { verified: false, reason: 'block_height_mismatch', checks, committed };
-    }
+    if (!checks.blockMatch) return done(false, 'block_height_mismatch');
   }
 
-  return { verified: true, reason: null, checks, committed };
+  // 7. ISSUER — optional treasury binding.
+  if (proof.expectedIssuerAddress) {
+    const inAddr = tx.vin?.[0]?.prevout?.scriptpubkey_address ?? null;
+    checks.issuerMatch = inAddr === proof.expectedIssuerAddress;
+    if (!checks.issuerMatch) return done(false, 'unexpected_issuer');
+  }
+
+  return done(true, null);
 }
 
-/** Strip OP_RETURN + a single push opcode (OP_PUSHBYTES_N for N<=75), return payload hex. */
-export function decodeOpReturnPayload(scriptHex) {
-  if (!/^[0-9a-f]*$/.test(scriptHex) || scriptHex.length < 4) return null;
-  if (!scriptHex.startsWith('6a')) return null; // must be OP_RETURN
-  let rest = scriptHex.slice(2);
-  const opcode = parseInt(rest.slice(0, 2), 16);
-  rest = rest.slice(2);
-  if (opcode <= 75) {
-    const len = opcode * 2;
-    return rest.slice(0, len);
-  }
-  if (opcode === 0x4c) {
-    // OP_PUSHDATA1: next byte is length
-    const len = parseInt(rest.slice(0, 2), 16) * 2;
-    return rest.slice(2, 2 + len);
-  }
-  return null; // longer pushes not expected for a 44-byte anchor payload
-}
-
-/** Live explorer fetch (blockstream.info) — the default in --live mode. */
+/** Live Esplora client (blockstream.info) — JSON for most paths, text for header/tip. */
 export function blockstreamFetch(base = 'https://blockstream.info/api') {
-  return async (txid) => {
-    const res = await fetch(`${base}/tx/${txid}`);
-    if (res.status === 404) {
-      const e = new Error('not found');
-      e.status = 404;
-      throw e;
-    }
+  const textPaths = (p) => p.endsWith('/header') || p === 'blocks/tip/height';
+  return async (path) => {
+    const res = await fetch(`${base}/${path}`);
+    if (res.status === 404) { const e = new Error('not found'); e.status = 404; throw e; }
     if (!res.ok) throw new Error(`explorer HTTP ${res.status}`);
-    return res.json();
+    return textPaths(path) ? res.text() : res.json();
   };
 }
 
@@ -122,7 +217,9 @@ function parseArgs(argv) {
     else if (k === '--rehearse') a.rehearse = true;
     else if (k === '--fingerprint') a.fingerprint = argv[++i];
     else if (k === '--txid') a.txid = argv[++i];
-    else if (k === '--block') a.expectedBlockHeight = Number(argv[++i]);
+    else if (k === '--issuer') a.expectedIssuerAddress = argv[++i];
+    else if (k === '--block') { const n = Number(argv[++i]); if (Number.isInteger(n)) a.expectedBlockHeight = n; }
+    else if (k === '--min-conf') { const n = Number(argv[++i]); if (Number.isInteger(n)) a.minConfirmations = n; }
   }
   return a;
 }
@@ -145,11 +242,11 @@ async function main() {
       console.error('--live requires --fingerprint <hex> and --txid <hex>');
       process.exit(2);
     }
-    const r = await verifyAnchorProof(args, blockstreamFetch());
+    const r = await verifyAnchorProof(args, blockstreamFetch(), { minConfirmations: args.minConfirmations });
     console.log(JSON.stringify(r, null, 2));
     process.exit(r.verified ? 0 : 1);
   }
-  console.error('usage: external-verify.mjs [--rehearse | --live --fingerprint <hex> --txid <hex> [--block N]]');
+  console.error('usage: external-verify.mjs [--rehearse | --live --fingerprint <hex> --txid <hex> [--block N] [--issuer <addr>] [--min-conf N]]');
   process.exit(2);
 }
 

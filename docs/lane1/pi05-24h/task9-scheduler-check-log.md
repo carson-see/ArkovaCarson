@@ -18,7 +18,7 @@ Read-only `gcloud scheduler jobs list --location=us-central1` (`CLOUDSDK_PYTHON=
 | `process-revocations` / `process-anchors` | ENABLED | */5, */30 |
 
 ### ⚠ DIVERGENCE FROM HANDOFF (07-17) — flag for RTE, do NOT touch (W6)
-HANDOFF (verified 2026-07-17) states `process-anchors` + `anchor-public-records` are **PAUSED** (backlog frozen) and `refresh-stats` PAUSED (stale monitors). **As of 2026-07-20 18:26Z all three are ENABLED**, and prod shows **live anchoring activity**: most-recent anchor `ARK-DOC-GHZG6V`, status **SUBMITTED**, `created_at=2026-07-20T18:12:24Z`, block 958922 — ~14 min before this check. **Prod anchoring pipeline is operational and producing anchors right now.** This contradicts the "feeders paused / backlog frozen" snapshot. Likely the pipeline was resumed between 07-17 and 07-20 (possibly the parallel release-ops session). **Action: RTE to reconcile HANDOFF's feeder-state claim with live state; Lane 1 only observed.** Bearing on Task 5: the drain/backlog narrative must be re-checked against live feeder state before the D1 packet is finalized.
+HANDOFF (verified 2026-07-17) states `process-anchors` + `anchor-public-records` are **PAUSED** (backlog frozen) and `refresh-stats` PAUSED (stale monitors). **As of 2026-07-20 18:26Z all three are ENABLED.** Prod shows one recent anchor: `ARK-DOC-GHZG6V`, **SUBMITTED**, `created_at=2026-07-20T18:12:24Z`. **Scope caveat (architect review MED-1):** this is **n=1** — ordering shows a single 07-20 anchor then a ~3-day gap to the prior 07-17 cluster, so it is one event, not evidence of a churning feeder cadence. What is solid: the **job states diverge from the 07-17 snapshot** (feeders ENABLED), and at least one anchor is mid-flight (SUBMITTED, not yet SECURED). **Action: RTE to reconcile HANDOFF's feeder-state claim with live state; Lane 1 only observed.** Bearing on Task 5: the drain/backlog narrative must not state "feeders paused / 0 PENDING" as fact (corrected in the revised Task 5).
 
 ### Soak rigs (ENABLED, running — DO NOT TOUCH, W6)
 - `arkova-worker-s33-rig-b1-staging-*` (B1 chain rig): check-confirmations / org-queue-scheduler / batch-anchors / populate-confirmation-proofs / recover-broadcasts all ENABLED */5; `...batch-anchors-forced-flush` PAUSED. **Active B1 soak.**
@@ -32,8 +32,8 @@ HANDOFF (verified 2026-07-17) states `process-anchors` + `anchor-public-records`
 `fetch-state-courts-{tx,ca,ny}`, `fetch-openalex`, `openalex-bulk`, `edgar-bulk`, `bq-export-incremental`, `anchor-attestations`, `workspace-subscription-renewal`, `chaindump-desk-daily`.
 
 ### Metrics
-- lastSecured/last-activity age: **live** — a SUBMITTED anchor 14 min old (18:12Z).
-- SECURED total (estimated): 2,992,652.
+- last-activity: one SUBMITTED anchor at 18:12Z (n=1, per MED-1 caveat above).
+- SECURED total: **estimate only** — `reltuples` drifts ±~20k between reads (2,972,268 / 2,992,652 / 2,996,486 across the packet); the stable exact figure is `anchor_proofs = 6,110`. Cite SECURED as "≈3.0M (estimated)", not a precise number (architect review MED-2).
 - backlog delta: `public_records` with `anchor_id IS NULL` not re-countable read-only (seq-scan timeout, no supporting index) — HANDOFF's 255,491 is the last CTO-signed figure; **stale risk given feeders now enabled** — recommend a psql/MCP recount.
 
 ## Entry 2 — morning (pending)
