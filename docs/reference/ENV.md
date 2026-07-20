@@ -163,6 +163,13 @@ VITE_APP_VERSION=                    # semver fallback for FE Sentry release
 VITE_APP_URL=                        # FE server_name tag (deployment surface); default 'arkova-frontend'
 #  Worker `release` = BUILD_SHA (see Worker section; same value /health exposes).
 #  Worker `serverName` = Cloud Run K_REVISION / K_SERVICE; default 'arkova-worker'.
+SENTRY_ENVIRONMENT=                  # MT-1 (SCRUM-2901): explicit override. When UNSET the worker
+#  derives the environment tag from K_SERVICE (utils/sentry.ts resolveSentryEnvironment):
+#  K_SERVICE=arkova-worker → 'production'; any other Cloud Run service (e.g. arkova-worker-staging,
+#  arkova-worker-rig-b1) → its own service name (filterable, never 'production'). Off Cloud Run
+#  (no K_SERVICE) it falls back to NODE_ENV, and a bare NODE_ENV=production maps to 'local-production'
+#  (§1.5 honesty). Rationale: rigs run NODE_ENV=production, so NODE_ENV alone would flood prod
+#  alerting on every rig standup. Prod does NOT set this var — the K_SERVICE derivation is the mechanism.
 ```
 
 ## AI

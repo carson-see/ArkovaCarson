@@ -251,6 +251,41 @@ export interface SentryRuntimeConfig {
   kService?: string;
 }
 
+// ---------------------------------------------------------------------------
+// MT-1 (SCRUM-2901): Sentry environment derivation
+// ---------------------------------------------------------------------------
+//
+// Rigs and staging run with NODE_ENV=production, so NODE_ENV cannot be the
+// environment tag — a rig standup would flood prod alerting. The deployment
+// surface identity (K_SERVICE) is the honest signal: only the real prod
+// service earns 'production'; every other Cloud Run service is tagged with
+// its own service name (per-rig attribution, filterable as non-prod).
+
+/** The one Cloud Run service whose events may be tagged 'production'. */
+export const PROD_SERVICE_NAME = 'arkova-worker';
+
+export interface SentryEnvironmentInputs {
+  /** Explicit SENTRY_ENVIRONMENT override (wins when non-blank). */
+  sentryEnvironment?: string;
+  /** Cloud Run service name (K_SERVICE); unset off Cloud Run. */
+  kService?: string;
+  /** NODE_ENV — trusted only off Cloud Run, and never for 'production'. */
+  nodeEnv: string;
+}
+
+export function resolveSentryEnvironment(inputs: SentryEnvironmentInputs): string {
+  const explicit = inputs.sentryEnvironment?.trim();
+  if (explicit) return explicit;
+
+  if (inputs.kService) {
+    return inputs.kService === PROD_SERVICE_NAME ? 'production' : inputs.kService;
+  }
+
+  // §1.5 honesty: a bare NODE_ENV=production without the prod service
+  // identity (local shell, docker run) must not pollute the prod stream.
+  return inputs.nodeEnv === 'production' ? 'local-production' : inputs.nodeEnv;
+}
+
 export function initSentry(
   dsn: string | undefined,
   environment: string,
