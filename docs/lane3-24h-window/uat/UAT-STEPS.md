@@ -2,12 +2,17 @@
 
 _Lane 3 / 24h train-protective window. Draft PR — merges Jul 22 FIRST (copy.ts order rule R10). Do NOT merge in-window._
 
-## Screenshot status: NOT CAPTURED (auth-gated)
+## Screenshot status: NOT CAPTURED (auth requires password entry)
 
 Screenshots at 1280px and 375px were **not** captured by the agent. Every scrubbed
 surface below is behind `AuthGuard` (and the Compliance dashboard is additionally
-`ORG_ADMIN`-gated). This work ran in an isolated git worktree with **no `.env.local`**
-and no reachable Supabase backend, so no authenticated session could be established.
+`ORG_ADMIN`-gated). The shared demo `.env.local` (PROD ref `vzwyaatejekddvltxyye`,
+URL + anon key only — no session token) exists in the main checkout, but reaching
+the gated surfaces requires an interactive sign-in. Typing the demo account password
+to authenticate is a prohibited action for the agent (credential entry), so the
+sign-in — and therefore the authed screenshots — is a **founder / next interactive
+session** step. Do NOT anchor or write anything; the demo account is on the PROD org,
+so keep the session READ-ONLY (navigate + screenshot only).
 
 What WAS verified locally:
 
@@ -16,8 +21,11 @@ What WAS verified locally:
   "Please sign in to access that page" toast (AuthGuard working; edits render at runtime).
 - **Rendered-DOM proof (jsdom)** — the vitest suites render the scrubbed components with
   the new copy and pass: `NessieIntelligencePanel.test.tsx` now asserts the panel title
-  `Document Intelligence` and the reworded empty state; compliance/scorecard/credentials
-  suites all green (56 tests across 6 files).
+  `Document Intelligence` and the reworded empty state.
+- **Copy-contract test** — `src/lib/copy-scrum-2938-terminology.test.ts` locks every moved /
+  scrubbed constant (Imported Records labels; `COMPLIANCE_LABELS.ACCESS_RESTRICTED_*`;
+  `DOCUMENTS_PAGE_LABELS.RECEIVED_EMPTY_*`; the killed compliance-intelligence / Nessie /
+  compliance-score phrasings) so a future edit can't silently regress them.
 - `npm run lint:copy` green, `npm run typecheck` green.
 
 The founder (or any run with the UAT demo account wired via a gitignored `.env.local`,

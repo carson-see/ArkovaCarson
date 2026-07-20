@@ -295,6 +295,11 @@ export const DOCUMENTS_PAGE_LABELS = {
   TAB_ATTESTATIONS: 'Attestations',
   EMPTY_TITLE: 'No documents yet',
   EMPTY_DESC: 'Secure your first document, receive a credential, or create an attestation to get started.',
+  // SCRUM-2938 S1: "Issued to Me" tab empty state (moved out of inline JSX in
+  // DocumentsPage per §1.3 / src/lib/agents.md). Generic securable/imported
+  // items are "documents", not "credentials".
+  RECEIVED_EMPTY_TITLE: 'No documents yet',
+  RECEIVED_EMPTY_DESC: 'When organizations issue documents to your email address, they will appear here.',
   SECURE_DOCUMENT: 'Secure Document',
   NO_MATCHING: 'No results found',
   NO_MATCHING_DESC: 'No documents match your current search or filter. Try adjusting your criteria.',
@@ -1799,6 +1804,11 @@ export const REVIEW_QUEUE_LABELS = {
 export const COMPLIANCE_LABELS = {
   // SCRUM-2938 S1: "Compliance Intelligence" retired from user-facing copy.
   PAGE_TITLE: 'Compliance Dashboard',
+  // SCRUM-2938 S1: non-admin access-restricted card (moved out of inline JSX
+  // in ComplianceDashboardPage per §1.3 / src/lib/agents.md — copy lives here).
+  ACCESS_RESTRICTED_TITLE: 'Access Restricted',
+  ACCESS_RESTRICTED_BODY:
+    'The Compliance dashboard is available to organization administrators. Contact your admin for access.',
   PAGE_SUBTITLE: 'Monitor credential health, expiring credentials, and review activity across your organization.',
   CARD_ACTIVE: 'Active Credentials',
   CARD_ACTIVE_SUBTITLE: 'Issued attestations',
