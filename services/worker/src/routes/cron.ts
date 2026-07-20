@@ -94,6 +94,11 @@ import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migrati
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runConnectorHealthCheck } from '../jobs/connector-health-alert.js';
 import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
+import {
+  runPipelineThroughputMonitor,
+  DEFAULT_THROUGHPUT_WINDOW_HOURS,
+  DEFAULT_LINKER_STALL_THRESHOLD_HOURS,
+} from '../jobs/pipelineThroughputMonitor.js';
 import { runCreditConservationReconciler } from '../jobs/credit-conservation-reconciler.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
@@ -1736,6 +1741,72 @@ cronRouter.post('/check-stuck-anchors', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Stuck anchor monitor failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2901 (PI-0.5): Pipeline throughput monitor — dead-man on conversion ───
+//
+// /health reports anchoring:"ok" while the unlinked public-records backlog
+// grows: liveness, not throughput. This endpoint runs TWO dead-man checks
+// inside bounded, index-backed probes (no snapshot table, no migration):
+//   A — total securing death: new unlinked records in the window while ZERO
+//       anchors secured network-wide (chain_timestamp on the 0310 partial
+//       index).
+//   B — linker stall: the OLDEST unlinked record's age exceeds
+//       linker_stall_threshold_hours (default 48) — the exact 2026-07
+//       incident shape, where other paths keep securing so A alone is silent.
+// Pages via Sentry (one stable fingerprint). Feeder death (Scheduler drift /
+// paused feeder crons) is owned by SCRUM-2900, not this monitor.
+//
+// NOT yet scheduled: the Cloud Scheduler binding is a separate, gated ops
+// step (RTE-owned). Same cronAuth as every /jobs/* route.
+//
+// HTTP semantics mirror /check-stuck-anchors: a DETECTED stall
+// (healthy:false) is a CORRECT result → 200 (no Scheduler retry of a true
+// finding). Only a broken probe throws → 500 so Scheduler retries the probe.
+const ThroughputWindowHoursSchema = z.coerce
+  .number()
+  .int()
+  .min(1)
+  .max(72)
+  .default(DEFAULT_THROUGHPUT_WINDOW_HOURS);
+
+const LinkerStallThresholdHoursSchema = z.coerce
+  .number()
+  .int()
+  .min(1)
+  .max(168)
+  .default(DEFAULT_LINKER_STALL_THRESHOLD_HOURS);
+
+cronRouter.post('/pipeline-throughput-monitor', async (req, res) => {
+  try {
+    const rawWindow = req.query.window_hours ?? req.body?.window_hours;
+    const parsedWindow = ThroughputWindowHoursSchema.safeParse(rawWindow ?? undefined);
+    if (!parsedWindow.success) {
+      res.status(400).json({
+        error: 'Invalid window_hours',
+        details: parsedWindow.error.flatten().formErrors,
+      });
+      return;
+    }
+    const rawThreshold =
+      req.query.linker_stall_threshold_hours ?? req.body?.linker_stall_threshold_hours;
+    const parsedThreshold = LinkerStallThresholdHoursSchema.safeParse(rawThreshold ?? undefined);
+    if (!parsedThreshold.success) {
+      res.status(400).json({
+        error: 'Invalid linker_stall_threshold_hours',
+        details: parsedThreshold.error.flatten().formErrors,
+      });
+      return;
+    }
+    const result = await runPipelineThroughputMonitor(db, {
+      windowHours: parsedWindow.data,
+      linkerStallThresholdHours: parsedThreshold.data,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Pipeline throughput monitor failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
