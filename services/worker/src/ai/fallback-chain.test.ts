@@ -22,7 +22,7 @@ function makeRequest(): ExtractionRequest {
 
 function makeMockProvider(
   name: string,
-  behavior: 'succeed' | 'fail-429' | 'fail-503' | 'fail-deprecated' | 'fail-generic',
+  behavior: 'succeed' | 'fail-429' | 'fail-502' | 'fail-503' | 'fail-504' | 'fail-deprecated' | 'fail-generic',
 ): IAIProvider {
   return {
     name,
@@ -37,8 +37,12 @@ function makeMockProvider(
           };
         case 'fail-429':
           throw Object.assign(new Error('Rate limited'), { status: 429 });
+        case 'fail-502':
+          throw Object.assign(new Error('Bad gateway'), { status: 502 });
         case 'fail-503':
           throw Object.assign(new Error('Service unavailable'), { status: 503 });
+        case 'fail-504':
+          throw Object.assign(new Error('Gateway timeout'), { status: 504 });
         case 'fail-deprecated':
           throw new Error('model is deprecated');
         case 'fail-generic':
@@ -83,6 +87,34 @@ describe('GME-19: FallbackChainProvider', () => {
 
     const result = await chain.extractMetadata(makeRequest());
     expect(result.provider).toBe('base');
+  });
+
+  it.each([
+    ['fail-502', 502],
+    ['fail-503', 503],
+    ['fail-504', 504],
+  ] as const)('classifies %s as provider_unavailable without exposing the error', async (behavior, _status) => {
+    const onFallback = vi.fn();
+    const chain = new FallbackChainProvider(
+      [
+        makeMockProvider('tuned', behavior),
+        makeMockProvider('base', 'succeed'),
+      ],
+      { onFallback },
+    );
+
+    await chain.extractMetadata(makeRequest());
+
+    expect(onFallback).toHaveBeenCalledWith({
+      event: 'provider_fallback',
+      fromProvider: 'tuned',
+      toProvider: 'base',
+      reason: 'provider_unavailable',
+    });
+    const serialized = JSON.stringify(onFallback.mock.calls);
+    expect(serialized).not.toContain('Bad gateway');
+    expect(serialized).not.toContain('Service unavailable');
+    expect(serialized).not.toContain('Gateway timeout');
   });
 
   it('falls back on deprecation error', async () => {

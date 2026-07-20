@@ -1,6 +1,12 @@
 # agents.md — services/worker/src/ai/
 
-_Last updated: 2026-06-01_
+_Last updated: 2026-07-15_
+
+## 2026-07-15 S3.3 Wave 2 Upstream 429 Attribution
+
+- `gemini.ts` converts Gemini Developer API and Vertex regional HTTP failures into `AIProviderHttpError`, retaining only bounded status, `Retry-After`, API surface, model, region, prompt-version, schema-state, and MIME metadata. Provider bodies, prompts, response objects, credentials, and raw headers must never be retained, logged, thrown, or traced.
+- `withRetry()` preserves those allowlisted fields across retry clones, generates one server-side UUID per provider invocation, and is the sole source of the explicit bounded attempt identity (`1..3`) passed to every upstream HTTP-error logger; 400/401/403/422 authentication or validation failures are non-retriable. `fallback-chain.ts` classifies 429 as `rate_limit` and 502/503/504 as `provider_unavailable`, and observer events expose only the bounded reason.
+- Upstream attribution logs use `event=ai_upstream_http_error`, include `requestInstanceId` plus the retry-loop `attempt`, and inherit the client-controlled request correlation ID only as context. Release evidence groups by the server UUID, never by correlation ID or timestamp; observed attempts must be unique and strictly increasing, while sparse sets are valid because non-429 attempts are intentionally absent from the 429 artifact. Do not infer upstream counts from raw messages or sum them with client-side limiter buckets.
 
 ## 2026-05-22 Batch Embedding Review Hardening
 
@@ -26,7 +32,7 @@ AI provider abstraction layer for credential metadata extraction, fraud detectio
 |------|---------|
 | `types.ts` | `IAIProvider` interface, `ExtractionRequest`/`ExtractionResult`, `EmbeddingResult`, `ProviderHealth` types |
 | `factory.ts` | Provider factory — routes to Gemini, Nessie, Together, Cloudflare, Replicate, or Mock based on `AI_PROVIDER` env var |
-| `gemini.ts` | Gemini Flash provider — primary production extraction via `@google/generative-ai` SDK |
+| `gemini.ts` | Gemini Flash provider — primary production extraction plus privacy-bounded upstream HTTP attribution for Developer API and Vertex regional calls |
 | `nessie.ts` | Nessie provider — fine-tuned Llama 3.1 8B on RunPod vLLM for pipeline/institutional documents |
 | `together.ts` | Together AI provider — OpenAI-compatible inference for Nessie fine-tuned models |
 | `cloudflare-fallback.ts` | Cloudflare Workers AI fallback — gated by `ENABLE_AI_FALLBACK`, never primary |
