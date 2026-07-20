@@ -275,7 +275,17 @@ export interface SentryEnvironmentInputs {
 
 export function resolveSentryEnvironment(inputs: SentryEnvironmentInputs): string {
   const explicit = inputs.sentryEnvironment?.trim();
-  if (explicit) return explicit;
+  if (explicit) {
+    // Guard (review P1): an explicit override may RENAME non-prod environments,
+    // but must NOT let a non-prod service identity claim 'production' — otherwise
+    // a rig with SENTRY_ENVIRONMENT=production floods the prod alert stream, the
+    // exact failure this derivation prevents. Only the real prod service may
+    // emit 'production', even via override.
+    if (explicit !== 'production' || inputs.kService === PROD_SERVICE_NAME) {
+      return explicit;
+    }
+    // else: fall through to the honest K_SERVICE/NODE_ENV derivation below.
+  }
 
   if (inputs.kService) {
     // NOTE (Architect review): the prod canary revision deploys onto the SAME

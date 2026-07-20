@@ -322,7 +322,7 @@ describe('initSentry', () => {
 // derived from the Cloud Run service identity (K_SERVICE), never from
 // NODE_ENV alone — otherwise every rig standup floods prod alerting.
 describe('resolveSentryEnvironment (MT-1 / SCRUM-2901)', () => {
-  it('an explicit SENTRY_ENVIRONMENT always wins', () => {
+  it('an explicit non-production SENTRY_ENVIRONMENT wins (may rename any env)', () => {
     expect(
       resolveSentryEnvironment({
         sentryEnvironment: 'staging',
@@ -330,6 +330,40 @@ describe('resolveSentryEnvironment (MT-1 / SCRUM-2901)', () => {
         nodeEnv: 'production',
       }),
     ).toBe('staging');
+    // non-prod rename on a rig is allowed
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'rig-smoke',
+        kService: 'arkova-worker-rig-b1',
+        nodeEnv: 'production',
+      }),
+    ).toBe('rig-smoke');
+  });
+
+  it('a production override is HONORED only for the real prod service', () => {
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'production',
+        kService: 'arkova-worker',
+        nodeEnv: 'production',
+      }),
+    ).toBe('production');
+  });
+
+  it('a production override on a RIG is rejected — cannot claim production (review P1)', () => {
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'production',
+        kService: 'arkova-worker-rig-b1',
+        nodeEnv: 'production',
+      }),
+    ).toBe('arkova-worker-rig-b1');
+  });
+
+  it('a production override off Cloud Run (no K_SERVICE) does not earn production', () => {
+    expect(
+      resolveSentryEnvironment({ sentryEnvironment: 'production', nodeEnv: 'production' }),
+    ).toBe('local-production');
   });
 
   it('ignores a blank SENTRY_ENVIRONMENT and falls through to K_SERVICE', () => {
