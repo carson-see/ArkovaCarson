@@ -1,0 +1,65 @@
+{
+  "$schema": "https://arkova.ai/schemas/capability-matrix/v1.json",
+  "version": "1.0.0-draft",
+  "generated": "2026-07-20",
+  "source": "Lane 3 24-hour window findings (SCRUM-2994 verification, SCRUM-2911, SCRUM-2913, SCRUM-2993, SCRUM-2999). Static code-path verification; runtime + prod confirmation deferred post-train.",
+  "claim_labeling": "Each capability is labeled measured|asserted|not_asserted per Constitution §1.5. 'measured' = verified this window; 'asserted' = from config/code not runtime-confirmed; 'not_asserted' = explicitly NOT claimed.",
+  "capabilities": {
+    "anchoring": {
+      "description": "Timestamp + integrity fingerprint (SHA-256) written to Bitcoin.",
+      "file_format_support": "format-agnostic (byte-level hash)",
+      "formats": {
+        "pdf": "supported", "docx": "supported",
+        "image_png_jpg_webp_gif": "supported", "image_heic_heif": "supported", "image_tiff": "supported",
+        "audio_mp3_wav_m4a_flac": "supported", "video": "supported", "any_binary": "supported"
+      },
+      "claim_status": "measured",
+      "evidence": "src/lib/fileHasher.ts generateFingerprint() hashes file.arrayBuffer() bytes; no MIME/extension gating."
+    },
+    "content_extraction": {
+      "description": "On-device OCR / text extraction producing structured metadata (client-side, §1.6).",
+      "formats": {
+        "pdf": "supported", "docx": "supported",
+        "image_png_jpg_webp_gif": "supported",
+        "image_heic_heif": "unsupported_soft_fail", "image_tiff": "unsupported_soft_fail",
+        "audio_mp3_wav_m4a_flac": "unsupported_no_path", "video": "unsupported_no_path"
+      },
+      "claim_status": "measured",
+      "evidence": "src/lib/ocrWorker.ts extractText(): pdf|docx|image/* branches; else UNSUPPORTED_FILE_TYPE. HEIC/TIFF browser-undecodable (SCRUM-2911). No audio/video extraction path exists.",
+      "not_asserted": ["audio content transcription", "audio content extraction", "video content extraction", "HEIC/TIFF OCR"]
+    },
+    "ai_template_reconstruction": {
+      "description": "Gemini-based reconstruction of a structured template from extracted fields.",
+      "claim_status": "asserted",
+      "health": "degraded",
+      "evidence": "SCRUM-2999: recent AI-path records persist low_confidence stubs with no template (measured prod: ARK-DOC-GHZG6V _ai_confidence=0.25). Model-SKU drift + low-confidence gate. Fix pending post-train.",
+      "not_asserted": ["current template richness parity with April-2026 records"]
+    },
+    "ctdl_ce_compliance": {
+      "description": "Credential Engine / CTDL interoperability.",
+      "import_parse": {
+        "status": "built_draft",
+        "claim_status": "measured",
+        "evidence": "SCRUM-2913 CTDL importer (PR #1603, 26 tests): @graph walk, language-map name, ownedBy→issuer, ctid→sourceId, dateEffective→issuedAt, expirationDate-vs-status override (SCRUM-2599). Draft, not merged."
+      },
+      "registry_read_consume": {
+        "status": "endpoint_reachable_unauthenticated",
+        "claim_status": "measured",
+        "evidence": "SCRUM-2993: sandbox.credentialengineregistry.org GET-by-CTID returns valid JSON (200 root; 404 {errors:[Resource not found]} for unknown CTID). No real sandbox CTID consumed — needs Jeff Grann published resource / invite.",
+        "not_asserted": ["consuming a real published sandbox envelope end-to-end", "registry publish access"]
+      },
+      "natively_ctdl_compliant": {
+        "status": "not_verified",
+        "claim_status": "not_asserted",
+        "note": "SCRUM-2998 owns validating the 'natively CTDL-compliant' assertion — do NOT make this claim until verified."
+      }
+    },
+    "fraud_detection_ui": {
+      "description": "Fraud/risk display surfaces.",
+      "status": "removed",
+      "claim_status": "measured",
+      "evidence": "Fraud display surfaces removed (#1569); dead RiskAssessmentReport/FRAUD_DETECTION_LABELS deleted (SCRUM-2910, PR #1602). No fraud/risk strings render.",
+      "not_asserted": ["fraud detection as a user-facing product capability"]
+    }
+  }
+}
