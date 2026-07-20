@@ -65,3 +65,26 @@ describe('RecordsList — Network Observed Time honesty (BUG-2026-06-24-008)', (
     expect(scope.getByText(RECORDS_LIST_LABELS.CREATED_TIME)).toBeInTheDocument();
   });
 });
+
+// BUG-2026-07-17-010 (SCRUM-2910, P0): historical fraud_* metadata keys must
+// never render in the owner records list rows.
+describe('RecordsList — fraud metadata never renders (BUG-2026-07-17-010)', () => {
+  it('filters fraud_* keys from the row metadata display', () => {
+    const withFraudMeta: Record = {
+      ...baseRecord,
+      metadata: {
+        field_of_study: 'Computer Science',
+        fraud_score: 0.87,
+        fraud_risk_level: 'high',
+        fraud_signals: [{ signal_type: 'future_date', score: 0.35 }],
+        fraudSignals: '["Font inconsistency detected"]',
+      },
+    };
+    const { container } = render(<RecordsList records={[withFraudMeta]} />);
+    const scope = within(container);
+
+    expect(scope.queryByText(/fraud/i)).not.toBeInTheDocument();
+    expect(scope.queryByText(/0\.87/)).not.toBeInTheDocument();
+    expect(container.textContent?.toLowerCase()).not.toContain('fraud');
+  });
+});

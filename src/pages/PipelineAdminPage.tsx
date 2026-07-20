@@ -42,6 +42,7 @@ import { supabase } from '@/lib/supabase';
 import { DataErrorBanner } from '@/components/DataErrorBanner';
 
 import { isPlatformAdmin, mempoolTxUrl, mempoolAddressUrl } from '@/lib/platform';
+import { isFraudMetadataKey } from '@/lib/fraudDetection';
 
 interface PipelineStats {
   totalRecords: number;
@@ -1596,7 +1597,8 @@ export function PipelineAdminPage() {
                         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Metadata</span>
                         <div className="grid gap-1.5 mt-2">
                           {Object.entries(selectedRecord.metadata)
-                            .filter(([key]) => !['abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'chain_tx_id', 'batch_id', 'pipeline_source'].includes(key))
+                            // BUG-2026-07-17-010 (SCRUM-2910, P0): fraud_* keys must never render.
+                            .filter(([key]) => !['abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'chain_tx_id', 'batch_id', 'pipeline_source'].includes(key) && !isFraudMetadataKey(key))
                             .filter(([, value]) => value !== null && value !== undefined && value !== '')
                             .slice(0, 12)
                             .map(([key, value]) => {

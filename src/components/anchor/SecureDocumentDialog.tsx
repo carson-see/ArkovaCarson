@@ -667,18 +667,12 @@ export function SecureDocumentDialog({
 
               {extractionProgress?.stage === 'complete' && extractedFields.length > 0 && (
                 <>
-                  {/* GME-26: Quality gate — show confidence warnings and fraud signals */}
-                  <ExtractionQualityBanner
-                    confidence={overallConfidence}
-                    fraudSignals={(() => {
-                      const raw = extractedFields.find(f => f.key === 'fraudSignals')?.value;
-                      if (!raw) return [];
-                      try {
-                        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                        return Array.isArray(parsed) ? parsed : [];
-                      } catch { return []; }
-                    })()}
-                  />
+                  {/* GME-26: Quality gate — show confidence warnings.
+                      BUG-2026-07-17-009 (SCRUM-2910, P0): fraud-signal UI
+                      removed — the extraction `fraudSignals` field was not
+                      gated by ENABLE_FRAUD_DETECTION, so the banner survived
+                      the prod flag-off. Fraud data is never rendered. */}
+                  <ExtractionQualityBanner confidence={overallConfidence} />
 
                   {/* Show auto-detected document type */}
                   {selectedTemplate && (
