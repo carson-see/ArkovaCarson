@@ -24,8 +24,9 @@
 2. **"Arkova reads any image format"** — **PARTIALLY FALSE.** Browser-decodable images extract; **HEIC/TIFF do not**. Anchoring still works for all. → soften to "common web image formats (PNG/JPG/WEBP); HEIC/TIFF anchor but are not OCR-read."
 
 ## TRUE claims (safe to make, static-until-runtime-confirmed)
-- **"Arkova can anchor (timestamp + integrity-verify) audio and image files of any format."** TRUE — fingerprint is byte-level and format-agnostic.
+- **"Arkova can anchor (timestamp + integrity-verify) audio and image files of any format."** TRUE — fingerprint is byte-level and format-agnostic. **Two caveats before partner use:** (a) client-side hashing ceiling — `fileHasher.ts` loads the whole file into browser memory with a 30s timeout, so very large media (multi-GB video / hi-res audio) may fail; do not claim "any size". (b) Byte-for-byte only, not perceptual — a re-encoded, recompressed, or re-saved copy of the same audio/image yields a **different** fingerprint and will not match the original.
 - **"Arkova extracts content from PDF, DOCX, and common web images."** TRUE.
+- **What an anchor proves:** these exact bytes existed at the network-observed time. It does **NOT** assert content authenticity, that the document is genuine, or legal validity (per §1.5 / `confirmation-proof.ts`).
 
 ## Remaining confirmation (post-train)
 - Runtime pass of each Exhibit-A format through the live upload dialog on local dev, capturing the actual dialog outcome per format.

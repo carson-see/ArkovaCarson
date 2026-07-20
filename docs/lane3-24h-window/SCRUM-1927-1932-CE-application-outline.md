@@ -20,7 +20,7 @@
 ## Claim table (paste-ready; §1.5-labeled)
 | Claim | Label | Wording to use | Wording to AVOID |
 |---|---|---|---|
-| Document anchoring | measured | "Anchors any file format with SHA-256 integrity + Bitcoin timestamp." | — |
+| Document anchoring | measured (PDF/DOCX/image); asserted (audio/video) | "Anchors files of any format with SHA-256 integrity + a network-observed timestamp." (no "Bitcoin"/"any size" — §1.3; very large media may hit a client hashing limit) | "Bitcoin timestamp", "any file, any size", or any wording implying the anchor proves content authenticity/legal validity |
 | CTDL import/parse | measured | "CTDL JSON-LD import implemented and unit-tested." | "in production" (Draft, unmerged) |
 | CE registry consume | measured | "Validated read access against the CE sandbox registry." | "fully integrated with CE registry" |
 | Natively CTDL-compliant | **not_asserted** | *(omit)* | "natively CTDL-compliant" (pending SCRUM-2998) |

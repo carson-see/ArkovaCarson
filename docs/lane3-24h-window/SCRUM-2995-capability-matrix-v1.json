@@ -6,15 +6,24 @@
   "claim_labeling": "Each capability is labeled measured|asserted|not_asserted per Constitution §1.5. 'measured' = verified this window; 'asserted' = from config/code not runtime-confirmed; 'not_asserted' = explicitly NOT claimed.",
   "capabilities": {
     "anchoring": {
-      "description": "Timestamp + integrity fingerprint (SHA-256) written to Bitcoin.",
-      "file_format_support": "format-agnostic (byte-level hash)",
+      "description": "Integrity fingerprint (SHA-256) + network-observed timestamp committed to the production anchoring network (32-byte commitment; file bytes never leave the device).",
+      "file_format_support": "format-agnostic at the chain layer (byte-level hash, no MIME/extension gating)",
       "formats": {
         "pdf": "supported", "docx": "supported",
         "image_png_jpg_webp_gif": "supported", "image_heic_heif": "supported", "image_tiff": "supported",
         "audio_mp3_wav_m4a_flac": "supported", "video": "supported", "any_binary": "supported"
       },
-      "claim_status": "measured",
-      "evidence": "src/lib/fileHasher.ts generateFingerprint() hashes file.arrayBuffer() bytes; no MIME/extension gating."
+      "claim_status": "asserted",
+      "claim_status_detail": "measured for PDF/DOCX/image (existing prod anchors); ASSERTED (static code-path, no runtime/prod anchor this window) for audio/video/binary. Nothing was anchored at runtime this window (W4).",
+      "constraints": "Client-side hashing ceiling: fileHasher.ts loads the whole file into browser memory (file.arrayBuffer()) with a 30s timeout; very large media (multi-GB video / hi-res audio) may fail or OOM. Not 'any file, any size'.",
+      "not_asserted": [
+        "authenticity or genuineness of document content",
+        "legal validity",
+        "that the signer/author is who they claim to be",
+        "content correctness — only that these exact bytes existed at the network-observed time",
+        "perceptual/content matching — a re-encoded or re-saved copy of the same audio/image produces a DIFFERENT fingerprint and will not match"
+      ],
+      "evidence": "src/lib/fileHasher.ts generateFingerprint() hashes file.arrayBuffer() bytes; services/worker/src/chain/signet.ts OP_RETURN = 4B tag + 32B SHA-256 (cap 80B); confirmation-proof.ts asserts only block-header inclusion + network-observed time."
     },
     "content_extraction": {
       "description": "On-device OCR / text extraction producing structured metadata (client-side, §1.6).",
