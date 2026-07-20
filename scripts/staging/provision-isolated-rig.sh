@@ -155,7 +155,7 @@ TRUSTED_GIT_PATH="/usr/bin/git"
 TRUSTED_GIT_SHA256="a961f78075d8e7621ef4f5d764c64ef8a41bf66c0a98ab5cb6ca39b85ce31c93"
 TRUSTED_GIT_VERSION="git version 2.50.1 (Apple Git-155)"
 TRUSTED_GIT_ORIGIN_URL="https://github.com/carson-see/ArkovaCarson.git"
-TRUSTED_GH_PATH="/opt/homebrew/bin/gh"
+TRUSTED_GH_PATH="/opt/homebrew/Cellar/gh/2.96.0/bin/gh"
 TRUSTED_GH_SHA256="02d2d4a85241c6a8c0b77ebb1ec76fc723caf7fb128e00915b306b968847cba1"
 TRUSTED_GH_VERSION="gh version 2.96.0 (2026-07-02)"
 TRUSTED_GH_CONFIG_DIR="/Users/carson/.config/gh"
@@ -2869,7 +2869,7 @@ if [[ $APPLY -eq 1 ]]; then
     exit 2
   fi
   if [[ "$(trusted_git -C "$TRUSTED_REPO_ROOT" cat-file -t "${REMOTE_MAIN_SHA}^{commit}" 2>/dev/null || true)" != "commit" ]]; then
-    echo "ERROR: code-bound remote main is not present in the local object store; refresh the checkout first." >&2
+    echo "ERROR: code-bound remote main is not present in the local object store; fetch/refresh the checkout first." >&2
     exit 2
   fi
   EXPECTED_BASE_SHA="$(trusted_git -C "$TRUSTED_REPO_ROOT" merge-base \

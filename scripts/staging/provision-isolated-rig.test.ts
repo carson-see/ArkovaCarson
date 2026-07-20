@@ -72,7 +72,10 @@ const CHILD_TIMEOUT_EXIT_CODE = 124;
 
 describe('provision-isolated-rig.sh — authenticated private-repo provenance', () => {
   it('falls back from anonymous Git to a code-bound authenticated GitHub main lookup', () => {
-    expect(script).toContain('TRUSTED_GH_PATH="/opt/homebrew/bin/gh"');
+    expect(script).toContain(
+      'TRUSTED_GH_PATH="/opt/homebrew/Cellar/gh/2.96.0/bin/gh"',
+    );
+    expect(script).not.toContain('TRUSTED_GH_PATH="/opt/homebrew/bin/gh"');
     expect(script).toMatch(/TRUSTED_GH_SHA256="[0-9a-f]{64}"/u);
     expect(script).toContain('TRUSTED_GH_VERSION="gh version 2.96.0 (2026-07-02)"');
     expect(script).toContain('TRUSTED_GH_REPOSITORY="carson-see/ArkovaCarson"');
