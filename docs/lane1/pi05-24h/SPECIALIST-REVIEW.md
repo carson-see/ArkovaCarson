@@ -44,9 +44,12 @@ Five specialists reviewed the Task 1–9 deliverables in parallel, read-only und
 - **F3 — `chain_tx_id IS NULL` seq-scans/times-out even at LIMIT 1** → never add that filter to a materializer scan. Applied to Task 3.
 - **F4 — pagination + cardinality probes index-backed**; the scale wall is the ~2.98M probes (~1–3h), inherent, handled by concurrency + resumability. Noted in Task 3.
 
+## Post-review closures (Jira + Supabase MCP came online mid-session)
+- **Task 1 D1 — RESOLVED into a 🔴 launch-critical finding.** SCRUM-2912 spec (Confluence 107872257) requires HakiChain access to **15 already-provisioned anchors** by Aug 9 (first-invoice trigger); direct prod SQL shows the HakiChain account has **exactly 4** (0 sub-orgs, 0 received). **11-anchor shortfall** — escalated to founder/CTO.
+- **Task 2 A1 — RESOLVED.** `secured_without_tx = 0` (exact, direct SQL); zero false-SECUREDs confirmed. Exact SECURED = **2,974,768**; no-proof-row = **2,968,658**.
+
 ## Residual (not fixed in-window, flagged)
-- Exact `direct` vs `ambiguous` (`secured_without_tx`) split still needs the census's cardinality-probe path on an isolated mirror or a `psql` aggregate (read-only REST cannot compute it). Recommendation stands in Task 2/3.
+- Exact `direct` vs shared-tx split needs the GROUP BY chain_tx_id aggregate (timed out on prod even via direct SQL) — run on an isolated mirror. Now bounded ≤2,968,658 with `secured_without_tx=0`.
 - Task 6 query change is documented, not executed (0358 not yet applied).
-- Canonical 15-record set (Task 1 D1) still needs the SCRUM-2912 list.
 
 _Lane 1 (Trust & Chain), 2026-07-20 evening. Review read-only; fixes branch-local; no merges/pushes._

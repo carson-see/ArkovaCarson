@@ -15,13 +15,14 @@ Relevant assertions proven:
 
 | Class (per `classifyAnchor`) | Count | Method | Confidence |
 |---|---|---|---|
-| **Total SECURED** (deleted_at null) | **≈ 3.0M** | `count=estimated` (pg_class reltuples) | ESTIMATE ONLY — drifts ±~20k between reads (2.97M/2.99M/3.00M seen); do NOT cite a precise number, and do NOT build a run loop on this bare estimate (perf review F1: 13s→22s→timeout) |
+| **Total SECURED** (deleted_at null) | **2,974,768 (EXACT)** | `execute_sql` FILTER count (direct SQL, MCP) | EXACT as of 2026-07-20 — supersedes the earlier drifting `reltuples` estimates (2.97M/2.99M/3.00M). Note: REST `count=estimated` is unstable (perf F1); the exact count needed direct SQL |
 | **already_complete** (root + path present) | **6,110** | `count=exact` on `anchor_proofs` | EXACT |
 | — of which also carry `batch_id` | 6,110 (all) | `count=exact` | EXACT |
 | **batch_provable** (root + batch_id, path null) | **0** | derived: every proof row already has path → already_complete | EXACT |
-| **direct_anchored** (no proof row, tx-cardinality 1) | **≈2.98M — UPPER BOUND** | total − already_complete − ambiguous (ambiguous UNcomputed) | inferred bulk; NOT a classifyAnchor-faithful count. Absorbs any secured_without_tx + shared-tx members. The materializer's insert authority is per-anchor classifyAnchor-WITH-cardinality, insert only on `direct_anchored` (see Task 3 HIGH-1) |
-| **ambiguous — secured_without_tx** | **not computed** | seq-scan on `chain_tx_id IS NULL` (no index) → statement timeout | UNRESOLVED |
-| **ambiguous — shared-tx / cardinality** | **not computed** | needs per-tx cardinality probe | UNRESOLVED |
+| **anchors without a proof row** | **2,968,658 (EXACT)** | 2,974,768 SECURED − 6,110 already_complete | these are direct_anchored OR shared-tx-batch-members-without-proof-rows |
+| **direct_anchored** (no proof row, tx-cardinality 1) | **≤ 2,968,658** | remainder minus any shared-tx members | UPPER BOUND — the exact direct-vs-shared split needs the GROUP BY chain_tx_id aggregate (timed out on prod; run on isolated mirror). Materializer insert authority = per-anchor classifyAnchor-WITH-cardinality (Task 3 HIGH-1) |
+| **ambiguous — secured_without_tx** | **0 (EXACT, RESOLVED)** | `execute_sql` FILTER count on prod | ✅ **Zero false-SECUREDs confirmed** (was A1; no longer "expected from memory" — measured) |
+| **ambiguous — shared-tx-without-proof-row** | **not computed** | GROUP BY chain_tx_id HAVING count>1 (timed out on prod, connector) | run on isolated mirror; bounded above by 2,968,658, likely small (the 6,110 materialized proofs are the known batches) |
 
 ### Key findings
 1. **All 6,110 materialized proof rows are `already_complete`** — every `anchor_proofs` row has `merkle_root` + `proof_path` + `batch_id` all non-null. These are the batch-anchored STORED proofs. `batch_provable` (root without path) = **0**.
@@ -29,7 +30,7 @@ Relevant assertions proven:
 3. **The ~2.98M no-proof-row SECURED anchors are `direct_anchored`** (fingerprint committed directly in OP_RETURN, tx-cardinality 1) — corroborated by Task 1's 15-anchor-sample (all 4 HakiChain anchors: no `anchor_proofs` row, OP_RETURN = `ARKV`+fingerprint, one anchor per tx). This is the census's own stated model ("~2.97M are DIRECT-anchored").
 
 ### Anomaly list
-- **A1 (data-integrity, UNVERIFIED read-only):** exact count of `secured_without_tx` (a SECURED anchor with no `chain_tx_id` = contradiction) could **not** be computed read-only — no partial index supports `chain_tx_id IS NULL` (the index is `... chain_tx_id IS NOT NULL`), so the count seq-scans 2.99M rows and hits the DB statement timeout. Known prod state is "0 false-SECUREDs"; **recommend confirming = 0 via a `psql` aggregate or the census job on an isolated mirror**, not asserting from memory.
+- **A1 (data-integrity) — ✅ RESOLVED: `secured_without_tx = 0`.** Measured exactly via `execute_sql` (direct SQL, MCP) on prod once the Supabase connector came online: **zero** SECURED anchors lack a `chain_tx_id`. No false-SECUREDs — now confirmed empirically, not assumed from memory. (REST could not compute this — no index on `chain_tx_id IS NULL`; direct SQL has a higher statement timeout and completed.) Consequence: the only remaining `ambiguous` class is shared-tx-batch-members-without-proof-rows, bounded above by 2,968,658 and likely small.
 - **A2 (materialization gap):** already_complete = 6,110 vs ~2.99M SECURED → **~99.8% of the catalogue has no downloadable two-layer proof bundle** (they are OP_RETURN-verifiable but produce `proof_bundle: null`). Feeds the PROOF-BACKCATALOG materializer scope (SCRUM-2916/2917) — the census confirms the input size for the Aug-4 materializer execute (~2.98M direct_anchored rows to label).
 - **A3 (label census never applied):** 0 rows labeled → the Aug-4 write/apply pass will be labeling from scratch across the whole scope; budget the resumable apply accordingly.
 
