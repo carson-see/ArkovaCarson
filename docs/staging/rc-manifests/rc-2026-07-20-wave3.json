@@ -17,7 +17,8 @@
     "9d513e85fceb58e9b4794ed29c2741902a017faf",
     "72ca4883eed34e45e8a5457bf5d8df658c520451",
     "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 ",
-    "99320c89750ce2518c218aa131c30b9ccd994c60"
+    "99320c89750ce2518c218aa131c30b9ccd994c60",
+    "81e39c8d9d595cf8f4120b64967252eb43a75cbf"
   ],
   "covered_main_shas": [
     "7bda2a08489e42ccab383e39b1f0f54c75e24225",
@@ -27,7 +28,8 @@
     "9d513e85fceb58e9b4794ed29c2741902a017faf",
     "72ca4883eed34e45e8a5457bf5d8df658c520451",
     "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 ",
-    "99320c89750ce2518c218aa131c30b9ccd994c60"
+    "99320c89750ce2518c218aa131c30b9ccd994c60",
+    "81e39c8d9d595cf8f4120b64967252eb43a75cbf"
   ],
   "included_prs": [
     {
@@ -77,8 +79,8 @@
     },
     {
       "number": 1573,
-      "head_sha": "b000adbaf9793bbd5f00638e733f850d546ce807",
-      "base_sha": "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
+      "head_sha": "23c9aefe6d419f1c71ebe9c4ce4a93dd503fea13",
+      "base_sha": "81e39c8d9d595cf8f4120b64967252eb43a75cbf",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "All required checks green on frozen head 848f204c; only Staging Soak Evidence Gate red pending this manifest. Honest limit: the GEMINI_LITE_MODEL=gemini-2.5-flash pin lives in .github/workflows/deploy-worker.yml (prod deploy env) and has no rig runtime surface under the admitted mock overlay \u2014 observable evidence is that the soaked train tip bd07cc0c carries the pin in both the canary and prod --set-env-vars lines; the train image containing this head served the full 12h soak.",
@@ -88,9 +90,10 @@
         "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
         "7bda2a08489e42ccab383e39b1f0f54c75e24225",
         "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 ",
-        "99320c89750ce2518c218aa131c30b9ccd994c60"
+        "99320c89750ce2518c218aa131c30b9ccd994c60",
+        "81e39c8d9d595cf8f4120b64967252eb43a75cbf"
       ],
-      "soak_head_note": "Head advanced 848f204c->b000adba by deploy-workflow security hardening (SonarCloud S6505/S6506/S8543: local tsc + https-only circom fetch). Deploy-workflow config only, no worker runtime surface \u2014 the GEMINI_LITE_MODEL pin soak is unaffected."
+      "soak_head_note": "Head 23c9aefe = GEMINI_LITE pin + deploy-workflow security hardening (S6505/S6506/S8543) + merge of current main (base was stale e35b5a22). Deploy-workflow config only, no worker runtime surface; soak unaffected. Merge-base 81e39c8d covered."
     },
     {
       "number": 1549,
