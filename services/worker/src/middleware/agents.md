@@ -2,6 +2,10 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-07-21 Partner Provisioning Gate (SCRUM-2990)
+
+- `partnerProvisioningGate.ts` gates the entire `/api/partner-provisioning` surface behind the `ENABLE_PARTNER_PROVISIONING` switchboard flag. Mirrors `featureGate.ts` (ENABLE_VERIFICATION_API / §1.9) exactly: `get_flag` RPC, 60s TTL cache, FAIL CLOSED on absent/false/non-boolean/read-error, and the env var is deliberately NOT a runtime fallback (unseeded flag row = surface dark, the intended pre-launch default; seeding is DBA/release-ops-owned). Dark = **404** (not the verification gate's 503): the surface is unreleased and must not disclose its existence. Registered in `flagRegistry.ts` `DB_FLAGS`; listed inert in `scripts/ci/config-drift/expected-prod-config.json` `pendingLaunchFlags` per the WH-6 precedent (pin the effective value only once the prod row is seeded).
+
 ## 2026-05-20 Visual Fraud Gate Note
 
 - `aiFeatureGate.ts` still exposes `ENABLE_VISUAL_FRAUD_DETECTION` for legacy route compatibility, but `/api/v1/ai/fraud/visual` now returns HTTP 410. Client-side worker fraud analysis is the only compliant forward path under SCRUM-1955.

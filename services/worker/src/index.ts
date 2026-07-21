@@ -475,6 +475,16 @@ app.use('/api/v2', apiV2Router);
 import { anchorRevokeRouter } from './api/anchor-revoke.js';
 app.use('/api/anchor', rateLimiters.api, requireAuthMw, anchorRevokeRouter);
 
+// Partner-account provisioning (SCRUM-2990) — RESERVED surface prefix, gated
+// behind the ENABLE_PARTNER_PROVISIONING switchboard flag (fail-closed: flag
+// absent/false/read-error → 404, surface dark; mirrors §1.9). No routes are
+// mounted in this slice (the skeleton is a pure state machine; table + routes
+// are the post-window continuation) — ANY future partner-provisioning router
+// MUST mount under this prefix so it inherits the gate. While dark or
+// routeless, every request here 404s and no provisioning is reachable.
+import { partnerProvisioningGate } from './middleware/partnerProvisioningGate.js';
+app.use('/api/partner-provisioning', partnerProvisioningGate(), rateLimiters.api);
+
 // SCRUM-1270 (R2-7) — append-only audit_events writer. Browser callers must use
 // this instead of inserting directly; migration 0276 dropped the authenticated
 // INSERT policy so direct writes now fail.
