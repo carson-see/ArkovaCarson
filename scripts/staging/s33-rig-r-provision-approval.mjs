@@ -40,12 +40,12 @@ const PROTECTED_V6_MODEL =
   'projects/270018525501/locations/us-central1/models/6611494259700793344';
 const PROTECTED_V6_MODEL_VERSION = `${PROTECTED_V6_MODEL}@1`;
 const TEMPORARY_ENDPOINT = Object.freeze({
-  id: '202607202346550002',
-  resource: 'projects/arkova1/locations/us-central1/endpoints/202607202346550002',
+  id: '6072023466',
+  resource: 'projects/arkova1/locations/us-central1/endpoints/6072023466',
   displayName: 'arkova-s33-rig-r-release-v6',
   modelVersionResource: PROTECTED_V6_MODEL_VERSION,
   checkpointId: '6',
-  deployedModelId: '202607202346552001',
+  deployedModelId: '6072023468',
   deployedModelDisplayName: 'arkova-s33-rig-r-release-v6',
   deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES',
   minReplicaCount: 1,
