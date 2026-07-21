@@ -215,11 +215,24 @@ describe('check-staging-evidence', () => {
       ).toBe('T0');
     });
 
-    it('returns T0 for standalone clean-room .mjs verification tools', () => {
+    it('returns T0 for clean-room .mjs verification tools in their dedicated trees', () => {
       expect(requiredTierFor(['scripts/clean-room/verify-proof.mjs']).tier).toBe('T0');
-      // A clean-room .mjs anywhere under scripts/ (not only the kpi3/clean-room dirs).
-      expect(requiredTierFor(['scripts/verify-anchor-standalone.mjs']).tier).toBe('T0');
-      expect(requiredTierFor(['scripts/audit/independent-check.mjs']).tier).toBe('T0');
+      expect(requiredTierFor(['scripts/kpi3/verify-anchor-standalone.mjs']).tier).toBe('T0');
+    });
+
+    it('G1 gate-integrity: .mjs under scripts/ OUTSIDE the dedicated trees is NOT T0', () => {
+      // Review finding (PR #1613): a blanket scripts/**.mjs carve-out would
+      // silently T0 future prod-shaped ops scripts. Pin the floor: an .mjs at
+      // the scripts/ root or in a non-allowlisted subdir keeps the T1 default.
+      expect(requiredTierFor(['scripts/verify-anchor-standalone.mjs']).tier).toBe('T1');
+      expect(requiredTierFor(['scripts/prod/apply-migration.mjs']).tier).toBe('T1');
+      // An .mjs rename/sibling of the prod-reachable S33 acceptance companion
+      // keeps its T2 PATH_RULE (extension-generalized by this PR).
+      expect(
+        requiredTierFor(['scripts/ci/s33-wave1-github-evidence.mjs']).tier,
+      ).toBe('T2');
+      // Outside the anchored ^scripts/ prefix nothing changes either.
+      expect(requiredTierFor(['services/worker/scripts/ops.mjs']).tier).toBe('T1');
     });
 
     it('returns T0 for a doc-only bundle spanning docs/, README, HANDOFF, and memory notes', () => {
@@ -271,7 +284,7 @@ describe('check-staging-evidence', () => {
       // Generic worker behavior → T2.
       expect(
         requiredTierFor([
-          'scripts/verify-anchor-standalone.mjs',
+          'scripts/kpi3/verify-anchor-standalone.mjs',
           'services/worker/src/index.ts',
         ]).tier,
       ).toBe('T2');
