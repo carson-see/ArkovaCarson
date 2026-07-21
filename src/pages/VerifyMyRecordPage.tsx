@@ -165,7 +165,7 @@ export function VerifyMyRecordPage() {
                       <CardContent className="p-4 space-y-3">
                         {credLabel && (
                           <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">Credential Type</span>
+                            <span className="text-muted-foreground">Document Type</span>
                             <span>{credLabel}</span>
                           </div>
                         )}

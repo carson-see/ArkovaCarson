@@ -120,7 +120,7 @@ ${fingerprint},degree.pdf,DEGREE,"{""issuer"": ""MIT""}"`;
     });
 
     // The review step should show credential type and metadata mapping selects
-    expect(screen.getByText('Credential Type')).toBeInTheDocument();
+    expect(screen.getByText('Document Type')).toBeInTheDocument();
     expect(screen.getByText('Metadata (JSON)')).toBeInTheDocument();
   });
 

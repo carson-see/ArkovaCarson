@@ -441,7 +441,7 @@ function TypeIcon({ type }: { type: 'record' | 'credential' | 'attestation' }) {
 }
 
 function TypeBadge({ type }: { type: 'record' | 'credential' | 'attestation' }) {
-  const labels = { record: 'Record', credential: 'Credential', attestation: 'Attestation' };
+  const labels = { record: 'Record', credential: 'Issued', attestation: 'Attestation' };
   const variants = { record: 'outline' as const, credential: 'default' as const, attestation: 'secondary' as const };
   return <Badge variant={variants[type]} className="text-[10px] px-1.5 py-0">{labels[type]}</Badge>;
 }
