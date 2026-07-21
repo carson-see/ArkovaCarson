@@ -26,3 +26,7 @@ App-level layout components: shell, sidebar, header, breadcrumbs, error boundari
 ## Do / Don't Rules
 - DO: Keep primary nav to max 5 items; overflow goes to Header user dropdown
 - DO: Use `ArkovaIcon`/`ArkovaLogo` from this folder for all branding
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+Breadcrumb label for /settings/credential-templates now "Document Templates" (via copy.ts NAV_POLISH_LABELS). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
