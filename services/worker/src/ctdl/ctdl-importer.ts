@@ -749,6 +749,31 @@ function hasCredentialClass(typeValue: unknown): boolean {
 }
 
 /**
+ * Resolve the CREDENTIAL-class `@type` label for an ADMITTED node (architect
+ * cross-review fix): a node typed
+ * `['ceterms:CredentialOrganization', 'ceterms:Certification']` is admitted by
+ * the any-entry filter, but `resolvePrimaryType` would label the record with
+ * the FIRST ceterms entry — the org class — which is exactly the
+ * class-confusion the filter exists to prevent. Returns the first entry that
+ * passes {@link isCtdlCredentialClass} (bounded by {@link MAX_TYPE_ENTRIES}),
+ * or null when none does (callers fall back to the record's existing type, so
+ * the resolution stays total). Scoped to the credential-filtered path only —
+ * the default unfiltered surface keeps `resolvePrimaryType` behavior.
+ */
+function resolveCredentialType(typeValue: unknown): string | null {
+  if (typeof typeValue === 'string') {
+    return isCtdlCredentialClass(typeValue) ? cleanString(typeValue) : null;
+  }
+  if (!Array.isArray(typeValue)) return null;
+  for (const entry of typeValue.slice(0, MAX_TYPE_ENTRIES)) {
+    if (typeof entry === 'string' && isCtdlCredentialClass(entry)) {
+      return cleanString(entry);
+    }
+  }
+  return null;
+}
+
+/**
  * Cross-`@id` issuer-name resolution (SCRUM-2913). Real CE credential nodes
  * reference their owner as a bare URI (`ceterms:ownedBy: ["https://…/resources/ce-…"]`);
  * when the referenced organization node happens to be PRESENT in the same
@@ -808,7 +833,14 @@ export function parseCtdlCredentials(
   for (const node of nodes) {
     if (!isRecord(node)) continue;
     if (!hasCredentialClass(node['@type'])) continue;
-    records.push(enrichIssuerFromGraph(parseCtdlNode(node, options), nodesById));
+    let record = parseCtdlNode(node, options);
+    // Mixed @type arrays: the record must be LABELED with the credential
+    // class that admitted it, never a co-listed non-credential class.
+    const credentialType = resolveCredentialType(node['@type']);
+    if (credentialType !== null && credentialType !== record.type) {
+      record = ImportedCtdlRecordSchema.parse({ ...record, type: credentialType });
+    }
+    records.push(enrichIssuerFromGraph(record, nodesById));
   }
   return records;
 }

@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CtdlImportError,
   ImportedCtdlRecordSchema,
+  isCtdlCredentialClass,
   MAX_GRAPH_NODES,
   parseCtdlCredentials,
   parseCtdlDocument,
@@ -205,6 +206,15 @@ describe('fuzz — mutations of the REAL CE graph fixture (deterministic seed)',
         for (const record of records) {
           const validated = ImportedCtdlRecordSchema.safeParse(record);
           expect(validated.success, `iteration ${i}: schema violation`).toBe(true);
+          // Architect cross-review invariant: a record admitted by the
+          // credential filter must never be LABELED with a non-credential
+          // class (mixed @type arrays must resolve to the credential entry).
+          if (record.type !== null) {
+            expect(
+              isCtdlCredentialClass(record.type),
+              `iteration ${i}: non-credential type label ${record.type}`,
+            ).toBe(true);
+          }
         }
       } catch (error) {
         expect(error, `iteration ${i}: unexpected error type`).toBeInstanceOf(CtdlImportError);

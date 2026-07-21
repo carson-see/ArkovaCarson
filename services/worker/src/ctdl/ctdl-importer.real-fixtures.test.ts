@@ -234,6 +234,29 @@ describe('CTDL credential-class filter', () => {
     expect(isCtdlCredentialClass('')).toBe(false);
   });
 
+  it('mixed @type arrays: the record type is the first CREDENTIAL class, never a co-listed non-credential class', () => {
+    // Architect cross-review finding: a node typed
+    // ['ceterms:CredentialOrganization', 'ceterms:Certification'] is ADMITTED
+    // by the any-entry filter, but the record's `type` label must be the
+    // credential class — labeling it with the org class would be exactly the
+    // class-confusion the filter exists to prevent.
+    const doc = {
+      '@graph': [
+        {
+          '@type': ['ceterms:CredentialOrganization', 'ceterms:Certification'],
+          'ceterms:name': { 'en-US': 'Mixed' },
+        },
+      ],
+    };
+    const records = parseCtdlCredentials(doc, OPTS);
+    expect(records).toHaveLength(1);
+    expect(records[0].type).toBe('ceterms:Certification');
+    // Scoped fix: the DEFAULT unfiltered surface keeps resolvePrimaryType
+    // behavior (first ceterms entry) unchanged.
+    const unfiltered = parseCtdlDocument(doc, OPTS);
+    expect(unfiltered[0].type).toBe('ceterms:CredentialOrganization');
+  });
+
   it('honors @type ARRAYS: a node is a credential if ANY type entry is a credential class', () => {
     const doc = {
       '@graph': [
