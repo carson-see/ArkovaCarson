@@ -11,7 +11,7 @@
  * Post-fix: card calls `useLatestComplianceAudit` → `/api/v1/compliance/audit?limit=1`
  * and renders overall_score / overall_grade / completed_at.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ComplianceScoreCard } from './ComplianceScoreCard';
@@ -28,8 +28,24 @@ function renderInRouter(ui: React.ReactElement) {
   return render(<MemoryRouter>{ui}</MemoryRouter>);
 }
 
+// Flake root cause: the card renders `Last audited {formatRelative(completed_at)}`
+// where `formatRelative` reads live `Date.now()` → "Nd ago", N = whole days since
+// the fixed mock `completed_at` (2026-04-25). That output is wall-clock dependent,
+// so the test's meaning changes every calendar day. On any day where N contains
+// the substring "87" (e.g. exactly 87 days later = 2026-07-21), the loose
+// `findByText(/87/)` score assertion ALSO matches the "87d ago" node and
+// `findByText` throws on multiple matches. Fix: freeze the clock (Date only —
+// leave real timers so Testing Library's async polling still works) to a fixed
+// instant just after `completed_at`, and assert the score exactly. Now
+// deterministic regardless of the day CI runs.
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-04-25T10:05:00Z'));
   mockedWorkerFetch.mockReset();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('ComplianceScoreCard (SCRUM-948)', () => {
@@ -56,11 +72,14 @@ describe('ComplianceScoreCard (SCRUM-948)', () => {
 
     renderInRouter(<ComplianceScoreCard />);
 
-    // Exact-match the score: a loose /87/ regex also matches the relative
-    // "87 days ago" timestamp whenever (today - completed_at) happens to equal
-    // the score (date-dependent flake, first tripped 2026-07-21).
+    // Exact match targets the gauge's score span (`{score}` → "87"), never the
+    // "Last audited …" relative-time node — so this cannot collide with a
+    // date-derived "87" even if the clock freeze is ever removed.
     expect(await screen.findByText('87')).toBeInTheDocument();
     expect(screen.getByText('B')).toBeInTheDocument();
+    // The relative-time render is now deterministic ("4m ago"), proving the
+    // clock is frozen and the score assertion is unambiguous.
+    expect(screen.getByText(/Last audited 4m ago/)).toBeInTheDocument();
   });
 
   it('hits /api/v1/compliance/audit?limit=1 (not /compliance/score)', async () => {
