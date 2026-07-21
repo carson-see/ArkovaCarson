@@ -2,10 +2,14 @@
  * G4 (PI-0.5 24h slice) — ENABLE_ORG_CREDIT_ENFORCEMENT switchboard seed.
  *
  * Pairs with the merged #1570 credit gate (SCRUM-2970, stable reference_id on
- * org_credit_deductions). The flag row must exist in `switchboard_flags` so
- * operators have a single visible switchboard entry for the launch-gated
- * credit-enforcement rollout — and it must seed OFF, because enforcement may
- * not be flipped ON before HakiChain's balance is funded (G3, founder-owned).
+ * org_credit_deductions). The row is an AUDIT MIRROR ONLY: the worker never
+ * reads it (runtime gate = the env-backed `config.enableOrgCreditEnforcement`
+ * from deploy-worker.yml, classified under ENV_FLAG_GETTERS — not DB_FLAGS —
+ * in flagRegistry.ts), and it is not rendered by PlatformControlsPage.tsx /
+ * src/lib/switchboard.ts. It must seed OFF and its description must say it is
+ * a mirror, because enforcement may not go ON before HakiChain's balance is
+ * funded (G3, founder-owned) — the enforced coupling lives in the R-5
+ * config-drift manifest pin, not in this row.
  *
  * These tests pin the MIGRATION + SEED artifacts (content-level, no DB):
  *  - off-by-default: the row seeds `enabled = false`;
@@ -75,5 +79,46 @@ describe('0360 ENABLE_ORG_CREDIT_ENFORCEMENT switchboard seed (G4, off-by-defaul
   it('seed.sql carries the flag with enabled = false so local resets stay non-enforcing', () => {
     const seed = fs.readFileSync(path.resolve(process.cwd(), 'supabase/seed.sql'), 'utf8');
     expect(seed).toMatch(/'ENABLE_ORG_CREDIT_ENFORCEMENT'\s*,\s*false\s*,/);
+  });
+
+  it('row descriptions state AUDIT MIRROR ONLY (worker never reads this row; env var is the gate)', () => {
+    // Review fix (a): a description implying the row is the control would let
+    // an operator "enable" enforcement with zero runtime effect while the
+    // audit trigger logs that it was enabled — silent free anchoring post-G3.
+    const migration = readFlagMigration();
+    const seed = fs.readFileSync(path.resolve(process.cwd(), 'supabase/seed.sql'), 'utf8');
+    for (const source of [migration, seed]) {
+      expect(source).toMatch(/AUDIT MIRROR ONLY[^']*does NOT gate enforcement/);
+      expect(source).toMatch(/env var in deploy-worker\.yml/);
+    }
+  });
+
+  it('flag_key literal matches the env key read by config.ts and registered in flagRegistry.ts ENV_FLAG_GETTERS', () => {
+    // Cross-pin: a rename on either side must fail this test, or the audit
+    // mirror silently drifts from the real (env-backed) runtime gate.
+    const KEY = 'ENABLE_ORG_CREDIT_ENFORCEMENT';
+    const migration = readFlagMigration();
+    expect(migration).toContain(`'${KEY}'`);
+
+    const configTs = fs.readFileSync(
+      path.resolve(process.cwd(), 'services/worker/src/config.ts'),
+      'utf8',
+    );
+    expect(configTs).toContain(`process.env.${KEY}`);
+
+    const flagRegistryTs = fs.readFileSync(
+      path.resolve(process.cwd(), 'services/worker/src/middleware/flagRegistry.ts'),
+      'utf8',
+    );
+    // Must be an ENV-backed registry entry (the audit-mirror premise), i.e.
+    // `KEY: () => config....` inside ENV_FLAG_GETTERS — not a DB_FLAGS string.
+    expect(flagRegistryTs).toMatch(
+      new RegExp(`${KEY}:\\s*\\(\\)\\s*=>\\s*config\\.enableOrgCreditEnforcement`),
+    );
+    const dbFlagsBlock = /const\s+DB_FLAGS\s*=\s*\[([\s\S]*?)\]\s*as\s+const\s*;/.exec(
+      flagRegistryTs,
+    );
+    expect(dbFlagsBlock).not.toBeNull();
+    expect(dbFlagsBlock?.[1]).not.toContain(KEY);
   });
 });
