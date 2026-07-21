@@ -2184,6 +2184,11 @@ const STAGING_TOOLING_ALLOW = [
   // in CI, never ships to prod runtime, so it is T0 tooling.
   /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
+  // SCRUM-2977: anti-hollow-soak pre-clock guard set. A pure guard module + CLI
+  // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
+  // CI (and locally over a soak-preflight JSON); never ships to prod runtime →
+  // T0 tooling. Same class as the check-* gates above.
+  /^scripts\/ci\/anti-hollow-soak\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,
   /^tests\/k6\//,

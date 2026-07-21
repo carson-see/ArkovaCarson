@@ -1501,11 +1501,11 @@ jobs:
           preflights=(docs/staging/soak-preflight/*.json)
           if [ ${#preflights[@]} -eq 0 ]; then
             echo "::notice::No soak-preflight JSON under docs/staging/soak-preflight/ — anti-hollow-soak guards have nothing to check (report-only, non-gating)."
-            npx tsx scripts/ci/anti-hollow-soak/guards.ts --report-only || true
+            node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --report-only || true
             exit 0
           fi
           for f in "${preflights[@]}"; do
             echo "== anti-hollow-soak (report-only) :: $f =="
-            npx tsx scripts/ci/anti-hollow-soak/guards.ts --report-only --input "$f" || true
+            node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --report-only --input "$f" || true
           done
           exit 0
