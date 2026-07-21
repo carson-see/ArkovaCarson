@@ -54,7 +54,7 @@ test.describe('Error States', () => {
 
       // Should show error or redirect — not blank page
       await expect(
-        page.getByRole('heading', { name: /Verify a Credential|Verification Failed|404/i })
+        page.getByRole('heading', { name: /Verify a Document|Verification Failed|404/i })
       ).toBeVisible({ timeout: 10000 });
     });
   });
