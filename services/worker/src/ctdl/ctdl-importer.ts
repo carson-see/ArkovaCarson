@@ -196,6 +196,17 @@ export interface ParseCtdlOptions {
    * stands and `resourceAvailableUntil` is preserved purely as data.
    */
   treatResourceExpiryAsCredentialExpired?: boolean;
+  /**
+   * SCRUM-2913 opt-in (the real-record "junk" fix). When `true`,
+   * `parseCtdlDocument` / `parseCtdlEnvelope` emit records ONLY for nodes whose
+   * `@type` is a CTDL credential class (see {@link isCtdlCredentialClass}), and
+   * resolve `@id`-referenced issuer names from sibling `@graph` nodes (see
+   * {@link parseCtdlCredentials}). A real CE `/graph/<ctid>` envelope carries
+   * the credential node PLUS organization / ConditionProfile / CostProfile /
+   * concept nodes; without the filter each of those becomes a junk record.
+   * **Default `false`** so the existing per-node surface is unchanged.
+   */
+  credentialNodesOnly?: boolean;
 }
 
 /** Prod CE Registry base — the default when no `registryBaseUrl` is injected. */
@@ -230,7 +241,7 @@ const ImportedCtdlIssuerSchema = z.object({
   name: z.string().nullable(),
 });
 
-const ImportedCtdlRecordSchema = z.object({
+export const ImportedCtdlRecordSchema = z.object({
   type: z.string().nullable(),
   name: z.string().nullable(),
   sourceId: z.string().nullable(),
@@ -598,7 +609,17 @@ export function parseCtdlNode(node: unknown, options: ParseCtdlOptions): Importe
   // into resourceAvailableUntil to mirror the serializer and keep round-trips
   // lossless — NOT a person's expiresAt.
   const resourceAvailableUntil = normalizeCtdlDate(node['ceterms:expirationDate']);
-  const sourceStatus = normalizeLifecycleStatus(node['ceterms:lifecycleStatusType']);
+  // REAL-record status spellings (SCRUM-2913): live CE Registry records carry
+  // the status under THREE keys — `ceterms:lifecycleStatusType` (synthetic /
+  // legacy), `ceterms:lifeCycleStatusType` (capital C — the actual CTDL term,
+  // seen on CE's own org record), or `ceterms:credentialStatusType`
+  // (`credentialStat:Active`, seen on real credential records). First present
+  // key wins; all three route through the same bounded normalizer.
+  const sourceStatus = normalizeLifecycleStatus(
+    node['ceterms:lifecycleStatusType'] ??
+      node['ceterms:lifeCycleStatusType'] ??
+      node['ceterms:credentialStatusType'],
+  );
   const status = reconcileStatus(
     sourceStatus,
     resourceAvailableUntil,
@@ -655,12 +676,152 @@ function nodesOf(doc: unknown): unknown[] {
   return nodes;
 }
 
+// -----------------------------------------------------------------------------
+// CTDL credential-class filter (SCRUM-2913 — the real-record "junk" fix)
+// -----------------------------------------------------------------------------
+
+/**
+ * Enumerated CTDL credential classes (`@type` values that describe a
+ * CREDENTIAL, not an organization/profile/concept). Sourced from the CTDL
+ * types list; the fallback pattern below catches credential-shaped ceterms
+ * classes added to CTDL after this enumeration.
+ */
+export const CTDL_CREDENTIAL_CLASSES: ReadonlySet<string> = new Set([
+  'ceterms:Certification',
+  'ceterms:License',
+  'ceterms:Certificate',
+  'ceterms:Degree',
+  'ceterms:Badge',
+  'ceterms:DigitalBadge',
+  'ceterms:OpenBadge',
+  'ceterms:BachelorDegree',
+  'ceterms:MasterDegree',
+  'ceterms:DoctoralDegree',
+  'ceterms:AssociateDegree',
+  'ceterms:MicroCredential',
+  'ceterms:ApprenticeshipCertificate',
+  'ceterms:JourneymanCertificate',
+  'ceterms:MasterCertificate',
+  'ceterms:ProfessionalDoctorate',
+  'ceterms:QualityAssuranceCredential',
+  'ceterms:SecondarySchoolDiploma',
+  'ceterms:GeneralEducationDevelopment',
+  'ceterms:CertificateOfCompletion',
+]);
+
+// Fallback for credential-shaped ceterms classes NOT in the enumeration
+// (CTDL adds subclasses over time — e.g. a future ceterms:TradeDiploma).
+const CREDENTIAL_CLASS_FALLBACK = /^ceterms:.*(Certificat|Licen|Degree|Badge|Diploma|Credential)/;
+
+// REAL-record trap (seen in the live /graph fixture): CTDL has NON-credential
+// classes whose names CONTAIN a credential keyword — `ceterms:QACredentialOrganization`,
+// `ceterms:CredentialOrganization`, `ceterms:CredentialAlignmentObject`,
+// `ceterms:CredentialingAction`, `ceterms:CredentialPerson`. A bare keyword
+// regex would emit junk records for every one of them, so agent/support-class
+// SUFFIXES veto the fallback (never the explicit enumeration above).
+const NON_CREDENTIAL_CLASS_VETO = /(Organization|Person|Agent|AlignmentObject|Action|Profile|Manifest|Framework|Scheme|Concept|Assessment|LearningOpportunity)$/;
+
+/**
+ * True when `type` (a single `@type` string) names a CTDL CREDENTIAL class:
+ * either enumerated in {@link CTDL_CREDENTIAL_CLASSES}, or matching the
+ * credential-shaped fallback pattern without hitting an agent/support-class
+ * veto suffix.
+ */
+export function isCtdlCredentialClass(type: string | null): boolean {
+  if (!type) return false;
+  const clean = type.trim();
+  if (clean.length === 0) return false;
+  if (CTDL_CREDENTIAL_CLASSES.has(clean)) return true;
+  if (NON_CREDENTIAL_CLASS_VETO.test(clean)) return false;
+  return CREDENTIAL_CLASS_FALLBACK.test(clean);
+}
+
+/**
+ * True when a node's raw `@type` value (string OR JSON-LD array) carries ANY
+ * credential class. Array scanning is bounded by {@link MAX_TYPE_ENTRIES}.
+ */
+function hasCredentialClass(typeValue: unknown): boolean {
+  if (typeof typeValue === 'string') return isCtdlCredentialClass(typeValue);
+  if (!Array.isArray(typeValue)) return false;
+  return typeValue
+    .slice(0, MAX_TYPE_ENTRIES)
+    .some((entry) => typeof entry === 'string' && isCtdlCredentialClass(entry));
+}
+
+/**
+ * Cross-`@id` issuer-name resolution (SCRUM-2913). Real CE credential nodes
+ * reference their owner as a bare URI (`ceterms:ownedBy: ["https://…/resources/ce-…"]`);
+ * when the referenced organization node happens to be PRESENT in the same
+ * `@graph`, lift its `ceterms:name` (and ctid) onto the issuer reference.
+ * Strictly same-document — never a network fetch — and cycle-proof by
+ * construction: resolution is a single Map lookup (index built in one pass, no
+ * recursion), so duplicated or self-referencing `@id`s cannot loop.
+ */
+function enrichIssuerFromGraph(
+  record: ImportedCtdlRecord,
+  nodesById: ReadonlyMap<string, Record<string, unknown>>,
+): ImportedCtdlRecord {
+  const issuer = record.issuer;
+  if (!issuer || issuer.id === null || issuer.name !== null) return record;
+  const referenced = nodesById.get(issuer.id);
+  if (!referenced) return record;
+  const name = resolveCtdlLangString(referenced['ceterms:name']);
+  const ctid = issuer.ctid ?? extractCtid(referenced['ceterms:ctid']);
+  if (name === null && ctid === issuer.ctid) return record;
+  // Re-validated: every record leaving this module passes the Zod schema.
+  return ImportedCtdlRecordSchema.parse({ ...record, issuer: { ...issuer, name, ctid } });
+}
+
+/**
+ * Parse ONLY the CREDENTIAL nodes of a CTDL document (SCRUM-2913 entry-point).
+ *
+ * A real CE `/graph/<ctid>` envelope carries the credential node PLUS
+ * organization nodes, ConditionProfile / CostProfile blank nodes, and
+ * ceasn/skos concept nodes; the unfiltered per-node surface turns each of
+ * those into a junk record. This entry-point:
+ *  - emits a record only for nodes whose `@type` (string or array, any entry)
+ *    is a CTDL credential class per {@link isCtdlCredentialClass};
+ *  - skips non-object and non-credential `@graph` entries entirely (they are
+ *    not credentials, so they are filtered — not a structural throw);
+ *  - resolves `@id`-referenced issuer names from sibling nodes in the SAME
+ *    document (two-pass: index by `@id`, then a single bounded lookup per
+ *    record — no recursion, no network, cycle-proof).
+ * The {@link MAX_GRAPH_NODES} DoS cap applies before any parsing.
+ */
+export function parseCtdlCredentials(
+  doc: unknown,
+  options: ParseCtdlOptions,
+): ImportedCtdlRecord[] {
+  const nodes = nodesOf(doc);
+
+  // Pass 1 — index nodes by @id for same-document issuer resolution. First
+  // occurrence wins on duplicated @ids (deterministic; no last-writer races).
+  const nodesById = new Map<string, Record<string, unknown>>();
+  for (const node of nodes) {
+    if (!isRecord(node)) continue;
+    const id = cleanString(node['@id']);
+    if (id && !nodesById.has(id)) nodesById.set(id, node);
+  }
+
+  // Pass 2 — parse credential-class nodes only.
+  const records: ImportedCtdlRecord[] = [];
+  for (const node of nodes) {
+    if (!isRecord(node)) continue;
+    if (!hasCredentialClass(node['@type'])) continue;
+    records.push(enrichIssuerFromGraph(parseCtdlNode(node, options), nodesById));
+  }
+  return records;
+}
+
 /**
  * Parse a CTDL JSON-LD document into internal records — one per node in the
  * `@graph` (or the single top-level node). Untrusted third-party input: shape
- * problems on individual fields resolve to null, not a throw.
+ * problems on individual fields resolve to null, not a throw. With
+ * `options.credentialNodesOnly` set, delegates to {@link parseCtdlCredentials}
+ * (credential-class nodes only + same-document issuer resolution).
  */
 export function parseCtdlDocument(doc: unknown, options: ParseCtdlOptions): ImportedCtdlRecord[] {
+  if (options.credentialNodesOnly === true) return parseCtdlCredentials(doc, options);
   return nodesOf(doc).map((node) => parseCtdlNode(node, options));
 }
 
