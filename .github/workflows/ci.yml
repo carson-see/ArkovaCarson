@@ -1503,4 +1503,4 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
-        run: npx tsx scripts/ci/check-evidence-identity.ts --report-only
+        run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts --report-only

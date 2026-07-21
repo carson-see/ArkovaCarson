@@ -186,6 +186,22 @@ describe('check-staging-evidence', () => {
       ).toBe('T0');
     });
 
+    it('returns T0 for the SCRUM-2897 evidence-identity gate + its report-only ci.yml wiring', () => {
+      // The full changed-file set of PR #1625: a pure CI identity-check module +
+      // tests, its agents.md, and a report-only ci.yml job. No runtime /
+      // migration / API / frontend surface → T0.
+      expect(
+        requiredTierFor([
+          'scripts/ci/check-evidence-identity.ts',
+          'scripts/ci/check-evidence-identity.test.ts',
+          'scripts/ci/agents.md',
+          'scripts/ci/check-staging-evidence.ts',
+          'scripts/ci/check-staging-evidence.test.ts',
+          '.github/workflows/ci.yml',
+        ]).tier,
+      ).toBe('T0');
+    });
+
     it('returns T0 for worker load-test tooling scripts', () => {
       expect(
         requiredTierFor([

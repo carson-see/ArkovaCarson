@@ -2153,6 +2153,11 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
+  // SCRUM-2897: evidence-identity gate — a pure body/head-SHA identity checker
+  // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
+  // CI (reads PR body/head/draft from the event context); never ships to prod
+  // runtime → T0 tooling. Same class as the staging-evidence gate above.
+  /^scripts\/ci\/check-evidence-identity(\.test)?\.ts$/,
   // S0-4.2 / S0-4.3 (epic S0-E4): release-pipeline CI tooling. These run only
   // in CI and never ship to prod runtime, so they are T0 tooling.
   /^scripts\/ci\/check-ledger-numeric-integrity(\.test)?\.ts$/,
