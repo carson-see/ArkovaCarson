@@ -116,3 +116,17 @@ Reserved by the Lane-1 S3 chain-primitives PR (`lane1/s3-chain-primitives-tests`
 ## Recent migrations (PR #1455)
 
 - **0357_scrum2486_secured_chain_integrity_trigger.sql** (FILE-ONLY / PRE-SOAK / NOT APPLIED): SCRUM-2486 "SECURED ⇒ on-chain receipt present" integrity trigger. Adds `enforce_secured_anchor_chain_present()` (SECURITY DEFINER, `SET search_path = public`) + a `BEFORE INSERT OR UPDATE OF status` trigger on `public.anchors` that refuses any transition INTO `status='SECURED'` unless `chain_tx_id IS NOT NULL AND chain_timestamp IS NOT NULL`. GATED behind the GUC `arkova.secured_enforce_chain_present` (default OFF) with the same two-phase fail-safe rollout as 0340 (SCRUM-2335): Phase 1 (this file) is inert; Phase 2 flips the GUC on after a back-catalogue backfill audit + a clean 48h T3 staging soak, with no further migration. **Authored file-only this window per the 3.25 ART decision (net-new never-soaked T3 work); it is NOT applied to prod or any rig and does NOT close SCRUM-2486.** The remaining ACs — the hash-invariance backfill gate (AC-2), the frozen-fixture `evidence_package_hash` regression test (AC-3, lives in worker test-land, `evidence_package_hash` is derived, not an `anchors` column), and the importer-can't-set-SECURED guard (AC-4) — are Sprint-4 deliverables tracked on the ticket. Tier T3 (touches `supabase/migrations/`). Rollback in the file header.
+
+## PI-0.5 24h-slice migration reservations (SCRUM-2979, 2026-07-20/21)
+
+Landed per the Architect-review finding that the prior watch-window ledger (`docs/staging/rig-reservation-ledger-and-migration-registry-2026-07-20.md`) was NOT collision-proof on its own — this file's reservation table, not a session memo, is what the uniqueness lint and `feedback_migration_number_vs_reservations` convention actually check. Next-free rule: `next = max(main numeric head, this table, open-PR migrations) + 1`.
+
+| `0358` | `lane1/24h-window-20260720` (soaking) / PR #1552 | SCRUM-2692 | `0358_scrum2692_anchor_txid_journal.sql` | **IN-FLIGHT T3 soak** (rig `railb220260719`), matures 2026-07-21T17:13Z; prod-apply precedes merge per §0 rule 10 |
+| `0359` | `claude/ecstatic-allen-0bf8a8` / PR #1615 | SCRUM-2917 | proof-materializer row-shape (`receipt_id` idempotency + rollback marker) | RESERVED — pre-soak, file-only |
+| `0360` | `claude/ecstatic-allen-0bf8a8` / PR #1615 | SCRUM-2917 | forge-safe 0340 trigger predicate (requires real `op_return_payload`) | RESERVED — pre-soak, file-only |
+| `0361` | (unclaimed) | SCRUM-2916 | watermark partial index | RESERVED — placeholder, not yet filed |
+| `0362` | `lane2/scrum-2913-public-registry-url-allowlist-0362` / PR #1618 | SCRUM-2913 (dependency) | `get_public_anchor` allow-list widening (`registry_url`, `ce_envelope_sha256`) | RESERVED — pre-soak, file-only |
+| `0363` | `lane2/g4-org-credit-enforcement-flag` / PR #1614 | SCRUM-2990 (G4) | `ENABLE_ORG_CREDIT_ENFORCEMENT` default-OFF seed | RESERVED — pre-soak, file-only (renumbered from `0360`, which collided with #1615's independent claim above) |
+| `0364+` | advisor train (post-PI-0.5) | — | not yet filed | RESERVED band — advisor train does not inherit any PI-0.5 prefix; claim by adding a row here in the same PR |
+
+All rows above are Draft/`do-not-merge`, pre-soak, and NOT applied to prod except `0358` (in-flight, apply precedes merge per standing policy). Full rig-reservation cross-reference: `docs/staging/rig-reservation-ledger-and-migration-registry-2026-07-20.md`.
