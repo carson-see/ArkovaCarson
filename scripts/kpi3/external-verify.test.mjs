@@ -9,11 +9,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   verifyAnchorProof,
   computeMerkleRoot,
   extractCanonicalFingerprint,
   parseBlockHeader,
+  compactToTarget,
+  MAINNET_POW_LIMIT,
 } from './external-verify.mjs';
 import {
   VALID_PROOF,
@@ -37,6 +40,42 @@ test('parseBlockHeader binds header -> block hash and merkle_root', () => {
   assert.equal(h.blockHash, CONSTANTS.REAL_BLOCK_HASH);
   assert.equal(h.merkleRoot, CONSTANTS.REAL_MERKLE_ROOT);
 });
+
+// ── Unit: proof-of-work (SCRUM-2917 review — forge-resistance) ────────────────
+test('compactToTarget decodes nBits (0x1d00ffff -> mainnet floor; sign bit -> null)', () => {
+  assert.equal(compactToTarget(0x1d00ffff), MAINNET_POW_LIMIT);
+  assert.equal(compactToTarget(0x00800000), null); // negative sign bit
+  // A real, harder mainnet target is strictly below the floor.
+  const realTarget = compactToTarget(Buffer.from(CONSTANTS.REAL_BLOCK_HEADER, 'hex').readUInt32LE(72));
+  assert.ok(realTarget > 0n && realTarget < MAINNET_POW_LIMIT, 'real block target below the floor');
+});
+
+test('parseBlockHeader: the REAL mainnet header satisfies its own PoW', () => {
+  assert.equal(parseBlockHeader(CONSTANTS.REAL_BLOCK_HEADER).powValid, true);
+});
+
+// Build an 80-byte header (hex) committing a chosen merkle root (display order),
+// with a chosen nBits (stored little-endian) — an attacker's forging primitive.
+function buildHeader({ merkleRootDisplay, nbitsLE, version = '00000020', prev = '00'.repeat(32), time = '00000000', nonce = '00000000' }) {
+  const mrLE = Buffer.from(merkleRootDisplay, 'hex').reverse().toString('hex');
+  return version + prev + mrLE + time + nbitsLE + nonce;
+}
+const dsha = (hex) => createHash('sha256').update(createHash('sha256').update(Buffer.from(hex, 'hex')).digest()).digest();
+// A fake explorer built entirely around an attacker-forged header + merkle proof.
+function forgedExplorer(headerHex, { fingerprint, txid, height = 800000, tipGap = 10 } = {}) {
+  const blockHash = Buffer.from(dsha(headerHex)).reverse().toString('hex');
+  const map = {
+    [`tx/${txid}`]: {
+      txid,
+      status: { confirmed: true, block_height: height, block_hash: blockHash },
+      vout: [{ scriptpubkey: '6a24' + '41524b56' + fingerprint, scriptpubkey_type: 'op_return' }],
+    },
+    [`tx/${txid}/merkle-proof`]: { block_height: height, pos: 0, merkle: [] }, // pos 0, no siblings -> root == txid
+    [`block/${blockHash}/header`]: headerHex,
+    'blocks/tip/height': String(height + tipGap),
+  };
+  return { fetchPath: async (p) => { if (!(p in map)) { const e = new Error('404'); e.status = 404; throw e; } return map[p]; }, blockHash };
+}
 
 test('extractCanonicalFingerprint: canonical anchor -> fingerprint at offset [4:36]', () => {
   assert.equal(extractCanonicalFingerprint(CONSTANTS.REAL_OP_RETURN_SCRIPT), CONSTANTS.REAL_FINGERPRINT);
@@ -64,9 +103,40 @@ test('VALID direct-anchor proof passes full SPV (commit+depth+merkle+header+issu
   assert.equal(r.checks.depthOk, true);
   assert.equal(r.checks.merkleIncluded, true);
   assert.equal(r.checks.headerBinds, true);
+  assert.equal(r.checks.powValid, true);
   assert.equal(r.checks.blockMatch, true);
   assert.equal(r.checks.issuerMatch, true);
   assert.equal(r.reason, null);
+});
+
+test('FORGERY (SCRUM-2917): self-consistent header with a TRIVIAL target is REJECTED', async () => {
+  // The zero-cost attack: mint a header committing an attacker-chosen merkle
+  // root (== the fake txid, via a pos-0 empty-branch proof) with an absurdly
+  // easy nBits (0x207fffff, regtest max) so no mining is needed. Hash + merkle
+  // + commit + depth all self-check — only the PoW floor stops it.
+  const fingerprint = CONSTANTS.REAL_FINGERPRINT;
+  const txid = 'ab'.repeat(32);
+  const header = buildHeader({ merkleRootDisplay: txid, nbitsLE: 'ffff7f20' }); // 0x207fffff
+  const { fetchPath } = forgedExplorer(header, { fingerprint, txid });
+  const r = await verifyAnchorProof({ fingerprint, txid }, fetchPath);
+  assert.equal(r.checks.headerBinds, true, 'the forged header IS self-consistent (hash matches)');
+  assert.equal(r.checks.powValid, false);
+  assert.equal(r.verified, false);
+  assert.equal(r.reason, 'header_pow_insufficient');
+});
+
+test('FORGERY (SCRUM-2917): floor-difficulty header that was never mined is REJECTED', async () => {
+  // Harder attack: set nBits to the mainnet floor (0x1d00ffff) so the target is
+  // valid, but present an unmined header whose dsha256 does NOT meet the target.
+  const fingerprint = CONSTANTS.REAL_FINGERPRINT;
+  const txid = 'cd'.repeat(32);
+  const header = buildHeader({ merkleRootDisplay: txid, nbitsLE: 'ffff001d', nonce: '2a000000' }); // 0x1d00ffff
+  // Sanity: this header does NOT satisfy the floor target (essentially certain).
+  assert.equal(parseBlockHeader(header).powValid, false);
+  const { fetchPath } = forgedExplorer(header, { fingerprint, txid });
+  const r = await verifyAnchorProof({ fingerprint, txid }, fetchPath);
+  assert.equal(r.checks.powValid, false);
+  assert.equal(r.reason, 'header_pow_insufficient');
 });
 
 test('NEGATIVE CONTROL: tampered fingerprint is REJECTED', async () => {

@@ -13,9 +13,11 @@
  *   - neither → `unverifiable_missing_inputs`, never a fake pass.
  *
  * Deterministic + offline: chain layer uses injected path->response maps
- * (the #1611 fixtures for the direct path; a synthetic single-tx block for
- * the batch path — the verifier checks header binding, not PoW target, so a
- * locally-built header exercises the full SPV path with zero network).
+ * (the #1611 fixtures for the direct path — a REAL mainnet block that meets its
+ * own PoW; a synthetic single-tx block for the batch path, MINED to an easy
+ * target (nBits 0x207fffff, ~2 nonce tries) so it genuinely satisfies the PoW
+ * check, with the batch calls passing an accept-any `powLimit` since the
+ * synthetic difficulty is below the mainnet floor). Full SPV, zero network.
  * Run: node --test scripts/kpi3/haki-bundle-verify.test.mjs
  */
 import { test } from 'node:test';
@@ -40,17 +42,33 @@ const APP_BRANCH = [{ hash: LEAF_B, position: 'right' }];
 // merkle-proof ({merkle: [], pos: 0}) recomputes it — full SPV, zero network.
 const BATCH_TXID = hex(dsha256(Buffer.from('haki-batch-tx')));
 const BATCH_BLOCK = 960000;
+// Accept-any PoW floor for the synthetic (below-mainnet-difficulty) batch block.
+const ANY_POW = (1n << 256n) - 1n;
+// nBits 0x207fffff (regtest max) → an easy but non-trivial target we can mine in
+// ~2 tries, so the synthetic header genuinely satisfies its own PoW.
+const EASY_BITS_LE = 'ffff7f20';
+const EASY_TARGET = 0x7fffffn << 232n; // == compactToTarget(0x207fffff)
 // 80-byte header: version(4) ‖ prev(32) ‖ merkle_root(32 = txid, internal LE
 // byte order) ‖ time(4) ‖ bits(4) ‖ nonce(4). parseBlockHeader reads bytes
-// [36:68] reversed → display-order root == BATCH_TXID.
-const BATCH_HEADER = hex(Buffer.concat([
-  Buffer.from('00c00520', 'hex'),
-  Buffer.alloc(32),
-  Buffer.from(BATCH_TXID, 'hex').reverse(),
-  Buffer.from('7aed1d6a', 'hex'),
-  Buffer.from('8f060217', 'hex'),
-  Buffer.from('28046ee4', 'hex'),
-]));
+// [36:68] reversed → display-order root == BATCH_TXID. We grind the nonce until
+// the header's double-SHA256 falls at or below EASY_TARGET (real, if tiny, PoW).
+function mineHeader(merkleRootDisplay) {
+  const prefix = Buffer.concat([
+    Buffer.from('00c00520', 'hex'),
+    Buffer.alloc(32),
+    Buffer.from(merkleRootDisplay, 'hex').reverse(),
+    Buffer.from('7aed1d6a', 'hex'),
+    Buffer.from(EASY_BITS_LE, 'hex'),
+  ]);
+  for (let nonce = 0; nonce < 1_000_000; nonce++) {
+    const nb = Buffer.alloc(4);
+    nb.writeUInt32LE(nonce);
+    const header = Buffer.concat([prefix, nb]);
+    if (BigInt('0x' + hex(Buffer.from(dsha256(header)).reverse())) <= EASY_TARGET) return hex(header);
+  }
+  throw new Error('mineHeader: no nonce satisfied the easy target (should be ~2 tries)');
+}
+const BATCH_HEADER = mineHeader(BATCH_TXID);
 const BATCH_BLOCK_HASH = hex(Buffer.from(dsha256(Buffer.from(BATCH_HEADER, 'hex'))).reverse());
 // Canonical batch commitment: OP_RETURN <push 36B: ARKV ‖ app-tree root>.
 const BATCH_OP_RETURN = '6a24' + '41524b56' + APP_ROOT;
@@ -144,7 +162,7 @@ test('computeAppTreeRoot: CVE-2012-2459 forged self-pair rejected when index+cou
 
 // ── Batch bundle: two-layer verification ─────────────────────────────────────
 test('BATCH happy path: app-tree recompute + full SPV on merkle_root both pass', async () => {
-  const r = await verifyHakiBundle(makeResponse(makeBundle()), {}, fakeExplorer(BATCH_EXPLORER_PATHS));
+  const r = await verifyHakiBundle(makeResponse(makeBundle()), { powLimit: ANY_POW }, fakeExplorer(BATCH_EXPLORER_PATHS));
   assert.equal(r.verified, true, `expected verified, got verdict=${r.verdict} reason=${JSON.stringify(r)}`);
   assert.equal(r.verdict, 'verified');
   assert.equal(r.mode, 'batch_bundle');
@@ -180,7 +198,7 @@ test('BATCH: tampered fingerprint fails the app-tree layer', async () => {
 test('BATCH: chain-layer failure surfaces as failed_chain with the SPV reason', async () => {
   // App tree is intact; the on-chain block height disagrees with the bundle.
   const bundle = makeBundle({ block_height: BATCH_BLOCK + 1 });
-  const r = await verifyHakiBundle(makeResponse(bundle), {}, fakeExplorer(BATCH_EXPLORER_PATHS));
+  const r = await verifyHakiBundle(makeResponse(bundle), { powLimit: ANY_POW }, fakeExplorer(BATCH_EXPLORER_PATHS));
   assert.equal(r.verified, false);
   assert.equal(r.verdict, 'failed_chain');
   assert.equal(r.failed_layer, 'chain');

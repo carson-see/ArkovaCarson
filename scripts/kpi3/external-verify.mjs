@@ -14,16 +14,31 @@
  *   3. INCLUDE  — the tx is in the block: its merkle proof recomputes the block
  *                 header's merkle_root (SPV inclusion, double-SHA256).
  *   4. HEADER   — that header double-SHA256-hashes to the stated block hash, so
- *                 the merkle_root is bound to a specific proof-of-work block.
- *   5. ISSUER   — (optional) the tx was funded by Arkova's expected treasury
+ *                 the merkle_root is bound to a specific block.
+ *   5. POW      — that block hash actually satisfies the proof-of-work target
+ *                 the header itself encodes (nBits), AND that target does not
+ *                 exceed the network minimum-difficulty floor. Without BOTH
+ *                 legs, steps 3-4 only prove internal self-consistency: an
+ *                 explorer/fixture could mint, at ZERO cost, a header whose
+ *                 dsha256 equals its own claimed hash and whose merkle_root is
+ *                 an attacker-chosen value (SCRUM-2917 review finding). Binding
+ *                 to real PoW makes such a header cost actual mining.
+ *   6. ISSUER   — (optional) the tx was funded by Arkova's expected treasury
  *                 address. Without this the tool proves "a fingerprint is on
  *                 Bitcoin", NOT "Arkova put it there" — see verdict notes.
  *
  * This upgrades the check from explorer-TRUST (status.confirmed says so) to
- * explorer-VERIFY (the header + merkle proof are recomputed locally; the
- * explorer can only lie by producing a valid PoW header, which it cannot forge).
- * Residual trust: that the returned block hash is on the most-work chain — depth
- * mitigates; a full header-chain check is out of scope for a single-record demo.
+ * explorer-VERIFY: the header + merkle proof are recomputed locally and the
+ * header must meet its own encoded PoW target at or below the network floor, so
+ * a forged header costs real proof-of-work rather than nothing. Residual trust
+ * (stated honestly, §1.5): the tool does NOT verify the header sits on the
+ * MOST-WORK chain — a resourced attacker could still mine a min-difficulty
+ * block, and the tip/depth check trusts the explorer's stated tip. A full
+ * header-chain / cumulative-work check is out of scope for a single-record
+ * tool; confirmation depth against the explorer's tip is the mitigation.
+ * NETWORK NOTE: the PoW floor defaults to MAINNET (Arkova prod anchors are
+ * mainnet). Signet blocks are signature-committed, not PoW-secured the same
+ * way — pass opts.powLimit / skip this tool for non-mainnet anchors.
  *
  * No Arkova dependencies by design: a stranger could run this file verbatim.
  * The explorer is a single injected async `fetchPath(path)` so tests run offline.
@@ -37,6 +52,15 @@ import { createHash } from 'node:crypto';
 
 export const ARKOVA_MAGIC_HEX = '41524b56'; // "ARKV"
 export const DEFAULT_MIN_CONFIRMATIONS = 6;
+
+/**
+ * Mainnet maximum target (minimum difficulty) — the target encoded by nBits
+ * 0x1d00ffff. A header whose encoded target exceeds this floor is rejected, so
+ * an attacker cannot set a trivially-easy target and grind a fake header at
+ * near-zero cost. (Real mainnet blocks have targets FAR below this floor.)
+ */
+export const MAINNET_POW_LIMIT =
+  0x00000000ffff0000000000000000000000000000000000000000000000000000n;
 
 // Hex-length constants for the OP_RETURN commitment (1 byte = 2 hex chars).
 const MAGIC_HEX_LEN = ARKOVA_MAGIC_HEX.length;       // 8  (4 bytes: ARKV)
@@ -67,13 +91,40 @@ export function computeMerkleRoot(txidHex, siblingsHex, pos) {
   return Buffer.from(h).reverse().toString('hex'); // back to display order
 }
 
-/** Parse an 80-byte block header hex → {blockHash, merkleRoot} (display order). */
-export function parseBlockHeader(headerHex) {
+/**
+ * Decode Bitcoin "compact" nBits (read as a little-endian uint32 from the
+ * header at bytes [72:76]) to its full target as a BigInt. Returns null when
+ * the sign bit is set (an invalid/negative target); 0n when the mantissa is 0.
+ */
+export function compactToTarget(compact) {
+  if (compact & 0x00800000) return null; // sign bit set → invalid
+  const exponent = compact >>> 24;
+  const mantissa = compact & 0x007fffff;
+  if (mantissa === 0) return 0n;
+  return exponent <= 3
+    ? BigInt(mantissa) >> BigInt(8 * (3 - exponent))
+    : BigInt(mantissa) << BigInt(8 * (exponent - 3));
+}
+
+/**
+ * Parse an 80-byte block header hex → {blockHash, merkleRoot, target, powValid}
+ * (hashes in display order). `powValid` is true only when the header's
+ * double-SHA256 (as a 256-bit integer) is ≤ the target its own nBits encodes,
+ * AND that target is a valid value at or below `powLimit` (the network minimum-
+ * difficulty floor). This is the check that makes a forged header cost real PoW.
+ */
+export function parseBlockHeader(headerHex, powLimit = MAINNET_POW_LIMIT) {
   if (!/^[0-9a-f]{160}$/i.test(headerHex)) return null;
   const bytes = Buffer.from(headerHex, 'hex');
   const blockHash = Buffer.from(dsha256(bytes)).reverse().toString('hex');
   const merkleRoot = Buffer.from(bytes.subarray(36, 68)).reverse().toString('hex');
-  return { blockHash, merkleRoot };
+  const target = compactToTarget(bytes.readUInt32LE(72));
+  // blockHash is the reversed dsha256 (big-endian display), so BigInt('0x'+hash)
+  // IS the numeric PoW value that must fall at or below the encoded target.
+  const powValid =
+    target !== null && target > 0n && target <= powLimit &&
+    BigInt('0x' + blockHash) <= target;
+  return { blockHash, merkleRoot, target, powValid };
 }
 
 /**
@@ -117,6 +168,7 @@ export function extractCanonicalFingerprint(scriptHex) {
  */
 export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
   const minConf = opts.minConfirmations ?? DEFAULT_MIN_CONFIRMATIONS;
+  const powLimit = opts.powLimit ?? MAINNET_POW_LIMIT;
   const checks = {
     confirmed: false,
     fingerprintCommitted: false,
@@ -124,6 +176,7 @@ export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
     depthOk: null,
     merkleIncluded: null,
     headerBinds: null,
+    powValid: null,
     blockMatch: null,
     issuerMatch: null,
     committed: null,
@@ -197,11 +250,18 @@ export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
   if (!isHex64(blockHash)) { checks.headerBinds = false; return done(false, 'bad_block_hash'); }
   let headerHex;
   try { headerHex = String(await fetchPath(`block/${blockHash}/header`)).trim(); } catch { headerHex = null; }
-  const header = headerHex ? parseBlockHeader(headerHex) : null;
+  const header = headerHex ? parseBlockHeader(headerHex, powLimit) : null;
   if (!header) { checks.headerBinds = false; return done(false, 'block_header_unavailable'); }
 
   checks.headerBinds = header.blockHash === blockHash;
   if (!checks.headerBinds) return done(false, 'header_hash_mismatch');
+
+  // POW — the header must satisfy the proof-of-work target it itself encodes,
+  // at or below the network floor. This is what turns a self-consistent forged
+  // header (matching hash + attacker-chosen merkle root) from a zero-cost lie
+  // into one that costs real mining. Checked BEFORE trusting its merkle_root.
+  checks.powValid = header.powValid === true;
+  if (!checks.powValid) return done(false, 'header_pow_insufficient');
 
   checks.merkleIncluded = header.merkleRoot === computedRoot;
   if (!checks.merkleIncluded) return done(false, 'tx_not_in_block');

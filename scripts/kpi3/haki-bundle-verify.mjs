@@ -126,7 +126,9 @@ const HONEST_DIRECT_NOTES = [
  *        body (200 MerkleProofResponse or 404 {error, proof_error_code}), or
  *        null when only CLI flags drive the check.
  * @param {{fingerprint?, txid?, direct?, expectedBlockHeight?,
- *          expectedIssuerAddress?, minConfirmations?}} opts
+ *          expectedIssuerAddress?, minConfirmations?, powLimit?}} opts
+ *        `powLimit` (BigInt) overrides the mainnet PoW floor — set only for
+ *        non-mainnet/synthetic blocks; mainnet Haki anchors use the default.
  * @param {(path:string)=>Promise<any>} fetchPath  injected explorer client
  * @returns honest result — see module docstring for the three shapes.
  */
@@ -159,7 +161,7 @@ export async function verifyHakiBundle(response, opts = {}, fetchPath) {
         expectedIssuerAddress: opts.expectedIssuerAddress,
       },
       fetchPath,
-      { minConfirmations: opts.minConfirmations },
+      { minConfirmations: opts.minConfirmations, powLimit: opts.powLimit },
     );
     return {
       mode: 'direct_anchor',
@@ -255,7 +257,7 @@ async function verifyBatchBundle(bundle, opts, fetchPath) {
       expectedIssuerAddress: opts.expectedIssuerAddress,
     },
     fetchPath,
-    { minConfirmations: opts.minConfirmations },
+    { minConfirmations: opts.minConfirmations, powLimit: opts.powLimit },
   );
   const verified = chain.verified === true;
   if (verified) {
