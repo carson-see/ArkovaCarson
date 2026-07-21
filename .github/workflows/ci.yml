@@ -921,7 +921,9 @@ jobs:
         # job is conditional on machine/anchor/chain code actually changing.
         if: steps.tla-changed.outputs.changed == 'true'
         working-directory: machines
-        run: npx tla-precheck check bitcoinAnchor.machine.ts
+        run: |
+          npx tla-precheck check bitcoinAnchor.machine.ts
+          npx tla-precheck check partnerProvisioning.machine.ts
 
   # Migration safety gate (SCALE-20) — verify migrations are additive-only
   migration-check:

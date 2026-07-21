@@ -44,14 +44,23 @@ const approvedBy = variable("approvedBy");
  * is caught when the flow is later wired to the DB. When the table lands, add the
  * runtimeAdapter/ownedTables/ownedColumns metadata and `build`.
  *
- * VERIFICATION STATUS (2026-07-20): DSL-valid and type-checks clean under
- * machines/tsconfig.json. The exhaustive `tla-precheck check` (TLC) run could NOT
- * execute in this worktree — tla-precheck v0.1.7's loader expects TypeScript
- * ^5.9.3 but the repo has TS 6.0.3, so its pre-compile aborts with TS5096/TS5103
- * for EVERY machine here (calibrationWorkflow/bitcoinAnchor included), not this
- * model. Run `check` in a TS-5 env / CI to produce the equivalence certificate.
- * All four invariants were verified by manual reachability trace (see PR notes);
- * that trace also caught + fixed an over-strong invariant on the cancel path.
+ * VERIFICATION STATUS (2026-07-21): `npx tla-precheck check
+ * partnerProvisioning.machine.ts` PASSES on this host (TLA2TOOLS_JAR=
+ * ~/.tla/tla2tools.jar). Certificate (tier `pr`): proofPassed: true;
+ * graphEquivalence equivalent: true; all 4 invariants checked
+ * (sodApproverNotRequester, provisionedImpliesApproved,
+ * nonNoneImpliesRequested, approvedBySetImpliesPastRequested);
+ * ts/tlc state counts 121/121, edge counts 308/308; deadlockChecked: false
+ * (PROVISIONED/REJECTED are terminal BY DESIGN — see proof tier note);
+ * symmetry used; graphHash
+ * 0958423852bf4befd11e28327f827f3a4090483d92bfd9a06cea271aea0b1aeb;
+ * TLC "Model checking completed. No error has been found." (proof AND
+ * equivalence runs). The earlier 2026-07-20 note claiming TLC could not run
+ * under repo TS 6.0.3 was WRONG (review FIX 4): the failures were (a) a
+ * nightly maxEstimatedStates over the tool's 100_000 graph-equivalence cap
+ * and (b) TLC deadlock-flagging the by-design terminal states — both fixed
+ * in the proof tiers below. CI runs `check` on this machine in the
+ * tla-verify job (ci.yml).
  */
 export const partnerProvisioningMachine = defineMachine({
   version: 2,
@@ -185,6 +194,10 @@ export const partnerProvisioningMachine = defineMachine({
         budgets: {
           maxEstimatedStates: 50_000,
         },
+        // PROVISIONED and REJECTED are terminal BY DESIGN (the invariants above
+        // prove the interesting properties); a fully-terminal world is a valid
+        // end state, not a liveness bug — so TLC's deadlock check is off.
+        checks: { deadlock: false },
       },
       nightly: {
         domains: {
@@ -192,8 +205,11 @@ export const partnerProvisioningMachine = defineMachine({
           PartnerAccounts: ids({ prefix: "p", size: 3 }),
         },
         budgets: {
-          maxEstimatedStates: 200_000,
+          // 100_000 is the tool's cap for graph-equivalence tiers (review FIX 1:
+          // 200_000 failed `check` validation before TLC ran).
+          maxEstimatedStates: 100_000,
         },
+        checks: { deadlock: false },
       },
     },
   },

@@ -53,6 +53,10 @@ export async function isPartnerProvisioningEnabled(): Promise<boolean> {
       { error, flagKey: 'ENABLE_PARTNER_PROVISIONING' },
       'Failed to read ENABLE_PARTNER_PROVISIONING flag from DB, failing closed',
     );
+    // The negative result is cached for the TTL so a failing switchboard is not
+    // hammered per-request. Symmetrically, a cached POSITIVE can serve up to
+    // ~60s after the DB flag is flipped off — the same accepted staleness
+    // window as featureGate.ts (ENABLE_VERIFICATION_API).
     flagCache = { value: false, expiresAt: now + FLAG_CACHE_TTL_MS };
     return false;
   }
@@ -71,7 +75,15 @@ export function partnerProvisioningGate() {
     const enabled = await isPartnerProvisioningEnabled();
 
     if (!enabled) {
-      res.status(404).json({ error: 'not_found' });
+      // BYTE-IDENTICAL to the index.ts BUG-14 404 catch-all body (review FIX 5):
+      // any divergence lets a prober distinguish this reserved surface from a
+      // nonexistent route, defeating the non-disclosure rationale. Do NOT
+      // next() into the catch-all instead — the gate must terminate here so a
+      // future router mounted under the prefix can never be reached dark.
+      res.status(404).json({
+        error: 'not_found',
+        message: `The requested endpoint does not exist. See /api/docs for available endpoints.`,
+      });
       return;
     }
 

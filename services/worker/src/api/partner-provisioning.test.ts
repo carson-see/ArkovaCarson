@@ -138,6 +138,13 @@ describe('approvePartnerRequest RBAC + separation of duties', () => {
     expect(() => approvePartnerRequest(record, requester, AT)).toThrow(/separation of duties|own request/i);
   });
 
+  it('the requester may NOT reject their own request either (SoD covers the reject leg)', () => {
+    const { record } = makeRequest();
+    expect(() => rejectPartnerRequest(record, requester, 'changed my mind', AT)).toThrow(
+      /separation of duties|own request/i,
+    );
+  });
+
   it('an outsider (wrong org, not platform admin) may NOT approve', () => {
     const { record } = makeRequest();
     expect(() => approvePartnerRequest(record, outsider, AT)).toThrow(/not authorized|RBAC/i);

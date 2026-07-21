@@ -167,7 +167,7 @@ describe('partnerProvisioningGate middleware (SCRUM-2990)', () => {
       expect(res.status).not.toHaveBeenCalled();
     });
 
-    it('returns 404 when the flag is off (surface dark)', async () => {
+    it('returns 404 when the flag is off — body BYTE-IDENTICAL to the index.ts catch-all (non-disclosure)', async () => {
       mockFlagRpc(false);
       const { req, res, next } = createMockReqRes();
 
@@ -175,7 +175,12 @@ describe('partnerProvisioningGate middleware (SCRUM-2990)', () => {
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(404);
-      expect(res.json).toHaveBeenCalledWith({ error: 'not_found' });
+      // Must match the BUG-14 catch-all shape exactly, or a prober can
+      // distinguish the gated (reserved) surface from a nonexistent route.
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'not_found',
+        message: 'The requested endpoint does not exist. See /api/docs for available endpoints.',
+      });
     });
 
     it('returns 404 on a DB read failure even when the env var is true (fail closed)', async () => {
@@ -187,7 +192,10 @@ describe('partnerProvisioningGate middleware (SCRUM-2990)', () => {
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(404);
-      expect(res.json).toHaveBeenCalledWith({ error: 'not_found' });
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'not_found',
+        message: 'The requested endpoint does not exist. See /api/docs for available endpoints.',
+      });
     });
 
     it('returns 404 when the flag row is simply unseeded (absent → dark, safe default)', async () => {
