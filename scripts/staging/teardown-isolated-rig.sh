@@ -67,9 +67,9 @@ RIG_G1_A_RUNTIME_SA="s33-rig-g1-a-runtime@arkova1.iam.gserviceaccount.com"
 RIG_G1_B_NAME="s33-g1-b"
 RIG_G1_B_SERVICE="arkova-worker-s33-g1-b-staging"
 RIG_G1_B_RUNTIME_SA="s33-rig-g1-b-runtime@arkova1.iam.gserviceaccount.com"
-RIG_G1_B_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/202607202346550001"
-RIG_G1_B_ENDPOINT_ID="202607202346550001"
-RIG_G1_B_DEPLOYED_MODEL_ID="202607202346551001"
+RIG_G1_B_ENDPOINT="projects/arkova1/locations/us-central1/endpoints/6072023465"
+RIG_G1_B_ENDPOINT_ID="6072023465"
+RIG_G1_B_DEPLOYED_MODEL_ID="6072023467"
 RIG_R_LEASE_BUCKET="arkova1-s33-immutable-authority-ledger"
 RIG_R_LEASE_PREFIX="s33/rig-leases"
 RIG_R_LEASE_OBJECT_NAME="${RIG_R_LEASE_PREFIX}/RIG-R.singleton.json"
@@ -261,7 +261,7 @@ elif [[ "$RIG_ID" == "RIG-G1-A" || "$RIG_ID" == "RIG-G1-B" ]]; then
   elif [[ "$VERTEX_ENDPOINT" != "$RIG_G1_B_ENDPOINT" \
     || "$VERTEX_MODEL" != "$RIG_R_PROTECTED_V6_MODEL" \
     || "$DEPLOYED_MODEL_ID" != "$RIG_G1_B_DEPLOYED_MODEL_ID" ]]; then
-    echo "ERROR: RIG-G1-B teardown requires exact endpoint 202607202346550001/deployment 202607202346551001 and preserves the canonical v6 model." >&2
+    echo "ERROR: RIG-G1-B teardown requires exact endpoint 6072023465/deployment 6072023467 and preserves the canonical v6 model." >&2
     exit 2
   fi
 elif [[ "$RIG_ID" == "RIG-R" ]]; then

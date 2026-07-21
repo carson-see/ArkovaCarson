@@ -6,12 +6,12 @@ export interface G1Scope {
   readonly rigId: 'RIG-G1';
   readonly leaseId: string;
   readonly corpusDigest: string;
-  readonly endpointId: '202607202346550001';
-  readonly endpointResource: 'projects/arkova1/locations/us-central1/endpoints/202607202346550001';
+  readonly endpointId: '6072023465';
+  readonly endpointResource: 'projects/arkova1/locations/us-central1/endpoints/6072023465';
   readonly endpointDisplayName: 'arkova-s33-rig-g1-b-tuned-v6';
   readonly vertexModelResource: 'projects/270018525501/locations/us-central1/models/6611494259700793344@1';
   readonly checkpointId: '6';
-  readonly deployedModelId: '202607202346551001';
+  readonly deployedModelId: '6072023467';
   readonly deployedModelDisplayName: 'arkova-s33-rig-g1-b-tuned-v6';
   readonly deploymentResourcesMode: 'TUNED_GEMINI_AUTOMATIC_RESOURCES';
   readonly minReplicaCount: 1;
