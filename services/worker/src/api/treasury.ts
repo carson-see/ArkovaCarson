@@ -194,7 +194,7 @@ export async function handleTreasuryStatus(
         };
       } else {
         logger.warn({ error: wr.utxos.reason }, 'Failed to fetch wallet data for treasury status');
-        result.error = 'Wallet data temporarily unavailable';
+        result.error = 'Fee Account data temporarily unavailable';
       }
       if (wr.blockchainInfo.status === 'fulfilled') {
         result.network = {
@@ -207,7 +207,7 @@ export async function handleTreasuryStatus(
     }
   } else {
     logger.warn({ error: walletResult.reason }, 'Failed to fetch wallet data for treasury status');
-    result.error = 'Wallet data temporarily unavailable';
+    result.error = 'Fee Account data temporarily unavailable';
   }
 
   // Unpack 2: Fees

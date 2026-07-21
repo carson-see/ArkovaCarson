@@ -183,6 +183,12 @@ function isTimeoutError(error: unknown): boolean {
   );
 }
 
+/** Timeout → friendly copy; Error → its message; anything else → fallback. */
+function timeoutAwareMessage(error: unknown, timedOutLabel: string, fallback: string): string {
+  if (isTimeoutError(error)) return timedOutLabel;
+  return error instanceof Error ? error.message : fallback;
+}
+
 function toAnchorStats(recentAnchors: WorkerTreasuryStatus['recentAnchors']): TreasuryAnchorStats | null {
   if (!recentAnchors) return null;
 
@@ -353,14 +359,14 @@ export function useTreasuryBalance() {
         workerError = data.error ?? null;
       } else if (workerSettled.ok) {
         workerError = TREASURY_LABELS.WORKER_RETURNED_STATUS(workerSettled.response.status);
-      } else if (isTimeoutError(workerSettled.error)) {
-        // SCRUM-2901: the 8s status budget fired — degrade with friendly copy,
-        // not the raw DOMException text.
-        workerError = TREASURY_LABELS.WORKER_STATUS_TIMED_OUT(WORKER_TIMEOUT_MS / 1000);
       } else {
-        workerError = workerSettled.error instanceof Error
-          ? workerSettled.error.message
-          : TREASURY_LABELS.WORKER_REQUEST_FAILED;
+        // SCRUM-2901: an 8s-budget TimeoutError degrades with friendly copy,
+        // not the raw DOMException text.
+        workerError = timeoutAwareMessage(
+          workerSettled.error,
+          TREASURY_LABELS.WORKER_STATUS_TIMED_OUT(WORKER_TIMEOUT_MS / 1000),
+          TREASURY_LABELS.WORKER_REQUEST_FAILED,
+        );
       }
 
       // ─── Worker cache freshness leg ─────────────────────────────────
@@ -379,11 +385,11 @@ export function useTreasuryBalance() {
         }));
       } else {
         // SCRUM-2901: map the 8s budget's TimeoutError to friendly copy.
-        const healthError = isTimeoutError(healthSettled.error)
-          ? TREASURY_LABELS.WORKER_HEALTH_TIMED_OUT(WORKER_TIMEOUT_MS / 1000)
-          : healthSettled.error instanceof Error
-            ? healthSettled.error.message
-            : TREASURY_LABELS.WORKER_HEALTH_REQUEST_FAILED;
+        const healthError = timeoutAwareMessage(
+          healthSettled.error,
+          TREASURY_LABELS.WORKER_HEALTH_TIMED_OUT(WORKER_TIMEOUT_MS / 1000),
+          TREASURY_LABELS.WORKER_HEALTH_REQUEST_FAILED,
+        );
         setSourceState((prev) => ({ ...prev, cacheStale: true, healthError }));
       }
 
@@ -464,11 +470,11 @@ export function useTreasuryBalance() {
     } catch (err) {
       if (signal.aborted || isAbortError(err)) return;
       if (isMountedRef.current) {
-        if (isTimeoutError(err)) {
-          setError(TREASURY_LABELS.WORKER_STATUS_TIMED_OUT(WORKER_TIMEOUT_MS / 1000));
-        } else {
-          setError(err instanceof Error ? err.message : TREASURY_LABELS.FETCH_FAILED);
-        }
+        setError(timeoutAwareMessage(
+          err,
+          TREASURY_LABELS.WORKER_STATUS_TIMED_OUT(WORKER_TIMEOUT_MS / 1000),
+          TREASURY_LABELS.FETCH_FAILED,
+        ));
       }
     } finally {
       if (isMountedRef.current) {

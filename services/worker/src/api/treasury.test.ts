@@ -178,7 +178,7 @@ describe('handleTreasuryStatus', () => {
     const response = vi.mocked(res.json).mock.calls[0][0] as Record<string, unknown>;
     // Wallet failed but fees and stats should still be populated
     expect(response.wallet).toBeNull();
-    expect(response.error).toBe('Wallet data temporarily unavailable');
+    expect(response.error).toBe('Fee Account data temporarily unavailable');
     expect(response.fees).toEqual(
       expect.objectContaining({ estimatorName: 'Static', currentRateSatPerVbyte: 1 }),
     );
@@ -301,7 +301,7 @@ describe('handleTreasuryStatus — per-leg status budget (SCRUM-2901)', () => {
     expect(res.json).toHaveBeenCalledTimes(1);
     const response = vi.mocked(res.json).mock.calls[0][0] as Record<string, unknown>;
     expect(response.wallet).toBeNull();
-    expect(response.error).toBe('Wallet data temporarily unavailable');
+    expect(response.error).toBe('Fee Account data temporarily unavailable');
     // Fast legs still ship despite the hung wallet leg.
     expect(response.fees).toEqual(
       expect.objectContaining({ estimatorName: 'Static', currentRateSatPerVbyte: 1 }),

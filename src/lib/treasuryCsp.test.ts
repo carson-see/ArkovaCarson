@@ -24,37 +24,32 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/** Parse a CSP header string into a `{ directive: sources[] }` map. */
+/**
+ * Parse a CSP header string into a `{ directive: sources[] }` map.
+ *
+ * Hardened per review of a1358c63:
+ *  - Directive names are case-insensitive per the CSP spec (`Connect-Src`
+ *    must not slip past the scoping guard) — normalized to lowercase.
+ *  - Duplicate directives FAIL the test. Browsers honor the FIRST occurrence
+ *    of a duplicated directive; a keep-last parser would let a prepended
+ *    duplicate `connect-src` (without mempool.space) be the one browsers
+ *    enforce while this guard read the ignored copy and passed.
+ */
 function parseCspDirectives(csp: string): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const part of csp.split(';')) {
     const trimmed = part.trim().replace(/\s+/g, ' ');
     if (!trimmed) continue;
     const tokens = trimmed.split(' ');
-    out[tokens[0]] = tokens.slice(1);
+    const directive = tokens[0].toLowerCase();
+    expect(
+      out[directive],
+      `duplicate CSP directive "${directive}" — browsers honor only the FIRST occurrence; deduplicate the policy`,
+    ).toBeUndefined();
+    out[directive] = tokens.slice(1);
   }
   return out;
 }
-
-function vercelConnectSrc(): string[] {
-  const vercel = JSON.parse(readFileSync(resolve(REPO_ROOT, 'vercel.json'), 'utf8'));
-  const cspHeader = vercel.headers
-    ?.flatMap((h: { headers?: Array<{ key: string; value: string }> }) => h.headers ?? [])
-    .find((kv: { key: string }) => kv.key === 'Content-Security-Policy');
-  expect(cspHeader, 'vercel.json must define a Content-Security-Policy header').toBeTruthy();
-  return parseCspDirectives(cspHeader.value)['connect-src'] ?? [];
-}
-
-function indexHtmlConnectSrc(): string[] {
-  const html = readFileSync(resolve(REPO_ROOT, 'index.html'), 'utf8');
-  const match = html.match(
-    /http-equiv="Content-Security-Policy"\s*content="([\s\S]*?)"/,
-  );
-  expect(match, 'index.html must define a CSP meta tag').toBeTruthy();
-  return parseCspDirectives(match![1])['connect-src'] ?? [];
-}
-
-const MEMPOOL_ORIGIN = 'https://mempool.space';
 
 function vercelDirectives(): Record<string, string[]> {
   const vercel = JSON.parse(readFileSync(resolve(REPO_ROOT, 'vercel.json'), 'utf8'));
@@ -71,6 +66,38 @@ function indexHtmlDirectives(): Record<string, string[]> {
   expect(match, 'index.html must define a CSP meta tag').toBeTruthy();
   return parseCspDirectives(match![1]);
 }
+
+function vercelConnectSrc(): string[] {
+  return vercelDirectives()['connect-src'] ?? [];
+}
+
+function indexHtmlConnectSrc(): string[] {
+  return indexHtmlDirectives()['connect-src'] ?? [];
+}
+
+const MEMPOOL_ORIGIN = 'https://mempool.space';
+
+describe('parseCspDirectives hardening (review of a1358c63)', () => {
+  it('matches directive names case-insensitively (CSP spec)', () => {
+    const directives = parseCspDirectives(
+      "Connect-Src 'self' https://mempool.space; IMG-SRC 'self'",
+    );
+    expect(directives['connect-src']).toContain('https://mempool.space');
+    expect(directives['img-src']).toEqual(["'self'"]);
+  });
+
+  it('fails on duplicate directives instead of keeping the last (browsers honor the FIRST)', () => {
+    expect(() =>
+      parseCspDirectives("connect-src 'self'; connect-src 'self' https://mempool.space"),
+    ).toThrow(/duplicate CSP directive/);
+  });
+
+  it('fails on case-variant duplicate directives', () => {
+    expect(() =>
+      parseCspDirectives("connect-src 'self'; Connect-Src 'self' https://mempool.space"),
+    ).toThrow(/duplicate CSP directive/);
+  });
+});
 
 describe('treasury CSP enrichment origins (SCRUM-2901)', () => {
   it('vercel.json connect-src allows mempool.space (prod header)', () => {
