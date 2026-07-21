@@ -50,7 +50,7 @@ import { captureSchedulerPauseAlert } from '../utils/sentry.js';
 import {
   MAINTENANCE_PAUSE_ALLOWLIST,
   lookupMaintenancePause,
-  validateMaintenancePauseAllowlist,
+  structuralAllowlistErrors,
   type MaintenancePauseAllowlistEntry,
 } from './scheduler-pause-allowlist.js';
 import {
@@ -93,6 +93,7 @@ export type PauseAuditClassification =
   | 'sanctioned-maintenance'
   | 'expired-sanction'
   | 'unexpected-pause'
+  | 'unexpected-state'
   | 'unsanctioned-resume'
   | 'missing-job';
 
@@ -266,9 +267,9 @@ export async function evaluateSchedulerPauseAudit(
       continue;
     }
 
-    // Live ENABLED (or any non-paused state) while the manifest codifies a
-    // pause: drift the other way. Reported (the manifest or the console is
-    // wrong and must be reconciled) but not paging — the job is running.
+    // Live non-PAUSED state while the manifest codifies a pause: drift the
+    // other way. Reported (the manifest or the console is wrong and must be
+    // reconciled) but not paging — the job is not silently stopped.
     if (!job.enabled) {
       findings.push({
         jobId: job.id,
@@ -280,6 +281,27 @@ export async function evaluateSchedulerPauseAudit(
         message:
           `${job.id} is ${live.state} in Cloud Scheduler but the manifest codifies it PAUSED ` +
           `(by ${job.pausedBy ?? 'unknown'}) — manifest/console drift; reconcile in the next PR.`,
+      });
+      continue;
+    }
+
+    // Manifest-enabled but live state is neither ENABLED nor PAUSED
+    // (DISABLED — system-set when the job errors — or an unrecognized state):
+    // the job is NOT running and no one codified a stop. Silence here would
+    // hide a broken feeder behind "no unexpected pauses" (review fix 2).
+    // Pause attribution does not apply — there is no PauseJob audit entry for
+    // a system DISABLE.
+    if (live.state !== 'ENABLED') {
+      findings.push({
+        jobId: job.id,
+        classification: 'unexpected-state',
+        firing: true,
+        actorPrincipal: null,
+        actorSource: null,
+        pausedAt: null,
+        message:
+          `${job.id} is ${live.state} in Cloud Scheduler but the manifest says ENABLED — ` +
+          `the job is not scheduled to run (DISABLED is system-set on error) and no pause was codified; page a human.`,
       });
     }
     // Live ENABLED + manifest enabled → healthy; no finding (silence budget
@@ -313,6 +335,16 @@ export interface GcpSourceOptions {
 const SCHEDULER_API_BASE = 'https://cloudscheduler.googleapis.com/v1';
 const LOGGING_ENTRIES_LIST = 'https://logging.googleapis.com/v2/entries:list';
 export const DEFAULT_PAUSE_AUDIT_LOOKBACK_DAYS = 90;
+
+/**
+ * entries.list on a narrow filter routinely returns EMPTY pages with a
+ * nextPageToken (the backend scans in bounded slices). A single-page read
+ * would report "no pause actor" while the real PauseJob entry sits deeper in
+ * the scan — silently defeating attribution in the exact 10-week-old-pause
+ * incident shape (review fix 3). Follow tokens through empty pages, bounded
+ * so a pathological scan cannot walk the whole log.
+ */
+export const MAX_AUDIT_LOG_PAGES = 10;
 
 /**
  * Cloud Scheduler jobs.list-backed state source. Paginates; maps resource
@@ -383,42 +415,58 @@ export function createAuditLogPauseActorSource(opts: AuditLogSourceOptions): Pau
 
   return {
     async lookupPauseActor(jobId: string): Promise<PauseActorRecord | null> {
-      const token = await getToken();
       const nowMs = opts.nowMs ?? Date.now();
       const sinceIso = new Date(nowMs - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
       const resourceName = `projects/${projectId}/locations/${locationId}/jobs/${jobId}`;
+      // NOT status.code>0: a FAILED PauseJob attempt (permission denied etc.)
+      // records the ATTEMPTING principal — attributing them as the pauser
+      // would name someone who did not pause anything (review fix 6). A
+      // successful call carries no error status (field absent or code 0),
+      // which the NOT-comparison matches.
       const filter =
         `resource.type="cloud_scheduler_job" AND ` +
         `protoPayload.methodName="google.cloud.scheduler.v1.CloudScheduler.PauseJob" AND ` +
         `protoPayload.resourceName="${resourceName}" AND ` +
+        `NOT protoPayload.status.code>0 AND ` +
         `timestamp>="${sinceIso}"`;
 
-      const res = await fetchImpl(LOGGING_ENTRIES_LIST, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          resourceNames: [`projects/${projectId}`],
-          filter,
-          orderBy: 'timestamp desc',
-          pageSize: 1,
-        }),
-      });
-      if (!res.ok) {
-        throw new Error(`Cloud Logging entries.list failed: ${res.status}`);
+      let pageToken: string | undefined;
+      for (let page = 0; page < MAX_AUDIT_LOG_PAGES; page += 1) {
+        const token = await getToken();
+        const res = await fetchImpl(LOGGING_ENTRIES_LIST, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            resourceNames: [`projects/${projectId}`],
+            filter,
+            orderBy: 'timestamp desc',
+            pageSize: 1,
+            ...(pageToken ? { pageToken } : {}),
+          }),
+        });
+        if (!res.ok) {
+          throw new Error(`Cloud Logging entries.list failed: ${res.status}`);
+        }
+        const body = (await res.json()) as {
+          entries?: Array<{
+            timestamp?: string;
+            protoPayload?: { authenticationInfo?: { principalEmail?: string } };
+          }>;
+          nextPageToken?: string;
+        };
+        const entry = body.entries?.[0];
+        const principal = entry?.protoPayload?.authenticationInfo?.principalEmail;
+        if (principal) {
+          return { principal, pausedAt: entry?.timestamp ?? null };
+        }
+        // Empty page: only continue while the API says the scan is unfinished.
+        if (!body.nextPageToken) return null;
+        pageToken = body.nextPageToken;
       }
-      const body = (await res.json()) as {
-        entries?: Array<{
-          timestamp?: string;
-          protoPayload?: { authenticationInfo?: { principalEmail?: string } };
-        }>;
-      };
-      const entry = body.entries?.[0];
-      const principal = entry?.protoPayload?.authenticationInfo?.principalEmail;
-      if (!principal) return null;
-      return { principal, pausedAt: entry?.timestamp ?? null };
+      return null; // page cap hit — treat as not found (bounded scan)
     },
   };
 }
@@ -466,7 +514,18 @@ export async function runSchedulerPauseAudit(
   if (manifestErrors.length > 0) {
     throw new Error(`Scheduler pause audit: invalid manifest — ${manifestErrors.join('; ')}`);
   }
-  const allowlistErrors = validateMaintenancePauseAllowlist(allowlist, nowMs);
+  // STRUCTURAL allowlist errors only (missing reason/approver, tz-less or
+  // unparseable expiry, duplicate, unknown jobId): fatal — the config cannot
+  // be trusted. EXPIRY is deliberately NOT fatal here (review fix 1): an
+  // expired entry with the job still paused is the exact rot scenario this
+  // dead-man exists for. If expiry threw, the deployed audit would 500 →
+  // Scheduler retry crash-loop and the fingerprinted `expired-sanction` page
+  // (with attribution) would NEVER fire. The evaluator classifies it instead;
+  // the strict full validation (incl. expiry) remains the CI unit gate.
+  const allowlistErrors = structuralAllowlistErrors(
+    allowlist,
+    manifest.map((j) => j.id),
+  );
   if (allowlistErrors.length > 0) {
     throw new Error(`Scheduler pause audit: invalid allowlist — ${allowlistErrors.join('; ')}`);
   }

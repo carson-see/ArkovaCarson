@@ -14,9 +14,11 @@ import { describe, it, expect } from 'vitest';
 import {
   MAINTENANCE_PAUSE_ALLOWLIST,
   lookupMaintenancePause,
+  structuralAllowlistErrors,
   validateMaintenancePauseAllowlist,
   type MaintenancePauseAllowlistEntry,
 } from './scheduler-pause-allowlist.js';
+import { SCHEDULER_MANIFEST } from './scheduler-manifest.js';
 
 const NOW = Date.parse('2026-07-21T12:00:00Z');
 
@@ -71,6 +73,15 @@ describe('lookupMaintenancePause', () => {
     const result = lookupMaintenancePause('fetch-edgar', NOW, [broken]);
     expect(result.status).not.toBe('active');
   });
+
+  it('a timezone-less expiry NEVER sanctions a pause (Date.parse would read it server-local — fail closed)', () => {
+    const tzless: MaintenancePauseAllowlistEntry = {
+      ...activeEntry,
+      expiresAt: '2099-08-01T00:00:00', // far future but no Z/offset
+    };
+    const result = lookupMaintenancePause('fetch-edgar', NOW, [tzless]);
+    expect(result.status).not.toBe('active');
+  });
 });
 
 describe('validateMaintenancePauseAllowlist', () => {
@@ -105,11 +116,51 @@ describe('validateMaintenancePauseAllowlist', () => {
     const errors = validateMaintenancePauseAllowlist([expiredEntry], NOW);
     expect(errors.some((e) => /expired/i.test(e))).toBe(true);
   });
+
+  it('rejects a timezone-less expiry (explicit Z/offset required; Date.parse reads tz-less as server-local)', () => {
+    const errors = validateMaintenancePauseAllowlist(
+      [{ ...activeEntry, expiresAt: '2099-08-01T00:00:00' }],
+      NOW,
+    );
+    expect(errors.some((e) => /timezone|offset/i.test(e))).toBe(true);
+  });
+
+  it('rejects an entry whose jobId is not in the monitored set (typo = sanction silently never applies)', () => {
+    const errors = validateMaintenancePauseAllowlist([activeEntry], NOW, ['batch-anchors']);
+    expect(errors.some((e) => /not in the monitored|unknown job/i.test(e))).toBe(true);
+  });
+
+  it('accepts an entry whose jobId IS in the monitored set', () => {
+    const errors = validateMaintenancePauseAllowlist([activeEntry], NOW, ['fetch-edgar']);
+    expect(errors).toEqual([]);
+  });
+});
+
+describe('structuralAllowlistErrors (runner-fatal set — FIX 1 split)', () => {
+  it('does NOT include expiry: an expired-but-structurally-valid entry passes (runtime fires expired-sanction instead of crashing)', () => {
+    expect(structuralAllowlistErrors([expiredEntry])).toEqual([]);
+  });
+
+  it('still rejects structural defects (missing reason, unparseable/tz-less expiry, duplicate, unknown jobId)', () => {
+    expect(structuralAllowlistErrors([{ ...activeEntry, reason: '' }]).length).toBeGreaterThan(0);
+    expect(structuralAllowlistErrors([{ ...activeEntry, expiresAt: 'nope' }]).length).toBeGreaterThan(0);
+    expect(
+      structuralAllowlistErrors([{ ...activeEntry, expiresAt: '2099-08-01T00:00:00' }]).length,
+    ).toBeGreaterThan(0);
+    expect(structuralAllowlistErrors([activeEntry, { ...activeEntry }]).length).toBeGreaterThan(0);
+    expect(structuralAllowlistErrors([activeEntry], ['batch-anchors']).length).toBeGreaterThan(0);
+  });
 });
 
 describe('shipped MAINTENANCE_PAUSE_ALLOWLIST', () => {
-  it('is valid against the real clock (an expired shipped entry turns this red until reviewed)', () => {
-    expect(validateMaintenancePauseAllowlist(MAINTENANCE_PAUSE_ALLOWLIST, Date.now())).toEqual([]);
+  it('is valid against the real clock + real manifest (an expired or typo-jobId shipped entry turns this red until reviewed)', () => {
+    expect(
+      validateMaintenancePauseAllowlist(
+        MAINTENANCE_PAUSE_ALLOWLIST,
+        Date.now(),
+        SCHEDULER_MANIFEST.map((j) => j.id),
+      ),
+    ).toEqual([]);
   });
 
   it('is empty today — no sanctioned live pause exists in prod (§1.5: state what IS)', () => {

@@ -257,6 +257,38 @@ describe('evaluateSchedulerPauseAudit — classification matrix', () => {
     expect(f.message).toMatch(/missing|not found/i);
   });
 
+  it('manifest-enabled + live DISABLED fires as unexpected-state (system-set on error; silence here would hide a broken feeder) — review FIX 2', async () => {
+    const live: LiveSchedulerJob[] = [{ id: 'batch-anchors', state: 'DISABLED' }];
+    const actorSource = actorSourceReturning(null);
+    const report = await evaluateSchedulerPauseAudit({
+      manifest: [enabledJob],
+      liveJobs: live,
+      allowlist: [],
+      nowMs: NOW,
+      actorSource,
+    });
+    expect(report.firing).toBe(true);
+    const f = report.findings[0];
+    expect(f.classification).toBe('unexpected-state');
+    expect(f.firing).toBe(true);
+    expect(f.message).toMatch(/DISABLED/);
+    // Pause attribution only applies to PAUSED — no audit-log spend here.
+    expect(actorSource.lookupPauseActor).not.toHaveBeenCalled();
+  });
+
+  it('manifest-enabled + live OTHER (unrecognized state) also fires as unexpected-state', async () => {
+    const live: LiveSchedulerJob[] = [{ id: 'batch-anchors', state: 'OTHER' }];
+    const report = await evaluateSchedulerPauseAudit({
+      manifest: [enabledJob],
+      liveJobs: live,
+      allowlist: [],
+      nowMs: NOW,
+      actorSource: actorSourceReturning(null),
+    });
+    expect(report.firing).toBe(true);
+    expect(report.findings[0].classification).toBe('unexpected-state');
+  });
+
   it('live jobs NOT in the manifest are ignored (manifest is the opt-in monitored set)', async () => {
     const live: LiveSchedulerJob[] = [
       { id: 'batch-anchors', state: 'ENABLED' },
@@ -386,8 +418,76 @@ describe('createAuditLogPauseActorSource', () => {
     expect(body.filter).toContain(
       'projects/arkova1/locations/us-central1/jobs/fetch-courtlistener',
     );
+    // FIX 6: failed PauseJob attempts (permission-denied etc.) must not be
+    // attributed as the pauser — the filter excludes entries with an error status.
+    expect(body.filter).toContain('NOT protoPayload.status.code>0');
     expect(body.orderBy).toBe('timestamp desc');
     expect(body.pageSize).toBe(1);
+  });
+
+  it('follows nextPageToken through EMPTY pages to find the entry (narrow filters return empty pages) — review FIX 3', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ nextPageToken: 'page-2' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ nextPageToken: 'page-3' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          entries: [
+            {
+              timestamp: '2026-05-02T09:14:00Z',
+              protoPayload: {
+                authenticationInfo: { principalEmail: 'carson@arkova.ai' },
+              },
+            },
+          ],
+        }),
+      });
+    const source = createAuditLogPauseActorSource({
+      projectId: 'arkova1',
+      locationId: 'us-central1',
+      fetchImpl,
+      getToken: async () => 'test-token',
+      nowMs: NOW,
+    });
+    const record = await source.lookupPauseActor('fetch-courtlistener');
+    expect(record?.principal).toBe('carson@arkova.ai');
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    const secondBody = JSON.parse(
+      (fetchImpl.mock.calls[1][1] as { body: string }).body,
+    ) as { pageToken?: string };
+    expect(secondBody.pageToken).toBe('page-2');
+    const thirdBody = JSON.parse(
+      (fetchImpl.mock.calls[2][1] as { body: string }).body,
+    ) as { pageToken?: string };
+    expect(thirdBody.pageToken).toBe('page-3');
+  });
+
+  it('bounds the empty-page scan (returns null after the page cap instead of walking the log forever)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ nextPageToken: 'again' }),
+    });
+    const source = createAuditLogPauseActorSource({
+      projectId: 'arkova1',
+      locationId: 'us-central1',
+      fetchImpl,
+      getToken: async () => 'test-token',
+      nowMs: NOW,
+    });
+    await expect(source.lookupPauseActor('fetch-edgar')).resolves.toBeNull();
+    expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(10);
+    expect(fetchImpl.mock.calls.length).toBeGreaterThan(1);
   });
 
   it('returns null when the lookback window holds no PauseJob entry', async () => {
@@ -472,6 +572,39 @@ describe('runSchedulerPauseAudit', () => {
     expect(result.firing).toBe(false);
     expect(result.alertFired).toBe(false);
     expect(emitAlert).not.toHaveBeenCalled();
+  });
+
+  it('an EXPIRED-but-structurally-valid allowlist entry does NOT crash the runner — it completes and fires expired-sanction (review FIX 1: the rot scenario must page, not 500-loop)', async () => {
+    const emitAlert = vi.fn();
+    const result = await runSchedulerPauseAudit({
+      manifest: [enabledFeeder],
+      allowlist: [expiredAllowlistEntry],
+      stateSource: { listJobs: async () => [{ id: 'fetch-edgar', state: 'PAUSED' }] },
+      actorSource: actorSourceReturning({
+        principal: 'carson@arkova.ai',
+        pausedAt: '2026-05-02T09:14:00Z',
+      }),
+      emitAlert,
+      nowMs: NOW,
+    });
+    expect(result.firing).toBe(true);
+    expect(result.alertFired).toBe(true);
+    expect(result.findings[0].classification).toBe('expired-sanction');
+    expect(result.findings[0].actorPrincipal).toBe('carson@arkova.ai');
+    expect(emitAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it('an allowlist entry for a job NOT in the manifest is runner-fatal (typo = sanction silently never applies — review FIX 4)', async () => {
+    await expect(
+      runSchedulerPauseAudit({
+        manifest: [enabledJob], // batch-anchors only
+        allowlist: [activeAllowlistEntry], // covers fetch-edgar — not monitored here
+        stateSource: { listJobs: async () => [] },
+        actorSource: actorSourceReturning(null),
+        emitAlert: vi.fn(),
+        nowMs: NOW,
+      }),
+    ).rejects.toThrow(/monitored|unknown job/i);
   });
 
   it('throws on an invalid manifest or allowlist (config error → loud, not a green no-op)', async () => {
