@@ -5,7 +5,7 @@ Supabase project configuration, migrations, seed data, and email templates.
 ## Structure
 - **`config.toml`** — Supabase CLI config: project ID `arkova`, Postgres 15, API port 54321, studio enabled.
 - **`migrations/`** — SQL migration files (numbered `0000`-`03xx`). Never modify an existing migration; write a compensating one.
-- **`seed.sql`** — seed data for local development (demo users, orgs, anchors).
+- **`seed.sql`** — seed data for local development (demo users, orgs, anchors). Switchboard block re-seeds flags post-TRUNCATE-cascade; launch-gated flags (e.g. `ENABLE_ORG_CREDIT_ENFORCEMENT`, G4/PR #1614) stay `false` so local resets never enforce early.
 - **`templates/`** — email templates: `confirmation.html`, `magic_link.html`, `recovery.html`.
 
 ## Conventions
