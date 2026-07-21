@@ -56,7 +56,10 @@ describe('ComplianceScoreCard (SCRUM-948)', () => {
 
     renderInRouter(<ComplianceScoreCard />);
 
-    expect(await screen.findByText(/87/)).toBeInTheDocument();
+    // Exact-match the score: a loose /87/ regex also matches the relative
+    // "87 days ago" timestamp whenever (today - completed_at) happens to equal
+    // the score (date-dependent flake, first tripped 2026-07-21).
+    expect(await screen.findByText('87')).toBeInTheDocument();
     expect(screen.getByText('B')).toBeInTheDocument();
   });
 
