@@ -206,7 +206,8 @@ INSERT INTO switchboard_flags (flag_key, enabled, description) VALUES
   ('ENABLE_VERIFICATION_API', true, 'Enable Verification API v1 endpoints (P4.5)'),
   ('ENABLE_AI_REPORTS', true, 'Enable AI-powered report generation (P8)'),
   ('ENABLE_X402_PAYMENTS', false, 'Enable x402 USDC pay-per-request on Base L2'),
-  ('ENABLE_GRC_INTEGRATIONS', false, 'Enable GRC platform integrations (Vanta, Drata, Anecdotes) — CML-05')
+  ('ENABLE_GRC_INTEGRATIONS', false, 'Enable GRC platform integrations (Vanta, Drata, Anecdotes) — CML-05'),
+  ('ENABLE_ORG_CREDIT_ENFORCEMENT', false, 'Launch-gated org credit-ledger enforcement for instant anchors (G4). Do NOT enable before HakiChain balance is funded (G3).')
 ON CONFLICT (flag_key) DO UPDATE SET enabled = EXCLUDED.enabled, description = EXCLUDED.description;
 
 
