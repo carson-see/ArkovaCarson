@@ -72,10 +72,10 @@ export interface LedgerReport {
  * its evidence is attributable (CLAUDE.md §1.11A isolated-evidence identity).
  */
 const REQUIRED_ACTIVE_FIELDS: Array<{ path: string; get: (r: Reservation) => unknown }> = [
-  { path: 'reservation_id', get: (r) => r.reservation_id },
-  { path: 'rail', get: (r) => r.rail },
-  { path: 'rig.cloud_run_service', get: (r) => r.rig?.cloud_run_service },
-  { path: 'rig.supabase_ref', get: (r) => r.rig?.supabase_ref },
+  { path: 'reservation_id', get: (r) => r?.reservation_id },
+  { path: 'rail', get: (r) => r?.rail },
+  { path: 'rig.cloud_run_service', get: (r) => r?.rig?.cloud_run_service },
+  { path: 'rig.supabase_ref', get: (r) => r?.rig?.supabase_ref },
 ];
 
 function isNonEmptyString(v: unknown): v is string {
@@ -175,6 +175,7 @@ function collectDuplicates(
 ): void {
   const byKey = new Map<string, string[]>();
   for (const r of rows) {
+    if (r === null || typeof r !== 'object') continue;
     const key = keyOf(r);
     if (!isNonEmptyString(key)) continue;
     const ids = byKey.get(key) ?? [];

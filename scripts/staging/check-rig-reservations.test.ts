@@ -158,8 +158,25 @@ describe('validateLedger — malformed active rows', () => {
     expect(report.findings.map((f) => f.rule)).toContain('duplicate-reservation-id');
   });
 
+  it('does not throw on a null / non-object entry in the reservations array', () => {
+    // Simulates a hand-edited malformed ledger (the CLI reads JSON, so entries
+    // are `any` at runtime). A bad entry must be tolerated (skipped), not crash.
+    const ledger: Ledger = JSON.parse(JSON.stringify({
+      version: 1,
+      reservations: [
+        null,
+        'nope',
+        activeReservation({ reservation_id: 'ok', rig: { cloud_run_service: 'svc', supabase_ref: 'ref00000000000000000' } }),
+      ],
+    }));
+    const report = validateLedger(ledger);
+    expect(report.activeCount).toBe(1);
+    expect(report.ok).toBe(true);
+  });
+
   it('FAILS when the ledger has no reservations array', () => {
-    // @ts-expect-error deliberately malformed
+    // reservations is optional in the type, but a ledger that omits it entirely
+    // is a shape error at runtime (nothing to validate against).
     const report = validateLedger({ version: 1 });
     expect(report.ok).toBe(false);
     expect(report.findings[0].rule).toBe('ledger-shape');
