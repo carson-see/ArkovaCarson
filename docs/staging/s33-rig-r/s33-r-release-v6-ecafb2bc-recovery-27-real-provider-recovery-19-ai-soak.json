@@ -1,0 +1,74 @@
+{
+  "startedAt": "2026-07-20T21:18:10.942Z",
+  "endedAt": "2026-07-20T21:47:43.321Z",
+  "durationSec": 1772.379,
+  "apiBase": "https://arkova-worker-s33-r-staging-kvojbeutfa-uc.a.run.app",
+  "mode": "ai-extract+template+tags",
+  "totalRequests": 2545,
+  "achievedRequestsPerHour": 5169.32326550924,
+  "rateLimited429": 0,
+  "transportErrors": 0,
+  "reliability": {
+    "total": 2545,
+    "counts": {
+      "ok": 1682,
+      "false_reading": 437,
+      "rate_limited": 0,
+      "server_unavailable": 0,
+      "server_error": 2,
+      "client_timeout": 0,
+      "transport_error": 0,
+      "client_error": 424
+    },
+    "rate429": 0,
+    "timeoutRate": 0,
+    "falseReadingRate": 0.17170923379174852,
+    "serverErrorRate": 0.0007858546168958742,
+    "unreliableRate": 0.33909626719056973
+  },
+  "byVariant": {
+    "oversized": 424,
+    "pdf-clean": 425,
+    "docx-text": 424,
+    "large": 424,
+    "malformed": 424,
+    "scan-ocr": 424
+  },
+  "byEndpoint": {
+    "extract": {
+      "ok": 1273,
+      "fail": 424,
+      "errorRate": 0.2498526812021214,
+      "p50Ms": 3768,
+      "p95Ms": 4875,
+      "p99Ms": 5144,
+      "byStatus": {
+        "200": 1273,
+        "400": 424
+      }
+    },
+    "template": {
+      "ok": 424,
+      "fail": 0,
+      "errorRate": 0,
+      "p50Ms": 7009,
+      "p95Ms": 8544,
+      "p99Ms": 9398,
+      "byStatus": {
+        "200": 424
+      }
+    },
+    "tags": {
+      "ok": 422,
+      "fail": 2,
+      "errorRate": 0.0047169811320754715,
+      "p50Ms": 3747,
+      "p95Ms": 9269,
+      "p99Ms": 15110,
+      "byStatus": {
+        "200": 422,
+        "500": 2
+      }
+    }
+  }
+}
