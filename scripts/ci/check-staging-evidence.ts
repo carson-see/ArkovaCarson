@@ -2184,6 +2184,22 @@ const STAGING_TOOLING_ALLOW = [
   // in CI, never ships to prod runtime, so it is T0 tooling.
   /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
+  // PI-0.5 KPI-3 (independent-Bitcoin-explorer verification) rehearsal harness +
+  // standalone clean-room verification tools. The KPI-3 rehearsal exercises the
+  // published proof/verification path against a THIRD-PARTY public explorer; a
+  // partner/auditor runs the dependency-free clean-room `.mjs` tools outside the
+  // app. Nothing under scripts/kpi3/ (or a scripts/**/*.mjs clean-room tool) is
+  // imported by the deployed Cloud Run worker (services/worker/**) or the
+  // frontend (src/**) — `.mjs` is not a deployed-runtime extension in this repo
+  // (worker + app are .ts/.tsx) — so there is no prod runtime for a soak to
+  // exercise → T0 tooling. This does NOT weaken the gate: any migration / worker /
+  // API / chain / billing file that rides alongside them still matches its
+  // PATH_RULE FIRST (isT0OnlyFile short-circuits on PATH_RULES.some() BEFORE this
+  // allowlist), so a mixed PR keeps its full T2/T3 tier.
+  /^scripts\/kpi3\//,
+  /^scripts\/clean-room\//,
+  // Standalone clean-room `.mjs` verification tool anywhere under scripts/.
+  /^scripts\/.+\.mjs$/,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,
   /^tests\/k6\//,
