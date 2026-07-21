@@ -425,6 +425,20 @@ const ConfigSchema = z.object({
    * never arms the other. Optional — unset means dry-run-only (safe default).
    */
   proofClassifierConfirm: z.string().optional(),
+
+  // Direct-anchor proof materializer (SCRUM-2917 / PROOF-BACKCATALOG)
+  /**
+   * PROOF_MATERIALIZER_CONFIRM — confirmation token for the INSERT-capable
+   * direct-anchor proof materializer (`runProofMaterializer`). The job is
+   * DRY-RUN by default (plans the honest direct-anchor skeleton INSERT set,
+   * writes NOTHING to anchor_proofs); write mode additionally requires this
+   * token to equal the literal `EXECUTE` AND the caller to pass `execute=true`.
+   * Deliberately SEPARATE from PROOF_CLASSIFIER_CONFIRM / PROOF_BACKFILL_CONFIRM
+   * so arming one proof write job never arms another (the materializer INSERTs
+   * rows — the sharpest of the three; its arming stays fully independent).
+   * Optional — unset means dry-run-only (safe default).
+   */
+  proofMaterializerConfirm: z.string().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -810,6 +824,7 @@ function loadConfig(): Config {
     // Back-catalogue classifier confirm token (S3-A / PROOF-BACKCATALOG).
     // `|| undefined` so an empty string is treated as unset (dry-run-only).
     proofClassifierConfirm: process.env.PROOF_CLASSIFIER_CONFIRM || undefined,
+    proofMaterializerConfirm: process.env.PROOF_MATERIALIZER_CONFIRM || undefined,
   });
 
   if (!result.success) {
