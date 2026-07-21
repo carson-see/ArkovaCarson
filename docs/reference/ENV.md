@@ -265,6 +265,17 @@ TREASURY_LOW_BALANCE_USD=50
 # in-process backup). Default 24. Invalid / non-positive values fall back to 24.
 STUCK_ANCHOR_ALERT_HOURS=24
 
+# SCRUM-2902 (R-1 FATAL) — Credential Engine API key expiry alarm.
+# When false, the /jobs/ce-key-expiry-check daily cron no-ops. Default true.
+ENABLE_CE_KEY_EXPIRY_ALERTS=true
+# ISO-8601 expiry timestamp of the Credential Engine partnership API key / CTID
+# publishing credential. **FOUNDER-SUPPLIED — must be set to the REAL date.**
+# Until set (or if left as a sentinel placeholder / unparseable), the alarm FAILS
+# LOUD: it fires an ERROR-level Sentry event (expiry_window=SENTINEL) on EVERY run
+# → Slack #ops, until a real date is configured. Set from the CE trial/renewal
+# contract. (Known trial expiry ≈ 2026-09-09 per project memory — confirm exact.)
+CE_API_KEY_EXPIRES_AT=               # e.g. 2026-09-09T00:00:00Z — DO NOT leave blank in prod
+
 # ─── SCRUM-1162 — Middesk KYB (organization verification) ───
 # Per 2026-04-24 decision these routes are NOT behind a feature flag.
 # Missing MIDDESK_API_KEY surfaces as 503 at POST /api/v1/org-kyb/:orgId/start.
