@@ -383,6 +383,48 @@ export function capturePipelineThroughputAlert(
 }
 
 // ---------------------------------------------------------------------------
+// Scheduler pause dead-man fingerprinting (SCRUM-2900 / PI-0.5)
+// ---------------------------------------------------------------------------
+//
+// The scheduler pause audit (jobs/scheduler-pause-attribution.ts) fires when a
+// monitored Cloud Scheduler job is PAUSED without a codified manifest pause or
+// an active maintenance-pause sanction — the 2026-05 untracked feeder-freeze
+// shape. A persistent unexpected pause re-fires on every scheduled audit run;
+// the fixed fingerprint collapses re-fires into ONE Sentry issue.
+export const SCHEDULER_PAUSE_FINGERPRINT = ['scheduler-pause-deadman'] as const;
+
+/**
+ * Capture a scheduler-pause dead-man alert with a stable fingerprint so
+ * scheduled re-fires collapse into a single Sentry issue.
+ *
+ * PII (§1.4): the acting identity that paused the job (from the Cloud
+ * Scheduler audit log) is an OPERATOR / service-account principal —
+ * operational attribution data, not user PII. Callers pass it in `extra`
+ * (e.g. `findings[].actor_principal`), NEVER in the message: `beforeSend`
+ * runs `scrubString` over messages and would redact an email-shaped
+ * principal to [EMAIL], and the message must stay grouping-stable anyway.
+ * Everything else in `extra` stays aggregate/operational-only — job ids,
+ * classifications, timestamps; never user emails, document fingerprints, or
+ * keys (mirrors capturePipelineThroughputAlert).
+ *
+ * Always error-level: an unexpected pause of a critical scheduled job is
+ * page-worthy by definition — there is no warning-tier caller.
+ *
+ * @param message - Human-readable summary (job ids + classification only).
+ * @param extra   - Structured context incl. per-finding actor attribution.
+ */
+export function captureSchedulerPauseAlert(
+  message: string,
+  extra?: Record<string, unknown>,
+): void {
+  Sentry.captureMessage(message, {
+    level: 'error',
+    fingerprint: [...SCHEDULER_PAUSE_FINGERPRINT],
+    ...(extra ? { extra } : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Credit-conservation reconciler fingerprinting (S1-9 / SCRUM-2349 / PM-25)
 // ---------------------------------------------------------------------------
 //
