@@ -61,6 +61,16 @@ describe('decideCeKeyExpiryAlert — fail-LOUD sentinel path', () => {
       decideCeKeyExpiryAlert({ expires_at_raw: '2026-13-99T99:99:99Z', now: NOW }),
     ).not.toThrow();
   });
+
+  it('never echoes the raw value into the reason (secret-leak guard, §1.4)', () => {
+    // If an operator misconfigures the actual CE API key into this var, the
+    // unparseable-path reason must NOT reproduce it into the Sentry message.
+    const secretLike = 'sk_live_SUPER_SECRET_ce_key_value_abcdef123456';
+    const d = decideCeKeyExpiryAlert({ expires_at_raw: secretLike, now: NOW });
+    expect(d.window).toBe('SENTINEL');
+    expect(d.reason).not.toContain(secretLike);
+    expect(d.reason).not.toContain('SUPER_SECRET');
+  });
 });
 
 describe('decideCeKeyExpiryAlert — window boundaries', () => {

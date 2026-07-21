@@ -112,13 +112,18 @@ export function decideCeKeyExpiryAlert(input: CeKeyExpiryInput): CeKeyExpiryDeci
 
   const parsedMs = Date.parse((input.expires_at_raw as string).trim());
   if (Number.isNaN(parsedMs)) {
+    // Do NOT echo the raw value: if an operator misconfigures the actual CE API
+    // *key* into this env var, reproducing it here would leak the secret into the
+    // Sentry event (§1.4 — secrets never logged). Report only its length as a
+    // debugging hint.
+    const rawLen = (input.expires_at_raw as string).trim().length;
     return {
       should_fire: true,
       window: 'SENTINEL',
       severity: 'error',
       days_until_expiry: null,
       reason:
-        `CE_API_KEY_EXPIRES_AT="${input.expires_at_raw}" is not a parseable date — ` +
+        `CE_API_KEY_EXPIRES_AT is set but not a parseable date (length ${rawLen}) — ` +
         'failing LOUD (treat as unknown/expired) until corrected.',
     };
   }
