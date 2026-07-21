@@ -38,13 +38,28 @@ Next-free rule (CLAUDE.md `feedback_migration_number_vs_reservations`): `next = 
 | `0355`, `0356` | RESERVED — security lane (#1457 Sprint-4 carry) | security lane | pre-soak, file-only |
 | `0357` | RESERVED — pre-soak, file-only, NOT applied | Lane-1 #1455 (SCRUM-2486) | `0357_scrum2486_secured_chain_integrity_trigger.sql` |
 | **`0358`** | **IN-FLIGHT — PR #1552 (railb2 soak)** | SCRUM-2692 | `0358_scrum2692_anchor_txid_journal.sql` — prod-apply BEFORE merge (release-ops), matures 17:13Z Jul 21 |
-| **`0359` and up** | **RESERVED → ADVISOR TRAIN (SCRUM-2979)** | advisor train | not yet filed — claim by adding a row here in the same PR |
+| `0359` | RESERVED — pre-soak, file-only | Lane-1 **PR #1615** (SCRUM-2917) | `0359_scrum2917_materialize_run_id.sql` |
+| `0360` | RESERVED — pre-soak, file-only | Lane-1 **PR #1615** (SCRUM-2917) | `0360_scrum2917_secured_proof_predicate_hardening.sql` |
+| `0361` | RESERVED — placeholder, not yet filed | SCRUM-2916 (watermark partial index) | not yet filed |
+| `0362` | RESERVED — pre-soak, file-only | Lane-2 **PR #1618** (SCRUM-2913) | `0362_scrum2913_public_anchor_registry_url_allowlist.sql` |
+| `0363` | RESERVED — pre-soak, file-only | Lane-2 **PR #1614** (SCRUM-2990 / G4) | `0363_g4_enable_org_credit_enforcement_flag.sql` (renumbered from `0360`, which collided with #1615) |
+| `0364+` | RESERVED band → advisor train (post-PI-0.5) | advisor train | not yet filed — claim by adding a row in `supabase/migrations/agents.md` in the same PR |
 
-**Next free prefix for any NON-advisor work: none in the `03XX` chain band without CTO sign-off** — `0359+` is reserved to the advisor train per this registry. A parallel session needing a chain-lane migration before the advisor train must escalate, not silently take `0359`.
+**CORRECTION (2026-07-21, RTE — SCRUM-2979/#1612 follow-up).** Section B originally reserved `0359+` wholesale to the advisor train. That was **superseded** by the CTO Technical Decision Queue ruling (Confluence 110198785): the materializer (#1615) took `0359`/`0360`, Lane-2 took `0362`/`0363`, and `0361` is the SCRUM-2916 watermark placeholder — so the advisor band starts at `0364`, not `0359`. The verified owners above match `supabase/migrations/agents.md` (the load-bearing canonical file) and the HANDOFF migration band.
 
-> **⚠️ CANONICAL-RESERVATION GAP (Architect review, MAJOR) — this memo is NOT collision-proof on its own.** The load-bearing convention (`supabase/migrations/agents.md` + `feedback_migration_number_vs_reservations`) requires a reservation to be a **specific numbered row in `supabase/migrations/agents.md`, added in the same PR that claims the prefix** — and the uniqueness lint only checks `main`. On `main` today that file's reservation tables stop at `0357`/`0350`; **nothing reserves `0359` in the canonical file.** A parallel session computing `next = max(main head, agents.md reservations, open-PR migrations)+1` will legitimately compute `0359` and **never see this memo** → exactly the `0327` three-way-collision failure mode. **This window cannot fix it: `agents.md` is W3-frozen.** REQUIRED post-window: land the `0359` (and advisor-band) reservation as an actual row in `supabase/migrations/agents.md`. Until then, treat `0359` as a **live collision risk** and coordinate any chain-lane claim through the RTE, not this doc alone.
+> **✅ CANONICAL-RESERVATION GAP — RESOLVED.** The earlier MAJOR gap (nothing reserved `0359+` in the canonical file, so a parallel session would legitimately compute `next=0359` and re-collide) is **closed**: the `## PI-0.5 24h-slice migration reservations (SCRUM-2979)` table in `supabase/migrations/agents.md` now carries explicit rows for `0358`–`0363` + the `0364+` advisor band, which is exactly what the uniqueness lint + `feedback_migration_number_vs_reservations` check. This dated memo is now a *mirror* of that canonical table, not a substitute for it.
 
-**Open-PR migration scan (this session, `gh pr view --json files`):** only #1552 carries a `supabase/migrations/*` file (`0358`). #1555 and #1570 carry none. No new collision risk on `03XX` from the in-flight train.
+**Open-PR migration scan (dry-run uniqueness, re-run 2026-07-21 via `gh pr view --json files` across ALL open PRs):**
+
+| Prefix | Open PR(s) carrying the `.sql` | Collision? |
+|---|---|---|
+| `0358` | #1552 (`0358_scrum2692_anchor_txid_journal.sql`) | unique |
+| `0359` | #1615 (`0359_scrum2917_materialize_run_id.sql`) | unique |
+| `0360` | #1615 (`0360_scrum2917_secured_proof_predicate_hardening.sql`) | unique |
+| `0362` | #1618 (`0362_scrum2913_public_anchor_registry_url_allowlist.sql`) | unique |
+| `0363` | #1614 (`0363_g4_enable_org_credit_enforcement_flag.sql`) | unique |
+
+`0361` is reserved (SCRUM-2916) but no open PR carries the file yet. Main numeric head = `0357`. **Result: NO collisions** — every open-PR migration prefix is unique and each is ≥ the main head. Next-free non-advisor prefix = `0361` (the reserved SCRUM-2916 slot) once filed, else `0365` after the `0364` advisor band.
 
 **Reconciliation note:** after `0358` is prod-applied via MCP, apply the §0-rule-10 numeric-ledger reconcile (`UPDATE supabase_migrations.schema_migrations SET version='0358' WHERE name='0358_scrum2692_anchor_txid_journal.sql' AND version !~ '^[0-9]{4}$';`) and confirm `list_migrations` shows the numeric head before declaring done. Owned by release-ops (RTE-delegated per `feedback_rte_owns_prod_migration_apply`), not this watch lane.
 
