@@ -1696,6 +1696,12 @@ export const TREASURY_LABELS = {
   WORKER_REQUEST_FAILED: 'Worker request failed',
   WORKER_HEALTH_RETURNED_STATUS: (status: number) => `Worker health returned ${status}`,
   WORKER_HEALTH_REQUEST_FAILED: 'Worker health request failed',
+  // SCRUM-2901: friendly copy for the 8s status-API budget firing — never
+  // surface the raw browser TimeoutError text ("signal timed out") to admins.
+  WORKER_STATUS_TIMED_OUT: (seconds: number) =>
+    `Status request took longer than ${seconds} seconds and was stopped.`,
+  WORKER_HEALTH_TIMED_OUT: (seconds: number) =>
+    `Freshness check took longer than ${seconds} seconds and was stopped.`,
   FETCH_FAILED: 'Failed to fetch treasury data',
   CACHE_NO_TIMESTAMP: 'No treasury cache timestamp returned',
   CACHE_TIMESTAMP_UNAVAILABLE: 'Treasury cache timestamp unavailable',

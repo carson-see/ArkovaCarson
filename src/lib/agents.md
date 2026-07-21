@@ -1,6 +1,11 @@
 # agents.md — lib
 
-_Last updated: 2026-07-06_
+_Last updated: 2026-07-21_
+
+## 2026-07-21 Treasury CSP + status-budget copy (SCRUM-2901, PR #1600)
+
+- `treasuryCsp.test.ts` guards the CSP↔treasury-enrichment invariant in BOTH sources (`vercel.json` prod header + `index.html` dev/build meta): `https://mempool.space` present in `connect-src`, `'self'` regression guard, and a scoping test asserting mempool.space appears in **connect-src ONLY** (never default-src / script-src / img-src / any other directive). The R-5 drift manifest (`scripts/ci/config-drift/expected-prod-config.json` `cspConnectSrc`) is deliberately untouched — its `_note` scopes it to the cross-runtime worker+edge SUBSET, "not the full vercel.json connect-src".
+- `copy.ts` `TREASURY_LABELS` gained `WORKER_STATUS_TIMED_OUT` / `WORKER_HEALTH_TIMED_OUT` (friendly copy for the 8s status-API budget firing; the raw browser TimeoutError text must never reach admins — see `useTreasuryBalance.ts`).
 
 ## 2026-07-06 S3 Lane-3 AI copy block (AI-03 — SCRUM-2383)
 

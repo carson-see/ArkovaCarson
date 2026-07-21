@@ -3,7 +3,7 @@
  * @see feedback_treasury_access — Arkova internal only
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Request, Response } from 'express';
 import { handleTreasuryStatus, handleTreasuryHealth, handleTreasuryX402Stats } from './treasury.js';
 
@@ -239,6 +239,120 @@ describe('handleTreasuryStatus', () => {
     };
     expect(response.recentAnchors.byStatus).toEqual({});
     expect(res.status).not.toHaveBeenCalledWith(500);
+  });
+});
+
+// ─── SCRUM-2901 (PI-0.5): status-API 8s budget ───────────────────────────────
+//
+// The frontend workerFetch budget for /api/treasury/status is 8s
+// (useTreasuryBalance WORKER_TIMEOUT_MS). Before this fix the handler's three
+// parallel legs had NO server-side bound — Promise.allSettled waits for the
+// SLOWEST leg, and listUnspent on the treasury address (millions of txs of
+// history on the public mempool provider) can exceed 8s. The client then
+// aborts and the admin loses EVERYTHING, including the fast legs (DB anchor
+// stats, fee estimate) that had already finished server-side. Each leg must
+// be individually bounded under the client budget so slow legs degrade to
+// their existing null/error shapes while fast legs still ship.
+describe('handleTreasuryStatus — per-leg status budget (SCRUM-2901)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchAnchorStats.mockResolvedValue(baseAnchorStats);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function runWithHangingWallet(): Promise<Response> {
+    const { config } = await import('../config.js');
+    (config as Record<string, unknown>).bitcoinTreasuryWif = 'cTestWif';
+
+    const { createUtxoProvider } = await import('../chain/utxo-provider.js');
+    vi.mocked(createUtxoProvider).mockReturnValueOnce({
+      // Never settles — simulates a mempool.space address-history crawl that
+      // outlives the frontend's 8s budget.
+      listUnspent: vi.fn().mockReturnValue(new Promise(() => undefined)),
+      getBlockchainInfo: vi.fn().mockReturnValue(new Promise(() => undefined)),
+    } as never);
+
+    const res = createMockRes();
+    // Intentionally NOT awaited before advancing timers: in the un-bounded
+    // implementation this promise never resolves.
+    const pending = handleTreasuryStatus('admin-123', {} as Request, res);
+    pending.catch(() => undefined);
+
+    const { STATUS_LEG_BUDGET_MS } = await import('./treasury.js');
+    await vi.advanceTimersByTimeAsync((STATUS_LEG_BUDGET_MS ?? 6_500) + 200);
+
+    (config as Record<string, unknown>).bitcoinTreasuryWif = undefined;
+    return res;
+  }
+
+  it('exports a leg budget under the frontend 8s workerFetch budget', async () => {
+    const { STATUS_LEG_BUDGET_MS } = await import('./treasury.js');
+    expect(STATUS_LEG_BUDGET_MS).toBeGreaterThan(0);
+    expect(STATUS_LEG_BUDGET_MS).toBeLessThan(8_000);
+  });
+
+  it('responds within the leg budget when the wallet leg hangs (degrades wallet, ships fees + stats)', async () => {
+    const res = await runWithHangingWallet();
+
+    expect(res.json).toHaveBeenCalledTimes(1);
+    const response = vi.mocked(res.json).mock.calls[0][0] as Record<string, unknown>;
+    expect(response.wallet).toBeNull();
+    expect(response.error).toBe('Wallet data temporarily unavailable');
+    // Fast legs still ship despite the hung wallet leg.
+    expect(response.fees).toEqual(
+      expect.objectContaining({ estimatorName: 'Static', currentRateSatPerVbyte: 1 }),
+    );
+    expect(response.recentAnchors).toEqual(
+      expect.objectContaining({ totalSecured: expect.any(Number) }),
+    );
+  });
+
+  it('responds with fees degraded when the fee-estimator leg hangs', async () => {
+    const { createFeeEstimator } = await import('../chain/fee-estimator.js');
+    vi.mocked(createFeeEstimator).mockReturnValueOnce({
+      name: 'Static',
+      estimateFee: vi.fn().mockReturnValue(new Promise(() => undefined)),
+    } as never);
+
+    const res = createMockRes();
+    const pending = handleTreasuryStatus('admin-123', {} as Request, res);
+    pending.catch(() => undefined);
+
+    const { STATUS_LEG_BUDGET_MS } = await import('./treasury.js');
+    await vi.advanceTimersByTimeAsync((STATUS_LEG_BUDGET_MS ?? 6_500) + 200);
+
+    expect(res.json).toHaveBeenCalledTimes(1);
+    const response = vi.mocked(res.json).mock.calls[0][0] as Record<string, unknown>;
+    expect(response.fees).toBeNull();
+    expect(response.recentAnchors).toEqual(
+      expect.objectContaining({ totalSecured: expect.any(Number) }),
+    );
+  });
+
+  it('responds with default anchor stats when the stats leg hangs', async () => {
+    mockFetchAnchorStats.mockReturnValueOnce(new Promise(() => undefined));
+
+    const res = createMockRes();
+    const pending = handleTreasuryStatus('admin-123', {} as Request, res);
+    pending.catch(() => undefined);
+
+    const { STATUS_LEG_BUDGET_MS } = await import('./treasury.js');
+    await vi.advanceTimersByTimeAsync((STATUS_LEG_BUDGET_MS ?? 6_500) + 200);
+
+    expect(res.json).toHaveBeenCalledTimes(1);
+    const response = vi.mocked(res.json).mock.calls[0][0] as {
+      recentAnchors: Record<string, unknown>;
+      fees: unknown;
+    };
+    // Stats leg degraded to the initialized defaults; fee leg still ships.
+    expect(response.recentAnchors.totalSecured).toBe(0);
+    expect(response.fees).toEqual(
+      expect.objectContaining({ estimatorName: 'Static' }),
+    );
   });
 });
 

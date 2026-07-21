@@ -1,6 +1,10 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-07-06 (OPS-03 SLO stats endpoint — admin-ops-slo.ts)_
+_Last updated: 2026-07-21 (SCRUM-2901 treasury status-API per-leg budget)_
+
+## 2026-07-21 — Lane 2 PI-0.5: /api/treasury/status per-leg budget (SCRUM-2901, PR #1600)
+
+`treasury.ts` exports `STATUS_LEG_BUDGET_MS = 6_500` and wraps each of `handleTreasuryStatus`'s three parallel legs (wallet UTXO crawl, fee estimate, anchor stats) in `withStatusBudget()` — a Promise.race that REJECTS the leg at the budget so the existing `Promise.allSettled` degradation branches fire (wallet→null + 'Wallet data temporarily unavailable', fees→null, stats→initialized defaults). Rationale: the frontend `workerFetch` budget for this route is 8s (`useTreasuryBalance` WORKER_TIMEOUT_MS); allSettled waits for the SLOWEST leg, and `listUnspent` against the treasury address (millions of txs of public history) can exceed 8s — the client then aborts and loses even the fast legs that had already finished server-side. 6.5s leaves headroom for the admin-gate lookup + serialization + RTT. The budget does NOT cancel the underlying provider request (providers carry their own transport timeouts); it just stops awaiting it. Keep `STATUS_LEG_BUDGET_MS < ` the frontend's `WORKER_TIMEOUT_MS` if either changes — `treasury.test.ts` pins `< 8_000`.
 
 ## 2026-07-06 — Lane 2 s3: OPS-03 SLO dashboard stats endpoint (SCRUM-2401)
 

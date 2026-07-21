@@ -56,6 +56,22 @@ function indexHtmlConnectSrc(): string[] {
 
 const MEMPOOL_ORIGIN = 'https://mempool.space';
 
+function vercelDirectives(): Record<string, string[]> {
+  const vercel = JSON.parse(readFileSync(resolve(REPO_ROOT, 'vercel.json'), 'utf8'));
+  const cspHeader = vercel.headers
+    ?.flatMap((h: { headers?: Array<{ key: string; value: string }> }) => h.headers ?? [])
+    .find((kv: { key: string }) => kv.key === 'Content-Security-Policy');
+  expect(cspHeader, 'vercel.json must define a Content-Security-Policy header').toBeTruthy();
+  return parseCspDirectives(cspHeader.value);
+}
+
+function indexHtmlDirectives(): Record<string, string[]> {
+  const html = readFileSync(resolve(REPO_ROOT, 'index.html'), 'utf8');
+  const match = html.match(/http-equiv="Content-Security-Policy"\s*content="([\s\S]*?)"/);
+  expect(match, 'index.html must define a CSP meta tag').toBeTruthy();
+  return parseCspDirectives(match![1]);
+}
+
 describe('treasury CSP enrichment origins (SCRUM-2901)', () => {
   it('vercel.json connect-src allows mempool.space (prod header)', () => {
     expect(vercelConnectSrc()).toContain(MEMPOOL_ORIGIN);
@@ -73,5 +89,24 @@ describe('treasury CSP enrichment origins (SCRUM-2901)', () => {
   it("both CSP sources still include 'self' (regression guard)", () => {
     expect(vercelConnectSrc()).toContain("'self'");
     expect(indexHtmlConnectSrc()).toContain("'self'");
+  });
+
+  // PI-0.5 24h-slice AC: the enrichment origin is allowed for FETCHES only.
+  // mempool.space must never widen into script-src / default-src / img-src /
+  // frame-src / any other directive — connect-src is the entire grant.
+  it('mempool.space is scoped to connect-src ONLY in both CSP sources', () => {
+    for (const [sourceName, directives] of [
+      ['vercel.json', vercelDirectives()],
+      ['index.html', indexHtmlDirectives()],
+    ] as const) {
+      for (const [directive, sources] of Object.entries(directives)) {
+        if (directive === 'connect-src') continue;
+        const hit = sources.find((s) => s.includes('mempool.space'));
+        expect(
+          hit,
+          `${sourceName}: mempool.space must not appear in ${directive} (found "${hit}")`,
+        ).toBeUndefined();
+      }
+    }
   });
 });
