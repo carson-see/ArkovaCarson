@@ -131,7 +131,7 @@
     "deploy_tag": "pr-1524",
     "image_digest": "sha256:c25c953618cc1dbd1870f6d262d939e05cba84dbf17d111515f85b6f0d9ab2e3",
     "supabase_project_ref": "aqvlmkjfvpywdwjykcic",
-    "deploy_log_id": 228,
+    "deploy_log_id": "228",
     "preflight_result": "environment_type=clean_mirror (all checks passed)"
   },
   "soak": {
