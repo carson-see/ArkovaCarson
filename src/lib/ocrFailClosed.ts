@@ -121,6 +121,66 @@ export class UnsupportedImageFormatError extends Error {
   }
 }
 
+/** Which extraction source yielded no text (a label, never document content). */
+export type NoTextSourceKind = 'pdf' | 'image' | 'document';
+
+/**
+ * A BENIGN, recoverable failure: extraction ran successfully but found no
+ * readable text — the classic case is a SCANNED (image-only) PDF, where PDF.js
+ * succeeds and returns an empty text layer (SCRUM-2911). Also covers blank
+ * Tesseract output for a supported image.
+ *
+ * This is deliberately NOT a subclass of {@link PiiStripFailClosedError},
+ * mirroring {@link UnsupportedImageFormatError} exactly: the on-device privacy
+ * guarantee was honored — the pipeline ran on-device and nothing left the
+ * browser; there is simply nothing to extract. Routing it through the §1.6
+ * fail-closed path would surface the FALSE "privacy failure" screen for a
+ * document that was never at risk. Callers must map it to the ordinary
+ * soft-fail recovery (retry / enter manually / anchor without AI metadata),
+ * never to the loud privacy-breach UI.
+ *
+ * Carries a stable `noTextExtracted` discriminator + `name` so cross-bundle
+ * checks work even when `instanceof` is unreliable. `sourceKind` is a coarse
+ * source label ('pdf' | 'image' | 'document') — NEVER document content.
+ */
+export class NoTextExtractedError extends Error {
+  /** Stable discriminator that survives bundling/transpilation. */
+  readonly noTextExtracted = true as const;
+  /** Coarse source label (NOT document content). */
+  readonly sourceKind: NoTextSourceKind;
+
+  constructor(message: string, sourceKind: NoTextSourceKind = 'document') {
+    super(message);
+    this.name = 'NoTextExtractedError';
+    this.sourceKind = sourceKind;
+    Object.setPrototypeOf(this, NoTextExtractedError.prototype);
+  }
+}
+
+/**
+ * Guard for {@link NoTextExtractedError}. Matches by prototype OR by the
+ * `noTextExtracted` discriminator / `name` (cross-bundle safe).
+ *
+ * PRIVACY BOUNDARY (fail-closed dominates): if the SAME error object also
+ * carries a fail-closed marker (a real {@link PiiStripFailClosedError} or a
+ * duck-typed `failClosed === true` / `NERModelLoadError`), this returns FALSE.
+ * A benign "no text found" downgrade must never win over a §1.6 privacy
+ * fail-closed signal — when in doubt, egress stays hard-blocked and the user
+ * sees the loud privacy screen. Callers should still check
+ * {@link isPiiStripFailClosedError} first as belt-and-suspenders.
+ */
+export function isNoTextExtractedError(err: unknown): boolean {
+  // Fail-closed always dominates: an error that is also a privacy fail-closed
+  // signal is NOT a benign no-text case.
+  if (isPiiStripFailClosedError(err)) return false;
+  if (err instanceof NoTextExtractedError) return true;
+  if (typeof err === 'object' && err !== null) {
+    if ((err as { noTextExtracted?: unknown }).noTextExtracted === true) return true;
+    if ((err as { name?: unknown }).name === 'NoTextExtractedError') return true;
+  }
+  return false;
+}
+
 /**
  * Guard for {@link UnsupportedImageFormatError}. Matches by prototype OR by the
  * `unsupportedFormat` discriminator / `name` (cross-bundle safe).

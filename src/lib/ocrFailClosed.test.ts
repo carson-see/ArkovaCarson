@@ -13,9 +13,11 @@ import {
   OcrEngineLoadError,
   NerPiiFailClosedError,
   UnsupportedImageFormatError,
+  NoTextExtractedError,
   isNerModelLoadError,
   isPiiStripFailClosedError,
   isUnsupportedImageFormatError,
+  isNoTextExtractedError,
 } from './ocrFailClosed';
 
 describe('ocrFailClosed contract', () => {
@@ -180,6 +182,76 @@ describe('ocrFailClosed contract', () => {
       });
       expect(isPiiStripFailClosedError(overlap)).toBe(true);
       expect(isUnsupportedImageFormatError(overlap)).toBe(false);
+    });
+  });
+
+  // SCRUM-2911 sub-item 2: the benign no-text-extracted contract. A scanned
+  // (image-only) PDF yields empty text from PDF.js — the pipeline ran fine,
+  // there is simply nothing to read. This mirrors UnsupportedImageFormatError:
+  // benign, recoverable, NEVER a §1.6 privacy fail-closed signal.
+  describe('NoTextExtractedError (SCRUM-2911 — scanned/image-only soft-fail)', () => {
+    it('is a plain Error, NOT a fail-closed error', () => {
+      const e = new NoTextExtractedError('no readable text', 'pdf');
+      expect(e).toBeInstanceOf(Error);
+      expect(e).toBeInstanceOf(NoTextExtractedError);
+      expect(e).not.toBeInstanceOf(PiiStripFailClosedError);
+      expect(e.name).toBe('NoTextExtractedError');
+      expect(e.noTextExtracted).toBe(true);
+      expect(e.sourceKind).toBe('pdf');
+      // Must not carry the fail-closed discriminator.
+      expect((e as { failClosed?: unknown }).failClosed).toBeUndefined();
+    });
+
+    it('defaults sourceKind to document and never carries document content', () => {
+      const e = new NoTextExtractedError('no readable text');
+      expect(e.sourceKind).toBe('document');
+      // The message is fixed copy — a label, never document-derived text.
+      expect(e.message).toBe('no readable text');
+    });
+
+    it('is NOT matched by isPiiStripFailClosedError (benign, not a privacy breach)', () => {
+      expect(isPiiStripFailClosedError(new NoTextExtractedError('empty', 'pdf'))).toBe(false);
+    });
+
+    it('isNoTextExtractedError matches the class and duck-typed copies', () => {
+      expect(isNoTextExtractedError(new NoTextExtractedError('x', 'image'))).toBe(true);
+      // Cross-bundle instanceof miss — match by name/discriminator.
+      const crossBundle = Object.assign(new Error('x'), {
+        name: 'NoTextExtractedError',
+        noTextExtracted: true,
+      });
+      expect(isNoTextExtractedError(crossBundle)).toBe(true);
+    });
+
+    it('isNoTextExtractedError does not match fail-closed, unsupported-format, or ordinary errors', () => {
+      expect(isNoTextExtractedError(new OcrEngineLoadError('engine down'))).toBe(false);
+      expect(isNoTextExtractedError(new UnsupportedImageFormatError('x', 'image/heic'))).toBe(false);
+      expect(isNoTextExtractedError(new Error('generic'))).toBe(false);
+      expect(isNoTextExtractedError(null)).toBe(false);
+      expect(isNoTextExtractedError(undefined)).toBe(false);
+      expect(isNoTextExtractedError('NoTextExtractedError')).toBe(false);
+    });
+
+    // ADVERSARIAL OVERLAP (privacy boundary): an error carrying BOTH the
+    // no-text marker AND a fail-closed marker must be treated as FAIL-CLOSED.
+    // Mirrors the isUnsupportedImageFormatError dominance tests above.
+    it('fail-closed DOMINATES: a real fail-closed error masquerading as no-text stays fail-closed', () => {
+      const overlap = Object.assign(new OcrEngineLoadError('engine down'), {
+        name: 'NoTextExtractedError',
+        noTextExtracted: true,
+      });
+      expect(isPiiStripFailClosedError(overlap)).toBe(true);
+      expect(isNoTextExtractedError(overlap)).toBe(false);
+    });
+
+    it('fail-closed DOMINATES: a duck-typed object with both discriminators stays fail-closed', () => {
+      const overlap = Object.assign(new Error('x'), {
+        name: 'NoTextExtractedError',
+        noTextExtracted: true,
+        failClosed: true,
+      });
+      expect(isPiiStripFailClosedError(overlap)).toBe(true);
+      expect(isNoTextExtractedError(overlap)).toBe(false);
     });
   });
 });

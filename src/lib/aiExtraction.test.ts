@@ -35,7 +35,8 @@ import { extractText } from './ocrWorker';
 import { stripPII } from './piiStripper';
 import { stripPIIEnhanced } from './enhancedPiiStripper';
 import { supabase } from './supabase';
-import { NerPiiFailClosedError, OcrEngineLoadError, UnsupportedImageFormatError } from './ocrFailClosed';
+import { NerPiiFailClosedError, OcrEngineLoadError, UnsupportedImageFormatError, NoTextExtractedError } from './ocrFailClosed';
+import { AI_EXTRACTION_LABELS } from './copy';
 
 describe('aiExtraction orchestrator', () => {
   beforeEach(() => {
@@ -192,7 +193,7 @@ describe('aiExtraction orchestrator', () => {
     expect(requestBody).not.toHaveProperty('imageBase64');
   });
 
-  it('returns null when OCR finds no text', async () => {
+  it('returns null with the typed NO_TEXT_FOUND copy when OCR finds no text', async () => {
     (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
       text: '',
       pageCount: 1,
@@ -206,7 +207,7 @@ describe('aiExtraction orchestrator', () => {
 
     expect(result).toBeNull();
     expect(progressCb).toHaveBeenCalledWith(
-      expect.objectContaining({ stage: 'error', message: expect.stringContaining('No text found') }),
+      expect.objectContaining({ stage: 'error', message: AI_EXTRACTION_LABELS.NO_TEXT_FOUND }),
     );
   });
 
@@ -617,6 +618,32 @@ describe('aiExtraction orchestrator', () => {
       );
     });
 
+    it('routes a THROWN NoTextExtractedError (future ocrWorker placement) to the same soft path', async () => {
+      // Belt-and-suspenders: if a later change moves the empty-text detection
+      // into ocrWorker (throwing instead of returning ''), the catch chain must
+      // route it identically — soft error, no failClosed, no fetch.
+      (extractText as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new NoTextExtractedError(AI_EXTRACTION_LABELS.NO_TEXT_FOUND, 'pdf'),
+      );
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['%PDF-scan'], 'scanned.pdf', { type: 'application/pdf' });
+      const result = await runExtraction(file, 'a'.repeat(64), 'DEGREE', progressCb);
+
+      expect(result).toBeNull();
+      expect(mockFetch).not.toHaveBeenCalled();
+      const failClosedCalls = progressCb.mock.calls.filter(
+        (c: unknown[]) => (c[0] as { failClosed?: boolean }).failClosed === true,
+      );
+      expect(failClosedCalls).toHaveLength(0);
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error', message: AI_EXTRACTION_LABELS.NO_TEXT_FOUND }),
+      );
+    });
+
     it('keeps a GENUINE OCR engine failure LOUD (privacy screen) — no regression', async () => {
       // Regression guard: distinguishing unsupported-format must not weaken the
       // genuine §1.6 fail-closed path for a real engine load failure.
@@ -630,6 +657,123 @@ describe('aiExtraction orchestrator', () => {
       const progressCb = vi.fn();
       const file = new File(['scan-bytes'], 'scan.png', { type: 'image/png' });
       const result = await runExtraction(file, 'b'.repeat(64), 'OTHER', progressCb);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toBeNull();
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error', failClosed: true }),
+      );
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // SCRUM-2911 sub-item 2 — SCANNED (image-only) PDF → empty OCR text.
+  //
+  // PDF.js succeeds but extracts '' from an image-only scan (the real-Kenya
+  // top gap). This is a BENIGN, recoverable outcome routed through the typed
+  // NoTextExtractedError → the SAME soft path as UnsupportedImageFormatError:
+  // stage 'error' WITHOUT failClosed, null result, and — critically — ZERO
+  // egress (no fetch: nothing ever left the device).
+  // ───────────────────────────────────────────────────────────────────────
+  describe('SCRUM-2911 scanned-PDF no-text soft-fail', () => {
+    it('scanned PDF (empty text) → soft error with NO_TEXT_FOUND copy, no failClosed, ZERO fetch', async () => {
+      (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
+        text: '',
+        pageCount: 3,
+        method: 'pdfjs',
+        durationMs: 220,
+      });
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['%PDF-image-only-scan'], 'scanned.pdf', { type: 'application/pdf' });
+      const result = await runExtraction(file, 'a'.repeat(64), 'DEGREE', progressCb);
+
+      expect(result).toBeNull();
+      // ZERO BYTE LEAKAGE: nothing left the device on the no-text path.
+      expect(mockFetch).not.toHaveBeenCalled();
+      // Soft path: an error stage WITHOUT the fail-closed flag.
+      const failClosedCalls = progressCb.mock.calls.filter(
+        (c: unknown[]) => (c[0] as { failClosed?: boolean }).failClosed === true,
+      );
+      expect(failClosedCalls).toHaveLength(0);
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error', message: AI_EXTRACTION_LABELS.NO_TEXT_FOUND }),
+      );
+    });
+
+    it('whitespace-only OCR output (blank Tesseract result) → same soft path, ZERO fetch', async () => {
+      (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
+        text: ' \n\n \t ',
+        pageCount: 1,
+        method: 'tesseract',
+        durationMs: 900,
+      });
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['png-bytes'], 'blank-photo.png', { type: 'image/png' });
+      const result = await runExtraction(file, 'b'.repeat(64), 'OTHER', progressCb);
+
+      expect(result).toBeNull();
+      expect(mockFetch).not.toHaveBeenCalled();
+      const failClosedCalls = progressCb.mock.calls.filter(
+        (c: unknown[]) => (c[0] as { failClosed?: boolean }).failClosed === true,
+      );
+      expect(failClosedCalls).toHaveLength(0);
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error', message: AI_EXTRACTION_LABELS.NO_TEXT_FOUND }),
+      );
+    });
+
+    it('ADVERSARIAL OVERLAP: an error with BOTH no-text AND fail-closed markers stays on the privacy path', async () => {
+      // Fail-closed dominates — mirrors the unsupported-format dominance test.
+      const overlap = Object.assign(new OcrEngineLoadError('engine down'), {
+        name: 'NoTextExtractedError',
+        noTextExtracted: true,
+      });
+      (extractText as ReturnType<typeof vi.fn>).mockRejectedValue(overlap);
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['bytes'], 'weird.pdf', { type: 'application/pdf' });
+      const result = await runExtraction(file, 'c'.repeat(64), 'OTHER', progressCb);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result).toBeNull();
+      // MUST land on the fail-closed (privacy-blocked) path, NOT the soft path.
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'error', failClosed: true }),
+      );
+      expect(progressCb).not.toHaveBeenCalledWith(
+        expect.objectContaining({ message: AI_EXTRACTION_LABELS.NO_TEXT_FOUND }),
+      );
+    });
+
+    it('NER model failure (name NERModelLoadError) STILL fails closed — no-text change does not weaken it', async () => {
+      (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
+        text: 'real text with PII',
+        pageCount: 1,
+        method: 'pdfjs',
+        durationMs: 100,
+      });
+      const nerLoadErr = Object.assign(new Error('model load failed'), {
+        name: 'NERModelLoadError',
+      });
+      (stripPIIEnhanced as ReturnType<typeof vi.fn>).mockRejectedValue(nerLoadErr);
+
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['x'], 'doc.pdf', { type: 'application/pdf' });
+      const result = await runExtraction(file, 'd'.repeat(64), 'DEGREE', progressCb);
 
       expect(mockFetch).not.toHaveBeenCalled();
       expect(result).toBeNull();

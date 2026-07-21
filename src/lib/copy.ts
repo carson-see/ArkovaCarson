@@ -1544,6 +1544,15 @@ export const AI_EXTRACTION_LABELS = {
   EXTRACT_DESCRIPTION: 'Automatically extract credential fields from the uploaded document',
   EXTRACTION_FAILED_TOAST: 'AI extraction unavailable — document will be secured without metadata.',
   /**
+   * SCRUM-2911 — BENIGN no-text soft-fail. Shown when extraction ran fine but
+   * found no readable text — the classic case is a scanned (image-only) PDF
+   * whose text layer is empty, or a blank photo. NOT a privacy failure: the
+   * pipeline ran on-device and nothing left the browser. Fixed copy — never
+   * interpolates document-derived text.
+   */
+  NO_TEXT_FOUND:
+    'No readable text was found in this document — it may be a scanned image. You can try a clearer copy, enter details manually, or secure it without AI metadata. Your file never left your device.',
+  /**
    * §1.6 FAIL-CLOSED (WEBEXT-03). Shown when the on-device privacy tools (the
    * personal-information remover or the on-device document reader) could not
    * run, so nothing was analyzed and nothing was sent. This is a LOUD failure,
