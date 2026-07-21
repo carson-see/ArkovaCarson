@@ -10,6 +10,7 @@
 
 import { cn } from '@/lib/utils';
 import { sanitizeHref } from '@/lib/urlValidator';
+import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import type { TemplateFieldDefinition } from '@/components/credentials/TemplateSchemaBuilder';
 import type { ReactElement } from 'react';
 
@@ -161,7 +162,16 @@ export function MetadataDisplay({
   schema,
   className,
 }: Readonly<MetadataDisplayProps>) {
-  const entries = Object.entries(metadata);
+  // BUG-2026-07-17-009 / -010 (SCRUM-2910, P0): fraud-derived metadata must
+  // never reach the DOM on any render surface. This component is a generic
+  // key-value metadata renderer exported from the verification barrel, so it
+  // hardens the same fraud filter every other metadata surface applies
+  // (RecordsList, PublicVerification, AssetDetailView, CredentialRenderer).
+  // Defense-in-depth: `_`-prefixed internal keys are dropped too, consistent
+  // with the other surfaces.
+  const entries = Object.entries(metadata).filter(
+    ([key]) => !key.startsWith('_') && !isFraudMetadataKey(key),
+  );
 
   if (entries.length === 0) {
     return (
