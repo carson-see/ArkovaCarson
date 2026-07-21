@@ -1,7 +1,7 @@
 BEGIN;
 
 -- =============================================================================
--- 0360 — Seed ENABLE_ORG_CREDIT_ENFORCEMENT switchboard row, AUDIT MIRROR ONLY,
+-- 0363 — Seed ENABLE_ORG_CREDIT_ENFORCEMENT switchboard row, AUDIT MIRROR ONLY,
 --        default OFF (G4, PI-0.5 24h slice; pairs with the merged #1570 /
 --        SCRUM-2970 credit gate — stable reference_id on org_credit_deductions)
 --

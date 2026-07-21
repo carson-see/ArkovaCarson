@@ -31,10 +31,10 @@ function readFlagMigration(): string {
   const migration = fs
     .readdirSync(migrationsDir)
     .filter((file) => file.endsWith('.sql'))
-    .find((file) => file.includes('0360') && file.includes('org_credit_enforcement'));
+    .find((file) => file.includes('0363') && file.includes('org_credit_enforcement'));
 
   if (!migration) {
-    throw new Error('Missing 0360 ENABLE_ORG_CREDIT_ENFORCEMENT flag migration');
+    throw new Error('Missing 0363 ENABLE_ORG_CREDIT_ENFORCEMENT flag migration');
   }
 
   return fs.readFileSync(path.join(migrationsDir, migration), 'utf8');
@@ -50,7 +50,7 @@ function executableSql(sql: string): string {
     .join('\n');
 }
 
-describe('0360 ENABLE_ORG_CREDIT_ENFORCEMENT switchboard seed (G4, off-by-default)', () => {
+describe('0363 ENABLE_ORG_CREDIT_ENFORCEMENT switchboard seed (G4, off-by-default)', () => {
   it('seeds the flag row with enabled = false (must NOT be ON before HakiChain funding — G3)', () => {
     const exec = executableSql(readFlagMigration());
 

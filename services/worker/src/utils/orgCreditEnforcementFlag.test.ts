@@ -1,7 +1,7 @@
 /**
  * G4 (PI-0.5 24h slice) — ENABLE_ORG_CREDIT_ENFORCEMENT fail-closed semantics.
  *
- * Pairs with `src/tests/0360-enable-org-credit-enforcement-flag.test.ts`
+ * Pairs with `src/tests/0363-enable-org-credit-enforcement-flag.test.ts`
  * (which pins the migration + seed artifacts). This file pins the WORKER
  * behavior the seed must match, verified against the existing code paths:
  *
