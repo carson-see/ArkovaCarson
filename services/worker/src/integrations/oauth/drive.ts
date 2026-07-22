@@ -63,8 +63,9 @@ export class DriveConfigError extends Error {
  * Drive paths (token exchange/refresh, startPageToken, changes.watch,
  * channels.stop, token revoke, files.get metadata, changes.list) whose error
  * body is safe Google API error JSON (e.g. `{ "error": { "message": "..." } }`).
- * Drive currently exposes no document-fetch helper here; were one added, it
- * MUST construct this error with status + message only (no detail).
+ * The ONE document-fetch helper — {@link fetchDriveFileBytes} (SCRUM-2903) —
+ * constructs this error with status + message only (NO detail), because its
+ * error body can itself carry document bytes.
  */
 export class DriveApiError extends Error {
   status: number;
@@ -397,6 +398,90 @@ export async function listChanges(args: {
     throw new DriveApiError('Drive changes.list failed', res.status, boundedErrorDetail(json));
   }
   return ChangesListResponse.parse(json);
+}
+
+/**
+ * Google Workspace-native mime types (Docs / Sheets / Slides / …). These files
+ * have NO downloadable binary of their own — `files.get?alt=media` returns 403
+ * `fileNotDownloadable`. They must be pulled through `files.export`, which
+ * renders the doc to a concrete export mime type (e.g. PDF). SCRUM-2903 GD-PROD.
+ */
+const GOOGLE_APPS_MIME_PREFIX = 'application/vnd.google-apps.';
+
+/**
+ * Default export mime types for the Google-native doc families. PDF is the
+ * lossless, universally-exportable rendering for Docs/Slides/Drawings; Sheets
+ * exports to PDF too (a CSV export would silently drop every tab but the first,
+ * so PDF is the safe fingerprint surface). Anything not listed falls back to
+ * PDF. The chosen export mime is recorded in the artifact metadata so the
+ * fingerprint is reproducible.
+ */
+const GOOGLE_APPS_EXPORT_MIME: Record<string, string> = {
+  'application/vnd.google-apps.document': 'application/pdf',
+  'application/vnd.google-apps.spreadsheet': 'application/pdf',
+  'application/vnd.google-apps.presentation': 'application/pdf',
+  'application/vnd.google-apps.drawing': 'application/pdf',
+};
+
+/** Is this a Google Workspace-native doc (export-only, no raw binary)? */
+export function isGoogleAppsMimeType(mimeType: string | null | undefined): boolean {
+  return typeof mimeType === 'string' && mimeType.startsWith(GOOGLE_APPS_MIME_PREFIX);
+}
+
+/** Resolve the export mime type for a Google-native doc (defaults to PDF). */
+export function resolveDriveExportMimeType(sourceMimeType: string): string {
+  return GOOGLE_APPS_EXPORT_MIME[sourceMimeType] ?? 'application/pdf';
+}
+
+/**
+ * Fetch a Drive file's raw bytes for server-side fingerprinting (SCRUM-2903
+ * GD-PROD / §1.6A).
+ *
+ * This is the ONE document-bearing Drive helper. Per §1.6A the returned bytes
+ * MUST be SHA-256'd in memory and then discarded by the caller — never logged,
+ * persisted, attached to an Error, written to `job_queue.last_error`, or spooled
+ * to a temp file. Two transport modes:
+ *
+ *   - Binary files (PDF, DOCX, images, …): `files.get?alt=media` streams the
+ *     stored bytes verbatim.
+ *   - Google Workspace-native docs (Docs/Sheets/Slides/Drawings): those have no
+ *     stored binary, so we render via `files.export?mimeType=…`. The export mime
+ *     is surfaced in the return so the caller records it (reproducible digest).
+ *
+ * §1.6A error discipline (mirrors `fetchDocusignCombinedDocument`): on a non-OK
+ * response we do NOT read/attach the body — an error body on the media/export
+ * path can itself carry document bytes. Status + message only; NO `detail`.
+ */
+export async function fetchDriveFileBytes(args: {
+  fileId: string;
+  accessToken: string;
+  /** Source mime type from changes.list; selects media vs export transport. */
+  mimeType?: string | null;
+  deps?: DriveClientDeps;
+}): Promise<{ bytes: Buffer; contentType: string | null; exportMimeType: string | null }> {
+  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+  const fileId = encodeURIComponent(args.fileId);
+
+  let url: string;
+  let exportMimeType: string | null = null;
+  if (isGoogleAppsMimeType(args.mimeType)) {
+    exportMimeType = resolveDriveExportMimeType(args.mimeType as string);
+    url = `${DRIVE_API_BASE}/files/${fileId}/export?mimeType=${encodeURIComponent(exportMimeType)}`;
+  } else {
+    url = `${DRIVE_API_BASE}/files/${fileId}?alt=media&supportsAllDrives=true`;
+  }
+
+  const res = await fetchImpl(url, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+  });
+  if (!res.ok) {
+    // §1.6A: do NOT read/attach the response body on the document-fetch path —
+    // an error response here can carry document bytes. Status + message only,
+    // and deliberately NO bounded `detail` (see DriveApiError doc comment).
+    throw new DriveApiError('Drive file bytes fetch failed', res.status);
+  }
+  const bytes = Buffer.from(await res.arrayBuffer());
+  return { bytes, contentType: res.headers.get('content-type'), exportMimeType };
 }
 
 /** Get a shared drive's display name. Falls back to the ID on failure. */

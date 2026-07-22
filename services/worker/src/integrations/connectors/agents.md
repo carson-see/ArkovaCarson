@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/integrations/connectors/
 
-_Last updated: 2026-07-01 (PI-0 S2 Lane 3: DRIVE-01/02/03/06 verified-only connect + watch-state bootstrap + dedupe + channel renewal)._
+_Last updated: 2026-07-22 (PI-0.5 Lane 3: SCRUM-2903 GD-PROD Drive connector-artifact producer bridge — fetch→SHA-256→enqueue)._
 
 ## What This Folder Contains
 
@@ -16,6 +16,7 @@ Vendor connector services and canonical event adapters. Each connector owns OAut
 | `docusign-token-store.ts` | DocuSign refresh-token Secret Manager store — org + member-level naming (SCRUM-2044) |
 | `drive-changes-processor.ts` | Drive changes feed processor — paginated, deduped, folder-matched event emission |
 | `drive-changes-runner.ts` | Webhook-to-processor glue — token refresh, watched-folder-id resolution |
+| `drive-artifact-producer.ts` | **SCRUM-2903 GD-PROD**: the producer bridge that gives Drive documents an anchor path. `processDriveFileChangedJob` (Drive twin of `processDocusignEnvelopeCompletedJob`): parse (Zod, ids-only payload — NO actor_email/PII field exists) → resolve access token → `fetchDriveFileBytes` → sink. Pure orchestrator (token resolver / fetch / sink all injected). The payload schema deliberately carries only connector-native ids so actor email cannot ride into the artifact. Byte handling is confined to the sink (`jobs/drive-file-changed.ts`). **REMAINING (SCRUM-2903 tail, In Progress):** the enqueue point — `drive-changes-runner.ts` still calls `enqueue_rule_event` only; inserting the `google_drive.file_changed` job_queue row on a matched change + registering the drain in `routes/scheduled.ts`/`cron.ts` is the end-to-end wiring not yet landed. |
 | `drive-folder-resolver.ts` | Drive parent-chain folder path resolver (20-level depth cap, 15-min TTL cache) |
 | `drive-connect-eligibility.ts` | **DRIVE-01 (SCRUM-2366)**: verified-only Google Drive connect gate. Org-admin / paid-verified-individual paths, resolved via the canonical owner-inclusive resolver (`api/_org-auth.ts`), never `org_members` alone. Re-evaluated at start AND callback so an existing/stale token can't bypass a lapsed entitlement. Fail-closed to `lookup_failed`. **WIRED into `api/v1/integrations/drive-oauth.ts`** (`start` + `callback`) via `assertDriveConnectAllowed` + a `makeEligibilityDb` adapter — do NOT leave it importer-less again. |
 | `drive-watch-bootstrap.ts` | **DRIVE-02 (SCRUM-2367)**: folder-watch bootstrap → persists initial page token, channel id/expiry, owner scope (my_drive vs shared_drive), status, `last_renewal_error` into `drive_watch_state` (mig 0351) via `upsert_drive_watch_state`. `persist()` forwards `p_last_renewal_error` — the RPC MUST declare that param (fixed in 0351: `p_last_renewal_error text DEFAULT NULL`, written on INSERT + ON CONFLICT UPDATE). Folder-permission failures → `status='permission_denied'` (no throw); folder id mismatch → `failed`. `folder_path`/`owner_email` are sensitive — persisted to the RLS row ONLY, never logged. |
