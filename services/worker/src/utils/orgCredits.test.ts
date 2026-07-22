@@ -119,6 +119,50 @@ describe('deductOrgCredit (SCRUM-1170-B)', () => {
     });
   });
 
+  it('deducts exactly once for two calls with the same reference_id (SCRUM-2970)', async () => {
+    // Simulate the 0326 ledger: UNIQUE(org_id, reference_id, reason). The
+    // first call for a given key decrements; a retry with the same key is
+    // returned idempotently without touching the balance.
+    mockConfig.enableOrgCreditEnforcement = true;
+    const ledger = new Set<string>();
+    let balance = 100;
+    mockRpc.mockImplementation(
+      (_fn: string, args: { p_org_id: string; p_amount: number; p_reason: string; p_reference_id: string | null }) => {
+        // Guard the property under test: the ledger only engages when
+        // p_reference_id is non-null (0326 lines 62-88 / 104-107).
+        expect(args.p_reference_id).not.toBeNull();
+        const key = `${args.p_org_id}:${args.p_reference_id}:${args.p_reason}`;
+        if (ledger.has(key)) {
+          return Promise.resolve({
+            data: { success: true, balance, deducted: 0, idempotent: true },
+            error: null,
+          });
+        }
+        ledger.add(key);
+        balance -= args.p_amount;
+        return Promise.resolve({
+          data: { success: true, balance, deducted: args.p_amount },
+          error: null,
+        });
+      },
+    );
+
+    const REF = '31111111-3222-4333-8444-355555555555';
+    const first = await deductOrgCredit(db, ORG, 1, 'anchor.create', REF);
+    const retry = await deductOrgCredit(db, ORG, 1, 'anchor.create', REF);
+
+    expect(first).toEqual({ allowed: true, balance: 99 });
+    expect(retry).toEqual({ allowed: true, balance: 99, idempotent: true });
+    expect(balance).toBe(99); // exactly ONE decrement across both calls
+    expect(mockRpc.mock.calls[0]?.[1]?.p_reference_id).toBe(REF);
+    expect(mockRpc.mock.calls[1]?.[1]?.p_reference_id).toBe(REF);
+
+    // A DISTINCT logical request (different reference_id) still deducts.
+    const other = await deductOrgCredit(db, ORG, 1, 'anchor.create', '41111111-4222-4333-8444-455555555555');
+    expect(other).toEqual({ allowed: true, balance: 98 });
+    expect(balance).toBe(98);
+  });
+
   it('treats unknown rpc-error values as rpc_failure (safe default)', async () => {
     mockConfig.enableOrgCreditEnforcement = true;
     mockRpc.mockResolvedValueOnce({
