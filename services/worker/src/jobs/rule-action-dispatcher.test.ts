@@ -39,6 +39,7 @@ interface AnchorInsert {
 }
 
 interface AnchorLookupRow {
+  id?: string;
   public_id: string;
   status: string;
 }
@@ -68,7 +69,17 @@ const dbState = {
 // when the flag is off. The dispatcher tests below pin the AC behavior on
 // the gated path (the 1649 PRD ACs are written against credit enforcement
 // being live), so flip the flag on in the per-test config mock.
-vi.mock('../config.js', () => ({ config: { enableOrgCreditEnforcement: true } }));
+// Mutable config mock so SCRUM-2904 reconciliation tests can flip the two
+// connector flags per-test. Default both OFF → the declared-hash path is the
+// writer (matching prod today), so every pre-existing test is unaffected.
+const { mockConfig } = vi.hoisted(() => ({
+  mockConfig: {
+    enableOrgCreditEnforcement: true,
+    enableConnectorArtifactEnqueue: false,
+    enableConnectorArtifactDrain: false,
+  },
+}));
+vi.mock('../config.js', () => ({ config: mockConfig }));
 vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: (...args: unknown[]) => mockLoggerWarn(...args), error: vi.fn(), debug: vi.fn() },
 }));
@@ -135,6 +146,10 @@ vi.mock('../utils/db.js', () => {
       eq: () => selectChain,
       is: () => selectChain,
       neq: () => selectChain,
+      // SCRUM-2904 envelope-level guard queries add .or()/.order()/.limit().
+      or: () => selectChain,
+      order: () => selectChain,
+      limit: () => selectChain,
       maybeSingle: async () => ({ data: dbState.existingAnchors[0] ?? null, error: null }),
     };
     return {
@@ -278,6 +293,9 @@ beforeEach(() => {
   // insufficient_credits explicitly override per-test via mockDbRpc.
   mockDbRpc.mockResolvedValue({ data: { success: true, balance: 99, deducted: 1 }, error: null });
   mockSubmitJob.mockResolvedValue('job-fast-track-1');
+  // SCRUM-2904: reset connector flags OFF between tests (declared-hash writer).
+  mockConfig.enableConnectorArtifactEnqueue = false;
+  mockConfig.enableConnectorArtifactDrain = false;
 });
 
 describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
@@ -856,5 +874,96 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     const final = dbState.finalUpdates.get(EXEC_ID);
     expect(final?.status).toBe('FAILED');
     expect(final?.error as string).toMatch(/org_not_initialized/i);
+  });
+
+  // ── SCRUM-2904: dual-path DocuSign reconciliation ─────────────────────────
+  describe('SCRUM-2904 dual-path reconciliation (declared-hash defers to connector)', () => {
+    function enableConnectorPath() {
+      mockConfig.enableConnectorArtifactEnqueue = true;
+      mockConfig.enableConnectorArtifactDrain = true;
+    }
+
+    it('AUTO_ANCHOR DEFERS to the connector path when both flags on — no anchor, no double-anchor', async () => {
+      enableConnectorPath();
+      setScenario({ rule: { ...defaultRule, action_type: 'AUTO_ANCHOR', action_config: {} } });
+
+      const result = await runRuleActionDispatcher();
+
+      expect(result.succeeded).toBe(1);
+      // The declared-hash path materialized NOTHING — the server-fetched
+      // connector path is the single writer for this docusign envelope.
+      expect(dbState.anchorInserts).toHaveLength(0);
+      const out = dbState.finalUpdates.get(EXEC_ID)?.output_payload as {
+        outcome: string;
+        routed_to: string;
+        anchor_materialized?: boolean;
+      };
+      expect(out.outcome).toBe('deferred_to_connector');
+      expect(out.routed_to).toBe('connector_pipeline');
+      expect(out.anchor_materialized).toBe(false);
+    });
+
+    it('FAST_TRACK_ANCHOR DEFERS and moves NO credit when both flags on', async () => {
+      enableConnectorPath();
+      setScenario({ rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} } });
+
+      const result = await runRuleActionDispatcher();
+
+      expect(result.succeeded).toBe(1);
+      expect(dbState.anchorInserts).toHaveLength(0);
+      // No credit deduction RPC — defer happens BEFORE any charge.
+      expect(mockDbRpc).not.toHaveBeenCalled();
+      expect(mockSubmitJob).not.toHaveBeenCalled();
+      const out = dbState.finalUpdates.get(EXEC_ID)?.output_payload as { outcome: string };
+      expect(out.outcome).toBe('deferred_to_connector');
+    });
+
+    it('does NOT defer when the DRAIN flag is off — declared-hash stays the writer (no silent data loss)', async () => {
+      // pre-mortem #1: deferring into an enqueue-but-no-drain path would strand
+      // the envelope forever. So the declared-hash path must still anchor it.
+      mockConfig.enableConnectorArtifactEnqueue = true;
+      mockConfig.enableConnectorArtifactDrain = false;
+      setScenario({ rule: { ...defaultRule, action_type: 'AUTO_ANCHOR', action_config: {} } });
+
+      await runRuleActionDispatcher();
+
+      expect(dbState.anchorInserts).toHaveLength(1);
+      const out = dbState.finalUpdates.get(EXEC_ID)?.output_payload as { outcome: string };
+      expect(out.outcome).toBe('queued_for_anchor');
+    });
+
+    it('does NOT defer when both flags off — backward-compatible prod default', async () => {
+      setScenario({ rule: { ...defaultRule, action_type: 'AUTO_ANCHOR', action_config: {} } });
+
+      await runRuleActionDispatcher();
+
+      expect(dbState.anchorInserts).toHaveLength(1);
+      const out = dbState.finalUpdates.get(EXEC_ID)?.output_payload as { outcome: string };
+      expect(out.outcome).toBe('queued_for_anchor');
+    });
+
+    it('envelope-level guard: AUTO_ANCHOR reuses an anchor already created for the same envelope (flag-flip race) — single anchor', async () => {
+      // Both flags OFF here (so no deferral), but the connector path had
+      // previously anchored this envelope under an earlier flag state. The
+      // envelope-level guard finds it and REUSES it instead of inserting a
+      // second, distinct anchor — the core "one document → one anchor" guarantee
+      // even when the two paths' fingerprints differ.
+      dbState.existingAnchors = [{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', public_id: 'ARK-2026-CONNECTOR', status: 'PENDING' }];
+      setScenario({ rule: { ...defaultRule, action_type: 'AUTO_ANCHOR', action_config: {} } });
+      // setScenario resets existingAnchors — re-set after.
+      dbState.existingAnchors = [{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', public_id: 'ARK-2026-CONNECTOR', status: 'PENDING' }];
+
+      const result = await runRuleActionDispatcher();
+
+      expect(result.succeeded).toBe(1);
+      // No NEW insert — the existing connector anchor is reused.
+      expect(dbState.anchorInserts).toHaveLength(0);
+      const out = dbState.finalUpdates.get(EXEC_ID)?.output_payload as {
+        duplicate_anchor?: boolean;
+        anchor_public_id?: string;
+      };
+      expect(out.duplicate_anchor).toBe(true);
+      expect(out.anchor_public_id).toBe('ARK-2026-CONNECTOR');
+    });
   });
 });
