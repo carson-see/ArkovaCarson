@@ -54,63 +54,57 @@ function repairNessieJson(text: string): string {
   return escapeBareNewlinesInStrings(balanced);
 }
 
+type JsonCharClass = 'escape-start' | 'escaped-char' | 'quote' | 'plain';
+
+/** Classifies one char of the string/escape state machine shared by the delimiter and newline repairs below. */
+function classifyJsonChar(
+  char: string,
+  state: { inString: boolean; escaped: boolean },
+): JsonCharClass {
+  if (state.escaped) {
+    state.escaped = false;
+    return 'escaped-char';
+  }
+  if (char === '\\') {
+    state.escaped = true;
+    return 'escape-start';
+  }
+  if (char === '"') {
+    state.inString = !state.inString;
+    return 'quote';
+  }
+  return 'plain';
+}
+
 function balanceJsonDelimiters(text: string): string {
-  let inString = false;
-  let escaped = false;
+  const state = { inString: false, escaped: false };
   const stack: string[] = [];
 
   for (const char of text) {
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
+    const charClass = classifyJsonChar(char, state);
+    if (charClass !== 'plain' || state.inString) continue;
     if (char === '{') stack.push('}');
-    if (char === '[') stack.push(']');
-    if ((char === '}' || char === ']') && stack[stack.length - 1] === char) stack.pop();
+    else if (char === '[') stack.push(']');
+    else if ((char === '}' || char === ']') && stack.at(-1) === char) stack.pop();
   }
 
-  return text + stack.reverse().join('');
+  stack.reverse();
+  return text + stack.join('');
 }
 
 function escapeBareNewlinesInStrings(text: string): string {
+  const state = { inString: false, escaped: false };
   let out = '';
-  let inString = false;
-  let escaped = false;
 
   for (const char of text) {
-    if (escaped) {
+    const charClass = classifyJsonChar(char, state);
+    if (charClass === 'plain' && state.inString && char === '\n') {
+      out += String.raw`\n`;
+    } else if (charClass === 'plain' && state.inString && char === '\r') {
+      out += String.raw`\r`;
+    } else {
       out += char;
-      escaped = false;
-      continue;
     }
-    if (char === '\\') {
-      out += char;
-      escaped = true;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      out += char;
-      continue;
-    }
-    if (inString && char === '\n') {
-      out += '\\n';
-      continue;
-    }
-    if (inString && char === '\r') {
-      out += '\\r';
-      continue;
-    }
-    out += char;
   }
 
   return out;

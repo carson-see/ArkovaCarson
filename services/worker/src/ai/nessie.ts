@@ -69,7 +69,7 @@ export class NessieProvider implements IAIProvider {
   private readonly endpointId: string;
   private readonly modelName: string;
   private readonly apiBase: string;
-  private circuit: CircuitState = {
+  private readonly circuit: CircuitState = {
     consecutiveFailures: 0,
     lastFailureAt: 0,
     isOpen: false,
