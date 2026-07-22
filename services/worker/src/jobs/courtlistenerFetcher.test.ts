@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { makeHangingFetch } from '../test-utils/hanging-fetch.js';
 
 const mockRpc = vi.fn();
 
@@ -16,27 +17,6 @@ function makeSupabase(opts: { flagEnabled?: boolean } = {}) {
     return Promise.resolve({ data: null });
   });
   return { rpc: mockRpc } as unknown as Parameters<typeof fetchCourtOpinions>[0];
-}
-
-/**
- * A `fetch` stub that simulates a stalled upstream: it never resolves on its
- * own, but DOES honour `init.signal` the way real fetch does — rejecting with
- * the signal's abort reason once the signal fires. This is what lets the test
- * prove `AbortSignal.timeout` actually bounds the call without waiting for a
- * real network hang.
- */
-function makeHangingFetch() {
-  return vi.fn((_url: string, init?: RequestInit) => {
-    return new Promise((_resolve, reject) => {
-      const signal = init?.signal;
-      if (!signal) return; // no signal wired — would hang forever (the bug)
-      if (signal.aborted) {
-        reject(signal.reason);
-        return;
-      }
-      signal.addEventListener('abort', () => reject(signal.reason));
-    });
-  });
 }
 
 describe('courtlistenerFetcher (SCRUM-2975 unbounded-fetch fix)', () => {
