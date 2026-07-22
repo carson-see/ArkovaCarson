@@ -2,6 +2,10 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-07-22 inferJurisdiction word-boundary fix (bug hunt)
+
+- `ai-extract.ts`'s `inferJurisdiction` (used only inside `buildFastFallbackExtraction`, the degraded fallback that runs when the primary AI provider errors/times out) had a regex bug: `/\bKenya|KDPA|ODPC\b/i`-style `|`-chains only bind `\b` to the FIRST/LAST alternative, leaving interior alternatives (`KDPA`, `OAIC`/`AHPRA`/`TEQSA`, `USA`) completely unanchored — they matched as raw substrings anywhere in the text (e.g. "CAUSATION" contains "USA" and incorrectly returned `jurisdiction: 'United States'`). Fixed by wrapping each `|`-chain's alternatives in a shared `\b(?:...)\b`/`(?!\w)` boundary, applied per-alternative correctly. Also fixed a latent, independent bug found in the same regexes: the original `U\.S\.\b` alternative's trailing `\b` could essentially never match in practice (a period is virtually always followed by another non-word character, so the word/non-word transition `\b` requires never occurs) — replaced with a trailing `(?!\w)` lookahead, which is boundary-correct for alternatives ending in either a letter or a period. `inferJurisdiction` is now exported for direct unit testing (mirrors the existing `resolveExtractionLatencyBudgetMs` export pattern).
+
 ## 2026-07-17 Anchor credit-gate idempotency (SCRUM-2970, BUG-2026-07-17-012)
 
 - `anchor-submit.ts` restructured to insert-then-deduct: the PENDING anchor row is inserted first, then `ensureAnchorCreditAvailable` runs with `reference_id` = the new row's id (repo pattern per `credential-sources.ts`). Previously the gate called `deduct_org_credit` with `p_reference_id=null`, bypassing the 0326 idempotency ledger so a retry double-deducted. A fingerprint-derived reference was rejected in review (free re-anchor after soft-delete). On deduct failure the never-paid row is hard-deleted (compensation) and the frozen 402/503 bodies are returned unchanged; an HTTP retry of the same request is absorbed by the dedup lookup before the gate.
