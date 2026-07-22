@@ -186,20 +186,20 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     const reviewPanel = page.getByTestId('template-review-panel');
     await expect(reviewPanel).toBeVisible({ timeout: 30000 });
 
-    // Low-confidence fields are flagged and Continue is BLOCKED.
+    // SCRUM-2914 (Founder UI findings, 2026-07-22): the AI-03 confidence-driven
+    // review gate was removed — extraction confidence scoring is unreliable and
+    // must never block a submit. Continue is enabled immediately; field
+    // review/edit stays available (exercised below) but no longer gates the flow.
+    // The template reconstruction request has not fired yet (it only goes out on
+    // Continue), so its captured body is still empty at this point.
     const continueButton = page.getByTestId('extraction-review-continue');
-    await expect(continueButton).toBeDisabled();
+    await expect(continueButton).toBeEnabled();
     expect(templateRequestBody).toEqual('');
 
-    // ── Correct one field (edit) and acknowledge the rest ──
+    // ── Correct one field (edit) — review/edit remains available ──
     await page.getByTestId('review-edit-creditHours').click();
     await page.getByTestId('review-input-creditHours').fill('6');
     await page.getByTestId('review-save-creditHours').click();
-
-    const remainingAcknowledgementButtons = reviewPanel.getByTestId(/^review-ack-/);
-    while (await remainingAcknowledgementButtons.count() > 0) {
-      await remainingAcknowledgementButtons.first().click();
-    }
 
     await expect(continueButton).toBeEnabled();
     await continueButton.click();
