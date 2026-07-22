@@ -370,3 +370,5 @@ _Last refreshed: 2026-07-17 by Claude (CTO/DBA drain-execution session) — clai
 _Last refreshed: 2026-07-17 by Claude (CTO/ART evening review) — claims verified against gcloud scheduler describe/update + Cloud Run log 200 (17:42:11Z), Supabase MCP treasury_cache/switchboard reads, gateway/worker curls, and three lane packets grounded in origin/main 27b90ef8; artifacts cited in this commit body._
 
 _Last refreshed: 2026-07-17 by Claude (CTO close-out) — plan docs + Confluence mirror created and cross-linked; superseded plans archived (Drive API-verified); no code changed._
+
+_Last refreshed: 2026-07-22 by Claude (CI-fix session, Draft PR #1661) claims verified against gcloud/MCP/CI output (no prod state asserted; the entry above notes the PR is not merged and not soaked)._
