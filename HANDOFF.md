@@ -11,6 +11,10 @@
 > - **git log** = what changed, by whom, when
 
 
+### 2026-07-22 — Together AI JSON parse hardening, Draft PR #1661 (not merged/soaked)
+
+[PR #1661](https://github.com/carson-see/ArkovaCarson/pull/1661) hardens `TogetherProvider.extractMetadata` (`services/worker/src/ai/together.ts`) against a naked `JSON.parse` on raw model output — the same BUG-2026-06-24-014 bug class as `gemini.ts`'s `parseModelJson` and the (separately in-flight, unmerged) `nessie-json-parse.ts`. Added a file-scoped `parseTogetherJson`, TDD tests for truncated/trailing-prose/trailing-comma responses, `agents.md` updated. `check-staging-evidence.ts` auto-tiers this T2 via the `services/worker/src/ai/` path pattern despite the narrow single-file scope; **left Draft, no soak started, Carson's to Ready/merge.** Jira/Confluence not touched — Atlassian MCP wasn't authenticated in that session.
+
 ### 2026-07-22 (RTE) — Live-state reconciliation: rail PRs re-verified against GitHub/gcloud, not memory; main has moved substantially since the last snapshot; a duplicated HANDOFF entry from an earlier rebase-conflict resolution was also found and fixed
 
 **Rail PRs from the T2/T3 watch list, re-verified live (`gh pr view`, `gcloud run services describe`) rather than assumed from prior notes or recalled context — a recalled claim of "#1552 conflict resolved, head bfd49751" turned out to describe a separate integration build, not the PR branch itself, and needed independent confirmation before trusting it:**
