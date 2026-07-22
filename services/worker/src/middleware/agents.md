@@ -2,6 +2,10 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-07-22 PR #1555 (SCRUM-2703/2705) rebase note — count:'exact' callsite reviewed, not changed
+
+`perOrgRateLimit.ts::getCapacityCount` uses `count: 'exact'` (the R0-8 baseline check flags it: 77→78 non-test callsites). Reviewed and left as-is: both `CAPACITY_TABLES` targets (`organization_rules`, `webhook_endpoints`) are queried with `.eq('org_id', orgId)` against an indexed `org_id` btree (`idx_organization_rules_org_trigger`, `idx_webhook_endpoints_org_id`), and per-org cardinality is bounded by the tier caps themselves (≤100 rules, ≤10 connectors) — not the unindexed multi-million-row `anchors`-table scan pattern R0-8 targets. Capacity enforcement also needs an exact count (compared against small integer tier limits); `count:'estimated'`/`pg_class.reltuples` would give an inaccurate, whole-table (not org-scoped) figure and risk incorrect quota allow/deny. Left for RTE/CTO call on whether to special-case this callsite in the baseline script vs. carry the `count-exact-allowed` label at PR time.
+
 ## 2026-05-20 Visual Fraud Gate Note
 
 - `aiFeatureGate.ts` still exposes `ENABLE_VISUAL_FRAUD_DETECTION` for legacy route compatibility, but `/api/v1/ai/fraud/visual` now returns HTTP 410. Client-side worker fraud analysis is the only compliant forward path under SCRUM-1955.
