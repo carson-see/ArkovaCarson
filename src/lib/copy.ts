@@ -2495,6 +2495,10 @@ export const CONFIRMATION_PROGRESS_LABELS = {
   // estimate \u2014 anchoring timing is not a guarantee we can make.
   IN_PROGRESS: 'Anchoring in progress \u2014 your record will be permanently verified.',
   NOTIFICATION_NOTE: 'You\u2019ll receive a notification when anchoring is complete. You can safely close this dialog.',
+  // SCRUM-2914: neighboring timing-neutral label for the record-detail
+  // "awaiting confirmation" notice (was hardcoded with a "~10 minutes"
+  // estimate directly in AssetDetailView.tsx \u2014 moved here per \u00a71.3).
+  AWAITING_CONFIRMATION: 'Your record has been submitted to the network. Confirmation is in progress.',
 } as const;
 
 export const FINGERPRINT_TOOLTIP = {
