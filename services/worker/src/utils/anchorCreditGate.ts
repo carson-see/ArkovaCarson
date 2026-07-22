@@ -10,6 +10,22 @@
  * SCRUM-1170-B set the original credit-deduction contract; this is a
  * mechanical extraction that does not change any response shape or
  * status-code mapping.
+ *
+ * SCRUM-2970 (BUG-2026-07-17-012) — the gate now REQUIRES a `referenceId`.
+ * It previously called `deductOrgCredit` with none, which made migration
+ * 0326's idempotency ledger a no-op on the primary anchor path (the RPC
+ * only consults/writes `org_credit_deductions` when `p_reference_id IS NOT
+ * NULL`), so any retry/redelivery double-deducted. Callers follow the
+ * insert-then-deduct pattern (see `credential-sources.ts`): insert the
+ * PENDING anchor row first, pass the new row's id as `referenceId` — a
+ * fresh uuid per anchoring event, so a soft-delete + re-anchor is a NEW
+ * billable event, while an HTTP retry of the same logical request is
+ * absorbed by the endpoint's dedup lookup before ever reaching this gate —
+ * and on a `false` return hard-delete the never-paid row as compensation.
+ * Do NOT derive the referenceId from request content (e.g. the
+ * fingerprint): a permanent ledger row keyed on content, combined with the
+ * soft-delete-aware dedup lookups (`.is('deleted_at', null)`), would make
+ * every re-anchor after a soft-delete free — even at zero balance.
  */
 
 import type { Response } from 'express';
@@ -20,7 +36,12 @@ import { logger } from './logger.js';
 /**
  * Deduct one anchor credit for `orgId` and emit an appropriate response on
  * failure. Returns `true` if the caller may proceed, `false` if the response
- * has already been written (and the caller must early-return).
+ * has already been written (and the caller must early-return, compensating
+ * for any just-inserted anchor row).
+ *
+ * `referenceId` is REQUIRED (SCRUM-2970): pass the just-inserted anchor
+ * row's id so the 0326 idempotency ledger dedupes a re-run of the same
+ * anchoring event instead of double-deducting.
  */
 export async function ensureAnchorCreditAvailable(
   // The Supabase client is passed in (rather than imported) so this helper
@@ -29,8 +50,9 @@ export async function ensureAnchorCreditAvailable(
   db: SupabaseClient<any, any, any>,
   orgId: string,
   res: Response,
+  referenceId: string,
 ): Promise<boolean> {
-  const deduction = await deductOrgCredit(db, orgId, 1, 'anchor.create');
+  const deduction = await deductOrgCredit(db, orgId, 1, 'anchor.create', referenceId);
   if (deduction.allowed) return true;
 
   if (deduction.error === 'insufficient_credits') {
