@@ -160,6 +160,96 @@ describe('TogetherProvider', () => {
     });
   });
 
+  // BUG-2026-06-24-014 parity: Together AI's `response_format: json_object`
+  // native JSON mode suppresses markdown-fence wrapping but does not protect
+  // against truncated output hitting the model's token limit mid-object. A
+  // naked JSON.parse throws SyntaxError there, surfacing as an unhandled
+  // extraction failure instead of recovering the object.
+  describe('JSON parsing resilience', () => {
+    it('recovers a response truncated mid-object at the token limit', async () => {
+      const provider = new TogetherProvider(FAKE_API_KEY);
+
+      // Missing the final closing brace — simulates output cut off when the
+      // model hits max_tokens before emitting the terminator.
+      const truncatedContent =
+        '{"credentialType":"DEGREE","issuerName":"MIT","fieldOfStudy":"Computer Science","confidence":0.92';
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: truncatedContent } }],
+          usage: { total_tokens: 150 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: '[NAME_REDACTED] graduated from MIT with a degree in Computer Science',
+        credentialType: 'DEGREE',
+        fingerprint: 'sha256:truncated',
+      });
+
+      expect(result.fields.credentialType).toBe('DEGREE');
+      expect(result.fields.issuerName).toBe('MIT');
+      expect(result.fields.fieldOfStudy).toBe('Computer Science');
+      expect(result.provider).toBe('together');
+    });
+
+    it('recovers a response with trailing prose after the closing brace', async () => {
+      const provider = new TogetherProvider(FAKE_API_KEY);
+
+      const contentWithTrailingProse = [
+        JSON.stringify({
+          credentialType: 'LICENSE',
+          issuerName: 'State Bar',
+          confidence: 0.81,
+        }),
+        'Note: response truncated, additional context follows.',
+      ].join('\n');
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: contentWithTrailingProse } }],
+          usage: { total_tokens: 130 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: 'Licensed by State Bar',
+        credentialType: 'LICENSE',
+        fingerprint: 'sha256:trailingprose',
+      });
+
+      expect(result.fields.credentialType).toBe('LICENSE');
+      expect(result.fields.issuerName).toBe('State Bar');
+      expect(result.provider).toBe('together');
+    });
+
+    it('repairs a trailing comma left before the closing brace', async () => {
+      const provider = new TogetherProvider(FAKE_API_KEY);
+
+      const contentWithTrailingComma =
+        '{"credentialType":"CERTIFICATE","issuerName":"Acme Institute","confidence":0.7,}';
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: contentWithTrailingComma } }],
+          usage: { total_tokens: 90 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: 'Certificate issued by Acme Institute',
+        credentialType: 'CERTIFICATE',
+        fingerprint: 'sha256:trailingcomma',
+      });
+
+      expect(result.fields.credentialType).toBe('CERTIFICATE');
+      expect(result.fields.issuerName).toBe('Acme Institute');
+    });
+  });
+
   describe('generateEmbedding', () => {
     it('calls Together AI embedding endpoint', async () => {
       const provider = new TogetherProvider(FAKE_API_KEY);

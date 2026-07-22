@@ -30,6 +30,7 @@ import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
 import { runCrossFieldChecks, validateFieldsForType } from './crossFieldFraudChecks.js';
 import { traceAiProviderCall } from './observability.js';
+import { stripJsonComments } from './strip-json-comments.js';
 
 const TOGETHER_API_BASE = 'https://api.together.xyz/v1';
 const DEFAULT_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct';
@@ -88,7 +89,7 @@ export class TogetherProvider implements IAIProvider {
       );
 
       const text = response.choices[0]?.message?.content ?? '';
-      const parsed = JSON.parse(text);
+      const parsed = parseTogetherJson(text);
       const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
       const { confidence: _, ...rawFields } = parsed;
       const validated = ExtractedFieldsSchema.safeParse(rawFields);
@@ -391,6 +392,138 @@ export class TogetherProvider implements IAIProvider {
     this.recordFailure();
     throw lastError;
   }
+}
+
+// ─── Hardened JSON parsing for raw Together AI text output ───
+
+/**
+ * BUG-2026-06-24-014 parity (Together AI / Nessie-on-RunPod follow-up):
+ * `response_format: { type: 'json_object' }` (native JSON mode) suppresses
+ * markdown-fence wrapping but does not protect against truncated output
+ * hitting max_tokens mid-object — a naked `JSON.parse` still throws
+ * SyntaxError there. Mirrors gemini.ts's parseModelJson and
+ * nessie-json-parse.ts's parseNessieJson pipeline (strip JS-style comments ->
+ * strip markdown fence, in case a fine-tuned model ignores json_object mode ->
+ * brace-salvage) exactly, kept file-scoped/independent per the same
+ * precedent those two use.
+ *
+ * Returns a parsed object whose shape the caller is responsible for
+ * validating (extractMetadata runs Zod).
+ */
+function parseTogetherJson(text: string): Record<string, unknown> {
+  const cleaned = stripJsonComments(text).trim();
+  const unfenced = stripMarkdownJsonFence(cleaned);
+
+  try {
+    return ensureJsonObject(JSON.parse(unfenced));
+  } catch (initialError) {
+    const start = unfenced.indexOf('{');
+    const end = unfenced.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      const candidate = unfenced.slice(start, end + 1);
+      try {
+        return ensureJsonObject(JSON.parse(candidate));
+      } catch {
+        return ensureJsonObject(JSON.parse(repairTogetherJson(candidate)));
+      }
+    }
+    const repaired = repairTogetherJson(unfenced);
+    if (repaired !== unfenced) return ensureJsonObject(JSON.parse(repaired));
+    throw initialError;
+  }
+}
+
+function repairTogetherJson(text: string): string {
+  const withoutControlChars = text
+    .replace(/^\uFEFF/, '')
+    // eslint-disable-next-line no-control-regex -- intentional: strip JSON-invalid control chars from model output
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
+  const withoutTrailingCommas = withoutControlChars.replace(/,\s*([}\]])/g, '$1');
+  const balanced = balanceJsonDelimiters(withoutTrailingCommas);
+  return escapeBareNewlinesInStrings(balanced);
+}
+
+function balanceJsonDelimiters(text: string): string {
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+
+  for (const char of text) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === '{') stack.push('}');
+    if (char === '[') stack.push(']');
+    if ((char === '}' || char === ']') && stack[stack.length - 1] === char) stack.pop();
+  }
+
+  return text + stack.reverse().join('');
+}
+
+function escapeBareNewlinesInStrings(text: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (const char of text) {
+    if (escaped) {
+      out += char;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      out += char;
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      out += char;
+      continue;
+    }
+    if (inString && char === '\n') {
+      out += '\\n';
+      continue;
+    }
+    if (inString && char === '\r') {
+      out += '\\r';
+      continue;
+    }
+    out += char;
+  }
+
+  return out;
+}
+
+function stripMarkdownJsonFence(cleaned: string): string {
+  if (!cleaned.startsWith('```')) return cleaned;
+
+  const firstLineBreak = cleaned.indexOf('\n');
+  const withoutOpeningFence = firstLineBreak >= 0
+    ? cleaned.slice(firstLineBreak + 1)
+    : cleaned.slice(3);
+  const trimmed = withoutOpeningFence.trim();
+
+  return trimmed.endsWith('```')
+    ? trimmed.slice(0, -3).trim()
+    : trimmed;
+}
+
+function ensureJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new Error('Together AI extraction response was not a JSON object');
 }
 
 // ─── Type definitions for Together AI API responses ───

@@ -1,6 +1,11 @@
 # agents.md — services/worker/src/ai/
 
-_Last updated: 2026-07-15_
+_Last updated: 2026-07-22_
+
+## 2026-07-22 Together AI JSON parse hardening (BUG-2026-06-24-014 follow-up)
+
+- `together.ts`'s `TogetherProvider.extractMetadata` did a naked `JSON.parse` on raw Together AI text output. `response_format: { type: 'json_object' }` (native JSON mode) suppresses markdown-fence wrapping but does not protect against truncated output hitting `max_tokens` mid-object — a `SyntaxError` there threw unhandled out of `extractMetadata`. Added a file-scoped `parseTogetherJson` (strip JS-style comments -> strip markdown fence -> brace-salvage/delimiter-repair), mirroring `gemini.ts`'s private `parseModelJson` and the sibling `nessie-json-parse.ts` (`parseNessieJson`) exactly. Kept file-scoped/independent per the same precedent those two use — do not extract a shared cross-provider module.
+- `strip-json-comments.ts` remains the one genuinely shared helper across `gemini.ts`, `nessie.ts`, and `together.ts`; the fence-strip/brace-salvage/delimiter-repair logic is intentionally duplicated per-file rather than centralized.
 
 ## 2026-07-15 S3.3 Wave 2 Upstream 429 Attribution
 
