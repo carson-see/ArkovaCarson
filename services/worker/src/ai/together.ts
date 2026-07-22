@@ -401,36 +401,55 @@ export class TogetherProvider implements IAIProvider {
  * `response_format: { type: 'json_object' }` (native JSON mode) suppresses
  * markdown-fence wrapping but does not protect against truncated output
  * hitting max_tokens mid-object — a naked `JSON.parse` still throws
- * SyntaxError there. Mirrors gemini.ts's parseModelJson and
- * nessie-json-parse.ts's parseNessieJson pipeline (strip JS-style comments ->
- * strip markdown fence, in case a fine-tuned model ignores json_object mode ->
- * brace-salvage) exactly, kept file-scoped/independent per the same
- * precedent those two use.
+ * SyntaxError there. Mirrors gemini.ts's private `parseModelJson` pipeline
+ * (strip JS-style comments -> strip markdown fence, in case a fine-tuned
+ * model ignores json_object mode -> brace-salvage/repair), kept
+ * file-scoped/independent per that precedent. (A third, near-identical
+ * `parseNessieJson` for nessie.ts exists on a separate, unmerged PR #1660 —
+ * not a file present in this checkout — so it isn't a sibling to cross-check
+ * against here.)
  *
  * Returns a parsed object whose shape the caller is responsible for
- * validating (extractMetadata runs Zod).
+ * validating (extractMetadata runs Zod). Tries, in order: the text as-is,
+ * the substring between the first `{` and last `}`, and a repaired version
+ * of that substring — deduping identical candidates so nothing is parsed
+ * twice, and always surfacing the FIRST parse error if every candidate
+ * fails (the most diagnostic one, not whichever attempt happened to run
+ * last).
  */
 function parseTogetherJson(text: string): Record<string, unknown> {
   const cleaned = stripJsonComments(text).trim();
   const unfenced = stripMarkdownJsonFence(cleaned);
 
-  try {
-    return ensureJsonObject(JSON.parse(unfenced));
-  } catch (initialError) {
-    const start = unfenced.indexOf('{');
-    const end = unfenced.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      const candidate = unfenced.slice(start, end + 1);
-      try {
-        return ensureJsonObject(JSON.parse(candidate));
-      } catch {
-        return ensureJsonObject(JSON.parse(repairTogetherJson(candidate)));
-      }
+  let firstError: unknown;
+  const tried = new Set<string>();
+  const tryParse = (candidate: string): Record<string, unknown> | undefined => {
+    if (tried.has(candidate)) return undefined;
+    tried.add(candidate);
+    try {
+      return ensureJsonObject(JSON.parse(candidate));
+    } catch (err) {
+      if (firstError === undefined) firstError = err;
+      return undefined;
     }
-    const repaired = repairTogetherJson(unfenced);
-    if (repaired !== unfenced) return ensureJsonObject(JSON.parse(repaired));
-    throw initialError;
-  }
+  };
+
+  const direct = tryParse(unfenced);
+  if (direct) return direct;
+
+  const start = unfenced.indexOf('{');
+  const end = unfenced.lastIndexOf('}');
+  const braceSliced = start >= 0 && end > start ? unfenced.slice(start, end + 1) : unfenced;
+
+  const sliced = tryParse(braceSliced);
+  if (sliced) return sliced;
+
+  const repaired = tryParse(repairTogetherJson(braceSliced));
+  if (repaired) return repaired;
+
+  throw firstError instanceof Error
+    ? firstError
+    : new Error('Together AI extraction response was not a JSON object');
 }
 
 function repairTogetherJson(text: string): string {
@@ -438,9 +457,52 @@ function repairTogetherJson(text: string): string {
     .replace(/^\uFEFF/, '')
     // eslint-disable-next-line no-control-regex -- intentional: strip JSON-invalid control chars from model output
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
-  const withoutTrailingCommas = withoutControlChars.replace(/,\s*([}\]])/g, '$1');
+  const withoutTrailingCommas = stripTrailingCommasOutsideStrings(withoutControlChars);
   const balanced = balanceJsonDelimiters(withoutTrailingCommas);
   return escapeBareNewlinesInStrings(balanced);
+}
+
+/**
+ * Removes a trailing comma before `}`/`]` — but only when the comma sits
+ * outside a string value. A blind `text.replace(/,\s*([}\]])/g, '$1')` would
+ * also strip a comma-then-bracket sequence that happens to appear as
+ * ordinary prose *inside* a string field (e.g. "...see item 3, ] ref..."),
+ * silently corrupting extracted content instead of just repairing the
+ * malformed structural comma.
+ */
+function stripTrailingCommasOutsideStrings(text: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (escaped) {
+      out += char;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      out += char;
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      out += char;
+      continue;
+    }
+    if (!inString && char === ',') {
+      let lookahead = i + 1;
+      while (lookahead < text.length && /\s/.test(text[lookahead])) lookahead++;
+      if (lookahead < text.length && (text[lookahead] === '}' || text[lookahead] === ']')) {
+        continue; // drop only a structural trailing comma, outside any string
+      }
+    }
+    out += char;
+  }
+
+  return out;
 }
 
 function balanceJsonDelimiters(text: string): string {
@@ -467,7 +529,17 @@ function balanceJsonDelimiters(text: string): string {
     if ((char === '}' || char === ']') && stack[stack.length - 1] === char) stack.pop();
   }
 
-  return text + stack.reverse().join('');
+  // Truncation cutting off mid-string (arguably the most realistic max_tokens
+  // shape) leaves `inString` true at the end — close the string before
+  // appending the guessed structural closers, else the repaired text is
+  // still an unterminated string and JSON.parse rejects it outright.
+  let closed = text;
+  if (inString) {
+    if (escaped) closed = closed.slice(0, -1); // drop a dangling, incomplete escape
+    closed += '"';
+  }
+
+  return closed + stack.reverse().join('');
 }
 
 function escapeBareNewlinesInStrings(text: string): string {
@@ -497,6 +569,10 @@ function escapeBareNewlinesInStrings(text: string): string {
     }
     if (inString && char === '\r') {
       out += '\\r';
+      continue;
+    }
+    if (inString && char === '\t') {
+      out += '\\t';
       continue;
     }
     out += char;
