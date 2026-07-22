@@ -9,6 +9,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const sentryCapture = vi.hoisted(() => vi.fn());
 
+// Mutable stand-in for the typed `config` export. Importing the real config.js
+// eagerly runs loadConfig(), which throws without a full worker env; the runner
+// now reads `config.enableCeKeyExpiryAlerts` / `config.ceApiKeyExpiresAt`
+// (SCRUM-1258 — typed, not ad-hoc process.env), so we mock the two fields.
+const mockConfig = vi.hoisted(() => ({
+  enableCeKeyExpiryAlerts: true as boolean,
+  ceApiKeyExpiresAt: undefined as string | undefined,
+}));
+
+vi.mock('../config.js', () => ({ config: mockConfig }));
+
 vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -37,6 +48,8 @@ function isoDaysFromNow(days: number): string {
 
 beforeEach(() => {
   sentryCapture.mockReset();
+  mockConfig.enableCeKeyExpiryAlerts = true;
+  mockConfig.ceApiKeyExpiresAt = undefined;
 });
 
 describe('decideCeKeyExpiryAlert — fail-LOUD sentinel path', () => {
@@ -186,6 +199,24 @@ describe('runCeKeyExpiryCheck — runner + flag gate', () => {
   it('skips entirely when disabled via flag', () => {
     const captureAlert = vi.fn();
     const res = runCeKeyExpiryCheck({ captureAlert }, { expiresAtRaw: undefined, now: NOW, enabled: false });
+    expect(captureAlert).not.toHaveBeenCalled();
+    expect(res.fired).toBe(false);
+  });
+
+  it('falls back to typed config.ceApiKeyExpiresAt when no override is given (SCRUM-1258)', () => {
+    mockConfig.ceApiKeyExpiresAt = isoDaysFromNow(5);
+    const captureAlert = vi.fn();
+    const res = runCeKeyExpiryCheck({ captureAlert }, { now: NOW });
+    expect(captureAlert).toHaveBeenCalledTimes(1);
+    expect(res.fired).toBe(true);
+    expect(res.window).toBe('T-7');
+  });
+
+  it('honors config.enableCeKeyExpiryAlerts=false when no override is given (SCRUM-1258)', () => {
+    mockConfig.enableCeKeyExpiryAlerts = false;
+    mockConfig.ceApiKeyExpiresAt = isoDaysFromNow(1);
+    const captureAlert = vi.fn();
+    const res = runCeKeyExpiryCheck({ captureAlert }, { now: NOW });
     expect(captureAlert).not.toHaveBeenCalled();
     expect(res.fired).toBe(false);
   });

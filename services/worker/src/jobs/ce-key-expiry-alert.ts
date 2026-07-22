@@ -34,6 +34,7 @@
  * Gated by `ENABLE_CE_KEY_EXPIRY_ALERTS` (default true).
  */
 
+import { config } from '../config.js';
 import { Sentry } from '../utils/sentry.js';
 import { logger } from '../utils/logger.js';
 
@@ -228,8 +229,11 @@ export function runCeKeyExpiryCheck(
   dispatcher: CeKeyExpiryDispatcher = createSentryCeKeyExpiryDispatcher(),
   overrides: { expiresAtRaw?: string; now?: Date; enabled?: boolean } = {},
 ): CeKeyExpiryCheckResult {
-  const enabled =
-    overrides.enabled ?? process.env.ENABLE_CE_KEY_EXPIRY_ALERTS !== 'false'; // default true
+  // Read via the typed `config` export, never ad-hoc process.env (SCRUM-1258):
+  // a Cloud Run binding typo then fails at boot instead of silently muting an
+  // R-1 FATAL alarm. `enableCeKeyExpiryAlerts` defaults true and only a literal
+  // "false" disables it (boolEnvInverse), preserving the original semantics.
+  const enabled = overrides.enabled ?? config.enableCeKeyExpiryAlerts;
 
   if (!enabled) {
     logger.info('CE key expiry alerts disabled via flag — skipping check');
@@ -237,7 +241,7 @@ export function runCeKeyExpiryCheck(
   }
 
   const decision = decideCeKeyExpiryAlert({
-    expires_at_raw: overrides.expiresAtRaw ?? process.env.CE_API_KEY_EXPIRES_AT,
+    expires_at_raw: overrides.expiresAtRaw ?? config.ceApiKeyExpiresAt,
     now: overrides.now,
   });
 
