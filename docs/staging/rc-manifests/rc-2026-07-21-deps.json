@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-07-21-DEPS",
+  "created_at": "2026-07-21T01:50:00Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "approval_status": "approved",
+  "approval_actor": "carson (founder) \u2014 deps rail authorized via the close-out automation 2026-07-20",
+  "approval_time": "2026-07-21T01:50:00Z",
+  "train_launch_sha": "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+  "target_main_sha": "a589f05f006276529d39356a6bef141cc38aa702",
+  "allowed_base_shas": [
+    "a589f05f006276529d39356a6bef141cc38aa702",
+    "52fcf1dcb6009d428e454752024aa1e1a35389bd",
+    "57a4aaf50abd5deaaf7e0dde5f5a927c4f39cc73",
+    "e20a580c66de1ca5747d2e9453e63566549c780e",
+    "5a2c0e857e4eb7e639fc403175b5ef3237933010",
+    "12605c6829f325cd7342fa5c5e97bb787e46bfc4",
+    "f589d6b4407ff8607f23c2d3922c7010e6d07208",
+    "9e8019b6ceec5cef4f05974df685e09bc240ce79",
+    "31764c387a6af76beb7d3a85863c40ca778512bf",
+    "c7d455df576112120d42fb1f43e35f37eb6514d6",
+    "19460805acb11a8f91e9b9d48077513e31984978",
+    "81e39c8d9d595cf8f4120b64967252eb43a75cbf",
+    "99320c89750ce2518c218aa131c30b9ccd994c60",
+    "ca5b01504f21edcc69fc76263e90b95377269caa",
+    "3fd1a39c5ffcc27f514e0ac0ee4c5c1e89de3ee1",
+    "cba7497fe054acf2f3530ce9f452b0e40baf5efe",
+    "bf54b62ac84c193f2d26cda722d93fac973cc80a",
+    "152161bbebcc2a2a4d0e9820f820725e877b62e5",
+    "72ca4883eed34e45e8a5457bf5d8df658c520451",
+    "9d513e85fceb58e9b4794ed29c2741902a017faf",
+    "67edbfbec88c6f5eda541a2208a22aee82edde86",
+    "d975e31dc69a6abc662d58a872ff96ccc70e6290",
+    "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+    "8b12c0e9d7293e34d3a117f5a674603e33057710",
+    "8a11d2c23f02fadf8bf41a9d2584f7357e3bc1b2",
+    "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4"
+  ],
+  "covered_main_shas": [
+    "a589f05f006276529d39356a6bef141cc38aa702",
+    "52fcf1dcb6009d428e454752024aa1e1a35389bd",
+    "57a4aaf50abd5deaaf7e0dde5f5a927c4f39cc73",
+    "e20a580c66de1ca5747d2e9453e63566549c780e",
+    "5a2c0e857e4eb7e639fc403175b5ef3237933010",
+    "12605c6829f325cd7342fa5c5e97bb787e46bfc4",
+    "f589d6b4407ff8607f23c2d3922c7010e6d07208",
+    "9e8019b6ceec5cef4f05974df685e09bc240ce79",
+    "31764c387a6af76beb7d3a85863c40ca778512bf",
+    "c7d455df576112120d42fb1f43e35f37eb6514d6",
+    "19460805acb11a8f91e9b9d48077513e31984978",
+    "81e39c8d9d595cf8f4120b64967252eb43a75cbf",
+    "99320c89750ce2518c218aa131c30b9ccd994c60",
+    "ca5b01504f21edcc69fc76263e90b95377269caa",
+    "3fd1a39c5ffcc27f514e0ac0ee4c5c1e89de3ee1",
+    "cba7497fe054acf2f3530ce9f452b0e40baf5efe",
+    "bf54b62ac84c193f2d26cda722d93fac973cc80a",
+    "152161bbebcc2a2a4d0e9820f820725e877b62e5",
+    "72ca4883eed34e45e8a5457bf5d8df658c520451",
+    "9d513e85fceb58e9b4794ed29c2741902a017faf",
+    "67edbfbec88c6f5eda541a2208a22aee82edde86",
+    "d975e31dc69a6abc662d58a872ff96ccc70e6290",
+    "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+    "8b12c0e9d7293e34d3a117f5a674603e33057710",
+    "8a11d2c23f02fadf8bf41a9d2584f7357e3bc1b2",
+    "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4"
+  ],
+  "included_prs": [
+    {
+      "number": 1526,
+      "head_sha": "dfd6633cbeffb2d7621b63dc2bbb63f104a9f17a",
+      "base_sha": "8b12c0e9d7293e34d3a117f5a674603e33057710",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Dependency bump undici 7.28.0->8.7.0 (services/worker) soaked in the deps RC train (rig rcb20260719, image c7e16366, 12.5h T2 window 2026-07-20T13:06Z->07-21T01:36Z, 115,558 mixed-mode requests, runner 200s continuous). All required CI green at frozen head dfd6633c; the bumped package resolves in the built lockfile. #1524/#1543 (the group PRs originally in this train) were auto-closed by dependabot 2026-07-20 (superseded), so this train ships the 4 surviving standalone bumps; #1572 is NOT superseded (its superseder #1524 closed unmerged).",
+      "rollback_note": "Dependency-only; revert PR #1526 to restore the prior version. No runtime code or schema change.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "8b12c0e9d7293e34d3a117f5a674603e33057710",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+      ]
+    },
+    {
+      "number": 1515,
+      "head_sha": "97443f03243fd47a49b123b212f52faa96104649",
+      "base_sha": "8a11d2c23f02fadf8bf41a9d2584f7357e3bc1b2",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Dependency bump vite + vitest (services/api-gateway) soaked in the deps RC train (rig rcb20260719, image c7e16366, 12.5h T2 window 2026-07-20T13:06Z->07-21T01:36Z, 115,558 mixed-mode requests, runner 200s continuous). All required CI green at frozen head 97443f03; the bumped package resolves in the built lockfile. #1524/#1543 (the group PRs originally in this train) were auto-closed by dependabot 2026-07-20 (superseded), so this train ships the 4 surviving standalone bumps; #1572 is NOT superseded (its superseder #1524 closed unmerged).",
+      "rollback_note": "Dependency-only; revert PR #1515 to restore the prior version. No runtime code or schema change.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "8a11d2c23f02fadf8bf41a9d2584f7357e3bc1b2",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+      ]
+    },
+    {
+      "number": 1517,
+      "head_sha": "e1e8fdca210737a6221d87674ffaac0972f3c80c",
+      "base_sha": "8a11d2c23f02fadf8bf41a9d2584f7357e3bc1b2",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Dependency bump esbuild + vitest (services/api-gateway) soaked in the deps RC train (rig rcb20260719, image c7e16366, 12.5h T2 window 2026-07-20T13:06Z->07-21T01:36Z, 115,558 mixed-mode requests, runner 200s continuous). All required CI green at frozen head e1e8fdca; the bumped package resolves in the built lockfile. #1524/#1543 (the group PRs originally in this train) were auto-closed by dependabot 2026-07-20 (superseded), so this train ships the 4 surviving standalone bumps; #1572 is NOT superseded (its superseder #1524 closed unmerged).",
+      "rollback_note": "Dependency-only; revert PR #1517 to restore the prior version. No runtime code or schema change.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "8a11d2c23f02fadf8bf41a9d2584f7357e3bc1b2",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+      ]
+    },
+    {
+      "number": 1572,
+      "head_sha": "5834349157c2e7870c9bf9736a24cb8d9541b7e4",
+      "base_sha": "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Dependency bump adm-zip 0.5.18->0.6.0 (services/worker, CVE-2026-39244) soaked in the deps RC train (rig rcb20260719, image c7e16366, 12.5h T2 window 2026-07-20T13:06Z->07-21T01:36Z, 115,558 mixed-mode requests, runner 200s continuous). All required CI green at frozen head 58343491; the bumped package resolves in the built lockfile. #1524/#1543 (the group PRs originally in this train) were auto-closed by dependabot 2026-07-20 (superseded), so this train ships the 4 surviving standalone bumps; #1572 is NOT superseded (its superseder #1524 closed unmerged).",
+      "rollback_note": "Dependency-only; revert PR #1572 to restore the prior version. No runtime code or schema change.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+      ]
+    }
+  ],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "staging_api_base": "https://pr-1524---arkova-worker-rcb20260719-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://pr-1524---arkova-worker-rcb20260719-staging-kvojbeutfa-uc.a.run.app",
+    "revision": "arkova-worker-rcb20260719-staging-00002-vak",
+    "deploy_tag": "pr-1524",
+    "image_digest": "sha256:c25c953618cc1dbd1870f6d262d939e05cba84dbf17d111515f85b6f0d9ab2e3",
+    "supabase_project_ref": "aqvlmkjfvpywdwjykcic",
+    "deploy_log_id": "228",
+    "preflight_result": "environment_type=clean_mirror (all checks passed)"
+  },
+  "soak": {
+    "start": "2026-07-20T13:06:26Z",
+    "end": "2026-07-21T01:36:26Z",
+    "duration_hours": 12.5,
+    "result": "pass \u2014 healthy across the window",
+    "harness_version": "scripts/staging/load-harness.ts (mixed mode, 115558 requests)",
+    "evidence_links": [
+      "docs/staging/rcb20260719/soak-rcb.json"
+    ],
+    "expires_at": "2026-07-23T01:36:26Z"
+  }
+}

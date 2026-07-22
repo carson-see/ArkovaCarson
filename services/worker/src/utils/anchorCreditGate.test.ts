@@ -37,6 +37,10 @@ function makeRes(): Response {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const fakeDb = {} as any;
 
+// SCRUM-2970 — the inserted anchor row's id (callers insert-then-deduct and
+// pass the fresh row id as the deduction reference).
+const REF = '11111111-2222-4333-8444-555555555555';
+
 describe('ensureAnchorCreditAvailable', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -46,10 +50,38 @@ describe('ensureAnchorCreditAvailable', () => {
     mockDeductOrgCredit.mockResolvedValue({ allowed: true });
     const res = makeRes();
 
-    const ok = await ensureAnchorCreditAvailable(fakeDb, 'org-1', res);
+    const ok = await ensureAnchorCreditAvailable(fakeDb, 'org-1', res, REF);
     expect(ok).toBe(true);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('passes the caller referenceId through to deductOrgCredit (SCRUM-2970)', async () => {
+    // Root cause of BUG-2026-07-17-012: the gate called deductOrgCredit with
+    // NO referenceId, so migration 0326's idempotency ledger never engaged on
+    // the primary anchor path — every retry double-deducted. The gate must
+    // forward a non-null referenceId (the inserted anchor row's id) on every
+    // call.
+    mockDeductOrgCredit.mockResolvedValue({ allowed: true });
+    const res = makeRes();
+
+    await ensureAnchorCreditAvailable(fakeDb, 'org-1', res, REF);
+
+    expect(mockDeductOrgCredit).toHaveBeenCalledWith(fakeDb, 'org-1', 1, 'anchor.create', REF);
+    const passedRef = mockDeductOrgCredit.mock.calls[0]?.[4];
+    expect(passedRef).toBeTruthy();
+    expect(passedRef).toBe(REF);
+  });
+
+  it('forwards the SAME referenceId on a retry of the same logical request', async () => {
+    mockDeductOrgCredit.mockResolvedValue({ allowed: true });
+
+    await ensureAnchorCreditAvailable(fakeDb, 'org-1', makeRes(), REF);
+    await ensureAnchorCreditAvailable(fakeDb, 'org-1', makeRes(), REF);
+
+    expect(mockDeductOrgCredit).toHaveBeenCalledTimes(2);
+    expect(mockDeductOrgCredit.mock.calls[0]?.[4]).toBe(mockDeductOrgCredit.mock.calls[1]?.[4]);
+    expect(mockDeductOrgCredit.mock.calls[0]?.[4]).not.toBeNull();
   });
 
   it('writes 402 insufficient_credits with balance + required when out of credits', async () => {
@@ -61,7 +93,7 @@ describe('ensureAnchorCreditAvailable', () => {
     });
     const res = makeRes();
 
-    const ok = await ensureAnchorCreditAvailable(fakeDb, 'org-1', res);
+    const ok = await ensureAnchorCreditAvailable(fakeDb, 'org-1', res, REF);
     expect(ok).toBe(false);
     expect(res.status).toHaveBeenCalledWith(402);
     expect(res.json).toHaveBeenCalledWith({
@@ -80,7 +112,7 @@ describe('ensureAnchorCreditAvailable', () => {
     });
     const res = makeRes();
 
-    const ok = await ensureAnchorCreditAvailable(fakeDb, 'org-1', res);
+    const ok = await ensureAnchorCreditAvailable(fakeDb, 'org-1', res, REF);
     expect(ok).toBe(false);
     expect(res.status).toHaveBeenCalledWith(503);
     expect(res.json).toHaveBeenCalledWith({ error: 'credit_check_unavailable' });
@@ -98,7 +130,7 @@ describe('ensureAnchorCreditAvailable', () => {
     });
     const res = makeRes();
 
-    const ok = await ensureAnchorCreditAvailable(fakeDb, 'org-1', res);
+    const ok = await ensureAnchorCreditAvailable(fakeDb, 'org-1', res, REF);
     expect(ok).toBe(false);
     expect(res.status).toHaveBeenCalledWith(402);
     expect(res.json).toHaveBeenCalledWith({
