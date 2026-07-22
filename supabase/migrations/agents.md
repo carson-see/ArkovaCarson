@@ -121,7 +121,7 @@ Reserved by the Lane-1 S3 chain-primitives PR (`lane1/s3-chain-primitives-tests`
 
 Landed per the Architect-review finding that the prior watch-window ledger (`docs/staging/rig-reservation-ledger-and-migration-registry-2026-07-20.md`) was NOT collision-proof on its own — this file's reservation table, not a session memo, is what the uniqueness lint and `feedback_migration_number_vs_reservations` convention actually check. Next-free rule: `next = max(main numeric head, this table, open-PR migrations) + 1`.
 
-| `0358` | `lane1/24h-window-20260720` (soaking) / PR #1552 | SCRUM-2692 | `0358_scrum2692_anchor_txid_journal.sql` | **IN-FLIGHT T3 soak** (rig `railb220260719`), matures 2026-07-21T17:13Z; prod-apply precedes merge per §0 rule 10 |
+| `0358` | `agent/s33-w2-l1-t0-gate-audit` (PR #1552's actual head branch) | SCRUM-2692 | `0358_scrum2692_anchor_txid_journal.sql` | **IN-FLIGHT T3 soak** (isolated rig `arkova-worker-1552-soak` / Supabase `phohrrhdoanmtafuetjh`, integrated head `bfd497519d6be441c5d3a0ee03526eff6d44921d`), soak clock started 2026-07-21 (this session, evidence banked to PR #1552); prod-apply precedes merge per §0 rule 10 |
 | `0359` | `claude/ecstatic-allen-0bf8a8` / PR #1615 | SCRUM-2917 | proof-materializer row-shape (`receipt_id` idempotency + rollback marker) | RESERVED — pre-soak, file-only |
 | `0360` | `claude/ecstatic-allen-0bf8a8` / PR #1615 | SCRUM-2917 | forge-safe 0340 trigger predicate (requires real `op_return_payload`) | RESERVED — pre-soak, file-only |
 | `0361` | (unclaimed) | SCRUM-2916 | watermark partial index | RESERVED — placeholder, not yet filed |
