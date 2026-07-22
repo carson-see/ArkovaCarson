@@ -148,8 +148,8 @@ Machine-readable; parsed by `scripts/ci/check-429-limiter-map.test.ts`. Each row
 | 35 | scripts/staging/s33-429-attribution.ts | 15 | export const S33_429_BUCKETS = [ |
 | 36 | scripts/staging/s33-429-attribution.ts | 260 | export function buildS33429AttributionEvidence(input: unknown): S33429AttributionEvidence { |
 | 37 | services/worker/src/ai/gemini.ts | 1196 | fn: (attempt: AIProviderRetryAttempt, requestInstanceId: string) => Promise<T>, |
-| 38 | services/worker/src/api/v1/anchor-submit.ts | 246 | const anchorCreateQuota = requireOrgQuota({ |
-| 39 | services/worker/src/api/v1/anchor-bulk.ts | 106 | const bulkAnchorQuota = requireOrgQuota({ |
+| 38 | services/worker/src/api/v1/anchor-submit.ts | 62 | const quota = requireOrgQuota({ |
+| 39 | services/worker/src/api/v1/anchor-bulk.ts | 117 | const quota = requireOrgQuota({ |
 | 40 | services/worker/src/api/v1/webhooks.ts | 229 | const connectorCapacityQuota = requireOrgQuota({ |
 | 41 | services/worker/src/routes/admin.ts | 427 | const ruleCapacityQuota = requireOrgQuota({ |
 <!-- claims:end -->
