@@ -105,6 +105,44 @@ describe('SignUpForm', () => {
       });
     });
 
+    // SCRUM-2907: The confirmation screen is session-aware. When signUp returns
+    // NO active session, email confirmation is genuinely pending → show the
+    // "Check your email" screen and do NOT proceed into the app.
+    it('shows email confirmation and does not proceed when signUp returns no session', async () => {
+      mockSignUp.mockResolvedValue({ error: null, session: null });
+      const SignUpForm = await loadSignUpForm();
+      const onSuccess = vi.fn();
+      render(<SignUpForm onSuccess={onSuccess} />);
+      fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'test@example.com' } });
+      fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'password123' } });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), { target: { value: 'password123' } });
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('email-confirmation')).toBeInTheDocument();
+      });
+      expect(onSuccess).not.toHaveBeenCalled();
+    });
+
+    // SCRUM-2907: When signUp returns an ACTIVE session (auto-confirm on, as in
+    // prod today), the user is already logged in → skip the misleading
+    // "Check your email" screen and proceed into the app like a normal login.
+    it('proceeds into the app without email confirmation when signUp returns an active session', async () => {
+      mockSignUp.mockResolvedValue({ error: null, session: { user: { id: 'user-1' } } });
+      const SignUpForm = await loadSignUpForm();
+      const onSuccess = vi.fn();
+      render(<SignUpForm onSuccess={onSuccess} />);
+      fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: 'test@example.com' } });
+      fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'password123' } });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), { target: { value: 'password123' } });
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      await waitFor(() => {
+        expect(onSuccess).toHaveBeenCalledOnce();
+      });
+      expect(screen.queryByTestId('email-confirmation')).not.toBeInTheDocument();
+    });
+
     it('shows sign in link when onLoginClick provided', async () => {
       const SignUpForm = await loadSignUpForm();
       const onLoginClick = vi.fn();

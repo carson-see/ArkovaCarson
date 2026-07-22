@@ -2,7 +2,9 @@
  * Sign Up Form Component
  *
  * Handles new user registration.
- * Shows "Check your email" success state after signup.
+ * Session-aware post-signup (SCRUM-2907): shows the "Check your email" state
+ * only when signUp returns no active session (email confirmation pending);
+ * when a live session is returned (auto-confirm on), proceeds into the app.
  * Note: Role is assigned during onboarding, not signup.
  *
  * Beta gate: When VITE_BETA_INVITE_CODE is set, users must enter
@@ -69,8 +71,19 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
 
     // BUG-003 fix: Check return value directly instead of stale error closure
     if (!result.error) {
-      setSignupComplete(true);
-      onSuccess?.();
+      // SCRUM-2907: Make the confirmation screen session-aware. When signUp
+      // returns an active session, email confirmation is off (auto-confirm, the
+      // current prod state) and the user is already logged in — proceed into the
+      // app like a normal login instead of showing a misleading "check your
+      // email" dead-end. Only when NO session is returned is confirmation
+      // genuinely pending, so we show the EmailConfirmation screen. This is also
+      // forward-compatible: if "Confirm email" is later enabled, signUp returns
+      // no session and the screen correctly appears.
+      if (result.session) {
+        onSuccess?.();
+      } else {
+        setSignupComplete(true);
+      }
     }
   };
 
