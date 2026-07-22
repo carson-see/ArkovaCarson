@@ -32,8 +32,8 @@ vi.mock('@/components/layout/ArkovaLogo', () => ({
 // Mock useProfile — controls the logo destination AND the profile role used for
 // role-based nav gating (SCRUM-2004). Both are configurable per test.
 const mockDestination = vi.fn<() => RouteDestination>(() => '/dashboard');
-const mockProfile = vi.fn<() => { role: string | null; org_id: string | null }>(
-  () => ({ role: 'ORG_ADMIN', org_id: 'org-1' }),
+const mockProfile = vi.fn<() => { role: string | null; org_id: string | null; is_platform_admin?: boolean }>(
+  () => ({ role: 'ORG_ADMIN', org_id: 'org-1', is_platform_admin: false }),
 );
 vi.mock('@/hooks/useProfile', () => ({
   useProfile: () => ({
@@ -57,7 +57,7 @@ function renderSidebar(props = {}, initialEntries = ['/dashboard']) {
 
 beforeEach(() => {
   mockDestination.mockReturnValue('/dashboard');
-  mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1' });
+  mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1', is_platform_admin: false });
 });
 
 describe('Sidebar', () => {
@@ -150,7 +150,7 @@ describe('Sidebar', () => {
   // ── Organization is gated by org affiliation (role/permission preserved) ──
 
   it('SCRUM-2004: surfaces Organization for ORG_ADMIN users', () => {
-    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1' });
+    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1', is_platform_admin: false });
     renderSidebar();
     expect(screen.getAllByText('Organization').length).toBeGreaterThanOrEqual(1);
     expect(hrefSet()).toContain(ROUTES.ORGANIZATION);
@@ -186,7 +186,7 @@ describe('Sidebar', () => {
   }
 
   it('SCRUM-2004: primary nav order is Dashboard, Documents, Organization, Search, Settings (org user)', () => {
-    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1' });
+    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1', is_platform_admin: false });
     renderSidebar();
     expect(primaryNavOrder()).toEqual([
       ROUTES.DASHBOARD,
@@ -269,10 +269,17 @@ describe('Sidebar', () => {
 
   // ── Admin section (unchanged role gating) ──
 
-  it('shows admin section only for platform admin emails', () => {
-    renderSidebar({ userEmail: 'user@example.com' });
+  it('hides the admin section for non-platform-admins (is_platform_admin=false)', () => {
+    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1', is_platform_admin: false });
+    renderSidebar();
     expect(screen.queryByText('Overview')).toBeNull();
     expect(screen.queryByText('Treasury')).toBeNull();
+  });
+
+  it('shows the admin section for platform admins (is_platform_admin=true)', () => {
+    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1', is_platform_admin: true });
+    renderSidebar({}, [ROUTES.ADMIN_TREASURY]);
+    expect(screen.getAllByText('Treasury').length).toBeGreaterThanOrEqual(1);
   });
 
   // ── Compliance Intelligence dashboard was orphaned (no sidebar link) ──
@@ -282,18 +289,21 @@ describe('Sidebar', () => {
   // collapsed by default but auto-expands when an admin route is active, so we
   // assert the link is present while sitting on the compliance route.
   it('surfaces the Compliance link in the admin section for platform admins', () => {
-    renderSidebar({ userEmail: 'carson@arkova.ai' }, [ROUTES.COMPLIANCE_DASHBOARD]);
+    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1', is_platform_admin: true });
+    renderSidebar({}, [ROUTES.COMPLIANCE_DASHBOARD]);
     expect(hrefSet()).toContain(ROUTES.COMPLIANCE_DASHBOARD);
     expect(screen.getAllByText('Compliance').length).toBeGreaterThanOrEqual(1);
   });
 
   it('hides the Compliance link from non-admin users', () => {
-    renderSidebar({ userEmail: 'user@example.com' }, [ROUTES.COMPLIANCE_DASHBOARD]);
+    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1', is_platform_admin: false });
+    renderSidebar({}, [ROUTES.COMPLIANCE_DASHBOARD]);
     expect(hrefSet()).not.toContain(ROUTES.COMPLIANCE_DASHBOARD);
   });
 
   it('highlights the active Compliance route', () => {
-    renderSidebar({ userEmail: 'carson@arkova.ai' }, [ROUTES.COMPLIANCE_DASHBOARD]);
+    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1', is_platform_admin: true });
+    renderSidebar({}, [ROUTES.COMPLIANCE_DASHBOARD]);
     const complianceLink = screen
       .getAllByRole('link')
       .find((a) => a.getAttribute('href') === ROUTES.COMPLIANCE_DASHBOARD);

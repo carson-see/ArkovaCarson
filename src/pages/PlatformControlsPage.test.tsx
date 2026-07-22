@@ -28,7 +28,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 vi.mock('@/hooks/useProfile', () => ({
   useProfile: vi.fn().mockReturnValue({
-    profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson' },
+    profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson', is_platform_admin: true },
     loading: false,
     destination: '/dashboard',
   }),

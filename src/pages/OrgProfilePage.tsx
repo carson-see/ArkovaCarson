@@ -62,14 +62,14 @@ export function OrgProfilePage() {
   // User's role in this org
   const [userRole, setUserRole] = useState<OrgMemberRole | null>(null);
   const [roleLoading, setRoleLoading] = useState(true);
-  const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(user?.email);
+  const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(profile);
   const issueCredentialRole = isAdmin ? 'ORG_ADMIN' : 'INDIVIDUAL';
 
   // Platform-admin-viewing-a-foreign-org: the admin is NOT a member of this org,
   // so the browser's RLS-scoped queries (useOrgMembers, profiles search) return 0
   // rows. Route the roster + add-member flow through the service_role worker
   // endpoints instead. Real org members keep the client-side path untouched.
-  const isForeignOrgAdmin = isPlatformAdmin(user?.email) && !roleLoading && !userRole;
+  const isForeignOrgAdmin = isPlatformAdmin(profile) && !roleLoading && !userRole;
   const { members: adminMembers, loading: adminMembersLoading, refreshMembers: refreshAdminMembers } = useAdminOrgMembers(
     orgId ?? null,
     isForeignOrgAdmin,
@@ -273,7 +273,7 @@ export function OrgProfilePage() {
   const orgPrefix = (organization as any)?.org_prefix as string | null;
   const orgLogoUrl = (organization as Record<string, unknown>)?.logo_url as string | null;
   const orgFoundedDisplay = getOrganizationFoundedDisplay(organization);
-  const _isOwner = userRole === 'owner' || isPlatformAdmin(user?.email);
+  const _isOwner = userRole === 'owner' || isPlatformAdmin(profile);
 
   useEffect(() => {
     const driveResult = searchParams.get('drive');
@@ -365,7 +365,7 @@ export function OrgProfilePage() {
   }
 
   // Access check: must be member or platform admin
-  if (!userRole && !isPlatformAdmin(user?.email)) {
+  if (!userRole && !isPlatformAdmin(profile)) {
     return (
       <AppShell user={user} profile={profile} profileLoading={profileLoading} onSignOut={handleSignOut}>
         <div className="flex flex-col items-center justify-center py-20 max-w-md mx-auto text-center">

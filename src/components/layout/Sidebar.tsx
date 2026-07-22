@@ -202,12 +202,11 @@ interface SidebarProps {
   mobileOpen?: boolean;
   onMobileClose?: () => void;
   orgName?: string | null;
-  userEmail?: string | null;
 }
 
-export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEmail }: Readonly<SidebarProps>) {
-  const isPlatformAdmin = checkPlatformAdmin(userEmail);
+export function Sidebar({ className, mobileOpen, onMobileClose, orgName }: Readonly<SidebarProps>) {
   const { destination, profile } = useProfile();
+  const isPlatformAdmin = checkPlatformAdmin(profile);
   const homeRoute = destinationToRoute(destination);
   const [collapsed, setCollapsed] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(false);
