@@ -167,6 +167,16 @@ export async function findExistingEnvelopeAnchor(args: {
   const envelopeId = typeof args.envelopeId === 'string' ? args.envelopeId.trim() : '';
   if (envelopeId.length === 0) return null;
 
+  // Defensive: the envelope id is interpolated into a PostgREST `.or()` filter,
+  // whose grammar is comma/parenthesis-delimited. A value containing `,` `(` `)`
+  // would corrupt the filter (split it into bogus conditions) or worse. DocuSign
+  // envelope ids are GUIDs and legitimate external_refs are token-shaped, so
+  // restrict to a safe charset and BAIL (return null) on anything else — the
+  // caller then falls back to the `(user_id, fingerprint)` unique index alone.
+  // Fail-safe, not fail-open: a skipped guard never creates a duplicate, it just
+  // forgoes the extra cross-hash protection for an unusual id.
+  if (!/^[A-Za-z0-9_.:-]+$/.test(envelopeId)) return null;
+
   // Build an OR across every metadata key the two paths may have used. Values
   // are JSON-encoded envelope ids (bounded, non-PII connector identifiers).
   const orFilter = ENVELOPE_ID_METADATA_KEYS.map(

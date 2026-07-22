@@ -143,6 +143,26 @@ describe('docusign-anchor-reconciliation — precedence decision (SCRUM-2904)', 
       expect(from).not.toHaveBeenCalled();
     });
 
+    it('bails (returns null, no query) on an unsafe envelope id — no PostgREST filter injection', async () => {
+      // A comma/paren would corrupt the .or() filter grammar; bail to the
+      // fingerprint-index fallback rather than issue a corrupted query.
+      const { db, from } = makeDb({ data: null, error: null });
+      for (const bad of ['env,evil', 'env)or(1', 'a,b.eq.c']) {
+        expect(await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: bad })).toBeNull();
+      }
+      expect(from).not.toHaveBeenCalled();
+    });
+
+    it('accepts GUID-shaped envelope ids (the DocuSign format)', async () => {
+      const { db, from } = makeDb({ data: null, error: null });
+      await findExistingEnvelopeAnchor({
+        db,
+        orgId: 'org-1',
+        envelopeId: 'a1b2c3d4-e5f6-4789-8abc-def012345678',
+      });
+      expect(from).toHaveBeenCalledWith('anchors');
+    });
+
     it('returns null when no anchor matches', async () => {
       const { db } = makeDb({ data: null, error: null });
       expect(await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' })).toBeNull();
