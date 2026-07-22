@@ -2491,7 +2491,9 @@ export const OCR_LABELS = {
 } as const;
 
 export const CONFIRMATION_PROGRESS_LABELS = {
-  IN_PROGRESS: 'Anchoring in progress \u2014 your record will be permanently verified in ~10 minutes.',
+  // SCRUM-2914 (Founder UI findings, 2026-07-22): dropped the "~10 minutes"
+  // estimate \u2014 anchoring timing is not a guarantee we can make.
+  IN_PROGRESS: 'Anchoring in progress \u2014 your record will be permanently verified.',
   NOTIFICATION_NOTE: 'You\u2019ll receive a notification when anchoring is complete. You can safely close this dialog.',
 } as const;
 
