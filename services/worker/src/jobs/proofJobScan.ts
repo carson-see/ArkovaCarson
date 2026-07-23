@@ -58,6 +58,20 @@ export interface ScanDb {
   };
 }
 
+/**
+ * Clamp a caller-supplied bound into [min, max], falling back to `fallback`
+ * for undefined / non-finite input. Both jobs bound page size and batches per
+ * invocation this way; only the constants differ.
+ */
+export function clampBound(
+  requested: number | undefined,
+  bounds: { fallback: number; min: number; max: number },
+): number {
+  const n = requested ?? bounds.fallback;
+  if (!Number.isFinite(n)) return bounds.fallback;
+  return Math.min(Math.max(Math.floor(n), bounds.min), bounds.max);
+}
+
 export function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));

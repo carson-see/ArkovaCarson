@@ -110,6 +110,7 @@ import {
 } from './proofJobCheckpoint.js';
 import {
   chunk,
+  clampBound,
   fetchProofRows as sharedFetchProofRows,
   fetchScanPage as sharedFetchScanPage,
   resolveCardinalities as sharedResolveCardinalities,
@@ -411,67 +412,29 @@ function checkpointStore(db: UntypedDb) {
   );
 }
 
-async function loadCheckpoint(
-  db: UntypedDb,
-  scope: string,
-  mode: 'dry-run' | 'write',
-): Promise<CheckpointHandle | null> {
-  return checkpointStore(db).load(scope, mode);
-}
+// ── Internals ────────────────────────────────────────────────────────────────
+//
+// Checkpoint persistence (proofJobCheckpoint.ts), the page scan / proof-row
+// fetch / cardinality probes and the option clamps (proofJobScan.ts) are all
+// shared with proof-backcatalog-classifier.ts. This job calls them DIRECTLY
+// with its own label rather than through local wrappers — wrappers would just
+// re-introduce the duplication the extraction removed.
 
-async function createCheckpoint(
-  db: UntypedDb,
-  payload: CheckpointPayload,
-): Promise<CheckpointHandle> {
-  return checkpointStore(db).create(payload);
-}
-
-async function saveCheckpoint(db: UntypedDb, cp: CheckpointHandle): Promise<void> {
-  return checkpointStore(db).save(cp);
-}
-
-// ── Internals (page scan + probes mirror the classifier's private shapes) ────
-
-function clampBatchSize(requested: number | undefined): number {
-  const n = requested ?? DEFAULT_BATCH_SIZE;
-  if (!Number.isFinite(n)) return DEFAULT_BATCH_SIZE;
-  return Math.min(Math.max(Math.floor(n), MIN_BATCH_SIZE), MAX_BATCH_SIZE);
-}
-
-function clampMaxBatches(requested: number | undefined): number {
-  const n = requested ?? DEFAULT_MAX_BATCHES_PER_INVOCATION;
-  if (!Number.isFinite(n)) return DEFAULT_MAX_BATCHES_PER_INVOCATION;
-  return Math.min(Math.max(Math.floor(n), MIN_BATCHES_PER_INVOCATION), MAX_BATCHES_PER_INVOCATION);
-}
+const BATCH_SIZE_BOUNDS = {
+  fallback: DEFAULT_BATCH_SIZE,
+  min: MIN_BATCH_SIZE,
+  max: MAX_BATCH_SIZE,
+};
+const MAX_BATCHES_BOUNDS = {
+  fallback: DEFAULT_MAX_BATCHES_PER_INVOCATION,
+  min: MIN_BATCHES_PER_INVOCATION,
+  max: MAX_BATCHES_PER_INVOCATION,
+};
+const clampBatchSize = (n: number | undefined): number => clampBound(n, BATCH_SIZE_BOUNDS);
+const clampMaxBatches = (n: number | undefined): number => clampBound(n, MAX_BATCHES_BOUNDS);
 
 function isFilled(value: unknown): boolean {
   return value !== null && value !== undefined;
-}
-
-// Page scan + proof-row fetch + cardinality probes are shared read-only
-// primitives — see proofJobScan.ts. Thin wrappers keep the call sites below
-// unchanged and bind this job's label.
-async function fetchScanPage(
-  db: UntypedDb,
-  opts: { orgId?: string; cursor: string | null; batchSize: number },
-): Promise<ScanAnchorRow[]> {
-  return sharedFetchScanPage(db, opts, 'materializer');
-}
-
-async function fetchProofRows(
-  db: UntypedDb,
-  anchorIds: string[],
-): Promise<Map<string, ClassifierProofRow>> {
-  return sharedFetchProofRows(db, anchorIds, 'materializer');
-}
-
-async function resolveCardinalities(
-  db: UntypedDb,
-  txIds: string[],
-  memo: Map<string, number | null>,
-  logger: ClassifierLogger,
-): Promise<void> {
-  return sharedResolveCardinalities(db, txIds, memo, logger, 'proof-materializer');
 }
 
 /** Which txs still need a cardinality probe (stored proof data cannot settle them). */
@@ -610,8 +573,14 @@ async function processPage(
   writeEnabled: boolean,
   logger: ClassifierLogger,
 ): Promise<PageOutcome> {
-  const proofMap = await fetchProofRows(db, page.map((a) => a.id));
-  await resolveCardinalities(db, txsNeedingCardinality(page, proofMap), cardinalityMemo, logger);
+  const proofMap = await sharedFetchProofRows(db, page.map((a) => a.id), 'materializer');
+  await sharedResolveCardinalities(
+    db,
+    txsNeedingCardinality(page, proofMap),
+    cardinalityMemo,
+    logger,
+    'proof-materializer',
+  );
 
   // Pass 1: classify the WHOLE page. Any ambiguity halts before any write.
   const candidates: Array<{ id: string; chain_tx_id: string }> = [];
@@ -665,7 +634,7 @@ async function processPage(
     cp.payload.haltedAmbiguous = ambiguousCount;
     cp.payload.ambiguousReasons = pageAmbiguous;
     cp.payload.updatedAt = new Date().toISOString();
-    await saveCheckpoint(db, cp); // progress so far stays durable
+    await checkpointStore(db).save(cp); // progress so far stays durable
     return { halted: true };
   }
 
@@ -774,7 +743,7 @@ async function runUnderLock(
   );
 
   // Checkpoint: resume or create. runId is minted exactly once, here.
-  let cp = options.restart === true ? null : await loadCheckpoint(db, scope, mode);
+  let cp = options.restart === true ? null : await checkpointStore(db).load(scope, mode);
   let resumed = cp !== null;
 
   if (cp && cp.payload.completedAt !== null) {
@@ -787,7 +756,7 @@ async function runUnderLock(
 
   if (!cp) {
     const now = new Date().toISOString();
-    cp = await createCheckpoint(db, {
+    cp = await checkpointStore(db).create({
       schemaVersion: 1,
       scope,
       mode,
@@ -816,16 +785,16 @@ async function runUnderLock(
   let halted = false;
 
   while (batchesProcessed < maxBatches) {
-    const page = await fetchScanPage(db, {
-      orgId: options.orgId,
-      cursor: cp.payload.cursor,
-      batchSize,
-    });
+    const page = await sharedFetchScanPage(
+      db,
+      { orgId: options.orgId, cursor: cp.payload.cursor, batchSize },
+      'materializer',
+    );
 
     if (page.length === 0) {
       cp.payload.completedAt = new Date().toISOString();
       cp.payload.updatedAt = cp.payload.completedAt;
-      await saveCheckpoint(db, cp);
+      await checkpointStore(db).save(cp);
       break;
     }
 
@@ -839,7 +808,7 @@ async function runUnderLock(
     cp.payload.updatedAt = new Date().toISOString();
     const isLastPage = page.length < batchSize;
     if (isLastPage) cp.payload.completedAt = cp.payload.updatedAt;
-    await saveCheckpoint(db, cp);
+    await checkpointStore(db).save(cp);
     batchesProcessed += 1;
 
     logger.info(
