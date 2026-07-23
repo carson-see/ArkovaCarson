@@ -267,6 +267,44 @@ describe('Sidebar', () => {
     expect(settingsLink?.className).not.toMatch(/border-\[#00d4ff\]/);
   });
 
+  // ──────────────────────────────────────────────────────────────────────
+  // SCRUM-2915 ([PI05-CE06]): /my-credentials shipped (SCRUM-1598 import page)
+  // but was reachable only by typed URL — no sidebar link. Surface it in the
+  // Account section (a personal destination, like Billing / API Keys), visible
+  // to every authenticated user including INDIVIDUAL, and stop the Documents
+  // item from double-lighting on /my-credentials now that it has its own entry.
+  // ──────────────────────────────────────────────────────────────────────
+
+  it('SCRUM-2915: surfaces My Credentials in the sidebar nav', () => {
+    renderSidebar();
+    expect(screen.getAllByText('My Credentials').length).toBeGreaterThanOrEqual(1);
+    expect(hrefSet()).toContain(ROUTES.MY_CREDENTIALS);
+  });
+
+  it('SCRUM-2915: My Credentials is visible to INDIVIDUAL users (personal inbox)', () => {
+    mockProfile.mockReturnValue({ role: 'INDIVIDUAL', org_id: null });
+    renderSidebar();
+    expect(hrefSet()).toContain(ROUTES.MY_CREDENTIALS);
+  });
+
+  it('SCRUM-2915: highlights the active My Credentials route', () => {
+    renderSidebar({}, [ROUTES.MY_CREDENTIALS]);
+    const link = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.MY_CREDENTIALS);
+    expect(link?.className).toMatch(/border-\[#00d4ff\]/);
+  });
+
+  it('SCRUM-2915: Documents is NOT highlighted when on /my-credentials (own entry now)', () => {
+    // With a dedicated My Credentials item, the Documents item must not also
+    // light up on /my-credentials — otherwise two items appear active at once.
+    renderSidebar({}, [ROUTES.MY_CREDENTIALS]);
+    const docsLink = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.DOCUMENTS);
+    expect(docsLink?.className).not.toMatch(/border-\[#00d4ff\]/);
+  });
+
   // ── Admin section (unchanged role gating) ──
 
   it('hides the admin section for non-platform-admins (is_platform_admin=false)', () => {

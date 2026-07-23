@@ -20,11 +20,11 @@
 import { useState, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight, FileText, Settings as SettingsIcon, CreditCard, KeyRound, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight, FileText, Settings as SettingsIcon, CreditCard, KeyRound, ShieldCheck, Award } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES, destinationToRoute } from '@/lib/routes';
-import { NAV_LABELS, NAV_POLISH_LABELS } from '@/lib/copy';
+import { NAV_LABELS, NAV_POLISH_LABELS, MY_CREDENTIALS_LABELS } from '@/lib/copy';
 import { useProfile } from '@/hooks/useProfile';
 import { Button } from '@/components/ui/button';
 import { useTheme, type Theme } from '@/hooks/useTheme';
@@ -73,6 +73,12 @@ const ORG_NAV_ITEM: NavItem = {
 // Account section (SCRUM-2004) — destinations previously reachable only via the
 // Header user dropdown or by typing the URL. Visible to all authenticated users.
 const accountNavItems: NavItem[] = [
+  // My Credentials (SCRUM-2915 / [PI05-CE06]): the SCRUM-1598 recipient inbox /
+  // import page shipped at /my-credentials but was reachable only by typing the
+  // URL. It is a personal (user-scoped) destination, so it lives in the Account
+  // section alongside Billing / API Keys and is visible to every authenticated
+  // user (including INDIVIDUAL). Label is §1.3-clean ("My Credentials").
+  { label: MY_CREDENTIALS_LABELS.NAV_LABEL, icon: Award, to: ROUTES.MY_CREDENTIALS },
   { label: ACCOUNT_NAV_LABELS.BILLING, icon: CreditCard, to: ROUTES.BILLING },
   { label: ACCOUNT_NAV_LABELS.API_KEYS, icon: KeyRound, to: ROUTES.SETTINGS_API_KEYS },
 ];
@@ -232,12 +238,14 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName }: Reado
 
   const isNavActive = (item: NavItem) => {
     if (item.to === ROUTES.DOCUMENTS) {
-      // Documents tab should be active for /documents, /records, /my-credentials, /attestations
+      // Documents tab is active for /documents, /records, /attestations.
+      // /my-credentials is intentionally EXCLUDED (SCRUM-2915): it now has its
+      // own Account-section entry, so lighting up Documents too would show two
+      // active items at once (same rule as Settings vs its API-Keys sub-route).
       return location.pathname === ROUTES.DOCUMENTS
         || location.pathname.startsWith(ROUTES.DOCUMENTS + '/')
         || location.pathname === ROUTES.RECORDS
         || location.pathname.startsWith(ROUTES.RECORDS + '/')
-        || location.pathname === ROUTES.MY_CREDENTIALS
         || location.pathname === ROUTES.ATTESTATIONS;
     }
     if (item.to === ROUTES.COMPLIANCE_DASHBOARD) {
