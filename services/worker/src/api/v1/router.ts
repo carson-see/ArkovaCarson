@@ -66,6 +66,7 @@ import { complianceCheckRouter } from './compliance-check.js';
 import { regulatoryLookupRouter } from './regulatory-lookup.js';
 import { cleVerifyRouter } from './cle-verify.js';
 import { credentialsCtdlRouter } from './credentials-ctdl.js';
+import { credentialsCtdlImportRouter } from './credentials-ctdl-import.js';
 import { webhooksRouter } from './webhooks.js';
 import { webhooksSelfServiceRouter } from './webhooks-self-service.js';
 // atsWebhookRouter moved to index.ts for raw-body HMAC (SCRUM-1214/1215)
@@ -315,6 +316,14 @@ const credentialSourceImportRateLimiter = rateLimit({
   keyGenerator: (req) => `credential-source-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
 });
 
+// SCRUM-2913: the CTDL import consumer does a live outbound CE Registry fetch,
+// so keep a tight per-user bucket (same shape as credential-source imports).
+const ctdlImportRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+  keyGenerator: (req) => `ctdl-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
+});
+
 // AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)
 router.use('/ai/extract-batch', aiExtractionGate(), requireAuth, aiRateLimiter, aiBatchExtractRouter);
 router.use('/ai/extract', aiExtractionGate(), requireAuth, aiRateLimiter, aiExtractRouter);
@@ -445,6 +454,11 @@ const anchorAnonAllow = (req: Request, res: Response, next: NextFunction) => {
 router.use('/anchor', anchorAnonAllow, anchorLifecycleRouter);
 router.use('/anchor', anchorAnonAllow, anchorEvidenceRouter);
 router.use('/anchor', anchorAnonAllow, anchorExtractionManifestRouter);
+// SCRUM-2913: authed CTDL import consumer. Mounted at the FULL sub-path so its
+// `requireAuth` gate is scoped exactly to `/credentials/ctdl/import` and never
+// runs for the public serializer's `/credentials/:publicId/ctdl` route below.
+// Disjoint from `/:publicId/ctdl`, so the two /credentials mounts never collide.
+router.use('/credentials/ctdl/import', requireAuth, ctdlImportRateLimiter, credentialsCtdlImportRouter);
 router.use('/credentials', anchorAnonAllow, credentialsCtdlRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
