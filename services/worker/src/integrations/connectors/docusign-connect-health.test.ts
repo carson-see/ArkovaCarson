@@ -232,11 +232,6 @@ describe('markDocusignConnectorDegraded / markDocusignConnectorConnected', () =>
 });
 
 describe('settleConnectProvisioning', () => {
-  const EVENT_TYPES = {
-    provisioned: 'connect_listener_provisioned',
-    failed: 'connect_listener_failed',
-  } as const;
-
   it('clears the sticky degraded state and records the success event', async () => {
     const { db, upserts } = alertStateDb();
     const recordEvent = vi.fn().mockResolvedValue(undefined);
@@ -247,7 +242,6 @@ describe('settleConnectProvisioning', () => {
       orgId: ORG_ID,
       integrationId: 'integration-1',
       flow: 'org',
-      eventTypes: EVENT_TYPES,
       recordEvent,
       now: NOW,
     });
@@ -277,10 +271,6 @@ describe('settleConnectProvisioning', () => {
       orgId: ORG_ID,
       integrationId: 'integration-1',
       flow: 'member',
-      eventTypes: {
-        provisioned: 'member_connect_listener_provisioned',
-        failed: 'member_connect_listener_failed',
-      },
       recordEvent,
       now: NOW,
     });
@@ -311,8 +301,7 @@ describe('settleConnectProvisioning', () => {
         provisioning: Promise.reject(new Error('boom')),
         orgId: ORG_ID,
         flow: 'org',
-        eventTypes: EVENT_TYPES,
-        recordEvent,
+          recordEvent,
         now: NOW,
       }),
     ).resolves.toBeUndefined();
@@ -334,7 +323,6 @@ describe('settleConnectProvisioning', () => {
       provisioning: Promise.resolve({ connectId: 'connect-9', action: 'updated' as const }),
       orgId: ORG_ID,
       flow: 'org',
-      eventTypes: EVENT_TYPES,
       recordEvent,
       now: NOW,
     });

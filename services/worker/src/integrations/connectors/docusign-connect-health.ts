@@ -216,11 +216,21 @@ export async function reportConnectProvisionFailure(args: {
   return diagnostics;
 }
 
-/** `integration_events` event-type pair for one Connect-provisioning flow. */
-export interface ConnectProvisionEventTypes {
-  provisioned: string;
-  failed: string;
-}
+/**
+ * `integration_events` event-type pair per flow. Derived from `flow` rather
+ * than passed in, so a caller cannot pair the org flow with member event types
+ * (or vice versa) — the two names always moved together anyway.
+ */
+export const CONNECT_PROVISION_EVENT_TYPES: Record<
+  DocusignConnectFlow,
+  { provisioned: string; failed: string }
+> = {
+  org: { provisioned: 'connect_listener_provisioned', failed: 'connect_listener_failed' },
+  member: {
+    provisioned: 'member_connect_listener_provisioned',
+    failed: 'member_connect_listener_failed',
+  },
+};
 
 /**
  * Writes one `integration_events` row for the calling router's org/integration.
@@ -257,15 +267,15 @@ export async function settleConnectProvisioning(args: {
   orgId: string;
   integrationId?: string | null;
   flow: DocusignConnectFlow;
-  eventTypes: ConnectProvisionEventTypes;
   recordEvent: ConnectProvisionEventRecorder;
   now?: Date;
 }): Promise<void> {
+  const eventTypes = CONNECT_PROVISION_EVENT_TYPES[args.flow];
   try {
     const result = await args.provisioning;
     await markDocusignConnectorConnected({ db: args.db, orgId: args.orgId, now: args.now });
     await args.recordEvent({
-      eventType: args.eventTypes.provisioned,
+      eventType: eventTypes.provisioned,
       status: 'success',
       details: { connect_id: result.connectId, action: result.action },
     });
@@ -280,7 +290,7 @@ export async function settleConnectProvisioning(args: {
     });
     try {
       await args.recordEvent({
-        eventType: args.eventTypes.failed,
+        eventType: eventTypes.failed,
         status: 'error',
         details: {
           error: diagnostics.message,

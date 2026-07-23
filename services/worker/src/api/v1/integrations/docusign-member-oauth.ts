@@ -468,26 +468,12 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
       // failure is loud + diagnosable but non-fatal to the connect flow.
       void settleConnectProvisioning({
         db: db as unknown as ConnectorAlertStateDb,
-        provisioning: provisionConnectListener({
-          accessToken: tokens.access_token,
-          baseUri: account.base_uri,
-          accountId: account.account_id,
-          deps: docusignDeps,
-        }),
+        flow: 'member',
+        provisioning: provisionConnectListener({ accessToken: tokens.access_token, baseUri: account.base_uri, accountId: account.account_id, deps: docusignDeps }),
         orgId: payload.orgId,
         integrationId: integration?.id,
-        flow: 'member',
-        eventTypes: {
-          provisioned: 'member_connect_listener_provisioned',
-          failed: 'member_connect_listener_failed',
-        },
-        recordEvent: (event) =>
-          recordIntegrationEvent(db, {
-            orgId: payload.orgId,
-            integrationId: integration?.id,
-            ...event,
-          }),
         now: deps.now?.() ?? new Date(),
+        recordEvent: (event) => recordIntegrationEvent(db, { orgId: payload.orgId, integrationId: integration?.id, ...event }),
       });
 
       res.redirect(302, appendResult(returnTo, 'docusign', 'connected'));

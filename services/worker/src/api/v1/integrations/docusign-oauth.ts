@@ -692,25 +692,11 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
       // redirected, a webhook-provisioning failure must not break it.
       void settleConnectProvisioning({
         db: db as unknown as ConnectorAlertStateDb,
-        provisioning: provisionConnectListener({
-          accessToken: tokens.access_token,
-          baseUri: account.base_uri,
-          accountId: account.account_id,
-          deps: docusignDeps,
-        }),
+        provisioning: provisionConnectListener({ accessToken: tokens.access_token, baseUri: account.base_uri, accountId: account.account_id, deps: docusignDeps }),
         orgId: payload.orgId,
         integrationId: integration?.id,
         flow: 'org',
-        eventTypes: {
-          provisioned: 'connect_listener_provisioned',
-          failed: 'connect_listener_failed',
-        },
-        recordEvent: (event) =>
-          recordIntegrationEvent(db, {
-            orgId: payload.orgId,
-            integrationId: integration?.id,
-            ...event,
-          }),
+        recordEvent: (event) => recordIntegrationEvent(db, { orgId: payload.orgId, integrationId: integration?.id, ...event }),
         now: deps.now?.() ?? new Date(),
       });
 
