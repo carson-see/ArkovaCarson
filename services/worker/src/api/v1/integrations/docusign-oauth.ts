@@ -40,6 +40,7 @@ import {
 import {
   markDocusignConnectorConnected,
   reportConnectProvisionFailure,
+  settleConnectProvisioning,
   type ConnectorAlertStateDb,
 } from '../../../integrations/connectors/docusign-connect-health.js';
 import type { TypeSafeDatabase } from '../../../types/database-overrides.js';
@@ -685,58 +686,32 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
 
       // Auto-provision Connect listener (fire-and-forget, non-fatal).
       // Don't block the redirect — user shouldn't wait for DocuSign API calls.
-      void provisionConnectListener({
-        accessToken: tokens.access_token,
-        baseUri: account.base_uri,
-        accountId: account.account_id,
-        deps: docusignDeps,
-      }).then(async (provisionResult) => {
-        // Clears any sticky `degraded` left by an earlier provisioning failure.
-        await markDocusignConnectorConnected({
-          db: db as unknown as ConnectorAlertStateDb,
-          orgId: payload.orgId,
-          now: deps.now?.() ?? new Date(),
-        });
-        await recordIntegrationEvent(db, {
-          orgId: payload.orgId,
-          integrationId: integration?.id,
-          eventType: 'connect_listener_provisioned',
-          status: 'success',
-          details: {
-            connect_id: provisionResult.connectId,
-            action: provisionResult.action,
-          },
-        });
-      }).catch(async (provisionError) => {
-        // SCRUM-3014: loud + diagnosable (real DocuSign status + bounded detail,
-        // Sentry, connector marked degraded) — but still NON-FATAL: the connect
-        // flow already redirected, a webhook-provisioning failure must not break it.
-        const diagnostics = await reportConnectProvisionFailure({
-          db: db as unknown as ConnectorAlertStateDb,
-          error: provisionError,
-          orgId: payload.orgId,
-          integrationId: integration?.id,
-          flow: 'org',
-          now: deps.now?.() ?? new Date(),
-        });
-        try {
-          await recordIntegrationEvent(db, {
+      // SCRUM-3014: success clears the sticky `degraded`; failure is loud +
+      // diagnosable (real DocuSign status + bounded detail, Sentry, connector
+      // marked degraded) but still NON-FATAL — the connect flow already
+      // redirected, a webhook-provisioning failure must not break it.
+      void settleConnectProvisioning({
+        db: db as unknown as ConnectorAlertStateDb,
+        provisioning: provisionConnectListener({
+          accessToken: tokens.access_token,
+          baseUri: account.base_uri,
+          accountId: account.account_id,
+          deps: docusignDeps,
+        }),
+        orgId: payload.orgId,
+        integrationId: integration?.id,
+        flow: 'org',
+        eventTypes: {
+          provisioned: 'connect_listener_provisioned',
+          failed: 'connect_listener_failed',
+        },
+        recordEvent: (event) =>
+          recordIntegrationEvent(db, {
             orgId: payload.orgId,
             integrationId: integration?.id,
-            eventType: 'connect_listener_failed',
-            status: 'error',
-            details: {
-              error: diagnostics.message,
-              docusign_status: diagnostics.status,
-              docusign_detail: diagnostics.detail,
-            },
-          });
-        } catch (eventError) {
-          logger.warn(
-            { message: eventError instanceof Error ? eventError.message : String(eventError) },
-            'Failed to record Connect provisioning failure event',
-          );
-        }
+            ...event,
+          }),
+        now: deps.now?.() ?? new Date(),
       });
 
       res.redirect(302, appendResult(returnTo, 'docusign', 'connected'));

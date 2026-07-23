@@ -215,3 +215,88 @@ export async function reportConnectProvisionFailure(args: {
 
   return diagnostics;
 }
+
+/** `integration_events` event-type pair for one Connect-provisioning flow. */
+export interface ConnectProvisionEventTypes {
+  provisioned: string;
+  failed: string;
+}
+
+/**
+ * Writes one `integration_events` row for the calling router's org/integration.
+ * Supplied by the router so this module stays free of router-local db typing.
+ */
+export type ConnectProvisionEventRecorder = (event: {
+  eventType: string;
+  status: 'success' | 'error';
+  /** Scalar-only so the row stays `Json`-assignable and can never carry bytes. */
+  details: Record<string, string | number | boolean | null>;
+}) => Promise<void>;
+
+/** Shape of a resolved `provisionConnectListener()` call. */
+export interface ConnectProvisionOutcome {
+  connectId: string;
+  action: string;
+}
+
+/**
+ * Settle a fire-and-forget `provisionConnectListener()` promise: clear or set
+ * the sticky connector-health state and record the matching
+ * `integration_events` row. Shared by the org and member OAuth callbacks (and
+ * the reprovision endpoint) so the two flows cannot drift apart — they differ
+ * only in their event-type names and `flow` tag.
+ *
+ * NEVER rejects: both callers already redirected the browser, so a rejection
+ * here would surface as an unhandled rejection in the worker. A throw from the
+ * SUCCESS-path event write deliberately falls through to the failure path,
+ * matching the `.then(...).catch(...)` chain this replaced.
+ */
+export async function settleConnectProvisioning(args: {
+  db: ConnectorAlertStateDb;
+  provisioning: PromiseLike<ConnectProvisionOutcome>;
+  orgId: string;
+  integrationId?: string | null;
+  flow: DocusignConnectFlow;
+  eventTypes: ConnectProvisionEventTypes;
+  recordEvent: ConnectProvisionEventRecorder;
+  now?: Date;
+}): Promise<void> {
+  try {
+    const result = await args.provisioning;
+    await markDocusignConnectorConnected({ db: args.db, orgId: args.orgId, now: args.now });
+    await args.recordEvent({
+      eventType: args.eventTypes.provisioned,
+      status: 'success',
+      details: { connect_id: result.connectId, action: result.action },
+    });
+  } catch (provisionError) {
+    const diagnostics = await reportConnectProvisionFailure({
+      db: args.db,
+      error: provisionError,
+      orgId: args.orgId,
+      integrationId: args.integrationId,
+      flow: args.flow,
+      now: args.now,
+    });
+    try {
+      await args.recordEvent({
+        eventType: args.eventTypes.failed,
+        status: 'error',
+        details: {
+          error: diagnostics.message,
+          docusign_status: diagnostics.status,
+          docusign_detail: diagnostics.detail,
+        },
+      });
+    } catch (eventError) {
+      logger.warn(
+        {
+          orgId: args.orgId,
+          flow: args.flow,
+          message: eventError instanceof Error ? eventError.message : String(eventError),
+        },
+        'Failed to record Connect provisioning failure event',
+      );
+    }
+  }
+}

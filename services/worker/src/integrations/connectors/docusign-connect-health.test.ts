@@ -26,6 +26,7 @@ import {
   markDocusignConnectorConnected,
   markDocusignConnectorDegraded,
   reportConnectProvisionFailure,
+  settleConnectProvisioning,
 } from './docusign-connect-health.js';
 
 const NOW = new Date('2026-07-23T12:00:00Z');
@@ -105,7 +106,10 @@ describe('reportConnectProvisionFailure', () => {
 
     expect(diagnostics.status).toBe(403);
     expect(logger.error).toHaveBeenCalledTimes(1);
-    const [context] = vi.mocked(logger.error).mock.calls[0] as [Record<string, unknown>, string];
+    const [context] = vi.mocked(logger.error).mock.calls[0] as unknown as [
+      Record<string, unknown>,
+      string,
+    ];
     expect(context).toMatchObject({
       orgId: ORG_ID,
       integrationId: 'integration-1',
@@ -224,5 +228,123 @@ describe('markDocusignConnectorDegraded / markDocusignConnectorConnected', () =>
 
     await expect(markDocusignConnectorDegraded({ db, orgId: ORG_ID, now: NOW })).resolves.toBeUndefined();
     expect(logger.warn).toHaveBeenCalled();
+  });
+});
+
+describe('settleConnectProvisioning', () => {
+  const EVENT_TYPES = {
+    provisioned: 'connect_listener_provisioned',
+    failed: 'connect_listener_failed',
+  } as const;
+
+  it('clears the sticky degraded state and records the success event', async () => {
+    const { db, upserts } = alertStateDb();
+    const recordEvent = vi.fn().mockResolvedValue(undefined);
+
+    await settleConnectProvisioning({
+      db,
+      provisioning: Promise.resolve({ connectId: 'connect-9', action: 'created' as const }),
+      orgId: ORG_ID,
+      integrationId: 'integration-1',
+      flow: 'org',
+      eventTypes: EVENT_TYPES,
+      recordEvent,
+      now: NOW,
+    });
+
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].values).toMatchObject({ last_state: 'connected', last_alerted_at: null });
+    expect(recordEvent).toHaveBeenCalledWith({
+      eventType: 'connect_listener_provisioned',
+      status: 'success',
+      details: { connect_id: 'connect-9', action: 'created' },
+    });
+  });
+
+  it('marks degraded and persists status + bounded detail on the failure event', async () => {
+    const { db, upserts } = alertStateDb();
+    const recordEvent = vi.fn().mockResolvedValue(undefined);
+
+    await settleConnectProvisioning({
+      db,
+      provisioning: Promise.reject(
+        new DocusignApiError(
+          'DocuSign Connect create failed',
+          403,
+          '{"errorCode":"CONNECT_NOT_ENABLED"}',
+        ),
+      ),
+      orgId: ORG_ID,
+      integrationId: 'integration-1',
+      flow: 'member',
+      eventTypes: {
+        provisioned: 'member_connect_listener_provisioned',
+        failed: 'member_connect_listener_failed',
+      },
+      recordEvent,
+      now: NOW,
+    });
+
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].values).toMatchObject({ last_state: 'degraded' });
+    expect(Sentry.captureException).toHaveBeenCalled();
+    expect(recordEvent).toHaveBeenCalledWith({
+      eventType: 'member_connect_listener_failed',
+      status: 'error',
+      details: {
+        error: 'DocuSign Connect create failed',
+        docusign_status: 403,
+        docusign_detail: '{"errorCode":"CONNECT_NOT_ENABLED"}',
+      },
+    });
+  });
+
+  // The OAuth callback has already redirected by the time this settles: nothing
+  // here may reject, or the worker takes an unhandled rejection.
+  it('never rejects when the failure-event write itself throws', async () => {
+    const { db } = alertStateDb();
+    const recordEvent = vi.fn().mockRejectedValue(new Error('integration_events insert failed'));
+
+    await expect(
+      settleConnectProvisioning({
+        db,
+        provisioning: Promise.reject(new Error('boom')),
+        orgId: ORG_ID,
+        flow: 'org',
+        eventTypes: EVENT_TYPES,
+        recordEvent,
+        now: NOW,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  // A throw from the SUCCESS-path event write must still land on the failure
+  // path — the pre-refactor `.then(...).catch(...)` chain behaved this way.
+  it('falls through to the degraded path when the success-event write throws', async () => {
+    const { db, upserts } = alertStateDb();
+    const recordEvent = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('success event write failed'))
+      .mockResolvedValue(undefined);
+
+    await settleConnectProvisioning({
+      db,
+      provisioning: Promise.resolve({ connectId: 'connect-9', action: 'updated' as const }),
+      orgId: ORG_ID,
+      flow: 'org',
+      eventTypes: EVENT_TYPES,
+      recordEvent,
+      now: NOW,
+    });
+
+    expect(upserts.map((u) => (u.values as { last_state: string }).last_state)).toEqual([
+      'connected',
+      'degraded',
+    ]);
+    expect(recordEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({ eventType: 'connect_listener_failed', status: 'error' }),
+    );
   });
 });

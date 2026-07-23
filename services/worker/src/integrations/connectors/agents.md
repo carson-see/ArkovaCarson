@@ -72,3 +72,10 @@ ERROR on this tree + the `docusign-*` job files) enforces this at build time.
   nothing else clears it.
 - **DO NOT** let anything in this module throw into the OAuth callback; every
   write is best-effort and logs on failure.
+- **DO** settle the provisioning promise through `settleConnectProvisioning()`
+  rather than hand-rolling a `.then(...).catch(...)` chain per router. Both
+  callbacks and the reprovision endpoint differ only in their event-type names
+  and `flow` tag; duplicating the chain drifted the two flows apart and tripped
+  the Sonar new-code duplication gate. A throw from the SUCCESS-path event write
+  deliberately falls through to the failure path — that is the behaviour of the
+  chain it replaced, not an accident.
