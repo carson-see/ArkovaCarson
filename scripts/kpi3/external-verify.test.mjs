@@ -17,6 +17,7 @@ import {
   parseBlockHeader,
   compactToTarget,
   MAINNET_POW_LIMIT,
+  blockstreamFetch,
 } from './external-verify.mjs';
 import {
   VALID_PROOF,
@@ -277,4 +278,71 @@ test('REJECT: unexpected issuer (treasury binding)', async () => {
   );
   assert.equal(r.checks.issuerMatch, false);
   assert.equal(r.reason, 'unexpected_issuer');
+});
+
+// ── blockstreamFetch path allow-list ────────────────────────────────────────
+// `blockstreamFetch` is an exported sink: it interpolates its `path` argument
+// straight into a network URL. verifyAnchorProof validates txid/block hash
+// before calling it, but the sink must also defend itself — any other caller
+// (or a future refactor of verifyAnchorProof) could otherwise walk the path
+// out of the Esplora API namespace and turn "verify this proof" into a request
+// at an attacker-chosen URL. SonarCloud flags exactly this
+// (jssecurity:S7044 / S8476).
+
+test('blockstreamFetch: accepts exactly the Esplora paths the verifier uses', async () => {
+  const seen = [];
+  const originalFetch = globalThis.fetch;
+  const hex64 = 'a'.repeat(64);
+  globalThis.fetch = async (url) => {
+    seen.push(url);
+    return { ok: true, status: 200, json: async () => ({}), text: async () => '' };
+  };
+  try {
+    const f = blockstreamFetch('https://explorer.test/api');
+    await f(`tx/${hex64}`);
+    await f(`tx/${hex64}/merkle-proof`);
+    await f(`block/${hex64}/header`);
+    await f('blocks/tip/height');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.deepEqual(seen, [
+    `https://explorer.test/api/tx/${hex64}`,
+    `https://explorer.test/api/tx/${hex64}/merkle-proof`,
+    `https://explorer.test/api/block/${hex64}/header`,
+    'https://explorer.test/api/blocks/tip/height',
+  ]);
+});
+
+test('blockstreamFetch: refuses any path outside the allow-list without issuing a request', async () => {
+  const originalFetch = globalThis.fetch;
+  let called = 0;
+  globalThis.fetch = async () => {
+    called += 1;
+    throw new Error('should never be reached');
+  };
+  try {
+    const f = blockstreamFetch('https://explorer.test/api');
+    const bad = [
+      'tx/../../../../etc/passwd',
+      `tx/${'a'.repeat(63)}`,
+      `tx/${'g'.repeat(64)}`,
+      `tx/${'A'.repeat(64)}`,
+      'https://evil.test/steal',
+      '//evil.test/steal',
+      'blocks/tip/height?x=1',
+      `block/${'a'.repeat(64)}/header/../../evil`,
+      '',
+    ];
+    for (const path of bad) {
+      await assert.rejects(
+        () => f(path),
+        (err) => err instanceof Error && /unsupported explorer path/i.test(err.message),
+        `expected rejection for ${JSON.stringify(path)}`,
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(called, 0, 'no network request may be issued for a rejected path');
 });

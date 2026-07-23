@@ -282,10 +282,35 @@ export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
   return done(true, null);
 }
 
+/**
+ * The complete set of Esplora paths this verifier ever requests. `path` reaches
+ * the sink from proof JSON the caller does not control, so the sink validates
+ * it itself rather than trusting that every caller pre-validated (defence in
+ * depth for SonarCloud jssecurity:S7044 / S8476): without this an attacker-
+ * supplied txid could path-traverse out of the API namespace and steer the
+ * request at a URL of their choosing.
+ */
+const ALLOWED_EXPLORER_PATHS = [
+  /^tx\/[0-9a-f]{64}$/,
+  /^tx\/[0-9a-f]{64}\/merkle-proof$/,
+  /^block\/[0-9a-f]{64}\/header$/,
+  /^blocks\/tip\/height$/,
+];
+
+/** Narrow an arbitrary string to one of the four literal Esplora shapes above. */
+function assertAllowedExplorerPath(path) {
+  const candidate = String(path);
+  if (!ALLOWED_EXPLORER_PATHS.some((re) => re.test(candidate))) {
+    throw new Error('unsupported explorer path');
+  }
+  return candidate;
+}
+
 /** Live Esplora client (blockstream.info) — JSON for most paths, text for header/tip. */
 export function blockstreamFetch(base = 'https://blockstream.info/api') {
   const textPaths = (p) => p.endsWith('/header') || p === 'blocks/tip/height';
-  return async (path) => {
+  return async (rawPath) => {
+    const path = assertAllowedExplorerPath(rawPath);
     const res = await fetch(`${base}/${path}`);
     if (res.status === 404) { const e = new Error('not found'); e.status = 404; throw e; }
     if (!res.ok) throw new Error(`explorer HTTP ${res.status}`);

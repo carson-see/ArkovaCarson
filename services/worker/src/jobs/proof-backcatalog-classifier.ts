@@ -78,6 +78,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { config } from '../config.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
+import {
+  createCheckpointStore,
+  type CheckpointHandle as SharedCheckpointHandle,
+} from './proofJobCheckpoint.js';
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -582,10 +586,7 @@ interface CheckpointPayload {
   unpersistedNoProofRow?: number;
 }
 
-interface CheckpointHandle {
-  id: string;
-  payload: CheckpointPayload;
-}
+type CheckpointHandle = SharedCheckpointHandle<CheckpointPayload>;
 
 type UntypedDb = {
   from(table: string): {
@@ -622,65 +623,30 @@ function emptyPlan(): PlanCounts {
   return { direct_anchored: 0, batch_provable: 0, already_complete: 0, ambiguous: 0 };
 }
 
+// Checkpoint load/create/save is shared with proof-materializer —
+// see proofJobCheckpoint.ts. These thin wrappers keep the call sites below
+// unchanged (same job type, same error-message prefixes).
+function checkpointStore(db: UntypedDb) {
+  return createCheckpointStore<CheckpointPayload>(db, CHECKPOINT_JOB_TYPE, 'classifier');
+}
+
 async function loadCheckpoint(
   db: UntypedDb,
   scope: string,
   mode: 'dry-run' | 'write',
 ): Promise<CheckpointHandle | null> {
-  const q = db
-    .from('job_queue')
-    .select('id, payload')
-    .eq('type', CHECKPOINT_JOB_TYPE) as {
-    eq(col: string, val: unknown): {
-      eq(col: string, val: unknown): {
-        order(
-          col: string,
-          opts: { ascending: boolean },
-        ): {
-          limit(n: number): PromiseLike<{
-            data: Array<{ id: string; payload: CheckpointPayload }> | null;
-            error: { message?: string } | null;
-          }>;
-        };
-      };
-    };
-  };
-  const { data, error } = await q
-    .eq('payload->>scope', scope)
-    .eq('payload->>mode', mode)
-    .order('created_at', { ascending: false })
-    .limit(1);
-  if (error) {
-    throw new Error(`classifier checkpoint load failed: ${error.message ?? 'unknown'}`);
-  }
-  const row = data?.[0];
-  return row ? { id: row.id, payload: row.payload } : null;
+  return checkpointStore(db).load(scope, mode);
 }
 
-async function createCheckpoint(db: UntypedDb, payload: CheckpointPayload): Promise<CheckpointHandle> {
-  // Terminal status 'completed' on purpose: never claimable by claim_next_job
-  // (nothing processes this type anyway), never counted as pending/failed/dead
-  // by queue monitors, never swept as a stuck job. It is a durable state row,
-  // not work.
-  const { data, error } = await db
-    .from('job_queue')
-    .insert({ type: CHECKPOINT_JOB_TYPE, status: 'completed', payload })
-    .select('id')
-    .single();
-  if (error || !data) {
-    throw new Error(`classifier checkpoint create failed: ${error?.message ?? 'no id returned'}`);
-  }
-  return { id: data.id, payload };
+async function createCheckpoint(
+  db: UntypedDb,
+  payload: CheckpointPayload,
+): Promise<CheckpointHandle> {
+  return checkpointStore(db).create(payload);
 }
 
 async function saveCheckpoint(db: UntypedDb, cp: CheckpointHandle): Promise<void> {
-  const { error } = await db
-    .from('job_queue')
-    .update({ payload: cp.payload, updated_at: new Date().toISOString() })
-    .eq('id', cp.id);
-  if (error) {
-    throw new Error(`classifier checkpoint save failed: ${error.message ?? 'unknown'}`);
-  }
+  return checkpointStore(db).save(cp);
 }
 
 // ── Internals ────────────────────────────────────────────────────────────────

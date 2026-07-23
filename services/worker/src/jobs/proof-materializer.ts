@@ -105,6 +105,10 @@ import {
   type GucState,
   type ScanAnchorRow,
 } from './proof-backcatalog-classifier.js';
+import {
+  createCheckpointStore,
+  type CheckpointHandle as SharedCheckpointHandle,
+} from './proofJobCheckpoint.js';
 
 // Re-exported for route wiring convenience: the prod cron path builds deps
 // with the classifier's shared read-only primitives (safe to share — the
@@ -359,10 +363,7 @@ interface CheckpointPayload {
   completedAt: string | null;
 }
 
-interface CheckpointHandle {
-  id: string;
-  payload: CheckpointPayload;
-}
+type CheckpointHandle = SharedCheckpointHandle<CheckpointPayload>;
 
 type UntypedDb = {
   from(table: string): {
@@ -394,67 +395,34 @@ type UntypedDb = {
   };
 };
 
+// Checkpoint load/create/save is shared with proof-backcatalog-classifier —
+// see proofJobCheckpoint.ts. These thin wrappers keep the call sites below
+// unchanged.
+function checkpointStore(db: UntypedDb) {
+  return createCheckpointStore<CheckpointPayload>(
+    db,
+    MATERIALIZER_CHECKPOINT_JOB_TYPE,
+    'materializer',
+  );
+}
+
 async function loadCheckpoint(
   db: UntypedDb,
   scope: string,
   mode: 'dry-run' | 'write',
 ): Promise<CheckpointHandle | null> {
-  const q = db
-    .from('job_queue')
-    .select('id, payload')
-    .eq('type', MATERIALIZER_CHECKPOINT_JOB_TYPE) as {
-    eq(col: string, val: unknown): {
-      eq(col: string, val: unknown): {
-        order(
-          col: string,
-          opts: { ascending: boolean },
-        ): {
-          limit(n: number): PromiseLike<{
-            data: Array<{ id: string; payload: CheckpointPayload }> | null;
-            error: { message?: string } | null;
-          }>;
-        };
-      };
-    };
-  };
-  const { data, error } = await q
-    .eq('payload->>scope', scope)
-    .eq('payload->>mode', mode)
-    .order('created_at', { ascending: false })
-    .limit(1);
-  if (error) {
-    throw new Error(`materializer checkpoint load failed: ${error.message ?? 'unknown'}`);
-  }
-  const row = data?.[0];
-  return row ? { id: row.id, payload: row.payload } : null;
+  return checkpointStore(db).load(scope, mode);
 }
 
 async function createCheckpoint(
   db: UntypedDb,
   payload: CheckpointPayload,
 ): Promise<CheckpointHandle> {
-  // Terminal status 'completed' on purpose (mirrors the classifier): never
-  // claimable by claim_next_job, never counted pending/failed/dead, never
-  // swept. A durable state row, not work.
-  const { data, error } = await db
-    .from('job_queue')
-    .insert({ type: MATERIALIZER_CHECKPOINT_JOB_TYPE, status: 'completed', payload })
-    .select('id')
-    .single();
-  if (error || !data) {
-    throw new Error(`materializer checkpoint create failed: ${error?.message ?? 'no id returned'}`);
-  }
-  return { id: data.id, payload };
+  return checkpointStore(db).create(payload);
 }
 
 async function saveCheckpoint(db: UntypedDb, cp: CheckpointHandle): Promise<void> {
-  const { error } = await db
-    .from('job_queue')
-    .update({ payload: cp.payload, updated_at: new Date().toISOString() })
-    .eq('id', cp.id);
-  if (error) {
-    throw new Error(`materializer checkpoint save failed: ${error.message ?? 'unknown'}`);
-  }
+  return checkpointStore(db).save(cp);
 }
 
 // ── Internals (page scan + probes mirror the classifier's private shapes) ────
