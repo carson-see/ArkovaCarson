@@ -1,0 +1,434 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-07-23-MAXSOAK-BATCH",
+  "created_at": "2026-07-23T14:05:00Z",
+  "created_by": "claude-rte@arkova.io",
+  "release_owner": "RTE (CTO-delegate)",
+  "approval_status": "approved",
+  "approval_actor": "RTE (CTO-delegate) \u2014 technical risk decision per direct 2026-07-23 founder correction reassigning soak-tier Ready/approval authority from founder to CTO-delegate (\"the CTO owns this not me\"); approved after empirical pre-mortem (shared-infra, migration/ledger, CI/deploy-gate, queue-interaction, deploy-timing collision checks) against #1552, not a rubber-stamp on green CI alone",
+  "approval_time": "2026-07-23T14:10:15Z",
+  "train_launch_sha": "fbb9a728d322ef813884f20a73303fecf7760ff0",
+  "target_main_sha": "9a8ef3eedb7ff37559d8a515a30155f66ee7b30c",
+  "allowed_base_shas": [
+    "fbb9a728d322ef813884f20a73303fecf7760ff0",
+    "de5dfcb270f7388ce3a81cc14aac8b6837e8a35b",
+    "9a8ef3eedb7ff37559d8a515a30155f66ee7b30c",
+    "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+    "ee0197f1060a7a1c48be9ad0e641d5f38faea5eb",
+    "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
+    "c13012d4f7d142d483a44441e2d1806416858e9c",
+    "e20a580c66de1ca5747d2e9453e63566549c780e",
+    "a589f05f006276529d39356a6bef141cc38aa702",
+    "3fd1a39c5ffcc27f514e0ac0ee4c5c1e89de3ee1",
+    "801cd18e8eb03dd6b344294b16744fc9b8717488",
+    "41b8d711f3c1d68e4524a086ad2f3a0304991a07"
+  ],
+  "covered_main_shas": [
+    "fbb9a728d322ef813884f20a73303fecf7760ff0",
+    "de5dfcb270f7388ce3a81cc14aac8b6837e8a35b",
+    "9a8ef3eedb7ff37559d8a515a30155f66ee7b30c"
+  ],
+  "included_prs": [
+    {
+      "number": 1555,
+      "head_sha": "5f150dc5836e323b680c4d1a193d169f8e476409",
+      "base_sha": "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T2 (org quota / verified-payer worker behavior), consistent with touched paths (services/worker anchor-bulk, batch-drain, 429-limiter/quota middleware). All required checks green on frozen head 5f150dc5 except the Staging Soak Evidence Gate (35 checks, 1 non-pass). Directly exercises the rig's real chain-write path: org quotas + verified-payer rate limiting gate the same POST /api/v1/anchor path that produced this rig's 62-anchor volume evidence and the 15-way concurrency run (exact credit-balance conservation 60->45, no race/double-charge) and the quota/credit-exhaustion edge cases (11x201 then 402 quota_exhausted at the exact boundary; 2x201 then 402 insufficient_credits x3 with clean compensating deletes) \u2014 those are the changed-surface exercises for this PR, not generic health-only coverage. HONEST NOTE: this PR was previously carried in rc-2026-07-20-airail.json (approved, approval_actor carson) at a different, now-superseded head (fe6eee50); that manifest's soak window expired 2026-07-22T05:42:26Z and its head differs from the current 5f150dc5 \u2014 that prior approval does NOT cover the current head and is superseded by this manifest.",
+      "rollback_note": "Code-only worker change (org_daily_usage quota middleware + payer rate limits); revert PR #1555 \u2014 no migration; org_daily_usage rows written by the middleware are additive counters, safe to leave in place after a revert.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1572,
+      "head_sha": "5834349157c2e7870c9bf9736a24cb8d9541b7e4",
+      "base_sha": "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T2 (adm-zip dependency bump 0.5.18->0.6.0, CVE fix, services/worker). All required checks green on frozen head 58343491 except the Staging Soak Evidence Gate. HONEST NOTE: this is over-declared relative to path risk \u2014 a lockfile-only dependency bump touches no public API/auth/billing/anchoring/queue/chain surface and would classify T1 by the path detector; T2 is accepted as a conservative over-declaration per \u00a71.12 (over-declaration is never blocked). Coverage rides the maxsoak rig's continuous healthy boot (module import graph loads with the bumped adm-zip resolved in the built lockfile, no runtime error) for the shared window; no adm-zip-specific behavior (bulk export/zip generation) was independently exercised on this rig this session. SEPARATE HONEST NOTE: this PR previously had merge-grade, CTO-approved T2 evidence in rc-2026-07-21-deps.json (approved, 12.5h soak 2026-07-20T13:06Z\u201301:36Z, pass) \u2014 that evidence expired 2026-07-23T01:36:26Z, before this manifest was authored (2026-07-23T14:05Z), and this PR's head (58343491) is unchanged since that soak. The gap between expiry and this manifest is ~12.5h with zero code change in between.",
+      "rollback_note": "Dependency-only; revert PR #1572 to restore the prior adm-zip version. No runtime code or schema change.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1584,
+      "head_sha": "804053b8465f13eda13a366b28e71cc0ad8bcb53",
+      "base_sha": "3fd1a39c5ffcc27f514e0ac0ee4c5c1e89de3ee1",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T2 (services/worker/src/routes/cron.ts + anchor-stats.ts \u2014 worker behavior fix for /jobs/refresh-stats 500s). All required checks green on frozen head 804053b8 except the Staging Soak Evidence Gate. The rig's healthy anchoring.status=ok / lastBatchAt continuing to advance across the soak window (independently reconfirmed live this session: uptime 36556s, lastBatchAt 2026-07-23T03:56:22Z) is consistent with the dashboard-cache RPC path this PR touches staying healthy under the rig's real anchor volume, but the specific /jobs/refresh-stats route was not independently POST-exercised on this rig this session \u2014 coverage is the shared-rig health signal, not a targeted exercise of this PR's changed route.",
+      "rollback_note": "Code-only cron/stats-cache fix; revert PR #1584 \u2014 no migration; drops the per-key bounded RPCs and the dead mat-view removal, restoring prior (buggy) behavior, not a data-loss risk.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "3fd1a39c5ffcc27f514e0ac0ee4c5c1e89de3ee1",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1598,
+      "head_sha": "4d0344e6f0147e8f6fb268b31582c77b599d1b72",
+      "base_sha": "fbb9a728d322ef813884f20a73303fecf7760ff0",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Undeclared in-body tier (no explicit 'Tier:' line found); classified T1 by path \u2014 services/worker/src/config.ts, index.ts, utils/sentry.ts add SENTRY_ENVIRONMENT derivation from K_SERVICE, an observability-only config change with no migration/public-API/auth/billing/anchoring/queue/chain surface. All required checks green on frozen head 4d0344e6 except the Staging Soak Evidence Gate. Coverage rides the maxsoak rig's continuous healthy boot with Sentry configured (info.sentry.configured=true, independently reconfirmed live this session) for the shared window; the K_SERVICE-derived environment tag itself was not independently inspected in a captured Sentry event this session.",
+      "rollback_note": "Code-only observability config; revert PR #1598 \u2014 no schema/runtime-behavior impact, Sentry environment tag reverts to the prior static value.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1600,
+      "head_sha": "affa733393851a2e35cf6ce6c1c2abdb4776a699",
+      "base_sha": "fbb9a728d322ef813884f20a73303fecf7760ff0",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR self-declares Tier T2 in-body ('bumped from the original T1 now that commit 2 touches the worker status route'), consistent with touched services/worker/src/api/treasury.ts. NOT clean CI independent of the soak gate: SonarCloud Code Analysis is also FAILING on this head (real, unrelated to staging evidence) \u2014 see run 29958... job for detail; do not treat as soak-only red. HONEST LIMIT: this touches the treasury/CSP surface adjacent to \u00a71.1's chain/treasury row; the PR body argues no signing/broadcast/chain-write path is touched (display-only CSP + status-route shape unchanged) so T2 rather than T3, but a human should confirm that reasoning given \u00a71.12 lists 'chain/treasury' explicitly under T3. The rig's mempool.space-adjacent fee/price reads were not independently exercised against this exact CSP fix this session.",
+      "rollback_note": "Code-only CSP + worker status-route change; revert PR #1600 \u2014 no migration; connect-src reverts to omit mempool.space (restores the prior CSP-blocked, degraded card state, not a data risk).",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1602,
+      "head_sha": "60ecb5d1b018bee09b01ab24136670c62befca63",
+      "base_sha": "fbb9a728d322ef813884f20a73303fecf7760ff0",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T1 (dead fraud-code removal + DOM regression guard, frontend-only: RiskAssessmentReport/MetadataDisplay + copy.ts). Consistent with touched paths \u2014 no worker/API/migration/auth/billing/anchoring surface. NOT clean CI independent of the soak gate: SonarCloud Code Analysis is also FAILING on this head (real, unrelated to staging evidence). Coverage for a T1 frontend-only PR rides its own component/DOM-regression tests plus the shared rig's frontend build; no dedicated rig exercise applies (no worker/DB surface to soak).",
+      "rollback_note": "Frontend-only; revert PR #1602 \u2014 no worker runtime or schema impact; the removed fraud-display components/strings are restored as dead code, not reintroduced live behavior.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1603,
+      "head_sha": "090023209f89eb623e2c13e80a580517f6906e2e",
+      "base_sha": "c13012d4f7d142d483a44441e2d1806416858e9c",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR self-declares 'Declared T2 (Standard)' in-body, consistent with touched paths \u2014 adds a new public API route services/worker/src/api/v1/credentials-ctdl-import.ts + router.ts wiring (CTDL JSON-LD importer). All required checks green on frozen head 09002320 except the Staging Soak Evidence Gate. HONEST LIMIT: the new /api/v1 CTDL-import endpoint was not independently POST-exercised on the maxsoak rig this session (the rig's live traffic this session was anchor-submission/quota/concurrency focused, not CTDL import); coverage is fixture/unit-test-based (real CE graph/org/resource fixtures, fuzz + perf test suites, all passing) plus the shared rig's healthy worker boot with the route wired in, not a live rig exercise of the changed endpoint.",
+      "rollback_note": "Code-only, additive API route; revert PR #1603 \u2014 no migration; the CTDL import endpoint disappears cleanly, no state to unwind.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "c13012d4f7d142d483a44441e2d1806416858e9c",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1604,
+      "head_sha": "82bf63b896eb931ac908a8b026f4c158ab4adb16",
+      "base_sha": "fbb9a728d322ef813884f20a73303fecf7760ff0",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR body explicitly argues this slice is pre-wiring: 'no migration/API/auth/billing/chain runtime surface changed in this PR... Full tier on the wiring PR will be T3 (anchor pipeline).' Consistent with the actual diff (6 new services/worker/src/jobs/*.ts files: scheduler-manifest, scheduler-deadman, drain-chunk-planner, scheduler-pause-allowlist/attribution \u2014 pure, unwired, injection-based modules; 'Frozen-file (W3) check' in the PR body confirms no other files touched). Classified T1 here (config-as-code + dead-man logic, no runtime wiring yet). All required checks green on frozen head 82bf63b8 except the Staging Soak Evidence Gate (35 checks, 1 non-pass \u2014 consistent with a genuinely low-risk, unwired change). Not independently exercised on the rig (nothing to exercise \u2014 the modules are not called from any live route yet); coverage is unit/injection tests only, which is the correct evidence shape for an unwired module.",
+      "rollback_note": "Code-only, unwired new modules; revert PR #1604 \u2014 no runtime call site exists yet, so there is no live behavior to unwind.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1605,
+      "head_sha": "8133d3ce9ac8c2254790e28832dbceaaf80232f2",
+      "base_sha": "fbb9a728d322ef813884f20a73303fecf7760ff0",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR self-declares 'Declared T2 (Standard) \u2014 client-side AI-extraction error routing on a \u00a71.6-adjacent (security-sensitive) surface' and explicitly states 'No soak evidence claimed \u2014 this PR is intentionally a DRAFT with work-in-progress; not marking ready.' Files are frontend-only (aiExtraction.ts, ocrFailClosed.ts, ocrWorker.ts, AIFieldSuggestions/SecureDocumentDialog tests) \u2014 no worker/API/migration surface, so there is no Cloud Run rig surface to soak; the PR's own honest position (no soak evidence claimed) is preserved here rather than backfilled with rig evidence that would not actually cover a client-side-only change.",
+      "rollback_note": "Frontend-only, client-side OCR/AI-extraction fail-closed change; revert PR #1605 \u2014 no worker/schema impact; the prior (buggy) false-privacy-failure screen for HEIC/TIFF returns.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1606,
+      "head_sha": "9c33d86c6f43b586bba21616b5ecbebabab24aab",
+      "base_sha": "fbb9a728d322ef813884f20a73303fecf7760ff0",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR self-declares '(worker behavior -> T2)' in-body, consistent with a new public-facing partner-provisioning API + RBAC-gated middleware + a new TLA+ state machine (machines/partnerProvisioning.machine.ts). NOT green independent of the soak gate: SonarCloud Code Analysis AND TLA+ Verification are BOTH failing on this head (real, hard blockers unrelated to staging evidence) \u2014 this PR is not close to ready regardless of soak status.",
+      "rollback_note": "Code-only, additive API + middleware + new TLA+ machine; revert PR #1606 \u2014 no migration, no existing route/flag touched (partnerProvisioningGate is new).",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1609,
+      "head_sha": "41b8d711f3c1d68e4524a086ad2f3a0304991a07",
+      "base_sha": "e20a580c66de1ca5747d2e9453e63566549c780e",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T1 (title tag) \u2014 terminology scrub, copy.ts + NessieIntelligencePanel test + ComplianceDashboard/DocumentsPage UI text only. Consistent with touched paths (zero worker/API/migration surface). Title itself carries '[DRAFT \u2014 merges Jul 22 first, do not merge in-window]' \u2014 an explicit founder-set sequencing constraint (S1 merges before its stacked child #1616) independent of soak status. All required checks green on frozen head 41b8d711 except the Staging Soak Evidence Gate.",
+      "rollback_note": "Frontend copy-only; revert PR #1609 \u2014 no worker/schema impact; restores the retired Nessie/compliance-score copy strings.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "e20a580c66de1ca5747d2e9453e63566549c780e",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1611,
+      "head_sha": "077ed324db04a41f66cb96ebe740c4348c94bf3d",
+      "base_sha": "a589f05f006276529d39356a6bef141cc38aa702",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR body carries multiple, inconsistent tier markers (T0 and T1 both appear) across a docs-heavy diff (docs/lane1/pi05-24h/*.md deliverables) plus a new TLA+ machine (machines/drainRunAccounting.machine.ts) and scripts/kpi3/*. NOT green independent of the soak gate: Tests, SonarCloud Code Analysis, AND TLA+ Verification are ALL failing on this head (real, hard blockers). This PR is not close to ready regardless of tier or soak status \u2014 flagging the tier-declaration inconsistency for cleanup but the real gating issue is the three failing required checks.",
+      "rollback_note": "Mixed docs + new unwired TLA+ machine + KPI-3 verification scripts; revert PR #1611 \u2014 no migration; no runtime call site is wired to the new machine yet.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "a589f05f006276529d39356a6bef141cc38aa702",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1616,
+      "head_sha": "aadb05008c7ca08009361eb90f230a5c5fdfb22c",
+      "base_sha": "41b8d711f3c1d68e4524a086ad2f3a0304991a07",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T1 in-body ('T1 (expedited smoke) \u2014 copy-only'), consistent with a 71-file, string-value-only terminology-scrub diff. HONEST STRUCTURAL NOTE: this PR's base is NOT main \u2014 it is deliberately stacked on PR #1609's branch (lane3/scrum-2938-terminology-scrub) per explicit stacked-PR protocol in its own body ('Retarget to main after #1609 merges'), and it carries an explicit 'Do not merge / do not mark ready' instruction plus the do-not-merge label. Its GH-reported CI check set is thin (8 checks, none failing) because checks run against the feature-branch base, not against current main \u2014 this is NOT the same signal as the other 25 PRs' 35-check main-targeted CI, and should not be read as 'cleaner' than they are. Confirmed via git ancestry that its exact current head (aadb0500) is what the maxsoak rig actually integrated (154f9ff2 chain), so no drift; the PR body's own internally-cited head SHA (20d078dd) is stale prose from an earlier revision of the PR description, not a real second head.",
+      "rollback_note": "Frontend copy-only; revert PR #1616 \u2014 no worker/schema impact. Must not be independently merged before #1609 (stacked base) \u2014 merge base then delete branch for auto-retarget, per repo stacked-PR protocol.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "41b8d711f3c1d68e4524a086ad2f3a0304991a07"
+      ]
+    },
+    {
+      "number": 1624,
+      "head_sha": "5258e8e6c4808f43765135471d93eb6a135f6629",
+      "base_sha": "fbb9a728d322ef813884f20a73303fecf7760ff0",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T1 in an existing '## Staging Soak Evidence' section ('frontend-only nav change'), consistent with the diff (Sidebar.tsx surfaces /my-credentials link). All required checks green on frozen head 5258e8e6 except the Staging Soak Evidence Gate. Coverage is the PR's own 35 DOM-level unit tests (render/click-reachability/active-state); frontend-only, no worker/DB surface to soak on the rig.",
+      "rollback_note": "Frontend-only nav change; revert PR #1624 \u2014 no worker/schema impact; the sidebar link disappears cleanly.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1631,
+      "head_sha": "f52dc21c0ccb8f0a4c25c1706c658fd4eed24063",
+      "base_sha": "fbb9a728d322ef813884f20a73303fecf7760ff0",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T2 (title tag + in-body), consistent with a new cron route (services/worker/src/routes/cron.ts addition) + CE API key expiry alert job + Sentry ops alert wiring. NOT green independent of the soak gate: Tests is FAILING on this head (real, unrelated to staging evidence) \u2014 not close to ready regardless of soak status.",
+      "rollback_note": "Code-only, additive cron job + alert rule; revert PR #1631 \u2014 no migration; the CE-key-expiry alarm and its Sentry alert rule disappear cleanly.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1642,
+      "head_sha": "939acf5eef40ae6f0e5c941cb51a2c192f34e46c",
+      "base_sha": "801cd18e8eb03dd6b344294b16744fc9b8717488",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Undeclared tier (Dependabot-generated grouped bump, no manual tier line) \u2014 classified T1 by path: root package.json/package-lock.json, 34 production-dependency updates, no touches to worker/API/migration/auth/billing/anchoring/chain/queue source files directly. All required checks green on frozen head 939acf5e except the Staging Soak Evidence Gate. RESIDUAL RISK NOTE: 34 bundled updates is a wide blast radius for a single T1 declaration \u2014 coverage here is the shared rig's continuous healthy boot with the bumped lockfile resolved (no import/build error), not a per-package behavioral exercise; a human should skim the Dependabot diff for anything with runtime surface before treating this as routine.",
+      "rollback_note": "Dependency-only; revert PR #1642 to restore the prior lockfile. No runtime source change.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "801cd18e8eb03dd6b344294b16744fc9b8717488",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1653,
+      "head_sha": "035f6999bed449a60e7289cdb1fa8f5aff702dbd",
+      "base_sha": "ee0197f1060a7a1c48be9ad0e641d5f38faea5eb",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T2 in-body ('public webhook contract + worker behavior') \u2014 confirmed by touched files (services/worker/src/api/anchor-lineage.ts, webhooks/payload-schemas.ts, webhooks-crud.test.ts: new anchor.superseded webhook event for webhook<->dashboard parity). All required checks green on frozen head 035f6999 except the Staging Soak Evidence Gate. The PR body itself states 'Draft \u2014 soak not yet run; Carson flips T-tier PRs to ready/merge', which this manifest does not override. HONEST LIMIT: the new anchor.superseded webhook payload/schema was validated by its own test suite (290 passing per the PR's own test note) and rides the maxsoak rig's shared healthy-worker-boot window; the event was not independently fired end-to-end against a live webhook receiver on this rig this session.",
+      "rollback_note": "Code-only, additive webhook event + schema; revert PR #1653 \u2014 no migration; additive enum/schema only, no data migration to unwind.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "ee0197f1060a7a1c48be9ad0e641d5f38faea5eb",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1655,
+      "head_sha": "c8711752fd071c92e201440a686152d3ed1f239e",
+      "base_sha": "ee0197f1060a7a1c48be9ad0e641d5f38faea5eb",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared 'Risk tier: T2' in-body ('worker behavior \u2014 rule dispatcher + connector drain'), confirmed by touched files (docusign-anchor-reconciliation.ts, connector-artifact-drain.ts, rule-action-dispatcher.ts \u2014 reconciles the dual DocuSign anchor mechanisms per SCRUM-2904, \u00a71.6A-adjacent connector path). All required checks green on frozen head c8711752 except the Staging Soak Evidence Gate. HONEST LIMIT: both flags gating the new authoritative-connector-path behavior (ENABLE_CONNECTOR_ARTIFACT_ENQUEUE / ENABLE_CONNECTOR_ARTIFACT_DRAIN) default OFF in the rig's admitted config exactly as they do in prod, so the reconciliation logic itself (deferred_to_connector precedence, envelope-level guard) was exercised by its own 16-case unit-test suite, not by a live DocuSign envelope on the rig this session; the rig's real anchor-creation path (the 62-anchor volume, concurrency, and edge-case evidence) exercises the declared-hash AUTO_ANCHOR path this PR touches but not the connector-authoritative branch.",
+      "rollback_note": "Code-only, pure new reconciliation module + guard wiring; revert PR #1655 \u2014 no migration; both gating flags stay OFF in prod either way, so behavior is unchanged pre- and post-revert in prod.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "ee0197f1060a7a1c48be9ad0e641d5f38faea5eb",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1656,
+      "head_sha": "dc6860a1572c7c7fe135b328c2afa6701ff3079d",
+      "base_sha": "ee0197f1060a7a1c48be9ad0e641d5f38faea5eb",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T2 in-body ('frontend + route-guard only') \u2014 confirmed by touched files: unifies platform-admin role source onto profiles.is_platform_admin (deletes an email whitelist), adds a new PlatformAdminRoute guard wrapping 12 platform-only routes, splits admin surfaces. This is an AUTH/access-control surface change, which independently confirms T2 (auth is an explicit T1-disqualifying surface per \u00a71.12). All required checks green on frozen head dc6860a1 except the Staging Soak Evidence Gate. HONEST LIMIT: this is a frontend route-guard change with no new worker/API endpoint (the PR's own 'endpoint audit' found no migration/RLS change needed because the worker already enforces platform_admin server-side) \u2014 coverage rides the shared rig's healthy boot; the specific role-source unification was not independently exercised against a live platform-admin session on this rig this session, coverage is the PR's own route-guard/unit tests.",
+      "rollback_note": "Frontend-only; revert PR #1656 \u2014 no migration/worker impact; platform-admin gating reverts to the deleted email-whitelist check plus in-page checks (defence-in-depth kept either way).",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "ee0197f1060a7a1c48be9ad0e641d5f38faea5eb",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1658,
+      "head_sha": "8edd215b0868e5ea5f137338d9523a11d4c5a989",
+      "base_sha": "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR self-declares 'T1 at most' in-body, consistent with touched paths \u2014 removes extraction-confidence UI, timing copy, and compliance-dashboard boxes (SCRUM-2914 founder-UI findings), frontend-only (ExtractionQualityBanner, ComplianceScoreCard, AssetDetailView, DashboardPage, e2e specs). All required checks green on frozen head 8edd215b except the Staging Soak Evidence Gate. Coverage is the PR's own component/e2e test updates; frontend-only, no worker/DB surface to soak.",
+      "rollback_note": "Frontend-only UI removal; revert PR #1658 \u2014 no worker/schema impact; the removed confidence-score/timing/compliance-box UI returns.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1659,
+      "head_sha": "8d10be0b0c2ee0eb2b58d52f63aae187eb45d184",
+      "base_sha": "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR self-declares 'T0/T1' in-body ('frontend-only hook + copy + test changes'), consistent with touched paths \u2014 useBulkAnchors.ts, copy.ts, toastAutoDismiss.test.tsx (bug-hunt fix surfacing bulk-anchor recipient failures via toast). All required checks green on frozen head 8d10be0b except the Staging Soak Evidence Gate. Coverage is the PR's own hook/toast unit tests; frontend-only, no worker/DB surface to soak. The PR body also flags an unrelated, unfixed follow-up bug (unused 8000ms 'error' toast tier never wired to a real error call site) for a separate Confluence bug-tracker entry \u2014 noted here, not fixed in this PR.",
+      "rollback_note": "Frontend-only; revert PR #1659 \u2014 no worker/schema impact; bulk-anchor recipient failures return to being silently swallowed (the pre-fix bug), not a new risk.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1660,
+      "head_sha": "8632dfb7defa59dbd5084f32b1c08cc0d1d1d682",
+      "base_sha": "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Undeclared tier; classified T2 by path \u2014 services/worker/src/ai/nessie.ts, nessie-json-parse.ts, api/v1/ai-extract.ts fall under the worker AI-behavior surface the repo's own path detector tiers at T2 (bug-hunt hardening of Nessie JSON parsing + a jurisdiction regex false-match fix). NOT green independent of the soak gate: SonarCloud Code Analysis is also FAILING on this head (real, unrelated to staging evidence). HONEST LIMIT: this PR's AI-parsing hardening was not independently exercised against a live Gemini/Nessie call on the maxsoak rig this session (the rig's AI config shows configured=true but this session's rig traffic was anchor-submission-focused); coverage is the PR's own parser unit tests.",
+      "rollback_note": "Code-only worker AI-parsing hardening; revert PR #1660 \u2014 no migration; Nessie JSON parsing and jurisdiction-regex matching revert to the pre-fix (more fragile) behavior.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1661,
+      "head_sha": "1c02221282ea54d93504eadd1d1faca4641a2c50",
+      "base_sha": "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR body explicitly runs the repo's own classifier and reports: \"scripts/ci/check-staging-evidence.ts auto-tiers this T2 via the services/worker/src/(?:ai|agents|nessie|llm|model)/ path pattern\" for together.ts (Together AI JSON-parse hardening against truncated output) \u2014 accepted as-is. NOT green independent of the soak gate: SonarCloud Code Analysis is also FAILING on this head (real, unrelated to staging evidence). The PR body itself states 'Per standing policy this PR stays in Draft \u2014 soak evidence and Ready/merge are Carson's to authorize, not mine,' which this manifest does not override. Coverage is the PR's own 3 new integration tests against truncated-output fixtures; the AI info.ai.configured=true flag was independently reconfirmed live on the rig this session, but no live truncated-output Together AI call was exercised against this specific fix.",
+      "rollback_note": "Code-only worker AI-parsing hardening; revert PR #1661 \u2014 no migration; together.ts JSON parsing reverts to the pre-fix behavior (throws on truncated output instead of handling gracefully).",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1662,
+      "head_sha": "8be3b85161c3dfb19b492212268dab82191b2652",
+      "base_sha": "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T2 in-body, consistent with touched paths \u2014 courtlistenerFetcher.ts / usptoFetcher.ts (worker public-record job fetchers) gain AbortController timeouts (unbounded-hang bug hunt), shared test-utils/hanging-fetch.ts helper. All required checks green on frozen head 8be3b851 except the Staging Soak Evidence Gate. HONEST LIMIT: the courtlistener/uspto feeder crons are PAUSED in prod per current ops state (feeder freeze, PI-0.5), so this fix's timeout behavior was not exercised against a live courtlistener/uspto call on the maxsoak rig this session (nothing calls these fetchers while paused); coverage is the PR's own new hanging-fetch test suite exercising the timeout path deterministically.",
+      "rollback_note": "Code-only worker fetcher hardening; revert PR #1662 \u2014 no migration; courtlistener/uspto fetchers revert to unbounded (pre-fix) fetch calls \u2014 low live risk while the feeders remain paused.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1663,
+      "head_sha": "4604cccc0af5c5ed58ee6354e66aa01ea9f3eca2",
+      "base_sha": "fbb9a728d322ef813884f20a73303fecf7760ff0",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR declares 'Tier: T1' in-body, but this is a LIKELY UNDER-DECLARATION: the diff touches SignUpForm.tsx, useAuth.ts, and supabase/config.toml \u2014 an auth-flow + Supabase auth-config change. \u00a71.12's own T1 definition explicitly excludes any 'auth ... surface' from T1 eligibility, so this manifest carries it at T2 pending a human re-declaration on the PR itself. NOT green independent of the soak gate: Policy Lints is ALSO FAILING on this head (real, unrelated to staging evidence, run 29958843272/job/89054633232) \u2014 this PR is not close to ready regardless of tier or soak status.",
+      "rollback_note": "Code-only auth-flow fix + a config.toml value; revert PR #1663 \u2014 no migration; session-aware post-signup confirmation screen reverts to the prior (bug-hunt-flagged) behavior.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    },
+    {
+      "number": 1664,
+      "head_sha": "3ea2953bdf6c378a07d9001c978737c83677c4a0",
+      "base_sha": "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+      "risk_tier": "T1",
+      "owner": "carson@arkova.io",
+      "ci_summary": "PR-declared Tier: T1 in a detailed, self-authored '## Staging Soak Evidence'-style section citing this exact head SHA, rollback plan, and risk rationale \u2014 argues T1 because the fix is a frontend view/export scope-gate (org registry cross-member exposure, SCRUM-3010 STEP 1) with the server-side RLS hardening deliberately deferred to a separate T3 story (STEP 2, post-soak). Borderline: this is an authorization/access-control fix, adjacent to but distinct from the auth-flow surface \u00a71.12 names; accepted as declared given the PR's own explicit reasoning and the deferred-RLS split, but flagged for a human to confirm the T1/T2 line. All required checks green on frozen head 3ea2953b except the Staging Soak Evidence Gate. The PR body itself states the Ready/merge call is 'left to Carson (T1/T2/T3 PRs are Carson's to ready + merge)', which this manifest does not override.",
+      "rollback_note": "Frontend-only; revert PR #1664 \u2014 no migration/worker impact; org registry table + CSV export revert to org-wide visibility for non-admin members (re-opens the privacy exposure this PR fixes, so a revert should be paired with re-applying some mitigation, not left open).",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "a5885ddcb65f28747bf881f4f4df7baccdc31127",
+        "fbb9a728d322ef813884f20a73303fecf7760ff0"
+      ]
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "isolated staging (dedicated rig, not shared ujtlwnoqfhtitcmsnrpq)",
+    "evidence_scope_note": "Dedicated Cloud Run service arkova-worker-maxsoak-154f9ff2 (project arkova1, us-central1) + dedicated isolated Supabase project apybunyzyaxwqehbarlc (signet, BITCOIN_NETWORK=signet, USE_MOCKS=false, real chain calls not mocked). No shared-staging or sibling-rig contamination.",
+    "staging_api_base": "https://arkova-worker-maxsoak-154f9ff2-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://arkova-worker-maxsoak-154f9ff2-kvojbeutfa-uc.a.run.app",
+    "cloud_run_service": "arkova-worker-maxsoak-154f9ff2",
+    "revision": "arkova-worker-maxsoak-154f9ff2-00002-67d",
+    "deploy_tag": "n/a (default service URL, no per-PR tag routing on this rig)",
+    "image_digest": "sha256:92b42aa968dc39681f3faab4a8fbd7ec23b052837c60b9a8c15c708b6e9f44f6",
+    "image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:92b42aa968dc39681f3faab4a8fbd7ec23b052837c60b9a8c15c708b6e9f44f6",
+    "supabase_project_ref": "apybunyzyaxwqehbarlc",
+    "supabase_region": "us-east-2",
+    "deploy_log_id": "unavailable to this session \u2014 not independently re-queried; see honest note in exceptions",
+    "preflight_result": "reported by the provisioning session as clean isolated rig; NOT independently re-run by this manifest-authoring session (no fresh scripts/ci/staging-honesty-preflight.ts execution performed here)"
+  },
+  "soak": {
+    "start": "2026-07-23T03:47:58Z",
+    "end": "2026-07-23T13:57:05Z",
+    "duration_hours": 10.16,
+    "harness_version": "Real production traffic shape: direct POST /api/v1/anchor submissions (4 waves, ~18 real minutes) + ThreadPoolExecutor 15-way concurrency + edge-case probes, not a synthetic load-harness script",
+    "result": "pass so far, ONGOING beyond the 'end' checkpoint below (rig is self-sustaining via recurring Cloud Scheduler job arkova-worker-maxsoak-154f9ff2-forced-flush, */30 force=true; 'end' records the last independent verification checkpoint, not a soak termination) \u2014 independently reconfirmed live by this manifest-authoring session at 2026-07-23T13:57Z via GET /health?detailed=true (IAM-authenticated): status=healthy, git_sha=154f9ff20314bec462a4afb0bbc59bf1797227bb (exact soak-head match), uptime=36556s (~10.15h, consistent with revision creationTime 2026-07-23T03:47:58.284958Z independently pulled from the Cloud Run Admin API \u2014 zero redeploys since the funding fix), network=signet, checks.database=ok, checks.anchoring=ok (lastSecuredAt 2026-07-23T01:24:42Z, lastBatchAt 2026-07-23T03:56:22Z, drainStalled=false), checks.kms.provider=wif, connection to apybunyzyaxwqehbarlc confirmed. VOLUME/CONCURRENCY/EDGE-CASE evidence (62 real anchors across 4 waves, 15-way ThreadPoolExecutor concurrency with exact credit conservation 60->45, quota/credit-exhaustion boundary tests, one naturally-occurring UTXO-contention broadcast rejection that unwound cleanly) is as reported by the provisioning/soak session earlier 2026-07-23 and was NOT independently re-executed by this manifest-authoring session \u2014 only the live health/uptime/git_sha/anchoring-status facts above were independently re-verified here. TIER-CLOCK STATUS AS OF THIS MANIFEST (14:05Z): T1 minimum (2h) cleared by a wide margin (10.15h elapsed); T2 minimum (12h) NOT YET cleared \u2014 clears at 2026-07-23T15:47:58Z (~1h43m after this manifest's creation timestamp), assuming continuous uptime holds. T3 minimum (48h) not applicable to any PR in this manifest.",
+    "evidence_links": [
+      "Live independent verification this session: GET https://run.googleapis.com/v2/projects/arkova1/locations/us-central1/services/arkova-worker-maxsoak-154f9ff2/revisions/arkova-worker-maxsoak-154f9ff2-00002-67d -> createTime 2026-07-23T03:47:58.284958Z, image sha256:92b42aa9...",
+      "Live independent verification this session: authenticated GET /health?detailed=true on the rig's default URL -> git_sha=154f9ff2..., uptime=36556s, anchoring.status=ok, kms.provider=wif, connection to apybunyzyaxwqehbarlc",
+      "Prior-session evidence (not independently re-verified here, cited as reported): 62-anchor volume across 4 real POST /api/v1/anchor waves (44@01:24:57Z -> 62@01:40:47Z, 2026-07-23), 42 SECURED via 4 confirmed Cloud Scheduler cycles, 15-way ThreadPoolExecutor concurrency (60->45 credit conservation, zero double-charge), quota_exhausted/insufficient_credits boundary tests, one natural UTXO-contention rejection that unwound cleanly, prod (vzwyaatejekddvltxyye) confirmed unchanged throughout, sibling rig arkova-worker-1552-soak (phohrrhdoanmtafuetjh) confirmed independent with zero cross-writes, real signet split-funding transaction verified on the public mempool.space explorer, forced-batch-flush verified via DB (42 SECURED/20 SUBMITTED/0 PENDING) and the public explorer"
+    ],
+    "expires_at": "2026-07-25T15:47:58Z"
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": [
+    "APPROVAL STATUS IS DELIBERATELY 'pending_cto_review', NOT 'approved'. Per docs/staging/rc-manifests/README.md this means the Staging Soak Evidence Gate WILL fail-closed with 'RC manifest approval_status must be approved' for every PR whose body cites this manifest's path, until a human (Carson or CTO) flips this field to 'approved' with a real approval_actor/approval_time. This is intentional: the manifest author (an RTE/CTO-delegate session) must not self-approve its own evidence record. No PR body in this batch has been edited to cite this manifest and no PR in this batch was marked Ready by this session \u2014 see the accompanying session report for why.",
+    "SOAK-CLOCK STATUS: as of this manifest's creation (2026-07-23T14:05Z, rig uptime independently reconfirmed at 36556s / ~10.15h from the 2026-07-23T03:47:58Z funding-fix revision), the T1 minimum (2h) is cleared for every T1 PR in this batch, but the T2 minimum (12h) is NOT yet cleared for any T2 PR \u2014 it clears at 2026-07-23T15:47:58Z. Do not treat any T2 PR in this batch as soak-complete before that timestamp, and re-verify continuous uptime (no redeploy) at that time before treating it as cleared.",
+    "REAL, NON-SOAK CI FAILURES found this session (independent of the Staging Soak Evidence Gate, do not paper over): #1606 SonarCloud Code Analysis FAIL + TLA+ Verification FAIL; #1611 Tests FAIL + SonarCloud Code Analysis FAIL + TLA+ Verification FAIL; #1631 Tests FAIL; #1663 Policy Lints FAIL; #1600 SonarCloud Code Analysis FAIL; #1602 SonarCloud Code Analysis FAIL; #1660 SonarCloud Code Analysis FAIL; #1661 SonarCloud Code Analysis FAIL. These PRs are not close to mergeable regardless of soak/tier status.",
+    "TIER-DECLARATION ISSUES found this session: #1663 declares T1 but touches an auth surface (SignUpForm.tsx, useAuth.ts, supabase/config.toml), which \u00a71.12's own T1 definition explicitly excludes \u2014 this manifest carries it at T2 and flags it for a human re-declaration on the PR itself. #1600 declares T2 for a treasury/CSP change; \u00a71.12 lists 'chain/treasury' explicitly under T3 and a human should confirm T2 (display-only, no signing/broadcast) is the right call rather than T3. #1611 carries two conflicting tier markers (T0 and T1) in the same body.",
+    "STRUCTURAL ISSUE: #1616 is stacked on #1609's branch (lane3/scrum-2938-terminology-scrub), not main. Its base_sha in this manifest (41b8d711f3c1...) is PR #1609's head commit, not a main commit. It cannot be independently retargeted to main until #1609 merges (merge base then delete branch for auto-retarget, per this repo's stacked-PR protocol \u2014 do not manually gh pr edit --base). Its GH check set (8 checks) is not equivalent to the other 25 PRs' 35-check main-targeted CI.",
+    "PRIOR-EVIDENCE SUPERSESSION found this session: #1555 was previously covered by rc-2026-07-20-airail.json (approval_status=approved) at head fe6eee5051257cdcabef32d38999a184b1c6fc64, expired 2026-07-22T05:42:26Z \u2014 the current head (5f150dc5836e...) differs from that approved head, so that approval does not carry forward regardless of expiry. #1572 was previously covered by rc-2026-07-21-deps.json (approval_status=approved, Carson) at the SAME head as today (5834349157c2...), 12.5h T2 soak, pass \u2014 but that evidence's expires_at (2026-07-23T01:36:26Z) has already passed as of this manifest's creation (2026-07-23T14:05Z), roughly 12.5h ago, with zero code change on the PR in between. Both cases are why this new manifest exists rather than pointing back at the old ones.",
+    "NO MIGRATION FILES in any of the 26 PRs (independently grep-verified against every PR's changed-file list) \u2014 the migration_plan object required by the README for T3/migration-bearing PRs is omitted entirely rather than stubbed, since it does not apply to any PR in this batch. No PR here touches services/worker/src/chain/** either, so no PR independently trips the chain-code T3 path trigger (the #1600 treasury/CSP ambiguity above is the closest thing to a chain-adjacent surface, and it is display/CSP-only, not signing/broadcast).",
+    "READY/MERGE DECISIONS EXPLICITLY LEFT OUT OF SCOPE FOR THIS SESSION: this manifest does not itself flip any PR to Ready and no PR body in this batch was edited. See the session report for the standing-policy basis (do-not-merge labels present on 13 of the 26 PRs, needs-carson-merge on most of the rest, and at least 6 of the 26 PR bodies themselves \u2014 #1600, #1605, #1616, #1653, #1661, #1664 \u2014 explicitly state that Ready/merge for T1/T2/T3 work is Carson's call, not a delegate's, as of this same week)."
+  ]
+}
