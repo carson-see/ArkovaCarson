@@ -93,7 +93,6 @@ import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { config } from '../config.js';
-import { runWithConcurrency } from '../utils/concurrency.js';
 import {
   classifyAnchor,
   computeClassifierLockId,
@@ -109,6 +108,12 @@ import {
   createCheckpointStore,
   type CheckpointHandle as SharedCheckpointHandle,
 } from './proofJobCheckpoint.js';
+import {
+  chunk,
+  fetchProofRows as sharedFetchProofRows,
+  fetchScanPage as sharedFetchScanPage,
+  resolveCardinalities as sharedResolveCardinalities,
+} from './proofJobScan.js';
 
 // Re-exported for route wiring convenience: the prod cron path builds deps
 // with the classifier's shared read-only primitives (safe to share — the
@@ -125,8 +130,8 @@ export const DEFAULT_MAX_BATCHES_PER_INVOCATION = 20;
 const MIN_BATCHES_PER_INVOCATION = 1;
 const MAX_BATCHES_PER_INVOCATION = 200;
 
-/** Bounded fan-out for tx-cardinality probes (mirrors the classifier). */
-const CARDINALITY_CONCURRENCY = 8;
+// Bounded fan-out for tx-cardinality probes now lives with the shared probe
+// itself (CARDINALITY_CONCURRENCY in proofJobScan.ts).
 
 /**
  * LIMIT-2 probe: eligibility only distinguishes 0 / 1 / ≥2 live anchors on a
@@ -134,8 +139,8 @@ const CARDINALITY_CONCURRENCY = 8;
  */
 const CARDINALITY_PROBE_LIMIT = 2;
 
-/** `.in()` read filters are chunked to stay inside PostgREST query-string limits. */
-const IN_FILTER_CHUNK = 100;
+// `.in()` read-filter chunking now lives with the shared proof-row fetch
+// (IN_FILTER_CHUNK in proofJobScan.ts).
 
 /** Skeleton upserts travel in the request BODY; 500 mirrors utils/anchorProofs.ts. */
 const INSERT_CHUNK = 500;
@@ -439,107 +444,34 @@ function clampMaxBatches(requested: number | undefined): number {
   return Math.min(Math.max(Math.floor(n), MIN_BATCHES_PER_INVOCATION), MAX_BATCHES_PER_INVOCATION);
 }
 
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
 function isFilled(value: unknown): boolean {
   return value !== null && value !== undefined;
 }
 
+// Page scan + proof-row fetch + cardinality probes are shared read-only
+// primitives — see proofJobScan.ts. Thin wrappers keep the call sites below
+// unchanged and bind this job's label.
 async function fetchScanPage(
   db: UntypedDb,
   opts: { orgId?: string; cursor: string | null; batchSize: number },
 ): Promise<ScanAnchorRow[]> {
-  let q = db
-    .from('anchors')
-    .select('id, org_id, fingerprint, chain_tx_id')
-    .eq('status', 'SECURED') as unknown as {
-    is(col: string, val: unknown): typeof q;
-    eq(col: string, val: unknown): typeof q;
-    gt(col: string, val: unknown): typeof q;
-    order(col: string, o: { ascending: boolean }): typeof q;
-    limit(
-      n: number,
-    ): PromiseLike<{ data: ScanAnchorRow[] | null; error: { message?: string } | null }>;
-  };
-  q = q.is('deleted_at', null);
-  if (opts.orgId) q = q.eq('org_id', opts.orgId);
-  if (opts.cursor) q = q.gt('id', opts.cursor);
-  const { data, error } = await q.order('id', { ascending: true }).limit(opts.batchSize);
-  if (error) {
-    throw new Error(
-      `materializer scan query failed at cursor=${opts.cursor ?? '<start>'}: ${error.message ?? 'unknown'}`,
-    );
-  }
-  return data ?? [];
+  return sharedFetchScanPage(db, opts, 'materializer');
 }
 
 async function fetchProofRows(
   db: UntypedDb,
   anchorIds: string[],
 ): Promise<Map<string, ClassifierProofRow>> {
-  const map = new Map<string, ClassifierProofRow>();
-  for (const ids of chunk(anchorIds, IN_FILTER_CHUNK)) {
-    const { data, error } = await (db
-      .from('anchor_proofs')
-      .select('anchor_id, merkle_root, proof_path, batch_id, proof_completeness_class')
-      .in('anchor_id', ids) as unknown as PromiseLike<{
-      data: ClassifierProofRow[] | null;
-      error: { message?: string } | null;
-    }>);
-    if (error) {
-      throw new Error(`materializer proof-row query failed: ${error.message ?? 'unknown'}`);
-    }
-    for (const row of data ?? []) map.set(row.anchor_id, row);
-  }
-  return map;
+  return sharedFetchProofRows(db, anchorIds, 'materializer');
 }
 
-/**
- * Resolve tx cardinality (live anchors sharing the tx, CAPPED at 2), memoized
- * across the invocation. DELIBERATELY GLOBAL — no org filter: a tx shared
- * with another org's anchor is still a batch tx. LIMIT-2 id probes, not
- * exact counts (R0-8 / SCRUM-1254). A probe failure marks the tx unknown →
- * the affected rows classify AMBIGUOUS (fail-closed) → the page HALTS.
- * (Local mirror of the classifier's private resolveCardinalities.)
- */
 async function resolveCardinalities(
   db: UntypedDb,
   txIds: string[],
   memo: Map<string, number | null>,
   logger: ClassifierLogger,
 ): Promise<void> {
-  const unresolved = [...new Set(txIds)].filter((tx) => !memo.has(tx));
-  if (unresolved.length === 0) return;
-
-  const tasks = unresolved.map((tx) => async () => {
-    const { data, error } = await (
-      db.from('anchors').select('id').eq('chain_tx_id', tx) as unknown as {
-        is(col: string, val: unknown): {
-          limit(n: number): PromiseLike<{
-            data: Array<{ id: string }> | null;
-            error: { message?: string } | null;
-          }>;
-        };
-      }
-    )
-      .is('deleted_at', null)
-      .limit(CARDINALITY_PROBE_LIMIT);
-    if (error || !data) {
-      logger.warn(
-        { tx, error: error?.message ?? 'null rows' },
-        'proof-materializer: cardinality probe failed — rows on this tx will classify AMBIGUOUS and halt the page',
-      );
-      memo.set(tx, null);
-      return;
-    }
-    memo.set(tx, data.length);
-  });
-
-  await runWithConcurrency(tasks, CARDINALITY_CONCURRENCY);
+  return sharedResolveCardinalities(db, txIds, memo, logger, 'proof-materializer');
 }
 
 /** Which txs still need a cardinality probe (stored proof data cannot settle them). */

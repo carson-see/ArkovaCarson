@@ -290,20 +290,28 @@ export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
  * supplied txid could path-traverse out of the API namespace and steer the
  * request at a URL of their choosing.
  */
-const ALLOWED_EXPLORER_PATHS = [
-  /^tx\/[0-9a-f]{64}$/,
-  /^tx\/[0-9a-f]{64}\/merkle-proof$/,
-  /^block\/[0-9a-f]{64}\/header$/,
-  /^blocks\/tip\/height$/,
+const EXPLORER_ROUTES = [
+  { match: /^tx\/([0-9a-f]{64})$/, build: (id) => `tx/${id}` },
+  { match: /^tx\/([0-9a-f]{64})\/merkle-proof$/, build: (id) => `tx/${id}/merkle-proof` },
+  { match: /^block\/([0-9a-f]{64})\/header$/, build: (id) => `block/${id}/header` },
+  { match: /^blocks\/tip\/height$/, build: () => 'blocks/tip/height' },
 ];
 
-/** Narrow an arbitrary string to one of the four literal Esplora shapes above. */
+/**
+ * Narrow an arbitrary string to one of the four Esplora shapes above and REBUILD
+ * it from string literals. The returned path is never the caller's string: the
+ * only variable part is a capture group already proven to be exactly 64 lowercase
+ * hex characters, then percent-encoded on the way in. Nothing the caller supplies
+ * can add a path segment, a traversal, a query string, or an authority.
+ */
 function assertAllowedExplorerPath(path) {
   const candidate = String(path);
-  if (!ALLOWED_EXPLORER_PATHS.some((re) => re.test(candidate))) {
-    throw new Error('unsupported explorer path');
+  for (const route of EXPLORER_ROUTES) {
+    const matched = route.match.exec(candidate);
+    if (matched === null) continue;
+    return route.build(matched[1] === undefined ? undefined : encodeURIComponent(matched[1]));
   }
-  return candidate;
+  throw new Error('unsupported explorer path');
 }
 
 /** Live Esplora client (blockstream.info) — JSON for most paths, text for header/tip. */

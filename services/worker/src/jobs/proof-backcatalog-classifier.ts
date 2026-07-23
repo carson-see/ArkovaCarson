@@ -77,11 +77,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { config } from '../config.js';
-import { runWithConcurrency } from '../utils/concurrency.js';
 import {
   createCheckpointStore,
   type CheckpointHandle as SharedCheckpointHandle,
 } from './proofJobCheckpoint.js';
+import {
+  chunk,
+  fetchProofRows as sharedFetchProofRows,
+  fetchScanPage as sharedFetchScanPage,
+  resolveCardinalities as sharedResolveCardinalities,
+} from './proofJobScan.js';
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -101,8 +106,8 @@ export const DEFAULT_MAX_BATCHES_PER_INVOCATION = 20;
 const MIN_BATCHES_PER_INVOCATION = 1;
 const MAX_BATCHES_PER_INVOCATION = 200;
 
-/** Bounded fan-out for tx-cardinality probes. */
-const CARDINALITY_CONCURRENCY = 8;
+// Bounded fan-out for tx-cardinality probes now lives with the shared probe
+// itself (CARDINALITY_CONCURRENCY in proofJobScan.ts).
 
 /**
  * Tx-cardinality probes fetch at most 2 ids: classification only ever needs
@@ -663,53 +668,21 @@ function clampMaxBatches(requested: number | undefined): number {
   return Math.min(Math.max(Math.floor(n), MIN_BATCHES_PER_INVOCATION), MAX_BATCHES_PER_INVOCATION);
 }
 
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
+// Page scan + proof-row fetch + cardinality probes are shared read-only
+// primitives — see proofJobScan.ts. Thin wrappers keep the call sites below
+// unchanged and bind this job's label.
 async function fetchScanPage(
   db: UntypedDb,
   opts: { orgId?: string; cursor: string | null; batchSize: number },
 ): Promise<ScanAnchorRow[]> {
-  // Chained shape kept explicit so the narrow test double can mirror it.
-  let q = db
-    .from('anchors')
-    .select('id, org_id, fingerprint, chain_tx_id')
-    .eq('status', 'SECURED') as unknown as {
-    is(col: string, val: unknown): typeof q;
-    eq(col: string, val: unknown): typeof q;
-    gt(col: string, val: unknown): typeof q;
-    order(col: string, o: { ascending: boolean }): typeof q;
-    limit(n: number): PromiseLike<{ data: ScanAnchorRow[] | null; error: { message?: string } | null }>;
-  };
-  q = q.is('deleted_at', null);
-  if (opts.orgId) q = q.eq('org_id', opts.orgId);
-  if (opts.cursor) q = q.gt('id', opts.cursor);
-  const { data, error } = await q.order('id', { ascending: true }).limit(opts.batchSize);
-  if (error) {
-    throw new Error(`classifier scan query failed at cursor=${opts.cursor ?? '<start>'}: ${error.message ?? 'unknown'}`);
-  }
-  return data ?? [];
+  return sharedFetchScanPage(db, opts, 'classifier');
 }
 
-async function fetchProofRows(db: UntypedDb, anchorIds: string[]): Promise<Map<string, ClassifierProofRow>> {
-  const map = new Map<string, ClassifierProofRow>();
-  for (const ids of chunk(anchorIds, IN_FILTER_CHUNK)) {
-    const { data, error } = await (db
-      .from('anchor_proofs')
-      .select('anchor_id, merkle_root, proof_path, batch_id, proof_completeness_class')
-      .in('anchor_id', ids) as unknown as PromiseLike<{
-      data: ClassifierProofRow[] | null;
-      error: { message?: string } | null;
-    }>);
-    if (error) {
-      throw new Error(`classifier proof-row query failed: ${error.message ?? 'unknown'}`);
-    }
-    for (const row of data ?? []) map.set(row.anchor_id, row);
-  }
-  return map;
+async function fetchProofRows(
+  db: UntypedDb,
+  anchorIds: string[],
+): Promise<Map<string, ClassifierProofRow>> {
+  return sharedFetchProofRows(db, anchorIds, 'classifier');
 }
 
 /**
@@ -729,36 +702,7 @@ async function resolveCardinalities(
   memo: Map<string, number | null>,
   logger: ClassifierLogger,
 ): Promise<void> {
-  const unresolved = [...new Set(txIds)].filter((tx) => !memo.has(tx));
-  if (unresolved.length === 0) return;
-
-  const tasks = unresolved.map((tx) => async () => {
-    const { data, error } = await (
-      db.from('anchors').select('id').eq('chain_tx_id', tx) as unknown as {
-        is(col: string, val: unknown): {
-          limit(n: number): PromiseLike<{
-            data: Array<{ id: string }> | null;
-            error: { message?: string } | null;
-          }>;
-        };
-      }
-    )
-      .is('deleted_at', null)
-      .limit(CARDINALITY_PROBE_LIMIT);
-    if (error || !data) {
-      logger.warn(
-        { tx, error: error?.message ?? 'null rows' },
-        'proof-backcatalog-classifier: cardinality probe failed — rows on this tx will classify AMBIGUOUS',
-      );
-      memo.set(tx, null);
-      return;
-    }
-    // data.length is 0, 1, or 2 — 2 stands for "≥2", which is everything
-    // classifyAnchor ever distinguishes (<1 ⇒ ambiguous, 1 ⇒ direct, >1 ⇒ shared).
-    memo.set(tx, data.length);
-  });
-
-  await runWithConcurrency(tasks, CARDINALITY_CONCURRENCY);
+  return sharedResolveCardinalities(db, txIds, memo, logger, 'proof-backcatalog-classifier');
 }
 
 /**
