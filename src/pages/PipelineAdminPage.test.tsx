@@ -9,7 +9,7 @@ import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('@/hooks/useAuth', () => ({ useAuth: vi.fn().mockReturnValue({ user: { email: 'carson@arkova.ai', id: 'user-1' }, signOut: vi.fn(), session: null, loading: false, error: null }) }));
 
-vi.mock('@/hooks/useProfile', () => ({ useProfile: vi.fn().mockReturnValue({ profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson' }, loading: false, destination: '/dashboard' }) }));
+vi.mock('@/hooks/useProfile', () => ({ useProfile: vi.fn().mockReturnValue({ profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson', is_platform_admin: true }, loading: false, destination: '/dashboard' }) }));
 
 vi.mock('@/hooks/useTheme', () => ({
   useTheme: vi.fn().mockReturnValue({ theme: 'dark', setTheme: vi.fn() }),
@@ -386,7 +386,14 @@ describe('PipelineAdminPage', () => {
 
   it('shows access restricted for non-admin', async () => {
     const { useAuth } = await import('@/hooks/useAuth');
+    const { useProfile } = await import('@/hooks/useProfile');
     vi.mocked(useAuth).mockReturnValue(mockAuthState('regular@test.com', 'user-2'));
+    // Access is decided by the is_platform_admin DB flag, not the email.
+    vi.mocked(useProfile).mockReturnValue({
+      profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Regular', is_platform_admin: false },
+      loading: false,
+      destination: '/dashboard',
+    } as never);
 
     render(
       <MemoryRouter>
@@ -394,6 +401,14 @@ describe('PipelineAdminPage', () => {
       </MemoryRouter>,
     );
     expect(screen.getByText('Access Restricted')).toBeInTheDocument();
+
+    // Restore the admin default so later describe blocks (which only
+    // clearAllMocks, preserving implementations) still see a platform admin.
+    vi.mocked(useProfile).mockReturnValue({
+      profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson', is_platform_admin: true },
+      loading: false,
+      destination: '/dashboard',
+    } as never);
   });
 
   it('wires the continuing education control to a real worker route', async () => {

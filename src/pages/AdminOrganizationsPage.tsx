@@ -75,7 +75,7 @@ export function AdminOrganizationsPage() {
   const [quotaInput, setQuotaInput] = useState(String(DEFAULT_FREE_QUOTA));
   const [saving, setSaving] = useState(false);
 
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   const doFetch = useCallback((p = 1) => {
     fetchList({ page: p, search: searchInput });
