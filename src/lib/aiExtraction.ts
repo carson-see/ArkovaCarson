@@ -15,7 +15,13 @@ import { stripPII, type StrippingReport } from './piiStripper';
 import { stripPIIEnhanced, type EnhancedStrippingReport } from './enhancedPiiStripper';
 import { supabase } from './supabase';
 import { WORKER_URL } from './workerClient';
-import { isPiiStripFailClosedError } from './ocrFailClosed';
+import {
+  isPiiStripFailClosedError,
+  isUnsupportedImageFormatError,
+  isNoTextExtractedError,
+  NoTextExtractedError,
+  type NoTextSourceKind,
+} from './ocrFailClosed';
 import { AI_EXTRACTION_LABELS } from './copy';
 
 export const AI_EXTRACTION_REQUEST_TIMEOUT_MS = 15_000;
@@ -86,13 +92,16 @@ export async function runExtraction(
       });
     });
 
+    // SCRUM-2911: a SCANNED (image-only) PDF yields empty text from PDF.js —
+    // the pipeline ran fine, there is simply nothing to read. Throw the typed
+    // benign NoTextExtractedError so it routes through the SAME catch-branch
+    // pattern as UnsupportedImageFormatError (soft-fail, never failClosed).
+    // Whitespace-only also covers blank Tesseract output for supported images.
     if (!ocrResult.text.trim()) {
-      onProgress?.({
-        stage: 'error',
-        progress: 0,
-        message: 'No text found in document. Try a clearer scan.',
-      });
-      return null;
+      throw new NoTextExtractedError(
+        AI_EXTRACTION_LABELS.NO_TEXT_FOUND,
+        noTextSourceKind(ocrResult.method),
+      );
     }
 
     // Step 2: PII Stripping (client-side)
@@ -207,12 +216,50 @@ export async function runExtraction(
     // We deliberately do NOT interpolate `err.message` for the fail-closed case:
     // the OCR-stage error may wrap document-derived text in its `cause`, so we
     // surface only the fixed §1.6 copy string (defense-in-depth per §1.6).
+    // PRIVACY BOUNDARY (fail-closed DOMINATES): the §1.6 fail-closed check runs
+    // FIRST. If an on-device privacy stage failed we hard-block egress and show
+    // the LOUD privacy screen — even if the same error also happens to carry an
+    // unsupported-format marker. A benign downgrade must never win over a
+    // privacy signal. `isUnsupportedImageFormatError` also yields to fail-closed
+    // internally, so this is belt-and-suspenders.
     if (isPiiStripFailClosedError(err)) {
       onProgress?.({
         stage: 'error',
         progress: 0,
         failClosed: true,
         message: AI_EXTRACTION_LABELS.PRIVACY_GUARANTEE_FAILED,
+      });
+      return null;
+    }
+
+    // SCRUM-2911: an unsupported image format (.heic / .tiff) is a BENIGN
+    // "we can't read this format" case — the document was never at risk and
+    // nothing left the device (the format is rejected before OCR/strip/network).
+    // It must NOT set `failClosed` (which would surface the FALSE privacy-failure
+    // screen); route it to the ordinary soft-fail recovery path instead.
+    // The message carries only the file format (never document-derived text).
+    if (isUnsupportedImageFormatError(err)) {
+      onProgress?.({
+        stage: 'error',
+        progress: 0,
+        message: err instanceof Error ? err.message : 'This document format could not be read on your device.',
+      });
+      return null;
+    }
+
+    // SCRUM-2911: no readable text (scanned/image-only PDF, blank photo) is a
+    // BENIGN "there is nothing to read" case — extraction ran on-device and
+    // nothing left the browser. Like the unsupported-format branch above, it
+    // must NOT set `failClosed`; it routes to the soft recovery path. We
+    // surface the fixed copy string (not `err.message`) so a duck-typed
+    // cross-bundle error can never smuggle arbitrary text into the UI (§1.6
+    // defense-in-depth). This branch runs AFTER the fail-closed check —
+    // fail-closed dominates (`isNoTextExtractedError` also yields internally).
+    if (isNoTextExtractedError(err)) {
+      onProgress?.({
+        stage: 'error',
+        progress: 0,
+        message: AI_EXTRACTION_LABELS.NO_TEXT_FOUND,
       });
       return null;
     }
@@ -227,6 +274,21 @@ export async function runExtraction(
     }
     onProgress?.({ stage: 'error', progress: 0, message });
     return null;
+  }
+}
+
+/**
+ * SCRUM-2911: map the OCR method to the coarse NoTextExtractedError source
+ * label. A label only — never document content.
+ */
+function noTextSourceKind(method: OCRResult['method']): NoTextSourceKind {
+  switch (method) {
+    case 'pdfjs':
+      return 'pdf';
+    case 'tesseract':
+      return 'image';
+    default:
+      return 'document';
   }
 }
 
