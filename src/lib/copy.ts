@@ -392,6 +392,7 @@ export const TOAST = {
   BULK_FAILED: 'Bulk upload failed. Please try again.',
   BULK_CANCELLED: 'Bulk upload cancelled.',
   BULK_QUOTA_EXCEEDED: 'Upload exceeds your plan limit.',
+  BULK_RECIPIENTS_FAILED: 'Bulk upload complete — {created} records created, but {failed} recipient invite(s) failed.',
 } as const;
 
 // =============================================================================
@@ -1544,6 +1545,15 @@ export const AI_EXTRACTION_LABELS = {
   EXTRACT_DESCRIPTION: 'Automatically extract credential fields from the uploaded document',
   EXTRACTION_FAILED_TOAST: 'AI extraction unavailable — document will be secured without metadata.',
   /**
+   * SCRUM-2911 — BENIGN no-text soft-fail. Shown when extraction ran fine but
+   * found no readable text — the classic case is a scanned (image-only) PDF
+   * whose text layer is empty, or a blank photo. NOT a privacy failure: the
+   * pipeline ran on-device and nothing left the browser. Fixed copy — never
+   * interpolates document-derived text.
+   */
+  NO_TEXT_FOUND:
+    'No readable text was found in this document — it may be a scanned image. You can try a clearer copy, enter details manually, or secure it without AI metadata. Your file never left your device.',
+  /**
    * §1.6 FAIL-CLOSED (WEBEXT-03). Shown when the on-device privacy tools (the
    * personal-information remover or the on-device document reader) could not
    * run, so nothing was analyzed and nothing was sent. This is a LOUD failure,
@@ -2488,6 +2498,16 @@ export const OCR_LABELS = {
    */
   OCR_ENGINE_UNAVAILABLE:
     'The on-device document reader couldn’t start, so this document was not read and nothing was sent. Your file never left your device.',
+  /**
+   * SCRUM-2911 — BENIGN unsupported-image-format soft-fail. Shown when the
+   * browser cannot decode an image format (e.g. HEIC/TIFF) for on-device text
+   * extraction. This is NOT a privacy failure — the document was never at risk
+   * and never left the device. Interpolates only the file's format/extension
+   * (not document-derived content).
+   */
+  UNSUPPORTED_IMAGE_FORMAT: (typeOrExt: string) =>
+    `This image format (${typeOrExt}) can’t be read on your device for text extraction. ` +
+    'You can still secure the document without AI metadata — your file never left your device.',
 } as const;
 
 export const CONFIRMATION_PROGRESS_LABELS = {

@@ -14,3 +14,12 @@ Tests for middleware modules that use a shared test directory rather than co-loc
 
 - No real Stripe or Bitcoin API calls — mock all external services.
 - Tests exercise the real middleware chain with mock DB/chain backends.
+
+## 2026-07-15 SCRUM-2703/2705 coverage
+
+- Payer tests must prove spoofed header payer data is ignored, only verified
+  Transfer senders become HMAC keys, bounded-store exhaustion fails closed,
+  and bypass contexts consume no state.
+- Organization quota tests cover exact bulk delta, canonical/compatibility
+  headers, daily versus capacity backends, and DB-error/rejection fail-closed
+  behavior. Never make external RPC or Supabase calls in these tests.

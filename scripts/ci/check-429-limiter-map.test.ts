@@ -7,16 +7,15 @@ import { join, resolve } from 'node:path';
  * L2-S0 (Sprint 3.3) — drift lint for the five-bucket 429 limiter map.
  *
  * docs/staging/429-limiter-map-s33.md enumerates every 429 emitter in the
- * worker with file:line claims, plus two DEAD-CODE claims (perOrgRateLimit
- * never mounted; x402 payer limiter orphaned). A stale map is worse than no
+ * worker with file:line claims, plus exact wiring claims for the per-org and
+ * x402 payer limiters. A stale map is worse than no
  * map — the S3.3 exit criterion 3a (CTO memo R2) hangs attribution buckets
  * off these exact locations. This test fails when the tree drifts:
  *
  *   1. Every row of the map's machine-readable "Claims ledger" table must
  *      still hold: the named file's named LINE must contain the named text.
- *   2. The structurally-zero claims must stay true: if someone mounts
- *      perOrgRateLimit or wires the x402 payer limiter, this test fails and
- *      forces the map (and the attribution spec) to be revised.
+ *   2. The mounted-but-excluded claims must stay true at their ratified
+ *      write/Nessie surfaces without becoming a sixth headline bucket.
  *
  * If this test fails after your change: update the map's ledger row(s) AND
  * re-read the attribution spec section — a moved/mounted limiter usually
@@ -121,36 +120,43 @@ describe('429 limiter map — file:line claims ledger', () => {
     // Buckets measure different populations at different layers — a sum is
     // meaningless and R2 bans it outright.
     expect(doc).toContain('never summed');
-    expect(doc).toContain('structurally_zero');
+    expect(doc).toContain('mounted_excluded');
   });
 });
 
-describe('429 limiter map — dead-code claims stay true', () => {
+describe('429 limiter map — mounted/excluded wiring stays exact', () => {
   const allWorkerTs = tsFilesUnder(WORKER_SRC).filter(
     (f) => !f.endsWith('.test.ts') && !f.includes('__tests__'),
   );
 
-  it('perOrgRateLimit is still UNMOUNTED (no non-test consumer imports requireOrgQuota)', () => {
+  it('perOrgRateLimit is mounted only on the ratified write surfaces', () => {
     const consumers = allWorkerTs.filter(
       (f) =>
         !f.endsWith('perOrgRateLimit.ts') &&
         /perOrgRateLimit|requireOrgQuota/.test(readFileSync(f, 'utf8')),
     );
-    expect(
-      consumers,
-      'perOrgRateLimit gained a consumer — the map\'s "structurally_zero (unmounted)" row and the five-bucket spec must be revised, and the SCALE-01 bug updated',
-    ).toEqual([]);
+    const relativeConsumers = consumers
+      .map((file) => file.slice(REPO_ROOT.length + 1))
+      .sort();
+    expect(relativeConsumers).toEqual([
+      'services/worker/src/api/v1/anchor-bulk.ts',
+      'services/worker/src/api/v1/anchor-submit.ts',
+      'services/worker/src/api/v1/webhooks.ts',
+      'services/worker/src/routes/admin.ts',
+    ]);
   });
 
-  it('x402 payer rate limiter is still an orphan (no non-test consumer)', () => {
+  it('x402 payer limiter is mounted only on the paid Nessie route', () => {
     const consumers = allWorkerTs.filter(
       (f) =>
         !f.endsWith('x402PayerRateLimit.ts') &&
         /x402PayerRateLimit|createPayerRateLimiter/.test(readFileSync(f, 'utf8')),
     );
-    expect(
-      consumers,
-      'x402PayerRateLimit gained a consumer — the map\'s orphan row must be revised and its bug updated',
-    ).toEqual([]);
+    expect(consumers.map((file) => file.slice(REPO_ROOT.length + 1))).toEqual([
+      'services/worker/src/api/v1/router.ts',
+    ]);
+    expect(readFileSync(consumers[0], 'utf8')).toContain(
+      "router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), x402PayerRateLimit, aiRateLimiter, nessieQueryRouter)",
+    );
   });
 });

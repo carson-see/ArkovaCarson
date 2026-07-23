@@ -56,7 +56,11 @@ vi.mock('tesseract.js', () => ({
 // Import under test — AFTER mocks are declared
 // ---------------------------------------------------------------------------
 import { extractText, extractTextFromImage, TESSERACT_VENDOR_PATHS } from './ocrWorker';
-import { OcrEngineLoadError } from './ocrFailClosed';
+import {
+  OcrEngineLoadError,
+  UnsupportedImageFormatError,
+  isPiiStripFailClosedError,
+} from './ocrFailClosed';
 
 /** Helper: create a File with the given name, MIME type, and optional content */
 function fakeFile(name: string, type: string, content = ''): File {
@@ -288,5 +292,89 @@ describe('Tesseract self-host + fail-closed (WEBEXT-02/03)', () => {
     const caught = await extractTextFromImage(file).catch((e: unknown) => e) as Error;
     // The surfaced message must be the fixed copy, not the raw underlying error.
     expect(caught.message).not.toContain('secret-doc-bytes-ABC123');
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// SCRUM-2911 sub-item 1 — unsupported image formats (.heic / .tiff) SOFT-FAIL.
+//
+// Browsers can't decode HEIC/TIFF, so Tesseract recognition throws. Previously
+// that failure was wrapped as OcrEngineLoadError (a §1.6 fail-closed error),
+// which surfaced the FALSE "privacy failure" screen even though the document
+// was never at risk. These must instead raise a BENIGN UnsupportedImageFormatError
+// WITHOUT ever loading/running the OCR engine — nothing left the device.
+// ───────────────────────────────────────────────────────────────────────────
+describe('unsupported image formats soft-fail (SCRUM-2911)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateWorker.mockResolvedValue({
+      recognize: mockTesseractRecognize,
+      terminate: mockTesseractTerminate,
+    });
+    mockTesseractRecognize.mockResolvedValue({ data: { text: 'ocr text' } });
+  });
+
+  it.each([
+    ['photo.heic', 'image/heic'],
+    ['photo.heif', 'image/heif'],
+    ['scan.tiff', 'image/tiff'],
+    ['scan.tif', 'image/tif'],
+  ])('raises a benign UnsupportedImageFormatError for %s (%s)', async (name, type) => {
+    const file = fakeFile(name, type, 'binary-image-bytes');
+
+    const caught = await extractTextFromImage(file).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
+    // This is a benign case — it must NOT be a §1.6 privacy fail-closed error.
+    expect(isPiiStripFailClosedError(caught)).toBe(false);
+    expect(caught).not.toBeInstanceOf(OcrEngineLoadError);
+    // The engine must never even be loaded — no privacy guarantee was in play.
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+
+  it('detects unsupported formats by extension even when MIME is empty', async () => {
+    const file = fakeFile('IMG_0042.HEIC', '', 'binary-image-bytes');
+
+    const caught = await extractTextFromImage(file).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+
+  it('still runs OCR for supported image formats (png/jpg)', async () => {
+    const file = fakeFile('scan.png', 'image/png', 'fake-image-bytes');
+    const result = await extractTextFromImage(file);
+    expect(result.method).toBe('tesseract');
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes HEIC/TIFF through extractText to the benign error (not fail-closed)', async () => {
+    const heic = fakeFile('photo.heic', 'image/heic', 'binary');
+    const caught = await extractText(heic).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
+    expect(isPiiStripFailClosedError(caught)).toBe(false);
+  });
+
+  // P2 — dispatch consistency for real browser file metadata: `.heic`/`.tiff`
+  // often arrive with an empty or generic MIME (not `image/*`). Those must still
+  // hit the typed benign error, NOT the generic "unsupported file type" path.
+  it('extractText: .heic with EMPTY MIME → typed UnsupportedImageFormatError (not generic)', async () => {
+    const file = fakeFile('IMG_0042.HEIC', '', 'binary-image-bytes');
+    const caught = await extractText(file).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
+    // Not the generic OCR_LABELS.UNSUPPORTED_FILE_TYPE error.
+    expect((caught as Error).message).not.toMatch(/Unsupported file type/);
+    // No handler should have been invoked.
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+    expect(mockExtractRawText).not.toHaveBeenCalled();
+    expect(mockGetDocument).not.toHaveBeenCalled();
+  });
+
+  it('extractText: .tiff with GENERIC MIME (application/octet-stream) → typed UnsupportedImageFormatError', async () => {
+    const file = fakeFile('scan.tiff', 'application/octet-stream', 'binary-image-bytes');
+    const caught = await extractText(file).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
+    expect((caught as Error).message).not.toMatch(/Unsupported file type/);
+    expect(mockCreateWorker).not.toHaveBeenCalled();
   });
 });
