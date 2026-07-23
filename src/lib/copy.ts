@@ -392,6 +392,7 @@ export const TOAST = {
   BULK_FAILED: 'Bulk upload failed. Please try again.',
   BULK_CANCELLED: 'Bulk upload cancelled.',
   BULK_QUOTA_EXCEEDED: 'Upload exceeds your plan limit.',
+  BULK_RECIPIENTS_FAILED: 'Bulk upload complete — {created} records created, but {failed} recipient invite(s) failed.',
 } as const;
 
 // =============================================================================
