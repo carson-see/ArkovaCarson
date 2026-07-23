@@ -37,6 +37,11 @@ import {
   resolveDocusignSecretManagerProjectId,
   type DocusignRefreshTokenStore,
 } from '../../../integrations/connectors/docusign-token-store.js';
+import {
+  markDocusignConnectorConnected,
+  reportConnectProvisionFailure,
+  type ConnectorAlertStateDb,
+} from '../../../integrations/connectors/docusign-connect-health.js';
 import type { TypeSafeDatabase } from '../../../types/database-overrides.js';
 import { resolveIntegrationStateSecret, createLazyOAuthRouter } from './oauth-state.js';
 
@@ -432,6 +437,12 @@ async function reprovisionDocusignConnectIntegration(args: {
       accountId,
       deps: docusignDeps,
     });
+    // SCRUM-3014: a successful reprovision clears the sticky degraded state.
+    await markDocusignConnectorConnected({
+      db: db as unknown as ConnectorAlertStateDb,
+      orgId,
+      now,
+    });
     await recordIntegrationEvent(db, {
       orgId,
       integrationId,
@@ -449,16 +460,28 @@ async function reprovisionDocusignConnectIntegration(args: {
       action: provisionResult.action,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    logger.error({ error: message, orgId, integrationId }, 'DocuSign Connect reprovision failed');
+    // SCRUM-3014: surface the real DocuSign status + bounded detail and mark the
+    // connector degraded instead of collapsing everything to a bare message.
+    const diagnostics = await reportConnectProvisionFailure({
+      db: db as unknown as ConnectorAlertStateDb,
+      error,
+      orgId,
+      integrationId,
+      flow: 'org',
+      now,
+    });
     await recordIntegrationEvent(db, {
       orgId,
       integrationId,
       eventType: 'connect_listener_reprovision_failed',
       status: 'error',
-      details: { error: message },
+      details: {
+        error: diagnostics.message,
+        docusign_status: diagnostics.status,
+        docusign_detail: diagnostics.detail,
+      },
     });
-    return { integration_id: integrationId, status: 'error', error: message };
+    return { integration_id: integrationId, status: 'error', error: diagnostics.message };
   }
 }
 
@@ -668,6 +691,12 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
         accountId: account.account_id,
         deps: docusignDeps,
       }).then(async (provisionResult) => {
+        // Clears any sticky `degraded` left by an earlier provisioning failure.
+        await markDocusignConnectorConnected({
+          db: db as unknown as ConnectorAlertStateDb,
+          orgId: payload.orgId,
+          now: deps.now?.() ?? new Date(),
+        });
         await recordIntegrationEvent(db, {
           orgId: payload.orgId,
           integrationId: integration?.id,
@@ -679,10 +708,17 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
           },
         });
       }).catch(async (provisionError) => {
-        logger.error(
-          { message: provisionError instanceof Error ? provisionError.message : String(provisionError), orgId: payload.orgId },
-          'DocuSign Connect listener provisioning failed',
-        );
+        // SCRUM-3014: loud + diagnosable (real DocuSign status + bounded detail,
+        // Sentry, connector marked degraded) — but still NON-FATAL: the connect
+        // flow already redirected, a webhook-provisioning failure must not break it.
+        const diagnostics = await reportConnectProvisionFailure({
+          db: db as unknown as ConnectorAlertStateDb,
+          error: provisionError,
+          orgId: payload.orgId,
+          integrationId: integration?.id,
+          flow: 'org',
+          now: deps.now?.() ?? new Date(),
+        });
         try {
           await recordIntegrationEvent(db, {
             orgId: payload.orgId,
@@ -690,7 +726,9 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
             eventType: 'connect_listener_failed',
             status: 'error',
             details: {
-              error: provisionError instanceof Error ? provisionError.message : String(provisionError),
+              error: diagnostics.message,
+              docusign_status: diagnostics.status,
+              docusign_detail: diagnostics.detail,
             },
           });
         } catch (eventError) {

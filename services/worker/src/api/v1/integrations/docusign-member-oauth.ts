@@ -38,6 +38,11 @@ import {
   resolveDocusignSecretManagerProjectId,
   type DocusignRefreshTokenStore,
 } from '../../../integrations/connectors/docusign-token-store.js';
+import {
+  markDocusignConnectorConnected,
+  reportConnectProvisionFailure,
+  type ConnectorAlertStateDb,
+} from '../../../integrations/connectors/docusign-connect-health.js';
 import { resolveIntegrationStateSecret, createLazyOAuthRouter } from './oauth-state.js';
 import { getCallerOrgId } from '../../_org-auth.js';
 
@@ -466,6 +471,12 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
         accountId: account.account_id,
         deps: docusignDeps,
       }).then(async (provisionResult) => {
+        // SCRUM-3014: clears any sticky `degraded` from an earlier failure.
+        await markDocusignConnectorConnected({
+          db: db as unknown as ConnectorAlertStateDb,
+          orgId: payload.orgId,
+          now: deps.now?.() ?? new Date(),
+        });
         await recordIntegrationEvent(db, {
           orgId: payload.orgId,
           integrationId: integration?.id,
@@ -477,10 +488,15 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
           },
         });
       }).catch(async (provisionError) => {
-        logger.error(
-          { message: provisionError instanceof Error ? provisionError.message : String(provisionError), orgId: payload.orgId, userId: payload.userId },
-          'DocuSign member Connect listener provisioning failed',
-        );
+        // SCRUM-3014: loud + diagnosable, still non-fatal to the connect flow.
+        const diagnostics = await reportConnectProvisionFailure({
+          db: db as unknown as ConnectorAlertStateDb,
+          error: provisionError,
+          orgId: payload.orgId,
+          integrationId: integration?.id,
+          flow: 'member',
+          now: deps.now?.() ?? new Date(),
+        });
         try {
           await recordIntegrationEvent(db, {
             orgId: payload.orgId,
@@ -488,7 +504,9 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
             eventType: 'member_connect_listener_failed',
             status: 'error',
             details: {
-              error: provisionError instanceof Error ? provisionError.message : String(provisionError),
+              error: diagnostics.message,
+              docusign_status: diagnostics.status,
+              docusign_detail: diagnostics.detail,
             },
           });
         } catch (eventError) {
