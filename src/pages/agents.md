@@ -1,5 +1,15 @@
 # agents.md — pages
-_Last updated: 2026-05-30_
+_Last updated: 2026-07-16_
+
+## PR #1561 — WebMCP search URL consumption
+
+`SearchPage.tsx` consumes a bounded `q` query parameter from same-origin
+`/search?q=...` navigation, pre-fills the search input, and executes the existing
+read-only public search path once. Keep the URL bound aligned with
+`src/webmcp.ts` (`200` decoded characters before trimming). The consumed-query
+ref is required because the app mounts under React Strict Mode; without it the
+URL-triggered RPCs run twice in development. Blank or overlong URL values are
+ignored, and the input itself carries the same maximum length.
 
 ## SCRUM-1980 — Search spinner persists below results (loading-state reset)
 
@@ -11,11 +21,16 @@ _Last updated: 2026-05-30_
 
 `DashboardPage.tsx` + `OrgProfilePage.tsx` — split "Secure Document" (universal) from "Issue Credential" (verified-org admin only). Dashboard empty-state CTA always opens `SecureDocumentDialog` (pre-1755 it opened `IssueCredentialForm` for ORG_ADMIN under a "Secure Document" label — the bug). Issue Credential header button is gated on `useCanIssueCredential()` AND `ENABLE_ISSUE_CREDENTIAL_SPLIT`. `OrgProfilePage` swaps the dual Bulk Upload + Issue Credential buttons for a single primary "Secure Document" button (auto-detects bulk inside the dialog) plus a gated outline "Issue Credential" button. The legacy bulk-only dialog wrapper was removed; `SecureDocumentDialog` handles every input shape.
 
+## SCRUM-3010 STEP 1 — Org registry cross-member privacy gate (frontend)
+
+`OrgProfilePage.tsx` — the Home-tab org records table (`OrgRegistryTable`) previously rendered UNCONDITIONALLY, so any org member (not just owner/admin/platform admin) could VIEW and CSV-EXPORT the entire org's records (every coworker's filenames, fingerprints, credential_type, label, metadata) — a live cross-member privacy leak (§1.6 flavor). Fix (STEP 1, frontend-only, T1): pass `isAdmin={isAdmin}` and `currentUserId={user?.id}` into `OrgRegistryTable`. Admins keep the org-wide registry; a non-admin member is scoped to their OWN rows only (by `user_id`, mirroring `useAnchors`), and the CSV export is gated the same way. Non-admin members still see their personal records on `/dashboard` (already correct). The org-wide `recordsCount` stat is an aggregate integer (no per-record metadata) and is intentionally left visible. STEP 2 (RLS tightening so this is enforced server-side, not just in the browser query) is a separate T3 story, deferred post-soak.
+
 ## What This Folder Contains
 
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.
 
 ## Recent Changes
+- 2026-07-17 SCRUM-2910 (BUG-2026-07-17-010, P0): `PipelineAdminPage.tsx` record-detail metadata panel filter also hides any `fraud*` key via `isFraudMetadataKey` from `@/lib/fraudDetection` (cross-review nit on PR #1569 — the ad-hoc denylist lacked fraud coverage).
 - 2026-06-29 PROOF-04 (SCRUM-2337, Lane 1 S2): `RecordDetailPage.tsx` — the `onDownloadProof` (PDF certificate) handler now fetches the `anchor_proofs` row for SECURED records (RLS-scoped) and passes the full `ProofInput` (merkle root/proof_path/index, block hash/header/height, op_return payload, schema version, observed time) into `generateAuditReport` so the certificate embeds the machine-readable proof packet (PROOF-04). Non-SECURED records still get the legacy certificate with no packet; fetch failures surface a generic `toast.error` (no raw error leak). No change to `onDownloadProofJson`. Download affordance remains gated on `status === 'SECURED'` in `AssetDetailView` (equivalent to the new `isProofDownloadable`).
 - 2026-06-29 PROOF-04 rework (Carson P1 review on #1352): `RecordDetailPage.onDownloadProof` now **validates + preserves** the `anchor_proofs.proof_path` entries as `{ hash, position }` (module-level `isMerkleEntry` guard) instead of filtering to strings — the old `string[]` narrowing yielded `[]` for real object rows, embedding an empty/invalid `merkle_proof` so the offline verifier couldn't recompute the root. The `ProofInput` it passes now carries `block_timestamp` (renamed from `observed_time`). Matches the canonical `proof_bundle` shape in `src/lib/generateAuditReport.ts` (PROOF-05 / PROOF-07 parity).
 - 2026-06-25 iter-5 webhook-toggle (BUG class): `WebhookSettingsPage.tsx` — `handleToggle` fired the `webhook_endpoints` `is_active` update fire-and-forget (never read `error`) then unconditionally `fetchEndpoints()`. On an RLS/permission denial the DB row was unchanged, the refetch snapped the row back, and **nothing was surfaced** — the user believed the enable/disable took. Now optimistically flips the row in local state (responsive), checks the update `error`, and on failure shows `toast.error(WEBHOOK_LABELS.TOGGLE_ERROR)` (sonner) — generic copy only, the raw RLS/Postgres message is never leaked — then refetches to visibly revert to the true value. Success refetches to confirm. `WebhookSettingsPage.test.tsx` gained 3 toggle cases (denied → error toast + visible revert + no message leak; success → state persists, no error; optimistic flip before the server responds). Toast asserted via `vi.mock('sonner')`.
@@ -75,3 +90,6 @@ Both take `pageUrl` as a prop. Use `getAppBaseUrl()` from `@/lib/routes` to buil
 ## UX-03 copy compliance (2026-07-06)
 
 `PipelineAdminPage.tsx` job-trigger footer reworded "worker service" → "background service" (UX-03 / SCRUM-1029 banned engineering copy). Decision on the (a) reword vs (b) treasury-style scan-exclusion choice: **reword.** The `EXCLUDE_PATTERNS` ops-dashboard exclusion (precedent: `src/components/admin/treasury/**`) was considered and rejected — the rest of this ~1,700-line admin page's copy is compliant and should stay under lint:copy scan; do NOT add this page to `EXCLUDE_PATTERNS`. Surfaced by the SCRUM-2666 cross-line lint:copy fix (PR #1440); this reword also clears that PR's grandfathered baseline entry for `PipelineAdminPage.tsx:1196` (it goes stale once #1440 lands — its owner removes it).
+
+## 2026-07-22 Platform-admin role-source cutover (SCRUM-2939 / PI05-ADMIN)
+Every admin page now derives platform-admin status from `isPlatformAdmin(profile)` (`profiles.is_platform_admin` DB flag) instead of the removed `isPlatformAdmin(user?.email)` whitelist. `ComplianceDashboardPage` stays org-accessible (`role === 'ORG_ADMIN' || isPlatformAdmin(profile)`) — it is NOT a platform-only surface and is deliberately NOT wrapped by `PlatformAdminRoute`. Page tests grant admin by setting `is_platform_admin: true` on the mocked profile and deny by overriding `useProfile` (NOT `user.email`).

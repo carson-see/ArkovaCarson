@@ -497,4 +497,42 @@ describe('PublicVerification', () => {
     // false for SUBMITTED) — it is not conditioned on the proof section.
     expect(await screen.findByTestId('does-not-assert-disclaimer')).toBeVisible();
   });
+
+  // BUG-2026-07-17-010 (SCRUM-2910, P0): historical fraud_* metadata keys must
+  // NEVER render on the PUBLIC verification page. No hidden-key filter covered
+  // the fraud_ prefix, so public links could show fraud_score.
+  it('never renders fraud_* metadata keys on the public verification page (BUG-2026-07-17-010)', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          field_of_study: 'Computer Science',
+          fraud_score: 0.87,
+          fraud_risk_level: 'high',
+          fraud_signals: [{ signal_type: 'future_date', score: 0.35, field_affected: 'issuedDate' }],
+          fraud_analysis_method: 'client_side_worker_v2',
+          fraud_processing_time_ms: 12,
+          fraudSignals: '["Font inconsistency detected"]',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    // The sanitized metadata handed to the credential card keeps legitimate
+    // keys but must carry no fraud-derived key or value.
+    const credentialRenderer = await screen.findByTestId('credential-renderer');
+    expect(credentialRenderer).toHaveTextContent('Computer Science');
+    expect(credentialRenderer.textContent?.toLowerCase()).not.toContain('fraud');
+    expect(credentialRenderer).not.toHaveTextContent('0.87');
+    expect(credentialRenderer).not.toHaveTextContent('client_side_worker_v2');
+    expect(credentialRenderer).not.toHaveTextContent('Font inconsistency');
+    // And nothing fraud-derived may appear anywhere else on the page either.
+    expect(document.body.textContent?.toLowerCase()).not.toContain('fraud');
+    expect(document.body.textContent).not.toContain('0.87');
+  });
 });

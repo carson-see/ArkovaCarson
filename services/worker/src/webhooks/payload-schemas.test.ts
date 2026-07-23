@@ -18,6 +18,7 @@ import {
   AnchorSecuredPayloadSchema,
   AnchorRevokedPayloadSchema,
   AnchorExpiredPayloadSchema,
+  AnchorSupersededPayloadSchema,
   AnchorBatchSecuredPayloadSchema,
   CredentialIssuedPayloadSchema,
   CredentialVerifiedPayloadSchema,
@@ -210,6 +211,141 @@ describe('AnchorExpiredPayloadSchema (SCRUM-1735)', () => {
 
   it('rejects null chain_block_height (on-chain invariant)', () => {
     expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, chain_block_height: null }).success).toBe(false);
+  });
+});
+
+describe('AnchorSupersededPayloadSchema (SCRUM-2937)', () => {
+  // anchor.superseded fires when a SECURED anchor is atomically replaced by a
+  // re-issued child (SECURED → SUPERSEDED, from the supersede_anchor RPC behind
+  // POST /api/anchor/:id/supersede). Closes the webhook↔dashboard parity gap:
+  // headless partners had no supersession signal while the dashboard shows the
+  // full version chain. Public-only contract, on-chain fields populated (can
+  // only follow SECURED).
+  const valid = {
+    public_id: 'abc123',
+    chain_tx_id: 'fake-tx-id',
+    chain_block_height: 850000,
+    superseded_at: '2026-07-22T00:00:00Z',
+    status: 'SUPERSEDED' as const,
+  };
+
+  it('accepts a SUPERSEDED payload with public-only fields', () => {
+    expect(AnchorSupersededPayloadSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts the optional superseded_by_public_id child slug', () => {
+    expect(
+      AnchorSupersededPayloadSchema.safeParse({ ...valid, superseded_by_public_id: 'ARK-2026-CHILD' }).success,
+    ).toBe(true);
+  });
+
+  it('accepts a null superseded_by_public_id (child slug not yet resolvable)', () => {
+    expect(
+      AnchorSupersededPayloadSchema.safeParse({ ...valid, superseded_by_public_id: null }).success,
+    ).toBe(true);
+  });
+
+  it('accepts an optional supersession_reason', () => {
+    expect(
+      AnchorSupersededPayloadSchema.safeParse({ ...valid, supersession_reason: 'corrected transcript' }).success,
+    ).toBe(true);
+  });
+
+  it('accepts org_public_id when provided', () => {
+    expect(AnchorSupersededPayloadSchema.safeParse({ ...valid, org_public_id: 'pub_org_xyz' }).success).toBe(true);
+  });
+
+  it('rejects a supersession_reason over 500 chars', () => {
+    expect(
+      AnchorSupersededPayloadSchema.safeParse({ ...valid, supersession_reason: 'a'.repeat(501) }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a SUPERSEDED payload that includes the internal anchor_id UUID (CLAUDE.md §6)', () => {
+    expect(
+      AnchorSupersededPayloadSchema.safeParse({ ...valid, anchor_id: '550e8400-e29b-41d4-a716-446655440000' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a SUPERSEDED payload that includes the raw fingerprint (CLAUDE.md §1.6)', () => {
+    expect(AnchorSupersededPayloadSchema.safeParse({ ...valid, fingerprint: 'a'.repeat(64) }).success).toBe(false);
+  });
+
+  it('rejects a SUPERSEDED payload that includes user_id', () => {
+    expect(
+      AnchorSupersededPayloadSchema.safeParse({ ...valid, user_id: '550e8400-e29b-41d4-a716-446655440001' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a SUPERSEDED payload that includes the internal org_id UUID', () => {
+    expect(
+      AnchorSupersededPayloadSchema.safeParse({ ...valid, org_id: '550e8400-e29b-41d4-a716-446655440002' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects status other than SUPERSEDED', () => {
+    expect(AnchorSupersededPayloadSchema.safeParse({ ...valid, status: 'REVOKED' }).success).toBe(false);
+  });
+
+  it('rejects non-ISO superseded_at', () => {
+    expect(AnchorSupersededPayloadSchema.safeParse({ ...valid, superseded_at: '2026-07-22 00:00:00' }).success).toBe(false);
+  });
+
+  // On-chain invariant: SUPERSEDED can only follow SECURED, so the chain fields
+  // must be populated (same as EXPIRED).
+  it('rejects null chain_tx_id (on-chain invariant — SUPERSEDED can only follow SECURED)', () => {
+    expect(AnchorSupersededPayloadSchema.safeParse({ ...valid, chain_tx_id: null }).success).toBe(false);
+  });
+
+  it('rejects null chain_block_height (on-chain invariant)', () => {
+    expect(AnchorSupersededPayloadSchema.safeParse({ ...valid, chain_block_height: null }).success).toBe(false);
+  });
+});
+
+describe('validateWebhookPayload helper — anchor.superseded (SCRUM-2937)', () => {
+  it('routes anchor.superseded through AnchorSupersededPayloadSchema (NOT bypassed)', () => {
+    const result = validateWebhookPayload('anchor.superseded', {
+      public_id: 'abc123',
+      chain_tx_id: 'fake-tx-id',
+      chain_block_height: 850000,
+      superseded_at: '2026-07-22T00:00:00Z',
+      status: 'SUPERSEDED',
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bypassed).toBeUndefined();
+  });
+
+  it('fails validation (does NOT bypass) when anchor.superseded carries a banned anchor_id', () => {
+    const result = validateWebhookPayload('anchor.superseded', {
+      public_id: 'abc123',
+      chain_tx_id: 'fake-tx-id',
+      chain_block_height: 850000,
+      superseded_at: '2026-07-22T00:00:00Z',
+      status: 'SUPERSEDED',
+      anchor_id: '550e8400-e29b-41d4-a716-446655440000',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBeInstanceOf(WebhookPayloadValidationError);
+  });
+});
+
+describe('credential.status_changed — SECURED→SUPERSEDED (SCRUM-2937)', () => {
+  // Guards the exact payload the supersede producer (api/anchor-lineage.ts)
+  // ships. Without SUPERSEDED in the enum this fails validation → the real
+  // dispatchWebhookEvent throws → the credential event silently never delivers.
+  // This test exercises the REAL schema (not a dispatcher mock) so the enum
+  // gap can't regress.
+  it('accepts the SECURED→SUPERSEDED transition via the real validator', () => {
+    const result = validateWebhookPayload('credential.status_changed', {
+      public_id: 'abc123',
+      credential_type: 'transcript',
+      previous_status: 'SECURED',
+      new_status: 'SUPERSEDED',
+      changed_at: '2026-07-22T00:00:00Z',
+      reason: 'corrected transcript',
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bypassed).toBeUndefined();
   });
 });
 

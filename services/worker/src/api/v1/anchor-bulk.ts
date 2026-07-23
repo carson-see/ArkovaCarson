@@ -25,6 +25,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit } from '../../utils/orgCredits.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
+import { requireOrgQuota } from '../../middleware/perOrgRateLimit.js';
 import { submitJob } from '../../utils/jobQueue.js';
 import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
 import {
@@ -106,6 +107,24 @@ interface BulkAnchorResponse {
     external_id: string | null;
     anchored_at: string;
   }>;
+}
+
+async function consumeAnchorCreateQuota(
+  req: Request,
+  res: Response,
+  delta: number,
+): Promise<boolean> {
+  const quota = requireOrgQuota({
+    kind: 'anchors_created',
+    mode: 'daily',
+    getOrgId: (quotaReq) => quotaReq.apiKey?.orgId ?? null,
+    getDelta: () => delta,
+  });
+  let allowed = false;
+  await quota(req, res, () => {
+    allowed = true;
+  });
+  return allowed;
 }
 
 router.post('/', async (req: Request, res: Response) => {
@@ -230,6 +249,10 @@ router.post('/', async (req: Request, res: Response) => {
       errors: [],
       dry_run: true,
     } satisfies BulkAnchorResponse);
+    return;
+  }
+
+  if (!(await consumeAnchorCreateQuota(req, res, queueable.length))) {
     return;
   }
 

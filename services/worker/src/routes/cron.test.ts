@@ -338,6 +338,25 @@ vi.mock('../jobs/stuck-anchor-monitor.js', () => ({
   runStuckAnchorCheck: (...args: unknown[]) => mockRunStuckAnchorCheck(...args),
 }));
 
+const mockRunPipelineThroughputMonitor = vi.fn().mockResolvedValue({
+  healthy: true,
+  alertFired: false,
+  windowHours: 24,
+  linkerStallThresholdHours: 48,
+  latestUnlinkedAgeHours: null,
+  oldestUnlinkedAgeHours: null,
+  lastSecuredAgeHours: 2,
+  unlinkedTotal: 0,
+  batchProgress: null,
+  reason: 'No unlinked public records — nothing to convert',
+  checkedAt: '2026-07-17T12:00:00.000Z',
+});
+vi.mock('../jobs/pipelineThroughputMonitor.js', () => ({
+  DEFAULT_THROUGHPUT_WINDOW_HOURS: 24,
+  DEFAULT_LINKER_STALL_THRESHOLD_HOURS: 48,
+  runPipelineThroughputMonitor: (...args: unknown[]) => mockRunPipelineThroughputMonitor(...args),
+}));
+
 const mockRunCreditConservationReconciler = vi.fn().mockResolvedValue({
   healthy: true,
   alertFired: false,
@@ -1830,151 +1849,98 @@ describe('cron routes', () => {
   // ═══════════════════════════════════════
 
   describe('POST /refresh-stats', () => {
-    it('refreshes BOTH pipeline_dashboard_cache AND legacy mat views', async () => {
-      // Hotfix 2026-04-28: handler used to call only
-      // refresh_stats_materialized_views, leaving pipeline_dashboard_cache
-      // stale (the actual table the dashboard reads). Now drives both.
+    // 2026-07-20 rework (refresh-stats 500s since the 07-17 drain resume):
+    // the route used to call the monolithic refresh_pipeline_dashboard_cache()
+    // RPC plus the legacy refresh_stats_materialized_views(). Under drain-era
+    // DB load the monolith outran the Supabase API gateway ("upstream request
+    // timeout") because statement_timeout budgets do not re-arm inside an
+    // already-running statement, and the legacy mat-view refresh (two matviews
+    // nothing reads) died at the 60s session statement_timeout — both legs
+    // failed -> 500 on ~30% of cron firings. The route now drives the six
+    // sub-refreshers as individual top-level RPC calls, where each
+    // function-level statement_timeout genuinely bounds the work.
+    const SUB_REFRESHERS: Array<[key: string, rpc: string]> = [
+      ['pipeline_stats', 'refresh_cache_pipeline_stats'],
+      ['anchor_status_counts', 'refresh_cache_anchor_status_counts'],
+      ['by_source', 'refresh_cache_by_source'],
+      ['anchor_type_counts', 'refresh_cache_anchor_type_counts'],
+      ['record_types', 'refresh_cache_record_types'],
+      ['anchor_tx_stats', 'refresh_cache_anchor_tx_stats'],
+    ];
+
+    it('refreshes each dashboard cache key via its own bounded RPC call', async () => {
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-      callRpcMock
-        .mockResolvedValueOnce({
-          data: {
-            status: 'refreshed',
-            succeeded: 6,
-            errors: [],
-            duration_ms: 12,
-          },
-          error: null,
-        })
-        .mockResolvedValueOnce({ data: null, error: null });
+      callRpcMock.mockResolvedValue({ data: null, error: null });
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('refreshed');
+      expect(res.body.refreshed).toEqual(SUB_REFRESHERS.map(([key]) => key));
       expect(res.body.succeeded).toBe(6);
-      expect(res.body.duration_ms).toBe(12);
       expect(res.body.errors).toEqual([]);
-      // First call must be the dashboard cache (the user-visible one).
-      expect(callRpcMock.mock.calls[0]?.[1]).toBe('refresh_pipeline_dashboard_cache');
-      expect(callRpcMock.mock.calls[1]?.[1]).toBe('refresh_stats_materialized_views');
-    });
-
-    it('still returns 200 if the legacy mat-view refresh fails (non-fatal)', async () => {
-      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-      callRpcMock
-        .mockResolvedValueOnce({
-          data: {
-            status: 'refreshed',
-            succeeded: 6,
-            errors: [],
-            duration_ms: 12,
-          },
-          error: null,
-        })
-        .mockResolvedValueOnce({ data: null, error: { message: 'mat-view fail' } });
-      const app = createApp();
-      const res = await request(app).post('/cron/refresh-stats');
-      expect(res.status).toBe(200);
-      expect(res.body.succeeded).toBe(6);
-      expect(res.body.duration_ms).toBe(12);
-      expect(res.body.errors).toHaveLength(1);
-      expect(res.body.errors[0].source).toBe('stats_materialized_views');
-    });
-
-    it('returns 500 if the dashboard cache refresh fails even when legacy refresh succeeds', async () => {
-      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-      callRpcMock
-        .mockResolvedValueOnce({ data: null, error: { message: 'dashboard fail' } })
-        .mockResolvedValueOnce({ data: null, error: null });
-      const app = createApp();
-      const res = await request(app).post('/cron/refresh-stats');
-      expect(res.status).toBe(500);
-      expect(res.body).toMatchObject({
-        status: 'failed',
-        reason: 'pipeline_dashboard_cache failed',
-        refreshed: ['stats_materialized_views'],
-      });
-      expect(res.body.errors).toEqual([
-        expect.objectContaining({ source: 'pipeline_dashboard_cache' }),
-      ]);
-    });
-
-    it('returns 500 if the dashboard cache RPC reports partial errors', async () => {
-      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-      callRpcMock
-        .mockResolvedValueOnce({
-          data: {
-            status: 'refreshed',
-            succeeded: 5,
-            errors: [{ source: 'embedded_records', message: 'timeout while refreshing embedded records' }],
-            duration_ms: 12,
-          },
-          error: null,
-        })
-        .mockResolvedValueOnce({ data: null, error: null });
-      const app = createApp();
-      const res = await request(app).post('/cron/refresh-stats');
-      expect(res.status).toBe(500);
-      expect(res.body).toMatchObject({
-        status: 'failed',
-        reason: 'pipeline_dashboard_cache failed',
-        refreshed: ['stats_materialized_views'],
-        succeeded: 5,
-        duration_ms: 12,
-      });
-      expect(res.body.errors[0]).toMatchObject({
-        source: 'pipeline_dashboard_cache.0',
-      });
-      expect(res.body.errors[0].message).toContain(
-        'timeout while refreshing embedded records',
+      expect(typeof res.body.duration_ms).toBe('number');
+      expect(callRpcMock.mock.calls.map((c) => c[1])).toEqual(
+        SUB_REFRESHERS.map(([, rpc]) => rpc),
       );
     });
 
-    it('returns 500 if the dashboard cache RPC returns a malformed success payload', async () => {
+    it('no longer calls the monolithic wrapper or the legacy mat-view refresh', async () => {
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-      callRpcMock
-        .mockResolvedValueOnce({ data: null, error: null })
-        .mockResolvedValueOnce({ data: null, error: null });
+      callRpcMock.mockResolvedValue({ data: null, error: null });
       const app = createApp();
-      const res = await request(app).post('/cron/refresh-stats');
-      expect(res.status).toBe(500);
-      expect(res.body).toMatchObject({
-        status: 'failed',
-        reason: 'pipeline_dashboard_cache failed',
-        refreshed: ['stats_materialized_views'],
-      });
-      expect(res.body.errors[0]).toMatchObject({
-        source: 'pipeline_dashboard_cache',
-      });
-      expect(res.body.errors[0].message).toContain('Invalid refresh_pipeline_dashboard_cache payload');
+      await request(app).post('/cron/refresh-stats');
+      const called = callRpcMock.mock.calls.map((c) => c[1]);
+      expect(called).not.toContain('refresh_pipeline_dashboard_cache');
+      expect(called).not.toContain('refresh_stats_materialized_views');
     });
 
-    it('propagates skipped dashboard refresh status from the RPC', async () => {
+    it('returns 200 partial and keeps going when one sub-refresher fails', async () => {
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-      callRpcMock
-        .mockResolvedValueOnce({
-          data: {
-            status: 'skipped',
-            reason: 'another refresh in progress',
-            duration_ms: 9,
-          },
-          error: null,
-        })
-        .mockResolvedValueOnce({ data: null, error: null });
+      callRpcMock.mockImplementation(async (_db: unknown, fnName: string) =>
+        fnName === 'refresh_cache_by_source'
+          ? {
+              data: null,
+              error: { message: 'canceling statement due to statement timeout', code: '57014' },
+            }
+          : { data: null, error: null },
+      );
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
       expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({
-        status: 'skipped',
-        reason: 'another refresh in progress',
-        duration_ms: 9,
-        refreshed: ['stats_materialized_views'],
-        errors: [],
-      });
+      expect(res.body.status).toBe('partial');
+      expect(res.body.succeeded).toBe(5);
+      expect(res.body.refreshed).toEqual(
+        SUB_REFRESHERS.map(([key]) => key).filter((k) => k !== 'by_source'),
+      );
+      expect(res.body.errors).toEqual([
+        { source: 'by_source', message: 'canceling statement due to statement timeout' },
+      ]);
+      // All six must still be attempted — one failure never aborts the rest.
+      expect(callRpcMock.mock.calls).toHaveLength(6);
     });
 
-    it('returns 500 with all errors when both refresh paths fail', async () => {
+    it('treats a rejected callRpc as that key failing, not a route crash', async () => {
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-      callRpcMock.mockResolvedValue({ data: null, error: { message: 'fail' } });
+      callRpcMock.mockImplementation(async (_db: unknown, fnName: string) => {
+        if (fnName === 'refresh_cache_pipeline_stats') throw new Error('socket hang up');
+        return { data: null, error: null };
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/refresh-stats');
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('partial');
+      expect(res.body.errors).toEqual([
+        { source: 'pipeline_stats', message: 'socket hang up' },
+      ]);
+      expect(callRpcMock.mock.calls).toHaveLength(6);
+    });
+
+    it('returns 500 so Cloud Scheduler retries only when every sub-refresher fails', async () => {
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock.mockResolvedValue({
+        data: null,
+        error: { message: 'upstream request timeout' },
+      });
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
       expect(res.status).toBe(500);
@@ -1982,8 +1948,9 @@ describe('cron routes', () => {
         status: 'failed',
         reason: 'all refresh paths failed',
         refreshed: [],
+        succeeded: 0,
       });
-      expect(res.body.errors).toHaveLength(2);
+      expect(res.body.errors).toHaveLength(6);
     });
   });
 
@@ -2468,6 +2435,94 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/check-stuck-anchors');
       expect(res.status).toBe(401);
       expect(mockRunStuckAnchorCheck).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════
+  // Pipeline Throughput Monitor (SCRUM-2901)
+  // ═══════════════════════════════════════
+
+  describe('POST /pipeline-throughput-monitor', () => {
+    it('returns the monitor result on success (defaults window_hours + linker threshold)', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor');
+      expect(res.status).toBe(200);
+      expect(res.body.healthy).toBe(true);
+      expect(res.body.alertFired).toBe(false);
+      expect(mockRunPipelineThroughputMonitor).toHaveBeenCalledWith(
+        expect.anything(),
+        { windowHours: 24, linkerStallThresholdHours: 48 },
+      );
+    });
+
+    it('passes validated window_hours + linker_stall_threshold_hours overrides through to the monitor', async () => {
+      const app = createApp();
+      const res = await request(app).post(
+        '/cron/pipeline-throughput-monitor?window_hours=48&linker_stall_threshold_hours=72',
+      );
+      expect(res.status).toBe(200);
+      expect(mockRunPipelineThroughputMonitor).toHaveBeenCalledWith(
+        expect.anything(),
+        { windowHours: 48, linkerStallThresholdHours: 72 },
+      );
+    });
+
+    it('rejects an out-of-range window_hours with 400 (never runs the probes)', async () => {
+      mockRunPipelineThroughputMonitor.mockClear();
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor?window_hours=0');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid window_hours');
+      expect(mockRunPipelineThroughputMonitor).not.toHaveBeenCalled();
+    });
+
+    it('rejects an out-of-range linker_stall_threshold_hours with 400', async () => {
+      mockRunPipelineThroughputMonitor.mockClear();
+      const app = createApp();
+      const res = await request(app).post(
+        '/cron/pipeline-throughput-monitor?linker_stall_threshold_hours=200',
+      );
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid linker_stall_threshold_hours');
+      expect(mockRunPipelineThroughputMonitor).not.toHaveBeenCalled();
+    });
+
+    it('returns 200 with healthy:false when a stall is DETECTED (no Scheduler retry of a correct finding)', async () => {
+      mockRunPipelineThroughputMonitor.mockResolvedValueOnce({
+        healthy: false,
+        alertFired: true,
+        windowHours: 24,
+        linkerStallThresholdHours: 48,
+        latestUnlinkedAgeHours: 1,
+        oldestUnlinkedAgeHours: 700,
+        lastSecuredAgeHours: 2,
+        unlinkedTotal: 259812,
+        batchProgress: null,
+        reason: 'Pipeline linker stall: oldest unlinked public record is 700h old …',
+        checkedAt: '2026-07-17T12:00:00.000Z',
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor');
+      expect(res.status).toBe(200);
+      expect(res.body.healthy).toBe(false);
+      expect(res.body.alertFired).toBe(true);
+    });
+
+    it('returns 500 when a core probe throws (Scheduler retries the broken probe)', async () => {
+      mockRunPipelineThroughputMonitor.mockRejectedValueOnce(new Error('statement timeout'));
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+
+    it('is protected by cronAuth — 401 unauthenticated in production', async () => {
+      mockRunPipelineThroughputMonitor.mockClear();
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+      const res = await request(app).post('/cron/pipeline-throughput-monitor');
+      expect(res.status).toBe(401);
+      expect(mockRunPipelineThroughputMonitor).not.toHaveBeenCalled();
     });
   });
 

@@ -62,7 +62,7 @@ export function AdminRecordsPage() {
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'ALL');
   const [typeFilter, setTypeFilter] = useState(searchParams.get('type') || 'ALL');
 
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   const doFetch = useCallback((p = 1) => {
     fetchList({ page: p, search: searchInput, filters: { status: statusFilter === 'ALL' ? '' : statusFilter, type: typeFilter === 'ALL' ? '' : typeFilter } });

@@ -192,3 +192,14 @@ regex as a second line of defense against that exact scanner blind spot.
 - `DoesNotAssertDisclaimer.test.tsx` — pins the MEASURED/ASSERTED/NOT-ASSERTED
   substance, the "always visible, no reveal needed" contract, a banned-terms
   regression guard, and basic rendering at 1280px/375px container widths.
+
+## Fraud metadata redaction (SCRUM-2910, 2026-07-17)
+
+BUG-2026-07-17-010 (P0): historical `fraud_*` metadata keys (fraud_score,
+fraud_risk_level, fraud_signals, camelCase `fraudSignals`, ...) rendered on the
+PUBLIC verification page because no hidden-key filter covered the prefix.
+`sanitizeCredentialMetadata` in `PublicVerification.tsx` now also drops any key
+matched by `isFraudMetadataKey` (`@/lib/fraudDetection`) — a normalized-prefix
+check, conservative by design. Regression test: "never renders fraud_* metadata
+keys" in `PublicVerification.test.tsx`. Never re-surface fraud data on any
+public or owner display surface.

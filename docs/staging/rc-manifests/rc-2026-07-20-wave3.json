@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-07-20-WAVE3",
+  "created_at": "2026-07-20T13:05:00Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "approval_status": "approved",
+  "approval_actor": "carson (founder) via release-team session 2026-07-19/20",
+  "approval_time": "2026-07-20T13:05:00Z",
+  "train_launch_sha": "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+  "target_main_sha": "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+  "allowed_base_shas": [
+    "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+    "b03de813f42cde5710b38275f5c6d1af219ef0c9",
+    "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
+    "ec95ae6acab861e853976b4e31faab093ef28d10",
+    "9d513e85fceb58e9b4794ed29c2741902a017faf",
+    "72ca4883eed34e45e8a5457bf5d8df658c520451",
+    "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 ",
+    "99320c89750ce2518c218aa131c30b9ccd994c60",
+    "81e39c8d9d595cf8f4120b64967252eb43a75cbf"
+  ],
+  "covered_main_shas": [
+    "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+    "b03de813f42cde5710b38275f5c6d1af219ef0c9",
+    "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
+    "ec95ae6acab861e853976b4e31faab093ef28d10",
+    "9d513e85fceb58e9b4794ed29c2741902a017faf",
+    "72ca4883eed34e45e8a5457bf5d8df658c520451",
+    "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 ",
+    "99320c89750ce2518c218aa131c30b9ccd994c60",
+    "81e39c8d9d595cf8f4120b64967252eb43a75cbf"
+  ],
+  "included_prs": [
+    {
+      "number": 1568,
+      "head_sha": "e18b4656b14d677a100a1becd40088e90b00ba49",
+      "base_sha": "b03de813f42cde5710b38275f5c6d1af219ef0c9",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "All required checks green on frozen head e18b4656 (TypeCheck & Lint, Worker Build deploy-parity, Verifier Build, Verifier CLI clean-room, scan, sonatype-sca, Vercel); only Staging Soak Evidence Gate red pending this manifest. Webhook DLQ retry fix exercised live on rig rca20260719: injected 'retrying' webhook_delivery_logs row, POST /jobs/webhook-retries re-fired the HTTP delivery (SSRF-block log on the .invalid sink, then HTTP 405 recorded from the example.com sink, attempt_number advanced to 2 with next_retry_at scheduled) \u2014 the pre-fix silent no-op retry path is demonstrably gone.",
+      "rollback_note": "Code-only worker change; revert PR #1568 and redeploy \u2014 no migration to reverse, webhook_delivery_logs schema untouched.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "b03de813f42cde5710b38275f5c6d1af219ef0c9",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+      ]
+    },
+    {
+      "number": 1569,
+      "head_sha": "e7a62dfcd9cb5fc6e4ed02c9330e831b6ed494ed",
+      "base_sha": "b03de813f42cde5710b38275f5c6d1af219ef0c9",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "All required checks green on frozen head e7a62dfc (frontend suite, TypeCheck & Lint, builds, scans); only Staging Soak Evidence Gate red pending this manifest. Frontend-only change (fraud-display removal) with no worker observable \u2014 coverage honestly rides the rig soak (the train image containing this head served the full 12h window) plus the existing green E2E, per the soak journal.",
+      "rollback_note": "Frontend-only; revert PR #1569 \u2014 no worker runtime or schema impact.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "b03de813f42cde5710b38275f5c6d1af219ef0c9",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+      ]
+    },
+    {
+      "number": 1571,
+      "head_sha": "95b4394378262e8922666e331ce1cc2e10c0e1da",
+      "base_sha": "72ca4883eed34e45e8a5457bf5d8df658c520451",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Union-merge drift resolved 2026-07-20: main merged into branch to clear a docs-only agents.md conflict from siblings #1568/#1569; RUNTIME DIFF VERIFIED IDENTICAL to soaked head 53dc3a23 (services/worker/src non-md files byte-identical), dropped union lines restored. Monitor decision code exercised live on rig rca20260719 (200 + decision log). All required checks green on frozen head 53dc3a23; only Staging Soak Evidence Gate red pending this manifest. Pipeline-throughput monitor exercised live on rig rca20260719: POST /jobs/pipeline-throughput-monitor (X-Cron-Secret + IAM OIDC) returned 200 {healthy:true} and emitted the 'Pipeline throughput monitor: No unlinked public records' decision log line on the serving revision \u2014 monitor decisio",
+      "rollback_note": "Code-only monitor job; revert PR #1571 \u2014 the cron route disappears cleanly, no state to unwind.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "b03de813f42cde5710b38275f5c6d1af219ef0c9",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+        "9d513e85fceb58e9b4794ed29c2741902a017faf",
+        "72ca4883eed34e45e8a5457bf5d8df658c520451"
+      ],
+      "soak_head_note": "Soaked head 53dc3a23; current head 95b43943 = soaked runtime + two docs-only main-merges (agents.md union resolution). Verified: diff(origin/main..head) = only pipelineThroughputMonitor/cron/sentry (+tests) + 2 agents.md lines; zero runtime delta vs soak."
+    },
+    {
+      "number": 1573,
+      "head_sha": "23c9aefe6d419f1c71ebe9c4ce4a93dd503fea13",
+      "base_sha": "81e39c8d9d595cf8f4120b64967252eb43a75cbf",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "All required checks green on frozen head 848f204c; only Staging Soak Evidence Gate red pending this manifest. Honest limit: the GEMINI_LITE_MODEL=gemini-2.5-flash pin lives in .github/workflows/deploy-worker.yml (prod deploy env) and has no rig runtime surface under the admitted mock overlay \u2014 observable evidence is that the soaked train tip bd07cc0c carries the pin in both the canary and prod --set-env-vars lines; the train image containing this head served the full 12h soak.",
+      "rollback_note": "Workflow-file pin only; revert PR #1573 to restore the prior deploy-workflow env line \u2014 no runtime or schema impact until the next prod deploy.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "e35b5a22d5e1d6dac1f10c5b564a8710e69dcfa4",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+        "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 ",
+        "99320c89750ce2518c218aa131c30b9ccd994c60",
+        "81e39c8d9d595cf8f4120b64967252eb43a75cbf"
+      ],
+      "soak_head_note": "Head 23c9aefe = GEMINI_LITE pin + deploy-workflow security hardening (S6505/S6506/S8543) + merge of current main (base was stale e35b5a22). Deploy-workflow config only, no worker runtime surface; soak unaffected. Merge-base 81e39c8d covered."
+    },
+    {
+      "number": 1549,
+      "head_sha": "a8d77727a6dcf7620e95ba5c287271f67eead4c8",
+      "base_sha": "ec95ae6acab861e853976b4e31faab093ef28d10",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "All required checks green on frozen head a8d77727; only Staging Soak Evidence Gate red pending this manifest. AI eval coverage-gate pin is tooling with no runtime endpoint \u2014 code-loaded proof on the rig: the train image containing this head booted healthy (module import graph loads, /health 200, single clean instance start, no boot errors) and served the full 12h soak.",
+      "rollback_note": "Eval tooling only; revert PR #1549 \u2014 no runtime endpoint, no schema, no deploy-surface change to unwind.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "ec95ae6acab861e853976b4e31faab093ef28d10",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225",
+        "bf54b62ac84c193f2d26cda722d93fac973cc80a 152161bbebcc2a2a4d0e9820f820725e877b62e5 72ca4883eed34e45e8a5457bf5d8df658c520451 9d513e85fceb58e9b4794ed29c2741902a017faf 67edbfbec88c6f5eda541a2208a22aee82edde86 d975e31dc69a6abc662d58a872ff96ccc70e6290 7bda2a08489e42ccab383e39b1f0f54c75e24225 a35ab1e7a6c3737ec5f8356391951e8aa2faee80 "
+      ]
+    },
+    {
+      "number": 1570,
+      "head_sha": "2a61720c0382f62bd282ab1bf1c8b40dea321ad4",
+      "base_sha": "b03de813f42cde5710b38275f5c6d1af219ef0c9",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "All required checks green on frozen head 2a61720c (PR is Draft; merge is gated on mark-ready + founder signoff). Honest partial: the anchor-path exercise on rig rca20260719 reached the feature gate only \u2014 POST /api/v1/anchor with a seeded org+API key returned 503 service_unavailable because ENABLE_VERIFICATION_API is absent from the admitted mock overlay, so the route chain (apiKeyAuth -> requireScope -> anchor-submit importing anchorCreditGate) is code-loaded proof; the SCRUM-2970 ledger write itself was NOT exercised on this rig and its evidence lands later per lane instructions.",
+      "rollback_note": "Code-only treasury reference_id fix; revert PR #1570 \u2014 no migration to reverse; the credit-gate behavior returns to the prior default-param form.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "b03de813f42cde5710b38275f5c6d1af219ef0c9",
+        "7bda2a08489e42ccab383e39b1f0f54c75e24225"
+      ]
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "evidence_scope_note": "brand-new dedicated Supabase project (arkova-soak-rca20260719) + dedicated Cloud Run service arkova-worker-rca20260719-staging; shared staging ujtlwnoqfhtitcmsnrpq used only for the lease row and deploy log per contract",
+    "staging_api_base": "https://pr-1568---arkova-worker-rca20260719-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://pr-1568---arkova-worker-rca20260719-staging-kvojbeutfa-uc.a.run.app",
+    "cloud_run_service": "arkova-worker-rca20260719-staging",
+    "revision": "arkova-worker-rca20260719-staging-00004-pab",
+    "deploy_tag": "pr-1568",
+    "image_digest": "sha256:443506cb3f2ebafdd18b6d64b67fe8916bde537fcb726a76e6fd615c472055d3",
+    "image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:bd07cc0c87760cb28ef50823909ab731d72c7096",
+    "supabase_project_ref": "mhbtgihvjoazwxuypado",
+    "supabase_region": "us-east-2",
+    "deploy_log_id": "226",
+    "preflight_result": "environment_type=clean_mirror (all checks passed)",
+    "preflight_note": "clean_mirror preflight ran from the train-tip worktree during provisioner admission (attestation sha256:c4a457533b50895a6868fc802b47789fb54a635625976c479aa79d296e1f4f95 matches recomputed file hash) and was independently re-run manually pre-admission with the same result; artifact docs/staging/rca20260719/clean-mirror-preflight-rca20260719.json"
+  },
+  "soak": {
+    "start": "2026-07-19T16:45:06Z",
+    "end": "2026-07-20T05:15:06Z",
+    "duration_hours": 12.5,
+    "harness_version": "scripts/staging/load-harness.ts@bd07cc0c87760cb28ef50823909ab731d72c7096 (train tip; mixed mode, 720 min)",
+    "result": "pass \u2014 healthy across window; durable clock = Cloud Run revision arkova-worker-rca20260719-staging-00004-pab continuous uptime (creationTimestamp 2026-07-19T16:45:06.942284Z, verified unchanged and still latest-ready at close-out 2026-07-20T13:05Z), 749/749 minutely Cloud Scheduler /health probes returned 200 across the window with largest gap 119.9s, close-out /health 200 with git_sha bd07cc0c at 20.3h uptime",
+    "evidence_links": [
+      "~/Arkova/soak-evidence-20260719/rca20260719-runner-continuity.csv \u2014 Cloud Logging export (Google-side clock): Google-Cloud-Scheduler GET /health?detailed=true on the pr-1568 tag URL, 749 requests 2026-07-19T16:50:00Z through 2026-07-20T05:19:06Z, all HTTP 200, zero non-200; largest gap 119.9s (19:47:03Z->19:49:03Z, one skipped minute) and one 90.9s gap (02:59:05Z->03:00:36Z) \u2014 ordinary scheduler jitter, no sustained outage; 714 of the 200s land before the 04:45:06Z uptime floor",
+      "~/Arkova/soak-evidence-20260719/rca20260719-harness.log \u2014 load-harness mixed-mode full-run log: started 2026-07-19T16:49:57.958Z, FINAL SUMMARY at t+43200s (the full 720 min): cron ok=720 fail=0 all 200; events/reads/webhook lanes produced the expected app-layer 401/429/503 mix per harness contract (115,499 total requests). HONEST CAVEAT: the harness JSON evidence file (rca20260719-soak.json) was never written \u2014 the harness path guard rejects evidence paths outside docs/staging, so the final-summary log block is the harness evidence of record; the host also slept overnight, which is why the soak clock and continuity above are taken from Google's side (Cloud Run revision timestamp + Cloud Logging), not from this host",
+      "~/Arkova/soak-evidence-20260719/rca20260719-health-20260720T1305Z.json \u2014 close-out authed GET /health?detailed=true on the tag URL 2026-07-20T~13:05Z: HTTP 200, git_sha bd07cc0c87760cb28ef50823909ab731d72c7096 (train tip), uptime 73194s, database ok, anchoring ok",
+      "docs/staging/rca20260719/isolated-rig-admission-rca20260719.json \u2014 fail-closed admission record (rig rca20260719, profile mock, T2 720/750, sha bd07cc0c, base 7bda2a08, image digest sha256:443506cb..., supabase ref mhbtgihvjoazwxuypado)",
+      "docs/staging/rca20260719/clean-mirror-preflight-rca20260719.json \u2014 clean_mirror preflight artifact (attestation sha256:c4a45753... verified)",
+      "staging_deploy_log id=226 on ujtlwnoqfhtitcmsnrpq: pr 1568, build_sha bd07cc0c, tag pr-1568, forced=false (verified by SELECT at deploy time)",
+      "Changed-path exercises on the serving revision (soak journal step 6f): #1571 monitor 200 + decision log line 16:46:25Z; #1568 webhook retry re-fire with SSRF-block then HTTP 405 + attempt_number=2 row and 'Webhook delivery failed' warn 16:48:24Z; #1570 partial (feature-gate 503, ENABLE_VERIFICATION_API absent from admitted overlay \u2014 ledger write NOT exercised here); #1573 workflow-pin only (no rig runtime surface); #1549 code-loaded via healthy boot; #1569 frontend-only (rides rig soak + green E2E)"
+    ],
+    "expires_at": "2026-07-22T05:15:06Z"
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": [
+    "No migration_plan: this train carries zero supabase/migrations changes (all six PRs are code/workflow/frontend/tooling only), so the checker's migration-plan requirement does not apply to any covered PR.",
+    "#1570 is Draft: included at its frozen soaked head per lane instructions; its anchor-path exercise was partial (feature gate only \u2014 ENABLE_VERIFICATION_API absent from the admitted mock overlay) and the SCRUM-2970 ledger-write evidence lands later; merge remains gated on mark-ready + founder signoff.",
+    "#1569 is frontend-only with no worker observable; its T2 coverage is the rig soak of the train image containing its head plus the existing green E2E.",
+    "Soak window facts verified from Google's side at close-out 2026-07-20T~13:05Z (host slept overnight; the rig did not): revision 00004-pab still latest-ready with creationTimestamp 2026-07-19T16:45:06.942284Z, no newer revision ever created (only 00001-00004, all pre-anchor), tag pr-1568 still routing to 00004-pab, and zero 'gcloud run services update' operations after the clock anchor.",
+    "soak.end is recorded at the 750-min wall floor (2026-07-20T05:15:06Z); scheduler-probe continuity is actually verified through 05:19:06Z and the revision remained the serving revision through close-out at 2026-07-20T13:05Z."
+  ]
+}

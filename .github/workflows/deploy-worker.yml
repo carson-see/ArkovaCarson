@@ -41,6 +41,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Worker acceptance tests verify immutable release ancestry and need
+          # the same complete Git object graph provided by the main CI suite.
+          fetch-depth: 0
+          # Worker tests execute repository code; do not leave the Actions
+          # credential in the checkout's local Git configuration.
+          persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v4
         with:
@@ -59,7 +66,10 @@ jobs:
 
       - name: Typecheck
         working-directory: services/worker
-        run: npx tsc --noEmit
+        # Use the locally-installed compiler (from `npm ci` above), not `npx`,
+        # so no package is fetched/run on-demand at deploy time (SonarCloud
+        # githubactions:S6505 / S8543 — pinned, no unverified on-demand install).
+        run: node_modules/.bin/tsc --noEmit
 
       - name: Lint
         working-directory: services/worker
@@ -93,7 +103,10 @@ jobs:
           set -euo pipefail
           CIRCOM_VERSION=v2.1.9
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL --retry 5 -o "$HOME/.local/bin/circom" \
+          # --proto '=https' --tlsv1.2: refuse any non-HTTPS redirect so the
+          # binary can only come over TLS (SonarCloud githubactions:S6506); the
+          # download is additionally sha256-verified on the next line.
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 5 -o "$HOME/.local/bin/circom" \
             "https://github.com/iden3/circom/releases/download/${CIRCOM_VERSION}/circom-linux-amd64"
           echo "e5575829252d763b7818049df9de2ef9304df834697de77fa63ce7babc23c967  $HOME/.local/bin/circom" | sha256sum -c -
           chmod +x "$HOME/.local/bin/circom"
@@ -260,7 +273,7 @@ jobs:
             --tag canary \
             --no-traffic \
             --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,SUPABASE_JWT_SECRET=supabase-jwt-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest,SENTRY_DSN=sentry-dsn:latest,API_KEY_HMAC_SECRET=api-key-hmac-secret:latest,GEMINI_API_KEY=gemini-api-key:latest,CRON_SECRET=cron-secret:latest,RESEND_API_KEY=resend-api-key:latest,TOGETHER_API_KEY=together-api-key:latest,COURTLISTENER_API_TOKEN=courtlistener-api-token:latest,OPENSTATES_API_KEY=openstates-api-key:latest,BITCOIN_RPC_URL=bitcoin-rpc-url:latest,UPSTASH_REDIS_REST_URL=UPSTASH_REDIS_REST_URL:latest,UPSTASH_REDIS_REST_TOKEN=UPSTASH_REDIS_REST_TOKEN:latest,RUNPOD_API_KEY=runpod-api-key:latest,EDGAR_USER_AGENT=edgar-user-agent:latest,SAM_GOV_API_KEY=sam-gov-api-key:latest,CLOUDFLARE_API_TOKEN=cloudflare-api-token:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,DOCUSIGN_INTEGRATION_KEY=docusign_integration_key:latest,DOCUSIGN_CLIENT_SECRET=docusign_client_secret:latest,DOCUSIGN_CONNECT_HMAC_SECRET=docusign_connect_hmac_secret:latest,INTEGRATION_STATE_HMAC_SECRET=INTEGRATION_STATE_HMAC_SECRET:latest" \
-            --set-env-vars "^||^NODE_ENV=production||LOG_LEVEL=info||BITCOIN_NETWORK=mainnet||ENABLE_PROD_NETWORK_ANCHORING=true||USE_MOCKS=false||FRONTEND_URL=https://app.arkova.ai||CORS_ALLOWED_ORIGINS=https://app.arkova.ai,https://arkova-carson.vercel.app,https://arkova-26.vercel.app||AI_PROVIDER=gemini||GEMINI_MODEL=gemini-2.5-flash||ENABLE_AI_EXTRACTION=true||ENABLE_SEMANTIC_SEARCH=true||ENABLE_AI_FRAUD=true||ENABLE_AI_REPORTS=true||CRON_OIDC_AUDIENCE=https://arkova-worker-270018525501.us-central1.run.app||KMS_PROVIDER=gcp||GCP_KMS_KEY_RESOURCE_NAME=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/bitcoin-mainnet/cryptoKeyVersions/1||GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens||ENABLE_VERIFICATION_API=true||BATCH_ANCHOR_MAX_SIZE=10000||X402_FACILITATOR_URL=https://edge.arkova.ai/x402/verify||X402_NETWORK=eip155:84532||BITCOIN_UTXO_PROVIDER=getblock||BITCOIN_FEE_STRATEGY=mempool||ENABLE_DOCUSIGN_OAUTH=true||ENABLE_DOCUSIGN_WEBHOOK=true||DOCUSIGN_DEMO=true||WORKER_PUBLIC_URL=https://arkova-worker-270018525501.us-central1.run.app||TOGETHER_MODEL=carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-e3cda031" \
+            --set-env-vars "^||^NODE_ENV=production||LOG_LEVEL=info||BITCOIN_NETWORK=mainnet||ENABLE_PROD_NETWORK_ANCHORING=true||USE_MOCKS=false||FRONTEND_URL=https://app.arkova.ai||CORS_ALLOWED_ORIGINS=https://app.arkova.ai,https://arkova-carson.vercel.app,https://arkova-26.vercel.app||AI_PROVIDER=gemini||GEMINI_MODEL=gemini-2.5-flash||GEMINI_LITE_MODEL=gemini-2.5-flash||ENABLE_AI_EXTRACTION=true||ENABLE_SEMANTIC_SEARCH=true||ENABLE_AI_FRAUD=true||ENABLE_AI_REPORTS=true||CRON_OIDC_AUDIENCE=https://arkova-worker-270018525501.us-central1.run.app||KMS_PROVIDER=gcp||GCP_KMS_KEY_RESOURCE_NAME=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/bitcoin-mainnet/cryptoKeyVersions/1||GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens||ENABLE_VERIFICATION_API=true||BATCH_ANCHOR_MAX_SIZE=10000||X402_FACILITATOR_URL=https://edge.arkova.ai/x402/verify||X402_NETWORK=eip155:84532||BITCOIN_UTXO_PROVIDER=getblock||BITCOIN_FEE_STRATEGY=mempool||ENABLE_DOCUSIGN_OAUTH=true||ENABLE_DOCUSIGN_WEBHOOK=true||DOCUSIGN_DEMO=true||WORKER_PUBLIC_URL=https://arkova-worker-270018525501.us-central1.run.app||TOGETHER_MODEL=carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-e3cda031" \
             --quiet
 
       - name: Smoke test canary revision

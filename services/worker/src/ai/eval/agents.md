@@ -1,6 +1,145 @@
 # agents.md — services/worker/src/ai/eval/
 
-_Last updated: 2026-07-14_
+_Last updated: 2026-07-15_
+
+## 2026-07-15 S3.3 Wave-2 top-15 coverage gate
+
+- `s33-wave2-coverage-audit.ts` is an offline Lane-4 registry/coverage gate;
+  it is not imported by the worker runtime and does not call a model. It parses
+  the CTO-signed 45-type Legal/Financial/Education registry, checks every
+  credential/subtype pair against `V6_SUBTYPE_TAXONOMY`, pins the merged Wave-1
+  revision-12 baseline without claiming unprovided top-15 coverage, and emits a
+  canonical deterministic report digest.
+- Coverage counts only whole-batch Lane-3 acceptance envelopes verified by the
+  shared Ed25519 CTO-release trust root. The audit recomputes the raw and
+  canonical coverage-registry digests, verifies the signed entry order, rejects
+  duplicate artifacts/batches/entry fingerprints, and requires one unbroken
+  base-to-result registry chain with no fork, cycle, or disconnected component.
+  A missing production trust root fails closed for nonempty acceptance input;
+  the pre-corpus empty baseline remains reproducible. Generator-derived,
+  training-exposed, shallow, duplicate, unknown-type, or taxonomy-mismatched
+  entries fail closed; a producer-supplied `lane3` label grants no authority and
+  Lane 4 cannot accept its own records. A type is complete only at
+  12 accepted rows with at least `ceil(12 * 0.30) = 4` edge cases; both total
+  and edge-case deficits contribute to the fail-closed missing count.
+- `docs/lane4/evidence/s33-wave2-coverage-baseline.json` is the reproducible
+  pre-corpus zero-state: 45 incomplete types and 540 minimum missing entries.
+  Later corpus batches must preserve the fixed domain-interleaved production
+  order and replace this zero-state only with exact Lane-3-accepted artifacts.
+## 2026-07-15 S3.3 Wave-3 deterministic offline gates
+
+- `s33-wave3-deterministic-eval-gates.ts` is the inert SCRUM-2681/2686/2687
+  scorer. It is not reachable from production runtime, reads no
+  files/env/endpoints, and cannot run a model, accept a corpus, activate a
+  signer, or claim soak/live evidence. Do not export it from the runtime eval
+  barrel.
+- Evaluation requires the exact #1554 16-gate registry bytes, the exact #1549
+  founder 3x15 mapping projection, a digest-valid accepted-corpus registry,
+  the current frozen 24 types plus 22 explicit subtype branches/105 values,
+  and exact ordered public/v6/v7.1 arm manifests. The deterministic bootstrap
+  seed is derived only from those corpus/arm bindings; Legal, Financial, and
+  Education remain separate and use B=2,000.
+- Raw observations, corpus-integrity findings, surgery evidence, AU/KE
+  manifests, trusted literal gold sources, and authenticated batch acceptances
+  each carry a caller-supplied canonical SHA-256. The evaluator recomputes all
+  six after schema validation and fails closed on stale input; the report binds
+  those digests so metric-equivalent raw packets cannot share provenance.
+  Missing/non-finite/unpaired/digest-mismatched evidence throws. Measured
+  threshold/leakage misses instead return an honest `NO-GO`.
+- Wave-1 truth is parsed only from the exact frozen source blobs. Every later
+  source batch requires a whole-batch Ed25519 acceptance whose registry chain
+  starts at the frozen Wave-1 digest and ends at the supplied corpus digest;
+  signed entry facts cross-bind source blobs, raw gold digests, subtype,
+  founder mapping, the trusted source's `edgeCase` boolean, and
+  post-production-validation depth. Every post-Wave-1 row must bind exactly one
+  founder registry id; non-founder substitution fails before scoring.
+- Production evaluation requires the committed CTO acceptance trust root.
+  Its Ed25519 SPKI and DER fingerprint are validated even when no acceptance is
+  supplied. Test-only trust-root injection is fingerprint-bound in the report,
+  marks the evidence `fixture-only`, fails the release-authority guard, and can
+  never produce a release `GO`.
+- Release `GO` also requires the exact corpus freeze: immutable Wave-1 n=81,
+  ordered TOP15-01-05/06-10/11-15 batches at n=180 each, every frozen founder
+  registry id at n=12 with at least four signed edge cases, exactly three
+  authenticated acceptances, and the final signed registry digest equal to the
+  supplied corpus digest. The report emits all counts and component guards.
+- Public/v6/v7.1 arms contain only raw predictions. The scorer derives expected
+  fields from the authenticated literal ground truth, runs that truth through
+  the production field validator, and recomputes all field comparisons. Empty
+  strings/arrays/objects are absent; a caller cannot assert perfect booleans,
+  replace expected fields, inject another arm, or score production-invalid
+  gold. G02 likewise scores an exported subtype as concrete only when its
+  credentialType/subType pair exists in the frozen taxonomy.
+- Standard F1 retains explicit `missing-both` accounting for compatibility,
+  while coverage-adjusted F1 excludes that credit and independently guards the
+  public-baseline regression floor. The report also emits per-domain confusion,
+  top-20 confused pairs, abstention/`suggestedType`, coverage-accuracy,
+  calibration, deterministic positive/negative bootstrap controls, exact
+  24-type/founder three-way dispositions, and separate exact 11-row AU/KE
+  directional/no-marketing reports.
+
+## 2026-07-15 S3.3 Wave-3 detached release signing v2
+
+- `s33-wave3-detached-signing-v2.ts` is additive offline tooling. It emits a
+  canonical `arkova:s33:detached-acceptance:v2` unsigned request, accepts only a
+  64-byte detached Ed25519 signature for assembly, and verifies the strict
+  request/envelope digests plus all caller-recomputed batch bindings.
+- The production key ring is deliberately `UNCONFIGURED`: it has no active key,
+  and the initial policy's public SPKI, DER SHA-256
+  fingerprint, authorized operator, CTO out-of-band fingerprint confirmation,
+  and activation time are all `null`. There
+  is no placeholder root, private-key API, signer, or environment override, so
+  production assembly and verification fail closed until a reviewed CTO input
+  commit activates the policy.
+- The versioned trust-policy set permits at most one active key and retains old
+  public roots. A normal A-to-B rotation is atomic: A becomes `RETIRED` at the
+  exact instant B becomes `ACTIVE`, with no overlap; unsigned in-flight A
+  requests must be regenerated with B's id/time and signed anew. Normal
+  assemble/verify resolves only the active key, so retired/revoked keys cannot
+  authorize new acceptance. Historical verification is a separate audit-only
+  path whose result always has `acceptanceAuthority: false`: unmerged evidence
+  is rejected, cutover-crossing merged evidence is put on CTO HOLD, and every
+  merged envelope under a revoked key is put on a reasoned CTO HOLD. Activation
+  still requires canonical CTO out-of-band confirmation. Ephemeral-key tests
+  use a separately named harness guarded by `NODE_ENV=test`; production
+  assemble/verify/audit entry points accept no caller-supplied policy.
+- `s33-wave2-acceptance-envelope.ts` now exports its already-strict unsigned
+  payload builder/parser for reuse. This does not activate the v1 or v2 signer
+  and does not connect v2 to whole-batch acceptance; corpus acceptance remains
+  impossible while the committed policies are unconfigured.
+
+## 2026-07-15 S3.3 Wave-2 trusted-main corpus acceptance
+
+- `s33-wave2-corpus-registry.ts` consumes Wave 1 only from the immutable merged
+  PR #1544 tuple (`42530fd7` merge, `618e08d5` producer) and re-verifies its
+  ancestry, trees, six packet blobs, raw digests, exact 81-row manifest, and
+  entry-datasheet bijection at the declared trusted-main head. Registry content
+  identity excludes the moving verification head/tree; exact-base freshness is
+  a separate mandatory gate.
+- `s33-wave2-batch-acceptance.ts` admits exactly one four-file Lane-4 tranche,
+  parses the candidate array with the literal-only parser, and never imports or
+  executes candidate source or tests. Manifest/source/datasheet bijection,
+  provenance, no-production-user-document declaration, PII/secret scans,
+  post-validation depth, duplicate ids/fingerprints, nonempty trusted corpus
+  roots, and normalized exact n=6..13 zero-overlap all fail closed.
+- `s33-wave2-acceptance-envelope.ts` is the shared Lane-3/Lane-4 contract. A
+  dedicated `arkova-s33-wave2-cto-release` Ed25519 signature authenticates the
+  whole batch, exact candidate/base/tree, manifest/source/datasheet, preflight,
+  base/result registry, top-15 policy bytes, order/set, per-entry facts, and
+  machine/human/model/leakage proof digests. The production SPKI/fingerprint is
+  deliberately null and fail-closed; generated-key injection is test-only.
+- Acceptance derives all per-entry facts from trusted-main parsing: top-15 type
+  mapping, normalized input and ground-truth digests, post-production depth,
+  exact `real-source|independently-authored` provenance, generator/training
+  exclusions, edge flag, and source blob. Partial lists, stale heads, unknown
+  fields, non-addition diffs, special modes, or paths outside the declared
+  manifest/datasheet/source/non-executed-test quartet are rejected. GitHub
+  comment/review identity is durable transport only and never grants authority.
+- Wave-1 behavior stays fixed: `parseS33ProducerModule()` retains its 81-row
+  ceiling; Wave 2 uses the new explicit-limit wrapper. The exported exact
+  lexical scanner reuses the existing Wave-1 n-gram implementation without
+  changing signed/historical Wave-1 callers. Additional leakage self-exclusions
+  are exact paths derived only from already accepted registry batches.
 
 ## 2026-07-14 CTO correction topology — revision-12 provenance
 

@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { isSafeUrl } from '@/lib/urlValidator';
+import { isFraudMetadataKey } from '@/lib/fraudDetection';
 
 export interface Record {
   id: string;
@@ -337,8 +338,9 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
   const pipelineSource = meta?.pipeline_source as string | undefined;
 
   // Filter metadata for display
+  // BUG-2026-07-17-010 (SCRUM-2910, P0): fraud_* keys must never render.
   const displayMeta = meta
-    ? Object.entries(meta).filter(([k]) => !HIDDEN_META_KEYS.has(k) && !k.startsWith('_'))
+    ? Object.entries(meta).filter(([k]) => !HIDDEN_META_KEYS.has(k) && !k.startsWith('_') && !isFraudMetadataKey(k))
     : [];
 
   return (

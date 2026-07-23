@@ -4,17 +4,36 @@
  * useBulkAnchors Hook Tests
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Hoist mock functions
 const mockRpc = vi.hoisted(() => vi.fn());
 const mockRefreshEntitlements = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockCanCreateCount = vi.hoisted(() => vi.fn().mockReturnValue(true));
 const mockRemaining = vi.hoisted(() => ({ current: 100 as number | null }));
+const mockGetSession = vi.hoisted(() => vi.fn());
+const mockToastSuccess = vi.hoisted(() => vi.fn());
+const mockToastWarning = vi.hoisted(() => vi.fn());
+const mockToastError = vi.hoisted(() => vi.fn());
 
+vi.mock('sonner', () => ({
+  toast: {
+    success: mockToastSuccess,
+    warning: mockToastWarning,
+    error: mockToastError,
+  },
+}));
+
+// Every test in this file passes `{ orgId }` explicitly (see recordsWithEmail
+// tests below), so the hook never falls into the `supabase.from('profiles')`
+// org-id-lookup branch — no `.from()` mock (or RLS-scoping assertion) is
+// needed here. That branch is unchanged by this fix and out of scope.
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     rpc: mockRpc,
+    auth: {
+      getSession: mockGetSession,
+    },
   },
 }));
 
@@ -294,5 +313,93 @@ describe('useBulkAnchors', () => {
     });
 
     expect(mockRefreshEntitlements).toHaveBeenCalled();
+  });
+
+  describe('recipient creation failures (SCRUM-2598)', () => {
+    const recordsWithEmail = [
+      { fingerprint: 'a'.repeat(64), filename: 'test1.pdf', email: 'a@example.com' },
+      { fingerprint: 'b'.repeat(64), filename: 'test2.pdf', email: 'b@example.com' },
+    ];
+
+    beforeEach(() => {
+      mockRpc.mockResolvedValue({
+        data: { total: 2, created: 2, skipped: 0, failed: 0, results: [] },
+        error: null,
+      });
+      mockGetSession.mockResolvedValue({
+        data: {
+          session: { access_token: 'test-token', user: { id: 'user-1' } },
+        },
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('surfaces a real per-recipient failure count instead of a false "complete" toast', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(null, { status: 201 }))
+        .mockResolvedValueOnce(new Response(null, { status: 500 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
+
+      let finalResult: Awaited<ReturnType<typeof result.current.createBulkAnchors>> = null;
+      await act(async () => {
+        finalResult = await result.current.createBulkAnchors(recordsWithEmail);
+      });
+
+      // The anchor batch itself fully succeeded...
+      expect(finalResult).not.toBeNull();
+      expect(finalResult!.created).toBe(2);
+      expect(finalResult!.failed).toBe(0);
+
+      // ...but one of the two recipient POSTs failed (HTTP 500), and that must
+      // be surfaced — not swallowed into a blanket success toast.
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(mockToastWarning).toHaveBeenCalledTimes(1);
+      const [warningMessage] = mockToastWarning.mock.calls[0];
+      expect(warningMessage).toContain('2');
+      expect(warningMessage).toContain('1');
+      expect(warningMessage.toLowerCase()).toContain('recipient');
+    });
+
+    it('shows a blanket success toast only when every recipient POST actually succeeds', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(null, { status: 201 }))
+        .mockResolvedValueOnce(new Response(null, { status: 201 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
+
+      await act(async () => {
+        await result.current.createBulkAnchors(recordsWithEmail);
+      });
+
+      expect(mockToastWarning).not.toHaveBeenCalled();
+      expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts a network-level rejection (not just non-2xx) as a recipient failure', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(null, { status: 201 }))
+        .mockRejectedValueOnce(new Error('network down'));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { result } = renderHook(() => useBulkAnchors({ orgId: 'org-1' }));
+
+      await act(async () => {
+        await result.current.createBulkAnchors(recordsWithEmail);
+      });
+
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(mockToastWarning).toHaveBeenCalledTimes(1);
+      const [warningMessage] = mockToastWarning.mock.calls[0];
+      expect(warningMessage).toContain('1');
+    });
   });
 });

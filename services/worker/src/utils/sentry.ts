@@ -342,6 +342,47 @@ export function captureStuckAnchorAlert(
 }
 
 // ---------------------------------------------------------------------------
+// Pipeline-throughput-monitor fingerprinting (SCRUM-2901 / PI-0.5)
+// ---------------------------------------------------------------------------
+//
+// The pipeline-throughput monitor (jobs/pipelineThroughputMonitor.ts) is the
+// dead-man switch on record→anchor conversion: /health says anchoring:"ok"
+// while the unlinked public-records backlog grows, so this monitor pages when
+// feeders produce records and NOTHING secures in the window. Like the
+// stuck-anchor monitor above, a persistent stall re-fires on every scheduled
+// run — a fixed fingerprint collapses all re-fires into ONE Sentry issue that
+// keeps incrementing its event count instead of flooding the inbox.
+export const PIPELINE_THROUGHPUT_FINGERPRINT = ['pipeline-throughput-monitor'] as const;
+
+/**
+ * Capture a pipeline-throughput-monitor alert with a stable fingerprint so
+ * scheduled re-fires collapse into a single Sentry issue.
+ *
+ * PII (§1.4): callers MUST pass aggregate metrics only — window counts and
+ * backlog totals, never emails, document fingerprints, API keys, or per-row
+ * ids. The beforeSend scrubber still runs, but the context is aggregate-only
+ * by construction.
+ *
+ * Always error-level: both fire conditions (total securing death, linker
+ * stall) are page-worthy — there is no warning-tier caller, so no severity
+ * parameter (review nit, 2026-07-17).
+ *
+ * @param message - Human-readable summary (e.g. "812 new unlinked records,
+ *                  0 anchors secured in 24h").
+ * @param extra   - Optional aggregate-only structured context (counts).
+ */
+export function capturePipelineThroughputAlert(
+  message: string,
+  extra?: Record<string, unknown>,
+): void {
+  Sentry.captureMessage(message, {
+    level: 'error',
+    fingerprint: [...PIPELINE_THROUGHPUT_FINGERPRINT],
+    ...(extra ? { extra } : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Credit-conservation reconciler fingerprinting (S1-9 / SCRUM-2349 / PM-25)
 // ---------------------------------------------------------------------------
 //
