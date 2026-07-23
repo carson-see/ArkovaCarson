@@ -20,10 +20,24 @@ Provision these as Cloud Run secrets, then redeploy the worker through the human
 DOCUSIGN_INTEGRATION_KEY=
 DOCUSIGN_CLIENT_SECRET=
 DOCUSIGN_CONNECT_HMAC_SECRET=
-DOCUSIGN_DEMO=true
+DOCUSIGN_DEMO=false   # prod: production account.docusign.com auth base (Go-Live approved 2026-07-23). Use "true" only for sandbox/dev.
 ENABLE_DOCUSIGN_OAUTH=true
 ENABLE_DOCUSIGN_WEBHOOK=true
 ```
+
+`DOCUSIGN_DEMO` selects the **OAuth account server only** (`account-d.docusign.com` vs
+`account.docusign.com`) — see `getAuthBase()` in
+`services/worker/src/integrations/oauth/docusign.ts`. The **eSignature REST base** is NOT derived
+from this flag: it is the per-connection `base_uri` captured from `/oauth/userinfo` at connect time
+and persisted in `org_integrations.base_uri` (migration `0306`) / `member_integrations.base_uri`
+(migration `0320`).
+
+**Consequence when flipping `DOCUSIGN_DEMO` true -> false:** connections established while the flag
+was `true` keep a sandbox `base_uri` (`https://demo.docusign.net`) and hold a refresh token minted by
+`account-d`. After the flip, their token refresh is sent to `account.docusign.com` and will fail, and
+any REST call still targets the demo host. Those orgs must **re-run the OAuth connect flow** so a
+production `base_uri` (e.g. `https://naN.docusign.net`) and a production refresh token are persisted.
+Flipping the env var alone does not migrate an existing connection.
 
 Do not paste refresh tokens into logs, tickets, or Confluence. Refresh tokens are encrypted through `GCP_KMS_INTEGRATION_TOKEN_KEY` before persistence in `org_integrations.encrypted_tokens`.
 
