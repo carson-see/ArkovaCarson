@@ -566,9 +566,15 @@ export function OrgProfilePage() {
               </div>
             )}
           </div>
+          {/* SCRUM-3010 STEP 1 (frontend gate): the org-wide registry + its CSV
+              export are admin-only. A non-admin member is scoped to their OWN
+              rows (by user_id) so a coworker's records never leak. RLS tightening
+              is deferred to STEP 2 (T3), post-soak. */}
           <OrgRegistryTable
             key={refreshKey}
             orgId={orgId}
+            isAdmin={isAdmin}
+            currentUserId={user?.id}
             onViewAnchor={handleViewAnchor}
             onRevokeAnchor={isAdmin ? handleRevokeAnchor : undefined}
           />

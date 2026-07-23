@@ -21,6 +21,10 @@ ignored, and the input itself carries the same maximum length.
 
 `DashboardPage.tsx` + `OrgProfilePage.tsx` — split "Secure Document" (universal) from "Issue Credential" (verified-org admin only). Dashboard empty-state CTA always opens `SecureDocumentDialog` (pre-1755 it opened `IssueCredentialForm` for ORG_ADMIN under a "Secure Document" label — the bug). Issue Credential header button is gated on `useCanIssueCredential()` AND `ENABLE_ISSUE_CREDENTIAL_SPLIT`. `OrgProfilePage` swaps the dual Bulk Upload + Issue Credential buttons for a single primary "Secure Document" button (auto-detects bulk inside the dialog) plus a gated outline "Issue Credential" button. The legacy bulk-only dialog wrapper was removed; `SecureDocumentDialog` handles every input shape.
 
+## SCRUM-3010 STEP 1 — Org registry cross-member privacy gate (frontend)
+
+`OrgProfilePage.tsx` — the Home-tab org records table (`OrgRegistryTable`) previously rendered UNCONDITIONALLY, so any org member (not just owner/admin/platform admin) could VIEW and CSV-EXPORT the entire org's records (every coworker's filenames, fingerprints, credential_type, label, metadata) — a live cross-member privacy leak (§1.6 flavor). Fix (STEP 1, frontend-only, T1): pass `isAdmin={isAdmin}` and `currentUserId={user?.id}` into `OrgRegistryTable`. Admins keep the org-wide registry; a non-admin member is scoped to their OWN rows only (by `user_id`, mirroring `useAnchors`), and the CSV export is gated the same way. Non-admin members still see their personal records on `/dashboard` (already correct). The org-wide `recordsCount` stat is an aggregate integer (no per-record metadata) and is intentionally left visible. STEP 2 (RLS tightening so this is enforced server-side, not just in the browser query) is a separate T3 story, deferred post-soak.
+
 ## What This Folder Contains
 
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.
