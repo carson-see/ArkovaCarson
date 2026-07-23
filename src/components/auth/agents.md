@@ -26,3 +26,6 @@ Authentication and identity components: login, signup, route guards, identity ve
 ## Do / Don't Rules
 - DO: Use `useAuth()` hook for all auth state — never call Supabase auth directly in components
 - DO NOT: Expose `supabase.auth.admin` or service role key to browser
+
+## 2026-07-22 PlatformAdminRoute (SCRUM-2939 / PI05-ADMIN)
+`PlatformAdminRoute.tsx` gates platform-only admin routes (treasury, pipeline, controls, payments, ops-slo, system-health, platform-overview, admin user/record/subscription/org lists) to platform admins in `App.tsx`. Authority is the `profiles.is_platform_admin` DB flag via `useProfile` + `isPlatformAdmin(profile)` (@/lib/platform) — the SAME source the worker (`utils/platformAdmin.ts`) and RLS enforce. The legacy client-side email whitelist (`PLATFORM_ADMIN_EMAILS`) was DELETED. This guard is client UX / defence-in-depth ONLY; every platform endpoint/RPC re-verifies the flag server-side, so a client hide never stands alone. Use INSIDE `<AuthGuard>`. ORG_ADMIN/INDIVIDUAL are redirected to `/dashboard`.

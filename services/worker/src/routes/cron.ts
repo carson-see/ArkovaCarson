@@ -1582,132 +1582,80 @@ cronRouter.post('/regulatory-change-scan', async (_req, res) => {
 // `refresh_stats_materialized_views`, which refreshed two materialized
 // views nothing reads (`mv_anchor_status_counts`,
 // `mv_public_records_source_counts`). The actual dashboard reads from
-// the `pipeline_dashboard_cache` table populated by
-// `refresh_pipeline_dashboard_cache()` — which NOTHING was calling.
-// Result: every cache row in the dashboard had an `updated_at` of
-// 2026-04-26 (last manual run) and `pipeline_stats.embedded_records`
-// stayed at the -1 sentinel from a stale 1s-budget timeout.
+// the `pipeline_dashboard_cache` table populated by the
+// `refresh_cache_*` sub-refreshers — which nothing was calling.
 //
-// Now we drive the dashboard cache (the user-visible one) AND keep
-// the legacy materialized views fresh so anything still pointing at
-// them keeps working. Each call is wrapped so a failure in one
-// pathway doesn't kill the other.
-const PipelineDashboardCacheRefreshResultSchema = z.object({
-  status: z.enum(['refreshed', 'skipped']),
-  reason: z.string().optional(),
-  succeeded: z.number().int().nonnegative().optional(),
-  errors: z.array(z.unknown()).optional(),
-  duration_ms: z.number().int().nonnegative().optional(),
-});
-
-type PipelineDashboardCacheRefreshResult = z.infer<typeof PipelineDashboardCacheRefreshResultSchema>;
-
-function formatDashboardCacheError(error: unknown): string {
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object') {
-    const maybeMessage = (error as { message?: unknown }).message;
-    if (typeof maybeMessage === 'string') return maybeMessage;
-    try {
-      return JSON.stringify(error) ?? String(error);
-    } catch {
-      return String(error);
-    }
-  }
-  return String(error);
-}
-
-function hasRefreshError(
-  errors: Array<{ source: string; message: string }>,
-  source: string,
-): boolean {
-  return errors.some((error) => error.source === source || error.source.startsWith(`${source}.`));
-}
+// 2026-07-20 rework (refresh-stats 500s since the 07-17 drain resume):
+// driving the six sub-refreshers through the monolithic
+// `refresh_pipeline_dashboard_cache()` wrapper put them all inside ONE
+// top-level statement. `SET statement_timeout` inside an already-running
+// statement arms against the OUTER statement's start (see migration 0335),
+// so under drain load the wrapper ran effectively unbudgeted, outran the
+// Supabase API gateway (~120s → "upstream request timeout"), and the
+// legacy `refresh_stats_materialized_views()` leg died at the 60s session
+// statement_timeout — both legs failed → 500 on ~30% of cron firings.
+//
+// Now each sub-refresher runs as its OWN top-level RPC call, where its
+// function-level `SET statement_timeout` genuinely bounds it (verified
+// live 2026-07-20: 0.2–20.4s each, worst-case sum ≈ 61s — well under the
+// gateway cut). A slow or failed key degrades that key only; 500 (which
+// makes Cloud Scheduler retry) is reserved for ALL six failing. The legacy
+// mat-view call is gone: its two matviews have zero readers, and a
+// follow-up migration can drop them plus `refresh_stats_materialized_views`
+// and the now-unused `refresh_pipeline_dashboard_cache` wrapper.
+//
+// Concurrency: the old wrapper held pg_try_advisory_lock. Each
+// sub-refresher is an idempotent single-row upsert, so overlapping runs
+// are harmless (last write wins); with a 5-min cron and ≤~60s worst-case
+// runtime, overlap is rare.
+const DASHBOARD_CACHE_REFRESHERS = [
+  { key: 'pipeline_stats', rpc: 'refresh_cache_pipeline_stats' },
+  { key: 'anchor_status_counts', rpc: 'refresh_cache_anchor_status_counts' },
+  { key: 'by_source', rpc: 'refresh_cache_by_source' },
+  { key: 'anchor_type_counts', rpc: 'refresh_cache_anchor_type_counts' },
+  { key: 'record_types', rpc: 'refresh_cache_record_types' },
+  { key: 'anchor_tx_stats', rpc: 'refresh_cache_anchor_tx_stats' },
+] as const;
 
 cronRouter.post('/refresh-stats', async (_req, res) => {
+  const startedAt = Date.now();
+  const refreshed: string[] = [];
   const errors: Array<{ source: string; message: string }> = [];
-  let pipelineDashboardResult: PipelineDashboardCacheRefreshResult | null = null;
 
-  try {
-    const result = await callRpc<PipelineDashboardCacheRefreshResult>(db, 'refresh_pipeline_dashboard_cache');
-    if (result.error) throw new Error(result.error.message);
-    const parsed = PipelineDashboardCacheRefreshResultSchema.safeParse(result.data);
-    if (!parsed.success) {
-      throw new Error(`Invalid refresh_pipeline_dashboard_cache payload: ${parsed.error.message}`);
-    }
-    const partialErrors = parsed.data.errors ?? [];
-    if (partialErrors.length > 0) {
-      partialErrors.forEach((detail, index) => {
-        errors.push({
-          source: `pipeline_dashboard_cache.${index}`,
-          message: formatDashboardCacheError(detail),
-        });
+  for (const { key, rpc } of DASHBOARD_CACHE_REFRESHERS) {
+    try {
+      const result = await callRpc(db, rpc);
+      if (result.error) throw new Error(result.error.message);
+      refreshed.push(key);
+    } catch (error) {
+      logger.error({ error, rpc }, `Dashboard cache refresher ${key} failed`);
+      errors.push({
+        source: key,
+        message: error instanceof Error ? error.message : String(error),
       });
     }
-    pipelineDashboardResult = parsed.data;
-  } catch (error) {
-    logger.error({ error }, 'refresh_pipeline_dashboard_cache failed');
-    errors.push({
-      source: 'pipeline_dashboard_cache',
-      message: error instanceof Error ? error.message : String(error),
-    });
   }
 
-  try {
-    const result = await callRpc(db, 'refresh_stats_materialized_views');
-    if (result.error) throw new Error(result.error.message);
-  } catch (error) {
-    logger.warn({ error }, 'refresh_stats_materialized_views failed (non-fatal)');
-    errors.push({
-      source: 'stats_materialized_views',
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
+  const duration_ms = Date.now() - startedAt;
 
-  if (errors.length === 2) {
-    // Both failed — surface 500 so Cloud Scheduler retries.
+  if (refreshed.length === 0) {
+    // Nothing refreshed at all — surface 500 so Cloud Scheduler retries.
     res.status(500).json({
       status: 'failed',
       reason: 'all refresh paths failed',
-      refreshed: [],
-      succeeded: pipelineDashboardResult?.succeeded,
-      duration_ms: pipelineDashboardResult?.duration_ms,
-      errors,
-    });
-    return;
-  }
-
-  const refreshed = ['pipeline_dashboard_cache', 'stats_materialized_views'].filter(
-    (s) => !hasRefreshError(errors, s),
-  );
-
-  if (pipelineDashboardResult?.status === 'skipped') {
-    res.json({
-      status: 'skipped',
-      reason: pipelineDashboardResult.reason,
-      duration_ms: pipelineDashboardResult.duration_ms,
-      refreshed: refreshed.filter((s) => s !== 'pipeline_dashboard_cache'),
-      errors,
-    });
-    return;
-  }
-
-  if (hasRefreshError(errors, 'pipeline_dashboard_cache')) {
-    res.status(500).json({
-      status: 'failed',
-      reason: 'pipeline_dashboard_cache failed',
-      refreshed: refreshed.filter((s) => s !== 'pipeline_dashboard_cache'),
-      succeeded: pipelineDashboardResult?.succeeded,
-      duration_ms: pipelineDashboardResult?.duration_ms,
+      refreshed,
+      succeeded: 0,
+      duration_ms,
       errors,
     });
     return;
   }
 
   res.json({
-    status: 'refreshed',
+    status: errors.length > 0 ? 'partial' : 'refreshed',
     refreshed,
-    succeeded: pipelineDashboardResult?.succeeded,
-    duration_ms: pipelineDashboardResult?.duration_ms,
+    succeeded: refreshed.length,
+    duration_ms,
     errors,
   });
 });

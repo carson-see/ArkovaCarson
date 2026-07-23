@@ -70,6 +70,16 @@ type AnchorStatus = Database['public']['Enums']['anchor_status'];
 
 interface OrgRegistryTableProps {
   orgId: string;
+  /**
+   * SCRUM-3010 STEP 1 (frontend gate): whether the current viewer is an org
+   * admin (owner/admin) or platform admin. Admins see the org-wide registry;
+   * a non-admin member is scoped to their OWN rows only (by `user_id`), so a
+   * coworker's filenames/fingerprints/metadata never leak. The matching RLS
+   * tightening is deferred to STEP 2 (T3), post-soak.
+   */
+  isAdmin: boolean;
+  /** The current viewer's user id — required to scope a non-admin member's rows. */
+  currentUserId?: string | null;
   onViewAnchor?: (anchor: Anchor) => void;
   onRevokeAnchor?: (anchor: Anchor) => void;
   onDownloadProof?: (anchor: Anchor) => void;
@@ -214,6 +224,8 @@ function RegistryStateMessage({
 
 export function OrgRegistryTable({
   orgId,
+  isAdmin,
+  currentUserId,
   onViewAnchor,
   onRevokeAnchor,
   onDownloadProof,
@@ -233,18 +245,37 @@ export function OrgRegistryTable({
   const { exportAnchors, loading: exporting } = useExportAnchors();
 
   const handleExport = useCallback(async () => {
-    await exportAnchors(orgId);
-  }, [exportAnchors, orgId]);
+    // SCRUM-3010 STEP 1: gate the CSV export identically to the table — admins
+    // export org-wide, a non-admin member exports only their own rows.
+    await exportAnchors(orgId, { isAdmin, userId: currentUserId });
+  }, [exportAnchors, orgId, isAdmin, currentUserId]);
 
   const fetchAnchors = useCallback(async () => {
     setLoading(true);
 
+    // SCRUM-3010 STEP 1 (frontend gate): a non-admin member must never see the
+    // org-wide registry. Fail closed if we can't identify the caller — show an
+    // empty table rather than falling through to an org-wide fetch.
+    if (!isAdmin && !currentUserId) {
+      setFetchError('none');
+      setAnchors([]);
+      setTotalCount(0);
+      setLoading(false);
+      return;
+    }
+
     // SCRUM-493: Use 'exact' count since 'estimated' can return 0 for filtered queries on large tables.
     // Push pipeline_source filter to DB level to avoid fetching 1.4M+ pipeline records client-side.
-    let query = supabase
+    // SCRUM-3010: admin → org-wide (`org_id`); non-admin member → own rows only (`user_id`).
+    const base = supabase
       .from('anchors')
-      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height, metadata', { count: 'exact' })
-      .eq('org_id', orgId)
+      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height, metadata', { count: 'exact' });
+
+    const scoped = isAdmin
+      ? base.eq('org_id', orgId)
+      : base.eq('user_id', currentUserId as string);
+
+    let query = scoped
       .is('deleted_at', null)
       .filter('metadata->>pipeline_source', 'is', 'null')
       .order('created_at', { ascending: false })
@@ -304,7 +335,7 @@ export function OrgRegistryTable({
     } finally {
       setLoading(false);
     }
-  }, [orgId, currentPage, statusFilter, searchQuery, dateFrom, dateTo]);
+  }, [orgId, isAdmin, currentUserId, currentPage, statusFilter, searchQuery, dateFrom, dateTo]);
 
   useEffect(() => {
     async function run() { await fetchAnchors(); }

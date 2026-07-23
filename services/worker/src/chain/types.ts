@@ -8,6 +8,13 @@ export interface SubmitFingerprintRequest {
   fingerprint: string;
   timestamp: string;
   metadata?: Record<string, string>;
+  /**
+   * SCRUM-2692: optional durable-write barrier invoked after signing and
+   * before any bytes reach the network. A rejection aborts submission with
+   * zero broadcast attempts. Batch anchoring normally calls the explicit
+   * prepare/broadcast halves, while composed callers use this hook.
+   */
+  preBroadcastHook?: (prepared: Readonly<PreparedChainTx>) => Promise<void>;
 }
 
 export interface ChainReceipt {
