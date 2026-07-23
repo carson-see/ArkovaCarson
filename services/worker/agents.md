@@ -2,6 +2,10 @@
 
 _Last updated: 2026-06-26 (PROOF-03 cron-wiring + adversarial-review fixes; PR #1320)._
 
+## S3.3 Wave 2 L1-A — durable txid journal (2026-07-15, SCRUM-2692)
+
+Batch anchoring now persists an immutable txid/cohort journal after signing and before any network call, then recovers via exact-tx ADOPT, affirmative bounded-absence REVERT, or fail-closed HOLD. Migration 0358 protects PENDING/HELD cohorts inside generic recovery; the worker refuses legacy/manual recovery when journal protection cannot be loaded. The composed Bitcoin and mock clients expose the same pre-broadcast hook, while production signer selection remains unchanged. Generated frontend/worker database types are byte-identical from a clean local reset.
+
 ## PROOF-03 (SCRUM-2336) confirmation-proof fetch (2026-06-22, branch `lane1/s1-proof03-confirmation-fetch`, stacked on `feat/train-d-proof-foundation` @ d11deed3)
 
 Builds on the proof-foundation: FIX-1 persists the **app-tree** branch
@@ -356,15 +360,3 @@ vi.mock('../config.js', () => ({
   get config() { return mutableState; }  // reads from hoisted ref
 }));
 ```
-
-## 2026-07-15 S3.3 Wave 3 Lane 2 quotas and verified-payer limits
-
-- SCRUM-2703 mounts trusted-identity organization quotas on the real anchor,
-  persisted-rule, and webhook-create surfaces. Daily anchor usage uses the
-  atomic `increment_org_usage` RPC; rule/webhook capacity reads are
-  authoritative but remain read-before-insert and therefore are not an atomic
-  cross-instance hard cap.
-- SCRUM-2705 keys the bounded, process-local Nessie payer limiter only by an
-  HMAC of the verified on-chain Transfer sender. Never place a raw wallet
-  address in request limiter context, limiter state, or logs.
-- Post-Wave-3 staging smoke is deferred; offline tests are not soak evidence.
