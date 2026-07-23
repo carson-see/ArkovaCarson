@@ -28,6 +28,7 @@
 --   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_folder_id;
 -- =============================================================================
 
+-- anchor-index-justification: folder sidebar reads filter anchors by folder (WHERE folder_id = $1) over ~2.97M prod rows, so without this index every folder open is a full anchors scan; the partial predicate (folder_id IS NOT NULL) keeps the Unfiled majority out of the index so write-path cost stays near zero.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_folder_id
   ON public.anchors (folder_id)
   WHERE folder_id IS NOT NULL;

@@ -22,6 +22,7 @@ import { useAuth } from './useAuth';
 import { useProfile } from './useProfile';
 
 type FolderRow = Database['public']['Tables']['folders']['Row'];
+type FolderInsert = Database['public']['Tables']['folders']['Insert'];
 
 /** UI-facing folder shape (camelCase, only what the browse UI needs). */
 export interface Folder {
@@ -94,9 +95,12 @@ export function useFolders(): UseFoldersReturn {
     mutationFn: async (name: string) => {
       if (!user) throw new Error('not authenticated');
       const trimmed = name.trim();
-      const row = orgScoped
-        ? { owner_scope: 'ORG' as const, org_id: profile!.org_id, user_id: null, name: trimmed, created_by: user.id }
-        : { owner_scope: 'USER' as const, user_id: user.id, org_id: null, name: trimmed, created_by: user.id };
+      // Annotated as the generated Insert type: without it TS widens the
+      // ternary to a union of two object literals and PostgREST's
+      // RejectExcessProperties<> narrows against only the first arm.
+      const row: FolderInsert = orgScoped
+        ? { owner_scope: 'ORG', org_id: profile!.org_id, user_id: null, name: trimmed, created_by: user.id }
+        : { owner_scope: 'USER', user_id: user.id, org_id: null, name: trimmed, created_by: user.id };
       const { error } = await supabase.from('folders').insert(row);
       if (error) throw error;
     },
