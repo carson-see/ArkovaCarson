@@ -318,6 +318,10 @@ WORKER_PUBLIC_URL=                  # Public worker origin used when provisionin
 
 # Sandbox vs production DocuSign account server. Default true. Only a literal
 # "false" flips to production account.docusign.com.
+# Prod worker deploy-worker.yml sets this to "false" as of SCRUM-3014/3015 Go-Live
+# (DocuSign Go-Live approved 2026-07-23 07:04 PST for integration key
+# c8a10703-8efd-48e0-9653-7a9b840f67e3, verified live via DocuSign Apps and Keys
+# dashboard — same key/secret promoted in place, no credential rotation).
 DOCUSIGN_DEMO=true
 
 # ─── SCRUM-1164 / 1166 — Billing Phase 3a ───
