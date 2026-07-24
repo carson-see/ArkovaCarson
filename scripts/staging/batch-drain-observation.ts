@@ -12,7 +12,7 @@ import { parseUtcTimestamp } from './batch-drain-time';
 
 export const R3_BATCH_SIZE = 10_000;
 
-export type DrainTrigger = 'org-scheduler' | 'global-flush';
+export type DrainTrigger = 'org-scheduler' | 'global-policy' | 'global-flush';
 export type DerivedClaimOutcome = 'drained' | 'credit-starved' | 'refunded-failure';
 
 export interface DrainFaultWindow {
@@ -285,7 +285,11 @@ interface ValidatedExpectation {
 function validateExpectation(expectation: DrainPassExpectation): ValidatedExpectation {
   requireId(expectation.batchId, 'batchId');
   requireId(expectation.schedulerExecutionId, 'schedulerExecutionId');
-  if (expectation.armedTrigger !== 'org-scheduler' && expectation.armedTrigger !== 'global-flush') {
+  if (
+    expectation.armedTrigger !== 'org-scheduler'
+    && expectation.armedTrigger !== 'global-policy'
+    && expectation.armedTrigger !== 'global-flush'
+  ) {
     throw new Error(`Unsupported armed trigger: ${String(expectation.armedTrigger)}.`);
   }
   requireId(expectation.faultWindow.id, 'faultWindow.id');
@@ -328,10 +332,10 @@ function assertR3TransactionInvariant(
     if (leaves.length > R3_BATCH_SIZE) throw new Error('An R3 transaction may contain at most 10000 leaves.');
   }
 
-  if (trigger === 'global-flush') {
-    if (transactions.length !== 1) throw new Error('A global-flush pass must produce exactly one mixed-org transaction.');
+  if (trigger !== 'org-scheduler') {
+    if (transactions.length !== 1) throw new Error('A global drain pass must produce exactly one mixed-org transaction.');
     const orgs = new Set((leavesByTx.get(transactions[0]!.txId) ?? []).map((leaf) => leaf.orgId));
-    if (orgs.size < 2) throw new Error('A global-flush transaction must be mixed-org (at least two orgs).');
+    if (orgs.size < 2) throw new Error('A global drain transaction must be mixed-org (at least two orgs).');
     return;
   }
 
@@ -872,7 +876,7 @@ function assertObservedMerkleTrees(
     if (leaves.some((leaf, index) => leaf.merkleIndex !== index)) {
       throw new Error('Actual transaction merkle indexes must be contiguous from zero.');
     }
-    const expectedFingerprints = expectation.armedTrigger === 'global-flush'
+    const expectedFingerprints = expectation.armedTrigger !== 'org-scheduler'
       ? derived.orderedDrainedRows.map((row) => row.fingerprint)
       : derived.orderedDrainedRows
           .filter((row) => row.orgId === leaves[0]!.orgId)

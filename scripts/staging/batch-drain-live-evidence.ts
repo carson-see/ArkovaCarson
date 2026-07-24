@@ -65,7 +65,7 @@ const claimSchema = z.object({ fingerprint: sha256Hex, orgId: nonEmpty }).strict
 const faultWindowSchema = z.object({ id: nonEmpty, startsAt: isoTimestamp, endsAt: isoTimestamp }).strict();
 const passExpectationSchema = z.object({
   batchId: nonEmpty,
-  armedTrigger: z.enum(['org-scheduler', 'global-flush']),
+  armedTrigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   schedulerExecutionId: nonEmpty,
   faultWindow: faultWindowSchema,
   claims: z.array(claimSchema).min(1),
@@ -73,7 +73,7 @@ const passExpectationSchema = z.object({
 const windowExpectationSchema = z.object({
   scenarioId: nonEmpty,
   kind: z.enum(['eligible-10000', 'eligible-12500', 'poison-isolation']),
-  armedTrigger: z.enum(['org-scheduler', 'global-flush']),
+  armedTrigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   expectedInitialPending: nonNegativeInteger,
   expectedFinalPending: nonNegativeInteger,
   passes: z.array(passExpectationSchema).min(1),
@@ -153,7 +153,7 @@ const schedulerRecordSchema = z.object({
   workerRevision: nonEmpty,
   workerId: nonEmpty,
   path: z.string().regex(/^\/jobs\/[a-z0-9-]+(?:\?[A-Za-z0-9_=&%-]+)?$/),
-  trigger: z.enum(['org-scheduler', 'global-flush']),
+  trigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   statusCode: z.number().int(),
   firedAt: isoTimestamp,
   completedAt: isoTimestamp,
@@ -172,7 +172,7 @@ const workerLogRecordSchema = z.object({
   event: z.enum(['trigger-fired', 'credit-gate']),
   schedulerExecutionId: nonEmpty,
   batchId: nonEmpty,
-  trigger: z.enum(['org-scheduler', 'global-flush']),
+  trigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   fingerprint: sha256Hex.nullable(),
   orgId: nonEmpty.nullable(),
   decision: z.enum(['not-required', 'allowed', 'denied']).nullable(),
@@ -191,7 +191,7 @@ const workerLogsCaptureSchema = z.object({
 
 const dbExecutionSchema = z.object({
   schedulerExecutionId: nonEmpty,
-  armedTrigger: z.enum(['org-scheduler', 'global-flush']),
+  armedTrigger: z.enum(['org-scheduler', 'global-policy', 'global-flush']),
   faultWindowId: nonEmpty,
   workerId: nonEmpty,
   startedAt: isoTimestamp,
@@ -898,8 +898,9 @@ function assertWorkerCovers(
   }
 }
 
-function expectedDrainPath(trigger: 'org-scheduler' | 'global-flush'): string {
-  return trigger === 'org-scheduler' ? '/jobs/org-queue-scheduler' : '/jobs/batch-anchors?force=true';
+function expectedDrainPath(trigger: 'org-scheduler' | 'global-policy' | 'global-flush'): string {
+  if (trigger === 'org-scheduler') return '/jobs/org-queue-scheduler';
+  return trigger === 'global-policy' ? '/jobs/batch-anchors' : '/jobs/batch-anchors?force=true';
 }
 
 function derivePassObservation(

@@ -6,6 +6,7 @@ import {
   assertDrainPassObservation,
   assertDrainWindowObservation,
   validateDrainPassExpectation,
+  type DrainTrigger,
   type DrainPassExpectation,
   type DrainPassObservation,
 } from './batch-drain-observation';
@@ -30,7 +31,7 @@ function doubleSha256(bytes: Uint8Array): string {
 
 const ROOT = doubleSha256(Buffer.concat([Buffer.from(FP_1, 'hex'), Buffer.from(FP_2, 'hex')]));
 
-function expectation(trigger: 'org-scheduler' | 'global-flush' = 'org-scheduler'): DrainPassExpectation {
+function expectation(trigger: DrainTrigger = 'org-scheduler'): DrainPassExpectation {
   return {
     batchId: BATCH_ID,
     armedTrigger: trigger,
@@ -42,15 +43,15 @@ function expectation(trigger: 'org-scheduler' | 'global-flush' = 'org-scheduler'
     },
     claims: [
       { fingerprint: FP_1, orgId: ORG_HEALTHY },
-      { fingerprint: FP_2, orgId: trigger === 'global-flush' ? ORG_OTHER : ORG_HEALTHY },
+      { fingerprint: FP_2, orgId: trigger !== 'org-scheduler' ? ORG_OTHER : ORG_HEALTHY },
       { fingerprint: FP_POISON, orgId: ORG_POISON },
     ],
   };
 }
 
-function observation(trigger: 'org-scheduler' | 'global-flush' = 'org-scheduler'): DrainPassObservation {
-  const secondOrg = trigger === 'global-flush' ? ORG_OTHER : ORG_HEALTHY;
-  const orgs = trigger === 'global-flush'
+function observation(trigger: DrainTrigger = 'org-scheduler'): DrainPassObservation {
+  const secondOrg = trigger !== 'org-scheduler' ? ORG_OTHER : ORG_HEALTHY;
+  const orgs = trigger !== 'org-scheduler'
     ? [ORG_HEALTHY, ORG_OTHER, ORG_POISON]
     : [ORG_HEALTHY, ORG_POISON];
   return {
@@ -197,7 +198,7 @@ function splitIntoTwoTransactions(actual: DrainPassObservation): void {
 }
 
 describe('assertDrainPassObservation — event-derived fail-closed R3 evidence', () => {
-  it.each(['org-scheduler', 'global-flush'] as const)('accepts an actual valid %s pass', (trigger) => {
+  it.each(['org-scheduler', 'global-policy', 'global-flush'] as const)('accepts an actual valid %s pass', (trigger) => {
     expect(assertDrainPassObservation(expectation(trigger), observation(trigger))).toMatchObject({
       batchId: BATCH_ID,
       armedTrigger: trigger,
@@ -223,11 +224,13 @@ describe('assertDrainPassObservation — event-derived fail-closed R3 evidence',
   });
 
   it('enforces exactly one mixed-org global transaction', () => {
-    const actual = observation('global-flush');
-    splitIntoTwoTransactions(actual);
-    expect(() => assertDrainPassObservation(expectation('global-flush'), actual)).toThrow(
-      /global-flush pass must produce exactly one mixed-org transaction/,
-    );
+    for (const trigger of ['global-policy', 'global-flush'] as const) {
+      const actual = observation(trigger);
+      splitIntoTwoTransactions(actual);
+      expect(() => assertDrainPassObservation(expectation(trigger), actual)).toThrow(
+        /global.*pass must produce exactly one mixed-org transaction/,
+      );
+    }
   });
 
   it('independently recomputes proof paths', () => {
