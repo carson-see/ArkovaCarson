@@ -33,6 +33,7 @@ const {
   mockInsert,
   chainEq,
   chainIs,
+  deleteEq,
   mockLogger,
   mockConfig,
   mockDeductOrgCredit,
@@ -47,12 +48,15 @@ const {
   // filters applied.
   const chainEq = vi.fn();
   const chainIs = vi.fn();
+  // SCRUM-2970 — compensation-delete spy (insert-then-deduct rework).
+  const deleteEq = vi.fn();
   return {
     selectMaybeSingle,
     insertSingle,
     mockInsert,
     chainEq,
     chainIs,
+    deleteEq,
     mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
     mockConfig: { enableOrgCreditEnforcement: false },
     mockDeductOrgCredit: vi.fn(),
@@ -90,6 +94,7 @@ vi.mock('../../../utils/db.js', () => {
       from: vi.fn(() => ({
         select: vi.fn(buildSelectChain),
         insert: mockInsert,
+        delete: vi.fn(() => ({ eq: deleteEq })),
       })),
     },
   };
@@ -562,6 +567,7 @@ describe('POST /api/v1/contracts/anchor-pre-signing — org credits', () => {
     selectMaybeSingle.mockResolvedValue({ data: null, error: null });
     insertSingle.mockResolvedValue({
       data: {
+        id: 'presign-row-1',
         public_id: 'ARK-2026-ABCD1234',
         fingerprint: VALID_FINGERPRINT,
         status: 'PENDING',
@@ -569,9 +575,26 @@ describe('POST /api/v1/contracts/anchor-pre-signing — org credits', () => {
       },
       error: null,
     });
+    deleteEq.mockResolvedValue({ error: null });
   });
 
-  it('402 insufficient_credits when balance < required', async () => {
+  it('deducts with reference_id = the inserted anchor row id (SCRUM-2970 insert-then-deduct)', async () => {
+    mockDeductOrgCredit.mockResolvedValue({ allowed: true });
+    const res = await request(makeApp())
+      .post('/v1/contracts/anchor-pre-signing')
+      .send(VALID_BODY);
+    expect(res.status).toBe(201);
+    expect(mockDeductOrgCredit).toHaveBeenCalledWith(
+      expect.anything(),
+      'org-1',
+      1,
+      'anchor.create',
+      'presign-row-1',
+    );
+    expect(deleteEq).not.toHaveBeenCalled();
+  });
+
+  it('402 insufficient_credits when balance < required (row inserted then compensated away)', async () => {
     mockDeductOrgCredit.mockResolvedValue({
       allowed: false,
       error: 'insufficient_credits',
@@ -585,10 +608,12 @@ describe('POST /api/v1/contracts/anchor-pre-signing — org credits', () => {
     expect(res.body.error).toBe('insufficient_credits');
     expect(res.body.balance).toBe(0);
     expect(res.body.required).toBe(1);
-    expect(mockInsert).not.toHaveBeenCalled();
+    // SCRUM-2970 insert-then-deduct: the never-paid row is hard-deleted.
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(deleteEq).toHaveBeenCalledWith('id', 'presign-row-1');
   });
 
-  it('503 credit_check_unavailable when credit RPC fails', async () => {
+  it('503 credit_check_unavailable when credit RPC fails (row inserted then compensated away)', async () => {
     mockDeductOrgCredit.mockResolvedValue({
       allowed: false,
       error: 'rpc_failure',
@@ -599,7 +624,8 @@ describe('POST /api/v1/contracts/anchor-pre-signing — org credits', () => {
       .send(VALID_BODY);
     expect(res.status).toBe(503);
     expect(res.body.error).toBe('credit_check_unavailable');
-    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(deleteEq).toHaveBeenCalledWith('id', 'presign-row-1');
   });
 
   it('skips credit deduction entirely when API key has no orgId', async () => {

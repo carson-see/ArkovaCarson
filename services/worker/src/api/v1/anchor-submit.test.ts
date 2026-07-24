@@ -6,15 +6,20 @@
  * and only accepts the frozen schema (CLAUDE.md §1.8).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig } = vi.hoisted(() => {
+const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc, mockDeleteEq, mockQuotaDeltas } = vi.hoisted(() => {
   const mockSelectChain = { single: vi.fn(), maybeSingle: vi.fn() };
   const mockInsertChain = { single: vi.fn() };
   const mockInsert = vi.fn((_value?: unknown) => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
   const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  // SCRUM-2970 — deduct_org_credit RPC surface + compensation-delete spy
+  // for the credit-gate tests.
+  const mockRpc = vi.fn();
+  const mockDeleteEq = vi.fn();
+  const mockQuotaDeltas: number[] = [];
   // Mock the worker config so transitive import (anchor-submit → orgCredits →
   // config.js) doesn't try to load required env vars in the test env and
   // throw "Invalid worker configuration" before any test runs.
@@ -22,7 +27,7 @@ const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig } =
     enableOrgCreditEnforcement: false,
     enableProfessionalEducationSchemaReady: true,
   };
-  return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig };
+  return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig, mockRpc, mockDeleteEq, mockQuotaDeltas };
 });
 
 vi.mock('../../config.js', () => ({
@@ -32,6 +37,14 @@ vi.mock('../../config.js', () => ({
 }));
 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
+
+vi.mock('../../middleware/perOrgRateLimit.js', () => ({
+  requireOrgQuota: (options: { getDelta?: (req: unknown) => number | Promise<number> }) =>
+    async (req: unknown, _res: unknown, next: () => void) => {
+      mockQuotaDeltas.push(options.getDelta ? await options.getDelta(req) : 1);
+      next();
+    },
+}));
 
 vi.mock('../../utils/jobQueue.js', () => ({
   submitJob: vi.fn().mockResolvedValue('job-1'),
@@ -48,7 +61,9 @@ vi.mock('../../utils/db.js', () => {
       from: vi.fn(() => ({
         select: vi.fn(() => eqChain),
         insert: mockInsert,
+        delete: vi.fn(() => ({ eq: mockDeleteEq })),
       })),
+      rpc: mockRpc,
     },
   };
 });
@@ -108,6 +123,7 @@ function expectPrivateSourceUrlRejection(res: request.Response) {
 describe('POST /api/v1/anchor — Zod validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuotaDeltas.length = 0;
     mockConfig.enableProfessionalEducationSchemaReady = true;
     mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
     mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
@@ -178,6 +194,27 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.body.record_uri).toContain('/verify/');
     expect(mockInsert.mock.calls[0]?.[0]).not.toHaveProperty('metadata');
     expect(submitJob).not.toHaveBeenCalled();
+  });
+
+  it('returns an existing idempotent receipt without consuming anchor quota', async () => {
+    mockSelectChain.maybeSingle.mockResolvedValueOnce({
+      data: {
+        public_id: 'ARK-2026-EXISTING',
+        fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING',
+        created_at: '2026-04-26T00:00:00Z',
+      },
+      error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.public_id).toBe('ARK-2026-EXISTING');
+    expect(mockQuotaDeltas).toEqual([]);
+    expect(mockInsert).not.toHaveBeenCalled();
   });
 
   it('accepts the compatibility submit path with the canonical write:anchors scope', async () => {
@@ -519,5 +556,155 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       expect(nnLogPayload).not.toHaveProperty('error');
       expect(nnLogPayload).not.toHaveProperty('pgConstraint');
     });
+  });
+});
+
+describe('POST /api/v1/anchor — credit-gate reference_id (SCRUM-2970)', () => {
+  // BUG-2026-07-17-012 + independent-review rework: the gate previously
+  // called deduct_org_credit with p_reference_id=null (0326 ledger bypassed,
+  // retries double-deducted). A first fix derived the reference_id from
+  // (org, fingerprint), but the review found that a PERMANENT ledger row
+  // keyed on the fingerprint + the soft-delete-aware dedup lookup = free
+  // re-anchor forever after soft-delete. Final design (repo pattern, see
+  // credential-sources.ts): insert the PENDING anchor row FIRST, then deduct
+  // with reference_id = the new row's id — a fresh uuid per anchoring event,
+  // so a soft-delete + re-anchor is a NEW billable event, while an HTTP
+  // retry of the same logical request is absorbed by the dedup lookup
+  // BEFORE the gate. On deduct failure the never-paid row is hard-deleted
+  // (compensation) and the 402/503 bodies are unchanged.
+
+  interface DeductRpcArgs {
+    p_org_id: string;
+    p_amount: number;
+    p_reason: string;
+    p_reference_id: string | null;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockConfig.enableOrgCreditEnforcement = true;
+    mockConfig.enableProfessionalEducationSchemaReady = true;
+    mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
+    // No pre-existing (non-deleted) anchor row → the request reaches the gate.
+    mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
+    mockInsertChain.single.mockResolvedValue({
+      data: {
+        id: 'row-1',
+        public_id: 'ARK-2026-ABCD1234',
+        fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING',
+        created_at: '2026-04-27T00:00:00Z',
+      },
+      error: null,
+    });
+    mockRpc.mockResolvedValue({ data: { success: true, balance: 9 }, error: null });
+    mockDeleteEq.mockResolvedValue({ error: null });
+  });
+
+  afterEach(() => {
+    mockConfig.enableOrgCreditEnforcement = false;
+  });
+
+  function deductCalls(): DeductRpcArgs[] {
+    return mockRpc.mock.calls
+      .filter(([fn]) => fn === 'deduct_org_credit')
+      .map(([, args]) => args as DeductRpcArgs);
+  }
+
+  function insertedRow(id: string) {
+    return {
+      data: {
+        id,
+        public_id: 'ARK-2026-ABCD1234',
+        fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING',
+        created_at: '2026-04-27T00:00:00Z',
+      },
+      error: null,
+    };
+  }
+
+  it('soft-delete then re-anchor is a NEW billable event (distinct row-id reference_ids, SECOND deduction)', async () => {
+    // Reviewer scenario: anchor F → pay 1 → soft-delete → resubmit F. The
+    // dedup lookup filters .is('deleted_at', null) so the resubmit MISSES
+    // dedup and must deduct a SECOND credit. Because reference_id is the
+    // fresh anchor row id (not a fingerprint-derived value), the 0326
+    // ledger does NOT idempotently absorb the second deduction.
+    mockInsertChain.single
+      .mockResolvedValueOnce(insertedRow('row-1'))
+      .mockResolvedValueOnce(insertedRow('row-2'));
+
+    const first = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+    // Simulates the post-soft-delete resubmit: dedup lookup returns null
+    // again because the old row has deleted_at set.
+    const reAnchor = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+    expect(first.status).toBe(201);
+    expect(reAnchor.status).toBe(201);
+
+    const calls = deductCalls();
+    expect(calls).toHaveLength(2); // second deduction actually happened
+    expect(calls[0].p_reference_id).toBe('row-1');
+    expect(calls[1].p_reference_id).toBe('row-2');
+    expect(calls[0].p_reference_id).not.toBeNull();
+    expect(calls[1].p_reference_id).not.toBe(calls[0].p_reference_id);
+    for (const call of calls) {
+      expect(call.p_org_id).toBe('org-1');
+      expect(call.p_amount).toBe(1);
+      expect(call.p_reason).toBe('anchor.create');
+    }
+  });
+
+  it('HTTP retry of the same logical request deducts exactly once (absorbed by dedup before the gate)', async () => {
+    const first = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+    expect(first.status).toBe(201);
+
+    // Retry: the anchor row now exists (deleted_at null) → dedup lookup
+    // hits → 200 with the existing receipt, never reaching insert or gate.
+    mockSelectChain.maybeSingle.mockResolvedValue({
+      data: {
+        public_id: 'ARK-2026-ABCD1234',
+        fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING',
+        created_at: '2026-04-27T00:00:00Z',
+      },
+      error: null,
+    });
+    const retry = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+    expect(retry.status).toBe(200);
+
+    expect(deductCalls()).toHaveLength(1); // exactly ONE deduction
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(mockDeleteEq).not.toHaveBeenCalled();
+  });
+
+  it('compensates a 402 deduct failure by hard-deleting the just-inserted row (frozen body unchanged)', async () => {
+    mockRpc.mockResolvedValue({
+      data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
+      error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(402);
+    expect(res.body).toEqual({
+      error: 'insufficient_credits',
+      message: 'Organization has insufficient anchor credits for this cycle.',
+      balance: 0,
+      required: 1,
+    });
+    // Insert-then-deduct: the row WAS inserted, then compensated away.
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(mockDeleteEq).toHaveBeenCalledWith('id', 'row-1');
+  });
+
+  it('compensates a 503 RPC failure the same way (frozen body unchanged)', async () => {
+    mockRpc.mockResolvedValue({ data: null, error: { message: 'connection refused' } });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'credit_check_unavailable' });
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(mockDeleteEq).toHaveBeenCalledWith('id', 'row-1');
   });
 });

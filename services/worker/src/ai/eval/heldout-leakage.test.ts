@@ -158,6 +158,41 @@ describe('checkHeldoutLeakage — REAL repo scan (fail-closed gate input)', () =
     }
   });
 
+  it('excludes only the three declared Wave-2 tranche sources while scanning near-name leaks', () => {
+    const workerRoot = mkdtempSync(resolve(tmpdir(), 's33-wave2-leakage-exclusion-'));
+    const reservedPaths = [
+      'src/ai/eval/golden-dataset-s33-wave2-top15-01-05-heldout.ts',
+      'src/ai/eval/golden-dataset-s33-wave2-top15-06-10-heldout.ts',
+      'src/ai/eval/golden-dataset-s33-wave2-top15-11-15-heldout.ts',
+    ];
+    const nearNamePaths = reservedPaths.map((path) => path.replace(/\.ts$/u, '-fewshot.ts'));
+    const fixture = {
+      id: 'GD-S33-W2-EXACT-EXCLUSION-001',
+      strippedText: 'Wave two adversarial phrase quartz maple indigo lantern copper summit.',
+      tags: ['held-out'],
+    };
+    try {
+      for (const path of [...reservedPaths, ...nearNamePaths]) {
+        const absolutePath = resolve(workerRoot, path);
+        mkdirSync(dirname(absolutePath), { recursive: true });
+        writeFileSync(absolutePath, `export const leaked = ${JSON.stringify(fixture.strippedText)};\n`);
+      }
+      const corpus = loadLeakageCorpus(workerRoot, { failOnUnreadable: false });
+      const corpusPaths = corpus.map(({ path }) => path);
+      for (const path of reservedPaths) expect(corpusPaths).not.toContain(path);
+      for (const path of nearNamePaths) expect(corpusPaths).toContain(path);
+      const violations = checkHeldoutLeakage([fixture], corpus);
+      expect(violations).toHaveLength(nearNamePaths.length);
+      expect(violations).toEqual(expect.arrayContaining(nearNamePaths.map((path) => ({
+        fixtureId: fixture.id,
+        corpusFile: path,
+        kind: 'content',
+      }))));
+    } finally {
+      rmSync(workerRoot, { recursive: true, force: true });
+    }
+  });
+
   it('checkS3LeakagePrecondition FAILS CLOSED when the scanned corpus is empty', () => {
     // Simulates running the CLI from a directory that is NOT the worker root
     // (e.g. the repo root): zero files scanned must be an ERROR, not a pass.

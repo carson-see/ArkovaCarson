@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { AIFieldSuggestions } from './AIFieldSuggestions';
 import type { ExtractionField, ExtractionProgress } from '../../lib/aiExtraction';
+import { AI_EXTRACTION_LABELS } from '../../lib/copy';
 
 const mockFields: ExtractionField[] = [
   { key: 'credentialType', value: 'DEGREE', confidence: 0.92, status: 'suggested' },
@@ -92,14 +93,16 @@ describe('AIFieldSuggestions', () => {
   });
 
   it('shows error state', () => {
+    // SCRUM-2911: the no-text message is the canonical §1.3 copy string, not a
+    // drifted inline literal (the old hardcoded 'No text found in document.').
     const progress: ExtractionProgress = {
       stage: 'error',
       progress: 0,
-      message: 'No text found in document.',
+      message: AI_EXTRACTION_LABELS.NO_TEXT_FOUND,
     };
 
     render(<AIFieldSuggestions {...defaultProps} progress={progress} />);
-    const matches = screen.getAllByText('No text found in document.');
+    const matches = screen.getAllByText(AI_EXTRACTION_LABELS.NO_TEXT_FOUND);
     expect(matches.length).toBeGreaterThanOrEqual(1);
   });
 

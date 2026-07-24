@@ -345,7 +345,7 @@ export function ComplianceDashboardPage() {
   const userId = user?.id;
 
   // SN2: Restrict to ORG_ADMIN and platform admins
-  const isAdmin = profile?.role === 'ORG_ADMIN' || isPlatformAdmin(profile?.email);
+  const isAdmin = profile?.role === 'ORG_ADMIN' || isPlatformAdmin(profile);
 
   const [stats, setStats] = useState<HealthStats | null>(null);
   const [expiring, setExpiring] = useState<ExpiringAttestation[]>([]);

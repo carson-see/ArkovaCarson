@@ -101,6 +101,16 @@ vi.mock('./utils/logger.js', () => ({
 
 vi.mock('./utils/sentry.js', () => ({
   initSentry: vi.fn(),
+  // MT-1: index.ts imports resolveSentryEnvironment; the real (pure) impl is
+  // fine to run in the mock so initSentry receives the derived environment.
+  resolveSentryEnvironment: vi.fn(
+    (i: { sentryEnvironment?: string; kService?: string; nodeEnv: string }) => {
+      const explicit = i.sentryEnvironment?.trim();
+      if (explicit && !(explicit === 'production' && i.kService !== 'arkova-worker')) return explicit;
+      if (i.kService) return i.kService === 'arkova-worker' ? 'production' : i.kService;
+      return i.nodeEnv === 'production' ? 'local-production' : i.nodeEnv;
+    },
+  ),
   withCronMonitoring: vi.fn((_name: string, _schedule: string, fn: () => unknown) => fn),
   Sentry: {
     setupExpressErrorHandler: vi.fn(),

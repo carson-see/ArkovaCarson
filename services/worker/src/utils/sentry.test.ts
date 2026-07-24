@@ -27,7 +27,7 @@ vi.mock('@sentry/profiling-node', () => ({
   nodeProfilingIntegration: vi.fn(() => ({})),
 }));
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, Sentry } from './sentry.js';
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, resolveSentryEnvironment, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -315,6 +315,106 @@ describe('initSentry', () => {
         serverName: 'arkova-worker-00123-abc',
       }),
     );
+  });
+});
+
+// MT-1 (SCRUM-2901): rigs run NODE_ENV=production, so environment must be
+// derived from the Cloud Run service identity (K_SERVICE), never from
+// NODE_ENV alone — otherwise every rig standup floods prod alerting.
+describe('resolveSentryEnvironment (MT-1 / SCRUM-2901)', () => {
+  it('an explicit non-production SENTRY_ENVIRONMENT wins (may rename any env)', () => {
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'staging',
+        kService: 'arkova-worker',
+        nodeEnv: 'production',
+      }),
+    ).toBe('staging');
+    // non-prod rename on a rig is allowed
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'rig-smoke',
+        kService: 'arkova-worker-rig-b1',
+        nodeEnv: 'production',
+      }),
+    ).toBe('rig-smoke');
+  });
+
+  it('a production override is HONORED only for the real prod service', () => {
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'production',
+        kService: 'arkova-worker',
+        nodeEnv: 'production',
+      }),
+    ).toBe('production');
+  });
+
+  it('a production override on a RIG is rejected — cannot claim production (review P1)', () => {
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'production',
+        kService: 'arkova-worker-rig-b1',
+        nodeEnv: 'production',
+      }),
+    ).toBe('arkova-worker-rig-b1');
+  });
+
+  it('a production override off Cloud Run (no K_SERVICE) does not earn production', () => {
+    expect(
+      resolveSentryEnvironment({ sentryEnvironment: 'production', nodeEnv: 'production' }),
+    ).toBe('local-production');
+  });
+
+  it('ignores a blank SENTRY_ENVIRONMENT and falls through to K_SERVICE', () => {
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: '   ',
+        kService: 'arkova-worker',
+        nodeEnv: 'production',
+      }),
+    ).toBe('production');
+  });
+
+  it('maps the prod service name to production', () => {
+    expect(
+      resolveSentryEnvironment({ kService: 'arkova-worker', nodeEnv: 'production' }),
+    ).toBe('production');
+  });
+
+  it('tags any non-prod Cloud Run service with its own service name', () => {
+    expect(
+      resolveSentryEnvironment({
+        kService: 'arkova-worker-staging',
+        nodeEnv: 'production',
+      }),
+    ).toBe('arkova-worker-staging');
+  });
+
+  it('never reports production for a rig even under NODE_ENV=production', () => {
+    expect(
+      resolveSentryEnvironment({
+        kService: 'arkova-worker-rig-b1',
+        nodeEnv: 'production',
+      }),
+    ).not.toBe('production');
+    expect(
+      resolveSentryEnvironment({
+        kService: 'arkova-worker-rig-b1',
+        nodeEnv: 'production',
+      }),
+    ).toBe('arkova-worker-rig-b1');
+  });
+
+  it('falls back to NODE_ENV off Cloud Run (no K_SERVICE)', () => {
+    expect(resolveSentryEnvironment({ nodeEnv: 'development' })).toBe('development');
+    expect(resolveSentryEnvironment({ nodeEnv: 'test' })).toBe('test');
+  });
+
+  it('a local shell claiming NODE_ENV=production without K_SERVICE is NOT production', () => {
+    // Honesty guard (§1.5): only the real prod service identity earns the
+    // 'production' tag; a bare NODE_ENV=production maps to local-production.
+    expect(resolveSentryEnvironment({ nodeEnv: 'production' })).toBe('local-production');
   });
 });
 

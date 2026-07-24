@@ -31,6 +31,33 @@ const MAX_PER_RUN = 5000;
 /** Batch size for Supabase inserts */
 const INSERT_BATCH_SIZE = 100;
 
+/**
+ * Connect + response-headers bound (Sentry bug, untracked in Jira). Without
+ * this, `fetch(PATENT_TSV_URL)` had no timeout/AbortController at all — only
+ * a transient-error retry — so a stalled S3 upstream hung the call
+ * indefinitely, the same unbounded-fetch class as SCRUM-2975. 30s matches the
+ * connect-timeout convention used elsewhere in jobs/ and ai/.
+ *
+ * Scoped to CONNECT + headers only, via a manual AbortController that is
+ * cleared the instant fetch() settles (see fetchWithConnectTimeout) — NOT via
+ * a single long-lived AbortSignal spanning the whole call. The ~230MB ZIP
+ * body is streamed incrementally afterward (Readable.fromWeb + unzipper +
+ * readline) and can legitimately take minutes on a healthy connection; a
+ * signal that stayed armed past the initial response would abort that
+ * in-progress, healthy stream too.
+ *
+ * NOT routed through `lib/safe-fetch.ts`: this file is on the
+ * `ban-raw-fetch-worker.ts` reviewed allow-list (`jobs/*Fetcher.ts` — fixed
+ * S3/registry host, no user-controlled URL), and more importantly
+ * `SafeFetchResponse`/`createSafeFetchImpl` only expose a fully-buffered
+ * `arrayBuffer()` capped at 5 MiB by default (no streaming `.body`) — that's
+ * incompatible with this ~230MB streamed download without either rejecting
+ * it outright on the size cap or forcing the whole ZIP into memory before
+ * unzipping even starts, which would remove the existing streaming/
+ * backpressure design and risk trading a hang bug for an OOM bug.
+ */
+const USPTO_CONNECT_TIMEOUT_MS = 30_000;
+
 interface FetchResult {
   status: string;
   inserted: number;
@@ -44,10 +71,30 @@ function computeContentHash(content: string): string {
 }
 
 /**
+ * Fetch `url`, bounding only the CONNECT + response-headers wait to
+ * `timeoutMs`. The timer is cleared as soon as fetch() settles (resolve OR
+ * reject), so it can never fire during a SEPARATE, later body-streaming read
+ * — only a stalled connect/response counts as "hung" here.
+ */
+export async function fetchWithConnectTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Fetch USPTO patent grants from PatentsView bulk TSV and insert into public_records.
  * Resumable: skips patents with dates before the most recent patent in DB.
  */
-export async function fetchUsptoPAtents(supabase: SupabaseClient): Promise<FetchResult> {
+export async function fetchUsptoPAtents(
+  supabase: SupabaseClient,
+  options: { connectTimeoutMs?: number } = {},
+): Promise<FetchResult> {
+  const connectTimeoutMs = options.connectTimeoutMs ?? USPTO_CONNECT_TIMEOUT_MS;
   // Check switchboard flag
   const { data: enabled } = await supabase.rpc('get_flag', {
     p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
@@ -71,22 +118,26 @@ export async function fetchUsptoPAtents(supabase: SupabaseClient): Promise<Fetch
 
   logger.info({ resumeDate, maxPerRun: MAX_PER_RUN }, 'USPTO bulk fetch starting');
 
-  // Download the ZIP (single retry on transient TCP errors)
+  // Download the ZIP (single retry on transient TCP errors). Each attempt is
+  // bounded to connectTimeoutMs — see fetchWithConnectTimeout / USPTO_CONNECT_TIMEOUT_MS.
   let response: Response;
   try {
-    response = await fetch(PATENT_TSV_URL);
+    response = await fetchWithConnectTimeout(PATENT_TSV_URL, connectTimeoutMs);
   } catch (err) {
     if (err instanceof TypeError && /terminated|socket hang up|ECONNRESET/i.test(err.message)) {
       logger.warn({ error: err }, 'Transient download failure — retrying once');
       await new Promise((r) => setTimeout(r, 2000));
       try {
-        response = await fetch(PATENT_TSV_URL);
+        response = await fetchWithConnectTimeout(PATENT_TSV_URL, connectTimeoutMs);
       } catch (retryErr) {
         logger.error({ error: retryErr }, 'Failed to download PatentsView bulk data after retry');
         return { status: 'download_failed', inserted: 0, skipped: 0, errors: 0, resumeDate };
       }
     } else {
-      logger.error({ error: err }, 'Failed to download PatentsView bulk data');
+      logger.error(
+        { error: err, timedOut: err instanceof Error && err.name === 'AbortError' },
+        'Failed to download PatentsView bulk data',
+      );
       return { status: 'download_failed', inserted: 0, skipped: 0, errors: 0, resumeDate };
     }
   }
