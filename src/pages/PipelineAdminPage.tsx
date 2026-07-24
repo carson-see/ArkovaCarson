@@ -313,7 +313,7 @@ export function PipelineAdminPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   // Tables from migrations 0077-0080 not yet in generated types
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -158,6 +158,10 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
         };
 
         // Auto-create recipient profiles for records with email addresses (BETA-04)
+        // Recipient creation is non-fatal to the anchor batch (anchors are already
+        // created above), but real failures must still be counted and surfaced —
+        // never swallowed into a false "complete" toast (SCRUM-2598).
+        let recipientFailed = 0;
         const recipientRecords = records.filter(r => r.email);
         if (recipientRecords.length > 0) {
           const workerUrl = WORKER_URL;
@@ -175,10 +179,9 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
             }
 
             if (orgId) {
-              // Fire-and-forget — don't block on recipient creation
-              Promise.allSettled(
-                recipientRecords.map(r =>
-                  fetch(`${workerUrl}/api/recipients`, {
+              const recipientResults = await Promise.allSettled(
+                recipientRecords.map(async r => {
+                  const response = await fetch(`${workerUrl}/api/recipients`, {
                     method: 'POST',
                     headers: {
                       'Content-Type': 'application/json',
@@ -190,11 +193,19 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
                       fullName: r.metadata?.recipient_name ?? r.metadata?.recipient ?? r.filename.replace('.credential', ''),
                       credentialLabel: r.credentialType ?? 'Credential',
                     }),
-                  }).catch(() => { /* non-fatal */ })
-                )
+                  });
+                  if (!response.ok) {
+                    throw new Error(`Recipient creation failed (${response.status})`);
+                  }
+                  return response;
+                })
               );
+              recipientFailed = recipientResults.filter(r => r.status === 'rejected').length;
             }
+            // No resolvable orgId: recipient creation was never attempted (same
+            // pre-existing behavior as before this fix) — not counted as a failure.
           }
+          // No session: recipient creation was never attempted, same as before.
         }
 
         // Refresh entitlement counts after successful bulk creation
@@ -205,6 +216,12 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
             TOAST.BULK_PARTIAL
               .replace('{created}', String(totalCreated))
               .replace('{failed}', String(totalFailed))
+          );
+        } else if (recipientFailed > 0) {
+          toast.warning(
+            TOAST.BULK_RECIPIENTS_FAILED
+              .replace('{created}', String(totalCreated))
+              .replace('{failed}', String(recipientFailed))
           );
         } else {
           toast.success(

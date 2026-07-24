@@ -129,6 +129,13 @@ describe('CE-06a — Credential Engine Registry publishing stays OFF (no write p
   // — but still fully subject to the WRITE markers above.
   const READ_ONLY_CE_TOOLING_ALLOWLIST = new Set([
     path.join(WORKER_SCRIPTS, 'ops', 'ce-secret-manager-smoke.ts'),
+    // SCRUM-2913 — the CTDL IMPORTER (`ctdl-importer.ts`) is a read/consume
+    // path: it parses CTDL documents that a caller FETCHED from the CE Registry
+    // and builds a read-only provenance link (`registryUrl`) from the injected
+    // registry base. It carries the registry host solely to construct that link;
+    // it issues no Registry calls and never writes/publishes. Exempt from the
+    // INTEGRATION (host) markers, still fully subject to the WRITE markers above.
+    path.join(WORKER_SRC, 'ctdl', 'ctdl-importer.ts'),
   ]);
 
   function scanRoots(): string[] {
@@ -186,14 +193,19 @@ describe('CE-06a — Credential Engine Registry publishing stays OFF (no write p
     expect(offenders).toEqual([]);
   });
 
-  it('the read-only CE smoke allowlist entry still exists and still declares itself GET-only', () => {
-    // If the smoke script moves or its read-only contract statement disappears,
-    // the allowlist must be re-reviewed rather than silently dangling.
-    const [smokePath] = [...READ_ONLY_CE_TOOLING_ALLOWLIST];
-    expect(fs.existsSync(smokePath)).toBe(true);
-    const source = fs.readFileSync(smokePath, 'utf-8');
-    expect(source).toMatch(/GET-only|READ-ONLY/i);
-    expect(source).toContain('never writes to the Registry');
+  it('every read-only CE allowlist entry still exists and still declares its read-only contract', () => {
+    // If an allow-listed file moves or its read-only contract statement
+    // disappears, the allowlist must be re-reviewed rather than silently
+    // dangling. Held to EVERY entry (not just the first) so a newly exempted
+    // file cannot skip the contract that justifies its exemption.
+    const entries = [...READ_ONLY_CE_TOOLING_ALLOWLIST];
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entryPath of entries) {
+      expect(fs.existsSync(entryPath), `${entryPath} missing`).toBe(true);
+      const source = fs.readFileSync(entryPath, 'utf-8');
+      expect(source, entryPath).toMatch(/GET-only|READ-ONLY/i);
+      expect(source, entryPath).toContain('never writes to the Registry');
+    }
   });
 
   it('the CE-01 publishability gate is still the front door of the CTDL route', () => {
