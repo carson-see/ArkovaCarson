@@ -3,8 +3,9 @@
  * the treasury-cache cron.
  *
  * SCRUM-1786: reads per-status counts from `pipeline_dashboard_cache`
- * (refreshed every 2 min by `refresh_pipeline_dashboard_cache()`, which
- * uses `pg_class.reltuples` — instant, no timeout risk) instead of the
+ * (refreshed every 5 min by the /jobs/refresh-stats cron via the
+ * `refresh_cache_*` sub-refreshers, which use `pg_class.reltuples` —
+ * instant, no timeout risk) instead of the
  * `get_anchor_status_counts_fast` RPC whose 1-second per-status timeouts
  * produce -1 sentinels on the 2.9M-row anchors table.
  */

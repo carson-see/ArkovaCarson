@@ -4,7 +4,7 @@ import {
   generateKeyPairSync,
 } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -12,6 +12,7 @@ import { normalizeForFingerprint } from './golden-dataset-s33-types.js';
 import {
   acceptS33Wave2BatchCandidate,
   consumeMergedS33Wave2Batches,
+  loadS33Wave2CandidateSnapshot,
   preflightS33Wave2BatchCandidate,
   verifyS33Wave2MergedBatch,
   type S33Wave2CandidateSnapshot,
@@ -53,6 +54,21 @@ const testTrustRoot: S33Wave2AcceptanceTrustRoot = {
 
 function coverageRegistryContent(): string {
   const domainIds = ['legal', 'financial', 'education'];
+  const domains = domainIds.map((domainId, domainIndex) => ({
+    id: domainId,
+    order: domainIndex + 1,
+    types: Array.from({ length: 15 }, (_, typeIndex) => ({
+      id: `${domainId}-${String(typeIndex + 1).padStart(2, '0')}-fixture`,
+      order: typeIndex + 1,
+      documentType: `Fixture ${domainId} ${typeIndex + 1}`,
+      mappings: [{ credentialType: 'LICENSE', subType: 'nursing_rn' }],
+    })),
+  }));
+  const productionOrder = [1, 6, 11].flatMap((start) => domains.flatMap((domain) => (
+    domain.types
+      .filter((type) => type.order >= start && type.order < start + 5)
+      .map((type) => type.id)
+  )));
   return JSON.stringify({
     schemaVersion: 1,
     artifactType: 'arkova-s33-wave2-top15-registry',
@@ -68,20 +84,12 @@ function coverageRegistryContent(): string {
       acceptanceLane: 'lane3',
     },
     acceptedBaseline: {},
-    domains: domainIds.map((domainId, domainIndex) => ({
-      id: domainId,
-      order: domainIndex + 1,
-      types: Array.from({ length: 15 }, (_, typeIndex) => ({
-        id: `${domainId}-${String(typeIndex + 1).padStart(2, '0')}-fixture`,
-        order: typeIndex + 1,
-        documentType: `Fixture ${domainId} ${typeIndex + 1}`,
-        mappings: [{ credentialType: 'LICENSE', subType: 'nursing_rn' }],
-      })),
-    })),
+    domains,
+    productionOrder,
   });
 }
 
-function fixture() {
+function fixture(baseRegistry = registry) {
   const rows = Array.from({ length: 4 }, (_, index) => {
     const suffix = index + 1;
     const strippedText = `Quasar willow ember cobalt lantern ${suffix} verifies synthetic board record with isolated wording alpha${suffix} beta${suffix} gamma${suffix}.`;
@@ -112,7 +120,7 @@ function fixture() {
     status: 'PRODUCER_CANDIDATE_PENDING_L3_ACCEPTANCE',
     intendedSplit: 'held-out-candidate',
     acceptanceScope: 'whole-batch-only',
-    baseRegistryDigestSha256: registry.registryDigestSha256,
+    baseRegistryDigestSha256: baseRegistry.registryDigestSha256,
     source: { path: sourcePath, exportName: 'S33_WAVE2_DEPTH_AUDIT_HELDOUT', blobSha: 'b'.repeat(40) },
     datasheet: { path: datasheetPath, blobSha: 'c'.repeat(40) },
     testPath,
@@ -146,7 +154,7 @@ function fixture() {
     })),
   };
   const snapshot: S33Wave2CandidateSnapshot = {
-    candidateBaseSha: registry.verificationHeadSha,
+    candidateBaseSha: baseRegistry.verificationHeadSha,
     candidateHeadSha,
     candidateTreeSha: 'd'.repeat(40),
     changedPaths: [manifestPath, datasheetPath, sourcePath, testPath].map((path) => ({
@@ -168,6 +176,81 @@ function fixture() {
     leakageCorpusRootCounts: { 'training-data': 1, 'src/ai': 1, scripts: 1 },
   };
   return { rows, manifest, datasheet, snapshot };
+}
+
+function loadSnapshotFixture(): Readonly<{
+  snapshot: S33Wave2CandidateSnapshot;
+  baseRegistry: ReturnType<typeof buildS33Wave2BaseCorpusRegistry>;
+  defaultRawDiff: string;
+  cleanup: () => void;
+}> {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 's33-w2-loader-'));
+  const trustedMainRoot = join(fixtureRoot, 'trusted-main');
+  const candidateRoot = join(fixtureRoot, 'candidate');
+  execFileSync('/usr/bin/git', ['clone', '--quiet', repositoryRoot, trustedMainRoot]);
+  gitRun(trustedMainRoot, ['config', 'user.email', 'lane3-test@arkova.test']);
+  gitRun(trustedMainRoot, ['config', 'user.name', 'Lane 3 Test']);
+  const coveragePath = join(trustedMainRoot, 'docs/lane4/s33-wave2-top15-registry.json');
+  mkdirSync(dirname(coveragePath), { recursive: true });
+  writeFileSync(coveragePath, `${coverageRegistryContent()}\n`);
+  gitRun(trustedMainRoot, ['add', 'docs/lane4/s33-wave2-top15-registry.json']);
+  gitRun(trustedMainRoot, ['commit', '-m', 'add coverage registry']);
+  const trustedMainHead = gitRun(trustedMainRoot, ['rev-parse', 'HEAD']);
+  const baseRegistry = buildS33Wave2BaseCorpusRegistry({
+    repositoryRoot: trustedMainRoot,
+    verificationHeadSha: trustedMainHead,
+  });
+  gitRun(trustedMainRoot, ['worktree', 'add', '-b', 'candidate', candidateRoot, trustedMainHead]);
+  gitRun(candidateRoot, ['config', 'user.email', 'lane4-test@arkova.test']);
+  gitRun(candidateRoot, ['config', 'user.name', 'Lane 4 Test']);
+
+  const value = fixture(baseRegistry);
+  const sourceContent = `export const S33_WAVE2_DEPTH_AUDIT_HELDOUT = ${JSON.stringify(value.rows, null, 2)} as const;\n`;
+  for (const [path, content] of [
+    [sourcePath, sourceContent],
+    [datasheetPath, `${JSON.stringify(value.datasheet)}\n`],
+    [testPath, 'export {};\n'],
+  ] as const) {
+    const absolutePath = join(candidateRoot, path);
+    mkdirSync(dirname(absolutePath), { recursive: true });
+    writeFileSync(absolutePath, content);
+  }
+  const manifest = {
+    ...value.manifest,
+    source: {
+      ...value.manifest.source,
+      blobSha: gitRun(candidateRoot, ['hash-object', sourcePath]),
+    },
+    datasheet: {
+      ...value.manifest.datasheet,
+      blobSha: gitRun(candidateRoot, ['hash-object', datasheetPath]),
+    },
+  };
+  const manifestAbsolutePath = join(candidateRoot, manifestPath);
+  mkdirSync(dirname(manifestAbsolutePath), { recursive: true });
+  writeFileSync(manifestAbsolutePath, `${JSON.stringify(manifest)}\n`);
+  gitRun(candidateRoot, ['add', manifestPath, datasheetPath, sourcePath, testPath]);
+  gitRun(candidateRoot, ['commit', '-m', 'add candidate packet']);
+  const candidateHead = gitRun(candidateRoot, ['rev-parse', 'HEAD']);
+  const defaultRawDiff = gitRun(candidateRoot, [
+    'diff', '--raw', '--no-renames', trustedMainHead, candidateHead,
+  ]);
+  const snapshot = loadS33Wave2CandidateSnapshot({
+    trustedMainWorkerRoot: join(trustedMainRoot, 'services/worker'),
+    candidateRepositoryRoot: candidateRoot,
+    candidateBaseSha: trustedMainHead,
+    candidateHeadSha: candidateHead,
+    registry: baseRegistry,
+  });
+  return {
+    snapshot,
+    baseRegistry,
+    defaultRawDiff,
+    cleanup: () => {
+      gitRun(trustedMainRoot, ['worktree', 'remove', '--force', candidateRoot]);
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    },
+  };
 }
 
 function authenticatedAcceptance(
@@ -291,6 +374,43 @@ describe('S3.3 Wave-2 whole-batch acceptance', () => {
     });
     expect(accepted.payload.verdict).toBe('APPROVED_WHOLE_BATCH');
     expect(accepted.payload.acceptedEntryCount).toBe(4);
+  });
+
+  it('loads default-abbreviated Git raw diffs as full object ids and preflights the real registry shape', () => {
+    const loaded = loadSnapshotFixture();
+    try {
+      const defaultObjectIds = Array.from(
+        loaded.defaultRawDiff.matchAll(/^:\d{6} \d{6} [0-9a-f]+ ([0-9a-f]+) A\t/gmu),
+        (match) => match[1],
+      );
+      expect(defaultObjectIds).toHaveLength(4);
+      expect(defaultObjectIds.every((objectId) => objectId.length < 40)).toBe(true);
+      expect(loaded.snapshot.changedPaths).toHaveLength(4);
+      expect(loaded.snapshot.changedPaths.every(({ blobSha }) => /^[0-9a-f]{40}$/u.test(blobSha))).toBe(true);
+      expect(() => preflightS33Wave2BatchCandidate(loaded.baseRegistry, loaded.snapshot)).not.toThrow();
+    } finally {
+      loaded.cleanup();
+    }
+  }, 30_000);
+
+  it('rejects a duplicate or non-tranche-interleaved production order', () => {
+    const value = fixture();
+    const outOfOrder = JSON.parse(coverageRegistryContent()) as { productionOrder: string[] };
+    [outOfOrder.productionOrder[0], outOfOrder.productionOrder[1]] = [
+      outOfOrder.productionOrder[1]!,
+      outOfOrder.productionOrder[0]!,
+    ];
+    expect(() => preflightS33Wave2BatchCandidate(registry, {
+      ...value.snapshot,
+      coverageRegistryContent: JSON.stringify(outOfOrder),
+    })).toThrow(/domain-interleaved.*tranches/iu);
+
+    const duplicated = JSON.parse(coverageRegistryContent()) as { productionOrder: string[] };
+    duplicated.productionOrder[1] = duplicated.productionOrder[0]!;
+    expect(() => preflightS33Wave2BatchCandidate(registry, {
+      ...value.snapshot,
+      coverageRegistryContent: JSON.stringify(duplicated),
+    })).toThrow(/45 registry types exactly once/iu);
   });
 
   it('admits the exact real-source authorship alternative without treating GitHub login as authority', () => {

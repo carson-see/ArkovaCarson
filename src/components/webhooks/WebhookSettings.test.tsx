@@ -123,8 +123,8 @@ describe('WebhookSettings', () => {
       expect(screen.getByLabelText(/Anchor Expired/i)).not.toBeChecked();
       expect(screen.getByLabelText(/Anchor Batch Secured/i)).not.toBeChecked();
       expect(screen.getByLabelText(/Credential Issued/i)).not.toBeChecked();
-      expect(screen.getByLabelText(/Credential Verified/i)).not.toBeChecked();
-      expect(screen.getByLabelText(/Credential Status Changed/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Record Verified/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Record Status Changed/i)).not.toBeChecked();
     });
 
     it('validates URL must start with https://', async () => {

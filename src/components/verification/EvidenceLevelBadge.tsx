@@ -69,7 +69,7 @@ const TIER_ALT_FALLBACK: Record<VerificationLevel, string> = {
   issuer_anchored:
     'Issuer Anchored: authenticated directly by the issuing organization.',
   source_signed:
-    'Source Signed: the credential source cryptographically signed this record, proving issuer origin.',
+    'Source Signed: the document source cryptographically signed this record, proving issuer origin.',
   account_linked:
     'Account Linked: imported from a connected account. Proves account access only; the originating organization did not vouch for this record.',
   captured_url:

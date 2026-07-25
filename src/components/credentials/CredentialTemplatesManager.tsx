@@ -676,7 +676,7 @@ export function CredentialTemplatesManager({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="template-type">Credential Type</Label>
+              <Label htmlFor="template-type">Document Type</Label>
               <Select
                 value={form.credential_type}
                 onValueChange={(v) =>

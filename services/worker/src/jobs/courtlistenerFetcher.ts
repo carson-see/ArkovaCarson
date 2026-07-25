@@ -23,6 +23,25 @@ const CL_API_URL = 'https://www.courtlistener.com/api/rest/v4';
 /** Rate limit: ~5 req/sec with token, ~1.4 req/sec anonymous */
 const CL_RATE_LIMIT_MS = 250;
 
+/**
+ * Per-page fetch bound (SCRUM-2975). Without this, a stalled CourtListener
+ * upstream (TCP connects, never responds) hangs the raw `fetch()` call
+ * indefinitely — the pagination loop (up to BULK_MAX_PAGES iterations) only
+ * ever backs off on an explicit 429, so a single stalled page can pin a cron
+ * firing until Cloud Run's 3600s request ceiling. 30s matches the existing
+ * 429 backoff constant below and is generous for a <=20-record JSON page.
+ *
+ * NOT routed through `lib/safe-fetch.ts`: this file is on the
+ * `ban-raw-fetch-worker.ts` reviewed allow-list (`jobs/*Fetcher.ts` — fixed
+ * .gov/registry hosts, no user-controlled URL), and `safeFetch`'s own
+ * `totalTimeoutMs` only re-checks the deadline BETWEEN redirect hops — it
+ * does not abort an in-flight single dispatch, so it would not actually have
+ * bounded this hang. `AbortSignal.timeout` is the established pattern for
+ * this exact problem elsewhere in jobs/ (treasury-cache.ts,
+ * secret-rotation-reminder.ts).
+ */
+const CL_DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
 /** Results per page (max 20 for CourtListener) */
 const PER_PAGE = 20;
 
@@ -181,6 +200,8 @@ export async function fetchCourtOpinions(
     courtFilter?: string;
     statusFilter?: string;
     offsetPage?: number;
+    /** Per-page fetch bound in ms. Default CL_DEFAULT_FETCH_TIMEOUT_MS (test seam). */
+    fetchTimeoutMs?: number;
   } = {},
 ): Promise<{
   inserted: number;
@@ -202,6 +223,7 @@ export async function fetchCourtOpinions(
   const maxPages = options.maxPages ?? BULK_MAX_PAGES;
   const courtFilter = options.courtFilter;
   const statusFilter = options.statusFilter ?? 'Published';
+  const fetchTimeoutMs = options.fetchTimeoutMs ?? CL_DEFAULT_FETCH_TIMEOUT_MS;
 
   let totalInserted = 0;
   let totalSkipped = 0;
@@ -258,9 +280,13 @@ export async function fetchCourtOpinions(
       if (clToken) {
         headers.Authorization = `Token ${clToken}`;
       }
-      response = await fetch(nextUrl, { headers });
+      // SCRUM-2975: bound the hang — see CL_DEFAULT_FETCH_TIMEOUT_MS docstring.
+      response = await fetch(nextUrl, { headers, signal: AbortSignal.timeout(fetchTimeoutMs) });
     } catch (err) {
-      logger.error({ error: err, page }, 'CourtListener API request failed');
+      logger.error(
+        { error: err, page, timedOut: err instanceof Error && err.name === 'TimeoutError' },
+        'CourtListener API request failed',
+      );
       totalErrors++;
       break;
     }

@@ -43,7 +43,7 @@ describe('PublicVerifyPage', () => {
       </MemoryRouter>
     );
 
-    expect(getByText('Credential Verification')).toBeInTheDocument();
+    expect(getByText('Document Verification')).toBeInTheDocument();
     expect(getByText('Upload Document')).toBeInTheDocument();
     expect(getByText('Enter Fingerprint')).toBeInTheDocument();
   });
@@ -57,7 +57,7 @@ describe('PublicVerifyPage', () => {
       </MemoryRouter>
     );
 
-    expect(getByText('Verify a Credential')).toBeInTheDocument();
+    expect(getByText('Verify a Document')).toBeInTheDocument();
   });
 
   it('renders privacy info cards on form page', () => {

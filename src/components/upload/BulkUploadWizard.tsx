@@ -431,7 +431,7 @@ function ReviewStep({
         )}
         <Separator />
         {renderSelect(
-          'Credential Type',
+          'Document Type',
           mapping.credentialType,
           (v) => onMappingChange({ ...mapping, credentialType: v })
         )}

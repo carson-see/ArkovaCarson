@@ -49,6 +49,9 @@ describe('CreateWebhookSchema', () => {
   it.each([
     ['anchor.submitted'],
     ['anchor.batch_secured'],
+    // SCRUM-2937: partners can now subscribe to supersession — parity with the
+    // dashboard version-chain view.
+    ['anchor.superseded'],
   ])('accepts %s subscription', (eventType) => {
     const result = CreateWebhookSchema.safeParse({
       url: 'https://example.com/hooks',
@@ -65,6 +68,7 @@ describe('CreateWebhookSchema', () => {
         'anchor.secured',
         'anchor.revoked',
         'anchor.expired',
+        'anchor.superseded',
         'anchor.batch_secured',
       ],
     });

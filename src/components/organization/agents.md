@@ -24,3 +24,7 @@ Organization-level admin components: credential issuance, member management, rev
 - DO: Use "Issue Credential" only for the restricted verified-organization credential issuance flow (SCRUM-1672)
 - DO NOT: Use "Issue Credential" for the universal document-securing action — use "Secure Document" instead
 - DO: On a data-fetch failure, set an explicit error state and render the error/permission banner instead of `console.error`-ing and falling through to the empty state (SCRUM-1999). Detect permission denials with the `42501` / `insufficient_privilege` predicate (mirrors `useRevokeAnchor.ts`).
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+ReviewQueue confirm prompt scrubbed ("Approve this record?"). IssueCredentialForm untouched except shared FORM_LABELS now render "Document Type" — the SCRUM-1672 "Issue Credential" copy (ISSUE_CREDENTIAL_LABELS) is preserved byte-identical. Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).

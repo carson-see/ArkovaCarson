@@ -96,7 +96,7 @@ const dbAny = supabase as any;
 export function PlatformControlsPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   const handleSignOut = async () => {
     await signOut();
