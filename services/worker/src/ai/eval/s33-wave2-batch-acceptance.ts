@@ -47,6 +47,7 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const SLUG = '[a-z0-9]+(?:-[a-z0-9]+)*';
 const MANIFEST_PATH = new RegExp(`^docs/lane4/s33-wave2-batches/(${SLUG})/manifest\\.json$`, 'u');
 const COVERAGE_REGISTRY_PATH = 'docs/lane4/s33-wave2-top15-registry.json' as const;
+const COVERAGE_DOMAIN_IDS = ['legal', 'financial', 'education'] as const;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -254,7 +255,7 @@ function parseCoverageRegistry(content: string): ParsedCoverageRegistry {
   const parsed = document.parsed as JsonRecord;
   exactKeys(parsed, [
     'schemaVersion', 'artifactType', 'status', 'decisionRecord', 'coveragePolicy',
-    'acceptedBaseline', 'domains',
+    'acceptedBaseline', 'domains', 'productionOrder',
   ], 'Wave-2 top-15 coverage registry');
   if (parsed.schemaVersion !== 1 || parsed.artifactType !== 'arkova-s33-wave2-top15-registry'
     || parsed.status !== 'CTO_SIGNED_SCOPE' || !Array.isArray(parsed.domains) || parsed.domains.length !== 3) {
@@ -273,18 +274,29 @@ function parseCoverageRegistry(content: string): ParsedCoverageRegistry {
     || policy.acceptanceLane !== 'lane3') {
     throw new Error('Wave-2 top-15 coverage policy does not match the CTO-approved scope');
   }
+  if (!Array.isArray(parsed.productionOrder) || parsed.productionOrder.length !== 45) {
+    throw new Error('Wave-2 production order must name each of the 45 registry types exactly once');
+  }
+  const productionOrder = parsed.productionOrder.map((candidate, index) => (
+    text(candidate, `Wave-2 productionOrder[${index}]`)
+  ));
   const mappingsByTypeId = new Map<string, ReadonlySet<string>>();
+  const typesByDomain = new Map<string, Array<Readonly<{ id: string; order: number }>>>();
   parsed.domains.forEach((candidate, domainIndex) => {
     const domain = record(candidate, `Wave-2 coverage domains[${domainIndex}]`);
     exactKeys(domain, ['id', 'order', 'types'], `Wave-2 coverage domains[${domainIndex}]`);
-    if (domain.order !== domainIndex + 1 || !Array.isArray(domain.types) || domain.types.length !== 15) {
+    const domainId = text(domain.id, `Wave-2 coverage domains[${domainIndex}].id`);
+    if (domainId !== COVERAGE_DOMAIN_IDS[domainIndex]
+      || domain.order !== domainIndex + 1 || !Array.isArray(domain.types) || domain.types.length !== 15) {
       throw new Error(`Wave-2 coverage domain ${domainIndex} must contain the ordered top 15`);
     }
+    const domainTypes: Array<Readonly<{ id: string; order: number }>> = [];
     domain.types.forEach((typeCandidate, typeIndex) => {
       const type = record(typeCandidate, `Wave-2 coverage domains[${domainIndex}].types[${typeIndex}]`);
       exactKeys(type, ['id', 'order', 'documentType', 'mappings'], `Wave-2 coverage type ${typeIndex}`);
       const typeId = text(type.id, `Wave-2 coverage type ${typeIndex}.id`);
       if (type.order !== typeIndex + 1 || mappingsByTypeId.has(typeId)
+        || !typeId.startsWith(`${domainId}-`)
         || !Array.isArray(type.mappings) || type.mappings.length < 1) {
         throw new Error(`Wave-2 coverage type ${typeId} order/id/mappings are invalid`);
       }
@@ -296,9 +308,23 @@ function parseCoverageRegistry(content: string): ParsedCoverageRegistry {
       }));
       if (mappings.size !== type.mappings.length) throw new Error(`Wave-2 coverage type ${typeId} has duplicate mappings`);
       mappingsByTypeId.set(typeId, mappings);
+      domainTypes.push({ id: typeId, order: type.order as number });
     });
+    typesByDomain.set(domainId, domainTypes);
   });
   if (mappingsByTypeId.size !== 45) throw new Error('Wave-2 coverage registry must contain exactly 45 unique types');
+  if (new Set(productionOrder).size !== 45 || productionOrder.some((typeId) => !mappingsByTypeId.has(typeId))) {
+    throw new Error('Wave-2 production order must name each of the 45 registry types exactly once');
+  }
+  const expectedProductionOrder = [1, 6, 11].flatMap((start) => COVERAGE_DOMAIN_IDS.flatMap((domainId) => (
+    (typesByDomain.get(domainId) ?? [])
+      .filter(({ order }) => order >= start && order < start + 5)
+      .sort((left, right) => left.order - right.order)
+      .map(({ id }) => id)
+  )));
+  if (canonicaliseJson(productionOrder) !== canonicaliseJson(expectedProductionOrder)) {
+    throw new Error('Wave-2 production order must be domain-interleaved in fixed 1-5, 6-10, and 11-15 tranches');
+  }
   return deepFreeze({
     path: COVERAGE_REGISTRY_PATH,
     rawSha256: document.rawSha256,
@@ -709,7 +735,7 @@ function git(repositoryRoot: string, args: readonly string[], encoding?: 'utf8')
 }
 
 function changedPaths(repositoryRoot: string, base: string, head: string): S33Wave2CandidateSnapshot['changedPaths'] {
-  const raw = git(repositoryRoot, ['diff', '--raw', '-z', '--no-renames', base, head], 'utf8');
+  const raw = git(repositoryRoot, ['diff', '--raw', '--abbrev=40', '-z', '--no-renames', base, head], 'utf8');
   const tokens = raw.split('\0').filter(Boolean);
   const changes: Array<{ status: string; path: string; mode: string; objectType: string; blobSha: string }> = [];
   for (let index = 0; index < tokens.length; index += 2) {

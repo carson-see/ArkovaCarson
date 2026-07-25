@@ -891,16 +891,20 @@ jobs:
         # pin unless the official tlaplus/tlaplus release body also changed.
         if: steps.tla-changed.outputs.changed == 'true'
         env:
-          # Pin updated 2026-07-09 - upstream published the official v1.8.0
-          # release assets on 2026-07-09T13:47:24Z. Verified per the protocol
-          # above: (1) release-body SHA1 checksum table changed and matches
-          # the new jar (e5f645d6b4ec7ed29749a1fdc017c3d45752003d),
-          # (2) GitHub release API asset digest is
-          # sha256:33de7da9ce1b7fffb9d1c184021178dbb051747be48504e65c584c423721a32e,
+          # Pin updated 2026-07-21 - upstream RE-CUT the mutable v1.8.0
+          # pre-release assets on 2026-07-18T14:54:57Z (jar bytes changed;
+          # size 4357904 -> 4485995), which is why the prior pin failed the
+          # supply-chain check. Verified per the protocol above against all
+          # THREE independent anchors: (1) release-body SHA1 checksum table
+          # now reads ae09269f0f74b9a7f69ac8b1e79f1514328082c6|tla2tools.jar
+          # and matches the new jar's SHA1, (2) GitHub release API asset
+          # digest is
+          # sha256:cc4803dce2a8ffaf0f5920a9dc39df4b5ee34ab4cb53fb58ac557277a7e516b3,
           # (3) direct `curl | shasum -a 256` of the official release URL
-          # matches (size 4357904). Previous pin (2026-07-06):
-          # 9e27b5e19a69ae1f56aabf8403a6ed5598dbfa6e638908e5278ac39736c1543d
-          TLA2TOOLS_SHA256: 33de7da9ce1b7fffb9d1c184021178dbb051747be48504e65c584c423721a32e
+          # matches (size 4485995). Previous pin (2026-07-09, now stale after
+          # the 07-18 re-cut):
+          # 33de7da9ce1b7fffb9d1c184021178dbb051747be48504e65c584c423721a32e
+          TLA2TOOLS_SHA256: cc4803dce2a8ffaf0f5920a9dc39df4b5ee34ab4cb53fb58ac557277a7e516b3
         run: |
           mkdir -p "$HOME/.tla"
           curl -fsSL -o "$HOME/.tla/tla2tools.jar" \

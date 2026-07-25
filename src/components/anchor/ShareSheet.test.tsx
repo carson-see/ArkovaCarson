@@ -43,7 +43,7 @@ describe('ShareSheet', () => {
 
   it('renders dialog with title', () => {
     render(<ShareSheet {...defaultProps} />);
-    expect(screen.getByText('Share Credential')).toBeInTheDocument();
+    expect(screen.getByText('Share Record')).toBeInTheDocument();
   });
 
   it('renders description with filename', () => {
@@ -81,6 +81,6 @@ describe('ShareSheet', () => {
 
   it('does not render when closed', () => {
     render(<ShareSheet {...defaultProps} open={false} />);
-    expect(screen.queryByText('Share Credential')).not.toBeInTheDocument();
+    expect(screen.queryByText('Share Record')).not.toBeInTheDocument();
   });
 });

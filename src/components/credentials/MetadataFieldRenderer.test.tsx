@@ -141,6 +141,6 @@ describe('MetadataFieldRenderer', () => {
     render(
       <MetadataFieldRenderer fields={TEXT_FIELDS} values={{}} onChange={vi.fn()} />
     );
-    expect(screen.getByText('Credential Details')).toBeInTheDocument();
+    expect(screen.getByText('Record Details')).toBeInTheDocument();
   });
 });

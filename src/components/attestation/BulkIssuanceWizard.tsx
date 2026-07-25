@@ -283,7 +283,7 @@ function buildAttestationFromRow(
   } else {
     // Generic — use summary or generate a basic claim
     const summary = mapping.summary ? row[mapping.summary]?.trim() : '';
-    claims.push({ claim: summary || `Verified credential for ${subjectId}` });
+    claims.push({ claim: summary || `Verified record for ${subjectId}` });
   }
 
   const result: MappedRow['attestation'] = {

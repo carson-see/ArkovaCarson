@@ -14,7 +14,7 @@ import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import compression from 'compression';
 import { config } from './config.js';
-import { initSentry, Sentry } from './utils/sentry.js';
+import { initSentry, resolveSentryEnvironment, Sentry } from './utils/sentry.js';
 import { logger } from './utils/logger.js';
 import { db, isDbHealthy, recordDbSuccess, recordDbFailure, getDbCircuitState, getConnectionInfo } from './utils/db.js';
 import { callRpc } from './utils/rpc.js';
@@ -65,10 +65,21 @@ import { setIdempotencyStore } from './middleware/idempotency.js';
 import { createFeeEstimator } from './chain/fee-estimator.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
-initSentry(config.sentryDsn, config.nodeEnv, {
-  kRevision: config.kRevision,
-  kService: config.kService,
-});
+// MT-1 (SCRUM-2901): derive the environment tag from the Cloud Run service
+// identity (K_SERVICE), not NODE_ENV — rigs run NODE_ENV=production and must
+// not tag their events 'production' (else a rig standup floods prod alerting).
+initSentry(
+  config.sentryDsn,
+  resolveSentryEnvironment({
+    sentryEnvironment: config.sentryEnvironment,
+    kService: config.kService,
+    nodeEnv: config.nodeEnv,
+  }),
+  {
+    kRevision: config.kRevision,
+    kService: config.kService,
+  },
+);
 
 // Static fee estimator singleton — avoids dynamic import on every /health request
 const feeEstimatorInstance = createFeeEstimator({

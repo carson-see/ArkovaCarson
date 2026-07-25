@@ -28,16 +28,16 @@ const REPORT_TYPES: { value: ReportType; label: string; description: string }[] 
   {
     value: 'integrity_summary',
     label: 'Integrity Summary',
-    description: 'Score distribution and flagged items across all credentials',
+    description: 'Score distribution and flagged items across all records',
   },
   {
     value: 'extraction_accuracy',
     label: 'Extraction Accuracy',
-    description: 'AI suggestion acceptance rates per field and credential type',
+    description: 'AI suggestion acceptance rates per field and document type',
   },
   {
     value: 'credential_analytics',
-    label: 'Credential Analytics',
+    label: 'Record Analytics',
     description: 'Issuance volume, type distribution, and timeline',
   },
   {
@@ -88,7 +88,7 @@ function ReportResultViewer({ report }: { report: AIReport }) {
         <div className="grid grid-cols-2 gap-2">
           <div className="bg-muted/50 rounded-md p-2">
             <div className="text-lg font-semibold">{String(report.result.totalCredentials)}</div>
-            <div className="text-xs text-muted-foreground">Total Credentials</div>
+            <div className="text-xs text-muted-foreground">Total Records</div>
           </div>
           {report.result.averageScore != null && (
             <div className="bg-muted/50 rounded-md p-2">
