@@ -55,3 +55,27 @@ ERROR on this tree + the `docusign-*` job files) enforces this at build time.
 - **DO** remember the lint is AST-only — a spread (`{ ...obj }`), cross-file flow,
   or a helper-return can hide bytes from it. The runtime guards above are the
   backstop; do not defeat them.
+
+## SCRUM-3014 — Connect listener provisioning health (`docusign-connect-health.ts`)
+
+- `provisionConnectListener()` is fire-and-forget from both DocuSign OAuth
+  callbacks. It MUST stay non-fatal — but it must not be silent. Use
+  `reportConnectProvisionFailure()` on every failure path: it logs the real
+  DocuSign HTTP status + bounded `detail`, captures to Sentry, and flips
+  `connector_alert_state` to `degraded` (the queue digest surfaces that as a
+  failed connector).
+- **DO** persist `docusign_status` / `docusign_detail` on the
+  `*_connect_listener_failed` `integration_events` row. A bare `error.message`
+  is what made the prod failures undiagnosable in the first place.
+- **DO** call `markDocusignConnectorConnected()` on every success path — the
+  degraded state is sticky by design (see `jobs/connector-health-alert.ts`) and
+  nothing else clears it.
+- **DO NOT** let anything in this module throw into the OAuth callback; every
+  write is best-effort and logs on failure.
+- **DO** settle the provisioning promise through `settleConnectProvisioning()`
+  rather than hand-rolling a `.then(...).catch(...)` chain per router. Both
+  callbacks and the reprovision endpoint differ only in their event-type names
+  and `flow` tag; duplicating the chain drifted the two flows apart and tripped
+  the Sonar new-code duplication gate. A throw from the SUCCESS-path event write
+  deliberately falls through to the failure path — that is the behaviour of the
+  chain it replaced, not an accident.
