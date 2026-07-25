@@ -36,7 +36,7 @@ const ACTION_CONFIG: Record<ReviewAction, {
     icon: CheckCircle2,
     label: REVIEW_QUEUE_LABELS.ACTION_APPROVE,
     color: 'text-green-600 hover:bg-green-50',
-    confirm: 'Approve this credential?',
+    confirm: 'Approve this record?',
   },
   INVESTIGATE: {
     icon: Search,

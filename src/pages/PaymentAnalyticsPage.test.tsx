@@ -19,7 +19,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 vi.mock('@/hooks/useProfile', () => ({
   useProfile: vi.fn().mockReturnValue({
-    profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson' },
+    profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson', is_platform_admin: true },
     loading: false,
     destination: '/dashboard',
   }),
@@ -62,6 +62,7 @@ describe('PaymentAnalyticsPage', () => {
 
   it('shows access restricted for non-admin', async () => {
     const { useAuth } = await import('@/hooks/useAuth');
+    const { useProfile } = await import('@/hooks/useProfile');
     vi.mocked(useAuth).mockReturnValue({
       user: { email: 'regular@test.com', id: 'user-2' },
       signOut: vi.fn(),
@@ -69,6 +70,12 @@ describe('PaymentAnalyticsPage', () => {
       loading: false,
       error: null,
     } as unknown as ReturnType<typeof useAuth>);
+    // Access is decided by the is_platform_admin DB flag, not the email.
+    vi.mocked(useProfile).mockReturnValue({
+      profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Regular', is_platform_admin: false },
+      loading: false,
+      destination: '/dashboard',
+    } as never);
 
     render(
       <MemoryRouter>

@@ -53,7 +53,7 @@ describe('EvidenceLayersSection', () => {
       <EvidenceLayersSection layers={[anchorLayer, signatureLayer, timestampLayer]} />,
     );
     fireEvent.click(screen.getByRole('button'));
-    const notPresent = screen.getAllByText('Not present for this credential.');
+    const notPresent = screen.getAllByText('Not present for this record.');
     expect(notPresent).toHaveLength(2); // signature + timestamp
   });
 

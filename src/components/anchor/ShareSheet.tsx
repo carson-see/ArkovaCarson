@@ -44,7 +44,7 @@ export function ShareSheet({ open, onOpenChange, publicId, filename }: Readonly<
   const handleEmailShare = useCallback(() => {
     const subject = encodeURIComponent(SHARE_LABELS.EMAIL_SUBJECT);
     const body = encodeURIComponent(
-      `Verify this credential on Arkova:\n\n${verificationUrl}`
+      `Verify this record on Arkova:\n\n${verificationUrl}`
     );
     window.open(`mailto:?subject=${subject}&body=${body}`, '_self');
   }, [verificationUrl]);

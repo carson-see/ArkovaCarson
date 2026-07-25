@@ -28,7 +28,7 @@ import type { ExtractionField } from '../../lib/aiExtraction';
 export const LOW_CONFIDENCE_THRESHOLD = 0.8;
 
 const FIELD_LABELS: Record<string, string> = {
-  credentialType: 'Credential Type',
+  credentialType: 'Document Type',
   issuerName: 'Issuer',
   recipientIdentifier: 'Recipient',
   issuedDate: 'Issue Date',

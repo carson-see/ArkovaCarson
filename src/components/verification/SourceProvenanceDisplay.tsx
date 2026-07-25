@@ -55,14 +55,14 @@ const SOURCE_PROVENANCE_TRIAD_LABELS = {
 
 const EVIDENCE_TRIAD_FALLBACK: Record<VerificationLevel, EvidenceTriad> = {
   issuer_anchored: {
-    measured: 'The credential fingerprint and the time it was anchored.',
+    measured: 'The document fingerprint and the time it was anchored.',
     asserted: 'Issuer identity — anchored directly by the issuing organization.',
-    notAsserted: 'The real-world facts the credential describes (e.g. skills held).',
+    notAsserted: 'The real-world facts the document describes (e.g. skills held).',
   },
   source_signed: {
-    measured: 'The credential fingerprint and the source signature.',
+    measured: 'The document fingerprint and the source signature.',
     asserted: 'Issuer origin — a cryptographic signature proves the source.',
-    notAsserted: 'The real-world facts the credential describes.',
+    notAsserted: 'The real-world facts the document describes.',
   },
   account_linked: {
     measured: 'The fingerprint of the record imported from the connected account.',

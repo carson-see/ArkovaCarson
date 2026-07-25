@@ -7,6 +7,7 @@
  */
 
 import { Router } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import { logger } from '../utils/logger.js';
 import { rateLimiters } from '../utils/rateLimit.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
@@ -32,6 +33,9 @@ import { handleMarkNotificationsRead, handleUnreadNotificationCount } from '../a
 import { getQueryStats } from '../utils/queryMonitor.js';
 import { getConnectionInfo } from '../utils/db.js';
 import { getRateLimitStoreSize } from '../utils/rateLimit.js';
+import { getCallerOrgIdResult } from '../api/_org-auth.js';
+import { requireOrgQuota } from '../middleware/perOrgRateLimit.js';
+import { CreateOrgRuleInput } from '../rules/schemas.js';
 
 export const adminRouter = Router();
 
@@ -393,16 +397,70 @@ adminRouter.get('/rules/:id', async (req, res) => {
   }
 });
 
-adminRouter.post('/rules', async (req, res) => {
-  const userId = await extractAuthUserId(req);
-  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+async function requireRuleCreateOrg(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  let userId: string | null;
   try {
-    await handleCreateRule(userId, req, res);
+    userId = await extractAuthUserId(req);
   } catch (error) {
-    logger.error({ error }, 'Rules create request failed');
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error({ error }, 'Rules create authentication lookup failed');
+    res.status(503).json({ error: 'Authentication is temporarily unavailable' });
+    return;
   }
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  let orgResult: Awaited<ReturnType<typeof getCallerOrgIdResult>>;
+  try {
+    orgResult = await getCallerOrgIdResult(userId);
+  } catch (error) {
+    logger.error({ error }, 'Rules create organization lookup rejected');
+    res.status(503).json({ error: 'Organization authorization is temporarily unavailable' });
+    return;
+  }
+  if (orgResult.error) {
+    res.status(503).json({ error: 'Organization authorization is temporarily unavailable' });
+    return;
+  }
+  if (!orgResult.value) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+  req.userId = userId;
+  req.orgId = orgResult.value;
+  next();
+}
+
+const ruleCapacityQuota = requireOrgQuota({
+  kind: 'rules_total',
+  mode: 'capacity',
+  getOrgId: (req) => req.orgId ?? null,
+  getDelta: (req) => CreateOrgRuleInput.safeParse(req.body).success ? 1 : 0,
 });
+
+adminRouter.post(
+  '/rules',
+  requireRuleCreateOrg,
+  ruleCapacityQuota,
+  async (req, res) => {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(503).json({ error: 'Authenticated user context unavailable' });
+      return;
+    }
+    try {
+      await handleCreateRule(userId, req, res);
+    } catch (error) {
+      logger.error({ error }, 'Rules create request failed');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
 
 adminRouter.patch('/rules/:id', async (req, res) => {
   const userId = await extractAuthUserId(req);
