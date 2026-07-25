@@ -38,6 +38,7 @@ import { processBatchAnchors, type BatchAnchorResult } from './batch-anchor.js';
 import { callRpc } from '../utils/rpc.js';
 import { Sentry } from '../utils/sentry.js';
 import { config } from '../config.js';
+import { findExistingEnvelopeAnchor } from './docusign-anchor-reconciliation.js';
 
 /**
  * Strict Zod schema for the `anchors` insert this job persists (CLAUDE.md §1.2:
@@ -353,6 +354,28 @@ export async function defaultMaterializeAnchor(
   deps: Pick<ConnectorArtifactDrainDeps, 'db'>,
 ): Promise<MaterializedAnchor> {
   const userId = await resolveOrgActorUserId(deps, row.org_id);
+
+  // SCRUM-2904 envelope-level guard: if the declared-hash rules path already
+  // created a live anchor for this same envelope (flag-flip-mid-flight race:
+  // declared-hash ran while the connector flags were off, then they flipped on),
+  // REUSE it instead of inserting a SECOND, distinct anchor. The
+  // (user_id, fingerprint) unique index below only catches the equal-hash case;
+  // this catches the DIFFERENT-hash case (asserted vs measured fingerprint).
+  // Keyed on the envelope id (external_ref), org-scoped. Fail-closed: a lookup
+  // error throws into the per-row try/catch (row marked failed/retryable) rather
+  // than risk a duplicate. §1.6A: reads coarse ids only — never bytes.
+  const existingEnvelopeAnchor = await findExistingEnvelopeAnchor({
+    db: deps.db,
+    orgId: row.org_id,
+    envelopeId: row.external_ref,
+  });
+  if (existingEnvelopeAnchor) {
+    return {
+      anchorId: existingEnvelopeAnchor.id,
+      anchorPublicId: existingEnvelopeAnchor.publicId,
+    };
+  }
+
   const filename =
     metadataString(row.metadata, 'filename') ??
     metadataString(row.metadata, 'external_filename') ??

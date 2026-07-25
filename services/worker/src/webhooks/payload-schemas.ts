@@ -108,6 +108,37 @@ export const AnchorExpiredPayloadSchema = z
   })
   .strict();
 
+// SCRUM-2937: anchor.superseded fires when a SECURED anchor is atomically
+// replaced by a re-issued child (lifecycle transition SECURED → SUPERSEDED,
+// sourced from the `supersede_anchor` RPC behind POST /api/anchor/:id/supersede
+// — the same action a dashboard org admin takes from VersionConflictsPage /
+// the RecordDetail lineage view). Headless partners (e.g. HakiChain) have no
+// dashboard, so without this event they silently miss supersession while a
+// dashboard org sees the whole version chain — the webhook↔dashboard parity
+// gap this story closes.
+//
+// Same on-chain invariant as SECURED / EXPIRED: SUPERSEDED can only follow
+// SECURED, so chain_tx_id + chain_block_height must be populated (a regression
+// shipping nulls fails validation before signing). Two additive public-only
+// fields carry the lineage pointer + reason:
+//   - `superseded_by_public_id` — the child anchor's public slug (same org,
+//     same lineage). Nullable + optional: the child slug may not be resolvable
+//     at dispatch time, and older producers may omit it (§1.8 additive).
+//   - `supersession_reason` — the operator-supplied reason, capped at 500.
+//     Nullable + optional; free text, PII-banned by convention (the .strict()
+//     rejects unknown keys; UUIDs/fingerprint can never ride this event).
+export const AnchorSupersededPayloadSchema = z
+  .object({
+    ...ANCHOR_BASE_FIELDS,
+    chain_tx_id: z.string().min(1),
+    chain_block_height: z.number().int().nonnegative(),
+    status: z.literal('SUPERSEDED'),
+    superseded_at: isoTimestamp,
+    superseded_by_public_id: z.string().min(1).max(64).nullable().optional(),
+    supersession_reason: z.string().max(500).nullable().optional(),
+  })
+  .strict();
+
 /**
  * Aggregate event for the merkle-batch path. Fires once per merkle TX.
  * Per-anchor `anchor.secured` events still fan out alongside this for
@@ -194,8 +225,12 @@ export const CredentialVerifiedPayloadSchema = z
 export const CredentialStatusChangedPayloadSchema = z
   .object({
     ...CREDENTIAL_BASE_FIELDS,
-    previous_status: z.enum(['PENDING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED']),
-    new_status: z.enum(['PENDING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED']),
+    // SCRUM-2937: SUPERSEDED added so credential.status_changed can carry the
+    // SECURED → SUPERSEDED transition emitted alongside anchor.superseded (the
+    // supersede action re-issues a credential as a new child). Widening an
+    // accepted enum value is additive per §1.8 — no existing value removed.
+    previous_status: z.enum(['PENDING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED', 'SUPERSEDED']),
+    new_status: z.enum(['PENDING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED', 'SUPERSEDED']),
     changed_at: isoTimestamp,
     // Free-form reason capped at 500 chars. Banned: PII, document text,
     // any internal UUIDs (the .strict() rejects unknown keys, this is a
@@ -221,6 +256,7 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'anchor.secured': AnchorSecuredPayloadSchema,
   'anchor.revoked': AnchorRevokedPayloadSchema,
   'anchor.expired': AnchorExpiredPayloadSchema,
+  'anchor.superseded': AnchorSupersededPayloadSchema,
   'anchor.batch_secured': AnchorBatchSecuredPayloadSchema,
   'credential.issued': CredentialIssuedPayloadSchema,
   'credential.verified': CredentialVerifiedPayloadSchema,
@@ -232,6 +268,7 @@ export type AnchorSubmittedPayload = z.infer<typeof AnchorSubmittedPayloadSchema
 export type AnchorSecuredPayload = z.infer<typeof AnchorSecuredPayloadSchema>;
 export type AnchorRevokedPayload = z.infer<typeof AnchorRevokedPayloadSchema>;
 export type AnchorExpiredPayload = z.infer<typeof AnchorExpiredPayloadSchema>;
+export type AnchorSupersededPayload = z.infer<typeof AnchorSupersededPayloadSchema>;
 export type AnchorBatchSecuredPayload = z.infer<typeof AnchorBatchSecuredPayloadSchema>;
 export type CredentialIssuedPayload = z.infer<typeof CredentialIssuedPayloadSchema>;
 export type CredentialVerifiedPayload = z.infer<typeof CredentialVerifiedPayloadSchema>;

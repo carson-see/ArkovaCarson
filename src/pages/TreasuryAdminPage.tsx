@@ -48,7 +48,7 @@ export function TreasuryAdminPage() {
 
   const [refreshing, setRefreshing] = useState(false);
 
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
