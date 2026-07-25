@@ -86,8 +86,8 @@ export const AVAILABLE_EVENTS = [
   // Credential.* are contract-defined today but emit points land in Phase-2
   // follow-ups; the "coming soon" suffix sets the right expectation.
   { id: 'credential.issued', label: 'Credential Issued (coming soon)' },
-  { id: 'credential.verified', label: 'Credential Verified (coming soon)' },
-  { id: 'credential.status_changed', label: 'Credential Status Changed (coming soon)' },
+  { id: 'credential.verified', label: 'Record Verified (coming soon)' },
+  { id: 'credential.status_changed', label: 'Record Status Changed (coming soon)' },
 ];
 
 export function WebhookSettings({

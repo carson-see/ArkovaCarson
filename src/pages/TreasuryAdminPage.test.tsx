@@ -13,7 +13,7 @@ import { workerFetch } from '@/lib/workerClient';
 
 // Mock hooks
 const mockUser = { email: 'carson@arkova.ai' };
-const mockProfile = { full_name: 'Admin', role: 'ORG_ADMIN', org_id: null, public_id: 'admin-1', is_public_profile: false, avatar_url: null };
+const mockProfile = { full_name: 'Admin', role: 'ORG_ADMIN', org_id: null, public_id: 'admin-1', is_public_profile: false, avatar_url: null, is_platform_admin: true };
 const mockTreasuryBalanceState: {
   balance: null;
   receipts: [];
@@ -125,6 +125,7 @@ describe('TreasuryAdminPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUser.email = 'carson@arkova.ai';
+    mockProfile.is_platform_admin = true;
     mockTreasuryBalanceState.sourceState = {
       cacheUpdatedAt: '2026-05-12T10:00:00Z',
       cacheStale: false,
@@ -164,7 +165,7 @@ describe('TreasuryAdminPage', () => {
   });
 
   it('shows unauthorized message for non-admin users', () => {
-    mockUser.email = 'user@example.com';
+    mockProfile.is_platform_admin = false;
     renderPage();
     expect(screen.getByText(/access denied/i)).toBeInTheDocument();
   });

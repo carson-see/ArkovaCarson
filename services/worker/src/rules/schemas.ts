@@ -312,6 +312,11 @@ export const RULE_DISPATCH_OUTCOME = {
   // is the FAST_TRACK_ANCHOR happy-path after submitJob succeeds.
   QUEUED_FOR_ANCHOR: 'queued_for_anchor',
   ANCHOR_DISPATCHED: 'anchor_dispatched',
+  // SCRUM-2904 — dual-path reconciliation. Emitted when the declared-hash rules
+  // path DEFERS to the authoritative server-fetched connector path (§1.6A) so a
+  // single DocuSign envelope is anchored exactly once, from the measured-bytes
+  // fingerprint. No anchor is materialized and no credit is moved on this outcome.
+  DEFERRED_TO_CONNECTOR: 'deferred_to_connector',
 } as const;
 
 export type RuleDispatchOutcome =
@@ -327,6 +332,9 @@ export const RULE_ROUTED_TO = {
   // SCRUM-1649 DS-AUTO-02 — anchor action routing.
   ANCHOR_QUEUE: 'anchor_queue',
   ANCHOR_PIPELINE: 'anchor_pipeline',
+  // SCRUM-2904 — the declared-hash path deferred; the authoritative server-
+  // fetched connector path owns anchoring this envelope.
+  CONNECTOR_PIPELINE: 'connector_pipeline',
 } as const;
 
 export type RuleRoutedTo = (typeof RULE_ROUTED_TO)[keyof typeof RULE_ROUTED_TO];

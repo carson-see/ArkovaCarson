@@ -213,7 +213,7 @@ export function OrgVerification({
         </CardTitle>
         <CardDescription>
           {isVerified
-            ? 'Your organization is verified. This badge is shown on all your credentials.'
+            ? 'Your organization is verified. This badge is shown on all your records.'
             : 'Verify your organization with an EIN/Tax ID and domain to earn a verified badge.'
           }
         </CardDescription>

@@ -5,8 +5,29 @@
  * `verifyGate` function is tested across the full pass/fail matrix.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import { shouldFailOnMissingToken, verifyGate, verifyNewCodeDefinition } from './check-sonar-quality-gate.js';
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const WAVE_2_HELDOUT_SOURCE_PATHS = [
+  'services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-01-05-heldout.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-06-10-heldout.ts',
+  'services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-11-15-heldout.ts',
+];
+
+function sonarProperty(name: string): string[] {
+  const config = readFileSync(resolve(REPO_ROOT, '.sonarcloud.properties'), 'utf8');
+  const property = config.split(/\r?\n/u).find((line) => line.startsWith(`${name}=`));
+
+  if (!property) {
+    throw new Error(`Missing ${name} in .sonarcloud.properties`);
+  }
+
+  return property.slice(name.length + 1).split(',').filter(Boolean);
+}
 
 const COMPLETE_GATE = {
   id: 'gate-1',
@@ -147,5 +168,26 @@ describe('shouldFailOnMissingToken (SCRUM-1681)', () => {
 
   it('allows local tokenless runs to skip', () => {
     expect(shouldFailOnMissingToken({})).toBe(false);
+  });
+});
+
+describe('.sonarcloud.properties Wave 2 held-out corpus policy', () => {
+  it('uses exact CPD-only exclusions for all three planned tranche sources', () => {
+    const cpdExclusions = sonarProperty('sonar.cpd.exclusions');
+    const fullExclusions = sonarProperty('sonar.exclusions');
+    const wave2CpdExclusions = cpdExclusions.filter((path) =>
+      path.includes('golden-dataset-s33-wave2-top15'),
+    );
+
+    expect(wave2CpdExclusions).toEqual(WAVE_2_HELDOUT_SOURCE_PATHS);
+    for (const path of WAVE_2_HELDOUT_SOURCE_PATHS) {
+      expect(fullExclusions).not.toContain(path);
+    }
+    expect(cpdExclusions).not.toContain(
+      'services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-*-heldout.ts',
+    );
+    expect(fullExclusions.some((path) => path.includes('golden-dataset-s33-wave2-top15'))).toBe(
+      false,
+    );
   });
 });

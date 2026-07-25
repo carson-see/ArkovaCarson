@@ -134,7 +134,7 @@ describe('SearchPage', () => {
   it('renders the unified search input with placeholder', () => {
     renderSearchPage();
     expect(
-      screen.getByPlaceholderText(/search issuers, credentials, or paste a verification id/i),
+      screen.getByPlaceholderText(/search issuers, records, or paste a verification id/i),
     ).toBeInTheDocument();
   });
 

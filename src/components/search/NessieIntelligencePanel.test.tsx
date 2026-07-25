@@ -22,13 +22,13 @@ describe('NessieIntelligencePanel', () => {
 
   it('renders panel title and input', () => {
     renderComponent();
-    expect(screen.getByText('Nessie Intelligence')).toBeInTheDocument();
+    expect(screen.getByText('Document Intelligence')).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/ask a compliance question/i)).toBeInTheDocument();
   });
 
   it('renders empty state when no query submitted', () => {
     renderComponent();
-    expect(screen.getByText(/ask a question to get compliance intelligence/i)).toBeInTheDocument();
+    expect(screen.getByText(/ask a question to get answers backed by verified evidence/i)).toBeInTheDocument();
   });
 
   it('disables submit button when input is empty', () => {

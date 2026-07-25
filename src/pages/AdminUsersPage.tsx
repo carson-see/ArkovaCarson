@@ -55,7 +55,7 @@ export function AdminUsersPage() {
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
   const [roleFilter, setRoleFilter] = useState(searchParams.get('role') || 'ALL');
 
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   const doFetch = useCallback((p = 1) => {
     fetchList({ page: p, search: searchInput, filters: { role: roleFilter === 'ALL' ? '' : roleFilter } });
