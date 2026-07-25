@@ -25,3 +25,7 @@ Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdictio
 ## Do / Don't Rules
 - DO: Read compliance data from `compliance_audits` table (NCA-03), not the legacy `compliance_scores` table
 - DO: Compliance section is accessed via admin sidebar toggle, not primary nav
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+AuditMyOrganizationButton/scorecard copy comes from copy.ts (scrubbed there). Drive-by: ComplianceScoreCard.test.tsx `/87/` regex made exact — it also matched the relative "87 days ago" timestamp whenever (today − completed_at) equalled the score (date-dependent flake, tripped 2026-07-21; pre-existing on main). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
