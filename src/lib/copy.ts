@@ -62,7 +62,7 @@ export const CREDENTIAL_TYPE_LABELS = {
   LICENSE: 'License',
   CERTIFICATE: 'Certificate',
   TRANSCRIPT: 'Transcript',
-  PROFESSIONAL: 'Professional Credential',
+  PROFESSIONAL: 'Professional Certification',
   CPE: 'CPE Credit',
   CLE: 'CLE Credit',
   BADGE: 'Digital Badge',
@@ -140,7 +140,7 @@ export const CREDENTIAL_TYPE_DESCRIPTIONS = {
   TRANSCRIPT: 'Academic transcript or record of courses',
   PROFESSIONAL: 'Professional certification or accreditation',
   CLE: 'Continuing Legal Education credit',
-  BADGE: 'Digital badge or micro-credential (e.g., Credly, Acclaim)',
+  BADGE: 'Digital badge or micro-certification (e.g., Credly, Acclaim)',
   ATTESTATION: 'Employment verification, reference letter, or sworn attestation',
   FINANCIAL: 'Financial statement, audit report, or tax document',
   LEGAL: 'Contract, court order, legal brief, or agreement',
@@ -169,11 +169,11 @@ export const CREDENTIAL_TYPE_DESCRIPTIONS = {
  * These replace raw file details with privacy-safe summaries.
  */
 export const TEMPLATE_DESCRIPTIONS: Record<string, string> = {
-  DEGREE: 'Verified Academic Credential',
+  DEGREE: 'Verified Academic Degree',
   LICENSE: 'Verified Professional License',
   CERTIFICATE: 'Verified Certificate of Achievement',
   TRANSCRIPT: 'Verified Academic Record',
-  PROFESSIONAL: 'Verified Professional Credential',
+  PROFESSIONAL: 'Verified Professional Certification',
   CLE: 'Verified Continuing Education Credit',
   BADGE: 'Verified Digital Badge',
   ATTESTATION: 'Verified Attestation Document',
@@ -288,13 +288,18 @@ export const NAV_LABELS = {
 
 export const DOCUMENTS_PAGE_LABELS = {
   PAGE_TITLE: 'Documents',
-  PAGE_SUBTITLE: 'All your records, credentials, and attestations in one place.',
+  PAGE_SUBTITLE: 'All your records, documents, and attestations in one place.',
   TAB_ALL: 'All',
   TAB_RECORDS: 'My Records',
   TAB_CREDENTIALS: 'Issued to Me',
   TAB_ATTESTATIONS: 'Attestations',
   EMPTY_TITLE: 'No documents yet',
-  EMPTY_DESC: 'Secure your first document, receive a credential, or create an attestation to get started.',
+  EMPTY_DESC: 'Secure your first document, receive a record, or create an attestation to get started.',
+  // SCRUM-2938 S1: "Issued to Me" tab empty state (moved out of inline JSX in
+  // DocumentsPage per §1.3 / src/lib/agents.md). Generic securable/imported
+  // items are "documents", not "credentials".
+  RECEIVED_EMPTY_TITLE: 'No documents yet',
+  RECEIVED_EMPTY_DESC: 'When organizations issue documents to your email address, they will appear here.',
   SECURE_DOCUMENT: 'Secure Document',
   NO_MATCHING: 'No results found',
   NO_MATCHING_DESC: 'No documents match your current search or filter. Try adjusting your criteria.',
@@ -317,10 +322,10 @@ export const FORM_LABELS = {
   EXPIRES_AT: 'Expires',
   REVOCATION_REASON: 'Reason for Revocation',
   REVOCATION_REASON_PLACEHOLDER: 'Describe why this record is being revoked (optional)',
-  CREDENTIAL_TYPE: 'Credential Type',
-  CREDENTIAL_TYPE_PLACEHOLDER: 'Select a credential type',
+  CREDENTIAL_TYPE: 'Document Type',
+  CREDENTIAL_TYPE_PLACEHOLDER: 'Select a document type',
   LABEL: 'Label',
-  LABEL_PLACEHOLDER: 'Enter a descriptive label for this credential',
+  LABEL_PLACEHOLDER: 'Enter a descriptive label for this document',
 } as const;
 
 // =============================================================================
@@ -392,6 +397,7 @@ export const TOAST = {
   BULK_FAILED: 'Bulk upload failed. Please try again.',
   BULK_CANCELLED: 'Bulk upload cancelled.',
   BULK_QUOTA_EXCEEDED: 'Upload exceeds your plan limit.',
+  BULK_RECIPIENTS_FAILED: 'Bulk upload complete — {created} records created, but {failed} recipient invite(s) failed.',
 } as const;
 
 // =============================================================================
@@ -411,9 +417,9 @@ export const EMPTY_STATES = {
 
 export const VERIFICATION_LABELS = {
   // Page
-  PAGE_TITLE: 'Verify a Credential',
-  PAGE_SUBTITLE: 'Check if a credential has been secured with Arkova. Upload the file or enter its fingerprint to verify authenticity.',
-  FORM_TITLE: 'Credential Verification',
+  PAGE_TITLE: 'Verify a Document',
+  PAGE_SUBTITLE: 'Check if a document has been secured with Arkova. Upload the file or enter its fingerprint to verify authenticity.',
+  FORM_TITLE: 'Document Verification',
   FORM_SUBTITLE: 'Verify that a document matches a secured record',
 
   // Status badges
@@ -424,7 +430,7 @@ export const VERIFICATION_LABELS = {
 
   // Section headings
   SECTION_STATUS: 'Verification Status',
-  SECTION_CREDENTIAL: 'Credential Details',
+  SECTION_CREDENTIAL: 'Record Details',
   SECTION_TIMELINE: 'Timeline',
   SECTION_PROOF: 'Network Proof',
   SECTION_DOCUMENT: 'Document Information',
@@ -432,7 +438,7 @@ export const VERIFICATION_LABELS = {
   // Field labels
   ISSUER: 'Issuer',
   RECIPIENT_ID: 'Recipient Identifier',
-  CREDENTIAL_TYPE: 'Credential Type',
+  CREDENTIAL_TYPE: 'Document Type',
   JURISDICTION: 'Jurisdiction',
   ISSUED_DATE: 'Issued',
   EXPIRY_DATE: 'Expires',
@@ -446,12 +452,12 @@ export const VERIFICATION_LABELS = {
   VERIFICATION_ID: 'Verification ID',
 
   // Status descriptions
-  ACTIVE_DESC: 'This credential has been verified and is currently active.',
-  REVOKED_DESC: 'This credential has been revoked and is no longer valid.',
-  EXPIRED_DESC: 'This credential has passed its expiration date.',
-  SUPERSEDED_DESC: 'This credential has been replaced by a newer version.',
+  ACTIVE_DESC: 'This record has been verified and is currently active.',
+  REVOKED_DESC: 'This record has been revoked and is no longer valid.',
+  EXPIRED_DESC: 'This record has passed its expiration date.',
+  SUPERSEDED_DESC: 'This record has been replaced by a newer version.',
   NOT_FOUND_TITLE: 'Verification Failed',
-  NOT_FOUND_DESC: 'The credential you are looking for may not exist or has not been verified yet.',
+  NOT_FOUND_DESC: 'The record you are looking for may not exist or has not been verified yet.',
 
   // Footer
   SECURED_BY: 'Secured by Arkova',
@@ -646,8 +652,8 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'anchor.expired': 'A secured document record passed its expiration date.',
   'anchor.batch_secured': 'A group of document records was secured together in one Network Receipt.',
   'credential.issued': 'A credential was issued by a verified organization.',
-  'credential.verified': 'A credential was confirmed as secured through a verification request.',
-  'credential.status_changed': 'A credential moved to a different status.',
+  'credential.verified': 'A document record was confirmed as secured through a verification request.',
+  'credential.status_changed': 'A document record moved to a different status.',
 };
 
 // =============================================================================
@@ -734,7 +740,7 @@ export const ENTITLEMENT_LABELS = {
 // =============================================================================
 
 export const CREDENTIAL_RENDERER_LABELS = {
-  CREDENTIAL_DETAILS: 'Credential Details',
+  CREDENTIAL_DETAILS: 'Record Details',
   DOCUMENT_RECORD: 'Document Record',
   NO_TEMPLATE: 'Record Details',
   ISSUED_BY: 'Issued by',
@@ -779,14 +785,14 @@ export const SECURE_DIALOG_LABELS = {
 
 export const SECURE_DOCUMENT_LABELS = {
   TITLE: 'Secure Document',
-  DESCRIPTION: 'Create a verifiable credential record for your organization.',
-  PENDING_NOTICE: 'The credential will be created with Pending status and assigned a unique verification ID immediately.',
+  DESCRIPTION: 'Create a verifiable document record for your organization.',
+  PENDING_NOTICE: 'The record will be created with Pending status and assigned a unique verification ID immediately.',
   ISSUING_LOADING: 'Securing...',
   ISSUE_BUTTON: 'Secure Document',
   VERIFICATION_LINK: 'Verification Link',
   COPY_LINK_ARIA: 'Copy verification link',
   HINT_UPLOAD_DOCUMENT: 'Upload a document to continue.',
-  HINT_SELECT_TYPE: 'Select a credential type to continue.',
+  HINT_SELECT_TYPE: 'Select a document type to continue.',
 } as const;
 
 // =============================================================================
@@ -857,7 +863,7 @@ export const PUBLIC_VERIFICATION_LABELS = {
   COPY_FINGERPRINT_ARIA: 'Copy document fingerprint',
   COPY_RECEIPT_ARIA: 'Copy network receipt',
   REPORT_ISSUE: 'Report an Issue',
-  REPORT_ISSUE_SUBJECT: 'Issue with credential',
+  REPORT_ISSUE_SUBJECT: 'Issue with record',
 } as const;
 
 // =============================================================================
@@ -915,7 +921,7 @@ export const CERTIFICATE_COPY = {
 
   FIELD_FILENAME: 'Filename',
   FIELD_FILE_SIZE: 'File Size',
-  FIELD_CREDENTIAL_TYPE: 'Credential Type',
+  FIELD_CREDENTIAL_TYPE: 'Document Type',
   FIELD_ORGANIZATION: 'Organization',
   FIELD_ISSUED: 'Issued',
   FIELD_FINGERPRINT: 'Fingerprint (SHA-256)',
@@ -959,7 +965,7 @@ export const CERTIFICATE_COPY = {
   DISCLAIMER_OBSERVED:
     'This certificate was generated by Arkova. It asserts that the document fingerprint was observed at the stated time.',
   DISCLAIMER_NOT_ASSERTED:
-    'This certificate does NOT assert the accuracy of document contents, the identity of the issuer, or the validity of the credential itself.',
+    'This certificate does NOT assert the accuracy of document contents, the identity of the issuer, or the validity of the document itself.',
 } as const;
 
 // =============================================================================
@@ -998,7 +1004,7 @@ export const ANCHORING_STATUS_LABELS = {
 // =============================================================================
 
 export const METADATA_FIELD_LABELS = {
-  SECTION_TITLE: 'Credential Details',
+  SECTION_TITLE: 'Record Details',
   REQUIRED_MARKER: '*',
   OPTIONAL: '(optional)',
   SELECT_PLACEHOLDER: 'Select...',
@@ -1006,11 +1012,11 @@ export const METADATA_FIELD_LABELS = {
   FILE_NAME: 'Filename',
   FILE_SIZE: 'Size',
   FINGERPRINT_PREVIEW: 'Fingerprint',
-  NO_TEMPLATE: 'No template found for this credential type. Metadata fields will be available after a template is created.',
+  NO_TEMPLATE: 'No template found for this document type. Metadata fields will be available after a template is created.',
   LOADING_TEMPLATE: 'Loading template fields...',
   RECIPIENT_EMAIL: 'Recipient Email',
   RECIPIENT_EMAIL_PLACEHOLDER: 'recipient@example.com',
-  RECIPIENT_EMAIL_DESCRIPTION: 'The recipient will be able to view this credential in their inbox.',
+  RECIPIENT_EMAIL_DESCRIPTION: 'The recipient will be able to view this record in their inbox.',
 } as const;
 
 // =============================================================================
@@ -1018,22 +1024,22 @@ export const METADATA_FIELD_LABELS = {
 // =============================================================================
 
 export const SEARCH_LABELS = {
-  PAGE_TITLE: 'Search Credentials',
-  PAGE_SUBTITLE: 'Find verified credentials by issuer, verification ID, or document fingerprint.',
+  PAGE_TITLE: 'Search Records',
+  PAGE_SUBTITLE: 'Find verified records by issuer, verification ID, or document fingerprint.',
   SEARCH_PLACEHOLDER: 'Search by issuer name or verification ID...',
   SEARCH_BY_ID: 'Verification ID',
   SEARCH_BY_ISSUER: 'Issuer',
   SEARCH_BY_FINGERPRINT: 'Fingerprint',
   FINGERPRINT_PLACEHOLDER: 'Paste a 64-character document fingerprint...',
   SEARCH_BUTTON: 'Search',
-  NO_RESULTS: 'No credentials found',
+  NO_RESULTS: 'No records found',
   NO_RESULTS_FOR: 'No results for "{query}"',
-  NO_RESULTS_DESC: 'No public credentials match your search.',
+  NO_RESULTS_DESC: 'No public records match your search.',
   NO_ISSUERS: 'No issuers found',
   NO_ISSUERS_DESC: 'No public issuers match your search.',
   ISSUER_REGISTRY_TITLE: 'Issuer Registry',
-  CREDENTIALS_COUNT: '{count} verified credentials',
-  VIEW_REGISTRY: 'View Credentials',
+  CREDENTIALS_COUNT: '{count} verified records',
+  VIEW_REGISTRY: 'View Records',
   VERIFY_LINK: 'Verify',
   ISSUED_ON: 'Issued',
   SEARCH_TYPE: 'Search Type',
@@ -1050,8 +1056,8 @@ export const SEARCH_LABELS = {
   SEARCH_BY_PERSON: 'Person',
   PERSON_PLACEHOLDER: 'Search by name...',
   NO_PERSONS: 'No matching records found',
-  NO_PERSONS_DESC: 'No public credentials match this name.',
-  PERSON_CREDENTIALS: 'Verified Credentials',
+  NO_PERSONS_DESC: 'No public records match this name.',
+  PERSON_CREDENTIALS: 'Verified Records',
   SEARCH_ERROR: 'Search failed. Please try again.',
 } as const;
 
@@ -1125,7 +1131,7 @@ export const USAGE_LABELS = {
 
 export const VERIFICATION_DISPLAY_LABELS = {
   ISSUER_SECTION: 'Issuer',
-  VIEW_ISSUER_REGISTRY: 'View all credentials from this issuer',
+  VIEW_ISSUER_REGISTRY: 'View all records from this issuer',
   REVOCATION_SECTION: 'Revocation Details',
   REVOCATION_REASON: 'Reason',
   REVOCATION_DATE: 'Revoked',
@@ -1183,9 +1189,9 @@ export const PUBLIC_ATTESTATION_VERIFY_LABELS = {
   DETAILS_TITLE: 'Attestation Details',
   EVIDENCE_PREFIX: 'Evidence:',
   EVIDENCE: 'Evidence',
-  LINKED_CREDENTIAL: 'Linked Credential',
-  ATTESTOR_CREDENTIAL_CHAIN: 'Attestor Credential Chain',
-  VERIFY_CREDENTIAL: 'Verify Credential',
+  LINKED_CREDENTIAL: 'Linked Record',
+  ATTESTOR_CREDENTIAL_CHAIN: 'Attestor Record Chain',
+  VERIFY_CREDENTIAL: 'Verify Record',
   VERIFY: 'Verify',
   BYTES_SUFFIX: ' bytes',
   FOOTER_TAGLINE: 'Arkova — Secure document verification platform',
@@ -1261,7 +1267,7 @@ export const ATTESTATION_LABELS = {
 
   // Empty state
   NO_ATTESTATIONS: 'No attestations yet',
-  NO_ATTESTATIONS_DESC: 'Create an attestation to verify, endorse, or audit a credential.',
+  NO_ATTESTATIONS_DESC: 'Create an attestation to verify, endorse, or audit a record.',
   CREATE_ATTESTATION: 'Create Attestation',
 
   // Page chrome
@@ -1294,7 +1300,7 @@ export const ATTESTATION_LABELS = {
   PLACEHOLDER_JURISDICTION: 'e.g., US, EU, UK',
 
   // Subject type options
-  SUBJECT_CREDENTIAL: 'Credential',
+  SUBJECT_CREDENTIAL: 'Record',
   SUBJECT_ENTITY: 'Entity / Organization',
   SUBJECT_PROCESS: 'Process / Procedure',
   SUBJECT_ASSET: 'Asset / Document',
@@ -1303,7 +1309,7 @@ export const ATTESTATION_LABELS = {
   TEMPLATE_PROMPT: 'Choose a template or create a custom attestation',
   TEMPLATE_EMPLOYMENT: 'Employment Verification',
   TEMPLATE_EMPLOYMENT_DESC: 'Verify employment dates, title, and status',
-  TEMPLATE_EDUCATION: 'Education Credential',
+  TEMPLATE_EDUCATION: 'Education Record',
   TEMPLATE_EDUCATION_DESC: 'Issue tamper-proof degree or certification',
   TEMPLATE_CUSTOM: 'Custom Attestation',
   TEMPLATE_CUSTOM_DESC: 'Create any type of attestation',
@@ -1331,11 +1337,16 @@ export const ATTESTATION_LABELS = {
 // =============================================================================
 
 export const MY_CREDENTIALS_LABELS = {
-  PAGE_TITLE: 'My Credentials',
-  PAGE_SUBTITLE: 'Credentials issued to you or imported from public sources.',
-  NAV_LABEL: 'My Credentials',
-  EMPTY_TITLE: 'No credentials yet',
-  EMPTY_DESC: 'When organizations issue credentials to your email address, they will appear here.',
+  // SCRUM-2938 S1: this surface is the generic "Imported Records" inbox — the
+  // securable/imported documents it lists are labelled "documents", not the
+  // restricted "credentials" term (§1.3 generic-action wording). The SCRUM-1672
+  // "Issue Credential" restricted issuance flow is untouched (see
+  // ISSUE_CREDENTIAL_LABELS / CREDENTIAL_ISSUE_FAILED).
+  PAGE_TITLE: 'Imported Records',
+  PAGE_SUBTITLE: 'Documents issued to you or imported from public sources.',
+  NAV_LABEL: 'Imported Records',
+  EMPTY_TITLE: 'No documents yet',
+  EMPTY_DESC: 'When organizations issue documents to your email address, they will appear here.',
   ISSUED_BY: 'Issued by',
   RECEIVED_ON: 'Received',
   VIEW_CREDENTIAL: 'View',
@@ -1343,15 +1354,15 @@ export const MY_CREDENTIALS_LABELS = {
   ADD_SOURCE: 'Add Source',
   CLAIMED: 'Claimed',
   UNCLAIMED: 'Pending',
-  CREDENTIAL_COUNT: '{count} credentials',
+  CREDENTIAL_COUNT: '{count} documents',
 } as const;
 
 export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
-  TITLE: 'Add Credential Source',
-  DESCRIPTION: 'Import a public credential source URL.',
-  URL_LABEL: 'Credential source URL',
+  TITLE: 'Add Record Source',
+  DESCRIPTION: 'Import a public record source URL.',
+  URL_LABEL: 'Record source URL',
   URL_PLACEHOLDER: 'https://',
-  TYPE_LABEL: 'Credential type',
+  TYPE_LABEL: 'Record type',
   ISSUER_LABEL: 'Issuer',
   ISSUED_FIELD: 'Issued',
   EXPIRES_FIELD: 'Expires',
@@ -1369,8 +1380,8 @@ export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
   PREVIEW_FAILED: 'Preview failed',
   IMPORT_FAILED: 'Import failed',
   REQUEST_FAILED: 'Request failed',
-  TOAST_ADDED: 'Credential source added',
-  TOAST_DUPLICATE: 'Credential source already added',
+  TOAST_ADDED: 'Record source added',
+  TOAST_DUPLICATE: 'Record source already added',
 } as const;
 
 // =============================================================================
@@ -1379,15 +1390,15 @@ export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
 
 export const SHARE_LABELS = {
   SHARE_BUTTON: 'Share',
-  SHARE_TITLE: 'Share Credential',
-  SHARE_DESCRIPTION: 'Share the verification link for this credential.',
+  SHARE_TITLE: 'Share Record',
+  SHARE_DESCRIPTION: 'Share the verification link for this record.',
   COPY_LINK: 'Copy Verification Link',
   LINK_COPIED: 'Verification link copied to clipboard',
   COPIED_TOAST: 'Copied to clipboard',
   QR_CODE: 'QR Code',
-  QR_DESCRIPTION: 'Scan to verify this credential',
+  QR_DESCRIPTION: 'Scan to verify this record',
   EMAIL_SHARE: 'Share via Email',
-  EMAIL_SUBJECT: 'Verify my credential on Arkova',
+  EMAIL_SUBJECT: 'Verify my record on Arkova',
   CLOSE: 'Close',
 } as const;
 
@@ -1398,10 +1409,10 @@ export const SHARE_LABELS = {
 export const LINKEDIN_LABELS = {
   SHARE_BUTTON: 'Share on LinkedIn',
   SHARE_TEXT_WITH_TYPE: 'My {type} has been independently verified on Arkova. Verify it here:',
-  SHARE_TEXT_DEFAULT: 'My credential has been independently verified on Arkova. Verify it here:',
+  SHARE_TEXT_DEFAULT: 'My document has been independently verified on Arkova. Verify it here:',
   GET_BADGE: 'Get Badge',
   BADGE_TITLE: 'Verification Badge',
-  BADGE_DESCRIPTION: 'Embed this badge in your LinkedIn profile or website to showcase your verified credential.',
+  BADGE_DESCRIPTION: 'Embed this badge in your LinkedIn profile or website to showcase your verified document.',
   EMBED_CODE: 'Embed Code',
   COPY_SNIPPET: 'Copy Snippet',
   SNIPPET_COPIED: 'Badge snippet copied to clipboard',
@@ -1424,8 +1435,8 @@ export const EXPLORER_LABELS = {
 
 export const DESCRIPTION_LABELS = {
   FIELD_LABEL: 'Description',
-  FIELD_PLACEHOLDER: 'Brief description of what this credential represents (max 500 characters)',
-  FIELD_HELP: 'This description will be permanently associated with your credential.',
+  FIELD_PLACEHOLDER: 'Brief description of what this document represents (max 500 characters)',
+  FIELD_HELP: 'This description will be permanently associated with your record.',
 } as const;
 
 // =============================================================================
@@ -1433,10 +1444,10 @@ export const DESCRIPTION_LABELS = {
 // =============================================================================
 
 export const REALTIME_TOAST_LABELS = {
-  SECURED: 'Your credential has been secured on the network.',
-  REVOKED: 'This credential has been revoked.',
-  EXPIRED: 'This credential has expired.',
-  SUBMITTED: 'Your credential has been submitted and is awaiting confirmation.',
+  SECURED: 'Your document has been secured on the network.',
+  REVOKED: 'This record has been revoked.',
+  EXPIRED: 'This record has expired.',
+  SUBMITTED: 'Your document has been submitted and is awaiting confirmation.',
 } as const;
 
 // =============================================================================
@@ -1451,13 +1462,13 @@ export const NAV_POLISH_LABELS = {
   BREADCRUMB_SETTINGS: 'Settings',
   BREADCRUMB_BILLING: 'Billing',
   BREADCRUMB_HELP: 'Help',
-  BREADCRUMB_CREDENTIAL_TEMPLATES: 'Credential Templates',
+  BREADCRUMB_CREDENTIAL_TEMPLATES: 'Document Templates',
   BREADCRUMB_WEBHOOKS: 'Webhooks',
   BREADCRUMB_API_KEYS: 'API Keys',
   AUTH_REDIRECT_TOAST: 'Please sign in to access that page',
   SIGN_OUT: 'Sign Out',
   COLLAPSE: 'Collapse',
-  PUBLIC_PROFILE_DESC_ON: 'When enabled, your name appears in public search results and your credential registry is visible. Your email and internal data are never exposed.',
+  PUBLIC_PROFILE_DESC_ON: 'When enabled, your name appears in public search results and your record registry is visible. Your email and internal data are never exposed.',
   PUBLIC_PROFILE_DESC_OFF: 'Your profile is not visible in public search results.',
 } as const;
 
@@ -1471,9 +1482,9 @@ export const ONBOARDING_GUIDANCE_LABELS = {
   CHECKLIST_TITLE: 'Getting Started',
   CHECKLIST_DISMISS: 'Skip setup',
   // ORG_ADMIN steps
-  STEP_TEMPLATE: 'Create a credential template',
-  STEP_TEMPLATE_DESC: 'Define the fields for your credentials.',
-  STEP_ISSUE: 'Issue your first credential',
+  STEP_TEMPLATE: 'Create a document template',
+  STEP_TEMPLATE_DESC: 'Define the fields for your documents.',
+  STEP_ISSUE: 'Secure your first document',
   STEP_ISSUE_DESC: 'Secure a document and create a verifiable record.',
   STEP_BILLING: 'Set up billing',
   STEP_BILLING_DESC: 'Choose a plan to unlock more records.',
@@ -1481,7 +1492,7 @@ export const ONBOARDING_GUIDANCE_LABELS = {
   STEP_SECURE: 'Secure your first document',
   STEP_SECURE_DESC: 'Create a permanent, tamper-proof record.',
   STEP_SHARE: 'Share your verification link',
-  STEP_SHARE_DESC: 'Let others verify your credential.',
+  STEP_SHARE_DESC: 'Let others verify your document.',
   // Empty states
   EMPTY_ORG_RECORDS: 'No documents secured yet',
   EMPTY_ORG_RECORDS_DESC: 'Secure your first document to get started.',
@@ -1541,8 +1552,17 @@ export const MEMBER_DETAIL_LABELS = {
 export const AI_EXTRACTION_LABELS = {
   EXTRACT_BUTTON: 'Extract with AI',
   EXTRACTING: 'Analyzing...',
-  EXTRACT_DESCRIPTION: 'Automatically extract credential fields from the uploaded document',
+  EXTRACT_DESCRIPTION: 'Automatically extract key fields from the uploaded document',
   EXTRACTION_FAILED_TOAST: 'AI extraction unavailable — document will be secured without metadata.',
+  /**
+   * SCRUM-2911 — BENIGN no-text soft-fail. Shown when extraction ran fine but
+   * found no readable text — the classic case is a scanned (image-only) PDF
+   * whose text layer is empty, or a blank photo. NOT a privacy failure: the
+   * pipeline ran on-device and nothing left the browser. Fixed copy — never
+   * interpolates document-derived text.
+   */
+  NO_TEXT_FOUND:
+    'No readable text was found in this document — it may be a scanned image. You can try a clearer copy, enter details manually, or secure it without AI metadata. Your file never left your device.',
   /**
    * §1.6 FAIL-CLOSED (WEBEXT-03). Shown when the on-device privacy tools (the
    * personal-information remover or the on-device document reader) could not
@@ -1578,14 +1598,14 @@ export const PRIVACY_FAIL_CLOSED_LABELS = {
 export const SETTINGS_PAGE_LABELS = {
   ORG_TITLE: 'Organization Settings',
   ORG_DESCRIPTION: 'Manage templates, integrations, and API access',
-  CREDENTIAL_TEMPLATES: 'Credential Templates',
-  CREDENTIAL_TEMPLATES_DESC: 'Define schemas for credential types',
+  CREDENTIAL_TEMPLATES: 'Document Templates',
+  CREDENTIAL_TEMPLATES_DESC: 'Define schemas for document types',
   WEBHOOKS: 'Webhooks',
   WEBHOOKS_DESC: 'Configure event notifications',
   API_KEYS: 'API Keys',
   API_KEYS_DESC: 'Manage verification API access',
   TEMPLATES_EMPTY_TITLE: 'No templates yet',
-  TEMPLATES_EMPTY_DESC: 'Create your first credential template to start issuing verifiable credentials.',
+  TEMPLATES_EMPTY_DESC: 'Create your first document template to start securing verifiable documents.',
   TEMPLATES_EMPTY_CTA: 'Create Template',
   TEMPLATES_STARTER_HEADING: 'Popular templates to get started',
 } as const;
@@ -1777,7 +1797,7 @@ export const INTEGRITY_LABELS = {
 
 export const REVIEW_QUEUE_LABELS = {
   PAGE_TITLE: 'Review Queue',
-  PAGE_SUBTITLE: 'Review flagged credentials that require human verification.',
+  PAGE_SUBTITLE: 'Review flagged records that require human verification.',
   EMPTY: 'No items in the review queue',
   PENDING: 'Pending Review',
   INVESTIGATING: 'Under Investigation',
@@ -1798,20 +1818,26 @@ export const REVIEW_QUEUE_LABELS = {
 // =============================================================================
 
 export const COMPLIANCE_LABELS = {
-  PAGE_TITLE: 'Compliance Intelligence',
-  PAGE_SUBTITLE: 'Monitor credential health, expiring credentials, and review activity across your organization.',
-  CARD_ACTIVE: 'Active Credentials',
+  // SCRUM-2938 S1: "Compliance Intelligence" retired from user-facing copy.
+  PAGE_TITLE: 'Compliance Dashboard',
+  // SCRUM-2938 S1: non-admin access-restricted card (moved out of inline JSX
+  // in ComplianceDashboardPage per §1.3 / src/lib/agents.md — copy lives here).
+  ACCESS_RESTRICTED_TITLE: 'Access Restricted',
+  ACCESS_RESTRICTED_BODY:
+    'The Compliance dashboard is available to organization administrators. Contact your admin for access.',
+  PAGE_SUBTITLE: 'Monitor record health, expiring records, and review activity across your organization.',
+  CARD_ACTIVE: 'Active Records',
   CARD_ACTIVE_SUBTITLE: 'Issued attestations',
   CARD_EXPIRING: 'Expiring Soon',
   CARD_REVOKED: 'Recently Revoked',
   CARD_ANCHORED: 'Anchored Rate',
-  SECTION_EXPIRING: 'Expiring Credentials',
+  SECTION_EXPIRING: 'Expiring Records',
   SECTION_ACTIVITY: 'Recent Activity',
   SECTION_REVIEW: 'Review Summary',
-  EMPTY_EXPIRING: 'All credentials current',
-  EMPTY_EXPIRING_DESC: 'No credentials are expiring in the next 30 days.',
+  EMPTY_EXPIRING: 'All records current',
+  EMPTY_EXPIRING_DESC: 'No records are expiring in the next 30 days.',
   EMPTY_ACTIVITY: 'No recent activity',
-  EMPTY_ACTIVITY_DESC: 'Credential activity will appear here as events occur.',
+  EMPTY_ACTIVITY_DESC: 'Record activity will appear here as events occur.',
   COL_SUBJECT: 'Subject',
   COL_TYPE: 'Type',
   COL_ATTESTER: 'Attester',
@@ -1824,17 +1850,17 @@ export const COMPLIANCE_LABELS = {
   REVIEW_PENDING: 'Items Pending Review',
   REVIEW_LINK: 'View Review Queue',
   WITHIN_30_DAYS: 'within 30 days',
-  EVENT_CREATED: 'Credential created',
-  EVENT_REVOKED: 'Credential revoked',
-  EVENT_EXPIRED: 'Credential expired',
-  EVENT_ACTIVE: 'Credential activated',
+  EVENT_CREATED: 'Record created',
+  EVENT_REVOKED: 'Record revoked',
+  EVENT_EXPIRED: 'Record expired',
+  EVENT_ACTIVE: 'Record activated',
   SECTION_COVERAGE: 'Regulatory Framework Coverage',
-  SECTION_COVERAGE_DESC: 'Controls evidenced by your secured credentials.',
+  SECTION_COVERAGE_DESC: 'Controls evidenced by your secured records.',
   COVERAGE_SECURED: 'Secured Records',
   COVERAGE_CONTROLS: 'Controls Evidenced',
   COVERAGE_FRAMEWORKS: 'Frameworks Covered',
   COVERAGE_EMPTY: 'No secured records yet',
-  COVERAGE_EMPTY_DESC: 'Framework coverage appears once credentials are anchored to the network.',
+  COVERAGE_EMPTY_DESC: 'Framework coverage appears once records are anchored to the network.',
   EXPORT_AUDIT: 'Export Audit Report',
   EXPORT_AUDIT_DESC: 'Download a compliance-ready report for GRC platforms.',
   EXPORT_PDF: 'Download PDF',
@@ -2129,14 +2155,17 @@ export const RULE_SIMULATOR_COPY = {
 // =============================================================================
 
 export const NESSIE_LABELS = {
-  PANEL_TITLE: 'Nessie Intelligence',
+  // SCRUM-2938 S1: internal codename "Nessie" and the "compliance intelligence"
+  // phrasing removed from user-facing copy (the NESSIE_LABELS identifier is
+  // internal-only and unchanged per §1.3 "internal code may use technical names").
+  PANEL_TITLE: 'Document Intelligence',
   PANEL_SUBTITLE: 'Ask compliance questions. Answers cite verified, anchored documents.',
   INPUT_PLACEHOLDER: 'Ask a compliance question...',
   CONFIDENCE: 'confidence',
   CITATIONS_HEADING: 'Verified Citations',
   VIEW_ON_CHAIN: 'On-chain proof',
   VERIFY: 'Verify',
-  EMPTY_STATE: 'Ask a question to get compliance intelligence backed by verified evidence.',
+  EMPTY_STATE: 'Ask a question to get answers backed by verified evidence.',
   CACHED: 'cached',
   RISKS_HEADING: 'Identified Risks',
   RECOMMENDATIONS_HEADING: 'Recommendations',
@@ -2149,7 +2178,7 @@ export const NESSIE_LABELS = {
   TASK_DOCUMENT_SUMMARY: 'Document Summary',
   TASK_RECOMMENDATION: 'Recommendations',
   TASK_CROSS_REFERENCE: 'Cross-Reference',
-  INSIGHTS_TITLE: 'Nessie Insights',
+  INSIGHTS_TITLE: 'Document Insights',
   INSIGHTS_SUBTITLE: 'AI-powered compliance analysis for this record.',
   INSIGHTS_LOADING: 'Analyzing...',
   INSIGHTS_EMPTY: 'No insights available for this record.',
@@ -2165,10 +2194,10 @@ export const AI_REPORTS_LABELS = {
   GENERATE_BUTTON: 'Generate Report',
   GENERATING: 'Generating...',
   EMPTY: 'No reports yet',
-  EMPTY_DESC: 'Generate your first report to get insights into your credentials.',
+  EMPTY_DESC: 'Generate your first report to get insights into your records.',
   REPORT_INTEGRITY: 'Integrity Summary',
   REPORT_ACCURACY: 'Extraction Accuracy',
-  REPORT_ANALYTICS: 'Credential Analytics',
+  REPORT_ANALYTICS: 'Record Analytics',
   REPORT_COMPLIANCE: 'Compliance Overview',
   DOWNLOAD_JSON: 'Download JSON',
   STATUS_QUEUED: 'Queued',
@@ -2209,7 +2238,7 @@ export const INTEGRITY_DETAIL_LABELS = {
   // Flag labels
   FLAG_MISSING_ISSUED_DATE: 'Missing issue date',
   FLAG_FUTURE_ISSUED_DATE: 'Issue date is in the future',
-  FLAG_VERY_OLD_CREDENTIAL: 'Credential is over 50 years old',
+  FLAG_VERY_OLD_CREDENTIAL: 'Document is over 50 years old',
   FLAG_EXPIRY_BEFORE_ISSUED: 'Expiry date is before issue date',
   FLAG_DUPLICATE_FINGERPRINT: 'Duplicate document fingerprint found',
   FLAG_ISSUER_NOT_IN_REGISTRY: 'Issuer not found in registry',
@@ -2286,25 +2315,25 @@ export const WALKTHROUGH_LABELS = {
 export const DEVELOPER_PAGE_LABELS = {
   // Hero
   HERO_TITLE: 'Developer Platform',
-  HERO_SUBTITLE: 'Programmatic credential verification, AI-powered metadata extraction, and seamless integration for your applications.',
+  HERO_SUBTITLE: 'Programmatic record verification, AI-powered metadata extraction, and seamless integration for your applications.',
 
   // API Overview cards
-  CARD_VERIFY_TITLE: 'Verify Credentials',
+  CARD_VERIFY_TITLE: 'Verify Records',
   CARD_VERIFY_ENDPOINT: 'GET /verify/{id}',
-  CARD_VERIFY_DESC: 'Verify any credential\'s status, proof details, and issuer information with a single API call.',
+  CARD_VERIFY_DESC: 'Verify any record\'s status, proof details, and issuer information with a single API call.',
   CARD_BATCH_TITLE: 'Batch Verification',
   CARD_BATCH_ENDPOINT: 'POST /verify/batch',
-  CARD_BATCH_DESC: 'Verify up to 100 credentials per request for high-throughput integrations.',
+  CARD_BATCH_DESC: 'Verify up to 100 records per request for high-throughput integrations.',
   CARD_AI_TITLE: 'AI Intelligence',
   CARD_AI_ENDPOINT: 'POST /ai/extract',
-  CARD_AI_DESC: 'AI-powered metadata extraction, semantic search, and integrity scoring for credential data.',
+  CARD_AI_DESC: 'AI-powered metadata extraction, semantic search, and integrity scoring for record data.',
 
   // Getting Started
   GETTING_STARTED_TITLE: 'Getting Started',
   STEP_1: 'Create an account and navigate to Settings',
   STEP_2: 'Go to API Keys and generate a new key',
   STEP_3: 'Make your first API call using the example below',
-  CURL_COMMENT: '# Verify a credential by its public ID',
+  CURL_COMMENT: '# Verify a record by its public ID',
 
   // Links
   LINKS_TITLE: 'Resources',
@@ -2319,11 +2348,11 @@ export const DEVELOPER_PAGE_LABELS = {
 
   // MCP Server
   MCP_TITLE: 'MCP Server for AI Agents',
-  MCP_DESC: 'Arkova provides a Model Context Protocol (MCP) server for AI agents. Connect your agent to verify credentials and search the registry programmatically.',
+  MCP_DESC: 'Arkova provides a Model Context Protocol (MCP) server for AI agents. Connect your agent to verify records and search the registry programmatically.',
   MCP_TOOL_VERIFY: 'verify_credential',
-  MCP_TOOL_VERIFY_DESC: 'Verify a credential by its public ID',
+  MCP_TOOL_VERIFY_DESC: 'Verify a record by its public ID',
   MCP_TOOL_SEARCH: 'search_credentials',
-  MCP_TOOL_SEARCH_DESC: 'Search the public credential registry',
+  MCP_TOOL_SEARCH_DESC: 'Search the public record registry',
 
   // API docs card on ApiKeySettingsPage
   API_DOCS_CARD_TITLE: 'API Documentation',
@@ -2441,7 +2470,7 @@ export const PIPELINE_LABELS = {
   RECORDS_SHOWING: 'Showing',
   RECORDS_OF: 'of',
   RECORDS_LOAD_MORE: 'Load More',
-  ANCHORS_BY_TYPE_TITLE: 'Anchors by Credential Type',
+  ANCHORS_BY_TYPE_TITLE: 'Anchors by Document Type',
   TYPE_PUBLICATION: 'Publications',
   TYPE_SEC_FILING: 'SEC Filings',
   TYPE_PROFESSIONAL: 'Professional',
@@ -2494,6 +2523,16 @@ export const OCR_LABELS = {
    */
   OCR_ENGINE_UNAVAILABLE:
     'The on-device document reader couldn’t start, so this document was not read and nothing was sent. Your file never left your device.',
+  /**
+   * SCRUM-2911 — BENIGN unsupported-image-format soft-fail. Shown when the
+   * browser cannot decode an image format (e.g. HEIC/TIFF) for on-device text
+   * extraction. This is NOT a privacy failure — the document was never at risk
+   * and never left the device. Interpolates only the file's format/extension
+   * (not document-derived content).
+   */
+  UNSUPPORTED_IMAGE_FORMAT: (typeOrExt: string) =>
+    `This image format (${typeOrExt}) can’t be read on your device for text extraction. ` +
+    'You can still secure the document without AI metadata — your file never left your device.',
 } as const;
 
 export const CONFIRMATION_PROGRESS_LABELS = {
@@ -2514,7 +2553,7 @@ export const RECORD_DETAIL_LABELS = {
 export const ONBOARDING_VALUE_PROP_LABELS = {
   TITLE: 'Welcome to Arkova',
   STEP_1_TITLE: 'Upload any document',
-  STEP_1_DESC: 'Drag and drop a credential, certificate, or any file you need to verify.',
+  STEP_1_DESC: 'Drag and drop a certificate, license, or any file you need to verify.',
   STEP_2_TITLE: 'AI extracts and verifies metadata',
   STEP_2_DESC: 'Our AI reads your document, extracts key fields, and checks for inconsistencies \u2014 all on your device.',
   STEP_3_TITLE: 'Permanently anchored and verifiable',
@@ -2676,7 +2715,7 @@ export const TERM_REPLACEMENTS: Record<string, string> = {
 export const DISCLAIMER_LABELS = {
   title: 'Platform Disclaimer',
   heading: 'Important Information About Arkova',
-  body: `Arkova provides timestamped cryptographic verification of documents and credentials. Our service creates permanent, tamper-evident records that a specific document existed at a specific time.
+  body: `Arkova provides timestamped cryptographic verification of documents and records. Our service creates permanent, tamper-evident records that a specific document existed at a specific time.
 
 Arkova does NOT:
 • Verify the truthfulness or accuracy of document contents
@@ -2684,7 +2723,7 @@ Arkova does NOT:
 • Provide legal certification or notarization
 • Replace official verification processes required by law
 
-A secured record on Arkova confirms that a document's digital fingerprint was anchored at a given time — nothing more. Users and third parties should perform their own due diligence when relying on any credential.
+A secured record on Arkova confirms that a document's digital fingerprint was anchored at a given time — nothing more. Users and third parties should perform their own due diligence when relying on any record.
 
 By using this platform, you acknowledge and accept these limitations.`,
   description: 'Please review our platform disclaimer',
@@ -2714,7 +2753,7 @@ export const PROFILE_LABELS = {
 // =============================================================================
 
 export const PUBLIC_FOOTER_LABELS = {
-  NAV_SEARCH: 'Search Credentials',
+  NAV_SEARCH: 'Search Records',
   NAV_VERIFY: 'Verify a Document',
   NAV_HOW_IT_WORKS: 'How It Works',
   NAV_USE_CASES: 'Use Cases',
@@ -2739,10 +2778,10 @@ export const LEGAL_PAGE_LABELS = {
 // =============================================================================
 
 export const HOW_IT_WORKS_LABELS = {
-  PAGE_TITLE: 'How Arkova Works — Credential Verification in 3 Steps',
-  PAGE_DESCRIPTION: 'Learn how Arkova secures credentials with client-side fingerprinting, permanent network anchoring, and universal verification. Privacy-first by design.',
+  PAGE_TITLE: 'How Arkova Works — Document Verification in 3 Steps',
+  PAGE_DESCRIPTION: 'Learn how Arkova secures documents with client-side fingerprinting, permanent network anchoring, and universal verification. Privacy-first by design.',
   HERO_TITLE: 'How Arkova Works',
-  HERO_SUBTITLE: 'Three steps to permanently verifiable credentials. Your documents never leave your device.',
+  HERO_SUBTITLE: 'Three steps to permanently verifiable records. Your documents never leave your device.',
   STEP_1_TITLE: 'Upload & Fingerprint',
   STEP_1_DESCRIPTION: 'Select your document and a unique cryptographic fingerprint (SHA-256) is generated entirely in your browser. The document itself never leaves your device — only the fingerprint moves forward.',
   STEP_1_DETAIL: 'Client-side processing means your sensitive documents remain private. No server ever sees, stores, or transmits the original file.',
@@ -2758,10 +2797,10 @@ export const HOW_IT_WORKS_LABELS = {
   DIFF_IMMUTABILITY_TITLE: 'Permanent Immutability',
   DIFF_IMMUTABILITY_DESC: 'Anchored fingerprints are recorded on a public, decentralized network. No single entity can alter or remove the record.',
   DIFF_AI_TITLE: 'AI-Powered Extraction',
-  DIFF_AI_DESC: 'Intelligent metadata extraction identifies credential types, issuers, dates, and fields — making records searchable and structured.',
+  DIFF_AI_DESC: 'Intelligent metadata extraction identifies document types, issuers, dates, and fields — making records searchable and structured.',
   DIFF_OPEN_TITLE: 'Open Verification',
   DIFF_OPEN_DESC: 'Verification is free and requires no account. Anyone with the document can confirm its authenticity against the permanent record.',
-  CTA_TITLE: 'Ready to Secure Your Credentials?',
+  CTA_TITLE: 'Ready to Secure Your Documents?',
   CTA_DESCRIPTION: 'Start anchoring documents in minutes. Free tier available.',
   CTA_BUTTON: 'Get Started',
 } as const;
@@ -2771,25 +2810,25 @@ export const HOW_IT_WORKS_LABELS = {
 // =============================================================================
 
 export const USE_CASES_LABELS = {
-  PAGE_TITLE: 'Use Cases — Who Uses Arkova for Credential Verification',
-  PAGE_DESCRIPTION: 'Discover how education, legal, healthcare, finance, HR, and government organizations use Arkova to verify credentials and anchor documents.',
+  PAGE_TITLE: 'Use Cases — Who Uses Arkova for Document Verification',
+  PAGE_DESCRIPTION: 'Discover how education, legal, healthcare, finance, HR, and government organizations use Arkova to verify records and anchor documents.',
   HERO_TITLE: 'Who Uses Arkova',
-  HERO_SUBTITLE: 'Organizations across industries trust Arkova to make credentials verifiable, tamper-proof, and portable.',
+  HERO_SUBTITLE: 'Organizations across industries trust Arkova to make documents verifiable, tamper-proof, and portable.',
   EDUCATION_TITLE: 'Education',
-  EDUCATION_DESC: 'Universities and institutions anchor degree certificates and transcripts, enabling instant verification by employers and other schools. Graduates carry provable credentials wherever they go.',
+  EDUCATION_DESC: 'Universities and institutions anchor degree certificates and transcripts, enabling instant verification by employers and other schools. Graduates carry provable records wherever they go.',
   EDUCATION_EXAMPLE: 'A university anchors 10,000 diplomas at graduation. Employers verify any graduate in seconds.',
   LEGAL_TITLE: 'Legal',
   LEGAL_DESC: 'Law firms and courts timestamp contracts, evidence, and filings. Anchored records prove a document existed at a specific point in time, providing an unalterable chain of custody.',
   LEGAL_EXAMPLE: 'A firm anchors a signed contract. Years later, either party can prove the original terms were never modified.',
   HEALTHCARE_TITLE: 'Healthcare',
-  HEALTHCARE_DESC: 'Hospitals and credentialing bodies verify medical licenses, board certifications, and continuing education. Reduces manual verification from weeks to seconds.',
+  HEALTHCARE_DESC: 'Hospitals and licensing boards verify medical licenses, board certifications, and continuing education. Reduces manual verification from weeks to seconds.',
   HEALTHCARE_EXAMPLE: 'A hospital verifies a surgeon\'s board certification instantly before granting privileges.',
   FINANCE_TITLE: 'Finance',
   FINANCE_DESC: 'Financial institutions anchor compliance documentation, audit reports, and regulatory filings. Creates an immutable audit trail for regulators and internal compliance teams.',
   FINANCE_EXAMPLE: 'A bank anchors quarterly compliance reports, creating tamper-proof evidence for regulatory review.',
   HR_TITLE: 'HR & Recruiting',
-  HR_DESC: 'HR teams and recruiters verify candidate credentials, background checks, and employment history. Integrates with applicant tracking systems for automated verification workflows.',
-  HR_EXAMPLE: 'A recruiter verifies a candidate\'s professional certifications directly from their credential portfolio.',
+  HR_DESC: 'HR teams and recruiters verify candidate records, background checks, and employment history. Integrates with applicant tracking systems for automated verification workflows.',
+  HR_EXAMPLE: 'A recruiter verifies a candidate\'s professional certifications directly from their document portfolio.',
   GOVERNMENT_TITLE: 'Government',
   GOVERNMENT_DESC: 'Government agencies anchor public records, licenses, and transparency documents. Citizens can independently verify the authenticity of any official record.',
   GOVERNMENT_EXAMPLE: 'A state agency publishes anchored business registrations that anyone can verify without contacting the agency.',
@@ -2801,12 +2840,12 @@ export const USE_CASES_LABELS = {
   FAQ_3_Q: 'Can a secured record be altered or deleted?',
   FAQ_3_A: 'No. Once a fingerprint is anchored on the public network, it cannot be modified, deleted, or tampered with by anyone — including Arkova. This is the foundation of the platform\'s trust model.',
   FAQ_4_Q: 'What types of documents can I anchor?',
-  FAQ_4_A: 'Arkova supports 21 credential types including degrees, licenses, certificates, legal documents, financial records, and more. Any digital document can be fingerprinted and anchored.',
+  FAQ_4_A: 'Arkova supports 21 document types including degrees, licenses, certificates, legal documents, financial records, and more. Any digital document can be fingerprinted and anchored.',
   FAQ_5_Q: 'Is there an API for automated verification?',
   FAQ_5_A: 'Yes. Arkova provides a RESTful Verification API with TypeScript and Python SDKs for programmatic access. Enterprise plans include batch processing, webhooks, and dedicated support.',
   CTA_TITLE: 'See It in Action',
-  CTA_DESCRIPTION: 'Try verifying a credential on the public search page, or create an account to start anchoring.',
-  CTA_BUTTON_SEARCH: 'Search Credentials',
+  CTA_DESCRIPTION: 'Try verifying a record on the public search page, or create an account to start anchoring.',
+  CTA_BUTTON_SEARCH: 'Search Records',
   CTA_BUTTON_SIGNUP: 'Create Account',
 } as const;
 
@@ -2815,17 +2854,17 @@ export const USE_CASES_LABELS = {
 // =============================================================================
 
 export const ENTERPRISE_LABELS = {
-  PAGE_TITLE: 'Enterprise Credential Verification — Arkova for Organizations',
-  PAGE_DESCRIPTION: 'Enterprise-grade credential verification with API access, batch processing, SSO, webhooks, and dedicated support. Built on permanent anchoring infrastructure.',
-  HERO_TITLE: 'Enterprise-Grade Credential Verification',
-  HERO_SUBTITLE: 'Scalable, secure, and auditable credential infrastructure for organizations that need more than a login.',
+  PAGE_TITLE: 'Enterprise Document Verification — Arkova for Organizations',
+  PAGE_DESCRIPTION: 'Enterprise-grade document verification with API access, batch processing, SSO, webhooks, and dedicated support. Built on permanent anchoring infrastructure.',
+  HERO_TITLE: 'Enterprise-Grade Document Verification',
+  HERO_SUBTITLE: 'Scalable, secure, and auditable document infrastructure for organizations that need more than a login.',
   FEATURES_TITLE: 'Built for Scale',
   FEAT_API_TITLE: 'RESTful API Access',
-  FEAT_API_DESC: 'Programmatic credential verification and anchoring. Full OpenAPI documentation with TypeScript and Python SDKs.',
+  FEAT_API_DESC: 'Programmatic record verification and anchoring. Full OpenAPI documentation with TypeScript and Python SDKs.',
   FEAT_BATCH_TITLE: 'Batch Processing',
-  FEAT_BATCH_DESC: 'Anchor thousands of credentials in a single operation. Optimized batching reduces costs while maintaining individual verifiability.',
+  FEAT_BATCH_DESC: 'Anchor thousands of documents in a single operation. Optimized batching reduces costs while maintaining individual verifiability.',
   FEAT_WEBHOOKS_TITLE: 'Custom Webhooks',
-  FEAT_WEBHOOKS_DESC: 'Real-time notifications when credentials are anchored, verified, or expire. Integrate with your existing workflows.',
+  FEAT_WEBHOOKS_DESC: 'Real-time notifications when records are anchored, verified, or expire. Integrate with your existing workflows.',
   FEAT_SSO_TITLE: 'Single Sign-On',
   FEAT_SSO_DESC: 'SAML and OAuth integration for seamless team access. Centralized user management with role-based permissions.',
   FEAT_SUPPORT_TITLE: 'Dedicated Support',
@@ -2834,7 +2873,7 @@ export const ENTERPRISE_LABELS = {
   FEAT_SLA_DESC: '99.9% uptime commitment with proactive monitoring and incident response. Enterprise-grade reliability.',
   TRUST_TITLE: 'Trusted Infrastructure',
   TRUST_ANCHORING_TITLE: 'Permanent Anchoring',
-  TRUST_ANCHORING_DESC: 'Every credential fingerprint is recorded on a public, immutable network. No single entity can alter the record.',
+  TRUST_ANCHORING_DESC: 'Every record fingerprint is recorded on a public, immutable network. No single entity can alter the record.',
   TRUST_SOC2_TITLE: 'SOC 2 Compliance Path',
   TRUST_SOC2_DESC: 'Security controls designed for SOC 2 Type II certification. Comprehensive audit trails and access logging.',
   TRUST_ENCRYPTION_TITLE: 'End-to-End Privacy',
@@ -2850,10 +2889,10 @@ export const ENTERPRISE_LABELS = {
   INT_SDK_TITLE: 'TypeScript & Python SDKs',
   INT_SDK_DESC: 'Official client libraries for rapid integration. Type-safe with full IDE support.',
   INT_MCP_TITLE: 'MCP Server for AI Agents',
-  INT_MCP_DESC: 'Model Context Protocol server enables AI agents to verify and anchor credentials programmatically.',
+  INT_MCP_DESC: 'Model Context Protocol server enables AI agents to verify and anchor records programmatically.',
   INT_WEBHOOKS_TITLE: 'Webhook Events',
-  INT_WEBHOOKS_DESC: 'Subscribe to credential lifecycle events and integrate with Slack, Zapier, or custom endpoints.',
-  CTA_TITLE: 'Ready to Scale Credential Verification?',
+  INT_WEBHOOKS_DESC: 'Subscribe to record lifecycle events and integrate with Slack, Zapier, or custom endpoints.',
+  CTA_TITLE: 'Ready to Scale Document Verification?',
   CTA_DESCRIPTION: 'Talk to our team about enterprise pricing, custom integrations, and volume discounts.',
   CTA_BUTTON_CONTACT: 'Contact Sales',
   CTA_BUTTON_DOCS: 'View API Documentation',
@@ -2883,9 +2922,9 @@ export const EVIDENCE_LAYER_LABELS = {
 
 export const INDEPENDENT_VERIFY_LABELS = {
   PAGE_TITLE: 'Verify Without Arkova',
-  PAGE_DESCRIPTION: 'Step-by-step instructions to verify any Arkova credential using only public data.',
+  PAGE_DESCRIPTION: 'Step-by-step instructions to verify any Arkova record using only public data.',
   HERO_TITLE: 'Verify Without Arkova',
-  HERO_SUBTITLE: 'Every Arkova credential can be independently verified using publicly available data. If Arkova disappears tomorrow, your proofs still work.',
+  HERO_SUBTITLE: 'Every Arkova record can be independently verified using publicly available data. If Arkova disappears tomorrow, your proofs still work.',
   STEP_1_TITLE: 'Compute the Document Fingerprint',
   STEP_1_DESC: 'Compute the SHA-256 fingerprint of your document. This is the same fingerprint Arkova computed when the document was anchored.',
   STEP_1_CMD: 'shasum -a 256 your-document.pdf',
@@ -2896,7 +2935,7 @@ export const INDEPENDENT_VERIFY_LABELS = {
   STEP_3_DESC: 'Using the Merkle proof from your proof package, verify that your fingerprint is included in the Merkle root.',
   STEP_3_CMD: './verify.sh --fingerprint {fingerprint} --proof proof-package.json',
   STEP_4_TITLE: 'Verify the Timestamp (Optional)',
-  STEP_4_DESC: 'If the credential has an RFC 3161 timestamp, verify it independently using OpenSSL.',
+  STEP_4_DESC: 'If the record has an RFC 3161 timestamp, verify it independently using OpenSSL.',
   STEP_4_CMD: 'openssl ts -verify -data signed-attrs.der -in timestamp.tst -CAfile tsa-ca.pem',
   FAQ_SHUTDOWN_Q: 'What if Arkova shuts down?',
   FAQ_SHUTDOWN_A: 'Your proofs remain valid. The network records are permanent and public. The Merkle proofs in your proof packages contain everything needed for independent verification.',
@@ -2963,11 +3002,11 @@ export const PROVENANCE_LABELS = {
   NO_EVENTS: 'No provenance data available.',
   ERROR: 'Unable to load provenance timeline.',
   EVENT_LABELS: {
-    credential_created: 'Credential Created',
+    credential_created: 'Record Created',
     anchor_submitted: 'Submitted to Network',
     batch_included: 'Included in Batch',
     network_confirmed: 'Network Confirmed',
-    credential_revoked: 'Credential Revoked',
+    credential_revoked: 'Record Revoked',
     signature_created: 'Signature Created',
     signature_completed: 'Signature Completed',
     timestamp_acquired: 'Timestamp Acquired',
@@ -2979,11 +3018,11 @@ export const PROVENANCE_LABELS = {
 
 export const AUDITOR_BATCH_LABELS = {
   PAGE_TITLE: 'Audit Batch Verification',
-  PAGE_DESCRIPTION: 'Verify credentials in bulk for SOC 2 and ISO 27001 audit sampling (ISA 530).',
+  PAGE_DESCRIPTION: 'Verify records in bulk for SOC 2 and ISO 27001 audit sampling (ISA 530).',
   SELECT_MODE: 'Verification Mode',
-  MODE_CSV: 'Credential IDs',
+  MODE_CSV: 'Record IDs',
   MODE_SAMPLE: 'Random Sample',
-  CSV_LABEL: 'Credential IDs (one per line or comma-separated)',
+  CSV_LABEL: 'Record IDs (one per line or comma-separated)',
   CSV_HINT: 'Maximum 1,000 IDs per batch. Paste from CSV or enter manually.',
   SAMPLE_PCT_LABEL: 'Sample Percentage',
   SEED_LABEL: 'Random Seed',
@@ -2992,7 +3031,7 @@ export const AUDITOR_BATCH_LABELS = {
   SUBMIT: 'Run Batch Verification',
   DOWNLOAD_CSV: 'Download CSV Report',
   VERIFYING: 'Verifying...',
-  COL_CREDENTIAL_ID: 'Credential ID',
+  COL_CREDENTIAL_ID: 'Record ID',
   COL_STATUS: 'Status',
   COL_SECURED_AT: 'Secured At',
   COL_ANOMALIES: 'Anomalies',
@@ -3005,8 +3044,8 @@ export const AUDITOR_BATCH_LABELS = {
   STATUS_FAIL: 'Fail',
   STATUS_NOT_FOUND: 'Not Found',
   ANOMALY_NONE: 'None',
-  ERR_EMPTY_IDS: 'Enter at least one credential ID',
-  ERR_MAX_IDS: 'Maximum 1,000 credential IDs per batch',
+  ERR_EMPTY_IDS: 'Enter at least one record ID',
+  ERR_MAX_IDS: 'Maximum 1,000 record IDs per batch',
   ERR_INVALID_PCT: 'Sample percentage must be between 0.1 and 100',
   ERR_NOT_AUTHENTICATED: 'Not authenticated',
   ERR_NETWORK: 'Network error',
@@ -3045,7 +3084,7 @@ export const COMPLIANCE_TREND_LABELS = {
 
 export const DIRECTORY_OPT_OUT_LABELS = {
   TITLE: 'Directory Information Preferences',
-  DESCRIPTION: 'Control whether your name, degree type, and dates of attendance are shared when credentials are verified. This applies to education records only.',
+  DESCRIPTION: 'Control whether your name, degree type, and dates of attendance are shared when records are verified. This applies to education records only.',
   OPT_OUT_TOGGLE: 'Opt out of directory information disclosure',
   OPT_OUT_HELP: 'When enabled, verification responses will not include your name, degree type, or dates of attendance per FERPA Section 99.37.',
   BULK_IMPORT_TITLE: 'Bulk Opt-Out Import',
@@ -3061,24 +3100,24 @@ export const DIRECTORY_OPT_OUT_LABELS = {
 
 export const HIPAA_LABELS = {
   MFA_REQUIRED_TITLE: 'Additional Verification Required',
-  MFA_REQUIRED_DESCRIPTION: 'This organization requires multi-factor authentication to access healthcare credentials. Please enable two-factor authentication to continue.',
+  MFA_REQUIRED_DESCRIPTION: 'This organization requires multi-factor authentication to access healthcare records. Please enable two-factor authentication to continue.',
   MFA_ENABLE_BUTTON: 'Enable Two-Factor Authentication',
   MFA_CHALLENGE_TITLE: 'Verify Your Identity',
-  MFA_CHALLENGE_DESCRIPTION: 'Enter your authentication code to access healthcare credentials.',
+  MFA_CHALLENGE_DESCRIPTION: 'Enter your authentication code to access healthcare records.',
   SESSION_TIMEOUT_TITLE: 'Session Expired',
   SESSION_TIMEOUT_DESCRIPTION: 'Your session has timed out due to inactivity. Please sign in again to continue.',
   SESSION_TIMEOUT_SETTING: 'Inactivity Timeout',
-  SESSION_TIMEOUT_HELP: 'Automatically sign out users after this period of inactivity. Recommended: 15 minutes for organizations handling healthcare credentials.',
+  SESSION_TIMEOUT_HELP: 'Automatically sign out users after this period of inactivity. Recommended: 15 minutes for organizations handling healthcare records.',
   AUDIT_REPORT_TITLE: 'Healthcare Access Audit Report',
-  AUDIT_REPORT_DESCRIPTION: 'Comprehensive log of all access to healthcare credentials, including views, verifications, and exports.',
+  AUDIT_REPORT_DESCRIPTION: 'Comprehensive log of all access to healthcare records, including views, verifications, and exports.',
   AUDIT_FILTER_DATE: 'Date Range',
-  AUDIT_FILTER_TYPE: 'Credential Type',
+  AUDIT_FILTER_TYPE: 'Document Type',
   AUDIT_FILTER_USER: 'User',
   AUDIT_FILTER_ACTION: 'Action',
   AUDIT_EXPORT_CSV: 'Export as CSV',
   AUDIT_EXPORT_PDF: 'Export as PDF',
   EMERGENCY_ACCESS_TITLE: 'Emergency Access Request',
-  EMERGENCY_ACCESS_DESCRIPTION: 'Request time-limited emergency access to healthcare credentials. Requires approval from an organization administrator.',
+  EMERGENCY_ACCESS_DESCRIPTION: 'Request time-limited emergency access to healthcare records. Requires approval from an organization administrator.',
   EMERGENCY_ACCESS_REASON: 'Reason for Emergency Access',
   EMERGENCY_ACCESS_DURATION: 'Access Duration',
   EMERGENCY_ACCESS_GRANTED: 'Emergency access granted. Expires in {duration}.',
@@ -3117,7 +3156,7 @@ export const AUDIT_MY_ORG_LABELS = {
     'Run a live compliance audit across every jurisdiction you operate in. Get a scored report with prioritised next steps in under 30 seconds.',
   CTA: 'Start compliance audit',
   RUNNING: 'Running compliance audit…',
-  PROGRESS_ANALYZING: 'Analyzing credentials…',
+  PROGRESS_ANALYZING: 'Analyzing records…',
   PROGRESS_CHECKING: 'Checking regulatory requirements…',
   PROGRESS_GENERATING: 'Generating compliance report…',
   PROGRESS_ESTIMATE: 'This usually completes in under 30 seconds.',
@@ -3128,8 +3167,9 @@ export const AUDIT_MY_ORG_LABELS = {
   ERROR_NETWORK: 'Network error — please check your connection and retry.',
   ERROR_FETCH_UNAVAILABLE: 'Your browser cannot reach the audit service. Please refresh and retry.',
   IN_PROGRESS_TOOLTIP: 'Audit is already in progress for this organization.',
-  SCORECARD_TITLE: 'Compliance scorecard',
-  SCORECARD_EMPTY: 'Run your first audit to see your compliance score.',
+  // SCRUM-2938 S1: "compliance score" phrasing retired from user-facing copy.
+  SCORECARD_TITLE: 'Audit scorecard',
+  SCORECARD_EMPTY: 'Run your first audit to see your results.',
   SCORECARD_GAPS_HEADING: 'Open gaps',
   SCORECARD_RECOMMENDATIONS_HEADING: 'Recommended actions',
   SCORECARD_QUICK_WINS: 'Quick wins',
@@ -3142,7 +3182,7 @@ export const AUDIT_MY_ORG_LABELS = {
   SCORECARD_EXPORT_PDF: 'Export PDF',
   SCORECARD_EXPORTING: 'Preparing PDF…',
   SCORECARD_DISCLAIMER:
-    'This report reflects credential status as of the audit date. It is not legal advice.',
+    'This report reflects record status as of the audit date. It is not legal advice.',
   SCORECARD_LOADING: 'Loading…',
   SCORECARD_BACK_TO_DASHBOARD: '← Back to dashboard',
   SCORECARD_NO_JURISDICTION_DATA: 'No jurisdiction data.',
@@ -3160,7 +3200,7 @@ export const PRIVACY_NOTICE_LABELS = {
   FERPA_TITLE: 'FERPA (Family Educational Rights and Privacy Act)',
   FERPA_DESCRIPTION: 'Applies to education records. Your records are protected under 34 CFR Part 99. You have the right to access, amend, and control disclosure of your education records.',
   HIPAA_TITLE: 'HIPAA (Health Insurance Portability and Accountability Act)',
-  HIPAA_DESCRIPTION: 'Applies to healthcare credentials. Protected health information is handled per 45 CFR Part 164 with technical safeguards including encryption, access controls, and audit logging.',
+  HIPAA_DESCRIPTION: 'Applies to healthcare records. Protected health information is handled per 45 CFR Part 164 with technical safeguards including encryption, access controls, and audit logging.',
   KENYA_TITLE: 'Kenya Data Protection Act 2019',
   KENYA_DESCRIPTION: 'Applies to data subjects in Kenya. Your personal data is processed lawfully under Sections 25-38. You have rights of access, correction, and erasure. Contact the ODPC for complaints.',
   AUSTRALIA_TITLE: 'Australian Privacy Act 1988',
@@ -3265,8 +3305,8 @@ export const EVIDENCE_LEVEL_LABELS = {
 } as const satisfies Record<EvidenceLevel, string>;
 
 export const EVIDENCE_LEVEL_DESCRIPTIONS = {
-  issuer_anchored: 'Verified directly with the issuing organization. The credential was cryptographically anchored by the original issuer.',
-  source_signed: 'The credential source provided a cryptographic signature proving origin and integrity.',
+  issuer_anchored: 'Verified directly with the issuing organization. The record was cryptographically anchored by the original issuer.',
+  source_signed: 'The document source provided a cryptographic signature proving origin and integrity.',
   account_linked: 'Imported from a connected account. Proves the holder had access to that account — the originating organization did not vouch for this record.',
   captured_url: 'Captured from a public URL. The content was fetched and fingerprinted at the recorded time.',
   ai_captured: 'Extracted using AI from an uploaded document. Content was parsed and structured automatically.',
@@ -3296,16 +3336,16 @@ export const VERSION_RESOLUTION_LABELS = {
 export const ISSUER_PARTNERSHIP_LABELS = {
   PAGE_TITLE: 'Issuer Partners',
   PAGE_SUBTITLE:
-    'Manage connections to credential issuers. Each partner sends Arkova the credentials they issue so we can secure them on your behalf.',
+    'Manage connections to issuing partners. Each partner sends Arkova the records they issue so we can secure them on your behalf.',
   EMPTY_TITLE: 'No issuer partners connected',
   EMPTY_BODY:
-    'Connect Credly or Accredible to start importing credentials your organisation issues. Setup keys are provided by the issuer’s admin tools.',
+    'Connect Credly or Accredible to start importing records your organisation issues. Setup keys are provided by the issuer’s admin tools.',
   EMPTY_PRIMARY_CTA: 'Connect an issuer',
   TABLE_HEADER_ISSUER: 'Issuer',
   TABLE_HEADER_ACCOUNT: 'Account',
   TABLE_HEADER_CONNECTED_AT: 'Connected',
   TABLE_HEADER_LAST_SYNC: 'Last sync',
-  TABLE_HEADER_CREDENTIALS: 'Credentials',
+  TABLE_HEADER_CREDENTIALS: 'Records',
   TABLE_HEADER_ACTIONS: 'Actions',
   ROW_LAST_SYNC_NEVER: 'Never',
   ROW_CREDENTIAL_COUNT_PENDING: '—',
@@ -3313,7 +3353,7 @@ export const ISSUER_PARTNERSHIP_LABELS = {
   DISCONNECT_CTA: 'Disconnect',
   DISCONNECT_DIALOG_TITLE: 'Disconnect issuer partner?',
   DISCONNECT_DIALOG_BODY:
-    'New credentials from this issuer will stop importing. Existing secured records stay verified.',
+    'New records from this issuer will stop importing. Existing secured records stay verified.',
   DISCONNECT_DIALOG_CONFIRM: 'Yes, disconnect',
   DISCONNECT_DIALOG_CANCEL: 'Cancel',
   CONNECT_CTA: 'Connect issuer',
@@ -3461,7 +3501,7 @@ export const EVIDENCE_LEVEL_BADGE_ALT = {
   issuer_anchored:
     'Issuer Anchored: authenticated directly by the issuing organization.',
   source_signed:
-    'Source Signed: the credential source cryptographically signed this record, proving issuer origin.',
+    'Source Signed: the document source cryptographically signed this record, proving issuer origin.',
   account_linked:
     'Account Linked: imported from a connected account. Proves account access only; the originating organization did not vouch for this record.',
   captured_url:
@@ -3483,14 +3523,14 @@ export const EVIDENCE_TRIAD_LABELS = {
  */
 export const EVIDENCE_TRIAD = {
   issuer_anchored: {
-    measured: 'The credential fingerprint and the time it was anchored.',
+    measured: 'The document fingerprint and the time it was anchored.',
     asserted: 'Issuer identity — anchored directly by the issuing organization.',
-    notAsserted: 'The real-world facts the credential describes (e.g. skills held).',
+    notAsserted: 'The real-world facts the document describes (e.g. skills held).',
   },
   source_signed: {
-    measured: 'The credential fingerprint and the source signature.',
+    measured: 'The document fingerprint and the source signature.',
     asserted: 'Issuer origin — a cryptographic signature proves the source.',
-    notAsserted: 'The real-world facts the credential describes.',
+    notAsserted: 'The real-world facts the document describes.',
   },
   account_linked: {
     measured: 'The fingerprint of the record imported from the connected account.',

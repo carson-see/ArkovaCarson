@@ -33,7 +33,7 @@ const STATUS_CONFIG = {
     icon: ArkovaIcon,
     label: 'Not Verified',
     variant: 'secondary' as const,
-    description: 'Verify your identity to build trust with your credentials and attestations.',
+    description: 'Verify your identity to build trust with your records and attestations.',
     className: 'text-muted-foreground',
   },
   pending: {
@@ -47,7 +47,7 @@ const STATUS_CONFIG = {
     icon: CheckCircle,
     label: 'Verified',
     variant: 'default' as const,
-    description: 'Your identity has been verified. This is shown alongside your credentials.',
+    description: 'Your identity has been verified. This is shown alongside your records.',
     className: 'text-emerald-500',
   },
   requires_input: {

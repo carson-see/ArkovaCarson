@@ -47,6 +47,7 @@ import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { rateLimit } from '../../utils/rateLimit.js';
 import { x402PaymentGate } from '../../middleware/x402PaymentGate.js';
+import { x402PayerRateLimit } from '../../middleware/x402PayerRateLimit.js';
 import { idempotencyMiddleware } from '../../middleware/idempotency.js';
 import { nessieQueryRouter } from './nessie-query.js';
 import { regulatoryAlertsRouter } from './regulatory-alerts.js';
@@ -65,6 +66,7 @@ import { complianceCheckRouter } from './compliance-check.js';
 import { regulatoryLookupRouter } from './regulatory-lookup.js';
 import { cleVerifyRouter } from './cle-verify.js';
 import { credentialsCtdlRouter } from './credentials-ctdl.js';
+import { credentialsCtdlImportRouter } from './credentials-ctdl-import.js';
 import { webhooksRouter } from './webhooks.js';
 import { webhooksSelfServiceRouter } from './webhooks-self-service.js';
 // atsWebhookRouter moved to index.ts for raw-body HMAC (SCRUM-1214/1215)
@@ -122,13 +124,47 @@ if (config.nodeEnv === 'production' && API_CORS_ORIGINS.length === 0) {
   logger.warn('CORS_ALLOWED_ORIGINS not set in production — cross-origin requests will be blocked');
 }
 
+const API_EXPOSED_HEADERS = [
+  'Deprecation',
+  'Sunset',
+  'X-Request-Id',
+  'X-RateLimit-Limit',
+  'X-RateLimit-Remaining',
+  'X-RateLimit-Reset',
+  'X-Quota-Used',
+  'X-Quota-Limit',
+  'X-Quota-Reset',
+  'X-Org-Quota-Anchors-Limit',
+  'X-Org-Quota-Anchors-Remaining',
+  'X-Org-Quota-Anchors-Reset',
+  'X-Org-Quota-Anchors-Created-Limit',
+  'X-Org-Quota-Anchors-Created-Remaining',
+  'X-Org-Quota-Anchors-Created-Reset',
+  'X-Org-Quota-Rule-Drafts-Limit',
+  'X-Org-Quota-Rule-Drafts-Remaining',
+  'X-Org-Quota-Rule-Drafts-Reset',
+  'X-Org-Quota-Rules-Limit',
+  'X-Org-Quota-Rules-Remaining',
+  'X-Org-Quota-Rules-Reset',
+  'X-Org-Quota-Connectors-Limit',
+  'X-Org-Quota-Connectors-Remaining',
+  'X-Org-Quota-Connectors-Reset',
+  'X-Org-Quota-Connector-Webhooks-Limit',
+  'X-Org-Quota-Connector-Webhooks-Remaining',
+  'X-Org-Quota-Connector-Webhooks-Reset',
+  'X-X402-RateLimit-Limit',
+  'X-X402-RateLimit-Remaining',
+  'X-X402-RateLimit-Reset',
+  'Retry-After',
+].join(', ');
+
 router.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
   if (API_CORS_ORIGINS.includes('*') || (origin && API_CORS_ORIGINS.includes(origin))) {
     res.setHeader('Access-Control-Allow-Origin', origin ?? '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Request-Id, Idempotency-Key');
-    res.setHeader('Access-Control-Expose-Headers', 'Deprecation, Sunset, X-Request-Id, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-Quota-Used, X-Quota-Limit, X-Quota-Reset, Retry-After');
+    res.setHeader('Access-Control-Expose-Headers', API_EXPOSED_HEADERS);
     res.setHeader('Access-Control-Max-Age', '86400');
   }
   if (req.method === 'OPTIONS') {
@@ -280,6 +316,14 @@ const credentialSourceImportRateLimiter = rateLimit({
   keyGenerator: (req) => `credential-source-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
 });
 
+// SCRUM-2913: the CTDL import consumer does a live outbound CE Registry fetch,
+// so keep a tight per-user bucket (same shape as credential-source imports).
+const ctdlImportRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+  keyGenerator: (req) => `ctdl-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
+});
+
 // AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)
 router.use('/ai/extract-batch', aiExtractionGate(), requireAuth, aiRateLimiter, aiBatchExtractRouter);
 router.use('/ai/extract', aiExtractionGate(), requireAuth, aiRateLimiter, aiExtractRouter);
@@ -410,6 +454,11 @@ const anchorAnonAllow = (req: Request, res: Response, next: NextFunction) => {
 router.use('/anchor', anchorAnonAllow, anchorLifecycleRouter);
 router.use('/anchor', anchorAnonAllow, anchorEvidenceRouter);
 router.use('/anchor', anchorAnonAllow, anchorExtractionManifestRouter);
+// SCRUM-2913: authed CTDL import consumer. Mounted at the FULL sub-path so its
+// `requireAuth` gate is scoped exactly to `/credentials/ctdl/import` and never
+// runs for the public serializer's `/credentials/:publicId/ctdl` route below.
+// Disjoint from `/:publicId/ctdl`, so the two /credentials mounts never collide.
+router.use('/credentials/ctdl/import', requireAuth, ctdlImportRateLimiter, credentialsCtdlImportRouter);
 router.use('/credentials', anchorAnonAllow, credentialsCtdlRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
@@ -453,7 +502,7 @@ router.use('/cle', x402PaymentGate('/api/v1/cle'), cleVerifyRouter);
 // Keep this before the broad AdES compliance mounts below. Those routers are
 // mounted at `/` because their internals expose signature paths, and their JWT
 // guards would otherwise shadow this API-key/x402 endpoint.
-router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), aiRateLimiter, nessieQueryRouter);
+router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), x402PayerRateLimit, aiRateLimiter, nessieQueryRouter);
 
 // ─── AdES Signatures — Phase III (PH3-ESIG-01) ───
 // Feature-gated + JWT auth required — signatures are org-managed resources

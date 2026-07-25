@@ -49,7 +49,7 @@ export function PaymentAnalyticsPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   const [stats, setStats] = useState<PaymentStats | null>(null);
   const [loading, setLoading] = useState(true);

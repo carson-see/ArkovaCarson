@@ -69,7 +69,7 @@ test.describe('Frontend Performance', () => {
       await page.goto('/verify/nonexistent-id');
 
       // Wait for page to render (either error or verification result)
-      await expect(page.getByRole('heading', { name: /Verify a Credential|Verification Failed/i }).first()).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole('heading', { name: /Verify a Document|Verification Failed/i }).first()).toBeVisible({ timeout: 10000 });
 
       const elapsed = Date.now() - start;
 
