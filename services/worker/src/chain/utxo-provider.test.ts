@@ -428,6 +428,70 @@ describe('GetBlockHybridProvider listUnspent fallback observability', () => {
   });
 });
 
+describe('SCRUM-2692 GetBlock hybrid receipt absence quorum', () => {
+  const TXID = 'ab'.repeat(32);
+  const MEMPOOL_TX = {
+    txid: TXID,
+    status: { confirmed: false },
+    vout: [],
+  };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockEmitRpcFallback.mockReset();
+  });
+
+  function provider() {
+    return new GetBlockHybridProvider({
+      rpcUrl: 'https://go.getblock.io/fake-token',
+      mempoolBaseUrl: 'https://mempool.space/signet/api',
+    });
+  }
+
+  it('returns the transaction when GetBlock misses but independent mempool.space finds it', async () => {
+    mockFetch.mockResolvedValueOnce(rpcErr('No such mempool or blockchain transaction', -5));
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(MEMPOOL_TX) });
+
+    await expect(provider().getRawTransaction(TXID)).resolves.toMatchObject({
+      txid: TXID,
+      confirmations: 0,
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports definitive absence only when GetBlock and mempool.space both return not-found', async () => {
+    mockFetch.mockResolvedValueOnce(rpcErr('No such mempool or blockchain transaction', -5));
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    await expect(provider().getRawTransaction(TXID)).rejects.toMatchObject({ code: -5 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates a secondary-source outage instead of converting the GetBlock miss to absence', async () => {
+    mockFetch.mockResolvedValueOnce(rpcErr('No such mempool or blockchain transaction', -5));
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 401 });
+
+    await expect(provider().getRawTransaction(TXID)).rejects.toMatchObject({ status: 401 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns the transaction when GetBlock is unavailable but independent mempool.space finds it', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 401 });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(MEMPOOL_TX) });
+
+    await expect(provider().getRawTransaction(TXID)).resolves.toMatchObject({ txid: TXID });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('propagates the GetBlock outage when mempool.space reports not-found', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 401 });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    await expect(provider().getRawTransaction(TXID)).rejects.toMatchObject({ status: 401 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('MempoolUtxoProvider retry integration', () => {
   const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
   beforeEach(() => { mockFetch.mockReset(); });

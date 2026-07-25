@@ -13,6 +13,10 @@ resync). Purely additive (**+364 / −6**): adds `external_document_versions`,
 the redundant `untypedDb` / `(db as any)` escape hatches in `api/version-resolution.ts`
 and `jobs/rules-engine-versions.ts` removable, so those paths now get real typing.
 
+## 2026-07-15 — Regenerated through local migration 0358
+
+After a clean local `supabase db reset --local`, the canonical generator added the service-role `anchor_txid_journal` table and `resolve_anchor_txid_journal` RPC. Worker and frontend generated files are byte-identical; no linked/staging/prod generation was used.
+
 ## Files
 
 - **database.types.ts** — Auto-generated Supabase types (`npx supabase gen types`). Never edit by hand; regenerate after any migration.

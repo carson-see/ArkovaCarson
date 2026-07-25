@@ -58,7 +58,7 @@ describe('AIReportsPanel', () => {
     expect(screen.getByText('Select Report Type')).toBeTruthy();
     expect(screen.getByText('Integrity Summary')).toBeTruthy();
     expect(screen.getByText('Extraction Accuracy')).toBeTruthy();
-    expect(screen.getByText('Credential Analytics')).toBeTruthy();
+    expect(screen.getByText('Record Analytics')).toBeTruthy();
     expect(screen.getByText('Compliance Overview')).toBeTruthy();
   });
 

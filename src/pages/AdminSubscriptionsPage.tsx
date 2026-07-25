@@ -56,7 +56,7 @@ export function AdminSubscriptionsPage() {
 
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'ALL');
 
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   const doFetch = useCallback((p = 1) => {
     fetchList({ page: p, filters: { status: statusFilter === 'ALL' ? '' : statusFilter } });

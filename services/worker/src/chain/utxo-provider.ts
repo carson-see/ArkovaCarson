@@ -60,6 +60,17 @@ export class RpcApplicationError extends Error {
   }
 }
 
+/**
+ * A transaction lookup is affirmative absence only when the provider returned
+ * its native not-found verdict. Authentication, quota, transport, timeout,
+ * malformed-response, and every other failure remain ambiguous.
+ */
+export function isDefinitiveTransactionAbsence(error: unknown): boolean {
+  if (error instanceof RpcApplicationError) return error.code === -5;
+  if (error instanceof HttpError) return error.status === 404;
+  return false;
+}
+
 // ─── BroadcastRejectedError ─────────────────────────────────────────────
 
 /**
@@ -877,11 +888,45 @@ export class GetBlockHybridProvider implements UtxoProvider {
     }, { name: 'GetBlockHybridProvider.getBlockchainInfo' });
   }
 
-  /** Use RPC for raw transaction lookup */
+  /**
+   * Receipt recovery uses a two-source absence quorum. A hit from either the
+   * dedicated GetBlock node or independent mempool.space is authoritative.
+   * Absence is surfaced only when BOTH sources return their native not-found
+   * verdict; any outage/disagreement throws so the journal recovery HOLDs.
+   */
   async getRawTransaction(txid: string): Promise<RawTransaction> {
-    return retryWithBackoff(async () => {
-      return (await rpcCall(this.rpcUrl, 'getrawtransaction', [txid, true], this.rpcAuth)) as RawTransaction;
-    }, { name: 'GetBlockHybridProvider.getRawTransaction' });
+    let rpcError: unknown;
+    try {
+      return await retryWithBackoff(async () => {
+        return (await rpcCall(this.rpcUrl, 'getrawtransaction', [txid, true], this.rpcAuth)) as RawTransaction;
+      }, { name: 'GetBlockHybridProvider.getRawTransaction.rpc' });
+    } catch (error) {
+      rpcError = error;
+      emitRpcFallback({
+        provider: 'getblock',
+        method: 'getrawtransaction',
+        error,
+        fallbackTo: 'mempool.space',
+        logger,
+        origin: 'GetBlockHybridProvider.getRawTransaction',
+      });
+    }
+
+    try {
+      return await this.mempool.getRawTransaction(txid);
+    } catch (mempoolError) {
+      const rpcAbsent = isDefinitiveTransactionAbsence(rpcError);
+      const mempoolAbsent = isDefinitiveTransactionAbsence(mempoolError);
+      if (rpcAbsent && mempoolAbsent) {
+        // Preserve the RPC -5 type so BitcoinChainClient can map the unanimous
+        // verdict to null. No single-source miss reaches that branch.
+        throw rpcError;
+      }
+      // One source was unavailable/ambiguous. Preserve that error rather than
+      // allowing the other source's not-found response to authorize REVERT.
+      if (!rpcAbsent) throw rpcError;
+      throw mempoolError;
+    }
   }
 
   /** Use RPC for block header lookup */

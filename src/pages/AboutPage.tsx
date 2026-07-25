@@ -111,7 +111,7 @@ export function AboutPage() {
         <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-16" aria-label="Platform metrics">
           <div className="p-5 rounded-xl border bg-card text-center">
             <p className="text-3xl font-bold text-primary">1.39M+</p>
-            <p className="text-xs text-muted-foreground mt-1">Credentials Secured</p>
+            <p className="text-xs text-muted-foreground mt-1">Records Secured</p>
           </div>
           <div className="p-5 rounded-xl border bg-card text-center">
             <p className="text-3xl font-bold text-primary">320K+</p>
@@ -119,7 +119,7 @@ export function AboutPage() {
           </div>
           <div className="p-5 rounded-xl border bg-card text-center">
             <p className="text-3xl font-bold text-primary">21</p>
-            <p className="text-xs text-muted-foreground mt-1">Credential Types</p>
+            <p className="text-xs text-muted-foreground mt-1">Document Types</p>
           </div>
           <div className="p-5 rounded-xl border bg-card text-center">
             <p className="text-3xl font-bold text-primary">87.2%</p>
@@ -237,7 +237,7 @@ export function AboutPage() {
       <footer className="border-t mt-16">
         <div className="mx-auto max-w-4xl px-6 py-8">
           <nav className="flex flex-wrap justify-center gap-6 text-sm text-muted-foreground" aria-label="Site navigation">
-            <Link to="/search" className="hover:text-primary transition-colors">Search Credentials</Link>
+            <Link to="/search" className="hover:text-primary transition-colors">Search Records</Link>
             <Link to="/verify" className="hover:text-primary transition-colors">Verify a Document</Link>
             <Link to="/developers" className="hover:text-primary transition-colors">Developer API</Link>
             <Link to="/contact" className="hover:text-primary transition-colors">Contact</Link>

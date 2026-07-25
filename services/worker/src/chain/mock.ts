@@ -32,8 +32,6 @@ export class MockChainClient implements ChainClient {
     // Simulate processing delay
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    mockBlockHeight += 1;
-
     // DEMO-01: Compute metadata hash if metadata provided
     let metadataHash: string | undefined;
     if (data.metadata && Object.keys(data.metadata).length > 0) {
@@ -45,21 +43,18 @@ export class MockChainClient implements ChainClient {
       metadataHash = createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
     }
 
-    const receipt: ChainReceipt = {
-      receiptId: `mock_receipt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      blockHeight: mockBlockHeight,
-      blockTimestamp: new Date().toISOString(),
-      confirmations: 6,
-      metadataHash,
-    };
+    const prepared = await this.prepareFingerprintTx(data);
+    if (data.preBroadcastHook) {
+      await data.preBroadcastHook(prepared);
+    }
+    const receipt = await this.broadcastSignedTx(prepared.txHex);
+    const enriched = { ...receipt, metadataHash, feeSats: prepared.feeSats };
+    mockReceipts.set(enriched.receiptId, enriched);
+    fingerprintToReceipt.set(data.fingerprint, enriched.receiptId);
 
-    // Store for later verification
-    mockReceipts.set(receipt.receiptId, receipt);
-    fingerprintToReceipt.set(data.fingerprint, receipt.receiptId);
+    logger.info({ receipt: enriched }, 'Mock: Fingerprint submitted successfully');
 
-    logger.info({ receipt }, 'Mock: Fingerprint submitted successfully');
-
-    return receipt;
+    return enriched;
   }
 
   async verifyFingerprint(fingerprint: string): Promise<VerificationResult> {

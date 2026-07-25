@@ -441,7 +441,7 @@ function TypeIcon({ type }: { type: 'record' | 'credential' | 'attestation' }) {
 }
 
 function TypeBadge({ type }: { type: 'record' | 'credential' | 'attestation' }) {
-  const labels = { record: 'Record', credential: 'Credential', attestation: 'Attestation' };
+  const labels = { record: 'Record', credential: 'Issued', attestation: 'Attestation' };
   const variants = { record: 'outline' as const, credential: 'default' as const, attestation: 'secondary' as const };
   return <Badge variant={variants[type]} className="text-[10px] px-1.5 py-0">{labels[type]}</Badge>;
 }
@@ -619,8 +619,8 @@ function CredentialsList({
   if (credentials.length === 0) {
     return (
       <EmptyState
-        title={allEmpty ? 'No credentials yet' : DOCUMENTS_PAGE_LABELS.NO_MATCHING}
-        description={allEmpty ? 'When organizations issue credentials to your email address, they will appear here.' : DOCUMENTS_PAGE_LABELS.NO_MATCHING_DESC}
+        title={allEmpty ? DOCUMENTS_PAGE_LABELS.RECEIVED_EMPTY_TITLE : DOCUMENTS_PAGE_LABELS.NO_MATCHING}
+        description={allEmpty ? DOCUMENTS_PAGE_LABELS.RECEIVED_EMPTY_DESC : DOCUMENTS_PAGE_LABELS.NO_MATCHING_DESC}
       />
     );
   }
