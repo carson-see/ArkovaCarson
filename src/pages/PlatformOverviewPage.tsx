@@ -43,7 +43,7 @@ export function PlatformOverviewPage() {
 
   const [refreshing, setRefreshing] = useState(false);
 
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   useEffect(() => {
     if (isAdmin) {

@@ -61,7 +61,7 @@ export function SystemHealthPage() {
   const [runningSmoke, setRunningSmoke] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   useEffect(() => {
     if (isAdmin) {

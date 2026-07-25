@@ -34,7 +34,7 @@ describe('Breadcrumbs', () => {
   it('renders breadcrumbs for credential templates page', () => {
     renderWithRoute('/settings/credential-templates');
     expect(screen.getByText('Settings')).toBeInTheDocument();
-    expect(screen.getByText('Credential Templates')).toBeInTheDocument();
+    expect(screen.getByText('Document Templates')).toBeInTheDocument();
   });
 
   it('renders breadcrumbs for webhooks page', () => {
