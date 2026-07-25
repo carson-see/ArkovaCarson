@@ -9,6 +9,7 @@
  *   silently showing the "No records found" empty state and masking the error.
  */
 
+import type React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -29,6 +30,25 @@ function setQueryResult(next: QueryResult) {
   queryResult = next;
 }
 
+// A minimal anchor row that renders without crashing (needs a known status so
+// `statusConfig[status]` resolves). Used by the Export-delegation tests.
+const validRow = {
+  id: '1',
+  filename: 'test.pdf',
+  fingerprint: 'abc123',
+  status: 'SECURED',
+  credential_type: null,
+  label: null,
+  public_id: 'pub-1',
+  file_size: 1024,
+  created_at: '2024-01-15T00:00:00Z',
+  updated_at: '2024-01-15T00:00:00Z',
+  chain_timestamp: null,
+  chain_tx_id: null,
+  chain_block_height: null,
+  metadata: null,
+};
+
 // When set, `await query` REJECTS (thrown error / network failure / abort /
 // client throw) instead of resolving with an `{ error }` object. This is the
 // distinct failure mode SCRUM-1999's resolved-with-error branch does NOT cover.
@@ -37,12 +57,24 @@ function setQueryRejection(reason: unknown) {
   queryRejection = reason;
 }
 
+// SCRUM-3010: record every `.eq(column, value)` the component issues so tests
+// can assert the row-scoping applied for admins vs non-admin members.
+const eqCalls: Array<[string, unknown]> = [];
+function resetEqCalls() {
+  eqCalls.length = 0;
+}
+
 vi.mock('@/lib/supabase', () => {
   const builder: Record<string, unknown> = {};
   const passthrough = () => builder;
-  for (const method of ['select', 'eq', 'is', 'filter', 'order', 'range', 'or', 'gte', 'lte']) {
+  for (const method of ['select', 'is', 'filter', 'order', 'range', 'or', 'gte', 'lte']) {
     builder[method] = passthrough;
   }
+  // `eq` records its arguments, then behaves like every other passthrough.
+  builder.eq = (column: string, value: unknown) => {
+    eqCalls.push([column, value]);
+    return builder;
+  };
   // Make the builder awaitable — `await query` resolves to the current result,
   // or rejects when `queryRejection` is set.
   builder.then = (
@@ -60,9 +92,11 @@ vi.mock('@/lib/supabase', () => {
   };
 });
 
-// Mock useExportAnchors
+// Mock useExportAnchors — shared spy so tests can assert the scope the table
+// delegates with (SCRUM-3010: admin org-wide vs non-admin member-scoped).
+const mockExportAnchors = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 vi.mock('@/hooks/useExportAnchors', () => ({
-  useExportAnchors: () => ({ exportAnchors: vi.fn(), loading: false }),
+  useExportAnchors: () => ({ exportAnchors: mockExportAnchors, loading: false }),
 }));
 
 // Mock navigator.clipboard
@@ -74,12 +108,30 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-function renderTable() {
+function renderTable(
+  props: Partial<React.ComponentProps<typeof OrgRegistryTable>> = {},
+) {
   return render(
     <MemoryRouter>
-      <OrgRegistryTable orgId="org-1" />
+      <OrgRegistryTable orgId="org-1" isAdmin currentUserId="user-1" {...props} />
     </MemoryRouter>,
   );
+}
+
+/**
+ * Export CSV is `disabled` until the row count arrives (`totalCount === 0`), and
+ * a raw `.click()` on a disabled button silently does nothing. Waiting only for
+ * the button to EXIST raced the fetch and made these specs flaky under load.
+ */
+async function waitForEnabledExportButton(): Promise<HTMLButtonElement> {
+  let button: HTMLButtonElement | undefined;
+  await waitFor(() => {
+    button = screen
+      .getAllByRole('button', { name: /export csv/i })
+      .find((el): el is HTMLButtonElement => !(el as HTMLButtonElement).disabled);
+    expect(button).toBeDefined();
+  });
+  return button as HTMLButtonElement;
 }
 
 describe('OrgRegistryTable', () => {
@@ -87,6 +139,69 @@ describe('OrgRegistryTable', () => {
     vi.clearAllMocks();
     setQueryResult({ data: [], count: 0, error: null });
     setQueryRejection(null);
+    resetEqCalls();
+  });
+
+  // SCRUM-3010 STEP 1 (frontend gate): the org-wide registry is the cross-member
+  // privacy leak. An admin sees the whole org; a non-admin member must only ever
+  // query their OWN rows (scoped by user_id), never by org_id.
+  it('scopes the query to org_id for an admin', async () => {
+    setQueryResult({ data: [], count: 0, error: null });
+    renderTable({ isAdmin: true, currentUserId: 'user-1' });
+    await waitFor(() => {
+      expect(eqCalls).toContainEqual(['org_id', 'org-1']);
+    });
+    expect(eqCalls).not.toContainEqual(['user_id', 'user-1']);
+  });
+
+  it('scopes the query to user_id (never org_id) for a non-admin member', async () => {
+    setQueryResult({ data: [], count: 0, error: null });
+    renderTable({ isAdmin: false, currentUserId: 'user-1' });
+    await waitFor(() => {
+      expect(eqCalls).toContainEqual(['user_id', 'user-1']);
+    });
+    // The whole-org query must never be issued for a non-admin.
+    expect(eqCalls).not.toContainEqual(['org_id', 'org-1']);
+  });
+
+  it('issues no org-wide query for a non-admin with no user id (fail closed)', async () => {
+    setQueryResult({ data: [], count: 0, error: null });
+    renderTable({ isAdmin: false, currentUserId: undefined });
+    // Give any effect a chance to run, then assert nothing org-wide was queried.
+    await waitFor(() => {
+      expect(screen.getAllByText(/no records found/i).length).toBeGreaterThan(0);
+    });
+    expect(eqCalls).not.toContainEqual(['org_id', 'org-1']);
+  });
+
+  // The Export CSV path must be gated the same way as the table: a non-admin's
+  // export is delegated with its own-scope, never an org-wide pull.
+  it('delegates export with the member scope for a non-admin', async () => {
+    setQueryResult({ data: [validRow], count: 1, error: null });
+    renderTable({ isAdmin: false, currentUserId: 'user-1' });
+    // The button renders immediately but is `disabled` until the row count
+    // lands — clicking it before then is a silent no-op, so wait for enabled.
+    const exportBtn = await waitForEnabledExportButton();
+    exportBtn.click();
+    await waitFor(() => {
+      expect(mockExportAnchors).toHaveBeenCalledWith('org-1', {
+        isAdmin: false,
+        userId: 'user-1',
+      });
+    });
+  });
+
+  it('delegates export org-wide for an admin', async () => {
+    setQueryResult({ data: [validRow], count: 1, error: null });
+    renderTable({ isAdmin: true, currentUserId: 'user-1' });
+    const exportBtn = await waitForEnabledExportButton();
+    exportBtn.click();
+    await waitFor(() => {
+      expect(mockExportAnchors).toHaveBeenCalledWith('org-1', {
+        isAdmin: true,
+        userId: 'user-1',
+      });
+    });
   });
 
   it('renders without crashing', () => {

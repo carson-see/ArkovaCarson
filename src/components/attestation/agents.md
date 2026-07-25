@@ -25,3 +25,7 @@ Attestation (credential issuance) components: status display, verification resul
 - DO: All UI copy via `ATTESTATION_LABELS` from `src/lib/copy.ts` — no hardcoded strings
 - DO: Use compliant terminology (Network Receipt not transaction, Fingerprint not hash, Network Checkpoint not block)
 - DON'T: Use banned terms in any user-visible string (see CLAUDE.md §1.3)
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+EducationVerificationForm heading + BulkIssuanceWizard generated claim text scrubbed ("Education Record Verification", "Verified record for …"). `subject_type: 'credential'` enum values untouched (internal). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).

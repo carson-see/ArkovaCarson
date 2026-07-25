@@ -20,10 +20,24 @@ Provision these as Cloud Run secrets, then redeploy the worker through the human
 DOCUSIGN_INTEGRATION_KEY=
 DOCUSIGN_CLIENT_SECRET=
 DOCUSIGN_CONNECT_HMAC_SECRET=
-DOCUSIGN_DEMO=true
+DOCUSIGN_DEMO=false   # prod: production account.docusign.com auth base (Go-Live approved 2026-07-23). Use "true" only for sandbox/dev.
 ENABLE_DOCUSIGN_OAUTH=true
 ENABLE_DOCUSIGN_WEBHOOK=true
 ```
+
+`DOCUSIGN_DEMO` selects the **OAuth account server only** (`account-d.docusign.com` vs
+`account.docusign.com`) — see `getAuthBase()` in
+`services/worker/src/integrations/oauth/docusign.ts`. The **eSignature REST base** is NOT derived
+from this flag: it is the per-connection `base_uri` captured from `/oauth/userinfo` at connect time
+and persisted in `org_integrations.base_uri` (migration `0306`) / `member_integrations.base_uri`
+(migration `0320`).
+
+**Consequence when flipping `DOCUSIGN_DEMO` true -> false:** connections established while the flag
+was `true` keep a sandbox `base_uri` (`https://demo.docusign.net`) and hold a refresh token minted by
+`account-d`. After the flip, their token refresh is sent to `account.docusign.com` and will fail, and
+any REST call still targets the demo host. Those orgs must **re-run the OAuth connect flow** so a
+production `base_uri` (e.g. `https://naN.docusign.net`) and a production refresh token are persisted.
+Flipping the env var alone does not migrate an existing connection.
 
 Do not paste refresh tokens into logs, tickets, or Confluence. Refresh tokens are encrypted through `GCP_KMS_INTEGRATION_TOKEN_KEY` before persistence in `org_integrations.encrypted_tokens`.
 
@@ -45,6 +59,137 @@ As of the 2026-05-15 SCRUM-1655 verification pass, production was serving revisi
 4. Enable HMAC signing and copy the HMAC key into `DOCUSIGN_CONNECT_HMAC_SECRET`.
 5. Set the Connect payload format to JSON.
 6. Point Connect to `https://<worker-host>/webhooks/docusign`.
+
+## Required DocuSign-App Redirect URIs (SCRUM-3015) — BOTH are mandatory
+
+Arkova has **two** DocuSign OAuth entry points and they use **different callback
+paths**. DocuSign rejects the authorization request (`invalid_redirect_uri`) for any
+path not registered on the integration key, so registering only the org-level URI
+silently breaks the member-level flow.
+
+Register **both** of these on the production DocuSign app
+(DocuSign Admin → Apps and Keys → the Arkova integration key → Redirect URIs):
+
+```
+https://arkova-worker-270018525501.us-central1.run.app/api/v1/integrations/docusign/oauth/callback
+https://arkova-worker-270018525501.us-central1.run.app/api/v1/integrations/docusign/member/oauth/callback
+```
+
+Source of truth in code (do not guess these — re-derive if routes move):
+
+| Flow | Route file | Mount | Callback path |
+|---|---|---|---|
+| Org-level (admin connects the org) | `services/worker/src/api/v1/integrations/docusign-oauth.ts` (`buildRedirectUri`) | `services/worker/src/index.ts` → `app.use('/api/v1/integrations', … docusignOAuthRouter)` | `/api/v1/integrations/docusign/oauth/callback` |
+| Member-level (SCRUM-2044) | `services/worker/src/api/v1/integrations/docusign-member-oauth.ts` (`buildRedirectUri`) | `services/worker/src/index.ts` → `app.use('/api/v1/integrations', … docusignMemberOAuthRouter)` | `/api/v1/integrations/docusign/member/oauth/callback` |
+
+Both builders derive the origin from the **request** (`x-forwarded-proto` /
+`x-forwarded-host`, falling back to `Host`), not from an env var. Consequences:
+
+- The registered host must match the host the browser is redirected through. Today
+  that is the Cloud Run URL above (`WORKER_PUBLIC_URL` in `deploy-worker.yml`).
+- If the worker is ever fronted by another hostname (custom domain, tunnel, staging
+  tag URL), **that host's two URIs must be registered as well** — otherwise OAuth
+  fails only on that host.
+- Demo (`account-d.docusign.com`) and production (`account.docusign.com`) are
+  separate DocuSign apps. Registering the URIs on the demo app does **not** register
+  them on the production app; `DOCUSIGN_DEMO=false` switches only the OAuth account
+  server (`getAuthBase()` in `services/worker/src/integrations/oauth/docusign.ts`).
+
+Note: the eSignature REST base is **not** affected by `DOCUSIGN_DEMO`. It is the
+per-connection `base_uri` returned by `/oauth/userinfo` and persisted in
+`org_integrations.base_uri` (migration 0306) / `member_integrations.base_uri` (0320).
+A connection created while `DOCUSIGN_DEMO=true` keeps `https://demo.docusign.net`
+forever until the org re-runs OAuth — see the switch-on checklist below.
+
+## Production Switch-On Checklist (DOCUSIGN_DEMO=false)
+
+Run in this order. Steps 2–5 are the ones that the flag flip alone does **not** do.
+
+1. **Merge + deploy the flag flip.** `DOCUSIGN_DEMO=false` in
+   `.github/workflows/deploy-worker.yml` (PR #1668). Confirm the new revision is
+   serving: `gcloud run services describe arkova-worker --region us-central1
+   --format='value(status.latestReadyRevisionName)'` and `/health` green.
+2. **Re-run the org OAuth connect.** Existing production rows still point at the
+   demo environment. As of 2026-07-22 prod (`vzwyaatejekddvltxyye`) has exactly one
+   active DocuSign connection — org `40383eb2-f1cd-4a85-8099-afafff95e5cf`,
+   `base_uri = https://demo.docusign.net` — and zero `member_integrations` DocuSign
+   rows. That org **must** re-run the connect flow after the flip so a production
+   `base_uri` (`https://<account>.docusign.net`) and a production refresh token are
+   persisted. Verify:
+
+   ```sql
+   SELECT org_id, account_id, base_uri, connected_at, revoked_at
+   FROM org_integrations
+   WHERE provider = 'docusign' AND revoked_at IS NULL;
+   ```
+
+   `base_uri` must no longer be `https://demo.docusign.net`.
+3. **Verify a Connect listener actually exists on the PRODUCTION account.**
+   Auto-provisioning is fire-and-forget and has failed in production before (see
+   "Connect listener provisioning failures" below). Check
+   `integration_events` for `connect_listener_provisioned` (success) vs
+   `connect_listener_failed` / `member_connect_listener_failed` (failure), then
+   confirm on the DocuSign side.
+
+   If auto-provision failed, create the listener manually:
+   DocuSign Admin → **Connect** → Add Configuration → Custom:
+   - **URL to publish to:** `https://arkova-worker-270018525501.us-central1.run.app/webhooks/docusign`
+     (verified against `services/worker/src/index.ts` `app.use('/webhooks/docusign', …)`
+     and `buildArkovaConnectConfig()`, which appends `/webhooks/docusign` to
+     `WORKER_PUBLIC_URL`. It is **not** under `/api/v1/…`.)
+   - **Enable log**, **Require acknowledgement**, **Send to all users**: on
+   - **Envelope events:** `Completed` only
+   - **Include HMAC signature:** on, with the key from Secret Manager
+     `docusign_connect_hmac_secret` (`gcloud secrets versions access latest
+     --project=arkova1 --secret=docusign_connect_hmac_secret`). It must match the
+     worker's `DOCUSIGN_CONNECT_HMAC_SECRET` exactly or every delivery 401s.
+   - **Payload format:** JSON, version `restv2.1`
+4. **Confirm both redirect URIs** from the SCRUM-3015 section above are registered on
+   the production integration key.
+5. **Send a real test envelope** from the connected production account and confirm,
+   end to end: webhook delivered (DocuSign Connect log shows `200`/`202`), an
+   `ESIGN_COMPLETED` rule event exists, a `docusign.envelope_completed` job ran, and
+   an anchor was created for the envelope.
+
+## Connect listener provisioning failures (SCRUM-3014)
+
+`provisionConnectListener()` runs fire-and-forget from both OAuth callbacks: it must
+never break the connect flow, so a failure leaves the org showing "Connected" while
+no webhook ever arrives. Until SCRUM-3014 the failure was also undiagnosable — prod
+`integration_events` rows carried only
+`{"error":"DocuSign Connect create failed"}` (four of them, 2026-06-29 → 2026-07-22),
+with no HTTP status and no vendor error code.
+
+The failure path now:
+
+- logs the real DocuSign HTTP status plus a bounded, PII-scrubbed vendor `detail`
+  (§1.6A-safe — never a raw response body);
+- persists them on the `connect_listener_failed` / `member_connect_listener_failed`
+  `integration_events` row as `docusign_status` / `docusign_detail`;
+- captures the exception in Sentry (`connector_id=docusign`,
+  `stage=connect_provision`, `flow=org|member`, `docusign_status=<code>`);
+- flips `connector_alert_state` to `degraded` for the org, which the queue digest
+  counts as a failed connector. That state is **sticky**: the 15-min connector-health
+  cron classifies from `revoked_at` only, so it deliberately does not reset a
+  `degraded` row. A successful (re)provision clears it back to `connected`.
+
+Triage query:
+
+```sql
+SELECT created_at, event_type, details
+FROM integration_events
+WHERE provider = 'docusign' AND event_type LIKE '%connect_listener%'
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+Read `details->>'docusign_status'` and `details->>'docusign_detail'` first — they
+carry DocuSign's own error code. Common causes to check against that code: Connect
+not enabled on the account plan, the consenting user lacking account-admin rights,
+or an account-level Connect configuration limit. If the listener cannot be created
+by API, fall back to the manual Connect configuration in step 3 above; the connector
+stays degraded until a reprovision succeeds
+(`POST /api/v1/integrations/docusign/connect/reprovision`).
 
 ## Verification
 

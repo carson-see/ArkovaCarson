@@ -33,6 +33,11 @@ import { resolveSecretHandle } from '../utils/secrets.js';
 import { submitJob } from '../utils/jobQueue.js';
 import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
 import { RULE_DISPATCH_OUTCOME, RULE_ROUTED_TO } from '../rules/schemas.js';
+import { config } from '../config.js';
+import {
+  connectorPathIsAuthoritative,
+  findExistingEnvelopeAnchor,
+} from './docusign-anchor-reconciliation.js';
 
 export const MAX_DISPATCH_ATTEMPTS = 5;
 const DISPATCH_BATCH_SIZE = 50;
@@ -560,7 +565,83 @@ function buildAnchorQueueOutcome(opts: {
   };
 }
 
+// SCRUM-2904 — read just the connector/vendor source (no fingerprint required)
+// so the reconciliation precedence decision can run BEFORE any materialize/
+// deduct. Mirrors `extractAnchorQueueSource`'s vendor resolution exactly.
+function extractConnectorSourceVendor(exec: ExecutionRow): string {
+  const input = readRecord(exec.input_payload);
+  const payload = readRecord(input.payload);
+  return readString(input.vendor) ?? readString(payload.source) ?? 'connector';
+}
+
+// SCRUM-2904 — the DocuSign envelope identity both paths key on. The declared-
+// hash path persists it as metadata.source_envelope_id; the connector path as
+// external_ref / envelope_id. Used by the envelope-level guard to reconcile a
+// flag-flip-mid-flight race (see docusign-anchor-reconciliation.ts).
+function extractEnvelopeId(exec: ExecutionRow): string | null {
+  const payload = readRecord(readRecord(exec.input_payload).payload);
+  return readString(payload.envelope_id);
+}
+
+// SCRUM-2904 — envelope-level guard: has EITHER path already created a live
+// anchor for this org+envelope? Returns the existing materialization (reuse) so
+// the caller inserts no duplicate and moves no credit. Null when there is no
+// envelope id or no match. Fail-closed: a lookup error propagates (the row
+// retries) rather than risk a duplicate insert.
+async function findEnvelopeAnchorMaterialization(
+  rule: RuleRow,
+  exec: ExecutionRow,
+): Promise<AnchorQueueMaterialization | null> {
+  const existing = await findExistingEnvelopeAnchor({
+    db,
+    orgId: rule.org_id,
+    envelopeId: extractEnvelopeId(exec),
+  });
+  if (!existing) return null;
+  return { anchorPublicId: existing.publicId, materialized: true, duplicate: true };
+}
+
+// SCRUM-2904 — THE reconciliation gate. Returns true when the authoritative
+// server-fetched connector path (§1.6A) owns anchoring for this envelope's
+// source, so the declared-hash rules path must DEFER (create no anchor, move no
+// credit). Deterministic single-source-of-truth: driven by the connector-fetch
+// source set + ENABLE_CONNECTOR_ARTIFACT_ENQUEUE.
+function connectorPathOwnsAnchor(exec: ExecutionRow): boolean {
+  return connectorPathIsAuthoritative({
+    source: extractConnectorSourceVendor(exec),
+    enableConnectorArtifactEnqueue: config.enableConnectorArtifactEnqueue,
+    enableConnectorArtifactDrain: config.enableConnectorArtifactDrain,
+  });
+}
+
+// SCRUM-2904 — deferral outcome. SUCCEEDED (the rule fired and was handled
+// correctly) but NO anchor materialized and NO credit moved: the connector path
+// is the sole writer. Legible to the compliance inbox via routed_to.
+function buildDeferredToConnectorOutcome(connectorSource: string): Outcome {
+  return {
+    kind: 'success',
+    output: {
+      outcome: RULE_DISPATCH_OUTCOME.DEFERRED_TO_CONNECTOR,
+      routed_to: RULE_ROUTED_TO.CONNECTOR_PIPELINE,
+      connector_source: connectorSource,
+      anchor_materialized: false,
+    },
+  };
+}
+
 async function dispatchAutoAnchor(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
+  // SCRUM-2904: defer to the authoritative server-fetched connector path when it
+  // owns this source (bytes measured, not asserted) — no double-anchor.
+  if (connectorPathOwnsAnchor(exec)) {
+    return buildDeferredToConnectorOutcome(extractConnectorSourceVendor(exec));
+  }
+  // SCRUM-2904 envelope-level guard: reuse an anchor already created for this
+  // envelope by EITHER path (flag-flip race) instead of inserting a duplicate.
+  const existing = await findEnvelopeAnchorMaterialization(rule, exec);
+  if (existing) {
+    return buildAnchorQueueOutcome({ creditDenialReason: null, materialization: existing });
+  }
+
   // DS-07 queue mode: route to the org anchor queue without consuming credits.
   const materialization = await materializeAnchorQueueItem({
     rule,
@@ -630,6 +711,13 @@ async function compensateFastTrackCreditFailure(args: {
 }
 
 async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
+  // SCRUM-2904: defer to the authoritative server-fetched connector path when it
+  // owns this source. MUST run BEFORE deductOrgCredit — deferring means moving
+  // no credit (the connector path charges once, at SECURING).
+  if (connectorPathOwnsAnchor(exec)) {
+    return buildDeferredToConnectorOutcome(extractConnectorSourceVendor(exec));
+  }
+
   // DS-06 instant secure: validate the future queue row before reserving
   // credit, then insert only for allowed or explicitly queued denial paths.
   // Uses the shared `deductOrgCredit` helper (SCRUM-1170-B) so

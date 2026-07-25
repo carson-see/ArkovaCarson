@@ -18,3 +18,7 @@ Organization management components: sub-org hierarchy, org verification, and aff
 - DO: Use dev bypass endpoints in development mode for auto-completing verification steps
 - DO: Use copy from `SUB_ORG_LABELS` for all sub-org UI strings
 - DO: On the initial sub-orgs fetch failure, set the `loadError` state and render the error banner with Retry — never silently `return` on `!response.ok` or swallow the `catch` and fall through to the empty state (SCRUM-1999 sibling). Create/approve/revoke action errors stay on toast.
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+OrgVerification verified-badge helper text scrubbed ("shown on all your records"). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
