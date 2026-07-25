@@ -17,8 +17,25 @@ import { useAsyncAction } from './useAsyncAction';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
 
+/**
+ * Row-scope for an export (SCRUM-3010 STEP 1 — frontend gate).
+ * - `isAdmin: true`  → the export covers the whole organization (`org_id`).
+ * - `isAdmin: false` → the export is restricted to the caller's OWN rows
+ *   (`user_id`), mirroring the `useAnchors` INDIVIDUAL path. A non-admin member
+ *   must never be able to pull a coworker's records. Fails closed when `userId`
+ *   is missing.
+ *
+ * NOTE: this is the client-side gate only. The matching RLS tightening (so the
+ * scope is enforced server-side, not just in the browser query) is deferred to
+ * SCRUM-3010 STEP 2 (T3), post-soak.
+ */
+interface ExportScope {
+  isAdmin: boolean;
+  userId?: string | null;
+}
+
 interface UseExportAnchorsReturn {
-  exportAnchors: (orgId: string) => Promise<boolean>;
+  exportAnchors: (orgId: string, scope: ExportScope) => Promise<boolean>;
   loading: boolean;
   error: string | null;
   clearError: () => void;
@@ -59,12 +76,25 @@ const anchorColumns = [
 ];
 
 export function useExportAnchors(): UseExportAnchorsReturn {
-  const exportImpl = useCallback(async (orgId: string): Promise<boolean> => {
-    // Capped at 5000 rows to prevent browser OOM on large orgs
-    const { data, error: fetchError } = await supabase
+  const exportImpl = useCallback(async (orgId: string, scope: ExportScope): Promise<boolean> => {
+    // SCRUM-3010 STEP 1: a non-admin member may only export their OWN rows.
+    // Fail closed if we cannot identify the caller — never fall through to an
+    // org-wide pull.
+    if (!scope.isAdmin && !scope.userId) {
+      throw new Error('You do not have permission to export these records.');
+    }
+
+    // Capped at 5000 rows to prevent browser OOM on large orgs.
+    // Admin → org-wide (`org_id`); non-admin → own rows only (`user_id`).
+    const scoped = supabase
       .from('anchors')
-      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, file_mime, created_at, updated_at, chain_timestamp, revoked_at, revocation_reason, expires_at, legal_hold')
-      .eq('org_id', orgId)
+      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, file_mime, created_at, updated_at, chain_timestamp, revoked_at, revocation_reason, expires_at, legal_hold');
+
+    const filtered = scope.isAdmin
+      ? scoped.eq('org_id', orgId)
+      : scoped.eq('user_id', scope.userId as string);
+
+    const { data, error: fetchError } = await filtered
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(5000);
@@ -87,9 +117,9 @@ export function useExportAnchors(): UseExportAnchorsReturn {
   const { execute, loading, error, clearError } = useAsyncAction(exportImpl);
 
   const exportAnchors = useCallback(
-    async (orgId: string): Promise<boolean> => {
+    async (orgId: string, scope: ExportScope): Promise<boolean> => {
       try {
-        return await execute(orgId);
+        return await execute(orgId, scope);
       } catch {
         return false;
       }

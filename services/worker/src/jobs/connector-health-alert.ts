@@ -223,9 +223,20 @@ export async function runConnectorHealthCheck(db: SupabaseDb): Promise<Connector
   const pendingAlerts: ConnectorAlertDecision[] = [];
   const upserts: Array<{ connector_id: string; org_id: string; last_state: string; last_alerted_at: string | null }> = [];
 
-  for (const snap of snapshots) {
-    const key = `${snap.connector_id}:${snap.org_id}`;
+  for (const rawSnap of snapshots) {
+    const key = `${rawSnap.connector_id}:${rawSnap.org_id}`;
     const prior = stateMap.get(key) ?? null;
+    // SCRUM-3014: `degraded` is only ever written by a connector path that
+    // observed a failure this cron cannot see (e.g. DocuSign Connect listener
+    // provisioning failing while the OAuth grant itself stays valid). This job
+    // classifies health from `revoked_at` alone, so without stickiness it would
+    // reset the row to `connected` on the next tick and fire a FALSE recovery.
+    // Degraded therefore persists until the connector path clears it after a
+    // successful (re)provision (markDocusignConnectorConnected).
+    const snap: ConnectorHealthSnapshot =
+      rawSnap.state === 'connected' && prior?.last_state === 'degraded'
+        ? { ...rawSnap, state: 'degraded', health_reason: 'processing_failure' }
+        : rawSnap;
     const decision = decideConnectorAlert(snap, prior, now);
 
     if (decision.should_fire) {

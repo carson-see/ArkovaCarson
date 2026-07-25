@@ -15,12 +15,13 @@ vi.mock('@/hooks/useAuth', () => ({
   useAuth: vi.fn().mockReturnValue({ user: { email: 'carson@arkova.ai', id: 'user-1' }, signOut: vi.fn() }),
 }));
 vi.mock('@/hooks/useProfile', () => ({
-  useProfile: vi.fn().mockReturnValue({ profile: { org_id: null, role: null }, loading: false }),
+  useProfile: vi.fn().mockReturnValue({ profile: { org_id: null, role: null, is_platform_admin: true }, loading: false }),
 }));
 vi.mock('@/hooks/useOpsSloStats', () => ({ useOpsSloStats: mockUseOpsSloStats }));
 
 import { OpsSloDashboardPage } from './OpsSloDashboardPage';
 import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/hooks/useProfile';
 import type { OpsSloStats } from '@/hooks/useOpsSloStats';
 
 function renderPage() {
@@ -53,12 +54,22 @@ describe('OpsSloDashboardPage', () => {
       user: { email: 'carson@arkova.ai', id: 'user-1' },
       signOut: vi.fn(),
     });
+    // Default to platform admin; individual tests override the flag to deny.
+    (useProfile as ReturnType<typeof vi.fn>).mockReturnValue({
+      profile: { org_id: null, role: null, is_platform_admin: true },
+      loading: false,
+    });
   });
 
   it('shows an access-restricted card for a non-admin user', () => {
     (useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
       user: { email: 'someone@example.com', id: 'user-2' },
       signOut: vi.fn(),
+    });
+    // Access is decided by the is_platform_admin DB flag, not the email.
+    (useProfile as ReturnType<typeof vi.fn>).mockReturnValue({
+      profile: { org_id: null, role: null, is_platform_admin: false },
+      loading: false,
     });
     mockUseOpsSloStats.mockReturnValue({ stats: null, loading: false, error: null, refetch: vi.fn() });
 
