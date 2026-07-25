@@ -124,7 +124,7 @@ test.describe('Settings', () => {
       await orgAdminPage.goto('/settings/credential-templates');
 
       // Should show credential templates management
-      await expect(orgAdminPage.getByRole('heading', { name: /Credential Templates/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByRole('heading', { name: /Document Templates/i })).toBeVisible({ timeout: 10000 });
 
       // Add Template button
       const addBtn = orgAdminPage.getByRole('button', { name: /Add Template/i });

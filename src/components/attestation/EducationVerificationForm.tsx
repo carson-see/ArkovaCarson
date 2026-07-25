@@ -122,7 +122,7 @@ export function EducationVerificationForm({ orgName, onSubmit, onCancel, submitt
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-[#00d4ff]">
         <GraduationCap className="h-5 w-5" />
-        <span className="font-semibold">Education Credential Verification</span>
+        <span className="font-semibold">Education Record Verification</span>
       </div>
 
       {error && (

@@ -29,3 +29,7 @@ Search and discovery components: semantic search, credential cards, issuer profi
 - DO: Show match strength as a friendly percentage/label, never the raw similarity score
 - DON'T: Add a filters sidebar until SCRUM-1958 subtask-3 wires server-side filter params (no dead/fake controls)
 - DON'T: POST audit/usage events from the browser — the worker logs AI usage server-side (§1.6)
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+IssuerCard count string now "{count} verified records" (via copy.ts SEARCH_LABELS). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).

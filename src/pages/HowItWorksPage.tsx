@@ -76,7 +76,7 @@ function HowToSchema() {
         __html: JSON.stringify({
           '@context': 'https://schema.org',
           '@type': 'HowTo',
-          name: 'How to Verify a Credential with Arkova',
+          name: 'How to Verify a Document with Arkova',
           description: HOW_IT_WORKS_LABELS.HERO_SUBTITLE,
           step: [
             {
