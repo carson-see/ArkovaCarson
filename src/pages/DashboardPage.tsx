@@ -326,7 +326,7 @@ export function DashboardPage() {
       </div>
 
       {/* Getting started checklist (UF-10) — hidden for platform admins */}
-      {profile?.role && !isPlatformAdmin(user?.email) && (
+      {profile?.role && !isPlatformAdmin(profile) && (
         <div className="mb-8">
           <GettingStartedChecklist
             role={profile.role as 'ORG_ADMIN' | 'INDIVIDUAL'}

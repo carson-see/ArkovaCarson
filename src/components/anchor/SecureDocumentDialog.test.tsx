@@ -357,6 +357,61 @@ describe('SecureDocumentDialog — extraction-failed recovery + toast behavior',
 
     expect(insert).not.toHaveBeenCalled();
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCRUM-2911 sub-item 2 — scanned (image-only) PDF no-text ROUTING guards.
+  // A no-text soft failure must land on the 'extraction-failed' recovery step
+  // (retry / manual / skip), NEVER on the §1.6 'privacy-blocked' screen — and
+  // a genuine fail-closed signal must STILL land on 'privacy-blocked'.
+  // ─────────────────────────────────────────────────────────────────────────
+  it('routes a scanned-PDF no-text soft failure to extraction-failed, NOT privacy-blocked', async () => {
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    // Simulate the orchestrator's no-text soft path: an error progress event
+    // WITHOUT failClosed, then null.
+    vi.mocked(runExtraction).mockImplementationOnce(async (_f, _fp, _t, onProgress) => {
+      onProgress?.({ stage: 'error', progress: 0, message: AI_EXTRACTION_LABELS.NO_TEXT_FOUND });
+      return null;
+    });
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+
+    // Soft recovery step with all three exits visible. The rendered heading is
+    // the specific soft-recovery copy (not the privacy-failure copy).
+    expect(screen.getByText(EXTRACTION_RECOVERY_LABELS.TITLE)).toBeInTheDocument();
+    expect(EXTRACTION_RECOVERY_LABELS.TITLE).toContain('Extraction Unsuccessful');
+    expect(screen.getByText(EXTRACTION_RECOVERY_LABELS.RETRY)).toBeInTheDocument();
+    expect(screen.getByText(EXTRACTION_RECOVERY_LABELS.ENTER_MANUALLY)).toBeInTheDocument();
+    expect(screen.getByText(EXTRACTION_RECOVERY_LABELS.SKIP)).toBeInTheDocument();
+    // NOT the loud §1.6 privacy screen.
+    expect(screen.queryByTestId('privacy-blocked')).not.toBeInTheDocument();
+    expect(toast.error).not.toHaveBeenCalled();
+    // The soft path warns with the specific recovery toast copy.
+    expect(toast.warning).toHaveBeenCalledWith(AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST);
+  });
+
+  it('STILL routes a fail-closed (OCR engine / NER model) failure to privacy-blocked', async () => {
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    // Simulate the orchestrator's §1.6 fail-closed path.
+    vi.mocked(runExtraction).mockImplementationOnce(async (_f, _fp, _t, onProgress) => {
+      onProgress?.({
+        stage: 'error',
+        progress: 0,
+        failClosed: true,
+        message: AI_EXTRACTION_LABELS.PRIVACY_GUARANTEE_FAILED,
+      });
+      return null;
+    });
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+
+    // LOUD privacy screen, not the soft recovery step.
+    expect(screen.getByTestId('privacy-blocked')).toBeInTheDocument();
+    expect(screen.queryByText(EXTRACTION_RECOVERY_LABELS.TITLE)).not.toBeInTheDocument();
+  });
 });
 
 describe('AI-03 (SCRUM-2383) — extraction review gate', () => {

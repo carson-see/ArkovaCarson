@@ -93,7 +93,7 @@ export function SearchPage() {
 
   // BUG-014 + SCRUM-365: Set page title for SEO
   useEffect(() => {
-    document.title = 'Arkova Search — Verify Credentials';
+    document.title = 'Arkova Search — Verify Records';
   }, []);
   const [query, setQuery] = useState(urlQuery ?? '');
   const [searchType, setSearchType] = useState<SearchType>('issuer');
@@ -463,7 +463,7 @@ export function SearchPage() {
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#859398]" />
               <Input
-                placeholder="Search issuers, credentials, or paste a verification ID..."
+                placeholder="Search issuers, records, or paste a verification ID..."
                 value={query}
                 maxLength={MAX_SEARCH_QUERY_LENGTH}
                 onChange={(e) => setQuery(e.target.value)}

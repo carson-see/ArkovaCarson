@@ -31,7 +31,7 @@ interface AIFieldSuggestionsProps {
 }
 
 const FIELD_LABELS: Record<string, string> = {
-  credentialType: 'Credential Type',
+  credentialType: 'Document Type',
   issuerName: 'Issuer',
   recipientIdentifier: 'Recipient',
   issuedDate: 'Issue Date',

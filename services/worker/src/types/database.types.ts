@@ -528,6 +528,54 @@ export type Database = {
           },
         ]
       }
+      anchor_txid_journal: {
+        Row: {
+          anchor_ids: string[]
+          batch_id: string
+          created_at: string
+          fingerprint_root: string
+          held_at: string | null
+          hold_reason: string | null
+          id: string
+          leaf_order: Json
+          recovery_status: string
+          resolved_at: string | null
+          signed_at: string
+          txid: string
+          updated_at: string
+        }
+        Insert: {
+          anchor_ids: string[]
+          batch_id: string
+          created_at?: string
+          fingerprint_root: string
+          held_at?: string | null
+          hold_reason?: string | null
+          id?: string
+          leaf_order: Json
+          recovery_status?: string
+          resolved_at?: string | null
+          signed_at?: string
+          txid: string
+          updated_at?: string
+        }
+        Update: {
+          anchor_ids?: string[]
+          batch_id?: string
+          created_at?: string
+          fingerprint_root?: string
+          held_at?: string | null
+          hold_reason?: string | null
+          id?: string
+          leaf_order?: Json
+          recovery_status?: string
+          resolved_at?: string | null
+          signed_at?: string
+          txid?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       anchors: {
         Row: {
           chain_block_hash: string | null
@@ -2303,6 +2351,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "drive_watch_state_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "drive_watch_state_integration_id_fkey"
             columns: ["integration_id"]
             isOneToOne: false
@@ -2314,6 +2369,20 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drive_watch_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drive_watch_state_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -7030,6 +7099,16 @@ export type Database = {
           org_id: string
         }[]
       }
+      persist_anchor_txid_journal: {
+        Args: {
+          p_anchor_ids: string[]
+          p_batch_id: string
+          p_fingerprint_root: string
+          p_leaf_order: Json
+          p_txid: string
+        }
+        Returns: Json
+      }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string
@@ -7105,6 +7184,16 @@ export type Database = {
           p_selected_public_id: string
         }
         Returns: string
+      }
+      resolve_anchor_txid_journal: {
+        Args: {
+          p_action: string
+          p_block_height?: number
+          p_block_timestamp?: string
+          p_journal_id: string
+          p_reason?: string
+        }
+        Returns: number
       }
       revoke_anchor: {
         Args: { anchor_id: string; reason?: string }

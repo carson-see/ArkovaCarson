@@ -2,6 +2,10 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-07-22 PR #1555 (SCRUM-2703/2705) rebase note — exact row-count callsite reviewed, not changed
+
+`perOrgRateLimit.ts::getCapacityCount` requests an exact row-count from PostgREST (the R0-8 baseline check flags it: +1 non-test callsite). Reviewed and left as-is: both `CAPACITY_TABLES` targets (`organization_rules`, `webhook_endpoints`) are queried with `.eq('org_id', orgId)` against an indexed `org_id` btree (`idx_organization_rules_org_trigger`, `idx_webhook_endpoints_org_id`), and per-org cardinality is bounded by the tier caps themselves (≤100 rules, ≤10 connectors) — not the unindexed multi-million-row `anchors`-table scan pattern R0-8 targets. Capacity enforcement also needs an accurate row-count (compared against small integer tier limits); an estimated count or `pg_class.reltuples` would give an inaccurate, whole-table (not org-scoped) figure and risk incorrect quota allow/deny. This PR carries the `count-exact-allowed` label to cover that single reviewed callsite (RTE/CTO may later special-case it in the baseline script instead). Prose here deliberately avoids the literal grep token so this note does not itself inflate the R0-8 baseline count.
+
 ## 2026-05-20 Visual Fraud Gate Note
 
 - `aiFeatureGate.ts` still exposes `ENABLE_VISUAL_FRAUD_DETECTION` for legacy route compatibility, but `/api/v1/ai/fraud/visual` now returns HTTP 410. Client-side worker fraud analysis is the only compliant forward path under SCRUM-1955.
@@ -51,7 +55,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - **idempotency.ts** — Idempotency-Key header middleware (Stripe pattern). In-memory or Upstash Redis store.
 - **upstashIdempotency.ts** — Upstash Redis-backed idempotency store for horizontal scaling.
 - **webhookIdempotency.ts** — Webhook-specific idempotency middleware.
-- **perOrgRateLimit.ts** — Per-org-per-day tier-based quota enforcement. Atomic check-then-increment via `increment_org_usage` RPC.
+- **perOrgRateLimit.ts** — Tier-based per-org daily usage and capacity enforcement. Daily counters use atomic `increment_org_usage`; capacity reads authoritative scoped counts but are not an atomic cross-instance reservation.
 - **webhookHmac.ts** — Inbound connector webhook HMAC verification with 5-minute replay window.
 - **paymentTierRouter.ts** — Routes requests based on payment tier.
 - **requirePaymentCurrent.ts** — Rejects requests from orgs with lapsed payments.
@@ -63,7 +67,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - **integrationKillSwitch.ts** — Emergency kill switch for third-party integrations.
 - **ruleEventBackpressure.ts** — Backpressure middleware for rule event processing.
 - **x402PaymentGate.ts** — Returns 402 with x402 payment requirements; validates on-chain payments.
-- **x402PayerRateLimit.ts** — Rate limiting for x402 payers.
+- **x402PayerRateLimit.ts** — Bounded process-local rate limiting keyed only by HMAC-derived verified x402 payer identity.
 - **x402PaymentLogger.ts** — Logs x402 payment settlements.
 
 ## Rules
@@ -72,3 +76,14 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - Feature gates fail closed by default — if the DB read fails, kill-switchable gates return 503. Exception: `ENABLE_AI_EXTRACTION` is launch-required (§1.6) and keeps its launch default; last-known-good DB value wins over the fail default on a transient blip (SCRUM-2247).
 - `errorSanitizer` must be registered BEFORE the global error handler.
 - No raw API keys in logs or DB — HMAC-SHA256 only.
+
+## 2026-07-15 SCRUM-2703/2705 quota invariants
+
+- `perOrgRateLimit.ts` accepts organization ids only from authenticated caller
+  context. Daily cardinality is atomically incremented; capacity counts query
+  only code-owned table mappings and fail closed on lookup uncertainty.
+- `x402PaymentGate.ts` derives payer identity only from the verified on-chain
+  USDC Transfer sender and places only its HMAC in `req.x402PayerContext`.
+- `x402PayerRateLimit.ts` is bounded process-local memory. Full-store or missing
+  identity conditions return 503; do not evict or silently bypass.
+- Canonical org/payer quota 429s must emit an integer `Retry-After`.
