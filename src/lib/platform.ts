@@ -5,12 +5,26 @@
  * and other cross-cutting concerns.
  */
 
-/** Platform admin email whitelist — server-side enforcement in worker isPlatformAdmin() */
-export const PLATFORM_ADMIN_EMAILS = ['carson@arkova.ai', 'sarah@arkova.ai'] as const;
+/**
+ * Minimal shape needed to resolve platform-admin status: the
+ * `profiles.is_platform_admin` DB flag. Accepts the full profile Row or any
+ * object carrying the flag, so callers can pass `useProfile().profile` directly.
+ */
+type PlatformAdminProfile = { is_platform_admin?: boolean | null } | null | undefined;
 
-/** Check if a user email is a platform admin */
-export function isPlatformAdmin(email: string | null | undefined): boolean {
-  return PLATFORM_ADMIN_EMAILS.includes(email as typeof PLATFORM_ADMIN_EMAILS[number]);
+/**
+ * Check whether a profile is a platform admin.
+ *
+ * SECURITY (SCRUM-2939): the ONLY authority is the `profiles.is_platform_admin`
+ * DB flag — the same source the worker (`services/worker/src/utils/platformAdmin.ts`)
+ * and every RLS policy enforce. The legacy client-side email whitelist was
+ * removed because a browser-only list that can diverge from the DB flag is a
+ * role-model split, not a real access-control boundary. This client check is
+ * defence-in-depth / UX gating only; the server RE-VERIFIES the flag on every
+ * privileged endpoint and RPC. Fails secure: any non-`true` value → false.
+ */
+export function isPlatformAdmin(profile: PlatformAdminProfile): boolean {
+  return profile?.is_platform_admin === true;
 }
 
 /** Mainnet treasury address for mempool explorer links */

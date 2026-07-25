@@ -56,14 +56,14 @@ print(result.status)  # "ACTIVE"`,
 };
 
 const PRICING_TABLE = [
-  { endpoint: '/verify/:publicId', method: 'GET', price: '$0.002', desc: 'Verify credential' },
+  { endpoint: '/verify/:publicId', method: 'GET', price: '$0.002', desc: 'Verify record' },
   { endpoint: '/verify/batch', method: 'POST', price: '$0.002/item', desc: 'Batch verification' },
   { endpoint: '/verify/entity', method: 'GET', price: '$0.005', desc: 'Entity lookup' },
   { endpoint: '/compliance/check', method: 'GET', price: '$0.010', desc: 'Compliance check' },
   { endpoint: '/regulatory/lookup', method: 'GET', price: '$0.002', desc: 'Regulatory lookup' },
   { endpoint: '/cle/*', method: 'GET/POST', price: '$0.005', desc: 'CLE verification' },
   { endpoint: '/ai/search', method: 'POST', price: '$0.010', desc: 'AI semantic search' },
-  { endpoint: '/nessie/query', method: 'GET', price: '$0.010', desc: 'Nessie AI query' },
+  { endpoint: '/nessie/query', method: 'GET', price: '$0.010', desc: 'AI assistant query' },
 ];
 
 const CTA_BUTTON_CLASS = "bg-[#00d4ff] text-[#003642] text-xs uppercase tracking-widest px-6 py-2.5 rounded-full font-bold shadow-[0_0_15px_rgba(0,212,255,0.3)] hover:shadow-[0_0_25px_rgba(0,212,255,0.5)] transition-all";
@@ -72,7 +72,7 @@ export function DevelopersPage() {
   const { user, loading: authLoading } = useAuth();
   usePageMeta({
     title: 'Arkova Developer Platform — Verification API, SDKs & MCP Server',
-    description: 'Build with the Arkova Verification API. Programmatic credential verification, AI metadata extraction, batch processing, and MCP server for AI agents.',
+    description: 'Build with the Arkova Verification API. Programmatic record verification, AI metadata extraction, batch processing, and MCP server for AI agents.',
   });
   const [copied, setCopied] = useState(false);
   const [sdkTab, setSdkTab] = useState<'curl' | 'typescript' | 'python'>('curl');
@@ -192,7 +192,7 @@ export function DevelopersPage() {
             <div className="flex flex-wrap justify-center gap-8 mt-12 text-center">
               <div>
                 <p className="text-2xl font-bold text-[#00d4ff]">1.39M+</p>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Credentials Secured</p>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Records Secured</p>
               </div>
               <div>
                 <p className="text-2xl font-bold text-[#00d4ff]">320K+</p>
@@ -200,7 +200,7 @@ export function DevelopersPage() {
               </div>
               <div>
                 <p className="text-2xl font-bold text-[#00d4ff]">21</p>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Credential Types</p>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Document Types</p>
               </div>
               <div>
                 <p className="text-2xl font-bold text-[#00d4ff]">87.2%</p>
@@ -217,7 +217,7 @@ export function DevelopersPage() {
               <div className="text-[#a8e8ff] mb-6">
                 <ArkovaIcon className="h-10 w-10" strokeWidth={1.5} />
               </div>
-              <h3 className="text-xl font-bold mb-4">Verify Credentials</h3>
+              <h3 className="text-xl font-bold mb-4">Verify Records</h3>
               <p className="text-[#bbc9cf] text-sm leading-relaxed">
                 Instant, high-fidelity verification of credentials against permanent cryptographic records. One API call returns full proof details.
               </p>
@@ -346,11 +346,11 @@ export function DevelopersPage() {
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="p-6 bg-[#2e353d] rounded-lg border-l-4 border-[#00d4ff]">
                   <code className="font-mono text-[#a8e8ff] font-bold block mb-2">verify_credential</code>
-                  <p className="text-xs text-[#bbc9cf]">Verify any credential by its public ID and receive full cryptographic proof.</p>
+                  <p className="text-xs text-[#bbc9cf]">Verify any record by its public ID and receive full cryptographic proof.</p>
                 </div>
                 <div className="p-6 bg-[#2e353d] rounded-lg border-l-4 border-[#00d4ff]">
                   <code className="font-mono text-[#a8e8ff] font-bold block mb-2">search_credentials</code>
-                  <p className="text-xs text-[#bbc9cf]">Search the public credential registry by issuer, type, or metadata attributes.</p>
+                  <p className="text-xs text-[#bbc9cf]">Search the public record registry by issuer, type, or metadata attributes.</p>
                 </div>
               </div>
             </div>
@@ -631,7 +631,7 @@ export function DevelopersPage() {
           </div>
           <nav className="flex flex-wrap justify-center gap-6" aria-label="Site navigation">
             <Link to="/about" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">About</Link>
-            <Link to="/search" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Search Credentials</Link>
+            <Link to="/search" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Search Records</Link>
             <Link to="/verify" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Verify</Link>
             <Link to="/issuers" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Verified Issuers</Link>
             <Link to="/cle" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">CLE API</Link>

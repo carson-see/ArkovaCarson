@@ -44,3 +44,7 @@ Core anchor (document-securing) UI components: upload, confirm, AI extraction, l
 - 2026-06-23 WEBEXT-03 (SCRUM-2505): `SecureDocumentDialog.tsx` gained the §1.6 fail-closed `privacy-blocked` step + `ShieldAlert` loud-failure UI. When the on-device PII model / OCR engine fails, the dialog no longer falls through to the soft "secure without metadata" recovery — it shows an explicit "On-Device Privacy Protection Unavailable" state (Reload / Continue Without AI Metadata) and states nothing was sent. UAT screenshots needed at 1280px + 375px.
 - 2026-05-26 SCRUM-2013: `SecureDocumentDialog.tsx` AI fuzzy type map expanded to align with the canonical credential taxonomy, including `CPE`, `ACCREDITATION`, `CONTRACT_PRESIGNING`, and `CONTRACT_POSTSIGNING`.
 - 2026-05-19 SCRUM-1599: `AssetDetailView.tsx` uses `SourceProvenanceDisplay` for internal record source provenance so internal and public views share URL sanitization/evidence-level rendering. `AnchorLifecycleTimeline.tsx` now treats `SUPERSEDED` as a visible terminal state.
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+User-visible "credential(s)" scrubbed to "record(s)/document(s)" in AIFieldSuggestions, ShareSheet, TemplateReviewPanel (field-label maps + share text). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).

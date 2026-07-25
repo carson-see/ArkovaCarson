@@ -313,7 +313,7 @@ export function PipelineAdminPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const isAdmin = isPlatformAdmin(user?.email);
+  const isAdmin = isPlatformAdmin(profile);
 
   // Tables from migrations 0077-0080 not yet in generated types
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -516,6 +516,13 @@ export function PipelineAdminPage() {
   const [triggerStatus, setTriggerStatus] = useState<Record<string, JobRunStatus>>({});
   const [triggerMessages, setTriggerMessages] = useState<Record<string, string>>({});
   const triggerTimersRef = useRef<Record<string, Array<ReturnType<typeof setTimeout>>>>({});
+  const scrollDetailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (scrollDetailTimerRef.current) clearTimeout(scrollDetailTimerRef.current);
+    };
+  }, []);
 
   const clearTriggerTimers = useCallback((jobPath?: string) => {
     if (jobPath) {
@@ -631,8 +638,9 @@ export function PipelineAdminPage() {
     setSelectedRecord(record);
     setAnchorDetails(null);
 
-    // Scroll the detail panel into view after render
-    setTimeout(() => {
+    // Scroll the detail panel into view after render. Cleared on unmount below
+    // so it never fires against a torn-down DOM (e.g. mid-test teardown).
+    scrollDetailTimerRef.current = setTimeout(() => {
       document.getElementById('pipeline-record-detail')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }, 100);
 

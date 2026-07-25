@@ -125,7 +125,10 @@ queue_rules:
       - check-success = E2E Tests
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
-    batch_size: 3
+    # Aug-10 release push: expand the default batch to 10 PRs so the CI-green
+    # T0/safe backlog drains in one queue cycle instead of 3-at-a-time (CTO
+    # directive 2026-07-22). Speculative checks widened to match.
+    batch_size: 10
     batch_max_wait_time: 5 min
     batch_max_failure_resolution_attempts: 3
 
@@ -134,7 +137,7 @@ queue_rules:
 # ---------------------------------------------------------------------------
 
 merge_queue:
-  max_parallel_checks: 2
+  max_parallel_checks: 5
 
 # ---------------------------------------------------------------------------
 # Pull request rules — automation triggers
