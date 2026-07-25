@@ -136,8 +136,12 @@ describe('S3.3 five-bucket 429 attribution evidence', () => {
       responseSchema: 'unset',
     });
     expect(evidence.reportedNotMeasured.perOrgRateLimit).toEqual({
-      status: 'structurally_zero',
-      reason: 'unmounted',
+      status: 'mounted_excluded',
+      reason: 'write-surfaces-outside-headline-soak',
+    });
+    expect(evidence.reportedNotMeasured.x402PayerRateLimit).toEqual({
+      status: 'mounted_excluded',
+      reason: 'nessie-only-outside-headline-soak',
     });
     expect(JSON.stringify(evidence)).not.toContain('"total"');
   });

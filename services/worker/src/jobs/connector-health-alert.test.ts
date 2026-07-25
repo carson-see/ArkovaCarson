@@ -13,6 +13,13 @@ vi.mock('../utils/logger.js', () => ({
   },
 }));
 
+// Same convention as docusign-connect-failures.test.ts: stub the Sentry
+// transport so the suite is hermetic (no network, no SDK init side effects).
+vi.mock('@sentry/node', () => ({
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+}));
+
 import {
   decideConnectorAlert,
   runConnectorHealthCheck,
@@ -191,5 +198,84 @@ describe('runConnectorHealthCheck', () => {
 
     const result = await runConnectorHealthCheck(db);
     expect(result.ok).toBe(false);
+  });
+
+  it('keeps a degraded connector degraded when revoked_at alone says healthy (SCRUM-3014)', async () => {
+    // `degraded` is written by the DocuSign Connect-provisioning path from a
+    // signal this cron cannot observe. Without stickiness the cron would flip
+    // the row back to `connected` within 15 min and fire a FALSE recovery.
+    const upserted: Array<Record<string, unknown>> = [];
+    const db = {
+      from(table: string) {
+        if (table === 'org_integrations') {
+          return {
+            select: () => Promise.resolve({
+              data: [{ org_id: 'org-1', provider: 'docusign', revoked_at: null }],
+              error: null,
+            }),
+          };
+        }
+        return {
+          select: () => Promise.resolve({
+            data: [{
+              connector_id: 'docusign',
+              org_id: 'org-1',
+              last_state: 'degraded',
+              last_alerted_at: new Date().toISOString(),
+            }],
+            error: null,
+          }),
+          upsert: (rows: Array<Record<string, unknown>>) => {
+            upserted.push(...rows);
+            return Promise.resolve({ error: null });
+          },
+        };
+      },
+    };
+
+    const result = await runConnectorHealthCheck(db);
+
+    expect(result.ok).toBe(true);
+    expect(upserted).toHaveLength(1);
+    expect(upserted[0]).toMatchObject({ connector_id: 'docusign', org_id: 'org-1', last_state: 'degraded' });
+    // Still inside the 1h cooldown seeded by the provisioning failure.
+    expect(result.alertsFired).toBe(0);
+  });
+
+  it('returns to connected once the connector path clears the degraded state', async () => {
+    const upserted: Array<Record<string, unknown>> = [];
+    const db = {
+      from(table: string) {
+        if (table === 'org_integrations') {
+          return {
+            select: () => Promise.resolve({
+              data: [{ org_id: 'org-1', provider: 'docusign', revoked_at: null }],
+              error: null,
+            }),
+          };
+        }
+        return {
+          select: () => Promise.resolve({
+            data: [{
+              connector_id: 'docusign',
+              org_id: 'org-1',
+              last_state: 'connected',
+              last_alerted_at: null,
+            }],
+            error: null,
+          }),
+          upsert: (rows: Array<Record<string, unknown>>) => {
+            upserted.push(...rows);
+            return Promise.resolve({ error: null });
+          },
+        };
+      },
+    };
+
+    const result = await runConnectorHealthCheck(db);
+
+    expect(result.ok).toBe(true);
+    expect(upserted[0]).toMatchObject({ last_state: 'connected' });
+    expect(result.alertsFired).toBe(0);
   });
 });

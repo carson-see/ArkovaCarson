@@ -97,10 +97,10 @@ function apiKeySearchEndpoint(
 }
 
 const ENDPOINTS: EndpointDef[] = [
-  endpoint('GET', 'verify', '/api/v1/verify/:publicId', 'Verify Credential', VERIFY_PRICE, 'Verify a credential by its public ID and receive full cryptographic proof.', [
+  endpoint('GET', 'verify', '/api/v1/verify/:publicId', 'Verify Record', VERIFY_PRICE, 'Verify a record by its public ID and receive full cryptographic proof.', [
     textParam('publicId', 'Public ID', 'abc123-def456', true),
   ]),
-  endpoint('POST', 'verify-batch', '/api/v1/verify/batch', 'Batch Verification', '$0.002/item', 'Verify multiple credentials in a single request. Up to 100 items per batch.', [
+  endpoint('POST', 'verify-batch', '/api/v1/verify/batch', 'Batch Verification', '$0.002/item', 'Verify multiple records in a single request. Up to 100 items per batch.', [
     textParam('public_ids', 'Public IDs (comma-separated)', 'abc123,def456,ghi789', true),
   ]),
   endpoint('GET', 'v2-search', '/api/v2/search', 'Search Everything', API_KEY_PRICE, 'Search organizations, records, fingerprints, and documents with one API-key endpoint.', [
@@ -111,7 +111,7 @@ const ENDPOINTS: EndpointDef[] = [
   apiKeySearchEndpoint('v2-records', '/api/v2/records', 'Search Records', 'Find anchored records by filename, description, or fingerprint.', 'Record Query', 'employment contract'),
   apiKeySearchEndpoint('v2-fingerprints', '/api/v2/fingerprints', 'Search Fingerprints', 'Look up exact SHA-256 fingerprints and get matching public record IDs.', 'Fingerprint', '64-character SHA-256 hex'),
   apiKeySearchEndpoint('v2-documents', '/api/v2/documents', 'Search Documents', 'Find document-like records by filename or description.', 'Document Query', 'msa.pdf'),
-  endpoint('GET', 'entity', '/api/v1/verify/entity', 'Entity Lookup', '$0.005', 'Look up an entity by name, domain, or identifier across the credential registry.', [
+  endpoint('GET', 'entity', '/api/v1/verify/entity', 'Entity Lookup', '$0.005', 'Look up an entity by name, domain, or identifier across the record registry.', [
     textParam('name', 'Entity Name', 'Acme University'),
     textParam('domain', 'Domain', 'acme.edu'),
     textParam('identifier', 'Identifier', 'OPEID:00123400'),
@@ -128,10 +128,10 @@ const ENDPOINTS: EndpointDef[] = [
     textParam('barNumber', 'Bar Number', '12345', true),
     textParam('jurisdiction', 'Jurisdiction', 'CA'),
   ]),
-  endpoint('POST', 'ai-search', '/api/v1/ai/search', 'AI Semantic Search', AI_PRICE, 'Semantic search across the credential registry using natural language queries.', [
+  endpoint('POST', 'ai-search', '/api/v1/ai/search', 'AI Semantic Search', AI_PRICE, 'Semantic search across the record registry using natural language queries.', [
     textParam('query', 'Search Query', 'accredited nursing programs in California', true),
   ]),
-  endpoint('GET', 'nessie', '/api/v1/nessie/query', 'Nessie AI Query', AI_PRICE, 'Query the Nessie AI assistant for credential intelligence and regulatory insights.', [
+  endpoint('GET', 'nessie', '/api/v1/nessie/query', 'AI Assistant Query', AI_PRICE, 'Query the Arkova AI assistant for record intelligence and regulatory insights.', [
     textParam('query', 'Query', 'What are the accreditation requirements for nursing schools?', true),
     selectParam('mode', 'Mode', nessieModeOptions),
   ]),

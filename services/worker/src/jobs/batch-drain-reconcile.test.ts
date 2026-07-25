@@ -313,6 +313,16 @@ function makeAnchorsQuery() {
   return api;
 }
 
+function makeEmptyJournalQuery() {
+  const api: Record<string, unknown> = {};
+  for (const method of ['select', 'in', 'order', 'limit']) {
+    api[method] = () => api;
+  }
+  api.then = (resolve?: (value: unknown) => unknown, reject?: (error: unknown) => unknown) =>
+    Promise.resolve({ data: [], error: null }).then(resolve, reject);
+  return api;
+}
+
 // ── Module mocks ────────────────────────────────────────────────────────────
 
 const mockSubmitFingerprint = vi.fn();
@@ -346,8 +356,9 @@ vi.mock('../chain/client.js', () => ({
 vi.mock('../utils/db.js', () => ({
   db: {
     from: (table: string) => {
-      if (table !== 'anchors') throw new Error(`unexpected table ${table}`);
-      return makeAnchorsQuery();
+      if (table === 'anchors') return makeAnchorsQuery();
+      if (table === 'anchor_txid_journal') return makeEmptyJournalQuery();
+      throw new Error(`unexpected table ${table}`);
     },
     rpc: async (fn: string, params: Record<string, unknown>) => {
       switch (fn) {

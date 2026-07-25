@@ -71,7 +71,7 @@ describe('CredentialSourceImportDialog', () => {
       />,
     );
 
-    await user.type(screen.getByLabelText(/credential source url/i), 'https://www.credly.example/badges/abc');
+    await user.type(screen.getByLabelText(/record source url/i), 'https://www.credly.example/badges/abc');
     await user.type(screen.getByLabelText(/issuer/i), 'Example Cloud');
     await user.click(screen.getByRole('button', { name: /preview/i }));
 
@@ -127,7 +127,7 @@ describe('CredentialSourceImportDialog', () => {
       />,
     );
 
-    await user.type(screen.getByLabelText(/credential source url/i), 'https://www.credly.example/badges/abc');
+    await user.type(screen.getByLabelText(/record source url/i), 'https://www.credly.example/badges/abc');
     await user.click(screen.getByRole('button', { name: /preview/i }));
     expect(await screen.findByText('Cloud Architecture Fundamentals')).toBeInTheDocument();
 
@@ -149,7 +149,7 @@ describe('CredentialSourceImportDialog', () => {
     );
 
     renderDialog();
-    await user.type(screen.getByLabelText(/credential source url/i), 'https://localhost/credential');
+    await user.type(screen.getByLabelText(/record source url/i), 'https://localhost/credential');
     await user.click(screen.getByRole('button', { name: /preview/i }));
 
     expect(await screen.findByText(/public internet host/i)).toBeInTheDocument();

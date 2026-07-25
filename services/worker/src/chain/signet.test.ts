@@ -55,7 +55,7 @@ import { HttpError, RpcApplicationError } from './utxo-provider.js';
 import { WifSigningProvider } from './signing-provider.js';
 import { StaticFeeEstimator } from './fee-estimator.js';
 import type { FeeEstimator } from './fee-estimator.js';
-import type { ChainIndexLookup, IndexEntry } from './types.js';
+import type { ChainIndexLookup, IndexEntry, PreparedChainTx } from './types.js';
 
 // Test WIF for Signet/testnet (this is a throwaway key, not real funds)
 const TEST_WIF = 'cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy';
@@ -1385,5 +1385,57 @@ describe('S3-P0 — BitcoinChainClient.broadcastSignedTx', () => {
     expect(sent[0]).toBe(prepared.txHex);
     expect(receipt.receiptId).toBe(prepared.txId);
     expect(receipt.rawTxHex).toBe(prepared.txHex);
+  });
+
+  it('aborts a single-input submission before network I/O when the durable journal hook fails', async () => {
+    const broadcastTx = vi.fn();
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: DUMMY_TXID, vout: 0, valueSats: 100000, rawTxHex: DUMMY_RAW_TX_HEX },
+      ]),
+      broadcastTx,
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    const hook = vi.fn(async (_prepared: Readonly<PreparedChainTx>) => {
+      throw new Error('journal write failed');
+    });
+
+    await expect(client.submitFingerprint({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+      preBroadcastHook: hook,
+    })).rejects.toThrow('journal write failed');
+
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(hook.mock.calls[0][0].txId).toMatch(/^[0-9a-f]{64}$/);
+    expect(broadcastTx).not.toHaveBeenCalled();
+  });
+
+  it('aborts a multi-input submission before network I/O when the durable journal hook fails', async () => {
+    const broadcastTx = vi.fn();
+    const fragmented = Array.from({ length: 10 }, (_, index) => ({
+      txid: (index + 1).toString(16).padStart(64, '0'),
+      vout: 0,
+      valueSats: 150,
+      rawTxHex: DUMMY_RAW_TX_HEX,
+    }));
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue(fragmented),
+      broadcastTx,
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+    const hook = vi.fn(async (_prepared: Readonly<PreparedChainTx>) => {
+      throw new Error('journal write failed');
+    });
+
+    await expect(client.submitFingerprint({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+      preBroadcastHook: hook,
+    })).rejects.toThrow('journal write failed');
+
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(hook.mock.calls[0][0].txId).toMatch(/^[0-9a-f]{64}$/);
+    expect(broadcastTx).not.toHaveBeenCalled();
   });
 });

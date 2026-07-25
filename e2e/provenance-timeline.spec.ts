@@ -66,6 +66,6 @@ test.describe('Provenance Timeline', () => {
     await toggle.click();
 
     // After expanding, should show at least the created event
-    await expect(page.getByText('Credential Created')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Record Created')).toBeVisible({ timeout: 5000 });
   });
 });
