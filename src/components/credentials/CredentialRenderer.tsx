@@ -63,7 +63,7 @@ const TYPE_CONFIG: Record<string, {
     accentColor: 'text-[#a8e8ff]',
     borderAccent: 'border-l-[#00d4ff]',
     bgGradient: 'from-[#00d4ff]/8 to-transparent',
-    label: 'Academic Credential',
+    label: 'Academic Degree',
   },
   CERTIFICATE: {
     icon: BadgeCheck,
@@ -91,7 +91,7 @@ const TYPE_CONFIG: Record<string, {
     accentColor: 'text-[#00d4ff]',
     borderAccent: 'border-l-[#00d4ff]',
     bgGradient: 'from-[#00d4ff]/8 to-transparent',
-    label: 'Professional Credential',
+    label: 'Professional Certification',
   },
   CLE: {
     icon: Scale,

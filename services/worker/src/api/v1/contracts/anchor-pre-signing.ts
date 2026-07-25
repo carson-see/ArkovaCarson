@@ -336,15 +336,14 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
     const shortId = randomUUID().slice(0, 8).toUpperCase();
     const publicId = `ARK-${new Date().getFullYear()}-${shortId}`;
 
-    // ATOMICITY NOTE (CodeRabbit critical on PR #680, "Heavy lift"):
-    // deduction → insert is not transactional. If the insert fails after
-    // the credit deducts, the credit is gone and no anchor exists. The
-    // same issue exists in /api/v1/anchor (anchor-submit.ts) — fixing it
-    // requires either a Postgres stored procedure that does both in one
-    // round-trip, or a compensating refund on insert failure. Both are
-    // broader than this [Build] subtask; tracked as a follow-up under
-    // the SCRUM-863 umbrella so it can be fixed for both endpoints in
-    // one consistent change.
+    // ATOMICITY NOTE (updated for SCRUM-2970): the ordering is now
+    // insert → deduction (reference_id = the new anchor row's id), with a
+    // compensating hard-delete of the never-paid row when the deduction
+    // fails. This is not transactional either — a crash between insert and
+    // deduction leaves an unpaid PENDING row — but a retry then hits the
+    // dedup lookup above and returns it without a charge, and the 0326
+    // ledger keys the deduction to the row id so a re-run of the same
+    // anchoring event cannot double-deduct.
     //
     // SCRUM-1667 — sub-org suspension guard, gated by
     // ENABLE_ORG_SUSPENSION_GUARD (default off). Mirrors anchor-submit.
@@ -358,15 +357,6 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
         });
         return;
       }
-    }
-
-    // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
-    // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
-    // existing API-key paths without per-org credit setup are unaffected.
-    // Same shared helper used by /api/v1/anchor (SCRUM-1631 PR #680
-    // extracted it to anchorCreditGate.ts to satisfy SonarCloud).
-    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res))) {
-      return;
     }
 
     // Sanitize the derived filename (CodeRabbit major on PR #680). The
@@ -437,7 +427,7 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
     const { data: anchor, error: insertError } = await db
       .from('anchors')
       .insert(insertParse.data)
-      .select('public_id, fingerprint, status, created_at')
+      .select('id, public_id, fingerprint, status, created_at')
       .single();
 
     if (insertError) {
@@ -446,6 +436,27 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
         'Failed to create pre-signing contract anchor',
       );
       res.status(500).json({ error: 'Failed to create anchor record' });
+      return;
+    }
+
+    // SCRUM-1170-B / SCRUM-2970 — org-credit deduction, insert-then-deduct.
+    // Helper short-circuits to allowed=true when
+    // ENABLE_ORG_CREDIT_ENFORCEMENT is off (default). Same shared helper as
+    // /api/v1/anchor (SCRUM-1631 PR #680). The reference_id is the
+    // just-inserted anchor row's id (repo pattern per
+    // credential-sources.ts): a fresh uuid per anchoring event, so a
+    // soft-delete + re-anchor is a NEW billable event, while an HTTP retry
+    // of the same logical request is absorbed by the dedup lookup above.
+    // On deduct failure (402/503 already written by the gate), compensate
+    // by hard-deleting the never-paid row.
+    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res, anchor.id))) {
+      const { error: compensationError } = await db.from('anchors').delete().eq('id', anchor.id);
+      if (compensationError) {
+        logger.error(
+          { anchorId: anchor.id, orgId },
+          'anchor_credit_compensation_delete_failed',
+        );
+      }
       return;
     }
 

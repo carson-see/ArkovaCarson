@@ -57,7 +57,7 @@ export function NotFoundPage() {
           </Link>
         </Button>
         <nav className="flex flex-wrap justify-center gap-4 pt-4 text-sm text-muted-foreground" aria-label="Helpful links">
-          <Link to={ROUTES.SEARCH} className="hover:text-primary transition-colors">Search Credentials</Link>
+          <Link to={ROUTES.SEARCH} className="hover:text-primary transition-colors">Search Records</Link>
           <Link to={ROUTES.VERIFY_FORM} className="hover:text-primary transition-colors">Verify a Document</Link>
           <Link to={ROUTES.DEVELOPERS} className="hover:text-primary transition-colors">Developer API</Link>
           <Link to={ROUTES.ABOUT} className="hover:text-primary transition-colors">About Arkova</Link>

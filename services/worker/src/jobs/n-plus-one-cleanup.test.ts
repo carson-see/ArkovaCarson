@@ -33,6 +33,16 @@ vi.mock('../utils/db.js', () => ({
   },
 }));
 
+vi.mock('../config.js', () => ({
+  config: { nodeEnv: 'test', useMocks: true, maxFeeThresholdSatPerVbyte: 50 },
+}));
+
+vi.mock('../chain/client.js', () => ({
+  getChainClientAsync: vi.fn(),
+  getChainClient: vi.fn(),
+  getInitializedChainClient: vi.fn(),
+}));
+
 // Helper: create chainable supabase mock.
 // Uses a Proxy to delegate `then`/`catch`/`finally` to a real Promise so the
 // object is awaitable without directly adding `then` to a plain object
@@ -350,19 +360,21 @@ describe('SCRUM-1296: broadcast-recovery chunked bulk update', () => {
     let fromCallCount = 0;
     const selectChain = makeChainable({ data: stuckAnchors, error: null });
     const updateChain = makeChainable({ data: null, error: null });
+    const emptyJournalChain = makeChainable({ data: [], error: null });
 
-    mockDbFrom.mockImplementation(() => {
+    mockDbFrom.mockImplementation((table: string) => {
       fromCallCount++;
-      if (fromCallCount === 1) return selectChain; // SELECT stuck
+      if (table === 'anchor_txid_journal') return emptyJournalChain;
+      if (table === 'anchors' && fromCallCount === 3) return selectChain; // SELECT stuck
       return updateChain; // Per-anchor UPDATE preserving metadata
     });
 
     const result = await recoverStuckBroadcasts(5);
 
     expect(result.recovered).toBe(5);
-    // 1 SELECT + 5 per-anchor UPDATEs (preserving individual metadata)
+    // 2 journal-protection reads + 1 SELECT + 5 per-anchor UPDATEs
     // Chunked in batches of 100, so all 5 are in one chunk processed via Promise.allSettled
-    expect(fromCallCount).toBe(6);
+    expect(fromCallCount).toBe(8);
   });
 });
 

@@ -23,11 +23,13 @@
  * before parameterized routes (/:id) so Express matches them first.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../../utils/db.js';
 import type { TablesUpdate } from '../../types/database.types.js';
 import { logger } from '../../utils/logger.js';
+import { requireOrgQuota } from '../../middleware/perOrgRateLimit.js';
 import {
   getDeadLetterEntries,
   isPrivateUrlResolved,
@@ -72,11 +74,17 @@ async function requireOrgAdmin(
   res: Response,
 ): Promise<boolean> {
   try {
-    const { data: profile } = await db
+    const { data: profile, error } = await db
       .from('profiles')
       .select('role')
       .eq('id', req.apiKey.userId)
       .single();
+
+    if (error) {
+      logger.error({ error }, 'webhook admin check failed');
+      errorResponse(res, 503, 'authorization_unavailable', 'Failed to verify admin permissions');
+      return false;
+    }
 
     if (!profile || profile.role !== 'ORG_ADMIN') {
       errorResponse(
@@ -89,10 +97,23 @@ async function requireOrgAdmin(
     }
     return true;
   } catch (err) {
-    logger.error({ err, userId: req.apiKey.userId }, 'webhook admin check failed');
-    errorResponse(res, 500, 'internal_error', 'Failed to verify admin permissions');
+    logger.error({ err }, 'webhook admin check failed');
+    errorResponse(res, 503, 'authorization_unavailable', 'Failed to verify admin permissions');
     return false;
   }
+}
+
+function requireWebhookApiKey(req: Request, res: Response, next: NextFunction): void {
+  if (requireApiKey(req, res)) next();
+}
+
+async function requireWebhookOrgAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  if (!requireApiKey(req, res)) return;
+  if (await requireOrgAdmin(req, res)) next();
 }
 
 /** Build a consistent error envelope across every handler. */
@@ -207,9 +228,19 @@ interface WebhookEndpointResponse {
 
 // ─── INT-09: POST /api/v1/webhooks — register ────────────────────────────
 
-router.post('/', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
-  if (!(await requireOrgAdmin(req, res))) return;
+const connectorCapacityQuota = requireOrgQuota({
+  kind: 'connectors_total',
+  mode: 'capacity',
+  getOrgId: (req) => req.apiKey?.orgId ?? null,
+  getDelta: (req) => CreateWebhookSchema.safeParse(req.body).success ? 1 : 0,
+});
+
+async function handleWebhookRegistration(req: Request, res: Response): Promise<void> {
+  const apiKey = req.apiKey;
+  if (!apiKey) {
+    errorResponse(res, 503, 'authorization_unavailable', 'Authenticated API key context unavailable');
+    return;
+  }
 
   const parsed = CreateWebhookSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -232,7 +263,7 @@ router.post('/', async (req, res) => {
     const { data: inserted, error } = await db
       .from('webhook_endpoints')
       .insert({
-        org_id: req.apiKey.orgId,
+        org_id: apiKey.orgId,
         public_id: '',
         url,
         secret_hash: secret,
@@ -244,7 +275,7 @@ router.post('/', async (req, res) => {
       .single();
 
     if (error || !inserted) {
-      logger.error({ error, orgId: req.apiKey.orgId }, 'failed to create webhook endpoint');
+      logger.error({ error }, 'failed to create webhook endpoint');
       errorResponse(res, 500, 'internal_error', 'Failed to register webhook endpoint');
       return;
     }
@@ -283,7 +314,7 @@ router.post('/', async (req, res) => {
       Object.assign(inserted, activated);
     }
 
-    logWebhookAudit(req.apiKey.orgId, req.apiKey.userId, 'WEBHOOK_ENDPOINT_CREATED', inserted.id, {
+    logWebhookAudit(apiKey.orgId, apiKey.userId, 'WEBHOOK_ENDPOINT_CREATED', inserted.id, {
       url,
       events,
       verified: Boolean(verify),
@@ -298,7 +329,15 @@ router.post('/', async (req, res) => {
     logger.error({ error: err }, 'webhook registration failed');
     errorResponse(res, 500, 'internal_error', 'Failed to register webhook endpoint');
   }
-});
+}
+
+router.post(
+  '/',
+  requireWebhookApiKey,
+  requireWebhookOrgAdmin,
+  connectorCapacityQuota,
+  handleWebhookRegistration,
+);
 
 // ─── INT-09: GET /api/v1/webhooks — list ────────────────────────────────
 

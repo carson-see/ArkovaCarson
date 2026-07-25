@@ -76,14 +76,14 @@ import { EVIDENCE_PAYLOAD_ERROR, ATTESTATION_LABELS, PUBLIC_ATTESTATION_VERIFY_L
 import { getStatusLabel } from '@/lib/statusDisplay';
 
 const ATTESTATION_TYPES = [
-  { value: 'VERIFICATION', label: 'Verification', desc: 'Verify a credential or document is authentic' },
+  { value: 'VERIFICATION', label: 'Verification', desc: 'Verify a record or document is authentic' },
   { value: 'ENDORSEMENT', label: 'Endorsement', desc: 'Endorse a qualification or competency' },
   { value: 'AUDIT', label: 'Audit', desc: 'Audit finding or compliance assessment' },
   { value: 'APPROVAL', label: 'Approval', desc: 'Regulatory or institutional approval' },
   { value: 'COMPLIANCE', label: 'Compliance', desc: 'SOX, ESG, or regulatory compliance attestation' },
   { value: 'SUPPLY_CHAIN', label: 'Supply Chain', desc: 'Provenance or chain-of-custody attestation' },
   { value: 'IDENTITY', label: 'Identity', desc: 'Identity verification attestation' },
-  { value: 'WITNESS', label: 'Witness', desc: 'Witnessed credential presentation' },
+  { value: 'WITNESS', label: 'Witness', desc: 'Witnessed record presentation' },
   { value: 'CUSTOM', label: 'Custom', desc: 'Custom attestation type' },
 ] as const;
 

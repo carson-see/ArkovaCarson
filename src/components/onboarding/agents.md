@@ -20,3 +20,7 @@ User onboarding flow components: stepper, org setup, plan selection, role select
 ## Dependencies
 - `@/lib/copy` (ONBOARDING_LABELS, ONBOARDING_GUIDANCE_LABELS) — all UI strings
 - `@/lib/routes` (ROUTES) — navigation targets from checklist items
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+Getting-started checklist org steps reworded via copy.ts (document template / Secure your first document). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).

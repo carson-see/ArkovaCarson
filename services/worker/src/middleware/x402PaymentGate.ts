@@ -22,7 +22,8 @@
  *   - 1.4: Payment addresses never logged
  */
 
-import { Request, Response, NextFunction } from 'express';
+import { createHmac } from 'node:crypto';
+import type { NextFunction, Request, Response } from 'express';
 import { db } from '../utils/db.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
@@ -134,6 +135,7 @@ interface OnChainValidationResult {
   confirmed?: boolean;
   amount?: number;
   recipient?: string;
+  payerAddress?: string;
 }
 
 const X402_VALIDATION_SERVICE_FAILURE_REASONS = new Set([
@@ -206,17 +208,30 @@ async function validateOnChain(
     const transferLog = receiptData.result.logs.find(
       (log) =>
         log.address.toLowerCase() === USDC_ADDRESS.toLowerCase() &&
-        log.topics[0] === TRANSFER_TOPIC,
+        log.topics[0] === TRANSFER_TOPIC &&
+        log.topics.length >= 3,
     );
 
     if (!transferLog) {
       return { valid: false, reason: 'no_usdc_transfer_found' };
     }
 
-    // Decode amount from log data (uint256, USDC has 6 decimals)
+    const addressTopicPattern = /^0x[0-9a-fA-F]{64}$/;
+    if (
+      !addressTopicPattern.test(transferLog.topics[1] ?? '')
+      || !addressTopicPattern.test(transferLog.topics[2] ?? '')
+      || !/^0x[0-9a-fA-F]{1,64}$/.test(transferLog.data)
+    ) {
+      return { valid: false, reason: 'invalid_transfer_event' };
+    }
+
+    // Decode amount and trusted identities from the verified Transfer event.
     const transferAmount = parseInt(transferLog.data, 16) / 1_000_000;
-    // Decode recipient from topic[2] (padded address)
-    const recipient = '0x' + transferLog.topics[2].slice(26);
+    const payerAddress = `0x${transferLog.topics[1].slice(-40)}`.toLowerCase();
+    const recipient = `0x${transferLog.topics[2].slice(-40)}`.toLowerCase();
+    if (!Number.isFinite(transferAmount) || /^0x0{40}$/.test(payerAddress)) {
+      return { valid: false, reason: 'invalid_transfer_event' };
+    }
 
     // 3. Verify amount (allow 1% tolerance for gas-related rounding)
     if (transferAmount < expectedAmount * 0.99) {
@@ -238,9 +253,20 @@ async function validateOnChain(
       };
     }
 
-    return { valid: true, confirmed: true, amount: transferAmount, recipient };
+    return {
+      valid: true,
+      confirmed: true,
+      amount: transferAmount,
+      recipient,
+      payerAddress,
+    };
   } catch (error) {
-    logger.warn({ error, txHash }, 'On-chain validation failed — rejecting payment');
+    // Fetch errors can embed the configured RPC URL (and provider credential)
+    // in their message/cause. Log only the coarse error class.
+    logger.warn(
+      { errorName: error instanceof Error ? error.name : 'UnknownError' },
+      'On-chain validation failed — rejecting payment',
+    );
     return { valid: false, reason: 'validation_error' };
   }
 }
@@ -357,7 +383,6 @@ async function recordPayment(
 function parsePaymentHeader(req: Request): {
   txHash: string;
   network: string;
-  payerAddress: string;
   timestamp?: number;
 } | null {
   const paymentHeader = req.headers['x-payment'] as string | undefined;
@@ -368,15 +393,23 @@ function parsePaymentHeader(req: Request): {
 
     // Basic validation
     const txHash = decoded.txHash ?? decoded.transactionHash ?? '';
-    if (!txHash || typeof txHash !== 'string' || txHash.length < 10) {
+    if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
       return null;
+    }
+
+    let timestamp: number | undefined;
+    if (decoded.timestamp !== undefined) {
+      const parsedTimestamp = Number(decoded.timestamp);
+      if (!Number.isFinite(parsedTimestamp) || parsedTimestamp < 0) return null;
+      timestamp = parsedTimestamp;
     }
 
     return {
       txHash,
-      network: decoded.network ?? config.x402Network ?? 'eip155:84532',
-      payerAddress: decoded.payerAddress ?? decoded.from ?? '',
-      timestamp: decoded.timestamp ? Number(decoded.timestamp) : undefined,
+      // The worker validates against its configured Base RPC. Do not trust a
+      // client-provided network label for settlement evidence.
+      network: config.x402Network ?? 'eip155:84532',
+      timestamp,
     };
   } catch {
     return null;
@@ -399,17 +432,42 @@ function parsePaymentHeader(req: Request): {
 export function x402PaymentGate(endpoint: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
     // Check switchboard flag
-    const { data: enabled } = await db.rpc('get_flag', {
-      p_flag_key: 'ENABLE_X402_PAYMENTS',
-    });
+    let enabled: unknown;
+    let flagError: unknown;
+    try {
+      const flagResult = await db.rpc('get_flag', {
+        p_flag_key: 'ENABLE_X402_PAYMENTS',
+      });
+      enabled = flagResult.data;
+      flagError = flagResult.error;
+    } catch (error) {
+      enabled = null;
+      flagError = error;
+    }
+
+    if (flagError) {
+      if (req.apiKey) {
+        req.x402PayerContext = { kind: 'bypass', reason: 'api-key' };
+        next();
+        return;
+      }
+      logger.error({ error: flagError }, 'x402 switchboard lookup failed');
+      res.status(503).json({
+        error: 'payment_gate_unavailable',
+        message: 'Payment authorization is temporarily unavailable.',
+      });
+      return;
+    }
 
     if (!enabled) {
+      req.x402PayerContext = { kind: 'bypass', reason: 'payments-disabled' };
       next();
       return;
     }
 
     // If the request has an API key, allow through (x402 is alternative)
     if (req.apiKey) {
+      req.x402PayerContext = { kind: 'bypass', reason: 'api-key' };
       next();
       return;
     }
@@ -450,6 +508,16 @@ export function x402PaymentGate(endpoint: string) {
       return;
     }
 
+    const payerHmacSecret = config.apiKeyHmacSecret;
+    if (!payerHmacSecret) {
+      logger.error('API_KEY_HMAC_SECRET not configured — verified payer identity unavailable');
+      res.status(503).json({
+        error: 'payer_identity_unavailable',
+        message: 'Payment authorization is temporarily unavailable.',
+      });
+      return;
+    }
+
     // RISK-4: Check in-memory cache first (fast path for replay rejection)
     if (isTxCached(payment.txHash)) {
       res.status(409).json({
@@ -472,11 +540,29 @@ export function x402PaymentGate(endpoint: string) {
     }
 
     // RISK-4: Check DB for replay (belt-and-suspenders with the UNIQUE constraint)
-    const { data: existingPayment } = await dbAny
-      .from('x402_payments')
-      .select('id')
-      .eq('tx_hash', payment.txHash)
-      .maybeSingle();
+    let existingPayment: unknown;
+    let replayLookupError: unknown;
+    try {
+      const replayResult = await dbAny
+        .from('x402_payments')
+        .select('id')
+        .eq('tx_hash', payment.txHash)
+        .maybeSingle();
+      existingPayment = replayResult.data;
+      replayLookupError = replayResult.error;
+    } catch (error) {
+      existingPayment = null;
+      replayLookupError = error;
+    }
+
+    if (replayLookupError) {
+      logger.error({ error: replayLookupError }, 'x402 replay lookup failed');
+      res.status(503).json({
+        error: 'payment_validation_unavailable',
+        message: 'Payment validation is temporarily unavailable.',
+      });
+      return;
+    }
 
     if (existingPayment) {
       cacheTxHash(payment.txHash); // Warm cache for future fast rejection
@@ -509,6 +595,21 @@ export function x402PaymentGate(endpoint: string) {
       return;
     }
 
+    if (!validation.payerAddress) {
+      res.status(402).json({
+        error: 'payment_validation_failed',
+        reason: 'payer_identity_missing',
+        message: 'On-chain validation did not yield a payer identity.',
+      });
+      return;
+    }
+
+    const payerAddress = validation.payerAddress.toLowerCase();
+    req.x402PayerContext = {
+      kind: 'verified',
+      payerKey: createHmac('sha256', payerHmacSecret).update(payerAddress).digest('hex'),
+    };
+
     // RISK-3: Record payment AFTER successful API execution (response interceptor)
     // RECON-2: Link to request ID
     const requestId = (req.headers['x-request-id'] as string) ?? req.id ?? undefined;
@@ -525,7 +626,7 @@ export function x402PaymentGate(endpoint: string) {
           payment.txHash,
           payment.network,
           price,
-          payment.payerAddress,
+          payerAddress,
           payeeAddress,
           requestId,
         ).catch((err) => {
@@ -537,7 +638,7 @@ export function x402PaymentGate(endpoint: string) {
           payment.txHash,
           payment.network,
           price,
-          payment.payerAddress,
+          payerAddress,
           payeeAddress,
           requestId,
           'refund_required',
@@ -550,7 +651,7 @@ export function x402PaymentGate(endpoint: string) {
       return originalJson(body);
     };
 
-    logger.info({ endpoint, txHash: payment.txHash }, 'x402 payment validated — proceeding to handler');
+    logger.info({ endpoint }, 'x402 payment validated — proceeding to handler');
     next();
   };
 }

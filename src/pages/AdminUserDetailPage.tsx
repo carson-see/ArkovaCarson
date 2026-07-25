@@ -102,7 +102,7 @@ export function AdminUserDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const isAdmin = isPlatformAdmin(authUser?.email);
+  const isAdmin = isPlatformAdmin(authProfile);
 
   const fetchUserDetail = useCallback(async () => {
     if (!isAdmin || !id) return;
