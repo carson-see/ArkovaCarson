@@ -22,6 +22,7 @@ import { logger } from '../../utils/logger.js';
 import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
 import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
+import { requireOrgQuota } from '../../middleware/perOrgRateLimit.js';
 import { submitJob } from '../../utils/jobQueue.js';
 import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
 import {
@@ -36,7 +37,7 @@ const router = Router();
 // inserts predictable and PostgREST payload size bounded. Metadata key syntax
 // is bounded here; only recognized public evidence keys are persisted below.
 const SAFE_METADATA_KEY = /^[a-zA-Z0-9_.-]+$/;
-const AnchorSubmitSchema = z.object({
+export const AnchorSubmitSchema = z.object({
   fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash'),
   credential_type: z.enum(ANCHOR_CREDENTIAL_TYPES).optional(),
   description: z.string().max(1000).optional(),
@@ -51,6 +52,24 @@ interface AnchorReceipt {
   status: 'PENDING';
   created_at: string;
   record_uri: string;
+}
+
+async function consumeAnchorCreateQuota(
+  req: Request,
+  res: Response,
+  delta: number,
+): Promise<boolean> {
+  const quota = requireOrgQuota({
+    kind: 'anchors_created',
+    mode: 'daily',
+    getOrgId: (quotaReq) => quotaReq.apiKey?.orgId ?? null,
+    getDelta: () => delta,
+  });
+  let allowed = false;
+  await quota(req, res, () => {
+    allowed = true;
+  });
+  return allowed;
 }
 
 async function handleAnchorSubmit(req: Request, res: Response) {
@@ -131,6 +150,10 @@ async function handleAnchorSubmit(req: Request, res: Response) {
         record_uri: buildVerifyUrl(existingPublicId),
       };
       res.status(200).json(receipt);
+      return;
+    }
+
+    if (!(await consumeAnchorCreateQuota(req, res, 1))) {
       return;
     }
 

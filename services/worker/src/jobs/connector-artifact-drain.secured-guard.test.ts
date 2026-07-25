@@ -120,8 +120,16 @@ function makeCapturingClient(opts: { actorUserId?: string | null } = {}) {
           },
         };
       }
-      // anchors
+      // anchors — SCRUM-2904 envelope-level guard reads (`.select()...maybeSingle`)
+      // before inserting; return no existing envelope anchor so materialize
+      // proceeds to the insert this test asserts on.
+      const selectChain: Record<string, unknown> = {};
+      for (const m of ['select', 'eq', 'is', 'neq', 'or', 'order', 'limit']) {
+        selectChain[m] = () => selectChain;
+      }
+      selectChain.maybeSingle = async () => ({ data: null, error: null });
       return {
+        select: () => selectChain,
         insert(values: Record<string, unknown>) {
           inserts.push({ table, values });
           return {

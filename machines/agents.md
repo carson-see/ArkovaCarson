@@ -2,6 +2,10 @@
 
 TLA+ PreCheck formal verification models for critical state machines.
 
+## 2026-07-15 — SCRUM-2692 durable txid journal / HELD protection
+
+`bitcoinAnchor.machine.ts` adds the three-valued conceptual `journalRecovery` state (`NONE | PENDING | HELD`) and explicit persist, HOLD, exact-tx ADOPT, affirmative-absence REVERT, and post-submit PERSISTED actions. Generic broadcast failure, legacy broadcast, submitted-abandon, and revoke edges cannot consume an unresolved journal; intent implies journal protection. PR-tier TLC passes 14 invariants with 3,589 generated / 529 distinct states and no deadlock or error.
+
 ## 2026-07-06 — S3-P0 persisted pre-broadcast intent (batch producer)
 
 `bitcoinAnchor.machine.ts` now models the batch producer's no-double-broadcast crash-resume contract:

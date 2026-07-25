@@ -110,6 +110,12 @@ const ConfigSchema = z.object({
   cloudflareTunnelToken: z.string().optional(),
   /** Sentry DSN for error tracking (INFRA-01) */
   sentryDsn: z.string().url().optional(),
+  /**
+   * MT-1 (SCRUM-2901): explicit Sentry environment override. When unset the
+   * environment derives from K_SERVICE (see utils/sentry.ts
+   * resolveSentryEnvironment) so rigs never tag events as production.
+   */
+  sentryEnvironment: z.string().optional(),
 
   // Feature flags (z.coerce.boolean treats "false" as true — use preprocess)
   useMocks: boolFlag(false),
@@ -705,6 +711,7 @@ function loadConfig(): Config {
     frontendUrl: process.env.FRONTEND_URL,
     cloudflareTunnelToken: process.env.CLOUDFLARE_TUNNEL_TOKEN,
     sentryDsn: process.env.SENTRY_DSN,
+    sentryEnvironment: process.env.SENTRY_ENVIRONMENT,
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
     enableConfirmationProofBackfill: process.env.ENABLE_CONFIRMATION_PROOF_BACKFILL,

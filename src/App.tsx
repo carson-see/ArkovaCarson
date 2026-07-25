@@ -23,6 +23,7 @@ import { useProfile, ProfileProvider } from '@/hooks/useProfile';
 import { AuditorModeContext, useAuditorModeState } from '@/hooks/useAuditorMode';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { RouteGuard } from '@/components/auth/RouteGuard';
+import { PlatformAdminRoute } from '@/components/auth/PlatformAdminRoute';
 import { ErrorBoundary } from '@/components/layout/ErrorBoundary';
 import { RouteErrorBoundary } from '@/components/layout/RouteErrorBoundary';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
@@ -302,18 +303,18 @@ export function App() {
           <Route path={ROUTES.ATTESTATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Attestations"><AttestationsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Admin routes */}
-          <Route path={ROUTES.ADMIN_OVERVIEW} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Platform Overview"><PlatformOverviewPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_HEALTH} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="System Health"><SystemHealthPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_TREASURY} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Treasury"><TreasuryAdminPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_PIPELINE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Pipeline"><PipelineAdminPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_OPS_SLO} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Platform SLOs"><OpsSloDashboardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_PAYMENTS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Payments"><PaymentAnalyticsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_USERS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Users"><AdminUsersPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_RECORDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Records"><AdminRecordsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_SUBSCRIPTIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Subscriptions"><AdminSubscriptionsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_ORGANIZATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Organizations"><AdminOrganizationsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_USER_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin User Detail"><AdminUserDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_CONTROLS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Platform Controls"><PlatformControlsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_OVERVIEW} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Platform Overview"><PlatformOverviewPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_HEALTH} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="System Health"><SystemHealthPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_TREASURY} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Treasury"><TreasuryAdminPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_PIPELINE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Pipeline"><PipelineAdminPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_OPS_SLO} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Platform SLOs"><OpsSloDashboardPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_PAYMENTS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Payments"><PaymentAnalyticsPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_USERS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Admin Users"><AdminUsersPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_RECORDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Admin Records"><AdminRecordsPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_SUBSCRIPTIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Admin Subscriptions"><AdminSubscriptionsPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_ORGANIZATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Admin Organizations"><AdminOrganizationsPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_USER_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Admin User Detail"><AdminUserDetailPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_CONTROLS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><PlatformAdminRoute><RouteErrorBoundary section="Platform Controls"><PlatformControlsPage /></RouteErrorBoundary></PlatformAdminRoute></RouteGuard></AuthGuard>} />
           {/* SCRUM-2082 CSI-04D — Issuer Partners admin */}
           <Route path={ROUTES.ADMIN_ISSUER_PARTNERSHIPS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Issuer Partners"><IssuerPartnershipsPageLazy /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
