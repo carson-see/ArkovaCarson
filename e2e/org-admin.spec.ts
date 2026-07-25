@@ -91,7 +91,7 @@ test.describe('Org Admin', () => {
 
         // Credential type dropdown should be present
         await expect(
-          orgAdminPage.getByRole('combobox', { name: /Credential Type/i })
+          orgAdminPage.getByRole('combobox', { name: /Document Type/i })
         ).toBeVisible();
 
         // Label field

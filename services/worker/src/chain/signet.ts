@@ -31,7 +31,13 @@ import type {
   SubmitFingerprintRequest,
   VerificationResult,
 } from './types.js';
-import { RpcUtxoProvider, HttpError, RpcApplicationError, type UtxoProvider, type Utxo, type RawTransaction } from './utxo-provider.js';
+import {
+  RpcUtxoProvider,
+  isDefinitiveTransactionAbsence,
+  type UtxoProvider,
+  type Utxo,
+  type RawTransaction,
+} from './utxo-provider.js';
 import type { SigningProvider } from './signing-provider.js';
 import { WifSigningProvider } from './signing-provider.js';
 import type { FeeEstimator } from './fee-estimator.js';
@@ -629,28 +635,6 @@ function isSignetConfig(
   return 'utxoProvider' in cfg;
 }
 
-/**
- * #1417-HIGH (fix c): does this getRawTransaction failure prove the tx is
- * ABSENT (vs. just unreadable)?  A definitive "not found" verdict is:
- *   - RPC: JSON-RPC code -5 (RPC_INVALID_ADDRESS_OR_KEY — "No such mempool or
- *     blockchain transaction"), regardless of the HTTP status it wrapped.
- *   - REST (mempool.space): HTTP 404 on GET /tx/:txid.
- * EVERYTHING else — 401/402/5xx/timeout/network/unknown — is a lookup FAILURE
- * and must NOT be read as absence (it would trigger a rebroadcast → 4xx →
- * unwind → double-broadcast). Fail-safe: unknown ⇒ not-absent ⇒ caller throws.
- */
-function isDefinitivelyAbsent(error: unknown): boolean {
-  if (error instanceof RpcApplicationError) {
-    // -5 = RPC_INVALID_ADDRESS_OR_KEY ("No such … transaction"). Any other
-    // application code (e.g. -8 bad param) is NOT a proof of absence.
-    return error.code === -5;
-  }
-  if (error instanceof HttpError) {
-    return error.status === 404;
-  }
-  return false;
-}
-
 // ─── Bitcoin Chain Client ────────────────────────────────────────────────
 
 export class BitcoinChainClient implements ChainClient {
@@ -905,6 +889,13 @@ export class BitcoinChainClient implements ChainClient {
     // need the persisted-intent guarantee call the two halves themselves.
     const prepared = await this.prepareFingerprintTx(data);
 
+    // SCRUM-2692: the txid is immutable now, but no network call has happened.
+    // A journal write failure must reject here so both the single-input and
+    // multi-input signing branches prove zero broadcast on persistence error.
+    if (data.preBroadcastHook) {
+      await data.preBroadcastHook(prepared);
+    }
+
     logger.info(
       { txId: prepared.txId, fee: prepared.feeSats },
       'Transaction built, broadcasting',
@@ -1076,7 +1067,7 @@ export class BitcoinChainClient implements ChainClient {
     try {
       rawTx = await this.provider.getRawTransaction(receiptId);
     } catch (error) {
-      if (isDefinitivelyAbsent(error)) {
+      if (isDefinitiveTransactionAbsence(error)) {
         logger.warn({ receiptId }, 'Receipt definitively absent on chain (not-found verdict)');
         return null;
       }

@@ -220,7 +220,7 @@ test.describe('API Keys & Verification Flow', () => {
 
       // Endpoint documentation
       await expect(
-        page.getByRole('heading', { name: 'Verify Credentials' })
+        page.getByRole('heading', { name: 'Verify Records' })
       ).toBeVisible();
     });
 
@@ -278,7 +278,7 @@ test.describe('API Keys & Verification Flow', () => {
 
       // Sandbox should load (may redirect to developers page if not a separate route)
       await expect(
-        page.getByRole('heading', { name: /API Sandbox|API Playground|Verify Credential/i })
+        page.getByRole('heading', { name: /API Sandbox|API Playground|Verify Record/i })
       ).toBeVisible({ timeout: 10000 });
     });
 
