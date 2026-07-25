@@ -38,7 +38,7 @@ describe('IssuerCard', () => {
 
   it('displays credential count', () => {
     renderCard();
-    expect(screen.getByText('42 verified credentials')).toBeInTheDocument();
+    expect(screen.getByText('42 verified records')).toBeInTheDocument();
   });
 
   it('links to issuer registry page', () => {

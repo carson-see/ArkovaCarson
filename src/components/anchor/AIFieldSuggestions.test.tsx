@@ -29,7 +29,7 @@ describe('AIFieldSuggestions', () => {
   it('renders field labels and values', () => {
     render(<AIFieldSuggestions {...defaultProps} />);
 
-    expect(screen.getByText('Credential Type')).toBeInTheDocument();
+    expect(screen.getByText('Document Type')).toBeInTheDocument();
     expect(screen.getByText('DEGREE')).toBeInTheDocument();
     expect(screen.getByText('University of Michigan')).toBeInTheDocument();
     expect(screen.getByText('Computer Science')).toBeInTheDocument();
