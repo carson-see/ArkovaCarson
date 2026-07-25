@@ -11,7 +11,7 @@
 
 import type React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { OrgRegistryTable } from './OrgRegistryTable';
 
@@ -163,11 +163,13 @@ describe('OrgRegistryTable', () => {
   it('delegates export with the member scope for a non-admin', async () => {
     setQueryResult({ data: [validRow], count: 1, error: null });
     renderTable({ isAdmin: false, currentUserId: 'user-1' });
+    // Wait for ENABLED, not merely present: a disabled button still has
+    // role="button" and a raw .click() on it is a silent no-op — the export
+    // mock is never called and the assertion times out (CI-only flake).
     await waitFor(() => {
-      expect(screen.getAllByRole('button', { name: /export csv/i }).length).toBeGreaterThan(0);
+      expect(screen.getAllByRole('button', { name: /export csv/i })[0]).toBeEnabled();
     });
-    const exportBtn = screen.getAllByRole('button', { name: /export csv/i })[0];
-    exportBtn.click();
+    fireEvent.click(screen.getAllByRole('button', { name: /export csv/i })[0]);
     await waitFor(() => {
       expect(mockExportAnchors).toHaveBeenCalledWith('org-1', {
         isAdmin: false,
@@ -179,11 +181,11 @@ describe('OrgRegistryTable', () => {
   it('delegates export org-wide for an admin', async () => {
     setQueryResult({ data: [validRow], count: 1, error: null });
     renderTable({ isAdmin: true, currentUserId: 'user-1' });
+    // Same enabled-wait + fireEvent treatment as the member-scope test above.
     await waitFor(() => {
-      expect(screen.getAllByRole('button', { name: /export csv/i }).length).toBeGreaterThan(0);
+      expect(screen.getAllByRole('button', { name: /export csv/i })[0]).toBeEnabled();
     });
-    const exportBtn = screen.getAllByRole('button', { name: /export csv/i })[0];
-    exportBtn.click();
+    fireEvent.click(screen.getAllByRole('button', { name: /export csv/i })[0]);
     await waitFor(() => {
       expect(mockExportAnchors).toHaveBeenCalledWith('org-1', {
         isAdmin: true,
