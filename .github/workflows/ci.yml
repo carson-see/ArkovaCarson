@@ -1500,3 +1500,45 @@ jobs:
       - name: Skip notice (no verifier changes)
         if: steps.changed.outputs.changed != 'true'
         run: echo "No packages/verifier changes detected — verifier compile gate skipped; reporting green."
+
+  # SCRUM-2897 — evidence-identity gate, REPORT-ONLY.
+  # Asserts that a Ready, soak-tier PR's Staging Soak Evidence block binds to the
+  # exact commit + clean environment it claims:
+  #   A. declared `PR head SHA:` == the actual PR head SHA (a commit pushed after
+  #      the evidence was written silently invalidates the exact-head soak).
+  #   B. clean-preflight identity — preflight is `environment_type=clean_mirror`
+  #      (T2/T3) and any head SHA embedded in the preflight matches the declared
+  #      head (evidence may not be copied across heads — CLAUDE.md §1.11A).
+  # Drafts and T0 / no-evidence PRs are skipped.
+  #
+  # W3-freeze CTO carve-out: REPORT-ONLY / warn mode only — `--report-only`
+  # makes the CLI always exit 0 (notice/warning annotations, never ::error::),
+  # plus continue-on-error. Gates nothing. Fail-closed activation is deferred
+  # until >=1 real green soak calibrates it (#1617 T0-CI-infra precedent).
+  # Runs only on pull_request events (needs PR head/draft context). NON-REQUIRED.
+  evidence-identity-report:
+    name: Evidence-identity gate (report-only)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run evidence-identity gate (report-only, non-gating)
+        continue-on-error: true
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
+        run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts --report-only
