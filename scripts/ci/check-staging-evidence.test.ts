@@ -202,6 +202,22 @@ describe('check-staging-evidence', () => {
       ).toBe('T0');
     });
 
+    it('returns T0 for the SCRUM-2897 evidence-identity gate + its report-only ci.yml wiring', () => {
+      // The full changed-file set of PR #1625: a pure CI identity-check module +
+      // tests, its agents.md, and a report-only ci.yml job. No runtime /
+      // migration / API / frontend surface → T0.
+      expect(
+        requiredTierFor([
+          'scripts/ci/check-evidence-identity.ts',
+          'scripts/ci/check-evidence-identity.test.ts',
+          'scripts/ci/agents.md',
+          'scripts/ci/check-staging-evidence.ts',
+          'scripts/ci/check-staging-evidence.test.ts',
+          '.github/workflows/ci.yml',
+        ]).tier,
+      ).toBe('T0');
+    });
+
     it('returns T0 for worker load-test tooling scripts', () => {
       expect(
         requiredTierFor([
@@ -217,6 +233,99 @@ describe('check-staging-evidence', () => {
       // scripts/ci-supabase-start.sh runs ONLY in CI to boot the local Supabase
       // stack for the types/tests/e2e jobs; it never ships to prod runtime.
       expect(requiredTierFor(['scripts/ci-supabase-start.sh']).tier).toBe('T0');
+    });
+
+    // --- G1 (PI-0.5): KPI-3 rehearsal + clean-room .mjs tooling classify T0 ---
+    it('returns T0 for the KPI-3 rehearsal tooling bundle', () => {
+      expect(
+        requiredTierFor([
+          'scripts/kpi3/rehearse-explorer-verify.mjs',
+          'scripts/kpi3/lib/fetch-block.mjs',
+          'scripts/kpi3/README.md',
+          'scripts/kpi3/fixtures/anchor-proof.json',
+        ]).tier,
+      ).toBe('T0');
+    });
+
+    it('returns T0 for clean-room .mjs verification tools in their dedicated trees', () => {
+      expect(requiredTierFor(['scripts/clean-room/verify-proof.mjs']).tier).toBe('T0');
+      expect(requiredTierFor(['scripts/kpi3/verify-anchor-standalone.mjs']).tier).toBe('T0');
+    });
+
+    it('G1 gate-integrity: .mjs under scripts/ OUTSIDE the dedicated trees is NOT T0', () => {
+      // Review finding (PR #1613): a blanket scripts/**.mjs carve-out would
+      // silently T0 future prod-shaped ops scripts. Pin the floor: an .mjs at
+      // the scripts/ root or in a non-allowlisted subdir keeps the T1 default.
+      expect(requiredTierFor(['scripts/verify-anchor-standalone.mjs']).tier).toBe('T1');
+      expect(requiredTierFor(['scripts/prod/apply-migration.mjs']).tier).toBe('T1');
+      // An .mjs rename/sibling of the prod-reachable S33 acceptance companion
+      // keeps its T2 PATH_RULE (extension-generalized by this PR).
+      expect(
+        requiredTierFor(['scripts/ci/s33-wave1-github-evidence.mjs']).tier,
+      ).toBe('T2');
+      // Outside the anchored ^scripts/ prefix nothing changes either.
+      expect(requiredTierFor(['services/worker/scripts/ops.mjs']).tier).toBe('T1');
+    });
+
+    it('returns T0 for a doc-only bundle spanning docs/, README, HANDOFF, and memory notes', () => {
+      // G1 (PI-0.5): doc-only bundles classify T0 — no staging evidence block.
+      expect(
+        requiredTierFor([
+          'docs/operating-model/session-operating-model.md',
+          'docs/staging/rc-manifests/rc-2026-07-21-example.json',
+          'README.md',
+          'HANDOFF.md',
+          'memory/feedback_example.md',
+          'services/worker/agents.md',
+        ]).tier,
+      ).toBe('T0');
+    });
+
+    // --- G1 HARD AC: the tweak must NOT loosen the real gate. A migration /
+    // worker / API / chain / billing path still forces its full tier, whether it
+    // rides ALONE or bundled with the new T0 KPI-3 / clean-room files. ---
+    it('G1 gate-integrity: migration still forces T3 alongside new T0 tooling', () => {
+      // Migration alone.
+      expect(requiredTierFor(['supabase/migrations/0360_x.sql']).tier).toBe('T3');
+      // Migration bundled with a KPI-3 rehearsal + a clean-room .mjs tool: the
+      // migration's T3 PATH_RULE wins; the T0 files do not drag the tier down.
+      const bundled = requiredTierFor([
+        'scripts/kpi3/rehearse-explorer-verify.mjs',
+        'scripts/clean-room/verify-proof.mjs',
+        'supabase/migrations/0360_x.sql',
+      ]);
+      expect(bundled.tier).toBe('T3');
+      expect(bundled.reason).toContain('supabase/migrations/0360_x.sql');
+    });
+
+    it('G1 gate-integrity: worker/chain/API paths keep their tier alongside new T0 tooling', () => {
+      // Chain hot path → T3.
+      expect(
+        requiredTierFor([
+          'scripts/kpi3/rehearse-explorer-verify.mjs',
+          'services/worker/src/chain/client.ts',
+        ]).tier,
+      ).toBe('T3');
+      // Public API surface → T2.
+      expect(
+        requiredTierFor([
+          'scripts/clean-room/verify-proof.mjs',
+          'services/worker/src/api/v1/anchor.ts',
+        ]).tier,
+      ).toBe('T2');
+      // Generic worker behavior → T2.
+      expect(
+        requiredTierFor([
+          'scripts/kpi3/verify-anchor-standalone.mjs',
+          'services/worker/src/index.ts',
+        ]).tier,
+      ).toBe('T2');
+    });
+
+    it('G1 scope guard: a runtime .mjs OUTSIDE scripts/ is NOT swept into T0', () => {
+      // The clean-room carve-out is scoped to scripts/**; a .mjs shipped in a
+      // deployed package still earns its tier via the SDK/package PATH_RULE.
+      expect(requiredTierFor(['sdks/typescript/dist/index.mjs']).tier).toBe('T2');
     });
 
     it('returns T3 when migration is touched', () => {
