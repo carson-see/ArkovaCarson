@@ -209,11 +209,21 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     }).not.toEqual('');
 
     // ── Template step (if shown) → confirm → success ──
+    // SCRUM-2914: with the AI-03 confidence gate gone, review-continue advances
+    // the dialog to EITHER the template-picker step (the mocked "CPE" type has no
+    // matching is_system template in the E2E seed, so none is auto-selected) OR
+    // straight to confirm. Wait for whichever step actually settles before
+    // acting — the previous one-shot isVisible() check raced the post-request
+    // re-render (setStep runs only after the template reconstruction resolves,
+    // which is AFTER the request-body poll above passes), so it could miss the
+    // Skip button and then hang on the confirm wait.
     const skipButton = page.getByRole('button', { name: /^Skip$/ });
+    const readyHeading = page.getByText(/Ready to Secure/i);
+    await expect(skipButton.or(readyHeading).first()).toBeVisible({ timeout: 15000 });
     if (await skipButton.isVisible().catch(() => false)) {
       await skipButton.click();
     }
-    await expect(page.getByText(/Ready to Secure/i)).toBeVisible({ timeout: 15000 });
+    await expect(readyHeading).toBeVisible({ timeout: 15000 });
     await page.getByRole('button', { name: /Secure Document/i }).last().click();
     await expect(page.getByText(/Document Submitted/i)).toBeVisible({ timeout: 20000 });
 
