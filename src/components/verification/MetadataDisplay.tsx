@@ -48,7 +48,11 @@ function isUrlValue(value: string): boolean {
  * Determine if a string looks like an email.
  */
 function isEmailValue(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  // Domain labels use `[^\s@.]` (dot-excluded) so each `\.` boundary is
+  // deterministic — this removes the ambiguous `[^\s@]+\.[^\s@]+` split that
+  // Sonar flags as super-linear backtracking, while still matching a
+  // local-part@labelled.domain shape (e.g. `test@example.com`).
+  return /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value);
 }
 
 /**
