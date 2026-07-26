@@ -128,10 +128,36 @@ function inferIssuedDate(strippedText: string): string | undefined {
   return dateMatch?.[0]?.replaceAll('/', '-').replaceAll('.', '-');
 }
 
-function inferJurisdiction(strippedText: string): string | undefined {
-  if (/\bKenya|KDPA|ODPC\b/i.test(strippedText)) return 'Kenya';
-  if (/\bAustralia|OAIC|AHPRA|TEQSA|Privacy Act\b/i.test(strippedText)) return 'Australia';
-  if (/\bUnited States|USA|U\.S\.A\.|U\.S\.\b/i.test(strippedText)) return 'United States';
+// bug hunt fix: `\b` binds only to the FIRST/LAST alternative of a `|`-chain,
+// not to each alternative individually — the interior alternatives (KDPA,
+// OAIC/AHPRA/TEQSA, USA) previously had no word-boundary constraint on either
+// side, so they matched as unanchored substrings anywhere in the text (e.g.
+// "CAUSATION" contains "USA" and incorrectly matched United States).
+//
+// Kenya/Australia: every alternative starts and ends with a plain word
+// character, so wrapping the whole non-capturing group in `\b(?:...)\b`
+// correctly enforces a word boundary on both sides of whichever alternative
+// matches.
+//
+// United States: "U.S.A." and "U.S." end in a literal `.` (non-word), so a
+// trailing `\b` right after them almost never holds — `\b` requires a
+// word/non-word transition, and a period is virtually always followed by
+// whitespace, punctuation, or end-of-string (also non-word), so the
+// transition never occurs. That means the ORIGINAL code's `U\.S\.\b`
+// alternative was already latently broken (it could not match in realistic
+// text). A trailing negative lookahead `(?!\w)` — "not immediately followed
+// by a word character" — gives the same "not glued to a longer word"
+// protection without depending on the character immediately preceding the
+// boundary, so it works uniformly whether the alternative ends in a letter
+// ("USA") or a period ("U.S.A.", "U.S.").
+const KENYA_JURISDICTION_PATTERN = /\b(?:Kenya|KDPA|ODPC)\b/i;
+const AUSTRALIA_JURISDICTION_PATTERN = /\b(?:Australia|OAIC|AHPRA|TEQSA|Privacy Act)\b/i;
+const UNITED_STATES_JURISDICTION_PATTERN = /\b(?:United States|USA|U\.S\.A\.|U\.S\.)(?!\w)/i;
+
+export function inferJurisdiction(strippedText: string): string | undefined {
+  if (KENYA_JURISDICTION_PATTERN.test(strippedText)) return 'Kenya';
+  if (AUSTRALIA_JURISDICTION_PATTERN.test(strippedText)) return 'Australia';
+  if (UNITED_STATES_JURISDICTION_PATTERN.test(strippedText)) return 'United States';
   return undefined;
 }
 
