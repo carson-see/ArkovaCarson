@@ -199,6 +199,40 @@ describe('parseDocusignConnectPayload', () => {
     expect(event).toMatchObject({ envelopeId: 'env-2', accountId: 'acct-2' });
   });
 
+  // Regression — prod 2026-07-26T18:05:35Z: the FIRST real production
+  // envelope-completed delivery (founder live-fire test, envelope completed
+  // 18:05:15Z) was 401-rejected because DocuSign REST v2.1 SIM payloads nest
+  // the envelope status/documents under data.envelopeSummary — one level
+  // deeper than every fallback chain looked.
+  it('normalizes REST v2.1 SIM payloads (status under data.envelopeSummary)', () => {
+    const event = parseDocusignConnectPayload(
+      JSON.stringify({
+        event: 'envelope-completed',
+        apiVersion: 'v2.1',
+        uri: '/restapi/v2.1/accounts/acct-3/envelopes/env-3',
+        retryCount: 0,
+        configurationId: 12345,
+        generatedDateTime: '2026-07-26T18:05:35.123Z',
+        data: {
+          accountId: 'acct-3',
+          userId: 'user-3',
+          envelopeId: 'env-3',
+          envelopeSummary: {
+            status: 'completed',
+            sender: { email: 'Founder@arkova.io' },
+            envelopeDocuments: [{ documentId: '1', name: 'Docusign Test.pdf' }],
+          },
+        },
+      }),
+    );
+
+    expect(event.envelopeId).toBe('env-3');
+    expect(event.accountId).toBe('acct-3');
+    expect(event.status).toBe('completed');
+    expect(event.sender?.email).toBe('founder@arkova.io');
+    expect(event.envelopeDocuments?.[0]?.name).toBe('Docusign Test.pdf');
+  });
+
   it('rejects non-completed events', () => {
     expect(() =>
       parseDocusignConnectPayload(

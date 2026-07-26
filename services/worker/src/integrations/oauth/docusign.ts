@@ -63,6 +63,15 @@ const RawConnectPayload = z.object({
     envelopeId: z.string().trim().min(1).optional(),
     accountId: z.string().trim().min(1).optional(),
     status: z.string().trim().min(1).optional(),
+    // REST v2.1 SIM deliveries nest the envelope summary here — the shape the
+    // production account actually sends (first live delivery 2026-07-26).
+    envelopeSummary: z.object({
+      envelopeId: z.string().trim().min(1).optional(),
+      accountId: z.string().trim().min(1).optional(),
+      status: z.string().trim().min(1).optional(),
+      sender: z.object({ email: z.string().email().optional() }).passthrough().optional(),
+      envelopeDocuments: z.array(EnvelopeDocument).max(100).optional(),
+    }).passthrough().optional(),
   }).passthrough().optional(),
   envelopeSummary: z.object({
     envelopeId: z.string().trim().min(1).optional(),
@@ -520,9 +529,10 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
   const json = JSON.parse(text);
   const parsed = RawConnectPayload.parse(json);
 
-  const envelopeId = parsed.envelopeId ?? parsed.data?.envelopeId ?? parsed.envelopeSummary?.envelopeId;
-  const accountId = parsed.accountId ?? parsed.data?.accountId ?? parsed.envelopeSummary?.accountId;
-  const status = (parsed.status ?? parsed.data?.status ?? parsed.envelopeSummary?.status ?? '').toLowerCase();
+  const nested = parsed.data?.envelopeSummary;
+  const envelopeId = parsed.envelopeId ?? parsed.data?.envelopeId ?? parsed.envelopeSummary?.envelopeId ?? nested?.envelopeId;
+  const accountId = parsed.accountId ?? parsed.data?.accountId ?? parsed.envelopeSummary?.accountId ?? nested?.accountId;
+  const status = (parsed.status ?? parsed.data?.status ?? parsed.envelopeSummary?.status ?? nested?.status ?? '').toLowerCase();
   const event = parsed.event.toLowerCase();
   if (event !== 'envelope-completed' || status !== 'completed' || !envelopeId || !accountId) {
     throw new Error('DocuSign Connect payload is not a completed envelope event');
@@ -534,8 +544,8 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
     envelopeId,
     accountId,
     status: 'completed',
-    sender: parsed.sender ?? parsed.envelopeSummary?.sender,
-    envelopeDocuments: parsed.envelopeDocuments ?? parsed.envelopeSummary?.envelopeDocuments ?? [],
+    sender: parsed.sender ?? parsed.envelopeSummary?.sender ?? nested?.sender,
+    envelopeDocuments: parsed.envelopeDocuments ?? parsed.envelopeSummary?.envelopeDocuments ?? nested?.envelopeDocuments ?? [],
     generatedDateTime: parsed.generatedDateTime,
   });
 }
