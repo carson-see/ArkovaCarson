@@ -1,6 +1,6 @@
 # agents.md — components/anchor
 
-_Last updated: 2026-07-21 (SCRUM-2911 no-text soft-fail routing)_
+_Last updated: 2026-05-26 (SCRUM-2013 credential type drift fix)_
 
 ## What This Folder Contains
 
@@ -36,7 +36,6 @@ Core anchor (document-securing) UI components: upload, confirm, AI extraction, l
 
 ## Recent Changes
 
-- 2026-07-21 SCRUM-2911 (PR #1605): extraction-failure error taxonomy the dialog consumes is now fully typed. Soft/benign (routes to `extraction-failed` step — retry / enter manually / anchor without AI metadata): `UnsupportedImageFormatError` (HEIC/TIFF) and NEW `NoTextExtractedError` (scanned image-only PDF / blank photo — `AI_EXTRACTION_LABELS.NO_TEXT_FOUND`). Fail-closed §1.6 (routes to `privacy-blocked` LOUD step): `OcrEngineLoadError`, `NerPiiFailClosedError`, Lane 1 `NERModelLoadError` (by name). An error carrying BOTH benign + fail-closed markers is FAIL-CLOSED (dominance). `SecureDocumentDialog.tsx` itself needed NO change — the existing `failedClosed`-latch else-branch already routes soft failures; routing regression tests added in `SecureDocumentDialog.test.tsx` (soft→extraction-failed NOT privacy-blocked; failClosed→privacy-blocked).
 - 2026-07-17 SCRUM-2910 (BUG-2026-07-17-009/-010, P0): `ExtractionQualityBanner.tsx` no longer renders fraud-signal UI (the `fraudSignals` prop was removed — it rendered Gemini extraction output ungated by ENABLE_FRAUD_DETECTION); `SecureDocumentDialog.tsx` no longer passes fraud data to it. `AssetDetailView.tsx` metadata filter now also hides any `fraud*` key via `isFraudMetadataKey` from `@/lib/fraudDetection`.
 - 2026-07-06 AI-03 round-1 review fixes (PR #1413): `SecureDocumentDialog.tsx` zero-field guard — extraction success with zero displayable fields (sparse extraction; template mapper filtered everything) sets `reviewComplete=true` so the absent `TemplateReviewPanel` never soft-locks Continue (same contract as flag-off). Dead per-field accept/reject/accept-all handler wiring removed — the progress-only `AIFieldSuggestions` instance renders with `fields={[]}` so those callbacks can never fire (inline no-ops); post-extraction review is owned by `TemplateReviewPanel`.
 - 2026-06-24 BUG-2026-06-24-008: `AssetDetailView.tsx` "Network Observed Time"
@@ -45,3 +44,7 @@ Core anchor (document-securing) UI components: upload, confirm, AI extraction, l
 - 2026-06-23 WEBEXT-03 (SCRUM-2505): `SecureDocumentDialog.tsx` gained the §1.6 fail-closed `privacy-blocked` step + `ShieldAlert` loud-failure UI. When the on-device PII model / OCR engine fails, the dialog no longer falls through to the soft "secure without metadata" recovery — it shows an explicit "On-Device Privacy Protection Unavailable" state (Reload / Continue Without AI Metadata) and states nothing was sent. UAT screenshots needed at 1280px + 375px.
 - 2026-05-26 SCRUM-2013: `SecureDocumentDialog.tsx` AI fuzzy type map expanded to align with the canonical credential taxonomy, including `CPE`, `ACCREDITATION`, `CONTRACT_PRESIGNING`, and `CONTRACT_POSTSIGNING`.
 - 2026-05-19 SCRUM-1599: `AssetDetailView.tsx` uses `SourceProvenanceDisplay` for internal record source provenance so internal and public views share URL sanitization/evidence-level rendering. `AnchorLifecycleTimeline.tsx` now treats `SUPERSEDED` as a visible terminal state.
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+User-visible "credential(s)" scrubbed to "record(s)/document(s)" in AIFieldSuggestions, ShareSheet, TemplateReviewPanel (field-label maps + share text). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
