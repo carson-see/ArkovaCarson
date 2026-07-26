@@ -282,10 +282,22 @@ export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
   return done(true, null);
 }
 
+/**
+ * Exact allowlist of the four Esplora paths this verifier ever requests. Pinning
+ * the whole path to a fixed grammar (64-hex ids only) means a CLI/proof-supplied
+ * `txid` or `blockHash` can never inject an arbitrary path (or `../`, host, or
+ * query) into the request URL — a defence-in-depth SSRF guard at the fetch sink.
+ */
+const SAFE_ESPLORA_PATH_RE =
+  /^(?:tx\/[0-9a-f]{64}(?:\/merkle-proof)?|block\/[0-9a-f]{64}\/header|blocks\/tip\/height)$/i;
+
 /** Live Esplora client (blockstream.info) — JSON for most paths, text for header/tip. */
 export function blockstreamFetch(base = 'https://blockstream.info/api') {
   const textPaths = (p) => p.endsWith('/header') || p === 'blocks/tip/height';
   return async (path) => {
+    if (!SAFE_ESPLORA_PATH_RE.test(path)) {
+      throw new Error(`unsafe explorer path rejected: ${path}`);
+    }
     const res = await fetch(`${base}/${path}`);
     if (res.status === 404) { const e = new Error('not found'); e.status = 404; throw e; }
     if (!res.ok) throw new Error(`explorer HTTP ${res.status}`);
