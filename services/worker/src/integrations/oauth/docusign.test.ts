@@ -298,6 +298,13 @@ describe('provisionConnectListener', () => {
     expect(body.enableLog).toBe('true');
     expect(body.includeHMAC).toBe('true');
     expect(body.hmacSecret).toBe('hmac-secret-123');
+    // Regression — prod 2026-07-25T17:07:37Z (req_80e749c4635aab853ab710a3):
+    // DocuSign 400 INVALID_REQUEST_PARAMETER — the modern `events` field is
+    // rejected unless the payload also carries deliveryMode "SIM" alongside
+    // eventData restv2.1. Without it, listener creation fails on every org
+    // connect and no webhooks ever arrive.
+    expect(body.deliveryMode).toBe('SIM');
+    expect(body.eventData).toEqual({ format: 'json', version: 'restv2.1' });
     expect(postAuthHeader).toBe('Bearer at-test');
     expect(body.requiresAcknowledgement).toBe('true');
     expect(body.envelopeEvents).toEqual(['Completed']);

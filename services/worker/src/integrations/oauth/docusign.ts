@@ -311,6 +311,10 @@ export interface ArkovaConnectConfig {
   requiresAcknowledgement: 'true';
   envelopeEvents: string[];
   events: string[];
+  // DocuSign rejects the modern `events` field with 400 INVALID_REQUEST_PARAMETER
+  // unless deliveryMode "SIM" accompanies it (prod failure 2026-07-25, org-connect
+  // provisioning never succeeded on the production account without this).
+  deliveryMode: 'SIM';
   payloadFormat: 'json';
   payloadVersion: 'restv2.1';
   eventData: { format: 'json'; version: 'restv2.1' };
@@ -380,6 +384,7 @@ export function buildArkovaConnectConfig(env: NodeJS.ProcessEnv = process.env): 
     requiresAcknowledgement: 'true',
     envelopeEvents: ['Completed'],
     events: ['envelope-completed'],
+    deliveryMode: 'SIM',
     payloadFormat: 'json',
     payloadVersion: 'restv2.1',
     eventData: { format: 'json', version: 'restv2.1' },
@@ -445,6 +450,8 @@ function buildConnectPayload(args: {
     requiresAcknowledgement: args.config.requiresAcknowledgement,
     envelopeEvents: args.config.envelopeEvents,
     events: args.config.events,
+    // DocuSign 400-rejects the `events` field unless deliveryMode SIM rides with it.
+    deliveryMode: args.config.deliveryMode,
     eventData: args.config.eventData,
     ...(args.existingConnectId ? { connectId: args.existingConnectId } : {}),
   };
