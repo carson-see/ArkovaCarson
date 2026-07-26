@@ -28,7 +28,7 @@ import { extractCleMetadataView } from '@/components/credentials/cleMetadataView
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
+import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, CONFIRMATION_PROGRESS_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
 import { sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import {
@@ -760,7 +760,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {anchor.status === 'SUBMITTED'
-                    ? 'Your record has been submitted to the network. Confirmation typically takes ~10 minutes.'
+                    ? CONFIRMATION_PROGRESS_LABELS.AWAITING_CONFIRMATION
                     : 'Your record is being prepared for permanent anchoring.'}
                 </p>
               </div>
