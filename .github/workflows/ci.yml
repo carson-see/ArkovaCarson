@@ -649,7 +649,9 @@ jobs:
           set -euo pipefail
           CIRCOM_VERSION=v2.1.9
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL --retry 5 -o "$HOME/.local/bin/circom" \
+          # SCRUM-3018 / Sonar S6506: enforce HTTPS on the fetch and on any
+          # redirect so a downgraded redirect can't serve the binary over http.
+          curl --proto '=https' --proto-redir '=https' -fsSL --retry 5 -o "$HOME/.local/bin/circom" \
             "https://github.com/iden3/circom/releases/download/${CIRCOM_VERSION}/circom-linux-amd64"
           # Pin the binary by SHA-256 — supply chain integrity for the toolchain.
           echo "e5575829252d763b7818049df9de2ef9304df834697de77fa63ce7babc23c967  $HOME/.local/bin/circom" | sha256sum -c -
@@ -873,7 +875,7 @@ jobs:
         # `tla-precheck setup` prompts "Download TLC tla2tools.jar? (Y/n)"
         # and "Install skill to Claude Code + Codex? (Y/n)"; piping `yes`
         # keeps CI non-interactive.
-        run: yes | npx tla-precheck setup || true
+        run: yes | node_modules/.bin/tla-precheck setup || true
 
       - name: Pin TLA2TOOLS_JAR (workaround tla-precheck checksum bug)
         # SCRUM-1248 (R0-2): tla-precheck@0.1.7 has a hard-coded expected
@@ -907,7 +909,9 @@ jobs:
           TLA2TOOLS_SHA256: cc4803dce2a8ffaf0f5920a9dc39df4b5ee34ab4cb53fb58ac557277a7e516b3
         run: |
           mkdir -p "$HOME/.tla"
-          curl -fsSL -o "$HOME/.tla/tla2tools.jar" \
+          # SCRUM-3018 / Sonar S6506: enforce HTTPS on the fetch and on any
+          # redirect (GitHub release assets redirect to an https objects host).
+          curl --proto '=https' --proto-redir '=https' -fsSL -o "$HOME/.tla/tla2tools.jar" \
             "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
           ACTUAL=$(sha256sum "$HOME/.tla/tla2tools.jar" | awk '{print $1}')
           if [ "$ACTUAL" != "$TLA2TOOLS_SHA256" ]; then
@@ -925,7 +929,10 @@ jobs:
         # job is conditional on machine/anchor/chain code actually changing.
         if: steps.tla-changed.outputs.changed == 'true'
         working-directory: machines
-        run: npx tla-precheck check bitcoinAnchor.machine.ts
+        # SCRUM-3018 / Sonar S6505,S8543: tla-precheck is now a pinned
+        # devDependency; run the local bin (root node_modules, one level up from
+        # the `machines` working-directory) instead of on-demand `npx`.
+        run: ../node_modules/.bin/tla-precheck check bitcoinAnchor.machine.ts
 
   # Migration safety gate (SCALE-20) — verify migrations are additive-only
   migration-check:
