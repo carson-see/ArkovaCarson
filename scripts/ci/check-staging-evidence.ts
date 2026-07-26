@@ -213,7 +213,7 @@ export const PATH_RULES: PathRule[] = [
     reason: 'auth-sensitive worker logic',
   },
   {
-    pattern: /^(?:scripts\/ci\/s33-wave1-github-evidence\.ts|\.github\/s33-wave1-acceptance-authorities\.json)$/,
+    pattern: /^(?:scripts\/ci\/s33-wave1-github-evidence\.(?:ts|mjs)|\.github\/s33-wave1-acceptance-authorities\.json)$/,
     minTier: 'T2',
     reason: 'S3.3 acceptance companion reachable from production runtime',
   },
@@ -2184,6 +2184,14 @@ const STAGING_TOOLING_ALLOW = [
   // in CI, never ships to prod runtime, so it is T0 tooling.
   /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
+  // PI-0.5 G1: KPI-3 explorer-rehearsal harness + clean-room verification tools
+  // (partner/auditor-run, dependency-free; never imported by worker or frontend
+  // — no prod runtime to soak). DIR-SCOPED on purpose: a blanket scripts/**.mjs
+  // carve-out was reviewed and rejected (unconditional T1→T0 for future
+  // prod-shaped ops scripts, unlike the import-scan-conditional S33 carve-out).
+  // New clean-room tool trees get their own explicit entry here.
+  /^scripts\/kpi3\//,
+  /^scripts\/clean-room\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,
   /^tests\/k6\//,

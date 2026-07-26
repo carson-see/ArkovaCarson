@@ -63,7 +63,7 @@ const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  '5abaf54634695c64f2a2b2de59d6576d4d38203d15a68fa96d391e8e47e8d4fe';
+  '055d0a435b2287521214790fe49f70e6a8af9ed35d83d6b783ff670245c781aa';
 
 // Apply-mode cases launch many short-lived git/gcloud/npx shell stubs. They
 // finish in ~1s focused but can exceed Vitest's 5s default when the full
@@ -552,6 +552,12 @@ exec "${REAL_GIT}" "$@"
 set -euo pipefail
 printf '%s\\n' "$*" >> "${logFile}"
 printf 'gcloud %s\\n' "$*" >> "${orderLogFile}"
+# Real gcloud always consumes stdin for --data-file=-; a stub that exits
+# without reading leaves the provisioner's printf writer racing a closed
+# pipe (SIGPIPE rc=141 under pipefail on loaded runners).
+if [[ "$*" == *"--data-file=-"* ]]; then
+  cat >/dev/null
+fi
 if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
   if [[ "$*" == *"status.latestReadyRevisionName"* ]]; then
     echo '${STUB_REVISION}'
@@ -1655,6 +1661,31 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
     const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
     const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
     expect(admission.supabase_project_ref).toBe('abcdefghijklmnopqrst');
+  }, 15_000);
+
+  it('survives a secret payload larger than the pipe buffer (gcloud stub must drain --data-file=- stdin)', () => {
+    // Deterministic reproduction of the CI flake (PR #1683 run 30166796132):
+    // ensure_secret_with_value pipes the secret into `gcloud … --data-file=-`.
+    // A stub gcloud that exits without reading stdin races printf's write; on a
+    // loaded runner the stub can win, printf takes SIGPIPE, and pipefail turns
+    // the provision run into rc=141. An 80 KiB payload exceeds the kernel pipe
+    // buffer (64 KiB on Linux and macOS), so printf MUST block mid-write and
+    // the race stops being timing-dependent: a non-draining stub fails this
+    // test every run.
+    const oversizedServiceRoleKey = 'k'.repeat(80 * 1024);
+    const result = applyRunStubbed('sigpipe-drain', 'mock', {
+      env: { STAGING_NEW_SUPABASE_SERVICE_ROLE_KEY: oversizedServiceRoleKey },
+    });
+    expect(result.timedOut).toBe(false);
+    expect(result.code, result.out).toBe(0);
+    expect(
+      result.gcloudCalls.some(
+        (call) =>
+          (call.startsWith('secrets create ') || call.startsWith('secrets versions add ')) &&
+          call.includes('--data-file=-'),
+      ),
+    ).toBe(true);
+    expect(result.out).toContain('ADMISSION_JSON=');
   }, 15_000);
 
   it('rejects a malformed created project ref before any downstream mutation', () => {
