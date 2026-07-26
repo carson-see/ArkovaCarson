@@ -1,0 +1,28 @@
+{
+  "_comment": "SCRUM-2906 R1 — parallel-rig reservation ledger (SCAFFOLD). Machine-checkable source of truth for which isolated staging rig is reserved to which rail/soak, so parallel sessions never double-book a Cloud Run service or a Supabase project (the real isolation boundary per CLAUDE.md 1.11A). Validate with: npx tsx scripts/staging/check-rig-reservations.ts docs/staging/rig-reservations.json. Rows with status='example' are ignored by the double-booking check and exist only to document the shape. Add a real row (status='active') in the SAME PR/session that stands up the rig; flip it to 'released' at teardown. This file is NOT auto-applied and stands up nothing.",
+  "version": 1,
+  "updated": "2026-07-21T00:00:00Z",
+  "reservations": [
+    {
+      "reservation_id": "resv-EXAMPLE-0001",
+      "status": "example",
+      "rail": "example-rail",
+      "tier": "T3",
+      "rig": {
+        "cloud_run_service": "arkova-worker-EXAMPLE-staging",
+        "supabase_ref": "exampleref0123456789",
+        "region": "us-central1",
+        "tag_url": "https://EXAMPLE---arkova-worker-EXAMPLE-staging-uc.a.run.app"
+      },
+      "pr": null,
+      "pr_head_sha": null,
+      "worker_revision": null,
+      "image_digest": null,
+      "deploy_log_id": null,
+      "soak": { "start": null, "end": null },
+      "preflight_result": null,
+      "owner": "RTE",
+      "notes": "Scaffold example. status='example' is skipped by the double-booking check. Copy this shape for a real reservation and set status='active'."
+    }
+  ]
+}
