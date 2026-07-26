@@ -171,6 +171,24 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+// SCRUM-2901 (PI-0.5): an AbortSignal.timeout() abort rejects with a
+// DOMException named 'TimeoutError'. Without this check, the raw browser
+// message ("signal timed out") flowed verbatim into the admin error banner.
+function isTimeoutError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: unknown }).name === 'TimeoutError'
+  );
+}
+
+/** Timeout → friendly copy; Error → its message; anything else → fallback. */
+function timeoutAwareMessage(error: unknown, timedOutLabel: string, fallback: string): string {
+  if (isTimeoutError(error)) return timedOutLabel;
+  return error instanceof Error ? error.message : fallback;
+}
+
 function toAnchorStats(recentAnchors: WorkerTreasuryStatus['recentAnchors']): TreasuryAnchorStats | null {
   if (!recentAnchors) return null;
 
@@ -342,9 +360,13 @@ export function useTreasuryBalance() {
       } else if (workerSettled.ok) {
         workerError = TREASURY_LABELS.WORKER_RETURNED_STATUS(workerSettled.response.status);
       } else {
-        workerError = workerSettled.error instanceof Error
-          ? workerSettled.error.message
-          : TREASURY_LABELS.WORKER_REQUEST_FAILED;
+        // SCRUM-2901: an 8s-budget TimeoutError degrades with friendly copy,
+        // not the raw DOMException text.
+        workerError = timeoutAwareMessage(
+          workerSettled.error,
+          TREASURY_LABELS.WORKER_STATUS_TIMED_OUT(WORKER_TIMEOUT_MS / 1000),
+          TREASURY_LABELS.WORKER_REQUEST_FAILED,
+        );
       }
 
       // ─── Worker cache freshness leg ─────────────────────────────────
@@ -362,9 +384,12 @@ export function useTreasuryBalance() {
           healthError: TREASURY_LABELS.WORKER_HEALTH_RETURNED_STATUS(healthSettled.response.status),
         }));
       } else {
-        const healthError = healthSettled.error instanceof Error
-          ? healthSettled.error.message
-          : TREASURY_LABELS.WORKER_HEALTH_REQUEST_FAILED;
+        // SCRUM-2901: map the 8s budget's TimeoutError to friendly copy.
+        const healthError = timeoutAwareMessage(
+          healthSettled.error,
+          TREASURY_LABELS.WORKER_HEALTH_TIMED_OUT(WORKER_TIMEOUT_MS / 1000),
+          TREASURY_LABELS.WORKER_HEALTH_REQUEST_FAILED,
+        );
         setSourceState((prev) => ({ ...prev, cacheStale: true, healthError }));
       }
 
@@ -445,7 +470,11 @@ export function useTreasuryBalance() {
     } catch (err) {
       if (signal.aborted || isAbortError(err)) return;
       if (isMountedRef.current) {
-        setError(err instanceof Error ? err.message : TREASURY_LABELS.FETCH_FAILED);
+        setError(timeoutAwareMessage(
+          err,
+          TREASURY_LABELS.WORKER_STATUS_TIMED_OUT(WORKER_TIMEOUT_MS / 1000),
+          TREASURY_LABELS.FETCH_FAILED,
+        ));
       }
     } finally {
       if (isMountedRef.current) {

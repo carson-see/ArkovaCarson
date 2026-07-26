@@ -1,6 +1,11 @@
 # agents.md — lib
 
-_Last updated: 2026-07-06_
+_Last updated: 2026-07-21_
+
+## 2026-07-21 Treasury CSP + status-budget copy (SCRUM-2901, PR #1600)
+
+- `treasuryCsp.test.ts` guards the CSP↔treasury-enrichment invariant in BOTH sources (`vercel.json` prod header + `index.html` dev/build meta): `https://mempool.space` present in `connect-src`, `'self'` regression guard, and a scoping test asserting mempool.space appears in **connect-src ONLY** (never default-src / script-src / img-src / any other directive). The R-5 drift manifest (`scripts/ci/config-drift/expected-prod-config.json` `cspConnectSrc`) is deliberately untouched — its `_note` scopes it to the cross-runtime worker+edge SUBSET, "not the full vercel.json connect-src".
+- `copy.ts` `TREASURY_LABELS` gained `WORKER_STATUS_TIMED_OUT` / `WORKER_HEALTH_TIMED_OUT` (friendly copy for the 8s status-API budget firing; the raw browser TimeoutError text must never reach admins — see `useTreasuryBalance.ts`).
 
 ## 2026-07-06 S3 Lane-3 AI copy block (AI-03 — SCRUM-2383)
 
@@ -35,8 +40,6 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - `sourceProvenance.ts` / `badgeSvg.ts` — SCRUM-1599 public-safe source provenance helpers, evidence-level validation, badge URL construction, and fail-closed badge SVG status mapping
 
 ## Recent Changes
-- 2026-07-21 SCRUM-2938 S2 (terminology scrub remainder, stacked on S1/#1609): purged user-visible "credential(s)" from `copy.ts` string values (165 occurrences scrubbed → "record(s)/document(s)" per surface). Categorized keeps: the SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out (locked byte-identical), restricted-issuance adjuncts (`TOAST.CREDENTIAL_ISSUED`/`CREDENTIAL_ISSUE_FAILED`, `ORG_PAGE_LABELS.ISSUE_CREDENTIAL`, the `credential.issued` webhook description), "sign-in credentials" (different word sense), third-party proper nouns ("Credential Engine" claims-gate string, LinkedIn "Credential URL" field), and the frozen MCP tool names `verify_credential`/`search_credentials`. Contract test `copy-scrum-2938-terminology-s2.test.ts` walks EVERY exported string value and fails on any non-allowlisted hit, locks the carve-out with a full-object equality snapshot, and fails if an allowlisted path disappears. Internal keys/export names (`CREDENTIAL_TYPE_LABELS`, `MY_CREDENTIALS_LABELS`, …) intentionally unchanged (§1.3 internal-code exemption).
-
 
 - 2026-07-17 SCRUM-2910 (BUG-2026-07-17-009/-010, P0): `fraudDetection.ts` gained `isFraudMetadataKey(key)` — normalized-prefix predicate hiding all fraud-derived metadata keys (`fraud_score`, `fraud_signals`, camelCase `fraudSignals`, ...) from every display surface. Detection/write path unchanged.
 - 2026-07-06 AI-03 round-1 review (PR #1413): `aiExtraction.ts` — documented at the stamping site that per-field confidence is NOT real: `/ai/extract` returns ONE overall confidence stamped onto every field, so review gating is overall-confidence-driven until per-field confidence exists (follow-up story). `copy.ts` — removed dead `TEMPLATE_REVIEW_LABELS.HIGH_CONFIDENCE_BADGE` (never rendered).
