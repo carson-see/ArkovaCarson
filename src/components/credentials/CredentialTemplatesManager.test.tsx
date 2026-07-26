@@ -74,4 +74,18 @@ describe('CredentialTemplatesManager', () => {
     // Should show loading spinner (Loader2 has animate-spin)
     expect(screen.queryByText(SETTINGS_PAGE_LABELS.TEMPLATES_EMPTY_TITLE)).toBeNull();
   });
+
+  // Regression — the page heading previously hardcoded "Credential Templates"
+  // (banned terminology drift; e2e/settings.spec.ts asserts the copy.ts label).
+  // The heading must come from SETTINGS_PAGE_LABELS so copy changes propagate
+  // and the terminology lint stays the single source of truth.
+  it('renders the heading and description from copy.ts constants', () => {
+    render(<CredentialTemplatesManager {...defaultProps} />);
+    expect(
+      screen.getByRole('heading', { name: SETTINGS_PAGE_LABELS.CREDENTIAL_TEMPLATES }),
+    ).toBeDefined();
+    expect(screen.getByText(SETTINGS_PAGE_LABELS.CREDENTIAL_TEMPLATES_DESC)).toBeDefined();
+    // The stale hardcoded literal must not reappear anywhere on the page.
+    expect(screen.queryByText('Credential Templates')).toBeNull();
+  });
 });
