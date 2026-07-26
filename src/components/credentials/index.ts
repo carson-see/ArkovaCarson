@@ -19,5 +19,3 @@ export { MetadataFieldRenderer } from './MetadataFieldRenderer';
 export { CredentialSourceImportDialog } from './CredentialSourceImportDialog';
 export { TemplateSchemaBuilder } from './TemplateSchemaBuilder';
 export type { TemplateFieldDefinition } from './TemplateSchemaBuilder';
-export { RiskAssessmentReport } from './RiskAssessmentReport';
-export type { RiskAssessmentData } from './RiskAssessmentReport';
