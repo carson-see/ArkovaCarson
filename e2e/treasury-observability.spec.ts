@@ -32,7 +32,32 @@
  */
 
 import type { Page } from '@playwright/test';
-import { test, expect } from './fixtures';
+import { test as authTest, expect } from './fixtures';
+
+// Leg 3 (receipts / price / granular fees) is fetched by useTreasuryBalance
+// DIRECTLY from mempool.space in the browser. Both the dev (index.html) and
+// prod (vercel.json) CSP `connect-src` omit mempool.space, and CSP is enforced
+// *before* a request is dispatched — so Playwright `page.route()` can never
+// intercept those calls: the leg-3 stubs below would be dead and the page would
+// silently degrade to worker-only (no USD, no granular fees, no receipts). The
+// treasury CSP is owned by the #1600 balance-source/CSP change, not this
+// test-only PR, so we isolate the hook's three-leg contract from the CSP config
+// by running the treasury page in a `bypassCSP` context. This lets the
+// network-boundary stubs actually fulfill, and it strengthens the sovereignty
+// assertion: a stray mempool `/utxo` balance-poll now registers on the counter
+// instead of being silently swallowed by CSP.
+const test = authTest.extend<{ orgBAdminPage: Page }>({
+  orgBAdminPage: async ({ browser }, use) => {
+    // '.auth/orgBAdmin.json' (sarah) mirrors ORG_B_ADMIN_STATE in e2e/fixtures/auth.ts.
+    const context = await browser.newContext({
+      storageState: '.auth/orgBAdmin.json',
+      bypassCSP: true,
+    });
+    const page = await context.newPage();
+    await use(page);
+    await context.close();
+  },
+});
 
 const TREASURY_ADDRESS = 'bc1qtm2kk33k6ht4agt48kh7rfkmmhfkapqn4zwerc';
 
@@ -119,8 +144,18 @@ async function stubWorkerLegs(page: Page): Promise<{ utxoHits: () => number }> {
   await page.route(WORKER_HEALTH, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: workerHealthBody() }),
   );
+  // Body MUST match the shape X402PaymentStats consumes ({ total, revenue,
+  // recent }). A mismatched payload (e.g. { totalUsdc, count }) leaves
+  // `stats.total` undefined, which slips past the `stats.total === 0`
+  // empty-state guard and reaches `stats.revenue.toFixed(4)` on undefined —
+  // that throw is swallowed by the Treasury <RouteErrorBoundary>, blanking the
+  // entire page (balance included). `total: 0` renders the safe empty state.
   await page.route(WORKER_X402, (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '{"totalUsdc":0,"count":0}' }),
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ total: 0, revenue: 0, recent: [] }),
+    }),
   );
 
   let utxoHits = 0;
