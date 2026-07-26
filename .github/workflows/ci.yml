@@ -1542,3 +1542,50 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
         run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts --report-only
+
+  # SCRUM-2977 — anti-hollow-soak pre-clock guards, REPORT-ONLY.
+  # A "hollow soak" burns real wall-clock while the PR's changed behavior is
+  # never exercised (flag off / no OIDC / unfunded rig / no provenance / base
+  # drift). scripts/ci/anti-hollow-soak/guards.ts runs the five pre-clock
+  # checks over a soak-preflight JSON and would block the clock on any hollow
+  # signature.
+  #
+  # W3-freeze CTO carve-out: this job is wired in REPORT-ONLY / warn mode only —
+  # it prints findings and ALWAYS exits 0, gating nothing. Fail-closed
+  # activation (dropping `--report-only`) is deferred until >=1 real green soak
+  # calibrates the guards, mirroring the #1617 T0-CI-infra precedent. The step
+  # also carries continue-on-error as belt-and-suspenders so this can never
+  # block a merge during calibration. NON-REQUIRED.
+  anti-hollow-soak-report:
+    name: Anti-hollow-soak guards (report-only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run anti-hollow-soak guards (report-only, non-gating)
+        continue-on-error: true
+        run: |
+          shopt -s nullglob
+          preflights=(docs/staging/soak-preflight/*.json)
+          if [ ${#preflights[@]} -eq 0 ]; then
+            echo "::notice::No soak-preflight JSON under docs/staging/soak-preflight/ — anti-hollow-soak guards have nothing to check (report-only, non-gating)."
+            node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --report-only || true
+            exit 0
+          fi
+          for f in "${preflights[@]}"; do
+            echo "== anti-hollow-soak (report-only) :: $f =="
+            node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --report-only --input "$f" || true
+          done
+          exit 0
