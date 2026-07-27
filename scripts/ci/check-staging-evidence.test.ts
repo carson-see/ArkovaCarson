@@ -186,6 +186,22 @@ describe('check-staging-evidence', () => {
       ).toBe('T0');
     });
 
+    it('returns T0 for the SCRUM-2977 anti-hollow-soak guard set + its report-only ci.yml wiring', () => {
+      // The full changed-file set of PR #1623: a pure CI guard module + CLI +
+      // tests, its agents.md, and a report-only ci.yml job. No runtime /
+      // migration / API / frontend surface → T0.
+      expect(
+        requiredTierFor([
+          'scripts/ci/anti-hollow-soak/guards.ts',
+          'scripts/ci/anti-hollow-soak/guards.test.ts',
+          'scripts/ci/anti-hollow-soak/agents.md',
+          'scripts/ci/check-staging-evidence.ts',
+          'scripts/ci/check-staging-evidence.test.ts',
+          '.github/workflows/ci.yml',
+        ]).tier,
+      ).toBe('T0');
+    });
+
     it('returns T0 for the SCRUM-2897 evidence-identity gate + its report-only ci.yml wiring', () => {
       // The full changed-file set of PR #1625: a pure CI identity-check module +
       // tests, its agents.md, and a report-only ci.yml job. No runtime /
