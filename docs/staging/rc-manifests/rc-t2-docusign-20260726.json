@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-07-26-t2-docusign",
+  "created_at": "2026-07-26T18:52:40Z",
+  "created_by": "carson@arkova.io (Lane-1 staging/soak session)",
+  "release_owner": "Carson",
+  "approval_status": "approved",
+  "approval_actor": "RTE/Release-Manager (CTO-delegate) \u2014 founder-directed release execution, ART session 2026-07-26/27",
+  "approval_time": "2026-07-27T06:47:22Z",
+  "approval_note": "Approved at soak maturity: 12h window covered by continuous Cloud Run uptime (verified 06:45Z: rc-t2 45575s >= 45480s window; rc-t2-docusign 43467s >= 43200s), clean_mirror preflight, lifecycle cycle SECURED 20/20, schedulers enabled throughout, zero restarts, deviations reviewed and accepted as documented.",
+  "train_launch_sha": "82a9ed53c21c1b1297639d2007ba7a210c1f9a77",
+  "target_main_sha": "82a9ed53c21c1b1297639d2007ba7a210c1f9a77",
+  "rc_head_sha": "55551e465718c93896a721bf7c6f806044377cee",
+  "rc_branch": "rc/t2-docusign-20260726",
+  "allowed_base_shas": [
+    "53c68dff51dc23b8789c8e16d5106a142437ef94",
+    "82a9ed53c21c1b1297639d2007ba7a210c1f9a77",
+    "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+  ],
+  "covered_main_shas": [
+    "53c68dff51dc23b8789c8e16d5106a142437ef94",
+    "82a9ed53c21c1b1297639d2007ba7a210c1f9a77",
+    "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+  ],
+  "included_prs": [
+    {
+      "number": 1690,
+      "head_sha": "7a96a8d515a8518438c7f5951a6a3b6e8748bcf4",
+      "base_sha": "82a9ed53c21c1b1297639d2007ba7a210c1f9a77",
+      "risk_tier": "T2",
+      "owner": "lane1",
+      "title": "fix(docusign): Connect listener provisioning \u2014 add required deliveryMode SIM",
+      "ci_summary": "Required checks green on exact head SHA (verify at merge time).",
+      "rollback_note": "Revert PR; restores prior docusign.ts parse chain (no data.envelopeSummary nesting, no deliveryMode SIM) and the prior deploy-worker.yml docusign_connect_hmac_secret binding.",
+      "migration_files": [],
+      "soak_coverage": "THREE changed surfaces, three coverage postures. (1) REST v2.1 SIM payload parse (parseDocusignConnectPayload data.envelopeSummary nesting) \u2014 EXERCISED end-to-end on the rig against the changed code (git_sha 55551e46): a signed nested REST v2.1 completed-envelope POST returned HTTP 200 {ok:true,orphaned:true} and logged 'DocuSign webhook: unknown connected account' accountId=acct-rc2-signed (parse reached the integration-lookup + HMAC-verify stage); the SAME nested payload UNSIGNED returned HTTP 401 invalid_signature with NO 'malformed body' log (parse succeeded \u2014 the pre-#1690 chain would have thrown 'not a completed envelope event'); a garbage control payload returned HTTP 401 + 'malformed body' log (parse-failure control). See webhook_liveness_evidence. (2) provisionConnectListener deliveryMode 'SIM' + eventData restv2.1 (buildArkovaConnectConfig / buildConnectPayload) \u2014 NOT exercised live on the rig: provisioning would create a real DocuSign Connect listener on the production DocuSign account pointing at the rig URL, which is prohibited on a soak rig (see deviations). Covered by the PR's own unit tests (docusign.test.ts asserts body.deliveryMode==='SIM' and body.eventData==={format:'json',version:'restv2.1'}) + worker boots cleanly with the provisioning module present. Real end-to-end provisioning proof is the documented post-merge prod residual. (3) deploy-worker.yml DOCUSIGN_CONNECT_HMAC_SECRET -> docusign_connect_hmac_secret_prod durable binding \u2014 CI/deploy-config only (one line in .github/workflows/deploy-worker.yml). NOT bound on this rig with the prod secret; an INERT placeholder DOCUSIGN_CONNECT_HMAC_SECRET was used to satisfy config Zod and drive the HMAC-verify path. Coverage = the deploy-worker.yml diff + CI; prod cutover proves the live binding.",
+      "allowed_base_shas": [
+        "82a9ed53c21c1b1297639d2007ba7a210c1f9a77",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "profile": "mock",
+    "staging_api_base": "https://arkova-worker-rc-t2-docusign-20260726-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-rc-t2-docusign-20260726-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-rc-t2-docusign-20260726",
+    "revision": "arkova-worker-rc-t2-docusign-20260726-00002-npc",
+    "deploy_tag": "none (dedicated isolated service, not a tag-routed revision on shared staging)",
+    "image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:rc-t2-docusign-20260726",
+    "image_digest": "sha256:a66752b70721a49107a144c12ad85976c0d3cc9c7725c698fd1ae48d53efdea3",
+    "cloud_build_id": "451a3b28-7752-4d48-a147-47425fe16df6",
+    "build_sha_baked": "55551e465718c93896a721bf7c6f806044377cee",
+    "health_git_sha": "55551e465718c93896a721bf7c6f806044377cee",
+    "supabase_project_ref": "xegdwkywfrioghzbpuzj",
+    "supabase_project_name": "arkova-rc-t2-docusign",
+    "supabase_region": "us-east-2",
+    "min_instances": 1,
+    "deploy_log_id": "n/a (scripts/staging/deploy.sh targets the shared arkova-worker-staging service only; this isolated rig was deployed via gcloud run deploy on the digest-pinned RC image + one gcloud run services update to load the DB switchboard flag \u2014 deviation documented in notes)",
+    "preflight_result": "environment_type=clean_mirror",
+    "profile_note": "mock-chain profile \u2014 no chain-path code in this RC; see deviations"
+  },
+  "soak": {
+    "start": "2026-07-26T18:41:44Z",
+    "end": "2026-07-27T06:41:44Z",
+    "duration_hours": 12,
+    "clock_anchor": "Cloud Run revision arkova-worker-rc-t2-docusign-20260726-00002-npc uptime (min-instances=1). Rev 00002 is the FIRST revision that read ENABLE_BATCH_ANCHORING=true from the DB switchboard flag; the clock anchors here (no mid-soak reset \u2014 the flag load + restart happened BEFORE the clock started).",
+    "harness_version": "manual authenticated cron-driven lifecycle + Cloud Scheduler (3 ENABLED jobs) + DocuSign webhook changed-path liveness probes",
+    "result": "pass \u2014 12h T2 window fully covered by continuous Cloud Run uptime, verified at maturity 2026-07-27T06:45Z (rc-t2 45575s >= 45480s; rc-t2-docusign 43467s >= 43200s); clean_mirror preflight; lifecycle cycle 20/20 SECURED; zero restarts",
+    "evidence_links": [
+      "https://arkova-worker-rc-t2-docusign-20260726-270018525501.us-central1.run.app",
+      "https://github.com/carson-see/ArkovaCarson/pull/1692",
+      "https://github.com/carson-see/ArkovaCarson/pull/1696",
+      "https://github.com/carson-see/ArkovaCarson/pull/1704"
+    ],
+    "expires_at": "2026-07-29T06:41:44Z"
+  },
+  "lifecycle_evidence": {
+    "note": "MOCK chain (USE_MOCKS=true, ENABLE_PROD_NETWORK_ANCHORING=false, network=signet in /health). Deterministic mock txid/block; no real broadcast. None of PR #1690's changed lines touch services/worker/src/chain/, so mock exercises the batch lifecycle as a worker-health neighbor of the changed DocuSign paths.",
+    "cycle": "20 anchors PENDING -> (force-flush POST /jobs/batch-anchors?force=true) -> SUBMITTED -> (POST /jobs/check-confirmations) -> SECURED",
+    "batch_id": "batch_1785091485967_20",
+    "merkle_root": "7d072268a95aab29fa2719bad2faf5114b6f01d3d31d039cb023fac307a30d6d",
+    "mock_txid": "6d2739d800d3e94e902cdcc9ed39809508f13874e1b433751a75653cf991ede3",
+    "batch_anchors_result": "{\"processed\":20,\"batchId\":\"batch_1785091485967_20\",\"merkleRoot\":\"7d072268...\",\"txId\":\"6d2739d8...\"}",
+    "check_confirmations_result": "{\"checked\":20,\"confirmed\":20}",
+    "final_status_distribution": "SECURED=20, SUBMITTED=1 (fixture baseline anchor preserved for preflight check-5 submitted_anchors)"
+  },
+  "webhook_liveness_evidence": {
+    "note": "Changed-path (#1690) liveness for POST /webhooks/docusign, driven WITHOUT any real DocuSign secret or API call. ENABLE_DOCUSIGN_WEBHOOK=true mounts the route; an INERT DOCUSIGN_CONNECT_HMAC_SECRET (random, NOT the prod secret) drives the HMAC-verify path. ENABLE_DOCUSIGN_OAUTH is OFF and DOCUSIGN_INTEGRATION_KEY/DOCUSIGN_CLIENT_SECRET are both UNSET, so the OAuth/provisionConnectListener flow is unreachable \u2014 the rig can never call or provision against the real DocuSign account.",
+    "route": "POST /webhooks/docusign (killSwitch ENABLE_DOCUSIGN_WEBHOOK)",
+    "probes": [
+      {
+        "name": "changed-path signed",
+        "request": "REST v2.1 SIM completed-envelope payload with status/documents nested under data.envelopeSummary (the shape only PR #1690's parser handles), HMAC-SHA256 base64 signed with the inert env key in X-DocuSign-Signature-1",
+        "http_status": 200,
+        "response_body": "{\"ok\":true,\"orphaned\":true}",
+        "log_line": "DocuSign webhook: unknown connected account (accountId=acct-rc2-signed)",
+        "proves": "parseDocusignConnectPayload parsed the nested REST v2.1 payload AND reached the integration-lookup + env-key HMAC verification (verification=ok). Both changed parse fallbacks and HMAC enforcement fire."
+      },
+      {
+        "name": "changed-path unsigned",
+        "request": "same nested REST v2.1 payload, no signature header",
+        "http_status": 401,
+        "response_body": "{\"error\":{\"code\":\"invalid_signature\"}}",
+        "log_line": "(none \u2014 no 'malformed body')",
+        "proves": "parse SUCCEEDED (reached the unsigned-unknown-account 401 branch, which does not log); the pre-#1690 parse chain would instead have thrown 'not a completed envelope event' and logged 'malformed body'. HMAC enforced (401 on unsigned)."
+      },
+      {
+        "name": "control garbage",
+        "request": "{\"event\":\"envelope-completed\",\"garbage\":true} (no status/envelopeId/accountId)",
+        "http_status": 401,
+        "response_body": "{\"error\":{\"code\":\"invalid_signature\"}}",
+        "log_line": "DocuSign webhook: malformed body (err: DocuSign Connect payload is not a completed envelope event)",
+        "proves": "parse-failure control \u2014 confirms the discriminator: a payload the parser cannot normalize logs 'malformed body', which the nested REST v2.1 payload did NOT."
+      }
+    ]
+  },
+  "schedulers_enabled": [
+    "arkova-worker-rc-t2-docusign-20260726-batch-anchors (*/5)",
+    "arkova-worker-rc-t2-docusign-20260726-check-confirmations (*/5)",
+    "arkova-worker-rc-t2-docusign-20260726-recover-broadcasts (*/10)"
+  ],
+  "scheduler_auth_proof": "gcloud scheduler jobs run arkova-worker-rc-t2-docusign-20260726-check-confirmations -> worker returned HTTP 200 (OIDC audience = rig URL + X-Cron-Secret chain verified end-to-end).",
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "N/A \u2014 PR #1690 touches no supabase/migrations/ files (verified: only .github/workflows/deploy-worker.yml + services/worker/src/integrations/oauth/docusign.ts + docusign.test.ts). No migration to rehearse.",
+    "reapply_proof": "N/A",
+    "stop_conditions": [
+      "worker uptime < 12h at merge time (soak not matured)",
+      "any /health regression during soak window",
+      "release-owner approval not granted"
+    ]
+  },
+  "deviations": [
+    "PROFILE = mock (USE_MOCKS=true / anchoring off / network=signet), matching the canonical shared-staging T2 posture and RC-1 (rc-t2-worker-batch-20260726). Rationale: none of #1690's changed lines touch services/worker/src/chain/, the broadcast path, or RPC; mock exercises 100% of the reachable changed lines (the DocuSign webhook parse path is fully exercised, see webhook_liveness_evidence).",
+    "NO real DocuSign secret bound and NO real DocuSign API/provisioning call made from the rig. ENABLE_DOCUSIGN_OAUTH is OFF; DOCUSIGN_INTEGRATION_KEY and DOCUSIGN_CLIENT_SECRET are both UNSET (config.ts pair-rule satisfied: both unset); DOCUSIGN_CONNECT_HMAC_SECRET is an INERT random placeholder (verifies inbound signatures only, never calls out). This is deliberate: a rig-side provisionConnectListener run would create a DocuSign Connect listener on the PRODUCTION DocuSign account pointing at the rig URL. The real deliveryMode-SIM provisioning proof is the post-merge prod residual (documented in included_prs[0].soak_coverage surface 2).",
+    "Supabase project created via `supabase projects create` (CLI, controlled DB password) instead of MCP create_project, because clean_mirror requires numeric-ledger schema replay via `supabase db push --linked` which needs a known DB password (MCP create_project does not expose one). Cost (~$10/mo micro) acknowledged; tear down after soak matures + merges.",
+    "Deployed via `gcloud run deploy` on the digest-pinned RC image (sha256:a66752b7...) rather than scripts/staging/deploy.sh, because deploy.sh is hard-scoped to the shared arkova-worker-staging service and cannot target an ad-hoc isolated service.",
+    "provision-isolated-rig.sh (the documented orchestrator) was NOT used to --apply: its mock profile deploys at min-instances=0 with no Cloud Scheduler (unsuitable for a T2 cron-driven soak), and its defaults are hardwired for a single-PR T3 chain soak. Standup was done manually to match T2 semantics + wire the 3 changed-path-neighbor cron routes + the DocuSign webhook route.",
+    "Soak clock set at rev 00002 (not 00001): rev 00001 booted with an empty switchboard_flags table (env fallback => ENABLE_BATCH_ANCHORING off); the flag was seeded to the DB and the worker restarted (gcloud run services update BATCH_ANCHORING_FLAG_LOADED=1) so flagRegistry.init() re-read it (source=db). Same image digest; RC head unchanged. The restart happened BEFORE the clock started, so this is a clean clock anchor, not a mid-soak reset.",
+    "SUPABASE_JWT_SECRET is an inert 64-hex value (>=32 chars), not the project's real JWT secret (not cleanly exposed by the Management API). Functionally sufficient: this mock rig verifies no user JWTs during the cron/webhook lifecycle; the value only needs to satisfy config.ts Zod. Boot-critical STRIPE_*/API_KEY_HMAC/CRON secrets reuse the shared `-staging` Secret Manager secrets."
+  ],
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": "",
+    "residual_note": "Post-merge on prod, verify the deliveryMode-SIM Connect provisioning end-to-end against the real DocuSign account (the one surface the rig cannot exercise): confirm an org connect creates a Connect listener (no 400 INVALID_REQUEST_PARAMETER) and a live envelope-completed delivery is HMAC-accepted under docusign_connect_hmac_secret_prod."
+  },
+  "exceptions": []
+}

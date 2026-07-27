@@ -213,7 +213,7 @@ export const PATH_RULES: PathRule[] = [
     reason: 'auth-sensitive worker logic',
   },
   {
-    pattern: /^(?:scripts\/ci\/s33-wave1-github-evidence\.ts|\.github\/s33-wave1-acceptance-authorities\.json)$/,
+    pattern: /^(?:scripts\/ci\/s33-wave1-github-evidence\.(?:ts|mjs)|\.github\/s33-wave1-acceptance-authorities\.json)$/,
     minTier: 'T2',
     reason: 'S3.3 acceptance companion reachable from production runtime',
   },
@@ -2153,6 +2153,11 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
+  // SCRUM-2897: evidence-identity gate — a pure body/head-SHA identity checker
+  // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
+  // CI (reads PR body/head/draft from the event context); never ships to prod
+  // runtime → T0 tooling. Same class as the staging-evidence gate above.
+  /^scripts\/ci\/check-evidence-identity(\.test)?\.ts$/,
   // S0-4.2 / S0-4.3 (epic S0-E4): release-pipeline CI tooling. These run only
   // in CI and never ship to prod runtime, so they are T0 tooling.
   /^scripts\/ci\/check-ledger-numeric-integrity(\.test)?\.ts$/,
@@ -2184,6 +2189,19 @@ const STAGING_TOOLING_ALLOW = [
   // in CI, never ships to prod runtime, so it is T0 tooling.
   /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
+  // SCRUM-2977: anti-hollow-soak pre-clock guard set. A pure guard module + CLI
+  // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
+  // CI (and locally over a soak-preflight JSON); never ships to prod runtime →
+  // T0 tooling. Same class as the check-* gates above.
+  /^scripts\/ci\/anti-hollow-soak\//,
+  // PI-0.5 G1: KPI-3 explorer-rehearsal harness + clean-room verification tools
+  // (partner/auditor-run, dependency-free; never imported by worker or frontend
+  // — no prod runtime to soak). DIR-SCOPED on purpose: a blanket scripts/**.mjs
+  // carve-out was reviewed and rejected (unconditional T1→T0 for future
+  // prod-shaped ops scripts, unlike the import-scan-conditional S33 carve-out).
+  // New clean-room tool trees get their own explicit entry here.
+  /^scripts\/kpi3\//,
+  /^scripts\/clean-room\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,
   /^tests\/k6\//,

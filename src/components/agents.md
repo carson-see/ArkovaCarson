@@ -1,9 +1,13 @@
 # agents.md — components
 _Last updated: 2026-07-06_
 
+## 2026-07-22 SCRUM-2914 (Founder UI findings): AI-03 confidence gate removed
+
+`anchor/TemplateReviewPanel.tsx` still renders as the review/correct step in `SecureDocumentDialog`'s completed-extraction view (every field editable; fields below `LOW_CONFIDENCE_THRESHOLD` (0.8) are still amber-flagged for acknowledgment/correction), but `SecureDocumentDialog.tsx` no longer wires its `onReviewStateChange` to a blocking `reviewComplete` state — it's a no-op. The dialog's Continue (`data-testid="extraction-review-continue"`) is never disabled on confidence; the AI-03 gate is vacuous by design (confidence scoring is unreliable and must not block a submit). `anchor/AIFieldSuggestions.tsx` and `anchor/ExtractionQualityBanner.tsx` also dropped their confidence-percentage UI (`overallConfidence` prop removed from both; accept/reject/edit and the PII-stripped-fields notice are unaffected).
+
 ## 2026-07-06 AI-03 template-review MVP (SCRUM-2383)
 
-`anchor/TemplateReviewPanel.tsx` — review/correct step rendered in `SecureDocumentDialog`'s completed-extraction view (replacing the completed-state `AIFieldSuggestions` instance; the progress-state instance remains). Every field is editable; fields below `LOW_CONFIDENCE_THRESHOLD` (0.8) are amber-flagged and must be acknowledged ("This is correct") or corrected before the dialog's Continue (`data-testid="extraction-review-continue"`) enables — wired via `onReviewStateChange` → `reviewComplete` state. Gated by `ENABLE_AI_EXTRACTION` (flag off → panel renders nothing AND reports review-complete so the flow is never blocked). Strings in `TEMPLATE_REVIEW_LABELS` (copy.ts). Client telemetry value-omission is test-locked; the server-side counterpart lives in `services/worker/src/api/v1/ai-template.ts`.
+`anchor/TemplateReviewPanel.tsx` — review/correct step rendered in `SecureDocumentDialog`'s completed-extraction view (replacing the completed-state `AIFieldSuggestions` instance; the progress-state instance remains). Strings in `TEMPLATE_REVIEW_LABELS` (copy.ts). Client telemetry value-omission is test-locked; the server-side counterpart lives in `services/worker/src/api/v1/ai-template.ts`.
 
 ## What This Folder Contains
 

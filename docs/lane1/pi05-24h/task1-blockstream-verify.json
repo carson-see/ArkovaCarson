@@ -1,0 +1,62 @@
+[
+ {
+  "public_id": "ARK-2026-D2959176",
+  "txid": "c814f1cec9450c091965b2e419e9a1b3d5edac3e4e79c8e3f95acf6edcb1f0d2",
+  "db_fp": "83204bbd57f6fd588a1f3458564b9b494de6a37231982cd1d17c6b12e290f018",
+  "db_block": 952022,
+  "explorer_confirmed": true,
+  "explorer_block": 952022,
+  "explorer_block_hash": "00000000000000000000eb383dddd0d3f905e9ece13261dfb1a127cb9b19725a",
+  "op_return_hex": "6a2c41524b5683204bbd57f6fd588a1f3458564b9b494de6a37231982cd1d17c6b12e290f018e78d227d111d0c3e",
+  "payload": "41524b5683204bbd57f6fd588a1f3458564b9b494de6a37231982cd1d17c6b12e290f018e78d227d111d0c3e",
+  "magic_ascii": "ARKV",
+  "fp_in_optreturn": true,
+  "committed_fp": "83204bbd57f6fd588a1f3458564b9b494de6a37231982cd1d17c6b12e290f018",
+  "block_match": true
+ },
+ {
+  "public_id": "ARK-2026-547B119A",
+  "txid": "2eaec136249f582ad18ba4364c1f5409daa26e2eea5cedab0877b8260514895c",
+  "db_fp": "dc49c50f264b21d9a99aa60a3332358593ec07c209eeeea7af5d48841e67aa7f",
+  "db_block": 952123,
+  "explorer_confirmed": true,
+  "explorer_block": 952123,
+  "explorer_block_hash": "000000000000000000018addd651ce18523edad10578039e79438554843a82c8",
+  "op_return_hex": "6a2c41524b56dc49c50f264b21d9a99aa60a3332358593ec07c209eeeea7af5d48841e67aa7f3866b02f688ec086",
+  "payload": "41524b56dc49c50f264b21d9a99aa60a3332358593ec07c209eeeea7af5d48841e67aa7f3866b02f688ec086",
+  "magic_ascii": "ARKV",
+  "fp_in_optreturn": true,
+  "committed_fp": "dc49c50f264b21d9a99aa60a3332358593ec07c209eeeea7af5d48841e67aa7f",
+  "block_match": true
+ },
+ {
+  "public_id": "ARK-2026-1F070188",
+  "txid": "20c00e614c9c84d8a3a8d89a053750965848b8b78d8431534a3929fe794e9194",
+  "db_fp": "1fcf3d3c2847674fa9f5ca4632dee2c3efbac386abf67a7a46ed24dec41bb0bb",
+  "db_block": 952123,
+  "explorer_confirmed": true,
+  "explorer_block": 952123,
+  "explorer_block_hash": "000000000000000000018addd651ce18523edad10578039e79438554843a82c8",
+  "op_return_hex": "6a2c41524b561fcf3d3c2847674fa9f5ca4632dee2c3efbac386abf67a7a46ed24dec41bb0bbf84b39e2df0bac21",
+  "payload": "41524b561fcf3d3c2847674fa9f5ca4632dee2c3efbac386abf67a7a46ed24dec41bb0bbf84b39e2df0bac21",
+  "magic_ascii": "ARKV",
+  "fp_in_optreturn": true,
+  "committed_fp": "1fcf3d3c2847674fa9f5ca4632dee2c3efbac386abf67a7a46ed24dec41bb0bb",
+  "block_match": true
+ },
+ {
+  "public_id": "ARK-2026-8F862179",
+  "txid": "05dd1f1dfea903f469533ce2ebaa12a630fd034751d87452e4f617b1ed379656",
+  "db_fp": "c9f167fd9cd0fe87ba8183f240baa149e4c7c29b354a4eeb7e9d3693279ec911",
+  "db_block": 955960,
+  "explorer_confirmed": true,
+  "explorer_block": 955960,
+  "explorer_block_hash": "000000000000000000010ea1924a6a1a2f421a6c876d6d00eccf82dfdbe3294b",
+  "op_return_hex": "6a2c41524b56c9f167fd9cd0fe87ba8183f240baa149e4c7c29b354a4eeb7e9d3693279ec9117d1d2e25bc116351",
+  "payload": "41524b56c9f167fd9cd0fe87ba8183f240baa149e4c7c29b354a4eeb7e9d3693279ec9117d1d2e25bc116351",
+  "magic_ascii": "ARKV",
+  "fp_in_optreturn": true,
+  "committed_fp": "c9f167fd9cd0fe87ba8183f240baa149e4c7c29b354a4eeb7e9d3693279ec911",
+  "block_match": true
+ }
+]

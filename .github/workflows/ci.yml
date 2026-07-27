@@ -104,10 +104,10 @@ jobs:
         env:
           # PR labels feed the worker-env-adhoc-baseline-update override
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        run: npx tsx scripts/ci/check-worker-env-adhoc.ts
+        run: node_modules/.bin/tsx scripts/ci/check-worker-env-adhoc.ts
 
       - name: Block tracked filenames with spaces (SCRUM-1294)
-        run: npx tsx scripts/ci/check-filename-spaces.ts
+        run: node_modules/.bin/tsx scripts/ci/check-filename-spaces.ts
 
       # SCRUM-2483 — ban raw fetch()/undici in services/worker/src outside a
       # reviewed allow-list; worker egress must route through the IP-pinned
@@ -115,7 +115,7 @@ jobs:
       # exits 0 and only annotates. The WARN→ERROR ratchet (BAN_RAW_FETCH_MODE=
       # error) lands in a SEPARATE PR after all egress is migrated to safeFetch.
       - name: Ban raw fetch/undici in worker egress (SCRUM-2483, warn-first)
-        run: npx tsx scripts/ci/ban-raw-fetch-worker.ts
+        run: node_modules/.bin/tsx scripts/ci/ban-raw-fetch-worker.ts
 
       # WEBEXT-04 / SCRUM-2506 — CSP↔runtime-deps drift gate. Parses the deployed
       # CSP (vercel.json) and fails if any on-device runtime dep (Tesseract OCR /
@@ -125,24 +125,24 @@ jobs:
       - name: Block CSP↔runtime-deps drift (WEBEXT-04 / SCRUM-2506)
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        run: npx tsx scripts/ci/check-csp-runtime-deps.ts
+        run: node_modules/.bin/tsx scripts/ci/check-csp-runtime-deps.ts
 
       - name: Block duplicate source artifacts and repo-copy worktrees (SCRUM-1586)
         run: npm run ci:duplicate-artifacts
 
       - name: Block migration prefix collisions (SCRUM-1287)
-        run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
+        run: node_modules/.bin/tsx scripts/ci/check-migration-prefix-uniqueness.ts
 
       # S0-4.2 / SCRUM-2500 — local-file half of the full-ledger numeric-integrity
       # audit (network-free). The prod-ledger half runs in migration-drift.yml,
       # which already holds the read-only Supabase Management API token.
       - name: Audit local migration ledger integrity (SCRUM-2500)
-        run: npx tsx scripts/ci/check-ledger-numeric-integrity.ts
+        run: node_modules/.bin/tsx scripts/ci/check-ledger-numeric-integrity.ts
 
       # S0-4.3 — block colliding migration agents.md "Recent migrations" blocks
       # (CLAUDE.md §6); each block must carry a (PR #NNNN) discriminator.
       - name: Block migration agents.md collisions (S0-E4)
-        run: npx tsx scripts/ci/check-agents-md-migration-collision.ts
+        run: node_modules/.bin/tsx scripts/ci/check-agents-md-migration-collision.ts
 
       - name: Require justification for new anchors indexes (SCRUM-1286)
         run: npm run ci:anchor-index-justification
@@ -151,27 +151,27 @@ jobs:
         run: npm run ci:api-scope-vocabulary
 
       - name: Block credential type enum drift (SCRUM-2013)
-        run: npx tsx scripts/ci/check-credential-type-drift.ts
+        run: node_modules/.bin/tsx scripts/ci/check-credential-type-drift.ts
 
       - name: Block CREATE VIEW without security_invoker (SCRUM-1276)
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        run: npx tsx scripts/ci/check-views-security-invoker.ts
+        run: node_modules/.bin/tsx scripts/ci/check-views-security-invoker.ts
 
       - name: Block bare auth.uid() in new RLS policies (SCRUM-1278)
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        run: npx tsx scripts/ci/check-rls-auth-uid-wrap.ts
+        run: node_modules/.bin/tsx scripts/ci/check-rls-auth-uid-wrap.ts
 
       - name: Block ENABLE RLS without policy (SCRUM-1275)
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        run: npx tsx scripts/ci/check-rls-policy-coverage.ts
+        run: node_modules/.bin/tsx scripts/ci/check-rls-policy-coverage.ts
 
       - name: Block inline crypto.createHmac in webhook handlers (SCRUM-1282)
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        run: npx tsx scripts/ci/check-webhook-hmac-consolidation.ts
+        run: node_modules/.bin/tsx scripts/ci/check-webhook-hmac-consolidation.ts
 
       - name: Enforce container-image CVE scan gate (TVM/IVS)
         # deploy-worker.yml must keep a Trivy base-image CVE scan gating the
@@ -179,7 +179,7 @@ jobs:
         # that control is removed, unpinned, or weakened. Complements the npm
         # audit / Sonatype dependency scans below (which cover the library
         # layer). Control doc: docs/compliance/container-image-scanning.md.
-        run: npx tsx scripts/ci/check-image-scan-gate.ts
+        run: node_modules/.bin/tsx scripts/ci/check-image-scan-gate.ts
 
       - name: Run npm audit (root production dependencies)
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
@@ -339,13 +339,13 @@ jobs:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: npx tsx scripts/ci/check-coverage-monotonic.ts
+        run: node_modules/.bin/tsx scripts/ci/check-coverage-monotonic.ts
 
       - name: "count:'exact' baseline"
         env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        run: npx tsx scripts/ci/check-count-exact-baseline.ts
+        run: node_modules/.bin/tsx scripts/ci/check-count-exact-baseline.ts
 
       - name: Feedback rules
         env:
@@ -353,7 +353,7 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_HEAD_REF: ${{ github.head_ref }}
-        run: npx tsx scripts/ci/check-feedback-rules.ts
+        run: node_modules/.bin/tsx scripts/ci/check-feedback-rules.ts
 
       # S0-4.3 — tiered-merge authority (advisory). Computes the required tier
       # from the changed files (reusing requiredTierFor) and reports whether the
@@ -364,10 +364,10 @@ jobs:
       - name: Tiered-merge authority (S0-E4)
         env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
-        run: npx tsx scripts/ci/compute-merge-authority.ts
+        run: node_modules/.bin/tsx scripts/ci/compute-merge-authority.ts
 
       - name: Config↔reality drift + cross-runtime parity gate (S0-5.2)
-        run: npx tsx scripts/ci/check-config-drift.ts
+        run: node_modules/.bin/tsx scripts/ci/check-config-drift.ts
 
       - name: HANDOFF.md verification lint
         env:
@@ -375,7 +375,7 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}
-        run: npx tsx scripts/ci/check-handoff-claims.ts
+        run: node_modules/.bin/tsx scripts/ci/check-handoff-claims.ts
 
       - name: Confluence page coverage
         if: github.event_name == 'pull_request'
@@ -388,7 +388,7 @@ jobs:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           FAIL_ON_MISSING_CONFLUENCE: 'false'
-        run: npx tsx scripts/ci/check-confluence-coverage.ts
+        run: node_modules/.bin/tsx scripts/ci/check-confluence-coverage.ts
 
   # TDD enforcement — production code changes must include test changes.
   # Actual enforcement runs only on pull_request events: TDD is a gate for
@@ -439,7 +439,7 @@ jobs:
         run: npm run typecheck
 
       - name: TypeScript build check (Vercel-safe)
-        run: npx tsc -p tsconfig.build.json --noEmit
+        run: node_modules/.bin/tsc -p tsconfig.build.json --noEmit
 
       - name: Lint
         run: npm run lint
@@ -467,7 +467,7 @@ jobs:
         # Fails CI if anyone reverts deploy-worker.yml back to inlined
         # `npx eslint src/ --max-warnings 0` (or any other drift). The
         # 2026-04-25 outage was caused by exactly this drift.
-        run: npx tsx scripts/ci/check-deploy-lint-parity.ts
+        run: node_modules/.bin/tsx scripts/ci/check-deploy-lint-parity.ts
 
       - name: Verify deploy-gate / CI worker BUILD parity
         # CONDITIONAL-GO sub-decision B — 3-way build-command parity guard.
@@ -480,7 +480,7 @@ jobs:
         # never acceptable; the escape hatch is editing the invariant in-PR
         # (with `ci-config-change` / `build-parity-ack` signoff), same as lint
         # parity.
-        run: npx tsx scripts/ci/check-deploy-build-parity.ts
+        run: node_modules/.bin/tsx scripts/ci/check-deploy-build-parity.ts
 
       - name: Verify 429 responses include Retry-After
         run: npm run ci:retry-after-429
@@ -491,7 +491,7 @@ jobs:
       - name: TypeScript check (edge workers)
         env:
           NODE_OPTIONS: '--max-old-space-size=8192'
-        run: npx tsc -p services/edge/tsconfig.json --noEmit
+        run: node_modules/.bin/tsc -p services/edge/tsconfig.json --noEmit
 
   # Verify generated types are up to date
   types-check:
@@ -649,7 +649,9 @@ jobs:
           set -euo pipefail
           CIRCOM_VERSION=v2.1.9
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL --retry 5 -o "$HOME/.local/bin/circom" \
+          # SCRUM-3018 / Sonar S6506: enforce HTTPS on the fetch and on any
+          # redirect so a downgraded redirect can't serve the binary over http.
+          curl --proto '=https' --proto-redir '=https' -fsSL --retry 5 -o "$HOME/.local/bin/circom" \
             "https://github.com/iden3/circom/releases/download/${CIRCOM_VERSION}/circom-linux-amd64"
           # Pin the binary by SHA-256 — supply chain integrity for the toolchain.
           echo "e5575829252d763b7818049df9de2ef9304df834697de77fa63ce7babc23c967  $HOME/.local/bin/circom" | sha256sum -c -
@@ -715,7 +717,7 @@ jobs:
       - name: Run AI eval against golden dataset (mock provider)
         if: steps.ai-changed.outputs.changed == 'true'
         working-directory: services/worker
-        run: npx vitest run src/ai/eval/ --reporter=verbose
+        run: node_modules/.bin/vitest run src/ai/eval/ --reporter=verbose
         env:
           AI_PROVIDER: mock
 
@@ -873,7 +875,7 @@ jobs:
         # `tla-precheck setup` prompts "Download TLC tla2tools.jar? (Y/n)"
         # and "Install skill to Claude Code + Codex? (Y/n)"; piping `yes`
         # keeps CI non-interactive.
-        run: yes | npx tla-precheck setup || true
+        run: yes | node_modules/.bin/tla-precheck setup || true
 
       - name: Pin TLA2TOOLS_JAR (workaround tla-precheck checksum bug)
         # SCRUM-1248 (R0-2): tla-precheck@0.1.7 has a hard-coded expected
@@ -907,7 +909,9 @@ jobs:
           TLA2TOOLS_SHA256: cc4803dce2a8ffaf0f5920a9dc39df4b5ee34ab4cb53fb58ac557277a7e516b3
         run: |
           mkdir -p "$HOME/.tla"
-          curl -fsSL -o "$HOME/.tla/tla2tools.jar" \
+          # SCRUM-3018 / Sonar S6506: enforce HTTPS on the fetch and on any
+          # redirect (GitHub release assets redirect to an https objects host).
+          curl --proto '=https' --proto-redir '=https' -fsSL -o "$HOME/.tla/tla2tools.jar" \
             "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
           ACTUAL=$(sha256sum "$HOME/.tla/tla2tools.jar" | awk '{print $1}')
           if [ "$ACTUAL" != "$TLA2TOOLS_SHA256" ]; then
@@ -1035,6 +1039,18 @@ jobs:
           # git cat-file check below fail, which fails safe to running E2E.
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
+          # SCRUM-3018: never skip E2E on a push to a protected branch. The path
+          # filter below is a PR-only cost optimization; on a push event it let a
+          # docs-only tip skip Playwright yet still report the "E2E Tests" check
+          # green, masking a real regression on main (run 30162406748, after
+          # #1677). Any push (main/staging/develop per this workflow's triggers)
+          # runs the full suite regardless of the diff. GITHUB_EVENT_NAME /
+          # GITHUB_REF are default runner env vars, always set.
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "Push event on $GITHUB_REF — always running full E2E suite (SCRUM-3018)"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
             echo "Base ref '$BASE_SHA' empty or unreachable — running E2E to be safe"
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -1082,7 +1098,7 @@ jobs:
 
       - name: Install Playwright browsers
         if: steps.e2e-changed.outputs.changed == 'true'
-        run: npx playwright install --with-deps chromium
+        run: node_modules/.bin/playwright install --with-deps chromium
 
       - name: Setup Supabase CLI
         if: steps.e2e-changed.outputs.changed == 'true'
@@ -1156,7 +1172,7 @@ jobs:
         # SCRUM-1620: E2E failures and timeouts are launch-blocking signals.
         # Workers=1 in playwright.config.ts; timeout 25 min keeps cold runners
         # from getting cut mid-suite while still failing the job on timeout.
-        run: npx playwright test --project=chromium
+        run: node_modules/.bin/playwright test --project=chromium
         timeout-minutes: 25
         env:
           VITE_SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
@@ -1230,10 +1246,25 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # SCRUM-3018 / Sonar S6505,S8543: lockfile-lint is now a pinned
+      # devDependency. Run the local, lockfile-verified binary instead of `npx`
+      # fetching an unpinned copy from the registry at runtime — a supply-chain
+      # smell that is doubly ironic for the lockfile-integrity check itself.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
       - name: Verify root lockfile integrity
-        run: npx lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https
+        run: node_modules/.bin/lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https
       - name: Verify worker lockfile integrity
-        run: npx lockfile-lint --path services/worker/package-lock.json --type npm --allowed-hosts npm --validate-https
+        run: node_modules/.bin/lockfile-lint --path services/worker/package-lock.json --type npm --allowed-hosts npm --validate-https
 
   # SBOM generation (CISO Action-10) — produce CycloneDX bill of materials on main
   sbom-generation:
@@ -1259,16 +1290,16 @@ jobs:
         # dep tree has legitimate peer-range drift (e.g. zod 3.24 vs
         # zod-to-json-schema's ^3.25.28 || ^4 peer). The SBOM still captures
         # the resolved tree — we just don't fail the job on `npm ls` warnings.
-        run: npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-file sbom-frontend.json --output-format JSON
+        run: node_modules/.bin/cyclonedx-npm --ignore-npm-errors --output-file sbom-frontend.json --output-format JSON
       - name: Generate worker SBOM (CycloneDX)
         run: |
           cd services/worker
           npm ci --ignore-scripts
-          npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-file ../../sbom-worker.json --output-format JSON
+          ../../node_modules/.bin/cyclonedx-npm --ignore-npm-errors --output-file ../../sbom-worker.json --output-format JSON
       - name: Generate license summary (DEP-09)
         run: |
-          npx license-checker --json --production > license-summary-frontend.json 2>/dev/null || true
-          cd services/worker && npx license-checker --json --production > ../../license-summary-worker.json 2>/dev/null || true
+          node_modules/.bin/license-checker --json --production > license-summary-frontend.json 2>/dev/null || true
+          cd services/worker && ../../node_modules/.bin/license-checker --json --production > ../../license-summary-worker.json 2>/dev/null || true
       - name: Flag GPL/AGPL/SSPL licenses
         run: |
           echo "=== GPL/AGPL/SSPL License Check ==="
@@ -1474,3 +1505,92 @@ jobs:
       - name: Skip notice (no verifier changes)
         if: steps.changed.outputs.changed != 'true'
         run: echo "No packages/verifier changes detected — verifier compile gate skipped; reporting green."
+
+  # SCRUM-2897 — evidence-identity gate, REPORT-ONLY.
+  # Asserts that a Ready, soak-tier PR's Staging Soak Evidence block binds to the
+  # exact commit + clean environment it claims:
+  #   A. declared `PR head SHA:` == the actual PR head SHA (a commit pushed after
+  #      the evidence was written silently invalidates the exact-head soak).
+  #   B. clean-preflight identity — preflight is `environment_type=clean_mirror`
+  #      (T2/T3) and any head SHA embedded in the preflight matches the declared
+  #      head (evidence may not be copied across heads — CLAUDE.md §1.11A).
+  # Drafts and T0 / no-evidence PRs are skipped.
+  #
+  # W3-freeze CTO carve-out: REPORT-ONLY / warn mode only — `--report-only`
+  # makes the CLI always exit 0 (notice/warning annotations, never ::error::),
+  # plus continue-on-error. Gates nothing. Fail-closed activation is deferred
+  # until >=1 real green soak calibrates it (#1617 T0-CI-infra precedent).
+  # Runs only on pull_request events (needs PR head/draft context). NON-REQUIRED.
+  evidence-identity-report:
+    name: Evidence-identity gate (report-only)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run evidence-identity gate (report-only, non-gating)
+        continue-on-error: true
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
+        run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts --report-only
+
+  # SCRUM-2977 — anti-hollow-soak pre-clock guards, REPORT-ONLY.
+  # A "hollow soak" burns real wall-clock while the PR's changed behavior is
+  # never exercised (flag off / no OIDC / unfunded rig / no provenance / base
+  # drift). scripts/ci/anti-hollow-soak/guards.ts runs the five pre-clock
+  # checks over a soak-preflight JSON and would block the clock on any hollow
+  # signature.
+  #
+  # W3-freeze CTO carve-out: this job is wired in REPORT-ONLY / warn mode only —
+  # it prints findings and ALWAYS exits 0, gating nothing. Fail-closed
+  # activation (dropping `--report-only`) is deferred until >=1 real green soak
+  # calibrates the guards, mirroring the #1617 T0-CI-infra precedent. The step
+  # also carries continue-on-error as belt-and-suspenders so this can never
+  # block a merge during calibration. NON-REQUIRED.
+  anti-hollow-soak-report:
+    name: Anti-hollow-soak guards (report-only)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run anti-hollow-soak guards (report-only, non-gating)
+        continue-on-error: true
+        run: |
+          shopt -s nullglob
+          preflights=(docs/staging/soak-preflight/*.json)
+          if [ ${#preflights[@]} -eq 0 ]; then
+            echo "::notice::No soak-preflight JSON under docs/staging/soak-preflight/ — anti-hollow-soak guards have nothing to check (report-only, non-gating)."
+            node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --report-only || true
+            exit 0
+          fi
+          for f in "${preflights[@]}"; do
+            echo "== anti-hollow-soak (report-only) :: $f =="
+            node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --report-only --input "$f" || true
+          done
+          exit 0

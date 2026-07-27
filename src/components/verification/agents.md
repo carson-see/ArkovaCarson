@@ -204,6 +204,13 @@ check, conservative by design. Regression test: "never renders fraud_* metadata
 keys" in `PublicVerification.test.tsx`. Never re-surface fraud data on any
 public or owner display surface.
 
-## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
-
-EvidenceLayersSection "Not present for this record."; EvidenceLevelBadge + SourceProvenanceDisplay local fallback triads scrubbed in lockstep with the canonical copy.ts EVIDENCE_TRIAD/EVIDENCE_LEVEL_BADGE_ALT strings (credential → document). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+**2026-07-21 (SCRUM-2910 remainder):** `MetadataDisplay.tsx` — a generic
+key-value metadata renderer exported from this barrel — now applies the same
+`isFraudMetadataKey` filter (plus the `_`-prefix internal-key drop). It is NOT
+currently mounted in any prod render path (exported for reuse only), so this is
+defense-in-depth against a future re-mount, not a live-leak fix. A durable STATIC
+guard (`src/tests/scrum-2910-fraud-filter-coverage.test.ts`) now scans every
+non-test file under `src/components` and FAILS if any file that iterates a
+freeform `metadata`/`meta` blob for rendering omits `isFraudMetadataKey` — this
+catches a brand-new renderer, not just the enumerated ones. If you add a metadata
+renderer, apply the filter or add an ALLOWLIST entry with a reason.
