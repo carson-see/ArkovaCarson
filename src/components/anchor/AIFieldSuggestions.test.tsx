@@ -17,7 +17,6 @@ const mockFields: ExtractionField[] = [
 
 const defaultProps = {
   fields: mockFields,
-  overallConfidence: 0.85,
   creditsRemaining: 45,
   onFieldAccept: vi.fn(),
   onFieldReject: vi.fn(),
@@ -29,16 +28,10 @@ describe('AIFieldSuggestions', () => {
   it('renders field labels and values', () => {
     render(<AIFieldSuggestions {...defaultProps} />);
 
-    expect(screen.getByText('Credential Type')).toBeInTheDocument();
+    expect(screen.getByText('Document Type')).toBeInTheDocument();
     expect(screen.getByText('DEGREE')).toBeInTheDocument();
     expect(screen.getByText('University of Michigan')).toBeInTheDocument();
     expect(screen.getByText('Computer Science')).toBeInTheDocument();
-  });
-
-  it('shows confidence badge', () => {
-    render(<AIFieldSuggestions {...defaultProps} />);
-    expect(screen.getByText(/Auto-detected/)).toBeInTheDocument();
-    expect(screen.getByText(/85%/)).toBeInTheDocument();
   });
 
   it('accepts creditsRemaining prop without error', () => {

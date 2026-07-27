@@ -55,12 +55,12 @@ describe('GettingStartedChecklist', () => {
 
   it('shows org-specific steps for ORG_ADMIN', () => {
     renderChecklist('ORG_ADMIN');
-    expect(screen.getByText(/credential template/i)).toBeInTheDocument();
+    expect(screen.getByText(/document template/i)).toBeInTheDocument();
   });
 
   it('shows individual steps for INDIVIDUAL', () => {
     renderChecklist('INDIVIDUAL');
-    expect(screen.getByText(/document/i)).toBeInTheDocument();
+    expect(screen.getByText('Secure your first document')).toBeInTheDocument();
   });
 
   it('marks completed steps when context reflects progress', () => {

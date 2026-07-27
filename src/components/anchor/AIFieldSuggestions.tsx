@@ -1,11 +1,16 @@
 /**
  * AIFieldSuggestions (P8-S5)
  *
- * Displays AI-extracted credential fields with confidence badges
- * and accept/reject/edit controls per field.
+ * Displays AI-extracted credential fields with accept/reject/edit controls
+ * per field.
  *
  * Constitution 4A: This component only displays server-returned metadata.
  * No document bytes or raw OCR text are rendered or stored.
+ *
+ * SCRUM-2914 (Founder UI findings, 2026-07-22): the overall and per-field
+ * confidence-percentage UI was removed — extraction confidence scoring is
+ * unreliable and must not be surfaced. Field-level accept/edit/reject is
+ * unaffected.
  *
  * Design: "Nordic Vault" aesthetic with glass cards and stagger animations.
  */
@@ -16,7 +21,6 @@ import type { ExtractionField, ExtractionProgress } from '../../lib/aiExtraction
 
 interface AIFieldSuggestionsProps {
   fields: ExtractionField[];
-  overallConfidence: number;
   creditsRemaining: number;
   progress?: ExtractionProgress;
   onFieldAccept: (key: string, value: string) => void;
@@ -27,7 +31,7 @@ interface AIFieldSuggestionsProps {
 }
 
 const FIELD_LABELS: Record<string, string> = {
-  credentialType: 'Credential Type',
+  credentialType: 'Document Type',
   issuerName: 'Issuer',
   recipientIdentifier: 'Recipient',
   issuedDate: 'Issue Date',
@@ -46,21 +50,8 @@ const FIELD_LABELS: Record<string, string> = {
   approvedBy: 'Approved By',
 };
 
-function getConfidenceColor(confidence: number): string {
-  if (confidence >= 0.8) return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
-  if (confidence >= 0.5) return 'text-amber-400 bg-amber-500/10 border-amber-500/20';
-  return 'text-[#00d4ff] bg-[#00d4ff]/10 border-[#00d4ff]/20';
-}
-
-function getConfidenceLabel(confidence: number): string {
-  if (confidence >= 0.8) return 'Auto-detected';
-  if (confidence >= 0.5) return 'Best guess';
-  return 'Needs review';
-}
-
 export function AIFieldSuggestions({
   fields,
-  overallConfidence,
   creditsRemaining: _creditsRemaining,
   progress,
   onFieldAccept,
@@ -133,13 +124,6 @@ export function AIFieldSuggestions({
           </div>
           <div>
             <h3 className="font-semibold text-sm">AI Suggestions</h3>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span
-                className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-xs font-medium border ${getConfidenceColor(overallConfidence)}`}
-              >
-                {getConfidenceLabel(overallConfidence)} ({Math.round(overallConfidence * 100)}%)
-              </span>
-            </div>
           </div>
         </div>
 
@@ -172,21 +156,6 @@ export function AIFieldSuggestions({
             <div className="flex-1 min-w-0">
               <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
                 {FIELD_LABELS[field.key] ?? field.key}
-              </div>
-
-              {/* Per-field confidence indicator (Design Audit #6) */}
-              <div className="flex items-center gap-1.5 mb-1">
-                <span
-                  className={`inline-block h-2 w-2 rounded-full ${
-                    field.confidence >= 0.8 ? 'bg-emerald-500' :
-                    field.confidence >= 0.5 ? 'bg-amber-500' :
-                    'bg-red-500'
-                  }`}
-                  title={`AI confidence: ${Math.round(field.confidence * 100)}%`}
-                />
-                <span className="text-[10px] text-muted-foreground">
-                  {Math.round(field.confidence * 100)}% confidence
-                </span>
               </div>
 
               {editingField === field.key ? (

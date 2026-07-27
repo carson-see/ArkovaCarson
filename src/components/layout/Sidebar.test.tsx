@@ -17,6 +17,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { ROUTES } from '@/lib/routes';
+import { MY_CREDENTIALS_LABELS } from '@/lib/copy';
 import type { RouteDestination } from '@/hooks/useProfile';
 
 // Mock ArkovaLogo
@@ -277,7 +278,7 @@ describe('Sidebar', () => {
 
   it('SCRUM-2915: surfaces My Credentials in the sidebar nav', () => {
     renderSidebar();
-    expect(screen.getAllByText('My Credentials').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(MY_CREDENTIALS_LABELS.NAV_LABEL).length).toBeGreaterThanOrEqual(1);
     expect(hrefSet()).toContain(ROUTES.MY_CREDENTIALS);
   });
 

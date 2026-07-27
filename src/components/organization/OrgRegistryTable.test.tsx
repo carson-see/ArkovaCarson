@@ -118,6 +118,22 @@ function renderTable(
   );
 }
 
+/**
+ * Export CSV is `disabled` until the row count arrives (`totalCount === 0`), and
+ * a raw `.click()` on a disabled button silently does nothing. Waiting only for
+ * the button to EXIST raced the fetch and made these specs flaky under load.
+ */
+async function waitForEnabledExportButton(): Promise<HTMLButtonElement> {
+  let button: HTMLButtonElement | undefined;
+  await waitFor(() => {
+    button = screen
+      .getAllByRole('button', { name: /export csv/i })
+      .find((el): el is HTMLButtonElement => !(el as HTMLButtonElement).disabled);
+    expect(button).toBeDefined();
+  });
+  return button as HTMLButtonElement;
+}
+
 describe('OrgRegistryTable', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -163,10 +179,9 @@ describe('OrgRegistryTable', () => {
   it('delegates export with the member scope for a non-admin', async () => {
     setQueryResult({ data: [validRow], count: 1, error: null });
     renderTable({ isAdmin: false, currentUserId: 'user-1' });
-    await waitFor(() => {
-      expect(screen.getAllByRole('button', { name: /export csv/i }).length).toBeGreaterThan(0);
-    });
-    const exportBtn = screen.getAllByRole('button', { name: /export csv/i })[0];
+    // The button renders immediately but is `disabled` until the row count
+    // lands — clicking it before then is a silent no-op, so wait for enabled.
+    const exportBtn = await waitForEnabledExportButton();
     exportBtn.click();
     await waitFor(() => {
       expect(mockExportAnchors).toHaveBeenCalledWith('org-1', {
@@ -179,10 +194,7 @@ describe('OrgRegistryTable', () => {
   it('delegates export org-wide for an admin', async () => {
     setQueryResult({ data: [validRow], count: 1, error: null });
     renderTable({ isAdmin: true, currentUserId: 'user-1' });
-    await waitFor(() => {
-      expect(screen.getAllByRole('button', { name: /export csv/i }).length).toBeGreaterThan(0);
-    });
-    const exportBtn = screen.getAllByRole('button', { name: /export csv/i })[0];
+    const exportBtn = await waitForEnabledExportButton();
     exportBtn.click();
     await waitFor(() => {
       expect(mockExportAnchors).toHaveBeenCalledWith('org-1', {

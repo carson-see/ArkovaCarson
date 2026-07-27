@@ -30,6 +30,7 @@ import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
 import { runCrossFieldChecks, validateFieldsForType } from './crossFieldFraudChecks.js';
 import { traceAiProviderCall } from './observability.js';
+import { stripJsonComments } from './strip-json-comments.js';
 
 const TOGETHER_API_BASE = 'https://api.together.xyz/v1';
 const DEFAULT_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct';
@@ -88,7 +89,7 @@ export class TogetherProvider implements IAIProvider {
       );
 
       const text = response.choices[0]?.message?.content ?? '';
-      const parsed = JSON.parse(text);
+      const parsed = parseTogetherJson(text);
       const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
       const { confidence: _, ...rawFields } = parsed;
       const validated = ExtractedFieldsSchema.safeParse(rawFields);
@@ -391,6 +392,214 @@ export class TogetherProvider implements IAIProvider {
     this.recordFailure();
     throw lastError;
   }
+}
+
+// ─── Hardened JSON parsing for raw Together AI text output ───
+
+/**
+ * BUG-2026-06-24-014 parity (Together AI / Nessie-on-RunPod follow-up):
+ * `response_format: { type: 'json_object' }` (native JSON mode) suppresses
+ * markdown-fence wrapping but does not protect against truncated output
+ * hitting max_tokens mid-object — a naked `JSON.parse` still throws
+ * SyntaxError there. Mirrors gemini.ts's private `parseModelJson` pipeline
+ * (strip JS-style comments -> strip markdown fence, in case a fine-tuned
+ * model ignores json_object mode -> brace-salvage/repair), kept
+ * file-scoped/independent per that precedent. (A third, near-identical
+ * `parseNessieJson` for nessie.ts exists on a separate, unmerged PR #1660 —
+ * not a file present in this checkout — so it isn't a sibling to cross-check
+ * against here.)
+ *
+ * Returns a parsed object whose shape the caller is responsible for
+ * validating (extractMetadata runs Zod). Tries, in order: the text as-is,
+ * the substring between the first `{` and last `}`, and a repaired version
+ * of that substring — deduping identical candidates so nothing is parsed
+ * twice, and always surfacing the FIRST parse error if every candidate
+ * fails (the most diagnostic one, not whichever attempt happened to run
+ * last).
+ */
+function parseTogetherJson(text: string): Record<string, unknown> {
+  const cleaned = stripJsonComments(text).trim();
+  const unfenced = stripMarkdownJsonFence(cleaned);
+
+  let firstError: unknown;
+  const tried = new Set<string>();
+  const tryParse = (candidate: string): Record<string, unknown> | undefined => {
+    if (tried.has(candidate)) return undefined;
+    tried.add(candidate);
+    try {
+      return ensureJsonObject(JSON.parse(candidate));
+    } catch (err) {
+      if (firstError === undefined) firstError = err;
+      return undefined;
+    }
+  };
+
+  const direct = tryParse(unfenced);
+  if (direct) return direct;
+
+  const start = unfenced.indexOf('{');
+  const end = unfenced.lastIndexOf('}');
+  const braceSliced = start >= 0 && end > start ? unfenced.slice(start, end + 1) : unfenced;
+
+  const sliced = tryParse(braceSliced);
+  if (sliced) return sliced;
+
+  const repaired = tryParse(repairTogetherJson(braceSliced));
+  if (repaired) return repaired;
+
+  throw firstError instanceof Error
+    ? firstError
+    : new Error('Together AI extraction response was not a JSON object');
+}
+
+function repairTogetherJson(text: string): string {
+  const withoutControlChars = text
+    .replace(/^\uFEFF/, '')
+    // eslint-disable-next-line no-control-regex -- intentional: strip JSON-invalid control chars from model output
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
+  const withoutTrailingCommas = stripTrailingCommasOutsideStrings(withoutControlChars);
+  const balanced = balanceJsonDelimiters(withoutTrailingCommas);
+  return escapeBareNewlinesInStrings(balanced);
+}
+
+/**
+ * Removes a trailing comma before `}`/`]` — but only when the comma sits
+ * outside a string value. A blind `text.replace(/,\s*([}\]])/g, '$1')` would
+ * also strip a comma-then-bracket sequence that happens to appear as
+ * ordinary prose *inside* a string field (e.g. "...see item 3, ] ref..."),
+ * silently corrupting extracted content instead of just repairing the
+ * malformed structural comma.
+ */
+function stripTrailingCommasOutsideStrings(text: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (escaped) {
+      out += char;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      out += char;
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      out += char;
+      continue;
+    }
+    if (!inString && char === ',') {
+      let lookahead = i + 1;
+      while (lookahead < text.length && /\s/.test(text[lookahead])) lookahead++;
+      if (lookahead < text.length && (text[lookahead] === '}' || text[lookahead] === ']')) {
+        continue; // drop only a structural trailing comma, outside any string
+      }
+    }
+    out += char;
+  }
+
+  return out;
+}
+
+function balanceJsonDelimiters(text: string): string {
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+
+  for (const char of text) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === '{') stack.push('}');
+    if (char === '[') stack.push(']');
+    if ((char === '}' || char === ']') && stack[stack.length - 1] === char) stack.pop();
+  }
+
+  // Truncation cutting off mid-string (arguably the most realistic max_tokens
+  // shape) leaves `inString` true at the end — close the string before
+  // appending the guessed structural closers, else the repaired text is
+  // still an unterminated string and JSON.parse rejects it outright.
+  let closed = text;
+  if (inString) {
+    if (escaped) closed = closed.slice(0, -1); // drop a dangling, incomplete escape
+    closed += '"';
+  }
+
+  return closed + stack.reverse().join('');
+}
+
+function escapeBareNewlinesInStrings(text: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (const char of text) {
+    if (escaped) {
+      out += char;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      out += char;
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      out += char;
+      continue;
+    }
+    if (inString && char === '\n') {
+      out += '\\n';
+      continue;
+    }
+    if (inString && char === '\r') {
+      out += '\\r';
+      continue;
+    }
+    if (inString && char === '\t') {
+      out += '\\t';
+      continue;
+    }
+    out += char;
+  }
+
+  return out;
+}
+
+function stripMarkdownJsonFence(cleaned: string): string {
+  if (!cleaned.startsWith('```')) return cleaned;
+
+  const firstLineBreak = cleaned.indexOf('\n');
+  const withoutOpeningFence = firstLineBreak >= 0
+    ? cleaned.slice(firstLineBreak + 1)
+    : cleaned.slice(3);
+  const trimmed = withoutOpeningFence.trim();
+
+  return trimmed.endsWith('```')
+    ? trimmed.slice(0, -3).trim()
+    : trimmed;
+}
+
+function ensureJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new Error('Together AI extraction response was not a JSON object');
 }
 
 // ─── Type definitions for Together AI API responses ───

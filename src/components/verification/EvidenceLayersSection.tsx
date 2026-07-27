@@ -118,7 +118,7 @@ export function EvidenceLayersSection({ layers, jurisdiction, className }: Evide
                 )}
 
                 {!layer.present && (
-                  <p className="text-xs text-muted-foreground ml-11">Not present for this credential.</p>
+                  <p className="text-xs text-muted-foreground ml-11">Not present for this record.</p>
                 )}
               </div>
             );

@@ -251,6 +251,57 @@ export interface SentryRuntimeConfig {
   kService?: string;
 }
 
+// ---------------------------------------------------------------------------
+// MT-1 (SCRUM-2901): Sentry environment derivation
+// ---------------------------------------------------------------------------
+//
+// Rigs and staging run with NODE_ENV=production, so NODE_ENV cannot be the
+// environment tag — a rig standup would flood prod alerting. The deployment
+// surface identity (K_SERVICE) is the honest signal: only the real prod
+// service earns 'production'; every other Cloud Run service is tagged with
+// its own service name (per-rig attribution, filterable as non-prod).
+
+/** The one Cloud Run service whose events may be tagged 'production'. */
+export const PROD_SERVICE_NAME = 'arkova-worker';
+
+export interface SentryEnvironmentInputs {
+  /** Explicit SENTRY_ENVIRONMENT override (wins when non-blank). */
+  sentryEnvironment?: string;
+  /** Cloud Run service name (K_SERVICE); unset off Cloud Run. */
+  kService?: string;
+  /** NODE_ENV — trusted only off Cloud Run, and never for 'production'. */
+  nodeEnv: string;
+}
+
+export function resolveSentryEnvironment(inputs: SentryEnvironmentInputs): string {
+  const explicit = inputs.sentryEnvironment?.trim();
+  if (explicit) {
+    // Guard (review P1): an explicit override may RENAME non-prod environments,
+    // but must NOT let a non-prod service identity claim 'production' — otherwise
+    // a rig with SENTRY_ENVIRONMENT=production floods the prod alert stream, the
+    // exact failure this derivation prevents. Only the real prod service may
+    // emit 'production', even via override.
+    if (explicit !== 'production' || inputs.kService === PROD_SERVICE_NAME) {
+      return explicit;
+    }
+    // else: fall through to the honest K_SERVICE/NODE_ENV derivation below.
+  }
+
+  if (inputs.kService) {
+    // NOTE (Architect review): the prod canary revision deploys onto the SAME
+    // service (`--tag canary --no-traffic`), so K_SERVICE is still
+    // 'arkova-worker' and canary events tag 'production'. K_SERVICE structurally
+    // can't distinguish canary from live (only K_REVISION carries the tag). This
+    // is acceptable today; if canary isolation is ever wanted, derive from the
+    // revision tag here.
+    return inputs.kService === PROD_SERVICE_NAME ? 'production' : inputs.kService;
+  }
+
+  // §1.5 honesty: a bare NODE_ENV=production without the prod service
+  // identity (local shell, docker run) must not pollute the prod stream.
+  return inputs.nodeEnv === 'production' ? 'local-production' : inputs.nodeEnv;
+}
+
 export function initSentry(
   dsn: string | undefined,
   environment: string,
@@ -378,6 +429,48 @@ export function capturePipelineThroughputAlert(
   Sentry.captureMessage(message, {
     level: 'error',
     fingerprint: [...PIPELINE_THROUGHPUT_FINGERPRINT],
+    ...(extra ? { extra } : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler pause dead-man fingerprinting (SCRUM-2900 / PI-0.5)
+// ---------------------------------------------------------------------------
+//
+// The scheduler pause audit (jobs/scheduler-pause-attribution.ts) fires when a
+// monitored Cloud Scheduler job is PAUSED without a codified manifest pause or
+// an active maintenance-pause sanction — the 2026-05 untracked feeder-freeze
+// shape. A persistent unexpected pause re-fires on every scheduled audit run;
+// the fixed fingerprint collapses re-fires into ONE Sentry issue.
+export const SCHEDULER_PAUSE_FINGERPRINT = ['scheduler-pause-deadman'] as const;
+
+/**
+ * Capture a scheduler-pause dead-man alert with a stable fingerprint so
+ * scheduled re-fires collapse into a single Sentry issue.
+ *
+ * PII (§1.4): the acting identity that paused the job (from the Cloud
+ * Scheduler audit log) is an OPERATOR / service-account principal —
+ * operational attribution data, not user PII. Callers pass it in `extra`
+ * (e.g. `findings[].actor_principal`), NEVER in the message: `beforeSend`
+ * runs `scrubString` over messages and would redact an email-shaped
+ * principal to [EMAIL], and the message must stay grouping-stable anyway.
+ * Everything else in `extra` stays aggregate/operational-only — job ids,
+ * classifications, timestamps; never user emails, document fingerprints, or
+ * keys (mirrors capturePipelineThroughputAlert).
+ *
+ * Always error-level: an unexpected pause of a critical scheduled job is
+ * page-worthy by definition — there is no warning-tier caller.
+ *
+ * @param message - Human-readable summary (job ids + classification only).
+ * @param extra   - Structured context incl. per-finding actor attribution.
+ */
+export function captureSchedulerPauseAlert(
+  message: string,
+  extra?: Record<string, unknown>,
+): void {
+  Sentry.captureMessage(message, {
+    level: 'error',
+    fingerprint: [...SCHEDULER_PAUSE_FINGERPRINT],
     ...(extra ? { extra } : {}),
   });
 }

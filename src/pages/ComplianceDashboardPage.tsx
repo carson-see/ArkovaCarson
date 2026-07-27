@@ -648,10 +648,9 @@ export function ComplianceDashboardPage() {
       <AppShell user={user ?? undefined} onSignOut={signOut} profile={profile ?? undefined} profileLoading={profileLoading}>
         <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
           <ArkovaIcon className="h-12 w-12 text-muted-foreground/30 mb-4" />
-          <h1 className="text-xl font-semibold text-foreground mb-2">Access Restricted</h1>
+          <h1 className="text-xl font-semibold text-foreground mb-2">{COMPLIANCE_LABELS.ACCESS_RESTRICTED_TITLE}</h1>
           <p className="text-sm text-muted-foreground max-w-md">
-            The Compliance Intelligence dashboard is available to organization administrators.
-            Contact your admin for access.
+            {COMPLIANCE_LABELS.ACCESS_RESTRICTED_BODY}
           </p>
         </div>
       </AppShell>

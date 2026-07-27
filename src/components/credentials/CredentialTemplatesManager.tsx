@@ -509,10 +509,10 @@ export function CredentialTemplatesManager({
         <div>
           <h1 className="text-2xl font-semibold flex items-center gap-2">
             <FileText className="h-6 w-6 text-primary" />
-            Credential Templates
+            {SETTINGS_PAGE_LABELS.CREDENTIAL_TEMPLATES}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Define reusable templates for issuing credentials
+            {SETTINGS_PAGE_LABELS.CREDENTIAL_TEMPLATES_DESC}
           </p>
         </div>
         <Button onClick={openCreate}>
@@ -676,7 +676,7 @@ export function CredentialTemplatesManager({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="template-type">Credential Type</Label>
+              <Label htmlFor="template-type">Document Type</Label>
               <Select
                 value={form.credential_type}
                 onValueChange={(v) =>

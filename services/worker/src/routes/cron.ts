@@ -98,6 +98,7 @@ import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.j
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runConnectorHealthCheck } from '../jobs/connector-health-alert.js';
+import { runCeKeyExpiryCheck } from '../jobs/ce-key-expiry-alert.js';
 import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
 import {
   runPipelineThroughputMonitor,
@@ -639,6 +640,22 @@ cronRouter.post('/treasury-alert-check', async (_req, res) => {
     });
   } catch (error) {
     logger.error({ error }, 'Treasury alert check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2902: Credential Engine API key expiry alarm (fail-LOUD) ───
+// Daily Cloud Scheduler tick. Emits escalating Sentry events at T-30/T-14/T-7
+// and continuously after expiry; fails LOUD (fires every run) when
+// CE_API_KEY_EXPIRES_AT is unset/sentinel. The Sentry event only pages a human
+// via the "SCRUM-2902 — Credential Engine API key expiry" rule in
+// infra/sentry/alert-rules.json (→ Slack #ops) — event ≠ alert.
+cronRouter.post('/ce-key-expiry-check', async (_req, res) => {
+  try {
+    const result = runCeKeyExpiryCheck();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'CE key expiry check failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

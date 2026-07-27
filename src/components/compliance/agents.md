@@ -5,7 +5,6 @@ _Last updated: 2026-05-16_
 Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdiction privacy notices, and session timeout handling.
 
 ## Key Files
-- `ComplianceScoreCard.tsx` — Dashboard widget showing latest audit score/grade from `compliance_audits` table
 - `ComplianceScoreGauge.tsx` — Visual gauge for compliance score percentage
 - `GradeBadge.tsx` — Letter grade badge (A/B/C/D/F) with color coding
 - `AuditGapScorecard.tsx` — Filterable audit gap display by jurisdiction and category (MISSING/EXPIRED/EXPIRING_SOON/INSUFFICIENT)
@@ -25,3 +24,6 @@ Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdictio
 ## Do / Don't Rules
 - DO: Read compliance data from `compliance_audits` table (NCA-03), not the legacy `compliance_scores` table
 - DO: Compliance section is accessed via admin sidebar toggle, not primary nav
+
+## Recent Changes
+- 2026-07-22 SCRUM-2914 (Founder UI findings): `ComplianceScoreCard.tsx` deleted (dashboard-only, no other importer) + removed from `index.ts` and `DashboardPage.tsx`. `AuditMyOrganizationButton.tsx` kept — still used by `src/pages/ComplianceScorecardPage.tsx`; its `DashboardPage.tsx` render was removed but the component itself is not dead.

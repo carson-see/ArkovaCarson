@@ -202,7 +202,7 @@ export function CreatePortfolioDialog({ open, onOpenChange, onCreated }: CreateP
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Briefcase className="h-5 w-5 text-[#00d4ff]" />
-            {createdId ? 'Portfolio Created' : 'Create Credential Portfolio'}
+            {createdId ? 'Portfolio Created' : 'Create Record Portfolio'}
           </DialogTitle>
           <DialogDescription>
             {createdId

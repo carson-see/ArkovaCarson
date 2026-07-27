@@ -110,7 +110,7 @@ export function TermsPage() {
         <div className="mx-auto max-w-3xl px-6 py-6">
           <nav className="flex flex-wrap justify-center gap-4 text-xs text-muted-foreground mb-3" aria-label="Site navigation">
             <Link to="/about" className="hover:text-foreground transition-colors">About</Link>
-            <Link to="/search" className="hover:text-foreground transition-colors">Search Credentials</Link>
+            <Link to="/search" className="hover:text-foreground transition-colors">Search Records</Link>
             <Link to="/verify" className="hover:text-foreground transition-colors">Verify</Link>
             <Link to="/developers" className="hover:text-foreground transition-colors">Developers</Link>
             <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>

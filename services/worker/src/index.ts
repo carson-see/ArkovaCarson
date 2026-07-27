@@ -14,7 +14,7 @@ import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import compression from 'compression';
 import { config } from './config.js';
-import { initSentry, Sentry } from './utils/sentry.js';
+import { initSentry, resolveSentryEnvironment, Sentry } from './utils/sentry.js';
 import { logger } from './utils/logger.js';
 import { db, isDbHealthy, recordDbSuccess, recordDbFailure, getDbCircuitState, getConnectionInfo } from './utils/db.js';
 import { callRpc } from './utils/rpc.js';
@@ -65,10 +65,21 @@ import { setIdempotencyStore } from './middleware/idempotency.js';
 import { createFeeEstimator } from './chain/fee-estimator.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
-initSentry(config.sentryDsn, config.nodeEnv, {
-  kRevision: config.kRevision,
-  kService: config.kService,
-});
+// MT-1 (SCRUM-2901): derive the environment tag from the Cloud Run service
+// identity (K_SERVICE), not NODE_ENV — rigs run NODE_ENV=production and must
+// not tag their events 'production' (else a rig standup floods prod alerting).
+initSentry(
+  config.sentryDsn,
+  resolveSentryEnvironment({
+    sentryEnvironment: config.sentryEnvironment,
+    kService: config.kService,
+    nodeEnv: config.nodeEnv,
+  }),
+  {
+    kRevision: config.kRevision,
+    kService: config.kService,
+  },
+);
 
 // Static fee estimator singleton — avoids dynamic import on every /health request
 const feeEstimatorInstance = createFeeEstimator({
@@ -474,6 +485,16 @@ app.use('/api/v2', apiV2Router);
 // Anchor revocation (SCRUM-1095) — requires auth, mounted under /api/anchor
 import { anchorRevokeRouter } from './api/anchor-revoke.js';
 app.use('/api/anchor', rateLimiters.api, requireAuthMw, anchorRevokeRouter);
+
+// Partner-account provisioning (SCRUM-2990) — RESERVED surface prefix, gated
+// behind the ENABLE_PARTNER_PROVISIONING switchboard flag (fail-closed: flag
+// absent/false/read-error → 404, surface dark; mirrors §1.9). No routes are
+// mounted in this slice (the skeleton is a pure state machine; table + routes
+// are the post-window continuation) — ANY future partner-provisioning router
+// MUST mount under this prefix so it inherits the gate. While dark or
+// routeless, every request here 404s and no provisioning is reachable.
+import { partnerProvisioningGate } from './middleware/partnerProvisioningGate.js';
+app.use('/api/partner-provisioning', partnerProvisioningGate(), rateLimiters.api);
 
 // SCRUM-1270 (R2-7) — append-only audit_events writer. Browser callers must use
 // this instead of inserting directly; migration 0276 dropped the authenticated

@@ -27,7 +27,7 @@ vi.mock('@sentry/profiling-node', () => ({
   nodeProfilingIntegration: vi.fn(() => ({})),
 }));
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, Sentry } from './sentry.js';
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, resolveSentryEnvironment, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, captureSchedulerPauseAlert, SCHEDULER_PAUSE_FINGERPRINT, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -318,6 +318,106 @@ describe('initSentry', () => {
   });
 });
 
+// MT-1 (SCRUM-2901): rigs run NODE_ENV=production, so environment must be
+// derived from the Cloud Run service identity (K_SERVICE), never from
+// NODE_ENV alone — otherwise every rig standup floods prod alerting.
+describe('resolveSentryEnvironment (MT-1 / SCRUM-2901)', () => {
+  it('an explicit non-production SENTRY_ENVIRONMENT wins (may rename any env)', () => {
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'staging',
+        kService: 'arkova-worker',
+        nodeEnv: 'production',
+      }),
+    ).toBe('staging');
+    // non-prod rename on a rig is allowed
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'rig-smoke',
+        kService: 'arkova-worker-rig-b1',
+        nodeEnv: 'production',
+      }),
+    ).toBe('rig-smoke');
+  });
+
+  it('a production override is HONORED only for the real prod service', () => {
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'production',
+        kService: 'arkova-worker',
+        nodeEnv: 'production',
+      }),
+    ).toBe('production');
+  });
+
+  it('a production override on a RIG is rejected — cannot claim production (review P1)', () => {
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: 'production',
+        kService: 'arkova-worker-rig-b1',
+        nodeEnv: 'production',
+      }),
+    ).toBe('arkova-worker-rig-b1');
+  });
+
+  it('a production override off Cloud Run (no K_SERVICE) does not earn production', () => {
+    expect(
+      resolveSentryEnvironment({ sentryEnvironment: 'production', nodeEnv: 'production' }),
+    ).toBe('local-production');
+  });
+
+  it('ignores a blank SENTRY_ENVIRONMENT and falls through to K_SERVICE', () => {
+    expect(
+      resolveSentryEnvironment({
+        sentryEnvironment: '   ',
+        kService: 'arkova-worker',
+        nodeEnv: 'production',
+      }),
+    ).toBe('production');
+  });
+
+  it('maps the prod service name to production', () => {
+    expect(
+      resolveSentryEnvironment({ kService: 'arkova-worker', nodeEnv: 'production' }),
+    ).toBe('production');
+  });
+
+  it('tags any non-prod Cloud Run service with its own service name', () => {
+    expect(
+      resolveSentryEnvironment({
+        kService: 'arkova-worker-staging',
+        nodeEnv: 'production',
+      }),
+    ).toBe('arkova-worker-staging');
+  });
+
+  it('never reports production for a rig even under NODE_ENV=production', () => {
+    expect(
+      resolveSentryEnvironment({
+        kService: 'arkova-worker-rig-b1',
+        nodeEnv: 'production',
+      }),
+    ).not.toBe('production');
+    expect(
+      resolveSentryEnvironment({
+        kService: 'arkova-worker-rig-b1',
+        nodeEnv: 'production',
+      }),
+    ).toBe('arkova-worker-rig-b1');
+  });
+
+  it('falls back to NODE_ENV off Cloud Run (no K_SERVICE)', () => {
+    expect(resolveSentryEnvironment({ nodeEnv: 'development' })).toBe('development');
+    expect(resolveSentryEnvironment({ nodeEnv: 'test' })).toBe('test');
+  });
+
+  it('a local shell claiming NODE_ENV=production without K_SERVICE is NOT production', () => {
+    // Honesty guard (§1.5): only the real prod service identity earns the
+    // 'production' tag; a bare NODE_ENV=production maps to local-production.
+    expect(resolveSentryEnvironment({ nodeEnv: 'production' })).toBe('local-production');
+  });
+});
+
 describe('emitRpcFallback (SCRUM-1262 R1-8 /simplify carry-over)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -495,5 +595,64 @@ describe('capturePipelineThroughputAlert (SCRUM-2901)', () => {
 
   it('exposes a single fixed fingerprint key', () => {
     expect(PIPELINE_THROUGHPUT_FINGERPRINT).toEqual(['pipeline-throughput-monitor']);
+  });
+});
+
+// SCRUM-2900 (PI-0.5): scheduler pause dead-man fingerprinting. An unexpected
+// PAUSED scheduler job re-alerts every scheduled audit run until resolved; the
+// stable fingerprint collapses re-fires into one Sentry issue. The acting
+// principal (operator / service-account identity — operational attribution
+// data, not user PII) rides in `extra`, never in the message: the beforeSend
+// email scrub would mangle a message-borne principal to [EMAIL].
+describe('captureSchedulerPauseAlert (SCRUM-2900)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('always captures at error level with the stable fingerprint', () => {
+    captureSchedulerPauseAlert(
+      'Scheduler pause dead-man: 1 unexpected pause (batch-anchors)',
+      {
+        firing_job_ids: ['batch-anchors'],
+        findings: [
+          {
+            job_id: 'batch-anchors',
+            classification: 'unexpected-pause',
+            actor_principal: 'ops-sa@arkova1.iam.gserviceaccount.com',
+            paused_at: '2026-05-02T09:14:00Z',
+          },
+        ],
+      },
+    );
+
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    const [message, scope] = (Sentry.captureMessage as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(message).toBe('Scheduler pause dead-man: 1 unexpected pause (batch-anchors)');
+    expect(scope).toEqual(
+      expect.objectContaining({
+        level: 'error',
+        fingerprint: SCHEDULER_PAUSE_FINGERPRINT,
+      }),
+    );
+  });
+
+  it('exposes a single fixed fingerprint key', () => {
+    expect(SCHEDULER_PAUSE_FINGERPRINT).toEqual(['scheduler-pause-deadman']);
+  });
+
+  it('the beforeSend scrubber leaves an actor_principal in extra intact (operational identity survives; message emails do not)', () => {
+    const event = {
+      message: 'Scheduler pause dead-man: 1 unexpected pause (batch-anchors)',
+      extra: {
+        findings: [
+          { job_id: 'batch-anchors', actor_principal: 'carson@arkova.ai' },
+        ],
+      },
+    };
+    const scrubbed = scrubPiiFromEvent(event);
+    const findings = scrubbed?.extra?.findings as Array<Record<string, unknown>>;
+    expect(findings[0].actor_principal).toBe('carson@arkova.ai');
+    expect(scrubbed?.message).not.toContain('[EMAIL]');
   });
 });

@@ -283,42 +283,21 @@ export async function verifyAnchorProof(proof, fetchPath, opts = {}) {
 }
 
 /**
- * The complete set of Esplora paths this verifier ever requests. `path` reaches
- * the sink from proof JSON the caller does not control, so the sink validates
- * it itself rather than trusting that every caller pre-validated (defence in
- * depth for SonarCloud jssecurity:S7044 / S8476): without this an attacker-
- * supplied txid could path-traverse out of the API namespace and steer the
- * request at a URL of their choosing.
+ * Exact allowlist of the four Esplora paths this verifier ever requests. Pinning
+ * the whole path to a fixed grammar (64-hex ids only) means a CLI/proof-supplied
+ * `txid` or `blockHash` can never inject an arbitrary path (or `../`, host, or
+ * query) into the request URL — a defence-in-depth SSRF guard at the fetch sink.
  */
-const EXPLORER_ROUTES = [
-  { match: /^tx\/([0-9a-f]{64})$/, build: (id) => `tx/${id}` },
-  { match: /^tx\/([0-9a-f]{64})\/merkle-proof$/, build: (id) => `tx/${id}/merkle-proof` },
-  { match: /^block\/([0-9a-f]{64})\/header$/, build: (id) => `block/${id}/header` },
-  { match: /^blocks\/tip\/height$/, build: () => 'blocks/tip/height' },
-];
-
-/**
- * Narrow an arbitrary string to one of the four Esplora shapes above and REBUILD
- * it from string literals. The returned path is never the caller's string: the
- * only variable part is a capture group already proven to be exactly 64 lowercase
- * hex characters, then percent-encoded on the way in. Nothing the caller supplies
- * can add a path segment, a traversal, a query string, or an authority.
- */
-function assertAllowedExplorerPath(path) {
-  const candidate = String(path);
-  for (const route of EXPLORER_ROUTES) {
-    const matched = route.match.exec(candidate);
-    if (matched === null) continue;
-    return route.build(matched[1] === undefined ? undefined : encodeURIComponent(matched[1]));
-  }
-  throw new Error('unsupported explorer path');
-}
+const SAFE_ESPLORA_PATH_RE =
+  /^(?:tx\/[0-9a-f]{64}(?:\/merkle-proof)?|block\/[0-9a-f]{64}\/header|blocks\/tip\/height)$/i;
 
 /** Live Esplora client (blockstream.info) — JSON for most paths, text for header/tip. */
 export function blockstreamFetch(base = 'https://blockstream.info/api') {
   const textPaths = (p) => p.endsWith('/header') || p === 'blocks/tip/height';
-  return async (rawPath) => {
-    const path = assertAllowedExplorerPath(rawPath);
+  return async (path) => {
+    if (!SAFE_ESPLORA_PATH_RE.test(path)) {
+      throw new Error(`unsafe explorer path rejected: ${path}`);
+    }
     const res = await fetch(`${base}/${path}`);
     if (res.status === 404) { const e = new Error('not found'); e.status = 404; throw e; }
     if (!res.ok) throw new Error(`explorer HTTP ${res.status}`);

@@ -110,6 +110,12 @@ const ConfigSchema = z.object({
   cloudflareTunnelToken: z.string().optional(),
   /** Sentry DSN for error tracking (INFRA-01) */
   sentryDsn: z.string().url().optional(),
+  /**
+   * MT-1 (SCRUM-2901): explicit Sentry environment override. When unset the
+   * environment derives from K_SERVICE (see utils/sentry.ts
+   * resolveSentryEnvironment) so rigs never tag events as production.
+   */
+  sentryEnvironment: z.string().optional(),
 
   // Feature flags (z.coerce.boolean treats "false" as true — use preprocess)
   useMocks: boolFlag(false),
@@ -368,6 +374,22 @@ const ConfigSchema = z.object({
   enableCloudLoggingSink: boolFlag(false),
   /** ENABLE_WORKSPACE_RENEWAL — Drive watch channel renewal cron. Default true when Drive is on. */
   enableWorkspaceRenewal: boolFlag(false),
+
+  // CE API key expiry alarm (SCRUM-2902)
+  /**
+   * ENABLE_CE_KEY_EXPIRY_ALERTS — gate the Credential Engine API key expiry
+   * alarm cron. Default TRUE (fail-LOUD): the alarm is an R-1 FATAL launch
+   * dependency, so it ships ON and only a literal "false" disables it. Routed
+   * through typed config (not an ad-hoc process.env read) per SCRUM-1258.
+   */
+  enableCeKeyExpiryAlerts: z.preprocess(boolEnvInverse, z.boolean()).default(true),
+  /**
+   * CE_API_KEY_EXPIRES_AT — operator-supplied ISO expiry date for the CE
+   * publishing credential. Optional/unparseable/sentinel values trip the
+   * alarm's fail-LOUD SENTINEL path (see ce-key-expiry-alert.ts). Kept as a raw
+   * string so that fail-loud classification stays in the job, not the schema.
+   */
+  ceApiKeyExpiresAt: z.string().optional(),
 
   // Arize observability (SCRUM-1067)
   /** ARIZE_TRACING_ENABLED — initialize OTLP exporter when true and creds present. */
@@ -719,6 +741,7 @@ function loadConfig(): Config {
     frontendUrl: process.env.FRONTEND_URL,
     cloudflareTunnelToken: process.env.CLOUDFLARE_TUNNEL_TOKEN,
     sentryDsn: process.env.SENTRY_DSN,
+    sentryEnvironment: process.env.SENTRY_ENVIRONMENT,
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
     enableConfirmationProofBackfill: process.env.ENABLE_CONFIRMATION_PROOF_BACKFILL,
@@ -800,6 +823,11 @@ function loadConfig(): Config {
     enableMultimodalEmbeddings: process.env.ENABLE_MULTIMODAL_EMBEDDINGS,
     enableCloudLoggingSink: process.env.ENABLE_CLOUD_LOGGING_SINK,
     enableWorkspaceRenewal: process.env.ENABLE_WORKSPACE_RENEWAL,
+    // CE API key expiry alarm (SCRUM-2902). Raw expiry string passed through
+    // untouched so the job's fail-LOUD sentinel/unparseable classification is
+    // the single source of truth.
+    enableCeKeyExpiryAlerts: process.env.ENABLE_CE_KEY_EXPIRY_ALERTS,
+    ceApiKeyExpiresAt: process.env.CE_API_KEY_EXPIRES_AT,
     arizeTracingEnabled: process.env.ARIZE_TRACING_ENABLED,
     arizeTracingConsole: process.env.ARIZE_TRACING_CONSOLE,
     arizeApiKey: process.env.ARIZE_API_KEY,

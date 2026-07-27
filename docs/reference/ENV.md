@@ -163,6 +163,13 @@ VITE_APP_VERSION=                    # semver fallback for FE Sentry release
 VITE_APP_URL=                        # FE server_name tag (deployment surface); default 'arkova-frontend'
 #  Worker `release` = BUILD_SHA (see Worker section; same value /health exposes).
 #  Worker `serverName` = Cloud Run K_REVISION / K_SERVICE; default 'arkova-worker'.
+SENTRY_ENVIRONMENT=                  # MT-1 (SCRUM-2901): explicit override. When UNSET the worker
+#  derives the environment tag from K_SERVICE (utils/sentry.ts resolveSentryEnvironment):
+#  K_SERVICE=arkova-worker → 'production'; any other Cloud Run service (e.g. arkova-worker-staging,
+#  arkova-worker-rig-b1) → its own service name (filterable, never 'production'). Off Cloud Run
+#  (no K_SERVICE) it falls back to NODE_ENV, and a bare NODE_ENV=production maps to 'local-production'
+#  (§1.5 honesty). Rationale: rigs run NODE_ENV=production, so NODE_ENV alone would flood prod
+#  alerting on every rig standup. Prod does NOT set this var — the K_SERVICE derivation is the mechanism.
 ```
 
 ## AI
@@ -265,6 +272,17 @@ TREASURY_LOW_BALANCE_USD=50
 # in-process backup). Default 24. Invalid / non-positive values fall back to 24.
 STUCK_ANCHOR_ALERT_HOURS=24
 
+# SCRUM-2902 (R-1 FATAL) — Credential Engine API key expiry alarm.
+# When false, the /jobs/ce-key-expiry-check daily cron no-ops. Default true.
+ENABLE_CE_KEY_EXPIRY_ALERTS=true
+# ISO-8601 expiry timestamp of the Credential Engine partnership API key / CTID
+# publishing credential. **FOUNDER-SUPPLIED — must be set to the REAL date.**
+# Until set (or if left as a sentinel placeholder / unparseable), the alarm FAILS
+# LOUD: it fires an ERROR-level Sentry event (expiry_window=SENTINEL) on EVERY run
+# → Slack #ops, until a real date is configured. Set from the CE trial/renewal
+# contract. (Known trial expiry ≈ 2026-09-09 per project memory — confirm exact.)
+CE_API_KEY_EXPIRES_AT=               # e.g. 2026-09-09T00:00:00Z — DO NOT leave blank in prod
+
 # ─── SCRUM-1162 — Middesk KYB (organization verification) ───
 # Per 2026-04-24 decision these routes are NOT behind a feature flag.
 # Missing MIDDESK_API_KEY surfaces as 503 at POST /api/v1/org-kyb/:orgId/start.
@@ -318,6 +336,14 @@ WORKER_PUBLIC_URL=                  # Public worker origin used when provisionin
 
 # Sandbox vs production DocuSign account server. Default true. Only a literal
 # "false" flips to production account.docusign.com.
+# Prod worker deploy-worker.yml sets this to "false" as of SCRUM-3014/3015 Go-Live
+# (DocuSign Go-Live approved 2026-07-23 07:04 PST for integration key
+# c8a10703-8efd-48e0-9653-7a9b840f67e3, verified live via DocuSign Apps and Keys
+# dashboard — same key/secret promoted in place, no credential rotation).
+# NOTE: this flag selects the OAuth account server only. The eSignature REST base is the
+# per-connection org_integrations.base_uri / member_integrations.base_uri captured at connect
+# time — orgs connected while DOCUSIGN_DEMO=true must re-run OAuth to move to production.
+# See docs/runbooks/integrations/docusign.md.
 DOCUSIGN_DEMO=true
 
 # ─── SCRUM-1164 / 1166 — Billing Phase 3a ───

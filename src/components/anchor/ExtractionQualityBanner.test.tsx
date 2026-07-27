@@ -1,12 +1,15 @@
 /**
  * GME-26: Extraction Quality Banner Tests
  *
- * Verifies confidence-based warning banners appear correctly.
+ * Verifies the PII-stripped-fields notice appears correctly.
  *
  * BUG-2026-07-17-009 (SCRUM-2910, P0): the fraud-signal banner was fed by the
  * Gemini extraction `fraudSignals` field and was NOT gated by
  * ENABLE_FRAUD_DETECTION — flipping the flag off did not remove it. The
  * component no longer renders any fraud UI at all.
+ *
+ * SCRUM-2914 (Founder UI findings, 2026-07-22): confidence-based warning
+ * assertions removed along with the confidence prop/UI.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -14,33 +17,14 @@ import { render, screen } from '@testing-library/react';
 import { ExtractionQualityBanner } from './ExtractionQualityBanner';
 
 describe('GME-26: ExtractionQualityBanner', () => {
-  it('renders nothing when confidence is high (>= 0.5)', () => {
-    const { container } = render(
-      <ExtractionQualityBanner confidence={0.8} />,
-    );
+  it('renders nothing when no stripped fields are provided', () => {
+    const { container } = render(<ExtractionQualityBanner />);
     expect(container.firstChild).toBeNull();
-  });
-
-  it('renders amber warning when confidence is 0.3-0.5', () => {
-    render(
-      <ExtractionQualityBanner confidence={0.4} />,
-    );
-    expect(screen.getByText(/low confidence/i)).toBeDefined();
-    expect(screen.getByText(/please verify/i)).toBeDefined();
-  });
-
-  it('renders red warning when confidence < 0.3', () => {
-    render(
-      <ExtractionQualityBanner confidence={0.2} />,
-    );
-    expect(screen.getByText(/may be unreliable/i)).toBeDefined();
-    expect(screen.getByText(/manual review/i)).toBeDefined();
   });
 
   it('shows stripped fields note when provided', () => {
     render(
       <ExtractionQualityBanner
-        confidence={0.7}
         strippedFields={['creditHours', 'barNumber']}
       />,
     );
@@ -53,7 +37,7 @@ describe('GME-26: ExtractionQualityBanner', () => {
   // extraction output or flag state.
   it('never renders fraud-signal UI (BUG-2026-07-17-009)', () => {
     const { container } = render(
-      <ExtractionQualityBanner confidence={0.25} strippedFields={['creditHours']} />,
+      <ExtractionQualityBanner strippedFields={['creditHours']} />,
     );
     expect(screen.queryByText(/fraud/i)).toBeNull();
     expect(container.textContent?.toLowerCase()).not.toContain('fraud');
