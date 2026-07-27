@@ -1,7 +1,11 @@
 # services/worker/src/
-_Last updated: 2026-05-21 (PR #841 prod containment)_
+_Last updated: 2026-07-21 (SCRUM-2990 partner-provisioning flag gate)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
+
+## 2026-07-21 SCRUM-2990 partner-provisioning surface is flag-gated (reserved prefix)
+
+- `index.ts` mounts `/api/partner-provisioning` behind `partnerProvisioningGate()` (ENABLE_PARTNER_PROVISIONING switchboard flag; fail-closed — absent/false/read-error → 404, surface dark; no env fallback). No routes exist under the prefix yet (the SCRUM-2990 skeleton is a pure state machine; table + routes are post-window). ANY future partner-provisioning router MUST mount under this prefix so it inherits the gate — `src/api/partner-provisioning.guard.test.ts` asserts the wiring.
 
 ## 2026-07-06 S3-P0 / DISC-03 config note
 

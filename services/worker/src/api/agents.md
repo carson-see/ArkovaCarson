@@ -1,10 +1,13 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-07-21 (SCRUM-2901 treasury status-API per-leg budget)_
+_Last updated: 2026-07-21 (SCRUM-2990 partner-provisioning guard tests)_
 
-## 2026-07-21 — Lane 2 PI-0.5: /api/treasury/status per-leg budget (SCRUM-2901, PR #1600)
+## 2026-07-21 — Lane 2 PI-0.5: partner-provisioning skeleton is flag-gated + statically guarded (SCRUM-2990)
 
-`treasury.ts` exports `STATUS_LEG_BUDGET_MS = 6_500` and wraps each of `handleTreasuryStatus`'s three parallel legs (wallet UTXO crawl, fee estimate, anchor stats) in `withStatusBudget()` — a Promise.race that REJECTS the leg at the budget so the existing `Promise.allSettled` degradation branches fire (wallet→null + 'Fee Account data temporarily unavailable' (§1.3: Wallet → Fee Account), fees→null, stats→initialized defaults). Rationale: the frontend `workerFetch` budget for this route is 8s (`useTreasuryBalance` WORKER_TIMEOUT_MS); allSettled waits for the SLOWEST leg, and `listUnspent` against the treasury address (millions of txs of public history) can exceed 8s — the client then aborts and loses even the fast legs that had already finished server-side. 6.5s leaves headroom for the admin-gate lookup + serialization + RTT. The budget does NOT cancel the underlying provider request (providers carry their own transport timeouts); it just stops awaiting it. Keep `STATUS_LEG_BUDGET_MS < ` the frontend's `WORKER_TIMEOUT_MS` if either changes — `treasury.test.ts` pins `< 8_000`.
+`partner-provisioning.ts` (pure request→approve→provision state machine, see PR #1606) is now protected by two invariants enforced in `partner-provisioning.guard.test.ts`:
+
+- **No live provisioning / no secret handling in the skeleton.** The module's static import list must be EXACTLY `zod` + `node:crypto` (`randomUUID` only) + the type-only `./audit-event.js` — no DB client, no RPC, no fetch, no Stripe, no Secret Manager, no API-key/HMAC/proof-key modules. Its only outputs are its own record + audit event body; the API layer persists them. If you wire the provision step to real org/user/key creation, that code goes in a SEPARATE adapter module (behind the gate) — this guard is meant to go red if the skeleton itself grows side effects.
+- **Flag wiring.** The reserved surface prefix `/api/partner-provisioning` must stay mounted behind `partnerProvisioningGate()` in `index.ts` (ENABLE_PARTNER_PROVISIONING, fail-closed → 404), and the flag must stay registered in `flagRegistry.ts` `DB_FLAGS`. Mount any future partner-provisioning router UNDER that prefix.
 
 ## 2026-07-06 — Lane 2 s3: OPS-03 SLO dashboard stats endpoint (SCRUM-2401)
 

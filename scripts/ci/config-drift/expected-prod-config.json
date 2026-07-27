@@ -11,7 +11,8 @@
   "launchRequiredFlags": ["ENABLE_AI_EXTRACTION", "ENABLE_PROD_NETWORK_ANCHORING", "ENABLE_VERIFICATION_API"],
   "acknowledgedFailOpenFlags": ["ENABLE_SEMANTIC_SEARCH", "ENABLE_AI_FRAUD"],
   "_pendingLaunchFlagsNote": "SCRUM-2899 (WH-6): ENABLE_OUTBOUND_WEBHOOKS is the webhook-delivery kill switch. It is DB-backed (flagRegistry.ts DB_FLAGS) and OFF in prod today (deploy-worker.yml omits it → registry env-fallback resolves false). This PR STAGES the pin here but does NOT enforce it: it is intentionally NOT in `flags`/`launchRequiredFlags` because that would fire flag-SPOF `launch-flag-off` (asserted ON, deploy omits it) and a drift `absent from running` — CI would go red before the flag is actually flipped. ACTIVATION (Carson, post-12h-T2-soak + prod flip): move \"ENABLE_OUTBOUND_WEBHOOKS\" into `flags: true` + `launchRequiredFlags`, add it to prod-config-snapshot.json `flags: true`, and add `ENABLE_OUTBOUND_WEBHOOKS=true` to deploy-worker.yml --set-env-vars so it fails SAFE. This inert key is ignored by check-config-drift.ts (Zod .passthrough(); not read by diffConfigState or flag-SPOF).",
-  "pendingLaunchFlags": ["ENABLE_OUTBOUND_WEBHOOKS"],
+  "_partnerProvisioningNote": "SCRUM-2990: ENABLE_PARTNER_PROVISIONING gates the reserved /api/partner-provisioning surface (partnerProvisioningGate.ts — get_flag RPC, fail-closed, NO env fallback; unseeded row = 404-dark, the safe default). DB-backed (flagRegistry DB_FLAGS). NOT pinned in `flags` yet per the WH-6 precedent above: no prod switchboard row exists (seeding is DBA/release-ops-owned), and pinning false would fire an `absent from running` drift. ACTIVATION (release-ops, at partner-provisioning launch): seed the switchboard_flags row, then pin the effective value here.",
+  "pendingLaunchFlags": ["ENABLE_OUTBOUND_WEBHOOKS", "ENABLE_PARTNER_PROVISIONING"],
   "bitcoinUtxoProvider": "getblock",
   "bitcoinFeeStrategy": "mempool",
   "cspConnectSrc": [

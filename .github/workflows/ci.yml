@@ -929,10 +929,15 @@ jobs:
         # job is conditional on machine/anchor/chain code actually changing.
         if: steps.tla-changed.outputs.changed == 'true'
         working-directory: machines
-        # SCRUM-3018 / Sonar S6505,S8543: tla-precheck is now a pinned
-        # devDependency; run the local bin (root node_modules, one level up from
-        # the `machines` working-directory) instead of on-demand `npx`.
-        run: ../node_modules/.bin/tla-precheck check bitcoinAnchor.machine.ts
+        # Invoke the RESOLVED LOCAL binary, not `npx tla-precheck` (SonarCloud
+        # githubactions:S6505/S8543): `tla-precheck` is a pinned root
+        # devDependency (package.json: exact "0.1.7", no caret) installed by the
+        # `npm ci --ignore-scripts` step above, so `../node_modules/.bin/…` is
+        # deterministic and uses the locked version — no on-demand install and
+        # no lifecycle-script execution the way `npx` can do for a missing pkg.
+        run: |
+          ../node_modules/.bin/tla-precheck check bitcoinAnchor.machine.ts
+          ../node_modules/.bin/tla-precheck check partnerProvisioning.machine.ts
 
   # Migration safety gate (SCALE-20) — verify migrations are additive-only
   migration-check:
