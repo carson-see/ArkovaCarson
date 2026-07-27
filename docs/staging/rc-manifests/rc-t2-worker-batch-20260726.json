@@ -13,12 +13,18 @@
   "rc_head_sha": "463d9ac4ef645a9ecb53f7a168d9d34a8308d2e5",
   "rc_branch": "rc/t2-worker-batch-20260726",
   "allowed_base_shas": [
+    "4c03d3531cec5fabded54de8d08ba3b7459a7eff",
     "53c68dff51dc23b8789c8e16d5106a142437ef94",
-    "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+    "b5b92643a35e776d14cbaece136293b606cb24fa",
+    "d4efd7ff5ccb5c876070d0610c9693919b0d12fb",
+    "f8059cba53f199cf44885fd66f6d70280e0ea21c"
   ],
   "covered_main_shas": [
+    "4c03d3531cec5fabded54de8d08ba3b7459a7eff",
     "53c68dff51dc23b8789c8e16d5106a142437ef94",
-    "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+    "b5b92643a35e776d14cbaece136293b606cb24fa",
+    "d4efd7ff5ccb5c876070d0610c9693919b0d12fb",
+    "f8059cba53f199cf44885fd66f6d70280e0ea21c"
   ],
   "included_prs": [
     {
