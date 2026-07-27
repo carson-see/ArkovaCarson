@@ -2,11 +2,11 @@
 
 _Last updated: 2026-07-22_
 
-## 2026-07-22 Nessie hardened JSON parse (bug hunt)
+## 2026-07-22 Together AI JSON parse hardening (BUG-2026-06-24-014 follow-up) + code-review fixes
 
-- `nessie.ts` no longer does a naked `JSON.parse` on raw Nessie (RunPod vLLM) model output. New file `nessie-json-parse.ts` exports `parseNessieJson()`, a Nessie-local port of gemini.ts's private `parseModelJson` pipeline (BUG-2026-06-24-014): strips JS-style comments (still via `strip-json-comments.ts`, NMT-02), strips a ` ```json ` markdown fence, and salvages truncated/trailing-prose JSON via brace-matching + delimiter balancing before falling back to `JSON.parse`.
-- Kept file-scoped rather than shared with gemini.ts's helper — the original BUG-2026-06-24-014 fix kept its version private/file-local too (not exported even within gemini.ts's own multiple call sites), and gemini.ts is an actively-changing file outside this fix's scope. Downstream `ExtractedFieldsSchema.safeParse` remains the safety net if the salvage path recovers a malformed-but-parseable object.
-- `together.ts` (Together AI / OpenAI-compatible Nessie provider) has the same naked-`JSON.parse` pattern at its `extractMetadata` call site — NOT fixed here (out of scope), flagged as a follow-up.
+- `together.ts`'s `TogetherProvider.extractMetadata` did a naked `JSON.parse` on raw Together AI text output. `response_format: { type: 'json_object' }` (native JSON mode) suppresses markdown-fence wrapping but does not protect against truncated output hitting `max_tokens` mid-object — a `SyntaxError` there threw unhandled out of `extractMetadata`. Added a file-scoped `parseTogetherJson` (strip JS-style comments -> strip markdown fence -> brace-salvage/delimiter-repair), mirroring `gemini.ts`'s private `parseModelJson`. Kept file-scoped/independent per that precedent — do not extract a shared cross-provider module. Correction: an earlier version of this note (and the code comment above `parseTogetherJson`) claimed parity with a sibling `nessie-json-parse.ts` (`parseNessieJson`) as if it existed in this directory — it does not on this branch/main; it exists only on a separate, unmerged PR (#1660). Both the comment and this note now say so explicitly.
+- `strip-json-comments.ts` remains the one genuinely shared helper across `gemini.ts`, `nessie.ts`, and `together.ts`; the fence-strip/brace-salvage/delimiter-repair logic is intentionally duplicated per-file rather than centralized.
+- **xhigh code review found real correctness bugs in the initial cut, since fixed:** (1) the trailing-comma repair regex ran over the whole text with no string-boundary awareness and could silently strip a comma-then-bracket sequence occurring as ordinary prose inside a string field — replaced with a string-aware `stripTrailingCommasOutsideStrings`; (2) `balanceJsonDelimiters` never closed an unterminated string, so output truncated mid-string (a realistic `max_tokens` shape) was never salvaged — it now closes the open string (dropping a dangling incomplete escape first) before appending guessed structural closers; (3) `escapeBareNewlinesInStrings` escaped `\n`/`\r` but not literal tabs, so any string containing a raw tab threw `Bad control character` — tabs are now escaped too; (4) the salvage-path `JSON.parse` calls were unguarded, so a still-broken repair threw a fresh, less-diagnostic error instead of the original — `parseTogetherJson` now dedupes candidates and always surfaces the first parse error if every candidate fails. Not fixed (flagged, out of scope for this pass): mismatched-bracket-type repair, `finish_reason`-based truncation detection/retry, and the cross-file duplication itself (3-4 near-identical copies of this parser now exist in `gemini.ts`/`together.ts`/`eval/s33-wave1-prerequisite-runner.ts`/the unmerged nessie one) — a shared `model-json-parser.ts` module is a real candidate but is a design call for the CTO/RTE panel, not decided here.
 
 ## 2026-07-15 S3.3 Wave 2 Upstream 429 Attribution
 
@@ -78,7 +78,6 @@ AI provider abstraction layer for credential metadata extraction, fraud detectio
 | `featureFlags.ts` | Runtime AI feature flags (v6 prompt, tuned endpoint, calibration) |
 | `modelTargets.ts` | Dual-model target config (8B server / 3B browser) |
 | `strip-json-comments.ts` | Strips JS-style comments from Nessie JSON responses before parsing |
-| `nessie-json-parse.ts` | Hardened JSON parse for raw Nessie model output — fence-stripping + truncated/trailing-prose salvage (Nessie-local port of gemini.ts's `parseModelJson` pattern) |
 | `trainingMetrics.ts` | Training data quality metrics tracker |
 
 ## Do / Don't Rules

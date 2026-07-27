@@ -50,6 +50,10 @@ _Last refreshed: 2026-07-23 by Claude (DocuSign Go-Live verification session) �
 
 _Last refreshed: 2026-07-23 by RTE — claims verified against direct `gcloud`/Cloud Run REST calls, Cloud Scheduler REST API, and Supabase MCP `execute_sql` against prod (`vzwyaatejekddvltxyye`), #1552's DB (`phohrrhdoanmtafuetjh`), and maxsoak's DB (`apybunyzyaxwqehbarlc`) — not inferred from agent self-reports or recalled context._
 
+### 2026-07-22 — Together AI JSON parse hardening, Draft PR #1661 (not merged/soaked)
+
+[PR #1661](https://github.com/carson-see/ArkovaCarson/pull/1661) hardens `TogetherProvider.extractMetadata` (`services/worker/src/ai/together.ts`) against a naked `JSON.parse` on raw model output — the same BUG-2026-06-24-014 bug class as `gemini.ts`'s `parseModelJson` and the sibling `nessie-json-parse.ts` (SCRUM-3005 / BUG-2026-07-22-002, PR #1660, which explicitly flagged this together.ts callsite as its own out-of-scope follow-up). Added a file-scoped `parseTogetherJson`, TDD tests for truncated/trailing-prose/trailing-comma responses, `agents.md` updated. `check-staging-evidence.ts` auto-tiers this T2 via the `services/worker/src/ai/` path pattern despite the narrow single-file scope; **left Draft, no soak started, Carson's to Ready/merge.** Bug filed as [SCRUM-3008 / BUG-2026-07-22-005](https://arkova.atlassian.net/browse/SCRUM-3008) (In Progress); row added to the [Confluence Bug Tracker](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514).
+
 ### 2026-07-22 (RTE) — Live-state reconciliation: rail PRs re-verified against GitHub/gcloud, not memory; main has moved substantially since the last snapshot; a duplicated HANDOFF entry from an earlier rebase-conflict resolution was also found and fixed
 
 **Rail PRs from the T2/T3 watch list, re-verified live (`gh pr view`, `gcloud run services describe`) rather than assumed from prior notes or recalled context — a recalled claim of "#1552 conflict resolved, head bfd49751" turned out to describe a separate integration build, not the PR branch itself, and needed independent confirmation before trusting it:**
@@ -405,6 +409,8 @@ _Last refreshed: 2026-07-17 by Claude (CTO/DBA drain-execution session) — clai
 _Last refreshed: 2026-07-17 by Claude (CTO/ART evening review) — claims verified against gcloud scheduler describe/update + Cloud Run log 200 (17:42:11Z), Supabase MCP treasury_cache/switchboard reads, gateway/worker curls, and three lane packets grounded in origin/main 27b90ef8; artifacts cited in this commit body._
 
 _Last refreshed: 2026-07-17 by Claude (CTO close-out) — plan docs + Confluence mirror created and cross-linked; superseded plans archived (Drive API-verified); no code changed._
+
+_Last refreshed: 2026-07-22 by Claude (CI-fix session, Draft PR #1661) claims verified against gcloud/MCP/CI output (no prod state asserted; the entry above notes the PR is not merged and not soaked)._
 
 _Last refreshed: 2026-07-23 by Claude (DocuSign Go-Live verification session, trailing-footer sync) — claims verified against gcloud/MCP/CI output (see top-of-file 2026-07-23 DocuSign Go-Live entry: DocuSign Apps and Keys admin dashboard via authenticated browser session, plus GCP Secret Manager integration-key and client-secret reads in project arkova1)._
 
