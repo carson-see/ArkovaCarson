@@ -1716,6 +1716,12 @@ export const TREASURY_LABELS = {
   WORKER_REQUEST_FAILED: 'Worker request failed',
   WORKER_HEALTH_RETURNED_STATUS: (status: number) => `Worker health returned ${status}`,
   WORKER_HEALTH_REQUEST_FAILED: 'Worker health request failed',
+  // SCRUM-2901: friendly copy for the 8s status-API budget firing — never
+  // surface the raw browser TimeoutError text ("signal timed out") to admins.
+  WORKER_STATUS_TIMED_OUT: (seconds: number) =>
+    `Status request took longer than ${seconds} seconds and was stopped.`,
+  WORKER_HEALTH_TIMED_OUT: (seconds: number) =>
+    `Freshness check took longer than ${seconds} seconds and was stopped.`,
   FETCH_FAILED: 'Failed to fetch treasury data',
   CACHE_NO_TIMESTAMP: 'No treasury cache timestamp returned',
   CACHE_TIMESTAMP_UNAVAILABLE: 'Treasury cache timestamp unavailable',
@@ -2243,32 +2249,6 @@ export const INTEGRITY_DETAIL_LABELS = {
 } as const;
 
 // =============================================================================
-// VISUAL FRAUD DETECTION (Phase 5)
-// =============================================================================
-
-export const FRAUD_DETECTION_LABELS = {
-  TITLE: 'Document Risk Assessment',
-  SUBTITLE: 'Visual analysis of document authenticity indicators.',
-  ANALYZE_BUTTON: 'Analyze Document',
-  ANALYZING: 'Analyzing document...',
-  RISK_LOW: 'Low Risk',
-  RISK_MEDIUM: 'Medium Risk',
-  RISK_HIGH: 'High Risk',
-  RISK_CRITICAL: 'Critical Risk',
-  NO_ANALYSIS: 'No risk assessment available',
-  SIGNALS_TITLE: 'Detection Signals',
-  RECOMMENDATIONS_TITLE: 'Recommendations',
-  CATEGORY_FONT: 'Font Analysis',
-  CATEGORY_LAYOUT: 'Layout Analysis',
-  CATEGORY_MANIPULATION: 'Image Manipulation',
-  CATEGORY_METADATA: 'Metadata Consistency',
-  CATEGORY_SECURITY: 'Security Features',
-  SEVERITY_INFO: 'Info',
-  SEVERITY_WARNING: 'Warning',
-  SEVERITY_CRITICAL: 'Critical',
-} as const;
-
-// =============================================================================
 // ERROR BOUNDARY (AUDIT-07)
 // =============================================================================
 
@@ -2530,8 +2510,14 @@ export const OCR_LABELS = {
 } as const;
 
 export const CONFIRMATION_PROGRESS_LABELS = {
-  IN_PROGRESS: 'Anchoring in progress \u2014 your record will be permanently verified in ~10 minutes.',
+  // SCRUM-2914 (Founder UI findings, 2026-07-22): dropped the "~10 minutes"
+  // estimate \u2014 anchoring timing is not a guarantee we can make.
+  IN_PROGRESS: 'Anchoring in progress \u2014 your record will be permanently verified.',
   NOTIFICATION_NOTE: 'You\u2019ll receive a notification when anchoring is complete. You can safely close this dialog.',
+  // SCRUM-2914: neighboring timing-neutral label for the record-detail
+  // "awaiting confirmation" notice (was hardcoded with a "~10 minutes"
+  // estimate directly in AssetDetailView.tsx \u2014 moved here per \u00a71.3).
+  AWAITING_CONFIRMATION: 'Your record has been submitted to the network. Confirmation is in progress.',
 } as const;
 
 export const FINGERPRINT_TOOLTIP = {

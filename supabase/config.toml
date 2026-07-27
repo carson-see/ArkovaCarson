@@ -49,7 +49,12 @@ enable_signup = true
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
-enable_confirmations = true
+# SCRUM-2907: prod auth auto-confirms signups (a live session is returned on
+# signUp), so local/CI must mirror that to match prod behavior. With this off,
+# signUp returns a session and the session-aware SignUpForm proceeds into the
+# app — the prod path the E2E "signup ... enters the authenticated app" spec
+# asserts. Leaving it on made local/CI drift from prod and broke that spec.
+enable_confirmations = false
 
 [auth.email.template.confirmation]
 subject = "Confirm your Arkova account"

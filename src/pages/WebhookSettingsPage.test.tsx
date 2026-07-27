@@ -297,17 +297,21 @@ describe('WebhookSettingsPage', () => {
     // after the user confirms (mirrors RevokeDialog). A single click must NOT
     // call the delete RPC.
     it('calls delete_webhook_endpoint RPC after confirming the dialog', async () => {
-      const { container } = renderPage();
+      renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('https://example.com/webhooks')).toBeInTheDocument();
+      // Gate on the row's Trash (delete) button itself, via findByRole — it
+      // mounts only after the async endpoints fetch resolves. The old gate
+      // (`getByText(url)` + a one-shot `.text-destructive` query) raced that
+      // fetch: the delivery-log table renders the SAME endpoint_url
+      // synchronously from the mocked hook, so `getByText(url)` could resolve
+      // against that cell while the endpoint row — and its delete button —
+      // did not exist yet, leaving the one-shot query `undefined` (flake:
+      // "expected undefined to be truthy", 4 CI runs 2026-07-26). The button's
+      // aria-label ("Delete endpoint: <url>") is the stable async signal.
+      const deleteBtn = await screen.findByRole('button', {
+        name: new RegExp(`^${WEBHOOK_LABELS.DELETE_CONFIRM_ACTION}: `),
       });
-
-      // Click the row's Trash (delete) button.
-      const deleteIcons = container.querySelectorAll('.text-destructive');
-      const deleteBtn = deleteIcons[0]?.closest('button');
-      expect(deleteBtn).toBeTruthy();
-      await userEvent.click(deleteBtn as HTMLButtonElement);
+      await userEvent.click(deleteBtn);
 
       // No RPC yet — the confirm dialog is open.
       expect(mockRpc).not.toHaveBeenCalledWith('delete_webhook_endpoint', {

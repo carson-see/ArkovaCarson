@@ -19,7 +19,11 @@ interface AuthState {
 
 interface AuthActions {
   signIn: (email: string, password: string) => Promise<{ error: import('@supabase/supabase-js').AuthError | null }>;
-  signUp: (email: string, password: string, fullName?: string) => Promise<{ error: import('@supabase/supabase-js').AuthError | null }>;
+  signUp: (
+    email: string,
+    password: string,
+    fullName?: string
+  ) => Promise<{ error: import('@supabase/supabase-js').AuthError | null; session: Session | null }>;
   signInWithGoogle: () => Promise<void>;
   signInWithLinkedIn: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -111,7 +115,7 @@ export function useAuth(): AuthState & AuthActions {
       setError(null);
 
       try {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
@@ -129,15 +133,20 @@ export function useAuth(): AuthState & AuthActions {
             setError(error.message);
           }
           setLoading(false);
-          return { error };
+          return { error, session: null };
         }
 
         setLoading(false);
-        return { error: null };
+        // SCRUM-2907: Surface the session so callers can distinguish an
+        // auto-confirmed signup (live session → user is already logged in) from
+        // a confirmation-pending signup (null session → "check your email").
+        // When email confirmation is required, Supabase returns a user but a
+        // null session; with auto-confirm on it returns a live session.
+        return { error: null, session: data.session };
       } catch (err) {
         setError('Unable to reach the server. Please check your connection and try again.');
         setLoading(false);
-        return { error: err as import('@supabase/supabase-js').AuthError };
+        return { error: err as import('@supabase/supabase-js').AuthError, session: null };
       }
     },
     []

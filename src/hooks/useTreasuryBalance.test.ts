@@ -40,6 +40,8 @@ vi.mock('@/lib/copy', () => ({
     WORKER_REQUEST_FAILED: 'Worker request failed',
     WORKER_HEALTH_RETURNED_STATUS: (status: number) => `Worker health returned ${status}`,
     WORKER_HEALTH_REQUEST_FAILED: 'Worker health request failed',
+    WORKER_STATUS_TIMED_OUT: (seconds: number) => `Status request took longer than ${seconds} seconds`,
+    WORKER_HEALTH_TIMED_OUT: (seconds: number) => `Freshness check took longer than ${seconds} seconds`,
     FETCH_FAILED: 'Failed to fetch treasury data',
   },
 }));
@@ -302,6 +304,72 @@ describe('useTreasuryBalance R1-6 hardening (SCRUM-1260)', () => {
     await waitFor(() =>
       expect(addEventListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function)),
     );
+  });
+});
+
+// ─── SCRUM-2901 (PI-0.5): 8s status-API budget — degraded rendering ─────────
+//
+// The 8s AbortSignal.timeout on the worker legs fires as a DOMException named
+// 'TimeoutError' whose raw browser message ("signal timed out") previously
+// flowed verbatim into the admin error banner. The timeout must surface as
+// friendly copy, flip loading off (no hung skeleton), and leave the cards in
+// their stale/unavailable states.
+describe('useTreasuryBalance status-budget degraded rendering (SCRUM-2901)', () => {
+  function timeoutError(): Error {
+    // Shape-identical to an AbortSignal.timeout abort reason.
+    return Object.assign(new Error('signal timed out'), { name: 'TimeoutError' });
+  }
+
+  it('maps a status-leg TimeoutError to friendly copy instead of raw browser text', async () => {
+    mockWorkerDefaults(() => Promise.reject(timeoutError()));
+
+    const { result } = renderHook(() => useTreasuryBalance());
+    await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 2000 });
+
+    expect(result.current.error).toContain('Balance unavailable');
+    expect(result.current.error).toContain('took longer than 8 seconds');
+    expect(result.current.error).not.toContain('signal timed out');
+    // Card renders the unavailable state (null balance, not a hung skeleton).
+    expect(result.current.balance).toBeNull();
+  });
+
+  it('keeps the last balance and flags stale copy when a later poll times out', async () => {
+    mockWorkerDefaults(() => Promise.resolve(jsonResponse({
+      wallet: { balanceSats: 12345 },
+      recentAnchors: { totalSecured: 1, lastSecuredAt: '2026-05-12T09:00:00Z', last24hCount: 1 },
+    })));
+
+    const { result } = renderHook(() => useTreasuryBalance());
+    await waitFor(() => expect(result.current.balance?.total).toBe(12345));
+
+    mockWorkerDefaults(() => Promise.reject(timeoutError()));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.balance?.total).toBe(12345);
+    expect(result.current.error).toContain('Balance is stale');
+    expect(result.current.error).toContain('took longer than 8 seconds');
+    expect(result.current.error).not.toContain('signal timed out');
+  });
+
+  it('maps a health-leg TimeoutError to friendly copy in sourceState', async () => {
+    workerFetchMock.mockImplementation((path: string) => {
+      if (path === '/api/treasury/status') {
+        return Promise.resolve(jsonResponse({
+          wallet: { balanceSats: 12345 },
+          recentAnchors: { totalSecured: 1, lastSecuredAt: '2026-05-12T09:00:00Z', last24hCount: 1 },
+        }));
+      }
+      return Promise.reject(timeoutError());
+    });
+
+    const { result } = renderHook(() => useTreasuryBalance());
+    await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 2000 });
+
+    expect(result.current.sourceState.cacheStale).toBe(true);
+    expect(result.current.sourceState.healthError).toContain('took longer than 8 seconds');
+    expect(result.current.sourceState.healthError).not.toContain('signal timed out');
   });
 });
 

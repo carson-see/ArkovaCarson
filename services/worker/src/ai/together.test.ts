@@ -160,6 +160,193 @@ describe('TogetherProvider', () => {
     });
   });
 
+  // BUG-2026-06-24-014 parity: Together AI's `response_format: json_object`
+  // native JSON mode suppresses markdown-fence wrapping but does not protect
+  // against truncated output hitting the model's token limit mid-object. A
+  // naked JSON.parse throws SyntaxError there, surfacing as an unhandled
+  // extraction failure instead of recovering the object.
+  describe('JSON parsing resilience', () => {
+    it('recovers a response truncated mid-object at the token limit', async () => {
+      const provider = new TogetherProvider(FAKE_API_KEY);
+
+      // Missing the final closing brace — simulates output cut off when the
+      // model hits max_tokens before emitting the terminator.
+      const truncatedContent =
+        '{"credentialType":"DEGREE","issuerName":"MIT","fieldOfStudy":"Computer Science","confidence":0.92';
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: truncatedContent } }],
+          usage: { total_tokens: 150 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: '[NAME_REDACTED] graduated from MIT with a degree in Computer Science',
+        credentialType: 'DEGREE',
+        fingerprint: 'sha256:truncated',
+      });
+
+      expect(result.fields.credentialType).toBe('DEGREE');
+      expect(result.fields.issuerName).toBe('MIT');
+      expect(result.fields.fieldOfStudy).toBe('Computer Science');
+      expect(result.provider).toBe('together');
+    });
+
+    it('recovers a response with trailing prose after the closing brace', async () => {
+      const provider = new TogetherProvider(FAKE_API_KEY);
+
+      const contentWithTrailingProse = [
+        JSON.stringify({
+          credentialType: 'LICENSE',
+          issuerName: 'State Bar',
+          confidence: 0.81,
+        }),
+        'Note: response truncated, additional context follows.',
+      ].join('\n');
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: contentWithTrailingProse } }],
+          usage: { total_tokens: 130 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: 'Licensed by State Bar',
+        credentialType: 'LICENSE',
+        fingerprint: 'sha256:trailingprose',
+      });
+
+      expect(result.fields.credentialType).toBe('LICENSE');
+      expect(result.fields.issuerName).toBe('State Bar');
+      expect(result.provider).toBe('together');
+    });
+
+    it('repairs a trailing comma left before the closing brace', async () => {
+      const provider = new TogetherProvider(FAKE_API_KEY);
+
+      const contentWithTrailingComma =
+        '{"credentialType":"CERTIFICATE","issuerName":"Acme Institute","confidence":0.7,}';
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: contentWithTrailingComma } }],
+          usage: { total_tokens: 90 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: 'Certificate issued by Acme Institute',
+        credentialType: 'CERTIFICATE',
+        fingerprint: 'sha256:trailingcomma',
+      });
+
+      expect(result.fields.credentialType).toBe('CERTIFICATE');
+      expect(result.fields.issuerName).toBe('Acme Institute');
+    });
+
+    // Code-review finding (xhigh, correctness, CONFIRMED): the trailing-comma
+    // repair regex ran over the whole text with no string-boundary awareness,
+    // so a comma-then-bracket sequence *inside* a legitimate string value
+    // (not a structural trailing comma) was silently stripped — corrupting
+    // extracted field content while still reporting a successful parse.
+    it('preserves a comma-then-bracket sequence inside a string value while still repairing the real trailing comma', async () => {
+      const provider = new TogetherProvider(FAKE_API_KEY);
+
+      // The `description` value contains ", ]" as ordinary prose text — not
+      // JSON syntax — immediately followed later by a genuine structural
+      // trailing comma before the closing brace that DOES need repair.
+      const content =
+        '{"credentialType":"CERTIFICATE","issuerName":"Acme Institute",' +
+        '"description":"See item 3, ] cross-ref","confidence":0.7,}';
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content } }],
+          usage: { total_tokens: 90 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: 'Certificate issued by Acme Institute',
+        credentialType: 'CERTIFICATE',
+        fingerprint: 'sha256:commainstring',
+      });
+
+      expect(result.fields.credentialType).toBe('CERTIFICATE');
+      // The prose comma+bracket inside the string must survive verbatim.
+      expect(result.fields.description).toBe('See item 3, ] cross-ref');
+    });
+
+    // Code-review finding (xhigh, correctness, CONFIRMED): balanceJsonDelimiters
+    // only appended missing brackets — it never closed an unterminated string
+    // literal, so output truncated mid-string (arguably the most realistic
+    // max_tokens truncation shape) threw `Unterminated string` and was never
+    // recovered at all.
+    it('recovers a response truncated mid-string value', async () => {
+      const provider = new TogetherProvider(FAKE_API_KEY);
+
+      // Cut off in the middle of the issuerName string value — no closing
+      // quote, no closing brace.
+      const truncatedMidString =
+        '{"credentialType":"DEGREE","issuerName":"Massachusetts Institute of Techno';
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: truncatedMidString } }],
+          usage: { total_tokens: 140 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: 'Graduated from Massachusetts Institute of Technology',
+        credentialType: 'DEGREE',
+        fingerprint: 'sha256:midstringtrunc',
+      });
+
+      expect(result.fields.credentialType).toBe('DEGREE');
+      // The salvaged value is itself truncated (a known, honest limitation)
+      // but the object as a whole must parse instead of throwing.
+      expect(result.fields.issuerName).toBe('Massachusetts Institute of Techno');
+      expect(result.provider).toBe('together');
+    });
+
+    // Code-review finding (xhigh, correctness, CONFIRMED): the control-char
+    // strip deliberately preserves tabs (0x09) so they can be escaped like
+    // \n/\r, but escapeBareNewlinesInStrings never escaped tabs — so any
+    // response containing a literal tab inside a string value threw `Bad
+    // control character in string literal` and was never recovered.
+    it('recovers a response containing a literal tab character inside a string value', async () => {
+      const provider = new TogetherProvider(FAKE_API_KEY);
+
+      const contentWithTab =
+        '{"credentialType":"DEGREE","issuerName":"MIT\tSchool of Engineering","confidence":0.9}';
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: contentWithTab } }],
+          usage: { total_tokens: 100 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: 'MIT School of Engineering degree',
+        credentialType: 'DEGREE',
+        fingerprint: 'sha256:tabinstring',
+      });
+
+      expect(result.fields.credentialType).toBe('DEGREE');
+      expect(result.fields.issuerName).toBe('MIT\tSchool of Engineering');
+    });
+  });
+
   describe('generateEmbedding', () => {
     it('calls Together AI embedding endpoint', async () => {
       const provider = new TogetherProvider(FAKE_API_KEY);

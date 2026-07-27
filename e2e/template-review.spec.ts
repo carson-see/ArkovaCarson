@@ -186,20 +186,20 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     const reviewPanel = page.getByTestId('template-review-panel');
     await expect(reviewPanel).toBeVisible({ timeout: 30000 });
 
-    // Low-confidence fields are flagged and Continue is BLOCKED.
+    // SCRUM-2914 (Founder UI findings, 2026-07-22): the AI-03 confidence-driven
+    // review gate was removed — extraction confidence scoring is unreliable and
+    // must never block a submit. Continue is enabled immediately; field
+    // review/edit stays available (exercised below) but no longer gates the flow.
+    // The template reconstruction request has not fired yet (it only goes out on
+    // Continue), so its captured body is still empty at this point.
     const continueButton = page.getByTestId('extraction-review-continue');
-    await expect(continueButton).toBeDisabled();
+    await expect(continueButton).toBeEnabled();
     expect(templateRequestBody).toEqual('');
 
-    // ── Correct one field (edit) and acknowledge the rest ──
+    // ── Correct one field (edit) — review/edit remains available ──
     await page.getByTestId('review-edit-creditHours').click();
     await page.getByTestId('review-input-creditHours').fill('6');
     await page.getByTestId('review-save-creditHours').click();
-
-    const remainingAcknowledgementButtons = reviewPanel.getByTestId(/^review-ack-/);
-    while (await remainingAcknowledgementButtons.count() > 0) {
-      await remainingAcknowledgementButtons.first().click();
-    }
 
     await expect(continueButton).toBeEnabled();
     await continueButton.click();
@@ -209,11 +209,21 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
     }).not.toEqual('');
 
     // ── Template step (if shown) → confirm → success ──
+    // SCRUM-2914: with the AI-03 confidence gate gone, review-continue advances
+    // the dialog to EITHER the template-picker step (the mocked "CPE" type has no
+    // matching is_system template in the E2E seed, so none is auto-selected) OR
+    // straight to confirm. Wait for whichever step actually settles before
+    // acting — the previous one-shot isVisible() check raced the post-request
+    // re-render (setStep runs only after the template reconstruction resolves,
+    // which is AFTER the request-body poll above passes), so it could miss the
+    // Skip button and then hang on the confirm wait.
     const skipButton = page.getByRole('button', { name: /^Skip$/ });
+    const readyHeading = page.getByText(/Ready to Secure/i);
+    await expect(skipButton.or(readyHeading).first()).toBeVisible({ timeout: 15000 });
     if (await skipButton.isVisible().catch(() => false)) {
       await skipButton.click();
     }
-    await expect(page.getByText(/Ready to Secure/i)).toBeVisible({ timeout: 15000 });
+    await expect(readyHeading).toBeVisible({ timeout: 15000 });
     await page.getByRole('button', { name: /Secure Document/i }).last().click();
     await expect(page.getByText(/Document Submitted/i)).toBeVisible({ timeout: 20000 });
 

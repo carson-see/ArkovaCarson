@@ -5,7 +5,6 @@ _Last updated: 2026-05-16_
 Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdiction privacy notices, and session timeout handling.
 
 ## Key Files
-- `ComplianceScoreCard.tsx` — Dashboard widget showing latest audit score/grade from `compliance_audits` table
 - `ComplianceScoreGauge.tsx` — Visual gauge for compliance score percentage
 - `GradeBadge.tsx` — Letter grade badge (A/B/C/D/F) with color coding
 - `AuditGapScorecard.tsx` — Filterable audit gap display by jurisdiction and category (MISSING/EXPIRED/EXPIRING_SOON/INSUFFICIENT)
@@ -26,6 +25,5 @@ Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdictio
 - DO: Read compliance data from `compliance_audits` table (NCA-03), not the legacy `compliance_scores` table
 - DO: Compliance section is accessed via admin sidebar toggle, not primary nav
 
-## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
-
-AuditMyOrganizationButton/scorecard copy comes from copy.ts (scrubbed there). Drive-by: ComplianceScoreCard.test.tsx `/87/` regex made exact — it also matched the relative "87 days ago" timestamp whenever (today − completed_at) equalled the score (date-dependent flake, tripped 2026-07-21; pre-existing on main). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+## Recent Changes
+- 2026-07-22 SCRUM-2914 (Founder UI findings): `ComplianceScoreCard.tsx` deleted (dashboard-only, no other importer) + removed from `index.ts` and `DashboardPage.tsx`. `AuditMyOrganizationButton.tsx` kept — still used by `src/pages/ComplianceScorecardPage.tsx`; its `DashboardPage.tsx` render was removed but the component itself is not dead.
