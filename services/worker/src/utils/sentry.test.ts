@@ -27,7 +27,7 @@ vi.mock('@sentry/profiling-node', () => ({
   nodeProfilingIntegration: vi.fn(() => ({})),
 }));
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, resolveSentryEnvironment, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, Sentry } from './sentry.js';
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, resolveSentryEnvironment, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, captureSchedulerPauseAlert, SCHEDULER_PAUSE_FINGERPRINT, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -595,5 +595,64 @@ describe('capturePipelineThroughputAlert (SCRUM-2901)', () => {
 
   it('exposes a single fixed fingerprint key', () => {
     expect(PIPELINE_THROUGHPUT_FINGERPRINT).toEqual(['pipeline-throughput-monitor']);
+  });
+});
+
+// SCRUM-2900 (PI-0.5): scheduler pause dead-man fingerprinting. An unexpected
+// PAUSED scheduler job re-alerts every scheduled audit run until resolved; the
+// stable fingerprint collapses re-fires into one Sentry issue. The acting
+// principal (operator / service-account identity — operational attribution
+// data, not user PII) rides in `extra`, never in the message: the beforeSend
+// email scrub would mangle a message-borne principal to [EMAIL].
+describe('captureSchedulerPauseAlert (SCRUM-2900)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('always captures at error level with the stable fingerprint', () => {
+    captureSchedulerPauseAlert(
+      'Scheduler pause dead-man: 1 unexpected pause (batch-anchors)',
+      {
+        firing_job_ids: ['batch-anchors'],
+        findings: [
+          {
+            job_id: 'batch-anchors',
+            classification: 'unexpected-pause',
+            actor_principal: 'ops-sa@arkova1.iam.gserviceaccount.com',
+            paused_at: '2026-05-02T09:14:00Z',
+          },
+        ],
+      },
+    );
+
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    const [message, scope] = (Sentry.captureMessage as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(message).toBe('Scheduler pause dead-man: 1 unexpected pause (batch-anchors)');
+    expect(scope).toEqual(
+      expect.objectContaining({
+        level: 'error',
+        fingerprint: SCHEDULER_PAUSE_FINGERPRINT,
+      }),
+    );
+  });
+
+  it('exposes a single fixed fingerprint key', () => {
+    expect(SCHEDULER_PAUSE_FINGERPRINT).toEqual(['scheduler-pause-deadman']);
+  });
+
+  it('the beforeSend scrubber leaves an actor_principal in extra intact (operational identity survives; message emails do not)', () => {
+    const event = {
+      message: 'Scheduler pause dead-man: 1 unexpected pause (batch-anchors)',
+      extra: {
+        findings: [
+          { job_id: 'batch-anchors', actor_principal: 'carson@arkova.ai' },
+        ],
+      },
+    };
+    const scrubbed = scrubPiiFromEvent(event);
+    const findings = scrubbed?.extra?.findings as Array<Record<string, unknown>>;
+    expect(findings[0].actor_principal).toBe('carson@arkova.ai');
+    expect(scrubbed?.message).not.toContain('[EMAIL]');
   });
 });

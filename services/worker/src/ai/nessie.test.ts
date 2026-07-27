@@ -112,6 +112,65 @@ describe('NessieProvider', () => {
       );
     });
 
+    it('parses a ```json fenced response instead of throwing (bug hunt fix)', async () => {
+      const provider = new NessieProvider(FAKE_API_KEY, FAKE_ENDPOINT_ID);
+
+      const fencedContent = [
+        '```json',
+        JSON.stringify({
+          credentialType: 'LICENSE',
+          issuerName: 'State Board of Nursing',
+          confidence: 0.83,
+        }),
+        '```',
+      ].join('\n');
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: fencedContent } }],
+          usage: { total_tokens: 90 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: 'Licensed by State Board of Nursing',
+        credentialType: 'LICENSE',
+        fingerprint: 'sha256:fenced123',
+      });
+
+      expect(result.fields.issuerName).toBe('State Board of Nursing');
+      expect(result.fields.credentialType).toBe('LICENSE');
+    });
+
+    it('parses a response with trailing prose after the JSON object instead of throwing (bug hunt fix)', async () => {
+      const provider = new NessieProvider(FAKE_API_KEY, FAKE_ENDPOINT_ID);
+
+      const trailingProseContent =
+        `${JSON.stringify({
+          credentialType: 'DEGREE',
+          issuerName: 'Stanford University',
+          confidence: 0.9,
+        })}\n\nLet me know if you need any further clarification on this extraction.`;
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: 'assistant', content: trailingProseContent } }],
+          usage: { total_tokens: 90 },
+        }),
+      });
+
+      const result = await provider.extractMetadata({
+        strippedText: 'Stanford University degree',
+        credentialType: 'DEGREE',
+        fingerprint: 'sha256:trailingprose123',
+      });
+
+      expect(result.fields.issuerName).toBe('Stanford University');
+      expect(result.fields.credentialType).toBe('DEGREE');
+    });
+
     it('retries on transient failures (handles cold start)', async () => {
       const provider = new NessieProvider(FAKE_API_KEY, FAKE_ENDPOINT_ID);
 

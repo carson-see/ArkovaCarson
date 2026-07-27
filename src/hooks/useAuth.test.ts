@@ -110,7 +110,7 @@ describe('useAuth', () => {
 
   it('signUp calls supabase signUp with full_name metadata', async () => {
     mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
-    mockSignUp.mockResolvedValue({ error: null });
+    mockSignUp.mockResolvedValue({ data: { session: null }, error: null });
     const testCredential = 'unit-test-credential';
 
     const { useAuth } = await import('./useAuth');
@@ -129,6 +129,50 @@ describe('useAuth', () => {
       password: testCredential,
       options: { data: { full_name: 'Test User' } },
     });
+  });
+
+  // SCRUM-2907: signUp must surface whether an active session was returned so
+  // callers can distinguish auto-confirmed signups (live session → proceed into
+  // the app) from confirmation-pending signups (null session → "check email").
+  it('signUp surfaces the active session when auto-confirm is on', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    const liveSession = { user: { id: 'user-1', email: 'new@test.com' } };
+    mockSignUp.mockResolvedValue({ data: { session: liveSession }, error: null });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    let signUpResult: Awaited<ReturnType<typeof result.current.signUp>> | undefined;
+    await act(async () => {
+      signUpResult = await result.current.signUp('new@test.com', 'unit-test-credential');
+    });
+
+    expect(signUpResult?.error).toBeNull();
+    expect(signUpResult?.session).toEqual(liveSession);
+  });
+
+  it('signUp surfaces a null session when email confirmation is pending', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockSignUp.mockResolvedValue({ data: { session: null }, error: null });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    let signUpResult: Awaited<ReturnType<typeof result.current.signUp>> | undefined;
+    await act(async () => {
+      signUpResult = await result.current.signUp('new@test.com', 'unit-test-credential');
+    });
+
+    expect(signUpResult?.error).toBeNull();
+    expect(signUpResult?.session).toBeNull();
   });
 
   it('signInWithGoogle calls signInWithOAuth', async () => {

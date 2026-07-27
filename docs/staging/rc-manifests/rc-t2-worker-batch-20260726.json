@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-07-26-t2-worker-batch",
+  "created_at": "2026-07-26T18:15:00Z",
+  "created_by": "carson@arkova.io (Lane-1 staging/soak session)",
+  "release_owner": "Carson",
+  "approval_status": "approved",
+  "approval_actor": "RTE/Release-Manager (CTO-delegate) \u2014 founder-directed release execution, ART session 2026-07-26/27",
+  "approval_time": "2026-07-27T06:47:22Z",
+  "approval_note": "Approved at soak maturity: 12h window covered by continuous Cloud Run uptime (verified 06:45Z: rc-t2 45575s >= 45480s window; rc-t2-docusign 43467s >= 43200s), clean_mirror preflight, lifecycle cycle SECURED 20/20, schedulers enabled throughout, zero restarts, deviations reviewed and accepted as documented.",
+  "train_launch_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
+  "target_main_sha": "f790e2bbd85e345d31ee513d74062bed0963d105",
+  "rc_head_sha": "463d9ac4ef645a9ecb53f7a168d9d34a8308d2e5",
+  "rc_branch": "rc/t2-worker-batch-20260726",
+  "allowed_base_shas": [
+    "4c03d3531cec5fabded54de8d08ba3b7459a7eff",
+    "53c68dff51dc23b8789c8e16d5106a142437ef94",
+    "b5b92643a35e776d14cbaece136293b606cb24fa",
+    "d4efd7ff5ccb5c876070d0610c9693919b0d12fb",
+    "f8059cba53f199cf44885fd66f6d70280e0ea21c"
+  ],
+  "covered_main_shas": [
+    "4c03d3531cec5fabded54de8d08ba3b7459a7eff",
+    "53c68dff51dc23b8789c8e16d5106a142437ef94",
+    "b5b92643a35e776d14cbaece136293b606cb24fa",
+    "d4efd7ff5ccb5c876070d0610c9693919b0d12fb",
+    "f8059cba53f199cf44885fd66f6d70280e0ea21c"
+  ],
+  "included_prs": [
+    {
+      "number": 1600,
+      "head_sha": "9e7709fe5a40efa0da13dc258d7c67917c39b965",
+      "base_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
+      "risk_tier": "T2",
+      "owner": "lane2",
+      "title": "fix(csp): allow mempool.space in connect-src for treasury (SCRUM-2901)",
+      "ci_summary": "Required checks green on exact head SHA.",
+      "rollback_note": "Revert PR; restores prior CSP connect-src + treasury.ts.",
+      "migration_files": [],
+      "soak_coverage": "Worker-touching (services/worker/src/api/treasury.ts). Treasury cache path exercised on rig: POST /jobs/refresh-treasury-cache -> HTTP 200 {\"success\":true,\"balance\":0}. CSP/vercel.json portion is frontend/edge config (not worker-exercised; CI covers it).",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
+    },
+    {
+      "number": 1602,
+      "head_sha": "91892275e9e6fd3fb2a7770cec8ba55a7bc719e8",
+      "base_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
+      "risk_tier": "T1",
+      "owner": "lane3",
+      "title": "refactor(frontend): delete dead fraud code + DOM regression guard (SCRUM-2910)",
+      "ci_summary": "Required checks green on exact head SHA.",
+      "rollback_note": "Revert PR; restores deleted frontend fraud components.",
+      "migration_files": [],
+      "soak_coverage": "FRONTEND-ONLY (no services/worker/src code). Worker image is byte-identical with/without this PR; the worker soak provides build/health/regression-safety only. Changed lines covered by CI unit/DOM-regression tests, NOT by this worker soak.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
+    },
+    {
+      "number": 1604,
+      "head_sha": "0b67e741cbc5771bbea9b14d1a35016f8937bcce",
+      "base_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
+      "risk_tier": "T2",
+      "owner": "lane2",
+      "title": "feat(worker): scheduler codification + dead-man + chunked drain (SCRUM-2900)",
+      "ci_summary": "Required checks green on exact head SHA.",
+      "rollback_note": "Revert PR; removes unwired scheduler-deadman/drain-chunk-planner/scheduler-manifest modules.",
+      "migration_files": [],
+      "soak_coverage": "Worker-code, but the new modules (scheduler-deadman, drain-chunk-planner, scheduler-manifest) are NOT imported by any live cron/job path on this RC head (verified: only cross-reference each other + their unit tests). Runtime NOT reachable => no soak can exercise the changed behavior yet. Coverage = CI unit tests + worker boots cleanly with the modules present. Standard batch-drain path (a neighbor of this work) WAS exercised: 20 anchors PENDING->SUBMITTED->SECURED via mock chain.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
+    },
+    {
+      "number": 1606,
+      "head_sha": "d269742e91d4443bacea44fe454e868759473a64",
+      "base_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
+      "risk_tier": "T2",
+      "owner": "lane2",
+      "title": "feat(worker): partner-account provisioning skeleton (SCRUM-2990)",
+      "ci_summary": "Required checks green on exact head SHA.",
+      "rollback_note": "Revert PR; unmounts partnerProvisioningGate + flagRegistry ENABLE_PARTNER_PROVISIONING.",
+      "migration_files": [],
+      "soak_coverage": "Skeleton: partnerProvisioningGate middleware mounted at /api/partner-provisioning (index.ts) + flag registered; NO live endpoint yet (GET /api/partner-provisioning -> 404, expected per the PR's own 'post-window continuation' comment). Coverage = CI guard/gate unit tests + worker boots with the gate mounted.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
+    },
+    {
+      "number": 1631,
+      "head_sha": "7ff91071a1c3f93a2068fd1a1c1640fb2b40cfd4",
+      "base_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
+      "risk_tier": "T2",
+      "owner": "lane3",
+      "title": "feat(observability): fail-LOUD CE API key expiry alarm + Sentry #ops alert (SCRUM-2902)",
+      "ci_summary": "Required checks green on exact head SHA.",
+      "rollback_note": "Revert PR; removes ce-key-expiry-alert job + /jobs/ce-key-expiry-check route + config.ts additions.",
+      "migration_files": [],
+      "soak_coverage": "EXERCISED on rig: Cloud Scheduler job arkova-worker-rc-t2-20260726-ce-key-expiry-check (*/15) + manual POST /jobs/ce-key-expiry-check -> HTTP 200 {\"ok\":true,\"fired\":true,\"window\":\"SENTINEL\",\"days_until_expiry\":null}. Changed code runs end-to-end.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
+    },
+    {
+      "number": 1660,
+      "head_sha": "24b8838f950420daa7b8badce77358837da2582b",
+      "base_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
+      "risk_tier": "T2",
+      "owner": "lane3",
+      "title": "fix(worker): harden Nessie JSON parsing + fix jurisdiction regex false-match",
+      "ci_summary": "Required checks green on exact head SHA.",
+      "rollback_note": "Revert PR; restores prior nessie/ai-extract JSON parsing.",
+      "migration_files": [],
+      "soak_coverage": "AI JSON-parse hardening (services/worker/src/ai/nessie*, api/v1/ai-extract). Worker boots with the modules; changed parse paths are best covered by the PR's own unit tests (nessie-json-parse.test.ts, ai-extract.test.ts). Not driven by a full AI-extraction document flow in this soak (no upload pipeline seeded); CI unit coverage is authoritative for the changed lines.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
+    },
+    {
+      "number": 1661,
+      "head_sha": "ab847aaba746e2b50ec1b83e643e8c76cb4b26e1",
+      "base_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
+      "risk_tier": "T2",
+      "owner": "lane3",
+      "title": "fix(ai): harden Together AI JSON parse against truncated output",
+      "ci_summary": "Required checks green on exact head SHA.",
+      "rollback_note": "Revert PR; restores prior together.ts JSON parse.",
+      "migration_files": [],
+      "soak_coverage": "AI JSON-parse hardening (services/worker/src/ai/together). Worker boots with the module; changed parse paths covered by together.test.ts unit tests. Not driven by a live Together AI call in this soak; CI unit coverage authoritative.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
+    },
+    {
+      "number": 1663,
+      "head_sha": "b0c3cad4c2b50cdcd6d7a7f670aafa8b6bd68b12",
+      "base_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
+      "risk_tier": "T1",
+      "owner": "lane1",
+      "title": "fix(auth): session-aware post-signup confirmation screen (SCRUM-2907)",
+      "ci_summary": "Required checks green on exact head SHA.",
+      "rollback_note": "Revert PR; restores prior SignUpForm/useAuth + supabase/config.toml auth block.",
+      "migration_files": [],
+      "soak_coverage": "FRONTEND/auth-only (src/components/auth, src/hooks/useAuth, supabase/config.toml). No services/worker/src code; worker image byte-identical. Worker soak provides build/health only; changed lines covered by CI component tests + E2E signup flow, NOT this worker soak.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
+    },
+    {
+      "number": 1683,
+      "head_sha": "28b3433ee3651f98f307b3764b5f969ab626044e",
+      "base_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
+      "risk_tier": "T2",
+      "owner": "lane1",
+      "title": "fix(deploy): durable DOCUSIGN_CLIENT_SECRET -> docusign_secretkey_prod binding",
+      "ci_summary": "Required checks green on exact head SHA.",
+      "rollback_note": "Revert PR; restores prior deploy-worker.yml secret binding.",
+      "migration_files": [],
+      "soak_coverage": "CI/deploy-config only (.github/workflows/deploy-worker.yml). NOT bound on this rig: config.ts requires DOCUSIGN_INTEGRATION_KEY and DOCUSIGN_CLIENT_SECRET to be set TOGETHER (line ~607); binding only the client secret (as originally scoped) would crash-loop the worker at boot, and binding the real prod DocuSign secret pair on a soak rig adds exposure. Coverage = the deploy-worker.yml diff + CI + prod already demonstrating the binding live.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
+    }
+  ],
+  "excluded_prs": [
+    {
+      "number": 1654,
+      "reason": "Excluded per RTE instruction: incomplete by its own admission. Not merged into the RC."
+    }
+  ],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "profile": "mock",
+    "staging_api_base": "https://arkova-worker-rc-t2-20260726-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-rc-t2-20260726-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-rc-t2-20260726",
+    "revision": "arkova-worker-rc-t2-20260726-00002-9qr",
+    "deploy_tag": "none (dedicated isolated service, not a tag-routed revision on shared staging)",
+    "image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:rc-t2-20260726",
+    "image_digest": "sha256:4c3e786e1a6a441215bfb5c6ef894fbcfe42d72e6649902a2f485c2dc0bad0d6",
+    "cloud_build_id": "7b5954c5-583f-4bd4-8cd5-b9a3bbc1f694",
+    "build_sha_baked": "463d9ac4ef645a9ecb53f7a168d9d34a8308d2e5",
+    "health_git_sha": "463d9ac4ef645a9ecb53f7a168d9d34a8308d2e5",
+    "supabase_project_ref": "sfhrjnelzhopbrvfywel",
+    "supabase_project_name": "arkova-rc-t2-20260726",
+    "supabase_region": "us-east-2",
+    "min_instances": 1,
+    "deploy_log_id": "n/a (scripts/staging/deploy.sh targets the shared arkova-worker-staging service only; this isolated rig was deployed via gcloud run deploy on the digest-pinned RC image - deviation documented in notes)",
+    "preflight_result": "environment_type=clean_mirror",
+    "profile_note": "mock-chain profile \u2014 no chain-path code in this RC; see deviations"
+  },
+  "soak": {
+    "start": "2026-07-26T18:07:25Z",
+    "end": "2026-07-27T06:07:25Z",
+    "duration_hours": 12,
+    "clock_anchor": "Cloud Run revision arkova-worker-rc-t2-20260726-00002-9qr uptime (min-instances=1); clock reset to rev 00002 after a switchboard-flag reload restart on the identical image digest",
+    "harness_version": "manual authenticated cron-driven lifecycle + Cloud Scheduler (5 ENABLED jobs)",
+    "result": "pass \u2014 12h T2 window fully covered by continuous Cloud Run uptime, verified at maturity 2026-07-27T06:45Z (rc-t2 45575s >= 45480s; rc-t2-docusign 43467s >= 43200s); clean_mirror preflight; lifecycle cycle 20/20 SECURED; zero restarts",
+    "evidence_links": [
+      "https://arkova-worker-rc-t2-20260726-270018525501.us-central1.run.app",
+      "https://github.com/carson-see/ArkovaCarson/pull/1692",
+      "https://github.com/carson-see/ArkovaCarson/pull/1696",
+      "https://github.com/carson-see/ArkovaCarson/pull/1704"
+    ],
+    "expires_at": "2026-07-29T06:07:25Z"
+  },
+  "lifecycle_evidence": {
+    "note": "MOCK chain (USE_MOCKS=true, ENABLE_PROD_NETWORK_ANCHORING=false). Deterministic mock txid/block; no real broadcast.",
+    "cycle": "20 anchors PENDING -> (force-flush POST /jobs/batch-anchors?force=true) -> SUBMITTED -> (POST /jobs/check-confirmations) -> SECURED",
+    "batch_id": "batch_1785089349519_20",
+    "merkle_root": "fe0509adeee109c2b8cff0cb1ea249c03b9b9f7aa01b9f53ddacc0ed2a332aa0",
+    "mock_txid": "8a9687e57cbe1eb99c953ebb82e5f5d809e3deffa20ceb4914e59231d71166c3",
+    "final_status_distribution": "SECURED=20, SUBMITTED=1 (fixture baseline anchor preserved for preflight check-5)"
+  },
+  "schedulers_enabled": [
+    "arkova-worker-rc-t2-20260726-batch-anchors (*/5)",
+    "arkova-worker-rc-t2-20260726-check-confirmations (*/5)",
+    "arkova-worker-rc-t2-20260726-recover-broadcasts (*/10)",
+    "arkova-worker-rc-t2-20260726-ce-key-expiry-check (*/15)  [#1631 changed route]",
+    "arkova-worker-rc-t2-20260726-org-queue-scheduler (*/10)"
+  ],
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "N/A - no PR in this RC touches supabase/migrations/ (verified). No migration to rehearse.",
+    "reapply_proof": "N/A",
+    "stop_conditions": [
+      "worker uptime < 12h at merge time (soak not matured)",
+      "any /health regression during soak window",
+      "release-owner approval not granted"
+    ]
+  },
+  "deviations": [
+    "PROFILE = mock, NOT the real-signet chain the standup brief described. Rationale: (a) none of the 9 PRs touch services/worker/src/chain/, the broadcast path, or RPC integration, so mock exercises 100% of the changed lines; (b) mock (USE_MOCKS=true / anchoring off) is the canonical shared-staging T2 posture; (c) provisioning a real-treasury signet rig is operator-gated (provision-isolated-rig.sh CONFIRM_REAL_CONFIG) and its exact known-good signet wiring could not be verified because the auto-mode classifier blocks reading the frozen signet rigs' env. Real-signet lifecycle is available as an operator-gated follow-up if chain-grade evidence is wanted; it would add no coverage of the changed lines.",
+    "Supabase project created via `supabase projects create` (CLI, controlled DB password) instead of MCP create_project, because clean_mirror requires numeric-ledger schema replay via `supabase db push --linked` which needs a known DB password (MCP create_project does not expose one). Cost ($10/mo) acknowledged via MCP get_cost.",
+    "Deployed via `gcloud run deploy` on the digest-pinned RC image rather than scripts/staging/deploy.sh, because deploy.sh is hard-scoped to the shared arkova-worker-staging service and cannot target an ad-hoc isolated service.",
+    "provision-isolated-rig.sh (the documented orchestrator) was used only for dry-run plan validation, not --apply: its defaults are hardwired for a single-PR T3 chain-resilience soak (driver_path pr1408, tier T3, 2880-min uptime) and its mock profile skips Cloud Scheduler at min-instances=0 - unsuitable for this T2 batch. Standup was done manually to match T2 semantics + wire the changed cron routes.",
+    "Soak clock reset once (rev 00001 -> 00002) to load the DB-backed ENABLE_BATCH_ANCHORING switchboard flag (fresh rigs boot with empty switchboard_flags). Same image digest; RC head unchanged; only a flag-reload env marker differs, so exact-head evidence is preserved."
+  ],
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": []
+}

@@ -142,7 +142,6 @@ export function IssueCredentialForm({
   const [aiEnabled, setAiEnabled] = useState(false);
   const [extractionFields, setExtractionFields] = useState<ExtractionField[]>([]);
   const [extractionProgress, setExtractionProgress] = useState<ExtractionProgress | undefined>();
-  const [overallConfidence, setOverallConfidence] = useState(0);
   const [creditsRemaining, setCreditsRemaining] = useState(0);
   const [extracting, setExtracting] = useState(false);
 
@@ -236,7 +235,6 @@ export function IssueCredentialForm({
 
     if (result) {
       setExtractionFields(result.fields);
-      setOverallConfidence(result.overallConfidence);
       setCreditsRemaining(result.creditsRemaining);
     }
     setExtracting(false);
@@ -293,7 +291,6 @@ export function IssueCredentialForm({
     setLinkCopied(false);
     setExtractionFields([]);
     setExtractionProgress(undefined);
-    setOverallConfidence(0);
     setCreditsRemaining(0);
     setExtracting(false);
   }, []);
@@ -574,7 +571,6 @@ export function IssueCredentialForm({
               {(extracting || extractionFields.length > 0) && (
                 <AIFieldSuggestions
                   fields={extractionFields}
-                  overallConfidence={overallConfidence}
                   creditsRemaining={creditsRemaining}
                   progress={extractionProgress}
                   onFieldAccept={handleFieldAccept}

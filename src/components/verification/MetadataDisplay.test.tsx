@@ -215,4 +215,55 @@ describe('MetadataDisplay', () => {
     expect(link.tagName).toBe('A');
     expect(link).toHaveAttribute('href', 'mailto:admin@school.edu');
   });
+
+  // SCRUM-2910 (BUG-2026-07-17-009 / -010, P0): fraud-derived metadata must
+  // never reach the DOM on any render surface. MetadataDisplay is a generic
+  // key-value renderer exported from the verification barrel; it must apply
+  // the same `isFraudMetadataKey` filter every other metadata surface uses.
+  describe('SCRUM-2910 — fraud metadata never renders', () => {
+    it('drops every fraud_* / fraudSignals key but keeps legitimate fields', () => {
+      const { container } = render(
+        <MetadataDisplay
+          metadata={{
+            institution: 'MIT',
+            fraud_score: 0.87 as unknown as string,
+            fraud_risk_level: 'high',
+            fraud_analysis_method: 'client_side_worker_v2',
+            fraudSignals: '["Font inconsistency detected"]',
+            'Fraud-Risk-Level': 'critical',
+          }}
+        />
+      );
+      // Legitimate field still renders (guard is not vacuously green).
+      expect(screen.getByText('Institution')).toBeInTheDocument();
+      expect(screen.getByText('MIT')).toBeInTheDocument();
+
+      const haystack = (container.textContent ?? '').toLowerCase();
+      expect(haystack).not.toContain('fraud');
+      expect(haystack).not.toContain('0.87');
+      expect(haystack).not.toContain('87%');
+      expect(haystack).not.toContain('client_side_worker_v2');
+      expect(haystack).not.toContain('font inconsistency');
+      expect(haystack).not.toContain('critical');
+    });
+
+    it('drops `_`-prefixed internal keys', () => {
+      render(
+        <MetadataDisplay
+          metadata={{ _internal: 'secret', visible: 'shown' }}
+        />
+      );
+      expect(screen.getByText('Visible')).toBeInTheDocument();
+      expect(screen.queryByText('secret')).not.toBeInTheDocument();
+    });
+
+    it('renders the empty state when every key is fraud-derived', () => {
+      render(
+        <MetadataDisplay
+          metadata={{ fraud_score: 0.9 as unknown as string, fraud_risk_level: 'high' }}
+        />
+      );
+      expect(screen.getByText('No metadata')).toBeInTheDocument();
+    });
+  });
 });

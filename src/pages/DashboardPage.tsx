@@ -41,8 +41,6 @@ import { DASHBOARD_STATS_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS
 import { resolveDashboardStatsRequest, resolveDashboardStatsState } from '@/lib/dashboardStats';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
-import { ComplianceScoreCard } from '@/components/compliance/ComplianceScoreCard';
-import { AuditMyOrganizationButton } from '@/components/compliance/AuditMyOrganizationButton';
 import { UsageWidget } from '@/components/billing/UsageWidget';
 import { CleCreditWidget } from '@/components/dashboard/CleCreditWidget';
 import { GettingStartedChecklist } from '@/components/onboarding/GettingStartedChecklist';
@@ -314,16 +312,10 @@ export function DashboardPage() {
         />
       </div>
 
-      {/* NCA-07: Audit My Organization CTA — prominently placed above the fold for ORG_ADMIN */}
-      {profile?.role === 'ORG_ADMIN' && (
-        <div className="mb-6">
-          <AuditMyOrganizationButton />
-        </div>
-      )}
-
-      {/* Widgets — Compliance Score only for ORG_ADMIN, Usage + Credit for all */}
-      <div className={`grid gap-4 grid-cols-1 mb-8 ${profile?.role === 'ORG_ADMIN' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
-        {profile?.role === 'ORG_ADMIN' && <ComplianceScoreCard />}
+      {/* Widgets — Usage + Credit for all. SCRUM-2914 (Founder UI findings,
+          2026-07-22): Audit My Organization CTA and the Compliance Score
+          card were removed from the dashboard. */}
+      <div className="grid gap-4 grid-cols-1 mb-8 sm:grid-cols-2">
         <UsageWidget />
         <CreditUsageWidget />
       </div>
