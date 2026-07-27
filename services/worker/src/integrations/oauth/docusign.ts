@@ -539,8 +539,10 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
   // present it must agree; when absent, the event name is authoritative.
   const rawStatus = parsed.status ?? parsed.data?.status ?? parsed.envelopeSummary?.status ?? nested?.status;
   const status = rawStatus?.toLowerCase();
-  const event = parsed.event.toLowerCase();
-  if (event !== 'envelope-completed' || (status !== undefined && status !== 'completed') || !envelopeId || !accountId) {
+  const isCompletedEvent = parsed.event.toLowerCase() === 'envelope-completed';
+  const statusContradictsCompletion = status !== undefined && status !== 'completed';
+  const hasEnvelopeIdentity = Boolean(envelopeId) && Boolean(accountId);
+  if (!isCompletedEvent || statusContradictsCompletion || !hasEnvelopeIdentity) {
     throw new Error('DocuSign Connect payload is not a completed envelope event');
   }
 
