@@ -43,6 +43,7 @@ import { Request, Response } from 'express';
 import {
   AI_EXTRACTION_LATENCY_BUDGET_MS,
   aiExtractRouter,
+  inferJurisdiction,
   resolveExtractionLatencyBudgetMs,
 } from './ai-extract.js';
 
@@ -468,6 +469,55 @@ describe('AI Extraction Endpoint', () => {
     expect(resolveExtractionLatencyBudgetMs({ AI_EXTRACTION_LATENCY_BUDGET_MS: '9000' })).toBe(9000);
     expect(resolveExtractionLatencyBudgetMs({ AI_EXTRACTION_LATENCY_BUDGET_MS: '0' })).toBe(AI_EXTRACTION_LATENCY_BUDGET_MS);
     expect(resolveExtractionLatencyBudgetMs({ AI_EXTRACTION_LATENCY_BUDGET_MS: 'not-a-number' })).toBe(AI_EXTRACTION_LATENCY_BUDGET_MS);
+  });
+
+  describe('inferJurisdiction (bug hunt fix — unanchored \\b substring false-match)', () => {
+    it('does NOT match United States on the word CAUSATION (bug: unanchored USA substring)', () => {
+      // "CAUSATION" contains "USA" as a raw substring (C-AUSA-TION). The
+      // pre-fix regex only anchored \b to the first/last alternative in each
+      // |-chain, leaving the middle "USA" alternative with no word-boundary
+      // constraint on either side, so it matched inside unrelated words.
+      expect(inferJurisdiction('Proximate CAUSATION is required under tort law.')).toBeUndefined();
+    });
+
+    it('does NOT match United States on other words containing "usa" as a substring', () => {
+      // "causal" contains "usa" (c-AUSA-l); "usable" contains "usa" as a
+      // prefix (USA-ble) — both are unrelated words, not the country.
+      expect(inferJurisdiction('Causal analysis supports usable evidence.')).toBeUndefined();
+    });
+
+    it('still matches a legitimate standalone "USA" mention', () => {
+      expect(inferJurisdiction('Licensed to practice in the USA.')).toBe('United States');
+    });
+
+    it('still matches "United States", "U.S.A.", and "U.S." as whole-word mentions', () => {
+      expect(inferJurisdiction('Issued in the United States of America.')).toBe('United States');
+      expect(inferJurisdiction('A citizen of the U.S.A. since birth.')).toBe('United States');
+      expect(inferJurisdiction('Practicing law in the U.S. since 2015.')).toBe('United States');
+    });
+
+    it('does NOT match Kenya/Australia jurisdictions on substrings of unrelated words', () => {
+      // "KDPA" and "OAIC"/"AHPRA"/"TEQSA" were also unanchored middle
+      // alternatives — same bug class, different jurisdiction group.
+      expect(inferJurisdiction('The team held a JUDPAKDPAX debrief.')).toBeUndefined();
+      expect(inferJurisdiction('An XOAICX artifact was misfiled.')).toBeUndefined();
+      expect(inferJurisdiction('The AHPRAXIMATE deadline slipped.')).toBeUndefined();
+    });
+
+    it('still matches legitimate whole-word Kenya jurisdiction terms', () => {
+      expect(inferJurisdiction('Regulated by the ODPC under KDPA.')).toBe('Kenya');
+      expect(inferJurisdiction('Issued in Kenya.')).toBe('Kenya');
+    });
+
+    it('still matches legitimate whole-word Australia jurisdiction terms', () => {
+      expect(inferJurisdiction('Regulated by OAIC under the Privacy Act 1988.')).toBe('Australia');
+      expect(inferJurisdiction('AHPRA-registered practitioner in Australia.')).toBe('Australia');
+      expect(inferJurisdiction('TEQSA-accredited institution.')).toBe('Australia');
+    });
+
+    it('returns undefined when no jurisdiction terms are present', () => {
+      expect(inferJurisdiction('Bachelor of Science in Computer Science.')).toBeUndefined();
+    });
   });
 
   it('uses an explicit extraction latency budget before returning fallback metadata', async () => {
