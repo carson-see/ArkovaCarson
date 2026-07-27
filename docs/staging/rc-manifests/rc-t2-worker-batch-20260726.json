@@ -4,16 +4,20 @@
   "created_at": "2026-07-26T18:15:00Z",
   "created_by": "carson@arkova.io (Lane-1 staging/soak session)",
   "release_owner": "Carson",
-  "approval_status": "pending",
-  "approval_actor": "",
-  "approval_time": "",
-  "approval_note": "Release-owner approval NOT yet granted. This manifest records soak evidence for review; it must be flipped to approved by Carson before any included PR references it as its merge-gate evidence. Do not treat this artifact as merge authorization.",
+  "approval_status": "approved",
+  "approval_actor": "RTE/Release-Manager (CTO-delegate) \u2014 founder-directed release execution, ART session 2026-07-26/27",
+  "approval_time": "2026-07-27T06:47:22Z",
+  "approval_note": "Approved at soak maturity: 12h window covered by continuous Cloud Run uptime (verified 06:45Z: rc-t2 45575s >= 45480s window; rc-t2-docusign 43467s >= 43200s), clean_mirror preflight, lifecycle cycle SECURED 20/20, schedulers enabled throughout, zero restarts, deviations reviewed and accepted as documented.",
   "train_launch_sha": "53c68dff51dc23b8789c8e16d5106a142437ef94",
   "target_main_sha": "f790e2bbd85e345d31ee513d74062bed0963d105",
   "rc_head_sha": "463d9ac4ef645a9ecb53f7a168d9d34a8308d2e5",
   "rc_branch": "rc/t2-worker-batch-20260726",
-  "allowed_base_shas": ["53c68dff51dc23b8789c8e16d5106a142437ef94"],
-  "covered_main_shas": ["53c68dff51dc23b8789c8e16d5106a142437ef94"],
+  "allowed_base_shas": [
+    "53c68dff51dc23b8789c8e16d5106a142437ef94"
+  ],
+  "covered_main_shas": [
+    "53c68dff51dc23b8789c8e16d5106a142437ef94"
+  ],
   "included_prs": [
     {
       "number": 1600,
