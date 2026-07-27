@@ -1,5 +1,21 @@
 # agents.md — pages
-_Last updated: 2026-07-16_
+_Last updated: 2026-07-27_
+
+## SCRUM-2940 — Folders UI (founder escalation, PR #1657 follow-up)
+
+PR #1657 merged the folders DATA LAYER (`useFolders`, `folders` table,
+`anchors.folder_id`) with **zero** UI — `useFolders` had no importers outside
+its own file, so there was no way to create a folder or file a record into
+one. `MyRecordsPage.tsx` is now the consumer: a `FolderSidebar`
+(`@/components/folders`) filters the record list by `'ALL' | 'UNFILED' |
+<folder id>`; create/rename/delete flow through `FolderFormDialog` /
+`DeleteFolderDialog`; each record's action menu gained "Move to folder"
+(`MoveToFolderDialog`) and, when already filed, a direct "Remove from folder"
+item. Filtering reads `Record.folderId`, added to `useAnchors`'s select (see
+`src/hooks/agents.md`). `DashboardPage.tsx`'s `RecordsList`-based view is
+**not** wired to folders in this pass — only the dedicated My Records page is
+in scope for SCRUM-2940 v1. Full component-level notes live in
+`src/components/folders/agents.md`.
 
 ## PR #1561 — WebMCP search URL consumption
 

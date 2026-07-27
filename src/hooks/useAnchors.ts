@@ -36,7 +36,7 @@ type AnchorRow = Database['public']['Tables']['anchors']['Row'];
 type AnchorPartial = Pick<AnchorRow,
   'id' | 'filename' | 'fingerprint' | 'status' | 'created_at' |
   'chain_timestamp' | 'file_size' | 'credential_type' | 'chain_tx_id' |
-  'chain_block_height' | 'public_id' | 'metadata'
+  'chain_block_height' | 'public_id' | 'metadata' | 'folder_id'
 >;
 
 /** Map a Supabase anchor row to the UI Record interface. */
@@ -56,6 +56,8 @@ function mapAnchorToRecord(anchor: AnchorPartial): Record {
     publicId: anchor.public_id ?? undefined,
     metadata: meta ?? undefined,
     issuerName: meta?.issuer ?? undefined,
+    // SCRUM-2940: null = Unfiled (distinct from "not fetched"/undefined).
+    folderId: anchor.folder_id ?? null,
   };
 }
 
@@ -71,7 +73,7 @@ async function fetchAnchorsData(
 ): Promise<Record[]> {
   let query = supabase
     .from('anchors')
-    .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata');
+    .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata, folder_id');
 
   // ORG_ADMIN: show all org records; INDIVIDUAL/platform admin: show own records
   if (role === 'ORG_ADMIN' && orgId) {
