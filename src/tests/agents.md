@@ -11,6 +11,7 @@ Integration and infrastructure test suites that cross-cut the codebase: migratio
 - `jurisdiction-rules-coverage.test.ts` — asserts `jurisdiction_rules` table shape survives baseline collapse (SCRUM-907)
 - `migration-drift-logic.test.ts` — unit-tests the diff algorithm used by the migration-drift CI workflow (SCRUM-908)
 - `rls-performance.test.ts` — checks RLS performance indexes exist in the baseline schema (SCRUM-348..352)
+- `0363-enable-org-credit-enforcement-flag.test.ts` — pins migration 0363 + seed.sql: `ENABLE_ORG_CREDIT_ENFORCEMENT` switchboard row seeds `enabled=false` with idempotent `ON CONFLICT (flag_key) DO NOTHING` (G4; worker behavior pinned in `services/worker/src/utils/orgCreditEnforcementFlag.test.ts`)
 
 ## Subdirectories
 - `edge/` — Cloudflare edge worker security tests (JWT verify, HMAC, rate-limit)

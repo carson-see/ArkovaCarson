@@ -5,7 +5,8 @@
     "ENABLE_AI_EXTRACTION": true,
     "ENABLE_VERIFICATION_API": true,
     "ENABLE_SEMANTIC_SEARCH": false,
-    "ENABLE_AI_FRAUD": false
+    "ENABLE_AI_FRAUD": false,
+    "ENABLE_ORG_CREDIT_ENFORCEMENT": false
   },
   "bitcoinUtxoProvider": "getblock",
   "bitcoinFeeStrategy": "mempool",
