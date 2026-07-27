@@ -71,10 +71,13 @@ test.describe('Dashboard', () => {
     test('org admin sees dashboard with records', async ({ orgAdminPage }) => {
       await openDashboard(orgAdminPage);
 
-      // Should show org-admin-specific dashboard content.
-      await expect(orgAdminPage.locator('#main-content')).toContainText(/Audit My Organization/i, {
-        timeout: 10000,
-      });
+      // Should show org-admin-specific dashboard content. SCRUM-2914 (Founder UI
+      // findings, 2026-07-22) removed the "Audit My Organization" CTA and the
+      // Compliance Score card from the dashboard, so assert on the ORG_ADMIN-only
+      // "Issue Credential" action instead (individual users never see it).
+      await expect(
+        orgAdminPage.locator('#main-content').getByRole('button', { name: /Issue Credential/i }),
+      ).toBeVisible({ timeout: 10000 });
     });
   });
 

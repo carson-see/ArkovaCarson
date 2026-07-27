@@ -28,7 +28,7 @@ import type {
 } from './types.js';
 import { ExtractedFieldsSchema } from './schemas.js';
 import { buildExtractionPrompt } from './prompts/extraction.js';
-import { stripJsonComments } from './strip-json-comments.js';
+import { parseNessieJson } from './nessie-json-parse.js';
 import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
 import { runCrossFieldChecks, validateFieldsForType } from './crossFieldFraudChecks.js';
@@ -69,7 +69,7 @@ export class NessieProvider implements IAIProvider {
   private readonly endpointId: string;
   private readonly modelName: string;
   private readonly apiBase: string;
-  private circuit: CircuitState = {
+  private readonly circuit: CircuitState = {
     consecutiveFailures: 0,
     lastFailureAt: 0,
     isOpen: false,
@@ -132,9 +132,10 @@ export class NessieProvider implements IAIProvider {
         );
       }
 
-      // NMT-02: Strip JS-style comments from Nessie reasoning/DPO model output
-      const cleanedText = stripJsonComments(text);
-      const parsed = JSON.parse(cleanedText);
+      // NMT-02 + bug hunt fix: hardened parse — strips JS-style comments,
+      // markdown ```json fences, and salvages truncated/trailing-prose JSON,
+      // mirroring gemini.ts's parseModelJson hardening (BUG-2026-06-24-014).
+      const parsed = parseNessieJson(text);
       const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
       const { confidence: _, ...rawFields } = parsed;
       const validated = ExtractedFieldsSchema.safeParse(rawFields);

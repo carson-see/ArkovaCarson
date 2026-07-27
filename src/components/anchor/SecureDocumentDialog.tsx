@@ -101,9 +101,10 @@ export function SecureDocumentDialog({
   const [aiEnabled, setAiEnabled] = useState(false);
   const [extractionProgress, setExtractionProgress] = useState<ExtractionProgress | null>(null);
   const [extractedFields, setExtractedFields] = useState<ExtractionField[]>([]);
-  // AI-03 (SCRUM-2383): low-confidence fields must be acknowledged or corrected
-  // in the TemplateReviewPanel before the user can proceed past extraction.
-  const [reviewComplete, setReviewComplete] = useState(true);
+  // SCRUM-2914 (Founder UI findings, 2026-07-22): the AI-03 confidence-driven
+  // review gate was removed — extraction confidence scoring is unreliable and
+  // must never block a submit. Field review/edit remains available via
+  // TemplateReviewPanel; it just no longer gates Continue.
   const [overallConfidence, setOverallConfidence] = useState(0);
   // creditsRemaining display moved out with the AI-03 review panel; the
   // extraction progress instance of AIFieldSuggestions passes a literal 0.
@@ -382,9 +383,6 @@ export function SecureDocumentDialog({
 
     setStep('extracting');
     setExtractedFields([]);
-    // Hold Continue until the review panel reports its state (it re-enables
-    // immediately when there is nothing low-confidence to review).
-    setReviewComplete(false);
     setExtractionProgress({ stage: 'ocr', progress: 0, message: 'Starting AI analysis...' });
 
     // §1.6 FAIL-CLOSED (WEBEXT-03): capture whether the on-device privacy
@@ -426,16 +424,6 @@ export function SecureDocumentDialog({
         f.confidence >= 0.5 ? { ...f, status: 'accepted' as const } : f
       );
       setExtractedFields(autoAccepted);
-
-      // AI-03 zero-field guard (round-1 review): sparse extraction can leave
-      // zero displayable fields (e.g. only credentialType/fraudSignals, both
-      // filtered by the template mapper). The review panel only mounts when
-      // there are fields, so it can never report review-complete — extraction
-      // success with nothing to review must NOT gate Continue (panel absent
-      // AND non-blocking, same contract as flag-off).
-      if (autoAccepted.length === 0) {
-        setReviewComplete(true);
-      }
 
       // Let the user review extracted fields before confirming.
       // The extracting step with stage=complete shows the field list
@@ -655,7 +643,6 @@ export function SecureDocumentDialog({
                    TemplateReviewPanel below. */
                 <AIFieldSuggestions
                   fields={[]}
-                  overallConfidence={0}
                   creditsRemaining={0}
                   progress={extractionProgress}
                   onFieldAccept={() => {}}
@@ -667,12 +654,13 @@ export function SecureDocumentDialog({
 
               {extractionProgress?.stage === 'complete' && extractedFields.length > 0 && (
                 <>
-                  {/* GME-26: Quality gate — show confidence warnings.
+                  {/* GME-26: PII-stripped-fields notice only.
                       BUG-2026-07-17-009 (SCRUM-2910, P0): fraud-signal UI
                       removed — the extraction `fraudSignals` field was not
                       gated by ENABLE_FRAUD_DETECTION, so the banner survived
-                      the prod flag-off. Fraud data is never rendered. */}
-                  <ExtractionQualityBanner confidence={overallConfidence} />
+                      the prod flag-off. Fraud data is never rendered.
+                      SCRUM-2914: confidence-based warnings removed. */}
+                  <ExtractionQualityBanner />
 
                   {/* Show auto-detected document type */}
                   {selectedTemplate && (
@@ -683,14 +671,15 @@ export function SecureDocumentDialog({
                       </span>
                     </div>
                   )}
-                  {/* AI-03 (SCRUM-2383): review/correct step — low-confidence
-                      fields are flagged and require acknowledgment or
-                      correction before Continue enables. */}
+                  {/* SCRUM-2914: field review/edit stays available via
+                      TemplateReviewPanel, but the AI-03 confidence-driven
+                      blocking gate is gone — onReviewStateChange is a no-op
+                      and Continue is never disabled on confidence. */}
                   <TemplateReviewPanel
                     fields={extractedFields}
                     overallConfidence={overallConfidence}
                     onFieldEdit={handleFieldEdit}
-                    onReviewStateChange={setReviewComplete}
+                    onReviewStateChange={() => {}}
                   />
                 </>
               )}
@@ -1001,12 +990,10 @@ export function SecureDocumentDialog({
                     {SECURE_DIALOG_LABELS.BACK}
                   </Button>
                   {/* Skip template selection if AI auto-detected a type.
-                      AI-03: disabled until every low-confidence field has been
-                      acknowledged or corrected in the review panel. */}
+                      SCRUM-2914: no longer gated on extraction confidence —
+                      the AI-03 confidence-driven block was removed. */}
                   <Button
                     onClick={() => void handleExtractionReviewContinue()}
-                    disabled={!reviewComplete}
-                    aria-disabled={!reviewComplete}
                     data-testid="extraction-review-continue"
                   >
                     {SECURE_DIALOG_LABELS.CONTINUE}

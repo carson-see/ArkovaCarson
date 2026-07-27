@@ -477,7 +477,7 @@ describe('AI-03 (SCRUM-2383) — extraction review gate', () => {
     }) as unknown as Awaited<ReturnType<typeof applyTemplate>>);
   }
 
-  it('disables Continue after extraction until the low-confidence field is acknowledged', async () => {
+  it('SCRUM-2914: never disables Continue on a low-confidence field — review/edit stays available but non-blocking', async () => {
     vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
     mockExtractionWith([
       { key: 'credentialType', value: 'CPE', confidence: 0.95, status: 'accepted' },
@@ -490,8 +490,11 @@ describe('AI-03 (SCRUM-2383) — extraction review gate', () => {
     // Let the review panel resolve its own flag read + report state.
     await flushAiEnabledState();
 
+    // The AI-03 confidence-driven gate is gone: Continue is never disabled,
+    // before or after acknowledgment. Field review/edit remains available.
     const continueBtn = screen.getByTestId('extraction-review-continue');
-    expect(continueBtn).toBeDisabled();
+    expect(continueBtn).not.toBeDisabled();
+    expect(screen.getByTestId('review-ack-creditHours')).toBeInTheDocument();
 
     await act(async () => {
       screen.getByTestId('review-ack-creditHours').click();

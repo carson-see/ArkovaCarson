@@ -336,6 +336,38 @@
                 }
             ],
             "frequency": 60
+        },
+        {
+            "name": "SCRUM-2902 — Credential Engine API key expiry",
+            "comment": "Fail-LOUD expiry alarm for the CE partnership API key / CTID publishing credential (R-1 FATAL launch dependency). services/worker/src/jobs/ce-key-expiry-alert.ts emits a Sentry event at T-30/T-14/T-7 and continuously after expiry, and fires EVERY daily run with expiry_window=SENTINEL when CE_API_KEY_EXPIRES_AT is unset/placeholder. This rule is what turns those events into a human page (Slack #ops) — event ≠ alert. FirstSeenEventCondition pages on each new day's issue (the message carries the changing day count) so the countdown is a daily reminder while in-window. Tag/channel parity enforced by scripts/ci/check-ce-key-expiry-alert-contract.test.ts. An admin must create this rule 1:1 at https://arkova.sentry.io/alerts/rules/ (Sentry MCP cannot create issue alert rules) AND a live delivery test (real Slack page) must be captured per the SCRUM-2902 runbook before this is considered wired.",
+            "actionMatch": "all",
+            "filterMatch": "all",
+            "conditions": [
+                {
+                    "id": "sentry.rules.conditions.first_seen_event.FirstSeenEventCondition"
+                }
+            ],
+            "filters": [
+                {
+                    "id": "sentry.rules.filters.tagged_event.TaggedEventFilter",
+                    "key": "source",
+                    "match": "eq",
+                    "value": "ce-key-expiry"
+                },
+                {
+                    "id": "sentry.rules.filters.level.LevelFilter",
+                    "match": "gte",
+                    "level": "30"
+                }
+            ],
+            "actions": [
+                {
+                    "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction",
+                    "channel": "#ops",
+                    "tags": "story,expiry_window,days_until_expiry"
+                }
+            ],
+            "frequency": 720
         }
     ],
     "dashboards": [

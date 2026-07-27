@@ -10,6 +10,7 @@
 
 import { cn } from '@/lib/utils';
 import { sanitizeHref } from '@/lib/urlValidator';
+import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import type { TemplateFieldDefinition } from '@/components/credentials/TemplateSchemaBuilder';
 import type { ReactElement } from 'react';
 
@@ -47,7 +48,11 @@ function isUrlValue(value: string): boolean {
  * Determine if a string looks like an email.
  */
 function isEmailValue(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  // Domain labels use `[^\s@.]` (dot-excluded) so each `\.` boundary is
+  // deterministic — this removes the ambiguous `[^\s@]+\.[^\s@]+` split that
+  // Sonar flags as super-linear backtracking, while still matching a
+  // local-part@labelled.domain shape (e.g. `test@example.com`).
+  return /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value);
 }
 
 /**
@@ -161,7 +166,16 @@ export function MetadataDisplay({
   schema,
   className,
 }: Readonly<MetadataDisplayProps>) {
-  const entries = Object.entries(metadata);
+  // BUG-2026-07-17-009 / -010 (SCRUM-2910, P0): fraud-derived metadata must
+  // never reach the DOM on any render surface. This component is a generic
+  // key-value metadata renderer exported from the verification barrel, so it
+  // hardens the same fraud filter every other metadata surface applies
+  // (RecordsList, PublicVerification, AssetDetailView, CredentialRenderer).
+  // Defense-in-depth: `_`-prefixed internal keys are dropped too, consistent
+  // with the other surfaces.
+  const entries = Object.entries(metadata).filter(
+    ([key]) => !key.startsWith('_') && !isFraudMetadataKey(key),
+  );
 
   if (entries.length === 0) {
     return (
