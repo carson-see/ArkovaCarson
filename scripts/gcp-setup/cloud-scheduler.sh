@@ -57,6 +57,11 @@ JOBS=(
   # Detection only: reads DocuSign Connect config and emits Sentry warnings
   # for missing/disabled/HMAC/event/payload-format drift; no DocuSign writes.
   "docusign-listener-drift|15 * * * *|/jobs/docusign-listener-drift|30s,120s,2"
+  # SCRUM-2902 (R-1 FATAL): Credential Engine API key expiry alarm, daily 08:00 UTC.
+  # Fail-LOUD: fires escalating Sentry events at T-30/T-14/T-7 + continuously after
+  # expiry, and EVERY run when CE_API_KEY_EXPIRES_AT is unset/sentinel. NO_RETRY —
+  # the job is idempotent and re-fires daily anyway; a retry would only double-page.
+  "ce-key-expiry-check|0 8 * * *|/jobs/ce-key-expiry-check|NO_RETRY"
   # QUEUE-06 (SCRUM-2352): connector_artifact drain consumer every 5 min.
   # Drains pending|queued rows → materialize PENDING anchor → charge at SECURING
   # (debit_and_enqueue_anchor) → batch-anchor. Endpoint at

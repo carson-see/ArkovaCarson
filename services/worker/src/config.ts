@@ -375,6 +375,22 @@ const ConfigSchema = z.object({
   /** ENABLE_WORKSPACE_RENEWAL — Drive watch channel renewal cron. Default true when Drive is on. */
   enableWorkspaceRenewal: boolFlag(false),
 
+  // CE API key expiry alarm (SCRUM-2902)
+  /**
+   * ENABLE_CE_KEY_EXPIRY_ALERTS — gate the Credential Engine API key expiry
+   * alarm cron. Default TRUE (fail-LOUD): the alarm is an R-1 FATAL launch
+   * dependency, so it ships ON and only a literal "false" disables it. Routed
+   * through typed config (not an ad-hoc process.env read) per SCRUM-1258.
+   */
+  enableCeKeyExpiryAlerts: z.preprocess(boolEnvInverse, z.boolean()).default(true),
+  /**
+   * CE_API_KEY_EXPIRES_AT — operator-supplied ISO expiry date for the CE
+   * publishing credential. Optional/unparseable/sentinel values trip the
+   * alarm's fail-LOUD SENTINEL path (see ce-key-expiry-alert.ts). Kept as a raw
+   * string so that fail-loud classification stays in the job, not the schema.
+   */
+  ceApiKeyExpiresAt: z.string().optional(),
+
   // Arize observability (SCRUM-1067)
   /** ARIZE_TRACING_ENABLED — initialize OTLP exporter when true and creds present. */
   arizeTracingEnabled: boolFlag(false),
@@ -793,6 +809,11 @@ function loadConfig(): Config {
     enableMultimodalEmbeddings: process.env.ENABLE_MULTIMODAL_EMBEDDINGS,
     enableCloudLoggingSink: process.env.ENABLE_CLOUD_LOGGING_SINK,
     enableWorkspaceRenewal: process.env.ENABLE_WORKSPACE_RENEWAL,
+    // CE API key expiry alarm (SCRUM-2902). Raw expiry string passed through
+    // untouched so the job's fail-LOUD sentinel/unparseable classification is
+    // the single source of truth.
+    enableCeKeyExpiryAlerts: process.env.ENABLE_CE_KEY_EXPIRY_ALERTS,
+    ceApiKeyExpiresAt: process.env.CE_API_KEY_EXPIRES_AT,
     arizeTracingEnabled: process.env.ARIZE_TRACING_ENABLED,
     arizeTracingConsole: process.env.ARIZE_TRACING_CONSOLE,
     arizeApiKey: process.env.ARIZE_API_KEY,
