@@ -55,6 +55,45 @@ export interface TreasuryStatusResponse {
   error?: string;
 }
 
+/**
+ * SCRUM-2901 (PI-0.5): per-leg budget for /api/treasury/status.
+ *
+ * The frontend workerFetch budget for this route is 8s (useTreasuryBalance
+ * WORKER_TIMEOUT_MS = 8_000). Promise.allSettled waits for the SLOWEST leg,
+ * and listUnspent against the treasury address (millions of txs of history on
+ * the public mempool provider) can exceed 8s — the client then aborts and the
+ * admin loses even the fast legs (DB anchor stats, fee estimate) that had
+ * already finished server-side. Bounding each leg at 6.5s leaves headroom for
+ * the admin-gate lookup, serialization, and network RTT inside the client's
+ * 8s, and lets a slow leg degrade to its existing null/error shape while the
+ * fast legs still ship.
+ */
+export const STATUS_LEG_BUDGET_MS = 6_500;
+
+/**
+ * Race a leg against the status budget. On budget exhaustion the leg REJECTS
+ * (feeding the existing Promise.allSettled degradation branches); the
+ * underlying request is not cancelled — it is simply no longer awaited, and
+ * the provider clients carry their own transport timeouts.
+ */
+function withStatusBudget<T>(leg: Promise<T>, label: string): Promise<T> {
+  return new Promise<T>((resolveLeg, rejectLeg) => {
+    const timer = setTimeout(() => {
+      rejectLeg(new Error(`${label} exceeded the ${STATUS_LEG_BUDGET_MS}ms treasury status budget`));
+    }, STATUS_LEG_BUDGET_MS);
+    leg.then(
+      (value) => {
+        clearTimeout(timer);
+        resolveLeg(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        rejectLeg(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
 function nonNegativeNumberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
@@ -94,41 +133,50 @@ export async function handleTreasuryStatus(
 
   // Run all three data-fetching sections in parallel. Each is independent
   // and makes external HTTP/DB calls — running them serially easily exceeds
-  // the frontend's 8-second workerFetch timeout.
+  // the frontend's 8-second workerFetch timeout. SCRUM-2901: each leg is
+  // additionally bounded by STATUS_LEG_BUDGET_MS so one slow leg (typically
+  // the UTXO crawl) degrades alone instead of dragging the whole response
+  // past the client's 8s abort.
   const [walletResult, feeResult, statsResult] = await Promise.allSettled([
     // 1. Wallet balance + UTXOs (requires BITCOIN_TREASURY_WIF)
-    (async () => {
-      if (!config.bitcoinTreasuryWif) {
-        return { error: 'Treasury wallet not configured (BITCOIN_TREASURY_WIF not set)' } as const;
-      }
-      const address = addressFromWif(config.bitcoinTreasuryWif);
-      const utxoProvider = createUtxoProvider({
-        type: config.bitcoinUtxoProvider as 'rpc' | 'mempool' | 'getblock',
-        rpcUrl: config.bitcoinRpcUrl,
-        rpcAuth: config.bitcoinRpcAuth,
-        mempoolApiUrl: config.mempoolApiUrl,
-        network: config.bitcoinNetwork,
-      });
-      const [utxos, blockchainInfo] = await Promise.allSettled([
-        utxoProvider.listUnspent(address),
-        utxoProvider.getBlockchainInfo(),
-      ]);
-      return { address, utxos, blockchainInfo } as const;
-    })(),
+    withStatusBudget(
+      (async () => {
+        if (!config.bitcoinTreasuryWif) {
+          return { error: 'Treasury wallet not configured (BITCOIN_TREASURY_WIF not set)' } as const;
+        }
+        const address = addressFromWif(config.bitcoinTreasuryWif);
+        const utxoProvider = createUtxoProvider({
+          type: config.bitcoinUtxoProvider as 'rpc' | 'mempool' | 'getblock',
+          rpcUrl: config.bitcoinRpcUrl,
+          rpcAuth: config.bitcoinRpcAuth,
+          mempoolApiUrl: config.mempoolApiUrl,
+          network: config.bitcoinNetwork,
+        });
+        const [utxos, blockchainInfo] = await Promise.allSettled([
+          utxoProvider.listUnspent(address),
+          utxoProvider.getBlockchainInfo(),
+        ]);
+        return { address, utxos, blockchainInfo } as const;
+      })(),
+      'wallet leg',
+    ),
 
     // 2. Fee estimates
-    (async () => {
-      const useMempoolFees = config.bitcoinUtxoProvider === 'mempool' || !config.bitcoinRpcUrl;
-      const feeEstimator = createFeeEstimator({
-        strategy: useMempoolFees ? 'mempool' : 'static',
-        mempoolApiUrl: config.mempoolApiUrl,
-        staticRate: 1,
-      });
-      return { rate: await feeEstimator.estimateFee(), name: feeEstimator.name };
-    })(),
+    withStatusBudget(
+      (async () => {
+        const useMempoolFees = config.bitcoinUtxoProvider === 'mempool' || !config.bitcoinRpcUrl;
+        const feeEstimator = createFeeEstimator({
+          strategy: useMempoolFees ? 'mempool' : 'static',
+          mempoolApiUrl: config.mempoolApiUrl,
+          staticRate: 1,
+        });
+        return { rate: await feeEstimator.estimateFee(), name: feeEstimator.name };
+      })(),
+      'fee leg',
+    ),
 
     // 3. Anchor stats from Supabase
-    fetchAnchorStats(),
+    withStatusBudget(fetchAnchorStats(), 'anchor-stats leg'),
   ]);
 
   // Unpack 1: Wallet + network
@@ -146,7 +194,7 @@ export async function handleTreasuryStatus(
         };
       } else {
         logger.warn({ error: wr.utxos.reason }, 'Failed to fetch wallet data for treasury status');
-        result.error = 'Wallet data temporarily unavailable';
+        result.error = 'Fee Account data temporarily unavailable';
       }
       if (wr.blockchainInfo.status === 'fulfilled') {
         result.network = {
@@ -159,7 +207,7 @@ export async function handleTreasuryStatus(
     }
   } else {
     logger.warn({ error: walletResult.reason }, 'Failed to fetch wallet data for treasury status');
-    result.error = 'Wallet data temporarily unavailable';
+    result.error = 'Fee Account data temporarily unavailable';
   }
 
   // Unpack 2: Fees
