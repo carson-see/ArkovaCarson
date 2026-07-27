@@ -532,9 +532,15 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
   const nested = parsed.data?.envelopeSummary;
   const envelopeId = parsed.envelopeId ?? parsed.data?.envelopeId ?? parsed.envelopeSummary?.envelopeId ?? nested?.envelopeId;
   const accountId = parsed.accountId ?? parsed.data?.accountId ?? parsed.envelopeSummary?.accountId ?? nested?.accountId;
-  const status = (parsed.status ?? parsed.data?.status ?? parsed.envelopeSummary?.status ?? nested?.status ?? '').toLowerCase();
+  // Minimal SIM deliveries (dashboard-created listeners without eventData
+  // includes) carry NO status field at any nesting level — the event name is
+  // the completion assertion (prod evidence 2026-07-27, envelope 624c1d84…,
+  // retryCount 7). Status is corroborative-only: when a status field IS
+  // present it must agree; when absent, the event name is authoritative.
+  const rawStatus = parsed.status ?? parsed.data?.status ?? parsed.envelopeSummary?.status ?? nested?.status;
+  const status = rawStatus?.toLowerCase();
   const event = parsed.event.toLowerCase();
-  if (event !== 'envelope-completed' || status !== 'completed' || !envelopeId || !accountId) {
+  if (event !== 'envelope-completed' || (status !== undefined && status !== 'completed') || !envelopeId || !accountId) {
     throw new Error('DocuSign Connect payload is not a completed envelope event');
   }
 
