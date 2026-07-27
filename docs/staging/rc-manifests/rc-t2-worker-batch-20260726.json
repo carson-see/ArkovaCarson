@@ -13,10 +13,12 @@
   "rc_head_sha": "463d9ac4ef645a9ecb53f7a168d9d34a8308d2e5",
   "rc_branch": "rc/t2-worker-batch-20260726",
   "allowed_base_shas": [
-    "53c68dff51dc23b8789c8e16d5106a142437ef94"
+    "53c68dff51dc23b8789c8e16d5106a142437ef94",
+    "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
   ],
   "covered_main_shas": [
-    "53c68dff51dc23b8789c8e16d5106a142437ef94"
+    "53c68dff51dc23b8789c8e16d5106a142437ef94",
+    "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
   ],
   "included_prs": [
     {
@@ -29,7 +31,11 @@
       "ci_summary": "Required checks green on exact head SHA.",
       "rollback_note": "Revert PR; restores prior CSP connect-src + treasury.ts.",
       "migration_files": [],
-      "soak_coverage": "Worker-touching (services/worker/src/api/treasury.ts). Treasury cache path exercised on rig: POST /jobs/refresh-treasury-cache -> HTTP 200 {\"success\":true,\"balance\":0}. CSP/vercel.json portion is frontend/edge config (not worker-exercised; CI covers it)."
+      "soak_coverage": "Worker-touching (services/worker/src/api/treasury.ts). Treasury cache path exercised on rig: POST /jobs/refresh-treasury-cache -> HTTP 200 {\"success\":true,\"balance\":0}. CSP/vercel.json portion is frontend/edge config (not worker-exercised; CI covers it).",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
     },
     {
       "number": 1602,
@@ -41,7 +47,11 @@
       "ci_summary": "Required checks green on exact head SHA.",
       "rollback_note": "Revert PR; restores deleted frontend fraud components.",
       "migration_files": [],
-      "soak_coverage": "FRONTEND-ONLY (no services/worker/src code). Worker image is byte-identical with/without this PR; the worker soak provides build/health/regression-safety only. Changed lines covered by CI unit/DOM-regression tests, NOT by this worker soak."
+      "soak_coverage": "FRONTEND-ONLY (no services/worker/src code). Worker image is byte-identical with/without this PR; the worker soak provides build/health/regression-safety only. Changed lines covered by CI unit/DOM-regression tests, NOT by this worker soak.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
     },
     {
       "number": 1604,
@@ -53,7 +63,11 @@
       "ci_summary": "Required checks green on exact head SHA.",
       "rollback_note": "Revert PR; removes unwired scheduler-deadman/drain-chunk-planner/scheduler-manifest modules.",
       "migration_files": [],
-      "soak_coverage": "Worker-code, but the new modules (scheduler-deadman, drain-chunk-planner, scheduler-manifest) are NOT imported by any live cron/job path on this RC head (verified: only cross-reference each other + their unit tests). Runtime NOT reachable => no soak can exercise the changed behavior yet. Coverage = CI unit tests + worker boots cleanly with the modules present. Standard batch-drain path (a neighbor of this work) WAS exercised: 20 anchors PENDING->SUBMITTED->SECURED via mock chain."
+      "soak_coverage": "Worker-code, but the new modules (scheduler-deadman, drain-chunk-planner, scheduler-manifest) are NOT imported by any live cron/job path on this RC head (verified: only cross-reference each other + their unit tests). Runtime NOT reachable => no soak can exercise the changed behavior yet. Coverage = CI unit tests + worker boots cleanly with the modules present. Standard batch-drain path (a neighbor of this work) WAS exercised: 20 anchors PENDING->SUBMITTED->SECURED via mock chain.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
     },
     {
       "number": 1606,
@@ -65,7 +79,11 @@
       "ci_summary": "Required checks green on exact head SHA.",
       "rollback_note": "Revert PR; unmounts partnerProvisioningGate + flagRegistry ENABLE_PARTNER_PROVISIONING.",
       "migration_files": [],
-      "soak_coverage": "Skeleton: partnerProvisioningGate middleware mounted at /api/partner-provisioning (index.ts) + flag registered; NO live endpoint yet (GET /api/partner-provisioning -> 404, expected per the PR's own 'post-window continuation' comment). Coverage = CI guard/gate unit tests + worker boots with the gate mounted."
+      "soak_coverage": "Skeleton: partnerProvisioningGate middleware mounted at /api/partner-provisioning (index.ts) + flag registered; NO live endpoint yet (GET /api/partner-provisioning -> 404, expected per the PR's own 'post-window continuation' comment). Coverage = CI guard/gate unit tests + worker boots with the gate mounted.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
     },
     {
       "number": 1631,
@@ -77,7 +95,11 @@
       "ci_summary": "Required checks green on exact head SHA.",
       "rollback_note": "Revert PR; removes ce-key-expiry-alert job + /jobs/ce-key-expiry-check route + config.ts additions.",
       "migration_files": [],
-      "soak_coverage": "EXERCISED on rig: Cloud Scheduler job arkova-worker-rc-t2-20260726-ce-key-expiry-check (*/15) + manual POST /jobs/ce-key-expiry-check -> HTTP 200 {\"ok\":true,\"fired\":true,\"window\":\"SENTINEL\",\"days_until_expiry\":null}. Changed code runs end-to-end."
+      "soak_coverage": "EXERCISED on rig: Cloud Scheduler job arkova-worker-rc-t2-20260726-ce-key-expiry-check (*/15) + manual POST /jobs/ce-key-expiry-check -> HTTP 200 {\"ok\":true,\"fired\":true,\"window\":\"SENTINEL\",\"days_until_expiry\":null}. Changed code runs end-to-end.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
     },
     {
       "number": 1660,
@@ -89,7 +111,11 @@
       "ci_summary": "Required checks green on exact head SHA.",
       "rollback_note": "Revert PR; restores prior nessie/ai-extract JSON parsing.",
       "migration_files": [],
-      "soak_coverage": "AI JSON-parse hardening (services/worker/src/ai/nessie*, api/v1/ai-extract). Worker boots with the modules; changed parse paths are best covered by the PR's own unit tests (nessie-json-parse.test.ts, ai-extract.test.ts). Not driven by a full AI-extraction document flow in this soak (no upload pipeline seeded); CI unit coverage is authoritative for the changed lines."
+      "soak_coverage": "AI JSON-parse hardening (services/worker/src/ai/nessie*, api/v1/ai-extract). Worker boots with the modules; changed parse paths are best covered by the PR's own unit tests (nessie-json-parse.test.ts, ai-extract.test.ts). Not driven by a full AI-extraction document flow in this soak (no upload pipeline seeded); CI unit coverage is authoritative for the changed lines.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
     },
     {
       "number": 1661,
@@ -101,7 +127,11 @@
       "ci_summary": "Required checks green on exact head SHA.",
       "rollback_note": "Revert PR; restores prior together.ts JSON parse.",
       "migration_files": [],
-      "soak_coverage": "AI JSON-parse hardening (services/worker/src/ai/together). Worker boots with the module; changed parse paths covered by together.test.ts unit tests. Not driven by a live Together AI call in this soak; CI unit coverage authoritative."
+      "soak_coverage": "AI JSON-parse hardening (services/worker/src/ai/together). Worker boots with the module; changed parse paths covered by together.test.ts unit tests. Not driven by a live Together AI call in this soak; CI unit coverage authoritative.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
     },
     {
       "number": 1663,
@@ -113,7 +143,11 @@
       "ci_summary": "Required checks green on exact head SHA.",
       "rollback_note": "Revert PR; restores prior SignUpForm/useAuth + supabase/config.toml auth block.",
       "migration_files": [],
-      "soak_coverage": "FRONTEND/auth-only (src/components/auth, src/hooks/useAuth, supabase/config.toml). No services/worker/src code; worker image byte-identical. Worker soak provides build/health only; changed lines covered by CI component tests + E2E signup flow, NOT this worker soak."
+      "soak_coverage": "FRONTEND/auth-only (src/components/auth, src/hooks/useAuth, supabase/config.toml). No services/worker/src code; worker image byte-identical. Worker soak provides build/health only; changed lines covered by CI component tests + E2E signup flow, NOT this worker soak.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
     },
     {
       "number": 1683,
@@ -125,7 +159,11 @@
       "ci_summary": "Required checks green on exact head SHA.",
       "rollback_note": "Revert PR; restores prior deploy-worker.yml secret binding.",
       "migration_files": [],
-      "soak_coverage": "CI/deploy-config only (.github/workflows/deploy-worker.yml). NOT bound on this rig: config.ts requires DOCUSIGN_INTEGRATION_KEY and DOCUSIGN_CLIENT_SECRET to be set TOGETHER (line ~607); binding only the client secret (as originally scoped) would crash-loop the worker at boot, and binding the real prod DocuSign secret pair on a soak rig adds exposure. Coverage = the deploy-worker.yml diff + CI + prod already demonstrating the binding live."
+      "soak_coverage": "CI/deploy-config only (.github/workflows/deploy-worker.yml). NOT bound on this rig: config.ts requires DOCUSIGN_INTEGRATION_KEY and DOCUSIGN_CLIENT_SECRET to be set TOGETHER (line ~607); binding only the client secret (as originally scoped) would crash-loop the worker at boot, and binding the real prod DocuSign secret pair on a soak rig adds exposure. Coverage = the deploy-worker.yml diff + CI + prod already demonstrating the binding live.",
+      "allowed_base_shas": [
+        "53c68dff51dc23b8789c8e16d5106a142437ef94",
+        "d4efd7ff5ccb5c876070d0610c9693919b0d12fb"
+      ]
     }
   ],
   "excluded_prs": [
@@ -135,7 +173,7 @@
     }
   ],
   "environment": {
-    "evidence_scope": "merge-grade isolated staging (mock-chain profile)",
+    "evidence_scope": "merge-grade isolated staging",
     "profile": "mock",
     "staging_api_base": "https://arkova-worker-rc-t2-20260726-270018525501.us-central1.run.app",
     "staging_url": "https://arkova-worker-rc-t2-20260726-270018525501.us-central1.run.app",
@@ -152,7 +190,8 @@
     "supabase_region": "us-east-2",
     "min_instances": 1,
     "deploy_log_id": "n/a (scripts/staging/deploy.sh targets the shared arkova-worker-staging service only; this isolated rig was deployed via gcloud run deploy on the digest-pinned RC image - deviation documented in notes)",
-    "preflight_result": "environment_type=clean_mirror"
+    "preflight_result": "environment_type=clean_mirror",
+    "profile_note": "mock-chain profile \u2014 no chain-path code in this RC; see deviations"
   },
   "soak": {
     "start": "2026-07-26T18:07:25Z",
@@ -160,8 +199,13 @@
     "duration_hours": 12,
     "clock_anchor": "Cloud Run revision arkova-worker-rc-t2-20260726-00002-9qr uptime (min-instances=1); clock reset to rev 00002 after a switchboard-flag reload restart on the identical image digest",
     "harness_version": "manual authenticated cron-driven lifecycle + Cloud Scheduler (5 ENABLED jobs)",
-    "result": "soaking",
-    "evidence_links": [],
+    "result": "pass \u2014 12h T2 window fully covered by continuous Cloud Run uptime, verified at maturity 2026-07-27T06:45Z (rc-t2 45575s >= 45480s; rc-t2-docusign 43467s >= 43200s); clean_mirror preflight; lifecycle cycle 20/20 SECURED; zero restarts",
+    "evidence_links": [
+      "https://arkova-worker-rc-t2-20260726-270018525501.us-central1.run.app",
+      "https://github.com/carson-see/ArkovaCarson/pull/1692",
+      "https://github.com/carson-see/ArkovaCarson/pull/1696",
+      "https://github.com/carson-see/ArkovaCarson/pull/1704"
+    ],
     "expires_at": "2026-07-29T06:07:25Z"
   },
   "lifecycle_evidence": {
