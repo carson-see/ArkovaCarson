@@ -262,7 +262,10 @@ export async function fetchDocusignCombinedDocument(args: {
   deps?: DocusignClientDeps;
 }): Promise<{ bytes: Buffer; contentType: string | null }> {
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
-  const base = args.baseUri.replace(/\/+$/, '');
+  // Trim trailing slashes without a `/+$/` regex (super-linear backtracking on
+  // adversarial input — Sonar S5852); linear scan instead.
+  let base = args.baseUri;
+  while (base.endsWith('/')) base = base.slice(0, -1);
   const url = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/envelopes/${encodeURIComponent(args.envelopeId)}/documents/combined`;
   const res = await fetchImpl(url, {
     headers: { Authorization: `Bearer ${args.accessToken}` },
